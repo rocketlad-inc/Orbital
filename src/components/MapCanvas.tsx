@@ -2708,10 +2708,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           spin: ((spinNowMs() % 180_000) / 180_000) * TAU * dir + phase,
           sides,
           // The fight faces away from the station, so neither hides the
-          // other; otherwise it wheels slowly round the world.
-          battleCenter: stationAngle !== undefined
-            ? stationAngle + Math.PI
-            : ((laneNow % 240_000) / 240_000) * TAU * dir + phase,
+          // other, and the whole formation, station with it, wheels slowly
+          // round the world as the battle lines always did.
+          battleCenter: stationAngle !== undefined ? stationAngle + Math.PI : phase,
+          battleSpin: ((laneNow % 240_000) / 240_000) * TAU * dir,
         });
         for (const [id, p] of layout.places) {
           const x = c0.x + Math.cos(p.angle) * p.r;

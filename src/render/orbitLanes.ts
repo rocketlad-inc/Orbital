@@ -52,12 +52,19 @@ export interface LaneWorld {
   /** Lanes should end by here, px from the centre (the next shown world,
    *  or a sensible reach); past it the whole layout shrinks first. */
   budgetR: number;
-  /** Ring rotation for free lanes, radians at lane radius `discR`. */
+  /** Ring rotation, radians at lane radius `discR`; each lane turns at
+   *  its own Kepler rate, and a lane holding a station turns with it as
+   *  one rigid ring (things at one radius orbit at one speed). */
   spin: number;
   /** Battle sides in fixed order, or null in peace. */
   sides?: string[] | null;
-  /** Centre of the contested sector (radians), when sides is set. */
+  /** Centre of the contested sector (radians), when sides is set, in the
+   *  formation's own frame (pinned items keep their angles in it). */
   battleCenter?: number;
+  /** How far the whole battle formation, pinned items with it, has
+   *  wheeled round the world (radians): one rigid turn for every lane,
+   *  so the lines hold their facing while they move. */
+  battleSpin?: number;
 }
 
 export interface LanePlace {
@@ -95,6 +102,24 @@ const MAX_RANKS = 3;
 const MAX_SECTOR = Math.PI * 1.7;
 
 type Interval = [number, number];
+
+/** How far into the gap beside its lane a hull may wander, as a share of
+ *  the gap: both neighbours together stay under the whole gap. */
+const RADIAL_GAP_SHARE = 0.3;
+/** Most a hull's nose sits off its lane's tangent, radians. */
+const HEADING_WOBBLE = 0.1;
+
+/** A stable 0..1 from an id and a salt (FNV-1a). */
+function h01(id: string, salt: number): number {
+  let h = (2166136261 ^ Math.imul(salt, 0x9e3779b1)) >>> 0;
+  for (let i = 0; i < id.length; i++) {
+    h ^= id.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  h ^= h >>> 13;
+  h = Math.imul(h, 0x5bd1e995) >>> 0;
+  return (h % 100003) / 100003;
+}
 
 const TAU = Math.PI * 2;
 const norm = (a: number) => ((a % TAU) + TAU) % TAU;
@@ -139,11 +164,19 @@ function intersect(a: Interval[], b: Interval[]): Interval[] {
 function fill(
   queue: LaneItem[], arcs: Interval[], rc: number, s: number, gap: number, dir: number,
   lane: number, out: Map<string, LanePlace>,
+  /** The lane's turn: arcs are in its own frame, output in the canvas's. */
+  rot = 0,
+  /** The lane's width, px: how far a shorter hull may sit off its middle. */
+  wl = 0,
 ): number {
   let qi = 0;
+  // Spaced at the INNERMOST radius a hull may wander to (see the chaos
+  // below): an arc only lengthens outward, so wherever a hull ends up in
+  // or out of the middle, it is never nearer its neighbours than this.
+  const rFit = Math.max(1, rc - (wl > 0 ? wl / 2 : 0) - gap * RADIAL_GAP_SHARE);
   for (const [a0, a1] of arcs) {
     if (qi >= queue.length) break;
-    const span = (a1 - a0) * rc;
+    const span = (a1 - a0) * rFit;
     // How many fit in this arc.
     let used = 0;
     const take: LaneItem[] = [];
@@ -155,22 +188,34 @@ function fill(
       take.push(it);
     }
     if (!take.length) continue;
-    // Even spread: spare room shared between the items.
-    const spare = (span - used) / take.length;
+    // A TOUCH OF CHAOS (Lorne: "a bit too clean... doesn't look like a
+    // spreadsheet"). Each hull gets its own, stable share of the lane's
+    // spare room, so the gaps between hulls vary; it sits a little in or
+    // out of the lane's middle, within the room the lane has; and its nose
+    // is a touch off the tangent. All seeded on the hull's id, so nothing
+    // jitters frame to frame, and all inside margins the layout already
+    // keeps, so nothing can overlap.
+    const spareTotal = span - used;
+    const weights = take.map(it => 0.3 + 1.4 * h01(it.id, 1));
+    const wsum = weights.reduce((a, b) => a + b, 0);
     let u = 0;
-    for (const it of take) {
+    take.forEach((it, k) => {
       const len = it.length * s;
+      const spare = (spareTotal * weights[k]) / wsum;
       const start = u + spare / 2 + gap / 2;
       // `u` runs WITH the direction of travel (from a0 when dir is +1,
       // from a1 when -1), so the item's FRONT is always its far end.
       const anchorFromFront = (it.anchor ?? it.length / 2) * s;
       const along = start + len - anchorFromFront;
-      const angle = dir >= 0 ? a0 + along / rc : a1 - along / rc;
+      const angle = dir >= 0 ? a0 + along / rFit : a1 - along / rFit;
+      const room = Math.max(0, (wl - it.height * s) / 2) + gap * RADIAL_GAP_SHARE;
+      const r = rc + (h01(it.id, 2) - 0.5) * 2 * room;
+      const nose = (h01(it.id, 3) - 0.5) * 2 * HEADING_WOBBLE;
       out.set(it.id, {
-        r: rc, angle, heading: angle + (Math.PI / 2) * (dir >= 0 ? 1 : -1), scale: s, lane,
+        r, angle: angle + rot, heading: angle + rot + (Math.PI / 2) * (dir >= 0 ? 1 : -1) + nose, scale: s, lane,
       });
       u += len + gap + spare;
-    }
+    });
     qi += take.length;
   }
   return qi;
@@ -202,6 +247,9 @@ function layoutAt(w: LaneWorld, s: number, sectorArg?: number): LaneLayout {
     const sides = w.sides;
     const F = sides.length;
     const sector = sectorArg ?? baseSector(F);
+    // Laid out in the formation's own frame; the whole of it is turned by
+    // battleRot on the way out, so the lines never reshuffle as it wheels.
+    const battleRot = w.battleSpin ?? 0;
     const centre = w.battleCenter ?? 0;
     const queues = sides.map(sd => free.filter(it => it.side === sd));
     // Hulls with no side (should not happen) ride with the first.
@@ -238,7 +286,7 @@ function layoutAt(w: LaneWorld, s: number, sectorArg?: number): LaneLayout {
       const rc = rInner + wl / 2;
       let blocked: Interval[] = [];
       if (pinQ.length) {
-        const pp = placePinned(pinQ, rc, s, gap, lane, out);
+        const pp = placePinned(pinQ, rc, s, gap, lane, out, battleRot);
         blocked = pp.blocked;
         pinQ = pp.overflow;
       }
@@ -250,7 +298,7 @@ function layoutAt(w: LaneWorld, s: number, sectorArg?: number): LaneLayout {
         const [a, b] = wedges[k];
         const wa = freeArcs([[b, a + TAU]]);
         const arcs = intersect(wa, open);
-        const n = fill(q, arcs, rc, s, gap, dir, lane, out);
+        const n = fill(q, arcs, rc, s, gap, dir, lane, out, battleRot, wl);
         q.splice(0, n);
       });
       rInner += wl + gap;
@@ -266,17 +314,21 @@ function layoutAt(w: LaneWorld, s: number, sectorArg?: number): LaneLayout {
   while (queue.length || pinQ.length) {
     const wl = Math.max(pinW(), queue.length ? queue[0].height * s : 0, 1);
     const rc = rInner + wl / 2;
+    // Every lane turns, inner lanes faster, as orbits do. A lane with a
+    // station in it turns as ONE ring: the station moves with its hulls,
+    // and the hulls keep flowing round the world. (Placing them round a
+    // station held at its true, near-still angle froze them: Lorne,
+    // 2026-10-02, "ships have stopped rotating".)
+    const turn = w.spin * Math.pow(Math.max(1, w.discR) / rc, 1.5);
     let arcs: Interval[];
     if (pinQ.length) {
-      const pp = placePinned(pinQ, rc, s, gap, lane, out);
+      const pp = placePinned(pinQ, rc, s, gap, lane, out, turn);
       arcs = freeArcs(pp.blocked);
       pinQ = pp.overflow;
     } else {
-      // A free lane turns: inner lanes faster, as orbits do.
-      const turn = w.spin * Math.pow(Math.max(1, w.discR) / rc, 1.5);
-      arcs = [[turn, turn + TAU]];
+      arcs = [[0, TAU]];
     }
-    const n = fill(queue, arcs, rc, s, gap, dir, lane, out);
+    const n = fill(queue, arcs, rc, s, gap, dir, lane, out, turn, wl);
     queue.splice(0, n);
     rInner += wl + gap;
     lane++;
@@ -293,6 +345,8 @@ function layoutAt(w: LaneWorld, s: number, sectorArg?: number): LaneLayout {
  */
 function placePinned(
   pinned: LaneItem[], rc: number, s: number, gap: number, lane: number, out: Map<string, LanePlace>,
+  /** The lane's turn: pinned angles are in the lane's own frame. */
+  rot = 0,
 ): { blocked: Interval[]; overflow: LaneItem[] } {
   // Half the arc each needs from its neighbours, gap included.
   const need = (p: LaneItem) => ((p.length * s) / 2 + gap / 2) / rc;
@@ -354,7 +408,7 @@ function placePinned(
   for (const { p, a } of ring) {
     const half = ((p.length * s) / 2 + gap) / rc;
     blocked.push([a - half, a + half]);
-    out.set(p.id, { r: rc, angle: a, heading: a + Math.PI / 2, scale: s, lane });
+    out.set(p.id, { r: rc, angle: a + rot, heading: a + rot + Math.PI / 2, scale: s, lane });
   }
   return { blocked, overflow };
 }

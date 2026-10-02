@@ -78,7 +78,7 @@ function overlaps(w: LaneWorld) {
         // The front is in +dir; the span centre is `off` behind the anchor.
         return p.angle - (w.dir >= 0 ? 1 : -1) * (off / p.r);
       };
-      const d = angDist(mid(A, a), mid(B, b)) * a.r;
+      const d = angDist(mid(A, a), mid(B, b)) * Math.min(a.r, b.r);
       if (d + 1e-6 < ((A.length + B.length) / 2) * a.scale) bad.push(`${ia}/${ib} overlap in lane ${a.lane}`);
     }
   }
@@ -170,8 +170,47 @@ describe('orbital lanes', () => {
     expect(overlaps(w).bad).toEqual([]);
   });
 
+  it('a ring with a station in it still turns, station and hulls together', () => {
+    const items: LaneItem[] = [{ id: 'station', length: 120, height: 120, pinned: 0.5 }];
+    for (let i = 0; i < 8; i++) items.push({ id: `s${i}`, length: 42, height: 42 });
+    const at = (spin: number) => layoutLanes({ discR: 150, items, dir: 1, budgetR: 2000, spin }).places;
+    const a = at(0), b = at(0.4);
+    const turnSt = b.get('station')!.angle - a.get('station')!.angle;
+    expect(Math.abs(turnSt)).toBeGreaterThan(0.05);
+    for (let i = 0; i < 8; i++) {
+      // Same lane as the station: the hulls move with it, rigidly.
+      expect(b.get(`s${i}`)!.lane).toBe(0);
+      expect(angDist(b.get(`s${i}`)!.angle - a.get(`s${i}`)!.angle, turnSt)).toBeLessThan(1e-6);
+    }
+  });
+
+  it('a battle wheels as one formation, every lane together', () => {
+    const items: LaneItem[] = [{ id: 'station', length: 100, height: 100, pinned: 2 }];
+    for (let i = 0; i < 30; i++) items.push({ id: `h${i}`, length: 48, height: 48, side: `f${i % 2}` });
+    const base: LaneWorld = { discR: 100, items, dir: 1, budgetR: 2000, spin: 0, sides: ['f0', 'f1'], battleCenter: 2 + Math.PI };
+    const a = layoutLanes({ ...base, battleSpin: 0 }).places;
+    const b = layoutLanes({ ...base, battleSpin: 0.7 }).places;
+    for (const [id, p] of a) expect(angDist(b.get(id)!.angle - p.angle, 0.7)).toBeLessThan(1e-6);
+  });
+
+  it('is not a spreadsheet: gaps, radii and noses vary, and hold still frame to frame', () => {
+    const items: LaneItem[] = [];
+    for (let i = 0; i < 9; i++) items.push({ id: `ship-${i}`, length: 42, height: 42 });
+    const w: LaneWorld = { discR: 200, items, dir: 1, budgetR: 2000, spin: 0 };
+    const p = [...layoutLanes(w).places.values()].filter(x => x.lane === 0).sort((x, y) => x.angle - y.angle);
+    const gaps = p.slice(1).map((x, i) => x.angle - p[i].angle);
+    const spread = (xs: number[]) => Math.max(...xs) - Math.min(...xs);
+    expect(spread(gaps)).toBeGreaterThan(0.05);
+    expect(spread(p.map(x => x.r))).toBeGreaterThan(0.5);
+    expect(spread(p.map(x => x.heading - x.angle))).toBeGreaterThan(0.02);
+    // Deterministic: the same world lays out the same.
+    const again = [...layoutLanes(w).places.values()].filter(x => x.lane === 0).sort((x, y) => x.angle - y.angle);
+    expect(again.map(x => x.angle)).toEqual(p.map(x => x.angle));
+  });
+
   it('keeps the station at its own angle', () => {
-    const w = world(3, 10, { budgetR: 400 }, true);
+    // At spin 0 the station's lane has not turned.
+    const w = world(3, 10, { budgetR: 400, spin: 0 }, true);
     const st = w.items.find(i => i.id === 'station')!;
     expect(layoutLanes(w).places.get('station')!.angle).toBeCloseTo(st.pinned!, 9);
   });
@@ -194,14 +233,17 @@ describe('orbital lanes', () => {
   it('starts one gap clear of the disc', () => {
     const w: LaneWorld = { discR: 100, items: [{ id: 'a', length: 40, height: 40 }], dir: 1, budgetR: 500, spin: 0 };
     const p = layoutLanes(w).places.get('a')!;
-    expect(p.r).toBeCloseTo(100 + LANE_GAP_PX + 20, 6);
+    // Its lane's middle, give or take its share of the gap.
+    expect(Math.abs(p.r - (100 + LANE_GAP_PX + 20))).toBeLessThanOrEqual(LANE_GAP_PX * 0.3 + 1e-9);
+    expect(p.r - 20).toBeGreaterThan(100);
   });
 
   it('points every hull along its lane, in the direction of travel', () => {
     for (const dir of [1, -1]) {
       const w: LaneWorld = { discR: 100, items: [{ id: 'a', length: 40, height: 40 }], dir, budgetR: 500, spin: 0.3 };
       const p = layoutLanes(w).places.get('a')!;
-      expect(angDist(p.heading, p.angle + dir * Math.PI / 2)).toBeLessThan(1e-9);
+      // Along the lane, give or take a touch of wobble.
+      expect(angDist(p.heading, p.angle + dir * Math.PI / 2)).toBeLessThanOrEqual(0.1 + 1e-9);
     }
   });
 });
