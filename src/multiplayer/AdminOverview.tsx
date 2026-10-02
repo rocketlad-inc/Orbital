@@ -21,6 +21,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from './api';
 import { ago, labelForKind, playTime } from './adminFormat';
+import { FrictionRows } from './GameStory';
+import { span } from './storyVerdict';
 import './AdminOverview.css';
 
 // ---------- payload types (worker/adminDashboard.js) ----------
@@ -34,7 +36,17 @@ type Kpis = {
   commissions_total: number; commissions_week: number;
 };
 type DailyRow = { day_ms: number; players: number; minutes: number; actions: number; signups: number };
-type UsageRow = { kind: string; n30: number; prev30: number; total: number };
+type UsageRow = {
+  kind: string; n30: number; prev30: number; total: number;
+  /** Refused, and tries that carry an outcome at all (0152). Rates divide by judged. */
+  rejected30?: number; judged30?: number;
+};
+type FrictionRow = { kind: string; code: string; reason: string; n: number };
+type CrashRow = { scope: string; message: string; n: number; users: number; last_ms: number; git_sha: string | null };
+type Journey = {
+  signed_up: number; eligible_1d: number; eligible_7d: number;
+  steps: Array<{ id: string; label: string; n: number; median_ms: number | null }>;
+};
 type Cohort = {
   week_ms: number; size: number; seated: number; played: number;
   r1: number; r7: number; r14: number; r28: number;
@@ -53,6 +65,9 @@ type Overview = {
   usage: UsageRow[];
   cohorts: Cohort[];
   sources: SourceRow[];
+  journey?: Journey;
+  friction?: FrictionRow[];
+  crashes?: CrashRow[];
 };
 type GameRow = {
   id: string; name: string; status: string; current_tick: number;
@@ -66,7 +81,7 @@ type PlayerRow = {
   id: string; display_name: string; email: string; created_at: number;
   last_played_ms: number | null; minutes_all: number | null;
   days_14: number[]; minutes_14d: number; minutes_7d: number; minutes_prior7: number;
-  active_days_14d: number; actions_14d: number;
+  active_days_14d: number; actions_14d: number; rejected_14d?: number; judged_14d?: number;
   games: Array<{ id: string; name: string; faction: string; color: string }>;
 };
 
@@ -77,12 +92,13 @@ const PAGE = 25;
  *  same answer. */
 const REFRESH_MS = 60_000;
 
-type Tab = 'pulse' | 'games' | 'players' | 'growth' | 'features' | 'commission';
+type Tab = 'pulse' | 'games' | 'players' | 'growth' | 'friction' | 'features' | 'commission';
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'pulse', label: 'Pulse' },
   { id: 'games', label: 'Games' },
   { id: 'players', label: 'Players' },
   { id: 'growth', label: 'Growth' },
+  { id: 'friction', label: 'Friction' },
   { id: 'features', label: 'Features' },
   { id: 'commission', label: 'Commission' },
 ];
@@ -206,6 +222,7 @@ export function AdminOverview({ onOpenGame }: { onOpenGame: (id: string) => void
       {tab === 'games' && <GamesPanel refreshKey={listKey} kpis={k} onOpen={onOpenGame} />}
       {tab === 'players' && <PlayersPanel refreshKey={listKey} onOpenGame={onOpenGame} />}
       {tab === 'growth' && <Growth data={data} />}
+      {tab === 'friction' && <FrictionTab data={data} />}
       {tab === 'features' && <Features rows={data.usage} />}
       {tab === 'commission' && <Commission kpis={k} />}
     </div>
@@ -274,11 +291,7 @@ function Pulse({ data, onGo }: { data: Overview; onGo: (t: Tab) => void }) {
           delta={[k.signups_week, k.signups_prev_week]}
           spark={done.map(d => d.signups)}
         />
-        <Kpi
-          label="Players · last 28 days"
-          value={n(k.players_month)}
-          foot={k.players_month ? `${Math.round((k.players_week / k.players_month) * 100)}% of them played this week` : '—'}
-        />
+        <RefusalKpi usage={data.usage} onGo={() => onGo('friction')} />
         <Kpi
           label="Games running"
           value={n(k.games_active)}
@@ -800,6 +813,7 @@ function PlayersPanel({ refreshKey, onOpenGame }: { refreshKey: number; onOpenGa
               <th>Last 14 days</th>
               <th className="num">Time · 14d</th>
               <th>This week</th>
+              <th className="num" title="Actions the game refused, last 14 days">Refused</th>
               <th>Last played</th>
               <th>Joined</th>
             </tr>
@@ -825,6 +839,9 @@ function PlayersPanel({ refreshKey, onOpenGame }: { refreshKey: number; onOpenGa
                 <td><DayStrip days={p.days_14} day0={day0} /></td>
                 <td className="num">{hours(p.minutes_14d)}</td>
                 <td><WeekDelta cur={p.minutes_7d} prev={p.minutes_prior7} /></td>
+                <td className={`num${refusedRate(p) > 0.15 ? ' ao-warn' : ''}`}>
+                  {p.rejected_14d ? `${n(p.rejected_14d)} · ${Math.round(refusedRate(p) * 100)}%` : <span className="ao-dim">—</span>}
+                </td>
                 <td>{p.last_played_ms ? ago(now, p.last_played_ms) : <span className="ao-dim">never played</span>}</td>
                 <td className="ao-dim">{ago(now, p.created_at)}</td>
               </tr>
@@ -877,6 +894,145 @@ function WeekDelta({ cur, prev }: { cur: number; prev: number }) {
 // Growth: cohorts + sources
 // ============================================================
 
+const refusedRate = (p: PlayerRow) => (p.judged_14d ? (p.rejected_14d ?? 0) / p.judged_14d : 0);
+/** Refused share of the tries that have an outcome; null until any do. */
+const usageRate = (u: UsageRow) => (u.judged30 ? (u.rejected30 ?? 0) / u.judged30 : null);
+
+/** Share of player actions the game refused over the last 30 days.
+ *  Outcomes are only recorded from the 1 October update, so until then
+ *  the tile says it is still collecting rather than showing a 0%. */
+function RefusalKpi({ usage, onGo }: { usage: UsageRow[]; onGo: () => void }) {
+  const tries = usage.reduce((s, u) => s + (u.judged30 ?? 0), 0);
+  const refused = usage.reduce((s, u) => s + (u.rejected30 ?? 0), 0);
+  const worst = [...usage].filter(u => (u.judged30 ?? 0) >= 20 && (u.rejected30 ?? 0) > 0)
+    .sort((a, b) => usageRate(b)! - usageRate(a)!)[0];
+  return (
+    <Kpi
+      label="Actions refused · 30 days"
+      value={refused ? `${((refused / Math.max(1, tries)) * 100).toFixed(1)}%` : '—'}
+      foot={worst
+        ? <>worst: <span className="ao-warn">{labelForKind(worst.kind)}</span> {Math.round(usageRate(worst)! * 100)}%</>
+        : 'recorded from the 1 Oct update on'}
+      onClick={onGo}
+    />
+  );
+}
+
+// ============================================================
+// Friction: where the game says no, and where it breaks
+// ============================================================
+
+function FrictionTab({ data }: { data: Overview }) {
+  const friction = data.friction ?? [];
+  const crashes = data.crashes ?? [];
+  const rates = data.usage
+    .filter(u => (u.judged30 ?? 0) >= 20 && (u.rejected30 ?? 0) > 0)
+    .map(u => ({ ...u, rate: usageRate(u)! }))
+    .sort((a, b) => b.rate - a.rate)
+    .slice(0, 12);
+  return (
+    <div className="ao-stack">
+      <section className="ao-panel">
+        <PanelHead
+          title="Where players hit walls"
+          hint="Every action the game refused in the last 7 days, by the reason it gave. A wall that many players hit is a rule the game is not explaining; one player hitting it over and over is someone stuck. Names in reasons are hidden as ·."
+        />
+        {friction.length === 0
+          ? <div className="ao-none">No refusals recorded yet. Outcomes are recorded from the 1 October update on.</div>
+          : <FrictionRows rows={friction.slice(0, 20)} max={friction[0].n} now={data.now} />}
+      </section>
+
+      <section className="ao-panel">
+        <PanelHead
+          title="Actions most often refused"
+          hint="Of the attempts at each action in the last 30 days, the share the game turned down (actions tried at least 20 times since outcomes were recorded). High rates point at controls that look available when they are not."
+        />
+        {rates.length === 0 ? <div className="ao-none">Nothing refused often enough to rank yet.</div> : (
+          <div className="ao-usage">
+            {rates.map(r => (
+              <div key={r.kind} className="ao-usage__row ao-usage__row--rate">
+                <span className="ao-usage__label" title={r.kind}>{labelForKind(r.kind)}</span>
+                <span className="ao-usage__track ao-usage__track--warn"><i style={{ width: `${r.rate * 100}%` }} /></span>
+                <span className="ao-usage__n">{Math.round(r.rate * 100)}%</span>
+                <span className="ao-usage__all">{n(r.rejected30)} of {n(r.judged30)} tries</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="ao-panel">
+        <PanelHead
+          title="Crashes"
+          hint="Real client crashes in the last 7 days, grouped by error. The Android app's launch breadcrumbs share this table and are left out."
+        />
+        {crashes.length === 0 ? <div className="ao-none">No crashes in the last 7 days.</div> : (
+          <div>
+            {crashes.map(c => (
+              <div key={`${c.scope}|${c.message}`} className="ao-crash">
+                <div>
+                  <code>{c.message}</code>
+                  <span className="ao-sub">{c.scope || 'web'}{c.git_sha ? ` · build ${c.git_sha.slice(0, 8)}` : ''}</span>
+                </div>
+                <span className="ao-usage__n">{n(c.n)}×</span>
+                <span className="ao-dim">{c.users} {c.users === 1 ? 'player' : 'players'}</span>
+                <span className="ao-dim">{ago(data.now, c.last_ms)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+// ============================================================
+// The new-player journey (Growth tab)
+// ============================================================
+
+function JourneyFunnel({ journey }: { journey: Journey }) {
+  const size = journey.signed_up;
+  if (!size) return <div className="ao-none">No signups in the last 30 days.</div>;
+  // Each step's base is everyone who signed up, except the "came back"
+  // steps, which only count players old enough to have had the chance.
+  const base = (id: string) => (id === 'back1' ? journey.eligible_1d : id === 'back7' ? journey.eligible_7d : size);
+  const rows = journey.steps.map(s => ({ ...s, of: base(s.id), p: base(s.id) ? s.n / base(s.id) : 0 }));
+  // The biggest single drop between neighbouring steps is the one to fix.
+  let worst = -1;
+  let worstDrop = 0;
+  rows.forEach((r, i) => {
+    if (i === 0) return;
+    const drop = rows[i - 1].p - r.p;
+    if (drop > worstDrop && !['back1', 'back7'].includes(r.id)) { worstDrop = drop; worst = i; }
+  });
+  return (
+    <div className="ao-funnel">
+      <div className="ao-funnel__row">
+        <span className="ao-funnel__label">Signed up</span>
+        <span className="ao-funnel__track"><span className="ao-funnel__fill" style={{ width: '100%' }} /></span>
+        <span className="ao-funnel__n">{n(size)}</span>
+        <span className="ao-funnel__time" />
+      </div>
+      {rows.map((r, i) => {
+        const prevP = i === 0 ? 1 : rows[i - 1].p;
+        return (
+          <div key={r.id} className="ao-funnel__row">
+            <span className={`ao-funnel__label${i === worst ? ' ao-funnel__worst' : ''}`} title={i === worst ? 'The biggest drop between two steps' : undefined}>
+              {r.label}{i === worst ? ' ◀ biggest drop' : ''}
+            </span>
+            <span className="ao-funnel__track">
+              <span className="ao-funnel__fill" style={{ width: `${r.p * 100}%` }} />
+              {prevP > r.p && <span className="ao-funnel__drop" style={{ left: `${r.p * 100}%`, width: `${(prevP - r.p) * 100}%` }} />}
+            </span>
+            <span className="ao-funnel__n">{Math.round(r.p * 100)}%<small>{n(r.n)}</small></span>
+            <span className="ao-funnel__time">{r.median_ms != null ? `median ${span(r.median_ms)} in` : ''}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function Growth({ data }: { data: Overview }) {
   const cohorts = data.cohorts;
   const sum = (key: keyof Cohort) => cohorts.reduce((s, c) => s + (c[key] as number), 0);
@@ -889,6 +1045,15 @@ function Growth({ data }: { data: Overview }) {
   ];
   return (
     <div className="ao-stack">
+      {data.journey && (
+        <section className="ao-panel">
+          <PanelHead
+            title="What new players actually do"
+            hint="Everyone who signed up in the last 30 days, and how many reached each of the game's basics, with the median time it took them. A step counts only when the game said yes, not on a refused attempt. The striped part of each bar is who dropped off since the step above."
+          />
+          <JourneyFunnel journey={data.journey} />
+        </section>
+      )}
       <section className="ao-panel">
         <PanelHead
           title="Do new players come back?"
@@ -1062,6 +1227,9 @@ function Features({ rows }: { rows: UsageRow[] }) {
               <span className="ao-usage__n">{n(r.n30)}</span>
               <span className={`ao-usage__chg ${change == null ? '' : change >= 0 ? 'ao-delta--up' : 'ao-delta--down'}`}>
                 {change == null ? (r.n30 ? 'new' : '') : `${change >= 0 ? '▲' : '▼'} ${Math.abs(change)}%`}
+              </span>
+              <span className={`ao-usage__rej${(usageRate(r) ?? 0) > 0.15 ? ' ao-warn' : ''}`}>
+                {r.rejected30 ? `${Math.round((usageRate(r) ?? 0) * 100)}% refused` : ''}
               </span>
               <span className="ao-usage__all">{n(r.total)} all time</span>
             </div>

@@ -87,7 +87,22 @@ let seed = 7;
 const rand = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
 const KINDS = ['POST bodies/build', 'POST research', 'POST fleets/orders', 'ui/trades', 'POST trades'];
 const events = [];
-function ev(user, game, kind, at) { events.push({ user, game, kind, at }); }
+// Outcomes (0152): actions older than ten days predate outcome logging
+// and carry no status at all; newer ones mostly succeed, and some are
+// refused with a code and a masked reason.
+const OUTCOMES_FROM = NOW - 10 * DAY_MS;
+const REFUSALS = [
+  { status: 409, code: 'insufficient_resources', reason: 'not enough metal (need #, have #)' },
+  { status: 400, code: 'bad_request', reason: '· is in transit' },
+];
+function ev(user, game, kind, at, outcome) {
+  let o = outcome;
+  if (o === undefined) {
+    if (kind === 'heartbeat' || at < OUTCOMES_FROM) o = null;
+    else o = rand() < 0.18 ? REFUSALS[Math.floor(rand() * REFUSALS.length)] : { status: 200 };
+  }
+  events.push({ user, game, kind, at, status: o?.status ?? null, code: o?.code ?? null, reason: o?.reason ?? null });
+}
 
 const seatOf = (u) => GAMES.find(g => g.seats.includes(u))?.id ?? null;
 for (let day = 45; day >= 0; day--) {
@@ -112,14 +127,54 @@ for (let day = 45; day >= 0; day--) {
 ev(null, 'g1aaaaaaaaaa', 'POST research', NOW - 2 * DAY_MS);
 // Events inside the lag window: the rollup must NOT count these yet.
 ev('ann', 'g1aaaaaaaaaa', 'heartbeat', NOW - 30_000);
-ev('ann', 'g1aaaaaaaaaa', 'POST bodies/build', NOW - 20_000);
+ev('ann', 'g1aaaaaaaaaa', 'POST bodies/build', NOW - 20_000, { status: 200 });
 
 for (let i = 0; i < events.length; i += 400) {
   await DB.batch(events.slice(i, i + 400).map(e => DB.prepare(
-    'INSERT INTO analytics_events (game_id, user_id, kind, created_at_ms) VALUES (?,?,?,?)',
-  ).bind(e.game, e.user, e.kind, e.at)));
+    'INSERT INTO analytics_events (game_id, user_id, kind, created_at_ms, status, err_code, err_reason) VALUES (?,?,?,?,?,?,?)',
+  ).bind(e.game, e.user, e.kind, e.at, e.status, e.code, e.reason)));
 }
 console.log(`seeded ${events.length} events over 46 days\n`);
+
+// ---- game history for the story endpoint, and the crash table ----------
+// g1: Ann's empire grows, loses a colony, falls into arrears, then
+// founds two more; Cy is eliminated. Ticks 0..120.
+const F = (i) => `g1aaaaaaaaaa:f${i}`;
+for (let t = 0; t <= 120; t++) {
+  const annColonies = t < 40 ? 1 + Math.floor(t / 20) : t < 60 ? 1 : 1 + Math.floor((t - 40) / 20);
+  await DB.prepare('INSERT INTO faction_metrics (game_id,tick_number,faction_id,settlements,ships,metal,gold,science) VALUES (?,?,?,?,?,?,?,?)')
+    .bind('g1aaaaaaaaaa', t, F(0), annColonies, 2 + Math.floor(t / 10), 100 + t, 50 + t, t).run();
+  await DB.prepare('INSERT INTO faction_metrics (game_id,tick_number,faction_id,settlements,ships,metal,gold,science) VALUES (?,?,?,?,?,?,?,?)')
+    .bind('g1aaaaaaaaaa', t, F(2), t < 90 ? 1 : 0, t < 90 ? 3 : 0, 80, 40, t).run();
+}
+const chron = [
+  [20, 'settlement_built', F(0), null, { settlement_name: 'Kepler Rest', body_name: 'Mars' }],
+  [45, 'settlement_destroyed', F(0), null, { settlement_name: 'Kepler Rest', body_name: 'Mars' }],
+  [50, 'fleet_arrears', F(0), null, { entered: true, arrears_gold: 4 }],
+  [53, 'fleet_arrears', F(0), null, { entered: false }],
+  [110, 'fleet_arrears', F(2), null, { entered: true, arrears_gold: 2 }],
+  [62, 'settlement_built', F(0), null, { settlement_name: 'New Rest', body_name: 'Ceres' }],
+  [90, 'faction_eliminated', F(2), null, { cause: 'no_settlements' }],
+  [30, 'ship_destroyed', F(2), null, { killer_faction_id: F(0) }],
+  [31, 'ship_destroyed', F(2), null, { killer_faction_id: F(0) }],
+  [33, 'ship_built', F(0), null, {}],
+];
+for (const [t, kind, a, o, p] of chron) {
+  await DB.prepare('INSERT INTO chronicle_entries (id,game_id,tick_number,kind,actor_faction_id,target_faction_id,payload,created_at_ms) VALUES (?,?,?,?,?,?,?,?)')
+    .bind(`c${t}${kind}`, 'g1aaaaaaaaaa', t, kind, a, o, JSON.stringify(p), NOW).run();
+}
+for (const t of [50, 51, 52]) {
+  await DB.prepare('INSERT INTO faction_economy_ticks (game_id,faction_id,tick_number,arrears_gold,created_at_ms) VALUES (?,?,?,?,?)')
+    .bind('g1aaaaaaaaaa', F(0), t, 4, NOW).run();
+}
+await DB.prepare("UPDATE games SET current_tick = 120 WHERE id = 'g1aaaaaaaaaa'").run();
+// Launch breadcrumbs from the Android app share client_crashes with
+// real crashes, and outnumber them a thousand to one.
+for (let i = 0; i < 30; i++) {
+  await DB.prepare("INSERT INTO client_crashes (message, scope, created_at_ms) VALUES ('resumed LauncherActivity','android:step',?)").bind(NOW - i * HOUR).run();
+}
+await DB.prepare("INSERT INTO client_crashes (user_id, message, scope, created_at_ms) VALUES ('ann','TypeError: x is undefined','App',?)").bind(NOW - HOUR).run();
+await DB.prepare("INSERT INTO client_crashes (user_id, message, scope, created_at_ms) VALUES ('bo','TypeError: x is undefined','App',?)").bind(NOW - 2 * HOUR).run();
 
 // ---- the ground truth, counted here from the raw rows -------------------
 const isQa = (u) => u != null && QA.includes(u);
@@ -129,12 +184,16 @@ const dayOf = (ms) => Math.floor(ms / DAY_MS) * DAY_MS;
 function truth(through) {
   const counted = events.filter(e => e.at < through);
   const userDay = new Map(), heat = new Map(), kindDay = new Map(), seen = new Map(), gameSeen = new Map();
+  const friction = new Map(), userFirst = new Map();
   for (const e of counted) {
+    const refused = (e.status ?? 0) >= 400;
     if (e.user != null) {
       const k = `${dayOf(e.at)}|${e.user}|${e.game ?? ''}`;
-      const r = userDay.get(k) ?? { minutes: 0, actions: 0, qa: isQa(e.user) ? 1 : 0 };
+      const r = userDay.get(k) ?? { minutes: 0, actions: 0, rejected: 0, judged: 0, qa: isQa(e.user) ? 1 : 0 };
       if (e.kind === 'heartbeat') r.minutes++;
       if (isAction(e.kind)) r.actions++;
+      if (isAction(e.kind) && refused) r.rejected++;
+      if (isAction(e.kind) && e.status != null) r.judged++;
       userDay.set(k, r);
     }
     if (e.kind === 'heartbeat' && e.user != null && !isQa(e.user)) {
@@ -143,7 +202,22 @@ function truth(through) {
     }
     if (isAction(e.kind) && !isQa(e.user)) {
       const k = `${dayOf(e.at)}|${e.kind}`;
-      kindDay.set(k, (kindDay.get(k) ?? 0) + 1);
+      const r = kindDay.get(k) ?? { n: 0, rejected: 0, judged: 0 };
+      r.n++;
+      if (refused) r.rejected++;
+      if (e.status != null) r.judged++;
+      kindDay.set(k, r);
+      if (refused) {
+        const fk = `${dayOf(e.at)}|${e.kind}|${e.code}|${e.reason ?? ''}`;
+        friction.set(fk, (friction.get(fk) ?? 0) + 1);
+      }
+    }
+    // First SUCCESSFUL use; a legacy row with no status counts as a use.
+    if (isAction(e.kind) && e.user != null && !refused) {
+      const k = `${e.user}|${e.kind}`;
+      const r = userFirst.get(k) ?? { first: Infinity, n: 0 };
+      r.first = Math.min(r.first, e.at); r.n++;
+      userFirst.set(k, r);
     }
     if (e.kind === 'heartbeat' && e.user != null) {
       const s = seen.get(e.user) ?? { first: Infinity, last: 0, minutes: 0 };
@@ -157,7 +231,7 @@ function truth(through) {
       gameSeen.set(e.game, g);
     }
   }
-  return { userDay, heat, kindDay, seen, gameSeen };
+  return { userDay, heat, kindDay, seen, gameSeen, friction, userFirst };
 }
 
 async function rows(sql) { return (await DB.prepare(sql).all()).results; }
@@ -169,10 +243,23 @@ async function compareAll(label, through) {
   let mism = [];
   for (const [k, v] of t.userDay) {
     const r = udMap.get(k);
-    if (!r || r.minutes !== v.minutes || r.actions !== v.actions || r.qa !== v.qa) mism.push(`${k}: want ${JSON.stringify(v)} got ${JSON.stringify(r && { m: r.minutes, a: r.actions, qa: r.qa })}`);
+    if (!r || r.minutes !== v.minutes || r.actions !== v.actions || r.rejected !== v.rejected || r.judged !== v.judged || r.qa !== v.qa) mism.push(`${k}: want ${JSON.stringify(v)} got ${JSON.stringify(r && { m: r.minutes, a: r.actions, rej: r.rejected, j: r.judged, qa: r.qa })}`);
   }
   if (ud.length !== t.userDay.size) mism.push(`row count ${ud.length} vs ${t.userDay.size}`);
-  check(`${label}: user/day/game minutes and actions match the raw events (${t.userDay.size} rows)`, mism.length === 0, mism.slice(0, 3).join('\n        '));
+  check(`${label}: user/day/game minutes, actions and refusals match the raw events (${t.userDay.size} rows)`, mism.length === 0, mism.slice(0, 3).join('\n        '));
+
+  const fr = await rows('SELECT * FROM analytics_friction_day');
+  mism = fr.filter(r => t.friction.get(`${r.day_ms}|${r.kind}|${r.code}|${r.reason}`) !== r.n).map(r => `${r.kind}|${r.code}`);
+  check(`${label}: refusals by action, code and reason match; robots excluded (${t.friction.size} rows)`,
+    t.friction.size > 0 && mism.length === 0 && fr.length === t.friction.size, `${mism.length} bad, ${fr.length} vs ${t.friction.size}`);
+
+  const uf = await rows('SELECT * FROM analytics_user_first');
+  mism = uf.filter(r => {
+    const f = t.userFirst.get(`${r.user_id}|${r.kind}`);
+    return !f || f.first !== r.first_ms || f.n !== r.n;
+  }).map(r => `${r.user_id}|${r.kind}`);
+  check(`${label}: first successful use per player and action matches; refusals are not first steps`,
+    mism.length === 0 && uf.length === t.userFirst.size, `${mism.length} bad, ${uf.length} vs ${t.userFirst.size}`);
 
   const heat = await rows('SELECT * FROM analytics_heat');
   mism = heat.filter(r => t.heat.get(r.hour_ms) !== r.minutes).map(r => `${r.hour_ms}`);
@@ -180,7 +267,10 @@ async function compareAll(label, through) {
     mism.length === 0 && heat.length === t.heat.size, `${mism.length} bad, ${heat.length} vs ${t.heat.size}`);
 
   const kd = await rows('SELECT * FROM analytics_kind_day');
-  mism = kd.filter(r => t.kindDay.get(`${r.day_ms}|${r.kind}`) !== r.n).map(r => `${r.day_ms}|${r.kind}`);
+  mism = kd.filter(r => {
+    const want = t.kindDay.get(`${r.day_ms}|${r.kind}`);
+    return !want || want.n !== r.n || want.rejected !== r.rejected || want.judged !== r.judged;
+  }).map(r => `${r.day_ms}|${r.kind}`);
   check(`${label}: feature use per day matches, perf chatter and robots excluded`,
     mism.length === 0 && kd.length === t.kindDay.size && !kd.some(r => r.kind.startsWith('POST perf')),
     `${mism.length} bad, ${kd.length} vs ${t.kindDay.size}`);
@@ -228,6 +318,7 @@ await DB.batch([
   DB.prepare('DELETE FROM analytics_user_day'), DB.prepare('DELETE FROM analytics_heat'),
   DB.prepare('DELETE FROM analytics_kind_day'), DB.prepare('DELETE FROM analytics_user_seen'),
   DB.prepare('DELETE FROM analytics_game_seen'),
+  DB.prepare('DELETE FROM analytics_friction_day'), DB.prepare('DELETE FROM analytics_user_first'),
   DB.prepare('UPDATE analytics_rollup_state SET through_ms = 0'),
 ]);
 for (let i = 0; i < 20; i++) {
@@ -242,8 +333,14 @@ await compareAll('after a racing rebuild', t3);
 const admin = { user_id: 'x', email: 'lcfeeser@gmail.com' };
 async function call(path, session = admin) {
   const url = new URL(`https://x${path}`);
-  const r = routes.find(x => x.pattern === url.pathname);
-  const res = await r.handle(new Request(url), env, { url, session, params: {} });
+  let params = {};
+  const r = routes.find(x => {
+    if (typeof x.pattern === 'string') return x.pattern === url.pathname;
+    const m = url.pathname.match(x.pattern);
+    if (m) params = m.groups ?? {};
+    return !!m;
+  });
+  const res = await r.handle(new Request(url), env, { url, session, params });
   return { status: res.status, body: await res.json() };
 }
 
@@ -321,6 +418,61 @@ try {
   check('players: shows the games they are playing', dee.games.length === 1 && dee.games[0].name === 'Pale Harbor');
   const tooBig = (await call('/api/admin/players?scope=all&limit=500')).body;
   check('players: page size is capped under D1\'s 100-parameter limit', tooBig.players.length <= 50);
+
+  // ---- 0152: friction, first steps, crashes --------------------------
+  const refusedWeek = events.filter(e => e.at < t3 && e.at >= today - 6 * DAY_MS && isAction(e.kind)
+    && !isQa(e.user) && (e.status ?? 0) >= 400).length;
+  check('friction: the week\'s refusals are all accounted for, by action and reason',
+    ov.friction.reduce((s, r) => s + r.n, 0) === refusedWeek && ov.friction.every(r => r.code && r.kind),
+    `${ov.friction.reduce((s, r) => s + r.n, 0)} vs ${refusedWeek}`);
+  check('features: each action carries its 30-day refusals',
+    ov.usage.some(u => u.rejected30 > 0) && ov.usage.every(u => u.rejected30 <= u.judged30));
+  // Outcomes exist only for the last ten days of a 46-day history, so the
+  // judged count must be well below the attempt count: a rate divided by
+  // n30 would be diluted by the twenty days that could not be refused.
+  const build = ov.usage.find(u => u.kind === 'POST bodies/build');
+  const judgedWant = events.filter(e => e.kind === 'POST bodies/build' && !isQa(e.user) && e.status != null
+    && e.at < t3 && e.at >= today - 30 * DAY_MS).length;
+  check('features: refusal rates divide by tries that have an outcome, not every try',
+    build.judged30 === judgedWant && build.judged30 < build.n30, `${build.judged30} vs ${judgedWant}, n30 ${build.n30}`);
+  const recent = REAL.filter(u => created[u] >= today - 29 * DAY_MS);
+  const builtWant = recent.filter(u => events.some(e => e.user === u && e.kind === 'POST bodies/build'
+    && e.at < t3 && (e.status ?? 0) < 400)).length;
+  const step = (id) => ov.journey.steps.find(s => s.id === id);
+  check('journey: signups in the last 30 days, robots excluded', ov.journey.signed_up === recent.length,
+    `${ov.journey.signed_up} vs ${recent.length}`);
+  check('journey: "queued a ship" counts only players whose build went through',
+    step('built').n === builtWant, `${step('built').n} vs ${builtWant}`);
+  check('journey: steps never exceed signups, and medians are durations',
+    ov.journey.steps.every(s => s.n <= ov.journey.signed_up && (s.median_ms == null || s.median_ms >= 0)));
+  check('crashes: launch breadcrumbs are not crashes; the real one groups across players',
+    ov.crashes.length === 1 && ov.crashes[0].n === 2 && ov.crashes[0].users === 2, JSON.stringify(ov.crashes));
+
+  const story = (await call('/api/admin/games/g1aaaaaaaaaa/story')).body;
+  check('story: one trajectory per empire with metrics, ending at the current tick',
+    Object.keys(story.series).length === 2 && story.series[F(0)].at(-1)[0] === 120);
+  check('story: the trajectory is thinned, not truncated', story.series[F(0)].length <= 170 && story.series[F(0)][0][0] === 0);
+  check('story: setbacks and recoveries arrive as timeline events with names',
+    story.events.some(e => e.kind === 'settlement_destroyed' && e.f === F(0) && e.d.name === 'Kepler Rest')
+    && story.events.some(e => e.kind === 'faction_eliminated' && e.d.cause === 'no_settlements')
+    && !story.events.some(e => e.kind === 'ship_built'));
+  check('story: kills are credited to the killer, losses to the owner',
+    story.tally[F(0)]?.kills === 2 && story.tally[F(2)]?.ship_destroyed === 2);
+  check('story: arrears come back as runs from the chronicle, open ones still open',
+    JSON.stringify(story.arrears[F(0)]) === '[[50,53]]' && JSON.stringify(story.arrears[F(2)]) === '[[110,null]]',
+    JSON.stringify(story.arrears));
+  const annP = story.players.find(p => p.user_id === 'ann');
+  const annRefused = events.filter(e => e.user === 'ann' && e.game === 'g1aaaaaaaaaa' && (e.status ?? 0) >= 400).length;
+  check('story: each human\'s refusals in this game, grouped by reason',
+    annP && annP.friction.reduce((s, r) => s + r.n, 0) === annRefused, `${annP?.friction.reduce((s, r) => s + r.n, 0)} vs ${annRefused}`);
+  const annFirstBuild = Math.min(...events.filter(e => e.user === 'ann' && e.game === 'g1aaaaaaaaaa'
+    && e.kind === 'POST bodies/build' && (e.status ?? 0) < 400).map(e => e.at));
+  check('story: a player\'s first step is their first SUCCESSFUL try', annP.firsts.built === annFirstBuild);
+  const story2 = (await call('/api/admin/games/g2aaaaaaaaaa/story')).body;
+  check('story: robots are flagged, not hidden',
+    story2.players.some(p => p.user_id === 'robot1' && p.qa === 1) && story2.players.some(p => p.user_id === 'dee' && p.qa === 0));
+  check('story: a game nobody can see is a 404, not an empty page',
+    (await call('/api/admin/games/nosuchgame0/story')).status === 404);
 } finally {
   Date.now = realNow;
 }

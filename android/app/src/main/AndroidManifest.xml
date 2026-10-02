@@ -178,9 +178,11 @@
             android:exported="false"
             android:foregroundServiceType="shortService" />
 
-        <!-- Delegates web push notifications to the site's service worker. -->
+        <!-- Delegates web push notifications to the site's service worker.
+             Our subclass, so that with the watch relay on, Orbital's alerts
+             stay on the phone instead of reaching the watch twice. -->
         <service
-            android:name="com.google.androidbrowserhelper.trusted.DelegationService"
+            android:name=".OrbitalDelegationService"
             android:exported="true">
             <!-- The status-bar icon Chrome asks this service for when it
                  posts the site's notifications under this app. Google's

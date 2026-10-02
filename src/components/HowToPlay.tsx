@@ -270,9 +270,10 @@ export const HowToPlay: React.FC<Props> = ({ onSignIn }) => (
       flip
     >
       <p>
-        You can strike deals with other players: metal, credits, fuel and
+        You can strike deals with other players: metal, credits and
         science in whatever mix you both agree to. You can also sign{' '}
-        <b>pacts</b> — non-aggression, mutual defence, or research sharing.
+        <b>pacts</b> — non-aggression, mutual defence, intelligence sharing, or
+        joint construction of a megastructure.
       </p>
       <p>
         The catch is that goods don't teleport. When a deal is accepted,
@@ -341,10 +342,12 @@ export const HowToPlay: React.FC<Props> = ({ onSignIn }) => (
         settlement. The straightforward one: take everything.
       </p>
       <p>
-        <b>Chancellor</b> — get the senate to elect you. It's a single bill
-        that can only be run once per game, and it needs the chamber behind
-        it, so this is the payoff for the systems you control and the
-        friends you made trading. Politics is a real path, not decoration.
+        <b>Chancellor</b> — get the senate to elect you. Each empire gets one
+        bid per game, only one can run per term, and the vote stays open for
+        48 turns, so everyone has time to rally against you. It needs more
+        weighted yeas than nays, which makes it the payoff for the systems you
+        control and the friends you made trading. Politics is a real path,
+        not decoration.
       </p>
       <p>
         <b>Engineering</b> — build a <b>Dyson Sphere</b> around the sun

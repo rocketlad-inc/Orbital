@@ -56,7 +56,7 @@ const FEATURES = [
   ['Settle and terraform', 'Cities on planets, stations in orbit. Raw worlds hoard what they mine; terraform them and they pay their full yield home.'],
   ['Fleets and a ship designer', 'Design hulls part by part, crew them with captains, and send them out as fleets. Veterans get deadlier with every kill.'],
   ['Superweapons', 'Mega Destroyers can sterilise a world, and a second strike reduces it to a debris field. Wrecked cities can be rebuilt or razed by whoever takes them.'],
-  ['Diplomacy and a Senate', 'Pacts, defence treaties, trade offers and declared wars. Every world held is a vote on the laws everyone has to live with.'],
+  ['Diplomacy and a Senate', 'Pacts, defence treaties, trade offers and declared wars. Vote weight grows with the systems you control, and passed laws change yields, costs and damage for everyone.'],
   ['Three ways to win', 'Hold most of the worlds, win the Senate, or complete the Dyson Sphere around the Sun.'],
 ];
 

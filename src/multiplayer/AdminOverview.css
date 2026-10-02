@@ -260,6 +260,8 @@
 .ao-delta--up { color: var(--ao-live); }
 .ao-delta--down { color: var(--ao-red); }
 .ao-warn { color: var(--ao-amber); }
+/* Table cells set their own ink; a warning cell must still read as one. */
+.ao-table td.ao-warn { color: var(--ao-amber); }
 .ao-dim { color: var(--ao-ink-3); }
 
 /* ---------- 30-day chart ---------- */
@@ -469,7 +471,7 @@
 .ao-usage { display: flex; flex-direction: column; gap: 7px; margin-bottom: 12px; }
 .ao-usage__row {
   display: grid;
-  grid-template-columns: minmax(130px, 220px) minmax(60px, 1fr) 64px 70px 110px;
+  grid-template-columns: minmax(130px, 220px) minmax(60px, 1fr) 64px 70px 90px 110px;
   align-items: center;
   gap: 12px;
   font-size: 13px;
@@ -480,6 +482,9 @@
 .ao-usage__n { text-align: right; font-family: var(--ao-data); color: var(--ao-ink); }
 .ao-usage__chg { font-size: 12px; color: var(--ao-ink-3); white-space: nowrap; }
 .ao-usage__all { font-size: 12px; color: var(--ao-ink-3); white-space: nowrap; text-align: right; }
+.ao-usage__rej { font-size: 12px; color: var(--ao-ink-3); white-space: nowrap; text-align: right; }
+.ao-usage__row--rate { grid-template-columns: minmax(130px, 220px) minmax(60px, 1fr) 64px 140px; }
+.ao-usage__track--warn i { background: var(--ao-amber); }
 
 /* ---------- commission ---------- */
 
@@ -494,10 +499,220 @@
 }
 .ao-pill--gold { background: rgba(255, 184, 77, 0.12); color: var(--ao-gold-2); box-shadow: inset 0 0 0 1px rgba(255, 184, 77, 0.35); }
 
+/* ============================================================
+   Game page (GameDetail + GameStory)
+   ============================================================ */
+
+.ao-game-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.ao-game-head h2 { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.01em; }
+.ao-game-head__meta { font-size: 13px; color: var(--ao-ink-3); }
+.ao-game-head__open { margin-left: auto; }
+.ao-kpis--game { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.ao-kpis--game .ao-kpi { min-height: 96px; }
+.ao-kpis--game .ao-kpi__value { font-size: 24px; }
+
+/* Older panels (AdminAnalytics.css) inside the new shell: borrow the
+   table and type treatment so the tabs read as one page. */
+.ao .aa-table { font-size: 13px; }
+.ao .aa-table th { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ao-ink-3); border-bottom-color: var(--ao-line-2); }
+.ao .aa-table td { border-bottom-color: var(--ao-line); color: var(--ao-ink-2); }
+.ao .aa-section-note { color: var(--ao-ink-3); font-size: 13px; }
+.ao .aa-bar-fill { background: var(--ao-teal); }
+
+/* ---------- empire cards ---------- */
+
+.gs-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: -4px 0 14px; font-size: 12px; color: var(--ao-ink-3); }
+.gs-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.gs-key { display: inline-block; width: 16px; height: 10px; border-radius: 2px; font-style: normal; }
+.gs-key--col { height: 2px; background: var(--ao-teal); }
+.gs-key--fleet { background: rgba(174, 189, 204, 0.28); box-shadow: inset 0 1px 0 rgba(174, 189, 204, 0.8); }
+.gs-key--setback { width: auto; height: auto; color: var(--ao-red); font-size: 10px; }
+.gs-key--arrears { background: rgba(244, 179, 80, 0.22); }
+.gs-key--war { width: 0; height: 12px; border-left: 1.5px dashed var(--ao-red); border-radius: 0; }
+
+.gs-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 12px; }
+.gs-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px 12px;
+  border-radius: var(--ao-radius-s);
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid var(--ao-line);
+  min-width: 0;
+}
+.gs-card--struggling { border-color: rgba(255, 116, 116, 0.35); }
+.gs-card--stalled { border-color: rgba(244, 179, 80, 0.3); }
+.gs-card--out { opacity: 0.62; }
+.gs-card__head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.gs-dot { flex: 0 0 auto; width: 12px; height: 12px; border-radius: 50%; box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35); }
+.gs-dot--sm { display: inline-block; width: 8px; height: 8px; margin-right: 6px; vertical-align: 1px; }
+.gs-card__who { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
+.gs-card__name { font-weight: 700; color: var(--ao-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gs-card__player { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ao-ink-3); }
+.gs-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ao-ink-3);
+  box-shadow: inset 0 0 0 1px var(--ao-line-2);
+  margin-left: 6px;
+}
+.gs-tag--warn { color: var(--ao-amber); box-shadow: inset 0 0 0 1px rgba(244, 179, 80, 0.4); }
+
+/* Status: the colour always travels with its word. */
+.gs-verdict {
+  flex: 0 0 auto;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.gs-verdict--struggling { background: rgba(255, 116, 116, 0.14); color: var(--ao-red); box-shadow: inset 0 0 0 1px rgba(255, 116, 116, 0.4); }
+.gs-verdict--stalled { background: rgba(244, 179, 80, 0.12); color: var(--ao-amber); box-shadow: inset 0 0 0 1px rgba(244, 179, 80, 0.4); }
+.gs-verdict--recovered { background: rgba(78, 205, 196, 0.12); color: var(--ao-teal); box-shadow: inset 0 0 0 1px rgba(78, 205, 196, 0.4); }
+.gs-verdict--growing { background: rgba(110, 231, 168, 0.12); color: var(--ao-live); box-shadow: inset 0 0 0 1px rgba(110, 231, 168, 0.4); }
+.gs-verdict--new, .gs-verdict--out { background: rgba(150, 180, 210, 0.08); color: var(--ao-ink-3); box-shadow: inset 0 0 0 1px var(--ao-line-2); }
+.gs-card__reason { margin: 0; font-size: 13px; line-height: 1.45; color: var(--ao-ink-2); min-height: 2.9em; text-wrap: pretty; }
+
+.gs-chart { position: relative; cursor: crosshair; }
+.gs-chart svg { display: block; width: 100%; }
+.gs-chart__col { height: 64px; }
+.gs-chart__fleet { height: 30px; margin-top: 3px; border-top: 1px solid var(--ao-line); }
+.gs-col { fill: none; stroke: var(--ao-teal); stroke-width: 2; stroke-linejoin: round; }
+.gs-fleet { fill: none; stroke: rgba(174, 189, 204, 0.85); stroke-width: 1.5; }
+.gs-fleet-area { fill: rgba(174, 189, 204, 0.16); }
+.gs-band { fill: rgba(244, 179, 80, 0.2); }
+.gs-war { stroke: var(--ao-red); stroke-width: 1.2; stroke-dasharray: 3 3; opacity: 0.7; }
+.gs-cursor { stroke: var(--ao-ink-2); stroke-width: 1; opacity: 0.6; }
+.gs-setback {
+  position: absolute;
+  top: -6px;
+  transform: translateX(-50%);
+  font-size: 10px;
+  line-height: 1;
+  color: var(--ao-red);
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.9);
+  cursor: help;
+}
+.gs-readout { display: flex; flex-wrap: wrap; gap: 2px 12px; font-family: var(--ao-data); font-size: 11.5px; color: var(--ao-ink-3); }
+.gs-readout b { color: var(--ao-ink); font-weight: 400; }
+
+.gs-facts { display: grid; grid-template-columns: repeat(5, auto) minmax(0, 1fr); gap: 4px 14px; margin: 2px 0 0; padding-top: 8px; border-top: 1px solid var(--ao-line); }
+.gs-facts div { display: flex; flex-direction: column; min-width: 0; }
+.gs-facts dt { font-size: 10.5px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ao-ink-3); }
+.gs-facts dd { margin: 0; font-family: var(--ao-data); font-size: 13px; color: var(--ao-ink); }
+.gs-facts .gs-facts__wide { font-family: inherit; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gs-card__play { margin: 0; font-size: 12px; color: var(--ao-ink-3); }
+
+/* ---------- journeys ---------- */
+
+.gs-journey th.gs-journey__step { text-align: center; }
+.gs-journey__pct { display: block; font-family: var(--ao-data); font-size: 10.5px; letter-spacing: 0; color: var(--ao-ink-3); text-transform: none; }
+.gs-journey td.gs-journey__cell { text-align: center; padding-right: 8px; }
+.gs-step {
+  display: block;
+  width: 14px;
+  height: 14px;
+  margin: 0 auto 2px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px rgba(150, 180, 210, 0.3);
+}
+.gs-step.is-done { background: var(--ao-teal); box-shadow: none; }
+.gs-step.is-blocked { box-shadow: inset 0 0 0 2px var(--ao-red); }
+.gs-step__when { display: block; font-family: var(--ao-data); font-size: 10.5px; color: var(--ao-ink-3); min-height: 1.2em; }
+.gs-days { display: inline-flex; gap: 2px; max-width: 320px; flex-wrap: wrap; }
+.gs-days i {
+  width: 7px;
+  height: 16px;
+  border-radius: 2px;
+  background: rgba(var(--ao-teal-rgb), var(--a));
+  box-shadow: inset 0 0 0 1px var(--ao-line);
+}
+.gs-days i.is-friction { box-shadow: inset 0 -3px 0 var(--ao-amber); }
+
+/* ---------- friction ---------- */
+
+.gs-friction { display: flex; flex-direction: column; gap: 8px; }
+.gs-friction__row {
+  display: grid;
+  grid-template-columns: minmax(200px, 2fr) minmax(80px, 1.4fr) 56px minmax(110px, auto);
+  align-items: center;
+  gap: 14px;
+  font-size: 13px;
+}
+.gs-friction__what { display: flex; flex-direction: column; min-width: 0; }
+.gs-friction__action { color: var(--ao-ink); font-weight: 600; }
+.gs-friction__why { color: var(--ao-ink-3); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gs-friction__bar { height: 8px; border-radius: 4px; background: rgba(150, 180, 210, 0.1); overflow: hidden; }
+.gs-friction__bar i { display: block; height: 100%; border-radius: 4px; background: var(--ao-amber); }
+.gs-friction__n { font-family: var(--ao-data); color: var(--ao-ink); text-align: right; }
+.gs-friction__who { font-size: 12px; color: var(--ao-ink-3); white-space: nowrap; }
+
+/* ---------- timeline ---------- */
+
+.gs-filter { margin-bottom: 12px; }
+.gs-timeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.gs-ev {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 12px;
+  padding: 7px 0 7px 12px;
+  border-left: 2px solid var(--ao-line-2);
+  font-size: 13.5px;
+  color: var(--ao-ink-2);
+}
+.gs-ev--bad { border-left-color: var(--ao-red); }
+.gs-ev--good { border-left-color: var(--ao-teal); }
+.gs-ev--war { border-left-color: rgba(255, 116, 116, 0.55); border-left-style: dashed; }
+.gs-ev__t { font-family: var(--ao-data); font-size: 12px; color: var(--ao-ink-3); padding-top: 1px; }
+.gs-who { color: var(--ao-ink); font-weight: 600; white-space: nowrap; }
+
+/* ---------- journey funnel (overview) ---------- */
+
+.ao-funnel { display: flex; flex-direction: column; gap: 6px; }
+.ao-funnel__row {
+  display: grid;
+  grid-template-columns: minmax(170px, 230px) minmax(0, 1fr) 92px 120px;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+.ao-funnel__label { color: var(--ao-ink); }
+.ao-funnel__track { position: relative; height: 22px; border-radius: 6px; background: rgba(150, 180, 210, 0.07); overflow: hidden; }
+.ao-funnel__fill { position: absolute; inset: 0 auto 0 0; border-radius: 6px; background: rgba(var(--ao-teal-rgb), 0.55); }
+.ao-funnel__drop { position: absolute; top: 0; bottom: 0; background: repeating-linear-gradient(135deg, rgba(255, 116, 116, 0.28) 0 3px, transparent 3px 6px); }
+.ao-funnel__n { font-family: var(--ao-data); color: var(--ao-ink); text-align: right; }
+.ao-funnel__n small { color: var(--ao-ink-3); font-size: 11.5px; margin-left: 4px; }
+.ao-funnel__time { font-size: 12px; color: var(--ao-ink-3); white-space: nowrap; }
+.ao-funnel__worst { color: var(--ao-red); }
+
+.ao-crash { display: grid; grid-template-columns: minmax(0, 1fr) 60px 90px 100px; gap: 12px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--ao-line); font-size: 13px; }
+.ao-crash code { font-family: var(--ao-data); font-size: 12px; color: var(--ao-ink); overflow-wrap: anywhere; }
+
 /* ---------- small screens ---------- */
 
 @media (max-width: 1000px) {
   .ao-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ao-kpis--game { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 720px) {
+  .ao-kpis--game { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .gs-cards { grid-template-columns: 1fr; }
+  .gs-friction__row { grid-template-columns: minmax(0, 1fr) 48px; }
+  .gs-friction__bar, .gs-friction__who { display: none; }
+  .ao-funnel__row { grid-template-columns: minmax(0, 1fr) 80px; }
+  .ao-funnel__track, .ao-funnel__time { display: none; }
+  .ao-crash { grid-template-columns: minmax(0, 1fr) 48px; }
+  .ao-crash > :nth-child(n+3) { display: none; }
 }
 @media (max-width: 720px) {
   .ao-head h2 { font-size: 22px; }
@@ -512,7 +727,8 @@
   .ao-chart__grid { left: 36px; }
   .ao-chart__x { padding-left: 36px; }
   .ao-usage__row { grid-template-columns: minmax(0, 1fr) 56px 64px; }
-  .ao-usage__track, .ao-usage__all { display: none; }
+  .ao-usage__track, .ao-usage__all, .ao-usage__rej { display: none; }
+  .ao-usage__row--rate { grid-template-columns: minmax(0, 1fr) 56px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

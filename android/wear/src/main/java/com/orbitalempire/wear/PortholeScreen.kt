@@ -165,6 +165,12 @@ fun PortholeScreen(
   val clock = rememberClock()
   val density = LocalDensity.current.density
   val slots = remember(world, density) { if (world != null) formation(world, worlds.me) else emptyList() }
+  // STATIONS AND CITIES: not hulls, so not in the formation, but they are
+  // shot at and shoot back. Slots of their own, so the battle effects
+  // treat them as any other combatant; drawn by drawStructures.
+  val structureSlots = remember(world, density) {
+    world?.structures?.map { Slot(it, -1, 0f, if (it.cls == "city") 14f else 20f) } ?: emptyList()
+  }
   val positions = remember { HashMap<String, Offset>() }
 
   Box(
@@ -188,7 +194,7 @@ fun PortholeScreen(
         .fillMaxSize()
         .pointerInput(slots) {
           detectTapGestures { p ->
-            val near = slots.minByOrNull { s ->
+            val near = (slots + structureSlots).minByOrNull { s ->
               val q = positions[s.ship.id] ?: Offset(-1e6f, -1e6f)
               (q.x - p.x) * (q.x - p.x) + (q.y - p.y) * (q.y - p.y)
             }
@@ -196,7 +202,8 @@ fun PortholeScreen(
             val hit = if (near != null && q != null &&
               sqrt((q.x - p.x) * (q.x - p.x) + (q.y - p.y) * (q.y - p.y)) < 20 * density
             ) near.ship else null
-            if (hit != null && hit.faction == worlds.me) onShip(hit.id) else selected = hit
+            // A structure has no orders sheet: a tap names it, as a rival's hull.
+            if (hit != null && hit.faction == worlds.me && hit.key != "structure") onShip(hit.id) else selected = hit
           }
         },
     ) {
@@ -220,8 +227,10 @@ fun PortholeScreen(
         if (k in 0f..1f) flights[m.id] = k
       }
       drawOrbits(world, worlds, slots, c, planetR, t, density, icons, positions, lastSeat, flights)
+      // After drawOrbits, which clears the positions each frame.
+      drawStructures(world, worlds, c, planetR, t, density, positions)
       drawDepartures(world, worlds, c, planetR, t, density, icons, flights, lastSeat)
-      drawBattleFx(worlds, slots, positions, t, density, fighting && world.firing, targetsIn(world, worlds, positions))
+      drawBattleFx(worlds, slots + structureSlots, positions, t, density, fighting && world.firing, targetsIn(world, worlds, positions))
       // The dead, thrown outward where they died.
       for (w in world.dead) {
         val born = wreckSeen.getOrPut(w.id) { t }
@@ -459,12 +468,14 @@ private fun DrawScope.drawOrbits(
  */
 private fun targetsIn(world: World, worlds: Worlds, positions: Map<String, Offset>): Map<String, String> {
   val out = HashMap<String, String>()
-  for (sh in world.ships) {
+  // Stations and cities shoot and are shot, like hulls.
+  val combatants = world.ships + world.structures
+  for (sh in combatants) {
     val t = sh.target
     if (t != null && positions.containsKey(t)) out[sh.id] = t
   }
   if (out.isEmpty()) {
-    val fighters = world.ships.filter { it.fighting && positions.containsKey(it.id) }
+    val fighters = combatants.filter { it.fighting && positions.containsKey(it.id) }
     val mine = fighters.filter { it.faction == worlds.me }
     val theirs = fighters.filter { it.faction != worlds.me }
     if (mine.isNotEmpty() && theirs.isNotEmpty()) {
@@ -473,6 +484,72 @@ private fun targetsIn(world: World, worlds: Worlds, positions: Map<String, Offse
     }
   }
   return out
+}
+
+/**
+ * THE WORLD'S STATIONS AND CITIES. A fight against a station used to be
+ * hulls firing at nothing, and a side counted but never drawn (Lorne: "an
+ * invisible ship"). A station holds a close orbit of its own, inside the
+ * first ring of hulls and slower than any of them; a city sits on the
+ * surface at its own angle. Both wear their empire's livery, show a pip
+ * when hurt, and are entered in [positions] so tracers find them.
+ */
+private fun DrawScope.drawStructures(
+  world: World,
+  worlds: Worlds,
+  c: Offset,
+  planetR: Float,
+  t: Long,
+  density: Float,
+  positions: HashMap<String, Offset>,
+) {
+  val stations = world.structures.filter { it.cls != "city" }
+  val step = (2 * PI / stations.size.coerceAtLeast(1)).toFloat()
+  stations.forEachIndexed { i, st ->
+    val r = planetR + 8f * density
+    val a0 = (abs(st.id.hashCode()) % 628) / 100f + i * step
+    val a = a0 + (2f * PI.toFloat() / (INNER_LAP_MS * 2.5f)) * t
+    val p = Offset(c.x + cos(a) * r, c.y + sin(a) * r)
+    positions[st.id] = p
+    val ink = factionColor(worlds.colorOf(st.faction))
+    drawStationGlyph(p, 8.5f * density, ink)
+    st.hp?.takeIf { it <= 66 }?.let { drawCircle(healthColor(it), radius = 1.8f * density, center = Offset(p.x, p.y + 11f * density)) }
+  }
+  for (city in world.structures.filter { it.cls == "city" }) {
+    val a = city.angle ?: ((abs(city.id.hashCode()) % 628) / 100f)
+    val p = Offset(c.x + cos(a) * planetR * 0.8f, c.y + sin(a) * planetR * 0.8f)
+    positions[city.id] = p
+    drawCityGlyph(p, 5f * density, factionColor(worlds.colorOf(city.faction)))
+    city.hp?.takeIf { it <= 66 }?.let { drawCircle(healthColor(it), radius = 1.8f * density, center = Offset(p.x, p.y + 8f * density)) }
+  }
+}
+
+/** A station or a city as a small picture of its own (the fight card). */
+@Composable
+internal fun StructureArt(cls: String, ink: Color, size: Dp) {
+  Canvas(Modifier.size(size)) {
+    val c = Offset(this.size.width / 2f, this.size.height / 2f)
+    if (cls == "city") drawCityGlyph(c, this.size.minDimension * 0.28f, ink)
+    else drawStationGlyph(c, this.size.minDimension * 0.4f, ink)
+  }
+}
+
+/** A station: a ring, four spokes and a hub -- the map's silhouette, simplified. */
+internal fun DrawScope.drawStationGlyph(p: Offset, r: Float, ink: Color) {
+  drawCircle(Ground, radius = r * 1.15f, center = p)
+  drawCircle(ink, radius = r, center = p, style = Stroke(r * 0.24f))
+  for (k in 0 until 4) {
+    val a = (k * PI / 2 + PI / 4).toFloat()
+    drawLine(ink, Offset(p.x + cos(a) * r * 0.3f, p.y + sin(a) * r * 0.3f), Offset(p.x + cos(a) * r, p.y + sin(a) * r), strokeWidth = r * 0.16f)
+  }
+  drawCircle(ink, radius = r * 0.32f, center = p)
+}
+
+/** A city on its world's surface: a lit dome in its empire's colour. */
+internal fun DrawScope.drawCityGlyph(p: Offset, r: Float, ink: Color) {
+  drawCircle(Ground.copy(alpha = 0.7f), radius = r * 1.5f, center = p)
+  drawCircle(ink, radius = r, center = p)
+  drawCircle(Ink.copy(alpha = 0.85f), radius = r, center = p, style = Stroke(r * 0.28f))
 }
 
 /**
