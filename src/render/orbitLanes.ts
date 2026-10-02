@@ -192,12 +192,11 @@ function layoutAt(w: LaneWorld, s: number, sectorArg?: number): LaneLayout {
   let lane = 0;
   const dir = w.dir >= 0 ? 1 : -1;
 
-  // Lane 0 holds the pinned items; what is left of it is free road.
-  let blocked0: Interval[] = [];
-  let pinW = 0;
-  if (pinned.length) {
-    pinW = Math.max(...pinned.map(p => p.height)) * s;
-  }
+  // Pinned items take the inner lanes at (or as near as they fit to)
+  // their own angles; what is left of each lane is free road. Any that
+  // cannot fit on a lane move out to the next.
+  let pinQ = pinned.slice();
+  const pinW = () => (pinQ.length ? Math.max(...pinQ.map(p => p.height)) * s : 0);
 
   if (w.sides && w.sides.length > 1) {
     const sides = w.sides;
@@ -213,14 +212,15 @@ function layoutAt(w: LaneWorld, s: number, sectorArg?: number): LaneLayout {
       return [c - wedge / 2, c + wedge / 2];
     });
     let guard = 0;
-    while (queues.some(q => q.length) || (lane === 0 && pinned.length)) {
+    while (queues.some(q => q.length) || pinQ.length) {
       const heads = queues.filter(q => q.length).map(q => q[0].height * s);
-      const wl = Math.max(lane === 0 ? pinW : 0, ...heads, 1);
+      const wl = Math.max(pinW(), ...heads, 1);
       const rc = rInner + wl / 2;
       let blocked: Interval[] = [];
-      if (lane === 0 && pinned.length) {
-        blocked0 = placePinned(pinned, rc, s, gap, out);
-        blocked = blocked0;
+      if (pinQ.length) {
+        const pp = placePinned(pinQ, rc, s, gap, lane, out);
+        blocked = pp.blocked;
+        pinQ = pp.overflow;
       }
       const open = freeArcs(blocked);
       sides.forEach((_, k) => {
@@ -243,13 +243,14 @@ function layoutAt(w: LaneWorld, s: number, sectorArg?: number): LaneLayout {
   // Peace: lanes fill outward; free lanes turn with their radius.
   const queue = free.slice();
   let guard = 0;
-  while (queue.length || (lane === 0 && pinned.length)) {
-    const wl = Math.max(lane === 0 ? pinW : 0, queue.length ? queue[0].height * s : 0, 1);
+  while (queue.length || pinQ.length) {
+    const wl = Math.max(pinW(), queue.length ? queue[0].height * s : 0, 1);
     const rc = rInner + wl / 2;
     let arcs: Interval[];
-    if (lane === 0 && pinned.length) {
-      blocked0 = placePinned(pinned, rc, s, gap, out);
-      arcs = freeArcs(blocked0);
+    if (pinQ.length) {
+      const pp = placePinned(pinQ, rc, s, gap, lane, out);
+      arcs = freeArcs(pp.blocked);
+      pinQ = pp.overflow;
     } else {
       // A free lane turns: inner lanes faster, as orbits do.
       const turn = w.spin * Math.pow(Math.max(1, w.discR) / rc, 1.5);
@@ -264,18 +265,78 @@ function layoutAt(w: LaneWorld, s: number, sectorArg?: number): LaneLayout {
   return { places: out, scale: s, outerR: rInner, lanes: lane };
 }
 
-/** Pinned items on lane 0 at their own angles; returns the arcs they hold. */
+/**
+ * Pinned items on one lane, as near their own angles as they fit: where
+ * two would overlap they are eased apart, sharing the nudge; any that
+ * cannot fit on this lane at all come back as overflow, for the next.
+ * Returns the arcs they hold (with a gap of clearance either side).
+ */
 function placePinned(
-  pinned: LaneItem[], rc: number, s: number, gap: number, out: Map<string, LanePlace>,
-): Interval[] {
+  pinned: LaneItem[], rc: number, s: number, gap: number, lane: number, out: Map<string, LanePlace>,
+): { blocked: Interval[]; overflow: LaneItem[] } {
+  // Half the arc each needs from its neighbours, gap included.
+  const need = (p: LaneItem) => ((p.length * s) / 2 + gap / 2) / rc;
+  // Biggest first claims the lane; what does not fit goes outward.
+  const byLen = pinned.slice().sort((a, b) => b.length - a.length);
+  const keep: LaneItem[] = [];
+  const overflow: LaneItem[] = [];
+  let total = 0;
+  for (const p of byLen) {
+    const t = 2 * need(p);
+    if (keep.length && total + t > TAU * 0.96) { overflow.push(p); continue; }
+    keep.push(p);
+    total += t;
+  }
+  // Ease apart with the least movement: cut the ring at its widest gap,
+  // lay the items in angle order along that line, and merge any run that
+  // would overlap into one block centred on where its members want to
+  // be (pool-adjacent-violators). Total width is under a full turn, so
+  // the result never meets itself across the cut.
+  const sorted = keep
+    .map(p => ({ p, want: norm(p.pinned as number), w: 2 * need(p) }))
+    .sort((x, y) => x.want - y.want);
+  const n = sorted.length;
+  let cut = 0;
+  let widest = -1;
+  for (let i = 0; i < n; i++) {
+    const g = i + 1 < n ? sorted[i + 1].want - sorted[i].want : sorted[0].want + TAU - sorted[i].want;
+    if (g > widest) { widest = g; cut = (i + 1) % n; }
+  }
+  const line = [...sorted.slice(cut), ...sorted.slice(0, cut)];
+  for (let i = 1; i < n; i++) while (line[i].want < line[i - 1].want) line[i].want += TAU;
+  type Block = { items: typeof line; start: number; width: number };
+  const blocks: Block[] = [];
+  const settle = (bk: Block) => {
+    let off = 0;
+    let sum = 0;
+    for (const it of bk.items) { sum += it.want - (off + it.w / 2); off += it.w; }
+    bk.width = off;
+    bk.start = sum / bk.items.length;
+  };
+  for (const it of line) {
+    const bk: Block = { items: [it], start: 0, width: 0 };
+    settle(bk);
+    blocks.push(bk);
+    while (blocks.length > 1) {
+      const B = blocks[blocks.length - 1], A = blocks[blocks.length - 2];
+      if (A.start + A.width <= B.start + 1e-9) break;
+      A.items.push(...B.items);
+      blocks.pop();
+      settle(A);
+    }
+  }
+  const ring: Array<{ p: LaneItem; a: number }> = [];
+  for (const bk of blocks) {
+    let off = 0;
+    for (const it of bk.items) { ring.push({ p: it.p, a: bk.start + off + it.w / 2 }); off += it.w; }
+  }
   const blocked: Interval[] = [];
-  for (const p of pinned) {
-    const a = p.pinned as number;
+  for (const { p, a } of ring) {
     const half = ((p.length * s) / 2 + gap) / rc;
     blocked.push([a - half, a + half]);
-    out.set(p.id, { r: rc, angle: a, heading: a + Math.PI / 2, scale: s, lane: 0 });
+    out.set(p.id, { r: rc, angle: a, heading: a + Math.PI / 2, scale: s, lane });
   }
-  return blocked;
+  return { blocked, overflow };
 }
 
 const baseSector = (F: number) => Math.min(Math.PI * 1.15, 0.9 + 0.55 * F);

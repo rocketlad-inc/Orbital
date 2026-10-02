@@ -299,6 +299,9 @@ function megaCanvasPos(
   bodyId: string,
   rc: RenderContext,
 ): { x: number; y: number } | null {
+  // In its world's lanes it is drawn, and so shoots, from its slot.
+  const slot = rc.structureSlots?.get(bodyId);
+  if (slot) return { x: slot.x, y: slot.y };
   const body = bodyOf(rc, bodyId);
   if (!body) return null;
   const wp = bodyPosition(body, rc.t, rc.bodies);

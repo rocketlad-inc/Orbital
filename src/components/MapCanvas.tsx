@@ -589,6 +589,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     /** Worlds with a battle on, and its sides in line order. */
     battles: Map<string, string[]>;
   }>({ state: null, vis: null, map: new Map(), battles: new Map() });
+  // Last frame's lane slots for megastructures (orbitLanes): body hit
+  // tests run outside the frame and must click where they were drawn.
+  const structureSlotsRef = useRef<Map<string, { x: number; y: number; r: number }>>(new Map());
   // Fleet collapse memo. Keyed on gameState identity alone: membership
   // and flagship come from /state and nothing about the camera, clock or
   // selection can change who folds into whom.
@@ -1665,7 +1668,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           const ringAlpha = body.type === 'megastructure'
             ? MEGA_ORBIT_RING_ALPHA
             : 0.35;
-          drawOrbit(body, renderContext, withOpacity(body.color, ringAlpha * orbitAlpha));
+          // A structure in its world's lanes is not on its raw orbit, so
+          // that ring would run through empty sky.
+          if (!(body.type === 'megastructure' && structureSlotsRef.current.has(body.id))) {
+            drawOrbit(body, renderContext, withOpacity(body.color, ringAlpha * orbitAlpha));
+          }
         }
       }
     }
@@ -2068,6 +2075,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       });
     }
     const bodyLabelRows = planBodyLabels(bodyLabelCandidates);
+    // Megastructures drawn after their worlds' lanes are laid out.
+    const deferredMegas: Array<() => void> = [];
 
     // Draw bodies. Destroyed asteroids (post-RAM impact) keep their
     // row in gameState.bodies for one tick to give consumers a chance
@@ -2103,17 +2112,23 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // and clicks already went to the parent. Mid-unfold it fades in.
       const shown = renderContext.presentation?.shown.get(body.id) ?? 1;
       if (shown <= 0.01) continue;
-      const prevBodyAlpha = ctx.globalAlpha;
-      if (shown < 1) ctx.globalAlpha = prevBodyAlpha * shown;
-      drawBody(
-        body, renderContext,
-        isSelected && !menuHidesChrome, isHovered && !menuHidesChrome,
-        yieldsVisible, bodyLabelRows.get(body.id) ?? 0,
-        // System-level collapse: a moon in a knotted system defers to its
-        // planet's label. Selection/hover always keep their own name.
-        labelCollapsed(body) && !isSelected && !isHovered,
-      );
-      ctx.globalAlpha = prevBodyAlpha;
+      const drawIt = () => {
+        const prevBodyAlpha = ctx.globalAlpha;
+        if (shown < 1) ctx.globalAlpha = prevBodyAlpha * shown;
+        drawBody(
+          body, renderContext,
+          isSelected && !menuHidesChrome, isHovered && !menuHidesChrome,
+          yieldsVisible, bodyLabelRows.get(body.id) ?? 0,
+          // System-level collapse: a moon in a knotted system defers to its
+          // planet's label. Selection/hover always keep their own name.
+          labelCollapsed(body) && !isSelected && !isHovered,
+        );
+        ctx.globalAlpha = prevBodyAlpha;
+      };
+      // MP: a megastructure waits for its world's lanes (below), which
+      // decide where it is drawn.
+      if (renderContext.presentation && body.type === 'megastructure') deferredMegas.push(drawIt);
+      else drawIt();
       // Asteroid-weapon overlay: flame trail + projected impact path
       // + pulsing crosshair on the target. drawBody already places
       // the body's icon at its ram-mode position via bodyPosition.
@@ -2572,8 +2587,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // slots; combat FX read the hitboxes and slots they leave behind.
     const laneSlots = new Map<string, { x: number; y: number; heading: number; scale: number; cx: number; cy: number; r: number }>();
     const stationSlots = new Map<string, { x: number; y: number; size: number; full: boolean }>();
+    const structureSlots = new Map<string, { x: number; y: number; r: number }>();
     renderContext.laneSlots = pres ? laneSlots : undefined;
     renderContext.stationSlots = pres ? stationSlots : undefined;
+    renderContext.structureSlots = pres ? structureSlots : undefined;
     if (pres) {
       const escortCount = new Map<string, number>();
       for (const m of merged.markers) escortCount.set(m.leadShipId, m.escortIds.length);
@@ -2604,9 +2621,20 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           arr.push(st);
         }
       }
+      // Megastructures orbiting a world, shown and with that world's
+      // hulls on screen: they take their place in its lanes too.
+      const megasAt = new Map<string, GameBody[]>();
+      for (const mb of gameState.bodies) {
+        if (mb.type !== 'megastructure' || !mb.parent || mb.destroyedAtTick != null) continue;
+        if ((pres.shown.get(mb.id) ?? 1) <= 0.01) continue;
+        if (hostOfBody(mb.parent) !== mb.parent || spriteBlendFor(mb.parent) <= 0.01) continue;
+        let arr = megasAt.get(mb.parent);
+        if (!arr) { arr = []; megasAt.set(mb.parent, arr); }
+        arr.push(mb);
+      }
       const TAU = Math.PI * 2;
       const laneNow = renderContext.nowMs ?? performance.now();
-      const worldIds = new Set([...atWorld.keys(), ...stationsAt.keys()]);
+      const worldIds = new Set([...atWorld.keys(), ...stationsAt.keys(), ...megasAt.keys()]);
       for (const bid of worldIds) {
         const body = bodyById2.get(bid);
         if (!body) continue;
@@ -2655,6 +2683,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           stationAngle = stationAngle ?? a;
           items.push({ id: `station:${st.id}`, length: stationSize, height: stationSize, pinned: a });
         }
+        for (const mb of megasAt.get(bid) ?? []) {
+          const mp = bodyPosition(mb, renderContext.t, renderContext.bodies);
+          items.push({
+            id: `mega:${mb.id}`, length: stationSize, height: stationSize,
+            pinned: Math.atan2(mp.y - bp.y, mp.x - bp.x),
+          });
+        }
         if (!items.length) continue;
         const dir = (ships[0]?.orbit?.direction ?? 1) >= 0 ? 1 : -1;
         const phase = (hashStr(bid) % 6283) / 1000;
@@ -2679,12 +2714,18 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           const y = c0.y + Math.sin(p.angle) * p.r;
           if (id.startsWith('station:')) {
             stationSlots.set(id.slice(8), { x, y, size: stationSize * p.scale, full: true });
+          } else if (id.startsWith('mega:')) {
+            structureSlots.set(id.slice(5), { x, y, r: (stationSize * p.scale) / 2 });
           } else {
             laneSlots.set(id, { x, y, heading: p.heading, scale: p.scale, cx: c0.x, cy: c0.y, r: p.r });
           }
         }
       }
     }
+
+    structureSlotsRef.current = structureSlots;
+    // The megastructures, now that their places are known.
+    for (const f of deferredMegas) f();
 
     perf.phase('bodies_overlays');
     const drawOrder = [...gameState.ships].sort((a, b) =>
@@ -4514,8 +4555,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     let bestD = Infinity;
     for (const body of gameState.bodies) {
       if (foldedForHit(body.id)) continue;
-      const pos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, hc, renderTick());
-      const r = aiming
+      // A megastructure in its world's lanes is clicked where it was drawn.
+      const slot = structureSlotsRef.current.get(body.id);
+      const pos = slot ?? getBodyCanvasPos(body, canvasRef.current, gameState.bodies, hc, renderTick());
+      const r = slot ? slot.r + 5 + TOUCH_HIT_PADDING : aiming
         ? Math.max(12, hitR(body, hc.scale) + 8) + TOUCH_HIT_PADDING
         : Math.max(8, Math.max(gateAwareRadius(body, hc.scale), hitR(body, hc.scale)) + 5) + TOUCH_HIT_PADDING;
       const d = Math.hypot(canvasX - pos.x, canvasY - pos.y);

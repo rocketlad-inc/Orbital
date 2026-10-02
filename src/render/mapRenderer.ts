@@ -153,6 +153,9 @@ export interface RenderContext {
   /** The station's place in its world's lanes (MP), keyed by settlement
    *  id: drawStation draws its structure there at `size` px across. */
   stationSlots?: Map<string, { x: number; y: number; size: number; full: boolean }>;
+  /** Megastructures orbiting a world, placed in its lanes (MP), keyed by
+   *  body id: drawn, shot from and clicked at `x, y`, radius `r`. */
+  structureSlots?: Map<string, { x: number; y: number; r: number }>;
   /** Perpendicular lane offset in SCREEN PIXELS for each in-transit ship,
    *  keyed by ship id — see computeTransitLanes. Ships sharing a route get
    *  consecutive lanes so they fly abreast instead of stacking. Absent or
@@ -2359,7 +2362,9 @@ export function drawMegastructureBody(
   //
   // Floor and cap are in PIXELS: never an unclickable speck at system
   // zoom, never filling the screen close up.
-  const R = Math.max(5, Math.min(radius, 46));
+  // In lanes its size is set against the hulls (half again a destroyer);
+  // otherwise the old 46px cap stands.
+  const R = ctx.structureSlots?.has(body.id) ? Math.max(5, radius) : Math.max(5, Math.min(radius, 46));
   const now = ctx.nowMs ?? 0;
   const g = ctx.ctx;
 
@@ -3732,10 +3737,13 @@ export function drawBody(
   labelSuppressed: boolean = false,
 ) {
   const pos = bodyPosition(body, ctx.t, ctx.bodies);
-  const canvasPos = worldToCanvas(pos.x, pos.y, ctx);
+  // A megastructure in its world's lanes (orbitLanes) draws at its slot,
+  // sized against the hulls round it.
+  const mslot = body.type === 'megastructure' ? ctx.structureSlots?.get(body.id) : undefined;
+  const canvasPos = mslot ? { x: mslot.x, y: mslot.y } : worldToCanvas(pos.x, pos.y, ctx);
   // Rocks and structures run their own glyph-to-sprite crossfades off the
   // TRUE radius; every other world draws at its presentation size.
-  const radius = (body.mineralKind || body.type === 'megastructure')
+  const radius = mslot ? mslot.r : (body.mineralKind || body.type === 'megastructure')
     ? Math.max(3, body.radius * ctx.camera.scale)
     : drawnRadiusOf(ctx.presentation, body, ctx.camera.scale);
 

@@ -126,6 +126,25 @@ describe('orbital lanes', () => {
     expect(overlaps(w).bad).toEqual([]);
   });
 
+  it('a cluster of structures eases apart, and any that cannot fit move out a lane', () => {
+    for (const n of [2, 5, 10, 24]) {
+      const items: LaneItem[] = [];
+      for (let i = 0; i < n; i++) items.push({ id: `m${i}`, length: 90, height: 90, pinned: 1 + i * 0.02 });
+      for (let i = 0; i < 12; i++) items.push({ id: `s${i}`, length: 48, height: 48 });
+      const w: LaneWorld = { discR: 80, items, dir: 1, budgetR: 3000, spin: 0.4 };
+      const { L, bad } = overlaps(w);
+      expect(L.places.size).toBe(items.length);
+      expect(bad).toEqual([]);
+    }
+    // Two that barely touch are barely moved.
+    const w2: LaneWorld = { discR: 200, items: [
+      { id: 'a', length: 90, height: 90, pinned: 1 }, { id: 'b', length: 90, height: 90, pinned: 1.3 },
+    ], dir: 1, budgetR: 3000, spin: 0 };
+    const p = layoutLanes(w2).places;
+    expect(Math.abs(p.get('a')!.angle - 1)).toBeLessThan(0.1);
+    expect(Math.abs(p.get('b')!.angle - 1.3)).toBeLessThan(0.1);
+  });
+
   it('keeps the station at its own angle', () => {
     const w = world(3, 10, { budgetR: 400 }, true);
     const st = w.items.find(i => i.id === 'station')!;
