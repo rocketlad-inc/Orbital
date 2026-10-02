@@ -122,22 +122,24 @@ private fun BankedLine(t: TickSummary?, s: Dp) {
     if (c >= 0.5) Text("+${compact(c.roundToLong())}C ", color = CreditInk, fontSize = tp(s, 15f), fontFamily = GameFont)
     if (sc >= 0.5) Text("+${compact(sc.roundToLong())}S", color = ScienceInk, fontSize = tp(s, 15f), fontFamily = GameFont)
   }
-  val from = b.filter { it.metal + it.credits + it.science >= 0.5 }.joinToString(" · ") { x ->
-    val label = when (x.source) {
-      "delivered" -> if ((t?.shipments ?: 0) > 1) "${t?.shipments} SHIPMENTS" else "SHIPMENT"
-      "terraformed" -> "TERRAFORMED"
-      else -> "RAW WORLDS"
+  // WHERE IT CAME FROM, in one short line: each source's share of what was
+  // banked, biggest first -- "TERRA 61% · SHIPS 31% · RAW 8%". Spelling out
+  // every resource per source ran far wider than the face (Lorne); the
+  // exact numbers are in the line above.
+  val total = m + c + sc
+  val from = b
+    .map { x -> x to (x.metal + x.credits + x.science) }
+    .filter { it.second >= 0.5 }
+    .sortedByDescending { it.second }
+    .joinToString(" · ") { (x, v) ->
+      val label = when (x.source) {
+        "delivered" -> "SHIPS"
+        "terraformed" -> "TERRA"
+        else -> "RAW"
+      }
+      "$label ${(v * 100 / total).roundToLong().coerceAtLeast(1)}%"
     }
-    // Per resource: "TERRAFORMED 16M 7C 9S". One summed number added metal
-    // to credits to science and meant nothing (the review).
-    val parts = listOfNotNull(
-      x.metal.takeIf { it >= 0.5 }?.let { "${compact(it.roundToLong())}M" },
-      x.credits.takeIf { it >= 0.5 }?.let { "${compact(it.roundToLong())}C" },
-      x.science.takeIf { it >= 0.5 }?.let { "${compact(it.roundToLong())}S" },
-    )
-    "$label ${parts.joinToString(" ")}"
-  }
-  Text(from, color = Sub, fontSize = tp(s, 10f), fontWeight = FontWeight.Bold, textAlign = androidx.compose.ui.text.style.TextAlign.Center, maxLines = 2)
+  Text(from, color = Sub, fontSize = tp(s, 10f), fontWeight = FontWeight.Bold, textAlign = androidx.compose.ui.text.style.TextAlign.Center, maxLines = 1)
 }
 
 @Composable
