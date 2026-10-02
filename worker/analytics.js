@@ -177,7 +177,9 @@ export function maskReason(message) {
   const masked = message
     .replace(/[`"'“”‘’][^`"'“”‘’]*[`"'“”‘’]/g, '·')
     .replace(/\d+(?:[.,]\d+)?/g, '#')
-    .replace(/(?<![\p{L}\p{N}#])\p{Lu}[\p{L}\p{N}_-]*/gu, '·')
+    // Apostrophes belong to the word, so "Can't" masks whole rather
+    // than leaving a stray "·'t".
+    .replace(/(?<![\p{L}\p{N}#])\p{Lu}[\p{L}\p{N}_'’-]*/gu, '·')
     .replace(/·(?:\s*·)+/g, '·')
     .replace(/\s+/g, ' ')
     .trim();
