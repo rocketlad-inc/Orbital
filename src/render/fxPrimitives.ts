@@ -23,8 +23,9 @@ import { hashStr, mulberry32 } from './planetTexture';
 import { isLightweight } from './lightweightMode';
 import {
   drawRound, drawBeam, drawMuzzle, drawExplosion, drawSparks, drawPlates, drawHullFire, drawShieldHit,
-  KINETIC_FX, ENERGY_FX,
+  KINETIC_FX, ENERGY_FX, drawTorch,
 } from './fxArt';
+import type { DriveBell } from './hulls';
 
 // ---- shared constants (were private to combatFx) ---------------------
 
@@ -294,122 +295,75 @@ export function drawThrustExhaust(
   shipClass?: string,
   /** Mid-plume colour. Defaults to the map's orange. */
   tint?: [number, number, number],
+  /** The hull's engine bells (hulls driveBellsOf), in its 64-unit box.
+   *  Given, the burn leaves every nozzle on the art; absent (a rock, a
+   *  recap without the design), the class's bell layout stands in. */
+  bells?: readonly DriveBell[] | null,
 ) {
   // LIGHTWEIGHT MODE draws no plume at all.
   //
   // The frozen animation clock already stopped it FLICKERING, but a static
-  // cone is still a multi-layer gradient-and-jitter fill per thrusting
-  // hull per frame, and during a fleet move that is every hull at once.
-  // Nothing is lost: a burning ship is already identifiable from its
-  // heading line and its transit path.
+  // plume is still several blits per thrusting hull per frame, and during
+  // a fleet move that is every hull at once. Nothing is lost: a burning
+  // ship is already identifiable from its heading line and its transit
+  // path.
   //
   // Guarded here rather than at the four call sites (two in mapRenderer
   // for transit hulls and ramming rocks, plus BattleReview and
   // TheatreRecap) so no caller can reintroduce it by accident.
   if (isLightweight()) return;
+  if (intensity <= 0.01 || shipSize <= 0) return;
 
-  const [tr, tg, tb] = tint ?? [255, 180, 90];
-  // Sized to the ship icon, so the plume reads as this hull's exhaust
-  // rather than a banner streaking across the map — and since shipSize
-  // IS the icon's on-screen size, it tracks the ship at every zoom.
-  // Base ≈ the ship's beam (half-width 0.26 → full 0.52·icon), length a
-  // touch over one icon. Was 2.4·icon long / 0.84·icon wide — a cone
-  // several times the hull, which read as "too big".
+  // THE NEW HULLS BURN FROM THEIR OWN ENGINES. The old plume was one
+  // flat cone from the middle of the stern, which next to the shaded,
+  // multi-engine hull art read as a sticker: each bell the design draws
+  // now gets its own torch -- a swelling plume cooling from white through
+  // the tint to deep orange, a white-hot throat and shock diamonds down
+  // its core (fxArt drawTorch). Everything else is as it was: sized to
+  // the icon so it tracks the ship at every zoom, a per-class length,
+  // pointing opposite the thrust (so a braking hull flames ahead of its
+  // motion), flickering live, and only the throat additive.
   const shape = PLUME_SHAPE[shipClass ?? ''] ?? { len: 1, width: 1, bells: 1 };
   const flameLen = shipSize * 1.35 * shape.len;
-  const flameWidth = shipSize * 0.19 * shape.width;
-  // Exhaust extends OPPOSITE to thrust.
-  const tailX = enginePos.x - thrustDir.x * flameLen;
-  const tailY = enginePos.y - thrustDir.y * flameLen;
-  // Perpendicular for the flame's flared base near the engine bell.
+  const ang = Math.atan2(-thrustDir.y, -thrustDir.x);
   const perpX = -thrustDir.y;
   const perpY = thrustDir.x;
-  // Per-frame jitter for a "live" flicker. Random is fine — the
-  // unpredictability is the point. Cheap enough to do every frame.
-  // Scaled down with the smaller plume so the wag stays proportional.
-  const jitterMag = shipSize * 0.12;
-  const jitterT = (Math.random() - 0.5) * 2 * jitterMag;       // tail wag
-  const jitterP = (Math.random() - 0.5) * jitterMag * 0.3;     // base wiggle
-  const lenJitter = (Math.random() - 0.5) * shipSize * 0.22;   // length pulse
+  // Retreating hulls burn longer as well as hotter.
+  const hot = Math.max(1, Math.min(1.3, intensity));
+  const alpha = Math.min(1, 0.95 * intensity);
 
-  // Gradient: hot core at the engine bell, cooling out to the tail.
-  const grad = ctx2d.createLinearGradient(
-    enginePos.x, enginePos.y,
-    tailX, tailY,
-  );
-  grad.addColorStop(0,    `rgba(255, 245, 200, ${0.95 * intensity})`);
-  grad.addColorStop(0.25, `rgba(${tr}, ${tg}, ${tb},  ${0.70 * intensity})`);
-  grad.addColorStop(0.7,  `rgba(255, 90, 50,   ${0.25 * intensity})`);
-  grad.addColorStop(1,     'rgba(255, 60, 30, 0)');
+  if (bells && bells.length) {
+    // The icon's centre, from the stern point the caller passes.
+    const cx = enginePos.x + thrustDir.x * shipSize / 2;
+    const cy = enginePos.y + thrustDir.y * shipSize / 2;
+    const k = shipSize / 64;
+    // A hull with a bank of small engines keeps its biggest six.
+    const use = bells.length > 6 ? [...bells].sort((a, b) => b.r - a.r).slice(0, 6) : bells;
+    for (const b of use) {
+      // The nozzle is the bell's rear lip (engine.ts drive()).
+      const along = (b.x - 0.6 - 32) * k;
+      const across = b.y * k;
+      const nx = cx + thrustDir.x * along + perpX * across;
+      const ny = cy + thrustDir.y * along + perpY * across;
+      // A touch wider than the bell itself: a plume this small has to
+      // read at map zoom.
+      const bell = Math.max(1.3, b.r * k * 1.35);
+      const len = flameLen * Math.max(0.75, Math.min(1.15, 0.65 + b.r / 7)) * hot;
+      drawTorch(ctx2d, nx, ny, ang, len, bell, alpha, Math.random(), tint);
+    }
+    return;
+  }
 
-  ctx2d.save();
-  // Blending: the BODY of the plume paints normally, only the small hot
-  // core is additive. Making the whole cone additive (the first cut)
-  // looked great over black space but summed past white over anything
-  // bright — a destroyer crossing a lit gas giant painted a solid white
-  // triangle bigger than the ship (live screenshot at Uranus). Normal
-  // blend keeps the plume translucent over planets while the additive
-  // core still gives the nozzle its glow against the void.
-  // Destroyer-style multi-bell: two smaller side cones flanking the
-  // main plume, offset along the beam. Drawn first so the core sits on top.
+  // No design: the class's own bell layout, as the old cone had it.
+  const bell = shipSize * 0.07 * shape.width;
   if (shape.bells >= 3) {
-    const sideW = flameWidth * 0.45;
-    const sideLen = flameLen * 0.6;
     for (const side of [-1, 1]) {
-      const bx = enginePos.x + perpX * flameWidth * 0.85 * side;
-      const by = enginePos.y + perpY * flameWidth * 0.85 * side;
-      ctx2d.fillStyle = `rgba(255, 150, 70, ${0.35 * intensity})`;
-      ctx2d.beginPath();
-      ctx2d.moveTo(bx + perpX * sideW, by + perpY * sideW);
-      ctx2d.lineTo(bx - perpX * sideW, by - perpY * sideW);
-      ctx2d.lineTo(bx - thrustDir.x * sideLen, by - thrustDir.y * sideLen);
-      ctx2d.closePath();
-      ctx2d.fill();
+      drawTorch(ctx2d,
+        enginePos.x + perpX * bell * 2.4 * side, enginePos.y + perpY * bell * 2.4 * side,
+        ang, flameLen * 0.6 * hot, bell * 0.6, alpha * 0.85, Math.random(), tint);
     }
   }
-  ctx2d.fillStyle = grad;
-  ctx2d.beginPath();
-  // Flared base near the engine nozzle.
-  ctx2d.moveTo(
-    enginePos.x + perpX * (flameWidth + jitterP),
-    enginePos.y + perpY * (flameWidth + jitterP),
-  );
-  ctx2d.lineTo(
-    enginePos.x - perpX * (flameWidth - jitterP),
-    enginePos.y - perpY * (flameWidth - jitterP),
-  );
-  // Tapered tail with side-to-side wag.
-  ctx2d.lineTo(
-    tailX - thrustDir.x * lenJitter + perpX * jitterT,
-    tailY - thrustDir.y * lenJitter + perpY * jitterT,
-  );
-  ctx2d.closePath();
-  ctx2d.fill();
-
-  // Hot inner core — a smaller, brighter triangle layered over the
-  // outer flame so the engine bell reads as the brightest point. THIS is
-  // the additive part: small enough that blowing out to white is the
-  // desired look (an engine bell IS blindingly bright) without washing
-  // over a planet behind it.
-  ctx2d.globalCompositeOperation = 'lighter';
-  const coreLen = flameLen * 0.45;
-  const coreW = flameWidth * 0.55;
-  const coreTailX = enginePos.x - thrustDir.x * coreLen;
-  const coreTailY = enginePos.y - thrustDir.y * coreLen;
-  const coreGrad = ctx2d.createLinearGradient(
-    enginePos.x, enginePos.y,
-    coreTailX, coreTailY,
-  );
-  coreGrad.addColorStop(0, `rgba(255, 255, 235, ${0.95 * intensity})`);
-  coreGrad.addColorStop(1, `rgba(255, 200, 100, 0)`);
-  ctx2d.fillStyle = coreGrad;
-  ctx2d.beginPath();
-  ctx2d.moveTo(enginePos.x + perpX * coreW, enginePos.y + perpY * coreW);
-  ctx2d.lineTo(enginePos.x - perpX * coreW, enginePos.y - perpY * coreW);
-  ctx2d.lineTo(coreTailX, coreTailY);
-  ctx2d.closePath();
-  ctx2d.fill();
-  ctx2d.restore();
+  drawTorch(ctx2d, enginePos.x, enginePos.y, ang, flameLen * hot, bell, alpha, Math.random(), tint);
 }
 
 /** Veteran mark: gold, screen-aligned, never rotated with the hull. */

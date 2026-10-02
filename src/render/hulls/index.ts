@@ -66,6 +66,30 @@ export function scaffoldDesign(stage: number): HullDesign {
   return (SCAFFOLD as HullDesign[])[Math.max(0, Math.min(3, Math.round(stage)))];
 }
 
+/** One engine bell, in the design's 64-unit box: x along the hull (nose
+ *  toward +x), y off the centreline, r its radius (engine.ts drive()). */
+export interface DriveBell { x: number; y: number; r: number }
+
+const bellCache = new WeakMap<HullDesign, DriveBell[]>();
+/** Every engine bell the design draws, mirrored exactly as the renderer
+ *  mirrors drive() parts, so a burn leaves the nozzles on the art. */
+export function driveBellsOf(d: HullDesign): DriveBell[] {
+  const hit = bellCache.get(d);
+  if (hit) return hit;
+  const out: DriveBell[] = [];
+  for (const p of d.parts as Array<{ t: string; x: number; y: number; r?: number; m?: boolean }>) {
+    if (p.t !== 'drive') continue;
+    const r = p.r ?? 2.2;
+    if (p.m === false) out.push({ x: p.x, y: p.y, r });
+    else {
+      out.push({ x: p.x, y: -Math.abs(p.y), r });
+      if (p.y !== 0) out.push({ x: p.x, y: Math.abs(p.y), r });
+    }
+  }
+  bellCache.set(d, out);
+  return out;
+}
+
 /** Display name of a variant (pickers, galleries). */
 export function hullName(shipClass: string, variant: string): string | null {
   return SHIP_SETS[shipClass]?.[variant]?.name ?? null;

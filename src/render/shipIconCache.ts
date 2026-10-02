@@ -9,6 +9,7 @@ import {
   ShipIcon, ShipIconClass, ShipIconVariant,
   DEFAULT_SHIP_ICONS, ALL_VARIANTS,
 } from '../components/ShipIcons';
+import { shipDesign, hasShipDesign, driveBellsOf, DriveBell } from './hulls';
 
 /** Pixel size of the rasterized icon — large enough to stay crisp when
  *  drawn at any practical on-map size. The shaded-hull treatment
@@ -39,6 +40,19 @@ function key(shipClass: ShipIconClass, color: string, variant: ShipIconVariant, 
  * Variant defaults to DEFAULT_SHIP_ICONS[class] when undefined so
  * callers that haven't been updated to pass a variant still work.
  */
+/**
+ * The engine bells of the hull this class and letter draw as, resolved
+ * the way ShipIcon resolves the drawing (a letter with no design draws
+ * the class default), or null for a class with no hull design.
+ */
+export function driveBellsFor(shipClass: string, variant?: string | null): DriveBell[] | null {
+  const def = (DEFAULT_SHIP_ICONS as Record<string, string>)[shipClass];
+  let v = variant ?? def;
+  if (!v || (!hasShipDesign(shipClass, v) && def)) v = def;
+  const d = shipDesign(shipClass, v);
+  return d ? driveBellsOf(d) : null;
+}
+
 export function getShipIconImage(
   shipClass: ShipIconClass,
   color: string,

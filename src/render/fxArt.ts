@@ -626,12 +626,117 @@ export function drawHullFire(
   c.restore();
 }
 
+// ---- drives ----------------------------------------------------------
+
+const torchCache = new Map<string, HTMLCanvasElement>();
+const TORCH_W = 128, TORCH_H = 40;
+/** A drive's plume, baked once per tint: nozzle at x = 0, tail at the
+ *  right. Narrow at the bell, swelling as the exhaust expands, white-hot
+ *  down its axis near the bell, cooling through the tint to deep orange
+ *  and nothing. Straight alpha, for the NORMAL blend: the body of a
+ *  plume is translucent matter, safe over a lit planet. */
+function torchSprite(tint: [number, number, number]): HTMLCanvasElement | null {
+  const key = tint.join(',');
+  const hit = torchCache.get(key);
+  if (hit) return hit;
+  if (typeof document === 'undefined') return null;
+  const cv = document.createElement('canvas');
+  cv.width = TORCH_W; cv.height = TORCH_H;
+  const g = cv.getContext('2d');
+  if (!g) return null;
+  const img = g.createImageData(TORCH_W, TORCH_H);
+  const stops: Array<[number, [number, number, number]]> = [
+    [0, [255, 244, 214]], [0.1, [255, 216, 150]], [0.3, tint], [0.62, [240, 102, 46]], [1, [176, 46, 26]],
+  ];
+  const colAt = (u: number): [number, number, number] => {
+    for (let i = 1; i < stops.length; i++) {
+      if (u <= stops[i][0]) {
+        const [u0, c0] = stops[i - 1], [u1, c1] = stops[i];
+        const t = (u - u0) / (u1 - u0);
+        return [c0[0] + (c1[0] - c0[0]) * t, c0[1] + (c1[1] - c0[1]) * t, c0[2] + (c1[2] - c0[2]) * t];
+      }
+    }
+    return stops[stops.length - 1][1];
+  };
+  for (let x = 0; x < TORCH_W; x++) {
+    const u = (x + 0.5) / TORCH_W;
+    // Half-width as a fraction of the sprite: tight at the bell, the
+    // exhaust expanding, then the tail narrowing as it thins out.
+    const half = (0.36 + 0.64 * Math.sqrt(Math.min(1, u / 0.55))) * (1 - 0.35 * Math.max(0, (u - 0.55) / 0.45));
+    const fade = Math.pow(1 - u, 1.05) * Math.min(1, u / 0.015 + 0.6);
+    const [cr, cg, cb] = colAt(u);
+    for (let y = 0; y < TORCH_H; y++) {
+      const v = Math.abs(y + 0.5 - TORCH_H / 2) / (TORCH_H / 2) / half;    // 0 axis .. 1 edge
+      if (v >= 1) continue;
+      const body = Math.pow(1 - v, 1.3);
+      // The axis runs hotter than the edges.
+      const hot = Math.max(0, 1 - v * 3) * (1 - u) * (1 - u);
+      const o = (y * TORCH_W + x) * 4;
+      img.data[o] = Math.min(255, cr + (255 - cr) * hot);
+      img.data[o + 1] = Math.min(255, cg + (250 - cg) * hot);
+      img.data[o + 2] = Math.min(255, cb + (232 - cb) * hot);
+      img.data[o + 3] = Math.round(Math.min(1, body * fade * 1.7) * 255);
+    }
+  }
+  g.putImageData(img, 0, 0);
+  torchCache.set(key, cv);
+  return cv;
+}
+
+/**
+ * One engine bell burning: the plume streaming back from the nozzle at
+ * (x, y) along `ang` (the exhaust direction), `len` long, `bell` its
+ * radius at the nozzle, then the white-hot throat and a train of shock
+ * diamonds down the core. `flick` 0..1 is this frame's flicker.
+ *
+ * Only the throat and the diamonds add light; the plume's body is drawn
+ * in the normal blend, so a burn over a bright planet stays a plume and
+ * never sums to a white wedge (the reason the old cone split its blend).
+ */
+export function drawTorch(
+  c: CanvasRenderingContext2D, x: number, y: number, ang: number,
+  len: number, bell: number, alpha: number, flick: number,
+  tint: [number, number, number] = [255, 180, 90],
+): void {
+  if (alpha <= 0.01 || len <= 1) return;
+  const s = torchSprite(tint);
+  const L = len * (0.9 + 0.2 * flick);
+  // The sprite's widest point is the full height; the bell sits at 0.36.
+  const H = Math.max(2, (bell / 0.36) * 2);
+  const prev = c.globalAlpha;
+  const prevOp = c.globalCompositeOperation;
+  if (s) {
+    c.save();
+    c.translate(x, y);
+    c.rotate(ang);
+    c.globalAlpha = prev * Math.min(1, alpha);
+    c.drawImage(s, 0, -H / 2, L, H);
+    c.restore();
+  }
+  c.globalCompositeOperation = 'lighter';
+  const ca = Math.cos(ang), sa = Math.sin(ang);
+  const hex = `#${tint.map(v => Math.round(v).toString(16).padStart(2, '0')).join('')}`;
+  glowAt(c, x, y, bell * (1.9 + 0.5 * flick), '#fffbea', hex, Math.min(1, alpha * 1.05));
+  // Shock diamonds: bright knots at a steady spacing down the core,
+  // shimmering as the flame breathes. Too small to see on a far-zoomed
+  // hull, so a fleet move does not pay for them there.
+  if (bell < 1.6) { c.globalCompositeOperation = prevOp; c.globalAlpha = prev; return; }
+  const step = Math.max(bell * 1.7, 2.2);
+  for (let i = 1; i <= 3; i++) {
+    const d = step * i * (0.95 + 0.1 * flick);
+    if (d > L * 0.55) break;
+    glowAt(c, x + ca * d, y + sa * d, bell * (0.95 - 0.18 * i), '#fffaf0', hex, alpha * (0.75 - 0.18 * i));
+  }
+  c.globalCompositeOperation = prevOp;
+  c.globalAlpha = prev;
+}
+
 /** Backing-store bytes of every baked effect sprite, for the renderer's
  *  memory gauge (mapRenderer.rendererCanvasBytes). Charred hulls are
  *  counted as made; they are few (one per distinct hull look). */
 export function fxSpriteBytes(): number {
   let b = charredBytes;
-  for (const m of [glowCache, streakCache, petalCache]) for (const cv of m.values()) b += cv.width * cv.height * 4;
+  for (const m of [glowCache, streakCache, petalCache, torchCache]) for (const cv of m.values()) b += cv.width * cv.height * 4;
   return b;
 }
 

@@ -23,7 +23,7 @@ import { COLORS, withOpacity, lighten, darken } from './colors';
 import { requestLabel, clearOfKeepOuts, reserveRect } from './labelLayer';
 import { visibleFogHoles } from './fogHoles';
 import { LOD, lodAlpha } from './lod';
-import { getShipIconImage } from './shipIconCache';
+import { getShipIconImage, driveBellsFor } from './shipIconCache';
 import {
   drawTexturedDisk as fxDrawTexturedDisk,
   drawSphereLighting,
@@ -6228,6 +6228,9 @@ function drawTorchTransitShip(
       // Retreating hulls burn HOT — running for home reads as running.
       (isSelected ? 1.0 : 0.85) * thrustVis * (shipIsRetreating(ship) ? 1.25 : 1),
       ship.class,
+      undefined,
+      // From the engines the hull's art actually has.
+      driveBellsFor(ship.class, ship.iconVariant),
     );
     // Speed streaks on a retreating burn: brief parallel motion lines
     // shedding off the hull, flickering — unmistakably "getting out".
