@@ -114,6 +114,33 @@ async function handleInit(req, env) {
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const ROOM_ID_RE = /^[A-Za-z0-9_-]{6,32}$/;
 
+/** Player actions waiting for their outcome: _dispatch registers the
+ *  action, fetch() logs it once the handler has answered. Keyed by the
+ *  Request object, so it cannot leak between requests. */
+const PENDING_ACTIONS = new WeakMap();
+
+/** Write the analytics row for one player action, with how it went.
+ *  The error code is read from a CLONE of the response, so the body the
+ *  player receives is untouched; only JSON error bodies are read. */
+function logActionOutcome(env, pending, res) {
+  const status = res?.status ?? 500;
+  const latencyMs = Date.now() - pending.t0;
+  const isJson = (res?.headers?.get('content-type') ?? '').includes('application/json');
+  const copy = status >= 400 && isJson ? res.clone() : null;
+  return (async () => {
+    let errCode = null;
+    let errMessage = null;
+    if (copy) {
+      try {
+        const e = (await copy.json())?.error;
+        errCode = e?.code ?? null;
+        errMessage = e?.message ?? null; // masked before it is stored
+      } catch { /* not JSON after all */ }
+    }
+    await analytics.logEvent(env, { ...pending, status, errCode, errMessage, latencyMs });
+  })();
+}
+
 function json(data, init = {}) {
   const headers = new Headers(init.headers);
   headers.set('content-type', 'application/json');
@@ -1632,14 +1659,22 @@ export default {
       if (url.pathname !== '/api/__init' && url.pathname !== '/api/_version') {
         await ensureMigrated(env);
       }
+      let res;
       try {
-        return await this._dispatch(req, env, url, execCtx);
+        res = await this._dispatch(req, env, url, execCtx);
       } catch (e) {
-        return json(
+        res = json(
           { error: { code: 'worker_exception', message: String(e?.message || e), stack: String(e?.stack || '').slice(0, 1000) } },
           { status: 500 },
         );
       }
+      const pending = PENDING_ACTIONS.get(req);
+      if (pending) {
+        PENDING_ACTIONS.delete(req);
+        const ev = logActionOutcome(env, pending, res);
+        if (execCtx?.waitUntil) execCtx.waitUntil(ev); else await ev;
+      }
+      return res;
     }
 
     return env.ASSETS.fetch(req);
@@ -1915,16 +1950,17 @@ export default {
         const kind = analytics.eventKindFromPath(req.method, url.pathname);
         if (kind) {
           const gm = url.pathname.match(/^\/api\/games\/([^/]+)\//);
-          // Deferred: this INSERT used to be AWAITED here, taxing every
-          // player action one D1 write (~20-60ms) before its handler even
-          // ran - measured in the action POST times while hunting click
-          // latency. waitUntil runs it after the response is sent.
-          const ev = analytics.logEvent(env, {
+          // Logged AFTER the handler, by fetch() below, so the row carries
+          // the outcome: status, the handler's error code, latency. It was
+          // logged here, before the handler, until 2026-10-01 - which made
+          // "tried to build and could not afford it" indistinguishable from
+          // a build. Still written in waitUntil, after the response is sent.
+          PENDING_ACTIONS.set(req, {
             gameId: gm ? decodeURIComponent(gm[1]) : null,
             userId: session.user_id,
             kind,
+            t0: Date.now(),
           });
-          if (execCtx?.waitUntil) execCtx.waitUntil(ev); else await ev;
         }
       }
       // Session liveness: the /state poll runs every ~1.5s, so touching

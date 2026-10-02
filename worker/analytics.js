@@ -159,7 +159,34 @@ function sanitizePayload(raw) {
  *  than trust it — it is a grouping key, never an authorization one. */
 const SESSION_ID_RE = /^[A-Za-z0-9_-]{6,40}$/;
 
-export async function logEvent(env, { gameId, userId, kind, payload, sessionId, dwellMs }) {
+/** An error code as a handler returns it ("insufficient_funds"). Codes
+ *  only: the human-readable message can carry names a player typed, and
+ *  has no business in a telemetry table. */
+const ERR_CODE_RE = /^[a-z][a-z0-9_.:-]{0,47}$/i;
+
+/**
+ * A rejection's message, safe to keep. Handler messages are written by
+ * the server ("rushing costs 40M 10G", "Avalon is in transit"), but some
+ * interpolate names a player chose. Digits become #, and any word that
+ * starts with a capital becomes a dot, which takes out ship, empire and
+ * world names while keeping the sentence that explains the refusal.
+ * Exported for the sim.
+ */
+export function maskReason(message) {
+  if (typeof message !== 'string' || !message.trim()) return null;
+  const masked = message
+    .replace(/[`"'“”‘’][^`"'“”‘’]*[`"'“”‘’]/g, '·')
+    .replace(/\d+(?:[.,]\d+)?/g, '#')
+    .replace(/(?<![\p{L}\p{N}#])\p{Lu}[\p{L}\p{N}_-]*/gu, '·')
+    .replace(/·(?:\s*·)+/g, '·')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return masked.slice(0, 80) || null;
+}
+
+export async function logEvent(env, {
+  gameId, userId, kind, payload, sessionId, dwellMs, status, errCode, errMessage, latencyMs,
+}) {
   if (!kind) return;
   try {
     const dwell = Number.isFinite(Number(dwellMs))
@@ -170,8 +197,9 @@ export async function logEvent(env, { gameId, userId, kind, payload, sessionId, 
     await env.DB
       .prepare(
         `INSERT INTO analytics_events
-           (game_id, user_id, kind, payload, session_id, dwell_ms, created_at_ms)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+           (game_id, user_id, kind, payload, session_id, dwell_ms, created_at_ms,
+            status, err_code, latency_ms, err_reason)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         gameId ?? null, userId ?? null, kind,
@@ -179,6 +207,10 @@ export async function logEvent(env, { gameId, userId, kind, payload, sessionId, 
         (typeof sessionId === 'string' && SESSION_ID_RE.test(sessionId)) ? sessionId : null,
         dwell,
         Date.now(),
+        Number.isInteger(status) ? status : null,
+        (typeof errCode === 'string' && ERR_CODE_RE.test(errCode)) ? errCode : null,
+        Number.isFinite(latencyMs) ? Math.max(0, Math.min(600_000, Math.round(latencyMs))) : null,
+        Number.isInteger(status) && status >= 400 ? maskReason(errMessage) : null,
       )
       .run();
   } catch (e) {

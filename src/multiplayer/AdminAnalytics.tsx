@@ -18,6 +18,8 @@ import { RESEARCH_BASE_COST, RESEARCH_COST_SCALING } from '../game/techs';
 import './AdminAnalytics.css';
 import { ago, labelForKind, playTime } from './adminFormat';
 import { AdminOverview } from './AdminOverview';
+import { GameStory, loadStory, StoryData } from './GameStory';
+import './AdminOverview.css';
 
 type OverviewGame = {
   id: string; name: string; status: string; current_tick: number;
@@ -207,38 +209,96 @@ export function AdminAnalytics({ onEnterRoom }: { onEnterRoom: (roomId: string) 
 
 /** Exported so the in-game menu can open one game's analytics directly.
  *  From inside a match the game is not a thing to be chosen — it is the
- *  one you are looking at — so the overview and its picker are a detour. */
+ *  one you are looking at — so the overview and its picker are a detour.
+ *
+ *  Tabs, Story first. The page had grown to 26 stacked sections, almost
+ *  all of them balance instruments (yields, hit maths, loadouts). The
+ *  playtesting questions — how is each empire doing, who is stuck, where
+ *  does the game keep saying no — had no home at all, so they get the
+ *  first tab and the instruments are grouped behind the rest. */
+type GameTab = 'story' | 'economy' | 'combat' | 'politics' | 'engagement';
+const GAME_TABS: Array<{ id: GameTab; label: string }> = [
+  { id: 'story', label: 'Story' },
+  { id: 'economy', label: 'Economy' },
+  { id: 'combat', label: 'Combat' },
+  { id: 'politics', label: 'Politics & trade' },
+  { id: 'engagement', label: 'Engagement' },
+];
+const GAME_TAB_KEY = 'orbital.admin.gameTab';
+/** The full analytics payload reads ~90k rows for a busy game, so it is
+ *  re-read on this cadence and only while the page is visible. */
+const GAME_REFRESH_MS = 120_000;
+
+function Panel({ title, hint, tools, children }: {
+  title: string; hint?: React.ReactNode; tools?: React.ReactNode; children: React.ReactNode;
+}) {
+  return (
+    <section className="ao-panel">
+      <div className="ao-phead">
+        <div>
+          <h3 className="ao-phead__title">{title}</h3>
+          {hint && <p className="ao-phead__hint">{hint}</p>}
+        </div>
+        {tools && <div className="ao-phead__tools">{tools}</div>}
+      </div>
+      {children}
+    </section>
+  );
+}
+
 export function GameDetail({
   gameId, onBack, onEnterRoom,
 }: { gameId: string; onBack: () => void; onEnterRoom: (id: string) => void }) {
   const [data, setData] = useState<GameAnalytics | null>(null);
+  const [story, setStory] = useState<StoryData | null>(null);
   const [metric, setMetric] = useState<Metric>('gold');
   // stock = balances; flow = per-tick delta (income minus spend), the
   // economy-balancing lens.
   const [mode, setMode] = useState<'stock' | 'flow' | 'share'>('stock');
-
+  const [tab, setTabState] = useState<GameTab>(() => {
+    try {
+      const v = sessionStorage.getItem(GAME_TAB_KEY);
+      if (v && GAME_TABS.some(t => t.id === v)) return v as GameTab;
+    } catch { /* storage blocked */ }
+    return 'story';
+  });
+  const setTab = (t: string) => {
+    if (!GAME_TABS.some(x => x.id === t)) return;
+    setTabState(t as GameTab);
+    try { sessionStorage.setItem(GAME_TAB_KEY, t); } catch { /* not essential */ }
+  };
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const [res, st] = await Promise.all([
+      apiFetch<GameAnalytics>(`/api/admin/games/${gameId}/analytics`),
+      loadStory(gameId),
+    ]);
+    setLoading(false);
+    // A failed load must SAY so - this view once spun forever on a
+    // server 500 and read as "loading" instead of "broken".
+    if (res.ok) { setData(res.data); setLoadError(null); }
+    else setLoadError(`Analytics failed to load (HTTP ${res.status}).`);
+    if (st.ok) setStory(st.data);
+  }, [gameId]);
 
   useEffect(() => {
-    let dead = false;
-    const load = async () => {
-      const res = await apiFetch<GameAnalytics>(`/api/admin/games/${gameId}/analytics`);
-      if (dead) return;
-      // A failed poll must SAY so - this view once spun forever on a
-      // server 500 and read as "loading" instead of "broken".
-      if (res.ok) { setData(res.data); setLoadError(null); }
-      else setLoadError(`Analytics failed to load (HTTP ${res.status}). Retrying in 30s.`);
-    };
-    load();
-    const t = setInterval(load, 30_000);
-    return () => { dead = true; clearInterval(t); };
-  }, [gameId]);
+    void load();
+    const t = setInterval(() => {
+      if (document.visibilityState === 'visible') void load();
+    }, GAME_REFRESH_MS);
+    return () => clearInterval(t);
+  }, [load]);
 
   if (!data) {
     return (
-      <div className="aa-root">
-        <button className="aa-btn" onClick={onBack}>← All games</button>
-        <div className="aa-empty">{loadError ?? 'Loading game analytics…'}</div>
+      <div className="ao">
+        <div className="ao-game-head">
+          <button className="ao-btn" onClick={onBack}>← All games</button>
+        </div>
+        <div className="ao-loading">{loadError ?? 'Loading game analytics…'}</div>
       </div>
     );
   }
@@ -253,213 +313,190 @@ export function GameDetail({
   );
 
   return (
-    <div className="aa-root">
-      <div className="aa-detail-head">
-        <button className="aa-btn" onClick={onBack}>← All games</button>
-        <div className="aa-detail-title">{game.name}</div>
-        <div className="aa-detail-sub">
-          T+{game.current_tick} · {game.status}
-          {game.victory_type ? ` · won by ${game.victory_type}` : ''}
+    <div className="ao ao-game">
+      <header className="ao-game-head">
+        <button className="ao-btn" onClick={onBack}>← All games</button>
+        <div>
+          <h2>{game.name}</h2>
+          <div className="ao-game-head__meta">
+            T{game.current_tick} · {game.status}
+            {game.victory_type ? ` · won by ${game.victory_type}` : ''}
+            {loadError ? <span className="ao-fresh__warn"> · {loadError}</span> : null}
+          </div>
         </div>
-        {/* Opens the normal room view — as a member you resume; games
-            you don't belong to still open their lobby/spectate page. */}
-        <button className="aa-btn aa-btn--primary" onClick={() => onEnterRoom(game.id)}>
-          Open game →
-        </button>
-      </div>
+        <span className="ao-game-head__open">
+          <button className="ao-btn" disabled={loading} onClick={() => void load()}>
+            {loading ? 'Refreshing…' : 'Refresh'}
+          </button>{' '}
+          {/* Opens the normal room view — as a member you resume; games
+              you don't belong to still open their lobby/spectate page. */}
+          <button className="ao-btn ao-btn--gold" onClick={() => onEnterRoom(game.id)}>Open game →</button>
+        </span>
+      </header>
 
-      <section>
-        <AlertsFeed data={data} idleFactions={idleFactions} />
-      </section>
+      <nav className="ao-tabs" role="tablist" aria-label="Game sections">
+        {GAME_TABS.map(t => (
+          <button
+            key={t.id}
+            role="tab"
+            aria-selected={tab === t.id}
+            className={`ao-tab${tab === t.id ? ' is-active' : ''}`}
+            onClick={() => setTab(t.id)}
+          >{t.label}</button>
+        ))}
+      </nav>
 
-      <section>
-        <div className="aa-section-title">
-          EMPIRE INCOME OVER TIME
-          <span className="aa-metric-tabs">
-            {METRICS.map(m => (
-              <button
-                key={m}
-                className={`aa-chip ${metric === m ? 'is-active' : ''}`}
-                onClick={() => setMetric(m)}
-              >{METRIC_LABEL[m] ?? m}</button>
-            ))}
-          </span>
+      {tab === 'story' && (story
+        ? <GameStory data={story} onOpenTab={setTab} />
+        : <div className="ao-loading">Loading the story of this game…</div>)}
+
+      {tab === 'economy' && (
+        <div className="ao-stack">
+          <Panel
+            title="Empire income over time"
+            hint="Each empire’s economy as the match ran. Lines fanning apart early is the runaway problem; lines staying bunched is a close game."
+            tools={(
+              <div className="ao-seg" role="group" aria-label="Resource">
+                {METRICS.map(m => (
+                  <button key={m} className={`ao-seg__opt${metric === m ? ' is-active' : ''}`} onClick={() => setMetric(m)}>
+                    {METRIC_LABEL[m] ?? m}
+                  </button>
+                ))}
+              </div>
+            )}
+          >
+            <div className="ao-seg" role="group" aria-label="View" style={{ marginBottom: 10 }}>
+              <button className={`ao-seg__opt${mode === 'stock' ? ' is-active' : ''}`} onClick={() => setMode('stock')}>Stockpile</button>
+              <button className={`ao-seg__opt${mode === 'flow' ? ' is-active' : ''}`} onClick={() => setMode('flow')}>Per-tick flow</button>
+              <button className={`ao-seg__opt${mode === 'share' ? ' is-active' : ''}`} onClick={() => setMode('share')}>Share of economy</button>
+            </div>
+            <YieldChart curves={data.curves} factions={factions} metric={metric} mode={mode} idleFactionIds={idleFactions} />
+          </Panel>
+
+          <Panel title="Empires right now" hint="Live standings: what each empire owns and is worth.">
+            <div className="ao-scroll">
+              <table className="ao-table">
+                <thead>
+                  <tr>
+                    <th>Empire</th><th>Player</th><th className="num">Metal</th><th className="num">Credits</th>
+                    <th className="num">Science</th><th className="num">Ships</th><th className="num">Colonies</th>
+                    <th className="num">Techs</th><th className="num">Rep</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {factions.map(f => (
+                    <tr key={f.id} className={f.status !== 'active' ? 'aa-row--dead' : ''}>
+                      <td><span className="gs-dot gs-dot--sm" style={{ background: f.color }} />{f.name}</td>
+                      <td>{f.player_name ?? 'AI'}</td>
+                      <td className="num">{f.metal}</td><td className="num">{f.gold}</td><td className="num">{f.science}</td>
+                      <td className="num">{f.ships}</td><td className="num">{f.settlements}</td>
+                      <td className="num">{f.techs_completed}</td><td className="num">{f.reputation}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Panel>
+
+          <Panel title="Is someone running away with it?" hint="The leader’s share of all economy and fleet in the game. Climbing past roughly 40% usually means the match is already decided.">
+            <RunawayChart data={data} />
+          </Panel>
+          <Panel title="Where the money goes" hint="Total metal and credits spent on each thing: what players actually invest in versus what you expected.">
+            <SpendTable data={data} />
+          </Panel>
+          <Panel title="Research speed" hint="How fast each empire climbed the tech tree, weighted by what each level costs.">
+            <TechPace data={data} />
+          </Panel>
         </div>
-        <div className="aa-section-note">
-          Each empire’s income per tick as the match ran. Lines fanning
-          apart early is the runaway problem; lines staying bunched is a
-          close game.
+      )}
+
+      {tab === 'combat' && (
+        <div className="ao-stack">
+          <Panel title="Who fought whom" hint="Every battle, who won, and what it cost both sides.">
+            <CombatLedger data={data} />
+          </Panel>
+          <Panel title="Battles" hint="One entry per engagement, with playback: what actually happened at a world, at the grain a player remembers it.">
+            <BattleReview gameId={gameId} />
+          </Panel>
+          <Panel title="How fights resolve" hint="Shots fired, hits landed and damage wasted on already-dying ships. This is where combat balance is judged.">
+            <CombatV2Panel data={data} />
+          </Panel>
+          <Panel title="Which hulls get built, and die" hint="Built versus destroyed per hull class. A class nobody builds is mispriced; one that always dies is underpowered.">
+            <ShipClassBars data={data} />
+          </Panel>
+          <Panel title="Which ship builds survive" hint="Weapon fits on ships still alive versus ones that died. A fit that only appears in the “lost” column is a trap.">
+            <LoadoutTable data={data} />
+          </Panel>
+          <Panel
+            title="Shooting in flight"
+            hint={<>Every shot transit combat has fired. <b>Predicted</b> is the average chance the aim maths gave those shots, <b>actual</b> is how many landed; a gap means the arithmetic and the dice disagree.</>}
+          >
+            <TransitCombat data={data} />
+          </Panel>
+          <Panel title="Standout performances" hint="Ships and captains that outperformed — mostly for flavour and Herald stories.">
+            <CombatAwards data={data} />
+          </Panel>
+          <Panel title="Combat detail" hint="Per-ship breakdown behind the summaries above.">
+            <CombatDeepDive data={data} />
+          </Panel>
         </div>
-        <div className="aa-metric-tabs" style={{ marginBottom: 8 }}>
-          <button className={`aa-chip ${mode === 'stock' ? 'is-active' : ''}`} onClick={() => setMode('stock')}>stockpile</button>
-          <button className={`aa-chip ${mode === 'flow' ? 'is-active' : ''}`} onClick={() => setMode('flow')}>per-tick flow</button>
-          <button className={`aa-chip ${mode === 'share' ? 'is-active' : ''}`} onClick={() => setMode('share')}>share of economy</button>
+      )}
+
+      {tab === 'politics' && (
+        <div className="ao-stack">
+          <Panel title="Who turns up to vote" hint="Bills proposed, votes cast, and how often players simply never voted.">
+            <SenateTable data={data} />
+          </Panel>
+          <Panel title="Deals between players" hint="Offers made, accepted and refused, plus standing trade routes.">
+            <TradeTable data={data} />
+          </Panel>
         </div>
-        <YieldChart curves={data.curves} factions={factions} metric={metric} mode={mode} idleFactionIds={idleFactions} />
-      </section>
+      )}
 
-      <section>
-        <div className="aa-section-title">EMPIRES RIGHT NOW</div>
-        <div className="aa-section-note">Live standings in this match: what each empire owns and is worth.</div>
-        <div className="aa-scroll-x">
-          <table className="aa-table">
-            <thead>
-              <tr>
-                <th>Faction</th><th>Player</th><th>Metal</th><th>Credits</th>
-                <th>Science</th><th>Ships</th><th>Cities</th><th>Techs</th><th>Rep</th>
-              </tr>
-            </thead>
-            <tbody>
-              {factions.map(f => (
-                <tr key={f.id} className={f.status !== 'active' ? 'aa-row--dead' : ''}>
-                  <td><span className="aa-dot" style={{ background: f.color }} />{f.name}</td>
-                  <td>{f.player_name ?? 'AI'}</td>
-                  <td>{f.metal}</td><td>{f.gold}</td><td>{f.science}</td>
-                  <td>{f.ships}</td><td>{f.settlements}</td><td>{f.techs_completed}</td>
-                  <td>{f.reputation}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {tab === 'engagement' && (
+        <div className="ao-stack">
+          <section className="ao-panel">
+            <AlertsFeed data={data} idleFactions={idleFactions} />
+          </section>
+          <Panel title="What players did in this game" hint="How many times each action was taken. The shape tells you what this match was actually about.">
+            <UsageBars usage={data.usage} />
+          </Panel>
+          <Panel title="Who showed up, and how often" hint="Per player in this match: days active and time spent.">
+            <TimelineStrips data={data} />
+          </Panel>
+          <Panel title="Opened it vs actually used it" hint="How many players opened a menu, and how many then did the thing it exists for. A big gap means the screen is confusing.">
+            <Funnels usage={data.usage} />
+          </Panel>
+          <Panel title="What they were doing when they quit" hint="The last thing a player did before going quiet for 30 minutes or more. Repeat offenders are where people give up.">
+            <Dropoff rows={data.dropoff} />
+          </Panel>
+          <Panel title="Time spent per player" hint="Last 14 days, this game only.">
+            <div className="ao-scroll">
+              <table className="ao-table">
+                <thead>
+                  <tr>
+                    <th>Player</th><th>Empire</th><th className="num">Logins</th><th className="num">Time</th>
+                    <th className="num">Active days</th><th className="num">Actions</th><th>Last seen</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.engagement.map(e => (
+                    <tr key={e.id}>
+                      <td>{e.display_name}</td>
+                      <td><span className="gs-dot gs-dot--sm" style={{ background: e.color }} />{e.faction_name}</td>
+                      <td className="num">{e.sessions_14d}</td>
+                      <td className="num">{playTime(e.minutes_14d)}</td>
+                      <td className="num">{e.active_days_14d}</td>
+                      <td className="num">{e.actions_14d}</td>
+                      <td>{ago(now, e.last_seen_ms)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Panel>
         </div>
-      </section>
-
-      <section>
-        <div className="aa-section-title">WHAT PLAYERS DID IN THIS GAME</div>
-        <div className="aa-section-note">How many times each action was taken. The shape tells you what this match was actually about.</div>
-        <UsageBars usage={data.usage} />
-      </section>
-
-      {/* The two client-performance sections (click-to-pixels latency and
-          frame rate) were removed on 2026-08-11. They were engineering
-          diagnostics living in a dashboard about player behaviour, and
-          their events were also the second most common "action" in the
-          database — so they skewed every usage chart while answering a
-          question nobody was asking here. The perf_samples /
-          perf_heartbeats tables and their endpoints are untouched; the
-          data is still there if a slow-client hunt ever needs it. */}
-
-      <section>
-        <div className="aa-section-title">IS SOMEONE RUNNING AWAY WITH IT?</div>
-        <div className="aa-section-note">The leader’s share of all economy and fleet in the game. Climbing past roughly 40% usually means the match is already decided.</div>
-        <RunawayChart data={data} />
-      </section>
-
-      <section>
-        <div className="aa-section-title">WHERE THE MONEY GOES</div>
-        <div className="aa-section-note">Total metal and credits spent on each thing. Shows what players actually invest in versus what you expected.</div>
-        <SpendTable data={data} />
-      </section>
-
-      <section>
-        <div className="aa-section-title">WHO SHOWED UP, AND HOW OFTEN</div>
-        <div className="aa-section-note">Per player in this match: logins, days active, actions taken and time spent.</div>
-        <TimelineStrips data={data} />
-      </section>
-
-      <section>
-        <div className="aa-section-title">RESEARCH SPEED</div>
-        <div className="aa-section-note">How fast each empire climbed the tech tree, weighted by what each level costs.</div>
-        <TechPace data={data} />
-      </section>
-
-      <section>
-        <div className="aa-section-title">WHO FOUGHT WHOM</div>
-        <div className="aa-section-note">Every battle, who won, and what it cost both sides.</div>
-        <CombatLedger data={data} />
-      </section>
-
-      <section>
-        <div className="aa-section-title">HOW FIGHTS RESOLVE</div>
-        <div className="aa-section-note">Shots fired, hits landed and damage wasted on already-dying ships. This is where combat balance is judged.</div>
-        <CombatV2Panel data={data} />
-      </section>
-
-      <section>
-        <div className="aa-section-title">STANDOUT PERFORMANCES</div>
-        <div className="aa-section-note">Individual ships and captains that outperformed — mostly for flavour and Herald stories.</div>
-        <CombatAwards data={data} />
-      </section>
-
-      <section>
-        <div className="aa-section-title">COMBAT DETAIL</div>
-        <div className="aa-section-note">Per-ship breakdown behind the battle summaries above.</div>
-        <CombatDeepDive data={data} />
-      </section>
-
-      <section>
-        <div className="aa-section-title">SHOOTING IN FLIGHT</div>
-        <div className="aa-section-note">Every shot transit combat has fired, from game_transit_shots. The question this answers is whether the model is honest: <b>predicted</b> is the average chance the aim maths gave those shots, <b>actual</b> is how many landed. A gap between them means the arithmetic and the dice disagree.</div>
-        <TransitCombat data={data} />
-      </section>
-
-      <section>
-        <div className="aa-section-title">WHICH SHIP BUILDS SURVIVE</div>
-        <div className="aa-section-note">Weapon fits on ships still alive versus ones that died. A fit that only appears in the “lost” column is a trap.</div>
-        <LoadoutTable data={data} />
-      </section>
-
-      <section>
-        <div className="aa-section-title">WHICH HULLS GET BUILT — AND DIE</div>
-        <div className="aa-section-note">Built versus destroyed per hull class. A class nobody builds is mispriced; one that always dies is underpowered.</div>
-        <ShipClassBars data={data} />
-      </section>
-
-      <section>
-        <div className="aa-section-title">WHO TURNS UP TO VOTE</div>
-        <div className="aa-section-note">Bills proposed, votes cast, and how often players simply never voted.</div>
-        <SenateTable data={data} />
-      </section>
-
-      <section>
-        <div className="aa-section-title">DEALS BETWEEN PLAYERS</div>
-        <div className="aa-section-note">Offers made, accepted and refused, plus standing trade routes.</div>
-        <TradeTable data={data} />
-      </section>
-
-      <section>
-        <div className="aa-section-title">OPENED IT VS ACTUALLY USED IT</div>
-        <div className="aa-section-note">How many players opened a menu, and how many then did the thing it exists for. A big gap means the screen is confusing.</div>
-        <Funnels usage={data.usage} />
-      </section>
-
-      <section>
-        <div className="aa-section-title">WHAT THEY WERE DOING WHEN THEY QUIT</div>
-        <div className="aa-section-note">The last thing a player did before going quiet. Repeat offenders are where people give up.</div>
-        <Dropoff rows={data.dropoff} />
-      </section>
-
-      <section>
-        <div className="aa-section-title">TIME SPENT PER PLAYER</div>
-        <div className="aa-section-note">Total time in game, and how that splits across sessions.</div>
-        <table className="aa-table">
-          <thead>
-            <tr><th>Player</th><th>Faction</th><th>Logins·14d</th><th>Time in game·14d</th><th>Active days</th><th>Actions·14d</th><th>Last seen</th></tr>
-          </thead>
-          <tbody>
-            {data.engagement.map(e => (
-              <tr key={e.id}>
-                <td>{e.display_name}</td>
-                <td><span className="aa-dot" style={{ background: e.color }} />{e.faction_name}</td>
-                <td>{e.sessions_14d}</td>
-                <td>{playTime(e.minutes_14d)}</td>
-                <td>{e.active_days_14d}</td>
-                <td>{e.actions_14d}</td>
-                <td>{ago(now, e.last_seen_ms)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </section>
-
-      {/* Battles — one section per engagement, with playback. The records
-          behind this are the first combat data kept at the grain a player
-          remembers a fight at, so this is where you go to ask what
-          actually happened at a world rather than how the totals moved. */}
-      <section>
-        <h3 className="aa-h3">Battles</h3>
-        <BattleReview gameId={gameId} />
-      </section>
+      )}
     </div>
   );
 }
