@@ -106,6 +106,14 @@ export const GroupActionBar: React.FC = () => {
   // A move needs a hull that isn't already committed to a burn — same
   // eligibility rule the Fleet panel's bulk transfer uses.
   const movable = ships.filter(s => !s.transit && !s.plannedTransit);
+  // Hulls already flying a route the server knows: an order for them is
+  // a LEG ON THE END of that route (useBulkChain appends), not a new
+  // burn. Counting only `movable` greyed SEND out on any group that was
+  // all in flight (reported on mobile, 2026-10-05). A hull with only an
+  // uncommitted local preview (plannedTransit, no transit) is in neither
+  // list: its route waits on that ship's own COMMIT.
+  const underWay = ships.filter(s => !!s.transit);
+  const routable = [...movable, ...underWay];
 
   // FORM FLEET from the selection. The server's rules, mirrored here so
   // the button is only drawn when it can actually succeed:
@@ -153,26 +161,38 @@ export const GroupActionBar: React.FC = () => {
   const groupMove = useCallback((bodyId: string) => {
     const body = gameState.bodies.find(b => b.id === bodyId);
     const targets = movable.map(s => s.id);
-    if (targets.length === 0) {
+    const flying = underWay.map(s => s.id);
+    if (targets.length === 0 && flying.length === 0) {
       setNotice('No ship in the group can start a new burn');
       return;
     }
-    const res = bulkTransfer(targets, bodyId, (msg, soFar, total) => {
-      setNotice(`${soFar} of ${total} rejected — ${msg}`);
-    });
-    if (res.issued === 0) {
+    const res = targets.length > 0
+      ? bulkTransfer(targets, bodyId, (msg, soFar, total) => {
+          setNotice(`${soFar} of ${total} rejected — ${msg}`);
+        })
+      : { issued: 0, unplannable: 0 };
+    // A one-leg chain is exactly a SEND, and the chain path is the one
+    // that knows how to put a leg on the end of a route in flight.
+    const after = flying.length > 0
+      ? bulkChain(flying, [{ bodyId, wait: 0 }], (msg) => setNotice(msg))
+      : { issued: 0, unplannable: 0, truncated: 0 };
+    const issued = res.issued + after.issued;
+    const unplannable = res.unplannable + after.unplannable;
+    if (issued === 0) {
       setNotice('Could not plan a burn for any ship in the group');
     } else {
       setNotice(
-        `${plural(res.issued, 'ship')} bound for ${body?.name ?? 'target'}`
-        + (res.unplannable > 0 ? ` · ${res.unplannable} couldn't` : ''),
+        `${plural(issued, 'ship')} bound for ${body?.name ?? 'target'}`
+        + (after.issued > 0 && res.issued > 0 ? ` · ${after.issued} after their current leg` : '')
+        + (after.issued > 0 && res.issued === 0 ? ' after their current leg' : '')
+        + (unplannable > 0 ? ` · ${unplannable} couldn't` : ''),
       );
       // Reset the picker so the same destination can't be re-fired by a
       // stray second click on SEND after the group has already launched.
       setDest('');
       setShowSend(false);
     }
-  }, [bulkTransfer, gameState.bodies, movable]);
+  }, [bulkTransfer, bulkChain, gameState.bodies, movable, underWay]);
 
   const done = useCallback(() => {
     clearShipSelection();
@@ -322,7 +342,7 @@ export const GroupActionBar: React.FC = () => {
   };
 
   const applyChain = () => {
-    const targets = movable.map(s => s.id);
+    const targets = routable.map(s => s.id);
     if (targets.length === 0 || chain.length === 0) return;
     const res = bulkChain(targets, chain, (msg) => setNotice(msg));
     if (res.issued === 0) {
@@ -417,13 +437,15 @@ export const GroupActionBar: React.FC = () => {
       </select>
       <button
         className="group-bar__btn group-bar__btn--primary"
-        disabled={!dest || movable.length === 0}
+        disabled={!dest || routable.length === 0}
         onClick={() => { if (dest) groupMove(dest); }}
-        title={movable.length === 0
-          ? 'Every ship in the group is already on a burn'
-          : `Send ${plural(movable.length, 'ship')}`}
+        title={routable.length === 0
+          ? 'No ship in the group can take an order yet'
+          : underWay.length > 0
+            ? `Send ${plural(routable.length, 'ship')} (${underWay.length} after their current leg)`
+            : `Send ${plural(routable.length, 'ship')}`}
       >
-        SEND {movable.length}
+        SEND {routable.length}
       </button>
     </div>
   );
@@ -452,19 +474,21 @@ export const GroupActionBar: React.FC = () => {
             steps={chain}
             onChange={setChain}
             bodies={gameState.bodies}
-            note={movable.length === 0
-              ? 'Every ship in the group is already on a burn.'
-              : `Each of the ${plural(movable.length, 'movable ship')} flies this from its own orbit.`}
+            note={routable.length === 0
+              ? 'No ship in the group can take an order yet.'
+              : underWay.length > 0
+                ? `Each ship flies this from its own orbit; the ${underWay.length} under way start once they land.`
+                : `Each of the ${plural(routable.length, 'ship')} flies this from its own orbit.`}
           />
           <button
             className="group-bar__btn group-bar__btn--primary"
-            disabled={chain.length === 0 || movable.length === 0}
+            disabled={chain.length === 0 || routable.length === 0}
             onClick={applyChain}
             title={chain.length === 0
               ? 'Add at least one leg'
-              : `Launch ${plural(movable.length, 'ship')} on a ${chain.length}-leg route`}
+              : `Launch ${plural(routable.length, 'ship')} on a ${chain.length}-leg route`}
           >
-            LAUNCH {movable.length} · {chain.length} LEG{chain.length === 1 ? '' : 'S'}
+            LAUNCH {routable.length} · {chain.length} LEG{chain.length === 1 ? '' : 'S'}
           </button>
         </div>
       )}
@@ -509,12 +533,12 @@ export const GroupActionBar: React.FC = () => {
                 + {plural(shipsThere.length, 'SHIP')} HERE
               </button>
             )}
-            {movable.length > 0 && (
+            {routable.length > 0 && (
               <button className="group-bar__btn group-bar__btn--primary" onClick={sendThere}>
-                SEND {movable.length} HERE
+                SEND {routable.length} HERE
               </button>
             )}
-            {shipsThere.length === 0 && movable.length === 0 && (
+            {shipsThere.length === 0 && routable.length === 0 && (
               <span className="group-bar__sub">Nothing to do here</span>
             )}
             <button
@@ -530,7 +554,7 @@ export const GroupActionBar: React.FC = () => {
             <button
               className={`group-bar__btn${showSend ? ' group-bar__btn--active' : ''}`}
               onClick={() => setShowSend(v => !v)}
-              disabled={movable.length === 0}
+              disabled={routable.length === 0}
             >SEND…</button>
             {formFleetButton}
             {sameClassButton}

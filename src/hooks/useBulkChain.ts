@@ -86,16 +86,39 @@ export function useBulkChain() {
         // fixed (fleetPace.ts). Loose hulls fly at their own rating.
         const accel = fleetEngineAccel(ship, gameState.ships, gameState.factions, gameState.factionTech);
 
+        // A HULL UNDER WAY CARRIES ON. Its legs go on the END of the route
+        // it is already flying, planned from where that route parks it --
+        // the same start the single-ship ADD LEG uses (enqueueTorchTransfer:
+        // the last queued leg, else the live burn). Groups in flight used
+        // to be refused outright: SEND greyed out on a selection where
+        // every hull was under way (reported on mobile, 2026-10-05).
+        const lastLeg = ship.transit
+          ? (ship.queuedTransits?.length
+            ? ship.queuedTransits[ship.queuedTransits.length - 1]
+            : ship.transit.currentTransfer)
+          : null;
         const tick = gameState.currentTick;
-        const legs = planChainLegs({
-          startPos: orbitWorldPos(ship.orbit, tick, gameState.bodies),
-          startVel: orbitWorldVelocity(ship.orbit, tick, gameState.bodies),
-          startTick: tick,
-          parkedAtBodyId: ship.orbit?.parentBodyId ?? null,
-          steps,
-          bodies: gameState.bodies,
-          accel,
-        });
+        const legs = planChainLegs(lastLeg
+          ? {
+              // planChainLegs resamples a parked hull's velocity from its
+              // body at the departure tick, so the zero here is never used.
+              startPos: lastLeg.interceptPos,
+              startVel: { x: 0, y: 0 },
+              startTick: lastLeg.arriveTick,
+              parkedAtBodyId: lastLeg.targetBodyId,
+              steps,
+              bodies: gameState.bodies,
+              accel,
+            }
+          : {
+              startPos: orbitWorldPos(ship.orbit, tick, gameState.bodies),
+              startVel: orbitWorldVelocity(ship.orbit, tick, gameState.bodies),
+              startTick: tick,
+              parkedAtBodyId: ship.orbit?.parentBodyId ?? null,
+              steps,
+              bodies: gameState.bodies,
+              accel,
+            });
 
         if (legs.length === 0) { result.unplannable += 1; continue; }
         if (legs.length < steps.length) result.truncated += 1;
@@ -110,7 +133,9 @@ export function useBulkChain() {
           launch: launchFromPlan(leg),
           dvPrograde: leg.totalDv,
           fuelCost: Math.round(leg.totalDv * 10),
-          replace: i === 0,
+          // Never replace a route already in flight: that would cancel
+          // the burn the hull is in the middle of.
+          replace: !lastLeg && i === 0,
         }));
       }
       if (mpActions && intents.length > 0) {
