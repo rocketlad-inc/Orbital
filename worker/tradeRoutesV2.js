@@ -17,6 +17,7 @@
 import { projectRoute, holdCapFor, CARGO_CAP } from './routeMath.js';
 import { maySupplySite, excludedFundersOf, constructionPartners } from './megastructures.js';
 import { factionTechLevels, gatingEnabled, hasFeature } from './researchUnlocks.js';
+import { holdLanding, landHoldStatement } from './landHold.js';
 
 const GAME_ID_RE  = /^[A-Za-z0-9_-]{6,32}$/;
 const ROUTE_ID_RE = /^[A-Za-z0-9_:.-]{6,80}$/;
@@ -121,7 +122,7 @@ async function validateStops(env, gameId, factionId, raw) {
       : s.action === 'mine' ? 'mine' : 'pickup';
     if (!BODY_ID_RE.test(bodyId)) return { error: err(400, 'bad_request', `invalid body id at stop ${i + 1}`) };
     if (bodyId === `${gameId}:sol`) {
-      return { error: err(409, 'sol_is_dyson', 'Sol is the Dyson supply line — lay that route from the sphere panel') };
+      return { error: err(409, 'sol_is_dyson', "the Dyson Sphere has its own supply line — open the Sun's world menu and use START SUPPLY (or a freighter's cargo tab)") };
     }
     if (i > 0 && stops[i - 1].body_id === bodyId) {
       return { error: err(400, 'duplicate_stop', `stops ${i} and ${i + 1} are the same body`) };
@@ -839,11 +840,11 @@ async function handleRemoveShip(req, env, { session, params }) {
     // delivered, the same rule cancel follows.
     const cf = Number(crewRow.cargo_fuel ?? 0), cm = Number(crewRow.cargo_metal ?? 0);
     const cg = Number(crewRow.cargo_gold ?? 0), cs = Number(crewRow.cargo_science ?? 0);
+    // ...unless it is parked at its own world (worker/landHold.js).
     if (cf + cm + cg + cs > 0) {
-      stmts.push(env.DB.prepare(
-        `UPDATE game_ships SET cargo_fuel = cargo_fuel + ?, cargo_metal = cargo_metal + ?,
-                cargo_gold = cargo_gold + ?, cargo_science = cargo_science + ? WHERE id = ?`,
-      ).bind(cf, cm, cg, cs, shipId));
+      const landing = await holdLanding(env, gameId, shipId);
+      stmts.push(landHoldStatement(env, shipId, landing,
+        { fuel: cf, metal: cm, gold: cg, science: cs }));
     }
     const survivors = (await env.DB
       .prepare(`SELECT c.ship_id FROM game_trade_route_ships c

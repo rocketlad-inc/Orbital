@@ -12,7 +12,10 @@
 // REAL handlers (actions.js route table, faked session) and the REAL
 // room.js resolveTick, and assert the whole lifecycle:
 //
-//   cancel  → cargo moves route → ship, pool untouched
+//   cancel  → cargo moves route → ship, pool untouched (mid-flight)
+//   cancel parked at its OWN world → the load goes back there instead:
+//             a raw world's stockpile, or the pool at a terraformed one
+//             (nothing teleports; CMDR Poopypants, 2026-10-05)
 //   unload  → manual delivery: ship (+ own-route) cargo → pool, once
 //   re-route→ the hold folds into the new route and the machine
 //             DELIVERS it at the new destination (the automatic half)
@@ -126,6 +129,12 @@ async function main() {
         status, kind, cargo_fuel, cargo_metal, cargo_gold, cargo_science, created_at_tick)
      VALUES ('r1', ?, ?, 'ship_A1', ?, 'luna', 'outbound', 'logistics', 0, 120, 80, 0, 0)`,
   ).bind(G, A.id, A.capital_body_id).run();
+  // MID-HAUL means in flight. (This fixture used to leave the hull
+  // parked at home, which is not mid-haul -- and is now a legal drop.)
+  await DB.prepare(
+    `INSERT INTO game_ship_nodes (id, game_id, ship_id, sequence, anchor_kind, scheduled_t, fuel_cost,
+                                  status, target_body_id, arrival_at_tick)
+     VALUES ('fly1', ?, 'ship_A1', 0, 'absolute', 0, 0, 'in_transit', ?, 999)`).bind(G, h.B.capital_body_id).run();
 
   const before = await pool(A.id);
   const res1 = await readJson(await callRoute(env, routes, 'DELETE', `/api/games/${G}/trade-routes/r1`, 'uA', null));
@@ -140,6 +149,8 @@ async function main() {
     JSON.stringify(hd));
   const r1 = await DB.prepare("SELECT cargo_metal, cancelled_at_tick FROM game_trade_routes WHERE id='r1'").first();
   check('cancel: route dead with zeroed cargo', r1.cancelled_at_tick != null && Number(r1.cargo_metal) === 0);
+  // It lands (back home) before the manual unload below.
+  await DB.prepare("DELETE FROM game_ship_nodes WHERE id = 'fly1'").run();
 
   // ---- 2. UNLOAD is the manual delivery ----------------------------
   const res2 = await readJson(await callRoute(env, routes, 'POST', `/api/games/${G}/ships/ship_A1/unload-hold`, 'uA', null));
@@ -215,6 +226,12 @@ async function main() {
 
   // ---- 5. Piracy loots the ship hold -------------------------------
   const h5 = await seed('5');
+  // Combat needs a declared war since peace became the default.
+  {
+    const [fa, fb] = [h5.A.id, h5.B.id].sort();
+    await h5.DB.prepare(`INSERT INTO game_wars (id, game_id, faction_a, faction_b, declared_by, declared_at_tick)
+                         VALUES ('w5', ?, ?, ?, ?, 0)`).bind(h5.G, fa, fb, h5.B.id).run();
+  }
   // A's freighter with hold cargo parked at B's capital next to B's gun.
   await h5.DB.prepare("UPDATE game_ships SET parent_body_id = ?, cargo_metal = 77, hp = 5 WHERE id = 'ship_A1'")
     .bind(h5.B.capital_body_id).run();
@@ -227,6 +244,55 @@ async function main() {
     `B metal ${pB.metal} → ${pB2.metal} (expected +77)`);
   check('dead hull holds nothing (no double-loot)', Number(shipRow.cargo_metal) === 0,
     String(shipRow.cargo_metal));
+
+  // ---- 6. Cancel while PARKED at your own world ---------------------
+  // Raw world: the load goes back into the station's stockpile it was
+  // drawn from, not into a hold floating in orbit.
+  const h6 = await seed('6');
+  const MARS6 = `${h6.G}:mars`;
+  await h6.DB.prepare('UPDATE game_bodies SET terraformed_at_tick = NULL WHERE id = ?').bind(MARS6).run();
+  {
+    const src = await h6.DB.prepare('SELECT id FROM game_settlements WHERE game_id = ? AND owner_faction_id = ? LIMIT 1')
+      .bind(h6.G, h6.A.id).first();
+    const cols = (await h6.DB.prepare('PRAGMA table_info(game_settlements)').all()).results.map(x => x.name);
+    const over = { id: "'st_raw'", body_id: `'${MARS6}'`, type: "'station'", stockpile_metal: '0', stockpile_gold: '0',
+                   stockpile_fuel: '0', stockpile_science: '0', destroyed_at_tick: 'NULL' };
+    await h6.DB.prepare(`INSERT INTO game_settlements (${cols.join(', ')})
+                         SELECT ${cols.map(c => over[c] ?? c).join(', ')} FROM game_settlements WHERE id = ?`).bind(src.id).run();
+  }
+  await h6.DB.prepare("UPDATE game_ships SET parent_body_id = ? WHERE id = 'ship_A1'").bind(MARS6).run();
+  await h6.DB.prepare(
+    `INSERT INTO game_trade_routes
+       (id, game_id, owner_faction_id, ship_id, origin_body_id, dest_body_id,
+        status, kind, cargo_fuel, cargo_metal, cargo_gold, cargo_science, created_at_tick)
+     VALUES ('r6', ?, ?, 'ship_A1', ?, ?, 'outbound', 'logistics', 0, 30, 20, 0, 0)`,
+  ).bind(h6.G, h6.A.id, MARS6, h6.A.capital_body_id).run();
+  const p6 = await h6.pool(h6.A.id);
+  const res6 = await readJson(await callRoute(h6.env, h6.routes, 'DELETE', `/api/games/${h6.G}/trade-routes/r6`, 'uA', null));
+  const st6 = await h6.DB.prepare("SELECT stockpile_metal, stockpile_gold FROM game_settlements WHERE id = 'st_raw'").first();
+  const hd6 = await h6.hold('ship_A1');
+  const p6b = await h6.pool(h6.A.id);
+  check('cancel parked at a raw world: the load goes back into its stockpile',
+    res6.ok === true && Number(st6?.stockpile_metal) === 30 && Number(st6?.stockpile_gold) === 20,
+    JSON.stringify({ res6, st6 }));
+  check('...and not into the hold or the pool',
+    Number(hd6.cargo_metal) === 0 && p6b.metal === p6.metal, JSON.stringify({ hd6, pool: [p6.metal, p6b.metal] }));
+
+  // Terraformed home (the loading dock): a cancel there is a dropoff.
+  const h7 = await seed('7');
+  await h7.DB.prepare(
+    `INSERT INTO game_trade_routes
+       (id, game_id, owner_faction_id, ship_id, origin_body_id, dest_body_id,
+        status, kind, cargo_fuel, cargo_metal, cargo_gold, cargo_science, created_at_tick)
+     VALUES ('r7', ?, ?, 'ship_A1', ?, 'luna', 'outbound', 'logistics', 0, 40, 10, 0, 0)`,
+  ).bind(h7.G, h7.A.id, h7.A.capital_body_id).run();
+  const p7 = await h7.pool(h7.A.id);
+  const res7 = await readJson(await callRoute(h7.env, h7.routes, 'DELETE', `/api/games/${h7.G}/trade-routes/r7`, 'uA', null));
+  const p7b = await h7.pool(h7.A.id);
+  const hd7 = await h7.hold('ship_A1');
+  check('cancel parked at your terraformed world: the load drops into the pool',
+    res7.ok === true && p7b.metal === p7.metal + 40 && p7b.gold === p7.gold + 10 && Number(hd7.cargo_metal) === 0,
+    JSON.stringify({ res7, pool: [p7.metal, p7b.metal], hd7 }));
 
   console.log(bad === 0 ? '\nALL PASS' : `\n${bad} FAILURE(S)`);
   process.exit(bad === 0 ? 0 : 1);

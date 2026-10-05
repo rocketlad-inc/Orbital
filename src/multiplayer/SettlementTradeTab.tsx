@@ -342,6 +342,11 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
         // Carriers ACROSS the whole deal: a folded lane is one route, so
         // counting this card's carriers is counting the lane's crew.
         const atCarrierCap = carriers.length >= carrierCap;
+        // A SUPPLY RUN (terraform, Dyson sphere, an agreement leg) keeps
+        // its hull and cargo on the route row: it flies ONE pinned
+        // freighter, by design, and a second would sit idle. The button
+        // offered one anyway and the server refused (single_carrier).
+        const pinnedRun = !isWalker && carriers.length >= 1;
         // Which side is short. A folded lane loads from BOTH treasuries
         // depending on the end it is at, so naming "you" unconditionally
         // would blame the wrong player half the time; the starving leg's
@@ -560,7 +565,7 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                 // server answer with a 409. The composer already states
                 // it at route creation; this button, which is where a
                 // player actually adds the second hull, did not.
-                disabled={busyId === r.id || freeFreighters.length === 0 || atCarrierCap}
+                disabled={busyId === r.id || freeFreighters.length === 0 || atCarrierCap || pinnedRun}
                 // NAME THE TECH AND THE TRACK AS THE PLAYER SEES THEM.
                 // This used to say "advance Logistics", which is neither:
                 // the tech is Convoy Logistics and the track is whatever
@@ -569,7 +574,9 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                 // "Society 7" until the row moved to Propulsion 4.
                 // requirementLabel resolves the track's DISPLAY name, so
                 // 'industry' still reads as SOCIETY where it applies.
-                title={atCarrierCap
+                title={pinnedRun
+                  ? 'A supply run flies one freighter. For more hauling, open another route to the same place.'
+                  : atCarrierCap
                   ? `Your research allows ${carrierCap} freighter${carrierCap === 1 ? '' : 's'} `
                     + (carrierCap < 2
                       ? `on a route. ${requirementLabel('trade.convoy2')} raises it to 2.`
@@ -764,7 +771,9 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                           <span className="stt-crewdoing">{ctx.doing}</span>
                         </span>
                       </span>
-                      <button
+                      {/* A supply run's pinned freighter IS the route: it
+                          comes off by cancelling, not by this button. */}
+                      {(isWalker || s.role === 'guard') && <button
                         type="button"
                         className="stt-crewx"
                         disabled={busyId === r.id}
@@ -773,7 +782,7 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                         onClick={() => unassign(r.id, s.shipId)}
                       >
                         ✕
-                      </button>
+                      </button>}
                     </span>
                   );
                 })}

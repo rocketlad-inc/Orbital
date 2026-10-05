@@ -1970,36 +1970,6 @@ const WmFleet: React.FC<{
 // ============================================================
 const WmTerraformCard: React.FC<{ body: Body; isMine: boolean }> = ({ body, isMine }) => {
   const { gameState } = useGameContext();
-  const mpActions = useMultiplayerActions();
-  // Assign-freighter state (hooks stay above the early returns).
-  const [pickShip, setPickShip] = useState('');
-  const [pickOrigin, setPickOrigin] = useState('');
-  const [assignBusy, setAssignBusy] = useState(false);
-  const [assignMsg, setAssignMsg] = useState<string | null>(null);
-
-  // Your freighters, most-assignable first: idle at a body beats
-  // in-transit beats already-on-a-route (picking a routed one simply
-  // replaces its route — the server swaps atomically).
-  // Employed = ANY role on ANY route. Mapping r.shipId counted only
-  // primaries, so a second carrier or a guard sorted as "idle" and
-  // offered itself for reassignment as though it had nothing to do.
-  const routedShips = useMemo(
-    () => employedShipIds(gameState.tradeRoutes ?? []),
-    [gameState.tradeRoutes],
-  );
-  const freighters = useMemo(() => {
-    const score = (s: Ship) => (routedShips.has(s.id) ? 2 : s.transit ? 1 : 0);
-    return gameState.ships
-      .filter(s => s.ownedBy === 'player' && s.class === 'freighter')
-      .sort((a, b) => score(a) - score(b));
-  }, [gameState.ships, routedShips]);
-  // Pool loading docks: terraformed worlds where you live.
-  const docks = useMemo(() => {
-    const settled = new Set(
-      gameState.settlements.filter(s => s.ownedBy === 'player').map(s => s.bodyId),
-    );
-    return gameState.bodies.filter(b => settled.has(b.id) && !isRawWorld(b));
-  }, [gameState.bodies, gameState.settlements]);
 
   // Only worlds that could host a city can be terraformed — the card is
   // noise on gas giants, stars and lagrange points.
@@ -2070,75 +2040,128 @@ const WmTerraformCard: React.FC<{ body: Body; isMine: boolean }> = ({ body, isMi
           </div>
         );
       })}
-      {/* Assign a freighter WITHOUT leaving the world: pick a hull +
-          a loading dock, one click opens the terraform route. The same
-          flow still exists ship-first in the ShipPanel route picker —
-          this is the world-first mirror of it. */}
-      {isMine && (() => {
-        const shipSel = pickShip || freighters[0]?.id || '';
-        const originSel = pickOrigin || docks[0]?.id || '';
-        const bodyNameOf = (id: string | null | undefined) =>
-          gameState.bodies.find(b => b.id === id)?.name ?? '?';
-        const shipLabel = (s: Ship) =>
-          `${s.name} · ${routedShips.has(s.id) ? 'on a route (reassigns)'
-            : s.transit ? 'in transit'
-            : `at ${bodyNameOf(s.orbit.parentBodyId)}`}`;
-        if (freighters.length === 0) {
-          return (
-            <div className="wm-terraform-hint">
-              No freighters — build one at a shipyard to start the payload.
-            </div>
-          );
-        }
-        if (docks.length === 0) {
-          return (
-            <div className="wm-terraform-hint">
-              No loading dock — you need a settlement on a terraformed world
-              to load the payload from.
-            </div>
-          );
-        }
-        const assign = async () => {
-          if (!mpActions || !shipSel || !originSel || assignBusy) return;
-          setAssignBusy(true);
-          setAssignMsg(null);
-          const res = await mpActions.createTradeRoute(shipSel, originSel, body.id);
-          setAssignBusy(false);
-          setAssignMsg(res.ok
-            ? `⇢ Supply route opened — loading at ${bodyNameOf(originSel)}`
-            : humanizeMpError(res.code, res.error, 'transfer'));
-        };
-        return (
-          <div className="wm-terraform-assign">
-            <select
-              value={shipSel}
-              onChange={e => setPickShip(e.target.value)}
-              title="Which freighter runs the payload. One already on a route is reassigned; its old route is cancelled."
-            >
-              {freighters.map(s => (
-                <option key={s.id} value={s.id}>{shipLabel(s)}</option>
-              ))}
-            </select>
-            <select
-              value={originSel}
-              onChange={e => setPickOrigin(e.target.value)}
-              title="The terraformed world the payload loads from — metal + credits come out of your faction POOL at this dock."
-            >
-              {docks.map(d => (
-                <option key={d.id} value={d.id}>⇐ load at {d.name}</option>
-              ))}
-            </select>
-            <button
-              disabled={assignBusy || !shipSel || !originSel}
-              onClick={assign}
-              data-testid="wm-terraform-assign"
-            >
-              {feeding > 0 ? '+ ADD ROUTE' : '▶ START SUPPLY'}
-            </button>
-            {assignMsg && <div className="wm-terraform-hint">{assignMsg}</div>}
-          </div>
-        );
-      })()}
+      {/* Assign a freighter WITHOUT leaving the world (WmSupplyAssign). */}
+      {isMine && (
+        <WmSupplyAssign
+          destId={body.id}
+          feeding={feeding}
+          payload="the payload"
+          testId="wm-terraform-assign"
+        />
+      )}
+    </div>
+  );
+};
+
+// ============================================================
+// WmSupplyAssign — open a supply route to THIS site from its own card.
+//
+// Pick a freighter and a loading dock, one click opens the route. Born
+// in the terraform card; the Dyson card had only the words "give a
+// freighter a route" and no way to do it, so the Sun was reachable
+// solely from a freighter's cargo tab ("sol is not a valid target for
+// any of the things", Crimson_Song, 2026-10-04). Both cards now share
+// this, and it posts the same create call the cargo tab does.
+// ============================================================
+const WmSupplyAssign: React.FC<{
+  destId: string;
+  feeding: number;
+  /** What is hauled, for the hint text ("the payload"). */
+  payload: string;
+  testId: string;
+}> = ({ destId, feeding, payload, testId }) => {
+  const { gameState } = useGameContext();
+  const mpActions = useMultiplayerActions();
+  const [pickShip, setPickShip] = useState('');
+  const [pickOrigin, setPickOrigin] = useState('');
+  const [assignBusy, setAssignBusy] = useState(false);
+  const [assignMsg, setAssignMsg] = useState<string | null>(null);
+
+  // Your freighters, most-assignable first: idle at a body beats
+  // in-transit beats already-on-a-route (picking a routed one simply
+  // replaces its route — the server swaps atomically).
+  // Employed = ANY role on ANY route. Mapping r.shipId counted only
+  // primaries, so a second carrier or a guard sorted as "idle" and
+  // offered itself for reassignment as though it had nothing to do.
+  const routedShips = useMemo(
+    () => employedShipIds(gameState.tradeRoutes ?? []),
+    [gameState.tradeRoutes],
+  );
+  const freighters = useMemo(() => {
+    const score = (s: Ship) => (routedShips.has(s.id) ? 2 : s.transit ? 1 : 0);
+    return gameState.ships
+      .filter(s => s.ownedBy === 'player' && s.class === 'freighter')
+      .sort((a, b) => score(a) - score(b));
+  }, [gameState.ships, routedShips]);
+  // Pool loading docks: terraformed worlds where you live.
+  const docks = useMemo(() => {
+    const settled = new Set(
+      gameState.settlements.filter(s => s.ownedBy === 'player').map(s => s.bodyId),
+    );
+    return gameState.bodies.filter(b => settled.has(b.id) && !isRawWorld(b));
+  }, [gameState.bodies, gameState.settlements]);
+
+  const shipSel = pickShip || freighters[0]?.id || '';
+  const originSel = pickOrigin || docks[0]?.id || '';
+  const bodyNameOf = (id: string | null | undefined) =>
+    gameState.bodies.find(b => b.id === id)?.name ?? '?';
+  const shipLabel = (s: Ship) =>
+    `${s.name} · ${routedShips.has(s.id) ? 'on a route (reassigns)'
+      : s.transit ? 'in transit'
+      : `at ${bodyNameOf(s.orbit.parentBodyId)}`}`;
+  if (freighters.length === 0) {
+    return (
+      <div className="wm-terraform-hint">
+        No freighters — build one at a shipyard to start {payload}.
+      </div>
+    );
+  }
+  if (docks.length === 0) {
+    return (
+      <div className="wm-terraform-hint">
+        No loading dock — you need a settlement on a terraformed world
+        to load {payload} from.
+      </div>
+    );
+  }
+  const assign = async () => {
+    if (!mpActions || !shipSel || !originSel || assignBusy) return;
+    setAssignBusy(true);
+    setAssignMsg(null);
+    const res = await mpActions.createTradeRoute(shipSel, originSel, destId);
+    setAssignBusy(false);
+    setAssignMsg(res.ok
+      ? `⇢ Supply route opened — loading at ${bodyNameOf(originSel)}`
+      : humanizeMpError(res.code, res.error, 'transfer'));
+  };
+  return (
+    <div className="wm-terraform-assign">
+      <select
+        value={shipSel}
+        onChange={e => setPickShip(e.target.value)}
+        title={`Which freighter runs ${payload}. One already on a route is reassigned; its old route is cancelled.`}
+      >
+        {freighters.map(s => (
+          <option key={s.id} value={s.id}>{shipLabel(s)}</option>
+        ))}
+      </select>
+      <select
+        value={originSel}
+        onChange={e => setPickOrigin(e.target.value)}
+        title={`The terraformed world ${payload} loads from — it comes out of your faction POOL at this dock.`}
+      >
+        {docks.map(d => (
+          <option key={d.id} value={d.id}>⇐ load at {d.name}</option>
+        ))}
+      </select>
+      <button
+        disabled={assignBusy || !shipSel || !originSel}
+        onClick={assign}
+        data-testid={testId}
+      >
+        {feeding > 0 ? '+ ADD ROUTE' : '▶ START SUPPLY'}
+      </button>
+      {assignMsg && <div className="wm-terraform-hint">{assignMsg}</div>}
     </div>
   );
 };
@@ -2193,8 +2216,16 @@ const WmDysonCard: React.FC = () => {
           <div className="wm-dyson-supply" title="The sphere is built from cargo physically hauled here. Set a freighter's trade route from one of your terraformed worlds to the Dyson Sphere — it loads metal, credits and science from your pool at the dock and delivers on arrival. Freighters on the line can be raided; escort what you can't afford to lose.">
             {supplyRoutes > 0
               ? <>⇢ {supplyRoutes} supply route{supplyRoutes === 1 ? '' : 's'} hauling to the sphere</>
-              : <span style={{ color: '#ffb84d' }}>⚠ No supply routes — construction is stalled. Give a freighter a route from a terraformed world to the Dyson Sphere.</span>}
+              : <span style={{ color: '#ffb84d' }}>⚠ No supply routes — construction is stalled. Pick a freighter and a dock below.</span>}
           </div>
+        )}
+        {isMine && (
+          <WmSupplyAssign
+            destId="sol"
+            feeding={supplyRoutes}
+            payload="the sphere's materials"
+            testId="wm-dyson-assign"
+          />
         )}
       </div>
     );
