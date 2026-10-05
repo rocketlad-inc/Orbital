@@ -22,6 +22,7 @@ import { STRAIGHT_LINE_TRAJECTORIES } from '../game/featureFlags';
 import { COLORS, withOpacity, lighten, darken } from './colors';
 import { requestLabel, clearOfKeepOuts, reserveRect } from './labelLayer';
 import { visibleFogHoles } from './fogHoles';
+import { sensorEdgeArcs } from './sensorEdge';
 import { LOD, lodAlpha } from './lod';
 import { getShipIconImage, driveBellsFor } from './shipIconCache';
 import {
@@ -7381,12 +7382,23 @@ let fogOffscreenCtx: CanvasRenderingContext2D | null = null;
  *   fades it out as the political wash fades in — at full-system zoom
  *   the fog's 62% dark fill covers nearly everything and was crushing
  *   the wash beneath it, and its main subject (enemy ships) is already
- *   hidden by the LOD out there.
+ *   hidden by the LOD out there. (Single-player; MP passes `edge`.)
+ * @param edge MP: the sensor EDGE treatment instead of a fade. A player
+ *   could not find their sensor range at all zoomed out (CMDR
+ *   Poopypants, 2026-10-04), because the fog faded away exactly where
+ *   the coloured wash appears. With `edge`, the fog never fades: outside
+ *   coverage is DIMMED -- lighter as the wash comes in, so territory
+ *   colours still read, only darker -- and the outline of the coverage
+ *   is drawn as one clean line (sensorEdge.ts) that holds up over any
+ *   colour: a dark casing, a bright cool core, and a soft glow falling
+ *   inward so it is plain which side you can see. `edge.wash` is the
+ *   wash's opacity, 0..1.
  */
 export function drawFogOfWarOverlay(
   rings: Array<{ pos: { x: number; y: number }; range: number }>,
   ctx: RenderContext,
   strength: number = 1,
+  edge?: { wash: number },
 ) {
   if (strength <= 0) return;
   const w = ctx.canvas.width;
@@ -7418,8 +7430,11 @@ export function drawFogOfWarOverlay(
   // Pass 1: wash the whole offscreen with the dim color. Opacity is
   // tuned so planet motion + orbits stay visible through the fog (the
   // player needs to track the inner-system bodies even when they're
-  // not in sensor range, otherwise the map feels broken).
-  oc.fillStyle = 'rgba(8, 12, 18, 0.62)';
+  // not in sensor range, otherwise the map feels broken). With the
+  // edge treatment it lightens as the territory wash comes in, so the
+  // wash's colours dim rather than vanish.
+  const dim = edge ? SENSOR_DIM_NEAR + (SENSOR_DIM_FAR - SENSOR_DIM_NEAR) * Math.max(0, Math.min(1, edge.wash)) : 0.62;
+  oc.fillStyle = `rgba(8, 12, 18, ${dim.toFixed(3)})`;
   oc.fillRect(0, 0, w, h);
 
   // Pass 2: punch out every sensor circle. Opaque source so the wash
@@ -7438,6 +7453,65 @@ export function drawFogOfWarOverlay(
   ctx.ctx.globalAlpha = ctx.ctx.globalAlpha * Math.min(1, strength);
   ctx.ctx.drawImage(fogOffscreen, 0, 0);
   ctx.ctx.restore();
+
+  if (edge && holes.length) drawSensorEdge(ctx.ctx, holes);
+}
+
+/** Outside sensor coverage: how dark, close in and with the wash on. */
+const SENSOR_DIM_NEAR = 0.62;
+const SENSOR_DIM_FAR = 0.5;
+
+/**
+ * The outline of sensor coverage: one line round everything you can
+ * see, the same weight at every zoom (screen px).
+ *   - a soft glow on the INSIDE only (clipped to the coverage), so the
+ *     line says which side is seen;
+ *   - a dark casing, so it holds up over a bright wash, a lit planet or
+ *     another empire's colour;
+ *   - a bright, cool core: not a faction colour, so it never reads as
+ *     anyone's border.
+ */
+function drawSensorEdge(c: CanvasRenderingContext2D, holes: Array<{ x: number; y: number; r: number }>): void {
+  const arcs = sensorEdgeArcs(holes);
+  if (!arcs.length) return;
+  const trace = () => {
+    c.beginPath();
+    for (const a of arcs) {
+      c.moveTo(a.x + Math.cos(a.a0) * a.r, a.y + Math.sin(a.a0) * a.r);
+      c.arc(a.x, a.y, a.r, a.a0, a.a1);
+    }
+  };
+  c.save();
+  c.lineCap = 'round';
+  c.lineJoin = 'round';
+  // Inner glow: the coverage itself is the clip.
+  c.save();
+  c.beginPath();
+  for (const h of holes) {
+    c.moveTo(h.x + h.r, h.y);
+    c.arc(h.x, h.y, h.r, 0, Math.PI * 2);
+  }
+  c.clip();
+  trace();
+  c.strokeStyle = 'rgba(120, 220, 255, 0.07)';
+  c.lineWidth = 22;
+  c.stroke();
+  c.strokeStyle = 'rgba(120, 220, 255, 0.10)';
+  c.lineWidth = 11;
+  c.stroke();
+  c.strokeStyle = 'rgba(150, 232, 255, 0.16)';
+  c.lineWidth = 5;
+  c.stroke();
+  c.restore();
+  // Casing, then core.
+  trace();
+  c.strokeStyle = 'rgba(2, 6, 12, 0.7)';
+  c.lineWidth = 4.5;
+  c.stroke();
+  c.strokeStyle = 'rgba(176, 240, 255, 0.95)';
+  c.lineWidth = 1.6;
+  c.stroke();
+  c.restore();
 }
 
 // === Territory halos (far-zoom ownership treatment) ============

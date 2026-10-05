@@ -3659,7 +3659,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // wash itself becomes the "what do I know" layer. The wash stays
       // UNDER bodies (drawn far earlier) so planets and labels keep
       // sitting crisply on top of coloured ground.
-      drawFogOfWarOverlay(rings, renderContext, 1 - regionFade);
+      // MP: the fog never fades out any more. Zoomed out it dims the
+      // wash instead of crushing it, and the edge of what you can see is
+      // drawn as one line (CMDR Poopypants: "a really hard time seeing
+      // my sensor range"). SP keeps its old fade.
+      if (renderContext.presentation) {
+        drawFogOfWarOverlay(rings, renderContext, 1, { wash: regionFade });
+      } else {
+        drawFogOfWarOverlay(rings, renderContext, 1 - regionFade);
+      }
     }
 
     drawHUD(renderContext, uiState.targetSelectionMode);
