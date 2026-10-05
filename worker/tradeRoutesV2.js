@@ -14,7 +14,7 @@
 // lets the same route grow here later.
 // ============================================================
 
-import { projectRoute, holdCapFor, CARGO_CAP } from './routeMath.js';
+import { projectRoute, holdCapFor, CARGO_CAP, dysonSupplyNeed } from './routeMath.js';
 import { maySupplySite, excludedFundersOf, constructionPartners } from './megastructures.js';
 import { factionTechLevels, gatingEnabled, hasFeature } from './researchUnlocks.js';
 import { holdLanding, landHoldStatement } from './landHold.js';
@@ -99,7 +99,7 @@ export async function carrierCapFor(env, gameId, factionId) {
  * source of truth:
  *   - 2..6 stops, at least one pickup and one dropoff
  *   - no body twice in a row (a zero-length leg is a wasted stop)
- *   - never Sol (dyson runs have their own path and their own rules)
+ *   - Sol only as a DROPOFF, and only for the Dyson Sphere's builder
  *   - every PICKUP body hosts a living settlement of yours
  *   - every DROPOFF body is a terraformed world you live on — the same
  *     loading-dock rule the two-stop create enforces for its dest
@@ -121,8 +121,18 @@ async function validateStops(env, gameId, factionId, raw) {
     const action = s.action === 'dropoff' ? 'dropoff'
       : s.action === 'mine' ? 'mine' : 'pickup';
     if (!BODY_ID_RE.test(bodyId)) return { error: err(400, 'bad_request', `invalid body id at stop ${i + 1}`) };
+    // THE SUN IS A SITE: the Dyson Sphere, fed like any construction
+    // site (room.js walks it; routeMath.dysonSupplyNeed is the rule).
+    // Nothing is picked up or mined there, and only the sphere's builder
+    // may pour into it -- the legacy dyson route's own rule.
     if (bodyId === `${gameId}:sol`) {
-      return { error: err(409, 'sol_is_dyson', "the Dyson Sphere has its own supply line — open the Sun's world menu and use START SUPPLY (or a freighter's cargo tab)") };
+      if (action !== 'dropoff') {
+        return { error: err(409, 'sol_dropoff_only', 'the Sun is a drop-off for the Dyson Sphere — nothing is loaded there') };
+      }
+      if (!(await dysonSupplyNeed(env.DB, gameId, factionId))) {
+        return { error: err(409, 'not_dyson_builder',
+          "only the Dyson Sphere's builder can supply it, and only while it is unfinished") };
+      }
     }
     if (i > 0 && stops[i - 1].body_id === bodyId) {
       return { error: err(400, 'duplicate_stop', `stops ${i} and ${i + 1} are the same body`) };
@@ -179,6 +189,8 @@ async function validateStops(env, gameId, factionId, raw) {
         .bind(gameId, s.body_id, factionId).first();
       if (!ok) return { error: err(409, 'no_pickup_settlement', `no settlement of yours at ${s.body_id.split(':').pop()} to pick up from`) };
     } else {
+      // The Sun was cleared as the sphere's drop-off above.
+      if (s.body_id === `${gameId}:sol`) continue;
       // A CONSTRUCTION SITE IS A DOCK. The rule below — "a terraformed
       // world you live on" — is about where the faction POOL is
       // physically reachable, and a site is the one destination that

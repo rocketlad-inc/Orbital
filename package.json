@@ -73,6 +73,7 @@
     "sim:email": "esbuild sim/emailQuickJoin.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/emailQuickJoin.mjs && node node_modules/.cache/emailQuickJoin.mjs",
     "sim:leave": "esbuild sim/lobbyLeave.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/lobbyLeave.mjs && node node_modules/.cache/lobbyLeave.mjs",
     "sim:fleetlock": "esbuild sim/fleetCombatLock.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/fleetCombatLock.mjs && node node_modules/.cache/fleetCombatLock.mjs",
+    "sim:dyson": "esbuild sim/dysonRoutes.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/dysonRoutes.mjs && node node_modules/.cache/dysonRoutes.mjs",
     "sim:buildslots": "esbuild sim/buildSlotsRace.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/buildSlotsRace.mjs && node node_modules/.cache/buildSlotsRace.mjs",
     "sim:weararts": "esbuild sim/wearArt.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/wearArt.mjs && node node_modules/.cache/wearArt.mjs",
     "sim:wearfeed": "esbuild sim/wearFeed.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --external:better-sqlite3 --log-level=error --outfile=node_modules/.cache/wearFeed.mjs && node node_modules/.cache/wearFeed.mjs",

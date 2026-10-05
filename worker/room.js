@@ -12,7 +12,7 @@ import { ensureCaptains, resolveCaptainOnDeath, parseTraits, traitMul, ensureCap
 import { orbitAngle, ORBITAL_SPEED_SCALE } from './orbitPos.js';
 import {
   makeRouteMath, planPickup, holdCapFor, planGateAwareHop, miningRouteIsSpent,
-  planSiteDraw, isDockFor, siteSupplyNeed,
+  planSiteDraw, isDockFor, siteSupplyNeed, dysonSupplyNeed,
 } from './routeMath.js';
 import {
   torchStateAt, engagement, hasLineOfSight, SHIP_RANGE, V_REF as TRANSIT_V_REF,
@@ -1133,7 +1133,8 @@ export class Room {
       if (siteNeedThisPass === null) {
         const partners = await constructionPartners(this.env, gameId, r.owner_faction_id, tick);
         siteNeedThisPass = await siteSupplyNeed(DB, gameId, stops, (row) => maySupplySite(
-          r.owner_faction_id, row.owner_faction_id, partners, excludedFundersOf(row.settings_json)));
+          r.owner_faction_id, row.owner_faction_id, partners, excludedFundersOf(row.settings_json)),
+          r.owner_faction_id);
       }
       return siteNeedThisPass;
     };
@@ -1286,34 +1287,41 @@ export class Room {
         // prod had five of them, 32-86 loops each, every meter at zero.
         const need = await siteNeedFor();
         if (need.sites > 0 && await isDockFor(DB, gameId, stop.body_id, r.owner_faction_id)) {
-          const f = await DB.prepare('SELECT metal, gold FROM game_factions WHERE id = ?')
+          const f = await DB.prepare('SELECT metal, gold, science FROM game_factions WHERE id = ?')
             .bind(r.owner_faction_id).first();
           // Cargo the route's OTHER hulls are already carrying toward the
           // site. `carriers` is kept current in-pass (c.cargo_* is written
           // back as each hull moves on), so a hull that loaded earlier
           // this tick is counted.
-          const committed = { metal: 0, gold: 0 };
+          const committed = { metal: 0, gold: 0, science: 0 };
           for (const o of carriers) {
             if (o.ship_id === c.ship_id) continue;
             committed.metal += Number(o.cargo_metal ?? 0);
             committed.gold += Number(o.cargo_gold ?? 0);
+            committed.science += Number(o.cargo_science ?? 0);
           }
           const draw = planSiteDraw({
             hold: holdCapFor(c.captain_traits), aboard,
-            filters: { metal: stop.take_metal, gold: stop.take_gold },
-            pool: { metal: Number(f?.metal ?? 0), gold: Number(f?.gold ?? 0) },
+            filters: { metal: stop.take_metal, gold: stop.take_gold, science: stop.take_science },
+            pool: { metal: Number(f?.metal ?? 0), gold: Number(f?.gold ?? 0), science: Number(f?.science ?? 0) },
             need, committed,
           });
-          if (draw.metal > 0 || draw.gold > 0) {
+          if (draw.metal > 0 || draw.gold > 0 || draw.science > 0) {
             // GUARDED, so a purchase landing between the read and this
             // write cannot drive the treasury negative. If it lost that
             // race the hull simply loads nothing this visit.
             const paid = await DB.prepare(
-              `UPDATE game_factions SET metal = metal - ?, gold = gold - ?
-                WHERE id = ? AND metal >= ? AND gold >= ?`,
-            ).bind(draw.metal, draw.gold, r.owner_faction_id, draw.metal, draw.gold).run();
+              `UPDATE game_factions SET metal = metal - ?, gold = gold - ?, science = science - ?
+                WHERE id = ? AND metal >= ? AND gold >= ? AND science >= ?`,
+            ).bind(draw.metal, draw.gold, draw.science, r.owner_faction_id,
+                   draw.metal, draw.gold, draw.science).run();
             if (paid.meta?.changes) {
-              aboard = { ...aboard, metal: aboard.metal + draw.metal, gold: aboard.gold + draw.gold };
+              aboard = {
+                ...aboard,
+                metal: aboard.metal + draw.metal,
+                gold: aboard.gold + draw.gold,
+                science: aboard.science + draw.science,
+              };
             }
           }
         }
@@ -1333,7 +1341,48 @@ export class Room {
         // through would silently convert a supply run into a delivery
         // home and the site would never finish while the hauler kept
         // reporting successful trips.
-        const siteHere = await DB
+        // THE DYSON SPHERE, as a stop. Multi-freighter routes can feed
+        // it now (Crimson_Song: one route per freighter, 34 of them for
+        // one player). Its meters are the games row's dyson_acc_*; only
+        // its controller may pour in (dysonSupplyNeed).
+        const solDrop = stop.body_id === `${gameId}:sol`;
+        if (solDrop) {
+          const sphereNeed = await dysonSupplyNeed(DB, gameId, r.owner_faction_id);
+          const ctrl = await DB.prepare('SELECT dyson_controller_faction_id AS c FROM games WHERE id = ?')
+            .bind(gameId).first();
+          if (ctrl?.c !== r.owner_faction_id) {
+            // Lost or never held: park the route with the cargo aboard,
+            // the same answer a captured construction site gets below.
+            await DB.prepare(
+              `UPDATE game_trade_routes SET stalled_since_tick = ?, status = 'stalled'
+                WHERE id = ? AND cancelled_at_tick IS NULL AND stalled_since_tick IS NULL`,
+            ).bind(tick, r.id).run();
+            continue;
+          }
+          if (sphereNeed) {
+            const addM = Math.min(aboard.metal, sphereNeed.metal);
+            const addG = Math.min(aboard.gold, sphereNeed.gold);
+            const addS = Math.min(aboard.science, sphereNeed.science);
+            if (addM > 0 || addG > 0 || addS > 0) {
+              await DB.prepare(
+                `UPDATE games SET dyson_acc_ore     = dyson_acc_ore     + ?,
+                                  dyson_acc_credits = dyson_acc_credits + ?,
+                                  dyson_acc_science = dyson_acc_science + ?
+                  WHERE id = ?`,
+              ).bind(addM, addG, addS, gameId).run();
+              await DB.prepare('UPDATE game_ships SET trades_completed = trades_completed + 1 WHERE id = ?')
+                .bind(c.ship_id).run();
+            }
+            // What the lattice could not take rides on, as at a site.
+            aboard = {
+              fuel: aboard.fuel,
+              metal: aboard.metal - addM,
+              gold: aboard.gold - addG,
+              science: aboard.science - addS,
+            };
+          }
+        }
+        const siteHere = solDrop ? null : await DB
           .prepare(
             `SELECT m.status, m.acc_metal, m.acc_credits, m.cost_metal, m.cost_credits,
                     m.settings_json, b.owner_faction_id, b.name
@@ -1366,7 +1415,10 @@ export class Room {
           ).bind(tick, r.id).run();
           continue;                       // cargo stays aboard
         }
-        if (siteHere && siteHere.status !== 'complete') {
+        if (solDrop) {
+          // Delivered above; a finished sphere takes nothing and the
+          // load rides home rather than banking at the Sun.
+        } else if (siteHere && siteHere.status !== 'complete') {
           const needM = Math.max(0, Number(siteHere.cost_metal) - Number(siteHere.acc_metal));
           const needG = Math.max(0, Number(siteHere.cost_credits) - Number(siteHere.acc_credits));
           const addM = Math.min(aboard.metal, needM);

@@ -370,6 +370,8 @@ export function planSiteDraw({ hold, aboard, filters, pool, need, committed }) {
   return {
     metal: one('metal', on(filters?.metal)),
     gold: one('gold', on(filters?.gold)),
+    // Only the sphere needs science; every other site's need is 0.
+    science: one('science', on(filters?.science)),
   };
 }
 
@@ -401,12 +403,18 @@ export async function isDockFor(db, gameId, bodyId, factionId) {
  * `mayFeed` is passed in rather than decided here because the ownership
  * rule needs pact state and a tick — the caller already has both.
  */
-export async function siteSupplyNeed(db, gameId, stops, mayFeed) {
+export async function siteSupplyNeed(db, gameId, stops, mayFeed, ownerFactionId = null) {
   const ids = [...new Set(
     (stops ?? []).filter(s => s && s.action === 'dropoff' && s.body_id).map(s => s.body_id),
   )];
-  const zero = { metal: 0, gold: 0, sites: 0 };
+  const zero = { metal: 0, gold: 0, science: 0, sites: 0 };
   if (ids.length === 0) return zero;
+  // THE DYSON SPHERE IS A SITE TOO (dysonSupplyNeed), and the only one
+  // that also wants science. Its meter lives on the games row, not in
+  // game_megastructures, so it is read separately.
+  const sphere = ids.includes(`${gameId}:sol`)
+    ? await dysonSupplyNeed(db, gameId, ownerFactionId)
+    : null;
   const rows = (await db
     .prepare(
       `SELECT m.body_id, m.status, m.acc_metal, m.acc_credits, m.cost_metal, m.cost_credits,
@@ -417,14 +425,46 @@ export async function siteSupplyNeed(db, gameId, stops, mayFeed) {
           AND b.destroyed_at_tick IS NULL AND m.status <> 'complete'`,
     )
     .bind(gameId, ...ids).all()).results ?? [];
-  let metal = 0, gold = 0, sites = 0;
+  let metal = 0, gold = 0, science = 0, sites = 0;
   for (const r of rows) {
     if (mayFeed && !(await mayFeed(r))) continue;
     metal += Math.max(0, Number(r.cost_metal) - Number(r.acc_metal));
     gold += Math.max(0, Number(r.cost_credits) - Number(r.acc_credits));
     sites += 1;
   }
-  return sites === 0 ? zero : { metal, gold, sites };
+  if (sphere) {
+    metal += sphere.metal; gold += sphere.gold; science += sphere.science;
+    sites += 1;
+  }
+  return sites === 0 ? zero : { metal, gold, science, sites };
+}
+
+/**
+ * What the Dyson Sphere still needs FROM `factionId`, or null when that
+ * faction may not feed it (nobody's sphere, a rival's, or finished).
+ *
+ * The sphere predates game_megastructures: its meters are the
+ * dyson_acc_* / dyson_target_* columns on the games row, and only its
+ * controller builds it (the legacy dyson route's own rule). ore is
+ * metal, credits are gold -- the same mapping the legacy route uses.
+ */
+export async function dysonSupplyNeed(db, gameId, factionId) {
+  if (!factionId) return null;
+  const g = await db
+    .prepare(
+      `SELECT dyson_controller_faction_id AS ctrl,
+              dyson_acc_ore, dyson_acc_credits, dyson_acc_science,
+              dyson_target_ore, dyson_target_credits, dyson_target_science
+         FROM games WHERE id = ?`,
+    )
+    .bind(gameId).first();
+  if (!g || g.ctrl !== factionId) return null;
+  const need = {
+    metal:   Math.max(0, Number(g.dyson_target_ore ?? 0)     - Number(g.dyson_acc_ore ?? 0)),
+    gold:    Math.max(0, Number(g.dyson_target_credits ?? 0) - Number(g.dyson_acc_credits ?? 0)),
+    science: Math.max(0, Number(g.dyson_target_science ?? 0) - Number(g.dyson_acc_science ?? 0)),
+  };
+  return need.metal + need.gold + need.science > 0 ? need : null;
 }
 
 /**
@@ -458,19 +498,23 @@ export async function projectRoute(db, gameId, ownerFactionId, stops, opts = {})
     if (siteNeed === null) {
       const partners = await constructionPartners({ DB: db }, gameId, ownerFactionId, refTick);
       siteNeed = await siteSupplyNeed(db, gameId, stops, (r) => maySupplySite(
-        ownerFactionId, r.owner_faction_id, partners, excludedFundersOf(r.settings_json)));
-      const f = await db.prepare('SELECT metal, gold FROM game_factions WHERE id = ?')
+        ownerFactionId, r.owner_faction_id, partners, excludedFundersOf(r.settings_json)),
+        ownerFactionId);
+      const f = await db.prepare('SELECT metal, gold, science FROM game_factions WHERE id = ?')
         .bind(ownerFactionId).first();
-      sitePool = { metal: Number(f?.metal ?? 0), gold: Number(f?.gold ?? 0) };
+      sitePool = { metal: Number(f?.metal ?? 0), gold: Number(f?.gold ?? 0), science: Number(f?.science ?? 0) };
     }
-    if (siteNeed.sites === 0) return { metal: 0, gold: 0 };
-    if (!(await isDockFor(db, gameId, stop.body_id, ownerFactionId))) return { metal: 0, gold: 0 };
+    const none = { metal: 0, gold: 0, science: 0 };
+    if (siteNeed.sites === 0) return none;
+    if (!(await isDockFor(db, gameId, stop.body_id, ownerFactionId))) return none;
     const d = planSiteDraw({
       hold, aboard: aboardNow,
-      filters: { metal: stop.take_metal, gold: stop.take_gold },
-      pool: sitePool, need: siteNeed, committed: { metal: 0, gold: 0 },
+      filters: { metal: stop.take_metal, gold: stop.take_gold, science: stop.take_science },
+      pool: sitePool, need: siteNeed, committed: { metal: 0, gold: 0, science: 0 },
     });
-    sitePool = { metal: sitePool.metal - d.metal, gold: sitePool.gold - d.gold };
+    sitePool = {
+      metal: sitePool.metal - d.metal, gold: sitePool.gold - d.gold, science: sitePool.science - d.science,
+    };
     return d;
   };
   for (let i = 0; i < stops.length; i++) {
@@ -501,9 +545,13 @@ export async function projectRoute(db, gameId, ownerFactionId, stops, opts = {})
       aboard = plan.aboardAfter;
       // Same top-up the tick does — see planSiteDraw.
       const d = await siteDraw(stop, aboard);
-      if (d.metal > 0 || d.gold > 0) {
-        loaded = { ...loaded, metal: loaded.metal + d.metal, gold: loaded.gold + d.gold };
-        aboard = { ...aboard, metal: aboard.metal + d.metal, gold: aboard.gold + d.gold };
+      if (d.metal > 0 || d.gold > 0 || d.science > 0) {
+        loaded = {
+          ...loaded, metal: loaded.metal + d.metal, gold: loaded.gold + d.gold, science: loaded.science + d.science,
+        };
+        aboard = {
+          ...aboard, metal: aboard.metal + d.metal, gold: aboard.gold + d.gold, science: aboard.science + d.science,
+        };
       }
     }
     const aboardTotal = aboard.fuel + aboard.metal + aboard.gold + aboard.science;
