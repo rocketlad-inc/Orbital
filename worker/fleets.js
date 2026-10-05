@@ -139,7 +139,12 @@ async function bankMemberCaptains(env, gameId, shipIds, exceptShipId, tick) {
   // otherwise "form a fleet around the hull that's losing" would be the
   // way around it. Checked here because this is the one choke point every
   // path (create, add members) goes through.
-  const hot = await shipsInCombat(env.DB, gameId, ids, tick);
+  // Only a hull WITH a captain has one to send to the bank; an
+  // uncaptained hull joining mid-fight changes nobody's post.
+  const captained = (await selectInChunks(ids, 1, (chunk, ph) => env.DB.prepare(
+    `SELECT id FROM game_ships WHERE game_id = ? AND id IN (${ph}) AND captain_id IS NOT NULL`,
+  ).bind(gameId, ...chunk).all())).map(r => r.id);
+  const hot = await shipsInCombat(env.DB, gameId, captained, tick);
   if (hot.size > 0) return { ok: false, blocked: [...hot] };
   await env.DB.batch([
     ...statementsInChunks(ids, 1, (chunk, ph) => env.DB.prepare(

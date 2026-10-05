@@ -30,6 +30,7 @@ import { makeRouteMath } from './routeMath.js';
 import { getActiveSliders } from './senate.js';
 import { effectiveHpMaxOf } from './effectiveHp.js';
 import { startingRankFor } from './captains.js';
+import { holdLanding, landHoldStatement } from './landHold.js';
 import {
   ASSET_KINDS, OPEN_STATUSES, assetState, owedOn, isSettled,
   fulfilDeal, voidDeal,
@@ -5764,14 +5765,15 @@ async function handleCancelTradeRoute(req, env, ctx) {
     .bind(tick, routeId)
     .run();
   if (!flip.meta?.changes) return err(409, 'already_cancelled', 'already cancelled');
+  // A hull parked at its own world puts the load back there instead
+  // (worker/landHold.js); anywhere else it stays aboard.
   for (const c of crewRows) {
     const cf = Number(c.cargo_fuel ?? 0), cm = Number(c.cargo_metal ?? 0);
     const cg = Number(c.cargo_gold ?? 0), cs = Number(c.cargo_science ?? 0);
     if (c.role === 'carrier' && cf + cm + cg + cs > 0) {
-      await env.DB
-        .prepare('UPDATE game_ships SET cargo_fuel = cargo_fuel + ?, cargo_metal = cargo_metal + ?, cargo_gold = cargo_gold + ?, cargo_science = cargo_science + ? WHERE id = ?')
-        .bind(cf, cm, cg, cs, c.ship_id)
-        .run();
+      const landing = await holdLanding(env, gameId, c.ship_id);
+      await landHoldStatement(env, c.ship_id, landing,
+        { fuel: cf, metal: cm, gold: cg, science: cs }).run();
     }
     await env.DB.prepare('DELETE FROM game_trade_route_ships WHERE id = ?').bind(c.id).run();
   }
@@ -5800,10 +5802,8 @@ async function handleCancelTradeRoute(req, env, ctx) {
   const routeCargoIsAuthoritative = !walkerKind;
   const releaseRouteCargo = routeCargoIsAuthoritative || !primaryHasCrewRow;
   if (releaseRouteCargo && fuel + metal + gold + science > 0) {
-    await env.DB
-      .prepare('UPDATE game_ships SET cargo_fuel = cargo_fuel + ?, cargo_metal = cargo_metal + ?, cargo_gold = cargo_gold + ?, cargo_science = cargo_science + ? WHERE id = ?')
-      .bind(fuel, metal, gold, science, route.ship_id)
-      .run();
+    const landing = await holdLanding(env, gameId, route.ship_id);
+    await landHoldStatement(env, route.ship_id, landing, { fuel, metal, gold, science }).run();
   }
 
   return json({ ok: true, kept_aboard: { fuel, metal, gold, science } });

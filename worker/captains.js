@@ -11,6 +11,7 @@
 
 import { pickCaptainName } from './captainNames.js';
 import { selectInChunks } from './sqlChunk.js';
+import { atWarSql } from './wars.js';
 import { pickFromPool, parseNamePools } from '../src/game/namePools.js';
 import { factionTechLevels, gatingEnabled, hasFeature } from './researchUnlocks.js';
 
@@ -104,13 +105,39 @@ export async function shipsInCombat(db, gameId, shipIds, tick) {
   const ids = [...new Set((shipIds ?? []).filter(id => typeof id === 'string' && id))];
   if (!ids.length) return new Set();
   const since = tick - COMBAT_LOCK_TICKS;
+  // A FIGHT THE PLAYER CAN SEE. The stamps alone also caught hulls that
+  // an unowned ancient battery shot at in passing (it fires on every
+  // armed hull in range, war or no war, and the counter-battery pass
+  // stamps each target as having fired) and hulls clipped mid-flight.
+  // Nothing on screen calls those ships engaged -- FleetPanel's "In
+  // Combat" is "a hostile at war shares the body" -- so forming a fleet
+  // was refused with "in combat" over ships the player could see were
+  // not (Drt3yGrandma, 2026-10-03; 30 refusals from 6 players in five
+  // days). Engaged now = stamped AND parked AND a ship or settlement of
+  // a faction at war with it is at that body.
+  //
   // Chunked: a 147-ship fleet put 150 bindings in here and D1 caps a
   // query at 100. Three fixed params (gameId, since, since).
   const rows = await selectInChunks(ids, 3, (chunk, ph) => db
-    .prepare(`SELECT id FROM game_ships
-               WHERE game_id = ? AND id IN (${ph})
-                 AND ( (last_combat_tick  IS NOT NULL AND last_combat_tick  >= ?)
-                    OR (last_damaged_tick IS NOT NULL AND last_damaged_tick >= ?) )`)
+    .prepare(`SELECT s.id FROM game_ships s
+               WHERE s.game_id = ? AND s.id IN (${ph})
+                 AND ( (s.last_combat_tick  IS NOT NULL AND s.last_combat_tick  >= ?)
+                    OR (s.last_damaged_tick IS NOT NULL AND s.last_damaged_tick >= ?) )
+                 AND NOT EXISTS (SELECT 1 FROM game_ship_nodes n
+                                  WHERE n.ship_id = s.id AND n.status = 'in_transit')
+                 AND ( EXISTS (SELECT 1 FROM game_ships e
+                                WHERE e.game_id = s.game_id AND e.status = 'active'
+                                  AND e.parent_body_id = s.parent_body_id
+                                  AND e.owner_faction_id <> s.owner_faction_id
+                                  AND ${atWarSql('s.owner_faction_id', 'e.owner_faction_id', 's.game_id')}
+                                  AND NOT EXISTS (SELECT 1 FROM game_ship_nodes en
+                                                   WHERE en.ship_id = e.id AND en.status = 'in_transit'))
+                    OR EXISTS (SELECT 1 FROM game_settlements st
+                                WHERE st.game_id = s.game_id AND st.body_id = s.parent_body_id
+                                  AND st.destroyed_at_tick IS NULL
+                                  AND st.owner_faction_id IS NOT NULL
+                                  AND st.owner_faction_id <> s.owner_faction_id
+                                  AND ${atWarSql('s.owner_faction_id', 'st.owner_faction_id', 's.game_id')}) )`)
     .bind(gameId, ...chunk, since, since)
     .all());
   return new Set(rows.map(r => r.id));
