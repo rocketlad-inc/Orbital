@@ -580,6 +580,7 @@ class DecisionsTileService : OrbitalTileService() {
     is Decision.Research -> "SCIENCE IDLE" to "CHOOSE RESEARCH"
     is Decision.IdleYard -> "IDLE YARD" to d.yard.name.uppercase()
     is Decision.Idle -> (if (d.arrived) "ARRIVED" else "IDLE") to d.group.title
+    is Decision.Launched -> "NEW SHIP" to d.group.title
   }
 
   private fun voteChip(label: String, choice: String, bill: Bill, tint: androidx.compose.ui.graphics.Color): LayoutElement {

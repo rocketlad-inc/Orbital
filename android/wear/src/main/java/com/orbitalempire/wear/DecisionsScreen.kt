@@ -115,6 +115,7 @@ fun DecisionsScreen(
         is Decision.Research -> ResearchCard(top, ui, nav)
         is Decision.IdleYard -> YardCard(d, top, ui, vm)
         is Decision.Idle -> IdleCard(d, top, ui, nav)
+        is Decision.Launched -> LaunchedCard(d, top, ui, nav)
       }
     }
     // Where you are in the stack, down the right-hand rim.
@@ -141,6 +142,7 @@ private fun kindLabel(d: Decision): String = when (d) {
   is Decision.Research -> "SCIENCE IDLE"
   is Decision.IdleYard -> "IDLE YARD"
   is Decision.Idle -> if (d.arrived) "ARRIVED" else "IDLE"
+  is Decision.Launched -> "NEW SHIP"
 }
 
 internal fun tierInk(tier: Int): Color = when (tier) {
@@ -515,6 +517,28 @@ private fun IdleCard(d: Decision.Idle, top: String, ui: WearViewModel.UiState, n
       }
       Row(Modifier.fillMaxWidth().padding(top = u(s, 12f)), horizontalArrangement = Arrangement.spacedBy(u(s, 10f))) {
         TapButton("SEND TO…", Teal, Modifier.weight(1.2f), height = u(s, 48f), outline = true) { nav.send(g) }
+        TapButton("ORDERS", Sub, Modifier.weight(1f), height = u(s, 48f)) { nav.orders(g.lead.id) }
+      }
+    }
+  }
+}
+
+/** A HULL FRESH OFF THE YARD: what it is, where it launched, and SEND. */
+@Composable
+private fun LaunchedCard(d: Decision.Launched, top: String, ui: WearViewModel.UiState, nav: Nav) {
+  val g = d.group
+  val place = placeOf(ui.worlds, g.at)
+  Card(top, d.tier) { s ->
+    Column(Modifier.fillMaxSize().padding(horizontal = u(s, 60f)), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+      CaptainBadge(g.captain, g.hullKey, u(s, 92f), ring = Good)
+      Text(g.title, color = Ink, fontSize = tp(s, 18f), fontFamily = GameFont, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = u(s, 8f)))
+      Text(g.lead.cls.replace('_', ' ').uppercase(), color = Sub, fontSize = tp(s, 12f), maxLines = 1)
+      Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
+        PlanetArt(place?.sp, u(s, 20f))
+        Text(" BUILT AT ${(place?.name ?: "?").uppercase()}", color = Good, fontSize = tp(s, 12f), fontWeight = FontWeight.Bold, maxLines = 1)
+      }
+      Row(Modifier.fillMaxWidth().padding(top = u(s, 12f)), horizontalArrangement = Arrangement.spacedBy(u(s, 10f))) {
+        TapButton("SEND TO…", Good, Modifier.weight(1.2f), height = u(s, 48f), outline = true) { nav.send(g) }
         TapButton("ORDERS", Sub, Modifier.weight(1f), height = u(s, 48f)) { nav.orders(g.lead.id) }
       }
     }
