@@ -7498,9 +7498,11 @@ export function drawFogOfWarOverlay(
   if (edge && holes.length) drawSensorEdge(ctx.ctx, holes);
 }
 
-/** Outside sensor coverage: how dark, close in and with the wash on. */
-const SENSOR_DIM_NEAR = 0.62;
-const SENSOR_DIM_FAR = 0.5;
+/** Outside sensor coverage: how dark, close in and with the wash on.
+ *  Lifted a fifth (Lorne, 2026-10-05: "a bit dreary"): what shows
+ *  through went from 38% / 50% to about 46% / 60%. */
+const SENSOR_DIM_NEAR = 0.544;
+const SENSOR_DIM_FAR = 0.4;
 
 /**
  * The outline of sensor coverage: one line round everything you can
