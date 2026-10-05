@@ -1,4 +1,5 @@
 import { hasFeature } from './researchUnlocks.js';
+import { DRAWN_SKIN_SQL } from './skins.js';
 import { parseNamePools } from '../src/game/namePools.js';
 import { getActiveSliders, activeSanctions, activeLawsFor } from './senate.js';
 import { buildCostFactors } from './buildCost.js';
@@ -532,10 +533,17 @@ const trade_deliveriesP = env.DB
     .all();
 const factionsP = env.DB
     .prepare(
-      `SELECT id, slot, name, color, color2, emblem, status, capital_body_id, senate_weight, reputation
-         FROM game_factions
-        WHERE game_id = ?
-        ORDER BY slot ASC`,
+      `SELECT gf.id, gf.slot, gf.name, gf.color, gf.color2, gf.emblem, gf.status, gf.capital_body_id,
+              gf.senate_weight, gf.reputation,
+              -- Colony and station skins (0154): the lobby override, else
+              -- the account default, only while the Commission is held.
+              ${DRAWN_SKIN_SQL('city_skin')} AS city_skin,
+              ${DRAWN_SKIN_SQL('station_skin')} AS station_skin
+         FROM game_factions gf
+         LEFT JOIN room_members rm ON rm.room_id = gf.game_id AND rm.user_id = gf.user_id
+         LEFT JOIN users u ON u.id = gf.user_id
+        WHERE gf.game_id = ?
+        ORDER BY gf.slot ASC`,
     )
     .bind(gameId)
     .all();

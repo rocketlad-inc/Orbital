@@ -659,6 +659,9 @@ async function handleMe(req, env) {
     // entitlement server-side — a spoofed flag shows options the server
     // will then refuse to persist.
     is_premium: await store.hasEntitlement(env, session.user_id),
+    // Account-default colony and station skins (0154); null = the free look.
+    ...(await env.DB.prepare('SELECT city_skin, station_skin FROM users WHERE id = ?')
+      .bind(session.user_id).first().catch(() => null) ?? {}),
     ...(await noteVisit(env, session.user_id)),
   } });
 }
@@ -1304,6 +1307,7 @@ import * as configAdmin from './configAdmin.js';
 import * as analytics from './analytics.js';
 import * as adminDashboard from './adminDashboard.js';
 import * as store from './store.js';
+import * as skins from './skins.js';
 import * as economy from './economy.js';
 import * as heraldStrip from './heraldStrip.js';
 import * as battleCard from './battleCard.js';
@@ -1324,7 +1328,7 @@ import * as devlog from './devlog.js';
 import * as gameFeed from './gameFeed.js';
 import { carryNamePools } from './namePoolHistory.js';
 
-const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, analytics, configAdmin, store, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed];
+const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, analytics, configAdmin, store, skins, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed];
 
 function matchPattern(pattern, pathname) {
   if (typeof pattern === 'string') {
