@@ -7505,11 +7505,11 @@ function drawSensorEdge(c: CanvasRenderingContext2D, holes: Array<{ x: number; y
   c.restore();
   // Casing, then core.
   trace();
-  c.strokeStyle = 'rgba(2, 6, 12, 0.7)';
-  c.lineWidth = 4.5;
+  c.strokeStyle = 'rgba(2, 6, 12, 0.72)';
+  c.lineWidth = 5;
   c.stroke();
   c.strokeStyle = 'rgba(176, 240, 255, 0.95)';
-  c.lineWidth = 1.6;
+  c.lineWidth = 1.9;
   c.stroke();
   c.restore();
 }
