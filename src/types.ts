@@ -1180,6 +1180,10 @@ export interface GameState {
   /** Megastructure build state, keyed on the site's body id. The site
    *  itself is in `bodies` with type 'megastructure'. */
   megastructures?: Record<string, MegastructureState>;
+  /** MP: every body the server lets you see, by sensor range AND by
+   *  presence (a world you are at, its moons, parent and siblings): the
+   *  sensor edge bubbles these so the hulls parked there are inside it. */
+  visibleBodyIds?: string[];
   /** Transit combat is on in THIS match (DESIGN-transit-combat.md).
    *  A rule of the game, not a client preference — the HUD must not warn
    *  about intercepting courses in a match where ships in flight cannot

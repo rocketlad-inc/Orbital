@@ -12,7 +12,7 @@
 
 import { Body, Ship, Settlement } from '../types';
 import { bodyPosition, orbitWorldPos } from '../physics/orbitalMechanics';
-import { settlementWorldPosition } from './settlements';
+import { settlementWorldPosition, buildingLevel } from './settlements';
 
 // === Sensor ranges (world units) ============================
 
@@ -187,6 +187,63 @@ function isFriendly(ownedBy: string, viewer: string, allies: ReadonlySet<string>
 }
 
 // === Sensor source enumeration ===============================
+
+/** Extra settlement reach per Deep Survey Telescope level, before the
+ *  game's sensor scale. KEEP IN SYNC with worker/state.js
+ *  TELESCOPE_SENSOR_BONUS (sensorParity.test.ts reads both). */
+export const TELESCOPE_SENSOR_BONUS = 400;
+/** A Pathfinder captain's sensor reach. KEEP IN SYNC with worker/state.js. */
+export const PATHFINDER_SENSOR_MUL = 1.15;
+
+/**
+ * MP: every sensor the SERVER counts when it decides what you can see
+ * (worker/state.js buildFriendlySensors), so the coverage the map draws
+ * is the coverage the server uses. factionSensorRings has only base ship
+ * and settlement reach; this adds what it lacked, each of which put
+ * revealed hulls OUTSIDE the drawn edge (Lorne, 2026-10-05: "I see ships
+ * outside of the sensor range, why?"):
+ *   - a settlement's Deep Survey Telescopes (+400 a level);
+ *   - a Pathfinder captain (x1.15);
+ *   - a Deep Space Array you or an ally hold (its own bubble).
+ * Single-player keeps factionSensorRings.
+ */
+export function coverageRings(
+  factionId: string,
+  ships: Ship[],
+  settlements: Settlement[],
+  bodies: Body[],
+  tick: number,
+  allies: ReadonlySet<string> = NO_ALLIES,
+  drawnTransitPos?: ReadonlyMap<string, { x: number; y: number }>,
+  /** Complete Deep Space Arrays held by you or an ally: where, and their
+   *  reach before the game's sensor scale. */
+  arrays: Array<{ bodyId: string; range: number }> = [],
+): Array<{ pos: { x: number; y: number }; range: number }> {
+  const rings: Array<{ pos: { x: number; y: number }; range: number }> = [];
+  for (const s of ships) {
+    if (!isFriendly(s.ownedBy, factionId, allies)) continue;
+    const pathfinder = !!s.captainTraits?.includes('pathfinder');
+    rings.push({
+      pos: shipWorldPosition(s, tick, bodies, drawnTransitPos),
+      range: shipSensorRange(s.class) * (pathfinder ? PATHFINDER_SENSOR_MUL : 1),
+    });
+  }
+  for (const st of settlements) {
+    if (!isFriendly(st.ownedBy, factionId, allies)) continue;
+    const pos = settlementWorldPosition(st, tick, bodies);
+    if (!pos) continue;
+    const base = SETTLEMENT_SENSOR_RANGE[st.type] ?? 40;
+    const scopes = Math.max(0, buildingLevel(st, 'telescope' as Parameters<typeof buildingLevel>[1]));
+    rings.push({ pos, range: (base + scopes * TELESCOPE_SENSOR_BONUS) * runtimeSensorScale });
+  }
+  const byId = new Map(bodies.map(b => [b.id, b]));
+  for (const a of arrays) {
+    const b = byId.get(a.bodyId);
+    if (!b || !(a.range > 0)) continue;
+    rings.push({ pos: bodyPosition(b, tick, bodies), range: a.range * runtimeSensorScale });
+  }
+  return rings;
+}
 
 /**
  * All sensor sources for a faction (and its allies): ships +

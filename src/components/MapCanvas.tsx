@@ -107,7 +107,8 @@ import { fleetEscortBlend,
 } from '../render/fleetGrouping';
 import { getShipClass } from '../game/shipClasses';
 import { computeIncomingThreats, threatenedBodyIds } from '../game/threats';
-import { computeVisibility, payloadVisibility, factionSensorRings } from '../game/visibility';
+import { computeVisibility, payloadVisibility, factionSensorRings, coverageRings } from '../game/visibility';
+import { MEGASTRUCTURES } from '../game/megastructures';
 // World menu (MULTIPLAYER ONLY): every use below is gated on
 // isWorldMenuActive(), which only the MP-mounted overlay ever sets —
 // these imports add zero reachable code paths to single-player.
@@ -340,6 +341,9 @@ let thrValue: ReturnType<typeof computeIncomingThreats> = [];
 // slow orbital map is invisible, while the work drops by the same
 // factor.
 const FOG_MAX_AGE_MS = 140;
+/** The sensor edge's bubble round a world you can see by presence: past
+ *  its drawn disc, room for the hulls parked round it, in px. */
+const PRESENCE_BUBBLE_PX = 36;
 let fogState: unknown = null;
 let fogAt = -1e9;
 let fogVis: ReturnType<typeof computeVisibility> | null = null;
@@ -2894,6 +2898,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // why neighbouring bodies' badges piled onto each other in the
     // strategic screenshot. If nothing is free the badge is SKIPPED,
     // never stacked: an unreadable pile communicates less than absence.
+    // MP: badges are LAID OUT here (they claim their slots with the label
+    // solver in draw order) but PAINTED after the sensor effect, so a
+    // count sits on top of the fog's dim and the coverage edge rather
+    // than under them (Lorne, 2026-10-05).
+    const deferredBadgePaints: Array<() => void> = [];
     const drawBadge = (
       id: string, ax: number, ay: number, anchorR: number,
       counts: Map<string, number>, big: boolean, alpha: number,
@@ -2951,6 +2960,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         entries.map(e => `▸${e.label}`).join(' '))
         ?? (fallback ? { x: fallback.x, y: fallback.y - pillH } : null);
       if (!slot) { c2d.restore(); return; }
+      const paintAlpha = c2d.globalAlpha;
+      c2d.restore();
+      const paint = () => {
+      c2d.save();
+      c2d.globalAlpha = paintAlpha;
+      c2d.font = `800 ${fs}px 'Audiowide', sans-serif`;
+      c2d.textAlign = 'left';
+      c2d.textBaseline = 'middle';
       const cy = slot.y + pillH / 2;
       let x = slot.x;
       const anyCtx = c2d as any;
@@ -2986,6 +3003,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         x += pillW + gap;
       }
       c2d.restore();
+      };
+      if (renderContext.presentation) deferredBadgePaints.push(paint);
+      else paint();
     };
 
     // FLEET MARKERS — the escorts and the count, drawn onto the flagship.
@@ -3664,7 +3684,36 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // drawn as one line (CMDR Poopypants: "a really hard time seeing
       // my sensor range"). SP keeps its old fade.
       if (renderContext.presentation) {
-        drawFogOfWarOverlay(rings, renderContext, 1, { wash: regionFade });
+        // THE EDGE IS THE SERVER'S. What you can see is decided by the
+        // server, and it counts more than the base reach: telescopes,
+        // Pathfinder captains and Deep Space Arrays (coverageRings), and
+        // every world visible by presence -- one you are at, its moons,
+        // parent and siblings -- whose parked hulls are all revealed. A
+        // small bubble round each such world puts those hulls inside the
+        // line too. Hulls seen only through Total Awareness (Sensors 10)
+        // stay outside it, dimmed: known by intel, not by sensors.
+        const arrays: Array<{ bodyId: string; range: number }> = [];
+        for (const m of Object.values(gameState.megastructures ?? {})) {
+          if (m.kind !== 'deep_array' || m.status !== 'complete') continue;
+          const owner = bodyById2.get(m.bodyId)?.ownedBy;
+          if (!owner || (owner !== 'player' && !alliedSet.has(owner))) continue;
+          arrays.push({ bodyId: m.bodyId, range: MEGASTRUCTURES.deep_array.effect.sensorRange ?? 0 });
+        }
+        const seen = coverageRings(
+          'player', gameState.ships, gameState.settlements, gameState.bodies,
+          renderTick(), alliedSet, transitShipWorldPosRef.current, arrays,
+        );
+        const sc = renderContext.camera.scale;
+        for (const id of gameState.visibleBodyIds ?? []) {
+          const vb = bodyById2.get(id);
+          if (!vb || vb.destroyedAtTick != null) continue;
+          const vp = bodyPosition(vb, renderTick(), gameState.bodies);
+          // The drawn disc plus room for the hulls parked round it, in px.
+          const px = drawnRadiusOf(renderContext.presentation, vb, sc) + PRESENCE_BUBBLE_PX;
+          seen.push({ pos: vp, range: px / Math.max(1e-9, sc) });
+        }
+        drawFogOfWarOverlay(seen, renderContext, 1, { wash: regionFade });
+        for (const f of deferredBadgePaints) f();
       } else {
         drawFogOfWarOverlay(rings, renderContext, 1 - regionFade);
       }

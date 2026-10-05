@@ -335,6 +335,9 @@ interface ServerState {
   }>;
   /** Fog-free political summary: every live settlement's body + owner,
    *  game-wide. Ownership only — no stats ride along. */
+  /** Every body the server lets this caller see: sensor range AND
+   *  presence (a world you are at, its moons, parent and siblings). */
+  visible_body_ids?: string[];
   megastructures?: Array<{
     body_id: string;
     kind: string;
@@ -2747,6 +2750,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     systemScale: srv.game.system_scale ?? 1,
     // Keyed on the LOCAL body id, because everything that looks a site
     // up holds a client-side body whose id has already been stripped.
+    visibleBodyIds: (srv.visible_body_ids ?? []).map(id => stripGameId(id) ?? id),
     megastructures: Object.fromEntries((srv.megastructures ?? []).map((m) => {
       const bodyId = stripGameId(m.body_id) ?? m.body_id;
       return [bodyId, {
