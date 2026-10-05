@@ -20,6 +20,8 @@ data class FleetGroup(val id: String, val lead: CmdShip, val ships: List<CmdShip
   val hp: Int get() = if (ships.isEmpty()) 100 else ships.sumOf { it.hp } / ships.size
   val captain: Captain? get() = lead.captain ?: ships.firstNotNullOfOrNull { it.captain }
   val rested: Int? get() = ships.mapNotNull { it.rested }.maxOrNull()
+  /** Its latest rest was a launch from the yard, not a trip's end. */
+  val launched: Boolean get() = rested.let { r -> r != null && ships.filter { it.rested == r }.all { it.launched } }
   /** The trade route this fleet runs, if it runs one: busy, not idle. */
   val route: String? get() = ships.firstNotNullOfOrNull { it.route }
   /** "VANGUARD ×5", or the hull's own name. */
@@ -132,7 +134,15 @@ sealed class Decision {
     override val key get() = "fleet:${group.id}"
     override val tier get() = 2
   }
+  /** A hull fresh off the yard, waiting for its first order. */
+  data class Launched(val group: FleetGroup) : Decision() {
+    override val key get() = "built:${group.id}"
+    override val tier get() = 2
+  }
 }
+
+/** How many new-ship cards make the stack before the rest wait in Fleets. */
+private const val LAUNCH_CARDS = 3
 
 /** How many idle fleets make the stack before the rest wait in Fleets. */
 private const val IDLE_CARDS = 3
@@ -152,8 +162,16 @@ fun decisionsOf(s: WearState, cmd: Command?): List<Decision> {
   if (s.research == null && s.researchOptions.any { !it.maxed }) out += Decision.Research(s.researchOptions)
   cmd?.yards?.filter { it.queue.isEmpty() }?.forEach { out += Decision.IdleYard(it) }
   if (cmd != null) {
-    val idle = groupsOf(cmd)
+    val resting = groupsOf(cmd)
       .filter { g -> g.route == null && !g.moving && !g.pending && g.at != null && g.at !in fightingAt && g.rested != null && g.rested!! > 0 }
+    // A SHIP JUST BUILT IS NOT AN ARRIVAL (Lorne): it gets its own card,
+    // NEW SHIP, for the tick it launches and the one after. Biggest first.
+    val (fresh, rest) = resting.partition { g -> g.launched && cmd.tick - g.rested!! <= 1 }
+    out += fresh
+      .sortedWith(compareBy<FleetGroup> { CLASS_RANK[it.lead.cls] ?: 9 }.thenByDescending { it.size })
+      .take(LAUNCH_CARDS)
+      .map { Decision.Launched(it) }
+    val idle = rest
       .map { g ->
         val since = cmd.tick - (g.rested ?: cmd.tick)
         Decision.Idle(g, arrived = since <= 1, idleTicks = since.coerceAtLeast(0))
