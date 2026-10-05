@@ -43,13 +43,24 @@ describe('app shell detection', () => {
 });
 
 describe('the Commission storefronts', () => {
-  it('the profile panel swaps the buy button for where-to-buy', () => {
-    const pp = read('multiplayer/ProfilePanel.tsx');
-    expect(pp).toMatch(/isAndroidApp\(\) \? \(/);
-    expect(pp).toMatch(/purchased on the Orbital website, not in the app/);
+  it('the profile hangar swaps the buy button for where-to-buy', () => {
+    // The Commission moved from the bottom of ProfilePanel to the Hangar
+    // at its top (0153). Same rule: in the app, words, never a button.
+    const hg = read('multiplayer/Hangar.tsx');
+    expect(hg).toMatch(/const sellable = canBuyHere\(\);/);
+    expect(hg).toMatch(/\{sellable \? \(/);
+    expect(hg).toMatch(/bought on the Orbital website, not in the app/);
     // The entitlement is account-wide, so the copy must not imply the
     // player has to buy twice.
-    expect(pp).toMatch(/unlocks here the next time you sign in/);
+    expect(hg).toMatch(/unlocks here the\s+next\s+time you sign in/);
+    // Gifts are bought AND redeemed on the website only.
+    expect(hg).toMatch(/\{sellable && \(/);
+    expect(hg).toMatch(/\{!holder && sellable && \(/);
+  });
+
+  it('the one gate every storefront uses is the app check', () => {
+    const cm = read('multiplayer/commission.ts');
+    expect(cm).toMatch(/export function canBuyHere\(\): boolean \{\s*return !isAndroidApp\(\);\s*\}/);
   });
 
   it('the lobby flag picker does the same', () => {
@@ -59,13 +70,20 @@ describe('the Commission storefronts', () => {
   });
 
   it('no checkout can be started from the packaged app', () => {
-    // Both call sites must be behind the gate. If a third appears, this
-    // fails until it is gated too.
-    for (const rel of ['multiplayer/ProfilePanel.tsx', 'multiplayer/LobbyView.tsx']) {
-      const s = read(rel);
-      expect(s).toMatch(/isAndroidApp/);
+    // Every call site must be behind the gate. If another appears, this
+    // fails until it is listed here, which means checking it is gated.
+    const gated: Record<string, RegExp> = {
+      'multiplayer/LobbyView.tsx': /isAndroidApp\(\) \? \(/,
+      'multiplayer/Hangar.tsx': /canBuyHere\(\)/,
+      // Both moments refuse to render at all where nothing can be sold.
+      'multiplayer/CommissionMoments.tsx': /&& canBuyHere\(\);/,
+      // The designer preview shows the hull everywhere, the button only here.
+      'components/ShipDesigner.tsx': /\{canBuyHere\(\) && \(/,
+    };
+    for (const [rel, gate] of Object.entries(gated)) {
+      expect(read(rel)).toMatch(gate);
     }
-    const callers = ['multiplayer/ProfilePanel.tsx', 'multiplayer/LobbyView.tsx', 'multiplayer/api.ts'];
+    const callers = [...Object.keys(gated), 'multiplayer/api.ts'];
     const root = path.join(__dirname, '..', '..');
     const walk = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true })
       .flatMap(e => (e.isDirectory() ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)]));

@@ -12,14 +12,11 @@
 // ============================================================
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { apiFetch, startCommissionCheckout } from './api';
-import { isAndroidApp, WEBSITE_ORIGIN } from '../platform/appShell';
+import { apiFetch } from './api';
 import { CommissionThanks } from './CommissionThanks';
 import { useAuth } from './AuthContext';
 import { EmailSettings } from './EmailSettings';
-import { ShipIcon } from '../components/ShipIcons';
-import { FactionEmblem } from '../components/FactionEmblem';
-import { PREMIUM_EMBLEM_IDS } from '../game/emblems';
+import { Hangar } from './Hangar';
 
 interface CareerProfile {
   display_name?: string;
@@ -61,11 +58,12 @@ export function ProfilePanel({ onEnterRoom }: { onEnterRoom?: (id: string) => vo
   const [outgoing, setOutgoing] = useState<FriendRow[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [buying, setBuying] = useState(false);
   // Shown over everything on the return trip from Stripe. Separate
   // from `notice` because a line of text is not what someone who has
   // just paid came back for.
   const [thanks, setThanks] = useState(false);
+  // Back from buying a GIFT: the Hangar polls for the new code.
+  const [giftBought, setGiftBought] = useState(false);
 
   // Consume Stripe's ?purchase=success|cancelled return trip. The param
   // is stripped from the URL immediately so a reload doesn't re-thank
@@ -97,19 +95,17 @@ export function ProfilePanel({ onEnterRoom }: { onEnterRoom?: (id: string) => vo
       }, 2000);
       return () => clearInterval(iv);
     }
+    if (outcome === 'gift') {
+      // A gift buys nothing for the buyer: the Hangar shows the code to
+      // pass on as soon as the webhook mints it.
+      setGiftBought(true);
+      setNotice('Thank you. Your gift code appears in the Hangar below in a few seconds; send the link to a friend.');
+    }
     if (outcome === 'cancelled') {
       setNotice('Checkout cancelled — nothing was charged.');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const buy = async () => {
-    setBuying(true); setError(null);
-    const url = await startCommissionCheckout();
-    if (url) { window.location.assign(url); return; }
-    setBuying(false);
-    setError('Could not start checkout — purchases may not be enabled yet. Try again in a minute.');
-  };
 
   const load = useCallback(async () => {
     const p = await apiFetch<{ profile: CareerProfile; history: HistoryRow[] }>('/api/users/me/profile');
@@ -201,6 +197,9 @@ export function ProfilePanel({ onEnterRoom }: { onEnterRoom?: (id: string) => vo
       {notice && <div className="pp-notice">{notice}</div>}
       {error && <div className="pp-error">{error}</div>}
 
+      {/* ---- the Commission, gifts ---- first, where it can be found */}
+      <Hangar onRedeemed={() => setThanks(true)} giftJustBought={giftBought} />
+
       {/* ---- identity ---- */}
       <section className="pp-section">
         <div className="pp-h">ACCOUNT</div>
@@ -239,78 +238,6 @@ export function ProfilePanel({ onEnterRoom }: { onEnterRoom?: (id: string) => vo
       <section className="pp-section" id="email-settings">
         <div className="pp-h">EMAIL</div>
         <EmailSettings />
-      </section>
-
-      {/* ---- commission ---- */}
-      <section className="pp-section">
-        <div className="pp-h">COMMISSION</div>
-        {user?.is_premium ? (
-          <>
-            <div className="pp-comm__own">
-              ★ You hold the Commander's Commission — thank you for
-              supporting Orbital.
-            </div>
-            <div className="pp-comm__row" aria-hidden>
-              <ShipIcon shipClass="destroyer" variant="S" size={26} />
-              <ShipIcon shipClass="frigate" variant="R" size={26} />
-              <ShipIcon shipClass="corvette" variant="J" size={26} />
-              <span className="pp-comm__sep" />
-              {PREMIUM_EMBLEM_IDS.slice(0, 5).map(id => (
-                <FactionEmblem key={id} emblem={id} fallbackKey={id} size={18} />
-              ))}
-            </div>
-            <div className="pp-sub">
-              All ten ship lines (J–S, every class) and all ten premium
-              emblems are yours — pick them in the ship designer and the
-              lobby flag section.
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="pp-comm__pitch">
-              Support the game, get more icons, get your Commission!
-            </div>
-            {/* The goods, not a bullet list: three premium hulls and five
-                premium emblems, rendered live. The hull you can see is
-                the ad. */}
-            <div className="pp-comm__row" aria-hidden>
-              <ShipIcon shipClass="destroyer" variant="S" size={26} />
-              <ShipIcon shipClass="frigate" variant="R" size={26} />
-              <ShipIcon shipClass="corvette" variant="J" size={26} />
-              <span className="pp-comm__sep" />
-              {PREMIUM_EMBLEM_IDS.slice(0, 5).map(id => (
-                <FactionEmblem key={id} emblem={id} fallbackKey={id} size={18} />
-              ))}
-              <span className="pp-comm__more">+42 more</span>
-            </div>
-            <div className="pp-sub" style={{ marginBottom: 8 }}>
-              Ten ship lines — Specter through Eclipse, every hull class —
-              plus ten flag emblems. Cosmetic only, yours on every account
-              login, forever.
-            </div>
-            {/* NOT SOLD IN THE ANDROID APP. The Commission is bought on
-                the website; the app says where rather than offering a
-                button that would dead-end. Same entitlement either way —
-                buy it anywhere and it is on the account at next login. */}
-            {isAndroidApp() ? (
-              <div className="pp-comm__offsite">
-                <div className="pp-sub" style={{ marginBottom: 6 }}>
-                  The Commission is purchased on the Orbital website, not in the app.
-                  Buy it there and it unlocks here the next time you sign in.
-                </div>
-                <div className="pp-comm__where">{WEBSITE_ORIGIN.replace('https://', '')}</div>
-              </div>
-            ) : (
-              <button
-                className="pp-btn pp-btn--primary"
-                disabled={buying}
-                onClick={() => { void buy(); }}
-              >
-                {buying ? 'Opening checkout…' : 'Get the Commission · $10 one-time'}
-              </button>
-            )}
-          </>
-        )}
       </section>
 
       {/* ---- career ---- */}

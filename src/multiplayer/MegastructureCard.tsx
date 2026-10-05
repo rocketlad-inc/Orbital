@@ -727,7 +727,7 @@ export const MegastructurePicker: React.FC<{
               style={locked ? { opacity: 0.45, cursor: 'not-allowed' } : undefined}
               onClick={() => { if (locked) return; setOpen(false); setPendingKind(null); onBegin(pendingKind, v); }}
               title={locked
-                ? `${STRUCTURE_VARIANT_NAMES[pendingKind][v]} — Commander's Commission (unlock in the lobby's flag section)`
+                ? `${STRUCTURE_VARIANT_NAMES[pendingKind][v]} — a Commander's Commission look (Profile → Hangar)`
                 : STRUCTURE_VARIANT_NAMES[pendingKind][v]}
             >
               {/* Drawn in YOUR colours, because that is how it will

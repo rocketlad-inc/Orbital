@@ -6,6 +6,7 @@ import { DevlogAdmin } from './DevlogAdmin';
 import { BotControl } from './BotControl';
 import { Editor } from './Editor';
 import { ProfilePanel } from './ProfilePanel';
+import { ThanksCard } from './CommissionMoments';
 import { GameCard, GameSummary, initials, DEFAULT_TICK_INTERVAL_MS } from './LobbyCards';
 import { LobbyStarfield } from './LobbyStarfield';
 import './lobby.css';
@@ -40,7 +41,11 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
     // instead of dumping the buyer on My Games mid-thank-you. The
     // "Email settings" link in every email lands here the same way.
     const q = new URLSearchParams(window.location.search);
-    return q.has('purchase') || q.get('settings') === 'email' ? 'profile' : 'my';
+    // A gift code waiting to be redeemed (a gift link, possibly from
+    // before signing up) opens there too: the Hangar has it filled in.
+    let pendingGift = false;
+    try { pendingGift = !!localStorage.getItem('orbital.pendingGift'); } catch { /* blocked */ }
+    return q.has('purchase') || q.has('gift') || pendingGift || q.get('settings') === 'email' ? 'profile' : 'my';
   });
   const [mine, setMine] = useState<Listing | null>(null);
   const [browse, setBrowse] = useState<Listing | null>(null);
@@ -136,6 +141,9 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
       </header>
 
       <main className="lx-main">
+        {/* The one-time Commission thank-you (20+ hours played). Only
+            on the home tabs, never over a game. */}
+        {(tab === 'my' || tab === 'browse') && <ThanksCard onSeeHangar={() => setTab('profile')} />}
         {(tab === 'my' || tab === 'browse') && (
           <Hero
             tab={tab}

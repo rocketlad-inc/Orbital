@@ -664,9 +664,9 @@ function TradeCard({
                   starts at once, collecting and delivering at both ends —{' '}
                   <b>you don't need to assign a freighter.</b></>)
             : (isMineOutgoing
-              ? <>No freighter pinned — you'll each commission one from the Trades panel after
+              ? <>No freighter pinned — you'll each assign one from the Trades panel after
                   they accept.</>
-              : <>No freighter pinned to this offer — after accepting, each side commissions one
+              : <>No freighter pinned to this offer — after accepting, each side assigns one
                   before anything ships.</>)}
         </div>
       )}
@@ -1157,7 +1157,7 @@ function AgreementCard({
                   {' '}— running · {myLeg.loops_completed} run{myLeg.loops_completed === 1 ? '' : 's'} completed
                 </span>
               : a.status === 'active'
-                ? <span style={{ color: '#ffb84d' }}> — needs a freighter; nothing ships until you commission one</span>
+                ? <span style={{ color: '#ffb84d' }}> — needs a freighter; nothing ships until you assign one</span>
                 : null)}
           </div>
         )}
@@ -1170,7 +1170,7 @@ function AgreementCard({
                   {' '}— running · {theirLeg.loops_completed} run{theirLeg.loops_completed === 1 ? '' : 's'} completed
                 </span>
               : a.status === 'active'
-                ? <span style={{ color: '#8aa0b4' }}> — waiting for {partner?.name ?? 'them'} to commission a freighter</span>
+                ? <span style={{ color: '#8aa0b4' }}> — waiting for {partner?.name ?? 'them'} to assign a freighter</span>
                 : null)}
           </div>
         )}
@@ -1209,8 +1209,8 @@ function AgreementCard({
                 {iHaveHullOnLane && theyHaveHullOnLane
                   ? 'Both of you have a hull on it — neither side owes a freighter.'
                   : iHaveHullOnLane
-                    ? `Your freighter carries both sides' goods. ${partner?.name ?? 'They'} need not commission one.${laneHasRoom ? ' A second hull would double the run.' : ''}`
-                    : `${partner?.name ?? 'Their'} freighter carries your goods too. You need not commission one.${laneHasRoom ? ' Adding yours would double the run.' : ''}`}
+                    ? `Your freighter carries both sides' goods. ${partner?.name ?? 'They'} need not assign one.${laneHasRoom ? ' A second hull would double the run.' : ''}`
+                    : `${partner?.name ?? 'Their'} freighter carries your goods too. You need not assign one.${laneHasRoom ? ' Adding yours would double the run.' : ''}`}
               </div>
             )}
             {/* THE CAP, STATED. "Adding yours would double the run" was
@@ -1253,7 +1253,7 @@ function AgreementCard({
       {needsMe && (
         <button className="mp-btn mp-btn--primary" style={{ fontSize: 9, padding: '2px 8px', marginTop: 6 }}
           onClick={() => setCommissioning(c => !c)}>
-          {commissioning ? 'Close' : 'Commission freighter'}
+          {commissioning ? 'Close' : 'Assign freighter'}
         </button>
       )}
       {commissioning && (
@@ -1303,7 +1303,7 @@ function CommissionForm({
     setBusy(true); setErr(null);
     const res = await api.commissionLeg(agreement.id, shipId, destId);
     setBusy(false);
-    if (!res.ok) { setErr(res.error?.message ?? 'Commission failed'); return; }
+    if (!res.ok) { setErr(res.error?.message ?? 'Could not assign the freighter'); return; }
     onDone();
   };
 

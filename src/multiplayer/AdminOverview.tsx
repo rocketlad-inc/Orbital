@@ -1256,6 +1256,7 @@ function Commission({ kpis }: { kpis: Kpis }) {
         <Kpi label="Commissions sold" value={n(kpis.commissions_total)} gold foot="paid through Stripe, all time" />
         <Kpi label="Sold this week" value={n(kpis.commissions_week)} gold foot="last 7 days" />
       </div>
+      <CommissionFunnel />
       <section className="ao-panel">
         <PanelHead
           title="Accounts"
@@ -1264,6 +1265,102 @@ function Commission({ kpis }: { kpis: Kpis }) {
         <PremiumGrants />
       </section>
     </div>
+  );
+}
+
+type FunnelRow = {
+  surface: string; views: number; viewers: number; clicks: number;
+  dismissals: number; checkouts: number; paid: number;
+};
+type FunnelData = {
+  days: number;
+  surfaces: FunnelRow[];
+  gifts: { sold: number; redeemed: number; voided: number; redeemed_grants: number };
+  thanks_card: Record<string, number>;
+};
+const SURFACE_LABEL: Record<string, string> = {
+  profile: 'Profile hangar',
+  'lobby-flag': 'Lobby flag picker',
+  designer: 'Ship designer preview',
+  endgame: 'End of game',
+  'thanks-card': '20-hour thank-you',
+  other: 'Other / older clients',
+  'before tracking': 'Before tracking',
+};
+
+/**
+ * Which surface sells (0153). Each surface logs a view, a click and a
+ * dismissal; checkout logs every attempt; the paid row carries where it
+ * started. Read left to right, each row is that surface's funnel.
+ */
+function CommissionFunnel() {
+  const [days, setDays] = useState(30);
+  const [data, setData] = useState<FunnelData | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let dead = false;
+    void apiFetch<FunnelData>(`/api/admin/commission?days=${days}`).then(res => {
+      if (dead) return;
+      if (res.ok) { setData(res.data); setError(null); } else setError('Could not load the funnel.');
+    });
+    return () => { dead = true; };
+  }, [days]);
+  const rate = (a: number, b: number) => (b ? `${Math.round((a / b) * 100)}%` : '\u2014');
+  const rows = (data?.surfaces ?? []).filter(r => r.views || r.clicks || r.checkouts || r.paid || SURFACE_LABEL[r.surface]);
+  return (
+    <section className="ao-panel">
+      <PanelHead
+        title="Which surface sells"
+        hint="For each place the Commission appears: how many saw it, clicked, started a checkout and paid. Views count once per page load. Recorded from the Oct 5 update on; robots excluded."
+      >
+        <div className="ao-seg" role="group" aria-label="Window">
+          {[7, 30, 90].map(d => (
+            <button key={d} className={`ao-seg__opt${days === d ? ' is-active' : ''}`} onClick={() => setDays(d)}>{d} days</button>
+          ))}
+        </div>
+      </PanelHead>
+      {error && <div className="ao-none">{error}</div>}
+      {!data && !error && <div className="ao-none">Loading…</div>}
+      {data && (
+        <>
+          <div className="ao-scroll">
+            <table className="ao-table">
+              <thead>
+                <tr>
+                  <th>Surface</th>
+                  <th className="num">Views</th>
+                  <th className="num">Players</th>
+                  <th className="num">Clicks</th>
+                  <th className="num">Click rate</th>
+                  <th className="num">Checkouts</th>
+                  <th className="num">Paid</th>
+                  <th className="num">Dismissed</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(r => (
+                  <tr key={r.surface}>
+                    <td>{SURFACE_LABEL[r.surface] ?? r.surface}</td>
+                    <td className="num">{n(r.views)}</td>
+                    <td className="num">{n(r.viewers)}</td>
+                    <td className="num">{n(r.clicks)}</td>
+                    <td className="num">{rate(r.clicks, r.views)}</td>
+                    <td className="num">{n(r.checkouts)}</td>
+                    <td className="num">{n(r.paid)}</td>
+                    <td className="num">{r.dismissals ? n(r.dismissals) : <span className="ao-dim">—</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="ao-note" style={{ marginTop: 12 }}>
+            Gifts: {n(data.gifts.sold)} bought, {n(data.gifts.redeemed)} redeemed
+            {data.gifts.voided ? `, ${n(data.gifts.voided)} refunded` : ''}.
+            {' '}Thank-you card answers: {n(data.thanks_card.clicked ?? 0)} interested, {n(data.thanks_card.dismissed ?? 0)} no thanks.
+          </p>
+        </>
+      )}
+    </section>
   );
 }
 

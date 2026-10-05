@@ -722,7 +722,7 @@ async function handlePutCaptainRoster(req, env, ctx) {
   // Same lock the rest of lobby identity uses: once the game exists the ten
   // have already been minted and editing this would change nothing.
   const started = await env.DB.prepare('SELECT 1 AS x FROM games WHERE id = ?').bind(roomId).first();
-  if (started) return err(409, 'already_started', 'captains are commissioned once the game starts');
+  if (started) return err(409, 'already_started', 'officers are appointed before the game starts');
 
   const body = await readJson(req);
   if (!body || typeof body !== 'object') return err(400, 'bad_request', 'invalid body');

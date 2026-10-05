@@ -33,6 +33,8 @@ import { useGameContext } from '../state/gameContext';
 import { useMultiplayerActions, ServerShipDesign, ServerShipTemplate } from '../multiplayer/MultiplayerActionsContext';
 import { logUiEvent } from '../multiplayer/telemetry';
 import { useAuth } from '../multiplayer/AuthContext';
+import { startCommissionCheckout } from '../multiplayer/api';
+import { COMMISSION_NAME, COMMISSION_PRICE, canBuyHere, logCommission } from '../multiplayer/commission';
 import { ShipClassName, BuildableClassName, SHIP_CLASSES, BUILDABLE_CLASSES, upkeepSplitFor } from '../game/shipClasses';
 import { deliveredHullHp } from '../game/combat';
 import {
@@ -149,6 +151,11 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   const [draftParts, setDraftParts] = useState<ShipPartId[]>([]);
   const [draftIcon, setDraftIcon] = useState<ShipIconVariant | undefined>(undefined);
   const [iconMenuOpen, setIconMenuOpen] = useState(false);
+  // A Commission line shown on the avatar for a look, never saved: the
+  // design keeps draftIcon, and the save paths never read this. Showing
+  // the goods on the player's own hull is the whole pitch (insight
+  // report, idea 1); the server would refuse to persist it anyway.
+  const [previewIcon, setPreviewIcon] = useState<ShipIconVariant | undefined>(undefined);
   // Commission gate for the J-S icon lines. UI-only — the designer save
   // and the build queue both re-check the entitlement server-side.
   const { user } = useAuth();
@@ -357,6 +364,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
     setDraftName(d?.name ?? '');
     setDraftParts(d ? sanitizeParts(d.parts) : []);
     setDraftIcon(d?.iconVariant);
+    setPreviewIcon(undefined);
     setError(null);
     setRefitNote(null);
   };
@@ -402,6 +410,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
 
   const switchClass = (cls: BuildableClassName) => {
     setActiveClass(cls);
+    setPreviewIcon(undefined);
     setSelectedId(null);
     setDraftName('');
     setDraftParts([]);
@@ -542,6 +551,9 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   if (!mpActions) return null;
 
   const iconVariant = draftIcon ?? DEFAULT_SHIP_ICONS[activeClass];
+  // Only a line this account cannot save is previewed; switching hull
+  // class leaves the preview behind (its name belongs to the old class).
+  const shownIcon = previewIcon ?? iconVariant;
   const allowedParts = ALL_PART_IDS.filter(p => SHIP_PART_DEFS[p].allowedOn.includes(activeClass));
   const activeDesignForClass = classDesigns.find(d => d.isActive) ?? null;
 
@@ -872,6 +884,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                       const isDefault = v === DEFAULT_SHIP_ICONS[activeClass];
                       // Premium lines render for everyone — locked, not
                       // hidden; the hull you can see but not fly is the ad.
+                      // Clicking one PREVIEWS it on the avatar (not saved).
                       const locked = !isPremium && PREMIUM_VARIANTS.has(v);
                       return (
                         <button
@@ -879,13 +892,20 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                           type="button"
                           role="option"
                           aria-selected={v === iconVariant}
-                          disabled={locked}
-                          className={`sd-icon-option ${v === iconVariant ? 'selected' : ''}`}
-                          style={locked ? { opacity: 0.45, cursor: 'not-allowed' } : undefined}
+                          className={`sd-icon-option ${v === iconVariant ? 'selected' : ''} ${locked ? 'is-locked' : ''}`}
                           title={locked
-                            ? `${ICON_VARIANT_NAMES[activeClass][v]} line — Commander's Commission (unlock in the lobby's flag section)`
+                            ? `Preview the ${ICON_VARIANT_NAMES[activeClass][v]} line on your hull — a ${COMMISSION_NAME} line`
                             : undefined}
-                          onClick={() => { if (!locked) { setDraftIcon(v); setIconMenuOpen(false); } }}
+                          onClick={() => {
+                            if (locked) {
+                              setPreviewIcon(v);
+                              logCommission('designer', 'view');
+                            } else {
+                              setDraftIcon(v);
+                              setPreviewIcon(undefined);
+                            }
+                            setIconMenuOpen(false);
+                          }}
                         >
                           <ShipIcon shipClass={activeClass} variant={v} size={22} />
                           <span>
@@ -911,7 +931,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                 {/* Component avatar: the portrait physically grows the
                     fitted hardware (barrel, emitter, plating, plume,
                     shield bubble) — live, as parts land in sockets. */}
-                <ShipIcon shipClass={activeClass} variant={iconVariant} size={96} parts={draftParts} />
+                <ShipIcon shipClass={activeClass} variant={shownIcon} size={96} parts={draftParts} />
                 <div className="sd-canvas__hull-name">{SHIP_CLASSES[activeClass].displayName}</div>
               </div>
               {Array.from({ length: slots }).map((_, i) => {
@@ -956,6 +976,27 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
               {flash && <div className="sd-flash" role="alert">⚠ {flash}</div>}
               {nDetonators > 0 && (
                 <div className="sd-canvas__det-warning">⚠ {detonatorDisclosure(detDamage)}</div>
+              )}
+              {previewIcon && (
+                <div className="sd-preview" role="status">
+                  <span>
+                    Previewing the <b>{ICON_VARIANT_NAMES[activeClass][previewIcon]}</b> line, part of
+                    the {COMMISSION_NAME}. Not saved with the design.
+                  </span>
+                  {canBuyHere() && (
+                    <button
+                      type="button"
+                      className="sd-preview__get"
+                      onClick={() => {
+                        logCommission('designer', 'click');
+                        void startCommissionCheckout('designer').then(url => { if (url) window.location.assign(url); });
+                      }}
+                    >Get it · {COMMISSION_PRICE}</button>
+                  )}
+                  <button type="button" className="sd-preview__end" onClick={() => setPreviewIcon(undefined)}>
+                    End preview
+                  </button>
+                </div>
               )}
             </div>
 

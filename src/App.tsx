@@ -939,6 +939,15 @@ function AppRouter() {
   );
 }
 
+// A gift link (?gift=CODE, Hangar.tsx) often reaches someone with no
+// account yet. Keep the code across the landing page and signup so the
+// Hangar can fill it in once they are in. Module scope: runs once, before
+// any redirect can drop the query string.
+try {
+  const giftParam = new URLSearchParams(window.location.search).get('gift');
+  if (giftParam && /^[A-Za-z0-9-]{12,16}$/.test(giftParam)) localStorage.setItem('orbital.pendingGift', giftParam);
+} catch { /* storage blocked: the URL still carries it this load */ }
+
 export function App() {
   return (
     <ErrorBoundary scope="App">

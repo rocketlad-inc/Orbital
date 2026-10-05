@@ -166,13 +166,29 @@ export type User = {
   // Set on the player's second visit until they answer: the feedback
   // Discord's invite URL (worker/index.js noteVisit). null otherwise.
   invite_discord?: string | null;
+  // True once, for a non-holder with 20+ hours played: the one-time
+  // Commission thank-you card (worker/index.js noteVisit). Never on the
+  // same visit as the Discord invite.
+  commission_ask?: boolean;
 };
+
+/** Where a Commission checkout started. The server keeps an allow-list
+ *  of these (worker/store.js COMMISSION_SURFACES) and labels each sale
+ *  with it, so the dashboard can say which surface sells. */
+export type CommissionSurface = 'profile' | 'lobby-flag' | 'designer' | 'endgame' | 'thanks-card';
 
 /** Start the Commander's Commission purchase. Resolves to the Stripe
  *  Checkout URL to navigate to, or null when purchases aren't enabled,
- *  the account already owns it, or the request failed. */
-export async function startCommissionCheckout(): Promise<string | null> {
-  const res = await apiFetch<{ url: string }>('/api/checkout/cosmetics', { method: 'POST' });
+ *  the account already owns it, or the request failed. `gift` buys one
+ *  for someone else: the buyer gets a code to pass on. */
+export async function startCommissionCheckout(
+  surface: CommissionSurface,
+  opts: { gift?: boolean } = {},
+): Promise<string | null> {
+  const res = await apiFetch<{ url: string }>('/api/checkout/cosmetics', {
+    method: 'POST',
+    body: JSON.stringify({ surface, gift: !!opts.gift }),
+  });
   return res.ok ? res.data.url : null;
 }
 
@@ -198,6 +214,8 @@ export type RoomSummary = {
 export type RoomMember = {
   userId: string;
   displayName: string;
+  /** Holds the Commander's Commission (0153): the roster's quiet mark. */
+  commissioned?: boolean;
   empire_name?: string | null;
   bio?: string | null;
   chosen_starting_body?: string | null;
@@ -258,6 +276,8 @@ export type Faction = {
   emblem?: string | null;
   status: string;
   capital_body_id: string | null;
+  /** Holds the Commander's Commission (0153); 0/1 from SQLite. */
+  commissioned?: number | boolean;
   senate_weight: number;
   reputation: number;
   /** Scoreboard extras from the factions endpoint — GATED by the caller's
