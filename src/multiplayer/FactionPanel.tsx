@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch, Faction, MyFaction, Pact, PACT_LABELS, PactKind, tradesApi, warsApi, WarRow } from './api';
 import { FlagChip } from '../components/FactionEmblem';
+import { HOLDER_MARK, HOLDER_TITLE } from './commission';
 
 // The local twoToneChip helper is gone — FlagChip in
 // components/FactionEmblem draws the same two-tone field plus the
@@ -333,6 +334,9 @@ export function FactionPanel({
                   <FlagChip className="mp-swatch" color={f.color} color2={f.color2}
                     emblem={f.emblem} fallbackKey={f.id} size={16} />
                   <span className="fp-name" title={f.name}>{f.name}</span>
+                  {!!f.commissioned && (
+                    <span className="fp-holder" title={HOLDER_TITLE} aria-label={HOLDER_TITLE}>{HOLDER_MARK}</span>
+                  )}
                   <span
                     className="fp-state"
                     style={{ color: eliminated ? 'var(--mp-fg-dim)' : STATUS_COLOR[statusKey] }}

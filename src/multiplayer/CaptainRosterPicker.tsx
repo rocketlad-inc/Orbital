@@ -151,7 +151,7 @@ export const CaptainRosterPicker: React.FC<{ roomId: string }> = ({ roomId }) =>
       body: JSON.stringify({ roster, dealtTraits: data.dealtTraits }),
     });
     setBusy(false);
-    setMsg(res.ok ? 'Officers commissioned.' : (res.error?.message ?? 'Could not save'));
+    setMsg(res.ok ? 'Officers appointed.' : (res.error?.message ?? 'Could not save'));
     if (res.ok) setData({ ...data, saved: true });
   };
 
@@ -400,7 +400,7 @@ export const CaptainRosterPicker: React.FC<{ roomId: string }> = ({ roomId }) =>
             onClick={save}
             disabled={busy}
           >
-            {data?.saved ? 'Update officers' : 'Commission these ten'}
+            {data?.saved ? 'Update officers' : 'Appoint these ten'}
           </button>
           <button
             onClick={reroll}

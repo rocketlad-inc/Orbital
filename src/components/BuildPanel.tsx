@@ -29,6 +29,7 @@ import { useFeatureGate } from '../hooks/useFeatureGate';
 import { RESOURCE_COLORS } from '../game/resourceColors';
 import { trackPendingBuild, resolveServerOrderId } from '../game/optimisticBuilds';
 import './BuildPanel.css';
+import { COMMISSION_LINES, COMMISSION_NAME } from '../multiplayer/commission';
 import { MEGASTRUCTURES } from '../game/megastructures';
 
 /** Optional explicit body. Omitted, the panel follows the map selection
@@ -774,7 +775,10 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
                       }}
                       title={activeDesign
                         ? `Icon from design "${activeDesign.name}" — click to change it in the designer`
-                        : `Icon: ${ICON_VARIANT_NAMES[cls][iconChoice[cls]]} (click to cycle)`}
+                        : `Icon: ${ICON_VARIANT_NAMES[cls][iconChoice[cls]]} (click to cycle)${isPremium ? ''
+                          // A fact, not an ask: mid-play, the hint only says
+                          // where the other lines are and that you can look.
+                          : ` · ${COMMISSION_LINES} more lines come with the ${COMMISSION_NAME}; preview them in the ship designer`}`}
                       style={{
                         background: 'transparent', border: 'none',
                         padding: 0, cursor: 'pointer',

@@ -12,6 +12,15 @@
 //      checkout.session.completed / .async_payment_succeeded grant the
 //      entitlement; on charge.refunded revoke it.
 //   3. Admin override                -> grant/revoke by email, audited.
+//   4. Gifts (0153)                   -> a checkout with gift:true mints a
+//      code instead of granting; POST /api/commission/redeem turns the
+//      code into the Commission on whoever redeems it.
+//
+// SURFACES (0153). Every checkout says where it started (profile, lobby
+// flag picker, designer, end of game, the thank-you card). It rides into
+// Stripe's metadata and onto the entitlement row, and every checkout
+// attempt is logged, so the dashboard can say which surface sells and
+// which only adds noise.
 //
 // WHAT AN ENTITLEMENT GATES. Cosmetics only — premium ship icon
 // variants and flag emblems. The validators in index.js (icon_variant)
@@ -118,15 +127,60 @@ function requireAdmin(session) {
 
 // ---------------------------------------------------------------- checkout
 
+/** Where a checkout may say it started. Anything else is recorded as
+ *  'other' rather than trusted: the value only ever labels a sale on the
+ *  dashboard, it never decides anything. */
+export const COMMISSION_SURFACES = new Set([
+  'profile', 'lobby-flag', 'designer', 'endgame', 'thanks-card',
+]);
+
+/** Gift codes: 12 characters from an alphabet with no lookalikes (no
+ *  0/O, 1/I), about 60 bits, so guessing one is not a strategy. Stored
+ *  bare; shown as XXXX-XXXX-XXXX. */
+const GIFT_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+export function newGiftCode() {
+  const bytes = crypto.getRandomValues(new Uint8Array(12));
+  let s = '';
+  for (const b of bytes) s += GIFT_ALPHABET[b % GIFT_ALPHABET.length];
+  return s;
+}
+export function normalizeGiftCode(raw) {
+  const s = String(raw ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return /^[A-HJ-NP-Z2-9]{12}$/.test(s) ? s : null;
+}
+const showGiftCode = (c) => `${c.slice(0, 4)}-${c.slice(4, 8)}-${c.slice(8, 12)}`;
+
+/** One analytics row per checkout attempt, with how it went. Not under
+ *  /api/games, so the dispatch chokepoint never logs it on its own. */
+async function logCheckout(env, session, { surface, gift, status, result }) {
+  try {
+    const { logEvent } = await import('./analytics.js');
+    await logEvent(env, {
+      userId: session.user_id,
+      kind: 'commission/checkout',
+      payload: { from: surface, kind: gift ? 'gift' : 'self', result },
+      status,
+    });
+  } catch (e) { console.error('checkout log failed', e); }
+}
+
 async function handleCreateCheckout(req, env, { url, session }) {
   const sku = 'cosmetics_v1';
+  // Body is optional: older clients POST with none, and get the old
+  // behaviour (a purchase for themselves, surface 'other').
+  const body = await req.json().catch(() => null);
+  const gift = body?.gift === true;
+  const surface = COMMISSION_SURFACES.has(body?.surface) ? body.surface : 'other';
   const priceId = env[SKUS[sku].priceEnv];
   if (!env.STRIPE_SECRET_KEY || !priceId) {
+    await logCheckout(env, session, { surface, gift, status: 400, result: 'not_configured' });
     return err(400, 'not_configured', 'purchases are not enabled on this server');
   }
   // Repurchase guard — Stripe would happily charge twice; we would grant
-  // once (PK collision) and owe a refund. Cheaper to refuse here.
-  if (await hasEntitlement(env, session.user_id, sku)) {
+  // once (PK collision) and owe a refund. Cheaper to refuse here. A GIFT
+  // is the one purchase a holder can make: it is for someone else.
+  if (!gift && await hasEntitlement(env, session.user_id, sku)) {
+    await logCheckout(env, session, { surface, gift, status: 409, result: 'already_owned' });
     return err(409, 'already_owned', 'this account already owns the Commission');
   }
 
@@ -142,8 +196,10 @@ async function handleCreateCheckout(req, env, { url, session }) {
     client_reference_id: session.user_id,
     'metadata[sku]': sku,
     'metadata[user_id]': session.user_id,
+    'metadata[surface]': surface,
+    'metadata[gift]': gift ? '1' : '0',
     customer_email: session.email,
-    success_url: `${origin}/?purchase=success`,
+    success_url: `${origin}/?purchase=${gift ? 'gift' : 'success'}`,
     cancel_url: `${origin}/?purchase=cancelled`,
   });
 
@@ -159,8 +215,10 @@ async function handleCreateCheckout(req, env, { url, session }) {
   if (!res.ok || !data?.url) {
     // Stripe's message is for our logs; the player gets a generic line.
     console.error('stripe checkout create failed', data?.error?.message ?? res.status);
+    await logCheckout(env, session, { surface, gift, status: 502, result: 'stripe_error' });
     return err(502, 'stripe_error', 'could not start checkout — try again in a minute');
   }
+  await logCheckout(env, session, { surface, gift, status: 200, result: 'started' });
   return json({ url: data.url });
 }
 
@@ -247,16 +305,35 @@ export async function handleStripeWebhook(req, env) {
       console.error('webhook: paid session with no grantable target', obj.id);
       return json({ received: true });
     }
+    const surface = typeof obj.metadata?.surface === 'string' ? obj.metadata.surface.slice(0, 24) : null;
+    // A GIFT mints a code for the buyer to pass on; nothing is granted
+    // to the buyer. The session id is UNIQUE on the gift row, so a
+    // redelivery (or both completion events) mints exactly one code.
+    if (obj.metadata?.gift === '1') {
+      if (!obj.id) {
+        console.error('webhook: paid gift session with no id');
+        return json({ received: true });
+      }
+      await env.DB
+        .prepare(
+          `INSERT OR IGNORE INTO commission_gifts
+             (code, sku, buyer_user_id, stripe_session_id, stripe_payment_intent, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(newGiftCode(), sku, userId, obj.id, obj.payment_intent ?? null, Date.now())
+        .run();
+      return json({ received: true });
+    }
     // INSERT OR IGNORE twice over: the (user, sku) PK absorbs an admin
     // grant already existing; the session-id UNIQUE absorbs redelivery —
     // including the same session arriving once per event type.
     await env.DB
       .prepare(
         `INSERT OR IGNORE INTO user_entitlements
-           (user_id, sku, source, stripe_session_id, stripe_payment_intent, granted_at)
-         VALUES (?, ?, 'stripe', ?, ?, ?)`,
+           (user_id, sku, source, stripe_session_id, stripe_payment_intent, granted_at, surface)
+         VALUES (?, ?, 'stripe', ?, ?, ?, ?)`,
       )
-      .bind(userId, sku, obj.id ?? null, obj.payment_intent ?? null, Date.now())
+      .bind(userId, sku, obj.id ?? null, obj.payment_intent ?? null, Date.now(), surface)
       .run();
     return json({ received: true });
   }
@@ -271,6 +348,20 @@ export async function handleStripeWebhook(req, env) {
         .prepare('DELETE FROM user_entitlements WHERE stripe_payment_intent = ?')
         .bind(intent)
         .run();
+      // A refunded GIFT: void the code so it can no longer be redeemed,
+      // and if someone already redeemed it, the Commission it gave goes
+      // back on the shelf too — the money behind it has been returned.
+      const g = await env.DB
+        .prepare('SELECT code FROM commission_gifts WHERE stripe_payment_intent = ?')
+        .bind(intent)
+        .first();
+      if (g) {
+        await env.DB.batch([
+          env.DB.prepare('UPDATE commission_gifts SET voided_at = COALESCE(voided_at, ?) WHERE code = ?')
+            .bind(Date.now(), g.code),
+          env.DB.prepare('DELETE FROM user_entitlements WHERE gift_code = ?').bind(g.code),
+        ]);
+      }
     }
     return json({ received: true });
   }
@@ -279,6 +370,68 @@ export async function handleStripeWebhook(req, env) {
   // whatever the dashboard's endpoint config subscribes to; being loud
   // about unhandled types just fills the retry queue.
   return json({ received: true });
+}
+
+// ---------------------------------------------------------------- gifts
+
+/** GET /api/commission/gifts — the codes this account bought for others. */
+async function handleListGifts(_req, env, { session }) {
+  const rows = (await env.DB
+    .prepare(
+      `SELECT g.code, g.created_at, g.redeemed_at, g.voided_at, u.display_name AS redeemed_by_name
+         FROM commission_gifts g LEFT JOIN users u ON u.id = g.redeemed_by
+        WHERE g.buyer_user_id = ?
+        ORDER BY g.created_at DESC
+        LIMIT 50`,
+    )
+    .bind(session.user_id)
+    .all()).results ?? [];
+  return json({
+    gifts: rows.map(r => ({
+      code: showGiftCode(r.code),
+      created_at: r.created_at,
+      redeemed_at: r.redeemed_at ?? null,
+      redeemed_by_name: r.redeemed_by_name ?? null,
+      voided: r.voided_at != null,
+    })),
+  });
+}
+
+/**
+ * POST /api/commission/redeem { code } — a gift becomes this account's
+ * Commission. The claim and the grant are ONE batch, and the grant only
+ * inserts if the claim just named this account, so two people racing
+ * for one code cannot both end up holding it.
+ */
+async function handleRedeemGift(req, env, { session }) {
+  const body = await req.json().catch(() => null);
+  const code = normalizeGiftCode(body?.code);
+  if (!code) return err(400, 'bad_code', 'that does not look like a gift code (12 letters and numbers)');
+  if (await hasEntitlement(env, session.user_id)) {
+    return err(409, 'already_owned', 'this account already holds the Commission — pass the code to someone who does not');
+  }
+  const g = await env.DB
+    .prepare('SELECT code, sku, redeemed_by, voided_at FROM commission_gifts WHERE code = ?')
+    .bind(code)
+    .first();
+  if (!g || g.voided_at != null) return err(404, 'no_such_gift', 'no gift with that code');
+  if (g.redeemed_by) return err(409, 'already_redeemed', 'that gift has already been redeemed');
+  const now = Date.now();
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE commission_gifts SET redeemed_by = ?, redeemed_at = ?
+        WHERE code = ? AND redeemed_by IS NULL AND voided_at IS NULL`,
+    ).bind(session.user_id, now, code),
+    env.DB.prepare(
+      `INSERT OR IGNORE INTO user_entitlements (user_id, sku, source, granted_at, surface, gift_code)
+       SELECT ?, sku, 'gift', ?, 'gift', code FROM commission_gifts
+        WHERE code = ? AND redeemed_by = ?`,
+    ).bind(session.user_id, now, code, session.user_id),
+  ]);
+  if (!(await hasEntitlement(env, session.user_id))) {
+    return err(409, 'already_redeemed', 'that gift has already been redeemed');
+  }
+  return json({ ok: true });
 }
 
 // ---------------------------------------------------------------- admin
@@ -446,6 +599,8 @@ async function handleAdminUsers(_req, env, { url, session }) {
 
 export const routes = [
   { method: 'POST', pattern: '/api/checkout/cosmetics', auth: 'required', handle: handleCreateCheckout },
+  { method: 'GET',  pattern: '/api/commission/gifts', auth: 'required', handle: handleListGifts },
+  { method: 'POST', pattern: '/api/commission/redeem', auth: 'required', handle: handleRedeemGift },
   // NOTE: the Stripe webhook is NOT in this table. Feature routes
   // dispatch below index.js's blanket session gate, and Stripe's POST
   // carries no cookie — it authenticates by signature instead, so

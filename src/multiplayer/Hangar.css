@@ -1,0 +1,74 @@
+/* Hangar — the Commission at the top of Profile (Hangar.tsx).
+   Calm by design: the hulls do the selling, the copy states facts, and
+   gold is kept for the one action. */
+
+.hg-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid rgba(255, 184, 77, 0.28);
+  border-radius: 8px;
+  background:
+    radial-gradient(120% 140% at 0% 0%, rgba(255, 184, 77, 0.07), transparent 60%),
+    rgba(255, 255, 255, 0.02);
+}
+.hg-card.is-holder {
+  border-color: rgba(110, 231, 183, 0.3);
+  background:
+    radial-gradient(120% 140% at 0% 0%, rgba(110, 231, 183, 0.06), transparent 60%),
+    rgba(255, 255, 255, 0.02);
+}
+.hg-goods {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: var(--mp-accent);
+}
+.hg-card.is-holder .hg-goods { color: #6ee7b7; }
+.hg-sep { width: 1px; height: 22px; background: var(--mp-border); }
+.hg-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--mp-fg);
+}
+.hg-mark { color: #6ee7b7; }
+.hg-body {
+  margin: 0;
+  max-width: 62ch;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--mp-fg-dim);
+}
+.hg-card .pp-btn { align-self: flex-start; }
+.hg-offsite { margin: 0; font-size: 12px; color: var(--mp-fg-dim); }
+.hg-where { font-family: var(--mp-mono); color: #ffb84d; letter-spacing: 0.04em; }
+.hg-err { margin: 0; }
+
+.hg-gift, .hg-redeem {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 14px;
+}
+.hg-gift .pp-btn { align-self: flex-start; }
+.hg-sub-h { font-size: 12.5px; font-weight: 700; color: var(--mp-fg); }
+.hg-sub { margin: 0; font-size: 11.5px; color: var(--mp-fg-dim); }
+
+.hg-gifts { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.hg-gifts li {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--mp-border);
+  border-radius: 6px;
+}
+.hg-gifts code { font-family: var(--mp-mono); font-size: 13px; letter-spacing: 0.08em; color: var(--mp-accent); }
+.hg-gifts li.is-used code, .hg-gifts li.is-void code { color: var(--mp-fg-dim); text-decoration: line-through; }
+.hg-gift__state { font-size: 11.5px; color: var(--mp-fg-dim); flex: 1 1 auto; }
+
+.hg-redeem__row { display: flex; gap: 8px; flex-wrap: wrap; }
+.hg-redeem__row .pp-input { flex: 0 1 220px; font-family: var(--mp-mono); letter-spacing: 0.06em; text-transform: uppercase; }

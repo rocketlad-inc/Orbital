@@ -7,6 +7,7 @@ import { deriveSecondary, emblemInk } from '../game/colorUtils';
 import { EMBLEM_IDS, PREMIUM_EMBLEM_IDS, EMBLEM_NAMES } from '../game/emblems';
 import { startCommissionCheckout } from './api';
 import { isAndroidApp } from '../platform/appShell';
+import { COMMISSION_LINES, COMMISSION_NAME, COMMISSION_PRICE, HOLDER_MARK, HOLDER_TITLE, logCommission } from './commission';
 import { FactionEmblem, FlagChip } from '../components/FactionEmblem';
 import { DEFAULT_TICK_INTERVAL_MS } from './LobbyCards';
 import { GameFeedSettings } from './GameFeedSettings';
@@ -84,6 +85,14 @@ interface Props {
    *  Supplied by MultiplayerShell. When present, the room's Back button
    *  uses it instead of the in-component RoomList fallback. */
   onExitRoom?: () => void;
+}
+
+/** Logs that the flag picker's Commission line was shown (once per page
+ *  load, see commission.ts). A component so the effect runs only while
+ *  the line is actually on screen. */
+function CommissionFlagView() {
+  useEffect(() => { logCommission('lobby-flag', 'view'); }, []);
+  return null;
 }
 
 export function LobbyView({ onEnterGame, initialRoomId, onExitRoom }: Props) {
@@ -921,6 +930,9 @@ Your seat opens up for someone else.${handOver} You can join again later while a
                         emblem={m.emblem} fallbackKey={m.userId} />
             )}
             <span>{m.displayName}{ready && !started ? ' ✓' : ''}</span>
+            {m.commissioned && (
+              <span className="mp-holder-mark" title={HOLDER_TITLE} aria-label={HOLDER_TITLE}>{HOLDER_MARK}</span>
+            )}
             {isThisHost && <span className="mp-host-tag">host</span>}
             {isHost && !isThisHost && !started && (
               <button className="mp-kick" onClick={() => kick(m.userId, m.displayName)}>kick</button>
@@ -1169,9 +1181,10 @@ function FactionFlagPicker({
         })}
       </div>
       {!isPremium && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
+          <CommissionFlagView />
           <span style={{ fontSize: 10, color: 'var(--mp-fg-dim, #8aa0b4)' }}>
-            🔒 Dimmed emblems + ship lines J–S are premium.
+            🔒 The dimmed flags and {COMMISSION_LINES} more ship lines come with the {COMMISSION_NAME}. Cosmetic only.
           </span>
           {/* The app does not sell it; see ProfilePanel. */}
           {isAndroidApp() ? (
@@ -1184,12 +1197,13 @@ function FactionFlagPicker({
               className="mp-btn"
               style={{ fontSize: 10, padding: '3px 8px' }}
               onClick={() => {
-                void startCommissionCheckout().then(url => {
+                logCommission('lobby-flag', 'click');
+                void startCommissionCheckout('lobby-flag').then(url => {
                   if (url) window.location.assign(url);
                 });
               }}
             >
-              Get the Commission · $10
+              Get the Commission · {COMMISSION_PRICE}
             </button>
           )}
         </div>

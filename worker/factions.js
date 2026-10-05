@@ -2143,7 +2143,11 @@ async function handleListFactions(_req, env, ctx) {
               -- Stockpiles ride along so the standings ledger can show
               -- them; they are STRIPPED below for any faction the caller
               -- lacks Economic Intel on, exactly like income.
-              metal, gold, science
+              metal, gold, science,
+              -- Holds the Commander's Commission (0153): the roster's
+              -- quiet mark. Public, like the hull it buys.
+              EXISTS (SELECT 1 FROM user_entitlements e
+                       WHERE e.user_id = game_factions.user_id) AS commissioned
          FROM game_factions
         WHERE game_id = ?
         ORDER BY slot ASC`,

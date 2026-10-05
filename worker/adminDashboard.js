@@ -905,8 +905,71 @@ async function handleGameStory(req, env, { session, params }) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// GET /api/admin/commission?days=30 — which Commission surface sells.
+//
+// Each surface (profile, lobby flag picker, designer preview, end of
+// game, the 20-hour thank-you card) logs a view the first time it shows
+// in a page load and a click when acted on; checkout logs every attempt
+// with its outcome; the webhook stamps the surface on the paid row. Read
+// together that is a funnel per surface. All of these rows carry no game
+// id, so they are read through the (game_id, kind, time) index with
+// game_id IS NULL rather than by scanning the window.
+// ---------------------------------------------------------------------------
+async function handleCommissionFunnel(req, env, { session, url }) {
+  const gate = requireAdmin(session);
+  if (gate) return gate;
+  const days = Math.max(1, Math.min(180, parseInt(url.searchParams.get('days') ?? '30', 10) || 30));
+  const since = Date.now() - days * DAY_MS;
+  const q = (sql, ...args) => env.DB.prepare(sql).bind(...args).all().then(r => r.results ?? []);
+  const [events, paid, gifts, asks] = await Promise.all([
+    q(`SELECT e.kind,
+              COALESCE(json_extract(e.payload, '$.from'), 'other') AS surface,
+              COALESCE(json_extract(e.payload, '$.result'), '') AS result,
+              COUNT(*) AS n, COUNT(DISTINCT e.user_id) AS players
+         FROM analytics_events e JOIN users u ON u.id = e.user_id
+        WHERE e.game_id IS NULL
+          AND e.kind IN ('ui/commission-view', 'ui/commission-click', 'ui/commission-dismiss', 'commission/checkout')
+          AND e.created_at_ms >= ?1 AND ${notQa('u.email')}
+        GROUP BY 1, 2, 3`, since),
+    q(`SELECT COALESCE(surface, 'before tracking') AS surface, source, COUNT(*) AS n
+         FROM user_entitlements
+        WHERE source IN ('stripe', 'gift') AND granted_at >= ?1
+        GROUP BY 1, 2`, since),
+    q(`SELECT COUNT(*) AS sold, SUM(redeemed_by IS NOT NULL) AS redeemed, SUM(voided_at IS NOT NULL) AS voided
+         FROM commission_gifts WHERE created_at >= ?1`, since),
+    q(`SELECT commission_ask_action AS action, COUNT(*) AS n
+         FROM users WHERE commission_ask_ms >= ?1 GROUP BY 1`, since),
+  ]);
+
+  const SURFACES = ['profile', 'lobby-flag', 'designer', 'endgame', 'thanks-card'];
+  const row = (s) => ({ surface: s, views: 0, viewers: 0, clicks: 0, dismissals: 0, checkouts: 0, paid: 0 });
+  const by = new Map(SURFACES.map(s => [s, row(s)]));
+  const get = (s) => { if (!by.has(s)) by.set(s, row(s)); return by.get(s); };
+  for (const e of events) {
+    const r = get(e.surface);
+    if (e.kind === 'ui/commission-view') { r.views += e.n; r.viewers += e.players; }
+    else if (e.kind === 'ui/commission-click') r.clicks += e.n;
+    else if (e.kind === 'ui/commission-dismiss') r.dismissals += e.n;
+    else if (e.kind === 'commission/checkout' && e.result === 'started') r.checkouts += e.n;
+  }
+  for (const p of paid) if (p.source === 'stripe') get(p.surface).paid += p.n;
+  return json({
+    days,
+    surfaces: [...by.values()],
+    gifts: {
+      sold: gifts[0]?.sold ?? 0,
+      redeemed: gifts[0]?.redeemed ?? 0,
+      voided: gifts[0]?.voided ?? 0,
+      redeemed_grants: paid.filter(p => p.source === 'gift').reduce((s, p) => s + p.n, 0),
+    },
+    thanks_card: Object.fromEntries(asks.map(a => [a.action ?? 'unknown', a.n])),
+  });
+}
+
 export const routes = [
   { method: 'GET', pattern: '/api/admin/overview', auth: 'required', handle: handleOverview },
+  { method: 'GET', pattern: '/api/admin/commission', auth: 'required', handle: handleCommissionFunnel },
   { method: 'GET', pattern: '/api/admin/games', auth: 'required', handle: handleAdminGames },
   { method: 'GET', pattern: '/api/admin/players', auth: 'required', handle: handleAdminPlayers },
   { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/story$/, auth: 'required', handle: handleGameStory },

@@ -372,6 +372,17 @@
   padding: 1px 4px;
   margin-left: 4px;
 }
+/* Holds the Commander's Commission (0153). Quiet on purpose: a small
+   mark with its meaning in the title, never a badge that shouts. The
+   same glyph and colour on the lobby roster and the in-game standings. */
+.mp-holder-mark, .fp-holder {
+  margin-left: 4px;
+  font-size: 11px;
+  color: #6ee7b7;
+  opacity: 0.85;
+  cursor: help;
+  flex: 0 0 auto;
+}
 
 .mp-kick {
   font-size: 12px;

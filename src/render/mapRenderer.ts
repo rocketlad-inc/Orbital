@@ -35,7 +35,7 @@ import {
 } from './fxPrimitives';
 import { getWorldMenuOpenBodyId } from '../game/worldMenu/store';
 import { isRoutePicking, isPickEligible, isPickChosen } from '../game/routePick/store';
-import { ShipIconClass } from '../components/ShipIcons';
+import { ShipIconClass, ShipIconVariant, ICON_VARIANT_NAMES, PREMIUM_VARIANTS } from '../components/ShipIcons';
 import { deriveSecondary } from '../game/colorUtils';
 import { getShipClass } from '../game/shipClasses';
 // hashStr/mulberry32 come from planetTexture (above) — combatFx defined
@@ -4910,7 +4910,14 @@ export function drawShip(
     ctx.ctx.textBaseline = 'middle';
     const nm = shipLabelName(ship.name);
     const textW = ctx.ctx.measureText(nm).width;
-    const blockW = Math.max(36, textW);          // the HP bar is 36px
+    // A rival's Commission hull names its line under the HP bar (hover
+    // only): it answers "how do I get that?" at the moment someone asks.
+    const tag = commissionTag(ship, isSelected, ctx.hoveredShipId === ship.id);
+    ctx.ctx.font = '8px "Audiowide", monospace';
+    const tagW = tag ? ctx.ctx.measureText(tag).width : 0;
+    ctx.ctx.font = '9px "Audiowide", monospace';
+    const blockW = Math.max(36, textW, tagW);    // the HP bar is 36px
+    const blockH = tag ? 29 : 19;
     // On the side AWAY from its world. The tag always sat to the right,
     // so a hull on its world's left printed its name and HP bar straight
     // across the planet -- worse now worlds draw bigger (zoom audit,
@@ -4925,17 +4932,47 @@ export function drawShip(
       ? canvasPos.x - iconSize / 2 - 4 - blockW
       : canvasPos.x + iconSize / 2 + 4);
     const sides = ctx.presentation ? [awayLeft, !awayLeft] : [false];
-    const leftSide = sides.find(l => clearOfKeepOuts(xFor(l), canvasPos.y - 12, blockW, 19));
+    const leftSide = sides.find(l => clearOfKeepOuts(xFor(l), canvasPos.y - 12, blockW, blockH));
     if (leftSide !== undefined) {
       const labelX = xFor(leftSide);
       ctx.ctx.fillText(nm, leftSide ? labelX + blockW - textW : labelX, canvasPos.y - 6);
       drawShipHpBar(ship, leftSide ? labelX + blockW - 36 : labelX, canvasPos.y + 3, ctx);
-      // Name + HP bar, claimed so a body label steps around them.
-      reserveRect(`shipname:${ship.id}`, labelX, canvasPos.y - 12, Math.max(30, blockW), 19, nm);
+      if (tag) drawCommissionTag(ctx, tag, leftSide ? labelX + blockW - tagW : labelX, canvasPos.y + 13);
+      // Name + HP bar (+ line tag), claimed so a body label steps around them.
+      reserveRect(`shipname:${ship.id}`, labelX, canvasPos.y - 12, Math.max(30, blockW), blockH, nm);
     }
   }
 }
 
+
+/**
+ * The hover line on a RIVAL's hull flying a Commander's Commission line:
+ * "Specter line · Commission". Passive by design (insight report, idea 2):
+ * nobody is asked anything; the map simply answers "what is that?" when a
+ * player points at it. Never on your own ships, never while selected.
+ * Hulls whose class has no named lines (capital hulls) carry no tag.
+ */
+function commissionTag(ship: Ship, isSelected: boolean, hovered: boolean): string | null {
+  if (isSelected || !hovered || ship.ownedBy === 'player') return null;
+  const v = ship.iconVariant as ShipIconVariant | undefined;
+  if (!v || !PREMIUM_VARIANTS.has(v)) return null;
+  const name = ICON_VARIANT_NAMES[ship.class as ShipIconClass]?.[v];
+  return name ? `${name} line \u00b7 Commission` : null;
+}
+
+/** Draw a commissionTag line; returns its width for the label's claim. */
+function drawCommissionTag(ctx: RenderContext, tag: string, x: number, y: number): number {
+  const c = ctx.ctx;
+  c.save();
+  c.font = '8px "Audiowide", monospace';
+  c.textAlign = 'left';
+  c.textBaseline = 'middle';
+  c.fillStyle = 'rgba(255, 203, 122, 0.85)';
+  c.fillText(tag, x, y);
+  const w = c.measureText(tag).width;
+  c.restore();
+  return w;
+}
 
 /**
  * Ship label for the hover/selection name tag — the FULL name.
@@ -6362,9 +6399,13 @@ function drawTorchTransitShip(
     ctx.ctx.textBaseline = 'middle';
     const nm = shipLabelName(ship.name);
     ctx.ctx.fillText(nm, labelX, canvasPos.y - 6);
+    const nameW = ctx.ctx.measureText(nm).width;
     drawShipHpBar(ship, labelX, canvasPos.y + 3, ctx);
+    // Never while selected, so it cannot collide with the ETA line below.
+    const tag = commissionTag(ship, isSelected, ctx.hoveredShipId === ship.id);
+    const tagW = tag ? drawCommissionTag(ctx, tag, labelX, canvasPos.y + 13) : 0;
     reserveRect(`shipname:${ship.id}`, labelX, canvasPos.y - 12,
-      Math.max(30, ctx.ctx.measureText(nm).width), 19, nm);
+      Math.max(30, nameW, tagW), tag ? 29 : 19, nm);
   }
 
   // ETA + phase label when selected

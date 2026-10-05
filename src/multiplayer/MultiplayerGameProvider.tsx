@@ -48,6 +48,7 @@ import { parseNamePools } from '../game/namePools';
 import { setServerLightweight } from '../render/lightweightMode';
 import { setServerStillWorlds } from '../render/globeSpin';
 import { connectRoomSocket } from './roomSocket';
+import { EndgameCommission } from './CommissionMoments';
 
 // The whole-match recap. Split out of the main bundle: it pulls in the
 // map renderer and the replay machinery, and nobody needs any of that
@@ -3347,6 +3348,14 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
                 Return to lobby
               </button>
             </div>
+            {/* The Commission, once per finished game, only for an
+                empire that made it to the end. Not while the film plays. */}
+            {!showFilm && (
+              <EndgameCommission
+                gameId={gameId}
+                survived={iWon || meta?.factions?.find(f => f.id === meta?.myFactionId)?.status === 'active'}
+              />
+            )}
             {showFilm && (
               <div style={{ width: 'min(1180px, 96vw)', marginTop: 4 }}>
                 <React.Suspense fallback={

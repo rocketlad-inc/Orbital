@@ -588,18 +588,51 @@ async function noteVisit(env, userId) {
       .bind(now - VISIT_GAP_MS, now, userId)
       .run();
     const row = await env.DB
-      .prepare('SELECT email, visit_count, discord_prompt_ms FROM users WHERE id = ?')
+      .prepare(
+        `SELECT u.email, u.visit_count, u.discord_prompt_ms, u.commission_ask_ms,
+                COALESCE(s.minutes, 0) AS minutes,
+                EXISTS (SELECT 1 FROM user_entitlements e WHERE e.user_id = u.id) AS owned
+           FROM users u LEFT JOIN analytics_user_seen s ON s.user_id = u.id
+          WHERE u.id = ?`,
+      )
       .bind(userId).first();
+    const agent = /@agents\.orbital\.local$/i.test(row?.email ?? '');
     const invite = !!row
       && row.visit_count >= 2
       && row.discord_prompt_ms == null
-      && !/@agents\.orbital\.local$/i.test(row.email ?? '');
-    return { invite_discord: invite ? FEEDBACK_DISCORD_URL : null };
+      && !agent;
+    // The one-time Commission thank-you card (0153): only for someone who
+    // has clearly chosen to keep playing (20+ hours), never on the same
+    // visit as the Discord invite, never twice, never to a holder.
+    const commissionAsk = !!row
+      && !invite
+      && !agent
+      && !row.owned
+      && row.commission_ask_ms == null
+      && row.minutes >= COMMISSION_ASK_MINUTES;
+    return {
+      invite_discord: invite ? FEEDBACK_DISCORD_URL : null,
+      commission_ask: commissionAsk,
+    };
   } catch (e) {
     // Bookkeeping only: a failure here must never block signing in.
     console.error('noteVisit failed', e);
-    return { invite_discord: null };
+    return { invite_discord: null, commission_ask: false };
   }
+}
+
+/** Minutes of play before the Commission thank-you card may appear. */
+const COMMISSION_ASK_MINUTES = 20 * 60;
+
+// POST /api/users/me/commission-ask  { action: 'clicked' | 'dismissed' }
+// Recorded once; after this the card never comes back, whatever was chosen.
+async function handleCommissionAskAnswer(req, env, session) {
+  const body = await readJson(req);
+  const action = body?.action === 'clicked' ? 'clicked' : 'dismissed';
+  await env.DB
+    .prepare('UPDATE users SET commission_ask_ms = ?, commission_ask_action = ? WHERE id = ? AND commission_ask_ms IS NULL')
+    .bind(Date.now(), action, session.user_id).run();
+  return json({ ok: true });
 }
 
 // POST /api/users/me/discord-invite  { action: 'joined' | 'dismissed' }
@@ -2000,6 +2033,7 @@ export default {
       if (req.method === 'GET'  && url.pathname === '/api/users/me/rooms') return handleListMyRooms(req, env, session);
       if (req.method === 'PUT'  && url.pathname === '/api/users/me/autoload') return handleSetAutoload(req, env, session);
       if (req.method === 'POST' && url.pathname === '/api/users/me/discord-invite') return handleDiscordInviteAnswer(req, env, session);
+      if (req.method === 'POST' && url.pathname === '/api/users/me/commission-ask') return handleCommissionAskAnswer(req, env, session);
       if (req.method === 'GET'  && url.pathname === '/api/users/me/email-prefs') return handleGetEmailPrefs(req, env, session);
       if (req.method === 'PATCH' && url.pathname === '/api/users/me/email-prefs') return handlePatchEmailPrefs(req, env, session);
       if (req.method === 'POST' && url.pathname === '/api/rooms/quick-join') return handleQuickJoin(req, env, session);
