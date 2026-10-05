@@ -87,3 +87,45 @@ export function sensorEdgeArcs(circles: FogHole[]): EdgeArc[] {
   }
   return out;
 }
+
+/**
+ * The outline's arcs chained into closed loops, in drawing order: each
+ * arc ends where the next begins. Lets the map fill "everything outside
+ * coverage" as ONE path (the screen, minus these loops, even-odd) instead
+ * of compositing a full-screen mask, which cost a desktop without GPU
+ * drawing ~30 ms a frame. A loop that cannot be closed (numerical edge
+ * cases) is returned as far as it goes.
+ */
+export function sensorEdgeLoops(arcs: EdgeArc[], eps = 0.75): EdgeArc[][] {
+  const end = (a: EdgeArc) => [a.x + Math.cos(a.a1) * a.r, a.y + Math.sin(a.a1) * a.r];
+  const start = (a: EdgeArc) => [a.x + Math.cos(a.a0) * a.r, a.y + Math.sin(a.a0) * a.r];
+  const used = new Array(arcs.length).fill(false);
+  const loops: EdgeArc[][] = [];
+  for (let i = 0; i < arcs.length; i++) {
+    if (used[i]) continue;
+    used[i] = true;
+    const loop = [arcs[i]];
+    // A whole circle is a loop on its own.
+    if (arcs[i].a1 - arcs[i].a0 >= TAU - 1e-9) { loops.push(loop); continue; }
+    const first = start(arcs[i]);
+    let cur = arcs[i];
+    for (let guard = 0; guard < arcs.length; guard++) {
+      const [ex, ey] = end(cur);
+      if (loop.length > 1 && Math.hypot(ex - first[0], ey - first[1]) <= eps) break;
+      let next = -1;
+      let best = eps;
+      for (let j = 0; j < arcs.length; j++) {
+        if (used[j]) continue;
+        const [sx, sy] = start(arcs[j]);
+        const d = Math.hypot(sx - ex, sy - ey);
+        if (d <= best) { best = d; next = j; }
+      }
+      if (next < 0) break;
+      used[next] = true;
+      loop.push(arcs[next]);
+      cur = arcs[next];
+    }
+    loops.push(loop);
+  }
+  return loops;
+}
