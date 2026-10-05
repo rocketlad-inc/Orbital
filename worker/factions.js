@@ -459,6 +459,115 @@ export const BODY_CATALOG = [
     orbit_radius: 4, orbit_period: TWO_PI * Math.sqrt(64 / 0.8), angle0: 5.85,
     color: '#4a4038',
     yield: { metal: 3, fuel: 0, gold: 1, science: 2 } },
+  // ============================================================
+  // THE FAR SYSTEMS — Centauri (east) and Cygnus X-1 (west).
+  //
+  // Written for single-player in May 2026 and never seeded in a
+  // multiplayer game: they lived only in src/state/mockGameState.ts,
+  // and single-player entry was retired. Ported here 2026-10-05 for
+  // STAGING, behind the `far_systems` config dial, which is OFF by
+  // default — nothing about a production game changes until a host
+  // turns it on.
+  //
+  // DISTANCE IS THE BALANCE. A barycenter's radius is written in
+  // catalogue units and multiplied by SYSTEM_SCALE (2) below and by
+  // the game's system_scale (live games run 4), so 33,150 here is
+  // 265,200 on a live board. The brachistochrone solver is
+  // T = 2·sqrt(d/a) at a = 26.52, so that is a 200-tick crossing —
+  // eight days at the one-hour tick, each way, with nothing to refuel
+  // at on the far side. Cygnus at 42,500 is 226 ticks. Those are the
+  // same crossing times the original single-player design picked.
+  //
+  // YIELDS: "everything, but far" (Lorne, 2026-10-05). The richest
+  // Sol world gives 9 of a resource; these run 1.3-1.6x that, broad
+  // rather than specialised, so the trip pays for itself in a way no
+  // single Sol world can — and the Kuiper Belt keeps its own job as
+  // the metal frontier.
+  //
+  // Local orbits (parent = a barycenter) are NOT heliocentric, so
+  // scaledGeometry treats them as moons and leaves them alone at
+  // moon_scale 1. That is deliberate: the systems keep their shape
+  // however far out the host spreads Sol.
+  // ============================================================
+
+  // ---- Centauri, a circumbinary (P-type) pair --------------------
+  { id: 'binary_barycenter', name: 'Centauri Barycenter', type: 'lagrange', parent: 'sol',
+    radius: 0.5, soi: 0, mu: 0,
+    orbit_radius: 33150, orbit_period: 1e12, angle0: 0,
+    color: '#3a3a44', far_system: true,
+    yield: { metal: 0, fuel: 0, gold: 0, science: 0 } },
+  { id: 'centauri_a', name: 'Centauri A', type: 'star', parent: 'binary_barycenter',
+    radius: 8, soi: 35, mu: 200,
+    orbit_radius: 18, orbit_period: 240, angle0: 0,
+    color: '#ffe082', far_system: true,
+    yield: { metal: 0, fuel: 0, gold: 0, science: 0 } },
+  { id: 'centauri_b', name: 'Centauri B', type: 'star', parent: 'binary_barycenter',
+    radius: 6, soi: 28, mu: 150,
+    orbit_radius: 28, orbit_period: 240, angle0: Math.PI,
+    color: '#ff8a5e', far_system: true,
+    yield: { metal: 0, fuel: 0, gold: 0, science: 0 } },
+  { id: 'verdant', name: 'Verdant', type: 'terrestrial', parent: 'binary_barycenter',
+    radius: 4, soi: 60, mu: 150,
+    orbit_radius: 400, orbit_period: 700, angle0: 0.3,
+    color: '#3aaf6e', far_system: true,
+    yield: { metal: 8, fuel: 0, gold: 8, science: 12 } },
+  { id: 'crimson', name: 'Crimson', type: 'gas-giant', parent: 'binary_barycenter',
+    radius: 9, soi: 110, mu: 350,
+    orbit_radius: 850, orbit_period: 2100, angle0: 2.1,
+    color: '#d35454', far_system: true,
+    yield: { metal: 2, fuel: 0, gold: 13, science: 6 } },
+  { id: 'prismara', name: 'Prismara', type: 'moon', parent: 'crimson',
+    radius: 1.8, soi: 9, mu: 6,
+    orbit_radius: 26, orbit_period: 90, angle0: 0,
+    color: '#c0a8ff', far_system: true,
+    yield: { metal: 6, fuel: 0, gold: 6, science: 8 } },
+  { id: 'cinder', name: 'Cinder', type: 'terrestrial', parent: 'binary_barycenter',
+    radius: 3, soi: 40, mu: 90,
+    orbit_radius: 1400, orbit_period: 4400, angle0: 4.7,
+    color: '#a8553a', far_system: true,
+    yield: { metal: 11, fuel: 0, gold: 9, science: 7 } },
+  { id: 'farspire', name: 'Farspire', type: 'dwarf', parent: 'binary_barycenter',
+    radius: 1.5, soi: 9, mu: 1,
+    orbit_radius: 2400, orbit_period: 10000, angle0: 1.5,
+    color: '#9088b0', far_system: true,
+    yield: { metal: 8, fuel: 0, gold: 4, science: 10 } },
+
+  // ---- Cygnus X-1, a black hole and its donor star ---------------
+  { id: 'bh_barycenter', name: 'Cygnus Barycenter', type: 'lagrange', parent: 'sol',
+    radius: 0.5, soi: 0, mu: 0,
+    orbit_radius: 42500, orbit_period: 1e12, angle0: Math.PI,
+    color: '#3a3a44', far_system: true,
+    yield: { metal: 0, fuel: 0, gold: 0, science: 0 } },
+  { id: 'cygnus_x', name: 'Cygnus X', type: 'black_hole', parent: 'bh_barycenter',
+    radius: 4, soi: 50, mu: 600,
+    orbit_radius: 12, orbit_period: 180, angle0: 0,
+    color: '#000000', far_system: true,
+    yield: { metal: 0, fuel: 0, gold: 0, science: 0 } },
+  { id: 'hde_226868', name: 'HDE 226868', type: 'star', parent: 'bh_barycenter',
+    radius: 7, soi: 30, mu: 300,
+    orbit_radius: 24, orbit_period: 180, angle0: Math.PI,
+    color: '#a8d0ff', far_system: true,
+    yield: { metal: 0, fuel: 0, gold: 0, science: 0 } },
+  { id: 'requiem', name: 'Requiem', type: 'terrestrial', parent: 'bh_barycenter',
+    radius: 3, soi: 40, mu: 80,
+    orbit_radius: 500, orbit_period: 900, angle0: 1.2,
+    color: '#5a3a4a', far_system: true,
+    yield: { metal: 12, fuel: 0, gold: 5, science: 13 } },
+  { id: 'vellichor', name: 'Vellichor', type: 'gas-giant', parent: 'bh_barycenter',
+    radius: 8, soi: 95, mu: 320,
+    orbit_radius: 1000, orbit_period: 2600, angle0: 3.4,
+    color: '#8870b0', far_system: true,
+    yield: { metal: 2, fuel: 0, gold: 12, science: 9 } },
+  { id: 'echelon', name: 'Echelon', type: 'terrestrial', parent: 'bh_barycenter',
+    radius: 3.5, soi: 45, mu: 110,
+    orbit_radius: 1700, orbit_period: 5800, angle0: 5.3,
+    color: '#b89060', far_system: true,
+    yield: { metal: 9, fuel: 0, gold: 14, science: 8 } },
+  { id: 'reliquary', name: 'Reliquary', type: 'dwarf', parent: 'bh_barycenter',
+    radius: 1.5, soi: 9, mu: 1,
+    orbit_radius: 2800, orbit_period: 12000, angle0: 0.8,
+    color: '#706878', far_system: true,
+    yield: { metal: 7, fuel: 0, gold: 4, science: 9 } },
 ];
 
 // ============================================================
@@ -651,10 +760,32 @@ function isCapitalWorthy(b, floor = MIN_CAPITAL_RADIUS) {
 // proves nothing about the map players get.
 // ============================================================
 
+/** Every far-system body id, for the callers that must leave them out.
+ *  A set rather than a repeated `.far_system` test because some of those
+ *  callers hold a DB row (which carries no catalogue flags) rather than a
+ *  catalogue entry — the dialect trap in [[orbital-body-type-dialects]]. */
+export const FAR_SYSTEM_IDS = new Set(
+  BODY_CATALOG.filter(b => b.far_system).map(b => b.id),
+);
+
+/** The catalogue a given game is built from. The far systems are in the
+ *  shipped catalogue so every lookup-by-template keeps working, but they
+ *  are seeded ONLY where the host asked for them. Off is the default and
+ *  production's answer. */
+export function catalogFor(conf) {
+  return Number(conf?.far_systems) === 1
+    ? BODY_CATALOG
+    : BODY_CATALOG.filter(b => !b.far_system);
+}
+
 /** Outermost moon of each planet, in shipped units. */
 export function moonReachByParent(catalog = BODY_CATALOG) {
   const out = {};
   for (const b of catalog) {
+    // Far-system worlds orbit a barycenter, not a planet. Counted here
+    // they would set a 2800-unit "moon reach" against a parent with no
+    // sphere of influence and clamp moon_scale for the whole map.
+    if (b.far_system) continue;
     if (b.parent && b.parent !== 'sol' && b.orbit_radius > 0) {
       out[b.parent] = Math.max(out[b.parent] ?? 0, b.orbit_radius);
     }
@@ -676,7 +807,8 @@ export function moonReachByParent(catalog = BODY_CATALOG) {
 export function moonScaleCeiling(sysScale = 1, catalog = BODY_CATALOG) {
   const reach = moonReachByParent(catalog);
   const solid = catalog
-    .filter(b => b.parent === 'sol' && b.orbit_radius > 0 && b.type !== 'asteroid')
+    .filter(b => b.parent === 'sol' && b.orbit_radius > 0 && b.type !== 'asteroid'
+      && !b.far_system)
     .map(b => ({ id: b.id, r: b.orbit_radius * sysScale }));
   let ceiling = Infinity;
   for (const p of solid) {
@@ -776,6 +908,8 @@ export function scaledGeometry(body, {
 }
 
 export const STARTING_BODY_OPTIONS = BODY_CATALOG
+  // A capital is in Sol. The far systems are somewhere you GO.
+  .filter(b => !b.far_system)
   // NOT .filter(isCapitalWorthy): filter passes (element, INDEX) and the
   // index lands in isCapitalWorthy's `floor` parameter, silently raising
   // the radius bar per position — which shrank the lobby menu to
@@ -1182,6 +1316,11 @@ export function pickSecretPlacements(rand, ownership) {
   // an edited catalogue up from.
   for (const b of BODY_CATALOG) {
     if (ownership.has(b.id)) continue;
+    // A secret on a far-system world would be unreachable in the games
+    // that have them and a phantom in the games that do not — this
+    // helper has no game in scope to ask. The far systems carry their
+    // own discoveries or none.
+    if (b.far_system) continue;
     const cat = categorizeBodyForSecret(b);
     if (cat) pool[cat].push(b);
   }
@@ -1321,7 +1460,10 @@ export async function seedGameWorld(env, gameId) {
   // it, or retune its yields; those overrides are applied to a COPY of
   // the catalogue so the module-level constant stays the shipped truth
   // and one game's edits can never leak into another's.
-  let CATALOG = BODY_CATALOG;
+  // catalogFor() drops the far systems unless the host asked for them.
+  // Everything downstream reads CATALOG, so this one line is the whole
+  // gate for seeding; the edited-catalogue path below maps over it.
+  let CATALOG = BODY_CATALOG.filter(b => !b.far_system);
   let spawnFloorRadius = MIN_CAPITAL_RADIUS;
   let capitalCityHp = STARTER_CITY_HP;
   let spawnFloorScience = 2;
@@ -1378,8 +1520,15 @@ export async function seedGameWorld(env, gameId) {
     const anyEdit = Object.keys(bodyEdits).length > 0 || sysScale !== 1
       || bodyScale !== 1 || moonScaleWanted !== 1;
 
+    // WHICH BODIES EXIST IS DECIDED BEFORE ANY EDIT TO THEM. The far
+    // systems are a membership question, not a geometry one, so they
+    // cannot ride inside the `anyEdit` branch: a config that asks for
+    // them and nothing else leaves anyEdit false, and the dial did
+    // nothing at all.
+    CATALOG = catalogFor(conf);
+
     if (anyEdit) {
-      CATALOG = BODY_CATALOG.map((body) => {
+      CATALOG = catalogFor(conf).map((body) => {
         const e = bodyEdits[body.id] ?? {};
         const orbit = e.orbit_radius ?? body.orbit_radius;
         return {
@@ -2055,9 +2204,16 @@ export async function backfillMissingBodies(env, gameId) {
   let bodyScale = 1;
   let moonScale = 1;
   let outerSpeedup = 1;
+  // THE LINE THAT KEEPS THE FAR SYSTEMS OUT OF PRODUCTION. This helper
+  // runs on live games (lobby.js calls it), so an ungated catalogue loop
+  // would drop Centauri and Cygnus into every match in progress the next
+  // time anyone touched a lobby. A game gets them only if its own config
+  // asked for them, and an unreadable config means no.
+  let farSystems = false;
   try {
     const gc = await import('./gameConfig.js');
     const conf = await gc.cfg(env, gameId);
+    farSystems = Number(conf.far_systems) === 1;
     bodyScale = conf.body_scale ?? 1;
     moonScale = effectiveMoonScale(conf.moon_scale ?? 1, scaleRatio);
     outerSpeedup = Math.max(1, Number(conf.outer_orbit_speedup) || 1);
@@ -2075,6 +2231,7 @@ export async function backfillMissingBodies(env, gameId) {
   const stmts = [];
   let inserted = 0;
   for (const b of BODY_CATALOG) {
+    if (b.far_system && !farSystems) continue;
     if (have.has(b.id)) continue;
     // Eccentric Kepler elements for Kuiper-class rogue asteroids
     // (migration 0024). Plain circular bodies have all four NULL and

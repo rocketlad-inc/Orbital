@@ -506,7 +506,7 @@ export const SHARED_BODIES: Body[] = [
   {
     id: 'binary_barycenter', name: 'Centauri Barycenter', type: 'lagrange', parent: 'sol',
     radius: 0.5, soi: 0, mu: 0, color: '#3a3a44',
-    orbitRadius: 265000, orbitPeriod: 1e12, angle0: 0,  // east of Sol
+    orbitRadius: 33150, orbitPeriod: 1e12, angle0: 0,  // east of Sol
   },
   {
     id: 'centauri_a', name: 'Centauri A', type: 'star', parent: 'binary_barycenter',
@@ -531,25 +531,25 @@ export const SHARED_BODIES: Body[] = [
     id: 'verdant', name: 'Verdant', type: 'terrestrial', parent: 'binary_barycenter',
     radius: 4, soi: 60, mu: 150, color: '#3aaf6e',
     orbitRadius: 400, orbitPeriod: 700, angle0: 0.3,
-    resources: { fuel: 6, gold: 4, metal: 6, science: 18 },
+    resources: { fuel: 0, gold: 8, metal: 8, science: 12 },
   },
   {
     id: 'crimson', name: 'Crimson', type: 'gas_giant', parent: 'binary_barycenter',
     radius: 9, soi: 110, mu: 350, color: '#d35454',
     orbitRadius: 850, orbitPeriod: 2100, angle0: 2.1,
-    resources: { fuel: 12, gold: 0, metal: 0, science: 14 },
+    resources: { fuel: 0, gold: 13, metal: 2, science: 6 },
   },
   {
     id: 'prismara', name: 'Prismara', type: 'moon', parent: 'crimson',
     radius: 1.8, soi: 9, mu: 6, color: '#c0a8ff',
     orbitRadius: 26, orbitPeriod: 90, angle0: 0,
-    resources: { fuel: 0, gold: 6, metal: 4, science: 12 },
+    resources: { fuel: 0, gold: 6, metal: 6, science: 8 },
   },
   {
     id: 'cinder', name: 'Cinder', type: 'terrestrial', parent: 'binary_barycenter',
     radius: 3, soi: 40, mu: 90, color: '#a8553a',
     orbitRadius: 1400, orbitPeriod: 4400, angle0: 4.7,
-    resources: { fuel: 0, gold: 8, metal: 5, science: 15 },
+    resources: { fuel: 0, gold: 9, metal: 11, science: 7 },
   },
   // Outer dwarf — the return-gate body. The warp_gate secret on this
   // is hardcoded by singlePlayerSetup (it always exists, always points
@@ -558,7 +558,7 @@ export const SHARED_BODIES: Body[] = [
     id: 'farspire', name: 'Farspire', type: 'dwarf', parent: 'binary_barycenter',
     radius: 1.5, soi: 9, mu: 1, color: '#9088b0',
     orbitRadius: 2400, orbitPeriod: 10000, angle0: 1.5,
-    resources: { fuel: 0, gold: 3, metal: 4, science: 10 },
+    resources: { fuel: 0, gold: 4, metal: 8, science: 10 },
   },
 
   // ============================================================
@@ -596,7 +596,7 @@ export const SHARED_BODIES: Body[] = [
   {
     id: 'bh_barycenter', name: 'Cygnus Barycenter', type: 'lagrange', parent: 'sol',
     radius: 0.5, soi: 0, mu: 0, color: '#3a3a44',
-    orbitRadius: 340000, orbitPeriod: 1e12, angle0: Math.PI,  // west of Sol
+    orbitRadius: 42500, orbitPeriod: 1e12, angle0: Math.PI,  // west of Sol
   },
   {
     id: 'cygnus_x', name: 'Cygnus X', type: 'black_hole', parent: 'bh_barycenter',
@@ -625,7 +625,7 @@ export const SHARED_BODIES: Body[] = [
     id: 'requiem', name: 'Requiem', type: 'terrestrial', parent: 'bh_barycenter',
     radius: 3, soi: 40, mu: 80, color: '#5a3a4a',  // dark irradiated rock
     orbitRadius: 500, orbitPeriod: 900, angle0: 1.2,
-    resources: { fuel: 0, gold: 6, metal: 10, science: 20 },
+    resources: { fuel: 0, gold: 5, metal: 12, science: 13 },
   },
   {
     id: 'vellichor', name: 'Vellichor', type: 'gas_giant', parent: 'bh_barycenter',
@@ -633,7 +633,7 @@ export const SHARED_BODIES: Body[] = [
     // visual hue tends toward pale blue-violet.
     radius: 8, soi: 95, mu: 320, color: '#8870b0',
     orbitRadius: 1000, orbitPeriod: 2600, angle0: 3.4,
-    resources: { fuel: 14, gold: 0, metal: 0, science: 16 },
+    resources: { fuel: 0, gold: 12, metal: 2, science: 9 },
   },
   {
     id: 'echelon', name: 'Echelon', type: 'terrestrial', parent: 'bh_barycenter',
@@ -641,7 +641,7 @@ export const SHARED_BODIES: Body[] = [
     // uranium, exotic isotopes.
     radius: 3.5, soi: 45, mu: 110, color: '#b89060',
     orbitRadius: 1700, orbitPeriod: 5800, angle0: 5.3,
-    resources: { fuel: 0, gold: 14, metal: 8, science: 18 },
+    resources: { fuel: 0, gold: 14, metal: 9, science: 8 },
   },
   // Outer dwarf — the return-gate body for this system. The warp_gate
   // secret here points back to whichever Sol KBO got picked as the
@@ -651,7 +651,7 @@ export const SHARED_BODIES: Body[] = [
     id: 'reliquary', name: 'Reliquary', type: 'dwarf', parent: 'bh_barycenter',
     radius: 1.5, soi: 9, mu: 1, color: '#706878',
     orbitRadius: 2800, orbitPeriod: 12000, angle0: 0.8,
-    resources: { fuel: 0, gold: 4, metal: 5, science: 12 },
+    resources: { fuel: 0, gold: 4, metal: 7, science: 9 },
   },
 ];
 
