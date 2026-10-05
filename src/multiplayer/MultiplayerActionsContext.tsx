@@ -566,6 +566,22 @@ export function MultiplayerActionsProvider({
       }
       return res;
     };
+    // ONE REQUEST PER CLICK-TARGET AT A TIME. Founding a station answers
+    // in ~1.7s (p95 ~4s) and the button shows nothing meanwhile, so
+    // players click again a median 0.3s later. The second request lost
+    // to the first and its refusal ("this body already has a station",
+    // "build queue changed", "already cancelled") was shown even though
+    // the first had worked: 46 + 31 + 15 of them from 17 players in five
+    // days (prod analytics_events, 2026-10-05). A click on the same thing
+    // while its request is still out now gets that request's answer.
+    const inFlight = new Map<string, Promise<MpActionResult>>();
+    const once = (key: string, run: () => Promise<MpActionResult>) => {
+      const pending = inFlight.get(key);
+      if (pending) return pending;
+      const p = run().finally(() => inFlight.delete(key));
+      inFlight.set(key, p);
+      return p;
+    };
     // The client stores body IDs in the unprefixed form ('jupiter', 'sol')
     // after MultiplayerGameProvider strips the "<gameId>:" namespace at the
     // deserialization boundary. The server still expects the namespaced
@@ -742,7 +758,8 @@ export function MultiplayerActionsProvider({
         error: res.error?.message ?? 'Server rejected the build.',
       };
     },
-    async deploySettlement(intent) {
+    deploySettlement(intent) {
+      return once(`settle:${qualify(intent.bodyId)}:${intent.type}`, async () => {
       const res = await apiFetch(`/api/games/${gameId}/bodies/${encodeURIComponent(qualify(intent.bodyId))}/settlement`, {
         method: 'POST',
         body: JSON.stringify({ type: intent.type, name: intent.name }),
@@ -759,6 +776,7 @@ export function MultiplayerActionsProvider({
         code: res.error?.code,
         error: res.error?.message ?? 'Server rejected the settlement deploy.',
       };
+      });
     },
     async setShipOrders(intent) {
       // Only forward fields the caller actually set — the server
@@ -1133,7 +1151,8 @@ export function MultiplayerActionsProvider({
       if (!res.ok) return null;
       return res.data;
     },
-    async cancelBuild(orderId) {
+    cancelBuild(orderId) {
+      return once(`cancelBuild:${orderId}`, async () => {
       const res = await apiFetch<{ ok: boolean }>(
         `/api/games/${gameId}/builds/${encodeURIComponent(orderId)}`,
         { method: 'DELETE' },
@@ -1145,6 +1164,7 @@ export function MultiplayerActionsProvider({
         code: res.error?.code,
         error: res.error?.message ?? 'Server rejected cancel.',
       };
+      });
     },
     async getHerald() {
       const res = await apiFetch<{
@@ -1245,7 +1265,8 @@ export function MultiplayerActionsProvider({
     },
     // buildCollector was deleted with the terraforming rework — the
     // server endpoint is gone; terraformed status is the loading dock.
-    async queueBuilding(settlementId, kind) {
+    queueBuilding(settlementId, kind) {
+      return once(`building:${settlementId}:${kind}`, async () => {
       const res = await apiFetch<{ ok: boolean }>(
         `/api/games/${gameId}/settlements/${encodeURIComponent(settlementId)}/buildings`,
         { method: 'POST', body: JSON.stringify({ kind }) },
@@ -1260,8 +1281,10 @@ export function MultiplayerActionsProvider({
         code: res.error?.code,
         error: res.error?.message ?? 'Server rejected the building queue.',
       };
+      });
     },
-    async cancelBuilding(settlementId, orderId) {
+    cancelBuilding(settlementId, orderId) {
+      return once(`unbuilding:${settlementId}:${orderId ?? ''}`, async () => {
       const q = orderId ? `?order_id=${encodeURIComponent(orderId)}` : '';
       const res = await apiFetch<{ ok: boolean }>(
         `/api/games/${gameId}/settlements/${encodeURIComponent(settlementId)}/buildings${q}`,
@@ -1274,6 +1297,7 @@ export function MultiplayerActionsProvider({
         code: res.error?.code,
         error: res.error?.message ?? 'Server rejected the cancel.',
       };
+      });
     },
     async initiateDysonSphere(foundationSettlementId) {
       // Server expects the namespaced settlement id ("<gameId>:<localId>").

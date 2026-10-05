@@ -5,6 +5,10 @@ import { StagingBanner } from './components/StagingBanner';
 import { AndroidBackHandler } from './platform/AndroidBackHandler';
 import { registerServiceWorker } from './platform/registerSW';
 import { captureAttribution } from './multiplayer/attribution';
+import { installTranslateGuard } from './platform/translateGuard';
+
+// Before React touches the DOM: page translation must not crash it.
+installTranslateGuard();
 
 // Before the first render: it reads the arrival URL (link tag, referrer)
 // and then tidies our tag out of the address bar.

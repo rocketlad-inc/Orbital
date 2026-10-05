@@ -187,6 +187,19 @@ describe('groupFleetsForRender', () => {
     expect(g.markerByLeadShip.get('f0')!.memberCount).toBe(20);
   });
 
+  it('a member flying its OWN leg to the same place is drawn on its own', () => {
+    // Fleeted mid-flight: A left at 1 and lands at 10, B left at 5 and
+    // lands at 15. Folded into A's marker, B looked like it would land
+    // with A (Master of Moria, 2026-10-05).
+    const a = ship('a', { fleetId: 'f1',
+      transit: { currentTransfer: { targetBodyId: 'mars', startTick: 1, arriveTick: 10 } } } as Partial<Ship>);
+    const b = ship('b', { fleetId: 'f1',
+      transit: { currentTransfer: { targetBodyId: 'mars', startTick: 5, arriveTick: 15 } } } as Partial<Ship>);
+    const g = groupFleetsForRender([a, b], [fleet('f1', 'a')]);
+    expect(g.collapsed.has('b')).toBe(false);
+    expect(g.draws.has('b')).toBe(true);
+  });
+
   it('ships in no fleet are untouched', () => {
     const loose = [ship('a'), ship('b'), ship('c')];
     const g = groupFleetsForRender(loose, []);
