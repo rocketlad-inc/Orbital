@@ -583,7 +583,8 @@ async function handleLobbySnapshot(_req, env, ctx) {
     .prepare(
       `SELECT rm.user_id, rm.empire_name, rm.bio, rm.chosen_starting_body,
               rm.color, rm.color2, rm.emblem, rm.name_pools,
-              u.display_name
+              u.display_name,
+              EXISTS (SELECT 1 FROM user_entitlements e WHERE e.user_id = rm.user_id) AS commissioned
          FROM room_members rm
          JOIN users u ON u.id = rm.user_id
         WHERE rm.room_id = ?`,
@@ -599,6 +600,9 @@ async function handleLobbySnapshot(_req, env, ctx) {
   const enrichedMembers = (memberRows.results ?? []).map(r => ({
     userId: r.user_id,
     displayName: doNameByUser.get(r.user_id) ?? r.display_name ?? 'player',
+    // Holds the Commander's Commission (0153): a quiet mark on the roster.
+    // Cosmetic standing only; nothing in the game reads it.
+    commissioned: !!r.commissioned,
     empire_name: r.empire_name ?? null,
     // Sent as the stored STRING; the client parses it. Parsing here as
     // well would mean two shapes for one field depending on which

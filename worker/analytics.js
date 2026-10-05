@@ -1077,6 +1077,16 @@ async function handleUiTelemetry(req, env, { session, params }) {
   return new Response(null, { status: 204 });
 }
 
+/**
+ * POST /api/telemetry — UI events that belong to no game: the lobby,
+ * the profile, and the Commission surfaces (0153), which need to report
+ * views and clicks from outside a match. Same shape and limits as the
+ * per-game channel; the rows simply carry no game id.
+ */
+async function handleAccountTelemetry(req, env, { session }) {
+  return handleUiTelemetry(req, env, { session, params: { gameId: null } });
+}
+
 // ---------------------------------------------------------------------------
 // POST /api/games/:gameId/perf
 // Client latency sample. Not admin-gated - every player reports their own
@@ -2561,6 +2571,7 @@ export const routes = [
   { method: 'POST', pattern: /^\/api\/games\/(?<gameId>[^/]+)\/perf\/session$/, auth: 'required', handle: handlePerfHeartbeat },
   { method: 'POST', pattern: /^\/api\/games\/(?<gameId>[^/]+)\/perf$/, auth: 'required', handle: handlePerfSample },
   { method: 'POST', pattern: /^\/api\/games\/(?<gameId>[^/]+)\/telemetry$/, auth: 'required', handle: handleUiTelemetry },
+  { method: 'POST', pattern: '/api/telemetry', auth: 'required', handle: handleAccountTelemetry },
   { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/analytics$/, auth: 'required', handle: handleGameAnalytics },
   { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/herald-preview$/, auth: 'required', handle: handleHeraldPreview },
   // Battle detail BEFORE the list: both live under .../battles and the
