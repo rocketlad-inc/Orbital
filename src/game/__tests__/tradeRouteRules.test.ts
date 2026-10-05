@@ -154,3 +154,35 @@ describe('construction sites are eligible stops', () => {
     }).toEqual({ sites: ['s1'], mineable: ['rock'], dropoff: ['home'] });
   });
 });
+
+// ---------------------------------------------------------------
+// THE DYSON SPHERE IS A SITE for its builder (Crimson_Song,
+// 2026-10-04: one route per freighter, because the Sun was never a
+// stop). Mirrors the server's routeMath.dysonSupplyNeed.
+// ---------------------------------------------------------------
+describe('the Sun as a stop', () => {
+  const sun = { id: 'sol', name: 'Sun', type: 'star' };
+  const foundation = { id: 'st1', bodyId: 'sol', ownedBy: 'player', type: 'station' };
+  const sphere = (controllerFactionId: string, hp: number) =>
+    ({ controllerFactionId, hp, maxHp: 1000 });
+
+  it('your unfinished sphere is a construction site, never a pickup', () => {
+    const st = world({ bodies: [sun], settlements: [foundation], dysonSphere: sphere('player', 400) });
+    const e = eligibleBodies(st);
+    expect(e.sites.map(b => b.id)).toEqual(['sol']);
+    expect(e.pickup.map(b => b.id)).not.toContain('sol');
+  });
+
+  it("a rival's sphere, a finished one, or none at all is not offered", () => {
+    for (const ds of [sphere('f3', 400), sphere('player', 1000), undefined]) {
+      const st = world({ bodies: [sun], settlements: [foundation], dysonSphere: ds });
+      expect(eligibleBodies(st).sites).toEqual([]);
+      expect(eligibleBodies(st).pickup.map(b => b.id)).not.toContain('sol');
+    }
+  });
+
+  it('the server accepts the Sun only as a drop-off', () => {
+    expect(server).toMatch(/sol_dropoff_only/);
+    expect(server).toMatch(/not_dyson_builder/);
+  });
+});

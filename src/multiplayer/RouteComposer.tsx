@@ -577,6 +577,25 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
                     <div>
                       <div className="rc-group is-rocks">Construction sites</div>
                       {searchableSites.map((b) => {
+                        if (b.id === 'sol') {
+                          // The Dyson Sphere: its meter is the sphere's
+                          // own, not a game_megastructures row.
+                          const ds = gameState.dysonSphere;
+                          const pct = ds && ds.maxHp > 0 ? Math.round((ds.hp / ds.maxHp) * 100) : 0;
+                          return (
+                            <button
+                              key={b.id}
+                              type="button"
+                              className="rc-pick"
+                              onClick={() => { addStop(b.id); setPicking(false); }}
+                            >
+                              <span className="rc-rockglyph" aria-hidden>☀</span>
+                              <span className="rc-pick-name">Dyson Sphere</span>
+                              <span className="rc-pick-stock">{pct}% built</span>
+                              <span className="rc-pick-meta">metal · credits · science</span>
+                            </button>
+                          );
+                        }
                         const m = (gameState.megastructures ?? {})[b.id];
                         const def = m ? MEGASTRUCTURES[m.kind] : undefined;
                         const loads = m ? loadsRemaining(m) : 0;

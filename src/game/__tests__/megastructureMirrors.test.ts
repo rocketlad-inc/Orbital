@@ -508,7 +508,8 @@ describe('you cannot supply a structure you do not own', () => {
   );
 
   it('the tick refuses to unload into somebody else\'s site', () => {
-    const i = room.indexOf('const siteHere = await DB');
+    // (The Sun skips this read: `solDrop ? null : await DB`.)
+    const i = room.indexOf('const siteHere = ');
     expect(i).toBeGreaterThan(-1);
     const block = room.slice(i, i + 2200);
     // It must read the owner AND put it through the shared rule.
