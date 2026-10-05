@@ -58,6 +58,8 @@ data class CmdShip(
   val eta: Int? = null,
   /** The tick it came to rest (arrived or was built), when not moving. */
   val rested: Int? = null,
+  /** That rest was its launch from the yard: it has flown nowhere since. */
+  val launched: Boolean = false,
   /** An order is already queued for it (a planned course). */
   val pending: Boolean = false,
   /** The standing trade route it runs ("Deimos–Mars"), or null. */
@@ -126,7 +128,7 @@ fun parseCommand(raw: String): Command {
         priority = s.optString("prio", "auto"), detonator = s.optBoolean("det", false), armedTick = s.int("boom"),
         hp = s.optInt("hp", 100), key = s.optString("k", "corvette:A:green"),
         captain = s.optJSONObject("cap")?.let { c -> Captain(c.optString("n"), c.str("p")) },
-        dest = s.str("dest"), eta = s.int("eta"), rested = s.int("rested"), pending = s.optBoolean("pending", false),
+        dest = s.str("dest"), eta = s.int("eta"), rested = s.int("rested"), launched = s.optBoolean("launched", false), pending = s.optBoolean("pending", false),
         route = s.str("route"),
       )
     },

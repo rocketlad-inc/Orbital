@@ -541,6 +541,10 @@ export async function handleWearCommand(_req, env, { params, ctx }) {
       // from the yard -- so the watch can tell "just got here and has
       // nothing to do" from a garrison that has sat there for a week.
       rested: s.moving ? null : Math.max(Number(s.arrived_tick ?? -1), Number(s.built_at_tick ?? -1)),
+      // That rest was its launch, not a trip: it has never flown anywhere
+      // since the yard put it out. The watch gives a fresh hull its own
+      // NEW SHIP card instead of calling it an arrival (Lorne).
+      launched: !s.moving && s.built_at_tick != null && Number(s.built_at_tick) >= Number(s.arrived_tick ?? -1),
       pending: !!s.pending,
       route: s.route_name ?? null,
     };
