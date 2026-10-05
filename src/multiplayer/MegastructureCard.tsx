@@ -24,7 +24,7 @@ import {
   MEGA_MAX_HP, MEGA_SEIZE_HP_FRAC, isBreached, isAbandoned,
 } from '../game/megastructures';
 import {
-  StructureIcon, variantsFor, STRUCTURE_VARIANT_NAMES, PREMIUM_STRUCTURE_VARIANTS,
+  StructureIcon, variantsFor, STRUCTURE_VARIANT_NAMES, isPremiumStructureVariant,
 } from '../components/StructureIcons';
 import { useAuth } from './AuthContext';
 import type { StructureVariant } from '../components/StructureIcons';
@@ -718,7 +718,7 @@ export const MegastructurePicker: React.FC<{
           {variantsFor(pendingKind).map(v => {
             // Premium looks show for everyone, locked: the hull you can
             // see but not fly is the ad. The server re-checks on found.
-            const locked = !isPremium && !!PREMIUM_STRUCTURE_VARIANTS[pendingKind]?.has(v);
+            const locked = !isPremium && isPremiumStructureVariant(v);
             return (
             <button
               key={v}

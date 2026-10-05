@@ -41,13 +41,19 @@ for (const v of PREMIUM) {
 }
 check('a letter past Y is still invalid', (await validateIconVariant(env, 'paid', 'Z'))?.code === 'bad_request');
 
-const pk = await validateStructureVariant(env, 'free', 'mega_destroyer', 'F');
-check('the Planet Killer is refused without the Commission', pk?.code === 'premium_required', JSON.stringify(pk));
-check('...and allowed with it', (await validateStructureVariant(env, 'paid', 'mega_destroyer', 'F')) === null);
-for (const v of 'ABCDE'.split('')) {
-  check(`Mega Destroyer ${v} stays free`, (await validateStructureVariant(env, 'free', 'mega_destroyer', v)) === null);
+// One look per megastructure is free (the default, A); every other look
+// on every kind needs the Commission (2026-10-05).
+const KINDS = ['warp_gate', 'weapons_station', 'gravity_sink', 'deep_array', 'null_field', 'mega_destroyer', 'mobile_foundry'];
+for (const kind of KINDS) {
+  check(`${kind}: the default look stays free`, (await validateStructureVariant(env, 'free', kind, 'A')) === null);
+  const looks = kind === 'mega_destroyer' ? 'BCDEF' : 'BC';
+  for (const v of looks) {
+    const r = await validateStructureVariant(env, 'free', kind, v);
+    check(`${kind} ${v} is refused without the Commission`, r?.code === 'premium_required', JSON.stringify(r));
+    check(`${kind} ${v} is allowed with it`, (await validateStructureVariant(env, 'paid', kind, v)) === null);
+  }
 }
-check('other kinds have no premium looks', (await validateStructureVariant(env, 'free', 'warp_gate', 'C')) === null);
+check('no look chosen (the default) is never refused', (await validateStructureVariant(env, 'free', 'warp_gate', null)) === null);
 
 console.log(failed ? `\n${failed} FAILED` : '\nALL PREMIUM LOOK CHECKS PASS');
 process.exit(failed ? 1 : 0);

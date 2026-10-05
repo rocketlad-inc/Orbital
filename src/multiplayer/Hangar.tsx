@@ -158,7 +158,7 @@ export function Hangar({ onRedeemed, giftJustBought }: {
             </div>
             <p className="hg-body">
               Thank you for supporting Orbital. Your lines and flags are in the ship designer, the lobby flag
-              section and the Mega Destroyer looks, and the {HOLDER_MARK} beside your name shows other commanders.
+              section and every megastructure's look picker, and the {HOLDER_MARK} beside your name shows other commanders.
             </p>
           </>
         ) : (

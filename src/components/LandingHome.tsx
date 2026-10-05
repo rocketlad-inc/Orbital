@@ -77,7 +77,7 @@ const Frame: React.FC<{ children: React.ReactNode; caption?: string; tone?: 'map
 // FAQ — mirrored in public/index.html as FAQPage JSON-LD. Edit both.
 export const FAQ: Array<[string, string]> = [
   ['Is Orbital free?',
-    'Yes. Orbital is free to play with no ads, and nothing that affects the game is for sale. An optional one-time Commander’s Commission ($10) unlocks cosmetic ship designs, a Mega Destroyer skin and premium emblems.'],
+    'Yes. Orbital is free to play with no ads, and nothing that affects the game is for sale. An optional one-time Commander’s Commission ($10) unlocks cosmetic ship designs, megastructure looks and premium emblems.'],
   ['Do I need to download anything?',
     'No. Orbital runs in any modern browser on desktop, tablet or phone. Sign in with Google or an email address and join a game straight away.'],
   ['How long does a game last?',

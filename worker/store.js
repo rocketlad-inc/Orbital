@@ -67,13 +67,15 @@ export const SKUS = {
 const ICON_VARIANT_RE = /^[A-Y]$/;
 const PREMIUM_ICON_VARIANTS = new Set(['J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y']);
 
-// Megastructure silhouettes that need the Commission, per kind (mirror of
-// PREMIUM_STRUCTURE_VARIANTS in src/components/StructureIcons.tsx).
-const PREMIUM_STRUCTURE_VARIANTS = { mega_destroyer: new Set(['F']) };
+// Megastructure looks: ONE per kind is free, the default 'A'; every other
+// look on every kind needs the Commission (2026-10-05). A rule, not a
+// per-kind list, so new art is covered without an edit here. Mirror of
+// isPremiumStructureVariant in src/components/StructureIcons.tsx.
+const FREE_STRUCTURE_VARIANT = 'A';
 
 /** A megastructure look pick: null when allowed, else an error body. */
 export async function validateStructureVariant(env, userId, kind, v) {
-  if (PREMIUM_STRUCTURE_VARIANTS[kind]?.has(v) && !(await hasEntitlement(env, userId))) {
+  if (v && v !== FREE_STRUCTURE_VARIANT && !(await hasEntitlement(env, userId))) {
     return { code: 'premium_required', message: 'that design needs the Commander\u2019s Commission' };
   }
   return null;
