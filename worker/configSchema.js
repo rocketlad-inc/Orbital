@@ -390,6 +390,17 @@ export const SCHEMA = [
       + 'without moving anything; lower it to play darker.',
   },
   {
+    // STAGING DIAL. The far systems (Centauri, Cygnus X-1) are in the
+    // shipped catalogue but seeded only where this is 1. Default 0 is
+    // production's answer: no running game changes, and the backfill
+    // that inserts catalogue bodies into live games skips them too.
+    id: 'far_systems', group: 'map', type: 'int',
+    label: 'Far systems (Centauri + Cygnus)', def: 0, min: 0, max: 1, step: 1,
+    danger: true,
+    help: 'Seed the two far star systems, ~200 ticks out. Off everywhere '
+      + 'until the way in is designed; a new game only.',
+  },
+  {
     id: 'system_scale', group: 'map', type: 'number',
     label: 'System scale (orbit spread)', def: 1, min: 0.1, max: 10, step: 0.05,
     danger: true,
