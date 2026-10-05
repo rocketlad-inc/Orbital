@@ -182,10 +182,12 @@ export function drawCityCluster(
   settlement: Settlement,
   factionColor: string,
   factionColor2?: string,
+  /** Colony skin (0154); absent = standard towers. */
+  skin?: string | null,
 ) {
   // Visual overhaul (staging): two-tone iso buildings in the hull language.
   // The legacy cluster below is kept, unreached, so reverting is one line.
-  if (drawCityArtEnabled) { drawCityArt(c, settlement, factionColor, factionColor2); return; }
+  if (drawCityArtEnabled) { drawCityArt(c, settlement, factionColor, factionColor2, skin); return; }
   // Landing pad — flat iso diamond, faction-edged.
   c.fillStyle = PAD;
   c.strokeStyle = factionColor;
@@ -792,6 +794,8 @@ export interface StationStructureOpts {
   /** "Just leveled up" pop timing per module, wall-clock ms. Undefined
    *  = no recent change, no pop. */
   buildFlash?: { weapons?: number; shipyard?: number; lab?: number };
+  /** Station skin (0154); absent = the free hub. */
+  skin?: string | null;
 }
 
 /**

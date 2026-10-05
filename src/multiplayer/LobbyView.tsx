@@ -16,6 +16,7 @@ import { NamePoolEditor } from './NamePoolEditor';
 import type { PastNameBank } from './NamePoolEditor';
 import { NamePools, EMPTY_POOLS, parseNamePools } from '../game/namePools';
 import { connectRoomSocket } from './roomSocket';
+import { SkinPicker } from './SkinPicker';
 
 /** A pre-game lobby chat line, as broadcast by the room WebSocket
  *  (`{ type: 'chat', from, text, at }`). `key` is assigned client-side
@@ -721,7 +722,7 @@ Your seat opens up for someone else.${handOver} You can join again later while a
   //   emblem  409 'emblem_taken' — EXACTLY another member's pick
   // Colours live on a continuum so "close enough to confuse" is the real
   // failure; emblems are a closed set where only identity collides.
-  const pickFlag = async (field: 'color' | 'color2' | 'emblem', value: string | null) => {
+  const pickFlag = async (field: FlagField, value: string | null) => {
     setError(null);
     const res = await apiFetch(`/api/lobby/rooms/${roomId}/me`, {
       method: 'PATCH',
@@ -1049,12 +1050,14 @@ function swatchStyle(c: string, opts: { selected: boolean; taken: boolean }): Re
   };
 }
 
+type FlagField = 'color' | 'color2' | 'emblem' | 'city_skin' | 'station_skin';
+
 function FactionFlagPicker({
   snap, myUserId, onPick,
 }: {
   snap: RoomSnapshot;
   myUserId?: string;
-  onPick: (field: 'color' | 'color2' | 'emblem', value: string | null) => void;
+  onPick: (field: FlagField, value: string | null) => void;
 }) {
   // Commission state gates the premium emblem wing below. UI-only — the
   // lobby endpoint re-checks the entitlement on save.
@@ -1228,6 +1231,26 @@ function FactionFlagPicker({
           {!myColor2 && <span>(trim auto-derived)</span>}
           {!myEmblem && <span>(no emblem — one will be assigned)</span>}
         </div>
+      )}
+      {/* Colony / station style for THIS game (0154). Null = the account
+          default from the Hangar, which is what the tiles show lit. */}
+      <label className="mp-label" style={{ marginTop: 8 }}>Colony &amp; station style</label>
+      <SkinPicker
+        city={me?.city_skin ?? null}
+        station={me?.station_skin ?? null}
+        fallbackCity={user?.city_skin ?? null}
+        fallbackStation={user?.station_skin ?? null}
+        primary={myColor}
+        secondary={myColor2}
+        holder={isPremium}
+        surface="skins"
+        onPick={onPick}
+      />
+      {(me?.city_skin || me?.station_skin) && (
+        <button type="button" className="skp-reset" style={{ marginTop: 4 }}
+                onClick={() => { onPick('city_skin', null); onPick('station_skin', null); }}>
+          Use my default style (set in Profile)
+        </button>
       )}
     </>
   );

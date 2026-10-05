@@ -21,6 +21,7 @@ import { apiFetch, CommissionSurface } from './api';
 import { PREMIUM_VARIANTS } from '../components/ShipIcons';
 import { PREMIUM_EMBLEM_IDS } from '../game/emblems';
 import { premiumStructureLookCount } from '../components/StructureIcons';
+import { CITY_SKINS, STATION_SKINS } from '../game/settlementSkins';
 import { isAndroidApp } from '../platform/appShell';
 import { TELEMETRY_SESSION_ID } from './telemetry';
 
@@ -30,10 +31,14 @@ export const COMMISSION_LINES = PREMIUM_VARIANTS.size;
 export const COMMISSION_EMBLEMS = PREMIUM_EMBLEM_IDS.length;
 /** Every megastructure look beyond the one free look per kind. */
 export const COMMISSION_STRUCTURE_LOOKS = premiumStructureLookCount();
+/** Colony and station styles beyond the free one of each (0154). */
+export const COMMISSION_CITY_SKINS = CITY_SKINS.filter(s => !s.free).length;
+export const COMMISSION_STATION_SKINS = STATION_SKINS.filter(s => !s.free).length;
 
 /** The whole offer in one calm sentence, for any surface. */
 export const COMMISSION_FACTS =
-  `${COMMISSION_LINES} ship lines for every hull, ${COMMISSION_EMBLEMS} flag emblems and `
+  `${COMMISSION_LINES} ship lines for every hull, ${COMMISSION_EMBLEMS} flag emblems, `
+  + `${COMMISSION_CITY_SKINS} colony and ${COMMISSION_STATION_SKINS} station styles and `
   + `${COMMISSION_STRUCTURE_LOOKS} megastructure looks. Cosmetic only. ${COMMISSION_PRICE}, once.`;
 
 /** The holder mark on rosters and standings. Not ★, which already

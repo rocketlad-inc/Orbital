@@ -20,7 +20,8 @@ import { buildingLevel } from '../game/settlements';
 import { deriveSecondary } from '../game/colorUtils';
 import { hullHex } from '../components/ShipIcons';
 import { palette, render } from './hulls/engine';
-import { STATION } from './hulls/capital';
+import { STATION, STATION_HUBS } from './hulls/capital';
+import { citySkinOf, stationSkinOf, CitySkin, StationSkin } from '../game/settlementSkins';
 import { shipDesign, hullSvgString } from './hulls';
 
 type Pal = ReturnType<typeof palette> & Record<string, string>;
@@ -106,19 +107,19 @@ function thrusterBlock(level: number, C: Pal): string {
 
 type StationLevels = { weaponsLevel: number; labLevel: number; shipyardLevel: number; thrustersLevel: number };
 
-function stationSvg(o: StationLevels, C: Pal): string {
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${PX}" height="${PX}" viewBox="${-VIEW} ${-VIEW} ${VIEW * 2} ${VIEW * 2}">${stationMarkup(o, C)}</svg>`;
+function stationSvg(o: StationLevels, C: Pal, skin: StationSkin): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${PX}" height="${PX}" viewBox="${-VIEW} ${-VIEW} ${VIEW * 2} ${VIEW * 2}">${stationMarkup(o, C, skin)}</svg>`;
 }
 
 /** The station drawing (no <svg> wrapper) in station units, centred on 0,0
  *  and spanning +/-STATION_VIEW, for a DOM <svg> to mount: the world
  *  menu's station badge shows the same station the map draws. */
 export const STATION_VIEW = VIEW;
-export function stationInnerSvg(o: StationLevels, primary: string, secondary?: string): string {
-  return stationMarkup(o, pal(primary, secondary));
+export function stationInnerSvg(o: StationLevels, primary: string, secondary?: string, skin?: string | null): string {
+  return stationMarkup(o, pal(primary, secondary), stationSkinOf(skin));
 }
 
-function stationMarkup(o: StationLevels, C: Pal): string {
+function stationMarkup(o: StationLevels, C: Pal, skin: StationSkin = 'hub'): string {
   const M = STATION_MOUNTS;
   let s = '';
   // Booms first so every module sits on top of its own mount.
@@ -126,7 +127,8 @@ function stationMarkup(o: StationLevels, C: Pal): string {
   if (o.labLevel > 0) s += boom(M.lab, C);
   if (o.shipyardLevel > 0) s += boom({ x: M.shipyard.x - 8, y: M.shipyard.y }, C);
   if (o.thrustersLevel > 0) s += boom(M.thrusters, C) + thrusterBlock(o.thrustersLevel, C);
-  s += place(STATION.core.parts as Part[], M.hub.x, M.hub.y, CORE_SCALE, C);
+  // The hub is the skin (0154); every module below keeps its mount.
+  s += place((STATION_HUBS[skin] ?? STATION.core.parts) as Part[], M.hub.x, M.hub.y, CORE_SCALE, C);
   if (o.shipyardLevel > 0) {
     // The frame and rails only: the ship on the slip is the real hull,
     // drawn live over this image as it builds.
@@ -154,6 +156,8 @@ export interface StationArtOpts {
   factionColor2?: string;
   builds: { shipClass: string; progress: number }[];
   nowMs: number;
+  /** Station skin (0154); absent or unknown = the free hub. */
+  skin?: string | null;
 }
 
 /** Draw the station centred on the current origin. False until its image
@@ -161,8 +165,9 @@ export interface StationArtOpts {
 export function drawStationArt(c: CanvasRenderingContext2D, o: StationArtOpts): boolean {
   const C = pal(o.factionColor, o.factionColor2);
   const lv = (n: number) => Math.max(0, Math.min(9, n | 0));
-  const key = `st|${lv(o.weaponsLevel)}|${lv(o.labLevel)}|${lv(o.shipyardLevel)}|${lv(o.thrustersLevel)}|${C.base}|${C.liv}`;
-  const img = svgImage(key, () => stationSvg(o, C));
+  const skin = stationSkinOf(o.skin);
+  const key = `st|${skin}|${lv(o.weaponsLevel)}|${lv(o.labLevel)}|${lv(o.shipyardLevel)}|${lv(o.thrustersLevel)}|${C.base}|${C.liv}`;
+  const img = svgImage(key, () => stationSvg(o, C, skin));
   if (!img) return false;
   c.drawImage(img, -VIEW, -VIEW, VIEW * 2, VIEW * 2);
 
@@ -226,7 +231,7 @@ const ISO_C = Math.cos(Math.PI / 6);
 
 /** An iso block standing with its footprint centred on ground (gx, gy):
  *  lit top, base-toned left face, shadowed right face, empire edges. */
-function isoBox(c: CanvasRenderingContext2D, gx: number, gy: number, w: number, d: number, h: number, C: Pal) {
+function isoBox(c: CanvasRenderingContext2D, gx: number, gy: number, w: number, d: number, h: number, C: Pal, top: string = C.top) {
   const x = gx - (w - d) / 2 * ISO_C, y = gy - (w + d) / 4;
   const p = (a: number, b: number, z: number): [number, number] => [x + (a - b) * ISO_C, y + (a + b) * 0.5 - z];
   const face = (pts: [number, number][], fill: string) => {
@@ -242,7 +247,7 @@ function isoBox(c: CanvasRenderingContext2D, gx: number, gy: number, w: number, 
   c.lineJoin = 'round';
   face([p(0, d, 0), p(w, d, 0), p(w, d, h), p(0, d, h)], C.base);
   face([p(w, 0, 0), p(w, d, 0), p(w, d, h), p(w, 0, h)], C.plate);
-  face([p(0, 0, h), p(w, 0, h), p(w, d, h), p(0, d, h)], C.top);
+  face([p(0, 0, h), p(w, 0, h), p(w, d, h), p(0, d, h)], top);
   // Return the top-face centre, where roof details hang.
   return { tx: x + (w - d) / 2 * ISO_C, ty: y + (w + d) / 4 - h };
 }
@@ -420,26 +425,162 @@ export function drawSkylineStructure(
   }
 }
 
-/** Draw the city standing on the surface at the current origin, "up" =
- *  outward (the caller rotates). Same footprint as the old cluster. */
-export function drawCityArt(c: CanvasRenderingContext2D, settlement: Settlement, primary: string, secondary?: string) {
-  const C = pal(primary, secondary);
+// ---- City skins (0154) ------------------------------------------------
+// A skin is a landing pad and a way of drawing HABITATS. The functional
+// buildings (forge, mint, lab, thrusters) are painted by the same code at
+// the same spots in every skin: rivals read a city's strength from them.
+// Habitats sit behind them (small gy) and grow with population exactly as
+// the standard towers do, so a big city reads big in every style.
 
-  // Landing pad: an iso plate in the empire's dark tone, livery edge.
+type Item = { gy: number; draw: () => void };
+
+function padDiamond(c: CanvasRenderingContext2D, C: Pal, fill: string, cross: boolean) {
   c.beginPath();
   c.moveTo(0, -9); c.lineTo(20, 1); c.lineTo(0, 11); c.lineTo(-20, 1);
   c.closePath();
-  c.fillStyle = C.plate;
+  c.fillStyle = fill;
   c.fill();
   c.strokeStyle = C.liv;
   c.lineWidth = 1;
   c.stroke();
-  c.strokeStyle = C.edge;
-  c.lineWidth = 0.4;
+  if (cross) {
+    c.strokeStyle = C.edge;
+    c.lineWidth = 0.4;
+    c.beginPath();
+    c.moveTo(-10, -4); c.lineTo(10, 6);
+    c.moveTo(10, -4); c.lineTo(-10, 6);
+    c.stroke();
+  }
+}
+
+function padHex(c: CanvasRenderingContext2D, C: Pal) {
   c.beginPath();
-  c.moveTo(-10, -4); c.lineTo(10, 6);
-  c.moveTo(10, -4); c.lineTo(-10, 6);
-  c.stroke();
+  ([[-20, 1], [-10, -8], [10, -8], [20, 1], [10, 10], [-10, 10]] as [number, number][])
+    .forEach(([x, y], i) => (i ? c.lineTo(x, y) : c.moveTo(x, y)));
+  c.closePath();
+  c.fillStyle = C.plate; c.fill();
+  c.strokeStyle = C.liv; c.lineWidth = 1; c.stroke();
+}
+
+/** Standard towers: the original look, unchanged. */
+function habsTowers(c: CanvasRenderingContext2D, habs: number, pop: number, C: Pal): Item[] {
+  const slots: [number, number, number][] = [[-9, -2, 11], [9, -2, 8], [-2, -5, 14]];
+  return slots.slice(0, habs).map(([hx, hy, hh]) => {
+    const h = hh + Math.min(4, Math.floor(pop / 6));
+    return { gy: hy, draw: () => towerAt(c, hx, hy, h, C) };
+  });
+}
+
+/** Hive: honeycomb cells, more of them and taller as the city grows. */
+function habsHive(c: CanvasRenderingContext2D, habs: number, pop: number, C: Pal): Item[] {
+  const cells: [number, number, number][] = [
+    [-6, -6, 12], [2, -7, 14], [-2, -3, 10], [6, -4, 9], [-10, -3, 8], [10, -2, 7], [0, -9, 11], [-4, -9, 9], [5, -9, 8],
+  ];
+  const n = Math.min(cells.length, 3 + habs * 2);
+  const grow = Math.min(6, Math.floor(pop / 3));
+  return cells.slice(0, n).map(([x, y, h0]) => ({
+    gy: y,
+    draw: () => {
+      const h = h0 + grow;
+      const r = 2.6;
+      c.fillStyle = C.base; c.fillRect(x - r * 0.87, y - h, r * 1.74, h);
+      c.fillStyle = C.plate; c.fillRect(x, y - h, r * 0.87, h);
+      c.strokeStyle = C.edge; c.lineWidth = 0.4; c.strokeRect(x - r * 0.87, y - h, r * 1.74, h);
+      c.beginPath();
+      for (let i = 0; i < 6; i++) {
+        const a = (60 * i + 30) * Math.PI / 180;
+        const px = x + Math.cos(a) * r, py = y - h + Math.sin(a) * r * 0.55;
+        if (i) c.lineTo(px, py); else c.moveTo(px, py);
+      }
+      c.closePath();
+      c.fillStyle = C.top; c.fill(); c.stroke();
+      glowDot(c, x, y - h, 0.7, C.glow, 0.8);
+    },
+  }));
+}
+
+/** Needle spires: thin, tall, banded, a beacon at every tip. */
+function habsSpires(c: CanvasRenderingContext2D, habs: number, pop: number, C: Pal): Item[] {
+  const slots: [number, number, number][] = [[-2, -6, 28], [-9, -2, 22], [9, -2, 18], [4, -4, 14]];
+  const grow = Math.min(4, Math.floor(pop / 6)) * 1.5;
+  return slots.slice(0, Math.min(slots.length, habs + 1)).map(([x, y, h0]) => ({
+    gy: y,
+    draw: () => {
+      const h = h0 + grow;
+      const { tx, ty } = isoBox(c, x, y, 2.6, 2.6, h, C);
+      c.beginPath(); c.moveTo(tx - 1.3, ty + 0.6); c.lineTo(tx, ty - 6); c.lineTo(tx + 1.3, ty + 0.6); c.closePath();
+      c.fillStyle = C.top; c.fill(); c.strokeStyle = C.edge; c.lineWidth = 0.4; c.stroke();
+      c.strokeStyle = C.liv; c.lineWidth = 0.5;
+      for (let z = 4; z < h; z += 5) { c.beginPath(); c.moveTo(x - 2.2, y - z); c.lineTo(x, y - z + 1.1); c.stroke(); }
+      glowDot(c, tx, ty - 6.5, 1.1, C.glow, 0.95);
+    },
+  }));
+}
+
+/** Arcology domes: one glass dome per habitat, two towers inside each. */
+function habsDomes(c: CanvasRenderingContext2D, habs: number, pop: number, C: Pal): Item[] {
+  const slots: [number, number, number][] = [[0, -6, 8], [-9, -3, 6.5], [9, -2, 5.5]];
+  const grow = Math.min(1.5, pop / 12);
+  return slots.slice(0, habs).map(([x, y, r0]) => ({
+    gy: y,
+    draw: () => {
+      const r = r0 + grow;
+      isoBox(c, x, y, r * 1.1, r * 1.1, 1.4, C);
+      c.beginPath(); c.ellipse(x, y - 2, r, r * 0.5, 0, 0, Math.PI * 2); c.fillStyle = C.plate2; c.fill();
+      isoBox(c, x - r * 0.25, y - 2.4, 1.7, 1.7, r * 0.75, C);
+      isoBox(c, x + r * 0.3, y - 2, 1.7, 1.7, r * 0.5, C);
+      c.beginPath(); c.ellipse(x, y - 2, r, r * 1.05, 0, Math.PI, 0);
+      c.fillStyle = 'rgba(200, 235, 255, 0.24)'; c.fill();
+      c.strokeStyle = C.glass; c.lineWidth = 0.55; c.stroke();
+      c.strokeStyle = 'rgba(232, 248, 255, 0.4)'; c.lineWidth = 0.35;
+      c.beginPath(); c.ellipse(x, y - 2, r * 0.5, r * 1.05, 0, Math.PI, 0); c.stroke();
+      glowDot(c, x, y - 2 - r * 1.05, 0.8, C.glow, 0.9);
+    },
+  }));
+}
+
+/** Terraced ziggurats: stepped tiers in alternating tones, lit at the
+ *  summit. Taller tiers and stronger contrast than the concept pass, which
+ *  turned to mush at map size. */
+function habsZiggurat(c: CanvasRenderingContext2D, habs: number, pop: number, C: Pal): Item[] {
+  const slots: [number, number, number][] = [[-5, -4, 12], [9, -3, 8.5], [0, -8, 7.5]];
+  const tiers = pop >= 8 ? 4 : 3;
+  return slots.slice(0, habs).map(([x, y, w0]) => ({
+    gy: y,
+    draw: () => {
+      let gy = y;
+      let topY = y;
+      for (let k = 0; k < tiers; k++) {
+        const w = w0 * (1 - k * 0.24);
+        const r = isoBox(c, x, gy, w, w, 3.4, C, k % 2 ? C.top : C.plate2);
+        topY = r.ty;
+        gy = r.ty + w * 0.5 - 0.6;
+      }
+      glowDot(c, x, topY - 0.4, 1.3, C.glow, 0.95);
+    },
+  }));
+}
+
+const CITY_STYLE: Record<CitySkin, {
+  pad: (c: CanvasRenderingContext2D, C: Pal) => void;
+  habs: (c: CanvasRenderingContext2D, habs: number, pop: number, C: Pal) => Item[];
+}> = {
+  towers: { pad: (c, C) => padDiamond(c, C, C.plate, true), habs: habsTowers },
+  hive: { pad: padHex, habs: habsHive },
+  spires: { pad: (c, C) => padDiamond(c, C, C.dark, false), habs: habsSpires },
+  domes: { pad: (c, C) => padDiamond(c, C, C.plate, false), habs: habsDomes },
+  ziggurat: { pad: (c, C) => padDiamond(c, C, C.plate, true), habs: habsZiggurat },
+};
+
+/** Draw the city standing on the surface at the current origin, "up" =
+ *  outward (the caller rotates). Same footprint as the old cluster. The
+ *  skin (0154) picks the pad and the habitats; absent = standard towers. */
+export function drawCityArt(
+  c: CanvasRenderingContext2D, settlement: Settlement, primary: string, secondary?: string, skin?: string | null,
+) {
+  const C = pal(primary, secondary);
+  const style = CITY_STYLE[citySkinOf(skin)];
+  style.pad(c, C);
 
   const L = (k: string) => buildingLevel(settlement, k as BuildingKind);
   const forgeL = L('forge'), mintL = L('mint'), labL = L('lab'), ttL = L('trajectory_thrusters');
@@ -447,13 +588,7 @@ export function drawCityArt(c: CanvasRenderingContext2D, settlement: Settlement,
   const habs = Math.min(3, 1 + Math.floor(pop / 3));
 
   // Painter's order: everything sorted back (small gy) to front.
-  const items: { gy: number; draw: () => void }[] = [];
-  const habSlots: [number, number, number][] = [[-9, -2, 11], [9, -2, 8], [-2, -5, 14]];
-  for (let i = 0; i < habs; i++) {
-    const [hx, hy, hh] = habSlots[i];
-    const h = hh + Math.min(4, Math.floor(pop / 6));
-    items.push({ gy: hy, draw: () => towerAt(c, hx, hy, h, C) });
-  }
+  const items: Item[] = style.habs(c, habs, pop, C);
   if (labL > 0) items.push({ gy: 5, draw: () => labAt(c, -12, 5, labL, C) });
   if (forgeL > 0) items.push({ gy: 4, draw: () => forgeAt(c, 1, 4, forgeL, C) });
   if (mintL > 0) items.push({ gy: 3, draw: () => mintAt(c, 12, 3, mintL, C) });

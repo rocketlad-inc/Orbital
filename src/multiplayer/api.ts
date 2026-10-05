@@ -163,6 +163,10 @@ export type User = {
   // is_admin: unlocks premium pickers in the UI, but every save path
   // re-checks the entitlement server-side.
   is_premium?: boolean;
+  // Colony / station skin, the account default (0154). null = the free
+  // look. Saved via PATCH /api/users/me/skins.
+  city_skin?: string | null;
+  station_skin?: string | null;
   // Set on the player's second visit until they answer: the feedback
   // Discord's invite URL (worker/index.js noteVisit). null otherwise.
   invite_discord?: string | null;
@@ -175,7 +179,7 @@ export type User = {
 /** Where a Commission checkout started. The server keeps an allow-list
  *  of these (worker/store.js COMMISSION_SURFACES) and labels each sale
  *  with it, so the dashboard can say which surface sells. */
-export type CommissionSurface = 'profile' | 'lobby-flag' | 'designer' | 'endgame' | 'thanks-card';
+export type CommissionSurface = 'profile' | 'lobby-flag' | 'designer' | 'endgame' | 'thanks-card' | 'skins';
 
 /** Start the Commander's Commission purchase. Resolves to the Stripe
  *  Checkout URL to navigate to, or null when purchases aren't enabled,
@@ -228,6 +232,10 @@ export type RoomMember = {
   /** Flag emblem pref (an EmblemId). Exclusive: the server 409s
    *  `emblem_taken` if another member of the room already flies it. */
   emblem?: string | null;
+  /** Colony / station skin override for THIS game (0154); null = the
+   *  player's account default. */
+  city_skin?: string | null;
+  station_skin?: string | null;
 };
 
 export type StartingBodyOption = {

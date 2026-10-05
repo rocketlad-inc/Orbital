@@ -185,6 +185,9 @@ interface ServerState {
     color2?: string | null;
     /** Flag emblem id; null on factions seeded before migration 0074. */
     emblem?: string | null;
+    /** Colony / station skins as DRAWN (0154): null = the free look. */
+    city_skin?: string | null;
+    station_skin?: string | null;
     status: string;
     capital_body_id: string | null;
   }>;
@@ -1340,6 +1343,8 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     // which is precisely the failure an emblem exists to prevent.
     // Resolving once, here, makes the shape identical for everyone.
     emblem: resolveEmblem(f.emblem, f.id),
+    citySkin: f.city_skin ?? null,
+    stationSkin: f.station_skin ?? null,
     isPlayer: f.id === callerFactionId,
     // Sent on every /state and dropped until now, so an eliminated
     // player's screen said nothing at all (QA battle test).

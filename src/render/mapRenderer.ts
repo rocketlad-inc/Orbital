@@ -6557,6 +6557,12 @@ function settlementColor(settlement: Settlement, factions: Faction[]): string {
  * Two-tone (§5): the owning faction's secondary trim for settlements.
  * Decoration only — meaning must stay in the primary.
  */
+/** The owner's skin for this settlement (0154); null = the free look. */
+function settlementSkin(settlement: Settlement, factions: Faction[]): string | null {
+  const f = factions.find(x => x.id === settlement.ownedBy);
+  return (settlement.type === 'station' ? f?.stationSkin : f?.citySkin) ?? null;
+}
+
 function settlementColor2(settlement: Settlement, factions: Faction[]): string | undefined {
   const faction = factions.find(f => f.id === settlement.ownedBy);
   if (!faction?.color) return undefined;
@@ -6616,7 +6622,7 @@ export function drawCity(
     ctx.ctx.save();
     ctx.ctx.translate(canvasPos.x, canvasPos.y);
     ctx.ctx.rotate(angle + Math.PI / 2);
-    drawCityCluster(ctx.ctx, settlement, color, settlementColor2(settlement, factions));
+    drawCityCluster(ctx.ctx, settlement, color, settlementColor2(settlement, factions), settlementSkin(settlement, factions));
     // This colony was already standing when someone found it — ring the
     // modern cluster with what's left of whoever built it first.
     if (ancientOriginOf(body) === 'city') drawAncientRuins(ctx.ctx, ctx.nowMs ?? 0);
@@ -6823,6 +6829,7 @@ export function drawStation(
       weaponsLevel, shipyardLevel, labLevel, thrustersLevel, builds,
       factionColor: color,
       factionColor2: settlementColor2(settlement, factions),
+      skin: settlementSkin(settlement, factions),
       nowMs: nowMForStation,
       buildFlash: {
         weapons: ctx.buildFlashStart?.get(`${settlement.id}:weapons`),

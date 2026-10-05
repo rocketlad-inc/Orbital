@@ -46,7 +46,7 @@
 .hg-where { font-family: var(--mp-mono); color: #ffb84d; letter-spacing: 0.04em; }
 .hg-err { margin: 0; }
 
-.hg-gift, .hg-redeem {
+.hg-skins, .hg-gift, .hg-redeem {
   display: flex;
   flex-direction: column;
   gap: 6px;
