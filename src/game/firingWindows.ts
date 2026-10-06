@@ -47,11 +47,11 @@ import { getShipClass } from './shipClasses';
 const SHIP_RANGE: Record<string, number> = {
   corvette: 12, frigate: 16, destroyer: 20, freighter: 0, colony: 0,
 };
-/** Reference crossing speed for the aim penalty. 45 for the old even
- *  burn, scaled with cruise speed (worker/burn.js CRUISE_SPEED_SCALE:
- *  x1.34 with the 9x brake). Held to worker/transitCombat.js V_REF by
- *  burnParity.test.ts. */
-export const V_REF = 60;
+/** Reference crossing speed for the aim penalty. 45 for the old flat
+ *  even burn, scaled with cruise speed (worker/burn.js CRUISE_SPEED_SCALE:
+ *  x2.6 with the build-up and the 9x brake). Held to
+ *  worker/transitCombat.js V_REF by burnParity.test.ts. */
+export const V_REF = 119;
 /** Floor on aim before exposure is applied. */
 const AIM_FLOOR = 0.05;
 const EPS = 1e-9;

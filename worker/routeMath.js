@@ -20,7 +20,7 @@ import { isEccentric, eccentricLocalPosition } from './transitCombat.js';
 import { parseTraits, traitMul } from './captains.js';
 import { maySupplySite, excludedFundersOf, constructionPartners } from './megastructures.js';
 import { hasFeature, factionTechLevels, gatingEnabled } from './researchUnlocks.js';
-import { SHIP_ENGINE_ACCEL, burnTicks } from './burn.js';
+import { SHIP_ENGINE_ACCEL, legTicks as burnLegTicks } from './burn.js';
 
 /** Transfer Lanes: a capital-to-capital leg runs at this fraction of
  *  its burn time once the faction holds Propulsion 3. 0.75 is a quarter
@@ -128,7 +128,7 @@ export function makeRouteMath(db, gameId) {
     return p;
   };
 
-  // Closed-form burn time (burn.js: push, flip at 90%, brake 9x hard)
+  // Burn time (burn.js: the push builds from launch, brake 9x hard)
   // with a 5-iteration intercept refinement so target-body motion during
   // the trip is accounted for. Integer ticks >= 1.
   const computeLegTicks = async (factionId, originId, destId, refTick) => {
@@ -140,7 +140,7 @@ export function makeRouteMath(db, gameId) {
       const dx = destPos.x - startPos.x;
       const dy = destPos.y - startPos.y;
       const d = Math.sqrt(dx * dx + dy * dy);
-      const Tnew = burnTicks(Math.max(d, 0.01), accel);
+      const Tnew = burnLegTicks(Math.max(d, 0.01), accel);
       if (Math.abs(Tnew - T) < 0.05) { T = Tnew; break; }
       T = Tnew;
     }

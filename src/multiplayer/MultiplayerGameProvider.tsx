@@ -30,7 +30,7 @@ import { traitMul as captainTraitMul } from '../game/captains';
 import { ingestChronicleFx } from '../render/pendingFx';
 import {
   planTorchTransfer, stepTorchShip, fromG,
-  baseEngineG, brakeAccelFor, setMpBurnProfile,
+  baseEngineG, brakeAccelFor, mpRampFor, setMpBurnProfile,
   TorchTransfer,
 } from '../physics/torchTransfer';
 import { orbitWorldPos, orbitWorldVelocity, bodyWorldVelocity, bodyPosition, parentMuForParking } from '../physics/orbitalMechanics';
@@ -79,9 +79,12 @@ interface ServerState {
     transit_combat_enabled?: number;
     /** Total sensor multiplier the server applied to this game. */
     sensor_scale?: number;
-    /** The burn every hull flies (worker/burn.js): base push in g and the
-     *  brake as a multiple of it. Absent from an older worker. */
+    /** The burn every hull flies (worker/burn.js): launch push in g, the
+     *  top of the build-up and its length in ticks, and the brake as a
+     *  multiple of the push reached. Absent from an older worker. */
     burn_engine_g?: number;
+    burn_max_g?: number;
+    burn_ramp_ticks?: number;
     burn_brake_mul?: number;
     system_scale?: number;
     transit_range_in_system_mul?: number;
@@ -456,6 +459,9 @@ interface ServerState {
     flip_tick?: number | null;
     /** Braking thrust (migration 0155); null on an even burn. */
     brake_accel?: number | null;
+    /** The build-up (migration 0158); null on a flat push. */
+    accel_ramp?: number | null;
+    accel_max?: number | null;
     /** Rendezvous arc (migration 0090) — burn/coast/burn to match a
      *  moving hull, then fly its plan. NULL on an ordinary transfer. */
     rv_ax?: number | null;
@@ -476,6 +482,8 @@ interface ServerState {
     fl_accel?: number | null;
     fl_flip_tick?: number | null;
     fl_brake_accel?: number | null;
+    fl_accel_ramp?: number | null;
+    fl_accel_max?: number | null;
   }>;
   events?: Array<{
     id: string;
@@ -1275,12 +1283,18 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
   // x2, so the client culled ships at 800 while the server revealed to
   // 3200 — and the tighter of the two is what the player saw.
   setSensorScale(srv.game.sensor_scale ?? 1);
-  // The burn is the server's call too (worker/burn.js): 1g pushes and a
-  // 9x brake since 2026-10-06. Installed BEFORE the legs below are rebuilt
-  // and before anything plans a new one. An older worker sends neither
-  // field and gets the even 0.05g burn it was planning with.
+  // The burn is the server's call too (worker/burn.js): since 2026-10-06
+  // the push builds from 0.05g to 1g over 48 ticks of burning and brakes
+  // at 9x the push reached. Installed BEFORE the legs below are rebuilt
+  // and before anything plans a new one. An older worker sends none of it
+  // and gets the flat, even 0.05g burn it was planning with.
   setMpBurnProfile(srv.game.burn_engine_g != null && srv.game.burn_brake_mul != null
-    ? { engineG: Number(srv.game.burn_engine_g), brakeMul: Number(srv.game.burn_brake_mul) }
+    ? {
+      engineG: Number(srv.game.burn_engine_g),
+      brakeMul: Number(srv.game.burn_brake_mul),
+      maxG: srv.game.burn_max_g != null ? Number(srv.game.burn_max_g) : undefined,
+      rampTicks: srv.game.burn_ramp_ticks != null ? Number(srv.game.burn_ramp_ticks) : undefined,
+    }
     : null);
 
   const bodies = srv.bodies.map(bodyToClient);
@@ -1539,6 +1553,10 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         // every leg committed before the hard brake, flown as planned.
         brakeAccel: n.brake_accel != null && n.brake_accel > 0
           ? Number(n.brake_accel) : Number(n.accel),
+        // The build-up (migration 0158). NULL = a flat push.
+        ramp: n.accel_ramp != null && n.accel_ramp > 0
+          && n.accel_max != null && n.accel_max > n.accel
+          ? { ramp: Number(n.accel_ramp), max: Number(n.accel_max) } : null,
       } : null;
 
       if (srvPlan) {
@@ -1562,8 +1580,15 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         srvPlan?.accel ?? engineAccel,
         srvPlan ? srvPlan.brakeAccel : brakeAccelFor(engineAccel),
         n.scheduled_t, bodies,
+        // A leg without a recorded plan is re-derived with today's burn;
+        // a recorded one keeps its own build (set just below).
+        undefined, srvPlan ? undefined : mpRampFor(engineAccel),
       );
       if (!plan) continue;
+      if (srvPlan?.ramp) {
+        plan.accelRamp = srvPlan.ramp.ramp;
+        plan.accelMax = srvPlan.ramp.max;
+      }
 
       // Server is canonical for "when does the ship park" — snap to its
       // authoritative arrival tick.
@@ -1595,10 +1620,14 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         // the way through, which is the midpoint for an even burn and
         // 90% for the hard brake. The recorded value is what the planner
         // actually computed, and it is what the tick will integrate.
+        // A building push has no closed-form flip share, so a re-derived
+        // ramped leg keeps the flip its own planner solved for.
         plan.flipTick = srvPlan
           ? srvPlan.flipTick
-          : plan.startTick + (plan.arriveTick - plan.startTick)
-            * (plan.brakeAcceleration / (plan.acceleration + plan.brakeAcceleration));
+          : plan.accelRamp != null
+            ? plan.flipTick
+            : plan.startTick + (plan.arriveTick - plan.startTick)
+              * (plan.brakeAcceleration / (plan.acceleration + plan.brakeAcceleration));
       }
 
       // Active = the burn has started (in_transit) or its scheduled_t has
@@ -1670,6 +1699,11 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
                 }
               }
               fl.flipTick = Number(n.fl_flip_tick);
+              if (n.fl_accel_ramp != null && n.fl_accel_ramp > 0
+                  && n.fl_accel_max != null && n.fl_accel_max > Number(n.fl_accel)) {
+                fl.accelRamp = Number(n.fl_accel_ramp);
+                fl.accelMax = Number(n.fl_accel_max);
+              }
               ship.plannedRendezvous.followTransfer = fl;
             }
           }

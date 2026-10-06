@@ -78,6 +78,12 @@ export interface TorchTransfer {
   totalDv: number;
   /** Peak speed at the flip, used for diagnostics and UI readouts. */
   peakVelocity: number;
+  /** Multiplayer, since 2026-10-06 (migration 0158): the push BUILDS
+   *  while boosting — `acceleration` at launch, growing by accelRamp per
+   *  tick up to accelMax. Absent = a flat push (single player, and every
+   *  leg committed before the build-up). */
+  accelRamp?: number;
+  accelMax?: number;
   /** Multiplayer only: the id of the server `game_ship_nodes` row this
    *  plan was reconstructed from. Lets the UI cancel a queued leg on the
    *  server (not just locally). Undefined for single-player and for
@@ -125,10 +131,18 @@ export function planTorchTransfer(
   currentTick: number,
   bodies: Body[],
   iterations: number = 20,
+  /** Multiplayer's build-up (mpRampFor). With it the push grows from
+   *  boostAccel by ramp.ramp per tick up to ramp.max, and the brake is
+   *  (brakeAccel / boostAccel) x the push reached at the flip. Absent =
+   *  the flat push this always planned. */
+  ramp?: BurnRamp,
 ): TorchTransfer | null {
   if (boostAccel <= 0 || brakeAccel <= 0) return null;
   const target = bodies.find(b => b.id === targetBodyId);
   if (!target) return null;
+  if (ramp && ramp.ramp > 0 && ramp.max > boostAccel) {
+    return planRampedTransfer(ship, target, boostAccel, brakeAccel / boostAccel, ramp, currentTick, bodies, iterations);
+  }
 
   // Closed-form trip time for a straight-line distance d.
   const tripTime = (d: number) => {
@@ -172,6 +186,95 @@ export function planTorchTransfer(
     startVel: { x: ship.vel.x, y: ship.vel.y },
     totalDv: boostAccel * t1 + brakeAccel * t2,
     peakVelocity: vPeak,
+  };
+}
+
+// ---- The build-up (multiplayer, migration 0158) ----------------------
+// MIRRORS worker/burn.js boostState / burnShape. burnParity.test.ts holds
+// the two to each other.
+
+/** How a leg's push builds: units/tick^3, and where it tops out. */
+export interface BurnRamp { ramp: number; max: number }
+
+/** Push, speed and distance after `tau` ticks of boosting from rest. */
+export function boostState(
+  tau: number, a0: number, ramp = 0, max = a0,
+): { a: number; v: number; x: number } {
+  if (!(ramp > 0) || !(max > a0)) return { a: a0, v: a0 * tau, x: 0.5 * a0 * tau * tau };
+  const tc = (max - a0) / ramp;
+  if (tau <= tc) {
+    return {
+      a: a0 + ramp * tau,
+      v: a0 * tau + 0.5 * ramp * tau * tau,
+      x: 0.5 * a0 * tau * tau + (ramp * tau * tau * tau) / 6,
+    };
+  }
+  const vc = a0 * tc + 0.5 * ramp * tc * tc;
+  const xc = 0.5 * a0 * tc * tc + (ramp * tc * tc * tc) / 6;
+  const s = tau - tc;
+  return { a: max, v: vc + max * s, x: xc + vc * s + 0.5 * max * s * s };
+}
+
+function legDistance(t1: number, a0: number, ramp: number, max: number, k: number): number {
+  const s = boostState(t1, a0, ramp, max);
+  return s.x + (s.v * s.v) / (2 * k * s.a);
+}
+
+/** The leg over a straight-line distance `d`: flip t1, trip T, brake,
+ *  top speed. Bisection on the flip, exactly as the server solves it. */
+export function burnShape(
+  d: number, a0: number, ramp = 0, max = a0, k = 1,
+): { t1: number; T: number; brake: number; vPeak: number } {
+  if (!(d > 0) || !(a0 > 0)) return { t1: 0, T: 0, brake: k * a0, vPeak: 0 };
+  let hi = 1;
+  while (legDistance(hi, a0, ramp, max, k) < d && hi < 1e9) hi *= 2;
+  let lo = 0;
+  for (let i = 0; i < 100; i++) {
+    const m = (lo + hi) / 2;
+    if (legDistance(m, a0, ramp, max, k) < d) lo = m; else hi = m;
+  }
+  const t1 = (lo + hi) / 2;
+  const s = boostState(t1, a0, ramp, max);
+  const brake = k * s.a;
+  return { t1, T: t1 + s.v / brake, brake, vPeak: s.v };
+}
+
+function planRampedTransfer(
+  ship: TorchShipState, target: Body, a0: number, k: number, r: BurnRamp,
+  currentTick: number, bodies: Body[], iterations: number,
+): TorchTransfer | null {
+  let interceptPos = bodyPosition(target, currentTick, bodies);
+  let shape = { t1: 0, T: 0, brake: k * a0, vPeak: 0 };
+  for (let i = 0; i < iterations; i++) {
+    const dx = interceptPos.x - ship.pos.x;
+    const dy = interceptPos.y - ship.pos.y;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    if (d < 1e-6) return null;
+    const next = burnShape(d, a0, r.ramp, r.max, k);
+    const done = Math.abs(next.T - shape.T) < 1e-4;
+    shape = next;
+    if (done) break;
+    interceptPos = bodyPosition(target, currentTick + shape.T, bodies);
+  }
+  const dx = interceptPos.x - ship.pos.x;
+  const dy = interceptPos.y - ship.pos.y;
+  const d = Math.sqrt(dx * dx + dy * dy);
+  return {
+    targetBodyId: target.id,
+    acceleration: a0,
+    brakeAcceleration: shape.brake,
+    accelRamp: r.ramp,
+    accelMax: r.max,
+    startTick: currentTick,
+    flipTick: currentTick + shape.t1,
+    arriveTick: currentTick + shape.T,
+    thrustDir: { x: dx / d, y: dy / d },
+    interceptPos,
+    startPos: { x: ship.pos.x, y: ship.pos.y },
+    startVel: { x: ship.vel.x, y: ship.vel.y },
+    // Whatever was built up on the way out is braked away on the way in.
+    totalDv: 2 * shape.vPeak,
+    peakVelocity: shape.vPeak,
   };
 }
 
@@ -237,7 +340,13 @@ function singleStepTorch(
   let thrustX: number, thrustY: number;
   let thisAccel: number;
   if (inAccelPhase) {
-    thisAccel = transfer.acceleration;
+    // A building push (multiplayer, migration 0158): the push at this
+    // step's midpoint. Without a ramp it is the flat push, as always.
+    thisAccel = transfer.accelRamp != null && transfer.accelRamp > 0
+      && transfer.accelMax != null && transfer.accelMax > transfer.acceleration
+      ? Math.min(transfer.accelMax,
+        transfer.acceleration + transfer.accelRamp * (midTick - transfer.startTick))
+      : transfer.acceleration;
     const dx = transfer.interceptPos.x - ship.pos.x;
     const dy = transfer.interceptPos.y - ship.pos.y;
     const d = Math.sqrt(dx * dx + dy * dy);
@@ -284,7 +393,8 @@ export function stepTorchShip(
   // direction re-aims at the same cadence the renderer's sampler uses.
   // Without this, a single large step ends up frozen at one midpoint
   // direction and the ship visibly drifts off the rendered arc.
-  const hardBrake = !!transfer && transfer.brakeAcceleration !== transfer.acceleration;
+  const hardBrake = !!transfer && (transfer.brakeAcceleration !== transfer.acceleration
+    || (transfer.accelRamp != null && transfer.accelRamp > 0));
   const fine = hardBrake
     ? Math.min(MAX_SUBSTEP, Math.max(1e-6, (transfer!.arriveTick - transfer!.startTick) / BURN_SUBSTEPS))
     : MAX_SUBSTEP;
@@ -440,21 +550,41 @@ export const DEFAULT_ENGINE_G = 0.05;
 export const DEFAULT_ENGINE_ACCEL = DEFAULT_ENGINE_G * G_ANCHOR;
 
 /**
- * MULTIPLAYER'S BURN, installed from /state (game.burn_engine_g and
- * game.burn_brake_mul, owned by worker/burn.js).
+ * MULTIPLAYER'S BURN, installed from /state (game.burn_*, owned by
+ * worker/burn.js).
  *
- * Since 2026-10-06 every multiplayer hull pushes at 1g and brakes nine
- * times harder, so the flip lands at 90% of the trip. Single-player never
- * installs a profile, and with none installed both helpers below return
- * exactly what the planners always used: the faction's g (or the 0.05g
- * default) and an even burn.
+ * Since 2026-10-06 every multiplayer hull launches at 0.05g, the push
+ * builds to 1g over 48 ticks of burning, and it brakes at nine times the
+ * push it reached. Single-player never installs a profile, and with none
+ * installed every helper below returns exactly what the planners always
+ * used: the faction's g (or the 0.05g default), an even burn, no build.
  */
-export interface MpBurnProfile { engineG: number; brakeMul: number }
+export interface MpBurnProfile {
+  engineG: number;
+  brakeMul: number;
+  /** Top of the build, in g (0 or <= engineG = no build). */
+  maxG?: number;
+  /** Ticks of burning to build from engineG to maxG. */
+  rampTicks?: number;
+}
 let mpBurn: MpBurnProfile | null = null;
 
 /** Called by the MP provider when /state lands; null on unmount. */
 export function setMpBurnProfile(p: MpBurnProfile | null): void {
-  mpBurn = p && p.engineG > 0 && p.brakeMul > 0 ? { engineG: p.engineG, brakeMul: p.brakeMul } : null;
+  mpBurn = p && p.engineG > 0 && p.brakeMul > 0
+    ? { engineG: p.engineG, brakeMul: p.brakeMul, maxG: p.maxG, rampTicks: p.rampTicks }
+    : null;
+}
+
+/** The build-up for a hull that launches at `a0` (its own push, parts and
+ *  all — the whole curve scales with it, as on the server). Undefined
+ *  outside multiplayer or without a build, which plans a flat push. */
+export function mpRampFor(a0: number): BurnRamp | undefined {
+  if (!mpBurn || !(a0 > 0)) return undefined;
+  const { engineG, maxG, rampTicks } = mpBurn;
+  if (!(maxG != null && maxG > engineG) || !(rampTicks != null && rampTicks > 0)) return undefined;
+  const max = a0 * (maxG / engineG);
+  return { ramp: (max - a0) / rampTicks, max };
 }
 
 /** A hull's base engine g: multiplayer's, else the faction's stored g. */
@@ -492,7 +622,7 @@ export function fromG(g: number): number {
  */
 export function launchFromPlan(plan: TorchTransfer): {
   x: number; y: number; vx: number; vy: number; accel: number; flipTick: number;
-  brakeAccel: number;
+  brakeAccel: number; accelRamp?: number; accelMax?: number;
 } {
   return {
     x: plan.startPos.x,
@@ -504,5 +634,9 @@ export function launchFromPlan(plan: TorchTransfer): {
     // The brake (migration 0155). Without it the server would store an
     // even burn and fly the hull past its own flip at the wrong thrust.
     brakeAccel: plan.brakeAcceleration,
+    // The build-up (migration 0158). Without it the server would fly a
+    // flat push and the hull would fall behind its own arc.
+    ...(plan.accelRamp != null && plan.accelMax != null
+      ? { accelRamp: plan.accelRamp, accelMax: plan.accelMax } : {}),
   };
 }
