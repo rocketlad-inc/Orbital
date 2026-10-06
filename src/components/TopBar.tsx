@@ -27,6 +27,7 @@ import { GameDetail } from '../multiplayer/AdminAnalytics';
 import '../multiplayer/AdminAnalytics.css';
 import './TopBar.css';
 import { GIT_SHA } from '../_version';
+import { useIsMobile } from '../hooks/useIsMobile';
 
 // Hint text under the Restart Tutorial menu item. Pulled out to a
 // constant so it doesn't allocate a new string every render.
@@ -1138,6 +1139,8 @@ const SideMenu: React.FC<SideMenuProps> = ({
   // Tutorial — replay entry under GAME. The first-game prompt has its
   // own modal; this menu item is the "I want to see it again" path.
   const tutorial = useTutorial();
+  // A phone has no Esc key: no "Press Esc to close" footer there.
+  const isMobile = useIsMobile();
 
   // Host can change the tick cadence on an in-flight game. Mirrors
   // worker/lobby.js ALLOWED_TICK_INTERVALS — any value not in this set is
@@ -1489,9 +1492,11 @@ const SideMenu: React.FC<SideMenuProps> = ({
           )}
         </nav>
 
-        <footer className="side-menu__foot">
-          <span>Press <kbd>Esc</kbd> to close</span>
-        </footer>
+        {!isMobile && (
+          <footer className="side-menu__foot">
+            <span>Press <kbd>Esc</kbd> to close</span>
+          </footer>
+        )}
       </aside>
     </>,
     document.body,

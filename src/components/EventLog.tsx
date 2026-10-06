@@ -21,6 +21,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
+import { useIsMobile } from '../hooks/useIsMobile';
 import type { ChronicleFocus } from '../types';
 import './DockRail.css';
 import './EventLog.css';
@@ -174,6 +175,8 @@ function readBookmarkKey(): string {
 export const EventLog: React.FC = () => {
   const { gameState, selectShip, selectBody, focusBody } = useGameContext();
   const mpActions = useMultiplayerActions();
+  // A phone has no Esc key: the footer drops the keyboard hint there.
+  const isMobile = useIsMobile();
   const entries = gameState.combatLog;
   const flavors = gameState.chronicleFlavor;
   const focuses = gameState.chronicleFocus;
@@ -641,8 +644,9 @@ export const EventLog: React.FC = () => {
           )}
           <footer className="event-log__foot">
             {view === 'herald'
-              ? <>The Orbital Herald · Press <kbd>Esc</kbd> to close</>
-              : <>{totalCount} {totalCount === 1 ? 'entry' : 'entries'} · Press <kbd>Esc</kbd> to close</>}
+              ? 'The Orbital Herald'
+              : <>{totalCount} {totalCount === 1 ? 'entry' : 'entries'}</>}
+            {!isMobile && <> · Press <kbd>Esc</kbd> to close</>}
           </footer>
         </div>
       )}

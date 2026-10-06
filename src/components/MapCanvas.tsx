@@ -4931,7 +4931,8 @@ function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
   // touch device, so don't tell a phone player to "right-drag."
   // The LAYOUT's verdict (useIsMobile stamps data-mobile-shell), not the
   // pointer media query, which some mouse-driven desktops answer 'coarse'.
-  const hint = document.documentElement.hasAttribute('data-mobile-shell')
+  const mobileShell = document.documentElement.hasAttribute('data-mobile-shell');
+  const hint = mobileShell
     ? 'Drag: pan · Pinch: zoom · Tap: select · Hold a ship: select several'
     : 'Right-drag: pan | Scroll: zoom | Click: select | Double-click: focus';
   ctx.ctx.fillText(hint, 16, ctx.canvas.height - 32);
@@ -4943,7 +4944,11 @@ function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
     ctx.ctx.fillText('SELECT TARGET BODY', ctx.canvas.width / 2, 16);
     ctx.ctx.fillStyle = COLORS.fgDim;
     ctx.ctx.font = '10px "Audiowide", monospace';
-    ctx.ctx.fillText('Click a body to transfer | ESC to cancel | Right-click to cancel', ctx.canvas.width / 2, 32);
+    // No Esc key or right button on a phone; its Cancel is the banner
+    // ShipPanel floats at the bottom during targeting.
+    ctx.ctx.fillText(mobileShell
+      ? 'Tap a body to transfer'
+      : 'Click a body to transfer | ESC to cancel | Right-click to cancel', ctx.canvas.width / 2, 32);
   }
 
   if (ctx.camera.focusedBodyId) {

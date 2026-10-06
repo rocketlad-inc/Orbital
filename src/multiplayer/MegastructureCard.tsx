@@ -32,6 +32,7 @@ import {
   getPlacement, subscribePlacement, cancelPlacement,
 } from '../game/megastructurePlacement';
 import { useFeatureGate } from '../hooks/useFeatureGate';
+import { useIsMobile } from '../hooks/useIsMobile';
 import {
   reachSpec, reachWorldRadius, isReachPinned, setReachPinned,
   subscribeReachPins, reachPinsVersion,
@@ -50,8 +51,10 @@ export const MegastructureCard: React.FC = () => {
   const mpActions = useMultiplayerActions();
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- gate — hook call kept; removing it would drop a subscription
   const gate = useFeatureGate();
+  // A phone has no Esc key: the Cancel button says just Cancel there.
+  const isMobile = useIsMobile();
 
-  const placement = useSyncExternalStore(subscribePlacement, getPlacement, () => null);
+  const placement =useSyncExternalStore(subscribePlacement, getPlacement, () => null);
   // Re-render when a reach ring is pinned or unpinned.
   useSyncExternalStore(subscribeReachPins, reachPinsVersion, reachPinsVersion);
 
@@ -118,7 +121,7 @@ export const MegastructureCard: React.FC = () => {
               It becomes a site of its own; nothing on your worlds is touched.
             </div>
           </div>
-          <button className="megac__cancel" onClick={cancelPlacement}>Cancel (Esc)</button>
+          <button className="megac__cancel" onClick={cancelPlacement}>{isMobile ? 'Cancel' : 'Cancel (Esc)'}</button>
         </div>
       </div>
     );
