@@ -87,9 +87,11 @@ export function isWorld(b) {
  *  nothing: factions.js and sunGates.js both import from here. */
 export const FAR_SYSTEM_TEMPLATE_IDS = new Set([
   'binary_barycenter', 'centauri_a', 'centauri_b',
-  'verdant', 'crimson', 'prismara', 'scoria', 'umber', 'cinder', 'farspire',
+  'verdant', 'thistle', 'sorrel', 'crimson', 'prismara', 'scoria', 'umber',
+  'cinder', 'clinker', 'farspire',
   'bh_barycenter', 'cygnus_x', 'hde_226868',
-  'requiem', 'vellichor', 'elegy', 'vesper', 'threnody', 'echelon', 'reliquary',
+  'requiem', 'lacrimosa', 'sanctus', 'vellichor', 'elegy', 'vesper', 'threnody',
+  'echelon', 'gilt', 'reliquary',
 ]);
 
 /** The far-side end of a sun gate (sunGates.js). Its Sol-side partner is

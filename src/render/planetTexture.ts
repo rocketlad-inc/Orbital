@@ -101,6 +101,7 @@ const GLOBE_IDS = new Set([
   // the far systems
   'verdant', 'crimson', 'prismara', 'scoria', 'umber', 'cinder', 'farspire',
   'elegy', 'vesper', 'threnody',
+  'thistle', 'sorrel', 'clinker', 'lacrimosa', 'sanctus', 'gilt',
   'requiem', 'vellichor', 'echelon', 'reliquary',
 ]);
 const NO_TF_GLOBE = new Set(['jupiter', 'saturn', 'uranus', 'neptune', 'crimson', 'vellichor']);
@@ -454,6 +455,12 @@ const CURATED_BIOME: Record<string, Biome> = {
   elegy: 'tundra',
   vesper: 'tundra',
   threnody: 'tundra',
+  thistle: 'tundra',
+  sorrel: 'arid',
+  clinker: 'volcanic',
+  lacrimosa: 'oceanic',
+  sanctus: 'tundra',
+  gilt: 'arid',
   farspire: 'tundra',
   reliquary: 'tundra',
 };

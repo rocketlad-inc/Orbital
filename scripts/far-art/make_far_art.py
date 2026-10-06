@@ -355,6 +355,65 @@ def threnody():
     tf = transform(src_map('oberon_tf'), **T)
     save_set('threnody_tf', tint(tf, (0.42, 0.42, 0.62), 0.25), small=True, tilt=0.2, lon0=0.9)
 
+# --- The terrestrial worlds' moons (2026-10-06: no one-world systems).
+
+def _ramp_moon(key, src, T, stops, tf_rgb, tilt, lon0, lo=2, hi=98, k=0.3, tf_k=0.22):
+    m = transform(src_map(src), **T)
+    L = stretch(lum(m), lo, hi)
+    save_set(key, detail(gradient_map(L, stops), L, k), small=True, tilt=tilt, lon0=lon0)
+    tf = transform(src_map(src + '_tf'), **T)
+    save_set(key + '_tf', tint(tf, tf_rgb, tf_k), small=True, tilt=tilt, lon0=lon0)
+
+@world
+def thistle():
+    # Verdant's near moon: grey-violet, frost-feathered ridges.
+    _ramp_moon('thistle', 'ganymede', dict(roll=0.47, flip=True),
+               [(0, '#16121c'), (0.35, '#3e3450'), (0.65, '#7a6c90'), (0.85, '#b8acc8'), (1, '#f0ecf6')],
+               (0.55, 0.5, 0.64), tilt=0.1, lon0=0.3)
+
+@world
+def sorrel():
+    # Rust-red, like the dry uplands it hangs over. Luna's maria in iron.
+    _ramp_moon('sorrel', 'luna', dict(roll=0.19, mirror=True),
+               [(0, '#1a0c08'), (0.35, '#4a2216'), (0.65, '#8a4630'), (0.85, '#c07a58'), (1, '#ecc8a8')],
+               (0.66, 0.42, 0.32), tilt=-0.14, lon0=1.2)
+
+@world
+def clinker():
+    # Furnace slag: Phobos in charcoal, a last glow in its grooves.
+    T = dict(roll=0.33, flip=True)
+    m = transform(src_map('phobos'), **T)
+    L = stretch(lum(m))
+    rock = gradient_map(L, [(0, '#060404'), (0.45, '#1a1210'), (0.75, '#3a2a24'), (1, '#6a5048')])
+    fire = glow_cracks(L, 95.0, 99.3)[..., None]
+    ember = gradient_map(fire[..., 0], [(0, '#5a1806'), (1, '#e0702a')])
+    raw = rock * (1 - fire * 0.7) + ember * fire * 0.7
+    save_set('clinker', detail(raw, L, 0.3), small=True, tilt=0.05, lon0=-0.8)
+    tf = transform(src_map('phobos_tf'), **T)
+    save_set('clinker_tf', tint(tf, (0.5, 0.38, 0.32), 0.22), small=True, tilt=0.05, lon0=-0.8)
+
+@world
+def lacrimosa():
+    # Requiem's pale moon: ice the blue of old tears. Ceres's complete
+    # Dawn map (Titan's showed its tile edges at the pole).
+    _ramp_moon('lacrimosa', 'ceres', dict(roll=0.72),
+               [(0, '#0c1420'), (0.35, '#2a4058'), (0.65, '#6a8aa8'), (0.85, '#a8c0d8'), (1, '#eef4fa')],
+               (0.46, 0.56, 0.68), tilt=0.16, lon0=2.2)
+
+@world
+def sanctus():
+    # Bright ivory and unreasonably calm. Deimos's smooth regolith.
+    _ramp_moon('sanctus', 'deimos', dict(roll=0.58, mirror=True),
+               [(0, '#2a261e'), (0.35, '#6a6250'), (0.65, '#b0a68a'), (0.85, '#e0d6bc'), (1, '#fffaf0')],
+               (0.7, 0.66, 0.56), tilt=-0.08, lon0=-1.6)
+
+@world
+def gilt():
+    # A gold-leafed shard of Echelon's supernova. Mars, in gold.
+    _ramp_moon('gilt', 'mars', dict(roll=0.86, flip=True),
+               [(0, '#2a1c08'), (0.3, '#7a5818'), (0.6, '#c09630'), (0.82, '#e8c860'), (1, '#fff6c8')],
+               (0.8, 0.66, 0.3), tilt=0.12, lon0=0.7, lo=5, hi=99, k=0.35, tf_k=0.38)
+
 if __name__ == '__main__':
     only = set(sys.argv[1:])
     for fn in WORLDS:
