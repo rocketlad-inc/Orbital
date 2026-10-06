@@ -148,6 +148,14 @@ const band = farReachBand(bodies);
 check('it will stop inside the Far Reach',
   g0.orbit_radius >= band.inner && g0.orbit_radius <= band.outer,
   `${g0.orbit_radius.toFixed(0)} in ${band.inner.toFixed(0)}..${band.outer.toFixed(0)}`);
+{
+  // Its year is a Far Reach year, not the barycenters' placeholder.
+  const peer = bodies.find(b => b.template_id === 'eris');
+  const expect = peer.orbit_period * Math.pow(g0.orbit_radius / peer.orbit_radius, 1.5);
+  check('it orbits like a Far Reach world, not a fixed point',
+    g0.orbit_period > expect * 0.5 && g0.orbit_period < expect * 2,
+    `${g0.orbit_period.toFixed(0)} vs ~${expect.toFixed(0)}`);
+}
 check('its flight is a 2g burn from the Sun\'s surface',
   g0.emerge_until_tick - g0.emerge_from_tick === emergeFlightTicks(g0.orbit_radius - 50),
   `${g0.emerge_until_tick - g0.emerge_from_tick} ticks`);

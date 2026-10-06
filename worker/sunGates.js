@@ -250,7 +250,13 @@ export async function spawnSunGatePair(env, gameId, sys, emergeTick, conf, other
     });
   }
   const bearing = pickBearing(rand, r, avoid, oppositeOf, r * 0.05);
-  const period = periodForRadius(sol, r, bodies);
+  // A gate's year comes from the WORLDS around its parent. The barycenters
+  // orbit Sol on a placeholder period of ~1e12 and the far suns on their
+  // own tight binary, and averaged in they gave the first staging gates a
+  // year of six hundred million ticks: a gate that never moved.
+  const orbitPeers = bodies.filter(b => !(Number(b.orbit_period) >= 1e9)
+    && b.type !== 'star' && b.type !== 'black_hole');
+  const period = periodForRadius(sol, r, orbitPeers);
   const landed = { x: Math.cos(bearing) * r, y: Math.sin(bearing) * r };
 
   // The Sol world it stops nearest, for "out past Eris" in the news.
@@ -266,7 +272,7 @@ export async function spawnSunGatePair(env, gameId, sys, emergeTick, conf, other
     && b.type !== 'megastructure' && b.type !== 'star' && b.type !== 'black_hole');
   const outermost = Math.max(100, ...farWorlds.map(b => Number(b.orbit_ra ?? b.orbit_radius) || 0));
   const farR = outermost * FAR_GATE_RADIUS_MUL;
-  const farPeriod = periodForRadius(bary, farR, bodies);
+  const farPeriod = periodForRadius(bary, farR, orbitPeers);
   const farBearing = rand() * TWO_PI;
 
   const bodyScale = Number(conf?.body_scale) > 0 ? Number(conf.body_scale) : 1;

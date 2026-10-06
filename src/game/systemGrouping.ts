@@ -229,9 +229,16 @@ export function findBelts(bodies: Body[]): Belt[] {
   // Makemake and Eris their real moons EVICTED all four from the belt
   // they were already in and made each its own system — which is how one
   // live map went from 12 systems to 21 overnight.
+  // THE BELTS ARE SOL'S. Clustering is by radius alone, so a dwarf
+  // orbiting a far barycenter (Farspire at 2400, Reliquary at 2800) was
+  // chained into Sol's Asteroid Belt at ~2880 -- a belt spanning three
+  // star systems. Only a ROOT star's rubble can make a belt; a lone far
+  // dwarf is its own place (2026-10-06).
+  const roots = new Set(bodies.filter(b => !b.parent).map(b => b.id));
   const adopted = coOrbitalHosts(bodies);
   const isRubble = (b: Body) =>
-    !!b.parent && anchors.has(b.parent) && isBeltable(b) && !adopted.has(b.id);
+    !!b.parent && anchors.has(b.parent) && roots.has(b.parent)
+    && isBeltable(b) && !adopted.has(b.id);
 
   // Clustering runs on ring-dwellers ONLY. A rogue's nominal radius is a
   // fiction, so letting it into the chain would drag a belt's extent
