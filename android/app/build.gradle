@@ -89,6 +89,10 @@ dependencies {
   // carry no AGP or compileSdk floor.
   implementation 'com.google.android.gms:play-services-wearable:19.0.0'
 
+  // Plain JVM unit tests (src/test), run by CI as :app:testReleaseUnitTest.
+  // Pure arithmetic only, e.g. WidgetSizeTest. Ships in nothing.
+  testImplementation 'junit:junit:4.13.2'
+
   // Instrumentation only. Nothing here ships in the release APK.
   androidTestImplementation 'androidx.test:runner:1.6.2'
   androidTestImplementation 'androidx.test.ext:junit:1.2.1'

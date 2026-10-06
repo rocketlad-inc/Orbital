@@ -96,12 +96,6 @@ final class WidgetWork {
     return want;
   }
 
-  /** Layout units (dp) asked of the server. A phone widget is never
-   *  wider than a phone; a launcher that reports its whole screen as the
-   *  maximum must not turn into a 2400x1600 image. */
-  private static final int MIN_W = 240, MIN_H = 120;
-  private static final int MAX_W = 480, MAX_H = 480;
-
   /** Decoded bitmap budget, in pixels. 4 bytes each, so 3.2MB. */
   private static final long MAX_PIXELS = 800L * 1000L;
 
@@ -440,9 +434,8 @@ final class WidgetWork {
   private static boolean paintOne(Context c, Kind k, int id, String token) {
     SharedPreferences p = prefs(c);
     AppWidgetManager m = AppWidgetManager.getInstance(c);
-    Bundle opts = m.getAppWidgetOptions(id);
-    int w = clamp(opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0), MIN_W, MAX_W);
-    int h = clamp(opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0), MIN_H, MAX_H);
+    int[] size = requestSize(c, m.getAppWidgetOptions(id));
+    int w = size[0], h = size[1];
     String url = k.url(c, token, w, h);
 
     Bitmap bmp = null;
@@ -482,8 +475,57 @@ final class WidgetWork {
     return false;
   }
 
-  private static int clamp(int v, int lo, int hi) {
-    return v < lo ? lo : (v > hi ? hi : v);
+  /**
+   * The card size to ask for, in dp, in the SHAPE of the slot the widget
+   * really occupies. See WidgetSize for why the old min-width x
+   * max-height guess cropped. Never throws: a launcher with an odd
+   * options bundle gets a sane default card, not a dead widget.
+   */
+  @SuppressWarnings("deprecation")
+  static int[] requestSize(Context c, Bundle opts) {
+    try {
+      boolean portrait = c.getResources().getConfiguration().orientation
+          != android.content.res.Configuration.ORIENTATION_LANDSCAPE;
+      if (opts == null) return WidgetSize.bound(0, 0);
+      float[] sw = null, sh = null;
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        // Android 12+: the launcher states the exact size(s) it lays the
+        // widget out at, padding already taken off. Prefer these to the
+        // four min/max numbers, whose meaning varies by launcher.
+        try {
+          java.util.ArrayList<android.os.Parcelable> list =
+              opts.getParcelableArrayList(AppWidgetManager.OPTION_APPWIDGET_SIZES);
+          if (list != null && !list.isEmpty()) {
+            sw = new float[list.size()];
+            sh = new float[list.size()];
+            for (int i = 0; i < list.size(); i++) {
+              Object o = list.get(i);
+              if (o instanceof android.util.SizeF) {
+                sw[i] = ((android.util.SizeF) o).getWidth();
+                sh[i] = ((android.util.SizeF) o).getHeight();
+              }
+            }
+          }
+        } catch (Throwable t) {
+          Log.w(TAG, "could not read widget sizes", t);
+          sw = null;
+          sh = null;
+        }
+      }
+      int[] slot = WidgetSize.slot(
+          opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0),
+          opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH, 0),
+          opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 0),
+          opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0),
+          sw, sh, portrait);
+      int[] out = WidgetSize.bound(slot[0], slot[1]);
+      Log.i(TAG, "slot " + slot[0] + "x" + slot[1] + (portrait ? " portrait" : " landscape")
+          + " -> ask " + out[0] + "x" + out[1]);
+      return out;
+    } catch (Throwable t) {
+      Log.w(TAG, "widget size failed", t);
+      return WidgetSize.bound(0, 0);
+    }
   }
 
   /** The class AND the message, trimmed to fit a widget: "Unable to

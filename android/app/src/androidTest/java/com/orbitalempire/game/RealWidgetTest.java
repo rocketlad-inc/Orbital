@@ -56,6 +56,15 @@ public class RealWidgetTest {
     opts.putInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH, 360);
     opts.putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 210);
     opts.putInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 300);
+    // Android 12+ launchers also send the exact sizes, which is what the
+    // widget sizes its card from first (WidgetSize). Send them the way
+    // Launcher3 does: one per orientation.
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+      java.util.ArrayList<android.util.SizeF> sizes = new java.util.ArrayList<>();
+      sizes.add(new android.util.SizeF(320f, 300f));
+      sizes.add(new android.util.SizeF(360f, 210f));
+      opts.putParcelableArrayList(AppWidgetManager.OPTION_APPWIDGET_SIZES, sizes);
+    }
 
     boolean bound = mgr.bindAppWidgetIdIfAllowed(id, provider, opts);
     Log.i(TAG, "bound=" + bound + " id=" + id);
