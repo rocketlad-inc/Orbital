@@ -36,7 +36,8 @@ import kotlin.math.sin
  * The map's effects were rebuilt for the new hull art (src/render/fxArt.ts
  * and combatFx.ts), and this is that vocabulary at watch size:
  *
- *   KINETIC   a three-round burst, each round with its own muzzle flash
+ *   KINETIC   a burst of 1 / 2 / 3 rounds by hull (corvette / frigate /
+ *             destroyer), each round with its own muzzle flash
  *             (a tongue of light down the barrel), an amber streak with
  *             a hot head, and a white flash and sparks where it lands.
  *   ENERGY    the emitter charges -- a bead swelling, motes spiralling
@@ -392,10 +393,16 @@ internal fun DrawScope.drawBattleFx(
         scorch(face.x, face.y, tR * 0.35f, min(0.9f, bk * 0.5f), hitAng, seed xor 0x51, fx.fire)
       }
     } else if (inBolt) {
-      // Three rounds, staggered, each with its own muzzle flash.
+      // One round per corvette, two per frigate, three per destroyer,
+      // staggered, each with its own muzzle flash. Fired from the LAST
+      // rounds of a three-slot burst, so every round flies at the same
+      // speed and the final one lands with the volley's big hit (the
+      // map's burstSlots).
       val rw = (sR * 0.075f).coerceIn(1.1f, 2.4f)
-      val flight = fx.boltMs - 2 * fx.roundGapMs
-      for (r in 0 until 3) {
+      val rounds = max(1, fx.roundsFor(shooter.cls))
+      val slots = max(3, rounds)
+      val flight = fx.boltMs - (slots - 1) * fx.roundGapMs
+      for (r in (slots - rounds) until slots) {
         val w2 = within - r * fx.roundGapMs
         if (w2 < 0f) continue
         val k = w2 / flight
