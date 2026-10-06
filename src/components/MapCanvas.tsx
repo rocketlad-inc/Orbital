@@ -66,12 +66,15 @@ import { fleetFormationGroups, FLEET_ARC_WIDTH } from '../render/fleetFormation'
 import { computeSystemRegions } from '../render/systemRegions';
 import { getEmblemImage } from '../render/emblemCache';
 import { BUILDING_DEFS, buildingLevel } from '../game/settlements';
+import { boxSingleTarget, cyclePick, orderPickHits } from '../render/mapPick';
+import type { PickHit } from '../render/mapPick';
 import { releaseFocusPosition } from '../game/cameraFocus';
 import { Body as GameBody, BuildingKind, Ship } from '../types';
 import {
   spawnTracer,
   drawTracers,
   drawEngagementFire,
+  settlementHasGuns,
   spawnWreck,
   drawWrecks,
   drawBattleDamageStates,
@@ -93,6 +96,9 @@ import { torchPositionFromSamples } from '../physics/torchTransfer';
 import type { InterceptMarker } from '../render/mapRenderer';
 import { shipIconSize, rendererCanvasMb, drawStructureReach, parkedOrbitMap } from '../render/mapRenderer';
 import {
+  liveBattleFor, escortBlockSpacing, type BattleUnit, type LiveBattle,
+} from '../render/battleLayoutLive';
+import {
   computePresentation, drawnRadiusOf, hullReveal, hullSize, isBarycenter,
 } from '../render/bodyPresentation';
 import type { BodyPresentation } from '../render/bodyPresentation';
@@ -105,7 +111,7 @@ import { shipWorldPosition } from '../game/combat';
 import { makePeaceCheck } from '../game/peace';
 import { fleetEscortBlend,
   groupFleetsForRender, escortOffsets, mergeCoincidentMarkers,
-  escortStandoffFor, escortSpacingFor, escortGlyphFor,
+  escortStandoffFor, escortGlyphFor,
 } from '../render/fleetGrouping';
 import { getShipClass } from '../game/shipClasses';
 import { computeIncomingThreats, threatenedBodyIds } from '../game/threats';
@@ -590,7 +596,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // Formation map memo — see the build site below for what it keys on.
   const formationCacheRef = useRef<{
     state: unknown; vis: unknown; map: Map<string, ShipFormation>;
-  }>({ state: null, vis: null, map: new Map() });
+    battles: Map<string, LiveBattle>;
+  }>({ state: null, vis: null, map: new Map(), battles: new Map() });
   // Fleet collapse memo. Keyed on gameState identity alone: membership
   // and flagship come from /state and nothing about the camera, clock or
   // selection can change who folds into whom.
@@ -1233,9 +1240,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // returns fire server-side (SETTLEMENT_DMG + weapons modules),
           // so a lone freighter limping past a hostile station takes its
           // hits from SOMETHING visible. Same lowest-id determinism.
+          // MULTIPLAYER: only a station with a built Weapons module has
+          // guns (the server's return-fire gate) — an unarmed station or
+          // a city credited with the hit drew a bolt from a world that
+          // cannot shoot (playtest: "Stations without weapons visually
+          // shoot back invading forces").
           for (const st of (settlementsByBodyId.get(atBody) ?? [])) {
             if (st.hp <= 0) continue;         // body already filtered
             if (st.ownedBy === ship.ownedBy) continue;
+            if (mpActions && !settlementHasGuns(st)) continue;
             if (attackerId === null || st.id < attackerId) attackerId = st.id;
           }
           if (attackerId) spawnTracer(attackerId, ship.id, nowMs);
@@ -2199,10 +2212,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     const fmc = formationCacheRef.current;
     const fmFresh = fmc.state === gameState && fmc.vis === visibleShipIds;
     const formationMap = fmFresh ? fmc.map : new Map<string, ShipFormation>();
+    const liveBattles = fmFresh ? fmc.battles : new Map<string, LiveBattle>();
     if (!fmFresh) {
       fmc.state = gameState;
       fmc.vis = visibleShipIds;
       fmc.map = formationMap;
+      fmc.battles = liveBattles;
       // PASS 1 — group by BODY, not by altitude.
       //
       // The old key was `parent|round(sma)`, which put ships at slightly
@@ -2261,6 +2276,49 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const hostilePair = armedOwners.some(
           a => armedOwners.some(b => a !== b && !atPeace(a, b)));
         const battle = owners.length >= 2 && hostilePair;
+
+        // WHOLE-ORBIT LAYOUT, EVERY WORLD (MP; Lorne approved it on
+        // /?battle, 2026-10-06, then "make every world scale with the
+        // planet"). Whoever is parked here takes as much of the orbit as
+        // their ships need, each side a contiguous share with open space
+        // between (a world at peace is one share, no fronts), fleets as
+        // their markers, the station opposite the ships. Solved ONCE per
+        // roster at a reference size and drawn times the world's scale
+        // (battleLayoutLive), so ships are fixed in scale to the planet
+        // at every world. SP keeps the battle lines and rings below.
+        if (mpActions) {
+          const bodyId = atBody[0].orbit.parentBodyId;
+          const body = bodyById2.get(bodyId);
+          if (body) {
+            const destroyerPx = shipIconSize('destroyer', false);
+            const units: BattleUnit[] = [];
+            for (const s of atBody) {
+              // Escorts ride in their marker's block; the lead stands for them.
+              if (fleetGrouping.collapsed.has(s.id)) continue;
+              const marker = fleetGrouping.markerByLeadShip.get(s.id);
+              const escortRel = marker?.escortIds.map(id => {
+                const e = shipById2.get(id);
+                return e ? Math.min(1, shipIconSize(e.class, false) / destroyerPx) : 1;
+              });
+              units.push({
+                id: s.id,
+                owner: s.ownedBy,
+                group: s.fleetId ?? null,
+                sizePx: shipIconSize(s.class, false),
+                armed: (s.damagePerTick ?? getShipClass(s.class).damagePerTick) > 0,
+                escortRel: escortRel && escortRel.length > 0 ? escortRel : undefined,
+                escortIds: marker && marker.escortIds.length > 0 ? [...marker.escortIds] : undefined,
+              });
+            }
+            const station = gameState.settlements.find(
+              st => st.bodyId === bodyId && st.type === 'station' && st.hp > 0);
+            const lb = liveBattleFor(bodyId, body.radius, atBody[0].orbit.direction ?? 1,
+              units, owners, station?.id);
+            liveBattles.set(bodyId, lb);
+            for (const u of units) formationMap.set(u.id, { index: 0, total: 1, battle: lb });
+            continue;
+          }
+        }
 
         if (battle) {
           const F = owners.length;
@@ -2356,6 +2414,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         }
       }
     }
+
+    // The whole-orbit battles this frame draws, and fresh per-frame maps
+    // the ship, marker, station and combat passes share.
+    renderContext.liveBattles = liveBattles;
+    renderContext.battleLooks = new Map();
+    renderContext.stationCanvasPos = new Map();
 
     // Body ownership rings — drawn AFTER bodies so the halo sits around
     // the planet circle, BEFORE ships so the ring doesn't obscure ship
@@ -2832,7 +2896,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // Ship parked but has a torch preview staged. Draw the parked
         // orbit + ship at its current location, plus a dashed amber
         // torch arc to the picked destination.
-        if (showOrbitRing) {
+        if (showOrbitRing && !formation?.battle) {
           drawOrbitEllipse(
             ship.orbit, renderContext,
             isSelected ? COLORS.orbitCurrent : COLORS.orbitTrajectory,
@@ -2845,7 +2909,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           );
         }
         drawShip(ship, renderContext, isSelected, formation, orbitShipScale);
-        if (isSelected) drawApsisMarkers(ship, renderContext, formation?.lane ?? 0);
+        if (isSelected && !formation?.battle) drawApsisMarkers(ship, renderContext, formation?.lane ?? 0);
 
         const previewColor = COLORS.maneuverPlanned;
         if (!ship.plannedRendezvous) {
@@ -2857,7 +2921,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           drawGhostPlanet(arrivalBody, ship.plannedTransit.arriveTick, renderContext);
         }
       } else {
-        if (showOrbitRing) {
+        if (showOrbitRing && !formation?.battle) {
           drawOrbitEllipse(
             ship.orbit, renderContext,
             isSelected ? COLORS.orbitCurrent : COLORS.orbitTrajectory,
@@ -2868,7 +2932,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           );
         }
         drawShip(ship, renderContext, isSelected, formation, orbitShipScale);
-        if (isSelected) drawApsisMarkers(ship, renderContext, formation?.lane ?? 0);
+        if (isSelected && !formation?.battle) drawApsisMarkers(ship, renderContext, formation?.lane ?? 0);
       }
       ctx.globalAlpha = prevShipAlpha;   // undo the crossfade-band fade
     }
@@ -3101,7 +3165,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // same colour as the trajectory, which is why an in-flight fleet
         // read as more dashed line rather than as a formation.
         let heading = 0;
-        if (lead.transit?.currentTransfer) {
+        // In a whole-orbit battle the flagship was drawn with the battle's
+        // heading and scale; the block follows both.
+        const bLook = renderContext.battleLooks?.get(leadId);
+        if (bLook) {
+          heading = bLook.heading;
+        } else if (lead.transit?.currentTransfer) {
           const dest = bodyById2.get(lead.transit.currentTransfer.targetBodyId);
           if (dest) {
             const dp = bodyPosition(dest, renderTick(), gameState.bodies);
@@ -3156,9 +3225,18 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // Room to grow with a big flagship (up to 24px a slot), so the
         // hulls behind a mega destroyer are small but not specks. (16 and
         // 6 before the visual overhaul made regular hulls 1.5x.)
-        const baseSpacing = Math.max(9, Math.min(24, hb.r * 0.9));
-        const spacing = escortSpacingFor(n, baseSpacing, hb.r) * Math.max(0.35, fold);
-        const standoff = escortStandoffFor(hb.r, spacing);
+        // In a battle: the block at FULL size (the flagship's unscaled hit
+        // radius, as battleLayoutLive.fleetBlockGeometry laid it out),
+        // then times the battle's k, so the whole fleet shrinks in place.
+        const hbR = bLook ? Math.max(shipIconSize(lead.class, false) / 2 + 3, 12) : hb.r;
+        const bk = bLook ? bLook.k : 1;
+        // Escort SPRITES follow the hulls' size cap; their slots follow k.
+        const bks = bLook ? bLook.ks : 1;
+        // escortBlockSpacing: the slot rule x FLEET_ESCORT_SCALE (1.5), shared
+        // with the layout so a block is laid out as big as it is drawn.
+        const spacing0 = escortBlockSpacing(n, hbR) * Math.max(0.35, fold);
+        const standoff = escortStandoffFor(hbR, spacing0) * bk;
+        const spacing = spacing0 * bk;
         const offs = escortOffsets(n, spacing, heading, standoff);
         const prevEscortAlpha = c.globalAlpha;
         c.globalAlpha = prevEscortAlpha * fold;
@@ -3172,7 +3250,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           }
           const ex = hb.x + offs[i].dx;
           const ey = hb.y + offs[i].dy;
-          drawEscortHull(renderContext, esc, ex, ey, escortGlyphFor(spacing), heading);
+          drawEscortHull(renderContext, esc, ex, ey, escortGlyphFor(spacing0 * bks), heading);
           // Where this hull IS, for everything that asks: its bolts leave
           // from here, hits on it land here, a click here is the fleet.
           fleetSlots.set(esc.id, { x: ex, y: ey });
@@ -3528,6 +3606,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         renderContext, gameState.ships, gameState.settlements, nowMs, nowTick,
         transitShipCanvasPosRef.current, gameState.warPairs,
         gameState.transitCombatEnabled, gameState.megastructures,
+        mpActions ? settlementHasGuns : undefined,
       );
     }
     // RENDEZVOUS PREVIEW. Drawn after the fleet so the arc and its
@@ -3829,10 +3908,26 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         for (const id of caught) merged.add(id);
         setShipSelection(Array.from(merged));
       } else {
+        // MULTIPLAYER: a plain box around ONE ship (or one fleet) does
+        // what clicking it does — "just this one", with its panel open —
+        // instead of a one-row group bar (playtest: "I often use the box
+        // selection to select only one ship; it could show the ship
+        // information if it's the only one selected"). Additive boxes and
+        // touch selection mode only ever collect, so they never get here.
+        const single = mpActions
+          ? boxSingleTarget(caught, gameState.ships, gameState.fleets,
+            id => fleetSlotsRef.current.get(id)?.lead)
+          : null;
+        if (single) {
+          clearShipSelection();
+          selectShip(single);
+          return;
+        }
         setShipSelection(caught);
       }
     },
-    [gameState.ships, shipCanvasPoint, uiState.selectedShipIds, setShipSelection],
+    [gameState.ships, gameState.fleets, shipCanvasPoint, uiState.selectedShipIds, setShipSelection,
+     mpActions, clearShipSelection, selectShip],
   );
 
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -4111,6 +4206,42 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     [gameState.ships, gameState.bodies, hitCam, renderTick],
   );
 
+  // MULTIPLAYER: EVERY hull under a canvas point, nearest first — the
+  // same boxes and the same fleet-to-flagship rule as pickShipAt, which
+  // stays the single-pick answer for hover and the touch gestures. Used
+  // by a click so overlapping hulls can be cycled (mapPick.cyclePick).
+  // Click-time only: nothing here runs per frame.
+  const pickShipsAt = useCallback(
+    (canvasX: number, canvasY: number, padTouch: boolean): string[] => {
+      const pad = padTouch ? TOUCH_HIT_PADDING : 0;
+      const hits: PickHit[] = [];
+      const slots = fleetSlotsRef.current;
+      for (const sl of slots.values()) {
+        const d = Math.hypot(canvasX - sl.x, canvasY - sl.y);
+        if (d <= sl.r + pad) hits.push({ id: sl.lead, d });
+      }
+      for (const ship of gameState.ships) {
+        if (slots.has(ship.id)) continue;
+        let x: number, y: number, r: number;
+        const hb = shipHitboxesRef.current.get(ship.id);
+        if (hb) {
+          x = hb.x; y = hb.y; r = hb.r + pad;
+        } else {
+          const cached = ship.transit ? transitShipCanvasPosRef.current.get(ship.id) : undefined;
+          const p = cached ?? getShipCanvasPos(ship, canvasRef.current!, gameState.bodies, hitCam(), renderTick());
+          if (!p) continue;
+          x = p.x; y = p.y; r = (ship.transit ? 20 : 14) + pad;
+        }
+        const d = Math.hypot(canvasX - x, canvasY - y);
+        if (d <= r) hits.push({ id: ship.id, d });
+      }
+      return orderPickHits(hits);
+    },
+    [gameState.ships, gameState.bodies, hitCam, renderTick],
+  );
+  /** The order the last click cycled through (mapPick.cyclePick). */
+  const pickCycleRef = useRef<string[] | null>(null);
+
   // DEVELOPMENT ONLY: every world as the last frame drew it -- centre,
   // drawn radius, how far it has unfolded, and the visible host it folds
   // into -- so a zoom sweep can aim at a world and audit overlaps without
@@ -4206,7 +4337,32 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         return;
       }
 
-      const hitShip = pickShipAt(canvasX, canvasY, touch);
+      // MULTIPLAYER: overlapping hulls cycle. Clicking the hull that is
+      // already selected, when others share the spot, selects the next
+      // one (playtest: "when intercepting ships get overlapped it's
+      // difficult to select one or the other"). A lone hull, and every
+      // shift-click, resolve exactly as before.
+      let hitShip: string | null;
+      if (mpActions && !additive) {
+        const cyc = cyclePick(
+          pickShipsAt(canvasX, canvasY, touch),
+          uiState.selectedShipId, pickCycleRef.current,
+        );
+        pickCycleRef.current = cyc && cyc.order.length > 1 ? cyc.order : null;
+        hitShip = cyc?.id ?? null;
+        if (cyc && cyc.order.length > 1) {
+          const name = gameState.ships.find(sh => sh.id === cyc.id)?.name ?? 'Ship';
+          window.dispatchEvent(new CustomEvent('orbital:toast', {
+            detail: {
+              kind: 'info',
+              text: `${name} — ${cyc.index + 1} of ${cyc.order.length} here. `
+                + `${touch ? 'Tap' : 'Click'} again for the next.`,
+            },
+          }));
+        }
+      } else {
+        hitShip = pickShipAt(canvasX, canvasY, touch);
+      }
       if (hitShip) {
         // Shift+click builds a group. Own hulls only — you can't give
         // orders to someone else's ship, and silently collecting them
@@ -4276,7 +4432,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       deselectBody();
       clearShipSelection();
     },
-    [gameState, hitCam, uiState.targetSelectionMode, uiState.selectedShipIds, selectShip, selectBody, deselectShip, deselectBody, renderTick, pickShipAt, toggleShipSelection, clearShipSelection]
+    [gameState, hitCam, uiState.targetSelectionMode, uiState.selectedShipIds, selectShip, selectBody, deselectShip, deselectBody, renderTick, pickShipAt, toggleShipSelection, clearShipSelection,
+     mpActions, pickShipsAt, uiState.selectedShipId]
   );
 
   /**
@@ -4944,7 +5101,8 @@ function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
   // touch device, so don't tell a phone player to "right-drag."
   // The LAYOUT's verdict (useIsMobile stamps data-mobile-shell), not the
   // pointer media query, which some mouse-driven desktops answer 'coarse'.
-  const hint = document.documentElement.hasAttribute('data-mobile-shell')
+  const mobileShell = document.documentElement.hasAttribute('data-mobile-shell');
+  const hint = mobileShell
     ? 'Drag: pan · Pinch: zoom · Tap: select · Hold a ship: select several'
     : 'Right-drag: pan | Scroll: zoom | Click: select | Double-click: focus';
   ctx.ctx.fillText(hint, 16, ctx.canvas.height - 32);
@@ -4956,7 +5114,11 @@ function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
     ctx.ctx.fillText('SELECT TARGET BODY', ctx.canvas.width / 2, 16);
     ctx.ctx.fillStyle = COLORS.fgDim;
     ctx.ctx.font = '10px "Audiowide", monospace';
-    ctx.ctx.fillText('Click a body to transfer | ESC to cancel | Right-click to cancel', ctx.canvas.width / 2, 32);
+    // No Esc key or right button on a phone; its Cancel is the banner
+    // ShipPanel floats at the bottom during targeting.
+    ctx.ctx.fillText(mobileShell
+      ? 'Tap a body to transfer'
+      : 'Click a body to transfer | ESC to cancel | Right-click to cancel', ctx.canvas.width / 2, 32);
   }
 
   if (ctx.camera.focusedBodyId) {

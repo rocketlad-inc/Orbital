@@ -15,6 +15,7 @@
 import { Body, Ship, Settlement } from '../types';
 import { MegastructureState, isBreached } from '../game/megastructures';
 import { makePeaceCheck, PeaceCheck } from '../game/peace';
+import { SHIP_RANGE } from '../game/firingWindows';
 import { shipWorldPosition } from '../game/combat';
 import { getShipClass } from '../game/shipClasses';
 import { damageProfile, countPart, flakSlowMultiplier } from '../game/shipParts';
@@ -27,6 +28,7 @@ import { RenderContext, worldToCanvas, drawnShipLook, drawnShipWorldPos, nearest
 import { hashStr, mulberry32 } from './planetTexture';
 import { isLightweight } from './lightweightMode';
 import { drawnRadiusOf } from './bodyPresentation';
+import { battleScale, battleShipOffsetPx } from './battleLayoutLive';
 import { getWorldMenuOpenBodyId } from '../game/worldMenu/store';
 import {
   drawRound, drawMuzzle, drawBeam, drawCharge, drawSparks, drawHullHit, drawShieldHit, drawScorch,
@@ -55,6 +57,18 @@ function combatParts(s: Ship): readonly string[] | undefined {
  *  and other non-combatants are left alone, mirroring the server. */
 function shipIsArmed(s: Ship): boolean {
   return (s.damagePerTick ?? getShipClass(s.class).damagePerTick) > 0;
+}
+
+/** MULTIPLAYER: can this settlement shoot at all? MIRROR of the server's
+ *  return-fire gate (worker/room.js, "Station return-fire"): cities never
+ *  fire, and a station has no guns until its Weapons module is built.
+ *  Playtest report (Franz, 2026-10): "Stations without weapons visually
+ *  shoot back invading forces" — the FX layer drew a bolt from every
+ *  hostile settlement at the fight, guns or not. */
+export function settlementHasGuns(stl: Settlement): boolean {
+  return stl.type === 'station'
+    && stl.hp > 0
+    && Number(stl.buildings?.weapons ?? 0) >= 1;
 }
 
 // Seeded randomness — one shared implementation lives in planetTexture
@@ -242,6 +256,19 @@ export function shipCanvasPos(
   const parent = bodyOf(rc, ship.orbit.parentBodyId);
   if (!parent) return null;
   const pp = bodyPosition(parent, rc.t, rc.bodies);
+  // NOT DRAWN THIS FRAME (culled off-screen, say) at a laid-out world: the
+  // hull's place is its spot in the layout, NOT its raw orbit point. The
+  // layout ignores the orbit, so effects resolved there (fires, smoke,
+  // bolts) floated in empty space, most visibly behind the world menu.
+  const lb = rc.presentation ? rc.liveBattles?.get(ship.orbit.parentBodyId) : undefined;
+  if (lb) {
+    const k = battleScale(lb, drawnRadiusOf(rc.presentation, parent, rc.camera.scale));
+    const off = k > 0 ? battleShipOffsetPx(lb, ship.id, rc.nowMs ?? performance.now(), k) : null;
+    if (off) {
+      const c = worldToCanvas(pp.x, pp.y, rc);
+      return { x: c.x + off.x, y: c.y + off.y };
+    }
+  }
   // SPIN_CLOCK, not rc.nowMs. drawShip drives the cosmetic spin from
   // Date.now() while rc.nowMs is performance.now() — two unrelated
   // epochs feeding the same `nowMs % 180_000` lap fraction, so this
@@ -281,10 +308,17 @@ function shipLeadCanvas(
  *  their orbital point via the same Kepler path the sprite uses
  *  (including the static-angle fallback on mu=0 primaries); cities sit
  *  on their body's surface at surfaceAngle. */
-function settlementCanvasPos(
+export function settlementCanvasPos(
   stl: Settlement,
   rc: RenderContext,
 ): { x: number; y: number } | null {
+  // Where the station was DRAWN this frame first: at a laid-out world it
+  // sits opposite the ships (battleLayoutLive), not on its orbit. A
+  // station the map did NOT draw this frame (every station is hidden
+  // while a world menu is open) has no place to fire from or burn at.
+  if (rc.stationCanvasPos && stl.type === 'station') {
+    return rc.stationCanvasPos.get(stl.id) ?? null;
+  }
   const wp = settlementWorldPosition(stl, rc.t, rc.bodies);
   return wp ? worldToCanvas(wp.x, wp.y, rc) : null;
 }
@@ -687,12 +721,10 @@ export function drawTracers(
 // same thing (identity-cached Set, same key ordering) in the one place
 // that now owns the rule. Kept as a local alias so the per-frame call
 // sites below read unchanged.
-/** Weapon reach per hull, world units. MIRROR of SHIP_RANGE in
- *  worker/transitCombat.js — the renderer must not draw a shot the
- *  server would never let happen. */
-const SHIP_TRANSIT_RANGE: Record<string, number> = {
-  corvette: 12, frigate: 16, destroyer: 20, freighter: 0, colony: 0,
-};
+/** Weapon reach per hull, world units: the client's mirror of SHIP_RANGE
+ *  in worker/transitCombat.js — the renderer must not draw a shot the
+ *  server would never let happen. One table, owned by firingWindows. */
+const SHIP_TRANSIT_RANGE = SHIP_RANGE;
 
 // Fed the OPEN WARS now, not the pacts — makePeaceCheck inverted with
 // the tick. The renderer must not draw a shot the server would never
@@ -727,6 +759,10 @@ export function drawEngagementFire(
   /** Live megastructures, keyed on local body id. Only Weapons Stations
    *  shoot, and only the server's stamp says when. */
   megastructures?: Record<string, MegastructureState>,
+  /** MULTIPLAYER only: when given, a settlement that fails this test is
+   *  never a shooter, whatever its lastCombatTick says (see
+   *  settlementHasGuns). Omitted = the legacy behaviour, unchanged. */
+  settlementMayFire?: (stl: Settlement) => boolean,
 ): void {
   // The server never fires between at-peace factions (room.js builds the
   // same nap/defense-pact set) - so neither may the animation. Without
@@ -833,6 +869,7 @@ export function drawEngagementFire(
     if (fired === undefined) continue;
     if (currentTick - fired > ENGAGED_WINDOW_TICKS) continue;
     if (stl.hp <= 0) continue;
+    if (settlementMayFire && !settlementMayFire(stl)) continue;
     if (!hasHostileFaction(bodyShipFactions, stl.bodyId, stl.ownedBy, peace)) continue;
     takeEngaged(stl.id, stl.bodyId, stl.ownedBy, null, stl);
   }

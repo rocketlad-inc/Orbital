@@ -29,8 +29,12 @@ export const FX_TUNING = {
    *  beatMs (~3.2 s); it was 500 ms and read as ships "on crack". */
   beatMs: 2400,
   /** Hulls a fight holds before each one fires less often, so a big
-   *  battle stays watchable: past this the cycle stretches in proportion. */
-  fireReference: 6,
+   *  battle stays watchable: past this the cycle stretches in proportion.
+   *  18 (was 6): Lorne picked 3x the fire on the battle test page
+   *  (2026-10-06). Tripling this triples every crowded fight's rate and
+   *  leaves a skirmish of up to 18 hulls on its ~3.2 s volley, the rate
+   *  he settled on 2026-10-01 after ~1.1 s read as ships "on crack". */
+  fireReference: 18,
   /** Muzzle flash at the start of each round. */
   muzzleMs: 130,
   /** The hit after a shot lands, inside the reload. */

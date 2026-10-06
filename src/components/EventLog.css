@@ -159,14 +159,6 @@
   white-space: normal;
   overflow-wrap: anywhere;
 }
-.event-log-shell .event-log__chevron {
-  flex: 0 0 auto;
-  color: #7a8b9a;
-  font-size: 11px;
-  line-height: 1.45;
-  width: 12px;
-  text-align: center;
-}
 
 /* Expanded body — category eyebrow + flavor prose. Phase-1
    placeholder; phase 2+ swaps in real flavor + edit affordance. */
@@ -350,37 +342,90 @@
    normally and the jump stays pinned to the right edge. */
 .event-log-shell .event-log__row__top {
   display: flex;
-  align-items: stretch;
+  /* flex-start, NOT stretch/center: the controls pin to the first text
+     line however many lines the headline wraps to. Centring them made
+     the jump drift away from the (top-pinned) chevron as rows grew. */
+  align-items: flex-start;
   width: 100%;
+  padding-right: 2px;
+  box-sizing: border-box;
 }
 .event-log-shell .event-log__row__top .event-log__row__headline {
   flex: 1 1 auto;
   min-width: 0;   /* let the text wrap instead of forcing the row wide */
 }
-/* "Take me there" — icon-only on the collapsed row, so jumping to a
-   location never costs an expand first. The labelled twin still shows
-   in the expanded body for anyone reading the detail. */
-.event-log-shell .event-log__row__jump {
+/* Row controls — "take me there" + the expand chevron. Equal square
+   tap targets (32px desktop, 40px on the mobile shell) with a 16px SVG
+   glyph. The box is offset so its centre sits on the centre of the
+   first headline line:
+     headline padding-top 7 + kicker 9 (line-height 1) + gap 3
+     + half a text line (12px x 1.45 / 2 = 8.7)  = ~27px
+   minus half the box. Same centre at either box size, so the glyphs
+   line up with the text whatever the shell. */
+.event-log-shell .event-log__row__top {
+  --ev-ctl: 32px;
+  --ev-line1: 27px;
+}
+@media (max-width: 1023px), (pointer: coarse) and (hover: none) and (max-width: 1399px) {
+  /* Mirrors the shell query in styles/mobile.css (useIsMobile). */
+  .event-log-shell .event-log__row__top { --ev-ctl: 40px; }
+}
+.event-log-shell .event-log__row__ctl {
   flex: 0 0 auto;
-  align-self: stretch;
-  width: 30px;
+  width: var(--ev-ctl);
+  height: var(--ev-ctl);
+  margin-top: calc(var(--ev-line1) - var(--ev-ctl) / 2);
   padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: transparent;
   border: none;
-  border-left: 1px solid rgba(255, 255, 255, 0.06);
-  font: inherit;
-  font-size: 13px;
-  line-height: 1;
+  border-radius: 4px;
   cursor: pointer;
-  opacity: 0.55;
-  transition: opacity 0.12s ease, background 0.12s ease;
+  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
 }
-.event-log-shell .event-log__row__jump:hover {
-  opacity: 1;
+/* The mobile shell's `button { min-height: 40px }` (and its JS-driven
+   `:root[data-mobile-shell] button` twin, specificity 0,2,1) would win
+   over height and push the glyph off the text line. (0,3,0) outranks
+   both; the box size itself comes from --ev-ctl above. */
+:root .event-log-shell .event-log__row__ctl {
+  min-height: var(--ev-ctl);
+}
+.event-log-shell .event-log__row__ctl svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  pointer-events: none;
+}
+.event-log-shell .event-log__row__ctl:hover {
   background: rgba(255, 255, 255, 0.06);
 }
-.event-log-shell .event-log__row__jump:focus-visible {
+.event-log-shell .event-log__row__ctl:focus-visible {
   outline: none;
-  opacity: 1;
   background: rgba(255, 184, 77, 0.14);
+}
+/* "Take me there" — icon-only on the collapsed row, so jumping to a
+   location never costs an expand first. The labelled twin still shows
+   in the expanded body for anyone reading the detail. Colour comes
+   inline from the row's category accent. */
+.event-log-shell .event-log__row__jump {
+  opacity: 0.75;
+}
+.event-log-shell .event-log__row__jump:hover,
+.event-log-shell .event-log__row__jump:focus-visible {
+  opacity: 1;
+}
+/* Expand chevron — always the right-most column. Rotates rather than
+   swapping glyphs so open/closed are the same size and position. */
+.event-log-shell .event-log__chevron {
+  color: #7a8b9a;
+}
+.event-log-shell .event-log__chevron:hover { color: #c5d3df; }
+.event-log-shell .event-log__chevron svg {
+  transition: transform 0.15s ease;
+}
+.event-log-shell .event-log__chevron.is-open svg {
+  transform: rotate(90deg);
 }

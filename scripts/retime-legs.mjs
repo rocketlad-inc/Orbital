@@ -16,7 +16,14 @@
 // Its arrival becomes launch + the new burn's trip time (never earlier
 // than next tick), and the stored plan is re-fitted to that arrival with
 // shapeForArrival — the same back-solve the server uses for trade legs.
-// It is applied only when it lands SOONER.
+// It is applied only when it lands SOONER — unless --allow-later, which
+// also moves legs whose old burn was FASTER than today's (the linear
+// build-up flown for a few hours on 2026-10-06 beat the exponential one
+// that replaced it). A later leg is drawn further back along its line.
+//
+// "Old" means anything not on today's burn exactly (see isCurrent): flat,
+// linear, or exponential from a different floor. An old leg is re-flown
+// from today's floor with its hull's engine parts carried over.
 //
 //   - Hulls moving together (a fleet, an escort paced to its carrier:
 //     same faction, target, launch and arrival) get ONE new arrival, the
@@ -40,10 +47,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { makeRouteMath } from '../worker/routeMath.js';
-import { legTicks, shapeForArrival, SHIP_ENGINE_ACCEL } from '../worker/burn.js';
+import {
+  legTicks, shapeForArrival, SHIP_ENGINE_ACCEL, SHIP_ENGINE_G, MAX_ENGINE_G, GROWTH_TAU,
+} from '../worker/burn.js';
 
 const [envName, ...flags] = process.argv.slice(2);
 const APPLY = flags.includes('--apply');
+const ALLOW_LATER = flags.includes('--allow-later');
 // --skip=<gameId>, repeatable: games to leave exactly as they are (the
 // frozen marketing showcase, whose staged ships must not move).
 const SKIP = flags.filter(f => f.startsWith('--skip=')).map(f => f.slice('--skip='.length))
@@ -66,19 +76,37 @@ function d1(sql) {
 
 // ---- every live leg of every ship that has an old one ----------------
 const LIVE = `('committed','in_transit')`;
-const legs = d1(`
+const allLegs = d1(`
   SELECT n.id, n.game_id, n.ship_id, n.sequence, n.status, n.target_body_id,
          n.scheduled_t, n.arrival_at_tick, n.launch_x, n.launch_y, n.launch_vx, n.launch_vy,
-         n.accel, n.brake_accel, n.accel_ramp, n.accel_max, n.flip_tick,
+         n.accel, n.brake_accel, n.accel_ramp, n.accel_max, n.accel_tau, n.flip_tick,
          n.rv_follow_ship_id, n.sink_held_until_tick,
          s.owner_faction_id, s.parent_body_id, g.current_tick
     FROM game_ship_nodes n
     JOIN game_ships s ON s.id = n.ship_id
     JOIN games g ON g.id = n.game_id AND g.status = 'active'
    WHERE n.status IN ${LIVE}
-     ${SKIP.length ? `AND n.game_id NOT IN (${SKIP.map(g => `'${g}'`).join(', ')})` : ''}
-     AND n.ship_id IN (SELECT ship_id FROM game_ship_nodes
-                        WHERE status IN ${LIVE} AND accel_ramp IS NULL)`);
+     ${SKIP.length ? `AND n.game_id NOT IN (${SKIP.map(g => `'${g}'`).join(', ')})` : ''}`);
+// ON TODAY'S BURN means today's build exactly: the same growth time AND
+// the same floor-to-top ratio (MAX / SHIP g). Server legs scale accel and
+// max together, so the ratio holds for them too. Anything else — a flat
+// push, the linear build, or the exponential build from the old 0.05g
+// floor — is old.
+const TOP_RATIO = MAX_ENGINE_G / SHIP_ENGINE_G;
+const isCurrent = (l) => l.accel_tau != null && Math.abs(Number(l.accel_tau) - GROWTH_TAU) < 1e-6
+  && Number(l.accel) > 0 && Math.abs(Number(l.accel_max) / Number(l.accel) - TOP_RATIO) < 1e-6;
+const shipsWithOld = new Set(allLegs.filter(l => !isCurrent(l)).map(l => l.ship_id));
+const legs = allLegs.filter(l => shipsWithOld.has(l.ship_id));
+// A leg's launch push carries its hull's engine parts. Every burn before
+// the 0.02g floor launched from 0.05g, so the same hull now launches from
+// accel x (SHIP_ENGINE_G / its old floor); a leg with a build tells us
+// its floor directly (max / accel = top / floor).
+const newLaunchPush = (l) => {
+  const a = Number(l.accel);
+  if (!(a > 0)) return SHIP_ENGINE_ACCEL;
+  const oldFloorG = Number(l.accel_max) > a ? MAX_ENGINE_G * a / Number(l.accel_max) : 0.05;
+  return a * (SHIP_ENGINE_G / oldFloorG);
+};
 const followed = new Set(d1(`
   SELECT DISTINCT rv_follow_ship_id AS id FROM game_ship_nodes
    WHERE status IN ${LIVE} AND rv_follow_ship_id IS NOT NULL`).map(r => r.id));
@@ -155,8 +183,9 @@ for (let depth = 0; depth < maxDepth; depth++) {
       L = await posAt(l.game_id, origin, newS);
       if (!launched) V = await velAt(l.game_id, origin, newS);
     }
-    const a0 = Number(l.accel) > 0 ? Number(l.accel) : SHIP_ENGINE_ACCEL;
-    const old = l.accel_ramp == null;
+    const old = !isCurrent(l);
+    // An old leg is re-flown from today's floor; a current one keeps its own.
+    const a0 = old ? newLaunchPush(l) : Number(l.accel);
     let natE;
     if (old) {
       let T = Math.max(1, oldE - oldS);
@@ -188,9 +217,10 @@ for (let depth = 0; depth < maxDepth; depth++) {
       continue;
     }
     const shifted = c.newS !== c.oldS;
-    // In place, a leg only ever gets SOONER; moved up behind a faster
-    // predecessor, it takes the group's arrival from its new departure.
-    const finalE = shifted ? groups.get(k) : Math.min(groups.get(k), c.oldE);
+    // In place, a leg only ever gets SOONER (unless --allow-later); moved
+    // behind a re-timed predecessor, it takes the group's arrival from its
+    // new departure.
+    const finalE = shifted || ALLOW_LATER ? groups.get(k) : Math.min(groups.get(k), c.oldE);
     st.prevOld = c.oldE;
     st.prevNew = finalE;
     if (!shifted && finalE === c.oldE) continue;
@@ -215,7 +245,8 @@ for (const p of plans) {
     set.push(
       `launch_x = ${round(p.L.x)}`, `launch_y = ${round(p.L.y)}`,
       `launch_vx = ${round(vx)}`, `launch_vy = ${round(vy)}`,
-      `accel = ${round(sh.accel)}`, `accel_ramp = ${round(sh.ramp)}`, `accel_max = ${round(sh.max)}`,
+      `accel = ${round(sh.accel)}`, `accel_ramp = NULL`, `accel_max = ${round(sh.max)}`,
+      `accel_tau = ${round(sh.tau)}`,
       `brake_accel = ${round(sh.brake)}`, `flip_tick = ${round(p.newS + sh.t1)}`,
     );
   }
@@ -223,22 +254,24 @@ for (const p of plans) {
   const q = (v) => (v == null ? 'NULL' : Number(v));
   rollback.push(`UPDATE game_ship_nodes SET scheduled_t = ${l.scheduled_t}, arrival_at_tick = ${l.arrival_at_tick}, `
     + `launch_x = ${q(l.launch_x)}, launch_y = ${q(l.launch_y)}, launch_vx = ${q(l.launch_vx)}, launch_vy = ${q(l.launch_vy)}, `
-    + `accel = ${q(l.accel)}, accel_ramp = ${q(l.accel_ramp)}, accel_max = ${q(l.accel_max)}, `
+    + `accel = ${q(l.accel)}, accel_ramp = ${q(l.accel_ramp)}, accel_max = ${q(l.accel_max)}, accel_tau = ${q(l.accel_tau)}, `
     + `brake_accel = ${q(l.brake_accel)}, flip_tick = ${q(l.flip_tick)} WHERE id = '${l.id}'`);
 }
 
 // ---- the report -------------------------------------------------------
 const byGame = new Map();
 for (const p of plans) {
-  const g = byGame.get(p.l.game_id) ?? { inFlight: 0, queued: 0, saved: [] };
+  const g = byGame.get(p.l.game_id) ?? { inFlight: 0, queued: 0, sooner: [], later: [] };
   if (p.launched) g.inFlight++; else g.queued++;
-  g.saved.push(p.oldE - p.newE);
+  const delta = p.oldE - p.newE;
+  if (delta >= 0) g.sooner.push(delta); else g.later.push(-delta);
   byGame.set(p.l.game_id, g);
 }
-console.log(`\n${plans.length} legs re-timed; left alone:`, Object.fromEntries(skipped));
+const med = (a) => { const s = [...a].sort((x, y) => x - y); return s.length ? s[s.length >> 1].toFixed(1) : '-'; };
+const mx = (a) => (a.length ? Math.max(...a).toFixed(1) : '-');
+console.log(`\n${plans.length} legs re-timed${ALLOW_LATER ? ' (later arrivals allowed)' : ''}; left alone:`, Object.fromEntries(skipped));
 for (const [g, v] of byGame) {
-  const s = v.saved.sort((a, b) => a - b);
-  console.log(`  ${g}: ${v.inFlight} in flight + ${v.queued} queued, ticks saved median ${s[s.length >> 1].toFixed(1)}, max ${s[s.length - 1].toFixed(1)}`);
+  console.log(`  ${g}: ${v.inFlight} in flight + ${v.queued} queued | sooner ${v.sooner.length} (median ${med(v.sooner)}, max ${mx(v.sooner)}) | later ${v.later.length} (median ${med(v.later)}, max ${mx(v.later)})`);
 }
 const arriveNext = plans.filter(p => p.launched && p.newE === Number(p.l.current_tick) + 1).length;
 console.log(`  arriving next tick (the new burn would already have landed them): ${arriveNext}`);

@@ -536,11 +536,15 @@ const AimExposure: React.FC = () => (
 /** Per-class reach, DESIGN-transit-combat.md R2. Drawn as circles on a
  *  shared scale rather than as bars: range is a radius in the world, and
  *  a bar chart would hide that a destroyer's envelope is not 1.67× a
- *  corvette's but 2.8× the area. */
+ *  corvette's but 2.8× the area.
+ *
+ *  Doubled 2026-10-06 (was 12 / 16 / 20). The ratios did not change, so
+ *  RANGE_DRAW keeps the circles exactly where they were in the viewBox. */
+const RANGE_DRAW = 0.5;
 const RANGES: { hull: string; range: number }[] = [
-  { hull: 'Corvette', range: 12 },
-  { hull: 'Frigate', range: 16 },
-  { hull: 'Destroyer', range: 20 },
+  { hull: 'Corvette', range: 24 },
+  { hull: 'Frigate', range: 32 },
+  { hull: 'Destroyer', range: 40 },
   { hull: 'Freighter', range: 0 },
   { hull: 'Colony', range: 0 },
 ];
@@ -576,11 +580,11 @@ const ShipRange: React.FC = () => (
           >
             {r.range > 0 && (
               <>
-                <circle r={r.range} className="dfg-reach" />
+                <circle r={r.range * RANGE_DRAW} className="dfg-reach" />
                 {/* Halved inside a sphere of influence: moon systems run
                     6-15 units between neighbours, so full reach covered
                     three orbits at once. */}
-                <circle r={r.range / 2} className="dfg-reach dfg-reach--in" />
+                <circle r={(r.range / 2) * RANGE_DRAW} className="dfg-reach dfg-reach--in" />
               </>
             )}
             <circle r={r.range === 0 ? 2.6 : 2} className="dfg-hull" />

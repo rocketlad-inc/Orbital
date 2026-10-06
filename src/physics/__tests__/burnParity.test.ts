@@ -13,13 +13,13 @@ import {
   G_ANCHOR as W_G_ANCHOR, SHIP_ENGINE_G, MAX_ENGINE_G, RAMP_TICKS, BRAKE_MUL,
   burnTicks, boostAccelFor, burnShape as wBurnShape, legTicks, shapeForArrival, GROWTH_TAU,
 } from '../../../worker/burn.js';
-import { torchStateAt, V_REF as W_V_REF } from '../../../worker/transitCombat.js';
+import { torchStateAt, V_REF as W_V_REF, SHIP_RANGE as W_SHIP_RANGE } from '../../../worker/transitCombat.js';
 import { burnProgress, legProgress } from '../../../worker/orbitPos.js';
 import {
   G_ANCHOR, DEFAULT_ENGINE_G, fromG, planTorchTransfer, stepTorchShip, launchFromPlan,
   setMpBurnProfile, baseEngineG, brakeAccelFor, mpRampFor, burnShape as cBurnShape, boostState,
 } from '../torchTransfer';
-import { V_REF } from '../../game/firingWindows';
+import { V_REF, SHIP_RANGE, reachOf } from '../../game/firingWindows';
 import type { Body } from '../../types';
 
 // A target that (effectively) sits still at 3000 units, so the trip
@@ -38,6 +38,15 @@ describe('the burn', () => {
     expect(V_REF).toBe(W_V_REF);
   });
 
+  it('client and server agree on every hull weapon reach', () => {
+    // The panel and the range ring promise shots from this table and the
+    // tick fires from the worker's. Doubled 2026-10-06 (12/16/20 -> 24/32/40).
+    expect({ ...SHIP_RANGE }).toEqual({ ...W_SHIP_RANGE });
+    expect(reachOf('destroyer', false)).toBe(40);
+    expect(reachOf('destroyer', true)).toBe(20);   // the in-system cut still halves it
+    expect(reachOf('freighter', false)).toBe(0);
+  });
+
   it('with no profile installed the planners are exactly what single player always ran', () => {
     expect(baseEngineG(undefined)).toBe(DEFAULT_ENGINE_G);
     expect(baseEngineG(0.2)).toBe(0.2);
@@ -46,10 +55,11 @@ describe('the burn', () => {
 
   it('multiplayer pushes at the server\'s g and brakes 9x', () => {
     setMpBurnProfile({ engineG: SHIP_ENGINE_G, brakeMul: BRAKE_MUL });
-    // 1g shipped for an hour on 2026-10-06 and was far too fast.
-    expect(SHIP_ENGINE_G).toBe(0.05);
+    // The floor: 0.05g until the evening of 2026-10-06, then 0.02g "to slow
+    // down intermoon a bit". (A flat 1g shipped for 21 minutes that day.)
+    expect(SHIP_ENGINE_G).toBe(0.02);
     expect(BRAKE_MUL).toBe(9);
-    expect(fromG(baseEngineG(undefined))).toBeCloseTo(26.52, 6);
+    expect(fromG(baseEngineG(undefined))).toBeCloseTo(10.608, 6);
     expect(brakeAccelFor(100)).toBe(900);
   });
 
@@ -135,10 +145,11 @@ describe('the build-up', () => {
     expect(RAMP_TICKS).toBe(48);
     // It reaches the same top at the same tick the linear build did.
     expect(boostState(48, a0, 0, fromG(1), GROWTH_TAU).a).toBeCloseTo(fromG(1), 6);
-    const hours = [625, 2709, 4835, 19235, 28530, 36880].map(d => Math.round(legTicks(d, a0) * 10) / 10);
+    // In WHOLE TICKS, as the server lands them (it rounds arrival up).
+    const ticks = [625, 2709, 4835, 19235, 28530, 36880].map(d => Math.ceil(legTicks(d, a0)));
     // Io-Callisto, Earth-Mars, Earth-Jupiter, Neptune-Pluto,
     // Pluto-Makemake, Makemake-Sedna.
-    expect(hours).toEqual([6.7, 12.9, 16.5, 28.2, 32.3, 35.2]);
+    expect(ticks).toEqual([10, 18, 23, 35, 39, 42]);
   });
 
   it('the client plans exactly the leg the server times', () => {
@@ -204,6 +215,8 @@ describe('the build-up', () => {
 
   it('a linear leg (committed before the switch) still flies as planned on both sides', () => {
     const d = 28530;
+    // The linear build launched at the old 0.05g floor.
+    const a0 = fromG(0.05);
     const max = fromG(1), ramp = (max - a0) / 48;
     const plan = planTorchTransfer(
       { pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 } }, 'rock', a0, a0 * BRAKE_MUL, 0, at(d), undefined, { ramp, max },
@@ -219,7 +232,7 @@ describe('the build-up', () => {
     const s = torchStateAt(server, still, t);
     const c = stepTorchShip({ pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 } }, plan, 0, t, at(d));
     expect(Math.hypot(s.pos.x - c.pos.x, s.pos.y - c.pos.y)).toBeLessThan(1e-4);
-    // Pluto -> Makemake on the linear build: the 24h Lorne saw at lunch.
+    // Pluto -> Makemake on the linear build: the 24 T Lorne saw at lunch.
     expect(Math.round(wBurnShape(d, a0, ramp, max, BRAKE_MUL).T)).toBe(24);
   });
 

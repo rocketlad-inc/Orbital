@@ -178,18 +178,19 @@ describe('capital hulls are ships, not planets', () => {
     // shipIconSize IS the on-screen width, unlike the procedural path
     // this file was originally written against.
     //
-    // Venus renders about 77 screen pixels at the default view. A Mega
-    // Destroyer at 76 is the largest thing anyone builds and still, just,
-    // not a world. That margin is thin on purpose (Lorne: "they need to
-    // loom large"), so this pins it rather than leaving it to drift.
+    // THE BOLD LADDER (Lorne, 2026-10-06). Capitals were held just under
+    // a Venus (~77px) at 76; he chose "more dramatic size differences" on
+    // the battle test page, so a Mega Destroyer is now 116 and outgrows a
+    // small world on purpose. Pinned so the ladder does not drift.
     const md = shipIconSize('mega_destroyer', false);
     const mf = shipIconSize('mobile_foundry', false);
     const dd = shipIconSize('destroyer', false);
-    // Was > 1.5. The visual overhaul made regular hulls 1.5x on the map
-    // and Lorne chose to keep capitals under Venus rather than grow them
-    // too, so the gap narrowed on purpose; it must still be clear.
-    expect(md / dd).toBeGreaterThan(1.1);      // still unmistakably bigger
-    expect(md).toBeLessThanOrEqual(78);        // still not a planet
+    const cv = shipIconSize('corvette', false);
+    expect(md).toBe(116);
+    expect(dd).toBe(84);
+    expect(cv).toBe(30);
+    expect(md / dd).toBeGreaterThan(1.3);      // a capital looms over a destroyer
+    expect(dd / cv).toBeGreaterThan(2.5);      // and a destroyer over a corvette
     expect(mf).toBeLessThan(md);               // the gun outsizes the yard
   });
 

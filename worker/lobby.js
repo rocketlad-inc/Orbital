@@ -24,6 +24,8 @@ import {
 } from './captains.js';
 
 const ROOM_ID_RE = /^[A-Za-z0-9_-]{6,32}$/;
+// Most players a game can seat (worker/index.js MAX_SEATS says the same).
+const MAX_SEATS = 10;
 
 // ---------- Two-tone faction colors (§5) ----------
 // PRIMARY = ownership (all meaning), SECONDARY = decoration only.
@@ -175,6 +177,9 @@ async function loadRoomSettings(env, roomId) {
     game_status: game?.status ?? null,
     game_started_at: game?.started_at ?? null,
     current_tick: game?.current_tick ?? null,
+    member_count: (await env.DB
+      .prepare('SELECT COUNT(*) AS c FROM room_members WHERE room_id = ?')
+      .bind(roomId).first())?.c ?? 0,
   };
 }
 
@@ -214,8 +219,9 @@ async function handleUpdateSettings(req, env, ctx) {
     updates.name = name;
   }
   if (body.max_players != null) {
-    if (!Number.isInteger(body.max_players) || body.max_players < 2 || body.max_players > 8) {
-      return err(400, 'bad_request', 'max_players must be an integer 2-8');
+    // 10 since 2026-10-06 (MAX_SEATS; worker/index.js says the same).
+    if (!Number.isInteger(body.max_players) || body.max_players < 2 || body.max_players > MAX_SEATS) {
+      return err(400, 'bad_request', `max_players must be an integer 2-${MAX_SEATS}`);
     }
     const count = await env.DB.prepare('SELECT COUNT(*) AS c FROM room_members WHERE room_id = ?').bind(roomId).first();
     if ((count?.c ?? 0) > body.max_players) {
@@ -1026,6 +1032,49 @@ async function handleForceTick(_req, env, ctx) {
  *
  * Body: { tick_interval_ms: number }   (must be in ALLOWED_TICK_INTERVALS)
  */
+/**
+ * PATCH /api/lobby/rooms/:roomId/seats  { max_players }
+ *
+ * The host opens more seats in a game that is already running. RAISE
+ * ONLY, up to the seat cap (10): every other setting stays locked once a
+ * game starts, and lowering mid-game would have to decide which seated
+ * empire loses its place. A newly open seat fills the way any running
+ * game's does: Browse lists it as "Join in progress", and the joiner is
+ * seated on their own capital by the late-join path (seedLateFaction).
+ */
+async function handleRaiseSeats(req, env, ctx) {
+  const roomId = ctx.params.roomId;
+  const g = await requireHost(env, roomId, ctx.session);
+  if (g.error) return g.error;
+  const body = await readJson(req);
+  const want = body?.max_players;
+  if (!Number.isInteger(want) || want > MAX_SEATS) {
+    return err(400, 'bad_request', `max_players must be a whole number up to ${MAX_SEATS}`);
+  }
+  const game = await env.DB.prepare('SELECT status FROM games WHERE id = ?').bind(roomId).first();
+  if (!game) return err(409, 'not_started', 'before the game starts, change seats in the lobby settings');
+  if (game.status === 'completed') return err(409, 'completed', 'this game is over');
+  const room = await env.DB.prepare('SELECT max_players FROM rooms WHERE id = ?').bind(roomId).first();
+  if (!room) return err(404, 'not_found', 'room not found');
+  if (want <= room.max_players) {
+    return err(400, 'raise_only', `seats can only be raised in a running game (it has ${room.max_players})`);
+  }
+  await env.DB
+    .prepare('UPDATE rooms SET max_players = ?, updated_at = ? WHERE id = ?')
+    .bind(want, Date.now(), roomId).run();
+  try {
+    await roomStub(env, roomId).fetch('https://room/settings', {
+      method: 'POST',
+      body: JSON.stringify({ maxPlayers: want }),
+    });
+  } catch (e) {
+    // D1 is the record the join check reads; the DO copy is display only.
+    console.warn('raise seats: DO settings push failed', e);
+  }
+  const settings = await loadRoomSettings(env, roomId);
+  return json({ settings });
+}
+
 async function handleChangeTickInterval(req, env, ctx) {
   const roomId = ctx.params.roomId;
   const g = await requireHost(env, roomId, ctx.session);
@@ -1262,6 +1311,7 @@ export const routes = [
   { method: 'POST', pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/start$/, auth: 'required', handle: handleStart },
   { method: 'POST', pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/force-tick$/, auth: 'required', handle: handleForceTick },
   { method: 'PATCH',pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/tick-interval$/, auth: 'required', handle: handleChangeTickInterval },
+  { method: 'PATCH',pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/seats$/, auth: 'required', handle: handleRaiseSeats },
   { method: 'PATCH',pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/me$/, auth: 'required', handle: handlePatchMe },
   { method: 'GET',  pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/captains$/, auth: 'required', handle: handleGetCaptainRoster },
   { method: 'PUT',  pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/captains$/, auth: 'required', handle: handlePutCaptainRoster },

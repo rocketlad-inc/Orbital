@@ -6,9 +6,13 @@ import { AndroidBackHandler } from './platform/AndroidBackHandler';
 import { registerServiceWorker } from './platform/registerSW';
 import { captureAttribution } from './multiplayer/attribution';
 import { installTranslateGuard } from './platform/translateGuard';
+import { installPageZoomLock } from './platform/pageZoomLock';
 
 // Before React touches the DOM: page translation must not crash it.
 installTranslateGuard();
+
+// A pinch on a panel must not zoom the whole app (iOS half; see the file).
+installPageZoomLock();
 
 // Before the first render: it reads the arrival URL (link tag, referrer)
 // and then tidies our tag out of the address bar.

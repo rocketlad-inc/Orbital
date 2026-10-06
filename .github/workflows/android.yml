@@ -146,7 +146,7 @@ jobs:
           gradle --no-daemon \
             -PorbitalVersionName="${{ inputs.versionName || '1.0.0' }}" \
             -PorbitalVersionCode="${{ inputs.versionCode || '1' }}" \
-            assembleRelease bundleRelease
+            assembleRelease bundleRelease :app:testReleaseUnitTest
 
       - name: Report what was built
         working-directory: android

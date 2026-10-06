@@ -70,6 +70,10 @@ import './styles/mobile.css';
 // the mobile shell even though no media query can detect it.
 import './styles/shellJs.css';
 
+// The orbital-battle layout test page (/?battle). Lazy: it is a tool,
+// not the game, so it stays out of the main bundle.
+const BattleSandbox = React.lazy(() => import('./battleSandbox/BattleSandbox'));
+
 /** Which engine the session is in. 'singleplayer' is unreachable — SP
  *  entry is retired — but the union survives because SinglePlayerView is
  *  still in the tree. Lived in ModePicker.tsx until that screen was
@@ -511,9 +515,20 @@ function AppShell() {
   //   2. else the game the player switched Auto-load on for
   //   3. else the lobby, which greets them with Welcome back
   // A tab already in a room (a refresh) stays put, if still a member.
+  //
+  // Once per SIGN-IN, keyed on the account id, never on the user object.
+  // AuthContext.refresh() hands back a fresh object after every profile
+  // save (a Hangar colony/station style, a redeemed gift, the Stripe
+  // return poll), and keying on it re-ran launch from the Profile tab:
+  // the lobby blanked and an Auto-load game opened in its place
+  // (playtester report: "selecting a station icon in the Hangar opens
+  // the last played game").
+  const userId = user?.id ?? null;
   useEffect(() => {
-    if (!user) return;
-    logger.setSession({ playerName: user.display_name || user.email });
+    if (user) logger.setSession({ playerName: user.display_name || user.email });
+  }, [user]);
+  useEffect(() => {
+    if (!userId) return;
     setLaunchResolved(false);
     let cancelled = false;
     (async () => {
@@ -577,7 +592,7 @@ function AppShell() {
     })();
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
+  }, [userId]);
 
   // handlePickMode retired with the mode picker — nothing asks the
   // player to choose a mode any more.
@@ -902,6 +917,24 @@ function AppRouter() {
     typeof window !== 'undefined' &&
     new URLSearchParams(window.location.search).has('torch'),
   );
+  const [battleMode, setBattleMode] = useState(() =>
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).has('battle'),
+  );
+  if (battleMode) {
+    return (
+      <React.Suspense fallback={<div style={{ position: 'fixed', inset: 0, background: '#060a11' }} />}>
+        <BattleSandbox
+          onExit={() => {
+            const url = new URL(window.location.href);
+            url.searchParams.delete('battle');
+            window.history.replaceState({}, '', url.toString());
+            setBattleMode(false);
+          }}
+        />
+      </React.Suspense>
+    );
+  }
   if (physicsMode) {
     return (
       <PhysicsSandbox
