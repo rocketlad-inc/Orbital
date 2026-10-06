@@ -39,8 +39,18 @@ export const FX_TUNING = {
   muzzleMs: 130,
   /** The hit after a shot lands, inside the reload. */
   impactMs: 380,
-  /** Gap between the three rounds of a kinetic burst. */
+  /** Gap between the rounds of a kinetic burst. */
   roundGapMs: 70,
+  /** Rounds in one kinetic burst, by the shooter's hull (Lorne,
+   *  2026-10-06): a corvette fires one, a frigate two, a destroyer three.
+   *  THE LOOK ONLY: the server still rolls one volley per hull per tick
+   *  and its damage is untouched. Anything else that fires kinetic
+   *  (stations, capital hulls) keeps the full burst. Flat numbers, not a
+   *  map, so they cross to Kotlin like every other field. */
+  kineticRoundsCorvette: 1,
+  kineticRoundsFrigate: 2,
+  kineticRoundsDestroyer: 3,
+  kineticRoundsOther: 3,
   /** An energy shot's charge, inside boltMs, before the beam. */
   chargeMs: 180,
 
@@ -63,3 +73,26 @@ export const FX_TUNING = {
 };
 
 export type FxTuning = typeof FX_TUNING;
+
+/** Rounds in a kinetic burst for a shooter of this class (undefined for a
+ *  settlement or a Weapons Station). The watch's FxTuning.roundsFor is the
+ *  same table. */
+export function kineticRoundsOf(cls: string | undefined, fx: FxTuning = FX_TUNING): number {
+  switch (cls) {
+    case 'corvette': return fx.kineticRoundsCorvette;
+    case 'frigate': return fx.kineticRoundsFrigate;
+    case 'destroyer': return fx.kineticRoundsDestroyer;
+    default: return fx.kineticRoundsOther;
+  }
+}
+
+/** Where round `r` of an `n`-round burst sits on the shared clock. The
+ *  burst always has at least three slots and fires from the LAST n of
+ *  them, so every round flies at the same speed whatever the hull and the
+ *  final round lands with the volley's big hit at boltMs. A three-round
+ *  burst is exactly the timing it always had. */
+export function burstSlots(n: number, fx: FxTuning = FX_TUNING): { first: number; slots: number; flight: number } {
+  const rounds = Math.max(1, Math.round(n));
+  const slots = Math.max(3, rounds);
+  return { first: slots - rounds, slots, flight: fx.boltMs - (slots - 1) * fx.roundGapMs };
+}

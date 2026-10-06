@@ -51,7 +51,7 @@ import { drawTexturedDisk, drawSphereLighting } from '../render/fxPrimitives';
 import {
   drawRound, drawBeam, drawMuzzle, drawHullHit, drawCharge, drawScorch, glowAt,
 } from '../render/fxArt';
-import { FX_TUNING } from '../render/fxTuning';
+import { FX_TUNING, kineticRoundsOf, burstSlots } from '../render/fxTuning';
 import { hashStr, mulberry32 } from '../render/planetTexture';
 import { artUrl } from '../render/artVersion';
 import type { ShipIconVariant } from '../components/ShipIcons';
@@ -605,8 +605,9 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
           const mx = fp.x + Math.cos(ang0) * sR * 0.45;
           const my = fp.y + Math.sin(ang0) * sR * 0.45;
           const rw = Math.max(1.1, Math.min(2.4, sR * 0.075));
-          const flight = BOLT_MS - 2 * ROUND_GAP_MS;
-          for (let r = 0; r < 3; r++) {
+          // The map's burst: 1 / 2 / 3 rounds by hull, stations three.
+          const { first, slots, flight } = burstSlots(kineticRoundsOf(isStation ? undefined : sh.cls));
+          for (let r = first; r < slots; r++) {
             const w2 = within - r * ROUND_GAP_MS;
             if (w2 < 0) continue;
             const kk = w2 / flight;
