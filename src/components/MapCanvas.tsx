@@ -66,12 +66,15 @@ import { fleetFormationGroups, FLEET_ARC_WIDTH } from '../render/fleetFormation'
 import { computeSystemRegions } from '../render/systemRegions';
 import { getEmblemImage } from '../render/emblemCache';
 import { BUILDING_DEFS, buildingLevel } from '../game/settlements';
+import { boxSingleTarget, cyclePick, orderPickHits } from '../render/mapPick';
+import type { PickHit } from '../render/mapPick';
 import { releaseFocusPosition } from '../game/cameraFocus';
 import { Body as GameBody, BuildingKind, Ship } from '../types';
 import {
   spawnTracer,
   drawTracers,
   drawEngagementFire,
+  settlementHasGuns,
   spawnWreck,
   drawWrecks,
   drawBattleDamageStates,
@@ -1232,9 +1235,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // returns fire server-side (SETTLEMENT_DMG + weapons modules),
           // so a lone freighter limping past a hostile station takes its
           // hits from SOMETHING visible. Same lowest-id determinism.
+          // MULTIPLAYER: only a station with a built Weapons module has
+          // guns (the server's return-fire gate) — an unarmed station or
+          // a city credited with the hit drew a bolt from a world that
+          // cannot shoot (playtest: "Stations without weapons visually
+          // shoot back invading forces").
           for (const st of (settlementsByBodyId.get(atBody) ?? [])) {
             if (st.hp <= 0) continue;         // body already filtered
             if (st.ownedBy === ship.ownedBy) continue;
+            if (mpActions && !settlementHasGuns(st)) continue;
             if (attackerId === null || st.id < attackerId) attackerId = st.id;
           }
           if (attackerId) spawnTracer(attackerId, ship.id, nowMs);
@@ -3524,6 +3533,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         renderContext, gameState.ships, gameState.settlements, nowMs, nowTick,
         transitShipCanvasPosRef.current, gameState.warPairs,
         gameState.transitCombatEnabled, gameState.megastructures,
+        mpActions ? settlementHasGuns : undefined,
       );
     }
     // RENDEZVOUS PREVIEW. Drawn after the fleet so the arc and its
@@ -3825,10 +3835,26 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         for (const id of caught) merged.add(id);
         setShipSelection(Array.from(merged));
       } else {
+        // MULTIPLAYER: a plain box around ONE ship (or one fleet) does
+        // what clicking it does — "just this one", with its panel open —
+        // instead of a one-row group bar (playtest: "I often use the box
+        // selection to select only one ship; it could show the ship
+        // information if it's the only one selected"). Additive boxes and
+        // touch selection mode only ever collect, so they never get here.
+        const single = mpActions
+          ? boxSingleTarget(caught, gameState.ships, gameState.fleets,
+            id => fleetSlotsRef.current.get(id)?.lead)
+          : null;
+        if (single) {
+          clearShipSelection();
+          selectShip(single);
+          return;
+        }
         setShipSelection(caught);
       }
     },
-    [gameState.ships, shipCanvasPoint, uiState.selectedShipIds, setShipSelection],
+    [gameState.ships, gameState.fleets, shipCanvasPoint, uiState.selectedShipIds, setShipSelection,
+     mpActions, clearShipSelection, selectShip],
   );
 
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -4107,6 +4133,42 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     [gameState.ships, gameState.bodies, hitCam, renderTick],
   );
 
+  // MULTIPLAYER: EVERY hull under a canvas point, nearest first — the
+  // same boxes and the same fleet-to-flagship rule as pickShipAt, which
+  // stays the single-pick answer for hover and the touch gestures. Used
+  // by a click so overlapping hulls can be cycled (mapPick.cyclePick).
+  // Click-time only: nothing here runs per frame.
+  const pickShipsAt = useCallback(
+    (canvasX: number, canvasY: number, padTouch: boolean): string[] => {
+      const pad = padTouch ? TOUCH_HIT_PADDING : 0;
+      const hits: PickHit[] = [];
+      const slots = fleetSlotsRef.current;
+      for (const sl of slots.values()) {
+        const d = Math.hypot(canvasX - sl.x, canvasY - sl.y);
+        if (d <= sl.r + pad) hits.push({ id: sl.lead, d });
+      }
+      for (const ship of gameState.ships) {
+        if (slots.has(ship.id)) continue;
+        let x: number, y: number, r: number;
+        const hb = shipHitboxesRef.current.get(ship.id);
+        if (hb) {
+          x = hb.x; y = hb.y; r = hb.r + pad;
+        } else {
+          const cached = ship.transit ? transitShipCanvasPosRef.current.get(ship.id) : undefined;
+          const p = cached ?? getShipCanvasPos(ship, canvasRef.current!, gameState.bodies, hitCam(), renderTick());
+          if (!p) continue;
+          x = p.x; y = p.y; r = (ship.transit ? 20 : 14) + pad;
+        }
+        const d = Math.hypot(canvasX - x, canvasY - y);
+        if (d <= r) hits.push({ id: ship.id, d });
+      }
+      return orderPickHits(hits);
+    },
+    [gameState.ships, gameState.bodies, hitCam, renderTick],
+  );
+  /** The order the last click cycled through (mapPick.cyclePick). */
+  const pickCycleRef = useRef<string[] | null>(null);
+
   // DEVELOPMENT ONLY: every world as the last frame drew it -- centre,
   // drawn radius, how far it has unfolded, and the visible host it folds
   // into -- so a zoom sweep can aim at a world and audit overlaps without
@@ -4194,7 +4256,32 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         return;
       }
 
-      const hitShip = pickShipAt(canvasX, canvasY, touch);
+      // MULTIPLAYER: overlapping hulls cycle. Clicking the hull that is
+      // already selected, when others share the spot, selects the next
+      // one (playtest: "when intercepting ships get overlapped it's
+      // difficult to select one or the other"). A lone hull, and every
+      // shift-click, resolve exactly as before.
+      let hitShip: string | null;
+      if (mpActions && !additive) {
+        const cyc = cyclePick(
+          pickShipsAt(canvasX, canvasY, touch),
+          uiState.selectedShipId, pickCycleRef.current,
+        );
+        pickCycleRef.current = cyc && cyc.order.length > 1 ? cyc.order : null;
+        hitShip = cyc?.id ?? null;
+        if (cyc && cyc.order.length > 1) {
+          const name = gameState.ships.find(sh => sh.id === cyc.id)?.name ?? 'Ship';
+          window.dispatchEvent(new CustomEvent('orbital:toast', {
+            detail: {
+              kind: 'info',
+              text: `${name} — ${cyc.index + 1} of ${cyc.order.length} here. `
+                + `${touch ? 'Tap' : 'Click'} again for the next.`,
+            },
+          }));
+        }
+      } else {
+        hitShip = pickShipAt(canvasX, canvasY, touch);
+      }
       if (hitShip) {
         // Shift+click builds a group. Own hulls only — you can't give
         // orders to someone else's ship, and silently collecting them
@@ -4264,7 +4351,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       deselectBody();
       clearShipSelection();
     },
-    [gameState, hitCam, uiState.targetSelectionMode, uiState.selectedShipIds, selectShip, selectBody, deselectShip, deselectBody, renderTick, pickShipAt, toggleShipSelection, clearShipSelection]
+    [gameState, hitCam, uiState.targetSelectionMode, uiState.selectedShipIds, selectShip, selectBody, deselectShip, deselectBody, renderTick, pickShipAt, toggleShipSelection, clearShipSelection,
+     mpActions, pickShipsAt, uiState.selectedShipId]
   );
 
   /**
