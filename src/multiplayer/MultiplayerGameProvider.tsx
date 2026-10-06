@@ -369,6 +369,8 @@ interface ServerState {
     founded_by_faction_id: string | null;
     founded_at_tick: number;
     completed_at_tick: number | null;
+    /** 1 = an outer-reach relic (0138), seizable like a built site. */
+    ancient?: number | null;
   }>;
   settlement_claims?: Array<{ body_id: string; owner_faction_id: string }>;
   /** Ruins (0142): dead settlements warships left standing. */
@@ -2837,6 +2839,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         costCredits: Number(m.cost_credits) || 0,
         partnerBodyId: m.partner_body_id ? (stripGameId(m.partner_body_id) ?? m.partner_body_id) : null,
         foundedByFactionId: m.founded_by_faction_id ?? null,
+        ancient: Number(m.ancient) === 1,
         foundedAtTick: Number(m.founded_at_tick) || 0,
         completedAtTick: m.completed_at_tick ?? null,
         // Parsed defensively: a malformed blob degrades to "nobody

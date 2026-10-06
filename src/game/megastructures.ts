@@ -193,6 +193,23 @@ export function isBreached(m: { hp: number }): boolean {
   return m.hp <= MEGA_MAX_HP * MEGA_SEIZE_HP_FRAC;
 }
 
+/**
+ * Can this structure be taken by breach + SEIZE (worker/actions.js
+ * handleSeizeSite)? Anything a player founded, and the outer-reach
+ * RELICS (0138: an ancient Deep Space Array or Weapons Station, flagged
+ * ancient). Not the ancient warp gates, which carry no flag and belong
+ * to nobody forever.
+ *
+ * The card used to test `foundedByFactionId !== null` alone, which hid
+ * the whole boarding section on every relic -- no button and no hint --
+ * while the server would have accepted the boarding: "so how exactly do
+ * i board this thing?" (fartmaster, 2026-10-06, a breached Eris
+ * Ancient Relay at 0/3000).
+ */
+export function isSeizable(m: { foundedByFactionId: string | null; ancient?: boolean }): boolean {
+  return m.foundedByFactionId !== null || !!m.ancient;
+}
+
 /** Live state of one site, from the state payload's `megastructures`. */
 export interface MegastructureState {
   bodyId: string;
@@ -204,6 +221,9 @@ export interface MegastructureState {
   costCredits: number;
   partnerBodyId: string | null;
   foundedByFactionId: string | null;
+  /** An outer-reach relic (0138): nobody founded it, and it is taken by
+   *  breach + SEIZE like anything a player built (isSeizable). */
+  ancient?: boolean;
   foundedAtTick: number;
   completedAtTick: number | null;
   /** Gravity Sink: faction ids allowed through. The OWNER is never in
