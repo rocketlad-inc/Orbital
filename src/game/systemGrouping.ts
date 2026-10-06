@@ -163,7 +163,10 @@ export function coOrbitalHosts(bodies: Body[]): Map<string, string> {
     if (isEccentricRogue(b)) continue;
     const r = b.orbitRadius;
     if (!(r > 0)) continue;
-    const host = planets.find(p => Math.abs(p.orbitRadius - r) <= r * CO_ORBITAL_TOLERANCE);
+    // Around the SAME body: a far gate 7000 from the Cygnus barycenter is
+    // not in Saturn's ring 6744 from the Sun (it filed under Saturn System).
+    const host = planets.find(p => p.parent === b.parent
+      && Math.abs(p.orbitRadius - r) <= r * CO_ORBITAL_TOLERANCE);
     if (host) out.set(b.id, host.id);
   }
   coOrbitalCache.set(bodies, out);

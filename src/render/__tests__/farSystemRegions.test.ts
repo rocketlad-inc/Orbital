@@ -12,7 +12,7 @@
 // ============================================================
 
 import { computeSystemRegions } from '../systemRegions';
-import { findBelts } from '../../game/systemGrouping';
+import { findBelts, coOrbitalHosts } from '../../game/systemGrouping';
 import type { Body } from '../../types';
 
 const B = (o: Partial<Body> & { id: string; type: Body['type'] }): Body => ({
@@ -68,6 +68,17 @@ describe('far-system territory rings', () => {
       expect(ring!.shape.rInner).toBeLessThan(orbit);
       expect(ring!.shape.rOuter).toBeGreaterThan(orbit);
     }
+  });
+
+  it('never files a far body in a Sol planet\'s ring for sharing its radius', () => {
+    // The far-side sun gate, 3680 out from the Centauri barycenter --
+    // exactly Jupiter's ring around the Sun. Seen on staging as the
+    // Cygnus "Sol Gate" listed under Saturn System.
+    const gate = B({ id: 'sungate_centauri_far', type: 'megastructure', parent: 'binary_barycenter', orbitRadius: 3680 });
+    expect(coOrbitalHosts([...solSide, ...far, gate]).get(gate.id)).toBeUndefined();
+    // ...while a real trojan in Jupiter's ring still files with Jupiter.
+    const trojan = B({ id: 'hektor', type: 'lagrange', parent: 'sol', orbitRadius: 3680 });
+    expect(coOrbitalHosts([...solSide, trojan]).get('hektor')).toBe('jupiter');
   });
 
   it('never files a far dwarf in Sol\'s Asteroid Belt', () => {
