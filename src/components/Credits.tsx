@@ -195,7 +195,10 @@ export const Credits: React.FC = () => (
       <a className="doc-link" href="https://astrogeology.usgs.gov">USGS Astrogeology</a> and NASA/JPL (Galileo,
       Cassini, Voyager, Dawn, Viking, Mars Global Surveyor and New Horizons), which are in the public domain.
       Orbital re-projects them onto spheres, re-grades some to fit the map, and paints the terraformed biomes over
-      each world&rsquo;s own topography. No endorsement by NASA, USGS or Solar System Scope is implied.
+      each world&rsquo;s own topography. The worlds of the far systems, which no spacecraft has mapped, are built
+      from these same maps (Ganymede, Io, Mercury, Callisto, Enceladus, Charon, Eris, Jupiter and Saturn), mirrored,
+      turned and recoloured, and their stars from the solar map re-graded by spectral class.
+      No endorsement by NASA, USGS or Solar System Scope is implied.
     </p>
 
     <h2>Fonts</h2>
