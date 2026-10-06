@@ -32,9 +32,9 @@ function check(label, ok, detail = '') {
 }
 
 const CENTAURI = ['binary_barycenter', 'centauri_a', 'centauri_b', 'verdant',
-  'crimson', 'prismara', 'cinder', 'farspire'];
+  'crimson', 'prismara', 'scoria', 'umber', 'cinder', 'farspire'];
 const CYGNUS = ['bh_barycenter', 'cygnus_x', 'hde_226868', 'requiem',
-  'vellichor', 'echelon', 'reliquary'];
+  'vellichor', 'elegy', 'vesper', 'threnody', 'echelon', 'reliquary'];
 const ALL_FAR = [...CENTAURI, ...CYGNUS];
 
 // ---- 1. The catalogue ------------------------------------------------
@@ -46,7 +46,7 @@ check('every one of them is flagged far_system',
 check('the default config leaves them out of a game\'s catalogue',
   catalogFor(defaults()).every(b => !b.far_system));
 check('...and the dial puts them back',
-  catalogFor({ ...defaults(), far_systems: 1 }).filter(b => b.far_system).length === 15);
+  catalogFor({ ...defaults(), far_systems: 1 }).filter(b => b.far_system).length === ALL_FAR.length);
 
 // SERVER DIALECT. The catalogue spells it 'gas-giant'; the client says
 // 'gas_giant' and mapBodyType rewrites at the /state boundary. A far
@@ -55,6 +55,31 @@ check('...and the dial puts them back',
 const types = new Set(BODY_CATALOG.filter(b => b.far_system).map(b => b.type));
 check('they use the SERVER spelling for types',
   !types.has('gas_giant') && !types.has('ice_giant'), [...types].join(', '));
+
+// EVERY GAS GIANT HOLDS AT LEAST THREE WORLDS (Lorne, 2026-10-06).
+{
+  const giants = BODY_CATALOG.filter(b => b.type === 'gas-giant' || b.type === 'ice-giant');
+  const moonsOf = (g) => BODY_CATALOG.filter(b => b.parent === g.id);
+  check('every gas and ice giant has at least three moons',
+    giants.every(g => moonsOf(g).length >= 3),
+    giants.filter(g => moonsOf(g).length < 3).map(g => `${g.id}:${moonsOf(g).length}`).join(', '));
+  // Far moons are not moon-scaled, so check them at the live body size
+  // (body_scale 2): clear of the giant's cloud tops, and each doubled SOI
+  // clear of its neighbour's.
+  const BODY = 2;
+  for (const g of giants.filter(x => x.far_system)) {
+    const ms = moonsOf(g).sort((a, b) => a.orbit_radius - b.orbit_radius);
+    check(`${g.name}'s moons clear its surface at live size`,
+      ms.every(m => m.orbit_radius - m.radius * BODY > g.radius * BODY),
+      ms.map(m => `${m.id}@${m.orbit_radius}`).join(', '));
+    check(`${g.name}'s moons keep out of each other's way`,
+      ms.every((m, i) => i === 0
+        || m.orbit_radius - m.soi * BODY > ms[i - 1].orbit_radius + ms[i - 1].soi * BODY),
+      ms.map(m => `${m.id} ${m.orbit_radius}±${m.soi * BODY}`).join(', '));
+    check(`${g.name}'s moons all sit inside its sphere of influence`,
+      ms.every(m => m.orbit_radius < g.soi * BODY * 0.5));
+  }
+}
 
 // ---- 2. Distance is the balance -------------------------------------
 // Live games run system_scale 4 over the catalogue's own SYSTEM_SCALE 2.
@@ -139,10 +164,10 @@ const off = await seedGame('gfar_zero', 0);
 check('far_systems: 0 seeds none either', ![...off.ids].some(t => FAR_SYSTEM_IDS.has(t)));
 
 const on = await seedGame('gfar_on', 1);
-check('far_systems: 1 seeds all fifteen',
+check(`far_systems: 1 seeds all ${ALL_FAR.length}`,
   ALL_FAR.every(id => on.ids.has(id)), ALL_FAR.filter(id => !on.ids.has(id)).join(', '));
 check('...and the rest of Sol is still there',
-  on.count === plain.count + 15, `${on.count} vs ${plain.count} + 15`);
+  on.count === plain.count + ALL_FAR.length, `${on.count} vs ${plain.count} + ${ALL_FAR.length}`);
 
 // THE BACKFILL IS THE ONE THAT TOUCHES LIVE GAMES.
 const added = await backfillMissingBodies(plain.env, 'gfar_off');

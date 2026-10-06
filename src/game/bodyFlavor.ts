@@ -165,6 +165,11 @@ export const BODY_FLAVOR: Record<string, string> = {
 
   cinder: "A rusty rock that looks dead and isn't — beneath its burnt surface lies a fortune in credits, metal, and some of the highest science in the system. Two suns have baked it to the color of old iron. Plain to the eye and priceless to the survey; never judge a Centauri world by its face.",
 
+  scoria: "A cinder of a moon, wrung by Crimson's tides until its crust split and never closed. Rivers of glowing rock run between plates of black glass, and the light of two suns comes back off it the colour of a forge. Metal-heavy, hot underfoot, and closer to its giant than anything should want to be.",
+  umber: "Crimson's outer moon, dark as old leather and cratered to the horizon, carrying the dust of everything that ever fell toward the giant. Rich in metal, poor in everything else, and quiet in a way the inner moons never are.",
+  elegy: "A shattered patchwork moon whose pieces froze back together in the wrong places, ridges and terraces stacked like a monument nobody finished. It rides closest to Vellichor and drinks the most of its light. Strong in science; the fractures run deep and so does the ice.",
+  vesper: "Pale and silver-violet, Vesper rises over Vellichor's horizon like an evening star. Its long canyons catch the blue glare of HDE 226868 and hold it a little after the light has gone. Balanced in everything, the steadiest world in Cygnus.",
+  threnody: "The outermost of Vellichor's moons, a dark indigo stone splashed with bright impact rays, as if the black hole had been throwing things at it. Cold, slow and patient, with metal under the ice for anyone who comes this far.",
   farspire: "The lonely outpost at the system's edge, a small frozen spire of rock and ice rich in science despite its modest size. Just beyond it, once the Sun gives up its doors, the gate home comes to rest — the far end of the crossing from Sol's Far Reach. The end of one journey and the beginning of the road back; every road through Centauri eventually passes Farspire.",
 
   // === Cygnus X-1 analogue ===================================

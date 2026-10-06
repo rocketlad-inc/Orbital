@@ -278,6 +278,83 @@ def vellichor():
                            (0.82, '#b4a4dc'), (1, '#ecE6fa'.lower())])
     save_set('vellichor', detail(raw, L, 0.2), tilt=-0.06, flatten=0.08)
 
+# --- The giants' moons (2026-10-06: every gas giant holds at least three).
+
+def glow_cracks(L, lo=94.0, hi=99.0, shrink=10):
+    """The finest dark seams of a map, 0..1: what fissures look like."""
+    H, W = L.shape
+    blur = np.asarray(Image.fromarray((L * 255).astype(np.uint8)).resize(
+        (W // shrink, H // shrink), Image.BILINEAR).resize((W, H), Image.BILINEAR), np.float32) / 255
+    d = blur - L
+    t0, t1 = np.percentile(d, lo), np.percentile(d, hi)
+    return np.clip((d - t0) / max(t1 - t0, 1e-6), 0, 1)
+
+@world
+def scoria():
+    # Crimson's tidal forge: plates of black glass split by glowing rock.
+    # Venus's radar map: real lava plains, and whole (Triton's Voyager
+    # coverage ends in a hard edge that lit up as a seam).
+    T = dict(roll=0.58, flip=True)
+    m = transform(src_map('venus'), **T)
+    L = stretch(lum(m))
+    rock = gradient_map(L, [(0, '#050304'), (0.45, '#140c0a'), (0.75, '#2c1c16'), (1, '#5a3c2c')])
+    fire = glow_cracks(L, 91.0, 98.5, shrink=14)[..., None]
+    lava = gradient_map(fire[..., 0], [(0, '#7a1c08'), (0.5, '#e05a14'), (1, '#ffd27a')])
+    raw = rock * (1 - fire * 0.95) + lava * fire * 0.95
+    save_set('scoria', detail(raw, L, 0.25), small=True, tilt=0.08, lon0=0.4)
+    tf = transform(src_map('venus_tf'), **T)
+    save_set('scoria_tf', tint(tf, (0.62, 0.4, 0.3), 0.25), small=True, tilt=0.08, lon0=0.4)
+
+@world
+def umber():
+    # Crimson's outer moon: leather-dark and cratered to the horizon.
+    T = dict(roll=0.27, mirror=True)
+    m = transform(src_map('umbriel'), **T)
+    L = stretch(lum(m))
+    raw = gradient_map(L, [(0, '#120c08'), (0.35, '#3a2618'), (0.65, '#6a4a32'),
+                           (0.85, '#9a7656'), (1, '#d8bc98')])
+    save_set('umber', detail(raw, L, 0.32), small=True, tilt=-0.12, lon0=-0.7)
+    tf = transform(src_map('umbriel_tf'), **T)
+    save_set('umber_tf', tint(tf, (0.6, 0.48, 0.36), 0.22), small=True, tilt=-0.12, lon0=-0.7)
+
+@world
+def elegy():
+    # A patchwork monument in ash-blue. Rhea's whole Cassini map: Miranda
+    # was the obvious terraces, but half of it was never imaged.
+    T = dict(roll=0.81, flip=True)
+    m = transform(src_map('rhea'), **T)
+    L = stretch(lum(m))
+    raw = gradient_map(L, [(0, '#0e121a'), (0.35, '#2c3648'), (0.65, '#6a7890'),
+                           (0.85, '#a8b4c8'), (1, '#eef2f8')])
+    save_set('elegy', detail(raw, L, 0.3), small=True, tilt=0.14, lon0=1.6)
+    tf = transform(src_map('rhea_tf'), **T)
+    save_set('elegy_tf', tint(tf, (0.48, 0.54, 0.66), 0.22), small=True, tilt=0.14, lon0=1.6)
+
+@world
+def vesper():
+    # The evening star of Cygnus: Titania's canyons in silver-violet.
+    T = dict(roll=0.36, mirror=True, flip=True)
+    m = transform(src_map('titania'), **T)
+    L = stretch(lum(m))
+    raw = gradient_map(L, [(0, '#16121e'), (0.35, '#40384e'), (0.65, '#8a7ea4'),
+                           (0.85, '#c4b8dc'), (1, '#f6f2fc')])
+    save_set('vesper', detail(raw, L, 0.3), small=True, tilt=-0.05, lon0=-1.4)
+    tf = transform(src_map('titania_tf'), **T)
+    save_set('vesper_tf', tint(tf, (0.62, 0.56, 0.74), 0.22), small=True, tilt=-0.05, lon0=-1.4)
+
+@world
+def threnody():
+    # Dark indigo stone splashed with bright rays: Oberon's craters keep
+    # their ejecta, so the bright end of the ramp goes nearly white.
+    T = dict(roll=0.64)
+    m = transform(src_map('oberon'), **T)
+    L = stretch(lum(m), 2, 99.5)
+    raw = gradient_map(L, [(0, '#0e0c1c'), (0.3, '#2a2850'), (0.6, '#4e4c7c'),
+                           (0.85, '#9896c4'), (1, '#f2f2fe')])
+    save_set('threnody', detail(raw, L, 0.3), small=True, tilt=0.2, lon0=0.9)
+    tf = transform(src_map('oberon_tf'), **T)
+    save_set('threnody_tf', tint(tf, (0.42, 0.42, 0.62), 0.25), small=True, tilt=0.2, lon0=0.9)
+
 if __name__ == '__main__':
     only = set(sys.argv[1:])
     for fn in WORLDS:
