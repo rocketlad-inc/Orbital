@@ -39,7 +39,7 @@
 import { json, err, readJson } from './trades.js';
 import { FEEDBACK_DISCORD_URL } from './links.js';
 import { hasEntitlement } from './store.js';
-import { page } from './discordOauth.js';
+import { page, discordClientId } from './discordOauth.js';
 
 const DISCORD_API = 'https://discord.com/api/v10';
 export const FEED_LEVELS = ['off', 'headlines', 'all'];
@@ -299,7 +299,8 @@ export async function handleConnectStart(req, env, { session, params, url }) {
       "Sending a game's feed to your own Discord server comes with the Commander's Commission. "
       + 'You can get it from your profile in Orbital.', false);
   }
-  if (!env.DISCORD_CLIENT_ID || !env.DISCORD_CLIENT_SECRET || !env.DISCORD_BOT_TOKEN) {
+  const clientId = await discordClientId(env);
+  if (!clientId || !env.DISCORD_CLIENT_SECRET || !env.DISCORD_BOT_TOKEN) {
     return page('Not available yet', "Orbital's Discord bot is not set up on this server yet.", false);
   }
   const nonce = crypto.randomUUID().replace(/-/g, '');
@@ -309,7 +310,7 @@ export async function handleConnectStart(req, env, { session, params, url }) {
     .prepare('INSERT INTO discord_link_codes (code, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)')
     .bind(`feed:${gameId}:${nonce}`, session.user_id, now, now + CONNECT_TTL_MS).run();
   const q = new URLSearchParams({
-    client_id: env.DISCORD_CLIENT_ID,
+    client_id: clientId,
     response_type: 'code',
     scope: 'bot applications.commands webhook.incoming',
     permissions: SERVER_BOT_PERMISSIONS,
@@ -344,7 +345,7 @@ export async function handleConnectCallback(_req, env, { url }) {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
-      client_id: env.DISCORD_CLIENT_ID,
+      client_id: await discordClientId(env),
       client_secret: env.DISCORD_CLIENT_SECRET,
       grant_type: 'authorization_code',
       code,
@@ -473,7 +474,9 @@ async function feedView(env, gameId, userId, isHost) {
     host_name: room?.host_name ?? null,
     i_hold_commission: iHold,
     host_holds_commission: hostHolds,
-    server_connect_ready: !!(env.DISCORD_CLIENT_ID && env.DISCORD_CLIENT_SECRET && env.DISCORD_BOT_TOKEN),
+    // The client id comes from the bot token (discordClientId); the
+    // secret is the one thing that must be configured by hand.
+    server_connect_ready: !!(env.DISCORD_CLIENT_SECRET && env.DISCORD_BOT_TOKEN),
     thread_id: row?.thread_id ?? null,
     following: follows,
     discord_linked: !!me?.discord_id,

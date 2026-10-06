@@ -52,6 +52,7 @@ globalThis.fetch = async (url, init = {}) => {
   let body = null;
   if (typeof init.body === 'string') { try { body = JSON.parse(init.body); } catch { body = init.body; } }
   calls.push({ method: init.method ?? 'GET', path, body });
+  if ((init.method ?? 'GET') === 'GET' && path === '/applications/@me') return Response.json({ id: 'app-from-token' });
   if ((init.method ?? 'GET') === 'GET' && path === `/channels/${CH}`) {
     return Response.json({ id: CH, name: 'orbital-news', type: channelType, guild_id: 'g9' });
   }
@@ -199,6 +200,14 @@ check('...and the game posts inside that post', posts(c => c.path === `/channels
 // ---- cancelled on Discord's page ------------------------------------------------------
 r = await call('GET', `/api/discord/feed/callback?error=access_denied&state=${g}.zzz`);
 check('cancelling on Discord connects nothing', /Nothing was connected/.test(String(r.data)));
+
+// ---- no DISCORD_CLIENT_ID configured: it is read from the bot token ---------------
+delete env.DISCORD_CLIENT_ID;
+r = await call('GET', `/api/games/${g}/feed/connect`, { cookie: H.cookie });
+check('with no client id configured, the connect still works (id read via the bot token)',
+  r.status === 302 && new URL(r.location ?? 'x:').searchParams.get('client_id') === 'app-from-token', r.location);
+r = await call('GET', '/api/discord/link-status', { cookie: H.cookie });
+check('...and the one-click account link shows as available', r.data?.oauth_available === true, r.data);
 
 // ---- the one-click account link (same state table) -----------------------------------
 // Its insert left out the NOT NULL created_at, so it threw on every click

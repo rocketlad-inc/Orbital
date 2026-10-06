@@ -1249,7 +1249,9 @@ async function handleLinkStatus(_req, env, { session }) {
     .prepare('SELECT discord_id, discord_username FROM users WHERE id = ?')
     .bind(session.user_id).first();
   return json({
-    oauth_available: !!(env.DISCORD_CLIENT_ID && env.DISCORD_CLIENT_SECRET),
+    // The client id is derived from the bot token (discordOauth.js
+    // discordClientId); only the secret has to be configured.
+    oauth_available: !!(env.DISCORD_CLIENT_SECRET && (env.DISCORD_CLIENT_ID || env.DISCORD_BOT_TOKEN)),
     linked: !!row?.discord_id,
     discord_username: row?.discord_username ?? null,
   });
