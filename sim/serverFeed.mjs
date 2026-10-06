@@ -53,6 +53,10 @@ globalThis.fetch = async (url, init = {}) => {
   if (typeof init.body === 'string') { try { body = JSON.parse(init.body); } catch { body = init.body; } }
   calls.push({ method: init.method ?? 'GET', path, body });
   if ((init.method ?? 'GET') === 'GET' && path === '/applications/@me') return Response.json({ id: 'app-from-token' });
+  if (init.method === 'PUT' && /^\/applications\/[^/]+(\/guilds\/[^/]+)?\/commands$/.test(path)) {
+    return Response.json((Array.isArray(body) ? body : []).map((c, i) => ({ id: `cmd${i}`, name: c.name })));
+  }
+  if ((init.method ?? 'GET') === 'GET' && path === '/users/@me/guilds') return Response.json([{ id: 'lorne1' }, { id: 'g9' }]);
   if ((init.method ?? 'GET') === 'GET' && path === `/channels/${CH}`) {
     return Response.json({ id: CH, name: 'orbital-news', type: channelType, guild_id: 'g9' });
   }
@@ -215,6 +219,22 @@ check('...and the one-click account link shows as available', r.data?.oauth_avai
 r = await call('GET', '/api/discord/oauth/start', { cookie: M.cookie });
 check('"Connect Discord" (one-click account link) hands off to Discord',
   r.status === 302 && new URL(r.location ?? 'x:').hostname === 'discord.com', [r.status, String(r.data).slice(0, 200)]);
+
+// ---- slash commands register themselves (the minute cron) --------------------------
+{
+  const { ensureGlobalCommands } = await import('../worker/discord.js');
+  calls.length = 0;
+  const first = await ensureGlobalCommands(env);
+  const globalPut = calls.find(c => c.method === 'PUT' && c.path === '/applications/app-from-token/commands');
+  const cleared = calls.filter(c => c.method === 'PUT' && /\/guilds\/[^/]+\/commands$/.test(c.path));
+  check('the cron registers the slash commands globally',
+    !!globalPut && Array.isArray(globalPut.body) && globalPut.body.some(c => c.name === 'link'), first);
+  check('...and clears the per-server copies, so nothing shows twice',
+    cleared.length === 2 && cleared.every(c => Array.isArray(c.body) && c.body.length === 0), cleared.map(c => c.path));
+  calls.length = 0;
+  const again = await ensureGlobalCommands(env);
+  check('the next minute does nothing (one read, no Discord call)', again.skipped === 'current' && calls.length === 0, again);
+}
 
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');
 process.exit(failures ? 1 : 0);

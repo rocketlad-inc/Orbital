@@ -1315,6 +1315,56 @@ export const SLASH_COMMANDS = [
 ];
 
 /**
+ * The slash commands register THEMSELVES, globally, whenever the list
+ * changes. Run from the minute cron: one D1 read when nothing changed.
+ * When SLASH_COMMANDS differs from what was last registered (a deploy
+ * added or changed one, or it never ran), PUT them globally -- every
+ * server the bot is in, including players' own (gameFeed.js, YOUR OWN
+ * SERVER) -- and clear the per-server copies registered by hand before,
+ * which would otherwise show every command twice. The hash is written
+ * only on success, so a failed attempt simply retries next minute.
+ *
+ * Replaces pressing a button in bot control after every command change
+ * (Lorne, 2026-10-06: "If it's in Orbital, turn it on").
+ */
+const COMMANDS_HASH_KEY = 'slash_commands_registered';
+export async function ensureGlobalCommands(env) {
+  if (!env.DISCORD_BOT_TOKEN) return { skipped: 'no_token' };
+  const body = JSON.stringify(SLASH_COMMANDS);
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`global:${body}`));
+  const hash = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
+  const row = await env.DB
+    .prepare('SELECT value FROM bot_settings WHERE key = ?').bind(COMMANDS_HASH_KEY).first();
+  let last = null;
+  try { last = row ? JSON.parse(row.value) : null; } catch { last = null; }
+  if (last?.hash === hash) return { skipped: 'current' };
+
+  const appRes = await botFetch(env, 'GET', '/applications/@me');
+  if (!appRes.ok) return { error: `application ${appRes.status}` };
+  const app = await appRes.json();
+  const res = await botFetch(env, 'PUT', `/applications/${app.id}/commands`, SLASH_COMMANDS);
+  if (!res.ok) {
+    console.error('global command registration failed', res.status, await res.text().catch(() => ''));
+    return { error: `register ${res.status}` };
+  }
+  const registered = await res.json();
+  let cleared = 0;
+  const gr = await botFetch(env, 'GET', '/users/@me/guilds');
+  for (const g of (gr.ok ? await gr.json() : [])) {
+    const c = await botFetch(env, 'PUT', `/applications/${app.id}/guilds/${g.id}/commands`, []);
+    if (c.ok) cleared += 1;
+  }
+  const value = JSON.stringify({
+    hash, at: Date.now(), commands: registered.map(c => c.name), guilds_cleared: cleared,
+  });
+  await env.DB
+    .prepare(`INSERT INTO bot_settings (key, value, updated_ms) VALUES (?, ?, ?)
+              ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_ms = excluded.updated_ms`)
+    .bind(COMMANDS_HASH_KEY, value, Date.now()).run();
+  return { registered: registered.length, guilds_cleared: cleared };
+}
+
+/**
  * POST /api/admin/discord/register-commands?guild=<id>
  * Registers SLASH_COMMANDS using the worker's OWN stored bot token, so
  * shipping a new command never requires the token to exist on a laptop
