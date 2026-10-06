@@ -1227,6 +1227,17 @@ export interface GameState {
    *  whether the local player can edit. Parallel-indexed with combatLog.
    *  Multiplayer only. */
   chronicleMeta?: (ChronicleEditMeta | null)[];
+  /** Refits that landed in the server's recent event window (the
+   *  'ship_refitted' chronicle rows, owner-only). Multiplayer only;
+   *  feeds the situation report's "Refit complete". */
+  recentRefits?: Array<{
+    shipId: string;
+    tick: number;
+    shipName: string | null;
+    designName: string | null;
+    bodyId: string | null;
+    bodyName: string | null;
+  }>;
   /** Machine-readable chronicle kind per entry, parallel-indexed with
    *  combatLog. Drives the pending-FX queue (src/render/pendingFx.ts). */
   lastHarvestTick: number;             // tick when resources were last collected

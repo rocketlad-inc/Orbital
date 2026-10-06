@@ -3204,12 +3204,14 @@ export class Room {
     try {
       const pendingRefits = (await this.env.DB
         .prepare(
-          `SELECT s.id, s.owner_faction_id, s.ship_class, s.parent_body_id,
+          `SELECT s.id, s.name, s.owner_faction_id, s.ship_class, s.parent_body_id,
                   s.hp, s.hp_max, s.parts_json, s.refit_pending_design_id,
                   d.parts_json AS design_parts_json, d.ship_class AS design_class,
-                  d.icon_variant AS design_icon_variant
+                  d.icon_variant AS design_icon_variant, d.name AS design_name,
+                  b.name AS body_name
              FROM game_ships s
              LEFT JOIN game_ship_designs d ON d.id = s.refit_pending_design_id
+             LEFT JOIN game_bodies b ON b.id = s.parent_body_id
             WHERE s.game_id = ? AND s.status = 'active'
               AND s.refit_pending_design_id IS NOT NULL
               AND NOT EXISTS (
@@ -3300,6 +3302,26 @@ export class Room {
               )
               .bind(fee.metal, fee.gold, s.owner_faction_id, fee.metal, fee.gold));
           }
+          // SAID OUT LOUD. A refit used to land in silence, which with
+          // the tick bug above read as "nothing happens". One owner-only
+          // chronicle row feeds the situation report, the event log and
+          // the ship's own Log tab (state.js reads it by ship_id).
+          stmts.push(this.env.DB
+            .prepare(
+              `INSERT OR IGNORE INTO chronicle_entries
+                 (id, game_id, tick_number, kind, actor_faction_id, body_id, ship_id,
+                  payload, visibility, created_at_ms)
+               VALUES (?, ?, ?, 'ship_refitted', ?, ?, ?, ?, ?, ?)`,
+            )
+            .bind(
+              `c_refit_${String(s.id).slice(-16)}_${tick}`, gameId, tick, s.owner_faction_id,
+              s.parent_body_id, s.id,
+              JSON.stringify({
+                ship_name: s.name, design_name: s.design_name, body_name: s.body_name,
+                fee_metal: fee.metal, fee_gold: fee.gold, parts: newParts,
+              }),
+              JSON.stringify([s.owner_faction_id]), Date.now(),
+            ));
           await this.env.DB.batch(stmts);
           pool.metal -= fee.metal;
           pool.gold -= fee.gold;

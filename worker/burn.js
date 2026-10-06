@@ -6,10 +6,10 @@
 // harder than the push, the flip lands at 90% of the trip (time AND
 // distance), and the trip takes 0.745x as long as an even 50/50 burn.
 //
-// Base thrust is 1g (Lorne, 2026-10-06: the outer system took days to
-// cross at the old 0.05g). Twenty times the push, with the hard brake on
-// top, makes every trip 6x shorter than before (Earth-Mars ~20h -> ~3.4h,
-// a Kuiper hop ~66h -> ~11h, at System scale 4 and one-hour ticks).
+// Base thrust is 0.05g. It was raised to 1g on 2026-10-06 (the outer
+// system took days to cross) and put back within the hour: 6x shorter
+// trips everywhere (Earth-Mars ~20h -> ~3.4h) was far too fast. The hard
+// brake alone stays: every trip is 0.745x what it was.
 //
 // Mirrored by src/physics/torchTransfer.ts, which installs these values
 // from /state (game.burn_engine_g, game.burn_brake_mul) and is held to
@@ -22,7 +22,7 @@ export const G_ANCHOR = 4 * 132.6;
 
 /** Every hull's base thrust, in g. Engine parts and captain traits
  *  multiply it on the client, where legs are planned. */
-export const SHIP_ENGINE_G = 1;
+export const SHIP_ENGINE_G = 0.05;
 
 /** Braking thrust as a multiple of the push. 1 = the old even burn. */
 export const BRAKE_MUL = 9;
@@ -60,12 +60,12 @@ export function boostAccelFor(d, T, k = BRAKE_MUL) {
 /**
  * How much faster a cruising ship moves than it did at the legacy burn,
  * over the same route: peak speed is sqrt(2k/(1+k) * a * d), so the ratio
- * is sqrt(2k/(1+k) * g / legacy g) = 6 at 1g with a 9x brake.
+ * is sqrt(2k/(1+k) * g / legacy g): 1.34 at 0.05g with a 9x brake.
  */
 export const CRUISE_SPEED_SCALE = Math.sqrt(
   ((2 * BRAKE_MUL) / (1 + BRAKE_MUL)) * (SHIP_ENGINE_G / LEGACY_ENGINE_G),
 );
 
 /** How much faster a hull is moving one tick after lighting its engine:
- *  linear in the push, so 20x at 1g. */
+ *  linear in the push. */
 export const DEPARTURE_SPEED_SCALE = SHIP_ENGINE_G / LEGACY_ENGINE_G;

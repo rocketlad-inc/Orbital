@@ -1210,6 +1210,7 @@ function classifyChronicleEvent(kind: string): { category: LogCategory; level: L
       return { category: 'THREAT', level: 'WARN' };
     case 'settlement_built':
     case 'ship_built':
+    case 'ship_refitted':
     case 'building_completed':
     case 'secret_discovered':
     case 'tech_advanced':
@@ -2168,6 +2169,15 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         return `${t}  ◇ ${parsed.name ?? 'A meteoroid'} is worked out`;
       }
 
+      if (ev.kind === 'ship_refitted') {
+        const fee = [
+          Number(parsed.fee_metal ?? 0) > 0 ? `${Math.round(Number(parsed.fee_metal))}M` : null,
+          Number(parsed.fee_gold ?? 0) > 0 ? `${Math.round(Number(parsed.fee_gold))}C` : null,
+        ].filter(Boolean).join(' ');
+        return `${t}  ⟳ ${parsed.ship_name ?? 'A ship'} refitted to ${parsed.design_name ?? 'its new design'}`
+          + ` at ${parsed.body_name ?? 'a friendly world'}${fee ? ` (${fee})` : ''}`;
+      }
+
       if (ev.kind === 'treaty_signed') {
         const a = nameOfFaction(ev.actor_faction_id);
         const b = nameOfFaction(ev.target_faction_id);
@@ -2869,6 +2879,21 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     chronicleFlavor,
     chronicleFocus,
     chronicleMeta,
+    recentRefits: orderedEvents
+      .filter(ev => ev.kind === 'ship_refitted' && ev.ship_id)
+      .map(ev => {
+        let p: Record<string, unknown> = {};
+        try { p = JSON.parse(ev.payload || '{}'); } catch { /* ignore */ }
+        return {
+          // Ship ids stay qualified on the client (id: s.id); bodies don't.
+          shipId: ev.ship_id as string,
+          tick: Number(ev.tick_number),
+          shipName: (p.ship_name as string) ?? null,
+          designName: (p.design_name as string) ?? null,
+          bodyId: ev.body_id ? (stripGameId(ev.body_id as string) ?? (ev.body_id as string)) : null,
+          bodyName: (p.body_name as string) ?? null,
+        };
+      }),
     lastHarvestTick: srv.game.current_tick,
     tradeRoutes,
     shipDesigns,

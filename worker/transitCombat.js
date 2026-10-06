@@ -34,10 +34,11 @@ import { CRUISE_SPEED_SCALE, DEPARTURE_SPEED_SCALE } from './burn.js';
  *  starting point, not as a tuned number, and stage-1 telemetry is what
  *  replaces it. Host-tunable via `transit_evasion_v_ref`.
  *
- *  SCALED WITH THE BURN (burn.js, 2026-10-06). 45 was set when ships
- *  pushed at 0.05g; at 1g with a 9x brake every cruise pass is 6x faster
- *  over the same route, so the crossing rate that "starts to matter" is
- *  6x too. Unscaled, a hull in flight would be all but unhittable. */
+ *  SCALED WITH THE BURN (burn.js, 2026-10-06). 45 was set for an even
+ *  burn; the 9x brake makes every cruise pass 1.34x faster over the same
+ *  route, so the crossing rate that "starts to matter" moves with it. A
+ *  faster burn (the 1g briefly shipped made passes 6x faster) would leave
+ *  hulls in flight all but unhittable if this stood still. */
 export const V_REF = Math.round(45 * CRUISE_SPEED_SCALE);
 
 /** CLOSING-SPEED BONUS — the answer to "a mechanic that does nothing".
@@ -66,10 +67,10 @@ export const V_REF = Math.round(45 * CRUISE_SPEED_SCALE);
  *
  *  SCALED WITH THE BURN (burn.js, 2026-10-06), each end by what it was
  *  tuned against. The start sat just above a one-tick departure burn
- *  (26.5 u/t at 0.05g; 530 at 1g), which grows with the push itself:
- *  x20. The full mark sat at the top of interplanetary cruise passes
- *  (200-380 u/t), which grow with sqrt of the push and the hard brake:
- *  x6. So 50 -> 1000 and 350 -> 2100. */
+ *  (26.5 u/t at 0.05g), which grows with the push itself. The full mark
+ *  sat at the top of interplanetary cruise passes (200-380 u/t on an even
+ *  burn), which grow with sqrt of the push and with the hard brake: x1.34
+ *  at 0.05g. So 50 -> 50 and 350 -> 470. */
 export const DV_BONUS_MAX = 0.10;
 export const DV_BONUS_START = Math.round(50 * DEPARTURE_SPEED_SCALE);
 export const DV_BONUS_FULL = Math.round(350 * CRUISE_SPEED_SCALE);
@@ -365,7 +366,7 @@ const MAX_SUBSTEP = 1;
 /** Substeps per trip on a HARD-BRAKE leg (brake != boost). Matches
  *  BURN_SUBSTEPS in src/physics/torchTransfer.ts — keep in sync.
  *
- *  At 1g a leg is a few ticks long and its 9x brake is a tenth of that:
+ *  A short leg is a few ticks long and its 9x brake a tenth of that:
  *  a whole-tick step whose midpoint falls before the flip boosts straight
  *  through the brake and never slows down. A hundredth of the trip gives
  *  the brake ten steps, and no step is allowed to straddle the flip. */

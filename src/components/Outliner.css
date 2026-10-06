@@ -579,3 +579,15 @@
 .outliner__fleet-hull:hover { background: rgba(255, 255, 255, 0.1); }
 /* The flag wears a ring, not a colour — colour is spoken for by health. */
 .outliner__fleet-hull.is-flag { box-shadow: inset 0 0 0 1px #ffb84d; }
+
+/* A refit is ordered (RefitMark): sky-blue like the fleet panel's
+   'Refit pending' badge, amber when something is in its way. */
+.outliner__refit {
+  flex: 0 0 auto;
+  margin-left: 4px;
+  font-size: 11px;
+  line-height: 1;
+  color: #9fdcff;
+  cursor: help;
+}
+.outliner__refit--blocked { color: #ffb84d; }
