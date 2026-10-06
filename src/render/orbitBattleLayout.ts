@@ -63,6 +63,9 @@ export type OBMode = 'compact' | 'wide' | 'ring' | 'deep ring' | 'crammed';
 
 export interface OBLayout {
   placements: Map<string, OBPlacement>;
+  /** Where the world's station sits, when one was asked for: on the far
+   *  side of the world from the fight (see layoutOrbitBattle). */
+  station?: OBPlacement;
   /** Each faction's share of the orbit, radians (start < end, may exceed 2pi). */
   sectors: Array<{ faction: string; start: number; end: number }>;
   band: { rIn: number; rOut: number };
@@ -126,7 +129,16 @@ const angDiff = (a: number, b: number) => {
 export function layoutOrbitBattle(
   ships: readonly OBShip[],
   planetR: number,
-  opts: { seed?: number; factionOrder?: string[] } = {},
+  opts: {
+    seed?: number;
+    factionOrder?: string[];
+    /** The world's station. It is placed OPPOSITE the fight (Lorne: "place
+     *  the stations opposite where the ships are fighting"): on the far
+     *  side of the world from a battle that does not wrap, or, when the
+     *  battle takes the whole lap, in the middle of the share farthest
+     *  from every front, where the hulls part around it. */
+    station?: { id: string; clearR: number };
+  } = {},
 ): OBLayout {
   const placements = new Map<string, OBPlacement>();
   if (ships.length === 0) {
@@ -162,9 +174,12 @@ export function layoutOrbitBattle(
   // A + (F-1) gapPx D = theta * D * (rIn + D/2).
   const thetaAt = (D: number) => (A + Math.max(0, F - 1) * gapPx * D) / (D * (rIn + D / 2));
   // Depth of a full lap, which has F gaps (the last share meets the first).
+  // A station inside a full lap takes room from the hulls like one more
+  // (big) body, so the ring deepens to fit it.
+  const stationA = opts.station ? (Math.PI * opts.station.clearR ** 2) / PACKING : 0;
   const ringDepth = () => {
     const a = TAU / 2, b = TAU * rIn - F * gapPx;
-    return (-b + Math.sqrt(b * b + 4 * a * A)) / (2 * a);
+    return (-b + Math.sqrt(b * b + 4 * a * (A + stationA))) / (2 * a);
   };
 
   // Compact first: a small fight keeps a blob-like depth (never thinner
@@ -186,7 +201,7 @@ export function layoutOrbitBattle(
     mode = depth <= dComfort * 1.05 ? 'ring' : 'deep ring';
     if (depth > dMax) {
       // Past the deepest band: pack tighter rather than stand further off.
-      const cap = TAU * dMax * (rIn + dMax / 2) - F * gapPx * dMax;
+      const cap = TAU * dMax * (rIn + dMax / 2) - F * gapPx * dMax - stationA;
       squeeze = Math.sqrt(Math.max(0.05, cap / A));
       depth = dMax;
       mode = 'crammed';
@@ -272,6 +287,8 @@ export function layoutOrbitBattle(
   type Body = {
     s: OBShip; x: number; y: number; c: number; stray: number;
     ax: number; ay: number; pull: number; press: number;
+    /** Pinned (the station): hulls are pushed off it, it never moves. */
+    pin?: boolean;
   };
   const bodies: Body[] = ships.map(s => {
     const R = rng(hash(s.id) ^ seed);
@@ -310,6 +327,32 @@ export function layoutOrbitBattle(
     };
   });
 
+  // THE STATION, opposite the fight. A battle that does not wrap is
+  // centred on angle 0, so the far side is pi. A full lap has no far side,
+  // so it takes the middle of the share farthest from every front.
+  let stationBody: Body | null = null;
+  if (opts.station) {
+    let at = Math.PI;
+    if (full && sectors.length > 0) {
+      const allFronts = [...fronts.values()].flat();
+      let best = -1;
+      for (const sec of sectors) {
+        const mid = (sec.start + sec.end) / 2;
+        const far = allFronts.length
+          ? Math.min(...allFronts.map(f => Math.abs(angDiff(mid, f)))) : 0;
+        if (far > best) { best = far; at = mid; }
+      }
+    }
+    const c = opts.station.clearR;
+    const r = planetR + c + 4;
+    const x = Math.cos(at) * r, y = Math.sin(at) * r;
+    stationBody = {
+      s: { id: opts.station.id, faction: '', fleet: null, size: c / CLEAR_FRAC, armed: true, clearR: c },
+      x, y, c, stray: 0, ax: x, ay: y, pull: 0, press: 0, pin: true,
+    };
+    bodies.push(stationBody);
+  }
+
   // RELAX. Push overlapping hulls apart; keep each near its anchor (the
   // blob), off the planet, inside a soft outer edge, and in its faction's
   // share (ragged). There is deliberately NO pull toward a preferred
@@ -330,11 +373,14 @@ export function layoutOrbitBattle(
         const push = (need - d) / 2;
         const ux = d2 > 0 ? dx / d : Math.cos(i + j);
         const uy = d2 > 0 ? dy / d : Math.sin(i + j);
-        a.x -= ux * push; a.y -= uy * push;
-        b.x += ux * push; b.y += uy * push;
+        // A pinned body (the station) stays put; the hull takes all of it.
+        const pa = a.pin ? 0 : b.pin ? 2 : 1, pb = b.pin ? 0 : a.pin ? 2 : 1;
+        a.x -= ux * push * pa; a.y -= uy * push * pa;
+        b.x += ux * push * pb; b.y += uy * push * pb;
       }
     }
     for (const b of bodies) {
+      if (b.pin) continue;
       // Hold the blob together (eased off at the end so separation wins).
       const k = late ? b.pull * 0.25 : b.pull;
       b.x += (b.ax - b.x) * k;
@@ -392,11 +438,13 @@ export function layoutOrbitBattle(
         if (d2 >= need * need) continue;
         const d = Math.sqrt(d2) || 0.01;
         const push = (need - d) / 2;
-        a.x -= (dx / d) * push; a.y -= (dy / d) * push;
-        b.x += (dx / d) * push; b.y += (dy / d) * push;
+        const pa = a.pin ? 0 : b.pin ? 2 : 1, pb = b.pin ? 0 : a.pin ? 2 : 1;
+        a.x -= (dx / d) * push * pa; a.y -= (dy / d) * push * pa;
+        b.x += (dx / d) * push * pb; b.y += (dy / d) * push * pb;
       }
     }
     for (const b of bodies) {
+      if (b.pin) continue;
       let r = Math.hypot(b.x, b.y) || 1;
       let t = Math.atan2(b.y, b.x);
       const rMin = planetR + b.c + 3;
@@ -430,6 +478,7 @@ export function layoutOrbitBattle(
   // which scrambled the clumps (Lorne: "Where are these things pointing?
   // I want all ships pointing forward in their orbits, like it is now").
   for (const b of bodies) {
+    if (b.pin) continue;
     const R = rng(hash(b.s.id) ^ (seed * 7919));
     const jitter = (R() - 0.5) * 0.22;
     const heading = Math.atan2(b.y, b.x) + Math.PI / 2 + jitter;
@@ -439,7 +488,12 @@ export function layoutOrbitBattle(
     });
   }
 
-  return { placements, sectors, band: { rIn, rOut }, mode, overlaps };
+  const station: OBPlacement | undefined = stationBody ? {
+    id: stationBody.s.id, x: stationBody.x, y: stationBody.y,
+    heading: Math.atan2(stationBody.y, stationBody.x) + Math.PI / 2,
+    r: Math.hypot(stationBody.x, stationBody.y), theta: wrap(Math.atan2(stationBody.y, stationBody.x)),
+  } : undefined;
+  return { placements, station, sectors, band: { rIn, rOut }, mode, overlaps };
 }
 
 // ------------------------------------------------- today's rules (compare)
@@ -455,7 +509,7 @@ export function layoutOrbitBattle(
 export function layoutTodayLines(
   ships: readonly OBShip[],
   planetR: number,
-  opts: { seed?: number; factionOrder?: string[] } = {},
+  opts: { seed?: number; factionOrder?: string[]; station?: { id: string; clearR: number } } = {},
 ): OBLayout {
   const placements = new Map<string, OBPlacement>();
   const factions = opts.factionOrder ?? [...new Set(ships.map(s => s.faction))].sort();

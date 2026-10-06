@@ -26,6 +26,10 @@
 //            same muzzles, rounds, scorches and hull hits, sized to the
 //            hitboxes; the contested ring and battle debris under it.
 //
+// TRY-OUTS on top of the live rules (Lorne, 2026-10-06): a FIRE RATE
+// multiplier over the map's cycle, SIZE CONTRAST ladders, and the world's
+// STATION placed opposite the fight (it returns fire, as a settlement does).
+//
 // Compare with TODAY'S rules (the narrow-arc battle lines, approximated
 // in orbitBattleLayout.layoutTodayLines): same roster, same world, same
 // fire.
@@ -33,11 +37,13 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  layoutOrbitBattle, layoutTodayLines, type OBLayout,
+  layoutOrbitBattle, layoutTodayLines, CLEAR_FRAC, type OBLayout, type OBPlacement,
 } from '../render/orbitBattleLayout';
 import {
-  buildScenario, hullCount, FACTIONS, SCENARIOS, type ScenarioId, type SandboxShip, type ShipClass,
+  buildScenario, hullCount, FACTIONS, SCENARIOS, SIZE_LADDERS,
+  type ScenarioId, type SandboxShip, type ShipClass, type SizeLadderId,
 } from './scenarios';
+import { drawStationStructure } from '../render/isoStructures';
 import { hullReveal, blendRadius, DISPLAY_FLOOR_PX } from '../render/bodyPresentation';
 import { getShipIconImage } from '../render/shipIconCache';
 import { getStructureIconImage } from '../render/structureIconCache';
@@ -86,6 +92,15 @@ const OCCLUSION_CORE = 0.55;
 /** mapRenderer SHIP_MIN_HIT_RADIUS; an escort has no hitbox and FX reads 14. */
 const MIN_HIT_R = 12;
 const ESCORT_HIT_R = 14;
+/** combatFx reads a settlement shooter's radius as 16. */
+const STATION_HIT_R = 16;
+/** The station's art spans this many local units (settlementArt VIEW x 2). */
+const STATION_ART_UNITS = 88;
+const STATION_ID = 'station';
+/** Fire-rate multipliers to try over the map's cycle (1 = live). */
+const FIRE_RATES = [1, 3, 10, 30];
+/** A hull cannot fire faster than its shot can fly and land. */
+const MIN_SLOT_MS = FX_TUNING.boltMs + FX_TUNING.impactMs;
 
 /** One hull on screen: a lone ship, a fleet's flagship, or an escort. */
 interface Hull {
@@ -147,6 +162,8 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
   const [zoom, setZoom] = useState(1);
   const [seed, setSeed] = useState(1);
   const [showShares, setShowShares] = useState(false);
+  const [fireRate, setFireRate] = useState(10);
+  const [ladder, setLadder] = useState<SizeLadderId>('bold');
   const [stats, setStats] = useState({ firing: 0, rerouted: 0 });
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -163,15 +180,26 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
   const planetR = blendRadius(trueR, DISPLAY_FLOOR_PX[PLANETS[planet].floor]);
   // Far out, hulls fold into the count badge on the world's true size.
   const reveal = hullReveal({ type: 'terrestrial', radius: trueR }, 1);
-  const ships: SandboxShip[] = useMemo(() => buildScenario(scenario, seed, 1), [scenario, seed]);
+  const px = SIZE_LADDERS[ladder].px;
+  const ships: SandboxShip[] = useMemo(
+    () => buildScenario(scenario, seed, 1, px), [scenario, seed, px],
+  );
+  // The world's station belongs to the first side (the defender).
+  const stationOwner = FACTIONS[0].id;
   const { layout, solveMs } = useMemo(() => {
     const order = FACTIONS.map(f => f.id).filter(id => ships.some(s => s.faction === id));
+    const station = { id: STATION_ID, clearR: px.station * CLEAR_FRAC };
     const t0 = performance.now();
     const L: OBLayout = mode === 'new'
-      ? layoutOrbitBattle(ships, baseR, { seed, factionOrder: order })
+      ? layoutOrbitBattle(ships, baseR, { seed, factionOrder: order, station })
       : layoutTodayLines(ships, baseR, { seed, factionOrder: order });
+    if (!L.station) {
+      // Today's lines sit in one sector centred on 0: the far side is pi.
+      const r = baseR + station.clearR + 4;
+      L.station = { id: STATION_ID, x: -r, y: 0, heading: -Math.PI / 2, r, theta: Math.PI };
+    }
     return { layout: L, solveMs: performance.now() - t0 };
-  }, [ships, baseR, mode, seed]);
+  }, [ships, baseR, mode, seed, px]);
   // Every hull drawn, escorts included, with its place in its unit.
   const hulls: Hull[] = useMemo(() => {
     const out: Hull[] = [];
@@ -234,8 +262,14 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
   useEffect(() => { zoomBy(1); }, [baseR]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Everything the animation loop reads, without re-subscribing it.
-  const live = useRef({ ships, hulls, stamps, layout, planetR, trueR, reveal, zoom, tex, showShares, planet });
-  live.current = { ships, hulls, stamps, layout, planetR, trueR, reveal, zoom, tex, showShares, planet };
+  const live = useRef({
+    ships, hulls, stamps, layout, planetR, trueR, reveal, zoom, tex, showShares, planet,
+    fireRate, stationPx: px.station, stationOwner,
+  });
+  live.current = {
+    ships, hulls, stamps, layout, planetR, trueR, reveal, zoom, tex, showShares, planet,
+    fireRate, stationPx: px.station, stationOwner,
+  };
 
   useEffect(() => {
     const cv = canvasRef.current;
@@ -266,6 +300,7 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
       const {
         ships: S, hulls: HL, stamps: ST, layout: L, planetR: R, trueR: TR, reveal: RV,
         zoom: Z, tex: T, showShares: SH, planet: P,
+        fireRate: FR, stationPx: SPX, stationOwner: SO,
       } = live.current;
       const dt = Math.min(100, now - last);
       last = now;
@@ -300,8 +335,22 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
         const jitter = p.heading - (Math.atan2(p.y, p.x) + Math.PI / 2);
         unitPos.set(s.id, { x: cx + Math.cos(t) * r, y: cy + Math.sin(t) * r, h: t + Math.PI / 2 + jitter });
       }
-      if (drawn.size > S.length * 2) {
-        const keep = new Set(S.map(s => s.id));
+      // The station rides the same wheel, gliding to a new place too.
+      let stationPos: { x: number; y: number } | null = null;
+      const stP: OBPlacement | undefined = L.station;
+      if (stP) {
+        let d = drawn.get(STATION_ID);
+        if (!d) { d = { r: stP.r, t: stP.theta }; drawn.set(STATION_ID, d); }
+        let dth = (stP.theta - d.t) % (Math.PI * 2);
+        if (dth > Math.PI) dth -= Math.PI * 2;
+        if (dth < -Math.PI) dth += Math.PI * 2;
+        d.t += dth * k;
+        d.r += (stP.r - d.r) * k;
+        const t = d.t + rot;
+        stationPos = { x: cx + Math.cos(t) * d.r * Z, y: cy + Math.sin(t) * d.r * Z };
+      }
+      if (drawn.size > S.length * 2 + 1) {
+        const keep = new Set([...S.map(s => s.id), STATION_ID]);
         for (const id of [...drawn.keys()]) if (!keep.has(id)) drawn.delete(id);
       }
       // And every hull from its unit: escorts ride in the fleet's frame.
@@ -378,6 +427,22 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
         g.restore();
       }
 
+      // THE STATION (drawStationStructure, the map's art), upright like the
+      // map's, at the ladder's size and the camera's zoom.
+      if (stationPos && RV > 0) {
+        const f = factionById.get(SO)!;
+        g.save();
+        g.globalAlpha = RV;
+        g.translate(stationPos.x, stationPos.y);
+        const sc = (SPX / STATION_ART_UNITS) * Z;
+        g.scale(sc, sc);
+        drawStationStructure(g, {
+          weaponsLevel: 3, shipyardLevel: 1, labLevel: 1, thrustersLevel: 0,
+          factionColor: f.color, factionColor2: f.color2, builds: [], nowMs: now,
+        });
+        g.restore();
+      }
+
       // Hulls, as drawShip draws them: the design the player picked, and
       // the soft engine glow astern of every full-size hull (escorts are
       // drawEscortHull's: no glow). Faded with the world's hull reveal.
@@ -439,11 +504,24 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
       // each fires continuously on its own cycle, phase-offset by its id,
       // and a crowded world stretches every cycle so the screen holds
       // about FIRE_REFERENCE hulls mid-volley.
-      const engaged = RV > 0.01 ? HL.filter(h => h.armed) : [];
-      const slotMs = SLOT_MS * Math.max(1, engaged.length / FIRE_REFERENCE);
+      // The station joins the shooters (a settlement returns fire: kinetic,
+      // only ever at armed hulls). Ships never bombard it while a hostile
+      // hull is left, as on the server.
+      const stationHull: Hull | null = stationPos ? {
+        id: STATION_ID, unit: STATION_ID, faction: SO, cls: 'destroyer', armed: true,
+        size: SPX, escort: false, lx: 0, ly: 0,
+      } : null;
+      const engaged = RV > 0.01
+        ? [...HL.filter(h => h.armed), ...(stationHull ? [stationHull] : [])] : [];
+      // TRY-OUT: the map's cycle divided by the fire-rate multiplier, never
+      // faster than a shot can fly and land.
+      const slotMs = Math.max(MIN_SLOT_MS,
+        (SLOT_MS * Math.max(1, engaged.length / FIRE_REFERENCE)) / FR);
+      const maxFiring = Math.min(400, MAX_FIRING_PER_FRAME * FR);
       const hullById = new Map(HL.map(h => [h.id, h]));
       // Hit radii as the map computes them at full size, then the camera.
-      const hitR = (h: Hull) => (h.escort ? ESCORT_HIT_R : Math.max(h.size / 2 + 3, MIN_HIT_R)) * Z;
+      const hitR = (h: Hull) => (h.id === STATION_ID ? STATION_HIT_R
+        : h.escort ? ESCORT_HIT_R : Math.max(h.size / 2 + 3, MIN_HIT_R)) * Z;
       const coreR = Math.max(3, TR) * OCCLUSION_CORE;
       const occluded = (a: { x: number; y: number }, b: { x: number; y: number }) => {
         const dx = b.x - a.x, dy = b.y - a.y;
@@ -462,9 +540,23 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
         const firing = within < BOLT_MS;
         const impacting = !firing && within < BOLT_MS + IMPACT_MS;
         if (!firing && !impacting) continue;
-        if (++firingSeen > MAX_FIRING_PER_FRAME) break;
-        const fp = pos.get(sh.id);
-        let tgt = hullById.get(ST.get(sh.id) ?? '');
+        if (++firingSeen > maxFiring) break;
+        const isStation = sh.id === STATION_ID;
+        const fp = isStation ? stationPos ?? undefined : pos.get(sh.id);
+        let tgt: Hull | undefined;
+        if (isStation) {
+          // combatFx's fallback for a settlement: the armed hostile with
+          // the best seeded score against this shooter.
+          let best = -1;
+          const sHash = idHash(sh.id);
+          for (const o of HL) {
+            if (o.faction === sh.faction || !o.armed) continue;
+            const sc = (sHash ^ idHash(o.id)) >>> 0;
+            if (sc > best) { best = sc; tgt = o; }
+          }
+        } else {
+          tgt = hullById.get(ST.get(sh.id) ?? '');
+        }
         let tp = tgt ? pos.get(tgt.id) : undefined;
         if (!fp || !tgt || !tp) continue;
         if (fp.x < -100 || fp.y < -100 || fp.x > W + 100 || fp.y > H + 100) continue;
@@ -475,6 +567,7 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
           let altP: { x: number; y: number; h: number } | undefined;
           for (const o of HL) {
             if (o.faction === sh.faction) continue;
+            if (isStation && !o.armed) continue;
             if (alt && alt.armed && !o.armed) continue;
             const op = pos.get(o.id);
             if (!op || occluded(fp, op)) continue;
@@ -485,7 +578,7 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
           tgt = alt; tp = altP;
           rerouted++;
         }
-        const energyShot = factionById.get(sh.faction)?.weapon === 'energy';
+        const energyShot = !isStation && factionById.get(sh.faction)?.weapon === 'energy';
         const sR = hitR(sh);
         const tR = hitR(tgt);
         const volleyIdx = Math.floor((now + (idHash(sh.id) % slotMs)) / slotMs);
@@ -542,7 +635,7 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
       }
       g.restore();
 
-      firingSum += Math.min(firingSeen, MAX_FIRING_PER_FRAME);
+      firingSum += Math.min(firingSeen, maxFiring);
       rerouteSum += rerouted;
       frames++;
       if (now - lastStat > 1000) {
@@ -562,8 +655,11 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
       return { f, n: hullCount(mine), fleets: mine.filter(s => s.geo).length };
     })
     .filter(x => x.n > 0);
-  const armedCount = hulls.filter(h => h.armed).length;
-  const cycleS = (SLOT_MS * Math.max(1, armedCount / FIRE_REFERENCE)) / 1000;
+  const armedCount = hulls.filter(h => h.armed).length + 1;
+  const cycleS = Math.max(MIN_SLOT_MS,
+    (SLOT_MS * Math.max(1, armedCount / FIRE_REFERENCE)) / fireRate) / 1000;
+  const sizeLine = `Corvette ${px.corvette} · Frigate ${px.frigate} · Destroyer ${px.destroyer}`
+    + ` · Capital ${px.mega_destroyer} · Station ${Math.round(px.station)}`;
 
   return (
     <div
@@ -616,6 +712,25 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
           <button type="button" style={chip(mode === 'new')} onClick={() => setMode('new')}>New: whole orbit</button>
           <button type="button" style={chip(mode === 'today')} onClick={() => setMode('today')}>Today</button>
         </div>
+        <div style={ui.label}>Fire rate</div>
+        <div style={ui.row}>
+          {FIRE_RATES.map(r => (
+            <button key={r} type="button" style={chip(fireRate === r)} onClick={() => setFireRate(r)}>
+              {r === 1 ? '1× (live)' : `${r}×`}
+            </button>
+          ))}
+        </div>
+
+        <div style={ui.label}>Size contrast</div>
+        <div style={ui.row}>
+          {(Object.keys(SIZE_LADDERS) as SizeLadderId[]).map(id => (
+            <button key={id} type="button" style={chip(ladder === id)} onClick={() => setLadder(id)}>
+              {SIZE_LADDERS[id].label}
+            </button>
+          ))}
+        </div>
+        <div style={ui.dim} data-testid="battle-sizes">{sizeLine} px</div>
+
         <div style={ui.row}>
           <button type="button" style={chip(false)} onClick={() => setSeed(s => s + 1)}>Reroll fleets</button>
           <button type="button" style={chip(showShares)} onClick={() => setShowShares(v => !v)}>Show shares</button>

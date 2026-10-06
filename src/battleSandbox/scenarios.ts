@@ -42,6 +42,34 @@ export const CLASS_PX: Record<ShipClass, number> = {
   mega_destroyer: 38 * 2,
 };
 
+/** Drawn px per class, plus the world's station. */
+export type SizeTable = Record<ShipClass | 'station', number>;
+
+export type SizeLadderId = 'live' | 'bold' | 'extreme';
+
+/**
+ * SIZE CONTRAST, to try on the page (Lorne: "more dramatic size
+ * differences between Corvettes, Frigates, Destroyers and stations").
+ * LIVE is the map today: shipIconSize per class, and the station's art
+ * (88 units) at STATION_STRUCTURE_SCALE 1.6. The others pull the ladder
+ * apart around the frigate, which barely moves: corvettes shrink,
+ * destroyers, capitals and the station grow.
+ */
+export const SIZE_LADDERS: Record<SizeLadderId, { label: string; px: SizeTable }> = {
+  live: {
+    label: 'Live',
+    px: { ...CLASS_PX, station: 88 * 1.6 },
+  },
+  bold: {
+    label: 'Bold',
+    px: { corvette: 30, frigate: 48, freighter: 44, destroyer: 84, mega_destroyer: 116, station: 200 },
+  },
+  extreme: {
+    label: 'Extreme',
+    px: { corvette: 24, frigate: 46, freighter: 42, destroyer: 104, mega_destroyer: 150, station: 260 },
+  },
+};
+
 export interface SandboxFaction {
   id: string;
   name: string;
@@ -141,8 +169,9 @@ function rng(seed: number): () => number {
  */
 export function fleetGeometry(
   id: string, flag: ShipClass, escorts: Array<Hull | ShipClass>, hullScale: number,
+  px: Record<ShipClass, number> = CLASS_PX,
 ): FleetGeometry {
-  const flagSize = CLASS_PX[flag] * hullScale;
+  const flagSize = px[flag] * hullScale;
   // hb.r in MapCanvas is the flagship's HITBOX radius: half the sprite
   // plus 3, never under SHIP_MIN_HIT_RADIUS (12).
   const hr = Math.max(flagSize / 2 + 3, 12);
@@ -153,7 +182,7 @@ export function fleetGeometry(
   const pts = [{ x: 0, y: 0, r: (flagSize / 2) * (CLEAR_FRAC * 2) }];
   const raw = escorts.map((h, i) => {
     const { cls, variant } = typeof h === 'string' ? { cls: h, variant: undefined } : h;
-    const size = Math.max(3, glyph * Math.min(1, CLASS_PX[cls] / CLASS_PX.destroyer));
+    const size = Math.max(3, glyph * Math.min(1, px[cls] / px.destroyer));
     pts.push({ x: offs[i].dx, y: offs[i].dy, r: (size / 2) * (CLEAR_FRAC * 2) });
     return { id: `${id}.e${i}`, cls, variant, x: offs[i].dx, y: offs[i].dy, size };
   });
@@ -181,7 +210,9 @@ interface SideSpec {
   capitals?: number;
 }
 
-function side(faction: string, spec: SideSpec, R: () => number, hullScale: number): SandboxShip[] {
+function side(
+  faction: string, spec: SideSpec, R: () => number, hullScale: number, px: Record<ShipClass, number>,
+): SandboxShip[] {
   const out: SandboxShip[] = [];
   const pick = (): Hull => {
     const cls = weighted(CLASS_MIX, R()) as Regular;
@@ -193,7 +224,7 @@ function side(faction: string, spec: SideSpec, R: () => number, hullScale: numbe
     const flag: ShipClass = capital ? 'mega_destroyer' : 'destroyer';
     const variant = capital ? undefined : design('destroyer', R());
     const escortClasses = Array.from({ length: n }, pick);
-    const geo = fleetGeometry(id, flag, escortClasses, hullScale);
+    const geo = fleetGeometry(id, flag, escortClasses, hullScale, px);
     out.push({
       id, name: `${faction.toUpperCase()} Fleet ${k + 1}`, faction,
       // Its own layout group: a fleet marker is one body.
@@ -208,17 +239,20 @@ function side(faction: string, spec: SideSpec, R: () => number, hullScale: numbe
     const fleet = R() > 0.16 ? `${faction}-s${Math.floor(R() * groups)}` : null;
     out.push({
       id: `${faction}-${i}`, name: `${faction.toUpperCase()}-${i}`, faction, fleet, cls, variant,
-      size: CLASS_PX[cls] * hullScale, armed: cls !== 'freighter',
+      size: px[cls] * hullScale, armed: cls !== 'freighter',
     });
   }
   return out;
 }
 
 /** The roster, sized for a zoom: `hullScale` is the map's parked-hull
- *  multiplier at that zoom (1 close in, 0.5 far out). */
-export function buildScenario(id: ScenarioId, seed = 1, hullScale = 1): SandboxShip[] {
+ *  multiplier at that zoom (1 close in, 0.5 far out), `px` the drawn size
+ *  of each class at full size (the live map's by default). */
+export function buildScenario(
+  id: ScenarioId, seed = 1, hullScale = 1, px: Record<ShipClass, number> = CLASS_PX,
+): SandboxShip[] {
   const R = rng(seed * 104729 + id.length);
-  const S = (f: string, spec: SideSpec) => side(f, spec, R, hullScale);
+  const S = (f: string, spec: SideSpec) => side(f, spec, R, hullScale, px);
   switch (id) {
     case 'small':  return [...S('a', { fleets: [3] }), ...S('b', { swarm: 3 })];
     case 'medium': return [
