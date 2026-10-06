@@ -70,6 +70,10 @@ import './styles/mobile.css';
 // the mobile shell even though no media query can detect it.
 import './styles/shellJs.css';
 
+// The orbital-battle layout test page (/?battle). Lazy: it is a tool,
+// not the game, so it stays out of the main bundle.
+const BattleSandbox = React.lazy(() => import('./battleSandbox/BattleSandbox'));
+
 /** Which engine the session is in. 'singleplayer' is unreachable — SP
  *  entry is retired — but the union survives because SinglePlayerView is
  *  still in the tree. Lived in ModePicker.tsx until that screen was
@@ -902,6 +906,24 @@ function AppRouter() {
     typeof window !== 'undefined' &&
     new URLSearchParams(window.location.search).has('torch'),
   );
+  const [battleMode, setBattleMode] = useState(() =>
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).has('battle'),
+  );
+  if (battleMode) {
+    return (
+      <React.Suspense fallback={<div style={{ position: 'fixed', inset: 0, background: '#060a11' }} />}>
+        <BattleSandbox
+          onExit={() => {
+            const url = new URL(window.location.href);
+            url.searchParams.delete('battle');
+            window.history.replaceState({}, '', url.toString());
+            setBattleMode(false);
+          }}
+        />
+      </React.Suspense>
+    );
+  }
   if (physicsMode) {
     return (
       <PhysicsSandbox

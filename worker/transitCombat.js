@@ -36,8 +36,8 @@ import { CRUISE_SPEED_SCALE, DEPARTURE_SPEED_SCALE } from './burn.js';
  *
  *  SCALED WITH THE BURN (burn.js, 2026-10-06). 45 was set for a flat
  *  0.05g even burn. With the exponential build-up and the 9x brake, the
- *  reference mid-cruise pass is 1.8x faster (burn.js CRUISE_SPEED_SCALE),
- *  so the crossing rate that "starts to matter" moves with it: 81. Long
+ *  reference mid-cruise pass is 1.5x faster (burn.js CRUISE_SPEED_SCALE),
+ *  so the crossing rate that "starts to matter" moves with it: 67. Long
  *  outer hauls run faster still (~3000 u/t), and are hard to hit. */
 export const V_REF = Math.round(45 * CRUISE_SPEED_SCALE);
 
@@ -67,11 +67,11 @@ export const V_REF = Math.round(45 * CRUISE_SPEED_SCALE);
  *
  *  SCALED WITH THE BURN (burn.js, 2026-10-06), each end by what it was
  *  tuned against. The start sat just above a one-tick departure burn
- *  (26.5 u/t on the flat push; 27.4 now, since the exponential build
- *  barely moves in a first tick: DEPARTURE_SPEED_SCALE 1.03). The full
+ *  (26.5 u/t on the old flat 0.05g push; 11.1 now, from the 0.02g floor
+ *  of the exponential build: DEPARTURE_SPEED_SCALE 0.42). The full
  *  mark sat at the top of interplanetary cruise passes (200-380 u/t on
- *  the flat even burn), which the build-up and the hard brake make 1.8x
- *  faster (CRUISE_SPEED_SCALE). So 50 -> 52 and 350 -> 631. */
+ *  the flat even burn), which the build-up and the hard brake make 1.5x
+ *  faster (CRUISE_SPEED_SCALE). So 50 -> 21 and 350 -> 519. */
 export const DV_BONUS_MAX = 0.10;
 export const DV_BONUS_START = Math.round(50 * DEPARTURE_SPEED_SCALE);
 export const DV_BONUS_FULL = Math.round(350 * CRUISE_SPEED_SCALE);

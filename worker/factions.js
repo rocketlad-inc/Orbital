@@ -751,8 +751,8 @@ function inferGameSystemScale(existingRows) {
   return SYSTEM_SCALE;
 }
 
-// Eligible worlds for ownership = everything that isn't the star (16 worlds).
-// 2 worlds/player × 8 players = 16. Caps at 8 players × 2 worlds for v1.
+// Eligible worlds for ownership = everything that isn't the star. The seat
+// cap is 10 (sim/tenPlayers.mjs seeds full games to prove ten fit).
 
 // Body ownership tracks settlements: the faction with the most active
 // settlements at a body owns it.
@@ -1098,6 +1098,9 @@ const FACTION_NAMES = [
   'Aurora League',
   'Helix Compact',
   'Ember Syndicate',
+  // Seats 9 and 10 (cap raised 8 -> 10, 2026-10-06).
+  'Meridian Union',
+  'Vanguard Assembly',
 ];
 
 const FACTION_COLORS = [
@@ -1109,6 +1112,11 @@ const FACTION_COLORS = [
   '#26c6da', // cyan
   '#ec407a', // rose
   '#8d6e63', // ferrous
+  // Seats 9 and 10: of the lobby's swatches, the two furthest from the
+  // eight above (indigo 83 units from its nearest, white 196). Both are in
+  // FACTION_COLOR_CHOICES (LobbyView.tsx), so a player can pick them too.
+  '#5c6bc0', // indigo
+  '#f5f5f5', // white
 ];
 
 // Fuel is dead (economy rework §1.1) — column kept at 0 for schema compat.
@@ -1826,7 +1834,7 @@ export async function seedGameWorld(env, gameId) {
       const c = FACTION_COLORS[(slot + i) % FACTION_COLORS.length];
       if (isFree(c)) return c;
     }
-    // Unreachable while FACTION_COLORS.length >= max_players, but a
+    // Unreachable while FACTION_COLORS.length (10) >= max_players (10), but a
     // duplicate beats a crash during game start.
     return FACTION_COLORS[slot % FACTION_COLORS.length];
   };
@@ -1836,7 +1844,7 @@ export async function seedGameWorld(env, gameId) {
   // somebody's explicit pick, not from two picks colliding. Reserve
   // every pick first, then hand out defaults from what's left.
   //
-  // Simpler than colour in one respect: 24 emblems against a cap of 8
+  // Simpler than colour in one respect: 24 emblems against a cap of 10
   // seats means a free one always exists, so this never has to degrade.
   const takenEmblems = memberRows
     .map(m => (isEmblemId(m.emblem) ? m.emblem : null))
@@ -1936,15 +1944,15 @@ export async function seedGameWorld(env, gameId) {
         fairPool.find(b => !claimed.has(b.id) && !usedRegions.has(regionOf(b.id))) ||
         fairPool.find(b => !claimed.has(b.id)) ||
         // Last resort relaxes the science floor but NEVER the size floor.
-        // Ten bodies clear radius>=1.5 AND science>=2, and fourteen clear
-        // the size floor alone, against a hard cap of 8 players — so this
-        // has headroom. Dropping to a small moon to seat a ninth player
+        // The cap is 10 players; sim/tenPlayers.mjs seeds full 10-player
+        // games over many maps and every one seats all ten on fair worlds.
+        // Dropping to a small moon to seat an extra player
         // would hand that player a materially worse game, which is the
         // whole thing this rule exists to prevent. Better to fail loudly
         // below than to seat someone on a rock.
         shuffled.find(b => !claimed.has(b.id) && isCapitalWorthy(b, spawnFloorRadius));
       // Defensive: STARTING_BODY_OPTIONS is far larger than max_players
-      // (8), so this can only trip if the catalog is edited down.
+      // (10), so this can only trip if the catalog is edited down.
       if (!pick) {
         throw new Error(
           `seedGameWorld: ran out of valid starting bodies for ${factionRows.length} players`,

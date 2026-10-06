@@ -135,7 +135,7 @@ export function StatusChip({ g }: { g: GameSummary }) {
   );
 }
 
-export function PlayerStack({ g, max = 8 }: { g: GameSummary; max?: number }) {
+export function PlayerStack({ g, max = 10 }: { g: GameSummary; max?: number }) {
   const shown = g.players.slice(0, max);
   const extra = g.players.length - shown.length;
   const empty = g.phase === 'open' || g.phase === 'live' ? Math.min(g.open_seats, Math.max(0, max - shown.length)) : 0;

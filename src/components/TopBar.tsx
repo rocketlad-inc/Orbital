@@ -811,6 +811,92 @@ const MpCommitTurnButton: React.FC<{
 // Herald edition to the configured Discord webhook immediately (a quiet
 // day gets a short "all quiet" special edition). Result is surfaced
 // inline in the hint slot: posted + event count, or the error.
+// Host-only: open more seats in a game already running (worker/lobby.js
+// handleRaiseSeats). Raise only, up to the cap of 10; a new seat fills
+// like any running game's, from Browse's "Join in progress".
+const SEAT_CAP = 10;
+const HostSeatsControl: React.FC<{ gameId: string }> = ({ gameId }) => {
+  const [seats, setSeats] = useState<{ max: number; taken: number } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      const { apiFetch } = await import('../multiplayer/api');
+      const res = await apiFetch<{ settings: { max_players: number; member_count?: number } }>(
+        `/api/lobby/rooms/${gameId}/settings`,
+      );
+      if (live && res.ok) setSeats({ max: res.data.settings.max_players, taken: res.data.settings.member_count ?? 0 });
+    })();
+    return () => { live = false; };
+  }, [gameId]);
+
+  const raise = async (to: number) => {
+    if (!seats || busy) return;
+    const more = to - seats.max;
+    if (!window.confirm(
+      `Raise this game to ${to} seats?\n\n${more} more ${more === 1 ? 'player' : 'players'} can join while it runs: `
+      + `it shows in Browse as "Join in progress", and each newcomer starts on a capital of their own. `
+      + `Seats can't be lowered again mid-game.`,
+    )) return;
+    setBusy(true);
+    setStatus(null);
+    try {
+      const { apiFetch } = await import('../multiplayer/api');
+      const res = await apiFetch<{ settings: { max_players: number; member_count?: number } }>(
+        `/api/lobby/rooms/${gameId}/seats`,
+        { method: 'PATCH', body: JSON.stringify({ max_players: to }) },
+      );
+      if (res.ok) {
+        setSeats({ max: res.data.settings.max_players, taken: res.data.settings.member_count ?? seats.taken });
+        setStatus(`✓ ${res.data.settings.max_players} seats`);
+      } else {
+        setStatus(res.error?.message ?? `Failed (${res.status})`);
+      }
+    } catch (e) {
+      setStatus(`Network error: ${(e as Error)?.message || 'unknown'}`);
+    } finally {
+      setBusy(false);
+      setTimeout(() => setStatus(null), 4000);
+    }
+  };
+
+  if (!seats) return null;
+  const options: number[] = [];
+  for (let n = seats.max + 1; n <= SEAT_CAP; n++) options.push(n);
+  return (
+    <div className="side-menu__item side-menu__item--block">
+      <span className="side-menu__item-icon">👥</span>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
+        <span className="side-menu__item-label" style={{ marginBottom: 2 }}>
+          {status ?? (busy ? 'Updating…' : `Seats: ${seats.taken} of ${seats.max} taken`)}
+        </span>
+        {options.length > 0 ? (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+            {options.map(n => (
+              <button
+                key={n}
+                className="side-menu__pill"
+                onClick={() => raise(n)}
+                disabled={busy}
+                title={`Open ${n - seats.max} more ${n - seats.max === 1 ? 'seat' : 'seats'} (${n} in all)`}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
+        ) : null}
+        <span className="side-menu__item-hint" style={{ marginTop: 2 }}>
+          {options.length > 0
+            ? 'Raise the cap: new players can join mid-game'
+            : `At the ${SEAT_CAP}-seat maximum`}
+        </span>
+      </div>
+    </div>
+  );
+};
+
 const PublishHeraldButton: React.FC<{ gameId: string }> = ({ gameId }) => {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<string | null>(null);
@@ -1307,6 +1393,7 @@ const SideMenu: React.FC<SideMenuProps> = ({
                   </span>
                 </div>
               </div>
+              <HostSeatsControl gameId={adminGameId!} />
               <button
                 className="side-menu__item"
                 onClick={() => { onClose(); onOpenAdminGrant?.(); }}

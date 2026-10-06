@@ -378,6 +378,39 @@ check('My Games carries the player’s own empire in each running game',
   dGames.length >= 2 && dGames.filter(g => g.phase === 'live').every(g => g.me && g.me.name), dGames.map(g => [g.phase, g.me?.name]));
 check('My Games marks membership', dGames.every(g => g.is_member === true));
 
+// ---- raising the seat cap mid-game -----------------------------------------
+
+// Ada hosts roomA (her first Quick Join): running, 5 of 5. Her original
+// session died with the password reset, so use the fresh login.
+const adaCookie = loginNew.cookie;
+const seatsUrl = `/api/lobby/rooms/${roomA}/seats`;
+const notHost = await call('PATCH', seatsUrl, { cookie: B.cookie, body: { max_players: 7 } });
+check('only the host can open more seats in a running game', notHost.status === 403, notHost.status);
+const lower = await call('PATCH', seatsUrl, { cookie: adaCookie, body: { max_players: 4 } });
+check('seats cannot be lowered mid-game', lower.status === 400 && lower.data.error.code === 'raise_only', lower.data);
+const over = await call('PATCH', seatsUrl, { cookie: adaCookie, body: { max_players: 11 } });
+check('seats cannot go past 10', over.status === 400, over.status);
+const preStart = await call('PATCH', `/api/lobby/rooms/${roomE}/seats`, { cookie: E.cookie, body: { max_players: 3 } });
+check('a lobby that has not started uses its own settings, not this', preStart.status === 409 && preStart.data.error.code === 'not_started', preStart.data);
+const raised = await call('PATCH', seatsUrl, { cookie: adaCookie, body: { max_players: 7 } });
+check('the host raises a running 5-seat game to 7', raised.status === 200 && raised.data.settings.max_players === 7
+  && raised.data.settings.member_count === 5, raised.data);
+const late1 = await signup('Lia');
+const late2 = await signup('Mo');
+const late3 = await signup('Ned');
+const brLate = await call('GET', '/api/lobby/browse', { cookie: late1.cookie });
+const aCard = (brLate.data.games ?? []).find(g => g.id === roomA);
+check('Browse lists it as joinable in progress with 2 open seats', aCard?.phase === 'live' && aCard?.joinable === true && aCard?.open_seats === 2, aCard);
+const j1 = await call('POST', `/api/rooms/${roomA}/join`, { cookie: late1.cookie });
+const j2 = await call('POST', `/api/rooms/${roomA}/join`, { cookie: late2.cookie });
+const j3 = await call('POST', `/api/rooms/${roomA}/join`, { cookie: late3.cookie });
+check('two newcomers take the two new seats', j1.status === 200 && j2.status === 200 && (await members(roomA)) === 7, [j1.status, j2.status]);
+check('the next one is turned away: the game is full again', j3.status === 403 && j3.data.error.code === 'room_full', j3.data);
+await DB.prepare(`UPDATE games SET status = 'completed' WHERE id = ?`).bind(roomA).run();
+const done = await call('PATCH', seatsUrl, { cookie: adaCookie, body: { max_players: 8 } });
+check('a finished game cannot be reopened for seats', done.status === 409, done.status);
+await DB.prepare(`UPDATE games SET status = 'active' WHERE id = ?`).bind(roomA).run();
+
 // ---- Auto-load on launch ---------------------------------------------------
 
 const noAuto = await call('GET', '/api/users/me/rooms', { cookie: D.cookie });

@@ -34,7 +34,7 @@ export type EmblemId =
   | 'serpent' | 'swords' | 'atom' | 'hourglass' | 'compass';
 
 /** Catalog order — drives the picker grid and the default rotation.
- *  25 entries against a max_players cap of 8 means uniqueness is always
+ *  25 entries against a max_players cap of 10 means uniqueness is always
  *  satisfiable, unlike the 8-colour palette.
  *
  *  New ids are APPENDED, never inserted: this array's order is the
