@@ -2613,9 +2613,7 @@ function drawEmergingGate(
   const f = Math.min(1, Math.max(0, (ctx.t - em.fromTick) / span));
   // Speed on an even burn peaks at the flip: 0 -> 1 -> 0.
   const speed = 1 - Math.abs(2 * f - 1);
-  // The map's headline event, so a floor well above a ship's: the old
-  // blob's 10px floor drew the squid as a smudge with its detail off.
-  const R = Math.max(28, Math.min(radius * 2.4, 64));
+  const R = sunSquidR(radius);
 
   g.save();
 
@@ -2644,6 +2642,13 @@ function drawEmergingGate(
     thrust: 0.25 + 0.75 * speed,
     now,
   });
+}
+
+/** Size in px of the squid in flight. The map's headline event, so a
+ *  floor well above a ship's: the old blob's 10px floor drew it as a
+ *  smudge with its detail switched off. */
+function sunSquidR(radius: number): number {
+  return Math.max(28, Math.min(radius * 2.4, 64));
 }
 
 /** Ring radius in px of a sun gate drawn at body radius `radius`. ONE
@@ -2686,6 +2691,19 @@ function drawLandingSite(canvasPos: { x: number; y: number }, radius: number, ct
   g.fillStyle = `rgba(255, 241, 194, ${0.6 + 0.4 * pulse})`;
   g.beginPath(); g.arc(0, 0, Math.max(1.5, R * 0.14), 0, Math.PI * 2); g.fill();
   g.restore();
+}
+
+/** How far a sun gate's art (or its site's reticle) reaches from its
+ *  centre in px, for the label solver: the art draws well outside the
+ *  structure's true radius, and a label spaced from that radius sat on
+ *  the ring. Null for everything else. */
+function sunGateArtRadius(body: Body, radius: number, t: number): number | null {
+  if (isSunGateSite(body)) return Math.max(9, Math.min(radius, 40)) * 1.9;
+  if (body.type !== 'megastructure' || !templateIdOf(body.id).startsWith('sungate_')) return null;
+  if (body.emerge && t < body.emerge.untilTick) {
+    return sunSquidR(radius) * 0.55 * 1.3;
+  }
+  return sunGateRingR(radius) * 1.15;
 }
 
 /** A sun gate at rest, either end: the squid fully unfurled. */
@@ -4318,7 +4336,7 @@ export function drawBody(
         subTokens,
         x: canvasPos.x,
         y: canvasPos.y,
-        radius: Math.max(6, radius) + 4,
+        radius: Math.max(6, sunGateArtRadius(body, radius, ctx.t) ?? radius) + 4,
         // Selection beats ownership beats size. The survivors of a tight
         // ink budget are the bodies the player is actually working with.
         // Selection beats ownership beats size. A rock sits BELOW moons:
