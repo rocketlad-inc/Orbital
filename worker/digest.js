@@ -37,6 +37,7 @@ import {
   GATE_TRANSIT, GATE_TRANSIT_HEADLINE,
   GATE_LINK_SEVERED, GATE_LINK_SEVERED_HEADLINE,
   SUN_GATE_OMEN, SUN_GATE_OMEN_HEADLINE,
+  SUN_GATE_OMEN_AGAIN, SUN_GATE_OMEN_AGAIN_HEADLINE,
   SUN_GATE_EMERGED, SUN_GATE_EMERGED_HEADLINE,
   SUN_GATE_OPENED, SUN_GATE_OPENED_HEADLINE,
   SUN_GATE_FIRST, SUN_GATE_FIRST_HEADLINE,
@@ -9035,8 +9036,14 @@ function buildFrontierStories(rows, used, locator, factionNames) {
     // under a world-killer, above any one battle.
     if (row.kind === 'sun_gate_omen') {
       const wait = Math.max(1, Math.round(Number(p.gate_in) || 6));
-      stories.push(mkStory(880, used, 'sun_gate_omen', SUN_GATE_OMEN,
-        'sun_gate_omen_hl', SUN_GATE_OMEN_HEADLINE, { wait }));
+      // The warning before a LATER gate knows there was one before.
+      if (Number(p.index) > 0) {
+        stories.push(mkStory(880, used, 'sun_gate_omen_again', SUN_GATE_OMEN_AGAIN,
+          'sun_gate_omen_again_hl', SUN_GATE_OMEN_AGAIN_HEADLINE, { wait }));
+      } else {
+        stories.push(mkStory(880, used, 'sun_gate_omen', SUN_GATE_OMEN,
+          'sun_gate_omen_hl', SUN_GATE_OMEN_HEADLINE, { wait }));
+      }
       continue;
     }
     if (row.kind === 'sun_gate_emerged') {

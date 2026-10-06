@@ -2359,52 +2359,91 @@ export function useSituationItems(
     // Everyone's, not yours: a race on a clock, so a decision while it is
     // coming (send something or not) and an opportunity once it is open.
     // Condition-based like the rest -- each row exists exactly while its
-    // moment does.
+    // moment does. The moments, in order: the warning before EACH gate,
+    // the flight (out of the Sun, braking, unfolding), the opening, and
+    // the first hull through.
     try {
       const gates = bodies.filter(b => /^sungate_[a-z]+$/.test(b.id));
       const systemOf = (b: { name: string }) => b.name.replace(/\s*Gate$/i, '');
+
+      // THE WARNING, before every gate (the server says when: state.js
+      // sun_gate_next). An older server sends only the omen tick, which
+      // can only speak for the first.
+      const next = gameState.sunGateNext;
       const omen = gameState.sunGateTick;
-      if (omen != null && tick >= omen && gates.length === 0) {
-        const out = Math.max(0, omen + SUN_GATE_WARNING_TICKS - tick);
+      const warnAt = next !== undefined
+        ? (next ? { out: next.emergeTick - tick, index: next.index } : null)
+        : (omen != null && tick >= omen && gates.length === 0
+          ? { out: omen + SUN_GATE_WARNING_TICKS - tick, index: 0 } : null);
+      if (warnAt) {
+        const out = Math.max(0, warnAt.out);
         push({
-          id: 'sun_gate:omen',
+          id: `sun_gate:omen:${warnAt.index}`,
           category: 'sun_gate',
-          title: 'Something strange is emerging from the Sun',
+          title: warnAt.index === 0
+            ? 'Something strange is emerging from the Sun'
+            : 'Something else is emerging from the Sun',
           subtitle: out > 0 ? `Out in ${out} tick${out === 1 ? '' : 's'}` : 'Any moment now',
           focus: { kind: 'body', bodyId: 'sol' },
           severity: 'warn',
           sortKey: out,
         });
       }
+
       for (const g of gates) {
         const sys = systemOf(g);
         if (g.emerge && tick < g.emerge.untilTick) {
+          // THE FLIGHT, in the three things the map shows it doing.
+          const span = Math.max(1, g.emerge.untilTick - g.emerge.fromTick);
+          const f = (tick - g.emerge.fromTick) / span;
+          const title = f >= 0.8
+            ? `The gate to ${sys} is unfolding at its landing site`
+            : f >= 0.5
+              ? `The gate to ${sys} has turned and is braking`
+              : `A gate to ${sys} is burning out of the Sun`;
+          const left = g.emerge.untilTick - tick;
           push({
             id: `sun_gate:flight:${g.id}`,
             category: 'sun_gate',
             entity: `body:${g.id}`,
-            title: `A gate to ${sys} is burning for the Far Reach`,
-            subtitle: `Stops at T+${g.emerge.untilTick} — send ships to its landing site to be first through`,
+            title,
+            subtitle: `Opens at T+${g.emerge.untilTick} (${left} tick${left === 1 ? '' : 's'}) — send ships to its landing site to be first through`,
             // Focus the SITE when there is one: that is the place to send
             // ships, and the gate itself cannot be targeted until it lands.
             focus: { kind: 'body', bodyId: bodies.some(b => b.id === `${g.id}_site`) ? `${g.id}_site` : g.id },
             severity: 'warn',
-            sortKey: g.emerge.untilTick - tick,
+            sortKey: left,
           });
           continue;
         }
         const opened = gameState.megastructures?.[g.id]?.completedAtTick;
-        if (opened != null && tick - opened <= SUN_GATE_NEWS_TICKS) {
+        const first = gameState.sunGateFirsts?.find(x => x.gateId === g.id || x.gateId === `${g.id}_far`);
+        if (opened != null && tick - opened <= SUN_GATE_NEWS_TICKS && !first) {
           push({
             id: `sun_gate:open:${g.id}`,
             category: 'sun_gate',
             tier: 'opportunity',
             entity: `body:${g.id}`,
             title: `The ${g.name} is open`,
-            subtitle: `Park a ship on it to launch to ${sys} at a tenth of the burn`,
+            subtitle: `Nobody has been through yet. Park a ship on it to launch to ${sys} at a tenth of the burn`,
             focus: { kind: 'body', bodyId: g.id },
             severity: 'normal',
             sortKey: -opened,
+          });
+        }
+        // THE FIRST HULL THROUGH: news for everyone, a triumph for one.
+        if (first && tick - first.tick <= SUN_GATE_NEWS_TICKS) {
+          const mine = first.factionId === factionId;
+          const who = mine ? 'You were' : `${first.factionId ? factionName(gameState, first.factionId) : 'Someone'} was`;
+          push({
+            id: `sun_gate:first:${g.id}`,
+            category: 'sun_gate',
+            entity: `body:${g.id}`,
+            title: `${who} first through the ${g.name}`,
+            subtitle: `${first.ship ? `The ${first.ship}` : 'Their hull'} is crossing to ${first.toSystem ?? sys}. The gate is open to everyone`,
+            focus: { kind: 'body', bodyId: g.id },
+            severity: 'normal',
+            sortKey: -first.tick,
           });
         }
       }

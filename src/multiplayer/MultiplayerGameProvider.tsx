@@ -92,6 +92,10 @@ interface ServerState {
     system_scale?: number;
     /** The sun-gate omen tick (worker/sunGates.js); null until rolled. */
     sun_gate_tick?: number | null;
+    /** The next gate within its warning window (sunGates.js / state.js). */
+    sun_gate_next?: { emerge_tick: number; index: number } | null;
+    /** The first hull through each sun gate. */
+    sun_gate_firsts?: Array<{ gate_id: string; faction_id: string | null; tick: number; ship: string | null; to_system: string | null }>;
     transit_range_in_system_mul?: number;
     ship_base_stats?: Record<string, { hp: number; damage_per_tick: number; speed: number }>;
     domination_fraction?: number;
@@ -1241,6 +1245,8 @@ function classifyChronicleEvent(kind: string): { category: LogCategory; level: L
     case 'sun_gate_emerged':
     case 'sun_gate_opened':
       return { category: 'SYSTEM', level: 'WARN' };
+    case 'gate_transit':
+      return { category: 'SYSTEM', level: 'INFO' };
     case 'settlement_built':
     case 'ship_built':
     case 'ship_refitted':
@@ -2171,18 +2177,33 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         return `${t}  ${possessive(owner, sName)} on ${where} completed ${kind} L${lvl}`;
       }
 
-      // THE SUN GATES (worker/sunGates.js): the omen, a gate leaving the
-      // Sun, a gate opening. Everyone gets all three.
+      // THE SUN GATES (worker/sunGates.js): the warning before each gate,
+      // a gate leaving the Sun, a gate opening, a hull going through.
+      // Everyone gets every one.
       if (ev.kind === 'sun_gate_omen') {
         const wait = Number(parsed.gate_in) || 6;
-        return `${t}  ☀ Something strange is emerging from the Sun — it will be out in ${wait} ticks`;
+        const again = Number(parsed.index) > 0;
+        return `${t}  ☀ Something ${again ? 'else' : 'strange'} is emerging from the Sun — it will be out in ${wait} ticks`;
       }
       if (ev.kind === 'sun_gate_emerged') {
         const system = (parsed.system as string) ?? 'another star';
         const near = parsed.near as string | undefined;
         const at = Number(parsed.arrive_tick);
         return `${t}  ◎ A gate to ${system} has come out of the Sun, burning for the Far Reach`
-          + `${near ? ` — it stops out past ${near}` : ''}${Number.isFinite(at) ? ` at T+${at}` : ''}`;
+          + `${near ? ` — it stops out past ${near}` : ''}${Number.isFinite(at) ? ` at T+${at}` : ''}`
+          + '; its landing site is marked on the map';
+      }
+      if (ev.kind === 'gate_transit') {
+        // Any gate, ancient or sun. This fell through to the raw-kind
+        // fallback and printed "T+45  gate_transit".
+        const owner = nameOfFaction(ev.actor_faction_id);
+        const ship = (parsed.ship as string) ?? 'a hull';
+        const from = (parsed.from as string) ?? 'a gate';
+        const to = (parsed.sun_gate ? (parsed.to_system as string | undefined) : undefined)
+          ?? (parsed.to as string) ?? 'the far side';
+        return parsed.first
+          ? `${t}  ◎ ${owner} was FIRST through the ${from}: the ${ship} is crossing to ${to}`
+          : `${t}  ◎ ${possessive(owner, ship)} went through the ${from}, crossing to ${to}`;
       }
       if (ev.kind === 'sun_gate_opened') {
         const gate = (parsed.gate as string) ?? 'The gate';
@@ -2880,6 +2901,14 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     sensorScale: srv.game.sensor_scale ?? 1,
     systemScale: srv.game.system_scale ?? 1,
     sunGateTick: srv.game.sun_gate_tick ?? null,
+    sunGateNext: srv.game.sun_gate_next
+      ? { emergeTick: srv.game.sun_gate_next.emerge_tick, index: srv.game.sun_gate_next.index }
+      : null,
+    sunGateFirsts: (srv.game.sun_gate_firsts ?? []).map(f => ({
+      gateId: stripGameId(f.gate_id) ?? f.gate_id,
+      factionId: f.faction_id ? (f.faction_id === callerFactionId ? PLAYER_TOKEN : f.faction_id) : null,
+      tick: f.tick, ship: f.ship, toSystem: f.to_system,
+    })),
     // Keyed on the LOCAL body id, because everything that looks a site
     // up holds a client-side body whose id has already been stripped.
     visibleBodyIds: (srv.visible_body_ids ?? []).map(id => stripGameId(id) ?? id),

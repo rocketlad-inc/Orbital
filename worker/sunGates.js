@@ -474,6 +474,19 @@ export async function advanceSunGates(env, gameId, tick, conf) {
 
   let prior = null;
   for (const step of plan) {
+    // EVERY GATE GETS ITS WARNING. The first is the omen above; each
+    // later one is told the same way, SUN_GATE_WARNING_TICKS ahead, so a
+    // second gate never comes out of the Sun unannounced. Which system it
+    // leads to stays secret until it is out.
+    if (step.index > 0 && tick >= step.emergeTick - SUN_GATE_WARNING_TICKS && tick < step.emergeTick) {
+      const wait = step.emergeTick - tick;
+      if (await chronicleOnce(DB, `${gameId}:sungate:omen:${step.index}`, gameId, tick, 'sun_gate_omen', solId,
+        { gate_in: wait, index: step.index })) {
+        await tellEveryone(env, gameId, tick, `omen:${step.index}`,
+          '☀ Something else is emerging from the Sun',
+          [`The Sun is not done. Another shape is rising through it, and it will be out in **${wait} ticks**.`]);
+      }
+    }
     if (tick < step.emergeTick) break;
     const id = solGateId(gameId, step.sys);
     let row = await DB.prepare(

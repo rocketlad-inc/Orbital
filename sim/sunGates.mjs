@@ -249,6 +249,16 @@ const g1 = await DB.prepare(`SELECT * FROM game_bodies WHERE id = ?`).bind(solGa
 check(`tick 21: the second gate (to ${order[1].label}) leaves, ten ticks later`,
   !!g1 && g1.emerge_from_tick === 21, JSON.stringify(g1));
 {
+  // The second gate is WARNED, like the first: six ticks ahead, once.
+  const warns = (await chron()).filter(r => r.kind === 'sun_gate_omen');
+  const second = warns.find(r => JSON.parse(r.payload).index === 1);
+  check('the second gate is warned six ticks ahead, like the first',
+    !!second && second.tick_number === 15 && JSON.parse(second.payload).gate_in === 6,
+    JSON.stringify(warns));
+  check('...once, and without saying where it leads',
+    warns.length === 2 && !/Centauri|Cygnus/.test(second.payload), JSON.stringify(warns));
+}
+{
   const at = g1.emerge_until_tick;
   const a0 = orbitAngle(g0.angle0, g0.orbit_period, at);
   const a1 = orbitAngle(g1.angle0, g1.orbit_period, at);
@@ -287,8 +297,8 @@ check('a retried tick writes nothing twice',
 
 for (let t = 22; t <= 60; t++) await advanceSunGates(env, G, t, dials);
 rows = await chron();
-check('the whole event: one omen, two departures, two openings',
-  rows.filter(r => r.kind === 'sun_gate_omen').length === 1
+check('the whole event: two warnings, two departures, two openings',
+  rows.filter(r => r.kind === 'sun_gate_omen').length === 2
   && rows.filter(r => r.kind === 'sun_gate_emerged').length === 2
   && rows.filter(r => r.kind === 'sun_gate_opened').length === 2,
   rows.map(r => r.kind).join(', '));
@@ -317,6 +327,12 @@ check('...and both landing sites retired once their gates were down', (await DB.
   // A section carries four stories, and six gate moments in one window
   // is more than any real edition sees: the first crossing lands in a
   // later one, after both gates are open.
+  // The second warning gets the paper's "again" story, not a repeat of
+  // the first omen's "first time in living memory".
+  const { SUN_GATE_OMEN_AGAIN_HEADLINE } = await import('../worker/heraldBanks.js');
+  const again = JSON.stringify(await composeHeraldForTickRange(env, { id: G, name: 'Gates' }, 12, 16));
+  check('the Herald runs the second warning as a second warning',
+    SUN_GATE_OMEN_AGAIN_HEADLINE.some(h => again.includes(h({ wait: 6 }))), again.slice(0, 400));
   const later = JSON.stringify(await composeHeraldForTickRange(env, { id: G, name: 'Gates' }, 35, 60));
   check('...and the edition the first crossing lands in names the hull', later.includes('Pathfinder'),
     later.slice(0, 400));
