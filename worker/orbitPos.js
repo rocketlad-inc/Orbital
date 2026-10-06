@@ -16,6 +16,8 @@
 // and the torch model in src/physics/torchTransfer.ts.
 // ============================================================
 
+import { boostState } from './burn.js';
+
 export const ORBITAL_SPEED_SCALE = 0.7;
 
 const TWO_PI = Math.PI * 2;
@@ -51,4 +53,32 @@ export function burnProgress(f, k = 1) {
 export function brakeRatioOf(accel, brakeAccel) {
   const a = Number(accel), b = Number(brakeAccel);
   return brakeAccel != null && a > 0 && b > 0 ? b / a : 1;
+}
+
+/**
+ * Fraction of a leg covered at time-fraction `f`, for any leg the table
+ * holds. A leg with a build-up (accel_ramp, migration 0158) follows its
+ * own curve: the push grows from `accel` toward `max`, then it brakes at
+ * `brake` from the flip until it stops. Anything else is a constant push
+ * and goes through burnProgress with its brake ratio.
+ *
+ * @param leg {accel, brake, ramp, max, startTick, flipTick, arriveTick}
+ */
+export function legProgress(f, leg) {
+  const ramp = Number(leg.ramp);
+  if (!(ramp > 0)) return burnProgress(f, brakeRatioOf(leg.accel, leg.brake));
+  if (f <= 0) return 0;
+  if (f >= 1) return 1;
+  const a0 = Number(leg.accel), max = Number(leg.max), brake = Number(leg.brake);
+  const T = Number(leg.arriveTick) - Number(leg.startTick);
+  const t1 = Number(leg.flipTick) - Number(leg.startTick);
+  if (!(a0 > 0) || !(brake > 0) || !(T > 0) || !(t1 > 0)) return burnProgress(f);
+  const s1 = boostState(t1, a0, ramp, max);
+  const total = s1.x + (s1.v * s1.v) / (2 * brake);
+  if (!(total > 0)) return f;
+  const tau = f * T;
+  if (tau <= t1) return Math.min(1, boostState(tau, a0, ramp, max).x / total);
+  // Braking; an arrival ceiled past the stop just waits at the end.
+  const u = Math.min(tau - t1, s1.v / brake);
+  return Math.min(1, (s1.x + s1.v * u - 0.5 * brake * u * u) / total);
 }

@@ -34,11 +34,11 @@ import { CRUISE_SPEED_SCALE, DEPARTURE_SPEED_SCALE } from './burn.js';
  *  starting point, not as a tuned number, and stage-1 telemetry is what
  *  replaces it. Host-tunable via `transit_evasion_v_ref`.
  *
- *  SCALED WITH THE BURN (burn.js, 2026-10-06). 45 was set for an even
- *  burn; the 9x brake makes every cruise pass 1.34x faster over the same
- *  route, so the crossing rate that "starts to matter" moves with it. A
- *  faster burn (the 1g briefly shipped made passes 6x faster) would leave
- *  hulls in flight all but unhittable if this stood still. */
+ *  SCALED WITH THE BURN (burn.js, 2026-10-06). 45 was set for a flat
+ *  0.05g even burn. With the build-up and the 9x brake, the reference
+ *  mid-cruise pass is 2.6x faster (burn.js CRUISE_SPEED_SCALE), so the
+ *  crossing rate that "starts to matter" moves with it: 119. Long outer
+ *  hauls run faster still, and are correspondingly hard to hit. */
 export const V_REF = Math.round(45 * CRUISE_SPEED_SCALE);
 
 /** CLOSING-SPEED BONUS — the answer to "a mechanic that does nothing".
@@ -67,10 +67,11 @@ export const V_REF = Math.round(45 * CRUISE_SPEED_SCALE);
  *
  *  SCALED WITH THE BURN (burn.js, 2026-10-06), each end by what it was
  *  tuned against. The start sat just above a one-tick departure burn
- *  (26.5 u/t at 0.05g), which grows with the push itself. The full mark
- *  sat at the top of interplanetary cruise passes (200-380 u/t on an even
- *  burn), which grow with sqrt of the push and with the hard brake: x1.34
- *  at 0.05g. So 50 -> 50 and 350 -> 470. */
+ *  (26.5 u/t on the flat push; 31.8 now the push builds in its first
+ *  tick, DEPARTURE_SPEED_SCALE 1.2). The full mark sat at the top of
+ *  interplanetary cruise passes (200-380 u/t on the flat even burn),
+ *  which the build-up and the hard brake make 2.6x faster
+ *  (CRUISE_SPEED_SCALE). So 50 -> 60 and 350 -> 922. */
 export const DV_BONUS_MAX = 0.10;
 export const DV_BONUS_START = Math.round(50 * DEPARTURE_SPEED_SCALE);
 export const DV_BONUS_FULL = Math.round(350 * CRUISE_SPEED_SCALE);
@@ -375,8 +376,11 @@ const BURN_SUBSTEPS = 100;
 /**
  * @param plan {launchX, launchY, launchVx, launchVy, accel, flipTick,
  *              startTick, arriveTick, interceptX, interceptY, targetBodyId,
- *              brakeAccel?} — brakeAccel null/absent = an even burn that
- *              brakes at accel (every leg before migration 0155, and rams)
+ *              brakeAccel?, accelRamp?, accelMax?}
+ *              brakeAccel null/absent = an even burn that brakes at accel
+ *              (every leg before migration 0155, and rams). accelRamp > 0
+ *              = the push builds from accel toward accelMax (migration
+ *              0158, burn.js); absent = a flat push.
  * @param bodyVelAt (bodyId, t) -> {x, y}, for the brake phase
  * @param t target tick
  */
@@ -390,9 +394,14 @@ export function torchStateAt(plan, bodyVelAt, t) {
   if (end <= cur) return { pos, vel };
 
   const brake = plan.brakeAccel != null && plan.brakeAccel > 0 ? plan.brakeAccel : plan.accel;
-  // An even burn steps exactly as it always has (whole ticks, phase by
-  // midpoint), so no leg already in flight moves when this ships.
-  const hardBrake = brake !== plan.accel;
+  const ramp = plan.accelRamp > 0 && plan.accelMax > plan.accel ? plan.accelRamp : 0;
+  // The push at tick `tm` of a building burn (constant without a ramp).
+  const pushAt = (tm) => (ramp > 0
+    ? Math.min(plan.accelMax, plan.accel + ramp * (tm - plan.startTick))
+    : plan.accel);
+  // An even, flat burn steps exactly as it always has (whole ticks, phase
+  // by midpoint), so no leg already in flight moves when this ships.
+  const hardBrake = brake !== plan.accel || ramp > 0;
   const fine = hardBrake
     ? Math.min(MAX_SUBSTEP, Math.max(1e-6, (plan.arriveTick - plan.startTick) / BURN_SUBSTEPS))
     : MAX_SUBSTEP;
@@ -425,7 +434,7 @@ export function torchStateAt(plan, bodyVelAt, t) {
       if (rv >= 1e-9) { tx = -rvx / rv; ty = -rvy / rv; }
     }
 
-    const a = boosting ? plan.accel : brake;
+    const a = boosting ? pushAt(midTick) : brake;
     const ax = tx * a;
     const ay = ty * a;
     pos.x += vel.x * step + 0.5 * ax * step * step;
