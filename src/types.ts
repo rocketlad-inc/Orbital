@@ -609,6 +609,10 @@ export interface Faction {
    *  and on the single-player model, which never seeds one — render
    *  through resolveEmblem() so those still draw a stable shape. */
   emblem?: string | null;
+  /** Colony and station skins (0154, Commission). Absent = the free look;
+   *  the server only sends a premium skin while the Commission is held. */
+  citySkin?: string | null;
+  stationSkin?: string | null;
   isPlayer: boolean;
   /** When true, this faction's turn is driven by src/game/factionAI.ts
    *  instead of waiting for player input. Single-player only for v1. */

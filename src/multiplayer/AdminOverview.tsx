@@ -1284,6 +1284,7 @@ const SURFACE_LABEL: Record<string, string> = {
   designer: 'Ship designer preview',
   endgame: 'End of game',
   'thanks-card': '20-hour thank-you',
+  skins: 'Colony & station styles',
   other: 'Other / older clients',
   'before tracking': 'Before tracking',
 };

@@ -28,6 +28,10 @@
 // or better, delete the constant and read the config.
 // ============================================================================
 
+// The transit-combat speed thresholds scale with the burn (burn.js), so
+// their defaults are READ from the code rather than copied here.
+import { V_REF, DV_BONUS_START, DV_BONUS_FULL } from './transitCombat.js';
+
 export const GROUPS = [
   { id: 'yields', label: 'Yields & Growth', blurb: 'What worlds produce, and how fast settlements grow.' },
   { id: 'buildings', label: 'Buildings', blurb: 'Cost and effect of the compounding structures.' },
@@ -263,36 +267,37 @@ export const SCHEMA = [
   },
   {
     id: 'transit_evasion_v_ref', group: 'combat', type: 'number',
-    label: 'Transit evasion reference (units/tick)', def: 45, min: 10, max: 500, step: 5,
+    label: 'Transit evasion reference (units/tick)', def: V_REF, min: 10, max: 3000, step: 5,
     danger: true,
     help: 'The CROSSING rate at which a target becomes twice as hard to hit. Lower = transit is '
-      + 'deadlier to cross in front of. Carried over from an earlier model that measured total '
-      + 'relative speed, so it wants re-tuning against real telemetry before anyone trusts it.',
+      + 'deadlier to cross in front of. Scaled with ship thrust (45 at the old 0.05g, 270 at 1g '
+      + 'with the hard brake). Carried over from an earlier model that measured total relative '
+      + 'speed, so it wants re-tuning against real telemetry before anyone trusts it.',
   },
   {
     id: 'transit_dv_bonus_max', group: 'combat', type: 'number',
     label: 'Closing-speed hit bonus (max, 0-1)', def: 0.10, min: 0, max: 0.5, step: 0.01,
     danger: true,
-    help: 'Flat bonus added to the hit chance at high RELATIVE speed, ramping in from 50 u/t to '
-      + '350 u/t. Exists because a fast pass is only inside weapon range for a few percent of a '
+    help: 'Flat bonus added to the hit chance at high RELATIVE speed, ramping in from 1000 u/t to '
+      + '2100 u/t. Exists because a fast pass is only inside weapon range for a few percent of a '
       + 'tick, so no aim-side knob could make one matter — even a certain hit caps at ~2 shots. '
       + 'A target closing straight at you is easy to aim at; this pays for the fact that it is '
       + 'not there long. Set 0 to disable. Cannot affect fights at a body (0 u/t) or the parting '
-      + 'shot (26.5 u/t) — both sit below the ramp.',
+      + 'shot (one tick of 1g, ~530 u/t) — both sit below the ramp.',
   },
   {
     id: 'transit_dv_bonus_start', group: 'combat', type: 'number',
-    label: 'Closing-speed bonus starts at (units/tick)', def: 50, min: 0, max: 500, step: 5,
+    label: 'Closing-speed bonus starts at (units/tick)', def: DV_BONUS_START, min: 0, max: 10000, step: 10,
     danger: true,
     help: 'Relative speed at which the bonus begins. Keep above the one-tick departure burn '
-      + '(~26.5 u/t) or the parting shot stops matching its tuned number.',
+      + '(~530 u/t at 1g) or the parting shot stops matching its tuned number.',
   },
   {
     id: 'transit_dv_bonus_full', group: 'combat', type: 'number',
-    label: 'Closing-speed bonus reaches max at (units/tick)', def: 350, min: 10, max: 1000, step: 10,
+    label: 'Closing-speed bonus reaches max at (units/tick)', def: DV_BONUS_FULL, min: 10, max: 20000, step: 10,
     danger: true,
     help: 'Relative speed at which the bonus is fully applied. Interplanetary cruise passes run '
-      + '200-380 u/t.',
+      + 'about 1200-2300 u/t at 1g.',
   },
   {
     id: 'station_dmg_per_weapons_level', group: 'combat', type: 'number',

@@ -255,3 +255,51 @@ export const STATION = {
     line([[14, -13], [50, -13]], 0.9, 'liv', { m: false }),
   ] },
 };
+
+// Station HUB skins (0154, Commander's Commission). Each replaces only the
+// hub; the module mounts in settlementArt.ts never move, so a rival still
+// reads a station by where its weapons, lab and shipyard sit and how big
+// they have grown. Same 64-unit box and centre (32, 0) as STATION.core.
+export const STATION_HUBS = {
+  hub: STATION.core.parts,
+  // A spoked habitat ring: the classic station.
+  wheel: [
+    ...around(6, 15, (x, y) => [line([[32, 0], [x, y]], 1.6, 'plate', { m: false, layer: 'under' })], 30),
+    ring(32, 0, 17, 17, 4.2),
+    ...around(12, 17, (x, y) => [disc(x, y, 0.9, { m: false, layer: 'top' })]),
+    disc(32, 0, 5.5),
+    ring(32, 0, 8, 8, 1.2),
+    disc(32, 0, 2, { core: true, layer: 'top' }),
+  ],
+  // An armoured octagon with four corner bastions.
+  citadel: [
+    poly(around(8, 17, (x, y) => [[x, y]], 22.5), 'plate'),
+    poly(around(8, 13, (x, y) => [[x, y]], 22.5), 'plate2'),
+    ...around(4, 17, (x, y) => [box(x - 3, y - 3, 6, 6, 'base', { layer: 'top' })], 45),
+    ...around(8, 13, (x, y) => [line([[32, 0], [x, y]], 0.6, 'liv', { m: false })], 22.5),
+    disc(32, 0, 6),
+    disc(32, 0, 2.6, { core: true, layer: 'top' }),
+  ],
+  // A long axial hull with a docking ring at each end and two radiators.
+  spindle: [
+    pod(32, 0, 46, 7, 3),
+    ...[14, 50].map(x => ring(x, 0, 3.5, 11, 2.2)),
+    ...[24, 40].map(x => box(x - 2, -16, 4, 32, '#16324c', { layer: 'under' })),
+    ...[24, 40].map(x => line([[x, -16], [x, 16]], 0.6, '#3f6f9a', { m: false })),
+    line([[10, 0], [54, 0]], 0.8, 'liv', { m: false }),
+    disc(32, 0, 4.5),
+    disc(32, 0, 1.8, { core: true, layer: 'top' }),
+  ],
+  // An open truss: a square frame braced once, nodes at its corners, two
+  // pods hung inside. Kept sparse on purpose: the concept pass had a
+  // second brace and more nodes, and it read as clutter at map size.
+  lattice: [
+    ...[-16, 16].map(y => line([[12, y], [52, y]], 2, 'plate2', { m: false, layer: 'under' })),
+    ...[12, 52].map(x => line([[x, -16], [x, 16]], 2, 'plate2', { m: false, layer: 'under' })),
+    line([[12, 16], [52, -16]], 1.2, 'plate', { m: false, layer: 'under' }),
+    ...[[12, -16], [52, -16], [12, 16], [52, 16]].map(([x, y]) => disc(x, y, 3.4, { m: false })),
+    ...[[22, 8], [42, -8]].map(([x, y]) => disc(x, y, 4, { m: false })),
+    disc(32, 0, 5.5),
+    disc(32, 0, 2.1, { core: true, layer: 'top' }),
+  ],
+};

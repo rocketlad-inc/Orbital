@@ -27,16 +27,28 @@ export function orbitAngle(angle0, period, t) {
 }
 
 /**
- * Fraction of a leg covered at time-fraction `f` under a symmetric
- * flip-and-burn: boost at constant acceleration to the midpoint, flip,
- * brake the rest of the way.
+ * Fraction of a leg covered at time-fraction `f` under a flip-and-burn:
+ * boost at constant acceleration, flip, brake the rest of the way.
  *
  * Deliberately NOT linear, and the gap is not a rounding difference: at
- * quarter flight the ship has covered 12.5% of the leg where a straight
- * lerp says 25% — twice as far along as it really is.
+ * quarter flight on an even burn the ship has covered 12.5% of the leg
+ * where a straight lerp says 25% — twice as far along as it really is.
+ *
+ * `k` is the leg's brake / boost ratio (burn.js BRAKE_MUL for every leg
+ * planned since 2026-10-06; 1 for the even burns before it, whose rows
+ * carry no brake_accel). The flip lands at F = k/(1+k) of the trip:
+ * f^2/F on the way out, 1 - (1+k)(1-f)^2 on the way in.
  */
-export function burnProgress(f) {
+export function burnProgress(f, k = 1) {
   if (f <= 0) return 0;
   if (f >= 1) return 1;
-  return f <= 0.5 ? 2 * f * f : 1 - 2 * (1 - f) * (1 - f);
+  if (!(k > 0) || k === 1) return f <= 0.5 ? 2 * f * f : 1 - 2 * (1 - f) * (1 - f);
+  const F = k / (1 + k);
+  return f <= F ? (f * f) / F : 1 - (1 + k) * (1 - f) * (1 - f);
+}
+
+/** A leg row's brake / boost ratio: 1 for an even burn (no brake_accel). */
+export function brakeRatioOf(accel, brakeAccel) {
+  const a = Number(accel), b = Number(brakeAccel);
+  return brakeAccel != null && a > 0 && b > 0 ? b / a : 1;
 }

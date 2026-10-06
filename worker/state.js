@@ -1,4 +1,5 @@
 import { hasFeature } from './researchUnlocks.js';
+import { DRAWN_SKIN_SQL } from './skins.js';
 import { parseNamePools } from '../src/game/namePools.js';
 import { getActiveSliders, activeSanctions, activeLawsFor } from './senate.js';
 import { buildCostFactors } from './buildCost.js';
@@ -9,7 +10,8 @@ import { upkeepSplit, parsePartsJson, shipBaseStatsFromCfg } from './shipDesigns
 import { voteWeights } from './systems.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
 import { visualsSwitches } from './botSettings.js';
-import { orbitAngle, burnProgress } from './orbitPos.js';
+import { orbitAngle, burnProgress, brakeRatioOf } from './orbitPos.js';
+import { SHIP_ENGINE_G, BRAKE_MUL } from './burn.js';
 
 // GET /api/games/:gameId/state — full renderer snapshot.
 //
@@ -179,7 +181,9 @@ export function buildFriendlySensors(
       const origin = bodyPos(byId.get(s.parent_body_id));
       const target = bodyPos(byId.get(s.target_body_id));
       const f = Math.max(0, Math.min(1, (tick - s.scheduled_t) / (s.arrival_at_tick - s.scheduled_t)));
-      const frac = burnProgress(f);
+      // The leg's own flip point: 90% for every burn since 2026-10-06,
+      // the midpoint for the even burns before it (no brake_accel).
+      const frac = burnProgress(f, brakeRatioOf(s.leg_accel, s.leg_brake_accel));
       return { x: origin.x + (target.x - origin.x) * frac, y: origin.y + (target.y - origin.y) * frac };
     }
     return bodyPos(byId.get(s.parent_body_id));
@@ -532,10 +536,17 @@ const trade_deliveriesP = env.DB
     .all();
 const factionsP = env.DB
     .prepare(
-      `SELECT id, slot, name, color, color2, emblem, status, capital_body_id, senate_weight, reputation
-         FROM game_factions
-        WHERE game_id = ?
-        ORDER BY slot ASC`,
+      `SELECT gf.id, gf.slot, gf.name, gf.color, gf.color2, gf.emblem, gf.status, gf.capital_body_id,
+              gf.senate_weight, gf.reputation,
+              -- Colony and station skins (0154): the lobby override, else
+              -- the account default, only while the Commission is held.
+              ${DRAWN_SKIN_SQL('city_skin')} AS city_skin,
+              ${DRAWN_SKIN_SQL('station_skin')} AS station_skin
+         FROM game_factions gf
+         LEFT JOIN room_members rm ON rm.room_id = gf.game_id AND rm.user_id = gf.user_id
+         LEFT JOIN users u ON u.id = gf.user_id
+        WHERE gf.game_id = ?
+        ORDER BY gf.slot ASC`,
     )
     .bind(gameId)
     .all();
@@ -735,7 +746,8 @@ const sensorShipsP = env.DB
     .prepare(
       `SELECT s.ship_class, s.parent_body_id,
               c.traits_json AS captain_traits,
-              n.target_body_id, n.scheduled_t, n.arrival_at_tick
+              n.target_body_id, n.scheduled_t, n.arrival_at_tick,
+              n.accel AS leg_accel, n.brake_accel AS leg_brake_accel
          FROM game_ships s
          LEFT JOIN game_captains c ON c.id = s.captain_id
          LEFT JOIN game_ship_nodes n
@@ -763,7 +775,8 @@ const sensorSettlementsP = env.DB
   const candidateEnemyShipsP = env.DB
     .prepare(
       `SELECT s.id, s.ship_class, s.parent_body_id,
-              n.target_body_id, n.scheduled_t, n.arrival_at_tick
+              n.target_body_id, n.scheduled_t, n.arrival_at_tick,
+              n.accel AS leg_accel, n.brake_accel AS leg_brake_accel
          FROM game_ships s
          LEFT JOIN game_ship_nodes n
            ON n.ship_id = s.id AND n.status = 'in_transit'
@@ -1363,6 +1376,9 @@ const nodesP = env.DB
               -- pre-flag nodes, which keep the legacy client-side plan.
               n.launch_x, n.launch_y, n.launch_vx, n.launch_vy,
               n.accel, n.flip_tick,
+              -- The brake (migration 0155). NULL on the even burns
+              -- committed before it, which brake at accel.
+              n.brake_accel,
               -- Rendezvous arc (migration 0090). NULL on an ordinary
               -- flip-and-burn, which is nearly every node.
               n.rv_ax, n.rv_ay, n.rv_bx, n.rv_by,
@@ -1382,6 +1398,7 @@ const nodesP = env.DB
               fl.launch_x AS fl_launch_x, fl.launch_y AS fl_launch_y,
               fl.launch_vx AS fl_launch_vx, fl.launch_vy AS fl_launch_vy,
               fl.accel AS fl_accel, fl.flip_tick AS fl_flip_tick,
+              fl.brake_accel AS fl_brake_accel,
               n.status, n.committed_at_tick,
               s.parent_body_id AS departure_body_id
          FROM game_ship_nodes n
@@ -2149,6 +2166,11 @@ const tradeRoutesP = env.DB
       // rides the map's spread but not the sensor knob (room.js
       // megaRangeScale), so its ring must not either.
       system_scale: systemScale,
+      // THE BURN SHIPS FLY (burn.js): base push in g, and the brake as a
+      // multiple of it. Sent so the client plans every leg with the
+      // server's numbers; it installs them via setMpBurnProfile.
+      burn_engine_g: SHIP_ENGINE_G,
+      burn_brake_mul: BRAKE_MUL,
       transit_combat_enabled: transitCombatEnabled,
       transit_range_in_system_mul: transitRangeInSystemMul,
       ship_base_stats: shipBaseStats,

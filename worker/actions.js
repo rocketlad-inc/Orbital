@@ -33,7 +33,8 @@ import { startingRankFor } from './captains.js';
 import { holdLanding, landHoldStatement } from './landHold.js';
 import {
   ASSET_KINDS, OPEN_STATUSES, assetState, owedOn, isSettled,
-  fulfilDeal, voidDeal,
+  fulfilDeal, voidDeal, ASSET_TRADE_PREFIX, isPaymentDest, paymentDests,
+  inFlightFor, deliveryPickup, payIntoDeal,
 } from './assetDeals.js';
 
 // Player-action endpoints: things the client wants the server to remember.
@@ -214,7 +215,13 @@ function parseTransferBody(body) {
     const acc = Number(body.accel), flip = Number(body.flip_tick);
     const finite = [lx, ly, lvx, lvy, acc, flip].every(Number.isFinite);
     if (finite && acc > 0 && flip > scheduledT && (arrivalT == null || flip < arrivalT)) {
-      plan = { lx, ly, lvx, lvy, acc, flip };
+      // The brake (migration 0155): a separate thrust for the second
+      // phase, so the flip can sit at 90% of the trip. Optional: absent,
+      // or not a positive number, stores NULL and the leg brakes at
+      // `accel` — an older bundle's even burn, integrated exactly as
+      // before.
+      const brk = Number(body.brake_accel);
+      plan = { lx, ly, lvx, lvy, acc, flip, brk: Number.isFinite(brk) && brk > 0 ? brk : null };
     }
   }
 
@@ -284,18 +291,18 @@ function nodeInsertStmt(env, gameId, shipId, nodeId, o) {
       `INSERT INTO game_ship_nodes
         (id, game_id, ship_id, sequence, anchor_kind, target_body_id,
          scheduled_t, arrival_at_tick, dv_prograde, dv_normal, dv_radial, fuel_cost,
-         launch_x, launch_y, launch_vx, launch_vy, accel, flip_tick,
+         launch_x, launch_y, launch_vx, launch_vy, accel, flip_tick, brake_accel,
          rv_ax, rv_ay, rv_bx, rv_by, rv_meet_tick, rv_follow_ship_id,
          status, committed_at_tick)
        SELECT ?, ?, ?,
               COALESCE((SELECT MAX(sequence) FROM game_ship_nodes WHERE ship_id = ?), -1) + 1,
-              'absolute', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'committed',
+              'absolute', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'committed',
               (SELECT current_tick FROM games WHERE id = ?)`,
     )
     .bind(
       nodeId, gameId, shipId, shipId, targetBodyId, scheduledT, arrivalT, dvP, dvN, dvR, fuelCost,
       plan?.lx ?? null, plan?.ly ?? null, plan?.lvx ?? null, plan?.lvy ?? null,
-      plan?.acc ?? null, plan?.flip ?? null,
+      plan?.acc ?? null, plan?.flip ?? null, plan?.brk ?? null,
       rv?.ax ?? null, rv?.ay ?? null, rv?.bx ?? null, rv?.by ?? null,
       rv?.meet ?? null, rv?.follow ?? null,
       gameId,
@@ -4453,6 +4460,8 @@ async function handleListAssetDeals(req, env, ctx) {
     )
     .bind(gameId, me.id).all()).results ?? [];
 
+  // Free to take a payment shipment: not on a route, not hauling one
+  // already, not mid-burn (the same rule handlePayAssetDeal enforces).
   const freighters = (await env.DB
     .prepare(
       `SELECT sh.id, sh.name, b.name AS body_name
@@ -4463,9 +4472,26 @@ async function handleListAssetDeals(req, env, ctx) {
           AND NOT EXISTS (
             SELECT 1 FROM game_ship_nodes n
              WHERE n.ship_id = sh.id AND n.status IN ('committed','in_transit'))
+          AND NOT EXISTS (
+            SELECT 1 FROM game_trade_routes r
+             WHERE r.ship_id = sh.id AND r.cancelled_at_tick IS NULL)
+          AND NOT EXISTS (
+            SELECT 1 FROM trade_deliveries d
+             WHERE d.ship_id = sh.id AND d.resolved_at_tick IS NULL)
         ORDER BY sh.name ASC`,
     )
     .bind(gameId, me.id).all()).results ?? [];
+
+  // Per deal the caller is BUYING and paying into: where the payment may
+  // land, and what is already on its way.
+  const payInfo = new Map();
+  for (const d of deals) {
+    if (d.buyer_faction_id !== me.id || d.status !== 'active') continue;
+    payInfo.set(d.id, {
+      dests: await paymentDests(env, gameId, d),
+      coming: await inFlightFor(env, gameId, d.id),
+    });
+  }
 
   return json({
     caller_faction_id: me.id,
@@ -4493,6 +4519,9 @@ async function handleListAssetDeals(req, env, ctx) {
       paid_metal: Number(d.paid_metal) || 0,
       paid_credits: Number(d.paid_credits) || 0,
       status: d.status,
+      delivery_body_id: d.delivery_body_id,
+      pay_dests: payInfo.get(d.id)?.dests ?? [],
+      in_flight: payInfo.get(d.id)?.coming ?? { metal: 0, credits: 0, freighters: 0 },
     })),
     sellable: [
       ...ships.map(s => ({
@@ -4764,12 +4793,15 @@ async function handleRespondAssetDeal(req, env, ctx) {
 
 /**
  * POST /api/games/:gameId/asset-deals/:dealId/pay
- * body: { ship_id }
+ * body: { ship_id, dest_body_id? }
  *
- * Unload a parked freighter into the deal's meter. Same shape as
- * delivering into a construction site, for the same reason: the freight
- * has to physically arrive, and that makes the payment attributable to
- * exactly one deal.
+ * Pay by freighter (assetDeals.js "PAYING BY FREIGHTER"):
+ *   - parked at a payment destination with freight aboard -> unload now
+ *   - otherwise -> DISPATCH: a shipment on the trade-delivery machinery
+ *     loads what is still owed at the buyer's dock and hauls it to
+ *     dest_body_id (default: the asset), and the tick pays it in.
+ * The freight has to physically arrive either way, which is what makes
+ * every payment attributable to exactly one deal, and raidable.
  */
 async function handlePayAssetDeal(req, env, ctx) {
   const { gameId, dealId } = ctx.params;
@@ -4781,6 +4813,8 @@ async function handlePayAssetDeal(req, env, ctx) {
   try { body = await req.json(); } catch { body = {}; }
   const shipId = String(body?.ship_id ?? '');
   if (!shipId) return err(400, 'bad_request', 'ship_id required');
+  const destRequested = typeof body?.dest_body_id === 'string' && body.dest_body_id
+    ? body.dest_body_id : null;
 
   const deal = await env.DB
     .prepare('SELECT * FROM trade_asset_deals WHERE id = ? AND game_id = ?')
@@ -4791,84 +4825,100 @@ async function handlePayAssetDeal(req, env, ctx) {
 
   const ship = await env.DB
     .prepare(
-      `SELECT id, name, owner_faction_id, status, parent_body_id, cargo_metal, cargo_gold
-         FROM game_ships WHERE id = ? AND game_id = ?`,
+      `SELECT sh.id, sh.name, sh.owner_faction_id, sh.status, sh.ship_class, sh.parent_body_id,
+              sh.cargo_metal, sh.cargo_gold, c.traits_json
+         FROM game_ships sh LEFT JOIN game_captains c ON c.id = sh.captain_id
+        WHERE sh.id = ? AND sh.game_id = ?`,
     )
     .bind(shipId, gameId).first();
   if (!ship || ship.owner_faction_id !== me.id) return err(404, 'not_found', 'ship not found');
   if (ship.status !== 'active') return err(409, 'not_active', 'ship is not active');
-  if (ship.parent_body_id !== deal.delivery_body_id) {
-    return err(409, 'not_here', 'the payment has to be delivered where the asset is');
-  }
-
-  const owed = owedOn(deal);
-  const giveMetal = Math.min(Number(ship.cargo_metal) || 0, owed.metal);
-  const giveCredits = Math.min(Number(ship.cargo_gold) || 0, owed.credits);
-  if (giveMetal <= 0 && giveCredits <= 0) {
-    return err(409, 'nothing_to_give', 'this ship carries nothing the deal still wants');
-  }
 
   const game = await env.DB
     .prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
   const tick = Number(game?.current_tick ?? 0);
+  const owed = owedOn(deal);
 
-  await env.DB.batch([
-    env.DB.prepare(
-      `UPDATE trade_asset_deals
-          SET paid_metal = paid_metal + ?, paid_credits = paid_credits + ?
-        WHERE id = ?`,
-    ).bind(giveMetal, giveCredits, dealId),
-    env.DB.prepare(
-      `UPDATE game_ships
-          SET cargo_metal = MAX(0, cargo_metal - ?), cargo_gold = MAX(0, cargo_gold - ?)
-        WHERE id = ?`,
-    ).bind(giveMetal, giveCredits, shipId),
-  ]);
-
-  const after = {
-    ...deal,
-    paid_metal: Number(deal.paid_metal) + giveMetal,
-    paid_credits: Number(deal.paid_credits) + giveCredits,
-  };
-
-  if (!isSettled(after)) {
-    return json({ ok: true, settled: false, still_owed: owedOn(after) });
+  // 1. UNLOAD NOW: parked at a payment destination with freight aboard.
+  const aboardM = Number(ship.cargo_metal) || 0;
+  const aboardC = Number(ship.cargo_gold) || 0;
+  const wantsAboard = Math.min(aboardM, owed.metal) + Math.min(aboardC, owed.credits) > 0;
+  if (wantsAboard && await isPaymentDest(env, gameId, deal, ship.parent_body_id)) {
+    const inFlight = await env.DB
+      .prepare("SELECT 1 AS x FROM game_ship_nodes WHERE ship_id = ? AND status IN ('committed','in_transit') LIMIT 1")
+      .bind(shipId).first();
+    if (!inFlight) {
+      const res = await payIntoDeal(env, gameId, dealId, aboardM, aboardC, tick);
+      if (res.taken.metal + res.taken.credits > 0) {
+        await env.DB
+          .prepare(
+            `UPDATE game_ships
+                SET cargo_metal = MAX(0, cargo_metal - ?), cargo_gold = MAX(0, cargo_gold - ?)
+              WHERE id = ?`,
+          )
+          .bind(res.taken.metal, res.taken.credits, shipId).run();
+      }
+      if (res.voided) {
+        return json({ ok: true, settled: false, voided: true, reason: res.reason, refunded: res.refunded });
+      }
+      if (res.settled) return json({ ok: true, settled: true, asset: res.asset });
+      return json({ ok: true, settled: false, still_owed: res.still_owed ?? owedOn(deal) });
+    }
   }
 
-  // PAID IN FULL - hand it over. The asset is re-checked here rather
-  // than trusted from the proposal: the seller has had every tick since
-  // then to scrap the hull or lose the world.
-  const done = await fulfilDeal(env, gameId, after, tick);
-  if (!done.ok) {
-    const refund = await voidDeal(env, gameId, after, done.reason, tick);
-    return json({
-      ok: true, settled: false, voided: true, reason: done.reason,
-      refunded: refund.refunded,
-    });
+  // 2. DISPATCH a shipment.
+  if (ship.ship_class !== 'freighter') {
+    return err(409, 'wrong_class', 'only freighters can carry a payment');
+  }
+  const busyRoute = await env.DB
+    .prepare('SELECT 1 AS x FROM game_trade_routes WHERE ship_id = ? AND cancelled_at_tick IS NULL LIMIT 1')
+    .bind(shipId).first();
+  if (busyRoute) return err(409, 'on_route', 'that freighter is running a trade route — take it off the route first');
+  const busyDelivery = await env.DB
+    .prepare('SELECT 1 AS x FROM trade_deliveries WHERE ship_id = ? AND resolved_at_tick IS NULL LIMIT 1')
+    .bind(shipId).first();
+  if (busyDelivery) return err(409, 'on_delivery', 'that freighter is already hauling a shipment');
+  const flying = await env.DB
+    .prepare("SELECT 1 AS x FROM game_ship_nodes WHERE ship_id = ? AND status IN ('committed','in_transit') LIMIT 1")
+    .bind(shipId).first();
+  if (flying) return err(409, 'in_transit', 'that freighter is mid-burn — wait for it to arrive');
+
+  const dest = destRequested ?? deal.delivery_body_id;
+  if (!(await isPaymentDest(env, gameId, deal, dest))) {
+    return err(409, 'bad_dest', "the payment can land at the asset or at any of the seller's settlements");
   }
 
-  try {
-    await env.DB
-      .prepare(
-        `INSERT INTO chronicle_entries
-          (id, game_id, tick_number, kind, actor_faction_id, body_id, target_faction_id, payload, visibility, created_at_ms)
-         VALUES (?, ?, ?, 'asset_sold', ?, ?, ?, ?, 'public', ?)`,
-      )
-      .bind(
-        `asale_${crypto.randomUUID().slice(0, 10)}`, gameId, tick,
-        deal.seller_faction_id, deal.delivery_body_id, deal.buyer_faction_id,
-        JSON.stringify({
-          asset: done.name,
-          asset_kind: deal.asset_kind,
-          metal: Number(after.paid_metal) || 0,
-          credits: Number(after.paid_credits) || 0,
-        }),
-        Date.now(),
-      )
-      .run();
-  } catch { /* the chronicle is decoration */ }
+  // Only what nobody is already carrying, and only one hold's worth.
+  const coming = await inFlightFor(env, gameId, dealId);
+  const hold = holdCapFor(ship.traits_json);
+  const metal = Math.max(0, Math.min(hold, owed.metal - coming.metal));
+  const credits = Math.max(0, Math.min(hold, owed.credits - coming.credits));
+  if (metal + credits <= 0) {
+    return err(409, 'covered', 'freighters already on the way carry the rest of the payment');
+  }
 
-  return json({ ok: true, settled: true, asset: done.name });
+  const capital = await env.DB.prepare('SELECT capital_body_id FROM game_factions WHERE id = ?')
+    .bind(me.id).first();
+  const pickup = await deliveryPickup(env, gameId, me.id, capital?.capital_body_id ?? null, ship.parent_body_id);
+  if (!pickup) return err(409, 'no_pickup_collector', 'you have no terraformed world to load the payment from');
+
+  const deliveryId = `tda_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
+  await env.DB
+    .prepare(
+      `INSERT INTO trade_deliveries
+         (id, game_id, trade_id, sender_faction_id, recipient_faction_id, ship_id, status,
+          pickup_body_id, dest_body_id, metal, fuel, gold, science, loaded, tariff_pct, created_at_tick)
+       VALUES (?, ?, ?, ?, ?, ?, 'to_pickup', ?, ?, ?, 0, ?, 0, 0, 0, ?)`,
+    )
+    .bind(deliveryId, gameId, `${ASSET_TRADE_PREFIX}${dealId}`, me.id, deal.seller_faction_id,
+          shipId, pickup, dest, metal, credits, tick)
+    .run();
+
+  return json({
+    ok: true, dispatched: true, delivery_id: deliveryId,
+    pickup_body_id: pickup, dest_body_id: dest,
+    carrying: { metal, credits },
+  }, { status: 201 });
 }
 
 /** POST /api/games/:gameId/asset-deals/:dealId/cancel - either party. */

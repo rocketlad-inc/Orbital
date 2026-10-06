@@ -445,6 +445,10 @@ export const WorldMenuOverlay: React.FC = () => {
   );
   const sp1 = staLivery?.color ?? p1;
   const sp2 = staLivery?.color2 || (staLivery ? deriveSecondary(sp1) : p2);
+  // ...and its owner's station skin (0154), so the badge is the station
+  // the map draws.
+  const staOwnerId = readout?.station ? here.find(x => x.id === readout.station!.settlementId)?.ownedBy : undefined;
+  const staSkin = gameState.factions.find(f => f.id === staOwnerId)?.stationSkin ?? null;
   const neighbors = useMemo(
     () => neighborsOf(openId, gameState.bodies).slice(0, 4),
     [openId, gameState.bodies],
@@ -1062,7 +1066,7 @@ export const WorldMenuOverlay: React.FC = () => {
               labLevel: myStation?.buildings?.lab ?? 0,
               shipyardLevel: myStation?.buildings?.shipyard ?? 0,
               thrustersLevel: (myStation?.buildings as Record<string, number> | undefined)?.trajectory_thrusters ?? 0,
-            }, sp1, sp2) }}
+            }, sp1, sp2, staSkin) }}
           />
           {/* Name + HP header — always readable */}
           <text x="65" y="14" textAnchor="middle"

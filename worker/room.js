@@ -27,8 +27,9 @@ import { rendezvousStateAt } from '../src/physics/rendezvous.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
 import { selectInChunks } from './sqlChunk.js';
 import { hostilePairs } from './wars.js';
-import { assetState, voidDeal } from './assetDeals.js';
-import { burnProgress } from './orbitPos.js';
+import { assetState, voidDeal, ASSET_TRADE_PREFIX, owedOn, payIntoDeal } from './assetDeals.js';
+import { burnProgress, brakeRatioOf } from './orbitPos.js';
+import { SHIP_ENGINE_ACCEL, BRAKE_MUL, FLIP_FRACTION, burnTicks, boostAccelFor } from './burn.js';
 import { effectiveHpMaxOf } from './effectiveHp.js';
 import {
   periodForRadius, MEGASTRUCTURES, MEGA_MU, bodyPositionAt, foundrySlotsAt,
@@ -2990,6 +2991,13 @@ export class Room {
               await this.env.DB
                 .prepare(`UPDATE trade_deliveries SET status = 'lost', resolved_at_tick = ? WHERE id = ?`)
                 .bind(tick, d.id).run();
+            } else if (String(d.trade_id).startsWith(ASSET_TRADE_PREFIX)) {
+              // An asset payment has no obligation row to fall back to:
+              // nothing was aboard, so it simply ends; the buyer sends
+              // another freighter.
+              await this.env.DB
+                .prepare(`UPDATE trade_deliveries SET status = 'cancelled', resolved_at_tick = ? WHERE id = ?`)
+                .bind(tick, d.id).run();
             } else {
               await this.env.DB
                 .prepare(`UPDATE trade_deliveries SET ship_id = NULL, pickup_body_id = NULL, status = 'unassigned' WHERE id = ?`)
@@ -2997,6 +3005,9 @@ export class Room {
             }
             continue;
           }
+          // ASSET PAYMENTS (assetDeals.js "PAYING BY FREIGHTER").
+          const assetDealId = String(d.trade_id).startsWith(ASSET_TRADE_PREFIX)
+            ? String(d.trade_id).slice(ASSET_TRADE_PREFIX.length) : null;
 
           const inFlight = await this.env.DB
             .prepare("SELECT 1 AS x FROM game_ship_nodes WHERE ship_id = ? AND status IN ('committed','in_transit') LIMIT 1")
@@ -3025,6 +3036,34 @@ export class Room {
               .run();
           };
 
+          if (d.status === 'to_pickup' && assetDealId) {
+            // Before anything is loaded, the deal may have closed or been
+            // paid by other runs. Load only what is still owed and not
+            // already riding another hull; nothing owed = no trip.
+            const deal = await this.env.DB
+              .prepare('SELECT * FROM trade_asset_deals WHERE id = ? AND game_id = ?')
+              .bind(assetDealId, gameId).first();
+            const others = await this.env.DB
+              .prepare(
+                `SELECT COALESCE(SUM(metal), 0) AS m, COALESCE(SUM(gold), 0) AS g FROM trade_deliveries
+                  WHERE game_id = ? AND trade_id = ? AND resolved_at_tick IS NULL AND id != ?`,
+              )
+              .bind(gameId, d.trade_id, d.id).first();
+            const owed = deal && deal.status === 'active' ? owedOn(deal) : { metal: 0, credits: 0 };
+            const m = Math.max(0, Math.min(Number(d.metal), owed.metal - Number(others?.m ?? 0)));
+            const g = Math.max(0, Math.min(Number(d.gold), owed.credits - Number(others?.g ?? 0)));
+            if (m + g <= 0) {
+              await this.env.DB
+                .prepare(`UPDATE trade_deliveries SET status = 'cancelled', resolved_at_tick = ? WHERE id = ?`)
+                .bind(tick, d.id).run();
+              continue;
+            }
+            if (m !== Number(d.metal) || g !== Number(d.gold)) {
+              await this.env.DB.prepare('UPDATE trade_deliveries SET metal = ?, gold = ? WHERE id = ?')
+                .bind(m, g, d.id).run();
+              d.metal = m; d.gold = g;
+            }
+          }
           if (d.status === 'to_pickup') {
             if (here !== d.pickup_body_id) { await planDeliveryLeg(d.pickup_body_id); continue; }
             // At the collector: load. The debit is guarded — if the
@@ -3052,6 +3091,24 @@ export class Room {
             await planDeliveryLeg(d.dest_body_id);
           } else if (d.status === 'outbound') {
             if (here !== d.dest_body_id) { await planDeliveryLeg(d.dest_body_id); continue; }
+            if (assetDealId) {
+              // Into the deal's escrow meter (no tariff: it is a price,
+              // not trade); the handover runs if this settles it. What
+              // the deal will not take -- it closed, or other runs paid
+              // first -- stays ABOARD, as a cancelled route's load does.
+              const res = await payIntoDeal(this.env, gameId, assetDealId, d.metal, d.gold, tick);
+              const keepM = Number(d.metal) - res.taken.metal;
+              const keepG = Number(d.gold) - res.taken.credits;
+              if (keepM + keepG > 0) {
+                await this.env.DB
+                  .prepare('UPDATE game_ships SET cargo_metal = cargo_metal + ?, cargo_gold = cargo_gold + ? WHERE id = ?')
+                  .bind(keepM, keepG, d.ship_id).run();
+              }
+              await this.env.DB
+                .prepare(`UPDATE trade_deliveries SET status = 'delivered', resolved_at_tick = ? WHERE id = ?`)
+                .bind(tick, d.id).run();
+              continue;
+            }
             // Arrived. Credit the recipient minus the accept-time
             // tariff snapshot; floors so the skim can't mint units.
             const mul = 1 - Math.max(0, Math.min(100, d.tariff_pct ?? 0)) / 100;
@@ -3123,6 +3180,137 @@ export class Room {
   // keyframe -- eviction costs one bigger row, never correctness. A
   // scheduled keyframe every 60 ticks bounds how many deltas a reader
   // ever walks.
+  // Pending refits (DESIGN-fleet-economy §2), as a method so the tick can
+  // run it TWICE: at 1c, and again after arrivals and before the route
+  // auto-pilot plans the next leg.
+  //
+  // Once at 1c was not enough. A freighter on a route lands in 2b and the
+  // auto-pilot launches its next leg in the SAME tick, so at the next
+  // tick's 1c it is mid-burn again and never "parked": its refit could
+  // never fire. CMDR Poopypants, 2026-10-06: "This freighter went to two
+  // different friendly worlds and never got refitted" -- a Mercury/Venus
+  // supply run, 6 of the 8 pending refits on prod were on routes.
+  async applyPendingRefits(gameId, tick) {
+    // 1c. Pending refits (DESIGN-fleet-economy §2). Ships stamped with
+    //     refit_pending_design_id by the refit-fleet endpoint catch up
+    //     here: whenever such a hull is PARKED (no committed/in-transit
+    //     node) at a body where its owner holds a living settlement, and
+    //     the owner's pool covers the fee (half the added parts'
+    //     escalated price, computed against the design's CURRENT parts —
+    //     later template edits are honored, not the snapshot at stamp
+    //     time), the loadout applies and the marker clears. Unaffordable
+    //     hulls stay pending and simply retry next tick; a deleted
+    //     design clears the marker as a no-op.
+    try {
+      const pendingRefits = (await this.env.DB
+        .prepare(
+          `SELECT s.id, s.owner_faction_id, s.ship_class, s.parent_body_id,
+                  s.hp, s.hp_max, s.parts_json, s.refit_pending_design_id,
+                  d.parts_json AS design_parts_json, d.ship_class AS design_class,
+                  d.icon_variant AS design_icon_variant
+             FROM game_ships s
+             LEFT JOIN game_ship_designs d ON d.id = s.refit_pending_design_id
+            WHERE s.game_id = ? AND s.status = 'active'
+              AND s.refit_pending_design_id IS NOT NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM game_ship_nodes n
+                 WHERE n.ship_id = s.id AND n.status IN ('committed', 'in_transit')
+              )
+              AND EXISTS (
+                SELECT 1 FROM game_settlements st
+                 WHERE st.game_id = s.game_id AND st.body_id = s.parent_body_id
+                   AND st.owner_faction_id = s.owner_faction_id
+                   AND st.destroyed_at_tick IS NULL
+              )
+            ORDER BY s.id ASC`,
+        )
+        .bind(gameId)
+        .all()).results ?? [];
+      if (pendingRefits.length > 0) {
+        // Per-faction running pool so a squadron refitting at once can't
+        // collectively overdraw. Tech per faction for the stat rebake.
+        const poolCache = new Map();
+        const refitTech = new Map();
+        for (const s of pendingRefits) {
+          // Design deleted (LEFT JOIN miss) or class mismatch → the
+          // refit can never apply; clear the marker. A bare-hull design
+          // (parts_json NULL) is a legitimate refit target.
+          if (s.design_class == null || s.design_class !== s.ship_class) {
+            await this.env.DB
+              .prepare('UPDATE game_ships SET refit_pending_design_id = NULL WHERE id = ?')
+              .bind(s.id).run();
+            continue;
+          }
+          const newParts = parsePartsJson(s.ship_class, s.design_parts_json);
+          const curParts = parsePartsJson(s.ship_class, s.parts_json);
+          const same = [...newParts].sort().join(',') === [...curParts].sort().join(',');
+          const fee = same ? { metal: 0, gold: 0 } : refitFee(curParts, newParts, s.ship_class);
+          let pool = poolCache.get(s.owner_faction_id);
+          if (!pool) {
+            const row = await this.env.DB
+              .prepare('SELECT metal, gold FROM game_factions WHERE id = ?')
+              .bind(s.owner_faction_id).first();
+            pool = { metal: Number(row?.metal ?? 0), gold: Number(row?.gold ?? 0) };
+            poolCache.set(s.owner_faction_id, pool);
+          }
+          if (fee.metal > pool.metal || fee.gold > pool.gold) continue; // retry next tick
+          let tech = refitTech.get(s.owner_faction_id);
+          if (!tech) {
+            const rows = (await this.env.DB
+              .prepare(
+                `SELECT tech_id, level FROM faction_techs
+                  WHERE game_id = ? AND faction_id = ?
+                    AND tech_id IN ('weapons', 'energy_weapons', 'armor', 'shields')`,
+              )
+              .bind(gameId, s.owner_faction_id)
+              .all()).results ?? [];
+            tech = Object.fromEntries(rows.map(r => [r.tech_id, r.level ?? 0]));
+            refitTech.set(s.owner_faction_id, tech);
+          }
+          // Same profile the yard stamped it with, so a refit re-derives
+          // from the CURRENT config rather than silently resetting the
+          // hull to the hardcoded default. loadGameConfig is cached.
+          const refitBase = shipBaseStatsFromCfg(
+            await loadGameConfig(this.env, gameId).catch(() => null));
+          const stats = computeShipStats(s.ship_class, newParts, tech, refitBase);
+          const oldBase = Number(s.hp_max ?? 0) > 0 ? Number(s.hp_max) : stats.hp;
+          const hpScale = stats.hp / oldBase;
+          const stmts = [
+            this.env.DB
+              .prepare(
+                // The hull takes the design's LOOK as well as its parts
+                // (a design with no variant keeps the hull's own), so a
+                // refit is visible on the map -- "nothing happens" was
+                // the report when the sprite never changed.
+                `UPDATE game_ships
+                    SET parts_json = ?, hp_max = ?, hp = MIN(hp * ?, ?),
+                        damage_per_tick = ?, refit_pending_design_id = NULL,
+                        icon_variant = COALESCE(?, icon_variant)
+                  WHERE id = ?`,
+              )
+              .bind(newParts.length > 0 ? JSON.stringify(newParts) : null,
+                    stats.hp, hpScale, stats.hp, stats.damage_per_tick,
+                    s.design_icon_variant ?? null, s.id),
+          ];
+          if (fee.metal > 0 || fee.gold > 0) {
+            stmts.push(this.env.DB
+              .prepare(
+                `UPDATE game_factions SET metal = metal - ?, gold = gold - ?
+                  WHERE id = ? AND metal >= ? AND gold >= ?`,
+              )
+              .bind(fee.metal, fee.gold, s.owner_faction_id, fee.metal, fee.gold));
+          }
+          await this.env.DB.batch(stmts);
+          pool.metal -= fee.metal;
+          pool.gold -= fee.gold;
+        }
+      }
+    } catch (e) {
+      console.error('pending refit pass failed (non-fatal)', e);
+    }
+
+  }
+
   async recordMatchSnapshot(gameId, tick) {
     const [ships, stl, fx, treaties, signers, routes] = await this.env.DB.batch([
       this.env.DB.prepare(
@@ -3370,10 +3558,11 @@ export class Room {
     // copy promises raiding and escorting is the whole reason guards
     // exist.
     //
-    // Symmetric flip-and-burn, so the acceleration falls out of the
-    // leg the planner just sized: d = a(T/2)^2, hence a = 4d/T^2.
-    // Same shape the client posts, so both sides integrate one plan.
-    let lx = null, ly = null, lvx = null, lvy = null, acc = null, flip = null;
+    // The burn's shape is burn.js's (push, flip at 90%, brake 9x hard),
+    // so the push falls out of the leg the planner just sized:
+    // a = boostAccelFor(d, T). Same shape the client posts, so both sides
+    // integrate one plan.
+    let lx = null, ly = null, lvx = null, lvy = null, acc = null, flip = null, brk = null;
     try {
       const from = await bodyPosAt(fromBodyId, tick);
       const to = await bodyPosAt(targetBodyId, arrive);
@@ -3427,10 +3616,10 @@ export class Room {
         // Using the raw engine value there would store an
         // acceleration that cannot reach the destination in the time
         // the node claims: the hull would lag its own arc all flight
-        // and snap at the end. Symmetric flip-and-burn, d = a(T/2)^2,
-        // so a = 4d/T^2.
-        acc = 4 * d / (T * T);
-        flip = tick + T / 2;
+        // and snap at the end.
+        acc = boostAccelFor(d, T);
+        brk = acc * BRAKE_MUL;
+        flip = tick + T * FLIP_FRACTION;
       }
     } catch (e) {
       // A missing body should cost this leg its combat visibility,
@@ -3443,12 +3632,12 @@ export class Room {
         `INSERT INTO game_ship_nodes
            (id, game_id, ship_id, sequence, anchor_kind, target_body_id,
             scheduled_t, arrival_at_tick, dv_prograde, dv_normal, dv_radial, fuel_cost,
-            launch_x, launch_y, launch_vx, launch_vy, accel, flip_tick,
+            launch_x, launch_y, launch_vx, launch_vy, accel, flip_tick, brake_accel,
             status, committed_at_tick)
-         VALUES (?, ?, ?, ?, 'absolute', ?, ?, ?, 0, 0, 0, 0, ?, ?, ?, ?, ?, ?, 'committed', ?)`,
+         VALUES (?, ?, ?, ?, 'absolute', ?, ?, ?, 0, 0, 0, 0, ?, ?, ?, ?, ?, ?, ?, 'committed', ?)`,
       )
       .bind(nodeId, gameId, shipId, seq, targetBodyId, tick, arrive,
-            lx, ly, lvx, lvy, acc, flip, tick)
+            lx, ly, lvx, lvy, acc, flip, brk, tick)
       .run();
     flyingShips.add(shipId);
     return arrive;
@@ -4569,116 +4758,8 @@ export class Room {
       console.error('build promotion pass failed', e);
     }
 
-    // 1c. Pending refits (DESIGN-fleet-economy §2). Ships stamped with
-    //     refit_pending_design_id by the refit-fleet endpoint catch up
-    //     here: whenever such a hull is PARKED (no committed/in-transit
-    //     node) at a body where its owner holds a living settlement, and
-    //     the owner's pool covers the fee (half the added parts'
-    //     escalated price, computed against the design's CURRENT parts —
-    //     later template edits are honored, not the snapshot at stamp
-    //     time), the loadout applies and the marker clears. Unaffordable
-    //     hulls stay pending and simply retry next tick; a deleted
-    //     design clears the marker as a no-op.
-    try {
-      const pendingRefits = (await this.env.DB
-        .prepare(
-          `SELECT s.id, s.owner_faction_id, s.ship_class, s.parent_body_id,
-                  s.hp, s.hp_max, s.parts_json, s.refit_pending_design_id,
-                  d.parts_json AS design_parts_json, d.ship_class AS design_class
-             FROM game_ships s
-             LEFT JOIN game_ship_designs d ON d.id = s.refit_pending_design_id
-            WHERE s.game_id = ? AND s.status = 'active'
-              AND s.refit_pending_design_id IS NOT NULL
-              AND NOT EXISTS (
-                SELECT 1 FROM game_ship_nodes n
-                 WHERE n.ship_id = s.id AND n.status IN ('committed', 'in_transit')
-              )
-              AND EXISTS (
-                SELECT 1 FROM game_settlements st
-                 WHERE st.game_id = s.game_id AND st.body_id = s.parent_body_id
-                   AND st.owner_faction_id = s.owner_faction_id
-                   AND st.destroyed_at_tick IS NULL
-              )
-            ORDER BY s.id ASC`,
-        )
-        .bind(gameId)
-        .all()).results ?? [];
-      if (pendingRefits.length > 0) {
-        // Per-faction running pool so a squadron refitting at once can't
-        // collectively overdraw. Tech per faction for the stat rebake.
-        const poolCache = new Map();
-        const refitTech = new Map();
-        for (const s of pendingRefits) {
-          // Design deleted (LEFT JOIN miss) or class mismatch → the
-          // refit can never apply; clear the marker. A bare-hull design
-          // (parts_json NULL) is a legitimate refit target.
-          if (s.design_class == null || s.design_class !== s.ship_class) {
-            await this.env.DB
-              .prepare('UPDATE game_ships SET refit_pending_design_id = NULL WHERE id = ?')
-              .bind(s.id).run();
-            continue;
-          }
-          const newParts = parsePartsJson(s.ship_class, s.design_parts_json);
-          const curParts = parsePartsJson(s.ship_class, s.parts_json);
-          const same = [...newParts].sort().join(',') === [...curParts].sort().join(',');
-          const fee = same ? { metal: 0, gold: 0 } : refitFee(curParts, newParts, s.ship_class);
-          let pool = poolCache.get(s.owner_faction_id);
-          if (!pool) {
-            const row = await this.env.DB
-              .prepare('SELECT metal, gold FROM game_factions WHERE id = ?')
-              .bind(s.owner_faction_id).first();
-            pool = { metal: Number(row?.metal ?? 0), gold: Number(row?.gold ?? 0) };
-            poolCache.set(s.owner_faction_id, pool);
-          }
-          if (fee.metal > pool.metal || fee.gold > pool.gold) continue; // retry next tick
-          let tech = refitTech.get(s.owner_faction_id);
-          if (!tech) {
-            const rows = (await this.env.DB
-              .prepare(
-                `SELECT tech_id, level FROM faction_techs
-                  WHERE game_id = ? AND faction_id = ?
-                    AND tech_id IN ('weapons', 'energy_weapons', 'armor', 'shields')`,
-              )
-              .bind(gameId, s.owner_faction_id)
-              .all()).results ?? [];
-            tech = Object.fromEntries(rows.map(r => [r.tech_id, r.level ?? 0]));
-            refitTech.set(s.owner_faction_id, tech);
-          }
-          // Same profile the yard stamped it with, so a refit re-derives
-          // from the CURRENT config rather than silently resetting the
-          // hull to the hardcoded default. loadGameConfig is cached.
-          const refitBase = shipBaseStatsFromCfg(
-            await loadGameConfig(this.env, gameId).catch(() => null));
-          const stats = computeShipStats(s.ship_class, newParts, tech, refitBase);
-          const oldBase = Number(s.hp_max ?? 0) > 0 ? Number(s.hp_max) : stats.hp;
-          const hpScale = stats.hp / oldBase;
-          const stmts = [
-            this.env.DB
-              .prepare(
-                `UPDATE game_ships
-                    SET parts_json = ?, hp_max = ?, hp = MIN(hp * ?, ?),
-                        damage_per_tick = ?, refit_pending_design_id = NULL
-                  WHERE id = ?`,
-              )
-              .bind(newParts.length > 0 ? JSON.stringify(newParts) : null,
-                    stats.hp, hpScale, stats.hp, stats.damage_per_tick, s.id),
-          ];
-          if (fee.metal > 0 || fee.gold > 0) {
-            stmts.push(this.env.DB
-              .prepare(
-                `UPDATE game_factions SET metal = metal - ?, gold = gold - ?
-                  WHERE id = ? AND metal >= ? AND gold >= ?`,
-              )
-              .bind(fee.metal, fee.gold, s.owner_faction_id, fee.metal, fee.gold));
-          }
-          await this.env.DB.batch(stmts);
-          pool.metal -= fee.metal;
-          pool.gold -= fee.gold;
-        }
-      }
-    } catch (e) {
-      console.error('pending refit pass failed (non-fatal)', e);
-    }
+    // 1c. Pending refits (applyPendingRefits; it runs again before 2c).
+    await this.applyPendingRefits(gameId, tick);
 
     // 2a. Depart. A committed node whose scheduled_t has come up: stamp
     //     committed_at_tick (in case it was force-fired without explicit
@@ -5283,6 +5364,11 @@ export class Room {
       sanctionCache.set(key, v);
       return v;
     };
+
+    // 2c-refit. Hulls that LANDED this tick are parked right now, for the
+    // only moment a route freighter ever is: refit them before the
+    // auto-pilot below sends them out again.
+    await this.applyPendingRefits(gameId, tick);
 
     // 2c. Trade route auto-pilot.
     //
@@ -5979,6 +6065,7 @@ export class Room {
         .prepare(
           `SELECT n.ship_id, n.target_body_id, n.scheduled_t, n.arrival_at_tick,
                   n.launch_x, n.launch_y, n.launch_vx, n.launch_vy, n.accel, n.flip_tick,
+                  n.brake_accel,
                   n.rv_ax, n.rv_ay, n.rv_bx, n.rv_by, n.rv_meet_tick, n.rv_follow_ship_id
              FROM game_ship_nodes n
              JOIN game_ships s ON s.id = n.ship_id
@@ -5995,6 +6082,9 @@ export class Room {
           launchX: Number(r.launch_x), launchY: Number(r.launch_y),
           launchVx: Number(r.launch_vx), launchVy: Number(r.launch_vy),
           accel: Number(r.accel), flipTick: Number(r.flip_tick),
+          // NULL on the even burns committed before migration 0155:
+          // torchStateAt then brakes at accel, exactly as they were planned.
+          brakeAccel: r.brake_accel != null ? Number(r.brake_accel) : null,
           startTick: Number(r.scheduled_t), arriveTick: Number(r.arrival_at_tick),
           interceptX: ip.x, interceptY: ip.y, targetBodyId: r.target_body_id,
           // Rendezvous arc, when this leg is one (migration 0090).
@@ -8850,21 +8940,9 @@ export class Room {
             y: parent.y + Math.sin(angle) * (b.orbit_radius ?? 0),
           };
         };
-        const G_ANCHOR = 4 * 132.6;            // mirror physics/torchTransfer.ts
-        const DEFAULT_ENGINE_G = 0.05;
-        const accelCache = new Map();
-        const getFactionAccel = async (factionId) => {
-          if (accelCache.has(factionId)) return accelCache.get(factionId);
-          const f = await this.env.DB
-            .prepare('SELECT engine_g FROM game_factions WHERE id = ?')
-            .bind(factionId)
-            .first();
-          const accel = (f?.engine_g ?? DEFAULT_ENGINE_G) * G_ANCHOR;
-          accelCache.set(factionId, accel);
-          return accel;
-        };
-        const computeLegTicks = async (factionId, originId, destId) => {
-          const accel = await getFactionAccel(factionId);
+        // Every hull's base push and the 90% flip, from burn.js.
+        const computeLegTicks = async (_factionId, originId, destId) => {
+          const accel = SHIP_ENGINE_ACCEL;
           const startPos = await bodyPosAt(originId, tick);
           let T = 1;
           for (let i = 0; i < 5; i++) {
@@ -8872,7 +8950,7 @@ export class Room {
             const dx = destPos.x - startPos.x;
             const dy = destPos.y - startPos.y;
             const d = Math.sqrt(dx * dx + dy * dy);
-            const Tnew = 2 * Math.sqrt(Math.max(d, 0.01) / accel);
+            const Tnew = burnTicks(Math.max(d, 0.01), accel);
             if (Math.abs(Tnew - T) < 0.05) { T = Tnew; break; }
             T = Tnew;
           }
@@ -10242,6 +10320,7 @@ export class Room {
       .prepare(
         `SELECT n.id, n.ship_id, n.target_body_id, n.scheduled_t, n.arrival_at_tick,
                 n.launch_x, n.launch_y, n.launch_vx, n.launch_vy, n.accel, n.flip_tick,
+                n.brake_accel,
                 n.sink_body_id, n.sink_held_until_tick,
                 s.owner_faction_id, s.ship_class
            FROM game_ship_nodes n
@@ -10281,7 +10360,7 @@ export class Room {
       const f = Math.max(0, Math.min(1,
         (tick - Number(n.scheduled_t)) /
         Math.max(1, Number(n.arrival_at_tick) - Number(n.scheduled_t))));
-      const frac = burnProgress(f);
+      const frac = burnProgress(f, brakeRatioOf(n.accel, n.brake_accel));
       const origin = { x: Number(n.launch_x), y: Number(n.launch_y) };
       const dest = posOfBody(n.target_body_id) ?? origin;
       const pos = {

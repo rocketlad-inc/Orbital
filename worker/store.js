@@ -133,7 +133,7 @@ function requireAdmin(session) {
  *  'other' rather than trusted: the value only ever labels a sale on the
  *  dashboard, it never decides anything. */
 export const COMMISSION_SURFACES = new Set([
-  'profile', 'lobby-flag', 'designer', 'endgame', 'thanks-card',
+  'profile', 'lobby-flag', 'designer', 'endgame', 'thanks-card', 'skins',
 ]);
 
 /** Gift codes: 12 characters from an alphabet with no lookalikes (no

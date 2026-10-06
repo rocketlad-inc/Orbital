@@ -13,6 +13,7 @@
 import * as factions from './factions.js';
 import { normalizeEmblem, isPremiumEmblem } from './emblems.js';
 import { validateEmblemChoice } from './store.js';
+import { skinUpdates } from './skins.js';
 // Shared with the client: one definition of what a valid name is, and
 // how a pool is parsed. Same .js-in-src pattern as physics/rendezvous.
 import { parseNamePools, serializeNamePools } from '../src/game/namePools.js';
@@ -582,7 +583,7 @@ async function handleLobbySnapshot(_req, env, ctx) {
   const memberRows = await env.DB
     .prepare(
       `SELECT rm.user_id, rm.empire_name, rm.bio, rm.chosen_starting_body,
-              rm.color, rm.color2, rm.emblem, rm.name_pools,
+              rm.color, rm.color2, rm.emblem, rm.name_pools, rm.city_skin, rm.station_skin,
               u.display_name,
               EXISTS (SELECT 1 FROM user_entitlements e WHERE e.user_id = rm.user_id) AS commissioned
          FROM room_members rm
@@ -603,6 +604,9 @@ async function handleLobbySnapshot(_req, env, ctx) {
     // Holds the Commander's Commission (0153): a quiet mark on the roster.
     // Cosmetic standing only; nothing in the game reads it.
     commissioned: !!r.commissioned,
+    // This game's skin override (0154); null = the account default.
+    city_skin: r.city_skin ?? null,
+    station_skin: r.station_skin ?? null,
     empire_name: r.empire_name ?? null,
     // Sent as the stored STRING; the client parses it. Parsing here as
     // well would mean two shapes for one field depending on which
@@ -880,6 +884,18 @@ async function handlePatchMe(req, env, ctx) {
     } else {
       return err(400, 'bad_request', 'name_pools must be an object or null');
     }
+  }
+  // Colony and station skins (0154): this game's override of the
+  // account default, set before the game starts like the rest of the
+  // flag. (Mid-game, the ACCOUNT default is what changes a running game:
+  // skins are resolved when state is read.) Same rules as the account
+  // picker.
+  const skinChanged = body.city_skin !== undefined || body.station_skin !== undefined;
+  if (skinChanged) {
+    const sk = await skinUpdates(env, ctx.session.user_id, body);
+    if (sk.error) return err(sk.error.status, sk.error.code, sk.error.message);
+    sets.push(...sk.sets);
+    args.push(...sk.args);
   }
   if (!sets.length) return err(400, 'bad_request', 'nothing to update');
 

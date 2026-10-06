@@ -79,6 +79,9 @@ describe('the Commission storefronts', () => {
       'multiplayer/CommissionMoments.tsx': /&& canBuyHere\(\);/,
       // The designer preview shows the hull everywhere, the button only here.
       'components/ShipDesigner.tsx': /\{canBuyHere\(\) && \(/,
+      // The skin picker shows the locked styles everywhere; the buy
+      // button under a clicked lock only where it can sell.
+      'multiplayer/SkinPicker.tsx': /\{sellable \? \(/,
     };
     for (const [rel, gate] of Object.entries(gated)) {
       expect(read(rel)).toMatch(gate);
