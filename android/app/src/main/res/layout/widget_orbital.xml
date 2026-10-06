@@ -8,16 +8,22 @@
   be changed by shipping a new build through store review.
 
   RemoteViews supports a small, fixed set of view classes, so this uses
-  FrameLayout/ImageView/TextView and nothing clever. centerCrop rather
-  than fitCenter: the card is rendered for the widget's own dimensions,
-  so it should fill them, and letterboxing a correctly-sized image would
-  just add black bars.
+  FrameLayout/ImageView/TextView and nothing clever.
+
+  fitCenter, NEVER centerCrop. The card is asked for in the widget's own
+  shape (WidgetSize), so when that works the two are the same and
+  nothing shows. But the shape is the launcher's word, launchers differ,
+  and a rotated home screen keeps the old card until the next fetch:
+  centerCrop turned every such mismatch into rows cut off the top and
+  bottom of the card ("all widgets are cropped quite a bit on my screen
+  size"). fitCenter turns it into a few dp of widgetGround, which is
+  the card's own ground colour, so the bars read as card.
 -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/widget_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/orbitalBackground">
+    android:background="@color/widgetGround">
 
     <!-- GONE until a card has been fetched. This file is also the
          widget's initialLayout, which is what the launcher paints the
@@ -30,7 +36,7 @@
         android:id="@+id/widget_image"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:scaleType="centerCrop"
+        android:scaleType="fitCenter"
         android:adjustViewBounds="false"
         android:visibility="gone"
         android:contentDescription="@string/widget_description" />
