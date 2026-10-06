@@ -26,6 +26,16 @@ public class WidgetSizeTest {
   }
 
   @Test
+  public void aStaleListLeftByAMergedBundleLosesToMinMax() {
+    // Bound at 320x300 / 360x210, then resized by a host that only
+    // updated min/max to 400..420 x 400..460. The old list survives the
+    // merge; asking for 320x300 would put a wrong-shaped card in it.
+    float[] w = { 320f, 360f };
+    float[] h = { 300f, 210f };
+    assertArrayEquals(new int[] { 400, 460 }, WidgetSize.slot(400, 420, 400, 460, w, h, true));
+  }
+
+  @Test
   public void oneExactSizeIsUsedInEitherOrientation() {
     float[] w = { 380f };
     float[] h = { 300f };

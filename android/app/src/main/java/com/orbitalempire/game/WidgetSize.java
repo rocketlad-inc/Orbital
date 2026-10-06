@@ -60,13 +60,29 @@ final class WidgetSize {
           bestRatio = r;
         }
       }
-      if (best >= 0) return new int[] { Math.round(sizesW[best]), Math.round(sizesH[best]) };
+      // OPTIONS BUNDLES MERGE. A host that later updates only the four
+      // min/max numbers leaves the previous size list in place (seen on
+      // the API 34 smoke emulator: a resize to 400x460 kept asking for
+      // the old 320x300). Launcher3 derives min/max FROM the list, so a
+      // list entry outside that range is stale; trust min/max then.
+      if (best >= 0 && within(sizesW[best], minW, maxW) && within(sizesH[best], minH, maxH)) {
+        return new int[] { Math.round(sizesW[best]), Math.round(sizesH[best]) };
+      }
     }
     // The documented convention: portrait shows the narrow-and-tall
     // extreme (min width, max height), landscape the wide-and-short one.
     int w = portrait ? first(minW, maxW) : first(maxW, minW);
     int h = portrait ? first(maxH, minH) : first(minH, maxH);
     return new int[] { w, h };
+  }
+
+  /** v lies in [lo, hi], with a few dp of rounding slack. A bound the
+   *  launcher left at 0 does not constrain. */
+  private static boolean within(float v, int lo, int hi) {
+    final float SLACK = 8f;
+    if (lo > 0 && v < lo - SLACK) return false;
+    if (hi > 0 && v > hi + SLACK) return false;
+    return true;
   }
 
   private static int first(int a, int b) {
