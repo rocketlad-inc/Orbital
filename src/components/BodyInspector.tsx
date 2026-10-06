@@ -3,6 +3,7 @@
 // ============================================================
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { MIN_CAMERA_SCALE } from '../render/cameraLimits';
 import { empireYieldMultipliers, applyYieldMultipliers } from '../game/yieldMultipliers';
 import { useGameContext } from '../state/gameContext';
 import { useCamera } from '../state/cameraStore';
@@ -165,7 +166,7 @@ export const BodyInspector: React.FC = () => {
     // above the bottom card and below the top card.
     const targetScale = 90 / Math.max(envelopeR, 1);
     focusBody(selectedBodyId);
-    updateCamera({ scale: Math.min(50, Math.max(0.0012, targetScale)) });
+    updateCamera({ scale: Math.min(50, Math.max(MIN_CAMERA_SCALE, targetScale)) });
     // gameState.bodies / camera intentionally NOT deps — fires only on
     // selection change.
     // eslint-disable-next-line react-hooks/exhaustive-deps

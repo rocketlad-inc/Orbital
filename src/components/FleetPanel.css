@@ -602,9 +602,17 @@
   text-transform: uppercase;
 }
 
+/* Captain row: avatar | name + traits | rail (ship link + ASSIGN).
+   The rail used to be an uncapped nowrap line sized to its max-content
+   (ship chip + REASSIGN button side by side), and the name column was
+   minmax(0, 1fr) — so the grid fed the rail first and the NAME got
+   whatever was left, which at phone width was "Corr…" or nothing at
+   all. Now the name column has a floor, the rail is capped (and stacks
+   on the mobile shell), and the ship chip ellipsizes — the rail gives
+   way before the name does. */
 .fleet-capcard {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(6.5em, 1fr) auto;
   align-items: center;
   gap: 8px;
   min-height: 44px;
@@ -631,19 +639,24 @@
   min-width: 0;
 }
 
+/* Wraps: a long name keeps the whole first line and the rank pill drops
+   under it, rather than the pill squeezing the name to an ellipsis. */
 .fleet-capcard__line1 {
   font-size: 11px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 5px;
+  gap: 2px 5px;
   min-width: 0;
 }
 
 .fleet-capcard__name {
+  flex: 0 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+  max-width: 100%;
 }
 
 .fleet-capcard__rename {
@@ -664,13 +677,29 @@
   white-space: nowrap;
 }
 
+/* Desktop: ship link and ASSIGN side by side (the panel is 640px, the
+   name has room), wrapping to two lines if the panel is ever narrower.
+   Capped so a long ship name can never take the name column's space. */
 .fleet-capcard__rail {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
   flex-wrap: wrap;
+  align-items: center;
   justify-content: flex-end;
+  gap: 3px 6px;
+  min-width: 0;
+  max-width: 260px;
+}
+button.fleet-capcard__posting--go { max-width: 150px; }
+/* Mobile shell: stack them (ship link over ASSIGN) in a narrow column,
+   so the name keeps everything else on a 360px phone. */
+@media (max-width: 1023px), (pointer: coarse) and (hover: none) and (max-width: 1399px) {
+  .fleet-capcard__rail {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: flex-end;
+    max-width: 120px;
+  }
+  button.fleet-capcard__posting--go { max-width: 100%; }
 }
 
 .fleet-capcard__posting {
@@ -693,6 +722,20 @@ button.fleet-capcard__posting--go {
   font-size: 9px;
   color: #4ecdc4;
   cursor: pointer;
+  min-width: 0;
+}
+button.fleet-capcard__posting--go > svg { flex: 0 0 auto; }
+/* Mobile shell: the global `button { min-height: 40px }` (mobile.css)
+   would make the stacked rail 83px tall; the ship link is secondary,
+   so it takes the 32px tap-target floor instead. */
+@media (max-width: 1023px), (pointer: coarse) and (hover: none) and (max-width: 1399px) {
+  button.fleet-capcard__posting--go { min-height: 32px; }
+}
+.fleet-capcard__postname {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 button.fleet-capcard__posting--go:hover {
   border-color: #2d4255;
@@ -700,7 +743,7 @@ button.fleet-capcard__posting--go:hover {
   text-decoration: underline;
 }
 button.fleet-capcard__posting--go:focus-visible { outline: 2px solid #4ecdc4; outline-offset: 1px; }
-.fleet-capcard__go { opacity: 0.7; }
+.fleet-capcard__go { opacity: 0.7; flex: 0 0 auto; }
 
 .fleet-capcard__reserve {
   font-size: 9px;
@@ -732,9 +775,10 @@ button.fleet-capcard__posting--go:focus-visible { outline: 2px solid #4ecdc4; ou
   color: #9fb4c6;
   font-family: inherit;
   font-size: 9px;
-  padding: 5px 4px;
+  padding: 5px 8px;
   min-height: 28px;
   max-width: 110px;
+  white-space: nowrap;
   cursor: pointer;
 }
 .fleet-capcard__assign:hover:not(:disabled) { border-color: #4ecdc4; }

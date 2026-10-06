@@ -21,6 +21,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
+import { useIsMobile } from '../hooks/useIsMobile';
 import type { ChronicleFocus } from '../types';
 import './DockRail.css';
 import './EventLog.css';
@@ -174,6 +175,8 @@ function readBookmarkKey(): string {
 export const EventLog: React.FC = () => {
   const { gameState, selectShip, selectBody, focusBody } = useGameContext();
   const mpActions = useMultiplayerActions();
+  // A phone has no Esc key: the footer drops the keyboard hint there.
+  const isMobile = useIsMobile();
   const entries = gameState.combatLog;
   const flavors = gameState.chronicleFlavor;
   const focuses = gameState.chronicleFocus;
@@ -534,22 +537,46 @@ export const EventLog: React.FC = () => {
                               aria-hidden="true"
                             >{icon}</span>
                             <span className="event-log__text">{tint(entry)}</span>
-                            <span
-                              className="event-log__chevron"
-                              aria-hidden="true"
-                            >{isOpen ? '▾' : '▸'}</span>
                           </span>
                         </button>
+                        {/* Jump + chevron: two equal 32px tap targets with
+                            16px SVG glyphs, both pinned to the FIRST text
+                            line (not centred on the row — a centred jump
+                            beside a top-pinned chevron drifted further
+                            apart the taller the entry got). The chevron
+                            is always the right-most column so it lines up
+                            down the list whether or not a row can jump. */}
                         {jump && (
                           <button
                             type="button"
-                            className="event-log__row__jump"
+                            className="event-log__row__ctl event-log__row__jump"
                             style={{ color }}
                             onClick={jump}
                             title="Take me there — center the camera on this location"
                             aria-label="Take me there"
-                          >◎</button>
+                          >
+                            <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"
+                                 fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                              <circle cx="8" cy="8" r="5" />
+                              <circle cx="8" cy="8" r="1.25" fill="currentColor" stroke="none" />
+                              <path d="M8 0.75v2.5M8 12.75v2.5M0.75 8h2.5M12.75 8h2.5" />
+                            </svg>
+                          </button>
                         )}
+                        <button
+                          type="button"
+                          className={'event-log__row__ctl event-log__chevron' + (isOpen ? ' is-open' : '')}
+                          onClick={() => toggleExpand(i)}
+                          title={isOpen ? 'Collapse' : 'Expand'}
+                          aria-label={isOpen ? 'Collapse' : 'Expand'}
+                          aria-expanded={isOpen}
+                        >
+                          <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"
+                               fill="none" stroke="currentColor" strokeWidth="1.75"
+                               strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M6 3.5L10.5 8L6 12.5" />
+                          </svg>
+                        </button>
                       </div>
                       {isOpen && (() => {
                         const onFocus = jump;
@@ -641,8 +668,9 @@ export const EventLog: React.FC = () => {
           )}
           <footer className="event-log__foot">
             {view === 'herald'
-              ? <>The Orbital Herald · Press <kbd>Esc</kbd> to close</>
-              : <>{totalCount} {totalCount === 1 ? 'entry' : 'entries'} · Press <kbd>Esc</kbd> to close</>}
+              ? 'The Orbital Herald'
+              : <>{totalCount} {totalCount === 1 ? 'entry' : 'entries'}</>}
+            {!isMobile && <> · Press <kbd>Esc</kbd> to close</>}
           </footer>
         </div>
       )}

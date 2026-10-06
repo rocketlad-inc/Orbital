@@ -475,12 +475,16 @@ export const BODY_CATALOG = [
   //
   // DISTANCE IS THE BALANCE. A barycenter's radius is written in
   // catalogue units and multiplied by SYSTEM_SCALE (2) below and by
-  // the game's system_scale (live games run 4), so 33,150 here is
-  // 265,200 on a live board. The brachistochrone solver is
-  // T = 2·sqrt(d/a) at a = 26.52, so that is a 200-tick crossing —
-  // eight days at the one-hour tick, each way, with nothing to refuel
-  // at on the far side. Cygnus at 42,500 is 226 ticks. Those are the
-  // same crossing times the original single-player design picked.
+  // the game's system_scale (live games run 4), so 66,300 here is
+  // 530,400 on a live board, and Cygnus at 85,000 is 680,000.
+  //
+  // DOUBLED 2026-10-06 (Lorne: "Double the distance between solar
+  // systems"). Ships now build up to 1g (burn.js), so the crossing that
+  // the even-burn design priced at 200 ticks had fallen to ~68 direct
+  // from Earth, and the sun gates saved nothing. Doubled: Earth to
+  // Centauri ~82 T direct, Cygnus ~88; through a gate (to it, across,
+  // and in to a home) ~71. The build-up is why doubling the distance
+  // adds only ~20%: sim:far pins the numbers.
   //
   // YIELDS: "everything, but far" (Lorne, 2026-10-05). The richest
   // Sol world gives 9 of a resource; these run 1.3-1.6x that, broad
@@ -497,7 +501,7 @@ export const BODY_CATALOG = [
   // ---- Centauri, a circumbinary (P-type) pair --------------------
   { id: 'binary_barycenter', name: 'Centauri Barycenter', type: 'lagrange', parent: 'sol',
     radius: 0.5, soi: 0, mu: 0,
-    orbit_radius: 33150, orbit_period: 1e12, angle0: 0,
+    orbit_radius: 66300, orbit_period: 1e12, angle0: 0,
     color: '#3a3a44', far_system: true,
     yield: { metal: 0, fuel: 0, gold: 0, science: 0 } },
   // THE DANCE: A and B ride matching e = 0.2 ellipses (0.46 : 0.54 of a
@@ -615,7 +619,7 @@ export const BODY_CATALOG = [
   // ---- Cygnus X-1, a black hole and its donor star ---------------
   { id: 'bh_barycenter', name: 'Cygnus Barycenter', type: 'lagrange', parent: 'sol',
     radius: 0.5, soi: 0, mu: 0,
-    orbit_radius: 42500, orbit_period: 1e12, angle0: Math.PI,
+    orbit_radius: 85000, orbit_period: 1e12, angle0: Math.PI,
     color: '#3a3a44', far_system: true,
     yield: { metal: 0, fuel: 0, gold: 0, science: 0 } },
   // THE SAME DANCE AS CENTAURI (Lorne, 2026-10-06: "do the same thing

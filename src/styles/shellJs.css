@@ -39,6 +39,31 @@
   display: none;
 }
 
+/* ---- mirrored from components/EventLog.css ---- */
+/* @media (max-width: 1023px), (pointer: coarse) and (hover: none) and (max-width: 1399px) */
+:root[data-mobile-shell] .event-log-shell .event-log__row__top {
+  --ev-ctl: 40px;
+}
+
+/* ---- mirrored from components/FleetPanel.css ---- */
+/* @media (max-width: 1023px), (pointer: coarse) and (hover: none) and (max-width: 1399px) */
+:root[data-mobile-shell] .fleet-capcard__rail {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: flex-end;
+  max-width: 120px;
+}
+
+:root[data-mobile-shell] button.fleet-capcard__posting--go {
+  max-width: 100%;
+}
+
+/* ---- mirrored from components/FleetPanel.css ---- */
+/* @media (max-width: 1023px), (pointer: coarse) and (hover: none) and (max-width: 1399px) */
+:root[data-mobile-shell] button.fleet-capcard__posting--go {
+  min-height: 32px;
+}
+
 /* ---- mirrored from components/GroupSelectionPanel.css ---- */
 /* @media (pointer: coarse) and (hover: none) */
 :root[data-mobile-shell] .gsp-drop {

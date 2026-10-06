@@ -9,8 +9,11 @@
  *   - the same roster always lays out the same way (no jumping)
  */
 import { layoutOrbitBattle, layoutTodayLines, crossesPlanet } from '../orbitBattleLayout';
-import { buildScenario, fleetGeometry, SCENARIOS, type ScenarioId } from '../../battleSandbox/scenarios';
-import { hullSize } from '../bodyPresentation';
+import {
+  buildScenario, fleetGeometry, SCENARIOS, SIZE_LADDERS, CLASS_PX, type ScenarioId, type SizeLadderId,
+} from '../../battleSandbox/scenarios';
+import { hullSize, blendRadius, DISPLAY_FLOOR_PX } from '../bodyPresentation';
+import { shipIconSize } from '../mapRenderer';
 
 const MARS = 150;
 const LUNA = 70;
@@ -106,9 +109,13 @@ test('zooming out re-spreads the fight: no overlaps at any zoom', () => {
   // The whole point (Lorne): sprites keep the map's pixel sizes while
   // the world shrinks under them, so pulling back is when hulls pile up.
   for (const id of Object.keys(SCENARIOS) as ScenarioId[]) {
-    for (const px of [400, 150, 60, 34, 20]) {
+    // As the map: hulls size on the world's TRUE radius, the ring sits
+    // round the DRAWN disc (true size, but never under the display floor),
+    // down to where hulls fold into the count badge (10px true).
+    for (const px of [400, 150, 60, 34, 20, 12]) {
       const hs = hullSize({ type: 'terrestrial', radius: px }, 1);
-      const L = layoutOrbitBattle(buildScenario(id, 1, hs), px);
+      const drawn = blendRadius(px, DISPLAY_FLOOR_PX.planet);
+      const L = layoutOrbitBattle(buildScenario(id, 1, hs), drawn);
       expect({ id, px, overlaps: L.overlaps }).toEqual({ id, px, overlaps: 0 });
     }
   }
@@ -144,6 +151,51 @@ test('a fleet is drawn as the map draws it: escorts behind, clear of the flagshi
     expect(Math.hypot(e.x - g.flagX, e.y)).toBeGreaterThan(flagR + e.size / 2 - 1);
     expect(e.size).toBeLessThan(g.flagSize / 2);            // small glyphs
     expect(Math.hypot(e.x, e.y) + e.size * 0.42).toBeLessThanOrEqual(g.clearR + 1e-6);
+  }
+});
+
+// The world's station sits OPPOSITE the fight (Lorne, 2026-10-06), and
+// nothing overlaps it, at every size contrast on the test page.
+const circMean = (ts: number[]) =>
+  Math.atan2(ts.reduce((n, t) => n + Math.sin(t), 0), ts.reduce((n, t) => n + Math.cos(t), 0));
+const angGap = (a: number, b: number) => {
+  let d = Math.abs(a - b) % (Math.PI * 2);
+  if (d > Math.PI) d = Math.PI * 2 - d;
+  return d;
+};
+
+test('the station sits on the far side of a battle that does not wrap', () => {
+  for (const ladder of Object.keys(SIZE_LADDERS) as SizeLadderId[]) {
+    const px = SIZE_LADDERS[ladder].px;
+    for (const id of ['small', 'medium'] as ScenarioId[]) {
+      const L = layoutOrbitBattle(buildScenario(id, 1, 1, px), MARS,
+        { station: { id: 'station', clearR: px.station * 0.42 } });
+      expect(L.station).toBeDefined();
+      const fight = circMean([...L.placements.values()].map(p => p.theta));
+      expect({ ladder, id, far: angGap(L.station!.theta, fight) > Math.PI * 0.75 })
+        .toEqual({ ladder, id, far: true });
+      expect({ ladder, id, overlaps: L.overlaps }).toEqual({ ladder, id, overlaps: 0 });
+    }
+  }
+});
+
+test('on a full lap the station takes the share farthest from the fronts, and hulls part round it', () => {
+  for (const ladder of Object.keys(SIZE_LADDERS) as SizeLadderId[]) {
+    const px = SIZE_LADDERS[ladder].px;
+    const L = layoutOrbitBattle(buildScenario('swarm', 1, 1, px), MARS,
+      { station: { id: 'station', clearR: px.station * 0.42 } });
+    expect(['ring', 'deep ring', 'crammed']).toContain(L.mode);
+    // The fronts are the gaps between shares; the station is well clear of all.
+    const S = L.sectors;
+    const fronts = S.map((s, i) => (s.end + (S[i + 1] ?? { start: S[0].start + Math.PI * 2 }).start) / 2);
+    for (const f of fronts) expect(angGap(L.station!.theta, f)).toBeGreaterThan(Math.PI / 4);
+    expect({ ladder, overlaps: L.overlaps }).toEqual({ ladder, overlaps: 0 });
+  }
+});
+
+test('the test page draws hulls at exactly the map’s sizes', () => {
+  for (const cls of Object.keys(CLASS_PX) as Array<keyof typeof CLASS_PX>) {
+    expect({ cls, px: CLASS_PX[cls] }).toEqual({ cls, px: shipIconSize(cls, false) });
   }
 });
 

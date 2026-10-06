@@ -39,7 +39,7 @@
 import { json, err, readJson } from './trades.js';
 import { FEEDBACK_DISCORD_URL } from './links.js';
 import { hasEntitlement } from './store.js';
-import { page, discordClientId } from './discordOauth.js';
+import { page, discordClientId, tokenFailurePage } from './discordOauth.js';
 
 const DISCORD_API = 'https://discord.com/api/v10';
 export const FEED_LEVELS = ['off', 'headlines', 'all'];
@@ -352,10 +352,7 @@ export async function handleConnectCallback(_req, env, { url }) {
       redirect_uri: serverRedirectUri(env, url),
     }),
   });
-  if (!tokenRes.ok) {
-    console.error('feed connect token exchange failed', tokenRes.status, await tokenRes.text().catch(() => ''));
-    return page('Discord refused the connection', 'Please try again from the game.', false);
-  }
+  if (!tokenRes.ok) return tokenFailurePage(tokenRes, 'connection', 'feed connect');
   const tok = await tokenRes.json();
   const hook = tok.webhook;
   if (!hook?.channel_id) {

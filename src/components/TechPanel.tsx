@@ -529,9 +529,9 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                     const afterBank = Math.max(0, cost - progress0 - playerScience);
                     const instant = afterBank <= 0;
                     return (
-                  <div style={{ display: 'flex', gap: 4, width: '100%' }}>
+                  <div className="tech-card__actions">
                   <button
-                    className={`tech-card__action ${isActive ? 'active' : ''} ${instant ? 'instant' : ''}`}
+                    className={`tech-card__action tech-card__action--main ${isActive ? 'active' : ''} ${instant ? 'instant' : ''}`}
                     onClick={async () => {
                       if (inFlight.has(id)) return;
                       // No affordability gate: committing is always
@@ -613,19 +613,19 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                     title={isActive
                       ? `Queue another level of ${def.name} behind the one you are researching`
                       : `Queue ${def.name} to research after your current project`}
-                    style={{ borderColor: '#4ecdc4', color: '#4ecdc4', flex: '0 0 auto' }}
+                    style={{ borderColor: '#4ecdc4', color: '#4ecdc4' }}
                   >+ Queue{queueCount > 0 ? ` \u00d7${queueCount}` : ''}</button>
                   {/* The card has no position of its own, so its −
                       trims the LAST copy of this tech: the stack
                       shrinks from the far end, a level at a time. */}
                   {queueCount > 0 && (
                     <button
-                      className="tech-card__action"
+                      className="tech-card__action tech-card__action--minus"
                       onClick={() => mpDequeue((queue as TechId[]).lastIndexOf(id))}
                       title={queueCount > 1
                         ? `Drop one queued ${def.name} (${queueCount} stacked)`
                         : `Remove ${def.name} from the queue (position ${queueIndex + 1})`}
-                      style={{ borderColor: '#ff5e5e', color: '#ff5e5e', flex: '0 0 auto' }}
+                      style={{ borderColor: '#ff5e5e', color: '#ff5e5e' }}
                       aria-label={`Remove one queued ${def.name}`}
                     >{'\u2212'}</button>
                   )}
