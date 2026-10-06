@@ -1533,8 +1533,10 @@ function drawBlackHoleBody(
     c.ellipse(x, y, rh * 1.32, rh * yScale, 0, from, to);
     c.stroke();
   };
-  arc(1.28, Math.PI, Math.PI * 2, 0.75, Math.max(1, rh * 0.32));
-  arc(1.18, 0, Math.PI, 0.28, Math.max(0.8, rh * 0.16));
+  // Thin, as real lensing is: at 0.32 rh the arc read as a heavy crown
+  // at close zoom on the first staging look.
+  arc(1.28, Math.PI, Math.PI * 2, 0.62, Math.max(1, rh * 0.15));
+  arc(1.18, 0, Math.PI, 0.22, Math.max(0.8, rh * 0.07));
   c.restore();
 
   // The near half of the disk again, passing in front of the horizon —
@@ -1604,7 +1606,7 @@ function drawAccretionStream(
   c.setLineDash([diskR * 0.08, diskR * 0.22]);
   c.lineDashOffset = -nowMs * 0.02;
   c.lineWidth = Math.max(0.6, diskR * 0.035);
-  c.strokeStyle = 'rgba(255, 235, 210, 0.5)';
+  c.strokeStyle = 'rgba(255, 215, 170, 0.3)';
   c.beginPath(); c.moveTo(sx, sy); c.quadraticCurveTo(mx, my, ex, ey); c.stroke();
   c.restore();
 }
