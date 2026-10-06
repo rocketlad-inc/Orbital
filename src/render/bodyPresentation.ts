@@ -83,8 +83,31 @@ export const HULL_FULL_PX = 34;
 export const STAR_HULL_OPEN_PX = 80;
 const STAR_HULL_FADE = 5 / 12;
 
-const isStar = (b: Pick<Body, 'type'> | undefined | null) =>
-  !!b && (b.type === 'star' || b.type === 'black_hole');
+/**
+ * A FAR SYSTEM'S BARYCENTER IS ITS STAR, AND IS NOTHING.
+ *
+ * Centauri and Cygnus X-1 have their worlds orbit the system's centre of
+ * mass, not a sun: an empty point carrying the type 'lagrange', which on
+ * this map otherwise means a ROCK at a Lagrange point (Sol's trojans).
+ * Read as one, the barycenter took a planet's floor and drew as a grey
+ * ball big enough to hide both Centauri suns — and since the suns orbit
+ * it, they FOLDED into it and vanished. Its worlds, whose parent was not
+ * a star, all got a moon's floor.
+ *
+ * So for presentation a barycenter counts as its system's star (its
+ * worlds classify as planets and giants), takes no space of its own, and
+ * never swallows the stars that orbit it. MapCanvas does not draw it.
+ */
+export const FAR_BARYCENTERS: ReadonlySet<string> = new Set(['binary_barycenter', 'bh_barycenter']);
+export function isBarycenter(b: Pick<Body, 'id'> | undefined | null): boolean {
+  if (!b) return false;
+  const i = b.id.lastIndexOf(':');
+  return FAR_BARYCENTERS.has(i >= 0 ? b.id.slice(i + 1) : b.id);
+}
+
+const isStar = (b: (Pick<Body, 'type'> & { id?: string }) | undefined | null) =>
+  !!b && (b.type === 'star' || b.type === 'black_hole'
+    || (b.id != null && isBarycenter(b as Pick<Body, 'id'>)));
 
 /** Which floor a body gets. Spellings vary by source (gas_giant from the
  *  client catalogue, gas-giant from older rows), so both are accepted. */
@@ -96,6 +119,7 @@ export function floorClass(
   // Rocks and structures already have their own glyph floors
   // (drawMeteoroidBody, drawMegastructureBody); leave them alone.
   if (body.mineralKind || t === 'megastructure') return null;
+  if ((body as { id?: string }).id != null && isBarycenter(body as unknown as Pick<Body, 'id'>)) return null;
   if (t === 'star' || t === 'black_hole') return 'star';
   if (t === 'gas_giant' || t === 'gas-giant' || t === 'ice_giant' || t === 'ice-giant') return 'giant';
   if (t === 'dwarf') return 'dwarf';
@@ -181,7 +205,8 @@ export function computePresentation(
     const parent = b.parent ? byId.get(b.parent) : null;
     const cls = floorClass(b, parent);
     const truePx = (b.radius ?? 0) * scale;
-    radius.set(b.id, cls ? blendRadius(truePx, DISPLAY_FLOOR_PX[cls] * growth) : ownGlyphRadius(b, truePx));
+    radius.set(b.id, isBarycenter(b) ? 0
+      : cls ? blendRadius(truePx, DISPLAY_FLOOR_PX[cls] * growth) : ownGlyphRadius(b, truePx));
   }
 
   // Parents before children, so a moon can see whether its planet has
@@ -222,6 +247,9 @@ export function computePresentation(
         ? Math.max(PARK_BAND_PX, wideBand.px) : PARK_BAND_PX;
       const need = (radius.get(parent.id) ?? 0) + band + (radius.get(b.id) ?? 0) + FOLD_GAP_PX;
       alpha = ramp(sep, need, FOLD_FADE_PX);
+      // The suns of a far system stay lit at every zoom: folding them
+      // into an empty point would leave the system with no light at all.
+      if (isBarycenter(parent) && (b.type === 'star' || b.type === 'black_hole')) alpha = 1;
     }
     // A moon of a folded planet folds with it.
     alpha = Math.min(alpha, parentShown);
@@ -267,6 +295,10 @@ export function computePresentation(
       for (let dy = -reach; dy <= reach; dy++) {
         for (const o of grid.get(`${cx + dx},${cy + dy}`) ?? []) {
           if (o.id === b.id || (shown.get(o.id) ?? 0) < 0.5) continue;
+          // Never fold a barycenter: it shares a point with its own suns,
+          // and a folded barycenter drags them down with it in the
+          // parent pass below.
+          if (isBarycenter(o)) continue;
           if (rank(o) >= rank(b)) continue;
           const q = at.get(o.id)!;
           const sep = Math.hypot(p.x - q.x, p.y - q.y);

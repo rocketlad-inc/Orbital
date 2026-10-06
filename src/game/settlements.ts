@@ -390,6 +390,9 @@ export function canHostStation(body: Body): boolean {
   // actions.js. Offering the button and failing the click is worse than
   // not offering it.
   if (body.type === 'black_hole') return false;
+  // A far system's barycenter is empty space, not a trojan rock.
+  const tpl = body.id.slice(body.id.lastIndexOf(':') + 1);
+  if (tpl === 'binary_barycenter' || tpl === 'bh_barycenter') return false;
   return body.type !== 'meteoroid';
 }
 

@@ -1876,6 +1876,14 @@ async function handleDeploySettlement(req, env, ctx) {
     return err(409, 'no_surface',
       'nothing holds an orbit at an event horizon — settle its worlds instead');
   }
+  // A far system's barycenter is its centre of mass: empty space carrying
+  // the type 'lagrange', which elsewhere on the map means a trojan ROCK
+  // that may take a station. This one has nothing to build on.
+  const bodyTpl = String(bodyRow.id).slice(String(bodyRow.id).lastIndexOf(':') + 1);
+  if (bodyTpl === 'binary_barycenter' || bodyTpl === 'bh_barycenter') {
+    return err(409, 'no_surface',
+      'a barycenter is empty space — settle the worlds that orbit it');
+  }
 
   // THE HARD GATE (DESIGN-terraforming): cities live on terraformed
   // worlds only. No soft fallback, no stunted raw-world city — a colony
