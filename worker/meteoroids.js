@@ -336,4 +336,120 @@ export function generateMeteoroids(rand, hosts, opts = {}) {
 }
 
 export const METEOROID_COUNT = L3_HOSTS.length + BELT_COUNT + KUIPER_COUNT;
+
+// ============================================================
+// THE FAR SYSTEMS' ROCKS (2026-10-06: "we need to load these systems up
+// with asteroids and meteoroids").
+//
+// Nine per system, in the same three populations Sol has and for the
+// same reasons, each placed against THAT system's own bodies:
+//
+//   3 AT L3, opposite its main worlds -- same radius and year as the
+//     host, half a turn of phase away, stable forever.
+//   3 IN ITS BELT (the Kindling, the Ossuary), circular, among the
+//     catalogue asteroids that define it.
+//   3 ECCENTRIC, out past its outermost world: the long-haul paydays,
+//     cheap at periapsis and brutal at apoapsis.
+//
+// RICHER THAN SOL'S, because they are far: the haul home is the cost,
+// and in Cygnus every route is also slowed by the well. Same metal/gold
+// split and no science, for the reason KINDS gives.
+//
+// Generated from the SCALED bodies (FAR_LOCAL_SCALE and the host's
+// dials already applied), like Sol's rocks, so an L3 rock is pinned to
+// where its host actually orbits. Designations are per system --
+// CEN-01, CYG-01 -- so a rock's name says where it is.
+// ============================================================
+
+export const FAR_ROCK_SYSTEMS = [
+  { key: 'cen', label: 'CEN', barycenter: 'binary_barycenter',
+    l3: ['verdant', 'crimson', 'cinder'], belt: ['flint', 'tinder', 'ember', 'pyrite'] },
+  { key: 'cyg', label: 'CYG', barycenter: 'bh_barycenter',
+    l3: ['requiem', 'vellichor', 'echelon'], belt: ['cenotaph', 'epitaph', 'votive', 'marrow'] },
+];
+export const FAR_L3_COUNT = 3;
+export const FAR_BELT_COUNT = 3;
+export const FAR_OUTER_COUNT = 3;
+
+/** T = k r^1.5 for a far system, from its own worlds (median), so a rock
+ *  keeps Kepler's ratios with the planets around it. */
+function keplerK(worlds) {
+  const ks = worlds
+    .filter(w => w.orbit_radius > 0 && w.orbit_period > 0)
+    .map(w => w.orbit_period / Math.pow(w.orbit_radius, 1.5))
+    .sort((a, b) => a - b);
+  return ks.length ? ks[Math.floor(ks.length / 2)] : 0.17;
+}
+
+/**
+ * Rock templates for every far system present in `catalog` (scaled
+ * catalogue entries: id, parent, type, orbit_radius, orbit_period,
+ * angle0). Returns [] when the far systems are not on the map.
+ */
+export function generateFarMeteoroids(rand, catalog) {
+  const byId = new Map(catalog.map(b => [b.id, b]));
+  const tonnage = (min, max) => Math.round((min + rand() * (max - min)) / 25) * 25;
+  const kind = () => KINDS[Math.floor(rand() * KINDS.length)];
+  const out = [];
+  for (const sys of FAR_ROCK_SYSTEMS) {
+    if (!byId.has(sys.barycenter)) continue;
+    const worlds = catalog.filter(b => b.parent === sys.barycenter
+      && ['terrestrial', 'gas-giant', 'dwarf'].includes(b.type));
+    if (worlds.length === 0) continue;
+    const k = keplerK(worlds);
+    let n = 0;
+    const name = () => `${sys.label}-${String(++n).padStart(2, '0')}`;
+
+    // ---- L3, opposite the main worlds ------------------------------
+    for (const hostId of sys.l3) {
+      const host = byId.get(hostId);
+      if (!host) continue;
+      out.push({
+        id: `mtr_${sys.key}_${hostId}_l3`, name: name(), type: 'lagrange',
+        parent: sys.barycenter, radius: 0.3 + rand() * 0.15, soi: 0, mu: 0,
+        orbit_radius: host.orbit_radius, orbit_period: host.orbit_period,
+        angle0: (host.angle0 + Math.PI) % TWO_PI,
+        color: '#8b7d6b', far_system: true,
+        yield: { metal: 0, fuel: 0, gold: 0, science: 0 },
+        mineral_kind: kind(), mineral_initial: tonnage(900, 1800), l3_host: hostId,
+      });
+    }
+
+    // ---- in the belt ---------------------------------------------------
+    const beltR = sys.belt.map(id => byId.get(id)?.orbit_radius).filter(r => r > 0);
+    if (beltR.length) {
+      const lo = Math.min(...beltR) * 0.97, hi = Math.max(...beltR) * 1.03;
+      for (let i = 0; i < FAR_BELT_COUNT; i++) {
+        const r = lo + rand() * (hi - lo);
+        out.push({
+          id: `mtr_${sys.key}_belt_${i}`, name: name(), type: 'meteoroid',
+          parent: sys.barycenter, radius: 0.25 + rand() * 0.15, soi: 0, mu: 0,
+          orbit_radius: r, orbit_period: Math.round(k * Math.pow(r, 1.5)),
+          angle0: rand() * TWO_PI, color: '#7d7367', far_system: true,
+          yield: { metal: 0, fuel: 0, gold: 0, science: 0 },
+          mineral_kind: kind(), mineral_initial: tonnage(600, 1200),
+        });
+      }
+    }
+
+    // ---- eccentric, past the last world --------------------------------
+    const outermost = Math.max(...worlds.map(w => w.orbit_ra ?? w.orbit_radius));
+    for (let i = 0; i < FAR_OUTER_COUNT; i++) {
+      const rp = outermost * (1.08 + rand() * 0.2);
+      const ra = outermost * (1.6 + rand() * 0.6);
+      const a = (ra + rp) / 2;
+      out.push({
+        id: `mtr_${sys.key}_outer_${i}`, name: name(), type: 'meteoroid',
+        parent: sys.barycenter, radius: 0.3 + rand() * 0.2, soi: 0, mu: 0,
+        orbit_radius: a, orbit_period: Math.round(k * Math.pow(a, 1.5)),
+        angle0: rand() * TWO_PI, color: '#6f6b78', far_system: true,
+        yield: { metal: 0, fuel: 0, gold: 0, science: 0 },
+        orbit_rp: rp, orbit_ra: ra, orbit_omega: rand() * TWO_PI, orbit_m0: rand() * TWO_PI,
+        mineral_kind: kind(), mineral_initial: tonnage(1800, 3200),
+      });
+    }
+  }
+  return out;
+}
+
 export { designation as meteoroidDesignation, L3_HOSTS };

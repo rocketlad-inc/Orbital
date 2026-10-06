@@ -11,7 +11,7 @@ import type { Body } from '../types';
 
 export const BINARY_SYSTEM_TEMPLATE_IDS: ReadonlySet<string> = new Set([
   'verdant', 'thistle', 'sorrel', 'crimson', 'prismara', 'scoria', 'umber',
-  'cinder', 'clinker', 'farspire',
+  'cinder', 'clinker', 'farspire', 'flint', 'tinder', 'ember', 'pyrite',
 ]);
 
 export const BINARY_STATION_MUL = 2;

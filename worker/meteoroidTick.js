@@ -198,14 +198,17 @@ export async function discoverMeteoroids(env, gameId, tick, posOf, sensorScale =
 export async function replenishKuiper(env, gameId, tick, rand, posOf, sensorScale = 1) {
   if (tick % RESTOCK_INTERVAL !== 0) return { added: 0 };
 
+  // SOL'S Kuiper rocks only: the far systems carry eccentric rocks of
+  // their own (meteoroids.js), and counted here they would hold Sol's
+  // belt below its floor for good.
   const live = await env.DB
     .prepare(
       `SELECT COUNT(*) n FROM game_bodies
         WHERE game_id = ? AND mineral_remaining > 0
           AND exhausted_at_tick IS NULL AND destroyed_at_tick IS NULL
-          AND orbit_ra IS NOT NULL`,
+          AND orbit_ra IS NOT NULL AND parent_body_id = ?`,
     )
-    .bind(gameId).first();
+    .bind(gameId, `${gameId}:sol`).first();
   if (Number(live?.n ?? 0) >= KUIPER_FLOOR) return { added: 0 };
 
   // Continue the catalogue rather than restarting it. MTR-31 tells a

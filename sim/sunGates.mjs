@@ -163,7 +163,7 @@ const arrive0 = g0.emerge_until_tick;
 {
   const bary = bodies.find(b => b.template_id === order[0].barycenter);
   const outer = Math.max(...bodies.filter(b => b.parent_body_id === bary.id
-    && !['star', 'black_hole', 'megastructure'].includes(b.type)).map(b => b.orbit_radius));
+    && !['star', 'black_hole', 'megastructure', 'meteoroid', 'lagrange'].includes(b.type)).map(b => b.orbit_radius));
   check('its twin sits just past the far system\'s outermost world',
     f0 && f0.parent_body_id === bary.id && f0.orbit_radius > outer && f0.orbit_radius < outer * 1.5,
     `${f0?.orbit_radius} vs outermost ${outer}`);

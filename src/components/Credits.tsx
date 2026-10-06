@@ -197,7 +197,8 @@ export const Credits: React.FC = () => (
       Orbital re-projects them onto spheres, re-grades some to fit the map, and paints the terraformed biomes over
       each world&rsquo;s own topography. The worlds of the far systems, which no spacecraft has mapped, are built
       from these same maps (Ganymede, Io, Venus, Mercury, Mars, the Moon, Phobos, Deimos, Ceres, Callisto,
-      Enceladus, Rhea, Titania, Oberon, Umbriel, Charon, Eris, Jupiter and Saturn), mirrored,
+      Enceladus, Rhea, Titania, Oberon, Umbriel, Charon, Eris, Vesta, Jupiter and Saturn, and this
+      game's own asteroids), mirrored,
       turned and recoloured, and their stars from the solar map re-graded by spectral class.
       No endorsement by NASA, USGS or Solar System Scope is implied.
     </p>

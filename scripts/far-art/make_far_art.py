@@ -414,6 +414,54 @@ def gilt():
                [(0, '#2a1c08'), (0.3, '#7a5818'), (0.6, '#c09630'), (0.82, '#e8c860'), (1, '#fff6c8')],
                (0.8, 0.66, 0.3), tilt=0.12, lon0=0.7, lo=5, hi=99, k=0.35, tf_k=0.38)
 
+# --- The far belts' asteroids (2026-10-06): the Kindling and the Ossuary.
+# Rock that cannot be terraformed, so a raw map only (NO_TF_GLOBE).
+
+def _rock(key, src, T, stops, tilt, lon0, lo=2, hi=98, k=0.35):
+    m = transform(src_map(src), **T)
+    L = stretch(lum(m), lo, hi)
+    save_set(key, detail(gradient_map(L, stops), L, k), small=True, tilt=tilt, lon0=lon0)
+
+@world
+def flint():
+    _rock('flint', 'iron_anna', dict(roll=0.31, mirror=True),
+          [(0, '#100f0e'), (0.35, '#34322e'), (0.65, '#6e6a62'), (0.85, '#a8a298'), (1, '#e6e2da')], 0.12, 0.5)
+
+@world
+def tinder():
+    _rock('tinder', 'styx_rock', dict(roll=0.66, flip=True),
+          [(0, '#140e08'), (0.35, '#4a3420'), (0.65, '#8a6844'), (0.85, '#b8966a'), (1, '#e8d4b0')], -0.1, -0.9)
+
+@world
+def ember():
+    _rock('ember', 'black_sky', dict(roll=0.14),
+          [(0, '#0a0605'), (0.4, '#2a140e'), (0.7, '#6a2e18'), (0.88, '#b0603a'), (1, '#f0b088')], 0.06, 1.7)
+
+@world
+def pyrite():
+    _rock('pyrite', 'midas', dict(roll=0.52, mirror=True, flip=True),
+          [(0, '#1a1406'), (0.35, '#5a4816'), (0.65, '#a08a34'), (0.85, '#d0b85a'), (1, '#fff2b0')], -0.16, 0.2)
+
+@world
+def cenotaph():
+    _rock('cenotaph', 'vesta', dict(roll=0.77),
+          [(0, '#0c0a10'), (0.35, '#2e2a38'), (0.65, '#5e5870'), (0.85, '#9a94a8'), (1, '#e4e0ec')], 0.1, -1.2)
+
+@world
+def epitaph():
+    _rock('epitaph', 'vagrant', dict(roll=0.09, flip=True),
+          [(0, '#0e0c12'), (0.35, '#363042'), (0.65, '#706888'), (0.85, '#a8a0bc'), (1, '#ece8f4')], -0.08, 2.3)
+
+@world
+def votive():
+    _rock('votive', 'juno', dict(roll=0.43, mirror=True),
+          [(0, '#140e06'), (0.35, '#4a3614'), (0.65, '#9a7a34'), (0.85, '#d0aa5c'), (1, '#fbe6b0')], 0.14, 0.9)
+
+@world
+def marrow():
+    _rock('marrow', 'augustin', dict(roll=0.88),
+          [(0, '#24201a'), (0.35, '#5e584c'), (0.65, '#a49c8a'), (0.85, '#d4ccb8'), (1, '#fbf8ee')], -0.12, -0.3)
+
 if __name__ == '__main__':
     only = set(sys.argv[1:])
     for fn in WORLDS:

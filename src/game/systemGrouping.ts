@@ -85,6 +85,13 @@ export const BELT_RATIO = 1.25;
 /** Fewer than this and it's a pair of neighbours, not a belt. */
 export const BELT_MIN_MEMBERS = 3;
 
+/** What each far system calls its asteroid belt. MIRROR of
+ *  FAR_BELT_LABELS in worker/systems.js. */
+export const FAR_BELT_LABELS: Record<string, string> = {
+  binary_barycenter: 'The Kindling',
+  bh_barycenter: 'The Ossuary',
+};
+
 /** Rubble — the only things that form belts. */
 export function isBeltable(b: Body): boolean {
   return b.type === 'asteroid' || b.type === 'dwarf';
@@ -258,8 +265,9 @@ export function findBelts(bodies: Body[]): Belt[] {
     else clusters.push([b]);
   }
 
+  // Sol's planets only (see the server's findBelts).
   const planetSystemRadii = bodies
-    .filter(b => b.parent && anchors.has(b.parent) && PLANET_TYPES.has(b.type))
+    .filter(b => b.parent && roots.has(b.parent) && PLANET_TYPES.has(b.type))
     .map(b => b.orbitRadius);
   const outermostPlanetSystem = planetSystemRadii.length
     ? Math.max(...planetSystemRadii)
@@ -323,6 +331,41 @@ export function findBelts(bodies: Body[]): Belt[] {
       id: 'belt:farreach', label: 'The Far Reach',
       members: farReach.slice(), laneMembers: farReach.slice(),
     });
+  }
+
+  // A FAR SYSTEM'S OWN BELTS -- see the server's findBelts (systems.js).
+  const farByAnchor = new Map<string, Body[]>();
+  for (const b of bodies) {
+    const p = b.parent;
+    if (!p || roots.has(p) || !anchors.has(p)) continue;
+    if (!isBeltable(b) || adopted.has(b.id) || isEccentricRogue(b)) continue;
+    const arr = farByAnchor.get(p) ?? [];
+    arr.push(b);
+    farByAnchor.set(p, arr);
+  }
+  for (const [anchorId, list] of Array.from(farByAnchor.entries())) {
+    list.sort((a, b) => a.orbitRadius - b.orbitRadius);
+    const tpl = anchorId.slice(anchorId.lastIndexOf(':') + 1);
+    const anchorBody = bodies.find(x => x.id === anchorId);
+    const label = FAR_BELT_LABELS[tpl]
+      ?? `${(anchorBody?.name ?? tpl).replace(/\s*Barycenter$/i, '')} Belt`;
+    let chain: Body[] = [];
+    const flush = () => {
+      if (chain.length >= BELT_MIN_MEMBERS) {
+        const radii = chain.map(b => b.orbitRadius);
+        belts.push({
+          id: `belt:${tpl}:${Math.round(radii[Math.floor(radii.length / 2)])}`,
+          label, members: chain.slice(), laneMembers: chain.slice(),
+        });
+      }
+      chain = [];
+    };
+    for (const b of list) {
+      const prev = chain[chain.length - 1];
+      if (prev && b.orbitRadius <= prev.orbitRadius * BELT_RATIO) chain.push(b);
+      else { flush(); chain = [b]; }
+    }
+    flush();
   }
 
   // Now fold the rogues in as MEMBERS. A Kuiper object is a Kuiper

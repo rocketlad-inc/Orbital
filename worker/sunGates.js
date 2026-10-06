@@ -268,8 +268,10 @@ export async function spawnSunGatePair(env, gameId, sys, emergeTick, conf, other
   });
 
   // The far end: just past the outermost world of its system.
+  // Worlds, not rocks: an eccentric meteoroid swinging out to twice the
+  // last world's orbit would push the gate out with it.
   const farWorlds = bodies.filter(b => b.parent_body_id === bary.id
-    && b.type !== 'megastructure' && b.type !== 'star' && b.type !== 'black_hole');
+    && isWorld(b) && b.type !== 'star' && b.type !== 'black_hole');
   const outermost = Math.max(100, ...farWorlds.map(b => Number(b.orbit_ra ?? b.orbit_radius) || 0));
   const farR = outermost * FAR_GATE_RADIUS_MUL;
   const farPeriod = periodForRadius(bary, farR, orbitPeers);

@@ -102,9 +102,12 @@ const GLOBE_IDS = new Set([
   'verdant', 'crimson', 'prismara', 'scoria', 'umber', 'cinder', 'farspire',
   'elegy', 'vesper', 'threnody',
   'thistle', 'sorrel', 'clinker', 'lacrimosa', 'sanctus', 'gilt',
+  'flint', 'tinder', 'ember', 'pyrite', 'cenotaph', 'epitaph', 'votive', 'marrow',
   'requiem', 'vellichor', 'echelon', 'reliquary',
 ]);
-const NO_TF_GLOBE = new Set(['jupiter', 'saturn', 'uranus', 'neptune', 'crimson', 'vellichor']);
+const NO_TF_GLOBE = new Set(['jupiter', 'saturn', 'uranus', 'neptune', 'crimson', 'vellichor',
+  // The far belts' asteroids: rock that cannot be terraformed.
+  'flint', 'tinder', 'ember', 'pyrite', 'cenotaph', 'epitaph', 'votive', 'marrow']);
 const globes = new Map<string, HTMLImageElement>();
 const globeWaiters = new Map<string, Array<() => void>>();
 

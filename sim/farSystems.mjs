@@ -33,10 +33,10 @@ function check(label, ok, detail = '') {
 
 const CENTAURI = ['binary_barycenter', 'centauri_a', 'centauri_b', 'verdant',
   'thistle', 'sorrel', 'crimson', 'prismara', 'scoria', 'umber', 'cinder',
-  'clinker', 'farspire'];
+  'clinker', 'farspire', 'flint', 'tinder', 'ember', 'pyrite'];
 const CYGNUS = ['bh_barycenter', 'cygnus_x', 'hde_226868', 'requiem',
   'lacrimosa', 'sanctus', 'vellichor', 'elegy', 'vesper', 'threnody',
-  'echelon', 'gilt', 'reliquary'];
+  'echelon', 'gilt', 'reliquary', 'cenotaph', 'epitaph', 'votive', 'marrow'];
 const ALL_FAR = [...CENTAURI, ...CYGNUS];
 
 // ---- 1. The catalogue ------------------------------------------------
@@ -210,7 +210,82 @@ const on = await seedGame('gfar_on', 1);
 check(`far_systems: 1 seeds all ${ALL_FAR.length}`,
   ALL_FAR.every(id => on.ids.has(id)), ALL_FAR.filter(id => !on.ids.has(id)).join(', '));
 check('...and the rest of Sol is still there',
-  on.count === plain.count + ALL_FAR.length, `${on.count} vs ${plain.count} + ${ALL_FAR.length}`);
+  on.count === plain.count + ALL_FAR.length + 18, `${on.count} vs ${plain.count} + ${ALL_FAR.length} + 18 rocks`);
+
+
+// ---- THE FAR SYSTEMS' ROCKS (2026-10-06) ---------------------------------
+{
+  const rows = (await on.DB.prepare(
+    `SELECT * FROM game_bodies WHERE game_id = 'gfar_on'`).all()).results;
+  const tpl = (r) => r.template_id;
+  const rocks = rows.filter(r => r.mineral_kind);
+  const cen = rocks.filter(r => tpl(r).startsWith('mtr_cen_'));
+  const cyg = rocks.filter(r => tpl(r).startsWith('mtr_cyg_'));
+  check('each far system is seeded nine rocks of its own', cen.length === 9 && cyg.length === 9,
+    `${cen.length} Centauri, ${cyg.length} Cygnus`);
+  check('...orbiting their own barycenter',
+    cen.every(r => r.parent_body_id === 'gfar_on:binary_barycenter')
+    && cyg.every(r => r.parent_body_id === 'gfar_on:bh_barycenter'));
+  check('...named for their system', cen.every(r => /^CEN-\d\d$/.test(r.name)) && cyg.every(r => /^CYG-\d\d$/.test(r.name)),
+    [...cen, ...cyg].map(r => r.name).join(' '));
+  check('...metal and gold, never science', [...cen, ...cyg].every(r => ['metal', 'gold'].includes(r.mineral_kind)));
+  const byTpl = new Map(rows.map(r => [tpl(r), r]));
+  const l3 = [...cen, ...cyg].filter(r => r.type === 'lagrange');
+  check('three per system sit at L3, on their host\'s orbit and opposite it',
+    l3.length === 6 && l3.every(r => {
+      const host = byTpl.get(tpl(r).replace(/^mtr_c(en|yg)_/, '').replace(/_l3$/, ''));
+      const dA = Math.abs(((r.angle0 - host.angle0) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI);
+      return host && r.orbit_radius === host.orbit_radius && r.orbit_period === host.orbit_period && dA < 1e-9;
+    }));
+  for (const [sysName, bary, list] of [['Centauri', 'binary_barycenter', cen], ['Cygnus', 'bh_barycenter', cyg]]) {
+    const worlds = rows.filter(r => r.parent_body_id === `gfar_on:${bary}` && !r.mineral_kind
+      && ['terrestrial', 'gas-giant', 'dwarf'].includes(r.type));
+    const outermost = Math.max(...worlds.map(w => w.orbit_radius));
+    const outer = list.filter(r => r.orbit_ra != null);
+    check(`${sysName}'s three long-haul rocks stay out past its last world`,
+      outer.length === 3 && outer.every(r => r.orbit_rp > outermost && r.orbit_ra > r.orbit_rp),
+      outer.map(r => `${Math.round(r.orbit_rp)}-${Math.round(r.orbit_ra)} vs ${outermost}`).join(', '));
+  }
+  // The belts form, each around its own centre, named for its system.
+  const { findBelts } = await import('../worker/systems.js');
+  const belts = findBelts(rows);
+  const kindling = belts.find(b => b.label === 'The Kindling');
+  const ossuary = belts.find(b => b.label === 'The Ossuary');
+  check('Centauri has its belt, the Kindling, of its four asteroids',
+    kindling && ['flint', 'tinder', 'ember', 'pyrite'].every(id => kindling.members.some(m => tpl(m) === id))
+    && !kindling.members.some(m => tpl(m) === 'farspire'),
+    kindling ? kindling.members.map(tpl).join(', ') : belts.map(b => b.label).join(', '));
+  check('Cygnus has its belt, the Ossuary',
+    ossuary && ['cenotaph', 'epitaph', 'votive', 'marrow'].every(id => ossuary.members.some(m => tpl(m) === id)),
+    ossuary ? ossuary.members.map(tpl).join(', ') : belts.map(b => b.label).join(', '));
+  check('Sol\'s belts are untouched by them',
+    belts.filter(b => b.members.some(m => m.parent_body_id === 'gfar_on:sol'))
+      .every(b => b.members.every(m => m.parent_body_id === 'gfar_on:sol')));
+
+  // Turning far_systems on never moves a Sol rock.
+  const solRocks = (g) => g.filter(r => r.mineral_kind && r.parent_body_id.endsWith(':sol'))
+    .map(r => `${tpl(r)} ${r.orbit_radius} ${r.angle0} ${r.mineral_kind} ${r.mineral_initial}`).sort();
+  const plainRows = (await plain.DB.prepare(`SELECT * FROM game_bodies WHERE game_id = 'gfar_off'`).all()).results;
+  // gfar_off was seeded from a different map seed; compare against a
+  // fresh far-less game on gfar_on's own seed instead.
+  const twin = await seedGame('gfar_on', 0);
+  const twinRows = (await twin.DB.prepare(`SELECT * FROM game_bodies WHERE game_id = 'gfar_on'`).all()).results;
+  check('turning the far systems on moves no Sol rock',
+    JSON.stringify(solRocks(rows)) === JSON.stringify(solRocks(twinRows)) && plainRows.length > 0,
+    `${solRocks(rows).length} vs ${solRocks(twinRows).length}`);
+
+  // A running game gets the same rocks from the backfill.
+  const before = cen.concat(cyg).map(r => `${tpl(r)} ${Math.round(r.orbit_radius)} ${r.mineral_initial}`).sort();
+  await on.DB.prepare(`DELETE FROM game_bodies WHERE game_id = 'gfar_on' AND template_id LIKE 'mtr_c%'`).run();
+  const added = await backfillMissingBodies(on.env, 'gfar_on');
+  const again = ((await on.DB.prepare(
+    `SELECT * FROM game_bodies WHERE game_id = 'gfar_on' AND template_id LIKE 'mtr_c%'`).all()).results)
+    .map(r => `${tpl(r)} ${Math.round(r.orbit_radius)} ${r.mineral_initial}`).sort();
+  check('the backfill gives a running game the same rocks a fresh one gets',
+    added >= 18 && JSON.stringify(again) === JSON.stringify(before), `added ${added}`);
+  const twice = await backfillMissingBodies(on.env, 'gfar_on');
+  check('...and never twice', twice === 0, `added ${twice}`);
+}
 
 // THE BACKFILL IS THE ONE THAT TOUCHES LIVE GAMES.
 const added = await backfillMissingBodies(plain.env, 'gfar_off');

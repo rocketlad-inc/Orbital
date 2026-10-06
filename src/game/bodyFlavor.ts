@@ -176,6 +176,10 @@ export const BODY_FLAVOR: Record<string, string> = {
   lacrimosa: "Requiem's pale moon, ice the blue of old tears, streaked where the X-ray glare has etched it. The quiet half of the system's grief, and its best science.",
   sanctus: "A bright ivory moon riding high over Requiem, smooth and unreasonably calm for somewhere this close to a black hole. Credits and metal in fair measure, and a kind of peace.",
   gilt: "Echelon's moon, a gold-leafed fragment of the same supernova that gilded its world, struck through with veins that flash when it turns. Heavy in credits, as you would hope from the name.",
+  flint: "The Kindling's grey anchor, a long splinter of hard stone that throws sparks of light as it tumbles under two suns. Metal, mostly, and a fine place to moor a station that drinks from both of them.",
+  tinder: "A loose, tan rubble-pile held together by little more than habit. Light, porous, rich enough in metal and credits to be worth the risk of building on something that might come apart.",
+  ember: "The warm one: a dark rock streaked rust-red where the binary's light has baked its iron. It never quite cools on its sunward side.",
+  pyrite: "Fool's gold, the prospectors call it, and they are wrong: the brassy glitter is real, and so are the credits. The brightest rock in the Kindling.",
   farspire: "The lonely outpost at the system's edge, a small frozen spire of rock and ice rich in science despite its modest size. Just beyond it, once the Sun gives up its doors, the gate home comes to rest — the far end of the crossing from Sol's Far Reach. The end of one journey and the beginning of the road back; every road through Centauri eventually passes Farspire.",
 
   // === Cygnus X-1 analogue ===================================
@@ -186,6 +190,10 @@ export const BODY_FLAVOR: Record<string, string> = {
   requiem: "The innermost world of Cygnus, a dark wine-violet rock whose impact scars the X-ray glare has fused to glass. Rich in metal and science, and deep in the well: everything bound to or from Requiem crawls, its clocks running slow against the rest of the system.",
   vellichor: "A gas giant bleached pale blue-violet by the binary's radiation, its methane stripped and its bands gone soft. Vellichor holds three mournful moons and a fortune in credits, far enough from the black hole that ships slow only a little on the way in.",
   echelon: "A world forged from supernova ash, its crust a heavy-element alloy of bronze and gold that rings when the wind crosses it. The richest credits in Cygnus, and far enough out of the well that a ship barely feels it.",
+  cenotaph: "An empty monument of a rock, smooth-flanked and heavy with metal, in a ring that is all that remains of whatever the black hole took apart first.",
+  epitaph: "A rock scored with long straight grooves, as if something had tried to write on it. Science and metal, and an uncomfortable silence.",
+  votive: "A small bright rock with a warm metallic sheen, catching HDE 226868's blue glare and giving back gold. The richest in credits of the Ossuary's dead.",
+  marrow: "The pale one: a bone-white lump of nickel-iron, the densest thing in the ring and the best metal in Cygnus for anyone willing to work this deep in the well.",
   reliquary: "The last world of Cygnus, a small cold relic wheeling far out from the black hole and the blue giant it is slowly eating. Science and metal in fair measure, and silence in abundance. Just past it is where the gate from Sol comes to rest — the first thing any traveller through it sees, and the last thing they pass on the way home.",
 };
 
