@@ -369,8 +369,6 @@ export function layoutOrbitBattle(
     }
   }
 
-  // Headings: at the nearest enemy, a little off true so the nose line
-  // is not ruled.
   let overlaps = 0;
   for (let i = 0; i < n; i++) {
     for (let j = i + 1; j < n; j++) {
@@ -378,19 +376,16 @@ export function layoutOrbitBattle(
       if (Math.hypot(a.x - b.x, a.y - b.y) < (a.c + b.c) * 0.9) overlaps++;
     }
   }
+  // HEADINGS: FORWARD IN ORBIT, as on the map today -- the prograde
+  // tangent (theta + pi/2 for the battle's wheel direction), with the
+  // map's own small off-parallel jitter (BATTLE_LINE_JITTER_H, 0.22 rad
+  // peak to peak). The first cut pointed every nose at the nearest enemy,
+  // which scrambled the clumps (Lorne: "Where are these things pointing?
+  // I want all ships pointing forward in their orbits, like it is now").
   for (const b of bodies) {
-    let best: Body | null = null;
-    let bd = Infinity;
-    for (const o of bodies) {
-      if (o.s.faction === b.s.faction) continue;
-      const d = (o.x - b.x) ** 2 + (o.y - b.y) ** 2;
-      if (d < bd) { bd = d; best = o; }
-    }
     const R = rng(hash(b.s.id) ^ (seed * 7919));
-    const jitter = (R() - 0.5) * 0.5;
-    const heading = best
-      ? Math.atan2(best.y - b.y, best.x - b.x) + jitter
-      : Math.atan2(b.y, b.x) + Math.PI / 2 + jitter;
+    const jitter = (R() - 0.5) * 0.22;
+    const heading = Math.atan2(b.y, b.x) + Math.PI / 2 + jitter;
     placements.set(b.s.id, {
       id: b.s.id, x: b.x, y: b.y, heading,
       r: Math.hypot(b.x, b.y), theta: wrap(Math.atan2(b.y, b.x)),

@@ -90,6 +90,17 @@ test('the same roster lays out the same way every time', () => {
   }
 });
 
+test('every ship points forward along its orbit, like the map', () => {
+  const L = layoutOrbitBattle(buildScenario('large'), MARS);
+  for (const p of L.placements.values()) {
+    const tangent = Math.atan2(p.y, p.x) + Math.PI / 2;
+    let d = (p.heading - tangent) % (Math.PI * 2);
+    if (d > Math.PI) d -= Math.PI * 2;
+    if (d < -Math.PI) d += Math.PI * 2;
+    expect(Math.abs(d)).toBeLessThanOrEqual(0.11 + 1e-9);
+  }
+});
+
 test('the planet-crossing check', () => {
   expect(crossesPlanet(-200, 0, 200, 0, MARS)).toBe(true);
   expect(crossesPlanet(-200, 180, 200, 180, MARS)).toBe(false);
