@@ -15,6 +15,7 @@
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { GIT_SHA, BUILT_AT } from '../_version';
+import './VersionBanner.css';
 
 interface VersionResponse {
   git_sha?: string;
@@ -62,28 +63,16 @@ export const VersionBanner: React.FC = () => {
   return (
     <>
       {/* Corner SHA badge — always visible. Bottom-left so it doesn't fight
-          the resource pills or outliner. Click to copy. */}
+          the resource pills or outliner. Click to copy (desktop). Where
+          the phone's bottom rail is, it sits ABOVE the rail and takes no
+          taps: it used to lie on the rail's first button, so a tap meant
+          for the menu copied the build number instead (playtester).
+          Placement lives in VersionBanner.css. */}
       <div
+        className={`version-badge${mismatch ? ' version-badge--stale' : ''}`}
         title={`Build ${GIT_SHA}\n${BUILT_AT}\n${mismatch ? 'A newer version is live on the server. Reload to update.' : 'Up to date'}`}
         onClick={() => {
           try { navigator.clipboard.writeText(GIT_SHA); } catch { /* ignore */ }
-        }}
-        style={{
-          position: 'fixed',
-          left: 6,
-          bottom: 6,
-          zIndex: 10000,
-          padding: '2px 6px',
-          fontSize: 10,
-          fontFamily: 'var(--font-body, monospace)',
-          letterSpacing: '0.04em',
-          color: mismatch ? '#ffb84d' : 'rgba(216, 228, 238, 0.4)',
-          background: mismatch ? 'rgba(255, 184, 77, 0.08)' : 'transparent',
-          border: mismatch ? '1px solid rgba(255, 184, 77, 0.45)' : '1px solid transparent',
-          borderRadius: 2,
-          pointerEvents: 'auto',
-          cursor: 'pointer',
-          userSelect: 'none',
         }}
       >
         v{SHORT(GIT_SHA)}{mismatch && serverSha ? ` → ${SHORT(serverSha)}` : ''}
