@@ -26,12 +26,34 @@ const ME = 'https://discord.com/api/v10/users/@me';
  *  is useless. */
 const STATE_TTL_MS = 10 * 60 * 1000;
 
+/**
+ * The app's OAuth client id. It is the application id, which is PUBLIC,
+ * so it need not be configured at all: the bot token the worker already
+ * holds can ask Discord for it. DISCORD_CLIENT_ID still wins when set.
+ * Only DISCORD_CLIENT_SECRET has to be added by hand (found 2026-10-06:
+ * prod had neither, so the one-click link could never have worked).
+ */
+let cachedClientId = null;
+export async function discordClientId(env) {
+  if (env.DISCORD_CLIENT_ID) return env.DISCORD_CLIENT_ID;
+  if (cachedClientId) return cachedClientId;
+  if (!env.DISCORD_BOT_TOKEN) return null;
+  try {
+    const r = await fetch('https://discord.com/api/v10/applications/@me', {
+      headers: { authorization: `Bot ${env.DISCORD_BOT_TOKEN}` },
+    });
+    if (!r.ok) return null;
+    cachedClientId = (await r.json())?.id ?? null;
+    return cachedClientId;
+  } catch { return null; }
+}
+
 function redirectUri(env, url) {
   const origin = env.PUBLIC_ORIGIN || `${url.protocol}//${url.host}`;
   return `${origin.replace(/\/+$/, '')}/api/discord/oauth/callback`;
 }
 
-function page(title, body, ok = true) {
+export function page(title, body, ok = true) {
   // Deliberately a full page, not JSON: this is the end of a browser
   // redirect chain, so a human is looking at it.
   return new Response(
@@ -128,7 +150,8 @@ function consentPage(username) {
  */
 export async function handleOauthStart(req, env, { session, url }) {
   if (!session) return new Response('sign in first', { status: 401 });
-  if (!env.DISCORD_CLIENT_ID || !env.DISCORD_CLIENT_SECRET) {
+  const clientId = await discordClientId(env);
+  if (!clientId || !env.DISCORD_CLIENT_SECRET) {
     return page('Discord sign-in not configured',
       'The one-click link needs a Discord client secret. Use the code method for now.', false);
   }
@@ -140,9 +163,13 @@ export async function handleOauthStart(req, env, { session, url }) {
   const now = Date.now();
   try {
     await env.DB.prepare('DELETE FROM discord_link_codes WHERE expires_at < ?').bind(now).run();
+    // created_at is NOT NULL (0035). This insert left it out, so it threw
+    // on every click and the one-click link has never once worked on prod:
+    // "Could not start sign-in" for everyone (found 2026-10-06; prod held
+    // only typed /link codes and 4 linked players).
     await env.DB
-      .prepare('INSERT INTO discord_link_codes (code, user_id, expires_at) VALUES (?, ?, ?)')
-      .bind(`oauth:${state}`, session.user_id, now + STATE_TTL_MS)
+      .prepare('INSERT INTO discord_link_codes (code, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)')
+      .bind(`oauth:${state}`, session.user_id, now, now + STATE_TTL_MS)
       .run();
   } catch (e) {
     console.error('oauth state store failed', e);
@@ -150,7 +177,7 @@ export async function handleOauthStart(req, env, { session, url }) {
   }
 
   const params = new URLSearchParams({
-    client_id: env.DISCORD_CLIENT_ID,
+    client_id: clientId,
     redirect_uri: redirectUri(env, url),
     response_type: 'code',
     scope: 'identify',
@@ -190,7 +217,7 @@ export async function handleOauthCallback(req, env, { url }) {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
-        client_id: env.DISCORD_CLIENT_ID,
+        client_id: await discordClientId(env),
         client_secret: env.DISCORD_CLIENT_SECRET,
         grant_type: 'authorization_code',
         code,

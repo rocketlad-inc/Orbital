@@ -215,6 +215,17 @@ export function BotControl() {
                 </td>
               </tr>
               <tr>
+                <td>Players&apos; own servers</td>
+                <td style={{ color: '#8a9fb3', fontSize: 12 }} colSpan={2}>
+                  A host holding the Commission can send their game&apos;s feed to their own
+                  Discord server (one click from the game&apos;s feed settings). Needs, once, in the
+                  Discord Developer Portal: <b>Bot → Public Bot</b> on, and under <b>OAuth2 →
+                  Redirects</b> add <code>https://orbital-empire.com/api/discord/feed/callback</code>.
+                  Then press <b>Register commands everywhere</b> below so the slash commands
+                  work in their servers too.
+                </td>
+              </tr>
+              <tr>
                 <td>Senate vote cards</td>
                 <td style={{ color: '#8a9fb3', fontSize: 12 }}>Bill announcements + vote buttons</td>
                 <td><Toggle on={!!s.senate_cards_enabled} busy={busy === 'senate_cards_enabled'}
@@ -245,6 +256,17 @@ export function BotControl() {
               Situation reports · {g.name}
             </button>
           ))}
+          {/* Every server the bot is in, including players' own servers
+              (game feeds): register once, globally. Discord can take up
+              to an hour to show global commands everywhere. */}
+          <button
+            className="aa-chip"
+            disabled={busy === 'register:global'}
+            onClick={() => fire('/api/admin/discord/register-commands', 'register:global')}
+            title="Registers the slash commands in every server the bot is in, and clears the old per-server copies so nothing shows twice. Takes up to an hour to appear."
+          >
+            Register commands everywhere (global)
+          </button>
           {(data.guilds ?? []).map(g => (
             <button
               key={g.id}

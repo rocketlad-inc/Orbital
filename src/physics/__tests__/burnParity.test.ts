@@ -1,11 +1,11 @@
-// ONE BURN: PUSH AT 1g, FLIP AT 90%, BRAKE NINE TIMES HARDER.
+// ONE BURN: PUSH, FLIP AT 90%, BRAKE NINE TIMES HARDER.
 //
 // worker/burn.js owns the burn. The server times trade, retreat and
 // delivery legs with it and integrates every leg in flight for transit
 // combat (worker/transitCombat.js torchStateAt). The client plans every
 // player leg (planTorchTransfer) and draws and fogs every hull from its
 // own integrator (stepTorchShip). These hold the four to one another, and
-// prove the hard brake actually brakes: at 1g a leg is a few ticks long
+// prove the hard brake actually brakes: a short leg is a few ticks long
 // and the brake a tenth of that, so whole-tick steps (all an even burn
 // ever needed) boost straight through it.
 
@@ -44,11 +44,12 @@ describe('the burn', () => {
     expect(brakeAccelFor(26.52)).toBe(26.52);
   });
 
-  it('multiplayer pushes at 1g and brakes 9x', () => {
+  it('multiplayer pushes at the server\'s g and brakes 9x', () => {
     setMpBurnProfile({ engineG: SHIP_ENGINE_G, brakeMul: BRAKE_MUL });
-    expect(SHIP_ENGINE_G).toBe(1);
+    // 1g shipped for an hour on 2026-10-06 and was far too fast.
+    expect(SHIP_ENGINE_G).toBe(0.05);
     expect(BRAKE_MUL).toBe(9);
-    expect(fromG(baseEngineG(undefined))).toBeCloseTo(530.4, 6);
+    expect(fromG(baseEngineG(undefined))).toBeCloseTo(26.52, 6);
     expect(brakeAccelFor(100)).toBe(900);
   });
 

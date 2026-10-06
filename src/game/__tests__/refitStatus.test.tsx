@@ -87,7 +87,7 @@ describe('why not', () => {
   });
 
   it('no refit ordered, no status', () => {
-    expect(refitStatus(ship({ refitPendingDesignId: null } as Partial<Ship>), state())).toBeNull();
+    expect(refitStatus(ship({ refitPendingDesignId: undefined } as Partial<Ship>), state())).toBeNull();
   });
 });
 
@@ -115,7 +115,7 @@ describe('the situation report', () => {
   it('forgets it after ten ticks', () => {
     const gs = state({
       currentTick: 120,
-      ships: [ship({ refitPendingDesignId: null } as Partial<Ship>)],
+      ships: [ship({ refitPendingDesignId: undefined } as Partial<Ship>)],
       recentRefits: [{ shipId: 'g:s1', tick: 87, shipName: 'x', designName: 'Scrapper', bodyId: 'venus', bodyName: 'Venus' }],
     });
     expect(items(gs).some(i => i.category === 'refit_done')).toBe(false);

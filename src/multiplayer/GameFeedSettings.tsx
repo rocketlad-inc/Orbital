@@ -10,6 +10,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from './api';
+import { DiscordServerFeed } from './DiscordServerFeed';
 
 export type FeedLevel = 'off' | 'headlines' | 'all';
 
@@ -22,6 +23,21 @@ export interface FeedView {
   is_host: boolean;
   /** The Orbital Discord server's invite; the feed's posts live there. */
   discord_invite?: string | null;
+  /** The host's own Discord channel, when connected (a Commission
+   *  feature, DiscordServerFeed). active=false: the host's Commission is
+   *  gone and posts fall back to the Orbital forum. */
+  server?: {
+    guild_name: string | null;
+    channel_name: string | null;
+    kind: 'forum' | 'text';
+    url: string | null;
+    active: boolean;
+  } | null;
+  host_name?: string | null;
+  i_hold_commission?: boolean;
+  host_holds_commission?: boolean;
+  /** False until the bot's client id/secret and token are set. */
+  server_connect_ready?: boolean;
 }
 
 export const FEED_LEVEL_LABEL: Record<FeedLevel, string> = {
@@ -74,6 +90,9 @@ export const GameFeedSettings: React.FC<{ gameId: string; title?: string }> = ({
   };
 
   const on = view.level !== 'off';
+  // Posting to the host's own server: the Orbital forum's follow toggle,
+  // invite and "forum not set up" warning are about somewhere else.
+  const inOwnServer = !!view.server?.active;
   return (
     <div style={box} data-testid="game-feed-settings">
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
@@ -103,12 +122,13 @@ export const GameFeedSettings: React.FC<{ gameId: string; title?: string }> = ({
         {FEED_LEVEL_HINT[view.level]}
         {view.is_host && !on && ' Only the host can turn it on.'}
       </div>
-      {on && !view.forum_configured && (
+      <DiscordServerFeed gameId={gameId} view={view} onChange={setView} />
+      {on && !inOwnServer && !view.forum_configured && (
         <div style={{ ...dim, color: '#ffb84d' }}>
           The game-feed forum is not set up on the Discord server yet, so nothing will post until it is.
         </div>
       )}
-      {on && (
+      {on && !inOwnServer && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           {view.discord_linked ? (
             <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
@@ -131,7 +151,7 @@ export const GameFeedSettings: React.FC<{ gameId: string; title?: string }> = ({
           )}
         </div>
       )}
-      {view.discord_invite && (
+      {view.discord_invite && !inOwnServer && (
         <div style={dim}>
           Not on the Orbital Discord yet?{' '}
           <a href={view.discord_invite} target="_blank" rel="noreferrer" data-testid="game-feed-invite"

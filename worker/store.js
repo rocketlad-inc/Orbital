@@ -134,6 +134,8 @@ function requireAdmin(session) {
  *  dashboard, it never decides anything. */
 export const COMMISSION_SURFACES = new Set([
   'profile', 'lobby-flag', 'designer', 'endgame', 'thanks-card', 'skins',
+  // The game-feed settings: "post this game in your own Discord server".
+  'discord-feed',
 ]);
 
 /** Gift codes: 12 characters from an alphabet with no lookalikes (no
