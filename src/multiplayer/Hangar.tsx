@@ -24,6 +24,7 @@ import { WEBSITE_ORIGIN } from '../platform/appShell';
 import { SkinPicker, SkinField } from './SkinPicker';
 import {
   COMMISSION_FACTS, COMMISSION_NAME, COMMISSION_PRICE, HOLDER_MARK, canBuyHere, logCommission,
+  COMMISSION_DISCORD_DETAIL,
 } from './commission';
 import './Hangar.css';
 
@@ -179,11 +180,18 @@ export function Hangar({ onRedeemed, giftJustBought }: {
               section and every megastructure's look picker, your colony and station styles are just below,
               and the {HOLDER_MARK} beside your name shows other commanders.
             </p>
+            <p className="hg-perk" data-testid="hangar-discord">
+              <b>Your games in your own Discord.</b> In any game you host, open its Discord game feed
+              settings and press <b>Connect your server</b>.
+            </p>
           </>
         ) : (
           <>
             <div className="hg-title">{COMMISSION_NAME}</div>
             <p className="hg-body">{COMMISSION_FACTS} Orbital is free and stays free; this is how you can support it.</p>
+            <p className="hg-perk" data-testid="hangar-discord">
+              <b>Your games in your own Discord.</b> {COMMISSION_DISCORD_DETAIL}
+            </p>
             {sellable ? (
               <button className="pp-btn pp-btn--primary" disabled={busy !== null} onClick={() => void buy(false)}>
                 {busy === 'self' ? 'Opening checkout…' : `Get the Commission · ${COMMISSION_PRICE}`}

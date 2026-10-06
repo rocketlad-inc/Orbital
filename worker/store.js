@@ -22,12 +22,13 @@
 // attempt is logged, so the dashboard can say which surface sells and
 // which only adds noise.
 //
-// WHAT AN ENTITLEMENT GATES. Cosmetics only — premium ship icon
-// variants and flag emblems. The validators in index.js (icon_variant)
-// and emblems.js (normalizeEmblem) consult hasEntitlement() before
-// accepting a premium id; nothing else ever reads this table. If a
-// future sku wants to gate anything the simulation can feel, the answer
-// is no.
+// WHAT AN ENTITLEMENT GATES. Looks -- premium ship icon variants, flag
+// emblems, megastructure looks, colony/station styles -- and, since
+// 2026-10-06, a host's game feed in their OWN Discord server
+// (gameFeed.js serverDestination). The validators in index.js
+// (icon_variant) and emblems.js (normalizeEmblem) and the feed consult
+// hasEntitlement(). If a future sku wants to gate anything the
+// simulation can feel, the answer is no.
 //
 // SECRETS (wrangler secret put): STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET.
 // CONFIG (var or secret):        STRIPE_PRICE_COSMETICS (price_... id).

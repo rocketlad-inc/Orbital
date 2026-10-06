@@ -34,7 +34,7 @@ import { useMultiplayerActions, ServerShipDesign, ServerShipTemplate } from '../
 import { logUiEvent } from '../multiplayer/telemetry';
 import { useAuth } from '../multiplayer/AuthContext';
 import { startCommissionCheckout } from '../multiplayer/api';
-import { COMMISSION_NAME, COMMISSION_PRICE, canBuyHere, logCommission } from '../multiplayer/commission';
+import { COMMISSION_NAME, COMMISSION_PRICE, COMMISSION_DISCORD, canBuyHere, logCommission } from '../multiplayer/commission';
 import { ShipClassName, BuildableClassName, SHIP_CLASSES, BUILDABLE_CLASSES, upkeepSplitFor } from '../game/shipClasses';
 import { deliveredHullHp } from '../game/combat';
 import {
@@ -981,7 +981,8 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                 <div className="sd-preview" role="status">
                   <span>
                     Previewing the <b>{ICON_VARIANT_NAMES[activeClass][previewIcon]}</b> line, part of
-                    the {COMMISSION_NAME}. Not saved with the design.
+                    the {COMMISSION_NAME} (with every other line, new flags and {COMMISSION_DISCORD}).
+                    {' '}Not saved with the design.
                   </span>
                   {canBuyHere() && (
                     <button

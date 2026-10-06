@@ -7,7 +7,10 @@ import { deriveSecondary, emblemInk } from '../game/colorUtils';
 import { EMBLEM_IDS, PREMIUM_EMBLEM_IDS, EMBLEM_NAMES } from '../game/emblems';
 import { startCommissionCheckout } from './api';
 import { isAndroidApp } from '../platform/appShell';
-import { COMMISSION_LINES, COMMISSION_NAME, COMMISSION_PRICE, HOLDER_MARK, HOLDER_TITLE, logCommission } from './commission';
+import {
+  COMMISSION_LINES, COMMISSION_NAME, COMMISSION_PRICE, HOLDER_MARK, HOLDER_TITLE, logCommission,
+  COMMISSION_DISCORD, COMMISSION_NO_GAMEPLAY,
+} from './commission';
 import { FactionEmblem, FlagChip } from '../components/FactionEmblem';
 import { DEFAULT_TICK_INTERVAL_MS } from './LobbyCards';
 import { GameFeedSettings } from './GameFeedSettings';
@@ -1187,7 +1190,8 @@ function FactionFlagPicker({
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
           <CommissionFlagView />
           <span style={{ fontSize: 10, color: 'var(--mp-fg-dim, #8aa0b4)' }}>
-            🔒 The dimmed flags and {COMMISSION_LINES} more ship lines come with the {COMMISSION_NAME}. Cosmetic only.
+            🔒 The dimmed flags, {COMMISSION_LINES} more ship lines and {COMMISSION_DISCORD} come with
+            {' '}the {COMMISSION_NAME}. {COMMISSION_NO_GAMEPLAY}
           </span>
           {/* The app does not sell it; see ProfilePanel. */}
           {isAndroidApp() ? (

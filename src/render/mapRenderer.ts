@@ -16,7 +16,7 @@ import { flameCount } from '../game/worldMenu/combatDisplay';
 import type { SystemRegion } from './systemRegions';
 import { bodyPosition, localPositionAt, semiMajor, eccentricity, velocityVectorsAt, bodyIndexOf, bodyById, stationOrbitRadius } from '../physics/orbitalMechanics';
 import { isLightweight } from './lightweightMode';
-import { sampleTorchTrajectory, torchPositionFromSamples, trajectoryTangentAt, isShapedBurn, burnFractionAt, burnStopTick, pushShareAt } from '../physics/torchTransfer';
+import { sampleTorchTrajectory, torchPositionFromSamples, trajectoryTangentAt, isShapedBurn, burnFractionAt, burnStopTick, pushShareAt, buildOf } from '../physics/torchTransfer';
 import { rendezvousStateAt } from '../physics/rendezvous.js';
 import { STRAIGHT_LINE_TRAJECTORIES } from '../game/featureFlags';
 import { COLORS, withOpacity, lighten, darken } from './colors';
@@ -6619,13 +6619,19 @@ function drawTorchTransitShip(
   // round and firing its engine at where it is going; the hull used to
   // face its line of travel the whole way, so the plume trailed behind it
   // through the brake and nothing said "slowing down". It now swings
-  // round over the last moments of the boost (a short window, at most
-  // half a tick), the plume dying away mid-turn, and brakes nose-first
-  // away from the target with the engine blazing ahead of it.
+  // round over the last moments of the boost, the plume dying away
+  // mid-turn, and brakes nose-first away from the target with the engine
+  // blazing ahead of it.
+  //
+  // THE TURN IS QUICK: at most a fiftieth of a tick (about a minute at
+  // one-hour ticks). It was half a tick, which at one-hour ticks left a
+  // hull side-on to its own line for thirty real minutes: Lorne, with a
+  // dozen hulls inbound to Mars all near their flips, "why are these guys
+  // sideways?" (2026-10-06).
   let flipTurn = 0;
   if (shaped) {
     const span = currentTransfer.arriveTick - currentTransfer.startTick;
-    const w = Math.max(1e-6, Math.min(0.5, 0.03 * span));
+    const w = Math.max(1e-6, Math.min(0.02, 0.03 * span));
     const u = Math.max(0, Math.min(1, (ctx.t - (currentTransfer.flipTick - w)) / w));
     flipTurn = u * u * (3 - 2 * u);
   }
@@ -6703,7 +6709,7 @@ function drawTorchTransitShip(
   // push to 1.4x long, full bright at the top of the build; the hard brake
   // burns at 1.4x throughout. It dies away through the middle of the flip
   // turn. Everything else is 1 and 1, exactly as before.
-  const ramped = currentTransfer.accelRamp != null && currentTransfer.accelRamp > 0;
+  const ramped = buildOf(currentTransfer) != null;
   const share = shaped && ramped && !isBrake ? pushShareAt(currentTransfer, ctx.t) : 1;
   const turnFade = shaped ? Math.abs(Math.cos(Math.PI * flipTurn)) : 1;
   const plumeLen = !shaped ? 1 : (isBrake ? 1.4 : ramped ? 0.7 + 0.7 * share : 1) * turnFade;

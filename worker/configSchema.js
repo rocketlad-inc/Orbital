@@ -271,33 +271,33 @@ export const SCHEMA = [
     danger: true,
     help: 'The CROSSING rate at which a target becomes twice as hard to hit. Lower = transit is '
       + 'deadlier to cross in front of. Scaled with cruise speed (worker/burn.js): 45 for the old '
-      + 'flat even burn, 119 with the build-up and the 9x brake. Carried over from an earlier model that measured total relative '
+      + 'flat even burn, 81 with the exponential build-up and the 9x brake. Carried over from an earlier model that measured total relative '
       + 'speed, so it wants re-tuning against real telemetry before anyone trusts it.',
   },
   {
     id: 'transit_dv_bonus_max', group: 'combat', type: 'number',
     label: 'Closing-speed hit bonus (max, 0-1)', def: 0.10, min: 0, max: 0.5, step: 0.01,
     danger: true,
-    help: 'Flat bonus added to the hit chance at high RELATIVE speed, ramping in from 60 u/t to '
-      + '922 u/t (both scaled with ship speed, worker/burn.js). Exists because a fast pass is only inside weapon range for a few percent of a '
+    help: 'Flat bonus added to the hit chance at high RELATIVE speed, ramping in from 52 u/t to '
+      + '631 u/t (both scaled with ship speed, worker/burn.js). Exists because a fast pass is only inside weapon range for a few percent of a '
       + 'tick, so no aim-side knob could make one matter — even a certain hit caps at ~2 shots. '
       + 'A target closing straight at you is easy to aim at; this pays for the fact that it is '
       + 'not there long. Set 0 to disable. Cannot affect fights at a body (0 u/t) or the parting '
-      + 'shot (one tick of burn, ~32 u/t) — both sit below the ramp.',
+      + 'shot (one tick of burn, ~27 u/t) — both sit below the ramp.',
   },
   {
     id: 'transit_dv_bonus_start', group: 'combat', type: 'number',
     label: 'Closing-speed bonus starts at (units/tick)', def: DV_BONUS_START, min: 0, max: 10000, step: 10,
     danger: true,
     help: 'Relative speed at which the bonus begins. Keep above the one-tick departure burn '
-      + '(~32 u/t) or the parting shot stops matching its tuned number.',
+      + '(~27 u/t) or the parting shot stops matching its tuned number.',
   },
   {
     id: 'transit_dv_bonus_full', group: 'combat', type: 'number',
     label: 'Closing-speed bonus reaches max at (units/tick)', def: DV_BONUS_FULL, min: 10, max: 20000, step: 10,
     danger: true,
     help: 'Relative speed at which the bonus is fully applied. Interplanetary cruise passes run '
-      + 'about 700-1000 u/t in the inner system and up to ~4000 on long outer hauls (the push builds over a burn).',
+      + 'about 200-700 u/t in the inner system and up to ~3000 on long outer hauls (the push builds over a burn).',
   },
   {
     id: 'station_dmg_per_weapons_level', group: 'combat', type: 'number',

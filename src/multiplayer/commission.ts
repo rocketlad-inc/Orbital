@@ -35,11 +35,25 @@ export const COMMISSION_STRUCTURE_LOOKS = premiumStructureLookCount();
 export const COMMISSION_CITY_SKINS = CITY_SKINS.filter(s => !s.free).length;
 export const COMMISSION_STATION_SKINS = STATION_SKINS.filter(s => !s.free).length;
 
+/** THE DISCORD PERK (worker/gameFeed.js, YOUR OWN SERVER): a host's game
+ *  posts into their own Discord server. Said the same way on every surface
+ *  that sells the Commission (Lorne, 2026-10-06: "make sure Discord bot is
+ *  clearly outlined anywhere we are selling the commission"). */
+export const COMMISSION_DISCORD = 'your games in your own Discord server';
+export const COMMISSION_DISCORD_DETAIL =
+  'Host a game and its wars, battles, Senate votes and daily Herald post straight into a channel '
+  + 'on your own Discord server, with a link that lets your friends join.';
+/** What the Commission never sells. It replaced "Cosmetic only", which
+ *  stopped being the whole truth once the Discord perk joined; this is
+ *  the rule itself. */
+export const COMMISSION_NO_GAMEPLAY = 'Nothing that changes the game.';
+
 /** The whole offer in one calm sentence, for any surface. */
 export const COMMISSION_FACTS =
   `${COMMISSION_LINES} ship lines for every hull, ${COMMISSION_EMBLEMS} flag emblems, `
-  + `${COMMISSION_CITY_SKINS} colony and ${COMMISSION_STATION_SKINS} station styles and `
-  + `${COMMISSION_STRUCTURE_LOOKS} megastructure looks. Cosmetic only. ${COMMISSION_PRICE}, once.`;
+  + `${COMMISSION_CITY_SKINS} colony and ${COMMISSION_STATION_SKINS} station styles, `
+  + `${COMMISSION_STRUCTURE_LOOKS} megastructure looks, and ${COMMISSION_DISCORD}. `
+  + `${COMMISSION_NO_GAMEPLAY} ${COMMISSION_PRICE}, once.`;
 
 /** The holder mark on rosters and standings. Not ★, which already
  *  means "owned" on the map. */

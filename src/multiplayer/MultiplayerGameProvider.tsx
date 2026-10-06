@@ -30,7 +30,7 @@ import { traitMul as captainTraitMul } from '../game/captains';
 import { ingestChronicleFx } from '../render/pendingFx';
 import {
   planTorchTransfer, stepTorchShip, fromG,
-  baseEngineG, brakeAccelFor, mpRampFor, setMpBurnProfile,
+  baseEngineG, brakeAccelFor, mpRampFor, setMpBurnProfile, buildOf,
   TorchTransfer,
 } from '../physics/torchTransfer';
 import { orbitWorldPos, orbitWorldVelocity, bodyWorldVelocity, bodyPosition, parentMuForParking } from '../physics/orbitalMechanics';
@@ -85,6 +85,8 @@ interface ServerState {
     burn_engine_g?: number;
     burn_max_g?: number;
     burn_ramp_ticks?: number;
+    /** Exponential build: ticks for the push to grow by e (burn.js). */
+    burn_growth_tau?: number;
     burn_brake_mul?: number;
     system_scale?: number;
     /** The sun-gate omen tick (worker/sunGates.js); null until rolled. */
@@ -376,6 +378,8 @@ interface ServerState {
     completed_at_tick: number | null;
     /** A sun gate's share of the ordinary burn (0157); null = a warp gate. */
     transit_fraction?: number | null;
+    /** 1 = an outer-reach relic (0138), seizable like a built site. */
+    ancient?: number | null;
   }>;
   settlement_claims?: Array<{ body_id: string; owner_faction_id: string }>;
   /** Ruins (0142): dead settlements warships left standing. */
@@ -468,6 +472,8 @@ interface ServerState {
     brake_accel?: number | null;
     /** The build-up (migration 0158); null on a flat push. */
     accel_ramp?: number | null;
+    /** The exponential build (migration 0159); null on linear or flat. */
+    accel_tau?: number | null;
     accel_max?: number | null;
     /** Rendezvous arc (migration 0090) — burn/coast/burn to match a
      *  moving hull, then fly its plan. NULL on an ordinary transfer. */
@@ -490,6 +496,7 @@ interface ServerState {
     fl_flip_tick?: number | null;
     fl_brake_accel?: number | null;
     fl_accel_ramp?: number | null;
+    fl_accel_tau?: number | null;
     fl_accel_max?: number | null;
   }>;
   events?: Array<{
@@ -1311,6 +1318,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       brakeMul: Number(srv.game.burn_brake_mul),
       maxG: srv.game.burn_max_g != null ? Number(srv.game.burn_max_g) : undefined,
       rampTicks: srv.game.burn_ramp_ticks != null ? Number(srv.game.burn_ramp_ticks) : undefined,
+      growthTau: srv.game.burn_growth_tau != null ? Number(srv.game.burn_growth_tau) : undefined,
     }
     : null);
 
@@ -1570,10 +1578,14 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         // every leg committed before the hard brake, flown as planned.
         brakeAccel: n.brake_accel != null && n.brake_accel > 0
           ? Number(n.brake_accel) : Number(n.accel),
-        // The build-up (migration 0158). NULL = a flat push.
-        ramp: n.accel_ramp != null && n.accel_ramp > 0
-          && n.accel_max != null && n.accel_max > n.accel
-          ? { ramp: Number(n.accel_ramp), max: Number(n.accel_max) } : null,
+        // The build-up: exponential (accel_tau, migration 0159) or linear
+        // (accel_ramp, 0158). NULL = a flat push.
+        ramp: n.accel_max != null && n.accel_max > n.accel
+          && ((n.accel_tau != null && n.accel_tau > 0) || (n.accel_ramp != null && n.accel_ramp > 0))
+          ? (n.accel_tau != null && n.accel_tau > 0
+            ? { ramp: 0, max: Number(n.accel_max), tau: Number(n.accel_tau) }
+            : { ramp: Number(n.accel_ramp), max: Number(n.accel_max) })
+          : null,
       } : null;
 
       if (srvPlan) {
@@ -1603,7 +1615,8 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       );
       if (!plan) continue;
       if (srvPlan?.ramp) {
-        plan.accelRamp = srvPlan.ramp.ramp;
+        if (srvPlan.ramp.tau != null) plan.accelTau = srvPlan.ramp.tau;
+        else plan.accelRamp = srvPlan.ramp.ramp;
         plan.accelMax = srvPlan.ramp.max;
       }
 
@@ -1641,7 +1654,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         // ramped leg keeps the flip its own planner solved for.
         plan.flipTick = srvPlan
           ? srvPlan.flipTick
-          : plan.accelRamp != null
+          : buildOf(plan) != null
             ? plan.flipTick
             : plan.startTick + (plan.arriveTick - plan.startTick)
               * (plan.brakeAcceleration / (plan.acceleration + plan.brakeAcceleration));
@@ -1716,10 +1729,14 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
                 }
               }
               fl.flipTick = Number(n.fl_flip_tick);
-              if (n.fl_accel_ramp != null && n.fl_accel_ramp > 0
-                  && n.fl_accel_max != null && n.fl_accel_max > Number(n.fl_accel)) {
-                fl.accelRamp = Number(n.fl_accel_ramp);
-                fl.accelMax = Number(n.fl_accel_max);
+              if (n.fl_accel_max != null && n.fl_accel_max > Number(n.fl_accel)) {
+                if (n.fl_accel_tau != null && n.fl_accel_tau > 0) {
+                  fl.accelTau = Number(n.fl_accel_tau);
+                  fl.accelMax = Number(n.fl_accel_max);
+                } else if (n.fl_accel_ramp != null && n.fl_accel_ramp > 0) {
+                  fl.accelRamp = Number(n.fl_accel_ramp);
+                  fl.accelMax = Number(n.fl_accel_max);
+                }
               }
               ship.plannedRendezvous.followTransfer = fl;
             }
@@ -2875,6 +2892,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         partnerBodyId: m.partner_body_id ? (stripGameId(m.partner_body_id) ?? m.partner_body_id) : null,
         transitFraction: Number(m.transit_fraction) > 0 ? Number(m.transit_fraction) : null,
         foundedByFactionId: m.founded_by_faction_id ?? null,
+        ancient: Number(m.ancient) === 1,
         foundedAtTick: Number(m.founded_at_tick) || 0,
         completedAtTick: m.completed_at_tick ?? null,
         // Parsed defensively: a malformed blob degrades to "nobody

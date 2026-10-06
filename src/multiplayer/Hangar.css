@@ -42,6 +42,20 @@
   color: var(--mp-fg-dim);
 }
 .hg-card .pp-btn { align-self: flex-start; }
+/* The Discord perk: the one good that is not a look, so it is named on
+   its own line rather than left inside the facts sentence. */
+.hg-perk {
+  margin: 0;
+  max-width: 62ch;
+  padding: 6px 9px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--mp-fg-dim);
+  border-left: 2px solid #c4a2ff;
+  background: rgba(196, 162, 255, 0.07);
+  border-radius: 0 5px 5px 0;
+}
+.hg-perk b { color: #d9c8ff; font-weight: 600; }
 .hg-offsite { margin: 0; font-size: 12px; color: var(--mp-fg-dim); }
 .hg-where { font-family: var(--mp-mono); color: #ffb84d; letter-spacing: 0.04em; }
 .hg-err { margin: 0; }
