@@ -31,7 +31,7 @@ function redirectUri(env, url) {
   return `${origin.replace(/\/+$/, '')}/api/discord/oauth/callback`;
 }
 
-function page(title, body, ok = true) {
+export function page(title, body, ok = true) {
   // Deliberately a full page, not JSON: this is the end of a browser
   // redirect chain, so a human is looking at it.
   return new Response(
@@ -140,9 +140,13 @@ export async function handleOauthStart(req, env, { session, url }) {
   const now = Date.now();
   try {
     await env.DB.prepare('DELETE FROM discord_link_codes WHERE expires_at < ?').bind(now).run();
+    // created_at is NOT NULL (0035). This insert left it out, so it threw
+    // on every click and the one-click link has never once worked on prod:
+    // "Could not start sign-in" for everyone (found 2026-10-06; prod held
+    // only typed /link codes and 4 linked players).
     await env.DB
-      .prepare('INSERT INTO discord_link_codes (code, user_id, expires_at) VALUES (?, ?, ?)')
-      .bind(`oauth:${state}`, session.user_id, now + STATE_TTL_MS)
+      .prepare('INSERT INTO discord_link_codes (code, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)')
+      .bind(`oauth:${state}`, session.user_id, now, now + STATE_TTL_MS)
       .run();
   } catch (e) {
     console.error('oauth state store failed', e);
