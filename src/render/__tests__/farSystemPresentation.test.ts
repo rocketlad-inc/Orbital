@@ -69,3 +69,77 @@ describe('far-system barycenters', () => {
     expect(p.radius.get(verdant.id)).toBeGreaterThanOrEqual(DISPLAY_FLOOR_PX.planet);
   });
 });
+
+// ============================================================
+// THE HOMES SHOW WITH THE WHOLE SYSTEM (Lorne, 2026-10-06: "I can see
+// the worlds around the stars at the same time as the rest of the
+// system"). Zoomed out to Centauri the floors run at their 3x growth
+// (Sol's Neptune sets it), so a sun is a 48px disc and a planet 27: a
+// home world closer than ~103px to its sun folds into it. Laid out as
+// Lorne frames it (browser zoom 0.5, so a 2880x1920 CSS viewport, with
+// Farspire's orbit reaching 0.55 of the short side), from the lobby
+// mirror's geometry at live size (x2 orbits and bodies).
+// ============================================================
+import { SHARED_BODIES } from '../../state/mockGameState';
+
+describe("Centauri's two homes at whole-system zoom", () => {
+  const cat = (id: string) => SHARED_BODIES.find(b => b.id === id)!;
+  const VIEW = { w: 2880, h: 1920 };
+  const cx = VIEW.w / 2, cy = VIEW.h / 2;
+  const scale = (0.55 * VIEW.h) / (2 * cat('farspire').orbitRadius);
+
+  // Suns at periastron, the closest the dance brings them; each home
+  // straight out from its own sun at `homeR` (live units).
+  function present(homeR: number) {
+    const live = (id: string, parent: string | null, type: Body['type']) =>
+      B({ id: `g1:${id}`, type, parent: parent ? `g1:${parent}` : undefined,
+        radius: cat(id).radius * 2, orbitRadius: cat(id).orbitRadius * 2 });
+    const solB = B({ id: 'sol', type: 'star', radius: 50 });
+    // Sol's outermost giant sets the floor growth; out at Centauri it is
+    // far off screen, so the growth sits at its 3x cap. That is what
+    // Lorne's screenshot shows (16px sun to a ~30px fold, image at 1/3
+    // CSS px): a 48px sun.
+    const neptune = B({ id: 'neptune', type: 'gas_giant', parent: 'sol', radius: 12, orbitRadius: 1e6 });
+    const baryB = B({ id: 'g1:binary_barycenter', type: 'lagrange', parent: 'sol', radius: 0.5, orbitRadius: 265200 });
+    const a = live('centauri_a', 'binary_barycenter', 'star');
+    const b = live('centauri_b', 'binary_barycenter', 'star');
+    const v = live('verdant', 'centauri_a', 'terrestrial');
+    const c = live('cinder', 'centauri_b', 'terrestrial');
+    const cr = live('crimson', 'binary_barycenter', 'gas_giant');
+    const fs = live('farspire', 'binary_barycenter', 'dwarf');
+    const rpA = 2 * cat('centauri_a').orbit_rp!, rpB = 2 * cat('centauri_b').orbit_rp!;
+    const pos: Record<string, { x: number; y: number }> = {
+      sol: { x: -1e6, y: 0 }, neptune: { x: -1e6, y: 9000 },
+      'g1:binary_barycenter': { x: cx, y: cy },
+      'g1:centauri_a': { x: cx - rpA * scale, y: cy },
+      'g1:centauri_b': { x: cx + rpB * scale, y: cy },
+      'g1:verdant': { x: cx - rpA * scale, y: cy - homeR * scale },
+      'g1:cinder': { x: cx + rpB * scale, y: cy + homeR * scale },
+      'g1:crimson': { x: cx, y: cy - cr.orbitRadius * scale },
+      'g1:farspire': { x: cx, y: cy + fs.orbitRadius * scale },
+    };
+    const bodies = [solB, neptune, baryB, a, b, v, c, cr, fs];
+    return computePresentation(bodies, scale, id => pos[id] ?? null, null, VIEW);
+  }
+
+  it('shows Verdant and Cinder beside their suns, not folded in', () => {
+    const p = present(2 * cat('verdant').orbitRadius);
+    expect(p.shown.get('g1:verdant')).toBe(1);
+    expect(p.shown.get('g1:cinder')).toBe(1);
+    expect(p.shown.get('g1:centauri_a')).toBe(1);
+    expect(p.shown.get('g1:centauri_b')).toBe(1);
+  });
+
+  it('...with room to spare: they would still show zoomed out by half again', () => {
+    // At 2/3 of the framing's scale the same layout must still unfold.
+    const p = present(2 * cat('verdant').orbitRadius * (2 / 3));
+    expect(p.shown.get('g1:verdant')).toBe(1);
+    expect(p.shown.get('g1:cinder')).toBe(1);
+  });
+
+  it('models the limit: the first wide cut (500 live) folded at this zoom', () => {
+    const p = present(500);
+    expect(p.shown.get('g1:verdant')).toBeLessThan(1);
+    expect(p.shown.get('g1:cinder')).toBeLessThan(1);
+  });
+});

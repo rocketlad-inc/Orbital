@@ -500,30 +500,35 @@ export const BODY_CATALOG = [
     orbit_radius: 33150, orbit_period: 1e12, angle0: 0,
     color: '#3a3a44', far_system: true,
     yield: { metal: 0, fuel: 0, gold: 0, science: 0 } },
-  // THE DANCE: A and B ride matching e = 0.4 ellipses (0.46 : 0.54 of a
-  // 1200 spacing, periapses opposite), swinging 720 <-> 1680 apart, 1440
-  // <-> 3360 live, every 240 ticks. WIDE ON PURPOSE (Lorne, 2026-10-06,
-  // "I dont care if that fudges the physics"): real stability limits
-  // would crowd Verdant and Cinder inside their suns' glare, so each
-  // home orbits 250 out (500 live) and each sun's SOI is 160 (640 live:
-  // SOIs take body_scale too). At periastron the two SOIs still clear
-  // each other (1280 < 1440 live), and B at apastron plus its SOI (2454
-  // live) stays well inside Crimson's (3360).
+  // THE DANCE: A and B ride matching e = 0.2 ellipses (0.46 : 0.54 of a
+  // 1575 spacing, periapses opposite), swinging 1260 <-> 1890 apart, 2520
+  // <-> 3780 live, every 240 ticks. WIDE ON PURPOSE (Lorne, 2026-10-06:
+  // "I want to see the worlds around the stars at the same time as the
+  // rest of the system", and "I dont care if that fudges the physics").
+  // Zoomed out to the whole system the map draws a sun at a 48px floor
+  // and a planet at 27, so a home world needs ~103px from its sun before
+  // it unfolds (bodyPresentation.ts): each home orbits 560 out (1120
+  // live), twice that at Lorne's framing. The ellipse is flatter than the
+  // first cut's 0.4 to make that fit: each sun's SOI is 310 (1240 live,
+  // SOIs take body_scale too), the two still clear each other at
+  // periastron (2480 < 2520 live), and B at apastron plus its SOI (3281
+  // live) stays inside Crimson's (3360). farSystemPresentation.test holds
+  // the fold; sim:far holds the rest.
   { id: 'centauri_a', name: 'Centauri A', type: 'star', parent: 'binary_barycenter',
-    radius: 8, soi: 160, mu: 200,
-    orbit_radius: 552, orbit_period: 168 / Math.pow(2, 1.5), angle0: 0,
+    radius: 8, soi: 310, mu: 200,
+    orbit_radius: 724.5, orbit_period: 168 / Math.pow(2, 1.5), angle0: 0,
     color: '#ffe082', far_system: true,
-    orbit_rp: 331.2, orbit_ra: 772.8, orbit_omega: 0, orbit_m0: 0,
+    orbit_rp: 579.6, orbit_ra: 869.4, orbit_omega: 0, orbit_m0: 0,
     yield: { metal: 0, fuel: 0, gold: 0, science: 0 } },
   { id: 'centauri_b', name: 'Centauri B', type: 'star', parent: 'binary_barycenter',
-    radius: 6, soi: 160, mu: 150,
-    orbit_radius: 648, orbit_period: 168 / Math.pow(2, 1.5), angle0: Math.PI,
+    radius: 6, soi: 310, mu: 150,
+    orbit_radius: 850.5, orbit_period: 168 / Math.pow(2, 1.5), angle0: Math.PI,
     color: '#ff8a5e', far_system: true,
-    orbit_rp: 388.8, orbit_ra: 907.2, orbit_omega: Math.PI, orbit_m0: 0,
+    orbit_rp: 680.4, orbit_ra: 1020.6, orbit_omega: Math.PI, orbit_m0: 0,
     yield: { metal: 0, fuel: 0, gold: 0, science: 0 } },
   { id: 'verdant', name: 'Verdant', type: 'terrestrial', parent: 'centauri_a',
     radius: 4, soi: 25, mu: 150,
-    orbit_radius: 250, orbit_period: 90, angle0: 0.3,
+    orbit_radius: 560, orbit_period: 180, angle0: 0.3,
     color: '#3aaf6e', far_system: true,
     yield: { metal: 8, fuel: 0, gold: 8, science: 12 } },
   // Every far terrestrial world holds one or two moons (Lorne,
@@ -569,7 +574,7 @@ export const BODY_CATALOG = [
     yield: { metal: 8, fuel: 0, gold: 3, science: 4 } },
   { id: 'cinder', name: 'Cinder', type: 'terrestrial', parent: 'centauri_b',
     radius: 3, soi: 15, mu: 90,
-    orbit_radius: 250, orbit_period: 90, angle0: 4.7,
+    orbit_radius: 560, orbit_period: 180, angle0: 4.7,
     color: '#a8553a', far_system: true,
     yield: { metal: 11, fuel: 0, gold: 9, science: 7 } },
   { id: 'clinker', name: 'Clinker', type: 'moon', parent: 'cinder',

@@ -3,7 +3,7 @@
 //
 // A and B ride matching ellipses about the barycenter (factions.js), so
 // how close they are is one number from A's own orbit: 1 at periastron
-// (1440 apart, live), 0 at apastron (3360). It drives the station bonus for the
+// (2520 apart, live), 0 at apastron (3780). It drives the station bonus for the
 // worlds that orbit one sun (systems.js stationTypeMul): x1.5 when the
 // suns are furthest apart, rising to x3 as they swing in.
 //
