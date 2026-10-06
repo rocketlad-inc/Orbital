@@ -227,6 +227,31 @@ check('the whole event: one omen, two departures, two openings',
 check('...and never a third gate', (await DB.prepare(
   `SELECT COUNT(*) n FROM game_bodies WHERE game_id = ? AND template_id LIKE 'sun_gate%'`).bind(G).first()).n === 4);
 
+// ---- 2b. The paper ------------------------------------------------------
+{
+  // The first hull through, as handleGateTransit writes it.
+  await DB.prepare(
+    `INSERT INTO chronicle_entries
+       (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
+     VALUES ('gtx_sim', ?, 40, 'gate_transit', ?, ?, ?, 'public', 0)`,
+  ).bind(G, facs[0].id, g0.id, JSON.stringify({
+    from: g0.name, to: 'Sol Gate', ship: 'Pathfinder', sun_gate: true, first: true,
+    to_system: order[0].label,
+  })).run();
+  const { composeHeraldForTickRange } = await import('../worker/digest.js');
+  const paper = await composeHeraldForTickRange(env, { id: G, name: 'Gates' }, 0, 60);
+  const text = JSON.stringify(paper);
+  check('the Herald prints the omen, the departures and the openings',
+    /out of the Sun|the Sun/i.test(text) && text.includes(order[0].label) && text.includes(order[1].label),
+    text.slice(0, 400));
+  // A section carries four stories, and six gate moments in one window
+  // is more than any real edition sees: the first crossing lands in a
+  // later one, after both gates are open.
+  const later = JSON.stringify(await composeHeraldForTickRange(env, { id: G, name: 'Gates' }, 35, 60));
+  check('...and the edition the first crossing lands in names the hull', later.includes('Pathfinder'),
+    later.slice(0, 400));
+}
+
 // ---- 3. Only the main system counts ------------------------------------
 {
   const all = (await DB.prepare(`SELECT * FROM game_bodies WHERE game_id = ?`).bind(G).all()).results;
