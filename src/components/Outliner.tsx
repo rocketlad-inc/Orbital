@@ -807,7 +807,10 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
                     style={{ color: owner?.color ?? '#6d8296' }}
                   >
                     {owner?.name
-                      ?? (site && site.foundedByFactionId ? 'owner unknown' : 'unclaimed')}
+                      ?? (site && site.foundedByFactionId ? 'owner unknown'
+                        // A sun gate can never be claimed: "unclaimed"
+                        // would invite a try (worker/sunGates.js).
+                        : site?.transitFraction != null ? 'neutral' : 'unclaimed')}
                   </span>
                 </div>
               );
