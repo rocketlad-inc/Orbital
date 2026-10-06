@@ -9,11 +9,14 @@
 //            hulls from the structure sheet, fleet markers (flagship full
 //            size, every other hull a small glyph in the escort block
 //            behind it), drawShip's engine glow, the real globe textures.
-//   ZOOM     bodyPresentation: the world's disc keeps a display floor, the
-//            hulls size and fade on the world's TRUE size (full until it
-//            is 34px in radius, half at 10px, folded into a count badge
-//            below that). The layout re-solves per wheel notch and hulls
-//            glide to their new places.
+//   ZOOM     a CAMERA on the battle (Lorne: "shrink and grow as you zoom,
+//            keeping their formation relative to the planet"). The layout
+//            is solved once, at full hull size around the world at its
+//            normal size, and zoom scales the whole scene together: world,
+//            places, hulls, escorts and fire. Nothing re-spreads, so a
+//            formation that does not overlap never overlaps. Far out the
+//            hulls fold into a count per side (bodyPresentation's reveal,
+//            on the world's true size, as the map's badge).
 //   FIRE     combatFx.drawEngagementFire: every engaged hull fires on its
 //            own 3.15s cycle (bolt + reload), stretched once a world holds
 //            more than six shooters; targets as the server stamps them
@@ -35,9 +38,7 @@ import {
 import {
   buildScenario, hullCount, FACTIONS, SCENARIOS, type ScenarioId, type SandboxShip, type ShipClass,
 } from './scenarios';
-import {
-  hullSize, hullReveal, blendRadius, DISPLAY_FLOOR_PX,
-} from '../render/bodyPresentation';
+import { hullReveal, blendRadius, DISPLAY_FLOOR_PX } from '../render/bodyPresentation';
 import { getShipIconImage } from '../render/shipIconCache';
 import { getStructureIconImage } from '../render/structureIconCache';
 import { drawTexturedDisk, drawSphereLighting } from '../render/fxPrimitives';
@@ -68,7 +69,7 @@ const MIN_TRUE_PX = 6;
 const MAX_TRUE_PX = 640;
 /** One wheel notch, as on the map. */
 const WHEEL_STEP = 1.15;
-/** How fast a hull glides to a re-solved place, ms (time constant). */
+/** How fast a hull glides to a new place (a reroll, a new world), ms. */
 const GLIDE_MS = 260;
 
 // combatFx's fire constants, from the same tuning table.
@@ -153,26 +154,24 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
   const drag = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
   const tex = useImage(PLANETS[planet].tex);
 
+  // THE REFERENCE: the world at its normal size, hulls at full size. The
+  // layout is solved here once; zoom is a camera scale over it.
   const baseR = PLANETS[planet].r;
-  // The world's TRUE radius on screen, and the disc the map DRAWS for it
-  // (a smooth max with the display floor, so a far world never vanishes).
+  // The world's TRUE radius on screen at this zoom, and the disc drawn for
+  // it (a smooth max with the display floor, so a far world never vanishes).
   const trueR = baseR * zoom;
   const planetR = blendRadius(trueR, DISPLAY_FLOOR_PX[PLANETS[planet].floor]);
-  // Parked hulls size and appear on the TRUE radius (bodyPresentation).
-  const hullScale = Math.round(hullSize({ type: 'terrestrial', radius: trueR }, 1) * 100) / 100;
+  // Far out, hulls fold into the count badge on the world's true size.
   const reveal = hullReveal({ type: 'terrestrial', radius: trueR }, 1);
-  const ships: SandboxShip[] = useMemo(
-    () => buildScenario(scenario, seed, hullScale),
-    [scenario, seed, hullScale],
-  );
+  const ships: SandboxShip[] = useMemo(() => buildScenario(scenario, seed, 1), [scenario, seed]);
   const { layout, solveMs } = useMemo(() => {
     const order = FACTIONS.map(f => f.id).filter(id => ships.some(s => s.faction === id));
     const t0 = performance.now();
     const L: OBLayout = mode === 'new'
-      ? layoutOrbitBattle(ships, planetR, { seed, factionOrder: order })
-      : layoutTodayLines(ships, planetR, { seed, factionOrder: order });
+      ? layoutOrbitBattle(ships, baseR, { seed, factionOrder: order })
+      : layoutTodayLines(ships, baseR, { seed, factionOrder: order });
     return { layout: L, solveMs: performance.now() - t0 };
-  }, [ships, planetR, mode, seed]);
+  }, [ships, baseR, mode, seed]);
   // Every hull drawn, escorts included, with its place in its unit.
   const hulls: Hull[] = useMemo(() => {
     const out: Hull[] = [];
@@ -212,14 +211,31 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
     return out;
   }, [hulls, ships, seed]);
 
-  const zoomBy = (f: number) => setZoom(z =>
-    Math.max(MIN_TRUE_PX / baseR, Math.min(MAX_TRUE_PX / baseR, z * f)));
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  // Zoom about a screen point (the cursor), so you zoom INTO the part of
+  // the battle you are looking at: the point under it stays put.
+  const zoomBy = (f: number, at?: { x: number; y: number }) => {
+    const z0 = zoomRef.current;
+    const z1 = Math.max(MIN_TRUE_PX / baseR, Math.min(MAX_TRUE_PX / baseR, z0 * f));
+    const cv = canvasRef.current;
+    if (at && cv) {
+      const W = cv.clientWidth, H = cv.clientHeight;
+      const panel = W > 980 ? 330 : 0;
+      const ox = panel + (W - panel) / 2, oy = H / 2;
+      const k = z1 / z0;
+      const cx = ox + pan.current.x, cy = oy + pan.current.y;
+      pan.current = { x: at.x - (at.x - cx) * k - ox, y: at.y - (at.y - cy) * k - oy };
+    }
+    zoomRef.current = z1;
+    setZoom(z1);
+  };
   // Switching worlds keeps the zoom inside that world's range.
   useEffect(() => { zoomBy(1); }, [baseR]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Everything the animation loop reads, without re-subscribing it.
-  const live = useRef({ ships, hulls, stamps, layout, planetR, trueR, reveal, tex, showShares, planet });
-  live.current = { ships, hulls, stamps, layout, planetR, trueR, reveal, tex, showShares, planet };
+  const live = useRef({ ships, hulls, stamps, layout, planetR, trueR, reveal, zoom, tex, showShares, planet });
+  live.current = { ships, hulls, stamps, layout, planetR, trueR, reveal, zoom, tex, showShares, planet };
 
   useEffect(() => {
     const cv = canvasRef.current;
@@ -249,7 +265,7 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
     const frame = (now: number) => {
       const {
         ships: S, hulls: HL, stamps: ST, layout: L, planetR: R, trueR: TR, reveal: RV,
-        tex: T, showShares: SH, planet: P,
+        zoom: Z, tex: T, showShares: SH, planet: P,
       } = live.current;
       const dt = Math.min(100, now - last);
       last = now;
@@ -278,7 +294,7 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
         d.r += (p.r - d.r) * k;
         // A small bob of its own so the cluster breathes.
         const ph = (s.id.length * 13 + s.id.charCodeAt(s.id.length - 1) * 7) % 100;
-        const r = d.r + Math.sin(now / 1700 + ph) * 1.6;
+        const r = (d.r + Math.sin(now / 1700 + ph) * 1.6) * Z;
         const t = d.t + rot + Math.sin(now / 2300 + ph * 1.3) * 0.004;
         // Nose: forward along the orbit, keeping the solved jitter.
         const jitter = p.heading - (Math.atan2(p.y, p.x) + Math.PI / 2);
@@ -294,7 +310,8 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
         const u = unitPos.get(h.unit);
         if (!u) continue;
         const c = Math.cos(u.h), sn = Math.sin(u.h);
-        pos.set(h.id, { x: u.x + h.lx * c - h.ly * sn, y: u.y + h.lx * sn + h.ly * c, h: u.h });
+        const lx = h.lx * Z, ly = h.ly * Z;
+        pos.set(h.id, { x: u.x + lx * c - ly * sn, y: u.y + lx * sn + ly * c, h: u.h });
       }
 
       // Background.
@@ -327,9 +344,9 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
           const f = factionById.get(sec.faction);
           g.strokeStyle = f?.color ?? '#fff';
           g.globalAlpha = 0.3 * RV;
-          g.lineWidth = L.band.rOut - L.band.rIn;
+          g.lineWidth = (L.band.rOut - L.band.rIn) * Z;
           g.beginPath();
-          g.arc(cx, cy, (L.band.rIn + L.band.rOut) / 2, sec.start + rot, sec.end + rot);
+          g.arc(cx, cy, ((L.band.rIn + L.band.rOut) / 2) * Z, sec.start + rot, sec.end + rot);
           g.stroke();
           g.globalAlpha = 1;
         }
@@ -374,20 +391,21 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
           const img = s.cls === 'mega_destroyer'
             ? getStructureIconImage('mega_destroyer', f.color, null, f.color2)
             : getShipIconImage(s.cls, f.color, s.variant, f.color2);
+          const size = s.size * Z;
           if (!s.escort && s.cls !== 'mega_destroyer') {
             const ph = (((s.id.charCodeAt(s.id.length - 1) * 37) % 1000) / 1000) * Math.PI * 2;
             const pulse = 0.6 + 0.4 * Math.sin(now / 420 + ph);
             g.save();
             g.globalCompositeOperation = 'lighter';
-            glowAt(g, p.x - Math.cos(p.h) * s.size * 0.46, p.y - Math.sin(p.h) * s.size * 0.46,
-              Math.max(2.5, s.size * 0.2) * 1.15, '#fff3dc', '#ff9a4a', 0.6 * pulse);
+            glowAt(g, p.x - Math.cos(p.h) * size * 0.46, p.y - Math.sin(p.h) * size * 0.46,
+              Math.max(1, size * 0.2) * 1.15, '#fff3dc', '#ff9a4a', 0.6 * pulse);
             g.restore();
           }
           g.save();
           g.translate(p.x, p.y);
           g.rotate(p.h);
-          if (img) g.drawImage(img, -s.size / 2, -s.size / 2, s.size, s.size);
-          else { g.fillStyle = f.color; g.beginPath(); g.arc(0, 0, s.size * 0.2, 0, Math.PI * 2); g.fill(); }
+          if (img) g.drawImage(img, -size / 2, -size / 2, size, size);
+          else { g.fillStyle = f.color; g.beginPath(); g.arc(0, 0, size * 0.2, 0, Math.PI * 2); g.fill(); }
           g.restore();
         }
         g.restore();
@@ -424,7 +442,8 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
       const engaged = RV > 0.01 ? HL.filter(h => h.armed) : [];
       const slotMs = SLOT_MS * Math.max(1, engaged.length / FIRE_REFERENCE);
       const hullById = new Map(HL.map(h => [h.id, h]));
-      const hitR = (h: Hull) => (h.escort ? ESCORT_HIT_R : Math.max(h.size / 2 + 3, MIN_HIT_R));
+      // Hit radii as the map computes them at full size, then the camera.
+      const hitR = (h: Hull) => (h.escort ? ESCORT_HIT_R : Math.max(h.size / 2 + 3, MIN_HIT_R)) * Z;
       const coreR = Math.max(3, TR) * OCCLUSION_CORE;
       const occluded = (a: { x: number; y: number }, b: { x: number; y: number }) => {
         const dx = b.x - a.x, dy = b.y - a.y;
@@ -549,7 +568,7 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
   return (
     <div
       style={{ position: 'fixed', inset: 0, background: '#060a11', touchAction: 'none' }}
-      onWheel={e => zoomBy(e.deltaY > 0 ? 1 / WHEEL_STEP : WHEEL_STEP)}
+      onWheel={e => zoomBy(e.deltaY > 0 ? 1 / WHEEL_STEP : WHEEL_STEP, { x: e.clientX, y: e.clientY })}
     >
       <canvas
         ref={canvasRef}
@@ -570,8 +589,8 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
       <div style={ui.panel}>
         <div style={ui.h}>Orbital battle layout</div>
         <div style={ui.dim}>
-          A prototype of a new battle layout. Sizes, zoom and fire follow the live map&apos;s rules.
-          Scroll to zoom, drag to pan.
+          A prototype of a new battle layout. Scroll to zoom into the fight (the formation holds and the
+          ships grow and shrink with the world), drag to pan.
         </div>
 
         <div style={ui.label}>Battle</div>
@@ -624,7 +643,7 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
           </span>
           <span style={{ color: '#7f93a8' }}>World on screen</span>
           <span data-testid="battle-zoom">
-            {Math.round(trueR)}px true, {Math.round(planetR)}px drawn · hulls {reveal <= 0 ? 'folded into the count' : `at ${Math.round(hullScale * 100)}%`}
+            {Math.round(trueR)}px radius · zoom {zoom.toFixed(2)}×{reveal <= 0 ? ' · hulls folded into the count' : ''}
           </span>
           <span style={{ color: '#7f93a8' }}>Re-solve</span>
           <span data-testid="battle-solve">{solveMs.toFixed(1)} ms</span>
