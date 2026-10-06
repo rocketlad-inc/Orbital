@@ -1,0 +1,244 @@
+// ============================================================
+// battleLayoutLive — the whole-orbit battle layout on the LIVE map.
+//
+// The prototype (orbitBattleLayout, /?battle) is the placement; this is
+// how the map uses it, under the rule Lorne approved on the test page
+// (2026-10-06): "fixing the scale of the ships to the planet, and
+// shrinking them in position as you zoom out and replace with the icon".
+//
+// SOLVE ONCE, SCALE EVERYTHING. A battle is laid out once, in REFERENCE
+// pixels: the world drawn at battleReferenceRadius(its true radius), every
+// hull at its full map size (shipIconSize). At draw time the whole fight
+// is multiplied by k = (the world's drawn radius now) / (reference): the
+// places, the sprites, the escort blocks, the station. Zooming is then a
+// camera on the battle: nothing re-spreads, so a layout with no overlaps
+// has none at any zoom, and far out the hulls fold into the world's count
+// badge on the usual hull-reveal rule. (The first no-overlap attempt,
+// orbital lanes 2026-10-02, re-solved from zoom-dependent pixel sizes
+// every frame and ships jumped while zooming. This never does.)
+//
+// STICKY. A layout is cached per world on a roster signature, so it is
+// re-solved only when hulls arrive, leave or change fleets; and each
+// unit GLIDES to a new place rather than jumping when that happens.
+//
+// Pure and free of the renderer (sizes come in from the caller), so the
+// map, the tests and the test page share it without an import cycle.
+// ============================================================
+
+import { layoutOrbitBattle, CLEAR_FRAC, type OBLayout, type OBShip } from './orbitBattleLayout';
+import {
+  escortSpacingFor, escortStandoffFor, escortOffsets, escortGlyphFor,
+} from './fleetGrouping';
+
+/** One full turn of the whole battle around its world, ms. */
+export const BATTLE_TURN_MS = 240000;
+/** A station's drawn width at full size (88-unit art x STATION_STRUCTURE_SCALE). */
+export const BATTLE_STATION_PX = 200;
+/** How fast a unit glides to a new place, ms (time constant). */
+const GLIDE_MS = 260;
+/** SHIP_MIN_HIT_RADIUS in mapRenderer: the floor under a hull's hit radius. */
+const MIN_HIT_R = 12;
+
+/**
+ * The world's drawn radius, px, at which its battle is laid out with every
+ * hull at full size. Grows with the square root of the world's TRUE radius
+ * (world units), so a giant gives a fight more room than a moon without a
+ * moon's battle becoming a speck: Mars (2.5) 150px, Jupiter (8) about 270,
+ * a small moon about 65. The test page's worlds sit on the same curve.
+ */
+export function battleReferenceRadius(bodyRadius: number): number {
+  return Math.max(60, Math.min(320, 95 * Math.sqrt(Math.max(0.05, bodyRadius || 0))));
+}
+
+/**
+ * A fleet marker's block at full size, measured with the SAME calls and
+ * constants MapCanvas's marker pass uses (spacing from the flagship's hit
+ * radius, escorts astern, each escort its class's size relative to a
+ * destroyer slot). `escortRel` is each escort's size as a fraction of the
+ * slot (capped at 1, as drawEscortHull does).
+ *
+ * The layout places the block's CENTRE; the flagship sits `flagX, flagY`
+ * from it in the fleet's frame (forward +x), and `clearR` covers it all.
+ */
+export interface BlockGeometry {
+  hr: number;
+  spacing: number;
+  standoff: number;
+  glyph: number;
+  flagX: number;
+  flagY: number;
+  clearR: number;
+}
+export function fleetBlockGeometry(flagPx: number, escortRel: readonly number[]): BlockGeometry {
+  const hr = Math.max(flagPx / 2 + 3, MIN_HIT_R);
+  const base = Math.max(9, Math.min(24, hr * 0.9));
+  const n = escortRel.length;
+  const spacing = escortSpacingFor(n, base, hr);
+  const standoff = escortStandoffFor(hr, spacing);
+  const offs = escortOffsets(n, spacing, 0, standoff);
+  const glyph = escortGlyphFor(spacing);
+  const pts = [{ x: 0, y: 0, r: (flagPx / 2) * (CLEAR_FRAC * 2) }];
+  offs.forEach((o, i) => {
+    const size = Math.max(3, glyph * Math.min(1, escortRel[i] ?? 1));
+    pts.push({ x: o.dx, y: o.dy, r: (size / 2) * (CLEAR_FRAC * 2) });
+  });
+  const minX = Math.min(...pts.map(p => p.x - p.r)), maxX = Math.max(...pts.map(p => p.x + p.r));
+  const minY = Math.min(...pts.map(p => p.y - p.r)), maxY = Math.max(...pts.map(p => p.y + p.r));
+  const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+  const clearR = Math.max(...pts.map(p => Math.hypot(p.x - cx, p.y - cy) + p.r));
+  return { hr, spacing, standoff, glyph, flagX: -cx, flagY: -cy, clearR };
+}
+
+/** One thing the layout places: a lone hull, or a fleet marker's lead. */
+export interface BattleUnit {
+  /** The ship drawn for this unit (a fleet's lead). */
+  id: string;
+  owner: string;
+  /** Hulls that clump together (same fleet); null = on its own. */
+  group: string | null;
+  /** Full-size sprite px (shipIconSize, unselected). */
+  sizePx: number;
+  armed: boolean;
+  /** A fleet marker: each escort's size as a fraction of its slot. */
+  escortRel?: number[];
+}
+
+export interface LiveBattle {
+  bodyId: string;
+  /** Roster signature the layout was solved for. */
+  key: string;
+  refR: number;
+  /** Which way the battle wheels (+1 toward +theta). */
+  dir: number;
+  layout: OBLayout;
+  /** Fleet leads: the block geometry, at full size. */
+  blocks: Map<string, BlockGeometry>;
+  /** The world's station settlement id, when it has one in the layout. */
+  stationId?: string;
+}
+
+const cache = new Map<string, LiveBattle>();
+
+/** The signature a battle is re-solved on: who is here, in what fleets. */
+export function battleKey(
+  refR: number, dir: number, units: readonly BattleUnit[], order: readonly string[], stationId?: string,
+): string {
+  const u = [...units].sort((a, b) => (a.id < b.id ? -1 : 1))
+    .map(x => `${x.id}:${x.owner}:${x.group ?? ''}:${Math.round(x.sizePx)}:${x.escortRel?.length ?? 0}`);
+  return `${Math.round(refR)}|${dir}|${order.join(',')}|${stationId ?? ''}|${u.join(';')}`;
+}
+
+function seedOf(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return (h >>> 0) % 100000;
+}
+
+/**
+ * The battle at a world, solved once per roster (cached on its key).
+ * `order` is the factions in share order; `stationId` asks for the
+ * world's station to be placed opposite the fight.
+ */
+export function liveBattleFor(
+  bodyId: string,
+  bodyRadius: number,
+  dir: number,
+  units: readonly BattleUnit[],
+  order: readonly string[],
+  stationId?: string,
+): LiveBattle {
+  const refR = battleReferenceRadius(bodyRadius);
+  const key = battleKey(refR, dir, units, order, stationId);
+  const hit = cache.get(bodyId);
+  if (hit && hit.key === key) return hit;
+  const blocks = new Map<string, BlockGeometry>();
+  const ships: OBShip[] = units.map(u => {
+    let clearR: number | undefined;
+    if (u.escortRel && u.escortRel.length > 0) {
+      const b = fleetBlockGeometry(u.sizePx, u.escortRel);
+      blocks.set(u.id, b);
+      clearR = b.clearR;
+    }
+    return { id: u.id, faction: u.owner, fleet: u.group, size: u.sizePx, armed: u.armed, clearR };
+  });
+  const layout = layoutOrbitBattle(ships, refR, {
+    seed: seedOf(bodyId) + 1,
+    factionOrder: [...order],
+    station: stationId ? { id: stationId, clearR: BATTLE_STATION_PX * CLEAR_FRAC } : undefined,
+  });
+  const lb: LiveBattle = { bodyId, key, refR, dir, layout, blocks, stationId };
+  cache.set(bodyId, lb);
+  return lb;
+}
+
+/** Forget a world's battle (it ended). */
+export function dropLiveBattle(bodyId: string): void {
+  cache.delete(bodyId);
+}
+
+/** k: the camera scale over the reference layout. */
+export function battleScale(battle: LiveBattle, drawnRadiusPx: number): number {
+  return Math.max(0, drawnRadiusPx) / battle.refR;
+}
+
+// ---------------------------------------------------------------- glide
+
+interface Glide { r: number; t: number; ms: number }
+const glides = new Map<string, Glide>();
+let lastSweep = 0;
+
+/** Start a unit's glide from where it was last drawn (reference polar,
+ *  wheel removed), so a hull arriving or re-slotted eases in. */
+export function seedBattleGlide(id: string, r: number, t: number, nowMs: number): void {
+  if (!glides.has(id)) glides.set(id, { r, t, ms: nowMs });
+}
+export function hasBattleGlide(id: string): boolean {
+  return glides.has(id);
+}
+
+/** The wheel's angle at `nowMs`. */
+export function battleDrift(battle: LiveBattle, nowMs: number): number {
+  return ((nowMs % BATTLE_TURN_MS) / BATTLE_TURN_MS) * Math.PI * 2 * battle.dir;
+}
+
+/**
+ * Where a unit (or the station) is drawn NOW, in REFERENCE px from the
+ * world's centre: its glided polar place plus the wheel, and its heading
+ * (forward along the orbit in the wheel's sense, with the layout's small
+ * per-hull jitter). Multiply x/y by k for screen px. Null when the battle
+ * did not place it.
+ */
+export function battlePlacement(
+  battle: LiveBattle, id: string, nowMs: number,
+): { x: number; y: number; theta: number; r: number; heading: number } | null {
+  const p = battle.layout.placements.get(id)
+    ?? (battle.layout.station && battle.layout.station.id === id ? battle.layout.station : undefined);
+  if (!p) return null;
+  let g = glides.get(id);
+  if (!g) { g = { r: p.r, t: p.theta, ms: nowMs }; glides.set(id, g); }
+  const dt = Math.max(0, Math.min(200, nowMs - g.ms));
+  g.ms = nowMs;
+  const k = 1 - Math.exp(-dt / GLIDE_MS);
+  let dth = (p.theta - g.t) % (Math.PI * 2);
+  if (dth > Math.PI) dth -= Math.PI * 2;
+  if (dth < -Math.PI) dth += Math.PI * 2;
+  g.t += dth * k;
+  g.r += (p.r - g.r) * k;
+  if (nowMs - lastSweep > 10000) {
+    lastSweep = nowMs;
+    for (const [gid, gl] of glides) if (nowMs - gl.ms > 10000) glides.delete(gid);
+  }
+  const theta = g.t + battleDrift(battle, nowMs);
+  // The layout's noses point +theta's way; keep each hull's own jitter
+  // and flip the forward sense when the battle wheels the other way.
+  const jitter = p.heading - (Math.atan2(p.y, p.x) + Math.PI / 2);
+  const heading = theta + (Math.PI / 2) * battle.dir + jitter;
+  return { x: Math.cos(theta) * g.r, y: Math.sin(theta) * g.r, theta, r: g.r, heading };
+}
+
+/** Test hook: clear every cached battle and glide. */
+export function resetLiveBattles(): void {
+  cache.clear();
+  glides.clear();
+  lastSweep = 0;
+}

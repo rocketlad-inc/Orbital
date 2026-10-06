@@ -95,6 +95,7 @@ import { bodyPosition, bodyById } from '../physics/orbitalMechanics';
 import { torchPositionFromSamples } from '../physics/torchTransfer';
 import type { InterceptMarker } from '../render/mapRenderer';
 import { shipIconSize, rendererCanvasMb, drawStructureReach, parkedOrbitMap } from '../render/mapRenderer';
+import { liveBattleFor, type BattleUnit, type LiveBattle } from '../render/battleLayoutLive';
 import {
   computePresentation, drawnRadiusOf, hullReveal, hullSize,
 } from '../render/bodyPresentation';
@@ -592,7 +593,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // Formation map memo — see the build site below for what it keys on.
   const formationCacheRef = useRef<{
     state: unknown; vis: unknown; map: Map<string, ShipFormation>;
-  }>({ state: null, vis: null, map: new Map() });
+    battles: Map<string, LiveBattle>;
+  }>({ state: null, vis: null, map: new Map(), battles: new Map() });
   // Fleet collapse memo. Keyed on gameState identity alone: membership
   // and flagship come from /state and nothing about the camera, clock or
   // selection can change who folds into whom.
@@ -2204,10 +2206,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     const fmc = formationCacheRef.current;
     const fmFresh = fmc.state === gameState && fmc.vis === visibleShipIds;
     const formationMap = fmFresh ? fmc.map : new Map<string, ShipFormation>();
+    const liveBattles = fmFresh ? fmc.battles : new Map<string, LiveBattle>();
     if (!fmFresh) {
       fmc.state = gameState;
       fmc.vis = visibleShipIds;
       fmc.map = formationMap;
+      fmc.battles = liveBattles;
       // PASS 1 — group by BODY, not by altitude.
       //
       // The old key was `parent|round(sma)`, which put ships at slightly
@@ -2266,6 +2270,45 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const hostilePair = armedOwners.some(
           a => armedOwners.some(b => a !== b && !atPeace(a, b)));
         const battle = owners.length >= 2 && hostilePair;
+
+        // WHOLE-ORBIT BATTLE (MP; Lorne approved it on /?battle,
+        // 2026-10-06). The fight takes as much of the orbit as its ships
+        // need, each side a contiguous share with open space between,
+        // fleets as their markers, the station opposite the fight, solved
+        // ONCE per roster at a reference size and drawn times the world's
+        // scale (battleLayoutLive). SP keeps the battle lines below.
+        if (battle && mpActions) {
+          const bodyId = atBody[0].orbit.parentBodyId;
+          const body = bodyById2.get(bodyId);
+          if (body) {
+            const destroyerPx = shipIconSize('destroyer', false);
+            const units: BattleUnit[] = [];
+            for (const s of atBody) {
+              // Escorts ride in their marker's block; the lead stands for them.
+              if (fleetGrouping.collapsed.has(s.id)) continue;
+              const marker = fleetGrouping.markerByLeadShip.get(s.id);
+              const escortRel = marker?.escortIds.map(id => {
+                const e = shipById2.get(id);
+                return e ? Math.min(1, shipIconSize(e.class, false) / destroyerPx) : 1;
+              });
+              units.push({
+                id: s.id,
+                owner: s.ownedBy,
+                group: s.fleetId ?? null,
+                sizePx: shipIconSize(s.class, false),
+                armed: (s.damagePerTick ?? getShipClass(s.class).damagePerTick) > 0,
+                escortRel: escortRel && escortRel.length > 0 ? escortRel : undefined,
+              });
+            }
+            const station = gameState.settlements.find(
+              st => st.bodyId === bodyId && st.type === 'station' && st.hp > 0);
+            const lb = liveBattleFor(bodyId, body.radius, atBody[0].orbit.direction ?? 1,
+              units, owners, station?.id);
+            liveBattles.set(bodyId, lb);
+            for (const u of units) formationMap.set(u.id, { index: 0, total: 1, battle: lb });
+            continue;
+          }
+        }
 
         if (battle) {
           const F = owners.length;
@@ -2361,6 +2404,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         }
       }
     }
+
+    // The whole-orbit battles this frame draws, and fresh per-frame maps
+    // the ship, marker, station and combat passes share.
+    renderContext.liveBattles = liveBattles;
+    renderContext.battleLooks = new Map();
+    renderContext.stationCanvasPos = new Map();
 
     // Body ownership rings — drawn AFTER bodies so the halo sits around
     // the planet circle, BEFORE ships so the ring doesn't obscure ship
@@ -3106,7 +3155,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // same colour as the trajectory, which is why an in-flight fleet
         // read as more dashed line rather than as a formation.
         let heading = 0;
-        if (lead.transit?.currentTransfer) {
+        // In a whole-orbit battle the flagship was drawn with the battle's
+        // heading and scale; the block follows both.
+        const bLook = renderContext.battleLooks?.get(leadId);
+        if (bLook) {
+          heading = bLook.heading;
+        } else if (lead.transit?.currentTransfer) {
           const dest = bodyById2.get(lead.transit.currentTransfer.targetBodyId);
           if (dest) {
             const dp = bodyPosition(dest, renderTick(), gameState.bodies);
@@ -3161,9 +3215,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // Room to grow with a big flagship (up to 24px a slot), so the
         // hulls behind a mega destroyer are small but not specks. (16 and
         // 6 before the visual overhaul made regular hulls 1.5x.)
-        const baseSpacing = Math.max(9, Math.min(24, hb.r * 0.9));
-        const spacing = escortSpacingFor(n, baseSpacing, hb.r) * Math.max(0.35, fold);
-        const standoff = escortStandoffFor(hb.r, spacing);
+        // In a battle: the block at FULL size (the flagship's unscaled hit
+        // radius, as battleLayoutLive.fleetBlockGeometry laid it out),
+        // then times the battle's k, so the whole fleet shrinks in place.
+        const hbR = bLook ? Math.max(shipIconSize(lead.class, false) / 2 + 3, 12) : hb.r;
+        const bk = bLook ? bLook.k : 1;
+        const baseSpacing = Math.max(9, Math.min(24, hbR * 0.9));
+        const spacing0 = escortSpacingFor(n, baseSpacing, hbR) * Math.max(0.35, fold);
+        const standoff = escortStandoffFor(hbR, spacing0) * bk;
+        const spacing = spacing0 * bk;
         const offs = escortOffsets(n, spacing, heading, standoff);
         const prevEscortAlpha = c.globalAlpha;
         c.globalAlpha = prevEscortAlpha * fold;

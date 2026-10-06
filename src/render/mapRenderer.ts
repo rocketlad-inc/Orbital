@@ -53,6 +53,9 @@ import { reachWorldRadius, reachLabel, isReachPinned } from '../game/structureRe
 import type { BodyPresentation } from './bodyPresentation';
 import { glowAt, drawExplosion, drawCharge, HullLook, fxSpriteBytes, drawShieldRipple, drawHullFire, drawHullBreakup } from './fxArt';
 import { drawnRadiusOf, inflationOf, parkedRadiusMap } from './bodyPresentation';
+import {
+  battlePlacement, battleScale, battleDrift, hasBattleGlide, seedBattleGlide, type LiveBattle,
+} from './battleLayoutLive';
 import { FX_TUNING } from './fxTuning';
 import {
   drawConstructionSite, drawCompletedStructure, drawCapitalHull, isCapitalHull, withAlpha,
@@ -146,6 +149,17 @@ export interface RenderContext {
    *  hull, each from its own slot) and hits land on the icon instead of
    *  on a folded hull's invisible orbital point. */
   fleetSlots?: Map<string, { x: number; y: number }>;
+  /** MP whole-orbit battles, keyed on body id (battleLayoutLive). The
+   *  station at a battle world is drawn at the layout's place, opposite
+   *  the fight, scaled with the world like the hulls. */
+  liveBattles?: Map<string, LiveBattle>;
+  /** Hulls drawn in a whole-orbit battle this frame: their heading and
+   *  the battle's scale k, so the fleet-marker pass can draw the escort
+   *  block in the same frame and at the same scale as its flagship. */
+  battleLooks?: Map<string, { heading: number; k: number }>;
+  /** Where each station was DRAWN this frame (canvas px), so combat FX
+   *  fire from and at the station the player sees. */
+  stationCanvasPos?: Map<string, { x: number; y: number }>;
   /** Perpendicular lane offset in SCREEN PIXELS for each in-transit ship,
    *  keyed by ship id — see computeTransitLanes. Ships sharing a route get
    *  consecutive lanes so they fly abreast instead of stacking. Absent or
@@ -4228,6 +4242,10 @@ export interface ShipFormation {
    *  fleets inserted from opposite approaches, which would rotate the
    *  two lines in opposite senses and drift them out of opposition). */
   arcDir?: number;
+  /** MP whole-orbit battle this hull is placed by (battleLayoutLive).
+   *  Wins over the arc fields: the hull's place, heading and SIZE come
+   *  from the battle's layout times the world's scale. */
+  battle?: LiveBattle;
 }
 
 /** Last WORLD position drawShip/drawTorchTransitShip actually rendered
@@ -4598,14 +4616,55 @@ export function drawShip(
   const localPos = localPositionAt(ship.orbit, shipT);
   let lx = localPos.x;
   let ly = localPos.y;
-  let heading: number;
+  let heading = 0;
   // Battle lines wheel with a RING-LEVEL direction (formation.arcDir)
   // so opposing lines hold their facing — per-ship orbit.direction can
   // legitimately differ across factions that inserted from opposite
   // approaches, which would spin the lines apart.
   const dir = formation?.arcDir ?? ship.orbit.direction ?? 1;
 
-  if (formation?.arcCenter !== undefined) {
+  // WHOLE-ORBIT BATTLE (MP, battleLayoutLive). The battle was solved once
+  // at a reference size; this hull's place, nose and sprite are that
+  // layout times k, the world's drawn radius over the reference. The
+  // ships are fixed in scale to the planet: zooming shrinks them in
+  // place, and far out the world's hull reveal folds them into its badge.
+  const liveBattle = ctx.presentation ? formation?.battle : undefined;
+  let battleK = -1;
+  if (liveBattle) {
+    const k = battleScale(liveBattle, drawnRadiusOf(ctx.presentation, parentBody, ctx.camera.scale));
+    const nowM = ctx.nowMs ?? performance.now();
+    if (k > 0 && !hasBattleGlide(ship.id)) {
+      // Arriving (or newly in a fight): ease in from where it was drawn.
+      const was = drawnShipWorldPos(ship.id);
+      if (was) {
+        const px = (was.x - parentPos.x) * ctx.camera.scale / k;
+        const py = (was.y - parentPos.y) * ctx.camera.scale / k;
+        seedBattleGlide(ship.id, Math.hypot(px, py),
+          Math.atan2(py, px) - battleDrift(liveBattle, nowM), nowM);
+      }
+    }
+    const pl = k > 0 ? battlePlacement(liveBattle, ship.id, nowM) : null;
+    if (pl) {
+      battleK = k;
+      heading = pl.heading;
+      let px = pl.x * k, py = pl.y * k;
+      // A fleet's lead sits ahead of its block's centre (the layout
+      // places the centre, so the escorts astern have their room).
+      const blk = liveBattle.blocks.get(ship.id);
+      if (blk) {
+        const c = Math.cos(heading), s = Math.sin(heading);
+        px += (blk.flagX * c - blk.flagY * s) * k;
+        py += (blk.flagX * s + blk.flagY * c) * k;
+      }
+      lx = px / ctx.camera.scale;
+      ly = py / ctx.camera.scale;
+      ctx.battleLooks?.set(ship.id, { heading, k });
+    }
+  }
+
+  if (battleK >= 0) {
+    // Placed by the battle above.
+  } else if (formation?.arcCenter !== undefined) {
     // BATTLE LINE placement — absolute arc angle, not phase offset.
     // The line wheels slowly around the planet (shared drift, so both
     // factions' lines hold their relative facing) and this hull takes
@@ -4745,7 +4804,7 @@ export function drawShip(
 
   // Around the DRAWN world, by the SAME radial map its orbit ring and
   // apsis markers use (parkedOrbitMap), so the hull stays on its ring.
-  const orbitMap = ship.transit ? null : parkedOrbitMap(
+  const orbitMap = (ship.transit || battleK >= 0) ? null : parkedOrbitMap(
     ship, parentBody, ctx,
     shipIconSize(ship.class, isSelected) * (isSelected ? 1 : sizeScale),
     formation?.lane ?? 0,
@@ -4779,7 +4838,7 @@ export function drawShip(
   const shipColorValue = shipColor(ship, ctx.factions);
 
   const iconSize = shipIconSize(ship.class, isSelected)
-    * ((ship.transit || isSelected) ? 1 : sizeScale);
+    * (battleK >= 0 ? battleK : (ship.transit || isSelected) ? 1 : sizeScale);
 
   // Record the true drawn box for hit-testing: canvasPos already carries
   // the orbit spin, tick interpolation AND the formation spread, so a
@@ -6877,7 +6936,22 @@ export function drawStation(
   const localY = radius * Math.sin(theta);
   const worldX = bodyPos.x + localX;
   const worldY = bodyPos.y + localY;
-  const canvasPos = worldToCanvas(worldX, worldY, ctx);
+  let canvasPos = worldToCanvas(worldX, worldY, ctx);
+  // AT A WHOLE-ORBIT BATTLE (MP) the station sits where the battle put it:
+  // opposite the fight, wheeling with it, and scaled with the world like
+  // the hulls (battleLayoutLive). Everywhere else it keeps its own orbit.
+  let structScale = STATION_STRUCTURE_SCALE;
+  const lb = ctx.presentation ? ctx.liveBattles?.get(body.id) : undefined;
+  if (lb && lb.stationId === settlement.id) {
+    const k = battleScale(lb, drawnRadiusOf(ctx.presentation, body, ctx.camera.scale));
+    const pl = k > 0 ? battlePlacement(lb, settlement.id, ctx.nowMs ?? performance.now()) : null;
+    if (pl) {
+      const c = worldToCanvas(bodyPos.x, bodyPos.y, ctx);
+      canvasPos = { x: c.x + pl.x * k, y: c.y + pl.y * k };
+      structScale = STATION_STRUCTURE_SCALE * k;
+    }
+  }
+  ctx.stationCanvasPos?.set(settlement.id, canvasPos);
 
   const color = settlementColor(settlement, factions);
   const size = Math.max(3, 4 * Math.min(1.5, Math.sqrt(ctx.camera.scale)));
@@ -6921,7 +6995,7 @@ export function drawStation(
     // view (callout chips hang off it), and at 1x it read as a trinket
     // next to the planet. Scale the whole structure up so the ring/hub
     // silhouette and its modules are legible as a place, not a marker.
-    ctx.ctx.scale(STATION_STRUCTURE_SCALE, STATION_STRUCTURE_SCALE);
+    ctx.ctx.scale(structScale, structScale);
     drawStationStructure(ctx.ctx, {
       weaponsLevel, shipyardLevel, labLevel, thrustersLevel, builds,
       factionColor: color,
@@ -6949,7 +7023,7 @@ export function drawStation(
         // off (fxArt.drawHullFire, the hulls' fire); the old ones were
         // flat 8 px bezier flames.
         const nowF = ctx.nowMs ?? performance.now();
-        const R = 14 * STATION_STRUCTURE_SCALE;
+        const R = 14 * structScale;
         const sev = Math.min(1, 0.45 + (1 - staRatio) * 0.7);
         const seed = hashStr(settlement.id);
         for (let i = 0; i < n; i++) {
@@ -6963,9 +7037,9 @@ export function drawStation(
 
     if (settlement.hp < settlement.maxHp) {
       // Bar rides above the scaled-up structure.
-      const barW = 34 * STATION_STRUCTURE_SCALE;
+      const barW = 34 * structScale;
       const barH = 3;
-      const barY = canvasPos.y - 22 * STATION_STRUCTURE_SCALE;
+      const barY = canvasPos.y - 22 * structScale;
       const hpFrac = Math.max(0, settlement.hp / settlement.maxHp);
       ctx.ctx.fillStyle = '#2a3d50';
       ctx.ctx.fillRect(canvasPos.x - barW / 2, barY, barW, barH);
@@ -6973,7 +7047,7 @@ export function drawStation(
       ctx.ctx.fillRect(canvasPos.x - barW / 2, barY, barW * hpFrac, barH);
     }
     if (isSelected) {
-      drawSelectionBrackets(ctx.ctx, canvasPos.x, canvasPos.y, 30 * STATION_STRUCTURE_SCALE, COLORS.warning, ctx.nowMs);
+      drawSelectionBrackets(ctx.ctx, canvasPos.x, canvasPos.y, 30 * structScale, COLORS.warning, ctx.nowMs);
     }
     return;
   }

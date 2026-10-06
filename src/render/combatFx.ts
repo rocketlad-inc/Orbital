@@ -297,6 +297,10 @@ function settlementCanvasPos(
   stl: Settlement,
   rc: RenderContext,
 ): { x: number; y: number } | null {
+  // Where the station was DRAWN this frame first: at a whole-orbit battle
+  // it sits opposite the fight (battleLayoutLive), not on its orbit.
+  const drawn = rc.stationCanvasPos?.get(stl.id);
+  if (drawn) return drawn;
   const wp = settlementWorldPosition(stl, rc.t, rc.bodies);
   return wp ? worldToCanvas(wp.x, wp.y, rc) : null;
 }
