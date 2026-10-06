@@ -299,6 +299,10 @@ export function drawThrustExhaust(
    *  Given, the burn leaves every nozzle on the art; absent (a rock, a
    *  recap without the design), the class's bell layout stands in. */
   bells?: readonly DriveBell[] | null,
+  /** Flame length multiplier, 1 = the class's own length. Multiplayer's
+   *  building burns pass 0.7 at launch rising to 1.4 at the top of the
+   *  build and through the hard brake, so the push SHOWS in the flame. */
+  lengthMul: number = 1,
 ) {
   // LIGHTWEIGHT MODE draws no plume at all.
   //
@@ -324,7 +328,7 @@ export function drawThrustExhaust(
   // pointing opposite the thrust (so a braking hull flames ahead of its
   // motion), flickering live, and only the throat additive.
   const shape = PLUME_SHAPE[shipClass ?? ''] ?? { len: 1, width: 1, bells: 1 };
-  const flameLen = shipSize * 1.35 * shape.len;
+  const flameLen = shipSize * 1.35 * shape.len * lengthMul;
   const ang = Math.atan2(-thrustDir.y, -thrustDir.x);
   const perpX = -thrustDir.y;
   const perpY = thrustDir.x;

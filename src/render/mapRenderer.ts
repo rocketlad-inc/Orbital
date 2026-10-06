@@ -16,7 +16,7 @@ import { flameCount } from '../game/worldMenu/combatDisplay';
 import type { SystemRegion } from './systemRegions';
 import { bodyPosition, localPositionAt, semiMajor, eccentricity, velocityVectorsAt, bodyIndexOf, bodyById, stationOrbitRadius } from '../physics/orbitalMechanics';
 import { isLightweight } from './lightweightMode';
-import { sampleTorchTrajectory, torchPositionFromSamples, trajectoryTangentAt } from '../physics/torchTransfer';
+import { sampleTorchTrajectory, torchPositionFromSamples, trajectoryTangentAt, isShapedBurn, burnFractionAt, burnStopTick, pushShareAt } from '../physics/torchTransfer';
 import { rendezvousStateAt } from '../physics/rendezvous.js';
 import { STRAIGHT_LINE_TRAJECTORIES } from '../game/featureFlags';
 import { COLORS, withOpacity, lighten, darken } from './colors';
@@ -5395,6 +5395,44 @@ export function drawSOIBoundary(
 const torchSampleCache = new Map<string, Array<{ t: number; x: number; y: number }>>();
 const TORCH_SAMPLE_CACHE_MAX = 256;
 
+/** Samples per straight-line leg: the boost and the (much shorter) brake
+ *  each get enough points that the hull's speed changes smoothly. */
+const SHAPED_BOOST_SAMPLES = 24;
+const SHAPED_BRAKE_SAMPLES = 8;
+/** One array per plan object. Plans are rebuilt on each /state poll, so
+ *  this re-times a hull every ~1.5s rather than every frame, and a
+ *  WeakMap lets retired plans go with no cap to thrash. */
+const shapedSampleCache = new WeakMap<object, Array<{ t: number; x: number; y: number }>>();
+
+/** The straight line from launch to intercept, timed by the leg's own
+ *  burn (torchTransfer.ts burnFractionAt). Ends exactly on the intercept
+ *  at arriveTick, as the two-point line did. */
+function shapedLineSamples(plan: TorchTransferPlan): Array<{ t: number; x: number; y: number }> {
+  const hit = shapedSampleCache.get(plan);
+  if (hit) return hit;
+  const s = plan.startTick;
+  const e = plan.arriveTick;
+  const f = plan.flipTick;
+  const sx = plan.startPos.x, sy = plan.startPos.y;
+  const dx = plan.interceptPos.x - sx, dy = plan.interceptPos.y - sy;
+  let out: Array<{ t: number; x: number; y: number }>;
+  if (!(e > s) || !(f > s) || !(f < e)) {
+    out = [{ t: s, x: sx, y: sy }, { t: e, x: sx + dx, y: sy + dy }];
+  } else {
+    const stop = Math.max(f, burnStopTick(plan));
+    const ts: number[] = [];
+    for (let i = 0; i <= SHAPED_BOOST_SAMPLES; i++) ts.push(s + ((f - s) * i) / SHAPED_BOOST_SAMPLES);
+    for (let i = 1; i <= SHAPED_BRAKE_SAMPLES; i++) ts.push(f + ((stop - f) * i) / SHAPED_BRAKE_SAMPLES);
+    if (e > stop + 1e-9) ts.push(e);
+    out = ts.map(t => {
+      const k = t >= e ? 1 : burnFractionAt(plan, t);
+      return { t, x: sx + dx * k, y: sy + dy * k };
+    });
+  }
+  shapedSampleCache.set(plan, out);
+  return out;
+}
+
 export function torchTrajectorySamples(
   plan: TorchTransferPlan,
   bodies: Body[],
@@ -5402,6 +5440,10 @@ export function torchTrajectorySamples(
   // Playtester said the curved torch arcs were unreadable —
   // straight-line mode draws a single segment from start to end.
   if (STRAIGHT_LINE_TRAJECTORIES) {
+    // A multiplayer burn with a shape (a build-up, a hard brake) is still
+    // one straight line, but timed along it: the hull is lerped through
+    // these, so it creeps off at launch, gathers speed and brakes hard.
+    if (isShapedBurn(plan)) return shapedLineSamples(plan);
     return [
       { t: plan.startTick,  x: plan.startPos.x,     y: plan.startPos.y },
       { t: plan.arriveTick, x: plan.interceptPos.x, y: plan.interceptPos.y },
@@ -6194,8 +6236,27 @@ function drawTorchTransitShip(
   // BRAKE (engine fires retrograde to kill velocity relative to target).
   // Outside [startTick, arriveTick] the ship is coasting.
   const isBoost = ctx.t >= currentTransfer.startTick && ctx.t < currentTransfer.flipTick;
-  const isBrake = ctx.t >= currentTransfer.flipTick && ctx.t < currentTransfer.arriveTick;
+  // A shaped (multiplayer) burn brakes to rest at burnStopTick, which a
+  // ceiled arrival can leave short of arriveTick: the hull then sits on
+  // the intercept with its engine cold rather than firing at nothing.
+  const shaped = isShapedBurn(currentTransfer);
+  const brakeEnd = shaped ? burnStopTick(currentTransfer) : currentTransfer.arriveTick;
+  const isBrake = ctx.t >= currentTransfer.flipTick && ctx.t < brakeEnd;
   const thrusting = isBoost || isBrake;
+  // THE FLIP, drawn (shaped burns only). A torch ship brakes by turning
+  // round and firing its engine at where it is going; the hull used to
+  // face its line of travel the whole way, so the plume trailed behind it
+  // through the brake and nothing said "slowing down". It now swings
+  // round over the last moments of the boost (a short window, at most
+  // half a tick), the plume dying away mid-turn, and brakes nose-first
+  // away from the target with the engine blazing ahead of it.
+  let flipTurn = 0;
+  if (shaped) {
+    const span = currentTransfer.arriveTick - currentTransfer.startTick;
+    const w = Math.max(1e-6, Math.min(0.5, 0.03 * span));
+    const u = Math.max(0, Math.min(1, (ctx.t - (currentTransfer.flipTick - w)) / w));
+    flipTurn = u * u * (3 - 2 * u);
+  }
 
   // Nose ties to the TRAJECTORY: the tangent of the sample polyline the
   // ship is positioned on. Probing the line the ship is lerped along
@@ -6207,9 +6268,19 @@ function drawTorchTransitShip(
   // the target body's current position, then velocity — so the icon
   // never snaps to an arbitrary +x.
   let facingX: number, facingY: number;
-  const tangent = trajectorySamples && trajectorySamples.length >= 2
+  // A shaped burn's line is straight, so its heading is the line's own
+  // direction: probing for motion fails once the brake has stopped the
+  // hull on the intercept (a ceiled arrival can leave it there a while),
+  // and the fallback would swing the nose at the moving target body.
+  const lineDir = shaped && trajectorySamples && trajectorySamples.length >= 2 ? (() => {
+    const a = trajectorySamples[0];
+    const b = trajectorySamples[trajectorySamples.length - 1];
+    const d = Math.hypot(b.x - a.x, b.y - a.y);
+    return d > 1e-9 ? { x: (b.x - a.x) / d, y: (b.y - a.y) / d } : null;
+  })() : null;
+  const tangent = lineDir ?? (trajectorySamples && trajectorySamples.length >= 2
     ? trajectoryTangentAt(trajectorySamples, ctx.t)
-    : null;
+    : null);
   if (tangent) {
     facingX = tangent.x;
     facingY = tangent.y;
@@ -6234,7 +6305,7 @@ function drawTorchTransitShip(
   // false "canvas y axis inverts" comment — mirrored every transit
   // ship across the horizontal axis. That was the "points anywhere
   // but forward" bug.
-  const heading = Math.atan2(facingY, facingX);
+  const heading = Math.atan2(facingY, facingX) + Math.PI * flipTurn;
 
   // Everything downstream (exhaust plume, wake, selection brackets, rank
   // chevron, label offset) is derived from iconSize, so scaling here
@@ -6255,7 +6326,17 @@ function drawTorchTransitShip(
   // flipped, so "behind the engine" in world space is now AHEAD of
   // motion — exactly what you'd see when the torch decelerates.
   const thrustVis = thrustVisibility(ctx.camera.scale);
-  if (thrusting && thrustVis > 0) {
+  // THE PLUME FOLLOWS THE PUSH (shaped burns only). A building burn lights
+  // short and a little dim (0.7x long, 0.8x bright) and grows with the
+  // push to 1.4x long, full bright at the top of the build; the hard brake
+  // burns at 1.4x throughout. It dies away through the middle of the flip
+  // turn. Everything else is 1 and 1, exactly as before.
+  const ramped = currentTransfer.accelRamp != null && currentTransfer.accelRamp > 0;
+  const share = shaped && ramped && !isBrake ? pushShareAt(currentTransfer, ctx.t) : 1;
+  const turnFade = shaped ? Math.abs(Math.cos(Math.PI * flipTurn)) : 1;
+  const plumeLen = !shaped ? 1 : (isBrake ? 1.4 : ramped ? 0.7 + 0.7 * share : 1) * turnFade;
+  const shapedPlume = !shaped ? 1 : (ramped && !isBrake ? 0.8 + 0.2 * share : 1) * turnFade;
+  if (thrusting && thrustVis > 0 && shapedPlume > 0.02) {
     const cosH = Math.cos(heading);
     const sinH = Math.sin(heading);
     drawThrustExhaust(
@@ -6264,11 +6345,12 @@ function drawTorchTransitShip(
       { x: cosH, y: sinH },
       iconSize,
       // Retreating hulls burn HOT — running for home reads as running.
-      (isSelected ? 1.0 : 0.85) * thrustVis * (shipIsRetreating(ship) ? 1.25 : 1),
+      (isSelected ? 1.0 : 0.85) * thrustVis * (shipIsRetreating(ship) ? 1.25 : 1) * shapedPlume,
       ship.class,
       undefined,
       // From the engines the hull's art actually has.
       driveBellsFor(ship.class, ship.iconVariant),
+      plumeLen,
     );
     // Speed streaks on a retreating burn: brief parallel motion lines
     // shedding off the hull, flickering — unmistakably "getting out".
