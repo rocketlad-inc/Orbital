@@ -23,6 +23,8 @@
 // same speed differ by 45 percentage points.
 // ============================================================
 
+import { CRUISE_SPEED_SCALE, DEPARTURE_SPEED_SCALE } from './burn.js';
+
 /** Reference crossing rate, units/tick. The scale on which sideways
  *  motion starts to matter.
  *
@@ -30,8 +32,13 @@
  *  TOTAL relative speed in the superseded model; against the crossing
  *  component alone it means something different. It is carried over as a
  *  starting point, not as a tuned number, and stage-1 telemetry is what
- *  replaces it. Host-tunable via `transit_evasion_v_ref`. */
-export const V_REF = 45;
+ *  replaces it. Host-tunable via `transit_evasion_v_ref`.
+ *
+ *  SCALED WITH THE BURN (burn.js, 2026-10-06). 45 was set when ships
+ *  pushed at 0.05g; at 1g with a 9x brake every cruise pass is 6x faster
+ *  over the same route, so the crossing rate that "starts to matter" is
+ *  6x too. Unscaled, a hull in flight would be all but unhittable. */
+export const V_REF = Math.round(45 * CRUISE_SPEED_SCALE);
 
 /** CLOSING-SPEED BONUS — the answer to "a mechanic that does nothing".
  *
@@ -53,13 +60,19 @@ export const V_REF = 45;
  *  by f would undo it precisely where it is meant to work: a contact you
  *  had 3% of a tick to shoot at would keep 3% of the bonus.
  *
- *  RAMPS IN FROM 50 u/t so it cannot reach the numbers that matter. A
- *  parting shot is 26.5 u/t and stays at its tuned 63.8%; two ships
- *  parked at a body are at 0 and reproduce DESIGN-combat-v2 to the
- *  decimal. sim/transitLevers.mjs asserts that invariant. */
+ *  RAMPS IN ABOVE THE PARTING SHOT so it cannot reach the numbers that
+ *  matter: two ships parked at a body are at 0 and reproduce
+ *  DESIGN-combat-v2 to the decimal.
+ *
+ *  SCALED WITH THE BURN (burn.js, 2026-10-06), each end by what it was
+ *  tuned against. The start sat just above a one-tick departure burn
+ *  (26.5 u/t at 0.05g; 530 at 1g), which grows with the push itself:
+ *  x20. The full mark sat at the top of interplanetary cruise passes
+ *  (200-380 u/t), which grow with sqrt of the push and the hard brake:
+ *  x6. So 50 -> 1000 and 350 -> 2100. */
 export const DV_BONUS_MAX = 0.10;
-export const DV_BONUS_START = 50;
-export const DV_BONUS_FULL = 350;
+export const DV_BONUS_START = Math.round(50 * DEPARTURE_SPEED_SCALE);
+export const DV_BONUS_FULL = Math.round(350 * CRUISE_SPEED_SCALE);
 
 /** Linear ramp between START and FULL, clamped at both ends. */
 export function closingBonus(dv, opts = {}) {
@@ -349,9 +362,20 @@ export function ramPlanOf(b) {
 /** Matches MAX_SUBSTEP in src/physics/torchTransfer.ts. */
 const MAX_SUBSTEP = 1;
 
+/** Substeps per trip on a HARD-BRAKE leg (brake != boost). Matches
+ *  BURN_SUBSTEPS in src/physics/torchTransfer.ts — keep in sync.
+ *
+ *  At 1g a leg is a few ticks long and its 9x brake is a tenth of that:
+ *  a whole-tick step whose midpoint falls before the flip boosts straight
+ *  through the brake and never slows down. A hundredth of the trip gives
+ *  the brake ten steps, and no step is allowed to straddle the flip. */
+const BURN_SUBSTEPS = 100;
+
 /**
  * @param plan {launchX, launchY, launchVx, launchVy, accel, flipTick,
- *              startTick, arriveTick, interceptX, interceptY, targetBodyId}
+ *              startTick, arriveTick, interceptX, interceptY, targetBodyId,
+ *              brakeAccel?} — brakeAccel null/absent = an even burn that
+ *              brakes at accel (every leg before migration 0155, and rams)
  * @param bodyVelAt (bodyId, t) -> {x, y}, for the brake phase
  * @param t target tick
  */
@@ -364,12 +388,21 @@ export function torchStateAt(plan, bodyVelAt, t) {
   // so this is defensive, but a coast is the honest answer.
   if (end <= cur) return { pos, vel };
 
+  const brake = plan.brakeAccel != null && plan.brakeAccel > 0 ? plan.brakeAccel : plan.accel;
+  // An even burn steps exactly as it always has (whole ticks, phase by
+  // midpoint), so no leg already in flight moves when this ships.
+  const hardBrake = brake !== plan.accel;
+  const fine = hardBrake
+    ? Math.min(MAX_SUBSTEP, Math.max(1e-6, (plan.arriveTick - plan.startTick) / BURN_SUBSTEPS))
+    : MAX_SUBSTEP;
+
   let guard = 0;
   while (cur < end - 1e-9) {
     // 10k substeps is ~10k ticks of transit; nothing in the game is
     // that long, so hitting this means a corrupt plan, not a long trip.
     if (++guard > 10000) break;
-    const step = Math.min(MAX_SUBSTEP, end - cur);
+    let step = Math.min(fine, end - cur);
+    if (hardBrake && cur < plan.flipTick - 1e-9) step = Math.min(step, plan.flipTick - cur);
     const midTick = cur + step / 2;
     const boosting = midTick < plan.flipTick;
 
@@ -391,8 +424,9 @@ export function torchStateAt(plan, bodyVelAt, t) {
       if (rv >= 1e-9) { tx = -rvx / rv; ty = -rvy / rv; }
     }
 
-    const ax = tx * plan.accel;
-    const ay = ty * plan.accel;
+    const a = boosting ? plan.accel : brake;
+    const ax = tx * a;
+    const ay = ty * a;
     pos.x += vel.x * step + 0.5 * ax * step * step;
     pos.y += vel.y * step + 0.5 * ay * step * step;
     vel.x += ax * step;
