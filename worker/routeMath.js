@@ -20,6 +20,7 @@ import { isEccentric, eccentricLocalPosition } from './transitCombat.js';
 import { parseTraits, traitMul } from './captains.js';
 import { maySupplySite, excludedFundersOf, constructionPartners } from './megastructures.js';
 import { hasFeature, factionTechLevels, gatingEnabled } from './researchUnlocks.js';
+import { SHIP_ENGINE_ACCEL, burnTicks } from './burn.js';
 
 /** Transfer Lanes: a capital-to-capital leg runs at this fraction of
  *  its burn time once the faction holds Propulsion 3. 0.75 is a quarter
@@ -41,10 +42,6 @@ export function holdCapFor(captainTraitsJson) {
   return Math.round(CARGO_CAP * traitMul(parseTraits(captainTraitsJson), 'cargoMul'));
 }
 
-// Torch trip-time anchors — mirror src/physics/torchTransfer.ts.
-const G_ANCHOR = 4 * 132.6;
-const DEFAULT_ENGINE_G = 0.05;
-const fromG = (g) => g * G_ANCHOR;
 
 /**
  * Factory for the position/leg-time helpers, carrying the same
@@ -89,18 +86,11 @@ export function makeRouteMath(db, gameId) {
     };
   };
 
-  const factionAccelCache = new Map();
-  const getFactionAccel = async (factionId) => {
-    if (factionAccelCache.has(factionId)) return factionAccelCache.get(factionId);
-    const f = await db
-      .prepare('SELECT engine_g FROM game_factions WHERE id = ?')
-      .bind(factionId)
-      .first();
-    const g = f?.engine_g ?? DEFAULT_ENGINE_G;
-    const accel = fromG(g);
-    factionAccelCache.set(factionId, accel);
-    return accel;
-  };
+  // Every hull's base push (burn.js). game_factions.engine_g is NOT read
+  // here any more: it was never written past its 0.05 column default, and
+  // only the asteroid ram still consults it (actions.js), where raising
+  // it would let a ram fly at a ship's thrust.
+  const getFactionAccel = async (_factionId) => SHIP_ENGINE_ACCEL;
 
   // TRANSFER LANES (Propulsion 3). Every capital in the game, read once
   // per pass, and whether a faction has the unlock, read once per
@@ -138,9 +128,9 @@ export function makeRouteMath(db, gameId) {
     return p;
   };
 
-  // Closed-form brachistochrone T = 2·√(d/a) with a 5-iteration
-  // intercept refinement so target-body motion during the trip is
-  // accounted for. Integer ticks >= 1.
+  // Closed-form burn time (burn.js: push, flip at 90%, brake 9x hard)
+  // with a 5-iteration intercept refinement so target-body motion during
+  // the trip is accounted for. Integer ticks >= 1.
   const computeLegTicks = async (factionId, originId, destId, refTick) => {
     const accel = await getFactionAccel(factionId);
     const startPos = await bodyPosAt(originId, refTick);
@@ -150,7 +140,7 @@ export function makeRouteMath(db, gameId) {
       const dx = destPos.x - startPos.x;
       const dy = destPos.y - startPos.y;
       const d = Math.sqrt(dx * dx + dy * dy);
-      const Tnew = 2 * Math.sqrt(Math.max(d, 0.01) / accel);
+      const Tnew = burnTicks(Math.max(d, 0.01), accel);
       if (Math.abs(Tnew - T) < 0.05) { T = Tnew; break; }
       T = Tnew;
     }

@@ -204,6 +204,15 @@ export function planTorchTransfer(
  *  simulator and the renderer agree to within roundoff. */
 const MAX_SUBSTEP = 1;
 
+/** Substeps per trip on a HARD-BRAKE leg (brake != boost). Matches
+ *  BURN_SUBSTEPS in worker/transitCombat.js torchStateAt — keep in sync.
+ *  At 1g a leg lasts a few ticks and its 9x brake a tenth of that, so a
+ *  whole-tick step would boost straight through the brake. A hundredth
+ *  of the trip gives the brake ten steps, and no step straddles the flip.
+ *  An even burn (every single-player leg, every leg committed before
+ *  migration 0155) steps exactly as it always did. */
+const BURN_SUBSTEPS = 100;
+
 function singleStepTorch(
   ship: TorchShipState,
   transfer: TorchTransfer | undefined,
@@ -275,10 +284,16 @@ export function stepTorchShip(
   // direction re-aims at the same cadence the renderer's sampler uses.
   // Without this, a single large step ends up frozen at one midpoint
   // direction and the ship visibly drifts off the rendered arc.
+  const hardBrake = !!transfer && transfer.brakeAcceleration !== transfer.acceleration;
+  const fine = hardBrake
+    ? Math.min(MAX_SUBSTEP, Math.max(1e-6, (transfer!.arriveTick - transfer!.startTick) / BURN_SUBSTEPS))
+    : MAX_SUBSTEP;
   let elapsed = 0;
   while (elapsed < dt) {
-    const step = Math.min(MAX_SUBSTEP, dt - elapsed);
-    singleStepTorch(ship, transfer, currentTick + elapsed, step, bodies);
+    let step = Math.min(fine, dt - elapsed);
+    const at = currentTick + elapsed;
+    if (hardBrake && at < transfer!.flipTick - 1e-9) step = Math.min(step, transfer!.flipTick - at);
+    singleStepTorch(ship, transfer, at, step, bodies);
     elapsed += step;
     // Arrival snap inside singleStepTorch already pinned the state to
     // interceptPos + target velocity. No more meaningful integration to do.
@@ -424,6 +439,34 @@ export const DEFAULT_ENGINE_G = 0.05;
  *  DEFAULT_ENGINE_G and the 1g anchor. */
 export const DEFAULT_ENGINE_ACCEL = DEFAULT_ENGINE_G * G_ANCHOR;
 
+/**
+ * MULTIPLAYER'S BURN, installed from /state (game.burn_engine_g and
+ * game.burn_brake_mul, owned by worker/burn.js).
+ *
+ * Since 2026-10-06 every multiplayer hull pushes at 1g and brakes nine
+ * times harder, so the flip lands at 90% of the trip. Single-player never
+ * installs a profile, and with none installed both helpers below return
+ * exactly what the planners always used: the faction's g (or the 0.05g
+ * default) and an even burn.
+ */
+export interface MpBurnProfile { engineG: number; brakeMul: number }
+let mpBurn: MpBurnProfile | null = null;
+
+/** Called by the MP provider when /state lands; null on unmount. */
+export function setMpBurnProfile(p: MpBurnProfile | null): void {
+  mpBurn = p && p.engineG > 0 && p.brakeMul > 0 ? { engineG: p.engineG, brakeMul: p.brakeMul } : null;
+}
+
+/** A hull's base engine g: multiplayer's, else the faction's stored g. */
+export function baseEngineG(factionEngineG: number | undefined): number {
+  return mpBurn ? mpBurn.engineG : (factionEngineG ?? DEFAULT_ENGINE_G);
+}
+
+/** The braking thrust for a leg that pushes at `boost`. */
+export function brakeAccelFor(boost: number): number {
+  return mpBurn ? boost * mpBurn.brakeMul : boost;
+}
+
 export function asG(accel: number): number {
   return accel / G_ANCHOR;
 }
@@ -449,6 +492,7 @@ export function fromG(g: number): number {
  */
 export function launchFromPlan(plan: TorchTransfer): {
   x: number; y: number; vx: number; vy: number; accel: number; flipTick: number;
+  brakeAccel: number;
 } {
   return {
     x: plan.startPos.x,
@@ -457,5 +501,8 @@ export function launchFromPlan(plan: TorchTransfer): {
     vy: plan.startVel.y,
     accel: plan.acceleration,
     flipTick: plan.flipTick,
+    // The brake (migration 0155). Without it the server would store an
+    // even burn and fly the hull past its own flip at the wrong thrust.
+    brakeAccel: plan.brakeAcceleration,
   };
 }

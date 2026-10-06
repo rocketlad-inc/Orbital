@@ -14,7 +14,7 @@ import { releaseFocusPosition } from '../game/cameraFocus';
 import { setCamera, CameraProvider, DEFAULT_CAMERA_SCALE } from './cameraStore';
 import {
   planTorchTransfer, stepTorchShip, torchPositionFromSamples,
-  DEFAULT_ENGINE_G, fromG,
+  DEFAULT_ENGINE_G, fromG, brakeAccelFor,
   TorchTransfer,
 } from '../physics/torchTransfer';
 import { getShipClass, ShipClassName, BuildableClassName, SHIP_CLASSES } from '../game/shipClasses';
@@ -2073,7 +2073,7 @@ export function GameContextProvider({
     const plan = planTorchTransfer(
       { pos: launchPos, vel: launchVel },
       targetBodyId,
-      engineAccel, engineAccel,
+      engineAccel, brakeAccelFor(engineAccel),
       tick, live.bodies,
     );
     if (!plan) return null;
@@ -2151,7 +2151,7 @@ export function GameContextProvider({
     const plan = planTorchTransfer(
       { pos: from, vel },
       originBodyId,
-      engineAccel, engineAccel,
+      engineAccel, brakeAccelFor(engineAccel),
       live.currentTick, live.bodies,
     );
     if (!plan) return null;
@@ -2254,7 +2254,7 @@ export function GameContextProvider({
     const plan = planTorchTransfer(
       { pos: departPos, vel: arrivalVel },
       targetBodyId,
-      engineAccel, engineAccel,
+      engineAccel, brakeAccelFor(engineAccel),
       departTick, live.bodies,
     );
     if (!plan) return null;
@@ -2348,7 +2348,7 @@ export function GameContextProvider({
     const plan = planTorchTransfer(
       { pos: departPos, vel: departVel },
       dest.id,
-      engineAccel, engineAccel,
+      engineAccel, brakeAccelFor(engineAccel),
       departTick, live.bodies,
     );
     if (!plan) return null;
@@ -2439,7 +2439,7 @@ export function GameContextProvider({
         pos: orbitWorldPos(ship.orbit, live.currentTick, live.bodies),
         vel: orbitWorldVelocity(ship.orbit, live.currentTick, live.bodies),
       },
-      targetBodyId, engineAccel, engineAccel, live.currentTick, live.bodies,
+      targetBodyId, engineAccel, brakeAccelFor(engineAccel), live.currentTick, live.bodies,
     );
   }, []);
 
@@ -2462,7 +2462,7 @@ export function GameContextProvider({
 
     for (const targetBodyId of targetBodyIds) {
       const plan = planTorchTransfer(
-        { pos, vel }, targetBodyId, engineAccel, engineAccel, departTick, live.bodies,
+        { pos, vel }, targetBodyId, engineAccel, brakeAccelFor(engineAccel), departTick, live.bodies,
       );
       // A leg we can't plan ends the tour — everything after it chained
       // off an arrival that now never happens.
@@ -2556,7 +2556,7 @@ export function GameContextProvider({
     const plan = planTorchTransfer(
       { pos: launchPos, vel: launchVel },
       targetBodyId,
-      flyAccel, flyAccel,
+      flyAccel, brakeAccelFor(flyAccel),
       tick, live.bodies,
     );
     if (!plan) return null;
