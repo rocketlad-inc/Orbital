@@ -510,16 +510,18 @@ export const SHARED_BODIES: Body[] = [
   },
   {
     id: 'centauri_a', name: 'Centauri A', type: 'star', parent: 'binary_barycenter',
-    radius: 8, soi: 35, mu: 200, color: '#ffe082',
-    // angle0=0 → starts at +X relative to barycenter
-    orbitRadius: 18, orbitPeriod: 240, angle0: 0,
+    radius: 8, soi: 80, mu: 200, color: '#ffe082',
+    // The dance (worker/factions.js): an e = 0.4 ellipse, opposite B.
+    orbitRadius: 230, orbitPeriod: 168 / Math.pow(2, 1.5), angle0: 0,
+    orbit_rp: 138, orbit_ra: 322, orbit_omega: 0, orbit_m0: 0,
   },
   {
     id: 'centauri_b', name: 'Centauri B', type: 'star', parent: 'binary_barycenter',
-    radius: 6, soi: 28, mu: 150, color: '#ff8a5e',
-    // angle0=π → starts at -X, opposite Centauri A. Same period keeps
-    // them locked opposite each other for the entire match.
-    orbitRadius: 28, orbitPeriod: 240, angle0: Math.PI,
+    radius: 6, soi: 80, mu: 150, color: '#ff8a5e',
+    // Opposite A on the matching ellipse: same period and mean anomaly,
+    // periapsis half a turn round.
+    orbitRadius: 270, orbitPeriod: 168 / Math.pow(2, 1.5), angle0: Math.PI,
+    orbit_rp: 162, orbit_ra: 378, orbit_omega: Math.PI, orbit_m0: 0,
   },
   // Circumbinary worlds. Periods follow a rough √r scaling so the
   // outer worlds visibly lag behind the inner one, same as Kepler's
@@ -528,15 +530,15 @@ export const SHARED_BODIES: Body[] = [
   // genuinely transformative for the player's research economy.
   // Verdant alone produces more science/harvest than any Sol body.
   {
-    id: 'verdant', name: 'Verdant', type: 'terrestrial', parent: 'binary_barycenter',
-    radius: 4, soi: 60, mu: 150, color: '#3aaf6e',
-    orbitRadius: 400, orbitPeriod: 700, angle0: 0.3,
+    id: 'verdant', name: 'Verdant', type: 'terrestrial', parent: 'centauri_a',
+    radius: 4, soi: 25, mu: 150, color: '#3aaf6e',
+    orbitRadius: 55, orbitPeriod: 35.7, angle0: 0.3,
     resources: { fuel: 0, gold: 8, metal: 8, science: 12 },
   },
   {
     id: 'crimson', name: 'Crimson', type: 'gas_giant', parent: 'binary_barycenter',
     radius: 9, soi: 110, mu: 350, color: '#d35454',
-    orbitRadius: 850, orbitPeriod: 2100, angle0: 2.1,
+    orbitRadius: 1900, orbitPeriod: 7247, angle0: 2.1,
     resources: { fuel: 0, gold: 13, metal: 2, science: 6 },
   },
   {
@@ -546,9 +548,9 @@ export const SHARED_BODIES: Body[] = [
     resources: { fuel: 0, gold: 6, metal: 6, science: 8 },
   },
   {
-    id: 'cinder', name: 'Cinder', type: 'terrestrial', parent: 'binary_barycenter',
-    radius: 3, soi: 40, mu: 90, color: '#a8553a',
-    orbitRadius: 1400, orbitPeriod: 4400, angle0: 4.7,
+    id: 'cinder', name: 'Cinder', type: 'terrestrial', parent: 'centauri_b',
+    radius: 3, soi: 15, mu: 90, color: '#a8553a',
+    orbitRadius: 55, orbitPeriod: 35.7, angle0: 4.7,
     resources: { fuel: 0, gold: 9, metal: 11, science: 7 },
   },
   // Outer dwarf — the return-gate body. The warp_gate secret on this
@@ -557,7 +559,7 @@ export const SHARED_BODIES: Body[] = [
   {
     id: 'farspire', name: 'Farspire', type: 'dwarf', parent: 'binary_barycenter',
     radius: 1.5, soi: 9, mu: 1, color: '#9088b0',
-    orbitRadius: 2400, orbitPeriod: 10000, angle0: 1.5,
+    orbitRadius: 2900, orbitPeriod: 13665, angle0: 1.5,
     resources: { fuel: 0, gold: 4, metal: 8, science: 10 },
   },
 

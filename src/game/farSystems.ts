@@ -8,6 +8,7 @@
 // ============================================================
 
 import type { Body } from '../types';
+import { bodyPosition } from '../physics/orbitalMechanics';
 
 export const BINARY_SYSTEM_TEMPLATE_IDS: ReadonlySet<string> = new Set([
   'verdant', 'thistle', 'sorrel', 'crimson', 'prismara', 'scoria', 'umber',
@@ -15,6 +16,39 @@ export const BINARY_SYSTEM_TEMPLATE_IDS: ReadonlySet<string> = new Set([
 ]);
 
 export const BINARY_STATION_MUL = 2;
+
+/** The worlds that orbit ONE sun ("two homes"): Verdant and its moons
+ *  around A, Cinder and Clinker around B. MIRROR of
+ *  BINARY_INNER_TEMPLATE_IDS in worker/systems.js. */
+export const BINARY_INNER_TEMPLATE_IDS: ReadonlySet<string> = new Set([
+  'verdant', 'thistle', 'sorrel', 'cinder', 'clinker',
+]);
+/** A station around one sun: x1.5 with the suns furthest apart, x3 as
+ *  they swing closest. MIRRORS worker/systems.js. */
+export const INNER_STATION_MUL_FAR = 1.5;
+export const INNER_STATION_MUL_NEAR = 3;
+
+/** How close Centauri's suns are, 0 (furthest) .. 1 (closest), from
+ *  Centauri A's own orbit -- the same number worker/binaryDance.js gets
+ *  from the same Kepler solve. 0.5 when there is no dance. */
+export function binaryClosenessFrom(bodies: Body[], tick: number): number {
+  const a = bodies.find(b => templateOf(b.id) === 'centauri_a');
+  if (!a || a.orbit_rp == null || a.orbit_ra == null || !(a.orbit_ra > a.orbit_rp)) return 0.5;
+  const parent = bodies.find(b => b.id === a.parent);
+  const p = bodyPosition(a, tick, bodies);
+  const c = parent ? bodyPosition(parent, tick, bodies) : { x: 0, y: 0 };
+  const r = Math.hypot(p.x - c.x, p.y - c.y);
+  return Math.max(0, Math.min(1, (a.orbit_ra - r) / (a.orbit_ra - a.orbit_rp)));
+}
+
+/** The dance as of the last /state, set by the multiplayer provider so
+ *  every yield readout (settlementYield) follows it without each caller
+ *  having to know the tick. */
+let currentCloseness = 0.5;
+export function setBinaryCloseness(c: number): void {
+  currentCloseness = Number.isFinite(c) ? Math.max(0, Math.min(1, c)) : 0.5;
+}
+export function getBinaryCloseness(): number { return currentCloseness; }
 
 /** Catalogue id of a client body (ids arrive stripped, but tolerate a
  *  game prefix the way templateIdOf does). */
@@ -27,7 +61,11 @@ export function isBinarySystemBody(body: Pick<Body, 'id'>): boolean {
   return BINARY_SYSTEM_TEMPLATE_IDS.has(templateOf(body.id));
 }
 
-/** What a station's yield is multiplied by at this body. */
-export function binaryStationMul(body: Pick<Body, 'id'>): number {
-  return isBinarySystemBody(body) ? BINARY_STATION_MUL : 1;
+/** What a station's yield is multiplied by at this body: 1 outside
+ *  Centauri, x2 around both suns, x1.5..x3 with the dance around one. */
+export function binaryStationMul(body: Pick<Body, 'id'>, closeness = currentCloseness): number {
+  if (!isBinarySystemBody(body)) return 1;
+  if (!BINARY_INNER_TEMPLATE_IDS.has(templateOf(body.id))) return BINARY_STATION_MUL;
+  const c = Math.max(0, Math.min(1, closeness));
+  return INNER_STATION_MUL_FAR + (INNER_STATION_MUL_NEAR - INNER_STATION_MUL_FAR) * c;
 }

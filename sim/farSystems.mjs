@@ -109,6 +109,71 @@ check('they use the SERVER spelling for types',
     centauriWorlds.filter(id => !BINARY_SYSTEM_TEMPLATE_IDS.has(id)).join(', '));
 }
 
+
+// ---- TWO HOMES AND A CHAOS ZONE (Lorne, 2026-10-06) -------------------------
+// Centauri A and B dance on matching e = 0.4 ellipses; Verdant (and its
+// moons) orbit A alone and Cinder B alone, inside each sun's stability
+// limit; everything else circles both, beyond the circumbinary edge.
+// Holman & Wiegert's fits for mass ratio 0.46, e = 0.4: S-type within
+// 0.155 of the pair's semi-major axis, P-type beyond 3.48 of it.
+{
+  const { eccentricLocalPosition } = await import('../worker/transitCombat.js');
+  const { ORBITAL_SPEED_SCALE } = await import('../worker/orbitPos.js');
+  const { binaryCloseness } = await import('../worker/binaryDance.js');
+  const { binaryStationFactor } = await import('../worker/systems.js');
+  const live = (id) => {
+    const b = BODY_CATALOG.find(x => x.id === id);
+    return { ...b, ...scaledGeometry(b, { bodyScale: 2 }), radius: b.radius * 2 };
+  };
+  const A = live('centauri_a'), Bs = live('centauri_b');
+  const at = (b, t) => eccentricLocalPosition(b, t, ORBITAL_SPEED_SCALE);
+  let opposite = true, minSep = Infinity, maxSep = 0;
+  for (let t = 0; t < 480; t += 3) {
+    const a = at(A, t), b = at(Bs, t);
+    // Opposite, in the 0.46 : 0.54 split: A at -0.46 of the gap, B at +0.54.
+    const cross = a.x * b.y - a.y * b.x, dotp = a.x * b.x + a.y * b.y;
+    if (Math.abs(cross) > 1e-6 * Math.hypot(a.x, a.y) * Math.hypot(b.x, b.y) || dotp > 0) opposite = false;
+    const sep = Math.hypot(a.x - b.x, a.y - b.y);
+    minSep = Math.min(minSep, sep); maxSep = Math.max(maxSep, sep);
+  }
+  check('the suns stay exactly opposite through the dance', opposite);
+  check('they swing from 600 apart to 1400', Math.abs(minSep - 600) < 2 && Math.abs(maxSep - 1400) < 2,
+    `${minSep.toFixed(0)}..${maxSep.toFixed(0)}`);
+  const sepAt = (t) => { const a = at(A, t), b = at(Bs, t); return Math.hypot(a.x - b.x, a.y - b.y); };
+  check('one full dance takes 240 ticks', Math.abs(sepAt(0) - sepAt(240)) < 0.5 && Math.abs(sepAt(0) - sepAt(120)) > 100,
+    `${sepAt(0).toFixed(0)} / ${sepAt(120).toFixed(0)} / ${sepAt(240).toFixed(0)}`);
+
+  const aBin = 1000, S_LIMIT = 0.155 * aBin, P_EDGE = 3.48 * aBin;
+  for (const [world, sun] of [['verdant', 'centauri_a'], ['cinder', 'centauri_b']]) {
+    const w = live(world);
+    const reach = Math.max(0, ...BODY_CATALOG.filter(m => m.parent === world).map(m => live(m.id).orbit_radius));
+    check(`${w.name} orbits ${sun === 'centauri_a' ? 'A' : 'B'} alone, inside the stability limit`,
+      w.parent === sun && w.orbit_radius + reach <= S_LIMIT,
+      `${w.orbit_radius} + moons ${reach} vs ${S_LIMIT}`);
+  }
+  for (const id of ['crimson', 'flint', 'tinder', 'ember', 'pyrite', 'farspire']) {
+    const w = live(id);
+    const reach = Math.max(0, ...BODY_CATALOG.filter(m => m.parent === id).map(m => live(m.id).orbit_radius));
+    check(`${w.name} circles both suns, beyond the edge`,
+      w.parent === 'binary_barycenter' && w.orbit_radius - reach > P_EDGE,
+      `${w.orbit_radius} - ${reach} vs ${P_EDGE}`);
+  }
+  check('nothing but the suns lives in the chaos zone',
+    BODY_CATALOG.filter(b => b.parent === 'binary_barycenter' && b.type !== 'star')
+      .every(b => live(b.id).orbit_radius > P_EDGE));
+
+  // The station bonus follows the dance for the worlds around one sun.
+  let lo = 1, hi = 0;
+  for (let t = 0; t < 240; t += 2) { const c = binaryCloseness(A, t); lo = Math.min(lo, c); hi = Math.max(hi, c); }
+  check('the dance runs the whole range, 0 to 1', lo < 0.01 && hi > 0.99, `${lo.toFixed(3)}..${hi.toFixed(3)}`);
+  check('a station around one sun yields x1.5 apart and x3 together',
+    binaryStationFactor({ id: 'g:verdant' }, 0) === 1.5 && binaryStationFactor({ id: 'g:cinder' }, 1) === 3);
+  check('a station around both stays x2 through it',
+    binaryStationFactor({ id: 'g:crimson' }, 0) === 2 && binaryStationFactor({ id: 'g:flint' }, 1) === 2);
+  check('and nothing outside Centauri is touched', binaryStationFactor({ id: 'g:requiem' }, 1) === 1
+    && binaryStationFactor({ id: 'g:earth' }, 1) === 1);
+}
+
 // ---- 2. Distance is the balance -------------------------------------
 // Live games run system_scale 4 over the catalogue's own SYSTEM_SCALE 2.
 const LIVE = 4;
@@ -224,7 +289,9 @@ check('...and the rest of Sol is still there',
   check('each far system is seeded nine rocks of its own', cen.length === 9 && cyg.length === 9,
     `${cen.length} Centauri, ${cyg.length} Cygnus`);
   check('...orbiting their own barycenter',
-    cen.every(r => r.parent_body_id === 'gfar_on:binary_barycenter')
+    // An L3 rock rides its host's parent: Verdant's and Cinder's are
+    // around their own sun now (two homes).
+    cen.every(r => ['gfar_on:binary_barycenter', 'gfar_on:centauri_a', 'gfar_on:centauri_b'].includes(r.parent_body_id))
     && cyg.every(r => r.parent_body_id === 'gfar_on:bh_barycenter'));
   check('...named for their system', cen.every(r => /^CEN-\d\d$/.test(r.name)) && cyg.every(r => /^CYG-\d\d$/.test(r.name)),
     [...cen, ...cyg].map(r => r.name).join(' '));
@@ -306,11 +373,12 @@ check('the barycenter is heliocentric and far out',
   && byId.get('binary_barycenter').orbit_radius > 60000,
   JSON.stringify(byId.get('binary_barycenter')));
 check('a default-dial game still opens the system up (FAR_LOCAL_SCALE)',
-  byId.get('verdant')?.orbit_radius === 400 * FAR_LOCAL_SCALE,
-  String(byId.get('verdant')?.orbit_radius));
+  byId.get('crimson')?.orbit_radius === 1900 * FAR_LOCAL_SCALE,
+  String(byId.get('crimson')?.orbit_radius));
 check('its worlds orbit IT, at their own local radii',
-  byId.get('verdant')?.parent_body_id?.endsWith(':binary_barycenter')
-  && byId.get('verdant').orbit_radius < 1000,
+  byId.get('crimson')?.parent_body_id?.endsWith(':binary_barycenter')
+  && byId.get('verdant')?.parent_body_id?.endsWith(':centauri_a')
+  && byId.get('verdant').orbit_radius < 200,
   JSON.stringify(byId.get('verdant')));
 check('the black hole kept its type through the seed',
   byId.get('cygnus_x')?.type === 'black_hole', byId.get('cygnus_x')?.type);
@@ -331,15 +399,15 @@ check('the gas giant kept the server spelling',
   // Opened up by FAR_LOCAL_SCALE and by nothing the host set.
   const F = FAR_LOCAL_SCALE;
   check(`a far world sits at ${F}x its designed orbit whatever the host dials`,
-    geo('verdant').orbit_radius === 400 * F && geo('farspire').orbit_radius === 2400 * F,
-    `verdant ${geo('verdant').orbit_radius}, farspire ${geo('farspire').orbit_radius}`);
+    geo('crimson').orbit_radius === 1900 * F && geo('farspire').orbit_radius === 2900 * F,
+    `crimson ${geo('crimson').orbit_radius}, farspire ${geo('farspire').orbit_radius}`);
   check('...and its year follows Kepler',
-    Math.abs(geo('verdant').orbit_period - 700 * Math.pow(F, 1.5)) < 1e-6,
-    String(geo('verdant').orbit_period));
+    Math.abs(geo('crimson').orbit_period - 7247 * Math.pow(F, 1.5)) < 1e-6,
+    String(geo('crimson').orbit_period));
   check('a far moon of a far world takes the same factor, not moon_scale',
     geo('prismara').orbit_radius === 26 * F, String(geo('prismara').orbit_radius));
   check("the suns' binary opens up with the rest",
-    geo('centauri_b').orbit_radius === 28 * F, String(geo('centauri_b').orbit_radius));
+    geo('centauri_b').orbit_radius === 270 * F, String(geo('centauri_b').orbit_radius));
   // 33,150 written in the file, doubled at module load by SYSTEM_SCALE,
   // then the host's system_scale 4 on top: the 265,200 of the design.
   check('but the DISTANCE to the system still scales with the map',
@@ -350,7 +418,7 @@ check('the gas giant kept the server spelling',
   check('a planet still takes system_scale',
     geo('earth').orbit_radius === 186 * 2 * 4, String(geo('earth').orbit_radius));
   // Twice the room costs root-two the time: still a hop, not a campaign.
-  const hop = 2 * Math.sqrt((2400 * FAR_LOCAL_SCALE) / ACCEL);
+  const hop = 2 * Math.sqrt((2900 * FAR_LOCAL_SCALE) / ACCEL);
   check('crossing Centauri end to end is a short trip, not a second campaign',
     hop < 30, `${hop.toFixed(0)} ticks`);
 }

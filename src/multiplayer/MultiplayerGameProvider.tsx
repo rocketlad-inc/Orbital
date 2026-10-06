@@ -50,6 +50,7 @@ import { setServerLightweight } from '../render/lightweightMode';
 import { setServerStillWorlds } from '../render/globeSpin';
 import { connectRoomSocket } from './roomSocket';
 import { EndgameCommission } from './CommissionMoments';
+import { binaryClosenessFrom, setBinaryCloseness } from '../game/farSystems';
 
 // The whole-match recap. Split out of the main bundle: it pulls in the
 // map renderer and the replay machinery, and nobody needs any of that
@@ -1323,6 +1324,9 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     : null);
 
   const bodies = srv.bodies.map(bodyToClient);
+  // Where Centauri's suns are in their dance, for every station yield
+  // readout this state drives (farSystems.ts, worker/binaryDance.js).
+  setBinaryCloseness(binaryClosenessFrom(bodies, srv.game.current_tick));
   // A discovered stargate now stands up two REAL gate bodies, one of
   // them in orbit of the world that hid it. The older model redrew the
   // HOST as the gate, and both survived — so a discovery turned the

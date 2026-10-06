@@ -9,7 +9,10 @@
 // ============================================================
 
 import { settlementYield } from '../settlements';
-import { BINARY_SYSTEM_TEMPLATE_IDS, BINARY_STATION_MUL, isBinarySystemBody } from '../farSystems';
+import {
+  BINARY_SYSTEM_TEMPLATE_IDS, BINARY_STATION_MUL, isBinarySystemBody,
+  BINARY_INNER_TEMPLATE_IDS, setBinaryCloseness, binaryClosenessFrom,
+} from '../farSystems';
 import type { Body, Settlement } from '../../types';
 /* eslint-disable @typescript-eslint/no-var-requires */
 const systems = require('../../../worker/systems.js');
@@ -35,22 +38,46 @@ describe('the binary system', () => {
     expect(isBinarySystemBody({ id: 'requiem' })).toBe(false);
   });
 
-  it('doubles a station in Centauri, and nothing else', () => {
-    const verdant = body('verdant'), earth = body('earth'), requiem = body('requiem');
+  it('scales a station in Centauri by its zone, and nothing else', () => {
+    const crimson = body('crimson'), verdant = body('verdant'), earth = body('earth'), requiem = body('requiem');
     const sum = (y: ReturnType<typeof settlementYield>) => y.ore + y.credits + y.science + y.fuel;
-    expect(sum(settlementYield(at(earth, 'station'), earth))).toBeGreaterThan(0);
-    expect(sum(settlementYield(at(verdant, 'station'), verdant)))
-      .toBeCloseTo(sum(settlementYield(at(earth, 'station'), earth)) * 2, 9);
+    const sol = sum(settlementYield(at(earth, 'station'), earth));
+    expect(sol).toBeGreaterThan(0);
+    // Around both suns: x2, whatever the dance.
+    setBinaryCloseness(0);
+    expect(sum(settlementYield(at(crimson, 'station'), crimson))).toBeCloseTo(sol * 2, 9);
+    // Around one sun: x1.5 with the suns apart, x3 together.
+    expect(sum(settlementYield(at(verdant, 'station'), verdant))).toBeCloseTo(sol * 1.5, 9);
+    setBinaryCloseness(1);
+    expect(sum(settlementYield(at(verdant, 'station'), verdant))).toBeCloseTo(sol * 3, 9);
+    expect(sum(settlementYield(at(crimson, 'station'), crimson))).toBeCloseTo(sol * 2, 9);
+    // Cities and other systems: untouched.
     expect(sum(settlementYield(at(verdant, 'city'), verdant)))
       .toBeCloseTo(sum(settlementYield(at(earth, 'city'), earth)), 9);
-    expect(sum(settlementYield(at(requiem, 'station'), requiem)))
-      .toBeCloseTo(sum(settlementYield(at(earth, 'station'), earth)), 9);
+    expect(sum(settlementYield(at(requiem, 'station'), requiem))).toBeCloseTo(sol, 9);
+    setBinaryCloseness(0.5);
   });
 
-  it('the server doubles the same thing', () => {
+  it('the server scales the same thing', () => {
     const base = { fuel: 1.1, metal: 0.8, gold: 1.0, science: 1.4 };
-    expect(systems.stationTypeMul(base, 'station', { id: 'g1:crimson' }).science).toBeCloseTo(2.8, 9);
-    expect(systems.stationTypeMul(base, 'city', { id: 'g1:crimson' })).toBe(base);
-    expect(systems.stationTypeMul(base, 'station', { id: 'g1:echelon' })).toBe(base);
+    expect(systems.stationTypeMul(base, 'station', { id: 'g1:crimson' }, 0).science).toBeCloseTo(2.8, 9);
+    expect(systems.stationTypeMul(base, 'station', { id: 'g1:verdant' }, 0).science).toBeCloseTo(2.1, 9);
+    expect(systems.stationTypeMul(base, 'station', { id: 'g1:verdant' }, 1).science).toBeCloseTo(4.2, 9);
+    expect(systems.stationTypeMul(base, 'city', { id: 'g1:crimson' }, 1)).toBe(base);
+    expect(systems.stationTypeMul(base, 'station', { id: 'g1:echelon' }, 1)).toBe(base);
+    expect([...BINARY_INNER_TEMPLATE_IDS].sort()).toEqual([...systems.BINARY_INNER_TEMPLATE_IDS].sort());
+  });
+
+  it('client and server see the suns at the same point of the dance', () => {
+    const { binaryCloseness } = require('../../../worker/binaryDance.js');
+    const row = { orbit_rp: 276, orbit_ra: 644, orbit_omega: 0, orbit_m0: 0, orbit_period: 168 };
+    const bodies = [
+      { id: 'binary_barycenter', name: 'b', type: 'lagrange', radius: 1, orbitRadius: 0, orbitPeriod: 1e12, angle0: 0, soi: 0, color: '#fff' },
+      { id: 'centauri_a', name: 'A', type: 'star', parent: 'binary_barycenter', radius: 16, orbitRadius: 460,
+        orbitPeriod: 168, angle0: 0, soi: 320, color: '#fff', orbit_rp: 276, orbit_ra: 644, orbit_omega: 0, orbit_m0: 0 },
+    ] as unknown as Body[];
+    for (let tick = 0; tick < 240; tick += 7) {
+      expect(binaryClosenessFrom(bodies, tick)).toBeCloseTo(binaryCloseness(row, tick), 9);
+    }
   });
 });

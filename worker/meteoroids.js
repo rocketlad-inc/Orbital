@@ -405,8 +405,10 @@ export function generateFarMeteoroids(rand, catalog) {
       const host = byId.get(hostId);
       if (!host) continue;
       out.push({
+        // The host's own parent: Verdant's L3 is around Centauri A, not
+        // the barycenter, since Verdant orbits A alone.
         id: `mtr_${sys.key}_${hostId}_l3`, name: name(), type: 'lagrange',
-        parent: sys.barycenter, radius: 0.3 + rand() * 0.15, soi: 0, mu: 0,
+        parent: host.parent, radius: 0.3 + rand() * 0.15, soi: 0, mu: 0,
         orbit_radius: host.orbit_radius, orbit_period: host.orbit_period,
         angle0: (host.angle0 + Math.PI) % TWO_PI,
         color: '#8b7d6b', far_system: true,

@@ -501,18 +501,20 @@ export const BODY_CATALOG = [
     color: '#3a3a44', far_system: true,
     yield: { metal: 0, fuel: 0, gold: 0, science: 0 } },
   { id: 'centauri_a', name: 'Centauri A', type: 'star', parent: 'binary_barycenter',
-    radius: 8, soi: 35, mu: 200,
-    orbit_radius: 18, orbit_period: 240, angle0: 0,
+    radius: 8, soi: 80, mu: 200,
+    orbit_radius: 230, orbit_period: 168 / Math.pow(2, 1.5), angle0: 0,
     color: '#ffe082', far_system: true,
+    orbit_rp: 138, orbit_ra: 322, orbit_omega: 0, orbit_m0: 0,
     yield: { metal: 0, fuel: 0, gold: 0, science: 0 } },
   { id: 'centauri_b', name: 'Centauri B', type: 'star', parent: 'binary_barycenter',
-    radius: 6, soi: 28, mu: 150,
-    orbit_radius: 28, orbit_period: 240, angle0: Math.PI,
+    radius: 6, soi: 80, mu: 150,
+    orbit_radius: 270, orbit_period: 168 / Math.pow(2, 1.5), angle0: Math.PI,
     color: '#ff8a5e', far_system: true,
+    orbit_rp: 162, orbit_ra: 378, orbit_omega: Math.PI, orbit_m0: 0,
     yield: { metal: 0, fuel: 0, gold: 0, science: 0 } },
-  { id: 'verdant', name: 'Verdant', type: 'terrestrial', parent: 'binary_barycenter',
-    radius: 4, soi: 60, mu: 150,
-    orbit_radius: 400, orbit_period: 700, angle0: 0.3,
+  { id: 'verdant', name: 'Verdant', type: 'terrestrial', parent: 'centauri_a',
+    radius: 4, soi: 25, mu: 150,
+    orbit_radius: 55, orbit_period: 35.7, angle0: 0.3,
     color: '#3aaf6e', far_system: true,
     yield: { metal: 8, fuel: 0, gold: 8, science: 12 } },
   // Every far terrestrial world holds one or two moons (Lorne,
@@ -531,7 +533,7 @@ export const BODY_CATALOG = [
     yield: { metal: 4, fuel: 0, gold: 4, science: 3 } },
   { id: 'crimson', name: 'Crimson', type: 'gas-giant', parent: 'binary_barycenter',
     radius: 9, soi: 110, mu: 350,
-    orbit_radius: 850, orbit_period: 2100, angle0: 2.1,
+    orbit_radius: 1900, orbit_period: 7247, angle0: 2.1,
     color: '#d35454', far_system: true,
     yield: { metal: 2, fuel: 0, gold: 13, science: 6 } },
   { id: 'prismara', name: 'Prismara', type: 'moon', parent: 'crimson',
@@ -556,9 +558,9 @@ export const BODY_CATALOG = [
     orbit_radius: 85, orbit_period: 532, angle0: 4.2,
     color: '#6a4a36', far_system: true,
     yield: { metal: 8, fuel: 0, gold: 3, science: 4 } },
-  { id: 'cinder', name: 'Cinder', type: 'terrestrial', parent: 'binary_barycenter',
-    radius: 3, soi: 40, mu: 90,
-    orbit_radius: 1400, orbit_period: 4400, angle0: 4.7,
+  { id: 'cinder', name: 'Cinder', type: 'terrestrial', parent: 'centauri_b',
+    radius: 3, soi: 15, mu: 90,
+    orbit_radius: 55, orbit_period: 35.7, angle0: 4.7,
     color: '#a8553a', far_system: true,
     yield: { metal: 11, fuel: 0, gold: 9, science: 7 } },
   { id: 'clinker', name: 'Clinker', type: 'moon', parent: 'cinder',
@@ -572,27 +574,27 @@ export const BODY_CATALOG = [
   // binary's doubled stations are the point of settling it.
   { id: 'flint', name: 'Flint', type: 'asteroid', parent: 'binary_barycenter',
     radius: 0.6, soi: 2, mu: 0.05,
-    orbit_radius: 1680, orbit_period: 5922, angle0: 0.4,
+    orbit_radius: 2100, orbit_period: 8276, angle0: 0.4,
     color: '#8a8478', far_system: true,
     yield: { metal: 8, fuel: 0, gold: 3, science: 2 } },
   { id: 'tinder', name: 'Tinder', type: 'asteroid', parent: 'binary_barycenter',
     radius: 0.5, soi: 2, mu: 0.05,
-    orbit_radius: 1750, orbit_period: 6296, angle0: 2.0,
+    orbit_radius: 2155, orbit_period: 8603, angle0: 2.0,
     color: '#a07a52', far_system: true,
     yield: { metal: 6, fuel: 0, gold: 5, science: 2 } },
   { id: 'ember', name: 'Ember', type: 'asteroid', parent: 'binary_barycenter',
     radius: 0.7, soi: 2, mu: 0.05,
-    orbit_radius: 1820, orbit_period: 6677, angle0: 3.6,
+    orbit_radius: 2210, orbit_period: 8935, angle0: 3.6,
     color: '#b0603a', far_system: true,
     yield: { metal: 7, fuel: 0, gold: 4, science: 3 } },
   { id: 'pyrite', name: 'Pyrite', type: 'asteroid', parent: 'binary_barycenter',
     radius: 0.55, soi: 2, mu: 0.05,
-    orbit_radius: 1890, orbit_period: 7066, angle0: 5.1,
+    orbit_radius: 2265, orbit_period: 9271, angle0: 5.1,
     color: '#c8b060', far_system: true,
     yield: { metal: 5, fuel: 0, gold: 8, science: 1 } },
   { id: 'farspire', name: 'Farspire', type: 'dwarf', parent: 'binary_barycenter',
     radius: 1.5, soi: 9, mu: 1,
-    orbit_radius: 2400, orbit_period: 10000, angle0: 1.5,
+    orbit_radius: 2900, orbit_period: 13665, angle0: 1.5,
     color: '#9088b0', far_system: true,
     yield: { metal: 8, fuel: 0, gold: 4, science: 10 } },
 
@@ -2764,11 +2766,18 @@ async function computePoolIncomePerFaction(env, gameId) {
   const industryMulOf = new Map();
   for (const r of techRows) industryMulOf.set(r.faction_id, 1 + 0.10 * Number(r.level ?? 0));
 
+  // Same dance as the tick (room.js), at the game's current tick.
+  let binaryClose = 0.5;
+  try {
+    const { binaryCloseness, binaryStarRow } = await import('./binaryDance.js');
+    const g = await env.DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
+    binaryClose = binaryCloseness(await binaryStarRow(env, gameId), Number(g?.current_tick ?? 0));
+  } catch { binaryClose = 0.5; }
   const perFaction = new Map();
   for (const s of settlements) {
-    // Same binary-system doubling as the tick (room.js).
+    // Same binary-system bonus as the tick (room.js).
     const tm = stationTypeMul(s.type === 'city' ? TYPE_MUL_CITY : TYPE_MUL_STATION,
-      s.type, { id: s.body_id });
+      s.type, { id: s.body_id }, binaryClose);
     const popMul = 1 + YIELD_MULT_PER_POP * Math.max(0, Number(s.population ?? 1) - 1);
     let bld = {};
     if (s.buildings_json) { try { bld = JSON.parse(s.buildings_json) ?? {}; } catch { bld = {}; } }

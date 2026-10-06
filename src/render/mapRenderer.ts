@@ -8590,7 +8590,23 @@ export function drawSystemRegions(
   const H = ctx.canvas.height;
   const MX = Math.round(W / 4);
   const MY = Math.round(H / 4);
-  const key = [Math.round(scale * 1000), W, H, Math.round(fade * 100), sig].join('|');
+  // RINGS ON A MOVING CENTRE. Centauri's worlds that orbit one sun are
+  // ringed around THAT sun, and the suns dance (factions.js), so where a
+  // ring centre sits is part of what the layer shows. To 3 px: a sun on
+  // a 240-tick cycle crosses that in a long while, so this repaints
+  // rarely. Sol has no parent and never moves, so it costs nothing.
+  let centres = '';
+  const seenCentre = new Set<string>();
+  for (const rg of regions) {
+    const id = rg.shape.starBodyId;
+    if (seenCentre.has(id)) continue;
+    seenCentre.add(id);
+    const cb = bodyById(ctx.bodies, id);
+    if (!cb || !cb.parent) continue;
+    const wp = bodyPosition(cb, ctx.t, ctx.bodies);
+    centres += `${Math.round(wp.x * scale / 3)},${Math.round(wp.y * scale / 3)};`;
+  }
+  const key = [Math.round(scale * 1000), W, H, Math.round(fade * 100), sig, centres].join('|');
   if (key === washKey && washLayer && washAnchor) {
     const dx = (washAnchor.x - ctx.camera.x) * scale;
     const dy = (washAnchor.y - ctx.camera.y) * scale;

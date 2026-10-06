@@ -132,10 +132,31 @@ export const BINARY_STATION_MUL = 2;
 export function isBinarySystemBody(row) {
   return BINARY_SYSTEM_TEMPLATE_IDS.has(templateOf(row));
 }
-/** A settlement's type multipliers, doubled for a station in Centauri. */
-export function stationTypeMul(base, settlementType, bodyRow) {
-  if (settlementType === 'city' || !isBinarySystemBody(bodyRow)) return base;
-  const m = BINARY_STATION_MUL;
+/** The worlds that orbit ONE of Centauri's suns (Lorne, 2026-10-06, "two
+ *  homes"): Verdant and its moons around A, Cinder and Clinker around B.
+ *  Everything else in the binary circles both. Mirrored in
+ *  src/game/farSystems.ts. */
+export const BINARY_INNER_TEMPLATE_IDS = new Set([
+  'verdant', 'thistle', 'sorrel', 'cinder', 'clinker',
+]);
+/** A station around ONE sun: x1.5 with the suns furthest apart, x3 as they
+ *  swing closest (closeness 0..1, binaryDance.js). */
+export const INNER_STATION_MUL_FAR = 1.5;
+export const INNER_STATION_MUL_NEAR = 3;
+/** What a station's yields are multiplied by on this body, given how close
+ *  the suns are. 1 outside Centauri; x2 for a station around both suns;
+ *  x1.5..x3 with the dance for one around a single sun. */
+export function binaryStationFactor(bodyRow, closeness = 0.5) {
+  if (!isBinarySystemBody(bodyRow)) return 1;
+  if (!BINARY_INNER_TEMPLATE_IDS.has(templateOf(bodyRow))) return BINARY_STATION_MUL;
+  const c = Math.max(0, Math.min(1, Number(closeness)));
+  return INNER_STATION_MUL_FAR + (INNER_STATION_MUL_NEAR - INNER_STATION_MUL_FAR) * c;
+}
+/** A settlement's type multipliers, scaled for a station in Centauri. */
+export function stationTypeMul(base, settlementType, bodyRow, closeness = 0.5) {
+  if (settlementType === 'city') return base;
+  const m = binaryStationFactor(bodyRow, closeness);
+  if (m === 1) return base;
   return { fuel: base.fuel * m, metal: base.metal * m, gold: base.gold * m, science: base.science * m };
 }
 
