@@ -94,8 +94,8 @@ export function TradesPanel({ gameId, view = 'deals' }: {
   };
   const respondAsset = (id: string, accept: boolean) =>
     runAsset(() => api.respondAssetDeal(id, accept), 'Server refused the answer.');
-  const payAsset = (id: string, shipId: string) =>
-    runAsset(() => api.payAssetDeal(id, shipId), 'Server refused the payment.');
+  const payAsset = (id: string, shipId: string, destBodyId?: string) =>
+    runAsset(() => api.payAssetDeal(id, shipId, destBodyId), 'Server refused the payment.');
   const cancelAsset = (id: string) =>
     runAsset(() => api.cancelAssetDeal(id), 'Server refused the cancellation.');
   const [error, setError] = useState<string | null>(null);

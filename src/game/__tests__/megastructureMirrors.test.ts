@@ -1197,12 +1197,25 @@ describe('asset deals hand over on delivery', () => {
     expect(body).toMatch(/await assetState\(/);
   });
 
-  it('payment must physically arrive at the asset', () => {
+  // Since 2026-10-06 (Lorne): at the asset OR at any of the seller's
+  // settlements -- but still PHYSICALLY: unloaded from a parked hull, or
+  // hauled there by a dispatched shipment and paid in on arrival.
+  it('payment must physically arrive at a payment destination', () => {
     const i = acts.indexOf('async function handlePayAssetDeal');
     const body = acts.slice(i, acts.indexOf('\n}\n', i));
-    expect(body).toMatch(/ship\.parent_body_id !== deal\.delivery_body_id/);
+    expect(body).toMatch(/isPaymentDest\(env, gameId, deal, ship\.parent_body_id\)/);
     // And it drains the hold, so the freight is really spent.
     expect(body).toMatch(/cargo_metal = MAX\(0, cargo_metal - \?\)/);
+    // Anything else is a shipment that has to fly there.
+    expect(body).toMatch(/INSERT INTO trade_deliveries/);
+  });
+
+  it('a payment lands only at the asset or one of the seller\'s settlements', () => {
+    const i = deals.indexOf('export async function isPaymentDest');
+    const body = deals.slice(i, deals.indexOf('\n}', i));
+    expect(body).toMatch(/bodyId === deal\.delivery_body_id/);
+    expect(body).toMatch(/owner_faction_id = \?/);
+    expect(body).toMatch(/deal\.seller_faction_id/);
   });
 
   it('cancelling is not a way to keep the instalments', () => {

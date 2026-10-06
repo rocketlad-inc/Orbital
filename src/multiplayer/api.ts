@@ -906,6 +906,13 @@ export interface AssetDealRow {
   paid_metal: number;
   paid_credits: number;
   status: 'offered' | 'active';
+  /** Where the asset stood at proposal (the default place to pay). */
+  delivery_body_id?: string;
+  /** Buyer only: where a payment may land -- the asset, or any of the
+   *  seller's settlements. */
+  pay_dests?: Array<{ body_id: string; name: string }>;
+  /** Buyer only: payment already riding freighters toward the deal. */
+  in_flight?: { metal: number; credits: number; freighters: number };
 }
 
 export interface AssetSellable {
@@ -975,10 +982,10 @@ export function tradesApi(gameId: string) {
         { method: 'POST', body: JSON.stringify({ accept }) },
       );
     },
-    payAssetDeal(dealId: string, shipId: string) {
+    payAssetDeal(dealId: string, shipId: string, destBodyId?: string) {
       return apiFetch<{ ok: boolean }>(
         `/api/games/${gameId}/asset-deals/${encodeURIComponent(dealId)}/pay`,
-        { method: 'POST', body: JSON.stringify({ ship_id: shipId }) },
+        { method: 'POST', body: JSON.stringify({ ship_id: shipId, dest_body_id: destBodyId }) },
       );
     },
     cancelAssetDeal(dealId: string) {
