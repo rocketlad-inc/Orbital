@@ -57,6 +57,18 @@ function shipIsArmed(s: Ship): boolean {
   return (s.damagePerTick ?? getShipClass(s.class).damagePerTick) > 0;
 }
 
+/** MULTIPLAYER: can this settlement shoot at all? MIRROR of the server's
+ *  return-fire gate (worker/room.js, "Station return-fire"): cities never
+ *  fire, and a station has no guns until its Weapons module is built.
+ *  Playtest report (Franz, 2026-10): "Stations without weapons visually
+ *  shoot back invading forces" — the FX layer drew a bolt from every
+ *  hostile settlement at the fight, guns or not. */
+export function settlementHasGuns(stl: Settlement): boolean {
+  return stl.type === 'station'
+    && stl.hp > 0
+    && Number(stl.buildings?.weapons ?? 0) >= 1;
+}
+
 // Seeded randomness — one shared implementation lives in planetTexture
 // (FNV-1a → mulberry32). This module used to carry private copies
 // because its branch predated that file; deduped at integration so all
@@ -727,6 +739,10 @@ export function drawEngagementFire(
   /** Live megastructures, keyed on local body id. Only Weapons Stations
    *  shoot, and only the server's stamp says when. */
   megastructures?: Record<string, MegastructureState>,
+  /** MULTIPLAYER only: when given, a settlement that fails this test is
+   *  never a shooter, whatever its lastCombatTick says (see
+   *  settlementHasGuns). Omitted = the legacy behaviour, unchanged. */
+  settlementMayFire?: (stl: Settlement) => boolean,
 ): void {
   // The server never fires between at-peace factions (room.js builds the
   // same nap/defense-pact set) - so neither may the animation. Without
@@ -833,6 +849,7 @@ export function drawEngagementFire(
     if (fired === undefined) continue;
     if (currentTick - fired > ENGAGED_WINDOW_TICKS) continue;
     if (stl.hp <= 0) continue;
+    if (settlementMayFire && !settlementMayFire(stl)) continue;
     if (!hasHostileFaction(bodyShipFactions, stl.bodyId, stl.ownedBy, peace)) continue;
     takeEngaged(stl.id, stl.bodyId, stl.ownedBy, null, stl);
   }
