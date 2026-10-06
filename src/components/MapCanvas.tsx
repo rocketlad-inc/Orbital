@@ -2303,6 +2303,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
                 sizePx: shipIconSize(s.class, false),
                 armed: (s.damagePerTick ?? getShipClass(s.class).damagePerTick) > 0,
                 escortRel: escortRel && escortRel.length > 0 ? escortRel : undefined,
+                escortIds: marker && marker.escortIds.length > 0 ? [...marker.escortIds] : undefined,
               });
             }
             const station = gameState.settlements.find(
@@ -3225,6 +3226,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // then times the battle's k, so the whole fleet shrinks in place.
         const hbR = bLook ? Math.max(shipIconSize(lead.class, false) / 2 + 3, 12) : hb.r;
         const bk = bLook ? bLook.k : 1;
+        // Escort SPRITES follow the hulls' size cap; their slots follow k.
+        const bks = bLook ? bLook.ks : 1;
         // escortBlockSpacing: the slot rule x FLEET_ESCORT_SCALE (1.5), shared
         // with the layout so a block is laid out as big as it is drawn.
         const spacing0 = escortBlockSpacing(n, hbR) * Math.max(0.35, fold);
@@ -3243,7 +3246,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           }
           const ex = hb.x + offs[i].dx;
           const ey = hb.y + offs[i].dy;
-          drawEscortHull(renderContext, esc, ex, ey, escortGlyphFor(spacing), heading);
+          drawEscortHull(renderContext, esc, ex, ey, escortGlyphFor(spacing0 * bks), heading);
           // Where this hull IS, for everything that asks: its bolts leave
           // from here, hits on it land here, a click here is the fleet.
           fleetSlots.set(esc.id, { x: ex, y: ey });

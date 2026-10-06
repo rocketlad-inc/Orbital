@@ -36,6 +36,16 @@ export const BATTLE_TURN_MS = 240000;
 export const BATTLE_STATION_PX = 200;
 /** How fast a unit glides to a new place, ms (time constant). */
 const GLIDE_MS = 260;
+/** Sprites grow with the world up to this many times full size, then
+ *  hold. Places keep scaling (so the fight stays clear of the disc);
+ *  only the hulls stop growing, which can only open space, never close
+ *  it. Without it the world menu's close zoom drew hulls 3-5x full size. */
+export const BATTLE_SPRITE_MAX_K = 2;
+
+/** The sprite scale for a layout scale k. */
+export function battleSpriteScale(k: number): number {
+  return Math.min(k, BATTLE_SPRITE_MAX_K);
+}
 /** SHIP_MIN_HIT_RADIUS in mapRenderer: the floor under a hull's hit radius. */
 const MIN_HIT_R = 12;
 
@@ -118,6 +128,8 @@ export interface BattleUnit {
   armed: boolean;
   /** A fleet marker: each escort's size as a fraction of its slot. */
   escortRel?: number[];
+  /** A fleet marker: the escort hulls riding in its block. */
+  escortIds?: string[];
 }
 
 export interface LiveBattle {
@@ -132,6 +144,8 @@ export interface LiveBattle {
   blocks: Map<string, BlockGeometry>;
   /** The world's station settlement id, when it has one in the layout. */
   stationId?: string;
+  /** Escort hull -> the fleet lead whose block it rides in. */
+  leadOf: Map<string, string>;
 }
 
 const cache = new Map<string, LiveBattle>();
@@ -141,7 +155,7 @@ export function battleKey(
   refR: number, dir: number, units: readonly BattleUnit[], order: readonly string[], stationId?: string,
 ): string {
   const u = [...units].sort((a, b) => (a.id < b.id ? -1 : 1))
-    .map(x => `${x.id}:${x.owner}:${x.group ?? ''}:${Math.round(x.sizePx)}:${x.escortRel?.length ?? 0}`);
+    .map(x => `${x.id}:${x.owner}:${x.group ?? ''}:${Math.round(x.sizePx)}:${(x.escortIds ?? []).join(',')}:${x.escortRel?.length ?? 0}`);
   return `${Math.round(refR)}|${dir}|${order.join(',')}|${stationId ?? ''}|${u.join(';')}`;
 }
 
@@ -169,6 +183,8 @@ export function liveBattleFor(
   const hit = cache.get(bodyId);
   if (hit && hit.key === key) return hit;
   const blocks = new Map<string, BlockGeometry>();
+  const leadOf = new Map<string, string>();
+  for (const u of units) for (const e of u.escortIds ?? []) leadOf.set(e, u.id);
   const ships: OBShip[] = units.map(u => {
     let clearR: number | undefined;
     if (u.escortRel && u.escortRel.length > 0) {
@@ -183,7 +199,7 @@ export function liveBattleFor(
     factionOrder: [...order],
     station: stationId ? { id: stationId, clearR: BATTLE_STATION_PX * CLEAR_FRAC } : undefined,
   });
-  const lb: LiveBattle = { bodyId, key, refR, dir, layout, blocks, stationId };
+  const lb: LiveBattle = { bodyId, key, refR, dir, layout, blocks, stationId, leadOf };
   cache.set(bodyId, lb);
   return lb;
 }
@@ -251,6 +267,31 @@ export function battlePlacement(
   const jitter = p.heading - (Math.atan2(p.y, p.x) + Math.PI / 2);
   const heading = theta + (Math.PI / 2) * battle.dir + jitter;
   return { x: Math.cos(theta) * g.r, y: Math.sin(theta) * g.r, theta, r: g.r, heading };
+}
+
+/**
+ * Where a ship sits in its world's layout NOW, in SCREEN px from the
+ * world's centre at scale k: a lone hull or a lead at its own place, an
+ * escort at its block's centre (close enough for an effect aimed at a
+ * hull that was not drawn this frame). Null when the layout has no place
+ * for it. Effects read this instead of the hull's raw orbit point, which
+ * the layout no longer uses: a fire or a bolt drawn there floated in
+ * empty space (Lorne: "rogue damage effects floating by").
+ */
+export function battleShipOffsetPx(
+  battle: LiveBattle, shipId: string, nowMs: number, k: number,
+): { x: number; y: number } | null {
+  const unit = battle.leadOf.get(shipId) ?? shipId;
+  const pl = battlePlacement(battle, unit, nowMs);
+  if (!pl) return null;
+  let x = pl.x * k, y = pl.y * k;
+  const blk = unit === shipId ? battle.blocks.get(unit) : undefined;
+  if (blk) {
+    const c = Math.cos(pl.heading), s = Math.sin(pl.heading);
+    x += (blk.flagX * c - blk.flagY * s) * k;
+    y += (blk.flagX * s + blk.flagY * c) * k;
+  }
+  return { x, y };
 }
 
 /** Test hook: clear every cached battle and glide. */

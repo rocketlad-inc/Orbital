@@ -54,7 +54,8 @@ import type { BodyPresentation } from './bodyPresentation';
 import { glowAt, drawExplosion, drawCharge, HullLook, fxSpriteBytes, drawShieldRipple, drawHullFire, drawHullBreakup } from './fxArt';
 import { drawnRadiusOf, inflationOf, parkedRadiusMap } from './bodyPresentation';
 import {
-  battlePlacement, battleScale, battleDrift, hasBattleGlide, seedBattleGlide, type LiveBattle,
+  battlePlacement, battleScale, battleDrift, hasBattleGlide, seedBattleGlide, battleSpriteScale,
+  type LiveBattle,
 } from './battleLayoutLive';
 import { FX_TUNING } from './fxTuning';
 import {
@@ -156,7 +157,7 @@ export interface RenderContext {
   /** Hulls drawn in a whole-orbit battle this frame: their heading and
    *  the battle's scale k, so the fleet-marker pass can draw the escort
    *  block in the same frame and at the same scale as its flagship. */
-  battleLooks?: Map<string, { heading: number; k: number }>;
+  battleLooks?: Map<string, { heading: number; k: number; ks: number }>;
   /** Where each station was DRAWN this frame (canvas px), so combat FX
    *  fire from and at the station the player sees. */
   stationCanvasPos?: Map<string, { x: number; y: number }>;
@@ -4658,7 +4659,7 @@ export function drawShip(
       }
       lx = px / ctx.camera.scale;
       ly = py / ctx.camera.scale;
-      ctx.battleLooks?.set(ship.id, { heading, k });
+      ctx.battleLooks?.set(ship.id, { heading, k, ks: battleSpriteScale(k) });
     }
   }
 
@@ -4838,7 +4839,7 @@ export function drawShip(
   const shipColorValue = shipColor(ship, ctx.factions);
 
   const iconSize = shipIconSize(ship.class, isSelected)
-    * (battleK >= 0 ? battleK : (ship.transit || isSelected) ? 1 : sizeScale);
+    * (battleK >= 0 ? battleSpriteScale(battleK) : (ship.transit || isSelected) ? 1 : sizeScale);
 
   // Record the true drawn box for hit-testing: canvasPos already carries
   // the orbit spin, tick interpolation AND the formation spread, so a
@@ -6956,7 +6957,7 @@ export function drawStation(
     if (pl) {
       const c = worldToCanvas(bodyPos.x, bodyPos.y, ctx);
       canvasPos = { x: c.x + pl.x * k, y: c.y + pl.y * k };
-      structScale = STATION_STRUCTURE_SCALE * k;
+      structScale = STATION_STRUCTURE_SCALE * battleSpriteScale(k);
     }
   }
   ctx.stationCanvasPos?.set(settlement.id, canvasPos);

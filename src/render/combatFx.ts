@@ -27,6 +27,7 @@ import { RenderContext, worldToCanvas, drawnShipLook, drawnShipWorldPos, nearest
 import { hashStr, mulberry32 } from './planetTexture';
 import { isLightweight } from './lightweightMode';
 import { drawnRadiusOf } from './bodyPresentation';
+import { battleScale, battleShipOffsetPx } from './battleLayoutLive';
 import { getWorldMenuOpenBodyId } from '../game/worldMenu/store';
 import {
   drawRound, drawMuzzle, drawBeam, drawCharge, drawSparks, drawHullHit, drawShieldHit, drawScorch,
@@ -254,6 +255,19 @@ export function shipCanvasPos(
   const parent = bodyOf(rc, ship.orbit.parentBodyId);
   if (!parent) return null;
   const pp = bodyPosition(parent, rc.t, rc.bodies);
+  // NOT DRAWN THIS FRAME (culled off-screen, say) at a laid-out world: the
+  // hull's place is its spot in the layout, NOT its raw orbit point. The
+  // layout ignores the orbit, so effects resolved there (fires, smoke,
+  // bolts) floated in empty space, most visibly behind the world menu.
+  const lb = rc.presentation ? rc.liveBattles?.get(ship.orbit.parentBodyId) : undefined;
+  if (lb) {
+    const k = battleScale(lb, drawnRadiusOf(rc.presentation, parent, rc.camera.scale));
+    const off = k > 0 ? battleShipOffsetPx(lb, ship.id, rc.nowMs ?? performance.now(), k) : null;
+    if (off) {
+      const c = worldToCanvas(pp.x, pp.y, rc);
+      return { x: c.x + off.x, y: c.y + off.y };
+    }
+  }
   // SPIN_CLOCK, not rc.nowMs. drawShip drives the cosmetic spin from
   // Date.now() while rc.nowMs is performance.now() — two unrelated
   // epochs feeding the same `nowMs % 180_000` lap fraction, so this
@@ -293,14 +307,17 @@ function shipLeadCanvas(
  *  their orbital point via the same Kepler path the sprite uses
  *  (including the static-angle fallback on mu=0 primaries); cities sit
  *  on their body's surface at surfaceAngle. */
-function settlementCanvasPos(
+export function settlementCanvasPos(
   stl: Settlement,
   rc: RenderContext,
 ): { x: number; y: number } | null {
-  // Where the station was DRAWN this frame first: at a whole-orbit battle
-  // it sits opposite the fight (battleLayoutLive), not on its orbit.
-  const drawn = rc.stationCanvasPos?.get(stl.id);
-  if (drawn) return drawn;
+  // Where the station was DRAWN this frame first: at a laid-out world it
+  // sits opposite the ships (battleLayoutLive), not on its orbit. A
+  // station the map did NOT draw this frame (every station is hidden
+  // while a world menu is open) has no place to fire from or burn at.
+  if (rc.stationCanvasPos && stl.type === 'station') {
+    return rc.stationCanvasPos.get(stl.id) ?? null;
+  }
   const wp = settlementWorldPosition(stl, rc.t, rc.bodies);
   return wp ? worldToCanvas(wp.x, wp.y, rc) : null;
 }
