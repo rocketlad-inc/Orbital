@@ -13,6 +13,10 @@
 //   SWARM   many separate hulls at the world, each a full-size sprite,
 //           clumping with the others that came with it.
 //
+// Hull classes and the designs they fly follow what live games actually
+// field (CLASS_MIX / DESIGNS below), so the mix of shapes and sizes is
+// the one players see.
+//
 // Rosters are seeded, so "Large" is the same fight every time unless the
 // page rerolls. Sizes are the game's own drawn sprite sizes (mapRenderer
 // shipIconSize: SHIP_ICON_REST_SIZE x SHIP_ICON_SCALE x REGULAR_SHIP_BOOST,
@@ -22,6 +26,7 @@
 // ============================================================
 
 import { CLEAR_FRAC, type OBShip } from '../render/orbitBattleLayout';
+import type { ShipIconVariant } from '../components/ShipIcons';
 import {
   escortSpacingFor, escortStandoffFor, escortOffsets, escortGlyphFor,
 } from '../render/fleetGrouping';
@@ -58,16 +63,21 @@ export interface FleetGeometry {
   flagSize: number;
   /** Flagship centre (on the x axis, ahead of the body centre). */
   flagX: number;
-  escorts: Array<{ id: string; cls: ShipClass; x: number; y: number; size: number }>;
+  escorts: Array<{
+    id: string; cls: ShipClass; variant?: ShipIconVariant; x: number; y: number; size: number;
+  }>;
   /** Radius of the circle that covers the flagship and every escort. */
   clearR: number;
 }
 
 export interface SandboxShip extends OBShip {
   cls: ShipClass;
+  /** The hull design the player picked (designer letter); undefined =
+   *  the class default, as for a ship with no icon_variant. */
+  variant?: ShipIconVariant;
   name: string;
-  /** Present on an in-game fleet marker: the classes riding behind. */
-  escortClasses?: ShipClass[];
+  /** Present on an in-game fleet marker: the hulls riding behind. */
+  escortClasses?: Hull[];
   geo?: FleetGeometry;
 }
 
@@ -80,6 +90,36 @@ export const SCENARIOS: Record<ScenarioId, { label: string; blurb: string }> = {
   swarm:  { label: 'Swarm',       blurb: '110 vs 95 hulls, every one on its own' },
   fleets: { label: 'Fleets only', blurb: 'In-game fleets, flagship + escorts: 72 vs 57' },
   three:  { label: 'Three-way',   blurb: 'Fleets and swarms: 31 vs 27 vs 18' },
+};
+
+/** One hull of a roster: its class and the design it flies. */
+export interface Hull { cls: ShipClass; variant?: ShipIconVariant }
+
+// WHAT LIVE GAMES ACTUALLY FLY (prod D1, active games, 2026-10-06), so a
+// battle here looks like a battle there. Hulls by class: about half are
+// corvettes and destroyers are rare; most hulls fly a design the player
+// picked rather than the class default ('-').
+const CLASS_MIX: Array<[ShipClass, number]> = [
+  ['corvette', 709], ['frigate', 290], ['freighter', 220], ['destroyer', 77],
+];
+type Regular = 'corvette' | 'frigate' | 'destroyer' | 'freighter';
+const DESIGNS: Record<Regular, Array<[string, number]>> = {
+  corvette: [['-', 246], ['H', 135], ['X', 64], ['G', 52], ['Y', 49], ['T', 39], ['C', 30], ['D', 21],
+    ['A', 16], ['I', 15], ['F', 13], ['S', 8], ['E', 8], ['U', 7], ['B', 6]],
+  frigate: [['U', 52], ['C', 35], ['A', 24], ['G', 23], ['-', 23], ['D', 20], ['J', 19], ['I', 16],
+    ['H', 16], ['E', 14], ['F', 11], ['B', 11], ['P', 6]],
+  destroyer: [['D', 16], ['E', 10], ['H', 9], ['I', 8], ['C', 8], ['G', 7], ['F', 7], ['-', 6],
+    ['B', 3], ['A', 3]],
+  freighter: [['-', 163], ['B', 21], ['D', 16], ['A', 11], ['I', 3], ['C', 3], ['U', 2], ['E', 1]],
+};
+function weighted<T>(rows: Array<[T, number]>, x: number): T {
+  let t = x * rows.reduce((n, r) => n + r[1], 0);
+  for (const [k, w] of rows) { t -= w; if (t <= 0) return k; }
+  return rows[rows.length - 1][0];
+}
+const design = (cls: Regular, x: number): ShipIconVariant | undefined => {
+  const d = weighted(DESIGNS[cls], x);
+  return d === '-' ? undefined : d as ShipIconVariant;
 };
 
 function rng(seed: number): () => number {
@@ -100,7 +140,7 @@ function rng(seed: number): () => number {
  * at its size relative to a destroyer (capped at 1).
  */
 export function fleetGeometry(
-  id: string, flag: ShipClass, escorts: ShipClass[], hullScale: number,
+  id: string, flag: ShipClass, escorts: Array<Hull | ShipClass>, hullScale: number,
 ): FleetGeometry {
   const flagSize = CLASS_PX[flag] * hullScale;
   const hr = flagSize / 2;
@@ -109,10 +149,11 @@ export function fleetGeometry(
   const offs = escortOffsets(escorts.length, spacing, 0, escortStandoffFor(hr, spacing));
   const glyph = escortGlyphFor(spacing);
   const pts = [{ x: 0, y: 0, r: hr * (CLEAR_FRAC * 2) }];
-  const raw = escorts.map((cls, i) => {
+  const raw = escorts.map((h, i) => {
+    const { cls, variant } = typeof h === 'string' ? { cls: h, variant: undefined } : h;
     const size = Math.max(3, glyph * Math.min(1, CLASS_PX[cls] / CLASS_PX.destroyer));
     pts.push({ x: offs[i].dx, y: offs[i].dy, r: (size / 2) * (CLEAR_FRAC * 2) });
-    return { id: `${id}.e${i}`, cls, x: offs[i].dx, y: offs[i].dy, size };
+    return { id: `${id}.e${i}`, cls, variant, x: offs[i].dx, y: offs[i].dy, size };
   });
   // Centre the body on the block's bounding box.
   const minX = Math.min(...pts.map(p => p.x - p.r)), maxX = Math.max(...pts.map(p => p.x + p.r));
@@ -140,29 +181,31 @@ interface SideSpec {
 
 function side(faction: string, spec: SideSpec, R: () => number, hullScale: number): SandboxShip[] {
   const out: SandboxShip[] = [];
-  const pick = (): ShipClass => {
-    const x = R();
-    return x < 0.42 ? 'corvette' : x < 0.72 ? 'frigate' : x < 0.9 ? 'destroyer' : 'freighter';
+  const pick = (): Hull => {
+    const cls = weighted(CLASS_MIX, R()) as Regular;
+    return { cls, variant: design(cls, R()) };
   };
   (spec.fleets ?? []).forEach((n, k) => {
     const id = `${faction}-F${k}`;
-    const flag: ShipClass = k < (spec.capitals ?? 0) ? 'mega_destroyer' : 'destroyer';
+    const capital = k < (spec.capitals ?? 0);
+    const flag: ShipClass = capital ? 'mega_destroyer' : 'destroyer';
+    const variant = capital ? undefined : design('destroyer', R());
     const escortClasses = Array.from({ length: n }, pick);
     const geo = fleetGeometry(id, flag, escortClasses, hullScale);
     out.push({
       id, name: `${faction.toUpperCase()} Fleet ${k + 1}`, faction,
       // Its own layout group: a fleet marker is one body.
       fleet: id,
-      cls: flag, size: geo.flagSize, clearR: geo.clearR, armed: true,
+      cls: flag, variant, size: geo.flagSize, clearR: geo.clearR, armed: true,
       escortClasses, geo,
     });
   });
   const groups = spec.groups ?? 1;
   for (let i = 0; i < (spec.swarm ?? 0); i++) {
-    const cls = pick();
+    const { cls, variant } = pick();
     const fleet = R() > 0.16 ? `${faction}-s${Math.floor(R() * groups)}` : null;
     out.push({
-      id: `${faction}-${i}`, name: `${faction.toUpperCase()}-${i}`, faction, fleet, cls,
+      id: `${faction}-${i}`, name: `${faction.toUpperCase()}-${i}`, faction, fleet, cls, variant,
       size: CLASS_PX[cls] * hullScale, armed: cls !== 'freighter',
     });
   }

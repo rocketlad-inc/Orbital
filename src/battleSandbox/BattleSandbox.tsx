@@ -31,7 +31,10 @@ import { hullSize } from '../render/bodyPresentation';
 import { getShipIconImage } from '../render/shipIconCache';
 import { getStructureIconImage } from '../render/structureIconCache';
 import { drawTexturedDisk, drawSphereLighting } from '../render/fxPrimitives';
-import { drawRound, drawBeam, drawMuzzle, drawHullHit, drawSparks, KINETIC_FX, ENERGY_FX } from '../render/fxArt';
+import {
+  drawRound, drawBeam, drawMuzzle, drawHullHit, drawSparks, glowAt, KINETIC_FX, ENERGY_FX,
+} from '../render/fxArt';
+import type { ShipIconVariant } from '../components/ShipIcons';
 import { artUrl } from '../render/artVersion';
 
 type PlanetId = 'luna' | 'mars' | 'jupiter';
@@ -59,6 +62,7 @@ interface Hull {
   unit: string;
   faction: string;
   cls: ShipClass;
+  variant?: ShipIconVariant;
   armed: boolean;
   size: number;
   escort: boolean;
@@ -138,14 +142,14 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
     const out: Hull[] = [];
     for (const s of ships) {
       if (s.geo) {
-        out.push({ id: s.id, unit: s.id, faction: s.faction, cls: s.cls, armed: true,
+        out.push({ id: s.id, unit: s.id, faction: s.faction, cls: s.cls, variant: s.variant, armed: true,
           size: s.geo.flagSize, escort: false, lx: s.geo.flagX, ly: 0 });
         for (const e of s.geo.escorts) {
-          out.push({ id: e.id, unit: s.id, faction: s.faction, cls: e.cls, armed: e.cls !== 'freighter',
-            size: e.size, escort: true, lx: e.x, ly: e.y });
+          out.push({ id: e.id, unit: s.id, faction: s.faction, cls: e.cls, variant: e.variant,
+            armed: e.cls !== 'freighter', size: e.size, escort: true, lx: e.x, ly: e.y });
         }
       } else {
-        out.push({ id: s.id, unit: s.id, faction: s.faction, cls: s.cls, armed: s.armed,
+        out.push({ id: s.id, unit: s.id, faction: s.faction, cls: s.cls, variant: s.variant, armed: s.armed,
           size: s.size, escort: false, lx: 0, ly: 0 });
       }
     }
@@ -315,14 +319,25 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
         if (chosen[2]) acrossCount++;
       }
 
-      // Hulls, drawn under the fire.
+      // Hulls, drawn under the fire, as drawShip draws them: the design
+      // the player picked, and the soft engine glow astern of every
+      // full-size hull. Escorts are drawEscortHull's: no glow.
       for (const s of HL) {
         const p = pos.get(s.id);
         if (!p) continue;
         const f = factionById.get(s.faction)!;
         const img = s.cls === 'mega_destroyer'
           ? getStructureIconImage('mega_destroyer', f.color, null, f.color2)
-          : getShipIconImage(s.cls, f.color, undefined, f.color2);
+          : getShipIconImage(s.cls, f.color, s.variant, f.color2);
+        if (!s.escort && s.cls !== 'mega_destroyer') {
+          const ph = (((s.id.charCodeAt(s.id.length - 1) * 37) % 1000) / 1000) * Math.PI * 2;
+          const pulse = 0.6 + 0.4 * Math.sin(now / 420 + ph);
+          g.save();
+          g.globalCompositeOperation = 'lighter';
+          glowAt(g, p.x - Math.cos(p.h) * s.size * 0.46, p.y - Math.sin(p.h) * s.size * 0.46,
+            Math.max(2.5, s.size * 0.2) * 1.15, '#fff3dc', '#ff9a4a', 0.6 * pulse);
+          g.restore();
+        }
         g.save();
         g.translate(p.x, p.y);
         g.rotate(p.h);
