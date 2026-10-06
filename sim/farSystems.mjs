@@ -187,6 +187,61 @@ check('they use the SERVER spelling for types',
     && binaryStationFactor({ id: 'g:earth' }, 1) === 1);
 }
 
+// ---- CYGNUS DANCES TOO (Lorne, 2026-10-06: "do the same thing for Cygnus")
+// The hole and its donor on matching e = 0.2 ellipses; Requiem around the
+// hole alone, Echelon around the giant alone; Vellichor, the Ossuary and
+// Reliquary circle both, clear of either SOI.
+{
+  const { eccentricLocalPosition } = await import('../worker/transitCombat.js');
+  const { ORBITAL_SPEED_SCALE } = await import('../worker/orbitPos.js');
+  const live = (id) => {
+    const b = BODY_CATALOG.find(x => x.id === id);
+    return { ...b, ...scaledGeometry(b, { bodyScale: 2 }), radius: b.radius * 2 };
+  };
+  const H = live('cygnus_x'), G = live('hde_226868');
+  const at = (b, t) => eccentricLocalPosition(b, t, ORBITAL_SPEED_SCALE);
+  let opposite = true, minSep = Infinity, maxSep = 0;
+  for (let t = 0; t < 480; t += 3) {
+    const a = at(H, t), b = at(G, t);
+    const cross = a.x * b.y - a.y * b.x, dotp = a.x * b.x + a.y * b.y;
+    if (Math.abs(cross) > 1e-6 * Math.hypot(a.x, a.y) * Math.hypot(b.x, b.y) || dotp > 0) opposite = false;
+    const sep = Math.hypot(a.x - b.x, a.y - b.y);
+    minSep = Math.min(minSep, sep); maxSep = Math.max(maxSep, sep);
+  }
+  check('Cygnus: the hole and the giant stay exactly opposite', opposite);
+  check('Cygnus: they swing from 2520 apart to 3780', Math.abs(minSep - 2520) < 3 && Math.abs(maxSep - 3780) < 3,
+    `${minSep.toFixed(0)}..${maxSep.toFixed(0)}`);
+  const reachOf = (id) => {
+    const w = live(id);
+    return Math.max(w.soi, ...BODY_CATALOG.filter(m => m.parent === id)
+      .map(m => live(m.id).orbit_radius + live(m.id).soi));
+  };
+  for (const [world, host] of [['requiem', 'cygnus_x'], ['echelon', 'hde_226868']]) {
+    const w = live(world), s = live(host);
+    check(`Cygnus: ${w.name} orbits ${s.name} alone, inside its SOI`,
+      w.parent === host && w.orbit_radius + reachOf(world) < s.soi,
+      `${w.orbit_radius} + ${reachOf(world)} vs ${s.soi}`);
+    check(`Cygnus: ${w.name}'s orbit shows clear of ${s.name}`, w.orbit_radius - reachOf(world) > 4 * s.radius);
+  }
+  check("Cygnus: the two SOIs never touch, even at their closest", H.soi + G.soi < minSep,
+    `${H.soi} + ${G.soi} vs ${minSep.toFixed(0)}`);
+  const ZONE = Math.max(H.orbit_ra + H.soi, G.orbit_ra + G.soi);
+  for (const id of ['vellichor', 'cenotaph', 'epitaph', 'votive', 'marrow', 'reliquary']) {
+    const w = live(id);
+    check(`Cygnus: ${w.name} circles both, clear of their zone`,
+      w.parent === 'bh_barycenter' && w.orbit_radius - reachOf(id) > ZONE,
+      `${w.orbit_radius} - ${reachOf(id)} vs ${ZONE}`);
+  }
+  check('Cygnus: Reliquary stays its own place, not chained into the Ossuary',
+    live('reliquary').orbit_radius > 1.25 * live('marrow').orbit_radius);
+  // The well follows the hole: Requiem, around it, is still the deep one.
+  const { legDilation } = await import('../worker/wellDilation.js');
+  const hp = at(H, 0), rq = { x: hp.x + live('requiem').orbit_radius, y: hp.y };
+  const far = { x: hp.x + 8000, y: hp.y };   // about where Reliquary flies
+  check('Cygnus: the well moves with the hole; Requiem is still deep in it',
+    legDilation(far, rq, [hp]) > 1.5, legDilation(far, rq, [hp]).toFixed(2));
+}
+
 // ---- 2. Distance is the balance -------------------------------------
 // Live games run system_scale 4 over the catalogue's own SYSTEM_SCALE 2.
 const LIVE = 4;
@@ -303,9 +358,11 @@ check('...and the rest of Sol is still there',
     `${cen.length} Centauri, ${cyg.length} Cygnus`);
   check('...orbiting their own barycenter',
     // An L3 rock rides its host's parent: Verdant's and Cinder's are
-    // around their own sun now (two homes).
+    // around their own sun now (two homes), Requiem's around the hole
+    // and Echelon's around the giant.
     cen.every(r => ['gfar_on:binary_barycenter', 'gfar_on:centauri_a', 'gfar_on:centauri_b'].includes(r.parent_body_id))
-    && cyg.every(r => r.parent_body_id === 'gfar_on:bh_barycenter'));
+    && cyg.every(r => ['gfar_on:bh_barycenter', 'gfar_on:cygnus_x', 'gfar_on:hde_226868'].includes(r.parent_body_id)),
+    [...cen, ...cyg].map(r => `${r.template_id}@${r.parent_body_id}`).join(' '));
   check('...named for their system', cen.every(r => /^CEN-\d\d$/.test(r.name)) && cyg.every(r => /^CYG-\d\d$/.test(r.name)),
     [...cen, ...cyg].map(r => r.name).join(' '));
   check('...metal and gold, never science', [...cen, ...cyg].every(r => ['metal', 'gold'].includes(r.mineral_kind)));

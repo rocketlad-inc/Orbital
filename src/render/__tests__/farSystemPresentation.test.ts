@@ -143,3 +143,60 @@ describe("Centauri's two homes at whole-system zoom", () => {
     expect(p.shown.get('g1:cinder')).toBeLessThan(1);
   });
 });
+
+// Cygnus, laid out the same way (2026-10-06, "do the same thing for
+// Cygnus"): Requiem beside the hole, Echelon beside the giant, framed so
+// Reliquary's orbit reaches 0.55 of the short side.
+describe("Cygnus's two homes at whole-system zoom", () => {
+  const cat = (id: string) => SHARED_BODIES.find(b => b.id === id)!;
+  const VIEW = { w: 2880, h: 1920 };
+  const cx = VIEW.w / 2, cy = VIEW.h / 2;
+  const scale = (0.55 * VIEW.h) / (2 * cat('reliquary').orbitRadius);
+
+  function present(homeR: number) {
+    const live = (id: string, parent: string | null, type: Body['type']) =>
+      B({ id: `g1:${id}`, type, parent: parent ? `g1:${parent}` : undefined,
+        radius: cat(id).radius * 2, orbitRadius: cat(id).orbitRadius * 2 });
+    const solB = B({ id: 'sol', type: 'star', radius: 50 });
+    const neptune = B({ id: 'neptune', type: 'gas_giant', parent: 'sol', radius: 12, orbitRadius: 1e6 });
+    const baryB = B({ id: 'g1:bh_barycenter', type: 'lagrange', parent: 'sol', radius: 0.5, orbitRadius: 340000 });
+    const hole = live('cygnus_x', 'bh_barycenter', 'black_hole');
+    const giant = live('hde_226868', 'bh_barycenter', 'star');
+    const rq = live('requiem', 'cygnus_x', 'terrestrial');
+    const ec = live('echelon', 'hde_226868', 'terrestrial');
+    const vl = live('vellichor', 'bh_barycenter', 'gas_giant');
+    const rl = live('reliquary', 'bh_barycenter', 'dwarf');
+    const rpH = 2 * cat('cygnus_x').orbit_rp!, rpG = 2 * cat('hde_226868').orbit_rp!;
+    const pos: Record<string, { x: number; y: number }> = {
+      sol: { x: -1e6, y: 0 }, neptune: { x: -1e6, y: 9000 },
+      'g1:bh_barycenter': { x: cx, y: cy },
+      'g1:cygnus_x': { x: cx - rpH * scale, y: cy },
+      'g1:hde_226868': { x: cx + rpG * scale, y: cy },
+      'g1:requiem': { x: cx - rpH * scale, y: cy - homeR * scale },
+      'g1:echelon': { x: cx + rpG * scale, y: cy + homeR * scale },
+      'g1:vellichor': { x: cx, y: cy - vl.orbitRadius * scale },
+      'g1:reliquary': { x: cx, y: cy + rl.orbitRadius * scale },
+    };
+    const bodies = [solB, neptune, baryB, hole, giant, rq, ec, vl, rl];
+    return computePresentation(bodies, scale, id => pos[id] ?? null, null, VIEW);
+  }
+
+  it('shows Requiem beside the hole and Echelon beside the giant', () => {
+    const p = present(2 * cat('requiem').orbitRadius);
+    expect(p.shown.get('g1:requiem')).toBe(1);
+    expect(p.shown.get('g1:echelon')).toBe(1);
+    expect(p.shown.get('g1:cygnus_x')).toBe(1);
+    expect(p.shown.get('g1:hde_226868')).toBe(1);
+  });
+
+  it('...still shows zoomed out by half again', () => {
+    const p = present(2 * cat('requiem').orbitRadius * (2 / 3));
+    expect(p.shown.get('g1:requiem')).toBe(1);
+    expect(p.shown.get('g1:echelon')).toBe(1);
+  });
+
+  it('models the limit: at Centauri\'s first wide cut (500 live) they fold', () => {
+    const p = present(500);
+    expect(p.shown.get('g1:echelon')).toBeLessThan(1);
+  });
+});

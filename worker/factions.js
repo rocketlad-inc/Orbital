@@ -618,19 +618,32 @@ export const BODY_CATALOG = [
     orbit_radius: 42500, orbit_period: 1e12, angle0: Math.PI,
     color: '#3a3a44', far_system: true,
     yield: { metal: 0, fuel: 0, gold: 0, science: 0 } },
+  // THE SAME DANCE AS CENTAURI (Lorne, 2026-10-06: "do the same thing
+  // for Cygnus"). The hole and its donor ride matching e = 0.2 ellipses,
+  // periapses opposite, on the game's 2:1 mass split (the hole carries a
+  // third of the 1575 spacing, the giant two thirds), swinging 2520 <->
+  // 3780 apart live every 240 ticks. Requiem orbits the hole alone, deep
+  // in its well; Echelon orbits the giant alone, and is dragged toward
+  // the well as the dance swings the giant in. Each home sits 560 out
+  // (1120 live) with a 25 SOI, inside a 310 SOI (1240 live) that clears
+  // the other at periastron (2480 < 2520); the giant at apastron plus its
+  // SOI reaches 3760, and Vellichor and everything past it circle both.
+  // Same fold reasoning as Centauri's (farSystemPresentation.test).
   { id: 'cygnus_x', name: 'Cygnus X', type: 'black_hole', parent: 'bh_barycenter',
-    radius: 4, soi: 50, mu: 600,
-    orbit_radius: 12, orbit_period: 180, angle0: 0,
+    radius: 4, soi: 310, mu: 600,
+    orbit_radius: 525, orbit_period: 168 / Math.pow(2, 1.5), angle0: 0,
     color: '#000000', far_system: true,
+    orbit_rp: 420, orbit_ra: 630, orbit_omega: 0, orbit_m0: 0,
     yield: { metal: 0, fuel: 0, gold: 0, science: 0 } },
   { id: 'hde_226868', name: 'HDE 226868', type: 'star', parent: 'bh_barycenter',
-    radius: 7, soi: 30, mu: 300,
-    orbit_radius: 24, orbit_period: 180, angle0: Math.PI,
+    radius: 7, soi: 310, mu: 300,
+    orbit_radius: 1050, orbit_period: 168 / Math.pow(2, 1.5), angle0: Math.PI,
     color: '#a8d0ff', far_system: true,
+    orbit_rp: 840, orbit_ra: 1260, orbit_omega: Math.PI, orbit_m0: 0,
     yield: { metal: 0, fuel: 0, gold: 0, science: 0 } },
-  { id: 'requiem', name: 'Requiem', type: 'terrestrial', parent: 'bh_barycenter',
-    radius: 3, soi: 40, mu: 80,
-    orbit_radius: 500, orbit_period: 900, angle0: 1.2,
+  { id: 'requiem', name: 'Requiem', type: 'terrestrial', parent: 'cygnus_x',
+    radius: 3, soi: 25, mu: 80,
+    orbit_radius: 560, orbit_period: 180, angle0: 1.2,
     color: '#5a3a4a', far_system: true,
     yield: { metal: 12, fuel: 0, gold: 5, science: 13 } },
   { id: 'lacrimosa', name: 'Lacrimosa', type: 'moon', parent: 'requiem',
@@ -645,7 +658,7 @@ export const BODY_CATALOG = [
     yield: { metal: 4, fuel: 0, gold: 5, science: 3 } },
   { id: 'vellichor', name: 'Vellichor', type: 'gas-giant', parent: 'bh_barycenter',
     radius: 8, soi: 95, mu: 320,
-    orbit_radius: 1000, orbit_period: 2600, angle0: 3.4,
+    orbit_radius: 2150, orbit_period: 8175, angle0: 3.4,
     color: '#8870b0', far_system: true,
     yield: { metal: 2, fuel: 0, gold: 12, science: 9 } },
   // Vellichor's three, named for the system that holds a Requiem and a
@@ -666,31 +679,33 @@ export const BODY_CATALOG = [
     color: '#3e3c62', far_system: true,
     yield: { metal: 6, fuel: 0, gold: 5, science: 4 } },
   // THE OSSUARY: Cygnus's ring of rubble between Vellichor and
-  // Echelon, the pieces the black hole has not finished with. Mid-well:
-  // about x1.3 slower to reach than open space.
+  // Reliquary, the pieces the black hole has not finished with. Out on
+  // the well's shoulder: a little slower to reach than open space.
+  // Kept under 2720 so Reliquary (a dwarf, so beltable) stays its own
+  // place: belts chain at 1.25x.
   { id: 'cenotaph', name: 'Cenotaph', type: 'asteroid', parent: 'bh_barycenter',
     radius: 0.65, soi: 2, mu: 0.05,
-    orbit_radius: 1250, orbit_period: 3624, angle0: 0.9,
+    orbit_radius: 2450, orbit_period: 9944, angle0: 0.9,
     color: '#6a6478', far_system: true,
     yield: { metal: 8, fuel: 0, gold: 2, science: 4 } },
   { id: 'epitaph', name: 'Epitaph', type: 'asteroid', parent: 'bh_barycenter',
     radius: 0.55, soi: 2, mu: 0.05,
-    orbit_radius: 1310, orbit_period: 3888, angle0: 2.5,
+    orbit_radius: 2510, orbit_period: 10312, angle0: 2.5,
     color: '#7a7088', far_system: true,
     yield: { metal: 6, fuel: 0, gold: 3, science: 5 } },
   { id: 'votive', name: 'Votive', type: 'asteroid', parent: 'bh_barycenter',
     radius: 0.6, soi: 2, mu: 0.05,
-    orbit_radius: 1370, orbit_period: 4158, angle0: 4.0,
+    orbit_radius: 2570, orbit_period: 10683, angle0: 4.0,
     color: '#a89060', far_system: true,
     yield: { metal: 5, fuel: 0, gold: 6, science: 3 } },
   { id: 'marrow', name: 'Marrow', type: 'asteroid', parent: 'bh_barycenter',
     radius: 0.7, soi: 2, mu: 0.05,
-    orbit_radius: 1430, orbit_period: 4434, angle0: 5.6,
+    orbit_radius: 2630, orbit_period: 11060, angle0: 5.6,
     color: '#c8bca8', far_system: true,
     yield: { metal: 9, fuel: 0, gold: 2, science: 2 } },
-  { id: 'echelon', name: 'Echelon', type: 'terrestrial', parent: 'bh_barycenter',
-    radius: 3.5, soi: 45, mu: 110,
-    orbit_radius: 1700, orbit_period: 5800, angle0: 5.3,
+  { id: 'echelon', name: 'Echelon', type: 'terrestrial', parent: 'hde_226868',
+    radius: 3.5, soi: 25, mu: 110,
+    orbit_radius: 560, orbit_period: 180, angle0: 5.3,
     color: '#b89060', far_system: true,
     yield: { metal: 9, fuel: 0, gold: 14, science: 8 } },
   { id: 'gilt', name: 'Gilt', type: 'moon', parent: 'echelon',
@@ -700,7 +715,7 @@ export const BODY_CATALOG = [
     yield: { metal: 3, fuel: 0, gold: 7, science: 2 } },
   { id: 'reliquary', name: 'Reliquary', type: 'dwarf', parent: 'bh_barycenter',
     radius: 1.5, soi: 9, mu: 1,
-    orbit_radius: 2800, orbit_period: 12000, angle0: 0.8,
+    orbit_radius: 3400, orbit_period: 16257, angle0: 0.8,
     color: '#706878', far_system: true,
     yield: { metal: 7, fuel: 0, gold: 4, science: 9 } },
 ];
