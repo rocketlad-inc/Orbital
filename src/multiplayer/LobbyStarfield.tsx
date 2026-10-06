@@ -71,10 +71,20 @@ export function LobbyStarfield() {
     let last = 0;
     const t0 = performance.now();
 
-    const paint = () => {
+    /** Rebuild the sky for the current window; false if it has no size. */
+    const paint = (): boolean => {
       dpr = Math.min(2, window.devicePixelRatio || 1);
       W = window.innerWidth;
       H = window.innerHeight;
+      // A collapsed or hidden window (the desktop app's browser pane, a
+      // tab mid-layout) reports 0, and drawImage throws on a 0-sized
+      // canvas every frame. Keep no sky until there is room for one.
+      if (Math.round(W * dpr) < 1 || Math.round(H * dpr) < 1) {
+        backdrop = null;
+        layers = [];
+        twinklers = [];
+        return false;
+      }
       canvas.width = Math.round(W * dpr);
       canvas.height = Math.round(H * dpr);
       canvas.style.width = `${W}px`;
@@ -162,6 +172,7 @@ export function LobbyStarfield() {
         }
         return c;
       });
+      return true;
     };
 
     const frame = (now: number) => {
@@ -172,7 +183,10 @@ export function LobbyStarfield() {
     };
 
     const draw = (t: number) => {
-      if (!backdrop) return;
+      // Built while the window had no size: try again now, since a pane
+      // that opens does not always send a resize we can count on.
+      if (!backdrop && !paint()) return;
+      if (!backdrop || !backdrop.width || !backdrop.height) return;
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.drawImage(backdrop, 0, 0);
       const wPx = W * dpr;
