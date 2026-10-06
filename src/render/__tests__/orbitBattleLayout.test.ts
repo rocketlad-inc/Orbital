@@ -10,7 +10,7 @@
  */
 import { layoutOrbitBattle, layoutTodayLines, crossesPlanet } from '../orbitBattleLayout';
 import { buildScenario, fleetGeometry, SCENARIOS, type ScenarioId } from '../../battleSandbox/scenarios';
-import { hullSize } from '../bodyPresentation';
+import { hullSize, blendRadius, DISPLAY_FLOOR_PX } from '../bodyPresentation';
 
 const MARS = 150;
 const LUNA = 70;
@@ -106,9 +106,13 @@ test('zooming out re-spreads the fight: no overlaps at any zoom', () => {
   // The whole point (Lorne): sprites keep the map's pixel sizes while
   // the world shrinks under them, so pulling back is when hulls pile up.
   for (const id of Object.keys(SCENARIOS) as ScenarioId[]) {
-    for (const px of [400, 150, 60, 34, 20]) {
+    // As the map: hulls size on the world's TRUE radius, the ring sits
+    // round the DRAWN disc (true size, but never under the display floor),
+    // down to where hulls fold into the count badge (10px true).
+    for (const px of [400, 150, 60, 34, 20, 12]) {
       const hs = hullSize({ type: 'terrestrial', radius: px }, 1);
-      const L = layoutOrbitBattle(buildScenario(id, 1, hs), px);
+      const drawn = blendRadius(px, DISPLAY_FLOOR_PX.planet);
+      const L = layoutOrbitBattle(buildScenario(id, 1, hs), drawn);
       expect({ id, px, overlaps: L.overlaps }).toEqual({ id, px, overlaps: 0 });
     }
   }

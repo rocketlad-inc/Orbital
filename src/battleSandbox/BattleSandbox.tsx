@@ -2,59 +2,89 @@
 // BattleSandbox — /?battle. Watch a fight laid out over a whole orbit.
 //
 // The test page for the cramped-fleet prototype (render/orbitBattleLayout).
-// Drawn with the game's own pieces: the real ship sprites and capital
-// hulls (shipIconCache / structureIconCache), the real globe textures and
-// lighting (fxPrimitives), the real weapon art (fxArt: rounds, beams,
-// muzzle flashes, hull hits), and the map's own fleet markers (flagship
-// full size, every other hull a small glyph in the escort block behind
-// it). Only the LAYOUT is new.
+// Everything except the LAYOUT is the map's own behaviour, ported rule
+// for rule so the page shows what a live battle would look like:
 //
-// ZOOM IS THE POINT. Sprites hold their pixel size while the world
-// shrinks under them (the map's parked-hull rule: full size until the
-// world is 34px across its radius, easing to half at 10px), so pulling
-// back is exactly when hulls pile up. The layout re-solves at every zoom
-// step and each hull GLIDES to its new place rather than jumping.
+//   ART      the real ship sprites and the designs players fly, capital
+//            hulls from the structure sheet, fleet markers (flagship full
+//            size, every other hull a small glyph in the escort block
+//            behind it), drawShip's engine glow, the real globe textures.
+//   ZOOM     bodyPresentation: the world's disc keeps a display floor, the
+//            hulls size and fade on the world's TRUE size (full until it
+//            is 34px in radius, half at 10px, folded into a count badge
+//            below that). The layout re-solves per wheel notch and hulls
+//            glide to their new places.
+//   FIRE     combatFx.drawEngagementFire: every engaged hull fires on its
+//            own 3.15s cycle (bolt + reload), stretched once a world holds
+//            more than six shooters; targets as the server stamps them
+//            (top tier, held until dead, a fleet focusing on one hull);
+//            a shot through the world's core re-aims at a hull in sight;
+//            kinetic three-round bursts, energy charge-and-lance, the
+//            same muzzles, rounds, scorches and hull hits, sized to the
+//            hitboxes; the contested ring and battle debris under it.
 //
 // Compare with TODAY'S rules (the narrow-arc battle lines, approximated
-// in orbitBattleLayout.layoutTodayLines): same roster, same planet,
-// shots that would cross the planet suppressed, as the map does now.
+// in orbitBattleLayout.layoutTodayLines): same roster, same world, same
+// fire.
 // ============================================================
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  layoutOrbitBattle, layoutTodayLines, crossesPlanet, type OBLayout,
+  layoutOrbitBattle, layoutTodayLines, type OBLayout,
 } from '../render/orbitBattleLayout';
 import {
   buildScenario, hullCount, FACTIONS, SCENARIOS, type ScenarioId, type SandboxShip, type ShipClass,
 } from './scenarios';
-import { hullSize } from '../render/bodyPresentation';
+import {
+  hullSize, hullReveal, blendRadius, DISPLAY_FLOOR_PX,
+} from '../render/bodyPresentation';
 import { getShipIconImage } from '../render/shipIconCache';
 import { getStructureIconImage } from '../render/structureIconCache';
 import { drawTexturedDisk, drawSphereLighting } from '../render/fxPrimitives';
 import {
-  drawRound, drawBeam, drawMuzzle, drawHullHit, drawSparks, glowAt, KINETIC_FX, ENERGY_FX,
+  drawRound, drawBeam, drawMuzzle, drawHullHit, drawCharge, drawScorch, glowAt,
 } from '../render/fxArt';
-import type { ShipIconVariant } from '../components/ShipIcons';
+import { FX_TUNING } from '../render/fxTuning';
+import { hashStr, mulberry32 } from '../render/planetTexture';
 import { artUrl } from '../render/artVersion';
+import type { ShipIconVariant } from '../components/ShipIcons';
 
 type PlanetId = 'luna' | 'mars' | 'jupiter';
-const PLANETS: Record<PlanetId, { label: string; r: number; tex: string; halo: string }> = {
-  luna:    { label: 'Luna (small)',  r: 70,  tex: artUrl('/globes/luna.webp'),    halo: 'rgba(200,210,225,0.35)' },
-  mars:    { label: 'Mars',          r: 150, tex: artUrl('/globes/mars_tf.webp'), halo: 'rgba(120,200,255,0.45)' },
-  jupiter: { label: 'Jupiter (big)', r: 260, tex: artUrl('/globes/jupiter.webp'), halo: 'rgba(255,214,170,0.35)' },
+const PLANETS: Record<PlanetId, {
+  label: string; r: number; tex: string; halo: string; floor: keyof typeof DISPLAY_FLOOR_PX;
+}> = {
+  luna:    { label: 'Luna (small)',  r: 70,  tex: artUrl('/globes/luna.webp'),    halo: 'rgba(200,210,225,0.35)', floor: 'moon' },
+  mars:    { label: 'Mars',          r: 150, tex: artUrl('/globes/mars_tf.webp'), halo: 'rgba(120,200,255,0.45)', floor: 'planet' },
+  jupiter: { label: 'Jupiter (big)', r: 260, tex: artUrl('/globes/jupiter.webp'), halo: 'rgba(255,214,170,0.35)', floor: 'giant' },
 };
 
 /** One full turn of the whole battle around the world, like the map's
  *  slow battle-line wheel. */
 const TURN_MS = 240000;
-/** Drawn world radius, px, at the closest and farthest zoom. Below ~18px
- *  the map folds hulls into a garrison badge, so the page stops there. */
-const MIN_PLANET_PX = 18;
-const MAX_PLANET_PX = 640;
+/** The world's TRUE radius on screen, px, at the closest and farthest
+ *  zoom. Below 10px the map folds parked hulls into a count badge, so the
+ *  page goes a little past that to show it happen. */
+const MIN_TRUE_PX = 6;
+const MAX_TRUE_PX = 640;
 /** One wheel notch, as on the map. */
 const WHEEL_STEP = 1.15;
 /** How fast a hull glides to a re-solved place, ms (time constant). */
 const GLIDE_MS = 260;
+
+// combatFx's fire constants, from the same tuning table.
+const BOLT_MS = FX_TUNING.boltMs;
+const SLOT_MS = FX_TUNING.boltMs + FX_TUNING.beatMs;
+const FIRE_REFERENCE = FX_TUNING.fireReference;
+const MAX_FIRING_PER_FRAME = 64;
+const MUZZLE_MS = FX_TUNING.muzzleMs;
+const IMPACT_MS = FX_TUNING.impactMs;
+const ROUND_GAP_MS = FX_TUNING.roundGapMs;
+const CHARGE_MS = FX_TUNING.chargeMs;
+/** Shots through the middle of a world are blocked; the limb is fair. */
+const OCCLUSION_CORE = 0.55;
+/** mapRenderer SHIP_MIN_HIT_RADIUS; an escort has no hitbox and FX reads 14. */
+const MIN_HIT_R = 12;
+const ESCORT_HIT_R = 14;
 
 /** One hull on screen: a lone ship, a fleet's flagship, or an escort. */
 interface Hull {
@@ -71,12 +101,14 @@ interface Hull {
   ly: number;
 }
 
-interface Shot {
-  from: string; to: string; start: number; dur: number;
-  kind: 'kinetic' | 'energy'; seed: number; across: boolean;
-}
-
 const factionById = new Map(FACTIONS.map(f => [f.id, f]));
+
+const hashCache = new Map<string, number>();
+function idHash(id: string): number {
+  let h = hashCache.get(id);
+  if (h === undefined) { h = hashStr(id); hashCache.set(id, h); }
+  return h;
+}
 
 function useImage(src: string): HTMLImageElement | null {
   const [img, setImg] = useState<HTMLImageElement | null>(null);
@@ -114,7 +146,7 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
   const [zoom, setZoom] = useState(1);
   const [seed, setSeed] = useState(1);
   const [showShares, setShowShares] = useState(false);
-  const [stats, setStats] = useState({ shots: 0, across: 0 });
+  const [stats, setStats] = useState({ firing: 0, rerouted: 0 });
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pan = useRef({ x: 0, y: 0 });
@@ -122,9 +154,13 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
   const tex = useImage(PLANETS[planet].tex);
 
   const baseR = PLANETS[planet].r;
-  const planetR = baseR * zoom;
-  // The map's own parked-hull size at this zoom (bodyPresentation).
-  const hullScale = Math.round(hullSize({ type: 'terrestrial', radius: planetR }, 1) * 100) / 100;
+  // The world's TRUE radius on screen, and the disc the map DRAWS for it
+  // (a smooth max with the display floor, so a far world never vanishes).
+  const trueR = baseR * zoom;
+  const planetR = blendRadius(trueR, DISPLAY_FLOOR_PX[PLANETS[planet].floor]);
+  // Parked hulls size and appear on the TRUE radius (bodyPresentation).
+  const hullScale = Math.round(hullSize({ type: 'terrestrial', radius: trueR }, 1) * 100) / 100;
+  const reveal = hullReveal({ type: 'terrestrial', radius: trueR }, 1);
   const ships: SandboxShip[] = useMemo(
     () => buildScenario(scenario, seed, hullScale),
     [scenario, seed, hullScale],
@@ -155,15 +191,35 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
     }
     return out;
   }, [ships]);
+  // WHO SHOOTS WHOM, as the server stamps it (room.js pickTarget): the
+  // top tier (armed hostiles, else civilians), sorted by id, a random
+  // start rolled on the FLEET's id for fleet hulls (so a fleet focuses on
+  // one target) and on the hull's own id otherwise, held until it dies.
+  // Nothing dies here, so a stamp holds for the whole fight.
+  const stamps = useMemo(() => {
+    const out = new Map<string, string>();
+    const byId = [...hulls].sort((a, b) => (a.id < b.id ? -1 : 1));
+    for (const h of hulls) {
+      if (!h.armed) continue;
+      const hostile = byId.filter(o => o.faction !== h.faction);
+      const armed = hostile.filter(o => o.armed);
+      const tier = armed.length ? armed : hostile;
+      if (!tier.length) continue;
+      const fleetKey = ships.find(s => s.id === h.unit)?.geo ? h.unit : h.id;
+      const r = mulberry32(idHash(`${fleetKey}:tgt`) ^ seed)();
+      out.set(h.id, tier[Math.min(tier.length - 1, Math.floor(r * tier.length))].id);
+    }
+    return out;
+  }, [hulls, ships, seed]);
 
   const zoomBy = (f: number) => setZoom(z =>
-    Math.max(MIN_PLANET_PX / baseR, Math.min(MAX_PLANET_PX / baseR, z * f)));
+    Math.max(MIN_TRUE_PX / baseR, Math.min(MAX_TRUE_PX / baseR, z * f)));
   // Switching worlds keeps the zoom inside that world's range.
   useEffect(() => { zoomBy(1); }, [baseR]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Everything the animation loop reads, without re-subscribing it.
-  const live = useRef({ ships, hulls, layout, planetR, tex, mode, showShares, planet });
-  live.current = { ships, hulls, layout, planetR, tex, mode, showShares, planet };
+  const live = useRef({ ships, hulls, stamps, layout, planetR, trueR, reveal, tex, showShares, planet });
+  live.current = { ships, hulls, stamps, layout, planetR, trueR, reveal, tex, showShares, planet };
 
   useEffect(() => {
     const cv = canvasRef.current;
@@ -172,13 +228,10 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
     if (!g) return undefined;
     let raf = 0;
     let last = performance.now();
-    const shots: Shot[] = [];
-    const nextFire = new Map<string, number>();
-    const hits: Array<{ id: string; start: number; seed: number; kind: 'kinetic' | 'energy' }> = [];
     // Where each unit is DRAWN (polar, before the wheel), chasing its
     // solved place so a re-solve glides instead of jumping.
     const drawn = new Map<string, { r: number; t: number }>();
-    let fired = 0, acrossCount = 0, lastStat = 0;
+    let firingSum = 0, rerouteSum = 0, frames = 0, lastStat = 0;
 
     // A fixed field of stars.
     const stars = Array.from({ length: 260 }, (_, i) => ({
@@ -194,7 +247,10 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
     window.addEventListener('resize', resize);
 
     const frame = (now: number) => {
-      const { ships: S, hulls: HL, layout: L, planetR: R, tex: T, mode: M, showShares: SH, planet: P } = live.current;
+      const {
+        ships: S, hulls: HL, stamps: ST, layout: L, planetR: R, trueR: TR, reveal: RV,
+        tex: T, showShares: SH, planet: P,
+      } = live.current;
       const dt = Math.min(100, now - last);
       last = now;
       const W = cv.clientWidth, H = cv.clientHeight;
@@ -205,6 +261,7 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
       const cx = panel + (W - panel) / 2 + pan.current.x;
       const cy = H / 2 + pan.current.y;
       const rot = ((now % TURN_MS) / TURN_MS) * Math.PI * 2;
+      const omega = (Math.PI * 2) / TURN_MS;
 
       // Each unit's drawn place glides toward its solved one.
       const k = 1 - Math.exp(-dt / GLIDE_MS);
@@ -265,11 +322,11 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
       }
 
       // Each faction's share of the orbit, when asked.
-      if (SH) {
+      if (SH && RV > 0) {
         for (const sec of L.sectors) {
           const f = factionById.get(sec.faction);
           g.strokeStyle = f?.color ?? '#fff';
-          g.globalAlpha = 0.3;
+          g.globalAlpha = 0.3 * RV;
           g.lineWidth = L.band.rOut - L.band.rIn;
           g.beginPath();
           g.arc(cx, cy, (L.band.rIn + L.band.rOut) / 2, sec.start + rot, sec.end + rot);
@@ -278,111 +335,201 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
         }
       }
 
-      // FIRE. Every armed hull fires every second or two (an escort half
-      // as often) at an enemy hull chosen by distance: front-liners trade
-      // with their neighbours, the far side fires ACROSS the world.
-      // Today's rules suppress any shot the planet would block.
-      for (const s of HL) {
-        if (!s.armed) continue;
-        const at = nextFire.get(s.id);
-        if (at === undefined) { nextFire.set(s.id, now + Math.random() * 2400); continue; }
-        if (now < at) continue;
-        nextFire.set(s.id, now + (900 + Math.random() * 1400) * (s.escort ? 2 : 1));
-        const me = pos.get(s.id);
-        if (!me) continue;
-        let total = 0;
-        const weights: Array<[Hull, number, boolean]> = [];
-        for (const o of HL) {
-          if (o.faction === s.faction) continue;
-          const op = pos.get(o.id);
-          if (!op) continue;
-          const across = crossesPlanet(me.x - cx, me.y - cy, op.x - cx, op.y - cy, R);
-          if (M === 'today' && across) continue;
-          const d = Math.hypot(op.x - me.x, op.y - me.y);
-          const w = 1 / Math.pow(Math.max(40, d), 1.5);
-          weights.push([o, w, across]);
-          total += w;
-        }
-        if (total <= 0) continue;
-        let pick = Math.random() * total;
-        let chosen = weights[0];
-        for (const w of weights) { pick -= w[1]; if (pick <= 0) { chosen = w; break; } }
-        const tp = pos.get(chosen[0].id)!;
-        const d = Math.hypot(tp.x - me.x, tp.y - me.y);
-        const kind = factionById.get(s.faction)?.weapon ?? 'kinetic';
-        shots.push({
-          from: s.id, to: chosen[0].id, start: now, kind, across: chosen[2],
-          dur: kind === 'energy' ? 200 : Math.max(140, Math.min(900, d / 1.1)),
-          seed: (Math.random() * 1e6) | 0,
-        });
-        fired++;
-        if (chosen[2]) acrossCount++;
-      }
-
-      // Hulls, drawn under the fire, as drawShip draws them: the design
-      // the player picked, and the soft engine glow astern of every
-      // full-size hull. Escorts are drawEscortHull's: no glow.
-      for (const s of HL) {
-        const p = pos.get(s.id);
-        if (!p) continue;
-        const f = factionById.get(s.faction)!;
-        const img = s.cls === 'mega_destroyer'
-          ? getStructureIconImage('mega_destroyer', f.color, null, f.color2)
-          : getShipIconImage(s.cls, f.color, s.variant, f.color2);
-        if (!s.escort && s.cls !== 'mega_destroyer') {
-          const ph = (((s.id.charCodeAt(s.id.length - 1) * 37) % 1000) / 1000) * Math.PI * 2;
-          const pulse = 0.6 + 0.4 * Math.sin(now / 420 + ph);
-          g.save();
-          g.globalCompositeOperation = 'lighter';
-          glowAt(g, p.x - Math.cos(p.h) * s.size * 0.46, p.y - Math.sin(p.h) * s.size * 0.46,
-            Math.max(2.5, s.size * 0.2) * 1.15, '#fff3dc', '#ff9a4a', 0.6 * pulse);
-          g.restore();
-        }
+      // CONTESTED (combatFx.drawContestedBodies): the slow red dashed
+      // ring and a few motes of battle debris, on the world's true size.
+      {
+        const pr = Math.max(4, TR);
+        const ringR = pr + Math.max(14, pr * 0.9);
+        const pulse = 0.5 + 0.5 * Math.sin(now / 700);
         g.save();
-        g.translate(p.x, p.y);
-        g.rotate(p.h);
-        if (img) g.drawImage(img, -s.size / 2, -s.size / 2, s.size, s.size);
-        else { g.fillStyle = f.color; g.beginPath(); g.arc(0, 0, s.size * 0.2, 0, Math.PI * 2); g.fill(); }
+        g.strokeStyle = `rgba(255, 80, 80, ${(0.1 + 0.14 * pulse).toFixed(3)})`;
+        g.lineWidth = 1.5;
+        g.setLineDash([8, 6]);
+        g.lineDashOffset = -(now * 0.006) % 14;
+        g.beginPath(); g.arc(cx, cy, ringR, 0, Math.PI * 2); g.stroke();
+        g.setLineDash([]);
+        const rr = mulberry32(idHash(P));
+        g.fillStyle = 'rgba(200, 190, 170, 0.22)';
+        for (let m = 0; m < 8; m++) {
+          const baseA = rr() * Math.PI * 2;
+          const rad = pr * (1.15 + rr() * 1.1);
+          const a = baseA + (now / 60000) * (0.4 + rr() * 0.6);
+          g.beginPath();
+          g.arc(cx + Math.cos(a) * rad, cy + Math.sin(a) * rad, 0.8 + rr() * 0.8, 0, Math.PI * 2);
+          g.fill();
+        }
         g.restore();
       }
 
-      // Rounds, beams, muzzles and the hits they land, sized to the hull.
-      const sizeOf = new Map(HL.map(h => [h.id, h.size]));
-      for (let i = shots.length - 1; i >= 0; i--) {
-        const sh = shots[i];
-        const a = pos.get(sh.from), b = pos.get(sh.to);
-        const kk = (now - sh.start) / sh.dur;
-        if (!a || !b || kk >= 1) {
-          if (b && kk >= 1) hits.push({ id: sh.to, start: now, seed: sh.seed, kind: sh.kind });
-          shots.splice(i, 1);
-          continue;
+      // Hulls, as drawShip draws them: the design the player picked, and
+      // the soft engine glow astern of every full-size hull (escorts are
+      // drawEscortHull's: no glow). Faded with the world's hull reveal.
+      if (RV > 0) {
+        g.save();
+        g.globalAlpha = RV;
+        for (const s of HL) {
+          const p = pos.get(s.id);
+          if (!p) continue;
+          const f = factionById.get(s.faction)!;
+          const img = s.cls === 'mega_destroyer'
+            ? getStructureIconImage('mega_destroyer', f.color, null, f.color2)
+            : getShipIconImage(s.cls, f.color, s.variant, f.color2);
+          if (!s.escort && s.cls !== 'mega_destroyer') {
+            const ph = (((s.id.charCodeAt(s.id.length - 1) * 37) % 1000) / 1000) * Math.PI * 2;
+            const pulse = 0.6 + 0.4 * Math.sin(now / 420 + ph);
+            g.save();
+            g.globalCompositeOperation = 'lighter';
+            glowAt(g, p.x - Math.cos(p.h) * s.size * 0.46, p.y - Math.sin(p.h) * s.size * 0.46,
+              Math.max(2.5, s.size * 0.2) * 1.15, '#fff3dc', '#ff9a4a', 0.6 * pulse);
+            g.restore();
+          }
+          g.save();
+          g.translate(p.x, p.y);
+          g.rotate(p.h);
+          if (img) g.drawImage(img, -s.size / 2, -s.size / 2, s.size, s.size);
+          else { g.fillStyle = f.color; g.beginPath(); g.arc(0, 0, s.size * 0.2, 0, Math.PI * 2); g.fill(); }
+          g.restore();
         }
-        const fs = Math.max(0.35, Math.min(1.2, (sizeOf.get(sh.from) ?? 50) / 50));
-        const ang = Math.atan2(b.y - a.y, b.x - a.x);
-        if (kk < 0.35) drawMuzzle(g, a.x, a.y, ang, 9 * fs, 1 - kk / 0.35, sh.kind === 'energy' ? ENERGY_FX : KINETIC_FX);
-        if (sh.kind === 'energy') {
-          drawBeam(g, a.x, a.y, b.x, b.y, 2.2 * fs, 1 - kk, now, sh.seed, ENERGY_FX);
-        } else {
-          const hx = a.x + (b.x - a.x) * kk, hy = a.y + (b.y - a.y) * kk;
-          const tail = Math.min(46 * fs, Math.hypot(b.x - a.x, b.y - a.y) * kk);
-          drawRound(g, hx - Math.cos(ang) * tail, hy - Math.sin(ang) * tail, hx, hy, 2.2 * fs, 1, KINETIC_FX);
-        }
+        g.restore();
       }
-      for (let i = hits.length - 1; i >= 0; i--) {
-        const h = hits[i];
-        const kk = (now - h.start) / 260;
-        const p = pos.get(h.id);
-        if (!p || kk >= 1) { hits.splice(i, 1); continue; }
-        const hs = Math.max(0.35, Math.min(1.2, (sizeOf.get(h.id) ?? 50) / 50));
-        const pal = h.kind === 'energy' ? ENERGY_FX : KINETIC_FX;
-        drawHullHit(g, p.x, p.y, 0, 14 * hs, kk, h.seed, pal);
-        drawSparks(g, p.x, p.y, (h.seed % 628) / 100, 1.2, 5 * hs, 16 * hs, kk, h.seed, pal);
+      // Far out, the hulls fold into a count per side, as the map's
+      // garrison badge does.
+      if (RV < 1) {
+        const counts = new Map<string, number>();
+        for (const h of HL) counts.set(h.faction, (counts.get(h.faction) ?? 0) + 1);
+        g.save();
+        g.globalAlpha = 1 - RV;
+        g.font = '600 11px "Chakra Petch", system-ui, sans-serif';
+        g.textBaseline = 'middle';
+        let bx = cx + R + 8;
+        for (const [fid, n] of counts) {
+          const f = factionById.get(fid);
+          const label = `${n}`;
+          const w = g.measureText(label).width + 16;
+          g.fillStyle = 'rgba(8,13,22,0.85)';
+          g.fillRect(bx, cy - R - 16, w, 16);
+          g.fillStyle = f?.color ?? '#fff';
+          g.fillRect(bx + 4, cy - R - 11, 6, 6);
+          g.fillStyle = '#d6e2ec';
+          g.fillText(label, bx + 13, cy - R - 8);
+          bx += w + 4;
+        }
+        g.restore();
       }
 
+      // FIRE (combatFx.drawEngagementFire). Every armed hull is engaged;
+      // each fires continuously on its own cycle, phase-offset by its id,
+      // and a crowded world stretches every cycle so the screen holds
+      // about FIRE_REFERENCE hulls mid-volley.
+      const engaged = RV > 0.01 ? HL.filter(h => h.armed) : [];
+      const slotMs = SLOT_MS * Math.max(1, engaged.length / FIRE_REFERENCE);
+      const hullById = new Map(HL.map(h => [h.id, h]));
+      const hitR = (h: Hull) => (h.escort ? ESCORT_HIT_R : Math.max(h.size / 2 + 3, MIN_HIT_R));
+      const coreR = Math.max(3, TR) * OCCLUSION_CORE;
+      const occluded = (a: { x: number; y: number }, b: { x: number; y: number }) => {
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const len2 = dx * dx + dy * dy;
+        if (len2 < 1e-6) return false;
+        let t = ((cx - a.x) * dx + (cy - a.y) * dy) / len2;
+        t = Math.max(0, Math.min(1, t));
+        const px = a.x + dx * t - cx, py = a.y + dy * t - cy;
+        return px * px + py * py < coreR * coreR;
+      };
+      let firingSeen = 0, rerouted = 0;
+      g.save();
+      g.globalCompositeOperation = 'lighter';
+      for (const sh of engaged) {
+        const within = (now + (idHash(sh.id) % slotMs)) % slotMs;
+        const firing = within < BOLT_MS;
+        const impacting = !firing && within < BOLT_MS + IMPACT_MS;
+        if (!firing && !impacting) continue;
+        if (++firingSeen > MAX_FIRING_PER_FRAME) break;
+        const fp = pos.get(sh.id);
+        let tgt = hullById.get(ST.get(sh.id) ?? '');
+        let tp = tgt ? pos.get(tgt.id) : undefined;
+        if (!fp || !tgt || !tp) continue;
+        if (fp.x < -100 || fp.y < -100 || fp.x > W + 100 || fp.y > H + 100) continue;
+        // Never through the world: re-aim at the first hostile in sight,
+        // armed first.
+        if (occluded(fp, tp)) {
+          let alt: Hull | null = null;
+          let altP: { x: number; y: number; h: number } | undefined;
+          for (const o of HL) {
+            if (o.faction === sh.faction) continue;
+            if (alt && alt.armed && !o.armed) continue;
+            const op = pos.get(o.id);
+            if (!op || occluded(fp, op)) continue;
+            alt = o; altP = op;
+            if (o.armed) break;
+          }
+          if (!alt || !altP) continue;
+          tgt = alt; tp = altP;
+          rerouted++;
+        }
+        const energyShot = factionById.get(sh.faction)?.weapon === 'energy';
+        const sR = hitR(sh);
+        const tR = hitR(tgt);
+        const volleyIdx = Math.floor((now + (idHash(sh.id) % slotMs)) / slotMs);
+        const seedBase = (idHash(sh.id) ^ Math.imul(volleyIdx, 0x9e3779b1)) >>> 0;
+        const hitAng = Math.atan2(fp.y - tp.y, fp.x - tp.x);
+        const faceX = tp.x + Math.cos(hitAng) * tR * 0.3;
+        const faceY = tp.y + Math.sin(hitAng) * tR * 0.3;
+        if (firing && energyShot) {
+          const ang = Math.atan2(tp.y - fp.y, tp.x - fp.x);
+          const mx = fp.x + Math.cos(ang) * sR * 0.45;
+          const my = fp.y + Math.sin(ang) * sR * 0.45;
+          const bw = Math.max(1.5, Math.min(3.4, sR * 0.11));
+          if (within < CHARGE_MS) {
+            drawCharge(g, mx, my, bw * 2.4, within / CHARGE_MS, now, seedBase);
+          } else {
+            const bk = (within - CHARGE_MS) / (BOLT_MS - CHARGE_MS);
+            const beamA = bk < 0.12 ? bk / 0.12 : bk > 0.75 ? 1 - (bk - 0.75) / 0.25 : 1;
+            drawBeam(g, mx, my, faceX, faceY, bw, beamA, now, seedBase);
+            drawScorch(g, faceX, faceY, tR * 0.35, Math.min(0.9, bk * 0.5), hitAng, seedBase ^ 0x51);
+          }
+        } else if (firing) {
+          const ang0 = Math.atan2(tp.y - fp.y, tp.x - fp.x);
+          const mx = fp.x + Math.cos(ang0) * sR * 0.45;
+          const my = fp.y + Math.sin(ang0) * sR * 0.45;
+          const rw = Math.max(1.1, Math.min(2.4, sR * 0.075));
+          const flight = BOLT_MS - 2 * ROUND_GAP_MS;
+          for (let r = 0; r < 3; r++) {
+            const w2 = within - r * ROUND_GAP_MS;
+            if (w2 < 0) continue;
+            const kk = w2 / flight;
+            if (w2 < MUZZLE_MS) drawMuzzle(g, mx, my, ang0, sR * 0.6, 1 - w2 / MUZZLE_MS);
+            if (kk >= 1) {
+              const lk = (kk - 1) / 0.35;
+              if (lk < 1) drawHullHit(g, faceX, faceY, hitAng, tR * 0.28, lk, seedBase + r);
+              continue;
+            }
+            // Lead the target along its orbit for the rest of the flight.
+            const lead = flight * (1 - kk) * omega;
+            const ta = Math.atan2(tp.y - cy, tp.x - cx), trr = Math.hypot(tp.x - cx, tp.y - cy);
+            const tx = faceX - Math.sin(ta) * trr * lead, ty = faceY + Math.cos(ta) * trr * lead;
+            const hx = mx + (tx - mx) * kk, hy = my + (ty - my) * kk;
+            const dist = Math.hypot(tx - mx, ty - my);
+            const len = Math.min(dist * kk, Math.max(10, Math.min(30, dist * 0.14)) * Math.max(0.7, rw / 1.6));
+            const ux = (tx - mx) / (dist || 1), uy = (ty - my) / (dist || 1);
+            drawRound(g, hx - ux * len, hy - uy * len, hx, hy, rw, 1);
+          }
+        } else if (energyShot) {
+          const ik = (within - BOLT_MS) / IMPACT_MS;
+          drawScorch(g, faceX, faceY, tR * 0.42, 0.45 + ik * 0.55, hitAng, seedBase ^ 0x51);
+        } else {
+          const ik = (within - BOLT_MS) / IMPACT_MS;
+          drawHullHit(g, faceX, faceY, hitAng, tR * 0.5, ik, seedBase);
+        }
+      }
+      g.restore();
+
+      firingSum += Math.min(firingSeen, MAX_FIRING_PER_FRAME);
+      rerouteSum += rerouted;
+      frames++;
       if (now - lastStat > 1000) {
         lastStat = now;
-        setStats({ shots: fired, across: acrossCount });
-        fired = 0; acrossCount = 0;
+        setStats({ firing: Math.round(firingSum / Math.max(1, frames)), rerouted: Math.round(rerouteSum / Math.max(1, frames)) });
+        firingSum = 0; rerouteSum = 0; frames = 0;
       }
       raf = requestAnimationFrame(frame);
     };
@@ -396,6 +543,8 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
       return { f, n: hullCount(mine), fleets: mine.filter(s => s.geo).length };
     })
     .filter(x => x.n > 0);
+  const armedCount = hulls.filter(h => h.armed).length;
+  const cycleS = (SLOT_MS * Math.max(1, armedCount / FIRE_REFERENCE)) / 1000;
 
   return (
     <div
@@ -421,9 +570,8 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
       <div style={ui.panel}>
         <div style={ui.h}>Orbital battle layout</div>
         <div style={ui.dim}>
-          A prototype: a fight takes as much of the orbit as its ships need, and fires across the world.
-          Scroll to zoom: the world shrinks, the hulls keep the map&apos;s sizes, and the fight re-spreads.
-          Drag to pan.
+          A prototype of a new battle layout. Sizes, zoom and fire follow the live map&apos;s rules.
+          Scroll to zoom, drag to pan.
         </div>
 
         <div style={ui.label}>Battle</div>
@@ -469,17 +617,21 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
           <span>{mode === 'new' ? layout.mode : 'battle lines (86° sector)'}</span>
           <span style={{ color: '#7f93a8' }}>Overlapping pairs</span>
           <span style={{ color: layout.overlaps ? '#ff8a8a' : '#6ee7b7' }} data-testid="battle-overlaps">{layout.overlaps}</span>
-          <span style={{ color: '#7f93a8' }}>Shots / second</span>
-          <span>{stats.shots}{stats.shots > 0 && ` · ${Math.round((stats.across / stats.shots) * 100)}% across the world`}</span>
+          <span style={{ color: '#7f93a8' }}>Fire</span>
+          <span data-testid="battle-fire">
+            {armedCount} armed · one volley each per {cycleS.toFixed(1)}s · {stats.firing} mid-volley
+            {stats.rerouted > 0 && ` · ${stats.rerouted} re-aimed past the world`}
+          </span>
           <span style={{ color: '#7f93a8' }}>World on screen</span>
-          <span data-testid="battle-zoom">{Math.round(planetR)}px radius · hulls at {Math.round(hullScale * 100)}%</span>
+          <span data-testid="battle-zoom">
+            {Math.round(trueR)}px true, {Math.round(planetR)}px drawn · hulls {reveal <= 0 ? 'folded into the count' : `at ${Math.round(hullScale * 100)}%`}
+          </span>
           <span style={{ color: '#7f93a8' }}>Re-solve</span>
           <span data-testid="battle-solve">{solveMs.toFixed(1)} ms</span>
         </div>
         {mode === 'today' && (
           <div style={ui.dim}>
             Today&apos;s rules, approximated: every side in a narrow arc, up to four ranks, then hulls overlap.
-            Shots the planet would block are not fired.
           </div>
         )}
       </div>

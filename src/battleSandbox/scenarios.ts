@@ -143,12 +143,14 @@ export function fleetGeometry(
   id: string, flag: ShipClass, escorts: Array<Hull | ShipClass>, hullScale: number,
 ): FleetGeometry {
   const flagSize = CLASS_PX[flag] * hullScale;
-  const hr = flagSize / 2;
+  // hb.r in MapCanvas is the flagship's HITBOX radius: half the sprite
+  // plus 3, never under SHIP_MIN_HIT_RADIUS (12).
+  const hr = Math.max(flagSize / 2 + 3, 12);
   const base = Math.max(9, Math.min(24, hr * 0.9));
   const spacing = escortSpacingFor(escorts.length, base, hr);
   const offs = escortOffsets(escorts.length, spacing, 0, escortStandoffFor(hr, spacing));
   const glyph = escortGlyphFor(spacing);
-  const pts = [{ x: 0, y: 0, r: hr * (CLEAR_FRAC * 2) }];
+  const pts = [{ x: 0, y: 0, r: (flagSize / 2) * (CLEAR_FRAC * 2) }];
   const raw = escorts.map((h, i) => {
     const { cls, variant } = typeof h === 'string' ? { cls: h, variant: undefined } : h;
     const size = Math.max(3, glyph * Math.min(1, CLASS_PX[cls] / CLASS_PX.destroyer));
