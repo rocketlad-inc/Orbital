@@ -858,12 +858,23 @@ export function scaledGeometry(body, {
   orbitOverride = null, outerSpeedup = 1, beltRadius = Infinity,
 }) {
   const isMoon = !!body.parent && body.parent !== 'sol';
+  // A FAR SYSTEM IS A SET PIECE, NOT A MOON SYSTEM. Everything orbiting
+  // a far barycenter trips the isMoon test above (its parent is not
+  // Sol), so the host's moon_scale was blowing Centauri up with it: at
+  // the live map's moon_scale 8, Verdant orbited at 3,200 instead of
+  // 400 and Farspire at 19,200 — one star system wider than Sol's whole
+  // Kuiper belt, and a 54-tick hop between neighbours. Only the DISTANCE
+  // TO the system scales (its barycenter is heliocentric and takes
+  // system_scale like any planet); the shape inside it is designed.
+  const isFarLocal = !!body.far_system && isMoon;
+  const localScale = isFarLocal ? 1 : (isMoon ? moonScale : sysScale);
   const baseOrbit = orbitOverride ?? body.orbit_radius;
-  const orbit = baseOrbit == null ? baseOrbit
-    : baseOrbit * (isMoon ? moonScale : sysScale);
+  const orbit = baseOrbit == null ? baseOrbit : baseOrbit * localScale;
 
   let period = body.orbit_period;
-  if (isMoon && period != null) {
+  if (isFarLocal) {
+    // Shape kept, so the year is kept.
+  } else if (isMoon && period != null) {
     // Kepler for a fixed parent mass.
     period *= Math.pow(moonScale, 1.5);
   } else if (period != null) {
@@ -890,7 +901,7 @@ export function scaledGeometry(body, {
   // Saturn while their axis said Neptune, and "the irregular path
   // objects only go out to about Saturn" (Lorne) was exactly right.
   const eccScale = (body.orbit_rp == null || body.orbit_ra == null) ? null
-    : (isMoon ? moonScale : sysScale)
+    : localScale
       * (orbitOverride != null && body.orbit_radius > 0 ? orbitOverride / body.orbit_radius : 1);
   return {
     orbit_radius: orbit,

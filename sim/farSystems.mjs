@@ -171,5 +171,37 @@ check('the black hole kept its type through the seed',
 check('the gas giant kept the server spelling',
   byId.get('crimson')?.type === 'gas-giant', byId.get('crimson')?.type);
 
+// ---- 7. The host's dials move the systems, not their shapes ---------
+//
+// Caught on the first staging seed: everything orbiting a barycenter
+// trips the "parent is not Sol, so it is a moon" test, so the live map's
+// moon_scale 8 inflated Centauri with it — Verdant at 3,200 instead of
+// 400, Farspire at 19,200, and a 54-tick hop between neighbours in a
+// system meant to be crossed in twenty.
+{
+  const { scaledGeometry } = await import('../worker/factions.js');
+  const dials = { sysScale: 4, bodyScale: 2, moonScale: 8, moonReach: {}, outerSpeedup: 4, beltRadius: 1000 };
+  const geo = (id) => scaledGeometry(BODY_CATALOG.find(b => b.id === id), dials);
+  check('a far world keeps its designed orbit whatever the host dials',
+    geo('verdant').orbit_radius === 400 && geo('farspire').orbit_radius === 2400,
+    `verdant ${geo('verdant').orbit_radius}, farspire ${geo('farspire').orbit_radius}`);
+  check('...and its year with it',
+    geo('verdant').orbit_period === 700, String(geo('verdant').orbit_period));
+  check('a far moon of a far world is left alone too',
+    geo('prismara').orbit_radius === 26, String(geo('prismara').orbit_radius));
+  // 33,150 written in the file, doubled at module load by SYSTEM_SCALE,
+  // then the host's system_scale 4 on top: the 265,200 of the design.
+  check('but the DISTANCE to the system still scales with the map',
+    geo('binary_barycenter').orbit_radius === 33150 * 2 * 4,
+    String(geo('binary_barycenter').orbit_radius));
+  check('a real moon still takes moon_scale',
+    geo('luna').orbit_radius === 20 * 8, String(geo('luna').orbit_radius));
+  check('a planet still takes system_scale',
+    geo('earth').orbit_radius === 186 * 2 * 4, String(geo('earth').orbit_radius));
+  const hop = 2 * Math.sqrt(2400 / ACCEL);
+  check('crossing Centauri end to end is a short trip, not a second campaign',
+    hop < 25, `${hop.toFixed(0)} ticks`);
+}
+
 console.log(bad === 0 ? '\nALL FAR SYSTEM CHECKS PASS' : `\n${bad} FAILED`);
 process.exit(bad === 0 ? 0 : 1);
