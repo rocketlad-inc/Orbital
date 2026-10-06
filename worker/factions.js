@@ -566,6 +566,30 @@ export const BODY_CATALOG = [
     orbit_radius: 12, orbit_period: TWO_PI * Math.sqrt(1728 / 90), angle0: 2.4,
     color: '#3e2a24', far_system: true,
     yield: { metal: 6, fuel: 0, gold: 3, science: 2 } },
+  // THE KINDLING: Centauri's asteroid belt, between Cinder and
+  // Farspire (2026-10-06). Kept inside 1890 so Farspire at 2400 stays
+  // its own place (belts chain at 1.25x). Station-only rock, so the
+  // binary's doubled stations are the point of settling it.
+  { id: 'flint', name: 'Flint', type: 'asteroid', parent: 'binary_barycenter',
+    radius: 0.6, soi: 2, mu: 0.05,
+    orbit_radius: 1680, orbit_period: 5922, angle0: 0.4,
+    color: '#8a8478', far_system: true,
+    yield: { metal: 8, fuel: 0, gold: 3, science: 2 } },
+  { id: 'tinder', name: 'Tinder', type: 'asteroid', parent: 'binary_barycenter',
+    radius: 0.5, soi: 2, mu: 0.05,
+    orbit_radius: 1750, orbit_period: 6296, angle0: 2.0,
+    color: '#a07a52', far_system: true,
+    yield: { metal: 6, fuel: 0, gold: 5, science: 2 } },
+  { id: 'ember', name: 'Ember', type: 'asteroid', parent: 'binary_barycenter',
+    radius: 0.7, soi: 2, mu: 0.05,
+    orbit_radius: 1820, orbit_period: 6677, angle0: 3.6,
+    color: '#b0603a', far_system: true,
+    yield: { metal: 7, fuel: 0, gold: 4, science: 3 } },
+  { id: 'pyrite', name: 'Pyrite', type: 'asteroid', parent: 'binary_barycenter',
+    radius: 0.55, soi: 2, mu: 0.05,
+    orbit_radius: 1890, orbit_period: 7066, angle0: 5.1,
+    color: '#c8b060', far_system: true,
+    yield: { metal: 5, fuel: 0, gold: 8, science: 1 } },
   { id: 'farspire', name: 'Farspire', type: 'dwarf', parent: 'binary_barycenter',
     radius: 1.5, soi: 9, mu: 1,
     orbit_radius: 2400, orbit_period: 10000, angle0: 1.5,
@@ -625,6 +649,29 @@ export const BODY_CATALOG = [
     orbit_radius: 82, orbit_period: 504, angle0: 4.7,
     color: '#3e3c62', far_system: true,
     yield: { metal: 6, fuel: 0, gold: 5, science: 4 } },
+  // THE OSSUARY: Cygnus's ring of rubble between Vellichor and
+  // Echelon, the pieces the black hole has not finished with. Mid-well:
+  // about x1.3 slower to reach than open space.
+  { id: 'cenotaph', name: 'Cenotaph', type: 'asteroid', parent: 'bh_barycenter',
+    radius: 0.65, soi: 2, mu: 0.05,
+    orbit_radius: 1250, orbit_period: 3624, angle0: 0.9,
+    color: '#6a6478', far_system: true,
+    yield: { metal: 8, fuel: 0, gold: 2, science: 4 } },
+  { id: 'epitaph', name: 'Epitaph', type: 'asteroid', parent: 'bh_barycenter',
+    radius: 0.55, soi: 2, mu: 0.05,
+    orbit_radius: 1310, orbit_period: 3888, angle0: 2.5,
+    color: '#7a7088', far_system: true,
+    yield: { metal: 6, fuel: 0, gold: 3, science: 5 } },
+  { id: 'votive', name: 'Votive', type: 'asteroid', parent: 'bh_barycenter',
+    radius: 0.6, soi: 2, mu: 0.05,
+    orbit_radius: 1370, orbit_period: 4158, angle0: 4.0,
+    color: '#a89060', far_system: true,
+    yield: { metal: 5, fuel: 0, gold: 6, science: 3 } },
+  { id: 'marrow', name: 'Marrow', type: 'asteroid', parent: 'bh_barycenter',
+    radius: 0.7, soi: 2, mu: 0.05,
+    orbit_radius: 1430, orbit_period: 4434, angle0: 5.6,
+    color: '#c8bca8', far_system: true,
+    yield: { metal: 9, fuel: 0, gold: 2, science: 2 } },
   { id: 'echelon', name: 'Echelon', type: 'terrestrial', parent: 'bh_barycenter',
     radius: 3.5, soi: 45, mu: 110,
     orbit_radius: 1700, orbit_period: 5800, angle0: 5.3,
@@ -2010,6 +2057,14 @@ export async function seedGameWorld(env, gameId) {
       if (reach > 0) jupiterInnerEdge = jup.orbit_radius - reach;
     }
     CATALOG = CATALOG.concat(generateMeteoroids(rand, sunOrbiting, { jupiterInnerEdge }));
+    // The far systems' own rocks (meteoroids.js generateFarMeteoroids),
+    // from their own seeded stream so turning far_systems on never moves
+    // a single Sol rock or anything drawn after them.
+    if (CATALOG.some(b => b.far_system)) {
+      const { generateFarMeteoroids } = await import('./meteoroids.js');
+      CATALOG = CATALOG.concat(generateFarMeteoroids(
+        makeRand(`${String(game.map_seed || gameId)}|far-rocks`), CATALOG));
+    }
   } catch (e) {
     // A worldgen extra must never cost a player their game: without
     // rocks the system is the one that shipped for three games.
@@ -2382,7 +2437,53 @@ export async function backfillMissingBodies(env, gameId) {
     inserted += 1;
   }
   if (stmts.length > 0) await env.DB.batch(stmts);
+
+  // THE FAR SYSTEMS' ROCKS reach a running game here too, generated from
+  // the same scaled geometry and the same seeded stream the seeder uses,
+  // so a backfilled game gets the rocks a fresh one would have.
+  if (farSystems) {
+    try {
+      inserted += await backfillFarRocks(env, gameId, geometryFor, bodyRowIdFor);
+    } catch (e) {
+      console.error('far rock backfill failed', e);
+    }
+  }
   return inserted;
+}
+
+async function backfillFarRocks(env, gameId, geometryFor, bodyRowIdFor) {
+  const { generateFarMeteoroids } = await import('./meteoroids.js');
+  const game = await env.DB.prepare('SELECT map_seed FROM games WHERE id = ?').bind(gameId).first();
+  const catalog = BODY_CATALOG.filter(b => b.far_system).map(b => ({ ...b, ...geometryFor(b) }));
+  const rocks = generateFarMeteoroids(
+    makeRand(`${String(game?.map_seed || gameId)}|far-rocks`), catalog);
+  if (rocks.length === 0) return 0;
+  const have = new Set(((await env.DB
+    .prepare(`SELECT template_id FROM game_bodies WHERE game_id = ? AND template_id LIKE 'mtr_c%'`)
+    .bind(gameId).all()).results ?? []).map(r => r.template_id));
+  const missing = rocks.filter(r => !have.has(r.id));
+  if (missing.length === 0) return 0;
+  await env.DB.batch(missing.map(r => env.DB.prepare(
+    `INSERT OR IGNORE INTO game_bodies
+       (id, game_id, template_id, name, type, parent_body_id,
+        radius, soi, mu, orbit_radius, orbit_period, angle0, color,
+        yield_metal, yield_fuel, yield_gold, yield_science,
+        owner_faction_id, development_level, fortification_level, shipyard_level,
+        orbit_rp, orbit_ra, orbit_omega, orbit_m0,
+        mineral_kind, mineral_initial, mineral_remaining)
+     VALUES (?, ?, ?, ?, ?, ?,
+             ?, 0, 0, ?, ?, ?, ?,
+             0, 0, 0, 0,
+             NULL, 0, 0, 0,
+             ?, ?, ?, ?,
+             ?, ?, ?)`,
+  ).bind(
+    bodyRowIdFor(r.id), gameId, r.id, r.name, r.type, bodyRowIdFor(r.parent),
+    r.radius, r.orbit_radius, r.orbit_period, r.angle0, r.color,
+    r.orbit_rp ?? null, r.orbit_ra ?? null, r.orbit_omega ?? null, r.orbit_m0 ?? null,
+    r.mineral_kind, r.mineral_initial, r.mineral_initial,
+  )));
+  return missing.length;
 }
 
 // ---------- route handlers ----------

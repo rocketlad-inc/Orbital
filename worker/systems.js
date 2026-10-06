@@ -88,10 +88,10 @@ export function isWorld(b) {
 export const FAR_SYSTEM_TEMPLATE_IDS = new Set([
   'binary_barycenter', 'centauri_a', 'centauri_b',
   'verdant', 'thistle', 'sorrel', 'crimson', 'prismara', 'scoria', 'umber',
-  'cinder', 'clinker', 'farspire',
+  'cinder', 'clinker', 'farspire', 'flint', 'tinder', 'ember', 'pyrite',
   'bh_barycenter', 'cygnus_x', 'hde_226868',
   'requiem', 'lacrimosa', 'sanctus', 'vellichor', 'elegy', 'vesper', 'threnody',
-  'echelon', 'gilt', 'reliquary',
+  'echelon', 'gilt', 'reliquary', 'cenotaph', 'epitaph', 'votive', 'marrow',
 ]);
 
 /** The far-side end of a sun gate (sunGates.js). Its Sol-side partner is
@@ -124,7 +124,7 @@ export function isFarSystemBody(row) {
  *  double (Lorne, 2026-10-06). Mirrored in src/game/farSystems.ts. */
 export const BINARY_SYSTEM_TEMPLATE_IDS = new Set([
   'verdant', 'thistle', 'sorrel', 'crimson', 'prismara', 'scoria', 'umber',
-  'cinder', 'clinker', 'farspire',
+  'cinder', 'clinker', 'farspire', 'flint', 'tinder', 'ember', 'pyrite',
 ]);
 /** What a station's yield is multiplied by in the binary system. */
 export const BINARY_STATION_MUL = 2;
@@ -170,6 +170,12 @@ function isStellarAnchor(b) {
 // ---------------------------------------------------------------------------
 
 const BELT_RATIO = 1.25;
+/** What each far system calls its asteroid belt. Mirrored in
+ *  src/game/systemGrouping.ts. */
+export const FAR_BELT_LABELS = {
+  binary_barycenter: 'The Kindling',
+  bh_barycenter: 'The Ossuary',
+};
 const BELT_MIN_MEMBERS = 3;
 const ROGUE_ECCENTRICITY_RATIO = 1.5;
 
@@ -320,8 +326,10 @@ export function findBelts(bodies) {
     else clusters.push([b]);
   }
 
+  // Sol's planets only: a far system's worlds say nothing about where
+  // Sol's outer system starts.
   const planetRadii = bodies
-    .filter(b => b.parent_body_id && anchors.has(b.parent_body_id) && PLANET_TYPES.has(b.type))
+    .filter(b => b.parent_body_id && roots.has(b.parent_body_id) && PLANET_TYPES.has(b.type))
     .map(b => b.orbit_radius ?? 0);
   const outermostPlanetSystem = planetRadii.length ? Math.max(...planetRadii) : Infinity;
 
@@ -384,6 +392,44 @@ export function findBelts(bodies) {
       id: 'belt:farreach', label: 'The Far Reach',
       members: farReach.slice(), laneMembers: farReach.slice(),
     });
+  }
+
+  // A FAR SYSTEM'S OWN BELTS (2026-10-06). Each far anchor's rubble is
+  // chained on its own, by the same ratio, and named for its system --
+  // never mixed with Sol's or with the other far system's (the radii
+  // only mean anything around the same centre). Sol's special bands
+  // above stay Sol's.
+  const farByAnchor = new Map();
+  for (const b of bodies) {
+    const p = b.parent_body_id;
+    if (!p || roots.has(p) || !anchors.has(p)) continue;
+    if (!isBeltable(b) || adopted.has(b.id) || isEccentricRogue(b)) continue;
+    if (!farByAnchor.has(p)) farByAnchor.set(p, []);
+    farByAnchor.get(p).push(b);
+  }
+  for (const [anchorId, list] of farByAnchor) {
+    list.sort((a, b) => (a.orbit_radius ?? 0) - (b.orbit_radius ?? 0));
+    const tpl = templateOf({ id: anchorId });
+    const anchorRow = bodies.find(x => x.id === anchorId);
+    const label = FAR_BELT_LABELS[tpl]
+      ?? `${String(anchorRow?.name ?? tpl).replace(/\s*Barycenter$/i, '')} Belt`;
+    let chain = [];
+    const flush = () => {
+      if (chain.length >= BELT_MIN_MEMBERS) {
+        const radii = chain.map(b => b.orbit_radius ?? 0);
+        belts.push({
+          id: `belt:${tpl}:${Math.round(radii[Math.floor(radii.length / 2)])}`,
+          label, members: chain.slice(), laneMembers: chain.slice(),
+        });
+      }
+      chain = [];
+    };
+    for (const b of list) {
+      const prev = chain[chain.length - 1];
+      if (prev && (b.orbit_radius ?? 0) <= (prev.orbit_radius ?? 0) * BELT_RATIO) chain.push(b);
+      else { flush(); chain = [b]; }
+    }
+    flush();
   }
 
   // Fold the rogues in as MEMBERS. A Kuiper object is a Kuiper object:

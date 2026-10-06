@@ -48,7 +48,8 @@ describe('globe art on disk', () => {
   it('the far systems are drawn from real maps now, not procedural', () => {
     for (const id of ['verdant', 'thistle', 'sorrel', 'crimson', 'prismara', 'scoria', 'umber',
       'cinder', 'clinker', 'farspire', 'requiem', 'lacrimosa', 'sanctus', 'vellichor', 'elegy',
-      'vesper', 'threnody', 'echelon', 'gilt', 'reliquary']) {
+      'vesper', 'threnody', 'echelon', 'gilt', 'reliquary',
+      'flint', 'tinder', 'ember', 'pyrite', 'cenotaph', 'epitaph', 'votive', 'marrow']) {
       expect(`${id}: ${globeIds.includes(id)}`).toBe(`${id}: true`);
     }
   });

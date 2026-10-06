@@ -81,6 +81,21 @@ describe('far-system territory rings', () => {
     expect(coOrbitalHosts([...solSide, trojan]).get('hektor')).toBe('jupiter');
   });
 
+  it('a far system\'s own asteroids make its own named belt, around its own centre', () => {
+    const kindling = ['flint', 'tinder', 'ember', 'pyrite'].map((id, i) =>
+      B({ id, type: 'asteroid', parent: 'binary_barycenter', orbitRadius: 3360 + i * 140 }));
+    const all = [...solSide, ...far.filter(b => b.id !== 'farspire'),
+      B({ id: 'farspire', type: 'dwarf', parent: 'binary_barycenter', orbitRadius: 4800 }), ...kindling];
+    const belt = findBelts(all).find(b => b.label === 'The Kindling');
+    expect(belt?.members.map(m => m.id).sort()).toEqual(['ember', 'flint', 'pyrite', 'tinder']);
+    const ring = computeSystemRegions(all).find(r => r.bodyIds.includes('flint'));
+    expect(ring?.shape.starBodyId).toBe('binary_barycenter');
+    expect(ring?.label).toBe('The Kindling');
+    // Sol's rings are still exactly Sol's.
+    expect(shape(computeSystemRegions(all).filter(r => r.shape.starBodyId === 'sol')))
+      .toEqual(shape(computeSystemRegions(solSide)));
+  });
+
   it('never files a far dwarf in Sol\'s Asteroid Belt', () => {
     const belt = findBelts([...solSide, ...far]).find(b => b.members.some(m => m.id === 'ceres'));
     expect(belt?.members.map(m => m.id)).not.toContain('farspire');
