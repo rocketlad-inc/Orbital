@@ -495,18 +495,15 @@ export const SHARED_BODIES: Body[] = [
   // (renderer min-draws at 3px so it's a tiny gray dot at the
   // barycenter, which actually reads as "centre of mass" nicely).
   //
-  // DISTANCE TUNING: 265,000 world units gives a brachistochrone
-  // direct-travel time of exactly 200 ticks at DEFAULT_ENGINE_ACCEL
-  // (formula t = 2·√(d/a), a=26.52, so 265,200 → 200 ticks). The
-  // intent is "you can SEE Centauri at max zoom-out but it's juuust
-  // off-frame at default zoom" — the gate is the practical way in.
-  // MIN_SCALE was lowered to 0.0012 so the system fits on a typical
-  // 1000-1200px canvas at full zoom-out.
+  // DISTANCE: mirrors worker/factions.js, doubled 2026-10-06 (530,400
+  // live, ~82 ticks direct from Earth on the 1g build-up burn). The
+  // sun gates are the shortcut. MIN_CAMERA_SCALE (cameraLimits.ts) is
+  // set so both far systems fit on screen at full zoom-out.
   // ============================================================
   {
     id: 'binary_barycenter', name: 'Centauri Barycenter', type: 'lagrange', parent: 'sol',
     radius: 0.5, soi: 0, mu: 0, color: '#3a3a44',
-    orbitRadius: 33150, orbitPeriod: 1e12, angle0: 0,  // east of Sol
+    orbitRadius: 66300, orbitPeriod: 1e12, angle0: 0,  // east of Sol (doubled 2026-10-06, worker/factions.js)
   },
   {
     id: 'centauri_a', name: 'Centauri A', type: 'star', parent: 'binary_barycenter',
@@ -565,8 +562,8 @@ export const SHARED_BODIES: Body[] = [
 
   // ============================================================
   // CYGNUS X-1 ANALOGUE — stellar-mass black hole + companion star
-  // X-ray binary, ~225 ticks direct from Sol on the opposite side
-  // (orbitRadius 340,000, angle0=π → west of Sol). Reachable via a
+  // X-ray binary, ~88 ticks direct from Earth on the opposite side
+  // (680,000 live since 2026-10-06, angle0=π → west of Sol). Reachable via a
   // second warp gate randomized onto a different Kuiper body each
   // match (see seedWarpGates in singlePlayerSetup).
   //
@@ -598,7 +595,7 @@ export const SHARED_BODIES: Body[] = [
   {
     id: 'bh_barycenter', name: 'Cygnus Barycenter', type: 'lagrange', parent: 'sol',
     radius: 0.5, soi: 0, mu: 0, color: '#3a3a44',
-    orbitRadius: 42500, orbitPeriod: 1e12, angle0: Math.PI,  // west of Sol
+    orbitRadius: 85000, orbitPeriod: 1e12, angle0: Math.PI,  // west of Sol (doubled 2026-10-06)
   },
   {
     id: 'cygnus_x', name: 'Cygnus X', type: 'black_hole', parent: 'bh_barycenter',

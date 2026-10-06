@@ -244,15 +244,32 @@ check('they use the SERVER spelling for types',
 
 // ---- 2. Distance is the balance -------------------------------------
 // Live games run system_scale 4 over the catalogue's own SYSTEM_SCALE 2.
+// Doubled 2026-10-06 ("Double the distance between solar systems"): on
+// the real burn (burn.js, building to 1g) Earth to Centauri is ~82 T
+// direct and Cygnus ~88, where the sun gates' whole route is ~71.
 const LIVE = 4;
-const ACCEL = 0.05 * 4 * 132.6;            // DEFAULT_ENGINE_G x G_ANCHOR
-const ticks = (r) => 2 * Math.sqrt((r * LIVE) / ACCEL);
+const { legTicks: burnTicksFor, SHIP_ENGINE_ACCEL } = await import('../worker/burn.js');
+const EARTH = 186 * 2 * LIVE;
+const direct = (r) => Math.ceil(burnTicksFor(r * LIVE - EARTH, SHIP_ENGINE_ACCEL));
 const cenR = BODY_CATALOG.find(b => b.id === 'binary_barycenter').orbit_radius;
 const cygR = BODY_CATALOG.find(b => b.id === 'bh_barycenter').orbit_radius;
-check('Centauri is a ~200-tick crossing at default engines',
-  Math.abs(ticks(cenR) - 200) < 3, `${ticks(cenR).toFixed(0)} ticks`);
-check('Cygnus is a ~226-tick crossing',
-  Math.abs(ticks(cygR) - 226) < 4, `${ticks(cygR).toFixed(0)} ticks`);
+// BODY_CATALOG is already through SYSTEM_SCALE (x2) at module load.
+check('the far systems sit twice as far out as they first did',
+  cenR === 2 * 2 * 33150 && cygR === 2 * 2 * 42500, `${cenR} / ${cygR}`);
+check('Centauri is ~82 ticks direct from Earth on the real burn',
+  Math.abs(direct(cenR) - 82) <= 2, `${direct(cenR)} ticks`);
+check('Cygnus is ~88 ticks direct',
+  Math.abs(direct(cygR) - 88) <= 2, `${direct(cygR)} ticks`);
+{
+  // ...and the sun gate is the shortcut: to the gate (out in the Far
+  // Reach, ~25,500 live), across it at a tenth of the burn, and in from
+  // the far gate to a home (~6,500).
+  const { gateTransitTicks } = await import('../worker/megastructures.js');
+  const leg = (d) => Math.ceil(burnTicksFor(d, SHIP_ENGINE_ACCEL));
+  const viaGate = leg(25500 - EARTH) + gateTransitTicks(leg(cenR * LIVE - 25500), 0.1) + leg(6500);
+  check('Earth to Centauri through the gate beats flying direct by 10+ ticks',
+    direct(cenR) - viaGate >= 10, `gate ${viaGate} vs direct ${direct(cenR)}`);
+}
 check('they sit on opposite sides of Sol',
   Math.abs(BODY_CATALOG.find(b => b.id === 'binary_barycenter').angle0
     - BODY_CATALOG.find(b => b.id === 'bh_barycenter').angle0) > 3,
@@ -478,17 +495,17 @@ check('the gas giant kept the server spelling',
     geo('prismara').orbit_radius === 26 * F, String(geo('prismara').orbit_radius));
   check("the suns' binary opens up with the rest",
     geo('centauri_b').orbit_radius === 850.5 * F, String(geo('centauri_b').orbit_radius));
-  // 33,150 written in the file, doubled at module load by SYSTEM_SCALE,
-  // then the host's system_scale 4 on top: the 265,200 of the design.
+  // 66,300 written in the file, doubled at module load by SYSTEM_SCALE,
+  // then the host's system_scale 4 on top: 530,400 live.
   check('but the DISTANCE to the system still scales with the map',
-    geo('binary_barycenter').orbit_radius === 33150 * 2 * 4,
+    geo('binary_barycenter').orbit_radius === 66300 * 2 * 4,
     String(geo('binary_barycenter').orbit_radius));
   check('a real moon still takes moon_scale',
     geo('luna').orbit_radius === 20 * 8, String(geo('luna').orbit_radius));
   check('a planet still takes system_scale',
     geo('earth').orbit_radius === 186 * 2 * 4, String(geo('earth').orbit_radius));
-  // Twice the room costs root-two the time: still a hop, not a campaign.
-  const hop = 2 * Math.sqrt((2900 * FAR_LOCAL_SCALE) / ACCEL);
+  // Twice the room is still a hop, not a campaign (the real burn).
+  const hop = burnTicksFor(2900 * FAR_LOCAL_SCALE, SHIP_ENGINE_ACCEL);
   check('crossing Centauri end to end is a short trip, not a second campaign',
     hop < 30, `${hop.toFixed(0)} ticks`);
 }

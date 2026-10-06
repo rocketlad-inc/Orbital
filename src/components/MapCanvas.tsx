@@ -102,6 +102,7 @@ import {
   computePresentation, drawnRadiusOf, hullReveal, hullSize, isBarycenter,
 } from '../render/bodyPresentation';
 import type { BodyPresentation } from '../render/bodyPresentation';
+import { MIN_CAMERA_SCALE } from '../render/cameraLimits';
 import { isGateInFlight, landingSiteIdOf } from '../game/farSystems';
 import { reachSpec } from '../game/structureReach';
 import { forecastIntercepts, reachOf } from '../game/firingWindows';
@@ -220,7 +221,7 @@ const TRANSIT_FULL_CAM_SCALE = 0.5;
 /** The wheel handler's hard zoom-out clamp — the ramp bottoms out here
  *  so "fully zoomed out" and "half size" line up exactly. Keep in sync
  *  with the Math.max floor in the wheel handler below. */
-const TRANSIT_MIN_CAM_SCALE = 0.0012;
+const TRANSIT_MIN_CAM_SCALE = MIN_CAMERA_SCALE;
 
 /** Size multiplier for an in-transit hull at the given camera scale.
  *  Interpolated in LOG space because zoom is multiplicative — a linear
@@ -916,14 +917,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       if (Number.isFinite(fitR) && fitR > 0) {
         const cv = canvasRef.current;
         const side = cv ? Math.min(cv.width, cv.height) : 800;
-        const scale = Math.max(0.0012, Math.min(getWorldMenuMaxScale(), (side * 0.42) / fitR));
+        const scale = Math.max(MIN_CAMERA_SCALE, Math.min(getWorldMenuMaxScale(), (side * 0.42) / fitR));
         updateCameraRef.current({ scale });
         return;
       }
       const factor = Number(detail.factor);
       if (!Number.isFinite(factor) || factor <= 0) return;
       const cam = cameraRef.current;
-      const scale = Math.max(0.0012, Math.min(getWorldMenuMaxScale(), cam.scale * factor));
+      const scale = Math.max(MIN_CAMERA_SCALE, Math.min(getWorldMenuMaxScale(), cam.scale * factor));
       updateCameraRef.current({ scale });
     };
     window.addEventListener('orbital:zoom-step', onZoom as EventListener);
@@ -4031,24 +4032,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       if (dy === 0) return;
       const notches = Math.abs(dy) >= 50 ? -Math.sign(dy) : -dy / 100;
       const factor = Math.pow(1.15, notches);
-      // MIN_SCALE evolution:
-      //   0.005  — original; Sol-system-only era
-      //   0.002  — Centauri at 60K landed
-      //   0.0012 — Centauri pushed to 265K AND Cygnus X added at 340K
-      //            on the opposite side of Sol. Both need to be
-      //            reachable at full zoom-out. On a 1000px canvas
-      //            centered at Sol, scale=0.0012 gives ±417K visible
-      //            range — Centauri at +265 and Cygnus at -340 both
-      //            sit comfortably inside, with Cygnus juuust off the
-      //            visible band at the default zoom (good — players
-      //            should discover it by pulling out).
-      // Touch hook (useCanvasTouchInput) needs to match this clamp.
+      // MIN_CAMERA_SCALE (cameraLimits.ts): pulled all the way out, both
+      // far systems are on screen. Shared with the touch hook and every
+      // other clamp, so they cannot drift apart.
       //
       // World menu (MP only): the cap comes from the store, which reports
       // the historical 50 unless the MP overlay is active over a focused
       // body (diving into a menu needs ~130 for small worlds). SP:
       // permanently 50, byte-identical behavior.
-      const newScale = Math.max(0.0012, Math.min(getWorldMenuMaxScale(), camera.scale * factor));
+      const newScale = Math.max(MIN_CAMERA_SCALE, Math.min(getWorldMenuMaxScale(), camera.scale * factor));
       const newCamX = worldBeforeX - (mouseX - canvas.width / 2) / newScale;
       const newCamY = worldBeforeY - (mouseY - canvas.height / 2) / newScale;
       // Written through at once so the next notch, before React renders

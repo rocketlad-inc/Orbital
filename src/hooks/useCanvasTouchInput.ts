@@ -23,6 +23,7 @@
 // ============================================================
 
 import { useEffect, useRef } from 'react';
+import { MIN_CAMERA_SCALE } from '../render/cameraLimits';
 import { getWorldMenuMaxScale } from '../game/worldMenu/store';
 
 interface CameraLike {
@@ -267,11 +268,10 @@ export function useCanvasTouchInput({
         const ma = canvasLocal(a.x, a.y), mb = canvasLocal(b.x, b.y);
         const mid = { x: (ma.x + mb.x) / 2, y: (ma.y + mb.y) / 2 };
         if (pinchStartDist > 0 && lastMid) {
-          // MIN_SCALE 0.0012 — frames both Centauri (+265K east) and
-          // Cygnus X (-340K west) at full zoom-out on a typical viewport.
-          // Stay in sync with MapCanvas.tsx wheel-zoom clamp. Max comes
-          // from the world-menu store: raised in MP menu dives.
-          const targetScale = Math.max(0.0012, Math.min(getWorldMenuMaxScale(),
+          // MIN_CAMERA_SCALE (cameraLimits.ts): both far systems on screen
+          // at full zoom-out, the same floor as the wheel. Max comes from
+          // the world-menu store: raised in MP menu dives.
+          const targetScale = Math.max(MIN_CAMERA_SCALE, Math.min(getWorldMenuMaxScale(),
             pinchStartScale * (dist / pinchStartDist)));
           // ZOOM AND PAN IN ONE STEP. The world point that was under the
           // fingers' midpoint last frame is put under the midpoint where

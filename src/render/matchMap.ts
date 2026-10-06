@@ -14,6 +14,7 @@
 // ============================================================
 
 import { hashStr, mulberry32 } from './planetTexture';
+import { MIN_CAMERA_SCALE } from './cameraLimits';
 import {
   BODY_LABEL_ROW_HEIGHT, bodyLabelAlwaysOn, computeTransitLanes,
   drawAsteroidBeltDust, drawBody, drawOrbit, drawOwnershipLayer,
@@ -235,7 +236,7 @@ export function createMatchMap(
   const SPRITE_FULL_PX = 34;
   const TRANSIT_SHIP_MIN_SIZE = 0.5;
   const TRANSIT_FULL_CAM_SCALE = 0.5;
-  const TRANSIT_MIN_CAM_SCALE = 0.0012;
+  const TRANSIT_MIN_CAM_SCALE = MIN_CAMERA_SCALE;
   /** Angular span a whole engagement occupies -- about 86 degrees. */
   const BATTLE_SECTOR = 1.5;
 
