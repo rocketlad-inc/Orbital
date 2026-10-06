@@ -10,9 +10,10 @@
  */
 import { layoutOrbitBattle, layoutTodayLines, crossesPlanet } from '../orbitBattleLayout';
 import {
-  buildScenario, fleetGeometry, SCENARIOS, SIZE_LADDERS, type ScenarioId, type SizeLadderId,
+  buildScenario, fleetGeometry, SCENARIOS, SIZE_LADDERS, CLASS_PX, type ScenarioId, type SizeLadderId,
 } from '../../battleSandbox/scenarios';
 import { hullSize, blendRadius, DISPLAY_FLOOR_PX } from '../bodyPresentation';
+import { shipIconSize } from '../mapRenderer';
 
 const MARS = 150;
 const LUNA = 70;
@@ -189,6 +190,12 @@ test('on a full lap the station takes the share farthest from the fronts, and hu
     const fronts = S.map((s, i) => (s.end + (S[i + 1] ?? { start: S[0].start + Math.PI * 2 }).start) / 2);
     for (const f of fronts) expect(angGap(L.station!.theta, f)).toBeGreaterThan(Math.PI / 4);
     expect({ ladder, overlaps: L.overlaps }).toEqual({ ladder, overlaps: 0 });
+  }
+});
+
+test('the test page draws hulls at exactly the map’s sizes', () => {
+  for (const cls of Object.keys(CLASS_PX) as Array<keyof typeof CLASS_PX>) {
+    expect({ cls, px: CLASS_PX[cls] }).toEqual({ cls, px: shipIconSize(cls, false) });
   }
 });
 

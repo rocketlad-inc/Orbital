@@ -33,36 +33,36 @@ import {
 
 export type ShipClass = 'corvette' | 'frigate' | 'destroyer' | 'freighter' | 'mega_destroyer';
 
-/** Full-size drawn px per class (mapRenderer shipIconSize, unselected). */
+/** Full-size drawn px per class (mapRenderer shipIconSize, unselected),
+ *  guarded against drift by a test. */
 export const CLASS_PX: Record<ShipClass, number> = {
-  corvette: 14 * 3,
-  frigate: 17 * 3,
-  destroyer: 22 * 3,
-  freighter: 16 * 3,
-  mega_destroyer: 38 * 2,
+  corvette: 10 * 3,
+  frigate: 16 * 3,
+  destroyer: 28 * 3,
+  freighter: 15 * 3,
+  mega_destroyer: 58 * 2,
 };
 
 /** Drawn px per class, plus the world's station. */
 export type SizeTable = Record<ShipClass | 'station', number>;
 
-export type SizeLadderId = 'live' | 'bold' | 'extreme';
+export type SizeLadderId = 'before' | 'live' | 'extreme';
 
 /**
- * SIZE CONTRAST, to try on the page (Lorne: "more dramatic size
- * differences between Corvettes, Frigates, Destroyers and stations").
- * LIVE is the map today: shipIconSize per class, and the station's art
- * (88 units) at STATION_STRUCTURE_SCALE 1.6. The others pull the ladder
- * apart around the frigate, which barely moves: corvettes shrink,
- * destroyers, capitals and the station grow.
+ * SIZE CONTRAST (Lorne: "more dramatic size differences between
+ * Corvettes, Frigates, Destroyers and stations"). He picked Bold on this
+ * page and it is now LIVE on the map (shipIconSize per class, the
+ * station's 88-unit art at STATION_STRUCTURE_SCALE 200/88). BEFORE is
+ * the map as it was; EXTREME pulls the ladder further apart.
  */
 export const SIZE_LADDERS: Record<SizeLadderId, { label: string; px: SizeTable }> = {
-  live: {
-    label: 'Live',
-    px: { ...CLASS_PX, station: 88 * 1.6 },
+  before: {
+    label: 'Before',
+    px: { corvette: 42, frigate: 51, freighter: 48, destroyer: 66, mega_destroyer: 76, station: 88 * 1.6 },
   },
-  bold: {
-    label: 'Bold',
-    px: { corvette: 30, frigate: 48, freighter: 44, destroyer: 84, mega_destroyer: 116, station: 200 },
+  live: {
+    label: 'Live (Bold)',
+    px: { ...CLASS_PX, station: 200 },
   },
   extreme: {
     label: 'Extreme',

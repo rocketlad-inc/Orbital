@@ -4038,13 +4038,20 @@ const SHIP_ICON_REST_SIZE: Record<string, number> = {
   // intended. A Mega Destroyer is now 76 screen pixels against a Venus
   // of about 77: the largest thing anyone builds, and still not a
   // planet.
-  mega_destroyer: 38,
-  mobile_foundry: 34,
-  corvette: 14,
-  frigate: 17,
-  freighter: 16,
-  colony: 16,
-  destroyer: 22,
+  //
+  // THE BOLD LADDER (Lorne, 2026-10-06, picked on the battle test page:
+  // "more dramatic size differences"). Corvettes shrink, the frigate
+  // holds, destroyers and capitals grow, and capitals now outgrow a
+  // Venus on purpose. Drawn px: corvette 30, frigate 48, freighter and
+  // colony 45, destroyer 84, Mega Destroyer 116, Mobile Foundry 104
+  // (was 42 / 51 / 48 / 66 / 76 / 68).
+  mega_destroyer: 58,
+  mobile_foundry: 52,
+  corvette: 10,
+  frigate: 16,
+  freighter: 15,
+  colony: 15,
+  destroyer: 28,
 };
 
 // Global multiplier on every ship sprite (and its hitbox, which derives
@@ -6817,9 +6824,11 @@ export function drawCity(
  * Draw a station: a diamond marker on a thin orbital ring around the body.
  */
 /** How much the zoomed-in station structure is enlarged over its native
- *  drawing units. 1.6 makes the ring-hub silhouette read as a place the
- *  overlay chips can plausibly hang off, without dwarfing small moons. */
-const STATION_STRUCTURE_SCALE = 1.6;
+ *  drawing units. 1.6 made the ring-hub silhouette read as a place the
+ *  overlay chips can plausibly hang off. 2.27 (Bold ladder, Lorne
+ *  2026-10-06): the station is the biggest thing at a world after the
+ *  world, 200px across its 88-unit art, against an 84px destroyer. */
+const STATION_STRUCTURE_SCALE = 200 / 88;
 
 export function drawStation(
   settlement: Settlement,

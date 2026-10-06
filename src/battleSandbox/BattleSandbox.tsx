@@ -97,8 +97,9 @@ const STATION_HIT_R = 16;
 /** The station's art spans this many local units (settlementArt VIEW x 2). */
 const STATION_ART_UNITS = 88;
 const STATION_ID = 'station';
-/** Fire-rate multipliers to try over the map's cycle (1 = live). */
-const FIRE_RATES = [1, 3, 10, 30];
+/** Fire-rate multipliers to try over the map's cycle (1 = live, which is
+ *  itself 3x what it was: fxTuning.fireReference 18). */
+const FIRE_RATES = [1, 3, 10];
 /** A hull cannot fire faster than its shot can fly and land. */
 const MIN_SLOT_MS = FX_TUNING.boltMs + FX_TUNING.impactMs;
 
@@ -162,8 +163,8 @@ export default function BattleSandbox({ onExit }: { onExit?: () => void }) {
   const [zoom, setZoom] = useState(1);
   const [seed, setSeed] = useState(1);
   const [showShares, setShowShares] = useState(false);
-  const [fireRate, setFireRate] = useState(10);
-  const [ladder, setLadder] = useState<SizeLadderId>('bold');
+  const [fireRate, setFireRate] = useState(1);
+  const [ladder, setLadder] = useState<SizeLadderId>('live');
   const [stats, setStats] = useState({ firing: 0, rerouted: 0 });
 
   const canvasRef = useRef<HTMLCanvasElement>(null);

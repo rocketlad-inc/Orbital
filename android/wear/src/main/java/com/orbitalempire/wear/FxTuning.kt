@@ -24,7 +24,7 @@ data class FxTuning(
   val fire: FxPalette = FxPalette(hex("#fff6dc"), hex("#ff9a3c"), hex("#d2401a")),
   val boltMs: Float = 750f,
   val beatMs: Float = 2400f,
-  val fireReference: Float = 6f,
+  val fireReference: Float = 18f,
   val muzzleMs: Float = 130f,
   val impactMs: Float = 380f,
   val roundGapMs: Float = 70f,
