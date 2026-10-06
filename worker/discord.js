@@ -1249,7 +1249,9 @@ async function handleLinkStatus(_req, env, { session }) {
     .prepare('SELECT discord_id, discord_username FROM users WHERE id = ?')
     .bind(session.user_id).first();
   return json({
-    oauth_available: !!(env.DISCORD_CLIENT_ID && env.DISCORD_CLIENT_SECRET),
+    // The client id is derived from the bot token (discordOauth.js
+    // discordClientId); only the secret has to be configured.
+    oauth_available: !!(env.DISCORD_CLIENT_SECRET && (env.DISCORD_CLIENT_ID || env.DISCORD_BOT_TOKEN)),
     linked: !!row?.discord_id,
     discord_username: row?.discord_username ?? null,
   });
@@ -1336,6 +1338,17 @@ async function handleRegisterCommands(req, env, { session }) {
   const text = await res.text();
   if (!res.ok) return err(502, 'discord_error', `register failed ${res.status}: ${text.slice(0, 300)}`);
   const registered = JSON.parse(text);
+  // GLOBAL means every server the bot joins, which is what a host who
+  // connects their own server needs (gameFeed.js, YOUR OWN SERVER). The
+  // per-server copies registered before would then show every command
+  // TWICE in those servers, so they are cleared in the same step.
+  if (!guild) {
+    const gr = await botFetch(env, 'GET', '/users/@me/guilds');
+    const guilds = gr.ok ? await gr.json() : [];
+    for (const g of guilds) {
+      await botFetch(env, 'PUT', `/applications/${app.id}/guilds/${g.id}/commands`, []).catch(() => {});
+    }
+  }
   return json({
     ok: true,
     scope: guild ? `guild:${guild}` : 'global',

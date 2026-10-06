@@ -406,6 +406,17 @@ export const HowToPlay: React.FC<Props> = ({ onSignIn }) => (
           strategy, and non-aggression pacts exist for exactly this reason.
         </dd>
 
+        <dt>Can I follow my game from Discord?</dt>
+        <dd>
+          Yes, for free. Link your account (Senate → Connect Discord) to vote on
+          bills from Discord and get your alerts and daily situation report by DM.
+          The host can turn on the game's feed, which posts its wars, battles,
+          votes and the daily Herald to the Orbital Discord. A host who holds the
+          Commander's Commission can send that feed to their own server instead:
+          Notifications → Discord game feed → Connect your server, pick the
+          channel, done.
+        </dd>
+
         <dt>Is it hard?</dt>
         <dd>
           The first hour is guided. The depth is there when you want it —

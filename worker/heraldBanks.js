@@ -336,6 +336,148 @@ export const GATE_TRANSIT_HEADLINE = [
 ];
 
 // ------------------------------------------------------------
+// The sun gates (sunGates.js). Four moments, all front page: the omen,
+// a gate leaving the Sun, a gate opening, and the first hull through.
+// Context: c.gate (the Sol-side name), c.system (where it leads),
+// c.wait / c.arrive / c.near where the moment has them, and for the
+// first crossing c.actor, c.ship and c.system. c.near can be null.
+// ------------------------------------------------------------
+
+const pastNear = (c, pre = ' out past ') => (c.near ? `${pre}${c.near}` : '');
+
+export const SUN_GATE_OMEN = [
+  c => `Every observatory in the system turned to the Sun this cycle. Something is coming out of it, and the best estimate gives it ${c.wait} ticks.`,
+  c => `The Sun is not behaving. Instruments across the system report a shape rising through the photosphere, due to clear it in ${c.wait} ticks.`,
+  c => `Astronomers on every world agree on one thing and nothing else: something strange is emerging from the Sun, and it will be out in ${c.wait} ticks.`,
+  c => `A disturbance at the solar surface has every empire's telescopes pointed the same way. Whatever it is, it breaks the surface in ${c.wait} ticks.`,
+  c => `No one claims it and no one can explain it. Something is pushing up out of the Sun, and it should be clear within ${c.wait} ticks.`,
+  c => `For the first time in living memory the Sun is the news. A mass is rising through it, expected out in ${c.wait} ticks.`,
+  c => `The Sun has a passenger. Spectrographs show something solid climbing through the plasma, and it will surface in ${c.wait} ticks.`,
+  c => `Every navigator in the system is recalculating. A body is rising out of the Sun on a course nobody plotted, due out in ${c.wait} ticks.`,
+  c => `Solar weather offices have stopped issuing forecasts and started issuing warnings: something is emerging from the star, ${c.wait} ticks out.`,
+  c => `It began as a dark fleck on the photosphere. It is now a shape, and the shape is rising. Expect it in ${c.wait} ticks.`,
+  c => `The oldest question in the system has a new answer pending. Something is coming out of the Sun, and it will be here in ${c.wait} ticks.`,
+  c => `Fleet captains report every sensor in the inner system saturated by the same signal. Its source is the Sun; its arrival is ${c.wait} ticks away.`,
+  c => `What the Sun is doing has no name in any manual. A structure is surfacing through it, and the count stands at ${c.wait} ticks.`,
+  c => `There is something inside the Sun, and it is on its way out. Every empire has ${c.wait} ticks to decide what to do about it.`,
+  c => `The photosphere has opened like a wound. Something geometric is rising through it, set to clear the surface in ${c.wait} ticks.`,
+  c => `Rival empires did not coordinate, yet every one of them pointed its telescopes at the Sun today. It will give up its secret in ${c.wait} ticks.`,
+  c => `The star at the centre of everything is shedding something it has kept since before anyone looked. It will be loose in ${c.wait} ticks.`,
+  c => `No fleet moved and no treaty broke, and still the whole system holds its breath. The Sun is opening, and ${c.wait} ticks remain.`,
+];
+export const SUN_GATE_OMEN_HEADLINE = [
+  () => `SOMETHING IS COMING OUT OF THE SUN`,
+  () => `THE SUN STIRS`,
+  () => `EVERY TELESCOPE, ONE TARGET`,
+  () => `A SHAPE IN THE PHOTOSPHERE`,
+  () => `THE STAR IS NOT ALONE`,
+  c => `${c.wait} TICKS TO WHATEVER IT IS`,
+  () => `THE SUN HAS A PASSENGER`,
+  () => `NO MANUAL COVERS THIS`,
+  () => `THE OLDEST LIGHT, A NEW SHADOW`,
+  () => `ALL EYES SUNWARD`,
+];
+
+export const SUN_GATE_EMERGED = [
+  c => `It is a gate. It cleared the Sun this cycle and is burning hard for the Far Reach, where it should stop${pastNear(c)} by tick ${c.arrive}. It leads to ${c.system}.`,
+  c => `The thing in the Sun was a door. The ${c.gate} is flying outward at a burn no hull can match, bound for the Far Reach${pastNear(c, ' near ')}; the far side opens on ${c.system}.`,
+  c => `A gate rose out of the Sun and did not stop to be studied. It is on a hard burn for the edge of the system${pastNear(c, ', somewhere past ')}, and it answers to ${c.system}.`,
+  c => `The ${c.gate} has left the Sun. It should come to rest in the Far Reach${pastNear(c, ' beyond ')} at tick ${c.arrive}, and whoever reaches it first will be looking at ${c.system}.`,
+  c => `What rose from the Sun is a gate to ${c.system}. It is already climbing toward the Far Reach${pastNear(c, ', aimed somewhere past ')}, and every fleet within reach is doing the same arithmetic.`,
+  c => `The wait is over and the answer is a door. The ${c.gate} burst from the Sun and is decelerating toward a stop in the Far Reach at tick ${c.arrive}.`,
+  c => `Out of the Sun came a ring of something no empire built, burning outward harder than any warship. It leads to ${c.system} and it stops at tick ${c.arrive}.`,
+  c => `The ${c.gate} is loose. Its course runs straight out from the Sun to the Far Reach${pastNear(c)}, and what waits on its other side is ${c.system}.`,
+  c => `Every forecast was wrong except the simplest: it was a gate. It is bound for the Far Reach${pastNear(c, ' by ')}, and ${c.system} is through it.`,
+  c => `The Sun has given up a gate to ${c.system}. It reaches the Far Reach at tick ${c.arrive}, and the race to meet it began the moment it surfaced.`,
+  c => `A gate climbed out of the Sun this cycle on a burn that left every escort behind. It stops in the Far Reach${pastNear(c)}; the far side is ${c.system}.`,
+  c => `The shape in the Sun has a purpose, and the purpose is ${c.system}. The ${c.gate} is braking toward the Far Reach and should hold station by tick ${c.arrive}.`,
+  c => `Whatever built it built it to travel. The ${c.gate} crossed out of the Sun and is heading for the edge of the system${pastNear(c, ', past ')}, door open to ${c.system}.`,
+  c => `Not a weapon, not a ship: a gate, and it is moving. It will stop in the Far Reach at tick ${c.arrive}, one step from ${c.system}.`,
+  c => `The Sun opened and a gate came through. Plotted course: the Far Reach${pastNear(c)}. Destination on the far side: ${c.system}.`,
+  c => `Strategists who spent the warning arguing over what it might be are now arguing over who gets there first. It is a gate to ${c.system}, and it lands at tick ${c.arrive}.`,
+  c => `The ${c.gate} is out and burning. It is aimed at the Far Reach${pastNear(c, ' near ')}, and nobody in the system can catch it before it stops.`,
+  c => `Every map in the system needs a new mark. The ${c.gate} left the Sun this cycle and will settle in the Far Reach by tick ${c.arrive}, opening onto ${c.system}.`,
+];
+export const SUN_GATE_EMERGED_HEADLINE = [
+  c => `A GATE TO ${c.system.toUpperCase()}`,
+  () => `IT WAS A DOOR`,
+  c => `THE ${c.gate.toUpperCase()} LEAVES THE SUN`,
+  () => `OUT OF THE SUN, BOUND FOR THE EDGE`,
+  () => `THE RACE FOR THE FAR REACH`,
+  c => `${c.system.toUpperCase()} IS ONE STEP AWAY`,
+  () => `THE SUN GIVES UP A GATE`,
+  c => `NEXT STOP AT TICK ${c.arrive}`,
+  () => `NOBODY BUILT THIS`,
+  () => `A DOOR ON A HARD BURN`,
+];
+
+export const SUN_GATE_OPENED = [
+  c => `The ${c.gate} has stopped in the Far Reach and is open. A hull parked on it crosses to ${c.system} at a tenth of the burn.`,
+  c => `The gate came to rest this cycle and lit. ${c.system} is now a short crossing from the edge of the system for anyone who gets there.`,
+  c => `The ${c.gate} is open for business, and it belongs to no one. Park on it and ${c.system} is ten times closer.`,
+  c => `The door is open. The ${c.gate} sits in the Far Reach, neutral and unbreakable, and ${c.system} is on the other side.`,
+  c => `The ${c.gate} stopped where the forecasts said it would and opened at once. The way to ${c.system} is a crossing now, not a campaign.`,
+  c => `The ${c.gate} has settled into orbit at the edge of the system and switched on. ${c.system} is reachable by anyone who can reach it.`,
+  c => `It stopped, and it opened. The ${c.gate} now flings any hull that parks on it toward ${c.system} at ten times the speed of flight.`,
+  c => `No empire owns the ${c.gate} and no fleet can break it. As of this cycle it is open, and it goes to ${c.system}.`,
+  c => `The ${c.gate} is holding station in the Far Reach, aperture lit. The trip to ${c.system} that took a campaign now takes a fraction of one.`,
+  c => `The gate has landed and the door has opened. ${c.system} is through the ${c.gate}, and it costs nothing but the trip to the gate.`,
+  c => `Its burn is over and its work begins. The ${c.gate} is open, and ${c.system} is suddenly a neighbour.`,
+  c => `The ${c.gate} came to rest in the Far Reach and lit up for every empire alike. Through it: ${c.system}.`,
+  c => `There is a new crossroads at the edge of the system. The ${c.gate} is open, and the road runs to ${c.system}.`,
+  c => `The ${c.gate} is live. Hulls parked on it can make the crossing to ${c.system} at a tenth of the burn, and every empire knows it.`,
+  c => `Whoever gets to the Far Reach first gets ${c.system} first. The ${c.gate} opened this cycle and it is waiting for traffic.`,
+  c => `The ${c.gate} has finished its flight and opened its door. ${c.system}, once a voyage, is now an errand.`,
+  c => `A gate nobody built and nobody can destroy is now open in the Far Reach. It answers to anyone, and it leads to ${c.system}.`,
+  c => `The ${c.gate} stands open. For the price of reaching the Far Reach, any fleet can be at ${c.system} in a tenth of the time.`,
+];
+export const SUN_GATE_OPENED_HEADLINE = [
+  c => `THE ${c.gate.toUpperCase()} IS OPEN`,
+  c => `${c.system.toUpperCase()} WITHIN REACH`,
+  () => `THE DOOR LIGHTS`,
+  () => `NEUTRAL, UNBREAKABLE, OPEN`,
+  c => `NEXT STOP: ${c.system.toUpperCase()}`,
+  () => `A NEW CROSSROADS AT THE EDGE`,
+  () => `THE GATE HOLDS STATION`,
+  c => `${c.system.toUpperCase()} IS AN ERRAND NOW`,
+  () => `OPEN TO ALL COMERS`,
+  () => `THE FAR REACH HAS A DOOR`,
+];
+
+export const SUN_GATE_FIRST = [
+  c => `**${c.actor}** was first through. The ${c.ship} entered the ${c.from} and is on its way to ${c.system}.`,
+  c => `The first hull to use the ${c.from} flew **${c.actor}**'s colors: the ${c.ship}, bound for ${c.system}.`,
+  c => `**${c.actor}** did not wait. The ${c.ship} took the ${c.from} before anyone else and is crossing to ${c.system}.`,
+  c => `History records the ${c.ship}. **${c.actor}**'s hull was the first through the ${c.from}, outbound for ${c.system}.`,
+  c => `Somebody had to go first, and it was **${c.actor}**. The ${c.ship} launched from the ${c.from} for ${c.system}.`,
+  c => `The ${c.from} has its first traveller. **${c.actor}** sent the ${c.ship} through, and it is flying for ${c.system}.`,
+  c => `While others were still plotting courses, **${c.actor}** was using the door. The ${c.ship} is through the ${c.from} and bound for ${c.system}.`,
+  c => `First through the ${c.from}: the ${c.ship}, under **${c.actor}**, headed for ${c.system}.`,
+  c => `**${c.actor}** has put the first hull through the ${c.from}. The ${c.ship} will be the first to see ${c.system} up close.`,
+  c => `The ${c.ship} made history this cycle, launching through the ${c.from} toward ${c.system} for **${c.actor}**.`,
+  c => `Every empire watched the ${c.from}; **${c.actor}** used it. The ${c.ship} is on its way to ${c.system}.`,
+  c => `The race to the gate has a winner. **${c.actor}**'s ${c.ship} launched through the ${c.from} for ${c.system}.`,
+  c => `**${c.actor}** planted the first flag on the crossing itself. The ${c.ship} went through the ${c.from}, bound for ${c.system}.`,
+  c => `The ${c.from} took its first passenger this cycle: the ${c.ship}, flying **${c.actor}**'s colors to ${c.system}.`,
+  c => `It took one hull to prove the gate works, and **${c.actor}** supplied it. The ${c.ship} is crossing to ${c.system}.`,
+  c => `**${c.actor}** moved first and moved fast. The ${c.ship} is through the ${c.from} and closing on ${c.system}.`,
+  c => `The first wake through the ${c.from} belongs to the ${c.ship}. **${c.actor}** has sent it on to ${c.system}.`,
+  c => `Rivals now know where **${c.actor}** is looking. The ${c.ship} was the first through the ${c.from}, and it is bound for ${c.system}.`,
+];
+export const SUN_GATE_FIRST_HEADLINE = [
+  c => `${c.actorPlain.toUpperCase()} FIRST THROUGH`,
+  c => `THE ${c.shipPlain.toUpperCase()} GOES FIRST`,
+  c => `FIRST CROSSING TO ${c.system.toUpperCase()}`,
+  c => `${c.actorPlain.toUpperCase()} TAKES THE DOOR`,
+  () => `THE GATE HAS ITS FIRST TRAVELLER`,
+  c => `${c.actorPlain.toUpperCase()} WINS THE RACE`,
+  c => `BOUND FOR ${c.system.toUpperCase()}`,
+  () => `SOMEBODY HAD TO GO FIRST`,
+  c => `${c.actorPlain.toUpperCase()} MOVES FIRST`,
+  () => `THE FIRST WAKE THROUGH`,
+];
+
+// ------------------------------------------------------------
 // gate_link_severed — the pact that held a gate pair open has ended,
 // and the door has closed. A diplomatic consequence with a physical
 // shape, which is exactly the kind of thing a newspaper is for.

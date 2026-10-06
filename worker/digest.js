@@ -36,6 +36,10 @@ import {
   ASSET_SOLD, ASSET_SOLD_HEADLINE,
   GATE_TRANSIT, GATE_TRANSIT_HEADLINE,
   GATE_LINK_SEVERED, GATE_LINK_SEVERED_HEADLINE,
+  SUN_GATE_OMEN, SUN_GATE_OMEN_HEADLINE,
+  SUN_GATE_EMERGED, SUN_GATE_EMERGED_HEADLINE,
+  SUN_GATE_OPENED, SUN_GATE_OPENED_HEADLINE,
+  SUN_GATE_FIRST, SUN_GATE_FIRST_HEADLINE,
   SENATE_REAPED, SENATE_REAPED_HEADLINE,
   TRADE_SHIPMENT_LOST, TRADE_SHIPMENT_LOST_HEADLINE,
   MINE_EXHAUSTED, MINE_EXHAUSTED_HEADLINE,
@@ -9026,9 +9030,46 @@ function buildFrontierStories(rows, used, locator, factionNames) {
       continue;
     }
 
+    // THE SUN GATES (sunGates.js). Front page, every one: they happen once
+    // a game, to everybody, and change where the game is played. Just
+    // under a world-killer, above any one battle.
+    if (row.kind === 'sun_gate_omen') {
+      const wait = Math.max(1, Math.round(Number(p.gate_in) || 6));
+      stories.push(mkStory(880, used, 'sun_gate_omen', SUN_GATE_OMEN,
+        'sun_gate_omen_hl', SUN_GATE_OMEN_HEADLINE, { wait }));
+      continue;
+    }
+    if (row.kind === 'sun_gate_emerged') {
+      stories.push(mkStory(870, used, 'sun_gate_emerged', SUN_GATE_EMERGED,
+        'sun_gate_emerged_hl', SUN_GATE_EMERGED_HEADLINE, {
+          gate: p.gate ?? 'the gate', system: p.system ?? 'another star',
+          arrive: Math.round(Number(p.arrive_tick) || 0), near: p.near ?? null,
+        }));
+      continue;
+    }
+    if (row.kind === 'sun_gate_opened') {
+      stories.push(mkStory(860, used, 'sun_gate_opened', SUN_GATE_OPENED,
+        'sun_gate_opened_hl', SUN_GATE_OPENED_HEADLINE, {
+          gate: p.gate ?? 'the gate', system: p.system ?? 'another star',
+        }));
+      continue;
+    }
+
+    if (row.kind === 'gate_transit' && p.sun_gate && p.first) {
+      const from = p.from ?? 'the gate';
+      const ship = p.ship ?? 'a hull';
+      const system = p.to_system ?? p.to ?? 'the far side';
+      stories.push(mkStory(840, used, 'sun_gate_first', SUN_GATE_FIRST,
+        'sun_gate_first_hl', SUN_GATE_FIRST_HEADLINE, {
+          actor, from, ship, system, actorPlain: actor, shipPlain: ship,
+        }));
+      continue;
+    }
+
     if (row.kind === 'gate_transit') {
       const from = p.from ?? 'one gate';
-      const to = p.to ?? 'the other';
+      // A sun gate's far ends are all "Sol Gate"; name the system.
+      const to = (p.sun_gate ? p.to_system : null) ?? p.to ?? 'the other';
       const ship = p.ship ?? 'a hull';
       // Back page by design. It earns a line because the mechanic is
       // invisible on the map: the hull simply appears in flight.
@@ -9115,6 +9156,7 @@ export const HERALD_HANDLED_KINDS = new Set([
   'dyson_claimed',
   // frontier
   'asteroid_launched', 'gate_transit', 'gate_link_severed',
+  'sun_gate_omen', 'sun_gate_emerged', 'sun_gate_opened',
   'meteoroid_exhausted',
   'asset_sold', 'secret_discovered', 'ancient_databank', 'meteoroid_found',
   // campaign

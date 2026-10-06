@@ -37,6 +37,8 @@ import {
   maySupplySite, excludedFundersOf, constructionPartners, gateTransitTicks,
 } from './megastructures.js';
 import { NON_WORLD_TYPES } from './systems.js';
+import { advanceSunGates, mainSystemSql } from './sunGates.js';
+const MAIN_SYSTEM = mainSystemSql();
 
 /** Unordered faction-pair key, shared by the tick's combat passes and
  *  peacePairsAt so both spell "these two are at peace" the same way. */
@@ -3496,22 +3498,26 @@ export class Room {
     try {
       const rows = (await this.env.DB
         .prepare(
-          `SELECT m.body_id AS a, m.partner_body_id AS b
+          `SELECT m.body_id AS a, m.partner_body_id AS b, m.transit_fraction AS fraction
              FROM game_megastructures m
              JOIN game_bodies ba ON ba.id = m.body_id
              JOIN game_bodies bb ON bb.id = m.partner_body_id
             WHERE m.game_id = ? AND m.kind = 'warp_gate'
               AND m.status = 'complete' AND m.partner_body_id IS NOT NULL
-              AND ba.destroyed_at_tick IS NULL AND bb.destroyed_at_tick IS NULL`,
+              AND ba.destroyed_at_tick IS NULL AND bb.destroyed_at_tick IS NULL
+              -- A sun gate still burning out of the Sun is not open yet
+              -- (0157): neither end may be routed through before it lands.
+              AND (ba.emerge_until_tick IS NULL OR ba.emerge_until_tick <= ?)
+              AND (bb.emerge_until_tick IS NULL OR bb.emerge_until_tick <= ?)`,
         )
-        .bind(gameId).all()).results ?? [];
+        .bind(gameId, tick, tick).all()).results ?? [];
       // One entry per pair: the rows come back from both ends.
       const seen = new Set();
       for (const r of rows) {
         const key = [r.a, r.b].sort().join('|');
         if (seen.has(key)) continue;
         seen.add(key);
-        pairs.push({ a: r.a, b: r.b });
+        pairs.push({ a: r.a, b: r.b, fraction: r.fraction ?? null });
       }
     } catch (e) {
       // A router that throws would freeze every freighter in the game.
@@ -5232,6 +5238,15 @@ export class Room {
       await this.resolveSecretReveal(gameId, tick);
     } catch (e) {
       console.error('resolveSecretReveal failed', e);
+    }
+
+    // 2c-bis. The sun gates (sunGates.js): the omen, each gate leaving
+    // the Sun, each one opening. A no-op unless the game has the far
+    // systems, and one read a tick outside the event.
+    try {
+      await advanceSunGates(this.env, gameId, tick, CFG);
+    } catch (e) {
+      console.error('advanceSunGates failed', e);
     }
 
     // 2d-bis. Finished MOBILE sites become hulls. Non-throwing: a
@@ -12349,9 +12364,12 @@ export class Room {
               -- that makes obliteration lower the domination goalpost.
               AND obliterated_at_tick IS NULL
               AND type NOT IN (${[...NON_WORLD_TYPES].map(() => '?').join(', ')})
+              -- The main system only: far-system worlds are income, not
+              -- conquest (isFarSystemBody, systems.js).
+              AND ${MAIN_SYSTEM.sql}
             GROUP BY owner_faction_id`,
         )
-        .bind(gameId, ...NON_WORLD_TYPES)
+        .bind(gameId, ...NON_WORLD_TYPES, ...MAIN_SYSTEM.binds)
         .all()).results ?? [];
       let total = 0;
       const owned = new Map();

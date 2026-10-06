@@ -231,8 +231,9 @@ export async function planGateAwareHop({
 
       if (fromId === near) {
         // The crossing itself, then whatever is left on the far side.
+        // At the pair's own speed: a sun gate flings at a tenth.
         const hop = gateTransitTicks(
-          await computeLegTicks(factionId, near, far, tick));
+          await computeLegTicks(factionId, near, far, tick), g.fraction);
         const onward = far === toId
           ? 0
           : await computeLegTicks(factionId, far, toId, tick + hop);
@@ -245,7 +246,7 @@ export async function planGateAwareHop({
 
       const toGate = await computeLegTicks(factionId, fromId, near, tick);
       const hop = gateTransitTicks(
-        await computeLegTicks(factionId, near, far, tick + toGate));
+        await computeLegTicks(factionId, near, far, tick + toGate), g.fraction);
       const onward = far === toId
         ? 0
         : await computeLegTicks(factionId, far, toId, tick + toGate + hop);

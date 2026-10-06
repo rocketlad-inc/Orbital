@@ -2616,6 +2616,16 @@ export const ShipPanel: React.FC = () => {
             if (!site.partnerBodyId) return null;
             const far = gameState.bodies.find(b => b.id === site.partnerBodyId);
             if (!far) return null;
+            // A SUN GATE goes to a SYSTEM, and both of its far ends are
+            // called "Sol Gate", so it is labelled by where the far end
+            // is: the far system's name (its barycenter, less the word),
+            // or Sol coming home.
+            const sunGate = site.transitFraction != null;
+            const farParent = gameState.bodies.find(b => b.id === far.parent);
+            const dest = !sunGate ? far.name
+              : !farParent || !farParent.parent ? 'Sol'
+                : farParent.name.replace(/\s*Barycenter$/i, '');
+            const share = sunGate ? 'a tenth' : 'a quarter';
             return (
               <div style={{ marginTop: 6 }}>
                 <button
@@ -2627,10 +2637,10 @@ export const ShipPanel: React.FC = () => {
                   }}
                   title={ship.transit
                     ? 'Mid-burn — arrive at the gate first'
-                    : `Launch to ${far.name} at a quarter of the normal burn. `
+                    : `Launch to ${dest} at ${share} of the normal burn. `
                       + 'The hull is in flight and can be intercepted on the way.'}
                 >
-                  ◎ LAUNCH TO {far.name.toUpperCase()}
+                  ◎ LAUNCH TO {dest.toUpperCase()}
                 </button>
               </div>
             );

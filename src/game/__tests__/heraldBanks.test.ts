@@ -51,6 +51,13 @@ const CTX = {
   cargo: '40 metal and 12 credits',
   killerClause: ', by **No Sleep the 3rd**',
   mineral: 'iron',
+  // The sun gates (sunGates.js).
+  wait: 6,
+  gate: 'Centauri Gate',
+  system: 'Centauri',
+  arrive: 287,
+  near: 'Eris',
+  shipPlain: 'Chetzemoka',
 };
 
 type Template = (c: typeof CTX) => string;

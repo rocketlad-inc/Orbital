@@ -187,11 +187,15 @@ export function excludedFundersOf(settingsJson) {
 export const GATE_TRANSIT_FRACTION = 0.25;
 
 /** Ticks a gate crossing takes, given what the same burn would cost
- *  under its own engine. Mirror of src/game/megastructures.ts. */
-export function gateTransitTicks(normalTicks) {
+ *  under its own engine. `fraction` is the gate's own row
+ *  (game_megastructures.transit_fraction): NULL for a warp gate, which
+ *  flings at the quarter above; a tenth for a sun gate (sunGates.js).
+ *  Mirror of src/game/megastructures.ts. */
+export function gateTransitTicks(normalTicks, fraction = null) {
   const t = Number(normalTicks);
   if (!Number.isFinite(t) || t <= 0) return 1;
-  return Math.max(1, Math.ceil(t * GATE_TRANSIT_FRACTION));
+  const f = Number(fraction) > 0 && Number(fraction) <= 1 ? Number(fraction) : GATE_TRANSIT_FRACTION;
+  return Math.max(1, Math.ceil(t * f));
 }
 
 /**

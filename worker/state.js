@@ -799,7 +799,8 @@ const sensorSettlementsP = env.DB
       `SELECT body_id, kind, status, acc_metal, acc_credits,
               cost_metal, cost_credits, partner_body_id, settings_json, hp,
               last_combat_tick, last_target_id, abandoned_at_tick, variant,
-              founded_by_faction_id, founded_at_tick, completed_at_tick
+              founded_by_faction_id, founded_at_tick, completed_at_tick,
+              transit_fraction
          FROM game_megastructures WHERE game_id = ?`,
     )
     .bind(gameId).all()).results ?? []);
@@ -1004,6 +1005,7 @@ __mark('sensors-done');
               ram_intercept_pos_x, ram_intercept_pos_y,
               ram_total_dv, ram_owned_by_faction_id,
               mineral_kind, mineral_remaining, mineral_initial, exhausted_at_tick,
+              emerge_from_tick, emerge_until_tick,
               -- A rock you have SURVEYED. Distinct from visible_to_me,
               -- which is "in sensor range this instant": discovery is
               -- permanent and per faction, so a meteoroid you found last
@@ -1025,7 +1027,11 @@ __mark('sensors-done');
                OR EXISTS (SELECT 1 FROM game_body_discoveries d2
                            WHERE d2.game_id = game_bodies.game_id
                              AND d2.body_id = game_bodies.id
-                             AND d2.faction_id = ?4))`,
+                             AND d2.faction_id = ?4))
+          -- A body that has not emerged yet does not exist for anyone
+          -- (0157): the far end of a sun gate still in flight.
+          AND (emerge_from_tick IS NULL
+               OR emerge_from_tick <= (SELECT current_tick FROM games WHERE id = ?1))`,
     )
     .bind(gameId, presenceFactionIds, sensorVisibleBodyIds, me.id)
     .all();

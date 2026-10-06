@@ -371,6 +371,25 @@ export function bodyPosition(body: Body, t: number, bodies: Body[]): WorldPositi
     return ramBodyPosition(body.ramPlan, t, bodies);
   }
 
+  // A SUN GATE STILL LEAVING THE SUN (worker/sunGates.js). It flies
+  // straight out along the bearing its orbit will have, from the
+  // parent's surface to its orbit, on an even push-flip-brake — the
+  // same profile the server timed it with — and is an ordinary orbit
+  // from untilTick on, so it lands exactly where it then orbits.
+  if (body.emerge && t < body.emerge.untilTick) {
+    const parentPos = bodyPosition(parent, t, bodies);
+    const angle = bodyAngleAt(body, t);
+    const span = Math.max(1e-6, body.emerge.untilTick - body.emerge.fromTick);
+    const f = Math.min(1, Math.max(0, (t - body.emerge.fromTick) / span));
+    const progress = f <= 0.5 ? 2 * f * f : 1 - 2 * (1 - f) * (1 - f);
+    const r0 = Math.min(parent.radius ?? 0, body.orbitRadius);
+    const r = r0 + (body.orbitRadius - r0) * progress;
+    return {
+      x: parentPos.x + Math.cos(angle) * r,
+      y: parentPos.y + Math.sin(angle) * r,
+    };
+  }
+
   // Eccentric Kepler orbit (Kuiper-class rogue asteroids). Standard
   // bodies skip this and use the cheap circular shortcut below.
   if (

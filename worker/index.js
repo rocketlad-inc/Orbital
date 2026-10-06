@@ -1956,6 +1956,14 @@ export default {
         return dispatchFeatureRoute(req, env, url, null);
       }
 
+      // Discord's return from "connect your server" (worker/gameFeed.js).
+      // It proves itself with the single-use state minted for the host,
+      // so it must not depend on the session cookie surviving Discord's
+      // redirect chain.
+      if (req.method === 'GET' && url.pathname === '/api/discord/feed/callback') {
+        return dispatchFeatureRoute(req, env, url, null);
+      }
+
       // everything below requires a session
       const session = await currentSession(req, env);
       if (!session) return err(401, 'unauthenticated', 'sign in required');
