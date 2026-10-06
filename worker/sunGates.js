@@ -181,8 +181,10 @@ export const SUN_GATE_QUADRANT_HALF = Math.PI / 4;
  * (the bearing from the Sun to the far system's barycenter) the gate
  * stops somewhere in the quarter of the Far Reach that faces it, 45
  * degrees either side, uniformly at random: the door opens on the side
- * of the sky it leads to. Centauri and Cygnus sit east and west, so
- * their two gates land on opposite sides without being told to.
+ * of the sky it leads to. Where the two systems sit is the map's call
+ * (a live board has had them under sixty degrees apart), so the two
+ * quadrants can overlap; the first gate is in `avoid`, so the second
+ * still never stops on top of it.
  *
  * Clear of every point in `avoid` by at least `minSep` when it can be,
  * else the bearing (still inside the quadrant) that gets furthest from
