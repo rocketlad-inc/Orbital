@@ -39,6 +39,7 @@ import {
 import { NON_WORLD_TYPES, stationTypeMul } from './systems.js';
 import { advanceSunGates, mainSystemSql } from './sunGates.js';
 import { legDilation } from './wellDilation.js';
+import { binaryCloseness, binaryStarRow } from './binaryDance.js';
 const MAIN_SYSTEM = mainSystemSql();
 
 /** Unordered faction-pair key, shared by the tick's combat passes and
@@ -7660,10 +7661,15 @@ export class Room {
       // same body write ONE UPDATE to the primary's row instead of two.
       const perGroupStock = new Map(); // groupKey -> { targetId, f, m, g, sc }
 
+      // Where Centauri's suns are in their dance (binaryDance.js), once a
+      // tick: a station around one sun yields x1.5..x3 with it.
+      let binaryClose = 0.5;
+      try { binaryClose = binaryCloseness(await binaryStarRow(this.env, gameId), tick); }
+      catch { binaryClose = 0.5; }
       for (const s of settlements) {
-        // Doubled for a station under Centauri's two suns (systems.js).
+        // Scaled for a station under Centauri's suns (systems.js).
         const tm = stationTypeMul(s.type === 'city' ? TYPE_MUL_CITY : TYPE_MUL_STATION,
-          s.type, { id: s.body_id });
+          s.type, { id: s.body_id }, binaryClose);
         const popMul = 1 + YIELD_MULT_PER_POP * Math.max(0, Number(s.population ?? 1) - 1);
         let bld = {};
         if (s.buildings_json) { try { bld = JSON.parse(s.buildings_json) ?? {}; } catch { bld = {}; } }
