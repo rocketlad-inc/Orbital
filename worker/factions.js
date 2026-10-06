@@ -878,6 +878,11 @@ export function effectiveMoonScale(wanted, sysScale = 1, catalog = BODY_CATALOG)
   return ceiling;
 }
 
+/** How much the far systems are opened up inside, over their catalogue
+ *  shape: orbits and spheres of influence, not body sizes. Twice, since
+ *  2026-10-06. Running games were migrated by hand on staging. */
+export const FAR_LOCAL_SCALE = 2;
+
 /**
  * Geometry for one body under every scale. Pure; no per-body edits.
  *
@@ -901,14 +906,20 @@ export function scaledGeometry(body, {
   // Kuiper belt, and a 54-tick hop between neighbours. Only the DISTANCE
   // TO the system scales (its barycenter is heliocentric and takes
   // system_scale like any planet); the shape inside it is designed.
+  //
+  // The designed shape is then opened up by FAR_LOCAL_SCALE (Lorne,
+  // 2026-10-06: "their rather cramped"): every orbit and sphere of
+  // influence inside, the suns' binary included, at the same factor
+  // regardless of the host's dials; body sizes unchanged.
   const isFarLocal = !!body.far_system && isMoon;
-  const localScale = isFarLocal ? 1 : (isMoon ? moonScale : sysScale);
+  const localScale = isFarLocal ? FAR_LOCAL_SCALE : (isMoon ? moonScale : sysScale);
   const baseOrbit = orbitOverride ?? body.orbit_radius;
   const orbit = baseOrbit == null ? baseOrbit : baseOrbit * localScale;
 
   let period = body.orbit_period;
   if (isFarLocal) {
-    // Shape kept, so the year is kept.
+    // Shape kept and opened up: Kepler for the wider orbit.
+    if (period != null) period *= Math.pow(FAR_LOCAL_SCALE, 1.5);
   } else if (isMoon && period != null) {
     // Kepler for a fixed parent mass.
     period *= Math.pow(moonScale, 1.5);
@@ -949,7 +960,8 @@ export function scaledGeometry(body, {
     // would inflate Jupiter's sphere until it swallowed the belt, and
     // everything inside would start counting as 'in Jupiter's system'.
     soi: body.soi == null ? body.soi
-      : Math.max(body.soi * bodyScale, (moonReach[body.id] ?? 0) * moonScale * 1.15),
+      : isFarLocal ? body.soi * bodyScale * FAR_LOCAL_SCALE
+        : Math.max(body.soi * bodyScale, (moonReach[body.id] ?? 0) * moonScale * 1.15),
   };
 }
 
@@ -1564,7 +1576,10 @@ export async function seedGameWorld(env, gameId) {
     const moonScale = effectiveMoonScale(moonScaleWanted, sysScale);
     const moonReach = moonReachByParent();
     const anyEdit = Object.keys(bodyEdits).length > 0 || sysScale !== 1
-      || bodyScale !== 1 || moonScaleWanted !== 1;
+      || bodyScale !== 1 || moonScaleWanted !== 1
+      // The far systems always need the geometry pass: FAR_LOCAL_SCALE
+      // opens them up even on a map whose own dials are all 1.
+      || Number(conf.far_systems) === 1;
 
     // WHICH BODIES EXIST IS DECIDED BEFORE ANY EDIT TO THEM. The far
     // systems are a membership question, not a geometry one, so they

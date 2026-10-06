@@ -19,7 +19,7 @@
 import {
   BODY_CATALOG, FAR_SYSTEM_IDS, STARTING_BODY_OPTIONS,
   seedGameWorld, backfillMissingBodies, pickSecretPlacements,
-  moonScaleCeiling, catalogFor,
+  moonScaleCeiling, catalogFor, scaledGeometry, FAR_LOCAL_SCALE,
 } from '../worker/factions.js';
 import { SimD1 } from './d1.mjs';
 import { MIGRATIONS } from '../worker/_migrations_bundle.js';
@@ -63,21 +63,24 @@ check('they use the SERVER spelling for types',
   check('every gas and ice giant has at least three moons',
     giants.every(g => moonsOf(g).length >= 3),
     giants.filter(g => moonsOf(g).length < 3).map(g => `${g.id}:${moonsOf(g).length}`).join(', '));
-  // Far moons are not moon-scaled, so check them at the live body size
-  // (body_scale 2): clear of the giant's cloud tops, and each doubled SOI
-  // clear of its neighbour's.
+  // Checked on the LIVE geometry (body_scale 2, and FAR_LOCAL_SCALE
+  // opening the system up): clear of the giant's cloud tops, and each
+  // SOI clear of its neighbour's.
   const BODY = 2;
-  for (const g of giants.filter(x => x.far_system)) {
-    const ms = moonsOf(g).sort((a, b) => a.orbit_radius - b.orbit_radius);
+  const live = (b) => ({ ...b, ...scaledGeometry(b, { bodyScale: BODY }), radius: b.radius * BODY });
+  for (const g0 of giants.filter(x => x.far_system)) {
+    const g = live(g0);
+    const ms = moonsOf(g0).map(live).sort((a, b) => a.orbit_radius - b.orbit_radius);
     check(`${g.name}'s moons clear its surface at live size`,
-      ms.every(m => m.orbit_radius - m.radius * BODY > g.radius * BODY),
+      ms.every(m => m.orbit_radius - m.radius > g.radius),
       ms.map(m => `${m.id}@${m.orbit_radius}`).join(', '));
     check(`${g.name}'s moons keep out of each other's way`,
       ms.every((m, i) => i === 0
-        || m.orbit_radius - m.soi * BODY > ms[i - 1].orbit_radius + ms[i - 1].soi * BODY),
-      ms.map(m => `${m.id} ${m.orbit_radius}±${m.soi * BODY}`).join(', '));
+        || m.orbit_radius - m.soi > ms[i - 1].orbit_radius + ms[i - 1].soi),
+      ms.map(m => `${m.id} ${m.orbit_radius}±${m.soi}`).join(', '));
     check(`${g.name}'s moons all sit inside its sphere of influence`,
-      ms.every(m => m.orbit_radius < g.soi * BODY * 0.5));
+      ms.every(m => m.orbit_radius < g.soi * 0.5),
+      `${ms.map(m => m.orbit_radius).join(', ')} vs soi ${g.soi}`);
   }
 }
 
@@ -187,6 +190,9 @@ check('the barycenter is heliocentric and far out',
   byId.get('binary_barycenter')?.parent_body_id?.endsWith(':sol')
   && byId.get('binary_barycenter').orbit_radius > 60000,
   JSON.stringify(byId.get('binary_barycenter')));
+check('a default-dial game still opens the system up (FAR_LOCAL_SCALE)',
+  byId.get('verdant')?.orbit_radius === 400 * FAR_LOCAL_SCALE,
+  String(byId.get('verdant')?.orbit_radius));
 check('its worlds orbit IT, at their own local radii',
   byId.get('verdant')?.parent_body_id?.endsWith(':binary_barycenter')
   && byId.get('verdant').orbit_radius < 1000,
@@ -207,13 +213,18 @@ check('the gas giant kept the server spelling',
   const { scaledGeometry } = await import('../worker/factions.js');
   const dials = { sysScale: 4, bodyScale: 2, moonScale: 8, moonReach: {}, outerSpeedup: 4, beltRadius: 1000 };
   const geo = (id) => scaledGeometry(BODY_CATALOG.find(b => b.id === id), dials);
-  check('a far world keeps its designed orbit whatever the host dials',
-    geo('verdant').orbit_radius === 400 && geo('farspire').orbit_radius === 2400,
+  // Opened up by FAR_LOCAL_SCALE and by nothing the host set.
+  const F = FAR_LOCAL_SCALE;
+  check(`a far world sits at ${F}x its designed orbit whatever the host dials`,
+    geo('verdant').orbit_radius === 400 * F && geo('farspire').orbit_radius === 2400 * F,
     `verdant ${geo('verdant').orbit_radius}, farspire ${geo('farspire').orbit_radius}`);
-  check('...and its year with it',
-    geo('verdant').orbit_period === 700, String(geo('verdant').orbit_period));
-  check('a far moon of a far world is left alone too',
-    geo('prismara').orbit_radius === 26, String(geo('prismara').orbit_radius));
+  check('...and its year follows Kepler',
+    Math.abs(geo('verdant').orbit_period - 700 * Math.pow(F, 1.5)) < 1e-6,
+    String(geo('verdant').orbit_period));
+  check('a far moon of a far world takes the same factor, not moon_scale',
+    geo('prismara').orbit_radius === 26 * F, String(geo('prismara').orbit_radius));
+  check("the suns' binary opens up with the rest",
+    geo('centauri_b').orbit_radius === 28 * F, String(geo('centauri_b').orbit_radius));
   // 33,150 written in the file, doubled at module load by SYSTEM_SCALE,
   // then the host's system_scale 4 on top: the 265,200 of the design.
   check('but the DISTANCE to the system still scales with the map',
@@ -223,9 +234,10 @@ check('the gas giant kept the server spelling',
     geo('luna').orbit_radius === 20 * 8, String(geo('luna').orbit_radius));
   check('a planet still takes system_scale',
     geo('earth').orbit_radius === 186 * 2 * 4, String(geo('earth').orbit_radius));
-  const hop = 2 * Math.sqrt(2400 / ACCEL);
+  // Twice the room costs root-two the time: still a hop, not a campaign.
+  const hop = 2 * Math.sqrt((2400 * FAR_LOCAL_SCALE) / ACCEL);
   check('crossing Centauri end to end is a short trip, not a second campaign',
-    hop < 25, `${hop.toFixed(0)} ticks`);
+    hop < 30, `${hop.toFixed(0)} ticks`);
 }
 
 // ---- 8. What the review found on staging ----------------------------
