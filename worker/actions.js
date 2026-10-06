@@ -1860,8 +1860,21 @@ async function handleDeploySettlement(req, env, ctx) {
   }
 
   // Surface settlements require a landable surface — no gas giants or the star.
-  if (type === 'city' && (bodyRow.type === 'star' || bodyRow.type === 'gas-giant' || bodyRow.type === 'ice-giant')) {
+  if (type === 'city' && (bodyRow.type === 'star' || bodyRow.type === 'black_hole'
+      || bodyRow.type === 'gas-giant' || bodyRow.type === 'ice-giant')) {
     return err(409, 'no_surface', 'cannot found a city on this body type');
+  }
+
+  // NOTHING HOLDS AN ORBIT AT AN EVENT HORIZON. Stations are allowed on
+  // anything but a meteoroid, a rule written when every body in the game
+  // was a world or a star; the far systems brought the first black hole,
+  // and the world menu duly offered BUILD STATION on it. Cities were
+  // already barred by type, so this is the station half of the same
+  // sentence. No production game has a black hole, so this changes
+  // nothing that exists today.
+  if (bodyRow.type === 'black_hole') {
+    return err(409, 'no_surface',
+      'nothing holds an orbit at an event horizon — settle its worlds instead');
   }
 
   // THE HARD GATE (DESIGN-terraforming): cities live on terraformed

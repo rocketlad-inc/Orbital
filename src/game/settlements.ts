@@ -386,6 +386,10 @@ export function canHostStation(body: Body): boolean {
   // Nor a debris field (0141): the server refuses every settlement on
   // one, in commitSettlement.
   if (body.obliteratedAtTick != null) return false;
+  // A black hole takes no station — see the server's own refusal in
+  // actions.js. Offering the button and failing the click is worse than
+  // not offering it.
+  if (body.type === 'black_hole') return false;
   return body.type !== 'meteoroid';
 }
 
