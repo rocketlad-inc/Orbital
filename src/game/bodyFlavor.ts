@@ -157,7 +157,7 @@ export const BODY_FLAVOR: Record<string, string> = {
 
   centauri_b: "The orange secondary, smaller and cooler, forever phased to the far side of the dance from its brighter sibling. Together they make a sky no Sol-born eye has seen: two suns, two sets of shadows, two dawns. Unreachable and essential — the second hearth of a system built for two.",
 
-  verdant: "A green world circling two suns at once, and the richest mind in any system — eighteen measures of science from a single harvest, a garden of biology that should not, by any law we know, exist. Everything grows here, including questions. Whatever learned to thrive under a doubled sky has had a very long time to think, and longer still to wait for someone to come asking.",
+  verdant: "A green world circling two suns at once, and the richest mind in any system — twelve measures of science from a single harvest, a garden of biology that should not, by any law we know, exist. Everything grows here, including questions. Whatever learned to thrive under a doubled sky has had a very long time to think, and longer still to wait for someone to come asking.",
 
   crimson: "A deep red giant swollen with fuel and ringing with science, its banded clouds lit blood-dark by the light of two suns. Twelve measures of fuel from a single draw — no world burns richer. It offers no metal and no credits, only power and knowledge in staggering excess; a furnace for an empire bold enough to tap it.",
 

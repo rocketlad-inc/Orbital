@@ -203,5 +203,25 @@ check('the gas giant kept the server spelling',
     hop < 25, `${hop.toFixed(0)} ticks`);
 }
 
+// ---- 8. What the review found on staging ----------------------------
+{
+  // The world menu offered BUILD STATION on the event horizon: stations
+  // are allowed on anything but a meteoroid, a rule from a game with no
+  // black holes in it.
+  const srv = (await import('node:fs')).readFileSync(
+    new URL('../worker/actions.js', import.meta.url), 'utf8');
+  check('the server refuses a station on a black hole',
+    /black_hole/.test(srv) && /event horizon/.test(srv));
+  check('...and refuses a city on one too',
+    /type === 'city' && \(bodyRow\.type === 'star' \|\| bodyRow\.type === 'black_hole'/.test(srv)
+    || srv.includes("bodyRow.type === 'black_hole'"));
+  // randomize_orbits spun the two set pieces into the same quarter of
+  // the sky on the first staging seed.
+  const fac = (await import('node:fs')).readFileSync(
+    new URL('../worker/factions.js', import.meta.url), 'utf8');
+  check('randomised phases skip the far systems',
+    /randomizeOrbits && !body\.far_system/.test(fac));
+}
+
 console.log(bad === 0 ? '\nALL FAR SYSTEM CHECKS PASS' : `\n${bad} FAILED`);
 process.exit(bad === 0 ? 0 : 1);

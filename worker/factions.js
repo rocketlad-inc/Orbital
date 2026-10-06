@@ -1566,7 +1566,12 @@ export async function seedGameWorld(env, gameId) {
           //
           // Trojan rocks are generated from their host further down, so
           // they follow their planet to its new phase without help.
-          angle0: (randomizeOrbits && (!body.parent || body.parent === 'sol'))
+          // RANDOMISED PHASES ARE FOR SOL. The far systems are placed
+          // east and west on purpose, so one is never a short hop from
+          // the other; randomize_orbits spun them to wherever and put
+          // Centauri and Cygnus in the same quarter of the sky.
+          angle0: (randomizeOrbits && !body.far_system
+            && (!body.parent || body.parent === 'sol'))
             ? phaseRand() * Math.PI * 2
             : body.angle0,
           radius: (e.radius ?? body.radius) * bodyScale,
