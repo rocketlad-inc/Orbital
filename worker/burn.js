@@ -1,26 +1,26 @@
 // ============================================================
 // THE BURN EVERY SHIP FLIES IN MULTIPLAYER, IN ONE PLACE.
 //
-// A ship lights its engine at 0.05g, and the push BUILDS the longer it
-// burns — EXPONENTIALLY: it doubles about every 11 ticks, so it barely
+// A ship lights its engine at 0.02g, and the push BUILDS the longer it
+// burns — EXPONENTIALLY: it doubles about every 8.5 ticks, so it barely
 // moves at first and climbs steeply later, reaching 1g at 48 ticks and
 // holding there. At the flip it turns round and brakes at BRAKE_MUL x
 // whatever push it had reached, so it arrives at rest. A moon hop hardly
-// gets up the build; a long haul spends most of its burn near the top,
+// gets off the floor; a long haul spends most of its burn near the top,
 // which is what makes the outer system crossable.
 //
 // Lorne, 2026-10-06, in steps: "build from launch" (linear, 0.05g -> 1g
-// over 48 ticks), then, with moon hops too fast, "change the growth from
-// linear to exponential, so it starts muuuuch slower but leads to the
-// same result". At System scale 4 with one-hour ticks, typical routes
-// (before today -> linear -> exponential):
-//   Io-Callisto 9.7 -> 5.5 -> 6.7h     Earth-Mars 20.2 -> 9.8 -> 12.9h
-//   Neptune-Pluto 54 -> 21 -> 28h      Pluto-Makemake 66 -> 24 -> 32h
+// over 48 ticks); "exponential, so it starts muuuuch slower but leads to
+// the same result"; then the floor 0.05g -> 0.02g "to slow down
+// intermoon a bit". Typical routes at System scale 4, in WHOLE TICKS (the
+// server rounds every arrival up), before today -> now:
+//   Io-Callisto 10 -> 10 T      Earth-Mars 21 -> 18 T    Earth-Jupiter 28 -> 23 T
+//   Neptune-Pluto 54 -> 35 T    Pluto-Makemake 66 -> 39 T  Makemake-Sedna 75 -> 42 T
 // (A flat 1g push shipped for 21 minutes that day too, and was far too
-// fast: Earth-Mars in 3.4h.)
+// fast: Earth-Mars in 4 T.)
 //
-// Legs already in flight keep the build they were committed with: a
-// linear ramp (accel_ramp) or none. This file integrates all three.
+// Legs keep the build they were committed with — exponential (accel_tau),
+// linear (accel_ramp) or flat — and this file integrates all three.
 //
 // Mirrored by src/physics/torchTransfer.ts, which installs these values
 // from /state (game.burn_*) and is held to this file by
@@ -31,9 +31,10 @@
  *  catalogue scale) in one tick on a symmetric burn. a = 4 * d / T^2. */
 export const G_ANCHOR = 4 * 132.6;
 
-/** Every hull's push at launch, in g. Engine parts and captain traits
- *  multiply the whole build (launch, rate and top) on the client. */
-export const SHIP_ENGINE_G = 0.05;
+/** Every hull's push at launch (the floor), in g. Engine parts and
+ *  captain traits multiply the whole build (launch and top) on the
+ *  client. 0.05 until 2026-10-06 evening. */
+export const SHIP_ENGINE_G = 0.02;
 
 /** Where the build tops out, in g (before parts). */
 export const MAX_ENGINE_G = 1;
@@ -54,7 +55,7 @@ export const fromG = (g) => g * G_ANCHOR;
 export const SHIP_ENGINE_ACCEL = fromG(SHIP_ENGINE_G);
 
 /** Ticks for the push to grow by a factor of e, so it climbs from launch
- *  to the top in RAMP_TICKS: ~16 ticks (doubling every ~11). */
+ *  to the top in RAMP_TICKS: ~12.3 ticks (doubling every ~8.5). */
 export const GROWTH_TAU = RAMP_TICKS / Math.log(MAX_ENGINE_G / SHIP_ENGINE_G);
 
 /** The build for a hull that launches at `a0`: exponential (tau, in
