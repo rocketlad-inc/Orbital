@@ -1197,6 +1197,12 @@ export interface GameState {
   /** The tick "something strange is emerging from the Sun" is announced
    *  (worker/sunGates.js). Null until the server rolls it; absent in SP. */
   sunGateTick?: number | null;
+  /** A sun gate due out of the Sun within the warning window: the tick it
+   *  comes out and its place in the order (0 = the first). Not where it
+   *  leads; that stays secret until it is out. Null otherwise. */
+  sunGateNext?: { emergeTick: number; index: number } | null;
+  /** The first hull through each sun gate (local gate id, either end). */
+  sunGateFirsts?: Array<{ gateId: string; factionId: string | null; tick: number; ship: string | null; toSystem: string | null }>;
   /** Megastructure build state, keyed on the site's body id. The site
    *  itself is in `bodies` with type 'megastructure'. */
   megastructures?: Record<string, MegastructureState>;

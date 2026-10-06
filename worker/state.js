@@ -2121,6 +2121,42 @@ const tradeRoutesP = env.DB
   // been laid. Null until the first `initiate` POST per match. See
   // migration 0018 + worker/room.js tickDysonSphere for the per-tick
   // delivery + damage logic.
+  // THE SUN GATES' MOMENTS for the Situation Report (sunGates.js), from
+  // the event itself so the client never has to guess the schedule:
+  //   next  -- a gate due out of the Sun within the warning window: its
+  //            tick and its place in the order, NOT where it leads (that
+  //            stays secret until it is out). Null outside the window.
+  //   firsts -- the first hull through each gate (gate_transit rows the
+  //            crossing flagged first), so "who went first" is news.
+  // Both are nothing at all until the omen has been rolled.
+  let sunGateNext = null;
+  let sunGateFirsts = [];
+  if (game.sun_gate_tick != null) {
+    try {
+      const { sunGatePlan, SUN_GATE_WARNING_TICKS } = await import('./sunGates.js');
+      const gconf = await loadGameConfig(env, gameId);
+      const cur = Number(game.current_tick) || 0;
+      const step = sunGatePlan(gameId, Number(game.sun_gate_tick), gconf).find(s => s.emergeTick > cur);
+      if (step && cur >= step.emergeTick - SUN_GATE_WARNING_TICKS) {
+        sunGateNext = { emerge_tick: step.emergeTick, index: step.index };
+      }
+      const rows = (await env.DB.prepare(
+        `SELECT body_id, actor_faction_id, tick_number, payload FROM chronicle_entries
+          WHERE game_id = ? AND kind = 'gate_transit' AND json_extract(payload, '$.first') = 1`,
+      ).bind(gameId).all()).results ?? [];
+      sunGateFirsts = rows.map(r => {
+        let p = {};
+        try { p = JSON.parse(r.payload || '{}'); } catch { p = {}; }
+        return {
+          gate_id: r.body_id, faction_id: r.actor_faction_id, tick: r.tick_number,
+          ship: p.ship ?? null, to_system: p.to_system ?? null,
+        };
+      });
+    } catch (e) {
+      console.error('sun gate state failed', e);
+    }
+  }
+
   const dysonSphere = (game.dyson_controller_faction_id || (game.dyson_max_hp ?? 0) > 0) ? {
     controllerFactionId: game.dyson_controller_faction_id ?? null,
     foundationSettlementId: game.dyson_foundation_settlement_id,
@@ -2185,6 +2221,8 @@ const tradeRoutesP = env.DB
       // The tick the sun-gate omen is (or was) announced (sunGates.js),
       // for the Situation Report's countdown. NULL until a tick rolls it.
       sun_gate_tick: game.sun_gate_tick ?? null,
+      sun_gate_next: sunGateNext,
+      sun_gate_firsts: sunGateFirsts,
       // THE BURN SHIPS FLY (burn.js): launch push in g, the top of the
       // build and how many ticks it takes, and the brake as a multiple of
       // the push reached. Sent so the client plans every leg with the
