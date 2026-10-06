@@ -418,7 +418,11 @@ export function layoutOrbitBattle(
         const mid = (sec.start + sec.end) / 2;
         const half = (sec.end - sec.start) / 2;
         const off = angDiff(t, mid);
-        const over = Math.abs(off) - (half + b.stray);
+        // The hull's EDGE, not its centre: a big hull centred on the
+        // border spilled half its sprite into the open space between
+        // the shares (Bold sizes made a destroyer wider than the gap).
+        const edge = Math.min(b.c / Math.max(1, r), half * 0.9);
+        const over = Math.abs(off) + edge - (half + b.stray);
         if (over > 0) t -= Math.sign(off) * over * 0.35;
       }
       b.x = Math.cos(t) * r;
@@ -454,7 +458,9 @@ export function layoutOrbitBattle(
       if (gap > 0 && it < 22) {
         const sec = sectorOf.get(b.s.faction)!;
         const off = angDiff(t, (sec.start + sec.end) / 2);
-        const over = Math.abs(off) - ((sec.end - sec.start) / 2 + b.stray);
+        const half = (sec.end - sec.start) / 2;
+        const edge = Math.min(b.c / Math.max(1, r), half * 0.9);
+        const over = Math.abs(off) + edge - (half + b.stray);
         if (over > 0) t -= Math.sign(off) * over * 0.5;
       }
       b.x = Math.cos(t) * r;
