@@ -1188,6 +1188,9 @@ export interface GameState {
   /** system_scale alone. Weapon reach (Weapons Station, Gravity Sink)
    *  scales by this and NOT by the sensor knob — see structureReach.ts. */
   systemScale?: number;
+  /** The tick "something strange is emerging from the Sun" is announced
+   *  (worker/sunGates.js). Null until the server rolls it; absent in SP. */
+  sunGateTick?: number | null;
   /** Megastructure build state, keyed on the site's body id. The site
    *  itself is in `bodies` with type 'megastructure'. */
   megastructures?: Record<string, MegastructureState>;

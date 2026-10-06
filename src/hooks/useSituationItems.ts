@@ -217,6 +217,7 @@ export type SituationCategory =
   | 'dyson_project' // YOUR Dyson Sphere — progress / stalled / under attack
   | 'dyson_threat' // a RIVAL's Dyson Sphere is rising — stop it or lose
   | 'domination_watch' // someone is closing on the 60%-of-worlds win
+  | 'sun_gate'        // the sun gates: the omen, a gate in flight, a gate open
   // --- senate sanctions in force, with a clock ---
   | 'sanction_on_me'  // a senate sanction is being applied TO you
   | 'sanction_window' // a sanction on a RIVAL you can exploit before it lapses
@@ -232,6 +233,12 @@ export type SituationCategory =
  *  — quoted to the player, so a drift here misstates the stakes of the
  *  single most decisive fight in the game. */
 const DYSON_ABANDON_LOSS_PCT = 0.20;
+
+/** Ticks between the sun-gate omen and the first gate leaving the Sun.
+ *  MIRRORS SUN_GATE_WARNING_TICKS in worker/sunGates.js. */
+const SUN_GATE_WARNING_TICKS = 6;
+/** How long a newly opened sun gate stays in the report. */
+const SUN_GATE_NEWS_TICKS = 24;
 
 export type SituationTier = 'now' | 'decision' | 'opportunity';
 
@@ -329,6 +336,7 @@ const TIER_OF: Record<SituationCategory, SituationTier> = {
   dyson_threat:   'decision',
   // Promotes itself to NOW when a rival is within 5 points of the line.
   domination_watch: 'decision',
+  sun_gate: 'decision',
   // A sanction aimed at YOU is happening every tick until it lapses —
   // same shape of fact as arrears, so the same tier. The mirror case (a
   // sanction on a rival) is a timed OPENING, not an emergency.
@@ -460,6 +468,7 @@ export const CATEGORY_LABEL: Record<SituationCategory, string> = {
   dyson_project:   'Dyson Sphere',
   dyson_threat:    'Rival megaproject',
   domination_watch: 'Domination race',
+  sun_gate: 'The sun gates',
   sanction_on_me:  'Senate sanctions against you',
   sanction_window: 'Sanction windows',
 };
@@ -2343,6 +2352,59 @@ export function useSituationItems(
           severity: 'normal',
           sortKey: v.tick,
         });
+      }
+    } catch { /* defensive */ }
+
+    // ---- The sun gates (worker/sunGates.js) ----
+    // Everyone's, not yours: a race on a clock, so a decision while it is
+    // coming (send something or not) and an opportunity once it is open.
+    // Condition-based like the rest -- each row exists exactly while its
+    // moment does.
+    try {
+      const gates = bodies.filter(b => /^sungate_[a-z]+$/.test(b.id));
+      const systemOf = (b: { name: string }) => b.name.replace(/\s*Gate$/i, '');
+      const omen = gameState.sunGateTick;
+      if (omen != null && tick >= omen && gates.length === 0) {
+        const out = Math.max(0, omen + SUN_GATE_WARNING_TICKS - tick);
+        push({
+          id: 'sun_gate:omen',
+          category: 'sun_gate',
+          title: 'Something strange is emerging from the Sun',
+          subtitle: out > 0 ? `Out in ${out} tick${out === 1 ? '' : 's'}` : 'Any moment now',
+          focus: { kind: 'body', bodyId: 'sol' },
+          severity: 'warn',
+          sortKey: out,
+        });
+      }
+      for (const g of gates) {
+        const sys = systemOf(g);
+        if (g.emerge && tick < g.emerge.untilTick) {
+          push({
+            id: `sun_gate:flight:${g.id}`,
+            category: 'sun_gate',
+            entity: `body:${g.id}`,
+            title: `A gate to ${sys} is burning for the Far Reach`,
+            subtitle: `Stops at T+${g.emerge.untilTick} — first there gets the shortcut`,
+            focus: { kind: 'body', bodyId: g.id },
+            severity: 'warn',
+            sortKey: g.emerge.untilTick - tick,
+          });
+          continue;
+        }
+        const opened = gameState.megastructures?.[g.id]?.completedAtTick;
+        if (opened != null && tick - opened <= SUN_GATE_NEWS_TICKS) {
+          push({
+            id: `sun_gate:open:${g.id}`,
+            category: 'sun_gate',
+            tier: 'opportunity',
+            entity: `body:${g.id}`,
+            title: `The ${g.name} is open`,
+            subtitle: `Park a ship on it to launch to ${sys} at a tenth of the burn`,
+            focus: { kind: 'body', bodyId: g.id },
+            severity: 'normal',
+            sortKey: -opened,
+          });
+        }
       }
     } catch { /* defensive */ }
 
