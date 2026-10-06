@@ -27,7 +27,7 @@ import { rendezvousStateAt } from '../src/physics/rendezvous.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
 import { selectInChunks } from './sqlChunk.js';
 import { hostilePairs } from './wars.js';
-import { assetState, voidDeal } from './assetDeals.js';
+import { assetState, voidDeal, ASSET_TRADE_PREFIX, owedOn, payIntoDeal } from './assetDeals.js';
 import { burnProgress } from './orbitPos.js';
 import { effectiveHpMaxOf } from './effectiveHp.js';
 import {
@@ -2990,6 +2990,13 @@ export class Room {
               await this.env.DB
                 .prepare(`UPDATE trade_deliveries SET status = 'lost', resolved_at_tick = ? WHERE id = ?`)
                 .bind(tick, d.id).run();
+            } else if (String(d.trade_id).startsWith(ASSET_TRADE_PREFIX)) {
+              // An asset payment has no obligation row to fall back to:
+              // nothing was aboard, so it simply ends; the buyer sends
+              // another freighter.
+              await this.env.DB
+                .prepare(`UPDATE trade_deliveries SET status = 'cancelled', resolved_at_tick = ? WHERE id = ?`)
+                .bind(tick, d.id).run();
             } else {
               await this.env.DB
                 .prepare(`UPDATE trade_deliveries SET ship_id = NULL, pickup_body_id = NULL, status = 'unassigned' WHERE id = ?`)
@@ -2997,6 +3004,9 @@ export class Room {
             }
             continue;
           }
+          // ASSET PAYMENTS (assetDeals.js "PAYING BY FREIGHTER").
+          const assetDealId = String(d.trade_id).startsWith(ASSET_TRADE_PREFIX)
+            ? String(d.trade_id).slice(ASSET_TRADE_PREFIX.length) : null;
 
           const inFlight = await this.env.DB
             .prepare("SELECT 1 AS x FROM game_ship_nodes WHERE ship_id = ? AND status IN ('committed','in_transit') LIMIT 1")
@@ -3025,6 +3035,34 @@ export class Room {
               .run();
           };
 
+          if (d.status === 'to_pickup' && assetDealId) {
+            // Before anything is loaded, the deal may have closed or been
+            // paid by other runs. Load only what is still owed and not
+            // already riding another hull; nothing owed = no trip.
+            const deal = await this.env.DB
+              .prepare('SELECT * FROM trade_asset_deals WHERE id = ? AND game_id = ?')
+              .bind(assetDealId, gameId).first();
+            const others = await this.env.DB
+              .prepare(
+                `SELECT COALESCE(SUM(metal), 0) AS m, COALESCE(SUM(gold), 0) AS g FROM trade_deliveries
+                  WHERE game_id = ? AND trade_id = ? AND resolved_at_tick IS NULL AND id != ?`,
+              )
+              .bind(gameId, d.trade_id, d.id).first();
+            const owed = deal && deal.status === 'active' ? owedOn(deal) : { metal: 0, credits: 0 };
+            const m = Math.max(0, Math.min(Number(d.metal), owed.metal - Number(others?.m ?? 0)));
+            const g = Math.max(0, Math.min(Number(d.gold), owed.credits - Number(others?.g ?? 0)));
+            if (m + g <= 0) {
+              await this.env.DB
+                .prepare(`UPDATE trade_deliveries SET status = 'cancelled', resolved_at_tick = ? WHERE id = ?`)
+                .bind(tick, d.id).run();
+              continue;
+            }
+            if (m !== Number(d.metal) || g !== Number(d.gold)) {
+              await this.env.DB.prepare('UPDATE trade_deliveries SET metal = ?, gold = ? WHERE id = ?')
+                .bind(m, g, d.id).run();
+              d.metal = m; d.gold = g;
+            }
+          }
           if (d.status === 'to_pickup') {
             if (here !== d.pickup_body_id) { await planDeliveryLeg(d.pickup_body_id); continue; }
             // At the collector: load. The debit is guarded — if the
@@ -3052,6 +3090,24 @@ export class Room {
             await planDeliveryLeg(d.dest_body_id);
           } else if (d.status === 'outbound') {
             if (here !== d.dest_body_id) { await planDeliveryLeg(d.dest_body_id); continue; }
+            if (assetDealId) {
+              // Into the deal's escrow meter (no tariff: it is a price,
+              // not trade); the handover runs if this settles it. What
+              // the deal will not take -- it closed, or other runs paid
+              // first -- stays ABOARD, as a cancelled route's load does.
+              const res = await payIntoDeal(this.env, gameId, assetDealId, d.metal, d.gold, tick);
+              const keepM = Number(d.metal) - res.taken.metal;
+              const keepG = Number(d.gold) - res.taken.credits;
+              if (keepM + keepG > 0) {
+                await this.env.DB
+                  .prepare('UPDATE game_ships SET cargo_metal = cargo_metal + ?, cargo_gold = cargo_gold + ? WHERE id = ?')
+                  .bind(keepM, keepG, d.ship_id).run();
+              }
+              await this.env.DB
+                .prepare(`UPDATE trade_deliveries SET status = 'delivered', resolved_at_tick = ? WHERE id = ?`)
+                .bind(tick, d.id).run();
+              continue;
+            }
             // Arrived. Credit the recipient minus the accept-time
             // tariff snapshot; floors so the skim can't mint units.
             const mul = 1 - Math.max(0, Math.min(100, d.tariff_pct ?? 0)) / 100;
