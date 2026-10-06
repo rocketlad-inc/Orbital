@@ -45,6 +45,9 @@ export interface TransferIntent {
     vx: number; vy: number;        // velocity inherited from the parking orbit
     accel: number;                 // units/tick², engine_g × parts × tech
     flipTick: number;              // boost ends, brake begins
+    /** Braking thrust (migration 0155): brake_mul × accel since the hard
+     *  brake; optional, and absent means an even burn at `accel`. */
+    brakeAccel?: number;
   };
   /** A matched-velocity rendezvous instead of a flip-and-burn: two burn
    *  vectors, when they meet, and whose trajectory to adopt afterwards
@@ -619,6 +622,7 @@ export function MultiplayerActionsProvider({
         launch_vy: intent.launch.vy,
         accel: intent.launch.accel,
         flip_tick: intent.launch.flipTick,
+        ...(intent.launch.brakeAccel != null ? { brake_accel: intent.launch.brakeAccel } : {}),
       } : {}),
       ...(intent.rendezvous ? {
         rv_ax: intent.rendezvous.ax,

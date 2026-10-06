@@ -609,6 +609,10 @@ export interface Faction {
    *  and on the single-player model, which never seeds one — render
    *  through resolveEmblem() so those still draw a stable shape. */
   emblem?: string | null;
+  /** Colony and station skins (0154, Commission). Absent = the free look;
+   *  the server only sends a premium skin while the Commission is held. */
+  citySkin?: string | null;
+  stationSkin?: string | null;
   isPlayer: boolean;
   /** When true, this faction's turn is driven by src/game/factionAI.ts
    *  instead of waiting for player input. Single-player only for v1. */
@@ -1223,6 +1227,17 @@ export interface GameState {
    *  whether the local player can edit. Parallel-indexed with combatLog.
    *  Multiplayer only. */
   chronicleMeta?: (ChronicleEditMeta | null)[];
+  /** Refits that landed in the server's recent event window (the
+   *  'ship_refitted' chronicle rows, owner-only). Multiplayer only;
+   *  feeds the situation report's "Refit complete". */
+  recentRefits?: Array<{
+    shipId: string;
+    tick: number;
+    shipName: string | null;
+    designName: string | null;
+    bodyId: string | null;
+    bodyName: string | null;
+  }>;
   /** Machine-readable chronicle kind per entry, parallel-indexed with
    *  combatLog. Drives the pending-FX queue (src/render/pendingFx.ts). */
   lastHarvestTick: number;             // tick when resources were last collected

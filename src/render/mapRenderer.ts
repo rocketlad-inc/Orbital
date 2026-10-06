@@ -22,7 +22,7 @@ import { STRAIGHT_LINE_TRAJECTORIES } from '../game/featureFlags';
 import { COLORS, withOpacity, lighten, darken } from './colors';
 import { requestLabel, clearOfKeepOuts, reserveRect } from './labelLayer';
 import { visibleFogHoles } from './fogHoles';
-import { sensorEdgeArcs } from './sensorEdge';
+import { sensorEdgeArcs, sensorEdgeLoops, EdgeArc } from './sensorEdge';
 import { LOD, lodAlpha } from './lod';
 import { getShipIconImage, driveBellsFor } from './shipIconCache';
 import {
@@ -6808,6 +6808,12 @@ function settlementColor(settlement: Settlement, factions: Faction[]): string {
  * Two-tone (§5): the owning faction's secondary trim for settlements.
  * Decoration only — meaning must stay in the primary.
  */
+/** The owner's skin for this settlement (0154); null = the free look. */
+function settlementSkin(settlement: Settlement, factions: Faction[]): string | null {
+  const f = factions.find(x => x.id === settlement.ownedBy);
+  return (settlement.type === 'station' ? f?.stationSkin : f?.citySkin) ?? null;
+}
+
 function settlementColor2(settlement: Settlement, factions: Faction[]): string | undefined {
   const faction = factions.find(f => f.id === settlement.ownedBy);
   if (!faction?.color) return undefined;
@@ -6867,7 +6873,7 @@ export function drawCity(
     ctx.ctx.save();
     ctx.ctx.translate(canvasPos.x, canvasPos.y);
     ctx.ctx.rotate(angle + Math.PI / 2);
-    drawCityCluster(ctx.ctx, settlement, color, settlementColor2(settlement, factions));
+    drawCityCluster(ctx.ctx, settlement, color, settlementColor2(settlement, factions), settlementSkin(settlement, factions));
     // This colony was already standing when someone found it — ring the
     // modern cluster with what's left of whoever built it first.
     if (ancientOriginOf(body) === 'city') drawAncientRuins(ctx.ctx, ctx.nowMs ?? 0);
@@ -7074,6 +7080,7 @@ export function drawStation(
       weaponsLevel, shipyardLevel, labLevel, thrustersLevel, builds,
       factionColor: color,
       factionColor2: settlementColor2(settlement, factions),
+      skin: settlementSkin(settlement, factions),
       nowMs: nowMForStation,
       buildFlash: {
         weapons: ctx.buildFlashStart?.get(`${settlement.id}:weapons`),
@@ -7716,6 +7723,34 @@ export function drawFogOfWarOverlay(
   }), w, h);
   if (coversAll) return;
 
+  if (edge) {
+    // DIRECT, NOT COMPOSITED. Since the fog stopped switching off at full
+    // zoom-out it runs on every frame of the zoomed-out map, and laying a
+    // full-screen mask over the map cost a desktop without GPU drawing
+    // ~30 ms a frame (5-14 ms in its prod telemetry; measured in a
+    // software canvas at 2560x1440, 2026-10-05). The dim is instead ONE
+    // fill on the map itself: the screen minus the coverage outline
+    // (sensorEdgeLoops), even-odd, ~4 ms there. The outline is drawn from
+    // the same arcs.
+    const dimE = SENSOR_DIM_NEAR + (SENSOR_DIM_FAR - SENSOR_DIM_NEAR) * Math.max(0, Math.min(1, edge.wash));
+    const arcs = sensorEdgeArcs(holes);
+    const c = ctx.ctx;
+    c.save();
+    c.beginPath();
+    c.rect(0, 0, w, h);
+    for (const loop of sensorEdgeLoops(arcs)) {
+      const f = loop[0];
+      c.moveTo(f.x + Math.cos(f.a0) * f.r, f.y + Math.sin(f.a0) * f.r);
+      for (const a of loop) c.arc(a.x, a.y, a.r, a.a0, a.a1);
+      c.closePath();
+    }
+    c.fillStyle = `rgba(8, 12, 18, ${dimE.toFixed(3)})`;
+    c.fill('evenodd');
+    c.restore();
+    if (arcs.length) drawSensorEdge(c, arcs);
+    return;
+  }
+
   oc.globalCompositeOperation = 'source-over';
   oc.clearRect(0, 0, w, h);
 
@@ -7725,8 +7760,7 @@ export function drawFogOfWarOverlay(
   // not in sensor range, otherwise the map feels broken). With the
   // edge treatment it lightens as the territory wash comes in, so the
   // wash's colours dim rather than vanish.
-  const dim = edge ? SENSOR_DIM_NEAR + (SENSOR_DIM_FAR - SENSOR_DIM_NEAR) * Math.max(0, Math.min(1, edge.wash)) : 0.62;
-  oc.fillStyle = `rgba(8, 12, 18, ${dim.toFixed(3)})`;
+  oc.fillStyle = 'rgba(8, 12, 18, 0.62)';
   oc.fillRect(0, 0, w, h);
 
   // Pass 2: punch out every sensor circle. Opaque source so the wash
@@ -7746,7 +7780,6 @@ export function drawFogOfWarOverlay(
   ctx.ctx.drawImage(fogOffscreen, 0, 0);
   ctx.ctx.restore();
 
-  if (edge && holes.length) drawSensorEdge(ctx.ctx, holes);
 }
 
 /** Outside sensor coverage: how dark, close in and with the wash on.
@@ -7765,40 +7798,33 @@ const SENSOR_DIM_FAR = 0.4;
  *   - a bright, cool core: not a faction colour, so it never reads as
  *     anyone's border.
  */
-function drawSensorEdge(c: CanvasRenderingContext2D, holes: Array<{ x: number; y: number; r: number }>): void {
-  const arcs = sensorEdgeArcs(holes);
+function drawSensorEdge(c: CanvasRenderingContext2D, arcs: EdgeArc[]): void {
   if (!arcs.length) return;
-  const trace = () => {
+  // Every arc lies on its own circle, so the same arc a few px further in
+  // is inside the coverage: the inner glow is those offset arcs, with no
+  // clip path (clipping to every sensor circle cost more than the glow).
+  const trace = (inset: number) => {
     c.beginPath();
     for (const a of arcs) {
-      c.moveTo(a.x + Math.cos(a.a0) * a.r, a.y + Math.sin(a.a0) * a.r);
-      c.arc(a.x, a.y, a.r, a.a0, a.a1);
+      const r = a.r - inset;
+      if (r <= 1) continue;
+      c.moveTo(a.x + Math.cos(a.a0) * r, a.y + Math.sin(a.a0) * r);
+      c.arc(a.x, a.y, r, a.a0, a.a1);
     }
   };
   c.save();
   c.lineCap = 'round';
   c.lineJoin = 'round';
-  // Inner glow: the coverage itself is the clip.
-  c.save();
-  c.beginPath();
-  for (const h of holes) {
-    c.moveTo(h.x + h.r, h.y);
-    c.arc(h.x, h.y, h.r, 0, Math.PI * 2);
-  }
-  c.clip();
-  trace();
-  c.strokeStyle = 'rgba(120, 220, 255, 0.07)';
-  c.lineWidth = 22;
+  trace(6);
+  c.strokeStyle = 'rgba(120, 220, 255, 0.08)';
+  c.lineWidth = 12;
   c.stroke();
-  c.strokeStyle = 'rgba(120, 220, 255, 0.10)';
-  c.lineWidth = 11;
+  trace(3);
+  c.strokeStyle = 'rgba(150, 232, 255, 0.15)';
+  c.lineWidth = 6;
   c.stroke();
-  c.strokeStyle = 'rgba(150, 232, 255, 0.16)';
-  c.lineWidth = 5;
-  c.stroke();
-  c.restore();
   // Casing, then core.
-  trace();
+  trace(0);
   c.strokeStyle = 'rgba(2, 6, 12, 0.72)';
   c.lineWidth = 5;
   c.stroke();

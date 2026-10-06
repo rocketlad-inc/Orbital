@@ -4,7 +4,7 @@
 // outline. Every point it returns must sit on the edge (inside no other
 // circle), and every edge point must be returned (no gaps in the line).
 
-import { sensorEdgeArcs } from '../sensorEdge';
+import { sensorEdgeArcs, sensorEdgeLoops } from '../sensorEdge';
 import type { FogHole } from '../fogHoles';
 
 const TAU = Math.PI * 2;
@@ -74,6 +74,26 @@ describe('sensor edge', () => {
           // Points exactly on another circle's rim are ambiguous; skip those.
           const onRim = cs.some((o, j) => j !== i && Math.abs(Math.hypot(x - o.x, y - o.y) - o.r) < 1e-6);
           if (!onRim) expect(on).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('the outline chains into closed loops that use every arc once', () => {
+    for (let seed = 1; seed <= 40; seed++) {
+      const r = rng(seed * 13);
+      const cs: FogHole[] = [];
+      const n = 2 + Math.floor(r() * 14);
+      for (let i = 0; i < n; i++) cs.push({ x: r() * 400, y: r() * 300, r: 15 + r() * 120 });
+      const arcs = sensorEdgeArcs(cs);
+      const loops = sensorEdgeLoops(arcs);
+      expect(loops.reduce((t, l) => t + l.length, 0)).toBe(arcs.length);
+      for (const loop of loops) {
+        const ends = loop.map(a => [a.x + Math.cos(a.a1) * a.r, a.y + Math.sin(a.a1) * a.r]);
+        const starts = loop.map(a => [a.x + Math.cos(a.a0) * a.r, a.y + Math.sin(a.a0) * a.r]);
+        for (let k = 0; k < loop.length; k++) {
+          const nx = starts[(k + 1) % loop.length];
+          expect(Math.hypot(ends[k][0] - nx[0], ends[k][1] - nx[1])).toBeLessThan(0.75);
         }
       }
     }

@@ -1,0 +1,87 @@
+/* SkinPicker — colony and station styles (SkinPicker.tsx). */
+
+.skp { display: flex; flex-direction: column; gap: 6px; }
+.skp-label {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--mp-fg-dim, #8aa0b4);
+}
+/* Five across at any width: the art scales with the tile. */
+.skp-row {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+  max-width: 480px;
+}
+.skp-tile {
+  position: relative;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 4px 5px;
+  border: 1px solid var(--mp-border, rgba(255, 255, 255, 0.12));
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--mp-fg, #cfd8e3);
+  cursor: pointer;
+  font: inherit;
+}
+.skp-tile:hover { border-color: rgba(255, 255, 255, 0.3); }
+.skp-tile:focus-visible { outline: 2px solid var(--mp-accent, #4ecdc4); outline-offset: 1px; }
+.skp-tile.is-on {
+  border-color: var(--mp-accent, #4ecdc4);
+  background: rgba(78, 205, 196, 0.08);
+  box-shadow: inset 0 0 0 1px var(--mp-accent, #4ecdc4);
+}
+/* Locked = a storefront, not a refusal: softened, still in your colours. */
+.skp-tile.is-locked .skp-art { opacity: 0.55; }
+.skp-tile.is-locked .skp-name { color: var(--mp-fg-dim, #8aa0b4); }
+.skp-tile:disabled { cursor: wait; }
+.skp-art { display: block; width: 100%; height: auto; aspect-ratio: 84 / 70; }
+.skp-name {
+  font-size: 10px;
+  line-height: 1.2;
+  max-width: 100%;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.skp-lock { position: absolute; top: 3px; right: 4px; font-size: 9px; line-height: 1; }
+.skp-note {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--mp-fg-dim, #8aa0b4);
+}
+.skp-buy {
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 184, 77, 0.5);
+  background: rgba(255, 184, 77, 0.1);
+  color: #ffb84d;
+  cursor: pointer;
+}
+.skp-buy:disabled { opacity: 0.6; cursor: wait; }
+.skp-dim { opacity: 0.85; }
+.skp-reset {
+  align-self: flex-start;
+  font: inherit;
+  font-size: 10px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--mp-accent, #4ecdc4);
+  text-decoration: underline;
+  cursor: pointer;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .skp-tile { transition: border-color 120ms ease, background 120ms ease; }
+}

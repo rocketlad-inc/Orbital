@@ -16,9 +16,16 @@
 // Presentational: data and handlers as props, no game state. That is
 // what lets it sit in TradesPanel, which mounts outside the game-state
 // provider.
+//
+// PAYING (fartmaster, 2026-10-06: "Trading for a planet does not seem to
+// work"). "Send a freighter" used to call the unload endpoint, which
+// only took a hull already parked at the asset with the payment aboard.
+// It now SENDS: the freighter loads at your dock and hauls the payment
+// to the place picked here -- the asset, or any of the seller's
+// settlements (worker/assetDeals.js, PAYING BY FREIGHTER).
 // ============================================================
 
-import React from 'react';
+import React, { useState } from 'react';
 import type { AssetDealRow as AssetDealRowData } from './api';
 
 interface Props {
@@ -26,7 +33,7 @@ interface Props {
   freighters: Array<{ id: string; name: string; where: string | null }>;
   busy: boolean;
   onRespond: (dealId: string, accept: boolean) => Promise<boolean>;
-  onPay: (dealId: string, shipId: string) => Promise<boolean>;
+  onPay: (dealId: string, shipId: string, destBodyId?: string) => Promise<boolean>;
   onCancel: (dealId: string) => Promise<boolean>;
 }
 
@@ -42,6 +49,71 @@ const paidOf = (d: AssetDealRowData) => {
   if (d.price_metal > 0) parts.push(`${d.paid_metal}/${d.price_metal} metal`);
   if (d.price_credits > 0) parts.push(`${d.paid_credits}/${d.price_credits} credits`);
   return parts.join(' · ');
+};
+
+/** The pay-at picker: the asset first, then the seller's other worlds. */
+const PayControls: React.FC<{
+  d: AssetDealRowData;
+  freighters: Props['freighters'];
+  busy: boolean;
+  onPay: Props['onPay'];
+}> = ({ d, freighters, busy, onPay }) => {
+  const dests = d.pay_dests ?? [];
+  const [dest, setDest] = useState<string>(d.delivery_body_id ?? dests[0]?.body_id ?? '');
+  const coming = d.in_flight ?? { metal: 0, credits: 0, freighters: 0 };
+  const owedM = Math.max(0, d.price_metal - d.paid_metal - coming.metal);
+  const owedC = Math.max(0, d.price_credits - d.paid_credits - coming.credits);
+  const covered = owedM + owedC <= 0;
+  return (
+    <>
+      {coming.freighters > 0 && (
+        <span className="adc__note">
+          {coming.freighters} freighter{coming.freighters === 1 ? '' : 's'} on the way
+          {' '}({[coming.metal > 0 ? `${coming.metal} metal` : '', coming.credits > 0 ? `${coming.credits} credits` : '']
+            .filter(Boolean).join(' + ')})
+        </span>
+      )}
+      {covered ? null : freighters.length === 0 ? (
+        <span className="adc__note">No idle freighter to carry the payment.</span>
+      ) : (
+        <>
+          {dests.length > 1 && (
+            <select
+              className="adc__select"
+              value={dest}
+              disabled={busy}
+              onChange={e => setDest(e.target.value)}
+              title="Where the payment lands: the asset itself, or any of the seller's settlements"
+            >
+              {dests.map(x => (
+                <option key={x.body_id} value={x.body_id}>
+                  Pay at {x.name}{x.body_id === d.delivery_body_id ? ' (the asset)' : ''}
+                </option>
+              ))}
+            </select>
+          )}
+          <select
+            className="adc__select"
+            defaultValue=""
+            disabled={busy}
+            title="The freighter loads the payment at your nearest dock and hauls it there"
+            onChange={e => {
+              const shipId = e.target.value;
+              e.currentTarget.value = '';
+              if (shipId) onPay(d.id, shipId, dest || undefined);
+            }}
+          >
+            <option value="">Send a freighter…</option>
+            {freighters.map(f => (
+              <option key={f.id} value={f.id}>
+                {f.name}{f.where ? ` — ${f.where}` : ''}
+              </option>
+            ))}
+          </select>
+        </>
+      )}
+    </>
+  );
 };
 
 export const AssetDealRow: React.FC<Props> = ({
@@ -88,29 +160,7 @@ export const AssetDealRow: React.FC<Props> = ({
       {/* Paying is the buyer's job and takes as many runs as the price
           needs, so the control stays on the row until it is settled. */}
       {!d.i_am_seller && d.status === 'active' && (
-        freighters.length > 0 ? (
-          <select
-            className="adc__select"
-            defaultValue=""
-            disabled={busy}
-            onChange={e => {
-              const shipId = e.target.value;
-              e.currentTarget.value = '';
-              if (shipId) onPay(d.id, shipId);
-            }}
-          >
-            <option value="">Send a freighter…</option>
-            {freighters.map(f => (
-              <option key={f.id} value={f.id}>
-                {f.name}{f.where ? ` — ${f.where}` : ''}
-              </option>
-            ))}
-          </select>
-        ) : (
-          <span className="adc__note">
-            No idle freighter to carry the payment.
-          </span>
-        )
+        <PayControls d={d} freighters={freighters} busy={busy} onPay={onPay} />
       )}
 
       <button

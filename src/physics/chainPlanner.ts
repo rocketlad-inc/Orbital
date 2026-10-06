@@ -18,7 +18,7 @@
 // posts the results.
 // ============================================================
 
-import { planTorchTransfer, TorchTransfer } from './torchTransfer';
+import { planTorchTransfer, brakeAccelFor, TorchTransfer } from './torchTransfer';
 import { bodyPosition, bodyWorldVelocity } from './orbitalMechanics';
 import { Body } from '../types';
 
@@ -102,7 +102,8 @@ export function planChainLegs(input: ChainPlanInput): TorchTransfer[] {
     const plan = planTorchTransfer(
       { pos: departPos, vel: departVel },
       step.bodyId,
-      accel, accel,
+      // Multiplayer's hard brake (an even burn when none is installed).
+      accel, brakeAccelFor(accel),
       departAt, bodies,
     );
     if (!plan) break;

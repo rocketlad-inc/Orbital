@@ -21,6 +21,7 @@ import { ShipIcon, ShipIconClass, ShipIconVariant } from '../components/ShipIcon
 import { FactionEmblem } from '../components/FactionEmblem';
 import { PREMIUM_EMBLEM_IDS } from '../game/emblems';
 import { WEBSITE_ORIGIN } from '../platform/appShell';
+import { SkinPicker, SkinField } from './SkinPicker';
 import {
   COMMISSION_FACTS, COMMISSION_NAME, COMMISSION_PRICE, HOLDER_MARK, canBuyHere, logCommission,
 } from './commission';
@@ -132,6 +133,23 @@ export function Hangar({ onRedeemed, giftJustBought }: {
     onRedeemed();
   };
 
+  // Colony / station style, the account default (0154). Optimistic:
+  // the tile lights at once and falls back if the server refuses.
+  const [skinDraft, setSkinDraft] = useState<{ city_skin?: string | null; station_skin?: string | null }>({});
+  const [skinBusy, setSkinBusy] = useState(false);
+  const [skinErr, setSkinErr] = useState<string | null>(null);
+  const pickSkin = async (field: SkinField, value: string | null) => {
+    setSkinErr(null); setSkinBusy(true);
+    setSkinDraft(d => ({ ...d, [field]: value }));
+    const res = await apiFetch('/api/users/me/skins', { method: 'PATCH', body: JSON.stringify({ [field]: value }) });
+    if (!res.ok) setSkinErr(res.error?.message ?? 'Could not save that style.');
+    await refresh();
+    setSkinDraft({});
+    setSkinBusy(false);
+  };
+  const citySkin = skinDraft.city_skin !== undefined ? skinDraft.city_skin : (user?.city_skin ?? null);
+  const stationSkin = skinDraft.station_skin !== undefined ? skinDraft.station_skin : (user?.station_skin ?? null);
+
   const copy = async (c: string) => {
     try { await navigator.clipboard.writeText(giftLink(c)); setCopied(c); } catch { setCopied(null); }
   };
@@ -158,7 +176,8 @@ export function Hangar({ onRedeemed, giftJustBought }: {
             </div>
             <p className="hg-body">
               Thank you for supporting Orbital. Your lines and flags are in the ship designer, the lobby flag
-              section and every megastructure's look picker, and the {HOLDER_MARK} beside your name shows other commanders.
+              section and every megastructure's look picker, your colony and station styles are just below,
+              and the {HOLDER_MARK} beside your name shows other commanders.
             </p>
           </>
         ) : (
@@ -178,6 +197,24 @@ export function Hangar({ onRedeemed, giftJustBought }: {
           </>
         )}
         {err && <div className="pp-error hg-err">{err}</div>}
+      </div>
+
+      {/* ---- colony & station style ---- */}
+      <div className="hg-skins">
+        <div className="hg-sub-h">Colony &amp; station style</div>
+        <p className="hg-sub">
+          How your cities and stations look in every game. Weapons, labs, forges and the rest keep their
+          shapes in every style, so rivals still read your strength. You can change it per game in the lobby.
+        </p>
+        <SkinPicker
+          city={citySkin}
+          station={stationSkin}
+          holder={holder}
+          surface="skins"
+          busy={skinBusy}
+          onPick={(f, v) => void pickSkin(f, v)}
+        />
+        {skinErr && <div className="pp-error hg-err">{skinErr}</div>}
       </div>
 
       {/* ---- gifts ---- */}

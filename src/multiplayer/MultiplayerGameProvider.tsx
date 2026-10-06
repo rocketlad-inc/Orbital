@@ -29,7 +29,8 @@ import { sanitizeParts, engineAccelMultiplier, setServerHullBase } from '../game
 import { traitMul as captainTraitMul } from '../game/captains';
 import { ingestChronicleFx } from '../render/pendingFx';
 import {
-  planTorchTransfer, stepTorchShip, DEFAULT_ENGINE_G, fromG,
+  planTorchTransfer, stepTorchShip, fromG,
+  baseEngineG, brakeAccelFor, setMpBurnProfile,
   TorchTransfer,
 } from '../physics/torchTransfer';
 import { orbitWorldPos, orbitWorldVelocity, bodyWorldVelocity, bodyPosition, parentMuForParking } from '../physics/orbitalMechanics';
@@ -78,6 +79,10 @@ interface ServerState {
     transit_combat_enabled?: number;
     /** Total sensor multiplier the server applied to this game. */
     sensor_scale?: number;
+    /** The burn every hull flies (worker/burn.js): base push in g and the
+     *  brake as a multiple of it. Absent from an older worker. */
+    burn_engine_g?: number;
+    burn_brake_mul?: number;
     system_scale?: number;
     transit_range_in_system_mul?: number;
     ship_base_stats?: Record<string, { hp: number; damage_per_tick: number; speed: number }>;
@@ -185,6 +190,9 @@ interface ServerState {
     color2?: string | null;
     /** Flag emblem id; null on factions seeded before migration 0074. */
     emblem?: string | null;
+    /** Colony / station skins as DRAWN (0154): null = the free look. */
+    city_skin?: string | null;
+    station_skin?: string | null;
     status: string;
     capital_body_id: string | null;
   }>;
@@ -446,6 +454,8 @@ interface ServerState {
     launch_vy?: number | null;
     accel?: number | null;
     flip_tick?: number | null;
+    /** Braking thrust (migration 0155); null on an even burn. */
+    brake_accel?: number | null;
     /** Rendezvous arc (migration 0090) — burn/coast/burn to match a
      *  moving hull, then fly its plan. NULL on an ordinary transfer. */
     rv_ax?: number | null;
@@ -465,6 +475,7 @@ interface ServerState {
     fl_launch_vy?: number | null;
     fl_accel?: number | null;
     fl_flip_tick?: number | null;
+    fl_brake_accel?: number | null;
   }>;
   events?: Array<{
     id: string;
@@ -1199,6 +1210,7 @@ function classifyChronicleEvent(kind: string): { category: LogCategory; level: L
       return { category: 'THREAT', level: 'WARN' };
     case 'settlement_built':
     case 'ship_built':
+    case 'ship_refitted':
     case 'building_completed':
     case 'secret_discovered':
     case 'tech_advanced':
@@ -1263,6 +1275,13 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
   // x2, so the client culled ships at 800 while the server revealed to
   // 3200 — and the tighter of the two is what the player saw.
   setSensorScale(srv.game.sensor_scale ?? 1);
+  // The burn is the server's call too (worker/burn.js): 1g pushes and a
+  // 9x brake since 2026-10-06. Installed BEFORE the legs below are rebuilt
+  // and before anything plans a new one. An older worker sends neither
+  // field and gets the even 0.05g burn it was planning with.
+  setMpBurnProfile(srv.game.burn_engine_g != null && srv.game.burn_brake_mul != null
+    ? { engineG: Number(srv.game.burn_engine_g), brakeMul: Number(srv.game.burn_brake_mul) }
+    : null);
 
   const bodies = srv.bodies.map(bodyToClient);
   // A discovered stargate now stands up two REAL gate bodies, one of
@@ -1340,6 +1359,8 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     // which is precisely the failure an emblem exists to prevent.
     // Resolving once, here, makes the shape identical for everyone.
     emblem: resolveEmblem(f.emblem, f.id),
+    citySkin: f.city_skin ?? null,
+    stationSkin: f.station_skin ?? null,
     isPlayer: f.id === callerFactionId,
     // Sent on every /state and dropped until now, so an eliminated
     // player's screen said nothing at all (QA battle test).
@@ -1465,7 +1486,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     // is opaque over the protocol, so their ships get the baseline).
     // UNIT FIX: faction.engineG is in units of 1g (e.g. 0.05); fromG scales
     // it to in-game accel — see SP gameContext.tsx for the matching fix.
-    const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
+    const baseAccel = fromG(baseEngineG(faction?.engineG));
     const techScale = ship.ownedBy === srv.me.faction_id ? engineGModifier(playerTech) : 1;
     // Engine parts: −15% travel time per engine (×Propulsion tech),
     // realized as an accel boost under T = 2√(d/a). Same multiplier the
@@ -1514,6 +1535,10 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         vel: { x: Number(n.launch_vx), y: Number(n.launch_vy) },
         accel: Number(n.accel),
         flipTick: Number(n.flip_tick),
+        // The leg's brake (migration 0155). NULL = an even burn at accel:
+        // every leg committed before the hard brake, flown as planned.
+        brakeAccel: n.brake_accel != null && n.brake_accel > 0
+          ? Number(n.brake_accel) : Number(n.accel),
       } : null;
 
       if (srvPlan) {
@@ -1534,7 +1559,8 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       const plan = planTorchTransfer(
         { pos: launchPos, vel: launchVel },
         targetLocalId,
-        srvPlan?.accel ?? engineAccel, srvPlan?.accel ?? engineAccel,
+        srvPlan?.accel ?? engineAccel,
+        srvPlan ? srvPlan.brakeAccel : brakeAccelFor(engineAccel),
         n.scheduled_t, bodies,
       );
       if (!plan) continue;
@@ -1565,12 +1591,14 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
           plan.interceptPos = { x: ip.x, y: ip.y };
         }
         // Flip: the server's recorded value when it has one, otherwise
-        // the midpoint guess this always used. The guess is only right
-        // for a symmetric burn; the recorded value is what the planner
+        // the guess from the burn's shape — boost / (boost + brake) of
+        // the way through, which is the midpoint for an even burn and
+        // 90% for the hard brake. The recorded value is what the planner
         // actually computed, and it is what the tick will integrate.
         plan.flipTick = srvPlan
           ? srvPlan.flipTick
-          : (plan.startTick + plan.arriveTick) / 2;
+          : plan.startTick + (plan.arriveTick - plan.startTick)
+            * (plan.brakeAcceleration / (plan.acceleration + plan.brakeAcceleration));
       }
 
       // Active = the burn has started (in_transit) or its scheduled_t has
@@ -1627,7 +1655,9 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
                 pos: { x: Number(n.fl_launch_x), y: Number(n.fl_launch_y) },
                 vel: { x: Number(n.fl_launch_vx), y: Number(n.fl_launch_vy) },
               },
-              flTarget, Number(n.fl_accel), Number(n.fl_accel),
+              flTarget, Number(n.fl_accel),
+              n.fl_brake_accel != null && n.fl_brake_accel > 0
+                ? Number(n.fl_brake_accel) : Number(n.fl_accel),
               Number(n.fl_scheduled_t), bodies,
             );
             if (fl) {
@@ -2137,6 +2167,15 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
 
       if (ev.kind === 'meteoroid_exhausted') {
         return `${t}  ◇ ${parsed.name ?? 'A meteoroid'} is worked out`;
+      }
+
+      if (ev.kind === 'ship_refitted') {
+        const fee = [
+          Number(parsed.fee_metal ?? 0) > 0 ? `${Math.round(Number(parsed.fee_metal))}M` : null,
+          Number(parsed.fee_gold ?? 0) > 0 ? `${Math.round(Number(parsed.fee_gold))}C` : null,
+        ].filter(Boolean).join(' ');
+        return `${t}  ⟳ ${parsed.ship_name ?? 'A ship'} refitted to ${parsed.design_name ?? 'its new design'}`
+          + ` at ${parsed.body_name ?? 'a friendly world'}${fee ? ` (${fee})` : ''}`;
       }
 
       if (ev.kind === 'treaty_signed') {
@@ -2840,6 +2879,21 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     chronicleFlavor,
     chronicleFocus,
     chronicleMeta,
+    recentRefits: orderedEvents
+      .filter(ev => ev.kind === 'ship_refitted' && ev.ship_id)
+      .map(ev => {
+        let p: Record<string, unknown> = {};
+        try { p = JSON.parse(ev.payload || '{}'); } catch { /* ignore */ }
+        return {
+          // Ship ids stay qualified on the client (id: s.id); bodies don't.
+          shipId: ev.ship_id as string,
+          tick: Number(ev.tick_number),
+          shipName: (p.ship_name as string) ?? null,
+          designName: (p.design_name as string) ?? null,
+          bodyId: ev.body_id ? (stripGameId(ev.body_id as string) ?? (ev.body_id as string)) : null,
+          bodyName: (p.body_name as string) ?? null,
+        };
+      }),
     lastHarvestTick: srv.game.current_tick,
     tradeRoutes,
     shipDesigns,
@@ -2966,6 +3020,9 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
   // Stable ref so the polling effect doesn't tear down each render.
   const onGameMissingRef = useRef(onGameMissing);
   useEffect(() => { onGameMissingRef.current = onGameMissing; }, [onGameMissing]);
+  // Leaving the game takes multiplayer's burn with it, so nothing that
+  // plans a leg outside a match inherits 1g and the hard brake.
+  useEffect(() => () => setMpBurnProfile(null), []);
 
   // Tag the audit log with this game's id + mode. This also drives the
   // logger's per-game reset: entering a new game id clears the previous

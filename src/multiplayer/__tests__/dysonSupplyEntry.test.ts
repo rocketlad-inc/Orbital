@@ -31,3 +31,10 @@ test('a supply run with its freighter aboard offers no second one, and no remove
   expect(src).toMatch(/disabled=\{[^}]*\|\| pinnedRun\}/);
   expect(src).toMatch(/\(isWalker \|\| s\.role === 'guard'\) && <button/);
 });
+
+test("the Sun's card adds a freighter to your Sun route, or starts a multi-freighter one", () => {
+  const src = read('WorldMenuOverlay.tsx');
+  const card = src.slice(src.indexOf('const WmDysonCard'));
+  expect(card).toMatch(/addRouteShip\(sunRoute\.id, 'carrier'/);
+  expect(card).toMatch(/createRouteFull\(\{[\s\S]{0,200}bodyId: 'sol', action: 'dropoff'/);
+});

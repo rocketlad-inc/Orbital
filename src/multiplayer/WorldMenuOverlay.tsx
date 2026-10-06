@@ -22,6 +22,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useGameContext } from '../state/gameContext';
 import { useCamera } from '../state/cameraStore';
 import { useMultiplayerActions } from './MultiplayerActionsContext';
+import type { MpActionResult } from './MultiplayerActionsContext';
 import { useFeatureGate } from '../hooks/useFeatureGate';
 import { BUILDING_FEATURE } from '../game/researchUnlocks';
 import { BUILDABLE_CLASSES, getShipClass } from '../game/shipClasses';
@@ -60,7 +61,7 @@ import { empireYieldMultipliers } from '../game/yieldMultipliers';
 import { PART_FRACS } from '../render/worldMenuCloseup';
 import './WorldMenuOverlay.css';
 import { RuinsCard } from './RuinsCard';
-import { employedShipIds, routeDeliversTo } from '../game/routeSelectors';
+import { employedShipIds, routeDeliversTo, routeCarriers } from '../game/routeSelectors';
 import { terraformInbound, tickClock } from '../game/terraformInbound';
 import { buildChoices } from '../game/designChoice';
 import { RamControlsSection } from '../components/BodyInspector';
@@ -444,6 +445,10 @@ export const WorldMenuOverlay: React.FC = () => {
   );
   const sp1 = staLivery?.color ?? p1;
   const sp2 = staLivery?.color2 || (staLivery ? deriveSecondary(sp1) : p2);
+  // ...and its owner's station skin (0154), so the badge is the station
+  // the map draws.
+  const staOwnerId = readout?.station ? here.find(x => x.id === readout.station!.settlementId)?.ownedBy : undefined;
+  const staSkin = gameState.factions.find(f => f.id === staOwnerId)?.stationSkin ?? null;
   const neighbors = useMemo(
     () => neighborsOf(openId, gameState.bodies).slice(0, 4),
     [openId, gameState.bodies],
@@ -1061,7 +1066,7 @@ export const WorldMenuOverlay: React.FC = () => {
               labLevel: myStation?.buildings?.lab ?? 0,
               shipyardLevel: myStation?.buildings?.shipyard ?? 0,
               thrustersLevel: (myStation?.buildings as Record<string, number> | undefined)?.trajectory_thrusters ?? 0,
-            }, sp1, sp2) }}
+            }, sp1, sp2, staSkin) }}
           />
           {/* Name + HP header — always readable */}
           <text x="65" y="14" textAnchor="middle"
@@ -2069,7 +2074,13 @@ const WmSupplyAssign: React.FC<{
   /** What is hauled, for the hint text ("the payload"). */
   payload: string;
   testId: string;
-}> = ({ destId, feeding, payload, testId }) => {
+  /** Replaces the default one-freighter route (createTradeRoute). */
+  onAssign?: (shipId: string, originId: string) => Promise<MpActionResult>;
+  /** Replaces the default START SUPPLY / + ADD ROUTE label. */
+  buttonLabel?: string;
+  /** No dock to choose: the freighter joins a route that has one. */
+  hideOrigin?: boolean;
+}> = ({ destId, feeding, payload, testId, onAssign, buttonLabel, hideOrigin }) => {
   const { gameState } = useGameContext();
   const mpActions = useMultiplayerActions();
   const [pickShip, setPickShip] = useState('');
@@ -2128,10 +2139,14 @@ const WmSupplyAssign: React.FC<{
     if (!mpActions || !shipSel || !originSel || assignBusy) return;
     setAssignBusy(true);
     setAssignMsg(null);
-    const res = await mpActions.createTradeRoute(shipSel, originSel, destId);
+    const res = onAssign
+      ? await onAssign(shipSel, originSel)
+      : await mpActions.createTradeRoute(shipSel, originSel, destId);
     setAssignBusy(false);
     setAssignMsg(res.ok
-      ? `⇢ Supply route opened — loading at ${bodyNameOf(originSel)}`
+      ? (hideOrigin
+        ? '⇢ Freighter added to the supply route'
+        : `⇢ Supply route opened — loading at ${bodyNameOf(originSel)}`)
       : humanizeMpError(res.code, res.error, 'transfer'));
   };
   return (
@@ -2145,21 +2160,23 @@ const WmSupplyAssign: React.FC<{
           <option key={s.id} value={s.id}>{shipLabel(s)}</option>
         ))}
       </select>
-      <select
-        value={originSel}
-        onChange={e => setPickOrigin(e.target.value)}
-        title={`The terraformed world ${payload} loads from — it comes out of your faction POOL at this dock.`}
-      >
-        {docks.map(d => (
-          <option key={d.id} value={d.id}>⇐ load at {d.name}</option>
-        ))}
-      </select>
+      {!hideOrigin && (
+        <select
+          value={originSel}
+          onChange={e => setPickOrigin(e.target.value)}
+          title={`The terraformed world ${payload} loads from — it comes out of your faction POOL at this dock.`}
+        >
+          {docks.map(d => (
+            <option key={d.id} value={d.id}>⇐ load at {d.name}</option>
+          ))}
+        </select>
+      )}
       <button
         disabled={assignBusy || !shipSel || !originSel}
         onClick={assign}
         data-testid={testId}
       >
-        {feeding > 0 ? '+ ADD ROUTE' : '▶ START SUPPLY'}
+        {buttonLabel ?? (feeding > 0 ? '+ ADD ROUTE' : '▶ START SUPPLY')}
       </button>
       {assignMsg && <div className="wm-terraform-hint">{assignMsg}</div>}
     </div>
@@ -2219,14 +2236,37 @@ const WmDysonCard: React.FC = () => {
               : <span style={{ color: '#ffb84d' }}>⚠ No supply routes — construction is stalled. Pick a freighter and a dock below.</span>}
           </div>
         )}
-        {isMine && (
-          <WmSupplyAssign
-            destId="sol"
-            feeding={supplyRoutes}
-            payload="the sphere's materials"
-            testId="wm-dyson-assign"
-          />
-        )}
+        {isMine && (() => {
+          // ONE ROUTE, MANY FREIGHTERS (Crimson_Song: "i can't add them
+          // to the route so i got a buncha individual routes"). The Sun
+          // is a drop-off on an ordinary route now, so a freighter JOINS
+          // your Sun route while it has room under the Convoy cap, and a
+          // new route starts only when every one is full.
+          const cap = gameState.carrierCap ?? 1;
+          const sunRoute = (gameState.tradeRoutes ?? []).find(r =>
+            r.ownedBy === 'player' && r.kind === 'logistics' && routeDeliversTo(r, 'sol')
+            && routeCarriers(r).length < cap);
+          return (
+            <WmSupplyAssign
+              destId="sol"
+              feeding={supplyRoutes}
+              payload="the sphere's materials"
+              testId="wm-dyson-assign"
+              hideOrigin={!!sunRoute}
+              buttonLabel={sunRoute ? '+ FREIGHTER' : supplyRoutes > 0 ? '+ NEW ROUTE' : '▶ START SUPPLY'}
+              onAssign={(shipId, originId) => (sunRoute
+                ? mpActions!.addRouteShip(sunRoute.id, 'carrier', { shipId })
+                : mpActions!.createRouteFull({
+                    name: 'Dyson supply',
+                    stops: [
+                      { bodyId: originId, action: 'pickup' },
+                      { bodyId: 'sol', action: 'dropoff' },
+                    ],
+                    carrierShipIds: [shipId],
+                  }))}
+            />
+          );
+        })()}
       </div>
     );
   }

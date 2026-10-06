@@ -23,7 +23,7 @@
 // ============================================================
 
 import type { Faction, Ship } from '../types';
-import { fromG, DEFAULT_ENGINE_G } from '../physics/torchTransfer';
+import { fromG, baseEngineG } from '../physics/torchTransfer';
 import { engineGModifier } from './techs';
 import { engineAccelMultiplier } from './shipParts';
 
@@ -33,7 +33,9 @@ type FactionTech = Record<string, { levels?: Record<string, number> } | undefine
 export function shipEngineAccel(ship: Ship, factions: Faction[], factionTech: FactionTech): number {
   const faction = factions.find(f => f.id === ship.ownedBy);
   const tech = factionTech?.[ship.ownedBy];
-  return fromG(faction?.engineG ?? DEFAULT_ENGINE_G)
+  // Multiplayer's installed base g (1g since 2026-10-06), else the
+  // faction's stored g or the 0.05g default, exactly as it always was.
+  return fromG(baseEngineG(faction?.engineG))
     * engineGModifier(tech as never)
     * engineAccelMultiplier(ship.parts, tech?.levels?.propulsion ?? 0);
 }

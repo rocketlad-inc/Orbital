@@ -18,7 +18,7 @@ export const ART_VERSION = '10a6d1bd1061';
  *  wearArtHash). It rides inside the ship and planet image keys, so a
  *  watch, which caches each image by its key for good, fetches new art
  *  by itself when this moves. Same npm run art:version, same test. */
-export const WEAR_ART_VERSION = 'b77f97e4';
+export const WEAR_ART_VERSION = 'ad9f84e9';
 
 /** A world-art path ('/globes/mars.webp') with the art version attached. */
 export function artUrl(path: string): string {

@@ -31,6 +31,7 @@ import { shipOrdersIntent } from '../game/shipOrdersIntent';
 import { committedNodeIdFor, markNodeCancelPending, unmarkNodeCancelPending } from '../multiplayer/pendingNodeCancels';
 import { humanizeMpError } from '../multiplayer/errorMessages';
 import { combatSpeedOf } from '../game/shipParts';
+import { refitStatus } from '../game/refitStatus';
 import { retrofitChoices, retrofitOptions, defaultRetrofitPick } from '../game/designChoice';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { EditableName } from './EditableName';
@@ -2495,7 +2496,20 @@ export const ShipPanel: React.FC = () => {
                 <div style={{ fontSize: 10, color: '#8a9fb3', lineHeight: 1.5, padding: '2px 0 4px' }}>
                   Refit to <b style={{ color: '#d8e4ee' }}>{active.name}</b>.
                   {' '}Costs <b style={{ color: '#d8e4ee' }}>{feeStr}</b>, charged when the work is done.
-                  {pending && <div style={{ color: '#6ee7b7' }}>Ordered — fits on arrival at a friendly world.</div>}
+                  {/* WHERE, WHEN, or WHY NOT (refitStatus): "fits on
+                      arrival at a friendly world" was all it ever said,
+                      and players read the silence as nothing happening. */}
+                  {pending && (() => {
+                    const st = refitStatus(ship, gameState);
+                    return (
+                      <div
+                        data-testid="refit-status"
+                        style={{ color: st?.blocked ? '#ffb84d' : '#6ee7b7' }}
+                      >
+                        Ordered — {st?.text ?? 'fits on arrival at a friendly world'}.
+                      </div>
+                    );
+                  })()}
                   {pendingOther && (
                     <div style={{ color: '#6ee7b7' }}>
                       {pendingOther.name} is ordered; refitting to {active.name} replaces it.

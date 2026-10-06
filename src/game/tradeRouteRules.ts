@@ -74,7 +74,15 @@ export function eligibleBodies(gameState: GameState) {
    *  it needs its own list rather than a looser rule on the old one. */
   const sites: Body[] = [];
   const megas = gameState.megastructures ?? {};
+  // THE DYSON SPHERE IS A SITE, for its builder, while it is unfinished
+  // (the server's rule: routeMath.dysonSupplyNeed). Never a pickup.
+  const sphere = gameState.dysonSphere;
+  const sphereOpen = !!sphere && sphere.controllerFactionId === 'player' && sphere.hp < sphere.maxHp;
   for (const b of gameState.bodies) {
+    if (b.id === 'sol') {
+      if (sphereOpen) sites.push(b);
+      continue;
+    }
     // A SITE NEEDS NO SETTLEMENT, same as a rock, and for the same
     // reason: the thing you are delivering to IS the destination. Tested
     // before the ownership gate so an ally's half-built gate can be
@@ -96,7 +104,6 @@ export function eligibleBodies(gameState: GameState) {
     // idea why.
     if (b.mineralKind && (b.mineralRemaining ?? 0) > 0) { mineable.push(b); continue; }
     if (!mine.has(b.id)) continue;
-    if (b.id === 'sol') continue;              // the Dyson line has its own path
     pickup.push(b);
     if (b.terraformedAtTick != null) dropoff.push(b);
   }

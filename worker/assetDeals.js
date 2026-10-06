@@ -217,3 +217,167 @@ export async function voidDeal(env, gameId, deal, reason, tick) {
   await env.DB.batch(stmts);
   return { ok: true, refunded: { metal: m, credits: c } };
 }
+
+// ============================================================
+// PAYING BY FREIGHTER — one rule for the instant unload and the tick.
+//
+// fartmaster (Discord), 2026-10-06: "Trading for a planet does not seem
+// to work." The row's "Send a freighter…" called the UNLOAD endpoint,
+// which only takes a hull already parked at the asset with the payment
+// aboard -- and nothing could load a payment or fly it there. So paying
+// was impossible unless a player hand-flew a loaded freighter to the
+// asset, which nothing told them.
+//
+// Now "send" dispatches a shipment on the trade-delivery machinery
+// (trade_deliveries, trade_id 'asset:<dealId>'): the freighter loads
+// what is owed at the buyer's dock and hauls it, and the tick pours it
+// in on arrival through payIntoDeal, the same call the instant unload
+// makes. And (Lorne's call, same report) the payment may land at ANY
+// of the seller's settlements as well as at the asset: handover still
+// re-checks the asset in fulfilDeal, so where the freight lands cannot
+// let a seller dodge the deal.
+// ============================================================
+
+export const ASSET_TRADE_PREFIX = 'asset:';
+
+/** Where a payment may land: any live settlement of the seller, or the
+ *  asset's snapshotted delivery point. */
+export async function isPaymentDest(env, gameId, deal, bodyId) {
+  if (!bodyId) return false;
+  if (bodyId === deal.delivery_body_id) return true;
+  const row = await env.DB
+    .prepare(
+      `SELECT 1 AS x FROM game_settlements
+        WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
+          AND destroyed_at_tick IS NULL LIMIT 1`,
+    )
+    .bind(gameId, bodyId, deal.seller_faction_id).first();
+  return !!row;
+}
+
+/** Every body a payment may land at, named, for the picker. */
+export async function paymentDests(env, gameId, deal) {
+  const rows = (await env.DB
+    .prepare(
+      `SELECT DISTINCT b.id AS body_id, b.name AS body_name
+         FROM game_settlements s
+         JOIN game_bodies b ON b.id = s.body_id AND b.game_id = s.game_id
+        WHERE s.game_id = ? AND s.owner_faction_id = ?
+          AND s.destroyed_at_tick IS NULL AND b.destroyed_at_tick IS NULL
+        ORDER BY b.name`,
+    )
+    .bind(gameId, deal.seller_faction_id).all()).results ?? [];
+  const out = rows.map(r => ({ body_id: r.body_id, name: r.body_name }));
+  if (!out.some(r => r.body_id === deal.delivery_body_id)) {
+    const at = await env.DB.prepare('SELECT name FROM game_bodies WHERE id = ?')
+      .bind(deal.delivery_body_id).first();
+    out.unshift({ body_id: deal.delivery_body_id, name: at?.name ?? 'the asset' });
+  }
+  return out;
+}
+
+/** What freighters are already hauling toward this deal (unresolved). */
+export async function inFlightFor(env, gameId, dealId) {
+  const row = await env.DB
+    .prepare(
+      `SELECT COALESCE(SUM(metal), 0) AS m, COALESCE(SUM(gold), 0) AS g, COUNT(*) AS n
+         FROM trade_deliveries
+        WHERE game_id = ? AND trade_id = ? AND resolved_at_tick IS NULL`,
+    )
+    .bind(gameId, `${ASSET_TRADE_PREFIX}${dealId}`).first();
+  return { metal: Number(row?.m ?? 0), credits: Number(row?.g ?? 0), freighters: Number(row?.n ?? 0) };
+}
+
+/**
+ * Where a freighter loads a shipment: where it is, if the faction has a
+ * terraformed world there (the pool is reachable), else the faction's
+ * dock, the capital first. Shared with trade-agreement deliveries.
+ */
+export async function deliveryPickup(env, gameId, factionId, capitalBodyId, shipBodyId) {
+  const dock = (bodyId) => env.DB
+    .prepare(
+      `SELECT 1 AS x FROM game_settlements s
+         JOIN game_bodies b ON b.id = s.body_id AND b.game_id = s.game_id
+        WHERE s.game_id = ? AND s.body_id = ? AND s.owner_faction_id = ?
+          AND b.terraformed_at_tick IS NOT NULL
+          AND s.destroyed_at_tick IS NULL AND b.destroyed_at_tick IS NULL LIMIT 1`,
+    )
+    .bind(gameId, bodyId, factionId).first();
+  if (shipBodyId && await dock(shipBodyId)) return shipBodyId;
+  const any = await env.DB
+    .prepare(
+      `SELECT s.body_id, CASE WHEN s.body_id = ? THEN 0 ELSE 1 END AS pref
+         FROM game_settlements s
+         JOIN game_bodies b ON b.id = s.body_id AND b.game_id = s.game_id
+        WHERE s.game_id = ? AND s.owner_faction_id = ?
+          AND b.terraformed_at_tick IS NOT NULL
+          AND s.destroyed_at_tick IS NULL AND b.destroyed_at_tick IS NULL
+        ORDER BY pref LIMIT 1`,
+    )
+    .bind(capitalBodyId ?? '', gameId, factionId).first();
+  return any?.body_id ?? null;
+}
+
+/**
+ * Pour freight into a deal's meter, and hand the asset over if that
+ * settles it. Takes only what is still owed; returns what it took so
+ * the caller can keep the rest aboard.
+ *
+ *   { taken: { metal, credits }, settled, voided?, reason?, asset? }
+ *   taken is zero when the deal is no longer open.
+ */
+export async function payIntoDeal(env, gameId, dealId, metal, credits, tick) {
+  const deal = await env.DB
+    .prepare('SELECT * FROM trade_asset_deals WHERE id = ? AND game_id = ?')
+    .bind(dealId, gameId).first();
+  const none = { taken: { metal: 0, credits: 0 }, settled: false };
+  if (!deal || deal.status !== 'active') return { ...none, reason: 'not_active' };
+  const owed = owedOn(deal);
+  const takeM = Math.max(0, Math.min(Number(metal) || 0, owed.metal));
+  const takeC = Math.max(0, Math.min(Number(credits) || 0, owed.credits));
+  if (takeM <= 0 && takeC <= 0) return { ...none, reason: 'nothing_owed' };
+  const upd = await env.DB
+    .prepare(
+      `UPDATE trade_asset_deals SET paid_metal = paid_metal + ?, paid_credits = paid_credits + ?
+        WHERE id = ? AND status = 'active'`,
+    )
+    .bind(takeM, takeC, dealId).run();
+  if (!upd.meta?.changes) return { ...none, reason: 'not_active' };
+  const taken = { metal: takeM, credits: takeC };
+  const after = {
+    ...deal,
+    paid_metal: Number(deal.paid_metal) + takeM,
+    paid_credits: Number(deal.paid_credits) + takeC,
+  };
+  if (!isSettled(after)) return { taken, settled: false, still_owed: owedOn(after) };
+
+  // PAID IN FULL - hand it over. The asset is re-checked here rather
+  // than trusted from the proposal: the seller has had every tick since
+  // then to scrap the hull or lose the world.
+  const done = await fulfilDeal(env, gameId, after, tick);
+  if (!done.ok) {
+    const refund = await voidDeal(env, gameId, after, done.reason, tick);
+    return { taken, settled: false, voided: true, reason: done.reason, refunded: refund.refunded };
+  }
+  try {
+    await env.DB
+      .prepare(
+        `INSERT INTO chronicle_entries
+          (id, game_id, tick_number, kind, actor_faction_id, body_id, target_faction_id, payload, visibility, created_at_ms)
+         VALUES (?, ?, ?, 'asset_sold', ?, ?, ?, ?, 'public', ?)`,
+      )
+      .bind(
+        `asale_${crypto.randomUUID().slice(0, 10)}`, gameId, tick,
+        deal.seller_faction_id, deal.delivery_body_id, deal.buyer_faction_id,
+        JSON.stringify({
+          asset: done.name,
+          asset_kind: deal.asset_kind,
+          metal: Number(after.paid_metal) || 0,
+          credits: Number(after.paid_credits) || 0,
+        }),
+        Date.now(),
+      )
+      .run();
+  } catch { /* the chronicle is decoration */ }
+  return { taken, settled: true, asset: done.name };
+}

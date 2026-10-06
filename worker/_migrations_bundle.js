@@ -6490,4 +6490,49 @@ CREATE INDEX IF NOT EXISTS idx_commission_gifts_intent ON commission_gifts(strip
 ALTER TABLE users ADD COLUMN commission_ask_ms INTEGER;
 ALTER TABLE users ADD COLUMN commission_ask_action TEXT;
 ` },
+  { name: "0154_settlement_skins.sql", sql: `-- ============================================================
+-- 0154 — colony and station skins (a Commander's Commission look)
+--
+-- How an empire's cities and orbital stations are drawn: the free look
+-- (towers / hub) or one of four premium styles each. Purely cosmetic:
+-- the skin restyles habitat towers, the landing pad and the station hub,
+-- and NEVER the buildings and modules a rival reads levels from.
+--
+-- Chosen in two places, the same split as emblems:
+--   users.*_skin          the account default (Profile -> Hangar), used in
+--                         every game the player has not overridden
+--   room_members.*_skin   a per-game override (the lobby flag section)
+--
+-- Resolved when the game state is READ (worker/state.js), not copied into
+-- game_factions at seed: override, else account default, and only while
+-- the player holds the Commission. So a new default restyles running
+-- games, and a refunded Commission falls back to the free look by itself.
+-- NULL everywhere means the free look.
+-- ============================================================
+
+ALTER TABLE users ADD COLUMN city_skin TEXT;
+ALTER TABLE users ADD COLUMN station_skin TEXT;
+ALTER TABLE room_members ADD COLUMN city_skin TEXT;
+ALTER TABLE room_members ADD COLUMN station_skin TEXT;
+` },
+  { name: "0155_brake_accel.sql", sql: `-- ============================================================
+-- 0155 — a separate braking thrust on every leg
+--
+-- Ships push toward their target, flip, and brake. Until now the brake
+-- ran at the same thrust as the push, so the flip always fell at the
+-- midpoint. From 2026-10-06 the brake is nine times harder (worker/
+-- burn.js BRAKE_MUL), which moves the flip to 90% of the trip and cuts
+-- every trip to 0.745x — alongside the base push rising 0.05g -> 1g.
+--
+-- brake_accel is that braking thrust, recorded at commit with the rest
+-- of the launch plan (0088), because the server's transit-combat
+-- integrator and every client must fly the leg the planner planned.
+--
+-- NULL means an even burn that brakes at \`accel\`: every leg committed
+-- before this, every older bundle, and the asteroid ram. Nothing in
+-- flight changes course when this lands.
+-- ============================================================
+
+ALTER TABLE game_ship_nodes ADD COLUMN brake_accel REAL;
+` },
 ];

@@ -47,8 +47,11 @@ import { getShipClass } from './shipClasses';
 const SHIP_RANGE: Record<string, number> = {
   corvette: 12, frigate: 16, destroyer: 20, freighter: 0, colony: 0,
 };
-/** Reference crossing speed for the aim penalty. */
-const V_REF = 45;
+/** Reference crossing speed for the aim penalty. 45 at the old 0.05g
+ *  burn, x6 with the 1g push and 9x brake (worker/burn.js
+ *  CRUISE_SPEED_SCALE) because every cruise pass is 6x faster. Held to
+ *  worker/transitCombat.js V_REF by burnParity.test.ts. */
+export const V_REF = 270;
 /** Floor on aim before exposure is applied. */
 const AIM_FLOOR = 0.05;
 const EPS = 1e-9;
