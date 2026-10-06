@@ -76,6 +76,13 @@ body {
   font-family: var(--font-body);
   overflow: hidden;
   user-select: none;
+  /* No page pinch-zoom (and no double-tap zoom): a pinch on any panel
+     zoomed the whole app and left it zoomed. Panning still works in
+     every scroller; the map canvas sets touch-action:none and runs its
+     own pinch. Blink intersects pinch-zoom across scrollers (only
+     panning is re-enabled at a scroller), so this one rule covers every
+     panel. Pairs with user-scalable=no in public/index.html. */
+  touch-action: pan-x pan-y;
 }
 
 /* The moment at launch while App decides lobby or Auto-load game: the

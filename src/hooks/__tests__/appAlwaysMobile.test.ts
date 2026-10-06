@@ -12,7 +12,8 @@
 
 type Mod = typeof import('../useIsMobile');
 
-const VIEWPORT = 'width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content';
+// Exactly public/index.html's tag (the first test below holds them together).
+const VIEWPORT = 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content';
 
 const UA_WINDOWS = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36';
 const UA_FOLD7 = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Mobile Safari/537.36';
@@ -81,6 +82,14 @@ describe('in the Android app the UX is mobile, whatever the device claims', () =
     expect(viewport()).toBe(VIEWPORT);
   });
 
+  test('these tests declare the viewport the page really ships', () => {
+    const html = require('fs').readFileSync(require('path').resolve(__dirname, '../../../public/index.html'), 'utf8');
+    expect(html).toContain(`content="${VIEWPORT}"`);
+  });
+
+  // The zoom locks go too: a clamped page is SCALED to fit (up, on an
+  // unfolded Fold), and maximum-scale=1 would pin the 720px layout at 1x.
+  // touch-action on html/body keeps page pinch-zoom off there.
   test('landscape phone in the app is laid out at phone width, other directives kept', () => {
     setEnv({ app: true, innerWidth: 905, screenWidth: 905 });
     load();
