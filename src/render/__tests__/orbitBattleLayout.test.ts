@@ -9,7 +9,8 @@
  *   - the same roster always lays out the same way (no jumping)
  */
 import { layoutOrbitBattle, layoutTodayLines, crossesPlanet } from '../orbitBattleLayout';
-import { buildScenario } from '../../battleSandbox/scenarios';
+import { buildScenario, fleetGeometry, SCENARIOS, type ScenarioId } from '../../battleSandbox/scenarios';
+import { hullSize } from '../bodyPresentation';
 
 const MARS = 150;
 const LUNA = 70;
@@ -33,10 +34,10 @@ test('a small fight stays compact', () => {
   expect(L.overlaps).toBe(0);
 });
 
-test('a large fight wraps the world, and nothing overlaps', () => {
-  const ships = buildScenario('large');
+test('a big swarm wraps the world, and nothing overlaps', () => {
+  const ships = buildScenario('swarm');
   const L = layoutOrbitBattle(ships, MARS);
-  expect(['ring', 'deep ring']).toContain(L.mode);
+  expect(['ring', 'deep ring', 'crammed']).toContain(L.mode);
   expect(L.overlaps).toBe(0);
   // Today's rules overlap heavily on the same roster.
   expect(layoutTodayLines(ships, MARS).overlaps).toBeGreaterThan(50);
@@ -77,7 +78,7 @@ test('nothing inside the planet; the band is bounded even when crammed', () => {
   for (const s of ships) {
     const p = L.placements.get(s.id)!;
     expect(p.r).toBeGreaterThan(LUNA);
-    expect(p.r).toBeLessThan(L.band.rOut + s.size);
+    expect(p.r).toBeLessThan(L.band.rOut + (s.clearR ?? s.size));
   }
 });
 
@@ -98,6 +99,51 @@ test('every ship points forward along its orbit, like the map', () => {
     if (d > Math.PI) d -= Math.PI * 2;
     if (d < -Math.PI) d += Math.PI * 2;
     expect(Math.abs(d)).toBeLessThanOrEqual(0.11 + 1e-9);
+  }
+});
+
+test('zooming out re-spreads the fight: no overlaps at any zoom', () => {
+  // The whole point (Lorne): sprites keep the map's pixel sizes while
+  // the world shrinks under them, so pulling back is when hulls pile up.
+  for (const id of Object.keys(SCENARIOS) as ScenarioId[]) {
+    for (const px of [400, 150, 60, 34, 20]) {
+      const hs = hullSize({ type: 'terrestrial', radius: px }, 1);
+      const L = layoutOrbitBattle(buildScenario(id, 1, hs), px);
+      expect({ id, px, overlaps: L.overlaps }).toEqual({ id, px, overlaps: 0 });
+    }
+  }
+});
+
+test('neighbouring shares keep a strip of open space between them', () => {
+  for (const id of ['medium', 'large', 'swarm', 'three'] as ScenarioId[]) {
+    const ships = buildScenario(id);
+    const L = layoutOrbitBattle(ships, MARS);
+    const S = L.sectors;
+    for (let i = 0; i < S.length; i++) {
+      const next = S[i + 1] ?? (L.mode === 'compact' || L.mode === 'wide' ? undefined : { ...S[0], start: S[0].start + Math.PI * 2 });
+      if (!next) continue;
+      const gap = next.start - S[i].end;
+      expect(gap).toBeGreaterThan(0.05);
+      // The middle third of the gap is empty of hull centres.
+      const lo = S[i].end + gap / 3, hi = next.start - gap / 3;
+      for (const p of L.placements.values()) {
+        let t = p.theta;
+        while (t < lo) t += Math.PI * 2;
+        while (t - Math.PI * 2 >= lo) t -= Math.PI * 2;
+        expect({ id, inGap: t > lo && t < hi }).toEqual({ id, inGap: false });
+      }
+    }
+  }
+});
+
+test('a fleet is drawn as the map draws it: escorts behind, clear of the flagship', () => {
+  const g = fleetGeometry('f', 'mega_destroyer', Array(28).fill('frigate'), 1);
+  const flagR = g.flagSize / 2;
+  for (const e of g.escorts) {
+    expect(e.x).toBeLessThan(g.flagX);                      // astern
+    expect(Math.hypot(e.x - g.flagX, e.y)).toBeGreaterThan(flagR + e.size / 2 - 1);
+    expect(e.size).toBeLessThan(g.flagSize / 2);            // small glyphs
+    expect(Math.hypot(e.x, e.y) + e.size * 0.42).toBeLessThanOrEqual(g.clearR + 1e-6);
   }
 });
 

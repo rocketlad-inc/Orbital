@@ -19,8 +19,14 @@
 // NATURE IS CHAOS. Nothing here is a line or a ring. Ships are scattered
 // (seeded, so a hull keeps its place), then relaxed apart until their
 // sprites do not touch; fleets pull toward their own centre, the edges
-// of every cluster are noisy, and noses point at the nearest enemy with
-// a little jitter.
+// of every cluster are noisy, and noses point forward along the orbit
+// with the map's small jitter. Neighbouring shares keep a strip of no
+// man's land between them.
+//
+// FLEETS, as the game draws them: a fleet marker (flagship plus its
+// escort block, fleetGrouping) is ONE body here, with `clearR` covering
+// the block. A swarm of separate hulls is many bodies sharing a `fleet`
+// key, and clumps.
 //
 // Pure and screen-space: sprites are sized in pixels while the planet's
 // size follows the zoom, so the layout is solved in pixels around a
@@ -36,6 +42,10 @@ export interface OBShip {
   /** Drawn sprite size in px (the square the icon is drawn into). */
   size: number;
   armed: boolean;
+  /** Clearance radius in px, when the body is not one sprite: an in-game
+   *  FLEET MARKER (flagship plus its escort block) is laid out as one
+   *  body whose circle covers the whole block. Default size x CLEAR_FRAC. */
+  clearR?: number;
 }
 
 export interface OBPlacement {
@@ -64,17 +74,24 @@ export interface OBLayout {
 // ---------------------------------------------------------------- tuning
 
 /** Fraction of the sprite box a hull really fills: clearance radius. */
-const CLEAR_FRAC = 0.42;
+export const CLEAR_FRAC = 0.42;
 /** Random packing of discs fills about this much of the area. */
 const PACKING = 0.6;
 /** A battle at or under this angle is "compact" (today's look). */
 const COMPACT_MAX = 1.9;
 /** Comfortable band depth, in average ship diameters. */
 const DEPTH_COMFORT = 3.2;
-/** Deepest the band grows before ships are allowed to overlap. */
-const DEPTH_MAX_DIAMS = 6;
+/** Deepest the band grows before ships are allowed to overlap. Deep on
+ *  purpose: zoomed out, 200 hulls round a 60px world need about seven
+ *  diameters, and at 6 they were squeezed into 391 touching pairs.
+ *  Not overlapping as you zoom out is the point (Lorne). */
+const DEPTH_MAX_DIAMS = 12;
 /** Relaxation passes. */
 const ITERATIONS = 90;
+/** No man's land between neighbouring shares, in TYPICAL (median) hull
+ *  diameters of arc at mid-band. Lorne: "put a little distance between
+ *  the borders of the portions". Every border gets one, full lap too. */
+const SHARE_GAP_DIAMS = 1.6;
 
 // ---------------------------------------------------------------- rng
 
@@ -118,9 +135,14 @@ export function layoutOrbitBattle(
   const seed = opts.seed ?? 1;
   const factions = opts.factionOrder
     ?? [...new Set(ships.map(s => s.faction))].sort();
-  const clear = (s: OBShip) => s.size * CLEAR_FRAC;
+  const clear = (s: OBShip) => s.clearR ?? s.size * CLEAR_FRAC;
   const avgDiam = ships.reduce((n, s) => n + 2 * clear(s), 0) / ships.length;
   const maxClear = Math.max(...ships.map(clear));
+  // The TYPICAL SPRITE (a lone hull, or a fleet's flagship), for the
+  // band's depth and the gaps. Measured in fleet BLOCKS, seven fleets
+  // asked for a band 600px deep and a moat between the shares.
+  const diams = ships.map(s => 2 * s.size * CLEAR_FRAC).sort((a, b) => a - b);
+  const medDiam = diams[Math.floor(diams.length / 2)];
 
   // The band starts just off the planet's limb.
   const rIn = planetR + maxClear + Math.max(4, planetR * 0.04);
@@ -131,16 +153,26 @@ export function layoutOrbitBattle(
   for (const s of ships) areaBy.set(s.faction, (areaBy.get(s.faction) ?? 0) + areaOf(s));
   const A = [...areaBy.values()].reduce((a, b) => a + b, 0);
 
-  // Angle needed at band depth D: A = theta * D * (rIn + D/2).
-  const thetaAt = (D: number) => A / (D * (rIn + D / 2));
-  const depthAt = (theta: number) =>
-    (-theta * rIn + Math.sqrt(theta * theta * rIn * rIn + 2 * theta * A)) / theta;
+  // NO MAN'S LAND. Every border between two shares is a gap of
+  // `gapPx` of arc, which costs room like ships do: gapPx x depth each.
+  const F = factions.length;
+  const gapPx = F < 2 ? 0 : SHARE_GAP_DIAMS * medDiam;
+
+  // Angle needed at band depth D, with the F-1 gaps of a partial lap:
+  // A + (F-1) gapPx D = theta * D * (rIn + D/2).
+  const thetaAt = (D: number) => (A + Math.max(0, F - 1) * gapPx * D) / (D * (rIn + D / 2));
+  // Depth of a full lap, which has F gaps (the last share meets the first).
+  const ringDepth = () => {
+    const a = TAU / 2, b = TAU * rIn - F * gapPx;
+    return (-b + Math.sqrt(b * b + 4 * a * A)) / (2 * a);
+  };
 
   // Compact first: a small fight keeps a blob-like depth (never thinner
-  // than a ship and a half), so two corvettes read as two clusters.
-  const dComfort = DEPTH_COMFORT * avgDiam;
-  const dMax = Math.max(DEPTH_MAX_DIAMS * avgDiam, planetR * 0.9);
-  let depth = Math.min(dComfort, Math.max(avgDiam * 1.6, Math.sqrt(A) * 0.75));
+  // than a ship and a half), so two corvettes read as two clusters. The
+  // band is always deep enough for its biggest body (a fleet block).
+  const dComfort = Math.max(DEPTH_COMFORT * medDiam, maxClear * 2.2);
+  const dMax = Math.max(DEPTH_MAX_DIAMS * medDiam, planetR * 0.9, maxClear * 2.6);
+  let depth = Math.min(dComfort, Math.max(medDiam * 1.6, maxClear * 2.2, Math.sqrt(A) * 0.75));
   let theta = thetaAt(depth);
   let mode: OBMode = theta <= COMPACT_MAX ? 'compact' : 'wide';
   let squeeze = 1;                       // < 1 = clearances shrink (overlap allowed)
@@ -150,12 +182,12 @@ export function layoutOrbitBattle(
   }
   if (theta >= TAU) {
     theta = TAU;
-    depth = depthAt(TAU);
+    depth = ringDepth();
     mode = depth <= dComfort * 1.05 ? 'ring' : 'deep ring';
     if (depth > dMax) {
       // Past the deepest band: pack tighter rather than stand further off.
-      const cap = TAU * dMax * (rIn + dMax / 2);
-      squeeze = Math.sqrt(cap / A);
+      const cap = TAU * dMax * (rIn + dMax / 2) - F * gapPx * dMax;
+      squeeze = Math.sqrt(Math.max(0.05, cap / A));
       depth = dMax;
       mode = 'crammed';
     }
@@ -164,11 +196,11 @@ export function layoutOrbitBattle(
   const full = theta >= TAU - 1e-9;
 
   // FACTION SHARES. Contiguous, sized to each side's ships, ordered so
-  // hostile neighbours share a front. A no-man's-land gap only when the
-  // battle is not a full lap; on a full lap the fronts touch (ragged).
-  const F = factions.length;
-  const gap = full || F < 2 ? 0 : Math.min(0.12, (avgDiam * 0.5) / (rIn + depth / 2));
-  const usable = theta - gap * (full ? 0 : F - 1);
+  // hostile neighbours share a front, with a gap at every border: F-1 on
+  // a partial lap, F on a full one.
+  const gap = gapPx / (rIn + depth / 2);
+  const nGaps = F < 2 ? 0 : full ? F : F - 1;
+  const usable = Math.max(theta * 0.3, theta - gap * nGaps);
   const sectors: OBLayout['sectors'] = [];
   let cursor = full ? -((areaBy.get(factions[0]) ?? 0) / A) * usable / 2 : -theta / 2;
   for (const f of factions) {
@@ -177,15 +209,15 @@ export function layoutOrbitBattle(
     cursor += w + gap;
   }
   const sectorOf = new Map(sectors.map(s => [s.faction, s]));
-  // THE FRONTS: every border where one faction's share meets another's.
-  // On a full lap the last share meets the first, so two factions have
-  // two fronts (one on each flank of the world).
+  // THE FRONTS: the middle of every gap between one faction's share and
+  // another's. On a full lap the last share meets the first, so two
+  // factions have two fronts (one on each flank of the world).
   const fronts = new Map<string, number[]>();
   for (let i = 0; i < sectors.length; i++) {
     const cur = sectors[i];
     const next = sectors[i + 1] ?? (full ? sectors[0] : undefined);
     if (!next || next.faction === cur.faction) continue;
-    const edge = i + 1 < sectors.length ? (cur.end + next.start) / 2 : cur.end;
+    const edge = i + 1 < sectors.length ? (cur.end + next.start) / 2 : cur.end + gap / 2;
     for (const f of [cur.faction, next.faction]) {
       const arr = fronts.get(f) ?? [];
       arr.push(edge);
@@ -263,8 +295,10 @@ export function layoutOrbitBattle(
       y: anc.y + g2 * sp,
       c: clear(s) * squeeze,
       // How far past its faction's edge this hull may wander, in radians
-      // of the band: most stay home, a few lean into the front.
-      stray: (R() ** 2) * 0.9 * avgDiam / (rIn + depth / 2),
+      // of the band: most stay home, a few lean into the front -- but
+      // never more than a quarter of the way into the gap, so the no
+      // man's land between the shares stays open.
+      stray: (R() ** 2) * (gap > 0 ? gap * 0.25 : 0.9 * avgDiam / (rIn + depth / 2)),
       ax: anc.x,
       ay: anc.y,
       // Fleet hulls hold to their blob; a straggler barely does.
@@ -363,9 +397,20 @@ export function layoutOrbitBattle(
       }
     }
     for (const b of bodies) {
-      const r = Math.hypot(b.x, b.y) || 1;
+      let r = Math.hypot(b.x, b.y) || 1;
+      let t = Math.atan2(b.y, b.x);
       const rMin = planetR + b.c + 3;
-      if (r < rMin) { b.x *= rMin / r; b.y *= rMin / r; }
+      if (r < rMin) r = rMin;
+      // Keep the no man's land open while separating, except on the
+      // last few passes, where touching sprites matter more.
+      if (gap > 0 && it < 22) {
+        const sec = sectorOf.get(b.s.faction)!;
+        const off = angDiff(t, (sec.start + sec.end) / 2);
+        const over = Math.abs(off) - ((sec.end - sec.start) / 2 + b.stray);
+        if (over > 0) t -= Math.sign(off) * over * 0.5;
+      }
+      b.x = Math.cos(t) * r;
+      b.y = Math.sin(t) * r;
     }
   }
 
@@ -373,7 +418,9 @@ export function layoutOrbitBattle(
   for (let i = 0; i < n; i++) {
     for (let j = i + 1; j < n; j++) {
       const a = bodies[i], b = bodies[j];
-      if (Math.hypot(a.x - b.x, a.y - b.y) < (a.c + b.c) * 0.9) overlaps++;
+      // Against TRUE sprite size: a crammed band squeezes `c`, and counting
+      // against the squeezed radius reported 0 while sprites touched.
+      if (Math.hypot(a.x - b.x, a.y - b.y) < (clear(a.s) + clear(b.s)) * 0.9) overlaps++;
     }
   }
   // HEADINGS: FORWARD IN ORBIT, as on the map today -- the prograde
@@ -449,7 +496,7 @@ export function layoutTodayLines(
   });
   let overlaps = 0;
   const list = [...placements.values()];
-  const sizeOf = new Map(ships.map(s => [s.id, s.size * CLEAR_FRAC]));
+  const sizeOf = new Map(ships.map(s => [s.id, s.clearR ?? s.size * CLEAR_FRAC]));
   for (let i = 0; i < list.length; i++) {
     for (let j = i + 1; j < list.length; j++) {
       const a = list[i], b = list[j];
