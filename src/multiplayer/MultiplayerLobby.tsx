@@ -740,7 +740,7 @@ function CreatePanel({ onCreated, hostName }: { onCreated: (id: string) => void;
         <div className="lx-field">
           <span className="lx-field__label">Players</span>
           <div className="lx-seg lx-seg--fill" role="radiogroup" aria-label="Players">
-            {[2, 3, 4, 5, 6, 7, 8].map(n => (
+            {[2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => (
               <button
                 type="button"
                 key={n}

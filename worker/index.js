@@ -112,6 +112,11 @@ async function handleInit(req, env) {
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Most players a game can seat. 10 since 2026-10-06; worker/lobby.js and
+// the lobby pickers (MultiplayerLobby.tsx, LobbyView.tsx) say the same.
+// sim/tenPlayers.mjs proves a full game seeds ten distinct capitals,
+// colours, emblems and names.
+const MAX_SEATS = 10;
 const ROOM_ID_RE = /^[A-Za-z0-9_-]{6,32}$/;
 
 /** Player actions waiting for their outcome: _dispatch registers the
@@ -944,7 +949,7 @@ async function handleCreateRoom(req, env, session) {
   if (rawName.length > 60) return err(400, 'bad_request', 'name too long');
 
   const maxPlayers = Number.isInteger(body?.max_players) ? body.max_players : 4;
-  if (maxPlayers < 2 || maxPlayers > 8) return err(400, 'bad_request', 'max_players must be 2-8');
+  if (maxPlayers < 2 || maxPlayers > MAX_SEATS) return err(400, 'bad_request', `max_players must be 2-${MAX_SEATS}`);
 
   // Optional room password — if set, joiners must provide it.
   let passwordHash = null;
