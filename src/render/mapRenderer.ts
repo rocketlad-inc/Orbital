@@ -16,7 +16,7 @@ import { flameCount } from '../game/worldMenu/combatDisplay';
 import type { SystemRegion } from './systemRegions';
 import { bodyPosition, localPositionAt, semiMajor, eccentricity, velocityVectorsAt, bodyIndexOf, bodyById, stationOrbitRadius } from '../physics/orbitalMechanics';
 import { isLightweight } from './lightweightMode';
-import { sampleTorchTrajectory, torchPositionFromSamples, trajectoryTangentAt, isShapedBurn, burnFractionAt, burnStopTick, pushShareAt } from '../physics/torchTransfer';
+import { sampleTorchTrajectory, torchPositionFromSamples, trajectoryTangentAt, isShapedBurn, burnFractionAt, burnStopTick, pushShareAt, buildOf } from '../physics/torchTransfer';
 import { rendezvousStateAt } from '../physics/rendezvous.js';
 import { STRAIGHT_LINE_TRAJECTORIES } from '../game/featureFlags';
 import { COLORS, withOpacity, lighten, darken } from './colors';
@@ -6331,7 +6331,7 @@ function drawTorchTransitShip(
   // push to 1.4x long, full bright at the top of the build; the hard brake
   // burns at 1.4x throughout. It dies away through the middle of the flip
   // turn. Everything else is 1 and 1, exactly as before.
-  const ramped = currentTransfer.accelRamp != null && currentTransfer.accelRamp > 0;
+  const ramped = buildOf(currentTransfer) != null;
   const share = shaped && ramped && !isBrake ? pushShareAt(currentTransfer, ctx.t) : 1;
   const turnFade = shaped ? Math.abs(Math.cos(Math.PI * flipTurn)) : 1;
   const plumeLen = !shaped ? 1 : (isBrake ? 1.4 : ramped ? 0.7 + 0.7 * share : 1) * turnFade;

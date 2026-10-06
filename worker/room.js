@@ -3585,7 +3585,7 @@ export class Room {
     // shapeForArrival(d, T). Same shape the client posts, so both sides
     // integrate one plan.
     let lx = null, ly = null, lvx = null, lvy = null, acc = null, flip = null, brk = null;
-    let rmp = null, amax = null;
+    let rmp = null, amax = null, atau = null;
     try {
       const from = await bodyPosAt(fromBodyId, tick);
       const to = await bodyPosAt(targetBodyId, arrive);
@@ -3644,6 +3644,9 @@ export class Room {
         acc = shape.accel;
         rmp = shape.ramp;
         amax = shape.max;
+        // The build is exponential now (accel_tau); no new leg is linear.
+        atau = shape.tau > 0 ? shape.tau : null;
+        if (!(rmp > 0)) rmp = null;
         brk = shape.brake;
         flip = tick + shape.t1;
       }
@@ -3659,12 +3662,12 @@ export class Room {
            (id, game_id, ship_id, sequence, anchor_kind, target_body_id,
             scheduled_t, arrival_at_tick, dv_prograde, dv_normal, dv_radial, fuel_cost,
             launch_x, launch_y, launch_vx, launch_vy, accel, flip_tick, brake_accel,
-            accel_ramp, accel_max,
+            accel_ramp, accel_max, accel_tau,
             status, committed_at_tick)
-         VALUES (?, ?, ?, ?, 'absolute', ?, ?, ?, 0, 0, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'committed', ?)`,
+         VALUES (?, ?, ?, ?, 'absolute', ?, ?, ?, 0, 0, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'committed', ?)`,
       )
       .bind(nodeId, gameId, shipId, seq, targetBodyId, tick, arrive,
-            lx, ly, lvx, lvy, acc, flip, brk, rmp, amax, tick)
+            lx, ly, lvx, lvy, acc, flip, brk, rmp, amax, atau, tick)
       .run();
     flyingShips.add(shipId);
     return arrive;
@@ -6092,7 +6095,7 @@ export class Room {
         .prepare(
           `SELECT n.ship_id, n.target_body_id, n.scheduled_t, n.arrival_at_tick,
                   n.launch_x, n.launch_y, n.launch_vx, n.launch_vy, n.accel, n.flip_tick,
-                  n.brake_accel, n.accel_ramp, n.accel_max,
+                  n.brake_accel, n.accel_ramp, n.accel_max, n.accel_tau,
                   n.rv_ax, n.rv_ay, n.rv_bx, n.rv_by, n.rv_meet_tick, n.rv_follow_ship_id
              FROM game_ship_nodes n
              JOIN game_ships s ON s.id = n.ship_id
@@ -6115,6 +6118,7 @@ export class Room {
           // The build-up (migration 0158); NULL = a flat push.
           accelRamp: r.accel_ramp != null ? Number(r.accel_ramp) : null,
           accelMax: r.accel_max != null ? Number(r.accel_max) : null,
+          accelTau: r.accel_tau != null ? Number(r.accel_tau) : null,
           startTick: Number(r.scheduled_t), arriveTick: Number(r.arrival_at_tick),
           interceptX: ip.x, interceptY: ip.y, targetBodyId: r.target_body_id,
           // Rendezvous arc, when this leg is one (migration 0090).
@@ -10350,7 +10354,7 @@ export class Room {
       .prepare(
         `SELECT n.id, n.ship_id, n.target_body_id, n.scheduled_t, n.arrival_at_tick,
                 n.launch_x, n.launch_y, n.launch_vx, n.launch_vy, n.accel, n.flip_tick,
-                n.brake_accel, n.accel_ramp, n.accel_max,
+                n.brake_accel, n.accel_ramp, n.accel_max, n.accel_tau,
                 n.sink_body_id, n.sink_held_until_tick,
                 s.owner_faction_id, s.ship_class
            FROM game_ship_nodes n
@@ -10391,7 +10395,7 @@ export class Room {
         (tick - Number(n.scheduled_t)) /
         Math.max(1, Number(n.arrival_at_tick) - Number(n.scheduled_t))));
       const frac = legProgress(f, {
-        accel: n.accel, brake: n.brake_accel, ramp: n.accel_ramp, max: n.accel_max,
+        accel: n.accel, brake: n.brake_accel, ramp: n.accel_ramp, max: n.accel_max, tau: n.accel_tau,
         startTick: n.scheduled_t, flipTick: n.flip_tick, arriveTick: n.arrival_at_tick,
       });
       const origin = { x: Number(n.launch_x), y: Number(n.launch_y) };

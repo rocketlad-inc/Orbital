@@ -561,6 +561,8 @@ export interface TorchTransferPlan {
    *  up to accelMax. Absent = a flat push. Mirrors TorchTransfer. */
   accelRamp?: number;
   accelMax?: number;
+  /** ...or the exponential build (migration 0159). */
+  accelTau?: number;
   startTick: number;
   flipTick: number;
   arriveTick: number;

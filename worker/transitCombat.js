@@ -35,10 +35,10 @@ import { CRUISE_SPEED_SCALE, DEPARTURE_SPEED_SCALE } from './burn.js';
  *  replaces it. Host-tunable via `transit_evasion_v_ref`.
  *
  *  SCALED WITH THE BURN (burn.js, 2026-10-06). 45 was set for a flat
- *  0.05g even burn. With the build-up and the 9x brake, the reference
- *  mid-cruise pass is 2.6x faster (burn.js CRUISE_SPEED_SCALE), so the
- *  crossing rate that "starts to matter" moves with it: 119. Long outer
- *  hauls run faster still, and are correspondingly hard to hit. */
+ *  0.05g even burn. With the exponential build-up and the 9x brake, the
+ *  reference mid-cruise pass is 1.8x faster (burn.js CRUISE_SPEED_SCALE),
+ *  so the crossing rate that "starts to matter" moves with it: 81. Long
+ *  outer hauls run faster still (~3000 u/t), and are hard to hit. */
 export const V_REF = Math.round(45 * CRUISE_SPEED_SCALE);
 
 /** CLOSING-SPEED BONUS — the answer to "a mechanic that does nothing".
@@ -67,11 +67,11 @@ export const V_REF = Math.round(45 * CRUISE_SPEED_SCALE);
  *
  *  SCALED WITH THE BURN (burn.js, 2026-10-06), each end by what it was
  *  tuned against. The start sat just above a one-tick departure burn
- *  (26.5 u/t on the flat push; 31.8 now the push builds in its first
- *  tick, DEPARTURE_SPEED_SCALE 1.2). The full mark sat at the top of
- *  interplanetary cruise passes (200-380 u/t on the flat even burn),
- *  which the build-up and the hard brake make 2.6x faster
- *  (CRUISE_SPEED_SCALE). So 50 -> 60 and 350 -> 922. */
+ *  (26.5 u/t on the flat push; 27.4 now, since the exponential build
+ *  barely moves in a first tick: DEPARTURE_SPEED_SCALE 1.03). The full
+ *  mark sat at the top of interplanetary cruise passes (200-380 u/t on
+ *  the flat even burn), which the build-up and the hard brake make 1.8x
+ *  faster (CRUISE_SPEED_SCALE). So 50 -> 52 and 350 -> 631. */
 export const DV_BONUS_MAX = 0.10;
 export const DV_BONUS_START = Math.round(50 * DEPARTURE_SPEED_SCALE);
 export const DV_BONUS_FULL = Math.round(350 * CRUISE_SPEED_SCALE);
@@ -394,14 +394,20 @@ export function torchStateAt(plan, bodyVelAt, t) {
   if (end <= cur) return { pos, vel };
 
   const brake = plan.brakeAccel != null && plan.brakeAccel > 0 ? plan.brakeAccel : plan.accel;
-  const ramp = plan.accelRamp > 0 && plan.accelMax > plan.accel ? plan.accelRamp : 0;
-  // The push at tick `tm` of a building burn (constant without a ramp).
-  const pushAt = (tm) => (ramp > 0
-    ? Math.min(plan.accelMax, plan.accel + ramp * (tm - plan.startTick))
-    : plan.accel);
+  const builds = plan.accelMax > plan.accel;
+  // The exponential build (accelTau, migration 0159) or the linear one it
+  // replaced (accelRamp, 0158); a leg carries at most one.
+  const etau = builds && plan.accelTau > 0 ? plan.accelTau : 0;
+  const ramp = builds && !etau && plan.accelRamp > 0 ? plan.accelRamp : 0;
+  // The push at tick `tm` of a building burn (constant without one).
+  const pushAt = (tm) => (etau > 0
+    ? Math.min(plan.accelMax, plan.accel * Math.exp((tm - plan.startTick) / etau))
+    : ramp > 0
+      ? Math.min(plan.accelMax, plan.accel + ramp * (tm - plan.startTick))
+      : plan.accel);
   // An even, flat burn steps exactly as it always has (whole ticks, phase
   // by midpoint), so no leg already in flight moves when this ships.
-  const hardBrake = brake !== plan.accel || ramp > 0;
+  const hardBrake = brake !== plan.accel || ramp > 0 || etau > 0;
   const fine = hardBrake
     ? Math.min(MAX_SUBSTEP, Math.max(1e-6, (plan.arriveTick - plan.startTick) / BURN_SUBSTEPS))
     : MAX_SUBSTEP;

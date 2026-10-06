@@ -2,18 +2,25 @@
 // THE BURN EVERY SHIP FLIES IN MULTIPLAYER, IN ONE PLACE.
 //
 // A ship lights its engine at 0.05g, and the push BUILDS the longer it
-// burns: +0.95g over 48 ticks, holding at 1g after that. At the flip it
-// turns round and brakes at BRAKE_MUL x whatever push it had reached, so
-// it arrives at rest. A short hop never gets far up the build and flies
-// much as it always did; a long haul spends most of its burn near the
-// top, which is what makes the outer system crossable (Lorne, 2026-10-06:
-// "build from launch. Easier to explain").
+// burns — EXPONENTIALLY: it doubles about every 11 ticks, so it barely
+// moves at first and climbs steeply later, reaching 1g at 48 ticks and
+// holding there. At the flip it turns round and brakes at BRAKE_MUL x
+// whatever push it had reached, so it arrives at rest. A moon hop hardly
+// gets up the build; a long haul spends most of its burn near the top,
+// which is what makes the outer system crossable.
 //
-// At System scale 4 with one-hour ticks, typical routes:
-//   Earth-Mars 20h -> 10h   Earth-Jupiter 27h -> 12h
-//   Neptune-Pluto 54h -> 21h   Pluto-Makemake 66h -> 24h
-// (A flat 1g push shipped for 21 minutes the same day and was far too
+// Lorne, 2026-10-06, in steps: "build from launch" (linear, 0.05g -> 1g
+// over 48 ticks), then, with moon hops too fast, "change the growth from
+// linear to exponential, so it starts muuuuch slower but leads to the
+// same result". At System scale 4 with one-hour ticks, typical routes
+// (before today -> linear -> exponential):
+//   Io-Callisto 9.7 -> 5.5 -> 6.7h     Earth-Mars 20.2 -> 9.8 -> 12.9h
+//   Neptune-Pluto 54 -> 21 -> 28h      Pluto-Makemake 66 -> 24 -> 32h
+// (A flat 1g push shipped for 21 minutes that day too, and was far too
 // fast: Earth-Mars in 3.4h.)
+//
+// Legs already in flight keep the build they were committed with: a
+// linear ramp (accel_ramp) or none. This file integrates all three.
 //
 // Mirrored by src/physics/torchTransfer.ts, which installs these values
 // from /state (game.burn_*) and is held to this file by
@@ -46,19 +53,39 @@ export const fromG = (g) => g * G_ANCHOR;
 /** Base launch push, game units / tick^2. */
 export const SHIP_ENGINE_ACCEL = fromG(SHIP_ENGINE_G);
 
-/** The build for a hull that launches at `a0`: units/tick^3 and the top.
- *  Proportional to a0, so engine parts lift the whole curve. */
+/** Ticks for the push to grow by a factor of e, so it climbs from launch
+ *  to the top in RAMP_TICKS: ~16 ticks (doubling every ~11). */
+export const GROWTH_TAU = RAMP_TICKS / Math.log(MAX_ENGINE_G / SHIP_ENGINE_G);
+
+/** The build for a hull that launches at `a0`: exponential (tau, in
+ *  ticks) up to the top, proportional to a0 so engine parts lift the
+ *  whole curve. ramp (the old linear rate) is 0: no new leg is linear. */
 export function rampFor(a0) {
   const max = a0 * (MAX_ENGINE_G / SHIP_ENGINE_G);
-  return { ramp: max > a0 ? (max - a0) / RAMP_TICKS : 0, max };
+  return { ramp: 0, max, tau: max > a0 ? GROWTH_TAU : 0 };
 }
 
 /**
- * Push, speed and distance after `tau` ticks of boosting from rest:
- * a = min(max, a0 + ramp * tau). No ramp (or max <= a0) is a constant
- * push, which is every leg committed before the build-up.
+ * Push, speed and distance after `tau` ticks of boosting from rest.
+ *   etau > 0: a = min(max, a0 * e^(tau/etau)) — the build since the
+ *             exponential switch (migration 0159, accel_tau)
+ *   ramp > 0: a = min(max, a0 + ramp * tau)   — the linear build it
+ *             replaced (migration 0158), still flown by legs committed
+ *             with it
+ *   neither:  a constant push (every leg before the build-up)
  */
-export function boostState(tau, a0, ramp = 0, max = a0) {
+export function boostState(tau, a0, ramp = 0, max = a0, etau = 0) {
+  if (etau > 0 && max > a0) {
+    // expm1 keeps the start of the curve exact, where it matters most.
+    const grow = (t) => {
+      const u = t / etau, em = Math.expm1(u);
+      return { a: a0 * (em + 1), v: a0 * etau * em, x: a0 * etau * etau * (em - u) };
+    };
+    const tcE = etau * Math.log(max / a0);
+    if (tau <= tcE) return grow(tau);
+    const c = grow(tcE), s = tau - tcE;
+    return { a: max, v: c.v + max * s, x: c.x + c.v * s + 0.5 * max * s * s };
+  }
   if (!(ramp > 0) || !(max > a0)) return { a: a0, v: a0 * tau, x: 0.5 * a0 * tau * tau };
   const tc = (max - a0) / ramp;
   if (tau <= tc) {
@@ -76,8 +103,8 @@ export function boostState(tau, a0, ramp = 0, max = a0) {
 
 /** Distance covered by a whole leg that flips at `t1` (boost, then brake
  *  at k x the push reached to a stop). Increasing in t1. */
-function legDistance(t1, a0, ramp, max, k) {
-  const s = boostState(t1, a0, ramp, max);
+function legDistance(t1, a0, ramp, max, k, etau = 0) {
+  const s = boostState(t1, a0, ramp, max, etau);
   return s.x + (s.v * s.v) / (2 * k * s.a);
 }
 
@@ -86,17 +113,17 @@ function legDistance(t1, a0, ramp, max, k) {
  * after launch), how long it takes (T), how hard it brakes, its top
  * speed. Solved by bisection on the flip — exact to float precision.
  */
-export function burnShape(d, a0, ramp = 0, max = a0, k = BRAKE_MUL) {
+export function burnShape(d, a0, ramp = 0, max = a0, k = BRAKE_MUL, etau = 0) {
   if (!(d > 0) || !(a0 > 0)) return { t1: 0, T: 0, brake: k * a0, vPeak: 0 };
   let hi = 1;
-  while (legDistance(hi, a0, ramp, max, k) < d && hi < 1e9) hi *= 2;
+  while (legDistance(hi, a0, ramp, max, k, etau) < d && hi < 1e9) hi *= 2;
   let lo = 0;
   for (let i = 0; i < 100; i++) {
     const m = (lo + hi) / 2;
-    if (legDistance(m, a0, ramp, max, k) < d) lo = m; else hi = m;
+    if (legDistance(m, a0, ramp, max, k, etau) < d) lo = m; else hi = m;
   }
   const t1 = (lo + hi) / 2;
-  const s = boostState(t1, a0, ramp, max);
+  const s = boostState(t1, a0, ramp, max, etau);
   const brake = k * s.a;
   return { t1, T: t1 + s.v / brake, brake, vPeak: s.v };
 }
@@ -104,8 +131,8 @@ export function burnShape(d, a0, ramp = 0, max = a0, k = BRAKE_MUL) {
 /** Trip time for a hull that launches at `a0`, with the build-up. What
  *  every server leg timer uses (trade, delivery, retreat, gate routing). */
 export function legTicks(d, a0) {
-  const { ramp, max } = rampFor(a0);
-  return burnShape(d, a0, ramp, max).T;
+  const { ramp, max, tau } = rampFor(a0);
+  return burnShape(d, a0, ramp, max, BRAKE_MUL, tau).T;
 }
 
 /**
@@ -116,19 +143,20 @@ export function legTicks(d, a0) {
  * at the base build, then scale the whole build to fit d.
  */
 export function shapeForArrival(d, T, a0 = SHIP_ENGINE_ACCEL) {
-  const { ramp, max } = rampFor(a0);
+  const { ramp, max, tau } = rampFor(a0);
   const k = BRAKE_MUL;
-  const tripOf = (t1) => { const s = boostState(t1, a0, ramp, max); return t1 + s.v / (k * s.a); };
+  const tripOf = (t1) => { const s = boostState(t1, a0, ramp, max, tau); return t1 + s.v / (k * s.a); };
   let lo = 0, hi = T;
   for (let i = 0; i < 100; i++) {
     const m = (lo + hi) / 2;
     if (tripOf(m) < T) lo = m; else hi = m;
   }
   const t1 = (lo + hi) / 2;
-  const scale = d / legDistance(t1, a0, ramp, max, k);
-  const reached = boostState(t1, a0, ramp, max).a;
+  const scale = d / legDistance(t1, a0, ramp, max, k, tau);
+  const reached = boostState(t1, a0, ramp, max, tau).a;
+  // tau is a TIME, so scaling every acceleration leaves it as it is.
   return {
-    t1, accel: a0 * scale, ramp: ramp * scale, max: max * scale, brake: k * reached * scale,
+    t1, accel: a0 * scale, ramp: ramp * scale, max: max * scale, brake: k * reached * scale, tau,
   };
 }
 
@@ -156,12 +184,12 @@ const REF_D = (REF_CRUISE_V * REF_CRUISE_V) / LEGACY_ACCEL;
 
 /** Peak speed on the reference route now, over then. */
 export const CRUISE_SPEED_SCALE = (() => {
-  const { ramp, max } = rampFor(SHIP_ENGINE_ACCEL);
-  return burnShape(REF_D, SHIP_ENGINE_ACCEL, ramp, max).vPeak / REF_CRUISE_V;
+  const { ramp, max, tau } = rampFor(SHIP_ENGINE_ACCEL);
+  return burnShape(REF_D, SHIP_ENGINE_ACCEL, ramp, max, BRAKE_MUL, tau).vPeak / REF_CRUISE_V;
 })();
 
 /** Speed one tick after lighting the engine, now over then. */
 export const DEPARTURE_SPEED_SCALE = (() => {
-  const { ramp, max } = rampFor(SHIP_ENGINE_ACCEL);
-  return boostState(1, SHIP_ENGINE_ACCEL, ramp, max).v / LEGACY_ACCEL;
+  const { ramp, max, tau } = rampFor(SHIP_ENGINE_ACCEL);
+  return boostState(1, SHIP_ENGINE_ACCEL, ramp, max, tau).v / LEGACY_ACCEL;
 })();
