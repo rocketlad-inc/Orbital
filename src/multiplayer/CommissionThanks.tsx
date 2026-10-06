@@ -100,7 +100,7 @@ export function CommissionThanks({
         </div>
 
         <section className="mp-thanks-goods" aria-busy={!unlocked}>
-          <h3>Ten ship silhouettes</h3>
+          <h3>{icons.length} ship lines</h3>
           <div className="mp-thanks-row">
             {icons.map(({ variant, hull }) => (
               <span className="mp-thanks-cell" key={variant} title={`Variant ${variant}`}>
@@ -110,7 +110,7 @@ export function CommissionThanks({
             ))}
           </div>
 
-          <h3>Ten flag emblems</h3>
+          <h3>{PREMIUM_EMBLEM_IDS.length} flag emblems</h3>
           <div className="mp-thanks-row">
             {PREMIUM_EMBLEM_IDS.map(id => (
               <span className="mp-thanks-cell" key={id} title={EMBLEM_NAMES[id]}>
@@ -125,6 +125,13 @@ export function CommissionThanks({
           Put them on any hull in the <strong>ship designer</strong>, and your
           emblem on the <strong>faction</strong> panel. They fly on everything
           you own, and every other empire sees them.
+        </p>
+
+        <p className="mp-thanks-where" data-testid="thanks-discord">
+          <strong>Your games in your own Discord:</strong> in any game you host,
+          open its <strong>Discord game feed</strong> settings and press
+          {' '}<strong>Connect your server</strong>. Its wars, battles and the daily
+          Herald post straight into your channel.
         </p>
 
         <button type="button" className="mp-thanks-go" onClick={onClose}>

@@ -20,7 +20,9 @@ import {
 } from '../game/settlementSkins';
 import { Settlement } from '../types';
 import { deriveSecondary } from '../game/colorUtils';
-import { COMMISSION_NAME, COMMISSION_PRICE, canBuyHere, logCommission } from './commission';
+import {
+  COMMISSION_NAME, COMMISSION_PRICE, COMMISSION_DISCORD, COMMISSION_NO_GAMEPLAY, canBuyHere, logCommission,
+} from './commission';
 import './SkinPicker.css';
 
 /** A mid-game colony: every functional building present, so the tile
@@ -149,7 +151,10 @@ export function SkinPicker({
       {row('station_skin', STATION_SKINS, station, fallbackStation, FREE_STATION_SKIN)}
       {lockedPick && (
         <div className="skp-note" role="status">
-          <span>{lockedPick} comes with the {COMMISSION_NAME}. Cosmetic only.</span>
+          <span>
+            {lockedPick} comes with the {COMMISSION_NAME}, along with {COMMISSION_DISCORD}.
+            {' '}{COMMISSION_NO_GAMEPLAY}
+          </span>
           {sellable ? (
             <button type="button" className="skp-buy" disabled={opening} onClick={() => void buy()}>
               {opening ? 'Opening checkout…' : `Get the Commission · ${COMMISSION_PRICE}`}
