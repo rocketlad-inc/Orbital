@@ -437,7 +437,7 @@ async function handleGetState(req, env, ctx) {
               dyson_started_at_tick,
               dyson_acc_fuel, dyson_acc_ore, dyson_acc_credits, dyson_acc_science,
               dyson_target_fuel, dyson_target_ore, dyson_target_credits, dyson_target_science,
-              dyson_hp, dyson_max_hp
+              dyson_hp, dyson_max_hp, sun_gate_tick
          FROM games WHERE id = ?`,
     )
     .bind(gameId)
@@ -2172,6 +2172,9 @@ const tradeRoutesP = env.DB
       // rides the map's spread but not the sensor knob (room.js
       // megaRangeScale), so its ring must not either.
       system_scale: systemScale,
+      // The tick the sun-gate omen is (or was) announced (sunGates.js),
+      // for the Situation Report's countdown. NULL until a tick rolls it.
+      sun_gate_tick: game.sun_gate_tick ?? null,
       // THE BURN SHIPS FLY (burn.js): base push in g, and the brake as a
       // multiple of it. Sent so the client plans every leg with the
       // server's numbers; it installs them via setMpBurnProfile.

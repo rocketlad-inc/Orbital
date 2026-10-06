@@ -84,6 +84,8 @@ interface ServerState {
     burn_engine_g?: number;
     burn_brake_mul?: number;
     system_scale?: number;
+    /** The sun-gate omen tick (worker/sunGates.js); null until rolled. */
+    sun_gate_tick?: number | null;
     transit_range_in_system_mul?: number;
     ship_base_stats?: Record<string, { hp: number; damage_per_tick: number; speed: number }>;
     domination_fraction?: number;
@@ -2822,6 +2824,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     gatingEnabled: applyServerVisuals(srv.game.visuals) && (srv.game.gating_enabled ?? 0) === 1,
     sensorScale: srv.game.sensor_scale ?? 1,
     systemScale: srv.game.system_scale ?? 1,
+    sunGateTick: srv.game.sun_gate_tick ?? null,
     // Keyed on the LOCAL body id, because everything that looks a site
     // up holds a client-side body whose id has already been stripped.
     visibleBodyIds: (srv.visible_body_ids ?? []).map(id => stripGameId(id) ?? id),
