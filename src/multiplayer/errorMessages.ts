@@ -125,6 +125,10 @@ export function humanizeMpError(
     case 'no_surface':
       return 'A city cannot be deployed on this body type — stars, gas giants and ice giants have no surface.';
 
+    case 'gate_in_flight':
+      // worker/actions.js emergingTargetRefusal.
+      return 'That gate is still flying out of the Sun. Send ships to its landing site instead.';
+
     case 'not_terraformed':
       return 'This world is still raw — cities need a terraformed world. Run a freighter supply route here to terraform it, or deploy a Station now.';
 

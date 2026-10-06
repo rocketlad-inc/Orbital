@@ -20,6 +20,8 @@ import { sampleTorchTrajectory, torchPositionFromSamples, trajectoryTangentAt, i
 import { rendezvousStateAt } from '../physics/rendezvous.js';
 import { STRAIGHT_LINE_TRAJECTORIES } from '../game/featureFlags';
 import { COLORS, withOpacity, lighten, darken } from './colors';
+import { drawSunSquid, sunGateHeading, sunGateMorph } from './sunSquid';
+import { isSunGateSite } from '../game/farSystems';
 import { requestLabel, clearOfKeepOuts, reserveRect } from './labelLayer';
 import { visibleFogHoles } from './fogHoles';
 import { sensorEdgeArcs, sensorEdgeLoops, EdgeArc } from './sensorEdge';
@@ -2583,9 +2585,10 @@ export function drawStructureReach(
  *     past the flip it brakes, and the plume swings round to point the
  *     way it is going. Same flip-and-burn the server timed it with
  *     (bodyPosition), so the swap lands on the frame the speed peaks.
- *   - the blob itself: a few soft lobes that will not hold still.
- *   - where it stops: a dashed line and a ring at its landing point, the
- *     one thing every fleet in the Far Reach is about to fly toward.
+ *   - the thing itself: a squid of the Sun (sunSquid.ts), unfurling
+ *     into the gate's ring over the last fifth of its flight.
+ *   - where it stops: a dashed line to its landing site, a body of its
+ *     own (drawLandingSite) that fleets can be sent to ahead of it.
  */
 function drawEmergingGate(
   body: Body,
@@ -2610,7 +2613,6 @@ function drawEmergingGate(
   const f = Math.min(1, Math.max(0, (ctx.t - em.fromTick) / span));
   // Speed on an even burn peaks at the flip: 0 -> 1 -> 0.
   const speed = 1 - Math.abs(2 * f - 1);
-  const braking = f > 0.5;
   const R = Math.max(10, Math.min(radius * 1.6, 32));
 
   g.save();
@@ -2624,68 +2626,70 @@ function drawEmergingGate(
   g.lineTo(land.x, land.y);
   g.stroke();
   g.setLineDash([]);
-  const pulse = 0.5 + 0.5 * Math.sin(now / 420);
-  g.strokeStyle = `rgba(255, 200, 107, ${0.35 + 0.35 * pulse})`;
-  g.lineWidth = 1.5;
-  g.beginPath();
-  g.arc(land.x, land.y, 9 + 3 * pulse, 0, Math.PI * 2);
-  g.stroke();
-
-  // The exhaust: behind it on the way out, ahead of it once it brakes.
-  const dir = braking ? 1 : -1;
-  const plume = R * (3 + 9 * speed);
-  const tipX = canvasPos.x + ux * plume * dir, tipY = canvasPos.y + uy * plume * dir;
-  const grad = g.createLinearGradient(canvasPos.x, canvasPos.y, tipX, tipY);
-  grad.addColorStop(0, 'rgba(255, 240, 200, 0.95)');
-  grad.addColorStop(0.35, 'rgba(255, 170, 70, 0.6)');
-  grad.addColorStop(1, 'rgba(255, 110, 40, 0)');
-  const px = -uy, py = ux;
-  const w = R * 0.75;
-  g.fillStyle = grad;
-  g.beginPath();
-  g.moveTo(canvasPos.x + px * w, canvasPos.y + py * w);
-  g.quadraticCurveTo(
-    canvasPos.x + ux * plume * dir * 0.45 + px * w * 0.6,
-    canvasPos.y + uy * plume * dir * 0.45 + py * w * 0.6,
-    tipX, tipY);
-  g.quadraticCurveTo(
-    canvasPos.x + ux * plume * dir * 0.45 - px * w * 0.6,
-    canvasPos.y + uy * plume * dir * 0.45 - py * w * 0.6,
-    canvasPos.x - px * w, canvasPos.y - py * w);
-  g.closePath();
-  g.fill();
-
-  // The halo, then the blob: lobes that drift around a white-hot core.
-  const halo = g.createRadialGradient(canvasPos.x, canvasPos.y, 0, canvasPos.x, canvasPos.y, R * 3.2);
-  halo.addColorStop(0, 'rgba(255, 210, 140, 0.45)');
-  halo.addColorStop(1, 'rgba(255, 160, 60, 0)');
-  g.fillStyle = halo;
-  g.beginPath();
-  g.arc(canvasPos.x, canvasPos.y, R * 3.2, 0, Math.PI * 2);
-  g.fill();
-
-  g.globalCompositeOperation = 'lighter';
-  for (let i = 0; i < 5; i++) {
-    const a = now / (700 + i * 230) + i * 1.7;
-    const off = R * 0.38 * (0.6 + 0.4 * Math.sin(now / 530 + i));
-    const lx = canvasPos.x + Math.cos(a) * off, ly = canvasPos.y + Math.sin(a) * off;
-    const lr = R * (0.55 + 0.12 * Math.sin(now / 610 + i * 2.1));
-    const lobe = g.createRadialGradient(lx, ly, 0, lx, ly, lr);
-    lobe.addColorStop(0, 'rgba(255, 244, 214, 0.55)');
-    lobe.addColorStop(0.6, 'rgba(255, 180, 90, 0.25)');
-    lobe.addColorStop(1, 'rgba(255, 140, 60, 0)');
-    g.fillStyle = lobe;
-    g.beginPath();
-    g.arc(lx, ly, lr, 0, Math.PI * 2);
-    g.fill();
-  }
-  g.globalCompositeOperation = 'source-over';
-  g.fillStyle = 'rgba(255, 252, 240, 0.95)';
-  g.beginPath();
-  g.arc(canvasPos.x, canvasPos.y, R * 0.32, 0, Math.PI * 2);
-  g.fill();
+  // The ring at the end of that line is the landing site's own marker
+  // (drawLandingSite): a body players can target, not decoration.
 
   g.restore();
+
+  // The thing itself (sunSquid.ts): mantle first on the way out, turned
+  // round to brake on its jet past the flip, unfurling into the gate's
+  // ring over the last fifth of the trip so it lands as the gate.
+  drawSunSquid(g, canvasPos.x, canvasPos.y, {
+    u: R * 0.55,
+    ringR: sunGateRingR(radius),
+    heading: sunGateHeading(Math.atan2(uy, ux), f),
+    morph: sunGateMorph(f),
+    thrust: 0.25 + 0.75 * speed,
+    now,
+  });
+}
+
+/** Ring radius in px of a sun gate drawn at body radius `radius`: the
+ *  same floor and cap a structure gets (drawMegastructureBody), so the
+ *  ring a flight unfurls into is the ring the resting gate draws. */
+function sunGateRingR(radius: number): number {
+  return Math.max(9, Math.min(radius, 46)) * 0.95;
+}
+
+/**
+ * A sun gate's LANDING SITE (worker/sunGates.js): a point in empty space
+ * on the orbit the gate will stop on, there so fleets can be sent ahead
+ * of it. A reticle, not a world: four brackets closing on a pulsing
+ * ring, turning slowly, in the gate's gold. Drawn in every render mode,
+ * lightweight included: it is information, not decoration.
+ */
+function drawLandingSite(canvasPos: { x: number; y: number }, radius: number, ctx: RenderContext) {
+  const g = ctx.ctx;
+  const now = ctx.nowMs ?? 0;
+  const pulse = 0.5 + 0.5 * Math.sin(now / 420);
+  const R = Math.max(9, Math.min(radius, 40));
+  g.save();
+  g.translate(canvasPos.x, canvasPos.y);
+  g.strokeStyle = `rgba(255, 200, 107, ${0.35 + 0.35 * pulse})`;
+  g.lineWidth = 1.5;
+  g.beginPath(); g.arc(0, 0, R * (0.95 + 0.25 * pulse), 0, Math.PI * 2); g.stroke();
+  g.rotate((now / 9000) % (Math.PI * 2));
+  g.strokeStyle = 'rgba(255, 214, 140, 0.85)';
+  g.lineWidth = 1.5;
+  const r0 = R * 1.45, r1 = R * 1.9;
+  for (let i = 0; i < 4; i++) {
+    const a = (i * Math.PI) / 2;
+    g.beginPath();
+    g.arc(0, 0, r0, a - 0.32, a + 0.32);
+    g.moveTo(Math.cos(a) * r0, Math.sin(a) * r0);
+    g.lineTo(Math.cos(a) * r1, Math.sin(a) * r1);
+    g.stroke();
+  }
+  g.fillStyle = `rgba(255, 241, 194, ${0.6 + 0.4 * pulse})`;
+  g.beginPath(); g.arc(0, 0, Math.max(1.5, R * 0.14), 0, Math.PI * 2); g.fill();
+  g.restore();
+}
+
+/** A sun gate at rest, either end: the squid fully unfurled. */
+function drawSunGateBody(canvasPos: { x: number; y: number }, radius: number, ctx: RenderContext) {
+  drawSunSquid(ctx.ctx, canvasPos.x, canvasPos.y, {
+    u: 1, ringR: sunGateRingR(radius), heading: 0, morph: 1, thrust: 0, now: ctx.nowMs ?? 0,
+  });
 }
 
 export function drawMegastructureBody(
@@ -4133,7 +4137,10 @@ export function drawBody(
   // city/eligibility hints — is information, not decoration, and a
   // performance mode that silently hid who owns what would be a bug
   // dressed as a setting. Only the art swaps out.
-  if (body.obliteratedAtTick != null) {
+  if (isSunGateSite(body)) {
+    // A landing site is a marker, in every mode (drawLandingSite).
+    drawLandingSite(canvasPos, radius, ctx);
+  } else if (body.obliteratedAtTick != null) {
     // Destroyed outright (0141). First in the chain, ahead of lightweight
     // mode: "this is no longer a world" is information, not decoration.
     drawDebrisField(body, canvasPos, radius, ctx);
@@ -4149,6 +4156,10 @@ export function drawBody(
     drawMeteoroidBody(body, canvasPos, radius, ctx);
   } else if (body.type === 'megastructure' && body.emerge && ctx.t < body.emerge.untilTick) {
     drawEmergingGate(body, canvasPos, radius, ctx);
+  } else if (body.type === 'megastructure' && templateIdOf(body.id).startsWith('sungate_')) {
+    // Either end of a sun gate, at rest: what the thing from the Sun
+    // turned into, not a warp gate somebody built.
+    drawSunGateBody(canvasPos, radius, ctx);
   } else if (body.type === 'megastructure') {
     // Build state lives beside the body, not on it — the site is a body
     // so that orbits and sensors work, and its progress is in

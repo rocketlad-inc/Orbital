@@ -344,6 +344,28 @@ const MAX_BATCH_TRANSFERS = 250;
 // lands in one D1 batch. Same rules as the single endpoint (the body is
 // parsed by the same function); each order succeeds or fails on its own,
 // and the response says which.
+/**
+ * A SUN GATE CANNOT BE CHASED (worker/sunGates.js). While one is still
+ * flying out of the Sun, every server position function already has it
+ * on its final orbit, so a leg aimed at it is drawn chasing the gate and
+ * parked by the tick somewhere else. Its landing site is the target. A
+ * body that has not appeared yet (the far end before its gate lands)
+ * does not exist, the fog rule: 404 rather than confirm it.
+ * Returns [status, code, message] or null.
+ */
+function emergingTargetRefusal(row) {
+  const cur = Number(row?.cur);
+  if (!Number.isFinite(cur)) return null;
+  if (row.emerge_from_tick != null && Number(row.emerge_from_tick) > cur) {
+    return [404, 'not_found', 'target body not found'];
+  }
+  if (row.emerge_until_tick != null && Number(row.emerge_until_tick) > cur) {
+    return [409, 'gate_in_flight',
+      'that gate is still flying out of the Sun: send ships to its landing site instead'];
+  }
+  return null;
+}
+
 async function handleCommitTransfers(req, env, ctx) {
   const { gameId } = ctx.params;
   if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
@@ -382,7 +404,9 @@ async function handleCommitTransfers(req, env, ctx) {
     .bind(...chunk).all())).map(r => r.ship_id));
   const targetIds = [...new Set(live.map(i => parsed[i].targetBodyId))];
   const targets = new Map((await selectInChunks(targetIds, 1, (chunk, ph) => env.DB
-    .prepare(`SELECT id, mineral_kind FROM game_bodies
+    .prepare(`SELECT id, mineral_kind, emerge_from_tick, emerge_until_tick,
+                     (SELECT current_tick FROM games WHERE id = game_bodies.game_id) AS cur
+                FROM game_bodies
                WHERE game_id = ? AND destroyed_at_tick IS NULL AND id IN (${ph})`)
     .bind(gameId, ...chunk).all())).map(r => [r.id, r]));
   const rockIds = targetIds.filter(id => targets.get(id)?.mineral_kind);
@@ -422,6 +446,12 @@ async function handleCommitTransfers(req, env, ctx) {
     // Same fog rule as the single endpoint: an unseen rock does not exist.
     if (!target || (target.mineral_kind && !seenRocks.has(p.targetBodyId))) {
       fail(i, 404, 'not_found', 'target body not found');
+      brokenChain.add(shipId);
+      continue;
+    }
+    const flying = emergingTargetRefusal(target);
+    if (flying) {
+      fail(i, ...flying);
       brokenChain.add(shipId);
       continue;
     }
@@ -489,12 +519,16 @@ async function handleCommitTransfer(req, env, ctx) {
   const { targetBodyId, scheduledT, arrivalT, dvP, dvN, dvR, plan, rv, fuelCost } = parsed;
   const target = await env.DB
     .prepare(
-      `SELECT mineral_kind FROM game_bodies
+      `SELECT mineral_kind, emerge_from_tick, emerge_until_tick,
+              (SELECT current_tick FROM games WHERE id = game_bodies.game_id) AS cur
+         FROM game_bodies
         WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL`,
     )
     .bind(targetBodyId, gameId)
     .first();
   if (!target) return err(404, 'not_found', 'target body not found');
+  const flying = emergingTargetRefusal(target);
+  if (flying) return err(...flying);
 
   // FOG HOLDS AT THE API, NOT JUST IN THE UI.
   //
@@ -1910,6 +1944,10 @@ async function handleDeploySettlement(req, env, ctx) {
   if (bodyTpl === 'binary_barycenter' || bodyTpl === 'bh_barycenter') {
     return err(409, 'no_surface',
       'a barycenter is empty space — settle the worlds that orbit it');
+  }
+  // Nor a sun gate's landing site: a marker in empty space (sunGates.js).
+  if (/^sungate_[a-z]+_site$/.test(bodyTpl)) {
+    return err(409, 'no_surface', 'a landing site is empty space — wait for the gate');
   }
 
   // THE HARD GATE (DESIGN-terraforming): cities live on terraformed

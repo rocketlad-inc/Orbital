@@ -394,6 +394,8 @@ export function canHostStation(body: Body): boolean {
   // A far system's barycenter is empty space, not a trojan rock.
   const tpl = body.id.slice(body.id.lastIndexOf(':') + 1);
   if (tpl === 'binary_barycenter' || tpl === 'bh_barycenter') return false;
+  // Nor a sun gate's landing site: a marker, not a place (sunGates.js).
+  if (/^sungate_[a-z]+_site$/.test(tpl)) return false;
   return body.type !== 'meteoroid';
 }
 

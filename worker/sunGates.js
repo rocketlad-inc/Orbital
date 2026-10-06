@@ -170,21 +170,30 @@ export function farReachBand(bodies) {
   return { inner: far * 1.05, outer: far * 1.25 };
 }
 
+/** Half the width of the quadrant a gate stops in: 45 degrees either
+ *  side of the bearing to its far system. */
+export const SUN_GATE_QUADRANT_HALF = Math.PI / 4;
+
 /**
  * The bearing a gate stops on, at radius `r`.
  *
+ * THE QUADRANT FACING ITS SYSTEM (Lorne, 2026-10-06). With `toward` set
+ * (the bearing from the Sun to the far system's barycenter) the gate
+ * stops somewhere in the quarter of the Far Reach that faces it, 45
+ * degrees either side, uniformly at random: the door opens on the side
+ * of the sky it leads to. Centauri and Cygnus sit east and west, so
+ * their two gates land on opposite sides without being told to.
+ *
  * Clear of every point in `avoid` by at least `minSep` when it can be,
- * else the bearing that gets furthest from them. With `oppositeOf` set
- * (the first gate's bearing at the moment this one lands) it stays in
- * the half of the sky across from it, give or take thirty degrees, so
- * whoever happened to be near the first gate is far from the second.
+ * else the bearing (still inside the quadrant) that gets furthest from
+ * them. With no `toward`, anywhere in the sky.
  */
-export function pickBearing(rand, r, avoid, oppositeOf = null, minSep = 0) {
+export function pickBearing(rand, r, avoid, toward = null, minSep = 0) {
   let best = null;
   for (let i = 0; i < 48; i++) {
-    const a = oppositeOf == null
+    const a = toward == null
       ? rand() * TWO_PI
-      : oppositeOf + Math.PI + (rand() - 0.5) * (Math.PI / 3);
+      : toward + (rand() * 2 - 1) * SUN_GATE_QUADRANT_HALF;
     const x = Math.cos(a) * r, y = Math.sin(a) * r;
     let clear = Infinity;
     for (const p of avoid) clear = Math.min(clear, Math.hypot(p.x - x, p.y - y));
@@ -210,6 +219,30 @@ const BODY_COLS = `id, template_id, name, type, parent_body_id, radius, soi, mu,
 
 export const solGateId = (gameId, sys) => `${gameId}:sungate_${sys.key}`;
 export const farGateId = (gameId, sys) => `${gameId}:sungate_${sys.key}_far`;
+export const siteId = (gameId, sys) => `${gameId}:sungate_${sys.key}_site`;
+/** Template of a landing site (below). */
+export const SUN_GATE_SITE_TEMPLATE = 'sun_gate_site';
+
+/**
+ * THE LANDING SITE (Lorne, 2026-10-06: "Make the expected arrival site a
+ * location players can target for transit").
+ *
+ * Every transfer in this game is to a BODY, so the site is one: a point
+ * of empty space (type 'lagrange', like the barycenters) riding exactly
+ * the orbit the gate will have once it stops, with the gate's own size
+ * and mass so a ship parked on it sits where it would sit on the gate.
+ * It exists from the moment the gate leaves the Sun until it lands.
+ *
+ * On landing, everything aimed at the site is handed to the gate:
+ * ships parked there, legs still flying there, homes, retreats, route
+ * stops. Same orbit, same park, so nothing moves on screen. Then the
+ * site retires (destroyed_at_tick, never deleted: CASCADE eats ships).
+ *
+ * The gate ITSELF cannot be targeted while it flies (actions.js): every
+ * server position function has it on its final orbit already, so a ship
+ * sent to the flying gate would be drawn chasing it and parked by the
+ * server somewhere else. The site is the honest version of that order.
+ */
 
 /**
  * Stand up one gate pair. Idempotent: every row is INSERT OR IGNORE on an
@@ -241,15 +274,15 @@ export async function spawnSunGatePair(env, gameId, sys, emergeTick, conf, other
     && b.type !== 'megastructure' && !isFarSystemBody(b));
   const avoid = [];
   for (const b of solWorlds) avoid.push(await rm.bodyPosAt(b.id, arrival));
-  let oppositeOf = null;
   if (otherGate && Number(otherGate.orbit_radius) > 0) {
-    oppositeOf = orbitAngle(otherGate.angle0, otherGate.orbit_period, arrival);
-    avoid.push({
-      x: Math.cos(oppositeOf) * otherGate.orbit_radius,
-      y: Math.sin(oppositeOf) * otherGate.orbit_radius,
-    });
+    const at = orbitAngle(otherGate.angle0, otherGate.orbit_period, arrival);
+    avoid.push({ x: Math.cos(at) * otherGate.orbit_radius, y: Math.sin(at) * otherGate.orbit_radius });
   }
-  const bearing = pickBearing(rand, r, avoid, oppositeOf, r * 0.05);
+  // The quadrant facing the far system, as seen from the Sun.
+  const solAt = await rm.bodyPosAt(sol.id, arrival);
+  const baryAt = await rm.bodyPosAt(bary.id, arrival);
+  const toward = Math.atan2(baryAt.y - solAt.y, baryAt.x - solAt.x);
+  const bearing = pickBearing(rand, r, avoid, toward, r * 0.05);
   // A gate's year comes from the WORLDS around its parent. The barycenters
   // orbit Sol on a placeholder period of ~1e12 and the far suns on their
   // own tight binary, and averaged in they gave the first staging gates a
@@ -301,9 +334,21 @@ export async function spawnSunGatePair(env, gameId, sys, emergeTick, conf, other
      VALUES (?, ?, 'warp_gate', 'complete', 0, 0, 0, 0, NULL, ?, ?, ?, ?, ?)`,
   ).bind(id, gameId, emergeTick, arrival, MEGA_MAX_HP, partner, SUN_GATE_TRANSIT_FRACTION);
 
+  const site = siteId(gameId, sys);
+  const gateAngle0 = angle0For(bearing, period, arrival);
   await DB.batch([
     insBody(a, SUN_GATE_TEMPLATE, sys.solGate, sol.id, r, period,
-      angle0For(bearing, period, arrival), '#ffc86b', emergeTick, arrival),
+      gateAngle0, '#ffc86b', emergeTick, arrival),
+    // The landing site: the gate's final orbit, from now until it lands.
+    // No emerge_until_tick: it does not fly, it is simply there.
+    DB.prepare(
+      `INSERT OR IGNORE INTO game_bodies
+         (id, game_id, template_id, name, type, parent_body_id, radius, soi, mu,
+          orbit_radius, orbit_period, angle0, color, owner_faction_id,
+          emerge_from_tick, emerge_until_tick)
+       VALUES (?, ?, ?, ?, 'lagrange', ?, ?, 0, ?, ?, ?, ?, '#ffc86b', NULL, ?, NULL)`,
+    ).bind(site, gameId, SUN_GATE_SITE_TEMPLATE, `${sys.solGate} landing site`, sol.id,
+      gateR, MEGA_MU, r, period, gateAngle0, emergeTick),
     // The far end appears when its partner lands: nobody is out there to
     // watch it arrive, and a door with no other side is no door.
     insBody(b, FAR_GATE_TEMPLATE, sys.farGate, bary.id, farR, farPeriod,
@@ -317,13 +362,40 @@ export async function spawnSunGatePair(env, gameId, sys, emergeTick, conf, other
   const factions = (await DB.prepare('SELECT id FROM game_factions WHERE game_id = ?')
     .bind(gameId).all()).results ?? [];
   if (factions.length > 0) {
-    await DB.batch(factions.flatMap(f => [a, b].map(gid => DB.prepare(
+    await DB.batch(factions.flatMap(f => [a, b, site].map(gid => DB.prepare(
       `INSERT OR IGNORE INTO game_body_discoveries (game_id, faction_id, body_id, discovered_at_tick)
        VALUES (?, ?, ?, ?)`,
     ).bind(gameId, f.id, gid, emergeTick))));
   }
 
   return { arrival, landedNear };
+}
+
+/**
+ * Hand everything aimed at a landing site to its gate, and retire the
+ * site. Idempotent, and run every tick from the landing on while the
+ * event runs, so a leg that arrives late is still caught. Runs after
+ * the tick's arrivals (room.js 2b), so a ship landing on the site the
+ * same tick the gate does is handed over in that tick.
+ */
+export async function handOffLandingSite(DB, gameId, sys, tick) {
+  const site = siteId(gameId, sys), gate = solGateId(gameId, sys);
+  await DB.batch([
+    DB.prepare('UPDATE game_ships SET parent_body_id = ? WHERE game_id = ? AND parent_body_id = ?')
+      .bind(gate, gameId, site),
+    DB.prepare('UPDATE game_ships SET home_body_id = ? WHERE game_id = ? AND home_body_id = ?')
+      .bind(gate, gameId, site),
+    DB.prepare('UPDATE game_ships SET retreat_body_id = ? WHERE game_id = ? AND retreat_body_id = ?')
+      .bind(gate, gameId, site),
+    DB.prepare('UPDATE game_ship_nodes SET target_body_id = ? WHERE game_id = ? AND target_body_id = ?')
+      .bind(gate, gameId, site),
+    DB.prepare('UPDATE game_ship_nodes SET anchor_body_id = ? WHERE game_id = ? AND anchor_body_id = ?')
+      .bind(gate, gameId, site),
+    DB.prepare('UPDATE game_trade_route_stops SET body_id = ? WHERE game_id = ? AND body_id = ?')
+      .bind(gate, gameId, site),
+    DB.prepare('UPDATE game_bodies SET destroyed_at_tick = ? WHERE id = ? AND destroyed_at_tick IS NULL')
+      .bind(tick, site),
+  ]);
 }
 
 /** One public chronicle row, once. Returns true if THIS call wrote it. */
@@ -420,11 +492,12 @@ export async function advanceSunGates(env, gameId, tick, conf) {
         await tellEveryone(env, gameId, tick, `emerged:${step.sys.key}`,
           step.index === 0 ? '◎ A gate has come out of the Sun' : '◎ Another gate has come out of the Sun',
           [`It is burning hard for the Far Reach and will stop${made.landedNear ? ` out past **${made.landedNear}**` : ''} at tick **${made.arrival}**.`,
-            `It leads to **${step.sys.label}**.`]);
+            `It leads to **${step.sys.label}**. Its landing site is marked on the map: send ships there now and be waiting when it opens.`]);
       }
     }
     const arrival = Number(row?.emerge_until_tick);
     if (Number.isFinite(arrival) && tick >= arrival) {
+      await handOffLandingSite(DB, gameId, step.sys, tick);
       if (await chronicleOnce(DB, `${gameId}:sungate:open:${step.sys.key}`, gameId, tick,
         'sun_gate_opened', id,
         { gate: step.sys.solGate, system: step.sys.label, index: step.index })) {
