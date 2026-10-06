@@ -222,7 +222,17 @@ function parseTransferBody(body) {
       // `accel` — an older bundle's even burn, integrated exactly as
       // before.
       const brk = Number(body.brake_accel);
-      plan = { lx, ly, lvx, lvy, acc, flip, brk: Number.isFinite(brk) && brk > 0 ? brk : null };
+      // The build-up (migration 0158): the push grows by accel_ramp per
+      // tick up to accel_max. Both or neither — a ramp with no ceiling,
+      // or a ceiling below the launch push, stores a flat push instead.
+      const rmp = Number(body.accel_ramp), amax = Number(body.accel_max);
+      const ramped = Number.isFinite(rmp) && rmp > 0 && Number.isFinite(amax) && amax > acc;
+      plan = {
+        lx, ly, lvx, lvy, acc, flip,
+        brk: Number.isFinite(brk) && brk > 0 ? brk : null,
+        rmp: ramped ? rmp : null,
+        amax: ramped ? amax : null,
+      };
     }
   }
 
@@ -293,17 +303,19 @@ function nodeInsertStmt(env, gameId, shipId, nodeId, o) {
         (id, game_id, ship_id, sequence, anchor_kind, target_body_id,
          scheduled_t, arrival_at_tick, dv_prograde, dv_normal, dv_radial, fuel_cost,
          launch_x, launch_y, launch_vx, launch_vy, accel, flip_tick, brake_accel,
+         accel_ramp, accel_max,
          rv_ax, rv_ay, rv_bx, rv_by, rv_meet_tick, rv_follow_ship_id,
          status, committed_at_tick)
        SELECT ?, ?, ?,
               COALESCE((SELECT MAX(sequence) FROM game_ship_nodes WHERE ship_id = ?), -1) + 1,
-              'absolute', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'committed',
+              'absolute', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'committed',
               (SELECT current_tick FROM games WHERE id = ?)`,
     )
     .bind(
       nodeId, gameId, shipId, shipId, targetBodyId, scheduledT, arrivalT, dvP, dvN, dvR, fuelCost,
       plan?.lx ?? null, plan?.ly ?? null, plan?.lvx ?? null, plan?.lvy ?? null,
       plan?.acc ?? null, plan?.flip ?? null, plan?.brk ?? null,
+      plan?.rmp ?? null, plan?.amax ?? null,
       rv?.ax ?? null, rv?.ay ?? null, rv?.bx ?? null, rv?.by ?? null,
       rv?.meet ?? null, rv?.follow ?? null,
       gameId,
