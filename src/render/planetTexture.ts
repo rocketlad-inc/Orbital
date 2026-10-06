@@ -99,7 +99,8 @@ const GLOBE_IDS = new Set([
   'orcus', 'vanth', 'ixion', 'mani', 'salacia', 'actaea', 'varuna', 'aya', 'varda', 'ilmare', 'hiiaka', 'namaka',
   'weywot', 'dysnomia', 'mk2',
   // the far systems
-  'verdant', 'crimson', 'prismara', 'cinder', 'farspire',
+  'verdant', 'crimson', 'prismara', 'scoria', 'umber', 'cinder', 'farspire',
+  'elegy', 'vesper', 'threnody',
   'requiem', 'vellichor', 'echelon', 'reliquary',
 ]);
 const NO_TF_GLOBE = new Set(['jupiter', 'saturn', 'uranus', 'neptune', 'crimson', 'vellichor']);
@@ -448,6 +449,11 @@ const CURATED_BIOME: Record<string, Biome> = {
   echelon: 'arid',         // heavy-element crust, baked dry
   requiem: 'tundra',       // irradiated and far from both suns
   prismara: 'oceanic',     // an ice shell over water, like Enceladus
+  scoria: 'volcanic',      // tidal fire in Crimson's grip
+  umber: 'arid',           // dark, dry, cratered rock
+  elegy: 'tundra',
+  vesper: 'tundra',
+  threnody: 'tundra',
   farspire: 'tundra',
   reliquary: 'tundra',
 };

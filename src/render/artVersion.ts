@@ -11,14 +11,14 @@
 // After regenerating art: npm run art:version. A test fails until you do.
 // ============================================================
 
-export const ART_VERSION = '10a6d1bd1061';
+export const ART_VERSION = 'f8aa54b5c915';
 
 /** The watch and widget art version: the world art plus the hull designs
  *  and emblem art the server draws them from (scripts/art-hash.js
  *  wearArtHash). It rides inside the ship and planet image keys, so a
  *  watch, which caches each image by its key for good, fetches new art
  *  by itself when this moves. Same npm run art:version, same test. */
-export const WEAR_ART_VERSION = 'ad9f84e9';
+export const WEAR_ART_VERSION = '3211fe92';
 
 /** A world-art path ('/globes/mars.webp') with the art version attached. */
 export function artUrl(path: string): string {

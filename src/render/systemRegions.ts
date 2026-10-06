@@ -32,7 +32,7 @@
 
 import { Body, Faction, Settlement } from '../types';
 import {
-  CORE_MEMBER_IDS, CORE_LABEL, findBelts, isEccentricRogue,
+  CORE_MEMBER_IDS, CORE_LABEL, findBelts, isEccentricRogue, isStellarAnchor,
 } from '../game/systemGrouping';
 import { deriveSecondary } from '../game/colorUtils';
 
@@ -257,8 +257,20 @@ export function computeSystemRegions(
     childrenOf.set(b.parent, arr);
   }
 
-  const stars = alive.filter(b => b.type === 'star' || b.type === 'black_hole');
+  // WHAT A SYSTEM'S RINGS ARE CENTRED ON: whatever its worlds orbit.
+  //
+  // In Sol that is the star. In a far system it is the BARYCENTER: Verdant
+  // and Crimson orbit the Centauri barycenter, not either sun, so a loop
+  // over stars gave the far worlds no lanes at all -- and, because belts
+  // were found map-wide, it handed every far sun a copy of SOL'S belts at
+  // Sol's radii, centred on itself. That was the set of grey bands around
+  // Centauri and Cygnus that lined up with nothing (Lorne, 2026-10-06).
+  // An anchor with no worlds of its own (each far sun, the black hole)
+  // simply draws nothing.
+  const stars = alive.filter(b => isStellarAnchor(b)
+    && (childrenOf.get(b.id) ?? []).some(c => !isStellarAnchor(c)));
   const regions: SystemRegion[] = [];
+  const allBelts = findBelts(alive);
 
   for (const star of stars) {
     // WHAT CAN HOLD GROUND.
@@ -281,7 +293,10 @@ export function computeSystemRegions(
       .filter(b => b.type !== 'lagrange' && b.type !== 'meteoroid'
         // A gate orbits a world; it is not one. Left in, the pair a
         // discovered stargate spawns claimed a lane each.
-        && b.type !== 'megastructure')
+        && b.type !== 'megastructure'
+        // Nor is a sun circling its own barycenter: it is the middle of
+        // the system, not a lane in it.
+        && !isStellarAnchor(b))
       .filter(b => !isEccentricRogue(b))
       .slice()
       .sort((a, b) => a.orbitRadius - b.orbitRadius);
@@ -317,7 +332,9 @@ export function computeSystemRegions(
     // extra rings past Neptune, which is the mess in Lorne's
     // screenshot. systemGrouping already knows the answer; the map just
     // has to ask before it decides, not after.
-    const beltList = findBelts(alive);
+    // Only the belts that orbit THIS anchor: Sol's Kuiper Belt is not a
+    // ring around Centauri A.
+    const beltList = allBelts.filter(belt => belt.members.some(m => m.parent === star.id));
     const inABelt = new Set<string>();
     for (const belt of beltList) for (const m of belt.members) inABelt.add(m.id);
 
@@ -576,9 +593,19 @@ export function computeSystemRegions(
   //
   // Runs BEFORE the border-touching pass below, which then closes any
   // residual seam — so the end state is adjacent, disjoint, touching.
-  {
+  //
+  // PER CENTRE. Radii only compare between rings around the same body:
+  // Vellichor's lane at 1000 around Cygnus has nothing to do with Sol's
+  // Core at 1000 around the Sun, and sorting them into one list let the
+  // far systems trim Sol's lanes (the Core came out 1036..1236).
+  const byCentre = new Map<string, SystemRegion[]>();
+  for (const r of regions) {
+    const arr = byCentre.get(r.shape.starBodyId);
+    if (arr) arr.push(r); else byCentre.set(r.shape.starBodyId, [r]);
+  }
+  for (const group of byCentre.values()) {
     const MIN_BAND = 4;
-    const bands = regions
+    const bands = group
       .filter(r => r.shape.kind === 'band')
       .slice()
       .sort((a, b) => (centerOf(a) - centerOf(b)) || a.id.localeCompare(b.id));
@@ -606,7 +633,8 @@ export function computeSystemRegions(
   // covered 0.80, leaving 20%). Adjacent rings now share a border.
   //
   // "Gap" here strictly means later.rInner > earlier.rOuter.
-  const byOrbit = regions.slice().sort((a, b) => centerOf(a) - centerOf(b));
+  for (const group of byCentre.values()) {
+  const byOrbit = group.slice().sort((a, b) => centerOf(a) - centerOf(b));
   for (let i = 0; i + 1 < byOrbit.length; i++) {
     const earlier = byOrbit[i], later = byOrbit[i + 1];
     if (later.shape.rInner <= earlier.shape.rOuter) continue;   // overlap OR touching → skip
@@ -625,6 +653,7 @@ export function computeSystemRegions(
     );
     earlier.shape.rOuter = meet;
     later.shape.rInner = meet;
+  }
   }
 
   // Paint broad first, specific last. The splitting pass above makes the

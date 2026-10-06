@@ -87,9 +87,9 @@ export function isWorld(b) {
  *  nothing: factions.js and sunGates.js both import from here. */
 export const FAR_SYSTEM_TEMPLATE_IDS = new Set([
   'binary_barycenter', 'centauri_a', 'centauri_b',
-  'verdant', 'crimson', 'prismara', 'cinder', 'farspire',
+  'verdant', 'crimson', 'prismara', 'scoria', 'umber', 'cinder', 'farspire',
   'bh_barycenter', 'cygnus_x', 'hde_226868',
-  'requiem', 'vellichor', 'echelon', 'reliquary',
+  'requiem', 'vellichor', 'elegy', 'vesper', 'threnody', 'echelon', 'reliquary',
 ]);
 
 /** The far-side end of a sun gate (sunGates.js). Its Sol-side partner is
@@ -270,8 +270,15 @@ export function findBelts(bodies) {
   // Makemake and Eris their real moons EVICTED all four from the belt
   // they were already in and made each its own system — which is how one
   // live map went from 12 systems to 21 overnight.
+  // THE BELTS ARE SOL'S. Clustering is by radius alone, so a dwarf
+  // orbiting a far barycenter (Farspire at 2400, Reliquary at 2800) was
+  // chained into Sol's Asteroid Belt at ~2880 -- a belt spanning three
+  // star systems. Only a ROOT star's rubble can make a belt; a lone far
+  // dwarf is its own place (2026-10-06).
+  const roots = new Set(bodies.filter(b => !b.parent_body_id).map(b => b.id));
   const adopted = coOrbitalHosts(bodies);
   const isRubble = (b) => !!b.parent_body_id && anchors.has(b.parent_body_id)
+    && roots.has(b.parent_body_id)
     && isBeltable(b) && !adopted.has(b.id);
 
   // Clustering runs on ring-dwellers ONLY — a rogue's nominal radius is

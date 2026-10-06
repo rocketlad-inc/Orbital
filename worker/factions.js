@@ -522,6 +522,23 @@ export const BODY_CATALOG = [
     orbit_radius: 26, orbit_period: 90, angle0: 0,
     color: '#c0a8ff', far_system: true,
     yield: { metal: 6, fuel: 0, gold: 6, science: 8 } },
+  // EVERY GAS GIANT HOLDS AT LEAST THREE WORLDS (Lorne, 2026-10-06).
+  // Sol's four giants already did; Crimson had one and Vellichor none.
+  // Placed OUTSIDE Prismara: live maps double body radii (body_scale 2),
+  // which puts Crimson's cloud tops at 18, and each moon's doubled SOI
+  // clears its neighbour's. Years follow Prismara's T = 0.679 r^1.5.
+  // Yields sit a little under Prismara's: broad, like every far world,
+  // and still about twice a Sol moon.
+  { id: 'scoria', name: 'Scoria', type: 'moon', parent: 'crimson',
+    radius: 1.4, soi: 5, mu: 4,
+    orbit_radius: 55, orbit_period: 277, angle0: 2.1,
+    color: '#7a3a24', far_system: true,
+    yield: { metal: 7, fuel: 0, gold: 4, science: 5 } },
+  { id: 'umber', name: 'Umber', type: 'moon', parent: 'crimson',
+    radius: 1.6, soi: 6, mu: 5,
+    orbit_radius: 85, orbit_period: 532, angle0: 4.2,
+    color: '#6a4a36', far_system: true,
+    yield: { metal: 8, fuel: 0, gold: 3, science: 4 } },
   { id: 'cinder', name: 'Cinder', type: 'terrestrial', parent: 'binary_barycenter',
     radius: 3, soi: 40, mu: 90,
     orbit_radius: 1400, orbit_period: 4400, angle0: 4.7,
@@ -559,6 +576,23 @@ export const BODY_CATALOG = [
     orbit_radius: 1000, orbit_period: 2600, angle0: 3.4,
     color: '#8870b0', far_system: true,
     yield: { metal: 2, fuel: 0, gold: 12, science: 9 } },
+  // Vellichor's three, named for the system that holds a Requiem and a
+  // Reliquary. Same placement rule as Crimson's (cloud tops at 16 live).
+  { id: 'elegy', name: 'Elegy', type: 'moon', parent: 'vellichor',
+    radius: 1.2, soi: 4, mu: 3,
+    orbit_radius: 28, orbit_period: 101, angle0: 0.5,
+    color: '#9aa8c4', far_system: true,
+    yield: { metal: 4, fuel: 0, gold: 4, science: 8 } },
+  { id: 'vesper', name: 'Vesper', type: 'moon', parent: 'vellichor',
+    radius: 1.7, soi: 6, mu: 5,
+    orbit_radius: 52, orbit_period: 255, angle0: 2.6,
+    color: '#c8bce0', far_system: true,
+    yield: { metal: 5, fuel: 0, gold: 6, science: 5 } },
+  { id: 'threnody', name: 'Threnody', type: 'moon', parent: 'vellichor',
+    radius: 1.5, soi: 5, mu: 4,
+    orbit_radius: 82, orbit_period: 504, angle0: 4.7,
+    color: '#3e3c62', far_system: true,
+    yield: { metal: 6, fuel: 0, gold: 5, science: 4 } },
   { id: 'echelon', name: 'Echelon', type: 'terrestrial', parent: 'bh_barycenter',
     radius: 3.5, soi: 45, mu: 110,
     orbit_radius: 1700, orbit_period: 5800, angle0: 5.3,
