@@ -184,9 +184,12 @@ describe('[pure] the 5% floor', () => {
 });
 
 describe('[pure] the design-doc scenario table (corvette → freighter)', () => {
-  // Derived at engine_g 0.05 → 26.52 units/tick² in the 2026-08-14 review.
-  const scenario = (wT: number, r0: {x:number;y:number}, w: {x:number;y:number}) =>
-    100 * hitChance(CORVETTE, FREIGHTER, aimFactor(wT), exposure(r0, w, SHIP_RANGE.corvette));
+  // Derived at engine_g 0.05 → 26.52 units/tick² in the 2026-08-14 review,
+  // with the corvette's reach at the time (12). Pinned to that reach so
+  // the table stays a check on the maths, not on today's tuning.
+  const DESIGN_REACH = 12;
+  const scenario = (wT: number, r0: {x:number;y:number}, w: {x:number;y:number}, reach = DESIGN_REACH) =>
+    100 * hitChance(CORVETTE, FREIGHTER, aimFactor(wT), exposure(r0, w, reach));
 
   it('parked / matched formation: 70.5% — unchanged from today', () => {
     expect(scenario(0, P(3, 0), P(0, 0))).toBeCloseTo(70.5, 1);
@@ -194,6 +197,12 @@ describe('[pure] the design-doc scenario table (corvette → freighter)', () => 
   it('parting shot (launch from the shooter body, one tick of burn): 63.8%', () => {
     // 13.26 units covered in the first tick at engine_g 0.05.
     expect(scenario(0, P(0, 0), P(13.26, 0))).toBeCloseTo(63.8, 1);
+  });
+  it('at today\'s doubled reach the same parting shot is a full parked shot', () => {
+    // Reach doubled 2026-10-06: 13.26 units no longer leaves a corvette's
+    // envelope inside the tick, so the window is the whole tick.
+    expect(SHIP_RANGE.corvette).toBe(2 * DESIGN_REACH);
+    expect(scenario(0, P(0, 0), P(13.26, 0), SHIP_RANGE.corvette)).toBeCloseTo(70.5, 1);
   });
   it('beam pass at moon-hop peak is much harder than the old model said', () => {
     const p = scenario(42.2, P(0, 6), P(42.2, 0));

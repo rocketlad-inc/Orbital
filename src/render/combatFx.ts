@@ -15,6 +15,7 @@
 import { Body, Ship, Settlement } from '../types';
 import { MegastructureState, isBreached } from '../game/megastructures';
 import { makePeaceCheck, PeaceCheck } from '../game/peace';
+import { SHIP_RANGE } from '../game/firingWindows';
 import { shipWorldPosition } from '../game/combat';
 import { getShipClass } from '../game/shipClasses';
 import { damageProfile, countPart, flakSlowMultiplier } from '../game/shipParts';
@@ -687,12 +688,10 @@ export function drawTracers(
 // same thing (identity-cached Set, same key ordering) in the one place
 // that now owns the rule. Kept as a local alias so the per-frame call
 // sites below read unchanged.
-/** Weapon reach per hull, world units. MIRROR of SHIP_RANGE in
- *  worker/transitCombat.js — the renderer must not draw a shot the
- *  server would never let happen. */
-const SHIP_TRANSIT_RANGE: Record<string, number> = {
-  corvette: 12, frigate: 16, destroyer: 20, freighter: 0, colony: 0,
-};
+/** Weapon reach per hull, world units: the client's mirror of SHIP_RANGE
+ *  in worker/transitCombat.js — the renderer must not draw a shot the
+ *  server would never let happen. One table, owned by firingWindows. */
+const SHIP_TRANSIT_RANGE = SHIP_RANGE;
 
 // Fed the OPEN WARS now, not the pacts — makePeaceCheck inverted with
 // the tick. The renderer must not draw a shot the server would never

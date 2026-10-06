@@ -106,11 +106,16 @@ export const AIM_FLOOR = 0.05;
  *  targetable. Stations are absent on purpose — the defensive-umbrella
  *  stage was cut, so a settlement never initiates at range.
  *
- *  KEEP IN SYNC with SHIP_COMBAT_STATS in worker/factions.js. */
+ *  Doubled 2026-10-06 (Lorne: "Double the firing radius of all ships in
+ *  transit. Shits too small rn"); was 12 / 16 / 20. The in-system cut
+ *  (transit_range_in_system_mul) still applies on top.
+ *
+ *  The client mirror is src/game/firingWindows.ts SHIP_RANGE, held equal
+ *  by burnParity.test.ts. */
 export const SHIP_RANGE = {
-  corvette: 12,
-  frigate: 16,
-  destroyer: 20,
+  corvette: 24,
+  frigate: 32,
+  destroyer: 40,
   freighter: 0,
   colony: 0,
 };

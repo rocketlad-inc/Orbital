@@ -43,9 +43,12 @@ import { getShipClass } from './shipClasses';
 // server scores engagements on. If they change there, change them here —
 // a disagreement means the panel promises a shot the tick will not fire.
 
-/** Per-class weapon reach. Freighter and colony are 0: they NEVER shoot. */
-const SHIP_RANGE: Record<string, number> = {
-  corvette: 12, frigate: 16, destroyer: 20, freighter: 0, colony: 0,
+/** Per-class weapon reach. Freighter and colony are 0: they NEVER shoot.
+ *  Doubled 2026-10-06 (was 12 / 16 / 20). Held to worker/transitCombat.js
+ *  SHIP_RANGE by burnParity.test.ts; the shot renderer (combatFx) reads
+ *  this one rather than keeping a third copy. */
+export const SHIP_RANGE: Readonly<Record<string, number>> = {
+  corvette: 24, frigate: 32, destroyer: 40, freighter: 0, colony: 0,
 };
 /** Reference crossing speed for the aim penalty. 45 for the old flat
  *  even burn, scaled with cruise speed (worker/burn.js CRUISE_SPEED_SCALE:

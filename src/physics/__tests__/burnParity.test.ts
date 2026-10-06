@@ -13,13 +13,13 @@ import {
   G_ANCHOR as W_G_ANCHOR, SHIP_ENGINE_G, MAX_ENGINE_G, RAMP_TICKS, BRAKE_MUL,
   burnTicks, boostAccelFor, burnShape as wBurnShape, legTicks, shapeForArrival, GROWTH_TAU,
 } from '../../../worker/burn.js';
-import { torchStateAt, V_REF as W_V_REF } from '../../../worker/transitCombat.js';
+import { torchStateAt, V_REF as W_V_REF, SHIP_RANGE as W_SHIP_RANGE } from '../../../worker/transitCombat.js';
 import { burnProgress, legProgress } from '../../../worker/orbitPos.js';
 import {
   G_ANCHOR, DEFAULT_ENGINE_G, fromG, planTorchTransfer, stepTorchShip, launchFromPlan,
   setMpBurnProfile, baseEngineG, brakeAccelFor, mpRampFor, burnShape as cBurnShape, boostState,
 } from '../torchTransfer';
-import { V_REF } from '../../game/firingWindows';
+import { V_REF, SHIP_RANGE, reachOf } from '../../game/firingWindows';
 import type { Body } from '../../types';
 
 // A target that (effectively) sits still at 3000 units, so the trip
@@ -36,6 +36,15 @@ describe('the burn', () => {
   it('client and server agree on the anchor and the combat reference', () => {
     expect(G_ANCHOR).toBe(W_G_ANCHOR);
     expect(V_REF).toBe(W_V_REF);
+  });
+
+  it('client and server agree on every hull weapon reach', () => {
+    // The panel and the range ring promise shots from this table and the
+    // tick fires from the worker's. Doubled 2026-10-06 (12/16/20 -> 24/32/40).
+    expect({ ...SHIP_RANGE }).toEqual({ ...W_SHIP_RANGE });
+    expect(reachOf('destroyer', false)).toBe(40);
+    expect(reachOf('destroyer', true)).toBe(20);   // the in-system cut still halves it
+    expect(reachOf('freighter', false)).toBe(0);
   });
 
   it('with no profile installed the planners are exactly what single player always ran', () => {
