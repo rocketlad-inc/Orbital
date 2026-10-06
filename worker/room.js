@@ -28,8 +28,8 @@ import { cfg as loadGameConfig } from './gameConfig.js';
 import { selectInChunks } from './sqlChunk.js';
 import { hostilePairs } from './wars.js';
 import { assetState, voidDeal, ASSET_TRADE_PREFIX, owedOn, payIntoDeal } from './assetDeals.js';
-import { burnProgress, brakeRatioOf } from './orbitPos.js';
-import { SHIP_ENGINE_ACCEL, BRAKE_MUL, FLIP_FRACTION, burnTicks, boostAccelFor } from './burn.js';
+import { legProgress } from './orbitPos.js';
+import { SHIP_ENGINE_ACCEL, legTicks as burnLegTicks, shapeForArrival } from './burn.js';
 import { effectiveHpMaxOf } from './effectiveHp.js';
 import {
   periodForRadius, MEGASTRUCTURES, MEGA_MU, bodyPositionAt, foundrySlotsAt,
@@ -3587,11 +3587,12 @@ export class Room {
     // copy promises raiding and escorting is the whole reason guards
     // exist.
     //
-    // The burn's shape is burn.js's (push, flip at 90%, brake 9x hard),
-    // so the push falls out of the leg the planner just sized:
-    // a = boostAccelFor(d, T). Same shape the client posts, so both sides
+    // The burn's shape is burn.js's (the push builds from launch, then a
+    // 9x brake), so the plan falls out of the leg the planner just sized:
+    // shapeForArrival(d, T). Same shape the client posts, so both sides
     // integrate one plan.
     let lx = null, ly = null, lvx = null, lvy = null, acc = null, flip = null, brk = null;
+    let rmp = null, amax = null, atau = null;
     try {
       const from = await bodyPosAt(fromBodyId, tick);
       const to = await bodyPosAt(targetBodyId, arrive);
@@ -3646,9 +3647,15 @@ export class Room {
         // acceleration that cannot reach the destination in the time
         // the node claims: the hull would lag its own arc all flight
         // and snap at the end.
-        acc = boostAccelFor(d, T);
-        brk = acc * BRAKE_MUL;
-        flip = tick + T * FLIP_FRACTION;
+        const shape = shapeForArrival(d, T);
+        acc = shape.accel;
+        rmp = shape.ramp;
+        amax = shape.max;
+        // The build is exponential now (accel_tau); no new leg is linear.
+        atau = shape.tau > 0 ? shape.tau : null;
+        if (!(rmp > 0)) rmp = null;
+        brk = shape.brake;
+        flip = tick + shape.t1;
       }
     } catch (e) {
       // A missing body should cost this leg its combat visibility,
@@ -3662,11 +3669,12 @@ export class Room {
            (id, game_id, ship_id, sequence, anchor_kind, target_body_id,
             scheduled_t, arrival_at_tick, dv_prograde, dv_normal, dv_radial, fuel_cost,
             launch_x, launch_y, launch_vx, launch_vy, accel, flip_tick, brake_accel,
+            accel_ramp, accel_max, accel_tau,
             status, committed_at_tick)
-         VALUES (?, ?, ?, ?, 'absolute', ?, ?, ?, 0, 0, 0, 0, ?, ?, ?, ?, ?, ?, ?, 'committed', ?)`,
+         VALUES (?, ?, ?, ?, 'absolute', ?, ?, ?, 0, 0, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'committed', ?)`,
       )
       .bind(nodeId, gameId, shipId, seq, targetBodyId, tick, arrive,
-            lx, ly, lvx, lvy, acc, flip, brk, tick)
+            lx, ly, lvx, lvy, acc, flip, brk, rmp, amax, atau, tick)
       .run();
     flyingShips.add(shipId);
     return arrive;
@@ -6103,7 +6111,7 @@ export class Room {
         .prepare(
           `SELECT n.ship_id, n.target_body_id, n.scheduled_t, n.arrival_at_tick,
                   n.launch_x, n.launch_y, n.launch_vx, n.launch_vy, n.accel, n.flip_tick,
-                  n.brake_accel,
+                  n.brake_accel, n.accel_ramp, n.accel_max, n.accel_tau,
                   n.rv_ax, n.rv_ay, n.rv_bx, n.rv_by, n.rv_meet_tick, n.rv_follow_ship_id
              FROM game_ship_nodes n
              JOIN game_ships s ON s.id = n.ship_id
@@ -6123,6 +6131,10 @@ export class Room {
           // NULL on the even burns committed before migration 0155:
           // torchStateAt then brakes at accel, exactly as they were planned.
           brakeAccel: r.brake_accel != null ? Number(r.brake_accel) : null,
+          // The build-up (migration 0158); NULL = a flat push.
+          accelRamp: r.accel_ramp != null ? Number(r.accel_ramp) : null,
+          accelMax: r.accel_max != null ? Number(r.accel_max) : null,
+          accelTau: r.accel_tau != null ? Number(r.accel_tau) : null,
           startTick: Number(r.scheduled_t), arriveTick: Number(r.arrival_at_tick),
           interceptX: ip.x, interceptY: ip.y, targetBodyId: r.target_body_id,
           // Rendezvous arc, when this leg is one (migration 0090).
@@ -8980,8 +8992,8 @@ export class Room {
             y: parent.y + Math.sin(angle) * (b.orbit_radius ?? 0),
           };
         };
-        // Every hull's base push and the 90% flip, from burn.js.
-        // Slowed near the black hole like every other leg (wellDilation).
+        // Every hull's launch push and its build-up, from burn.js,
+        // slowed near the black hole like every other leg (wellDilation).
         const wellRows = (await this.env.DB
           .prepare(`SELECT id FROM game_bodies
                      WHERE game_id = ? AND type = 'black_hole' AND destroyed_at_tick IS NULL`)
@@ -8997,8 +9009,10 @@ export class Room {
             const dx = destPos.x - startPos.x;
             const dy = destPos.y - startPos.y;
             const d = Math.sqrt(dx * dx + dy * dy);
+            // The well stretches the whole build-up in time by f, so the
+            // trip is exactly f times the open-space one (wellDilation).
             const f = wells.length ? legDilation(startPos, destPos, wells) : 1;
-            const Tnew = burnTicks(Math.max(d, 0.01), accel / (f * f));
+            const Tnew = burnLegTicks(Math.max(d, 0.01), accel) * f;
             if (Math.abs(Tnew - T) < 0.05) { T = Tnew; break; }
             T = Tnew;
           }
@@ -10368,7 +10382,7 @@ export class Room {
       .prepare(
         `SELECT n.id, n.ship_id, n.target_body_id, n.scheduled_t, n.arrival_at_tick,
                 n.launch_x, n.launch_y, n.launch_vx, n.launch_vy, n.accel, n.flip_tick,
-                n.brake_accel,
+                n.brake_accel, n.accel_ramp, n.accel_max, n.accel_tau,
                 n.sink_body_id, n.sink_held_until_tick,
                 s.owner_faction_id, s.ship_class
            FROM game_ship_nodes n
@@ -10408,7 +10422,10 @@ export class Room {
       const f = Math.max(0, Math.min(1,
         (tick - Number(n.scheduled_t)) /
         Math.max(1, Number(n.arrival_at_tick) - Number(n.scheduled_t))));
-      const frac = burnProgress(f, brakeRatioOf(n.accel, n.brake_accel));
+      const frac = legProgress(f, {
+        accel: n.accel, brake: n.brake_accel, ramp: n.accel_ramp, max: n.accel_max, tau: n.accel_tau,
+        startTick: n.scheduled_t, flipTick: n.flip_tick, arriveTick: n.arrival_at_tick,
+      });
       const origin = { x: Number(n.launch_x), y: Number(n.launch_y) };
       const dest = posOfBody(n.target_body_id) ?? origin;
       const pos = {

@@ -48,6 +48,13 @@ export interface TransferIntent {
     /** Braking thrust (migration 0155): brake_mul × accel since the hard
      *  brake; optional, and absent means an even burn at `accel`. */
     brakeAccel?: number;
+    /** The build-up (migration 0158): push grows by accelRamp per tick
+     *  up to accelMax. Both or neither; absent = a flat push. */
+    accelRamp?: number;
+    accelMax?: number;
+    /** ...or the exponential build (migration 0159): grows by e every
+     *  accelTau ticks up to accelMax. */
+    accelTau?: number;
   };
   /** A matched-velocity rendezvous instead of a flip-and-burn: two burn
    *  vectors, when they meet, and whose trajectory to adopt afterwards
@@ -623,6 +630,10 @@ export function MultiplayerActionsProvider({
         accel: intent.launch.accel,
         flip_tick: intent.launch.flipTick,
         ...(intent.launch.brakeAccel != null ? { brake_accel: intent.launch.brakeAccel } : {}),
+        ...(intent.launch.accelTau != null && intent.launch.accelMax != null
+          ? { accel_tau: intent.launch.accelTau, accel_max: intent.launch.accelMax }
+          : intent.launch.accelRamp != null && intent.launch.accelMax != null
+            ? { accel_ramp: intent.launch.accelRamp, accel_max: intent.launch.accelMax } : {}),
       } : {}),
       ...(intent.rendezvous ? {
         rv_ax: intent.rendezvous.ax,

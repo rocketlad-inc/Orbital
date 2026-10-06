@@ -10,8 +10,8 @@ import { upkeepSplit, parsePartsJson, shipBaseStatsFromCfg } from './shipDesigns
 import { voteWeights } from './systems.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
 import { visualsSwitches } from './botSettings.js';
-import { orbitAngle, burnProgress, brakeRatioOf } from './orbitPos.js';
-import { SHIP_ENGINE_G, BRAKE_MUL } from './burn.js';
+import { orbitAngle, legProgress } from './orbitPos.js';
+import { SHIP_ENGINE_G, BRAKE_MUL, MAX_ENGINE_G, RAMP_TICKS, GROWTH_TAU } from './burn.js';
 
 // GET /api/games/:gameId/state — full renderer snapshot.
 //
@@ -181,9 +181,12 @@ export function buildFriendlySensors(
       const origin = bodyPos(byId.get(s.parent_body_id));
       const target = bodyPos(byId.get(s.target_body_id));
       const f = Math.max(0, Math.min(1, (tick - s.scheduled_t) / (s.arrival_at_tick - s.scheduled_t)));
-      // The leg's own flip point: 90% for every burn since 2026-10-06,
-      // the midpoint for the even burns before it (no brake_accel).
-      const frac = burnProgress(f, brakeRatioOf(s.leg_accel, s.leg_brake_accel));
+      // The leg's own profile: the build-up and hard brake since
+      // 2026-10-06, a flat push before it (orbitPos.js legProgress).
+      const frac = legProgress(f, {
+        accel: s.leg_accel, brake: s.leg_brake_accel, ramp: s.leg_ramp, max: s.leg_max, tau: s.leg_tau,
+        startTick: s.scheduled_t, flipTick: s.leg_flip, arriveTick: s.arrival_at_tick,
+      });
       return { x: origin.x + (target.x - origin.x) * frac, y: origin.y + (target.y - origin.y) * frac };
     }
     return bodyPos(byId.get(s.parent_body_id));
@@ -747,7 +750,8 @@ const sensorShipsP = env.DB
       `SELECT s.ship_class, s.parent_body_id,
               c.traits_json AS captain_traits,
               n.target_body_id, n.scheduled_t, n.arrival_at_tick,
-              n.accel AS leg_accel, n.brake_accel AS leg_brake_accel
+              n.accel AS leg_accel, n.brake_accel AS leg_brake_accel,
+              n.accel_ramp AS leg_ramp, n.accel_max AS leg_max, n.accel_tau AS leg_tau, n.flip_tick AS leg_flip
          FROM game_ships s
          LEFT JOIN game_captains c ON c.id = s.captain_id
          LEFT JOIN game_ship_nodes n
@@ -776,7 +780,8 @@ const sensorSettlementsP = env.DB
     .prepare(
       `SELECT s.id, s.ship_class, s.parent_body_id,
               n.target_body_id, n.scheduled_t, n.arrival_at_tick,
-              n.accel AS leg_accel, n.brake_accel AS leg_brake_accel
+              n.accel AS leg_accel, n.brake_accel AS leg_brake_accel,
+              n.accel_ramp AS leg_ramp, n.accel_max AS leg_max, n.accel_tau AS leg_tau, n.flip_tick AS leg_flip
          FROM game_ships s
          LEFT JOIN game_ship_nodes n
            ON n.ship_id = s.id AND n.status = 'in_transit'
@@ -799,8 +804,8 @@ const sensorSettlementsP = env.DB
       `SELECT body_id, kind, status, acc_metal, acc_credits,
               cost_metal, cost_credits, partner_body_id, settings_json, hp,
               last_combat_tick, last_target_id, abandoned_at_tick, variant,
-              founded_by_faction_id, founded_at_tick, completed_at_tick,
-              transit_fraction
+              transit_fraction,
+              founded_by_faction_id, founded_at_tick, completed_at_tick, ancient
          FROM game_megastructures WHERE game_id = ?`,
     )
     .bind(gameId).all()).results ?? []);
@@ -1385,6 +1390,9 @@ const nodesP = env.DB
               -- The brake (migration 0155). NULL on the even burns
               -- committed before it, which brake at accel.
               n.brake_accel,
+              -- The build-up: linear (0158) or exponential (0159,
+              -- accel_tau). NULL = a flat push.
+              n.accel_ramp, n.accel_max, n.accel_tau,
               -- Rendezvous arc (migration 0090). NULL on an ordinary
               -- flip-and-burn, which is nearly every node.
               n.rv_ax, n.rv_ay, n.rv_bx, n.rv_by,
@@ -1405,6 +1413,8 @@ const nodesP = env.DB
               fl.launch_vx AS fl_launch_vx, fl.launch_vy AS fl_launch_vy,
               fl.accel AS fl_accel, fl.flip_tick AS fl_flip_tick,
               fl.brake_accel AS fl_brake_accel,
+              fl.accel_ramp AS fl_accel_ramp, fl.accel_max AS fl_accel_max,
+              fl.accel_tau AS fl_accel_tau,
               n.status, n.committed_at_tick,
               s.parent_body_id AS departure_body_id
          FROM game_ship_nodes n
@@ -2175,10 +2185,15 @@ const tradeRoutesP = env.DB
       // The tick the sun-gate omen is (or was) announced (sunGates.js),
       // for the Situation Report's countdown. NULL until a tick rolls it.
       sun_gate_tick: game.sun_gate_tick ?? null,
-      // THE BURN SHIPS FLY (burn.js): base push in g, and the brake as a
-      // multiple of it. Sent so the client plans every leg with the
+      // THE BURN SHIPS FLY (burn.js): launch push in g, the top of the
+      // build and how many ticks it takes, and the brake as a multiple of
+      // the push reached. Sent so the client plans every leg with the
       // server's numbers; it installs them via setMpBurnProfile.
       burn_engine_g: SHIP_ENGINE_G,
+      burn_max_g: MAX_ENGINE_G,
+      burn_ramp_ticks: RAMP_TICKS,
+      // Exponential since 2026-10-06: ticks for the push to grow by e.
+      burn_growth_tau: GROWTH_TAU,
       burn_brake_mul: BRAKE_MUL,
       transit_combat_enabled: transitCombatEnabled,
       transit_range_in_system_mul: transitRangeInSystemMul,

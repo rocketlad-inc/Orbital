@@ -21,6 +21,7 @@ import { useAuth } from './AuthContext';
 import { ShipIcon, ShipIconClass, ShipIconVariant } from '../components/ShipIcons';
 import {
   COMMISSION_FACTS, COMMISSION_LINES, COMMISSION_NAME, COMMISSION_PRICE,
+  COMMISSION_DISCORD, COMMISSION_NO_GAMEPLAY,
   answerCommissionAsk, canBuyHere, logCommission,
 } from './commission';
 import './CommissionMoments.css';
@@ -60,7 +61,8 @@ export function EndgameCommission({ gameId, survived }: { gameId: string; surviv
       <div className="cm-end__text">
         <div className="cm-title">Fly your next fleet in a new line</div>
         <div className="cm-body">
-          {COMMISSION_LINES} ship lines and new flags with the {COMMISSION_NAME}. Cosmetic only, {COMMISSION_PRICE} once.
+          {COMMISSION_LINES} ship lines, new flags and {COMMISSION_DISCORD} with the {COMMISSION_NAME}.
+          {' '}{COMMISSION_NO_GAMEPLAY} {COMMISSION_PRICE}, once.
         </div>
       </div>
       <div className="cm-actions">

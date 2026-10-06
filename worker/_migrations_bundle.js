@@ -6590,4 +6590,45 @@ ALTER TABLE game_bodies ADD COLUMN emerge_from_tick INTEGER;
 ALTER TABLE game_bodies ADD COLUMN emerge_until_tick INTEGER;
 ALTER TABLE game_megastructures ADD COLUMN transit_fraction REAL;
 ` },
+  { name: "0158_accel_ramp.sql", sql: `-- ============================================================
+-- 0158 — the push builds over a burn
+--
+-- A ship lights its engine at 0.05g and the push grows the longer it
+-- burns, to 1g after 48 ticks (worker/burn.js), then brakes at 9x the
+-- push it reached (brake_accel, 0155). Short hops fly much as they did;
+-- long outer hauls spend most of their burn near the top. Lorne,
+-- 2026-10-06: "build from launch. Easier to explain".
+--
+-- Recorded at commit with the rest of the launch plan (0088), because
+-- the server's transit-combat integrator and every client have to fly
+-- the leg the planner planned:
+--   accel        the push at launch (as before)
+--   accel_ramp   units/tick^3 added to the push per tick of burning
+--   accel_max    where the build tops out
+--
+-- NULL = a flat push: every leg committed before this, older bundles,
+-- gate hops and the asteroid ram. Nothing in flight changes course.
+-- ============================================================
+
+ALTER TABLE game_ship_nodes ADD COLUMN accel_ramp REAL;
+ALTER TABLE game_ship_nodes ADD COLUMN accel_max REAL;
+` },
+  { name: "0159_accel_tau.sql", sql: `-- ============================================================
+-- 0159 — the build-up grows exponentially
+--
+-- 0158 made a ship's push build from 0.05g to 1g over 48 ticks of burning,
+-- in a straight line. Moon hops came out too fast (Io-Callisto ~10h ->
+-- ~5.5h), so the same build now grows EXPONENTIALLY: the push doubles
+-- about every 11 ticks, barely moving at first and climbing steeply late,
+-- and still reaches 1g at 48 ticks (worker/burn.js GROWTH_TAU). Lorne,
+-- 2026-10-06: "starts muuuuch slower but leads to the same result".
+--
+-- accel_tau is the ticks for the push to grow by a factor of e, recorded
+-- with the rest of the launch plan so the server's integrator and every
+-- client fly the leg that was planned. A leg carries accel_tau OR the
+-- linear accel_ramp, never both; with neither it is a flat push.
+-- ============================================================
+
+ALTER TABLE game_ship_nodes ADD COLUMN accel_tau REAL;
+` },
 ];

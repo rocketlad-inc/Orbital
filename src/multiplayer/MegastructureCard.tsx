@@ -21,7 +21,7 @@ import { humanizeMpError } from './errorMessages';
 import {
   MEGASTRUCTURES, MEGASTRUCTURE_KINDS, MegastructureKind,
   progressOf, remainingFor, loadsRemaining, effectSummary, headlineFor,
-  MEGA_MAX_HP, MEGA_SEIZE_HP_FRAC, isBreached, isAbandoned,
+  MEGA_MAX_HP, MEGA_SEIZE_HP_FRAC, isBreached, isAbandoned, isSeizable,
 } from '../game/megastructures';
 import {
   StructureIcon, variantsFor, STRUCTURE_VARIANT_NAMES, isPremiumStructureVariant,
@@ -161,8 +161,11 @@ export const MegastructureCard: React.FC = () => {
         <div className="megac__headtext">
           <div className="megac__title">{def.label}</div>
           <div className="megac__sub">
-            {complete ? 'Operational' : buildStageName(pct)}
-            {derelict ? ' · abandoned' : !mine && ' · not yours'}
+            {/* A finished structure below 20% hull STOPS WORKING (the
+                server's rule), so "Operational" beside "Breached" was a
+                contradiction on the same card. */}
+            {complete ? (isBreached(site) ? 'Breached · offline' : 'Operational') : buildStageName(pct)}
+            {derelict ? ' · abandoned' : site.ancient && !mine ? ' · an ancient relic' : !mine && ' · not yours'}
           </div>
         </div>
       </div>
@@ -517,7 +520,7 @@ export const MegastructureCard: React.FC = () => {
           a hauler at a gate is not an occupying force. Fog of war means
           the rival warship count can be short, so the server still gets
           the last word; this only stops the hopeless click. */}
-      {!mine && !derelict && site.foundedByFactionId !== null && mpActions && (() => {
+      {!mine && !derelict && isSeizable(site) && mpActions && (() => {
         const armedHere = gameState.ships.filter(sh =>
           sh.orbit?.parentBodyId === site.bodyId
           && sh.class !== 'freighter' && sh.class !== 'colony');
@@ -534,13 +537,14 @@ export const MegastructureCard: React.FC = () => {
             + `on it to break it below ${Math.round(MEGA_MAX_HP * MEGA_SEIZE_HP_FRAC)} `
             + '— it repairs itself the moment you leave.'
           : myForce.length === 0
-            ? 'Breached. Bring an armed ship here to board it. Freighters do not count.'
+            ? 'Breached. Send an armed ship to this structure (pick it as the ship\'s destination), '
+              + 'then board it here. Freighters and colony ships do not count.'
             : `Contested — ${rivalForce.length} rival warship${rivalForce.length === 1 ? '' : 's'} `
               + 'still here. Clear them off first.';
 
         return (
         <div className="megac__seize">
-          <div className="megac__gatehead">Not yours</div>
+          <div className="megac__gatehead">{site.ancient ? 'Board it' : 'Not yours'}</div>
           {!canTake && <div className="megac__hint">{why}</div>}
           {canTake && (<>
           <button

@@ -20,7 +20,7 @@ import { isEccentric, eccentricLocalPosition } from './transitCombat.js';
 import { parseTraits, traitMul } from './captains.js';
 import { maySupplySite, excludedFundersOf, constructionPartners } from './megastructures.js';
 import { hasFeature, factionTechLevels, gatingEnabled } from './researchUnlocks.js';
-import { SHIP_ENGINE_ACCEL, burnTicks } from './burn.js';
+import { SHIP_ENGINE_ACCEL, legTicks as burnLegTicks } from './burn.js';
 import { legDilation } from './wellDilation.js';
 
 /** Transfer Lanes: a capital-to-capital leg runs at this fraction of
@@ -129,7 +129,7 @@ export function makeRouteMath(db, gameId) {
     return p;
   };
 
-  // Closed-form burn time (burn.js: push, flip at 90%, brake 9x hard)
+  // Burn time (burn.js: the push builds from launch, brake 9x hard)
   // with a 5-iteration intercept refinement so target-body motion during
   // the trip is accounted for. Integer ticks >= 1.
   // THE WELL (wellDilation.js): the black holes on the map, read once
@@ -158,10 +158,10 @@ export function makeRouteMath(db, gameId) {
       const dx = destPos.x - startPos.x;
       const dy = destPos.y - startPos.y;
       const d = Math.sqrt(dx * dx + dy * dy);
-      // Slowed by the well: f on the time is 1/f^2 on the engine, the
-      // same trade the client planner makes (planTorchTransfer).
+      // Slowed by the well: the whole build-up stretched in time by f,
+      // the same transform the client planner applies (torchTransfer).
       const f = wells.length ? legDilation(startPos, destPos, wells) : 1;
-      const Tnew = burnTicks(Math.max(d, 0.01), accel / (f * f));
+      const Tnew = burnLegTicks(Math.max(d, 0.01), accel) * f;
       if (Math.abs(Tnew - T) < 0.05) { T = Tnew; break; }
       T = Tnew;
     }

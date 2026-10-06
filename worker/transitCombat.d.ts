@@ -19,6 +19,14 @@ export interface LaunchPlan {
   arriveTick: number;
   interceptX: number; interceptY: number;
   targetBodyId: string;
+  /** Braking thrust (migration 0155); absent/null = brakes at accel. */
+  brakeAccel?: number | null;
+  /** The build-up (migration 0158); absent/null = a flat push. */
+  accelRamp?: number | null;
+  accelMax?: number | null;
+  /** The exponential build (migration 0159): push grows by e every
+   *  accelTau ticks up to accelMax. Absent/null = linear or flat. */
+  accelTau?: number | null;
 }
 
 export function torchStateAt(

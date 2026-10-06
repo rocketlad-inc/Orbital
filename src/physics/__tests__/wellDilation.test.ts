@@ -9,7 +9,7 @@
 // ============================================================
 
 import { legDilation, wellDepthAt, WELL_RADIUS } from '../wellDilation';
-import { planTorchTransfer } from '../torchTransfer';
+import { planTorchTransfer, burnShape } from '../torchTransfer';
 import type { Body } from '../../types';
 /* eslint-disable @typescript-eslint/no-var-requires */
 const worker = require('../../../worker/wellDilation.js');
@@ -49,6 +49,28 @@ describe('the well', () => {
     expect(legDilation({ x: 1000, y: 0 }, { x: 0, y: 1000 }, [{ x: 0, y: 0 }])).toBeGreaterThan(1.9);
   });
 
+  it('stretches a built-up burn in time by exactly f, as the server assumes', () => {
+    // The client planner slows a ramped leg by rescaling its build-up
+    // (pushes / f^2, linear rate / f^3, exponential time constant x f);
+    // the server just multiplies its open-space trip by f. Both must land
+    // on the same tick, for the linear build and the exponential one.
+    const burn = require('../../../worker/burn.js');
+    const a0 = burn.SHIP_ENGINE_ACCEL;
+    const { max, tau } = burn.rampFor(a0);
+    // [linear rate, top push, time constant]: flat, linear, exponential.
+    const builds: Array<[number, number, number]> = [[0, a0, 0], [a0 * 0.05, max, 0], [0, max, tau]];
+    for (const f of [1.2, 1.9, 2.7]) {
+      for (const d of [300, 4000, 90000]) {
+        for (const [r, top, t] of builds) {
+          const open = burnShape(d, a0, r, top, 9, t).T;
+          const slowed = burnShape(d, a0 / (f * f), r / (f * f * f), top / (f * f), 9, t * f).T;
+          expect(slowed / open).toBeCloseTo(f, 6);
+        }
+      }
+    }
+    expect(tau).toBeGreaterThan(0);
+  });
+
   it('makes the planner fly a slower, still-real burn', () => {
     const B = (o: Partial<Body> & { id: string; type: Body['type'] }) => ({
       name: o.id, radius: 1, orbitRadius: 0, orbitPeriod: 0, angle0: 0, soi: 0, color: '#fff', ...o,
@@ -64,5 +86,15 @@ describe('the well', () => {
     const f = within.arriveTick / without.arriveTick;
     expect(within.acceleration).toBeCloseTo(10 / (f * f), 1);
     expect(within.brakeAcceleration / within.acceleration).toBeCloseTo(9, 6);
+
+    // Multiplayer's built-up burn (the path every live leg takes): the
+    // same slowdown, and the committed build carries the stretch.
+    const ramp = { ramp: 0, max: 200, tau: 6 };
+    const openR = planTorchTransfer(ship, 'requiem', 10, 90, 0, [bary, target], 20, ramp)!;
+    const wellR = planTorchTransfer(ship, 'requiem', 10, 90, 0, [bary, hole, target], 20, ramp)!;
+    const fr = wellR.arriveTick / openR.arriveTick;
+    expect(fr).toBeGreaterThan(1.5);
+    expect(wellR.accelTau).toBeCloseTo(6 * fr, 1);
+    expect(wellR.accelMax).toBeCloseTo(200 / (fr * fr), 0);
   });
 });
