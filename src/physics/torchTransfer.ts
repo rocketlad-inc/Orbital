@@ -239,6 +239,60 @@ export function burnShape(
   return { t1, T: t1 + s.v / brake, brake, vPeak: s.v };
 }
 
+// ---- Where a shaped burn is, for DRAWING ------------------------------
+// The map draws every leg as a straight line (STRAIGHT_LINE_TRAJECTORIES)
+// and used to slide the hull along it at one even speed, so a hull that
+// builds to 1g over a long haul looked exactly as slow as a moon hop. These
+// put it where its burn says: creeping off the line at launch, gathering
+// speed, then braking hard at the end. Mirrors worker/orbitPos.js
+// legProgress, which places the same hull for fog and the gravity sink.
+
+/** A multiplayer burn with a shape to show: a hard brake or a build-up.
+ *  Single player's flat, even burns never are, so nothing drawn for it
+ *  changes. */
+export function isShapedBurn(p: TorchTransfer): boolean {
+  return p.brakeAcceleration !== p.acceleration
+    || (p.accelRamp != null && p.accelRamp > 0 && p.accelMax != null && p.accelMax > p.acceleration);
+}
+
+function boostOf(p: TorchTransfer, tau: number) {
+  const ramped = p.accelRamp != null && p.accelRamp > 0 && p.accelMax != null && p.accelMax > p.acceleration;
+  return boostState(tau, p.acceleration, ramped ? p.accelRamp : 0, ramped ? p.accelMax : p.acceleration);
+}
+
+/** The tick the brake brings the hull to rest (at or before arrival: a
+ *  server-ceiled arrival can leave it parked on the intercept a while). */
+export function burnStopTick(p: TorchTransfer): number {
+  const t1 = p.flipTick - p.startTick;
+  if (!(t1 > 0) || !(p.brakeAcceleration > 0)) return p.arriveTick;
+  return Math.min(p.arriveTick, p.flipTick + boostOf(p, t1).v / p.brakeAcceleration);
+}
+
+/** Share of the leg's line covered at tick `t`, on the leg's own burn. */
+export function burnFractionAt(p: TorchTransfer, t: number): number {
+  const T = p.arriveTick - p.startTick;
+  const t1 = p.flipTick - p.startTick;
+  const tau = t - p.startTick;
+  if (!(T > 0)) return 1;
+  if (tau <= 0) return 0;
+  if (!(t1 > 0) || !(p.brakeAcceleration > 0) || !(p.acceleration > 0)) return Math.min(1, tau / T);
+  const s1 = boostOf(p, t1);
+  const total = s1.x + (s1.v * s1.v) / (2 * p.brakeAcceleration);
+  if (!(total > 0)) return Math.min(1, tau / T);
+  if (tau <= t1) return Math.min(1, boostOf(p, tau).x / total);
+  const u = Math.min(tau - t1, s1.v / p.brakeAcceleration);
+  return Math.min(1, (s1.x + s1.v * u - 0.5 * p.brakeAcceleration * u * u) / total);
+}
+
+/** How far up its build-up the push is at tick `t`, 0 (launch) to 1
+ *  (top). A flat push is always 1. */
+export function pushShareAt(p: TorchTransfer, t: number): number {
+  const ramped = p.accelRamp != null && p.accelRamp > 0 && p.accelMax != null && p.accelMax > p.acceleration;
+  if (!ramped) return 1;
+  const a = Math.min(p.accelMax!, p.acceleration + p.accelRamp! * Math.max(0, t - p.startTick));
+  return (a - p.acceleration) / (p.accelMax! - p.acceleration);
+}
+
 function planRampedTransfer(
   ship: TorchShipState, target: Body, a0: number, k: number, r: BurnRamp,
   currentTick: number, bodies: Body[], iterations: number,

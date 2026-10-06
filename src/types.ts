@@ -564,6 +564,10 @@ export interface TorchTransferPlan {
   targetBodyId: string;
   acceleration: number;          // boost-phase g (game units / tick²)
   brakeAcceleration: number;     // brake-phase g — equal to acceleration for v1
+  /** Multiplayer (migration 0158): the push builds by accelRamp per tick
+   *  up to accelMax. Absent = a flat push. Mirrors TorchTransfer. */
+  accelRamp?: number;
+  accelMax?: number;
   startTick: number;
   flipTick: number;
   arriveTick: number;

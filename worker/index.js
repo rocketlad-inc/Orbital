@@ -1747,6 +1747,10 @@ export default {
         // the watermark where it was for the next minute to retry.
         try { await adminDashboard.rollupAnalytics(env); }
         catch (e) { console.error('analytics rollup failed', e); }
+        // Slash commands register themselves globally when their list
+        // changes (discord.ensureGlobalCommands). One D1 read otherwise.
+        try { await discord.ensureGlobalCommands(env); }
+        catch (e) { console.error('slash command registration failed', e); }
         const now = Date.now();
         // Active games that are due OR orphaned (NULL next_tick_at but
         // not turn-based — the latter happens when a game's tick state
