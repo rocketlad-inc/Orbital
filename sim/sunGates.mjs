@@ -265,9 +265,14 @@ check(`tick 21: the second gate (to ${order[1].label}) leaves, ten ticks later`,
     `${(o0 * 180 / Math.PI).toFixed(1)} degrees off`);
   check(`the ${order[1].label} gate stopped facing ${order[1].label}`, o1 <= Math.PI / 4 + 1e-6,
     `${(o1 * 180 / Math.PI).toFixed(1)} degrees off`);
-  const sep = Math.abs(((a1 - a0) % (2 * Math.PI) + 3 * Math.PI) % (2 * Math.PI) - Math.PI);
-  check('so the two gates stop on opposite sides of the sky',
-    sep >= Math.PI / 2, `${(sep * 180 / Math.PI).toFixed(0)} degrees apart`);
+  // Not "opposite sides": where the two systems sit is the map's call,
+  // and a live board has had them under sixty degrees apart. Only that
+  // the second never stops on top of the first.
+  const gap = Math.hypot(
+    Math.cos(a1) * g1.orbit_radius - Math.cos(a0) * g0.orbit_radius,
+    Math.sin(a1) * g1.orbit_radius - Math.sin(a0) * g0.orbit_radius);
+  check('the second gate never stops on top of the first', gap >= g1.orbit_radius * 0.05,
+    `${gap.toFixed(0)} apart`);
 }
 check('the two gates lead to different systems', order[0].key !== order[1].key);
 

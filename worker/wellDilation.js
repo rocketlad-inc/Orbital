@@ -23,7 +23,9 @@
 // ============================================================
 
 /** Distance at which the well doubles trip time, near enough (live units:
- *  Requiem orbits at 1000 since FAR_LOCAL_SCALE opened Cygnus up). */
+ *  Requiem orbits the hole itself at 1120 since Cygnus took Centauri's
+ *  dance, so the well rides along with the hole -- callers pass its
+ *  position at the tick). */
 export const WELL_REF = 1000;
 /** Past this, the well has no effect. */
 export const WELL_RADIUS = 10000;

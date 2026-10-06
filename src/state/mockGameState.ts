@@ -605,28 +605,29 @@ export const SHARED_BODIES: Body[] = [
     // Small visible radius — the event horizon is tiny compared to
     // a star. The custom renderer draws the accretion disk much
     // bigger (3× the body radius) so it reads as a glowing eye.
-    radius: 4, soi: 50, mu: 600, color: '#000000',
-    // Same period as the companion, phased π apart so they stay
-    // opposite each other across the barycenter (matches binary-
-    // star bookkeeping). Mass ratio ~1:2 (BH heavier than companion
-    // — real Cygnus X-1 is the reverse, but flipping it here keeps
-    // the BH closer to the barycenter for visual cleanliness).
-    orbitRadius: 12, orbitPeriod: 180, angle0: 0,
+    radius: 4, soi: 310, mu: 600, color: '#000000',
+    // The dance (worker/factions.js): an e = 0.2 ellipse, opposite the
+    // companion. Mass ratio ~1:2 (BH heavier than companion -- real
+    // Cygnus X-1 is the reverse, but flipping it here keeps the BH
+    // closer to the barycenter for visual cleanliness).
+    orbitRadius: 525, orbitPeriod: 168 / Math.pow(2, 1.5), angle0: 0,
+    orbit_rp: 420, orbit_ra: 630, orbit_omega: 0, orbit_m0: 0,
   },
   {
     id: 'hde_226868', name: 'HDE 226868', type: 'star', parent: 'bh_barycenter',
     // Blue-white supergiant donor star. Color picked to read as
     // "hot massive star" against the dark BH.
-    radius: 7, soi: 30, mu: 300, color: '#a8d0ff',
-    orbitRadius: 24, orbitPeriod: 180, angle0: Math.PI,
+    radius: 7, soi: 310, mu: 300, color: '#a8d0ff',
+    orbitRadius: 1050, orbitPeriod: 168 / Math.pow(2, 1.5), angle0: Math.PI,
+    orbit_rp: 840, orbit_ra: 1260, orbit_omega: Math.PI, orbit_m0: 0,
   },
   // Surviving worlds — irradiated by the X-ray emission, enriched
   // by supernova ejecta. Science yields are exceptional because
   // every measurement out here is a new physics result.
   {
-    id: 'requiem', name: 'Requiem', type: 'terrestrial', parent: 'bh_barycenter',
-    radius: 3, soi: 40, mu: 80, color: '#5a3a4a',  // dark irradiated rock
-    orbitRadius: 500, orbitPeriod: 900, angle0: 1.2,
+    id: 'requiem', name: 'Requiem', type: 'terrestrial', parent: 'cygnus_x',
+    radius: 3, soi: 25, mu: 80, color: '#5a3a4a',  // dark irradiated rock
+    orbitRadius: 560, orbitPeriod: 180, angle0: 1.2,
     resources: { fuel: 0, gold: 5, metal: 12, science: 13 },
   },
   {
@@ -634,15 +635,15 @@ export const SHARED_BODIES: Body[] = [
     // X-ray-bleached gas giant — methane stripped, hydrogen ionized,
     // visual hue tends toward pale blue-violet.
     radius: 8, soi: 95, mu: 320, color: '#8870b0',
-    orbitRadius: 1000, orbitPeriod: 2600, angle0: 3.4,
+    orbitRadius: 2150, orbitPeriod: 8175, angle0: 3.4,
     resources: { fuel: 0, gold: 12, metal: 2, science: 9 },
   },
   {
-    id: 'echelon', name: 'Echelon', type: 'terrestrial', parent: 'bh_barycenter',
+    id: 'echelon', name: 'Echelon', type: 'terrestrial', parent: 'hde_226868',
     // Heavy-element world — supernova ejecta seeded it with gold,
     // uranium, exotic isotopes.
-    radius: 3.5, soi: 45, mu: 110, color: '#b89060',
-    orbitRadius: 1700, orbitPeriod: 5800, angle0: 5.3,
+    radius: 3.5, soi: 25, mu: 110, color: '#b89060',
+    orbitRadius: 560, orbitPeriod: 180, angle0: 5.3,
     resources: { fuel: 0, gold: 14, metal: 9, science: 8 },
   },
   // Outer dwarf — the return-gate body for this system. The warp_gate
@@ -652,7 +653,7 @@ export const SHARED_BODIES: Body[] = [
   {
     id: 'reliquary', name: 'Reliquary', type: 'dwarf', parent: 'bh_barycenter',
     radius: 1.5, soi: 9, mu: 1, color: '#706878',
-    orbitRadius: 2800, orbitPeriod: 12000, angle0: 0.8,
+    orbitRadius: 3400, orbitPeriod: 16257, angle0: 0.8,
     resources: { fuel: 0, gold: 4, metal: 7, science: 9 },
   },
 ];
