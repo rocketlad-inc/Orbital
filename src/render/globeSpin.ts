@@ -30,7 +30,11 @@ let serverStillWorlds = false;
 export function setServerStillWorlds(on: boolean): void { serverStillWorlds = on; }
 
 /** Oblate worlds keep their squash (sprite values). */
-const FLATTEN: Record<string, number> = { jupiter: 0.065, saturn: 0.1, haumea: 0.38 };
+const FLATTEN: Record<string, number> = {
+  jupiter: 0.065, saturn: 0.1, haumea: 0.38,
+  // far-system giants, baked into their sprites at the same values
+  crimson: 0.06, vellichor: 0.08,
+};
 /** Ringed worlds lean with their rings; every other axis stands upright. */
 const LEAN: Record<string, number> = { saturn: 0.35, uranus: 0.35 };
 

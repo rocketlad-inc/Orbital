@@ -6,7 +6,7 @@ import { shipDisplayTick, spinNowMs } from './tickPhase';
 
 import { Body, Ship, OrbitElements, TrajectoryArc, Settlement, Faction, TorchTransferPlan, BuildOrder, BuildingKind, FactionTechStateBase } from '../types';
 import { effectiveShipMaxHp } from '../game/combat';
-import { getPlanetTexture, getTerraformedTexture, getCloudTexture, terraformFraction, terraformTint, hashStr, mulberry32, getGlobe } from './planetTexture';
+import { getPlanetTexture, getTerraformedTexture, getCloudTexture, terraformFraction, terraformTint, hashStr, mulberry32, getGlobe, templateIdOf } from './planetTexture';
 import { getSpinningGlobe, drawSpinningGlobe, spinRate } from './globeSpin';
 import { artUrl } from './artVersion';
 import { getEmblemImage } from './emblemCache';
@@ -1011,14 +1011,63 @@ function sphereShadeSprite(radius: number): HTMLCanvasElement | null {
 // two rotated drawImages.
 // ------------------------------------------------------------
 
-const coronaCache = new Map<number, [HTMLCanvasElement, HTMLCanvasElement] | null>();
+// Keyed by size bucket AND star: each star paints its own corona.
+const coronaCache = new Map<string, [HTMLCanvasElement, HTMLCanvasElement] | null>();
 const CORONA_CACHE_CAP = 6;
+
+/**
+ * EVERY STAR WEARS ITS OWN LIGHT. The corona, flares and photosphere
+ * were written for Sol alone, so the far systems' stars came out as more
+ * Sols: HDE 226868, a blue supergiant, wore an orange corona. Each look
+ * names its photosphere sprite (Sol's real solar surface map, regraded
+ * by spectral class) and the 'r, g, b' of its glow and flares.
+ * Unknown stars keep the procedural face and borrow Sol's glow.
+ */
+interface StarLook {
+  photo: string;
+  base: [string, string, string];      // corona radial: inner, mid, outer
+  lobes: [string, string];             // the two counter-rotating layers
+  flare: [string, string];             // loop body, hot core
+}
+const STAR_LOOK: Record<string, StarLook> = {
+  sol: {
+    photo: 'sol',
+    base: ['255, 209, 128', '255, 170, 70', '255, 154, 60'],
+    lobes: ['rgba(255, 200, 110, 0.10)', 'rgba(255, 165, 75, 0.09)'],
+    flare: ['255, 190, 90', '255, 240, 200'],
+  },
+  // Alpha Centauri A — G2V, a near-twin of the Sun, a shade whiter.
+  centauri_a: {
+    photo: 'centauri_a',
+    base: ['255, 236, 180', '255, 210, 130', '255, 192, 104'],
+    lobes: ['rgba(255, 232, 168, 0.10)', 'rgba(255, 208, 128, 0.09)'],
+    flare: ['255, 218, 146', '255, 250, 228'],
+  },
+  // Alpha Centauri B — K1V, cooler, deeper orange.
+  centauri_b: {
+    photo: 'centauri_b',
+    base: ['255, 178, 112', '255, 128, 62', '238, 98, 40'],
+    lobes: ['rgba(255, 158, 92, 0.11)', 'rgba(255, 118, 56, 0.09)'],
+    flare: ['255, 138, 72', '255, 220, 182'],
+  },
+  // HDE 226868 — the O-type blue supergiant feeding Cygnus X-1.
+  hde_226868: {
+    photo: 'hde_226868',
+    base: ['204, 226, 255', '142, 182, 255', '108, 150, 255'],
+    lobes: ['rgba(172, 206, 255, 0.11)', 'rgba(122, 166, 255, 0.10)'],
+    flare: ['142, 186, 255', '232, 242, 255'],
+  },
+};
+function starLookOf(body: Body): StarLook | null {
+  return STAR_LOOK[templateIdOf(body.id)] ?? null;
+}
 
 function paintCoronaLayer(
   size: number,
   lobes: number,
   baseAlpha: number,
   lobeColor: string,
+  look: StarLook = STAR_LOOK.sol,
 ): HTMLCanvasElement {
   const off = document.createElement('canvas');
   off.width = size;
@@ -1029,9 +1078,9 @@ function paintCoronaLayer(
   // Radial base — replaces the old static outer/mid glow (each layer
   // carries ~half the old alpha; the two sum additively).
   const base = c.createRadialGradient(half, half, half * 0.28, half, half, half * 0.85);
-  base.addColorStop(0, `rgba(255, 209, 128, ${baseAlpha})`);
-  base.addColorStop(0.45, `rgba(255, 170, 70, ${baseAlpha * 0.3})`);
-  base.addColorStop(1, 'rgba(255, 154, 60, 0)');
+  base.addColorStop(0, `rgba(${look.base[0]}, ${baseAlpha})`);
+  base.addColorStop(0.45, `rgba(${look.base[1]}, ${baseAlpha * 0.3})`);
+  base.addColorStop(1, `rgba(${look.base[2]}, 0)`);
   c.fillStyle = base;
   c.beginPath();
   c.arc(half, half, half * 0.85, 0, Math.PI * 2);
@@ -1046,30 +1095,31 @@ function paintCoronaLayer(
     const lr = half * 0.3;
     const g = c.createRadialGradient(lx, ly, 0, lx, ly, lr);
     g.addColorStop(0, lobeColor);
-    g.addColorStop(1, 'rgba(255, 180, 90, 0)');
+    g.addColorStop(1, `rgba(${look.base[1]}, 0)`);
     c.fillStyle = g;
     c.fillRect(lx - lr, ly - lr, lr * 2, lr * 2);
   }
   return off;
 }
 
-function getCoronaLayers(coreR: number): [HTMLCanvasElement, HTMLCanvasElement] | null {
+function getCoronaLayers(coreR: number, look: StarLook = STAR_LOOK.sol): [HTMLCanvasElement, HTMLCanvasElement] | null {
   // Bucket to power-of-two canvas sizes (~4× core radius) so zoom
   // changes only repaint on bucket crossings, not every frame.
   let size = 64;
   while (size < coreR * 4 && size < 2048) size *= 2;
-  const hit = coronaCache.get(size);
+  const key = `${size}|${look.photo}`;
+  const hit = coronaCache.get(key);
   if (hit !== undefined) {
-    coronaCache.delete(size);
-    coronaCache.set(size, hit);
+    coronaCache.delete(key);
+    coronaCache.set(key, hit);
     return hit;
   }
   if (typeof document === 'undefined') return null;
   const layers: [HTMLCanvasElement, HTMLCanvasElement] = [
-    paintCoronaLayer(size, 6, 0.13, 'rgba(255, 200, 110, 0.10)'),
-    paintCoronaLayer(size, 5, 0.11, 'rgba(255, 165, 75, 0.09)'),
+    paintCoronaLayer(size, 6, 0.13, look.lobes[0], look),
+    paintCoronaLayer(size, 5, 0.11, look.lobes[1], look),
   ];
-  coronaCache.set(size, layers);
+  coronaCache.set(key, layers);
   if (coronaCache.size > CORONA_CACHE_CAP) {
     const oldest = coronaCache.keys().next().value;
     if (oldest !== undefined) coronaCache.delete(oldest);
@@ -1106,7 +1156,8 @@ export function drawStarBody(
   // 1.7×coreR down to ~1.23×coreR: the corona band got proportionally
   // thinner as the disc grew, keeping the TOTAL footprint inside the
   // 12-unit ship ring.
-  const layers = getCoronaLayers(coreR);
+  const look = starLookOf(body) ?? STAR_LOOK.sol;
+  const layers = getCoronaLayers(coreR, look);
   if (layers) {
     // 3.2x measured (pixel harness): glow ~0.03 lum at 1.09x disc,
     // fading to zero by ~1.36x coreR = 231px at scale 20 — a soft skirt
@@ -1156,14 +1207,14 @@ export function drawStarBody(
       const ax = Math.cos(th - spread) * coreR * 0.99, ay = Math.sin(th - spread) * coreR * 0.99;
       const bx = Math.cos(th + spread) * coreR * 0.99, by = Math.sin(th + spread) * coreR * 0.99;
       const mx = Math.cos(th) * (coreR + reach), my = Math.sin(th) * (coreR + reach);
-      c.strokeStyle = `rgba(255, 190, 90, ${(0.55 * env).toFixed(3)})`;
+      c.strokeStyle = `rgba(${look.flare[0]}, ${(0.55 * env).toFixed(3)})`;
       c.lineWidth = Math.max(1, coreR * 0.045);
       c.lineCap = 'round';
       c.beginPath();
       c.moveTo(ax, ay);
       c.quadraticCurveTo(mx * 1.06, my * 1.06, bx, by);
       c.stroke();
-      c.strokeStyle = `rgba(255, 240, 200, ${(0.7 * env).toFixed(3)})`;
+      c.strokeStyle = `rgba(${look.flare[1]}, ${(0.7 * env).toFixed(3)})`;
       c.lineWidth = Math.max(0.5, coreR * 0.018);
       c.beginPath();
       c.moveTo(ax, ay);
@@ -1241,17 +1292,22 @@ export function drawStarBody(
   }
 }
 
-/** Sol's photosphere sprite (visual overhaul, staging). Only the home star
- *  has one; other stars keep the procedural face. */
-let sunPhoto: HTMLImageElement | null = null;
+/** Each star's photosphere sprite (visual overhaul). Sol's is the real
+ *  solar surface map; the far systems' stars are that map regraded by
+ *  spectral class (see STAR_LOOK). Stars with no look keep the
+ *  procedural face. */
+const starPhotos = new Map<string, HTMLImageElement>();
 function getSunPhotosphere(body: Body): HTMLImageElement | null {
   if (typeof document === 'undefined') return null;
-  if (body.id !== 'sol' && !body.id.endsWith(':sol')) return null;
-  if (!sunPhoto) {
-    sunPhoto = new Image();
-    sunPhoto.src = artUrl('/globes/sol.webp');
+  const look = starLookOf(body);
+  if (!look) return null;
+  let img = starPhotos.get(look.photo);
+  if (!img) {
+    img = new Image();
+    img.src = artUrl(`/globes/${look.photo}.webp`);
+    starPhotos.set(look.photo, img);
   }
-  return sunPhoto.complete && sunPhoto.naturalWidth > 0 ? sunPhoto : null;
+  return img.complete && img.naturalWidth > 0 ? img : null;
 }
 
 /** Cached granulation texture for the sun's face — irregular brighter
@@ -1298,66 +1354,246 @@ function getSunMottleLayer(coreR: number): HTMLCanvasElement | null {
   return cv;
 }
 
-/** Black hole: dark event horizon + bright orange/red accretion disk.
- *
- *  Layered from outside in:
- *    - faint blue-violet halo (gravitational lensing suggestion)
- *    - hot accretion disk ring (orange→red→dark falloff)
- *    - black event horizon (filled disk, no gradient — true black)
- *
- *  No "core glow" like a star — the entire point is the central disk
- *  is invisible. Light comes from the swirling accretion disk, not
- *  the singularity itself. We don't bother drawing a Doppler-tilted
- *  disk (one half brighter than the other from rotation) — clean
- *  symmetry reads better at small sizes. */
+// ------------------------------------------------------------
+// Black hole (Cygnus X-1). Rebuilt 2026-10-06 in the overhaul's look:
+// the old face was a flat face-on gradient with a black dot on it.
+//
+// What is drawn, back to front, all cheap and cached:
+//   halo      a faint warm glow, the system's light scattered
+//   jets      thin relativistic jets along the spin axis
+//   disk      a TILTED accretion disk (one cached spiral-streaked
+//             texture per size bucket, squashed to an ellipse and
+//             turned in its own plane), Doppler-beamed: the side
+//             turning toward us burns brighter and whiter
+//   shadow    the event horizon
+//   lensing   the far side of the disk, bent over the top of the
+//             shadow and under it, and a thin photon ring
+//   front     the near half of the disk again, passing IN FRONT
+//   stream    gas torn off the companion star, spiralling into the
+//             disk: the thing that makes Cygnus X-1 an X-ray binary
+// Lightweight mode draws one still frame and skips the stream.
+// ------------------------------------------------------------
+const BH_TILT = 0.3;          // disk seen nearly edge-on: minor/major axis
+const BH_DISK_OUT = 4.2;      // disk outer radius, in horizon radii
+const BH_DISK_IN = 1.35;      // innermost stable orbit, in horizon radii
+const bhDiskCache = new Map<number, HTMLCanvasElement | null>();
+
+function getBlackHoleDisk(diskR: number): HTMLCanvasElement | null {
+  let size = 64;
+  while (size < diskR * 2 && size < 1024) size *= 2;
+  const hit = bhDiskCache.get(size);
+  if (hit !== undefined) return hit;
+  if (typeof document === 'undefined') return null;
+  const cv = document.createElement('canvas');
+  cv.width = size; cv.height = size;
+  const c = cv.getContext('2d');
+  if (!c) { bhDiskCache.set(size, null); return null; }
+  const img = c.createImageData(size, size);
+  const half = size / 2;
+  const inner = BH_DISK_IN / BH_DISK_OUT;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = (x + 0.5 - half) / half;
+      const dy = (y + 0.5 - half) / half;
+      const r = Math.sqrt(dx * dx + dy * dy);
+      if (r < inner || r > 1) continue;
+      const t = (r - inner) / (1 - inner);            // 0 inner edge .. 1 rim
+      const th = Math.atan2(dy, dx);
+      const lr = Math.log(r);
+      // Spiral streaks: a few logarithmic arms at different pitches, so
+      // the turning disk reads as moving gas rather than a rotating disc.
+      const s = 0.55
+        + 0.22 * Math.sin(5 * th + 16 * lr)
+        + 0.14 * Math.sin(13 * th - 9 * lr + 1.3)
+        + 0.09 * Math.sin(31 * th + 27 * lr + 0.7);
+      const heat = Math.pow(1 - t, 1.5);              // hottest at the inner edge
+      let R: number;
+      let G: number;
+      let B: number;
+      if (t < 0.12) { R = 255; G = 246; B = 226; }
+      else if (t < 0.4) { const k = (t - 0.12) / 0.28; R = 255; G = 246 - 70 * k; B = 226 - 140 * k; }
+      else if (t < 0.75) { const k = (t - 0.4) / 0.35; R = 255 - 45 * k; G = 176 - 110 * k; B = 86 - 56 * k; }
+      else { const k = (t - 0.75) / 0.25; R = 210 - 120 * k; G = 66 - 46 * k; B = 30 - 15 * k; }
+      const edge = Math.min(1, (1 - r) * 14) * Math.min(1, (r - inner) * 30);
+      const a = Math.max(0, Math.min(1, (0.25 + heat) * s * edge));
+      const i = (y * size + x) * 4;
+      img.data[i] = R; img.data[i + 1] = G; img.data[i + 2] = B;
+      img.data[i + 3] = Math.round(a * 255);
+    }
+  }
+  c.putImageData(img, 0, 0);
+  bhDiskCache.set(size, cv);
+  return cv;
+}
+
 function drawBlackHoleBody(
   body: Body,
   canvasPos: { x: number; y: number },
   radius: number,
   ctx: RenderContext,
 ) {
-  // Faint outer halo — visual hint at the gravitational lensing
-  // signature without actually doing the optics.
-  const haloR = radius * 7;
-  const halo = ctx.ctx.createRadialGradient(
-    canvasPos.x, canvasPos.y, radius * 2.5,
-    canvasPos.x, canvasPos.y, haloR,
-  );
-  halo.addColorStop(0, 'rgba(180, 120, 220, 0.18)');
-  halo.addColorStop(0.5, 'rgba(120, 80, 180, 0.06)');
-  halo.addColorStop(1, 'rgba(120, 80, 180, 0)');
-  ctx.ctx.fillStyle = halo;
-  ctx.ctx.beginPath();
-  ctx.ctx.arc(canvasPos.x, canvasPos.y, haloR, 0, Math.PI * 2);
-  ctx.ctx.fill();
+  const c = ctx.ctx;
+  const { x, y } = canvasPos;
+  const rh = radius * 1.05;                           // event horizon
+  const diskR = rh * BH_DISK_OUT;
+  const still = isLightweight();
+  const nowMs = still ? 0 : (ctx.nowMs ?? performance.now());
+  const spin = nowMs * 0.00022;                       // disk turns in its plane
 
-  // Accretion disk — bright ring around the horizon. Bright hot
-  // orange near the event horizon, falling off to deep red and then
-  // black at the outer edge. radius * 3 gives a chunky ring that
-  // reads as the dominant feature.
-  const diskR = radius * 3;
-  const disk = ctx.ctx.createRadialGradient(
-    canvasPos.x, canvasPos.y, radius * 1.05,
-    canvasPos.x, canvasPos.y, diskR,
-  );
-  disk.addColorStop(0,    '#fff0c0');   // innermost: white-hot inner edge
-  disk.addColorStop(0.18, '#ffb050');   // hot orange
-  disk.addColorStop(0.5,  '#d04020');   // red shade
-  disk.addColorStop(0.85, '#401015');   // deep red, almost gone
-  disk.addColorStop(1,    'rgba(40, 8, 12, 0)');
-  ctx.ctx.fillStyle = disk;
-  ctx.ctx.beginPath();
-  ctx.ctx.arc(canvasPos.x, canvasPos.y, diskR, 0, Math.PI * 2);
-  ctx.ctx.fill();
+  // Halo: the system's light, scattered. Warm, not the old violet.
+  const haloR = rh * 8;
+  const halo = c.createRadialGradient(x, y, rh * 2, x, y, haloR);
+  halo.addColorStop(0, 'rgba(255, 170, 110, 0.16)');
+  halo.addColorStop(0.45, 'rgba(200, 110, 90, 0.05)');
+  halo.addColorStop(1, 'rgba(160, 90, 120, 0)');
+  c.fillStyle = halo;
+  c.beginPath(); c.arc(x, y, haloR, 0, Math.PI * 2); c.fill();
 
-  // Event horizon — solid black. Drawn LAST so it sits on top of the
-  // disk, cleanly blacking out the central region. No gradient — the
-  // whole point is that no light escapes. Slightly larger than the
-  // body's nominal radius so the disk's inner edge tucks under it.
-  ctx.ctx.fillStyle = '#000000';
-  ctx.ctx.beginPath();
-  ctx.ctx.arc(canvasPos.x, canvasPos.y, radius * 1.05, 0, Math.PI * 2);
-  ctx.ctx.fill();
+  // Jets: thin, faint, flickering, along the spin axis (screen-vertical,
+  // since the disk is tilted about the horizontal).
+  if (rh >= 3) {
+    const flick = still ? 1 : 0.85 + 0.15 * Math.sin(nowMs * 0.006);
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    for (const dir of [-1, 1]) {
+      const len = rh * 9;
+      const g = c.createLinearGradient(x, y, x, y + dir * len);
+      g.addColorStop(0, `rgba(190, 215, 255, ${0.5 * flick})`);
+      g.addColorStop(0.35, `rgba(140, 175, 255, ${0.2 * flick})`);
+      g.addColorStop(1, 'rgba(120, 150, 255, 0)');
+      c.fillStyle = g;
+      c.beginPath();
+      c.moveTo(x - rh * 0.16, y);
+      c.lineTo(x + rh * 0.16, y);
+      c.lineTo(x + rh * 0.04, y + dir * len);
+      c.lineTo(x - rh * 0.04, y + dir * len);
+      c.closePath();
+      c.fill();
+    }
+    c.restore();
+  }
+
+  const tex = getBlackHoleDisk(diskR);
+  // One disk pass: the texture squashed into the tilted ellipse and turned
+  // in its own plane, then Doppler-beamed in screen space.
+  const drawDisk = () => {
+    if (!tex) return;
+    c.save();
+    c.translate(x, y);
+    c.scale(1, BH_TILT);
+    c.rotate(spin);
+    c.drawImage(tex, -diskR, -diskR, diskR * 2, diskR * 2);
+    c.restore();
+    // Doppler beaming, clipped to the disk's ellipse.
+    c.save();
+    c.beginPath();
+    c.ellipse(x, y, diskR, diskR * BH_TILT, 0, 0, Math.PI * 2);
+    c.clip();
+    c.globalCompositeOperation = 'lighter';
+    const bright = c.createLinearGradient(x - diskR, y, x, y);
+    bright.addColorStop(0, 'rgba(200, 220, 255, 0)');
+    bright.addColorStop(0.55, 'rgba(225, 235, 255, 0.28)');
+    bright.addColorStop(1, 'rgba(225, 235, 255, 0)');
+    c.fillStyle = bright;
+    c.fillRect(x - diskR, y - diskR, diskR, diskR * 2);
+    c.globalCompositeOperation = 'source-over';
+    const dim = c.createLinearGradient(x, y, x + diskR, y);
+    dim.addColorStop(0, 'rgba(40, 0, 6, 0)');
+    dim.addColorStop(1, 'rgba(40, 0, 6, 0.55)');
+    c.fillStyle = dim;
+    c.fillRect(x, y - diskR, diskR, diskR * 2);
+    c.restore();
+  };
+
+  drawDisk();
+
+  // The event horizon.
+  c.fillStyle = '#000000';
+  c.beginPath(); c.arc(x, y, rh, 0, Math.PI * 2); c.fill();
+
+  // Lensing: the disk's far side, bent up over the shadow (bright) and
+  // under it (faint), hugging the horizon.
+  c.save();
+  c.globalCompositeOperation = 'lighter';
+  const arc = (yScale: number, from: number, to: number, alpha: number, w: number) => {
+    const g = c.createLinearGradient(x - rh * 1.6, y, x + rh * 1.6, y);
+    g.addColorStop(0, `rgba(255, 236, 200, ${alpha})`);
+    g.addColorStop(0.5, `rgba(255, 196, 120, ${alpha * 0.85})`);
+    g.addColorStop(1, `rgba(220, 110, 70, ${alpha * 0.45})`);
+    c.strokeStyle = g;
+    c.lineWidth = w;
+    c.beginPath();
+    c.ellipse(x, y, rh * 1.32, rh * yScale, 0, from, to);
+    c.stroke();
+  };
+  arc(1.28, Math.PI, Math.PI * 2, 0.75, Math.max(1, rh * 0.32));
+  arc(1.18, 0, Math.PI, 0.28, Math.max(0.8, rh * 0.16));
+  c.restore();
+
+  // The near half of the disk again, passing in front of the horizon.
+  c.save();
+  c.beginPath();
+  c.rect(x - diskR - 2, y, diskR * 2 + 4, diskR);
+  c.clip();
+  drawDisk();
+  c.restore();
+
+  // Photon ring: light orbiting at the edge of the shadow.
+  c.save();
+  c.globalCompositeOperation = 'lighter';
+  c.strokeStyle = 'rgba(255, 240, 215, 0.55)';
+  c.lineWidth = Math.max(0.6, rh * 0.06);
+  c.beginPath(); c.arc(x, y, rh * 1.03, 0, Math.PI * 2); c.stroke();
+  c.restore();
+
+  // The mass-transfer stream from the companion star.
+  if (!still && rh >= 2) drawAccretionStream(body, x, y, diskR, ctx);
+}
+
+/** Gas torn off the companion, spiralling into the disk's rim. Only a
+ *  star sharing the hole's own parent counts as its companion. */
+function drawAccretionStream(
+  body: Body, x: number, y: number, diskR: number, ctx: RenderContext,
+) {
+  const star = ctx.bodies.find(b => b.type === 'star' && b.parent === body.parent && b.id !== body.id);
+  if (!star) return;
+  const wp = bodyPosition(star, ctx.t, ctx.bodies);
+  const sp = worldToCanvas(wp.x, wp.y, ctx);
+  const dx = sp.x - x;
+  const dy = sp.y - y;
+  const d = Math.hypot(dx, dy);
+  if (d < diskR * 1.1) return;                       // overlapping: nothing to draw
+  const c = ctx.ctx;
+  const ux = dx / d;
+  const uy = dy / d;
+  // Leave the star from its near limb; arrive at the disk rim a quarter
+  // turn round, swept the way the disk turns.
+  const sx = sp.x - ux * Math.min(d * 0.15, diskR * 0.6);
+  const sy = sp.y - uy * Math.min(d * 0.15, diskR * 0.6);
+  const ang = Math.atan2(uy, ux) + 1.1;
+  const ex = x + Math.cos(ang) * diskR * 0.92;
+  const ey = y + Math.sin(ang) * diskR * 0.92 * BH_TILT;
+  const mx = (sx + ex) / 2 - uy * d * 0.28;
+  const my = (sy + ey) / 2 + ux * d * 0.28;
+  const nowMs = ctx.nowMs ?? performance.now();
+  c.save();
+  c.globalCompositeOperation = 'lighter';
+  c.lineCap = 'round';
+  const g = c.createLinearGradient(sx, sy, ex, ey);
+  g.addColorStop(0, 'rgba(160, 200, 255, 0.0)');
+  g.addColorStop(0.2, 'rgba(170, 205, 255, 0.35)');
+  g.addColorStop(0.75, 'rgba(255, 190, 120, 0.45)');
+  g.addColorStop(1, 'rgba(255, 150, 90, 0.15)');
+  c.strokeStyle = g;
+  c.lineWidth = Math.max(1, diskR * 0.09);
+  c.beginPath(); c.moveTo(sx, sy); c.quadraticCurveTo(mx, my, ex, ey); c.stroke();
+  // Flowing clumps along the stream.
+  c.setLineDash([diskR * 0.08, diskR * 0.22]);
+  c.lineDashOffset = -nowMs * 0.02;
+  c.lineWidth = Math.max(0.6, diskR * 0.035);
+  c.strokeStyle = 'rgba(255, 235, 210, 0.5)';
+  c.beginPath(); c.moveTo(sx, sy); c.quadraticCurveTo(mx, my, ex, ey); c.stroke();
+  c.restore();
 }
 
 // ------------------------------------------------------------

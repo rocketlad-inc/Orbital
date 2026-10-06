@@ -76,8 +76,19 @@ const cache = new Map<string, HTMLCanvasElement | null>();
 // body's own topography — seas fill its real basins.
 //
 // Keyed by TEMPLATE id (the part after the game prefix), so every game
-// on the standard map shares one set of files. Bodies with no globe
-// (far systems, procedural rocks) keep the procedural texture.
+// on the standard map shares one set of files. Procedural rocks keep the
+// procedural texture.
+//
+// THE FAR SYSTEMS HAVE GLOBES TOO (2026-10-06). They were left
+// procedural when the overhaul shipped, since no spacecraft has mapped
+// a world around another star. They are built the way Augustin, Iron
+// Anna and the other invented worlds were: each from a real map,
+// mirrored, turned and regraded into its own identity, raw and
+// terraformed twins sharing one transform so the seas still fill the
+// right basins. Sources: Verdant <- Ganymede's terraformed continents,
+// Cinder <- Io, Echelon <- Mercury, Requiem <- Callisto, Prismara <-
+// Enceladus, Farspire <- Charon, Reliquary <- Eris, Crimson <- Jupiter,
+// Vellichor <- Saturn.
 // ------------------------------------------------------------
 
 const GLOBE_IDS = new Set([
@@ -87,8 +98,11 @@ const GLOBE_IDS = new Set([
   'neptune', 'proteus', 'triton', 'nereid', 'pluto', 'charon', 'haumea', 'makemake', 'quaoar', 'eris', 'sedna',
   'orcus', 'vanth', 'ixion', 'mani', 'salacia', 'actaea', 'varuna', 'aya', 'varda', 'ilmare', 'hiiaka', 'namaka',
   'weywot', 'dysnomia', 'mk2',
+  // the far systems
+  'verdant', 'crimson', 'prismara', 'cinder', 'farspire',
+  'requiem', 'vellichor', 'echelon', 'reliquary',
 ]);
-const NO_TF_GLOBE = new Set(['jupiter', 'saturn', 'uranus', 'neptune']);
+const NO_TF_GLOBE = new Set(['jupiter', 'saturn', 'uranus', 'neptune', 'crimson', 'vellichor']);
 const globes = new Map<string, HTMLImageElement>();
 const globeWaiters = new Map<string, Array<() => void>>();
 
@@ -426,6 +440,16 @@ const CURATED_BIOME: Record<string, Biome> = {
   titania: 'tundra', oberon: 'tundra', nereid: 'tundra', proteus: 'tundra',
   charon: 'tundra', pluto: 'tundra', eris: 'tundra', sedna: 'tundra',
   makemake: 'tundra', haumea: 'tundra', quaoar: 'tundra',
+  // The far systems, chosen rather than hashed: each one's terraformed
+  // twin was painted in this biome, so the heuristic below must never
+  // get a vote.
+  verdant: 'verdant',      // already a garden; terraforming opens farmland
+  cinder: 'volcanic',      // Io's furnace under the rust
+  echelon: 'arid',         // heavy-element crust, baked dry
+  requiem: 'tundra',       // irradiated and far from both suns
+  prismara: 'oceanic',     // an ice shell over water, like Enceladus
+  farspire: 'tundra',
+  reliquary: 'tundra',
 };
 
 /** Rough "how red is this rock" — volcanic and desert worlds skew warm,
