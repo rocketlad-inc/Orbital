@@ -874,7 +874,7 @@ Your seat opens up for someone else.${handOver} You can join again later while a
                 type="number"
                 inputMode="numeric"
                 min={2}
-                max={8}
+                max={10}
                 value={hostMax}
                 onChange={(e) => setHostMax(parseInt(e.target.value, 10) || 2)}
               />

@@ -10,7 +10,7 @@
 // than one bundle of the original PNGs, which was 30 MB.
 //
 // Facts here must stay true. Multiplayer only (single player is retired),
-// 2-8 players, the Android app is in TESTING on Play, not public.
+// 2-10 players, the Android app is in TESTING on Play, not public.
 // ============================================================
 
 import React, { useState } from 'react';
@@ -19,7 +19,7 @@ const SHORT = 'A real-time strategy game across the whole Sol system, played in 
 
 const MEDIUM =
   'Orbital is a free multiplayer strategy game set across the Sol system, from Mercury out to the '
-  + 'Kuiper Belt. Up to eight empires settle worlds, fly fleets on real trajectories and fight for '
+  + 'Kuiper Belt. Up to ten empires settle worlds, fly fleets on real trajectories and fight for '
   + 'the system on a clock that keeps running when you log off. Win by conquest, by politics in the '
   + 'Senate, or by building a Dyson Sphere around the Sun.';
 
@@ -30,7 +30,7 @@ const LONG = [
   'The clock never stops. Each game ticks on a real schedule, an hour a turn by default, whether or '
   + 'not you are logged in. Players drop in to give orders: a fleet sent last night has arrived, '
   + 'fought and repaired by morning.',
-  'Up to eight empires share a system. They settle cities and stations, terraform raw worlds into '
+  'Up to ten empires share a system. They settle cities and stations, terraform raw worlds into '
   + 'living ones, run freighters on supply lines and design their own warships. Every flight is a '
   + 'real continuous-thrust trajectory with a travel time you cannot take back.',
   'The fight is only half the game. Rivals sign pacts, trade resources, declare wars and pass laws '
@@ -42,7 +42,7 @@ const FACTS: Array<[string, React.ReactNode]> = [
   ['Game', <>Orbital <span className="press-muted">(listed on Google Play as Orbital Empire)</span></>],
   ['Genre', 'Real-time multiplayer 4X strategy'],
   ['Setting', 'The Sol system, Mercury to the Kuiper Belt'],
-  ['Players', '2 to 8 per game'],
+  ['Players', '2 to 10 per game'],
   ['Pace', 'Runs on a real clock, one turn an hour by default; hosts can pick faster games'],
   ['Platforms', 'Web browser on desktop, tablet and phone. Android and Wear OS apps in testing'],
   ['Price', 'Free to play'],

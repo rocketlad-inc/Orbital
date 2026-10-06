@@ -110,7 +110,7 @@ export const LandingHome: React.FC<Props> = ({ onSignIn }) => (
           <a className="lh-btn lh-btn--ghost" href="#how-it-plays">See how it plays</a>
         </div>
         <ul className="lh-facts" aria-label="At a glance">
-          <li><strong>2–8</strong> players</li>
+          <li><strong>2–10</strong> players</li>
           <li><strong>1 hr</strong> turns, or your pick</li>
           <li><strong>3</strong> ways to win</li>
           <li><strong>$0</strong> no ads</li>

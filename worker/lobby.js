@@ -214,8 +214,9 @@ async function handleUpdateSettings(req, env, ctx) {
     updates.name = name;
   }
   if (body.max_players != null) {
-    if (!Number.isInteger(body.max_players) || body.max_players < 2 || body.max_players > 8) {
-      return err(400, 'bad_request', 'max_players must be an integer 2-8');
+    // 10 since 2026-10-06 (worker/index.js MAX_SEATS).
+    if (!Number.isInteger(body.max_players) || body.max_players < 2 || body.max_players > 10) {
+      return err(400, 'bad_request', 'max_players must be an integer 2-10');
     }
     const count = await env.DB.prepare('SELECT COUNT(*) AS c FROM room_members WHERE room_id = ?').bind(roomId).first();
     if ((count?.c ?? 0) > body.max_players) {
