@@ -111,7 +111,7 @@ check('they use the SERVER spelling for types',
 
 
 // ---- TWO HOMES AND A CHAOS ZONE (Lorne, 2026-10-06) -------------------------
-// Centauri A and B dance on matching e = 0.4 ellipses; Verdant (and its
+// Centauri A and B dance on matching e = 0.2 ellipses; Verdant (and its
 // moons) orbit A alone and Cinder B alone, each inside its sun's SOI;
 // everything else circles both, beyond the reach of either sun's SOI.
 // Spread wider than real stability limits allow (Lorne, 2026-10-06: "I
@@ -138,7 +138,7 @@ check('they use the SERVER spelling for types',
     minSep = Math.min(minSep, sep); maxSep = Math.max(maxSep, sep);
   }
   check('the suns stay exactly opposite through the dance', opposite);
-  check('they swing from 1440 apart to 3360', Math.abs(minSep - 1440) < 3 && Math.abs(maxSep - 3360) < 3,
+  check('they swing from 2520 apart to 3780', Math.abs(minSep - 2520) < 3 && Math.abs(maxSep - 3780) < 3,
     `${minSep.toFixed(0)}..${maxSep.toFixed(0)}`);
   const sepAt = (t) => { const a = at(A, t), b = at(Bs, t); return Math.hypot(a.x - b.x, a.y - b.y); };
   check('one full dance takes 240 ticks', Math.abs(sepAt(0) - sepAt(240)) < 0.5 && Math.abs(sepAt(0) - sepAt(120)) > 100,
@@ -391,7 +391,7 @@ check('a default-dial game still opens the system up (FAR_LOCAL_SCALE)',
 check('its worlds orbit IT, at their own local radii',
   byId.get('crimson')?.parent_body_id?.endsWith(':binary_barycenter')
   && byId.get('verdant')?.parent_body_id?.endsWith(':centauri_a')
-  && byId.get('verdant').orbit_radius === 250 * FAR_LOCAL_SCALE,
+  && byId.get('verdant').orbit_radius === 560 * FAR_LOCAL_SCALE,
   JSON.stringify(byId.get('verdant')));
 check('the black hole kept its type through the seed',
   byId.get('cygnus_x')?.type === 'black_hole', byId.get('cygnus_x')?.type);
@@ -420,7 +420,7 @@ check('the gas giant kept the server spelling',
   check('a far moon of a far world takes the same factor, not moon_scale',
     geo('prismara').orbit_radius === 26 * F, String(geo('prismara').orbit_radius));
   check("the suns' binary opens up with the rest",
-    geo('centauri_b').orbit_radius === 648 * F, String(geo('centauri_b').orbit_radius));
+    geo('centauri_b').orbit_radius === 850.5 * F, String(geo('centauri_b').orbit_radius));
   // 33,150 written in the file, doubled at module load by SYSTEM_SCALE,
   // then the host's system_scale 4 on top: the 265,200 of the design.
   check('but the DISTANCE to the system still scales with the map',
