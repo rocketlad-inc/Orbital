@@ -92,7 +92,7 @@ import { torchPositionFromSamples } from '../physics/torchTransfer';
 import type { InterceptMarker } from '../render/mapRenderer';
 import { shipIconSize, rendererCanvasMb, drawStructureReach, parkedOrbitMap } from '../render/mapRenderer';
 import {
-  computePresentation, drawnRadiusOf, hullReveal, hullSize,
+  computePresentation, drawnRadiusOf, hullReveal, hullSize, isBarycenter,
 } from '../render/bodyPresentation';
 import type { BodyPresentation } from '../render/bodyPresentation';
 import { reachSpec } from '../game/structureReach';
@@ -2101,6 +2101,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // FOLDED INTO ITS PARENT (bodyPresentation): a world whose disc
       // would touch the one it orbits is not drawn at all -- its ships
       // and clicks already went to the parent. Mid-unfold it fades in.
+      // A far system's barycenter is an empty point: nothing to draw,
+      // nothing to label (see isBarycenter in bodyPresentation.ts).
+      if (isBarycenter(body)) continue;
       const shown = renderContext.presentation?.shown.get(body.id) ?? 1;
       if (shown <= 0.01) continue;
       const prevBodyAlpha = ctx.globalAlpha;
@@ -4426,6 +4429,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     let bestD = Infinity;
     for (const body of gameState.bodies) {
       if (foldedForHit(body.id)) continue;
+      if (isBarycenter(body)) continue;       // empty space takes no click
       const pos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, hc, renderTick());
       const r = aiming
         ? Math.max(12, hitR(body, hc.scale) + 8) + TOUCH_HIT_PADDING
