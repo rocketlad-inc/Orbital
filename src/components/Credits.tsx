@@ -196,8 +196,8 @@ export const Credits: React.FC = () => (
       Cassini, Voyager, Dawn, Viking, Mars Global Surveyor and New Horizons), which are in the public domain.
       Orbital re-projects them onto spheres, re-grades some to fit the map, and paints the terraformed biomes over
       each world&rsquo;s own topography. The worlds of the far systems, which no spacecraft has mapped, are built
-      from these same maps (Ganymede, Io, Venus, Mercury, Callisto, Enceladus, Rhea, Titania, Oberon, Umbriel,
-      Charon, Eris, Jupiter and Saturn), mirrored,
+      from these same maps (Ganymede, Io, Venus, Mercury, Mars, the Moon, Phobos, Deimos, Ceres, Callisto,
+      Enceladus, Rhea, Titania, Oberon, Umbriel, Charon, Eris, Jupiter and Saturn), mirrored,
       turned and recoloured, and their stars from the solar map re-graded by spectral class.
       No endorsement by NASA, USGS or Solar System Scope is implied.
     </p>

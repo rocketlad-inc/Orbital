@@ -32,9 +32,11 @@ function check(label, ok, detail = '') {
 }
 
 const CENTAURI = ['binary_barycenter', 'centauri_a', 'centauri_b', 'verdant',
-  'crimson', 'prismara', 'scoria', 'umber', 'cinder', 'farspire'];
+  'thistle', 'sorrel', 'crimson', 'prismara', 'scoria', 'umber', 'cinder',
+  'clinker', 'farspire'];
 const CYGNUS = ['bh_barycenter', 'cygnus_x', 'hde_226868', 'requiem',
-  'vellichor', 'elegy', 'vesper', 'threnody', 'echelon', 'reliquary'];
+  'lacrimosa', 'sanctus', 'vellichor', 'elegy', 'vesper', 'threnody',
+  'echelon', 'gilt', 'reliquary'];
 const ALL_FAR = [...CENTAURI, ...CYGNUS];
 
 // ---- 1. The catalogue ------------------------------------------------
@@ -68,7 +70,15 @@ check('they use the SERVER spelling for types',
   // SOI clear of its neighbour's.
   const BODY = 2;
   const live = (b) => ({ ...b, ...scaledGeometry(b, { bodyScale: BODY }), radius: b.radius * BODY });
-  for (const g0 of giants.filter(x => x.far_system)) {
+  // ...and every far TERRESTRIAL world holds one or two (no one-world
+  // systems out there; Sol's own Mercury and Venus are left alone).
+  const farRocks = BODY_CATALOG.filter(b => b.far_system && b.type === 'terrestrial');
+  check('every far terrestrial world has one or two moons',
+    farRocks.every(p => moonsOf(p).length >= 1 && moonsOf(p).length <= 2),
+    farRocks.map(p => `${p.id}:${moonsOf(p).length}`).join(', '));
+  check('Mercury and Venus are untouched',
+    moonsOf({ id: 'mercury' }).length === 0 && moonsOf({ id: 'venus' }).length === 0);
+  for (const g0 of [...giants.filter(x => x.far_system), ...farRocks]) {
     const g = live(g0);
     const ms = moonsOf(g0).map(live).sort((a, b) => a.orbit_radius - b.orbit_radius);
     check(`${g.name}'s moons clear its surface at live size`,

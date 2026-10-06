@@ -170,6 +170,12 @@ export const BODY_FLAVOR: Record<string, string> = {
   elegy: "A shattered patchwork moon whose pieces froze back together in the wrong places, ridges and terraces stacked like a monument nobody finished. It rides closest to Vellichor and drinks the most of its light. Strong in science; the fractures run deep and so does the ice.",
   vesper: "Pale and silver-violet, Vesper rises over Vellichor's horizon like an evening star. Its long canyons catch the blue glare of HDE 226868 and hold it a little after the light has gone. Balanced in everything, the steadiest world in Cygnus.",
   threnody: "The outermost of Vellichor's moons, a dark indigo stone splashed with bright impact rays, as if the black hole had been throwing things at it. Cold, slow and patient, with metal under the ice for anyone who comes this far.",
+  thistle: "Verdant's near moon, grey-violet and bristling with frost-feathered ridges that catch the doubled light like seed heads. Nothing grows here, but it looks as though something tried. Science comes easier than anything else.",
+  sorrel: "A small rust-red moon on a wide orbit, the colour of the dry uplands it hangs over. Iron-stained and plain-spoken: some metal, some credits, and a fine view of the only garden for light-years.",
+  clinker: "What the furnace left. Cinder's lone moon is a lump of black slag glazed by two suns, still faintly warm on its sunward face. Mostly metal, and not much else to say for it.",
+  lacrimosa: "Requiem's pale moon, ice the blue of old tears, streaked where the X-ray glare has etched it. The quiet half of the system's grief, and its best science.",
+  sanctus: "A bright ivory moon riding high over Requiem, smooth and unreasonably calm for somewhere this close to a black hole. Credits and metal in fair measure, and a kind of peace.",
+  gilt: "Echelon's moon, a gold-leafed fragment of the same supernova that gilded its world, struck through with veins that flash when it turns. Heavy in credits, as you would hope from the name.",
   farspire: "The lonely outpost at the system's edge, a small frozen spire of rock and ice rich in science despite its modest size. Just beyond it, once the Sun gives up its doors, the gate home comes to rest — the far end of the crossing from Sol's Far Reach. The end of one journey and the beginning of the road back; every road through Centauri eventually passes Farspire.",
 
   // === Cygnus X-1 analogue ===================================
