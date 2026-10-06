@@ -46,6 +46,8 @@
 //   src/components/Outliner.css
 //   src/components/OverviewPanel.css
 //   src/components/BodyInspector.css (the 768/769 cardinal pair)
+//   src/components/EventLog.css      (row control size)
+//   src/components/FleetPanel.css    (captain ship link)
 // ============================================================
 
 import { useEffect, useState } from 'react';

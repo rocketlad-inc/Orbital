@@ -988,7 +988,8 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                   title={`Go to ${postedShip.name} — ${postedShip.class}`}
                 >
                   <HullIcon shipClass={postedShip.class} variant={postedShip.iconVariant} size={14} />
-                  {' '}{aboard}<span className="fleet-capcard__go" aria-hidden> ▸</span>
+                  <span className="fleet-capcard__postname">{aboard}</span>
+                  <span className="fleet-capcard__go" aria-hidden>▸</span>
                 </button>
               )}
               {/* Distinguishes "held back on purpose" from "in the bank

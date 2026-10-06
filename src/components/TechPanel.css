@@ -252,6 +252,38 @@
   color: #b8c8d6;
 }
 
+/* MP action row: SET PROJECT · nT  |  + QUEUE [×n]  |  −.
+   The shared .tech-card__action rule has no side padding (it was drawn
+   for the full-width SP button), so in this row the labels touched
+   their borders. Give them real padding; the main button takes the
+   spare width, and on a card too narrow for all three the row wraps —
+   the main button then gets a line of its own instead of squeezing the
+   text back into the border. */
+.tech-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 100%;
+  margin-top: 4px;
+}
+.tech-card__actions .tech-card__action {
+  margin-top: 0;
+  padding: 7px 12px;
+  min-height: 32px;
+  white-space: nowrap;
+  /* Grow to fill whatever line they land on (so a wrapped + QUEUE isn't
+     a stub hanging off the left); the main button claims more of it. */
+  flex: 1 0 auto;
+}
+.tech-card__actions .tech-card__action--main {
+  flex-grow: 3;
+}
+.tech-card__actions .tech-card__action--minus {
+  flex: 0 0 auto;
+  min-width: 32px;
+  padding: 7px 10px;
+}
+
 /* Banked science covers the whole cost — committing = instant unlock.
    Amber to read as "spend now", distinct from the teal commit and the
    green in-progress states. (MP-only: the class is only set in the
