@@ -19,7 +19,7 @@
 import { seedGameWorld, FAR_SYSTEM_IDS } from '../worker/factions.js';
 import {
   advanceSunGates, settleOmenTick, rollOmenTick, gateOrder, sunGatePlan,
-  emergeFlightTicks, farReachBand, pickBearing, seededRand,
+  emergeFlightTicks, farReachBand, pickBearing, seededRand, siteId,
   FAR_SYSTEM_TEMPLATE_IDS, SUN_GATE_TRANSIT_FRACTION, solGateId, farGateId,
   SUN_GATE_SYSTEMS, isFarSystemBody, mainSystemSql,
 } from '../worker/sunGates.js';
@@ -70,10 +70,18 @@ check('a 2g burn out to the Far Reach takes about ten ticks', ft >= 8 && ft <= 1
 check('a sun gate crossing is a tenth of the burn', gateTransitTicks(200, SUN_GATE_TRANSIT_FRACTION) === 20);
 check('a warp gate is still a quarter', gateTransitTicks(200) === 50 && gateTransitTicks(200, null) === 50);
 {
-  const a = pickBearing(seededRand('b'), 1000, [], 0);
-  const diff = Math.abs(((a - Math.PI) + 3 * Math.PI) % (2 * Math.PI) - Math.PI);
-  check('the second gate lands across the sky from the first', diff <= Math.PI / 6 + 1e-9,
-    `${(diff * 180 / Math.PI).toFixed(1)} degrees off opposite`);
+  // The quadrant facing its system: within 45 degrees of the bearing,
+  // and spread across all of it, not bunched on the line.
+  const offs = Array.from({ length: 200 }, (_, i) => {
+    const a = pickBearing(seededRand(`b${i}`), 1000, [], 2.0);
+    return ((a - 2.0) % (2 * Math.PI) + 3 * Math.PI) % (2 * Math.PI) - Math.PI;
+  });
+  check('a gate stops in the quadrant facing its system',
+    offs.every(d => Math.abs(d) <= Math.PI / 4 + 1e-9),
+    `${(Math.max(...offs.map(Math.abs)) * 180 / Math.PI).toFixed(1)} degrees off at most`);
+  check('...anywhere in that quadrant, at random',
+    Math.min(...offs) < -Math.PI / 6 && Math.max(...offs) > Math.PI / 6,
+    `${(Math.min(...offs) * 180 / Math.PI).toFixed(0)}..${(Math.max(...offs) * 180 / Math.PI).toFixed(0)} degrees`);
   const crowd = Array.from({ length: 12 }, (_, i) => ({
     x: Math.cos(i * 0.5) * 1000, y: Math.sin(i * 0.5) * 1000 }));
   const b = pickBearing(seededRand('c'), 1000, crowd, null, 100);
@@ -197,7 +205,41 @@ const seen = await DB.prepare(
 ).bind(G, g0.id, f0.id).first();
 check('every faction can see both ends', seen.n === facs.length * 2, `${seen.n} for ${facs.length}`);
 
-for (let t = 12; t <= arrive0; t++) await advanceSunGates(env, G, t, dials);
+// THE LANDING SITE: a body on the gate's final orbit, there to be flown
+// to while the gate is still in the air.
+const s0 = await DB.prepare(`SELECT * FROM game_bodies WHERE id = ?`).bind(siteId(G, order[0])).first();
+check('a landing site appears with the gate',
+  !!s0 && s0.type === 'lagrange' && s0.emerge_from_tick === g0.emerge_from_tick
+  && s0.emerge_until_tick == null && s0.destroyed_at_tick == null, JSON.stringify(s0));
+check('...on exactly the orbit the gate will stop on',
+  s0.parent_body_id === g0.parent_body_id && s0.orbit_radius === g0.orbit_radius
+  && s0.orbit_period === g0.orbit_period && s0.angle0 === g0.angle0);
+check("...with the gate's own size and mass, so a ship parks in the same place",
+  s0.radius === g0.radius && s0.mu === g0.mu);
+{
+  const n = (await DB.prepare(
+    `SELECT COUNT(*) n FROM game_body_discoveries WHERE game_id = ? AND body_id = ?`).bind(G, s0.id).first()).n;
+  check('every faction can see the site', n === facs.length, `${n} for ${facs.length}`);
+}
+// A fleet sent ahead: one hull already waiting at the site, one still on
+// its way there.
+const hulls = (await DB.prepare(`SELECT id FROM game_ships WHERE game_id = ? LIMIT 2`).bind(G).all()).results;
+await DB.prepare(`UPDATE game_ships SET parent_body_id = ? WHERE id = ?`).bind(s0.id, hulls[0].id).run();
+await DB.prepare(
+  `INSERT INTO game_ship_nodes (id, game_id, ship_id, sequence, anchor_kind, scheduled_t, fuel_cost, status, target_body_id)
+   VALUES (?, ?, ?, 0, 'absolute', ?, 0, 'in_transit', ?)`,
+).bind(`${hulls[1].id}:n_site`, G, hulls[1].id, arrive0 - 2, s0.id).run();
+
+for (let t = 12; t < arrive0; t++) await advanceSunGates(env, G, t, dials);
+check('the site stands until the gate lands',
+  (await DB.prepare(`SELECT destroyed_at_tick d FROM game_bodies WHERE id = ?`).bind(s0.id).first()).d == null);
+await advanceSunGates(env, G, arrive0, dials);
+check('on landing the waiting hull is handed to the gate',
+  (await DB.prepare(`SELECT parent_body_id p FROM game_ships WHERE id = ?`).bind(hulls[0].id).first()).p === g0.id);
+check('...and the leg still flying there now flies to the gate',
+  (await DB.prepare(`SELECT target_body_id t FROM game_ship_nodes WHERE id = ?`).bind(`${hulls[1].id}:n_site`).first()).t === g0.id);
+check('...and the site retires (never deleted: CASCADE eats ships)',
+  (await DB.prepare(`SELECT destroyed_at_tick d FROM game_bodies WHERE id = ?`).bind(s0.id).first()).d === arrive0);
 rows = await chron();
 check('it is announced open the tick it lands',
   rows.some(r => r.kind === 'sun_gate_opened' && r.tick_number === arrive0), JSON.stringify(rows.map(r => [r.kind, r.tick_number])));
@@ -210,9 +252,22 @@ check(`tick 21: the second gate (to ${order[1].label}) leaves, ten ticks later`,
   const at = g1.emerge_until_tick;
   const a0 = orbitAngle(g0.angle0, g0.orbit_period, at);
   const a1 = orbitAngle(g1.angle0, g1.orbit_period, at);
+  // Each stopped in the quadrant facing the system it leads to, as
+  // seen from the Sun the moment it landed.
+  const off = (gate, sys, tick) => {
+    const bary = bodies.find(b => b.template_id === sys.barycenter);
+    const toward = orbitAngle(bary.angle0, bary.orbit_period, tick);
+    const a = orbitAngle(gate.angle0, gate.orbit_period, tick);
+    return Math.abs(((a - toward) % (2 * Math.PI) + 3 * Math.PI) % (2 * Math.PI) - Math.PI);
+  };
+  const o0 = off(g0, order[0], arrive0), o1 = off(g1, order[1], at);
+  check(`the ${order[0].label} gate stopped facing ${order[0].label}`, o0 <= Math.PI / 4 + 1e-6,
+    `${(o0 * 180 / Math.PI).toFixed(1)} degrees off`);
+  check(`the ${order[1].label} gate stopped facing ${order[1].label}`, o1 <= Math.PI / 4 + 1e-6,
+    `${(o1 * 180 / Math.PI).toFixed(1)} degrees off`);
   const sep = Math.abs(((a1 - a0) % (2 * Math.PI) + 3 * Math.PI) % (2 * Math.PI) - Math.PI);
-  check('it stops on the far side of the system from the first',
-    sep >= (2 * Math.PI) / 3, `${(sep * 180 / Math.PI).toFixed(0)} degrees apart`);
+  check('so the two gates stop on opposite sides of the sky',
+    sep >= Math.PI / 2, `${(sep * 180 / Math.PI).toFixed(0)} degrees apart`);
 }
 check('the two gates lead to different systems', order[0].key !== order[1].key);
 
@@ -233,7 +288,9 @@ check('the whole event: one omen, two departures, two openings',
   && rows.filter(r => r.kind === 'sun_gate_opened').length === 2,
   rows.map(r => r.kind).join(', '));
 check('...and never a third gate', (await DB.prepare(
-  `SELECT COUNT(*) n FROM game_bodies WHERE game_id = ? AND template_id LIKE 'sun_gate%'`).bind(G).first()).n === 4);
+  `SELECT COUNT(*) n FROM game_bodies WHERE game_id = ? AND template_id IN ('sun_gate', 'sun_gate_far')`).bind(G).first()).n === 4);
+check('...and both landing sites retired once their gates were down', (await DB.prepare(
+  `SELECT COUNT(*) n FROM game_bodies WHERE game_id = ? AND template_id = 'sun_gate_site' AND destroyed_at_tick IS NOT NULL`).bind(G).first()).n === 2);
 
 // ---- 2b. The paper ------------------------------------------------------
 {

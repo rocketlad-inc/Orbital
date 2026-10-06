@@ -46,6 +46,7 @@ import {
   BINARY_SYSTEM_BODY_IDS,
   BLACK_HOLE_SYSTEM_BODY_IDS,
 } from '../state/mockGameState';
+import { isSunGateSite, isGateInFlight } from '../game/farSystems';
 import {
   makeSystemRootOf, systemLabel, shipStatus, isArmed,
   makeHostilesAtBody, makeArmedHostilesAtBody, makeStationsAtBody,
@@ -4261,6 +4262,7 @@ export const ShipPanel: React.FC = () => {
       {transferModalOpen && (
         <TransferTargetPicker
           bodies={gameState.bodies}
+          tick={gameState.currentTick}
           excludeBodyId={ship.orbit.parentBodyId}
           title={hasExistingTransfer ? 'Chain Move To' : 'Move To Target'}
           onPick={(id, wait) => handleTransferManeuver(id, wait ?? 0)}
@@ -4317,6 +4319,9 @@ interface TransferTargetPickerProps {
    *  picker to pick a destination for a hull that does not exist yet,
    *  and "leave in 6 ticks" is meaningless there. */
   allowDepartDelay?: boolean;
+  /** The game's tick, so a sun gate still in flight can be left out (its
+   *  landing site is offered instead). Omitted: nothing is filtered. */
+  tick?: number;
 }
 
 /**
@@ -4359,7 +4364,7 @@ function pickerGroupOf(
 // one would drift in grouping, search and mobile layout the moment
 // either was touched.
 export const TransferTargetPicker: React.FC<TransferTargetPickerProps> = ({
-  bodies, excludeBodyId, title, onPick, onClose, allowDepartDelay = false,
+  bodies, excludeBodyId, title, onPick, onClose, allowDepartDelay = false, tick,
 }) => {
   const [query, setQuery] = useState('');
   // WAIT IS AN ADVERB ON A LEG, not an action of its own. It used to be
@@ -4394,12 +4399,17 @@ export const TransferTargetPicker: React.FC<TransferTargetPickerProps> = ({
       // Lagrange-type markers (the Centauri + Cygnus barycenters) are
       // invisible centre-of-mass points with no SOI or mu — there's
       // nothing to park around. Hide them so the player can't try.
-      if (b.type === 'lagrange') return false;
+      // A sun gate's landing site is the one 'lagrange' point you CAN
+      // fly to: that is what it is for (worker/sunGates.js).
+      if (b.type === 'lagrange' && !isSunGateSite(b)) return false;
+      // ...and the gate itself only once it has landed: the server
+      // refuses a leg to a gate still in flight (gate_in_flight).
+      if (tick != null && isGateInFlight(b, tick)) return false;
       if (!q) return true;
       const parentName = b.parent ? bodies.find(x => x.id === b.parent)?.name.toLowerCase() ?? '' : '';
       return b.name.toLowerCase().includes(q) || parentName.includes(q);
     });
-  }, [bodies, excludeBodyId, query]);
+  }, [bodies, excludeBodyId, query, tick]);
 
   // Built once per body list, not per body: makeSystemRootOf computes
   // belt clustering up front and memoizes the parent walk internally.

@@ -403,7 +403,13 @@ export async function handleWearDestinations(req, env, { params }) {
               orbit_rp, orbit_ra, orbit_omega, orbit_m0, owner_faction_id,
               yield_metal, terraformed_at_tick
          FROM game_bodies
-        WHERE game_id = ? AND destroyed_at_tick IS NULL AND obliterated_at_tick IS NULL`,
+        WHERE game_id = ?1 AND destroyed_at_tick IS NULL AND obliterated_at_tick IS NULL
+          -- Not a sun gate still flying, nor one not here yet: send to its
+          -- landing site (sunGates.js, actions.js emergingTargetRefusal).
+          AND (emerge_until_tick IS NULL
+               OR emerge_until_tick <= (SELECT current_tick FROM games WHERE id = ?1))
+          AND (emerge_from_tick IS NULL
+               OR emerge_from_tick <= (SELECT current_tick FROM games WHERE id = ?1))`,
     ).bind(gameId).all(),
     env.DB.prepare("SELECT DISTINCT body_id FROM battles WHERE game_id = ? AND status = 'active'").bind(gameId).all(),
     env.DB.prepare('SELECT id, name FROM game_factions WHERE game_id = ?').bind(gameId).all(),

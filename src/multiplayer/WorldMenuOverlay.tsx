@@ -1834,6 +1834,7 @@ const WmFleet: React.FC<{
       {orderPickerFor && (
         <TransferTargetPicker
           bodies={gameState.bodies}
+          tick={gameState.currentTick}
           excludeBodyId={bodyId}
           title={orderPickerFor === NEXT_SHIP ? 'Send new ships to' : 'Send this hull to'}
           onPick={(id) => {

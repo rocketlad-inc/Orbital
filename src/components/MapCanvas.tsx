@@ -96,6 +96,7 @@ import {
   computePresentation, drawnRadiusOf, hullReveal, hullSize, isBarycenter,
 } from '../render/bodyPresentation';
 import type { BodyPresentation } from '../render/bodyPresentation';
+import { isGateInFlight, landingSiteIdOf } from '../game/farSystems';
 import { reachSpec } from '../game/structureReach';
 import { forecastIntercepts, reachOf } from '../game/firingWindows';
 import { COLORS, withOpacity, lighten } from '../render/colors';
@@ -4188,6 +4189,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             pickDist = d;
             pickId = body.id;
           }
+        }
+        // Clicking the thing still flying out of the Sun means "go where
+        // it is going": its landing site (worker/sunGates.js). The gate
+        // itself is refused as a target until it lands.
+        const picked = pickId ? gameState.bodies.find(b => b.id === pickId) : undefined;
+        if (picked && isGateInFlight(picked, renderTick())) {
+          const site = landingSiteIdOf(picked.id);
+          pickId = gameState.bodies.some(b => b.id === site) ? site : null;
         }
         if (pickId) {
           window.dispatchEvent(new CustomEvent('orbital-transfer-confirm', {

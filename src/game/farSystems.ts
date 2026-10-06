@@ -69,3 +69,22 @@ export function binaryStationMul(body: Pick<Body, 'id'>, closeness = currentClos
   const c = Math.max(0, Math.min(1, closeness));
   return INNER_STATION_MUL_FAR + (INNER_STATION_MUL_NEAR - INNER_STATION_MUL_FAR) * c;
 }
+
+// ---- the sun gates' landing sites (worker/sunGates.js) -----------------
+
+/** A sun gate's landing site: a point in empty space on the orbit the
+ *  gate will stop on, there to be flown to while the gate is in flight. */
+export function isSunGateSite(body: Pick<Body, 'id'> | null | undefined): boolean {
+  return !!body && /^sungate_[a-z]+_site$/.test(templateOf(body.id));
+}
+
+/** A sun gate still flying out of the Sun at `tick`. It cannot be a
+ *  transfer target until it lands (worker/actions.js): its site can. */
+export function isGateInFlight(body: Pick<Body, 'type' | 'emerge'> | null | undefined, tick: number): boolean {
+  return !!body && body.type === 'megastructure' && !!body.emerge && tick < body.emerge.untilTick;
+}
+
+/** The landing site of a gate, by id (same prefix, `_site` appended). */
+export function landingSiteIdOf(gateId: string): string {
+  return `${gateId}_site`;
+}

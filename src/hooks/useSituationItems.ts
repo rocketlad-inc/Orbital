@@ -2384,8 +2384,10 @@ export function useSituationItems(
             category: 'sun_gate',
             entity: `body:${g.id}`,
             title: `A gate to ${sys} is burning for the Far Reach`,
-            subtitle: `Stops at T+${g.emerge.untilTick} — first there gets the shortcut`,
-            focus: { kind: 'body', bodyId: g.id },
+            subtitle: `Stops at T+${g.emerge.untilTick} — send ships to its landing site to be first through`,
+            // Focus the SITE when there is one: that is the place to send
+            // ships, and the gate itself cannot be targeted until it lands.
+            focus: { kind: 'body', bodyId: bodies.some(b => b.id === `${g.id}_site`) ? `${g.id}_site` : g.id },
             severity: 'warn',
             sortKey: g.emerge.untilTick - tick,
           });
