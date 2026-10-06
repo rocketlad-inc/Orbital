@@ -2611,7 +2611,7 @@ function drawEmergingGate(
   // Speed on an even burn peaks at the flip: 0 -> 1 -> 0.
   const speed = 1 - Math.abs(2 * f - 1);
   const braking = f > 0.5;
-  const R = Math.max(7, Math.min(radius * 1.6, 30));
+  const R = Math.max(10, Math.min(radius * 1.6, 32));
 
   g.save();
 
@@ -2633,11 +2633,11 @@ function drawEmergingGate(
 
   // The exhaust: behind it on the way out, ahead of it once it brakes.
   const dir = braking ? 1 : -1;
-  const plume = R * (2 + 7 * speed);
+  const plume = R * (3 + 9 * speed);
   const tipX = canvasPos.x + ux * plume * dir, tipY = canvasPos.y + uy * plume * dir;
   const grad = g.createLinearGradient(canvasPos.x, canvasPos.y, tipX, tipY);
-  grad.addColorStop(0, 'rgba(255, 236, 190, 0.85)');
-  grad.addColorStop(0.35, 'rgba(255, 170, 70, 0.45)');
+  grad.addColorStop(0, 'rgba(255, 240, 200, 0.95)');
+  grad.addColorStop(0.35, 'rgba(255, 170, 70, 0.6)');
   grad.addColorStop(1, 'rgba(255, 110, 40, 0)');
   const px = -uy, py = ux;
   const w = R * 0.75;

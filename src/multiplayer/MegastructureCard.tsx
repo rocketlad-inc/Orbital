@@ -42,6 +42,8 @@ import './MegastructureCard.css';
 import { RouteComposer } from './RouteComposer';
 import type { RouteStopInput } from './MultiplayerActionsContext';
 import { buildStageName } from '../render/megastructureArt';
+import type { MegastructureState } from '../game/megastructures';
+import type { Body } from '../types';
 
 const HOLD = 400;
 
@@ -136,6 +138,14 @@ export const MegastructureCard: React.FC = () => {
   // by the first hull to reach it — a different thing entirely from a
   // rival's structure, and it must not read as one.
   const derelict = isAbandoned(site, body.ownedBy);
+
+  // A SUN GATE is not a warp gate anyone built (worker/sunGates.js): it
+  // came out of the Sun, cannot be broken or claimed, and its link is
+  // fixed. Every section below is about building, pairing, besieging or
+  // seizing, none of which applies, so it has its own short card.
+  if (site.transitFraction != null) {
+    return <SunGateCard site={site} body={body} />;
+  }
 
   // Ships of ours parked ON the site, which is the only place a manual
   // delivery can happen from.
@@ -798,3 +808,56 @@ export const MegastructurePicker: React.FC<{
     </div>
   );
 };
+
+/**
+ * The card for a sun gate (worker/sunGates.js): where it goes, whether it
+ * is open yet, and the three rules that make it unlike every other
+ * structure -- nobody's, unbreakable, and a tenth of the burn.
+ */
+function SunGateCard({ site, body }: { site: MegastructureState; body: Body }) {
+  const { gameState } = useGameContext();
+  const tick = gameState.currentTick;
+  const flying = body.emerge != null && tick < body.emerge.untilTick;
+  // Named by destination: the Sol end is "<System> Gate"; its twin,
+  // out in the far system, leads home.
+  const atSol = !body.id.endsWith('_far');
+  const dest = atSol ? body.name.replace(/\s*Gate$/i, '') : 'Sol';
+  const partner = site.partnerBodyId
+    ? gameState.bodies.find(b => b.id === site.partnerBodyId)
+    : undefined;
+  return (
+    <div className="megac">
+      <div className="megac__head">
+        <span className="megac__glyph" style={{ color: body.color }}>◎</span>
+        <div className="megac__headtext">
+          <div className="megac__title">{body.name}</div>
+          <div className="megac__sub">
+            {flying ? `In flight · opens at T+${body.emerge!.untilTick}` : 'Open'} · neutral
+          </div>
+        </div>
+      </div>
+      <p className="megac__blurb">
+        {atSol
+          ? `It came out of the Sun. Park a ship on it to launch to ${dest} at a tenth of the normal burn.`
+          : 'The far end of a gate out of the Sun. Park a ship on it to launch home to Sol at a tenth of the normal burn.'}
+        {' '}The hull is really in flight for the crossing, and can be intercepted on the way.
+      </p>
+      <div className="megac__gate">
+        <div className="megac__gatehead">Gate link</div>
+        {partner ? (
+          <div className="megac__linked"><span>↔ {dest === 'Sol' ? 'Sol' : `${partner.name}, ${dest}`}</span></div>
+        ) : (
+          <div className="megac__hint">
+            {flying
+              ? `Its far end opens beyond the outermost world of ${dest} the moment this one stops.`
+              : `Wired to ${dest}.`}
+          </div>
+        )}
+        <div className="megac__warn">
+          A sun gate. It belongs to nobody, it cannot be destroyed, anyone may
+          use it, and its link cannot be changed.
+        </div>
+      </div>
+    </div>
+  );
+}
