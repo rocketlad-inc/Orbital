@@ -395,6 +395,23 @@
   }
 }
 
+/* The phone's bottom rail (DockRail.css, same 768px tier) is drawn OVER
+   the open drawer: the drawer's z-index only counts inside .left-rail's
+   own stacking context (z 80), and the rail is 3200. So the drawer's
+   last ~72px sat under the rail, and the last "In Transit" row could not
+   be scrolled clear of it (playtester). A spacer the rail's full height
+   (safe-area included) ends every section's scroll above the rail. A
+   spacer, not padding, so the shell block's `padding` shorthand (and its
+   data-mobile-shell mirror, which out-specifies this file) can't undo it. */
+@media (max-width: 768px) {
+  .outliner.outliner--mobile .outliner__body::after {
+    content: '';
+    display: block;
+    height: calc(var(--mobile-rail-height, 72px) + 8px);
+    flex-shrink: 0;
+  }
+}
+
 @keyframes outliner-slide-in {
   from { transform: translateX(100%); }
   to   { transform: translateX(0); }

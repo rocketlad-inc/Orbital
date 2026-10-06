@@ -261,7 +261,12 @@ function screenSignature(): string {
  * re-checks (see the listeners below).
  *
  * Keeps every other directive (viewport-fit, interactive-widget); drops
- * only width and initial-scale, which a fixed width replaces.
+ * width and initial-scale, which a fixed width replaces, AND the zoom
+ * locks (maximum-scale, minimum-scale, user-scalable). The clamped page
+ * is SCALED to fit -- up, on an unfolded Fold -- and maximum-scale=1
+ * would pin a 720px layout at 1x on a ~1000px screen, undoing the clamp.
+ * Page pinch-zoom stays off there through `touch-action: pan-x pan-y` on
+ * html/body (App.css), which Chrome carries across scrollers.
  */
 function clampViewportForApp(): void {
   let meta = document.querySelector('meta[name="viewport"]') as HTMLMetaElement | null;
@@ -282,7 +287,7 @@ function clampViewportForApp(): void {
   if (window.innerWidth <= PHONE_LAYOUT_WIDTH) return;
   clampedAt = screenSignature();
   const rest = originalViewport.split(',').map(d => d.trim())
-    .filter(d => d && !/^(width|initial-scale)\s*=/i.test(d));
+    .filter(d => d && !/^(width|initial-scale|maximum-scale|minimum-scale|user-scalable)\s*=/i.test(d));
   meta.setAttribute('content', [`width=${PHONE_LAYOUT_WIDTH}`, ...rest].join(', '));
 }
 

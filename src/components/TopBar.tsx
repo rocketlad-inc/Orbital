@@ -27,6 +27,8 @@ import { GameDetail } from '../multiplayer/AdminAnalytics';
 import '../multiplayer/AdminAnalytics.css';
 import './TopBar.css';
 import { GIT_SHA } from '../_version';
+import { useIsMobile, isInApp } from '../hooks/useIsMobile';
+import { saveTextFile } from '../platform/saveTextFile';
 
 // Hint text under the Restart Tutorial menu item. Pulled out to a
 // constant so it doesn't allocate a new string every render.
@@ -1138,6 +1140,11 @@ const SideMenu: React.FC<SideMenuProps> = ({
   // Tutorial — replay entry under GAME. The first-game prompt has its
   // own modal; this menu item is the "I want to see it again" path.
   const tutorial = useTutorial();
+  // A phone has no Esc key: no "Press Esc to close" footer there.
+  const isMobile = useIsMobile();
+  // "Log copied" / failure note on the Download Log row. The menu sits
+  // over the toast layer, so the row itself has to say what happened.
+  const [logStatus, setLogStatus] = useState<string | null>(null);
 
   // Host can change the tick cadence on an in-flight game. Mirrors
   // worker/lobby.js ALLOWED_TICK_INTERVALS — any value not in this set is
@@ -1437,12 +1444,33 @@ const SideMenu: React.FC<SideMenuProps> = ({
               // Don't close the drawer — the user might want to inspect more
               // afterwards, and a download doesn't navigate.
               logger.info('SYSTEM', 'User exported game log');
-              logger.downloadText();
+              // Desktop: the same download as ever. Phone layout: share
+              // sheet, else download (browser) or clipboard (the app,
+              // where an <a download> silently does nothing). No await
+              // before this call: the share sheet needs the tap.
+              const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+              void saveTextFile(logger.exportText(), `orbital-log-${stamp}.txt`, {
+                mobile: isMobile,
+                inApp: isInApp(),
+                download: () => logger.downloadText(),
+              }).then((outcome) => {
+                const said = outcome === 'copied' ? 'Log copied to the clipboard: paste it anywhere'
+                  : outcome === 'failed' ? 'Could not save the log on this device'
+                  : null;
+                if (!said) return;
+                setLogStatus(outcome === 'copied' ? 'Copied' : 'Failed');
+                window.setTimeout(() => setLogStatus(null), 4000);
+                try {
+                  window.dispatchEvent(new CustomEvent('orbital:toast', {
+                    detail: { text: said, kind: outcome === 'failed' ? 'error' : 'info' },
+                  }));
+                } catch { /* noop */ }
+              });
             }}
           >
             <span className="side-menu__item-icon">⤓</span>
             <span className="side-menu__item-label">Download Log</span>
-            <span className="side-menu__item-hint">{logger.count()} entries</span>
+            <span className="side-menu__item-hint">{logStatus ?? `${logger.count()} entries`}</span>
           </button>
 
           {user && (
@@ -1489,9 +1517,11 @@ const SideMenu: React.FC<SideMenuProps> = ({
           )}
         </nav>
 
-        <footer className="side-menu__foot">
-          <span>Press <kbd>Esc</kbd> to close</span>
-        </footer>
+        {!isMobile && (
+          <footer className="side-menu__foot">
+            <span>Press <kbd>Esc</kbd> to close</span>
+          </footer>
+        )}
       </aside>
     </>,
     document.body,

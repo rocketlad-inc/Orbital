@@ -4,8 +4,15 @@
     <meta charset="utf-8" />
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content"
     />
+    <!--
+      NO PAGE ZOOM. A pinch on any panel zoomed the WHOLE app and left it
+      zoomed (playtester, phone + Android app); the map canvas does its
+      own pinch. Belt and braces with `touch-action: pan-x pan-y` on
+      html/body (App.css), which is what holds when useIsMobile's phone
+      clamp rewrites this tag without the zoom directives.
+    -->
     <meta name="theme-color" content="#0a0e14" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />

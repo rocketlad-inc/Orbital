@@ -24,6 +24,7 @@ import { createPortal } from 'react-dom';
 import type { Body, GameState, Ship } from '../types';
 import type { RouteProjection, RouteStopInput } from './MultiplayerActionsContext';
 import { useMultiplayerActions } from './MultiplayerActionsContext';
+import { useIsMobile } from '../hooks/useIsMobile';
 import { PlanetIcon } from '../components/PlanetIcon';
 import {
   beginRoutePick, endRoutePick, requestRouteFit, setClusterHandler,
@@ -120,6 +121,8 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
   // both add a stop, and having both is the point: the list is faster
   // when you know the name, the map is faster when you know the place.
   const [mapPicking, setMapPicking] = useState(false);
+  // A phone has no Esc key: the picking label drops the hint there.
+  const isMobile = useIsMobile();
   const [search, setSearch] = useState('');
   const [projection, setProjection] = useState<RouteProjection | null>(null);
   const [busy, setBusy] = useState(false);
@@ -481,7 +484,7 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
               onClick={() => setMapPicking(v => !v)}
               title="Click worlds on the map to add them. Worlds you can't ship from are dimmed."
             >
-              {mapPicking ? 'Picking… (Esc)' : 'Pick on map'}
+              {mapPicking ? (isMobile ? 'Picking… (tap to stop)' : 'Picking… (Esc)') : 'Pick on map'}
             </button>
             {cluster && cluster.length > 1 && (
               <div className="rc-cluster">
