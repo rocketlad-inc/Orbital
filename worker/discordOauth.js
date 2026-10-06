@@ -53,6 +53,27 @@ function redirectUri(env, url) {
   return `${origin.replace(/\/+$/, '')}/api/discord/oauth/callback`;
 }
 
+/**
+ * Turn a failed token exchange into the page a person should see.
+ *
+ * invalid_client (401) means Discord rejected ORBITAL's own credentials:
+ * DISCORD_CLIENT_SECRET does not belong to the bot's application. Nothing
+ * the player does can fix that, so the page must not tell them to try
+ * again (a host who was told to kept retrying, sure their admin rights
+ * were the problem). Anything else is usually a stale or reused code,
+ * where trying again does work.
+ */
+export async function tokenFailurePage(tokenRes, what, logTag) {
+  const text = await tokenRes.text().catch(() => '');
+  console.error(`${logTag} token exchange failed`, tokenRes.status, text);
+  if (tokenRes.status === 401 || /invalid_client/.test(text)) {
+    return page(`Orbital could not finish the ${what}`,
+      "This one is on Orbital's side, not yours or your server's: our Discord "
+      + 'credentials were refused. It has been logged; please try again later.', false);
+  }
+  return page(`Discord refused the ${what}`, 'The link from Discord had expired. Start again from the game.', false);
+}
+
 export function page(title, body, ok = true) {
   // Deliberately a full page, not JSON: this is the end of a browser
   // redirect chain, so a human is looking at it.
@@ -224,10 +245,7 @@ export async function handleOauthCallback(req, env, { url }) {
         redirect_uri: redirectUri(env, url),
       }),
     });
-    if (!tokenRes.ok) {
-      console.error('oauth token exchange failed', tokenRes.status, await tokenRes.text().catch(() => ''));
-      return page('Discord refused the sign-in', 'Please try again.', false);
-    }
+    if (!tokenRes.ok) return tokenFailurePage(tokenRes, 'sign-in', 'oauth');
     const tok = await tokenRes.json();
 
     const meRes = await fetch(ME, { headers: { authorization: `Bearer ${tok.access_token}` } });
