@@ -405,6 +405,24 @@ export const SCHEMA = [
     help: 'Seed the two far star systems, ~200 ticks out. Off everywhere '
       + 'until the way in is designed; a new game only.',
   },
+  // THE SUN GATES (worker/sunGates.js) — the way in. Only with far_systems.
+  {
+    id: 'sun_gate_start', group: 'map', type: 'int',
+    label: 'Sun gates: omen window opens (tick)', def: 250, min: 1, max: 5000, step: 1,
+    help: 'Earliest tick "something strange is emerging from the Sun". The game '
+      + 'rolls one tick in the window; the first gate follows six ticks later.',
+  },
+  {
+    id: 'sun_gate_end', group: 'map', type: 'int',
+    label: 'Sun gates: omen window closes (tick)', def: 300, min: 1, max: 5000, step: 1,
+    help: 'Latest tick for the omen. A game already past its roll when the gates '
+      + 'arrive starts twelve ticks later instead.',
+  },
+  {
+    id: 'sun_gate_interval', group: 'map', type: 'int',
+    label: 'Sun gates: ticks between gates', def: 40, min: 1, max: 1000, step: 1,
+    help: 'Gap between the first gate leaving the Sun and the second.',
+  },
   {
     id: 'system_scale', group: 'map', type: 'number',
     label: 'System scale (orbit spread)', def: 1, min: 0.1, max: 10, step: 0.05,

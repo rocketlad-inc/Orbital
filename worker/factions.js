@@ -1,4 +1,5 @@
-import { summarizeSystems, NON_WORLD_TYPES, PLUTINO_TEMPLATES, FAR_REACH_TEMPLATES } from './systems.js';
+import { summarizeSystems, NON_WORLD_TYPES, PLUTINO_TEMPLATES, FAR_REACH_TEMPLATES, mainSystemSql } from './systems.js';
+const MAIN_SYSTEM = mainSystemSql();
 import { DEFAULT_LOADOUTS } from './shipDesigns.js';
 import { gatingEnabled, factionTechLevels, hasFeature } from './researchUnlocks.js';
 import { isEmblemId, defaultEmblemFor } from './emblems.js';
@@ -2452,9 +2453,11 @@ async function countOwnedBodiesPerFaction(env, gameId) {
         WHERE game_id = ? AND destroyed_at_tick IS NULL
           AND obliterated_at_tick IS NULL
           AND type NOT IN (${[...NON_WORLD_TYPES].map(() => '?').join(', ')})
+          -- Main system only, exactly as the win check counts.
+          AND ${MAIN_SYSTEM.sql}
         GROUP BY owner_faction_id`,
     )
-    .bind(gameId, ...NON_WORLD_TYPES)
+    .bind(gameId, ...NON_WORLD_TYPES, ...MAIN_SYSTEM.binds)
     .all()).results ?? [];
   const owned = new Map();
   let total = 0;

@@ -2573,6 +2573,121 @@ export function drawStructureReach(
   g.restore();
 }
 
+/**
+ * A SUN GATE STILL LEAVING THE SUN (worker/sunGates.js).
+ *
+ * Not yet a structure: a hot blob on a hard burn, which is how the news
+ * describes it and what everyone racing for it needs to see. Three parts:
+ *
+ *   - the exhaust. While it pushes, the plume points back at the Sun;
+ *     past the flip it brakes, and the plume swings round to point the
+ *     way it is going. Same flip-and-burn the server timed it with
+ *     (bodyPosition), so the swap lands on the frame the speed peaks.
+ *   - the blob itself: a few soft lobes that will not hold still.
+ *   - where it stops: a dashed line and a ring at its landing point, the
+ *     one thing every fleet in the Far Reach is about to fly toward.
+ */
+function drawEmergingGate(
+  body: Body,
+  canvasPos: { x: number; y: number },
+  radius: number,
+  ctx: RenderContext,
+) {
+  const em = body.emerge!;
+  const g = ctx.ctx;
+  const now = ctx.nowMs ?? 0;
+  const parent = bodyById(ctx.bodies, body.parent);
+  const sunW = parent ? bodyPosition(parent, ctx.t, ctx.bodies) : { x: 0, y: 0 };
+  const sun = worldToCanvas(sunW.x, sunW.y, ctx);
+  const landW = bodyPosition({ ...body, emerge: undefined }, em.untilTick, ctx.bodies);
+  const land = worldToCanvas(landW.x, landW.y, ctx);
+
+  const dx = canvasPos.x - sun.x, dy = canvasPos.y - sun.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len, uy = dy / len;
+
+  const span = Math.max(1e-6, em.untilTick - em.fromTick);
+  const f = Math.min(1, Math.max(0, (ctx.t - em.fromTick) / span));
+  // Speed on an even burn peaks at the flip: 0 -> 1 -> 0.
+  const speed = 1 - Math.abs(2 * f - 1);
+  const braking = f > 0.5;
+  const R = Math.max(7, Math.min(radius * 1.6, 30));
+
+  g.save();
+
+  // Where it will stop.
+  g.setLineDash([4, 6]);
+  g.lineWidth = 1;
+  g.strokeStyle = 'rgba(255, 200, 107, 0.35)';
+  g.beginPath();
+  g.moveTo(canvasPos.x, canvasPos.y);
+  g.lineTo(land.x, land.y);
+  g.stroke();
+  g.setLineDash([]);
+  const pulse = 0.5 + 0.5 * Math.sin(now / 420);
+  g.strokeStyle = `rgba(255, 200, 107, ${0.35 + 0.35 * pulse})`;
+  g.lineWidth = 1.5;
+  g.beginPath();
+  g.arc(land.x, land.y, 9 + 3 * pulse, 0, Math.PI * 2);
+  g.stroke();
+
+  // The exhaust: behind it on the way out, ahead of it once it brakes.
+  const dir = braking ? 1 : -1;
+  const plume = R * (2 + 7 * speed);
+  const tipX = canvasPos.x + ux * plume * dir, tipY = canvasPos.y + uy * plume * dir;
+  const grad = g.createLinearGradient(canvasPos.x, canvasPos.y, tipX, tipY);
+  grad.addColorStop(0, 'rgba(255, 236, 190, 0.85)');
+  grad.addColorStop(0.35, 'rgba(255, 170, 70, 0.45)');
+  grad.addColorStop(1, 'rgba(255, 110, 40, 0)');
+  const px = -uy, py = ux;
+  const w = R * 0.75;
+  g.fillStyle = grad;
+  g.beginPath();
+  g.moveTo(canvasPos.x + px * w, canvasPos.y + py * w);
+  g.quadraticCurveTo(
+    canvasPos.x + ux * plume * dir * 0.45 + px * w * 0.6,
+    canvasPos.y + uy * plume * dir * 0.45 + py * w * 0.6,
+    tipX, tipY);
+  g.quadraticCurveTo(
+    canvasPos.x + ux * plume * dir * 0.45 - px * w * 0.6,
+    canvasPos.y + uy * plume * dir * 0.45 - py * w * 0.6,
+    canvasPos.x - px * w, canvasPos.y - py * w);
+  g.closePath();
+  g.fill();
+
+  // The halo, then the blob: lobes that drift around a white-hot core.
+  const halo = g.createRadialGradient(canvasPos.x, canvasPos.y, 0, canvasPos.x, canvasPos.y, R * 3.2);
+  halo.addColorStop(0, 'rgba(255, 210, 140, 0.45)');
+  halo.addColorStop(1, 'rgba(255, 160, 60, 0)');
+  g.fillStyle = halo;
+  g.beginPath();
+  g.arc(canvasPos.x, canvasPos.y, R * 3.2, 0, Math.PI * 2);
+  g.fill();
+
+  g.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < 5; i++) {
+    const a = now / (700 + i * 230) + i * 1.7;
+    const off = R * 0.38 * (0.6 + 0.4 * Math.sin(now / 530 + i));
+    const lx = canvasPos.x + Math.cos(a) * off, ly = canvasPos.y + Math.sin(a) * off;
+    const lr = R * (0.55 + 0.12 * Math.sin(now / 610 + i * 2.1));
+    const lobe = g.createRadialGradient(lx, ly, 0, lx, ly, lr);
+    lobe.addColorStop(0, 'rgba(255, 244, 214, 0.55)');
+    lobe.addColorStop(0.6, 'rgba(255, 180, 90, 0.25)');
+    lobe.addColorStop(1, 'rgba(255, 140, 60, 0)');
+    g.fillStyle = lobe;
+    g.beginPath();
+    g.arc(lx, ly, lr, 0, Math.PI * 2);
+    g.fill();
+  }
+  g.globalCompositeOperation = 'source-over';
+  g.fillStyle = 'rgba(255, 252, 240, 0.95)';
+  g.beginPath();
+  g.arc(canvasPos.x, canvasPos.y, R * 0.32, 0, Math.PI * 2);
+  g.fill();
+
+  g.restore();
+}
+
 export function drawMegastructureBody(
   body: Body,
   canvasPos: { x: number; y: number },
@@ -4032,6 +4147,8 @@ export function drawBody(
     // Rocks never reach the client undiscovered, so anything with a
     // mineral kind is something this player has surveyed and should see.
     drawMeteoroidBody(body, canvasPos, radius, ctx);
+  } else if (body.type === 'megastructure' && body.emerge && ctx.t < body.emerge.untilTick) {
+    drawEmergingGate(body, canvasPos, radius, ctx);
   } else if (body.type === 'megastructure') {
     // Build state lives beside the body, not on it — the site is a body
     // so that orbits and sensors work, and its progress is in
@@ -4049,7 +4166,11 @@ export function drawBody(
       // should say, and it is the thing ships have always said. The
       // catalogue colour survives as the fallback for ancient gates,
       // which belong to nobody and should look like it.
-      bodyPrimaryColor(body, ctx.factions) ?? def?.color ?? '#9fb4c4',
+      // A sun gate wears its own gold (worker/sunGates.js), not the
+      // warp gate's catalogue blue: it is not something anyone built.
+      bodyPrimaryColor(body, ctx.factions)
+        ?? (templateIdOf(body.id).startsWith('sungate_') ? body.color : undefined)
+        ?? def?.color ?? '#9fb4c4',
       st ? Math.max(0, Math.min(1, st.hp / MEGA_MAX_HP)) : 1,
       st?.variant ?? null,
       // Faction trim, so a structure wears the same livery as the fleet

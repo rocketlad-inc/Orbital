@@ -37,7 +37,8 @@ import { resolveWidgetTokenRow, widgetSnapshot, WEAR_SCOPES } from './widget.js'
 import { battleSnapshot } from './battleWidget.js';
 import { economySeries, economyAverages } from './economy.js';
 import { castVoteCore } from './senate.js';
-import { NON_WORLD_TYPES } from './systems.js';
+import { NON_WORLD_TYPES, mainSystemSql } from './systems.js';
+const MAIN_SYSTEM = mainSystemSql();
 import { cfg as loadGameConfig } from './gameConfig.js';
 import { tickSummaryFor } from './turnDigest.js';
 import { spriteKey } from './planetSvg.js';
@@ -418,8 +419,9 @@ async function complicationExtras(env, gameId, factionId) {
               SUM(CASE WHEN owner_faction_id = ? THEN 1 ELSE 0 END) AS owned
          FROM game_bodies
         WHERE game_id = ? AND destroyed_at_tick IS NULL
-          AND obliterated_at_tick IS NULL AND type NOT IN (${marks})`,
-    ).bind(factionId, gameId, ...types).first(),
+          AND obliterated_at_tick IS NULL AND type NOT IN (${marks})
+          AND ${MAIN_SYSTEM.sql}`,
+    ).bind(factionId, gameId, ...types, ...MAIN_SYSTEM.binds).first(),
     env.DB.prepare(
       'SELECT count, now, updated_ms, items FROM situation_badges WHERE game_id = ? AND faction_id = ?',
     ).bind(gameId, factionId).first().catch(() => null),

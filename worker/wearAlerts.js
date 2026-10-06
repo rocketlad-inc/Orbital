@@ -46,6 +46,8 @@ const SCREEN_BY_CATEGORY = {
   digest: 'empire',
   nudge: 'empire',
   security: 'empire',
+  // A gate opening is a place on the map (sunGates.js).
+  galactic: 'systems',
 };
 const SCREENS = new Set([
   'empire', 'battles', 'senate', 'systems', 'territory', 'comms', 'yards', 'porthole',

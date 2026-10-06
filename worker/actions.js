@@ -1,5 +1,6 @@
 import { buildCostFactors } from './buildCost.js';
 import { NON_WORLD_TYPES } from './systems.js';
+import { SUN_GATE_SYSTEMS } from './sunGates.js';
 import { selectInChunks, runInChunks } from './sqlChunk.js';
 import { holdCapFor } from './routeMath.js';
 import { routeRoleForClass } from './tradeRoutesV2.js';
@@ -3985,7 +3986,8 @@ async function handleGateTransit(req, env, ctx) {
 
   const gate = await env.DB
     .prepare(
-      `SELECT m.body_id, m.kind, m.status, m.partner_body_id, b.name
+      `SELECT m.body_id, m.kind, m.status, m.partner_body_id, m.transit_fraction,
+              b.name, b.emerge_until_tick
          FROM game_megastructures m
          JOIN game_bodies b ON b.id = m.body_id
         WHERE m.body_id = ? AND m.game_id = ? AND b.destroyed_at_tick IS NULL`,
@@ -4003,7 +4005,7 @@ async function handleGateTransit(req, env, ctx) {
 
   const far = await env.DB
     .prepare(
-      `SELECT b.id, b.name FROM game_bodies b
+      `SELECT b.id, b.name, b.emerge_until_tick FROM game_bodies b
          JOIN game_megastructures m ON m.body_id = b.id
         WHERE b.id = ? AND b.destroyed_at_tick IS NULL AND m.status = 'complete'`,
     )
@@ -4016,6 +4018,13 @@ async function handleGateTransit(req, env, ctx) {
     .prepare('SELECT current_tick FROM games WHERE id = ?')
     .bind(gameId).first();
   const tick = Number(game?.current_tick ?? 0);
+
+  // A SUN GATE IS NOT OPEN WHILE IT IS STILL BURNING OUT OF THE SUN
+  // (0157), and its far twin does not exist until it lands.
+  const landsAt = Math.max(Number(gate.emerge_until_tick ?? 0), Number(far.emerge_until_tick ?? 0));
+  if (landsAt > tick) {
+    return err(409, 'not_open', `${gate.name} is still in flight — it opens at tick ${landsAt}`);
+  }
 
   // A GATE FLINGS YOU; IT DOES NOT TELEPORT YOU.
   //
@@ -4041,7 +4050,9 @@ async function handleGateTransit(req, env, ctx) {
     // instant again.
     if (Number.isFinite(raw) && raw > 0) legTicks = raw;
   } catch { legTicks = 0; }
-  const tripTicks = gateTransitTicks(legTicks);
+  // At the gate's own speed: a sun gate flings at a tenth, a warp gate
+  // at a quarter (transit_fraction NULL).
+  const tripTicks = gateTransitTicks(legTicks, gate.transit_fraction);
   const arriveAt = tick + tripTicks;
 
   // Where the hull is leaving from, for the flight the map draws. The
@@ -4086,6 +4097,22 @@ async function handleGateTransit(req, env, ctx) {
   // THE MOUTH IT LEFT FROM. A gate flinging a hull across the system
   // showed nothing at either end — the ship simply appeared in flight,
   // which is the one part of the mechanic a player cannot infer.
+  //
+  // The FIRST hull through a sun gate is front-page news (digest.js), so
+  // the row says whether this is it. Asked before this row is written.
+  let first = false;
+  const sunGate = gate.transit_fraction != null;
+  if (sunGate) {
+    try {
+      const prior = await env.DB
+        .prepare(
+          `SELECT 1 AS x FROM chronicle_entries
+            WHERE game_id = ? AND kind = 'gate_transit' AND body_id IN (?, ?) LIMIT 1`,
+        )
+        .bind(gameId, gate.body_id, far.id).first();
+      first = !prior;
+    } catch { first = false; }
+  }
   try {
     await env.DB
       .prepare(
@@ -4096,7 +4123,14 @@ async function handleGateTransit(req, env, ctx) {
       .bind(
         `gtx_${crypto.randomUUID().slice(0, 10)}`, gameId, tick,
         me.id, gate.body_id,
-        JSON.stringify({ from: gate.name, to: far.name, ship: ship.name }),
+        JSON.stringify({
+          from: gate.name, to: far.name, ship: ship.name, sun_gate: sunGate, first,
+          // Both far ends are called "Sol Gate", so name the system the
+          // hull is bound for: the far system outbound, Sol coming home.
+          to_system: sunGate
+            ? (SUN_GATE_SYSTEMS.find(x => x.solGate === gate.name)?.label ?? 'Sol')
+            : null,
+        }),
         Date.now(),
       )
       .run();

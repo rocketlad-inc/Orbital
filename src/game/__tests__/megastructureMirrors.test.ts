@@ -1030,7 +1030,8 @@ describe('a gate compresses the flight', () => {
     // manual transit endpoint and the trade router call, rather than an
     // expression written out at each use. Assert the call, and assert
     // the function it calls below.
-    expect(body).toMatch(/gateTransitTicks\(legTicks\)/);
+    // At the gate's own speed: a sun gate's tenth (0156), else the quarter.
+    expect(body).toMatch(/gateTransitTicks\(legTicks, gate\.transit_fraction\)/);
   });
 
   it('a non-finite leg cannot make the trip instant', () => {
@@ -1042,7 +1043,7 @@ describe('a gate compresses the flight', () => {
     // ...and the floor of 1 now sits inside the shared helper.
     const fn = workerMega.slice(workerMega.indexOf('export function gateTransitTicks'));
     expect(fn).toMatch(/Number\.isFinite\(t\) \|\| t <= 0\) return 1/);
-    expect(fn).toMatch(/Math\.max\(1, Math\.ceil\(t \* GATE_TRANSIT_FRACTION\)\)/);
+    expect(fn).toMatch(/Math\.max\(1, Math\.ceil\(t \* f\)\)/);
   });
 
   it('the worker and client price a crossing identically', () => {
@@ -1053,8 +1054,13 @@ describe('a gate compresses the flight', () => {
     const client = fs.readFileSync(
       path.resolve(__dirname, '../..', 'game/megastructures.ts'), 'utf8');
     const clientFn = client.slice(client.indexOf('export function gateTransitTicks'));
-    // Match the expression itself, wherever it sits in the function.
-    const SHAPE = /Math\.max\(1, Math\.ceil\(t \* GATE_TRANSIT_FRACTION\)\)/;
+    // Match the expressions themselves, wherever they sit in the
+    // function: the fraction chosen (the gate's own when it has one, a
+    // sun gate's tenth; else the warp gate's quarter) and the rounding.
+    const PICK = /Number\(fraction\) > 0 && Number\(fraction\) <= 1 \? Number\(fraction\) : GATE_TRANSIT_FRACTION/;
+    const SHAPE = /Math\.max\(1, Math\.ceil\(t \* f\)\)/;
+    expect(worker).toMatch(PICK);
+    expect(clientFn).toMatch(PICK);
     expect(worker).toMatch(SHAPE);
     expect(clientFn).toMatch(SHAPE);
   });
@@ -1252,7 +1258,10 @@ describe('asset deals hand over on delivery', () => {
     // Same shared set as the win check — bound into the SQL, not a
     // literal that could drift from it.
     expect(body).toMatch(/type NOT IN \(/);
-    expect(body).toMatch(/\.bind\(gameId, \.\.\.NON_WORLD_TYPES\)/);
+    // ...and the same main-system rule (only Sol counts, isFarSystemBody).
+    expect(body).toMatch(/\.bind\(gameId, \.\.\.NON_WORLD_TYPES, \.\.\.MAIN_SYSTEM\.binds\)/);
+    const room = fs.readFileSync(path.resolve(__dirname, '../../..', 'worker/room.js'), 'utf8');
+    expect(room).toMatch(/\.bind\(gameId, \.\.\.NON_WORLD_TYPES, \.\.\.MAIN_SYSTEM\.binds\)/);
   });
 });
 

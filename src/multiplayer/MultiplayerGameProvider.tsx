@@ -246,6 +246,9 @@ interface ServerState {
     ram_start_tick?: number | null;
     ram_flip_tick?: number | null;
     ram_arrive_tick?: number | null;
+    /** A body flying out of its parent (0157): the sun gates. */
+    emerge_from_tick?: number | null;
+    emerge_until_tick?: number | null;
     ram_acceleration?: number | null;
     ram_start_pos_x?: number | null;
     ram_start_pos_y?: number | null;
@@ -366,6 +369,8 @@ interface ServerState {
     founded_by_faction_id: string | null;
     founded_at_tick: number;
     completed_at_tick: number | null;
+    /** A sun gate's share of the ordinary burn (0157); null = a warp gate. */
+    transit_fraction?: number | null;
   }>;
   settlement_claims?: Array<{ body_id: string; owner_faction_id: string }>;
   /** Ruins (0142): dead settlements warships left standing. */
@@ -739,6 +744,12 @@ function bodyToClient(b: ServerState['bodies'][number]): Body {
     orbit_omega: b.orbit_omega ?? undefined,
     orbit_m0: b.orbit_m0 ?? undefined,
     ramPlan,
+    // Still flying out of the Sun (0157). Only while there is a flight
+    // to show: a gate that has landed is an ordinary orbiting body.
+    emerge: b.emerge_from_tick != null && b.emerge_until_tick != null
+      && Number(b.emerge_until_tick) > Number(b.emerge_from_tick)
+      ? { fromTick: Number(b.emerge_from_tick), untilTick: Number(b.emerge_until_tick) }
+      : undefined,
   };
 }
 
@@ -1208,6 +1219,10 @@ function classifyChronicleEvent(kind: string): { category: LogCategory; level: L
     case 'asteroid_launched':
     case 'treaty_broken':
       return { category: 'THREAT', level: 'WARN' };
+    case 'sun_gate_omen':
+    case 'sun_gate_emerged':
+    case 'sun_gate_opened':
+      return { category: 'SYSTEM', level: 'WARN' };
     case 'settlement_built':
     case 'ship_built':
     case 'ship_refitted':
@@ -2099,6 +2114,25 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         return `${t}  ${possessive(owner, sName)} on ${where} completed ${kind} L${lvl}`;
       }
 
+      // THE SUN GATES (worker/sunGates.js): the omen, a gate leaving the
+      // Sun, a gate opening. Everyone gets all three.
+      if (ev.kind === 'sun_gate_omen') {
+        const wait = Number(parsed.gate_in) || 6;
+        return `${t}  ☀ Something strange is emerging from the Sun — it will be out in ${wait} ticks`;
+      }
+      if (ev.kind === 'sun_gate_emerged') {
+        const system = (parsed.system as string) ?? 'another star';
+        const near = parsed.near as string | undefined;
+        const at = Number(parsed.arrive_tick);
+        return `${t}  ◎ A gate to ${system} has come out of the Sun, burning for the Far Reach`
+          + `${near ? ` — it stops out past ${near}` : ''}${Number.isFinite(at) ? ` at T+${at}` : ''}`;
+      }
+      if (ev.kind === 'sun_gate_opened') {
+        const gate = (parsed.gate as string) ?? 'The gate';
+        const system = (parsed.system as string) ?? 'another star';
+        return `${t}  ◎ The ${gate} is open — park on it to launch to ${system} at a tenth of the burn`;
+      }
+
       if (ev.kind === 'secret_discovered') {
         // The server already wrote a human-readable message into the
         // payload (e.g. "Ceres: DISCOVERY — a derelict destroyer is
@@ -2802,6 +2836,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         costMetal: Number(m.cost_metal) || 0,
         costCredits: Number(m.cost_credits) || 0,
         partnerBodyId: m.partner_body_id ? (stripGameId(m.partner_body_id) ?? m.partner_body_id) : null,
+        transitFraction: Number(m.transit_fraction) > 0 ? Number(m.transit_fraction) : null,
         foundedByFactionId: m.founded_by_faction_id ?? null,
         foundedAtTick: Number(m.founded_at_tick) || 0,
         completedAtTick: m.completed_at_tick ?? null,

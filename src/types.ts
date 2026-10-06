@@ -155,6 +155,13 @@ export interface Body {
    *  the body itself destroyed) at arriveTick. */
   ramPlan?: RamPlan;
 
+  /** A body still flying out of its parent along its final bearing: a sun
+   *  gate leaving the Sun (worker/sunGates.js, 0157). bodyPosition
+   *  draws it at its orbit's bearing, pushed out from the parent's
+   *  surface under a flip-and-burn, until untilTick; after that it is an
+   *  ordinary orbit and this is absent. */
+  emerge?: { fromTick: number; untilTick: number };
+
   /** Set when the body has been destroyed — either smashed into a
    *  target via its own ram plan, or wiped by an incoming impact
    *  (planets don't get destroyed, but asteroids can collide

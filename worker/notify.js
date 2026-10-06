@@ -65,6 +65,9 @@ export const CATEGORIES = {
   // anything else that widens what a device may do. Not a game alert:
   // it is how you find out about a grant you did not make.
   security: 'Devices allowed to act on your account',
+  // Events that happen to the whole map at once -- the sun gates
+  // opening (sunGates.js). A handful a game, so on everywhere by default.
+  galactic: 'Events that change the whole map, like gates opening',
 };
 
 /**

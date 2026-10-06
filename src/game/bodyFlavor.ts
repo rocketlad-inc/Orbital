@@ -103,7 +103,7 @@ export const BODY_FLAVOR: Record<string, string> = {
 
   charon: "Half the size of the world it orbits, locked face-to-face with Pluto in a waltz that keeps each hanging motionless in the other's sky, scarred by a dark red cap of unknown origin at its pole. Metal-rich and quiet. A companion world more than a moon — and old surveys treated it like one, leaving equipment and a databank in its rock.",
 
-  haumea: "Spun so fast it has stretched itself into an egg, Haumea whirls through the deep belt trailing a ring and a pair of small moons, its surface a glaze of crystalline ice. Metal-rich and far from anywhere. One of the five worlds that might conceal a warp gate — a door to Centauri or Cygnus, hidden on a world already spinning toward the edge of reason.",
+  haumea: "Spun so fast it has stretched itself into an egg, Haumea whirls through the deep belt trailing a ring and a pair of small moons, its surface a glaze of crystalline ice. Metal-rich and far from anywhere. One of the five worlds that might conceal a warp gate — a door to somewhere else out here, hidden on a world already spinning toward the edge of reason.",
 
   makemake: "A reddish, frozen world out in the cold dark, bright with frozen methane and so distant that its single faint moon went unseen for years. Decent credits and metal for those willing to come this far. One of the five that could hide a gate — and a fittingly remote threshold for a leap between stars.",
 
@@ -165,7 +165,7 @@ export const BODY_FLAVOR: Record<string, string> = {
 
   cinder: "A rusty rock that looks dead and isn't — beneath its burnt surface lies a fortune in credits, metal, and some of the highest science in the system. Two suns have baked it to the color of old iron. Plain to the eye and priceless to the survey; never judge a Centauri world by its face.",
 
-  farspire: "The lonely outpost at the system's edge, a small frozen spire of rock and ice rich in science despite its modest size. Here lies the guaranteed gate home — the fixed door that leads back to whichever far KBO of Sol opened the way out. The end of one journey and the beginning of the road back; every road through Centauri eventually passes through Farspire.",
+  farspire: "The lonely outpost at the system's edge, a small frozen spire of rock and ice rich in science despite its modest size. Just beyond it, once the Sun gives up its doors, the gate home comes to rest — the far end of the crossing from Sol's Far Reach. The end of one journey and the beginning of the road back; every road through Centauri eventually passes Farspire.",
 
   // === Cygnus X-1 analogue ===================================
   // Awaiting flavor text — drop entries here for bh_barycenter,
@@ -176,7 +176,7 @@ export const BODY_FLAVOR: Record<string, string> = {
   requiem: '',
   vellichor: '',
   echelon: '',
-  reliquary: '',
+  reliquary: "The last world of Cygnus, a small cold relic wheeling far out from the black hole and the blue giant it is slowly eating. Science and metal in fair measure, and silence in abundance. Just past it is where the gate from Sol comes to rest — the first thing any traveller through it sees, and the last thing they pass on the way home.",
 };
 
 /** Lookup helper. Returns the flavor string for a body id, or

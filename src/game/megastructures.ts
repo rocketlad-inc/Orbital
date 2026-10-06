@@ -158,12 +158,18 @@ export const MEGA_MAX_HP = 3000;
  *  KEEP IN SYNC with worker/megastructures.js. */
 export const GATE_TRANSIT_FRACTION = 0.25;
 
+/** A sun gate's share of the ordinary burn: ten times faster than flying.
+ *  KEEP IN SYNC with SUN_GATE_TRANSIT_FRACTION in worker/sunGates.js. */
+export const SUN_GATE_TRANSIT_FRACTION = 0.1;
+
 /** Ticks a gate crossing takes, given the ordinary burn between the two
- *  gates. Always at least one — a gate is fast, not instant. */
-export function gateTransitTicks(normalTicks: number): number {
+ *  gates. Always at least one — a gate is fast, not instant. `fraction`
+ *  is the gate's own (a sun gate's tenth); absent means a warp gate. */
+export function gateTransitTicks(normalTicks: number, fraction?: number | null): number {
   const t = Number(normalTicks);
   if (!Number.isFinite(t) || t <= 0) return 1;
-  return Math.max(1, Math.ceil(t * GATE_TRANSIT_FRACTION));
+  const f = Number(fraction) > 0 && Number(fraction) <= 1 ? Number(fraction) : GATE_TRANSIT_FRACTION;
+  return Math.max(1, Math.ceil(t * f));
 }
 
 /** Below this fraction of max HP a structure can be boarded. */
@@ -203,6 +209,9 @@ export interface MegastructureState {
   costMetal: number;
   costCredits: number;
   partnerBodyId: string | null;
+  /** A gate's share of the ordinary burn when it is not a warp gate's
+   *  quarter: a sun gate's tenth (worker/sunGates.js). Null otherwise. */
+  transitFraction?: number | null;
   foundedByFactionId: string | null;
   foundedAtTick: number;
   completedAtTick: number | null;

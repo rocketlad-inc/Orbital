@@ -82,6 +82,51 @@ export function isWorld(b) {
   return !NON_WORLD_TYPES.has(b.type) && b.obliterated_at_tick == null;
 }
 
+/** Every far-system catalogue id (factions.js far_system: true, held to
+ *  it by sim/sunGates.mjs). A plain list so this file keeps importing
+ *  nothing: factions.js and sunGates.js both import from here. */
+export const FAR_SYSTEM_TEMPLATE_IDS = new Set([
+  'binary_barycenter', 'centauri_a', 'centauri_b',
+  'verdant', 'crimson', 'prismara', 'cinder', 'farspire',
+  'bh_barycenter', 'cygnus_x', 'hde_226868',
+  'requiem', 'vellichor', 'echelon', 'reliquary',
+]);
+
+/** The far-side end of a sun gate (sunGates.js). Its Sol-side partner is
+ *  in the main system and is a structure, so it never counted anyway. */
+export const FAR_GATE_TEMPLATE = 'sun_gate_far';
+
+/** A row's catalogue id: template_id when the SELECT carried it, else the
+ *  part after the game prefix ("<game>:verdant"). Rows come in several
+ *  shapes [[orbital-body-type-dialects]]; every one of them has an id. */
+export function templateOf(row) {
+  if (row?.template_id) return String(row.template_id);
+  const id = String(row?.id ?? '');
+  const i = id.lastIndexOf(':');
+  return i >= 0 ? id.slice(i + 1) : id;
+}
+
+/** Is this body out in a far system? ONLY THE MAIN SYSTEM COUNTS for
+ *  conquest and the senate, for now (Lorne, 2026-10-06): every share-of-
+ *  the-map count leaves these out, so a far colony is income, not votes,
+ *  and turning the far systems on never moves the domination target. */
+export function isFarSystemBody(row) {
+  if (!row) return false;
+  if (row.far_system === true || row.farSystem === true) return true;
+  const t = templateOf(row);
+  return FAR_SYSTEM_TEMPLATE_IDS.has(t) || t === FAR_GATE_TEMPLATE;
+}
+
+/** The same rule for SQL counts over game_bodies: a fragment plus its
+ *  binds (15, well inside D1's 100 [[orbital-d1-bind-limit]]). */
+export function mainSystemSql(col = 'template_id') {
+  const ids = [...FAR_SYSTEM_TEMPLATE_IDS];
+  return {
+    sql: `(${col} IS NULL OR ${col} NOT IN (${ids.map(() => '?').join(', ')}))`,
+    binds: ids,
+  };
+}
+
 /** A star or barycenter — the thing planets orbit. Never heads a system. */
 function isStellarAnchor(b) {
   return !b.parent_body_id
@@ -367,12 +412,6 @@ function beltsOf(bodies) {
   return built;
 }
 
-function templateOf(b) {
-  if (b.template_id) return b.template_id;
-  const colon = String(b.id).indexOf(':');
-  return colon === -1 ? String(b.id) : String(b.id).slice(colon + 1);
-}
-
 /**
  * Build a memoized `bodyId -> system root key` resolver.
  *
@@ -479,6 +518,9 @@ export function summarizeSystems(bodies) {
     // stood as a whole empty "system", inflating the total the panel
     // shows and the "still winnable" count. See NON_WORLD_TYPES.
     if (!isWorld(b)) continue;
+    // Nor the far systems: only the main system holds seats (see
+    // isFarSystemBody).
+    if (isFarSystemBody(b)) continue;
     const rootId = rootOf(b.id);
     let sys = systems.get(rootId);
     if (!sys) {
