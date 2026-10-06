@@ -1,4 +1,7 @@
-import { summarizeSystems, NON_WORLD_TYPES, PLUTINO_TEMPLATES, FAR_REACH_TEMPLATES, mainSystemSql } from './systems.js';
+import {
+  summarizeSystems, NON_WORLD_TYPES, PLUTINO_TEMPLATES, FAR_REACH_TEMPLATES, mainSystemSql,
+  stationTypeMul,
+} from './systems.js';
 const MAIN_SYSTEM = mainSystemSql();
 import { DEFAULT_LOADOUTS } from './shipDesigns.js';
 import { gatingEnabled, factionTechLevels, hasFeature } from './researchUnlocks.js';
@@ -2662,7 +2665,9 @@ async function computePoolIncomePerFaction(env, gameId) {
 
   const perFaction = new Map();
   for (const s of settlements) {
-    const tm = s.type === 'city' ? TYPE_MUL_CITY : TYPE_MUL_STATION;
+    // Same binary-system doubling as the tick (room.js).
+    const tm = stationTypeMul(s.type === 'city' ? TYPE_MUL_CITY : TYPE_MUL_STATION,
+      s.type, { id: s.body_id });
     const popMul = 1 + YIELD_MULT_PER_POP * Math.max(0, Number(s.population ?? 1) - 1);
     let bld = {};
     if (s.buildings_json) { try { bld = JSON.parse(s.buildings_json) ?? {}; } catch { bld = {}; } }

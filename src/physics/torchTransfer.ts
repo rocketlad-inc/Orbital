@@ -29,6 +29,7 @@
 // (Asymmetric: t1 = √(2·d·brake / (boost·(boost+brake))), T = t1·(1+boost/brake))
 
 import { bodyPosition, bodyWorldVelocity } from './orbitalMechanics';
+import { legDilation } from './wellDilation';
 import type { Body } from '../types';
 
 export interface Vec2 { x: number; y: number }
@@ -130,10 +131,20 @@ export function planTorchTransfer(
   const target = bodies.find(b => b.id === targetBodyId);
   if (!target) return null;
 
+  // THE WELL (wellDilation.ts). Near Cygnus X the trip takes f times as
+  // long, flown as the engine the well leaves you: both accelerations
+  // over f^2, so the plan committed below is still a real burn and every
+  // client and the server's transit combat fly it identically.
+  const wells = bodies
+    .filter(b => b.type === 'black_hole')
+    .map(b => bodyPosition(b, currentTick, bodies));
+  let boost = boostAccel;
+  let brake = brakeAccel;
+
   // Closed-form trip time for a straight-line distance d.
   const tripTime = (d: number) => {
-    const t1 = Math.sqrt(2 * d * brakeAccel / (boostAccel * (boostAccel + brakeAccel)));
-    const t2 = (boostAccel * t1) / brakeAccel;
+    const t1 = Math.sqrt(2 * d * brake / (boost * (boost + brake)));
+    const t2 = (boost * t1) / brake;
     return { T: t1 + t2, t1 };
   };
 
@@ -145,6 +156,11 @@ export function planTorchTransfer(
     const dy = interceptPos.y - ship.pos.y;
     const d = Math.sqrt(dx * dx + dy * dy);
     if (d < 1e-6) return null;
+    if (wells.length > 0) {
+      const f = legDilation(ship.pos, interceptPos, wells);
+      boost = boostAccel / (f * f);
+      brake = brakeAccel / (f * f);
+    }
     const tt = tripTime(d);
     if (Math.abs(tt.T - T) < 1e-4) { T = tt.T; t1 = tt.t1; break; }
     T = tt.T;
@@ -156,13 +172,13 @@ export function planTorchTransfer(
   const dy = interceptPos.y - ship.pos.y;
   const d = Math.sqrt(dx * dx + dy * dy);
   const thrustDir: Vec2 = { x: dx / d, y: dy / d };
-  const vPeak = boostAccel * t1;
+  const vPeak = boost * t1;
   const t2 = T - t1;
 
   return {
     targetBodyId,
-    acceleration: boostAccel,
-    brakeAcceleration: brakeAccel,
+    acceleration: boost,
+    brakeAcceleration: brake,
     startTick: currentTick,
     flipTick: currentTick + t1,
     arriveTick: currentTick + T,
@@ -170,7 +186,7 @@ export function planTorchTransfer(
     interceptPos,
     startPos: { x: ship.pos.x, y: ship.pos.y },
     startVel: { x: ship.vel.x, y: ship.vel.y },
-    totalDv: boostAccel * t1 + brakeAccel * t2,
+    totalDv: boost * t1 + brake * t2,
     peakVelocity: vPeak,
   };
 }

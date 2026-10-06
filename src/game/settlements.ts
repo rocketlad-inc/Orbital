@@ -8,6 +8,7 @@ import { createCircularOrbit, bodyPosition, localPositionAt } from '../physics/o
 import { pickFromPool } from './namePools';
 import { bodyProductionRates } from './economy';
 import { randomSettlementName } from './settlementNames';
+import { binaryStationMul } from './farSystems';
 
 /**
  * World position of a settlement at a given tick.
@@ -494,9 +495,12 @@ export function settlementYield(
   const base = bodyProductionRates(body);
   const mult = 1 + YIELD_MULT_PER_POP * (settlement.population - 1);
   // Stations boost science (orbital research platforms), cities boost ore.
+  // A station under Centauri's two suns yields double (farSystems.ts),
+  // mirroring stationTypeMul in worker/systems.js.
+  const bin = settlement.type === 'city' ? 1 : binaryStationMul(body);
   const typeMult = settlement.type === 'city'
     ? { fuel: 1.0, ore: 1.2, credits: 1.0, science: 0.8 }
-    : { fuel: 1.1, ore: 0.8, credits: 1.0, science: 1.4 };
+    : { fuel: 1.1 * bin, ore: 0.8 * bin, credits: 1.0 * bin, science: 1.4 * bin };
 
   // Building multipliers — city Forge/Mint/Lab compound the matching
   // resource. Stations don't host yield buildings, so these are 0 there.

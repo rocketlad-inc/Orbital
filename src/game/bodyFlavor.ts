@@ -153,7 +153,7 @@ export const BODY_FLAVOR: Record<string, string> = {
   // === Centauri binary system ================================
   binary_barycenter: "Not a body at all, but the still point the whole system turns around — an invisible center of mass where two stars trade their endless pull. Nothing orbits closer to the true heart of this place. There is nothing here to mine and everything here to understand: the hidden pivot on which two suns and all their worlds depend.",
 
-  centauri_a: "The yellow primary, half again as massive as its partner, anchoring the system with its steady golden light. It and its companion chase each other around the barycenter on a tireless cycle, neither ever quite catching the other. You cannot land on a sun — but everything in this system lives or dies by the warmth this one gives.",
+  centauri_a: "The yellow primary, half again as massive as its partner, anchoring the system with its steady golden light. It and its companion chase each other around the barycenter on a tireless cycle, neither ever quite catching the other. You cannot land on a sun — but everything in this system lives or dies by the warmth this one gives. Stations in orbit here drink from both suns at once, and yield twice what they would under one.",
 
   centauri_b: "The orange secondary, smaller and cooler, forever phased to the far side of the dance from its brighter sibling. Together they make a sky no Sol-born eye has seen: two suns, two sets of shadows, two dawns. Unreachable and essential — the second hearth of a system built for two.",
 
@@ -179,14 +179,13 @@ export const BODY_FLAVOR: Record<string, string> = {
   farspire: "The lonely outpost at the system's edge, a small frozen spire of rock and ice rich in science despite its modest size. Just beyond it, once the Sun gives up its doors, the gate home comes to rest — the far end of the crossing from Sol's Far Reach. The end of one journey and the beginning of the road back; every road through Centauri eventually passes Farspire.",
 
   // === Cygnus X-1 analogue ===================================
-  // Awaiting flavor text — drop entries here for bh_barycenter,
-  // cygnus_x, hde_226868, requiem, vellichor, echelon, reliquary.
+  // The barycenter is never drawn or selected, so it has no text.
   bh_barycenter: '',
-  cygnus_x: '',
-  hde_226868: '',
-  requiem: '',
-  vellichor: '',
-  echelon: '',
+  cygnus_x: "A black hole fifteen times the Sun's mass, feeding on its blue companion through a ribbon of stolen gas. Nothing lands here and nothing leaves. Its pull bends time itself: the deeper a ship flies into the well, the slower its passage runs, so a hop between Cygnus's inner worlds takes nearly twice as long as the same distance anywhere else.",
+  hde_226868: "A blue supergiant being eaten alive. HDE 226868 pours a stream of its own atmosphere into the black hole beside it, and its glare turns every world in Cygnus violet, bronze or glass. Unreachable, unstable, and the only light this system has.",
+  requiem: "The innermost world of Cygnus, a dark wine-violet rock whose impact scars the X-ray glare has fused to glass. Rich in metal and science, and deep in the well: everything bound to or from Requiem crawls, its clocks running slow against the rest of the system.",
+  vellichor: "A gas giant bleached pale blue-violet by the binary's radiation, its methane stripped and its bands gone soft. Vellichor holds three mournful moons and a fortune in credits, far enough from the black hole that ships slow only a little on the way in.",
+  echelon: "A world forged from supernova ash, its crust a heavy-element alloy of bronze and gold that rings when the wind crosses it. The richest credits in Cygnus, and far enough out of the well that a ship barely feels it.",
   reliquary: "The last world of Cygnus, a small cold relic wheeling far out from the black hole and the blue giant it is slowly eating. Science and metal in fair measure, and silence in abundance. Just past it is where the gate from Sol comes to rest — the first thing any traveller through it sees, and the last thing they pass on the way home.",
 };
 
