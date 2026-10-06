@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useCallback, useState, useMemo } from 'react';
+import { refitStatus } from '../game/refitStatus';
 import { routeForShip } from '../game/routeSelectors';
 import {
   subscribeRoutePick, isRoutePicking,
@@ -3478,6 +3479,32 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         }
       },
     );
+
+    // REFIT ORDERED: a small ⟳ up-right of each of your hulls waiting on
+    // a refit, amber when something is in its way (refitStatus, the same
+    // answer the panel and the situation report give). Only hulls drawn
+    // this frame have a position, so a hull folded into a fleet marker or
+    // off-screen costs nothing; there are rarely more than a handful.
+    for (const ship of gameState.ships) {
+      if (ship.ownedBy !== 'player' || !ship.refitPendingDesignId) continue;
+      const hb = shipHitboxesRef.current.get(ship.id)
+        ?? (ship.transit ? transitShipCanvasPosRef.current.get(ship.id) : undefined);
+      if (!hb) continue;
+      const r = 'r' in hb ? (hb as { r: number }).r : 8;
+      const blocked = !!refitStatus(ship, gameState)?.blocked;
+      ctx.save();
+      ctx.font = '11px "Audiowide", monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(6, 10, 16, 0.85)';
+      ctx.fillStyle = blocked ? '#ffb84d' : '#9fdcff';
+      const gx = hb.x + r + 4;
+      const gy = hb.y - r - 2;
+      ctx.strokeText('⟳', gx, gy);
+      ctx.fillText('⟳', gx, gy);
+      ctx.restore();
+    }
 
     perf.phase('badges_markers');
     // LIGHTWEIGHT MODE skips the whole combat FX layer. These are the

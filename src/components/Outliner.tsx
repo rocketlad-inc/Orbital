@@ -8,6 +8,7 @@ import { useGameContext } from '../state/gameContext';
 import type { GameState } from '../types';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { loadoutSummary } from '../game/shipParts';
+import { refitStatus } from '../game/refitStatus';
 import { effectiveShipMaxHp } from '../game/combat';
 import { CaptainAvatar } from './CaptainAvatar';
 import { canHostCity } from '../game/settlements';
@@ -28,6 +29,22 @@ import './Outliner.css';
 // - the "short beat" after otherwise-instant clicks. The entity arrays
 // keep their identity across such updates (updateGameState spreads),
 // so a memo keyed on the slices skips the whole row tree.
+
+/** A hull with a refit ordered: a ⟳ beside its name, amber when something
+ *  is in the way, and the where/when/why in its tooltip (refitStatus) --
+ *  so a fleet-wide refit shows at a glance which hulls are still waiting. */
+const RefitMark: React.FC<{ ship: Ship; gameState: GameState }> = ({ ship, gameState }) => {
+  if (!ship.refitPendingDesignId) return null;
+  const st = refitStatus(ship, gameState);
+  return (
+    <span
+      className={`outliner__refit${st?.blocked ? ' outliner__refit--blocked' : ''}`}
+      data-testid="outliner-refit"
+      title={`Refit to ${st?.designName ?? 'a new design'} ordered — ${st?.text ?? 'fits at a friendly world'}`}
+    >⟳</span>
+  );
+};
+
 export const Outliner: React.FC = () => {
   const {
     gameState, uiState, selectShip, selectBody, focusBody,
@@ -732,6 +749,7 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
                         {loadout && ship.parts && ship.parts.length > 0 && (
                           <span className="outliner__ship-loadout" title="Fitted parts">{loadout}</span>
                         )}
+                        <RefitMark ship={ship} gameState={gameState} />
                         <span className={`outliner__hp-dot outliner__hp-dot--${hpClass(r)}`} title={`HP ${Math.round(r * 100)}%`} />
                       </div>
                     );
@@ -907,6 +925,7 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
                   <span className="outliner__ship-name">
                     {ship.name} → {target?.name || '?'} T-{Math.max(0, eta).toFixed(0)}
                   </span>
+                  <RefitMark ship={ship} gameState={gameState} />
                   <span className={`outliner__hp-dot outliner__hp-dot--${hpClass(r)}`} />
                 </div>
               );

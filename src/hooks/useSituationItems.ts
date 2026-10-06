@@ -46,6 +46,7 @@ import type {
   TradeRouteStop,
   BuildingKind,
 } from '../types';
+import { refitStatus } from '../game/refitStatus';
 import {
   computeIncomingThreats,
   type IncomingThreat,
@@ -197,6 +198,9 @@ export type SituationCategory =
   // --- construction: buildings were unwatched while ships were not ---
   | 'building_idle'  // settlement with an empty building queue
   | 'building_done'  // a building just finished — the slot is free again
+  // --- refits: "nothing happens" was the report, so say both ends ---
+  | 'refit_done'     // a refit landed (server 'ship_refitted' event)
+  | 'refit_waiting'  // an ordered refit that cannot happen as things stand
   // --- research beyond "no project" ---
   | 'research_done'  // a level completed (and what it unlocked)
   | 'research_stall' // committed to a track with zero science income
@@ -283,6 +287,10 @@ const TIER_OF: Record<SituationCategory, SituationTier> = {
   building_idle:  'opportunity',
   building_done:  'decision',
   research_done:  'decision',
+  refit_done:     'decision',
+  // Ordered, paid for in intent, and going nowhere: the player thinks it
+  // is handled. That is waiting on them by definition.
+  refit_waiting:  'decision',
   // Stalled research burns the whole science economy every tick, same
   // argument as "no research project" — a decision, not a someday.
   research_stall: 'decision',
@@ -436,6 +444,8 @@ export const CATEGORY_LABEL: Record<SituationCategory, string> = {
   tech_available:  'Research idle',
   building_idle:   'Building slots empty',
   building_done:   'Construction complete',
+  refit_done:      'Refit complete',
+  refit_waiting:   'Refit waiting',
   research_done:   'Research complete',
   research_stall:  'Research stalled',
   damaged:         'Damaged and quiet',
@@ -1988,6 +1998,46 @@ export function useSituationItems(
             severity: 'warn',
           });
         }
+      }
+    } catch { /* defensive */ }
+
+    // ---- Refits ----
+    // Both ends of a refit, which used to happen (or not) in silence.
+    // Done: the server's owner-only 'ship_refitted' events, for 10 ticks.
+    // Waiting: an ordered refit with something in its way (refitStatus,
+    // the same answer the ship panel gives).
+    try {
+      const shipById = new Map(gameState.ships.map(s => [s.id, s]));
+      const doneShips = new Set<string>();
+      for (const r of gameState.recentRefits ?? []) {
+        if (tick - r.tick > 10) continue;
+        const sh = shipById.get(r.shipId);
+        if (!sh || sh.ownedBy !== factionId || doneShips.has(r.shipId)) continue;
+        doneShips.add(r.shipId);
+        push({
+          id: `refit_done:${r.shipId}:${r.tick}`,
+          category: 'refit_done',
+          entity: `ship:${r.shipId}`,
+          title: `${sh.name} refitted to ${r.designName ?? 'its new design'}`,
+          subtitle: r.bodyName ? `at ${r.bodyName}, tick ${r.tick}` : `tick ${r.tick}`,
+          focus: { kind: 'ship', shipId: r.shipId },
+          severity: 'normal',
+          sortKey: -r.tick,
+        });
+      }
+      for (const sh of gameState.ships) {
+        if (sh.ownedBy !== factionId || !sh.refitPendingDesignId) continue;
+        const st = refitStatus(sh, gameState);
+        if (!st?.blocked) continue;
+        push({
+          id: `refit_waiting:${sh.id}`,
+          category: 'refit_waiting',
+          entity: `ship:${sh.id}`,
+          title: `${sh.name}: refit to ${st.designName ?? 'its design'} is waiting`,
+          subtitle: st.blocked.text,
+          focus: { kind: 'ship', shipId: sh.id },
+          severity: 'warn',
+        });
       }
     } catch { /* defensive */ }
 

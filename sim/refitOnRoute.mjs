@@ -136,5 +136,16 @@ check("the hull wears the design's look", s.icon_variant === 'C', JSON.stringify
 const r = await DB.prepare("SELECT status, cancelled_at_tick FROM game_trade_routes WHERE game_id = ?").bind(G).first();
 check('and the route is still running', r?.cancelled_at_tick == null, JSON.stringify(r));
 
+// SAID OUT LOUD: one owner-only chronicle row, tied to the hull, so the
+// situation report, the event log and the ship's Log tab all show it.
+const ev = await DB.prepare(
+  "SELECT kind, ship_id, visibility, payload FROM chronicle_entries WHERE game_id = ? AND kind = 'ship_refitted'",
+).bind(G).first();
+const pl = ev ? JSON.parse(ev.payload) : {};
+check('the refit is recorded as a ship_refitted event on that hull',
+  ev?.ship_id === 'ship_lev1' && pl.design_name === 'Scrapper' && pl.ship_name === 'The Rotten Leviathan',
+  JSON.stringify(ev));
+check('...visible only to its owner', ev?.visibility === JSON.stringify([A.id]), JSON.stringify(ev?.visibility));
+
 console.log(bad === 0 ? '\nALL PASS' : `\n${bad} FAILURE(S)`);
 process.exit(bad === 0 ? 0 : 1);

@@ -87,6 +87,11 @@ function describe(r: ShipLogRow): { text: string; tone: 'good' | 'bad' | 'plain'
           return { text: `Captain ${p.captain_name ?? ''} lost with the ship`.trim(), tone: 'bad' };
         case 'captain_rescued':
           return { text: `Captain ${p.captain_name ?? ''} pulled from the wreck`.trim(), tone: 'good' };
+        case 'ship_refitted':
+          return {
+            text: `Refitted to ${p.design_name ?? 'its new design'} at ${p.body_name ?? 'a friendly world'}`,
+            tone: 'good',
+          };
         default:
           return { text: (r.event ?? 'event').replace(/_/g, ' '), tone: 'plain' };
       }
