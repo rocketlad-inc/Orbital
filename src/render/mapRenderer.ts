@@ -6327,14 +6327,15 @@ function drawTorchTransitShip(
   // motion — exactly what you'd see when the torch decelerates.
   const thrustVis = thrustVisibility(ctx.camera.scale);
   // THE PLUME FOLLOWS THE PUSH (shaped burns only). A building burn lights
-  // at 0.7 (dimmer) and grows to 1.3 (30% longer, full bright) as the push
-  // reaches its top; the hard brake burns at 1.3 throughout. It dies away
-  // through the middle of the flip turn. Everything else is 1, as before.
-  const shapedPlume = !shaped ? 1
-    : (isBrake ? 1.3
-      : (currentTransfer.accelRamp != null && currentTransfer.accelRamp > 0
-        ? 0.7 + 0.6 * pushShareAt(currentTransfer, ctx.t) : 1))
-      * Math.abs(Math.cos(Math.PI * flipTurn));
+  // short and a little dim (0.7x long, 0.8x bright) and grows with the
+  // push to 1.4x long, full bright at the top of the build; the hard brake
+  // burns at 1.4x throughout. It dies away through the middle of the flip
+  // turn. Everything else is 1 and 1, exactly as before.
+  const ramped = currentTransfer.accelRamp != null && currentTransfer.accelRamp > 0;
+  const share = shaped && ramped && !isBrake ? pushShareAt(currentTransfer, ctx.t) : 1;
+  const turnFade = shaped ? Math.abs(Math.cos(Math.PI * flipTurn)) : 1;
+  const plumeLen = !shaped ? 1 : (isBrake ? 1.4 : ramped ? 0.7 + 0.7 * share : 1) * turnFade;
+  const shapedPlume = !shaped ? 1 : (ramped && !isBrake ? 0.8 + 0.2 * share : 1) * turnFade;
   if (thrusting && thrustVis > 0 && shapedPlume > 0.02) {
     const cosH = Math.cos(heading);
     const sinH = Math.sin(heading);
@@ -6349,6 +6350,7 @@ function drawTorchTransitShip(
       undefined,
       // From the engines the hull's art actually has.
       driveBellsFor(ship.class, ship.iconVariant),
+      plumeLen,
     );
     // Speed streaks on a retreating burn: brief parallel motion lines
     // shedding off the hull, flickering — unmistakably "getting out".
