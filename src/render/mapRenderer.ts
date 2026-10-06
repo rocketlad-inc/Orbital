@@ -1374,8 +1374,11 @@ function getSunMottleLayer(coreR: number): HTMLCanvasElement | null {
 // Lightweight mode draws one still frame and skips the stream.
 // ------------------------------------------------------------
 const BH_TILT = 0.3;          // disk seen nearly edge-on: minor/major axis
-const BH_DISK_OUT = 4.2;      // disk outer radius, in horizon radii
-const BH_DISK_IN = 1.35;      // innermost stable orbit, in horizon radii
+// 2.8, not 4.2: first look on staging, the disk reached HDE 226868 and
+// swallowed the gap the mass-transfer stream needs to cross. Cygnus X-1's
+// disk sits well inside the binary's orbit.
+const BH_DISK_OUT = 2.8;      // disk outer radius, in horizon radii
+const BH_DISK_IN = 1.25;      // innermost stable orbit, in horizon radii
 const bhDiskCache = new Map<number, HTMLCanvasElement | null>();
 
 function getBlackHoleDisk(diskR: number): HTMLCanvasElement | null {
@@ -1441,7 +1444,7 @@ function drawBlackHoleBody(
   const spin = nowMs * 0.00022;                       // disk turns in its plane
 
   // Halo: the system's light, scattered. Warm, not the old violet.
-  const haloR = rh * 8;
+  const haloR = rh * 6;
   const halo = c.createRadialGradient(x, y, rh * 2, x, y, haloR);
   halo.addColorStop(0, 'rgba(255, 170, 110, 0.16)');
   halo.addColorStop(0.45, 'rgba(200, 110, 90, 0.05)');
@@ -1455,20 +1458,24 @@ function drawBlackHoleBody(
     const flick = still ? 1 : 0.85 + 0.15 * Math.sin(nowMs * 0.006);
     c.save();
     c.globalCompositeOperation = 'lighter';
+    // Two passes per jet: a faint sheath, then a narrow bright core.
+    // First look on staging: one filled wedge read as a hard light bar.
     for (const dir of [-1, 1]) {
-      const len = rh * 9;
-      const g = c.createLinearGradient(x, y, x, y + dir * len);
-      g.addColorStop(0, `rgba(190, 215, 255, ${0.5 * flick})`);
-      g.addColorStop(0.35, `rgba(140, 175, 255, ${0.2 * flick})`);
-      g.addColorStop(1, 'rgba(120, 150, 255, 0)');
-      c.fillStyle = g;
-      c.beginPath();
-      c.moveTo(x - rh * 0.16, y);
-      c.lineTo(x + rh * 0.16, y);
-      c.lineTo(x + rh * 0.04, y + dir * len);
-      c.lineTo(x - rh * 0.04, y + dir * len);
-      c.closePath();
-      c.fill();
+      const len = rh * 7;
+      for (const [w0, w1, a] of [[0.1, 0.03, 0.16], [0.035, 0.008, 0.42]] as const) {
+        const g = c.createLinearGradient(x, y, x, y + dir * len);
+        g.addColorStop(0, `rgba(200, 222, 255, ${a * flick})`);
+        g.addColorStop(0.4, `rgba(150, 185, 255, ${a * 0.45 * flick})`);
+        g.addColorStop(1, 'rgba(120, 150, 255, 0)');
+        c.fillStyle = g;
+        c.beginPath();
+        c.moveTo(x - rh * w0, y);
+        c.lineTo(x + rh * w0, y);
+        c.lineTo(x + rh * w1, y + dir * len);
+        c.lineTo(x - rh * w1, y + dir * len);
+        c.closePath();
+        c.fill();
+      }
     }
     c.restore();
   }
@@ -1530,10 +1537,16 @@ function drawBlackHoleBody(
   arc(1.18, 0, Math.PI, 0.28, Math.max(0.8, rh * 0.16));
   c.restore();
 
-  // The near half of the disk again, passing in front of the horizon.
+  // The near half of the disk again, passing in front of the horizon —
+  // redrawn ONLY over the shadow. Clipped to the whole lower half, it
+  // painted the disk twice everywhere below the midline, and a bright
+  // seam ran across the system on the first staging look.
   c.save();
   c.beginPath();
-  c.rect(x - diskR - 2, y, diskR * 2 + 4, diskR);
+  c.rect(x - rh - 1, y, (rh + 1) * 2, rh + 1);
+  c.clip();
+  c.beginPath();
+  c.arc(x, y, rh + 0.5, 0, Math.PI * 2);
   c.clip();
   drawDisk();
   c.restore();
