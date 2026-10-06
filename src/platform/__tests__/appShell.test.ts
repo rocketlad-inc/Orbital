@@ -82,6 +82,9 @@ describe('the Commission storefronts', () => {
       // The skin picker shows the locked styles everywhere; the buy
       // button under a clicked lock only where it can sell.
       'multiplayer/SkinPicker.tsx': /\{sellable \? \(/,
+      // The game-feed card (own Discord server): the goods and the
+      // Connect everywhere; buy and gift only where it can sell.
+      'multiplayer/DiscordServerFeed.tsx': /\{sellable \? \(/,
     };
     for (const [rel, gate] of Object.entries(gated)) {
       expect(read(rel)).toMatch(gate);
