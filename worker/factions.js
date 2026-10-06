@@ -500,21 +500,30 @@ export const BODY_CATALOG = [
     orbit_radius: 33150, orbit_period: 1e12, angle0: 0,
     color: '#3a3a44', far_system: true,
     yield: { metal: 0, fuel: 0, gold: 0, science: 0 } },
+  // THE DANCE: A and B ride matching e = 0.4 ellipses (0.46 : 0.54 of a
+  // 1200 spacing, periapses opposite), swinging 720 <-> 1680 apart, 1440
+  // <-> 3360 live, every 240 ticks. WIDE ON PURPOSE (Lorne, 2026-10-06,
+  // "I dont care if that fudges the physics"): real stability limits
+  // would crowd Verdant and Cinder inside their suns' glare, so each
+  // home orbits 250 out (500 live) and each sun's SOI is 160 (640 live:
+  // SOIs take body_scale too). At periastron the two SOIs still clear
+  // each other (1280 < 1440 live), and B at apastron plus its SOI (2454
+  // live) stays well inside Crimson's (3360).
   { id: 'centauri_a', name: 'Centauri A', type: 'star', parent: 'binary_barycenter',
-    radius: 8, soi: 80, mu: 200,
-    orbit_radius: 230, orbit_period: 168 / Math.pow(2, 1.5), angle0: 0,
+    radius: 8, soi: 160, mu: 200,
+    orbit_radius: 552, orbit_period: 168 / Math.pow(2, 1.5), angle0: 0,
     color: '#ffe082', far_system: true,
-    orbit_rp: 138, orbit_ra: 322, orbit_omega: 0, orbit_m0: 0,
+    orbit_rp: 331.2, orbit_ra: 772.8, orbit_omega: 0, orbit_m0: 0,
     yield: { metal: 0, fuel: 0, gold: 0, science: 0 } },
   { id: 'centauri_b', name: 'Centauri B', type: 'star', parent: 'binary_barycenter',
-    radius: 6, soi: 80, mu: 150,
-    orbit_radius: 270, orbit_period: 168 / Math.pow(2, 1.5), angle0: Math.PI,
+    radius: 6, soi: 160, mu: 150,
+    orbit_radius: 648, orbit_period: 168 / Math.pow(2, 1.5), angle0: Math.PI,
     color: '#ff8a5e', far_system: true,
-    orbit_rp: 162, orbit_ra: 378, orbit_omega: Math.PI, orbit_m0: 0,
+    orbit_rp: 388.8, orbit_ra: 907.2, orbit_omega: Math.PI, orbit_m0: 0,
     yield: { metal: 0, fuel: 0, gold: 0, science: 0 } },
   { id: 'verdant', name: 'Verdant', type: 'terrestrial', parent: 'centauri_a',
     radius: 4, soi: 25, mu: 150,
-    orbit_radius: 55, orbit_period: 35.7, angle0: 0.3,
+    orbit_radius: 250, orbit_period: 90, angle0: 0.3,
     color: '#3aaf6e', far_system: true,
     yield: { metal: 8, fuel: 0, gold: 8, science: 12 } },
   // Every far terrestrial world holds one or two moons (Lorne,
@@ -560,7 +569,7 @@ export const BODY_CATALOG = [
     yield: { metal: 8, fuel: 0, gold: 3, science: 4 } },
   { id: 'cinder', name: 'Cinder', type: 'terrestrial', parent: 'centauri_b',
     radius: 3, soi: 15, mu: 90,
-    orbit_radius: 55, orbit_period: 35.7, angle0: 4.7,
+    orbit_radius: 250, orbit_period: 90, angle0: 4.7,
     color: '#a8553a', far_system: true,
     yield: { metal: 11, fuel: 0, gold: 9, science: 7 } },
   { id: 'clinker', name: 'Clinker', type: 'moon', parent: 'cinder',

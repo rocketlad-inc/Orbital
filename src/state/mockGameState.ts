@@ -510,18 +510,18 @@ export const SHARED_BODIES: Body[] = [
   },
   {
     id: 'centauri_a', name: 'Centauri A', type: 'star', parent: 'binary_barycenter',
-    radius: 8, soi: 80, mu: 200, color: '#ffe082',
+    radius: 8, soi: 160, mu: 200, color: '#ffe082',
     // The dance (worker/factions.js): an e = 0.4 ellipse, opposite B.
-    orbitRadius: 230, orbitPeriod: 168 / Math.pow(2, 1.5), angle0: 0,
-    orbit_rp: 138, orbit_ra: 322, orbit_omega: 0, orbit_m0: 0,
+    orbitRadius: 552, orbitPeriod: 168 / Math.pow(2, 1.5), angle0: 0,
+    orbit_rp: 331.2, orbit_ra: 772.8, orbit_omega: 0, orbit_m0: 0,
   },
   {
     id: 'centauri_b', name: 'Centauri B', type: 'star', parent: 'binary_barycenter',
-    radius: 6, soi: 80, mu: 150, color: '#ff8a5e',
+    radius: 6, soi: 160, mu: 150, color: '#ff8a5e',
     // Opposite A on the matching ellipse: same period and mean anomaly,
     // periapsis half a turn round.
-    orbitRadius: 270, orbitPeriod: 168 / Math.pow(2, 1.5), angle0: Math.PI,
-    orbit_rp: 162, orbit_ra: 378, orbit_omega: Math.PI, orbit_m0: 0,
+    orbitRadius: 648, orbitPeriod: 168 / Math.pow(2, 1.5), angle0: Math.PI,
+    orbit_rp: 388.8, orbit_ra: 907.2, orbit_omega: Math.PI, orbit_m0: 0,
   },
   // Circumbinary worlds. Periods follow a rough √r scaling so the
   // outer worlds visibly lag behind the inner one, same as Kepler's
@@ -532,7 +532,7 @@ export const SHARED_BODIES: Body[] = [
   {
     id: 'verdant', name: 'Verdant', type: 'terrestrial', parent: 'centauri_a',
     radius: 4, soi: 25, mu: 150, color: '#3aaf6e',
-    orbitRadius: 55, orbitPeriod: 35.7, angle0: 0.3,
+    orbitRadius: 250, orbitPeriod: 90, angle0: 0.3,
     resources: { fuel: 0, gold: 8, metal: 8, science: 12 },
   },
   {
@@ -550,7 +550,7 @@ export const SHARED_BODIES: Body[] = [
   {
     id: 'cinder', name: 'Cinder', type: 'terrestrial', parent: 'centauri_b',
     radius: 3, soi: 15, mu: 90, color: '#a8553a',
-    orbitRadius: 55, orbitPeriod: 35.7, angle0: 4.7,
+    orbitRadius: 250, orbitPeriod: 90, angle0: 4.7,
     resources: { fuel: 0, gold: 9, metal: 11, science: 7 },
   },
   // Outer dwarf — the return-gate body. The warp_gate secret on this

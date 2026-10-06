@@ -112,10 +112,11 @@ check('they use the SERVER spelling for types',
 
 // ---- TWO HOMES AND A CHAOS ZONE (Lorne, 2026-10-06) -------------------------
 // Centauri A and B dance on matching e = 0.4 ellipses; Verdant (and its
-// moons) orbit A alone and Cinder B alone, inside each sun's stability
-// limit; everything else circles both, beyond the circumbinary edge.
-// Holman & Wiegert's fits for mass ratio 0.46, e = 0.4: S-type within
-// 0.155 of the pair's semi-major axis, P-type beyond 3.48 of it.
+// moons) orbit A alone and Cinder B alone, each inside its sun's SOI;
+// everything else circles both, beyond the reach of either sun's SOI.
+// Spread wider than real stability limits allow (Lorne, 2026-10-06: "I
+// dont care if that fudges the physics") so each home's orbit shows
+// clear of its sun's glare and the chaos zone between shrinks.
 {
   const { eccentricLocalPosition } = await import('../worker/transitCombat.js');
   const { ORBITAL_SPEED_SCALE } = await import('../worker/orbitPos.js');
@@ -137,30 +138,42 @@ check('they use the SERVER spelling for types',
     minSep = Math.min(minSep, sep); maxSep = Math.max(maxSep, sep);
   }
   check('the suns stay exactly opposite through the dance', opposite);
-  check('they swing from 600 apart to 1400', Math.abs(minSep - 600) < 2 && Math.abs(maxSep - 1400) < 2,
+  check('they swing from 1440 apart to 3360', Math.abs(minSep - 1440) < 3 && Math.abs(maxSep - 3360) < 3,
     `${minSep.toFixed(0)}..${maxSep.toFixed(0)}`);
   const sepAt = (t) => { const a = at(A, t), b = at(Bs, t); return Math.hypot(a.x - b.x, a.y - b.y); };
   check('one full dance takes 240 ticks', Math.abs(sepAt(0) - sepAt(240)) < 0.5 && Math.abs(sepAt(0) - sepAt(120)) > 100,
     `${sepAt(0).toFixed(0)} / ${sepAt(120).toFixed(0)} / ${sepAt(240).toFixed(0)}`);
 
-  const aBin = 1000, S_LIMIT = 0.155 * aBin, P_EDGE = 3.48 * aBin;
+  // A home's full reach: its orbit, its outermost moon, that moon's SOI.
+  const reachOf = (id) => {
+    const w = live(id);
+    return Math.max(w.soi, ...BODY_CATALOG.filter(m => m.parent === id)
+      .map(m => live(m.id).orbit_radius + live(m.id).soi));
+  };
   for (const [world, sun] of [['verdant', 'centauri_a'], ['cinder', 'centauri_b']]) {
-    const w = live(world);
-    const reach = Math.max(0, ...BODY_CATALOG.filter(m => m.parent === world).map(m => live(m.id).orbit_radius));
-    check(`${w.name} orbits ${sun === 'centauri_a' ? 'A' : 'B'} alone, inside the stability limit`,
-      w.parent === sun && w.orbit_radius + reach <= S_LIMIT,
-      `${w.orbit_radius} + moons ${reach} vs ${S_LIMIT}`);
+    const w = live(world), s = live(sun);
+    check(`${w.name} orbits ${sun === 'centauri_a' ? 'A' : 'B'} alone, inside its sun's SOI`,
+      w.parent === sun && w.orbit_radius + reachOf(world) < s.soi,
+      `${w.orbit_radius} + ${reachOf(world)} vs ${s.soi}`);
+    // Clear of the sun's glare: at least 4x the sun's drawn radius out.
+    check(`${w.name}'s orbit shows clear of its sun`, w.orbit_radius - reachOf(world) > 4 * s.radius,
+      `${w.orbit_radius} - ${reachOf(world)} vs ${4 * s.radius}`);
   }
+  check("the two suns' SOIs never touch, even at their closest", A.soi + Bs.soi < minSep,
+    `${A.soi} + ${Bs.soi} vs ${minSep.toFixed(0)}`);
+  // The suns' zone: the furthest either sun's SOI ever reaches.
+  const SUN_ZONE = Math.max(A.orbit_ra + A.soi, Bs.orbit_ra + Bs.soi);
   for (const id of ['crimson', 'flint', 'tinder', 'ember', 'pyrite', 'farspire']) {
     const w = live(id);
-    const reach = Math.max(0, ...BODY_CATALOG.filter(m => m.parent === id).map(m => live(m.id).orbit_radius));
-    check(`${w.name} circles both suns, beyond the edge`,
-      w.parent === 'binary_barycenter' && w.orbit_radius - reach > P_EDGE,
-      `${w.orbit_radius} - ${reach} vs ${P_EDGE}`);
+    const reach = Math.max(w.soi, ...BODY_CATALOG.filter(m => m.parent === id)
+      .map(m => live(m.id).orbit_radius + live(m.id).soi));
+    check(`${w.name} circles both suns, clear of the suns' zone`,
+      w.parent === 'binary_barycenter' && w.orbit_radius - reach > SUN_ZONE,
+      `${w.orbit_radius} - ${reach} vs ${SUN_ZONE}`);
   }
   check('nothing but the suns lives in the chaos zone',
     BODY_CATALOG.filter(b => b.parent === 'binary_barycenter' && b.type !== 'star')
-      .every(b => live(b.id).orbit_radius > P_EDGE));
+      .every(b => live(b.id).orbit_radius > SUN_ZONE));
 
   // The station bonus follows the dance for the worlds around one sun.
   let lo = 1, hi = 0;
@@ -378,7 +391,7 @@ check('a default-dial game still opens the system up (FAR_LOCAL_SCALE)',
 check('its worlds orbit IT, at their own local radii',
   byId.get('crimson')?.parent_body_id?.endsWith(':binary_barycenter')
   && byId.get('verdant')?.parent_body_id?.endsWith(':centauri_a')
-  && byId.get('verdant').orbit_radius < 200,
+  && byId.get('verdant').orbit_radius === 250 * FAR_LOCAL_SCALE,
   JSON.stringify(byId.get('verdant')));
 check('the black hole kept its type through the seed',
   byId.get('cygnus_x')?.type === 'black_hole', byId.get('cygnus_x')?.type);
@@ -407,7 +420,7 @@ check('the gas giant kept the server spelling',
   check('a far moon of a far world takes the same factor, not moon_scale',
     geo('prismara').orbit_radius === 26 * F, String(geo('prismara').orbit_radius));
   check("the suns' binary opens up with the rest",
-    geo('centauri_b').orbit_radius === 270 * F, String(geo('centauri_b').orbit_radius));
+    geo('centauri_b').orbit_radius === 648 * F, String(geo('centauri_b').orbit_radius));
   // 33,150 written in the file, doubled at module load by SYSTEM_SCALE,
   // then the host's system_scale 4 on top: the 265,200 of the design.
   check('but the DISTANCE to the system still scales with the map',
