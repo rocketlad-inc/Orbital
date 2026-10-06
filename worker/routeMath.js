@@ -21,6 +21,7 @@ import { parseTraits, traitMul } from './captains.js';
 import { maySupplySite, excludedFundersOf, constructionPartners } from './megastructures.js';
 import { hasFeature, factionTechLevels, gatingEnabled } from './researchUnlocks.js';
 import { SHIP_ENGINE_ACCEL, legTicks as burnLegTicks } from './burn.js';
+import { legDilation } from './wellDilation.js';
 
 /** Transfer Lanes: a capital-to-capital leg runs at this fraction of
  *  its burn time once the faction holds Propulsion 3. 0.75 is a quarter
@@ -131,16 +132,36 @@ export function makeRouteMath(db, gameId) {
   // Burn time (burn.js: the push builds from launch, brake 9x hard)
   // with a 5-iteration intercept refinement so target-body motion during
   // the trip is accounted for. Integer ticks >= 1.
+  // THE WELL (wellDilation.js): the black holes on the map, read once
+  // per pass. A map without the far systems has none and pays nothing.
+  let wellIdsPromise = null;
+  const wellIds = () => {
+    if (!wellIdsPromise) {
+      wellIdsPromise = db
+        .prepare(`SELECT id FROM game_bodies
+                   WHERE game_id = ? AND type = 'black_hole' AND destroyed_at_tick IS NULL`)
+        .bind(gameId).all()
+        .then(r => (r.results ?? []).map(x => x.id))
+        .catch(() => []);
+    }
+    return wellIdsPromise;
+  };
+
   const computeLegTicks = async (factionId, originId, destId, refTick) => {
     const accel = await getFactionAccel(factionId);
     const startPos = await bodyPosAt(originId, refTick);
+    const wells = [];
+    for (const id of await wellIds()) wells.push(await bodyPosAt(id, refTick));
     let T = 1;
     for (let i = 0; i < 5; i++) {
       const destPos = await bodyPosAt(destId, refTick + T);
       const dx = destPos.x - startPos.x;
       const dy = destPos.y - startPos.y;
       const d = Math.sqrt(dx * dx + dy * dy);
-      const Tnew = burnLegTicks(Math.max(d, 0.01), accel);
+      // Slowed by the well: the whole build-up stretched in time by f,
+      // the same transform the client planner applies (torchTransfer).
+      const f = wells.length ? legDilation(startPos, destPos, wells) : 1;
+      const Tnew = burnLegTicks(Math.max(d, 0.01), accel) * f;
       if (Math.abs(Tnew - T) < 0.05) { T = Tnew; break; }
       T = Tnew;
     }

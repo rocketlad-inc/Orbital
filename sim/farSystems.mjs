@@ -94,6 +94,21 @@ check('they use the SERVER spelling for types',
   }
 }
 
+// THE BINARY'S STATION BONUS covers every world and moon of Centauri, and
+// nothing else: a new Centauri moon added later without joining the list
+// would quietly yield single.
+{
+  const { BINARY_SYSTEM_TEMPLATE_IDS } = await import('../worker/systems.js');
+  const centauriWorlds = CENTAURI.filter(id => {
+    const b = BODY_CATALOG.find(x => x.id === id);
+    return b && b.type !== 'star' && b.type !== 'lagrange';
+  });
+  check('every Centauri world and moon gets the binary station bonus',
+    centauriWorlds.every(id => BINARY_SYSTEM_TEMPLATE_IDS.has(id))
+    && BINARY_SYSTEM_TEMPLATE_IDS.size === centauriWorlds.length,
+    centauriWorlds.filter(id => !BINARY_SYSTEM_TEMPLATE_IDS.has(id)).join(', '));
+}
+
 // ---- 2. Distance is the balance -------------------------------------
 // Live games run system_scale 4 over the catalogue's own SYSTEM_SCALE 2.
 const LIVE = 4;
@@ -177,6 +192,21 @@ const off = await seedGame('gfar_zero', 0);
 check('far_systems: 0 seeds none either', ![...off.ids].some(t => FAR_SYSTEM_IDS.has(t)));
 
 const on = await seedGame('gfar_on', 1);
+
+// THE WELL, on the server's own leg timer (routeMath.computeLegTicks):
+// a hop from Requiem to Vellichor, timed with the black hole there and
+// again with it gone.
+{
+  const { makeRouteMath } = await import('../worker/routeMath.js');
+  const leg = async () => makeRouteMath(on.DB, 'gfar_on')
+    .computeLegTicks(null, 'gfar_on:requiem', 'gfar_on:vellichor', 0);
+  const near = await leg();
+  await on.DB.prepare(`UPDATE game_bodies SET destroyed_at_tick = 0 WHERE id = 'gfar_on:cygnus_x'`).run();
+  const flat = await leg();
+  await on.DB.prepare(`UPDATE game_bodies SET destroyed_at_tick = NULL WHERE id = 'gfar_on:cygnus_x'`).run();
+  check("the well slows a hop between Cygnus's inner worlds on the server too",
+    near >= flat * 1.3, `${near} ticks in the well vs ${flat} without it`);
+}
 check(`far_systems: 1 seeds all ${ALL_FAR.length}`,
   ALL_FAR.every(id => on.ids.has(id)), ALL_FAR.filter(id => !on.ids.has(id)).join(', '));
 check('...and the rest of Sol is still there',

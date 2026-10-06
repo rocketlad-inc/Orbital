@@ -29,6 +29,7 @@
 // (Asymmetric: t1 = √(2·d·brake / (boost·(boost+brake))), T = t1·(1+boost/brake))
 
 import { bodyPosition, bodyWorldVelocity } from './orbitalMechanics';
+import { legDilation } from './wellDilation';
 import type { Body } from '../types';
 
 export interface Vec2 { x: number; y: number }
@@ -148,10 +149,20 @@ export function planTorchTransfer(
     return planRampedTransfer(ship, target, boostAccel, brakeAccel / boostAccel, ramp, currentTick, bodies, iterations);
   }
 
+  // THE WELL (wellDilation.ts). Near Cygnus X the trip takes f times as
+  // long, flown as the engine the well leaves you: both accelerations
+  // over f^2, so the plan committed below is still a real burn and every
+  // client and the server's transit combat fly it identically.
+  const wells = bodies
+    .filter(b => b.type === 'black_hole')
+    .map(b => bodyPosition(b, currentTick, bodies));
+  let boost = boostAccel;
+  let brake = brakeAccel;
+
   // Closed-form trip time for a straight-line distance d.
   const tripTime = (d: number) => {
-    const t1 = Math.sqrt(2 * d * brakeAccel / (boostAccel * (boostAccel + brakeAccel)));
-    const t2 = (boostAccel * t1) / brakeAccel;
+    const t1 = Math.sqrt(2 * d * brake / (boost * (boost + brake)));
+    const t2 = (boost * t1) / brake;
     return { T: t1 + t2, t1 };
   };
 
@@ -163,6 +174,11 @@ export function planTorchTransfer(
     const dy = interceptPos.y - ship.pos.y;
     const d = Math.sqrt(dx * dx + dy * dy);
     if (d < 1e-6) return null;
+    if (wells.length > 0) {
+      const f = legDilation(ship.pos, interceptPos, wells);
+      boost = boostAccel / (f * f);
+      brake = brakeAccel / (f * f);
+    }
     const tt = tripTime(d);
     if (Math.abs(tt.T - T) < 1e-4) { T = tt.T; t1 = tt.t1; break; }
     T = tt.T;
@@ -174,13 +190,13 @@ export function planTorchTransfer(
   const dy = interceptPos.y - ship.pos.y;
   const d = Math.sqrt(dx * dx + dy * dy);
   const thrustDir: Vec2 = { x: dx / d, y: dy / d };
-  const vPeak = boostAccel * t1;
+  const vPeak = boost * t1;
   const t2 = T - t1;
 
   return {
     targetBodyId,
-    acceleration: boostAccel,
-    brakeAcceleration: brakeAccel,
+    acceleration: boost,
+    brakeAcceleration: brake,
     startTick: currentTick,
     flipTick: currentTick + t1,
     arriveTick: currentTick + T,
@@ -188,7 +204,7 @@ export function planTorchTransfer(
     interceptPos,
     startPos: { x: ship.pos.x, y: ship.pos.y },
     startVel: { x: ship.vel.x, y: ship.vel.y },
-    totalDv: boostAccel * t1 + brakeAccel * t2,
+    totalDv: boost * t1 + brake * t2,
     peakVelocity: vPeak,
   };
 }
@@ -334,6 +350,15 @@ function planRampedTransfer(
   ship: TorchShipState, target: Body, a0: number, k: number, r: BurnRamp,
   currentTick: number, bodies: Body[], iterations: number,
 ): TorchTransfer | null {
+  // THE WELL (wellDilation.ts), on the build-up: the whole burn is
+  // stretched in time by f -- every push over f^2, the linear build rate
+  // over f^3, the exponential build's time constant times f -- which is
+  // the same burn, f times slower. The server's leg timer multiplies its
+  // open-space trip by f and lands on the same tick (routeMath).
+  const wells = bodies
+    .filter(b => b.type === 'black_hole')
+    .map(b => bodyPosition(b, currentTick, bodies));
+  let w = { a0, ramp: r.ramp, max: r.max, tau: r.tau ?? 0 };
   let interceptPos = bodyPosition(target, currentTick, bodies);
   let shape = { t1: 0, T: 0, brake: k * a0, vPeak: 0 };
   for (let i = 0; i < iterations; i++) {
@@ -341,7 +366,11 @@ function planRampedTransfer(
     const dy = interceptPos.y - ship.pos.y;
     const d = Math.sqrt(dx * dx + dy * dy);
     if (d < 1e-6) return null;
-    const next = burnShape(d, a0, r.ramp, r.max, k, r.tau ?? 0);
+    if (wells.length > 0) {
+      const f = legDilation(ship.pos, interceptPos, wells);
+      w = { a0: a0 / (f * f), ramp: r.ramp / (f * f * f), max: r.max / (f * f), tau: (r.tau ?? 0) * f };
+    }
+    const next = burnShape(d, w.a0, w.ramp, w.max, k, w.tau);
     const done = Math.abs(next.T - shape.T) < 1e-4;
     shape = next;
     if (done) break;
@@ -352,11 +381,12 @@ function planRampedTransfer(
   const d = Math.sqrt(dx * dx + dy * dy);
   return {
     targetBodyId: target.id,
-    acceleration: a0,
+    acceleration: w.a0,
     brakeAcceleration: shape.brake,
-    // Exponential (tau) or linear (ramp): the leg carries whichever it is.
-    ...((r.tau ?? 0) > 0 ? { accelTau: r.tau } : { accelRamp: r.ramp }),
-    accelMax: r.max,
+    // Exponential (tau) or linear (ramp): the leg carries whichever it is
+    // -- as the well left it, so every replay flies the slowed burn.
+    ...((r.tau ?? 0) > 0 ? { accelTau: w.tau } : { accelRamp: w.ramp }),
+    accelMax: w.max,
     startTick: currentTick,
     flipTick: currentTick + shape.t1,
     arriveTick: currentTick + shape.T,

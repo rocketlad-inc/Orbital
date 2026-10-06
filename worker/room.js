@@ -36,8 +36,9 @@ import {
   MEGA_MAX_HP, MEGA_REGEN_PER_TICK, MEGA_BREACH_HP, stationDamage,
   maySupplySite, excludedFundersOf, constructionPartners, gateTransitTicks,
 } from './megastructures.js';
-import { NON_WORLD_TYPES } from './systems.js';
+import { NON_WORLD_TYPES, stationTypeMul } from './systems.js';
 import { advanceSunGates, mainSystemSql } from './sunGates.js';
+import { legDilation } from './wellDilation.js';
 const MAIN_SYSTEM = mainSystemSql();
 
 /** Unordered faction-pair key, shared by the tick's combat passes and
@@ -7660,7 +7661,9 @@ export class Room {
       const perGroupStock = new Map(); // groupKey -> { targetId, f, m, g, sc }
 
       for (const s of settlements) {
-        const tm = s.type === 'city' ? TYPE_MUL_CITY : TYPE_MUL_STATION;
+        // Doubled for a station under Centauri's two suns (systems.js).
+        const tm = stationTypeMul(s.type === 'city' ? TYPE_MUL_CITY : TYPE_MUL_STATION,
+          s.type, { id: s.body_id });
         const popMul = 1 + YIELD_MULT_PER_POP * Math.max(0, Number(s.population ?? 1) - 1);
         let bld = {};
         if (s.buildings_json) { try { bld = JSON.parse(s.buildings_json) ?? {}; } catch { bld = {}; } }
@@ -8989,17 +8992,27 @@ export class Room {
             y: parent.y + Math.sin(angle) * (b.orbit_radius ?? 0),
           };
         };
-        // Every hull's launch push and its build-up, from burn.js.
+        // Every hull's launch push and its build-up, from burn.js,
+        // slowed near the black hole like every other leg (wellDilation).
+        const wellRows = (await this.env.DB
+          .prepare(`SELECT id FROM game_bodies
+                     WHERE game_id = ? AND type = 'black_hole' AND destroyed_at_tick IS NULL`)
+          .bind(gameId).all()).results ?? [];
         const computeLegTicks = async (_factionId, originId, destId) => {
           const accel = SHIP_ENGINE_ACCEL;
           const startPos = await bodyPosAt(originId, tick);
+          const wells = [];
+          for (const w of wellRows) wells.push(await bodyPosAt(w.id, tick));
           let T = 1;
           for (let i = 0; i < 5; i++) {
             const destPos = await bodyPosAt(destId, tick + T);
             const dx = destPos.x - startPos.x;
             const dy = destPos.y - startPos.y;
             const d = Math.sqrt(dx * dx + dy * dy);
-            const Tnew = burnLegTicks(Math.max(d, 0.01), accel);
+            // The well stretches the whole build-up in time by f, so the
+            // trip is exactly f times the open-space one (wellDilation).
+            const f = wells.length ? legDilation(startPos, destPos, wells) : 1;
+            const Tnew = burnLegTicks(Math.max(d, 0.01), accel) * f;
             if (Math.abs(Tnew - T) < 0.05) { T = Tnew; break; }
             T = Tnew;
           }

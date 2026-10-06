@@ -119,6 +119,26 @@ export function isFarSystemBody(row) {
   return FAR_SYSTEM_TEMPLATE_IDS.has(t) || t === FAR_GATE_TEMPLATE;
 }
 
+/** Centauri's worlds and moons: the binary system. Two suns pour twice
+ *  the light on anything in orbit there, so a STATION in Centauri yields
+ *  double (Lorne, 2026-10-06). Mirrored in src/game/farSystems.ts. */
+export const BINARY_SYSTEM_TEMPLATE_IDS = new Set([
+  'verdant', 'thistle', 'sorrel', 'crimson', 'prismara', 'scoria', 'umber',
+  'cinder', 'clinker', 'farspire',
+]);
+/** What a station's yield is multiplied by in the binary system. */
+export const BINARY_STATION_MUL = 2;
+/** Is this row a world (or moon) of the binary system? */
+export function isBinarySystemBody(row) {
+  return BINARY_SYSTEM_TEMPLATE_IDS.has(templateOf(row));
+}
+/** A settlement's type multipliers, doubled for a station in Centauri. */
+export function stationTypeMul(base, settlementType, bodyRow) {
+  if (settlementType === 'city' || !isBinarySystemBody(bodyRow)) return base;
+  const m = BINARY_STATION_MUL;
+  return { fuel: base.fuel * m, metal: base.metal * m, gold: base.gold * m, science: base.science * m };
+}
+
 /** The same rule for SQL counts over game_bodies: a fragment plus its
  *  binds (15, well inside D1's 100 [[orbital-d1-bind-limit]]). */
 export function mainSystemSql(col = 'template_id') {
