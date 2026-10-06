@@ -2613,7 +2613,9 @@ function drawEmergingGate(
   const f = Math.min(1, Math.max(0, (ctx.t - em.fromTick) / span));
   // Speed on an even burn peaks at the flip: 0 -> 1 -> 0.
   const speed = 1 - Math.abs(2 * f - 1);
-  const R = Math.max(10, Math.min(radius * 1.6, 32));
+  // The map's headline event, so a floor well above a ship's: the old
+  // blob's 10px floor drew the squid as a smudge with its detail off.
+  const R = Math.max(28, Math.min(radius * 2.4, 64));
 
   g.save();
 
@@ -2644,11 +2646,12 @@ function drawEmergingGate(
   });
 }
 
-/** Ring radius in px of a sun gate drawn at body radius `radius`: the
- *  same floor and cap a structure gets (drawMegastructureBody), so the
- *  ring a flight unfurls into is the ring the resting gate draws. */
+/** Ring radius in px of a sun gate drawn at body radius `radius`. ONE
+ *  function for the flight and the resting gate, so the ring a flight
+ *  unfurls into is exactly the ring the gate then draws. A landmark's
+ *  floor: findable from across the system. */
 function sunGateRingR(radius: number): number {
-  return Math.max(9, Math.min(radius, 46)) * 0.95;
+  return Math.max(16, Math.min(radius * 1.4, 56));
 }
 
 /**
