@@ -6944,7 +6944,15 @@ export function drawStation(
   const lb = ctx.presentation ? ctx.liveBattles?.get(body.id) : undefined;
   if (lb && lb.stationId === settlement.id) {
     const k = battleScale(lb, drawnRadiusOf(ctx.presentation, body, ctx.camera.scale));
-    const pl = k > 0 ? battlePlacement(lb, settlement.id, ctx.nowMs ?? performance.now()) : null;
+    const nowSt = ctx.nowMs ?? performance.now();
+    if (k > 0 && !hasBattleGlide(settlement.id)) {
+      // Ships just arrived: glide over from its own orbit, not jump.
+      const c0 = worldToCanvas(bodyPos.x, bodyPos.y, ctx);
+      const px = (canvasPos.x - c0.x) / k, py = (canvasPos.y - c0.y) / k;
+      seedBattleGlide(settlement.id, Math.hypot(px, py),
+        Math.atan2(py, px) - battleDrift(lb, nowSt), nowSt);
+    }
+    const pl = k > 0 ? battlePlacement(lb, settlement.id, nowSt) : null;
     if (pl) {
       const c = worldToCanvas(bodyPos.x, bodyPos.y, ctx);
       canvasPos = { x: c.x + pl.x * k, y: c.y + pl.y * k };

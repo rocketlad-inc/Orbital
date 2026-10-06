@@ -69,11 +69,28 @@ export interface BlockGeometry {
   flagY: number;
   clearR: number;
 }
+/** Fleet escorts are drawn half again bigger than the slot rule gave
+ *  (Lorne, 2026-10-06: "increase the size of ships in a fleet by 50%.
+ *  They're just too damn small"). The SPACING grows with them, so an
+ *  escort is still drawn smaller than its slot and never touches the next. */
+export const FLEET_ESCORT_SCALE = 1.5;
+
+/**
+ * The gap between a fleet's escorts, for `n` escorts behind a flagship of
+ * hit radius `hr` (px): the map's slot rule (fleetGrouping.escortSpacingFor)
+ * times FLEET_ESCORT_SCALE. THE one place it is decided: MapCanvas's
+ * marker pass, the battle layout and the test page all call this, so a
+ * block is laid out exactly as big as it is drawn.
+ */
+export function escortBlockSpacing(n: number, hr: number): number {
+  const base = Math.max(9, Math.min(24, hr * 0.9));
+  return escortSpacingFor(n, base, hr) * FLEET_ESCORT_SCALE;
+}
+
 export function fleetBlockGeometry(flagPx: number, escortRel: readonly number[]): BlockGeometry {
   const hr = Math.max(flagPx / 2 + 3, MIN_HIT_R);
-  const base = Math.max(9, Math.min(24, hr * 0.9));
   const n = escortRel.length;
-  const spacing = escortSpacingFor(n, base, hr);
+  const spacing = escortBlockSpacing(n, hr);
   const standoff = escortStandoffFor(hr, spacing);
   const offs = escortOffsets(n, spacing, 0, standoff);
   const glyph = escortGlyphFor(spacing);

@@ -27,9 +27,8 @@
 
 import { CLEAR_FRAC, type OBShip } from '../render/orbitBattleLayout';
 import type { ShipIconVariant } from '../components/ShipIcons';
-import {
-  escortSpacingFor, escortStandoffFor, escortOffsets, escortGlyphFor,
-} from '../render/fleetGrouping';
+import { escortStandoffFor, escortOffsets, escortGlyphFor } from '../render/fleetGrouping';
+import { escortBlockSpacing } from '../render/battleLayoutLive';
 
 export type ShipClass = 'corvette' | 'frigate' | 'destroyer' | 'freighter' | 'mega_destroyer';
 
@@ -175,8 +174,7 @@ export function fleetGeometry(
   // hb.r in MapCanvas is the flagship's HITBOX radius: half the sprite
   // plus 3, never under SHIP_MIN_HIT_RADIUS (12).
   const hr = Math.max(flagSize / 2 + 3, 12);
-  const base = Math.max(9, Math.min(24, hr * 0.9));
-  const spacing = escortSpacingFor(escorts.length, base, hr);
+  const spacing = escortBlockSpacing(escorts.length, hr);
   const offs = escortOffsets(escorts.length, spacing, 0, escortStandoffFor(hr, spacing));
   const glyph = escortGlyphFor(spacing);
   const pts = [{ x: 0, y: 0, r: (flagSize / 2) * (CLEAR_FRAC * 2) }];

@@ -95,7 +95,9 @@ import { bodyPosition, bodyById } from '../physics/orbitalMechanics';
 import { torchPositionFromSamples } from '../physics/torchTransfer';
 import type { InterceptMarker } from '../render/mapRenderer';
 import { shipIconSize, rendererCanvasMb, drawStructureReach, parkedOrbitMap } from '../render/mapRenderer';
-import { liveBattleFor, type BattleUnit, type LiveBattle } from '../render/battleLayoutLive';
+import {
+  liveBattleFor, escortBlockSpacing, type BattleUnit, type LiveBattle,
+} from '../render/battleLayoutLive';
 import {
   computePresentation, drawnRadiusOf, hullReveal, hullSize,
 } from '../render/bodyPresentation';
@@ -108,7 +110,7 @@ import { shipWorldPosition } from '../game/combat';
 import { makePeaceCheck } from '../game/peace';
 import { fleetEscortBlend,
   groupFleetsForRender, escortOffsets, mergeCoincidentMarkers,
-  escortStandoffFor, escortSpacingFor, escortGlyphFor,
+  escortStandoffFor, escortGlyphFor,
 } from '../render/fleetGrouping';
 import { getShipClass } from '../game/shipClasses';
 import { computeIncomingThreats, threatenedBodyIds } from '../game/threats';
@@ -2271,13 +2273,16 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           a => armedOwners.some(b => a !== b && !atPeace(a, b)));
         const battle = owners.length >= 2 && hostilePair;
 
-        // WHOLE-ORBIT BATTLE (MP; Lorne approved it on /?battle,
-        // 2026-10-06). The fight takes as much of the orbit as its ships
-        // need, each side a contiguous share with open space between,
-        // fleets as their markers, the station opposite the fight, solved
-        // ONCE per roster at a reference size and drawn times the world's
-        // scale (battleLayoutLive). SP keeps the battle lines below.
-        if (battle && mpActions) {
+        // WHOLE-ORBIT LAYOUT, EVERY WORLD (MP; Lorne approved it on
+        // /?battle, 2026-10-06, then "make every world scale with the
+        // planet"). Whoever is parked here takes as much of the orbit as
+        // their ships need, each side a contiguous share with open space
+        // between (a world at peace is one share, no fronts), fleets as
+        // their markers, the station opposite the ships. Solved ONCE per
+        // roster at a reference size and drawn times the world's scale
+        // (battleLayoutLive), so ships are fixed in scale to the planet
+        // at every world. SP keeps the battle lines and rings below.
+        if (mpActions) {
           const bodyId = atBody[0].orbit.parentBodyId;
           const body = bodyById2.get(bodyId);
           if (body) {
@@ -2886,7 +2891,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // Ship parked but has a torch preview staged. Draw the parked
         // orbit + ship at its current location, plus a dashed amber
         // torch arc to the picked destination.
-        if (showOrbitRing) {
+        if (showOrbitRing && !formation?.battle) {
           drawOrbitEllipse(
             ship.orbit, renderContext,
             isSelected ? COLORS.orbitCurrent : COLORS.orbitTrajectory,
@@ -2899,7 +2904,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           );
         }
         drawShip(ship, renderContext, isSelected, formation, orbitShipScale);
-        if (isSelected) drawApsisMarkers(ship, renderContext, formation?.lane ?? 0);
+        if (isSelected && !formation?.battle) drawApsisMarkers(ship, renderContext, formation?.lane ?? 0);
 
         const previewColor = COLORS.maneuverPlanned;
         if (!ship.plannedRendezvous) {
@@ -2911,7 +2916,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           drawGhostPlanet(arrivalBody, ship.plannedTransit.arriveTick, renderContext);
         }
       } else {
-        if (showOrbitRing) {
+        if (showOrbitRing && !formation?.battle) {
           drawOrbitEllipse(
             ship.orbit, renderContext,
             isSelected ? COLORS.orbitCurrent : COLORS.orbitTrajectory,
@@ -2922,7 +2927,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           );
         }
         drawShip(ship, renderContext, isSelected, formation, orbitShipScale);
-        if (isSelected) drawApsisMarkers(ship, renderContext, formation?.lane ?? 0);
+        if (isSelected && !formation?.battle) drawApsisMarkers(ship, renderContext, formation?.lane ?? 0);
       }
       ctx.globalAlpha = prevShipAlpha;   // undo the crossfade-band fade
     }
@@ -3220,8 +3225,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // then times the battle's k, so the whole fleet shrinks in place.
         const hbR = bLook ? Math.max(shipIconSize(lead.class, false) / 2 + 3, 12) : hb.r;
         const bk = bLook ? bLook.k : 1;
-        const baseSpacing = Math.max(9, Math.min(24, hbR * 0.9));
-        const spacing0 = escortSpacingFor(n, baseSpacing, hbR) * Math.max(0.35, fold);
+        // escortBlockSpacing: the slot rule x FLEET_ESCORT_SCALE (1.5), shared
+        // with the layout so a block is laid out as big as it is drawn.
+        const spacing0 = escortBlockSpacing(n, hbR) * Math.max(0.35, fold);
         const standoff = escortStandoffFor(hbR, spacing0) * bk;
         const spacing = spacing0 * bk;
         const offs = escortOffsets(n, spacing, heading, standoff);

@@ -13,9 +13,9 @@ import fs from 'fs';
 import path from 'path';
 import {
   battleReferenceRadius, fleetBlockGeometry, liveBattleFor, battlePlacement, battleScale,
-  resetLiveBattles, type BattleUnit,
+  resetLiveBattles, escortBlockSpacing, FLEET_ESCORT_SCALE, type BattleUnit,
 } from '../battleLayoutLive';
-import { escortOffsets } from '../fleetGrouping';
+import { escortOffsets, escortSpacingFor, escortGlyphFor } from '../fleetGrouping';
 
 beforeEach(() => resetLiveBattles());
 
@@ -86,6 +86,18 @@ test('a fleet block measures what the map draws, and scales linearly with k', ()
   });
 });
 
+test('fleet escorts are half again bigger, and still never touch', () => {
+  const n = 18, hr = 45;
+  const base = Math.max(9, Math.min(24, hr * 0.9));
+  expect(escortBlockSpacing(n, hr)).toBeCloseTo(escortSpacingFor(n, base, hr) * 1.5, 9);
+  expect(FLEET_ESCORT_SCALE).toBe(1.5);
+  // escortGlyphFor draws each escort inside its slot.
+  const sp = escortBlockSpacing(n, hr);
+  expect(escortGlyphFor(sp)).toBeLessThan(sp);
+  // The layout's block uses the same spacing, so it is laid out as drawn.
+  expect(fleetBlockGeometry(84, Array(n).fill(1)).spacing).toBeCloseTo(escortBlockSpacing(n, 45), 9);
+});
+
 test('a roster change glides: no jump on the frame it happens, settled a couple of seconds later', () => {
   const r = roster();
   const lb1 = liveBattleFor('mars', MARS_R, 1, r, ['a', 'b'], 'stn');
@@ -126,9 +138,14 @@ test('noses point forward in the wheel’s sense, either way round', () => {
   }
 });
 
-test('the live map uses it only in multiplayer; single-player keeps its battle lines', () => {
+test('the live map uses it at EVERY world in multiplayer; single-player keeps its lines and rings', () => {
   const src = fs.readFileSync(path.join(__dirname, '../../components/MapCanvas.tsx'), 'utf8');
-  expect(src).toMatch(/if \(battle && mpActions\) \{/);
+  // Not gated on a battle: peaceful worlds scale with the planet too
+  // (Lorne, 2026-10-06: "make every world scale with the planet").
+  expect(src).toMatch(/if \(mpActions\) \{\s*const bodyId = atBody\[0\]\.orbit\.parentBodyId;/);
+  expect(src).not.toMatch(/if \(battle && mpActions\)/);
+  // A laid-out ship is not on its orbit ring, so neither is drawn for it.
+  expect((src.match(/if \(showOrbitRing && !formation\?\.battle\)/g) ?? []).length).toBe(2);
   const r = fs.readFileSync(path.join(__dirname, '../mapRenderer.ts'), 'utf8');
   // drawShip honours a battle only when the MP presentation exists.
   expect(r).toMatch(/const liveBattle = ctx\.presentation \? formation\?\.battle : undefined;/);
