@@ -21,7 +21,9 @@
 // build-up flown for a few hours on 2026-10-06 beat the exponential one
 // that replaced it). A later leg is drawn further back along its line.
 //
-// "Old" means anything not on today's burn: no accel_tau (migration 0159).
+// "Old" means anything not on today's burn exactly (see isCurrent): flat,
+// linear, or exponential from a different floor. An old leg is re-flown
+// from today's floor with its hull's engine parts carried over.
 //
 //   - Hulls moving together (a fleet, an escort paced to its carrier:
 //     same faction, target, launch and arrival) get ONE new arrival, the
@@ -45,7 +47,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { makeRouteMath } from '../worker/routeMath.js';
-import { legTicks, shapeForArrival, SHIP_ENGINE_ACCEL } from '../worker/burn.js';
+import {
+  legTicks, shapeForArrival, SHIP_ENGINE_ACCEL, SHIP_ENGINE_G, MAX_ENGINE_G, GROWTH_TAU,
+} from '../worker/burn.js';
 
 const [envName, ...flags] = process.argv.slice(2);
 const APPLY = flags.includes('--apply');
@@ -72,7 +76,7 @@ function d1(sql) {
 
 // ---- every live leg of every ship that has an old one ----------------
 const LIVE = `('committed','in_transit')`;
-const legs = d1(`
+const allLegs = d1(`
   SELECT n.id, n.game_id, n.ship_id, n.sequence, n.status, n.target_body_id,
          n.scheduled_t, n.arrival_at_tick, n.launch_x, n.launch_y, n.launch_vx, n.launch_vy,
          n.accel, n.brake_accel, n.accel_ramp, n.accel_max, n.accel_tau, n.flip_tick,
@@ -82,9 +86,27 @@ const legs = d1(`
     JOIN game_ships s ON s.id = n.ship_id
     JOIN games g ON g.id = n.game_id AND g.status = 'active'
    WHERE n.status IN ${LIVE}
-     ${SKIP.length ? `AND n.game_id NOT IN (${SKIP.map(g => `'${g}'`).join(', ')})` : ''}
-     AND n.ship_id IN (SELECT ship_id FROM game_ship_nodes
-                        WHERE status IN ${LIVE} AND accel_tau IS NULL)`);
+     ${SKIP.length ? `AND n.game_id NOT IN (${SKIP.map(g => `'${g}'`).join(', ')})` : ''}`);
+// ON TODAY'S BURN means today's build exactly: the same growth time AND
+// the same floor-to-top ratio (MAX / SHIP g). Server legs scale accel and
+// max together, so the ratio holds for them too. Anything else — a flat
+// push, the linear build, or the exponential build from the old 0.05g
+// floor — is old.
+const TOP_RATIO = MAX_ENGINE_G / SHIP_ENGINE_G;
+const isCurrent = (l) => l.accel_tau != null && Math.abs(Number(l.accel_tau) - GROWTH_TAU) < 1e-6
+  && Number(l.accel) > 0 && Math.abs(Number(l.accel_max) / Number(l.accel) - TOP_RATIO) < 1e-6;
+const shipsWithOld = new Set(allLegs.filter(l => !isCurrent(l)).map(l => l.ship_id));
+const legs = allLegs.filter(l => shipsWithOld.has(l.ship_id));
+// A leg's launch push carries its hull's engine parts. Every burn before
+// the 0.02g floor launched from 0.05g, so the same hull now launches from
+// accel x (SHIP_ENGINE_G / its old floor); a leg with a build tells us
+// its floor directly (max / accel = top / floor).
+const newLaunchPush = (l) => {
+  const a = Number(l.accel);
+  if (!(a > 0)) return SHIP_ENGINE_ACCEL;
+  const oldFloorG = Number(l.accel_max) > a ? MAX_ENGINE_G * a / Number(l.accel_max) : 0.05;
+  return a * (SHIP_ENGINE_G / oldFloorG);
+};
 const followed = new Set(d1(`
   SELECT DISTINCT rv_follow_ship_id AS id FROM game_ship_nodes
    WHERE status IN ${LIVE} AND rv_follow_ship_id IS NOT NULL`).map(r => r.id));
@@ -161,8 +183,9 @@ for (let depth = 0; depth < maxDepth; depth++) {
       L = await posAt(l.game_id, origin, newS);
       if (!launched) V = await velAt(l.game_id, origin, newS);
     }
-    const a0 = Number(l.accel) > 0 ? Number(l.accel) : SHIP_ENGINE_ACCEL;
-    const old = l.accel_tau == null;
+    const old = !isCurrent(l);
+    // An old leg is re-flown from today's floor; a current one keeps its own.
+    const a0 = old ? newLaunchPush(l) : Number(l.accel);
     let natE;
     if (old) {
       let T = Math.max(1, oldE - oldS);

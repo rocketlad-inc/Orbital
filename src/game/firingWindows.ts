@@ -49,9 +49,9 @@ const SHIP_RANGE: Record<string, number> = {
 };
 /** Reference crossing speed for the aim penalty. 45 for the old flat
  *  even burn, scaled with cruise speed (worker/burn.js CRUISE_SPEED_SCALE:
- *  x1.8 with the exponential build-up and the 9x brake). Held to
+ *  x1.5 with the 0.02g exponential build-up and the 9x brake). Held to
  *  worker/transitCombat.js V_REF by burnParity.test.ts. */
-export const V_REF = 81;
+export const V_REF = 67;
 /** Floor on aim before exposure is applied. */
 const AIM_FLOOR = 0.05;
 const EPS = 1e-9;
