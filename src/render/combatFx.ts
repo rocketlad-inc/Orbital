@@ -1922,6 +1922,11 @@ export function drawSinkTethers(
   transitCanvasPos?: Map<string, { x: number; y: number }>,
 ): void {
   const c = rc.ctx;
+  // Hull-level detail: in the galaxy view every held hull has folded into
+  // its system, and a dozen "HELD 8T" tags stacked on one point inside
+  // the ring (seen at full zoom-out, 2026-10-06) told nobody anything.
+  const fade = 1 - (rc.galaxyAlpha ?? 0);
+  if (fade <= 0.01) return;
   let opened = false;
 
   for (const ship of ships) {
@@ -1941,7 +1946,7 @@ export function drawSinkTethers(
       ?? shipCanvasPos(ship, rc, transitCanvasPos);
     if (!hp) continue;
 
-    if (!opened) { c.save(); opened = true; }
+    if (!opened) { c.save(); c.globalAlpha = c.globalAlpha * fade; opened = true; }
 
     // The tether: dashes crawling from the hull TOWARD the sink, so the
     // direction of the pull is unmistakable.
