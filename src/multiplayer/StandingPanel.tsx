@@ -20,6 +20,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { apiFetch, warsApi, WarRow, Faction, MyFaction, Pact } from './api';
 import { logUiEvent } from './telemetry';
+import { t } from '../i18n/core';
+import type { Key } from '../i18n/core';
+import { useI18n } from '../i18n/react';
+import { apiErrorText } from '../i18n/apiErrors';
 import './StandingPanel.css';
 
 type Props = { gameId: string };
@@ -40,6 +44,7 @@ type Summary = {
 };
 
 export function StandingPanel({ gameId }: Props) {
+  useI18n();
   const [factions, setFactions] = useState<Faction[]>([]);
   const [wars, setWars] = useState<WarRow[]>([]);
   const [allies, setAllies] = useState<Set<string>>(new Set());
@@ -53,7 +58,7 @@ export function StandingPanel({ gameId }: Props) {
   const load = useCallback(async () => {
     try {
       const res = await apiFetch<Summary>(`/api/games/${gameId}/trade-summary`);
-      if (!res.ok) { setError('Could not read the diplomatic standing.'); return; }
+      if (!res.ok) { setError(t('standing.err.read')); return; }
       const d = res.data;
       setFactions(d?.factions?.factions ?? []);
       setWars(d?.wars?.wars ?? []);
@@ -69,7 +74,7 @@ export function StandingPanel({ gameId }: Props) {
       setAllies(set);
       setError(null);
     } catch {
-      setError('Could not read the diplomatic standing.');
+      setError(t('standing.err.read'));
     }
   }, [gameId]);
 
@@ -85,16 +90,16 @@ export function StandingPanel({ gameId }: Props) {
   const run = async (
     fid: string,
     fn: () => Promise<{ ok: boolean; error?: { message: string } | null }>,
-    failMsg: string,
+    failKey: Key,
   ) => {
     setBusy(fid);
     setError(null);
     try {
       const res = await fn();
-      if (!res.ok) { setError(res.error?.message ?? failMsg); return; }
+      if (!res.ok) { setError(apiErrorText(res.error, failKey)); return; }
       await load();
     } catch {
-      setError(failMsg);
+      setError(t(failKey));
     } finally {
       setBusy(null);
       setConfirming(null);
@@ -112,16 +117,15 @@ export function StandingPanel({ gameId }: Props) {
         {(() => {
           const atWar = others.filter(f => openWarWith(f.id)).length;
           return atWar === 0
-            ? 'You are at peace with everyone until you say otherwise.'
+            ? t('standing.lede.peace')
             : atWar === others.length
-              ? `You are at war with every empire (${atWar}).`
-              : `You are at war with ${atWar} of ${others.length} empires; the rest are at peace until you say otherwise.`;
+              ? t('standing.lede.warAll', { n: atWar })
+              : t('standing.lede.warSome', { n: atWar, total: others.length });
         })()}
-        {' '}Shots are only exchanged between empires that have declared war — and
-        a war ends only when both sides agree to stop.
+        {' '}{t('standing.lede.rule')}
       </p>
       {error && <div className="mp-standing-error">{error}</div>}
-      {others.length === 0 && <div className="mp-standing-empty">No other empires.</div>}
+      {others.length === 0 && <div className="mp-standing-empty">{t('standing.noOthers')}</div>}
       <ul className="mp-standing-list">
         {others.map((f) => {
           const war = openWarWith(f.id);
@@ -133,7 +137,7 @@ export function StandingPanel({ gameId }: Props) {
               <span className="mp-standing-flag" style={{ background: f.color }} aria-hidden />
               <span className="mp-standing-name">{f.name}</span>
               <span className={`mp-standing-chip is-${state}`}>
-                {war ? 'AT WAR' : allied ? 'ALLIED' : 'at peace'}
+                {war ? t('standing.chip.war') : allied ? t('standing.chip.allied') : t('standing.chip.peace')}
               </span>
               {war ? (
                 // PEACE TAKES TWO, so this is three states, not one.
@@ -147,16 +151,16 @@ export function StandingPanel({ gameId }: Props) {
                     disabled={busy === f.id}
                     onClick={() => {
                       logUiEvent(gameId, 'ceasefire_accept');
-                      run(f.id, () => api.end(f.id), 'Could not accept the ceasefire.');
+                      run(f.id, () => api.end(f.id), 'standing.err.accept');
                     }}
-                    title={`${f.name} has offered a ceasefire. Accepting ends the war immediately.`}
+                    title={t('standing.accept.tip', { name: f.name })}
                   >
-                    Accept ceasefire
+                    {t('standing.accept')}
                   </button>
                 ) : war.ceasefire_by === meId ? (
                   <span className="mp-standing-confirm">
                     <span className="mp-standing-pending">
-                      Ceasefire offered — the war runs until {f.name} takes it.
+                      {t('standing.offered', { name: f.name })}
                     </span>
                     <button
                       type="button"
@@ -164,10 +168,10 @@ export function StandingPanel({ gameId }: Props) {
                       disabled={busy === f.id}
                       onClick={() => {
                         logUiEvent(gameId, 'ceasefire_withdraw');
-                        run(f.id, () => api.endUndo(f.id), 'Could not withdraw the offer.');
+                        run(f.id, () => api.endUndo(f.id), 'standing.err.withdraw');
                       }}
                     >
-                      Withdraw offer
+                      {t('standing.withdraw')}
                     </button>
                   </span>
                 ) : (
@@ -177,19 +181,19 @@ export function StandingPanel({ gameId }: Props) {
                     disabled={busy === f.id}
                     onClick={() => {
                       logUiEvent(gameId, 'ceasefire_offer');
-                      run(f.id, () => api.end(f.id), 'Could not offer a ceasefire.');
+                      run(f.id, () => api.end(f.id), 'standing.err.offer');
                     }}
-                    title="Offer to stop. The war runs on until they accept."
+                    title={t('standing.offer.tip')}
                   >
-                    Offer ceasefire
+                    {t('standing.offer')}
                   </button>
                 )
               ) : confirming === f.id ? (
                 <span className="mp-standing-confirm">
                   <span className="mp-standing-warn">
                     {breaksPact
-                      ? `This breaks your pact with ${f.name}, publicly.`
-                      : 'Shots can be exchanged immediately.'}
+                      ? t('standing.confirm.breaksPact', { name: f.name })
+                      : t('standing.confirm.immediate')}
                   </span>
                   <button
                     type="button"
@@ -197,17 +201,17 @@ export function StandingPanel({ gameId }: Props) {
                     disabled={busy === f.id}
                     onClick={() => {
                       logUiEvent(gameId, breaksPact ? 'war_declare_oathbreak' : 'war_declare_confirm');
-                      run(f.id, () => api.declare(f.id), 'Could not declare war.');
+                      run(f.id, () => api.declare(f.id), 'standing.err.declare');
                     }}
                   >
-                    Confirm
+                    {t('standing.confirm')}
                   </button>
                   <button
                     type="button"
                     className="mp-standing-btn"
                     onClick={() => setConfirming(null)}
                   >
-                    Cancel
+                    {t('common.cancel')}
                   </button>
                 </span>
               ) : (
@@ -217,10 +221,10 @@ export function StandingPanel({ gameId }: Props) {
                   disabled={busy === f.id}
                   onClick={() => setConfirming(f.id)}
                   title={breaksPact
-                    ? 'Declaring war breaks your standing pact, and the record will say so.'
-                    : 'Declare war. Takes effect immediately, and is announced.'}
+                    ? t('standing.declare.tipBreaks')
+                    : t('standing.declare.tip')}
                 >
-                  Declare war
+                  {t('standing.declare')}
                 </button>
               )}
             </li>
@@ -229,17 +233,17 @@ export function StandingPanel({ gameId }: Props) {
       </ul>
       {wars.some(w => !w.open) && (
         <>
-          <h4 className="mp-standing-head">Past wars</h4>
+          <h4 className="mp-standing-head">{t('standing.past')}</h4>
           <ul className="mp-standing-past">
             {wars.filter(w => !w.open).slice(0, 8).map((w) => {
-              const name = (id: string) => factions.find(f => f.id === id)?.name ?? 'Unknown';
+              const name = (id: string) => factions.find(f => f.id === id)?.name ?? t('standing.unknown');
               return (
                 <li key={w.id}>
                   {name(w.factions[0])} vs {name(w.factions[1])}
                   <span className="mp-standing-ticks">
-                    {' '}· ticks {w.declared_at_tick}–{w.ended_at_tick}
-                    {w.origin === 'pact_broken' ? ' · pact broken' : ''}
-                    {w.origin === 'seeded' ? ' · inherited' : ''}
+                    {' '}· {t('standing.ticks', { from: w.declared_at_tick, to: w.ended_at_tick })}
+                    {w.origin === 'pact_broken' ? ` · ${t('standing.pactBroken')}` : ''}
+                    {w.origin === 'seeded' ? ` · ${t('standing.inherited')}` : ''}
                   </span>
                 </li>
               );
