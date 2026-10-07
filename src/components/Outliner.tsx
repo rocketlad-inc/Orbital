@@ -21,6 +21,8 @@ import { makeSystemRootOf, systemLabel, shipStatus, makeHostilesAtBody, makeArme
 import { makePeaceCheck } from '../game/peace';
 import { MEGASTRUCTURES, progressOf } from '../game/megastructures';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { t } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 import './Outliner.css';
 
 // Wrapper + memo boundary. Every useGameContext consumer re-renders on
@@ -34,13 +36,17 @@ import './Outliner.css';
  *  is in the way, and the where/when/why in its tooltip (refitStatus) --
  *  so a fleet-wide refit shows at a glance which hulls are still waiting. */
 const RefitMark: React.FC<{ ship: Ship; gameState: GameState }> = ({ ship, gameState }) => {
+  useI18n();
   if (!ship.refitPendingDesignId) return null;
   const st = refitStatus(ship, gameState);
   return (
     <span
       className={`outliner__refit${st?.blocked ? ' outliner__refit--blocked' : ''}`}
       data-testid="outliner-refit"
-      title={`Refit to ${st?.designName ?? 'a new design'} ordered — ${st?.text ?? 'fits at a friendly world'}`}
+      title={t('outliner.refit.title', {
+        design: st?.designName ?? t('outliner.refit.newDesign'),
+        text: st?.text ?? t('outliner.refit.default'),
+      })}
     >⟳</span>
   );
 };
@@ -198,6 +204,7 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
   }), [ships, bodies, settlements, buildOrders, fleets, captains, factionTech,
        warPairs, terraformConfig, currentTick, factions,
        megastructures]) as unknown as GameState;
+  useI18n();
   const isMobile = useIsMobile();
   // Default collapsed on mobile so it doesn't eat the whole screen.
   const [collapsed, setCollapsed] = useState<boolean>(() => isMobile);
@@ -439,8 +446,8 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
           <button
             className="outliner__toggle"
             onClick={() => setCollapsed(false)}
-            title={`Show holdings${trackedCount > 0 ? ` (${trackedCount})` : ''}`}
-            aria-label={`Show holdings${trackedCount > 0 ? `: ${trackedCount}` : ''}`}
+            title={`${t('outliner.showHoldings')}${trackedCount > 0 ? ` (${trackedCount})` : ''}`}
+            aria-label={`${t('outliner.showHoldings')}${trackedCount > 0 ? `: ${trackedCount}` : ''}`}
           >
             <span className="outliner__toggle-icon">☰</span>
             {trackedCount > 0 && (
@@ -466,19 +473,19 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
         data-tutorial-id="outliner"
       >
       <div className="outliner__header">
-        <span className="outliner__title">Outliner</span>
+        <span className="outliner__title">{t('outliner.title')}</span>
         <button
           className="outliner__toggle"
           onClick={() => setCollapsed(true)}
-          title="Collapse"
-          aria-label="Close"
+          title={t('outliner.collapse')}
+          aria-label={t('outliner.close')}
         >{isMobile ? '✕' : '›'}</button>
       </div>
       <div className="outliner__body">
         <div className="outliner__section">
-          <div className="outliner__section-title">Holdings</div>
+          <div className="outliner__section-title">{t('outliner.holdings')}</div>
           {tracked.length === 0 ? (
-            <div className="outliner__empty">No tracked bodies</div>
+            <div className="outliner__empty">{t('outliner.noBodies')}</div>
           ) : (
             systems.map(sys => (
               <div className="outliner__system" key={sys.rootId}>
@@ -487,7 +494,7 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
                   className="outliner__system-title"
                   onClick={() => toggleSystem(sys.rootId)}
                   aria-expanded={!shutSystems.has(sys.rootId)}
-                  title={shutSystems.has(sys.rootId) ? 'Show this system' : 'Hide this system'}
+                  title={shutSystems.has(sys.rootId) ? t('outliner.showSystem') : t('outliner.hideSystem')}
                 >
                   <span className={`outliner__caret${shutSystems.has(sys.rootId) ? ' is-shut' : ''}`} aria-hidden>▾</span>
                   {sys.label}
@@ -541,8 +548,8 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
                         <span className="outliner__build outliner__build--terraform">
                           <span className="outliner__build-label">
                             {tf.state === 'working'
-                              ? `Terraforming · ${tf.ticksLeft}t`
-                              : `Terraform · ${Math.round(tf.pct * 100)}%`}
+                              ? t('outliner.terraforming', { n: tf.ticksLeft })
+                              : t('outliner.terraform', { pct: Math.round(tf.pct * 100) })}
                           </span>
                           <span className="outliner__build-bar">
                             <span
@@ -578,7 +585,7 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
                           className={`outliner__fold${shutBodies.has(body.id) ? ' is-shut' : ''}`}
                           onClick={e => { e.stopPropagation(); toggleBody(body.id); }}
                           aria-expanded={!shutBodies.has(body.id)}
-                          title={shutBodies.has(body.id) ? 'Show what is here' : 'Hide what is here'}
+                          title={shutBodies.has(body.id) ? t('outliner.showHere') : t('outliner.hideHere')}
                         >▾</button>
                         <span className="outliner__body-count">{totalUnder}</span>
                       </>
@@ -594,7 +601,7 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
                     const hulls = s.id === yard?.id ? builds : [];
                     const bar = upgrade
                       ? {
-                          label: `${upgrade.kind} L${upgrade.targetLevel}`,
+                          label: t('outliner.upgradeLabel', { kind: upgrade.kind, lv: upgrade.targetLevel }),
                           pct: tickProgress(upgrade.startTick, upgrade.completeTick),
                           eta: Math.max(0, upgrade.completeTick - currentTick),
                         }
@@ -604,7 +611,10 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
                         key={s.id}
                         className={`outliner__ship-row ${selectedSettlementId === s.id ? 'selected' : ''}`}
                         onClick={(e) => { e.stopPropagation(); handleSettlementClick(s.id, body.id); }}
-                        title={`${s.type} · pop ${s.population} · HP ${s.hp}/${s.maxHp}`}
+                        title={t('outliner.settlementTitle', {
+                          type: s.type === 'city' ? t('outliner.type.city') : t('outliner.type.station'),
+                          pop: s.population, hp: s.hp, max: s.maxHp,
+                        })}
                       >
                         <span className="outliner__ship-class">{s.type === 'city' ? '⌂' : '◇'}</span>
                         <span className="outliner__ship-name">
@@ -673,7 +683,7 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
                           key={`fleet:${fleet.id}`}
                           className="outliner__ship-row outliner__fleet-row"
                           onClick={(e) => { e.stopPropagation(); handleShipClick(fleet.leadShipId || crew[0]?.id); }}
-                          title={`${fleet.name} — ${crew.length} ships · ${pct}% hull`}
+                          title={t('outliner.fleetTitle', { name: fleet.name, n: crew.length, pct })}
                         >
                           <span className="outliner__ship-class">
                             {adm
@@ -695,7 +705,7 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
                                 <span
                                   key={m.id}
                                   className={`outliner__fleet-hull${m.id === fleet.leadShipId ? ' is-flag' : ''}`}
-                                  title={`${m.name} · ${p}% hull`}
+                                  title={t('outliner.hullTitle', { name: m.name, pct: p })}
                                   onClick={(e) => { e.stopPropagation(); handleShipClick(m.id); }}
                                 >
                                   <HullIcon shipClass={m.class} variant={m.iconVariant} size={14} color={c1} color2={c2} />
@@ -747,10 +757,10 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
                           title={status.title}
                         >{status.label}</span>
                         {loadout && ship.parts && ship.parts.length > 0 && (
-                          <span className="outliner__ship-loadout" title="Fitted parts">{loadout}</span>
+                          <span className="outliner__ship-loadout" title={t('outliner.fittedParts')}>{loadout}</span>
                         )}
                         <RefitMark ship={ship} gameState={gameState} />
-                        <span className={`outliner__hp-dot outliner__hp-dot--${hpClass(r)}`} title={`HP ${Math.round(r * 100)}%`} />
+                        <span className={`outliner__hp-dot outliner__hp-dot--${hpClass(r)}`} title={t('outliner.hpTitle', { pct: Math.round(r * 100) })} />
                       </div>
                     );
                   })}</>)}
@@ -764,7 +774,7 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
 
         {foreignStructures.length > 0 && (
           <div className="outliner__section">
-            <div className="outliner__section-title">Foreign Structures</div>
+            <div className="outliner__section-title">{t('outliner.foreign')}</div>
             {foreignStructures.map(body => {
               const site = gameState.megastructures?.[body.id];
               const def = site ? MEGASTRUCTURES[site.kind] : null;
@@ -782,14 +792,14 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
               // is the useful fact about it, not a missing value.
               const detail = !site ? ''
                 : complete ? (def?.label ?? '')
-                  : `${def?.label ?? 'Site'} · ${pct}%`;
+                  : `${def?.label ?? t('outliner.site')} · ${pct}%`;
               return (
                 <div
                   key={body.id}
                   className={`outliner__body-row ${selectedBodyId === body.id ? 'selected' : ''}`}
                   onClick={() => handleBodyClick(body.id)}
                   title={site && !complete
-                    ? `${detail} — breaking it below 20% hull lets you board it`
+                    ? t('outliner.boardable', { detail })
                     : detail}
                 >
                   <PlanetIcon body={body} size={16} className="outliner__body-icon" currentTick={currentTick} />
@@ -807,10 +817,10 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
                     style={{ color: owner?.color ?? '#6d8296' }}
                   >
                     {owner?.name
-                      ?? (site && site.foundedByFactionId ? 'owner unknown'
+                      ?? (site && site.foundedByFactionId ? t('outliner.ownerUnknown')
                         // A sun gate can never be claimed: "unclaimed"
                         // would invite a try (worker/sunGates.js).
-                        : site?.transitFraction != null ? 'neutral' : 'unclaimed')}
+                        : site?.transitFraction != null ? t('outliner.neutral') : t('outliner.unclaimed'))}
                   </span>
                 </div>
               );
@@ -820,7 +830,7 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
 
         {inTransit.length > 0 && (
           <div className="outliner__section" data-tutorial-id="outliner-transit">
-            <div className="outliner__section-title">In Transit</div>
+            <div className="outliner__section-title">{t('outliner.inTransit')}</div>
             {/* A FLEET UNDER WAY IS ONE ROW, same as a parked one.
                 This section never got the fleet treatment the body
                 sections have, so ordering a 64-hull squadron somewhere
@@ -864,7 +874,7 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
                     className="outliner__ship-row outliner__fleet-row"
                     style={{ paddingLeft: 8 }}
                     onClick={() => handleShipClick(fleet.leadShipId || crew[0]?.id)}
-                    title={`${fleet.name} - ${crew.length} ships · ${pct}% hull · arrives in ${eta.toFixed(0)}`}
+                    title={t('outliner.fleetTransitTitle', { name: fleet.name, n: crew.length, pct, eta: eta.toFixed(0) })}
                   >
                     <span className="outliner__ship-class">
                       {adm
@@ -888,7 +898,7 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
                           <span
                             key={m.id}
                             className={`outliner__fleet-hull${m.id === fleet.leadShipId ? ' is-flag' : ''}`}
-                            title={`${m.name} · ${q}% hull`}
+                            title={t('outliner.hullTitle', { name: m.name, pct: q })}
                             onClick={(e) => { e.stopPropagation(); handleShipClick(m.id); }}
                           >
                             <HullIcon shipClass={m.class} variant={m.iconVariant} size={14} color={c1} color2={c2} />
