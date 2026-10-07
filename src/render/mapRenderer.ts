@@ -93,6 +93,10 @@ export interface RenderContext {
    *  Absent for callers that don't compute one (lobby preview, tests,
    *  single-player), which keep the old true-scale-with-3px-floor rule. */
   presentation?: BodyPresentation;
+  /** MP: 0..1, how far the map has handed over to the galaxy view
+   *  (render/galaxyLayer.ts). The territory wash, the sensor outline and
+   *  the stars' own names fade out by it as the system rings fade in. */
+  galaxyAlpha?: number;
   bodies: Body[];
   /** Factions in this game, used by per-asset color lookups (drawShip,
    *  drawTransitShip, drawCity/Station). Optional — older render paths
@@ -4337,9 +4341,14 @@ export function drawBody(
     // no moon system governs when it is worth naming.
     const moonParent = body.type === 'moon' && body.parent
       ? bodyById(ctx.bodies, body.parent) : null;
+    // World names give way to the system names in the galaxy view: every
+    // world is inside its system's ring there, and "SOL" beside the star
+    // under "SOL" on the ring said it twice. The one you have selected
+    // keeps its name.
     const nameAlpha = labelAlpha * (moonParent
       ? lodAlpha(systemOpenness(moonParent, ctx.bodies, ctx.camera.scale), LOD.MOON_LABEL)
-      : lodAlpha(ctx.camera.scale, isMinor ? LOD.BODY_LABEL_MINOR : LOD.BODY_LABEL_MAJOR));
+      : lodAlpha(ctx.camera.scale, isMinor ? LOD.BODY_LABEL_MINOR : LOD.BODY_LABEL_MAJOR))
+      * (isSelected ? 1 : 1 - (ctx.galaxyAlpha ?? 0));
     if (nameAlpha > 0.02) {
       // Yield pills ride as a sub-line, and only once they're
       // actionable — at strategic zoom they doubled the glyph count for
@@ -8111,7 +8120,15 @@ export function drawFogOfWarOverlay(
     c.fillStyle = `rgba(8, 12, 18, ${dimE.toFixed(3)})`;
     c.fill('evenodd');
     c.restore();
-    if (arcs.length) drawSensorEdge(c, arcs);
+    // The outline fades out in the galaxy view: Sol's coverage there is a
+    // lumpy blob round a 20px system, and the ring is the read.
+    const lineAlpha = 1 - (ctx.galaxyAlpha ?? 0);
+    if (arcs.length && lineAlpha > 0.01) {
+      c.save();
+      c.globalAlpha = c.globalAlpha * lineAlpha;
+      drawSensorEdge(c, arcs);
+      c.restore();
+    }
     return;
   }
 
@@ -8736,7 +8753,10 @@ export function drawSystemRegions(
   // LOD.POLITICAL_WASH for the reasoning — territory stays worth seeing
   // far closer in than the first cut assumed.
   const fade = systemRegionOpacityFor(spans, scale, ctx.bodies)
-    * lodAlpha(scale, LOD.POLITICAL_WASH);
+    * lodAlpha(scale, LOD.POLITICAL_WASH)
+    // The galaxy rings carry ownership out there; the wash would only be
+    // a rainbow smudge under the ring.
+    * (1 - (ctx.galaxyAlpha ?? 0));
   if (fade <= 0) return;
 
   // Ownership signature: any claim change redraws the layer.

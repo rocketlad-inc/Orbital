@@ -64,7 +64,11 @@ import {
 import { buildBadgeSegments, layoutBadgePills } from '../render/fleetBadge';
 import { useCamera } from '../state/cameraStore';
 import { fleetFormationGroups, FLEET_ARC_WIDTH } from '../render/fleetFormation';
-import { computeSystemRegions } from '../render/systemRegions';
+import { computeSystemRegions, claimsFromSettlements } from '../render/systemRegions';
+import {
+  summariseStarSystems, galaxyLayerAlpha, galaxyRingRadius, galaxyLabelBox, galaxySubline, paintGalaxyRings,
+  GALAXY_NAME_FONT, GALAXY_SUB_FONT, GALAXY_RING_WIDTH, type GalaxyRing, type StarSystemSummary,
+} from '../render/galaxyLayer';
 import { getEmblemImage } from '../render/emblemCache';
 import { BUILDING_DEFS, buildingLevel } from '../game/settlements';
 import { boxSingleTarget, cyclePick, orderPickHits } from '../render/mapPick';
@@ -442,6 +446,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
   // Starfield: generated once and regenerated when canvas size changes
   const starfieldRef = useRef<StarfieldCache | null>(null);
+  /** Galaxy-view summaries (worlds held per empire per star system),
+   *  rebuilt only when the bodies or the claims change. */
+  const galaxyMemoRef = useRef<{ bodies: unknown; claims: unknown; out: StarSystemSummary[] } | null>(null);
 
   /** Intercept markers, recomputed once per TICK rather than per frame —
    *  every trajectory feeding them is a committed burn, so nothing in the
@@ -1596,6 +1603,65 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // behaves identically in a 1x game and a SYSTEM_SCALE=2 one.
     const spans = systemSpans(renderContext);
     const regionFade = systemRegionOpacityFor(spans, camera.scale, gameState.bodies);
+
+    // THE GALAXY VIEW (render/galaxyLayer.ts), MP only: once Sol's worlds
+    // have shrunk into a token, every star system gets a ring split by the
+    // worlds each empire holds, and its name. Worked out HERE, before the
+    // wash, the world pass and the badges, because all three give way to
+    // it: the wash and the stars' names fade by galaxyAlpha, and the name
+    // boxes are reserved now so badges and text step around them.
+    let galaxyRings: GalaxyRing[] = [];
+    let galaxyAlpha = 0;
+    if (renderContext.presentation && layerOn('ownership')) {
+      // Keyed on the SOURCE arrays: the settlements fallback builds a new
+      // claims array every call, which would rebuild this every frame.
+      const claimSrc = gameState.settlementClaims && gameState.settlementClaims.length > 0
+        ? gameState.settlementClaims
+        : gameState.settlements;
+      const memo = galaxyMemoRef.current;
+      const summaries = memo && memo.bodies === gameState.bodies && memo.claims === claimSrc
+        ? memo.out
+        : summariseStarSystems(gameState.bodies,
+          claimSrc === gameState.settlementClaims
+            ? gameState.settlementClaims ?? []
+            : claimsFromSettlements(gameState.settlements));
+      galaxyMemoRef.current = { bodies: gameState.bodies, claims: claimSrc, out: summaries };
+      const sol = summaries.find(s => !bodyById2.get(s.anchorId)?.parent);
+      galaxyAlpha = galaxyLayerAlpha((sol?.outerR ?? 0) * camera.scale);
+      if (galaxyAlpha > 0) {
+        const W1 = ctx.canvas.width, H1 = ctx.canvas.height;
+        for (const s of summaries) {
+          const anchor = bodyById2.get(s.anchorId);
+          if (!anchor) continue;
+          const wp = bodyPosition(anchor, renderTick(), gameState.bodies);
+          const cp = worldToCanvas(wp.x, wp.y, renderContext);
+          const r = galaxyRingRadius(s.outerR * camera.scale);
+          if (cp.x < -r - 120 || cp.y < -r - 120 || cp.x > W1 + r + 120 || cp.y > H1 + r + 120) continue;
+          ctx.font = GALAXY_NAME_FONT;
+          const nameW = ctx.measureText(s.name.toUpperCase()).width;
+          ctx.font = GALAXY_SUB_FONT;
+          const subW = ctx.measureText(galaxySubline(s)).width;
+          const label = galaxyLabelBox(cp.x, cp.y, r, nameW, subW);
+          reserveRect(`galaxy:${s.anchorId}`, label.x, label.y, label.w, label.h, s.name);
+          galaxyRings.push({ summary: s, x: cp.x, y: cp.y, r, label });
+        }
+      }
+    }
+    renderContext.galaxyAlpha = galaxyAlpha;
+    /** Once the rings are mostly in, every count badge whose anchor sits
+     *  inside a ring folds into ONE badge for that system, placed round the
+     *  ring: per-world and per-fleet badges scattered across a 50px token
+     *  were the clutter the galaxy view is meant to clear. Null below that. */
+    const galaxyBadgeAgg = galaxyAlpha >= 0.5 ? new Map<GalaxyRing, Map<string, number>>() : null;
+    const foldIntoGalaxyRing = (x: number, y: number, counts: Map<string, number>): boolean => {
+      if (!galaxyBadgeAgg) return false;
+      const g = galaxyRings.find(rg => Math.hypot(x - rg.x, y - rg.y) < rg.r);
+      if (!g) return false;
+      let agg = galaxyBadgeAgg.get(g);
+      if (!agg) { agg = new Map(); galaxyBadgeAgg.set(g, agg); }
+      for (const [fid, n] of counts) agg.set(fid, (agg.get(fid) ?? 0) + n);
+      return true;
+    };
     // Structure-derived, so it costs a pass over the body list — skipped
     // entirely once we're zoomed past the overlay's fade-out.
     const systemRegions = regionFade > 0
@@ -3279,9 +3345,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // It is there to be READ: counting sixty-four specks is not
         // something anyone should have to do to answer "how big is that
         // fleet".
-        drawBadge(`fleetbadge:${leadId}`, hb.x, hb.y, hb.r,
-          new Map([[lead.ownedBy, marker.memberCount]]), false, 1,
-          { x: hb.x + hb.r + 3, y: hb.y - hb.r - 3 });
+        const fleetCount = new Map([[lead.ownedBy, marker.memberCount]]);
+        if (!foldIntoGalaxyRing(hb.x, hb.y, fleetCount)) {
+          drawBadge(`fleetbadge:${leadId}`, hb.x, hb.y, hb.r, fleetCount, false, 1,
+            { x: hb.x + hb.r + 3, y: hb.y - hb.r - 3 });
+        }
       }
     }
 
@@ -3363,6 +3431,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         if (alpha <= 0.01) continue;
         const bp = bodyPosition(body, renderTick(), gameState.bodies);
         const cp = worldToCanvas(bp.x, bp.y, renderContext);
+        if (foldIntoGalaxyRing(cp.x, cp.y, counts)) continue;
         const radius = pres ? drawnRadiusOf(pres, body, lodScale) : Math.max(3, (body.radius ?? 4) * camera.scale);
         drawBadge(`badge:${bodyId}`, cp.x, cp.y, radius + 4, counts, false, alpha);
       }
@@ -3372,8 +3441,16 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         if (!body) continue;
         const bp = bodyPosition(body, renderTick(), gameState.bodies);
         const cp = worldToCanvas(bp.x, bp.y, renderContext);
+        if (foldIntoGalaxyRing(cp.x, cp.y, counts)) continue;
         const radius = pres ? drawnRadiusOf(pres, body, lodScale) : Math.max(4, (body.radius ?? 5) * camera.scale);
         drawBadge(`sysbadge:${anchorId}`, cp.x, cp.y, radius + 5, counts, true, 1);
+      }
+      // One badge per galaxy ring, round the ring: below it first, the name
+      // having already claimed the space above.
+      if (galaxyBadgeAgg) {
+        for (const [g, counts] of galaxyBadgeAgg) {
+          drawBadge(`galaxybadge:${g.summary.anchorId}`, g.x, g.y, g.r + GALAXY_RING_WIDTH, counts, true, 1);
+        }
       }
     }
 
@@ -3840,6 +3917,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           seen.push({ pos: vp, range: px / Math.max(1e-9, sc) });
         }
         drawFogOfWarOverlay(seen, renderContext, 1, { wash: regionFade });
+        // Over the fog, like the badges: a ring is read, not shaded.
+        paintGalaxyRings(ctx, galaxyRings, galaxyAlpha, 'player', (fid) => {
+          const f = gameState.factions.find(fa => fa.id === fid);
+          return f?.color ?? (fid === 'player' ? COLORS.neutral : COLORS.danger);
+        });
         for (const f of deferredBadgePaints) f();
       } else {
         drawFogOfWarOverlay(rings, renderContext, 1 - regionFade);
