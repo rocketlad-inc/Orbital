@@ -205,6 +205,29 @@ const seen = await DB.prepare(
 ).bind(G, g0.id, f0.id).first();
 check('every faction can see both ends', seen.n === facs.length * 2, `${seen.n} for ${facs.length}`);
 
+// THE TICK'S "STRUCTURES THAT FINISHED" SWEEP must not announce a sun
+// gate. Its completed_at_tick is its ARRIVAL, stamped when it leaves the
+// Sun, and the sweep had no upper bound: on prod both ends were printed
+// "operational under An unflagged force" the tick the gate came out.
+{
+  const { Room } = await import('../worker/room.js');
+  const store = new Map();
+  const room = new Room({
+    storage: {
+      async get(k) { return store.get(k); }, async put(k, v) { store.set(k, v); },
+      async delete(k) { return store.delete(k); }, async list() { return new Map(store); },
+      async deleteAll() { store.clear(); }, setAlarm() {}, getAlarm() { return null; },
+    },
+    blockConcurrencyWhile: async (f) => f(),
+    broadcast: () => {},
+  }, env);
+  await room.chronicleCompletions(G, 11);
+  await room.chronicleCompletions(G, g0.emerge_until_tick);
+  const told = (await DB.prepare(
+    `SELECT COUNT(*) n FROM chronicle_entries WHERE game_id = ? AND kind = 'megastructure_complete'`).bind(G).first()).n;
+  check('the tick never announces a sun gate as a finished megastructure', told === 0, `${told} rows`);
+}
+
 // THE LANDING SITE: a body on the gate's final orbit, there to be flown
 // to while the gate is still in the air.
 const s0 = await DB.prepare(`SELECT * FROM game_bodies WHERE id = ?`).bind(siteId(G, order[0])).first();
