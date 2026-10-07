@@ -12,6 +12,7 @@
 // ============================================================
 
 import { ShipClassName, SHIP_CLASSES } from './shipClasses';
+import { t } from '../i18n/core';
 
 export type ShipPartId = 'kinetic' | 'energy' | 'shield' | 'armor' | 'engine' | 'detonator' | 'flak' | 'repair' | 'mining' | 'construction' | 'colony';
 
@@ -292,7 +293,7 @@ const GLYPH_ORDER: ShipPartId[] = ['kinetic', 'energy', 'shield', 'armor', 'engi
 export function loadoutSummary(parts: readonly string[] | undefined): string | null {
   if (!parts) return null;
   const clean = sanitizeParts(parts);
-  if (clean.length === 0) return 'bare hull';
+  if (clean.length === 0) return t('build.bareHull');
   return GLYPH_ORDER
     .map(id => {
       const n = clean.filter(p => p === id).length;
@@ -716,5 +717,5 @@ export function detonatorDamage(hpMax: number, detonatorCount: number, weaponsLv
 export function detonatorDisclosure(damage: number): string {
   // The percentage is DERIVED, never typed: this string said "50%" for a
   // full release after the constant moved to 25% (clownking's report).
-  return `Detonate: deal ${damage} damage (${Math.round(DETONATOR_HP_FRAC * 100)}% of max HP per detonator) to every ship in this orbit — friend or foe alike. This ship is destroyed.`;
+  return t('helper.det.disclosure', { damage, pct: Math.round(DETONATOR_HP_FRAC * 100) });
 }

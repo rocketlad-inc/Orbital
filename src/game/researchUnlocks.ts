@@ -22,6 +22,7 @@
 // ============================================================
 
 import { TechId, TECH_DEFS } from './techs';
+import { t, tk } from '../i18n/core';
 
 /** Everything that can be locked. Server mirrors these string ids. */
 export type FeatureId =
@@ -342,19 +343,23 @@ export function isMegastructureUnlock(feature: FeatureId): boolean {
 /** How one gets built, start to finish. The first step names the module
  *  through requirementLabel so moving it on the tree moves this copy. */
 export function megastructureHowTo(): string[] {
-  const module = requirementLabel('part.construction') ?? 'the Construction Module';
+  const module = requirementLabel('part.construction') ?? t('helper.mega.fallbackModule');
   return [
-    `Research ${module} and fit it to a colony ship at a shipyard.`,
-    'Park that ship at any world, select it, and choose "Lay a megastructure foundation". '
-      + 'Click inside the ring to site it. The ship is spent.',
-    'Haul the metal and credits to the site by freighter from your terraformed worlds. '
-      + 'It switches on when the bill is paid.',
+    t('helper.mega.howto.1', { module }),
+    t('helper.mega.howto.2'),
+    t('helper.mega.howto.3'),
   ];
 }
 
-/** The fear the feedback named, answered where a player will read it. */
+/** The fear the feedback named, answered where a player will read it.
+ *  English source text: screens read it through megastructureReassurance(). */
 export const MEGASTRUCTURE_REASSURANCE =
   'A megastructure is a site of its own in open space. Nothing on your worlds is touched or replaced.';
+
+/** The same sentence in the player's language. */
+export function megastructureReassurance(): string {
+  return tk('helper.mega.reassurance', MEGASTRUCTURE_REASSURANCE);
+}
 
 /** One line for a just-unlocked megastructure: what to do NEXT, which
  *  depends on whether the module is already researched. */
@@ -362,8 +367,8 @@ export function megastructureNextStep(levels: Partial<Record<TechId, number>>): 
   const req = requirementFor('part.construction');
   const hasModule = !req || (levels[req.track] ?? 0) >= req.level;
   return hasModule
-    ? 'Fit a Construction Module to a colony ship, then lay the foundation from that ship.'
-    : `Needs ${requirementLabel('part.construction')} before you can build it.`;
+    ? t('helper.mega.nextFit')
+    : t('helper.mega.needs', { req: requirementLabel('part.construction') ?? '' });
 }
 
 export function unlocksAt(track: TechId, level: number): UnlockRow[] {
@@ -391,8 +396,25 @@ export function requirementFor(feature: FeatureId): { track: TechId; level: numb
 export function requirementLabel(feature: FeatureId): string | null {
   const req = requirementFor(feature);
   if (!req) return null;
-  return `${req.label} (${TECH_DEFS[req.track].name} ${req.level})`;
+  return `${unlockLabel(feature, req.label)} (${trackName(req.track)} ${req.level})`;
 }
+
+/** A research track's name AS THE PLAYER READS IT ("Society", not
+ *  'industry'), in the player's language. */
+export function trackName(track: TechId): string {
+  return tk(`helper.track.${track}`, TECH_DEFS[track].name);
+}
+
+/** An unlock's label / blurb in the player's language. The English text
+ *  stays in RESEARCH_UNLOCKS (the table, and the tests that read it). */
+export function unlockLabel(feature: FeatureId, english: string): string {
+  return tk(`helper.unlock.${feature}.label`, english);
+}
+export function unlockBlurb(feature: FeatureId, english: string): string {
+  return tk(`helper.unlock.${feature}.blurb`, english);
+}
+export const unlockLabelOf = (u: UnlockRow): string => unlockLabel(u.feature, u.label);
+export const unlockBlurbOf = (u: UnlockRow): string => unlockBlurb(u.feature, u.blurb);
 
 /**
  * Is `feature` available to a faction at these tech levels?

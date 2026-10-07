@@ -6,6 +6,8 @@
 // (torch plans are client-computed and server-trusted).
 // ============================================================
 
+import { tk } from '../i18n/core';
+
 export interface CaptainTraitDef {
   name: string;
   icon: string;
@@ -73,6 +75,22 @@ export function rankTier(rank: number): string {
   return 'Rookie';
 }
 
+/** The tier as a player reads it, in their language. rankTier() stays
+ *  English because screens lower-case it into a CSS class
+ *  (fleet-xp__tier--veteran); show THIS one. */
+export function rankTierLabel(rank: number): string {
+  const english = rankTier(rank);
+  return tk(`helper.rank.${english.toLowerCase()}`, english);
+}
+
+/** A trait's name / effect in the player's language. */
+export function traitName(id: string, d: CaptainTraitDef): string {
+  return tk(`helper.trait.${id}.name`, d.name);
+}
+export function traitBlurb(id: string, d: CaptainTraitDef): string {
+  return tk(`helper.trait.${id}.blurb`, d.blurb);
+}
+
 /** Multiplier over a trait-id list for a client-applied effect key. */
 export function traitMul(traits: string[] | undefined, key: 'hpMul' | 'accelMul' | 'dmgMul'): number {
   let m = 1;
@@ -86,9 +104,8 @@ export function traitMul(traits: string[] | undefined, key: 'hpMul' | 'accelMul'
 /** One-line trait summary for tooltips/rows: "🎯 Gunner — +10% weapon damage". */
 export function traitSummary(traits: string[] | undefined): string {
   return (traits ?? [])
-    .map(t => CAPTAIN_TRAITS[t])
-    .filter(Boolean)
-    .map(d => `${d.icon} ${d.name} — ${d.blurb}`)
+    .filter(id => CAPTAIN_TRAITS[id])
+    .map(id => `${CAPTAIN_TRAITS[id].icon} ${traitName(id, CAPTAIN_TRAITS[id])} — ${traitBlurb(id, CAPTAIN_TRAITS[id])}`)
     .join(' · ');
 }
 
@@ -106,8 +123,7 @@ export function traitSummary(traits: string[] | undefined): string {
  */
 export function traitBrief(traits: string[] | undefined): string {
   return (traits ?? [])
-    .map(t => CAPTAIN_TRAITS[t])
-    .filter(Boolean)
-    .map(d => `${d.icon} ${d.name} ${d.blurb}`)
+    .filter(id => CAPTAIN_TRAITS[id])
+    .map(id => `${CAPTAIN_TRAITS[id].icon} ${traitName(id, CAPTAIN_TRAITS[id])} ${traitBlurb(id, CAPTAIN_TRAITS[id])}`)
     .join(' · ');
 }

@@ -13,7 +13,7 @@ import {
   effectAtLevel, nextLevelCost,
   TECH_MAX_LEVEL, levelsToQueue, levelForQueueSlot,
 } from '../game/techs';
-import { unlocksAt, isMegastructureUnlock, megastructureNextStep } from '../game/researchUnlocks';
+import { unlocksAt, isMegastructureUnlock, megastructureNextStep, unlockLabelOf, unlockBlurbOf } from '../game/researchUnlocks';
 import { TechTree } from './TechTree';
 import { computeIncomePerTick } from '../game/settlements';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
@@ -457,8 +457,8 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                         const mega = next.some(u => isMegastructureUnlock(u.feature));
                         return (
                           <>
-                            <span style={{ color: '#ffb84d' }} title={next.map(u => u.blurb).join(' · ')}>
-                              {next.map(u => (isMegastructureUnlock(u.feature) ? `◆ ${u.label}` : u.label)).join(', ')}
+                            <span style={{ color: '#ffb84d' }} title={next.map(u => unlockBlurbOf(u)).join(' · ')}>
+                              {next.map(u => (isMegastructureUnlock(u.feature) ? `◆ ${unlockLabelOf(u)}` : unlockLabelOf(u))).join(', ')}
                             </span>
                             {mega && (
                               <div style={{ fontSize: 10, color: '#b8c8d6', marginTop: 3, lineHeight: 1.45 }}>

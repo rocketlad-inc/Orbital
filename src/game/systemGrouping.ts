@@ -18,6 +18,7 @@ import type { Body, Ship } from '../types';
 import { AUTO_COMBAT_INTERVAL } from './combat';
 import { ALWAYS_PEACE, PeaceCheck } from './peace';
 import { getShipClass } from './shipClasses';
+import { t } from '../i18n/core';
 
 /** A hull is "armed" if it actually deals damage — server-authoritative
  *  damagePerTick when present (designer builds can arm OR disarm ANY
@@ -503,15 +504,37 @@ export function makeSystemRootOf(bodies: Body[]): (bodyId: string) => string {
 export function systemLabel(bodies: Body[], rootId: string): string {
   // Synthetic roots — no body carries these ids, so name them before the
   // lookup below falls through to shouting the raw id.
-  if (rootId === CORE_SYSTEM_ID) return CORE_LABEL;
+  if (rootId === CORE_SYSTEM_ID) return regionLabel(CORE_LABEL);
   const belt = beltsOf(bodies).byId.get(rootId);
-  if (belt) return belt.label;
+  if (belt) return regionLabel(belt.label);
   const root = bodies.find(b => b.id === rootId);
   if (!root) return rootId.toUpperCase();
   const name = root.name.replace(/\s*Barycenter$/i, '');
   if (isStellarAnchor(root)) return name;
   const hasSatellites = bodies.some(b => b.parent === rootId);
-  return hasSatellites ? `${name} System` : name;
+  return hasSatellites ? t('helper.sys.system', { name }) : name;
+}
+
+/** A region's English label (CORE_LABEL, a belt's label) in the player's
+ *  language. Belts are memoised per bodies array with English labels, so the
+ *  words are looked up here, when they are read, not when they are built. A
+ *  label it does not know (a body's own name) comes back untouched. */
+export function regionLabel(label: string): string {
+  switch (label) {
+    case CORE_LABEL: return t('helper.sys.core');
+    case 'Asteroid Belt': return t('helper.sys.asteroidBelt');
+    case 'The Plutinos': return t('helper.sys.plutinos');
+    case 'Kuiper Belt': return t('helper.sys.kuiper');
+    case 'The Far Reach': return t('helper.sys.farReach');
+    case 'The Kindling': return t('helper.sys.kindling');
+    case 'The Ossuary': return t('helper.sys.ossuary');
+    default: break;
+  }
+  const inner = /^Inner Belt (\d+)$/.exec(label);
+  if (inner) return t('helper.sys.innerBelt', { n: inner[1] });
+  const far = /^(.+) Belt$/.exec(label);
+  if (far) return t('helper.sys.beltOf', { name: far[1] });
+  return label;
 }
 
 /** Legacy fallback window, used only when a caller can't supply presence
@@ -631,15 +654,15 @@ export function shipStatus(
     // shipyard once HP falls to the threshold, so a below-threshold ship
     // in flight is fleeing, not making a routine trip.
     if (ship.retreatHpPct != null && hpRatio <= ship.retreatHpPct / 100) {
-      return { label: 'Retreating', cls: 'retreating', title: 'Auto-retreating to a friendly shipyard (HP below threshold)' };
+      return { label: t('helper.status.retreating'), cls: 'retreating', title: t('helper.status.retreatingTip') };
     }
-    return { label: 'In Transit', cls: 'transit', title: 'Under torch burn between bodies' };
+    return { label: t('helper.status.transit'), cls: 'transit', title: t('helper.status.transitTip') };
   }
   // Holding fire outranks combat: a ship under a never-fire standing order
   // isn't fighting, and saying "In Combat" would hide the very order that
   // explains why it's sitting there taking hits.
   if (ship.stance === 'hold') {
-    return { label: 'Holding Fire', cls: 'holding', title: 'Standing order: never fire' };
+    return { label: t('helper.status.holding'), cls: 'holding', title: t('helper.status.holdingTip') };
   }
   const contested = hostilesPresent ?? (
     // No presence info — fall back to the old timestamp window.
@@ -647,7 +670,7 @@ export function shipStatus(
       <= COMBAT_RECENT_TICKS
   );
   if (contested) {
-    return { label: 'In Combat', cls: 'combat', title: 'A hostile force shares this orbit' };
+    return { label: t('helper.status.combat'), cls: 'combat', title: t('helper.status.combatTip') };
   }
   // Docked at a friendly station with hull damage → the maintenance pass
   // is actively healing it (+2 HP/tick). Ranked below combat: a ship
@@ -663,10 +686,10 @@ export function shipStatus(
     // real number; the ship panel does (maintenanceRatesForShip) and quotes
     // it there. Better to say WHERE it is repairing than to state a rate
     // that is wrong by an order of magnitude.
-    return { label: 'Repairing', cls: 'repairing', title: 'Docked at a friendly station — hull repairing each tick (rate rises with shipyard level)' };
+    return { label: t('helper.status.repairing'), cls: 'repairing', title: t('helper.status.repairingTip') };
   }
   if (ship.plannedTransit) {
-    return { label: 'Planned', cls: 'planned', title: 'A transfer is planned but not yet committed' };
+    return { label: t('helper.status.planned'), cls: 'planned', title: t('helper.status.plannedTip') };
   }
-  return { label: 'Orbiting', cls: 'orbiting', title: 'Parked in a stable orbit' };
+  return { label: t('helper.status.orbiting'), cls: 'orbiting', title: t('helper.status.orbitingTip') };
 }
