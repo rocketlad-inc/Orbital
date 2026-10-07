@@ -656,7 +656,7 @@ export const guide = {
   'mp.err.noSurface': 'A city cannot be deployed on this body type — stars, gas giants and ice giants have no surface.',
   'mp.err.tooFast': 'That order is faster than this ship can fly. Reload to pick up the current engines and try again.',
   'mp.err.gateInFlight': 'That gate is still flying out of the Sun. Send ships to its landing site instead.',
-  'mp.err.gateInFlightClick': 'That gate is still flying out of the Sun and cannot be targeted in flight. It lands on T{tick}.',
+  'mp.err.gateInFlightClick': 'That gate is still flying out of the Sun and cannot be targeted in flight. It lands on T+{tick}.',
   'mp.err.notTerraformed': 'This world is still raw — cities need a terraformed world. Run a freighter supply route here to terraform it, or deploy a Station now.',
   'mp.err.originNotTerraformed': 'Terraform and Dyson runs load your POOL, and the pool is only on the dock at a terraformed world — pick one of those as the origin.',
   'mp.err.cannotTerraform': 'Only terrestrial worlds, moons and dwarf planets can be terraformed — gas giants and stars have nothing to work with.',

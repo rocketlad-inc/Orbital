@@ -845,11 +845,20 @@ function SunGateCard({ site, body }: { site: MegastructureState; body: Body }) {
           </div>
         </div>
       </div>
+      {/* IN FLIGHT IT IS NOT A DOOR YET (Lorne, 2026-10-07). The at-rest
+          copy, "park a ship on it to launch", read mid-flight as "go and
+          ride it": a player chased the squid past Venus to board it. In
+          flight it says what is true: it cannot be boarded or targeted,
+          where it stops, and how to be waiting there when it does. */}
       <p className="megac__blurb">
-        {atSol
-          ? t('megastructure.sun.blurbSol', { dest })
-          : t('megastructure.sun.blurbFar')}
-        {' '}{t('megastructure.sun.blurbTail')}
+        {flying
+          ? t('megastructure.sun.blurbFlying', { n: body.emerge!.untilTick, dest })
+          : <>
+              {atSol
+                ? t('megastructure.sun.blurbSol', { dest })
+                : t('megastructure.sun.blurbFar')}
+              {' '}{t('megastructure.sun.blurbTail')}
+            </>}
       </p>
       <div className="megac__gate">
         <div className="megac__gatehead">{t('megastructure.gateLink')}</div>

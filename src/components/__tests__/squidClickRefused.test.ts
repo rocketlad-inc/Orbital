@@ -38,6 +38,16 @@ describe('clicking the squid in flight', () => {
     expect(panel).toMatch(/mp\.err\.gateInFlightClick/);
   });
 
+  it('the gate card in flight says it cannot be boarded, not "park a ship on it"', () => {
+    const card = fs.readFileSync(path.join(__dirname, '..', '..', 'multiplayer', 'MegastructureCard.tsx'), 'utf8');
+    expect(card).toMatch(/flying\s*\?\s*t\('megastructure\.sun\.blurbFlying'/);
+    for (const cat of [en, ptBR] as Array<Record<string, string>>) {
+      const s = cat['megastructure.sun.blurbFlying'];
+      expect(s).toMatch(/\{n\}/);
+      expect(s).not.toMatch(/Park a ship on it|Estacione uma nave nele/);
+    }
+  });
+
   it('in both languages, with the landing tick', () => {
     const e = (en as Record<string, string>)['mp.err.gateInFlightClick'];
     const p = (ptBR as Record<string, string>)['mp.err.gateInFlightClick'];

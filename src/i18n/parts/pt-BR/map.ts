@@ -210,6 +210,7 @@ export const map: Catalog = {
   'megastructure.sun.blurbSol': 'Ele saiu do Sol. Estacione uma nave nele para partir rumo a {dest} com um décimo da propulsão normal.',
   'megastructure.sun.blurbFar': 'A outra ponta de um portal saído do Sol. Estacione uma nave nele para voltar para casa, em Sol, com um décimo da propulsão normal.',
   'megastructure.sun.blurbTail': 'O casco realmente viaja durante a travessia e pode ser interceptado no caminho.',
+  'megastructure.sun.blurbFlying': 'Ainda voando para fora do Sol: não pode ser abordado nem virar alvo até parar no Alcance Distante em T+{n}. Para passar primeiro, envie naves ao local de pouso dele (a mira dourada no fim da linha tracejada) e elas estarão esperando quando ele pousar. Depois parta do portal rumo a {dest} com um décimo da propulsão normal.',
   'megastructure.sun.farEnd': 'Sua outra ponta se abre além do mundo mais externo de {dest} assim que este parar.',
   'megastructure.sun.wiredTo': 'Ligado a {dest}.',
   'megastructure.sun.warn': 'Um portal solar. Não pertence a ninguém, não pode ser destruído, qualquer um pode usá-lo e sua ligação não pode ser mudada.',

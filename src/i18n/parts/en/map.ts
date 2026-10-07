@@ -208,6 +208,7 @@ export const map = {
   'megastructure.sun.blurbSol': 'It came out of the Sun. Park a ship on it to launch to {dest} at a tenth of the normal burn.',
   'megastructure.sun.blurbFar': 'The far end of a gate out of the Sun. Park a ship on it to launch home to Sol at a tenth of the normal burn.',
   'megastructure.sun.blurbTail': 'The hull is really in flight for the crossing, and can be intercepted on the way.',
+  'megastructure.sun.blurbFlying': 'Still flying out of the Sun: it cannot be boarded or targeted until it stops in the Far Reach on T+{n}. To be first through, send ships to its landing site (the gold reticle at the end of the dashed line) and they will be waiting when it lands. Then launch from the gate to {dest} at a tenth of the normal burn.',
   'megastructure.sun.farEnd': 'Its far end opens beyond the outermost world of {dest} the moment this one stops.',
   'megastructure.sun.wiredTo': 'Wired to {dest}.',
   'megastructure.sun.warn': 'A sun gate. It belongs to nobody, it cannot be destroyed, anyone may use it, and its link cannot be changed.',
