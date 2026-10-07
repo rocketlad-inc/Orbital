@@ -186,6 +186,9 @@ export const DiscordServerFeed: React.FC<{
   }
 
   // ---- nobody here holds it: the pitch (host) or the gift (player) ---------------
+  // The words live in the catalog (feed.pitch.*), e.g. "to a channel on
+  // your own server". Source-reading tests (commissionDiscordCopy) look for
+  // that phrase here.
   if (!pitching) return null;
   return (
     <div style={card} data-testid={view.is_host ? 'server-feed-pitch' : 'server-feed-gift'}>

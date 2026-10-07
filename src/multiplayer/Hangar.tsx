@@ -203,6 +203,9 @@ export function Hangar({ onRedeemed, giftJustBought }: {
               </button>
             ) : (
               <p className="hg-offsite">
+                {/* Words: hangar.offsite. English promise (appShell.test reads it here):
+                    the Commission is bought on the Orbital website, not in the app.
+                    It unlocks here the next time you sign in. */}
                 {t('hangar.offsite')}{' '}
                 <span className="hg-where">{WEBSITE_ORIGIN.replace('https://', '')}</span>
               </p>
