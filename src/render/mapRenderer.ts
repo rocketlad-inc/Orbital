@@ -20,7 +20,10 @@ import { sampleTorchTrajectory, torchPositionFromSamples, trajectoryTangentAt, i
 import { rendezvousStateAt } from '../physics/rendezvous.js';
 import { STRAIGHT_LINE_TRAJECTORIES } from '../game/featureFlags';
 import { COLORS, withOpacity, lighten, darken } from './colors';
-import { drawSunSquid, sunGateHeading, sunGateMorph } from './sunSquid';
+import { drawSunSquid, drawSunOmen, sunGateHeading, sunGateMorph } from './sunSquid';
+/** Ticks of warning before a gate leaves the Sun (worker/sunGates.js
+ *  SUN_GATE_WARNING_TICKS). */
+const SUN_GATE_OMEN_TICKS = 6;
 import { isSunGateSite } from '../game/farSystems';
 import { requestLabel, clearOfKeepOuts, reserveRect } from './labelLayer';
 import { visibleFogHoles } from './fogHoles';
@@ -67,6 +70,9 @@ import {
 
 export interface RenderContext {
   ctx: CanvasRenderingContext2D;
+  /** The tick the next sun gate comes out of the Sun, while its warning
+   *  is running (state.js sun_gate_next): the Sun shows the omen. */
+  sunGateEmergeTick?: number | null;
   /** Megastructure build state, keyed on LOCAL body id. A site is a
    *  body; this is the part a body cannot express. */
   megastructures?: Record<string, MegastructureState>;
@@ -4228,6 +4234,13 @@ export function drawBody(
     drawWarpGateBody(body, canvasPos, radius, ctx);
   } else if (body.type === 'star') {
     drawStarBody(body, canvasPos, radius, ctx);
+    // THE OMEN (sunSquid.ts): the six ticks before a gate comes out, the
+    // Sun itself shows something rising through it.
+    const emerge = ctx.sunGateEmergeTick;
+    if (body.id === 'sol' && emerge != null && ctx.t < emerge && ctx.t >= emerge - SUN_GATE_OMEN_TICKS) {
+      drawSunOmen(ctx.ctx, canvasPos.x, canvasPos.y, radius * 0.85,
+        1 - (emerge - ctx.t) / SUN_GATE_OMEN_TICKS, (emerge * 2.39996) % (Math.PI * 2), ctx.nowMs ?? 0);
+    }
     // Dyson Sphere lattice — the win-condition megaproject finally has
     // a face on the map. Segments of the sun-cage light up with real
     // construction progress; a completed sphere reads as a full golden

@@ -8956,6 +8956,15 @@ function cargoWords(p) {
 
 function buildFrontierStories(rows, used, locator, factionNames) {
   const stories = [];
+  // THE SUN GATES ARE ONE STORY PER EDITION (found auditing the first
+  // live run on prod). The warning, a gate leaving the Sun and the gate
+  // opening come hours apart, so a daily edition usually holds all three;
+  // printed as separate stories they were ranked by weight, so the paper
+  // led with "6 TICKS TO WHATEVER IT IS" above a gate already open. Each
+  // moment's sentence is kept, in the order it happened, under the
+  // headline of the LATEST moment, at the highest weight of them.
+  const sunGate = [];
+  const sunGateStory = (row, rank, story) => sunGate.push({ tick: Number(row.tick_number) || 0, rank, story });
   for (const row of rows) {
     const p = safeJson(row.payload);
     const actor = factionNames.get(row.actor_faction_id) ?? 'An unflagged force';
@@ -9038,16 +9047,16 @@ function buildFrontierStories(rows, used, locator, factionNames) {
       const wait = Math.max(1, Math.round(Number(p.gate_in) || 6));
       // The warning before a LATER gate knows there was one before.
       if (Number(p.index) > 0) {
-        stories.push(mkStory(880, used, 'sun_gate_omen_again', SUN_GATE_OMEN_AGAIN,
+        sunGateStory(row, 0, mkStory(880, used, 'sun_gate_omen_again', SUN_GATE_OMEN_AGAIN,
           'sun_gate_omen_again_hl', SUN_GATE_OMEN_AGAIN_HEADLINE, { wait }));
       } else {
-        stories.push(mkStory(880, used, 'sun_gate_omen', SUN_GATE_OMEN,
+        sunGateStory(row, 0, mkStory(880, used, 'sun_gate_omen', SUN_GATE_OMEN,
           'sun_gate_omen_hl', SUN_GATE_OMEN_HEADLINE, { wait }));
       }
       continue;
     }
     if (row.kind === 'sun_gate_emerged') {
-      stories.push(mkStory(870, used, 'sun_gate_emerged', SUN_GATE_EMERGED,
+      sunGateStory(row, 1, mkStory(870, used, 'sun_gate_emerged', SUN_GATE_EMERGED,
         'sun_gate_emerged_hl', SUN_GATE_EMERGED_HEADLINE, {
           gate: p.gate ?? 'the gate', system: p.system ?? 'another star',
           arrive: Math.round(Number(p.arrive_tick) || 0), near: p.near ?? null,
@@ -9055,7 +9064,7 @@ function buildFrontierStories(rows, used, locator, factionNames) {
       continue;
     }
     if (row.kind === 'sun_gate_opened') {
-      stories.push(mkStory(860, used, 'sun_gate_opened', SUN_GATE_OPENED,
+      sunGateStory(row, 2, mkStory(860, used, 'sun_gate_opened', SUN_GATE_OPENED,
         'sun_gate_opened_hl', SUN_GATE_OPENED_HEADLINE, {
           gate: p.gate ?? 'the gate', system: p.system ?? 'another star',
         }));
@@ -9066,7 +9075,7 @@ function buildFrontierStories(rows, used, locator, factionNames) {
       const from = p.from ?? 'the gate';
       const ship = p.ship ?? 'a hull';
       const system = p.to_system ?? p.to ?? 'the far side';
-      stories.push(mkStory(840, used, 'sun_gate_first', SUN_GATE_FIRST,
+      sunGateStory(row, 3, mkStory(840, used, 'sun_gate_first', SUN_GATE_FIRST,
         'sun_gate_first_hl', SUN_GATE_FIRST_HEADLINE, {
           actor, from, ship, system, actorPlain: actor, shipPlain: ship,
         }));
@@ -9126,6 +9135,16 @@ function buildFrontierStories(rows, used, locator, factionNames) {
           senderPlain: sender, recipientPlain: recipient,
         }));
     }
+  }
+  if (sunGate.length) {
+    sunGate.sort((a, b) => a.tick - b.tick || a.rank - b.rank);
+    const latest = sunGate[sunGate.length - 1].story;
+    stories.push({
+      ...latest,
+      // A paragraph per moment: each one is a beat of the story.
+      text: sunGate.map(s => s.story.text).join('\n\n'),
+      weight: Math.max(...sunGate.map(s => s.story.weight)),
+    });
   }
   return stories;
 }

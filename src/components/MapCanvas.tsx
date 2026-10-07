@@ -1527,6 +1527,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // Megastructure build state. Keyed on local body id, matching
       // the ids on the bodies the renderer is iterating.
       megastructures: gameState.megastructures,
+      // The omen on the Sun while a gate's warning runs (sunSquid.ts).
+      sunGateEmergeTick: gameState.sunGateNext?.emergeTick ?? null,
     };
 
     // Drawn worlds, kept for the badge pass below to extend with hulls.
