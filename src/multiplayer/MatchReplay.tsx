@@ -20,9 +20,17 @@ import {
   type ReplayStage as MatchStage, type MatchSummary, type SnapshotRow,
   mineEvents, type MatchEvent,
 } from '../render/matchWorld';
+import { t as tr, type Key } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 import './BattleCinema.css';
 
 const TICK_SECONDS = 1;
+
+/** A catalog line with one {name} that is shown bold: "battle at **name**". */
+function boldName(key: Key, name: string): React.ReactNode {
+  const [before, after] = tr(key, { name: '\u0000' }).split('\u0000');
+  return <>{before}<strong>{name}</strong>{after}</>;
+}
 
 /**
  * The whole-match film.
@@ -37,6 +45,7 @@ const TICK_SECONDS = 1;
 export function MatchReplay(
   { gameId, token }: { gameId?: string; token?: string },
 ) {
+  useI18n();
   // A token names its own game server-side, so the caller never supplies
   // one; a signed-in viewer supplies a game and has a session.
   const src = token
@@ -195,7 +204,7 @@ export function MatchReplay(
     summary?.factions.find(f => f.id === fid)?.name ?? 'Unaligned';
   const bodyName = (bid: string | null) =>
     summary?.bodies.find(b => b.id === bid || b.id.endsWith(':' + (bid ?? '')))
-      ?.name ?? bid ?? 'deep space';
+      ?.name ?? bid ?? tr('review.deepSpaceLower');
 
   // The film says what happens AT a world on that world; the log is
   // where the rest of the match is written down, including the things
@@ -203,7 +212,8 @@ export function MatchReplay(
   // Those used to exist only as a caption that flashed for a tick.
   const visibleEvents = useMemo(() => {
     const rows: Array<{ tick: number; kind: string; bodyId: string | null;
-      text: string; count?: number }> = [];
+      text: string; senate?: { title: string; passed: boolean; yea: number; nay: number };
+      count?: number }> = [];
     for (const e of events) {
       rows.push({ tick: e.tick, kind: e.kind, bodyId: e.bodyId,
         text: '', count: (e as { count?: number }).count });
@@ -217,8 +227,7 @@ export function MatchReplay(
         else if (v.vote === 'nay') nay += v.weight || 1;
       }
       rows.push({ tick: at, kind: 'senate', bodyId: null,
-        text: `"${bill.title || bill.kind}" `
-          + `${bill.status === 'passed' ? 'passed' : 'failed'} ${yea}–${nay}` });
+        text: '', senate: { title: bill.title || bill.kind, passed: bill.status === 'passed', yea, nay } });
     }
     rows.sort((a, b) => a.tick - b.tick);
     return rows.slice(0, 500);
@@ -238,7 +247,7 @@ export function MatchReplay(
             position: 'absolute', top: 8, right: 10, fontSize: 10,
             color: '#9fb3c8', background: 'rgba(10,16,24,0.7)',
             padding: '2px 8px', borderRadius: 4, letterSpacing: '0.06em',
-          }}>RECONSTRUCTED</div>
+          }}>{tr('replay.reconstructed')}</div>
         )}
       </div>
 
@@ -247,19 +256,19 @@ export function MatchReplay(
           onClick={() => (pos >= range[1]
             ? (seek(range[0]), setPlaying(true))
             : setPlaying(p => !p))}
-          aria-label={pos >= range[1] ? 'Replay' : playing ? 'Pause' : 'Play'}>
+          aria-label={pos >= range[1] ? tr('review.cinema.replay') : playing ? tr('review.cinema.pause') : tr('review.cinema.play')}>
           {pos >= range[1] ? '↺' : playing ? '‖' : '▶'}
         </button>
         <input type="range" min={range[0]} max={Math.max(range[0] + 0.001, range[1])}
           step={0.01} value={pos}
           onChange={e => { setPlaying(false); seek(Number(e.target.value)); }}
-          aria-label="Scrub" />
+          aria-label={tr('review.cinema.scrub')} />
         <span className="cinema-clock">
           T+{liveTick} / {range[1]}
         </span>
         <select value={speed} onChange={e => setSpeed(Number(e.target.value))}
-          aria-label="Speed">
-          <option value={1}>1 s/tick</option>
+          aria-label={tr('review.cinema.speed')}>
+          <option value={1}>{tr('replay.secPerTick')}</option>
           <option value={4}>4&times;</option>
           <option value={15}>15&times;</option>
           <option value={60}>60&times;</option>
@@ -276,7 +285,7 @@ export function MatchReplay(
       </div>
       </div>
 
-      <ol className="cinema-log" aria-label="Match log">
+      <ol className="cinema-log" aria-label={tr('replay.log')}>
         {visibleEvents.map((e, i) => (
           <li key={i}
             className={e.tick === liveTick ? 'tick live' : 'tick'}
@@ -284,12 +293,13 @@ export function MatchReplay(
             <div className="tick-head">
               <span className="tick-n">T+{e.tick}</span>
               <span className="tick-sum">
-                {e.kind === 'battle' && <>battle at <strong>{bodyName(e.bodyId)}</strong></>}
-                {e.kind === 'loss' && <>ships lost near <strong>{bodyName(e.bodyId)}</strong></>}
-                {e.kind === 'founded' && <>settlement founded on <strong>{bodyName(e.bodyId)}</strong></>}
-                {e.kind === 'fallen' && <>settlement lost on <strong>{bodyName(e.bodyId)}</strong></>}
-                {e.kind === 'pact' && <>a pact was signed</>}
-                {e.kind === 'senate' && <>senate {e.text}</>}
+                {e.kind === 'battle' && boldName('replay.battle', bodyName(e.bodyId))}
+                {e.kind === 'loss' && boldName('replay.loss', bodyName(e.bodyId))}
+                {e.kind === 'founded' && boldName('replay.founded', bodyName(e.bodyId))}
+                {e.kind === 'fallen' && boldName('replay.fallen', bodyName(e.bodyId))}
+                {e.kind === 'pact' && <>{tr('replay.pact')}</>}
+                {e.kind === 'senate' && e.senate && <>{tr(e.senate.passed ? 'replay.senatePassed' : 'replay.senateFailed',
+                  { title: e.senate.title, yea: e.senate.yea, nay: e.senate.nay })}</>}
               </span>
             </div>
           </li>

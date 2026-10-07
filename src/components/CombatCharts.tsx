@@ -30,6 +30,8 @@
 import React from 'react';
 import { SHIP_CLASSES, ShipClassName } from '../game/shipClasses';
 import { hitChanceOf, DAMAGE_MITIGATION_PER_PART } from '../game/shipParts';
+import { t, tn } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 import './CombatCharts.css';
 
 /** Hulls that can shoot, in speed order (fast first) — the order is the
@@ -38,6 +40,10 @@ const ARMED: ShipClassName[] = ['corvette', 'frigate', 'destroyer'];
 /** Everything that can be shot AT. Freighters never fire but are very
  *  much a target, and leaving them out would hide how safe they aren't. */
 const TARGETS: ShipClassName[] = ['corvette', 'frigate', 'destroyer', 'freighter'];
+
+/** "a **b** c" -> a, <b>b</b>, c. The catalog marks bold with ** so word order can differ per language. */
+const rich = (s: string): React.ReactNode[] =>
+  s.split('**').map((part, i) => (i % 2 ? <b key={i}>{part}</b> : part));
 
 const stat = (c: ShipClassName) => SHIP_CLASSES[c];
 const label = (c: ShipClassName) => c.charAt(0).toUpperCase() + c.slice(1);
@@ -68,7 +74,9 @@ const Matrix: React.FC<{
   title: string;
   caption: string;
   cell: (atk: ShipClassName, def: ShipClassName) => { t: number; text: string; title: string };
-}> = ({ title, caption, cell }) => (
+}> = ({ title, caption, cell }) => {
+  useI18n();
+  return (
   <figure className="cc-fig">
     <figcaption className="cc-figcap">
       <span className="cc-figtitle">{title}</span>
@@ -78,7 +86,7 @@ const Matrix: React.FC<{
       <table className="cc-matrix">
         <thead>
           <tr>
-            <th scope="col" className="cc-corner">firing ↓ / at →</th>
+            <th scope="col" className="cc-corner">{t('combat.matrix.corner')}</th>
             {TARGETS.map(d => <th scope="col" key={d}>{label(d)}</th>)}
           </tr>
         </thead>
@@ -106,9 +114,11 @@ const Matrix: React.FC<{
       </table>
     </div>
   </figure>
-);
+  );
+};
 
 export const CombatCharts: React.FC = () => {
+  useI18n();
   const maxHp = Math.max(...TARGETS.map(c => stat(c).hp));
   const maxDmg = Math.max(...TARGETS.map(c => stat(c).damagePerTick));
   const maxSpd = Math.max(...TARGETS.map(c => stat(c).speed));
@@ -121,62 +131,61 @@ export const CombatCharts: React.FC = () => {
 
   return (
     <section className="cc">
-      <h2 className="cc-h2">The numbers behind a fight</h2>
+      <h2 className="cc-h2">{t('combat.title')}</h2>
       <p className="cc-lede">
-        Ships fire every tick. Whether a shot lands is decided by speed alone:
-        a fast hull is hard to hit, and it does not matter how big the gun is.
-        Everything below is read live from the game's own combat tables, so it
-        is what your ships are actually doing right now.
+        {t('combat.lede')}
       </p>
 
       <Matrix
-        title="Chance to hit"
-        caption="attacker speed² ÷ (attacker² + defender²) — mirrors are always 50%"
+        title={t('combat.hit.title')}
+        caption={t('combat.hit.caption')}
         cell={(a, d) => {
           const p = hitChanceOf(stat(a).speed, stat(d).speed);
           return {
             t: p,
             text: `${Math.round(p * 100)}%`,
-            title: `A ${label(a)} firing at a ${label(d)} hits ${Math.round(p * 100)}% of the time.`,
+            title: t('combat.hit.cell', { a: label(a), d: label(d), p: Math.round(p * 100) }),
           };
         }}
       />
 
       <p className="cc-note">
-        Read the corners. A corvette hits a destroyer{' '}
-        <b>{Math.round(hitChanceOf(stat('corvette').speed, stat('destroyer').speed) * 100)}%</b>{' '}
-        of the time; the destroyer shooting back lands{' '}
-        <b>{Math.round(hitChanceOf(stat('destroyer').speed, stat('corvette').speed) * 100)}%</b>.
-        That gap is the whole reason small hulls still matter.
+        {rich(t('combat.note.corners', {
+          a: Math.round(hitChanceOf(stat('corvette').speed, stat('destroyer').speed) * 100),
+          b: Math.round(hitChanceOf(stat('destroyer').speed, stat('corvette').speed) * 100),
+        }))}
       </p>
 
       <Matrix
-        title="Expected damage per tick"
-        caption="base damage × chance to hit — what the shot is actually worth"
+        title={t('combat.exp.title')}
+        caption={t('combat.exp.caption')}
         cell={(a, d) => {
           const p = hitChanceOf(stat(a).speed, stat(d).speed);
           const dmg = stat(a).damagePerTick * p;
           return {
             t: maxExp > 0 ? dmg / maxExp : 0,
             text: dmg.toFixed(1),
-            title: `${label(a)} → ${label(d)}: ${stat(a).damagePerTick} base × `
-              + `${Math.round(p * 100)}% = ${dmg.toFixed(1)} damage per tick.`,
+            title: t('combat.exp.cell', {
+              a: label(a), d: label(d), base: stat(a).damagePerTick,
+              p: Math.round(p * 100), dmg: dmg.toFixed(1),
+            }),
           };
         }}
       />
 
       <p className="cc-note">
-        Accuracy is why a destroyer is not simply {(stat('destroyer').damagePerTick
-          / stat('corvette').damagePerTick).toFixed(0)}× a corvette. Against a
-        corvette its {stat('destroyer').damagePerTick} damage lands as{' '}
-        <b>{(stat('destroyer').damagePerTick
-          * hitChanceOf(stat('destroyer').speed, stat('corvette').speed)).toFixed(1)}</b>.
+        {rich(t('combat.note.accuracy', {
+          x: (stat('destroyer').damagePerTick / stat('corvette').damagePerTick).toFixed(0),
+          dmg: stat('destroyer').damagePerTick,
+          eff: (stat('destroyer').damagePerTick
+            * hitChanceOf(stat('destroyer').speed, stat('corvette').speed)).toFixed(1),
+        }))}
       </p>
 
       <div className="cc-grid3">
         <figure className="cc-fig">
           <figcaption className="cc-figcap">
-            <span className="cc-figtitle">Hull HP</span>
+            <span className="cc-figtitle">{t('combat.hp')}</span>
           </figcaption>
           {TARGETS.map(c => (
             <BarRow key={c} name={label(c)} value={stat(c).hp} max={maxHp}
@@ -185,7 +194,7 @@ export const CombatCharts: React.FC = () => {
         </figure>
         <figure className="cc-fig">
           <figcaption className="cc-figcap">
-            <span className="cc-figtitle">Base damage / tick</span>
+            <span className="cc-figtitle">{t('combat.damage')}</span>
           </figcaption>
           {TARGETS.map(c => (
             <BarRow key={c} name={label(c)} value={stat(c).damagePerTick} max={maxDmg}
@@ -194,8 +203,8 @@ export const CombatCharts: React.FC = () => {
         </figure>
         <figure className="cc-fig">
           <figcaption className="cc-figcap">
-            <span className="cc-figtitle">Speed</span>
-            <span className="cc-figsub">drives accuracy both ways</span>
+            <span className="cc-figtitle">{t('combat.speed')}</span>
+            <span className="cc-figsub">{t('combat.speed.sub')}</span>
           </figcaption>
           {TARGETS.map(c => (
             <BarRow key={c} name={label(c)} value={stat(c).speed} max={maxSpd}
@@ -209,20 +218,19 @@ export const CombatCharts: React.FC = () => {
           cue rather than the only one. */}
       <figure className="cc-fig">
         <figcaption className="cc-figcap">
-          <span className="cc-figtitle">Guns and their counters</span>
+          <span className="cc-figtitle">{t('combat.counters.title')}</span>
           <span className="cc-figsub">
-            each matching defensive part cuts that damage type by{' '}
-            {Math.round((1 - DAMAGE_MITIGATION_PER_PART) * 100)}%, compounding
+            {t('combat.counters.sub', { pct: Math.round((1 - DAMAGE_MITIGATION_PER_PART) * 100) })}
           </span>
         </figcaption>
         <div className="cc-counters">
           <div className="cc-counter">
             <span className="cc-swatch" style={{ background: '#26a69a' }} />
-            <span className="cc-ctext"><b>Kinetic</b> is stopped by <b>Shields</b></span>
+            <span className="cc-ctext">{rich(t('combat.counter.kinetic'))}</span>
           </div>
           <div className="cc-counter">
             <span className="cc-swatch" style={{ background: '#c98500' }} />
-            <span className="cc-ctext"><b>Energy</b> is stopped by <b>Armour</b></span>
+            <span className="cc-ctext">{rich(t('combat.counter.energy'))}</span>
           </div>
         </div>
         <div className="cc-mit">
@@ -230,7 +238,7 @@ export const CombatCharts: React.FC = () => {
             const cut = 1 - Math.pow(DAMAGE_MITIGATION_PER_PART, n);
             return (
               <div className="cc-mitrow" key={n}>
-                <div className="cc-barname">{n} part{n > 1 ? 's' : ''}</div>
+                <div className="cc-barname">{tn('combat.parts', n)}</div>
                 <div className="cc-bartrack">
                   <div className="cc-barfill cc-barfill--mit" style={{ width: `${cut * 100}%` }} />
                 </div>
@@ -240,10 +248,7 @@ export const CombatCharts: React.FC = () => {
           })}
         </div>
         <p className="cc-note cc-note--tight">
-          The wrong defence does nothing at all — shields do not slow an energy
-          beam. Since metal buys kinetic guns and shields while credits buy
-          energy guns and armour, a fleet built on one currency carries a
-          defence its enemy simply ignores.
+          {t('combat.wrongDefence')}
         </p>
       </figure>
     </section>
