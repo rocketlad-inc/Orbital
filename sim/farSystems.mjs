@@ -244,9 +244,9 @@ check('they use the SERVER spelling for types',
 
 // ---- 2. Distance is the balance -------------------------------------
 // Live games run system_scale 4 over the catalogue's own SYSTEM_SCALE 2.
-// Doubled 2026-10-06 ("Double the distance between solar systems"): on
-// the real burn (burn.js, building to 1g) Earth to Centauri is ~82 T
-// direct and Cygnus ~88, where the sun gates' whole route is ~71.
+// Doubled 2026-10-06 ("Double the distance between solar systems"), then
+// the burn capped at 0.1g the same evening: Earth to Centauri ~159 T
+// direct and Cygnus ~179, where the sun gates' whole route is ~82.
 const LIVE = 4;
 const { legTicks: burnTicksFor, SHIP_ENGINE_ACCEL } = await import('../worker/burn.js');
 const EARTH = 186 * 2 * LIVE;
@@ -256,10 +256,10 @@ const cygR = BODY_CATALOG.find(b => b.id === 'bh_barycenter').orbit_radius;
 // BODY_CATALOG is already through SYSTEM_SCALE (x2) at module load.
 check('the far systems sit twice as far out as they first did',
   cenR === 2 * 2 * 33150 && cygR === 2 * 2 * 42500, `${cenR} / ${cygR}`);
-check('Centauri is ~82 ticks direct from Earth on the real burn',
-  Math.abs(direct(cenR) - 82) <= 2, `${direct(cenR)} ticks`);
-check('Cygnus is ~88 ticks direct',
-  Math.abs(direct(cygR) - 88) <= 2, `${direct(cygR)} ticks`);
+check('Centauri is ~159 ticks direct from Earth on the real burn',
+  Math.abs(direct(cenR) - 159) <= 3, `${direct(cenR)} ticks`);
+check('Cygnus is ~179 ticks direct',
+  Math.abs(direct(cygR) - 179) <= 3, `${direct(cygR)} ticks`);
 {
   // ...and the sun gate is the shortcut: to the gate (out in the Far
   // Reach, ~25,500 live), across it at a tenth of the burn, and in from
@@ -267,8 +267,8 @@ check('Cygnus is ~88 ticks direct',
   const { gateTransitTicks } = await import('../worker/megastructures.js');
   const leg = (d) => Math.ceil(burnTicksFor(d, SHIP_ENGINE_ACCEL));
   const viaGate = leg(25500 - EARTH) + gateTransitTicks(leg(cenR * LIVE - 25500), 0.1) + leg(6500);
-  check('Earth to Centauri through the gate beats flying direct by 10+ ticks',
-    direct(cenR) - viaGate >= 10, `gate ${viaGate} vs direct ${direct(cenR)}`);
+  check('Earth to Centauri through the gate takes about half the time of flying direct',
+    viaGate <= direct(cenR) * 0.6, `gate ${viaGate} vs direct ${direct(cenR)}`);
 }
 check('they sit on opposite sides of Sol',
   Math.abs(BODY_CATALOG.find(b => b.id === 'binary_barycenter').angle0

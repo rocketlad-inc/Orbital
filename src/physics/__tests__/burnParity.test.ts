@@ -141,15 +141,21 @@ describe('the build-up', () => {
   const still = () => ({ x: 0, y: 0 });
 
   it('gives the trip times Lorne picked (System scale 4, typical routes)', () => {
-    expect(MAX_ENGINE_G).toBe(1);
-    expect(RAMP_TICKS).toBe(48);
-    // It reaches the same top at the same tick the linear build did.
-    expect(boostState(48, a0, 0, fromG(1), GROWTH_TAU).a).toBeCloseTo(fromG(1), 6);
+    // Capped at 0.1g (2026-10-06 late), building at the rate the 1g build
+    // had: 0.02g -> 1g in 48 ticks, so it reaches 0.1g in ~19.7.
+    expect(MAX_ENGINE_G).toBe(0.1);
+    expect(GROWTH_TAU).toBeCloseTo(48 / Math.log(50), 9);
+    expect(RAMP_TICKS).toBeCloseTo(19.75, 2);
+    expect(boostState(RAMP_TICKS, a0, 0, fromG(0.1), GROWTH_TAU).a).toBeCloseTo(fromG(0.1), 6);
+    // ...and holds there: the cap is a cap.
+    expect(boostState(48, a0, 0, fromG(0.1), GROWTH_TAU).a).toBeCloseTo(fromG(0.1), 9);
     // In WHOLE TICKS, as the server lands them (it rounds arrival up).
     const ticks = [625, 2709, 4835, 19235, 28530, 36880].map(d => Math.ceil(legTicks(d, a0)));
     // Io-Callisto, Earth-Mars, Earth-Jupiter, Neptune-Pluto,
     // Pluto-Makemake, Makemake-Sedna.
-    expect(ticks).toEqual([10, 18, 23, 35, 39, 42]);
+    // The cap leaves everything short of a long Kuiper haul alone
+    // (was 10 / 18 / 23 / 35 / 39 / 42 at the 1g top).
+    expect(ticks).toEqual([10, 18, 23, 38, 44, 49]);
   });
 
   it('the client plans exactly the leg the server times', () => {
