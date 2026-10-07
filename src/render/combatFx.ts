@@ -19,7 +19,7 @@ import { SHIP_RANGE } from '../game/firingWindows';
 import { shipWorldPosition } from '../game/combat';
 import { getShipClass } from '../game/shipClasses';
 import { damageProfile, countPart, flakSlowMultiplier } from '../game/shipParts';
-import { FX_TUNING } from './fxTuning';
+import { FX_TUNING, kineticRoundsOf, burstSlots } from './fxTuning';
 import { settlementWorldPosition } from '../game/settlements';
 import { bodyPosition, localPositionAt } from '../physics/orbitalMechanics';
 import { shipDisplayTick, spinNowMs } from './tickPhase';
@@ -1155,14 +1155,15 @@ export function drawEngagementFire(
         if (!bubble) drawScorch(c, faceX, faceY, tR * 0.35, Math.min(0.9, bk * 0.5), hitAng, seedBase ^ 0x51);
       }
     } else if (firing) {
-      // KINETIC BURST: three rounds, staggered, each with its own muzzle
-      // flash, each leading the target so it lands on the hull.
+      // KINETIC BURST: one round per corvette, two per frigate, three per
+      // destroyer (stations and capitals three), staggered, each with its
+      // own muzzle flash, each leading the target so it lands on the hull.
       const ang0 = Math.atan2(tpNow.y - fp.y, tpNow.x - fp.x);
       const mx = fp.x + Math.cos(ang0) * sR * 0.45;
       const my = fp.y + Math.sin(ang0) * sR * 0.45;
       const rw = Math.max(1.1, Math.min(2.4, sR * 0.075));
-      const flight = BOLT_MS - 2 * ROUND_GAP_MS;
-      for (let r = 0; r < 3; r++) {
+      const { first, slots, flight } = burstSlots(kineticRoundsOf(shooter.ship?.class));
+      for (let r = first; r < slots; r++) {
         const w2 = within - r * ROUND_GAP_MS;
         if (w2 < 0) continue;
         const k = w2 / flight;

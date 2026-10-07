@@ -28,6 +28,10 @@ data class FxTuning(
   val muzzleMs: Float = 130f,
   val impactMs: Float = 380f,
   val roundGapMs: Float = 70f,
+  val kineticRoundsCorvette: Int = 1,
+  val kineticRoundsFrigate: Int = 2,
+  val kineticRoundsDestroyer: Int = 3,
+  val kineticRoundsOther: Int = 3,
   val chargeMs: Float = 180f,
   val flakBurstMs: Float = 1000f,
   val flakCycleMs: Float = 750f,
@@ -40,6 +44,17 @@ data class FxTuning(
   val breakupFlyMs: Float = 1800f,
   val breakupHeatMs: Float = 2600f,
 ) {
+  /** Rounds in one kinetic burst for a shooter of this class: 1 / 2 / 3
+   *  for corvette / frigate / destroyer, the full burst for anything else.
+   *  The look only -- the server's volley is untouched. Same table as the
+   *  game's kineticRoundsOf (src/render/fxTuning.ts). */
+  fun roundsFor(cls: String?): Int = when (cls) {
+    "corvette" -> kineticRoundsCorvette
+    "frigate" -> kineticRoundsFrigate
+    "destroyer" -> kineticRoundsDestroyer
+    else -> kineticRoundsOther
+  }
+
   companion object {
     /** What the Porthole draws by: the last feed's, or the defaults. */
     @Volatile
@@ -73,6 +88,10 @@ data class FxTuning(
         muzzleMs = f("muzzleMs", d.muzzleMs),
         impactMs = f("impactMs", d.impactMs),
         roundGapMs = f("roundGapMs", d.roundGapMs),
+        kineticRoundsCorvette = f("kineticRoundsCorvette", d.kineticRoundsCorvette.toFloat()).toInt(),
+        kineticRoundsFrigate = f("kineticRoundsFrigate", d.kineticRoundsFrigate.toFloat()).toInt(),
+        kineticRoundsDestroyer = f("kineticRoundsDestroyer", d.kineticRoundsDestroyer.toFloat()).toInt(),
+        kineticRoundsOther = f("kineticRoundsOther", d.kineticRoundsOther.toFloat()).toInt(),
         chargeMs = f("chargeMs", d.chargeMs),
         flakBurstMs = f("flakBurstMs", d.flakBurstMs),
         flakCycleMs = f("flakCycleMs", d.flakCycleMs),
