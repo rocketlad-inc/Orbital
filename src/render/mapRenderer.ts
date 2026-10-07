@@ -21,9 +21,6 @@ import { rendezvousStateAt } from '../physics/rendezvous.js';
 import { STRAIGHT_LINE_TRAJECTORIES } from '../game/featureFlags';
 import { COLORS, withOpacity, lighten, darken } from './colors';
 import { drawSunSquid, drawSunOmen, sunGateHeading, sunGateMorph } from './sunSquid';
-/** Ticks of warning before a gate leaves the Sun (worker/sunGates.js
- *  SUN_GATE_WARNING_TICKS). */
-const SUN_GATE_OMEN_TICKS = 6;
 import { isSunGateSite } from '../game/farSystems';
 import { requestLabel, clearOfKeepOuts, reserveRect } from './labelLayer';
 import { visibleFogHoles } from './fogHoles';
@@ -67,6 +64,10 @@ import {
   drawConstructionSite, drawCompletedStructure, drawCapitalHull, isCapitalHull, withAlpha,
   drawStructureGlyph,
 } from './megastructureArt';
+
+/** Ticks of warning before a gate leaves the Sun (worker/sunGates.js
+ *  SUN_GATE_WARNING_TICKS). */
+const SUN_GATE_OMEN_TICKS = 6;
 
 export interface RenderContext {
   ctx: CanvasRenderingContext2D;
