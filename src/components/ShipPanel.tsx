@@ -66,6 +66,8 @@ import { MEGA_STRIKE_CHARGE_TICKS, MEGASTRUCTURES } from '../game/megastructures
 import { isCapitalHull } from '../render/megastructureArt';
 import { BuildPanel } from './BuildPanel';
 import { fleetPath } from '../multiplayer/fleetWire';
+import { t, tn } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 
 // Order-independent key for a parts loadout, so two designs with the same
 // multiset of parts compare equal regardless of slot order.
@@ -100,19 +102,19 @@ type ShipPanelTab = 'fleet' | 'orders' | 'yard' | 'ship' | 'cargo' | 'log';
 
 /** Tab order, left to right. Reads as a sentence about the hull: what it's
  *  doing, what it is, what it's carrying, what it's done. */
-const SHIP_TABS: Array<{ key: ShipPanelTab; label: string }> = [
+const SHIP_TABS: Array<{ key: ShipPanelTab }> = [
   // FLEET exists only for a hull in a fleet, and sits first because for
   // one it is the card the panel opens on — see the default below.
-  { key: 'fleet',  label: 'FLEET' },
-  { key: 'orders', label: 'ORDERS' },
+  { key: 'fleet' },
+  { key: 'orders' },
   // YARD is the Mobile Foundry's whole reason to exist, and it lived on
   // the BODY's menu — so the one hull in the game that IS a shipyard had
   // no way to build anything from its own panel. Sits second because on
   // a foundry it is the thing you opened the panel for.
-  { key: 'yard',   label: 'YARD' },
-  { key: 'ship',   label: 'SHIP' },
-  { key: 'cargo',  label: 'CARGO' },
-  { key: 'log',    label: 'LOG' },
+  { key: 'yard' },
+  { key: 'ship' },
+  { key: 'cargo' },
+  { key: 'log' },
 ];
 
 /** Hostile hull names in the intercept list. Red on request (Noah), not
@@ -122,6 +124,7 @@ const SHIP_TABS: Array<{ key: ShipPanelTab; label: string }> = [
 const RV_HOSTILE_RED = '#ff5e5e';
 
 export const ShipPanel: React.FC = () => {
+  const { lang: uiLang } = useI18n();
   const {
     gameState, uiState, deselectShip, setGameState,
     deleteManeuverNode, setTargetSelectionMode,
@@ -309,9 +312,9 @@ export const ShipPanel: React.FC = () => {
     const shipNameOf = (id: string | undefined | null) =>
       (id ? gameState.ships.find(sh => sh.id === id)?.name : null) ?? null;
     const nameOf = (id: string | undefined | null) =>
-      (id ? gameState.bodies.find(b => b.id === id)?.name : null) ?? 'unknown';
+      (id ? gameState.bodies.find(b => b.id === id)?.name : null) ?? t('ship.panel.unknownLower');
     const eta = (arrive: number | undefined) =>
-      arrive == null ? '' : `arrives T+${Math.round(arrive)} (${Math.max(0, Math.round(arrive - now))}t)`;
+      arrive == null ? '' : t('ship.panel.arrives', { tick: Math.round(arrive), n: Math.max(0, Math.round(arrive - now)) });
 
     const out: Array<{
       key: string; kind: 'goto' | 'wait'; dest: string; label: string; meta: string;
@@ -338,29 +341,29 @@ export const ShipPanel: React.FC = () => {
     const live = ship.transit?.currentTransfer;
     if (live) {
       const d = nameOf(live.targetBodyId);
-      out.push({ key: 'live', kind: 'goto', dest: d, label: `Go to ${d}`, meta: eta(live.arriveTick), committed: true, waitBefore: 0, intercepts: shipNameOf(live.rv?.followShipId), queueIndex: null });
+      out.push({ key: 'live', kind: 'goto', dest: d, label: t('ship.panel.goTo', { name: d }), meta: eta(live.arriveTick), committed: true, waitBefore: 0, intercepts: shipNameOf(live.rv?.followShipId), queueIndex: null });
       readyAt = live.arriveTick;
     } else if (ship.plannedTransit) {
       const d = nameOf(ship.plannedTransit.targetBodyId);
       const w = waitFor(ship.plannedTransit.startTick);
       // Staged, not committed: say so, because this one CAN still be changed
       // and the committed one cannot. That difference is the whole rule.
-      out.push({ key: 'planned', kind: 'goto', dest: d, label: `Go to ${d}`, meta: 'staged — not committed', committed: false, waitBefore: w, intercepts: shipNameOf(ship.plannedTransit.rv?.followShipId), queueIndex: null });
+      out.push({ key: 'planned', kind: 'goto', dest: d, label: t('ship.panel.goTo', { name: d }), meta: t('ship.panel.staged'), committed: false, waitBefore: w, intercepts: shipNameOf(ship.plannedTransit.rv?.followShipId), queueIndex: null });
       readyAt = ship.plannedTransit.arriveTick;
     }
     for (const [i, q] of (ship.queuedTransits ?? []).entries()) {
       const d = nameOf(q.targetBodyId);
       const w = waitFor(q.startTick);
       out.push({
-        key: `q${i}`, kind: 'goto', dest: d, label: `Go to ${d}`,
-        meta: `departs T+${Math.round(q.startTick)}`, committed: false, waitBefore: w,
+        key: `q${i}`, kind: 'goto', dest: d, label: t('ship.panel.goTo', { name: d }),
+        meta: t('ship.panel.departs', { tick: Math.round(q.startTick) }), committed: false, waitBefore: w,
         queueIndex: i,
         intercepts: shipNameOf(q.rv?.followShipId),
       });
       readyAt = q.arriveTick;
     }
     return out;
-  }, [ship, gameState.bodies, gameState.ships, gameState.currentTick]);
+  }, [ship, gameState.bodies, gameState.ships, gameState.currentTick, uiLang]);
 
   /**
    * WHO THIS SHIP COULD STILL CATCH, solved from the END of its chain.
@@ -407,7 +410,7 @@ export const ShipPanel: React.FC = () => {
           dest: gameState.bodies.find(b => b.id === tr.targetBodyId)?.name ?? '?',
           shipClass: t.class,
           iconVariant: t.iconVariant,
-          ownerName: owner?.name ?? 'Unknown',
+          ownerName: owner?.name ?? t('ship.panel.unknown'),
           c1,
           c2: owner?.color2 || deriveSecondary(c1),
           mine: t.ownedBy === 'player',
@@ -613,9 +616,9 @@ export const ShipPanel: React.FC = () => {
           shipId: ship.id, target: targetBodyId,
         });
         const targetName = gameState.bodies.find(bd => bd.id === targetBodyId)?.name
-          ?? 'that destination';
+          ?? t('ship.panel.thatDestination');
         setTransferError(
-          `Couldn't plot a course to ${targetName}. If this ship is already there, pick somewhere else.`,
+          t('ship.panel.noCourse', { name: targetName }),
         );
         setTransferModalOpen(false);
         setTargetSelectionMode(false);
@@ -665,9 +668,7 @@ export const ShipPanel: React.FC = () => {
           setTransferNote(null);
           if (staged.length > 1 && throttled > 0) {
             setTransferNote(
-              `Flying in formation — ${throttled} hull${throttled === 1 ? '' : 's'} `
-              + `throttled to the fleet's pace so all ${staged.length} land on `
-              + `T+${Math.ceil(Math.max(...staged))}.`,
+              tn('ship.panel.formation', throttled, { total: staged.length, tick: Math.ceil(Math.max(...staged)) }),
             );
           }
         } else {
@@ -869,13 +870,13 @@ export const ShipPanel: React.FC = () => {
 
     const plans = queueTorchTour(ship.id, tour);
     if (plans.length === 0) {
-      setExploreNotice('Could not plot a course to any of those worlds');
+      setExploreNotice(t('ship.panel.exploreNoCourse'));
       return;
     }
-    const firstName = gameState.bodies.find(b => b.id === plans[0].targetBodyId)?.name ?? 'the first stop';
+    const firstName = gameState.bodies.find(b => b.id === plans[0].targetBodyId)?.name ?? t('ship.panel.firstStop');
     setExploreNotice(
-      `Surveying ${plans.length} world${plans.length === 1 ? '' : 's'} — next stop ${firstName}`
-      + (plans.length < tour.length ? ` (${tour.length - plans.length} unreachable)` : ''),
+      tn('ship.panel.surveying', plans.length, { name: firstName })
+      + (plans.length < tour.length ? ` (${t('ship.panel.unreachable', { n: tour.length - plans.length })})` : ''),
     );
     if (!mpActions) return;
 
@@ -914,7 +915,7 @@ export const ShipPanel: React.FC = () => {
       // Deliberately doesn't name the hull: the server consumes the
       // first colony ship it finds at the body (LIMIT 1), which isn't
       // necessarily the one selected here when two share an orbit.
-      setDeployNotice(`${name} founded on ${colonyBody.name} — a colony ship was consumed`);
+      setDeployNotice(t('ship.panel.founded', { name, body: colonyBody.name }));
     } else {
       setDeployNotice(humanizeMpError(res.code, res.error, 'deploy'));
     }
@@ -1008,7 +1009,7 @@ export const ShipPanel: React.FC = () => {
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
     if (!res.ok) {
-      setFleetError(res.error?.message ?? 'fleet action failed');
+      setFleetError(res.error?.message ?? t('ship.panel.fleetFailed'));
       return false;
     }
     return true;
@@ -1122,11 +1123,11 @@ export const ShipPanel: React.FC = () => {
   })();
   const gateOnward = routeStopName
     ?? (targetGate?.partnerBodyId ? nameOfBody(targetGate.partnerBodyId) : null);
-  const gateSuffix = onAGateLeg && gateOnward ? ` · gate leg → ${gateOnward}` : '';
+  const gateSuffix = onAGateLeg && gateOnward ? ` · ${t('ship.panel.gateLeg', { name: gateOnward })}` : '';
 
   const locationLabel = ship.transit
-    ? `En route to ${nameOfBody(transitTarget) ?? 'unknown'}${etaSuffix}${gateSuffix}`
-    : `Orbiting ${nameOfBody(ship.orbit.parentBodyId) ?? ship.orbit.parentBodyId}`;
+    ? `${t('ship.panel.enRoute', { name: nameOfBody(transitTarget) ?? t('ship.panel.unknownLower') })}${etaSuffix}${gateSuffix}`
+    : t('ship.panel.orbiting', { name: nameOfBody(ship.orbit.parentBodyId) ?? ship.orbit.parentBodyId });
 
 
   // RECALL WINDOW. The client paints a launch onto its arc immediately,
@@ -1178,8 +1179,8 @@ export const ShipPanel: React.FC = () => {
         const burn = Math.ceil(pendingNode?.burnTime ?? gameState.currentTick + 1);
         const wait = burn - gameState.currentTick;
         return wait <= 1
-          ? 'The burn fires at the top of the next tick — until then this ship can still be called back.'
-          : `The burn fires on T${burn}, ${wait} ticks from now — until then this ship can still be called back.`;
+          ? t('ship.panel.recallNext')
+          : t('ship.panel.recallAt', { burn, wait });
       })()}
       style={{
         background: 'rgba(255,184,77,0.14)',
@@ -1189,7 +1190,7 @@ export const ShipPanel: React.FC = () => {
         padding: '2px 8px',
       }}
     >
-      {recalling ? 'RECALLING…' : '⟲ RECALL LAUNCH'}
+      {recalling ? t('ship.panel.recalling') : `⟲ ${t('ship.panel.recallLaunch')}`}
     </button>
   );
 
@@ -1215,8 +1216,8 @@ export const ShipPanel: React.FC = () => {
     : (ship.plannedTransit ? [ship] : []);
   const canCommit = fleetPreviewShips.length > 0;
   const commitLabel = fleetPreviewShips.length > 1
-    ? `▶ COMMIT ALL (${fleetPreviewShips.length})`
-    : '▶ COMMIT';
+    ? `▶ ${t('ship.panel.commitAll', { n: fleetPreviewShips.length })}`
+    : `▶ ${t('ship.panel.commit')}`;
   // Every hull's legs in ONE request (POST /transfers). A fleet COMMIT ALL
   // was one POST per leg per hull, awaited hull by hull.
   const commitStagedPlan = () => {
@@ -1227,7 +1228,7 @@ export const ShipPanel: React.FC = () => {
       const bad = results.filter((r): r is Extract<MpActionResult, { ok: false }> => !r.ok);
       if (bad.length === 0) return;
       const msg = humanizeMpError(bad[0].code, bad[0].error, 'transfer');
-      setTransferError(bad.length > 1 ? `${bad.length} legs refused — ${msg}` : msg);
+      setTransferError(bad.length > 1 ? t('ship.panel.legsRefused', { n: bad.length, msg }) : msg);
     });
   };
 
@@ -1416,14 +1417,14 @@ export const ShipPanel: React.FC = () => {
     if (where === 'ship' && currentFleet) {
       return (
         <div className="fleet-section" data-tutorial-id="ship-fleet-section">
-          <div className="section-title">FLEET</div>
+          <div className="section-title">{t('ship.panel.tab.fleet')}</div>
           <div className="fleet-note">
-            {ship.fleetDetached ? 'Detached from ' : 'Flies with '}
+            {ship.fleetDetached ? t('ship.panel.detachedFrom') : t('ship.panel.fliesWith')}{' '}
             <strong>{currentFleet.name}</strong>.
           </div>
           <div className="fleet-buttons">
             <button className="maneuver-btn" onClick={() => setShipTab('fleet')}>
-              OPEN FLEET CARD
+              {t('ship.panel.openFleetCard')}
             </button>
           </div>
         </div>
@@ -1433,7 +1434,7 @@ export const ShipPanel: React.FC = () => {
     return (
             <div className="fleet-section" data-tutorial-id={where === 'ship' ? 'ship-fleet-section' : undefined}>
               <div className="section-title">
-                {where === 'fleet' ? 'FLEET ACTIONS' : 'FLEET'}
+                {where === 'fleet' ? t('ship.panel.fleetActions') : t('ship.panel.tab.fleet')}
               </div>
               {currentFleet ? (
                 <>
@@ -1445,8 +1446,8 @@ export const ShipPanel: React.FC = () => {
                       is for. */}
                   <div className="fleet-note">
                     {ship.fleetDetached
-                      ? 'Detached — this hull takes its own orders and is skipped by the fleet’s.'
-                      : `Orders and transfers apply to all ${fleetMembers.filter(m => !m.fleetDetached).length} attached ships.`}
+                      ? t('ship.panel.detachedNote')
+                      : t('ship.panel.attachedNote', { n: fleetMembers.filter(m => !m.fleetDetached).length })}
                   </div>
                   <div className="fleet-buttons">
                     <button
@@ -1454,8 +1455,8 @@ export const ShipPanel: React.FC = () => {
                       onClick={() => setShipSelection(
                         fleetMembers.filter(m => !m.fleetDetached).map(m => m.id),
                       )}
-                      title="Put the whole squadron in the selection, for group actions"
-                    >SELECT FLEET</button>
+                      title={t('ship.panel.selectFleetTip')}
+                    >{t('ship.panel.selectFleet')}</button>
                     {/* DETACH keeps membership. LEAVE below is permanent
                         and forfeits the captain arrangement; this is for
                         "that one scouts ahead" and is one click to undo. */}
@@ -1468,14 +1469,14 @@ export const ShipPanel: React.FC = () => {
                             : { detach_ship_ids: [ship.id] });
                       }}
                       title={ship.fleetDetached
-                        ? 'Fall back in: this hull takes the fleet’s orders again.'
-                        : 'Step out of formation without leaving the fleet — own orders, skipped by the fleet’s, one click to rejoin.'}
-                    >{ship.fleetDetached ? 'REJOIN' : 'DETACH'}</button>
+                        ? t('ship.panel.rejoinTip')
+                        : t('ship.panel.detachTip')}
+                    >{ship.fleetDetached ? t('ship.panel.rejoin') : t('ship.panel.detach')}</button>
                   </div>
                   <div className="fleet-buttons">
                     {eligiblePeers.length > 0 && (
                       <button className="maneuver-btn" onClick={() => setFleetModalOpen(true)}>
-                        + ADD SHIPS
+                        {t('ship.panel.addShips')}
                       </button>
                     )}
                     <button
@@ -1487,7 +1488,7 @@ export const ShipPanel: React.FC = () => {
                         } else removeFromFleet(currentFleet.id, ship.id);
                       }}
                     >
-                      LEAVE
+                      {t('ship.panel.leave')}
                     </button>
                     <button
                       className="maneuver-btn"
@@ -1498,13 +1499,13 @@ export const ShipPanel: React.FC = () => {
                         } else disbandFleet(currentFleet.id);
                       }}
                     >
-                      DISBAND
+                      {t('ship.panel.disband')}
                     </button>
                   </div>
                 </>
               ) : (
                 <button className="maneuver-btn" onClick={() => setFleetModalOpen(true)}>
-                  FORM FLEET ({eligiblePeers.length} ship{eligiblePeers.length === 1 ? '' : 's'} available)
+                  {tn('ship.panel.formFleet', eligiblePeers.length)}
                 </button>
               )}
               {/* A rejected fleet action is indistinguishable from a dead
@@ -1515,7 +1516,7 @@ export const ShipPanel: React.FC = () => {
                 <button
                   onClick={() => setFleetError(null)}
                   className="orders-config-error"
-                  title="Click to dismiss"
+                  title={t('ship.sd.dismiss')}
                 >⚠ {fleetError}</button>
               )}
             </div>
@@ -1551,7 +1552,7 @@ export const ShipPanel: React.FC = () => {
             letterSpacing: '0.08em',
           }}
         >
-          <span>TAP A BODY → {ship.name.toUpperCase()}</span>
+          <span>{t('ship.panel.tapBody', { name: ship.name.toUpperCase() })}</span>
           <button
             onClick={() => setTargetSelectionMode(false)}
             style={{
@@ -1566,20 +1567,20 @@ export const ShipPanel: React.FC = () => {
               letterSpacing: '0.08em',
             }}
           >
-            CANCEL
+            {t('ship.panel.cancel')}
           </button>
         </div>
       )}
 
-      <BottomSheet open={!hideForTargeting} onClose={deselectShip} title={`Ship: ${ship.name}`}>
+      <BottomSheet open={!hideForTargeting} onClose={deselectShip} title={t('ship.panel.shipTitle', { name: ship.name })}>
       <div className="ship-panel" data-tutorial-id="ship-panel">
         <div className="panel-header">
           <span>
-            SHIP:{' '}
+            {t('ship.panel.shipColon')}{' '}
             <EditableName
               value={ship.name}
               readOnly={ship.ownedBy !== 'player'}
-              ariaLabel="Rename this ship"
+              ariaLabel={t('ship.panel.renameThis')}
               onSave={async (next) => {
                 // Optimistic local rename so the header updates
                 // instantly. MP /state poll reconciles within ~1.5s
@@ -1611,8 +1612,8 @@ export const ShipPanel: React.FC = () => {
                   borderRadius: 3,
                   verticalAlign: 'middle',
                 }}
-                title={`Rank ${ship.rank}: +${ship.rank ?? 0}% damage, +${ship.rank ?? 0}% max HP`}
-              >RANK {ship.rank}</span>
+                title={t('ship.panel.rankTip', { rank: ship.rank ?? 0, pct: ship.rank ?? 0 })}
+              >{t('ship.panel.rank', { n: ship.rank ?? 0 })}</span>
             )}
             {/* Captain chip (DESIGN-captains §5): portrait + name. The rank
                 above is HIS. Click-through lives in the Fleet panel's
@@ -1628,12 +1629,14 @@ export const ShipPanel: React.FC = () => {
             {currentFleet && ship.id !== currentFleet.leadShipId && admiral && (
               <span
                 className="ship-adm-chip"
-                title={`${admiral.name} commands ${currentFleet.name} from ${
-                  gameState.ships.find(x => x.id === currentFleet.leadShipId)?.name ?? 'the flagship'
-                }. ${traitSummary(admiral.traits) || 'No notable traits'}.`}
+                title={t('ship.panel.admiralTip', {
+                  name: admiral.name, fleet: currentFleet.name,
+                  flag: gameState.ships.find(x => x.id === currentFleet.leadShipId)?.name ?? t('ship.panel.theFlagship'),
+                  traits: traitSummary(admiral.traits) || t('fleet.noTraits'),
+                })}
               >
                 <CaptainAvatar avatarId={admiral.avatarId} size={CAPTAIN_CHIP_PX} />
-                <span className="ship-adm-chip__rank">ADMIRAL</span>
+                <span className="ship-adm-chip__rank">{t('fleet.admiral')}</span>
                 {admiral.name.toUpperCase()}
               </span>
             )}
@@ -1650,7 +1653,7 @@ export const ShipPanel: React.FC = () => {
                      curve at 28px. 6 sits just outside the portrait's own rounding. */
                   color: '#9fe8e2', borderRadius: 6, verticalAlign: 'middle',
                 }}
-                title={traitSummary(ship.captainTraits) || 'Captain'}
+                title={traitSummary(ship.captainTraits) || t('ship.panel.captain')}
               >
                 <CaptainAvatar avatarId={ship.captainAvatar} size={CAPTAIN_CHIP_PX} />
                 {ship.captainName.toUpperCase()}
@@ -1661,15 +1664,15 @@ export const ShipPanel: React.FC = () => {
         </div>
 
         <div className="ship-tabs" role="tablist">
-          {SHIP_TABS.filter(t => tabExists(t.key)).map(t => (
+          {SHIP_TABS.filter(tb => tabExists(tb.key)).map(tb => (
             <button
-              key={t.key}
+              key={tb.key}
               role="tab"
-              aria-selected={activeTab === t.key}
-              className={`ship-tabs__tab${activeTab === t.key ? ' is-active' : ''}`}
-              onClick={() => setShipTab(t.key)}
+              aria-selected={activeTab === tb.key}
+              className={`ship-tabs__tab${activeTab === tb.key ? ' is-active' : ''}`}
+              onClick={() => setShipTab(tb.key)}
             >
-              {t.label}
+              {t(`ship.panel.tab.${tb.key}` as const)}
             </button>
           ))}
         </div>
@@ -1701,7 +1704,7 @@ export const ShipPanel: React.FC = () => {
             };
             const head = fleetHeadlineStatus(sum.attached.map(statusOf));
             const bodyName = (id: string) => gameState.bodies.find(b => b.id === id)?.name ?? '?';
-            const name = currentFleet?.name ?? 'Fleet';
+            const name = currentFleet?.name ?? t('fleet.title');
             const flagId = currentFleet?.leadShipId;
             // The officer, read off the FLAGSHIP: it carries captain name,
             // portrait and rank for rivals too, while our captain roster
@@ -1722,7 +1725,7 @@ export const ShipPanel: React.FC = () => {
                   <span className="fleet-tab__flag" aria-hidden>&#9873;</span>
                   <span className="fleet-tab__name">{name}</span>
                   <span className="fleet-tab__count">
-                    {sum.attached.length} ship{sum.attached.length === 1 ? '' : 's'}
+                    {tn('fleet.ships', sum.attached.length)}
                   </span>
                 </div>
                 {ownerFaction && (
@@ -1732,10 +1735,10 @@ export const ShipPanel: React.FC = () => {
                 )}
 
                 {admName ? (
-                  <div className="fleet-tab__adm" title={traitSummary(admTraits) || 'No notable traits'}>
+                  <div className="fleet-tab__adm" title={traitSummary(admTraits) || t('fleet.noTraits')}>
                     <CaptainAvatar avatarId={admAvatar ?? undefined} size={34} />
                     <div className="fleet-tab__admtext">
-                      <span className="fleet-tab__admrole">ADMIRAL · {rankTier(admRank).toUpperCase()}</span>
+                      <span className="fleet-tab__admrole">{t('fleet.admiral')} · {rankTier(admRank).toUpperCase()}</span>
                       <span className="fleet-tab__admname">{admName}</span>
                       {admTraits.length > 0 && (
                         <span className="fleet-tab__admtraits">{traitSummary(admTraits)}</span>
@@ -1744,17 +1747,17 @@ export const ShipPanel: React.FC = () => {
                   </div>
                 ) : (
                   <div className="fleet-tab__adm fleet-tab__adm--none">
-                    No admiral. The flagship has no captain, so the fleet flies leaderless.
+                    {t('ship.panel.noAdmiral')}
                   </div>
                 )}
 
                 <div className="stat-row">
-                  <span className="label">STATUS</span>
+                  <span className="label">{t('ship.panel.status')}</span>
                   <span className="value">
                     {head ? (
                       <span className={`status-badge status-badge--${head.status.cls}`} title={head.status.title}>
                         {head.status.label.toUpperCase()}
-                        {head.count < sum.attached.length ? ` · ${head.count} of ${sum.attached.length}` : ''}
+                        {head.count < sum.attached.length ? ` · ${t('ship.panel.ofTotal', { n: head.count, total: sum.attached.length })}` : ''}
                       </span>
                     ) : '—'}
                   </span>
@@ -1764,18 +1767,18 @@ export const ShipPanel: React.FC = () => {
                     detachment somewhere else is a real answer. */}
                 {sum.places.map(pl => (
                   <div className="stat-row" key={`${pl.kind}:${pl.bodyId}`}>
-                    <span className="label">{sum.places.length > 1 ? `${pl.count} SHIPS` : 'LOCATION'}</span>
+                    <span className="label">{sum.places.length > 1 ? tn('fleet.shipsCaps', pl.count) : t('ship.panel.location')}</span>
                     <span className="value">
                       {pl.kind === 'transit'
-                        ? `En route to ${bodyName(pl.bodyId)} · T-${pl.eta}`
-                        : `Parked at ${bodyName(pl.bodyId)}`}
+                        ? t('ship.panel.enRouteEta', { name: bodyName(pl.bodyId), eta: pl.eta })
+                        : t('ship.panel.parkedAt', { name: bodyName(pl.bodyId) })}
                     </span>
                   </div>
                 ))}
 
-                <div className="section-title">POWER</div>
+                <div className="section-title">{t('ship.panel.power')}</div>
                 <div className="stat-row">
-                  <span className="label">HULL</span>
+                  <span className="label">{t('ship.panel.hull')}</span>
                   <span className="value">{Math.round(sum.hp)}/{Math.round(sum.hpMax)} · {sum.hpPct}%</span>
                 </div>
                 {/* The ship card's own hull bar, so a fleet reads on the
@@ -1787,13 +1790,13 @@ export const ShipPanel: React.FC = () => {
                   />
                 </div>
                 {sum.worstHpPct < sum.hpPct - 10 && (
-                  <div className="fleet-tab__warn">Weakest hull at {sum.worstHpPct}%.</div>
+                  <div className="fleet-tab__warn">{t('ship.panel.weakest', { pct: sum.worstHpPct })}</div>
                 )}
                 <div className="stat-row">
-                  <span className="label">FIREPOWER</span>
+                  <span className="label">{t('ship.panel.firepower')}</span>
                   <span className="value">
-                    {Math.round(sum.firepower)}/tick
-                    {sum.armed < sum.attached.length ? ` · ${sum.armed} armed` : ''}
+                    {Math.round(sum.firepower)}/{t('fleet.tick')}
+                    {sum.armed < sum.attached.length ? ` · ${t('ship.panel.armedN', { n: sum.armed })}` : ''}
                   </span>
                 </div>
                 <div className="fleet-tab__comp">
@@ -1805,7 +1808,7 @@ export const ShipPanel: React.FC = () => {
                   ))}
                 </div>
 
-                <div className="section-title">SHIPS</div>
+                <div className="section-title">{t('ship.panel.shipsHead')}</div>
                 <div className="fleet-tab__list">
                   {listed.map(m => {
                     const mx = maxHpOf(m);
@@ -1817,7 +1820,7 @@ export const ShipPanel: React.FC = () => {
                         type="button"
                         className={`fleet-tab__row${m.id === ship.id ? ' is-open' : ''}`}
                         onClick={() => selectShip(m.id)}
-                        title={`${m.name} · ${pct}% hull`}
+                        title={t('ship.panel.rowTip', { name: m.name, pct })}
                       >
                         <HullIcon shipClass={m.class} variant={m.iconVariant} size={16} color={c} />
                         <span className="fleet-tab__rowname">{m.id === flagId ? '★ ' : ''}{m.name}</span>
@@ -1829,12 +1832,12 @@ export const ShipPanel: React.FC = () => {
                 </div>
                 {sum.attached.length > LIST_CAP && (
                   <button type="button" className="fleet-tab__more" onClick={() => setFleetListAll(v => !v)}>
-                    {fleetListAll ? 'SHOW FEWER' : `AND ${sum.attached.length - LIST_CAP} MORE · SHOW ALL`}
+                    {fleetListAll ? t('ship.panel.showFewer') : t('ship.panel.moreShowAll', { n: sum.attached.length - LIST_CAP })}
                   </button>
                 )}
                 {sum.detached.length > 0 && (<>
-                  <div className="section-title">DETACHED</div>
-                  <div className="fleet-tab__note">On their own orders, and not counted in the figures above.</div>
+                  <div className="section-title">{t('ship.panel.detachedHead')}</div>
+                  <div className="fleet-tab__note">{t('ship.panel.detachedNoteTab')}</div>
                   <div className="fleet-tab__list">
                     {sum.detached.map(m => (
                       <button key={m.id} type="button" className="fleet-tab__row" onClick={() => selectShip(m.id)}>
@@ -1863,12 +1866,9 @@ export const ShipPanel: React.FC = () => {
             return (
               <>
                 <div className="capnote">
-                  <div className="capnote__head">⬢ Slipway</div>
+                  <div className="capnote__head">⬢ {t('ship.panel.slipway')}</div>
                   <div className="capnote__body">
-                    {slots} build slots at {at?.name ?? 'this orbit'}, stacked on
-                    top of any yards already there. Move the foundry and the
-                    slipway moves with it — anything still on the ways is
-                    finished where it was laid down.
+                    {t('ship.panel.slipwayBody', { slots, name: at?.name ?? t('ship.panel.thisOrbit') })}
                   </div>
                 </div>
                 <BuildPanel bodyId={ship.orbit.parentBodyId} />
@@ -1894,7 +1894,7 @@ export const ShipPanel: React.FC = () => {
                 fontFamily: 'inherit', textAlign: 'left',
                 cursor: 'pointer', width: '100%',
               }}
-              title="Click to dismiss"
+              title={t('ship.sd.dismiss')}
             >⚠ {transferError}</button>
           )}
           {transferNote && !transferError && (
@@ -1908,7 +1908,7 @@ export const ShipPanel: React.FC = () => {
                 fontFamily: 'inherit', textAlign: 'left',
                 cursor: 'pointer', width: '100%',
               }}
-              title="Click to dismiss"
+              title={t('ship.sd.dismiss')}
             >{transferNote}</button>
           )}
           {/* WHO THIS ORDER MOVES, said where the order is given. A move
@@ -1918,8 +1918,8 @@ export const ShipPanel: React.FC = () => {
           {isOwn && currentFleet && !ship.fleetDetached && mpActions && (
             <div className="fleet-note" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
               <span style={{ flex: 1 }}>
-                Moves apply to all {fleetMembers.filter(m => !m.fleetDetached).length} ships
-                of <strong>{currentFleet.name}</strong>.
+                {t('ship.panel.movesApply', { n: fleetMembers.filter(m => !m.fleetDetached).length })}{' '}
+                <strong>{currentFleet.name}</strong>.
               </span>
               <button
                 className="maneuver-btn"
@@ -1927,8 +1927,8 @@ export const ShipPanel: React.FC = () => {
                 onClick={() => {
                   void fleetApi('PATCH', fleetUrl(currentFleet.id), { detach_ship_ids: [ship.id] });
                 }}
-                title="Step this hull out of formation so the next move is for it alone. One click to rejoin."
-              >DETACH THIS HULL</button>
+                title={t('ship.panel.detachThisTip')}
+              >{t('ship.panel.detachThis')}</button>
             </div>
           )}
           <div className="maneuver-buttons">
@@ -1937,10 +1937,10 @@ export const ShipPanel: React.FC = () => {
               onClick={() => setTargetSelectionMode(true)}
               data-tutorial-id="ship-transfer-button"
             >
-              {hasExistingTransfer ? '+ CHAIN MOVE' : 'MOVE TO TARGET'}
+              {hasExistingTransfer ? t('ship.panel.chainMove') : t('ship.panel.moveToTarget')}
             </button>
             <button className="maneuver-btn" onClick={() => setTransferModalOpen(true)}>
-              CHOOSE FROM LIST
+              {t('ship.panel.chooseFromList')}
             </button>
             {/* LOCATE — put the camera where this hull actually is.
                 Two different moves, because a ship has two states:
@@ -1966,10 +1966,10 @@ export const ShipPanel: React.FC = () => {
                 }
               }}
               title={ship.transit
-                ? 'Centre the map on this ship in flight'
-                : 'Focus the world this ship is orbiting'}
+                ? t('ship.panel.locateFlightTip')
+                : t('ship.panel.locateTip')}
             >
-              LOCATE
+              {t('ship.panel.locate')}
             </button>
             {/* INTERCEPT — the fourth button, and a button at last.
                 It was a bare disclosure row below the grid: "it doesn't
@@ -1985,9 +1985,9 @@ export const ShipPanel: React.FC = () => {
                 className={`maneuver-btn${rendezvousOpen ? ' is-armed' : ''}`}
                 onClick={() => setRendezvousOpen(o => !o)}
                 aria-expanded={rendezvousOpen}
-                title="Fly to meet a ship already in flight, at the world it is heading for"
+                title={t('ship.panel.interceptTip')}
               >
-                INTERCEPT {rendezvousOpen ? '▾' : '▸'}
+                {t('ship.panel.intercept')} {rendezvousOpen ? '▾' : '▸'}
               </button>
             )}
           </div>
@@ -2002,28 +2002,28 @@ export const ShipPanel: React.FC = () => {
               <select
                 value={exploreScope}
                 onChange={(e) => setExploreScope(e.target.value as ExploreScope)}
-                title="How far the survey ranges"
+                title={t('ship.panel.surveyRange')}
                 style={{
                   background: '#14202c', border: '1px solid #2a3d50', borderRadius: 3,
                   color: '#9fb4c6', fontFamily: 'inherit', fontSize: 10, padding: '3px 5px',
                   flex: '0 1 auto', minWidth: 0,
                 }}
               >
-                <option value="system">This system</option>
-                <option value="all">Whole map</option>
+                <option value="system">{t('ship.panel.thisSystem')}</option>
+                <option value="all">{t('ship.panel.wholeMap')}</option>
               </select>
               <button
                 className="maneuver-btn"
                 disabled={exploreTour.length === 0 || !!ship.transit}
                 onClick={startAutoExplore}
                 title={ship.transit
-                  ? 'Already under way — auto-explore starts from a parked hull'
+                  ? t('ship.panel.exploreUnderWay')
                   : exploreTour.length === 0
-                    ? 'Nothing left to survey in range'
-                    : `Queue a ${exploreTour.length}-stop survey`}
+                    ? t('ship.panel.exploreNothing')
+                    : t('ship.panel.exploreQueue', { n: exploreTour.length })}
                 style={exploreTour.length === 0 || ship.transit ? { opacity: 0.45 } : undefined}
               >
-                ⌖ AUTO-EXPLORE{exploreTour.length > 0 ? ` (${exploreTour.length})` : ''}
+                ⌖ {t('ship.panel.autoExplore')}{exploreTour.length > 0 ? ` (${exploreTour.length})` : ''}
               </button>
             </div>
           )}
@@ -2063,7 +2063,7 @@ export const ShipPanel: React.FC = () => {
             const rvShown = filterIntercepts(candidates, rvQuery, (c) => ({
               shipName: c.t.name,
               ownerName: c.t.ownedBy === 'player'
-                ? 'yours'
+                ? t('ship.panel.yours')
                 : (gameState.factions.find(f => f.id === c.t.ownedBy)?.name ?? ''),
               destName: c.dest.name,
             }));
@@ -2126,31 +2126,31 @@ export const ShipPanel: React.FC = () => {
                       className="rv-search"
                       value={rvQuery}
                       onChange={(e) => setRvQuery(e.target.value)}
-                      placeholder="Search ship, empire or destination"
-                      aria-label="Search intercept targets"
+                      placeholder={t('ship.panel.rvSearch')}
+                      aria-label={t('ship.panel.rvSearchLabel')}
                     />
                     <div className="rv-count">
                       {rvShown.length === candidates.length
-                        ? `${candidates.length} reachable`
-                        : `${rvShown.length} of ${candidates.length} reachable`}
+                        ? t('ship.panel.reachable', { n: candidates.length })
+                        : t('ship.panel.reachableOf', { n: rvShown.length, total: candidates.length })}
                     </div>
                   </>
                 )}
                 {rendezvousOpen && candidates.length > 0 && rvShown.length === 0 && (
                   <div style={{ fontSize: 10, color: '#7a8a9a', lineHeight: 1.45, padding: '4px 0' }}>
-                    No contact matches “{rvQuery.trim()}”.
+                    {t('ship.panel.noContact', { q: rvQuery.trim() })}
                   </div>
                 )}
                 {!rendezvousOpen ? null : candidates.length === 0 ? (
                   <div style={{ fontSize: 10, color: '#7a8a9a', lineHeight: 1.45, padding: '4px 0' }}>
-                    Nothing in flight you could reach before it lands.
+                    {t('ship.panel.nothingReach')}
                   </div>
                 ) : (
                   <div style={{ maxHeight: 190, overflowY: 'auto', margin: '2px 0 6px' }}>
                     {rvShown.map((c) => {
                       const isMine = c.t.ownedBy === 'player';
                       const owner = gameState.factions.find(f => f.id === c.t.ownedBy);
-                      const who = isMine ? 'yours' : (owner?.name ?? 'rival');
+                      const who = isMine ? t('ship.panel.yours') : (owner?.name ?? t('ship.panel.rival'));
                       const tint = isMine ? '#4ecdc4' : (owner?.color ?? '#8a9fb3');
                       // HOSTILES READ RED AT A GLANCE (Noah). Who counts
                       // as hostile is the map's own rule — trajectoryRole:
@@ -2179,8 +2179,7 @@ export const ShipPanel: React.FC = () => {
                               followShipId: c.t.id,
                             } : null);
                           }}
-                          title={'Frame the course — ' + c.t.name + ' reaches ' + c.dest.name
-                                 + ' on T+' + Math.round(c.theirEta)}
+                          title={t('ship.panel.frameTip', { name: c.t.name, dest: c.dest.name, tick: Math.round(c.theirEta) })}
                           style={{
                             display: 'flex', alignItems: 'center', gap: 8, width: '100%',
                             textAlign: 'left', cursor: 'pointer',
@@ -2205,10 +2204,10 @@ export const ShipPanel: React.FC = () => {
                               <span style={{ color: tint, fontSize: 9, marginLeft: 5 }}>{who}</span>
                             </span>
                             <span style={{ display: 'block', fontSize: 9, color: '#7a8a9a' }}>
-                              → {c.dest.name} · {c.rv ? 'match' : 'meet'} in {Math.round(c.meetIn)}t
+                              → {c.dest.name} · {c.rv ? t('ship.panel.matchIn', { n: Math.round(c.meetIn) }) : t('ship.panel.meetIn', { n: Math.round(c.meetIn) })}
                               {c.rv && (
                                 <span style={{ color: '#6ee7b7', marginLeft: 5 }}>
-                                  ⇌ fly together
+                                  ⇌ {t('ship.panel.flyTogether')}
                                 </span>
                               )}
                             </span>
@@ -2349,21 +2348,21 @@ export const ShipPanel: React.FC = () => {
                         const got = 1 + mateOk;
                         const matched = (chosen.rv ? 1 : 0) + mateMatched;
                         const flyingNote = mateFlying > 0
-                          ? ` ${mateFlying} already under way kept their course.`
+                          ? ` ${t('ship.panel.mateFlying', { n: mateFlying })}`
                           : '';
                         setTransferError(
                           got < total
-                            ? `${got} of ${total} could plot an intercept of ${chosen.t.name}.${flyingNote}`
+                            ? `${t('ship.panel.ivPlotted', { got, total, name: chosen.t.name })}${flyingNote}`
                             : matched === total || matched === 0
                               ? null
-                              : `${matched} of ${total} matched ${chosen.t.name}; the rest are flying to ${chosen.dest.name}.`,
+                              : t('ship.panel.ivMatched', { matched, total, name: chosen.t.name, dest: chosen.dest.name }),
                         );
                       }
                     }}
                   >
                     {chosen.rv
-                      ? '⇌ MATCH COURSE WITH ' + chosen.t.name.toUpperCase()
-                      : '⇉ MEET ' + chosen.t.name.toUpperCase() + ' AT ' + chosen.dest.name.toUpperCase()}
+                      ? '⇌ ' + t('ship.panel.matchCourse', { name: chosen.t.name.toUpperCase() })
+                      : '⇉ ' + t('ship.panel.meetAt', { name: chosen.t.name.toUpperCase(), dest: chosen.dest.name.toUpperCase() })}
                   </button>
                 )}
               </div>
@@ -2402,10 +2401,10 @@ export const ShipPanel: React.FC = () => {
             return (
               <div className="strikeclock">
                 <div className="strikeclock__head">
-                  ✹ {ship.strikeMode === 'obliterate' ? 'Charging to destroy' : 'Charging'}{world ? ` — ${world.name}` : ''}
+                  ✹ {ship.strikeMode === 'obliterate' ? t('ship.panel.chargingDestroy') : t('ship.panel.charging')}{world ? ` — ${world.name}` : ''}
                 </div>
                 <div className="strikeclock__t">
-                  T–{left} tick{left === 1 ? '' : 's'} till charged
+                  {tn('ship.panel.tillCharged', left)}
                 </div>
                 <div className="strikeclock__track">
                   <div className="strikeclock__fill" style={{ width: `${(pct * 100).toFixed(1)}%` }} />
@@ -2413,13 +2412,12 @@ export const ShipPanel: React.FC = () => {
                 <div className="strikeclock__note">
                   {mineTarget
                     ? (ship.strikeMode === 'obliterate'
-                      ? 'The world itself is destroyed when this completes: every settlement '
-                        + 'on it dies and it becomes a debris field for good. '
-                      : 'Every settlement on it dies when this completes. ')
-                      + 'Move the hull off the world and the charge breaks.'
+                      ? t('ship.panel.strikeWorldDies')
+                      : t('ship.panel.strikeSettlementsDie'))
+                      + ' ' + t('ship.panel.strikeMoveBreaks')
                     : isOwn
-                      ? 'Moving breaks the charge.'
-                      : 'It loses the charge if it is forced off the world.'}
+                      ? t('ship.panel.movingBreaks')
+                      : t('ship.panel.losesCharge')}
                 </div>
               </div>
             );
@@ -2442,19 +2440,19 @@ export const ShipPanel: React.FC = () => {
               ? (gameState.shipDesigns ?? []).find(d => d.id === ship.refitPendingDesignId) : undefined;
             const fee = refitFee(now, want, ship.class);
             const feeStr = [
-              fee.ore > 0 ? `${Math.round(fee.ore)} metal` : null,
-              fee.credits > 0 ? `${Math.round(fee.credits)} credits` : null,
-            ].filter(Boolean).join(' + ') || 'no charge';
+              fee.ore > 0 ? t('ship.panel.nMetal', { n: Math.round(fee.ore) }) : null,
+              fee.credits > 0 ? t('ship.panel.nCredits', { n: Math.round(fee.credits) }) : null,
+            ].filter(Boolean).join(' + ') || t('ship.panel.noCharge');
 
             // Where the work can actually happen — ANY friendly
             // settlement, which is what the tick pass requires. null
             // means this hull is already somewhere that qualifies.
             const site = nearestRefitBodyId(ship, gameState.settlements, gameState.bodies, gameState.currentTick);
-            const siteName = site ? (gameState.bodies.find(b => b.id === site)?.name ?? 'a yard') : null;
+            const siteName = site ? (gameState.bodies.find(b => b.id === site)?.name ?? t('ship.panel.aYard')) : null;
 
             return (
               <div className="maneuver-section" style={{ marginTop: 8 }}>
-                <div className="section-title">RETROFIT</div>
+                <div className="section-title">{t('ship.panel.retrofit')}</div>
                 {/* ALWAYS a dropdown once there is anything to refit to,
                     listing the whole class: the design this hull carries
                     shows as "fitted now" and cannot be picked. A single
@@ -2466,7 +2464,7 @@ export const ShipPanel: React.FC = () => {
                     data-testid="refit-pick"
                     value={active.id}
                     onChange={e => setRefitPick({ shipId: ship.id, designId: e.target.value })}
-                    title="Which of your saved designs to refit this hull to"
+                    title={t('ship.panel.refitPickTip')}
                     style={{
                       width: '100%', margin: '2px 0 4px', padding: '3px 4px', fontSize: 11,
                       background: 'rgba(14, 21, 30, 0.9)', color: '#d8e4ee',
@@ -2477,7 +2475,7 @@ export const ShipPanel: React.FC = () => {
                       if (d.fitted) {
                         return (
                           <option key={d.id} value={d.id} disabled>
-                            {d.name}{d.isActive ? ' (active)' : ''} · fitted now
+                            {d.name}{d.isActive ? ` (${t('ship.sd.activeLower')})` : ''} · {t('ship.panel.fittedNow')}
                           </option>
                         );
                       }
@@ -2485,18 +2483,18 @@ export const ShipPanel: React.FC = () => {
                       const cost = [
                         f.ore > 0 ? `${Math.round(f.ore)}M` : null,
                         f.credits > 0 ? `${Math.round(f.credits)}C` : null,
-                      ].filter(Boolean).join(' ') || 'free';
+                      ].filter(Boolean).join(' ') || t('ship.sd.free');
                       return (
                         <option key={d.id} value={d.id}>
-                          {d.name}{d.isActive ? ' (active)' : ''}{ship.refitPendingDesignId === d.id ? ' · ordered' : ''} · {cost}
+                          {d.name}{d.isActive ? ` (${t('ship.sd.activeLower')})` : ''}{ship.refitPendingDesignId === d.id ? ` · ${t('ship.panel.ordered')}` : ''} · {cost}
                         </option>
                       );
                     })}
                   </select>
                 )}
                 <div style={{ fontSize: 10, color: '#8a9fb3', lineHeight: 1.5, padding: '2px 0 4px' }}>
-                  Refit to <b style={{ color: '#d8e4ee' }}>{active.name}</b>.
-                  {' '}Costs <b style={{ color: '#d8e4ee' }}>{feeStr}</b>, charged when the work is done.
+                  {t('ship.panel.refitTo')} <b style={{ color: '#d8e4ee' }}>{active.name}</b>.
+                  {' '}{t('ship.panel.refitCosts')} <b style={{ color: '#d8e4ee' }}>{feeStr}</b>{t('ship.panel.refitCharged')}
                   {/* WHERE, WHEN, or WHY NOT (refitStatus): "fits on
                       arrival at a friendly world" was all it ever said,
                       and players read the silence as nothing happening. */}
@@ -2507,13 +2505,13 @@ export const ShipPanel: React.FC = () => {
                         data-testid="refit-status"
                         style={{ color: st?.blocked ? '#ffb84d' : '#6ee7b7' }}
                       >
-                        Ordered — {st?.text ?? 'fits on arrival at a friendly world'}.
+                        {t('ship.panel.orderedDash')} {st?.text ?? t('ship.panel.fitsOnArrival')}.
                       </div>
                     );
                   })()}
                   {pendingOther && (
                     <div style={{ color: '#6ee7b7' }}>
-                      {pendingOther.name} is ordered; refitting to {active.name} replaces it.
+                      {t('ship.panel.pendingReplaced', { other: pendingOther.name, name: active.name })}
                     </div>
                   )}
                 </div>
@@ -2523,8 +2521,8 @@ export const ShipPanel: React.FC = () => {
                     disabled={refitBusy}
                     style={{ opacity: refitBusy ? 0.45 : 1 }}
                     title={site
-                      ? `Order ${ship.name} to ${siteName} and fit ${active.name} on arrival`
-                      : `Fit ${active.name} here — applies on the next tick`}
+                      ? t('ship.panel.retrofitOrderTip', { ship: ship.name, site: siteName ?? '', name: active.name })
+                      : t('ship.panel.retrofitHereTip', { name: active.name })}
                     onClick={async () => {
                       if (refitBusy) return;
                       setRefitBusy(true);
@@ -2535,12 +2533,12 @@ export const ShipPanel: React.FC = () => {
                       // flight it already has.
                       if (res.ok && !pending && !pendingOther && site) launchTorchTransfer(ship.id, site);
                       setRefitBusy(false);
-                      if (!res.ok) setTransferError(humanizeMpError(res.code, res.error ?? 'Refit failed.', 'transfer'));
+                      if (!res.ok) setTransferError(humanizeMpError(res.code, res.error ?? t('ship.sd.refitFailed'), 'transfer'));
                     }}
                   >
-                    {pending ? '✕ CANCEL RETROFIT'
-                      : site ? `⟳ RETROFIT AT ${siteName!.toUpperCase()}`
-                      : '⟳ RETROFIT HERE'}
+                    {pending ? `✕ ${t('ship.panel.cancelRetrofit')}`
+                      : site ? `⟳ ${t('ship.panel.retrofitAt', { name: siteName!.toUpperCase() })}`
+                      : `⟳ ${t('ship.panel.retrofitHere')}`}
                   </button>
                 </div>
               </div>
@@ -2575,18 +2573,18 @@ export const ShipPanel: React.FC = () => {
             let line: string;
             if (ship.transit) {
               line = foundry
-                ? `${slots} build slots, live the moment it parks. Nothing can be laid down mid-burn.`
-                : 'The spinal gun cannot charge under burn. Park it over a terraformed world.';
+                ? t('ship.panel.foundryTransit', { slots })
+                : t('ship.panel.gunTransit');
             } else if (foundry) {
               line = here
-                ? `${slots} build slots at ${here.name}. Lay hulls down on the YARD tab.`
-                : `${slots} build slots wherever it parks.`;
+                ? t('ship.panel.foundryAt', { slots, name: here.name })
+                : t('ship.panel.foundryAnywhere', { slots });
             } else if (here && here.terraformedAtTick != null) {
-              line = `In range of ${here.name}. The charge order is below.`;
+              line = t('ship.panel.inRange', { name: here.name });
             } else {
               line = here
-                ? `Nothing to strike at ${here.name} — it has no terraforming to take.`
-                : 'Park it over a terraformed world to charge a strike.';
+                ? t('ship.panel.nothingStrike', { name: here.name })
+                : t('ship.panel.parkToStrike');
             }
 
             return (
@@ -2599,9 +2597,9 @@ export const ShipPanel: React.FC = () => {
                   <button
                     className="maneuver-btn"
                     onClick={() => setShipTab('yard')}
-                    title={`Lay a hull down at ${here.name} without leaving the foundry`}
+                    title={t('ship.panel.layDownTip', { name: here.name })}
                   >
-                    ⚒ OPEN THE YARD
+                    ⚒ {t('ship.panel.openYard')}
                   </button>
                 )}
               </div>
@@ -2626,7 +2624,7 @@ export const ShipPanel: React.FC = () => {
             const dest = !sunGate ? far.name
               : !farParent || !farParent.parent ? 'Sol'
                 : farParent.name.replace(/\s*Barycenter$/i, '');
-            const share = sunGate ? 'a tenth' : 'a quarter';
+            const share = sunGate ? t('ship.panel.aTenth') : t('ship.panel.aQuarter');
             return (
               <div style={{ marginTop: 6 }}>
                 <button
@@ -2637,11 +2635,10 @@ export const ShipPanel: React.FC = () => {
                     mpActions.gateTransit(ship.id).then(() => setGateBusy(false));
                   }}
                   title={ship.transit
-                    ? 'Mid-burn — arrive at the gate first'
-                    : `Launch to ${dest} at ${share} of the normal burn. `
-                      + 'The hull is in flight and can be intercepted on the way.'}
+                    ? t('ship.panel.midBurn')
+                    : t('ship.panel.gateLaunchTip', { dest, share })}
                 >
-                  ◎ LAUNCH TO {dest.toUpperCase()}
+                  ◎ {t('ship.panel.launchTo', { dest: dest.toUpperCase() })}
                 </button>
               </div>
             );
@@ -2665,7 +2662,7 @@ export const ShipPanel: React.FC = () => {
               return (
                 <div style={{ marginTop: 6 }}>
                   <div style={{ fontSize: 11, color: '#ff5e5e', marginBottom: 4 }}>
-                    ✹ {ship.strikeMode === 'obliterate' ? 'DESTROYING' : 'CHARGING'} — {tgt?.name ?? 'target'} in {left} tick{left === 1 ? '' : 's'}
+                    ✹ {ship.strikeMode === 'obliterate' ? t('ship.panel.destroying') : t('ship.panel.chargingCaps')} — {t(left === 1 ? 'ship.panel.targetInOne' : 'ship.panel.targetInMany', { name: tgt?.name ?? t('ship.panel.target'), n: left })}
                   </div>
                   <div style={{
                     height: 5, background: 'rgba(255,255,255,0.08)',
@@ -2683,9 +2680,9 @@ export const ShipPanel: React.FC = () => {
                       setGateBusy(true);
                       mpActions.megaStrike(ship.id, false, true).then(() => setGateBusy(false));
                     }}
-                    title="Stand down. Moving the ship also breaks the charge."
+                    title={t('ship.panel.standDownTip')}
                   >
-                    STAND DOWN
+                    {t('ship.panel.standDown')}
                   </button>
                 </div>
               );
@@ -2701,7 +2698,7 @@ export const ShipPanel: React.FC = () => {
             if (world.obliteratedAtTick != null) {
               return (
                 <div style={{ fontSize: 10, color: '#8fa6ba', marginTop: 6, lineHeight: 1.4 }}>
-                  {world.name} is already a debris field. There is nothing left to strike.
+                  {t('ship.panel.alreadyDebris', { name: world.name })}
                 </div>
               );
             }
@@ -2718,28 +2715,22 @@ export const ShipPanel: React.FC = () => {
                     // catastrophic misclick, so it asks. A rival's does
                     // not — you flew a world-killer there on purpose.
                     if (mine && !window.confirm(obliterate
-                      ? `Begin charging on ${world.name}? It is YOURS. `
-                        + `In ${MEGA_STRIKE_CHARGE_TICKS} ticks the world is destroyed `
-                        + 'for good, and every settlement on it with it.'
-                      : `Begin charging on ${world.name}? It is YOURS. `
-                        + `In ${MEGA_STRIKE_CHARGE_TICKS} ticks every settlement `
-                        + 'on it dies.')) return;
+                      ? t('ship.panel.confirmDestroy', { name: world.name, n: MEGA_STRIKE_CHARGE_TICKS })
+                      : t('ship.panel.confirmStrip', { name: world.name, n: MEGA_STRIKE_CHARGE_TICKS }))) return;
                     setGateBusy(true);
                     mpActions.megaStrike(ship.id, mine).then(() => setGateBusy(false));
                   }}
                   title={obliterate
-                    ? `Charge for ${MEGA_STRIKE_CHARGE_TICKS} ticks, then destroy ${world.name}. `
-                      + 'It becomes a debris field and stops counting as a world. Everyone can see it winding up.'
-                    : `Charge for ${MEGA_STRIKE_CHARGE_TICKS} ticks, then strip `
-                      + `${world.name} of terraforming. Everyone can see it winding up.`}
+                    ? t('ship.panel.chargeDestroyTip', { n: MEGA_STRIKE_CHARGE_TICKS, name: world.name })
+                    : t('ship.panel.chargeStripTip', { n: MEGA_STRIKE_CHARGE_TICKS, name: world.name })}
                 >
                   {obliterate
-                    ? <>✹ CHARGE TO DESTROY {world.name.toUpperCase()}</>
-                    : <>✹ CHARGE STRIKE ON {world.name.toUpperCase()}</>}
+                    ? <>✹ {t('ship.panel.chargeToDestroy', { name: world.name.toUpperCase() })}</>
+                    : <>✹ {t('ship.panel.chargeStrike', { name: world.name.toUpperCase() })}</>}
                 </button>
                 <div style={{ fontSize: 10, color: '#8fa6ba', marginTop: 3, lineHeight: 1.4 }}>
-                  {MEGA_STRIKE_CHARGE_TICKS} ticks to fire, and everyone will see it.
-                  Moving breaks the charge.
+                  {t('ship.panel.ticksToFire', { n: MEGA_STRIKE_CHARGE_TICKS })}{' '}
+                  {t('ship.panel.movingBreaks')}
                 </div>
               </div>
             );
@@ -2774,29 +2765,31 @@ export const ShipPanel: React.FC = () => {
             <div style={{ marginTop: 6 }}>
               {deployTypes.length > 0 ? (
                 <div className="maneuver-buttons">
-                  {deployTypes.map(t => (
+                  {deployTypes.map(dt => (
                     <button
-                      key={t}
+                      key={dt}
                       className="maneuver-btn"
                       disabled={deployBusy}
-                      onClick={() => deploySettlementHere(t)}
-                      title={`Found a ${t} on ${colonyBody?.name} — consumes ${ship.name}`}
+                      onClick={() => deploySettlementHere(dt)}
+                      title={dt === 'city'
+                        ? t('ship.panel.foundCityTip', { body: colonyBody?.name ?? '', ship: ship.name })
+                        : t('ship.panel.foundStationTip', { body: colonyBody?.name ?? '', ship: ship.name })}
                     >
-                      ▲ DEPLOY {t === 'city' ? 'CITY' : 'STATION'}
+                      ▲ {dt === 'city' ? t('ship.panel.deployCity') : t('ship.panel.deployStation')}
                     </button>
                   ))}
                 </div>
               ) : (
                 <div style={{ fontSize: 10, color: '#5f7488', lineHeight: 1.4 }}>
                   {ship.transit
-                    ? 'Deploy available once parked at a target'
+                    ? t('ship.panel.deployParked')
                     : !colonyBody
-                      ? 'Deploy available in orbit of a world'
+                      ? t('ship.panel.deployOrbit')
                       : cityHere && stationHere
-                        ? `${colonyBody.name} is already fully settled`
+                        ? t('ship.panel.fullySettled', { name: colonyBody.name })
                         : cityLock && !canDeployCity
                           ? `🔒 ${cityLock.label} — ${cityLock.text}`
-                          : `Nothing left to found at ${colonyBody.name}`}
+                          : t('ship.panel.nothingToFound', { name: colonyBody.name })}
                 </div>
               )}
             </div>
@@ -2819,7 +2812,7 @@ export const ShipPanel: React.FC = () => {
               control that had wandered into a console. */}
           {isOwn && ship.class === 'colony' && mpActions && (
             <div className="orders-config-row" style={{ marginTop: 6 }}>
-              <span className="orders-config-label">ON ARRIVAL</span>
+              <span className="orders-config-label">{t('ship.panel.onArrival')}</span>
               <div className="orders-stance-toggle">
                 {([null, 'station'] as const).map(v => (
                   <button
@@ -2827,11 +2820,11 @@ export const ShipPanel: React.FC = () => {
                     className={`orders-stance-btn ${(ship.deployOnArrival ?? null) === v ? 'active' : ''}`}
                     disabled={settleBusy}
                     title={v
-                      ? 'The hull is spent founding the station, exactly as if you had pressed DEPLOY STATION on arrival.'
-                      : 'Park at the destination and wait for orders.'}
+                      ? t('ship.panel.foundOnArrivalTip')
+                      : t('ship.panel.waitTip')}
                     onClick={() => void setSettleOrder(v)}
                   >
-                    {v ? 'FOUND STATION' : 'WAIT'}
+                    {v ? t('ship.panel.foundStation') : t('ship.panel.wait')}
                   </button>
                 ))}
               </div>
@@ -2843,9 +2836,9 @@ export const ShipPanel: React.FC = () => {
               scroll meant staging a move and losing sight of the button
               that actually launches it. */}
           <div className="maneuver-section" data-tutorial-id="ship-maneuver-section">
-            <div className="section-title">MANEUVER NODES</div>
+            <div className="section-title">{t('ship.panel.maneuverNodes')}</div>
             {ship.orders.length === 0 && !ship.transit && !ship.plannedTransit && queuedTransits.length === 0 ? (
-              <div className="no-orders">No planned maneuvers</div>
+              <div className="no-orders">{t('ship.panel.noManeuvers')}</div>
             ) : (
               <>
                 <div className="orders-list">
@@ -2872,20 +2865,20 @@ export const ShipPanel: React.FC = () => {
                           {rv ? (
                             <>
                               <div className="order-type" style={{ color: '#4ecdc4' }}>
-                                ⇌ MATCH {(mate?.name ?? 'CONTACT').toUpperCase()}
+                                ⇌ {t('ship.panel.matchName', { name: (mate?.name ?? t('ship.panel.contactCaps')).toUpperCase() })}
                               </div>
                               <div className="order-details">
-                                meet in {meetIn.toFixed(0)}t · then together → {targetBody?.name ?? plan.targetBodyId}
+                                {t('ship.panel.meetThenTogether', { n: meetIn.toFixed(0), name: targetBody?.name ?? plan.targetBodyId })}
                               </div>
                               <div className="order-details" style={{ color: '#6ee7b7' }}>
-                                ETA T-{Math.max(0, plan.arriveTick - gameState.currentTick).toFixed(0)} · Δv {plan.totalDv.toFixed(2)}
+                                {t('ship.panel.etaDv', { eta: Math.max(0, plan.arriveTick - gameState.currentTick).toFixed(0), dv: plan.totalDv.toFixed(2) })}
                               </div>
                             </>
                           ) : (
                             <>
                               <div className="order-type">→ {targetBody?.name ?? plan.targetBodyId}</div>
                               <div className="order-details">
-                                ETA T-{Math.max(0, plan.arriveTick - gameState.currentTick).toFixed(0)} · Δv {plan.totalDv.toFixed(2)}
+                                {t('ship.panel.etaDv', { eta: Math.max(0, plan.arriveTick - gameState.currentTick).toFixed(0), dv: plan.totalDv.toFixed(2) })}
                               </div>
                             </>
                           )}
@@ -2906,19 +2899,18 @@ export const ShipPanel: React.FC = () => {
                           {ship.plannedRendezvous ? (
                             <>
                               <div className="order-type" style={{ color: '#4ecdc4' }}>
-                                ⇌ MATCH {(gameState.ships.find(x => x.id === ship.plannedRendezvous!.followShipId)?.name
-                                  ?? 'CONTACT').toUpperCase()} (PLANNED)
+                                ⇌ {t('ship.panel.matchNamePlanned', { name: (gameState.ships.find(x => x.id === ship.plannedRendezvous!.followShipId)?.name
+                                  ?? t('ship.panel.contactCaps')).toUpperCase() })}
                               </div>
                               <div className="order-details">
-                                meet in {Math.max(0, ship.plannedRendezvous.meetTick - gameState.currentTick).toFixed(0)}t
-                                {' '}· then together → {targetBody?.name ?? plan.targetBodyId}
+                                {t('ship.panel.meetThenTogether', { n: Math.max(0, ship.plannedRendezvous.meetTick - gameState.currentTick).toFixed(0), name: targetBody?.name ?? plan.targetBodyId })}
                               </div>
                             </>
                           ) : (
                             <>
-                              <div className="order-type">→ {targetBody?.name ?? plan.targetBodyId} (PLANNED)</div>
+                              <div className="order-type">→ {targetBody?.name ?? plan.targetBodyId} ({t('ship.panel.planned')})</div>
                               <div className="order-details">
-                                Δv: {plan.totalDv.toFixed(2)} | Trip: {tripTime.toFixed(0)} ticks
+                                {t('ship.panel.dvTrip', { dv: plan.totalDv.toFixed(2), n: tripTime.toFixed(0) })}
                               </div>
                             </>
                           )}
@@ -2927,7 +2919,7 @@ export const ShipPanel: React.FC = () => {
                           <button
                             className="delete-btn"
                             onClick={() => cancelTorchPreview(ship.id)}
-                            title="Cancel this transfer"
+                            title={t('ship.panel.cancelTransfer')}
                           >✕</button>
                         </div>
                       </div>
@@ -2960,7 +2952,7 @@ export const ShipPanel: React.FC = () => {
                               });
                             }
                           }}
-                          title="Cancel this maneuver"
+                          title={t('ship.panel.cancelManeuver')}
                         >✕</button>
                       </div>
                     </div>
@@ -2972,7 +2964,7 @@ export const ShipPanel: React.FC = () => {
                         <div className="order-info">
                           <div className="order-type">→ {targetBody?.name ?? qt.targetBodyId}</div>
                           <div className="order-details">
-                            QUEUED | Δv: {qt.totalDv.toFixed(2)} | Arr. T+{qt.arriveTick.toFixed(0)}
+                            {t('ship.panel.queuedLine', { dv: qt.totalDv.toFixed(2), tick: qt.arriveTick.toFixed(0) })}
                           </div>
                         </div>
                         <div className="order-actions">
@@ -2998,8 +2990,7 @@ export const ShipPanel: React.FC = () => {
                 margin: '6px 0', fontSize: 10, lineHeight: 1.4,
                 color: '#7c8b99', fontStyle: 'italic', textAlign: 'center',
               }}>
-                Burn fired — this one is committed. Recall is only offered
-                between COMMIT and the tick that lights the engines.
+                {t('ship.panel.burnFired')}
               </div>
             )}
             <button
@@ -3007,8 +2998,8 @@ export const ShipPanel: React.FC = () => {
               data-tutorial-id="ship-commit-button"
               disabled={!canCommit}
               title={canCommit
-                ? 'Launch the planned burn'
-                : 'Nothing staged — plan a move first'}
+                ? t('ship.panel.launchPlanned')
+                : t('ship.panel.nothingStaged')}
               onClick={commitStagedPlan}
             >
               {commitLabel}
@@ -3024,15 +3015,15 @@ export const ShipPanel: React.FC = () => {
               {currentFleet && (
                 <div
                   className="orders-fleetbar"
-                  title={`Every order below applies to all ${fleetMembers.length} hulls in ${currentFleet.name}.`}
+                  title={t('ship.panel.fleetOrdersTip', { n: fleetMembers.length, name: currentFleet.name })}
                 >
                   <span className="orders-fleetbar__flag" aria-hidden>&#9873;</span>
                   <span className="orders-fleetbar__name">{currentFleet.name}</span>
-                  <span className="orders-fleetbar__count">{fleetMembers.length} ships</span>
+                  <span className="orders-fleetbar__count">{tn('fleet.ships', fleetMembers.length)}</span>
                 </div>
               )}
               <div className="section-title">
-                {currentFleet ? 'FLEET ORDERS' : 'ORDERS'}
+                {currentFleet ? t('ship.panel.fleetOrders') : t('ship.panel.tab.orders')}
               </div>
               {/* SAY THE SCOPE. The server now applies any order on a
                   fleet member to the whole fleet, which is what a fleet
@@ -3042,7 +3033,7 @@ export const ShipPanel: React.FC = () => {
                   So the panel says so before you click. */}
 
               <div className="orders-config-row">
-                <span className="orders-config-label">STANCE</span>
+                <span className="orders-config-label">{t('ship.panel.stance')}</span>
                 <div className="orders-stance-toggle">
                   {(['attack', 'defensive', 'hold'] as const).map(st => (
                     <button
@@ -3050,12 +3041,12 @@ export const ShipPanel: React.FC = () => {
                       className={`orders-stance-btn ${currentStance === st ? 'active' : ''}`}
                       onClick={() => applyOrders({ stance: st })}
                       title={
-                        st === 'attack' ? 'Attack on sight: engage hostiles in range.'
-                        : st === 'defensive' ? 'Defensive: return fire only.'
-                        : 'Hold fire: never fires. Still takes damage.'
+                        st === 'attack' ? t('ship.panel.stanceAttackTip')
+                        : st === 'defensive' ? t('ship.panel.stanceDefTip')
+                        : t('ship.panel.stanceHoldTip')
                       }
                     >
-                      {st === 'attack' ? 'ATTACK' : st === 'defensive' ? 'DEFEND' : 'HOLD'}
+                      {st === 'attack' ? t('ship.panel.attack') : st === 'defensive' ? t('ship.panel.defend') : t('ship.panel.hold')}
                     </button>
                   ))}
                 </div>
@@ -3070,7 +3061,7 @@ export const ShipPanel: React.FC = () => {
               <CurrentTargetRow ship={ship} />
 
               <div className="orders-config-row">
-                <span className="orders-config-label">RETREAT AT</span>
+                <span className="orders-config-label">{t('ship.panel.retreatAt')}</span>
                 <select
                   className="orders-config-select"
                   value={ship.retreatHpPct ?? ''}
@@ -3080,7 +3071,7 @@ export const ShipPanel: React.FC = () => {
                       : null,
                   })}
                 >
-                  <option value="">OFF</option>
+                  <option value="">{t('ship.panel.off')}</option>
                   <option value="25">25% HP</option>
                   <option value="50">50% HP</option>
                   <option value="75">75% HP</option>
@@ -3112,24 +3103,24 @@ export const ShipPanel: React.FC = () => {
                 // city and never a port, and the hull's home is still
                 // that world — it just has nowhere there to dock.
                 const defaultLabel = homeStands
-                  ? `Home yard — ${homeName}`
+                  ? t('ship.panel.homeYard', { name: homeName ?? '' })
                   : homeName
-                    ? `Nearest shipyard (no station at ${homeName}, its home)`
-                    : 'Nearest shipyard';
+                    ? t('ship.panel.nearestYardNoHome', { name: homeName })
+                    : t('ship.panel.nearestYard');
                 return (
                   <div className="orders-config-row">
-                    <span className="orders-config-label">RETREAT TO</span>
+                    <span className="orders-config-label">{t('ship.panel.retreatTo')}</span>
                     <select
                       className="orders-config-select"
                       value={ship.retreatBodyId ?? ''}
                       onChange={e => applyOrders({ retreatBodyId: e.target.value || null })}
-                      title="Where this hull runs when RETREAT AT fires. Default: the yard that built it."
+                      title={t('ship.panel.retreatToTip')}
                     >
                       <option value="">{defaultLabel}</option>
                       {ports.map(p => (
                         <option key={p.bodyId} value={p.bodyId}>
-                          {p.name}{p.yard ? ' · yard' : ' · station, no repairs'}
-                          {p.bodyId === ship.homeBodyId ? ' · home' : ''}
+                          {p.name}{p.yard ? ` · ${t('ship.panel.yardWord')}` : ` · ${t('ship.panel.stationNoRepairs')}`}
+                          {p.bodyId === ship.homeBodyId ? ` · ${t('ship.panel.homeWord')}` : ''}
                         </option>
                       ))}
                     </select>
@@ -3137,10 +3128,7 @@ export const ShipPanel: React.FC = () => {
                 );
               })()}
               <div className="orders-config-hint">
-                Auto-transfer to the port above when HP drops below the
-                threshold — the yard that built this hull unless you pick
-                another; the nearest friendly shipyard if that one is gone.
-                Fires once per damage episode.
+                {t('ship.panel.retreatHint')}
                 {' '}
                 {/* A setting that silently stops applying is worse than one
                     never offered. Transit combat means a hull can now be
@@ -3149,7 +3137,7 @@ export const ShipPanel: React.FC = () => {
                     and the player is owed that BEFORE they watch a ship set
                     to run at 25% die at 0%. See DESIGN-transit-combat.md. */}
                 <strong style={{ color: '#ffb84d' }}>
-                  No effect in transit — a committed burn can’t be re-aimed.
+                  {t('fleet.retreatTip2')}
                 </strong>
               </div>
 
@@ -3170,24 +3158,24 @@ export const ShipPanel: React.FC = () => {
                   ship, gameState.settlements, gameState.bodies, gameState.currentTick,
                 );
                 const destBody = dest ? gameState.bodies.find(b => b.id === dest) : null;
-                const why = dest && dest === ship.retreatBodyId ? 'its chosen port'
-                  : dest && dest === ship.homeBodyId ? 'its home yard'
-                  : 'nearest friendly shipyard';
+                const why = dest && dest === ship.retreatBodyId ? t('ship.panel.whyChosen')
+                  : dest && dest === ship.homeBodyId ? t('ship.panel.whyHome')
+                  : t('ship.panel.whyNearest');
                 return (
                   <div className="orders-config-row">
-                    <span className="orders-config-label">REPAIR</span>
+                    <span className="orders-config-label">{t('ship.panel.repair')}</span>
                     <button
                       className="orders-stance-btn"
                       disabled={!dest}
                       title={dest
-                        ? `Transfer to ${destBody?.name ?? dest} — ${why} — and repair (+2 HP/tick docked)`
-                        : 'No friendly shipyard station anywhere — build a station shipyard first'}
+                        ? t('ship.panel.repairTip', { name: destBody?.name ?? dest, why })
+                        : t('ship.panel.noYardAnywhere')}
                       onClick={() => {
                         if (!dest) return;
                         const plan = launchTorchTransfer(ship.id, dest);
                         // "check fuel" named a resource that no longer
                         // exists — a dead end for anyone who read it.
-                        if (!plan) { setTransferError('Transfer failed — no route to that world'); return; }
+                        if (!plan) { setTransferError(t('ship.panel.transferFailed')); return; }
                         setTransferError(null);
                         mpActions?.transfer({
                           shipId: ship.id,
@@ -3203,7 +3191,7 @@ export const ShipPanel: React.FC = () => {
                         });
                       }}
                     >
-                      ⛨ SEND TO SHIPYARD{destBody ? ` (${destBody.name.toUpperCase()})` : ''}
+                      ⛨ {t('ship.panel.sendYard')}{destBody ? ` (${destBody.name.toUpperCase()})` : ''}
                     </button>
                   </div>
                 );
@@ -3218,7 +3206,7 @@ export const ShipPanel: React.FC = () => {
               {countPart(ship.parts, 'detonator') > 0 && (
                 <>
                   <div className="orders-config-row">
-                    <span className="orders-config-label">AUTO-DETONATE</span>
+                    <span className="orders-config-label">{t('ship.panel.autoDetonate')}</span>
                     <select
                       className="orders-config-select"
                       value={ship.detonateHpPct ?? ''}
@@ -3228,15 +3216,13 @@ export const ShipPanel: React.FC = () => {
                           : null,
                       })}
                     >
-                      <option value="">OFF</option>
+                      <option value="">{t('ship.panel.off')}</option>
                       <option value="25">25% HP</option>
                       <option value="50">50% HP</option>
                     </select>
                   </div>
                   <div className="orders-config-hint orders-config-hint--danger">
-                    Auto-detonate below {ship.detonateHpPct ?? 'X'}% HP: deals
-                    damage to every ship in this orbit, friend or foe; this
-                    ship is destroyed.
+                    {t('ship.panel.detonateHint', { pct: ship.detonateHpPct ?? 'X' })}
                   </div>
                 </>
               )}
@@ -3300,10 +3286,10 @@ export const ShipPanel: React.FC = () => {
                   font: 'inherit', color: 'inherit', cursor: 'pointer',
                   textAlign: 'left', marginTop: 10,
                 }}
-                title={programOpen ? 'Hide this ship’s plan' : 'Show this ship’s plan step by step'}
+                title={programOpen ? t('ship.panel.hidePlan') : t('ship.panel.showPlan')}
               >
                 <span style={{ transform: programOpen ? 'rotate(90deg)' : 'none', transition: 'transform .12s' }}>&#9656;</span>
-                CHAIN ORDERS
+                {t('grp.chain')}
                 {programSteps.length > 0 && (
                   <span style={{ color: '#4ecdc4', fontSize: 10 }}>{programSteps.length}</span>
                 )}
@@ -3754,7 +3740,7 @@ export const ShipPanel: React.FC = () => {
                 <button
                   onClick={() => setOrdersError(null)}
                   className="orders-config-error"
-                  title="Click to dismiss"
+                  title={t('ship.sd.dismiss')}
                 >⚠ {ordersError}</button>
               )}
             </div>
