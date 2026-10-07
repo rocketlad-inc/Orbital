@@ -2370,7 +2370,7 @@ export async function seedGameWorld(env, gameId) {
  *
  * Returns the number of inserted bodies.
  */
-export async function backfillMissingBodies(env, gameId) {
+export async function backfillMissingBodies(env, gameId, { farOnly = false } = {}) {
   const existing = await env.DB
     .prepare('SELECT template_id, orbit_radius, angle0 FROM game_bodies WHERE game_id = ?')
     .bind(gameId).all();
@@ -2433,6 +2433,12 @@ export async function backfillMissingBodies(env, gameId) {
   let inserted = 0;
   for (const b of BODY_CATALOG) {
     if (b.far_system && !farSystems) continue;
+    // farOnly: the far-systems rollout (scripts/enable-far-systems.mjs)
+    // brings Centauri and Cygnus and nothing else. An old game can also be
+    // missing Sol bodies the catalogue gained later (the Kuiper shell), and
+    // those have their own placement (scripts/respread-shell.mjs), not
+    // this plain insert.
+    if (farOnly && !b.far_system) continue;
     if (have.has(b.id)) continue;
     // Eccentric Kepler elements for Kuiper-class rogue asteroids
     // (migration 0024). Plain circular bodies have all four NULL and
@@ -2440,8 +2446,15 @@ export async function backfillMissingBodies(env, gameId) {
     // these here, a pre-0024 game backfilled later would have its
     // Kuiper asteroids stuck on a wrong-orbit-radius circle.
     const geom = geometryFor(b);
-    const orbitRp    = fitR(b, b.orbit_rp ?? null);
-    const orbitRa    = fitR(b, b.orbit_ra ?? null);
+    // A FAR body takes the seeder's geometry exactly (sim:farbackfill
+    // compares the two field by field). fitR scales only what orbits
+    // Sol, so Centauri's suns, which ride ellipses about their
+    // barycenter, arrived at HALF their periastron and apastron; and
+    // rounding the periods to whole ticks put every far moon out of step
+    // with a game seeded with the systems. Sol bodies keep the old path.
+    const exact = !!b.far_system;
+    const orbitRp    = exact ? (geom.orbit_rp ?? b.orbit_rp ?? null) : fitR(b, b.orbit_rp ?? null);
+    const orbitRa    = exact ? (geom.orbit_ra ?? b.orbit_ra ?? null) : fitR(b, b.orbit_ra ?? null);
     const orbitOmega = b.orbit_omega ?? null;
     const orbitM0    = b.orbit_m0    ?? null;
     stmts.push(
@@ -2463,7 +2476,8 @@ export async function backfillMissingBodies(env, gameId) {
         bodyRowIdFor(b.id), gameId, b.id, b.name, b.type,
         b.parent ? bodyRowIdFor(b.parent) : null,
         b.radius * bodyScale, geom.soi, b.mu,
-        Math.round(geom.orbit_radius), Math.round(geom.orbit_period),
+        exact ? geom.orbit_radius : Math.round(geom.orbit_radius),
+        exact ? geom.orbit_period : Math.round(geom.orbit_period),
         // A phase-locked body answers to the host AS IT STANDS IN THIS
         // GAME, whose angle a shuffled map has already changed. Reading
         // the catalogue's authored angle here would have put Orcus

@@ -52,9 +52,28 @@ async function scenario({ atWar, attackers, defenders, arriving = false }) {
   await DB.prepare(`INSERT INTO games (id,status,map_seed,current_tick,tick_interval_ms,created_at,started_at) VALUES (?,'setup','prof',50,3600000,?,?)`).bind(G, now, now).run();
   await DB.prepare(`INSERT INTO room_members (room_id,user_id,joined_at,chosen_starting_body) VALUES (?,'u1',?,'earth')`).bind(G, now).run();
   await DB.prepare(`INSERT INTO room_members (room_id,user_id,joined_at,chosen_starting_body) VALUES (?,'u2',?,'mars')`).bind(G, now).run();
+  // --far: the same game with Centauri and Cygnus on the map at live
+  // dials, the sun-gate event mid-run (a gate in flight), so the cost of
+  // rolling the far systems out shows up as queries here.
+  if (process.argv.includes('--far')) {
+    await DB.prepare(
+      `INSERT INTO game_configs (id, name, status, overrides, created_ms, updated_ms) VALUES (?, 'far', 'archived', ?, 0, 0)`,
+    ).bind(`cfg_${G}`, JSON.stringify({
+      far_systems: 1, system_scale: 4, moon_scale: 8, body_scale: 2, outer_orbit_speedup: 4,
+      sun_gate_start: 40, sun_gate_end: 40,
+    })).run();
+    await DB.prepare(`UPDATE games SET config_id = ? WHERE id = ?`).bind(`cfg_${G}`, G).run();
+  }
   const factions = await import('../worker/factions.js');
   await factions.seedGameWorld(env, G);
   await DB.prepare(`UPDATE games SET status='active' WHERE id=?`).bind(G).run();
+  // --far: the omen long past, so a gate is out and flying this tick.
+  if (process.argv.includes('--far')) {
+    await DB.prepare(`UPDATE games SET sun_gate_tick = 40 WHERE id = ?`).bind(G).run();
+    const { advanceSunGates } = await import('../worker/sunGates.js');
+    const { cfg } = await import('../worker/gameConfig.js');
+    await advanceSunGates(env, G, 46, await cfg(env, G));
+  }
   const fA = (await DB.prepare(`SELECT id FROM game_factions WHERE game_id=? AND user_id='u1'`).bind(G).first()).id;
   const fB = (await DB.prepare(`SELECT id FROM game_factions WHERE game_id=? AND user_id='u2'`).bind(G).first()).id;
   const mars = (await DB.prepare(`SELECT id FROM game_bodies WHERE game_id=? AND template_id='mars'`).bind(G).first()).id;
