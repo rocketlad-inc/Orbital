@@ -1,5 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from './api';
+import { t } from '../i18n/core';
+import { tRich } from '../i18n/rich';
+import { useI18n } from '../i18n/react';
 
 // Links the player's Orbital account to their Discord user, so Senate
 // votes, alerts and trade offers reach them there.
@@ -18,6 +21,7 @@ import { apiFetch } from './api';
 // on the clipboard is exactly what goes in the box.
 
 export const DiscordLink: React.FC = () => {
+  useI18n();
   const [linked, setLinked] = useState<boolean | null>(null);
   const [username, setUsername] = useState<string | null>(null);
   const [oauth, setOauth] = useState(false);
@@ -80,8 +84,8 @@ export const DiscordLink: React.FC = () => {
 
       {linked ? (
         <div className="discord-link__status">
-          <span>🔗 Linked{username ? ` as ${username}` : ''} — votes, alerts and trades reach you there.</span>
-          <button className="mp-btn mp-btn--ghost" onClick={unlink} disabled={busy}>Unlink</button>
+          <span>{username ? t('mp.discord.linkedAs', { name: username }) : t('mp.discord.linked')}</span>
+          <button className="mp-btn mp-btn--ghost" onClick={unlink} disabled={busy}>{t('mp.discord.unlink')}</button>
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -92,10 +96,10 @@ export const DiscordLink: React.FC = () => {
                 href="/api/discord/oauth/start"
                 style={{ textAlign: 'center', textDecoration: 'none' }}
               >
-                Connect Discord
+                {t('mp.discord.connect')}
               </a>
               <div style={{ fontSize: 12, color: '#8a9fb3' }}>
-                One click — approve on Discord and you're done. No code to type.
+                {t('mp.discord.oneClick')}
               </div>
             </>
           )}
@@ -107,7 +111,7 @@ export const DiscordLink: React.FC = () => {
               disabled={busy}
               style={{ fontSize: 12 }}
             >
-              {busy ? '…' : oauth ? 'Use a code instead' : 'Get a pairing code'}
+              {busy ? '…' : oauth ? t('mp.discord.useCode') : t('mp.discord.getCode')}
             </button>
           ) : (
             <div style={{
@@ -115,9 +119,10 @@ export const DiscordLink: React.FC = () => {
               display: 'flex', flexDirection: 'column', gap: 8,
             }}>
               <div style={{ fontSize: 12, color: '#8a9fb3', lineHeight: 1.5 }}>
-                In Discord, <b style={{ color: '#cdd9e4' }}>type <code>/link</code> and pick it from
-                the menu</b> that pops up — pasting the whole command won't work. Then paste this
-                code into the <code>code</code> box:
+                {tRich('mp.discord.how', {
+                  typeIt: <b style={{ color: '#cdd9e4' }}>{tRich('mp.discord.typeLink', { cmd: <code>/link</code> })}</b>,
+                  code: <code>code</code>,
+                })}
               </div>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                 <code style={{
@@ -126,11 +131,11 @@ export const DiscordLink: React.FC = () => {
                   fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
                 }}>{code}</code>
                 <button className="mp-btn mp-btn--ghost" onClick={copyCode} disabled={!code}>
-                  {copied ? 'Copied ✓' : 'Copy code'}
+                  {copied ? t('mp.discord.copied') : t('mp.discord.copy')}
                 </button>
               </div>
               <div style={{ fontSize: 11.5, color: '#5f7186' }}>
-                Expires in 10 minutes.{' '}
+                {t('mp.discord.expires')}{' '}
                 <button
                   onClick={mintCode}
                   disabled={busy}
@@ -138,7 +143,7 @@ export const DiscordLink: React.FC = () => {
                     background: 'none', border: 'none', color: '#4ecdc4', cursor: 'pointer',
                     padding: 0, font: 'inherit', textDecoration: 'underline',
                   }}
-                >Get a new one</button>
+                >{t('mp.discord.newCode')}</button>
               </div>
             </div>
           )}

@@ -18,16 +18,24 @@ import { useMultiplayerActions } from './MultiplayerActionsContext';
 import { humanizeMpError } from './errorMessages';
 import { BUILDING_DEFS } from '../game/settlements';
 import type { BuildingKind } from '../types';
+import { t, tn } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 import './RuinsCard.css';
 
 /** MIRRORS WRECK_SEIZE_COST in worker/actions.js: a colony ship's price. */
 export const WRECK_SEIZE_COST = { ore: 80, credits: 60 } as const;
+
+/** "city" / "station" as a word a player reads (w.type is a code). */
+function typeWord(type: string): string {
+  return type === 'city' ? t('mp.ruins.type.city') : t('mp.ruins.type.station');
+}
 
 function buildingLabel(kind: string): string {
   return BUILDING_DEFS[kind as BuildingKind]?.displayName ?? kind;
 }
 
 export function RuinsCard({ bodyId }: { bodyId: string }) {
+  useI18n();
   const { gameState } = useGameContext();
   const mpActions = useMultiplayerActions();
   const [busy, setBusy] = useState(false);
@@ -46,7 +54,7 @@ export function RuinsCard({ bodyId }: { bodyId: string }) {
   const purse = gameState.resources['player'];
   const canAfford = !!purse && purse.ore >= WRECK_SEIZE_COST.ore && purse.credits >= WRECK_SEIZE_COST.credits;
   const factionName = (id: string | null) =>
-    id === 'player' ? 'yours' : (gameState.factions.find(f => f.id === id)?.name ?? 'unknown');
+    id === 'player' ? t('mp.ruins.yours') : (gameState.factions.find(f => f.id === id)?.name ?? t('mp.ruins.unknown'));
 
   const act = (id: string, mode: 'seize' | 'raze') => {
     setBusy(true); setError(null);
@@ -65,34 +73,36 @@ export function RuinsCard({ bodyId }: { bodyId: string }) {
         const deadWorld = w.type === 'city' && body?.terraformedAtTick === null;
         const occupied = standing.has(w.type);
         const why = myForce === 0
-          ? 'Bring an armed ship here to take or raze these. Freighters and colony ships do not count.'
+          ? t('mp.ruins.needArmed')
           : rivalForce > 0
-            ? `Contested: ${rivalForce} rival warship${rivalForce === 1 ? '' : 's'} still here. Clear them off first.`
+            ? tn('mp.ruins.contested', rivalForce)
             : null;
         const seizeBlock = why ?? (deadWorld
-          ? 'This world has no biosphere left; a city cannot stand on it.'
+          ? t('mp.ruins.noBiosphere')
           : occupied
-            ? `A ${w.type} already stands here. Only one per world.`
+            ? t('mp.ruins.occupied', { type: typeWord(w.type) })
             : !canAfford
-              ? `Rebuilding costs ${WRECK_SEIZE_COST.ore}M ${WRECK_SEIZE_COST.credits}C.`
+              ? t('mp.ruins.cost', { ore: WRECK_SEIZE_COST.ore, credits: WRECK_SEIZE_COST.credits })
               : null);
         return (
           <div className="ruins__item" key={w.id}>
             <div className="ruins__head">
               <span className="ruins__glyph">{w.type === 'city' ? '▦' : '◇'}</span>
-              RUINS · {w.name}
+              {t('mp.ruins.title', { name: w.name })}
               <span className="ruins__was">
-                {w.formerOwner === 'player' ? 'your old ' : `${factionName(w.formerOwner)}'s `}{w.type}
+                {w.formerOwner === 'player'
+                  ? t('mp.ruins.wasYours', { type: typeWord(w.type) })
+                  : t('mp.ruins.wasTheirs', { name: factionName(w.formerOwner), type: typeWord(w.type) })}
               </span>
             </div>
             <div className="ruins__bld">
               {entries.length === 0
-                ? 'No buildings survive.'
+                ? t('mp.ruins.none')
                 : entries.map(([kind, lvl]) => {
                     const next = Number(lvl) - 1;
                     return (
                       <span key={kind} className="ruins__b">
-                        {buildingLabel(kind)} {lvl}→{next > 0 ? next : <em>lost</em>}
+                        {buildingLabel(kind)} {lvl}→{next > 0 ? next : <em>{t('mp.ruins.lost')}</em>}
                       </span>
                     );
                   })}
@@ -105,21 +115,20 @@ export function RuinsCard({ bodyId }: { bodyId: string }) {
                     className="ruins__take"
                     disabled={busy}
                     onClick={() => act(w.id, 'seize')}
-                    title={`Rebuild it under your flag: every building a level down, 25% hull. `
-                      + `${WRECK_SEIZE_COST.ore}M ${WRECK_SEIZE_COST.credits}C, no colony ship.`}
+                    title={t('mp.ruins.seizeTitle', { ore: WRECK_SEIZE_COST.ore, credits: WRECK_SEIZE_COST.credits })}
                   >
-                    {w.formerOwner === 'player' ? 'Retake' : 'Seize'} · {WRECK_SEIZE_COST.ore}M {WRECK_SEIZE_COST.credits}C
+                    {t(w.formerOwner === 'player' ? 'mp.ruins.retake' : 'mp.ruins.seize', { ore: WRECK_SEIZE_COST.ore, credits: WRECK_SEIZE_COST.credits })}
                   </button>
                 )}
                 <button
                   className="ruins__raze"
                   disabled={busy}
                   onClick={() => {
-                    if (!window.confirm(`Raze the ruins of ${w.name}? Nobody will be able to rebuild them.`)) return;
+                    if (!window.confirm(t('mp.ruins.confirmRaze', { name: w.name }))) return;
                     act(w.id, 'raze');
                   }}
                 >
-                  Raze
+                  {t('mp.ruins.raze')}
                 </button>
               </div>
             )}

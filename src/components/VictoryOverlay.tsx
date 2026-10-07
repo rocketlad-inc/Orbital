@@ -6,6 +6,8 @@
 
 import React from 'react';
 import { useGameContext } from '../state/gameContext';
+import { t, tk } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 import './VictoryOverlay.css';
 
 interface Props {
@@ -38,6 +40,7 @@ const VICTORY_BLURB: Record<string, string> = {
 };
 
 export const VictoryOverlay: React.FC<Props> = ({ onNewGame }) => {
+  useI18n();
   const { gameState } = useGameContext();
 
   if (gameState.status !== 'completed') return null;
@@ -74,26 +77,26 @@ export const VictoryOverlay: React.FC<Props> = ({ onNewGame }) => {
     <div className="victory-overlay">
       <div className="victory-card">
         <div className={`victory-banner ${playerWon ? 'won' : 'lost'}`}>
-          {playerWon ? 'VICTORY' : 'GAME OVER'}
+          {playerWon ? t('site.victory.won') : t('site.victory.lost')}
         </div>
 
         <div className="victory-winner">
-          <div className="victory-winner-eyebrow">{VICTORY_LABEL[victoryType]}</div>
+          <div className="victory-winner-eyebrow">{tk(`site.victory.label.${victoryType}`, VICTORY_LABEL[victoryType])}</div>
           <div
             className="victory-winner-name"
             style={{ color: winner?.color ?? '#d8e4ee' }}
           >
-            {winner?.name ?? 'Unknown'}
+            {winner?.name ?? t('site.victory.unknown')}
           </div>
-          <div className="victory-winner-blurb">{VICTORY_BLURB[victoryType]}</div>
+          <div className="victory-winner-blurb">{tk(`site.victory.blurb.${victoryType}`, VICTORY_BLURB[victoryType])}</div>
         </div>
 
         <div className="victory-stats">
           <div className="victory-stats-head">
-            <span>FACTION</span>
-            <span>BODIES</span>
-            <span>SHIPS</span>
-            <span>WEALTH</span>
+            <span>{t('site.victory.faction')}</span>
+            <span>{t('site.victory.bodies')}</span>
+            <span>{t('site.victory.ships')}</span>
+            <span>{t('site.victory.wealth')}</span>
           </div>
           {stats.map(s => (
             <div
@@ -116,10 +119,10 @@ export const VictoryOverlay: React.FC<Props> = ({ onNewGame }) => {
 
         <div className="victory-footer">
           <div className="victory-footer-meta">
-            Match ended at T+{Math.floor(gameState.currentTick)}
+            {t('site.victory.ended', { n: Math.floor(gameState.currentTick) })}
           </div>
           <button className="victory-button" onClick={onNewGame}>
-            ▶ NEW CAMPAIGN
+            {t('site.victory.new')}
           </button>
         </div>
       </div>

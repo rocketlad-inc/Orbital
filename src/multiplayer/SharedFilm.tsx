@@ -11,8 +11,11 @@
 
 import React from 'react';
 import { MatchReplay } from './MatchReplay';
+import { t } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 
 export function SharedFilm({ token }: { token: string }) {
+  useI18n();
   return (
     <div style={{
       minHeight: '100vh',
@@ -28,7 +31,7 @@ export function SharedFilm({ token }: { token: string }) {
           <div style={{
             fontFamily: 'var(--font-body, system-ui), system-ui',
             fontSize: 20, letterSpacing: '0.18em', color: '#cfe0ee',
-          }}>ORBITAL — MATCH FILM</div>
+          }}>{t('mp.film.title')}</div>
           <a
             href="/"
             style={{ fontSize: 12, color: '#6fb4ee', textDecoration: 'none' }}
