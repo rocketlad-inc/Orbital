@@ -23,7 +23,7 @@ import {
   ALL_TECH_IDS, TECH_DEFS, TechId, TECH_MAX_LEVEL, nextLevelCost,
 } from '../game/techs';
 import {
-  RESEARCH_UNLOCKS, UnlockRow, isMegastructureUnlock, megastructureHowTo, MEGASTRUCTURE_REASSURANCE,
+  RESEARCH_UNLOCKS, UnlockRow, isMegastructureUnlock, megastructureHowTo, megastructureReassurance, unlockLabelOf, unlockBlurbOf,
 } from '../game/researchUnlocks';
 import { t, tn } from '../i18n/core';
 import { useI18n } from '../i18n/react';
@@ -137,7 +137,7 @@ export const TechTree: React.FC<TechTreeProps> = ({
         <ol>
           {megastructureHowTo().map((step, i) => <li key={i}>{step}</li>)}
         </ol>
-        <p>{MEGASTRUCTURE_REASSURANCE}</p>
+        <p>{megastructureReassurance()}</p>
       </details>
 
       {!gatingEnabled && (
@@ -187,9 +187,9 @@ export const TechTree: React.FC<TechTreeProps> = ({
                 const baseTitle = empty
                   ? t('econ.tree.noUnlock', { name: TECH_DEFS[cell.track].name, level: cell.level, effect: TECH_DEFS[cell.track].effectText })
                   : cell.unlocks.map(u => (isMegastructureUnlock(u.feature)
-                    ? t('econ.tree.megaTip', { label: u.label, blurb: u.blurb }) + ' '
-                      + MEGASTRUCTURE_REASSURANCE
-                    : `${u.label} — ${u.blurb}`)).join('\n\n');
+                    ? t('econ.tree.megaTip', { label: unlockLabelOf(u), blurb: unlockBlurbOf(u) }) + ' '
+                      + megastructureReassurance()
+                    : `${unlockLabelOf(u)} — ${unlockBlurbOf(u)}`)).join('\n\n');
                 return (
                   <div
                     key={`${cell.track}-${cell.level}`}
@@ -223,7 +223,7 @@ export const TechTree: React.FC<TechTreeProps> = ({
                           className={`techtree__unlock${isMegastructureUnlock(u.feature) ? ' techtree__unlock--mega' : ''}`}
                         >
                           {isMegastructureUnlock(u.feature) && <span aria-hidden>◆ </span>}
-                          {u.label}
+                          {unlockLabelOf(u)}
                           {isMegastructureUnlock(u.feature) && <span className="techtree__sr">{` ${t('econ.tree.megaSr')}`}</span>}
                         </span>
                       ))

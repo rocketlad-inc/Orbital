@@ -14,7 +14,7 @@ import { filterIntercepts } from '../game/interceptSearch';
 import { torchPositionFromSamples } from '../physics/torchTransfer';
 import { solveRendezvous } from '../physics/rendezvous.js';
 import { predictTarget, enemyFlakOn, SETTLEMENT_COMBAT_SPEED } from '../game/targeting';
-import { traitSummary, traitBrief, rankTier, rerollAvatarId } from '../game/captains';
+import { traitSummary, traitBrief, rankTierLabel, rerollAvatarId } from '../game/captains';
 import { CaptainAvatar } from './CaptainAvatar';
 import { summarizeFleet, fleetHeadlineStatus } from '../game/fleetSummary';
 import {
@@ -1741,7 +1741,7 @@ export const ShipPanel: React.FC = () => {
                   <div className="fleet-tab__adm" title={traitSummary(admTraits) || t('fleet.noTraits')}>
                     <CaptainAvatar avatarId={admAvatar ?? undefined} size={34} />
                     <div className="fleet-tab__admtext">
-                      <span className="fleet-tab__admrole">{t('fleet.admiral')} · {rankTier(admRank).toUpperCase()}</span>
+                      <span className="fleet-tab__admrole">{t('fleet.admiral')} · {rankTierLabel(admRank).toUpperCase()}</span>
                       <span className="fleet-tab__admname">{admName}</span>
                       {admTraits.length > 0 && (
                         <span className="fleet-tab__admtraits">{traitSummary(admTraits)}</span>
@@ -4783,7 +4783,7 @@ const ShipCaptainCard: React.FC<{
       <div className="section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
         <span>{t('ship.panel.captainCaps')}</span>
         <span style={{ fontSize: 10, color: '#b8c8d6', letterSpacing: '0.06em' }}>
-          {rankTier(rank)}{rank > 0 ? ` · ${rank} ⚔` : ''}
+          {rankTierLabel(rank)}{rank > 0 ? ` · ${rank} ⚔` : ''}
         </span>
       </div>
       <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '6px 0 2px' }}>

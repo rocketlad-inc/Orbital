@@ -24,10 +24,11 @@ import {
 import { hasFeature, requirementFor } from '../game/researchUnlocks';
 import { TECH_DEFS } from '../game/techs';
 import {
-  compareToGoingRate, nonZeroKeys, pairPrice, fmtPrice,
-  type GoingRate, type MarketBundle,
+  compareToGoingRate, nonZeroKeys,
+  bundleWords as bundleWordsT, marketRate as marketRateT, goingRateText as goingRateTextT,
+  fmtTicksAsTime as fmtTicksAsTimeT, ttlLabel as ttlLabelT,
 } from './marketMath';
-import { t, fmtNumber } from '../i18n/core';
+import { t } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import { apiErrorText } from '../i18n/apiErrors';
 
@@ -99,43 +100,10 @@ export function pactLabel(p: PactKind): string {
     default: return PACT_LABELS[p as PactKind];
   }
 }
-const shortWord = (k: ResKey): string =>
-  k === 'metal' ? t('market.short.metal') : k === 'gold' ? t('market.short.gold') : t('market.short.science');
-
-// The market's own sentences, in the player's language. marketMath.ts builds
-// the same strings in English only (and is pinned by its own tests), so the
-// screens use these instead of its bundleWords / marketRate / goingRateText /
-// fmtTicksAsTime / ttlLabel.
-export function bundleWordsT(b: MarketBundle): string {
-  const keys = nonZeroKeys(b);
-  return keys.length
-    ? keys.map(k => `${fmtNumber(Math.round(b[k]))} ${resWord(k)}`).join(' + ')
-    : t('market.nothing');
-}
-export function marketRateT(post: { offer: MarketBundle; request: MarketBundle }): string | null {
-  const p = pairPrice(post.offer, post.request);
-  if (!p) return null;
-  return t('market.rate', { price: fmtPrice(p.price), quote: shortWord(p.quote), base: shortWord(p.base) });
-}
-export function goingRateTextT(r: GoingRate): string {
-  const range = r.n > 1 && fmtPrice(r.low) !== fmtPrice(r.high)
-    ? `${fmtPrice(r.low)}–${fmtPrice(r.high)}`
-    : fmtPrice(r.mid);
-  return t('market.going', { base: resWord(r.base), range, quote: shortWord(r.quote) });
-}
-export function fmtTicksAsTimeT(ticks: number, tickIntervalMs: number): string {
-  const ms = Math.max(0, ticks) * Math.max(1, tickIntervalMs);
-  const mins = Math.round(ms / 60000);
-  if (mins < 1) return t('market.time.under');
-  if (mins < 60) return t('market.time.m', { n: mins });
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return mins % 60 && hours < 6 ? t('market.time.hm', { h: hours, m: mins % 60 }) : t('market.time.h', { n: hours });
-  const days = Math.floor(hours / 24);
-  return hours % 24 ? t('market.time.dh', { d: days, h: hours % 24 }) : t('market.time.d', { n: days });
-}
-export function ttlLabelT(hours: number): string {
-  return hours < 24 ? t('market.ttl.hours', { n: hours }) : hours === 24 ? t('market.ttl.day') : t('market.ttl.days', { n: hours / 24 });
-}
+// The market's own sentences now translate themselves (marketMath.ts reads the
+// same market.* keys at call time). These names stay so the screens that import
+// them from here keep working.
+export { bundleWordsT, marketRateT, goingRateTextT, fmtTicksAsTimeT, ttlLabelT };
 const RESOURCE_COLORS: Record<keyof ResourceBundle, string> = {
   metal: '#a0a0a0', gold: '#ffd700', science: '#6ee7b7',
 };

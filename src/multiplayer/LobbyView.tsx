@@ -1211,7 +1211,7 @@ function FactionFlagPicker({
                 });
               }}
             >
-              {t('feed.buy', { price: COMMISSION_PRICE })}
+              {t('feed.buy', { price: tk('mp.commission.price', COMMISSION_PRICE) })}
             </button>
           )}
         </div>

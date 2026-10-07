@@ -12,7 +12,7 @@ import type { Ship, Captain, TargetPriorityKey } from '../types';
 import { TARGET_PRIORITY_DEFAULT } from '../types';
 import { TargetPriorityCards } from './TargetPriorityCards';
 import { RESOURCE_COLORS } from '../game/resourceColors';
-import { rankTier, traitSummary, rerollAvatarId } from '../game/captains';
+import { rankTier, rankTierLabel, traitSummary, rerollAvatarId } from '../game/captains';
 import { CaptainAvatar } from './CaptainAvatar';
 import { EditableName } from './EditableName';
 import { deriveSecondary } from '../game/colorUtils';
@@ -750,7 +750,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     const tierBits = (
       <>
         <span className={`fleet-xp__tier fleet-xp__tier--${rankTier(rank).toLowerCase()}`}>
-          {rankTier(rank)}
+          {rankTierLabel(rank)}
         </span>
         <span className="fleet-xp__kills" title={t('fleet.kills')}>
           {rank > 0 ? `${rank} ⚔` : '—'}
@@ -806,7 +806,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                             {c.benchedAtTick != null && <em className="fleet-capmenu__swap"> ⏸</em>}
                           </span>
                           <span className={`fleet-xp__tier fleet-xp__tier--${rankTier(c.rank).toLowerCase()}`}>
-                            {rankTier(c.rank)}
+                            {rankTierLabel(c.rank)}
                           </span>
                         </button>
                       ))}
@@ -954,7 +954,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                   >✎</button>
                 )}
                 <span className={`fleet-xp__tier fleet-xp__tier--${rankTier(c.rank).toLowerCase()}`}>
-                  {rankTier(c.rank)}
+                  {rankTierLabel(c.rank)}
                 </span>
                 <span className="fleet-xp__kills">{c.rank > 0 ? `${c.rank} ⚔` : ''}</span>
               </div>
@@ -1330,7 +1330,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                   <span className="fleet-adm__rank">{t('fleet.admiral')}</span>
                   <span className="fleet-capchip__name">{adm.name}</span>
                   <span className={`fleet-xp__tier fleet-xp__tier--${rankTier(adm.rank).toLowerCase()}`}>
-                    {rankTier(adm.rank)}
+                    {rankTierLabel(adm.rank)}
                   </span>
                   <span className="fleet-xp__kills" title={t('fleet.kills')}>
                     {adm.rank > 0 ? `${adm.rank} ⚔` : '—'}
@@ -1778,7 +1778,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                                   {adm ? adm.name : t('fleet.vacant')}
                                 </span>
                                 {adm && (
-                                  <span className="fleet-adm__tier">{rankTier(adm.rank)}</span>
+                                  <span className="fleet-adm__tier">{rankTierLabel(adm.rank)}</span>
                                 )}
                               </span>
                               <span className="fleet-adm__bottom">
@@ -1805,7 +1805,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                                 <option value="">{adm ? t('fleet.replace') : t('fleet.postAdmiral')}</option>
                                 {bank.map(c => (
                                   <option key={c.id} value={c.id}>
-                                    {c.name} · {rankTier(c.rank)}
+                                    {c.name} · {rankTierLabel(c.rank)}
                                     {c.traits.length > 0 ? ` · ${traitSummary(c.traits)}` : ''}
                                   </option>
                                 ))}

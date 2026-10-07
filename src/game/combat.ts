@@ -8,6 +8,7 @@ import { bodyPosition, localPositionAt } from '../physics/orbitalMechanics';
 import { SETTLEMENT_DEFS, BUILDING_DEFS, buildingLevel } from './settlements';
 import { rankDamageMul, rankHpMul, hpModifier } from './techs';
 import { traitMul as captainTraitMul } from './captains';
+import { t } from '../i18n/core';
 
 /** One named factor in an attacker's live damage chain. */
 export interface DamageFactor {
@@ -60,16 +61,16 @@ export function attackerDamageFactors(opts: {
   const eLvl = Math.max(Number(levels.energy_weapons ?? 0), wLvl);
   const techMul = opts.profile.kinetic * (1 + 0.10 * wLvl)
     + opts.profile.energy * (1 + 0.10 * eLvl);
-  push('Weapons tech', techMul);
+  push(t('helper.dmg.weaponsTech'), techMul);
 
-  push('Rank', rankDamageMul(opts.rank));
-  push('Captain', captainTraitMul(opts.captainTraits, 'dmgMul'));
+  push(t('helper.dmg.rank'), rankDamageMul(opts.rank));
+  push(t('helper.dmg.captain'), captainTraitMul(opts.captainTraits, 'dmgMul'));
   // Flag aura is HALF strength and never applies to the flagship — the
   // caller decides that by passing flagTraits only for members.
   const flagFull = captainTraitMul(opts.flagTraits, 'dmgMul');
-  push('Flag aura', 1 + (flagFull - 1) / 2);
-  if (opts.inArrears) push('Unpaid fleet', 0.75);
-  if (opts.warAuthorized) push('War authorization', 2);
+  push(t('helper.dmg.flagAura'), 1 + (flagFull - 1) / 2);
+  if (opts.inArrears) push(t('helper.dmg.unpaid'), 0.75);
+  if (opts.warAuthorized) push(t('helper.dmg.warAuth'), 2);
 
   return { total: factors.reduce((m, f) => m * f.mul, 1), factors };
 }

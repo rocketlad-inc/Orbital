@@ -50,7 +50,7 @@ import {
 import type { ShipDesign } from '../types';
 import { PART_FEATURE } from '../game/researchUnlocks';
 import { useFeatureGate } from '../hooks/useFeatureGate';
-import { t, tn } from '../i18n/core';
+import { t, tn, tk } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import './ShipDesigner.css';
 
@@ -900,7 +900,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                           aria-selected={v === iconVariant}
                           className={`sd-icon-option ${v === iconVariant ? 'selected' : ''} ${locked ? 'is-locked' : ''}`}
                           title={locked
-                            ? t('ship.sd.previewLineTip', { line: ICON_VARIANT_NAMES[activeClass][v], commission: COMMISSION_NAME })
+                            ? t('ship.sd.previewLineTip', { line: ICON_VARIANT_NAMES[activeClass][v], commission: tk('mp.commission.name', COMMISSION_NAME) })
                             : undefined}
                           onClick={() => {
                             if (locked) {
@@ -986,7 +986,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
               {previewIcon && (
                 <div className="sd-preview" role="status">
                   <span>
-                    {t('ship.sd.previewA')} <b>{ICON_VARIANT_NAMES[activeClass][previewIcon]}</b>{t('ship.sd.previewB', { commission: COMMISSION_NAME, discord: COMMISSION_DISCORD })}
+                    {t('ship.sd.previewA')} <b>{ICON_VARIANT_NAMES[activeClass][previewIcon]}</b>{t('ship.sd.previewB', { commission: tk('mp.commission.name', COMMISSION_NAME), discord: tk('mp.commission.discord', COMMISSION_DISCORD) })}
                   </span>
                   {canBuyHere() && (
                     <button
@@ -996,7 +996,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                         logCommission('designer', 'click');
                         void startCommissionCheckout('designer').then(url => { if (url) window.location.assign(url); });
                       }}
-                    >{t('ship.sd.getIt', { price: COMMISSION_PRICE })}</button>
+                    >{t('ship.sd.getIt', { price: tk('mp.commission.price', COMMISSION_PRICE) })}</button>
                   )}
                   <button type="button" className="sd-preview__end" onClick={() => setPreviewIcon(undefined)}>
                     {t('ship.sd.endPreview')}

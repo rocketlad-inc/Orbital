@@ -1,4 +1,5 @@
 import type { Body, GameState } from '../types';
+import { t } from '../i18n/core';
 // ============================================================
 // tradeRouteRules — is this itinerary flyable?
 //
@@ -36,14 +37,14 @@ export const MIN_STOPS = 2;
  * the message could describe different problems.
  */
 export function routeProblem(stops: RouteStopLike[]): string | null {
-  if (stops.length < MIN_STOPS) return 'Add at least two stops.';
+  if (stops.length < MIN_STOPS) return t('helper.route.addTwo');
   // MINING COUNTS AS LOADING. A mine stop fills the hold off a rock;
   // that is a pickup in every sense except the label.
   if (!stops.some(s => s.action === 'pickup' || s.action === 'mine')) {
-    return 'Nothing is loaded anywhere on this run.';
+    return t('helper.route.noLoad');
   }
   if (!stops.some(s => s.action === 'dropoff')) {
-    return 'Nothing is dropped off anywhere on this run.';
+    return t('helper.route.noDrop');
   }
   return null;
 }
