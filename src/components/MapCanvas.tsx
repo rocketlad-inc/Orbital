@@ -2260,9 +2260,20 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // (zoom out of it and the camera stays focused), and the close-up kept
     // painting a faint skyline and the capital's name tag over the
     // overworld globe and its fleet at scale ~2-3 (zoom audit, 2026-09-26).
-    if (isWorldMenuActive() && camera.focusedBodyId
-        && getWorldMenuOpenBodyId() === camera.focusedBodyId) {
+    const wmOpen = isWorldMenuActive() && !!camera.focusedBodyId
+      && getWorldMenuOpenBodyId() === camera.focusedBodyId;
+    if (wmOpen) {
       drawWorldMenuCloseup(renderContext, gameState.settlements, 'player');
+    }
+    {
+      // World-menu camera probe (PerfHud.recordCam): the focused world's
+      // on-screen centre this frame, as the close-up places the city.
+      const fb = wmOpen ? bodyById2.get(camera.focusedBodyId!) : undefined;
+      const fp = fb ? bodyPosition(fb, renderContext.t, gameState.bodies) : null;
+      const fc = fp ? worldToCanvas(fp.x, fp.y, renderContext) : null;
+      perf.recordCam(!!fc, fc?.x ?? 0, fc?.y ?? 0, renderContext.camera.scale,
+        !!camTweenRef.current, !!wheelFollowRef.current,
+        renderContext.canvas.width, renderContext.canvas.height);
     }
 
     // Build a co-orbit formation map: ships sharing the same parent body
