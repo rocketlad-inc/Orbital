@@ -45,10 +45,13 @@ import type { RouteStopInput } from './MultiplayerActionsContext';
 import { buildStageName } from '../render/megastructureArt';
 import type { MegastructureState } from '../game/megastructures';
 import type { Body } from '../types';
+import { t, tn } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 
 const HOLD = 400;
 
 export const MegastructureCard: React.FC = () => {
+  useI18n();
   const { gameState, uiState } = useGameContext();
   const mpActions = useMultiplayerActions();
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- gate — hook call kept; removing it would drop a subscription
@@ -117,13 +120,12 @@ export const MegastructureCard: React.FC = () => {
         <div className="megac__banner-row">
           <span className="megac__glyph" style={{ color: def.color }}>{def.glyph}</span>
           <div>
-            <div className="megac__title">Placing {def.label}</div>
+            <div className="megac__title">{t('megastructure.placing', { label: def.label })}</div>
             <div className="megac__sub">
-              Click inside the highlighted ring. The colony ship is spent laying it.
-              It becomes a site of its own; nothing on your worlds is touched.
+              {t('megastructure.placingSub')}
             </div>
           </div>
-          <button className="megac__cancel" onClick={cancelPlacement}>{isMobile ? 'Cancel' : 'Cancel (Esc)'}</button>
+          <button className="megac__cancel" onClick={cancelPlacement}>{isMobile ? t('megastructure.cancel') : t('megastructure.cancelEsc')}</button>
         </div>
       </div>
     );
@@ -167,8 +169,8 @@ export const MegastructureCard: React.FC = () => {
             {/* A finished structure below 20% hull STOPS WORKING (the
                 server's rule), so "Operational" beside "Breached" was a
                 contradiction on the same card. */}
-            {complete ? (isBreached(site) ? 'Breached · offline' : 'Operational') : buildStageName(pct)}
-            {derelict ? ' · abandoned' : site.ancient && !mine ? ' · an ancient relic' : !mine && ' · not yours'}
+            {complete ? (isBreached(site) ? t('megastructure.breachedOffline') : t('megastructure.operational')) : buildStageName(pct)}
+            {derelict ? ` · ${t('megastructure.abandonedTag')}` : site.ancient && !mine ? ` · ${t('megastructure.ancientRelic')}` : !mine && ` · ${t('megastructure.notYoursTag')}`}
           </div>
         </div>
       </div>
@@ -197,7 +199,7 @@ export const MegastructureCard: React.FC = () => {
               }
             }}
           >
-            {on ? '◎ Hide reach' : '◎ Show reach on map'}
+            {on ? t('megastructure.hideReach') : t('megastructure.showReach')}
           </button>
         );
       })()}
@@ -221,7 +223,7 @@ export const MegastructureCard: React.FC = () => {
         return (
           <div className="megac__hull">
             <div className="megac__hullhead">
-              <span>Hull</span>
+              <span>{t('megastructure.hull')}</span>
               <b style={{ color: tone }}>{hp} / {MEGA_MAX_HP}</b>
             </div>
             <div className="megac__barwrap">
@@ -232,7 +234,7 @@ export const MegastructureCard: React.FC = () => {
             </div>
             {breached && (
               <div className="megac__hullwarn">
-                Breached — boardable by anyone holding the orbit.
+                {t('megastructure.breachedWarn')}
               </div>
             )}
           </div>
@@ -256,13 +258,13 @@ export const MegastructureCard: React.FC = () => {
             {/* Loads, not raw numbers. "18 freighter runs" is the unit a
                 player plans in; 7,000 credits is not. */}
             <span className="megac__loads">
-              {loads} freighter {loads === 1 ? 'load' : 'loads'} to go
+              {tn('megastructure.loadsToGo', loads)}
             </span>
           </div>
 
           <div className="megac__needs">
-            <div><span>Metal</span><b>{Math.round(site.accMetal)} / {site.costMetal}</b></div>
-            <div><span>Credits</span><b>{Math.round(site.accCredits)} / {site.costCredits}</b></div>
+            <div><span>{t('megastructure.metal')}</span><b>{Math.round(site.accMetal)} / {site.costMetal}</b></div>
+            <div><span>{t('megastructure.credits')}</span><b>{Math.round(site.accCredits)} / {site.costCredits}</b></div>
           </div>
 
           {/* WHO IS ALREADY HAULING TO THIS. A site that says "31 loads
@@ -281,20 +283,20 @@ export const MegastructureCard: React.FC = () => {
                 routeId: rt.id,
                 name: sh.shipName
                   ?? gameState.ships.find(x => x.id === sh.shipId)?.name
-                  ?? 'Freighter',
+                  ?? t('megastructure.freighterDefault'),
                 status: rt.status,
               })));
             if (crew.length === 0) {
               return (
                 <div className="megac__crewnone">
-                  Nothing is hauling to this yet.
+                  {t('megastructure.crewNone')}
                 </div>
               );
             }
             return (
               <div className="megac__crew">
                 <div className="megac__gatehead">
-                  {crew.length} freighter{crew.length === 1 ? '' : 's'} on supply
+                  {tn('megastructure.crewOnSupply', crew.length)}
                 </div>
                 {crew.map((c, i) => (
                   <div key={`${c.routeId}:${i}`} className="megac__crewrow">
@@ -304,8 +306,8 @@ export const MegastructureCard: React.FC = () => {
                         saying which is the difference between "it is on the
                         way" and "it is coming back round". */}
                     <span className={`megac__crewst is-${c.status}`}>
-                      {c.status === 'outbound' ? 'inbound'
-                        : c.status === 'returning' ? 'returning for more'
+                      {c.status === 'outbound' ? t('megastructure.crew.inbound')
+                        : c.status === 'returning' ? t('megastructure.crew.returning')
                         : c.status}
                     </span>
                   </div>
@@ -323,9 +325,7 @@ export const MegastructureCard: React.FC = () => {
               subtitle read 'not yours'. */}
           {!mine ? (
             <div className="megac__hint">
-              This belongs to somebody else. Take it and the freight
-              already in it becomes yours; supply it and you are paying
-              for their structure.
+              {t('megastructure.notYoursHint')}
             </div>
           ) : (<>
           {/* THE AUTOMATED HALF. Manual delivery is one hold at a time;
@@ -346,7 +346,7 @@ export const MegastructureCard: React.FC = () => {
               ]);
             }}
           >
-            ⇌ Run a supply route here
+            {t('megastructure.runRoute')}
           </button>
 
           {here.length > 0 ? (
@@ -357,16 +357,15 @@ export const MegastructureCard: React.FC = () => {
                   className="megac__deliver"
                   disabled={busy}
                   onClick={() => deliver(s.id)}
-                  title={`Unload ${s.name} into the site — it takes only what it still needs`}
+                  title={t('megastructure.unloadTitle', { name: s.name })}
                 >
-                  Deliver from {s.name}
+                  {t('megastructure.deliverFrom', { name: s.name })}
                 </button>
               ))}
             </div>
           ) : (
             <div className="megac__hint">
-              Park a loaded ship here to unload by hand, or run a trade route to it.
-              Still wants {rem.metal} metal and {rem.credits} credits.
+              {t('megastructure.parkHint', { metal: rem.metal, credits: rem.credits })}
             </div>
           )}
           </>)}
@@ -375,7 +374,7 @@ export const MegastructureCard: React.FC = () => {
 
       {complete && site.kind !== 'warp_gate' && (
         <div className="megac__done" style={{ borderColor: def.color, color: def.color }}>
-          Finished on tick {site.completedAtTick}
+          {t('megastructure.finished', { tick: site.completedAtTick ?? '' })}
         </div>
       )}
 
@@ -421,18 +420,17 @@ export const MegastructureCard: React.FC = () => {
 
         return (
           <div className="megac__gate">
-            <div className="megac__gatehead">Gate link</div>
+            <div className="megac__gatehead">{t('megastructure.gateLink')}</div>
             {partner ? (
               <div className="megac__linked">
                 <span>↔ {partner.name}</span>
                 {mine && (
-                  <button disabled={busy} onClick={() => setPartner(null)}>Cut link</button>
+                  <button disabled={busy} onClick={() => setPartner(null)}>{t('megastructure.cutLink')}</button>
                 )}
               </div>
             ) : (
               <div className="megac__hint">
-                Not wired to anything. A gate with no partner is a door that
-                opens onto a wall.
+                {t('megastructure.notWired')}
               </div>
             )}
             {mine && others.length > 0 && (
@@ -443,26 +441,24 @@ export const MegastructureCard: React.FC = () => {
                     disabled={busy}
                     onClick={() => setPartner(m.bodyId)}
                     title={m.partnerBodyId
-                      ? 'This gate is already wired elsewhere — pairing here drops that link'
+                      ? t('megastructure.rewiredTitle')
                       : undefined}
                   >
-                    Pair with {b!.name}
-                    {m.partnerBodyId && ' (re-wires)'}
+                    {t('megastructure.pairWith', { name: b!.name })}
+                    {m.partnerBodyId && ` ${t('megastructure.rewires')}`}
                   </button>
                 ))}
               </div>
             )}
             {mine && others.length === 0 && !partner && (
               <div className="megac__hint">
-                Build a second gate to pair this one with.
+                {t('megastructure.buildSecond')}
               </div>
             )}
             <div className="megac__warn">
               {site.foundedByFactionId === null
-                ? 'An ancient gate. It belongs to nobody, anyone may use it, '
-                  + 'and its link cannot be changed.'
-                : 'Anyone can fly through this, including the people you built '
-                  + 'it against.'}
+                ? t('megastructure.ancientGateWarn')
+                : t('megastructure.gateWarn')}
             </div>
           </div>
         );
@@ -483,10 +479,9 @@ export const MegastructureCard: React.FC = () => {
         ).length;
         return (
           <div className="megac__seize">
-            <div className="megac__gatehead">Abandoned</div>
+            <div className="megac__gatehead">{t('megastructure.abandonedHead')}</div>
             <div className="megac__hint">
-              The faction that built this is gone. The first to put a ship in
-              orbit takes it.
+              {t('megastructure.abandonedHint')}
             </div>
             {anyHere > 0 ? (
               <button
@@ -499,13 +494,13 @@ export const MegastructureCard: React.FC = () => {
                     if (!res.ok) setError(humanizeMpError(res.code, res.error, 'transfer'));
                   });
                 }}
-                title="Nobody is defending it — presence is enough"
+                title={t('megastructure.claimTitle')}
               >
-                Claim it
+                {t('megastructure.claim')}
               </button>
             ) : (
               <div className="megac__hint">
-                Put any ship in orbit here to claim it. It does not have to be armed.
+                {t('megastructure.claimHint')}
               </div>
             )}
           </div>
@@ -536,18 +531,18 @@ export const MegastructureCard: React.FC = () => {
         const breached = isBreached(site);
         const canTake = breached && myForce.length > 0 && rivalForce.length === 0;
         const why = !breached
-          ? `Hull at ${Math.max(0, Math.round(site.hp))}/${MEGA_MAX_HP}. Park warships `
-            + `on it to break it below ${Math.round(MEGA_MAX_HP * MEGA_SEIZE_HP_FRAC)} `
-            + '— it repairs itself the moment you leave.'
+          ? t('megastructure.why.hull', {
+            hp: Math.max(0, Math.round(site.hp)),
+            max: MEGA_MAX_HP,
+            below: Math.round(MEGA_MAX_HP * MEGA_SEIZE_HP_FRAC),
+          })
           : myForce.length === 0
-            ? 'Breached. Send an armed ship to this structure (pick it as the ship\'s destination), '
-              + 'then board it here. Freighters and colony ships do not count.'
-            : `Contested — ${rivalForce.length} rival warship${rivalForce.length === 1 ? '' : 's'} `
-              + 'still here. Clear them off first.';
+            ? t('megastructure.why.breached')
+            : tn('megastructure.why.contested', rivalForce.length);
 
         return (
         <div className="megac__seize">
-          <div className="megac__gatehead">{site.ancient ? 'Board it' : 'Not yours'}</div>
+          <div className="megac__gatehead">{site.ancient ? t('megastructure.boardIt') : t('megastructure.notYoursHead')}</div>
           {!canTake && <div className="megac__hint">{why}</div>}
           {canTake && (<>
           <button
@@ -560,15 +555,15 @@ export const MegastructureCard: React.FC = () => {
                 if (!res.ok) setError(humanizeMpError(res.code, res.error, 'transfer'));
               });
             }}
-            title="Keep it, and 70% of the freight already poured into it"
+            title={t('megastructure.captureTitle')}
           >
-            Capture — keep 70% of progress
+            {t('megastructure.capture')}
           </button>
           <button
             className="megac__raze"
             disabled={busy}
             onClick={() => {
-              if (!window.confirm(`Destroy ${def.label}? Nobody gets it.`)) return;
+              if (!window.confirm(t('megastructure.destroyConfirm', { label: def.label }))) return;
               setBusy(true); setError(null);
               mpActions.seizeSite(site.bodyId, 'destroy').then((res) => {
                 setBusy(false);
@@ -576,11 +571,10 @@ export const MegastructureCard: React.FC = () => {
               });
             }}
           >
-            Destroy — deny it to everyone
+            {t('megastructure.destroy')}
           </button>
           <div className="megac__hint">
-            {myForce.length} armed ship{myForce.length === 1 ? '' : 's'} of yours
-            {' '}here and nobody else's.
+            {tn('megastructure.armedHere', myForce.length)}
           </div>
           </>)}
         </div>
@@ -614,9 +608,9 @@ export const MegastructureCard: React.FC = () => {
 
         return (
           <div className="megac__gate">
-            <div className="megac__gatehead">Who passes</div>
+            <div className="megac__gatehead">{t('megastructure.whoPasses')}</div>
             {others.length === 0 ? (
-              <div className="megac__hint">Nobody else is left in this game.</div>
+              <div className="megac__hint">{t('megastructure.nobodyLeft')}</div>
             ) : others.map(f => (
               <label key={f.id} className="megac__passrow">
                 <input
@@ -627,15 +621,12 @@ export const MegastructureCard: React.FC = () => {
                 <span className="megac__passdot" style={{ background: f.color }} />
                 <span className="megac__passname">{f.name}</span>
                 <span className="megac__passst">
-                  {passing.has(f.id) ? 'passes' : 'held'}
+                  {passing.has(f.id) ? t('megastructure.passes') : t('megastructure.held')}
                 </span>
               </label>
             ))}
             <div className="megac__warn">
-              You always pass. Anyone unticked is held for{' '}
-              {MEGASTRUCTURES.gravity_sink.effect.holdTicks} ticks.
-              The list is read at the moment of the grab, so a stale one
-              catches the wrong people.
+              {t('megastructure.sinkWarn', { n: MEGASTRUCTURES.gravity_sink.effect.holdTicks })}
             </div>
           </div>
         );
@@ -656,16 +647,17 @@ export const MegastructureCard: React.FC = () => {
  * a hull that already has the module.
  */
 export const MegastructureModuleHint: React.FC = () => {
+  useI18n();
   const gate = useFeatureGate();
   const canBuildAny = MEGASTRUCTURE_KINDS.some(k => gate.has(MEGASTRUCTURES[k].feature as FeatureId));
   if (!canBuildAny) return null;
   const hasModule = gate.has('part.construction' as FeatureId);
   return (
     <div className="megap__none">
-      🏗 Megastructures are founded from a colony ship carrying a <b>Construction Module</b>.
+      🏗 {t('megastructure.hint.pre')} <b>{t('megastructure.constructionModule')}</b>.
       {' '}{hasModule
-        ? 'This hull does not have one. Fit it at a shipyard, or build a colony ship with the module.'
-        : `You have not researched it yet: ${requirementLabel('part.construction' as FeatureId) ?? 'Construction Module'}.`}
+        ? t('megastructure.hint.noModule')
+        : t('megastructure.hint.notResearched', { req: requirementLabel('part.construction' as FeatureId) ?? t('megastructure.constructionModule') })}
     </div>
   );
 };
@@ -681,6 +673,7 @@ export const MegastructurePicker: React.FC<{
   anchorSoi: number;
   onBegin: (kind: MegastructureKind, variant: StructureVariant) => void;
 }> = ({ onBegin }) => {
+  useI18n();
   const gate = useFeatureGate();
   const { gameState } = useGameContext();
   const [open, setOpen] = useState(false);
@@ -701,8 +694,7 @@ export const MegastructurePicker: React.FC<{
   if (affordableKinds.length === 0) {
     return (
       <div className="megap__none">
-        This ship carries a Construction Module, but you have not researched
-        any structure to build with it yet.
+        {t('megastructure.picker.none')}
       </div>
     );
   }
@@ -710,7 +702,7 @@ export const MegastructurePicker: React.FC<{
   if (!open) {
     return (
       <button className="megap__open" onClick={() => setOpen(true)}>
-        🏗 Lay a megastructure foundation
+        {t('megastructure.picker.open')}
       </button>
     );
   }
@@ -726,7 +718,7 @@ export const MegastructurePicker: React.FC<{
     const d = MEGASTRUCTURES[pendingKind];
     return (
       <div className="megap">
-        <div className="megap__head">Choose a look for your {d.label}</div>
+        <div className="megap__head">{t('megastructure.picker.chooseLook', { label: d.label })}</div>
         <div className="megap__variants">
           {/* Only what this kind HAS. A picker built on the full letter
               list would offer a warp gate two options that do not exist
@@ -744,7 +736,7 @@ export const MegastructurePicker: React.FC<{
               style={locked ? { opacity: 0.45, cursor: 'not-allowed' } : undefined}
               onClick={() => { if (locked) return; setOpen(false); setPendingKind(null); onBegin(pendingKind, v); }}
               title={locked
-                ? `${STRUCTURE_VARIANT_NAMES[pendingKind][v]} — a Commander's Commission look (Profile → Hangar)`
+                ? t('megastructure.picker.lockedTitle', { name: STRUCTURE_VARIANT_NAMES[pendingKind][v] })
                 : STRUCTURE_VARIANT_NAMES[pendingKind][v]}
             >
               {/* Drawn in YOUR colours, because that is how it will
@@ -765,19 +757,18 @@ export const MegastructurePicker: React.FC<{
             );
           })}
         </div>
-        <button className="megap__close" onClick={() => setPendingKind(null)}>Back</button>
+        <button className="megap__close" onClick={() => setPendingKind(null)}>{t('megastructure.picker.back')}</button>
       </div>
     );
   }
 
   return (
     <div className="megap">
-      <div className="megap__head">Choose what to found</div>
+      <div className="megap__head">{t('megastructure.picker.chooseWhat')}</div>
       {/* The fear the playtest named: "I thought they'd wipe out the
           upgrades on a planet." Said here, at the moment of committing. */}
       <div className="megap__note">
-        {MEGASTRUCTURE_REASSURANCE} You will site it inside this world's ring, then
-        freighters haul the cost to it.
+        {MEGASTRUCTURE_REASSURANCE} {t('megastructure.picker.note')}
       </div>
       {affordableKinds.map((k) => {
         const d = MEGASTRUCTURES[k];
@@ -804,14 +795,14 @@ export const MegastructurePicker: React.FC<{
                   going and reading a wiki. */}
               <span className="megap__optwhat">{effectSummary(k)}</span>
               <span className="megap__optcost">
-                {d.cost.metal.toLocaleString()} metal · {d.cost.credits.toLocaleString()} credits
-                <b> · {loads} freighter loads</b>
+                {t('megastructure.picker.cost', { metal: d.cost.metal.toLocaleString(), credits: d.cost.credits.toLocaleString() })}
+                <b> · {t('megastructure.picker.freighterLoads', { n: loads })}</b>
               </span>
             </span>
           </button>
         );
       })}
-      <button className="megap__close" onClick={() => setOpen(false)}>Never mind</button>
+      <button className="megap__close" onClick={() => setOpen(false)}>{t('megastructure.picker.neverMind')}</button>
     </div>
   );
 };
@@ -822,6 +813,7 @@ export const MegastructurePicker: React.FC<{
  * structure -- nobody's, unbreakable, and a tenth of the burn.
  */
 function SunGateCard({ site, body }: { site: MegastructureState; body: Body }) {
+  useI18n();
   const { gameState } = useGameContext();
   const tick = gameState.currentTick;
   const flying = body.emerge != null && tick < body.emerge.untilTick;
@@ -839,30 +831,29 @@ function SunGateCard({ site, body }: { site: MegastructureState; body: Body }) {
         <div className="megac__headtext">
           <div className="megac__title">{body.name}</div>
           <div className="megac__sub">
-            {flying ? `In flight · opens at T+${body.emerge!.untilTick}` : 'Open'} · neutral
+            {flying ? t('megastructure.sun.inFlight', { n: body.emerge!.untilTick }) : t('megastructure.sun.open')} · {t('megastructure.sun.neutral')}
           </div>
         </div>
       </div>
       <p className="megac__blurb">
         {atSol
-          ? `It came out of the Sun. Park a ship on it to launch to ${dest} at a tenth of the normal burn.`
-          : 'The far end of a gate out of the Sun. Park a ship on it to launch home to Sol at a tenth of the normal burn.'}
-        {' '}The hull is really in flight for the crossing, and can be intercepted on the way.
+          ? t('megastructure.sun.blurbSol', { dest })
+          : t('megastructure.sun.blurbFar')}
+        {' '}{t('megastructure.sun.blurbTail')}
       </p>
       <div className="megac__gate">
-        <div className="megac__gatehead">Gate link</div>
+        <div className="megac__gatehead">{t('megastructure.gateLink')}</div>
         {partner ? (
           <div className="megac__linked"><span>↔ {dest === 'Sol' ? 'Sol' : `${partner.name}, ${dest}`}</span></div>
         ) : (
           <div className="megac__hint">
             {flying
-              ? `Its far end opens beyond the outermost world of ${dest} the moment this one stops.`
-              : `Wired to ${dest}.`}
+              ? t('megastructure.sun.farEnd', { dest })
+              : t('megastructure.sun.wiredTo', { dest })}
           </div>
         )}
         <div className="megac__warn">
-          A sun gate. It belongs to nobody, it cannot be destroyed, anyone may
-          use it, and its link cannot be changed.
+          {t('megastructure.sun.warn')}
         </div>
       </div>
     </div>
