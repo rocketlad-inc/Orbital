@@ -133,7 +133,7 @@ import { menuScaleFor, zOf, furnitureOpacity } from '../game/worldMenu/camera';
 import { drawWorldMenuCloseup } from '../render/worldMenuCloseup';
 import { useCanvasTouchInput } from '../hooks/useCanvasTouchInput';
 import { GIT_SHA } from '../_version';
-import { t, getLang, subscribeLang } from '../i18n/core';
+import { t, tk, getLang, subscribeLang } from '../i18n/core';
 import { exploredStorageKey, loadExplored, saveExplored } from '../game/exploredBodies';
 import './MapCanvas.css';
 import { getPlacement, cancelPlacement } from '../game/megastructurePlacement';
@@ -5181,42 +5181,40 @@ function getShipCanvasPos(
   };
 }
 
-/** The HUD's static words, looked up once per language rather than once per
- *  frame: drawHUD runs inside the render loop. */
-let hudWords: {
-  lang: string; paused: string; tick: string; scale: string;
-  hintMobile: string; hintDesktop: string; selectTarget: string;
-  tapBody: string; clickBody: string; focused: string; soi: string;
-} | null = null;
-function hudText() {
+/** The HUD's words. The English text stays in drawHUD (it is the lookup key,
+ *  and a source test reads it); this maps it to the catalog and remembers the
+ *  answer per language, because drawHUD runs inside the render loop and must
+ *  not look anything up per frame. */
+const HUD_KEYS: Record<string, string> = {
+  'PAUSED': 'map.hud.paused',
+  'Tick:': 'map.hud.tick',
+  'Scale:': 'map.hud.scale',
+  'Drag: pan · Pinch: zoom · Tap: select · Hold a ship: select several': 'map.hud.hintMobile',
+  'Right-drag: pan | Scroll: zoom | Click: select | Double-click: focus': 'map.hud.hintDesktop',
+  'SELECT TARGET BODY': 'map.hud.selectTarget',
+  'Tap a body to transfer': 'map.hud.tapBody',
+  'Click a body to transfer | ESC to cancel | Right-click to cancel': 'map.hud.clickBody',
+  'FOCUSED:': 'map.hud.focused',
+  'SOI:': 'map.hud.soi',
+};
+let hudLang = '';
+const hudCache = new Map<string, string>();
+function hudTr(english: string): string {
   const lang = getLang();
-  if (!hudWords || hudWords.lang !== lang) {
-    hudWords = {
-      lang,
-      paused: t('map.hud.paused'),
-      tick: t('map.hud.tick'),
-      scale: t('map.hud.scale'),
-      hintMobile: t('map.hud.hintMobile'),
-      hintDesktop: t('map.hud.hintDesktop'),
-      selectTarget: t('map.hud.selectTarget'),
-      tapBody: t('map.hud.tapBody'),
-      clickBody: t('map.hud.clickBody'),
-      focused: t('map.hud.focused'),
-      soi: t('map.hud.soi'),
-    };
-  }
-  return hudWords;
+  if (lang !== hudLang) { hudCache.clear(); hudLang = lang; }
+  let s = hudCache.get(english);
+  if (s === undefined) { s = tk(HUD_KEYS[english], english); hudCache.set(english, s); }
+  return s;
 }
 
 function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
-  const w = hudText();
-  const speedLabel = ctx.simSpeed && ctx.simSpeed > 0 ? `${ctx.simSpeed}×` : w.paused;
+  const speedLabel = ctx.simSpeed && ctx.simSpeed > 0 ? `${ctx.simSpeed}×` : hudTr('PAUSED');
   ctx.ctx.fillStyle = COLORS.fgDim;
   ctx.ctx.font = '12px "Audiowide", monospace';
   ctx.ctx.textAlign = 'left';
   ctx.ctx.textBaseline = 'top';
-  ctx.ctx.fillText(`${w.tick} ${ctx.t.toFixed(1)} | ${speedLabel}`, 16, 16);
-  ctx.ctx.fillText(`${w.scale} ${ctx.camera.scale.toFixed(2)}x`, 16, 32);
+  ctx.ctx.fillText(`${hudTr('Tick:')} ${ctx.t.toFixed(1)} | ${speedLabel}`, 16, 16);
+  ctx.ctx.fillText(`${hudTr('Scale:')} ${ctx.camera.scale.toFixed(2)}x`, 16, 32);
 
   ctx.ctx.fillStyle = COLORS.fgFaint;
   ctx.ctx.font = '10px "Audiowide", monospace';
@@ -5225,19 +5223,23 @@ function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
   // The LAYOUT's verdict (useIsMobile stamps data-mobile-shell), not the
   // pointer media query, which some mouse-driven desktops answer 'coarse'.
   const mobileShell = document.documentElement.hasAttribute('data-mobile-shell');
-  const hint = mobileShell ? w.hintMobile : w.hintDesktop;
+  const hint = hudTr(mobileShell
+    ? 'Drag: pan · Pinch: zoom · Tap: select · Hold a ship: select several'
+    : 'Right-drag: pan | Scroll: zoom | Click: select | Double-click: focus');
   ctx.ctx.fillText(hint, 16, ctx.canvas.height - 32);
 
   if (targetSelectionMode) {
     ctx.ctx.fillStyle = COLORS.warning;
     ctx.ctx.font = 'bold 12px "Audiowide", monospace';
     ctx.ctx.textAlign = 'center';
-    ctx.ctx.fillText(w.selectTarget, ctx.canvas.width / 2, 16);
+    ctx.ctx.fillText(hudTr('SELECT TARGET BODY'), ctx.canvas.width / 2, 16);
     ctx.ctx.fillStyle = COLORS.fgDim;
     ctx.ctx.font = '10px "Audiowide", monospace';
     // No Esc key or right button on a phone; its Cancel is the banner
     // ShipPanel floats at the bottom during targeting.
-    ctx.ctx.fillText(mobileShell ? w.tapBody : w.clickBody, ctx.canvas.width / 2, 32);
+    ctx.ctx.fillText(hudTr(mobileShell
+      ? 'Tap a body to transfer'
+      : 'Click a body to transfer | ESC to cancel | Right-click to cancel'), ctx.canvas.width / 2, 32);
   }
 
   if (ctx.camera.focusedBodyId) {
@@ -5246,10 +5248,10 @@ function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
       ctx.ctx.fillStyle = COLORS.info;
       ctx.ctx.font = 'bold 12px "Audiowide", monospace';
       ctx.ctx.textAlign = 'center';
-      ctx.ctx.fillText(`${w.focused} ${focusedBody.name.toUpperCase()}`, ctx.canvas.width / 2, targetSelectionMode ? 52 : 32);
+      ctx.ctx.fillText(`${hudTr('FOCUSED:')} ${focusedBody.name.toUpperCase()}`, ctx.canvas.width / 2, targetSelectionMode ? 52 : 32);
       ctx.ctx.fillStyle = COLORS.fgDim;
       ctx.ctx.font = '10px "Audiowide", monospace';
-      ctx.ctx.fillText(`${w.soi} ${focusedBody.soi.toFixed(0)} km`, ctx.canvas.width / 2, targetSelectionMode ? 68 : 48);
+      ctx.ctx.fillText(`${hudTr('SOI:')} ${focusedBody.soi.toFixed(0)} km`, ctx.canvas.width / 2, targetSelectionMode ? 68 : 48);
     }
   }
 

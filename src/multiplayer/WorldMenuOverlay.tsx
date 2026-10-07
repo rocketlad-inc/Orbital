@@ -1942,7 +1942,7 @@ const WmFleet: React.FC<{
               ) : h.templates.length > 0 ? (
                 templateSelect(cls, h, 'wm-hulltpl')
               ) : (
-                <span className="wm-hulltpl is-bare" title={t('worldmenu.bareTitle')}>{t('worldmenu.bareHull')}</span>
+                <span className="wm-hulltpl is-bare" title={t('worldmenu.bareTitle')}>{tk('worldmenu.bareHull', 'Bare hull')}</span>
               )}
               <span className="wm-hullcost">{h.costOre}m · {h.costCredits}c</span>
               <span className="wm-hulltime">{h.def.buildTime}t</span>

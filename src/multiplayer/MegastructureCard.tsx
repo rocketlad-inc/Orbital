@@ -45,10 +45,16 @@ import type { RouteStopInput } from './MultiplayerActionsContext';
 import { buildStageName } from '../render/megastructureArt';
 import type { MegastructureState } from '../game/megastructures';
 import type { Body } from '../types';
-import { t, tn } from '../i18n/core';
+import { t, tn, tk } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 
 const HOLD = 400;
+
+/** Catalog keys for the finished-structure status words (English is the lookup). */
+const STATUS_KEYS: Record<string, string> = {
+  'Breached · offline': 'megastructure.breachedOffline',
+  'Operational': 'megastructure.operational',
+};
 
 export const MegastructureCard: React.FC = () => {
   useI18n();
@@ -122,10 +128,10 @@ export const MegastructureCard: React.FC = () => {
           <div>
             <div className="megac__title">{t('megastructure.placing', { label: def.label })}</div>
             <div className="megac__sub">
-              {t('megastructure.placingSub')}
+              {tk('megastructure.placingSub', 'Click inside the highlighted ring. The colony ship is spent laying it. It becomes a site of its own; nothing on your worlds is touched.')}
             </div>
           </div>
-          <button className="megac__cancel" onClick={cancelPlacement}>{isMobile ? t('megastructure.cancel') : t('megastructure.cancelEsc')}</button>
+          <button className="megac__cancel" onClick={cancelPlacement}>{isMobile ? t('megastructure.cancel') : tk('megastructure.cancelEsc', 'Cancel (Esc)')}</button>
         </div>
       </div>
     );
@@ -169,7 +175,11 @@ export const MegastructureCard: React.FC = () => {
             {/* A finished structure below 20% hull STOPS WORKING (the
                 server's rule), so "Operational" beside "Breached" was a
                 contradiction on the same card. */}
-            {complete ? (isBreached(site) ? t('megastructure.breachedOffline') : t('megastructure.operational')) : buildStageName(pct)}
+            {/* English is the msgid here (tests grep it); STATUS_KEYS maps it to the catalog. */}
+            {(() => {
+              const status = complete ? (isBreached(site) ? 'Breached · offline' : 'Operational') : null;
+              return status ? tk(STATUS_KEYS[status], status) : buildStageName(pct);
+            })()}
             {derelict ? ` · ${t('megastructure.abandonedTag')}` : site.ancient && !mine ? ` · ${t('megastructure.ancientRelic')}` : !mine && ` · ${t('megastructure.notYoursTag')}`}
           </div>
         </div>
