@@ -16,6 +16,8 @@ import { PhoneAlerts } from './PhoneAlerts';
 import { WidgetLink } from './WidgetLink';
 import { GameFeedSettings } from './GameFeedSettings';
 import { useMultiplayerActions } from './MultiplayerActionsContext';
+import { t, tk } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 
 type Prefs = Record<string, boolean>;
 type Payload = {
@@ -49,6 +51,7 @@ type Transport = 'push' | 'watch' | 'discord';
 const BLIND_SPOT = ['digest', 'combat', 'inbound'];
 
 export function NotificationSettings() {
+  useI18n();
   const [data, setData] = useState<Payload | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -57,7 +60,7 @@ export function NotificationSettings() {
   const load = useCallback(async () => {
     const res = await apiFetch<Payload>('/api/me/notifications');
     if (res.ok) { setData(res.data); setErr(null); }
-    else setErr('Could not load your notification settings.');
+    else setErr(t('notify.err.load'));
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -80,7 +83,7 @@ export function NotificationSettings() {
         push_prefs: res.data.push_prefs,
         watch_prefs: res.data.watch_prefs ?? d.watch_prefs,
       } : d));
-    } else setErr('That change did not save. Try again.');
+    } else setErr(t('notify.err.save'));
   };
 
   // Answering the master question. On "yes" the server sends a welcome DM
@@ -93,13 +96,13 @@ export function NotificationSettings() {
       '/api/me/dm-consent', { method: 'POST', body: JSON.stringify({ consent }) },
     );
     setBusy(null);
-    if (!res.ok) { setErr('That change did not save. Try again.'); return; }
+    if (!res.ok) { setErr(t('notify.err.save')); return; }
     setDmBlocked(consent && res.data.dm_ok === false);
     setData(d => (d ? { ...d, dm_consent: res.data.dm_consent } : d));
   };
 
   if (err) return <div style={sub}>{err}</div>;
-  if (!data) return <div style={sub}>Loading…</div>;
+  if (!data) return <div style={sub}>{t('notify.loading')}</div>;
 
   const discordLive = data.linked && data.dm_consent === true;
   // Evaluated once for the whole list rather than per row: the question
@@ -122,17 +125,18 @@ export function NotificationSettings() {
           list was hidden behind an account they did not have. The
           question "what do you want to hear about" is not a Discord
           question, so it is asked first and on its own. */}
-      <div style={{ ...head, marginTop: 18 }}>What reaches you</div>
+      <div style={{ ...head, marginTop: 18 }}>{t('notify.h.reaches')}</div>
 
       <div style={{ ...colHead }}>
         <span style={{ flex: 1 }} />
-        <span style={colLabel}>Phone</span>
-        <span style={colLabel}>Watch</span>
+        <span style={colLabel}>{t('notify.col.phone')}</span>
+        <span style={colLabel}>{t('notify.col.watch')}</span>
         <span style={colLabel}>Discord</span>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
-        {Object.entries(data.categories).map(([key, label]) => {
+        {Object.entries(data.categories).map(([key, serverLabel]) => {
+          const label = tk(`notify.cat.${key}`, serverLabel);
           const onPush = data.push_prefs[key] !== false;
           const onWatch = (data.watch_prefs ?? data.push_prefs)[key] !== false;
           const onDm = data.prefs[key] !== false;
@@ -144,22 +148,22 @@ export function NotificationSettings() {
               <Toggle
                 on={onPush}
                 busy={busy === `push:${key}`}
-                label={`${label} on your phone`}
+                label={t('notify.on.phone', { label })}
                 onClick={() => toggle(key, !onPush, 'push')}
               />
               <Toggle
                 on={onWatch}
                 busy={busy === `watch:${key}`}
                 disabled={!data.watch_paired}
-                disabledHint="Needs a paired watch"
-                label={`${label} on your watch`}
+                disabledHint={t('notify.needsWatch')}
+                label={t('notify.on.watch', { label })}
                 onClick={() => toggle(key, !onWatch, 'watch')}
               />
               <Toggle
                 on={onDm}
                 busy={busy === `discord:${key}`}
                 disabled={!discordLive}
-                label={`${label} in Discord`}
+                label={t('notify.on.discord', { label })}
                 onClick={() => toggle(key, !onDm, 'discord')}
               />
             </div>
@@ -172,27 +176,24 @@ export function NotificationSettings() {
           fontSize: 11.5, color: '#ffca28', marginTop: 9, lineHeight: 1.5,
           border: '1px solid rgba(255,202,40,.3)', borderRadius: 6, padding: '8px 10px',
         }}>
-          Nothing will warn you that a city is under fire or that a fleet is on its
-          way. Fighting, inbound and the daily report are all off — leave any one of
-          them on and you will still hear about it.
+          {t('notify.blind')}
         </div>
       )}
 
       <div style={{ ...sub, marginTop: 8 }}>
         {data.watch_paired
-          ? 'Watch alerts come from the Orbital watch app itself: a tap opens the right screen on the watch, and its buttons act from your wrist. Your phone’s Orbital alerts no longer copy across to the watch.'
-          : 'The Watch column switches on once the Orbital watch app is paired.'}
+          ? t('notify.watch.paired')
+          : t('notify.watch.unpaired')}
       </div>
 
       {data.push_devices === 0 && (
         <div style={{ ...sub, marginTop: 8 }}>
-          No device is set up for phone alerts yet — turn them on above, on the
-          device you want them to reach.
+          {t('notify.noDevice')}
         </div>
       )}
       {!discordLive && (
         <div style={{ ...sub, marginTop: 8 }}>
-          The Discord column needs a linked account with direct messages on.
+          {t('notify.discordNeeds')}
         </div>
       )}
 
@@ -202,12 +203,11 @@ export function NotificationSettings() {
           for phone settings opens exactly one thing. */}
       <WidgetLink />
 
-      <div style={{ ...head, marginTop: 18 }}>Discord account</div>
+      <div style={{ ...head, marginTop: 18 }}>{t('notify.h.discord')}</div>
 
       {!data.linked ? (
         <div style={sub}>
-          Link your Discord account above to receive alerts. Once linked, you
-          choose what reaches you here.
+          {t('notify.linkFirst')}
         </div>
       ) : data.dm_consent == null ? (
         // Linked but never asked. Pose the question rather than assuming
@@ -217,40 +217,38 @@ export function NotificationSettings() {
           border: '1px solid rgba(96,130,160,.3)', borderRadius: 8, padding: '12px 14px',
         }}>
           <div style={{ fontSize: 12.5, color: '#cdd9e4', marginBottom: 8 }}>
-            Do you want Orbital to send you direct messages?
+            {t('notify.dmQ')}
           </div>
           <div style={{ ...sub, marginBottom: 10 }}>
-            Senate cards, the Orbital Herald and slash commands reach you in the server
-            either way. This is only about your inbox.
+            {t('notify.dmQ.note')}
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button
               type="button" onClick={() => answerConsent(true)} disabled={busy === 'consent'}
               style={{ ...pill, borderColor: '#4ecdc4', color: '#4ecdc4', padding: '6px 12px' }}
-            >📬 Yes, DM me</button>
+            >{t('notify.yesDm')}</button>
             <button
               type="button" onClick={() => answerConsent(false)} disabled={busy === 'consent'}
               style={{ ...pill, padding: '6px 12px' }}
-            >🔕 Server only</button>
+            >{t('notify.serverOnly')}</button>
           </div>
         </div>
       ) : data.dm_consent === false ? (
         <div>
-          <div style={{ fontSize: 12.5, color: '#cdd9e4' }}>🔕 Server only</div>
+          <div style={{ fontSize: 12.5, color: '#cdd9e4' }}>{t('notify.serverOnly')}</div>
           <div style={{ ...sub, marginTop: 4, marginBottom: 10 }}>
-            Nothing reaches your inbox. Senate cards, the Herald and every slash command
-            still work in the server.
+            {t('notify.serverOnly.note')}
           </div>
           <button
             type="button" onClick={() => answerConsent(true)} disabled={busy === 'consent'}
             style={{ ...pill, borderColor: '#4ecdc4', color: '#4ecdc4', padding: '6px 12px' }}
-          >Turn direct messages on</button>
+          >{t('notify.dmOn')}</button>
         </div>
       ) : (
         <>
           <div style={{ ...sub, marginBottom: 10 }}>
-            Sent to <b style={{ color: '#cdd9e4' }}>{data.discord_username ?? 'your Discord'}</b>.
-            You can also change these with <code style={code}>/notify</code> in Discord.
+            {t('notify.sentTo')} <b style={{ color: '#cdd9e4' }}>{data.discord_username ?? t('notify.yourDiscord')}</b>.
+            {' '}{t('notify.changeWith.pre')} <code style={code}>/notify</code> {t('notify.changeWith.post')}
           </div>
 
           {dmBlocked && (
@@ -258,21 +256,18 @@ export function NotificationSettings() {
               fontSize: 11.5, color: '#ffca28', marginBottom: 10, lineHeight: 1.5,
               border: '1px solid rgba(255,202,40,.3)', borderRadius: 6, padding: '8px 10px',
             }}>
-              Discord blocked our test message. Right-click the server icon →
-              <b> Privacy Settings</b> → enable <b>Direct Messages</b>, or none of this
-              will reach you.
+              {t('notify.blocked.pre')}{' '}
+              <b>{t('notify.blocked.privacy')}</b> → {t('notify.blocked.enable')} <b>{t('notify.blocked.dms')}</b>{t('notify.blocked.post')}
             </div>
           )}
 
           <button
             type="button" onClick={() => answerConsent(false)} disabled={busy === 'consent'}
             style={{ ...pill, marginTop: 10, padding: '6px 12px' }}
-          >🔕 Stop all direct messages</button>
+          >{t('notify.stopDm')}</button>
 
           <div style={{ ...sub, marginTop: 12 }}>
-            Only deadlines interrupt you — a vote about to close, unpaid upkeep.
-            Everything else, fighting and inbound fleets included, is gathered
-            into your daily situation report.
+            {t('notify.deadlines')}
           </div>
         </>
       )}
@@ -289,9 +284,11 @@ export function NotificationSettings() {
  * depending on account setup and the two columns stop lining up.
  */
 function Toggle(
-  { on, busy, disabled, disabledHint = 'Needs a linked Discord account', label, onClick }:
+  { on, busy, disabled, disabledHint, label, onClick }:
   { on: boolean; busy: boolean; disabled?: boolean; disabledHint?: string; label: string; onClick: () => void },
 ) {
+  useI18n();
+  const hint = disabledHint ?? t('notify.needsDiscord');
   return (
     <button
       type="button"
@@ -299,7 +296,7 @@ function Toggle(
       disabled={busy || disabled}
       aria-pressed={on}
       aria-label={label}
-      title={disabled ? disabledHint : label}
+      title={disabled ? hint : label}
       style={{
         ...pill,
         cursor: disabled ? 'default' : 'pointer',
@@ -307,7 +304,7 @@ function Toggle(
         color: disabled ? '#4c5c6e' : on ? '#4ecdc4' : '#7d8fa3',
         opacity: busy ? 0.5 : 1,
       }}
-    >{disabled ? '—' : on ? 'ON' : 'OFF'}</button>
+    >{disabled ? '—' : on ? t('notify.on') : t('notify.off')}</button>
   );
 }
 
@@ -349,6 +346,7 @@ const code: React.CSSProperties = {
  * screen they may never open.
  */
 export function NotificationSettingsModal({ onClose }: { onClose: () => void }) {
+  useI18n();
   // Present inside a game (the TopBar is within its provider); null in
   // the lobby, where the room screen shows the feed itself.
   const mpActions = useMultiplayerActions();
@@ -369,7 +367,7 @@ export function NotificationSettingsModal({ onClose }: { onClose: () => void }) 
     >
       <div
         role="dialog"
-        aria-label="Discord alert settings"
+        aria-label={t('notify.dialog.aria')}
         onClick={e => e.stopPropagation()}
         style={{
           background: '#0b111a', border: '1px solid rgba(96,130,160,.35)',
@@ -379,10 +377,10 @@ export function NotificationSettingsModal({ onClose }: { onClose: () => void }) 
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-          <div style={{ fontSize: 15, fontWeight: 700, color: '#e7eef6' }}>Notifications</div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: '#e7eef6' }}>{t('notify.title')}</div>
           <button
             onClick={onClose}
-            title="Close (Esc)"
+            title={t('notify.close')}
             style={{
               background: 'transparent', border: '1px solid rgba(96,130,160,.4)',
               color: '#8a9fb3', borderRadius: 6, cursor: 'pointer',
@@ -392,7 +390,7 @@ export function NotificationSettingsModal({ onClose }: { onClose: () => void }) 
         </div>
         {mpActions?.gameId && (
           <div style={{ marginTop: 12 }}>
-            <GameFeedSettings gameId={mpActions.gameId} title="This game's Discord feed" />
+            <GameFeedSettings gameId={mpActions.gameId} title={t('notify.gameFeed')} />
           </div>
         )}
         <NotificationSettings />
