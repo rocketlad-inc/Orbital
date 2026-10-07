@@ -12,6 +12,9 @@
 // ============================================================
 
 import React from 'react';
+import { t } from '../i18n/core';
+import { tMarkup } from '../i18n/rich';
+import { useI18n } from '../i18n/react';
 import './HowToPlay.css';
 
 interface Props {
@@ -31,44 +34,49 @@ const Beat: React.FC<{
   diagram?: React.ReactNode;
   flip?: boolean;
   children: React.ReactNode;
-}> = ({ n, title, img, alt, diagram, flip, children }) => (
-  <section className={`htp-beat${flip ? ' htp-beat--flip' : ''}`}>
-    <figure className="htp-shot">
-      {img
-        ? <img src={img} alt={alt} loading="lazy" width={1200} height={675} />
-        : diagram}
-    </figure>
-    <div className="htp-copy">
-      <div className="htp-step">STEP {n}</div>
-      <h3 className="htp-beat-title">{title}</h3>
-      {children}
-    </div>
-  </section>
-);
+}> = ({ n, title, img, alt, diagram, flip, children }) => {
+  useI18n();
+  return (
+    <section className={`htp-beat${flip ? ' htp-beat--flip' : ''}`}>
+      <figure className="htp-shot">
+        {img
+          ? <img src={img} alt={alt} loading="lazy" width={1200} height={675} />
+          : diagram}
+      </figure>
+      <div className="htp-copy">
+        <div className="htp-step">{t('howto.step', { n })}</div>
+        <h3 className="htp-beat-title">{title}</h3>
+        {children}
+      </div>
+    </section>
+  );
+};
 
 const SVG_W = 640;
 const SVG_H = 360;
 
 /** Trade: two empires swapping goods, hauled physically by freighter. */
-const TradeDiagram = () => (
+const TradeDiagram = () => {
+  useI18n();
+  return (
   <svg
     className="htp-diagram"
     viewBox={`0 0 ${SVG_W} ${SVG_H}`}
     role="img"
-    aria-label="A trade between two empires: your world sends metal, their world sends science, carried by freighters that can be raided in transit. A senate tariff skims a percentage off what arrives."
+    aria-label={t('howto.trade.aria')}
   >
     <rect width={SVG_W} height={SVG_H} fill="#080d14" />
     {/* your world */}
     <g transform="translate(96,180)">
       <circle r={44} fill="rgba(78,205,196,0.18)" stroke="#4ecdc4" strokeWidth={1.8} />
       <path d="M-20 6 Q-8 -14 10 -5 Q22 3 17 14 Q0 25 -14 18 Z" fill="rgba(110,231,183,0.5)" />
-      <text y={70} textAnchor="middle" fill="#4ecdc4" fontSize={13} fontWeight={700} letterSpacing={2}>YOU</text>
+      <text y={70} textAnchor="middle" fill="#4ecdc4" fontSize={13} fontWeight={700} letterSpacing={2}>{t('howto.you')}</text>
     </g>
     {/* their world */}
     <g transform="translate(544,180)">
       <circle r={44} fill="rgba(255,138,77,0.16)" stroke="#ff8a4d" strokeWidth={1.8} />
       <path d="M-18 4 Q-6 -13 12 -6 Q23 2 17 13 Q0 24 -13 16 Z" fill="rgba(255,179,122,0.45)" />
-      <text y={70} textAnchor="middle" fill="#ff8a4d" fontSize={13} fontWeight={700} letterSpacing={2}>THEM</text>
+      <text y={70} textAnchor="middle" fill="#ff8a4d" fontSize={13} fontWeight={700} letterSpacing={2}>{t('howto.them')}</text>
     </g>
 
     {/* outbound leg — label sits ABOVE the lane so it never sits on the
@@ -79,7 +87,7 @@ const TradeDiagram = () => (
       <g transform="translate(238,128)">
         <rect x={-46} y={-30} width={92} height={22} rx={4}
           fill="rgba(78,205,196,0.16)" stroke="#4ecdc4" strokeWidth={1.2} />
-        <text y={-14} textAnchor="middle" fill="#d8f5f2" fontSize={12} fontWeight={700}>500 METAL</text>
+        <text y={-14} textAnchor="middle" fill="#d8f5f2" fontSize={12} fontWeight={700}>{t('howto.trade.metal', { n: 500 })}</text>
       </g>
       <g transform="translate(384,128)">
         <rect x={-17} y={-9} width={34} height={18} rx={3}
@@ -95,7 +103,7 @@ const TradeDiagram = () => (
       <g transform="translate(392,232)">
         <rect x={-52} y={8} width={104} height={22} rx={4}
           fill="rgba(255,138,77,0.14)" stroke="#ff8a4d" strokeWidth={1.2} />
-        <text y={24} textAnchor="middle" fill="#ffd9c2" fontSize={12} fontWeight={700}>300 SCIENCE</text>
+        <text y={24} textAnchor="middle" fill="#ffd9c2" fontSize={12} fontWeight={700}>{t('howto.trade.science', { n: 300 })}</text>
       </g>
       <g transform="translate(246,232)">
         <rect x={-17} y={-9} width={34} height={18} rx={3}
@@ -106,26 +114,29 @@ const TradeDiagram = () => (
 
     {/* the caption that carries the actual lesson */}
     <text x={SVG_W / 2} y={182} textAnchor="middle" fill="#ff8080" fontSize={12} letterSpacing={0.6}>
-      freighters in transit can be raided
+      {t('howto.trade.raided')}
     </text>
 
     <text x={SVG_W / 2} y={30} textAnchor="middle" fill="#8fa8bf" fontSize={11.5} letterSpacing={2}>
-      GOODS ARE PHYSICALLY DELIVERED
+      {t('howto.trade.delivered')}
     </text>
     {/* tariff — centred at the foot, clear of the world labels */}
     <text x={SVG_W / 2} y={322} textAnchor="middle" fill="#c4b5fd" fontSize={11} letterSpacing={0.6}>
-      a senate tariff skims a % of whatever arrives
+      {t('howto.trade.tariff')}
     </text>
   </svg>
-);
+  );
+};
 
 /** Senate: weighted votes on a bill that rebinds the rules for everyone. */
-const SenateDiagram = () => (
+const SenateDiagram = () => {
+  useI18n();
+  return (
   <svg
     className="htp-diagram"
     viewBox={`0 0 ${SVG_W} ${SVG_H}`}
     role="img"
-    aria-label="A senate bill to raise metal yield. Factions vote with weight equal to one plus one per system they control; a majority of living factions must engage for the bill to pass, and the new law then applies to everyone."
+    aria-label={t('howto.senate.aria')}
   >
     <rect width={SVG_W} height={SVG_H} fill="#080d14" />
 
@@ -133,305 +144,204 @@ const SenateDiagram = () => (
     <g transform="translate(320,56)">
       <rect x={-160} y={-30} width={320} height={56} rx={6}
         fill="rgba(196,181,253,0.10)" stroke="#c4b5fd" strokeWidth={1.5} />
-      <text y={-10} textAnchor="middle" fill="#c4b5fd" fontSize={10.5} letterSpacing={2.4}>BILL ON THE FLOOR</text>
-      <text y={13} textAnchor="middle" fill="#efeaff" fontSize={15} fontWeight={700}>METAL YIELD ×1.5</text>
+      <text y={-10} textAnchor="middle" fill="#c4b5fd" fontSize={10.5} letterSpacing={2.4}>{t('howto.senate.bill')}</text>
+      <text y={13} textAnchor="middle" fill="#efeaff" fontSize={15} fontWeight={700}>{t('howto.senate.yield')}</text>
     </g>
 
     {/* voters, sized by weight */}
     <text x={320} y={116} textAnchor="middle" fill="#8fa8bf" fontSize={11} letterSpacing={1.6}>
-      VOTE WEIGHT = 1 + 1 PER SYSTEM YOU CONTROL
+      {t('howto.senate.weight')}
     </text>
     {[
-      { x: 128, name: 'YOU', w: 4, col: '#4ecdc4', vote: 'YEA' },
-      { x: 320, name: 'RIVAL', w: 3, col: '#ff8a4d', vote: 'NAY' },
-      { x: 512, name: 'THIRD', w: 2, col: '#ffd27a', vote: 'YEA' },
+      { x: 128, name: t('howto.you'), w: 4, col: '#4ecdc4', vote: 'YEA' },
+      { x: 320, name: t('howto.senate.rival'), w: 3, col: '#ff8a4d', vote: 'NAY' },
+      { x: 512, name: t('howto.senate.third'), w: 2, col: '#ffd27a', vote: 'YEA' },
     ].map(v => (
       <g key={v.name} transform={`translate(${v.x},170)`}>
         <circle r={26} fill={`${v.col}22`} stroke={v.col} strokeWidth={1.6} />
         <text y={5} textAnchor="middle" fill={v.col} fontSize={16} fontWeight={800}>×{v.w}</text>
         <text y={44} textAnchor="middle" fill={v.col} fontSize={11} fontWeight={700} letterSpacing={1.4}>{v.name}</text>
-        <text y={59} textAnchor="middle" fill={v.vote === 'YEA' ? '#7fffa1' : '#ff8080'} fontSize={10.5} letterSpacing={1.2}>{v.vote}</text>
+        <text y={59} textAnchor="middle" fill={v.vote === 'YEA' ? '#7fffa1' : '#ff8080'} fontSize={10.5} letterSpacing={1.2}>{v.vote === 'YEA' ? t('howto.senate.yea') : t('howto.senate.nay')}</text>
       </g>
     ))}
 
     {/* tally */}
     <g transform="translate(320,268)">
-      <text y={-12} textAnchor="middle" fill="#8fa8bf" fontSize={10.5} letterSpacing={1.6}>TALLY</text>
+      <text y={-12} textAnchor="middle" fill="#8fa8bf" fontSize={10.5} letterSpacing={1.6}>{t('howto.senate.tally')}</text>
       <rect x={-160} y={0} width={320} height={16} rx={4} fill="rgba(255,255,255,0.06)" />
       {/* 6 yea of 9 total */}
       <rect x={-160} y={0} width={213} height={16} rx={4} fill="rgba(127,255,161,0.45)" />
-      <text x={-150} y={12} fill="#0a1a10" fontSize={11} fontWeight={800}>YEA 6</text>
-      <text x={150} y={12} textAnchor="end" fill="#ffb0b0" fontSize={11} fontWeight={800}>NAY 3</text>
+      <text x={-150} y={12} fill="#0a1a10" fontSize={11} fontWeight={800}>{t('howto.senate.yeaN', { n: 6 })}</text>
+      <text x={150} y={12} textAnchor="end" fill="#ffb0b0" fontSize={11} fontWeight={800}>{t('howto.senate.nayN', { n: 3 })}</text>
     </g>
 
     {/* outcome */}
     <text x={320} y={318} textAnchor="middle" fill="#7fffa1" fontSize={12.5} fontWeight={700} letterSpacing={1.2}>
-      PASSED — THE LAW NOW APPLIES TO EVERY EMPIRE
+      {t('howto.senate.passed')}
     </text>
     <text x={320} y={340} textAnchor="middle" fill="#64809c" fontSize={10.5}>
-      a majority of living factions must vote for anything to pass
+      {t('howto.senate.majority')}
     </text>
   </svg>
-);
+  );
+};
 
-export const HowToPlay: React.FC<Props> = ({ onSignIn }) => (
+export const HowToPlay: React.FC<Props> = ({ onSignIn }) => {
+  useI18n();
+  return (
   <div className="htp">
     <header className="htp-hero">
-      <div className="htp-eyebrow">— HOW TO PLAY</div>
-      <h1 className="htp-title">Your first hour in Orbital</h1>
+      <div className="htp-eyebrow">{t('howto.eyebrow')}</div>
+      <h1 className="htp-title">{t('howto.title')}</h1>
       <p className="htp-lede">
-        Orbital is a strategy game about running a space empire across the
-        real solar system. You found colonies, build ships, trade, argue in
-        a senate, and fight over planets. It plays in your browser, and it
-        keeps running when you close the tab.
+        {t('howto.lede')}
       </p>
       <div className="htp-facts">
         <div className="htp-fact">
-          <b>1 hour = 1 turn</b>
-          <span>The clock never stops. Give orders, come back later.</span>
+          <b>{t('howto.fact1.b')}</b>
+          <span>{t('howto.fact1.s')}</span>
         </div>
         <div className="htp-fact">
-          <b>No download</b>
-          <span>It runs in the browser, on desktop or phone.</span>
+          <b>{t('howto.fact2.b')}</b>
+          <span>{t('howto.fact2.s')}</span>
         </div>
         <div className="htp-fact">
-          <b>3 ways to win</b>
-          <span>Out-vote, out-build, or out-fight everyone else.</span>
+          <b>{t('howto.fact3.b')}</b>
+          <span>{t('howto.fact3.s')}</span>
         </div>
       </div>
     </header>
 
     <Beat
       n={1}
-      title="The map is the game"
+      title={t('howto.b1.title')}
       img="/howto/map-system.jpg"
-      alt="The Sol system map: the sun at the centre, planets on their orbit rings, with two factions' ships parked at Earth and Mars."
+      alt={t('howto.b1.alt')}
     >
-      <p>
-        This is the solar system, seen from above. The sun sits in the middle
-        and every planet moves along its ring in real time — <b>the planets
-        actually orbit</b>, so the distance between two worlds changes from
-        week to week.
-      </p>
-      <p>
-        Drag to look around, scroll to zoom. Everything you'll ever click is
-        on this map: <b>click a world to open it</b>, click a ship to give it
-        orders. Colours mean ownership — your things are one colour, each
-        rival another.
-      </p>
+      <p>{tMarkup('howto.b1.p1')}</p>
+      <p>{tMarkup('howto.b1.p2')}</p>
     </Beat>
 
     <Beat
       n={2}
-      title="Your homeworld makes everything"
+      title={t('howto.b2.title')}
       img="/howto/map-world.jpg"
-      alt="Zoomed in on Earth: a green terraformed world with a city and station, four ships in orbit around it."
+      alt={t('howto.b2.alt')}
       flip
     >
-      <p>
-        You start with one world and a few ships. Zoom in and it becomes a
-        place: a <b>city</b> on the surface, a <b>station</b> in orbit, and
-        your fleet circling above.
-      </p>
-      <p>
-        Open a world and you get its build menu. Cities make{' '}
-        <b>metal, credits and science</b> every hour, and you spend those on
-        upgrades — a forge for metal, a mint for credits, a lab for science —
-        and on new ships. Better buildings mean more income, which means more
-        ships. That's the loop.
-      </p>
+      <p>{tMarkup('howto.b2.p1')}</p>
+      <p>{tMarkup('howto.b2.p2')}</p>
     </Beat>
 
     <Beat
       n={3}
-      title="Raw worlds hoard. Terraformed worlds pay"
+      title={t('howto.b3.title')}
       img="/howto/map-terraform.jpg"
-      alt="Mars mid-transformation: a dusty world glowing with a new atmosphere, two freighters in orbit delivering the payload."
+      alt={t('howto.b3.alt')}
     >
-      <p>
-        Most worlds out there are <b>raw</b> — dead rock. A raw world will
-        take a station, but it won't take a city, and it keeps 90% of what it
-        digs up sitting on the ground instead of sending it home.
-      </p>
-      <p>
-        To fix that you <b>terraform</b> it: claim it with a station, then
-        point a freighter at it on a supply route. The freighter hauls metal
-        and credits until the world's meter fills, then the transformation
-        runs and the planet comes alive — oceans, weather, the lot. Now it
-        pays you in full and can hold a city. This is permanent, and it's how
-        a one-planet empire becomes a real one.
-      </p>
+      <p>{tMarkup('howto.b3.p1')}</p>
+      <p>{tMarkup('howto.b3.p2')}</p>
     </Beat>
 
     <Beat
       n={4}
-      title="Trade is a shipment, not a menu"
+      title={t('howto.b4.title')}
       diagram={<TradeDiagram />}
       flip
     >
-      <p>
-        You can strike deals with other players: metal, credits and
-        science in whatever mix you both agree to. You can also sign{' '}
-        <b>pacts</b> — non-aggression, mutual defence, intelligence sharing, or
-        joint construction of a megastructure.
-      </p>
-      <p>
-        The catch is that goods don't teleport. When a deal is accepted,
-        each side loads a freighter at one of their terraformed worlds and
-        flies it to the other's. <b>That freighter can be intercepted.</b>{' '}
-        A trade route across contested space is a real risk, and escorting a
-        shipment is a legitimate use of a warship.
-      </p>
+      <p>{tMarkup('howto.b4.p1')}</p>
+      <p>{tMarkup('howto.b4.p2')}</p>
     </Beat>
 
     <Beat
       n={5}
-      title="Fights happen where fleets meet"
+      title={t('howto.b5.title')}
       img="/howto/map-battle.jpg"
-      alt="A battle at Mars: a teal fleet and an orange fleet in facing arcs around the planet, weapon fire crossing between them."
+      alt={t('howto.b5.alt')}
     >
-      <p>
-        There's no separate battle screen. If your ships and someone else's
-        ships are at the same world and you're hostile, they shoot — you
-        watch it happen on the map.
-      </p>
-      <p>
-        Warships are targeted first, then freighters, and only once the orbit
-        is clear can anyone bombard the settlements below. Armed stations
-        shoot back; cities never do. Damaged ships limp home to a shipyard to
-        repair, and ships that survive fights get better at fighting.
-      </p>
+      <p>{tMarkup('howto.b5.p1')}</p>
+      <p>{tMarkup('howto.b5.p2')}</p>
     </Beat>
 
     <Beat
       n={6}
-      title="The senate writes the rules"
+      title={t('howto.b6.title')}
       diagram={<SenateDiagram />}
       flip
     >
-      <p>
-        There's a galactic senate, and it is not decoration — it changes the
-        actual numbers everyone plays by. Bills can raise or cut{' '}
-        <b>metal, credit and science output</b>, change what ships cost to
-        build, adjust <b>combat damage</b>, set a <b>tariff</b> on trade, or
-        move fleet upkeep. A passed law applies to <b>every empire</b>,
-        including the one that proposed it.
-      </p>
-      <p>
-        Your vote isn't one vote. <b>Weight is 1, plus 1 for every system
-        you control</b> — and you control a system by owning more of its
-        bodies than anyone else. Grabbing a moon is therefore also a
-        political act. A bill needs a majority of the living factions to
-        actually engage before it can pass, so ignoring the chamber is how
-        you get governed by someone else.
-      </p>
-      <p>
-        The senate can also aim things at a specific player: authorise war
-        on them, embargo their trade, or sanction their production.
-      </p>
+      <p>{tMarkup('howto.b6.p1')}</p>
+      <p>{tMarkup('howto.b6.p2')}</p>
+      <p>{tMarkup('howto.b6.p3')}</p>
     </Beat>
 
     <Beat
       n={7}
-      title="Three ways to win"
+      title={t('howto.b7.title')}
       img="/howto/map-dyson.jpg"
-      alt="A Dyson Sphere under construction around the sun: a partial amber lattice ringing the star, freighters delivering supplies."
+      alt={t('howto.b7.alt')}
     >
-      <p>
-        <b>Domination</b> — own more than 60% of the worlds that can hold a
-        settlement. The straightforward one: take everything.
-      </p>
-      <p>
-        <b>Chancellor</b> — get the senate to elect you. Each empire gets one
-        bid per game, only one can run per term, and the vote stays open for
-        48 turns, so everyone has time to rally against you. It needs more
-        weighted yeas than nays, which makes it the payoff for the systems you
-        control and the friends you made trading. Politics is a real path,
-        not decoration.
-      </p>
-      <p>
-        <b>Engineering</b> — build a <b>Dyson Sphere</b> around the sun
-        (pictured). It's enormously expensive and everyone can see it going
-        up, so the moment you start, you become the target. Finish it and you
-        win outright.
-      </p>
+      <p>{tMarkup('howto.b7.p1')}</p>
+      <p>{tMarkup('howto.b7.p2')}</p>
+      <p>{tMarkup('howto.b7.p3')}</p>
     </Beat>
 
     <section className="htp-quick">
-      <h2 className="htp-h2">The short version</h2>
+      <h2 className="htp-h2">{t('howto.quick.title')}</h2>
       <ol className="htp-list">
-        <li><b>Open your homeworld</b> and queue an upgrade — a forge is a fine first pick.</li>
-        <li><b>Build a ship or two.</b> A colony ship claims new worlds; a freighter moves cargo.</li>
-        <li><b>Send a colony ship somewhere new</b> and drop a station to claim the world.</li>
-        <li><b>Terraform it</b> with a freighter supply route so it starts paying full income.</li>
-        <li><b>Talk to people.</b> Trade for what you're short of, and vote on the bills that set everyone's rules.</li>
-        <li><b>Pick your win</b> and build toward it — more worlds, more votes, or the sphere.</li>
+        <li>{tMarkup('howto.quick.1')}</li>
+        <li>{tMarkup('howto.quick.2')}</li>
+        <li>{tMarkup('howto.quick.3')}</li>
+        <li>{tMarkup('howto.quick.4')}</li>
+        <li>{tMarkup('howto.quick.5')}</li>
+        <li>{tMarkup('howto.quick.6')}</li>
       </ol>
       <p className="htp-note">
-        The game walks you through all of this the first time you play, with
-        an interactive tutorial that opens the right menus and waits while
-        you actually do each step.
+        {t('howto.quick.note')}
       </p>
     </section>
 
     <section className="htp-faq">
-      <h2 className="htp-h2">Questions people ask</h2>
+      <h2 className="htp-h2">{t('howto.faq.title')}</h2>
       <dl>
-        <dt>Do I have to be online all the time?</dt>
+        <dt>{t('howto.faq.q1')}</dt>
         <dd>
-          No — that's the point. A turn is an hour of real time and the
-          simulation runs without you. Most people check in a couple of times
-          a day, give orders, and get on with their lives.
+          {t('howto.faq.a1')}
         </dd>
 
-        <dt>What happens while I'm gone?</dt>
+        <dt>{t('howto.faq.q2')}</dt>
         <dd>
-          Your worlds keep producing, your ships keep flying the orders you
-          gave them, and fights resolve on their own. When you come back
-          there's a report waiting that tells you what happened.
+          {t('howto.faq.a2')}
         </dd>
 
-        <dt>Can I lose everything in one night?</dt>
+        <dt>{t('howto.faq.q3')}</dt>
         <dd>
-          Not out of nowhere. Attacks take time to arrive because ships have
-          to physically cross the distance, and you get warning when
-          something hostile is inbound.
+          {t('howto.faq.a3')}
         </dd>
 
-        <dt>Do I have to fight?</dt>
+        <dt>{t('howto.faq.q4')}</dt>
         <dd>
-          No. Trade, terraforming and the senate are a complete way to play —
-          plenty of games are decided by who controlled the most systems and
-          therefore the most votes. Being useful to your neighbours is a real
-          strategy, and non-aggression pacts exist for exactly this reason.
+          {t('howto.faq.a4')}
         </dd>
 
-        <dt>Can I follow my game from Discord?</dt>
+        <dt>{t('howto.faq.q5')}</dt>
         <dd>
-          Yes, for free. Link your account (Senate → Connect Discord) to vote on
-          bills from Discord and get your alerts and daily situation report by DM.
-          The host can turn on the game's feed, which posts its wars, battles,
-          votes and the daily Herald to the Orbital Discord. A host who holds the
-          Commander's Commission can send that feed to their own server instead:
-          Notifications → Discord game feed → Connect your server, pick the
-          channel, done.
+          {t('howto.faq.a5')}
         </dd>
 
-        <dt>Is it hard?</dt>
+        <dt>{t('howto.faq.q6')}</dt>
         <dd>
-          The first hour is guided. The depth is there when you want it —
-          custom ship designs, senate politics, trade deals — but you can
-          play a perfectly good game with cities, ships, and a map.
+          {t('howto.faq.a6')}
         </dd>
       </dl>
     </section>
 
     <section className="htp-cta">
-      <h2 className="htp-h2">That's it. Go start one.</h2>
+      <h2 className="htp-h2">{t('howto.cta.title')}</h2>
       <button className="cta-primary cta-large" onClick={onSignIn}>
-        CREATE ACCOUNT
+        {t('howto.cta.button')}
       </button>
-      <div className="htp-cta-sub">Free. No download. Play with friends or strangers.</div>
+      <div className="htp-cta-sub">{t('howto.cta.sub')}</div>
     </section>
   </div>
-);
+  );
+};
