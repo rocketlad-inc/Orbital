@@ -25,6 +25,7 @@ import {
   Captain, BuildingKind,
 } from '../types';
 import type { Wreck } from '../types';
+import { parseTargetPriority } from './targetPriority';
 import { sanitizeParts, engineAccelMultiplier, setServerHullBase } from '../game/shipParts';
 import { traitMul as captainTraitMul } from '../game/captains';
 import { ingestChronicleFx } from '../render/pendingFx';
@@ -924,18 +925,10 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
       ? s.detonate_hp_pct : null;
   // Target priority (migration 0064) — malformed JSON degrades to auto,
   // matching how the combat loop itself reads the column.
-  let targetPriority: Ship['targetPriority'] = null;
-  if (s.target_priority) {
-    try {
-      const p = JSON.parse(s.target_priority);
-      if (Array.isArray(p) && p.length > 0
-          && p.every((k: unknown) =>
-            k === 'corvette' || k === 'frigate' || k === 'destroyer'
-            || k === 'civilian' || k === 'settlement')) {
-        targetPriority = p;
-      }
-    } catch { /* auto */ }
-  }
+  // parseTargetPriority's keys come from TARGET_PRIORITY_DEFAULT: a private
+  // five-key list here dropped every order containing 'capital' (all of
+  // them, since the server stores the full list), so it showed AUTO.
+  const targetPriority: Ship['targetPriority'] = parseTargetPriority(s.target_priority);
   return {
     id: s.id,
     name: s.name,

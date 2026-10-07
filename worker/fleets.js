@@ -310,15 +310,18 @@ async function handlePatch(req, env, ctx) {
     // Joiners inherit the fleet's standing orders — take them from the
     // flagship's current row, the fleet's de-facto order sheet.
     if (fleet.flag_captain_id) {
+      // Target priority rides along too: a fleet whose hulls keep their own
+      // orders shows no single priority (the group bar falls back to the
+      // default ladder), which read as the order "resetting" (player report).
       const flagShip = await env.DB
-        .prepare('SELECT stance, retreat_hp_pct, detonate_hp_pct FROM game_ships WHERE captain_id = ?')
-        .bind(fleet.flag_captain_id)
+        .prepare('SELECT stance, retreat_hp_pct, detonate_hp_pct, target_priority FROM game_ships WHERE game_id = ? AND captain_id = ?')
+        .bind(gameId, fleet.flag_captain_id)
         .first();
       if (flagShip) {
-        await runInChunks(env.DB, loaded.ships.map(s => s.id), 4, (chunk, ph) => env.DB
-          .prepare(`UPDATE game_ships SET stance = ?, retreat_hp_pct = ?, detonate_hp_pct = ? WHERE game_id = ? AND id IN (${ph})`)
+        await runInChunks(env.DB, loaded.ships.map(s => s.id), 5, (chunk, ph) => env.DB
+          .prepare(`UPDATE game_ships SET stance = ?, retreat_hp_pct = ?, detonate_hp_pct = ?, target_priority = ? WHERE game_id = ? AND id IN (${ph})`)
           .bind(flagShip.stance, flagShip.retreat_hp_pct, flagShip.detonate_hp_pct,
-                gameId, ...chunk));
+                flagShip.target_priority ?? null, gameId, ...chunk));
       }
     }
   }
