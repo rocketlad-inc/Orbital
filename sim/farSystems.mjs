@@ -309,7 +309,7 @@ check('no secret is ever placed out there',
   [...places.keys()].filter(id => FAR_SYSTEM_IDS.has(id)).join(', '));
 
 // ---- 5. Seeding, both ways -------------------------------------------
-async function seedGame(id, farSystems) {
+async function seedGame(id, farSystems, mapSeed = 'far-seed') {
   const DB = new SimD1(':memory:');
   DB.applyMigrations(MIGRATIONS);
   const env = { DB };
@@ -318,7 +318,7 @@ async function seedGame(id, farSystems) {
   await DB.prepare(`INSERT INTO rooms (id,name,host_id,created_at,updated_at)
                     VALUES (?, 'Far','u0',0,0)`).bind(id).run();
   await DB.prepare(`INSERT INTO games (id,status,map_seed,current_tick,created_at)
-                    VALUES (?, 'setup','far-seed',0,0)`).bind(id).run();
+                    VALUES (?, 'setup',?,0,0)`).bind(id, mapSeed).run();
   await DB.prepare(`INSERT INTO room_members (room_id,user_id,joined_at) VALUES (?,?,0)`)
     .bind(id, 'u0').run();
   if (farSystems != null) {
@@ -439,6 +439,156 @@ check('...and the rest of Sol is still there',
     added >= 18 && JSON.stringify(again) === JSON.stringify(before), `added ${added}`);
   const twice = await backfillMissingBodies(on.env, 'gfar_on');
   check('...and never twice', twice === 0, `added ${twice}`);
+}
+
+// ---- THE FAR SYSTEMS' DISCOVERIES (Lorne, 2026-10-06) ----------------------
+// "We need to sprinkle some discoveries into the new systems": themed
+// existing kinds plus a signature find each, 4-5 a system, from their own
+// pool and their own seeded stream.
+{
+  const { FAR_SECRET_PLAN, pickFarSecretPlacements, categorizeBodyForSecret, backfillFarSecrets } =
+    await import('../worker/factions.js');
+  const { pickFarGateTwin, HORIZON_ARCHIVE_SCIENCE, Room } = await import('../worker/room.js');
+
+  check("no far world sits in any of Sol's secret bands",
+    BODY_CATALOG.filter(b => b.far_system).every(b => categorizeBodyForSecret(b) === null),
+    BODY_CATALOG.filter(b => b.far_system && categorizeBodyForSecret(b) !== null).map(b => b.id).join(', '));
+
+  // The Sol gate pair's twin: every outer host, 300 games, every far world
+  // on offer. Reliquary used to score as a Kuiper world.
+  const offered = BODY_CATALOG.filter(b => b.type !== 'star')
+    .map(b => ({ id: `g:${b.id}`, template_id: b.id, type: b.type, name: b.name }));
+  const gateHosts = BODY_CATALOG.filter(b => ['plutino', 'kuiper', 'farreach'].includes(categorizeBodyForSecret(b)));
+  let farTwins = 0, draws = 0;
+  for (let i = 0; i < 300; i++) for (const h of gateHosts) {
+    const tw = pickFarGateTwin(offered, `g:${h.id}`, `game${i}`);
+    draws++;
+    if (tw && FAR_SYSTEM_IDS.has(tw.template_id)) farTwins++;
+  }
+  check("a Sol gate pair's twin never lands in a far system", farTwins === 0, `${farTwins}/${draws}`);
+
+  const cenIds = new Set(CENTAURI), cygIds = new Set(CYGNUS);
+  let shapeOk = true;
+  const seen = new Map();
+  for (let sd = 1; sd <= 500; sd++) {
+    let a = Math.imul(sd, 2654435761) >>> 0;
+    const rand = () => { a = (Math.imul(a, 1664525) + 1013904223) >>> 0; return a / 4294967296; };
+    const p = pickFarSecretPlacements(rand, ALL_FAR);
+    const c = [...p.keys()].filter(id => cenIds.has(id)).length;
+    const y = [...p.keys()].filter(id => cygIds.has(id)).length;
+    if (p.size !== FAR_SECRET_PLAN.length || c < 4 || c > 5 || y < 4 || y > 5) shapeOk = false;
+    for (const [id, kind] of p) {
+      if (!FAR_SECRET_PLAN.some(e => e.kind === kind && e.hosts.includes(id))) shapeOk = false;
+      seen.set(id, (seen.get(id) ?? 0) + 1);
+    }
+  }
+  check('each system hides 4-5 finds, each on a host its plan allows', shapeOk);
+  check('...and over many maps every listed host gets its turn',
+    FAR_SECRET_PLAN.every(e => e.hosts.every(h => (seen.get(h) ?? 0) > 0)),
+    FAR_SECRET_PLAN.flatMap(e => e.hosts).filter(h => !seen.get(h)).join(', '));
+  const held = pickFarSecretPlacements(() => 0, ALL_FAR, new Set(['verdant', 'thistle', 'sorrel']));
+  check('a held world is skipped; with every host held, that find is simply not hidden',
+    ![...held.values()].includes('ancient_city') && held.size === FAR_SECRET_PLAN.length - 1);
+
+  // Seeded for real.
+  const farRows = async (g) => ((await g.DB.prepare(
+    `SELECT template_id, secret_kind, secret_revealed FROM game_bodies WHERE secret_kind IS NOT NULL`).all()).results)
+    .filter(r => FAR_SYSTEM_IDS.has(r.template_id));
+  const seeded = await farRows(on);
+  check('a far-systems game is seeded with all ten, hidden',
+    seeded.length === FAR_SECRET_PLAN.length && seeded.every(r => Number(r.secret_revealed) === 0),
+    seeded.map(r => `${r.template_id}:${r.secret_kind}`).join(' '));
+  const solSecrets = async (g) => ((await g.DB.prepare(
+    `SELECT template_id, secret_kind FROM game_bodies WHERE secret_kind IS NOT NULL`).all()).results)
+    .filter(r => !FAR_SYSTEM_IDS.has(r.template_id)).map(r => `${r.template_id}:${r.secret_kind}`).sort().join(' ');
+  const offTwin = await seedGame('gfar_on', 0);
+  check('turning the far systems on moves no Sol secret',
+    (await solSecrets(on)) === (await solSecrets(offTwin)) && (await solSecrets(on)).length > 0,
+    `${await solSecrets(on)}\n        vs ${await solSecrets(offTwin)}`);
+
+  // A player with no capital pick is seated from the fair pool, which held
+  // Verdant and Requiem when the dial was on.
+  const farCaps = [];
+  for (let i = 0; i < 40; i++) {
+    const g = await seedGame(`gcap${i}`, 1, `cap-seed-${i}`);
+    const caps = (await g.DB.prepare('SELECT capital_body_id FROM game_factions').all()).results;
+    for (const c of caps) {
+      const tpl = String(c.capital_body_id ?? '').split(':').pop();
+      if (FAR_SYSTEM_IDS.has(tpl)) farCaps.push(tpl);
+    }
+  }
+  check('nobody ever starts in a far system (40 maps)', farCaps.length === 0, farCaps.join(', '));
+
+  // A running game gets the same set, once, and never on a held world.
+  const clearFar = () => on.DB.prepare(`UPDATE game_bodies SET secret_kind = NULL WHERE game_id = 'gfar_on'
+                        AND template_id IN (${ALL_FAR.map(() => '?').join(',')})`).bind(...ALL_FAR).run();
+  await clearFar();
+  const hid = await backfillFarSecrets(on.env, 'gfar_on');
+  const back = await farRows(on);
+  check('the backfill hides the same ten a fresh seed would',
+    hid === FAR_SECRET_PLAN.length
+      && JSON.stringify(back.map(r => `${r.template_id}:${r.secret_kind}`).sort())
+         === JSON.stringify(seeded.map(r => `${r.template_id}:${r.secret_kind}`).sort()),
+    `hid ${hid}`);
+  check('...and only once', (await backfillFarSecrets(on.env, 'gfar_on')) === 0);
+  const fid = (await on.DB.prepare(`SELECT id FROM game_factions WHERE game_id = 'gfar_on' LIMIT 1`).first()).id;
+  await clearFar();
+  const cityHost = seeded.find(r => r.secret_kind === 'ancient_city').template_id;
+  await on.DB.prepare(`UPDATE game_bodies SET owner_faction_id = ? WHERE id = ?`).bind(fid, `gfar_on:${cityHost}`).run();
+  await backfillFarSecrets(on.env, 'gfar_on');
+  const heldRow = await on.DB.prepare(`SELECT secret_kind FROM game_bodies WHERE id = ?`).bind(`gfar_on:${cityHost}`).first();
+  check('...and never on a world someone already holds', heldRow.secret_kind == null, String(heldRow.secret_kind));
+  await on.DB.prepare(`UPDATE game_bodies SET owner_faction_id = NULL WHERE id = ?`).bind(`gfar_on:${cityHost}`).run();
+
+  // The two signature finds, revealed by a parked ship.
+  const store = new Map();
+  const room = new Room({
+    storage: {
+      async get(k) { return store.get(k); }, async put(k, v) { store.set(k, v); },
+      async delete(k) { return store.delete(k); }, async list() { return new Map(store); },
+      async deleteAll() { store.clear(); }, setAlarm() {}, getAlarm() { return null; },
+    },
+    blockConcurrencyWhile: async (f) => f(),
+    broadcast: () => {},
+  }, on.env);
+  const hostOf = async (kind) => (await on.DB.prepare(
+    `SELECT id, name FROM game_bodies WHERE game_id = 'gfar_on' AND secret_kind = ?`).bind(kind).first());
+  const orrery = await hostOf('precursor_orrery');
+  const archive = await hostOf('horizon_archive');
+  let n = 0;
+  for (const h of [orrery, archive]) {
+    await on.DB.prepare(
+      `INSERT INTO game_ships (id, game_id, owner_faction_id, name, ship_class, parent_body_id, status,
+         orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, orbit_direction,
+         fuel, fuel_max, hp, hp_max, damage_per_tick, built_at_tick, home_body_id)
+       VALUES (?, 'gfar_on', ?, ?, 'corvette', ?, 'active', 30, 30, 0, 0, 0, 1, 300, 300, 40, 40, 3, 0, ?)`,
+    ).bind(`gfar_on:scout${n}`, fid, `Scout ${n++}`, h.id, h.id).run();
+  }
+  const sciOf = async () => Number((await on.DB.prepare('SELECT science FROM game_factions WHERE id = ?').bind(fid).first()).science);
+  const sci0 = await sciOf();
+  await room.resolveSecretReveal('gfar_on', 300);
+  const station = await on.DB.prepare(
+    `SELECT name, owner_faction_id, type FROM game_settlements WHERE body_id = ? AND destroyed_at_tick IS NULL`)
+    .bind(orrery.id).first();
+  check(`the Precursor Orrery hands its finder a working station (${orrery.name})`,
+    station?.type === 'station' && station.owner_faction_id === fid && station.name === `${orrery.name} Orrery`,
+    JSON.stringify(station));
+  const sci1 = await sciOf();
+  check(`the Horizon Archive pays ${HORIZON_ARCHIVE_SCIENCE} science (${archive.name})`,
+    sci1 - sci0 === HORIZON_ARCHIVE_SCIENCE, `${sci0} -> ${sci1}`);
+  const news = (await on.DB.prepare(
+    `SELECT payload FROM chronicle_entries WHERE game_id = 'gfar_on' AND kind = 'secret_discovered'`).all()).results
+    .map(r => JSON.parse(r.payload));
+  check('both finds make the news, in their own words',
+    news.some(p => p.kind === 'precursor_orrery' && /orrery/.test(p.message))
+      && news.some(p => p.kind === 'horizon_archive' && /event horizon/.test(p.message)),
+    news.map(p => p.kind).join(', '));
+  await room.resolveSecretReveal('gfar_on', 301);
+  const stations = (await on.DB.prepare(
+    `SELECT COUNT(*) AS n FROM game_settlements WHERE body_id = ? AND destroyed_at_tick IS NULL`).bind(orrery.id).first()).n;
+  const sci2 = await sciOf();
+  check('...and a second tick pays nothing twice', Number(stations) === 1 && sci2 === sci1,
+    `${stations} stations, ${sci1} -> ${sci2}`);
 }
 
 // THE BACKFILL IS THE ONE THAT TOUCHES LIVE GAMES.

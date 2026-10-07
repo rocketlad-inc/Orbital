@@ -229,7 +229,10 @@ export type BodySecretKind =
   | 'ancient_relay'     // an ownerless Deep Space Array, taken by breach + SEIZE
   | 'ancient_station'   // an ownerless Weapons Station, hostile to all until taken
   | 'far_gate'          // a linked gate pair between two outer worlds
-  | 'deep_cache';       // a cache sized for the trip
+  | 'deep_cache'        // a cache sized for the trip
+  // MP only — the far systems' signature finds (worker/factions.js FAR_SECRET_PLAN)
+  | 'precursor_orrery'  // Centauri: a working precursor station, handed to the finder
+  | 'horizon_archive';  // Cygnus: event-horizon measurements, paid out as science
 
 export interface BodySecret {
   kind: BodySecretKind;
