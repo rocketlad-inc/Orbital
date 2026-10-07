@@ -1,5 +1,7 @@
 import { catalogs, LANGS, setLang, t, tn, relativeTime, fmtNumber } from '../core';
-import { en } from '../en';
+import { en, enBase } from '../en';
+import * as enParts from '../parts/en';
+import * as ptParts from '../parts/pt-BR';
 import { apiErrorText } from '../apiErrors';
 
 const placeholders = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map(m => m[1]).sort().join(',');
@@ -43,6 +45,47 @@ describe('translation catalogs', () => {
     const bases = new Set(keys.filter(k => /_(one|other)$/.test(k)).map(baseOf));
     const missing = [...bases].filter(b => !(`${b}_one` in en && `${b}_other` in en));
     expect(missing).toEqual([]);
+  });
+});
+
+describe('catalog parts', () => {
+  const prefixes = enParts.PART_PREFIXES;
+  const partNames = Object.keys(prefixes);
+  const own = (part: Record<string, unknown>) => Object.keys(part);
+
+  it('every part is wired into the English catalog and keeps to its own key prefixes', () => {
+    const outside: string[] = [];
+    for (const name of partNames) {
+      const part = (enParts as unknown as Record<string, Record<string, string>>)[name];
+      for (const k of own(part)) {
+        if (!prefixes[name].some(p => k.startsWith(p))) outside.push(`${name}: ${k}`);
+        if (!(k in en)) outside.push(`${name}: ${k} (not in the assembled catalog)`);
+      }
+    }
+    expect(outside).toEqual([]);
+  });
+
+  it('no part reuses a base key or another part key', () => {
+    const seen = new Map<string, string>(Object.keys(enBase).map(k => [k, 'base']));
+    const dupes: string[] = [];
+    for (const name of partNames) {
+      const part = (enParts as unknown as Record<string, Record<string, string>>)[name];
+      for (const k of own(part)) {
+        if (seen.has(k)) dupes.push(`${k} (${name} and ${seen.get(k)})`);
+        seen.set(k, name);
+      }
+    }
+    expect(dupes).toEqual([]);
+  });
+
+  it('a Portuguese part only translates keys its English part owns', () => {
+    const stray: string[] = [];
+    for (const name of partNames) {
+      const pt = (ptParts as unknown as Record<string, Record<string, string>>)[name];
+      const e = (enParts as unknown as Record<string, Record<string, string>>)[name];
+      for (const k of own(pt)) if (!(k in e)) stray.push(`${name}: ${k}`);
+    }
+    expect(stray).toEqual([]);
   });
 });
 
