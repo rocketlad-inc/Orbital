@@ -16,6 +16,9 @@ import React, { useCallback, useEffect } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { isRevealedWarpGate } from '../render/mapRenderer';
 import { Body } from '../types';
+import { t, tn } from '../i18n/core';
+import { tRich } from '../i18n/rich';
+import { useI18n } from '../i18n/react';
 import './WarpGateCard.css';
 
 /** Where this gate lets out. MP only ever seeds `portal_to_sun`, whose
@@ -30,6 +33,7 @@ function destinationOf(body: Body, bodies: Body[]): Body | undefined {
 }
 
 export const WarpGateCard: React.FC = () => {
+  useI18n();
   const { gameState, uiState, deselectBody, focusBody, updateCamera } = useGameContext();
 
   const body = uiState.selectedBodyId
@@ -71,15 +75,15 @@ export const WarpGateCard: React.FC = () => {
         onClick={e => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-label={`${body.name} warp gate`}
+        aria-label={t('mp.gate.aria', { name: body.name })}
       >
-        <button className="wgc__x" onClick={close} aria-label="Close">✕</button>
+        <button className="wgc__x" onClick={close} aria-label={t('site.close')}>✕</button>
 
-        <div className="wgc__eyebrow">Anomaly · Active</div>
-        <h2 className="wgc__title">{body.name} Gate</h2>
+        <div className="wgc__eyebrow">{t('mp.gate.eyebrow')}</div>
+        <h2 className="wgc__title">{t('mp.gate.title', { name: body.name })}</h2>
         <div className="wgc__sub">
-          {parent ? `In orbit of ${parent.name}` : 'Deep space'}
-          {body.secret?.discoveredAtTick != null && ` · found tick ${body.secret.discoveredAtTick}`}
+          {parent ? t('mp.gate.orbitOf', { name: parent.name }) : t('mp.gate.deepSpace')}
+          {body.secret?.discoveredAtTick != null && t('mp.gate.found', { n: body.secret.discoveredAtTick })}
         </div>
 
         <div className="wgc__route" aria-hidden>
@@ -87,37 +91,36 @@ export const WarpGateCard: React.FC = () => {
           <span className="wgc__arrow">
             <i /><i /><i />
           </span>
-          <span className="wgc__end wgc__end--dest">{dest ? dest.name : 'Unknown'}</span>
+          <span className="wgc__end wgc__end--dest">{dest ? dest.name : t('mp.gate.unknown')}</span>
         </div>
 
         <p className="wgc__body">
-          An ancient ring, still under power. <strong>Every ship that arrives here is
-          transported to {dest ? dest.name : 'a distant star'}</strong> on the next tick —
-          into a low, tight orbit. The transit is one-way and it is not optional.
+          {tRich('mp.gate.body', {
+            transported: <strong>{t('mp.gate.transported', { dest: dest ? dest.name : t('mp.gate.farStar') })}</strong>,
+          })}
         </p>
 
         <ul className="wgc__facts">
-          <li><span>Destination</span><span>{dest ? dest.name : 'Unknown'}</span></li>
-          <li><span>Transit time</span><span>Instant</span></li>
-          <li><span>Can be settled</span><span className="wgc__no">No — ships never stay</span></li>
-          <li><span>Can be held</span><span className="wgc__no">No — no garrison persists</span></li>
+          <li><span>{t('mp.gate.destination')}</span><span>{dest ? dest.name : t('mp.gate.unknown')}</span></li>
+          <li><span>{t('mp.gate.transit')}</span><span>{t('mp.gate.instant')}</span></li>
+          <li><span>{t('mp.gate.settled')}</span><span className="wgc__no">{t('mp.gate.settledNo')}</span></li>
+          <li><span>{t('mp.gate.held')}</span><span className="wgc__no">{t('mp.gate.heldNo')}</span></li>
           {shipsHere > 0 && (
-            <li><span>In transit now</span><span>{shipsHere} ship{shipsHere === 1 ? '' : 's'}</span></li>
+            <li><span>{t('mp.gate.inTransit')}</span><span>{tn('mp.gate.ships', shipsHere)}</span></li>
           )}
         </ul>
 
         <p className="wgc__tip">
-          Use it as a shortcut: anything you send here comes out at{' '}
-          {dest ? dest.name : 'the far end'}, however far away it started.
+          {t('mp.gate.tip', { dest: dest ? dest.name : t('mp.gate.farEnd') })}
         </p>
 
         <div className="wgc__actions">
           {dest && (
             <button className="wgc__btn wgc__btn--go" onClick={showDestination}>
-              Show {dest.name}
+              {t('mp.gate.show', { name: dest.name })}
             </button>
           )}
-          <button className="wgc__btn" onClick={close}>Close</button>
+          <button className="wgc__btn" onClick={close}>{t('site.close')}</button>
         </div>
       </div>
     </div>

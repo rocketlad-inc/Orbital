@@ -7,6 +7,8 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { t } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 import './BottomSheet.css';
 
 interface BottomSheetProps {
@@ -39,6 +41,7 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({
   className,
   children,
 }) => {
+  useI18n();
   const isMobile = useIsMobile();
   const sheetRef = useRef<HTMLDivElement>(null);
   const [dragY, setDragY] = useState(0);
@@ -111,7 +114,7 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({
         ref={sheetRef}
         role="dialog"
         aria-modal="false"
-        aria-label={title ?? 'Panel'}
+        aria-label={title ?? t('site.sheet.panel')}
         style={{ transform: dragY > 0 ? `translateY(${dragY}px)` : undefined }}
       >
         <div
@@ -127,7 +130,7 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({
             <button
               className="bottom-sheet__close"
               onClick={onClose}
-              aria-label="Close"
+              aria-label={t('site.close')}
             >
               ✕
             </button>

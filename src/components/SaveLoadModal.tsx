@@ -20,6 +20,8 @@ import {
   formatBytes, formatSavedAt, SaveMeta, AUTOSAVE_ID,
 } from '../state/saveGame';
 import { GameState } from '../types';
+import { t } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 
 interface SaveLoadModalProps {
   mode: 'save' | 'load';
@@ -35,6 +37,7 @@ interface SaveLoadModalProps {
 export const SaveLoadModal: React.FC<SaveLoadModalProps> = ({
   mode, onClose, currentState, onLoad,
 }) => {
+  useI18n();
   const [saves, setSaves] = useState<SaveMeta[]>(() => listSaves());
   const [newName, setNewName] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -53,10 +56,10 @@ export const SaveLoadModal: React.FC<SaveLoadModalProps> = ({
   const handleNewSave = () => {
     if (!currentState) return;
     setError(null);
-    const name = newName.trim() || `Campaign T+${Math.floor(currentState.currentTick)}`;
+    const name = newName.trim() || t('saveload.defaultName', { n: Math.floor(currentState.currentTick) });
     const meta = writeSave(currentState, name);
     if (!meta) {
-      setError('Could not save — storage may be full or unavailable.');
+      setError(t('saveload.errSave'));
       return;
     }
     setNewName('');
@@ -68,10 +71,10 @@ export const SaveLoadModal: React.FC<SaveLoadModalProps> = ({
     setBusyId(id);
     setError(null);
     const existing = saves.find(s => s.id === id);
-    const meta = writeSave(currentState, existing?.name ?? `Save`, id);
+    const meta = writeSave(currentState, existing?.name ?? t('saveload.defaultOverwrite'), id);
     setBusyId(null);
     if (!meta) {
-      setError('Could not overwrite — storage may be full.');
+      setError(t('saveload.errOverwrite'));
       return;
     }
     refresh();
@@ -83,7 +86,7 @@ export const SaveLoadModal: React.FC<SaveLoadModalProps> = ({
     const result = readSave(id);
     setBusyId(null);
     if (!result) {
-      setError('Could not load — save is missing or written against an older schema.');
+      setError(t('saveload.errLoad'));
       return;
     }
     onLoad?.(result.state, result.meta);
@@ -91,13 +94,13 @@ export const SaveLoadModal: React.FC<SaveLoadModalProps> = ({
   };
 
   const handleDelete = (id: string) => {
-    if (!window.confirm('Delete this save? This cannot be undone.')) return;
+    if (!window.confirm(t('saveload.confirmDelete'))) return;
     deleteSave(id);
     refresh();
   };
 
   const handleExport = (id: string) => {
-    if (!exportSave(id)) setError('Could not export — save is missing.');
+    if (!exportSave(id)) setError(t('saveload.errExport'));
   };
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -109,11 +112,11 @@ export const SaveLoadModal: React.FC<SaveLoadModalProps> = ({
       await importSave(file);
       refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Import failed.');
+      setError(e instanceof Error ? e.message : t('saveload.errImport'));
     }
   };
 
-  const title = mode === 'save' ? 'Save Game' : 'Load Game';
+  const title = mode === 'save' ? t('saveload.saveTitle') : t('saveload.loadTitle');
 
   // Portal to document.body — the modal is rendered from inside TopBar,
   // and .top-bar carries a backdrop-filter, which promotes it to a
@@ -150,12 +153,12 @@ export const SaveLoadModal: React.FC<SaveLoadModalProps> = ({
           }}
         >
           <div>
-            <div style={{ fontSize: 10, letterSpacing: '0.16em', color: '#b8c8d6' }}>SINGLE-PLAYER</div>
+            <div style={{ fontSize: 10, letterSpacing: '0.16em', color: '#b8c8d6' }}>{t('saveload.eyebrow')}</div>
             <div style={{ fontSize: 16, fontWeight: 700, color: '#ffb84d', letterSpacing: '0.08em' }}>{title.toUpperCase()}</div>
           </div>
           <button
             onClick={onClose}
-            aria-label="Close"
+            aria-label={t('saveload.close')}
             style={{
               width: 32, height: 32, border: '1px solid #2a3d50',
               background: 'transparent', color: '#d8e4ee', borderRadius: 4, cursor: 'pointer',
@@ -177,7 +180,7 @@ export const SaveLoadModal: React.FC<SaveLoadModalProps> = ({
                 type="text"
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
-                placeholder={`Campaign T+${Math.floor(currentState.currentTick)}`}
+                placeholder={t('saveload.defaultName', { n: Math.floor(currentState.currentTick) })}
                 maxLength={48}
                 style={{
                   flex: 1, padding: '6px 10px',
@@ -193,7 +196,7 @@ export const SaveLoadModal: React.FC<SaveLoadModalProps> = ({
                   border: 'none', borderRadius: 4, cursor: 'pointer',
                   fontFamily: 'inherit', fontSize: 11, fontWeight: 700, letterSpacing: '0.08em',
                 }}
-              >+ NEW SAVE</button>
+              >{t('saveload.newSave')}</button>
             </div>
           )}
 
@@ -214,7 +217,7 @@ export const SaveLoadModal: React.FC<SaveLoadModalProps> = ({
                   border: '1px solid #4ecdc4', borderRadius: 4, cursor: 'pointer',
                   fontFamily: 'inherit', fontSize: 11, fontWeight: 600, letterSpacing: '0.08em',
                 }}
-              >⤒ IMPORT FROM FILE</button>
+              >{t('saveload.import')}</button>
             </div>
           )}
 
@@ -236,7 +239,7 @@ export const SaveLoadModal: React.FC<SaveLoadModalProps> = ({
                 color: '#b8c8d6', fontSize: 12, fontStyle: 'italic',
               }}
             >
-              No saves yet. {mode === 'save' && 'Use the field above to create one.'}
+              {t('saveload.empty')} {mode === 'save' && t('saveload.emptySave')}
             </div>
           ) : (
             <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -268,11 +271,11 @@ export const SaveLoadModal: React.FC<SaveLoadModalProps> = ({
                             padding: '1px 6px', borderRadius: 3,
                             border: '1px solid #4ecdc4', color: '#4ecdc4',
                           }}
-                        >AUTO</span>
+                        >{t('saveload.auto')}</span>
                       )}
                     </div>
                     <div style={{ fontSize: 10, color: '#b8c8d6', marginTop: 2 }}>
-                      T+{s.currentTick} · {s.playerShipCount} ships · {s.playerSettlementCount} settlements · {formatBytes(s.bytes)} · {formatSavedAt(s.savedAt)}
+                      {t('saveload.meta', { tick: s.currentTick, ships: s.playerShipCount, settlements: s.playerSettlementCount, size: formatBytes(s.bytes), when: formatSavedAt(s.savedAt) })}
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: 4 }}>
@@ -286,7 +289,7 @@ export const SaveLoadModal: React.FC<SaveLoadModalProps> = ({
                           border: 'none', borderRadius: 3, cursor: 'pointer',
                           fontFamily: 'inherit', fontSize: 10, fontWeight: 700, letterSpacing: '0.08em',
                         }}
-                      >LOAD</button>
+                      >{t('saveload.load')}</button>
                     )}
                     {mode === 'save' && (
                       <button
@@ -298,12 +301,12 @@ export const SaveLoadModal: React.FC<SaveLoadModalProps> = ({
                           border: '1px solid #ffb84d', borderRadius: 3, cursor: 'pointer',
                           fontFamily: 'inherit', fontSize: 10, fontWeight: 600, letterSpacing: '0.08em',
                         }}
-                      >OVERWRITE</button>
+                      >{t('saveload.overwrite')}</button>
                     )}
                     <button
                       onClick={() => handleExport(s.id)}
-                      title="Download as JSON"
-                      aria-label="Export"
+                      title={t('saveload.exportTitle')}
+                      aria-label={t('saveload.export')}
                       style={{
                         width: 28, height: 28,
                         background: 'transparent', color: '#b8c8d6',
@@ -312,8 +315,8 @@ export const SaveLoadModal: React.FC<SaveLoadModalProps> = ({
                     >⤓</button>
                     <button
                       onClick={() => handleDelete(s.id)}
-                      title="Delete save"
-                      aria-label="Delete"
+                      title={t('saveload.deleteTitle')}
+                      aria-label={t('saveload.delete')}
                       style={{
                         width: 28, height: 28,
                         background: 'transparent', color: '#ff5e5e',
@@ -334,7 +337,7 @@ export const SaveLoadModal: React.FC<SaveLoadModalProps> = ({
             fontSize: 10, color: '#b8c8d6',
           }}
         >
-          Saves are stored in your browser ({saves.length} / ~10 fit). Export to JSON for backup.
+          {t('saveload.footer', { n: saves.length })}
         </footer>
       </div>
     </div>,

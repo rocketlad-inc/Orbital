@@ -14,6 +14,9 @@
 
 import React from 'react';
 import type { ChainStep } from '../physics/chainPlanner';
+import { t, tn } from '../i18n/core';
+import { tRich } from '../i18n/rich';
+import { useI18n } from '../i18n/react';
 import './ChainOrderEditor.css';
 
 const WAIT_CHOICES = [1, 3, 6, 12, 24];
@@ -25,8 +28,9 @@ export const ChainOrderEditor: React.FC<{
   /** Rendered under the tape — used to say who the chain will apply to. */
   note?: string;
 }> = ({ steps, onChange, bodies, note }) => {
+  useI18n();
   const [dest, setDest] = React.useState('');
-  const nameOf = (id: string) => bodies.find(b => b.id === id)?.name ?? 'unknown';
+  const nameOf = (id: string) => bodies.find(b => b.id === id)?.name ?? t('site.chain.unknown');
 
   const sorted = React.useMemo(
     () => [...bodies].sort((a, b) => a.name.localeCompare(b.name)),
@@ -49,7 +53,7 @@ export const ChainOrderEditor: React.FC<{
   return (
     <div className="chain-ed">
       {steps.length === 0 ? (
-        <div className="chain-ed__empty">No legs yet — pick a destination to start the chain.</div>
+        <div className="chain-ed__empty">{t('site.chain.empty')}</div>
       ) : (
         <ol className="chain-ed__tape">
           {steps.map((st, i) => (
@@ -57,9 +61,9 @@ export const ChainOrderEditor: React.FC<{
               <span className="chain-ed__n">{i + 1}</span>
               <span className="chain-ed__b">
                 {st.wait > 0 && (
-                  <span className="chain-ed__wait">WAIT {st.wait}t</span>
+                  <span className="chain-ed__wait">{t('site.chain.wait', { n: st.wait })}</span>
                 )}
-                GO TO <em>{nameOf(st.bodyId)}</em>
+                {tRich('site.chain.goTo', { name: <em>{nameOf(st.bodyId)}</em> })}
               </span>
               <span className="chain-ed__waitpick">
                 {WAIT_CHOICES.map(n => (
@@ -67,7 +71,7 @@ export const ChainOrderEditor: React.FC<{
                     key={n}
                     type="button"
                     className={`chain-ed__wb${st.wait === n ? ' is-on' : ''}`}
-                    title={`Hold ${n} tick${n === 1 ? '' : 's'} before this leg departs`}
+                    title={tn('site.chain.hold', n)}
                     onClick={() => {
                       const next = steps.slice();
                       next[i] = { ...next[i], wait: next[i].wait === n ? 0 : n };
@@ -79,7 +83,7 @@ export const ChainOrderEditor: React.FC<{
               <button
                 type="button"
                 className="chain-ed__x"
-                title="Drop this leg"
+                title={t('site.chain.dropTitle')}
                 onClick={() => removeAt(i)}
               >✕</button>
             </li>
@@ -92,9 +96,9 @@ export const ChainOrderEditor: React.FC<{
           className="chain-ed__select"
           value={dest}
           onChange={(e) => { setDest(e.target.value); addLeg(e.target.value); }}
-          title="Append a leg to the chain"
+          title={t('site.chain.appendTitle')}
         >
-          <option value="">+ Add leg…</option>
+          <option value="">{t('site.chain.addLeg')}</option>
           {sorted.map(b => (
             <option key={b.id} value={b.id}>
               {b.ownedBy === 'player' ? '★ ' : ''}{b.name}
@@ -106,7 +110,7 @@ export const ChainOrderEditor: React.FC<{
             type="button"
             className="chain-ed__clear"
             onClick={() => onChange([])}
-          >CLEAR</button>
+          >{t('site.chain.clear')}</button>
         )}
       </div>
 

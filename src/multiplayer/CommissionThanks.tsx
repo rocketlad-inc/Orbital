@@ -32,6 +32,9 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { ShipIcon, PREMIUM_VARIANTS } from '../components/ShipIcons';
 import { FactionEmblem } from '../components/FactionEmblem';
 import { PREMIUM_EMBLEM_IDS, EMBLEM_NAMES } from '../game/emblems';
+import { t, tk } from '../i18n/core';
+import { tRich, tMarkup } from '../i18n/rich';
+import { useI18n } from '../i18n/react';
 import './CommissionThanks.css';
 
 /** How long to wait for the webhook before saying so out loud. The grant
@@ -51,12 +54,13 @@ export function CommissionThanks({
   unlocked: boolean;
   onClose: () => void;
 }) {
+  useI18n();
   const [waitedTooLong, setWaitedTooLong] = useState(false);
 
   useEffect(() => {
     if (unlocked) return undefined;
-    const t = setTimeout(() => setWaitedTooLong(true), PATIENCE_MS);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setWaitedTooLong(true), PATIENCE_MS);
+    return () => clearTimeout(timer);
   }, [unlocked]);
 
   // Esc closes, like every other overlay in the app.
@@ -72,45 +76,43 @@ export function CommissionThanks({
   );
 
   return (
-    <div className="mp-thanks-scrim" role="dialog" aria-modal="true" aria-label="Commission confirmed">
+    <div className="mp-thanks-scrim" role="dialog" aria-modal="true" aria-label={t('mp.thanks2.aria')}>
       <div className={`mp-thanks${unlocked ? ' is-unlocked' : ''}`}>
-        <button type="button" className="mp-thanks-x" onClick={onClose} aria-label="Close">×</button>
+        <button type="button" className="mp-thanks-x" onClick={onClose} aria-label={t('site.close')}>×</button>
 
-        <p className="mp-thanks-eyebrow">Payment complete</p>
-        <h2 className="mp-thanks-title">The Commission is yours</h2>
+        <p className="mp-thanks-eyebrow">{t('mp.thanks2.eyebrow')}</p>
+        <h2 className="mp-thanks-title">{t('mp.thanks2.title')}</h2>
         <p className="mp-thanks-sub">
-          Thank you — genuinely. Orbital is made by one person, and this is what
-          keeps it running.
+          {t('mp.thanks2.sub')}
         </p>
 
         <div className="mp-thanks-status">
           {unlocked ? (
-            <span className="mp-thanks-live">★ Unlocked on your account</span>
+            <span className="mp-thanks-live">{t('mp.thanks2.unlocked')}</span>
           ) : waitedTooLong ? (
             <span className="mp-thanks-slow">
-              Your payment went through. The unlock is taking longer than usual —
-              it will land on your account shortly, and it is safe to close this.
+              {t('mp.thanks2.slow')}
             </span>
           ) : (
             <span className="mp-thanks-wait">
               <i className="mp-thanks-dot" aria-hidden />
-              Unlocking your account…
+              {t('mp.thanks2.wait')}
             </span>
           )}
         </div>
 
         <section className="mp-thanks-goods" aria-busy={!unlocked}>
-          <h3>{icons.length} ship lines</h3>
+          <h3>{t('mp.thanks2.lines', { n: icons.length })}</h3>
           <div className="mp-thanks-row">
             {icons.map(({ variant, hull }) => (
-              <span className="mp-thanks-cell" key={variant} title={`Variant ${variant}`}>
+              <span className="mp-thanks-cell" key={variant} title={t('mp.thanks2.variant', { variant })}>
                 <ShipIcon shipClass={hull} variant={variant} size={34} color="#4ecdc4" color2="#ffc24a" />
                 <b>{variant}</b>
               </span>
             ))}
           </div>
 
-          <h3>{PREMIUM_EMBLEM_IDS.length} flag emblems</h3>
+          <h3>{t('mp.thanks2.emblems', { n: PREMIUM_EMBLEM_IDS.length })}</h3>
           <div className="mp-thanks-row">
             {PREMIUM_EMBLEM_IDS.map(id => (
               <span className="mp-thanks-cell" key={id} title={EMBLEM_NAMES[id]}>
@@ -122,20 +124,19 @@ export function CommissionThanks({
         </section>
 
         <p className="mp-thanks-where">
-          Put them on any hull in the <strong>ship designer</strong>, and your
-          emblem on the <strong>faction</strong> panel. They fly on everything
-          you own, and every other empire sees them.
+          {tMarkup('mp.thanks2.where')}
         </p>
 
         <p className="mp-thanks-where" data-testid="thanks-discord">
-          <strong>Your games in your own Discord:</strong> in any game you host,
-          open its <strong>Discord game feed</strong> settings and press
-          {' '}<strong>Connect your server</strong>. Its wars, battles and the daily
-          Herald post straight into your channel.
+          {tRich('mp.thanks2.discord', {
+            title: <strong>{t('mp.thanks2.discordTitle')}</strong>,
+            feed: <strong>{t('mp.thanks2.feedName')}</strong>,
+            connect: <strong>{tk('mp.thanks2.connect', 'Connect your server')}</strong>,
+          })}
         </p>
 
         <button type="button" className="mp-thanks-go" onClick={onClose}>
-          Back to the game
+          {t('mp.thanks2.back')}
         </button>
       </div>
     </div>

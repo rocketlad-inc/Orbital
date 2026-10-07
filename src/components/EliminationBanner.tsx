@@ -15,9 +15,13 @@
 
 import React, { useEffect, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
+import { t, tn } from '../i18n/core';
+import { tRich } from '../i18n/rich';
+import { useI18n } from '../i18n/react';
 import './EliminationBanner.css';
 
 export const EliminationBanner: React.FC = () => {
+  useI18n();
   const { gameState } = useGameContext();
   const [hidden, setHidden] = useState(false);
   const me = gameState.factions.find(f => f.id === 'player');
@@ -28,17 +32,15 @@ export const EliminationBanner: React.FC = () => {
 
   return (
     <div className="elim-banner" role="alert">
-      <div className="elim-banner__title">Your empire has fallen</div>
+      <div className="elim-banner__title">{t('banner.elim.title')}</div>
       <div className="elim-banner__body">
         {colony
-          ? <>You hold no settlements. Found a city or station with <b>{colony.name}</b> and
-              your empire returns to the war next tick.</>
+          ? <>{tRich('banner.elim.colony', { name: <b>{colony.name}</b> })}</>
           : hulls > 0
-            ? <>You hold no settlements and have no colony ship left. Your {hulls} {hulls === 1 ? 'ship fights' : 'ships fight'} on,
-                but the empire cannot return.</>
-            : <>You hold no settlements and no ships. Your part in this war is over.</>}
+            ? <>{tn('banner.elim.hulls', hulls)}</>
+            : <>{t('banner.elim.none')}</>}
       </div>
-      <button type="button" className="elim-banner__close" onClick={() => setHidden(true)} aria-label="Dismiss">✕</button>
+      <button type="button" className="elim-banner__close" onClick={() => setHidden(true)} aria-label={t('banner.elim.dismiss')}>✕</button>
     </div>
   );
 };
@@ -60,7 +62,9 @@ export const CapitalLossAlert: React.FC = () => {
     window.dispatchEvent(new CustomEvent('orbital:toast', {
       detail: {
         kind: 'error',
-        text: `Your capital on ${cap.bodyName} has fallen${cap.killerName ? ` to ${cap.killerName}` : ''}.`,
+        text: cap.killerName
+          ? t('banner.capitalFallenTo', { body: cap.bodyName, killer: cap.killerName })
+          : t('banner.capitalFallen', { body: cap.bodyName }),
       },
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps

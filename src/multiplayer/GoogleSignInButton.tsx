@@ -17,6 +17,8 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 
+import { t } from '../i18n/core';
+
 const GSI_SCRIPT_URL = 'https://accounts.google.com/gsi/client';
 
 // Promise reused across mounts so we don't load the script twice.
@@ -31,7 +33,7 @@ function loadGsi(): Promise<void> {
       const start = Date.now();
       (function poll() {
         if ((window as any).google?.accounts?.id) return resolve();
-        if (Date.now() - start > 5000) return reject(new Error('GSI script present but window.google never appeared'));
+        if (Date.now() - start > 5000) return reject(new Error(t('mp.google.neverAppeared')));
         setTimeout(poll, 50);
       })();
       return;
@@ -41,7 +43,7 @@ function loadGsi(): Promise<void> {
     s.async = true;
     s.defer = true;
     s.onload = () => resolve();
-    s.onerror = () => reject(new Error('Failed to load Google Identity Services'));
+    s.onerror = () => reject(new Error(t('mp.google.scriptFailed')));
     document.head.appendChild(s);
   });
   return scriptPromise;
@@ -81,13 +83,13 @@ export const GoogleSignInButton: React.FC<Props> = ({
       try {
         await loadGsi();
       } catch (e) {
-        if (!cancelled) onErrorRef.current?.(e instanceof Error ? e.message : 'GSI load failed');
+        if (!cancelled) onErrorRef.current?.(e instanceof Error ? e.message : t('mp.google.loadFailed'));
         return;
       }
       if (cancelled || !hostRef.current) return;
       const goog = (window as any).google?.accounts?.id;
       if (!goog) {
-        onErrorRef.current?.('Google library missing after load');
+        onErrorRef.current?.(t('mp.google.missing'));
         return;
       }
       try {
@@ -115,7 +117,7 @@ export const GoogleSignInButton: React.FC<Props> = ({
         });
         setReady(true);
       } catch (e) {
-        onErrorRef.current?.(e instanceof Error ? e.message : 'Google button render failed');
+        onErrorRef.current?.(e instanceof Error ? e.message : t('mp.google.renderFailed'));
       }
     })();
     return () => { cancelled = true; };

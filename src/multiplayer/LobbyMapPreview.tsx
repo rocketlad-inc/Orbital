@@ -38,6 +38,8 @@ import {
   clearCanvas, drawOrbit, drawBody, worldToCanvas, RenderContext,
 } from '../render/mapRenderer';
 import type { RoomSnapshot } from './api';
+import { t } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 
 // Sol-system bodies only — exclude the far Centauri / Cygnus systems
 // (their barycenters sit 265K–340K out and would crush the inner
@@ -68,6 +70,7 @@ interface Props {
 }
 
 export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }) => {
+  useI18n();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // Animated camera: `cam` is the current (lerps toward `target`).
   const camRef = useRef<Camera | null>(null);
@@ -376,10 +379,10 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
     <div className="lobby-map-preview" aria-hidden="true">
       <canvas ref={canvasRef} className="lobby-map-preview__canvas" />
       <div className="lobby-map-preview__legend">
-        <span><i className="dot dot--claimable" /> claimable</span>
-        <span><i className="dot dot--mine" /> your pick</span>
-        <span><i className="dot dot--other" /> taken</span>
-        <span className="lobby-map-preview__hint">drag to pan · scroll to zoom</span>
+        <span><i className="dot dot--claimable" /> {t('mp.lobbyPreview.claimable')}</span>
+        <span><i className="dot dot--mine" /> {t('mp.lobbyPreview.mine')}</span>
+        <span><i className="dot dot--other" /> {t('mp.lobbyPreview.taken')}</span>
+        <span className="lobby-map-preview__hint">{t('mp.lobbyPreview.hint')}</span>
       </div>
     </div>,
     document.body,

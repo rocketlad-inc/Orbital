@@ -1,6 +1,8 @@
 import React, { useMemo } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { employedShipIds } from '../game/routeSelectors';
+import { t } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 
 // "Why is my freighter idle?" is the question the trade dock exists to
 // answer, and it was the one thing the dock never said: you had to open
@@ -14,6 +16,7 @@ import { employedShipIds } from '../game/routeSelectors';
 const MAX_NAMED = 3;
 
 export function FreighterStrip({ onPutToWork }: { onPutToWork: () => void }) {
+  useI18n();
   const { gameState, selectShip } = useGameContext();
 
   const { total, idle } = useMemo(() => {
@@ -30,8 +33,8 @@ export function FreighterStrip({ onPutToWork }: { onPutToWork: () => void }) {
   if (total === 0) {
     return (
       <div className="fs-strip is-empty">
-        <span className="fs-k">Freighters</span>
-        <span>None yet. Goods move by freighter — build one at a shipyard to trade.</span>
+        <span className="fs-k">{t('mp.freighters.label')}</span>
+        <span>{t('mp.freighters.none')}</span>
       </div>
     );
   }
@@ -39,12 +42,12 @@ export function FreighterStrip({ onPutToWork }: { onPutToWork: () => void }) {
   const working = total - idle.length;
   return (
     <div className={`fs-strip${idle.length > 0 ? ' has-idle' : ''}`}>
-      <span className="fs-k">Freighters</span>
+      <span className="fs-k">{t('mp.freighters.label')}</span>
       <span className="fs-count">
-        <b>{total}</b> · {working} working
+        <b>{total}</b> · {t('mp.freighters.working', { n: working })}
         {idle.length > 0
-          ? <> · <b className="fs-idle">{idle.length} idle</b></>
-          : ' · none idle'}
+          ? <> · <b className="fs-idle">{t('mp.freighters.idle', { n: idle.length })}</b></>
+          : ` · ${t('mp.freighters.noneIdle')}`}
       </span>
       {idle.length > 0 && (
         <span className="fs-names">
@@ -52,13 +55,13 @@ export function FreighterStrip({ onPutToWork }: { onPutToWork: () => void }) {
             <button
               key={s.id}
               className="fs-chip"
-              title={`${s.name} has no job. Click to select it on the map.`}
+              title={t('mp.freighters.noJob', { name: s.name })}
               onClick={() => selectShip(s.id)}
             >{s.name}</button>
           ))}
           {idle.length > MAX_NAMED && <span className="fs-more">+{idle.length - MAX_NAMED}</span>}
-          <button className="fs-chip fs-chip--go" onClick={onPutToWork} title="Open ROUTES to give them a route">
-            Put to work
+          <button className="fs-chip fs-chip--go" onClick={onPutToWork} title={t('mp.freighters.routesTitle')}>
+            {t('mp.freighters.putToWork')}
           </button>
         </span>
       )}

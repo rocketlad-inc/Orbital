@@ -19,6 +19,8 @@
 // ============================================================
 
 import React, { useEffect, useRef, useState } from 'react';
+import { t } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 
 interface Props {
   value: string;
@@ -44,6 +46,7 @@ export const EditableName: React.FC<Props> = ({
   ariaLabel,
   readOnly,
 }) => {
+  useI18n();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -104,7 +107,7 @@ export const EditableName: React.FC<Props> = ({
       <span
         className={className}
         style={{ ...style, cursor: 'text' }}
-        title={ariaLabel ?? 'Click to rename'}
+        title={ariaLabel ?? t('site.editName.click')}
         role="button"
         tabIndex={0}
         onClick={() => setEditing(true)}
@@ -138,7 +141,7 @@ export const EditableName: React.FC<Props> = ({
       ref={inputRef}
       type="text"
       className={className}
-      aria-label={ariaLabel ?? 'Rename'}
+      aria-label={ariaLabel ?? t('site.editName.rename')}
       maxLength={maxLength + 8} // soft slack so the user sees the over-length state
       value={draft}
       onChange={(e) => setDraft(e.target.value)}

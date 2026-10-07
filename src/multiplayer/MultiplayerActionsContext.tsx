@@ -11,6 +11,7 @@ import React, { createContext, useContext, useMemo } from 'react';
 import { apiFetch as rawApiFetch } from './api';
 import { perf } from './PerfHud';
 import { logger } from '../game/logger';
+import { t } from '../i18n/core';
 import { buildOrderWireFields, buildOrderPatchBody, BuildOrderIntent } from './buildOrderWire';
 import type { BuildListEntry, TargetPriorityKey } from '../types';
 
@@ -665,7 +666,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Server rejected the transfer.',
+        error: res.error?.message ?? t('mp.act.transfer'),
       };
     };
 
@@ -704,7 +705,7 @@ export function MultiplayerActionsProvider({
             out.push({
               ok: false,
               code: r?.error?.code,
-              error: r?.error?.message ?? 'Server rejected the transfer.',
+              error: r?.error?.message ?? t('mp.act.transfer'),
             });
           }
         });
@@ -720,7 +721,7 @@ export function MultiplayerActionsProvider({
       );
       if (res.ok) return { ok: true };
       console.warn('setDeployOnArrival failed', res.error);
-      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server rejected the order.' };
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? t('mp.act.order') };
     },
     async setYardOrder(settlementId, intent) {
       const res = await apiFetch(
@@ -729,7 +730,7 @@ export function MultiplayerActionsProvider({
       );
       if (res.ok) return { ok: true };
       console.warn('setYardOrder failed', res.error);
-      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server rejected the order.' };
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? t('mp.act.order') };
     },
     async setBuildOrder(orderId, intent) {
       const res = await apiFetch(
@@ -741,7 +742,7 @@ export function MultiplayerActionsProvider({
       );
       if (res.ok) return { ok: true };
       console.warn('setBuildOrder failed', res.error);
-      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server rejected the order.' };
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? t('mp.act.order') };
     },
     async build(intent) {
       const res = await apiFetch<{ order?: { id?: string } }>(`/api/games/${gameId}/bodies/${encodeURIComponent(qualify(intent.bodyId))}/build`, {
@@ -770,7 +771,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Server rejected the build.',
+        error: res.error?.message ?? t('mp.act.build'),
       };
     },
     deploySettlement(intent) {
@@ -789,7 +790,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Server rejected the settlement deploy.',
+        error: res.error?.message ?? t('mp.act.deploy'),
       };
       });
     },
@@ -829,7 +830,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Server rejected the orders update.',
+        error: res.error?.message ?? t('mp.act.ordersUpdate'),
       };
     },
     async renameBody(bodyId, name) {
@@ -844,7 +845,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Server rejected the name.',
+        error: res.error?.message ?? t('mp.act.name'),
       };
     },
 
@@ -861,7 +862,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Server rejected the rename.',
+        error: res.error?.message ?? t('mp.act.rename'),
       };
     },
     async renameSettlement(settlementId, name) {
@@ -877,7 +878,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Server rejected the rename.',
+        error: res.error?.message ?? t('mp.act.rename'),
       };
     },
     async editChronicleFlavor(entryId, flavor) {
@@ -893,7 +894,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Server rejected the edit.',
+        error: res.error?.message ?? t('mp.act.edit'),
       };
     },
     async research(intent) {
@@ -916,7 +917,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Server rejected the research spend.',
+        error: res.error?.message ?? t('mp.act.research'),
       };
     },
     async ram(intent) {
@@ -952,7 +953,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Server rejected the asteroid ram.',
+        error: res.error?.message ?? t('mp.act.ram'),
       };
     },
     async getDesigns() {
@@ -994,7 +995,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Server rejected the template.',
+        error: res.error?.message ?? t('mp.act.template'),
       };
     },
     async deleteShipTemplate(templateId) {
@@ -1005,7 +1006,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Could not delete the template.',
+        error: res.error?.message ?? t('mp.act.deleteTemplate'),
       };
     },
     async createDesign(intent) {
@@ -1029,7 +1030,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Server rejected the design.',
+        error: res.error?.message ?? t('mp.act.design'),
       };
     },
     async updateDesign(designId, patch) {
@@ -1050,7 +1051,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Server rejected the design update.',
+        error: res.error?.message ?? t('mp.act.designUpdate'),
       };
     },
     async deleteDesign(designId) {
@@ -1065,7 +1066,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Server rejected the delete.',
+        error: res.error?.message ?? t('mp.act.delete'),
       };
     },
     async setBuildList(entries) {
@@ -1085,7 +1086,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Server rejected the build list.',
+        error: res.error?.message ?? t('mp.act.buildList'),
       };
     },
     async createCaptain(name) {
@@ -1095,7 +1096,7 @@ export function MultiplayerActionsProvider({
       });
       if (res.ok) { logger.info('ACTION', 'Captain created', { name: name ?? '(rolled)' }); return { ok: true }; }
       console.warn('createCaptain failed', res.error);
-      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server rejected the captain.' };
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? t('mp.act.captain') };
     },
     async updateCaptain(captainId, patch) {
       const res = await apiFetch(`/api/games/${gameId}/captains/${encodeURIComponent(captainId)}`, {
@@ -1108,7 +1109,7 @@ export function MultiplayerActionsProvider({
       });
       if (res.ok) { logger.info('ACTION', 'Captain updated', { captain: captainId }); return { ok: true }; }
       console.warn('updateCaptain failed', res.error);
-      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server rejected the edit.' };
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? t('mp.act.edit') };
     },
     async assignCaptain(captainId, shipId) {
       const res = await apiFetch(`/api/games/${gameId}/captains/${encodeURIComponent(captainId)}/assign`, {
@@ -1117,7 +1118,7 @@ export function MultiplayerActionsProvider({
       });
       if (res.ok) { logger.info('ACTION', 'Captain assigned', { captain: captainId, ship: shipId }); return { ok: true }; }
       console.warn('assignCaptain failed', res.error);
-      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server rejected the assignment.' };
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? t('mp.act.assignment') };
     },
     async detonateShip(shipId) {
       const res = await apiFetch(`/api/games/${gameId}/ships/${encodeURIComponent(qualify(shipId))}/detonate`, {
@@ -1131,7 +1132,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Server rejected the detonation.',
+        error: res.error?.message ?? t('mp.act.detonation'),
       };
     },
     async setTurnSettings(enabled, ticksPerTurn) {
@@ -1144,7 +1145,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Server rejected the TBM setting change.',
+        error: res.error?.message ?? t('mp.act.tbm'),
       };
     },
     async commitTurn() {
@@ -1153,7 +1154,7 @@ export function MultiplayerActionsProvider({
       });
       if (!res.ok) {
         console.warn('commitTurn failed', res.error);
-        return { ok: false, error: res.error?.message ?? 'unknown' };
+        return { ok: false, error: res.error?.message ?? t('mp.act.unknown') };
       }
       // The server already populates `ok: true` in its 200 payload, so
       // spreading res.data after `ok: true` would re-set the same key.
@@ -1177,7 +1178,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Server rejected cancel.',
+        error: res.error?.message ?? t('mp.act.cancel'),
       };
       });
     },
@@ -1214,7 +1215,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Server rejected the rush.',
+        error: res.error?.message ?? t('mp.act.rush'),
       };
     },
     async refitFleet(designId) {
@@ -1237,7 +1238,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Server rejected the refit.',
+        error: res.error?.message ?? t('mp.act.refit'),
       };
     },
     async cancelNode(nodeId) {
@@ -1250,7 +1251,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Server rejected cancel.',
+        error: res.error?.message ?? t('mp.act.cancel'),
       };
     },
     async adminGrant(target, delta) {
@@ -1275,7 +1276,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Server rejected the grant.',
+        error: res.error?.message ?? t('mp.act.grant'),
       };
     },
     // buildCollector was deleted with the terraforming rework — the
@@ -1294,7 +1295,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Server rejected the building queue.',
+        error: res.error?.message ?? t('mp.act.buildingQueue'),
       };
       });
     },
@@ -1310,7 +1311,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Server rejected the cancel.',
+        error: res.error?.message ?? t('mp.act.cancelThe'),
       };
       });
     },
@@ -1336,7 +1337,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Server rejected the Dyson Sphere foundation.',
+        error: res.error?.message ?? t('mp.act.dysonFoundation'),
       };
     },
     async createTradeRoute(shipId, originBodyId, destBodyId) {
@@ -1362,7 +1363,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Server rejected the route.',
+        error: res.error?.message ?? t('mp.act.route'),
       };
     },
     // ---- TRADE V2 ----
@@ -1395,7 +1396,7 @@ export function MultiplayerActionsProvider({
         return { ok: true };
       }
       console.warn('createRouteFull failed', res.error);
-      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server rejected the route.' };
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? t('mp.act.route') };
     },
     async projectRoute(stops, shipId) {
       const res = await apiFetch<{ ok: boolean; projection: RouteProjection }>(
@@ -1403,7 +1404,7 @@ export function MultiplayerActionsProvider({
         { method: 'POST', body: JSON.stringify({ ship_id: shipId, stops: stops.map(toServerStop) }) },
       );
       if (res.ok) return { ok: true, projection: res.data?.projection };
-      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Could not project the run.' };
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? t('mp.act.project') };
     },
     async updateRouteStops(routeId, stops, name) {
       const res = await apiFetch<{ ok: boolean }>(
@@ -1412,7 +1413,7 @@ export function MultiplayerActionsProvider({
       );
       if (res.ok) return { ok: true };
       console.warn('updateRouteStops failed', res.error);
-      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server rejected the change.' };
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? t('mp.act.change') };
     },
     async addRouteShip(routeId, role, opts) {
       const res = await apiFetch<{ ok: boolean }>(
@@ -1432,7 +1433,7 @@ export function MultiplayerActionsProvider({
         return { ok: true };
       }
       console.warn('addRouteShip failed', res.error);
-      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server rejected the assignment.' };
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? t('mp.act.assignment') };
     },
     async removeRouteShip(routeId, shipId) {
       const res = await apiFetch<{ ok: boolean }>(
@@ -1441,7 +1442,7 @@ export function MultiplayerActionsProvider({
       );
       if (res.ok) return { ok: true };
       console.warn('removeRouteShip failed', res.error);
-      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server rejected the removal.' };
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? t('mp.act.removal') };
     },
     async consolidateAgreement(agreementId) {
       const res = await apiFetch<{ ok: boolean; carriers?: string[] }>(
@@ -1453,7 +1454,7 @@ export function MultiplayerActionsProvider({
         return { ok: true };
       }
       console.warn('consolidateAgreement failed', res.error);
-      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server rejected the merge.' };
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? t('mp.act.merge') };
     },
     async unloadHold(shipId) {
       const res = await apiFetch<{ ok: boolean }>(
@@ -1465,7 +1466,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Server rejected the unload.',
+        error: res.error?.message ?? t('mp.act.unload'),
       };
     },
     async setMining(shipId, active) {
@@ -1478,7 +1479,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Server rejected the mining order.',
+        error: res.error?.message ?? t('mp.act.mining'),
       };
     },
     async placeFramework(shipId, kind, x, y, variant) {
@@ -1491,7 +1492,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Server refused the foundation.',
+        error: res.error?.message ?? t('mp.act.foundation'),
       };
     },
     async deliverToSite(siteId, shipId) {
@@ -1504,7 +1505,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Server refused the delivery.',
+        error: res.error?.message ?? t('mp.act.delivery'),
       };
     },
     async pairGate(siteId, partnerBodyId) {
@@ -1517,7 +1518,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Server refused the pairing.',
+        error: res.error?.message ?? t('mp.act.pairing'),
       };
     },
     async gateTransit(shipId) {
@@ -1530,7 +1531,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Server refused the transit.',
+        error: res.error?.message ?? t('mp.act.transit'),
       };
     },
     async megaStrike(shipId, confirmOwn, cancel) {
@@ -1546,7 +1547,7 @@ export function MultiplayerActionsProvider({
       );
       if (res.ok) return { ok: true, firesAtTick: res.data?.fires_at_tick };
       console.warn('megaStrike failed', res.error);
-      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server refused the strike.' };
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? t('mp.act.strike') };
     },
     async claimSite(siteId) {
       const res = await apiFetch<{ ok: boolean; name?: string }>(
@@ -1555,7 +1556,7 @@ export function MultiplayerActionsProvider({
       );
       if (res.ok) return { ok: true, name: res.data?.name };
       console.warn('claimSite failed', res.error);
-      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server refused that.' };
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? t('mp.act.refusedThat') };
     },
     async seizeSite(siteId, mode) {
       const res = await apiFetch<{ ok: boolean }>(
@@ -1564,7 +1565,7 @@ export function MultiplayerActionsProvider({
       );
       if (res.ok) return { ok: true };
       console.warn('seizeSite failed', res.error);
-      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server refused that.' };
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? t('mp.act.refusedThat') };
     },
     async wreckAction(settlementId, mode) {
       const res = await apiFetch<{ ok: boolean }>(
@@ -1573,7 +1574,7 @@ export function MultiplayerActionsProvider({
       );
       if (res.ok) return { ok: true };
       console.warn('wreckAction failed', res.error);
-      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server refused that.' };
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? t('mp.act.refusedThat') };
     },
     async setSinkPass(siteId, factionIds) {
       const res = await apiFetch<{ ok: boolean }>(
@@ -1582,7 +1583,7 @@ export function MultiplayerActionsProvider({
       );
       if (res.ok) return { ok: true };
       console.warn('setSinkPass failed', res.error);
-      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server refused that.' };
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? t('mp.act.refusedThat') };
     },
     async refitShip(shipId, designId) {
       const res = await apiFetch<{ ok: boolean }>(
@@ -1597,7 +1598,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Server rejected the refit order.',
+        error: res.error?.message ?? t('mp.act.refitOrder'),
       };
     },
     async cancelTradeRoute(routeId) {
@@ -1610,7 +1611,7 @@ export function MultiplayerActionsProvider({
       return {
         ok: false,
         code: res.error?.code,
-        error: res.error?.message ?? 'Server rejected the cancel.',
+        error: res.error?.message ?? t('mp.act.cancelThe'),
       };
     },
     });
