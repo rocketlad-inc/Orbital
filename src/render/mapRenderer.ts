@@ -4770,6 +4770,14 @@ function recordDrawnShipWorldPos(shipId: string, x: number, y: number): void {
   else lastDrawnShipWorldPos.set(shipId, { x, y });
 }
 
+/** For a hull that rides with another this frame without being drawn on
+ *  its own (an escort whose flagship is off-screen): it is where its
+ *  flagship last was, which is where its death belongs too. */
+export function recordShipWorldPosAs(shipId: string, asShipId: string): void {
+  const at = lastDrawnShipWorldPos.get(asShipId);
+  if (at) recordDrawnShipWorldPos(shipId, at.x, at.y);
+}
+
 /**
  * Class lane base + deterministic per-hull jitter, in world units.
  *
@@ -4974,6 +4982,15 @@ export function drawEscortHull(
         ship.class as MegastructureKind, color,
         (ship.iconVariant as StructureVariant | undefined) ?? null, trim)
     : getShipIconImage(ship.class as ShipIconClass, color, ship.iconVariant, trim);
+
+  // DEATH FX GO WHERE THE HULL WAS DRAWN. drawShip records every hull it
+  // draws; escorts never came through it, so a dead escort's explosion and
+  // wreck fell back to its raw orbit point -- which the whole-orbit layout
+  // does not use, so they went off elsewhere on the ring (Lorne: "the
+  // explosion effects are happening at some other point in the orbit").
+  const at = canvasToWorld(x, y, ctx);
+  recordDrawnShipWorldPos(ship.id, at.x, at.y);
+  if (img) recordDrawnLook(ship.id, img, size, heading);
 
   g.save();
   g.translate(x, y);
