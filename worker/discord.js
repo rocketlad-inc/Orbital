@@ -722,12 +722,18 @@ export async function publishChairmanSeated(env, gameId, term, chairName) {
 
 /** Post a plain embed. With a gameId it goes to that game's feed (and
  *  `headline` says whether a 'headlines' feed keeps it); without one it
- *  goes to the shared channel, which is now for cross-game news only. */
+ *  goes to the shared channel, which is now for cross-game news only.
+ *  `embed` may be a function of the feed's language, `(L) => embed`: it is
+ *  called only once the post is known to go somewhere, in the game's feed
+ *  language (English for the shared channel). */
 export async function postChannelEmbed(env, embed, gameId = null, { headline = false } = {}) {
   if (!env.DISCORD_BOT_TOKEN) return { posted: false, reason: 'no_bot_token' };
   const channelId = gameId ? await channelForGame(env, gameId, { headline }) : await resolveChannelId(env);
   if (!channelId) return { posted: false, reason: 'no_channel' };
-  const res = await botFetch(env, 'POST', `/channels/${channelId}/messages`, { embeds: [embed] });
+  const built = typeof embed === 'function'
+    ? embed(gameId ? await feedLocaleOf(env, gameId) : 'en')
+    : embed;
+  const res = await botFetch(env, 'POST', `/channels/${channelId}/messages`, { embeds: [built] });
   if (!res.ok) {
     console.error(`channel embed post failed ${res.status}`, await res.text().catch(() => ''));
     return { posted: false, reason: `http_${res.status}` };

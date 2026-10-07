@@ -1,4 +1,5 @@
 import { buildCostFactors } from './buildCost.js';
+import { tr } from './i18n.js';
 import { NON_WORLD_TYPES } from './systems.js';
 import { SUN_GATE_SYSTEMS } from './sunGates.js';
 import { selectInChunks, runInChunks } from './sqlChunk.js';
@@ -4892,13 +4893,12 @@ async function handleClaimAssetDeal(_req, env, ctx) {
     if (uid) {
       await notify.sendDm(env, {
         userId: uid, gameId, category: 'dm', dedupeKey: `asset-claimed:${dealId}`,
-        embed: {
-          title: `✅ ${buyerName} is buying ${state.name ?? 'your listing'}`,
-          description: 'They claimed it from the open market. It changes hands when their payment '
-            + 'arrives by freighter at the delivery point.',
+        embed: (L) => ({
+          title: tr(L, 'alert.asset.title', { buyer: buyerName, name: state.name ?? tr(L, 'alert.asset.yourListing') }),
+          description: tr(L, 'alert.asset.body'),
           color: 0x6bd39a,
           footer: { text: `Orbital · T+${tick}` },
-        },
+        }),
       });
     }
   } catch (e) { console.error('asset claim DM failed', e, { dealId }); }

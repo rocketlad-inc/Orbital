@@ -9,6 +9,8 @@
 // Visibility: caller sees messages they sent, messages where they are a
 // recipient (dm/group), or any scope='broadcast' message in the game.
 
+import { tr } from './i18n.js';
+
 const GAME_ID_RE = /^[A-Za-z0-9_-]{6,32}$/;
 const MSG_ID_RE  = /^[A-Za-z0-9_-]{6,64}$/;
 // Faction IDs are formatted "${gameId}:f${slot}" (see seedGameWorld in
@@ -178,7 +180,7 @@ export async function handleSend(req, env, { session, params }) {
     const notify = await import('./notify.js');
     const claimedName = (await env.DB
       .prepare('SELECT name FROM game_factions WHERE id = ?')
-      .bind(sender.id).first())?.name ?? 'Unknown';
+      .bind(sender.id).first())?.name ?? null;
     const roomName = (await env.DB
       .prepare('SELECT name FROM rooms WHERE id = ?').bind(gameId).first())?.name ?? gameId;
     const preview = text.length > 300 ? text.slice(0, 300) + '…' : text;
@@ -194,23 +196,23 @@ export async function handleSend(req, env, { session, params }) {
         dedupeKey: `msg:${id}:${factionId}`,
         // Answer without opening anything: Android collects the line in
         // the shade and the server sends it as an ordinary DM.
-        actions: sender.id ? [
+        actions: (L) => (sender.id ? [
           {
             id: 'reply',
-            label: 'REPLY',
+            label: tr(L, 'alert.msg.reply'),
             reply: true,
-            placeholder: `Reply to ${claimedName}`,
+            placeholder: tr(L, 'alert.msg.replyTo', { name: claimedName ?? tr(L, 'alert.unknown') }),
             verb: { verb: 'reply', game_id: gameId, faction_id: sender.id },
           },
-        ] : [],
-        embed: {
+        ] : []),
+        embed: (L) => ({
           title: scope === 'broadcast'
-            ? `📡 Broadcast from ${claimedName}`
-            : `✉️ Message from ${claimedName}`,
+            ? tr(L, 'alert.msg.broadcast', { name: claimedName ?? tr(L, 'alert.unknown') })
+            : tr(L, 'alert.msg.message', { name: claimedName ?? tr(L, 'alert.unknown') }),
           description: preview,
           color: 0x5865f2,
           footer: { text: `Orbital · ${roomName} · T+${tick}` },
-        },
+        }),
       });
     }
   } catch (e) {
