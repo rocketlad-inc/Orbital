@@ -51,6 +51,9 @@ import { setServerStillWorlds } from '../render/globeSpin';
 import { connectRoomSocket } from './roomSocket';
 import { EndgameCommission } from './CommissionMoments';
 import { binaryClosenessFrom, setBinaryCloseness } from '../game/farSystems';
+import { t, tk } from '../i18n/core';
+import { apiErrorText } from '../i18n/apiErrors';
+import { useI18n } from '../i18n/react';
 
 // The whole-match recap. Split out of the main bundle: it pulls in the
 // map renderer and the replay machinery, and nobody needs any of that
@@ -2554,7 +2557,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     capitalLoss = {
       eventId: ev.id,
       bodyId: stripGameId(ev.body_id) ?? ev.body_id,
-      bodyName: (p.body_name as string) ?? 'your capital',
+      bodyName: (p.body_name as string) ?? t('mp.provider.yourCapital'),
       tick: ev.tick_number,
       killerName: (p.killer_faction_name as string) ?? null,
     };
@@ -3077,6 +3080,7 @@ interface GameMeta {
 }
 
 export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Props) {
+  useI18n();
   const [state, setState] = useState<GameState | null>(null);
 
   // ============================================================
@@ -3258,7 +3262,7 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
         // room id in localStorage). Stop polling and surface a bounce-out.
         setMissing(true);
       } else if (res.error?.code !== 'no_backend') {
-        setError(res.error?.message ?? 'failed to load game state');
+        setError(apiErrorText(res.error, 'mp.provider.errLoad'));
       }
     } finally {
       inflightRef.current = false;
@@ -3410,22 +3414,22 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
           {status === 'missing' ? (
             <>
               <div style={{ color: 'var(--mp-accent)', marginBottom: 8 }}>
-                This game no longer exists
+                {t('mp.provider.missingTitle')}
               </div>
               <div style={{ color: 'var(--mp-fg-dim)', fontSize: 11, marginBottom: 12 }}>
-                The room may have been deleted or the game expired.
+                {t('mp.provider.missingBody')}
               </div>
               <button
                 className="mp-submit"
                 onClick={() => onGameMissingRef.current?.()}
                 style={{ marginTop: 4 }}
               >
-                Return to lobby
+                {t('mp.provider.returnLobby')}
               </button>
             </>
           ) : status === 'error' ? (
             <>
-              <div style={{ color: 'var(--mp-hostile)', marginBottom: 8 }}>Couldn't load game state</div>
+              <div style={{ color: 'var(--mp-hostile)', marginBottom: 8 }}>{t('mp.provider.loadErrTitle')}</div>
               <div style={{ color: 'var(--mp-fg-dim)', fontSize: 11, marginBottom: 12 }}>{error}</div>
               {/* Safety net so the user is never permanently stuck. */}
               <button
@@ -3433,11 +3437,11 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
                 onClick={() => onGameMissingRef.current?.()}
                 style={{ marginTop: 4 }}
               >
-                Return to lobby
+                {t('mp.provider.returnLobby')}
               </button>
             </>
           ) : (
-            <div style={{ color: 'var(--mp-fg-dim)' }}>Loading game…</div>
+            <div style={{ color: 'var(--mp-fg-dim)' }}>{t('mp.provider.loading')}</div>
           )}
         </div>
       </div>
@@ -3486,7 +3490,7 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
                 ? '0 0 24px rgba(78,205,196,0.4)'
                 : '0 0 24px rgba(255,184,77,0.4)',
             }}>
-              {iWon ? 'VICTORY' : 'GAME OVER'}
+              {iWon ? t('mp.provider.victory') : t('mp.provider.gameOver')}
             </div>
             <div style={{
               fontFamily: 'var(--mp-mono)',
@@ -3498,18 +3502,18 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
               {meta?.winnerName ? (
                 <>
                   <div style={{ color: 'var(--mp-accent)', marginBottom: 6 }}>
-                    {meta.winnerName} {iWon ? '(you)' : ''} wins
+                    {t('mp.provider.wins', { name: meta.winnerName, you: iWon ? t('mp.provider.you') : '' })}
                   </div>
                   <div style={{ fontSize: 11, color: 'var(--mp-fg-dim)' }}>
-                    {MP_VICTORY_LABEL[meta.victoryType ?? ''] ?? `Victory type: ${meta.victoryType ?? 'hegemony'}`}
+                    {MP_VICTORY_LABEL[meta.victoryType ?? ''] ? tk(`mp.provider.vl.${meta.victoryType}`, MP_VICTORY_LABEL[meta.victoryType ?? '']) : t('mp.provider.victoryType', { type: meta.victoryType ?? 'hegemony' })}
                   </div>
                 </>
               ) : meta?.victoryType === 'annihilation' ? (
                 <div style={{ color: 'var(--mp-fg-dim)' }}>
-                  No empire survived, and none could return
+                  {t('mp.provider.noSurvivor')}
                 </div>
               ) : (
-                <div style={{ color: 'var(--mp-fg-dim)' }}>No winner declared</div>
+                <div style={{ color: 'var(--mp-fg-dim)' }}>{t('mp.provider.noWinner')}</div>
               )}
             </div>
             <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
@@ -3518,14 +3522,14 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
                 style={{ width: 'auto', padding: '10px 24px' }}
                 onClick={() => setShowFilm(v => !v)}
               >
-                {showFilm ? 'Hide the match film' : '\u25b6 Watch the match film'}
+                {showFilm ? t('mp.provider.hideFilm') : t('mp.provider.watchFilm')}
               </button>
               <button
                 className="mp-submit"
                 style={{ width: 'auto', padding: '10px 24px' }}
                 onClick={() => onGameMissingRef.current?.()}
               >
-                Return to lobby
+                {t('mp.provider.returnLobby')}
               </button>
             </div>
             {/* The Commission, once per finished game, only for an
@@ -3543,7 +3547,7 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
                     fontFamily: 'var(--mp-mono)', fontSize: 12,
                     color: 'var(--mp-fg-dim)', textAlign: 'center',
                     padding: '32px 0',
-                  }}>Loading the renderer\u2026</div>
+                  }}>{t('mp.provider.loadingRenderer')}</div>
                 }>
                   <MatchReplay gameId={gameId} />
                 </React.Suspense>

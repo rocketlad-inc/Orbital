@@ -25,6 +25,8 @@
 //     so the copy has to name the Station prerequisite).
 // ============================================================
 
+import { t } from '../i18n/core';
+
 export type MpErrorDomain =
   | 'build'
   | 'deploy'
@@ -55,24 +57,24 @@ export function humanizeMpError(
 ): string {
   switch (code) {
     case 'not_member':
-      return 'You are not in this game. Re-enter the room and try again.';
+      return t('mp.err.notMember');
 
     case 'not_owner':
       // Build → you tried to queue on someone else's body. Transfer →
       // you tried to redirect someone else's ship. Either way the
       // underlying action is the same: the resource isn't yours.
       switch (domain) {
-        case 'build':    return 'You no longer own this body. Recapture it before queuing builds here.';
-        case 'transfer': return 'You no longer own this ship — it may have been captured or destroyed.';
-        case 'rename':   return 'You no longer own this ship or settlement.';
-        case 'orders':   return 'One of the selected ships is not yours — no orders were changed.';
-        default:         return `You do not own this resource (${fallback}).`;
+        case 'build':    return t('mp.err.ownBuild');
+        case 'transfer': return t('mp.err.ownTransfer');
+        case 'rename':   return t('mp.err.ownRename');
+        case 'orders':   return t('mp.err.ownOrders');
+        default:         return t('mp.err.ownDefault', { fallback });
       }
 
     case 'on_delivery':
       // Freighter is hauling an inter-player trade shipment — the
       // delivery autopilot owns its movement until the cargo lands.
-      return 'This freighter is hauling a trade shipment — it flies itself until delivery.';
+      return t('mp.err.onDelivery');
 
     case 'not_researched':
       // Research gating. The server's message already names the exact
@@ -85,16 +87,16 @@ export function humanizeMpError(
     case 'not_host':
       // Currently only TBM toggle returns this — non-hosts trying to
       // change game-wide settings.
-      return 'Only the host can change this setting.';
+      return t('mp.err.notHost');
 
     case 'not_found':
       switch (domain) {
-        case 'build':    return 'This body no longer exists in the game.';
-        case 'deploy':   return 'This body no longer exists in the game.';
-        case 'transfer': return 'Target body or ship no longer exists.';
-        case 'rename':   return 'This ship or settlement no longer exists.';
-        case 'orders':   return 'One of the selected ships no longer exists — no orders were changed.';
-        default:         return `Resource not found (${fallback}).`;
+        case 'build':    return t('mp.err.gone');
+        case 'deploy':   return t('mp.err.gone');
+        case 'transfer': return t('mp.err.goneTransfer');
+        case 'rename':   return t('mp.err.goneRename');
+        case 'orders':   return t('mp.err.goneOrders');
+        default:         return t('mp.err.goneDefault', { fallback });
       }
 
     case 'insufficient_resources':
@@ -102,107 +104,107 @@ export function humanizeMpError(
       // because "insufficient resources" alone leaves the player
       // hunting for which meter to top up.
       switch (domain) {
-        case 'build':    return 'Not enough metal + credits. Wait for income from your settlements.';
-        case 'deploy':   return 'Not enough metal + credits. Wait for income from your settlements, or trade for what you need.';
-        case 'research': return `Not enough science. ${fallback}`;
-        default:         return `Insufficient resources (${fallback}).`;
+        case 'build':    return t('mp.err.poorBuild');
+        case 'deploy':   return t('mp.err.poorDeploy');
+        case 'research': return t('mp.err.poorResearch', { fallback });
+        default:         return t('mp.err.poorDefault', { fallback });
       }
 
     case 'tech_maxed':
-      return 'This tech is already at the global cap.';
+      return t('mp.err.techMaxed');
 
     case 'no_presence':
       // Legacy deploy gate (pre colony-ship split) — kept so an older
       // server bundle still gets sensible copy.
-      return 'No qualifying ship of yours parked here yet.';
+      return t('mp.err.noPresence');
 
     case 'need_colony_ship':
       // Colony/freighter split: cities always consume a Colony Ship;
       // stations need one too unless you already own a settlement at
       // the body (then they're built from orbit for metal + credits).
-      return 'Needs a Colony Ship of yours in orbit here — deploying consumes it. (Stations can instead be built from orbit for resources where you already own a settlement.)';
+      return t('mp.err.needColony');
 
     case 'no_surface':
-      return 'A city cannot be deployed on this body type — stars, gas giants and ice giants have no surface.';
+      return t('mp.err.noSurface');
 
     case 'too_fast':
       // worker/legGuard.js: the leg is faster than this hull's engines.
       // Only a modified client, or one planning on a stale burn for a
       // tick after a change, ever sees it.
-      return 'That order is faster than this ship can fly. Reload to pick up the current engines and try again.';
+      return t('mp.err.tooFast');
 
     case 'gate_in_flight':
       // worker/actions.js emergingTargetRefusal.
-      return 'That gate is still flying out of the Sun. Send ships to its landing site instead.';
+      return t('mp.err.gateInFlight');
 
     case 'not_terraformed':
-      return 'This world is still raw — cities need a terraformed world. Run a freighter supply route here to terraform it, or deploy a Station now.';
+      return t('mp.err.notTerraformed');
 
     // --- Trade-route taxonomy rejections (terraforming rework) ---
     case 'origin_not_terraformed':
-      return 'Terraform and Dyson runs load your POOL, and the pool is only on the dock at a terraformed world — pick one of those as the origin.';
+      return t('mp.err.originNotTerraformed');
     case 'cannot_terraform':
-      return 'Only terrestrial worlds, moons and dwarf planets can be terraformed — gas giants and stars have nothing to work with.';
+      return t('mp.err.cannotTerraform');
     case 'unscouted':
-      return 'This world holds an undiscovered secret. Scout it with a ship before the terraformers move in.';
+      return t('mp.err.unscouted');
     case 'not_controller':
-      return 'Only the Dyson Sphere controller can run supply routes to Sol.';
+      return t('mp.err.notController');
     case 'no_dest_settlement':
-      return 'The destination is not one of your worlds — logistics routes deliver to a terraformed world where you have a settlement.';
+      return t('mp.err.noDestSettlement');
     case 'no_origin_settlement':
-      return 'The origin body has no settlement of yours to pick up from.';
+      return t('mp.err.noOriginSettlement');
     case 'no_dest_collector':
-      return 'The other side has no terraformed world to receive the delivery.';
+      return t('mp.err.noDestCollector');
     case 'no_pickup_collector':
-      return 'You have no terraformed world to load from — the pool is only on the dock at terraformed worlds.';
+      return t('mp.err.noPickupCollector');
 
     case 'no_slots':
       // Shipyards are STATION_BUILDINGS, so "build a Shipyard" is not
       // actionable from a city — the buildings strip there only offers
       // forge / mint / lab. Naming the station prerequisite keeps the
       // advice from dead-ending the one player who most needs it.
-      return 'All build slots at this body are busy. Wait for one to finish, or deploy a Station here and add a Shipyard to it for more slots.';
+      return t('mp.err.noSlots');
 
     case 'occupied':
-      return 'This body already has that settlement type — only one city and one station per body.';
+      return t('mp.err.occupied');
 
     // Lobby / designer / orders codes
     case 'color_taken':
-      return 'Another player already flies that exact color — pick a different one.';
+      return t('mp.err.colorTaken');
     case 'already_cancelled':
-      return 'This build was already cancelled.';
+      return t('mp.err.alreadyCancelled');
     case 'no_detonator':
-      return 'This ship carries no detonator — fit one in the Ship Designer before building it.';
+      return t('mp.err.noDetonator');
     case 'in_transit':
-      return 'Cannot detonate mid-transfer — wait for the ship to arrive.';
+      return t('mp.err.inTransit');
 
     // RAM-specific codes
     case 'wrong_type':
-      return 'Only rogue asteroid bodies can be rammed.';
+      return t('mp.err.wrongType');
     case 'already_ramming':
-      return 'This asteroid already has a ram in flight.';
+      return t('mp.err.alreadyRamming');
     case 'no_settlement':
-      return 'You need a settlement on this asteroid to ram.';
+      return t('mp.err.noSettlement');
     case 'no_thrusters':
-      return 'Build Trajectory Control Thrusters first.';
+      return t('mp.err.noThrusters');
     case 'insufficient_fuel':
       // Legacy code from when rams charged fuel — the server now charges
       // metal (insufficient_resources). Kept as a fallback for an old
       // worker bundle mid-deploy.
-      return 'Not enough resources to launch this ram.';
+      return t('mp.err.insufficientFuel');
     case 'destroyed':
-      return 'This body has been destroyed.';
+      return t('mp.err.destroyed');
 
     case 'bad_request':
       // bad_request typically indicates a client-server schema drift
       // (an old bundle still cached). Tell the user to refresh.
-      return `This client sent an invalid request — try refreshing the page. (${fallback})`;
+      return t('mp.err.badRequest', { fallback });
 
     case 'network_error':
-      return 'Network: could not reach the server. Check your connection and try again.';
+      return t('mp.err.networkError');
 
     case 'no_backend':
-      return 'Multiplayer backend is offline. Try again in a moment.';
+      return t('mp.err.noBackend');
 
     default:
       // Unmapped code — show the freeform message, keeping the raw code
