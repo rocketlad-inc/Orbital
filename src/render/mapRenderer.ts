@@ -22,6 +22,7 @@ import { STRAIGHT_LINE_TRAJECTORIES } from '../game/featureFlags';
 import { COLORS, withOpacity, lighten, darken } from './colors';
 import { drawSunSquid, drawSunOmen, sunGateHeading, sunGateMorph } from './sunSquid';
 import { isSunGateSite } from '../game/farSystems';
+import { transitHullScale } from './cameraLimits';
 import { requestLabel, clearOfKeepOuts, reserveRect } from './labelLayer';
 import { visibleFogHoles } from './fogHoles';
 import { sensorEdgeArcs, sensorEdgeLoops, EdgeArc } from './sensorEdge';
@@ -2635,7 +2636,7 @@ function drawEmergingGate(
   const f = Math.min(1, Math.max(0, (ctx.t - em.fromTick) / span));
   // Speed on an even burn peaks at the flip: 0 -> 1 -> 0.
   const speed = 1 - Math.abs(2 * f - 1);
-  const R = sunSquidR(radius);
+  const scale = ctx.camera.scale;
 
   g.save();
 
@@ -2657,8 +2658,8 @@ function drawEmergingGate(
   // round to brake on its jet past the flip, unfurling into the gate's
   // ring over the last fifth of the trip so it lands as the gate.
   drawSunSquid(g, canvasPos.x, canvasPos.y, {
-    u: R * 0.55,
-    ringR: sunGateRingR(radius),
+    u: sunSquidUnit(scale),
+    ringR: sunGateRingR(scale),
     heading: sunGateHeading(Math.atan2(uy, ux), f),
     morph: sunGateMorph(f),
     thrust: 0.25 + 0.75 * speed,
@@ -2666,19 +2667,23 @@ function drawEmergingGate(
   });
 }
 
-/** Size in px of the squid in flight. The map's headline event, so a
- *  floor well above a ship's: the old blob's 10px floor drew it as a
- *  smudge with its detail switched off. */
-function sunSquidR(radius: number): number {
-  return Math.max(28, Math.min(radius * 2.4, 64));
+/** THE SQUID IS SHIP-SIZED (Lorne, 2026-10-07: "scale the squid like a
+ *  ship would, so it's not a massive squid when zoomed out"). Its body,
+ *  mantle tip to arm tips, is about six of its units long; that is fitted
+ *  to a Mega Destroyer's drawn size, the biggest hull anyone builds, on
+ *  the same zoom curve every hull in flight uses (cameraLimits.ts
+ *  transitHullScale): 116 px close up, half that pulled all the way out.
+ *  It used to hold a 28..64 px floor whatever the zoom, which at system
+ *  view painted a squid the size of the whole inner system. */
+function sunSquidUnit(camScale: number): number {
+  return shipIconSize('mega_destroyer', false) * transitHullScale(camScale) / 6;
 }
 
-/** Ring radius in px of a sun gate drawn at body radius `radius`. ONE
- *  function for the flight and the resting gate, so the ring a flight
- *  unfurls into is exactly the ring the gate then draws. A landmark's
- *  floor: findable from across the system. */
-function sunGateRingR(radius: number): number {
-  return Math.max(16, Math.min(radius * 1.4, 56));
+/** Ring radius in px of a sun gate. ONE function for the flight and the
+ *  resting gate, so the ring a flight unfurls into is exactly the ring the
+ *  gate then draws; on the same ship-sized curve as the squid. */
+function sunGateRingR(camScale: number): number {
+  return shipIconSize('mega_destroyer', false) * transitHullScale(camScale) * 0.4;
 }
 
 /**
@@ -2719,19 +2724,19 @@ function drawLandingSite(canvasPos: { x: number; y: number }, radius: number, ct
  *  centre in px, for the label solver: the art draws well outside the
  *  structure's true radius, and a label spaced from that radius sat on
  *  the ring. Null for everything else. */
-function sunGateArtRadius(body: Body, radius: number, t: number): number | null {
+function sunGateArtRadius(body: Body, radius: number, t: number, scale: number): number | null {
   if (isSunGateSite(body)) return Math.max(9, Math.min(radius, 40)) * 1.9;
   if (body.type !== 'megastructure' || !templateIdOf(body.id).startsWith('sungate_')) return null;
   if (body.emerge && t < body.emerge.untilTick) {
-    return sunSquidR(radius) * 0.55 * 1.3;
+    return sunSquidUnit(scale) * 1.3;
   }
-  return sunGateRingR(radius) * 1.15;
+  return sunGateRingR(scale) * 1.15;
 }
 
 /** A sun gate at rest, either end: the squid fully unfurled. */
 function drawSunGateBody(canvasPos: { x: number; y: number }, radius: number, ctx: RenderContext) {
   drawSunSquid(ctx.ctx, canvasPos.x, canvasPos.y, {
-    u: 1, ringR: sunGateRingR(radius), heading: 0, morph: 1, thrust: 0, now: ctx.nowMs ?? 0,
+    u: 1, ringR: sunGateRingR(ctx.camera.scale), heading: 0, morph: 1, thrust: 0, now: ctx.nowMs ?? 0,
   });
 }
 
@@ -4365,7 +4370,7 @@ export function drawBody(
         subTokens,
         x: canvasPos.x,
         y: canvasPos.y,
-        radius: Math.max(6, sunGateArtRadius(body, radius, ctx.t) ?? radius) + 4,
+        radius: Math.max(6, sunGateArtRadius(body, radius, ctx.t, ctx.camera.scale) ?? radius) + 4,
         // Selection beats ownership beats size. The survivors of a tight
         // ink budget are the bodies the player is actually working with.
         // Selection beats ownership beats size. A rock sits BELOW moons:

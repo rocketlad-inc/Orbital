@@ -104,7 +104,7 @@ import {
   computePresentation, drawnRadiusOf, hullReveal, hullSize, isBarycenter,
 } from '../render/bodyPresentation';
 import type { BodyPresentation } from '../render/bodyPresentation';
-import { MIN_CAMERA_SCALE } from '../render/cameraLimits';
+import { MIN_CAMERA_SCALE, transitHullScale } from '../render/cameraLimits';
 import { isGateInFlight, landingSiteIdOf } from '../game/farSystems';
 import { reachSpec } from '../game/structureReach';
 import { forecastIntercepts, reachOf } from '../game/firingWindows';
@@ -214,28 +214,10 @@ const MEGA_ORBIT_RING_ALPHA = 0.02;
 // it drew at FULL size at every zoom — a wall of same-size sprites once
 // you pulled back to see the whole system. These drive a straight
 // camera-zoom ramp instead.
-/** Floor: how small an in-transit hull gets at max zoom-out. Half. */
-const TRANSIT_SHIP_MIN_SIZE = 0.5;
-/** Camera scale at/above which transit hulls draw full size. This is the
- *  default view scale (gameContext DEFAULT_CAMERA_SCALE), so zooming IN
- *  never shrinks anything and zooming out starts the ramp immediately. */
-const TRANSIT_FULL_CAM_SCALE = 0.5;
-/** The wheel handler's hard zoom-out clamp — the ramp bottoms out here
- *  so "fully zoomed out" and "half size" line up exactly. Keep in sync
- *  with the Math.max floor in the wheel handler below. */
-const TRANSIT_MIN_CAM_SCALE = MIN_CAMERA_SCALE;
-
-/** Size multiplier for an in-transit hull at the given camera scale.
- *  Interpolated in LOG space because zoom is multiplicative — a linear
- *  ramp across a ~400x range would spend almost its entire travel in the
- *  last sliver of zoom and read as an abrupt pop. */
-function transitShipScale(camScale: number): number {
-  const s = Math.max(TRANSIT_MIN_CAM_SCALE, camScale);
-  const t = Math.max(0, Math.min(1,
-    Math.log(s / TRANSIT_MIN_CAM_SCALE)
-      / Math.log(TRANSIT_FULL_CAM_SCALE / TRANSIT_MIN_CAM_SCALE)));
-  return TRANSIT_SHIP_MIN_SIZE + (1 - TRANSIT_SHIP_MIN_SIZE) * t;
-}
+// The ramp itself (full size at the default zoom, half at full zoom-out,
+// in log space) lives in render/cameraLimits.ts transitHullScale, shared
+// with the thing from the Sun so it shrinks on the same curve as fleets.
+const transitShipScale = transitHullScale;
 /** A star-orbiter whose whole moon system spans fewer than this many
  *  screen pixels collapses its bodies' ship badges into a single
  *  SYSTEM-level count (its moons would overlap into an unreadable smear
