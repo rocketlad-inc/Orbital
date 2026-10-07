@@ -1,4 +1,5 @@
 import { resolveSenate, getSliderResolver, hasActiveSanction } from './senate.js';
+import { tr, trn } from './i18n.js';
 import { recomputeBodyOwnership, SETTLEMENT_SPEED, parkOrbitRadius } from './factions.js';
 import { commitSettlement } from './actions.js';
 import { pickFromPool, parseNamePools } from '../src/game/namePools.js';
@@ -1769,6 +1770,7 @@ export class Room {
       .prepare(`SELECT id, name, user_id FROM game_factions WHERE id IN (${parties.map(() => '?').join(',')})`)
       .bind(...parties)
       .all()).results ?? []).map(f => [f.id, f]));
+    // `title` and `description` are functions of the recipient's language.
     const dmBoth = async (title, description, dedupeKey) => {
       try {
         const notify = await import('./notify.js');
@@ -1777,7 +1779,7 @@ export class Room {
           if (!f?.user_id) continue;
           await notify.sendDm(this.env, {
             userId: f.user_id, gameId, category: 'economy', dedupeKey,
-            embed: { title, description, color: 0xffca28, footer: { text: `Orbital · T+${tick}` } },
+            embed: (L) => ({ title: title(L), description: description(L), color: 0xffca28, footer: { text: `Orbital · T+${tick}` } }),
           });
         }
       } catch (e) { console.error('stall DM failed', e, { routeId: r.id }); }
@@ -1798,9 +1800,8 @@ export class Room {
                JSON.stringify(parties), Date.now()).run();
       } catch (e) { console.error('trade_route_stalled chronicle failed', e); }
       await dmBoth(
-        '⚓ Trade route stalled — no freighter',
-        `**${routeLabel}** lost its last freighter. Assign a new one within `
-        + `**${ROUTE_STALL_TICKS} ticks** or the route cancels itself.`,
+        (L) => tr(L, 'alert.stall.title'),
+        (L) => tr(L, 'alert.stall.body', { route: routeLabel, n: ROUTE_STALL_TICKS }),
         `stall:${r.id}`,
       );
       return;
@@ -1809,9 +1810,8 @@ export class Room {
     const elapsed = tick - Number(r.stalled_since_tick);
     if (elapsed === ROUTE_STALL_WARN_AT) {
       await dmBoth(
-        '⏳ Stalled route cancels soon',
-        `**${routeLabel}** has been without a freighter for ${elapsed} ticks — `
-        + `**${ROUTE_STALL_TICKS - elapsed} ticks** left before it cancels.`,
+        (L) => tr(L, 'alert.stall.warnTitle'),
+        (L) => tr(L, 'alert.stall.warnBody', { route: routeLabel, elapsed, left: ROUTE_STALL_TICKS - elapsed }),
         `stallwarn:${r.id}`,
       );
       return;
@@ -1830,9 +1830,11 @@ export class Room {
       )
       .bind(r.id)
       .all()).results ?? [];
-    const guardNote = guardRows.length
-      ? ' Guards hold position: ' + guardRows.map(g => `${g.ship_name} at ${g.body_name ?? 'deep space'}`).join(', ') + '.'
-      : '';
+    const guardNote = (L) => (guardRows.length
+      ? ` ${tr(L, 'alert.stall.guards', {
+        list: guardRows.map(g => tr(L, 'alert.stall.guardAt', { ship: g.ship_name, body: g.body_name ?? tr(L, 'alert.deepSpace') })).join(', '),
+      })}`
+      : '');
 
     if (r.agreement_id) {
       try {
@@ -1861,8 +1863,8 @@ export class Room {
              JSON.stringify(parties), Date.now()).run();
     } catch (e) { console.error('trade_route_cancelled chronicle failed', e); }
     await dmBoth(
-      '🚫 Trade route cancelled',
-      `**${routeLabel}** went ${ROUTE_STALL_TICKS} ticks without a freighter and has been cancelled.${guardNote}`,
+      (L) => tr(L, 'alert.stall.cancelTitle'),
+      (L) => `${tr(L, 'alert.stall.cancelBody', { route: routeLabel, n: ROUTE_STALL_TICKS })}${guardNote(L)}`,
       `stallcancel:${r.id}`,
     );
   }
@@ -4673,13 +4675,12 @@ export class Room {
                   await notify.sendDm(this.env, {
                     userId: owner.user_id, gameId, category: 'economy',
                     dedupeKey: `bo_route_${shipId}`,
-                    embed: {
-                      title: '⚓ New ship could not join its route',
-                      description: `${shipName} rolled out, but ${res.message}. `
-                        + 'It is parked at its yard awaiting orders.',
+                    embed: (L) => ({
+                      title: tr(L, 'alert.buildRoute.title'),
+                      description: tr(L, 'alert.buildRoute.body', { ship: shipName, reason: res.message }),
                       color: 0xffca28,
                       footer: { text: `Orbital · T+${tick}` },
-                    },
+                    }),
                   });
                 }
               } catch (e) { console.error('build-order route DM failed', e, { shipId }); }

@@ -13,16 +13,19 @@
 // ============================================================================
 
 import { atWarSql } from './wars.js';
+import { tr, trn, pickLocale } from './i18n.js';
 
 const COLOR_CALM = 0x4ecdc4;
 const COLOR_BUSY = 0xffca28;
 const COLOR_ALARM = 0xff5e5e;
 
 /**
- * Assemble one player's briefing for one game.
+ * Assemble one player's briefing for one game, in `locale` (the player's
+ * users.locale; English when unknown).
  * Returns null when the player has no faction (spectator / vacated).
  */
-export async function buildSituationReport(env, gameId, userId) {
+export async function buildSituationReport(env, gameId, userId, locale = 'en') {
+  const L = pickLocale(locale);
   const game = await env.DB
     .prepare(
       `SELECT g.id, g.current_tick, g.status, g.tick_interval_ms, g.next_tick_at, r.name
@@ -66,8 +69,8 @@ export async function buildSituationReport(env, gameId, userId) {
   if (attacked.length) {
     urgency = 2;
     fields.push({
-      name: '⚔️ Fighting in the last day',
-      value: attacked.map(a => `**${a.body}** — ${a.n} of yours engaged`).join('\n').slice(0, 1000),
+      name: tr(L, 'sitrep.fighting'),
+      value: attacked.map(a => tr(L, 'sitrep.fightingRow', { body: a.body, n: a.n })).join('\n').slice(0, 1000),
     });
   }
 
@@ -106,9 +109,9 @@ export async function buildSituationReport(env, gameId, userId) {
   if (incoming.length) {
     urgency = 2;
     fields.push({
-      name: '🚀 Inbound — hostile fleets under way',
+      name: tr(L, 'sitrep.inbound'),
       value: incoming.slice(0, 8)
-        .map(i => `**${i.body}** ← ${i.n} ship${i.n === 1 ? '' : 's'} · ${i.attacker}`)
+        .map(i => tr(L, 'sitrep.inboundRow', { body: i.body, ships: trn(L, 'sitrep.ships', i.n), attacker: i.attacker }))
         .join('\n').slice(0, 1000),
     });
   }
@@ -140,16 +143,16 @@ export async function buildSituationReport(env, gameId, userId) {
     try {
       const senate = await import('./senate.js');
       const d = await senate.voteWeightDetail(env, gameId, me.id);
-      weightNote = `_Your vote carries weight **${d.weight}** (base 1`
-        + (d.controlled.length ? ` + ${d.controlled.length} system${d.controlled.length === 1 ? '' : 's'}` : '')
-        + ')._\n';
+      weightNote = d.controlled.length
+        ? trn(L, 'sitrep.weightSys', d.controlled.length, { w: d.weight })
+        : tr(L, 'sitrep.weight', { w: d.weight });
     } catch (e) {
       console.error('sitrep weight failed', e);
     }
     fields.push({
-      name: '🏛️ Your vote is missing',
+      name: tr(L, 'sitrep.voteMissing'),
       value: (weightNote + openBills
-        .map(b => `**${b.title}** — closes T+${b.vote_closes_at_tick} (${b.vote_closes_at_tick - tick} ticks)`)
+        .map(b => tr(L, 'sitrep.billRow', { title: b.title, tick: b.vote_closes_at_tick, left: b.vote_closes_at_tick - tick }))
         .join('\n')).slice(0, 1000),
     });
   }
@@ -163,7 +166,7 @@ export async function buildSituationReport(env, gameId, userId) {
     .bind(gameId, me.id).first())?.n ?? 0;
   if (offers > 0) {
     urgency = Math.max(urgency, 1);
-    fields.push({ name: '🤝 Trade offers waiting', value: `${offers} offer${offers === 1 ? '' : 's'} need an answer.` });
+    fields.push({ name: tr(L, 'sitrep.offersTitle'), value: trn(L, 'sitrep.offers', offers) });
   }
 
   // ---- unread messages ----------------------------------------------------
@@ -176,7 +179,7 @@ export async function buildSituationReport(env, gameId, userId) {
     .bind(me.id, gameId).first())?.n ?? 0;
   if (unread > 0) {
     urgency = Math.max(urgency, 1);
-    fields.push({ name: '✉️ Unread messages', value: `${unread} waiting in the comms panel.` });
+    fields.push({ name: tr(L, 'sitrep.unreadTitle'), value: tr(L, 'sitrep.unread', { n: unread }) });
   }
 
   // ---- terraforming: what's close, and what's stuck ----------------------
@@ -225,7 +228,7 @@ export async function buildSituationReport(env, gameId, userId) {
     const accM = Number(r.accM ?? 0), accC = Number(r.accC ?? 0);
     const started = accM > 0 || accC > 0;
     if (r.doneAt != null) {
-      finishing.push(`**${r.name}** — green in **${Math.max(0, r.doneAt - tick)}** ticks. Hold it.`);
+      finishing.push(tr(L, 'sitrep.tfFinishing', { name: r.name, n: Math.max(0, r.doneAt - tick) }));
       continue;
     }
     if (!started) continue;                       // never begun: not news
@@ -234,9 +237,9 @@ export async function buildSituationReport(env, gameId, userId) {
     const pct = Math.round(Math.min(accM / Math.max(1, tfCostMetal),
                                     accC / Math.max(1, tfCostCredits)) * 100);
     if (Number(r.feeding ?? 0) === 0) {
-      stalled.push(`**${r.name}** — **${pct}%** and STALLED: no freighter is supplying it.`);
+      stalled.push(tr(L, 'sitrep.tfStalled', { name: r.name, pct }));
     } else {
-      feeding.push(`**${r.name}** — ${pct}% · ${r.feeding} route${r.feeding === 1 ? '' : 's'} feeding`);
+      feeding.push(trn(L, 'sitrep.tfFeeding', Number(r.feeding), { name: r.name, pct }));
     }
   }
   if (stalled.length || finishing.length || feeding.length) {
@@ -245,7 +248,7 @@ export async function buildSituationReport(env, gameId, userId) {
     // not — that would make a calm day read as busy.
     if (stalled.length) urgency = Math.max(urgency, 1);
     fields.push({
-      name: '🌱 Terraforming',
+      name: tr(L, 'sitrep.terraforming'),
       value: [...finishing, ...stalled, ...feeding].join('\n').slice(0, 1000),
     });
   }
@@ -276,13 +279,13 @@ export async function buildSituationReport(env, gameId, userId) {
     .bind(gameId, me.id).first())?.n ?? 0;
 
   fields.push({
-    name: '📊 Your empire',
+    name: tr(L, 'sitrep.empire'),
     value: [
-      `**${ships}** ships · **${cities}** settlements`,
+      tr(L, 'sitrep.holdings', { ships, cities }),
       `**${Math.round(me.metal)}**M · **${Math.round(me.gold)}**C · **${Math.round(me.science)}**S`,
-      building > 0 ? `**${building}** under construction` : '_Nothing in the yards_',
-      researching ? `Researching **${researching.tech_id}** L${(researching.level ?? 0) + 1}` : '_No active research_',
-      lost > 0 ? `Lost **${lost}** ship${lost === 1 ? '' : 's'} in the last day` : null,
+      building > 0 ? tr(L, 'sitrep.building', { n: building }) : tr(L, 'sitrep.noYards'),
+      researching ? tr(L, 'sitrep.researching', { tech: researching.tech_id, level: (researching.level ?? 0) + 1 }) : tr(L, 'sitrep.noResearch'),
+      lost > 0 ? trn(L, 'sitrep.lost', lost) : null,
     ].filter(Boolean).join('\n'),
   });
 
@@ -290,22 +293,22 @@ export async function buildSituationReport(env, gameId, userId) {
     ? Math.max(0, Math.round((game.next_tick_at - Date.now()) / 60000))
     : null;
 
-  const headline = incoming.length ? 'Hostile fleets are inbound'
-    : urgency === 2 ? 'Your empire is under attack'
-    : urgency === 1 ? 'Decisions are waiting on you'
-    : 'All quiet';
+  const headline = incoming.length ? tr(L, 'sitrep.headlineInbound')
+    : urgency === 2 ? tr(L, 'sitrep.headlineAttack')
+    : urgency === 1 ? tr(L, 'sitrep.headlineDecisions')
+    : tr(L, 'sitrep.headlineQuiet');
 
   return {
     urgency,
     embed: {
-      title: `🛰️ Situation Report — ${headline}`,
+      title: tr(L, 'sitrep.title', { headline }),
       description: [
         `**${me.name}** · ${game.name} · T+${tick}`,
-        nextIn != null ? `Next tick in ~${nextIn} min.` : null,
+        nextIn != null ? tr(L, 'sitrep.nextTick', { n: nextIn }) : null,
       ].filter(Boolean).join('\n'),
       color: urgency === 2 ? COLOR_ALARM : urgency === 1 ? COLOR_BUSY : COLOR_CALM,
       fields,
-      footer: { text: 'Orbital · /notify to change what reaches you' },
+      footer: { text: tr(L, 'sitrep.footer') },
       timestamp: new Date().toISOString(),
     },
   };
@@ -319,7 +322,7 @@ export async function sendSituationReports(env, gameId, { force = false, onlyUse
   const notify = await import('./notify.js');
   const rows = (await env.DB
     .prepare(
-      `SELECT f.user_id FROM game_factions f
+      `SELECT f.user_id, u.locale FROM game_factions f
          JOIN users u ON u.id = f.user_id
         WHERE f.game_id = ? AND f.status = 'active'
           AND f.user_id IS NOT NULL AND u.discord_id IS NOT NULL`,
@@ -330,7 +333,9 @@ export async function sendSituationReports(env, gameId, { force = false, onlyUse
   const day = new Date().toISOString().slice(0, 10);
   for (const r of rows) {
     if (onlyUserId && r.user_id !== onlyUserId) continue;
-    const report = await buildSituationReport(env, gameId, r.user_id);
+    // In the recipient's own language (users.locale, read by the query
+    // above: no extra round trip per player; NULL = English).
+    const report = await buildSituationReport(env, gameId, r.user_id, r.locale);
     if (!report) { out.push({ user: r.user_id, sent: false, reason: 'no_faction' }); continue; }
     // A briefing that says "nothing happened" is how players learn to
     // stop opening briefings. When quiet days are suppressed, every

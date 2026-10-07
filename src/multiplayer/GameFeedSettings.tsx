@@ -11,7 +11,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from './api';
 import { DiscordServerFeed } from './DiscordServerFeed';
-import { t, tk } from '../i18n/core';
+import { t, tk, LANGS } from '../i18n/core';
 import { apiErrorText } from '../i18n/apiErrors';
 import { useI18n } from '../i18n/react';
 
@@ -19,6 +19,9 @@ export type FeedLevel = 'off' | 'headlines' | 'all';
 
 export interface FeedView {
   level: FeedLevel;
+  /** The language this game's feed posts in (the host's pick); null means
+   *  "same as the host's own language". */
+  feed_locale?: string | null;
   thread_url: string | null;
   following: boolean;
   discord_linked: boolean;
@@ -84,6 +87,14 @@ export const GameFeedSettings: React.FC<{ gameId: string; title?: string }> = ({
     setBusy(false);
     if (res.ok) setView(res.data); else setError(apiErrorText(res.error, 'mp.feed.errLevel'));
   };
+  const setLocale = async (value: string) => {
+    setBusy(true); setError(null);
+    const res = await apiFetch<FeedView>(`/api/games/${encodeURIComponent(gameId)}/feed`, {
+      method: 'PUT', body: JSON.stringify({ feed_locale: value || null }),
+    });
+    setBusy(false);
+    if (res.ok) setView(res.data); else setError(apiErrorText(res.error, 'mp.feed.lang.err'));
+  };
   const setFollow = async (follow: boolean) => {
     setBusy(true); setError(null);
     const res = await apiFetch<FeedView>(`/api/games/${encodeURIComponent(gameId)}/feed/follow`, {
@@ -126,6 +137,25 @@ export const GameFeedSettings: React.FC<{ gameId: string; title?: string }> = ({
         {tk(`mp.feed.hint.${view.level}`, FEED_LEVEL_HINT[view.level])}
         {view.is_host && !on && t('mp.feed.onlyHost')}
       </div>
+      {view.is_host && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+          <span style={dim}>{t('mp.feed.lang.label')}</span>
+          <select
+            aria-label={t('mp.feed.lang.aria')}
+            data-testid="game-feed-locale"
+            value={view.feed_locale ?? ''}
+            disabled={busy}
+            onChange={e => void setLocale(e.target.value)}
+            style={{
+              background: '#070c12', color: '#d6e2ec', border: '1px solid #2a3d50', borderRadius: 4,
+              fontFamily: 'inherit', fontSize: 12, padding: '4px 6px',
+            }}
+          >
+            <option value="">{t('mp.feed.lang.host')}</option>
+            {LANGS.map(l => <option key={l.code} value={l.code}>{l.name}</option>)}
+          </select>
+        </div>
+      )}
       <DiscordServerFeed gameId={gameId} view={view} onChange={setView} />
       {on && !inOwnServer && !view.forum_configured && (
         <div style={{ ...dim, color: '#ffb84d' }}>

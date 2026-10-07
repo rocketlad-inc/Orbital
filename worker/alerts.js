@@ -23,6 +23,7 @@
 // ============================================================================
 
 import { atWarSql } from './wars.js';
+import { tr, trn } from './i18n.js';
 
 /** Warn about a vote this many ticks before it closes. */
 const VOTE_WARN_TICKS = 2;
@@ -137,7 +138,6 @@ async function combatAlerts(env, notify, gameId, gameName, tick) {
         .filter(f => f !== factionId)
         .map(f => humans.get(f)?.name)
         .filter(Boolean);
-      const where = battle.body_name ?? 'open space';
       await notify.sendDm(env, {
         userId: me.user_id,
         gameId,
@@ -149,17 +149,20 @@ async function combatAlerts(env, notify, gameId, gameName, tick) {
         // the hulls: by the time a thumb reaches it some of them are
         // dead, so the server resolves who is still in the fight and
         // retreats those (worker/notifyActions.js).
-        actions: [
-          { id: 'retreat', label: 'RETREAT', verb: { verb: 'retreat', game_id: gameId, battle_id: battle.id } },
+        actions: (L) => [
+          { id: 'retreat', label: tr(L, 'alert.retreat'), verb: { verb: 'retreat', game_id: gameId, battle_id: battle.id } },
         ],
         // On the watch it opens the fight itself: that world's Porthole.
         watch: battle.body_id ? { screen: 'porthole', ref: battle.body_id } : { screen: 'battles' },
-        embed: {
-          title: `⚔️ Fighting at ${where}`,
-          description: enemies.length
-            ? `Your forces are engaged with **${enemies.join('**, **')}** at **${where}**.`
-            : `Your forces are under fire at **${where}**.`,
-          footer: { text: gameName },
+        embed: (L) => {
+          const where = battle.body_name ?? tr(L, 'alert.openSpace');
+          return {
+            title: tr(L, 'alert.combat.title', { where }),
+            description: enemies.length
+              ? tr(L, 'alert.combat.engaged', { enemies: enemies.join('**, **'), where })
+              : tr(L, 'alert.combat.underFire', { where }),
+            footer: { text: gameName },
+          };
         },
       });
     }
@@ -225,12 +228,11 @@ async function inboundAlerts(env, notify, gameId, gameName, tick) {
       url: '/',
       // The world they are coming for, in the Porthole.
       watch: { screen: 'porthole', ref: w.body_id },
-      embed: {
-        title: `🚀 Inbound — ${w.body}`,
-        description: `**${w.n}** ship${w.n === 1 ? '' : 's'} from **${w.attacker}** `
-          + `set out for **${w.body}**, which you hold.`,
+      embed: (L) => ({
+        title: tr(L, 'alert.inbound.title', { body: w.body }),
+        description: trn(L, 'alert.inbound.body', w.n, { attacker: w.attacker, body: w.body }),
         footer: { text: gameName },
-      },
+      }),
     });
   }
 }
@@ -281,15 +283,15 @@ async function arrearsAlerts(env, notify, gameId, gameName, tick) {
       // Daily, not per-tick: arrears persist for many ticks and an
       // hourly reminder about the same debt is nagging, not helping.
       dedupeKey: `arrears:${gameId}:${Math.floor(tick / 24)}`,
-      embed: {
-        title: '💸 Fleet upkeep unpaid',
+      embed: (L) => ({
+        title: tr(L, 'alert.arrears.title'),
         description: [
-          `Owed: **${Math.round(r.gold || 0)}**C · **${Math.round(r.metal || 0)}**M`,
-          'Unpaid fleets fight at reduced damage until settled.',
+          tr(L, 'alert.arrears.owed', { gold: Math.round(r.gold || 0), metal: Math.round(r.metal || 0) }),
+          tr(L, 'alert.arrears.note'),
         ].join('\n'),
         color: 0xffca28,
         footer: { text: `Orbital · ${gameName} · T+${tick}` },
-      },
+      }),
     });
   }
 }
@@ -325,23 +327,23 @@ async function voteClosingAlerts(env, notify, gameId, gameName, tick) {
         category: 'senate',
         dedupeKey: `voteclose:${bill.id}`,
         // The whole point of warning somebody is that they can answer.
-        actions: [
-          { id: 'yea', label: 'YEA', verb: { verb: 'vote', game_id: gameId, proposal_id: bill.id, vote: 'yea' } },
-          { id: 'nay', label: 'NAY', verb: { verb: 'vote', game_id: gameId, proposal_id: bill.id, vote: 'nay' } },
+        actions: (L) => [
+          { id: 'yea', label: tr(L, 'alert.vote.yea'), verb: { verb: 'vote', game_id: gameId, proposal_id: bill.id, vote: 'yea' } },
+          { id: 'nay', label: tr(L, 'alert.vote.nay'), verb: { verb: 'vote', game_id: gameId, proposal_id: bill.id, vote: 'nay' } },
           // Third, so the phone (two buttons) keeps YEA/NAY and the watch
           // card, which fits three, offers the whole ballot.
-          { id: 'abstain', label: 'ABSTAIN', verb: { verb: 'vote', game_id: gameId, proposal_id: bill.id, vote: 'abstain' } },
+          { id: 'abstain', label: tr(L, 'alert.vote.abstain'), verb: { verb: 'vote', game_id: gameId, proposal_id: bill.id, vote: 'abstain' } },
         ],
-        embed: {
-          title: '🏛️ A vote closes soon without you',
+        embed: (L) => ({
+          title: tr(L, 'alert.vote.title'),
           description: [
             `**${bill.title}**`,
-            `Closes at tick **${bill.vote_closes_at_tick}** — ${bill.vote_closes_at_tick - tick} tick(s) away.`,
-            'You can vote from the card in the channel, or in-game.',
+            tr(L, 'alert.vote.closes', { tick: bill.vote_closes_at_tick, left: bill.vote_closes_at_tick - tick }),
+            tr(L, 'alert.vote.how'),
           ].join('\n'),
           color: 0xc4b5fd,
           footer: { text: `Orbital · ${gameName} · T+${tick}` },
-        },
+        }),
       });
     }
   }
@@ -395,22 +397,23 @@ export async function runIdleNudges(env) {
       .prepare(`SELECT COUNT(*) AS n FROM game_ships WHERE game_id = ? AND owner_faction_id = ? AND hp > 0`)
       .bind(r.game_id, r.faction_id).first())?.n ?? 0;
 
-    const news = [
-      lost > 0 ? `You've lost **${lost}** ship${lost === 1 ? '' : 's'} since you left.` : null,
-      bills > 0 ? `**${bills}** bill${bills === 1 ? '' : 's'} on the senate floor right now.` : null,
-      `Your empire still holds **${ships}** ships.`,
-    ].filter(Boolean);
-
     await notify.sendDm(env, {
       userId: r.user_id,
       gameId: r.game_id,
       category: 'nudge',
       dedupeKey: `nudge:${r.game_id}:${r.user_id}:${Math.floor(now / NUDGE_COOLDOWN_MS)}`,
-      embed: {
-        title: `🛰️ ${r.faction_name} awaits orders`,
-        description: [`${days} days since your last command. ${r.game_name} is at T+${r.current_tick}.`, '', ...news].join('\n'),
-        color: 0x4ecdc4,
-        footer: { text: 'Orbital · /notify off to stop these' },
+      embed: (L) => {
+        const news = [
+          lost > 0 ? trn(L, 'alert.nudge.lost', lost) : null,
+          bills > 0 ? trn(L, 'alert.nudge.bills', bills) : null,
+          tr(L, 'alert.nudge.holds', { n: ships }),
+        ].filter(Boolean);
+        return {
+          title: tr(L, 'alert.nudge.title', { name: r.faction_name }),
+          description: [tr(L, 'alert.nudge.away', { days, game: r.game_name, tick: r.current_tick }), '', ...news].join('\n'),
+          color: 0x4ecdc4,
+          footer: { text: tr(L, 'alert.nudge.footer') },
+        };
       },
     });
   }

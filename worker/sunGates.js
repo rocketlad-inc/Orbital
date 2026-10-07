@@ -43,6 +43,7 @@ import {
 export { FAR_SYSTEM_TEMPLATE_IDS, FAR_GATE_TEMPLATE, templateOf, isFarSystemBody, mainSystemSql };
 import { MEGA_MU, MEGA_MAX_HP, MEGASTRUCTURES, periodForRadius } from './megastructures.js';
 import { makeRouteMath } from './routeMath.js';
+import { tr } from './i18n.js';
 
 const TWO_PI = Math.PI * 2;
 
@@ -416,16 +417,21 @@ async function chronicleOnce(DB, id, gameId, tick, kind, bodyId, payload) {
  *  has, live, rather than only in the next morning's Herald. Called once
  *  per moment (chronicleOnce gates it), so the feed gets each beat once;
  *  a game whose host never turned the feed on posts nowhere. */
-async function tellEveryone(env, gameId, tick, dedupeKey, title, lines) {
+async function tellEveryone(env, gameId, tick, dedupeKey, build) {
+  // `build` is a function of the language: (L) => ({ title, lines }). Each
+  // player's DM is written in their own; the feed post in the game's.
   let feedEmbed = null;
   try {
     const notify = await import('./notify.js');
     const room = await env.DB.prepare('SELECT name FROM rooms WHERE id = ?').bind(gameId).first();
-    feedEmbed = {
-      title,
-      description: lines.join('\n'),
-      color: 0xffc86b,
-      footer: { text: `Orbital · ${room?.name ?? gameId} · T+${tick}` },
+    feedEmbed = (L) => {
+      const { title, lines } = build(L);
+      return {
+        title,
+        description: lines.join('\n'),
+        color: 0xffc86b,
+        footer: { text: `Orbital · ${room?.name ?? gameId} · T+${tick}` },
+      };
     };
     const users = (await env.DB.prepare(
       `SELECT DISTINCT user_id FROM game_factions WHERE game_id = ? AND user_id IS NOT NULL`,
@@ -436,12 +442,7 @@ async function tellEveryone(env, gameId, tick, dedupeKey, title, lines) {
         gameId,
         category: 'galactic',
         dedupeKey: `sungate:${gameId}:${dedupeKey}`,
-        embed: {
-          title,
-          description: lines.join('\n'),
-          color: 0xffc86b,
-          footer: { text: `Orbital · ${room?.name ?? gameId} · T+${tick}` },
-        },
+        embed: feedEmbed,
       });
     }
   } catch (e) {
@@ -485,9 +486,10 @@ export async function advanceSunGates(env, gameId, tick, conf) {
   const solId = `${gameId}:sol`;
   if (await chronicleOnce(DB, `${gameId}:sungate:omen`, gameId, tick, 'sun_gate_omen', solId,
     { gate_in: SUN_GATE_WARNING_TICKS })) {
-    await tellEveryone(env, gameId, tick, 'omen',
-      '☀ Something strange is emerging from the Sun',
-      [`Every observatory in the system has turned to the Sun. Whatever it is, it will be out in **${SUN_GATE_WARNING_TICKS} ticks**.`]);
+    await tellEveryone(env, gameId, tick, 'omen', (L) => ({
+      title: tr(L, 'feed.gate.omenTitle'),
+      lines: [tr(L, 'feed.gate.omenBody', { n: SUN_GATE_WARNING_TICKS })],
+    }));
   }
 
   let prior = null;
@@ -500,9 +502,10 @@ export async function advanceSunGates(env, gameId, tick, conf) {
       const wait = step.emergeTick - tick;
       if (await chronicleOnce(DB, `${gameId}:sungate:omen:${step.index}`, gameId, tick, 'sun_gate_omen', solId,
         { gate_in: wait, index: step.index })) {
-        await tellEveryone(env, gameId, tick, `omen:${step.index}`,
-          '☀ Something else is emerging from the Sun',
-          [`The Sun is not done. Another shape is rising through it, and it will be out in **${wait} ticks**.`]);
+        await tellEveryone(env, gameId, tick, `omen:${step.index}`, (L) => ({
+          title: tr(L, 'feed.gate.omen2Title'),
+          lines: [tr(L, 'feed.gate.omen2Body', { n: wait })],
+        }));
       }
     }
     if (tick < step.emergeTick) break;
@@ -522,10 +525,15 @@ export async function advanceSunGates(env, gameId, tick, conf) {
         'sun_gate_emerged', id,
         { gate: step.sys.solGate, system: step.sys.label, arrive_tick: made.arrival,
           near: made.landedNear, index: step.index })) {
-        await tellEveryone(env, gameId, tick, `emerged:${step.sys.key}`,
-          step.index === 0 ? '◎ A gate has come out of the Sun' : '◎ Another gate has come out of the Sun',
-          [`It is burning hard for the Far Reach and will stop${made.landedNear ? ` out past **${made.landedNear}**` : ''} at tick **${made.arrival}**.`,
-            `It leads to **${step.sys.label}**. Its landing site is marked on the map: send ships there now and be waiting when it opens.`]);
+        await tellEveryone(env, gameId, tick, `emerged:${step.sys.key}`, (L) => ({
+          title: step.index === 0 ? tr(L, 'feed.gate.emergedTitle') : tr(L, 'feed.gate.emerged2Title'),
+          lines: [
+            made.landedNear
+              ? tr(L, 'feed.gate.emergedNear', { near: made.landedNear, tick: made.arrival })
+              : tr(L, 'feed.gate.emergedAt', { tick: made.arrival }),
+            tr(L, 'feed.gate.leadsTo', { system: step.sys.label }),
+          ],
+        }));
       }
     }
     const arrival = Number(row?.emerge_until_tick);
@@ -534,9 +542,10 @@ export async function advanceSunGates(env, gameId, tick, conf) {
       if (await chronicleOnce(DB, `${gameId}:sungate:open:${step.sys.key}`, gameId, tick,
         'sun_gate_opened', id,
         { gate: step.sys.solGate, system: step.sys.label, index: step.index })) {
-        await tellEveryone(env, gameId, tick, `open:${step.sys.key}`,
-          `◎ The ${step.sys.solGate} is open`,
-          [`It has stopped in the Far Reach. Park a ship on it and launch to **${step.sys.label}** at a tenth of the normal burn.`]);
+        await tellEveryone(env, gameId, tick, `open:${step.sys.key}`, (L) => ({
+          title: tr(L, 'feed.gate.openTitle', { gate: step.sys.solGate }),
+          lines: [tr(L, 'feed.gate.openBody', { system: step.sys.label })],
+        }));
       }
     }
     prior = row;
