@@ -23,8 +23,8 @@ import { PREMIUM_EMBLEM_IDS } from '../game/emblems';
 import { WEBSITE_ORIGIN } from '../platform/appShell';
 import { SkinPicker, SkinField } from './SkinPicker';
 import {
-  COMMISSION_FACTS, COMMISSION_PRICE, HOLDER_MARK, canBuyHere, logCommission,
-  COMMISSION_DISCORD_DETAIL,
+  COMMISSION_LINES, COMMISSION_EMBLEMS, COMMISSION_CITY_SKINS, COMMISSION_STATION_SKINS, COMMISSION_STRUCTURE_LOOKS,
+  COMMISSION_PRICE, HOLDER_MARK, canBuyHere, logCommission,
 } from './commission';
 import { t } from '../i18n/core';
 import { useI18n } from '../i18n/react';
@@ -190,9 +190,12 @@ export function Hangar({ onRedeemed, giftJustBought }: {
         ) : (
           <>
             <div className="hg-title">{t('hangar.commissionName')}</div>
-            <p className="hg-body">{COMMISSION_FACTS} {t('hangar.free')}</p>
+            <p className="hg-body">{t('hangar.facts', {
+              lines: COMMISSION_LINES, emblems: COMMISSION_EMBLEMS, cities: COMMISSION_CITY_SKINS,
+              stations: COMMISSION_STATION_SKINS, looks: COMMISSION_STRUCTURE_LOOKS, price: COMMISSION_PRICE,
+            })} {t('hangar.free')}</p>
             <p className="hg-perk" data-testid="hangar-discord">
-              <b>{t('hangar.perk.title')}</b> {COMMISSION_DISCORD_DETAIL}
+              <b>{t('hangar.perk.title')}</b> {t('hangar.discordDetail')}
             </p>
             {sellable ? (
               <button className="pp-btn pp-btn--primary" disabled={busy !== null} onClick={() => void buy(false)}>
