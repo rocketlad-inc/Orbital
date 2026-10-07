@@ -25,6 +25,8 @@ import {
   TUTORIAL_STEPS, TutorialStep, TutorialEffect, TutorialCheckId,
 } from '../game/tutorialSteps';
 import { TutorialVisual } from './TutorialVisuals';
+import { t, tk } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 import { getWorldMenuOpenBodyId } from '../game/worldMenu/store';
 import type { GameState } from '../types';
 
@@ -138,6 +140,7 @@ function playerOrderCount(gs: GameState): number {
 }
 
 export const TutorialOverlay: React.FC = () => {
+  useI18n();
   const { active, index, advance, back, skip, finish, jumpTo } = useTutorial();
   const { gameState, uiState, selectBody, selectShip } = useGameContext();
   const [targetRect, setTargetRect] = useState<Rect | null>(null);
@@ -281,10 +284,10 @@ export const TutorialOverlay: React.FC = () => {
     // Let the ✓ + green flash land, then move on. Captured index guards
     // against advancing a step the player already navigated away from.
     const at = index;
-    const t = setTimeout(() => {
+    const timer = setTimeout(() => {
       if (at === index) advance();
     }, 1300);
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [checkPassed, step?.id]);
 
@@ -378,7 +381,7 @@ export const TutorialOverlay: React.FC = () => {
   return createPortal(
     <div
       role="dialog"
-      aria-label="Tutorial"
+      aria-label={t('tutorial.aria')}
       aria-live="polite"
       style={{
         position: 'fixed',
@@ -484,23 +487,23 @@ export const TutorialOverlay: React.FC = () => {
           }}
         >
           <div style={{ fontSize: 10, color: '#b8c8d6', letterSpacing: '0.14em' }}>
-            TUTORIAL · {index + 1} / {TUTORIAL_STEPS.length}
+            {t('tutorial.header', { n: index + 1, total: TUTORIAL_STEPS.length })}
           </div>
           <button
             onClick={skip}
-            title="Skip tour (Esc)"
+            title={t('tutorial.skipTour')}
             style={{
               background: 'transparent', color: '#b8c8d6',
               border: 'none', fontSize: 10, cursor: 'pointer',
               letterSpacing: '0.08em',
             }}
-          >SKIP</button>
+          >{t('tutorial.skip')}</button>
         </div>
         <div style={{ fontSize: 15, fontWeight: 700, color: '#ffb84d', marginBottom: 6 }}>
-          {step.title}
+          {tk(`tutorial.step.${step.id}.title`, step.title)}
         </div>
         <div style={{ fontSize: 12, lineHeight: 1.45, color: '#d8e4ee' }}>
-          {step.body}
+          {tk(`tutorial.step.${step.id}.body`, step.body)}
         </div>
         {/* Illustration for menu-less concept steps (Lorne's rule:
             every step either points at a live surface or shows one). */}
@@ -524,7 +527,7 @@ export const TutorialOverlay: React.FC = () => {
               {taskDone ? '✓' : '▢'}
             </span>
             <span style={{ fontSize: 12, fontWeight: 600, color: taskDone ? '#7fffa1' : '#ffd98a' }}>
-              {step.task.label}{taskDone ? ' — nice.' : ''}
+              {tk(`tutorial.step.${step.id}.task`, step.task.label)}{taskDone ? t('tutorial.taskDone') : ''}
             </span>
           </div>
         )}
@@ -548,7 +551,7 @@ export const TutorialOverlay: React.FC = () => {
               // eating enough width to wrap the labels onto two lines.
               flexShrink: 0, whiteSpace: 'nowrap',
             }}
-          >‹ BACK</button>
+          >{t('tutorial.back')}</button>
 
           {/* Progress dots — clickable for jumping (handy for players
               who want to re-read an earlier step). minWidth:0 +
@@ -569,7 +572,7 @@ export const TutorialOverlay: React.FC = () => {
                 <button
                   key={i}
                   onClick={() => jumpTo(i)}
-                  title={`Step ${i + 1} of ${TUTORIAL_STEPS.length}`}
+                  title={t('tutorial.stepOf', { n: i + 1, total: TUTORIAL_STEPS.length })}
                   style={{
                     width: 6, height: 6, borderRadius: '50%', padding: 0,
                     background: i === index ? '#ffb84d' : '#2a3d50',
@@ -586,7 +589,7 @@ export const TutorialOverlay: React.FC = () => {
                 fontSize: 10, color: '#b8c8d6', letterSpacing: '0.1em',
                 fontVariantNumeric: 'tabular-nums',
               }}
-              title="Tutorial progress"
+              title={t('tutorial.progress')}
             >
               {index + 1} / {TUTORIAL_STEPS.length}
             </div>
@@ -598,7 +601,7 @@ export const TutorialOverlay: React.FC = () => {
             // it) — but the loud affordance is DOING the task.
             <button
               onClick={advance}
-              title="Skip this task and move on"
+              title={t('tutorial.skipTaskTitle')}
               style={{
                 padding: '5px 12px',
                 background: 'transparent', color: '#8fa8bf',
@@ -606,7 +609,7 @@ export const TutorialOverlay: React.FC = () => {
                 fontFamily: 'inherit', fontSize: 10, letterSpacing: '0.06em',
                 flexShrink: 0, whiteSpace: 'nowrap',
               }}
-            >skip task ›</button>
+            >{t('tutorial.skipTask')}</button>
           ) : (
             <button
               onClick={() => isLast ? finish() : advance()}
@@ -618,7 +621,7 @@ export const TutorialOverlay: React.FC = () => {
                 flexShrink: 0, whiteSpace: 'nowrap',
                 transition: 'background 0.25s',
               }}
-            >{isLast ? 'DONE ▸' : 'NEXT ›'}</button>
+            >{isLast ? t('tutorial.done') : t('tutorial.next')}</button>
           )}
         </div>
       </div>
