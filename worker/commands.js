@@ -56,6 +56,13 @@ export async function resolveCaller(env, discordId, interaction = null) {
   return { user, row, L };
 }
 
+/** 'yea' | 'nay' | 'abstain' as the reader's language says it. */
+function voteWord(L, v) {
+  const k = `dc.cmd.vote.${v}`;
+  const s = tr(L, k);
+  return s === k ? String(v) : s;
+}
+
 function footer(row, L) {
   const mins = row.next_tick_at
     ? Math.max(0, Math.round((row.next_tick_at - Date.now()) / 60000))
@@ -230,7 +237,7 @@ export async function cmdBills(env, discordId, interaction = null) {
         ? tr(L, 'dc.cmd.debating')
         : tr(L, 'dc.cmd.closes', { tick: b.vote_closes_at_tick, left: b.vote_closes_at_tick - row.current_tick });
       const mine = b.my_vote
-        ? tr(L, 'dc.cmd.youVoted', { vote: tr(L, `dc.cmd.vote.${b.my_vote}`) === `dc.cmd.vote.${b.my_vote}` ? b.my_vote : tr(L, `dc.cmd.vote.${b.my_vote}`) })
+        ? tr(L, 'dc.cmd.youVoted', { vote: voteWord(L, b.my_vote) })
         : (b.status === 'voting' ? tr(L, 'dc.cmd.notVoted') : '');
       return `**${b.title}**\n${state} ${mine}`;
     }).join('\n\n').slice(0, 3500),

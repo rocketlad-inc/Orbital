@@ -281,6 +281,13 @@ const text = (r) => `${r.data?.content ?? ''} ${(r.data?.embeds ?? []).map(e => 
   check('an English account\'s confirmation is English, though the card everyone shares is Portuguese',
     /Your vote is recorded as \*\*✅ Yea\*\*/.test(conf?.body.content) && /Votação no Senado/.test(r.data.embeds[0].title), conf?.body);
   check('the tally line counts in the card\'s language', /Sim \*\*\d+\*\* _\(2 votos\)_/.test(r.data.embeds[0].fields[0].value), r.data.embeds[0].fields[0].value);
+  r = await slash('bills', 'D_BR');
+  check('/bills lists the bill and how you voted, in Portuguese',
+    /Em pauta/.test(r.data.embeds[0].title) && /você votou \*\*sim\*\*/.test(r.data.embeds[0].description)
+    && /fecha em T\+120 \(20\)/.test(r.data.embeds[0].description), r.data.embeds?.[0]?.description);
+  r = await slash('bills', 'D_EN');
+  check('...and in English, as before', /On the floor/.test(r.data.embeds[0].title) && /you voted \*\*yea\*\*/.test(r.data.embeds[0].description)
+    && /closes T\+120 \(20\)/.test(r.data.embeds[0].description));
 }
 
 // ---- 7. DMs follow users.locale, from the read sendDm already makes -------------
@@ -311,6 +318,19 @@ const text = (r) => `${r.data?.content ?? ''} ${(r.data?.embeds ?? []).map(e => 
   });
   check('component rows are built in the recipient\'s language too',
     posted.filter(p => p.channel === 'dm-D_BR').pop()?.body.components[0].components[0].label === 'Aceitar');
+
+  // A real producer: the upkeep-arrears alert, one recipient per language.
+  await DB.prepare(`UPDATE game_factions SET arrears_gold = 40, arrears_metal = 5 WHERE id IN ('fBr','fEn')`).run();
+  posted.length = 0;
+  const alerts = await import('../worker/alerts.js');
+  await alerts.runTickAlerts(env, 'gloc', 100);
+  const arrBr = posted.find(p => p.channel === 'dm-D_BR')?.body.embeds[0];
+  const arrEn = posted.find(p => p.channel === 'dm-D_EN')?.body.embeds[0];
+  check('the arrears alert reaches a Portuguese account in Portuguese',
+    arrBr?.title === '💸 Manutenção da frota em atraso' && /Devendo: \*\*40\*\*C · \*\*5\*\*M/.test(arrBr.description), arrBr);
+  check('...and an English account in the original English',
+    arrEn?.title === '💸 Fleet upkeep unpaid' && arrEn.description === 'Owed: **40**C · **5**M\nUnpaid fleets fight at reduced damage until settled.'
+    && arrEn.footer.text === 'Orbital · Loc · T+100', arrEn);
 
   check('category labels follow the language', notify.categoryLabel('pt-BR', 'senate') === 'Projetos do Senado e votações prestes a fechar'
     && notify.categoryLabel('en', 'senate') === notify.CATEGORIES.senate);
