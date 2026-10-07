@@ -6631,4 +6631,8 @@ ALTER TABLE game_ship_nodes ADD COLUMN accel_max REAL;
 
 ALTER TABLE game_ship_nodes ADD COLUMN accel_tau REAL;
 ` },
+  { name: "0160_user_locale.sql", sql: `-- The language a player chose (see worker/i18n.js). NULL = never chose:
+-- the app follows the device, and emails go out in English.
+ALTER TABLE users ADD COLUMN locale TEXT;
+` },
 ];
