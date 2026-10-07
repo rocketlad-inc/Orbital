@@ -2,6 +2,7 @@
 // value import back would be a runtime cycle. The cost function is
 // passed in by the caller for the same reason.
 import type { ShipPartId } from './shipParts';
+import { tk } from '../i18n/core';
 // ============================================================
 // Ship Class Definitions — Expanse-inspired fleet roster
 // ============================================================
@@ -54,8 +55,8 @@ export interface ShipClassDef {
  */
 const CORVETTE: ShipClassDef = {
   className: 'corvette',
-  displayName: 'Corvette',
-  description: 'Fast attack craft. Light armor, high speed.',
+  get displayName() { return tk('data.ship.corvette.name', 'Corvette'); },
+  get description() { return tk('data.ship.corvette.desc', 'Fast attack craft. Light armor, high speed.'); },
   firepower: 8,
   hp: 40,
   pdcRating: 0.2,
@@ -82,8 +83,8 @@ const CORVETTE: ShipClassDef = {
  */
 const FRIGATE: ShipClassDef = {
   className: 'frigate',
-  displayName: 'Frigate',
-  description: 'Balanced warship. Solid firepower and armor.',
+  get displayName() { return tk('data.ship.frigate.name', 'Frigate'); },
+  get description() { return tk('data.ship.frigate.desc', 'Balanced warship. Solid firepower and armor.'); },
   firepower: 18,
   hp: 200,                 // x5 tier ladder (2026-09-21)
   pdcRating: 0.4,
@@ -106,8 +107,8 @@ const FRIGATE: ShipClassDef = {
  */
 const DESTROYER: ShipClassDef = {
   className: 'destroyer',
-  displayName: 'Destroyer',
-  description: 'Heavy warship. Devastating firepower, slow.',
+  get displayName() { return tk('data.ship.destroyer.name', 'Destroyer'); },
+  get description() { return tk('data.ship.destroyer.desc', 'Heavy warship. Devastating firepower, slow.'); },
   firepower: 35,
   hp: 1000,                // x5 tier ladder (2026-09-21)
   pdcRating: 0.6,
@@ -130,8 +131,8 @@ const DESTROYER: ShipClassDef = {
  */
 const FREIGHTER: ShipClassDef = {
   className: 'freighter',
-  displayName: 'Freighter',
-  description: 'Unarmed cargo hauler. Harvests resources at bodies.',
+  get displayName() { return tk('data.ship.freighter.name', 'Freighter'); },
+  get description() { return tk('data.ship.freighter.desc', 'Unarmed cargo hauler. Harvests resources at bodies.'); },
   firepower: 0,
   hp: 60,
   pdcRating: 0.1,
@@ -157,8 +158,8 @@ const FREIGHTER: ShipClassDef = {
  */
 const COLONY: ShipClassDef = {
   className: 'colony',
-  displayName: 'Colony Ship',
-  description: 'Consumable settler transport. Deploying a settlement consumes it.',
+  get displayName() { return tk('data.ship.colony.name', 'Colony Ship'); },
+  get description() { return tk('data.ship.colony.desc', 'Consumable settler transport. Deploying a settlement consumes it.'); },
   firepower: 0,
   hp: 60,
   pdcRating: 0,
@@ -177,10 +178,10 @@ const COLONY: ShipClassDef = {
 
 const MEGA_DESTROYER: ShipClassDef = {
   className: 'mega_destroyer',
-  displayName: 'Mega Destroyer',
+  get displayName() { return tk('data.ship.mega_destroyer.name', 'Mega Destroyer'); },
   icon: '✹',
-  description: 'A world-killer that barely moves. Strips terraforming, '
-    + 'cannot use gates, and everyone sees it coming for days.',
+  get description() { return tk('data.ship.mega_destroyer.desc', 'A world-killer that barely moves. Strips terraforming, '
+    + 'cannot use gates, and everyone sees it coming for days.'); },
   firepower: 90,
   hp: 6000,
   pdcRating: 0.4,
@@ -206,10 +207,10 @@ const MEGA_DESTROYER: ShipClassDef = {
 
 const MOBILE_FOUNDRY: ShipClassDef = {
   className: 'mobile_foundry',
-  displayName: 'Mobile Foundry',
+  get displayName() { return tk('data.ship.mobile_foundry.name', 'Mobile Foundry'); },
   icon: '⬢',
-  description: 'A shipyard that moves. Builds four hulls at once, '
-    + 'wherever you park it.',
+  get description() { return tk('data.ship.mobile_foundry.desc', 'A shipyard that moves. Builds four hulls at once, '
+    + 'wherever you park it.'); },
   firepower: 0,
   hp: 4600,
   pdcRating: 0.3,

@@ -10,6 +10,7 @@
 
 import { Body, BodySecret, BodySecretKind, Settlement } from '../types';
 import { createCity } from './settlements';
+import { tk } from '../i18n/core';
 
 /**
  * Catalog of secrets the seeder draws from. Each entry declares
@@ -29,8 +30,8 @@ export type BodyCategory = 'inner' | 'belt' | 'outer' | 'moon-inner' | 'moon-out
 export const SECRET_DEFS: Record<BodySecretKind, SecretDef> = {
   portal_to_sun: {
     kind: 'portal_to_sun',
-    displayName: 'Ancient Stargate',
-    discoveryMessage: 'DISCOVERY: an ancient stargate. Every ship arriving here will now be warped to Sol.',
+    get displayName() { return tk('data.secret.portal_to_sun.name', 'Ancient Stargate'); },
+    get discoveryMessage() { return tk('data.secret.portal_to_sun.found', 'DISCOVERY: an ancient stargate. Every ship arriving here will now be warped to Sol.'); },
     hostCategories: ['outer', 'moon-outer'],
   },
   // Warp gate is seeded outside the normal seedBodySecrets flow (see
@@ -40,20 +41,20 @@ export const SECRET_DEFS: Record<BodySecretKind, SecretDef> = {
   // is intentionally empty so the regular seeder never picks it.
   warp_gate: {
     kind: 'warp_gate',
-    displayName: 'Warp Gate',
-    discoveryMessage: 'DISCOVERY: a warp gate. Arriving ships are transported across the void.',
+    get displayName() { return tk('data.secret.warp_gate.name', 'Warp Gate'); },
+    get discoveryMessage() { return tk('data.secret.warp_gate.found', 'DISCOVERY: a warp gate. Arriving ships are transported across the void.'); },
     hostCategories: [],
   },
   ancient_city: {
     kind: 'ancient_city',
-    displayName: 'Ancient City Ruins',
-    discoveryMessage: 'DISCOVERY: a long-abandoned colony reactivates under your banner — a free city with a working Lab.',
+    get displayName() { return tk('data.secret.ancient_city.name', 'Ancient City Ruins'); },
+    get discoveryMessage() { return tk('data.secret.ancient_city.found', 'DISCOVERY: a long-abandoned colony reactivates under your banner — a free city with a working Lab.'); },
     hostCategories: ['belt'],
   },
   free_collector: {
     kind: 'free_collector',
-    displayName: 'Ancient Logistics Hub',
-    discoveryMessage: 'DISCOVERY: a derelict freight hub still pings. Free city + collector — your logistics just widened.',
+    get displayName() { return tk('data.secret.free_collector.name', 'Ancient Logistics Hub'); },
+    get discoveryMessage() { return tk('data.secret.free_collector.found', 'DISCOVERY: a derelict freight hub still pings. Free city + collector — your logistics just widened.'); },
     hostCategories: ['moon-outer', 'moon-inner'],
   },
   // MP-only (terraforming rework): seeded server-side in
@@ -62,26 +63,26 @@ export const SECRET_DEFS: Record<BodySecretKind, SecretDef> = {
   // toast code has a display name for the revealed secret.
   pre_terraformed: {
     kind: 'pre_terraformed',
-    displayName: 'Pre-Terraformed World',
-    discoveryMessage: 'DISCOVERY: a world the ancients already prepped for life. Terraformed and waiting; claim it and build.',
+    get displayName() { return tk('data.secret.pre_terraformed.name', 'Pre-Terraformed World'); },
+    get discoveryMessage() { return tk('data.secret.pre_terraformed.found', 'DISCOVERY: a world the ancients already prepped for life. Terraformed and waiting; claim it and build.'); },
     hostCategories: [],
   },
   derelict_warship: {
     kind: 'derelict_warship',
-    displayName: 'Derelict Warship',
-    discoveryMessage: 'DISCOVERY: a derelict destroyer is salvageable. Claimed.',
+    get displayName() { return tk('data.secret.derelict_warship.name', 'Derelict Warship'); },
+    get discoveryMessage() { return tk('data.secret.derelict_warship.found', 'DISCOVERY: a derelict destroyer is salvageable. Claimed.'); },
     hostCategories: ['belt', 'outer'],
   },
   resource_cache: {
     kind: 'resource_cache',
-    displayName: 'Hidden Resource Cache',
-    discoveryMessage: 'DISCOVERY: a buried cache — +500 metal + 500 credits to your pool.',
+    get displayName() { return tk('data.secret.resource_cache.name', 'Hidden Resource Cache'); },
+    get discoveryMessage() { return tk('data.secret.resource_cache.found', 'DISCOVERY: a buried cache — +500 metal + 500 credits to your pool.'); },
     hostCategories: ['inner', 'belt'],
   },
   ancient_databank: {
     kind: 'ancient_databank',
-    displayName: 'Ancient Databank',
-    discoveryMessage: 'DISCOVERY: an intact databank teaches your engineers a new trick — a free tech level.',
+    get displayName() { return tk('data.secret.ancient_databank.name', 'Ancient Databank'); },
+    get discoveryMessage() { return tk('data.secret.ancient_databank.found', 'DISCOVERY: an intact databank teaches your engineers a new trick — a free tech level.'); },
     hostCategories: ['moon-inner', 'moon-outer'],
   },
   // --- THE OUTER REACH. MP-only, seeded server-side in worker/factions.js
@@ -90,32 +91,32 @@ export const SECRET_DEFS: Record<BodySecretKind, SecretDef> = {
   // pre_terraformed. Listed so MP toasts and inspectors have a name.
   ancient_capital: {
     kind: 'ancient_capital',
-    displayName: 'Derelict Capital Ship',
-    discoveryMessage: 'DISCOVERY: a derelict capital ship drifting dark at the edge of the system. Claimed.',
+    get displayName() { return tk('data.secret.ancient_capital.name', 'Derelict Capital Ship'); },
+    get discoveryMessage() { return tk('data.secret.ancient_capital.found', 'DISCOVERY: a derelict capital ship drifting dark at the edge of the system. Claimed.'); },
     hostCategories: [],
   },
   ancient_relay: {
     kind: 'ancient_relay',
-    displayName: 'Ancient Sensor Relay',
-    discoveryMessage: 'DISCOVERY: an ancient sensor relay, still listening, answering to nobody. Breach it and seize it to make its eyes yours.',
+    get displayName() { return tk('data.secret.ancient_relay.name', 'Ancient Sensor Relay'); },
+    get discoveryMessage() { return tk('data.secret.ancient_relay.found', 'DISCOVERY: an ancient sensor relay, still listening, answering to nobody. Breach it and seize it to make its eyes yours.'); },
     hostCategories: [],
   },
   ancient_station: {
     kind: 'ancient_station',
-    displayName: 'Ancient Weapons Station',
-    discoveryMessage: 'DISCOVERY: an ancient weapons station wakes and opens fire on everything in reach. Breach it and seize it to turn its guns.',
+    get displayName() { return tk('data.secret.ancient_station.name', 'Ancient Weapons Station'); },
+    get discoveryMessage() { return tk('data.secret.ancient_station.found', 'DISCOVERY: an ancient weapons station wakes and opens fire on everything in reach. Breach it and seize it to turn its guns.'); },
     hostCategories: [],
   },
   far_gate: {
     kind: 'far_gate',
-    displayName: 'Ancient Gate Pair',
-    discoveryMessage: 'DISCOVERY: an ancient gate, and its twin elsewhere in the outer system. The pair is live.',
+    get displayName() { return tk('data.secret.far_gate.name', 'Ancient Gate Pair'); },
+    get discoveryMessage() { return tk('data.secret.far_gate.found', 'DISCOVERY: an ancient gate, and its twin elsewhere in the outer system. The pair is live.'); },
     hostCategories: [],
   },
   deep_cache: {
     kind: 'deep_cache',
-    displayName: 'Deep Cache',
-    discoveryMessage: 'DISCOVERY: a deep cache sealed against the cold, worth a destroyer in metal and credits.',
+    get displayName() { return tk('data.secret.deep_cache.name', 'Deep Cache'); },
+    get discoveryMessage() { return tk('data.secret.deep_cache.found', 'DISCOVERY: a deep cache sealed against the cold, worth a destroyer in metal and credits.'); },
     hostCategories: [],
   },
 };

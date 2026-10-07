@@ -9,6 +9,7 @@ import { pickFromPool } from './namePools';
 import { bodyProductionRates } from './economy';
 import { randomSettlementName } from './settlementNames';
 import { binaryStationMul } from './farSystems';
+import { tk } from '../i18n/core';
 
 /**
  * World position of a settlement at a given tick.
@@ -130,7 +131,7 @@ export const BUILDING_DEFS: Record<BuildingKind, BuildingDef> = {
   // ground is what you protect, orbit is what you contest. Costs metal
   // AND credits so the strongest single economy cannot turtle for free.
   shields: {
-    displayName: 'Shields',
+    get displayName() { return tk('data.building.shields.name', 'Shields'); },
     // CITY-HOSTED. Briefly moved to the station and moved straight
     // back: stations already die before cities, so station-hosted
     // shields would evaporate in the exchange they were bought for.
@@ -142,64 +143,64 @@ export const BUILDING_DEFS: Record<BuildingKind, BuildingDef> = {
     costScaling: 2.0,
     baseBuildTicks: 35,
     buildTimeScaling: 1.35,
-    description: 'Orbital shields: a second health bar that REGENERATES. '
+    get description() { return tk('data.building.shields.desc', 'Orbital shields: a second health bar that REGENERATES. '
       + 'Absorbs incoming fire before structure, +120 pool per level. '
-      + 'Structure never comes back — this does.',
-    effectShort: '+120 shield pool / level',
+      + 'Structure never comes back — this does.'); },
+    get effectShort() { return tk('data.building.shields.short', '+120 shield pool / level'); },
   },
   forge: {
-    displayName: 'Forge',
+    get displayName() { return tk('data.building.forge.name', 'Forge'); },
     hostType: 'city',
     baseCost: { fuel: 0, ore: 40, credits: 0 },
     costScaling: 1.6,
     baseBuildTicks: 20,
     buildTimeScaling: 1.3,
-    description: '+25% metal output per level. Reinvests metal to compound this city\'s metal yield.',
-    effectShort: '+25% metal / level',
+    get description() { return tk('data.building.forge.desc', '+25% metal output per level. Reinvests metal to compound this city\'s metal yield.'); },
+    get effectShort() { return tk('data.building.forge.short', '+25% metal / level'); },
     yieldBoost: { resource: 'ore', perLevel: 0.25 },
   },
   mint: {
-    displayName: 'Mint',
+    get displayName() { return tk('data.building.mint.name', 'Mint'); },
     hostType: 'city',
     baseCost: { fuel: 0, ore: 0, credits: 40 },
     costScaling: 1.6,
     baseBuildTicks: 20,
     buildTimeScaling: 1.3,
-    description: '+25% credits output per level. Reinvests credits to compound this city\'s coinage yield.',
-    effectShort: '+25% credits / level',
+    get description() { return tk('data.building.mint.desc', '+25% credits output per level. Reinvests credits to compound this city\'s coinage yield.'); },
+    get effectShort() { return tk('data.building.mint.short', '+25% credits / level'); },
     yieldBoost: { resource: 'credits', perLevel: 0.25 },
   },
   lab: {
-    displayName: 'Lab',
+    get displayName() { return tk('data.building.lab.name', 'Lab'); },
     hostType: 'any',
     baseCost: { fuel: 0, ore: 0, credits: 40 },
     costScaling: 1.6,
     baseBuildTicks: 20,
     buildTimeScaling: 1.3,
-    description: '+25% science output per level. Stations make the best hosts — orbital platforms already run hotter labs.',
-    effectShort: '+25% science / level',
+    get description() { return tk('data.building.lab.desc', '+25% science output per level. Stations make the best hosts — orbital platforms already run hotter labs.'); },
+    get effectShort() { return tk('data.building.lab.short', '+25% science / level'); },
     yieldBoost: { resource: 'science', perLevel: 0.25 },
   },
   weapons: {
-    displayName: 'Weapons',
+    get displayName() { return tk('data.building.weapons.name', 'Weapons'); },
     hostType: 'station',
     baseCost: { fuel: 0, ore: 30, credits: 20 },
     costScaling: 1.6,
     baseBuildTicks: 30,
     buildTimeScaling: 1.3,
-    description: '+20 damage per level to hostile ships in range, every tick.',
-    effectShort: '+20 damage / level',
+    get description() { return tk('data.building.weapons.desc', '+20 damage per level to hostile ships in range, every tick.'); },
+    get effectShort() { return tk('data.building.weapons.short', '+20 damage / level'); },
     combatBoost: { damagePerLevel: 20 },   // matches worker/room.js STATION_DMG_PER_WEAPONS_LEVEL
   },
   shipyard: {
-    displayName: 'Shipyard',
+    get displayName() { return tk('data.building.shipyard.name', 'Shipyard'); },
     hostType: 'station',
     baseCost: { fuel: 0, ore: 50, credits: 30 },
     costScaling: 1.7,
     baseBuildTicks: 40,
     buildTimeScaling: 1.3,
-    description: '+1 simultaneous ship-build slot at this body, per level.',
-    effectShort: '+1 build slot / level',
+    get description() { return tk('data.building.shipyard.desc', '+1 simultaneous ship-build slot at this body, per level.'); },
+    get effectShort() { return tk('data.building.shipyard.short', '+1 build slot / level'); },
     shipyardBoost: { slotsPerLevel: 1 },
   },
   // Trajectory Control Thrusters — asteroid-only doomsday weapon.
@@ -222,7 +223,7 @@ export const BUILDING_DEFS: Record<BuildingKind, BuildingDef> = {
   // the whole history of the game. A station is what a colony ship
   // drops on a rock anyway, so it is the correct socket.
   telescope: {
-    displayName: 'Deep Survey Telescope',
+    get displayName() { return tk('data.building.telescope.name', 'Deep Survey Telescope'); },
     // STATION-HOSTED. Mirrors worker/actions.js. Passive infrastructure
     // belongs on the settlement that dies first -- losing it costs
     // vision, not a defence -- and a station already sees 400 to a
@@ -232,21 +233,21 @@ export const BUILDING_DEFS: Record<BuildingKind, BuildingDef> = {
     costScaling: 1.6,
     baseBuildTicks: 18,
     buildTimeScaling: 1.25,
-    description: "Permanent survey infrastructure. Extends this station's "
+    get description() { return tk('data.building.telescope.desc', "Permanent survey infrastructure. Extends this station's "
       + 'sensor reach, which finds meteoroids as their orbits carry them '
       + 'through — and gives early warning of raiders on your trade lanes. '
-      + 'Finds one rock outright the moment it finishes.',
-    effectShort: 'Sensor range +400 per level; surveys meteoroids',
+      + 'Finds one rock outright the moment it finishes.'); },
+    get effectShort() { return tk('data.building.telescope.short', 'Sensor range +400 per level; surveys meteoroids'); },
   },
   trajectory_thrusters: {
-    displayName: 'Trajectory Control Thrusters',
+    get displayName() { return tk('data.building.trajectory_thrusters.name', 'Trajectory Control Thrusters'); },
     hostType: 'station',
     baseCost: { fuel: 0, ore: 800, credits: 1200 },
     costScaling: 99,            // exorbitant — players should never see L2 even theoretically
     baseBuildTicks: 40,
     buildTimeScaling: 1,
-    description: 'Anchor industrial-scale thrust packages to this rock. Unlocks the RAM action — target another body and crash this asteroid into it.',
-    effectShort: 'Unlocks the RAM action',
+    get description() { return tk('data.building.trajectory_thrusters.desc', 'Anchor industrial-scale thrust packages to this rock. Unlocks the RAM action — target another body and crash this asteroid into it.'); },
+    get effectShort() { return tk('data.building.trajectory_thrusters.short', 'Unlocks the RAM action'); },
   },
 };
 
@@ -322,7 +323,7 @@ export const SETTLEMENT_DEFS: Record<SettlementType, {
     // a pre-existing mismatch, now aligned on the server's number.
     maxHp: 300,
     cost: { fuel: 0, ore: 50, credits: 40 },
-    displayName: 'City',
+    get displayName() { return tk('data.settlement.city.name', 'City'); },
     range: 8,        // ground-based PDC, short range
     damagePerTick: 6,
     pdcRating: 0.3,
@@ -331,7 +332,7 @@ export const SETTLEMENT_DEFS: Record<SettlementType, {
     // Mirrors station_base_hp in worker/configSchema.js (60 -> 180 -> 400).
     maxHp: 400,
     cost: { fuel: 0, ore: 30, credits: 60 },
-    displayName: 'Station',
+    get displayName() { return tk('data.settlement.station.name', 'Station'); },
     range: 12,       // orbital weapons platform, medium range
     damagePerTick: 8,
     pdcRating: 0.5,

@@ -17,6 +17,8 @@
 // the server doesn't know would 400 on save.
 // ============================================================
 
+import { tk } from '../i18n/core';
+
 export type EmblemId =
   | 'anchor' | 'comet' | 'crown' | 'eye' | 'gear' | 'hammer'
   | 'helix' | 'key' | 'leaf' | 'moon' | 'mountain' | 'orbit'
@@ -61,16 +63,42 @@ export const PREMIUM_EMBLEM_IDS: EmblemId[] = [
 
 /** Human labels for tooltips and the Herald's prose. */
 export const EMBLEM_NAMES: Record<EmblemId, string> = {
-  star: 'Star', sun: 'Sun', moon: 'Crescent', comet: 'Comet',
-  orbit: 'Orbit', ring: 'Ringed World', crown: 'Crown', shield: 'Shield',
-  spear: 'Spear', trident: 'Trident', hammer: 'Hammer', anchor: 'Anchor',
-  skull: 'Skull', wolf: 'Wolf', phoenix: 'Phoenix', eye: 'Eye',
-  key: 'Key', gear: 'Gear', helix: 'Helix', leaf: 'Leaf',
-  wave: 'Wave', mountain: 'Mountain', tower: 'Tower', pyramid: 'Pyramid',
-  dragon: 'Dragon', kraken: 'Kraken', galaxy: 'Galaxy', nova: 'Nova',
-  raven: 'Raven', serpent: 'Serpent', swords: 'Crossed Swords',
-  atom: 'Atom', hourglass: 'Hourglass', compass: 'Compass Rose',
-  doublev: 'Double V', rocket: 'Rocket',
+  get star() { return tk('data.emblem.star', 'Star'); },
+  get sun() { return tk('data.emblem.sun', 'Sun'); },
+  get moon() { return tk('data.emblem.moon', 'Crescent'); },
+  get comet() { return tk('data.emblem.comet', 'Comet'); },
+  get orbit() { return tk('data.emblem.orbit', 'Orbit'); },
+  get ring() { return tk('data.emblem.ring', 'Ringed World'); },
+  get crown() { return tk('data.emblem.crown', 'Crown'); },
+  get shield() { return tk('data.emblem.shield', 'Shield'); },
+  get spear() { return tk('data.emblem.spear', 'Spear'); },
+  get trident() { return tk('data.emblem.trident', 'Trident'); },
+  get hammer() { return tk('data.emblem.hammer', 'Hammer'); },
+  get anchor() { return tk('data.emblem.anchor', 'Anchor'); },
+  get skull() { return tk('data.emblem.skull', 'Skull'); },
+  get wolf() { return tk('data.emblem.wolf', 'Wolf'); },
+  get phoenix() { return tk('data.emblem.phoenix', 'Phoenix'); },
+  get eye() { return tk('data.emblem.eye', 'Eye'); },
+  get key() { return tk('data.emblem.key', 'Key'); },
+  get gear() { return tk('data.emblem.gear', 'Gear'); },
+  get helix() { return tk('data.emblem.helix', 'Helix'); },
+  get leaf() { return tk('data.emblem.leaf', 'Leaf'); },
+  get wave() { return tk('data.emblem.wave', 'Wave'); },
+  get mountain() { return tk('data.emblem.mountain', 'Mountain'); },
+  get tower() { return tk('data.emblem.tower', 'Tower'); },
+  get pyramid() { return tk('data.emblem.pyramid', 'Pyramid'); },
+  get dragon() { return tk('data.emblem.dragon', 'Dragon'); },
+  get kraken() { return tk('data.emblem.kraken', 'Kraken'); },
+  get galaxy() { return tk('data.emblem.galaxy', 'Galaxy'); },
+  get nova() { return tk('data.emblem.nova', 'Nova'); },
+  get raven() { return tk('data.emblem.raven', 'Raven'); },
+  get serpent() { return tk('data.emblem.serpent', 'Serpent'); },
+  get swords() { return tk('data.emblem.swords', 'Crossed Swords'); },
+  get atom() { return tk('data.emblem.atom', 'Atom'); },
+  get hourglass() { return tk('data.emblem.hourglass', 'Hourglass'); },
+  get compass() { return tk('data.emblem.compass', 'Compass Rose'); },
+  get doublev() { return tk('data.emblem.doublev', 'Double V'); },
+  get rocket() { return tk('data.emblem.rocket', 'Rocket'); },
 };
 
 const EMBLEM_SET = new Set<string>([...EMBLEM_IDS, ...PREMIUM_EMBLEM_IDS]);
