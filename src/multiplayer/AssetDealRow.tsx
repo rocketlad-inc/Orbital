@@ -27,6 +27,8 @@
 
 import React, { useState } from 'react';
 import type { AssetDealRow as AssetDealRowData } from './api';
+import { t, tn } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 
 interface Props {
   deal: AssetDealRowData;
@@ -39,15 +41,15 @@ interface Props {
 
 const priceOf = (d: AssetDealRowData) => {
   const parts: string[] = [];
-  if (d.price_metal > 0) parts.push(`${d.price_metal} metal`);
-  if (d.price_credits > 0) parts.push(`${d.price_credits} credits`);
-  return parts.join(' + ') || 'nothing';
+  if (d.price_metal > 0) parts.push(t('trade.deal.metalAmt', { n: d.price_metal }));
+  if (d.price_credits > 0) parts.push(t('trade.deal.creditsAmt', { n: d.price_credits }));
+  return parts.join(' + ') || t('trade.deal.nothing');
 };
 
 const paidOf = (d: AssetDealRowData) => {
   const parts: string[] = [];
-  if (d.price_metal > 0) parts.push(`${d.paid_metal}/${d.price_metal} metal`);
-  if (d.price_credits > 0) parts.push(`${d.paid_credits}/${d.price_credits} credits`);
+  if (d.price_metal > 0) parts.push(t('trade.deal.paidMetal', { paid: d.paid_metal, price: d.price_metal }));
+  if (d.price_credits > 0) parts.push(t('trade.deal.paidCredits', { paid: d.paid_credits, price: d.price_credits }));
   return parts.join(' · ');
 };
 
@@ -58,6 +60,7 @@ const PayControls: React.FC<{
   busy: boolean;
   onPay: Props['onPay'];
 }> = ({ d, freighters, busy, onPay }) => {
+  useI18n();
   const dests = d.pay_dests ?? [];
   const [dest, setDest] = useState<string>(d.delivery_body_id ?? dests[0]?.body_id ?? '');
   const coming = d.in_flight ?? { metal: 0, credits: 0, freighters: 0 };
@@ -68,13 +71,13 @@ const PayControls: React.FC<{
     <>
       {coming.freighters > 0 && (
         <span className="adc__note">
-          {coming.freighters} freighter{coming.freighters === 1 ? '' : 's'} on the way
-          {' '}({[coming.metal > 0 ? `${coming.metal} metal` : '', coming.credits > 0 ? `${coming.credits} credits` : '']
+          {tn('trade.deal.freightersOnWay', coming.freighters)}
+          {' '}({[coming.metal > 0 ? t('trade.deal.metalAmt', { n: coming.metal }) : '', coming.credits > 0 ? t('trade.deal.creditsAmt', { n: coming.credits }) : '']
             .filter(Boolean).join(' + ')})
         </span>
       )}
       {covered ? null : freighters.length === 0 ? (
-        <span className="adc__note">No idle freighter to carry the payment.</span>
+        <span className="adc__note">{t('trade.deal.noFreighter')}</span>
       ) : (
         <>
           {dests.length > 1 && (
@@ -83,11 +86,11 @@ const PayControls: React.FC<{
               value={dest}
               disabled={busy}
               onChange={e => setDest(e.target.value)}
-              title="Where the payment lands: the asset itself, or any of the seller's settlements"
+              title={t('trade.deal.payAtTip')}
             >
               {dests.map(x => (
                 <option key={x.body_id} value={x.body_id}>
-                  Pay at {x.name}{x.body_id === d.delivery_body_id ? ' (the asset)' : ''}
+                  {t('trade.deal.payAt', { name: x.name })}{x.body_id === d.delivery_body_id ? ` (${t('trade.deal.theAsset')})` : ''}
                 </option>
               ))}
             </select>
@@ -96,14 +99,14 @@ const PayControls: React.FC<{
             className="adc__select"
             defaultValue=""
             disabled={busy}
-            title="The freighter loads the payment at your nearest dock and hauls it there"
+            title={t('trade.deal.sendTip')}
             onChange={e => {
               const shipId = e.target.value;
               e.currentTarget.value = '';
               if (shipId) onPay(d.id, shipId, dest || undefined);
             }}
           >
-            <option value="">Send a freighter…</option>
+            <option value="">{t('trade.deal.sendFreighter')}</option>
             {freighters.map(f => (
               <option key={f.id} value={f.id}>
                 {f.name}{f.where ? ` — ${f.where}` : ''}
@@ -118,23 +121,25 @@ const PayControls: React.FC<{
 
 export const AssetDealRow: React.FC<Props> = ({
   deal: d, freighters, busy, onRespond, onPay, onCancel,
-}) => (
+}) => {
+  useI18n();
+  return (
   <div className="adc__deal">
     <div className="adc__dealhead">
-      {d.i_am_seller ? 'Selling ' : 'Buying '}
+      {d.i_am_seller ? t('trade.deal.selling') : t('trade.deal.buying')}{' '}
       <strong>{d.asset_name}</strong>
       {d.asset_detail ? ` (${d.asset_detail})` : ''}
-      {d.open_listing ? ' on ' : d.i_am_seller ? ' to ' : ' from '}
+      {' '}{d.open_listing ? t('trade.deal.on') : d.i_am_seller ? t('trade.deal.to') : t('trade.deal.from')}{' '}
       <strong>{d.i_am_seller ? d.buyer_name : d.seller_name}</strong>
     </div>
     <div className="adc__dealsub">
       {priceOf(d)}
-      {d.status === 'active' && <> · paid {paidOf(d)}</>}
-      {d.delivery_body_name && <> · to {d.delivery_body_name}</>}
+      {d.status === 'active' && <> · {t('trade.deal.paid', { paid: paidOf(d) })}</>}
+      {d.delivery_body_name && <> · {t('trade.deal.toBody', { name: d.delivery_body_name })}</>}
       {d.status === 'offered' && (
         <> · {d.open_listing
-          ? 'nobody has claimed it yet'
-          : d.i_am_seller ? 'awaiting their answer' : 'awaiting your answer'}</>
+          ? t('trade.deal.unclaimed')
+          : d.i_am_seller ? t('trade.deal.awaitingTheirs') : t('trade.deal.awaitingYours')}</>
       )}
     </div>
     <div className="adc__acts">
@@ -145,14 +150,14 @@ export const AssetDealRow: React.FC<Props> = ({
             disabled={busy}
             onClick={() => onRespond(d.id, true)}
           >
-            Accept
+            {t('trade.deal.accept')}
           </button>
           <button
             className="adc__btn adc__btn--warn"
             disabled={busy}
             onClick={() => onRespond(d.id, false)}
           >
-            Decline
+            {t('trade.deal.decline')}
           </button>
         </>
       )}
@@ -168,8 +173,9 @@ export const AssetDealRow: React.FC<Props> = ({
         disabled={busy}
         onClick={() => onCancel(d.id)}
       >
-        {d.i_am_seller ? 'Withdraw' : 'Back out'}
+        {d.i_am_seller ? t('trade.deal.withdraw') : t('trade.deal.backOut')}
       </button>
     </div>
   </div>
-);
+  );
+};
