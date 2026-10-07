@@ -11,7 +11,7 @@ import { PressKit } from './PressKit';
 import { Credits } from './Credits';
 import { LandingHome } from './LandingHome';
 import { t, tk, type Key } from '../i18n/core';
-import { useI18n } from '../i18n/react';
+import { useI18n, LanguageSwitch } from '../i18n/react';
 
 interface LandingProps {
   /** Triggered by the Login button or any CTA. Reveals the auth overlay. */
@@ -237,6 +237,7 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, authed = false, onEx
           ))}
         </nav>
         <div className="landing-nav-actions">
+          <LanguageSwitch compact />
           {authed ? (
             <button className="landing-cta-btn" onClick={onExit}>{t('site.back')}</button>
           ) : (

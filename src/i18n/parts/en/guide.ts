@@ -696,4 +696,6 @@ export const guide = {
   'mp.provider.hideFilm': 'Hide the match film',
   'mp.provider.watchFilm': '▶ Watch the match film',
   'mp.provider.loadingRenderer': 'Loading the renderer…',
+  // ---- app shell ----
+  'site.loading': 'Loading…',
 } as const;

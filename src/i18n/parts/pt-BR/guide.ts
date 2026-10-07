@@ -698,4 +698,6 @@ export const guide: Catalog = {
   'mp.provider.hideFilm': 'Ocultar o filme da partida',
   'mp.provider.watchFilm': '▶ Assistir ao filme da partida',
   'mp.provider.loadingRenderer': 'Carregando o renderizador…',
+  // ---- app shell ----
+  'site.loading': 'Carregando…',
 };
