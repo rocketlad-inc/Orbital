@@ -7,7 +7,7 @@ import { parsePartsJson, computeShipStats, countPart, detonatorDamage,
          shipSpeed, hitChance, flakSlowMultiplier,
          damageProfile, defenseMitigation, MITIGATION_FLOOR, refitFee,
          upkeepSplit, REPAIR_TENDER_PER_BAY,
-         shipBaseStatsFromCfg, HULL_COST } from './shipDesigns.js';
+         shipBaseStatsFromCfg, HULL_COST, DEFAULT_LOADOUTS } from './shipDesigns.js';
 import { ensureCaptains, resolveCaptainOnDeath, parseTraits, traitMul, ensureCaptainFloor } from './captains.js';
 import { orbitAngle, ORBITAL_SPEED_SCALE } from './orbitPos.js';
 import {
@@ -224,6 +224,51 @@ export function pickFarGateTwin(bodies, hostId, gameId) {
   const band = byBand.get(bands[h % bands.length]);
   const sorted = [...band].sort((a, b) => a.id.localeCompare(b.id));
   return sorted[Math.floor(h / bands.length) % sorted.length];
+}
+
+/** Fuel a destroyer launches with -- FUEL_MAX in the build path. */
+const DESTROYER_FUEL_MAX = 300;
+
+/**
+ * THE SALVAGED DESTROYER IS A MODERN ONE (Lorne, 2026-10-07: "Fix the
+ * destroyers you find in discovery so they are a modern, updated
+ * destroyer"). It used to be minted from literals frozen before the hull
+ * ladder and the designer: 180 HP, 10 damage, no parts -- a bare hull
+ * from three economies ago, a fraction of anything a yard turns out now.
+ *
+ * Now it is exactly what the finder's own yard would launch today: their
+ * ACTIVE destroyer design (else the standard-issue fit), stats from
+ * computeShipStats on their tech and the game's ship config, full fuel,
+ * at the defence-tech ceiling, wearing the design's silhouette.
+ */
+export async function salvagedDestroyer(env, gameId, factionId) {
+  const design = await env.DB
+    .prepare(
+      `SELECT parts_json, icon_variant FROM game_ship_designs
+        WHERE game_id = ? AND faction_id = ? AND ship_class = 'destroyer' AND is_active = 1
+        LIMIT 1`,
+    )
+    .bind(gameId, factionId).first();
+  let parts = design ? parsePartsJson('destroyer', design.parts_json) : [];
+  if (parts.length === 0) parts = [...DEFAULT_LOADOUTS.destroyer];
+  const tech = Object.fromEntries(((await env.DB
+    .prepare(
+      `SELECT tech_id, level FROM faction_techs
+        WHERE game_id = ? AND faction_id = ? AND tech_id IN ('weapons','armor','shields')`,
+    )
+    .bind(gameId, factionId).all()).results ?? []).map(r => [r.tech_id, Number(r.level) || 0]));
+  const CFG = await loadGameConfig(env, gameId).catch(() => null);
+  const stats = computeShipStats('destroyer', parts, tech, shipBaseStatsFromCfg(CFG));
+  const defenseLvl = Math.max(Number(tech.armor ?? 0), Number(tech.shields ?? 0));
+  const iconVariant = design?.icon_variant && /^[A-Y]$/.test(design.icon_variant) ? design.icon_variant : null;
+  return {
+    parts,
+    iconVariant,
+    hpMax: stats.hp,
+    hp: stats.hp * (1 + 0.08 * defenseLvl),
+    damage: stats.damage_per_tick,
+    fuel: DESTROYER_FUEL_MAX,
+  };
 }
 
 /** A deep cache is worth this many destroyer hulls. Tied to HULL_COST so it
@@ -11213,23 +11258,12 @@ export class Room {
           break;
         }
         case 'derelict_warship': {
-          // Spawn a destroyer for the discoverer in a tight orbit
-          // around the body. Stats mirror the destroyer class definition.
+          // A destroyer for the discoverer, parked in a tight orbit, built
+          // exactly as their own yard would build one today (see
+          // salvagedDestroyer).
           const shipId = `${gameId}:wreck_${body_id.slice(-8)}_${Math.random().toString(36).slice(2, 6)}`;
-          const rp = (body_radius || 4) * 1.5;
-          const ra = (body_radius || 4) * 2.0;
-          // Same launch-at-the-ceiling rule as the build path above: the
-          // hardcoded 180/180 says the author meant a FULL hull, but the
-          // live ceiling is 180 × defense tech, so a Defense-10 finder
-          // salvaged a "free destroyer" that showed up reading 56%.
-          let wreckHp = 180;
-          try {
-            const dRow = await this.env.DB
-              .prepare(`SELECT MAX(level) AS lvl FROM faction_techs
-                         WHERE game_id = ? AND faction_id = ? AND tech_id IN ('armor','shields')`)
-              .bind(gameId, discoverer).first();
-            wreckHp = 180 * (1 + 0.08 * Number(dRow?.lvl ?? 0));
-          } catch (e) { console.error('derelict hp scale failed', e); }
+          const rp = parkOrbitRadius(body_radius);
+          const wreck = await salvagedDestroyer(this.env, gameId, discoverer);
           stmts.push(
             this.env.DB
               .prepare(
@@ -11237,14 +11271,17 @@ export class Room {
                   (id, game_id, owner_faction_id, name, ship_class, parent_body_id,
                    orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, orbit_direction,
                    fuel, fuel_max, status, built_at_tick,
-                   hp, hp_max, damage_per_tick, home_body_id)
+                   hp, hp_max, damage_per_tick, icon_variant, parts_json, home_body_id)
                  VALUES (?, ?, ?, ?, 'destroyer', ?,
                          ?, ?, 0, 0, ?, 1,
-                         200, 200, 'active', ?,
-                         ?, 180, 10, ?)`,
+                         ?, ?, 'active', ?,
+                         ?, ?, ?, ?, ?, ?)`,
               )
               .bind(shipId, gameId, discoverer, `${body_name} Salvage`, body_id,
-                    rp, ra, tick, tick, wreckHp, body_id),
+                    rp, rp, tick,
+                    wreck.fuel, wreck.fuel, tick,
+                    wreck.hp, wreck.hpMax, wreck.damage, wreck.iconVariant,
+                    JSON.stringify(wreck.parts), body_id),
           );
           chronicleMessage = `${body_name}: DISCOVERY — a derelict destroyer is salvageable. Claimed.`;
           break;
