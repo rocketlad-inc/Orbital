@@ -702,6 +702,21 @@ export const ShipPanel: React.FC = () => {
     return () => window.removeEventListener('orbital-transfer-confirm', handleTransferConfirmEvent);
   }, [handleTransferConfirmEvent]);
 
+  // A map pick the map itself refused (MapCanvas): today only a sun gate
+  // still flying out of the Sun. Said in the transfer error box; the pick
+  // stays open so the player can choose another target.
+  useEffect(() => {
+    const onRefused = (e: Event) => {
+      const d = (e as CustomEvent).detail;
+      if (d?.reason === 'gate_in_flight') {
+        setTransferNote(null);
+        setTransferError(t('mp.err.gateInFlightClick', { tick: d.landsAt }));
+      }
+    };
+    window.addEventListener('orbital-transfer-refused', onRefused);
+    return () => window.removeEventListener('orbital-transfer-refused', onRefused);
+  }, []);
+
   // GroupSelectionPanel takes the ship-card slot when 2+ live hulls are
   // selected — the group is what you're commanding, and showing whichever
   // single ship you last clicked contradicted the action bar. Same live

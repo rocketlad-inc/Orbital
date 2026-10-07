@@ -109,7 +109,7 @@ import {
 } from '../render/bodyPresentation';
 import type { BodyPresentation } from '../render/bodyPresentation';
 import { MIN_CAMERA_SCALE } from '../render/cameraLimits';
-import { isGateInFlight, landingSiteIdOf } from '../game/farSystems';
+import { isGateInFlight } from '../game/farSystems';
 import { reachSpec } from '../game/structureReach';
 import { forecastIntercepts, reachOf } from '../game/firingWindows';
 import { COLORS, withOpacity, lighten } from '../render/colors';
@@ -4414,13 +4414,20 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             pickId = body.id;
           }
         }
-        // Clicking the thing still flying out of the Sun means "go where
-        // it is going": its landing site (worker/sunGates.js). The gate
-        // itself is refused as a target until it lands.
+        // THE SQUID CANNOT BE TARGETED IN FLIGHT (Lorne, 2026-10-07:
+        // "Refuse the click. Cant target the Squid in transit"). This
+        // click used to be read as "go where it is going" and quietly
+        // swapped in its landing site out in the Far Reach: a player who
+        // clicked the squid passing Venus to board it sent five hulls on
+        // a 40-tick burn to the edge of the system. Now it is refused, out
+        // loud, and the pick stays open so another target can be chosen.
+        // The landing site is still a target, clicked as itself.
         const picked = pickId ? gameState.bodies.find(b => b.id === pickId) : undefined;
         if (picked && isGateInFlight(picked, renderTick())) {
-          const site = landingSiteIdOf(picked.id);
-          pickId = gameState.bodies.some(b => b.id === site) ? site : null;
+          window.dispatchEvent(new CustomEvent('orbital-transfer-refused', {
+            detail: { reason: 'gate_in_flight', landsAt: Math.ceil(picked.emerge!.untilTick) },
+          }));
+          return;
         }
         if (pickId) {
           window.dispatchEvent(new CustomEvent('orbital-transfer-confirm', {
