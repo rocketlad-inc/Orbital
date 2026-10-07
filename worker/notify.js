@@ -19,6 +19,8 @@
 //     bot at all.
 // ============================================================================
 
+import { pickLocale, tr } from './i18n.js';
+
 const DISCORD_API = 'https://discord.com/api/v10';
 
 // The 'urgent' category was removed after it over-fired (see alerts.js).
@@ -69,6 +71,14 @@ export const CATEGORIES = {
   // opening (sunGates.js). A handful a game, so on everywhere by default.
   galactic: 'Events that change the whole map, like gates opening',
 };
+
+/** A category's one-line description in a language. CATEGORIES (English)
+ *  stays the source and the admin panel's labels; this is what a player is
+ *  shown in /notify. A category with no catalog line falls back to it. */
+export function categoryLabel(locale, key) {
+  const s = tr(locale, `alert.cat.${key}`);
+  return s === `alert.cat.${key}` ? (CATEGORIES[key] ?? key) : s;
+}
 
 /**
  * Where a category goes when the player has never said.
@@ -221,6 +231,30 @@ export async function categoryEnabled(env, userId, category, transport = 'discor
  * those replies would start lying. Push reports separately in `.pushed`.
  */
 export async function sendDm(env, opts) {
+  // THE RECIPIENT'S LANGUAGE (users.locale; NULL = English). One read of
+  // their row, which sendDiscordDm below then REUSES for discord_id, so the
+  // tick path pays no extra round trip for it. A producer that writes
+  // player-visible text passes `embed` (and `actions` / `components`) as a
+  // function of the locale, `(L) => ({...})`, and it is called here once
+  // the language is known; a plain object is sent as given.
+  let user;
+  try {
+    user = await env.DB
+      .prepare('SELECT discord_id, locale FROM users WHERE id = ?')
+      .bind(opts.userId).first();
+  } catch {
+    user = undefined;       // sendDiscordDm reads again, inside its own guard
+  }
+  const L = pickLocale(opts.locale, user?.locale);
+  const built = {
+    ...opts,
+    locale: L,
+    embed: typeof opts.embed === 'function' ? opts.embed(L) : opts.embed,
+    actions: typeof opts.actions === 'function' ? opts.actions(L) : opts.actions,
+    components: typeof opts.components === 'function' ? opts.components(L) : opts.components,
+  };
+  opts = built;
+
   // Independent of Discord entirely: a player who never linked an
   // account still has a phone, and that is most of the point.
   let pushed = false;
@@ -247,16 +281,16 @@ export async function sendDm(env, opts) {
   } catch (e) {
     console.error('watch alert failed', e);
   }
-  const discord = await sendDiscordDm(env, opts);
+  const discord = await sendDiscordDm(env, opts, user);
   return { ...discord, pushed, watched };
 }
 
-async function sendDiscordDm(env, opts) {
+async function sendDiscordDm(env, opts, knownUser) {
   const { userId, category, dedupeKey = null, embed, components } = opts;
   if (!env.DISCORD_BOT_TOKEN) return { sent: false, reason: 'no_bot_token' };
 
   try {
-    const user = await env.DB
+    const user = knownUser !== undefined ? knownUser : await env.DB
       .prepare('SELECT discord_id FROM users WHERE id = ?')
       .bind(userId).first();
     if (!user?.discord_id) return { sent: false, reason: 'not_linked' };

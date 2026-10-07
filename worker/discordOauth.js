@@ -18,6 +18,8 @@
 // authorise an app, and because it still works from a phone.
 // ============================================================================
 
+import { tr, normalizeLocale, localeFromAcceptLanguage } from './i18n.js';
+
 const AUTHORIZE = 'https://discord.com/api/oauth2/authorize';
 const TOKEN = 'https://discord.com/api/oauth2/token';
 const ME = 'https://discord.com/api/v10/users/@me';
@@ -63,22 +65,41 @@ function redirectUri(env, url) {
  * were the problem). Anything else is usually a stale or reused code,
  * where trying again does work.
  */
-export async function tokenFailurePage(tokenRes, what, logTag) {
+export async function tokenFailurePage(tokenRes, what, logTag, L = 'en') {
   const text = await tokenRes.text().catch(() => '');
   console.error(`${logTag} token exchange failed`, tokenRes.status, text);
+  // `what` names the flow ('sign-in' or 'connection'): one whole sentence
+  // per flow, not a fragment dropped into a template, so a language with
+  // gendered nouns can say it properly.
+  const kind = what === 'connection' ? 'connection' : 'signin';
   if (tokenRes.status === 401 || /invalid_client/.test(text)) {
-    return page(`Orbital could not finish the ${what}`,
-      "This one is on Orbital's side, not yours or your server's: our Discord "
-      + 'credentials were refused. It has been logged; please try again later.', false);
+    return page(tr(L, `dc.oauth.cannotFinish.${kind}`), tr(L, 'dc.oauth.ourSide'), false, L);
   }
-  return page(`Discord refused the ${what}`, 'The link from Discord had expired. Start again from the game.', false);
+  return page(tr(L, `dc.oauth.refused.${kind}`), tr(L, 'dc.oauth.linkExpired'), false, L);
 }
 
-export function page(title, body, ok = true) {
+/**
+ * The language of one of these pages. A browser lands here with no app
+ * state, so: the browser's own Accept-Language first, then the signed-in
+ * player's saved language when we know who they are, else English.
+ */
+export async function pageLocale(env, req, userId = null) {
+  const fromHeader = localeFromAcceptLanguage(req?.headers?.get?.('accept-language'));
+  if (fromHeader) return fromHeader;
+  if (userId && env?.DB) {
+    try {
+      const row = await env.DB.prepare('SELECT locale FROM users WHERE id = ?').bind(userId).first();
+      return normalizeLocale(row?.locale) ?? 'en';
+    } catch { /* English */ }
+  }
+  return 'en';
+}
+
+export function page(title, body, ok = true, L = 'en') {
   // Deliberately a full page, not JSON: this is the end of a browser
   // redirect chain, so a human is looking at it.
   return new Response(
-    `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title>
+    `<!doctype html><html${L === 'en' ? '' : ` lang="${L}"`}><head><meta charset="utf-8"><title>${title}</title>
      <style>
        body{background:#070b12;color:#e7eef6;font:16px/1.6 ui-sans-serif,system-ui,sans-serif;
             display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
@@ -89,7 +110,7 @@ export function page(title, body, ok = true) {
        a{color:#4ecdc4}
      </style></head><body><div class="card">
      <h1>${title}</h1><p>${body}</p>
-     <p><a href="/">Return to Orbital</a></p>
+     <p><a href="/">${tr(L, 'dc.oauth.return')}</a></p>
      </div></body></html>`,
     { status: ok ? 200 : 400, headers: { 'content-type': 'text/html; charset=utf-8' } },
   );
@@ -107,9 +128,14 @@ export function page(title, body, ok = true) {
  * question is answered would be a silent "no", and the player would
  * never learn the feature existed.
  */
-function consentPage(username) {
+/** A string as a single-quoted JS literal for the inline script below. */
+function jsStr(s) {
+  return `'${String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/<\//g, '<\\/')}'`;
+}
+
+function consentPage(username, L = 'en') {
   return new Response(
-    `<!doctype html><html><head><meta charset="utf-8"><title>Discord connected</title>
+    `<!doctype html><html${L === 'en' ? '' : ` lang="${L}"`}><head><meta charset="utf-8"><title>${tr(L, 'dc.oauth.connected')}</title>
      <style>
        body{background:#070b12;color:#e7eef6;font:16px/1.6 ui-sans-serif,system-ui,sans-serif;
             display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:20px}
@@ -126,19 +152,16 @@ function consentPage(username) {
        a{color:#4ecdc4}
        #done{display:none;color:#cdd9e4}
      </style></head><body><div class="card">
-     <h1>Discord connected</h1>
-     <p>Linked as <b style="color:#cdd9e4">${username}</b>. You can vote on Senate bills from
-     the channel either way — one more question:</p>
+     <h1>${tr(L, 'dc.oauth.connected')}</h1>
+     <p>${tr(L, 'dc.oauth.linkedAs', { name: `<b style="color:#cdd9e4">${username}</b>` })}</p>
      <div id="ask">
-       <div class="opt"><b>📬 Send me direct messages</b><span>Your 6pm situation report,
-         a nudge when a vote is closing without you, and messages from other factions.</span>
-         <button onclick="pick(true)">Yes, DM me</button></div>
-       <div class="opt"><b>🔕 Server only</b><span>Nothing in your inbox. Senate cards, the
-         Orbital Herald and every slash command still work exactly the same.</span>
-         <button class="ghost" onclick="pick(false)">Server only</button></div>
+       <div class="opt"><b>${tr(L, 'dc.oauth.dmTitle')}</b><span>${tr(L, 'dc.oauth.dmBody')}</span>
+         <button onclick="pick(true)">${tr(L, 'dc.consent.btnYes')}</button></div>
+       <div class="opt"><b>${tr(L, 'dc.oauth.serverTitle')}</b><span>${tr(L, 'dc.oauth.serverBody')}</span>
+         <button class="ghost" onclick="pick(false)">${tr(L, 'dc.consent.btnNo')}</button></div>
      </div>
      <div id="done"></div>
-     <p style="margin-top:16px"><a href="/">Return to Orbital</a></p>
+     <p style="margin-top:16px"><a href="/">${tr(L, 'dc.oauth.return')}</a></p>
      </div>
      <script>
        async function pick(consent){
@@ -149,11 +172,11 @@ function consentPage(username) {
              method:'POST', headers:{'content-type':'application/json'},
              credentials:'same-origin', body:JSON.stringify({consent:consent})});
            var d = await r.json();
-           if(!consent) msg='🔕 <b>Server only.</b> Nothing will reach your inbox. You can change this any time in the Notifications panel.';
-           else if(d.dm_ok) msg='📬 <b>DMs on.</b> A welcome message is waiting in your Discord inbox.';
-           else msg='⚠️ You are opted in, but Discord <b>blocked the test message</b>. Right-click the server icon &rarr; Privacy Settings &rarr; enable Direct Messages. Everything still reaches you in the channel meanwhile.';
+           if(!consent) msg=${jsStr(tr(L, 'dc.oauth.msgServer'))};
+           else if(d.dm_ok) msg=${jsStr(tr(L, 'dc.oauth.msgOn'))};
+           else msg=${jsStr(tr(L, 'dc.oauth.msgBlocked'))};
          }catch(e){
-           msg='Could not save that. Set it in-game under Notifications.';
+           msg=${jsStr(tr(L, 'dc.oauth.msgFailed'))};
          }
          document.getElementById('ask').style.display='none';
          var el=document.getElementById('done');
@@ -173,8 +196,8 @@ export async function handleOauthStart(req, env, { session, url }) {
   if (!session) return new Response('sign in first', { status: 401 });
   const clientId = await discordClientId(env);
   if (!clientId || !env.DISCORD_CLIENT_SECRET) {
-    return page('Discord sign-in not configured',
-      'The one-click link needs a Discord client secret. Use the code method for now.', false);
+    const L = await pageLocale(env, req, session.user_id);
+    return page(tr(L, 'dc.oauth.notConfigured'), tr(L, 'dc.oauth.notConfiguredBody'), false, L);
   }
 
   // Reuse the link-code table for state: same TTL semantics, same
@@ -194,7 +217,8 @@ export async function handleOauthStart(req, env, { session, url }) {
       .run();
   } catch (e) {
     console.error('oauth state store failed', e);
-    return page('Could not start sign-in', 'Please try again.', false);
+    const L = await pageLocale(env, req, session.user_id);
+    return page(tr(L, 'dc.oauth.cannotStart'), tr(L, 'dc.oauth.tryAgain'), false, L);
   }
 
   const params = new URLSearchParams({
@@ -213,7 +237,8 @@ export async function handleOauthCallback(req, env, { url }) {
   const code = url.searchParams.get('code');
   const state = url.searchParams.get('state');
   if (!code || !state) {
-    return page('Sign-in cancelled', 'Nothing was linked. You can try again any time.', false);
+    const L = await pageLocale(env, req);
+    return page(tr(L, 'dc.oauth.cancelled'), tr(L, 'dc.oauth.cancelledBody'), false, L);
   }
 
   // Consume the state ONCE. Deleting on read means a replayed callback
@@ -229,8 +254,11 @@ export async function handleOauthCallback(req, env, { url }) {
   } catch (e) {
     console.error('oauth state lookup failed', e);
   }
+  // The browser's language, else the signed-in player's saved one (the
+  // state row told us who this is).
+  const L = await pageLocale(env, req, userId);
   if (!userId) {
-    return page('That sign-in expired', 'Head back to Orbital and press Connect Discord again.', false);
+    return page(tr(L, 'dc.oauth.expired'), tr(L, 'dc.oauth.expiredBody'), false, L);
   }
 
   try {
@@ -245,13 +273,13 @@ export async function handleOauthCallback(req, env, { url }) {
         redirect_uri: redirectUri(env, url),
       }),
     });
-    if (!tokenRes.ok) return tokenFailurePage(tokenRes, 'sign-in', 'oauth');
+    if (!tokenRes.ok) return tokenFailurePage(tokenRes, 'sign-in', 'oauth', L);
     const tok = await tokenRes.json();
 
     const meRes = await fetch(ME, { headers: { authorization: `Bearer ${tok.access_token}` } });
-    if (!meRes.ok) return page('Could not read your Discord account', 'Please try again.', false);
+    if (!meRes.ok) return page(tr(L, 'dc.oauth.cannotRead'), tr(L, 'dc.oauth.tryAgain'), false, L);
     const me = await meRes.json();
-    if (!me?.id) return page('Could not read your Discord account', 'Please try again.', false);
+    if (!me?.id) return page(tr(L, 'dc.oauth.cannotRead'), tr(L, 'dc.oauth.tryAgain'), false, L);
 
     // Re-linking: clear this Discord id from any other account first, or
     // the partial unique index rejects the update. Same rule the /link
@@ -265,10 +293,10 @@ export async function handleOauthCallback(req, env, { url }) {
 
     // Linked, but not yet permitted to DM them — same rule as /link.
     // This page asks before anything reaches their inbox.
-    return consentPage((me.username ?? 'your account').replace(/[<>&]/g, ''));
+    return consentPage((me.username ?? tr(L, 'dc.oauth.yourAccount')).replace(/[<>&]/g, ''), L);
   } catch (e) {
     console.error('oauth callback failed', e);
-    return page('Something went wrong', 'Please try again.', false);
+    return page(tr(L, 'dc.oauth.wrong'), tr(L, 'dc.oauth.tryAgain'), false, L);
   }
 }
 
