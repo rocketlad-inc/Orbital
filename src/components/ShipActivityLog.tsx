@@ -15,6 +15,8 @@
 
 import React, { useEffect, useState } from 'react';
 import { apiFetch } from '../multiplayer/api';
+import { t } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 
 export interface ShipLogRow {
   tick: number;
@@ -47,53 +49,54 @@ const dmg = (n: number | null | undefined) =>
  *  so every row reads with the same grammar: what happened, to whom, and
  *  what it cost. */
 function describe(r: ShipLogRow): { text: string; tone: 'good' | 'bad' | 'plain' } {
-  const other = r.otherClass ?? 'contact';
-  const transit = r.inTransit ? ' in flight' : '';
+  const other = r.otherClass ?? t('ship.log.contact');
+  const transit = r.inTransit ? ` ${t('ship.log.inFlight')}` : '';
   switch (r.kind) {
     case 'fired': {
-      if (!r.hit) return { text: `Fired on ${other}${transit} — missed`, tone: 'plain' };
+      if (!r.hit) return { text: t('ship.log.firedMiss', { other, transit }), tone: 'plain' };
       const d = dmg(r.damage);
-      const killed = r.killed ? ' — DESTROYED' : '';
+      const killed = r.killed ? t('ship.log.destroyedSuffix') : '';
       return {
-        text: `Fired on ${other}${transit} — hit${d != null ? ` for ${d}` : ''}${killed}`,
+        text: `${d != null ? t('ship.log.firedHitDmg', { other, transit, d }) : t('ship.log.firedHit', { other, transit })}${killed}`,
         tone: 'good',
       };
     }
     case 'took_fire': {
-      if (!r.hit) return { text: `Under fire from ${other}${transit} — missed`, tone: 'plain' };
+      if (!r.hit) return { text: t('ship.log.fireMiss', { other, transit }), tone: 'plain' };
       const d = dmg(r.damage);
       return {
-        text: `Hit by ${other}${transit}${d != null ? ` for ${d}` : ''}`,
+        text: d != null ? t('ship.log.hitByDmg', { other, transit, d }) : t('ship.log.hitBy', { other, transit }),
         tone: 'bad',
       };
     }
     case 'burn':
-      return { text: `Burned for ${r.targetBodyName ?? 'a new heading'}`, tone: 'plain' };
+      return { text: t('ship.log.burned', { target: r.targetBodyName ?? t('ship.log.newHeading') }), tone: 'plain' };
     case 'event':
     default: {
       const p = (r.payload ?? {}) as Record<string, string | number | null>;
       switch (r.event) {
         case 'ship_built':
-          return { text: `Launched from ${p.body_name ?? 'the yard'}`, tone: 'plain' };
+          return { text: t('ship.log.launched', { body: p.body_name ?? t('ship.log.theYard') }), tone: 'plain' };
         case 'ship_damaged':
-          return { text: `Took ${dmg(Number(p.damage)) ?? '?'} damage at ${p.body_name ?? 'station'}`, tone: 'bad' };
+          return { text: t('ship.log.tookDamage', { n: dmg(Number(p.damage)) ?? '?', body: p.body_name ?? t('ship.log.station') }), tone: 'bad' };
         case 'ship_destroyed':
           return {
-            text: `Destroyed at ${p.body_name ?? 'station'}`
-              + (p.killer_ship_name ? ` by ${p.killer_ship_name}` : ''),
+            text: (p.killer_ship_name
+              ? t('ship.log.destroyedAtBy', { body: p.body_name ?? t('ship.log.station'), killer: p.killer_ship_name })
+              : t('ship.log.destroyedAt', { body: p.body_name ?? t('ship.log.station') })),
             tone: 'bad',
           };
         case 'captain_lost':
-          return { text: `Captain ${p.captain_name ?? ''} lost with the ship`.trim(), tone: 'bad' };
+          return { text: t('ship.log.captainLost', { name: p.captain_name ?? '' }).trim(), tone: 'bad' };
         case 'captain_rescued':
-          return { text: `Captain ${p.captain_name ?? ''} pulled from the wreck`.trim(), tone: 'good' };
+          return { text: t('ship.log.captainRescued', { name: p.captain_name ?? '' }).trim(), tone: 'good' };
         case 'ship_refitted':
           return {
-            text: `Refitted to ${p.design_name ?? 'its new design'} at ${p.body_name ?? 'a friendly world'}`,
+            text: t('ship.log.refitted', { design: p.design_name ?? t('ship.log.newDesign'), body: p.body_name ?? t('ship.log.friendlyWorld') }),
             tone: 'good',
           };
         default:
-          return { text: (r.event ?? 'event').replace(/_/g, ' '), tone: 'plain' };
+          return { text: (r.event ?? t('ship.log.event')).replace(/_/g, ' '), tone: 'plain' };
       }
     }
   }
@@ -105,9 +108,9 @@ function describe(r: ShipLogRow): { text: string; tone: 'good' | 'bad' | 'plain'
 function geometry(r: ShipLogRow): string | null {
   if (r.kind !== 'fired' && r.kind !== 'took_fire') return null;
   const bits: string[] = [];
-  if (r.closestApproach != null) bits.push(`${Math.round(r.closestApproach)}u closest`);
+  if (r.closestApproach != null) bits.push(t('ship.log.closest', { n: Math.round(r.closestApproach) }));
   if (r.relativeVelocity != null) bits.push(`Δv ${Math.round(r.relativeVelocity)}`);
-  if (r.hitChance != null) bits.push(`${Math.round(r.hitChance * 100)}% odds`);
+  if (r.hitChance != null) bits.push(t('ship.log.odds', { n: Math.round(r.hitChance * 100) }));
   return bits.length ? bits.join(' · ') : null;
 }
 
@@ -118,6 +121,7 @@ const TONE: Record<string, string> = {
 };
 
 export const ShipActivityLog: React.FC<{ gameId: string; shipId: string }> = ({ gameId, shipId }) => {
+  useI18n();
   const [data, setData] = useState<LogResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -132,13 +136,13 @@ export const ShipActivityLog: React.FC<{ gameId: string; shipId: string }> = ({ 
       );
       if (!live) return;
       if (res.ok) setData(res.data);
-      else setError(res.error?.message ?? `Failed (${res.status})`);
+      else setError(res.error?.message ?? t('ship.log.failed', { status: res.status }));
       setLoading(false);
     })();
     return () => { live = false; };
   }, [gameId, shipId]);
 
-  if (loading) return <div className="ship-log__note">Reading the log…</div>;
+  if (loading) return <div className="ship-log__note">{t('ship.log.reading')}</div>;
   if (error) return <div className="ship-log__note ship-log__note--bad">{error}</div>;
   if (!data) return null;
 
@@ -147,12 +151,12 @@ export const ShipActivityLog: React.FC<{ gameId: string; shipId: string }> = ({ 
       {/* Say WHY a rival's log is thin, rather than letting it read as broken. */}
       {data.scope === 'shared_engagements' && (
         <div className="ship-log__note">
-          Not your ship — showing only engagements you were part of.
+          {t('ship.log.notYours')}
         </div>
       )}
       {data.rows.length === 0 && (
         <div className="ship-log__note">
-          {data.scope === 'full' ? 'Nothing logged yet.' : 'You have never engaged this ship.'}
+          {data.scope === 'full' ? t('ship.log.empty') : t('ship.log.neverEngaged')}
         </div>
       )}
       {data.rows.map((r, i) => {

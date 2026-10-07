@@ -33,6 +33,8 @@ import type { ChainStep } from '../physics/chainPlanner';
 import './OverviewPanel.css';
 import './FleetPanel.css';
 import { fleetPath } from '../multiplayer/fleetWire';
+import { t, tn } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 
 interface FleetPanelProps {
   onClose: () => void;
@@ -58,6 +60,7 @@ type Filter = 'all' | 'player' | 'enemy' | 'captains';
  * quote a price the tick no longer charges.
  */
 const FleetUpkeepLine: React.FC = () => {
+  useI18n();
   const { gameState } = useGameContext();
   const [open, setOpen] = useState(false);
   const up = gameState.fleetUpkeep;
@@ -75,7 +78,7 @@ const FleetUpkeepLine: React.FC = () => {
     <div className="fleet-header__counts" style={{ display: 'block', marginTop: 2 }}>
       <button
         onClick={() => setOpen(o => !o)}
-        title="Per-tick fleet maintenance. Click for the breakdown by ship class."
+        title={t('fleet.upkeepTip')}
         style={{
           background: 'none', border: 'none', padding: 0, cursor: 'pointer',
           font: 'inherit', color: inDebt ? '#ff6b6b' : 'inherit', textAlign: 'left',
@@ -84,17 +87,16 @@ const FleetUpkeepLine: React.FC = () => {
         <span aria-hidden>{inDebt ? '💸' : '🛠'}</span>{' '}
         {/* Resource tints defer to the red arrears state — debt must
             stay unmissable, so segments only tint when solvent. */}
-        Upkeep <span style={inDebt ? undefined : { color: RESOURCE_COLORS.credits }}>{fmt(up.credits)}C</span>
-        {up.ore > 0 && <> · <span style={inDebt ? undefined : { color: RESOURCE_COLORS.metal }}>{fmt(up.ore)}M</span></>} / tick
-        {mult !== 1 && <span style={{ opacity: 0.75 }}> (senate ×{mult})</span>}
+        {t('fleet.upkeep')} <span style={inDebt ? undefined : { color: RESOURCE_COLORS.credits }}>{fmt(up.credits)}C</span>
+        {up.ore > 0 && <> · <span style={inDebt ? undefined : { color: RESOURCE_COLORS.metal }}>{fmt(up.ore)}M</span></>} / {t('fleet.tick')}
+        {mult !== 1 && <span style={{ opacity: 0.75 }}> ({t('fleet.senateMult', { mult })})</span>}
         {rows.length > 0 && <span style={{ opacity: 0.6 }}> {open ? '▾' : '▸'}</span>}
       </button>
 
       {inDebt && (
         <div style={{ color: '#ff6b6b', fontSize: 11, marginTop: 1 }}>
-          Unpaid: {fmt(arrears!.credits)}C
-          {arrears!.ore > 0 ? ` · ${fmt(arrears!.ore)}M` : ''} — ships fight at{' '}
-          {Math.round((up.arrearsDamageMult ?? 0.75) * 100)}% damage until it clears.
+          {t('fleet.unpaid', { c: fmt(arrears!.credits) })}
+          {arrears!.ore > 0 ? ` · ${fmt(arrears!.ore)}M` : ''} {t('fleet.unpaidTail', { pct: Math.round((up.arrearsDamageMult ?? 0.75) * 100) })}
         </div>
       )}
 
@@ -124,6 +126,7 @@ const FleetUpkeepLine: React.FC = () => {
 };
 
 export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
+  useI18n();
   const {
     gameState, selectShip, focusBody, uiState,
     launchTorchTransfer, recallTorchTransfer, renameShip,
@@ -171,7 +174,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   // submit assignCaptain and need the same busy guard + rejection text.
   const doCap = (p: Promise<{ ok: boolean; error?: string }>) => {
     setCapBusy(true);
-    p.then(res => { setCapBusy(false); setCapMsg(res.ok ? null : (res.error ?? 'Rejected')); });
+    p.then(res => { setCapBusy(false); setCapMsg(res.ok ? null : (res.error ?? t('fleet.rejected'))); });
   };
   // Which ship's NO CAPTAIN picker is open.
   const [capPickFor, setCapPickFor] = useState<string | null>(null);
@@ -236,8 +239,8 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   // derived one, so the fleet-menu ship icons carry the same two-tone
   // livery the map does.
   const factionOf = (ownedBy: string): { name: string; color: string; color2: string } => {
-    if (ownedBy === 'player') return { name: 'You', color: '#4ecdc4', color2: deriveSecondary('#4ecdc4') };
-    if (ownedBy === 'enemy') return { name: 'Enemy', color: '#ff5e5e', color2: deriveSecondary('#ff5e5e') };
+    if (ownedBy === 'player') return { name: t('fleet.you'), color: '#4ecdc4', color2: deriveSecondary('#4ecdc4') };
+    if (ownedBy === 'enemy') return { name: t('fleet.enemy'), color: '#ff5e5e', color2: deriveSecondary('#ff5e5e') };
     const f = factionById.get(ownedBy);
     if (f) return f;
     // Last resort (unknown faction id): show the short suffix, not the
@@ -445,13 +448,13 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     if (chain.length === 0 || visibleSelected.length === 0) return;
     const res = bulkChain(visibleSelected, chain, (msg) => setBulkError(msg));
     if (res.issued === 0) {
-      setBulkError('Could not plan that route for any selected ship');
+      setBulkError(t('fleet.noRoute'));
       return;
     }
     // A cut-short chain still LAUNCHES, so silence would park hulls
     // somewhere nobody chose.
     setBulkError(res.truncated > 0
-      ? `${res.issued} launched · ${res.truncated} cut short`
+      ? t('fleet.launchedCut', { issued: res.issued, cut: res.truncated })
       : null);
     setChain([]);
     setShowChain(false);
@@ -548,16 +551,16 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
       }).then(res => {
         if (!res.ok) {
           rejections.push(humanizeMpError(res.code, res.error, 'transfer'));
-          setRepairMsg(`${rejections.length} repair transfer${rejections.length === 1 ? '' : 's'} rejected — ${rejections[0]}`);
+          setRepairMsg(tn('fleet.repairRejected', rejections.length, { msg: rejections[0] }));
         }
       });
     }
     if (sent > 0) {
-      setRepairMsg(`${sent} ship${sent === 1 ? '' : 's'} dispatched to shipyards for repair`);
+      setRepairMsg(tn('fleet.repairSent', sent));
     } else {
       setRepairMsg(noYard > 0
-        ? 'No friendly shipyard to send them to — build a station shipyard first'
-        : 'No damaged ships needed dispatching');
+        ? t('fleet.noYard')
+        : t('fleet.noneDamaged'));
     }
   };
 
@@ -577,7 +580,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   const issueBulkRecall = () => {
     setBulkError(null);
     if (recallSelected.length === 0) {
-      setBulkError('No ships in flight selected');
+      setBulkError(t('fleet.noneInFlight'));
       return;
     }
     let issued = 0;
@@ -599,7 +602,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
       });
       issued += 1;
     }
-    if (issued === 0) { setBulkError('Could not plan a return burn for any selected ship'); return; }
+    if (issued === 0) { setBulkError(t('fleet.noReturnBurn')); return; }
     if (mpActions) void reportBatch(mpActions.transferMany(intents), recallSelected.length);
   };
 
@@ -610,17 +613,17 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     const rejected = results.filter((r): r is Extract<MpActionResult, { ok: false }> => !r.ok);
     if (rejected.length > 0) {
       setBulkError(
-        `${rejected.length} of ${of} rejected by server — ${humanizeMpError(rejected[0].code, rejected[0].error, 'transfer')}`,
+        t('fleet.rejectedByServer', { n: rejected.length, of, msg: humanizeMpError(rejected[0].code, rejected[0].error, 'transfer') }),
       );
     }
   };
 
   const issueBulkTransfer = () => {
     setBulkError(null);
-    if (!bulkTarget) { setBulkError('Pick a destination'); return; }
+    if (!bulkTarget) { setBulkError(t('fleet.pickDest')); return; }
     const target = gameState.bodies.find(b => b.id === bulkTarget);
-    if (!target) { setBulkError('Unknown destination'); return; }
-    if (visibleSelected.length === 0) { setBulkError('No eligible ships selected'); return; }
+    if (!target) { setBulkError(t('fleet.unknownDest')); return; }
+    if (visibleSelected.length === 0) { setBulkError(t('fleet.noEligible')); return; }
 
     let issued = 0;
     // Server refusals are summarised once the batch answers ("3 of 70
@@ -647,7 +650,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
       });
       issued += 1;
     }
-    if (issued === 0) { setBulkError('Could not plan a transfer for any selected ship'); return; }
+    if (issued === 0) { setBulkError(t('fleet.noTransfer')); return; }
     if (mpActions) void reportBatch(mpActions.transferMany(intents), visibleSelected.length);
     setSelectedIds(new Set());
     setBulkTarget('');
@@ -695,7 +698,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   const issueBulkOrders = () => {
     setOrdersNotice(null);
     if (!mpActions) return;
-    if (ordersSelected.length === 0) { setOrdersNotice('No ships selected'); return; }
+    if (ordersSelected.length === 0) { setOrdersNotice(t('fleet.noneSelected')); return; }
     // The detonate dropdown hides when the selection has no detonator
     // hulls, but its state survives the selection change — drop it here
     // so a stale value can't ride along on a later SET ORDERS.
@@ -704,7 +707,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     // selection can shoot, but its state outlives the selection.
     const targeting = armedSelectedCount > 0 ? bulkTargeting : '';
     if (!bulkStance && !bulkRetreat && !bulkRetreatTo && !detonate && !targeting) {
-      setOrdersNotice('Pick at least one order to apply');
+      setOrdersNotice(t('fleet.pickOrder'));
       return;
     }
     mpActions.setShipOrders({
@@ -724,7 +727,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
         : {}),
     }).then(res => {
       if (res.ok) {
-        setOrdersNotice(`Orders set on ${ordersSelected.length} ship${ordersSelected.length === 1 ? '' : 's'}`);
+        setOrdersNotice(tn('fleet.ordersSet', ordersSelected.length));
         setBulkStance('');
         setBulkRetreat('');
         setBulkRetreatTo('');
@@ -749,7 +752,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
         <span className={`fleet-xp__tier fleet-xp__tier--${rankTier(rank).toLowerCase()}`}>
           {rankTier(rank)}
         </span>
-        <span className="fleet-xp__kills" title="Confirmed kills">
+        <span className="fleet-xp__kills" title={t('fleet.kills')}>
           {rank > 0 ? `${rank} ⚔` : '—'}
         </span>
       </>
@@ -770,8 +773,8 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
               <button
                 className="fleet-xp__tier fleet-xp__tier--none"
                 onClick={(e) => { e.stopPropagation(); setCapPickFor(capPickFor === ship.id ? null : ship.id); }}
-                title="This ship flies uncommanded — no trait bonus, no rank growth. Click to assign a captain."
-              >NO CAPTAIN</button>
+                title={t('fleet.noCaptainTip')}
+              >{t('fleet.noCaptain')}</button>
               {capPickFor === ship.id && (() => {
                 // Bank captains only. Serving captains are BUSY (per
                 // Lorne) — poaching them here would just move the hole
@@ -810,23 +813,23 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                       {bank.length === 0 && (
                         <div className="fleet-capmenu__empty">
                           {roster.length > 0
-                            ? `All ${roster.length} captains are serving — recruit another below.`
-                            : 'No captains yet — recruit one below.'}
+                            ? tn('fleet.allServing', roster.length)
+                            : t('fleet.noCaptains')}
                         </div>
                       )}
                       <button
                         className="fleet-capmenu__row fleet-capmenu__row--foot"
                         disabled={capBusy}
                         onClick={() => { setCapPickFor(null); doCap(mpActions.createCaptain()); }}
-                        title="Recruit a fresh captain into the bank; assign them from here once they arrive"
+                        title={t('fleet.recruitTip')}
                       >
-                        <span className="fleet-capmenu__name">+ Recruit · 50M+100C</span>
+                        <span className="fleet-capmenu__name">{t('fleet.recruit')}</span>
                       </button>
                       <button
                         className="fleet-capmenu__row fleet-capmenu__row--foot"
                         onClick={() => { setCapPickFor(null); setFilter('captains'); }}
                       >
-                        <span className="fleet-capmenu__name">Open Captain Bank →</span>
+                        <span className="fleet-capmenu__name">{t('fleet.openBank')}</span>
                       </button>
                     </div>
                   </>
@@ -859,7 +862,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
             type="button"
             className="fleet-capchip"
             onClick={(e) => { e.stopPropagation(); setFilter('captains'); }}
-            title={traits ? `${traits} — open the Captain Bank` : 'Open the Captain Bank'}
+            title={traits ? t('fleet.traitsOpenBank', { traits }) : t('fleet.openTheBank')}
           >{capBody}</button>
         ) : (
           <span className="fleet-capchip fleet-capchip--static" title={traits}>{capBody}</span>
@@ -919,7 +922,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
               doCap(mpActions.updateCaptain(c.id, { avatarId: rerollAvatarId(c.avatarId) }));
             }}
             disabled={capBusy || c.status === 'lost'}
-            title={c.status === 'lost' ? undefined : 'Change portrait'}
+            title={c.status === 'lost' ? undefined : t('fleet.changePortrait')}
           >
             <CaptainAvatar avatarId={c.avatarId} size={30} />
           </button>
@@ -947,7 +950,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                   <button
                     className="fleet-capcard__rename"
                     onClick={() => setCapEditId(c.id)}
-                    title="Rename"
+                    title={t('fleet.rename')}
                   >✎</button>
                 )}
                 <span className={`fleet-xp__tier fleet-xp__tier--${rankTier(c.rank).toLowerCase()}`}>
@@ -957,13 +960,13 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
               </div>
             )}
             <div className="fleet-capcard__traits">
-              {traitSummary(c.traits) || 'No notable traits'}
+              {traitSummary(c.traits) || t('fleet.noTraits')}
               {c.bio ? ` · ${c.bio}` : ''}
             </div>
           </div>
           {c.status === 'lost' ? (
             <span className="fleet-capcard__lostmark">
-              ✝ LOST{c.lostAtTick != null ? ` T+${c.lostAtTick}` : ''}
+              ✝ {t('fleet.lost')}{c.lostAtTick != null ? ` T+${c.lostAtTick}` : ''}
             </span>
           ) : (
             <div className="fleet-capcard__rail">
@@ -985,7 +988,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                 <button
                   className="fleet-capcard__posting fleet-capcard__posting--go"
                   onClick={() => handleShipClick(postedShip.id)}
-                  title={`Go to ${postedShip.name} — ${postedShip.class}`}
+                  title={t('fleet.goTo', { name: postedShip.name, cls: postedShip.class })}
                 >
                   <HullIcon shipClass={postedShip.class} variant={postedShip.iconVariant} size={14} />
                   <span className="fleet-capcard__postname">{aboard}</span>
@@ -997,8 +1000,8 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                   by the server's auto-assign pass (migration 0051). */}
               {!aboard && c.benchedAtTick != null && (
                 <span className="fleet-capcard__reserve"
-                      title="Held in reserve by you — the auto-assign pass will leave them alone">
-                  ⏸ RESERVE
+                      title={t('fleet.reserveTip')}>
+                  ⏸ {t('fleet.reserve')}
                 </span>
               )}
               {mpActions && (
@@ -1007,8 +1010,8 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                     className="fleet-capcard__assign"
                     disabled={capBusy}
                     onClick={() => setAssignOpenFor(assignOpenFor === c.id ? null : c.id)}
-                    title="Assign this captain to a ship (any sitting captain returns to the bank)"
-                  >{aboard ? 'REASSIGN…' : 'ASSIGN…'} ▾</button>
+                    title={t('fleet.assignTip')}
+                  >{aboard ? t('fleet.reassign') : t('fleet.assign')} ▾</button>
                   {assignOpenFor === c.id && (
                     <>
                       {/* click-away backdrop — cheaper and more reliable
@@ -1020,7 +1023,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                             className="fleet-capmenu__row"
                             onClick={() => { setAssignOpenFor(null); doCap(mpActions.assignCaptain(c.id, null)); }}
                           >
-                            <span className="fleet-capmenu__name">→ To the bank</span>
+                            <span className="fleet-capmenu__name">{t('fleet.toBank')}</span>
                           </button>
                         )}
                         {/* Captainless hulls first — they are the natural
@@ -1032,7 +1035,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                             || a.name.localeCompare(b.name))
                           .map(s => {
                             const where = s.transit
-                              ? `→ ${bodyById.get(s.transit.currentTransfer?.targetBodyId ?? '')?.name ?? 'in transit'}`
+                              ? `→ ${bodyById.get(s.transit.currentTransfer?.targetBodyId ?? '')?.name ?? t('fleet.inTransit')}`
                               : bodyById.get(s.orbit.parentBodyId)?.name ?? '—';
                             return (
                               <button
@@ -1043,7 +1046,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                                 <HullIcon shipClass={s.class} variant={s.iconVariant} size={16} />
                                 <span className="fleet-capmenu__name">
                                   {s.name}
-                                  {s.captainName && <em className="fleet-capmenu__swap"> swap: {s.captainName}</em>}
+                                  {s.captainName && <em className="fleet-capmenu__swap"> {t('fleet.swap', { name: s.captainName })}</em>}
                                 </span>
                                 <span className="fleet-capmenu__where">{where}</span>
                               </button>
@@ -1064,15 +1067,15 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
       <div className="fleet-capbank">
         <div className="fleet-capbank__head">
           <span className="fleet-capbank__title">
-            Captain Bank <span className="fleet-capbank__title-sub">· {active.length} serving/{lost.length ? ` ${lost.length} lost` : ' none lost'}</span>
+            {t('fleet.captainBank')} <span className="fleet-capbank__title-sub">· {t('fleet.nServing', { n: active.length })}/{lost.length ? ` ${t('fleet.nLost', { n: lost.length })}` : ` ${t('fleet.noneLost')}`}</span>
           </span>
           {mpActions && (
             <button
               className="filter-chip"
               disabled={capBusy}
               onClick={() => doCap(mpActions.createCaptain())}
-              title="Recruit a fresh captain into the bank (50 metal + 100 credits). Ships without captains fly uncommanded — no trait, no rank growth."
-            >+ RECRUIT · 50M+100C</button>
+              title={t('fleet.recruitBankTip')}
+            >{t('fleet.recruitBtn')}</button>
           )}
         </div>
         {capMsg && (
@@ -1081,13 +1084,13 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
           </div>
         )}
         {active.length === 0 && (
-          <div className="overview-empty">No captains yet — they generate automatically as ships launch.</div>
+          <div className="overview-empty">{t('fleet.noCaptainsAuto')}</div>
         )}
         {active.map(row)}
         {lost.length > 0 && (
           <>
             <div className="fleet-capbank__memorial">
-              ✝ MEMORIAL — went down with the ship
+              ✝ {t('fleet.memorial')}
             </div>
             {lost.map(row)}
           </>
@@ -1160,8 +1163,8 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     });
     if (!res.ok) {
       setFleetErr(res.error?.code === 'fleet_leaderless'
-        ? 'Fleet is leaderless — promote a captain first.'
-        : (res.error?.message ?? 'fleet action failed'));
+        ? t('fleet.leaderless')
+        : (res.error?.message ?? t('fleet.actionFailed')));
       return false;
     }
     return true;
@@ -1194,7 +1197,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     return (
       <span
         className="fleet-card__fleetchip"
-        title={`In ${fleetName(f)} — orders to this hull command the whole fleet`}
+        title={t('fleet.inFleetTip', { name: fleetName(f) })}
       >⚑ {fleetName(f)}</span>
     );
   };
@@ -1243,7 +1246,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
           {eligibleIds.length > 0 ? (
             <label
               className="fleet-check"
-              title={`Select all ${eligibleIds.length} of ${fleet.name}`}
+              title={t('fleet.selectAllOf', { n: eligibleIds.length, name: fleet.name })}
               onClick={(e) => e.stopPropagation()}
             >
               <input
@@ -1263,7 +1266,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
               <span className="fleet-check__box" aria-hidden />
             </label>
           ) : (
-            <span className="fleet-card__nocheck" title="No hull in this fleet can take a bulk order right now">—</span>
+            <span className="fleet-card__nocheck" title={t('fleet.noBulkFleet')}>—</span>
           )}
           {/* The flagship's own silhouette stands for the fleet, in the
               slot a ship row puts its hull icon. */}
@@ -1286,21 +1289,21 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
               <EditableName
                 value={fleetName(fleet)}
                 maxLength={48}
-                ariaLabel={`Rename ${fleetName(fleet)}`}
+                ariaLabel={t('fleet.renameName', { name: fleetName(fleet) })}
                 onSave={next => renameFleet(fleet.id, next)}
               />
             </span>
             {inCombat && (
-              <span className="status-badge status-badge--danger">IN COMBAT</span>
+              <span className="status-badge status-badge--danger">{t('fleet.inCombat')}</span>
             )}
           </div>
           {/* Same shape as a ship's line2: what it is, then where. */}
           <div className="fleet-card__line2">
-            <span>FLEET</span>
+            <span>{t('fleet.fleetWord')}</span>
             <span className="fleet-card__sep" aria-hidden>·</span>
-            <span>{here.length} ship{here.length === 1 ? '' : 's'}</span>
+            <span>{tn('fleet.ships', here.length)}</span>
             <span className="fleet-card__sep" aria-hidden>·</span>
-            <span>{pct}% · {Math.round(guns)} dmg/t</span>
+            <span>{pct}% · {t('fleet.dmgPerTick', { n: Math.round(guns) })}</span>
             <span className="fleet-card__sep" aria-hidden>·</span>
             <span>{bodyById.get(here[0]?.orbit.parentBodyId ?? '')?.name ?? ''}</span>
           </div>
@@ -1316,20 +1319,20 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
               if (!adm) {
                 return (
                   <div className="fleet-xp">
-                    <span className="fleet-adm__rank">ADMIRAL</span>
-                    <span className="fleet-xp__kills">vacant</span>
+                    <span className="fleet-adm__rank">{t('fleet.admiral')}</span>
+                    <span className="fleet-xp__kills">{t('fleet.vacant')}</span>
                   </div>
                 );
               }
               return (
                 <div className="fleet-xp">
                   <CaptainAvatar avatarId={adm.avatarId} size={22} />
-                  <span className="fleet-adm__rank">ADMIRAL</span>
+                  <span className="fleet-adm__rank">{t('fleet.admiral')}</span>
                   <span className="fleet-capchip__name">{adm.name}</span>
                   <span className={`fleet-xp__tier fleet-xp__tier--${rankTier(adm.rank).toLowerCase()}`}>
                     {rankTier(adm.rank)}
                   </span>
-                  <span className="fleet-xp__kills" title="Confirmed kills">
+                  <span className="fleet-xp__kills" title={t('fleet.kills')}>
                     {adm.rank > 0 ? `${adm.rank} ⚔` : '—'}
                   </span>
                 </div>
@@ -1348,7 +1351,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                   type="button"
                   className={`fleet-fleetcard__hull${m.id === fleet.leadShipId ? ' is-flag' : ''}`}
                   onClick={() => selectShip(m.id)}
-                  title={`${m.name} — ${getShipClass(m.class as ShipClassName).displayName} · ${p}% hull`}
+                  title={t('fleet.hullTip', { name: m.name, cls: getShipClass(m.class as ShipClassName).displayName, pct: p })}
                   aria-label={m.name}
                 >
                   <HullIcon shipClass={m.class} variant={m.iconVariant} size={17} color={c1} color2={c2} />
@@ -1392,8 +1395,8 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
       <span
         className="status-badge"
         style={{ color: '#9fdcff', borderColor: 'rgba(127,212,255,0.5)', flex: '0 0 auto' }}
-        title="Refit pending — this ship updates to its latest template (and pays the refit fee) when it next parks at a friendly yard."
-      >⟳ Refit pending</span>
+        title={t('fleet.refitPendingTip')}
+      >⟳ {t('fleet.refitPending')}</span>
     ) : null;
 
     const eligible = checkableIds.has(ship.id);
@@ -1426,7 +1429,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
           {eligible ? (
             <label
               className="fleet-check"
-              title="Add to bulk selection"
+              title={t('fleet.addBulk')}
               onClick={(e) => e.stopPropagation()}
             >
               <input
@@ -1437,7 +1440,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
               <span className="fleet-check__box" aria-hidden />
             </label>
           ) : (
-            <span className="fleet-card__nocheck" title="Not eligible (not player-owned, or already in transit/planned)">—</span>
+            <span className="fleet-card__nocheck" title={t('fleet.notEligible')}>—</span>
           )}
           <ShipIcon
             shipClass={iconClassFor(ship.class)}
@@ -1463,7 +1466,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
               <EditableName
                 value={ship.name}
                 readOnly={ship.ownedBy !== 'player' || !mpActions}
-                ariaLabel={`Rename ${ship.name}`}
+                ariaLabel={t('fleet.renameName', { name: ship.name })}
                 onSave={async (next) => {
                   renameShip(ship.id, next);
                   if (mpActions) {
@@ -1498,7 +1501,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
             {loadout && (
               <>
                 <span className="fleet-card__sep" aria-hidden>·</span>
-                <span className="fleet-card__loadout" title="Fitted parts">{loadout}</span>
+                <span className="fleet-card__loadout" title={t('fleet.fittedParts')}>{loadout}</span>
               </>
             )}
             <span className="fleet-card__sep" aria-hidden>·</span>
@@ -1524,11 +1527,11 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
           wrap on narrow screens (labels drop at ≤640px, icons stay). */}
       <div className="fleet-header">
         <div className="fleet-header__title">
-          <div className="fleet-header__name">Fleet</div>
+          <div className="fleet-header__name">{t('fleet.title')}</div>
           <div className="fleet-header__counts">
-            <span>{ships.length} {ships.length === 1 ? 'ship' : 'ships'} · {orbiting.length} orbiting</span>
+            <span>{tn('fleet.ships', ships.length)} · {t('fleet.orbiting', { n: orbiting.length })}</span>
             {inTransit.length > 0 && (
-              <span className="fleet-header__transit-chip">In transit: {inTransit.length}</span>
+              <span className="fleet-header__transit-chip">{t('fleet.inTransitN', { n: inTransit.length })}</span>
             )}
           </div>
           <FleetUpkeepLine />
@@ -1543,11 +1546,11 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
             onClick={sendDamagedToYards}
             disabled={damagedAway.length === 0}
             title={damagedAway.length === 0
-              ? 'No damaged ships away from a friendly station'
-              : `Send ${damagedAway.length} damaged ship${damagedAway.length === 1 ? '' : 's'} to the nearest friendly shipyard for repair`}
+              ? t('fleet.noDamagedAway')
+              : tn('fleet.sendDamagedTip', damagedAway.length)}
           >
             <span className="fleet-hbtn__icon" aria-hidden>⛨</span>
-            <span className="fleet-hbtn__label">Repair at yard</span>
+            <span className="fleet-hbtn__label">{t('fleet.repairYard')}</span>
             {damagedAway.length > 0 && <span>({damagedAway.length})</span>}
           </button>
         )}
@@ -1557,13 +1560,13 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
           <button
             className="fleet-hbtn"
             onClick={() => openShipDesigner()}
-            title="Design ship loadouts — weapons, shields, engines, detonators. BUILD uses each class's active design."
+            title={t('fleet.designerTip')}
           >
             <span className="fleet-hbtn__icon" aria-hidden>⚙</span>
-            <span className="fleet-hbtn__label">Ship designer</span>
+            <span className="fleet-hbtn__label">{t('fleet.designer')}</span>
           </button>
         )}
-        <button className="overview-panel__close" onClick={onClose}>✕</button>
+        <button className="overview-panel__close" onClick={onClose} aria-label={t('fleet.close')}>✕</button>
       </div>
 
       <div className="fleet-scroll">
@@ -1572,11 +1575,11 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
         <div className="fleet-controls">
           <div className="fleet-controls__chips">
             {([
-              ['player', 'Mine'],
-              ['enemy', 'Enemies'],
-              ['all', 'All'],
+              ['player', t('fleet.filterMine')],
+              ['enemy', t('fleet.filterEnemies')],
+              ['all', t('fleet.filterAll')],
               // Captain Bank (spec §5.3) — MP only; captains don't exist in SP.
-              ...(mpActions ? ([['captains', '★ Captains']] as [Filter, string][]) : []),
+              ...(mpActions ? ([['captains', t('fleet.filterCaptains')]] as [Filter, string][]) : []),
             ] as [Filter, string][]).map(([f, label]) => (
               <button
                 key={f}
@@ -1594,16 +1597,16 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search…"
-              title="Search by ship, world, system or owner"
-              aria-label="Search fleet"
+              placeholder={t('fleet.searchPlaceholder')}
+              title={t('fleet.searchTip')}
+              aria-label={t('fleet.searchLabel')}
             />
             {query && (
               <button
                 className="fleet-search__clear"
                 onClick={() => setQuery('')}
-                aria-label="Clear search"
-                title="Clear search"
+                aria-label={t('fleet.clearSearch')}
+                title={t('fleet.clearSearch')}
               >✕</button>
             )}
           </div>
@@ -1616,16 +1619,16 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
               className="fleet-search__selectall"
               onClick={allVisibleSelected ? clearSelection : selectAllVisible}
               title={allVisibleSelected
-                ? 'Deselect all listed ships'
+                ? t('fleet.deselectTip')
                 : selectAllSkips > 0
-                  ? `Select every warship in this list; leaves out ${selectAllSkips} freighter/colony hull${selectAllSkips === 1 ? '' : 's'}`
-                  : 'Select every ship in this list (respects the tab and search)'}
+                  ? tn('fleet.selectWarshipsTip', selectAllSkips)
+                  : t('fleet.selectAllTip')}
             >
               {allVisibleSelected
-                ? 'Select none'
+                ? t('fleet.selectNone')
                 : selectAllSkips > 0
-                  ? `Select ${selectableVisible.length} warships`
-                  : `Select all ${selectableVisible.length}`}
+                  ? t('fleet.selectWarships', { n: selectableVisible.length })
+                  : t('fleet.selectAllN', { n: selectableVisible.length })}
             </button>
           )}
         </div>
@@ -1645,16 +1648,16 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
           {filter === 'captains' ? renderCaptainBank() : ships.length === 0 ? (
             <div className="overview-empty">
               {query.trim()
-                ? `No ships match “${query.trim()}”.`
+                ? t('fleet.noMatch', { q: query.trim() })
                 : filter === 'enemy'
-                  ? 'No rival ships are visible to you right now.'
-                  : 'No ships match the current filter.'}
+                  ? t('fleet.noRivals')
+                  : t('fleet.noMatchFilter')}
             </div>
           ) : (
             <>
             {mpActions && myFleets.length > 0 && (
               <div className="fleet-group">
-                <div className="fleet-group__title">Fleets</div>
+                <div className="fleet-group__title">{t('fleet.fleets')}</div>
                 {fleetErr && (
                   <div className="fleet-notice">{fleetErr}</div>
                 )}
@@ -1706,12 +1709,12 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                       )];
                       const split = parkedAt.length > 1;
                       const whereLabel = flying.length === attached.length && attached.length > 0
-                        ? `in transit → ${bodyById.get(
-                            flying[0].transit?.currentTransfer?.targetBodyId ?? '')?.name ?? '?'}`
+                        ? t('fleet.whereTransit', { name: bodyById.get(
+                            flying[0].transit?.currentTransfer?.targetBodyId ?? '')?.name ?? '?' })
                         : split
-                          ? `split across ${parkedAt.length} worlds`
+                          ? t('fleet.whereSplit', { n: parkedAt.length })
                           : (bodyById.get(parkedAt[0] ?? '')?.name ?? '—')
-                            + (flying.length > 0 ? ` · ${flying.length} under way` : '');
+                            + (flying.length > 0 ? ` · ${t('fleet.underWay', { n: flying.length })}` : '');
                       return (
                     <div key={f.id} className={`fleet-fleetcard${f.leaderless ? ' fleet-fleetcard--leaderless' : ''}`}>
                       <div className="fleet-fleetcard__line1">
@@ -1719,17 +1722,17 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                           <EditableName
                             value={fleetName(f)}
                             maxLength={48}
-                            ariaLabel={`Rename ${fleetName(f)}`}
+                            ariaLabel={t('fleet.renameName', { name: fleetName(f) })}
                             onSave={next => renameFleet(f.id, next)}
                           />
                         </span>
-                        <span className="fleet-fleetcard__count">{f.shipIds.length} ships</span>
+                        <span className="fleet-fleetcard__count">{tn('fleet.ships', f.shipIds.length)}</span>
 
                         {f.leaderless ? (
-                          <span className="fleet-fleetcard__leaderless">LEADERLESS</span>
+                          <span className="fleet-fleetcard__leaderless">{t('fleet.leaderlessBadge')}</span>
                         ) : (
-                          <span className="fleet-fleetcard__flagship" title="The hull the admiral flies from">
-                            {gameState.ships.find(x => x.id === f.leadShipId)?.name ?? 'flagship lost'}
+                          <span className="fleet-fleetcard__flagship" title={t('fleet.flagshipTip')}>
+                            {gameState.ships.find(x => x.id === f.leadShipId)?.name ?? t('fleet.flagshipLost')}
                           </span>
                         )}
                       </div>
@@ -1738,12 +1741,12 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                           <i style={{ width: `${hpPct}%` }} />
                         </span>
                         <span className="fleet-fleetcard__num">{hpPct}%</span>
-                        <span className="fleet-fleetcard__num" title="Combined damage per tick">
-                          {Math.round(guns)} dmg/t
+                        <span className="fleet-fleetcard__num" title={t('fleet.combinedDmg')}>
+                          {t('fleet.dmgPerTick', { n: Math.round(guns) })}
                         </span>
                         {detachedCount > 0 && (
-                          <span className="fleet-fleetcard__detached" title="Detached hulls take their own orders and are skipped by the fleet's">
-                            {detachedCount} detached
+                          <span className="fleet-fleetcard__detached" title={t('fleet.detachedTip')}>
+                            {t('fleet.detached', { n: detachedCount })}
                           </span>
                         )}
                         <span className="fleet-fleetcard__where">{whereLabel}</span>
@@ -1770,9 +1773,9 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                             </span>
                             <span className="fleet-adm__body">
                               <span className="fleet-adm__top">
-                                <span className="fleet-adm__rank">ADMIRAL</span>
+                                <span className="fleet-adm__rank">{t('fleet.admiral')}</span>
                                 <span className="fleet-adm__name">
-                                  {adm ? adm.name : 'vacant'}
+                                  {adm ? adm.name : t('fleet.vacant')}
                                 </span>
                                 {adm && (
                                   <span className="fleet-adm__tier">{rankTier(adm.rank)}</span>
@@ -1780,8 +1783,8 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                               </span>
                               <span className="fleet-adm__bottom">
                                 {adm
-                                  ? (traitSummary(adm.traits) || 'no notable traits')
-                                  : 'no officer — the squadron fights without their bonus'}
+                                  ? (traitSummary(adm.traits) || t('fleet.noNotableTraits'))
+                                  : t('fleet.noOfficer')}
                               </span>
                             </span>
                             {/* Post an officer BY NAME. CHANGE FLAG picks a
@@ -1792,14 +1795,14 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                               <select
                                 className="fleet-adm__pick"
                                 value=""
-                                title="Post a captain from the bank as this fleet's admiral"
+                                title={t('fleet.postAdmiralTip')}
                                 onChange={e => {
                                   if (!e.target.value) return;
                                   void fleetApi('PATCH', fleetUrl(f.id),
                                     { flag_captain_id: e.target.value });
                                 }}
                               >
-                                <option value="">{adm ? 'Replace…' : 'Post an admiral…'}</option>
+                                <option value="">{adm ? t('fleet.replace') : t('fleet.postAdmiral')}</option>
                                 {bank.map(c => (
                                   <option key={c.id} value={c.id}>
                                     {c.name} · {rankTier(c.rank)}
@@ -1831,8 +1834,8 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                               type="button"
                               className={`fleet-fleetcard__hull${m.id === f.leadShipId ? ' is-flag' : ''}`}
                               onClick={() => selectShip(m.id)}
-                              title={`${m.name} — ${getShipClass(m.class as ShipClassName).displayName}`
-                                + ` · ${pct}% hull${m.id === f.leadShipId ? ' · flagship' : ''}`}
+                              title={t('fleet.hullTip', { name: m.name, cls: getShipClass(m.class as ShipClassName).displayName, pct })
+                                + (m.id === f.leadShipId ? ` · ${t('fleet.flagship')}` : '')}
                               aria-label={m.name}
                             >
                               <ShipIcon
@@ -1848,15 +1851,15 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                       </div>
 
                       <div className="fleet-fleetcard__controls">
-                        <button className="fleet-chipbtn" title="Check every member into the bulk-action list — then move or order them together"
-                                onClick={() => setSelectedIds(new Set(f.shipIds))}>Select all</button>
+                        <button className="fleet-chipbtn" title={t('fleet.selectMembersTip')}
+                                onClick={() => setSelectedIds(new Set(f.shipIds))}>{t('fleet.selectAll')}</button>
                         <button className="fleet-chipbtn"
-                                title="Dissolve the fleet — members keep their current orders"
+                                title={t('fleet.disbandTip')}
                                 onClick={() => {
-                                  if (window.confirm(`Disband ${fleetName(f)}? Members keep their current orders.`)) {
+                                  if (window.confirm(t('fleet.disbandConfirm', { name: fleetName(f) }))) {
                                     void fleetApi('DELETE', fleetUrl(f.id));
                                   }
-                                }}>Disband</button>
+                                }}>{t('fleet.disband')}</button>
                         {(['attack', 'defensive', 'hold'] as const).map(st => (
                           // Chips read as STATE: the stance every member
                           // currently holds is lit.
@@ -1865,7 +1868,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                                   disabled={!!f.leaderless}
                                   aria-pressed={curStance === st}
                                   onClick={() => void fleetApi('PATCH', fleetUrl(f.id, '/orders'), { stance: st })}>
-                            {st === 'attack' ? 'Attack' : st === 'defensive' ? 'Defend' : 'Hold'}
+                            {st === 'attack' ? t('fleet.stanceAttack') : st === 'defensive' ? t('fleet.stanceDefend') : t('fleet.stanceHold')}
                           </button>
                         ))}
                         <select className="fleet-chipbtn"
@@ -1876,10 +1879,10 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                                   void fleetApi('PATCH', fleetUrl(f.id, '/orders'),
                                     { retreat_hp_pct: v === '' ? null : Number(v) });
                                 }}>
-                          <option value="">Ship retreat off</option>
-                          <option value="25">Ship retreat 25%</option>
-                          <option value="50">Ship retreat 50%</option>
-                          <option value="75">Ship retreat 75%</option>
+                          <option value="">{t('fleet.shipRetreatOff')}</option>
+                          <option value="25">{t('fleet.shipRetreatPct', { pct: 25 })}</option>
+                          <option value="50">{t('fleet.shipRetreatPct', { pct: 50 })}</option>
+                          <option value="75">{t('fleet.shipRetreatPct', { pct: 75 })}</option>
                         </select>
                         {/* FLEET retreat, on COMBINED hull. Deliberately
                             next to the per-hull one and labelled apart:
@@ -1889,16 +1892,16 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                         <select className="fleet-chipbtn"
                                 disabled={!!f.leaderless}
                                 value={f.retreatHpPct == null ? '' : String(f.retreatHpPct)}
-                                title="Withdraw the WHOLE fleet when its combined hull drops below this. Separate from per-ship retreat; both apply."
+                                title={t('fleet.fleetRetreatTip')}
                                 onChange={e => {
                                   const v = e.target.value;
                                   void fleetApi('PATCH', fleetUrl(f.id),
                                     { retreat_hp_pct: v === '' ? null : Number(v) });
                                 }}>
-                          <option value="">Fleet retreat off</option>
-                          <option value="25">Fleet retreat 25%</option>
-                          <option value="50">Fleet retreat 50%</option>
-                          <option value="75">Fleet retreat 75%</option>
+                          <option value="">{t('fleet.fleetRetreatOff')}</option>
+                          <option value="25">{t('fleet.fleetRetreatPct', { pct: 25 })}</option>
+                          <option value="50">{t('fleet.fleetRetreatPct', { pct: 50 })}</option>
+                          <option value="75">{t('fleet.fleetRetreatPct', { pct: 75 })}</option>
                         </select>
                         {/* Shown for HEALTHY fleets too, not just leaderless
                             ones — the server has never gated flag_ship_id on
@@ -1928,22 +1931,22 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                           return (
                             <select className={`fleet-chipbtn${f.leaderless ? ' fleet-chipbtn--promote' : ''}`} value=""
                                     title={f.leaderless
-                                      ? 'Pick the hull the admiral flies from — an officer is drawn from the bank'
-                                      : 'Move the flag to another hull. The admiral transfers with it.'}
+                                      ? t('fleet.promoteTip')
+                                      : t('fleet.moveFlagTip')}
                                     onChange={e => {
                                       if (e.target.value) {
                                         void fleetApi('PATCH', fleetUrl(f.id), { flag_ship_id: e.target.value });
                                       }
                                     }}>
-                              <option value="">{f.leaderless ? 'Promote a hull to flagship…' : 'Move the flag to…'}</option>
+                              <option value="">{f.leaderless ? t('fleet.promoteHull') : t('fleet.moveFlag')}</option>
                               {options.map(sh => (
                                 <option key={sh.id} value={sh.id} disabled={sh.id === f.leadShipId}>
                                   {sh.name}
                                   {sh.id === f.leadShipId
-                                    ? ` ★ flagship (${sh.captainName ?? 'no captain'})`
+                                    ? ` ★ ${t('fleet.flagshipCap', { cap: sh.captainName ?? t('fleet.noCaptainLower') })}`
                                     : sh.captainName
                                       ? ` — ${sh.captainName}`
-                                      : ' — promotes from the bank'}
+                                      : ` — ${t('fleet.promotesFromBank')}`}
                                 </option>
                               ))}
                             </select>
@@ -1966,13 +1969,13 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                     className="fleet-sys__header"
                     onClick={() => toggleSystem(system.rootId)}
                     aria-expanded={!isCollapsed}
-                    title={isCollapsed ? 'Expand system' : 'Collapse system'}
+                    title={isCollapsed ? t('fleet.expandSystem') : t('fleet.collapseSystem')}
                   >
                     <span className={`fleet-sys__caret${isCollapsed ? ' fleet-sys__caret--collapsed' : ''}`} aria-hidden>▾</span>
                     <span className="fleet-sys__dot" style={{ background: rootBody?.color || '#888' }} aria-hidden />
                     <span className="fleet-sys__name">{system.label}</span>
                     <span className="fleet-sys__meta">
-                      {system.bodies.length} world{system.bodies.length === 1 ? '' : 's'} · {system.shipCount} ship{system.shipCount === 1 ? '' : 's'}
+                      {tn('fleet.worlds', system.bodies.length)} · {tn('fleet.ships', system.shipCount)}
                     </span>
                   </button>
 
@@ -1999,7 +2002,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                           {bodyEligibleIds.length > 0 ? (
                             <label
                               className="fleet-check"
-                              title={`Select all ${bodyEligibleIds.length} at ${body?.name || bodyId}`}
+                              title={t('fleet.selectAllAt', { n: bodyEligibleIds.length, name: body?.name || bodyId })}
                               onClick={(e) => e.stopPropagation()}
                             >
                               <input
@@ -2018,16 +2021,16 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                               <span className="fleet-check__box" aria-hidden />
                             </label>
                           ) : (
-                            <span className="fleet-card__nocheck" title="No hull here can take a bulk order right now">—</span>
+                            <span className="fleet-card__nocheck" title={t('fleet.noBulkHere')}>—</span>
                           )}
                           <button
                             className="fleet-bodyhead__focus"
                             onClick={() => handleBodyClick(bodyId)}
-                            title="Click to focus map"
+                            title={t('fleet.focusMap')}
                           >
                             <span className="fleet-bodyhead__dot" style={{ background: body?.color || '#888' }} aria-hidden />
                             {body?.name || bodyId}
-                            <span className="fleet-bodyhead__count">· {bodyShips.length} ship{bodyShips.length === 1 ? '' : 's'}</span>
+                            <span className="fleet-bodyhead__count">· {tn('fleet.ships', bodyShips.length)}</span>
                           </button>
                         </div>
                         <div className="fleet-sys__cards">
@@ -2082,16 +2085,16 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
           <div className="fleet-actionbar">
             <div className="fleet-actionbar__row">
               <span className="fleet-actionbar__count">
-                {visibleSelected.length} selected
+                {t('fleet.nSelected', { n: visibleSelected.length })}
                 {visibleSelected.length !== selectedIds.size
-                  && ` (${selectedIds.size - visibleSelected.length} ineligible)`}
+                  && ` (${t('fleet.nIneligible', { n: selectedIds.size - visibleSelected.length })})`}
                 {/* Selected but filtered out of the list: orders still go
                     to them, so say so (QA battle test: "2 SELECTED" with
                     one row showing and no word about the other). */}
                 {(() => {
                   const listed = new Set(ships.map(s => s.id));
                   const hidden = Array.from(selectedIds).filter(id => !listed.has(id)).length;
-                  return hidden > 0 ? ` · ${hidden} not shown by the current ${query.trim() ? 'search' : 'tab'}` : null;
+                  return hidden > 0 ? ` · ${query.trim() ? t('fleet.hiddenSearch', { n: hidden }) : t('fleet.hiddenTab', { n: hidden })}` : null;
                 })()}
               </span>
               {mpActions && selectedIds.size >= 2 && (
@@ -2100,19 +2103,18 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                   onClick={() => { void formFleetFromSelection(); }}
                   disabled={!formFleetFlag}
                   title={formFleetFlag
-                    ? `Form a fleet under ${formFleetFlag.captainName ?? 'the senior captain'} (${formFleetFlag.name})`
-                    : 'A fleet needs a captain to lead it'}
+                    ? t('fleet.formFleetTip', { cap: formFleetFlag.captainName ?? t('fleet.seniorCaptain'), name: formFleetFlag.name })
+                    : t('fleet.needCaptain')}
                 >
-                  ★ Form fleet
+                  ★ {t('fleet.formFleet')}
                 </button>
               )}
               <span className="fleet-actionbar__spacer" />
-              <button className="fleet-actionbar__btn" onClick={clearSelection}>Clear</button>
+              <button className="fleet-actionbar__btn" onClick={clearSelection}>{t('fleet.clear')}</button>
             </div>
             {mpActions && selectedIds.size >= 2 && !formFleetFlag && (
               <div className="fleet-actionbar__row fleet-actionbar__note">
-                No captain among these hulls, so they can't form a fleet.
-                Assign one from the Captains tab.
+                {t('fleet.noCaptainAmong')}
               </div>
             )}
             {/* The Fleets group shows this error once fleets exist; before
@@ -2124,13 +2126,13 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
             )}
 
             <div className="fleet-actionbar__row">
-              <span className="fleet-actionbar__label">Transfer to</span>
+              <span className="fleet-actionbar__label">{t('fleet.transferTo')}</span>
               <select
                 className="fleet-actionbar__select"
                 value={bulkTarget}
                 onChange={(e) => setBulkTarget(e.target.value)}
               >
-                <option value="">Destination…</option>
+                <option value="">{t('fleet.destination')}</option>
                 {transferTargets.map(b => (
                   <option key={b.id} value={b.id}>{b.name}</option>
                 ))}
@@ -2140,7 +2142,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                 onClick={issueBulkTransfer}
                 disabled={!bulkTarget}
               >
-                Issue {visibleSelected.length} order{visibleSelected.length === 1 ? '' : 's'}
+                {tn('fleet.issueOrders', visibleSelected.length)}
               </button>
               {/* The multi-leg sibling of the row it sits in: that one
                   sends the selection to ONE world, this one sends it
@@ -2148,9 +2150,9 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
               <button
                 className={`fleet-actionbar__btn${showChain ? ' fleet-actionbar__btn--primary' : ''}`}
                 onClick={() => setShowChain(v => !v)}
-                title="Send the selection through a multi-leg route, with holds between legs"
+                title={t('fleet.chainTip')}
               >
-                Chain orders
+                {t('fleet.chainOrders')}
               </button>
               {/* RECALL — only shown when the selection actually contains
                   ships in flight, so it never sits there dead next to a
@@ -2160,11 +2162,9 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                 <button
                   className="fleet-actionbar__btn"
                   onClick={issueBulkRecall}
-                  title={'Turn the selected in-flight ships around and send each '
-                    + 'back to the world it launched from. Costs fuel and time — '
-                    + 'the outbound burn has already fired.'}
+                  title={t('fleet.recallTip')}
                 >
-                  ↩ Recall {recallSelected.length}
+                  ↩ {t('fleet.recall', { n: recallSelected.length })}
                 </button>
               )}
             </div>
@@ -2175,15 +2175,15 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                   onChange={setChain}
                   bodies={gameState.bodies}
                   note={visibleSelected.length === 0
-                    ? 'Nothing in the selection can start a new burn.'
-                    : `Each of the ${visibleSelected.length} eligible ship${visibleSelected.length === 1 ? '' : 's'} flies this from its own orbit.`}
+                    ? t('fleet.nothingBurn')
+                    : tn('fleet.chainNote', visibleSelected.length)}
                 />
                 <button
                   className="fleet-actionbar__btn fleet-actionbar__btn--primary"
                   disabled={chain.length === 0 || visibleSelected.length === 0}
                   onClick={applyChain}
                 >
-                  Launch {visibleSelected.length} · {chain.length} leg{chain.length === 1 ? '' : 's'}
+                  {tn('fleet.launch', chain.length, { ships: visibleSelected.length })}
                 </button>
               </div>
             )}
@@ -2191,17 +2191,17 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
 
             {mpActions && (
               <div className="fleet-actionbar__row">
-                <span className="fleet-actionbar__label">Orders</span>
+                <span className="fleet-actionbar__label">{t('fleet.orders')}</span>
                 <select
                   className="fleet-actionbar__select"
                   value={bulkStance}
                   onChange={(e) => setBulkStance(e.target.value)}
-                  title="Stance: attack on sight / return fire only / never fire"
+                  title={t('fleet.stanceTip')}
                 >
-                  <option value="">Stance: keep</option>
-                  <option value="attack">Attack on sight</option>
-                  <option value="defensive">Defensive (return fire)</option>
-                  <option value="hold">Hold fire</option>
+                  <option value="">{t('fleet.stanceKeep')}</option>
+                  <option value="attack">{t('fleet.stanceOptAttack')}</option>
+                  <option value="defensive">{t('fleet.stanceOptDefensive')}</option>
+                  <option value="hold">{t('fleet.stanceOptHold')}</option>
                 </select>
                 <select
                   className="fleet-actionbar__select"
@@ -2213,14 +2213,13 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                   // path is the one that most needs to say it: a committed
                   // burn cannot be re-aimed, so retreat does nothing while
                   // a ship is in transit. See DESIGN-transit-combat.md.
-                  title={'Auto-retreat to the nearest friendly shipyard station below this HP threshold.'
-                    + '\nNo effect in transit — a committed burn can’t be re-aimed.'}
+                  title={t('fleet.retreatTip1') + '\n' + t('fleet.retreatTip2')}
                 >
-                  <option value="">Retreat: keep</option>
-                  <option value="off">Retreat: off</option>
-                  <option value="25">Retreat at 25% HP</option>
-                  <option value="50">Retreat at 50% HP</option>
-                  <option value="75">Retreat at 75% HP</option>
+                  <option value="">{t('fleet.retreatKeep')}</option>
+                  <option value="off">{t('fleet.retreatOff')}</option>
+                  <option value="25">{t('fleet.retreatAt', { pct: 25 })}</option>
+                  <option value="50">{t('fleet.retreatAt', { pct: 50 })}</option>
+                  <option value="75">{t('fleet.retreatAt', { pct: 75 })}</option>
                 </select>
                 {/* WHERE the selection runs to (migration 0126). "home" is
                     each hull's own build yard, so a mixed fleet still
@@ -2230,11 +2229,10 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                   className="fleet-actionbar__select"
                   value={bulkRetreatTo}
                   onChange={(e) => setBulkRetreatTo(e.target.value)}
-                  title={'Where these hulls retreat to. Home = the yard that built each one; '
-                    + 'pick a port to send them all to the same place.'}
+                  title={t('fleet.retreatToTip')}
                 >
-                  <option value="">Retreat to: keep</option>
-                  <option value="home">Retreat to: each hull's home yard</option>
+                  <option value="">{t('fleet.retreatToKeep')}</option>
+                  <option value="home">{t('fleet.retreatToHome')}</option>
                   {gameState.settlements
                     .filter(st => st.type === 'station' && st.hp > 0 && st.ownedBy === 'player')
                     .filter((st, i, arr) => arr.findIndex(q => q.bodyId === st.bodyId) === i)
@@ -2246,7 +2244,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                     .sort((a, b) => Number(b.yard) - Number(a.yard) || a.name.localeCompare(b.name))
                     .map(p => (
                       <option key={p.bodyId} value={p.bodyId}>
-                        Retreat to: {p.name}{p.yard ? '' : ' (no repairs)'}
+                        {t('fleet.retreatToName', { name: p.name })}{p.yard ? '' : ` ${t('fleet.noRepairs')}`}
                       </option>
                     ))}
                 </select>
@@ -2258,12 +2256,12 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                     className="fleet-actionbar__select"
                     value={bulkDetonate}
                     onChange={(e) => setBulkDetonate(e.target.value)}
-                    title="Auto-detonate below X% HP: deals damage to every ship in this orbit, friend or foe; this ship is destroyed."
+                    title={t('fleet.detonateTip')}
                   >
-                    <option value="">Detonate: keep</option>
-                    <option value="off">Detonate: off</option>
-                    <option value="25">Detonate below 25% HP</option>
-                    <option value="50">Detonate below 50% HP</option>
+                    <option value="">{t('fleet.detonateKeep')}</option>
+                    <option value="off">{t('fleet.detonateOff')}</option>
+                    <option value="25">{t('fleet.detonateBelow', { pct: 25 })}</option>
+                    <option value="50">{t('fleet.detonateBelow', { pct: 50 })}</option>
                   </select>
                 )}
                 {armedSelectedCount > 0 && (
@@ -2272,12 +2270,12 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                     value={bulkTargeting}
                     onChange={(e) => setBulkTargeting(e.target.value as '' | 'auto' | 'custom')}
                     title={armedSelectedCount === ordersSelected.length
-                      ? 'Target priority: auto matches speed peers; custom ranks target categories'
-                      : `Applies to the ${armedSelectedCount} armed hull${armedSelectedCount === 1 ? '' : 's'} selected — the rest never fire`}
+                      ? t('fleet.targetingTip')
+                      : tn('fleet.targetingSome', armedSelectedCount)}
                   >
-                    <option value="">Targeting: keep</option>
-                    <option value="auto">Targeting: auto</option>
-                    <option value="custom">Targeting: custom…</option>
+                    <option value="">{t('fleet.targetingKeep')}</option>
+                    <option value="auto">{t('fleet.targetingAuto')}</option>
+                    <option value="custom">{t('fleet.targetingCustom')}</option>
                   </select>
                 )}
                 <button
@@ -2286,7 +2284,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                   disabled={!bulkStance && !bulkRetreat && !bulkRetreatTo && !bulkTargeting
                     && !(bulkDetonate && detonatorSelectedCount > 0)}
                 >
-                  Set orders
+                  {t('fleet.setOrders')}
                 </button>
               </div>
             )}
@@ -2300,16 +2298,15 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                     if (next == null) setBulkTargeting('auto');
                     else setBulkPriorityOrder(next);
                   }}
-                  note={`Will apply to ${armedSelectedCount} armed hull${armedSelectedCount === 1 ? '' : 's'} on SET ORDERS.`}
+                  note={tn('fleet.willApply', armedSelectedCount)}
                 />
               </div>
             )}
             {mpActions && bulkDetonate && bulkDetonate !== 'off' && detonatorSelectedCount > 0 && (
               <div className="fleet-actionbar__warn">
-                Auto-detonate below {bulkDetonate}% HP: deals damage to every ship
-                in this orbit, friend or foe; the detonating ship is destroyed.
+                {t('fleet.detonateWarn', { pct: bulkDetonate })}
                 {detonatorSelectedCount < visibleSelected.length
-                  && ` Applies to ${detonatorSelectedCount} of ${visibleSelected.length} selected — the rest carry no detonator.`}
+                  && ` ${t('fleet.detonateSubset', { n: detonatorSelectedCount, of: visibleSelected.length })}`}
               </div>
             )}
             {ordersNotice && <div className="fleet-actionbar__error">{ordersNotice}</div>}

@@ -50,6 +50,8 @@ import {
 import type { ShipDesign } from '../types';
 import { PART_FEATURE } from '../game/researchUnlocks';
 import { useFeatureGate } from '../hooks/useFeatureGate';
+import { t, tn } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 import './ShipDesigner.css';
 
 interface ShipDesignerProps {
@@ -115,12 +117,15 @@ function serverDesignToClient(d: ServerShipDesign): ShipDesign {
 
 /** "Countered by" micro-text per part — visible on the card, not hidden
  *  in a tooltip: what beats this choice is a decision input. */
-const COUNTER_TEXT: Partial<Record<ShipPartId, string>> = {
-  kinetic: 'each 🛡 shield cuts it by 22%',
-  energy: 'each 🪨 armor plate cuts it by 22%',
-  shield: 'does nothing against ⚡ energy',
-  armor: 'does nothing against ⚔ kinetic',
-};
+function counterText(pid: ShipPartId): string | undefined {
+  switch (pid) {
+    case 'kinetic': return t('ship.sd.counter.kinetic');
+    case 'energy': return t('ship.sd.counter.energy');
+    case 'shield': return t('ship.sd.counter.shield');
+    case 'armor': return t('ship.sd.counter.armor');
+    default: return undefined;
+  }
+}
 
 /** Escalated price of the NEXT copy given n already fitted. Mirrors the
  *  per-copy rounding in partsCost so quote == charge. */
@@ -134,6 +139,7 @@ const sameLoadout = (a: readonly string[], b: readonly string[]) =>
   [...a].sort().join(',') === [...b].sort().join(',');
 
 export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClose }) => {
+  useI18n();
   const { gameState } = useGameContext();
   const mpActions = useMultiplayerActions();
   useEffect(() => { logUiEvent(mpActions?.gameId, 'ship-designer'); }, [mpActions?.gameId]);
@@ -279,7 +285,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   const costMult = gameState.buildCost?.mult ?? 1;
   const priced = (n: number) => Math.ceil(n * costMult);
   const costNote = costMult !== 1
-    ? `Includes the current build multiplier (×${costMult.toFixed(2)}); this is what the yard charges.`
+    ? t('ship.sd.costNote', { mult: costMult.toFixed(2) })
     : undefined;
   const nDetonators = countPart(draftParts, 'detonator');
   const upkeepMult = gameState.fleetUpkeep?.multiplier ?? 1;
@@ -290,8 +296,8 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
     ? [
         upkeep.credits * upkeepMult > 0 ? `${(upkeep.credits * upkeepMult).toFixed(2).replace(/\.?0+$/, '')}C` : null,
         upkeep.ore * upkeepMult > 0 ? `${(upkeep.ore * upkeepMult).toFixed(2).replace(/\.?0+$/, '')}M` : null,
-      ].filter(Boolean).join(' + ') + ' /tick'
-    : 'free';
+      ].filter(Boolean).join(' + ') + ` ${t('ship.sd.perTick')}`
+    : t('ship.sd.free');
 
   // Combat-profile readout: what this hull deals and what it shrugs off.
   const nKinetic = countPart(draftParts, 'kinetic');
@@ -300,33 +306,33 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   const nArmor = countPart(draftParts, 'armor');
   const prof = damageProfile(draftParts);
   const dmgTypeLabel = nKinetic + nEnergy === 0
-    ? '⚔ Kinetic (bare)'
-    : nEnergy === 0 ? '⚔ Kinetic'
-    : nKinetic === 0 ? '⚡ Energy'
+    ? t('ship.sd.dmgKineticBare')
+    : nEnergy === 0 ? t('ship.sd.dmgKinetic')
+    : nKinetic === 0 ? t('ship.sd.dmgEnergy')
     : `⚔ ${Math.round(prof.kinetic * 100)}% / ⚡ ${Math.round(prof.energy * 100)}%`;
   const defLabel = nShields === 0 && nArmor === 0
-    ? 'Unshielded'
-    : [nShields > 0 ? `🛡×${nShields} vs kinetic` : '', nArmor > 0 ? `🪨×${nArmor} vs energy` : '']
+    ? t('ship.sd.unshielded')
+    : [nShields > 0 ? t('ship.sd.shieldsVsKinetic', { n: nShields }) : '', nArmor > 0 ? t('ship.sd.armorVsEnergy', { n: nArmor }) : '']
         .filter(Boolean).join(' · ');
   // The old hint said "strong vs armored targets", which read as a damage
   // BONUS. There is none: defenseMitigation only ever reduces, so the
   // off-counter simply arrives at 100%. Both lines below quote the real
   // multiplier, and the incoming line quotes THIS draft's actual stack.
   const outgoingHint = (() => {
-    if (nKinetic > 0 && nEnergy > 0) return 'Mixed guns — each type is cut only by its own counter.';
-    if (nKinetic > 0) return '⚔ Kinetic: strong against 🪨 armor · each 🛡 shield cuts damage 22% (compounding).';
-    if (nEnergy > 0) return '⚡ Energy: strong against 🛡 shields · each 🪨 armor plate cuts damage 22% (compounding).';
+    if (nKinetic > 0 && nEnergy > 0) return t('ship.sd.hintMixed');
+    if (nKinetic > 0) return t('ship.sd.hintKinetic');
+    if (nEnergy > 0) return t('ship.sd.hintEnergy');
     return '';
   })();
   const incomingHint = (() => {
-    if (nShields === 0 && nArmor === 0) return 'No 🛡/🪨 fitted — all incoming damage lands at 100%.';
+    if (nShields === 0 && nArmor === 0) return t('ship.sd.hintNoDefense');
     const kin = nShields > 0
-      ? `⚔ kinetic −${reductionPct(nShields)}%`
-      : '⚔ kinetic unreduced';
+      ? t('ship.sd.kinReduced', { pct: reductionPct(nShields) })
+      : t('ship.sd.kinUnreduced');
     const nrg = nArmor > 0
-      ? `⚡ energy −${reductionPct(nArmor)}%`
-      : '⚡ energy unreduced';
-    return `Incoming damage: ${kin} · ${nrg}`;
+      ? t('ship.sd.nrgReduced', { pct: reductionPct(nArmor) })
+      : t('ship.sd.nrgUnreduced');
+    return t('ship.sd.incoming', { kin, nrg });
   })();
   const detDamage = detonatorDamage(stats.hp, nDetonators, techLevels.weapons ?? 0);
 
@@ -388,7 +394,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   const saveAsTemplate = async () => {
     if (!mpActions) return;
     const name = draftName.trim();
-    if (!name) { setError('Name the loadout before saving it as a template.'); return; }
+    if (!name) { setError(t('ship.sd.nameFirst')); return; }
     setBusy(true);
     const res = await mpActions.saveShipTemplate({
       shipClass: activeClass, name, parts: draftParts, iconVariant: draftIcon,
@@ -436,12 +442,12 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
 
   const fitRefusal = (pid: ShipPartId, slotIdx?: number): string | null => {
     const lock = gate.lockReason(PART_FEATURE[pid]);
-    if (lock) return `🔒 ${SHIP_PART_DEFS[pid].name} is locked — ${lock.text}`;
+    if (lock) return t('ship.sd.partLocked', { name: SHIP_PART_DEFS[pid].name, reason: lock.text });
     // Replacing a filled socket frees its slot, so only a fit into an
     // EMPTY socket can overflow.
     const replacing = slotIdx != null && draftParts[slotIdx] != null;
     if (!replacing && draftParts.length >= slots) {
-      return `All ${slots} slots are fitted — tap a socket to unfit a part first.`;
+      return t('ship.sd.slotsFull', { n: slots });
     }
     return null;
   };
@@ -503,7 +509,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
     if (setActive) {
       // Say what "active" MEANS, right where the click happened — the
       // save-then-deploy loop was invisible to playtesters.
-      setRefitNote(`${name} is now ACTIVE — every shipyard BUILD for this class launches this design.`);
+      setRefitNote(t('ship.sd.nowActive', { name }));
     }
     // Keep the (possibly generated) name in the field so the player sees
     // what their design is called; the library list refresh shows it too.
@@ -535,14 +541,14 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
     setRefitNote(null);
     const res = await mpActions.refitFleet(selected.id);
     setBusy(false);
-    if (!res.ok) { setError(res.error ?? 'Refit failed.'); return; }
+    if (!res.ok) { setError(res.error ?? t('ship.sd.refitFailed')); return; }
     const done = res.refitted?.length ?? 0;
     const pend = res.pending?.length ?? 0;
     const cost = res.charged;
     setRefitNote(
-      `Refitted ${done} hull${done === 1 ? '' : 's'} now`
-      + (cost && (cost.ore > 0 || cost.credits > 0) ? ` for ${cost.ore}M ${cost.credits}C` : '')
-      + (pend > 0 ? ` · ${pend} pending (refit at next friendly yard)` : '')
+      tn('ship.sd.refittedNow', done)
+      + (cost && (cost.ore > 0 || cost.credits > 0) ? ` ${t('ship.sd.refitFor', { ore: cost.ore, credits: cost.credits })}` : '')
+      + (pend > 0 ? ` · ${t('ship.sd.refitPending', { n: pend })}` : '')
       + '.',
     );
   };
@@ -585,23 +591,23 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   const statRows = (
     <>
       <div className="sd-stat">
-        <span className="sd-stat__label">Max HP</span>
+        <span className="sd-stat__label">{t('ship.sd.maxHp')}</span>
         <span className="sd-stat__value"><Delta from={hpOut(base.hp)} to={hpOut(stats.hp)} /></span>
       </div>
       <div className="sd-stat">
-        <span className="sd-stat__label">Damage / volley</span>
+        <span className="sd-stat__label">{t('ship.sd.dmgVolley')}</span>
         <span className="sd-stat__value"><Delta from={base.damagePerTick} to={stats.damagePerTick} /></span>
       </div>
       <div className="sd-stat">
-        <span className="sd-stat__label">Speed</span>
+        <span className="sd-stat__label">{t('ship.sd.speed')}</span>
         <span className="sd-stat__value"><Delta from={base.speed} to={stats.speed} /></span>
       </div>
       <div className="sd-stat">
-        <span className="sd-stat__label">Damage type</span>
+        <span className="sd-stat__label">{t('ship.sd.dmgType')}</span>
         <span className="sd-stat__value">{dmgTypeLabel}</span>
       </div>
       <div className="sd-stat">
-        <span className="sd-stat__label">Defense</span>
+        <span className="sd-stat__label">{t('ship.sd.defense')}</span>
         <span className="sd-stat__value">{defLabel}</span>
       </div>
       {/* ONE travel time, the one the ship will fly. This panel showed two
@@ -612,14 +618,14 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
           speed-class multiplier is read only by the frozen single-player
           sim. Speed (above) is combat speed: evasion and hit chance.
           A hull in a fleet also flies at the fleet's slowest pace. */}
-      <div className="sd-stat" title="Trip time from engine parts. In a fleet, the whole fleet flies at its slowest ship's pace.">
-        <span className="sd-stat__label">Travel time</span>
+      <div className="sd-stat" title={t('ship.sd.travelTip')}>
+        <span className="sd-stat__label">{t('ship.sd.travel')}</span>
         <span className="sd-stat__value">
           <Delta from={base.travelTimeMult} to={stats.travelTimeMult} fmt={n => `×${n.toFixed(2)}`} invert />
         </span>
       </div>
       <div className="sd-stat" title={costNote}>
-        <span className="sd-stat__label">Cost / ship</span>
+        <span className="sd-stat__label">{t('ship.sd.costShip')}</span>
         <span className="sd-stat__value">
           <Delta
             from={priced(base.totalCost.ore)} to={priced(hullDef.cost.ore + draftCost.ore)}
@@ -633,13 +639,13 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
         </span>
       </div>
       <div className="sd-stat">
-        <span className="sd-stat__label">Upkeep</span>
+        <span className="sd-stat__label">{t('ship.sd.upkeep')}</span>
         <span className="sd-stat__value">{upkeepLabel}</span>
       </div>
       {nDetonators > 0 && (
         <div className="sd-stat">
-          <span className="sd-stat__label">Detonation</span>
-          <span className="sd-stat__value" style={{ color: '#ff5e5e' }}>{detDamage} dmg</span>
+          <span className="sd-stat__label">{t('ship.sd.detonation')}</span>
+          <span className="sd-stat__value" style={{ color: '#ff5e5e' }}>{t('ship.sd.dmgN', { n: detDamage })}</span>
         </div>
       )}
     </>
@@ -650,29 +656,29 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
       {refitInfo.hulls > 0 ? (
         <>
           <div className="sd-refit__line">
-            {refitInfo.hulls} live hull{refitInfo.hulls === 1 ? '' : 's'} differ{refitInfo.hulls === 1 ? 's' : ''} from this template
-            {refitInfo.pendingAlready > 0 && <> · {refitInfo.pendingAlready} already pending</>}
+            {tn('ship.sd.liveDiffer', refitInfo.hulls)}
+            {refitInfo.pendingAlready > 0 && <> · {t('ship.sd.alreadyPending', { n: refitInfo.pendingAlready })}</>}
           </div>
           <button
             className="sd-btn sd-btn--refit"
             disabled={busy || !draftMatchesSelected}
             onClick={doRefitFleet}
             title={draftMatchesSelected
-              ? 'Refit every live hull of this class to this template. Ships at a friendly yard refit now; the rest refit on arrival at one.'
-              : 'Save your edits first — the fleet refits to the SAVED template.'}
+              ? t('ship.sd.refitTip')
+              : t('ship.sd.refitSaveFirstTip')}
           >
-            ⟳ REFIT FLEET · {refitInfo.ore}M {refitInfo.credits}C
+            {t('ship.sd.refitFleet', { ore: refitInfo.ore, credits: refitInfo.credits })}
           </button>
           {!draftMatchesSelected && (
-            <div className="sd-refit__hint">Unsaved edits — save first, then refit.</div>
+            <div className="sd-refit__hint">{t('ship.sd.unsavedEdits')}</div>
           )}
           <div className="sd-refit__hint">
-            Fee = half the added parts' price per hull. Removals refund nothing.
+            {t('ship.sd.refitFee')}
           </div>
         </>
       ) : (
         <div className="sd-refit__line">
-          {refitInfo.pendingAlready} hull{refitInfo.pendingAlready === 1 ? '' : 's'} pending refit — applies at the next friendly yard.
+          {tn('ship.sd.pendingRefit', refitInfo.pendingAlready)}
         </div>
       )}
     </div>
@@ -688,25 +694,25 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
         className="sd-btn sd-btn--primary"
         disabled={busy}
         onClick={() => save(true)}
-        title="Save this design and make it the one BUILD uses for this class"
+        title={t('ship.sd.saveActiveTip')}
       >
-        {selected ? 'SAVE & SET ACTIVE' : 'CREATE & SET ACTIVE'}
+        {selected ? t('ship.sd.saveActive') : t('ship.sd.createActive')}
       </button>
       <button
         className="sd-btn"
         disabled={busy}
         onClick={() => save(false)}
-        title="Save without changing which design is active"
+        title={t('ship.sd.saveTip')}
       >
-        {selected ? 'SAVE' : 'CREATE'}
+        {selected ? t('ship.sd.save') : t('ship.sd.create')}
       </button>
       <button
         className="sd-btn"
         disabled={busy}
         onClick={saveAsTemplate}
-        title="Save this loadout to your account so you can load it in future games"
+        title={t('ship.sd.saveTemplateTip')}
       >
-        SAVE AS TEMPLATE
+        {t('ship.sd.saveTemplate')}
       </button>
       {selected && (
         <button
@@ -714,7 +720,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
           disabled={busy}
           onClick={() => deleteDesign(selected)}
         >
-          DELETE
+          {t('ship.sd.delete')}
         </button>
       )}
     </div>
@@ -725,7 +731,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
       <div className="sd" onClick={e => e.stopPropagation()}>
         {/* ---------- Header: title + class tabs + close ---------- */}
         <div className="sd-header">
-          <span className="sd-title">SHIP DESIGNER</span>
+          <span className="sd-title">{t('ship.sd.title')}</span>
           <div className="sd-tabs">
             {BUILDABLE_CLASSES.filter(cls => (SHIP_SLOT_COUNTS[cls] ?? 0) > 0).map(cls => (
               <button
@@ -739,7 +745,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
               </button>
             ))}
           </div>
-          <button className="sd-close" onClick={onClose} aria-label="Close">✕</button>
+          <button className="sd-close" onClick={onClose} aria-label={t('ship.sd.close')}>✕</button>
         </div>
 
         <div className="sd-main">
@@ -752,17 +758,17 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                 onClick={() => setLibraryOpen(o => !o)}
                 aria-expanded={libraryOpen}
               >
-                {libraryOpen ? '▾' : '▸'} LIBRARY
+                {libraryOpen ? '▾' : '▸'} {t('ship.sd.library')}
                 <span className="sd-library__meta">
-                  {classDesigns.length} design{classDesigns.length === 1 ? '' : 's'}
-                  {activeDesignForClass ? ` · active: ${activeDesignForClass.name}` : ' · builds launch bare hull'}
+                  {tn('ship.sd.designs', classDesigns.length)}
+                  {activeDesignForClass ? ` · ${t('ship.sd.activeName', { name: activeDesignForClass.name })}` : ` · ${t('ship.sd.buildsBare')}`}
                 </span>
               </button>
               {libraryOpen && (
                 <div className="sd-library__body">
                   {classDesigns.length === 0 && (
                     <div className="sd-hint">
-                      No designs yet. A build with no active design launches the bare hull (base stats, no extra cost).
+                      {t('ship.sd.noDesigns')}
                     </div>
                   )}
                   {classDesigns.map(d => (
@@ -775,53 +781,53 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                       <span className="sd-library__row-name">
                         {d.name}
                         <span className="sd-library__row-parts">
-                          {d.parts.length === 0 ? 'bare hull' : d.parts.map(p => PART_GLYPH[p as ShipPartId] ?? '?').join(' ')}
+                          {d.parts.length === 0 ? t('ship.sd.bareHull') : d.parts.map(p => PART_GLYPH[p as ShipPartId] ?? '?').join(' ')}
                         </span>
                       </span>
                       {d.isActive ? (
                         <>
-                          <span className="sd-badge" title="BUILD uses this design for this class">ACTIVE</span>
+                          <span className="sd-badge" title={t('ship.sd.activeBadgeTip')}>{t('ship.sd.active')}</span>
                           <button
                             className="sd-mini-btn"
                             disabled={busy}
                             onClick={e => { e.stopPropagation(); setActiveDesign(d, false); }}
-                            title="Deactivate — builds fall back to the bare hull"
-                          >UNSET</button>
+                            title={t('ship.sd.unsetTip')}
+                          >{t('ship.sd.unset')}</button>
                         </>
                       ) : (
                         <button
                           className="sd-mini-btn"
                           disabled={busy}
                           onClick={e => { e.stopPropagation(); setActiveDesign(d, true); }}
-                          title="Make this the design BUILD uses for this class"
-                        >SET ACTIVE</button>
+                          title={t('ship.sd.setActiveTip')}
+                        >{t('ship.sd.setActive')}</button>
                       )}
                       <button
                         className="sd-mini-btn sd-mini-btn--danger"
                         disabled={busy}
                         onClick={e => { e.stopPropagation(); deleteDesign(d); }}
-                        title="Delete this design (queued and completed ships keep their loadout)"
+                        title={t('ship.sd.deleteDesignTip')}
                       >✕</button>
                     </div>
                   ))}
-                  <div className="sd-library__subhead">TEMPLATES · saved across games</div>
+                  <div className="sd-library__subhead">{t('ship.sd.templatesHead')}</div>
                   {templates === null ? (
-                    <div className="sd-hint">Loading templates…</div>
+                    <div className="sd-hint">{t('ship.sd.loadingTemplates')}</div>
                   ) : classTemplates.length === 0 ? (
                     <div className="sd-hint">
-                      None yet — build a loadout and hit SAVE AS TEMPLATE to reuse it in future games.
+                      {t('ship.sd.noTemplates')}
                     </div>
-                  ) : classTemplates.map(t => (
-                    <div key={t.id} className="sd-library__row">
-                      <ShipIcon shipClass={activeClass} variant={t.iconVariant} size={16} />
+                  ) : classTemplates.map(tpl => (
+                    <div key={tpl.id} className="sd-library__row">
+                      <ShipIcon shipClass={activeClass} variant={tpl.iconVariant} size={16} />
                       <span className="sd-library__row-name">
-                        {t.name}
+                        {tpl.name}
                         <span className="sd-library__row-parts">
-                          {t.parts.length === 0 ? 'bare hull' : t.parts.map(p => PART_GLYPH[p as ShipPartId] ?? '?').join(' ')}
+                          {tpl.parts.length === 0 ? t('ship.sd.bareHull') : tpl.parts.map(p => PART_GLYPH[p as ShipPartId] ?? '?').join(' ')}
                         </span>
                       </span>
-                      <button className="sd-mini-btn" disabled={busy} onClick={() => loadTemplate(t)} title="Load this loadout into the editor">LOAD</button>
-                      <button className="sd-mini-btn sd-mini-btn--danger" disabled={busy} onClick={() => deleteTemplate(t)} title="Delete this saved template">✕</button>
+                      <button className="sd-mini-btn" disabled={busy} onClick={() => loadTemplate(tpl)} title={t('ship.sd.loadTip')}>{t('ship.sd.load')}</button>
+                      <button className="sd-mini-btn sd-mini-btn--danger" disabled={busy} onClick={() => deleteTemplate(tpl)} title={t('ship.sd.deleteTemplateTip')}>✕</button>
                     </div>
                   ))}
 
@@ -830,25 +836,25 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                       path, so this game's tech still decides what fits. */}
                   {classPastDesigns.length > 0 && (
                     <>
-                      <div className="sd-library__subhead">FROM YOUR OTHER GAMES</div>
-                      {classPastDesigns.map(t => (
-                        <div key={t.id} className="sd-library__row">
-                          <ShipIcon shipClass={activeClass} variant={t.iconVariant} size={16} />
+                      <div className="sd-library__subhead">{t('ship.sd.otherGames')}</div>
+                      {classPastDesigns.map(tpl => (
+                        <div key={tpl.id} className="sd-library__row">
+                          <ShipIcon shipClass={activeClass} variant={tpl.iconVariant} size={16} />
                           <span className="sd-library__row-name">
-                            {t.name}
+                            {tpl.name}
                             <span className="sd-library__row-parts">
-                              {t.parts.length === 0
-                                ? 'bare hull'
-                                : t.parts.map(p => PART_GLYPH[p as ShipPartId] ?? '?').join(' ')}
-                              {t.gameName ? ` · ${t.gameName}` : ''}
+                              {tpl.parts.length === 0
+                                ? t('ship.sd.bareHull')
+                                : tpl.parts.map(p => PART_GLYPH[p as ShipPartId] ?? '?').join(' ')}
+                              {tpl.gameName ? ` · ${tpl.gameName}` : ''}
                             </span>
                           </span>
                           <button
                             className="sd-mini-btn"
                             disabled={busy}
-                            onClick={() => loadTemplate(t)}
-                            title="Load this loadout into the editor"
-                          >LOAD</button>
+                            onClick={() => loadTemplate(tpl)}
+                            title={t('ship.sd.loadTip')}
+                          >{t('ship.sd.load')}</button>
                         </div>
                       ))}
                     </>
@@ -861,7 +867,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
             <div className="sd-name-row">
               <input
                 className="sd-name-input"
-                placeholder={selected ? selected.name : 'Design name (e.g. Brawler MkII)'}
+                placeholder={selected ? selected.name : t('ship.sd.namePlaceholder')}
                 value={draftName}
                 maxLength={32}
                 onChange={e => setDraftName(e.target.value)}
@@ -873,13 +879,13 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                   onClick={() => setIconMenuOpen(o => !o)}
                   aria-haspopup="listbox"
                   aria-expanded={iconMenuOpen}
-                  title="Change ship icon"
+                  title={t('ship.sd.changeIcon')}
                 >
                   <ShipIcon shipClass={activeClass} variant={iconVariant} size={18} />
                   <span className="sd-icon-caret" aria-hidden>▾</span>
                 </button>
                 {iconMenuOpen && (
-                  <div className="sd-icon-menu" role="listbox" aria-label="Ship icon">
+                  <div className="sd-icon-menu" role="listbox" aria-label={t('ship.sd.shipIcon')}>
                     {ALL_VARIANTS.map(v => {
                       const isDefault = v === DEFAULT_SHIP_ICONS[activeClass];
                       // Premium lines render for everyone — locked, not
@@ -894,7 +900,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                           aria-selected={v === iconVariant}
                           className={`sd-icon-option ${v === iconVariant ? 'selected' : ''} ${locked ? 'is-locked' : ''}`}
                           title={locked
-                            ? `Preview the ${ICON_VARIANT_NAMES[activeClass][v]} line on your hull — a ${COMMISSION_NAME} line`
+                            ? t('ship.sd.previewLineTip', { line: ICON_VARIANT_NAMES[activeClass][v], commission: COMMISSION_NAME })
                             : undefined}
                           onClick={() => {
                             if (locked) {
@@ -910,7 +916,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                           <ShipIcon shipClass={activeClass} variant={v} size={22} />
                           <span>
                             {ICON_VARIANT_NAMES[activeClass][v]}
-                            {isDefault && <span className="sd-icon-default"> · default</span>}
+                            {isDefault && <span className="sd-icon-default"> · {t('ship.sd.default')}</span>}
                             {locked && <span aria-hidden> 🔒</span>}
                           </span>
                           {v === iconVariant && <span aria-hidden>✓</span>}
@@ -921,7 +927,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                 )}
               </div>
               {selected && (
-                <button className="sd-mini-btn" onClick={() => loadDesign(null)}>+ NEW</button>
+                <button className="sd-mini-btn" onClick={() => loadDesign(null)}>{t('ship.sd.newDesign')}</button>
               )}
             </div>
 
@@ -950,8 +956,8 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                     ].filter(Boolean).join(' ')}
                     style={pos}
                     title={part
-                      ? `${SHIP_PART_DEFS[part].name} — click to unfit`
-                      : 'Empty slot (free) — drag a part here, or tap a part card to fit'}
+                      ? t('ship.sd.unfitTip', { name: SHIP_PART_DEFS[part].name })
+                      : t('ship.sd.emptySlotTip')}
                     onClick={() => { if (part) unfitSocket(i); }}
                     onDragOver={e => { if (dragging) e.preventDefault(); }}
                     onDrop={e => {
@@ -966,11 +972,11 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                 );
               })}
               <div className="sd-canvas__slots-label">
-                SLOTS {draftParts.length}/{slots} · empty slots are free
+                {t('ship.sd.slotsLabel', { used: draftParts.length, slots })}
               </div>
               {!dragHintSeen && draftParts.length === 0 && slots > 0 && (
                 <div className="sd-drag-hint" aria-hidden>
-                  ⤵ Drag a part from the tray onto a socket — or just tap a card to fit it
+                  {t('ship.sd.dragHint')}
                 </div>
               )}
               {flash && <div className="sd-flash" role="alert">⚠ {flash}</div>}
@@ -980,9 +986,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
               {previewIcon && (
                 <div className="sd-preview" role="status">
                   <span>
-                    Previewing the <b>{ICON_VARIANT_NAMES[activeClass][previewIcon]}</b> line, part of
-                    the {COMMISSION_NAME} (with every other line, new flags and {COMMISSION_DISCORD}).
-                    {' '}Not saved with the design.
+                    {t('ship.sd.previewA')} <b>{ICON_VARIANT_NAMES[activeClass][previewIcon]}</b>{t('ship.sd.previewB', { commission: COMMISSION_NAME, discord: COMMISSION_DISCORD })}
                   </span>
                   {canBuyHere() && (
                     <button
@@ -992,10 +996,10 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                         logCommission('designer', 'click');
                         void startCommissionCheckout('designer').then(url => { if (url) window.location.assign(url); });
                       }}
-                    >Get it · {COMMISSION_PRICE}</button>
+                    >{t('ship.sd.getIt', { price: COMMISSION_PRICE })}</button>
                   )}
                   <button type="button" className="sd-preview__end" onClick={() => setPreviewIcon(undefined)}>
-                    End preview
+                    {t('ship.sd.endPreview')}
                   </button>
                 </div>
               )}
@@ -1008,9 +1012,9 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                 onClick={() => setDrawerOpen(o => !o)}
                 aria-expanded={drawerOpen}
               >
-                {drawerOpen ? '▾' : '▴'} PARTS
+                {drawerOpen ? '▾' : '▴'} {t('ship.sd.parts')}
                 {activeClass === 'freighter' && (
-                  <span className="sd-drawer__hint">freighters take engine/shield only — they haul, they don't fight</span>
+                  <span className="sd-drawer__hint">{t('ship.sd.freighterHint')}</span>
                 )}
               </button>
               {drawerOpen && (
@@ -1039,8 +1043,8 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                           setDragging(pid);
                         }}
                         onDragEnd={() => setDragging(null)}
-                        onClick={() => { if (!lock) fitPart(pid); else showFlash(`🔒 ${def.name} — ${lock.text}`); }}
-                        title={`${def.blurb}\n${def.techNote}${lock ? `\n🔒 ${lock.text}` : ''}\nClick to fit · drag onto a socket`}
+                        onClick={() => { if (!lock) fitPart(pid); else showFlash(t('ship.sd.partLockedShort', { name: def.name, reason: lock.text })); }}
+                        title={`${def.blurb}\n${def.techNote}${lock ? `\n🔒 ${lock.text}` : ''}\n${t('ship.sd.clickToFit')}`}
                         role="button"
                         aria-disabled={!!lock || full}
                       >
@@ -1052,16 +1056,16 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                             {lock && <span className="sd-part__lock"> 🔒</span>}
                           </span>
                           <span className="sd-part__blurb">{def.blurb}</span>
-                          {COUNTER_TEXT[pid] && (
-                            <span className="sd-part__counter">countered: {COUNTER_TEXT[pid]}</span>
+                          {counterText(pid) && (
+                            <span className="sd-part__counter">{t('ship.sd.countered', { text: counterText(pid) ?? '' })}</span>
                           )}
                           {isDet && (
                             <span className="sd-part__counter" style={{ color: '#ff8a5c' }}>
-                              hits friend AND foe · ship is destroyed
+                              {t('ship.sd.detWarn')}
                             </span>
                           )}
                         </span>
-                        <span className="sd-part__price" title={n > 0 ? `Copies of the same part escalate ×${PART_STACK_ESCALATION} each` : 'Base price'}>
+                        <span className="sd-part__price" title={n > 0 ? t('ship.sd.escalateTip', { mult: PART_STACK_ESCALATION }) : t('ship.sd.basePrice')}>
                           {n > 0 && <span className="sd-part__price-nth">#{n + 1}</span>}
                           {next.ore}M {next.credits}C
                         </span>
@@ -1076,8 +1080,8 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
           {/* ---------- Right sidebar: stats + refit + actions ---------- */}
           <div className="sd-side" data-tutorial-id="designer-stats">
             <div className="sd-side__title">
-              {selected ? `EDITING: ${selected.name}` : 'NEW DESIGN'}
-              {selected && !draftMatchesSelected && <span className="sd-side__dirty"> · unsaved</span>}
+              {selected ? t('ship.sd.editing', { name: selected.name }) : t('ship.sd.newTitle')}
+              {selected && !draftMatchesSelected && <span className="sd-side__dirty"> · {t('ship.sd.unsaved')}</span>}
             </div>
             <div className="sd-side__stats">{statRows}</div>
             {/* COMBAT V2's core rule, live. A player fitting an engine watches
@@ -1086,41 +1090,39 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                 unchanged, so a hit and a miss look identical on the map. This
                 is the only place the rule is stated. */}
             <div className="sd-hit">
-              <div className="sd-hit__title">Chance to hit, per tick</div>
+              <div className="sd-hit__title">{t('ship.sd.hitTitle')}</div>
               <div className="sd-hit__row">
-                {(['corvette', 'frigate', 'destroyer'] as ShipClassName[]).map(t => {
-                  const p = hitChanceOf(stats.speed, HULL_BASE[t].speed);
+                {(['corvette', 'frigate', 'destroyer'] as ShipClassName[]).map(hc => {
+                  const p = hitChanceOf(stats.speed, HULL_BASE[hc].speed);
                   return (
-                    <div key={t} className="sd-hit__cell" title={`vs a bare ${t} (speed ${HULL_BASE[t].speed})`}>
-                      <span className="sd-hit__glyph">{t === 'corvette' ? '▹' : t === 'frigate' ? '▰' : '▮'}</span>
+                    <div key={hc} className="sd-hit__cell" title={t('ship.sd.vsBare', { cls: hc, speed: HULL_BASE[hc].speed })}>
+                      <span className="sd-hit__glyph">{hc === 'corvette' ? '▹' : hc === 'frigate' ? '▰' : '▮'}</span>
                       <span className="sd-hit__pct">{(100 * p).toFixed(0)}%</span>
-                      <span className="sd-hit__lbl">{t.slice(0, 3).toUpperCase()}</span>
+                      <span className="sd-hit__lbl">{t(`ship.sd.abbr.${hc as 'corvette' | 'frigate' | 'destroyer'}` as const)}</span>
                     </div>
                   );
                 })}
               </div>
               <div className="sd-hit__foot">
-                Faster hulls are harder to hit. Engines raise speed, which lifts
-                every number here and shortens the trip.
+                {t('ship.sd.hitFoot')}
               </div>
             </div>
             {outgoingHint && <div className="sd-hint sd-hint--matchup">{outgoingHint}</div>}
             <div className="sd-hint sd-hint--matchup">{incomingHint}</div>
             <div className="sd-hint">
-              <strong>🛡 Shields</strong> only stop ⚔ kinetic. <strong>🪨 Armor</strong> only stops
-              ⚡ energy. Each part cuts its own type by 22%, and they <em>compound</em> rather than
-              add — {reductionLadder(3)} off for 1 / 2 / 3 parts, not 22 / 44 / 66. The other type
-              is never boosted; it just arrives unreduced.
-              Hull base: {SERVER_HULL_BASE[activeClass].hp} HP · {SERVER_HULL_BASE[activeClass].damagePerTick} dmg.
+              <strong>{t('ship.sd.tipShields')}</strong>{' '}{t('ship.sd.tipA')}{' '}
+              <strong>{t('ship.sd.tipArmor')}</strong>{' '}{t('ship.sd.tipB')}{' '}
+              <em>{t('ship.sd.tipCompound')}</em>{' '}
+              {t('ship.sd.tipC', { ladder: reductionLadder(3), hp: SERVER_HULL_BASE[activeClass].hp, dmg: SERVER_HULL_BASE[activeClass].damagePerTick })}
               {hpOut(100) !== 100 && (
-                <> Max HP shown includes your defense tech (×{(hpOut(1000) / 1000).toFixed(2)}).</>
+                <> {t('ship.sd.tipTech', { mult: (hpOut(1000) / 1000).toFixed(2) })}</>
               )}
-              Builds snapshot the ACTIVE design at queue time.
+              {' '}{t('ship.sd.tipBuilds')}
             </div>
             {refitBar}
             {noteLine}
             {error && (
-              <button className="sd-error" onClick={() => setError(null)} title="Click to dismiss">
+              <button className="sd-error" onClick={() => setError(null)} title={t('ship.sd.dismiss')}>
                 ⚠ {error}
               </button>
             )}
@@ -1136,7 +1138,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
             aria-expanded={statsSheetOpen}
           >
             <span>{hpOut(stats.hp)} HP</span>
-            <span>{stats.damagePerTick} dmg</span>
+            <span>{t('ship.sd.dmgN', { n: stats.damagePerTick })}</span>
             <span>{priced(hullDef.cost.ore + draftCost.ore)}M {priced(hullDef.cost.credits + draftCost.credits)}C</span>
             <span>{upkeepLabel}</span>
             <span aria-hidden>{statsSheetOpen ? '▾' : '▴'}</span>
@@ -1159,7 +1161,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                 disabled={busy}
                 onClick={() => save(true)}
               >
-                {selected ? 'SAVE & ACTIVATE' : 'CREATE & ACTIVATE'}
+                {selected ? t('ship.sd.saveActivate') : t('ship.sd.createActivate')}
               </button>
             </div>
           )}
