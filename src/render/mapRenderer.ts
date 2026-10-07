@@ -8677,6 +8677,19 @@ export function chooseRegionLabelPos(opts: {
 // hits precisely BECAUSE the pose hasn't moved.
 let washLayer: HTMLCanvasElement | null = null;
 let washKey = '';
+
+/** The zoom part of the wash cache key: 0.1% of the CURRENT zoom.
+ *
+ *  It was Math.round(scale * 1000) -- a fixed 0.001 step. Fine at
+ *  scale ~1, where that is 0.1%, but the far systems pulled the zoom out
+ *  to 0.0006, and there one step spans 0.0005..0.0015: zooming out from
+ *  1.5x to 0.6x the floor kept blitting a layer painted at the old zoom,
+ *  shifted by the new one. Sol's territory came out as a grey-and-rainbow
+ *  disc twice its size, a hundred pixels off to the side (Lorne,
+ *  2026-10-06: "territory ... gets all kinds of fucky"). */
+export function washScaleKey(scale: number): number {
+  return scale > 0 ? Math.round(Math.log(scale) * 1000) : 0;
+}
 /** Camera position the wash layer was painted at. */
 let washAnchor: { x: number; y: number } | null = null;
 
@@ -8730,7 +8743,7 @@ export function drawSystemRegions(
     const wp = bodyPosition(cb, ctx.t, ctx.bodies);
     centres += `${Math.round(wp.x * scale / 3)},${Math.round(wp.y * scale / 3)};`;
   }
-  const key = [Math.round(scale * 1000), W, H, Math.round(fade * 100), sig, centres].join('|');
+  const key = [washScaleKey(scale), W, H, Math.round(fade * 100), sig, centres].join('|');
   if (key === washKey && washLayer && washAnchor) {
     const dx = (washAnchor.x - ctx.camera.x) * scale;
     const dy = (washAnchor.y - ctx.camera.y) * scale;

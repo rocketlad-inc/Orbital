@@ -55,3 +55,53 @@ export function buildBadgeSegments(
   });
   return segs;
 }
+
+/** Most pills on one line of a badge. */
+export const BADGE_ROW_MAX = 4;
+
+export interface BadgeLayout {
+  /** The whole badge, the box the label solver places. */
+  w: number;
+  h: number;
+  /** Each pill's offset inside that box, in entry order. */
+  pills: Array<{ x: number; y: number; w: number }>;
+}
+
+/**
+ * Lay a badge's pills out in rows of at most BADGE_ROW_MAX, balanced
+ * (8 -> 4 + 4, 5 -> 3 + 2) and centred, so a short last row sits under
+ * the middle of the one above.
+ *
+ * Eight empires parked at one place printed a single strip of eight
+ * pills, ~400px wide, off a system 20px across at full zoom-out. Nowhere
+ * near the system had room for it, so the label solver hung it a screen
+ * away, where it read as stray icons (Lorne, 2026-10-06). Four or fewer
+ * stay one row, exactly as before.
+ */
+export function layoutBadgePills(
+  widths: readonly number[],
+  pillH: number,
+  gap: number,
+  perRow: number = BADGE_ROW_MAX,
+): BadgeLayout {
+  const n = widths.length;
+  if (n === 0) return { w: 0, h: 0, pills: [] };
+  const rowCount = Math.ceil(n / Math.max(1, perRow));
+  const per = Math.ceil(n / rowCount);
+  const rows: number[][] = [];
+  for (let i = 0; i < n; i += per) {
+    rows.push(Array.from({ length: Math.min(per, n - i) }, (_, k) => i + k));
+  }
+  const rowW = rows.map(r => r.reduce((s, i) => s + widths[i], 0) + gap * (r.length - 1));
+  const w = Math.max(...rowW);
+  const h = rows.length * pillH + (rows.length - 1) * gap;
+  const pills: BadgeLayout['pills'] = new Array(n);
+  rows.forEach((r, ri) => {
+    let x = (w - rowW[ri]) / 2;
+    for (const i of r) {
+      pills[i] = { x, y: ri * (pillH + gap), w: widths[i] };
+      x += widths[i] + gap;
+    }
+  });
+  return { w, h, pills };
+}
