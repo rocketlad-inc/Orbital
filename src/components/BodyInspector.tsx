@@ -30,6 +30,8 @@ import { EditableName } from './EditableName';
 import { RESOURCE_COLORS } from '../game/resourceColors';
 import './BodyInspector.css';
 import { anyRouteCollectsFrom , routesIAmPartyTo } from '../game/routeSelectors';
+import { t, tn, tk } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 
 /** Per-Δv METAL cost when an asteroid is rammed via Trajectory Control
  *  Thrusters. Charged once at commit time to the faction pool. Tuned
@@ -53,6 +55,7 @@ const RAM_METAL_PER_DV = 50;
 const RAM_ASTEROID_G = 0.005;
 
 export const BodyInspector: React.FC = () => {
+  useI18n();
   const { gameState, uiState, deselectBody, focusBody, updateCamera } = useGameContext();
   const camera = useCamera();
   // Industry tech + Senate yield laws, the same multipliers the tick
@@ -325,11 +328,11 @@ export const BodyInspector: React.FC = () => {
               <EditableName
                 value={body.name}
                 onSave={async (n) => { await mpActionsTopCard?.renameBody?.(body.id, n); }}
-                ariaLabel="Name this meteoroid"
+                ariaLabel={t('meteoroid.nameIt')}
               />
             </div>
             <div className="mtr-kind">
-              {dead ? 'WORKED OUT' : `METEOROID · ${unit.toUpperCase()}`}
+              {dead ? t('body.mtr.workedOut') : t('body.mtr.kind', { unit: (unit === 'credits' ? t('meteoroid.unit.credits') : t('meteoroid.unit.metal')).toUpperCase() })}
             </div>
             <div className="mtr-bar" aria-hidden>
               <div className={`mtr-bar__fill${dead ? ' is-dead' : ''}`}
@@ -337,19 +340,17 @@ export const BodyInspector: React.FC = () => {
             </div>
             <div className="mtr-left">
               {dead
-                ? 'Nothing left. Any route still pointed here will move on.'
-                : `${Math.round(left)} ${unit} remaining of ${Math.round(initial)}`}
+                ? t('body.mtr.deadLeft')
+                : t('body.mtr.remaining', { left: Math.round(left), unit: unit === 'credits' ? t('meteoroid.unit.credits') : t('meteoroid.unit.metal'), initial: Math.round(initial) })}
             </div>
             <div className="mtr-note">
               {body.type === 'lagrange'
-                ? 'Sits permanently opposite its world — the far side of that orbit.'
-                : 'Deep space. Nobody lives out here.'}
+                ? t('body.mtr.noteLagrange')
+                : t('body.mtr.noteDeep')}
             </div>
             {!dead && (
               <div className="mtr-how">
-                Work it with a trade route: add this rock as a stop and crew the
-                run with a freighter carrying a <b>Mining Rig</b>. The hull fills
-                at 50 a tick and cannot leave until it is done.
+                {t('body.mtr.howPre')} <b>{t('meteoroid.miningRig')}</b>. {t('body.mtr.howPost')}
               </div>
             )}
           </div>
@@ -370,9 +371,9 @@ export const BodyInspector: React.FC = () => {
             <button
               className={`panel-focus ${isFocused ? 'active' : ''}`}
               onClick={toggleFocus}
-              title={isFocused ? 'Stop following' : 'Camera follows this body'}
+              title={isFocused ? t('body.follow.stop') : t('body.follow.camera')}
             >
-              {isFocused ? '◉ FOLLOWING' : '○ FOLLOW'}
+              {isFocused ? t('body.following') : t('body.follow')}
             </button>
             <button className="panel-close" onClick={closeAndRestore}>
               ✕
@@ -386,7 +387,7 @@ export const BodyInspector: React.FC = () => {
             the player already knows the body's parent from clicking
             it, and SOI is a tooltip-on-hover value, not a glance one. */}
         <div className="body-focus__chips">
-          <span className="body-focus__chip">{body.type.toUpperCase()}</span>
+          <span className="body-focus__chip">{tk(`body.type.${body.type}`, body.type).toUpperCase()}</span>
           {ownerFaction && (
             <span
               className="body-focus__chip"
@@ -396,7 +397,7 @@ export const BodyInspector: React.FC = () => {
             </span>
           )}
           {shipsHere.length > 0 && (
-            <span className="body-focus__chip">{shipsHere.length} SHIP{shipsHere.length === 1 ? '' : 'S'}</span>
+            <span className="body-focus__chip">{tn('body.shipsChip', shipsHere.length)}</span>
           )}
         </div>
 
@@ -488,7 +489,7 @@ export const BodyInspector: React.FC = () => {
                 <div className="body-focus__yield-row">
                   {production.ore > 0 && <span>+{Math.round(production.ore)}M</span>}
                   {production.credits > 0 && <span>+{Math.round(production.credits)}C</span>}
-                  <span style={{ color: '#7a8a9a' }}>/ tick if settled</span>
+                  <span style={{ color: '#7a8a9a' }}>{t('body.perTickIfSettled')}</span>
                 </div>
                 <div className="body-focus__yield-note">
                   {mpActionsTopCard
@@ -497,11 +498,11 @@ export const BodyInspector: React.FC = () => {
                     ? (gameState.ships.some(s =>
                         s.ownedBy === 'player' && !s.transit
                         && s.orbit.parentBodyId === body.id && s.class === 'colony')
-                        ? 'Colony Ship in orbit; deploy below to start harvesting.'
-                        : 'No settlement yet — send a Colony Ship, then deploy.')
+                        ? t('body.pitch.colonyInOrbit')
+                        : t('body.pitch.sendColony'))
                     : (freightersHere.length === 0
-                        ? 'No settlement yet — park a freighter, then deploy.'
-                        : 'Freighter in orbit; deploy below to start harvesting.')}
+                        ? t('body.pitch.parkFreighter')
+                        : t('body.pitch.freighterInOrbit'))}
                 </div>
               </div>
             );
@@ -521,7 +522,7 @@ export const BodyInspector: React.FC = () => {
                   {poolC > 0.01 && <span style={{ color: '#ffd700' }}>+{fmt(poolC)}C</span>}
                   {poolS > 0.01 && <span style={{ color: '#6ee7b7' }}>+{fmt(poolS)}S</span>}
                   <span style={{ color: '#7a8a9a', fontSize: 12, fontWeight: 400 }}>
-                    /tick → pool
+                    {t('body.perTickPool')}
                   </span>
                 </div>
               )}
@@ -529,7 +530,7 @@ export const BodyInspector: React.FC = () => {
               {/* Body-level LOCAL stockpile + the per-tick build rate. */}
               {(hasStockpile || hasLocalFlow) && (
                 <div style={{ fontSize: 13, color: '#a8b8c8', marginBottom: 2 }}>
-                  <span style={{ color: '#7a8a9a', letterSpacing: '0.08em' }}>LOCAL: </span>
+                  <span style={{ color: '#7a8a9a', letterSpacing: '0.08em' }}>{t('body.localLabel')} </span>
                   {/* Canonical resource tints (resourceColors.ts). This also
                       drops an old dup: science used to print twice. */}
                   <span style={{ color: RESOURCE_COLORS.metal }}>{Math.round(localStockO)}M</span>{' '}
@@ -540,7 +541,7 @@ export const BodyInspector: React.FC = () => {
                       ({/* per-tick LOCAL fill rate */}
                       {localPerTickO > 0.01 && <span style={{ color: RESOURCE_COLORS.metal }}>+{fmt(localPerTickO)}M </span>}
                       {localPerTickC > 0.01 && <span style={{ color: RESOURCE_COLORS.credits }}>+{fmt(localPerTickC)}C</span>}
-                      <span style={{ color: '#7a8a9a' }}>/tick</span>)
+                      <span style={{ color: '#7a8a9a' }}>{t('body.perTick')}</span>)
                     </span>
                   )}
                 </div>
@@ -563,17 +564,17 @@ export const BodyInspector: React.FC = () => {
                   border: '1px solid rgba(255, 94, 94, 0.4)',
                   borderRadius: 3,
                 }}>
-                  ⚠ No route is collecting this — put a freighter on it, or spend it here.
+                  {t('body.noRouteCollecting')}
                 </div>
               )}
               {hasLocalFlow && !allCollectered && routeFromHere && (
                 <div className="body-focus__yield-note" style={{ color: '#6ee7b7' }}>
-                  Trade route active — freighter en route.
+                  {t('body.routeActive')}
                 </div>
               )}
               {hasLocalFlow && !allCollectered && !routeFromHere && freightersHere.length > 0 && (
                 <div className="body-focus__yield-note" style={{ color: '#6ee7b7' }}>
-                  Freighter in orbit — pickup on arrival.
+                  {t('body.freighterPickup')}
                 </div>
               )}
             </div>
@@ -748,6 +749,7 @@ interface SettlementsSectionProps {
 }
 
 const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFilter }) => {
+  useI18n();
   const {
     gameState, deploySettlement, selectSettlement, selectedSettlementId,
     buildCollector, queueBuilding, cancelBuilding, renameSettlement,
@@ -866,12 +868,12 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
   // Single source of truth for the disabled-button hint text. Used by
   // both the button title attribute and the visible hint below.
   const noFreighterHint = playerFreighterEnRoute
-    ? 'Your freighter is en route — wait for it to arrive'
+    ? t('body.hint.freighterEnRoute')
     : playerNonFreighterHere
-      ? `Your ${playerNonFreighterHere.class} here can't deploy — only freighters can.`
+      ? t('body.hint.cantDeploy', { cls: playerNonFreighterHere.class })
       : enemyFreighterHere
-        ? 'That freighter belongs to an enemy. Send YOUR own to deploy.'
-        : 'Send a freighter to orbit to deploy';
+        ? t('body.hint.enemyFreighter')
+        : t('body.hint.sendFreighter');
 
   // === MP colony/freighter split (DESIGN-identity-economy §4) ===
   // In multiplayer, freighters lost the settle verb. Instead:
@@ -993,14 +995,14 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
   return (
     <div className="settlements-section">
       <div className="section-title">
-        {typeFilter === 'city' ? 'CITY' : typeFilter === 'station' ? 'STATION' : 'SETTLEMENTS'}
+        {typeFilter === 'city' ? t('body.sec.city') : typeFilter === 'station' ? t('body.sec.station') : t('body.sec.settlements')}
       </div>
 
       {settlements.length === 0 && !namingType && (
         <div className="no-orders">
-          {typeFilter === 'city' ? 'No city at this body'
-            : typeFilter === 'station' ? 'No station at this body'
-            : 'No settlements at this body'}
+          {typeFilter === 'city' ? t('body.sec.noCity')
+            : typeFilter === 'station' ? t('body.sec.noStation')
+            : t('body.sec.noSettlements')}
         </div>
       )}
 
@@ -1048,7 +1050,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
                   <EditableName
                     value={s.name}
                     readOnly={s.ownedBy !== 'player'}
-                    ariaLabel={`Rename this ${s.type}`}
+                    ariaLabel={s.type === 'city' ? t('worldmenu.renameCity') : t('worldmenu.renameStation')}
                     onSave={async (next) => {
                       renameSettlement(s.id, next);
                       if (mpActions) {
@@ -1066,18 +1068,18 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
                   // Without one of these anywhere in the empire, every
                   // settlement stockpile is stranded.
                   <span
-                    title="Collector — receives stockpile drains from this empire's settlements"
+                    title={t('body.collector.chipTitle')}
                     style={{
                       fontSize: 8, letterSpacing: '0.12em',
                       padding: '1px 5px', borderRadius: 3,
                       border: '1px solid #4ecdc4', color: '#4ecdc4',
                       background: 'rgba(78, 205, 196, 0.08)',
                     }}
-                  >◆ COLLECTOR</span>
+                  >{t('body.collector.chip')}</span>
                 )}
               </div>
               <div className="settlement-stats">
-                <span>HP {Math.round(s.hp)}/{s.maxHp}</span>
+                <span>{t('body.stat.hp', { hp: Math.round(s.hp), max: s.maxHp })}</span>
                 {/* Orbital shields sit BEFORE structure in the damage
                     order, so they read before it here too. Hidden
                     entirely when no generator is built — an empty 0/0
@@ -1086,14 +1088,13 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
                 {(s.shieldHpMax ?? 0) > 0 && (
                   <span
                     style={{ color: '#6fd3ff' }}
-                    title={`Orbital shields absorb damage before structure and regenerate. `
-                      + `Structure does not.`}
+                    title={t('body.shieldsTitle')}
                   >
                     ⬡ {Math.round(s.shieldHp ?? 0)}/{Math.round(s.shieldHpMax ?? 0)}
                   </span>
                 )}
-                <span>POP {s.population}</span>
-                <span className="yield">{yieldStr || '–'}/harvest</span>
+                <span>{t('body.stat.pop', { n: s.population })}</span>
+                <span className="yield">{yieldStr || '–'}{t('body.stat.perHarvest')}</span>
               </div>
               {/* Two-part bar: shield above structure, so a defender can
                   see at a glance which pool is being eaten. The shield
@@ -1131,8 +1132,8 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
                   }}
                   disabled={!canAffordCollector}
                   title={canAffordCollector
-                    ? `Upgrade to collector: pumps 100% of this settlement's yield straight to your pool every tick (10× the non-collector trickle). Stops the LOCAL stockpile from growing here. Collectors are also your TRADE ports — freighters load outgoing trade shipments here, and other players' deliveries can only land at your collectors. Cost: ${COLLECTOR_COST.credits}C.`
-                    : `Need ${COLLECTOR_COST.credits} credits.`}
+                    ? t('body.collector.upgradeTitle', { cost: COLLECTOR_COST.credits })
+                    : t('body.collector.needCredits', { cost: COLLECTOR_COST.credits })}
                   style={{
                     marginTop: 6,
                     padding: '4px 10px',
@@ -1143,7 +1144,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
                     fontFamily: 'inherit', fontSize: 10, fontWeight: 600, letterSpacing: '0.08em',
                     cursor: canAffordCollector ? 'pointer' : 'default',
                   }}
-                >+ COLLECTOR ({COLLECTOR_COST.credits}C)</button>
+                >{t('body.collector.btn', { cost: COLLECTOR_COST.credits })}</button>
               )}
               {isMine && (
                 <div data-tutorial-id="buildings-strip">
@@ -1186,7 +1187,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
       {namingType ? (
         <div className="deploy-prompt">
           <div className="deploy-prompt-label">
-            NAME YOUR {namingType === 'city' ? 'CITY' : 'STATION'}
+            {namingType === 'city' ? t('body.name.city') : t('body.name.station')}
           </div>
           <input
             ref={inputRef}
@@ -1196,13 +1197,13 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
             maxLength={32}
             onChange={(e) => setDraftName(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={`e.g. ${suggestSettlementName(body, namingType, gameState.settlements)}`}
+            placeholder={t('body.name.placeholder', { name: suggestSettlementName(body, namingType, gameState.settlements) })}
           />
           <div className="deploy-prompt-actions">
             <button className="btn-confirm" onClick={handleConfirm}>
-              {namingType === 'city' ? '■ FOUND CITY' : '◆ LAUNCH STATION'}
+              {namingType === 'city' ? t('body.name.foundCity') : t('body.name.launchStation')}
             </button>
-            <button className="btn-cancel" onClick={handleCancel}>CANCEL</button>
+            <button className="btn-cancel" onClick={handleCancel}>{t('body.name.cancel')}</button>
           </div>
         </div>
       ) : (
@@ -1219,24 +1220,24 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
                   ? `${cityLock.label} — ${cityLock.text}`
                   : isMp
                   ? (playerColonyShipHere
-                      ? `Found a city — consumes ${playerColonyShipHere.name} (the Colony Ship in orbit)`
+                      ? t('body.deploy.cityConsumes', { name: playerColonyShipHere.name })
                       : ownSettlementHere
                         ? (canAffordMpStation
-                            ? `Built on ground you already hold: ${MP_STATION_COST.ore}M ${MP_STATION_COST.credits}C — no ship needed`
-                            : `Needs ${MP_STATION_COST.ore}M ${MP_STATION_COST.credits}C — not enough in the pool yet`)
+                            ? t('body.deploy.cityHeld', { ore: MP_STATION_COST.ore, credits: MP_STATION_COST.credits })
+                            : t('body.deploy.cityNeeds', { ore: MP_STATION_COST.ore, credits: MP_STATION_COST.credits }))
                         : colonyShipEnRoute
-                          ? 'Your Colony Ship is en route — wait for it to arrive'
-                          : 'Requires a Colony Ship in orbit, or a settlement of yours here first')
+                          ? t('body.deploy.colonyEnRoute')
+                          : t('body.deploy.cityRequires'))
                   : (
                     // Fuel term dropped — cost.fuel is 0 and fuel is dead
                     // (DESIGN §1.1), so it only ever rendered a stray "0F".
                     !canBuildHere ? noFreighterHint
-                    : !canAffordCity ? `Need ${SETTLEMENT_DEFS.city.cost.ore}M/${SETTLEMENT_DEFS.city.cost.credits}C`
-                    : `Deploy a city (${SETTLEMENT_DEFS.city.cost.ore}M/${SETTLEMENT_DEFS.city.cost.credits}C)`
+                    : !canAffordCity ? t('body.deploy.need', { ore: SETTLEMENT_DEFS.city.cost.ore, credits: SETTLEMENT_DEFS.city.cost.credits })
+                    : t('body.deploy.cityDeploy', { ore: SETTLEMENT_DEFS.city.cost.ore, credits: SETTLEMENT_DEFS.city.cost.credits })
                   )
                 }
               >
-                {cityLock ? `🔒 ${cityLock.text}` : '■ DEPLOY CITY'}
+                {cityLock ? `🔒 ${cityLock.text}` : t('body.deploy.cityBtn')}
               </button>
             )}
             {showStationDeploy && (
@@ -1248,22 +1249,22 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
                 onClick={() => handleStartDeploy('station')}
                 title={isMp
                   ? (playerColonyShipHere
-                      ? `Launch a station — consumes ${playerColonyShipHere.name} (the Colony Ship in orbit)`
+                      ? t('body.deploy.stationConsumes', { name: playerColonyShipHere.name })
                       : ownSettlementHere
                         ? (canAffordMpStation
-                            ? `Built from orbit: ${MP_STATION_COST.ore}M ${MP_STATION_COST.credits}C`
-                            : `Need ${MP_STATION_COST.ore}M ${MP_STATION_COST.credits}C to build from orbit`)
+                            ? t('body.deploy.stationHeld', { ore: MP_STATION_COST.ore, credits: MP_STATION_COST.credits })
+                            : t('body.deploy.stationNeed', { ore: MP_STATION_COST.ore, credits: MP_STATION_COST.credits }))
                         : colonyShipEnRoute
-                          ? 'Your Colony Ship is en route — wait for it to arrive'
-                          : `Requires a Colony Ship in orbit (consumed) — or own a settlement here first to build from orbit for ${MP_STATION_COST.ore}M ${MP_STATION_COST.credits}C`)
+                          ? t('body.deploy.colonyEnRoute')
+                          : t('body.deploy.stationRequires', { ore: MP_STATION_COST.ore, credits: MP_STATION_COST.credits }))
                   : (
                     !canBuildHere ? noFreighterHint
-                    : !canAffordStation ? `Need ${SETTLEMENT_DEFS.station.cost.ore}M/${SETTLEMENT_DEFS.station.cost.credits}C`
-                    : `Deploy a station (${SETTLEMENT_DEFS.station.cost.ore}M/${SETTLEMENT_DEFS.station.cost.credits}C)`
+                    : !canAffordStation ? t('body.deploy.need', { ore: SETTLEMENT_DEFS.station.cost.ore, credits: SETTLEMENT_DEFS.station.cost.credits })
+                    : t('body.deploy.stationDeploy', { ore: SETTLEMENT_DEFS.station.cost.ore, credits: SETTLEMENT_DEFS.station.cost.credits })
                   )
                 }
               >
-                ◆ DEPLOY STATION
+                {t('body.deploy.stationBtn')}
               </button>
             )}
           </div>
@@ -1273,12 +1274,12 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
           {isMp && !playerColonyShipHere && (showCityDeploy || showStationDeploy) && (
             <div className="deploy-hint">
               {colonyShipEnRoute
-                ? 'Your Colony Ship is en route — wait for it to arrive.'
+                ? t('body.hint.colonyEnRoute')
                 : ownSettlementHere
                   ? (canAffordMpStation
-                      ? `Station built from orbit: ${MP_STATION_COST.ore}M ${MP_STATION_COST.credits}C — no ship needed.`
-                      : `Station built from orbit costs ${MP_STATION_COST.ore}M ${MP_STATION_COST.credits}C — not enough in the pool yet.`)
-                  : 'Requires a Colony Ship in orbit — deploying consumes it.'}
+                      ? t('body.hint.stationHeld', { ore: MP_STATION_COST.ore, credits: MP_STATION_COST.credits })
+                      : t('body.hint.stationNeed', { ore: MP_STATION_COST.ore, credits: MP_STATION_COST.credits }))
+                  : t('body.hint.colonyRequired')}
             </div>
           )}
           {!isMp && !canBuildHere && (showCityDeploy || showStationDeploy) && (
@@ -1295,12 +1296,12 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
               ? SETTLEMENT_DEFS.station
               : (showCityDeploy && !canAffordCity ? SETTLEMENT_DEFS.city : null);
             if (!checkDef) return null;
-            if (playerRes.ore < checkDef.cost.ore) shortfalls.push(`${Math.ceil(checkDef.cost.ore - playerRes.ore)} metal`);
-            if (playerRes.credits < checkDef.cost.credits) shortfalls.push(`${Math.ceil(checkDef.cost.credits - playerRes.credits)} credits`);
+            if (playerRes.ore < checkDef.cost.ore) shortfalls.push(t('body.short.metal', { n: Math.ceil(checkDef.cost.ore - playerRes.ore) }));
+            if (playerRes.credits < checkDef.cost.credits) shortfalls.push(t('body.short.credits', { n: Math.ceil(checkDef.cost.credits - playerRes.credits) }));
             if (shortfalls.length === 0) return null;
             return (
               <div className="deploy-hint" style={{ color: '#ff5e5e' }}>
-                Short {shortfalls.join(' + ')} for a {checkDef.displayName.toLowerCase()}.
+                {t('body.short.line', { list: shortfalls.join(' + '), what: checkDef.displayName.toLowerCase() })}
               </div>
             );
           })()}
@@ -1319,7 +1320,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
                 fontFamily: 'inherit', textAlign: 'left',
                 cursor: 'pointer', width: '100%',
               }}
-              title="Click to dismiss"
+              title={t('body.clickDismiss')}
             >⚠ {deployError}</button>
           )}
         </>
@@ -1373,6 +1374,7 @@ interface BuildingsStripProps {
 const BuildingsStrip: React.FC<BuildingsStripProps> = ({
   settlement, body, playerRes, currentTick, queueBuilding, cancelBuilding,
 }) => {
+  useI18n();
   const gate = useFeatureGate();
   const baseKinds = settlement.type === 'city' ? CITY_BUILDINGS : STATION_BUILDINGS;
   const kinds: BuildingKind[] = (settlement.type === 'station' && body.type === 'asteroid')
@@ -1396,7 +1398,7 @@ const BuildingsStrip: React.FC<BuildingsStripProps> = ({
           fontSize: 10, letterSpacing: '0.14em', fontWeight: 700,
           color: '#b8c8d6', textTransform: 'uppercase',
         }}
-      >Buildings</div>
+      >{t('body.buildings')}</div>
 
       {kinds.map(kind => {
         const def = BUILDING_DEFS[kind];
@@ -1431,9 +1433,9 @@ const BuildingsStrip: React.FC<BuildingsStripProps> = ({
           const pct = Math.round(def.yieldBoost.perLevel * 100);
           effectStr = `+${pct}% ${def.yieldBoost.resource}`;
         } else if (def.combatBoost) {
-          effectStr = `+${def.combatBoost.damagePerLevel} dmg/tick`;
+          effectStr = t('body.bld.dmg', { n: def.combatBoost.damagePerLevel });
         } else if (def.shipyardBoost) {
-          effectStr = `+${def.shipyardBoost.slotsPerLevel} build slot`;
+          effectStr = t('body.bld.slot', { n: def.shipyardBoost.slotsPerLevel });
         } else {
           effectStr = '';
         }
@@ -1471,7 +1473,7 @@ const BuildingsStrip: React.FC<BuildingsStripProps> = ({
                     overflow: 'hidden',
                     position: 'relative',
                   }}
-                  title={`Building ${def.displayName} L${q.targetLevel} — ETA T+${Math.max(0, Math.round(q.completeTick - currentTick))} ticks`}
+                  title={t('body.bld.etaTitle', { name: def.displayName, lv: q.targetLevel, eta: Math.max(0, Math.round(q.completeTick - currentTick)) })}
                 >
                   <div
                     style={{
@@ -1492,7 +1494,7 @@ const BuildingsStrip: React.FC<BuildingsStripProps> = ({
                 </span>
                 <button
                   onClick={(e) => { e.stopPropagation(); cancelBuilding(settlement.id); }}
-                  title="Cancel — refunds 50% of cost."
+                  title={t('body.bld.cancelTitle')}
                   style={{
                     background: 'transparent',
                     color: '#ff8888',
@@ -1517,9 +1519,9 @@ const BuildingsStrip: React.FC<BuildingsStripProps> = ({
                   disabled={!canQueue}
                   title={
                     lock ? `${lock.label} — ${lock.text}`
-                    : queueBusy ? `Another upgrade is in flight (${BUILDING_DEFS[q!.kind].displayName})`
-                    : !canAfford ? `Need ${costStr}`
-                    : `Upgrade ${def.displayName} → L${level + 1} (${ticks} ticks)`
+                    : queueBusy ? t('body.bld.busy', { name: BUILDING_DEFS[q!.kind].displayName })
+                    : !canAfford ? t('body.bld.need', { cost: costStr })
+                    : t('body.bld.upgrade', { name: def.displayName, lv: level + 1, ticks })
                   }
                   style={{
                     padding: '2px 8px',
@@ -1563,6 +1565,7 @@ const BuildingsStrip: React.FC<BuildingsStripProps> = ({
 // Exported for the World Menu, which is what multiplayer actually shows
 // when you open a world. See the mount in WorldMenuOverlay.
 export const RamControlsSection: React.FC<{ body: Body }> = ({ body }) => {
+  useI18n();
   const { gameState, setGameState } = useGameContext();
   const mpActions = useMultiplayerActions();
   const [targetPickerOpen, setTargetPickerOpen] = useState(false);
@@ -1581,12 +1584,12 @@ export const RamControlsSection: React.FC<{ body: Body }> = ({ body }) => {
         background: 'rgba(80, 20, 20, 0.4)',
       }}>
         <div style={{ color: '#ff8888', fontSize: 11, fontWeight: 700, letterSpacing: '0.1em' }}>
-          ⚠ ASTEROID WEAPON IN FLIGHT
+          {t('body.ram.inFlight')}
         </div>
         <div style={{ color: '#e8c8b8', fontSize: 10, marginTop: 4 }}>
           {body.name} → {target?.name ?? '?'}<br />
-          Impact in T-{eta.toFixed(0)} ticks<br />
-          Launched by {launcher?.name ?? body.ramPlan.ownedBy}
+          {t('body.ram.impact', { eta: eta.toFixed(0) })}<br />
+          {t('body.ram.launchedBy', { name: launcher?.name ?? body.ramPlan.ownedBy })}
         </div>
       </div>
     );
@@ -1610,8 +1613,8 @@ export const RamControlsSection: React.FC<{ body: Body }> = ({ body }) => {
     // on terraformed worlds. A colony ship drops a STATION here, which
     // is where the thrusters now mount.
     const hintCopy = mySettlements.length === 0
-      ? 'Send a colony ship to claim this rock with a station, then queue Trajectory Control Thrusters to weaponize it.'
-      : 'Queue Trajectory Control Thrusters at your station here to weaponize this rock. (Buildings panel below.)';
+      ? t('body.ram.hintNoSettlement')
+      : t('body.ram.hintQueue');
     return (
       <div style={{
         marginTop: 8, padding: '8px 10px',
@@ -1619,7 +1622,7 @@ export const RamControlsSection: React.FC<{ body: Body }> = ({ body }) => {
         background: 'rgba(74, 98, 117, 0.10)',
         borderLeft: '2px solid #4a6275', borderRadius: '0 3px 3px 0',
       }}>
-        ☄ This is a rogue asteroid — small, mineable, and weaponizable.
+        {t('body.ram.rogue')}
         <br /><br />
         {hintCopy}
       </div>
@@ -1742,14 +1745,14 @@ export const RamControlsSection: React.FC<{ body: Body }> = ({ body }) => {
             fontSize: 11, fontWeight: 700, letterSpacing: '0.1em',
             cursor: 'pointer', width: '100%',
           }}
-        >▶ RAM TARGET</button>
+        >{t('body.ram.target')}</button>
       ) : (
         <div style={{
           border: '1px solid #b04040', borderRadius: 4, padding: 8,
           background: 'rgba(40, 20, 20, 0.6)',
         }}>
           <div style={{ fontSize: 10, color: '#ff9090', fontWeight: 700, letterSpacing: '0.1em', marginBottom: 6 }}>
-            PICK TARGET BODY
+            {t('body.ram.pick')}
           </div>
           <select
             value={pickedTargetId ?? ''}
@@ -1760,24 +1763,24 @@ export const RamControlsSection: React.FC<{ body: Body }> = ({ body }) => {
               border: '1px solid #2a3d50', fontSize: 11,
             }}
           >
-            <option value="">— select —</option>
+            <option value="">{t('body.ram.select')}</option>
             {targets.map(b => (
               <option key={b.id} value={b.id}>{b.name}</option>
             ))}
           </select>
           {plan && pickedTarget && (
             <div style={{ fontSize: 10, color: '#e0d0c0', marginBottom: 6, lineHeight: 1.4 }}>
-              Crash {body.name} into {pickedTarget.name}<br />
-              ETA: T+{(plan.arriveTick - gameState.currentTick).toFixed(0)} ticks<br />
-              Δv: {plan.totalDv.toFixed(1)} · Metal cost: {metalCost}<br />
+              {t('body.ram.crash', { from: body.name, to: pickedTarget.name })}<br />
+              {t('body.ram.eta', { eta: (plan.arriveTick - gameState.currentTick).toFixed(0) })}<br />
+              {t('body.ram.dv', { dv: plan.totalDv.toFixed(1), cost: metalCost })}<br />
               {pickedTarget.id === 'sol'
-                ? <span style={{ color: '#ffcc66' }}>Sol target — asteroid will evaporate (no effect)</span>
-                : <span style={{ color: '#ff8888' }}>On impact: settlements destroyed, yields halved</span>}
+                ? <span style={{ color: '#ffcc66' }}>{t('body.ram.solTarget')}</span>
+                : <span style={{ color: '#ff8888' }}>{t('body.ram.onImpact')}</span>}
             </div>
           )}
           {plan && pickedTarget && !canAfford && (
             <div style={{ fontSize: 10, color: '#ff8080', marginBottom: 6 }}>
-              Not enough metal ({Math.round(playerRes?.ore ?? 0)} / {metalCost})
+              {t('body.ram.notEnough', { have: Math.round(playerRes?.ore ?? 0), cost: metalCost })}
             </div>
           )}
           {ramError && (
@@ -1795,7 +1798,7 @@ export const RamControlsSection: React.FC<{ body: Body }> = ({ body }) => {
                 borderRadius: 3, fontSize: 11, fontWeight: 700, letterSpacing: '0.08em',
                 cursor: canAfford ? 'pointer' : 'default',
               }}
-            >▶ CONFIRM IMPACT</button>
+            >{t('body.ram.confirm')}</button>
             <button
               onClick={() => { setTargetPickerOpen(false); setPickedTargetId(null); setRamError(null); }}
               style={{
@@ -1804,7 +1807,7 @@ export const RamControlsSection: React.FC<{ body: Body }> = ({ body }) => {
                 border: '1px solid #3a4a58', borderRadius: 3,
                 fontSize: 10, cursor: 'pointer',
               }}
-            >CANCEL</button>
+            >{t('body.name.cancel')}</button>
           </div>
         </div>
       )}
@@ -1821,6 +1824,7 @@ export const RamControlsSection: React.FC<{ body: Body }> = ({ body }) => {
 //   sphere exists, rival controls  → enemy progress display (intel value)
 // ============================================================
 const DysonSpherePanel: React.FC = () => {
+  useI18n();
   const { gameState, initiateDysonSphere } = useGameContext();
   // Non-null in MP — we mirror initiate to the server so the per-tick
   // delivery loop runs against the server's authoritative dyson_*
@@ -1847,15 +1851,12 @@ const DysonSpherePanel: React.FC = () => {
   return (
     <div className="settlements-section" data-tutorial-id="dyson-sphere-section" style={{ marginTop: 12 }}>
       <div className="section-title" style={{ color: '#ffb84d' }}>
-        DYSON SPHERE
+        {t('body.dyson.title')}
       </div>
       <div style={{
         fontSize: 10, color: '#a8b8c8', marginBottom: 8, lineHeight: 1.5,
       }}>
-        The Sol megaproject. Lay the foundation at a Sol-orbit station,
-        then run freighter trade routes from your collectors to the sphere
-        to haul the materials in. Target: 15K metal · 15K credits · 10K
-        science. Completing it wins the match by Engineering Victory.
+        {t('body.dyson.intro')}
       </div>
 
       {playerStations.length === 0 ? (
@@ -1863,7 +1864,7 @@ const DysonSpherePanel: React.FC = () => {
           fontSize: 10, color: '#ffb84d', fontStyle: 'italic',
           padding: '6px 8px', border: '1px dashed #ffb84d', borderRadius: 3,
         }}>
-          Deploy a station in Sol orbit first to host the foundation.
+          {t('worldmenu.dyson.needStation')}
         </div>
       ) : (
         playerStations.map(s => (
@@ -1896,9 +1897,9 @@ const DysonSpherePanel: React.FC = () => {
               fontFamily: 'inherit', fontSize: 10, fontWeight: 700,
               letterSpacing: '0.1em', cursor: 'pointer',
             }}
-            title={`Lay the Dyson Sphere foundation on ${s.name}. One-shot per game — destroying the station collapses the entire project.`}
+            title={t('body.dyson.initiateTitle', { name: s.name })}
           >
-            ◆ INITIATE AT {s.name.toUpperCase()}
+            {t('worldmenu.dyson.initiateBtn', { name: s.name.toUpperCase() })}
           </button>
         ))
       )}
@@ -1915,7 +1916,7 @@ const DysonSpherePanel: React.FC = () => {
             fontFamily: 'inherit', textAlign: 'left',
             cursor: 'pointer', width: '100%',
           }}
-          title="Click to dismiss"
+          title={t('body.clickDismiss')}
         >⚠ {dysonError}</button>
       )}
     </div>
@@ -1923,6 +1924,7 @@ const DysonSpherePanel: React.FC = () => {
 };
 
 const DysonSphereProgress: React.FC = () => {
+  useI18n();
   const { gameState } = useGameContext();
   const dyson = gameState.dysonSphere;
   if (!dyson) return null;
@@ -1936,22 +1938,22 @@ const DysonSphereProgress: React.FC = () => {
   // the row could only ever read "0/0". The filter keeps it out even if a
   // legacy game row carries residue.
   const rows: Array<{ label: string; acc: number; tgt: number; color: string }> = [
-    { label: 'Metal',   acc: dyson.accumulated.ore,     tgt: dyson.target.ore,     color: RESOURCE_COLORS.metal },
-    { label: 'Credits', acc: dyson.accumulated.credits, tgt: dyson.target.credits, color: RESOURCE_COLORS.credits },
-    { label: 'Science', acc: dyson.accumulated.science, tgt: dyson.target.science, color: RESOURCE_COLORS.science },
+    { label: t('megastructure.metal'),   acc: dyson.accumulated.ore,     tgt: dyson.target.ore,     color: RESOURCE_COLORS.metal },
+    { label: t('megastructure.credits'), acc: dyson.accumulated.credits, tgt: dyson.target.credits, color: RESOURCE_COLORS.credits },
+    { label: t('body.dyson.science'), acc: dyson.accumulated.science, tgt: dyson.target.science, color: RESOURCE_COLORS.science },
   ].filter(r => r.tgt > 0);
 
   return (
     <div className="settlements-section" data-tutorial-id="dyson-sphere-section" style={{ marginTop: 12 }}>
       <div className="section-title" style={{ color: '#ffb84d' }}>
-        DYSON SPHERE
+        {t('body.dyson.title')}
       </div>
       <div style={{
         fontSize: 10, marginBottom: 6,
         color: isMine ? '#6ee7b7' : '#ff8a4d',
       }}>
-        {isMine ? '★ YOUR PROJECT' : `RIVAL: ${controller?.name ?? '?'}`}
-        {station && <span style={{ color: '#a8b8c8' }}> · foundation: {station.name}</span>}
+        {isMine ? t('worldmenu.dyson.yours') : t('worldmenu.dyson.rival', { name: controller?.name ?? '?' })}
+        {station && <span style={{ color: '#a8b8c8' }}> · {t('body.dyson.foundation', { name: station.name })}</span>}
       </div>
 
       {/* Overall HP / progress bar */}
@@ -1967,7 +1969,7 @@ const DysonSphereProgress: React.FC = () => {
         }} />
       </div>
       <div style={{ fontSize: 10, color: '#a8b8c8', marginBottom: 8, letterSpacing: '0.05em' }}>
-        {Math.round(dyson.hp)} / {dyson.maxHp} HP · {pct.toFixed(1)}%
+        {t('body.dyson.hp', { hp: Math.round(dyson.hp), max: dyson.maxHp, pct: pct.toFixed(1) })}
       </div>
 
       {/* Per-resource breakdown */}
@@ -1998,11 +2000,7 @@ const DysonSphereProgress: React.FC = () => {
         <div style={{
           marginTop: 8, fontSize: 9, color: '#a8b8c8', fontStyle: 'italic', lineHeight: 1.4,
         }}>
-          Run more supply routes to speed delivery — each freighter loads
-          from your pool at one of your collectors and hauls it here, and
-          can be raided on the way. Lose the foundation and 20% of your
-          progress is destroyed, with the rest left for a rival to claim
-          — defend it.
+          {t('body.dyson.runMore')}
         </div>
       )}
     </div>

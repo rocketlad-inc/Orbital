@@ -29,10 +29,8 @@ import './TopBar.css';
 import { GIT_SHA } from '../_version';
 import { useIsMobile, isInApp } from '../hooks/useIsMobile';
 import { saveTextFile } from '../platform/saveTextFile';
-
-// Hint text under the Restart Tutorial menu item. Pulled out to a
-// constant so it doesn't allocate a new string every render.
-const TUTORIAL_STEP_COUNT_HINT = `${TUTORIAL_STEP_COUNT} steps · ~3 min`;
+import { t, tn } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 
 export type PanelId = 'settlements' | 'fleet' | 'research' | null;
 
@@ -63,6 +61,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   adminGameId = null, isHost = false,
   canSaveLoad = false, onLoadSave,
 }) => {
+  useI18n();
   const {
     gameState, simSpeed, setSimSpeed, updateTick,
     turnBasedActive, commitTurn,
@@ -183,12 +182,12 @@ export const TopBar: React.FC<TopBarProps> = ({
       <button
         className="top-bar__title"
         onClick={() => setMenuOpen(true)}
-        title="Open menu"
-        aria-label="Open menu"
+        title={t('topbar.openMenu')}
+        aria-label={t('topbar.openMenu')}
         data-tutorial-id="menu-button"
       >
         <div className="top-bar__title-main">ORBITAL</div>
-        <div className="top-bar__title-sub" title={`Build ${GIT_SHA}`}>v0.3 · {GIT_SHA.slice(0,7)}</div>
+        <div className="top-bar__title-sub" title={t('topbar.build', { sha: GIT_SHA })}>v0.3 · {GIT_SHA.slice(0,7)}</div>
       </button>
 
       {notifOpen && <NotificationSettingsModal onClose={() => setNotifOpen(false)} />}
@@ -245,13 +244,13 @@ export const TopBar: React.FC<TopBarProps> = ({
           the match back out of a list — three steps to answer a question
           about the thing already on screen. */}
       {analyticsOpen && adminGameId && (
-        <div className="mp-analytics-overlay" role="dialog" aria-label="Game analytics">
+        <div className="mp-analytics-overlay" role="dialog" aria-label={t('topbar.analytics.dialog')}>
           <div className="mp-analytics-overlay__bar">
-            <span className="mp-analytics-overlay__title">Analytics</span>
+            <span className="mp-analytics-overlay__title">{t('topbar.analytics.title')}</span>
             <button
               className="mp-analytics-overlay__close"
               onClick={() => setAnalyticsOpen(false)}
-              aria-label="Close analytics"
+              aria-label={t('topbar.analytics.close')}
             >✕</button>
           </div>
           <div className="mp-analytics-overlay__body">
@@ -268,7 +267,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         <div className="top-bar__resources" data-tutorial-id="topbar-resources">
           {/* FUEL pill removed — fuel is dead (DESIGN-identity-economy.md §1.1) */}
           <ResourcePill
-            label="METAL" modifier="ore"
+            label={t('topbar.res.metal')} modifier="ore"
             value={playerResources.ore}
             rate={income.delivered.ore}
             local={income.local.ore}
@@ -276,7 +275,7 @@ export const TopBar: React.FC<TopBarProps> = ({
             upkeep={gameState.fleetUpkeep?.ore ?? 0}
           />
           <ResourcePill
-            label="CR" modifier="credits"
+            label={t('topbar.res.credits')} modifier="credits"
             value={playerResources.credits}
             rate={income.delivered.credits}
             local={income.local.credits}
@@ -284,14 +283,14 @@ export const TopBar: React.FC<TopBarProps> = ({
             upkeep={gameState.fleetUpkeep?.credits ?? 0}
           />
           <ResourcePill
-            label="SCI" modifier="science"
+            label={t('topbar.res.science')} modifier="science"
             value={playerResources.science}
             rate={income.delivered.science}
             local={income.local.science}
             hasCollector={income.hasCollector}
           />
           <div className="resource-pill resource-pill--ships">
-            <div className="resource-pill__label">SHIPS</div>
+            <div className="resource-pill__label">{t('topbar.res.ships')}</div>
             <div className="resource-pill__value">{playerShips.length}</div>
           </div>
           {/* Terraformed worlds — the "worlds that matter" economy stat
@@ -301,9 +300,9 @@ export const TopBar: React.FC<TopBarProps> = ({
           {income.terraformedCount > 0 && (
             <div
               className="resource-pill resource-pill--ships"
-              title={`${income.terraformedCount} terraformed world${income.terraformedCount === 1 ? '' : 's'} — full-rate income, city-capable, and your trade docks. Terraform raw worlds by freighter supply route to grow this.`}
+              title={tn('topbar.terraTitle', income.terraformedCount)}
             >
-              <div className="resource-pill__label">TERRA</div>
+              <div className="resource-pill__label">{t('topbar.res.terra')}</div>
               <div className="resource-pill__value">{income.terraformedCount}</div>
             </div>
           )}
@@ -313,15 +312,15 @@ export const TopBar: React.FC<TopBarProps> = ({
             // must be impossible to miss.
             <div
               className="resource-pill resource-pill--arrears"
-              title={`Fleet upkeep unpaid — owing ${fmtRate(gameState.fleetArrears?.credits ?? 0)} CR, ${fmtRate(gameState.fleetArrears?.ore ?? 0)} metal. Your ships fight at −25% damage until income clears the debt.`}
+              title={t('topbar.arrearsTitle', { credits: fmtRate(gameState.fleetArrears?.credits ?? 0), metal: fmtRate(gameState.fleetArrears?.ore ?? 0) })}
               style={{
                 background: 'rgba(255, 70, 70, 0.18)',
                 border: '1px solid rgba(255, 90, 90, 0.65)',
                 animation: 'arrears-pulse 1.6s ease-in-out infinite',
               }}
             >
-              <div className="resource-pill__label" style={{ color: '#ff8a8a' }}>ARREARS</div>
-              <div className="resource-pill__value" style={{ color: '#ff8a8a' }}>−25% DMG</div>
+              <div className="resource-pill__label" style={{ color: '#ff8a8a' }}>{t('topbar.arrears')}</div>
+              <div className="resource-pill__value" style={{ color: '#ff8a8a' }}>{t('topbar.arrearsDmg')}</div>
             </div>
           )}
         </div>
@@ -331,34 +330,34 @@ export const TopBar: React.FC<TopBarProps> = ({
         <button
           className={`nav-button ${activePanel === 'settlements' ? 'active' : ''}`}
           onClick={() => onTogglePanel(activePanel === 'settlements' ? null : 'settlements')}
-          title="Empire"
-          aria-label="Empire"
+          title={t('topbar.nav.empire')}
+          aria-label={t('topbar.nav.empire')}
           data-tutorial-id="nav-settlements"
         >
           <span className="nav-button__icon" aria-hidden>⌂</span>
-          <span className="nav-button__label">Empire</span>
+          <span className="nav-button__label">{t('topbar.nav.empire')}</span>
           <span className="badge">{gameState.settlements.filter(s => s.ownedBy === 'player').length}</span>
         </button>
         <button
           className={`nav-button ${activePanel === 'fleet' ? 'active' : ''}`}
           onClick={() => onTogglePanel(activePanel === 'fleet' ? null : 'fleet')}
-          title="Fleet"
-          aria-label="Fleet"
+          title={t('topbar.nav.fleet')}
+          aria-label={t('topbar.nav.fleet')}
           data-tutorial-id="nav-fleet"
         >
           <span className="nav-button__icon" aria-hidden>◈</span>
-          <span className="nav-button__label">Fleet</span>
+          <span className="nav-button__label">{t('topbar.nav.fleet')}</span>
           <span className="badge">{playerShips.length}</span>
         </button>
         <button
           className={`nav-button ${activePanel === 'research' ? 'active' : ''}`}
           onClick={() => onTogglePanel(activePanel === 'research' ? null : 'research')}
-          title="Research tech tree"
-          aria-label="Research"
+          title={t('topbar.nav.researchTitle')}
+          aria-label={t('topbar.nav.research')}
           data-tutorial-id="nav-research"
         >
           <span className="nav-button__icon" aria-hidden>⚛</span>
-          <span className="nav-button__label">Research</span>
+          <span className="nav-button__label">{t('topbar.nav.research')}</span>
           {(() => {
             const lvls = gameState.factionTech?.player?.levels || {};
             const total = Object.values(lvls).reduce((s, n) => s + (n ?? 0), 0);
@@ -382,8 +381,8 @@ export const TopBar: React.FC<TopBarProps> = ({
                 {affordable > 0 && (
                   <span
                     className="nav-button__attention-dot"
-                    title={`${affordable} tech${affordable === 1 ? '' : 's'} affordable`}
-                    aria-label={`${affordable} affordable`}
+                    title={tn('topbar.nav.affordableTitle', affordable)}
+                    aria-label={t('topbar.nav.affordableAria', { n: affordable })}
                   />
                 )}
               </>
@@ -403,7 +402,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       {(gameState.activeLaws?.length ?? 0) > 0 && (
         <div className="top-bar__laws" data-testid="topbar-laws">
           <div className="laws-chip__label">
-            {gameState.activeLaws!.length === 1 ? 'LAW IN FORCE' : `LAWS IN FORCE · ${gameState.activeLaws!.length}`}
+            {gameState.activeLaws!.length === 1 ? t('topbar.laws.one') : t('topbar.laws.many', { n: gameState.activeLaws!.length })}
           </div>
           <div className="laws-chip__list">
             {gameState.activeLaws!.slice(0, 2).map(l => {
@@ -414,7 +413,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                   className="laws-chip__row"
                   // Full sentence + topic on hover; the row itself is
                   // clipped to keep the bar's height fixed.
-                  title={`${l.topic}: ${l.effect} Lapses at T+${Math.round(l.untilTick)}.`}
+                  title={t('topbar.laws.rowTitle', { topic: l.topic, effect: l.effect, tick: Math.round(l.untilTick) })}
                 >
                   <b>{l.name}</b>
                   <span className="laws-chip__effect">{l.effect.replace(/\.$/, '')}</span>
@@ -424,7 +423,7 @@ export const TopBar: React.FC<TopBarProps> = ({
             })}
             {gameState.activeLaws!.length > 2 && (
               <div className="laws-chip__row laws-chip__more">
-                +{gameState.activeLaws!.length - 2} more in the Senate
+                {t('topbar.laws.more', { n: gameState.activeLaws!.length - 2 })}
               </div>
             )}
           </div>
@@ -433,11 +432,11 @@ export const TopBar: React.FC<TopBarProps> = ({
 
       <div className="top-bar__time">
         <div className={`time-display${tickCountdownLabel != null ? ' time-display--ticking' : ''}`}>
-          <div className="time-display__label">TICK</div>
+          <div className="time-display__label">{t('topbar.tick')}</div>
           <div className="time-display__value">{tickStr}</div>
           {tickCountdownLabel != null && (
-            <div className="time-display__countdown" title="Time until the next server tick">
-              next in {tickCountdownLabel}
+            <div className="time-display__countdown" title={t('topbar.nextTickTitle')}>
+              {t('topbar.nextIn', { when: tickCountdownLabel })}
             </div>
           )}
         </div>
@@ -449,19 +448,19 @@ export const TopBar: React.FC<TopBarProps> = ({
             <button
               className={`sim-btn ${simSpeed === 0 ? 'active' : ''}`}
               onClick={() => setSimSpeed(0)}
-              title="Pause"
+              title={t('topbar.pause')}
             >⏸</button>
             {SIM_SPEEDS.map(s => (
               <button
                 key={s}
                 className={`sim-btn ${simSpeed === s ? 'active' : ''}`}
                 onClick={() => setSimSpeed(s)}
-                title={`${s}× speed`}
+                title={t('topbar.speed', { n: s })}
               >{s}×</button>
             ))}
-            <button className="sim-btn" onClick={() => handleSkip(10)} title="Skip +10 ticks">+10</button>
-            <button className="sim-btn" onClick={() => handleSkip(100)} title="Skip +100 ticks">+100</button>
-            <button className="sim-btn" onClick={() => handleSkip(1000)} title="Skip +1000 ticks">+1K</button>
+            <button className="sim-btn" onClick={() => handleSkip(10)} title={t('topbar.skip', { n: 10 })}>+10</button>
+            <button className="sim-btn" onClick={() => handleSkip(100)} title={t('topbar.skip', { n: 100 })}>+100</button>
+            <button className="sim-btn" onClick={() => handleSkip(1000)} title={t('topbar.skip', { n: 1000 })}>+1K</button>
           </div>
         )}
         {!hideSimControls && turnBasedActive && !mpTbmActive && (
@@ -534,22 +533,23 @@ const ResourcePill: React.FC<{
    *  BEFORE arrears hit; the popover breaks out the subtraction. */
   upkeep?: number;
 }> = ({ label, modifier, value, rate, local, hasCollector, upkeep = 0 }) => {
+  useI18n();
   const hasUpkeep = upkeep > 0.001;
   // NET is the number that matters at a glance — income the fleet is
   // eating counts against you every tick whether you look or not.
   const net = rate - upkeep;
   const hasRate = rate > 0.01 || hasUpkeep;
   const hasLocal = local > 0.01;
-  const upkeepTip = hasUpkeep ? ` Fleet upkeep −${fmtRate(upkeep)}/t (net ${net < 0 ? '−' : '+'}${fmtRate(Math.abs(net))}/t).` : '';
+  const upkeepTip = hasUpkeep ? ` ${t('topbar.pill.upkeepTip', { up: fmtRate(upkeep), net: `${net < 0 ? '−' : '+'}${fmtRate(Math.abs(net))}` })}` : '';
   let tooltip: string;
   if (hasLocal && !hasCollector) {
-    tooltip = `${label}: ${displayResource(value)} (pool). ${fmtRate(local)}/t banking LOCAL at raw-world settlements — spendable on body builds, or send a freighter to haul it home. Terraform a world for the full-rate pump.${upkeepTip}`;
+    tooltip = `${t('topbar.pill.tipLocalOnly', { label, value: displayResource(value), local: fmtRate(local) })}${upkeepTip}`;
   } else if (hasLocal && hasCollector) {
-    tooltip = `${label}: ${displayResource(value)} (pool) — +${fmtRate(rate)}/t delivered, +${fmtRate(local)}/t banking LOCAL at raw-world settlements.${upkeepTip}`;
+    tooltip = `${t('topbar.pill.tipBoth', { label, value: displayResource(value), rate: fmtRate(rate), local: fmtRate(local) })}${upkeepTip}`;
   } else if (hasRate) {
-    tooltip = `${label}: ${displayResource(value)} (pool) — gaining +${fmtRate(rate)} per tick.${upkeepTip}`;
+    tooltip = `${t('topbar.pill.tipRate', { label, value: displayResource(value), rate: fmtRate(rate) })}${upkeepTip}`;
   } else {
-    tooltip = `${label}: ${displayResource(value)} (pool)`;
+    tooltip = t('topbar.pill.tipPlain', { label, value: displayResource(value) });
   }
   // ONE rate line, not two stacked (+ a third for the label). The old
   // 4-line stack (label / value / +net / ~LOCAL) is what made the bar
@@ -583,12 +583,12 @@ const ResourcePill: React.FC<{
         // Full breakdown — hover (desktop) / focus (mobile tap). Absolute,
         // so revealing it never reflows the bar.
         <div className="resource-pill__pop" role="note">
-          <span style={{ color: '#7fffa1' }}>+{fmtRate(rate)}/t</span> pool
+          <span style={{ color: '#7fffa1' }}>+{fmtRate(rate)}/t</span> {t('topbar.pill.pool')}
           {hasUpkeep && (
-            <> &nbsp;·&nbsp; <span style={{ color: '#ff7a7a' }}>−{fmtRate(upkeep)}/t</span> fleet</>
+            <> &nbsp;·&nbsp; <span style={{ color: '#ff7a7a' }}>−{fmtRate(upkeep)}/t</span> {t('topbar.pill.fleet')}</>
           )}
           {hasLocal && (
-            <> &nbsp;·&nbsp; <span style={{ color: '#ffb84d' }}>~{fmtRate(local)}/t</span> local</>
+            <> &nbsp;·&nbsp; <span style={{ color: '#ffb84d' }}>~{fmtRate(local)}/t</span> {t('topbar.pill.local')}</>
           )}
         </div>
       )}
@@ -609,6 +609,7 @@ const ResourcePill: React.FC<{
 // ----------------------------------------------------------------
 
 const CommitTurnButton: React.FC<{ onCommit: () => void }> = ({ onCommit }) => {
+  useI18n();
   const { gameState } = useGameContext();
   const { ticksPerTurn } = useTurnBasedSettings();
   const [popoverOpen, setPopoverOpen] = useState(false);
@@ -621,10 +622,10 @@ const CommitTurnButton: React.FC<{ onCommit: () => void }> = ({ onCommit }) => {
   const headline = (() => {
     const parts: string[] = [];
     const ordersN = budget.plannedItems.length;
-    if (ordersN > 0) parts.push(`${ordersN} order${ordersN === 1 ? '' : 's'}`);
+    if (ordersN > 0) parts.push(tn('topbar.budget.orders', ordersN));
     const buildsLanding = budget.buildItems.filter(b => b.detail === 'LANDS THIS TURN').length;
-    if (buildsLanding > 0) parts.push(`+${buildsLanding} ship${buildsLanding === 1 ? '' : 's'}`);
-    return parts.length > 0 ? parts.join(' · ') : 'no orders queued';
+    if (buildsLanding > 0) parts.push(tn('topbar.budget.shipsLanding', buildsLanding));
+    return parts.length > 0 ? parts.join(' · ') : t('topbar.budget.noOrders');
   })();
 
   const color = '#ffb84d';
@@ -638,7 +639,7 @@ const CommitTurnButton: React.FC<{ onCommit: () => void }> = ({ onCommit }) => {
       <button
         className="sim-btn sim-btn--commit-turn"
         onClick={onCommit}
-        title="Advance the simulation by one turn"
+        title={t('topbar.budget.advanceTitle')}
         style={{
           background: color,
           color: '#0a1018',
@@ -654,13 +655,13 @@ const CommitTurnButton: React.FC<{ onCommit: () => void }> = ({ onCommit }) => {
           lineHeight: 1.15,
         }}
       >
-        <span style={{ fontSize: 11 }}>▶ COMMIT TURN</span>
+        <span style={{ fontSize: 11 }}>{t('topbar.commit.button')}</span>
         <span style={{ fontSize: 9, opacity: 0.75, letterSpacing: '0.04em' }}>{headline}</span>
       </button>
       <button
         onClick={(e) => { e.stopPropagation(); setPopoverOpen(p => !p); }}
-        title="Show turn budget"
-        aria-label="Show turn budget"
+        title={t('topbar.budget.show')}
+        aria-label={t('topbar.budget.show')}
         style={{
           width: 22, height: 22, borderRadius: 3,
           border: `1px solid ${color}`, background: 'transparent', color,
@@ -671,7 +672,7 @@ const CommitTurnButton: React.FC<{ onCommit: () => void }> = ({ onCommit }) => {
       {popoverOpen && (
         <div
           role="dialog"
-          aria-label="Turn budget"
+          aria-label={t('topbar.budget.dialog')}
           style={{
             position: 'absolute',
             top: 'calc(100% + 6px)',
@@ -689,10 +690,10 @@ const CommitTurnButton: React.FC<{ onCommit: () => void }> = ({ onCommit }) => {
           }}
         >
           <div style={{ fontSize: 10, color, letterSpacing: '0.12em', marginBottom: 6 }}>
-            NEXT TURN · +{ticksPerTurn} ticks
+            {t('topbar.budget.next', { n: ticksPerTurn })}
           </div>
 
-          <BudgetRow label="Planned transfers" count={budget.plannedItems.length} delta="" />
+          <BudgetRow label={t('topbar.budget.planned')} count={budget.plannedItems.length} delta="" />
           {budget.plannedItems.slice(0, 4).map((it, i) => (
             <div key={i} style={{ fontSize: 10, color: '#b8c8d6', paddingLeft: 8 }}>
               · {it.label}{it.detail ? ` — ${it.detail}` : ''}
@@ -700,18 +701,18 @@ const CommitTurnButton: React.FC<{ onCommit: () => void }> = ({ onCommit }) => {
           ))}
           {budget.plannedItems.length > 4 && (
             <div style={{ fontSize: 10, color: '#b8c8d6', paddingLeft: 8 }}>
-              · +{budget.plannedItems.length - 4} more
+              · {t('topbar.budget.more', { n: budget.plannedItems.length - 4 })}
             </div>
           )}
 
           <div style={{ height: 1, background: '#2a3d50', margin: '8px 0' }} />
 
           <BudgetRow
-            label="Builds in flight"
+            label={t('topbar.budget.builds')}
             count={budget.buildItems.length}
             delta={
               budget.buildItems.filter(b => b.detail === 'LANDS THIS TURN').length > 0
-                ? `${budget.buildItems.filter(b => b.detail === 'LANDS THIS TURN').length} land this turn`
+                ? t('topbar.budget.landThisTurn', { n: budget.buildItems.filter(b => b.detail === 'LANDS THIS TURN').length })
                 : ''
             }
           />
@@ -732,7 +733,7 @@ const CommitTurnButton: React.FC<{ onCommit: () => void }> = ({ onCommit }) => {
             <>
               <div style={{ height: 1, background: '#2a3d50', margin: '8px 0' }} />
               <BudgetRow
-                label="Research"
+                label={t('topbar.nav.research')}
                 count={1}
                 delta={`${budget.research.progressPct.toFixed(0)}% · ${budget.research.techId}`}
               />
@@ -742,7 +743,7 @@ const CommitTurnButton: React.FC<{ onCommit: () => void }> = ({ onCommit }) => {
           <div style={{ height: 1, background: '#2a3d50', margin: '8px 0' }} />
 
           <div style={{ fontSize: 10, color: '#b8c8d6' }}>
-            POOL: {Math.round(budget.pool.ore)} metal · {Math.round(budget.pool.credits)} cr · {Math.round(budget.pool.science)} sci
+            {t('topbar.budget.pool', { ore: Math.round(budget.pool.ore), credits: Math.round(budget.pool.credits), science: Math.round(budget.pool.science) })}
           </div>
         </div>
       )}
@@ -767,6 +768,7 @@ const MpCommitTurnButton: React.FC<{
   status: import('../multiplayer/MultiplayerActionsContext').TurnStatus;
   onCommit: () => Promise<void>;
 }> = ({ status, onCommit }) => {
+  useI18n();
   const [busy, setBusy] = useState(false);
   const locked = status.me_committed || busy;
   const waitingOn = status.needed - status.ready;
@@ -778,8 +780,8 @@ const MpCommitTurnButton: React.FC<{
   };
 
   const label = locked
-    ? (waitingOn > 0 ? `⏳ WAITING ON ${waitingOn}` : '⏳ ADVANCING…')
-    : '▶ COMMIT TURN';
+    ? (waitingOn > 0 ? t('topbar.commit.waiting', { n: waitingOn }) : t('topbar.commit.advancing'))
+    : t('topbar.commit.button');
   const color = locked ? '#5a7080' : '#ffb84d';
 
   return (
@@ -787,7 +789,7 @@ const MpCommitTurnButton: React.FC<{
       <button
         onClick={handleClick}
         disabled={locked}
-        title={`Turn ${status.turn_number} · ${status.ready}/${status.needed} ready · +${status.ticks_per_turn} ticks on commit`}
+        title={t('topbar.commit.title', { turn: status.turn_number, ready: status.ready, needed: status.needed, ticks: status.ticks_per_turn })}
         style={{
           background: color, color: '#0a1018',
           fontWeight: 700, letterSpacing: '0.12em',
@@ -799,7 +801,7 @@ const MpCommitTurnButton: React.FC<{
       >
         <span style={{ fontSize: 11 }}>{label}</span>
         <span style={{ fontSize: 9, opacity: 0.75, letterSpacing: '0.04em' }}>
-          turn {status.turn_number} · {status.ready}/{status.needed}
+          {t('topbar.commit.sub', { turn: status.turn_number, ready: status.ready, needed: status.needed })}
         </span>
       </button>
     </div>
@@ -818,6 +820,7 @@ const MpCommitTurnButton: React.FC<{
 // like any running game's, from Browse's "Join in progress".
 const SEAT_CAP = 10;
 const HostSeatsControl: React.FC<{ gameId: string }> = ({ gameId }) => {
+  useI18n();
   const [seats, setSeats] = useState<{ max: number; taken: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
@@ -837,11 +840,7 @@ const HostSeatsControl: React.FC<{ gameId: string }> = ({ gameId }) => {
   const raise = async (to: number) => {
     if (!seats || busy) return;
     const more = to - seats.max;
-    if (!window.confirm(
-      `Raise this game to ${to} seats?\n\n${more} more ${more === 1 ? 'player' : 'players'} can join while it runs: `
-      + `it shows in Browse as "Join in progress", and each newcomer starts on a capital of their own. `
-      + `Seats can't be lowered again mid-game.`,
-    )) return;
+    if (!window.confirm(tn('topbar.seats.confirm', more, { to }))) return;
     setBusy(true);
     setStatus(null);
     try {
@@ -852,12 +851,12 @@ const HostSeatsControl: React.FC<{ gameId: string }> = ({ gameId }) => {
       );
       if (res.ok) {
         setSeats({ max: res.data.settings.max_players, taken: res.data.settings.member_count ?? seats.taken });
-        setStatus(`✓ ${res.data.settings.max_players} seats`);
+        setStatus(t('topbar.seats.done', { n: res.data.settings.max_players }));
       } else {
-        setStatus(res.error?.message ?? `Failed (${res.status})`);
+        setStatus(res.error?.message ?? t('topbar.failed', { status: res.status }));
       }
     } catch (e) {
-      setStatus(`Network error: ${(e as Error)?.message || 'unknown'}`);
+      setStatus(t('topbar.networkError', { msg: (e as Error)?.message || t('topbar.unknown') }));
     } finally {
       setBusy(false);
       setTimeout(() => setStatus(null), 4000);
@@ -872,7 +871,7 @@ const HostSeatsControl: React.FC<{ gameId: string }> = ({ gameId }) => {
       <span className="side-menu__item-icon">👥</span>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
         <span className="side-menu__item-label" style={{ marginBottom: 2 }}>
-          {status ?? (busy ? 'Updating…' : `Seats: ${seats.taken} of ${seats.max} taken`)}
+          {status ?? (busy ? t('topbar.updating') : t('topbar.seats.taken', { taken: seats.taken, max: seats.max }))}
         </span>
         {options.length > 0 ? (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
@@ -882,7 +881,7 @@ const HostSeatsControl: React.FC<{ gameId: string }> = ({ gameId }) => {
                 className="side-menu__pill"
                 onClick={() => raise(n)}
                 disabled={busy}
-                title={`Open ${n - seats.max} more ${n - seats.max === 1 ? 'seat' : 'seats'} (${n} in all)`}
+                title={tn('topbar.seats.openTitle', n - seats.max, { total: n })}
               >
                 {n}
               </button>
@@ -891,8 +890,8 @@ const HostSeatsControl: React.FC<{ gameId: string }> = ({ gameId }) => {
         ) : null}
         <span className="side-menu__item-hint" style={{ marginTop: 2 }}>
           {options.length > 0
-            ? 'Raise the cap: new players can join mid-game'
-            : `At the ${SEAT_CAP}-seat maximum`}
+            ? t('topbar.seats.raiseHint')
+            : t('topbar.seats.atMax', { n: SEAT_CAP })}
         </span>
       </div>
     </div>
@@ -900,13 +899,18 @@ const HostSeatsControl: React.FC<{ gameId: string }> = ({ gameId }) => {
 };
 
 const PublishHeraldButton: React.FC<{ gameId: string }> = ({ gameId }) => {
+  useI18n();
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<string | null>(null);
+  // Whether `result` reports a successful publish. Tracked as a flag, not
+  // by sniffing the (translated) text.
+  const [published, setPublished] = useState(false);
 
   const fire = async () => {
     if (busy) return;
     setBusy(true);
     setResult(null);
+    setPublished(false);
     try {
       // Lazy-import apiFetch — same pattern as the diagnostics export
       // below — so TopBar's module graph stays MP-agnostic.
@@ -916,14 +920,15 @@ const PublishHeraldButton: React.FC<{ gameId: string }> = ({ gameId }) => {
         { method: 'POST' },
       );
       if (res.ok) {
+        setPublished(!!res.data.posted);
         setResult(res.data.posted
-          ? `Published (${res.data.events} event${res.data.events === 1 ? '' : 's'})`
-          : `Not posted — ${res.data.reason ?? 'unknown'}`);
+          ? tn('topbar.herald.published', res.data.events)
+          : t('topbar.herald.notPosted', { reason: res.data.reason ?? t('topbar.unknown') }));
       } else {
-        setResult(res.error?.message ?? 'Failed');
+        setResult(res.error?.message ?? t('topbar.herald.failed'));
       }
     } catch {
-      setResult('Request failed');
+      setResult(t('topbar.herald.requestFailed'));
     } finally {
       setBusy(false);
     }
@@ -931,11 +936,11 @@ const PublishHeraldButton: React.FC<{ gameId: string }> = ({ gameId }) => {
 
   return (
     <button className="side-menu__item" onClick={fire} disabled={busy}
-      title="Post today's Orbital Herald to the Discord channel right now">
+      title={t('topbar.herald.title')}>
       <span className="side-menu__item-icon">🗞</span>
-      <span className="side-menu__item-label">{busy ? 'Publishing…' : 'Publish Herald Now'}</span>
-      <span className="side-menu__item-hint" style={result?.startsWith('Published') ? { color: '#6ee7b7' } : undefined}>
-        {result ?? 'Discord daily digest'}
+      <span className="side-menu__item-label">{busy ? t('topbar.herald.publishing') : t('topbar.herald.publish')}</span>
+      <span className="side-menu__item-hint" style={published ? { color: '#6ee7b7' } : undefined}>
+        {result ?? t('topbar.herald.digest')}
       </span>
     </button>
   );
@@ -945,6 +950,7 @@ const PublishHeraldButton: React.FC<{ gameId: string }> = ({ gameId }) => {
 // via POST /turn/settings. Editing ticks_per_turn uses the same
 // pill-stepper pattern as the existing tick-interval admin.
 const MpTbmHostToggle: React.FC = () => {
+  useI18n();
   const mp = useMultiplayerActions();
   const { status, refresh } = useMpTurnStatus();
   const [busy, setBusy] = useState(false);
@@ -976,7 +982,7 @@ const MpTbmHostToggle: React.FC = () => {
       <span className="side-menu__item-icon">⏯</span>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
         <span className="side-menu__item-label" style={{ marginBottom: 2 }}>
-          Turn-Based Mode {status.turn_based_enabled ? 'ON' : 'OFF'}
+          {status.turn_based_enabled ? t('topbar.tbm.on') : t('topbar.tbm.off')}
         </span>
         <div style={{ display: 'flex', gap: 6 }}>
           <button
@@ -984,12 +990,12 @@ const MpTbmHostToggle: React.FC = () => {
             onClick={() => setTBM(!status.turn_based_enabled, status.ticks_per_turn)}
             disabled={busy}
           >
-            {status.turn_based_enabled ? 'Disable' : 'Enable'}
+            {status.turn_based_enabled ? t('topbar.tbm.disable') : t('topbar.tbm.enable')}
           </button>
         </div>
         {status.turn_based_enabled && (
           <>
-            <span className="side-menu__item-hint">Ticks per turn</span>
+            <span className="side-menu__item-hint">{t('topbar.tbm.ticksPerTurn')}</span>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
               {ticksOptions.map(t => (
                 <button
@@ -1007,8 +1013,8 @@ const MpTbmHostToggle: React.FC = () => {
         )}
         <span className="side-menu__item-hint" style={{ marginTop: 2 }}>
           {status.turn_based_enabled
-            ? `Wall-clock paused. ${status.ready}/${status.needed} committed for turn ${status.turn_number}.`
-            : 'Server alarm advances ticks on schedule.'}
+            ? t('topbar.tbm.paused', { ready: status.ready, needed: status.needed, turn: status.turn_number })
+            : t('topbar.tbm.onSchedule')}
         </span>
         {tbmError && (
           // Server rejected the toggle (almost always not_host on a
@@ -1023,7 +1029,7 @@ const MpTbmHostToggle: React.FC = () => {
               fontFamily: 'inherit', textAlign: 'left',
               cursor: 'pointer', width: '100%',
             }}
-            title="Click to dismiss"
+            title={t('topbar.clickDismiss')}
           >⚠ {tbmError}</button>
         )}
       </div>
@@ -1072,24 +1078,25 @@ function useLightweight(): boolean {
  * what this browser draws and never touches the match.
  */
 const LightweightToggle: React.FC = () => {
+  useI18n();
   const on = useLightweight();
   return (
     <button
       className="side-menu__item"
       onClick={() => setLightweight(!on)}
       title={on
-        ? 'On — flat bodies, no combat FX, no blur, 15fps cap. Labels, ownership and hp still shown.'
-        : 'Off — full art. Turn on if the map stutters on your phone.'}
+        ? t('topbar.light.onTitle')
+        : t('topbar.light.offTitle')}
     >
       <span className="side-menu__item-icon">{on ? '▱' : '◈'}</span>
       <span className="side-menu__item-label">
-        Lightweight Mode {on ? 'ON' : 'OFF'}
+        {on ? t('topbar.light.on') : t('topbar.light.off')}
       </span>
       <span
         className="side-menu__item-hint"
         style={{ color: on ? '#ffb84d' : undefined }}
       >
-        {on ? 'flat art · 15fps' : 'full art'}
+        {on ? t('topbar.light.hintOn') : t('topbar.light.hintOff')}
       </span>
     </button>
   );
@@ -1128,6 +1135,7 @@ const SideMenu: React.FC<SideMenuProps> = ({
   playerShipCount = 0, settlementCount = 0, researchTotal = 0,
   canSaveLoad = false, onOpenSave, onOpenLoad, onOpenAdminGrant, onOpenAnalytics,
 }) => {
+  useI18n();
   const [forceTickBusy, setForceTickBusy] = useState(false);
   const [forceTickStatus, setForceTickStatus] = useState<string | null>(null);
   const [intervalBusy, setIntervalBusy] = useState(false);
@@ -1174,12 +1182,12 @@ const SideMenu: React.FC<SideMenuProps> = ({
         },
       );
       if (!res.ok) {
-        setIntervalStatus(res.error?.message ?? `Failed (${res.status})`);
+        setIntervalStatus(res.error?.message ?? t('topbar.failed', { status: res.status }));
       } else {
-        setIntervalStatus(`✓ Now ticking every ${label}`);
+        setIntervalStatus(t('topbar.admin.nowTicking', { label }));
       }
     } catch (e) {
-      setIntervalStatus(`Network error: ${(e as Error)?.message || 'unknown'}`);
+      setIntervalStatus(t('topbar.networkError', { msg: (e as Error)?.message || t('topbar.unknown') }));
     } finally {
       setIntervalBusy(false);
       setTimeout(() => setIntervalStatus(null), 4000);
@@ -1201,21 +1209,21 @@ const SideMenu: React.FC<SideMenuProps> = ({
         { method: 'POST' },
       );
       if (!res.ok) {
-        setForceTickStatus(res.error?.message ?? `Failed (${res.status})`);
+        setForceTickStatus(res.error?.message ?? t('topbar.failed', { status: res.status }));
       } else {
         const bodiesNote = res.data?.bodies_added && res.data.bodies_added > 0
-          ? ` +${res.data.bodies_added} bodies`
+          ? ` ${t('topbar.admin.bodiesAdded', { n: res.data.bodies_added })}`
           : '';
         if (res.data?.advanced === false) {
           // Worker returned 200 but the tick didn't actually move — usually
           // means the DO bailed (no game / status mismatch). Surface that.
-          setForceTickStatus(`No change${bodiesNote}`);
+          setForceTickStatus(`${t('topbar.admin.noChange')}${bodiesNote}`);
         } else {
-          setForceTickStatus(`✓ Tick → T+${res.data?.current_tick ?? '?'}${bodiesNote}`);
+          setForceTickStatus(`${t('topbar.admin.tickTo', { tick: res.data?.current_tick ?? '?' })}${bodiesNote}`);
         }
       }
     } catch (e) {
-      setForceTickStatus(`Network error: ${(e as Error)?.message || 'unknown'}`);
+      setForceTickStatus(t('topbar.networkError', { msg: (e as Error)?.message || t('topbar.unknown') }));
     } finally {
       setForceTickBusy(false);
       setTimeout(() => setForceTickStatus(null), 4000);
@@ -1227,19 +1235,19 @@ const SideMenu: React.FC<SideMenuProps> = ({
   return createPortal(
     <>
       <div className="side-menu__backdrop" onClick={onClose} />
-      <aside className="side-menu" role="dialog" aria-label="Menu">
+      <aside className="side-menu" role="dialog" aria-label={t('topbar.menu')}>
         <header className="side-menu__head">
           <div>
             <div className="side-menu__brand">ORBITAL</div>
-            <div className="side-menu__brand-sub" title={`Build ${GIT_SHA}`}>v0.3 alpha · {GIT_SHA.slice(0,7)}</div>
+            <div className="side-menu__brand-sub" title={t('topbar.build', { sha: GIT_SHA })}>v0.3 alpha · {GIT_SHA.slice(0,7)}</div>
           </div>
-          <button className="side-menu__close" onClick={onClose} title="Close (Esc)">×</button>
+          <button className="side-menu__close" onClick={onClose} title={t('topbar.closeEsc')}>×</button>
         </header>
 
         <section className="side-menu__identity">
-          <div className="side-menu__identity-label">SIGNED IN AS</div>
+          <div className="side-menu__identity-label">{t('topbar.signedInAs')}</div>
           <div className="side-menu__identity-name">
-            {user ? (user.display_name || user.email) : 'Guest'}
+            {user ? (user.display_name || user.email) : t('topbar.guest')}
           </div>
           {user && <div className="side-menu__identity-sub">{user.email}</div>}
         </section>
@@ -1247,13 +1255,13 @@ const SideMenu: React.FC<SideMenuProps> = ({
         <nav className="side-menu__nav">
           {onTogglePanel && (
             <div className="side-menu__panels-mobile">
-              <div className="side-menu__group-label">PANELS</div>
+              <div className="side-menu__group-label">{t('topbar.menuPanels')}</div>
               <button
                 className={`side-menu__item${activePanel === 'settlements' ? ' side-menu__item--active' : ''}`}
                 onClick={() => { onClose(); onTogglePanel(activePanel === 'settlements' ? null : 'settlements'); }}
               >
                 <span className="side-menu__item-icon">⌂</span>
-                <span className="side-menu__item-label">Settlements</span>
+                <span className="side-menu__item-label">{t('topbar.menuSettlements')}</span>
                 <span className="side-menu__item-hint">{settlementCount}</span>
               </button>
               <button
@@ -1261,7 +1269,7 @@ const SideMenu: React.FC<SideMenuProps> = ({
                 onClick={() => { onClose(); onTogglePanel(activePanel === 'fleet' ? null : 'fleet'); }}
               >
                 <span className="side-menu__item-icon">◈</span>
-                <span className="side-menu__item-label">Fleet</span>
+                <span className="side-menu__item-label">{t('topbar.nav.fleet')}</span>
                 <span className="side-menu__item-hint">{playerShipCount}</span>
               </button>
               <button
@@ -1269,21 +1277,21 @@ const SideMenu: React.FC<SideMenuProps> = ({
                 onClick={() => { onClose(); onTogglePanel(activePanel === 'research' ? null : 'research'); }}
               >
                 <span className="side-menu__item-icon">⚛</span>
-                <span className="side-menu__item-label">Research</span>
-                <span className="side-menu__item-hint">{researchTotal || 'lvl 0'}</span>
+                <span className="side-menu__item-label">{t('topbar.nav.research')}</span>
+                <span className="side-menu__item-hint">{researchTotal || t('topbar.lvl0')}</span>
               </button>
             </div>
           )}
 
-          <div className="side-menu__group-label">GAME</div>
+          <div className="side-menu__group-label">{t('topbar.menuGame')}</div>
           {canSaveLoad && onOpenSave && (
             <button
               className="side-menu__item"
               onClick={onOpenSave}
-              title="Save the current campaign to your browser"
+              title={t('topbar.save.title')}
             >
               <span className="side-menu__item-icon">⤓</span>
-              <span className="side-menu__item-label">Save Game</span>
+              <span className="side-menu__item-label">{t('topbar.save.label')}</span>
               <span className="side-menu__item-hint">localStorage</span>
             </button>
           )}
@@ -1291,11 +1299,11 @@ const SideMenu: React.FC<SideMenuProps> = ({
             <button
               className="side-menu__item"
               onClick={onOpenLoad}
-              title="Load a previously saved campaign (replaces this one)"
+              title={t('topbar.load.title')}
             >
               <span className="side-menu__item-icon">⤒</span>
-              <span className="side-menu__item-label">Load Game</span>
-              <span className="side-menu__item-hint">replaces current</span>
+              <span className="side-menu__item-label">{t('topbar.load.label')}</span>
+              <span className="side-menu__item-hint">{t('topbar.load.hint')}</span>
             </button>
           )}
           {onExitMode && (
@@ -1304,8 +1312,8 @@ const SideMenu: React.FC<SideMenuProps> = ({
               onClick={() => { onClose(); onExitMode(); }}
             >
               <span className="side-menu__item-icon">←</span>
-              <span className="side-menu__item-label">Back to Menu</span>
-              <span className="side-menu__item-hint">Exit this session</span>
+              <span className="side-menu__item-label">{t('topbar.backToMenu')}</span>
+              <span className="side-menu__item-hint">{t('topbar.exitSession')}</span>
             </button>
           )}
           <button
@@ -1319,13 +1327,13 @@ const SideMenu: React.FC<SideMenuProps> = ({
               tutorial.start();
               onClose();
             }}
-            title="Replay the guided walkthrough"
+            title={t('topbar.tutorial.title')}
           >
             <span className="side-menu__item-icon">?</span>
             <span className="side-menu__item-label">
-              {tutorial.completed ? 'Replay Tutorial' : 'Start Tutorial'}
+              {tutorial.completed ? t('topbar.tutorial.replay') : t('topbar.tutorial.start')}
             </span>
-            <span className="side-menu__item-hint">{TUTORIAL_STEP_COUNT_HINT}</span>
+            <span className="side-menu__item-hint">{t('topbar.tutorial.hint', { n: TUTORIAL_STEP_COUNT })}</span>
           </button>
 
           <LightweightToggle />
@@ -1339,18 +1347,18 @@ const SideMenu: React.FC<SideMenuProps> = ({
               className="side-menu__item"
               onClick={() => tbm.setEnabled(!tbm.enabled)}
               title={tbm.enabled
-                ? `On — realtime suppressed. Click COMMIT TURN to advance ${tbm.ticksPerTurn} ticks.`
-                : 'Off — game runs in realtime. Click to switch flows.'}
+                ? t('topbar.sptbm.onTitle', { n: tbm.ticksPerTurn })
+                : t('topbar.sptbm.offTitle')}
             >
               <span className="side-menu__item-icon">{tbm.enabled ? '⏯' : '▶'}</span>
               <span className="side-menu__item-label">
-                Turn-Based Mode {tbm.enabled ? 'ON' : 'OFF'}
+                {tbm.enabled ? t('topbar.tbm.on') : t('topbar.tbm.off')}
               </span>
               <span
                 className="side-menu__item-hint"
                 style={{ color: tbm.enabled ? '#ffb84d' : undefined }}
               >
-                {tbm.enabled ? `+${tbm.ticksPerTurn} ticks/turn` : 'realtime'}
+                {tbm.enabled ? t('topbar.sptbm.hintOn', { n: tbm.ticksPerTurn }) : t('topbar.sptbm.hintOff')}
               </span>
             </button>
           )}
@@ -1364,7 +1372,7 @@ const SideMenu: React.FC<SideMenuProps> = ({
 
           {isHost && adminGameId && (
             <>
-              <div className="side-menu__group-label">HOST ADMIN</div>
+              <div className="side-menu__group-label">{t('topbar.admin.group')}</div>
               <button
                 className="side-menu__item"
                 onClick={forceTick}
@@ -1372,15 +1380,15 @@ const SideMenu: React.FC<SideMenuProps> = ({
               >
                 <span className="side-menu__item-icon">⏭</span>
                 <span className="side-menu__item-label">
-                  {forceTickStatus ?? (forceTickBusy ? 'Ticking…' : 'Force Tick')}
+                  {forceTickStatus ?? (forceTickBusy ? t('topbar.admin.ticking') : t('topbar.admin.forceTick'))}
                 </span>
-                <span className="side-menu__item-hint">Advance one tick now</span>
+                <span className="side-menu__item-hint">{t('topbar.admin.forceTickHint')}</span>
               </button>
               <div className="side-menu__item side-menu__item--block">
                 <span className="side-menu__item-icon">⏱</span>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
                   <span className="side-menu__item-label" style={{ marginBottom: 2 }}>
-                    {intervalStatus ?? (intervalBusy ? 'Updating…' : 'Tick Speed')}
+                    {intervalStatus ?? (intervalBusy ? t('topbar.updating') : t('topbar.admin.tickSpeed'))}
                   </span>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                     {TICK_INTERVAL_OPTIONS.map(opt => (
@@ -1389,14 +1397,14 @@ const SideMenu: React.FC<SideMenuProps> = ({
                         className="side-menu__pill"
                         onClick={() => setTickInterval(opt.value, opt.label)}
                         disabled={intervalBusy}
-                        title={`${opt.label} per tick`}
+                        title={t('topbar.admin.perTick', { label: opt.label })}
                       >
                         {opt.label}
                       </button>
                     ))}
                   </div>
                   <span className="side-menu__item-hint" style={{ marginTop: 2 }}>
-                    Cadence applies on next tick
+                    {t('topbar.admin.cadence')}
                   </span>
                 </div>
               </div>
@@ -1406,17 +1414,17 @@ const SideMenu: React.FC<SideMenuProps> = ({
                 onClick={() => { onClose(); onOpenAdminGrant?.(); }}
               >
                 <span className="side-menu__item-icon">$</span>
-                <span className="side-menu__item-label">Grant Resources</span>
-                <span className="side-menu__item-hint">Bump any faction's pools</span>
+                <span className="side-menu__item-label">{t('topbar.admin.grant')}</span>
+                <span className="side-menu__item-hint">{t('topbar.admin.grantHint')}</span>
               </button>
               <button
                 className="side-menu__item"
                 onClick={() => { onClose(); onOpenAnalytics?.(); }}
-                title="Charts, engagements and battle recaps for this match"
+                title={t('topbar.admin.analyticsTitle')}
               >
                 <span className="side-menu__item-icon">📈</span>
-                <span className="side-menu__item-label">Analytics</span>
-                <span className="side-menu__item-hint">This match, without leaving it</span>
+                <span className="side-menu__item-label">{t('topbar.analytics.title')}</span>
+                <span className="side-menu__item-hint">{t('topbar.admin.analyticsHint')}</span>
               </button>
               <PublishHeraldButton gameId={adminGameId!} />
             </>
@@ -1437,7 +1445,7 @@ const SideMenu: React.FC<SideMenuProps> = ({
             </>
           )}
 
-          <div className="side-menu__group-label">DIAGNOSTICS</div>
+          <div className="side-menu__group-label">{t('topbar.diag.group')}</div>
           <button
             className="side-menu__item"
             onClick={() => {
@@ -1454,11 +1462,11 @@ const SideMenu: React.FC<SideMenuProps> = ({
                 inApp: isInApp(),
                 download: () => logger.downloadText(),
               }).then((outcome) => {
-                const said = outcome === 'copied' ? 'Log copied to the clipboard: paste it anywhere'
-                  : outcome === 'failed' ? 'Could not save the log on this device'
+                const said = outcome === 'copied' ? t('topbar.diag.copiedToast')
+                  : outcome === 'failed' ? t('topbar.diag.failedToast')
                   : null;
                 if (!said) return;
-                setLogStatus(outcome === 'copied' ? 'Copied' : 'Failed');
+                setLogStatus(outcome === 'copied' ? t('topbar.diag.copied') : t('topbar.diag.failed'));
                 window.setTimeout(() => setLogStatus(null), 4000);
                 try {
                   window.dispatchEvent(new CustomEvent('orbital:toast', {
@@ -1469,20 +1477,20 @@ const SideMenu: React.FC<SideMenuProps> = ({
             }}
           >
             <span className="side-menu__item-icon">⤓</span>
-            <span className="side-menu__item-label">Download Log</span>
-            <span className="side-menu__item-hint">{logStatus ?? `${logger.count()} entries`}</span>
+            <span className="side-menu__item-label">{t('topbar.diag.download')}</span>
+            <span className="side-menu__item-hint">{logStatus ?? t('topbar.diag.entries', { n: logger.count() })}</span>
           </button>
 
           {user && (
             <>
-              <div className="side-menu__group-label">ACCOUNT</div>
+              <div className="side-menu__group-label">{t('topbar.account.group')}</div>
               <button
                 className="side-menu__item"
                 onClick={() => { onClose(); onOpenNotifications?.(); }}
               >
                 <span className="side-menu__item-icon">🔔</span>
-                <span className="side-menu__item-label">Notifications</span>
-                <span className="side-menu__item-hint">Phone, Discord &amp; widget</span>
+                <span className="side-menu__item-label">{t('topbar.account.notifications')}</span>
+                <span className="side-menu__item-hint">{t('topbar.account.notificationsHint')}</span>
               </button>
               {/* A SMALL WINDOW TO LEAVE OPEN. Not the game in miniature:
                   a page of its own that reads the same feeds the watch
@@ -1502,16 +1510,16 @@ const SideMenu: React.FC<SideMenuProps> = ({
                 }}
               >
                 <span className="side-menu__item-icon">🛰</span>
-                <span className="side-menu__item-label">Pop-out panel</span>
-                <span className="side-menu__item-hint">A window to leave open</span>
+                <span className="side-menu__item-label">{t('topbar.account.popout')}</span>
+                <span className="side-menu__item-hint">{t('topbar.account.popoutHint')}</span>
               </button>
               <button
                 className="side-menu__item side-menu__item--danger"
                 onClick={async () => { onClose(); await onSignOut(); }}
               >
                 <span className="side-menu__item-icon">⏏</span>
-                <span className="side-menu__item-label">Sign Out</span>
-                <span className="side-menu__item-hint">End your session</span>
+                <span className="side-menu__item-label">{t('topbar.account.signOut')}</span>
+                <span className="side-menu__item-hint">{t('topbar.account.signOutHint')}</span>
               </button>
             </>
           )}
@@ -1519,7 +1527,7 @@ const SideMenu: React.FC<SideMenuProps> = ({
 
         {!isMobile && (
           <footer className="side-menu__foot">
-            <span>Press <kbd>Esc</kbd> to close</span>
+            <span>{t('topbar.pressEsc.pre')} <kbd>Esc</kbd> {t('topbar.pressEsc.post')}</span>
           </footer>
         )}
       </aside>

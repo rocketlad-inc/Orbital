@@ -34,6 +34,8 @@ import {
   planMiningRun,
 } from '../game/mining';
 import { RouteComposer } from './RouteComposer';
+import { t, tn } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 import './MeteoroidCard.css';
 
 /** Which population a rock belongs to, in words a player can act on.
@@ -43,23 +45,23 @@ function bandOf(body: Body, bodies: Body[]): { name: string; note: string } {
   if (body.type === 'lagrange') {
     const hostId = /mtr_([a-z]+)_l3$/.exec(body.id)?.[1];
     const host = hostId ? bodies.find(b => b.id.endsWith(`:${hostId}`) || b.id === hostId) : undefined;
-    const who = host ? host.name : 'its world';
+    const who = host ? host.name : t('meteoroid.itsWorld');
     return {
-      name: `Trojan · opposite ${who}`,
+      name: t('meteoroid.band.trojan.name', { who }),
       // The thing that makes L3 worth knowing about: it never moves
       // relative to its host, so a route planned here stays planned.
-      note: `Pinned to the far side of ${who}'s orbit — it stays there, so a run to it never goes stale. The crossing passes the sun.`,
+      note: t('meteoroid.band.trojan.note', { who }),
     };
   }
   if (body.orbit_ra != null && body.orbit_rp != null) {
     return {
-      name: 'Kuiper · eccentric',
-      note: 'A long, lopsided orbit — the haul is cheap near its closest approach and brutal at its farthest. Time the run.',
+      name: t('meteoroid.band.kuiper.name'),
+      note: t('meteoroid.band.kuiper.note'),
     };
   }
   return {
-    name: 'Main belt',
-    note: 'Out past Mars, among the dwarf worlds. The close, contested rocks.',
+    name: t('meteoroid.band.main.name'),
+    note: t('meteoroid.band.main.note'),
   };
 }
 
@@ -113,6 +115,7 @@ const RockPortrait: React.FC<{ body: Body; bodies: Body[]; t: number }> = ({ bod
 };
 
 export const MeteoroidCard: React.FC = () => {
+  useI18n();
   const { gameState, uiState, deselectBody, focusBody, updateCamera } = useGameContext();
   const mpActions = useMultiplayerActions();
 
@@ -248,9 +251,9 @@ export const MeteoroidCard: React.FC = () => {
         onClick={e => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-label={`${body.name} meteoroid`}
+        aria-label={t('meteoroid.ariaLabel', { name: body.name })}
       >
-        <button className="mtrc__x" onClick={close} aria-label="Close">✕</button>
+        <button className="mtrc__x" onClick={close} aria-label={t('meteoroid.close')}>✕</button>
 
         <div className="mtrc__head">
           <RockPortrait body={body} bodies={gameState.bodies} t={gameState.currentTick} />
@@ -261,7 +264,7 @@ export const MeteoroidCard: React.FC = () => {
                   Credits (EconomyPanel's RES_LABEL is the authority).
                   Saying GOLD here and then "450 credits left" two lines
                   down invented a second currency out of nothing. */}
-              {dead ? 'Worked out' : `Meteoroid · ${unit === 'credits' ? 'Credits' : 'Metal'}`}
+              {dead ? t('meteoroid.workedOut') : t('meteoroid.eyebrow', { kind: unit === 'credits' ? t('meteoroid.kind.credits') : t('meteoroid.kind.metal') })}
             </div>
             {/* The finder names it. renameBody is first-finder-only on
                 the server, so a rejected save means someone beat you. */}
@@ -269,7 +272,7 @@ export const MeteoroidCard: React.FC = () => {
               <EditableName
                 value={body.name}
                 onSave={async (n) => { await mpActions?.renameBody?.(body.id, n); }}
-                ariaLabel="Name this meteoroid"
+                ariaLabel={t('meteoroid.nameIt')}
               />
             </div>
             <div className="mtrc__band">{band.name}</div>
@@ -281,7 +284,7 @@ export const MeteoroidCard: React.FC = () => {
           <div className={`mtrc__amount${dead ? ' is-dead' : ''}`}>
             {Math.round(left).toLocaleString()}
           </div>
-          <div className="mtrc__unit">{unit} left</div>
+          <div className="mtrc__unit">{t('meteoroid.unitLeft', { unit: unit === 'credits' ? t('meteoroid.unit.credits') : t('meteoroid.unit.metal') })}</div>
         </div>
 
         <div className="mtrc__bar" aria-hidden="true">
@@ -294,38 +297,38 @@ export const MeteoroidCard: React.FC = () => {
         <div className="mtrc__stats">
           <div className="mtrc__stat">
             <span className="mtrc__stat-v">{Math.round(initial).toLocaleString()}</span>
-            <span className="mtrc__stat-k">surveyed</span>
+            <span className="mtrc__stat-k">{t('meteoroid.surveyed')}</span>
           </div>
           <div className="mtrc__stat">
             <span className="mtrc__stat-v">{Math.round(pulled).toLocaleString()}</span>
-            <span className="mtrc__stat-k">taken</span>
+            <span className="mtrc__stat-k">{t('meteoroid.taken')}</span>
           </div>
           <div className="mtrc__stat">
             {/* Trips, not tonnes — the unit a route is planned in. */}
             <span className="mtrc__stat-v">{dead ? '—' : loads}</span>
-            <span className="mtrc__stat-k">{loads === 1 ? 'freighter load' : 'freighter loads'}</span>
+            <span className="mtrc__stat-k">{loads === 1 ? t('meteoroid.freighterLoad_one') : t('meteoroid.freighterLoad_other')}</span>
           </div>
         </div>
 
         {/* ---- WHERE IT IS ---- */}
         <div className="mtrc__orbit">
           <div className="mtrc__orbit-row">
-            <span className="mtrc__k">Distance from Sol</span>
+            <span className="mtrc__k">{t('meteoroid.distFromSol')}</span>
             <span className="mtrc__v">{distNow.toLocaleString()}</span>
           </div>
           {rp != null && ra != null && (
             <div className="mtrc__orbit-row">
-              <span className="mtrc__k">Closest / farthest</span>
+              <span className="mtrc__k">{t('meteoroid.closestFarthest')}</span>
               <span className="mtrc__v">{rp.toLocaleString()} · {ra.toLocaleString()}</span>
             </div>
           )}
           <div className="mtrc__orbit-row">
-            <span className="mtrc__k">Year</span>
-            <span className="mtrc__v">{Math.round(body.orbitPeriod).toLocaleString()} ticks</span>
+            <span className="mtrc__k">{t('meteoroid.year')}</span>
+            <span className="mtrc__v">{t('meteoroid.ticks', { n: Math.round(body.orbitPeriod).toLocaleString() })}</span>
           </div>
           {shipsHere > 0 && (
             <div className="mtrc__orbit-row">
-              <span className="mtrc__k">Ships here</span>
+              <span className="mtrc__k">{t('meteoroid.shipsHere')}</span>
               <span className="mtrc__v">{shipsHere}</span>
             </div>
           )}
@@ -334,8 +337,7 @@ export const MeteoroidCard: React.FC = () => {
 
         {dead ? (
           <div className="mtrc__dead">
-            Nothing left. Any route still pointed here will skip the stop
-            and move on to the next one.
+            {t('meteoroid.dead')}
           </div>
         ) : (
           <>
@@ -361,15 +363,15 @@ export const MeteoroidCard: React.FC = () => {
                     mpActions?.setMining?.(sh.id, false);
                   }}
                 >
-                  <span className="mtrc__go-main">■ Stop {sh.name}</span>
+                  <span className="mtrc__go-main">{t('meteoroid.stop', { name: sh.name })}</span>
                   <span className="mtrc__go-bar" aria-hidden="true">
                     <span className="mtrc__go-bar-fill" style={{ width: `${Math.round(pctFull * 100)}%` }} />
                   </span>
                   <span className="mtrc__go-sub">
-                    {Math.round(aboard)} / {BASE_HOLD} aboard ·{' '}
+                    {t('meteoroid.aboard', { have: Math.round(aboard), cap: BASE_HOLD })} ·{' '}
                     {ticks <= 0
-                      ? 'stopping now'
-                      : `${ticks} tick${ticks === 1 ? '' : 's'} until ${room <= left ? 'full' : 'dry'}`}
+                      ? t('meteoroid.stoppingNow')
+                      : tn(room <= left ? 'meteoroid.untilFull' : 'meteoroid.untilDry', ticks)}
                   </span>
                 </button>
               );
@@ -383,10 +385,9 @@ export const MeteoroidCard: React.FC = () => {
                   mpActions?.setMining?.(sh.id, true);
                 }}
               >
-                <span className="mtrc__go-main">⛏ Begin mining — {sh.name}</span>
+                <span className="mtrc__go-main">{t('meteoroid.begin', { name: sh.name })}</span>
                 <span className="mtrc__go-sub">
-                  Parked here with a rig. Fills {MINE_RATE_PER_TICK}/tick and
-                  cannot leave until you stop it.
+                  {t('meteoroid.beginSub', { rate: MINE_RATE_PER_TICK })}
                 </span>
               </button>
             ))}
@@ -405,18 +406,18 @@ export const MeteoroidCard: React.FC = () => {
                   name: run.plan.name,
                 })}
               >
-                <span className="mtrc__go-main">Start a mining run</span>
+                <span className="mtrc__go-main">{t('meteoroid.startRun')}</span>
                 <span className="mtrc__go-sub">
                   {run.plan.carrierName} → {body.name} → {run.plan.dropoff.name}
                 </span>
               </button>
             ) : (
               <div className="mtrc__go is-blocked">
-                <span className="mtrc__go-main">Can't run this yet</span>
+                <span className="mtrc__go-main">{t('meteoroid.cantRun')}</span>
                 <span className="mtrc__go-sub">
                   {run.reason === 'no_rig'
-                    ? 'No idle freighter carries a Mining Rig. Fit one in the ship designer.'
-                    : 'Nowhere to deliver — you need a terraformed world of your own.'}
+                    ? t('meteoroid.noRig')
+                    : t('meteoroid.noDropoff')}
                 </span>
               </div>
             )}
@@ -424,33 +425,28 @@ export const MeteoroidCard: React.FC = () => {
             <div className="mtrc__rule">
               <span className="mtrc__rule-icon" aria-hidden="true">⌀</span>
               <div>
-                <b>Nothing can be built here.</b> A few hundred metres of rock
-                on a loose orbit — no ring to anchor a station to, no ground to
-                stand a city on. Rocks are worked, not held.
+                <b>{t('meteoroid.rule.noBuild.title')}</b> {t('meteoroid.rule.noBuild.body')}
               </div>
             </div>
 
             <div className="mtrc__rule">
               <span className="mtrc__rule-icon" aria-hidden="true">⛏</span>
               <div>
-                <b>A freighter is the only way to move it.</b> Fit a{' '}
-                <b>Mining Rig</b> in the ship designer, then add this rock as a
-                stop on that freighter's trade route.
+                <b>{t('meteoroid.rule.freighter.title')}</b> {t('meteoroid.rule.freighter.pre')}{' '}
+                <b>{t('meteoroid.miningRig')}</b> {t('meteoroid.rule.freighter.post')}
               </div>
             </div>
 
             <div className="mtrc__rule">
               <span className="mtrc__rule-icon" aria-hidden="true">⏱</span>
               <div>
-                <b>It has to sit still to fill.</b> {MINE_RATE_PER_TICK} a tick —
-                about <b>{TICKS_PER_HOLD} ticks</b> for a full {BASE_HOLD} hold —
-                and it cannot leave until it is done. A parked freighter is a
-                target.
+                <b>{t('meteoroid.rule.sit.title')}</b> {t('meteoroid.rule.sit.a', { rate: MINE_RATE_PER_TICK })}{' '}
+                <b>{t('meteoroid.ticks', { n: TICKS_PER_HOLD })}</b> {t('meteoroid.rule.sit.b', { hold: BASE_HOLD })}
               </div>
             </div>
 
             <div className="mtrc__foot">
-              Nothing is banked until the load is carried home and dropped off.
+              {t('meteoroid.foot')}
             </div>
           </>
         )}

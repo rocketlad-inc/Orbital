@@ -65,6 +65,8 @@ import { employedShipIds, routeDeliversTo, routeCarriers } from '../game/routeSe
 import { terraformInbound, tickClock } from '../game/terraformInbound';
 import { buildChoices } from '../game/designChoice';
 import { RamControlsSection } from '../components/BodyInspector';
+import { t, tn, tk } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 /** Picker target meaning "the panel default", not a specific queued row.
  *  A build order id can never collide with it — they are body-prefixed. */
 const NEXT_SHIP = '__next_ship__';
@@ -119,6 +121,7 @@ const ORB_SLOTS = [
 ];
 
 export const WorldMenuOverlay: React.FC = () => {
+  useI18n();
   const {
     gameState, uiState,
     updateCamera, focusBody, selectBody, deselectBody, renameSettlement,
@@ -468,7 +471,7 @@ export const WorldMenuOverlay: React.FC = () => {
     const res = waiting
       ? await mpActions?.cancelBuilding(settlement.id, waiting.id)
       : await mpActions?.queueBuilding(settlement.id, kind);
-    if (res && !res.ok) setErrMsg(res.error ?? 'Build rejected by server');
+    if (res && !res.ok) setErrMsg(res.error ?? t('worldmenu.err.buildRejected'));
   };
   // Rename a settlement (city OR station). Mirrors BodyInspector: apply
   // the optimistic local change, then PATCH the server; re-throw on
@@ -486,7 +489,7 @@ export const WorldMenuOverlay: React.FC = () => {
       type === 'city' ? gameState.namePools?.city : gameState.namePools?.station,
     );
     const res = await mpActions?.deploySettlement({ bodyId: openId, type, name });
-    if (res && !res.ok) setErrMsg(res.error ?? `Could not found ${type}`);
+    if (res && !res.ok) setErrMsg(res.error ?? (type === 'city' ? t('worldmenu.err.couldNotFoundCity') : t('worldmenu.err.couldNotFoundStation')));
   };
 
   // ---- founding a city / station (MP rules, mirrors BodyInspector) ----
@@ -657,14 +660,14 @@ export const WorldMenuOverlay: React.FC = () => {
         title={lockObj
           ? `${lockObj.label} — ${lockObj.text}\n\n${BUILDING_DEFS[kind].description}`
           : st.state === 'backlogged'
-            ? `#${st.position} in the build queue — click to take it back out and refund the cost.`
+            ? t('worldmenu.build.backlogTitle', { pos: st.position })
               + `\n\n${BUILDING_DEFS[kind].description}`
             : BUILDING_DEFS[kind].description}
         onClick={() => queueBuild(kind, host)}
       >
-        <span className="wm-bbtn-nm">{kind.toUpperCase()}</span>
+        <span className="wm-bbtn-nm">{tk(`worldmenu.building.${kind}`, kind.toUpperCase())}</span>
         {st.state === 'backlogged' && (
-          <span className="wm-bbtn-q" aria-label={`queue position ${st.position}`}>{st.position}</span>
+          <span className="wm-bbtn-q" aria-label={t('worldmenu.build.queuePosition', { pos: st.position })}>{st.position}</span>
         )}
         <span className="wm-bbtn-st">{lockShort ?? st.text}</span>
         <span className="wm-bbtn-fx">{BUILDING_DEFS[kind].effectShort}</span>
@@ -711,26 +714,27 @@ export const WorldMenuOverlay: React.FC = () => {
     const enabled = !raw && !(isCity ? !!cityLock : false)
       && (own ? canAffordSettlement : !!colonyShipHere);
     const needSub = own
-      ? (colonistHere ? `${costLabel} · colonist` : costLabel)
-      : 'needs colony ship in orbit';
+      ? (colonistHere ? t('worldmenu.found.costColonist', { cost: costLabel }) : costLabel)
+      : t('worldmenu.found.needsShip');
     const sub = isCity
-      ? (raw ? 'raw world — terraform first'
+      ? (raw ? t('worldmenu.found.rawFirst')
         : cityLock ? cityLock.text
-        : consumesShip ? 'consumes colony ship' : needSub)
-      : (consumesShip ? 'consumes colony ship' : needSub);
+        : consumesShip ? t('worldmenu.found.consumesShip') : needSub)
+      : (consumesShip ? t('worldmenu.found.consumesShip') : needSub);
+    const colonistTag = colonistHere ? ` ${t('worldmenu.found.colonistTag')}` : '';
     const title = isCity
-      ? (raw ? 'Raw world — run a terraform supply route here first. Stations can be built now.'
+      ? (raw ? t('worldmenu.found.rawTitle')
         : cityLock ? `${cityLock.label} — ${cityLock.text}`
-        : consumesShip ? `Found a city — consumes ${colonyShipHere!.name}`
+        : consumesShip ? t('worldmenu.found.cityConsumes', { name: colonyShipHere!.name })
         : own ? (canAffordSettlement
-            ? `Built on ground you already hold: ${costLabel}${colonistHere ? ' (Colonist captain: -20%)' : ''}`
-            : `Need ${costLabel} to build here`)
-        : 'Requires a Colony Ship in orbit, or own a settlement here first')
-      : (consumesShip ? `Launch a station — consumes ${colonyShipHere!.name}`
+            ? `${t('worldmenu.found.cityHeld', { cost: costLabel })}${colonistTag}`
+            : t('worldmenu.found.cityNeed', { cost: costLabel }))
+        : t('worldmenu.found.requires'))
+      : (consumesShip ? t('worldmenu.found.stationConsumes', { name: colonyShipHere!.name })
         : own ? (canAffordSettlement
-            ? `Built from orbit: ${costLabel}${colonistHere ? ' (Colonist captain: -20%)' : ''}`
-            : `Need ${costLabel} to build from orbit`)
-        : 'Requires a Colony Ship in orbit, or own a settlement here first');
+            ? `${t('worldmenu.found.stationHeld', { cost: costLabel })}${colonistTag}`
+            : t('worldmenu.found.stationNeed', { cost: costLabel }))
+        : t('worldmenu.found.requires'));
     // MOBILE: a CITY button that's disabled purely because the world is
     // raw is not an action — it's a rule. As a full-height tile it took a
     // third of the build row and, on a cramped phone, sat directly on the
@@ -749,10 +753,10 @@ export const WorldMenuOverlay: React.FC = () => {
         data-testid={`wm-found-${type}`}
       >
         {rawCityNote ? (
-          <span className="wm-bbtn-st">🔒 CITY — terraform this world first</span>
+          <span className="wm-bbtn-st">{t('worldmenu.found.rawCityNote')}</span>
         ) : (
           <>
-            <span className="wm-bbtn-nm">{isCity ? '▲ FOUND CITY' : '▲ BUILD STATION'}</span>
+            <span className="wm-bbtn-nm">{isCity ? t('worldmenu.found.btnCity') : t('worldmenu.found.btnStation')}</span>
             <span className="wm-bbtn-st">{cityLock && isCity && !raw ? `🔒 ${sub}` : sub}</span>
           </>
         )}
@@ -814,13 +818,13 @@ export const WorldMenuOverlay: React.FC = () => {
           )}
           <div className="wm-name">{body.name.toUpperCase()}</div>
           <div className="wm-idrow">
-            <span className="wm-type">{body.type.replace('_', ' ')}</span>
+            <span className="wm-type">{tk(`body.type.${body.type}`, body.type.replace('_', ' '))}</span>
             {readout.ownerFactionId && (
               <span
                 className={`wm-owner ${isMine ? '' : 'neutral'}`}
                 style={isMine ? { borderColor: p1, color: p1 } : undefined}
               >
-                {isMine ? 'YOU' : (ownerFaction?.name ?? readout.ownerFactionId).toUpperCase()}
+                {isMine ? t('worldmenu.you') : (ownerFaction?.name ?? readout.ownerFactionId).toUpperCase()}
               </span>
             )}
           </div>
@@ -832,35 +836,35 @@ export const WorldMenuOverlay: React.FC = () => {
             on a phone. One short line, so it costs little room. */}
         {immovable && <div className="wm-immovable">{immovable}</div>}
         <div className="wm-metrics">
-          <div className="wm-metric"><span>POP</span><b>{readout.pop}</b></div>
-          <div className="wm-metric"><span>DEFENSE</span><b>{readout.defense}</b></div>
-          <div className="wm-metric"><span>SHIPS</span><b>◆ {readout.shipCount}</b></div>
-          <div className="wm-metric"><span>INTEGRITY</span>
+          <div className="wm-metric"><span>{t('worldmenu.metric.pop')}</span><b>{readout.pop}</b></div>
+          <div className="wm-metric"><span>{t('worldmenu.metric.defense')}</span><b>{readout.defense}</b></div>
+          <div className="wm-metric"><span>{t('worldmenu.metric.ships')}</span><b>◆ {readout.shipCount}</b></div>
+          <div className="wm-metric"><span>{t('worldmenu.metric.integrity')}</span>
             <b>{integrity ? `${Math.round(integrity.hp)}/${integrity.maxHp}` : '—'}</b>
           </div>
         </div>
         {(myCity || myStation) && (
           <div className="wm-settlements">
             {myCity && (
-              <span className="wm-settlement" title="Rename this city">
+              <span className="wm-settlement" title={t('worldmenu.renameCity')}>
                 <span className="wm-settlement-glyph">■</span>
-                <EditableName value={myCity.name} maxLength={32} ariaLabel="Rename this city"
+                <EditableName value={myCity.name} maxLength={32} ariaLabel={t('worldmenu.renameCity')}
                   onSave={(next) => renameOwned(myCity.id, next)} />
                 <span className="wm-settlement-hp"
                   style={{ color: hpColor(myCity.hp / Math.max(1, myCity.maxHp)) }}
-                  title="Structure integrity (current / max)">
+                  title={t('worldmenu.integrityTitle')}>
                   ◈ {Math.round(myCity.hp)}/{myCity.maxHp}
                 </span>
               </span>
             )}
             {myStation && (
-              <span className="wm-settlement" title="Rename this station">
+              <span className="wm-settlement" title={t('worldmenu.renameStation')}>
                 <span className="wm-settlement-glyph">◆</span>
-                <EditableName value={myStation.name} maxLength={32} ariaLabel="Rename this station"
+                <EditableName value={myStation.name} maxLength={32} ariaLabel={t('worldmenu.renameStation')}
                   onSave={(next) => renameOwned(myStation.id, next)} />
                 <span className="wm-settlement-hp"
                   style={{ color: hpColor(myStation.hp / Math.max(1, myStation.maxHp)) }}
-                  title="Structure integrity (current / max)">
+                  title={t('worldmenu.integrityTitle')}>
                   ◈ {Math.round(myStation.hp)}/{myStation.maxHp}
                 </span>
               </span>
@@ -869,7 +873,7 @@ export const WorldMenuOverlay: React.FC = () => {
         )}
         <RuinsCard bodyId={body.id} />
         <div className="wm-out">
-          <span className="wm-label">Output /t</span>
+          <span className="wm-label">{t('worldmenu.output')}</span>
           <div className="wm-yields">
             {yieldChips.map(([k, v]) => (
               // Chip tinted with the canonical resource color so F/M/C/S
@@ -883,7 +887,7 @@ export const WorldMenuOverlay: React.FC = () => {
             ))}
           </div>
           <div className="wm-stock">
-            <span className="wm-label">Stockpile</span>{' '}
+            <span className="wm-label">{t('worldmenu.stockpile')}</span>{' '}
             {/* Round, not floor: floor turns fp residue like 0.9999 into
                 0 when the true stock is 1. Whole numbers everywhere. */}
             {([
@@ -931,26 +935,26 @@ export const WorldMenuOverlay: React.FC = () => {
              DESKTOP, which has the room for it. ===== */}
         {mobile && !collapsed && orbitEls.length > 0 && (
           <div className="wm-msec" data-testid="wm-col-orbit">
-            <div className="wm-msec-label">ORBIT — <b>STATION</b></div>
+            <div className="wm-msec-label">{t('worldmenu.col.orbit')} — <b>{t('worldmenu.col.station')}</b></div>
             <div className="wm-mrow wm-mrow-flow">{orbitEls}</div>
           </div>
         )}
         {mobile && !collapsed && surfaceEls.length > 0 && (
           <div className="wm-msec" data-testid="wm-col-surface">
-            <div className="wm-msec-label">SURFACE — <b>CITY</b></div>
+            <div className="wm-msec-label">{t('worldmenu.col.surface')} — <b>{t('worldmenu.col.city')}</b></div>
             <div className="wm-mrow wm-mrow-flow">{surfaceEls}</div>
           </div>
         )}
 
         {mobile && (
           <button className="wm-more" onClick={() => setCollapsed(c => !c)}>
-            {collapsed ? '▾ More' : '▴ Less'}
+            {collapsed ? t('worldmenu.more') : t('worldmenu.less')}
           </button>
         )}
       </section>
 
       {/* ===== dismissal + error ===== */}
-      <button className="wm-tomap" onClick={() => close(true)} data-testid="wm-tomap">✕ MAP</button>
+      <button className="wm-tomap" onClick={() => close(true)} data-testid="wm-tomap">{t('worldmenu.toMap')}</button>
       {errMsg && <div className="wm-err">{errMsg}</div>}
 
       {/* ===== neighbor orbs (desktop only — they don't fit alongside
@@ -1098,7 +1102,7 @@ export const WorldMenuOverlay: React.FC = () => {
               data-tutorial-id="wm-columns"
               style={{ left: leftColX, top: colTopY, width: COL_W }}
             >
-              <div className="wm-col-label">SURFACE — <b>CITY</b></div>
+              <div className="wm-col-label">{t('worldmenu.col.surface')} — <b>{t('worldmenu.col.city')}</b></div>
               {surfaceEls}
             </aside>
           )}
@@ -1108,7 +1112,7 @@ export const WorldMenuOverlay: React.FC = () => {
               data-tutorial-id="wm-columns-orbit"
               style={{ left: rightColX, top: colTopY, width: COL_W }}
             >
-              <div className="wm-col-label">ORBIT — <b>STATION</b></div>
+              <div className="wm-col-label">{t('worldmenu.col.orbit')} — <b>{t('worldmenu.col.station')}</b></div>
               {orbitEls}
             </aside>
           )}
@@ -1173,6 +1177,7 @@ const WmFleet: React.FC<{
   hasStation: boolean;
   railW: number; onErr: (m: string | null) => void;
 }> = ({ bodyId, mobile, isMine, hasStation, railW, onErr }) => {
+  useI18n();
   const { gameState, updateGameState } = useGameContext();
   // Live view for async rollbacks (a poll may land while the POST flies).
   const gsRef = React.useRef(gameState);
@@ -1359,7 +1364,7 @@ const WmFleet: React.FC<{
       updateGameState({
         buildOrders: gsRef.current.buildOrders.filter(o => o.id !== optimisticId),
       });
-      onErr(res.error ?? 'Build rejected by server');
+      onErr(res.error ?? t('worldmenu.err.buildRejected'));
     }
   };
 
@@ -1374,7 +1379,7 @@ const WmFleet: React.FC<{
     // row the player can plainly see.
     const serverId = await resolveServerOrderId(orderId);
     if (!serverId) {
-      onErr('That order is still being placed — give it a second.');
+      onErr(t('worldmenu.err.stillPlacing'));
       return;
     }
     // Drop it locally NOW. Cancelling used to wait on the next /state
@@ -1386,7 +1391,7 @@ const WmFleet: React.FC<{
     // A rejected cancel needs no rollback: the row is still the
     // server's, so the next poll puts it back — which is the honest
     // signal that it was not cancelled.
-    if (res && !res.ok) onErr(res.error ?? 'Could not cancel build');
+    if (res && !res.ok) onErr(res.error ?? t('worldmenu.err.cantCancel'));
   };
 
   // Write the yard's standing order. Optimistic through the same
@@ -1413,7 +1418,7 @@ const WmFleet: React.FC<{
     });
     const res = await mpActions?.setYardOrder(yard.id, intent);
     if (res && !res.ok) {
-      onErr(res.error ?? 'Could not set that order');
+      onErr(res.error ?? t('worldmenu.err.cantSetOrder'));
       if (before) {
         updateGameState({
           settlements: gsRef.current.settlements.map(st => (st.id === yard.id ? before : st)),
@@ -1450,7 +1455,7 @@ const WmFleet: React.FC<{
     // Resolve it through the build request that drew it first.
     const serverId = await resolveServerOrderId(orderId);
     if (!serverId) {
-      onErr('That order is still being placed — give it a second.');
+      onErr(t('worldmenu.err.stillPlacing'));
       if (before) {
         updateGameState({
           buildOrders: gsRef.current.buildOrders.map(o => (o.id === orderId ? before : o)),
@@ -1460,7 +1465,7 @@ const WmFleet: React.FC<{
     }
     const res = await mpActions?.setBuildOrder(serverId, intent);
     if (res && !res.ok) {
-      onErr(res.error ?? 'Could not set that order');
+      onErr(res.error ?? t('worldmenu.err.cantSetOrder'));
       if (before) {
         updateGameState({
           buildOrders: gsRef.current.buildOrders.map(o => (o.id === orderId ? before : o)),
@@ -1473,17 +1478,17 @@ const WmFleet: React.FC<{
   const rowOrderLabel = (o: typeof orders[number]): string | null => {
     if (!o.buildOrder) return null;
     if (o.buildOrder === 'go_to') {
-      return `Go to ${gameState.bodies.find(b => b.id === o.buildOrderBodyId)?.name ?? '?'}`;
+      return t('worldmenu.order.goTo', { name: gameState.bodies.find(b => b.id === o.buildOrderBodyId)?.name ?? '?' });
     }
     if (o.buildOrder === 'join_fleet') {
-      return `Join ${joinableFleets.find(f => f.id === o.buildOrderFleetId)?.name ?? 'fleet'}`;
+      return t('worldmenu.order.join', { name: joinableFleets.find(f => f.id === o.buildOrderFleetId)?.name ?? t('worldmenu.order.fleetDefault') });
     }
     if (o.buildOrder === 'trade_route') {
       const r = joinableRoutes.find(x => x.id === o.buildOrderRouteId);
-      return `Join ${r ? routeLabel(r) : 'route'}`;
+      return t('worldmenu.order.join', { name: r ? routeLabel(r) : t('worldmenu.order.routeDefault') });
     }
-    if (o.buildOrder === 'stay') return 'Wait here';
-    return o.buildOrder === 'defensive' ? 'Defend' : 'Hold';
+    if (o.buildOrder === 'stay') return t('worldmenu.order.wait');
+    return o.buildOrder === 'defensive' ? t('worldmenu.order.defend') : t('worldmenu.order.hold');
   };
 
   /** What the yard is doing, worded for the row's follow option. Null
@@ -1491,12 +1496,12 @@ const WmFleet: React.FC<{
    *  which is what they will actually do. */
   const yardOrderLabel: string | null = !buildOrder ? null
     : buildOrder === 'go_to'
-      ? `go to ${gameState.bodies.find(b => b.id === buildOrderBody)?.name ?? '?'}`
+      ? t('worldmenu.yard.goTo', { name: gameState.bodies.find(b => b.id === buildOrderBody)?.name ?? '?' })
       : buildOrder === 'join_fleet'
-        ? `join ${joinableFleets.find(f => f.id === buildOrderFleet)?.name ?? 'fleet'}`
+        ? t('worldmenu.yard.join', { name: joinableFleets.find(f => f.id === buildOrderFleet)?.name ?? t('worldmenu.order.fleetDefault') })
         : buildOrder === 'trade_route'
-          ? `join ${orderRouteName}`
-          : buildOrder === 'defensive' ? 'defend' : 'hold';
+          ? t('worldmenu.yard.join', { name: orderRouteName })
+          : buildOrder === 'defensive' ? t('worldmenu.yard.defend') : t('worldmenu.yard.hold');
 
   // THE PER-HULL ORDER, one control for both layouts. A row with no
   // order of its own follows the yard; one that has its own reads in
@@ -1507,8 +1512,8 @@ const WmFleet: React.FC<{
       value={o.buildOrder === 'join_fleet' && o.buildOrderFleetId
         ? `fleet:${o.buildOrderFleetId}`
         : o.buildOrder ?? ''}
-      aria-label={`Starting order for ${o.shipName ?? o.shipClass}`}
-      title="What THIS hull does the moment it rolls out. The first entry follows the yard."
+      aria-label={t('worldmenu.order.startingFor', { name: o.shipName ?? o.shipClass })}
+      title={t('worldmenu.order.rowTitle')}
       onChange={e => {
         const v = e.target.value;
         if (v === 'go_to') { setOrderPickerFor(o.id); return; }
@@ -1526,12 +1531,12 @@ const WmFleet: React.FC<{
           does whatever the yard is doing, and keeps doing it if
           the yard changes its mind. */}
       <option value="">
-        {`Yard: ${yardOrderLabel ?? 'wait here'}`}
+        {t('worldmenu.order.yard', { order: yardOrderLabel ?? t('worldmenu.yard.wait') })}
       </option>
-      <option value="stay">Wait here</option>
-      <option value="defensive">Defend</option>
+      <option value="stay">{t('worldmenu.order.wait')}</option>
+      <option value="defensive">{t('worldmenu.order.defend')}</option>
       <option value="go_to">
-        {o.buildOrder === 'go_to' ? rowOrderLabel(o) : 'Go to…'}
+        {o.buildOrder === 'go_to' ? rowOrderLabel(o) : t('worldmenu.order.goToEllipsis')}
       </option>
       {/* SHOWN EVEN WHEN THERE IS NOTHING TO JOIN, disabled and
           saying why. Hiding them made the two best verbs invisible
@@ -1541,15 +1546,15 @@ const WmFleet: React.FC<{
           unselectable and wrong to be absent. */}
       {joinableFleets.length > 0
         ? joinableFleets.map(f => (
-          <option key={f.id} value={`fleet:${f.id}`}>Join {f.name}</option>
+          <option key={f.id} value={`fleet:${f.id}`}>{t('worldmenu.order.join', { name: f.name })}</option>
         ))
-        : <option value="__no_fleets" disabled>Join a fleet — none formed yet</option>}
+        : <option value="__no_fleets" disabled>{t('worldmenu.order.noFleets')}</option>}
       {joinableRoutes.length > 0 ? (
         <option value="trade_route">
-          {o.buildOrder === 'trade_route' ? rowOrderLabel(o) : 'Join trade route…'}
+          {o.buildOrder === 'trade_route' ? rowOrderLabel(o) : t('worldmenu.order.joinRouteEllipsis')}
         </option>
       ) : (
-        <option value="__no_routes" disabled>Join a trade route — none laid yet</option>
+        <option value="__no_routes" disabled>{t('worldmenu.order.noRoutes')}</option>
       )}
     </select>
   );
@@ -1563,10 +1568,10 @@ const WmFleet: React.FC<{
         <div className="wm-qhead">
           <ShipIcon shipClass={o.shipClass} variant={o.iconVariant} size={15} color={p1} color2={p2} />
           <span className="wm-qnm">{o.shipName ?? o.shipClass}</span>
-          <span className="wm-qeta">{isBuilding ? `T-${eta}` : 'queued'}</span>
+          <span className="wm-qeta">{isBuilding ? `T-${eta}` : t('worldmenu.q.queued')}</span>
           {o.botched && (
             <span
-              title="A rush went badly — this hull will be delivered at HALF health."
+              title={t('worldmenu.q.botched')}
               style={{ color: '#ff8a5c', fontSize: 10, flex: '0 0 auto' }}
             >⚠</span>
           )}
@@ -1584,8 +1589,8 @@ const WmFleet: React.FC<{
             <button
               className="wm-qcancel"
               onClick={() => cancelBuild(o.id)}
-              title={isBuilding ? 'Cancel construction (refunds cost)' : 'Remove from queue (refunds cost)'}
-              aria-label="Cancel build"
+              title={isBuilding ? t('worldmenu.q.cancelBuilding') : t('worldmenu.q.cancelQueued')}
+              aria-label={t('worldmenu.q.cancelBuild')}
             >✕</button>
           )}
         </div>
@@ -1616,9 +1621,9 @@ const WmFleet: React.FC<{
           {isMine ? orderSelect(o) : <span />}
           <span className="wm-qline__end">
             {o.botched && (
-              <span title="A rush went badly — this hull will be delivered at HALF health." style={{ color: '#ff8a5c' }}>⚠</span>
+              <span title={t('worldmenu.q.botched')} style={{ color: '#ff8a5c' }}>⚠</span>
             )}
-            <span className="wm-qeta">{isBuilding ? `T-${eta}` : 'queued'}</span>
+            <span className="wm-qeta">{isBuilding ? `T-${eta}` : t('worldmenu.q.queued')}</span>
             {isMine && isBuilding && eta > 1 && (
               <RushControl
                 order={o}
@@ -1631,8 +1636,8 @@ const WmFleet: React.FC<{
               <button
                 className="wm-qcancel"
                 onClick={() => cancelBuild(o.id)}
-                title={isBuilding ? 'Cancel construction (refunds cost)' : 'Remove from queue (refunds cost)'}
-                aria-label={`Cancel ${o.shipName ?? 'build'}`}
+                title={isBuilding ? t('worldmenu.q.cancelBuilding') : t('worldmenu.q.cancelQueued')}
+                aria-label={t('worldmenu.q.cancelNamed', { name: o.shipName ?? t('worldmenu.q.buildWord') })}
               >✕</button>
             )}
           </span>
@@ -1663,23 +1668,23 @@ const WmFleet: React.FC<{
     // so the tooltip itemises it: bare hull, what the loadout added,
     // what a law did, total.
     const priceWhy = [
-      `Build ${def.displayName} — ${def.buildTime} ticks`,
-      `Hull ${def.cost.ore}M ${def.cost.credits}C`,
-      pc.ore || pc.credits ? `Loadout +${pc.ore}M +${pc.credits}C` : '',
+      t('worldmenu.why.build', { name: def.displayName, ticks: def.buildTime }),
+      t('worldmenu.why.hull', { ore: def.cost.ore, credits: def.cost.credits }),
+      pc.ore || pc.credits ? t('worldmenu.why.loadout', { ore: pc.ore, credits: pc.credits }) : '',
       // EVERY dial that moves the total gets a line. This listed the
       // senate law only, while `priced` also applies the host's price
       // setting and the Construction discount, so a player at
       // Construction 10 read "Hull 1000M + Loadout 580M = Total 790M"
       // ("Math aint mathing"). Lines above are list prices, these are
       // multipliers, the total is what the yard takes.
-      dial('Game setting', gameState.buildCost?.config),
-      dial('Senate law', priceLaw),
-      dial(`Construction ${gameState.buildCost?.constructionLevel ?? 0} research`, gameState.buildCost?.tech),
-      `Total ${costOre}M ${costCredits}C`,
+      dial(t('worldmenu.why.gameSetting'), gameState.buildCost?.config),
+      dial(t('worldmenu.why.senateLaw'), priceLaw),
+      dial(t('worldmenu.why.constructionResearch', { lv: gameState.buildCost?.constructionLevel ?? 0 }), gameState.buildCost?.tech),
+      t('worldmenu.why.total', { ore: costOre, credits: costCredits }),
       // The hull's real fighting numbers with this loadout and your
       // research. def.firepower is a legacy display field and def.hp
       // the bare hull, neither of which is what launches.
-      `Damage ${stats.damagePerTick}/tick · Hull ${stats.hp}`,
+      t('worldmenu.why.damage', { dmg: stats.damagePerTick, hp: stats.hp }),
     ].filter(Boolean).join('\n');
     const feat = HULL_FEATURE[cls];
     const lockObj = feat ? gate.lockReason(feat as Parameters<typeof gate.lockReason>[0]) : null;
@@ -1698,8 +1703,8 @@ const WmFleet: React.FC<{
       data-testid={`wm-template-${cls}`}
       value={h.picked?.id ?? ''}
       onChange={e => setTemplatePick(p => ({ ...p, [cls]: e.target.value }))}
-      aria-label={`${h.def.displayName} template`}
-      title={`Which ${h.def.displayName} template this yard builds (★ = your active template)`}
+      aria-label={t('worldmenu.template.aria', { name: h.def.displayName })}
+      title={t('worldmenu.template.title', { name: h.def.displayName })}
     >
       {h.templates.map(d => (
         <option key={d.id} value={d.id}>{d.name}{d.isActive ? ' ★' : ''}</option>
@@ -1728,7 +1733,7 @@ const WmFleet: React.FC<{
           horizontal label needs horizontal room. */}
       <div className="wm-fleet-set">
         <span className="wm-fleet-title">
-          SLOTS <b>{building.length}/{Math.max(slots, building.length)}</b>
+          {t('worldmenu.slots')} <b>{building.length}/{Math.max(slots, building.length)}</b>
         </span>
         <input
           className="wm-name-input"
@@ -1736,12 +1741,12 @@ const WmFleet: React.FC<{
           maxLength={28}
           value={nameDraft}
           onChange={e => setNameDraft(e.target.value)}
-          placeholder="Name next ship (optional)"
+          placeholder={t('worldmenu.nameNext')}
           data-testid="wm-ship-name"
         />
         {isMine && hasStation && (
           <span className="wm-oncomplete">
-            <span className="wm-oncomplete__k">YARD ORDER</span>
+            <span className="wm-oncomplete__k">{t('worldmenu.yardOrder')}</span>
             {/* A single-choice setting with a default IS a select. Four
                 always-visible buttons spent two rows saying one value,
                 and the collapsed summary then said it a second time.
@@ -1754,7 +1759,7 @@ const WmFleet: React.FC<{
               value={buildOrder === 'join_fleet' && buildOrderFleet
                 ? `fleet:${buildOrderFleet}`
                 : buildOrder ?? ''}
-              title="What this yard tells its ships to do the moment they roll out. Any queued hull can override it."
+              title={t('worldmenu.yardOrderTitle')}
               onChange={e => {
                 const v = e.target.value;
                 if (v === 'go_to') { setOrderPickerFor(NEXT_SHIP); return; }
@@ -1773,28 +1778,28 @@ const WmFleet: React.FC<{
                 void setYardOrder(v === 'defensive' ? { buildOrder: 'defensive' } : {});
               }}
             >
-              <option value="">Wait here</option>
-              <option value="defensive">Defend</option>
+              <option value="">{t('worldmenu.order.wait')}</option>
+              <option value="defensive">{t('worldmenu.order.defend')}</option>
               <option value="go_to">
                 {buildOrder === 'go_to' && buildOrderBody
-                  ? `Go to ${gameState.bodies.find(b => b.id === buildOrderBody)?.name ?? '?'}`
-                  : 'Go to…'}
+                  ? t('worldmenu.order.goTo', { name: gameState.bodies.find(b => b.id === buildOrderBody)?.name ?? '?' })
+                  : t('worldmenu.order.goToEllipsis')}
               </option>
               {/* Same reasoning as the per-row control below: an absent
                   option teaches that the feature does not exist. */}
               {joinableFleets.length > 0
                 ? joinableFleets.map(f => (
-                  <option key={f.id} value={`fleet:${f.id}`}>Join {f.name}</option>
+                  <option key={f.id} value={`fleet:${f.id}`}>{t('worldmenu.order.join', { name: f.name })}</option>
                 ))
-                : <option value="__no_fleets" disabled>Join a fleet — none formed yet</option>}
+                : <option value="__no_fleets" disabled>{t('worldmenu.order.noFleets')}</option>}
               {joinableRoutes.length > 0 ? (
                 <option value="trade_route">
                   {buildOrder === 'trade_route' && buildOrderRoute
-                    ? `Join ${orderRouteName}`
-                    : 'Join trade route…'}
+                    ? t('worldmenu.order.join', { name: orderRouteName })
+                    : t('worldmenu.order.joinRouteEllipsis')}
                 </option>
               ) : (
-                <option value="__no_routes" disabled>Join a trade route — none laid yet</option>
+                <option value="__no_routes" disabled>{t('worldmenu.order.noRoutes')}</option>
               )}
             </select>
           </span>
@@ -1806,7 +1811,7 @@ const WmFleet: React.FC<{
       {routePickerFor && (
         <div className="wm-routepick">
           <div className="wm-routepick__k">
-            {routePickerFor === NEXT_SHIP ? 'SIGN NEW SHIPS ONTO' : 'SIGN THIS HULL ONTO'}
+            {routePickerFor === NEXT_SHIP ? t('worldmenu.routePick.newShips') : t('worldmenu.routePick.thisHull')}
           </div>
           {joinableRoutes.map(r => (
             <button
@@ -1828,7 +1833,7 @@ const WmFleet: React.FC<{
             type="button"
             className="wm-routepick__x"
             onClick={() => setRoutePickerFor(null)}
-          >CANCEL</button>
+          >{t('worldmenu.cancel')}</button>
         </div>
       )}
       {orderPickerFor && (
@@ -1836,7 +1841,7 @@ const WmFleet: React.FC<{
           bodies={gameState.bodies}
           tick={gameState.currentTick}
           excludeBodyId={bodyId}
-          title={orderPickerFor === NEXT_SHIP ? 'Send new ships to' : 'Send this hull to'}
+          title={orderPickerFor === NEXT_SHIP ? t('worldmenu.sendNew') : t('worldmenu.sendThis')}
           onPick={(id) => {
             if (orderPickerFor === NEXT_SHIP) {
               void setYardOrder({ buildOrder: 'go_to', buildOrderBodyId: id });
@@ -1853,21 +1858,21 @@ const WmFleet: React.FC<{
       <div className="wm-fleet-queue">
         {mobile ? (
           <>
-            <div className="wm-fleet-sub">IN THE YARD</div>
+            <div className="wm-fleet-sub">{t('worldmenu.inYard')}</div>
             {building.map(o => qRow(o, true))}
             {waiting.map(o => qRow(o, false))}
           </>
         ) : (
           <>
             <div className="wm-yardhead">
-              <span className="wm-fleet-sub">IN THE YARD</span>
+              <span className="wm-fleet-sub">{t('worldmenu.inYard')}</span>
               <span className="wm-yardcount" data-testid="wm-yardcount">
-                <b className="is-building">{building.length}</b> building · <b>{waiting.length}</b> queued
+                <b className="is-building">{building.length}</b> {t('worldmenu.yardBuilding')} · <b>{waiting.length}</b> {t('worldmenu.q.queued')}
               </span>
             </div>
             {orders.length > 0 && (
               <div className="wm-qcols" aria-hidden="true">
-                <span /><span>SHIP</span><span>ON LAUNCH</span><span />
+                <span /><span>{t('worldmenu.qcol.ship')}</span><span>{t('worldmenu.qcol.onLaunch')}</span><span />
               </div>
             )}
             <div className="wm-qlist" data-testid="wm-qlist">
@@ -1877,7 +1882,7 @@ const WmFleet: React.FC<{
           </>
         )}
         {orders.length === 0 && (
-          <div className="wm-qrow empty">{hasStation ? (slots > 0 ? 'slots idle' : 'build a shipyard for slots') : 'no station yet'}</div>
+          <div className="wm-qrow empty">{hasStation ? (slots > 0 ? t('worldmenu.slotsIdle') : t('worldmenu.needYard')) : t('worldmenu.noStationYet')}</div>
         )}
       </div>
       {mobile ? (
@@ -1889,7 +1894,7 @@ const WmFleet: React.FC<{
             <button
               className="wm-shipcell"
               disabled={h.disabled}
-              title={h.lock ?? (h.noYard ? 'Build a shipyard first' : h.priceWhy)}
+              title={h.lock ?? (h.noYard ? t('worldmenu.buildYardFirst') : h.priceWhy)}
               onClick={() => buildShip(cls)}
               data-testid={`wm-ship-${cls}`}
             >
@@ -1911,8 +1916,8 @@ const WmFleet: React.FC<{
           className="wm-shipcell design"
           onClick={() => window.dispatchEvent(new CustomEvent('orbital:open-ship-designer'))}
         >
-          <span className="wm-shipmain"><span className="wm-shipnm">◈ DESIGN</span></span>
-          <span className="wm-shipmeta">custom hull</span>
+          <span className="wm-shipmain"><span className="wm-shipnm">{t('worldmenu.design')}</span></span>
+          <span className="wm-shipmeta">{t('worldmenu.customHull')}</span>
         </button>
       </div>
       ) : (
@@ -1922,7 +1927,7 @@ const WmFleet: React.FC<{
          of the cell. */
       <div className="wm-hulls" data-testid="wm-hulls">
         <div className="wm-hullrow wm-hullrow--head" aria-hidden="true">
-          <span>HULL</span><span>TEMPLATE</span><span>COST</span><span>TIME</span><span />
+          <span>{t('worldmenu.hcol.hull')}</span><span>{t('worldmenu.hcol.template')}</span><span>{t('worldmenu.hcol.cost')}</span><span>{t('worldmenu.hcol.time')}</span><span />
         </div>
         {BUILDABLE_CLASSES.map(cls => {
           const h = hullInfo(cls);
@@ -1937,24 +1942,24 @@ const WmFleet: React.FC<{
               ) : h.templates.length > 0 ? (
                 templateSelect(cls, h, 'wm-hulltpl')
               ) : (
-                <span className="wm-hulltpl is-bare" title="No saved design for this hull yet: it builds bare. Design one to fit it out.">Bare hull</span>
+                <span className="wm-hulltpl is-bare" title={t('worldmenu.bareTitle')}>{tk('worldmenu.bareHull', 'Bare hull')}</span>
               )}
               <span className="wm-hullcost">{h.costOre}m · {h.costCredits}c</span>
               <span className="wm-hulltime">{h.def.buildTime}t</span>
               <button
                 className="wm-hullbuild"
                 disabled={h.disabled}
-                title={h.lock ?? (h.noYard ? 'Build a shipyard first' : h.priceWhy)}
+                title={h.lock ?? (h.noYard ? t('worldmenu.buildYardFirst') : h.priceWhy)}
                 onClick={() => buildShip(cls)}
                 data-testid={`wm-ship-${cls}`}
-              >BUILD</button>
+              >{t('worldmenu.build')}</button>
             </div>
           );
         })}
         <button
           className="wm-hulldesign"
           onClick={() => window.dispatchEvent(new CustomEvent('orbital:open-ship-designer'))}
-        >◈ Design a new template…</button>
+        >{t('worldmenu.designTemplate')}</button>
       </div>
       )}
       </div>
@@ -1975,6 +1980,7 @@ const WmFleet: React.FC<{
 // hardcoded 124.
 // ============================================================
 const WmTerraformCard: React.FC<{ body: Body; isMine: boolean }> = ({ body, isMine }) => {
+  useI18n();
   const { gameState } = useGameContext();
 
   // Only worlds that could host a city can be terraformed — the card is
@@ -1985,8 +1991,8 @@ const WmTerraformCard: React.FC<{ body: Body; isMine: boolean }> = ({ body, isMi
   if (!isRawWorld(body)) {
     return (
       <div className="wm-terraform done" data-testid="wm-terraform" data-tutorial-id="terraform-section"
-        title="Terraformed: every settlement here routes 100% of its yield to your pool, cities and city-buildings are allowed, and freighters can load pool cargo at the dock.">
-        ● TERRAFORMED
+        title={t('worldmenu.tf.doneTitle')}>
+        {t('worldmenu.tf.done')}
       </div>
     );
   }
@@ -2000,8 +2006,8 @@ const WmTerraformCard: React.FC<{ body: Body; isMine: boolean }> = ({ body, isMi
     const left = Math.max(0, window_ - gameState.currentTick);
     return (
       <div className="wm-terraform working" data-testid="wm-terraform" data-tutorial-id="terraform-section"
-        title="The full payload has been delivered — the transformation is running. Nothing can speed it up now; hold the world.">
-        ◌ TERRAFORMING · {left} tick{left === 1 ? '' : 's'} to completion
+        title={t('worldmenu.tf.workingTitle')}>
+        {tn('worldmenu.tf.working', left)}
       </div>
     );
   }
@@ -2010,11 +2016,11 @@ const WmTerraformCard: React.FC<{ body: Body; isMine: boolean }> = ({ body, isMi
   const cPct = Math.min(100, (acc.credits / Math.max(1, cfg.costCredits)) * 100);
   return (
     <div className="wm-terraform" data-testid="wm-terraform" data-tutorial-id="terraform-section"
-      title={`Raw world — it banks 90% of settlement yield locally and can host stations only. Deliver ${cfg.costMetal} metal + ${cfg.costCredits} credits by freighter supply route to terraform it (${cfg.durationTicks}-tick transformation once the payload lands). Progress is permanent and transfers with the world if it changes hands.`}>
+      title={t('worldmenu.tf.rawTitle', { metal: cfg.costMetal, credits: cfg.costCredits, ticks: cfg.durationTicks })}>
       <div className="wm-terraform-head">
-        <span>◌ RAW WORLD</span>
+        <span>{t('worldmenu.tf.raw')}</span>
         <span className="wm-terraform-routes">
-          {feeding > 0 ? `⇢ ${feeding} route${feeding === 1 ? '' : 's'} feeding` : 'no supply routes'}
+          {feeding > 0 ? tn('worldmenu.tf.feeding', feeding) : t('worldmenu.tf.noRoutes')}
         </span>
       </div>
       <div className="wm-terraform-row">
@@ -2033,13 +2039,13 @@ const WmTerraformCard: React.FC<{ body: Body; isMine: boolean }> = ({ body, isMi
       {isMine && terraformInbound(gameState, body.id).map(x => {
         const nameOf = (id: string | null) => gameState.bodies.find(b => b.id === id)?.name ?? '?';
         const when = x.arriveTick != null
-          ? `tick ${x.arriveTick}${tickClock(x.arriveTick, gameState) ? ` (${tickClock(x.arriveTick, gameState)})` : ''}`
+          ? `${t('worldmenu.tf.tick', { n: x.arriveTick })}${tickClock(x.arriveTick, gameState) ? ` (${tickClock(x.arriveTick, gameState)})` : ''}`
           : null;
         const text = x.stage === 'inbound'
-          ? `${x.metal} M · ${x.credits} C aboard ${x.shipName}, lands ${when}`
+          ? t('worldmenu.tf.inbound', { metal: x.metal, credits: x.credits, ship: x.shipName, when: when ?? 'null' })
           : x.stage === 'aboard'
-            ? `${x.metal} M · ${x.credits} C aboard ${x.shipName}, not yet under way`
-            : `${x.shipName} is flying to ${nameOf(x.pickupBodyId)} to load first${when ? `, arrives ${when}` : ''}`;
+            ? t('worldmenu.tf.aboard', { metal: x.metal, credits: x.credits, ship: x.shipName })
+            : `${t('worldmenu.tf.loadFirst', { ship: x.shipName, pickup: nameOf(x.pickupBodyId) })}${when ? t('worldmenu.tf.arrives', { when }) : ''}`;
         return (
           <div key={x.routeId} className={`wm-terraform-inbound ${x.stage}`} data-testid="wm-terraform-inbound">
             ⇢ {text}
@@ -2051,7 +2057,7 @@ const WmTerraformCard: React.FC<{ body: Body; isMine: boolean }> = ({ body, isMi
         <WmSupplyAssign
           destId={body.id}
           feeding={feeding}
-          payload="the payload"
+          payload={t('worldmenu.payload.terraform')}
           testId="wm-terraform-assign"
         />
       )}
@@ -2082,6 +2088,7 @@ const WmSupplyAssign: React.FC<{
   /** No dock to choose: the freighter joins a route that has one. */
   hideOrigin?: boolean;
 }> = ({ destId, feeding, payload, testId, onAssign, buttonLabel, hideOrigin }) => {
+  useI18n();
   const { gameState } = useGameContext();
   const mpActions = useMultiplayerActions();
   const [pickShip, setPickShip] = useState('');
@@ -2118,21 +2125,20 @@ const WmSupplyAssign: React.FC<{
   const bodyNameOf = (id: string | null | undefined) =>
     gameState.bodies.find(b => b.id === id)?.name ?? '?';
   const shipLabel = (s: Ship) =>
-    `${s.name} · ${routedShips.has(s.id) ? 'on a route (reassigns)'
-      : s.transit ? 'in transit'
-      : `at ${bodyNameOf(s.orbit.parentBodyId)}`}`;
+    `${s.name} · ${routedShips.has(s.id) ? t('worldmenu.assign.onRoute')
+      : s.transit ? t('worldmenu.assign.inTransit')
+      : t('worldmenu.assign.at', { body: bodyNameOf(s.orbit.parentBodyId) })}`;
   if (freighters.length === 0) {
     return (
       <div className="wm-terraform-hint">
-        No freighters — build one at a shipyard to start {payload}.
+        {t('worldmenu.assign.noFreighters', { payload })}
       </div>
     );
   }
   if (docks.length === 0) {
     return (
       <div className="wm-terraform-hint">
-        No loading dock — you need a settlement on a terraformed world
-        to load {payload} from.
+        {t('worldmenu.assign.noDock', { payload })}
       </div>
     );
   }
@@ -2146,8 +2152,8 @@ const WmSupplyAssign: React.FC<{
     setAssignBusy(false);
     setAssignMsg(res.ok
       ? (hideOrigin
-        ? '⇢ Freighter added to the supply route'
-        : `⇢ Supply route opened — loading at ${bodyNameOf(originSel)}`)
+        ? t('worldmenu.assign.added')
+        : t('worldmenu.assign.opened', { body: bodyNameOf(originSel) }))
       : humanizeMpError(res.code, res.error, 'transfer'));
   };
   return (
@@ -2155,7 +2161,7 @@ const WmSupplyAssign: React.FC<{
       <select
         value={shipSel}
         onChange={e => setPickShip(e.target.value)}
-        title={`Which freighter runs ${payload}. One already on a route is reassigned; its old route is cancelled.`}
+        title={t('worldmenu.assign.shipTitle', { payload })}
       >
         {freighters.map(s => (
           <option key={s.id} value={s.id}>{shipLabel(s)}</option>
@@ -2165,10 +2171,10 @@ const WmSupplyAssign: React.FC<{
         <select
           value={originSel}
           onChange={e => setPickOrigin(e.target.value)}
-          title={`The terraformed world ${payload} loads from — it comes out of your faction POOL at this dock.`}
+          title={t('worldmenu.assign.dockTitle', { payload })}
         >
           {docks.map(d => (
-            <option key={d.id} value={d.id}>⇐ load at {d.name}</option>
+            <option key={d.id} value={d.id}>{t('worldmenu.assign.loadAt', { name: d.name })}</option>
           ))}
         </select>
       )}
@@ -2177,7 +2183,7 @@ const WmSupplyAssign: React.FC<{
         onClick={assign}
         data-testid={testId}
       >
-        {buttonLabel ?? (feeding > 0 ? '+ ADD ROUTE' : '▶ START SUPPLY')}
+        {buttonLabel ?? (feeding > 0 ? t('worldmenu.assign.addRoute') : t('worldmenu.assign.start'))}
       </button>
       {assignMsg && <div className="wm-terraform-hint">{assignMsg}</div>}
     </div>
@@ -2201,6 +2207,7 @@ const WmSupplyAssign: React.FC<{
 //                collectors and trade routes keep the pool filled).
 // ============================================================
 const WmDysonCard: React.FC = () => {
+  useI18n();
   const { gameState } = useGameContext();
   const mpActions = useMultiplayerActions();
   const gate = useFeatureGate();
@@ -2219,9 +2226,9 @@ const WmDysonCard: React.FC = () => {
     return (
       <div className="wm-dyson" data-testid="wm-dyson" data-tutorial-id="dyson-sphere-section">
         <div className="wm-dyson-head">
-          <span className="wm-dyson-title">☀ DYSON SPHERE</span>
+          <span className="wm-dyson-title">{t('worldmenu.dyson.title')}</span>
           <span className="wm-dyson-owner" style={{ color: isMine ? '#6ee7b7' : '#ff8a4d' }}>
-            {isMine ? '★ YOUR PROJECT' : `RIVAL: ${(controller?.name ?? '?').toUpperCase()}`}
+            {isMine ? t('worldmenu.dyson.yours') : t('worldmenu.dyson.rival', { name: (controller?.name ?? '?').toUpperCase() })}
           </span>
         </div>
         <div className="wm-dyson-bar">
@@ -2231,10 +2238,10 @@ const WmDysonCard: React.FC = () => {
           {Math.round(dyson.hp).toLocaleString()} / {dyson.maxHp.toLocaleString()} · {pct.toFixed(1)}%
         </div>
         {isMine && (
-          <div className="wm-dyson-supply" title="The sphere is built from cargo physically hauled here. Set a freighter's trade route from one of your terraformed worlds to the Dyson Sphere — it loads metal, credits and science from your pool at the dock and delivers on arrival. Freighters on the line can be raided; escort what you can't afford to lose.">
+          <div className="wm-dyson-supply" title={t('worldmenu.dyson.supplyTitle')}>
             {supplyRoutes > 0
-              ? <>⇢ {supplyRoutes} supply route{supplyRoutes === 1 ? '' : 's'} hauling to the sphere</>
-              : <span style={{ color: '#ffb84d' }}>⚠ No supply routes — construction is stalled. Pick a freighter and a dock below.</span>}
+              ? <>{tn('worldmenu.dyson.hauling', supplyRoutes)}</>
+              : <span style={{ color: '#ffb84d' }}>{t('worldmenu.dyson.stalled')}</span>}
           </div>
         )}
         {isMine && (() => {
@@ -2251,10 +2258,10 @@ const WmDysonCard: React.FC = () => {
             <WmSupplyAssign
               destId="sol"
               feeding={supplyRoutes}
-              payload="the sphere's materials"
+              payload={t('worldmenu.payload.sphere')}
               testId="wm-dyson-assign"
               hideOrigin={!!sunRoute}
-              buttonLabel={sunRoute ? '+ FREIGHTER' : supplyRoutes > 0 ? '+ NEW ROUTE' : '▶ START SUPPLY'}
+              buttonLabel={sunRoute ? t('worldmenu.dyson.addFreighter') : supplyRoutes > 0 ? t('worldmenu.dyson.newRoute') : t('worldmenu.assign.start')}
               onAssign={(shipId, originId) => (sunRoute
                 ? mpActions!.addRouteShip(sunRoute.id, 'carrier', { shipId })
                 : mpActions!.createRouteFull({
@@ -2284,11 +2291,11 @@ const WmDysonCard: React.FC = () => {
     <div className="wm-dyson" data-testid="wm-dyson" data-tutorial-id="dyson-sphere-section">
       <div className="wm-dyson-head">
         <span className="wm-dyson-title">
-          {derelict ? '☀ DYSON SPHERE · ABANDONED' : '☀ DYSON SPHERE · slot open'}
+          {derelict ? t('worldmenu.dyson.abandoned') : t('worldmenu.dyson.slotOpen')}
         </span>
         {derelict && (
           <span className="wm-dyson-owner" style={{ color: '#ffb84d' }}>
-            {derelictPct.toFixed(1)}% BUILT · UNCLAIMED
+            {t('worldmenu.dyson.builtUnclaimed', { pct: derelictPct.toFixed(1) })}
           </span>
         )}
       </div>
@@ -2299,22 +2306,15 @@ const WmDysonCard: React.FC = () => {
       )}
       <div className="wm-dyson-meta">
         {derelict
-          ? <>The previous builder was thrown off. Most of their work survives —
-              a fifth of it tore loose when the sphere went masterless. Lay a
-              foundation at a Sol station to CLAIM it and resume construction
-              at {derelictPct.toFixed(0)}%. Supply it by freighter routes from
-              your terraformed worlds.</>
-          : <>Lay the foundation at a Sol station, then run freighter routes
-              from your terraformed worlds to deliver 15K metal · 15K credits ·
-              10K science. Completion wins the match. Lose the foundation and
-              the sphere goes masterless: <b>20% of your progress is destroyed</b>{' '}
-              and the rest is there for whoever claims it first.</>}
+          ? <>{t('worldmenu.dyson.derelictBody', { pct: derelictPct.toFixed(0) })}</>
+          : <>{t('worldmenu.dyson.slotBodyA')} <b>{t('worldmenu.dyson.slotBodyBold')}</b>{' '}
+              {t('worldmenu.dyson.slotBodyB')}</>}
       </div>
       {lock ? (
         <div className="wm-dyson-meta" style={{ color: '#8aa0b4' }}>🔒 {lock.label} — {lock.text}</div>
       ) : myStations.length === 0 ? (
         <div className="wm-dyson-meta" style={{ color: '#ffb84d' }}>
-          Deploy a station in Sol orbit first to host the foundation.
+          {t('worldmenu.dyson.needStation')}
         </div>
       ) : (
         myStations.map(s => (
@@ -2328,17 +2328,17 @@ const WmDysonCard: React.FC = () => {
               setErr(null);
               mpActions.initiateDysonSphere(s.id).then(res => {
                 setBusy(false);
-                if (!res.ok) setErr(humanizeMpError(res.code, res.error ?? 'Initiate rejected.', 'build'));
+                if (!res.ok) setErr(humanizeMpError(res.code, res.error ?? t('worldmenu.dyson.initiateRejected'), 'build'));
               });
             }}
             title={derelict
-              ? `Claim the abandoned sphere from ${s.name} — construction resumes at ${derelictPct.toFixed(0)}%, and completing it wins YOU the game.`
-              : `Lay the Dyson Sphere foundation on ${s.name}. One sphere per game — lose the station and 20% of your progress is destroyed, with the rest left for whoever claims it first.`}
-          >{derelict ? `◆ CLAIM AT ${s.name.toUpperCase()}` : `◆ INITIATE AT ${s.name.toUpperCase()}`}</button>
+              ? t('worldmenu.dyson.claimTitle', { name: s.name, pct: derelictPct.toFixed(0) })
+              : t('worldmenu.dyson.initiateTitle', { name: s.name })}
+          >{derelict ? t('worldmenu.dyson.claimBtn', { name: s.name.toUpperCase() }) : t('worldmenu.dyson.initiateBtn', { name: s.name.toUpperCase() })}</button>
         ))
       )}
       {err && (
-        <button className="wm-dyson-err" onClick={() => setErr(null)} title="Click to dismiss">
+        <button className="wm-dyson-err" onClick={() => setErr(null)} title={t('worldmenu.dyson.clickDismiss')}>
           ⚠ {err}
         </button>
       )}
@@ -2361,13 +2361,16 @@ export function setWorldMenuPref(on: boolean): void {
 /** Tiny MP-only pill for flipping between the diegetic menu and the
  *  legacy inspector. Rendered by GameUI's MP branch in both modes so
  *  the kill switch is always reachable. */
-export const WorldMenuToggle: React.FC<{ on: boolean }> = ({ on }) => (
-  <button
-    className="wm-toggle-pill"
-    data-testid="wm-toggle"
-    title={on ? 'Switch back to the classic body inspector' : 'Switch to the diegetic world menu'}
-    onClick={() => setWorldMenuPref(!on)}
-  >
-    {on ? '☰ CLASSIC UI' : '🪐 WORLD MENU'}
-  </button>
-);
+export const WorldMenuToggle: React.FC<{ on: boolean }> = ({ on }) => {
+  useI18n();
+  return (
+    <button
+      className="wm-toggle-pill"
+      data-testid="wm-toggle"
+      title={on ? t('worldmenu.toggle.toClassicTitle') : t('worldmenu.toggle.toWorldTitle')}
+      onClick={() => setWorldMenuPref(!on)}
+    >
+      {on ? t('worldmenu.toggle.classic') : t('worldmenu.toggle.world')}
+    </button>
+  );
+};
