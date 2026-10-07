@@ -555,8 +555,22 @@ check('...and the rest of Sol is still there',
     `SELECT id, name FROM game_bodies WHERE game_id = 'gfar_on' AND secret_kind = ?`).bind(kind).first());
   const orrery = await hostOf('precursor_orrery');
   const archive = await hostOf('horizon_archive');
+  const wreckHost = await hostOf('derelict_warship');
+  // The finder has refitted: an energy destroyer design is active, and
+  // they have Weapons 3 / Armor 3. The salvage must come out as THAT ship.
+  const myDesign = ['energy', 'energy', 'energy', 'armor', 'armor', 'engine'];
+  await on.DB.prepare(`UPDATE game_ship_designs SET is_active = 0 WHERE game_id = 'gfar_on' AND faction_id = ? AND ship_class = 'destroyer'`).bind(fid).run();
+  await on.DB.prepare(
+    `INSERT INTO game_ship_designs (id, game_id, faction_id, ship_class, name, parts_json, icon_variant, is_active, created_at_ms)
+     VALUES ('gfar_on:dsg_energy', 'gfar_on', ?, 'destroyer', 'Lancer', ?, 'C', 1, 0)`).bind(fid, JSON.stringify(myDesign)).run();
+  for (const [tech, level] of [['weapons', 3], ['armor', 3]]) {
+    await on.DB.prepare(
+      `INSERT INTO faction_techs (game_id, faction_id, tech_id, status, level, started_at_tick, completed_at_tick)
+       VALUES ('gfar_on', ?, ?, 'completed', ?, 0, 0)
+       ON CONFLICT(game_id, faction_id, tech_id) DO UPDATE SET level = excluded.level`).bind(fid, tech, level).run();
+  }
   let n = 0;
-  for (const h of [orrery, archive]) {
+  for (const h of [orrery, archive, wreckHost]) {
     await on.DB.prepare(
       `INSERT INTO game_ships (id, game_id, owner_faction_id, name, ship_class, parent_body_id, status,
          orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, orbit_direction,
@@ -579,6 +593,31 @@ check('...and the rest of Sol is still there',
   const news = (await on.DB.prepare(
     `SELECT payload FROM chronicle_entries WHERE game_id = 'gfar_on' AND kind = 'secret_discovered'`).all()).results
     .map(r => JSON.parse(r.payload));
+  // THE SALVAGED DESTROYER IS A MODERN ONE: the finder's own active
+  // design, on their tech and the game's ship config, full fuel, at the
+  // defence ceiling -- not the 180 HP / 10 damage bare hull of old.
+  {
+    const { computeShipStats, shipBaseStatsFromCfg } = await import('../worker/shipDesigns.js');
+    const want = computeShipStats('destroyer', myDesign, { weapons: 3, armor: 3 }, shipBaseStatsFromCfg(null));
+    const wreck = await on.DB.prepare(
+      `SELECT * FROM game_ships WHERE game_id = 'gfar_on' AND parent_body_id = ? AND ship_class = 'destroyer'`)
+      .bind(wreckHost.id).first();
+    check(`the derelict at ${wreckHost.name} is salvaged as the finder's current destroyer design`,
+      wreck && wreck.owner_faction_id === fid && JSON.parse(wreck.parts_json ?? '[]').join() === myDesign.join()
+        && wreck.icon_variant === 'C',
+      JSON.stringify(wreck && { parts: wreck.parts_json, icon: wreck.icon_variant }));
+    check('...with the stats a yard would give it today, full fuel, at the defence ceiling',
+      wreck && Math.abs(wreck.hp_max - want.hp) < 1e-6 && Math.abs(wreck.damage_per_tick - want.damage_per_tick) < 1e-6
+        && Math.abs(wreck.hp - want.hp * (1 + 0.08 * 3)) < 1e-6 && wreck.fuel === 300 && wreck.fuel_max === 300
+        && wreck.damage_per_tick > 10 * 10,
+      JSON.stringify(wreck && { hp: wreck.hp, hp_max: wreck.hp_max, dmg: wreck.damage_per_tick, fuel: wreck.fuel })
+        + ` want hp_max ${want.hp} dmg ${want.damage_per_tick}`);
+    const { salvagedDestroyer } = await import('../worker/room.js');
+    await on.DB.prepare(`UPDATE game_ship_designs SET is_active = 0 WHERE game_id = 'gfar_on' AND faction_id = ? AND ship_class = 'destroyer'`).bind(fid).run();
+    const stock = await salvagedDestroyer(on.env, 'gfar_on', fid);
+    check('...and with no active design, the standard-issue fit',
+      stock.parts.join() === ['kinetic', 'kinetic', 'kinetic', 'shield', 'shield', 'engine'].join(), stock.parts.join());
+  }
   check('both finds make the news, in their own words',
     news.some(p => p.kind === 'precursor_orrery' && /orrery/.test(p.message))
       && news.some(p => p.kind === 'horizon_archive' && /event horizon/.test(p.message)),
