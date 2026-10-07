@@ -26,7 +26,7 @@ import {
   COMMISSION_LINES, COMMISSION_EMBLEMS, COMMISSION_CITY_SKINS, COMMISSION_STATION_SKINS, COMMISSION_STRUCTURE_LOOKS,
   COMMISSION_PRICE, HOLDER_MARK, canBuyHere, logCommission,
 } from './commission';
-import { t } from '../i18n/core';
+import { t, tk } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import { apiErrorText } from '../i18n/apiErrors';
 import './Hangar.css';
@@ -192,14 +192,14 @@ export function Hangar({ onRedeemed, giftJustBought }: {
             <div className="hg-title">{t('hangar.commissionName')}</div>
             <p className="hg-body">{t('hangar.facts', {
               lines: COMMISSION_LINES, emblems: COMMISSION_EMBLEMS, cities: COMMISSION_CITY_SKINS,
-              stations: COMMISSION_STATION_SKINS, looks: COMMISSION_STRUCTURE_LOOKS, price: COMMISSION_PRICE,
+              stations: COMMISSION_STATION_SKINS, looks: COMMISSION_STRUCTURE_LOOKS, price: tk('mp.commission.price', COMMISSION_PRICE),
             })} {t('hangar.free')}</p>
             <p className="hg-perk" data-testid="hangar-discord">
               <b>{t('hangar.perk.title')}</b> {t('hangar.discordDetail')}
             </p>
             {sellable ? (
               <button className="pp-btn pp-btn--primary" disabled={busy !== null} onClick={() => void buy(false)}>
-                {busy === 'self' ? t('hangar.opening') : t('feed.buy', { price: COMMISSION_PRICE })}
+                {busy === 'self' ? t('hangar.opening') : t('feed.buy', { price: tk('mp.commission.price', COMMISSION_PRICE) })}
               </button>
             ) : (
               <p className="hg-offsite">
@@ -240,7 +240,7 @@ export function Hangar({ onRedeemed, giftJustBought }: {
             {t('hangar.gift.body')}
           </p>
           <button className="pp-btn" disabled={busy !== null} onClick={() => void buy(true)}>
-            {busy === 'gift' ? t('hangar.opening') : t('hangar.gift.buy', { price: COMMISSION_PRICE })}
+            {busy === 'gift' ? t('hangar.opening') : t('hangar.gift.buy', { price: tk('mp.commission.price', COMMISSION_PRICE) })}
           </button>
           {giftJustBought && gifts.length === 0 && (
             <p className="hg-sub">{t('hangar.gift.coming')}</p>

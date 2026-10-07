@@ -38,7 +38,7 @@ import {
   subscribeReachPins, reachPinsVersion,
 } from '../game/structureReach';
 import type { FeatureId } from '../game/researchUnlocks';
-import { MEGASTRUCTURE_REASSURANCE, requirementLabel } from '../game/researchUnlocks';
+import { megastructureReassurance, requirementLabel } from '../game/researchUnlocks';
 import './MegastructureCard.css';
 import { RouteComposer } from './RouteComposer';
 import type { RouteStopInput } from './MultiplayerActionsContext';
@@ -778,7 +778,7 @@ export const MegastructurePicker: React.FC<{
       {/* The fear the playtest named: "I thought they'd wipe out the
           upgrades on a planet." Said here, at the moment of committing. */}
       <div className="megap__note">
-        {MEGASTRUCTURE_REASSURANCE} {t('megastructure.picker.note')}
+        {megastructureReassurance()} {t('megastructure.picker.note')}
       </div>
       {affordableKinds.map((k) => {
         const d = MEGASTRUCTURES[k];

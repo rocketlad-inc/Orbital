@@ -195,7 +195,7 @@ export const DiscordServerFeed: React.FC<{
       <span style={head}>{HOLDER_MARK} {t('feed.pitch.title')}</span>
       <span style={dim}>
         {t(view.is_host ? 'feed.pitch.bodyHost' : 'feed.pitch.bodyPlayer', {
-          name: t('hangar.commissionName'), price: COMMISSION_PRICE,
+          name: t('hangar.commissionName'), price: tk('mp.commission.price', COMMISSION_PRICE),
         })}
         {view.is_host ? '' : ` ${t('feed.pitch.giftNote', { host })}`}
       </span>
@@ -203,7 +203,7 @@ export const DiscordServerFeed: React.FC<{
         {sellable ? (
           <button type="button" style={btn(true)} onClick={() => void buy(!view.is_host)}
             data-testid="server-feed-buy">
-            {view.is_host ? t('feed.buy', { price: COMMISSION_PRICE }) : t('feed.gift', { host, price: COMMISSION_PRICE })}
+            {view.is_host ? t('feed.buy', { price: tk('mp.commission.price', COMMISSION_PRICE) }) : t('feed.gift', { host, price: tk('mp.commission.price', COMMISSION_PRICE) })}
           </button>
         ) : (
           <span style={dim}>{t('feed.webOnly')}</span>

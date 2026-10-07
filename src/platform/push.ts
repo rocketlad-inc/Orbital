@@ -16,6 +16,7 @@
 // ============================================================
 
 import { apiFetch } from '../multiplayer/api';
+import { t } from '../i18n/core';
 
 export type PushState = 'unsupported' | 'denied' | 'default' | 'subscribed';
 
@@ -39,9 +40,9 @@ function bufToB64url(buf: ArrayBuffer | null): string {
 const PROMPT_TIMEOUT_MS = 20_000;
 const TIMED_OUT = Symbol('timed out');
 
-const MANUAL_ALLOW =
-  'Your phone did not show the permission prompt. Open Android Settings → Apps → Orbital → '
-  + 'Notifications, allow them, then come back and press Turn on notifications again.';
+// A function, not a constant: the text is read when the error happens, in
+// whatever language the player has by then.
+const manualAllow = (): string => t('helper.push.manualAllow');
 
 /** The promise's value, or TIMED_OUT if it has not settled in `ms`. */
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | typeof TIMED_OUT> {
@@ -82,11 +83,11 @@ export async function pushState(): Promise<PushState> {
  *  when it failed, something a player can act on. */
 export async function enablePush(): Promise<{ state: PushState; error?: string }> {
   if (!pushSupported()) {
-    return { state: 'unsupported', error: 'This browser cannot do notifications.' };
+    return { state: 'unsupported', error: t('helper.push.unsupported') };
   }
 
   const keyRes = await apiFetch<{ key: string }>('/api/push/key');
-  if (!keyRes.ok) return { state: 'default', error: 'The server is not set up for notifications yet.' };
+  if (!keyRes.ok) return { state: 'default', error: t('helper.push.noKey') };
 
   // NEITHER WAIT BELOW MAY HANG FOREVER. Inside the Android app the
   // permission prompt is shown by the app on the page's behalf, and an
@@ -95,13 +96,13 @@ export async function enablePush(): Promise<{ state: PushState; error?: string }
   // timeout turns that into an instruction a player can follow.
   const permission = await withTimeout(Notification.requestPermission(), PROMPT_TIMEOUT_MS);
   if (permission === TIMED_OUT) {
-    return { state: 'default', error: MANUAL_ALLOW };
+    return { state: 'default', error: manualAllow() };
   }
   if (permission !== 'granted') {
     return {
       state: permission === 'denied' ? 'denied' : 'default',
       error: permission === 'denied'
-        ? 'Notifications are blocked for this site. Turn them back on in your browser settings for orbital-empire.com.'
+        ? t('helper.push.blocked')
         : undefined,
     };
   }
@@ -110,7 +111,7 @@ export async function enablePush(): Promise<{ state: PushState; error?: string }
   // register; the same timeout keeps that from reading as a hang.
   const reg = await withTimeout(navigator.serviceWorker.ready, PROMPT_TIMEOUT_MS);
   if (reg === TIMED_OUT) {
-    return { state: 'default', error: 'Notifications could not start on this device. Close Orbital completely, reopen it, and try again.' };
+    return { state: 'default', error: t('helper.push.noStart') };
   }
   // userVisibleOnly is required by Chrome: every push must show a
   // notification, so this cannot be used for silent background work.
@@ -123,7 +124,7 @@ export async function enablePush(): Promise<{ state: PushState; error?: string }
     // Don't leave a browser subscription the server knows nothing about;
     // it would sit there receiving nothing forever.
     await sub.unsubscribe().catch(() => {});
-    return { state: 'default', error: 'Could not register this device. Try again.' };
+    return { state: 'default', error: t('helper.push.registerFail') };
   }
   return { state: 'subscribed' };
 }
@@ -157,5 +158,5 @@ export async function disablePush(): Promise<void> {
 /** Prove it works, now, rather than waiting for a game event. */
 export async function sendTestPush(): Promise<string | null> {
   const res = await apiFetch<{ ok: boolean }>('/api/push/test', { method: 'POST' });
-  return res.ok ? null : (res.error?.message ?? 'Could not send a test notification.');
+  return res.ok ? null : (res.error?.message ?? t('helper.push.testFail'));
 }
