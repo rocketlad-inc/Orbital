@@ -9,6 +9,10 @@ import { ProfilePanel } from './ProfilePanel';
 import { ThanksCard } from './CommissionMoments';
 import { GameCard, GameSummary, initials, DEFAULT_TICK_INTERVAL_MS } from './LobbyCards';
 import { LobbyStarfield } from './LobbyStarfield';
+import { t, tn } from '../i18n/core';
+import { useI18n, LanguageSwitch } from '../i18n/react';
+import { apiErrorText } from '../i18n/apiErrors';
+import { saveLocale } from '../i18n/account';
 import './lobby.css';
 
 // Full-screen pre-game lobby: where a signed-in player finds, starts and
@@ -33,6 +37,7 @@ interface Props {
 type Listing = { games: GameSummary[]; now: number; autoload_room_id?: string | null };
 
 export function MultiplayerLobby({ onEnterRoom }: Props) {
+  useI18n();
   const { user, signOut } = useAuth();
   const [tab, setTab] = useState<Tab>(() => {
     // Stripe's success/cancel redirect lands on the SPA root with
@@ -63,16 +68,16 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
 
   useEffect(() => {
     refreshMine();
-    const t = setInterval(refreshMine, 10000);
-    return () => clearInterval(t);
+    const timer = setInterval(refreshMine, 10000);
+    return () => clearInterval(timer);
   }, [refreshMine]);
   // Browse feeds the hero's numbers too, so it polls on both front tabs.
   const wantsBrowse = tab === 'browse' || tab === 'my';
   useEffect(() => {
     if (!wantsBrowse) return;
     refreshBrowse();
-    const t = setInterval(refreshBrowse, 15000);
-    return () => clearInterval(t);
+    const timer = setInterval(refreshBrowse, 15000);
+    return () => clearInterval(timer);
   }, [wantsBrowse, refreshBrowse]);
 
   const liveMine = useMemo(() => mine?.games.filter(g => !g.archived_at_ms) ?? null, [mine]);
@@ -92,10 +97,10 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
     const res = await apiFetch<{ ok: true; room_id: string }>('/api/rooms/quick-join', { method: 'POST' });
     setQuickBusy(false);
     if (res.ok) onEnterRoom(res.data.room_id);
-    else setQuickError(res.error?.message ?? 'Quick join failed. Try again in a moment.');
+    else setQuickError(apiErrorText(res.error, 'lobby.quick.failed'));
   }, [onEnterRoom]);
 
-  const displayName = user?.display_name || user?.email || 'Commander';
+  const displayName = user?.display_name || user?.email || t('lobby.commander');
 
   return (
     <div className="lx">
@@ -106,36 +111,37 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
           <button className="lx-brand" onClick={() => setTab(liveMine && liveMine.length ? 'my' : 'browse')}>
             ORBITAL
           </button>
-          <nav className="lx-nav" aria-label="Lobby">
-            <NavItem active={tab === 'my'} onClick={() => setTab('my')} badge={liveMine?.length || undefined}>My games</NavItem>
+          <nav className="lx-nav" aria-label={t('lobby.nav.label')}>
+            <NavItem active={tab === 'my'} onClick={() => setTab('my')} badge={liveMine?.length || undefined}>{t('lobby.nav.my')}</NavItem>
             {pastMine && pastMine.length > 0 && (
-              <NavItem active={tab === 'past'} onClick={() => setTab('past')}>Past games</NavItem>
+              <NavItem active={tab === 'past'} onClick={() => setTab('past')}>{t('lobby.nav.past')}</NavItem>
             )}
-            <NavItem active={tab === 'browse'} onClick={() => setTab('browse')}>Browse</NavItem>
-            <NavItem active={tab === 'create'} onClick={() => setTab('create')}>Create a game</NavItem>
-            <NavItem active={tab === 'code'} onClick={() => setTab('code')}>Join with code</NavItem>
+            <NavItem active={tab === 'browse'} onClick={() => setTab('browse')}>{t('lobby.nav.browse')}</NavItem>
+            <NavItem active={tab === 'create'} onClick={() => setTab('create')}>{t('lobby.nav.create')}</NavItem>
+            <NavItem active={tab === 'code'} onClick={() => setTab('code')}>{t('lobby.nav.code')}</NavItem>
             {/* Live-ops tools, allow-listed admins only. Display-only flag;
                 every /api/admin route re-checks server-side. */}
             {user?.is_admin && (
               <>
                 <span className="lx-nav__sep" aria-hidden />
-                <NavItem small active={tab === 'admin'} onClick={() => setTab('admin')}>Analytics</NavItem>
-                <NavItem small active={tab === 'bot'} onClick={() => setTab('bot')}>Bot</NavItem>
-                <NavItem small active={tab === 'editor'} onClick={() => setTab('editor')}>Editor</NavItem>
-                <NavItem small active={tab === 'devlog'} onClick={() => setTab('devlog')}>Devlog</NavItem>
+                <NavItem small active={tab === 'admin'} onClick={() => setTab('admin')}>{t('lobby.nav.analytics')}</NavItem>
+                <NavItem small active={tab === 'bot'} onClick={() => setTab('bot')}>{t('lobby.nav.bot')}</NavItem>
+                <NavItem small active={tab === 'editor'} onClick={() => setTab('editor')}>{t('lobby.nav.editor')}</NavItem>
+                <NavItem small active={tab === 'devlog'} onClick={() => setTab('devlog')}>{t('lobby.nav.devlog')}</NavItem>
               </>
             )}
           </nav>
           <div className="lx-user">
+            <LanguageSwitch compact className="lx-lang" onChosen={saveLocale} />
             <button
               className={`lx-user__chip ${tab === 'profile' ? 'is-active' : ''}`}
               onClick={() => setTab('profile')}
-              title="Profile and settings"
+              title={t('lobby.profileTitle')}
             >
               <span className="lx-user__avatar" aria-hidden>{initials(displayName).slice(0, 1)}</span>
               <span className="lx-user__name">{displayName}</span>
             </button>
-            <button className="lx-user__out" onClick={signOut}>Sign out</button>
+            <button className="lx-user__out" onClick={signOut}>{t('lobby.signOut')}</button>
           </div>
         </div>
       </header>
@@ -229,6 +235,7 @@ function Hero({
   quickBusy: boolean;
   quickError: string | null;
 }) {
+  useI18n();
   // Quick Join only ever seats you in a PUBLIC game (no password), so the
   // numbers here count only those.
   const openPublic = (browse ?? []).filter(g => g.joinable && !g.has_password && g.phase === 'open');
@@ -236,46 +243,44 @@ function Hero({
   const live = (browse ?? []).filter(g => g.phase === 'live').length;
 
   // First real word of the name ("[agent] lobby-review" greets "lobby").
-  const first = name.replace(/[^\p{L}\p{N}\s'-]+/gu, ' ').trim().split(/\s+/).filter(w => w.length > 1)[0] ?? 'Commander';
+  const first = name.replace(/[^\p{L}\p{N}\s'-]+/gu, ' ').trim().split(/\s+/).filter(w => w.length > 1)[0] ?? t('lobby.commander');
   const running = (mine ?? []).filter(g => g.phase === 'live').length;
   const waiting = (mine ?? []).filter(g => g.phase === 'open' || g.phase === 'full').length;
 
-  const title = tab === 'my' ? `Welcome back, ${first}` : 'Find a game';
+  const title = tab === 'my' ? t('lobby.hero.welcome', { name: first }) : t('lobby.hero.find');
   const sub = tab === 'my'
-    ? [running ? `${running} ${running === 1 ? 'game' : 'games'} in progress` : null,
-       waiting ? `${waiting} waiting to start` : null].filter(Boolean).join(' · ') || 'Pick up where you left off, or start something new.'
+    ? [running ? tn('lobby.hero.inProgress', running) : null,
+       waiting ? t('lobby.hero.waiting', { n: waiting }) : null].filter(Boolean).join(' · ') || t('lobby.hero.idle')
     : browse === null
-      ? 'Looking across the Sol system…'
-      : `${live} ${live === 1 ? 'game is' : 'games are'} running right now. Join one in progress, or take a seat in a game about to start.`;
+      ? t('lobby.hero.looking')
+      : tn('lobby.hero.running', live);
 
   return (
     <section className="lx-hero">
       <div className="lx-hero__text">
-        <div className="lx-eyebrow">Multiplayer · the Sol system</div>
+        <div className="lx-eyebrow">{t('lobby.hero.eyebrow')}</div>
         <h1 className="lx-hero__title">{title}</h1>
         <p className="lx-hero__sub">{sub}</p>
         {tab === 'my' && running > 0 && !autoloadSet && (
           <p className="lx-hero__tip">
-            Want to skip this page? Switch on <b>Auto-load on launch</b> on a game and Orbital opens straight into it.
+            {t('lobby.hero.tipBefore')}<b>{t('lobby.hero.tipBold')}</b>{t('lobby.hero.tipAfter')}
           </p>
         )}
       </div>
       <div className="lx-quick">
         <div className="lx-quick__head">
-          <span className="lx-quick__label">Quick join</span>
+          <span className="lx-quick__label">{t('lobby.quick.label')}</span>
           <span className="lx-quick__meta">
             {browse === null ? '' : seats > 0
-              ? `${seats} open ${seats === 1 ? 'seat' : 'seats'} in ${openPublic.length} public ${openPublic.length === 1 ? 'game' : 'games'}`
-              : 'No public game is open'}
+              ? t('lobby.quick.meta', { seats: tn('lobby.quick.seats', seats), games: tn('lobby.quick.games', openPublic.length) })
+              : t('lobby.quick.noneOpen')}
           </span>
         </div>
         <p className="lx-quick__body">
-          {seats > 0
-            ? 'We seat you in the public game closest to starting. It begins on its own the moment every seat is filled.'
-            : 'We open a fresh game with you as host and four seats for whoever joins next. It starts itself when full.'}
+          {seats > 0 ? t('lobby.quick.bodySeat') : t('lobby.quick.bodyNew')}
         </p>
         <button className="lx-btn lx-btn--primary lx-btn--lg lx-btn--block" onClick={onQuick} disabled={quickBusy}>
-          {quickBusy ? 'Finding your game…' : seats > 0 ? 'Quick join' : 'Open a game'}
+          {quickBusy ? t('lobby.quick.busy') : seats > 0 ? t('lobby.quick.btnJoin') : t('lobby.quick.btnOpen')}
         </button>
         {quickError && <div className="lx-error" role="alert">{quickError}</div>}
       </div>
@@ -301,6 +306,7 @@ function MyGamesPanel({
   archiveView?: boolean;
   onBrowse: () => void;
 }) {
+  useI18n();
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -319,14 +325,14 @@ function MyGamesPanel({
   if (visible.length === 0) {
     return archiveView ? (
       <EmptyState
-        title="Nothing archived"
-        hint="Archive a finished game from My games to file it here. Nothing is deleted: the game and its history are kept."
+        title={t('lobby.my.emptyArchivedTitle')}
+        hint={t('lobby.my.emptyArchivedHint')}
       />
     ) : (
       <EmptyState
-        title="You're not in any games yet"
-        hint="Use Quick join above, pick a game from Browse, or create your own."
-        action={{ label: 'Browse games', onClick: onBrowse }}
+        title={t('lobby.my.emptyTitle')}
+        hint={t('lobby.my.emptyHint')}
+        action={{ label: t('lobby.my.browseGames'), onClick: onBrowse }}
       />
     );
   }
@@ -347,7 +353,7 @@ function MyGamesPanel({
     setAutoBusy(false);
     if (!res.ok) {
       setAutoloadLocal(before);
-      setError(res.error?.message ?? 'Could not change Auto-load.');
+      setError(apiErrorText(res.error, 'lobby.my.err.autoload'));
       return;
     }
     onChanged();
@@ -360,15 +366,12 @@ function MyGamesPanel({
     // before asking why the game had "become a past game". The prompt
     // answers what he had no way to know: nothing is deleted, only HE is
     // affected, and it is reversible from a named tab.
-    if (archived && !window.confirm(
-      `Archive "${g.name}"?\n\nIt moves to your Past games tab. Nothing is deleted, and no one `
-      + `else's list changes. You can restore it from Past games at any time.`,
-    )) return;
+    if (archived && !window.confirm(t('lobby.my.confirmArchive', { name: g.name }))) return;
     setError(null); setNotice(null);
     setBusyId(g.id);
     const res = await apiFetch(`/api/rooms/${g.id}/archive`, { method: 'POST', body: JSON.stringify({ archived }) });
     setBusyId(null);
-    if (!res.ok) { setError(res.error?.message ?? (archived ? 'Could not archive' : 'Could not restore')); return; }
+    if (!res.ok) { setError(apiErrorText(res.error, archived ? 'lobby.my.err.archive' : 'lobby.my.err.restore')); return; }
     if (archived && priorityId === g.id) setAutoload(null);
     onChanged();
   }
@@ -382,32 +385,32 @@ function MyGamesPanel({
       `/api/games/${g.id}/admin/digest-now`, { method: 'POST' },
     );
     setBusyId(null);
-    if (!res.ok) { setError(res.error?.message ?? 'Could not publish the Herald'); return; }
+    if (!res.ok) { setError(apiErrorText(res.error, 'lobby.my.err.herald')); return; }
     setNotice(res.data.posted
-      ? `Herald published: ${res.data.events} event${res.data.events === 1 ? '' : 's'}.`
-      : `Not posted: ${res.data.reason ?? 'unknown reason'}`);
+      ? tn('lobby.my.heraldPublished', res.data.events)
+      : t('lobby.my.heraldNot', { reason: res.data.reason ?? t('lobby.my.unknownReason') }));
   }
 
   async function deleteRoom(g: GameSummary) {
-    if (!window.confirm(`Delete "${g.name}"? This permanently removes the game for everyone in it.`)) return;
+    if (!window.confirm(t('lobby.my.confirmDelete', { name: g.name }))) return;
     setError(null); setNotice(null);
     setBusyId(g.id);
     const res = await apiFetch(`/api/rooms/${g.id}`, { method: 'DELETE' });
     setBusyId(null);
-    if (!res.ok) { setError(res.error?.message ?? 'Could not delete the game'); return; }
+    if (!res.ok) { setError(apiErrorText(res.error, 'lobby.my.err.delete')); return; }
     setGone(prev => new Set(prev).add(g.id));
     if (priorityId === g.id) setAutoload(null);
     onChanged();
   }
 
   const groups: Array<{ title: string; hint?: string; items: GameSummary[] }> = archiveView
-    ? [{ title: 'Archived', items: visible }]
+    ? [{ title: t('lobby.my.group.archived'), items: visible }]
     : [
-      { title: 'Needs you', hint: 'Full lobbies you host: every seat is taken and only you can start.',
+      { title: t('lobby.my.group.needs'), hint: t('lobby.my.group.needsHint'),
         items: visible.filter(g => g.phase === 'full' && g.host_id === myUserId) },
-      { title: 'In progress', items: visible.filter(g => g.phase === 'live') },
-      { title: 'Waiting to start', items: visible.filter(g => (g.phase === 'open' || g.phase === 'full') && !(g.phase === 'full' && g.host_id === myUserId)) },
-      { title: 'Finished', hint: 'Archive a finished game to tidy it away. Nothing is deleted.', items: visible.filter(g => g.phase === 'finished') },
+      { title: t('lobby.my.group.live'), items: visible.filter(g => g.phase === 'live') },
+      { title: t('lobby.my.group.waiting'), items: visible.filter(g => (g.phase === 'open' || g.phase === 'full') && !(g.phase === 'full' && g.host_id === myUserId)) },
+      { title: t('lobby.my.group.finished'), hint: t('lobby.my.group.finishedHint'), items: visible.filter(g => g.phase === 'finished') },
     ];
 
   return (
@@ -440,19 +443,19 @@ function MyGamesPanel({
                     onPrimary={() => onEnter(g.id)}
                     menu={(
                       <details className="lx-menu">
-                        <summary className="lx-menu__btn" aria-label={`More actions for ${g.name}`}>⋯</summary>
+                        <summary className="lx-menu__btn" aria-label={t('lobby.my.moreActions', { name: g.name })}>⋯</summary>
                         <div className="lx-menu__pop" role="menu">
                           <button role="menuitem" onClick={(e) => { closeMenu(e); setArchived(g, !archiveView); }}>
-                            {archiveView ? 'Restore to My games' : 'Archive'}
+                            {archiveView ? t('lobby.my.restore') : t('lobby.my.archive')}
                           </button>
                           {iHost && g.phase === 'finished' && (
                             <button role="menuitem" onClick={(e) => { closeMenu(e); publishFinalHerald(g); }}>
-                              Publish the final Herald
+                              {t('lobby.my.publishHerald')}
                             </button>
                           )}
                           {iHost && (
                             <button role="menuitem" className="is-danger" onClick={(e) => { closeMenu(e); deleteRoom(g); }}>
-                              Delete game
+                              {t('lobby.my.delete')}
                             </button>
                           )}
                         </div>
@@ -483,6 +486,7 @@ function BrowsePanel({
   onCreate: () => void;
   myUserId?: string;
 }) {
+  useI18n();
   const [filter, setFilter] = useState<Filter>('join');
   const [query, setQuery] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -538,10 +542,10 @@ function BrowsePanel({
       if (res.error?.code === 'password_required' || res.error?.code === 'bad_password') {
         setPwFor(g);
         if (res.error.code === 'password_required') setPwInput('');
-        setError(res.error.code === 'bad_password' ? 'That password is not right.' : null);
+        setError(res.error.code === 'bad_password' ? t('err.bad_password') : null);
         return;
       }
-      setError(res.error?.message ?? 'Could not join that game.');
+      setError(apiErrorText(res.error, 'lobby.browse.err.join'));
       refresh();
       return;
     }
@@ -550,18 +554,18 @@ function BrowsePanel({
   }
 
   const FILTERS: Array<{ id: Filter; label: string }> = [
-    { id: 'join', label: 'Open seats' },
-    { id: 'private', label: 'Private' },
-    { id: 'live', label: 'In progress' },
-    { id: 'waiting', label: 'Waiting for host' },
-    { id: 'finished', label: 'Recently finished' },
-    { id: 'all', label: 'All' },
+    { id: 'join', label: t('lobby.browse.filter.join') },
+    { id: 'private', label: t('lobby.browse.filter.private') },
+    { id: 'live', label: t('lobby.browse.filter.live') },
+    { id: 'waiting', label: t('lobby.browse.filter.waiting') },
+    { id: 'finished', label: t('lobby.browse.filter.finished') },
+    { id: 'all', label: t('lobby.browse.filter.all') },
   ];
 
   return (
     <section className="lx-section">
       <div className="lx-toolbar">
-        <div className="lx-seg" role="tablist" aria-label="Filter games">
+        <div className="lx-seg" role="tablist" aria-label={t('lobby.browse.filterLabel')}>
           {FILTERS.filter(f => f.id === 'join' || f.id === 'all' || counts[f.id] > 0).map(f => (
             <button
               key={f.id}
@@ -578,10 +582,10 @@ function BrowsePanel({
           <span className="lx-search__icon" aria-hidden>⌕</span>
           <input
             type="search"
-            placeholder="Search games, hosts, players"
+            placeholder={t('lobby.browse.search')}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            aria-label="Search games"
+            aria-label={t('lobby.browse.searchLabel')}
           />
         </label>
       </div>
@@ -590,15 +594,15 @@ function BrowsePanel({
 
       {listing === null ? <LoadingGrid /> : shown.length === 0 ? (
         query ? (
-          <EmptyState title="No games match that search" hint="Try a game name, a host, or a player." />
+          <EmptyState title={t('lobby.browse.noMatchTitle')} hint={t('lobby.browse.noMatchHint')} />
         ) : filter === 'join' ? (
           <EmptyState
-            title="No open seats right now"
-            hint="Quick join opens a new game with you as host, or create one with your own rules."
-            action={{ label: 'Create a game', onClick: onCreate }}
+            title={t('lobby.browse.noSeatsTitle')}
+            hint={t('lobby.browse.noSeatsHint')}
+            action={{ label: t('lobby.browse.createBtn'), onClick: onCreate }}
           />
         ) : (
-          <EmptyState title="Nothing here right now" hint="Check back soon, or look under Open seats." />
+          <EmptyState title={t('lobby.browse.nothingTitle')} hint={t('lobby.browse.nothingHint')} />
         )
       ) : (
         <div className="lx-grid">
@@ -623,16 +627,16 @@ function BrowsePanel({
             onClick={(e) => e.stopPropagation()}
             onSubmit={(e) => { e.preventDefault(); attemptJoin(pwFor, pwInput); }}
           >
-            <h2 className="lx-modal__title">This game is private</h2>
-            <p className="lx-muted">Enter the password {pwFor.host_name} shared to join “{pwFor.name}”.</p>
+            <h2 className="lx-modal__title">{t('lobby.browse.pwTitle')}</h2>
+            <p className="lx-muted">{t('lobby.browse.pwBody', { host: pwFor.host_name, name: pwFor.name })}</p>
             <label className="lx-field">
-              <span className="lx-field__label">Password</span>
+              <span className="lx-field__label">{t('common.password')}</span>
               <input autoFocus className="lx-input" type="password" value={pwInput} onChange={(e) => setPwInput(e.target.value)} />
             </label>
             {error && <div className="lx-error" role="alert">{error}</div>}
             <div className="lx-modal__actions">
-              <button type="button" className="lx-btn lx-btn--ghost" onClick={() => setPwFor(null)}>Cancel</button>
-              <button type="submit" className="lx-btn lx-btn--primary" disabled={!pwInput}>Join game</button>
+              <button type="button" className="lx-btn lx-btn--ghost" onClick={() => setPwFor(null)}>{t('common.cancel')}</button>
+              <button type="submit" className="lx-btn lx-btn--primary" disabled={!pwInput}>{t('lobby.browse.joinGame')}</button>
             </div>
           </form>
         </div>
@@ -644,6 +648,7 @@ function BrowsePanel({
 // ---------- Create ----------
 
 function CreatePanel({ onCreated, hostName }: { onCreated: (id: string) => void; hostName: string }) {
+  useI18n();
   const [name, setName] = useState('');
   const [maxPlayers, setMaxPlayers] = useState(4);
   const [isPrivate, setIsPrivate] = useState(false);
@@ -657,15 +662,15 @@ function CreatePanel({ onCreated, hostName }: { onCreated: (id: string) => void;
     e.preventDefault();
     setError(null);
     const trimmed = name.trim();
-    if (!trimmed) { setError('Give your game a name.'); return; }
-    if (isPrivate && password.length < 4) { setError('The password needs at least 4 characters.'); return; }
+    if (!trimmed) { setError(t('lobby.create.err.name')); return; }
+    if (isPrivate && password.length < 4) { setError(t('lobby.create.err.pw')); return; }
     setBusy(true);
     const res = await apiFetch<{ room: { id: string; invite_code?: string } }>('/api/rooms', {
       method: 'POST',
       body: JSON.stringify({ name: trimmed, max_players: maxPlayers, password: isPrivate ? password : undefined }),
     });
     setBusy(false);
-    if (!res.ok) { setError(res.error?.message ?? 'Could not create the game.'); return; }
+    if (!res.ok) { setError(apiErrorText(res.error, 'lobby.create.err.failed')); return; }
     setCreated({ id: res.data.room.id, invite_code: res.data.room.invite_code });
   }
 
@@ -683,26 +688,26 @@ function CreatePanel({ onCreated, hostName }: { onCreated: (id: string) => void;
       <section className="lx-section lx-narrow">
         <div className="lx-panel lx-success">
           <div className="lx-success__badge" aria-hidden>✓</div>
-          <h2 className="lx-panel__title">Your game is ready</h2>
+          <h2 className="lx-panel__title">{t('lobby.create.doneTitle')}</h2>
           <p className="lx-muted">
-            Send friends the invite link, or the code for them to enter under Join with code.
-            {isPrivate ? ' They will also need the password.' : ' It is also listed in Browse for anyone to join.'}
+            {t('lobby.create.doneBody')}
+            {isPrivate ? t('lobby.create.donePrivate') : t('lobby.create.donePublic')}
           </p>
           {created.invite_code && (
-            <button type="button" className="lx-code" onClick={() => copy('code')} title="Copy the code">
+            <button type="button" className="lx-code" onClick={() => copy('code')} title={t('lobby.create.copyCodeTitle')}>
               {created.invite_code.match(/.{1,4}/g)?.join('-')}
             </button>
           )}
           <div className="lx-row">
             <button type="button" className="lx-btn lx-btn--ghost" onClick={() => copy('link')}>
-              {copied === 'link' ? 'Link copied' : 'Copy invite link'}
+              {copied === 'link' ? t('lobby.create.linkCopied') : t('lobby.create.copyLink')}
             </button>
             <button type="button" className="lx-btn lx-btn--ghost" onClick={() => copy('code')}>
-              {copied === 'code' ? 'Code copied' : 'Copy code'}
+              {copied === 'code' ? t('lobby.create.codeCopied') : t('lobby.create.copyCode')}
             </button>
           </div>
           <button className="lx-btn lx-btn--primary lx-btn--lg lx-btn--block" onClick={() => onCreated(created.id)}>
-            Go to your lobby
+            {t('lobby.create.goLobby')}
           </button>
         </div>
       </section>
@@ -711,7 +716,7 @@ function CreatePanel({ onCreated, hostName }: { onCreated: (id: string) => void;
 
   const now = Date.now();
   const preview: GameSummary = {
-    id: 'preview', name: name.trim() || 'Your game', phase: 'open', max_players: maxPlayers, member_count: 1,
+    id: 'preview', name: name.trim() || t('lobby.create.previewName'), phase: 'open', max_players: maxPlayers, member_count: 1,
     open_seats: maxPlayers - 1, has_password: isPrivate, quick_join: false, host_id: 'me', host_name: hostName,
     created_at: now, updated_at: now, started_at: null, completed_at: null, current_tick: null, next_tick_at: null,
     tick_interval_ms: DEFAULT_TICK_INTERVAL_MS, is_member: false, joinable: true,
@@ -721,11 +726,11 @@ function CreatePanel({ onCreated, hostName }: { onCreated: (id: string) => void;
   return (
     <section className="lx-section lx-create">
       <form className="lx-panel" onSubmit={submit}>
-        <h2 className="lx-panel__title">Create a game</h2>
-        <p className="lx-muted">You host it. You can change the turn speed in the lobby before you start.</p>
+        <h2 className="lx-panel__title">{t('lobby.create.title')}</h2>
+        <p className="lx-muted">{t('lobby.create.intro')}</p>
 
         <label className="lx-field">
-          <span className="lx-field__label">Game name</span>
+          <span className="lx-field__label">{t('lobby.create.nameLabel')}</span>
           <input
             autoFocus
             className="lx-input"
@@ -733,13 +738,13 @@ function CreatePanel({ onCreated, hostName }: { onCreated: (id: string) => void;
             maxLength={60}
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="The Inara Compact"
+            placeholder={t('lobby.create.namePlaceholder')}
           />
         </label>
 
         <div className="lx-field">
-          <span className="lx-field__label">Players</span>
-          <div className="lx-seg lx-seg--fill" role="radiogroup" aria-label="Players">
+          <span className="lx-field__label">{t('lobby.create.players')}</span>
+          <div className="lx-seg lx-seg--fill" role="radiogroup" aria-label={t('lobby.create.players')}>
             {[2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => (
               <button
                 type="button"
@@ -754,28 +759,28 @@ function CreatePanel({ onCreated, hostName }: { onCreated: (id: string) => void;
         </div>
 
         <div className="lx-field">
-          <span className="lx-field__label">Who can join</span>
-          <div className="lx-choice" role="radiogroup" aria-label="Who can join">
+          <span className="lx-field__label">{t('lobby.create.who')}</span>
+          <div className="lx-choice" role="radiogroup" aria-label={t('lobby.create.who')}>
             <button type="button" role="radio" aria-checked={!isPrivate}
               className={`lx-choice__opt ${!isPrivate ? 'is-active' : ''}`} onClick={() => setIsPrivate(false)}>
-              <span className="lx-choice__title">Public</span>
-              <span className="lx-choice__desc">Listed in Browse. Anyone can take a seat.</span>
+              <span className="lx-choice__title">{t('lobby.create.public')}</span>
+              <span className="lx-choice__desc">{t('lobby.create.publicDesc')}</span>
             </button>
             <button type="button" role="radio" aria-checked={isPrivate}
               className={`lx-choice__opt ${isPrivate ? 'is-active' : ''}`} onClick={() => setIsPrivate(true)}>
-              <span className="lx-choice__title">Private</span>
-              <span className="lx-choice__desc">Joining needs a password you share.</span>
+              <span className="lx-choice__title">{t('lobby.create.private')}</span>
+              <span className="lx-choice__desc">{t('lobby.create.privateDesc')}</span>
             </button>
           </div>
         </div>
 
         {isPrivate && (
           <label className="lx-field">
-            <span className="lx-field__label">Password</span>
+            <span className="lx-field__label">{t('common.password')}</span>
             <input
               className="lx-input"
               type="text"
-              placeholder="At least 4 characters"
+              placeholder={t('lobby.create.pwPlaceholder')}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               maxLength={100}
@@ -786,13 +791,13 @@ function CreatePanel({ onCreated, hostName }: { onCreated: (id: string) => void;
         {error && <div className="lx-error" role="alert">{error}</div>}
 
         <button type="submit" className="lx-btn lx-btn--primary lx-btn--lg lx-btn--block" disabled={busy}>
-          {busy ? 'Creating…' : 'Create game'}
+          {busy ? t('lobby.create.busy') : t('lobby.create.submit')}
         </button>
-        <p className="lx-muted lx-small">Next you get an invite link and code to share.</p>
+        <p className="lx-muted lx-small">{t('lobby.create.next')}</p>
       </form>
 
       <aside className="lx-create__preview" aria-label="Preview">
-        <div className="lx-eyebrow">How it appears in Browse</div>
+        <div className="lx-eyebrow">{t('lobby.create.previewTitle')}</div>
         <GameCard g={preview} now={now} variant="browse" />
       </aside>
     </section>
@@ -802,6 +807,7 @@ function CreatePanel({ onCreated, hostName }: { onCreated: (id: string) => void;
 // ---------- Join with code ----------
 
 function JoinByCodePanel({ onJoined }: { onJoined: (id: string) => void }) {
+  useI18n();
   const [code, setCode] = useState('');
   const [password, setPassword] = useState('');
   const [askPassword, setAskPassword] = useState(false);
@@ -818,7 +824,7 @@ function JoinByCodePanel({ onJoined }: { onJoined: (id: string) => void }) {
     e.preventDefault();
     setError(null);
     const clean = code.replace(/[^A-Z2-9]/gi, '').toUpperCase();
-    if (clean.length !== 8) { setError('Invite codes are 8 characters.'); return; }
+    if (clean.length !== 8) { setError(t('lobby.join.err.length')); return; }
     setBusy(true);
     const res = await apiFetch<{ ok: true; room_id: string }>('/api/rooms/join-by-code', {
       method: 'POST',
@@ -826,9 +832,9 @@ function JoinByCodePanel({ onJoined }: { onJoined: (id: string) => void }) {
     });
     setBusy(false);
     if (!res.ok) {
-      if (res.error?.code === 'password_required') { setAskPassword(true); setError('This game is private. Enter its password.'); return; }
-      if (res.error?.code === 'bad_password') { setError('That password is not right.'); return; }
-      setError(res.error?.message ?? 'Could not join.');
+      if (res.error?.code === 'password_required') { setAskPassword(true); setError(t('err.password_required')); return; }
+      if (res.error?.code === 'bad_password') { setError(t('err.bad_password')); return; }
+      setError(apiErrorText(res.error, 'lobby.join.err.failed'));
       return;
     }
     onJoined(res.data.room_id);
@@ -837,13 +843,10 @@ function JoinByCodePanel({ onJoined }: { onJoined: (id: string) => void }) {
   return (
     <section className="lx-section lx-narrow">
       <form className="lx-panel" onSubmit={submit}>
-        <h2 className="lx-panel__title">Join with a code</h2>
-        <p className="lx-muted">
-          Got an invite? Enter its 8-character code. Capitals don&rsquo;t matter, and codes never
-          use 0, 1, I or O, so there is nothing to mix up.
-        </p>
+        <h2 className="lx-panel__title">{t('lobby.join.title')}</h2>
+        <p className="lx-muted">{t('lobby.join.intro')}</p>
         <label className="lx-field">
-          <span className="lx-field__label">Invite code</span>
+          <span className="lx-field__label">{t('lobby.join.codeLabel')}</span>
           <input
             autoFocus
             className="lx-input lx-input--code"
@@ -859,13 +862,13 @@ function JoinByCodePanel({ onJoined }: { onJoined: (id: string) => void }) {
         </label>
         {askPassword && (
           <label className="lx-field">
-            <span className="lx-field__label">Password</span>
+            <span className="lx-field__label">{t('common.password')}</span>
             <input className="lx-input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoFocus />
           </label>
         )}
         {error && <div className="lx-error" role="alert">{error}</div>}
         <button type="submit" className="lx-btn lx-btn--primary lx-btn--lg lx-btn--block" disabled={busy}>
-          {busy ? 'Joining…' : 'Join game'}
+          {busy ? t('lobby.join.busy') : t('lobby.join.submit')}
         </button>
       </form>
     </section>
@@ -875,8 +878,9 @@ function JoinByCodePanel({ onJoined }: { onJoined: (id: string) => void }) {
 // ---------- shared ----------
 
 function LoadingGrid() {
+  useI18n();
   return (
-    <div className="lx-grid" aria-busy="true" aria-label="Loading games">
+    <div className="lx-grid" aria-busy="true" aria-label={t('common.loadingGames')}>
       {[0, 1, 2].map(i => <div key={i} className="lx-card lx-card--skeleton" />)}
     </div>
   );

@@ -174,6 +174,9 @@ export type User = {
   // Commission thank-you card (worker/index.js noteVisit). Never on the
   // same visit as the Discord invite.
   commission_ask?: boolean;
+  // The language the player chose ('en' | 'pt-BR'); null = follow the
+  // device. Set by PUT /api/users/me/locale.
+  locale?: string | null;
 };
 
 /** Where a Commission checkout started. The server keeps an allow-list

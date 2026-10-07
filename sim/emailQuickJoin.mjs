@@ -452,6 +452,74 @@ await DB.prepare("UPDATE users SET email = 'agent+sim@agents.orbital.local', vis
 const agentMe = await call('GET', '/api/auth/me', { cookie: Q2.cookie });
 check('agent accounts (the screenshot harness) are never invited', agentMe.data.user.invite_discord === null);
 
+// ---- language --------------------------------------------------------------
+
+const { catalogs, normalizeLocale, tr, trn, localeFromAcceptLanguage } = await import('../worker/i18n.js');
+{
+  const cat = catalogs();
+  const en = cat.en, pt = cat['pt-BR'];
+  const ph = (s) => (s.match(/\{\w+\}/g) ?? []).sort().join(',');
+  check('every Portuguese email key exists in English', Object.keys(pt).every(k => k in en),
+    Object.keys(pt).filter(k => !(k in en)));
+  check('Portuguese placeholders match English, key by key',
+    Object.keys(pt).every(k => ph(pt[k]) === ph(en[k])),
+    Object.keys(pt).filter(k => ph(pt[k]) !== ph(en[k])));
+  check('every English email key is translated', Object.keys(en).every(k => k in pt),
+    Object.keys(en).filter(k => !(k in pt)));
+  check('normalizeLocale: pt, pt_BR, PT-br and pt-PT are pt-BR; en-GB is en; fr and junk are null',
+    ['pt', 'pt_BR', 'PT-br', 'pt-PT'].every(x => normalizeLocale(x) === 'pt-BR')
+      && normalizeLocale('en-GB') === 'en' && normalizeLocale('fr') === null
+      && normalizeLocale(5) === null && normalizeLocale(null) === null);
+  check('Accept-Language picks the first language we write',
+    localeFromAcceptLanguage('de-DE,pt-BR;q=0.8,en;q=0.5') === 'pt-BR' && localeFromAcceptLanguage('de') === null);
+  check('plurals follow the language: Portuguese counts 0 as singular, English does not',
+    trn('pt-BR', 'email.started.l1', 0, { name: 'X' }).includes('0 jogador.')
+      && trn('en', 'email.started.l1', 0, { name: 'X' }).includes('0 players.')
+      && trn('pt-BR', 'email.started.l1', 2, { name: 'X' }).includes('2 jogadores.'));
+  check('an unknown key shows as itself, an untranslated one falls back to English',
+    tr('pt-BR', 'no.such.key') === 'no.such.key');
+}
+
+const PT = await call('POST', '/api/auth/signup', {
+  body: { email: 'luiza@example.com', password: 'password123', display_name: 'Luiza', locale: 'pt-BR' },
+});
+check('signup with a language remembers it', PT.status === 201
+  && (await DB.prepare('SELECT locale FROM users WHERE id = ?').bind(PT.data.user.id).first()).locale === 'pt-BR', PT.data);
+check('/me hands the saved language back', PT.data.user.locale === 'pt-BR');
+const ptWelcome = sent.filter(m => m.to === 'luiza@example.com');
+check('her welcome email is in Portuguese, html lang and all',
+  ptWelcome.length === 1 && ptWelcome[0].subject === 'Bem-vindo ao Orbital'
+    && ptWelcome[0].html.includes('<html lang="pt-BR"')
+    && /Bem-vindo ao Orbital, Luiza/.test(ptWelcome[0].html)
+    && /ENTRADA RÁPIDA/.test(ptWelcome[0].text) && !/Welcome|Quick Join/.test(ptWelcome[0].html),
+  ptWelcome.map(m => m.subject));
+
+const setPt = await call('PUT', '/api/users/me/locale', { cookie: PT.cookie, body: { locale: 'pt_BR' } });
+check('PUT /api/users/me/locale saves a language (pt_BR is understood as pt-BR)', setPt.status === 200 && setPt.data.locale === 'pt-BR', setPt);
+const meA = await call('GET', '/api/auth/me', { cookie: PT.cookie });
+check('and /me returns it', meA.data.user.locale === 'pt-BR', meA.data.user);
+const badLang = await call('PUT', '/api/users/me/locale', { cookie: PT.cookie, body: { locale: 'klingon' } });
+check('an unsupported language is refused, not stored', badLang.status === 400
+  && (await DB.prepare('SELECT locale FROM users WHERE id = ?').bind(PT.data.user.id).first()).locale === 'pt-BR');
+const anon = await call('PUT', '/api/users/me/locale', { body: { locale: 'en' } });
+check('signed-out callers cannot set a language', anon.status === 401, anon.status);
+
+sent.length = 0;
+await call('POST', '/api/auth/forgot', { body: { email: 'luiza@example.com' } });
+check('a reset email follows the saved language', sent.length === 1 && sent[0].subject === 'Redefina sua senha do Orbital'
+  && sent[0].html.includes('<html lang="pt-BR"'), sent.map(m => m.subject));
+
+const clear = await call('PUT', '/api/users/me/locale', { cookie: PT.cookie, body: { locale: null } });
+check('null clears the preference (follow the device)', clear.status === 200 && clear.data.locale === null);
+sent.length = 0;
+await call('POST', '/api/auth/forgot', { body: { email: 'luiza@example.com', locale: 'pt-BR' } });
+check('with nothing saved, the language the page was showing is used',
+  sent.length === 1 && sent[0].subject === 'Redefina sua senha do Orbital', sent.map(m => m.subject));
+sent.length = 0;
+await call('POST', '/api/auth/forgot', { body: { email: 'luiza@example.com' } });
+check('and with neither, English', sent.length === 1 && sent[0].subject === 'Reset your Orbital password');
+sent.length = 0;
+
 // ---- no binding, no mail ---------------------------------------------------
 
 const quiet = await mail.sendEmail({ DB }, { to: 'x@example.com', kind: 't', subject: 's', html: 'h', text: 't' });

@@ -24,6 +24,8 @@
 //      and Yahoo require of bulk senders) signed with EMAIL_LINK_SECRET.
 // ============================================================================
 
+import { tr, trn, normalizeLocale } from './i18n.js';
+
 const SITE = 'https://orbital-empire.com';
 const FROM = { email: 'noreply@orbital-empire.com', name: 'Orbital' };
 const REPLY_TO = 'support@orbital-empire.com';
@@ -202,17 +204,19 @@ const FONT = "'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
  * @param p.cta        {label, url} optional button
  * @param p.footer     trusted HTML: why you got this
  * @param p.unsubUrl   optional
+ * @param p.locale     the reader's language (footer links, <html lang>)
  */
 export function layout(p) {
+  const locale = normalizeLocale(p.locale) ?? 'en';
   const button = p.cta ? `
     <tr><td style="padding:8px 32px 28px">
       <a href="${esc(p.cta.url)}" style="display:inline-block;background:${C.gold};color:#1a1204;font-family:${FONT};font-size:14px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;text-decoration:none;padding:13px 26px;border-radius:3px">${esc(p.cta.label)}</a>
     </td></tr>` : '';
   const unsub = p.unsubUrl
-    ? `<br><a href="${esc(p.unsubUrl)}" style="color:${C.dim}">Unsubscribe</a> · <a href="${SITE}/?settings=email" style="color:${C.dim}">Email settings</a>`
+    ? `<br><a href="${esc(p.unsubUrl)}" style="color:${C.dim}">${esc(tr(locale, 'email.unsubscribe'))}</a> · <a href="${SITE}/?settings=email" style="color:${C.dim}">${esc(tr(locale, 'email.settings'))}</a>`
     : '';
   return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="${locale === 'pt-BR' ? 'pt-BR' : 'en'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="dark light"><title>${esc(p.heading)}</title></head>
 <body style="margin:0;padding:0;background:${C.page}">
 <div style="display:none;max-height:0;overflow:hidden;opacity:0">${esc(p.preheader ?? '')}</div>
@@ -240,11 +244,11 @@ export function layout(p) {
 
 /** Plain-text twin. Every email ships both: some clients show only text,
  *  and a text part helps the spam score. */
-export function textLayout({ heading, lines, cta, footer, unsubUrl }) {
+export function textLayout({ heading, lines, cta, footer, unsubUrl, locale }) {
   const out = [heading, '='.repeat(Math.min(60, heading.length)), '', ...lines];
   if (cta) out.push('', `${cta.label}: ${cta.url}`);
-  out.push('', '--', footer ?? 'Orbital · orbital-empire.com');
-  if (unsubUrl) out.push(`Unsubscribe: ${unsubUrl}`);
+  out.push('', '--', footer ?? tr(locale, 'email.defaultFooter'));
+  if (unsubUrl) out.push(`${tr(locale, 'email.unsubscribe')}: ${unsubUrl}`);
   return out.join('\n');
 }
 
@@ -258,51 +262,52 @@ export function roomUrl(roomId) {
 // ---------------------------------------------------------------------------
 
 export async function sendWelcome(env, user) {
-  const name = user.display_name || 'Commander';
-  const heading = `Welcome to Orbital, ${name}`;
+  const L = normalizeLocale(user.locale) ?? 'en';
+  const name = user.display_name || tr(L, 'email.defaultName');
+  const heading = tr(L, 'email.welcome.heading', { name });
   const lines = [
-    'Your account is ready. Orbital is a strategy game across the whole Sol system, on a clock that keeps running while you are away.',
-    'The fastest way in: press QUICK JOIN in the lobby and we will seat you in the game closest to starting.',
-    'Each turn is an hour of real time, so check in when it suits you. A fleet you send tonight will have arrived by morning.',
+    tr(L, 'email.welcome.l1'),
+    tr(L, 'email.welcome.l2'),
+    tr(L, 'email.welcome.l3'),
   ];
+  const cta = { label: tr(L, 'email.welcome.cta'), url: SITE };
+  const footer = tr(L, 'email.welcome.footer');
   return sendEmail(env, {
     userId: user.id, to: user.email, kind: 'welcome', dedupeKey: `welcome:${user.id}`,
-    subject: 'Welcome to Orbital',
+    subject: tr(L, 'email.welcome.subject'),
     html: layout({
-      preheader: 'Your account is ready. Quick Join seats you in a game in one click.',
+      locale: L,
+      preheader: tr(L, 'email.welcome.preheader'),
       heading,
       body: lines.map(l => `<p style="margin:0 0 14px">${esc(l)}</p>`).join(''),
-      cta: { label: 'Find a game', url: SITE },
-      footer: `You are getting this because an Orbital account was created with this address. If that wasn't you, reply to this email and we will remove it.`,
+      cta,
+      footer: esc(footer),
     }),
-    text: textLayout({
-      heading, lines, cta: { label: 'Find a game', url: SITE },
-      footer: "You are getting this because an Orbital account was created with this address. If that wasn't you, reply and we will remove it.",
-    }),
+    text: textLayout({ locale: L, heading, lines, cta, footer }),
   });
 }
 
 export async function sendPasswordReset(env, user, link, tokenHash) {
-  const heading = 'Reset your password';
+  const L = normalizeLocale(user.locale) ?? 'en';
+  const heading = tr(L, 'email.reset.heading');
   const lines = [
-    `Someone (hopefully you) asked to reset the password for the Orbital account ${user.email}.`,
-    'The link below works once and expires in one hour. Using it signs you out on every other device.',
-    "If you didn't ask for this, ignore this email. Your password stays as it is.",
+    tr(L, 'email.reset.l1', { email: user.email }),
+    tr(L, 'email.reset.l2'),
+    tr(L, 'email.reset.l3'),
   ];
+  const cta = { label: tr(L, 'email.reset.cta'), url: link };
   return sendEmail(env, {
     userId: user.id, to: user.email, kind: 'reset', dedupeKey: `reset:${tokenHash}`,
-    subject: 'Reset your Orbital password',
+    subject: tr(L, 'email.reset.subject'),
     html: layout({
-      preheader: 'This link works once and expires in one hour.',
+      locale: L,
+      preheader: tr(L, 'email.reset.preheader'),
       heading,
       body: lines.map(l => `<p style="margin:0 0 14px">${esc(l)}</p>`).join(''),
-      cta: { label: 'Choose a new password', url: link },
-      footer: 'Account security email. You get these whenever a password reset is requested for your address.',
+      cta,
+      footer: esc(tr(L, 'email.reset.footer')),
     }),
-    text: textLayout({
-      heading, lines, cta: { label: 'Choose a new password', url: link },
-      footer: 'Account security email from Orbital.',
-    }),
+    text: textLayout({ locale: L, heading, lines, cta, footer: tr(L, 'email.reset.footerText') }),
   });
 }
 
@@ -314,7 +319,7 @@ export async function sendPasswordReset(env, user, link, tokenHash) {
 async function gameRecipients(env, gameId) {
   const rows = (await env.DB
     .prepare(
-      `SELECT u.id, u.email, u.display_name, u.email_games
+      `SELECT u.id, u.email, u.display_name, u.email_games, u.locale
          FROM room_members m JOIN users u ON u.id = m.user_id
         WHERE m.room_id = ?`,
     )
@@ -322,10 +327,13 @@ async function gameRecipients(env, gameId) {
   return rows.filter(u => u.email && !UNDELIVERABLE.test(u.email) && u.email_games !== 0);
 }
 
-function tickWords(ms) {
+function tickWords(ms, locale) {
   const m = Math.round((ms ?? 3600000) / 60000);
-  if (m % 60 === 0) { const h = m / 60; return h === 1 ? 'an hour' : `${h} hours`; }
-  return `${m} minutes`;
+  if (m % 60 === 0) {
+    const h = m / 60;
+    return h === 1 ? tr(locale, 'email.tick.hour') : tr(locale, 'email.tick.hours', { n: h });
+  }
+  return tr(locale, 'email.tick.minutes', { n: m });
 }
 
 /** A game you are in has started. Never throws. */
@@ -339,25 +347,28 @@ export async function sendGameStarted(env, gameId) {
       .bind(gameId).first();
     if (!g) return;
     for (const u of await gameRecipients(env, gameId)) {
+      const L = normalizeLocale(u.locale) ?? 'en';
       const unsubUrl = await unsubscribeUrl(env, u.id, 'games');
-      const heading = `${g.name} has begun`;
+      const heading = tr(L, 'email.started.heading', { name: g.name });
       const lines = [
-        `Your game ${g.name} just started with ${g.players} players.`,
-        `Each turn is ${tickWords(g.tick_interval_ms)} of real time, and the clock runs whether or not you are logged in. Pick your home world and send your first ships out before the neighbours do.`,
+        trn(L, 'email.started.l1', g.players, { name: g.name }),
+        tr(L, 'email.started.l2', { tick: tickWords(g.tick_interval_ms, L) }),
       ];
+      const cta = { label: tr(L, 'email.started.cta'), url: roomUrl(gameId) };
       await sendEmail(env, {
         userId: u.id, to: u.email, kind: 'game_started', category: 'games',
         dedupeKey: `game_started:${gameId}:${u.id}`,
-        subject: `${g.name} has begun`,
+        subject: tr(L, 'email.started.subject', { name: g.name }),
         html: layout({
-          preheader: `${g.players} empires, one Sol system. Your first turn is live.`,
+          locale: L,
+          preheader: tr(L, 'email.started.preheader', { n: g.players }),
           heading,
           body: lines.map(l => `<p style="margin:0 0 14px">${esc(l)}</p>`).join(''),
-          cta: { label: 'Open the game', url: roomUrl(gameId) },
-          footer: 'You are getting this because you joined this game on Orbital.',
+          cta,
+          footer: esc(tr(L, 'email.started.footer')),
           unsubUrl,
         }),
-        text: textLayout({ heading, lines, cta: { label: 'Open the game', url: roomUrl(gameId) }, unsubUrl }),
+        text: textLayout({ locale: L, heading, lines, cta, unsubUrl }),
       });
     }
   } catch (e) {
@@ -378,7 +389,7 @@ export async function sendLobbyFull(env, roomId) {
   try {
     if (!emailConfigured(env)) return;
     const r = await env.DB
-      .prepare(`SELECT r.name, r.max_players, r.host_id, u.email, u.display_name, u.email_games,
+      .prepare(`SELECT r.name, r.max_players, r.host_id, u.email, u.display_name, u.email_games, u.locale,
                        (SELECT COUNT(*) FROM room_members m WHERE m.room_id = r.id) AS n
                   FROM rooms r JOIN users u ON u.id = r.host_id
                  WHERE r.id = ? AND r.status = 'lobby'
@@ -395,24 +406,26 @@ export async function sendLobbyFull(env, roomId) {
       return;
     }
     const unsubUrl = await unsubscribeUrl(env, r.host_id, 'games');
-    const heading = 'Your lobby is full';
+    const L = normalizeLocale(r.locale) ?? 'en';
+    const heading = tr(L, 'email.full.heading');
     const lines = [
-      `All ${r.n} seats in ${r.name} are taken, and your players are waiting for you to start.`,
-      'Only the host can start the game. Open the lobby and press START. Once it begins, the clock runs whether or not anyone is logged in.',
+      tr(L, 'email.full.l1', { n: r.n, name: r.name }),
+      tr(L, 'email.full.l2'),
     ];
-    const cta = { label: 'Start the game', url: roomUrl(roomId) };
+    const cta = { label: tr(L, 'email.full.cta'), url: roomUrl(roomId) };
     await sendEmail(env, {
       userId: r.host_id, to: r.email, kind: 'lobby_full', category: 'games', dedupeKey,
-      subject: `${r.name} is full: start the game`,
+      subject: tr(L, 'email.full.subject', { name: r.name }),
       html: layout({
-        preheader: `All ${r.n} seats are taken. Your players are waiting on you.`,
+        locale: L,
+        preheader: tr(L, 'email.full.preheader', { n: r.n }),
         heading,
         body: lines.map(l => `<p style="margin:0 0 14px">${esc(l)}</p>`).join(''),
         cta,
-        footer: 'You are getting this because you host this lobby on Orbital.',
+        footer: esc(tr(L, 'email.full.footer')),
         unsubUrl,
       }),
-      text: textLayout({ heading, lines, cta, unsubUrl }),
+      text: textLayout({ locale: L, heading, lines, cta, unsubUrl }),
     });
   } catch (e) {
     console.error('sendLobbyFull failed', e);
@@ -451,12 +464,12 @@ export async function sweepFullLobbies(env) {
   }
 }
 
-const VICTORY_WORDS = {
-  engineering: 'finished the Dyson Sphere around the Sun',
-  domination: 'took control of most of the worlds',
-  chancellor: 'was elected Supreme Chancellor by the Senate',
-  annihilation: 'was the last empire left standing',
-};
+const VICTORY_TYPES = new Set(['engineering', 'domination', 'chancellor', 'annihilation']);
+
+/** How a game was won, as a verb phrase in the reader's language. */
+function victoryHow(locale, type) {
+  return tr(locale, VICTORY_TYPES.has(type) ? `email.over.how.${type}` : 'email.over.how.default');
+}
 
 /** A game you are in has ended. Never throws. */
 export async function sendGameOver(env, gameId) {
@@ -470,35 +483,43 @@ export async function sendGameOver(env, gameId) {
                  WHERE r.id = ? AND g.status = 'completed'`)
       .bind(gameId).first();
     if (!g) return;
-    const how = VICTORY_WORDS[g.victory_type] ?? 'won the game';
     const mine = new Map(((await env.DB
       .prepare('SELECT user_id, name FROM game_factions WHERE game_id = ? AND user_id IS NOT NULL')
       .bind(gameId).all()).results ?? []).map(f => [f.user_id, f.name]));
     for (const u of await gameRecipients(env, gameId)) {
+      const L = normalizeLocale(u.locale) ?? 'en';
+      const how = victoryHow(L, g.victory_type);
       const won = g.winner_user_id && g.winner_user_id === u.id;
-      const heading = won ? `Victory in ${g.name}` : `${g.name} is over`;
-      const winner = g.winner_name ?? 'An empire';
+      const heading = tr(L, won ? 'email.over.headingWon' : 'email.over.headingLost', { name: g.name });
+      const winner = g.winner_name ?? tr(L, 'email.over.defaultWinner');
+      const myEmpire = mine.get(u.id) ?? tr(L, 'email.over.yourEmpire');
       const lines = [
         won
-          ? `You won. ${mine.get(u.id) ?? 'Your empire'} ${how} on turn ${g.current_tick}.`
-          : `${winner} ${how} on turn ${g.current_tick}, and the game is over.`,
-        !won && mine.has(u.id) ? `You played as ${mine.get(u.id)}. The full history of the game stays in Past Games, with its recaps and the final Herald.` : 'The full history of the game stays in Past Games, with its recaps and the final Herald.',
-        'Ready for another? Quick Join seats you in the next game in one click.',
+          ? tr(L, 'email.over.won', { empire: myEmpire, how, turn: g.current_tick })
+          : tr(L, 'email.over.lost', { winner, how, turn: g.current_tick }),
+        !won && mine.has(u.id)
+          ? tr(L, 'email.over.playedAs', { empire: mine.get(u.id) })
+          : tr(L, 'email.over.history'),
+        tr(L, 'email.over.another'),
       ];
       const unsubUrl = await unsubscribeUrl(env, u.id, 'games');
+      const cta = { label: tr(L, 'email.over.cta'), url: roomUrl(gameId) };
       await sendEmail(env, {
         userId: u.id, to: u.email, kind: 'game_over', category: 'games',
         dedupeKey: `game_over:${gameId}:${u.id}`,
-        subject: won ? `You won ${g.name}` : `${g.name}: ${winner} wins`,
+        subject: won
+          ? tr(L, 'email.over.subjectWon', { name: g.name })
+          : tr(L, 'email.over.subjectLost', { name: g.name, winner }),
         html: layout({
-          preheader: won ? `${mine.get(u.id) ?? 'Your empire'} ${how}.` : `${winner} ${how}.`,
+          locale: L,
+          preheader: won ? `${myEmpire} ${how}.` : `${winner} ${how}.`,
           heading,
           body: lines.map(l => `<p style="margin:0 0 14px">${esc(l)}</p>`).join(''),
-          cta: { label: 'See how it ended', url: roomUrl(gameId) },
-          footer: 'You are getting this because you played in this game on Orbital.',
+          cta,
+          footer: esc(tr(L, 'email.over.footer')),
           unsubUrl,
         }),
-        text: textLayout({ heading, lines, cta: { label: 'See how it ended', url: roomUrl(gameId) }, unsubUrl }),
+        text: textLayout({ locale: L, heading, lines, cta, unsubUrl }),
       });
     }
   } catch (e) {
@@ -582,7 +603,7 @@ export async function maybeSendDailyHeraldEmails(env, nowMs = Date.now()) {
   const readers = new Map();
   for (const gameId of editions.keys()) {
     const rows = (await env.DB
-      .prepare(`SELECT u.id, u.email, u.display_name, u.email_herald
+      .prepare(`SELECT u.id, u.email, u.display_name, u.email_herald, u.locale
                   FROM game_factions gf JOIN users u ON u.id = gf.user_id
                  WHERE gf.game_id = ?`)
       .bind(gameId).all()).results ?? [];
@@ -598,35 +619,42 @@ export async function maybeSendDailyHeraldEmails(env, nowMs = Date.now()) {
     const eds = ids.map(id => editions.get(id)).filter(Boolean);
     if (eds.length === 0) continue;
     const lead = eds[0].ed;
+    // The frame (headings, buttons, footer) speaks the reader's language.
+    // The news inside is composed by digest.js and is English until its
+    // sentence banks are translated.
+    const L = normalizeLocale(user.locale) ?? 'en';
     const unsubUrl = await unsubscribeUrl(env, user.id, 'herald');
     const sectionsHtml = eds.map(({ game, ed }) => `
       <div style="margin:0 0 26px;padding:0 0 22px;border-bottom:1px solid ${C.border}">
-        <div style="color:${C.gold};font-size:11px;letter-spacing:.18em;text-transform:uppercase;margin:0 0 8px">${esc(game.name)} · Turn ${ed.tick}</div>
+        <div style="color:${C.gold};font-size:11px;letter-spacing:.18em;text-transform:uppercase;margin:0 0 8px">${esc(game.name)} · ${esc(tr(L, 'email.herald.turn', { n: ed.tick }))}</div>
         <div style="color:${C.ink};font-size:18px;font-weight:700;line-height:1.3;margin:0 0 10px">${heraldMarkdownToHtml(ed.title)}</div>
         <div style="color:${C.ink};font-size:14px;line-height:1.6">${heraldMarkdownToHtml(ed.description)}</div>
         ${ed.fields.map(f => `<div style="margin:14px 0 0"><div style="color:${C.teal};font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin:0 0 4px">${heraldMarkdownToHtml(f.name)}</div><div style="color:${C.dim};font-size:14px;line-height:1.6">${heraldMarkdownToHtml(f.value)}</div></div>`).join('')}
-        <div style="margin:14px 0 0"><a href="${esc(roomUrl(game.id))}" style="color:${C.teal};font-size:13px">Open ${esc(game.name)} →</a></div>
+        <div style="margin:14px 0 0"><a href="${esc(roomUrl(game.id))}" style="color:${C.teal};font-size:13px">${esc(tr(L, 'email.herald.open', { name: game.name }))}</a></div>
       </div>`).join('');
     const textLines = eds.flatMap(({ game, ed }) => [
-      `${game.name.toUpperCase()} · TURN ${ed.tick}`,
+      `${game.name} · ${tr(L, 'email.herald.turn', { n: ed.tick })}`.toUpperCase(),
       heraldMarkdownToText(ed.title), '',
       heraldMarkdownToText(ed.description),
       ...ed.fields.flatMap(f => ['', heraldMarkdownToText(f.name), heraldMarkdownToText(f.value)]),
-      '', `Open the game: ${roomUrl(game.id)}`, '', '----', '',
+      '', tr(L, 'email.herald.openText', { url: roomUrl(game.id) }), '', '----', '',
     ]);
     const subjectLead = heraldMarkdownToText(lead.title).replace(/\s+/g, ' ').trim().slice(0, 90);
     await sendEmail(env, {
       userId: user.id, to: user.email, kind: 'herald', category: 'herald',
       dedupeKey: `herald:${user.id}:${day}`,
-      subject: `The Orbital Herald: ${subjectLead}`,
+      subject: tr(L, 'email.herald.subject', { lead: subjectLead }),
       html: layout({
-        preheader: eds.length > 1 ? `Today's news from your ${eds.length} games.` : `Today's news from ${eds[0].game.name}.`,
-        heading: 'The Orbital Herald',
+        locale: L,
+        preheader: eds.length > 1
+          ? tr(L, 'email.herald.preheaderMany', { n: eds.length })
+          : tr(L, 'email.herald.preheaderOne', { name: eds[0].game.name }),
+        heading: tr(L, 'email.herald.heading'),
         body: sectionsHtml,
-        footer: 'The daily Herald for the games you are playing on Orbital. One email a day, only when something happened.',
+        footer: esc(tr(L, 'email.herald.footer')),
         unsubUrl,
       }),
-      text: textLayout({ heading: 'The Orbital Herald', lines: textLines, unsubUrl }),
+      text: textLayout({ locale: L, heading: tr(L, 'email.herald.heading'), lines: textLines, unsubUrl }),
     });
   }
 }

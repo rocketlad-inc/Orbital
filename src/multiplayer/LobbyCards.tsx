@@ -10,6 +10,8 @@
 
 import React from 'react';
 import { FlagChip } from '../components/FactionEmblem';
+import { t, tn, relativeTime } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 
 export type Phase = 'open' | 'full' | 'live' | 'finished';
 
@@ -53,26 +55,16 @@ export interface GameSummary {
 
 // ---------- words ----------
 
+/** "2 days ago", "yesterday": the browser knows the words in every language. */
 export function ago(ms: number | null | undefined, now = Date.now()): string {
   if (!ms) return '';
-  const s = Math.max(0, Math.round((now - ms) / 1000));
-  if (s < 60) return 'just now';
-  const m = Math.round(s / 60);
-  if (m < 60) return `${m} min ago`;
-  const h = Math.round(m / 60);
-  if (h < 24) return `${h} h ago`;
-  const d = Math.round(h / 24);
-  return d === 1 ? 'yesterday' : `${d} days ago`;
+  return relativeTime(ms - now);
 }
 
 export function until(ms: number | null | undefined, now = Date.now()): string {
   if (!ms) return '';
-  const s = Math.round((ms - now) / 1000);
-  if (s <= 30) return 'any moment';
-  const m = Math.round(s / 60);
-  if (m < 60) return `in ${m} min`;
-  const h = Math.floor(m / 60);
-  return `in ${h} h ${m % 60} min`;
+  if ((ms - now) / 1000 <= 30) return t('card.anyMoment');
+  return relativeTime(ms - now);
 }
 
 /** "7.5-minute turns", "1-hour turns". */
@@ -84,20 +76,23 @@ export const DEFAULT_TICK_INTERVAL_MS = 3_600_000;
 export function turnSpeed(ms: number | null | undefined): string | null {
   if (!ms || ms <= 0) return null;
   const s = ms / 1000;
-  if (s < 60) return `${Math.round(s)}-second turns`;
+  const tenth = (x: number) => Math.round(x * 10) / 10;
+  if (s < 60) return tn('card.turns.sec', Math.round(s));
   const m = s / 60;
-  if (m < 60) return `${Number.isInteger(m) ? m : m.toFixed(1)}-minute turns`;
-  const h = m / 60;
-  return h === 1 ? '1-hour turns' : `${Number.isInteger(h) ? h : h.toFixed(1)}-hour turns`;
+  if (m < 60) return tn('card.turns.min', tenth(m));
+  return tn('card.turns.hour', tenth(m / 60));
 }
 
-const worldsWord = (n: number) => `${n} ${n === 1 ? 'world' : 'worlds'}`;
+const worldsWord = (n: number) => tn('card.worlds', n);
 
-const VICTORY: Record<string, string> = {
-  engineering: 'finished the Dyson Sphere',
-  domination: 'held most of the worlds',
-  chancellor: 'was elected Chancellor',
-  annihilation: 'was the last empire standing',
+const victoryText = (type: string | null | undefined): string | null => {
+  switch (type) {
+    case 'engineering': return t('card.victory.engineering');
+    case 'domination': return t('card.victory.domination');
+    case 'chancellor': return t('card.victory.chancellor');
+    case 'annihilation': return t('card.victory.annihilation');
+    default: return null;
+  }
 };
 
 export function initials(name: string): string {
@@ -120,13 +115,14 @@ function hueOf(name: string): number {
 // ---------- pieces ----------
 
 export function StatusChip({ g }: { g: GameSummary }) {
+  useI18n();
   const label = g.phase === 'open'
-    ? `Open · ${g.open_seats} ${g.open_seats === 1 ? 'seat' : 'seats'} left`
+    ? tn('card.status.open', g.open_seats)
     : g.phase === 'full'
-      ? 'Full · waiting for host'
+      ? t('card.status.full')
       : g.phase === 'live'
-        ? `Live · Turn ${g.current_tick ?? 0}`
-        : 'Finished';
+        ? t('card.status.live', { n: g.current_tick ?? 0 })
+        : t('card.status.finished');
   return (
     <span className={`lx-chip lx-chip--${g.phase}`}>
       <span className="lx-chip__dot" aria-hidden />
@@ -136,6 +132,7 @@ export function StatusChip({ g }: { g: GameSummary }) {
 }
 
 export function PlayerStack({ g, max = 10 }: { g: GameSummary; max?: number }) {
+  useI18n();
   const shown = g.players.slice(0, max);
   const extra = g.players.length - shown.length;
   const empty = g.phase === 'open' || g.phase === 'live' ? Math.min(g.open_seats, Math.max(0, max - shown.length)) : 0;
@@ -146,7 +143,7 @@ export function PlayerStack({ g, max = 10 }: { g: GameSummary; max?: number }) {
           <span
             key={i}
             className={`lx-avatar ${p.out ? 'is-out' : ''} ${p.is_you ? 'is-you' : ''}`}
-            title={`${p.name}${p.is_host ? ' (host)' : ''}${p.is_you ? ' (you)' : ''}${p.out ? ' (out)' : ''}${p.worlds != null && g.phase !== 'open' && g.phase !== 'full' ? ` · ${worldsWord(p.worlds)}` : ''}`}
+            title={`${p.name}${p.is_host ? ` (${t('card.host')})` : ''}${p.is_you ? ` (${t('card.youSuffix')})` : ''}${p.out ? ` (${t('card.out')})` : ''}${p.worlds != null && g.phase !== 'open' && g.phase !== 'full' ? ` · ${worldsWord(p.worlds)}` : ''}`}
           >
             {p.color ? (
               <FlagChip color={p.color} emblem={p.emblem ?? undefined} fallbackKey={p.name} size={30} className="lx-avatar__flag" />
@@ -155,18 +152,18 @@ export function PlayerStack({ g, max = 10 }: { g: GameSummary; max?: number }) {
                 {initials(p.name)}
               </span>
             )}
-            {p.is_host && <span className="lx-avatar__crown" aria-label="host">★</span>}
+            {p.is_host && <span className="lx-avatar__crown" aria-label={t('card.host')}>★</span>}
           </span>
         ))}
         {extra > 0 && <span className="lx-avatar lx-avatar--more">+{extra}</span>}
         {Array.from({ length: empty }, (_, i) => (
-          <span key={`e${i}`} className="lx-avatar lx-avatar--empty" title="Open seat" />
+          <span key={`e${i}`} className="lx-avatar lx-avatar--empty" title={t('card.openSeat')} />
         ))}
       </div>
       <div className="lx-players__caption">
-        {g.member_count} of {g.max_players} players
+        {t('card.players', { n: g.member_count, max: g.max_players })}
         {g.phase === 'open' || (g.phase === 'live' && g.open_seats > 0)
-          ? <> · <b>{g.open_seats} open</b></> : null}
+          ? <> · <b>{t('card.openCount', { n: g.open_seats })}</b></> : null}
       </div>
     </div>
   );
@@ -189,31 +186,35 @@ interface CardProps {
 }
 
 export function GameCard({ g, now, variant, busy, onPrimary, menu, pinned, myUserId, autoload }: CardProps) {
+  useI18n();
   const speed = turnSpeed(g.tick_interval_ms);
   const iHost = !!myUserId && g.host_id === myUserId;
 
   const sub = g.phase === 'live'
-    ? `Started ${ago(g.started_at, now)}${g.next_tick_at ? ` · next turn ${until(g.next_tick_at, now)}` : ''}`
+    ? `${t('card.started', { when: ago(g.started_at, now) })}${g.next_tick_at ? ` · ${t('card.nextTurn', { when: until(g.next_tick_at, now) })}` : ''}`
     : g.phase === 'finished'
-      ? `Ended ${ago(g.completed_at, now)} on turn ${g.current_tick ?? 0}`
-      : `Hosted by ${iHost ? 'you' : g.host_name} · opened ${ago(g.created_at, now)}`;
+      ? t('card.ended', { when: ago(g.completed_at, now), n: g.current_tick ?? 0 })
+      : t('card.hosted', { host: iHost ? t('card.hostedYou') : g.host_name, when: ago(g.created_at, now) });
 
   let cta: { label: string; kind: 'primary' | 'secondary' | 'disabled' } ;
   if (variant === 'mine') {
-    cta = g.phase === 'live' ? { label: 'Resume', kind: 'primary' }
-      : g.phase === 'finished' ? { label: 'View', kind: 'secondary' }
-      : iHost && g.phase === 'full' ? { label: 'Start the game', kind: 'primary' }
-      : { label: 'Open lobby', kind: 'secondary' };
+    cta = g.phase === 'live' ? { label: t('card.cta.resume'), kind: 'primary' }
+      : g.phase === 'finished' ? { label: t('card.cta.view'), kind: 'secondary' }
+      : iHost && g.phase === 'full' ? { label: t('card.cta.startGame'), kind: 'primary' }
+      : { label: t('card.cta.openLobby'), kind: 'secondary' };
   } else if (g.is_member) {
-    cta = { label: g.phase === 'live' ? 'Resume' : 'Open', kind: 'secondary' };
+    cta = { label: g.phase === 'live' ? t('card.cta.resume') : t('card.cta.open'), kind: 'secondary' };
   } else if (g.joinable) {
     // A private game is only joinable with a password the host shared, so
     // it never wears the gold Join button a stranger can't actually use.
     cta = g.has_password
-      ? { label: 'Have the password?', kind: 'secondary' }
-      : { label: g.phase === 'live' ? 'Join in progress' : 'Join game', kind: 'primary' };
+      ? { label: t('card.cta.havePw'), kind: 'secondary' }
+      : { label: g.phase === 'live' ? t('card.cta.joinProgress') : t('card.cta.join'), kind: 'primary' };
   } else {
-    cta = { label: g.phase === 'full' ? 'Waiting for host' : g.phase === 'finished' ? 'Finished' : 'Full', kind: 'disabled' };
+    cta = {
+      label: g.phase === 'full' ? t('card.cta.waitingHost') : g.phase === 'finished' ? t('card.status.finished') : t('card.cta.noSeats'),
+      kind: 'disabled',
+    };
   }
 
   return (
@@ -221,9 +222,9 @@ export function GameCard({ g, now, variant, busy, onPrimary, menu, pinned, myUse
       <div className="lx-card__top">
         <StatusChip g={g} />
         <div className="lx-card__tags">
-          {g.has_password && <span className="lx-tag" title="Needs a password to join">Private</span>}
-          {g.quick_join && g.phase !== 'finished' && <span className="lx-tag lx-tag--quick" title="Starts itself when the last seat fills">Quick</span>}
-          {pinned && <span className="lx-tag lx-tag--pin" title="Opens automatically when you launch Orbital">Auto-loads</span>}
+          {g.has_password && <span className="lx-tag" title={t('card.tag.privateTitle')}>{t('card.tag.private')}</span>}
+          {g.quick_join && g.phase !== 'finished' && <span className="lx-tag lx-tag--quick" title={t('card.tag.quickTitle')}>{t('card.tag.quick')}</span>}
+          {pinned && <span className="lx-tag lx-tag--pin" title={t('card.tag.pinTitle')}>{t('card.tag.pin')}</span>}
           {menu}
         </div>
       </div>
@@ -234,31 +235,31 @@ export function GameCard({ g, now, variant, busy, onPrimary, menu, pinned, myUse
       <PlayerStack g={g} />
 
       <div className="lx-card__facts">
-        {speed && <span className="lx-fact"><span className="lx-fact__k">Speed</span>{speed}</span>}
+        {speed && <span className="lx-fact"><span className="lx-fact__k">{t('card.fact.speed')}</span>{speed}</span>}
         {g.me && (g.phase === 'live' || g.phase === 'finished') && (
           <span className="lx-fact">
-            <span className="lx-fact__k">You</span>
+            <span className="lx-fact__k">{t('card.fact.you')}</span>
             <FlagChip color={g.me.color ?? '#888'} emblem={g.me.emblem ?? undefined} fallbackKey={g.me.name} size={16} />
-            {g.me.out ? `${g.me.name} · out` : `${g.me.name}${g.me.rank ? ` · #${g.me.rank}` : ''} · ${worldsWord(g.me.worlds)}`}
+            {g.me.out ? `${g.me.name} · ${t('card.out')}` : `${g.me.name}${g.me.rank ? ` · #${g.me.rank}` : ''} · ${worldsWord(g.me.worlds)}`}
           </span>
         )}
         {/* Who is ahead, unless it is you (your own line already says #1). */}
         {g.phase === 'live' && g.leader && g.me?.rank !== 1 && (
           <span className="lx-fact">
-            <span className="lx-fact__k">Leading</span>
+            <span className="lx-fact__k">{t('card.fact.leading')}</span>
             <FlagChip color={g.leader.color ?? '#888'} emblem={g.leader.emblem ?? undefined} fallbackKey={g.leader.name} size={16} />
             {g.leader.name} · {worldsWord(g.leader.worlds)}
           </span>
         )}
         {g.phase === 'finished' && g.winner && (
           <span className="lx-fact">
-            <span className="lx-fact__k">Winner</span>
+            <span className="lx-fact__k">{t('card.fact.winner')}</span>
             <FlagChip color={g.winner.color ?? '#888'} emblem={g.winner.emblem ?? undefined} fallbackKey={g.winner.name} size={16} />
-            {g.winner.name}{g.winner.victory_type && VICTORY[g.winner.victory_type] ? `, ${VICTORY[g.winner.victory_type]}` : ''}
+            {g.winner.name}{victoryText(g.winner.victory_type) ? `, ${victoryText(g.winner.victory_type)}` : ''}
           </span>
         )}
         {variant === 'mine' && iHost && g.phase === 'full' && (
-          <span className="lx-fact lx-fact--nudge">Every seat is taken. Only you can start it.</span>
+          <span className="lx-fact lx-fact--nudge">{t('card.nudge')}</span>
         )}
       </div>
 
@@ -267,8 +268,8 @@ export function GameCard({ g, now, variant, busy, onPrimary, menu, pinned, myUse
           <input type="checkbox" checked={autoload.on} disabled={autoload.busy} onChange={autoload.onToggle} />
           <span className="lx-switch__track" aria-hidden><span className="lx-switch__thumb" /></span>
           <span className="lx-switch__text">
-            Auto-load on launch
-            <span className="lx-switch__hint">{autoload.on ? 'Opens straight into this game' : 'Opens on this page instead'}</span>
+            {t('card.autoload')}
+            <span className="lx-switch__hint">{autoload.on ? t('card.autoloadOn') : t('card.autoloadOff')}</span>
           </span>
         </label>
       )}
@@ -276,7 +277,7 @@ export function GameCard({ g, now, variant, busy, onPrimary, menu, pinned, myUse
       <div className="lx-card__foot">
         {cta.kind === 'disabled' ? (
           // Nothing to press: say why, quietly, instead of a dead button.
-          <span className="lx-card__none">{cta.label === 'Full' ? 'No open seats' : cta.label}</span>
+          <span className="lx-card__none">{cta.label}</span>
         ) : (
           <button
             type="button"
@@ -284,7 +285,7 @@ export function GameCard({ g, now, variant, busy, onPrimary, menu, pinned, myUse
             onClick={onPrimary}
             disabled={busy}
           >
-            {busy ? (variant === 'mine' ? 'Opening…' : 'Joining…') : cta.label}
+            {busy ? (variant === 'mine' ? t('card.cta.opening') : t('card.cta.joining')) : cta.label}
           </button>
         )}
       </div>

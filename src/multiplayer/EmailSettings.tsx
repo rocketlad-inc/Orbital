@@ -9,6 +9,8 @@
 
 import React, { useEffect, useState } from 'react';
 import { apiFetch } from './api';
+import { t } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 
 type Prefs = {
   address: string | null;
@@ -19,6 +21,7 @@ type Prefs = {
 };
 
 export function EmailSettings() {
+  useI18n();
   const [prefs, setPrefs] = useState<Prefs | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -28,7 +31,7 @@ export function EmailSettings() {
     apiFetch<Prefs>('/api/users/me/email-prefs').then(res => {
       if (!live) return;
       if (res.ok) setPrefs(res.data);
-      else setError('Could not load your email settings.');
+      else setError(t('emailSettings.loadFailed'));
     });
     return () => { live = false; };
   }, []);
@@ -43,19 +46,19 @@ export function EmailSettings() {
     });
     setBusy(null);
     if (res.ok) setPrefs(res.data);
-    else setError('Could not save. Try again.');
+    else setError(t('emailSettings.saveFailed'));
   }
 
-  if (!prefs) return <div className="pp-sub">{error ?? 'Loading…'}</div>;
+  if (!prefs) return <div className="pp-sub">{error ?? t('emailSettings.loading')}</div>;
 
   return (
     <div className="em-settings">
       {prefs.address ? (
         <div className="pp-sub">
-          Sent to <b className="em-settings__addr">{prefs.address}</b>. Password resets always reach you.
+          {t('emailSettings.sentTo')}<b className="em-settings__addr">{prefs.address}</b>{t('emailSettings.resetsAlways')}
         </div>
       ) : (
-        <div className="pp-sub">This account has no email address that can receive mail.</div>
+        <div className="pp-sub">{t('emailSettings.noAddress')}</div>
       )}
       {(['games', 'herald'] as const).map(key => (
         <label key={key} className="em-settings__row">
@@ -65,7 +68,7 @@ export function EmailSettings() {
             disabled={busy === key || !prefs.address}
             onChange={() => flip(key)}
           />
-          <span>{prefs.categories[key]}</span>
+          <span>{key === 'games' ? t('emailSettings.games') : t('emailSettings.herald')}</span>
         </label>
       ))}
       {error && <div className="pp-error">{error}</div>}
