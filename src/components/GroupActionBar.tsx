@@ -37,19 +37,16 @@ import { ChainOrderEditor } from './ChainOrderEditor';
 import { useBulkChain } from '../hooks/useBulkChain';
 import { useIsMobile } from '../hooks/useIsMobile';
 import type { ChainStep } from '../physics/chainPlanner';
+import { t, tn } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 import './GroupActionBar.css';
 
 type Stance = 'attack' | 'defensive' | 'hold';
 
-const STANCES: Array<{ id: Stance; label: string; title: string }> = [
-  { id: 'attack',    label: 'ATTACK',    title: 'Attack on sight' },
-  { id: 'defensive', label: 'DEFENSIVE', title: 'Return fire only' },
-  { id: 'hold',      label: 'HOLD',      title: 'Never fire' },
-];
-
-const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+const STANCE_IDS: Stance[] = ['attack', 'defensive', 'hold'];
 
 export const GroupActionBar: React.FC = () => {
+  useI18n();
   const {
     gameState, uiState, clearShipSelection, setShipSelection,
     setSelectMode, setGroupListOpen,
@@ -143,8 +140,8 @@ export const GroupActionBar: React.FC = () => {
   }, [mine, ids, gameState.ships]);
   const classLabel = useMemo(() => {
     const classes = Array.from(new Set(mine.map(s => s.class)));
-    if (classes.length !== 1) return 'SAME CLASSES';
-    return `ALL ${getShipClass(classes[0] as ShipClassName).displayName.toUpperCase()}S`;
+    if (classes.length !== 1) return t('grp.sameClasses');
+    return t('grp.allOfClass', { name: getShipClass(classes[0] as ShipClassName).displayName.toUpperCase() });
   }, [mine]);
 
   // Destination list for the picker — every body, alphabetical, matching
@@ -163,12 +160,12 @@ export const GroupActionBar: React.FC = () => {
     const targets = movable.map(s => s.id);
     const flying = underWay.map(s => s.id);
     if (targets.length === 0 && flying.length === 0) {
-      setNotice('No ship in the group can start a new burn');
+      setNotice(t('grp.noBurn'));
       return;
     }
     const res = targets.length > 0
       ? bulkTransfer(targets, bodyId, (msg, soFar, total) => {
-          setNotice(`${soFar} of ${total} rejected — ${msg}`);
+          setNotice(t('grp.rejected', { soFar, total, msg }));
         })
       : { issued: 0, unplannable: 0 };
     // A one-leg chain is exactly a SEND, and the chain path is the one
@@ -179,13 +176,13 @@ export const GroupActionBar: React.FC = () => {
     const issued = res.issued + after.issued;
     const unplannable = res.unplannable + after.unplannable;
     if (issued === 0) {
-      setNotice('Could not plan a burn for any ship in the group');
+      setNotice(t('grp.noPlan'));
     } else {
       setNotice(
-        `${plural(issued, 'ship')} bound for ${body?.name ?? 'target'}`
-        + (after.issued > 0 && res.issued > 0 ? ` · ${after.issued} after their current leg` : '')
-        + (after.issued > 0 && res.issued === 0 ? ' after their current leg' : '')
-        + (unplannable > 0 ? ` · ${unplannable} couldn't` : ''),
+        t('grp.bound', { ships: tn('grp.ships', issued), target: body?.name ?? t('grp.target') })
+        + (after.issued > 0 && res.issued > 0 ? ` · ${t('grp.afterLegN', { n: after.issued })}` : '')
+        + (after.issued > 0 && res.issued === 0 ? ` ${t('grp.afterLeg')}` : '')
+        + (unplannable > 0 ? ` · ${t('grp.couldnt', { n: unplannable })}` : ''),
       );
       // Reset the picker so the same destination can't be re-fired by a
       // stray second click on SEND after the group has already launched.
@@ -297,7 +294,7 @@ export const GroupActionBar: React.FC = () => {
       // The server would say this too, but only after a round trip and
       // in its own words. Saying it here keeps the reason next to the
       // button that could not act.
-      setNotice('No captain among these ships — a fleet needs one to fly the flag');
+      setNotice(t('grp.noCaptain'));
       return;
     }
     const parent = gameState.bodies.find(b => b.id === flagCandidate.orbit?.parentBodyId);
@@ -310,8 +307,8 @@ export const GroupActionBar: React.FC = () => {
       }),
     });
     setNotice(res.ok
-      ? `Fleet formed — ${mine.length} ships under ${flagCandidate.captainName ?? flagCandidate.name}`
-      : (res.error?.message ?? 'Could not form a fleet'));
+      ? t('grp.fleetFormed', { n: mine.length, name: flagCandidate.captainName ?? flagCandidate.name })
+      : (res.error?.message ?? t('grp.fleetFail')));
   };
 
   const setStance = (stance: Stance) => {
@@ -320,7 +317,7 @@ export const GroupActionBar: React.FC = () => {
     if (targets.length === 0) return;
     mpActions.setShipOrders({ shipIds: targets, stance }).then(res => {
       setNotice(res.ok
-        ? `${plural(targets.length, 'ship')} set to ${stance}`
+        ? t('grp.stanceSet', { ships: tn('grp.ships', targets.length), stance: t(`grp.stanceWord.${stance}` as const) })
         : humanizeMpError(res.code, res.error, 'orders'));
     });
   };
@@ -335,8 +332,8 @@ export const GroupActionBar: React.FC = () => {
     mpActions.setShipOrders({ shipIds: targets, targetPriority: priority }).then(res => {
       setNotice(res.ok
         ? (priority === null
-          ? `${plural(targets.length, 'ship')} back to auto targeting`
-          : `Priority set on ${plural(targets.length, 'ship')}`)
+          ? t('grp.targetAuto', { ships: tn('grp.ships', targets.length) })
+          : t('grp.prioritySet', { ships: tn('grp.ships', targets.length) }))
         : humanizeMpError(res.code, res.error, 'orders'));
     });
   };
@@ -346,15 +343,15 @@ export const GroupActionBar: React.FC = () => {
     if (targets.length === 0 || chain.length === 0) return;
     const res = bulkChain(targets, chain, (msg) => setNotice(msg));
     if (res.issued === 0) {
-      setNotice('Could not plan that route for any ship in the group');
+      setNotice(t('grp.noRoute'));
       return;
     }
     setNotice(
-      `${plural(res.issued, 'ship')} flying a ${chain.length}-leg chain`
-      + (res.unplannable > 0 ? ` · ${res.unplannable} couldn't` : '')
+      t('grp.flyingChain', { ships: tn('grp.ships', res.issued), n: chain.length })
+      + (res.unplannable > 0 ? ` · ${t('grp.couldnt', { n: res.unplannable })}` : '')
       // Truncation is called out because the ship still LAUNCHES -- it
       // just stops short, somewhere nobody chose.
-      + (res.truncated > 0 ? ` · ${res.truncated} cut short` : ''),
+      + (res.truncated > 0 ? ` · ${t('grp.cutShort', { n: res.truncated })}` : ''),
     );
     setChain([]);
     setShowChain(false);
@@ -364,14 +361,14 @@ export const GroupActionBar: React.FC = () => {
     if (sameClass.length === 0) return;
     ownChangeRef.current = true;
     setShipSelection([...ids, ...sameClass.map(s => s.id)]);
-    setNotice(`Added ${plural(sameClass.length, 'ship')}`);
+    setNotice(t('grp.added', { ships: tn('grp.ships', sameClass.length) }));
   };
 
   const takeShipsThere = () => {
     if (shipsThere.length === 0) return;
     ownChangeRef.current = true;
     setShipSelection([...ids, ...shipsThere.map(s => s.id)]);
-    setNotice(`Added ${plural(shipsThere.length, 'ship')} at ${promptBody?.name ?? 'that world'}`);
+    setNotice(t('grp.addedAt', { ships: tn('grp.ships', shipsThere.length), body: promptBody?.name ?? t('grp.thatWorld') }));
     setWorldPrompt(null);
   };
 
@@ -381,56 +378,56 @@ export const GroupActionBar: React.FC = () => {
     setWorldPrompt(null);
   };
 
-  const stanceButtons = STANCES.map(s => (
+  const stanceButtons = STANCE_IDS.map(s => (
     <button
-      key={s.id}
+      key={s}
       className="group-bar__btn"
-      title={s.title}
-      onClick={() => setStance(s.id)}
-    >{s.label}</button>
+      title={t(`grp.stance.${s}.title` as const)}
+      onClick={() => setStance(s)}
+    >{t(`grp.stance.${s}.label` as const)}</button>
   ));
   const targetingButton = gunners.length > 0 && (
     <button
       className={`group-bar__btn${showTargeting ? ' group-bar__btn--active' : ''}`}
       title={gunners.length === ships.length
-        ? 'Rank which target categories the group engages first'
-        : `Rank targets for the ${plural(gunners.length, 'armed hull')} — the rest never fire`}
+        ? t('grp.targetingTip')
+        : t('grp.targetingTipSome', { hulls: tn('grp.armedHulls', gunners.length) })}
       onClick={() => setShowTargeting(v => !v)}
-    >TARGETING</button>
+    >{t('grp.targeting')}</button>
   );
   const chainButton = (
     <button
       className={`group-bar__btn${showChain ? ' group-bar__btn--active' : ''}`}
-      title="Send the group through a multi-leg route, with holds between legs"
+      title={t('grp.chainTip')}
       onClick={() => setShowChain(v => !v)}
-    >CHAIN ORDERS</button>
+    >{t('grp.chain')}</button>
   );
   const formFleetButton = canFormFleet && (
     <button
       className="group-bar__btn"
       onClick={() => { void formFleet(); }}
       title={flagCandidate
-        ? `Bind these ${mine.length} ships into one fleet under ${flagCandidate.captainName ?? flagCandidate.name}. One order set, one commander.`
-        : 'These ships have no captain between them — a fleet needs one to fly the flag'}
-    >FORM FLEET</button>
+        ? t('grp.formFleetTip', { n: mine.length, name: flagCandidate.captainName ?? flagCandidate.name })
+        : t('grp.formFleetNoCaptain')}
+    >{t('grp.formFleet')}</button>
   );
   const sameClassButton = sameClass.length > 0 && (
     <button
       className="group-bar__btn"
       onClick={addSameClass}
-      title={`Add the ${plural(sameClass.length, 'other ship')} of yours of the same class`}
+      title={tn('grp.addSameTip', sameClass.length)}
     >+ {classLabel}</button>
   );
   const destinationPicker = (
     <div className="group-bar__row">
-      <span className="group-bar__label">Transfer to</span>
+      <span className="group-bar__label">{t('grp.transferTo')}</span>
       <select
         className="group-bar__select"
         value={dest}
         onChange={(e) => setDest(e.target.value)}
-        title="Send the whole group to one world"
+        title={t('grp.sendAllTip')}
       >
-        <option value="">Destination…</option>
+        <option value="">{t('grp.destination')}</option>
         {destinations.map(d => (
           <option key={d.id} value={d.id}>{d.label}</option>
         ))}
@@ -440,12 +437,12 @@ export const GroupActionBar: React.FC = () => {
         disabled={!dest || routable.length === 0}
         onClick={() => { if (dest) groupMove(dest); }}
         title={routable.length === 0
-          ? 'No ship in the group can take an order yet'
+          ? t('grp.noOrderYet')
           : underWay.length > 0
-            ? `Send ${plural(routable.length, 'ship')} (${underWay.length} after their current leg)`
-            : `Send ${plural(routable.length, 'ship')}`}
+            ? t('grp.sendTipAfter', { ships: tn('grp.ships', routable.length), n: underWay.length })
+            : t('grp.sendTip', { ships: tn('grp.ships', routable.length) })}
       >
-        SEND {routable.length}
+        {t('grp.send', { n: routable.length })}
       </button>
     </div>
   );
@@ -460,7 +457,7 @@ export const GroupActionBar: React.FC = () => {
             onChange={setTargeting}
             note={sharedPriority
               ? undefined
-              : `Applies to ${plural(gunners.length, 'armed hull')} on drop.`}
+              : t('grp.appliesTo', { hulls: tn('grp.armedHulls', gunners.length) })}
           />
         </div>
       )}
@@ -475,20 +472,20 @@ export const GroupActionBar: React.FC = () => {
             onChange={setChain}
             bodies={gameState.bodies}
             note={routable.length === 0
-              ? 'No ship in the group can take an order yet.'
+              ? t('grp.noOrderYetDot')
               : underWay.length > 0
-                ? `Each ship flies this from its own orbit; the ${underWay.length} under way start once they land.`
-                : `Each of the ${plural(routable.length, 'ship')} flies this from its own orbit.`}
+                ? t('grp.chainNoteUnderWay', { n: underWay.length })
+                : t('grp.chainNote', { ships: tn('grp.ships', routable.length) })}
           />
           <button
             className="group-bar__btn group-bar__btn--primary"
             disabled={chain.length === 0 || routable.length === 0}
             onClick={applyChain}
             title={chain.length === 0
-              ? 'Add at least one leg'
-              : `Launch ${plural(routable.length, 'ship')} on a ${chain.length}-leg route`}
+              ? t('grp.addLeg')
+              : t('grp.launchTip', { ships: tn('grp.ships', routable.length), n: chain.length })}
           >
-            LAUNCH {routable.length} · {chain.length} LEG{chain.length === 1 ? '' : 'S'}
+            {tn('grp.launch', chain.length, { ships: routable.length })}
           </button>
         </div>
       )}
@@ -499,29 +496,29 @@ export const GroupActionBar: React.FC = () => {
   if (touch) {
     const hint = notice
       ?? (ships.length === 0
-        ? 'Tap your ships to select · drag to box · two fingers to pan'
-        : 'Tap ships to add or remove · tap a world for orders · drag to box');
+        ? t('grp.hintTouchEmpty')
+        : t('grp.hintTouch'));
     return (
-      <div className="group-bar group-bar--touch" role="region" aria-label="Selection">
+      <div className="group-bar group-bar--touch" role="region" aria-label={t('grp.selection')}>
         <div className="group-bar__row group-bar__row--head">
           <span className="group-bar__count">
-            {ships.length === 0 ? 'SELECT SHIPS' : `${ships.length} SELECTED`}
+            {ships.length === 0 ? t('grp.selectShips') : t('grp.selectedCaps', { n: ships.length })}
             {ships.length > 0 && movable.length !== ships.length && (
-              <span className="group-bar__sub">{ships.length - movable.length} under way</span>
+              <span className="group-bar__sub">{t('grp.underWay', { n: ships.length - movable.length })}</span>
             )}
           </span>
           {ships.length >= 2 && (
             <button
               className="group-bar__btn"
               onClick={() => setGroupListOpen(true)}
-              title="List the ships in the group"
-            >LIST</button>
+              title={t('grp.listTip')}
+            >{t('grp.list')}</button>
           )}
           <button
             className="group-bar__btn group-bar__btn--primary"
             onClick={done}
-            title="Leave selection mode and clear the group"
-          >DONE</button>
+            title={t('grp.doneTip')}
+          >{t('grp.done')}</button>
         </div>
 
         {/* A tapped world, waiting on a choice. Never acts on its own. */}
@@ -530,21 +527,21 @@ export const GroupActionBar: React.FC = () => {
             <span className="group-bar__label">{promptBody.name}</span>
             {shipsThere.length > 0 && (
               <button className="group-bar__btn" onClick={takeShipsThere}>
-                + {plural(shipsThere.length, 'SHIP')} HERE
+                {t('grp.plusHere', { ships: tn('grp.shipsCaps', shipsThere.length) })}
               </button>
             )}
             {routable.length > 0 && (
               <button className="group-bar__btn group-bar__btn--primary" onClick={sendThere}>
-                SEND {routable.length} HERE
+                {t('grp.sendHere', { n: routable.length })}
               </button>
             )}
             {shipsThere.length === 0 && routable.length === 0 && (
-              <span className="group-bar__sub">Nothing to do here</span>
+              <span className="group-bar__sub">{t('grp.nothingHere')}</span>
             )}
             <button
               className="group-bar__btn group-bar__btn--ghost"
               onClick={() => setWorldPrompt(null)}
-              aria-label="Dismiss"
+              aria-label={t('grp.dismiss')}
             >✕</button>
           </div>
         )}
@@ -555,14 +552,14 @@ export const GroupActionBar: React.FC = () => {
               className={`group-bar__btn${showSend ? ' group-bar__btn--active' : ''}`}
               onClick={() => setShowSend(v => !v)}
               disabled={routable.length === 0}
-            >SEND…</button>
+            >{t('grp.sendMore')}</button>
             {formFleetButton}
             {sameClassButton}
             {mpActions && (
               <button
                 className={`group-bar__btn${showOrders ? ' group-bar__btn--active' : ''}`}
                 onClick={() => setShowOrders(v => !v)}
-              >ORDERS…</button>
+              >{t('grp.ordersMore')}</button>
             )}
           </div>
         )}
@@ -582,12 +579,12 @@ export const GroupActionBar: React.FC = () => {
 
   // ---- desktop ------------------------------------------------------------
   return (
-    <div className="group-bar" role="region" aria-label="Group actions">
+    <div className="group-bar" role="region" aria-label={t('grp.groupActions')}>
       <div className="group-bar__row">
         <span className="group-bar__count">
-          {ships.length} selected
+          {t('grp.selected', { n: ships.length })}
           {movable.length !== ships.length && (
-            <span className="group-bar__sub"> · {ships.length - movable.length} already burning</span>
+            <span className="group-bar__sub"> · {t('grp.alreadyBurning', { n: ships.length - movable.length })}</span>
           )}
         </span>
         {mpActions && (
@@ -602,8 +599,8 @@ export const GroupActionBar: React.FC = () => {
         <button
           className="group-bar__btn group-bar__btn--ghost"
           onClick={done}
-          title="Clear the group (Esc)"
-        >CLEAR</button>
+          title={t('grp.clearTip')}
+        >{t('grp.clear')}</button>
       </div>
 
       {/* Pick-from-list transfer, for when the destination is off-screen
@@ -613,7 +610,7 @@ export const GroupActionBar: React.FC = () => {
       {flyouts}
 
       <div className="group-bar__hint">
-        {notice ?? 'Drag a box or shift-click to add · shift-click a world to send them there'}
+        {notice ?? t('grp.hintDesktop')}
       </div>
     </div>
   );
