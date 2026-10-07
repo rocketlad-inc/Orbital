@@ -47,6 +47,8 @@ import { damageProfile } from '../game/shipParts';
 import { deriveSecondary } from '../game/colorUtils';
 import { ShipIconClass, ShipIconVariant } from '../components/ShipIcons';
 import { Body } from '../types';
+import { t as tr, tn as trn, tk } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 
 // Lazy, because this is what pulls three.js in. Loaded eagerly it put
 // 140kB gzipped onto the main bundle for every player, to render a view
@@ -1053,6 +1055,7 @@ function makeStars(seed: string, w: number, h: number) {
 }
 
 export function BattleRecap({ d }: { d: Detail }) {
+  useI18n();
   const cv = useRef<HTMLCanvasElement | null>(null);
   const [playing, setPlaying] = useState(false);
   const [pos, setPos] = useState(0);          // fractional frame index
@@ -1685,7 +1688,7 @@ export function BattleRecap({ d }: { d: Detail }) {
           // A battle recorded before settlements were rostered has no
           // name for one, and a raw row id is worse than the plain word
           // for what it is.
-          const label = r.name ?? (kind === 'ship' ? r.id : kind);
+          const label = r.name ?? (kind === 'ship' ? r.id : tk(`review.battle.kind.${kind}`, kind));
           g.fillText(label, q.x + outX * (size * 0.5 + 10), q.y + 3);
         }
         g.restore();
@@ -1762,7 +1765,7 @@ export function BattleRecap({ d }: { d: Detail }) {
 
       g.fillStyle = '#9dbdd8';
       g.font = '13px system-ui'; g.textAlign = 'left';
-      g.fillText(d.battle.body_name ?? 'deep space', 12, H - 14);
+      g.fillText(d.battle.body_name ?? tr('review.deepSpaceLower'), 12, H - 14);
 
       // ---- weapons ---------------------------------------------------
       // Bolts, muzzle flashes and impacts all blend additively, the way
@@ -1905,7 +1908,7 @@ export function BattleRecap({ d }: { d: Detail }) {
         if ((s.abs ?? 0) >= 1) {
           g.fillStyle = `rgba(143, 216, 255, ${(alpha * 0.85).toFixed(3)})`;
           g.font = '10px system-ui';
-          g.fillText(`+${Math.round(s.abs!)} held`,
+          g.fillText(tr('review.battle.held', { n: Math.round(s.abs!) }),
             to.x + (n % 2 ? 14 : -14), to.y - 24 - rise - n * 5);
           g.fillStyle = `rgba(255, 176, 120, ${alpha.toFixed(3)})`;
           g.font = `${s.kill ? 'bold ' : ''}11px system-ui`;
@@ -1929,8 +1932,8 @@ export function BattleRecap({ d }: { d: Detail }) {
         const killer = killerOf.get(r.id);
         const q = posOf(r.id);
         const alpha = Math.min(1, (sinceMs - 120) / 220) * (1 - Math.max(0, (sinceMs - 1100) / 500));
-        const head = `${r.name ?? r.id} lost`;
-        const sub = killer ? `to ${killer}` : '';
+        const head = tr('review.battle.lost', { name: r.name ?? r.id });
+        const sub = killer ? tr('review.battle.to', { name: killer }) : '';
         // A backing plate, because a kill in a crowded orbit lands on top
         // of the labels either side of it — and the one line a viewer
         // most needs to read is the one that must not be legible only
@@ -1963,8 +1966,8 @@ export function BattleRecap({ d }: { d: Detail }) {
       g.textAlign = 'left';
       g.fillStyle = '#8a9fb3'; g.font = '12px system-ui';
       g.fillText(`T+${frame.tick}`, 12, 20);
-      g.fillText(`${frame.shots} shots · ${frame.hits} hit`
-        + (frame.kills ? ` · ${frame.kills} lost` : ''), 12, 36);
+      g.fillText(`${trn('review.shots', frame.shots, { n: frame.shots })} · ${tr('review.battle.hits', { n: frame.hits })}`
+        + (frame.kills ? ` · ${tr('review.shared.lost', { n: frame.kills })}` : ''), 12, 36);
 
       let ly = 20;
       for (const s of standings) {
@@ -1992,7 +1995,7 @@ export function BattleRecap({ d }: { d: Detail }) {
       comings, stars, d.battle.id, d.battle.body_name, d.sides, d.factions, renderBody]);
 
   if (frames.length === 0) {
-    return <div style={{ color: NEUTRAL, padding: 8 }}>No frames recorded for this battle.</div>;
+    return <div style={{ color: NEUTRAL, padding: 8 }}>{tr('review.battle.noFrames')}</div>;
   }
   // Clamped, not trusted: Math.min(len-1, NaN) is NaN, and frames[NaN]
   // is undefined — which is the exact shape of the crash reported from
@@ -2013,7 +2016,7 @@ export function BattleRecap({ d }: { d: Detail }) {
             background: '#16273a', border: '1px solid #3d6b96', borderRadius: 5,
             color: '#cfe0ee', padding: '3px 10px', cursor: 'pointer', fontSize: 11,
           }}
-        >{playing ? '❚❚ Pause' : '▶ Play'}</button>
+        >{playing ? tr('review.battle.pause') : tr('review.battle.play')}</button>
         <input
           type="range" min={0} max={Math.max(0.0001, frames.length - 1)} step={0.02}
           value={Number.isFinite(pos) ? pos : 0}
@@ -2023,7 +2026,7 @@ export function BattleRecap({ d }: { d: Detail }) {
             setPos(Number.isFinite(v) ? v : 0);
           }}
           style={{ flex: 1 }}
-          aria-label="Scrub the battle"
+          aria-label={tr('review.battle.scrub')}
         />
         <span style={{ fontSize: 10, color: NEUTRAL, minWidth: 76, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
           T+{frames[idx].tick} · {idx + 1}/{frames.length}
