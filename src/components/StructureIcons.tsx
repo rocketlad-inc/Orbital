@@ -31,6 +31,7 @@ import React from 'react';
 import { IconFrame, ShipIcon, iconClassFor, hullHex } from './ShipIcons';
 import { structureDesign, hullInnerSvg, hasStructureDesign, scaffoldDesign } from '../render/hulls';
 import type { MegastructureKind } from '../game/megastructures';
+import { tk } from '../i18n/core';
 
 export type StructureVariant = 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
 
@@ -480,14 +481,14 @@ const REGISTRY: Record<MegastructureKind, Reg> = {
  *  is: a kind names only the variants it has. */
 export const STRUCTURE_VARIANT_NAMES:
   Record<MegastructureKind, Partial<Record<StructureVariant, string>>> = {
-  warp_gate:       { A: 'Octagon Ring', B: 'Hex Frame',   C: 'Torus' },
-  weapons_station: { A: 'Cruciform',    B: 'Bastion',     C: 'Star Fort' },
-  gravity_sink:    { A: 'Collar',       B: 'Drum Ring',   C: 'Deep Well' },
-  deep_array:      { A: 'Great Dish',   B: 'Dish Spine',  C: 'Tilted Dish' },
-  null_field:      { A: 'Pylon Cage',   B: 'Containment', C: 'Corner Cage' },
-  mega_destroyer:  { A: 'Battle Station', B: 'Spinal Lance', C: 'Ringed Fortress',
-                     D: 'Ribbed Dreadnought', E: 'Great Cylinder', F: 'Planet Killer' },
-  mobile_foundry:  { A: 'Gantry',       B: 'Cradle',      C: 'Ring Yard' },
+  warp_gate:       { get A() { return tk('data.structure.warp_gate.A', 'Octagon Ring'); }, get B() { return tk('data.structure.warp_gate.B', 'Hex Frame'); },   get C() { return tk('data.structure.warp_gate.C', 'Torus'); } },
+  weapons_station: { get A() { return tk('data.structure.weapons_station.A', 'Cruciform'); },    get B() { return tk('data.structure.weapons_station.B', 'Bastion'); },     get C() { return tk('data.structure.weapons_station.C', 'Star Fort'); } },
+  gravity_sink:    { get A() { return tk('data.structure.gravity_sink.A', 'Collar'); },       get B() { return tk('data.structure.gravity_sink.B', 'Drum Ring'); },   get C() { return tk('data.structure.gravity_sink.C', 'Deep Well'); } },
+  deep_array:      { get A() { return tk('data.structure.deep_array.A', 'Great Dish'); },   get B() { return tk('data.structure.deep_array.B', 'Dish Spine'); },  get C() { return tk('data.structure.deep_array.C', 'Tilted Dish'); } },
+  null_field:      { get A() { return tk('data.structure.null_field.A', 'Pylon Cage'); },   get B() { return tk('data.structure.null_field.B', 'Containment'); }, get C() { return tk('data.structure.null_field.C', 'Corner Cage'); } },
+  mega_destroyer:  { get A() { return tk('data.structure.mega_destroyer.A', 'Battle Station'); }, get B() { return tk('data.structure.mega_destroyer.B', 'Spinal Lance'); }, get C() { return tk('data.structure.mega_destroyer.C', 'Ringed Fortress'); },
+                     get D() { return tk('data.structure.mega_destroyer.D', 'Ribbed Dreadnought'); }, get E() { return tk('data.structure.mega_destroyer.E', 'Great Cylinder'); }, get F() { return tk('data.structure.mega_destroyer.F', 'Planet Killer'); } },
+  mobile_foundry:  { get A() { return tk('data.structure.mobile_foundry.A', 'Gantry'); },       get B() { return tk('data.structure.mobile_foundry.B', 'Cradle'); },      get C() { return tk('data.structure.mobile_foundry.C', 'Ring Yard'); } },
 };
 
 /** The variant a structure gets when nobody chose one. */
