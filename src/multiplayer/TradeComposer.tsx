@@ -23,7 +23,13 @@ import {
 } from './api';
 import { hasFeature, requirementFor } from '../game/researchUnlocks';
 import { TECH_DEFS } from '../game/techs';
-import { goingRateText, marketRate, compareToGoingRate, ttlLabel, nonZeroKeys } from './marketMath';
+import {
+  compareToGoingRate, nonZeroKeys, pairPrice, fmtPrice,
+  type GoingRate, type MarketBundle,
+} from './marketMath';
+import { t, fmtNumber } from '../i18n/core';
+import { useI18n } from '../i18n/react';
+import { apiErrorText } from '../i18n/apiErrors';
 
 type Mode =
   | {
@@ -71,9 +77,65 @@ const GATED_PACT_KINDS = new Set<PactKind>(['defense_pact', 'intel_share']);
 // Fuel was removed from the economy. The schema column stays so we don't
 // need a migration, but the trade composer no longer offers it as a knob.
 const RESOURCE_KEYS: Array<keyof ResourceBundle> = ['metal', 'gold', 'science'];
-const RESOURCE_LABELS: Record<keyof ResourceBundle, string> = {
-  metal: 'Metal', gold: 'Credits', science: 'Science',
-};
+// Words for the three resources, as functions so the language is read when
+// they are used, not when this file is imported. The server's 'gold' is the
+// player's 'credits'. Exported: the other trade screens share them.
+type ResKey = keyof ResourceBundle;
+/** Lower-case word, for running text ("120 credits"). */
+export function resWord(k: ResKey): string {
+  return k === 'metal' ? t('market.res.metal') : k === 'gold' ? t('market.res.gold') : t('market.res.science');
+}
+/** Capitalised name, for labels. */
+export function resTitle(k: ResKey): string {
+  return k === 'metal' ? t('econ.res.metal') : k === 'gold' ? t('econ.res.credits') : t('econ.res.science');
+}
+/** The pact's name (PACT_LABELS in api.ts is English only). */
+export function pactLabel(p: PactKind): string {
+  switch (p) {
+    case 'nap': return t('trade.pact.nap');
+    case 'defense_pact': return t('trade.pact.defense');
+    case 'intel_share': return t('trade.pact.intel');
+    case 'construction_pact': return t('trade.pact.construction');
+    default: return PACT_LABELS[p as PactKind];
+  }
+}
+const shortWord = (k: ResKey): string =>
+  k === 'metal' ? t('market.short.metal') : k === 'gold' ? t('market.short.gold') : t('market.short.science');
+
+// The market's own sentences, in the player's language. marketMath.ts builds
+// the same strings in English only (and is pinned by its own tests), so the
+// screens use these instead of its bundleWords / marketRate / goingRateText /
+// fmtTicksAsTime / ttlLabel.
+export function bundleWordsT(b: MarketBundle): string {
+  const keys = nonZeroKeys(b);
+  return keys.length
+    ? keys.map(k => `${fmtNumber(Math.round(b[k]))} ${resWord(k)}`).join(' + ')
+    : t('market.nothing');
+}
+export function marketRateT(post: { offer: MarketBundle; request: MarketBundle }): string | null {
+  const p = pairPrice(post.offer, post.request);
+  if (!p) return null;
+  return t('market.rate', { price: fmtPrice(p.price), quote: shortWord(p.quote), base: shortWord(p.base) });
+}
+export function goingRateTextT(r: GoingRate): string {
+  const range = r.n > 1 && fmtPrice(r.low) !== fmtPrice(r.high)
+    ? `${fmtPrice(r.low)}–${fmtPrice(r.high)}`
+    : fmtPrice(r.mid);
+  return t('market.going', { base: resWord(r.base), range, quote: shortWord(r.quote) });
+}
+export function fmtTicksAsTimeT(ticks: number, tickIntervalMs: number): string {
+  const ms = Math.max(0, ticks) * Math.max(1, tickIntervalMs);
+  const mins = Math.round(ms / 60000);
+  if (mins < 1) return t('market.time.under');
+  if (mins < 60) return t('market.time.m', { n: mins });
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return mins % 60 && hours < 6 ? t('market.time.hm', { h: hours, m: mins % 60 }) : t('market.time.h', { n: hours });
+  const days = Math.floor(hours / 24);
+  return hours % 24 ? t('market.time.dh', { d: days, h: hours % 24 }) : t('market.time.d', { n: days });
+}
+export function ttlLabelT(hours: number): string {
+  return hours < 24 ? t('market.ttl.hours', { n: hours }) : hours === 24 ? t('market.ttl.day') : t('market.ttl.days', { n: hours / 24 });
+}
 const RESOURCE_COLORS: Record<keyof ResourceBundle, string> = {
   metal: '#a0a0a0', gold: '#ffd700', science: '#6ee7b7',
 };
@@ -88,6 +150,7 @@ interface TradeComposerProps {
 }
 
 export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }: TradeComposerProps) {
+  useI18n();
   const api = useMemo(() => tradesApi(gameId), [gameId]);
   const prefill = mode.kind === 'new' ? mode.prefill ?? null : null;
 
@@ -107,7 +170,8 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
     const req = requirementFor('pacts');
     if (!req) return null;
     const track = TECH_DEFS[req.track]?.name ?? req.track;
-    return { label: req.label, text: `Unlocks at ${track} ${req.level}` };
+    const where = `${track} ${req.level}`;
+    return { label: req.label, text: t('trade.unlocksAt', { where }), where };
   }, [me.tech_levels, me.gating_enabled]);
 
 
@@ -238,7 +302,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
   }, [mode.kind]);
 
   const responderName = useMemo(() => {
-    return factions.find((f) => f.id === responderId)?.name ?? 'unknown';
+    return factions.find((f) => f.id === responderId)?.name ?? t('trade.unknown');
   }, [factions, responderId]);
 
   const responderColor = useMemo(() => {
@@ -262,7 +326,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
   // way, and not a standing route (whose numbers are already a rate).
   const canDivide = isMarket && !recurring
     && nonZeroKeys(offer).length === 1 && nonZeroKeys(request).length === 1;
-  const yourRate = marketRate({ offer, request });
+  const yourRate = marketRateT({ offer, request });
   // From the OTHER side's chair: is this a deal a taker would want?
   const yourCmp = compareToGoingRate({ offer, request }, rates);
 
@@ -340,13 +404,13 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
       const kind = sep < 0 ? '' : assetRef.slice(0, sep);
       const assetId = sep < 0 ? '' : assetRef.slice(sep + 1);
       if (kind !== 'ship' && kind !== 'settlement') {
-        setError('Pick the hull or world you are selling.');
+        setError(t('trade.composer.errPick'));
         return;
       }
       const m = Math.max(0, Math.floor(Number(askMetal) || 0));
       const c = Math.max(0, Math.floor(Number(askCredits) || 0));
       if (m <= 0 && c <= 0) {
-        setError('Name a price — a free handover is a gift, not a deal.');
+        setError(t('trade.composer.errPrice'));
         return;
       }
       setSubmitting(true);
@@ -360,7 +424,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
       });
       setSubmitting(false);
       if (!res.ok) {
-        setError(res.error?.message ?? 'Failed to offer the sale');
+        setError(apiErrorText(res.error, 'trade.composer.errSale'));
         return;
       }
       if (isMarket) {
@@ -372,7 +436,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
 
     if (!canSubmit) return;
     if (hasOverspend) {
-      setError('You don\'t hold enough resources to make that offer.');
+      setError(t('trade.composer.errOverspend'));
       return;
     }
     setSubmitting(true);
@@ -382,12 +446,12 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
     // stays because the server rejects the combination too and a silent
     // 400 is worse than a sentence.
     if (recurring && (offerPacts.length + requestPacts.length) > 0) {
-      setError('A standing route carries goods only — remove the treaty riders or make it a one-time trade.');
+      setError(t('trade.composer.errRiders'));
       setSubmitting(false);
       return;
     }
     if (recurring && !laneShipId) {
-      setError('Pick the freighter that will fly this lane — it starts the run the moment they accept.');
+      setError(t('trade.composer.errLaneShip'));
       setSubmitting(false);
       return;
     }
@@ -402,7 +466,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
       });
       setSubmitting(false);
       if (!res.ok) {
-        setError(res.error?.message ?? 'Failed to post to the market');
+        setError(apiErrorText(res.error, 'trade.composer.errPost'));
         return;
       }
       // Show them their post where it now lives.
@@ -427,7 +491,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
       });
     setSubmitting(false);
     if (!res.ok) {
-      setError(res.error?.message ?? 'Failed to send offer');
+      setError(apiErrorText(res.error, 'trade.composer.errSend'));
       return;
     }
     // A counter to a market post lands under PRIVATE, not on the board.
@@ -475,13 +539,13 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
               fontSize: 13, fontWeight: 700, color: '#ffb84d',
               letterSpacing: '0.18em', textTransform: 'uppercase',
             }}>
-              {isCounter ? 'Counter Offer' : isMarket ? 'Post to Market' : prefill ? 'Counter a Market Post' : 'New Trade Offer'}
+              {isCounter ? t('trade.composer.titleCounter') : isMarket ? t('trade.composer.titlePost') : prefill ? t('trade.composer.titleCounterPost') : t('trade.composer.titleNew')}
             </div>
             <div style={{ fontSize: 10, color: '#b8c8d6', marginTop: 2 }}>
-              {isCounter ? 'Modify terms and send back'
-                : isMarket ? 'Everyone sees it — the first faction to take it strikes the deal'
-                : prefill ? 'Sent privately to the poster — their post stays on the board'
-                : 'Propose terms to another faction'}
+              {isCounter ? t('trade.composer.subCounter')
+                : isMarket ? t('trade.composer.subPost')
+                : prefill ? t('trade.composer.subCounterPost')
+                : t('trade.composer.subNew')}
             </div>
           </div>
           <button
@@ -498,7 +562,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
           {!isCounter && (
             <div style={{ marginBottom: 12 }}>
               <div style={{ fontSize: 9, color: '#b8c8d6', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 4 }}>
-                To
+                {t('trade.composer.to')}
               </div>
               <select
                 className="mp-select"
@@ -507,7 +571,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
                 disabled={!!prefill}
                 style={{ width: '100%' }}
               >
-                {!prefill && <option value={MARKET}>◈ Open market — anyone can take it</option>}
+                {!prefill && <option value={MARKET}>◈ {t('trade.composer.openMarket')}</option>}
                 {factions.filter((f) => f.id !== me.id).map((f) => (
                   <option key={f.id} value={f.id}>{f.name}</option>
                 ))}
@@ -516,7 +580,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
           )}
           {isCounter && (
             <div style={{ marginBottom: 12, fontSize: 10, color: '#b8c8d6' }}>
-              Replying to{' '}
+              {t('trade.composer.replyingTo')}{' '}
               <span style={{ color: responderColor, fontWeight: 600 }}>{responderName}</span>
             </div>
           )}
@@ -526,13 +590,13 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
               per-run rate), which is too big a semantic flip to hang off
               a small square nobody reads. */}
           <div style={{ display: 'flex', gap: 4, marginBottom: 10 }}>
-            {([['one', 'One-time trade', false], ['route', 'Standing route', true]] as const).map(([key, label, val]) => (
+            {([['one', t('trade.composer.oneTime'), false], ['route', t('trade.composer.standing'), true]] as const).map(([key, label, val]) => (
               <button
                 key={key}
                 type="button"
                 onClick={() => chooseKind(val)}
                 disabled={isCounter}
-                title={isCounter ? 'A counter keeps the original\'s shape — haggle the rate, not the kind' : undefined}
+                title={isCounter ? t('trade.composer.counterKeepsKind') : undefined}
                 style={(() => {
                   // Three segments, one truth. `recurring` only
                   // distinguishes the first two, so in asset mode it is
@@ -557,12 +621,12 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
               onClick={chooseAsset}
               disabled={isCounter || !!prefill}
               title={isCounter
-                ? 'A counter keeps the shape of the original'
+                ? t('trade.composer.counterKeepsShape')
                 : prefill
-                  ? 'A counter to a goods post is goods'
+                  ? t('trade.composer.counterIsGoods')
                   : isMarket
-                    ? 'List a hull or a settled world for whoever claims it first'
-                    : 'Sell a hull or a settled world for freight'}
+                    ? t('trade.composer.assetMarketTip')
+                    : t('trade.composer.assetTip')}
               style={{
                 flex: 1, padding: '5px 0', fontSize: 10,
                 cursor: isCounter ? 'default' : 'pointer',
@@ -573,7 +637,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
                 borderRadius: 3, opacity: (isCounter || !!prefill) && !assetMode ? 0.35 : 1,
               }}
             >
-              Ship or world
+              {t('trade.composer.shipOrWorld')}
             </button>
           </div>
 
@@ -583,7 +647,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
                 fontSize: 9, color: '#b8c8d6', letterSpacing: '0.1em',
                 textTransform: 'uppercase', marginBottom: 4,
               }}>
-                Handing over
+                {t('trade.composer.handingOver')}
               </div>
               <select
                 className="mp-select"
@@ -592,7 +656,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
                 style={{ width: '100%', marginBottom: 8 }}
               >
                 <option value="">
-                  {sellable === null ? 'Loading…' : 'Pick a hull or a world…'}
+                  {sellable === null ? t('trade.loading') : t('trade.composer.pickAsset')}
                 </option>
                 {(sellable ?? []).map(s => (
                   <option key={`${s.kind}:${s.id}`} value={`${s.kind}:${s.id}`}>
@@ -602,15 +666,14 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
               </select>
               {sellable !== null && sellable.length === 0 && (
                 <div style={{ fontSize: 10, color: '#b8c8d6', marginBottom: 8 }}>
-                  Nothing parked that you could hand over. A hull under way
-                  has no address to be paid at.
+                  {t('trade.composer.nothingParked')}
                 </div>
               )}
               <div style={{
                 fontSize: 9, color: '#b8c8d6', letterSpacing: '0.1em',
                 textTransform: 'uppercase', marginBottom: 4,
               }}>
-                Asking
+                {t('trade.composer.asking')}
               </div>
               <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                 <input
@@ -619,27 +682,26 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
                   min={0}
                   value={askMetal}
                   onChange={e => setAskMetal(e.target.value)}
-                  aria-label="Asking price in metal"
+                  aria-label={t('trade.composer.askMetalAria')}
                   style={{ width: 80 }}
                 />
-                <span style={{ fontSize: 10, color: '#b8c8d6' }}>metal</span>
+                <span style={{ fontSize: 10, color: '#b8c8d6' }}>{t('market.res.metal')}</span>
                 <input
                   className="mp-input"
                   type="number"
                   min={0}
                   value={askCredits}
                   onChange={e => setAskCredits(e.target.value)}
-                  aria-label="Asking price in credits"
+                  aria-label={t('trade.composer.askCreditsAria')}
                   style={{ width: 80 }}
                 />
-                <span style={{ fontSize: 10, color: '#b8c8d6' }}>credits</span>
+                <span style={{ fontSize: 10, color: '#b8c8d6' }}>{t('market.res.gold')}</span>
               </div>
               <div style={{
                 fontSize: 10, color: '#b8c8d6', marginTop: 8, lineHeight: 1.5,
                 borderLeft: '2px solid #6ee7b7', paddingLeft: 8,
               }}>
-                They haul the payment to where it stands now. It changes
-                hands when the last of it arrives.
+                {t('trade.composer.haulNote')}
               </div>
             </div>
           )}
@@ -649,11 +711,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
               fontSize: 10, color: '#b8c8d6', marginBottom: 10, lineHeight: 1.5,
               borderLeft: '2px solid #6ee7b7', paddingLeft: 8,
             }}>
-              Amounts below ship <b style={{ color: '#6ee7b7' }}>every run</b>, on the freighter
-              you pin below — it collects at your dock, delivers to theirs, loads their
-              side and brings it home, over and over. It repeats until either of you
-              cancels — or war, a lost freighter, or an empty treasury ends it. Goods
-              only; no treaty riders.
+              {t('trade.composer.recurPre')} <b style={{ color: '#6ee7b7' }}>{t('trade.composer.everyRun')}</b>{t('trade.composer.recurPost')}
             </div>
           )}
 
@@ -663,12 +721,11 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
                 fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase',
                 color: '#7a8a9a', marginBottom: 6,
               }}>
-                Freighter that flies it
+                {t('trade.composer.laneShip')}
               </div>
               {freeFreighters.length === 0 ? (
                 <div style={{ fontSize: 11, color: '#ff9b9b', lineHeight: 1.5 }}>
-                  Every freighter you have is already on a route. Free one up, or build
-                  another, before proposing a standing lane.
+                  {t('trade.composer.noFree')}
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
@@ -700,7 +757,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
               has its own asset picker and price above. */}
           <div style={{ display: assetMode ? 'none' : 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <ColumnEditor
-              title="You give"
+              title={t('trade.composer.youGive')}
               titleColor="#ffb84d"
               bundle={offer}
               pacts={offerPacts}
@@ -716,12 +773,12 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
                 // is the server's 'gold', the player-facing name is
                 // 'credits' (this line was the last place still
                 // printing "gold").
-                ? `Your stockpile: ${RESOURCE_KEYS.map(k => `${Math.round(Number(me[k]) || 0)} ${RESOURCE_LABELS[k].toLowerCase()}`).join(' · ')}`
+                ? t('trade.composer.stockpile', { list: RESOURCE_KEYS.map(k => `${Math.round(Number(me[k]) || 0)} ${resWord(k)}`).join(' · ') })
                 : undefined}
               overspend={overspend}
             />
             <ColumnEditor
-              title={isMarket ? 'The taker gives' : 'They give'}
+              title={isMarket ? t('trade.composer.takerGives') : t('trade.composer.theyGive')}
               titleColor="#4ecdc4"
               bundle={request}
               pacts={requestPacts}
@@ -737,13 +794,13 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
               marginTop: 10, fontSize: 10, lineHeight: 1.6, color: '#b8c8d6',
               borderLeft: '2px solid #2a3d50', paddingLeft: 8,
             }}>
-              {rates.length > 0 && <div>Recent deals: {rates.map(goingRateText).join(' · ')}</div>}
+              {rates.length > 0 && <div>{t('trade.composer.recentDeals')} {rates.map(goingRateTextT).join(' · ')}</div>}
               {yourRate && (
                 <div>
-                  Your price: <b style={{ color: '#d8e4ee' }}>{yourRate}</b>
+                  {t('trade.composer.yourPrice')} <b style={{ color: '#d8e4ee' }}>{yourRate}</b>
                   {isMarket && yourCmp && (
                     <span style={{ color: yourCmp.better ? '#6ee7b7' : '#ffb84d' }}>
-                      {' '}— {yourCmp.pct}% {yourCmp.better ? 'better' : 'worse'} for a taker than recent deals
+                      {' '}— {t(yourCmp.better ? 'trade.composer.cmpBetter' : 'trade.composer.cmpWorse', { pct: yourCmp.pct })}
                     </span>
                   )}
                 </div>
@@ -767,17 +824,17 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
                   style={{ marginTop: 2 }}
                 />
                 <span>
-                  <b>Sell in parts</b><br />
+                  <b>{t('trade.composer.sellParts')}</b><br />
                   {canDivide
-                    ? 'Takers may buy any amount and pay pro rata. It stays up until it is all gone.'
+                    ? t('trade.composer.partsOn')
                     : recurring
-                      ? 'A standing route is already a rate — it is taken whole.'
-                      : 'Needs one resource each way, so a unit has one price.'}
+                      ? t('trade.composer.partsRoute')
+                      : t('trade.composer.partsNeeds')}
                 </span>
               </label>
               <div>
                 <div style={{ fontSize: 9, color: '#b8c8d6', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 4 }}>
-                  Stays up for
+                  {t('trade.composer.staysUp')}
                 </div>
                 <select
                   className="mp-select"
@@ -788,13 +845,13 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
                   {[...new Set([minTtlHours, 12, 24, 72, 168])]
                     .filter(h => h > 0 && h >= minTtlHours)
                     .sort((a, b) => a - b)
-                    .map(h => <option key={h} value={h}>{ttlLabel(h)}</option>)}
+                    .map(h => <option key={h} value={h}>{ttlLabelT(h)}</option>)}
                 </select>
               </div>
               {!recurring && (
                 <div style={{ gridColumn: '1 / -1' }}>
                   <div style={{ fontSize: 9, color: '#b8c8d6', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 4 }}>
-                    Your freighter (optional)
+                    {t('trade.composer.yourFreighter')}
                   </div>
                   <select
                     className="mp-select"
@@ -802,12 +859,11 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
                     onChange={(e) => setMarketShipId(e.target.value)}
                     style={{ width: '100%' }}
                   >
-                    <option value="">Decide when it sells</option>
+                    <option value="">{t('trade.composer.decideLater')}</option>
                     {freeFreighters.map(f => <option key={f.id} value={f.id}>{f.name} — {f.where}</option>)}
                   </select>
                   <div style={{ fontSize: 9, color: '#8aa0b4', marginTop: 4, lineHeight: 1.5 }}>
-                    Pin one and your half ships the moment someone takes the post. The hull is not
-                    reserved meanwhile; if it is busy by then, the shipment waits for you under PRIVATE.
+                    {t('trade.composer.pinNote')}
                   </div>
                 </div>
               )}
@@ -816,7 +872,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
 
           <div style={{ marginTop: 12 }}>
             <div style={{ fontSize: 9, color: '#b8c8d6', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 4 }}>
-              Note (optional)
+              {t('trade.composer.note')}
             </div>
             <textarea
               className="mp-textarea"
@@ -825,7 +881,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
               maxLength={500}
               rows={2}
               style={{ width: '100%' }}
-              placeholder="Add a message to the offer…"
+              placeholder={t('trade.composer.notePlaceholder')}
             />
           </div>
 
@@ -845,7 +901,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
               style={{ padding: '7px 16px', fontSize: 12 }}
               onClick={onClose}
             >
-              Cancel
+              {t('common.cancel')}
             </button>
             <button
               type="submit"
@@ -853,16 +909,13 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
               style={{ padding: '7px 16px', fontSize: 12 }}
               disabled={!canSubmit || (!assetMode && hasOverspend)}
             >
-              {isCounter ? 'Send Counter' : isMarket ? 'Post to Market' : 'Send Offer'}
+              {isCounter ? t('trade.composer.sendCounter') : isMarket ? t('trade.composer.titlePost') : t('trade.composer.sendOffer')}
             </button>
           </div>
           <div style={{ marginTop: 10, fontSize: 9, color: '#8aa0b4', lineHeight: 1.5 }}>
             {isMarket
-              ? 'The post stays on the board until someone takes it, you withdraw it, or it expires.'
-              : 'Pacts take effect the moment the deal is accepted.'} Resources are
-            DELIVERED: each side loads its goods onto a freighter at one of
-            its terraformed worlds and flies them to the other's — assign
-            ships in the Trades panel's Shipments tab after acceptance.
+              ? t('trade.composer.footPost')
+              : t('trade.composer.footPacts')} {t('trade.composer.footDelivered')}
           </div>
         </form>
       </div>
@@ -891,8 +944,9 @@ function ColumnEditor({
   hint?: string;
   overspend?: Partial<Record<keyof ResourceBundle, number>>;
   /** Non-null → pacts are research-locked; carries the unlock label. */
-  pactLock?: { label: string; text: string } | null;
+  pactLock?: { label: string; text: string; where: string } | null;
 }) {
+  useI18n();
   return (
     <div style={{
       border: '1px solid #2a3d50',
@@ -917,7 +971,7 @@ function ColumnEditor({
             marginBottom: 4,
           }}>
             <span style={{ color: RESOURCE_COLORS[k], fontSize: 10 }}>
-              {RESOURCE_LABELS[k]}
+              {resTitle(k)}
             </span>
             <input
               type="number"
@@ -944,7 +998,7 @@ function ColumnEditor({
         fontSize: 9, color: '#b8c8d6', letterSpacing: '0.1em',
         textTransform: 'uppercase', marginTop: 8, marginBottom: 4,
       }}>
-        Pacts
+        {t('trade.composer.pacts')}
       </div>
       {/* Only the ADVANTAGE pacts are research-locked; non-aggression is
           free from tick one, so the banner no longer says "Pacts unlock
@@ -955,8 +1009,8 @@ function ColumnEditor({
           border: '1px solid rgba(255, 184, 77, 0.4)', borderRadius: 3,
           background: 'rgba(255, 184, 77, 0.06)', padding: '5px 7px', marginBottom: 5,
         }}>
-          🔒 Defense &amp; intel pacts unlock at <b>{pactLock.text.replace(/^Unlocks at\s*/i, '')}</b>.
-          {' '}Non-aggression and resource trades work now.
+          🔒 {t('trade.composer.pactLockPre')} <b>{pactLock.where}</b>.
+          {' '}{t('trade.composer.pactLockPost')}
         </div>
       )}
       {PACT_KINDS_ORDER.map((p) => {
@@ -983,7 +1037,7 @@ function ColumnEditor({
               disabled={locked}
               onChange={() => onTogglePact(p)}
             />
-            {PACT_LABELS[p]}
+            {pactLabel(p)}
           </label>
         );
       })}
