@@ -609,6 +609,7 @@ const ResourcePill: React.FC<{
 // ----------------------------------------------------------------
 
 const CommitTurnButton: React.FC<{ onCommit: () => void }> = ({ onCommit }) => {
+  useI18n();
   const { gameState } = useGameContext();
   const { ticksPerTurn } = useTurnBasedSettings();
   const [popoverOpen, setPopoverOpen] = useState(false);
@@ -621,10 +622,10 @@ const CommitTurnButton: React.FC<{ onCommit: () => void }> = ({ onCommit }) => {
   const headline = (() => {
     const parts: string[] = [];
     const ordersN = budget.plannedItems.length;
-    if (ordersN > 0) parts.push(`${ordersN} order${ordersN === 1 ? '' : 's'}`);
+    if (ordersN > 0) parts.push(tn('topbar.budget.orders', ordersN));
     const buildsLanding = budget.buildItems.filter(b => b.detail === 'LANDS THIS TURN').length;
-    if (buildsLanding > 0) parts.push(`+${buildsLanding} ship${buildsLanding === 1 ? '' : 's'}`);
-    return parts.length > 0 ? parts.join(' · ') : 'no orders queued';
+    if (buildsLanding > 0) parts.push(tn('topbar.budget.shipsLanding', buildsLanding));
+    return parts.length > 0 ? parts.join(' · ') : t('topbar.budget.noOrders');
   })();
 
   const color = '#ffb84d';
@@ -638,7 +639,7 @@ const CommitTurnButton: React.FC<{ onCommit: () => void }> = ({ onCommit }) => {
       <button
         className="sim-btn sim-btn--commit-turn"
         onClick={onCommit}
-        title="Advance the simulation by one turn"
+        title={t('topbar.budget.advanceTitle')}
         style={{
           background: color,
           color: '#0a1018',
@@ -654,13 +655,13 @@ const CommitTurnButton: React.FC<{ onCommit: () => void }> = ({ onCommit }) => {
           lineHeight: 1.15,
         }}
       >
-        <span style={{ fontSize: 11 }}>▶ COMMIT TURN</span>
+        <span style={{ fontSize: 11 }}>{t('topbar.commit.button')}</span>
         <span style={{ fontSize: 9, opacity: 0.75, letterSpacing: '0.04em' }}>{headline}</span>
       </button>
       <button
         onClick={(e) => { e.stopPropagation(); setPopoverOpen(p => !p); }}
-        title="Show turn budget"
-        aria-label="Show turn budget"
+        title={t('topbar.budget.show')}
+        aria-label={t('topbar.budget.show')}
         style={{
           width: 22, height: 22, borderRadius: 3,
           border: `1px solid ${color}`, background: 'transparent', color,
@@ -671,7 +672,7 @@ const CommitTurnButton: React.FC<{ onCommit: () => void }> = ({ onCommit }) => {
       {popoverOpen && (
         <div
           role="dialog"
-          aria-label="Turn budget"
+          aria-label={t('topbar.budget.dialog')}
           style={{
             position: 'absolute',
             top: 'calc(100% + 6px)',
@@ -689,10 +690,10 @@ const CommitTurnButton: React.FC<{ onCommit: () => void }> = ({ onCommit }) => {
           }}
         >
           <div style={{ fontSize: 10, color, letterSpacing: '0.12em', marginBottom: 6 }}>
-            NEXT TURN · +{ticksPerTurn} ticks
+            {t('topbar.budget.next', { n: ticksPerTurn })}
           </div>
 
-          <BudgetRow label="Planned transfers" count={budget.plannedItems.length} delta="" />
+          <BudgetRow label={t('topbar.budget.planned')} count={budget.plannedItems.length} delta="" />
           {budget.plannedItems.slice(0, 4).map((it, i) => (
             <div key={i} style={{ fontSize: 10, color: '#b8c8d6', paddingLeft: 8 }}>
               · {it.label}{it.detail ? ` — ${it.detail}` : ''}
@@ -700,18 +701,18 @@ const CommitTurnButton: React.FC<{ onCommit: () => void }> = ({ onCommit }) => {
           ))}
           {budget.plannedItems.length > 4 && (
             <div style={{ fontSize: 10, color: '#b8c8d6', paddingLeft: 8 }}>
-              · +{budget.plannedItems.length - 4} more
+              · {t('topbar.budget.more', { n: budget.plannedItems.length - 4 })}
             </div>
           )}
 
           <div style={{ height: 1, background: '#2a3d50', margin: '8px 0' }} />
 
           <BudgetRow
-            label="Builds in flight"
+            label={t('topbar.budget.builds')}
             count={budget.buildItems.length}
             delta={
               budget.buildItems.filter(b => b.detail === 'LANDS THIS TURN').length > 0
-                ? `${budget.buildItems.filter(b => b.detail === 'LANDS THIS TURN').length} land this turn`
+                ? t('topbar.budget.landThisTurn', { n: budget.buildItems.filter(b => b.detail === 'LANDS THIS TURN').length })
                 : ''
             }
           />
@@ -732,7 +733,7 @@ const CommitTurnButton: React.FC<{ onCommit: () => void }> = ({ onCommit }) => {
             <>
               <div style={{ height: 1, background: '#2a3d50', margin: '8px 0' }} />
               <BudgetRow
-                label="Research"
+                label={t('topbar.nav.research')}
                 count={1}
                 delta={`${budget.research.progressPct.toFixed(0)}% · ${budget.research.techId}`}
               />
@@ -742,7 +743,7 @@ const CommitTurnButton: React.FC<{ onCommit: () => void }> = ({ onCommit }) => {
           <div style={{ height: 1, background: '#2a3d50', margin: '8px 0' }} />
 
           <div style={{ fontSize: 10, color: '#b8c8d6' }}>
-            POOL: {Math.round(budget.pool.ore)} metal · {Math.round(budget.pool.credits)} cr · {Math.round(budget.pool.science)} sci
+            {t('topbar.budget.pool', { ore: Math.round(budget.pool.ore), credits: Math.round(budget.pool.credits), science: Math.round(budget.pool.science) })}
           </div>
         </div>
       )}
@@ -1287,10 +1288,10 @@ const SideMenu: React.FC<SideMenuProps> = ({
             <button
               className="side-menu__item"
               onClick={onOpenSave}
-              title="Save the current campaign to your browser"
+              title={t('topbar.save.title')}
             >
               <span className="side-menu__item-icon">⤓</span>
-              <span className="side-menu__item-label">Save Game</span>
+              <span className="side-menu__item-label">{t('topbar.save.label')}</span>
               <span className="side-menu__item-hint">localStorage</span>
             </button>
           )}
@@ -1298,11 +1299,11 @@ const SideMenu: React.FC<SideMenuProps> = ({
             <button
               className="side-menu__item"
               onClick={onOpenLoad}
-              title="Load a previously saved campaign (replaces this one)"
+              title={t('topbar.load.title')}
             >
               <span className="side-menu__item-icon">⤒</span>
-              <span className="side-menu__item-label">Load Game</span>
-              <span className="side-menu__item-hint">replaces current</span>
+              <span className="side-menu__item-label">{t('topbar.load.label')}</span>
+              <span className="side-menu__item-hint">{t('topbar.load.hint')}</span>
             </button>
           )}
           {onExitMode && (
@@ -1346,18 +1347,18 @@ const SideMenu: React.FC<SideMenuProps> = ({
               className="side-menu__item"
               onClick={() => tbm.setEnabled(!tbm.enabled)}
               title={tbm.enabled
-                ? `On — realtime suppressed. Click COMMIT TURN to advance ${tbm.ticksPerTurn} ticks.`
-                : 'Off — game runs in realtime. Click to switch flows.'}
+                ? t('topbar.sptbm.onTitle', { n: tbm.ticksPerTurn })
+                : t('topbar.sptbm.offTitle')}
             >
               <span className="side-menu__item-icon">{tbm.enabled ? '⏯' : '▶'}</span>
               <span className="side-menu__item-label">
-                Turn-Based Mode {tbm.enabled ? 'ON' : 'OFF'}
+                {tbm.enabled ? t('topbar.tbm.on') : t('topbar.tbm.off')}
               </span>
               <span
                 className="side-menu__item-hint"
                 style={{ color: tbm.enabled ? '#ffb84d' : undefined }}
               >
-                {tbm.enabled ? `+${tbm.ticksPerTurn} ticks/turn` : 'realtime'}
+                {tbm.enabled ? t('topbar.sptbm.hintOn', { n: tbm.ticksPerTurn }) : t('topbar.sptbm.hintOff')}
               </span>
             </button>
           )}

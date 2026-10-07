@@ -133,6 +133,7 @@ import { menuScaleFor, zOf, furnitureOpacity } from '../game/worldMenu/camera';
 import { drawWorldMenuCloseup } from '../render/worldMenuCloseup';
 import { useCanvasTouchInput } from '../hooks/useCanvasTouchInput';
 import { GIT_SHA } from '../_version';
+import { t, getLang, subscribeLang } from '../i18n/core';
 import { exploredStorageKey, loadExplored, saveExplored } from '../game/exploredBodies';
 import './MapCanvas.css';
 import { getPlacement, cancelPlacement } from '../game/megastructurePlacement';
@@ -2236,7 +2237,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         requestLabel({
           id: `threat:${body.id}`,
           kind: 'threat',
-          text: '⚠ THREAT',
+          text: t('map.threat'),
           x: cp.x,
           y: cp.y,
           radius: baseR + 6,
@@ -3741,7 +3742,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         : null;
       drawRendezvousPreview(
         rv, theirPath, renderContext,
-        (isMine && followed) ? `MEET ${followed.name} · T+${Math.round(rv.meetTick)}` : undefined,
+        (isMine && followed) ? t('map.meet', { name: followed.name, tick: Math.round(rv.meetTick) }) : undefined,
         leaderLeg?.arriveTick ?? null,
         renderTick(),
       );
@@ -4441,12 +4442,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         pickCycleRef.current = cyc && cyc.order.length > 1 ? cyc.order : null;
         hitShip = cyc?.id ?? null;
         if (cyc && cyc.order.length > 1) {
-          const name = gameState.ships.find(sh => sh.id === cyc.id)?.name ?? 'Ship';
+          const name = gameState.ships.find(sh => sh.id === cyc.id)?.name ?? t('map.toast.shipFallback');
           window.dispatchEvent(new CustomEvent('orbital:toast', {
             detail: {
               kind: 'info',
-              text: `${name} — ${cyc.index + 1} of ${cyc.order.length} here. `
-                + `${touch ? 'Tap' : 'Click'} again for the next.`,
+              text: t(touch ? 'map.toast.cycleTap' : 'map.toast.cycleClick',
+                { name, i: cyc.index + 1, n: cyc.order.length }),
             },
           }));
         }
@@ -4556,7 +4557,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // place" because it names the actual rule.
           console.warn('placeFramework rejected', res.code, res.error);
           window.dispatchEvent(new CustomEvent('orbital:toast', {
-            detail: { kind: 'error', text: res.error ?? 'Could not place the foundation.' },
+            detail: { kind: 'error', text: res.error ?? t('map.toast.placeFailed') },
           }));
         }
       });
@@ -4752,9 +4753,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         if (pendingTargetRef.current !== bodyId) {
           pendingTargetRef.current = bodyId;
           hoverBody(bodyId);
-          const name = gameState.bodies.find(b => b.id === bodyId)?.name ?? 'it';
+          const name = gameState.bodies.find(b => b.id === bodyId)?.name ?? t('map.toast.itFallback');
           window.dispatchEvent(new CustomEvent('orbital:toast', {
-            detail: { kind: 'info', text: `Tap ${name} again to add this leg` },
+            detail: { kind: 'info', text: t('map.toast.tapAgain', { name }) },
           }));
           return;
         }
@@ -4917,6 +4918,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // Keep renderRef pointed at the freshest render closure so the camera
   // tween's self-driven frames never call a stale one.
   useEffect(() => { renderRef.current = render; }, [render]);
+
+  // Canvas text is translated at draw time, so a language switch only has
+  // to ask for one more frame (no React re-render of this component).
+  useEffect(() => subscribeLang(() => renderRef.current()), []);
 
   // Unmount-only: kill any pending tween continuation frame.
   useEffect(() => () => {
@@ -5176,14 +5181,42 @@ function getShipCanvasPos(
   };
 }
 
+/** The HUD's static words, looked up once per language rather than once per
+ *  frame: drawHUD runs inside the render loop. */
+let hudWords: {
+  lang: string; paused: string; tick: string; scale: string;
+  hintMobile: string; hintDesktop: string; selectTarget: string;
+  tapBody: string; clickBody: string; focused: string; soi: string;
+} | null = null;
+function hudText() {
+  const lang = getLang();
+  if (!hudWords || hudWords.lang !== lang) {
+    hudWords = {
+      lang,
+      paused: t('map.hud.paused'),
+      tick: t('map.hud.tick'),
+      scale: t('map.hud.scale'),
+      hintMobile: t('map.hud.hintMobile'),
+      hintDesktop: t('map.hud.hintDesktop'),
+      selectTarget: t('map.hud.selectTarget'),
+      tapBody: t('map.hud.tapBody'),
+      clickBody: t('map.hud.clickBody'),
+      focused: t('map.hud.focused'),
+      soi: t('map.hud.soi'),
+    };
+  }
+  return hudWords;
+}
+
 function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
-  const speedLabel = ctx.simSpeed && ctx.simSpeed > 0 ? `${ctx.simSpeed}×` : 'PAUSED';
+  const w = hudText();
+  const speedLabel = ctx.simSpeed && ctx.simSpeed > 0 ? `${ctx.simSpeed}×` : w.paused;
   ctx.ctx.fillStyle = COLORS.fgDim;
   ctx.ctx.font = '12px "Audiowide", monospace';
   ctx.ctx.textAlign = 'left';
   ctx.ctx.textBaseline = 'top';
-  ctx.ctx.fillText(`Tick: ${ctx.t.toFixed(1)} | ${speedLabel}`, 16, 16);
-  ctx.ctx.fillText(`Scale: ${ctx.camera.scale.toFixed(2)}x`, 16, 32);
+  ctx.ctx.fillText(`${w.tick} ${ctx.t.toFixed(1)} | ${speedLabel}`, 16, 16);
+  ctx.ctx.fillText(`${w.scale} ${ctx.camera.scale.toFixed(2)}x`, 16, 32);
 
   ctx.ctx.fillStyle = COLORS.fgFaint;
   ctx.ctx.font = '10px "Audiowide", monospace';
@@ -5192,23 +5225,19 @@ function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
   // The LAYOUT's verdict (useIsMobile stamps data-mobile-shell), not the
   // pointer media query, which some mouse-driven desktops answer 'coarse'.
   const mobileShell = document.documentElement.hasAttribute('data-mobile-shell');
-  const hint = mobileShell
-    ? 'Drag: pan · Pinch: zoom · Tap: select · Hold a ship: select several'
-    : 'Right-drag: pan | Scroll: zoom | Click: select | Double-click: focus';
+  const hint = mobileShell ? w.hintMobile : w.hintDesktop;
   ctx.ctx.fillText(hint, 16, ctx.canvas.height - 32);
 
   if (targetSelectionMode) {
     ctx.ctx.fillStyle = COLORS.warning;
     ctx.ctx.font = 'bold 12px "Audiowide", monospace';
     ctx.ctx.textAlign = 'center';
-    ctx.ctx.fillText('SELECT TARGET BODY', ctx.canvas.width / 2, 16);
+    ctx.ctx.fillText(w.selectTarget, ctx.canvas.width / 2, 16);
     ctx.ctx.fillStyle = COLORS.fgDim;
     ctx.ctx.font = '10px "Audiowide", monospace';
     // No Esc key or right button on a phone; its Cancel is the banner
     // ShipPanel floats at the bottom during targeting.
-    ctx.ctx.fillText(mobileShell
-      ? 'Tap a body to transfer'
-      : 'Click a body to transfer | ESC to cancel | Right-click to cancel', ctx.canvas.width / 2, 32);
+    ctx.ctx.fillText(mobileShell ? w.tapBody : w.clickBody, ctx.canvas.width / 2, 32);
   }
 
   if (ctx.camera.focusedBodyId) {
@@ -5217,10 +5246,10 @@ function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
       ctx.ctx.fillStyle = COLORS.info;
       ctx.ctx.font = 'bold 12px "Audiowide", monospace';
       ctx.ctx.textAlign = 'center';
-      ctx.ctx.fillText(`FOCUSED: ${focusedBody.name.toUpperCase()}`, ctx.canvas.width / 2, targetSelectionMode ? 52 : 32);
+      ctx.ctx.fillText(`${w.focused} ${focusedBody.name.toUpperCase()}`, ctx.canvas.width / 2, targetSelectionMode ? 52 : 32);
       ctx.ctx.fillStyle = COLORS.fgDim;
       ctx.ctx.font = '10px "Audiowide", monospace';
-      ctx.ctx.fillText(`SOI: ${focusedBody.soi.toFixed(0)} km`, ctx.canvas.width / 2, targetSelectionMode ? 68 : 48);
+      ctx.ctx.fillText(`${w.soi} ${focusedBody.soi.toFixed(0)} km`, ctx.canvas.width / 2, targetSelectionMode ? 68 : 48);
     }
   }
 
