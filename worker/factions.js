@@ -481,10 +481,10 @@ export const BODY_CATALOG = [
   // DOUBLED 2026-10-06 (Lorne: "Double the distance between solar
   // systems"). Ships now build up to 1g (burn.js), so the crossing that
   // the even-burn design priced at 200 ticks had fallen to ~68 direct
-  // from Earth, and the sun gates saved nothing. Doubled: Earth to
-  // Centauri ~82 T direct, Cygnus ~88; through a gate (to it, across,
-  // and in to a home) ~71. The build-up is why doubling the distance
-  // adds only ~20%: sim:far pins the numbers.
+  // from Earth, and the sun gates saved nothing. Doubled, and the same
+  // evening the push was capped at 0.1g (burn.js): Earth to Centauri
+  // ~159 T direct, Cygnus ~179; through a gate (to it, across, and in
+  // to a home) ~82. sim:far pins the numbers.
   //
   // YIELDS: "everything, but far" (Lorne, 2026-10-05). The richest
   // Sol world gives 9 of a resource; these run 1.3-1.6x that, broad
