@@ -89,7 +89,7 @@ export function StandingPanel({ gameId }: Props) {
   // actually said when it bothered to say something.
   const run = async (
     fid: string,
-    fn: () => Promise<{ ok: boolean; error?: { message: string } | null }>,
+    fn: () => Promise<{ ok: boolean; error?: { code: string; message: string } | null }>,
     failKey: Key,
   ) => {
     setBusy(fid);
@@ -241,7 +241,7 @@ export function StandingPanel({ gameId }: Props) {
                 <li key={w.id}>
                   {name(w.factions[0])} vs {name(w.factions[1])}
                   <span className="mp-standing-ticks">
-                    {' '}· {t('standing.ticks', { from: w.declared_at_tick, to: w.ended_at_tick })}
+                    {' '}· {t('standing.ticks', { from: w.declared_at_tick, to: w.ended_at_tick ?? '' })}
                     {w.origin === 'pact_broken' ? ` · ${t('standing.pactBroken')}` : ''}
                     {w.origin === 'seeded' ? ` · ${t('standing.inherited')}` : ''}
                   </span>
