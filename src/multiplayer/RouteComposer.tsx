@@ -35,6 +35,8 @@ import { BASE_HOLD } from '../game/mining';
 import './RouteComposer.css';
 import { requirementLabel } from '../game/researchUnlocks';
 import { MEGASTRUCTURES, progressOf, loadsRemaining } from '../game/megastructures';
+import { t, tn } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 
 const MAX_STOPS = 6;
 
@@ -110,6 +112,7 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
   // is typed nullable for SP callers — assert once here rather than
   // threading optional chaining through every handler.
   const mp = useMultiplayerActions()!;
+  useI18n();
   const [name, setName] = useState(initialName ?? '');
   const [stops, setStops] = useState<RouteStopInput[]>(initialStops ?? []);
   const [loopMode, setLoopMode] = useState<'forever' | 'count'>('forever');
@@ -318,7 +321,7 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
         guardShipIds: guards,
       });
     setBusy(false);
-    if (!res.ok) { setErr(res.error ?? 'The server turned that down.'); return; }
+    if (!res.ok) { setErr(res.error ?? t('route.err.turnedDown')); return; }
     onSaved?.();
     onClose();
   };
@@ -362,7 +365,7 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
   // and would have kept saying it after the hold moved to 400.
   const cap = projection?.hold_cap ?? BASE_HOLD;
   const disabledReason = problem
-    ?? (carriers.length === 0 && !routeId ? 'Name a freighter to run it.' : null);
+    ?? (carriers.length === 0 && !routeId ? t('route.composer.nameFreighter') : null);
 
   // Rendered at page level: the trade dock slides on a CSS transform,
   // which makes it the containing block for position:fixed and squeezed
@@ -371,27 +374,26 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
     <div
       className={`rc-backdrop${mapPicking ? ' rc-backdrop--picking' : ''}`}
       role="dialog"
-      aria-label="Route composer"
+      aria-label={t('route.composer.aria')}
     >
       <div className="rc">
         <div className="rc-head">
-          <span className="rc-title">{routeId ? 'Edit run' : 'New route'}</span>
+          <span className="rc-title">{routeId ? t('route.composer.editRun') : t('route.tab.new')}</span>
           <input
             className="rc-name"
             value={name}
-            placeholder="Name it (optional) — e.g. Ceres Milk Run"
+            placeholder={t('route.composer.namePlaceholder')}
             maxLength={60}
             onChange={e => setName(e.target.value)}
           />
-          <button className="rc-x" onClick={onClose} aria-label="Close">✕</button>
+          <button className="rc-x" onClick={onClose} aria-label={t('trade.close')}>✕</button>
         </div>
 
-        <div className="rc-section-label">Stops — in visiting order</div>
+        <div className="rc-section-label">{t('route.composer.stops')}</div>
         <div className="rc-strip">
           {stops.length === 0 && (
             <div className="rc-empty">
-              No stops yet. Add the places this run visits — it collects at each
-              stop and drops everything at the last one.
+              {t('route.composer.noStops')}
             </div>
           )}
           {stops.map((s, i) => (
@@ -413,16 +415,16 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
                   type="button"
                   className="rc-sub"
                   onClick={() => setDetailFor(detailFor === i ? null : i)}
-                  title="Choose which resources this stop picks up"
+                  title={t('route.composer.chooseTip')}
                 >
                   {s.action === 'dropoff'
-                    ? 'drop it all'
-                    : [s.takeMetal !== false && 'metal', s.takeGold !== false && 'credits',
-                      s.takeScience !== false && 'science'].filter(Boolean).join(' · ') || 'nothing selected'}
+                    ? t('route.composer.dropAll')
+                    : [s.takeMetal !== false && t('market.res.metal'), s.takeGold !== false && t('market.res.gold'),
+                      s.takeScience !== false && t('market.res.science')].filter(Boolean).join(' · ') || t('route.composer.nothingSelected')}
                 </button>
                 {detailFor === i && s.action === 'pickup' && (
                   <div className="rc-detail">
-                    {([['takeMetal', 'metal'], ['takeGold', 'credits'], ['takeScience', 'science']] as const)
+                    {([['takeMetal', t('market.res.metal')], ['takeGold', t('market.res.gold')], ['takeScience', t('market.res.science')]] as const)
                       .map(([key, label]) => (
                         <label key={key} className="rc-check">
                           <input
@@ -442,8 +444,8 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
                   position is the DEPLOY-rule violation this codebase
                   keeps catching — a control that does nothing. */}
               {mineIds.has(s.bodyId) ? (
-                <span className="rc-pill is-mine" title="Freighters work this rock until their hold is full">
-                  Mine
+                <span className="rc-pill is-mine" title={t('route.composer.mineTip')}>
+                  {t('route.composer.mine')}
                 </span>
               ) : (
                 <button
@@ -452,26 +454,26 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
                   onClick={() => setAction(i, s.action === 'pickup' ? 'dropoff' : 'pickup')}
                   disabled={s.action === 'pickup' && !dropoffIds.has(s.bodyId)}
                   title={s.action === 'pickup' && !dropoffIds.has(s.bodyId)
-                    ? 'Cargo can only be dropped at a terraformed world you live on'
-                    : 'Switch between picking up and dropping off here'}
+                    ? t('route.composer.dropOnlyTip')
+                    : t('route.composer.switchTip')}
                 >
-                  {s.action === 'dropoff' ? 'Drop off' : 'Pick up'}
+                  {s.action === 'dropoff' ? t('route.composer.dropOff') : t('route.composer.pickUp')}
                 </button>
               )}
               <div className="rc-reorder">
-                <button type="button" onClick={() => move(i, -1)} disabled={i === 0} aria-label="Move earlier">↑</button>
-                <button type="button" onClick={() => move(i, 1)} disabled={i === stops.length - 1} aria-label="Move later">↓</button>
-                <button type="button" onClick={() => removeStop(i)} aria-label="Remove stop">✕</button>
+                <button type="button" onClick={() => move(i, -1)} disabled={i === 0} aria-label={t('route.composer.moveEarlier')}>↑</button>
+                <button type="button" onClick={() => move(i, 1)} disabled={i === stops.length - 1} aria-label={t('route.composer.moveLater')}>↓</button>
+                <button type="button" onClick={() => removeStop(i)} aria-label={t('route.composer.removeStop')}>✕</button>
               </div>
             </div>
           ))}
-          {stops.length >= 2 && <div className="rc-loopback">↻ then back to stop 1</div>}
+          {stops.length >= 2 && <div className="rc-loopback">↻ {t('route.composer.loopBack')}</div>}
         </div>
 
         {stops.length < MAX_STOPS && (
           <div className="rc-add">
             <button type="button" className="rc-addbtn" onClick={() => setPicking(p => !p)}>
-              + Add stop
+              + {t('route.composer.addStop')}
             </button>
             {/* PICK ON MAP. This button existed but was gated on a prop
                 neither mount ever passed, so map picking was dead code
@@ -482,13 +484,13 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
               type="button"
               className={`rc-addbtn is-map${mapPicking ? ' is-on' : ''}`}
               onClick={() => setMapPicking(v => !v)}
-              title="Click worlds on the map to add them. Worlds you can't ship from are dimmed."
+              title={t('route.composer.mapTip')}
             >
-              {mapPicking ? (isMobile ? 'Picking… (tap to stop)' : 'Picking… (Esc)') : 'Pick on map'}
+              {mapPicking ? (isMobile ? t('route.composer.pickingTap') : t('route.composer.pickingEsc')) : t('route.composer.pickOnMap')}
             </button>
             {cluster && cluster.length > 1 && (
               <div className="rc-cluster">
-                <div className="rc-cluster-q">Several worlds there — which one?</div>
+                <div className="rc-cluster-q">{t('route.composer.cluster')}</div>
                 <div className="rc-cluster-opts">
                   {cluster.map(id => {
                     const b = gameState.bodies.find(x => x.id === id);
@@ -504,7 +506,7 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
                     );
                   })}
                   <button type="button" className="rc-cluster-opt is-cancel"
-                          onClick={() => setCluster(null)}>Cancel</button>
+                          onClick={() => setCluster(null)}>{t('common.cancel')}</button>
                 </div>
               </div>
             )}
@@ -514,15 +516,14 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
                   className="rc-search"
                   autoFocus
                   value={search}
-                  placeholder="Search your worlds…"
+                  placeholder={t('route.composer.searchWorlds')}
                   onChange={e => setSearch(e.target.value)}
                 />
                 <div className="rc-picker-hint">
-                  Cargo can only be dropped at a <b>terraformed</b> world you live on.
-                  Raw worlds can still be collected from.
+                  {t('route.composer.pickHintPre')} <b>{t('route.composer.pickHintBold')}</b> {t('route.composer.pickHintPost')}
                 </div>
                 <div className="rc-picker-list">
-                  {searchable.length === 0 && <div className="rc-empty">Nothing matches.</div>}
+                  {searchable.length === 0 && <div className="rc-empty">{t('route.composer.noMatch')}</div>}
                   {searchable.map(([group, items]) => (
                     <div key={group}>
                       <div className="rc-group">{group}</div>
@@ -554,9 +555,9 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
                               // planSiteDraw).
                               if (st.total < 1 && dropoffIds.has(b.id)
                                   && stops.some(s => siteIds.has(s.bodyId))) {
-                                return <span className="rc-pick-stock">treasury · for the site</span>;
+                                return <span className="rc-pick-stock">{t('route.composer.treasury')}</span>;
                               }
-                              if (st.total < 1) return <span className="rc-pick-empty">nothing waiting</span>;
+                              if (st.total < 1) return <span className="rc-pick-empty">{t('route.composer.nothingWaiting')}</span>;
                               return [
                                 st.ore >= 1 ? `${Math.round(st.ore)}M` : null,
                                 st.credits >= 1 ? `${Math.round(st.credits)}C` : null,
@@ -565,7 +566,7 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
                             })()}
                           </span>
                           <span className={`rc-pick-meta${dropoffIds.has(b.id) ? ' is-dock' : ''}`}>
-                            {dropoffIds.has(b.id) ? 'terraformed · can drop off' : 'raw · pick up only'}
+                            {dropoffIds.has(b.id) ? t('route.composer.terraformedMeta') : t('route.composer.rawMeta')}
                           </span>
                         </button>
                       ))}
@@ -578,7 +579,7 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
                       numbers. */}
                   {searchableSites.length > 0 && (
                     <div>
-                      <div className="rc-group is-rocks">Construction sites</div>
+                      <div className="rc-group is-rocks">{t('route.composer.sites')}</div>
                       {searchableSites.map((b) => {
                         if (b.id === 'sol') {
                           // The Dyson Sphere: its meter is the sphere's
@@ -593,9 +594,9 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
                               onClick={() => { addStop(b.id); setPicking(false); }}
                             >
                               <span className="rc-rockglyph" aria-hidden>☀</span>
-                              <span className="rc-pick-name">Dyson Sphere</span>
-                              <span className="rc-pick-stock">{pct}% built</span>
-                              <span className="rc-pick-meta">metal · credits · science</span>
+                              <span className="rc-pick-name">{t('route.composer.dyson')}</span>
+                              <span className="rc-pick-stock">{t('route.composer.built', { pct })}</span>
+                              <span className="rc-pick-meta">{t('market.res.metal')} · {t('market.res.gold')} · {t('market.res.science')}</span>
                             </button>
                           );
                         }
@@ -612,10 +613,10 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
                             <span className="rc-rockglyph" aria-hidden>{def?.glyph ?? '⬡'}</span>
                             <span className="rc-pick-name">{def?.label ?? b.name}</span>
                             <span className="rc-pick-stock">
-                              {m ? `${Math.round(progressOf(m) * 100)}% built` : ''}
+                              {m ? t('route.composer.built', { pct: Math.round(progressOf(m) * 100) }) : ''}
                             </span>
                             <span className="rc-pick-meta">
-                              {loads} load{loads === 1 ? '' : 's'} to go
+                              {tn('route.composer.loadsToGo', loads)}
                             </span>
                           </button>
                         );
@@ -625,7 +626,7 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
 
                   {searchableRocks.length > 0 && (
                     <div>
-                      <div className="rc-group is-rocks">Surveyed rocks</div>
+                      <div className="rc-group is-rocks">{t('route.composer.rocks')}</div>
                       {searchableRocks.map(b => (
                         <button
                           key={b.id}
@@ -636,11 +637,10 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
                           <span className="rc-rockglyph" aria-hidden>◈</span>
                           <span className="rc-pick-name">{b.name}</span>
                           <span className="rc-pick-stock">
-                            {Math.round(b.mineralRemaining ?? 0)}
-                            {b.mineralKind === 'gold' ? 'C' : 'M'} left
+                            {t('route.composer.left', { n: Math.round(b.mineralRemaining ?? 0), unit: b.mineralKind === 'gold' ? 'C' : 'M' })}
                           </span>
                           <span className="rc-pick-meta">
-                            {b.type === 'lagrange' ? 'L3 — parked opposite its world' : 'deep space'}
+                            {b.type === 'lagrange' ? t('route.composer.l3') : t('route.tab.deepSpace')}
                           </span>
                         </button>
                       ))}
@@ -654,7 +654,7 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
 
         {projection && (
           <>
-            <div className="rc-section-label">The run, as it will actually go</div>
+            <div className="rc-section-label">{t('route.composer.projection')}</div>
             <HoldGauge
               projection={projection}
               cap={cap}
@@ -667,12 +667,12 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
 
         {!routeId && (
           <>
-            <div className="rc-section-label">When to stop looping</div>
+            <div className="rc-section-label">{t('route.composer.whenStop')}</div>
             <div className="rc-radios">
               <button type="button" className={`rc-radio${loopMode === 'forever' ? ' on' : ''}`}
-                onClick={() => setLoopMode('forever')}>Repeat forever</button>
+                onClick={() => setLoopMode('forever')}>{t('route.composer.forever')}</button>
               <button type="button" className={`rc-radio${loopMode === 'count' ? ' on' : ''}`}
-                onClick={() => setLoopMode('count')}>Repeat a set number of times</button>
+                onClick={() => setLoopMode('count')}>{t('route.composer.setNumber')}</button>
               {loopMode === 'count' && (
                 <input
                   className="rc-count" type="number" min={1} max={999} value={loopCount}
@@ -681,23 +681,23 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
               )}
             </div>
 
-            <div className="rc-section-label">Ships</div>
+            <div className="rc-section-label">{t('route.composer.ships')}</div>
             <ShipRow
-              label="Runs it"
+              label={t('route.tab.runsIt')}
               // Names the NEXT tech, for the same reason the route card's
               // tooltip does: "at your research" states the limit without
               // ever saying how to lift it, and Convoy Logistics was
               // missing from the research card entirely, so there was
               // nothing to stumble across either.
               hint={carriers.length >= carrierCap
-                ? `At your research a route can hold ${carrierCap} freighter${carrierCap === 1 ? '' : 's'}.`
+                ? tn('route.composer.holds', carrierCap)
                   + (carrierCap < 2
-                    ? ` ${requirementLabel('trade.convoy2')} raises it to 2.`
+                    ? ` ${t('route.composer.raisesTo2', { tech: requirementLabel('trade.convoy2') ?? '' })}`
                     : carrierCap < 4
-                      ? ` ${requirementLabel('trade.convoy4')} raises it to 4.`
+                      ? ` ${t('route.composer.raisesTo4', { tech: requirementLabel('trade.convoy4') ?? '' })}`
                       : '')
                 : busyFreighters > 0
-                  ? `${busyFreighters} more ${busyFreighters === 1 ? 'freighter is' : 'freighters are'} already on a route.`
+                  ? tn('route.composer.busyFreighters', busyFreighters)
                   : undefined}
               options={myFreighters}
               chosen={carriers}
@@ -707,9 +707,9 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
                   : prev.length < carrierCap ? [...prev, id] : prev)}
             />
             <ShipRow
-              label="Guards"
-              hint={`Guards fly the run with the freighter and hold fire unless something attacks it.${
-                busyWarships > 0 ? ` ${busyWarships} more already on a route.` : ''}`}
+              label={t('route.tab.guards')}
+              hint={`${t('route.composer.guardsHint')}${
+                busyWarships > 0 ? ` ${t('route.composer.busyWarships', { n: busyWarships })}` : ''}`}
               options={myWarships}
               chosen={guards}
               onToggle={id => setGuards(prev =>
@@ -723,15 +723,15 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
         <div className="rc-foot">
           {projection && (
             <div className="rc-readout">
-              <span>loop <b>≈{projection.loop_ticks} ticks</b></span>
-              <span>peak hold <b>{Math.round(projection.peak_per_resource)} / {cap}</b></span>
-              <span>delivers <b>{Math.round(
+              <span>{t('route.composer.loop')} <b>{t('route.composer.loopTicks', { n: projection.loop_ticks })}</b></span>
+              <span>{t('route.composer.peakHold')} <b>{Math.round(projection.peak_per_resource)} / {cap}</b></span>
+              <span>{t('route.composer.delivers')} <b>{t('route.composer.perLoop', { n: Math.round(
                 projection.delivered.metal + projection.delivered.gold + projection.delivered.science,
-              )} / loop</b></span>
+              ) })}</b></span>
             </div>
           )}
           <div className="rc-actions">
-            <button type="button" className="rc-btn" onClick={onClose}>Cancel</button>
+            <button type="button" className="rc-btn" onClick={onClose}>{t('common.cancel')}</button>
             <button
               type="button"
               className="rc-btn is-primary"
@@ -739,7 +739,7 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
               title={disabledReason ?? undefined}
               onClick={save}
             >
-              {busy ? 'Saving…' : routeId ? 'Save run' : 'Create route'}
+              {busy ? t('route.composer.saving') : routeId ? t('route.composer.saveRun') : t('route.composer.create')}
             </button>
           </div>
         </div>
@@ -760,6 +760,7 @@ const HoldGauge: React.FC<{
   bodyOf: (id: string) => Body | undefined;
   currentTick: number;
 }> = ({ projection, cap, bodyName, bodyOf, currentTick }) => {
+  useI18n();
   const over = projection.peak_per_resource >= cap;
   // SCALE TO THE RUN, not to the theoretical ceiling. The first version
   // divided by cap*3 (three resources at 500 each), so a real 50-unit
@@ -786,7 +787,7 @@ const HoldGauge: React.FC<{
                 />
               </div>
               <div className="rc-gauge-lbl">
-                {s.sequence + 1} · {s.action === 'dropoff' ? 'empty' : Math.round(s.aboard_total)}
+                {s.sequence + 1} · {s.action === 'dropoff' ? t('route.tab.empty') : Math.round(s.aboard_total)}
               </div>
               <div className="rc-gauge-body">
                 {b && <PlanetIcon body={b} size={14} currentTick={currentTick} className="rc-planet" />}
@@ -798,8 +799,7 @@ const HoldGauge: React.FC<{
       </div>
       {over && (
         <div className="rc-gauge-warn">
-          The hold fills up before the end of the run — later pickups will come
-          back light. Drop something off sooner, or take fewer resources.
+          {t('route.composer.holdWarn')}
         </div>
       )}
     </div>
@@ -813,11 +813,13 @@ const ShipRow: React.FC<{
   chosen: string[];
   max?: number;
   onToggle: (id: string) => void;
-}> = ({ label, hint, options, chosen, max, onToggle }) => (
+}> = ({ label, hint, options, chosen, max, onToggle }) => {
+  useI18n();
+  return (
   <div className="rc-shiprow">
     <div className="rc-shiprow-label">{label}</div>
     <div className="rc-shiprow-list">
-      {options.length === 0 && <span className="rc-empty">None available.</span>}
+      {options.length === 0 && <span className="rc-empty">{t('route.composer.noneAvailable')}</span>}
       {options.map(s => {
         const on = chosen.includes(s.id);
         const blocked = !on && max != null && chosen.length >= max;
@@ -837,6 +839,7 @@ const ShipRow: React.FC<{
     </div>
     {hint && <div className="rc-hint">{hint}</div>}
   </div>
-);
+  );
+};
 
 export default RouteComposer;
