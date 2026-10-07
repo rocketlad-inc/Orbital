@@ -272,6 +272,11 @@ export async function salvagedDestroyer(env, gameId, factionId) {
   };
 }
 
+/** The Horizon Archive (Cygnus's signature find): science paid to the
+ *  finder. About one mid-game research level (level 5 costs 839, level 6
+ *  1323, actions.js techCostForNext) -- the price of the trip in. */
+export const HORIZON_ARCHIVE_SCIENCE = 1000;
+
 /** A deep cache is worth this many destroyer hulls. Tied to HULL_COST so it
  *  keeps its meaning through the next rebalance; the inner cache's flat
  *  +500 was sized for an economy that no longer exists.
@@ -11139,6 +11144,9 @@ export class Room {
     // same as the gate pairs: built after each body's batch lands.
     const capitalsToSpawn = [];
     const ancientsToSpawn = [];
+    // Precursor Orreries: a station for the finder, founded through the
+    // shared settlement write once the reveal has committed.
+    const orreriesToFound = [];
 
     // Step 1: unrevealed-secret bodies that have at least one parked ship.
     const unrevealed = (await this.env.DB
@@ -11383,6 +11391,23 @@ export class Room {
           chronicleExtra = { metal, credits: gold };
           break;
         }
+
+        // --- THE FAR SYSTEMS' SIGNATURE FINDS (factions.js FAR_SECRET_PLAN)
+        case 'precursor_orrery': {
+          orreriesToFound.push({ bodyId: body_id, bodyName: body_name, bodyRadius: body_radius, discoverer });
+          chronicleMessage = `${body_name}: DISCOVERY — a precursor orrery, built to follow the two suns and still turning. It answers to you now: a working station, and Centauri's suns pay a station double.`;
+          break;
+        }
+        case 'horizon_archive': {
+          stmts.push(
+            this.env.DB
+              .prepare('UPDATE game_factions SET science = science + ? WHERE id = ?')
+              .bind(HORIZON_ARCHIVE_SCIENCE, discoverer),
+          );
+          chronicleMessage = `${body_name}: DISCOVERY — the Horizon Archive, a record of everything the ancients measured at the event horizon. +${HORIZON_ARCHIVE_SCIENCE} science to your pool.`;
+          chronicleExtra = { science: HORIZON_ARCHIVE_SCIENCE };
+          break;
+        }
       }
 
       // Chronicle the discovery. Best-effort; never block the reveal.
@@ -11431,6 +11456,27 @@ export class Room {
         if (ins) await ins.run();
       } catch (e) {
         console.error('ancient capital spawn failed', c, e);
+      }
+    }
+
+    // Step 1c': Precursor Orreries. Through commitSettlement like any
+    // station (ownership recount, debris-field refusal). A finder who
+    // already keeps a station on that world gets nothing doubled.
+    for (const o of orreriesToFound) {
+      try {
+        const have = await this.env.DB
+          .prepare(`SELECT id FROM game_settlements
+                     WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
+                       AND type = 'station' AND destroyed_at_tick IS NULL LIMIT 1`)
+          .bind(gameId, o.bodyId, o.discoverer).first();
+        if (have) continue;
+        await commitSettlement(this.env, {
+          gameId, bodyId: o.bodyId, factionId: o.discoverer, type: 'station',
+          name: `${o.bodyName} Orrery`, tick, bodyRadius: o.bodyRadius, bodyName: o.bodyName,
+          quiet: true,
+        });
+      } catch (e) {
+        console.error('precursor orrery founding failed', o, e);
       }
     }
 
