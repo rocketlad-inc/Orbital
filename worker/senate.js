@@ -28,6 +28,7 @@ import { voteWeights, weightBreakdown, WEIGHT_RULE } from './systems.js';
 import {
   ensureTerm, currentTerm, termTicksFor, shapeTerm, remainingInCycle,
 } from './senateTerms.js';
+import { tr, trn } from './i18n.js';
 
 export { WEIGHT_RULE };
 
@@ -1413,10 +1414,10 @@ async function handleCreateProposal(req, env, { params, session }) {
     const opensIn = Math.max(0, voteOpens - proposedAt);
     const summaryLine = summary.trim() ? `\n${summary.trim().slice(0, 240)}` : '';
     const ballot = (v) => ({ verb: 'vote', game_id: gameId, proposal_id: id, vote: v });
-    const actions = opensIn > 0 ? undefined : [
-      { id: 'yea', label: 'YEA', verb: ballot('yea') },
-      { id: 'nay', label: 'NAY', verb: ballot('nay') },
-      { id: 'abstain', label: 'ABSTAIN', verb: ballot('abstain') },
+    const actions = opensIn > 0 ? undefined : (L) => [
+      { id: 'yea', label: tr(L, 'alert.vote.yea'), verb: ballot('yea') },
+      { id: 'nay', label: tr(L, 'alert.vote.nay'), verb: ballot('nay') },
+      { id: 'abstain', label: tr(L, 'alert.vote.abstain'), verb: ballot('abstain') },
     ];
     await Promise.allSettled(others.map(f => notify.sendDm(env, {
       userId: f.user_id,
@@ -1426,14 +1427,14 @@ async function handleCreateProposal(req, env, { params, session }) {
       url: '/',
       actions,
       watch: { screen: 'senate', ref: id },
-      embed: {
-        title: `🏛️ New bill: ${title.trim()}`,
-        description: `Proposed by **${ctx.faction.name ?? 'a senator'}**. `
+      embed: (L) => ({
+        title: tr(L, 'alert.bill.title', { title: title.trim() }),
+        description: `${tr(L, 'alert.bill.by', { name: ctx.faction.name ?? tr(L, 'alert.bill.aSenator') })} `
           + (opensIn > 0
-            ? `Debate now; voting opens in ${opensIn} tick${opensIn === 1 ? '' : 's'} (tick ${voteOpens}) and closes at tick ${voteCloses}.`
-            : `Voting is open until tick ${voteCloses}.`)
+            ? trn(L, 'alert.bill.debate', opensIn, { opens: voteOpens, closes: voteCloses })
+            : tr(L, 'alert.bill.open', { closes: voteCloses }))
           + summaryLine,
-      },
+      }),
     })));
   } catch (e) {
     console.error('new-bill alerts failed', e, { proposalId: id });

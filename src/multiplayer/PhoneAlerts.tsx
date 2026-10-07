@@ -22,6 +22,9 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   pushState, enablePush, disablePush, sendTestPush, type PushState,
 } from '../platform/push';
+import { t } from '../i18n/core';
+import { tRich } from '../i18n/rich';
+import { useI18n } from '../i18n/react';
 
 const head: React.CSSProperties = {
   fontSize: 11, letterSpacing: '.12em', textTransform: 'uppercase',
@@ -35,6 +38,7 @@ const pill: React.CSSProperties = {
 };
 
 export function PhoneAlerts() {
+  useI18n();
   const [state, setState] = useState<PushState | null>(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
@@ -51,7 +55,7 @@ export function PhoneAlerts() {
     setBusy(false);
     setState(res.state);
     if (res.error) setErr(res.error);
-    else setNote('Notifications are on for this device.');
+    else setNote(t('mp.alerts.noteOn'));
   };
 
   const turnOff = async () => {
@@ -59,7 +63,7 @@ export function PhoneAlerts() {
     await disablePush();
     setBusy(false);
     await refresh();
-    setNote('This device will stop receiving notifications.');
+    setNote(t('mp.alerts.noteOff'));
   };
 
   const test = async () => {
@@ -67,45 +71,39 @@ export function PhoneAlerts() {
     const problem = await sendTestPush();
     setBusy(false);
     if (problem) setErr(problem);
-    else setNote('Sent — it should appear in a moment.');
+    else setNote(t('mp.alerts.noteSent'));
   };
 
   return (
     <div style={{ marginTop: 14 }}>
-      <div style={head}>Notifications on this device</div>
+      <div style={head}>{t('mp.alerts.head')}</div>
 
       {state === 'unsupported' ? (
         <div style={sub}>
-          This browser cannot show notifications. On a phone, install Orbital to
-          your home screen first.
+          {t('mp.alerts.unsupported')}
         </div>
       ) : state === 'denied' ? (
         <div style={sub}>
-          Notifications are blocked for orbital-empire.com. Your browser will not
-          ask again, so this has to be switched back on in its site settings —
-          the padlock beside the address, then Notifications.
+          {t('mp.alerts.denied')}
         </div>
       ) : state === 'subscribed' ? (
         <>
           <div style={{ ...sub, marginBottom: 10 }}>
-            On for this device. Trade offers, senate votes and your daily report
-            arrive here, following the same switches below.
+            {t('mp.alerts.on')}
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button type="button" style={pill} disabled={busy} onClick={() => void test()}>
-              Send a test
+              {t('mp.alerts.test')}
             </button>
             <button type="button" style={pill} disabled={busy} onClick={() => void turnOff()}>
-              Turn off here
+              {t('mp.alerts.off')}
             </button>
           </div>
         </>
       ) : (
         <>
           <div style={{ ...sub, marginBottom: 10 }}>
-            Get told when something needs you — an offer, a vote closing, a world
-            under attack — without keeping the game open. No Discord needed.
-            This covers <b style={{ color: '#cdd9e4' }}>this device only</b>.
+            {tRich('mp.alerts.ask', { device: <b style={{ color: '#cdd9e4' }}>{t('mp.alerts.thisDevice')}</b> })}
           </div>
           <button
             type="button"
@@ -113,7 +111,7 @@ export function PhoneAlerts() {
             disabled={busy}
             onClick={() => void turnOn()}
           >
-            {busy ? 'Asking…' : '🔔 Turn on notifications'}
+            {busy ? t('mp.alerts.asking') : t('mp.alerts.turnOn')}
           </button>
         </>
       )}

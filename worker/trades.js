@@ -16,6 +16,8 @@
 // Resource payload uses server faction columns: metal, fuel, gold, science.
 
 import { getActiveSliders, getSliderResolver } from './senate.js';
+import { tr } from './i18n.js';
+import { resWord, pactName } from './alertText.js';
 import {
   factionTechLevels, gatingEnabled, hasFeature, lockedError,
 } from './researchUnlocks.js';
@@ -412,13 +414,13 @@ async function handlePropose(req, env, { session, params }) {
     if (uid) {
       const roomName = (await env.DB
         .prepare('SELECT name FROM rooms WHERE id = ?').bind(gameId).first())?.name ?? gameId;
-      const bits = (o) => {
+      const bits = (o, L) => {
         const out = [];
-        if (o.metal) out.push(`**${Math.round(o.metal)}** metal`);
-        if (o.fuel) out.push(`**${Math.round(o.fuel)}** fuel`);
-        if (o.gold) out.push(`**${Math.round(o.gold)}** credits`);
-        if (o.science) out.push(`**${Math.round(o.science)}** science`);
-        return out.length ? out.join(' · ') : '_nothing_';
+        if (o.metal) out.push(`**${Math.round(o.metal)}** ${resWord(L, 'metal')}`);
+        if (o.fuel) out.push(`**${Math.round(o.fuel)}** ${resWord(L, 'fuel')}`);
+        if (o.gold) out.push(`**${Math.round(o.gold)}** ${resWord(L, 'gold')}`);
+        if (o.science) out.push(`**${Math.round(o.science)}** ${resWord(L, 'science')}`);
+        return out.length ? out.join(' · ') : tr(L, 'alert.nothing');
       };
       // pactCheck holds the validated arrays the INSERT binds above.
       const pacts = (arr) => (Array.isArray(arr) && arr.length ? ` · ${arr.join(', ')}` : '');
@@ -431,34 +433,33 @@ async function handlePropose(req, env, { session, params }) {
         // Yes or no from the lock screen. The routes below own every
         // rule about whether the deal can still be taken, so a stale
         // button gets the game's own refusal rather than a silent no-op.
-        actions: [
-          { id: 'accept', label: 'ACCEPT', verb: { verb: 'trade_accept', game_id: gameId, trade_id: id } },
-          { id: 'decline', label: 'DECLINE', verb: { verb: 'trade_decline', game_id: gameId, trade_id: id } },
+        actions: (L) => [
+          { id: 'accept', label: tr(L, 'alert.trade.pushAccept'), verb: { verb: 'trade_accept', game_id: gameId, trade_id: id } },
+          { id: 'decline', label: tr(L, 'alert.trade.pushDecline'), verb: { verb: 'trade_decline', game_id: gameId, trade_id: id } },
         ],
-        embed: {
-          title: `🤝 Trade offer from ${proposer.name}`,
+        embed: (L) => ({
+          title: tr(L, 'alert.trade.offerTitle', { name: proposer.name }),
           description: [
-            `**They give you:** ${bits(res.offer)}${pacts(pactCheck.offerPacts)}`,
-            `**They want:** ${bits(res.request)}${pacts(pactCheck.requestPacts)}`,
+            tr(L, 'alert.trade.theyGive', { what: bits(res.offer, L), pacts: pacts(pactCheck.offerPacts) }),
+            tr(L, 'alert.trade.theyWant', { what: bits(res.request, L), pacts: pacts(pactCheck.requestPacts) }),
             // Same point the panel now makes: whether saying yes costs
             // you a freighter. It's the difference between a deal that
             // flies on acceptance and one that sits until you crew it.
             recurring && offeredShipId
-              ? '\n🚚 They have committed a freighter — accept and the lane '
-                + 'starts at once, both directions. You need not assign one.'
+              ? tr(L, 'alert.trade.committed')
               : recurring
-                ? '\n_A standing route: each side commissions a freighter after accepting._'
+                ? tr(L, 'alert.trade.standing')
                 : null,
             note ? `\n_"${String(note).slice(0, 200)}"_` : null,
           ].filter(Boolean).join('\n'),
           color: 0x4ecdc4,
           footer: { text: `Orbital · ${roomName} · T+${tick}` },
-        },
-        components: [{
+        }),
+        components: (L) => [{
           type: 1,
           components: [
-            { type: 2, style: 3, label: 'Accept', custom_id: `orb:t:${gameId}:${id}:accept` },
-            { type: 2, style: 4, label: 'Decline', custom_id: `orb:t:${gameId}:${id}:decline` },
+            { type: 2, style: 3, label: tr(L, 'alert.trade.accept'), custom_id: `orb:t:${gameId}:${id}:accept` },
+            { type: 2, style: 4, label: tr(L, 'alert.trade.decline'), custom_id: `orb:t:${gameId}:${id}:decline` },
           ],
         }],
       });
@@ -894,48 +895,48 @@ export async function handleAccept(req, env, { session, params }) {
     if (uid) {
       const roomName = (await env.DB
         .prepare('SELECT name FROM rooms WHERE id = ?').bind(gameId).first())?.name ?? gameId;
-      const bits = (o) => {
+      const bits = (o, L) => {
         const out = [];
-        if (o.metal) out.push(`**${Math.round(o.metal)}** metal`);
-        if (o.fuel) out.push(`**${Math.round(o.fuel)}** fuel`);
-        if (o.gold) out.push(`**${Math.round(o.gold)}** credits`);
-        if (o.science) out.push(`**${Math.round(o.science)}** science`);
-        return out.length ? out.join(' · ') : '_nothing_';
+        if (o.metal) out.push(`**${Math.round(o.metal)}** ${resWord(L, 'metal')}`);
+        if (o.fuel) out.push(`**${Math.round(o.fuel)}** ${resWord(L, 'fuel')}`);
+        if (o.gold) out.push(`**${Math.round(o.gold)}** ${resWord(L, 'gold')}`);
+        if (o.science) out.push(`**${Math.round(o.science)}** ${resWord(L, 'science')}`);
+        return out.length ? out.join(' · ') : tr(L, 'alert.nothing');
       };
-      const give = bits({
+      const giveBundle = {
         metal: trade.offer_metal, fuel: trade.offer_fuel,
         gold: trade.offer_gold, science: trade.offer_science,
-      });
-      const get = bits({
+      };
+      const getBundle = {
         metal: trade.request_metal, fuel: trade.request_fuel,
         gold: trade.request_gold, science: trade.request_science,
-      });
+      };
       // WHAT HAPPENS NEXT is the useful half. A standing deal that still
       // needs a hull commissioned looks identical to one already flying
       // until someone opens the panel and reads the fine print.
-      const next = !isRecurring
-        ? 'The goods are on their way.'
+      const nextKey = !isRecurring
+        ? 'alert.trade.next.goods'
         : startedRouteId
-          ? 'The lane is already flying — your freighter is on it, both directions.'
-          : 'Commission a freighter in the Trades panel to start the run.';
+          ? 'alert.trade.next.flying'
+          : 'alert.trade.next.commission';
       await notify.sendDm(env, {
         userId: uid,
         gameId,
         category: 'dm',
         dedupeKey: `trade-accepted:${tradeId}`,
-        embed: {
-          title: `✅ ${responder.name} accepted your offer`,
+        embed: (L) => ({
+          title: tr(L, 'alert.trade.acceptedTitle', { name: responder.name }),
           description: [
-            `**You give:** ${give}`,
-            `**You get:** ${get}`,
+            tr(L, 'alert.trade.youGive', { what: bits(giveBundle, L) }),
+            tr(L, 'alert.trade.youGet', { what: bits(getBundle, L) }),
             treatyIds.length
-              ? `**Signed:** ${treatyIds.map(t => t.kind).join(', ')}`
+              ? tr(L, 'alert.trade.signed', { kinds: treatyIds.map(t => pactName(L, t.kind)).join(', ') })
               : null,
-            `\n${next}`,
+            `\n${tr(L, nextKey)}`,
           ].filter(Boolean).join('\n'),
           color: 0x6bd39a,
           footer: { text: `Orbital · ${roomName} · T+${tick}` },
-        },
+        }),
       });
     }
   } catch (e) {

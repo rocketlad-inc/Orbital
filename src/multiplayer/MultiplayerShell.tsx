@@ -9,6 +9,8 @@ import { SenatePanel } from './SenatePanel';
 import { tradesApi, apiFetch, RoomSnapshot } from './api';
 import { openScreen, logAction } from './telemetry';
 import { connectRoomSocket } from './roomSocket';
+import { t, tn } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 
 // Multiplayer overlay UI mounted alongside the existing single-player React
 // app. The dock exposes a right-side panel with Lobby / Faction / Comms /
@@ -80,7 +82,7 @@ function shipLossToast(
   myFactionId: string | null,
 ): string {
   if (!owners || owners.length === 0 || !myFactionId) {
-    return `${total} ship${total === 1 ? '' : 's'} destroyed`;
+    return tn('shell.loss.total', total);
   }
   const peace = new Set(peacePairs);
   const atPeace = (other: string) => peace.has(
@@ -100,21 +102,22 @@ function shipLossToast(
   // on, and burying it behind an enemy count is how a wipe reads as a
   // win at a glance.
   const parts: string[] = [];
-  if (mine > 0) parts.push(mine === 1 ? 'Your ship' : `${mine} of your ships`);
-  if (friendly > 0) parts.push(friendly === 1 ? 'a friendly ship' : `${friendly} friendly ships`);
-  if (enemy > 0) parts.push(enemy === 1 ? 'an enemy ship' : `${enemy} enemy ships`);
-  if (unknown > 0) parts.push(unknown === 1 ? 'an unidentified ship' : `${unknown} unidentified ships`);
-  if (parts.length === 0) return `${total} ship${total === 1 ? '' : 's'} destroyed`;
+  if (mine > 0) parts.push(tn('shell.loss.mine', mine));
+  if (friendly > 0) parts.push(tn('shell.loss.friendly', friendly));
+  if (enemy > 0) parts.push(tn('shell.loss.enemy', enemy));
+  if (unknown > 0) parts.push(tn('shell.loss.unknown', unknown));
+  if (parts.length === 0) return tn('shell.loss.total', total);
   const joined = parts.length === 1
     ? parts[0]
-    : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+    : `${parts.slice(0, -1).join(', ')}${t('shell.loss.and')}${parts[parts.length - 1]}`;
   // Capitalised only when the sentence does not already start with
   // "Your" — "A friendly ship destroyed" beats "a friendly ship...".
   const text = joined.charAt(0).toUpperCase() + joined.slice(1);
-  return `${text} destroyed`;
+  return tn('shell.loss.destroyed', mine + friendly + enemy + unknown, { text });
 }
 
 export function MultiplayerShell({ children, initialRoomId, onExit, preGame = false }: MultiplayerShellProps) {
+  useI18n();
   // `signOut` used to live behind the mp-user-pill (top-right pill with
   // "← Menu", display name, and Sign out). That pill duplicated the
   // TopBar title-button drawer's GAME section ("Back to Menu") and
@@ -492,19 +495,19 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
             }
             const proposer = (typeof m.proposer_faction_name === 'string' && m.proposer_faction_name)
               ? m.proposer_faction_name
-              : 'Another faction';
-            pushToast('trade', `New trade offer from ${proposer}`);
+              : t('shell.toast.anotherFaction');
+            pushToast('trade', t('shell.toast.tradeOffer', { name: proposer }));
             setIncomingTradeCount((n) => n + 1);
             setPendingTrade({
               tradeId: String(m.trade_id ?? ''),
               proposerName: proposer,
             });
           } else if (m.event === 'accepted') {
-            pushToast('trade', 'Trade accepted');
+            pushToast('trade', t('shell.toast.tradeAccepted'));
           } else if (m.event === 'declined') {
-            pushToast('trade', 'Trade declined');
+            pushToast('trade', t('shell.toast.tradeDeclined'));
           } else if (m.event === 'countered') {
-            pushToast('trade', 'Counter-offer received');
+            pushToast('trade', t('shell.toast.tradeCountered'));
           }
         } else if (m?.kind === 'treaty') {
           // Treaty WS broadcasts come from worker/trades.js handleBreakTreaty
@@ -512,11 +515,11 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
           // notable one for now — implicit war resumes the moment a NAP or
           // defense pact dies, so the other party needs to know.
           if (m.event === 'broken') {
-            const kindLabel = m.treaty_kind === 'defense_pact' ? 'Defense Pact'
-              : m.treaty_kind === 'nap' ? 'Non-Aggression Pact'
-              : m.treaty_kind === 'intel_share' ? 'Intel-Share Pact'
-              : 'Treaty';
-            pushToast('trade', `${kindLabel} broken — war resumes`);
+            const kindLabel = m.treaty_kind === 'defense_pact' ? t('shell.treaty.defense')
+              : m.treaty_kind === 'nap' ? t('shell.treaty.nap')
+              : m.treaty_kind === 'intel_share' ? t('shell.treaty.intel')
+              : t('shell.treaty.generic');
+            pushToast('trade', t('shell.toast.treatyBroken', { kind: kindLabel }));
           }
         } else if (m?.kind === 'senate') {
           // Server emits two kinds of senate broadcasts:
@@ -532,18 +535,18 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
               // Own proposal -- skip the toast but still bump no count
               // (we know we just proposed it).
             } else {
-              const title = (typeof m.title === 'string' && m.title) ? m.title : 'A new proposal';
-              const from  = proposer ? ` from ${proposer}` : '';
+              const title = (typeof m.title === 'string' && m.title) ? m.title : t('shell.toast.newProposal');
+              const from  = proposer ? t('shell.toast.fromProposer', { name: proposer }) : '';
               pushToast('senate', `${title}${from}`);
             }
           } else if (m.event === 'resolved') {
             const opened = Number(m.opened ?? 0);
             const resolved = Number(m.resolved ?? 0);
             if (opened > 0) {
-              pushToast('senate', `${opened} proposal${opened > 1 ? 's' : ''} now open for voting`);
+              pushToast('senate', tn('shell.toast.opened', opened));
             }
             if (resolved > 0) {
-              pushToast('senate', `${resolved} proposal${resolved > 1 ? 's' : ''} resolved`);
+              pushToast('senate', tn('shell.toast.resolved', resolved));
             }
           }
           // Either way, nudge the panel to re-poll right now so it shows
@@ -552,7 +555,7 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
         } else if (m?.kind === 'message') {
           // Not your own, and not someone else's private letter.
           if (messageAlertsMe(m, myFactionIdRef.current)) {
-            pushToast('message', 'New message in Comms');
+            pushToast('message', t('shell.toast.message'));
             setUnreadMessages((n) => n + 1);
           }
         } else if (m?.type === 'ships_destroyed') {
@@ -590,17 +593,17 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
         >
           <div className="mp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="mp-modal__title" id="trade-modal-title">
-              ⚖ Incoming Trade Offer
+              {t('shell.trade.title')}
             </div>
             <div className="mp-modal__desc">
               <strong style={{ color: 'var(--mp-friendly)' }}>{pendingTrade.proposerName}</strong>{' '}
-              is offering you a trade. Review and accept, counter, or decline it from the Trades panel.
+              {t('shell.trade.desc')}
             </div>
             <div className="mp-modal__actions">
               <button
                 className="mp-btn"
                 onClick={() => setPendingTrade(null)}
-              >Dismiss</button>
+              >{t('shell.trade.dismiss')}</button>
               <button
                 className="mp-btn mp-btn--primary"
                 onClick={() => {
@@ -608,19 +611,19 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
                   try { window.dispatchEvent(new CustomEvent('orbital:open-panel', { detail: { panel: 'trades' } })); } catch {}
                   setPendingTrade(null);
                 }}
-              >Take Me There</button>
+              >{t('shell.trade.go')}</button>
             </div>
           </div>
         </div>
       )}
       {toasts.length > 0 && (
         <div className="mp-toasts">
-          {toasts.map(t => (
-            <div key={t.id} className={`mp-toast mp-toast--${t.kind}`}>
+          {toasts.map(toast => (
+            <div key={toast.id} className={`mp-toast mp-toast--${toast.kind}`}>
               <span className="mp-toast__icon">
-                {t.kind === 'senate' ? '🏛' : t.kind === 'trade' ? '⚖' : t.kind === 'message' ? '✉' : t.kind === 'combat' ? '✸' : '◷'}
+                {toast.kind === 'senate' ? '🏛' : toast.kind === 'trade' ? '⚖' : toast.kind === 'message' ? '✉' : toast.kind === 'combat' ? '✸' : '◷'}
               </span>
-              <span className="mp-toast__text">{t.text}</span>
+              <span className="mp-toast__text">{toast.text}</span>
             </div>
           ))}
         </div>
@@ -630,24 +633,24 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
         <div className="mp-dock-head">
           <span className="mp-dock-head__title">
             <MpPeopleIcon />
-            Multiplayer
+            {t('shell.title')}
           </span>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             {gameId && invite?.isHost && invite.code && (
               <button
                 className="mp-dock-collapse-btn"
                 onClick={copyInvite}
-                title="Copy the invite code — a friend can join an unclaimed world mid-game"
+                title={t('shell.invite.tip')}
                 style={{ fontSize: 11, letterSpacing: '0.04em' }}
               >
-                {inviteCopied ? `✓ ${invite.code}` : '⧉ Invite'}
+                {inviteCopied ? `✓ ${invite.code}` : t('shell.invite')}
               </button>
             )}
             <button
               className="mp-dock-collapse-btn"
               onClick={() => setCollapsed(true)}
-              title="Close panel"
-              aria-label="Close multiplayer panel"
+              title={t('shell.close')}
+              aria-label={t('shell.close.aria')}
             >×</button>
           </div>
         </div>
@@ -658,20 +661,20 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
                   game has started the room is frozen; hide the tab so it
                   can't drag the player back into a screen that doesn't apply. */}
               {!gameId && (
-                <button className={tab === 'lobby' ? 'active' : ''} onClick={() => setTab('lobby')}>Lobby</button>
+                <button className={tab === 'lobby' ? 'active' : ''} onClick={() => setTab('lobby')}>{t('shell.tab.lobby')}</button>
               )}
               <button
                 className={tab === 'faction' ? 'active' : ''}
                 disabled={!gameId}
                 onClick={() => gameId && setTab('faction')}
-              >Faction</button>
+              >{t('shell.tab.faction')}</button>
               <button
                 className={tab === 'comms' ? 'active' : ''}
                 disabled={!gameId}
                 onClick={() => gameId && setTab('comms')}
-                title={unreadMessages > 0 ? `${unreadMessages} unread message${unreadMessages > 1 ? 's' : ''}` : 'Comms'}
+                title={unreadMessages > 0 ? tn('shell.unread', unreadMessages) : t('shell.tab.comms')}
               >
-                Comms{unreadMessages > 0 && (
+                {t('shell.tab.comms')}{unreadMessages > 0 && (
                   <span style={{
                     marginLeft: 4, padding: '0 5px', fontSize: 9,
                     background: '#4ecdc4', color: '#0a0e14', borderRadius: 8,
@@ -684,10 +687,10 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
                 disabled={!gameId}
                 onClick={() => gameId && setTab('senate')}
                 title={incomingProposalCount > 0
-                  ? `${incomingProposalCount} bill${incomingProposalCount > 1 ? 's' : ''} need${incomingProposalCount > 1 ? '' : 's'} your vote`
-                  : 'Senate'}
+                  ? tn('shell.billsNeedVote', incomingProposalCount)
+                  : t('shell.tab.senate')}
               >
-                Senate{incomingProposalCount > 0 && (
+                {t('shell.tab.senate')}{incomingProposalCount > 0 && (
                   <span style={{
                     marginLeft: 4, padding: '0 5px', fontSize: 9,
                     background: '#ff6b6b', color: '#0a0e14', borderRadius: 8,

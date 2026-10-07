@@ -15,9 +15,10 @@
 import { useMemo } from 'react';
 import { useGameContext } from '../state/gameContext';
 import {
-  FeatureId, hasFeature, requirementFor,
+  FeatureId, hasFeature, requirementFor, trackName, unlockLabel,
 } from '../game/researchUnlocks';
 import { TECH_DEFS } from '../game/techs';
+import { t } from '../i18n/core';
 
 export interface FeatureGate {
   /** Can the player use this feature right now? */
@@ -50,8 +51,8 @@ export function useFeatureGate(): FeatureGate {
       if (hasFeature(feature, levels, enabled)) return null;
       const req = requirementFor(feature);
       if (!req) return null;
-      const track = TECH_DEFS[req.track]?.name ?? req.track;
-      return { label: req.label, text: `Unlocks at ${track} ${req.level}` };
+      const track = TECH_DEFS[req.track] ? trackName(req.track) : req.track;
+      return { label: unlockLabel(feature, req.label), text: t('trade.unlocksAt', { where: `${track} ${req.level}` }) };
     },
   }), [levels, enabled]);
 }

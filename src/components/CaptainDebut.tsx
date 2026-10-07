@@ -12,6 +12,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { CaptainAvatar } from './CaptainAvatar';
 import { traitSummary } from '../game/captains';
+import { t } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 
 interface Debut {
   captainId: string;
@@ -22,6 +24,7 @@ interface Debut {
 }
 
 export const CaptainDebut: React.FC = () => {
+  useI18n();
   const mpActions = useMultiplayerActions();
   const [debut, setDebut] = useState<Debut | null>(null);
   const [name, setName] = useState('');
@@ -69,7 +72,7 @@ export const CaptainDebut: React.FC = () => {
       <CaptainAvatar avatarId={debut.captainAvatar} size={36} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 9, letterSpacing: '0.1em', color: '#4ecdc4', marginBottom: 3 }}>
-          NEW COMMAND · {debut.shipName.toUpperCase()}
+          {t('site.debut.new', { ship: debut.shipName.toUpperCase() })}
         </div>
         <input
           value={name}
@@ -81,15 +84,15 @@ export const CaptainDebut: React.FC = () => {
             borderRadius: 3, color: '#d8e4ee', fontFamily: 'inherit',
             fontSize: 11, padding: '3px 6px',
           }}
-          title="Rename your captain (Enter to save, Esc to dismiss)"
+          title={t('site.debut.renameTitle')}
         />
         <div style={{ fontSize: 9, color: '#8aa0b4', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {traitSummary(debut.captainTraits) || 'Reporting for duty.'}
+          {traitSummary(debut.captainTraits) || t('site.debut.duty')}
         </div>
       </div>
       <button
         onClick={commit}
-        title="Confirm"
+        title={t('site.debut.confirm')}
         style={{
           background: '#103a3a', color: '#4ecdc4', border: '1px solid #2f6f6a',
           borderRadius: 4, padding: '4px 8px', fontFamily: 'inherit', fontSize: 10, cursor: 'pointer',
@@ -97,7 +100,7 @@ export const CaptainDebut: React.FC = () => {
       >✓</button>
       <button
         onClick={() => setDebut(null)}
-        aria-label="Dismiss"
+        aria-label={t('site.debut.dismiss')}
         style={{ background: 'transparent', border: 'none', color: '#5f7488', cursor: 'pointer', fontSize: 12 }}
       >✕</button>
     </div>

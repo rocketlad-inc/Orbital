@@ -25,6 +25,7 @@
 // ============================================================
 import type { Body } from '../types';
 import { isBarycenter } from './bodyPresentation';
+import { t } from '../i18n/core';
 
 /** Sol's outermost world on screen, px: above FADE_FROM the layer is
  *  off, below FADE_TO it is fully on (the system view has shrunk into a
@@ -204,7 +205,7 @@ export function galaxyLabelBox(x: number, y: number, r: number, nameW: number, s
 /** "62% held" under the name: how much of the system is spoken for. */
 export function galaxySubline(s: StarSystemSummary): string {
   const held = Math.round(100 * s.shares.reduce((t, x) => t + x.share, 0));
-  return held <= 0 ? 'UNCLAIMED' : `${held}% HELD`;
+  return held <= 0 ? t('helper.galaxy.unclaimed') : t('helper.galaxy.held', { pct: held });
 }
 
 export function paintGalaxyRings(

@@ -21,31 +21,36 @@ import {
   apiFetch, marketApi, MarketPost, MarketView, ResourceBundle, MyFaction, Faction, AssetListing,
 } from './api';
 import { logUiEvent } from './telemetry';
-import { TradeComposer } from './TradeComposer';
+import {
+  TradeComposer, resWord, resTitle, bundleWordsT, marketRateT, goingRateTextT, fmtTicksAsTimeT,
+} from './TradeComposer';
+import { t, tn, type Key } from '../i18n/core';
+import { useI18n } from '../i18n/react';
+import { apiErrorText } from '../i18n/apiErrors';
 import { hasFeature, requirementFor } from '../game/researchUnlocks';
 import { TECH_DEFS } from '../game/techs';
 import {
-  MARKET_KEYS as KEYS, MARKET_LABEL as LABEL, MarketKey, nonZeroKeys as nonZero,
-  marketRate, bundleWords, goingRateText, compareToGoingRate, costForUnits,
-  afterTariff, fmtTicksAsTime, unitCostForTaker,
+  MARKET_KEYS as KEYS, MarketKey, nonZeroKeys as nonZero,
+  compareToGoingRate, costForUnits,
+  afterTariff, unitCostForTaker,
 } from './marketMath';
 import { markMarketSeen } from './marketSeen';
 import './MarketPanel.css';
 
 const COLOR: Record<keyof ResourceBundle, string> = { metal: '#a0a0a0', gold: '#ffd700', science: '#6ee7b7' };
-const CHIP_LABEL: Record<MarketKey, string> = { metal: 'Metal', gold: 'Credits', science: 'Science' };
 
 const fmt = (n: number) => Math.round(n).toLocaleString();
 
 function Bundle({ b }: { b: ResourceBundle }) {
+  useI18n();
   const keys = nonZero(b);
-  if (keys.length === 0) return <span className="mkt-dim">nothing</span>;
+  if (keys.length === 0) return <span className="mkt-dim">{t('market.nothing')}</span>;
   return (
     <>
       {keys.map((k, i) => (
         <span key={k}>
           {i > 0 && <span className="mkt-dim"> + </span>}
-          <b style={{ color: COLOR[k] }}>{fmt(b[k])}</b> {LABEL[k]}
+          <b style={{ color: COLOR[k] }}>{fmt(b[k])}</b> {resWord(k)}
         </span>
       ))}
     </>
@@ -55,6 +60,7 @@ function Bundle({ b }: { b: ResourceBundle }) {
 type Freighter = { id: string; name: string; where: string };
 
 export function MarketPanel({ gameId }: { gameId: string }) {
+  useI18n();
   useEffect(() => { logUiEvent(gameId, 'market'); }, [gameId]);
   const api = useMemo(() => marketApi(gameId), [gameId]);
   const [view, setView] = useState<MarketView | null>(null);
@@ -130,8 +136,10 @@ export function MarketPanel({ gameId }: { gameId: string }) {
     const req = requirementFor('hull.freighter');
     if (!req) return null;
     const track = TECH_DEFS[req.track]?.name ?? req.track;
-    return `Unlocks at ${track} ${req.level}`;
+    return { where: `${track} ${req.level}` };
   }, [me]);
+  // Built at render, not inside the memo, so it follows the language.
+  const lockText = tradeLock ? t('trade.unlocksAt', { where: tradeLock.where }) : null;
 
   const posts = useMemo(() => view?.posts ?? [], [view]);
   const rates = useMemo(() => view?.rates ?? [], [view]);
@@ -153,12 +161,12 @@ export function MarketPanel({ gameId }: { gameId: string }) {
   const atCap = view != null && myOpen >= view.max_open;
   const lapsed = view?.mine_expired ?? [];
 
-  const run = async (id: string, fn: () => Promise<{ ok: boolean; error?: { message?: string } | null }>, fallback: string) => {
+  const run = async (id: string, fn: () => Promise<{ ok: boolean; error?: { code: string; message: string } | null }>, fallback: Key) => {
     setBusyId(id);
     setError(null);
     const res = await fn();
     setBusyId(null);
-    if (!res.ok) setError(res.error?.message ?? fallback);
+    if (!res.ok) setError(apiErrorText(res.error, fallback));
     await refresh();
     return res.ok;
   };
@@ -173,70 +181,68 @@ export function MarketPanel({ gameId }: { gameId: string }) {
     <div className="mkt">
       <div className="mkt-head">
         <div>
-          <div className="mkt-title">Open market</div>
+          <div className="mkt-title">{t('market.title')}</div>
           <div className="mkt-sub">
-            {view == null ? 'Loading…'
-              : `${posts.length} post${posts.length === 1 ? '' : 's'} · you have ${myOpen} of ${view.max_open}`}
+            {view == null ? t('trade.loading')
+              : tn('market.postsLine', posts.length, { mine: myOpen, max: view.max_open })}
           </div>
         </div>
         <button
           className="mp-btn mp-btn--primary"
           disabled={!!tradeLock || atCap || !me}
-          title={tradeLock ?? (atCap ? 'Withdraw a post to free a slot' : 'Offer goods to anyone who will take them')}
+          title={lockText ?? (atCap ? t('market.freeSlot') : t('market.offerTip'))}
           onClick={() => { setError(null); setNotice(null); setComposer({ kind: 'post' }); }}
         >
-          {tradeLock ? 'Locked' : '+ Post'}
+          {tradeLock ? t('market.locked') : `+ ${t('market.post')}`}
         </button>
       </div>
 
       <div className="mkt-hint">
-        Everyone sees this board — rivals included. Taking a post strikes the
-        deal; the goods still ship by freighter.
+        {t('market.hint')}
       </div>
-      {tradeLock && (
+      {lockText && (
         <div className="mkt-lock">
-          Posting and taking {tradeLock.charAt(0).toLowerCase() + tradeLock.slice(1)}. Goods ride freighters,
-          and you cannot build one yet. You can still read the board.
+          {t('market.lockNote', { unlock: lockText.charAt(0).toLowerCase() + lockText.slice(1) })}
         </div>
       )}
 
       {rates.length > 0 && (
-        <div className="mkt-rates" title="Low to high of the most recent deals struck on this board">
-          <span className="mkt-k">Recent deals</span>
-          <span>{rates.map(goingRateText).join(' · ')}</span>
+        <div className="mkt-rates" title={t('market.ratesTip')}>
+          <span className="mkt-k">{t('market.recent')}</span>
+          <span>{rates.map(goingRateTextT).join(' · ')}</span>
         </div>
       )}
 
       <div className="mkt-browse">
-        <div className="mkt-chiprow" role="group" aria-label="Show posts giving">
-          <span className="mkt-k">I need</span>
+        <div className="mkt-chiprow" role="group" aria-label={t('market.showGiving')}>
+          <span className="mkt-k">{t('market.iNeed')}</span>
           {KEYS.map(k => (
             <button
               key={k}
               aria-pressed={need === k}
               className={`mkt-chip${need === k ? ' is-on' : ''}`}
-              title={`Posts that give ${LABEL[k]}, cheapest first`}
+              title={t('market.givingTip', { res: resWord(k) })}
               onClick={() => setNeed(need === k ? null : k)}
-            >{CHIP_LABEL[k]}</button>
+            >{resTitle(k)}</button>
           ))}
         </div>
-        <div className="mkt-chiprow" role="group" aria-label="Show posts wanting">
-          <span className="mkt-k">I have</span>
+        <div className="mkt-chiprow" role="group" aria-label={t('market.showWanting')}>
+          <span className="mkt-k">{t('market.iHave')}</span>
           {KEYS.map(k => (
             <button
               key={k}
               aria-pressed={have === k}
               className={`mkt-chip${have === k ? ' is-on' : ''}`}
-              title={`Posts that want ${LABEL[k]}`}
+              title={t('market.wantingTip', { res: resWord(k) })}
               onClick={() => setHave(have === k ? null : k)}
-            >{CHIP_LABEL[k]}</button>
+            >{resTitle(k)}</button>
           ))}
           <button
             aria-pressed={mineOnly}
             className={`mkt-chip mkt-chip--mine${mineOnly ? ' is-on' : ''}`}
-            title="Only your own posts"
+            title={t('market.mineTip')}
             onClick={() => setMineOnly(v => !v)}
-          >Mine</button>
+          >{t('market.mine')}</button>
         </div>
       </div>
 
@@ -244,33 +250,33 @@ export function MarketPanel({ gameId }: { gameId: string }) {
       {notice && (
         <div className="mkt-notice">
           {notice}{' '}
-          <button className="mkt-link" onClick={() => goTab('private')}>Open PRIVATE</button>
+          <button className="mkt-link" onClick={() => goTab('private')}>{t('market.openPrivate')}</button>
         </div>
       )}
 
       {lapsed.length > 0 && (
         <div className="mkt-lapsed">
           <div className="mkt-lapsed__head">
-            {lapsed.length === 1 ? 'One of your posts expired' : `${lapsed.length} of your posts expired`}
+            {tn('market.lapsed', lapsed.length)}
           </div>
           {lapsed.map(p => (
             <div key={p.id} className="mkt-lapsed__row">
               <span className="mkt-lapsed__terms">
-                {bundleWords(p.offer)} <span className="mkt-dim">for</span> {bundleWords(p.request)}
+                {bundleWordsT(p.offer)} <span className="mkt-dim">{t('market.for')}</span> {bundleWordsT(p.request)}
               </span>
               <span className="mkt-actions mkt-actions--tight">
                 <button
                   className="mp-btn mp-btn--primary"
                   disabled={busyId === p.id || atCap}
-                  title={atCap ? 'Withdraw a post to free a slot' : `Put it back up for ${fmtTicksAsTime(p.ttl_ticks, interval)}`}
-                  onClick={() => run(p.id, () => api.renew(p.id), 'Could not renew that post.')}
-                >Renew</button>
+                  title={atCap ? t('market.freeSlot') : t('market.putBack', { time: fmtTicksAsTimeT(p.ttl_ticks, interval) })}
+                  onClick={() => run(p.id, () => api.renew(p.id), 'market.err.renew')}
+                >{t('market.renew')}</button>
                 <button
                   className="mp-btn"
                   disabled={busyId === p.id}
-                  title="Take it down for good"
-                  onClick={() => run(p.id, () => api.withdraw(p.id), 'Could not clear that post.')}
-                >Clear</button>
+                  title={t('market.clearTip')}
+                  onClick={() => run(p.id, () => api.withdraw(p.id), 'market.err.clear')}
+                >{t('market.clear')}</button>
               </span>
             </div>
           ))}
@@ -280,20 +286,20 @@ export function MarketPanel({ gameId }: { gameId: string }) {
       {view != null && shown.length === 0 && !(listings.length > 0 && !filtering) && (
         <div className="mkt-empty">
           {mineOnly
-            ? 'You have nothing on the market.'
+            ? t('market.emptyMine')
             : !filtering
-              ? 'The board is empty. Post what you have spare and name your price.'
+              ? t('market.emptyBoard')
               : need && have
-                ? `Nobody is offering ${LABEL[need]} for ${LABEL[have]} right now. Post the deal you want.`
+                ? t('market.emptyBoth', { need: resWord(need), have: resWord(have) })
                 : need
-                  ? `Nobody is offering ${LABEL[need]} right now.`
-                  : `Nobody is asking for ${LABEL[have as MarketKey]} right now.`}
+                  ? t('market.emptyNeed', { res: resWord(need) })
+                  : t('market.emptyHave', { res: resWord(have as MarketKey) })}
         </div>
       )}
 
       {shown.map(post => {
         const left = view ? Math.max(0, post.expires_at_tick - view.tick) : 0;
-        const rate = marketRate(post);
+        const rate = marketRateT(post);
         const cmp = post.mine ? null : compareToGoingRate(post, rates);
         const confirming = confirmId === post.id;
         const busy = busyId === post.id;
@@ -303,45 +309,44 @@ export function MarketPanel({ gameId }: { gameId: string }) {
             <div className="mkt-row__top">
               <span className="mkt-who">
                 <span className="mkt-dot" style={{ background: post.poster_color ?? '#a8b8c8' }} />
-                <span className="mkt-who__name">{post.mine ? 'You' : (post.poster_name ?? 'Unknown')}</span>
+                <span className="mkt-who__name">{post.mine ? t('market.you') : (post.poster_name ?? t('market.unknown'))}</span>
                 {!post.mine && (rec.delivered > 0 || rec.stalled > 0) && (
                   <span
                     className="mkt-rec"
-                    title={'Their delivery record in this game: shipments landed, and shipments left '
-                      + 'with no freighter for two days or more. Nothing escrows a post — this is how you judge a stranger.'}
+                    title={t('market.recTip')}
                   >
-                    {rec.delivered} delivered
-                    {rec.stalled > 0 && <span className="mkt-warn"> · {rec.stalled} stalled</span>}
+                    {t('market.delivered', { n: rec.delivered })}
+                    {rec.stalled > 0 && <span className="mkt-warn"> · {t('market.stalled', { n: rec.stalled })}</span>}
                   </span>
                 )}
               </span>
-              <span className="mkt-meta" title={`Listed until T+${post.expires_at_tick}`}>
-                {fmtTicksAsTime(left, interval)} left
+              <span className="mkt-meta" title={t('market.listedUntil', { n: post.expires_at_tick })}>
+                {t('market.left', { time: fmtTicksAsTimeT(left, interval) })}
               </span>
             </div>
             <div className="mkt-tags">
               {post.recurring && (
-                <span className="mkt-tag" title="Standing route: these are per-run amounts, shipped over and over until someone cancels.">per run</span>
+                <span className="mkt-tag" title={t('market.perRunTip')}>{t('market.perRun')}</span>
               )}
               {post.divisible && (
-                <span className="mkt-tag mkt-tag--amber" title="Sold in parts: take any amount, pay pro rata.">
+                <span className="mkt-tag mkt-tag--amber" title={t('market.partsTip')}>
                   {post.units_left < post.units_total
-                    ? `${fmt(post.units_left)} of ${fmt(post.units_total)} left`
-                    : 'sold in parts'}
+                    ? t('market.unitsLeft', { left: fmt(post.units_left), total: fmt(post.units_total) })
+                    : t('market.soldInParts')}
                 </span>
               )}
               {post.has_ship && (
                 <span
                   className="mkt-tag"
                   title={post.recurring
-                    ? 'The poster pinned a freighter — the lane starts flying the moment this is taken.'
-                    : 'The poster pinned a freighter — their half ships as soon as this is taken.'}
-                >hull ready</span>
+                    ? t('market.hullTipRoute')
+                    : t('market.hullTip')}
+                >{t('market.hullReady')}</span>
               )}
             </div>
             <div className="mkt-terms">
-              <span className="mkt-k">Gives</span><span><Bundle b={post.offer} /></span>
-              <span className="mkt-k">Wants</span>
+              <span className="mkt-k">{t('market.gives')}</span><span><Bundle b={post.offer} /></span>
+              <span className="mkt-k">{t('market.wants')}</span>
               <span>
                 <Bundle b={post.request} />
                 {rate && <span className="mkt-rate">{rate}</span>}
@@ -349,7 +354,7 @@ export function MarketPanel({ gameId }: { gameId: string }) {
             </div>
             {cmp && (
               <div className={`mkt-cmp${cmp.better ? ' is-good' : ' is-bad'}`}>
-                {cmp.pct}% {cmp.better ? 'better' : 'worse'} for you than recent deals
+                {t(cmp.better ? 'market.cmpBetter' : 'market.cmpWorse', { pct: cmp.pct })}
               </div>
             )}
             {post.note && <div className="mkt-note">“{post.note}”</div>}
@@ -373,29 +378,29 @@ export function MarketPanel({ gameId }: { gameId: string }) {
                 <button
                   className="mp-btn"
                   disabled={busy}
-                  onClick={() => run(post.id, () => api.withdraw(post.id), 'Could not withdraw that post.')}
-                >{busy ? 'Withdrawing…' : 'Withdraw'}</button>
+                  onClick={() => run(post.id, () => api.withdraw(post.id), 'market.err.withdraw')}
+                >{busy ? t('market.withdrawing') : t('market.withdraw')}</button>
                 <button
                   className="mp-btn"
                   disabled={busy}
-                  title={`Reset the clock to ${fmtTicksAsTime(post.ttl_ticks, interval)}`}
-                  onClick={() => run(post.id, () => api.renew(post.id), 'Could not renew that post.')}
-                >Renew</button>
+                  title={t('market.resetClock', { time: fmtTicksAsTimeT(post.ttl_ticks, interval) })}
+                  onClick={() => run(post.id, () => api.renew(post.id), 'market.err.renew')}
+                >{t('market.renew')}</button>
               </div>
             ) : (
               <div className="mkt-actions">
                 <button
                   className="mp-btn mp-btn--primary"
                   disabled={!!tradeLock || busy || !me}
-                  title={tradeLock ?? (post.divisible ? 'Buy all of it, or part' : 'Strike this deal as posted')}
+                  title={lockText ?? (post.divisible ? t('market.takeTipParts') : t('market.takeTip'))}
                   onClick={() => { setError(null); setNotice(null); setConfirmId(post.id); }}
-                >{post.divisible ? 'Take…' : 'Take'}</button>
+                >{post.divisible ? t('market.takeEllipsis') : t('market.take')}</button>
                 <button
                   className="mp-btn"
                   disabled={!!tradeLock || !me}
-                  title={tradeLock ?? 'Send the poster different terms, privately. The post stays up.'}
+                  title={lockText ?? t('market.counterTip')}
                   onClick={() => { setError(null); setNotice(null); setComposer({ kind: 'counter', post }); }}
-                >Counter</button>
+                >{t('market.counter')}</button>
               </div>
             )}
           </div>
@@ -405,7 +410,7 @@ export function MarketPanel({ gameId }: { gameId: string }) {
       {listings.length > 0 && !need && !have && (
         <div className="mkt-assets">
           <div className="mkt-assets__head">
-            <span>Hulls and worlds</span>
+            <span>{t('market.assets')}</span>
             <span className="mkt-dim">{listings.filter(l => !mineOnly || l.mine).length}</span>
           </div>
           {listings.filter(l => !mineOnly || l.mine).map(l => {
@@ -417,27 +422,25 @@ export function MarketPanel({ gameId }: { gameId: string }) {
                 <div className="mkt-row__top">
                   <span className="mkt-who">
                     <span className="mkt-dot" style={{ background: l.seller_color ?? '#a8b8c8' }} />
-                    <span className="mkt-who__name">{l.mine ? 'You' : l.seller_name}</span>
+                    <span className="mkt-who__name">{l.mine ? t('market.you') : l.seller_name}</span>
                   </span>
-                  <span className="mkt-meta">{l.asset_kind === 'ship' ? 'hull' : 'world'}</span>
+                  <span className="mkt-meta">{l.asset_kind === 'ship' ? t('market.kindHull') : t('market.kindWorld')}</span>
                 </div>
                 <div className="mkt-terms">
-                  <span className="mkt-k">Sells</span>
+                  <span className="mkt-k">{t('market.sells')}</span>
                   <span><b>{l.asset_name}</b>{l.asset_detail && <span className="mkt-dim"> · {l.asset_detail}</span>}</span>
-                  <span className="mkt-k">Price</span><span><Bundle b={price} /></span>
+                  <span className="mkt-k">{t('market.price')}</span><span><Bundle b={price} /></span>
                   {l.delivery_body_name && (
-                    <><span className="mkt-k">At</span><span>{l.delivery_body_name}</span></>
+                    <><span className="mkt-k">{t('market.at')}</span><span>{l.delivery_body_name}</span></>
                   )}
                 </div>
                 {claimId === l.id ? (
                   <div className="mkt-confirm">
                     <div>
-                      You will owe <b>{bundleWords(price)}</b>, hauled by your freighter
-                      to <b>{l.delivery_body_name ?? 'where it stands'}</b>. It changes hands when the
-                      payment has arrived in full. Until then either side can back out.
+                      {t('market.claim.owe')} <b>{bundleWordsT(price)}</b>{t('market.claim.hauled')} <b>{l.delivery_body_name ?? t('market.claim.whereStands')}</b>{t('market.claim.rest')}
                       {shortOf.length > 0 && (
                         <span className="mkt-warn">
-                          {' '}You are short of {shortOf.map(k => LABEL[k]).join(' and ')} right now.
+                          {' '}{t('market.claim.short', { list: shortOf.map(k => resWord(k)).join(` ${t('market.and')} `) })}
                         </span>
                       )}
                     </div>
@@ -446,12 +449,12 @@ export function MarketPanel({ gameId }: { gameId: string }) {
                         className="mp-btn mp-btn--primary"
                         disabled={busy}
                         onClick={async () => {
-                          const ok = await run(l.id, () => api.claimAsset(l.id), 'Could not claim that listing.');
+                          const ok = await run(l.id, () => api.claimAsset(l.id), 'market.err.claim');
                           setClaimId(null);
-                          if (ok) setNotice(`${l.asset_name} is yours to pay for — send a freighter with the payment under PRIVATE.`);
+                          if (ok) setNotice(t('market.claim.done', { name: l.asset_name }));
                         }}
-                      >{busy ? 'Claiming…' : 'Confirm'}</button>
-                      <button className="mp-btn" disabled={busy} onClick={() => setClaimId(null)}>Back</button>
+                      >{busy ? t('market.claiming') : t('market.confirm')}</button>
+                      <button className="mp-btn" disabled={busy} onClick={() => setClaimId(null)}>{t('market.back')}</button>
                     </div>
                   </div>
                 ) : l.mine ? (
@@ -459,17 +462,17 @@ export function MarketPanel({ gameId }: { gameId: string }) {
                     <button
                       className="mp-btn"
                       disabled={busy}
-                      onClick={() => run(l.id, () => api.withdrawAsset(l.id), 'Could not withdraw that listing.')}
-                    >{busy ? 'Withdrawing…' : 'Withdraw'}</button>
+                      onClick={() => run(l.id, () => api.withdrawAsset(l.id), 'market.err.withdrawListing')}
+                    >{busy ? t('market.withdrawing') : t('market.withdraw')}</button>
                   </div>
                 ) : (
                   <div className="mkt-actions">
                     <button
                       className="mp-btn mp-btn--primary"
                       disabled={!!tradeLock || busy || !me}
-                      title={tradeLock ?? 'Claim it. First come, first served.'}
+                      title={lockText ?? t('market.buyTip')}
                       onClick={() => { setError(null); setNotice(null); setClaimId(l.id); }}
-                    >Buy</button>
+                    >{t('market.buy')}</button>
                   </div>
                 )}
               </div>
@@ -481,16 +484,16 @@ export function MarketPanel({ gameId }: { gameId: string }) {
       {view != null && view.recent.length > 0 && (
         <div className="mkt-tape">
           <button className="mkt-tape__head" onClick={() => setTapeOpen(o => !o)} aria-expanded={tapeOpen}>
-            <span>{tapeOpen ? '▾' : '▸'} Recent deals</span>
+            <span>{tapeOpen ? '▾' : '▸'} {t('market.recent')}</span>
             <span className="mkt-dim">{view.recent.length}</span>
           </button>
           {tapeOpen && view.recent.map(f => (
             <div key={f.id} className="mkt-tape__row">
-              <span style={{ color: f.taker_color ?? undefined }}>{f.taker_name ?? 'Someone'}</span>
-              {' took '}
-              <span style={{ color: f.poster_color ?? undefined }}>{f.poster_name ?? 'someone'}</span>
-              {'’s '}{bundleWords(f.offer)} for {bundleWords(f.request)}
-              {f.recurring ? ' per run' : ''}
+              <span style={{ color: f.taker_color ?? undefined }}>{f.taker_name ?? t('market.someoneCap')}</span>
+              {` ${t('market.took')} `}
+              <span style={{ color: f.poster_color ?? undefined }}>{f.poster_name ?? t('market.someone')}</span>
+              {`${t('market.posters')} `}{bundleWordsT(f.offer)} {t('market.for')} {bundleWordsT(f.request)}
+              {f.recurring ? ` ${t('market.perRun')}` : ''}
               <span className="mkt-dim"> · T+{f.at_tick}</span>
             </div>
           ))}
@@ -521,7 +524,7 @@ export function MarketPanel({ gameId }: { gameId: string }) {
             setComposer(null);
             refresh();
             if (wasCounter) {
-              setNotice('Counter sent privately. The post stays on the board.');
+              setNotice(t('market.counterSent'));
             }
           }}
         />
@@ -548,6 +551,7 @@ function TakeConfirm({
   onStruck: (notice: string) => void;
   onFailed: (message: string) => void;
 }) {
+  useI18n();
   const api = useMemo(() => marketApi(gameId), [gameId]);
   const oK = nonZero(post.offer)[0];
   const rK = nonZero(post.request)[0];
@@ -591,25 +595,25 @@ function TakeConfirm({
     });
     setBusy(false);
     if (!res.ok) {
-      onFailed(res.error?.message ?? 'The deal could not be struck.');
+      onFailed(apiErrorText(res.error, 'market.err.strike'));
       return;
     }
-    const who = post.poster_name ?? 'the poster';
+    const who = post.poster_name ?? t('market.thePoster');
     const mine = res.data.assigned?.mine;
     onStruck(post.recurring
-      ? `Deal struck with ${who} — the standing route is under PRIVATE.`
+      ? t('market.struck.route', { who })
       : mine?.ok
-        ? `Deal struck with ${who} — your freighter is on its way to load.`
+        ? t('market.struck.loading', { who })
         : mine && !mine.ok
-          ? `Deal struck with ${who}, but ${mine.message}. Assign a freighter under PRIVATE.`
-          : `Deal struck with ${who} — assign a freighter under PRIVATE to ship your side.`);
+          ? t('market.struck.but', { who, why: mine.message ?? '' })
+          : t('market.struck.assign', { who }));
   };
 
   return (
     <div className="mkt-confirm">
       {post.divisible && (
         <div className="mkt-amount">
-          <label className="mkt-k" htmlFor={`mkt-units-${post.id}`}>How much {LABEL[oK]}</label>
+          <label className="mkt-k" htmlFor={`mkt-units-${post.id}`}>{t('market.take.howMuch', { res: resWord(oK) })}</label>
           <div className="mkt-amount__row">
             <input
               id={`mkt-units-${post.id}`}
@@ -624,35 +628,33 @@ function TakeConfirm({
                 type="button"
                 className="mkt-chip"
                 onClick={() => setUnits(Math.max(1, Math.floor(post.units_left * f)))}
-              >{f === 1 ? 'All' : `${f * 100}%`}</button>
+              >{f === 1 ? t('market.take.all') : `${f * 100}%`}</button>
             ))}
           </div>
         </div>
       )}
       <div>
-        You give <b>{bundleWords(give)}</b>{post.recurring ? ' every run' : ''} and
-        get <b>{bundleWords(get)}</b>.
+        {t('market.take.give')} <b>{bundleWordsT(give)}</b>{post.recurring ? ` ${t('market.take.everyRun')}` : ''} {t('market.take.andGet')} <b>{bundleWordsT(get)}</b>.
         {tariffPct > 0 && (
           <span className="mkt-warn">
-            {' '}The Senate’s {tariffPct}% tariff is skimmed off what you receive:
-            {' '}<b>{bundleWords(landed)}</b> lands.
+            {' '}{t('market.take.tariff', { pct: tariffPct })}
+            {' '}<b>{bundleWordsT(landed)}</b> {t('market.take.lands')}
           </span>
         )}
         {short.length > 0 && (
           <span className="mkt-warn">
-            {' '}You are short of {short.map(k => LABEL[k]).join(' and ')} — your side will
-            wait at the dock until you can cover it.
+            {' '}{t('market.take.short', { list: short.map(k => resWord(k)).join(` ${t('market.and')} `) })}
           </span>
         )}
       </div>
       {!post.recurring && (
         <div className="mkt-ship">
-          <label className="mkt-k" htmlFor={`mkt-ship-${post.id}`}>Your freighter</label>
+          <label className="mkt-k" htmlFor={`mkt-ship-${post.id}`}>{t('market.take.yourFreighter')}</label>
           {freighters == null ? (
-            <span className="mkt-dim">Looking for free freighters…</span>
+            <span className="mkt-dim">{t('market.take.looking')}</span>
           ) : freighters.length === 0 ? (
             <span className="mkt-dim">
-              None free. The deal still strikes; assign one under PRIVATE when a hull frees up.
+              {t('market.take.noneFree')}
             </span>
           ) : (
             <select
@@ -664,16 +666,16 @@ function TakeConfirm({
               {freighters.map(f => (
                 <option key={f.id} value={f.id}>{f.name} — {f.where}</option>
               ))}
-              <option value="">Decide later</option>
+              <option value="">{t('market.take.decideLater')}</option>
             </select>
           )}
         </div>
       )}
       <div className="mkt-actions">
         <button className="mp-btn mp-btn--primary" disabled={busy} onClick={strike}>
-          {busy ? 'Striking…' : 'Confirm'}
+          {busy ? t('market.take.striking') : t('market.confirm')}
         </button>
-        <button className="mp-btn" disabled={busy} onClick={onCancel}>Back</button>
+        <button className="mp-btn" disabled={busy} onClick={onCancel}>{t('market.back')}</button>
       </div>
     </div>
   );

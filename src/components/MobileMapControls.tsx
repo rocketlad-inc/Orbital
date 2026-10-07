@@ -25,6 +25,8 @@
 import React, { useEffect, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { useIsMobile, isMobileShell } from '../hooks/useIsMobile';
+import { t } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 import './MobileMapControls.css';
 
 
@@ -45,6 +47,7 @@ export function mapControlsWanted(): boolean {
 }
 
 export const MobileMapControls: React.FC = () => {
+  useI18n();
   const { uiState, setSelectMode, clearShipSelection } = useGameContext();
   // The layout's hook, so the buttons re-evaluate on resize exactly when
   // the layout does.
@@ -79,14 +82,14 @@ export const MobileMapControls: React.FC = () => {
     window.dispatchEvent(new CustomEvent('orbital:world-step', { detail: { dir } }));
 
   return (
-    <div className="map-controls" role="toolbar" aria-label="Map controls">
+    <div className="map-controls" role="toolbar" aria-label={t('site.map.controls')}>
       <button
         className={`map-controls__btn map-controls__btn--select${selecting ? ' is-on' : ''}`}
         onClick={toggleSelect}
         disabled={aiming}
         aria-pressed={selecting}
-        aria-label={selecting ? 'Stop selecting ships' : 'Select several ships'}
-        title={selecting ? 'Stop selecting' : 'Select several ships (or hold one)'}
+        aria-label={selecting ? t('site.map.stopAria') : t('site.map.selectAria')}
+        title={selecting ? t('site.map.stopTitle') : t('site.map.selectTitle')}
       >
         <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden>
           <rect x="3.5" y="3.5" width="17" height="17" rx="2"
@@ -96,8 +99,8 @@ export const MobileMapControls: React.FC = () => {
         </svg>
       </button>
       <div className="map-controls__gap" />
-      <button className="map-controls__btn" onClick={() => step(-1)} aria-label="Previous world">‹</button>
-      <button className="map-controls__btn" onClick={() => step(1)} aria-label="Next world">›</button>
+      <button className="map-controls__btn" onClick={() => step(-1)} aria-label={t('site.map.prev')}>‹</button>
+      <button className="map-controls__btn" onClick={() => step(1)} aria-label={t('site.map.next')}>›</button>
     </div>
   );
 };

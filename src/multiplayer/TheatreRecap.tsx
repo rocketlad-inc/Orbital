@@ -43,6 +43,8 @@ import { deriveSecondary } from '../game/colorUtils';
 import { toRenderBody, stripGameId } from './bodyIdentity';
 import { ShipIconClass, ShipIconVariant } from '../components/ShipIcons';
 import type { Body } from '../types';
+import { t as tr, tn as trn } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 
 const NEUTRAL = '#8a9fb3';
 
@@ -226,24 +228,24 @@ function drawHud(
   g.fillRect(0, 58, 348, 26);
   g.fillStyle = '#e8f2fb';
   g.font = 'bold 17px system-ui';
-  g.fillText(`THE FIGHT FOR ${v.title.toUpperCase()}`, 14, 25);
+  g.fillText(tr('theatre.fightFor', { name: v.title.toUpperCase() }), 14, 25);
   g.fillStyle = '#7f9bb3';
   g.font = '11px system-ui';
   g.fillText(
-    `${v.span}  ·  ${v.engagements} battle${v.engagements === 1 ? '' : 's'}`, 14, 42);
+    `${v.span}  ·  ${trn('theatre.battles', v.engagements, { n: v.engagements })}`, 14, 42);
 
   // ---- live state, under the title --------------------------------
   g.fillStyle = '#9fc2dc';
   g.font = '12px system-ui';
   const hot = v.worldsHot === 0
-    ? 'holding fire'
-    : `${v.worldsHot} world${v.worldsHot === 1 ? '' : 's'} under fire`;
+    ? tr('theatre.holdingFire')
+    : trn('theatre.worldsHot', v.worldsHot, { n: v.worldsHot });
   g.fillText(`T+${v.tick}`, 14, 60);
   g.fillStyle = '#7f9bb3';
   g.font = '11px system-ui';
   // Labelled for what it is. The bare number went up and down between
   // beats and read as a broken running total.
-  g.fillText(`${v.shotsThisBeat} shots exchanged  ·  ${hot}`, 52, 60);
+  g.fillText(`${trn('theatre.shotsExchanged', v.shotsThisBeat, { n: v.shotsThisBeat })}  ·  ${hot}`, 52, 60);
 
   // ---- standings, top right ---------------------------------------
   if (v.hideStandings) { g.restore(); return; }
@@ -260,9 +262,9 @@ function drawHud(
   g.fillStyle = '#83a0b8';
   g.font = '10px system-ui';
   g.textAlign = 'left';
-  g.fillText('FLEET', px + 12, py + 17);
+  g.fillText(tr('theatre.hudFleet'), px + 12, py + 17);
   g.textAlign = 'right';
-  g.fillText('STANDING', px + panelW - 12, py + 17);
+  g.fillText(tr('theatre.hudStanding'), px + panelW - 12, py + 17);
 
   let y = py + 26 + 13;
   for (const s of v.sides) {
@@ -302,6 +304,7 @@ function drawHud(
  * — the campaign view is worth being able to drive from a fixture.
  */
 export function TheatreCanvas({ d }: { d: TheatreDetail }) {
+  useI18n();
   const cv = useRef<HTMLCanvasElement | null>(null);
   const [playing, setPlaying] = useState(false);
   const [pos, setPos] = useState(0);
@@ -884,7 +887,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
             void killer;
             callouts.push({
               x: q.x, y: q.y,
-              head: `${h.name ?? 'hull'} lost`,
+              head: tr('review.battle.lost', { name: h.name ?? tr('theatre.hull') }),
               sub: d.factions[h.fid ?? '']?.name ?? '',
               // The spine wears the colour of the side that lost the hull.
               // One red bar on every card meant the only colour cue a card
@@ -1250,11 +1253,11 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
           const f = d.factions[wiped[n]];
           const y = CANVAS_H - 74 - (wiped.length - 1 - n) * 92;
           g.textAlign = 'center';
-          const nm = (f?.name ?? 'A faction').toUpperCase();
+          const nm = (f?.name ?? tr('theatre.aFaction')).toUpperCase();
           g.font = 'bold 13px system-ui';
           const wName = g.measureText(nm).width;
           g.font = 'bold 34px system-ui';
-          const wKill = g.measureText('ELIMINATED').width;
+          const wKill = g.measureText(tr('theatre.eliminated')).width;
           const w = Math.max(wName, wKill);
           const bx = CANVAS_W / 2 - w / 2 - 30, bw = w + 60;
           const by = y - 40, bh = 82;
@@ -1275,7 +1278,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
           g.shadowBlur = 22;
           g.fillStyle = `rgba(255, 122, 108, ${a.toFixed(3)})`;
           g.font = 'bold 34px system-ui';
-          g.fillText('ELIMINATED', CANVAS_W / 2, by + 62);
+          g.fillText(tr('theatre.eliminated'), CANVAS_W / 2, by + 62);
           g.restore();
         }
       }
@@ -1323,17 +1326,17 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         const a = Math.min(1, Math.max(0, (t - 0.08) / 0.26));
         if (a > 0.01) {
           const wipedOut = standings.filter(s => s.alive === 0);
-          const place = (d.theatre.anchor_name ?? 'THE SYSTEM').toUpperCase();
+          const place = (d.theatre.anchor_name ?? tr('theatre.theSystem')).toUpperCase();
           // Who was left fighting when the shooting stopped.
           const held = standings.filter(s => s.onField > 0)
             .sort((a, b) => b.onField - a.onField);
           const first = held[0], second = held[1];
           const decisive = !!first && (!second || first.onField >= second.onField * 2);
           const over = decisive ? first : null;
-          const verdict = !first ? `${place} LEFT EMPTY`
-            : held.length === 1 ? `TAKES ${place}`
-              : decisive ? 'HOLDS THE FIELD'
-                : `${place} STILL CONTESTED`;
+          const verdict = !first ? tr('theatre.leftEmpty', { place })
+            : held.length === 1 ? tr('theatre.takes', { place })
+              : decisive ? tr('theatre.holdsField')
+                : tr('theatre.contested', { place });
           const vcol = over ? over.color : '#ffd07a';
           const rows = standings.length;
           const cardH = (over ? 142 : 126) + rows * 22;
@@ -1362,12 +1365,12 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
           g.fillStyle = '#6f8ba3';
           g.font = '10px system-ui';
           g.fillText(
-            `THE FIGHT FOR ${(d.theatre.anchor_name ?? 'THIS SYSTEM').toUpperCase()}`
+            tr('theatre.fightFor', { name: (d.theatre.anchor_name ?? tr('theatre.thisSystem')).toUpperCase() })
             + `  ·  T+${d.theatre.started_tick}–${d.theatre.last_fire_tick}`,
             cx, y0 + 22);
           g.fillStyle = '#55707f';
           g.font = '9px system-ui';
-          g.fillText(over ? 'WHEN THE SHOOTING STOPPED' : 'AT THE LAST SHOT',
+          g.fillText(over ? tr('theatre.whenStopped') : tr('theatre.lastShot'),
             cx, y0 + 37);
           let hy = y0 + 58;
           if (over) {
@@ -1391,9 +1394,9 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
           g.font = '10px system-ui';
           g.fillText(
             wipedOut.length
-              ? `${held.length} FLEET${held.length === 1 ? '' : 'S'} STILL IN THE FIGHT`
-                + `  ·  ${wipedOut.length} ELIMINATED`
-              : `${held.length} FLEET${held.length === 1 ? '' : 'S'} STILL IN THE FIGHT`,
+              ? `${trn('theatre.fleetsStill', held.length, { n: held.length })}`
+                + `  ·  ${trn('theatre.eliminatedCount', wipedOut.length, { n: wipedOut.length })}`
+              : `${trn('theatre.fleetsStill', held.length, { n: held.length })}`,
             cx, hy + 18);
 
           g.strokeStyle = 'rgba(90, 122, 152, 0.3)';
@@ -1414,8 +1417,8 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
             g.font = '12px system-ui';
             g.fillText(
               s.alive === 0
-                ? `eliminated · ${s.lost} lost`
-                : `${s.onField} on the field · ${s.lost} lost`,
+                ? tr('theatre.rowEliminated', { lost: s.lost })
+                : tr('theatre.rowOnField', { onField: s.onField, lost: s.lost }),
               x0 + cardW - 20, ry);
             ry += 22;
           }
@@ -1426,7 +1429,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
       // ---- HUD ----------------------------------------------------------
       drawHud(g, {
         hideStandings: i >= beats.length - 1 && t > 0.14,
-        title: d.theatre.anchor_name ?? 'system',
+        title: d.theatre.anchor_name ?? tr('theatre.systemFallback'),
         span: `T+${d.theatre.started_tick}–${d.theatre.last_fire_tick}`,
         engagements: d.theatre.battle_count,
         tick: beat.tick,
@@ -1444,7 +1447,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
       renderBodies, d.bodies, d.factions, d.theatre]);
 
   if (beats.length === 0) {
-    return <div style={{ color: NEUTRAL, padding: 8 }}>No frames recorded for this campaign.</div>;
+    return <div style={{ color: NEUTRAL, padding: 8 }}>{tr('theatre.noFrames')}</div>;
   }
   const idx = clampFrame(pos, beats.length);
 
@@ -1459,7 +1462,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
             background: '#16273a', border: '1px solid #3d6b96', borderRadius: 5,
             color: '#cfe0ee', padding: '3px 10px', cursor: 'pointer', fontSize: 11,
           }}
-        >{playing ? '❚❚ Pause' : '▶ Play campaign'}</button>
+        >{playing ? tr('review.battle.pause') : tr('theatre.play')}</button>
         <input
           type="range" min={0} max={Math.max(0.0001, beats.length - 1 + 0.98)} step={0.02}
           value={Number.isFinite(pos) ? pos : 0}
@@ -1469,7 +1472,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
             setPos(Number.isFinite(v) ? v : 0);
           }}
           style={{ flex: 1 }}
-          aria-label="Scrub the campaign"
+          aria-label={tr('theatre.scrub')}
         />
         <span style={{ fontSize: 10, color: NEUTRAL, minWidth: 84, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
           T+{beats[idx].tick} · {idx + 1}/{beats.length}

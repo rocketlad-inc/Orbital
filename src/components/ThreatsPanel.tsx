@@ -18,18 +18,21 @@ import { useGameContext } from '../state/gameContext';
 import { computeIncomingThreats, IncomingThreat } from '../game/threats';
 import { computeVisibility } from '../game/visibility';
 import { ShipIcon, ShipIconClass } from './ShipIcons';
+import { t, tn } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 
 /** Urgency by ticks-until-arrival → label + color. A freshly-started
  *  burn always reads as "BURN INBOUND" regardless of distance, so the
  *  player notices the moment an enemy commits even on a long transit. */
 function urgency(ticks: number, isFreshBurn: boolean): { label: string; color: string; bg: string } {
-  if (isFreshBurn) return { label: 'BURN INBOUND', color: '#ff3030', bg: 'rgba(255, 48, 48, 0.18)' };
-  if (ticks <= 10) return { label: 'IMMINENT', color: '#ff3030', bg: 'rgba(255, 48, 48, 0.15)' };
-  if (ticks <= 30) return { label: 'INCOMING', color: '#ff8a4d', bg: 'rgba(255, 138, 77, 0.12)' };
-  return { label: 'DETECTED', color: '#ffb84d', bg: 'rgba(255, 184, 77, 0.08)' };
+  if (isFreshBurn) return { label: t('threats.burnInbound'), color: '#ff3030', bg: 'rgba(255, 48, 48, 0.18)' };
+  if (ticks <= 10) return { label: t('threats.imminent'), color: '#ff3030', bg: 'rgba(255, 48, 48, 0.15)' };
+  if (ticks <= 30) return { label: t('threats.incoming'), color: '#ff8a4d', bg: 'rgba(255, 138, 77, 0.12)' };
+  return { label: t('threats.detected'), color: '#ffb84d', bg: 'rgba(255, 184, 77, 0.08)' };
 }
 
 export const ThreatsPanel: React.FC = () => {
+  useI18n();
   const { gameState, focusBody } = useGameContext();
   // Fog of war — same model the map uses. Without it this panel listed
   // inbound hostiles the player had NO sensor on ("4 hostiles inbound →
@@ -136,11 +139,11 @@ export const ThreatsPanel: React.FC = () => {
         marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6,
       }}>
         <span style={{ fontSize: 12 }}>⚠</span>
-        <span>THREATS · {threats.length}</span>
+        <span>{t('threats.header', { n: threats.length })}</span>
         {threats.length > 1 && (
           <button
             onClick={dismissAll}
-            title="Dismiss all threats"
+            title={t('threats.dismissAll')}
             style={{
               marginLeft: 'auto',
               background: 'transparent',
@@ -154,7 +157,7 @@ export const ThreatsPanel: React.FC = () => {
               cursor: 'pointer',
             }}
           >
-            CLEAR ALL
+            {t('threats.clearAll')}
           </button>
         )}
       </div>
@@ -186,6 +189,7 @@ interface ThreatRowProps {
 }
 
 const ThreatRow: React.FC<ThreatRowProps> = ({ threat, faction, isNew, onClick, onDismiss }) => {
+  useI18n();
   const u = urgency(threat.ticksUntilArrival, threat.isFreshBurn);
   const factionColor = faction?.color ?? '#ff5e5e';
   const factionName = faction?.name ?? threat.attackerFaction;
@@ -202,7 +206,7 @@ const ThreatRow: React.FC<ThreatRowProps> = ({ threat, faction, isNew, onClick, 
         animation: isNew ? 'threatBlink 0.6s ease-in-out 0s 3' : undefined,
         position: 'relative',
       }}
-      title="Click to focus on the threatened body"
+      title={t('threats.focusTitle')}
     >
       <div style={{
         display: 'flex', alignItems: 'center', gap: 6,
@@ -214,8 +218,8 @@ const ThreatRow: React.FC<ThreatRowProps> = ({ threat, faction, isNew, onClick, 
         </span>
         <button
           onClick={(e) => { e.stopPropagation(); onDismiss(); }}
-          title="Dismiss this threat"
-          aria-label="Dismiss"
+          title={t('threats.dismissOne')}
+          aria-label={t('threats.dismiss')}
           style={{
             background: 'transparent',
             border: 'none',
@@ -263,12 +267,12 @@ const ThreatRow: React.FC<ThreatRowProps> = ({ threat, faction, isNew, onClick, 
         {threat.threatenedShipCount === 0 && threat.threatenedSettlementCount === 0 ? (
           // Body owned but empty — incoming ship is a claim-jumper. No
           // ships or settlements to defend it; the body itself is at risk.
-          <span style={{ color: '#ffb84d' }}>Claim unguarded — no ships or settlements here</span>
+          <span style={{ color: '#ffb84d' }}>{t('threats.unguarded')}</span>
         ) : (
           <>
-            Defending: {threat.threatenedShipCount > 0 && `${threat.threatenedShipCount} ship${threat.threatenedShipCount === 1 ? '' : 's'}`}
+            {t('threats.defending')} {threat.threatenedShipCount > 0 && tn('threats.ships', threat.threatenedShipCount)}
             {threat.threatenedShipCount > 0 && threat.threatenedSettlementCount > 0 && ' · '}
-            {threat.threatenedSettlementCount > 0 && `${threat.threatenedSettlementCount} settlement${threat.threatenedSettlementCount === 1 ? '' : 's'}`}
+            {threat.threatenedSettlementCount > 0 && tn('threats.settlements', threat.threatenedSettlementCount)}
           </>
         )}
       </div>

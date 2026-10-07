@@ -19,6 +19,8 @@
 
 import React, { useEffect, useState } from 'react';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { t } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 import './DockRail.css';
 
 export type DockRailKey = 'situation' | 'eventlog' | 'multiplayer' | 'trade';
@@ -63,6 +65,7 @@ export const DockRail: React.FC<{ isMultiplayer?: boolean; lobbyOnly?: boolean }
   // Phone-only behaviour below follows the LAYOUT, not the pointer media
   // query (a mouse-driven desktop can report a coarse pointer).
   const isMobile = useIsMobile();
+  useI18n();
   // Mirror of App.tsx's activePanel so the 3 mobile-only rail buttons
   // (settlements / fleet / research) can show the right active state
   // even though the underlying panel state lives in App.
@@ -168,14 +171,14 @@ export const DockRail: React.FC<{ isMultiplayer?: boolean; lobbyOnly?: boolean }
   }
 
   return (
-    <div className="dock-rail" role="toolbar" aria-label="Side panels">
+    <div className="dock-rail" role="toolbar" aria-label={t("dock.sidePanels")}>
       {!lobbyOnly && (
         <DockButton
           which="situation"
           active={active === 'situation'}
           badge={badges.situation}
           icon={<SitIcon />}
-          label="Situation Report"
+          label={t("dock.situation")}
           onClick={() => toggle('situation')}
         />
       )}
@@ -185,7 +188,7 @@ export const DockRail: React.FC<{ isMultiplayer?: boolean; lobbyOnly?: boolean }
           active={active === 'eventlog'}
           badge={badges.eventlog}
           icon={<EventLogIcon />}
-          label="Event Log"
+          label={t("dock.eventLog")}
           onClick={() => toggle('eventlog')}
         />
       )}
@@ -200,7 +203,7 @@ export const DockRail: React.FC<{ isMultiplayer?: boolean; lobbyOnly?: boolean }
           active={active === 'multiplayer'}
           badge={badges.multiplayer}
           icon={<PeopleIcon />}
-          label="Multiplayer"
+          label={t("dock.multiplayer")}
           onClick={() => toggle('multiplayer')}
         />
       )}
@@ -213,7 +216,7 @@ export const DockRail: React.FC<{ isMultiplayer?: boolean; lobbyOnly?: boolean }
           active={active === 'trade'}
           badge={badges.trade}
           icon={<TradeIcon />}
-          label="Trade"
+          label={t("dock.trade")}
           onClick={() => toggle('trade')}
         />
       )}
@@ -229,8 +232,8 @@ export const DockRail: React.FC<{ isMultiplayer?: boolean; lobbyOnly?: boolean }
           <button
             className={`dock-rail__btn dock-rail__btn--mobile-only${externalActive === 'settlements' ? ' is-active' : ''}`}
             onClick={() => toggleExternal('settlements')}
-            title="Settlements"
-            aria-label="Settlements"
+            title={t("dock.settlements")}
+            aria-label={t("dock.settlements")}
             aria-pressed={externalActive === 'settlements'}
           >
             <span className="dock-rail__icon"><SettlementsIcon /></span>
@@ -238,8 +241,8 @@ export const DockRail: React.FC<{ isMultiplayer?: boolean; lobbyOnly?: boolean }
           <button
             className={`dock-rail__btn dock-rail__btn--mobile-only${externalActive === 'fleet' ? ' is-active' : ''}`}
             onClick={() => toggleExternal('fleet')}
-            title="Fleet"
-            aria-label="Fleet"
+            title={t("dock.fleet")}
+            aria-label={t("dock.fleet")}
             aria-pressed={externalActive === 'fleet'}
           >
             <span className="dock-rail__icon"><FleetIcon /></span>
@@ -247,8 +250,8 @@ export const DockRail: React.FC<{ isMultiplayer?: boolean; lobbyOnly?: boolean }
           <button
             className={`dock-rail__btn dock-rail__btn--mobile-only${externalActive === 'research' ? ' is-active' : ''}`}
             onClick={() => toggleExternal('research')}
-            title="Research"
-            aria-label="Research"
+            title={t("dock.research")}
+            aria-label={t("dock.research")}
             aria-pressed={externalActive === 'research'}
           >
             <span className="dock-rail__icon"><ResearchIcon /></span>

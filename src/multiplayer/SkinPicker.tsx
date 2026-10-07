@@ -23,6 +23,8 @@ import { deriveSecondary } from '../game/colorUtils';
 import {
   COMMISSION_NAME, COMMISSION_PRICE, COMMISSION_DISCORD, COMMISSION_NO_GAMEPLAY, canBuyHere, logCommission,
 } from './commission';
+import { t, tk } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 import './SkinPicker.css';
 
 /** A mid-game colony: every functional building present, so the tile
@@ -83,6 +85,7 @@ export function SkinPicker({
   onPick: (field: SkinField, value: string | null) => void;
   busy?: boolean;
 }) {
+  useI18n();
   const p = primary || '#4ecdc4';
   const s = secondary || deriveSecondary(p);
   const [lockedPick, setLockedPick] = useState<string | null>(null);
@@ -101,7 +104,7 @@ export function SkinPicker({
     const fb = fallback && (holder || fallback === free) ? fallback : free;
     const drawn = saved ?? fb;
     return (
-      <div className="skp-row" role="radiogroup" aria-label={field === 'city_skin' ? 'Colony style' : 'Station style'}>
+      <div className="skp-row" role="radiogroup" aria-label={field === 'city_skin' ? t('mp.skin.colonyStyle') : t('mp.skin.stationStyle')}>
         {defs.map(d => {
           const locked = !d.free && !holder;
           const on = drawn === d.id;
@@ -114,7 +117,7 @@ export function SkinPicker({
               aria-disabled={locked || undefined}
               className={`skp-tile${on ? ' is-on' : ''}${locked ? ' is-locked' : ''}`}
               disabled={busy}
-              title={locked ? `${d.name}, a ${COMMISSION_NAME} style. ${d.blurb}` : `${d.name}. ${d.blurb}`}
+              title={locked ? t('mp.skin.lockedTitle', { skin: d.name, name: tk('mp.commission.name', COMMISSION_NAME), blurb: d.blurb }) : `${d.name}. ${d.blurb}`}
               aria-label={d.name}
               onClick={() => {
                 if (locked) { setLockedPick(d.name); logCommission(surface, 'view'); return; }
@@ -145,22 +148,26 @@ export function SkinPicker({
 
   return (
     <div className="skp">
-      <div className="skp-label">Colonies</div>
+      <div className="skp-label">{t('mp.skin.colonies')}</div>
       {row('city_skin', CITY_SKINS, city, fallbackCity, FREE_CITY_SKIN)}
-      <div className="skp-label">Stations</div>
+      <div className="skp-label">{t('mp.skin.stations')}</div>
       {row('station_skin', STATION_SKINS, station, fallbackStation, FREE_STATION_SKIN)}
       {lockedPick && (
         <div className="skp-note" role="status">
           <span>
-            {lockedPick} comes with the {COMMISSION_NAME}, along with {COMMISSION_DISCORD}.
-            {' '}{COMMISSION_NO_GAMEPLAY}
+            {t('mp.skin.locked', {
+              pick: lockedPick,
+              name: tk('mp.commission.name', COMMISSION_NAME),
+              discord: tk('mp.commission.discord', COMMISSION_DISCORD),
+              noGameplay: tk('mp.commission.noGameplay', COMMISSION_NO_GAMEPLAY),
+            })}
           </span>
           {sellable ? (
             <button type="button" className="skp-buy" disabled={opening} onClick={() => void buy()}>
-              {opening ? 'Opening checkout…' : `Get the Commission · ${COMMISSION_PRICE}`}
+              {opening ? t('mp.skin.opening') : t('mp.commission.get', { price: tk('mp.commission.price', COMMISSION_PRICE) })}
             </button>
           ) : (
-            <span className="skp-dim">It is bought on the Orbital website.</span>
+            <span className="skp-dim">{t('mp.skin.dim')}</span>
           )}
         </div>
       )}

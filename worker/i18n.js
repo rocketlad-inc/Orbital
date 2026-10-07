@@ -83,3 +83,26 @@ export function trn(locale, key, n, vars) {
 export function catalogs() {
   return CATALOGS;
 }
+
+/**
+ * The language for a reply to a Discord interaction (a slash command or a
+ * button): the linked account's saved language wins, then what Discord says
+ * the person's client is set to (`interaction.locale`, e.g. 'pt-BR'), then
+ * English. `userRow` is the users row the handler already loaded (anything
+ * with a `locale`); pass `null` for "known not to be linked". Left
+ * `undefined`, the account is looked up by the interacting Discord id, one
+ * read, for callers that have not loaded it.
+ */
+export async function localeForInteraction(env, interaction, userRow) {
+  let row = userRow;
+  if (row === undefined) {
+    const did = (interaction?.member?.user ?? interaction?.user)?.id;
+    row = null;
+    if (did && env?.DB) {
+      try {
+        row = await env.DB.prepare('SELECT locale FROM users WHERE discord_id = ?').bind(did).first();
+      } catch { row = null; }
+    }
+  }
+  return pickLocale(row?.locale, interaction?.locale);
+}

@@ -1,13 +1,25 @@
 // Pure helpers for the market board — kept apart from MarketPanel so
 // they can be tested without mounting a panel that fetches.
 
+import { t, fmtNumber } from '../i18n/core';
+
 export type MarketBundle = { metal: number; gold: number; science: number };
 export type MarketKey = keyof MarketBundle;
 
 export const MARKET_KEYS: MarketKey[] = ['metal', 'gold', 'science'];
 /** Player-facing names. The server's 'gold' is the player's 'credits'. */
-export const MARKET_LABEL: Record<MarketKey, string> = { metal: 'metal', gold: 'credits', science: 'science' };
-const SHORT: Record<MarketKey, string> = { metal: 'metal', gold: 'cr', science: 'sci' };
+// Getters, not values: this object is built once at import, and a plain
+// value would freeze the language the page loaded in.
+export const MARKET_LABEL: Record<MarketKey, string> = {
+  get metal() { return t('market.res.metal'); },
+  get gold() { return t('market.res.gold'); },
+  get science() { return t('market.res.science'); },
+};
+const SHORT: Record<MarketKey, string> = {
+  get metal() { return t('market.short.metal'); },
+  get gold() { return t('market.short.gold'); },
+  get science() { return t('market.short.science'); },
+};
 
 export function nonZeroKeys(b: MarketBundle): MarketKey[] {
   return MARKET_KEYS.filter(k => (b[k] ?? 0) > 0);
@@ -28,14 +40,14 @@ export function marketRate(post: { offer: MarketBundle; request: MarketBundle })
   // prices for one market, not comparable at a glance.
   const p = pairPrice(post.offer, post.request);
   if (!p) return null;
-  return `${fmtPrice(p.price)} ${SHORT[p.quote]} per ${SHORT[p.base]}`;
+  return t('market.rate', { price: fmtPrice(p.price), quote: SHORT[p.quote], base: SHORT[p.base] });
 }
 
 export function bundleWords(b: MarketBundle): string {
   const keys = nonZeroKeys(b);
   return keys.length
-    ? keys.map(k => `${Math.round(b[k]).toLocaleString('en-US')} ${MARKET_LABEL[k]}`).join(' + ')
-    : 'nothing';
+    ? keys.map(k => `${fmtNumber(Math.round(b[k]))} ${MARKET_LABEL[k]}`).join(' + ')
+    : t('market.nothing');
 }
 
 // ---- one price per market --------------------------------------------
@@ -64,7 +76,7 @@ export function goingRateText(r: GoingRate): string {
   const range = r.n > 1 && fmtPrice(r.low) !== fmtPrice(r.high)
     ? `${fmtPrice(r.low)}–${fmtPrice(r.high)}`
     : fmtPrice(r.mid);
-  return `${MARKET_LABEL[r.base]} ${range} ${SHORT[r.quote]}`;
+  return t('market.going', { base: MARKET_LABEL[r.base], range, quote: SHORT[r.quote] });
 }
 
 /** How a post compares with what that market has recently gone for —
@@ -104,16 +116,16 @@ export function afterTariff(amount: number, tariffPct: number): number {
 export function fmtTicksAsTime(ticks: number, tickIntervalMs: number): string {
   const ms = Math.max(0, ticks) * Math.max(1, tickIntervalMs);
   const mins = Math.round(ms / 60000);
-  if (mins < 1) return 'under a minute';
-  if (mins < 60) return `${mins}m`;
+  if (mins < 1) return t('market.time.under');
+  if (mins < 60) return t('market.time.m', { n: mins });
   const hours = Math.floor(mins / 60);
-  if (hours < 24) return mins % 60 && hours < 6 ? `${hours}h ${mins % 60}m` : `${hours}h`;
+  if (hours < 24) return mins % 60 && hours < 6 ? t('market.time.hm', { h: hours, m: mins % 60 }) : t('market.time.h', { n: hours });
   const days = Math.floor(hours / 24);
-  return hours % 24 ? `${days}d ${hours % 24}h` : `${days}d`;
+  return hours % 24 ? t('market.time.dh', { d: days, h: hours % 24 }) : t('market.time.d', { n: days });
 }
 
 export function ttlLabel(hours: number): string {
-  return hours < 24 ? `${hours} hours` : hours === 24 ? '1 day' : `${hours / 24} days`;
+  return hours < 24 ? t('market.ttl.hours', { n: hours }) : hours === 24 ? t('market.ttl.day') : t('market.ttl.days', { n: hours / 24 });
 }
 
 /** Sort key for "I need X": what one unit of X costs the taker, in

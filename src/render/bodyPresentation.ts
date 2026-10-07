@@ -164,6 +164,18 @@ export interface PresentBody {
   parent?: string | null;
   mineralKind?: unknown;
   orbitRadius?: number;
+  /** A sun gate still in flight out of the Sun (worker/sunGates.js). */
+  emerge?: { untilTick: number } | null;
+}
+
+/** A sun gate on its burn out of the Sun. It moves like a ship, so it is
+ *  presented like one: never folded into the Sun or into a world it
+ *  passes, and never the reason a world folds. Lorne, 2026-10-07: "make
+ *  it so that the squid shows like ships do. It disappears when you zoom
+ *  out." Zoomed out it was folding into the Sun on the way out, then into
+ *  every outer world it crossed (a structure ranks below all of them). */
+export function isInFlight(b: PresentBody, tick: number | null | undefined): boolean {
+  return tick != null && !!b.emerge && tick < b.emerge.untilTick;
 }
 
 /**
@@ -185,6 +197,8 @@ export function computePresentation(
    *  selected hull draws at full size, twice an ordinary parked hull, so
    *  its world's moons wait for room for IT before they unfold. */
   wideBand?: { bodyId: string; px: number } | null,
+  /** The map's clock, so a gate in flight (isInFlight) is known. */
+  tick?: number | null,
 ): BodyPresentation {
   const byId = new Map(bodies.map(b => [b.id, b]));
   // How much of the system fills the screen: the outermost giant's orbit
@@ -254,6 +268,7 @@ export function computePresentation(
     // A moon of a folded planet folds with it.
     alpha = Math.min(alpha, parentShown);
     if (keepShown && b.id === keepShown) alpha = 1;
+    if (isInFlight(b, tick)) alpha = 1;
     shown.set(b.id, alpha);
     host.set(b.id, alpha >= 0.5 ? b.id : parentHost);
   }
@@ -264,7 +279,8 @@ export function computePresentation(
   // other's parent. The lesser one folds into the greater: the bigger
   // class wins, then the bigger world. Pairs by grid cell, so the cost is
   // the number of near neighbours, not the square of the map.
-  const live = ordered.filter(b => b.parent && (shown.get(b.id) ?? 0) >= 0.5);
+  // A gate in flight sits out this pass both ways (isInFlight).
+  const live = ordered.filter(b => b.parent && (shown.get(b.id) ?? 0) >= 0.5 && !isInFlight(b, tick));
   const cell = 48;
   const grid = new Map<string, PresentBody[]>();
   const at = new Map<string, { x: number; y: number }>();

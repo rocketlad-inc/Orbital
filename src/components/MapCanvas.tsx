@@ -108,8 +108,8 @@ import {
   computePresentation, drawnRadiusOf, hullReveal, hullSize, isBarycenter,
 } from '../render/bodyPresentation';
 import type { BodyPresentation } from '../render/bodyPresentation';
-import { MIN_CAMERA_SCALE } from '../render/cameraLimits';
-import { isGateInFlight, landingSiteIdOf } from '../game/farSystems';
+import { MIN_CAMERA_SCALE, transitHullScale } from '../render/cameraLimits';
+import { isGateInFlight } from '../game/farSystems';
 import { reachSpec } from '../game/structureReach';
 import { forecastIntercepts, reachOf } from '../game/firingWindows';
 import { COLORS, withOpacity, lighten } from '../render/colors';
@@ -133,6 +133,7 @@ import { menuScaleFor, zOf, furnitureOpacity } from '../game/worldMenu/camera';
 import { drawWorldMenuCloseup } from '../render/worldMenuCloseup';
 import { useCanvasTouchInput } from '../hooks/useCanvasTouchInput';
 import { GIT_SHA } from '../_version';
+import { t, tk, getLang, subscribeLang } from '../i18n/core';
 import { exploredStorageKey, loadExplored, saveExplored } from '../game/exploredBodies';
 import './MapCanvas.css';
 import { getPlacement, cancelPlacement } from '../game/megastructurePlacement';
@@ -218,28 +219,10 @@ const MEGA_ORBIT_RING_ALPHA = 0.02;
 // it drew at FULL size at every zoom — a wall of same-size sprites once
 // you pulled back to see the whole system. These drive a straight
 // camera-zoom ramp instead.
-/** Floor: how small an in-transit hull gets at max zoom-out. Half. */
-const TRANSIT_SHIP_MIN_SIZE = 0.5;
-/** Camera scale at/above which transit hulls draw full size. This is the
- *  default view scale (gameContext DEFAULT_CAMERA_SCALE), so zooming IN
- *  never shrinks anything and zooming out starts the ramp immediately. */
-const TRANSIT_FULL_CAM_SCALE = 0.5;
-/** The wheel handler's hard zoom-out clamp — the ramp bottoms out here
- *  so "fully zoomed out" and "half size" line up exactly. Keep in sync
- *  with the Math.max floor in the wheel handler below. */
-const TRANSIT_MIN_CAM_SCALE = MIN_CAMERA_SCALE;
-
-/** Size multiplier for an in-transit hull at the given camera scale.
- *  Interpolated in LOG space because zoom is multiplicative — a linear
- *  ramp across a ~400x range would spend almost its entire travel in the
- *  last sliver of zoom and read as an abrupt pop. */
-function transitShipScale(camScale: number): number {
-  const s = Math.max(TRANSIT_MIN_CAM_SCALE, camScale);
-  const t = Math.max(0, Math.min(1,
-    Math.log(s / TRANSIT_MIN_CAM_SCALE)
-      / Math.log(TRANSIT_FULL_CAM_SCALE / TRANSIT_MIN_CAM_SCALE)));
-  return TRANSIT_SHIP_MIN_SIZE + (1 - TRANSIT_SHIP_MIN_SIZE) * t;
-}
+// The ramp itself (full size at the default zoom, half at full zoom-out,
+// in log space) lives in render/cameraLimits.ts transitHullScale, shared
+// with the thing from the Sun so it shrinks on the same curve as fleets.
+const transitShipScale = transitHullScale;
 /** A star-orbiter whose whole moon system spans fewer than this many
  *  screen pixels collapses its bodies' ship badges into a single
  *  SYSTEM-level count (its moons would overlap into an unreadable smear
@@ -1578,6 +1561,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           if (!sel || sel.transit || !sel.orbit?.parentBodyId) return null;
           return { bodyId: sel.orbit.parentBodyId, px: shipIconSize(sel.class, true) + 4 };
         })(),
+        // A sun gate in flight is presented like a ship: never folded.
+        tNow,
       );
       presentationRef.current = renderContext.presentation;
       // Every drawn world is a keep-out for labels AND badges this frame,
@@ -2236,7 +2221,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         requestLabel({
           id: `threat:${body.id}`,
           kind: 'threat',
-          text: '⚠ THREAT',
+          text: t('map.threat'),
           x: cp.x,
           y: cp.y,
           radius: baseR + 6,
@@ -2257,9 +2242,20 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // (zoom out of it and the camera stays focused), and the close-up kept
     // painting a faint skyline and the capital's name tag over the
     // overworld globe and its fleet at scale ~2-3 (zoom audit, 2026-09-26).
-    if (isWorldMenuActive() && camera.focusedBodyId
-        && getWorldMenuOpenBodyId() === camera.focusedBodyId) {
+    const wmOpen = isWorldMenuActive() && !!camera.focusedBodyId
+      && getWorldMenuOpenBodyId() === camera.focusedBodyId;
+    if (wmOpen) {
       drawWorldMenuCloseup(renderContext, gameState.settlements, 'player');
+    }
+    {
+      // World-menu camera probe (PerfHud.recordCam): the focused world's
+      // on-screen centre this frame, as the close-up places the city.
+      const fb = wmOpen ? bodyById2.get(camera.focusedBodyId!) : undefined;
+      const fp = fb ? bodyPosition(fb, renderContext.t, gameState.bodies) : null;
+      const fc = fp ? worldToCanvas(fp.x, fp.y, renderContext) : null;
+      perf.recordCam(!!fc, fc?.x ?? 0, fc?.y ?? 0, renderContext.camera.scale,
+        !!camTweenRef.current, !!wheelFollowRef.current,
+        renderContext.canvas.width, renderContext.canvas.height);
     }
 
     // Build a co-orbit formation map: ships sharing the same parent body
@@ -3741,7 +3737,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         : null;
       drawRendezvousPreview(
         rv, theirPath, renderContext,
-        (isMine && followed) ? `MEET ${followed.name} · T+${Math.round(rv.meetTick)}` : undefined,
+        (isMine && followed) ? t('map.meet', { name: followed.name, tick: Math.round(rv.meetTick) }) : undefined,
         leaderLeg?.arriveTick ?? null,
         renderTick(),
       );
@@ -4411,13 +4407,20 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             pickId = body.id;
           }
         }
-        // Clicking the thing still flying out of the Sun means "go where
-        // it is going": its landing site (worker/sunGates.js). The gate
-        // itself is refused as a target until it lands.
+        // THE SQUID CANNOT BE TARGETED IN FLIGHT (Lorne, 2026-10-07:
+        // "Refuse the click. Cant target the Squid in transit"). This
+        // click used to be read as "go where it is going" and quietly
+        // swapped in its landing site out in the Far Reach: a player who
+        // clicked the squid passing Venus to board it sent five hulls on
+        // a 40-tick burn to the edge of the system. Now it is refused, out
+        // loud, and the pick stays open so another target can be chosen.
+        // The landing site is still a target, clicked as itself.
         const picked = pickId ? gameState.bodies.find(b => b.id === pickId) : undefined;
         if (picked && isGateInFlight(picked, renderTick())) {
-          const site = landingSiteIdOf(picked.id);
-          pickId = gameState.bodies.some(b => b.id === site) ? site : null;
+          window.dispatchEvent(new CustomEvent('orbital-transfer-refused', {
+            detail: { reason: 'gate_in_flight', landsAt: Math.ceil(picked.emerge!.untilTick) },
+          }));
+          return;
         }
         if (pickId) {
           window.dispatchEvent(new CustomEvent('orbital-transfer-confirm', {
@@ -4441,12 +4444,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         pickCycleRef.current = cyc && cyc.order.length > 1 ? cyc.order : null;
         hitShip = cyc?.id ?? null;
         if (cyc && cyc.order.length > 1) {
-          const name = gameState.ships.find(sh => sh.id === cyc.id)?.name ?? 'Ship';
+          const name = gameState.ships.find(sh => sh.id === cyc.id)?.name ?? t('map.toast.shipFallback');
           window.dispatchEvent(new CustomEvent('orbital:toast', {
             detail: {
               kind: 'info',
-              text: `${name} — ${cyc.index + 1} of ${cyc.order.length} here. `
-                + `${touch ? 'Tap' : 'Click'} again for the next.`,
+              text: t(touch ? 'map.toast.cycleTap' : 'map.toast.cycleClick',
+                { name, i: cyc.index + 1, n: cyc.order.length }),
             },
           }));
         }
@@ -4556,7 +4559,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // place" because it names the actual rule.
           console.warn('placeFramework rejected', res.code, res.error);
           window.dispatchEvent(new CustomEvent('orbital:toast', {
-            detail: { kind: 'error', text: res.error ?? 'Could not place the foundation.' },
+            detail: { kind: 'error', text: res.error ?? t('map.toast.placeFailed') },
           }));
         }
       });
@@ -4752,9 +4755,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         if (pendingTargetRef.current !== bodyId) {
           pendingTargetRef.current = bodyId;
           hoverBody(bodyId);
-          const name = gameState.bodies.find(b => b.id === bodyId)?.name ?? 'it';
+          const name = gameState.bodies.find(b => b.id === bodyId)?.name ?? t('map.toast.itFallback');
           window.dispatchEvent(new CustomEvent('orbital:toast', {
-            detail: { kind: 'info', text: `Tap ${name} again to add this leg` },
+            detail: { kind: 'info', text: t('map.toast.tapAgain', { name }) },
           }));
           return;
         }
@@ -4918,6 +4921,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // tween's self-driven frames never call a stale one.
   useEffect(() => { renderRef.current = render; }, [render]);
 
+  // Canvas text is translated at draw time, so a language switch only has
+  // to ask for one more frame (no React re-render of this component).
+  useEffect(() => subscribeLang(() => renderRef.current()), []);
+
   // Unmount-only: kill any pending tween continuation frame.
   useEffect(() => () => {
     if (tweenRafRef.current != null) cancelAnimationFrame(tweenRafRef.current);
@@ -5032,7 +5039,18 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // map was giant). Reset the transform and keep the loop alive.
         console.error('render frame failed', e);
         const c = canvasRef.current?.getContext('2d');
-        if (c) c.setTransform(1, 0, 0, 1, 0, 0);
+        if (c) {
+          // Unwind every save() the throw skipped past (restore() on an
+          // empty stack is a no-op), then reset what restore cannot reach.
+          // Only the transform was reset before: a leaked clip left the
+          // edges uncleared and a leaked 'lighter' smeared every later
+          // frame, until reload.
+          for (let i = 0; i < 64; i++) c.restore();
+          c.setTransform(1, 0, 0, 1, 0, 0);
+          c.globalAlpha = 1;
+          c.globalCompositeOperation = 'source-over';
+          c.setLineDash([]);
+        }
       }
       perf.recordDraw(performance.now() - t0);
       // ZOOM + CANVAS BYTES, from the loop that actually knows them.
@@ -5176,14 +5194,40 @@ function getShipCanvasPos(
   };
 }
 
+/** The HUD's words. The English text stays in drawHUD (it is the lookup key,
+ *  and a source test reads it); this maps it to the catalog and remembers the
+ *  answer per language, because drawHUD runs inside the render loop and must
+ *  not look anything up per frame. */
+const HUD_KEYS: Record<string, string> = {
+  'PAUSED': 'map.hud.paused',
+  'Tick:': 'map.hud.tick',
+  'Scale:': 'map.hud.scale',
+  'Drag: pan · Pinch: zoom · Tap: select · Hold a ship: select several': 'map.hud.hintMobile',
+  'Right-drag: pan | Scroll: zoom | Click: select | Double-click: focus': 'map.hud.hintDesktop',
+  'SELECT TARGET BODY': 'map.hud.selectTarget',
+  'Tap a body to transfer': 'map.hud.tapBody',
+  'Click a body to transfer | ESC to cancel | Right-click to cancel': 'map.hud.clickBody',
+  'FOCUSED:': 'map.hud.focused',
+  'SOI:': 'map.hud.soi',
+};
+let hudLang = '';
+const hudCache = new Map<string, string>();
+function hudTr(english: string): string {
+  const lang = getLang();
+  if (lang !== hudLang) { hudCache.clear(); hudLang = lang; }
+  let s = hudCache.get(english);
+  if (s === undefined) { s = tk(HUD_KEYS[english], english); hudCache.set(english, s); }
+  return s;
+}
+
 function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
-  const speedLabel = ctx.simSpeed && ctx.simSpeed > 0 ? `${ctx.simSpeed}×` : 'PAUSED';
+  const speedLabel = ctx.simSpeed && ctx.simSpeed > 0 ? `${ctx.simSpeed}×` : hudTr('PAUSED');
   ctx.ctx.fillStyle = COLORS.fgDim;
   ctx.ctx.font = '12px "Audiowide", monospace';
   ctx.ctx.textAlign = 'left';
   ctx.ctx.textBaseline = 'top';
-  ctx.ctx.fillText(`Tick: ${ctx.t.toFixed(1)} | ${speedLabel}`, 16, 16);
-  ctx.ctx.fillText(`Scale: ${ctx.camera.scale.toFixed(2)}x`, 16, 32);
+  ctx.ctx.fillText(`${hudTr('Tick:')} ${ctx.t.toFixed(1)} | ${speedLabel}`, 16, 16);
+  ctx.ctx.fillText(`${hudTr('Scale:')} ${ctx.camera.scale.toFixed(2)}x`, 16, 32);
 
   ctx.ctx.fillStyle = COLORS.fgFaint;
   ctx.ctx.font = '10px "Audiowide", monospace';
@@ -5192,23 +5236,23 @@ function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
   // The LAYOUT's verdict (useIsMobile stamps data-mobile-shell), not the
   // pointer media query, which some mouse-driven desktops answer 'coarse'.
   const mobileShell = document.documentElement.hasAttribute('data-mobile-shell');
-  const hint = mobileShell
+  const hint = hudTr(mobileShell
     ? 'Drag: pan · Pinch: zoom · Tap: select · Hold a ship: select several'
-    : 'Right-drag: pan | Scroll: zoom | Click: select | Double-click: focus';
+    : 'Right-drag: pan | Scroll: zoom | Click: select | Double-click: focus');
   ctx.ctx.fillText(hint, 16, ctx.canvas.height - 32);
 
   if (targetSelectionMode) {
     ctx.ctx.fillStyle = COLORS.warning;
     ctx.ctx.font = 'bold 12px "Audiowide", monospace';
     ctx.ctx.textAlign = 'center';
-    ctx.ctx.fillText('SELECT TARGET BODY', ctx.canvas.width / 2, 16);
+    ctx.ctx.fillText(hudTr('SELECT TARGET BODY'), ctx.canvas.width / 2, 16);
     ctx.ctx.fillStyle = COLORS.fgDim;
     ctx.ctx.font = '10px "Audiowide", monospace';
     // No Esc key or right button on a phone; its Cancel is the banner
     // ShipPanel floats at the bottom during targeting.
-    ctx.ctx.fillText(mobileShell
+    ctx.ctx.fillText(hudTr(mobileShell
       ? 'Tap a body to transfer'
-      : 'Click a body to transfer | ESC to cancel | Right-click to cancel', ctx.canvas.width / 2, 32);
+      : 'Click a body to transfer | ESC to cancel | Right-click to cancel'), ctx.canvas.width / 2, 32);
   }
 
   if (ctx.camera.focusedBodyId) {
@@ -5217,10 +5261,10 @@ function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
       ctx.ctx.fillStyle = COLORS.info;
       ctx.ctx.font = 'bold 12px "Audiowide", monospace';
       ctx.ctx.textAlign = 'center';
-      ctx.ctx.fillText(`FOCUSED: ${focusedBody.name.toUpperCase()}`, ctx.canvas.width / 2, targetSelectionMode ? 52 : 32);
+      ctx.ctx.fillText(`${hudTr('FOCUSED:')} ${focusedBody.name.toUpperCase()}`, ctx.canvas.width / 2, targetSelectionMode ? 52 : 32);
       ctx.ctx.fillStyle = COLORS.fgDim;
       ctx.ctx.font = '10px "Audiowide", monospace';
-      ctx.ctx.fillText(`SOI: ${focusedBody.soi.toFixed(0)} km`, ctx.canvas.width / 2, targetSelectionMode ? 68 : 48);
+      ctx.ctx.fillText(`${hudTr('SOI:')} ${focusedBody.soi.toFixed(0)} km`, ctx.canvas.width / 2, targetSelectionMode ? 68 : 48);
     }
   }
 

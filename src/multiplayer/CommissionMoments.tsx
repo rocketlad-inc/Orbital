@@ -21,14 +21,40 @@ import { useAuth } from './AuthContext';
 import { ShipIcon, ShipIconClass, ShipIconVariant } from '../components/ShipIcons';
 import {
   COMMISSION_FACTS, COMMISSION_LINES, COMMISSION_NAME, COMMISSION_PRICE,
-  COMMISSION_DISCORD, COMMISSION_NO_GAMEPLAY,
+  COMMISSION_DISCORD, COMMISSION_NO_GAMEPLAY, COMMISSION_EMBLEMS, COMMISSION_CITY_SKINS, COMMISSION_STATION_SKINS,
+  COMMISSION_STRUCTURE_LOOKS,
   answerCommissionAsk, canBuyHere, logCommission,
 } from './commission';
+import { t, tk } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 import './CommissionMoments.css';
 
 const FLEET: Array<[ShipIconClass, ShipIconVariant]> = [
   ['frigate', 'S'], ['destroyer', 'Y'], ['corvette', 'W'], ['freighter', 'V'],
 ];
+
+/** The Commission's fixed phrases in the player's language. The constants in
+ *  commission.ts are the English source (and what the English catalog must
+ *  equal); tk() falls back to them when a catalog has no entry. */
+function commissionPhrases() {
+  return {
+    lines: COMMISSION_LINES,
+    name: tk('mp.commission.name', COMMISSION_NAME),
+    discord: tk('mp.commission.discord', COMMISSION_DISCORD),
+    noGameplay: tk('mp.commission.noGameplay', COMMISSION_NO_GAMEPLAY),
+    price: tk('mp.commission.price', COMMISSION_PRICE),
+  };
+}
+
+function commissionFacts(): string {
+  return tk('mp.commission.facts', COMMISSION_FACTS, {
+    ...commissionPhrases(),
+    emblems: COMMISSION_EMBLEMS,
+    city: COMMISSION_CITY_SKINS,
+    station: COMMISSION_STATION_SKINS,
+    looks: COMMISSION_STRUCTURE_LOOKS,
+  });
+}
 
 const endgameKey = (gameId: string) => `orbital.commission.endgame.${gameId}`;
 
@@ -38,6 +64,7 @@ const endgameKey = (gameId: string) => `orbital.commission.endgame.${gameId}`;
  * setback is no moment to sell anything).
  */
 export function EndgameCommission({ gameId, survived }: { gameId: string; survived: boolean }) {
+  useI18n();
   const { user } = useAuth();
   const [gone, setGone] = useState(() => {
     try { return !!localStorage.getItem(endgameKey(gameId)); } catch { return false; }
@@ -59,10 +86,9 @@ export function EndgameCommission({ gameId, survived }: { gameId: string; surviv
         {FLEET.map(([cls, v]) => <ShipIcon key={cls} shipClass={cls} variant={v} size={36} />)}
       </div>
       <div className="cm-end__text">
-        <div className="cm-title">Fly your next fleet in a new line</div>
+        <div className="cm-title">{t('mp.endgame.title')}</div>
         <div className="cm-body">
-          {COMMISSION_LINES} ship lines, new flags and {COMMISSION_DISCORD} with the {COMMISSION_NAME}.
-          {' '}{COMMISSION_NO_GAMEPLAY} {COMMISSION_PRICE}, once.
+          {t('mp.endgame.body', commissionPhrases())}
         </div>
       </div>
       <div className="cm-actions">
@@ -72,11 +98,11 @@ export function EndgameCommission({ gameId, survived }: { gameId: string; surviv
             logCommission('endgame', 'click');
             void startCommissionCheckout('endgame').then(url => { if (url) window.location.assign(url); });
           }}
-        >Take a look</button>
+        >{t('mp.endgame.look')}</button>
         <button
           className="cm-btn"
           onClick={() => { logCommission('endgame', 'dismiss'); setGone(true); }}
-        >Not now</button>
+        >{t('mp.endgame.notNow')}</button>
       </div>
     </div>
   );
@@ -84,6 +110,7 @@ export function EndgameCommission({ gameId, survived }: { gameId: string; surviv
 
 /** The one-time thank-you card, at the top of the lobby. */
 export function ThanksCard({ onSeeHangar }: { onSeeHangar: () => void }) {
+  useI18n();
   const { user } = useAuth();
   const [gone, setGone] = useState(false);
   const show = !gone && !!user?.commission_ask && !user.is_premium && canBuyHere();
@@ -97,15 +124,14 @@ export function ThanksCard({ onSeeHangar }: { onSeeHangar: () => void }) {
   };
   return (
     <aside className="cm-thanks" aria-labelledby="cm-thanks-title">
-      <button className="cm-x" aria-label="Close for good" onClick={close}>×</button>
+      <button className="cm-x" aria-label={t('mp.thanks.closeForGood')} onClick={close}>×</button>
       <div className="cm-fleet" aria-hidden>
         {FLEET.map(([cls, v]) => <ShipIcon key={cls} shipClass={cls} variant={v} size={34} />)}
       </div>
       <div className="cm-thanks__text">
-        <h3 id="cm-thanks-title" className="cm-title">Twenty hours in. Thank you for playing.</h3>
+        <h3 id="cm-thanks-title" className="cm-title">{t('mp.thanks.title')}</h3>
         <p className="cm-body">
-          Orbital is free and stays free. If you would like to support it, the {COMMISSION_NAME} is how:
-          {' '}{COMMISSION_FACTS} This is the only time we will ask.
+          {t('mp.thanks.body', { ...commissionPhrases(), facts: commissionFacts() })}
         </p>
       </div>
       <div className="cm-actions">
@@ -119,7 +145,7 @@ export function ThanksCard({ onSeeHangar }: { onSeeHangar: () => void }) {
               else { setGone(true); onSeeHangar(); }
             });
           }}
-        >Get the Commission · {COMMISSION_PRICE}</button>
+        >{t('mp.commission.get', { price: tk('mp.commission.price', COMMISSION_PRICE) })}</button>
         <button
           className="cm-btn"
           onClick={() => {
@@ -129,8 +155,8 @@ export function ThanksCard({ onSeeHangar }: { onSeeHangar: () => void }) {
             setGone(true);
             onSeeHangar();
           }}
-        >See it in the Hangar</button>
-        <button className="cm-btn cm-btn--quiet" onClick={close}>No thanks</button>
+        >{t('mp.thanks.hangar')}</button>
+        <button className="cm-btn cm-btn--quiet" onClick={close}>{t('mp.thanks.noThanks')}</button>
       </div>
     </aside>
   );

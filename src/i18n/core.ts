@@ -99,6 +99,15 @@ export function t(key: Key, vars?: Record<string, string | number>): string {
   return fill(lookup(key, current), vars);
 }
 
+/** Translate a key that is built at run time (`data.tech.${id}.name`) or
+ *  that lives next to the data it names. `english` is what shows when the
+ *  language is English or the catalog has no entry, so adding a new tech,
+ *  ship or world never leaves a blank. Static strings should use t(). */
+export function tk(key: string, english: string, vars?: Record<string, string | number>): string {
+  const own = (CATALOGS[current] as Record<string, string | undefined>)[key];
+  return fill(own ?? english, vars);
+}
+
 /** Keys that have plural forms, named without the _one/_other suffix. */
 export type PluralKey = Extract<Key, `${string}_other`> extends `${infer B}_other` ? B : never;
 

@@ -3,6 +3,7 @@
 // wrangler dev.
 
 import { logger } from '../game/logger';
+import { t } from '../i18n/core';
 
 export type ApiResult<T> =
   /** `raw` is the response body verbatim. res.json() internally does
@@ -1083,15 +1084,15 @@ export function realSuffix(ticks: number, tickMs?: number | null): string {
 }
 
 export function fmtTicksReal(ticks: number, tickMs?: number | null): string {
-  const base = `${ticks} tick${ticks === 1 ? '' : 's'}`;
+  const base = t(ticks === 1 ? 'helper.ticks.one' : 'helper.ticks.other', { n: ticks });
   if (!tickMs || tickMs <= 0 || ticks <= 0) return base;
   const ms = ticks * tickMs;
   const mins = ms / 60_000;
   const hours = ms / 3_600_000;
   const human = mins < 60
-    ? `~${Math.max(1, Math.round(mins))}m`
+    ? `~${t('market.time.m', { n: Math.max(1, Math.round(mins)) })}`
     : hours < 48
-      ? `~${Math.round(hours)}h`
-      : `~${Math.round(hours / 24)}d`;
+      ? `~${t('market.time.h', { n: Math.round(hours) })}`
+      : `~${t('market.time.d', { n: Math.round(hours / 24) })}`;
   return `${base} · ${human}`;
 }

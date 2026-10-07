@@ -34,6 +34,7 @@
 import { castVoteCore, loadProposalTotals } from './senate.js';
 import { WEIGHT_RULE } from './systems.js';
 import { isAdminEmail } from './analytics.js';
+import { tr, trn, pickLocale, normalizeLocale } from './i18n.js';
 
 const DISCORD_API = 'https://discord.com/api/v10';
 const POLITICS_COLOR = 0xc4b5fd; // matches the digest "Halls of the Senate" hue
@@ -175,31 +176,43 @@ async function channelForGame(env, gameId, { headline = false } = {}) {
   return feed.feedTarget(env, gameId, { headline });
 }
 
+/** The language a game's FEED posts in (the host's pick for this game,
+ *  else the host's own language, else English). One shared message, one
+ *  language: a card does not change per reader. */
+async function feedLocaleOf(env, gameId) {
+  const feed = await import('./gameFeed.js');
+  return feed.feedLocale(env, gameId);
+}
+
 // ---------- message building ----------
 
-const KIND_LABELS = {
-  slider_law: 'Slider Law',
-  trade_embargo: 'Trade Embargo',
-  war_authorization: 'War Authorization',
-  production_sanction: 'Production Sanction',
-  reparations: 'Reparations',
-  chancellor_vote: 'Chancellor Vote',
-  repeal_law: 'Repeal',
-};
+// What a bill KIND is called, in the language of whoever reads the card
+// (dc.kind.<kind> in the catalogs; an unknown kind shows its own id).
+function kindLabel(L, kind) {
+  const s = tr(L, `dc.kind.${kind}`);
+  return s === `dc.kind.${kind}` ? kind : s;
+}
+
+/** The weighting rule, verbatim from systems.js in English (so the two can
+ *  never drift apart in the language most players read it in) and from the
+ *  catalog otherwise. */
+function weightRule(L) {
+  return L === 'en' ? WEIGHT_RULE : tr(L, 'dc.weightRule');
+}
 
 /** Weight AND headcount. A bare "Yea 18" reads as eighteen voters when
  *  it's actually two factions holding eighteen planets between them —
  *  Lorne asked why a 2-vote bill said 18. The line explains itself now. */
-function tallyLine(totals) {
+function tallyLine(L, totals) {
   const cell = (k, icon, label) => {
     const w = totals[k]?.weight ?? 0;
     const c = totals[k]?.count ?? 0;
-    return `${icon} ${label} **${w}** _(${c} vote${c === 1 ? '' : 's'})_`;
+    return tr(L, 'dc.tally.cell', { icon, label, w, votes: trn(L, 'dc.votes', c) });
   };
   return [
-    cell('yea', '✅', 'Yea'),
-    cell('nay', '❌', 'Nay'),
-    cell('abstain', '⚪', 'Abstain'),
+    cell('yea', '✅', tr(L, 'dc.yea')),
+    cell('nay', '❌', tr(L, 'dc.nay')),
+    cell('abstain', '⚪', tr(L, 'dc.abstain')),
   ].join('   ·   ');
 }
 
@@ -217,10 +230,10 @@ function tallyLine(totals) {
  * channel, looking at a card.) Every number here mirrors the constant
  * that actually applies the effect in senate.js/room.js.
  */
-function billEffect(row, sliderById, targetName, describe) {
+function billEffect(L, row, sliderById, targetName, describe) {
   let payload = {};
   try { payload = JSON.parse(row.payload || '{}'); } catch { /* best effort */ }
-  const who = targetName || 'the target';
+  const who = targetName || tr(L, 'dc.eff.theTarget');
 
   switch (row.kind) {
     case 'slider_law': {
@@ -229,61 +242,60 @@ function billEffect(row, sliderById, targetName, describe) {
       // the in-game senate shows, from the same table.
       const said = describe?.(payload.slider_id, payload.target_value);
       const scope = payload.target_faction_id
-        ? `Applies to **${who}** alone; everyone else keeps the current rule.`
-        : 'Applies to **every faction**, including whoever proposed it.';
+        ? tr(L, 'dc.eff.scopeOne', { who })
+        : tr(L, 'dc.eff.scopeAll');
       if (said) return [`**${said.name}** — ${said.effect}`, scope].join('\n');
       // Unknown slider: name the topic rather than leaking a column name.
       const def = sliderById?.[payload.slider_id];
-      return [`Changes **${def?.label ?? 'a rule'}**.`, scope].join('\n');
+      return [tr(L, 'dc.eff.sliderUnknown', { label: def?.label ?? tr(L, 'dc.eff.aRule') }), scope].join('\n');
     }
     case 'trade_embargo':
-      return `Blocks **${who}** from all trade routes and deliveries for **14 ticks**.`;
+      return tr(L, 'dc.eff.embargo', { who });
     case 'war_authorization':
       return [
-        `Everyone deals **double damage** to **${who}** for **21 ticks**.`,
-        `Also **breaks every treaty ${who} holds** — NAPs, defense pacts and intel-sharing alike.`,
+        tr(L, 'dc.eff.war1', { who }),
+        tr(L, 'dc.eff.war2', { who }),
       ].join('\n');
     case 'production_sanction':
-      return `Halves **${who}**'s resource harvest for **14 ticks**.`;
+      return tr(L, 'dc.eff.sanction', { who });
     case 'reparations':
-      return `**${who}** pays **200 credits to every other faction** immediately (capped at what they actually hold).`;
+      return tr(L, 'dc.eff.reparations', { who });
     case 'chancellor_vote':
-      return `Elects **${who}** Chancellor. **This can end the game.**`;
+      return tr(L, 'dc.eff.chancellor', { who });
     default:
       return null;
   }
 }
 
-function buildVoteMessage(row, totals, gameName, effect, proposerName = null) {
-  const kindLabel = KIND_LABELS[row.kind] ?? row.kind;
+function buildVoteMessage(L, row, totals, gameName, effect, proposerName = null) {
   const descParts = [];
   if (row.summary) descParts.push(row.summary);
-  descParts.push(`**Bill:** ${kindLabel}`);
-  if (proposerName) descParts.push(`**Proposed by:** ${proposerName}`);
+  descParts.push(tr(L, 'dc.bill.line', { kind: kindLabel(L, row.kind) }));
+  if (proposerName) descParts.push(tr(L, 'dc.bill.by', { name: proposerName }));
   // The mechanical consequence, separated from the proposer's pitch so a
   // voter can tell the two apart at a glance.
-  if (effect) descParts.push(`\n**If this passes**\n${effect}`);
-  descParts.push(`\nVoting closes at tick **${row.vote_closes_at_tick}**.`);
+  if (effect) descParts.push(tr(L, 'dc.bill.ifPasses', { effect }));
+  descParts.push(tr(L, 'dc.vote.closes', { tick: row.vote_closes_at_tick }));
   // Spell the weighting rule out on every card. "Yea 18" with two voters
   // reads as a bug unless the reader already knows what weight is.
-  descParts.push(`_${WEIGHT_RULE} You can change your vote until it closes._`);
+  descParts.push(tr(L, 'dc.vote.weightNote', { rule: weightRule(L) }));
 
   return {
     embeds: [{
       title: row.status === 'withdrawn'
-        ? `🗑️  Withdrawn — ${row.title}`
-        : `🏛️  Senate Vote — ${row.title}`,
+        ? tr(L, 'dc.vote.titleWithdrawn', { title: row.title })
+        : tr(L, 'dc.vote.title', { title: row.title }),
       description: descParts.join('\n'),
       color: POLITICS_COLOR,
-      fields: [{ name: 'Tally', value: tallyLine(totals), inline: false }],
+      fields: [{ name: tr(L, 'dc.vote.tally'), value: tallyLine(L, totals), inline: false }],
       footer: { text: gameName ? `Orbital · ${gameName}` : 'Orbital' },
     }],
     components: [{
       type: 1,
       components: [
-        { type: 2, style: 3, label: 'Yea',     custom_id: `orb:v:${row.id}:yea` },
-        { type: 2, style: 4, label: 'Nay',     custom_id: `orb:v:${row.id}:nay` },
-        { type: 2, style: 2, label: 'Abstain', custom_id: `orb:v:${row.id}:abstain` },
+        { type: 2, style: 3, label: tr(L, 'dc.yea'),     custom_id: `orb:v:${row.id}:yea` },
+        { type: 2, style: 4, label: tr(L, 'dc.nay'),     custom_id: `orb:v:${row.id}:nay` },
+        { type: 2, style: 2, label: tr(L, 'dc.abstain'), custom_id: `orb:v:${row.id}:abstain` },
       ],
     }],
   };
@@ -297,19 +309,18 @@ function buildVoteMessage(row, totals, gameName, effect, proposerName = null) {
  * hourly game = half a day of dead air) and the vote card was the first
  * anyone heard of a bill.
  */
-function buildDebateMessage(row, gameName, proposerName, effect) {
-  const kindLabel = KIND_LABELS[row.kind] ?? row.kind;
+function buildDebateMessage(L, row, gameName, proposerName, effect) {
   const parts = [];
   if (row.summary) parts.push(row.summary);
-  parts.push(`**Bill:** ${kindLabel}`);
-  if (proposerName) parts.push(`**Proposed by:** ${proposerName}`);
-  if (effect) parts.push(`\n**If this passes**\n${effect}`);
-  parts.push(`\nDebate is open. Voting begins at tick **${row.vote_opens_at_tick}** and closes at tick **${row.vote_closes_at_tick}**.`);
-  parts.push('_A vote card with buttons posts here when the floor opens._');
+  parts.push(tr(L, 'dc.bill.line', { kind: kindLabel(L, row.kind) }));
+  if (proposerName) parts.push(tr(L, 'dc.bill.by', { name: proposerName }));
+  if (effect) parts.push(tr(L, 'dc.bill.ifPasses', { effect }));
+  parts.push(tr(L, 'dc.debate.open', { opens: row.vote_opens_at_tick, closes: row.vote_closes_at_tick }));
+  parts.push(tr(L, 'dc.debate.cardLater'));
 
   return {
     embeds: [{
-      title: `📜  Bill on the Floor — ${row.title}`,
+      title: tr(L, 'dc.debate.title', { title: row.title }),
       description: parts.join('\n'),
       color: POLITICS_COLOR,
       footer: { text: gameName ? `Orbital · ${gameName}` : 'Orbital' },
@@ -319,7 +330,7 @@ function buildDebateMessage(row, gameName, proposerName, effect) {
 
 /** Resolve everything billEffect needs: the slider catalogue and the
  *  targeted faction's display name. */
-async function effectFor(env, gameId, row) {
+async function effectFor(env, gameId, row, L = 'en') {
   try {
     const senate = await import('./senate.js');
     let payload = {};
@@ -331,7 +342,7 @@ async function effectFor(env, gameId, row) {
         .prepare('SELECT name FROM game_factions WHERE id = ?')
         .bind(targetId).first())?.name ?? null;
     }
-    return billEffect(row, senate.SLIDER_BY_ID, targetName, senate.describeSlider);
+    return billEffect(L, row, senate.SLIDER_BY_ID, targetName, senate.describeSlider);
   } catch (e) {
     console.error('billEffect failed', e);
     return null;   // a card without the effect line still beats no card
@@ -366,9 +377,10 @@ export async function publishSenateVoteOpen(env, gameId, row, proposerName = nul
   const channelId = await channelForGame(env, gameId, { headline: row?.kind === 'chancellor_vote' });
   if (!channelId) return { posted: false, reason: 'no_channel' };
 
+  const L = await feedLocaleOf(env, gameId);
   const totals = await loadProposalTotals(env, row.id);
   const payload = buildVoteMessage(
-    row, totals, await gameName(env, gameId), await effectFor(env, gameId, row), proposerName);
+    L, row, totals, await gameName(env, gameId), await effectFor(env, gameId, row, L), proposerName);
 
   const res = await botFetch(env, 'POST', `/channels/${channelId}/messages`, payload);
   if (!res.ok) {
@@ -411,8 +423,9 @@ export async function publishSenateProposed(env, gameId, row, proposerName) {
   const channelId = await channelForGame(env, gameId);
   if (!channelId) return { posted: false, reason: 'no_channel' };
 
+  const L = await feedLocaleOf(env, gameId);
   const payload = buildDebateMessage(
-    row, await gameName(env, gameId), proposerName, await effectFor(env, gameId, row));
+    L, row, await gameName(env, gameId), proposerName, await effectFor(env, gameId, row, L));
   const res = await botFetch(env, 'POST', `/channels/${channelId}/messages`, payload);
   if (!res.ok) {
     console.error(`discord debate post failed: ${res.status} ${await res.text().catch(() => '')}`);
@@ -451,33 +464,30 @@ export async function publishSenateResolved(env, gameId, row, outcome) {
     yea, nay, abstain, effectUntil, tick,
   } = outcome;
 
-  const kindLabel = KIND_LABELS[row.kind] ?? row.kind;
-  const effect = await effectFor(env, gameId, row);
+  const L = await feedLocaleOf(env, gameId);
+  const effect = await effectFor(env, gameId, row, L);
 
   const parts = [];
-  parts.push(`**Bill:** ${kindLabel}`);
+  parts.push(tr(L, 'dc.bill.line', { kind: kindLabel(L, row.kind) }));
   if (passed) {
     // Present tense, not "if this passes" — the thing has happened.
-    if (effect) parts.push(`\n**Now in force**\n${effect}`);
+    if (effect) parts.push(tr(L, 'dc.resolved.inForce', { effect }));
     if (effectUntil != null) {
       const left = Math.max(0, Number(effectUntil) - Number(tick));
-      parts.push(`\nLapses at tick **${effectUntil}** — **${left}** ticks from now.`);
+      parts.push(tr(L, 'dc.resolved.lapses', { until: effectUntil, left }));
     }
   } else if (!quorumMet) {
-    parts.push(
-      `\nOnly **${cast}** of **${eligible}** living factions voted; **${required}** were needed.`
-      + ' The bill dies unheard — it was never counted for or against.',
-    );
+    parts.push(tr(L, 'dc.resolved.noQuorum', { cast, eligible, required }));
   } else {
-    parts.push('\nThe chamber voted it down.');
+    parts.push(tr(L, 'dc.resolved.votedDown'));
   }
-  parts.push(`\n_${WEIGHT_RULE}_`);
+  parts.push(`\n_${weightRule(L)}_`);
 
   const title = passed
-    ? `✅  Ratified — ${row.title}`
+    ? tr(L, 'dc.resolved.titlePassed', { title: row.title })
     : !quorumMet
-      ? `🕳️  Failed for want of quorum — ${row.title}`
-      : `❌  Voted down — ${row.title}`;
+      ? tr(L, 'dc.resolved.titleQuorum', { title: row.title })
+      : tr(L, 'dc.resolved.titleDown', { title: row.title });
 
   const payload = {
     embeds: [{
@@ -488,17 +498,17 @@ export async function publishSenateResolved(env, gameId, row, outcome) {
       color: passed ? 0x2ecc71 : 0xe74c3c,
       fields: [
         {
-          name: 'Final tally',
-          value: `Yea **${yea}** · Nay **${nay}** · Abstain **${abstain}**`,
+          name: tr(L, 'dc.resolved.finalTally'),
+          value: tr(L, 'dc.resolved.finalTallyVal', { yea, nay, abstain }),
           inline: false,
         },
         // A chancellor election has NO quorum (a47ef974): "met, 0
         // needed" under it read like a bug, so it has no Quorum field.
         ...(row.kind === 'chancellor_vote' ? [] : [{
-          name: 'Quorum',
+          name: tr(L, 'dc.resolved.quorum'),
           value: quorumMet
-            ? `met — ${cast}/${eligible} voted (${required} needed)`
-            : `NOT met — ${cast}/${eligible} voted (${required} needed)`,
+            ? tr(L, 'dc.resolved.quorumMet', { cast, eligible, required })
+            : tr(L, 'dc.resolved.quorumNot', { cast, eligible, required }),
           inline: false,
         }]),
       ],
@@ -528,14 +538,16 @@ export async function publishLawExpired(env, gameId, law) {
   const channelId = await channelForGame(env, gameId);
   if (!channelId) return { posted: false, reason: 'no_channel' };
 
+  const L = await feedLocaleOf(env, gameId);
   const res = await botFetch(env, 'POST', `/channels/${channelId}/messages`, {
     embeds: [{
-      title: `⌛  Lapsed — ${law.title}`,
+      title: tr(L, 'dc.law.lapsedTitle', { title: law.title }),
       description: [
-        `**Bill:** ${KIND_LABELS[law.kind] ?? law.kind}`,
-        `\nIts window has closed. Whatever it changed is back to normal${
-          law.ticksInForce ? ` after **${law.ticksInForce}** ticks in force` : ''}.`,
-        '\n_The chamber may pass it again._',
+        tr(L, 'dc.bill.line', { kind: kindLabel(L, law.kind) }),
+        law.ticksInForce
+          ? tr(L, 'dc.law.lapsedBodyN', { n: law.ticksInForce })
+          : tr(L, 'dc.law.lapsedBody'),
+        tr(L, 'dc.law.passAgain'),
       ].join('\n'),
       color: POLITICS_COLOR,
       footer: { text: 'Orbital' },
@@ -570,20 +582,18 @@ export async function publishLawExpiring(env, gameId, law) {
   const channelId = await channelForGame(env, gameId);
   if (!channelId) return { posted: false, reason: 'no_channel' };
 
+  const L = await feedLocaleOf(env, gameId);
   const urgent = Number(law.hoursLeft) <= 1;
-  const window = urgent ? 'about an hour' : `about ${law.hoursLeft} hours`;
+  const window = urgent ? tr(L, 'dc.law.windowHour') : tr(L, 'dc.law.windowHours', { n: law.hoursLeft });
 
   const res = await botFetch(env, 'POST', `/channels/${channelId}/messages`, {
     embeds: [{
-      title: `${urgent ? '⏳' : '🕰'}  Lapsing soon — ${law.title}`,
+      title: tr(L, 'dc.law.expiringTitle', { icon: urgent ? '⏳' : '🕰', title: law.title }),
       description: [
-        `**Bill:** ${KIND_LABELS[law.kind] ?? law.kind}`,
-        law.effect ? `**Doing:** ${law.effect}` : null,
-        `\nThis law lapses in **${window}** (T+${law.untilTick}), and the`
-        + ' economy goes back to normal when it does.',
-        urgent
-          ? '\n_Too late to vote a replacement in — but not to plan one._'
-          : '\n_Re-passing it needs a vote of at least 12 ticks, so start now if you want it kept._',
+        tr(L, 'dc.bill.line', { kind: kindLabel(L, law.kind) }),
+        law.effect ? tr(L, 'dc.law.doing', { effect: law.effect }) : null,
+        tr(L, 'dc.law.lapsesIn', { window, tick: law.untilTick }),
+        urgent ? tr(L, 'dc.law.tooLate') : tr(L, 'dc.law.repass'),
       ].filter(Boolean).join('\n'),
       color: POLITICS_COLOR,
       footer: { text: 'Orbital' },
@@ -609,15 +619,15 @@ export async function publishLawRepealed(env, gameId, law) {
   const channelId = await channelForGame(env, gameId);
   if (!channelId) return { posted: false, reason: 'no_channel' };
 
+  const L = await feedLocaleOf(env, gameId);
   const res = await botFetch(env, 'POST', `/channels/${channelId}/messages`, {
     embeds: [{
-      title: `🗑  Repealed — ${law.title}`,
+      title: tr(L, 'dc.law.repealedTitle', { title: law.title }),
       description: [
-        law.effect ? `**Was doing:** ${law.effect}` : null,
-        law.movedBy ? `**Moved by:** ${law.movedBy}` : null,
-        `\nStruck down with **${law.ticksLeft}** ticks still to run.`
-        + ' Whatever it changed is back to normal.',
-        '\n_The chamber may pass it again — or the same knob, the other way._',
+        law.effect ? tr(L, 'dc.law.wasDoing', { effect: law.effect }) : null,
+        law.movedBy ? tr(L, 'dc.law.movedBy', { name: law.movedBy }) : null,
+        tr(L, 'dc.law.struckDown', { n: law.ticksLeft }),
+        tr(L, 'dc.law.passAgainKnob'),
       ].filter(Boolean).join('\n'),
       color: POLITICS_COLOR,
       footer: { text: 'Orbital' },
@@ -664,15 +674,13 @@ export async function publishChairmanSeated(env, gameId, term, chairName) {
   // 1) The room's announcement — only for a game Discord actually plays.
   const channelId = await channelForGame(env, gameId);
   if (channelId) {
+    const L = await feedLocaleOf(env, gameId);
     const res = await botFetch(env, 'POST', `/channels/${channelId}/messages`, {
       embeds: [{
-        title: `🔨 ${chairName} takes the Senate chair`,
-        description:
-          `**Term ${termNo}** runs until tick **${term.end_tick}** (${span} ticks).\n\n`
-          + `Only the chairman can put a bill on the floor: **${perTerm}** this term, with up to `
-          + `**${openCap}** votes open at once. Anything you want voted on this term, say now.`,
+        title: tr(L, 'dc.chair.title', { name: chairName }),
+        description: tr(L, 'dc.chair.body', { term: termNo, end: term.end_tick, span, perTerm, openCap }),
         color: 0xffb84d,
-        footer: { text: name ? `${name} · Senate` : 'Senate' },
+        footer: { text: name ? `${name} · ${tr(L, 'dc.senate')}` : tr(L, 'dc.senate') },
       }],
     });
     result.posted = res.ok;
@@ -696,17 +704,12 @@ export async function publishChairmanSeated(env, gameId, term, chairName) {
         gameId,
         category: 'senate',
         dedupeKey: `chair:${term.id}`,
-        embed: {
-          title: '🔨 You hold the Senate gavel',
-          description:
-            `You preside over **term ${termNo}** until tick **${term.end_tick}** — ${span} ticks.\n\n`
-            + `You are the only faction that can propose right now: **${perTerm} bills** this term, `
-            + `each going straight to a vote. A bill you file late still runs to its end in the next `
-            + `term.\n\n**Unused bills don't carry over.** Whatever you don't put on the floor this `
-            + `term goes unproposed.`,
+        embed: (L) => ({
+          title: tr(L, 'dc.gavel.title'),
+          description: tr(L, 'dc.gavel.body', { term: termNo, end: term.end_tick, span, perTerm }),
           color: 0x6ee7b7,
-          footer: { text: name ? `${name} · Senate` : 'Senate' },
-        },
+          footer: { text: name ? `${name} · ${tr(L, 'dc.senate')}` : tr(L, 'dc.senate') },
+        }),
       });
       result.dmed = dm.sent;
       if (!dm.sent) result.dmReason = dm.reason;
@@ -719,12 +722,18 @@ export async function publishChairmanSeated(env, gameId, term, chairName) {
 
 /** Post a plain embed. With a gameId it goes to that game's feed (and
  *  `headline` says whether a 'headlines' feed keeps it); without one it
- *  goes to the shared channel, which is now for cross-game news only. */
+ *  goes to the shared channel, which is now for cross-game news only.
+ *  `embed` may be a function of the feed's language, `(L) => embed`: it is
+ *  called only once the post is known to go somewhere, in the game's feed
+ *  language (English for the shared channel). */
 export async function postChannelEmbed(env, embed, gameId = null, { headline = false } = {}) {
   if (!env.DISCORD_BOT_TOKEN) return { posted: false, reason: 'no_bot_token' };
   const channelId = gameId ? await channelForGame(env, gameId, { headline }) : await resolveChannelId(env);
   if (!channelId) return { posted: false, reason: 'no_channel' };
-  const res = await botFetch(env, 'POST', `/channels/${channelId}/messages`, { embeds: [embed] });
+  const built = typeof embed === 'function'
+    ? embed(gameId ? await feedLocaleOf(env, gameId) : 'en')
+    : embed;
+  const res = await botFetch(env, 'POST', `/channels/${channelId}/messages`, { embeds: [built] });
   if (!res.ok) {
     console.error(`channel embed post failed ${res.status}`, await res.text().catch(() => ''));
     return { posted: false, reason: `http_${res.status}` };
@@ -753,10 +762,11 @@ export async function refreshSenateCard(env, proposalId) {
       .prepare('SELECT * FROM senate_proposals WHERE id = ?').bind(proposalId).first();
     if (!row) return;
 
+    const L = await feedLocaleOf(env, msg.game_id);
     const totals = await loadProposalTotals(env, proposalId);
     const payload = buildVoteMessage(
-      row, totals, await gameName(env, msg.game_id),
-      await effectFor(env, msg.game_id, row));
+      L, row, totals, await gameName(env, msg.game_id),
+      await effectFor(env, msg.game_id, row, L));
 
     // A resolved bill keeps its card but loses its buttons — clicking
     // Yea on a closed vote is a dead end that looks like a bug.
@@ -802,6 +812,10 @@ function discordUserOf(interaction) {
 async function handleSlashCommand(env, interaction) {
   const name = interaction.data?.name;
   if (name === 'notify') return handleNotifyCommand(env, interaction);
+  // Before the caller's account is known (the identity errors below), the
+  // reply speaks Discord's language for them; commands.js and the /link
+  // path look their account up and let ITS language win.
+  const Li = pickLocale(interaction.locale);
 
   // Read-only commands: checking your empire from a phone. All replies
   // are ephemeral — nobody wants their fleet disposition posted into a
@@ -812,36 +826,36 @@ async function handleSlashCommand(env, interaction) {
   // Discord, but replying meant opening the game.
   if (name === 'msg') {
     const u = discordUserOf(interaction);
-    if (!u?.id) return ephemeral('Could not read your Discord identity.');
+    if (!u?.id) return ephemeral(tr(Li, 'dc.noIdentity'));
     const o = interaction.data?.options ?? [];
     const get = (k) => o.find(x => x.name === k)?.value;
     try {
-      return json(await cmds.cmdMsg(env, u.id, { to: get('to'), text: get('text') }));
+      return json(await cmds.cmdMsg(env, u.id, { to: get('to'), text: get('text') }, interaction));
     } catch (e) {
       console.error('slash /msg failed', e);
-      return ephemeral('Could not send that message. Try again.');
+      return ephemeral(tr(Li, 'dc.msg.failed'));
     }
   }
 
   if (cmds.READ_COMMANDS[name]) {
     const user = discordUserOf(interaction);
-    if (!user?.id) return ephemeral('Could not read your Discord identity.');
+    if (!user?.id) return ephemeral(tr(Li, 'dc.noIdentity'));
     try {
-      return json(await cmds.READ_COMMANDS[name](env, user.id));
+      return json(await cmds.READ_COMMANDS[name](env, user.id, interaction));
     } catch (e) {
       console.error(`slash /${name} failed`, e);
-      return ephemeral('Something went wrong reading your empire. Try again.');
+      return ephemeral(tr(Li, 'dc.read.failed'));
     }
   }
 
-  if (name !== 'link') return ephemeral('Unknown command.');
+  if (name !== 'link') return ephemeral(tr(Li, 'dc.unknownCommand'));
 
   const user = discordUserOf(interaction);
-  if (!user?.id) return ephemeral('Could not read your Discord identity.');
+  if (!user?.id) return ephemeral(tr(Li, 'dc.noIdentity'));
 
   const opt = (interaction.data?.options ?? []).find(o => o.name === 'code');
   const code = String(opt?.value ?? '').trim().toUpperCase();
-  if (!code) return ephemeral('Usage: `/link <code>` — get your code in-game from the Senate panel.');
+  if (!code) return ephemeral(tr(Li, 'dc.link.usage'));
 
   const now = Date.now();
   // Opportunistic sweep of expired codes.
@@ -851,7 +865,7 @@ async function handleSlashCommand(env, interaction) {
     .prepare('SELECT user_id, expires_at FROM discord_link_codes WHERE code = ?')
     .bind(code).first();
   if (!rowc || rowc.expires_at < now) {
-    return ephemeral('That code is invalid or expired. Generate a fresh one in-game (Senate panel → Link Discord).');
+    return ephemeral(tr(Li, 'dc.link.invalid'));
   }
 
   try {
@@ -865,7 +879,23 @@ async function handleSlashCommand(env, interaction) {
     await env.DB.prepare('DELETE FROM discord_link_codes WHERE code = ?').bind(code).run();
   } catch (e) {
     console.error('discord link failed', e);
-    return ephemeral('Something went wrong linking your account. Try a fresh code.');
+    return ephemeral(tr(Li, 'dc.link.failed'));
+  }
+  // THE LANGUAGE FOLLOWS THE LINK. The account's own language wins; an
+  // account that never chose one adopts the language of the Discord client
+  // it was just linked from, if we speak it, so a player who links from a
+  // Portuguese Discord gets Portuguese DMs from here on. Best-effort: a
+  // failure here costs nothing but the default.
+  let L = Li;
+  try {
+    const owner = await env.DB.prepare('SELECT locale FROM users WHERE id = ?').bind(rowc.user_id).first();
+    const seen = normalizeLocale(interaction.locale);
+    if (!normalizeLocale(owner?.locale) && seen) {
+      await env.DB.prepare('UPDATE users SET locale = ? WHERE id = ? AND locale IS NULL').bind(seen, rowc.user_id).run();
+    }
+    L = pickLocale(owner?.locale, interaction.locale);
+  } catch (e) {
+    console.error('link locale failed', e);
   }
   // Linked — but NOT yet permitted to DM them. Ask, here, before anything
   // lands in their inbox. The buttons are the whole point: a "reply YES"
@@ -874,8 +904,8 @@ async function handleSlashCommand(env, interaction) {
     type: 4,
     data: {
       flags: FLAG_EPHEMERAL,
-      embeds: [dmConsentEmbed()],
-      components: dmConsentButtons(),
+      embeds: [dmConsentEmbed(L)],
+      components: dmConsentButtons(L),
     },
   });
 }
@@ -889,30 +919,28 @@ async function handleSlashCommand(env, interaction) {
  * tells them anything. "Server only" is a real, supported answer — not a
  * booby prize — and the copy says so.
  */
-export function dmConsentEmbed() {
+export function dmConsentEmbed(L = 'en') {
   return {
-    title: '✅ Linked — do you want direct messages?',
+    title: tr(L, 'dc.consent.title'),
     description: [
-      'You can now vote on Senate bills straight from the channel. That works either way.',
+      tr(L, 'dc.consent.intro'),
       '',
-      '**📬 Yes, DM me** — the daily situation report at 6pm Eastern, a nudge when a vote '
-        + 'is about to close without you, and messages other factions send you in-game.',
+      tr(L, 'dc.consent.yes'),
       '',
-      '**🔕 Server only** — nothing in your inbox, ever. Senate cards, the Orbital Herald '
-        + 'and every slash command still work exactly the same.',
+      tr(L, 'dc.consent.no'),
       '',
-      '_You can change this any time with_ `/notify` _or in-game under Notifications._',
+      tr(L, 'dc.consent.change'),
     ].join('\n'),
     color: POLITICS_COLOR,
   };
 }
 
-export function dmConsentButtons() {
+export function dmConsentButtons(L = 'en') {
   return [{
     type: 1,
     components: [
-      { type: 2, style: 3, label: 'Yes, DM me', emoji: { name: '📬' }, custom_id: 'dmconsent:yes' },
-      { type: 2, style: 2, label: 'Server only', emoji: { name: '🔕' }, custom_id: 'dmconsent:no' },
+      { type: 2, style: 3, label: tr(L, 'dc.consent.btnYes'), emoji: { name: '📬' }, custom_id: 'dmconsent:yes' },
+      { type: 2, style: 2, label: tr(L, 'dc.consent.btnNo'), emoji: { name: '🔕' }, custom_id: 'dmconsent:no' },
     ],
   }];
 }
@@ -929,12 +957,13 @@ export function dmConsentButtons() {
  */
 async function handleDmConsentButton(env, interaction, choice) {
   const du = discordUserOf(interaction);
-  if (!du?.id) return json({ type: 7, data: { content: 'Could not read your Discord identity.', embeds: [], components: [] } });
+  if (!du?.id) return json({ type: 7, data: { content: tr(pickLocale(interaction.locale), 'dc.noIdentity'), embeds: [], components: [] } });
 
   const row = await env.DB
-    .prepare('SELECT id FROM users WHERE discord_id = ?').bind(du.id).first();
+    .prepare('SELECT id, locale FROM users WHERE discord_id = ?').bind(du.id).first();
+  const L = pickLocale(row?.locale, interaction.locale);
   if (!row) {
-    return json({ type: 7, data: { content: 'That link expired — generate a fresh code in-game.', embeds: [], components: [] } });
+    return json({ type: 7, data: { content: tr(L, 'dc.consent.expired'), embeds: [], components: [] } });
   }
 
   const notify = await import('./notify.js');
@@ -942,8 +971,7 @@ async function handleDmConsentButton(env, interaction, choice) {
 
   if (choice !== 'yes') {
     return json({ type: 7, data: {
-      content: '🔕 **Server only.** Nothing will reach your inbox. Senate cards, the Herald '
-        + 'and slash commands all still work — and `/notify` flips this back whenever you like.',
+      content: tr(L, 'dc.consent.serverOnly'),
       embeds: [], components: [],
     } });
   }
@@ -951,17 +979,12 @@ async function handleDmConsentButton(env, interaction, choice) {
   const res = await notify.sendDm(env, {
     userId: row.id,
     category: 'digest',
+    // The language this very reply is in: the account's, else the Discord
+    // client's (sendDm would otherwise read only the account's).
+    locale: L,
     embed: {
-      title: '📬 You are set up',
-      description: [
-        'This is the channel your Orbital briefings will arrive on.',
-        '',
-        '• **6pm Eastern** — your daily situation report: fighting, inbound fleets, bills awaiting your vote.',
-        '• **Deadlines** — a vote about to close without you, or unpaid fleet upkeep.',
-        '• **Diplomacy** — messages and trade offers from other factions.',
-        '',
-        'Use `/notify` to turn any of it off.',
-      ].join('\n'),
+      title: tr(L, 'dc.welcome.title'),
+      description: tr(L, 'dc.welcome.body'),
       color: POLITICS_COLOR,
     },
   });
@@ -969,11 +992,7 @@ async function handleDmConsentButton(env, interaction, choice) {
   // The honest failure path. Naming the exact Discord setting is the
   // difference between a fixable problem and a player concluding the bot
   // is broken.
-  const content = res.sent
-    ? '📬 **DMs on.** Check your inbox — a welcome message is waiting. `/notify` changes this any time.'
-    : '⚠️ You are opted in, but Discord **blocked the test message**. Open this server → '
-      + 'right-click its icon → *Privacy Settings* → enable **Direct Messages**, then run '
-      + '`/notify` to re-test. Until then everything still reaches you in the channel.';
+  const content = res.sent ? tr(L, 'dc.consent.on') : tr(L, 'dc.consent.blocked');
   return json({ type: 7, data: { content, embeds: [], components: [] } });
 }
 
@@ -986,12 +1005,13 @@ async function handleDmConsentButton(env, interaction, choice) {
 async function handleNotifyCommand(env, interaction) {
   const notify = await import('./notify.js');
   const user = discordUserOf(interaction);
-  if (!user?.id) return ephemeral('Could not read your Discord identity.');
+  if (!user?.id) return ephemeral(tr(pickLocale(interaction.locale), 'dc.noIdentity'));
 
   const linked = await env.DB
-    .prepare('SELECT id FROM users WHERE discord_id = ?').bind(user.id).first();
+    .prepare('SELECT id, locale FROM users WHERE discord_id = ?').bind(user.id).first();
+  const L = pickLocale(linked?.locale, interaction.locale);
   if (!linked) {
-    return ephemeral('Link your account first: in-game Senate panel → Link Discord, then `/link <code>` here.');
+    return ephemeral(tr(L, 'dc.needLink'));
   }
 
   // Never answered the master question — ask it instead of showing a
@@ -1001,7 +1021,7 @@ async function handleNotifyCommand(env, interaction) {
   if (consent == null) {
     return json({
       type: R_MESSAGE,
-      data: { flags: FLAG_EPHEMERAL, embeds: [dmConsentEmbed()], components: dmConsentButtons() },
+      data: { flags: FLAG_EPHEMERAL, embeds: [dmConsentEmbed(L)], components: dmConsentButtons(L) },
     });
   }
 
@@ -1014,29 +1034,25 @@ async function handleNotifyCommand(env, interaction) {
   // categories that the master gate still blocks.
   if (category === 'all' && String(stateRaw) === 'on' && consent === false) {
     await notify.setDmConsent(env, linked.id, true);
-    return ephemeral('📬 **DMs back on.** Use `/notify` again to fine-tune which ones.');
+    return ephemeral(tr(L, 'dc.notify.backOn'));
   }
   if (consent === false) {
-    return ephemeral(
-      '🔕 You are set to **server only** — no direct messages. '
-      + 'Turn them on with `/notify category:all state:on`, or in-game under Notifications.',
-    );
+    return ephemeral(tr(L, 'dc.notify.serverOnly'));
   }
 
   if (category && stateRaw) {
     const on = String(stateRaw) === 'on';
     if (category === 'all') await notify.setAllPrefs(env, linked.id, on);
     else if (!(await notify.setPref(env, linked.id, category, on))) {
-      return ephemeral(`Unknown category '${category}'.`);
+      return ephemeral(tr(L, 'dc.notify.unknown', { category }));
     }
   }
 
   const prefs = await notify.getPrefs(env, linked.id);
   const lines = Object.entries(notify.CATEGORIES)
-    .map(([k, label]) => `${prefs[k] ? '🔔' : '🔕'} \`${k}\` — ${label}`);
+    .map(([k]) => `${prefs[k] ? '🔔' : '🔕'} \`${k}\` — ${notify.categoryLabel(L, k)}`);
   return ephemeral(
-    ['**Your Orbital notifications**', ...lines, '',
-     'Change with `/notify category:<name> state:<on|off>` (or `category:all`).'].join('\n'),
+    [tr(L, 'dc.notify.title'), ...lines, '', tr(L, 'dc.notify.help')].join('\n'),
   );
 }
 
@@ -1056,15 +1072,16 @@ async function handleComponent(env, interaction) {
   if (parts[0] === 'orb' && parts[1] === 't') {
     const [, , gameId, tradeId, action] = parts;
     const user = discordUserOf(interaction);
-    if (!user?.id) return ephemeral('Could not read your Discord identity.');
+    if (!user?.id) return ephemeral(tr(pickLocale(interaction.locale), 'dc.noIdentity'));
     const linked = await env.DB
-      .prepare('SELECT id FROM users WHERE discord_id = ?').bind(user.id).first();
-    if (!linked) return ephemeral('Link your Orbital account first with `/link <code>`.');
+      .prepare('SELECT id, locale FROM users WHERE discord_id = ?').bind(user.id).first();
+    const L = pickLocale(linked?.locale, interaction.locale);
+    if (!linked) return ephemeral(tr(L, 'dc.needLink2'));
 
     const trades = await import('./trades.js');
     const fn = action === 'accept' ? trades.handleAccept
       : action === 'decline' ? trades.handleDecline : null;
-    if (!fn) return ephemeral('Unrecognized action.');
+    if (!fn) return ephemeral(tr(L, 'dc.unrecognized'));
 
     // Synthetic session: the handlers only read user_id, and going
     // through them keeps every ownership and affordability check intact.
@@ -1075,7 +1092,8 @@ async function handleComponent(env, interaction) {
     let payload = null;
     try { payload = await res.clone().json(); } catch { /* non-json */ }
     if (!res.ok) {
-      return ephemeral(`Could not ${action} that trade: ${payload?.error?.message ?? res.status}`);
+      return ephemeral(tr(L, action === 'accept' ? 'dc.trade.couldNotAccept' : 'dc.trade.couldNotDecline',
+        { msg: payload?.error?.message ?? res.status }));
     }
     // Replace the buttons so the offer can't be actioned twice from a
     // stale message sitting in someone's DM history.
@@ -1083,10 +1101,10 @@ async function handleComponent(env, interaction) {
       type: 7,
       data: {
         embeds: [{
-          title: action === 'accept' ? '✅ Trade accepted' : '✖️ Trade declined',
+          title: action === 'accept' ? tr(L, 'dc.trade.accepted') : tr(L, 'dc.trade.declined'),
           description: action === 'accept'
-            ? 'Resources have moved and any pacts are in force.'
-            : 'The offer was turned down.',
+            ? tr(L, 'dc.trade.acceptedBody')
+            : tr(L, 'dc.trade.declinedBody'),
           color: action === 'accept' ? 0x4ecdc4 : 0x8a9fb3,
         }],
         components: [],
@@ -1101,10 +1119,11 @@ async function handleComponent(env, interaction) {
   if (parts[0] === 'orb' && parts[1] === 'm') {
     const [, , gameId, postId] = parts;
     const user = discordUserOf(interaction);
-    if (!user?.id) return ephemeral('Could not read your Discord identity.');
+    if (!user?.id) return ephemeral(tr(pickLocale(interaction.locale), 'dc.noIdentity'));
     const linked = await env.DB
-      .prepare('SELECT id FROM users WHERE discord_id = ?').bind(user.id).first();
-    if (!linked) return ephemeral('Link your Orbital account first with `/link <code>`.');
+      .prepare('SELECT id, locale FROM users WHERE discord_id = ?').bind(user.id).first();
+    const L = pickLocale(linked?.locale, interaction.locale);
+    if (!linked) return ephemeral(tr(L, 'dc.needLink2'));
     const market = await import('./market.js');
     const res = await market.handleTake(new Request('https://orbital/internal', { method: 'POST' }), env, {
       session: { user_id: linked.id },
@@ -1117,11 +1136,11 @@ async function handleComponent(env, interaction) {
       // retire the button so the message stops inviting a dead click.
       const gone = res.status === 409;
       const msg = payload?.error?.message ?? String(res.status);
-      if (!gone) return ephemeral(`Could not take that post: ${msg}`);
+      if (!gone) return ephemeral(tr(L, 'dc.market.couldNotTake', { msg }));
       return json({
         type: 7,
         data: {
-          embeds: [{ title: '✖️ No longer on the market', description: msg, color: 0x8a9fb3 }],
+          embeds: [{ title: tr(L, 'dc.market.gone'), description: msg, color: 0x8a9fb3 }],
           components: [],
         },
       });
@@ -1130,9 +1149,8 @@ async function handleComponent(env, interaction) {
       type: 7,
       data: {
         embeds: [{
-          title: '✅ Deal struck',
-          description: 'It is under PRIVATE in the Trade panel. One-time goods ship by freighter — '
-            + 'assign one there if you have not already.',
+          title: tr(L, 'dc.market.struck'),
+          description: tr(L, 'dc.market.struckBody'),
           color: 0x4ecdc4,
         }],
         components: [],
@@ -1140,25 +1158,28 @@ async function handleComponent(env, interaction) {
     });
   }
   // orb:v:<proposalId>:<choice>
-  if (parts[0] !== 'orb' || parts[1] !== 'v') return ephemeral('Unrecognized action.');
+  if (parts[0] !== 'orb' || parts[1] !== 'v') return ephemeral(tr(pickLocale(interaction.locale), 'dc.unrecognized'));
   const proposalId = parts[2];
   const choice = parts[3];
 
   const user = discordUserOf(interaction);
-  if (!user?.id) return ephemeral('Could not read your Discord identity.');
+  if (!user?.id) return ephemeral(tr(pickLocale(interaction.locale), 'dc.noIdentity'));
 
-  const linked = await env.DB.prepare('SELECT id FROM users WHERE discord_id = ?').bind(user.id).first();
+  const linked = await env.DB.prepare('SELECT id, locale FROM users WHERE discord_id = ?').bind(user.id).first();
+  // The clicker's own confirmation is in THEIR language; the shared card
+  // everyone sees stays in the game feed's (below).
+  const L = pickLocale(linked?.locale, interaction.locale);
   if (!linked) {
-    return ephemeral('You haven’t linked your Orbital account yet. In-game: Senate panel → Link Discord, then run `/link <code>` here.');
+    return ephemeral(tr(L, 'dc.vote.notLinked'));
   }
 
   const prop = await env.DB.prepare('SELECT game_id FROM senate_proposals WHERE id = ?').bind(proposalId).first();
-  if (!prop) return ephemeral('That proposal no longer exists.');
+  if (!prop) return ephemeral(tr(L, 'dc.vote.gone'));
 
   const faction = await env.DB
     .prepare('SELECT id FROM game_factions WHERE game_id = ? AND user_id = ?')
     .bind(prop.game_id, linked.id).first();
-  if (!faction) return ephemeral('You have no faction in that game, so you can’t vote on this bill.');
+  if (!faction) return ephemeral(tr(L, 'dc.vote.noFaction'));
 
   const game = await env.DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(prop.game_id).first();
   const res = await castVoteCore(env, {
@@ -1168,13 +1189,14 @@ async function handleComponent(env, interaction) {
     currentTick: game?.current_tick ?? 0,
     vote: choice,
   });
-  if (!res.ok) return ephemeral(`Couldn’t record your vote: ${res.message}`);
+  if (!res.ok) return ephemeral(tr(L, 'dc.vote.failed', { message: res.message }));
 
   // Update the shared card for everyone...
+  const FL = await feedLocaleOf(env, prop.game_id);
   const totals = await loadProposalTotals(env, proposalId);
   const payload = buildVoteMessage(
-    res.row, totals, await gameName(env, prop.game_id),
-    await effectFor(env, prop.game_id, res.row));
+    FL, res.row, totals, await gameName(env, prop.game_id),
+    await effectFor(env, prop.game_id, res.row, FL));
 
   // ...and privately confirm to the CLICKER what they just did. The
   // shared card can't show per-person state (components are per-message,
@@ -1194,9 +1216,8 @@ async function handleComponent(env, interaction) {
     const senate = await import('./senate.js');
     const detail = await senate.voteWeightDetail(env, prop.game_id, faction.id);
     whyWeight = detail.controlled.length
-      ? `\n_Base 1 + ${detail.controlled.length} system${detail.controlled.length === 1 ? '' : 's'}: `
-        + `${detail.controlled.map(s => s.label).join(', ')}._`
-      : '\n_Base 1 — you control no systems outright yet._';
+      ? trn(L, 'dc.vote.why', detail.controlled.length, { labels: detail.controlled.map(s => s.label).join(', ') })
+      : tr(L, 'dc.vote.whyNone');
   } catch (e) {
     console.error('weight breakdown failed', e);
   }
@@ -1204,7 +1225,8 @@ async function handleComponent(env, interaction) {
   const appId = interaction.application_id;
   const token = interaction.token;
   if (appId && token) {
-    const mine = choice === 'yea' ? '✅ Yea' : choice === 'nay' ? '❌ Nay' : '⚪ Abstain';
+    const mine = choice === 'yea' ? tr(L, 'dc.vote.mineYea')
+      : choice === 'nay' ? tr(L, 'dc.vote.mineNay') : tr(L, 'dc.vote.mineAbstain');
     // Fire-and-forget followup; the UPDATE response below is what Discord
     // is waiting on and must not be delayed by this.
     void fetch(`${DISCORD_API}/webhooks/${appId}/${token}`, {
@@ -1212,8 +1234,11 @@ async function handleComponent(env, interaction) {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         flags: FLAG_EPHEMERAL,
-        content: `Your vote is recorded as **${mine}**${myWeight != null ? ` · weight **${myWeight}**` : ''}`
-          + `. You can change it until the vote closes.${whyWeight}`,
+        content: tr(L, 'dc.vote.recorded', {
+          mine,
+          weight: myWeight != null ? tr(L, 'dc.vote.weight', { w: myWeight }) : '',
+          why: whyWeight,
+        }),
       }),
     }).catch(() => {});
   }
@@ -1279,37 +1304,55 @@ export const SLASH_COMMANDS = [
   {
     name: 'link',
     description: 'Link your Discord account to your Orbital empire so you can vote in the Senate.',
-    options: [{ name: 'code', description: 'The code shown in-game under Senate → Link Discord.', type: 3, required: true }],
+    description_localizations: { 'pt-BR': 'Vincule sua conta do Discord ao seu império no Orbital para votar no Senado.' },
+    options: [{
+      name: 'code', description: 'The code shown in-game under Senate → Link Discord.', type: 3, required: true,
+      description_localizations: { 'pt-BR': 'O código mostrado no jogo, no Senado → Conectar Discord.' },
+    }],
   },
   {
     name: 'msg',
     description: 'Send a message to another faction (or everyone) without opening the game.',
+    description_localizations: { 'pt-BR': 'Envie uma mensagem a outra facção (ou a todos) sem abrir o jogo.' },
     options: [
-      { name: 'to', description: 'Faction name, or "all" to broadcast.', type: 3, required: true },
-      { name: 'text', description: 'What to say.', type: 3, required: true },
+      { name: 'to', description: 'Faction name, or "all" to broadcast.', type: 3, required: true,
+        description_localizations: { 'pt-BR': 'Nome da facção, ou "all" para falar com todos.' } },
+      { name: 'text', description: 'What to say.', type: 3, required: true,
+        description_localizations: { 'pt-BR': 'O que dizer.' } },
     ],
   },
-  { name: 'status',   description: 'Your empire at a glance — resources, fleet, what needs you.' },
-  { name: 'fleet',    description: 'Where your ships are, and what is under way.' },
-  { name: 'research', description: 'Your current project and tech levels.' },
-  { name: 'bills',    description: 'Senate bills on the floor and how you voted.' },
-  { name: 'map',      description: 'The current territory map.' },
+  { name: 'status',   description: 'Your empire at a glance — resources, fleet, what needs you.',
+    description_localizations: { 'pt-BR': 'Seu império num relance: recursos, frota e o que precisa de você.' } },
+  { name: 'fleet',    description: 'Where your ships are, and what is under way.',
+    description_localizations: { 'pt-BR': 'Onde estão suas naves e o que está a caminho.' } },
+  { name: 'research', description: 'Your current project and tech levels.',
+    description_localizations: { 'pt-BR': 'Sua pesquisa atual e os níveis de tecnologia.' } },
+  { name: 'bills',    description: 'Senate bills on the floor and how you voted.',
+    description_localizations: { 'pt-BR': 'Projetos de lei em votação no Senado e como você votou.' } },
+  { name: 'map',      description: 'The current territory map.',
+    description_localizations: { 'pt-BR': 'O mapa de territórios atual.' } },
   {
     name: 'notify',
     description: 'See or change which Orbital events DM you.',
+    description_localizations: { 'pt-BR': 'Veja ou mude quais eventos do Orbital chegam por mensagem direta.' },
     options: [
       { name: 'category', description: 'Which kind of notification to change.', type: 3, required: false,
+        description_localizations: { 'pt-BR': 'Qual tipo de notificação mudar.' },
         choices: [
-          { name: 'all', value: 'all' },
-          { name: 'messages from factions', value: 'dm' },
-          { name: 'attacks on you', value: 'combat' },
-          { name: 'senate bills & votes', value: 'senate' },
-          { name: 'upkeep & build problems', value: 'economy' },
-          { name: 'daily situation report', value: 'digest' },
-          { name: 'away reminders', value: 'nudge' },
+          { name: 'all', value: 'all', name_localizations: { 'pt-BR': 'todas' } },
+          { name: 'messages from factions', value: 'dm', name_localizations: { 'pt-BR': 'mensagens de facções' } },
+          { name: 'attacks on you', value: 'combat', name_localizations: { 'pt-BR': 'ataques contra você' } },
+          { name: 'senate bills & votes', value: 'senate', name_localizations: { 'pt-BR': 'projetos e votos do Senado' } },
+          { name: 'upkeep & build problems', value: 'economy', name_localizations: { 'pt-BR': 'manutenção e problemas de construção' } },
+          { name: 'daily situation report', value: 'digest', name_localizations: { 'pt-BR': 'relatório diário de situação' } },
+          { name: 'away reminders', value: 'nudge', name_localizations: { 'pt-BR': 'lembretes de ausência' } },
         ] },
       { name: 'state', description: 'Turn it on or off.', type: 3, required: false,
-        choices: [{ name: 'on', value: 'on' }, { name: 'off', value: 'off' }] },
+        description_localizations: { 'pt-BR': 'Ligue ou desligue.' },
+        choices: [
+          { name: 'on', value: 'on', name_localizations: { 'pt-BR': 'ligado' } },
+          { name: 'off', value: 'off', name_localizations: { 'pt-BR': 'desligado' } },
+        ] },
     ],
   },
 ];
@@ -1545,19 +1588,11 @@ async function handleDmConsentWrite(req, env, { session }) {
     const res = await notify.sendDm(env, {
       userId: session.user_id,
       category: 'digest',
-      embed: {
-        title: '📬 You are set up',
-        description: [
-          'This is the channel your Orbital briefings will arrive on.',
-          '',
-          '• **6pm Eastern** — your daily situation report.',
-          '• **Deadlines** — a vote closing without you, or unpaid upkeep.',
-          '• **Diplomacy** — messages and trade offers from other factions.',
-          '',
-          'Use `/notify` in Discord, or this panel, to turn any of it off.',
-        ].join('\n'),
+      embed: (L) => ({
+        title: tr(L, 'dc.welcome.title'),
+        description: tr(L, 'dc.welcomeWeb.body'),
         color: POLITICS_COLOR,
-      },
+      }),
     });
     dmOk = res.sent;
   }

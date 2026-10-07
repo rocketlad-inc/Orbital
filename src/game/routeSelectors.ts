@@ -24,6 +24,7 @@
 // ============================================================
 
 import type { TradeRoute, TradeRouteStop, TradeRouteShip } from '../types';
+import { t } from '../i18n/core';
 
 /** The itinerary, always as a list — synthesised from origin/dest for
  *  any route that predates the stop table. */
@@ -178,7 +179,7 @@ export function starveTicksLeft(route: TradeRoute, currentTick: number): number 
  *  and the post-mortem never disagree by a unit. */
 export function starveShortText(route: TradeRoute): string {
   const LABEL: Record<string, string> = {
-    metal: 'metal', gold: 'credits', science: 'science', fuel: 'fuel',
+    metal: t('market.res.metal'), gold: t('market.res.gold'), science: t('market.res.science'), fuel: t('helper.res.fuel'),
   };
   return (route.starveShortfall ?? [])
     .map(x => `${Math.max(0, Math.ceil(x.need - x.have))} ${LABEL[x.resource] ?? x.resource}`)

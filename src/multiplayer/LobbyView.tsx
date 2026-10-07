@@ -8,7 +8,7 @@ import { EMBLEM_IDS, PREMIUM_EMBLEM_IDS, EMBLEM_NAMES } from '../game/emblems';
 import { startCommissionCheckout } from './api';
 import { isAndroidApp } from '../platform/appShell';
 import {
-  COMMISSION_LINES, COMMISSION_NAME, COMMISSION_PRICE, HOLDER_MARK, HOLDER_TITLE, logCommission,
+  COMMISSION_LINES, COMMISSION_PRICE, HOLDER_MARK, logCommission,
   COMMISSION_DISCORD, COMMISSION_NO_GAMEPLAY,
 } from './commission';
 import { FactionEmblem, FlagChip } from '../components/FactionEmblem';
@@ -20,6 +20,9 @@ import type { PastNameBank } from './NamePoolEditor';
 import { NamePools, EMPTY_POOLS, parseNamePools } from '../game/namePools';
 import { connectRoomSocket } from './roomSocket';
 import { SkinPicker } from './SkinPicker';
+import { t, tk } from '../i18n/core';
+import { useI18n } from '../i18n/react';
+import { apiErrorText } from '../i18n/apiErrors';
 
 /** A pre-game lobby chat line, as broadcast by the room WebSocket
  *  (`{ type: 'chat', from, text, at }`). `key` is assigned client-side
@@ -117,6 +120,7 @@ export function LobbyView({ onEnterGame, initialRoomId, onExitRoom }: Props) {
 // ---------- Room list ----------
 
 function RoomList({ onJoin }: { onJoin: (roomId: string) => void }) {
+  useI18n();
   const [rooms, setRooms] = useState<RoomSummary[]>([]);
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -128,8 +132,8 @@ function RoomList({ onJoin }: { onJoin: (roomId: string) => void }) {
 
   useEffect(() => {
     refresh();
-    const t = setInterval(refresh, 5000);
-    return () => clearInterval(t);
+    const iv = setInterval(refresh, 5000);
+    return () => clearInterval(iv);
   }, [refresh]);
 
   async function create(e: React.FormEvent) {
@@ -141,7 +145,7 @@ function RoomList({ onJoin }: { onJoin: (roomId: string) => void }) {
       method: 'POST',
       body: JSON.stringify({ name: trimmed }),
     });
-    if (!res.ok) { setError(res.error?.message ?? 'Could not create room'); return; }
+    if (!res.ok) { setError(apiErrorText(res.error, 'roomlobby.err.create')); return; }
     setName('');
     onJoin(res.data.room.id);
   }
@@ -149,19 +153,19 @@ function RoomList({ onJoin }: { onJoin: (roomId: string) => void }) {
   async function join(roomId: string) {
     setError(null);
     const res = await apiFetch(`/api/rooms/${roomId}/join`, { method: 'POST' });
-    if (!res.ok) { setError(res.error?.message ?? 'Could not join'); return; }
+    if (!res.ok) { setError(apiErrorText(res.error, 'roomlobby.err.join')); return; }
     onJoin(roomId);
   }
 
   return (
     <div>
-      <div className="mp-section-title">Create room</div>
+      <div className="mp-section-title">{t('roomlobby.list.create')}</div>
       <form className="mp-row" onSubmit={create} style={{ gap: 6 }}>
         <input
           className="mp-input"
           type="text"
           maxLength={60}
-          placeholder="Room name"
+          placeholder={t('roomlobby.roomName')}
           value={name}
           onChange={(e) => setName(e.target.value)}
           style={{ flex: 1 }}
@@ -170,14 +174,14 @@ function RoomList({ onJoin }: { onJoin: (roomId: string) => void }) {
       </form>
       <div className="mp-error">{error || ''}</div>
 
-      <div className="mp-section-title" style={{ marginTop: 16 }}>Open rooms</div>
+      <div className="mp-section-title" style={{ marginTop: 16 }}>{t('roomlobby.list.open')}</div>
       {rooms.length === 0 ? (
-        <div className="mp-empty">No open rooms.</div>
+        <div className="mp-empty">{t('roomlobby.list.none')}</div>
       ) : rooms.map((r) => (
         <div key={r.id} className="mp-list-row" onClick={() => join(r.id)}>
           <div>
             <div>{r.name}</div>
-            <div className="meta">host · {r.host_name}{r.game_id ? ' · in progress' : ''}</div>
+            <div className="meta">{t('roomlobby.list.host', { name: r.host_name })}{r.game_id ? ` · ${t('roomlobby.list.inProgress')}` : ''}</div>
           </div>
           <div style={{ color: 'var(--mp-friendly)', fontSize: 10 }}>
             {r.member_count}/{r.max_players}
@@ -199,6 +203,7 @@ function RoomDetail({
   onLeave: () => void;
   onEnterGame: (gameId: string) => void;
 }) {
+  useI18n();
   const { user } = useAuth();
   const [snap, setSnap] = useState<RoomSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -275,8 +280,8 @@ function RoomDetail({
 
   useEffect(() => {
     refresh();
-    const t = setInterval(refresh, 2000);
-    return () => clearInterval(t);
+    const iv = setInterval(refresh, 2000);
+    return () => clearInterval(iv);
   }, [refresh]);
 
   // Open the lobby WebSocket so the server registers presence + chat works.
@@ -295,8 +300,7 @@ function RoomDetail({
       },
       onGiveUp: () => {
         wsRef.current = null;
-        setError('This room will not accept a connection from your account — '
-          + 'you may have been removed from it, or signed in as someone else.');
+        setError(t('roomlobby.err.giveUp'));
       },
       onMessage: (ev) => {
       // Chat lines carry their own payload and don't change the room
@@ -392,7 +396,7 @@ function RoomDetail({
       },
     );
     if (!res.ok) {
-      setError(res.error?.message ?? 'Could not join');
+      setError(apiErrorText(res.error, 'roomlobby.err.join'));
       setLateJoin('needed');
       // A body_taken race: refresh the joinable list so the player can
       // pick another world.
@@ -455,7 +459,7 @@ function RoomDetail({
     if (el) el.scrollTop = el.scrollHeight;
   }, [chatLog]);
 
-  if (!snap) return <div className="mp-empty">Loading room…</div>;
+  if (!snap) return <div className="mp-empty">{t('roomlobby.loading')}</div>;
 
   const isHost = snap.settings.host_id === user?.id;
   const started = !!snap.game_id;
@@ -466,29 +470,28 @@ function RoomDetail({
   if (lateJoin) {
     return (
       <div className="mp-room-detail">
-        <div className="mp-section-title" style={{ marginTop: 4 }}>Join the war</div>
+        <div className="mp-section-title" style={{ marginTop: 4 }}>{t('roomlobby.late.title')}</div>
         <div className="mp-empty" style={{ fontSize: 11, marginBottom: 8, padding: '0 2px' }}>
-          The game is already underway. Pick an unclaimed world to drop your capital on —
-          you start with a city, two frigates, and a freighter.
+          {t('roomlobby.late.desc')}
         </div>
 
-        <label className="mp-label">Empire name (optional)</label>
+        <label className="mp-label">{t('roomlobby.late.empireName')}</label>
         <input
           className="mp-input"
           type="text"
           maxLength={40}
           value={empireName}
           onChange={(e) => setEmpireName(e.target.value)}
-          placeholder="e.g. Verdan Concord"
+          placeholder={t('roomlobby.empirePlaceholder')}
         />
 
         {joinableBodies.length === 0 ? (
           <div className="mp-empty" style={{ marginTop: 12 }}>
-            No unclaimed capital-worlds remain — there's no open seat in this game.
+            {t('roomlobby.late.none')}
           </div>
         ) : (
           <>
-            <div className="mp-section-title" style={{ marginTop: 12 }}>Unclaimed worlds</div>
+            <div className="mp-section-title" style={{ marginTop: 12 }}>{t('roomlobby.late.worlds')}</div>
             <div className="lobby-body-grid">
               {joinableBodies.map((b) => {
                 const isMine = lateChoice === b.id;
@@ -497,7 +500,7 @@ function RoomDetail({
                     key={b.id}
                     className={`lobby-body-card ${isMine ? 'is-mine' : ''}`}
                     onClick={() => setLateChoice(isMine ? null : b.id)}
-                    title={isMine ? 'Click to un-pick' : 'Click to claim'}
+                    title={isMine ? t('roomlobby.late.unpick') : t('roomlobby.claim')}
                   >
                     <div className="lobby-body-card__name">{b.name}</div>
                     <div className="lobby-body-card__sub">{b.type}</div>
@@ -508,7 +511,7 @@ function RoomDetail({
                       {b.yield.gold > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.C }}>C{b.yield.gold}</span>}
                       {b.yield.science > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.S }}>S{b.yield.science}</span>}
                     </div>
-                    {isMine && <div className="lobby-body-card__tag">✓ chosen</div>}
+                    {isMine && <div className="lobby-body-card__tag">{t('roomlobby.late.chosen')}</div>}
                   </button>
                 );
               })}
@@ -525,14 +528,14 @@ function RoomDetail({
             disabled={!lateChoice || lateJoin === 'submitting'}
             onClick={submitLateJoin}
           >
-            {lateJoin === 'submitting' ? 'Joining…' : 'Found my capital'}
+            {lateJoin === 'submitting' ? t('roomlobby.late.joining') : t('roomlobby.late.found')}
           </button>
           <button
             className="mp-submit"
             style={{ width: 'auto', margin: 0, padding: '8px 16px', background: 'transparent', border: '1px solid var(--mp-border)', color: 'var(--mp-fg-dim)' }}
             onClick={onLeave}
           >
-            Back
+            {t('roomlobby.back')}
           </button>
         </div>
       </div>
@@ -554,7 +557,7 @@ function RoomDetail({
     // write that failed — the exact lie a save button exists to
     // prevent. Throwing keeps the draft intact so the player can retry.
     if (!res.ok) {
-      const msg = res.error?.message ?? 'Could not save names';
+      const msg = apiErrorText(res.error, 'roomlobby.err.names');
       setError(msg);
       throw new Error(msg);
     }
@@ -571,7 +574,7 @@ function RoomDetail({
         bio: bio.trim() || null,
       }),
     });
-    if (!res.ok) { setError(res.error?.message ?? 'Could not save'); return; }
+    if (!res.ok) { setError(apiErrorText(res.error, 'roomlobby.err.save')); return; }
     setSavedFlash('saved');
     setTimeout(() => setSavedFlash(null), 1800);
     refresh();
@@ -587,14 +590,14 @@ function RoomDetail({
         tick_interval_ms: hostInterval,
       }),
     });
-    if (!res.ok) { setError(res.error?.message ?? 'Save failed'); return; }
+    if (!res.ok) { setError(apiErrorText(res.error, 'roomlobby.err.saveFailed')); return; }
     refresh();
   }
 
   async function startMatch() {
     setError(null);
     const res = await apiFetch(`/api/lobby/rooms/${roomId}/start`, { method: 'POST' });
-    if (!res.ok) setError(res.error?.message ?? 'Start failed');
+    if (!res.ok) setError(apiErrorText(res.error, 'roomlobby.err.start'));
     refresh();
   }
 
@@ -654,18 +657,14 @@ function RoomDetail({
     const name = snap.settings.name;
     const alone = snap.members.length <= 1;
     if (isHost && alone) {
-      if (!window.confirm(`You're the only one in "${name}". Leaving deletes the lobby.
-
-Delete it?`)) return;
+      if (!window.confirm(t('roomlobby.delete.confirm', { name }))) return;
       const res = await apiFetch(`/api/rooms/${roomId}`, { method: 'DELETE' });
-      if (!res.ok) { window.alert(res.error?.message ?? 'Could not delete the lobby'); return; }
+      if (!res.ok) { window.alert(apiErrorText(res.error, 'roomlobby.err.delete')); return; }
     } else {
-      const handOver = isHost ? ' The player who has waited longest becomes host.' : '';
-      if (!window.confirm(`Leave "${name}"?
-
-Your seat opens up for someone else.${handOver} You can join again later while a seat is free.`)) return;
+      const handOver = isHost ? t('roomlobby.leave.handOver') : '';
+      if (!window.confirm(t('roomlobby.leave.confirm', { name, handOver }))) return;
       const res = await apiFetch(`/api/lobby/rooms/${roomId}/leave`, { method: 'POST' });
-      if (!res.ok) { window.alert(res.error?.message ?? 'Could not leave the lobby'); return; }
+      if (!res.ok) { window.alert(apiErrorText(res.error, 'roomlobby.err.leave')); return; }
     }
     // A pinned lobby you are no longer in would be a dead pin.
     try { if (localStorage.getItem('orbital.priority_room') === roomId) localStorage.removeItem('orbital.priority_room'); } catch { /* storage off */ }
@@ -673,7 +672,7 @@ Your seat opens up for someone else.${handOver} You can join again later while a
   }
 
   async function kick(uid: string, name: string) {
-    if (!window.confirm(`Kick ${name}?`)) return;
+    if (!window.confirm(t('roomlobby.kick.confirm', { name }))) return;
     await apiFetch(`/api/lobby/rooms/${roomId}/kick`, {
       method: 'POST',
       body: JSON.stringify({ user_id: uid }),
@@ -711,7 +710,7 @@ Your seat opens up for someone else.${handOver} You can join again later while a
     });
     if (!res.ok) {
       setOptimisticChoice(undefined);  // revert to whatever the server says
-      setError(res.error?.message ?? 'Could not pick body');
+      setError(apiErrorText(res.error, 'roomlobby.err.pick'));
       return;
     }
     refresh();  // pull the authoritative snapshot; reconcile effect clears the override
@@ -735,10 +734,10 @@ Your seat opens up for someone else.${handOver} You can join again later while a
       const code = res.error?.code;
       setError(
         code === 'color_taken'
-          ? 'Another player already flies that color'
+          ? t('roomlobby.err.colorTaken')
           : code === 'emblem_taken'
-            ? 'Another player already flies that emblem'
-            : res.error?.message ?? 'Could not save flag',
+            ? t('roomlobby.err.emblemTaken')
+            : apiErrorText(res.error, 'roomlobby.err.flag'),
       );
       return;
     }
@@ -768,69 +767,69 @@ Your seat opens up for someone else.${handOver} You can join again later while a
         <div className="lobby-panel__actions">
           {!started && (
             <button className="mp-kick lobby-leave" onClick={leaveLobby}
-              title="Give up your seat in this lobby">
-              Leave lobby
+              title={t('roomlobby.leaveLobby.tip')}>
+              {t('roomlobby.leaveLobby')}
             </button>
           )}
           <button className="mp-kick" onClick={onLeave}
-            title={started ? undefined : 'Back to the game list. You keep your seat.'}>
-            Back
+            title={started ? undefined : t('roomlobby.back.tip')}>
+            {t('roomlobby.back')}
           </button>
         </div>
       </div>
       <div className="lobby-panel__body">
 
       {inviteCode && !started && (
-        <div className="mp-invite-strip" onClick={copyInvite} title="Click to copy invite code">
-          <span className="mp-invite-strip__label">INVITE</span>
+        <div className="mp-invite-strip" onClick={copyInvite} title={t('roomlobby.invite.tip')}>
+          <span className="mp-invite-strip__label">{t('roomlobby.invite')}</span>
           <span className="mp-invite-strip__code">{formattedInvite}</span>
           {snap.settings.has_password && (
-            <span className="mp-invite-strip__lock" title="Password-protected">🔒</span>
+            <span className="mp-invite-strip__lock" title={t('roomlobby.invite.locked')}>🔒</span>
           )}
-          {savedFlash === 'copied' && <span className="mp-invite-strip__flash">✓ copied</span>}
+          {savedFlash === 'copied' && <span className="mp-invite-strip__flash">{t('roomlobby.invite.copied')}</span>}
         </div>
       )}
 
-      <div className="mp-section-title">Status</div>
+      <div className="mp-section-title">{t('roomlobby.status')}</div>
       <div className="mp-row" style={{ justifyContent: 'space-between' }}>
         <span style={{ fontSize: 11 }}>
           {started
-            ? `In progress · tick ${snap.settings.current_tick ?? 0}`
-            : `Lobby · ${snap.members.length}/${snap.settings.max_players} · ${Object.values(snap.ready).filter(Boolean).length} ready`}
+            ? t('roomlobby.status.running', { n: snap.settings.current_tick ?? 0 })
+            : t('roomlobby.status.lobby', { count: snap.members.length, max: snap.settings.max_players, ready: Object.values(snap.ready).filter(Boolean).length })}
         </span>
         {!started && (
           <button
             className={`mp-ready-btn ${myReady ? 'is-ready' : ''}`}
             onClick={toggleReady}
           >
-            {myReady ? '✓ Ready' : 'Ready Up'}
+            {myReady ? t('roomlobby.ready') : t('roomlobby.readyUp')}
           </button>
         )}
       </div>
 
       {!started && (
         <>
-          <div className="mp-section-title">Your empire</div>
-          <label className="mp-label">Empire name</label>
+          <div className="mp-section-title">{t('roomlobby.empire')}</div>
+          <label className="mp-label">{t('roomlobby.empireName')}</label>
           <input
             className="mp-input"
             type="text"
             maxLength={40}
             value={empireName}
             onChange={(e) => setEmpireName(e.target.value)}
-            placeholder="e.g. Verdan Concord"
+            placeholder={t('roomlobby.empirePlaceholder')}
           />
-          <label className="mp-label">Bio</label>
+          <label className="mp-label">{t('roomlobby.bio')}</label>
           <textarea
             className="mp-textarea"
             maxLength={1000}
             value={bio}
             onChange={(e) => setBio(e.target.value)}
-            placeholder="Lore, doctrine, ambitions…"
+            placeholder={t('roomlobby.bioPlaceholder')}
           />
           <div className="mp-row" style={{ marginTop: 8 }}>
             <button className="mp-submit" style={{ width: 'auto', margin: 0, padding: '6px 12px' }} onClick={saveEmpire}>
-              Save empire
+              {t('roomlobby.saveEmpire')}
             </button>
             <span className="mp-saved" style={{ marginLeft: 8 }}>{savedFlash || ''}</span>
           </div>
@@ -857,8 +856,8 @@ Your seat opens up for someone else.${handOver} You can join again later while a
 
       {isHost && !started && (
         <>
-          <div className="mp-section-title" style={{ marginTop: 12 }}>Host controls</div>
-          <label className="mp-label">Room name</label>
+          <div className="mp-section-title" style={{ marginTop: 12 }}>{t('roomlobby.host.title')}</div>
+          <label className="mp-label">{t('roomlobby.roomName')}</label>
           <input
             className="mp-input"
             type="text"
@@ -868,7 +867,7 @@ Your seat opens up for someone else.${handOver} You can join again later while a
           />
           <div className="mp-row" style={{ gap: 6, marginTop: 6 }}>
             <div style={{ flex: 1 }}>
-              <label className="mp-label">Max players</label>
+              <label className="mp-label">{t('roomlobby.host.max')}</label>
               <input
                 className="mp-input"
                 type="number"
@@ -880,28 +879,28 @@ Your seat opens up for someone else.${handOver} You can join again later while a
               />
             </div>
           </div>
-          <label className="mp-label">Tick interval</label>
+          <label className="mp-label">{t('roomlobby.host.interval')}</label>
           <select
             className="mp-select"
             value={String(hostInterval)}
             onChange={(e) => setHostInterval(parseInt(e.target.value, 10))}
           >
             {TICK_INTERVAL_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
+              <option key={o.value} value={o.value}>{tk(`roomlobby.tick.${o.value}`, o.label)}</option>
             ))}
           </select>
           <div className="mp-row" style={{ marginTop: 8, gap: 6 }}>
             <button className="mp-submit" style={{ width: 'auto', margin: 0, padding: '6px 12px' }} onClick={saveSettings}>
-              Save
+              {t('roomlobby.save')}
             </button>
             <button
               className="mp-submit"
               style={{ width: 'auto', margin: 0, padding: '6px 12px' }}
               disabled={snap.members.length < 2}
-              title={snap.members.length < 2 ? 'Need at least 2 players' : ''}
+              title={snap.members.length < 2 ? t('roomlobby.host.needTwo') : ''}
               onClick={startMatch}
             >
-              Start match
+              {t('roomlobby.host.start')}
             </button>
           </div>
         </>
@@ -915,7 +914,7 @@ Your seat opens up for someone else.${handOver} You can join again later while a
         </div>
       )}
 
-      <div className="mp-section-title" style={{ marginTop: 12 }}>Members</div>
+      <div className="mp-section-title" style={{ marginTop: 12 }}>{t('roomlobby.members')}</div>
       {snap.members.map((m) => {
         const online = snap.connected.includes(m.userId);
         const ready = !!snap.ready[m.userId];
@@ -935,11 +934,11 @@ Your seat opens up for someone else.${handOver} You can join again later while a
             )}
             <span>{m.displayName}{ready && !started ? ' ✓' : ''}</span>
             {m.commissioned && (
-              <span className="mp-holder-mark" title={HOLDER_TITLE} aria-label={HOLDER_TITLE}>{HOLDER_MARK}</span>
+              <span className="mp-holder-mark" title={t('faction.holderTitle', { name: t('hangar.commissionName') })} aria-label={t('faction.holderTitle', { name: t('hangar.commissionName') })}>{HOLDER_MARK}</span>
             )}
-            {isThisHost && <span className="mp-host-tag">host</span>}
+            {isThisHost && <span className="mp-host-tag">{t('roomlobby.hostTag')}</span>}
             {isHost && !isThisHost && !started && (
-              <button className="mp-kick" onClick={() => kick(m.userId, m.displayName)}>kick</button>
+              <button className="mp-kick" onClick={() => kick(m.userId, m.displayName)}>{t('roomlobby.kick')}</button>
             )}
             {m.empire_name && <span className="empire">⚑ {m.empire_name}</span>}
             {m.bio && <span className="bio">{m.bio}</span>}
@@ -952,29 +951,27 @@ Your seat opens up for someone else.${handOver} You can join again later while a
           that start running the moment the match does. Editable later
           too: the profile endpoint syncs pools into a running game. */}
       <div className="mp-section-title" style={{ marginTop: 12 }}>
-        Custom names <span style={{ opacity: 0.6, fontWeight: 400 }}>· optional</span>
+        {t('roomlobby.names.title')} <span style={{ opacity: 0.6, fontWeight: 400 }}>{t('roomlobby.names.optional')}</span>
       </div>
       <div style={{ fontSize: 10, color: '#6b8195', marginBottom: 6, lineHeight: 1.5 }}>
-        Your own names for ships, captains, stations and cities. Handed out in
-        the order you write them; the game&rsquo;s own names take over when a
-        list runs out.
+        {t('roomlobby.names.desc')}
       </div>
       <NamePoolEditor value={namePools} onSave={saveNamePools} disabled={started}
                       pastBanks={pastBanks} />
 
-      <div className="mp-section-title" style={{ marginTop: 12 }}>Lobby chat</div>
+      <div className="mp-section-title" style={{ marginTop: 12 }}>{t('roomlobby.chat')}</div>
       <div className="lobby-chat">
         <div className="lobby-chat__log" ref={chatScrollRef}>
           {chatLog.length === 0 ? (
             <div className="mp-empty" style={{ fontSize: 10, padding: '4px 2px' }}>
-              No messages yet — say hi to the other commanders.
+              {t('roomlobby.chat.empty')}
             </div>
           ) : (
             chatLog.map((m) => {
               const mine = !!user && m.from.userId === user.id;
               return (
                 <div key={m.key} className={`lobby-chat__line ${mine ? 'is-mine' : ''}`}>
-                  <span className="lobby-chat__who">{mine ? 'you' : m.from.displayName}</span>
+                  <span className="lobby-chat__who">{mine ? t('roomlobby.chat.you') : m.from.displayName}</span>
                   <span className="lobby-chat__text">{m.text}</span>
                 </div>
               );
@@ -986,7 +983,7 @@ Your seat opens up for someone else.${handOver} You can join again later while a
             className="mp-input"
             type="text"
             maxLength={500}
-            placeholder="Message the lobby…"
+            placeholder={t('roomlobby.chat.placeholder')}
             value={chatDraft}
             onChange={(e) => setChatDraft(e.target.value)}
             style={{ flex: 1 }}
@@ -997,7 +994,7 @@ Your seat opens up for someone else.${handOver} You can join again later while a
             disabled={!chatDraft.trim()}
             style={{ width: 'auto', margin: 0, padding: '8px 12px' }}
           >
-            Send
+            {t('roomlobby.chat.send')}
           </button>
         </form>
       </div>
@@ -1062,6 +1059,7 @@ function FactionFlagPicker({
   myUserId?: string;
   onPick: (field: FlagField, value: string | null) => void;
 }) {
+  useI18n();
   // Commission state gates the premium emblem wing below. UI-only — the
   // lobby endpoint re-checks the entitlement on save.
   const { user } = useAuth();
@@ -1091,13 +1089,11 @@ function FactionFlagPicker({
 
   return (
     <>
-      <div className="mp-section-title" style={{ marginTop: 12 }}>Faction flag</div>
+      <div className="mp-section-title" style={{ marginTop: 12 }}>{t('roomlobby.flag.title')}</div>
       <div className="mp-empty" style={{ fontSize: 10, marginBottom: 6, padding: '0 2px' }}>
-        Primary marks what you own on the map — no two players may fly the same
-        one. Secondary is trim only. Your emblem is your shorthand across the
-        game, and it's exclusive too.
+        {t('roomlobby.flag.desc')}
       </div>
-      <label className="mp-label">Primary</label>
+      <label className="mp-label">{t('roomlobby.flag.primary')}</label>
       <div style={rowStyle}>
         {FACTION_COLOR_CHOICES.map(c => {
           // Exact match only. This used to grey out anything within 90
@@ -1114,13 +1110,13 @@ function FactionFlagPicker({
               type="button"
               disabled={taken}
               style={swatchStyle(c, { selected, taken })}
-              title={taken ? `${clash!.name} already flies this color` : selected ? 'Click to clear' : c}
+              title={taken ? t('roomlobby.flag.colorTaken', { name: clash!.name }) : selected ? t('roomlobby.flag.clear') : c}
               onClick={() => onPick('color', selected ? null : c)}
             />
           );
         })}
       </div>
-      <label className="mp-label">Secondary (trim)</label>
+      <label className="mp-label">{t('roomlobby.flag.secondary')}</label>
       <div style={rowStyle}>
         {FACTION_COLOR_CHOICES.map(c => {
           const selected = myColor2 === c;
@@ -1131,13 +1127,13 @@ function FactionFlagPicker({
               key={c}
               type="button"
               style={swatchStyle(c, { selected, taken: false })}
-              title={selected ? 'Click to clear (auto trim)' : c}
+              title={selected ? t('roomlobby.flag.clearTrim') : c}
               onClick={() => onPick('color2', selected ? null : c)}
             />
           );
         })}
       </div>
-      <label className="mp-label">Emblem</label>
+      <label className="mp-label">{t('roomlobby.flag.emblem')}</label>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
         {[...EMBLEM_IDS, ...PREMIUM_EMBLEM_IDS].map(id => {
           const selected = myEmblem === id;
@@ -1176,9 +1172,9 @@ function FactionFlagPicker({
                 cursor: (taken || locked) ? 'not-allowed' : 'pointer',
                 opacity: taken ? 0.55 : locked ? 0.45 : 1,
               }}
-              title={locked ? `${EMBLEM_NAMES[id]} — Commander's Commission emblem`
-                : taken ? `${takenBy} already flies the ${EMBLEM_NAMES[id]}`
-                : selected ? 'Click to clear' : EMBLEM_NAMES[id]}
+              title={locked ? t('roomlobby.flag.premiumEmblem', { name: EMBLEM_NAMES[id] })
+                : taken ? t('roomlobby.flag.emblemTaken', { who: takenBy ?? '', name: EMBLEM_NAMES[id] })
+                : selected ? t('roomlobby.flag.clear') : EMBLEM_NAMES[id]}
               onClick={() => onPick('emblem', selected ? null : id)}
             >
               <FactionEmblem emblem={id} fallbackKey={id} size={18} />
@@ -1190,13 +1186,18 @@ function FactionFlagPicker({
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
           <CommissionFlagView />
           <span style={{ fontSize: 10, color: 'var(--mp-fg-dim, #8aa0b4)' }}>
-            🔒 The dimmed flags, {COMMISSION_LINES} more ship lines and {COMMISSION_DISCORD} come with
-            {' '}the {COMMISSION_NAME}. {COMMISSION_NO_GAMEPLAY}
+            {t('roomlobby.flag.upsell', {
+              lines: COMMISSION_LINES, name: t('hangar.commissionName'),
+              discord: tk('roomlobby.flag.discord', COMMISSION_DISCORD),
+              rule: tk('roomlobby.flag.rule', COMMISSION_NO_GAMEPLAY),
+            })}
           </span>
           {/* The app does not sell it; see ProfilePanel. */}
           {isAndroidApp() ? (
             <span style={{ fontSize: 10, color: 'var(--mp-fg-dim, #8aa0b4)' }}>
-              Unlock them with the Commission, on the Orbital website.
+              {/* Words: roomlobby.flag.unlockWeb ("Unlock them with the Commission,
+                  on the Orbital website."). The app does not sell. */}
+              {t('roomlobby.flag.unlockWeb')}
             </span>
           ) : (
             <button
@@ -1210,14 +1211,14 @@ function FactionFlagPicker({
                 });
               }}
             >
-              Get the Commission · {COMMISSION_PRICE}
+              {t('feed.buy', { price: tk('mp.commission.price', COMMISSION_PRICE) })}
             </button>
           )}
         </div>
       )}
       {myColor && (
         <div className="mp-empty" style={{ fontSize: 10, padding: '0 2px', display: 'flex', alignItems: 'center', gap: 6 }}>
-          Preview:
+          {t('roomlobby.flag.preview')}
           <span style={{
             display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
             width: 22, height: 22, borderRadius: 3,
@@ -1232,13 +1233,13 @@ function FactionFlagPicker({
                              color={emblemInk(myColor)} />
             )}
           </span>
-          {!myColor2 && <span>(trim auto-derived)</span>}
-          {!myEmblem && <span>(no emblem — one will be assigned)</span>}
+          {!myColor2 && <span>{t('roomlobby.flag.autoTrim')}</span>}
+          {!myEmblem && <span>{t('roomlobby.flag.noEmblem')}</span>}
         </div>
       )}
       {/* Colony / station style for THIS game (0154). Null = the account
           default from the Hangar, which is what the tiles show lit. */}
-      <label className="mp-label" style={{ marginTop: 8 }}>Colony &amp; station style</label>
+      <label className="mp-label" style={{ marginTop: 8 }}>{t('hangar.skins.title')}</label>
       <SkinPicker
         city={me?.city_skin ?? null}
         station={me?.station_skin ?? null}
@@ -1253,7 +1254,7 @@ function FactionFlagPicker({
       {(me?.city_skin || me?.station_skin) && (
         <button type="button" className="skp-reset" style={{ marginTop: 4 }}
                 onClick={() => { onPick('city_skin', null); onPick('station_skin', null); }}>
-          Use my default style (set in Profile)
+          {t('roomlobby.flag.useDefault')}
         </button>
       )}
     </>
@@ -1272,6 +1273,7 @@ function StartingBodyPicker({
   /** Pick / un-pick handler (optimistic + PATCH) owned by the parent. */
   onPick: (bodyId: string | null) => void;
 }) {
+  useI18n();
   const options = snap.starting_body_options ?? [];
   if (!options.length) return null;
 
@@ -1295,10 +1297,10 @@ function StartingBodyPicker({
   return (
     <>
       <div className="mp-section-title" style={{ marginTop: 12 }}>
-        Starting capital
+        {t('roomlobby.capital.title')}
       </div>
       <div className="mp-empty" style={{ fontSize: 10, marginBottom: 6, padding: '0 2px' }}>
-        Pick the world your faction starts on. First-come first-served — pick early.
+        {t('roomlobby.capital.desc')}
       </div>
       <div className="lobby-body-grid">
         {options.map(opt => {
@@ -1306,7 +1308,7 @@ function StartingBodyPicker({
           const isMine = taken === myUserId;
           const isTaken = !!taken && !isMine;
           const ownerName = taken
-            ? (snap.members.find(m => m.userId === taken)?.displayName ?? 'someone')
+            ? (snap.members.find(m => m.userId === taken)?.displayName ?? t('roomlobby.capital.someone'))
             : null;
           return (
             <button
@@ -1315,9 +1317,9 @@ function StartingBodyPicker({
               disabled={isTaken}
               onClick={() => pick(isMine ? null : opt.id)}
               title={
-                isMine ? 'Click to un-claim'
-                : isTaken ? `Claimed by ${ownerName}`
-                : 'Click to claim'
+                isMine ? t('roomlobby.capital.unclaim')
+                : isTaken ? t('roomlobby.capital.claimedBy', { name: ownerName ?? '' })
+                : t('roomlobby.claim')
               }
             >
               <div className="lobby-body-card__name">{opt.name}</div>
@@ -1331,7 +1333,7 @@ function StartingBodyPicker({
                 {opt.yield.gold > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.C }}>C{opt.yield.gold}</span>}
                 {opt.yield.science > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.S }}>S{opt.yield.science}</span>}
               </div>
-              {isMine && <div className="lobby-body-card__tag">✓ yours</div>}
+              {isMine && <div className="lobby-body-card__tag">{t('roomlobby.capital.yours')}</div>}
               {isTaken && <div className="lobby-body-card__tag is-taken">{ownerName}</div>}
             </button>
           );
@@ -1339,7 +1341,7 @@ function StartingBodyPicker({
       </div>
       {!myChoice && (
         <div className="mp-empty" style={{ fontSize: 10, marginTop: 4, padding: '0 2px', fontStyle: 'italic' }}>
-          No choice = the host will auto-assign you a world.
+          {t('roomlobby.capital.auto')}
         </div>
       )}
     </>

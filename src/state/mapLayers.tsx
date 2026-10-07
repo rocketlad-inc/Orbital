@@ -15,6 +15,7 @@
 // ============================================================
 
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { t } from '../i18n/core';
 
 // v2: bumped when the LayersPanel button was removed and all overlays
 // default to ON. Old v1 entries (where players had turned layers off)
@@ -42,22 +43,24 @@ export interface LayerMeta {
 }
 
 export const LAYER_META: readonly LayerMeta[] = [
+  // label / description are getters so they read the language when they are
+  // shown, not the one the page loaded in.
   {
     id: 'transfers',
-    label: 'Ship transfers',
-    description: 'Show the torch trajectory of every ship currently in transit.',
+    get label() { return t('helper.layer.transfers.label'); },
+    get description() { return t('helper.layer.transfers.desc'); },
     defaultOn: true,
   },
   {
     id: 'enemyTrajectories',
-    label: 'Incoming threats',
-    description: 'Highlight visible enemy ships whose transfer ends at one of your bodies.',
+    get label() { return t('helper.layer.enemyTrajectories.label'); },
+    get description() { return t('helper.layer.enemyTrajectories.desc'); },
     defaultOn: true,
   },
   {
     id: 'ownership',
-    label: 'Body ownership',
-    description: 'Colored ring around each body indicating which faction controls it.',
+    get label() { return t('helper.layer.ownership.label'); },
+    get description() { return t('helper.layer.ownership.desc'); },
     defaultOn: true,
   },
 ];

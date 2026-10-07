@@ -56,6 +56,15 @@ class PerfBus {
   // in 3ms). MapCanvas marks phase boundaries; each frame's split is
   // kept and the heartbeat ships per-phase p50/p95.
   private phaseFrames: Array<Record<string, number>> = [];
+  // ---- WORLD-MENU CAMERA PROBE (per heartbeat window; reset on send) ----
+  // "Lorneland and the city is still wiggling" (2026-10-07): the focused
+  // world's on-screen spot moves between frames on his machine and not in
+  // any test. Measured where it happens instead of guessed at.
+  private cam = {
+    frames: 0, maxJump: 0, jumps: 0, last: null as null | { x: number; y: number; s: number },
+    scaleJumps: 0, tween: 0, follow: 0, flips: 0, resizes: 0,
+    lastWm: false, lastW: 0, lastH: 0,
+  };
   private phaseCur: Record<string, number> = {};
   private phaseT = 0;
   private longFrames = 0;
@@ -197,6 +206,27 @@ class PerfBus {
     }
   }
 
+  /** One frame of the world-menu probe: where the focused world's centre
+   *  is on screen, the camera scale, whether an ease or a wheel-glide is
+   *  running, and the canvas size. Only frames with a menu open count. */
+  recordCam(wm: boolean, x: number, y: number, scale: number, tween: boolean, follow: boolean, w: number, h: number) {
+    const c = this.cam;
+    if (wm !== c.lastWm) { if (c.frames > 0) c.flips++; c.lastWm = wm; c.last = null; }
+    if (!wm || document.visibilityState !== 'visible') return;
+    c.frames++;
+    if (tween) c.tween++;
+    if (follow) c.follow++;
+    if (c.lastW && (w !== c.lastW || h !== c.lastH)) c.resizes++;
+    c.lastW = w; c.lastH = h;
+    if (c.last) {
+      const d = Math.hypot(x - c.last.x, y - c.last.y);
+      if (d > c.maxJump) c.maxJump = d;
+      if (d > 0.75) c.jumps++;
+      if (Math.abs(scale / c.last.s - 1) > 1e-6) c.scaleJumps++;
+    }
+    c.last = { x, y, s: scale };
+  }
+
   recordDraw(ms: number) {
     if (document.visibilityState === 'visible' && this.draws.length < 20_000) {
       this.draws.push(ms);
@@ -269,6 +299,25 @@ class PerfBus {
     for (const k of phaseNames) {
       const xs = phaseFrames.map(fr => fr[k] ?? 0);
       phases[k] = [Math.round(this.pct(xs, 0.5) * 10) / 10, Math.round(this.pct(xs, 0.95) * 10) / 10];
+    }
+    // The world-menu camera probe rides in `phases` (no new columns):
+    //   wmcam: [largest frame-to-frame jump of the focused world, px;
+    //           frames it moved over 0.75 px]
+    //   wmev:  [frames easing, frames wheel-gliding]
+    //   wmetc: [frames the scale changed, menu-flag flips]
+    //   wmrsz: [canvas resizes, 0]
+    //   wmn:   [menu frames in the window, 0]
+    {
+      const c = this.cam;
+      if (c.frames > 0) {
+        phases.wmcam = [Math.round(c.maxJump * 10) / 10, c.jumps];
+        phases.wmev = [c.tween, c.follow];
+        phases.wmetc = [c.scaleJumps, c.flips];
+        phases.wmrsz = [c.resizes, 0];
+        phases.wmn = [c.frames, 0];
+      }
+      c.frames = 0; c.maxJump = 0; c.jumps = 0; c.scaleJumps = 0;
+      c.tween = 0; c.follow = 0; c.flips = 0; c.resizes = 0;
     }
     const longFrames = this.longFrames;
     this.longFrames = 0;

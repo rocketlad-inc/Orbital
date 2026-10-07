@@ -1,6 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch, Faction, Message, MyFaction } from './api';
 import { FlagChip } from '../components/FactionEmblem';
+import { t, getLang } from '../i18n/core';
+import { useI18n } from '../i18n/react';
+import { apiErrorText } from '../i18n/apiErrors';
 
 // ============================================================
 // CommsPanel — per-recipient channels + mark-on-view.
@@ -48,12 +51,18 @@ function groupMessages<T extends { claimed_sender_faction_id: string; sent_at_ms
     }
     out.push({
       dayKey,
-      dayLabel: d.toLocaleDateString([], { month: 'short', day: 'numeric' }),
+      dayLabel: d.toLocaleDateString(dateLocale(), { month: 'short', day: 'numeric' }),
       senderId: m.claimed_sender_faction_id,
       items: [m],
     });
   }
   return out;
+}
+
+/** English keeps the browser's own date style (as it always did); another
+ *  language names its days and months in that language. */
+function dateLocale(): string | string[] {
+  return getLang() === 'en' ? [] : getLang();
 }
 
 function channelKey(ch: ChannelId): string {
@@ -71,13 +80,13 @@ function formatChatTime(ms: number): string {
   const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   if (sameDay) return time;
   const yest = new Date(now); yest.setDate(now.getDate() - 1);
-  if (d.toDateString() === yest.toDateString()) return `Yest ${time}`;
+  if (d.toDateString() === yest.toDateString()) return t('comms.yest', { time });
   const ageDays = (now.getTime() - d.getTime()) / 86_400_000;
   if (ageDays < 7) {
-    const wd = d.toLocaleDateString([], { weekday: 'short' });
+    const wd = d.toLocaleDateString(dateLocale(), { weekday: 'short' });
     return `${wd} ${time}`;
   }
-  return `${d.getMonth() + 1}/${d.getDate()} ${time}`;
+  return t('comms.dateTime', { m: d.getMonth() + 1, d: d.getDate(), time });
 }
 
 interface Props {
@@ -93,6 +102,7 @@ interface Props {
 }
 
 export function CommsPanel({ gameId, onUnreadDelta, focusFaction }: Props) {
+  useI18n();
   const [factions, setFactions] = useState<Faction[]>([]);
   const [me, setMe] = useState<MyFaction | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -144,8 +154,8 @@ export function CommsPanel({ gameId, onUnreadDelta, focusFaction }: Props) {
 
   useEffect(() => {
     refresh();
-    const t = setInterval(refresh, 5000);
-    return () => clearInterval(t);
+    const iv = setInterval(refresh, 5000);
+    return () => clearInterval(iv);
   }, [refresh]);
 
   const factionsById = useMemo(() => {
@@ -242,7 +252,7 @@ export function CommsPanel({ gameId, onUnreadDelta, focusFaction }: Props) {
       method: 'POST',
       body: JSON.stringify(payload),
     });
-    if (!res.ok) { setError(res.error?.message ?? 'Send failed'); return; }
+    if (!res.ok) { setError(apiErrorText(res.error, 'comms.err.send')); return; }
     draftsRef.current.delete(channelKey(channel));
     setBody('');
     refresh();
@@ -254,7 +264,7 @@ export function CommsPanel({ gameId, onUnreadDelta, focusFaction }: Props) {
   }, [channel, visibleMessages.length]);
 
   const channelLabel = (ch: ChannelId): string => {
-    if (typeof ch === 'string') return 'PUBLIC';
+    if (typeof ch === 'string') return t('comms.public');
     const f = factionsById.get(ch.factionId);
     return f?.name ?? '???';
   };
@@ -277,7 +287,7 @@ export function CommsPanel({ gameId, onUnreadDelta, focusFaction }: Props) {
       <div className="mp-channel-rail">
         <ChannelTab
           active={channel === 'public'}
-          label="PUBLIC"
+          label={t('comms.public')}
           color="var(--mp-accent)"
           unread={unreadByChannel.get('public') ?? 0}
           onClick={() => setChannel('public')}
@@ -304,8 +314,8 @@ export function CommsPanel({ gameId, onUnreadDelta, focusFaction }: Props) {
         {visibleMessages.length === 0 && (
           <div className="mp-empty">
             {typeof channel === 'string'
-              ? 'No public messages yet.'
-              : `No messages with ${channelLabel(channel)} yet.`}
+              ? t('comms.empty.public')
+              : t('comms.empty.dm', { name: channelLabel(channel) })}
           </div>
         )}
         {groupMessages(visibleMessages).map((g, gi, all) => {
@@ -337,7 +347,7 @@ export function CommsPanel({ gameId, onUnreadDelta, focusFaction }: Props) {
                     style={{ flex: '0 0 auto', alignSelf: 'center' }}
                   />
                   <span className="mp-msggrp__who" style={{ color: sender?.color ?? 'var(--mp-accent)' }}>
-                    {isMine ? 'You' : sender?.name ?? 'unknown'}
+                    {isMine ? t('comms.you') : sender?.name ?? t('comms.unknown')}
                   </span>
                   <span
                     className="mp-msggrp__t"
@@ -355,7 +365,7 @@ export function CommsPanel({ gameId, onUnreadDelta, focusFaction }: Props) {
                       .filter((fid) => fid !== me?.id)
                       .filter((fid) => typeof channel === 'string' || fid !== channel.factionId)
                       .map((fid) => factionsById.get(fid)?.name ?? '???');
-                    if (others.length > 0) groupNote = `also to: ${others.join(', ')}`;
+                    if (others.length > 0) groupNote = t('comms.alsoTo', { names: others.join(', ') });
                   }
                   return (
                     <div key={m.id} className="mp-bubble">
@@ -363,7 +373,7 @@ export function CommsPanel({ gameId, onUnreadDelta, focusFaction }: Props) {
                       {groupNote && (
                         <span
                           className="mp-bubble__grp"
-                          title="Group message — went to more than just this thread."
+                          title={t('comms.groupTip')}
                         >
                           {groupNote}
                         </span>
@@ -382,8 +392,8 @@ export function CommsPanel({ gameId, onUnreadDelta, focusFaction }: Props) {
             PUBLIC" repeated the label in shouting case on every channel. */}
         <label className="mp-compose__lbl" htmlFor="mp-compose-input">
           {typeof channel === 'string'
-            ? 'Public channel'
-            : <>Private · <span style={{ color: channelColor(channel) }}>{channelLabel(channel)}</span></>}
+            ? t('comms.channel.public')
+            : <>{t('comms.channel.private')} · <span style={{ color: channelColor(channel) }}>{channelLabel(channel)}</span></>}
         </label>
         <textarea
           id="mp-compose-input"
@@ -403,8 +413,8 @@ export function CommsPanel({ gameId, onUnreadDelta, focusFaction }: Props) {
           }}
           placeholder={
             typeof channel === 'string'
-              ? 'Message to all players…'
-              : `Private message to ${channelLabel(channel)}…`
+              ? t('comms.placeholder.public')
+              : t('comms.placeholder.dm', { name: channelLabel(channel) })
           }
         />
         <div className="mp-crow">
@@ -413,9 +423,9 @@ export function CommsPanel({ gameId, onUnreadDelta, focusFaction }: Props) {
             type="submit"
             style={{ borderColor: channelColor(channel), flex: '0 0 auto', width: 'auto', padding: '6px 22px' }}
           >
-            Send
+            {t('comms.send')}
           </button>
-          <span className="mp-crow__hint">⏎ send · ⇧⏎ newline</span>
+          <span className="mp-crow__hint">{t('comms.hint')}</span>
         </div>
         <div className="mp-error">{error || ''}</div>
       </form>
@@ -435,7 +445,9 @@ interface ChannelTabProps {
   flag?: Faction;
 }
 
-const ChannelTab: React.FC<ChannelTabProps> = ({ active, label, color, unread, onClick, flag }) => (
+const ChannelTab: React.FC<ChannelTabProps> = ({ active, label, color, unread, onClick, flag }) => {
+  useI18n();
+  return (
   <button
     type="button"
     className={`mp-channel-tab ${active ? 'is-active' : ''}`}
@@ -471,11 +483,12 @@ const ChannelTab: React.FC<ChannelTabProps> = ({ active, label, color, unread, o
     {unread > 0 && (
       <span
         className="mp-channel-tab__badge"
-        aria-label={`${unread} unread from ${label}`}
-        title={`${unread} unread from ${label}`}
+        aria-label={t('comms.unreadFrom', { n: unread, label })}
+        title={t('comms.unreadFrom', { n: unread, label })}
       >
         {unread > 9 ? '9+' : unread}
       </span>
     )}
   </button>
-);
+  );
+};

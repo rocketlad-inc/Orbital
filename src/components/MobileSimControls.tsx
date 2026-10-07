@@ -9,6 +9,8 @@
 import React from 'react';
 import { useGameContext } from '../state/gameContext';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { t } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 import './MobileSimControls.css';
 
 /** Mobile-only sim speeds. Keep this short so the dock fits at 375px wide. */
@@ -20,33 +22,34 @@ interface Props {
 }
 
 export const MobileSimControls: React.FC<Props> = ({ hideSimControls = false }) => {
+  useI18n();
   const isMobile = useIsMobile();
   const { gameState, simSpeed, setSimSpeed, updateTick } = useGameContext();
 
   if (!isMobile || hideSimControls) return null;
 
   return (
-    <div className="mobile-sim-controls" role="group" aria-label="Simulation controls">
+    <div className="mobile-sim-controls" role="group" aria-label={t('site.sim.controls')}>
       <button
         className={`mobile-sim-btn ${simSpeed === 0 ? 'active' : ''}`}
         onClick={() => setSimSpeed(0)}
-        title="Pause"
-        aria-label="Pause"
+        title={t('site.sim.pause')}
+        aria-label={t('site.sim.pause')}
       >⏸</button>
       {MOBILE_SPEEDS.map(s => (
         <button
           key={s}
           className={`mobile-sim-btn ${simSpeed === s ? 'active' : ''}`}
           onClick={() => setSimSpeed(s)}
-          title={`${s}× speed`}
-          aria-label={`${s} times speed`}
+          title={t('site.sim.speed', { s })}
+          aria-label={t('site.sim.speedAria', { s })}
         >{s >= 1000 ? `${s / 1000}K×` : `${s}×`}</button>
       ))}
       <button
         className="mobile-sim-btn"
         onClick={() => updateTick(gameState.currentTick + 10)}
-        title="Skip +10 ticks"
-        aria-label="Skip 10 ticks forward"
+        title={t('site.sim.skipTitle')}
+        aria-label={t('site.sim.skipAria')}
       >+10</button>
     </div>
   );

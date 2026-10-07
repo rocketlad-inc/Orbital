@@ -6,6 +6,8 @@
 // (torch plans are client-computed and server-trusted).
 // ============================================================
 
+import { tk } from '../i18n/core';
+
 export interface CaptainTraitDef {
   name: string;
   icon: string;
@@ -20,13 +22,44 @@ export const CAPTAIN_TRAITS: Record<string, CaptainTraitDef> = {
   // dmgMul mirrors the server's traitMul(_,'dmgMul') in worker/room.js.
   // It was blurb-only until the ship card started quoting real expected
   // damage — the number silently omitted the Gunner bonus.
-  gunner:        { name: 'Gunner',        icon: '🎯', blurb: '+10% weapon damage', dmgMul: 1.10 },
-  bulwark:       { name: 'Bulwark',       icon: '🛡', blurb: '+10% max hull', hpMul: 1.10 },
-  wrench:        { name: 'Wrench',        icon: '🔧', blurb: '+50% repair rate' },
-  voidrunner:    { name: 'Voidrunner',    icon: '💨', blurb: '+10% engine acceleration', accelMul: 1.10 },
-  pathfinder:    { name: 'Pathfinder',    icon: '🧭', blurb: '+15% sensor range' },
-  quartermaster: { name: 'Quartermaster', icon: '📦', blurb: '+25% cargo hold' },
-  colonist:      { name: 'Colonist',      icon: '🏗', blurb: '−20% settlement founding cost' },
+  gunner: {
+    get name() { return tk('data.trait.gunner.name', 'Gunner'); },
+    icon: '🎯',
+    get blurb() { return tk('data.trait.gunner.blurb', '+10% weapon damage'); },
+    dmgMul: 1.10,
+  },
+  bulwark: {
+    get name() { return tk('data.trait.bulwark.name', 'Bulwark'); },
+    icon: '🛡',
+    get blurb() { return tk('data.trait.bulwark.blurb', '+10% max hull'); },
+    hpMul: 1.10,
+  },
+  wrench: {
+    get name() { return tk('data.trait.wrench.name', 'Wrench'); },
+    icon: '🔧',
+    get blurb() { return tk('data.trait.wrench.blurb', '+50% repair rate'); },
+  },
+  voidrunner: {
+    get name() { return tk('data.trait.voidrunner.name', 'Voidrunner'); },
+    icon: '💨',
+    get blurb() { return tk('data.trait.voidrunner.blurb', '+10% engine acceleration'); },
+    accelMul: 1.10,
+  },
+  pathfinder: {
+    get name() { return tk('data.trait.pathfinder.name', 'Pathfinder'); },
+    icon: '🧭',
+    get blurb() { return tk('data.trait.pathfinder.blurb', '+15% sensor range'); },
+  },
+  quartermaster: {
+    get name() { return tk('data.trait.quartermaster.name', 'Quartermaster'); },
+    icon: '📦',
+    get blurb() { return tk('data.trait.quartermaster.blurb', '+25% cargo hold'); },
+  },
+  colonist: {
+    get name() { return tk('data.trait.colonist.name', 'Colonist'); },
+    icon: '🏗',
+    get blurb() { return tk('data.trait.colonist.blurb', '−20% settlement founding cost'); },
+  },
 };
 
 // 48 imported portraits (public/portraits, via scripts/import-portraits.js).
@@ -73,6 +106,22 @@ export function rankTier(rank: number): string {
   return 'Rookie';
 }
 
+/** The tier as a player reads it, in their language. rankTier() stays
+ *  English because screens lower-case it into a CSS class
+ *  (fleet-xp__tier--veteran); show THIS one. */
+export function rankTierLabel(rank: number): string {
+  const english = rankTier(rank);
+  return tk(`helper.rank.${english.toLowerCase()}`, english);
+}
+
+/** A trait's name / effect in the player's language. */
+export function traitName(id: string, d: CaptainTraitDef): string {
+  return tk(`helper.trait.${id}.name`, d.name);
+}
+export function traitBlurb(id: string, d: CaptainTraitDef): string {
+  return tk(`helper.trait.${id}.blurb`, d.blurb);
+}
+
 /** Multiplier over a trait-id list for a client-applied effect key. */
 export function traitMul(traits: string[] | undefined, key: 'hpMul' | 'accelMul' | 'dmgMul'): number {
   let m = 1;
@@ -86,9 +135,8 @@ export function traitMul(traits: string[] | undefined, key: 'hpMul' | 'accelMul'
 /** One-line trait summary for tooltips/rows: "🎯 Gunner — +10% weapon damage". */
 export function traitSummary(traits: string[] | undefined): string {
   return (traits ?? [])
-    .map(t => CAPTAIN_TRAITS[t])
-    .filter(Boolean)
-    .map(d => `${d.icon} ${d.name} — ${d.blurb}`)
+    .filter(id => CAPTAIN_TRAITS[id])
+    .map(id => `${CAPTAIN_TRAITS[id].icon} ${traitName(id, CAPTAIN_TRAITS[id])} — ${traitBlurb(id, CAPTAIN_TRAITS[id])}`)
     .join(' · ');
 }
 
@@ -106,8 +154,7 @@ export function traitSummary(traits: string[] | undefined): string {
  */
 export function traitBrief(traits: string[] | undefined): string {
   return (traits ?? [])
-    .map(t => CAPTAIN_TRAITS[t])
-    .filter(Boolean)
-    .map(d => `${d.icon} ${d.name} ${d.blurb}`)
+    .filter(id => CAPTAIN_TRAITS[id])
+    .map(id => `${CAPTAIN_TRAITS[id].icon} ${traitName(id, CAPTAIN_TRAITS[id])} ${traitBlurb(id, CAPTAIN_TRAITS[id])}`)
     .join(' · ');
 }

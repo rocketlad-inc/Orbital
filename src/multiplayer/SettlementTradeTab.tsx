@@ -27,6 +27,8 @@ import {
 import './SettlementTradeTab.css';
 import { focusTradeCard, useTradeFocus } from './tradeFocus';
 import { requirementLabel } from '../game/researchUnlocks';
+import { t, tn } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 
 /** WHERE IS THIS SHIP AND WHAT IS IT DOING — the context the ship
  *  pickers were missing (Lorne: "Where are these ships I'm choosing
@@ -40,12 +42,12 @@ function shipContext(
 ): { where: string; doing: string } {
   if (!ship) return { where: '', doing: '' };
   const bodyName = (id?: string) =>
-    gameState.bodies.find(b => b.id === id)?.name ?? id ?? 'deep space';
+    gameState.bodies.find(b => b.id === id)?.name ?? id ?? t('route.tab.deepSpace');
   if (ship.transit) {
     const target = ship.transit.currentTransfer?.targetBodyId;
     return {
-      where: target ? `→ ${bodyName(target)}` : 'under way',
-      doing: 'in transit',
+      where: target ? `→ ${bodyName(target)}` : t('route.tab.underWay'),
+      doing: t('route.tab.inTransit'),
     };
   }
   const held = (ship.cargo?.ore ?? 0) + (ship.cargo?.credits ?? 0)
@@ -55,11 +57,11 @@ function shipContext(
   // asked to stand as though it had no orders — which is half of what
   // "ain't moving and still marked idle" was describing.
   if (role === 'guard') {
-    return { where: bodyName(ship.orbit?.parentBodyId), doing: 'on station' };
+    return { where: bodyName(ship.orbit?.parentBodyId), doing: t('route.tab.onStation') };
   }
   return {
     where: bodyName(ship.orbit?.parentBodyId),
-    doing: held >= 1 ? `holding ${Math.round(held)}` : 'empty',
+    doing: held >= 1 ? t('route.tab.holdingN', { n: Math.round(held) }) : t('route.tab.empty'),
   };
 }
 
@@ -87,23 +89,23 @@ function crewContext(
   // a run that picked nothing up — the thing a stalled lane looks like
   // before the stall counter admits it.
   const held: string[] = [];
-  if (c.cargo.ore >= 1) held.push(`${Math.round(c.cargo.ore)} metal`);
-  if (c.cargo.credits >= 1) held.push(`${Math.round(c.cargo.credits)} credits`);
-  if (c.cargo.science >= 1) held.push(`${Math.round(c.cargo.science)} science`);
+  if (c.cargo.ore >= 1) held.push(`${Math.round(c.cargo.ore)} ${t('market.res.metal')}`);
+  if (c.cargo.credits >= 1) held.push(`${Math.round(c.cargo.credits)} ${t('market.res.gold')}`);
+  if (c.cargo.science >= 1) held.push(`${Math.round(c.cargo.science)} ${t('market.res.science')}`);
 
   if (dest) {
     return {
       where: `→ ${bodyName(dest)}`,
       // A tick is the game's unit of time everywhere else in the UI, so
       // the ETA is quoted in ticks rather than invented minutes.
-      eta: ticks != null && ticks > 0 ? `ETA ${ticks}t` : 'arriving',
+      eta: ticks != null && ticks > 0 ? t('route.tab.eta', { n: ticks }) : t('route.tab.arriving'),
       // A GUARD IS NEVER "EMPTY" — same rule as the docked branch below,
       // which had it and this one didn't. An escort carries nothing by
       // design, so grading it on its hold reported a corvette doing
       // exactly its job as though it had failed to load.
       doing: c.role === 'guard'
-        ? 'escorting'
-        : held.length ? `carrying ${held.join(', ')}` : 'running empty',
+        ? t('route.tab.escorting')
+        : held.length ? t('route.tab.carrying', { list: held.join(', ') }) : t('route.tab.runningEmpty'),
     };
   }
   // Docked. The next stop is the useful half of "where" — a ship sitting
@@ -112,11 +114,11 @@ function crewContext(
   const next = stops.find(s => s.sequence === c.nextStopSeq);
   const nextName = next && next.bodyId !== at ? bodyName(next.bodyId) : null;
   return {
-    where: at ? `at ${bodyName(at)}` : 'deep space',
-    eta: nextName ? `next ${nextName}` : '',
+    where: at ? t('route.tab.at', { name: bodyName(at) }) : t('route.tab.deepSpace'),
+    eta: nextName ? t('route.tab.next', { name: nextName }) : '',
     doing: c.role === 'guard'
-      ? 'on station'
-      : held.length ? `holding ${held.join(', ')}` : 'loading',
+      ? t('route.tab.onStation')
+      : held.length ? t('route.tab.holding', { list: held.join(', ') }) : t('route.tab.loading'),
   };
 }
 
@@ -136,6 +138,7 @@ export interface SettlementTradeTabProps {
 export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
   gameState, bodyId, onEditRoute, onNewRoute,
 }) => {
+  useI18n();
   const mp = useMultiplayerActions();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -204,7 +207,7 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
     setBusyId(null);
     setAssignFor(null);
     setAssignQuery('');
-    if (!res.ok) setErr(res.error ?? 'The server turned that down.');
+    if (!res.ok) setErr(res.error ?? t('route.err.turnedDown'));
   };
   // CONSOLIDATION: fold a two-leg deal onto one freighter, so the lane
   // stops flying half its distance empty. Offer -> the partner accepts,
@@ -219,7 +222,7 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
     setBusyId(agreementId);
     const res = await mp.consolidateAgreement(agreementId);
     setBusyId(null);
-    if (!res.ok) setErr(res.error ?? 'The server turned that down.');
+    if (!res.ok) setErr(res.error ?? t('route.err.turnedDown'));
   };
   const remove = async (routeId: string) => {
     if (!mp) return;
@@ -227,7 +230,7 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
     setBusyId(routeId);
     const res = await mp.cancelTradeRoute(routeId);
     setBusyId(null);
-    if (!res.ok) setErr(res.error ?? 'The server turned that down.');
+    if (!res.ok) setErr(res.error ?? t('route.err.turnedDown'));
   };
   const unassign = async (routeId: string, shipId: string) => {
     if (!mp) return;
@@ -235,7 +238,7 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
     setBusyId(routeId);
     const res = await mp.removeRouteShip(routeId, shipId);
     setBusyId(null);
-    if (!res.ok) setErr(res.error ?? 'The server turned that down.');
+    if (!res.ok) setErr(res.error ?? t('route.err.turnedDown'));
   };
 
   // ONE DEAL, ONE CARD. A standing agreement that hasn't consolidated
@@ -273,12 +276,12 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
       <div className="stt">
         <div className="stt-empty">
           {bodyId
-            ? 'No trade route stops here yet. A run collects from your outposts and drops everything at a terraformed world you live on.'
-            : 'No trade routes yet. A run collects from your outposts and drops everything at a terraformed world you live on.'}
+            ? t('route.tab.emptyHere')
+            : t('route.tab.empty2')}
         </div>
         {onNewRoute && (
           <button type="button" className="stt-btn is-primary" onClick={() => onNewRoute(bodyId)}>
-            {bodyId ? 'New route from here' : 'New route'}
+            {bodyId ? t('route.tab.newHere') : t('route.tab.new')}
           </button>
         )}
       </div>
@@ -316,10 +319,10 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
           && (!r.counterpartyFactionId || r.consolidated === true);
         const cancelBlockers: string[] = [];
         if (guards.length > 0) {
-          cancelBlockers.push(guards.length === 1 ? 'the guard' : 'the guards');
+          cancelBlockers.push(guards.length === 1 ? t('route.tab.theGuard') : t('route.tab.theGuards'));
         }
         if (isWalker && carriers.length > 0) {
-          cancelBlockers.push(carriers.length === 1 ? 'the freighter' : 'the freighters');
+          cancelBlockers.push(carriers.length === 1 ? t('route.tab.theFreighter') : t('route.tab.theFreighters'));
         }
         const stalled = isStalled(r);
         const left = stallTicksLeft(r, gameState.currentTick);
@@ -357,8 +360,8 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
         const shortText = starvedLeg ? starveShortText(starvedLeg) : '';
         const starveWho = starvedLeg
           ? (starvedLeg.ownedBy === 'player'
-            ? 'You'
-            : gameState.factions.find(f => f.id === starvedLeg.ownedBy)?.name ?? 'Your partner')
+            ? t('route.tab.you')
+            : gameState.factions.find(f => f.id === starvedLeg.ownedBy)?.name ?? t('route.tab.yourPartner'))
           : '';
         // THE LEDGER, summed across every leg of the deal — a folded lane
         // is one card, so its numbers have to be one set of numbers.
@@ -371,9 +374,9 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
           { metal: 0, gold: 0, science: 0 },
         );
         const payload = [
-          per.metal >= 1 ? `${Math.round(per.metal)} metal` : null,
-          per.gold >= 1 ? `${Math.round(per.gold)} credits` : null,
-          per.science >= 1 ? `${Math.round(per.science)} science` : null,
+          per.metal >= 1 ? `${Math.round(per.metal)} ${t('market.res.metal')}` : null,
+          per.gold >= 1 ? `${Math.round(per.gold)} ${t('market.res.gold')}` : null,
+          per.science >= 1 ? `${Math.round(per.science)} ${t('market.res.science')}` : null,
         ].filter(Boolean).join(' + ');
         const runs = group.legs.reduce((a, l) => a + (l.loopsCompleted ?? 0), 0);
         // The soonest CARRIER arrival is the next delivery. A guard
@@ -407,19 +410,19 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                   : routeLabel(r, bodyName)}
               </span>
               {partnerName && (
-                <span className="stt-partner" title={`A standing deal with ${partnerName}`}>
-                  with {partnerName}
+                <span className="stt-partner" title={t('route.tab.dealWith', { name: partnerName })}>
+                  {t('trade.with')} {partnerName}
                 </span>
               )}
               {stalled
-                ? <span className="stt-pill is-warn">Stalled</span>
-                : <span className="stt-pill">Running</span>}
+                ? <span className="stt-pill is-warn">{t('route.tab.stalled')}</span>
+                : <span className="stt-pill">{t('route.tab.running')}</span>}
               <span className="stt-spacer" />
               <span className="stt-meta">
                 {isPair
-                  ? `${group.legs.length} legs · one freighter each`
+                  ? t('route.tab.legsEach', { n: group.legs.length })
                   : bodyId
-                    ? here.map(s => (s.action === 'dropoff' ? 'drops off here' : 'collects here')).join(' · ')
+                    ? here.map(s => (s.action === 'dropoff' ? t('route.tab.dropsHere') : t('route.tab.collectsHere'))).join(' · ')
                     // Unscoped: name the whole circuit, since no single
                     // body is "here" in an empire-wide list.
                     : stops.map(s => `${bodyName(s.bodyId)}${s.action === 'dropoff' ? ' ▾' : ''}`).join(' → ')}
@@ -435,8 +438,8 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                 a round trip split across two hulls. */}
             {group.legs.map(leg => {
               const legOwner = leg.ownedBy === 'player'
-                ? 'yours'
-                : gameState.factions.find(f => f.id === leg.ownedBy)?.name ?? 'theirs';
+                ? t('route.tab.yours')
+                : gameState.factions.find(f => f.id === leg.ownedBy)?.name ?? t('route.tab.theirs');
               return (
                 <div key={leg.id} className={isPair ? 'stt-leg' : undefined}>
                   {isPair && (
@@ -445,7 +448,7 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                       <span className="stt-leg-ships">
                         {routeCarriers(leg).length > 0
                           ? routeCarriers(leg).map(c => shipName(c.shipId)).join(', ')
-                          : 'no freighter'}
+                          : t('route.tab.noFreighter')}
                       </span>
                     </div>
                   )}
@@ -459,21 +462,21 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                 when the next lot arrives — the three numbers a player
                 needs to decide whether a route deserves another hull. */}
             <div className="stt-ledger">
-              {payload && <span className="stt-led-item">{payload} <em>per run</em></span>}
+              {payload && <span className="stt-led-item">{payload} <em>{t('trade.perRun')}</em></span>}
               <span className="stt-led-item">
-                {runs > 0 ? <><strong>{runs}</strong> <em>run{runs === 1 ? '' : 's'} delivered</em></>
-                  : <em>no runs yet</em>}
+                {runs > 0 ? <><strong>{runs}</strong> <em>{tn('route.tab.runsDelivered', runs)}</em></>
+                  : <em>{t('trade.noRuns')}</em>}
               </span>
               {nextDrop
                 ? (
                   <span className="stt-led-item is-eta">
-                    next drop <strong>{nextDrop.where}</strong>
-                    {nextDrop.ticks != null ? <> in <strong>{nextDrop.ticks}t</strong></> : null}
+                    {t('route.tab.nextDrop')} <strong>{nextDrop.where}</strong>
+                    {nextDrop.ticks != null ? <> {t('route.tab.in')} <strong>{nextDrop.ticks}t</strong></> : null}
                   </span>
                 )
-                : <span className="stt-led-item is-idle"><em>nothing under way</em></span>}
+                : <span className="stt-led-item is-idle"><em>{t('route.tab.nothingUnderWay')}</em></span>}
               {r.loopMode !== 'forever' && r.loopsRemaining != null && (
-                <span className="stt-led-item"><strong>{r.loopsRemaining}</strong> <em>runs left</em></span>
+                <span className="stt-led-item"><strong>{r.loopsRemaining}</strong> <em>{t('route.tab.runsLeft')}</em></span>
               )}
             </div>
 
@@ -498,15 +501,11 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                     // the fold used to open a rival leg. The same button
                     // repairs it, so a game already carrying the damage
                     // is not stuck with it.
-                    ? 'This deal is running on two routes at once: one circuit that works both '
-                      + 'directions, and a one-way leg beside it. Merge them so every freighter '
-                      + 'collects and delivers at both ends.'
+                    ? t('route.tab.foldSplit')
                     : carriers.length > 1
-                      ? `Both freighters fly home empty on this deal. Put ${carriers
-                          .map(c => shipName(c.shipId)).join(' and ')} on one circuit and each
-                         collects and delivers at both ends — same ships, twice the trade.`
-                      : 'This freighter flies home empty every run. One circuit makes it collect '
-                        + 'and deliver at both ends.'}
+                      ? t('route.tab.foldBoth', { names: carriers
+                          .map(c => shipName(c.shipId)).join(` ${t('market.and')} `) })
+                      : t('route.tab.foldOne')}
                 </div>
                 <div className="stt-row stt-actions">
                   <button
@@ -515,12 +514,12 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                     onClick={() => consolidate(r.agreementId!)}
                   >
                     {busyId === r.agreementId
-                      ? 'Merging…'
+                      ? t('route.tab.merging')
                       : split
-                        ? 'Merge onto one lane'
+                        ? t('route.tab.mergeLane')
                         : carriers.length > 1
-                          ? `Run both ways with ${carriers.length} freighters`
-                          : 'Run it both ways'}
+                          ? t('route.tab.runBothN', { n: carriers.length })
+                          : t('route.tab.runBoth')}
                   </button>
                 </div>
               </div>
@@ -528,8 +527,8 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
 
             {stalled && (
               <div className="stt-stall">
-                No freighter. This route cancels itself in <b>{left ?? ROUTE_STALL_TICKS}</b>{' '}
-                tick{left === 1 ? '' : 's'} unless one is assigned.
+                {t('route.tab.stallPre')} <b>{left ?? ROUTE_STALL_TICKS}</b>{' '}
+                {tn('route.tab.ticksUnlessAssigned', left === 1 ? 1 : 2)}
               </div>
             )}
 
@@ -541,19 +540,19 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                 clock three times shorter than the stall one. */}
             {starved && (
               <div className="stt-stall is-starved">
-                {starveWho} can't cover the next run
-                {shortText && <> — short <b>{shortText}</b></>}.
-                {' '}The whole deal ends in <b>{starveLeft ?? TRADE_STARVE_GRACE_TICKS}</b>{' '}
-                tick{starveLeft === 1 ? '' : 's'} unless the shortfall is covered.
+                {t('route.tab.cantCover', { who: starveWho })}
+                {shortText && <> — {t('route.tab.short')} <b>{shortText}</b></>}.
+                {' '}{t('route.tab.dealEndsIn')} <b>{starveLeft ?? TRADE_STARVE_GRACE_TICKS}</b>{' '}
+                {tn('route.tab.ticksUnlessCovered', starveLeft === 1 ? 1 : 2)}
               </div>
             )}
 
             <div className="stt-row stt-crew">
               <span className="stt-chip">
-                Runs it · <b>{carriers.length ? carriers.map(c => shipName(c.shipId)).join(', ') : 'none'}</b>
+                {t('route.tab.runsIt')} · <b>{carriers.length ? carriers.map(c => shipName(c.shipId)).join(', ') : t('route.tab.none')}</b>
               </span>
               <span className="stt-chip">
-                Guards · <b>{guards.length ? guards.map(g => shipName(g.shipId)).join(', ') : 'none'}</b>
+                {t('route.tab.guards')} · <b>{guards.length ? guards.map(g => shipName(g.shipId)).join(', ') : t('route.tab.none')}</b>
               </span>
             </div>
 
@@ -575,37 +574,36 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                 // requirementLabel resolves the track's DISPLAY name, so
                 // 'industry' still reads as SOCIETY where it applies.
                 title={pinnedRun
-                  ? 'A supply run flies one freighter. For more hauling, open another route to the same place.'
+                  ? t('route.tab.pinnedTip')
                   : atCarrierCap
-                  ? `Your research allows ${carrierCap} freighter${carrierCap === 1 ? '' : 's'} `
-                    + (carrierCap < 2
-                      ? `on a route. ${requirementLabel('trade.convoy2')} raises it to 2.`
+                  ? (carrierCap < 2
+                      ? tn('route.tab.capTo2', carrierCap, { tech: requirementLabel('trade.convoy2') ?? '' })
                       : carrierCap < 4
-                        ? `on a route. ${requirementLabel('trade.convoy4')} raises it to 4.`
+                        ? tn('route.tab.capTo4', carrierCap, { tech: requirementLabel('trade.convoy4') ?? '' })
                         // 4 is the ceiling — there is no third tech, and
                         // pointing at one would send the player hunting.
-                        : 'on a route, which is the most any research allows.')
+                        : tn('route.tab.capMax', carrierCap))
                   : freeFreighters.length === 0
-                    ? 'Every freighter you have is already on a job.'
-                    : 'Put another freighter on this run'}
+                    ? t('route.tab.allBusy')
+                    : t('route.tab.putAnother')}
                 onClick={() => { setAssignQuery(''); setAssignFor({ routeId: r.id, role: 'carrier' }); }}
               >
-                {stalled ? 'Assign freighter' : '+ Freighter'}
+                {stalled ? t('trade.assignFreighter') : `+ ${t('route.tab.freighter')}`}
               </button>
               <button
                 type="button"
                 className="stt-btn"
                 disabled={busyId === r.id || freeWarships.length === 0}
                 title={freeWarships.length === 0
-                  ? 'No free warships — guards are corvettes, frigates and destroyers.'
-                  : 'Guards fly the run and hold fire unless something attacks it'}
+                  ? t('route.tab.noWarships')
+                  : t('route.tab.guardTip')}
                 onClick={() => { setAssignQuery(''); setAssignFor({ routeId: r.id, role: 'guard' }); }}
               >
-                + Guard
+                + {t('route.tab.guard')}
               </button>
               {mine && onEditRoute && !r.counterpartyFactionId && (
                 <button type="button" className="stt-btn" onClick={() => onEditRoute(r)}>
-                  Add stops
+                  {t('route.tab.addStops')}
                 </button>
               )}
               {/* DELETE, but only once the lane is empty. Cancelling a
@@ -624,10 +622,10 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                 <button
                   type="button"
                   className="stt-btn"
-                  title="Show the standing deal this lane flies, under PRIVATE — that is where it is ended"
+                  title={t('route.tab.contractTip')}
                   onClick={() => focusTradeCard('agreement', r.agreementId!)}
                 >
-                  Contract
+                  {t('route.tab.contract')}
                 </button>
               )}
               {mine && !r.agreementId && (
@@ -636,12 +634,11 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                   className="stt-btn is-danger"
                   disabled={busyId === r.id || cancelBlockers.length > 0}
                   title={cancelBlockers.length > 0
-                    ? `Take ${cancelBlockers.join(' and ')} off this route first — `
-                      + 'otherwise they are left with no orders.'
-                    : 'Delete this route'}
+                    ? t('route.tab.deleteBlocked', { who: cancelBlockers.join(` ${t('market.and')} `) })
+                    : t('route.tab.deleteTip')}
                   onClick={() => remove(r.id)}
                 >
-                  Delete route
+                  {t('route.tab.delete')}
                 </button>
               )}
             </div>
@@ -649,7 +646,7 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
             {assignFor?.routeId === r.id && (
               <div className="stt-picker">
                 <div className="stt-picker-head">
-                  {assignFor.role === 'carrier' ? 'Which freighter runs it?' : 'Which ship guards it?'}
+                  {assignFor.role === 'carrier' ? t('route.tab.whichRuns') : t('route.tab.whichGuards')}
                 </div>
                 {/* SEARCH + PRIORITY. A mature empire offers forty-odd
                     hulls here, which as a wrap of chips was a wall to
@@ -663,7 +660,7 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                   type="text"
                   value={assignQuery}
                   onChange={e => setAssignQuery(e.target.value)}
-                  placeholder="Search ships…"
+                  placeholder={t('route.tab.search')}
                   autoFocus
                 />
                 <div className="stt-picker-list">
@@ -690,10 +687,10 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                       return (
                         <span className="stt-empty">
                           {q
-                            ? `No ship matches "${assignQuery.trim()}".`
+                            ? t('route.tab.noMatch', { q: assignQuery.trim() })
                             : assignFor.role === 'carrier'
-                              ? 'Every freighter you have is already on a job.'
-                              : 'No free warships — guards are corvettes, frigates and destroyers.'}
+                              ? t('route.tab.allBusy')
+                              : t('route.tab.noWarships')}
                         </span>
                       );
                     }
@@ -716,14 +713,14 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                           />
                           <span className="stt-pick-name">{sh.name}</span>
                           <span className="stt-pick-where">{ctx.where}</span>
-                          <span className="stt-pick-doing">{here ? 'on station' : ctx.doing}</span>
+                          <span className="stt-pick-doing">{here ? t('route.tab.onStation') : ctx.doing}</span>
                         </button>
                       );
                     });
                   })()}
                 </div>
                 <button type="button" className="stt-btn" onClick={() => { setAssignFor(null); setAssignQuery(''); }}>
-                  Cancel
+                  {t('common.cancel')}
                 </button>
               </div>
             )}
@@ -763,7 +760,7 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                       <span className="stt-crewbody">
                         <span className="stt-crewtop">
                           <span className="stt-crewname">{shipName(s.shipId)}</span>
-                          <span className="stt-crewrole">{s.role === 'guard' ? 'guard' : 'runs it'}</span>
+                          <span className="stt-crewrole">{s.role === 'guard' ? t('route.tab.guardRole') : t('route.tab.runsRole')}</span>
                         </span>
                         <span className="stt-crewbottom">
                           <span className="stt-crewwhere">{ctx.where}</span>
@@ -777,8 +774,8 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
                         type="button"
                         className="stt-crewx"
                         disabled={busyId === r.id}
-                        title={`Take ${shipName(s.shipId)} off this route`}
-                        aria-label={`Take ${shipName(s.shipId)} off this route`}
+                        title={t('route.tab.takeOff', { name: shipName(s.shipId) })}
+                        aria-label={t('route.tab.takeOff', { name: shipName(s.shipId) })}
                         onClick={() => unassign(r.id, s.shipId)}
                       >
                         ✕
@@ -793,7 +790,7 @@ export const SettlementTradeTab: React.FC<SettlementTradeTabProps> = ({
       })}
       {onNewRoute && (
         <button type="button" className="stt-btn" onClick={() => onNewRoute(bodyId)}>
-          {bodyId ? 'New route from here' : 'New route'}
+          {bodyId ? t('route.tab.newHere') : t('route.tab.new')}
         </button>
       )}
     </div>

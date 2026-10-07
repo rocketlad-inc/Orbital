@@ -12,6 +12,7 @@
 // ============================================================================
 
 import { STRIP_PUBLIC_URL } from './heraldStrip.js';
+import { tr, trn, pickLocale } from './i18n.js';
 
 const EPHEMERAL = 64;
 const COLOR = 0x4ecdc4;
@@ -27,12 +28,16 @@ function replyEmbed(embed) {
  * Resolve the caller to a faction in a live game.
  * Returns { error } as a ready-to-send response, or { user, game, faction }.
  */
-export async function resolveCaller(env, discordId) {
+export async function resolveCaller(env, discordId, interaction = null) {
   const user = await env.DB
-    .prepare('SELECT id, display_name FROM users WHERE discord_id = ?')
+    .prepare('SELECT id, display_name, locale FROM users WHERE discord_id = ?')
     .bind(discordId).first();
+  // THE REPLY'S LANGUAGE: the linked account's own, else Discord's (the
+  // interaction's), else English. Resolved here, once, off the row this
+  // lookup already reads.
+  const L = pickLocale(user?.locale, interaction?.locale);
   if (!user) {
-    return { error: reply('Link your account first: in-game Senate panel → Link Discord, then `/link <code>` here.') };
+    return { error: reply(tr(L, 'dc.needLink')) };
   }
   // Most recently ticked active game the player holds a live faction in.
   const row = await env.DB
@@ -47,28 +52,35 @@ export async function resolveCaller(env, discordId) {
         ORDER BY g.current_tick DESC LIMIT 1`,
     )
     .bind(user.id).first();
-  if (!row) return { error: reply('You have no active empire right now.') };
-  return { user, row };
+  if (!row) return { error: reply(tr(L, 'dc.cmd.noEmpire')) };
+  return { user, row, L };
 }
 
-function footer(row) {
+/** 'yea' | 'nay' | 'abstain' as the reader's language says it. */
+function voteWord(L, v) {
+  const k = `dc.cmd.vote.${v}`;
+  const s = tr(L, k);
+  return s === k ? String(v) : s;
+}
+
+function footer(row, L) {
   const mins = row.next_tick_at
     ? Math.max(0, Math.round((row.next_tick_at - Date.now()) / 60000))
     : null;
   return {
     text: [
       `${row.game_name} · T+${row.current_tick}`,
-      mins != null ? `next tick ~${mins}m` : null,
+      mins != null ? tr(L, 'dc.cmd.nextTick', { mins }) : null,
     ].filter(Boolean).join(' · '),
   };
 }
 
 // ---------------------------------------------------------------------------
 
-export async function cmdStatus(env, discordId) {
-  const r = await resolveCaller(env, discordId);
+export async function cmdStatus(env, discordId, interaction = null) {
+  const r = await resolveCaller(env, discordId, interaction);
   if (r.error) return r.error;
-  const { row } = r;
+  const { row, L } = r;
 
   const ships = (await env.DB
     .prepare(`SELECT COUNT(*) n FROM game_ships WHERE game_id=? AND owner_faction_id=? AND hp>0`)
@@ -91,21 +103,21 @@ export async function cmdStatus(env, discordId) {
     title: `🛰️ ${row.faction_name}`,
     color: COLOR,
     fields: [
-      { name: 'Resources', value: `**${Math.round(row.metal)}**M · **${Math.round(row.gold)}**C · **${Math.round(row.science)}**S`, inline: false },
-      { name: 'Holdings', value: `**${ships}** ships · **${cities}** settlements`, inline: true },
-      { name: 'Building', value: building > 0 ? `**${building}** in the yards` : '—', inline: true },
-      ...(bills > 0 ? [{ name: '🏛️ Needs you', value: `**${bills}** bill${bills === 1 ? '' : 's'} awaiting your vote`, inline: false }] : []),
+      { name: tr(L, 'dc.cmd.resources'), value: `**${Math.round(row.metal)}**M · **${Math.round(row.gold)}**C · **${Math.round(row.science)}**S`, inline: false },
+      { name: tr(L, 'dc.cmd.holdings'), value: tr(L, 'dc.cmd.holdingsVal', { ships, cities }), inline: true },
+      { name: tr(L, 'dc.cmd.building'), value: building > 0 ? tr(L, 'dc.cmd.inYards', { n: building }) : '—', inline: true },
+      ...(bills > 0 ? [{ name: tr(L, 'dc.cmd.needsYou'), value: trn(L, 'dc.cmd.billsWaiting', bills), inline: false }] : []),
     ],
-    footer: footer(row),
+    footer: footer(row, L),
   });
 }
 
 // ---------------------------------------------------------------------------
 
-export async function cmdFleet(env, discordId) {
-  const r = await resolveCaller(env, discordId);
+export async function cmdFleet(env, discordId, interaction = null) {
+  const r = await resolveCaller(env, discordId, interaction);
   if (r.error) return r.error;
-  const { row } = r;
+  const { row, L } = r;
 
   const parked = (await env.DB
     .prepare(
@@ -126,7 +138,7 @@ export async function cmdFleet(env, discordId) {
     )
     .bind(row.game_id, row.faction_id).all()).results ?? [];
 
-  if (!parked.length && !moving.length) return reply('You have no ships.');
+  if (!parked.length && !moving.length) return reply(tr(L, 'dc.cmd.noShips'));
 
   // Collapse per body so a 40-hull empire still fits one screen.
   const byBody = new Map();
@@ -140,29 +152,29 @@ export async function cmdFleet(env, discordId) {
     .map(([body, list]) => ({ name: body, value: list.join(', '), inline: true }));
   if (moving.length) {
     fields.push({
-      name: '🚀 Under way',
+      name: tr(L, 'dc.cmd.underWay'),
       value: moving.map(m => `**${m.n}** → ${m.body}`).join('\n').slice(0, 1000),
       inline: false,
     });
   }
 
   return replyEmbed({
-    title: `◈ ${row.faction_name} — fleet`,
-    color: COLOR, fields, footer: footer(row),
+    title: tr(L, 'dc.cmd.fleetTitle', { name: row.faction_name }),
+    color: COLOR, fields, footer: footer(row, L),
   });
 }
 
 // ---------------------------------------------------------------------------
 
-export async function cmdResearch(env, discordId) {
-  const r = await resolveCaller(env, discordId);
+export async function cmdResearch(env, discordId, interaction = null) {
+  const r = await resolveCaller(env, discordId, interaction);
   if (r.error) return r.error;
-  const { row } = r;
+  const { row, L } = r;
 
   const techs = (await env.DB
     .prepare(`SELECT tech_id, level, status FROM faction_techs WHERE game_id=? AND faction_id=?`)
     .bind(row.game_id, row.faction_id).all()).results ?? [];
-  if (!techs.length) return reply('No research yet.');
+  if (!techs.length) return reply(tr(L, 'dc.cmd.noResearch'));
 
   const active = techs.find(t => t.status === 'researching');
   const levels = techs
@@ -172,25 +184,25 @@ export async function cmdResearch(env, discordId) {
     .join(' · ');
 
   return replyEmbed({
-    title: `⚛ ${row.faction_name} — research`,
+    title: tr(L, 'dc.cmd.researchTitle', { name: row.faction_name }),
     color: COLOR,
     description: [
-      active ? `Currently: **${active.tech_id}** → level ${(active.level ?? 0) + 1}` : '_Nothing in progress_',
+      active ? tr(L, 'dc.cmd.currently', { tech: active.tech_id, level: (active.level ?? 0) + 1 }) : tr(L, 'dc.cmd.nothingInProgress'),
       '',
-      levels || '_No levels yet_',
+      levels || tr(L, 'dc.cmd.noLevels'),
       '',
-      `Banked science: **${Math.round(row.science)}**`,
+      tr(L, 'dc.cmd.bankedScience', { n: Math.round(row.science) }),
     ].join('\n'),
-    footer: footer(row),
+    footer: footer(row, L),
   });
 }
 
 // ---------------------------------------------------------------------------
 
-export async function cmdBills(env, discordId) {
-  const r = await resolveCaller(env, discordId);
+export async function cmdBills(env, discordId, interaction = null) {
+  const r = await resolveCaller(env, discordId, interaction);
   if (r.error) return r.error;
-  const { row } = r;
+  const { row, L } = r;
 
   const bills = (await env.DB
     .prepare(
@@ -201,7 +213,7 @@ export async function cmdBills(env, discordId) {
         ORDER BY p.vote_closes_at_tick ASC`,
     )
     .bind(row.faction_id, row.game_id).all()).results ?? [];
-  if (!bills.length) return reply('Nothing on the senate floor.');
+  if (!bills.length) return reply(tr(L, 'dc.cmd.noBills'));
 
   // Weight, with the systems that bought it. A player looking at a bill
   // needs to know what their own "aye" is actually worth before they
@@ -210,33 +222,35 @@ export async function cmdBills(env, discordId) {
   try {
     const senate = await import('./senate.js');
     const d = await senate.voteWeightDetail(env, row.game_id, row.faction_id);
-    weightLine = `Your vote weight: **${d.weight}** — base 1`
-      + (d.controlled.length ? ` + ${d.controlled.map(s => s.label).join(' + ')}` : ', no systems controlled')
-      + '\n\n';
+    weightLine = d.controlled.length
+      ? tr(L, 'dc.cmd.weight', { w: d.weight, labels: d.controlled.map(s => s.label).join(' + ') })
+      : tr(L, 'dc.cmd.weightNone', { w: d.weight });
   } catch (e) {
     console.error('/bills weight failed', e);
   }
 
   return replyEmbed({
-    title: '🏛️ On the floor',
+    title: tr(L, 'dc.cmd.onTheFloor'),
     color: 0xc4b5fd,
     description: weightLine + bills.slice(0, 10).map(b => {
       const state = b.status === 'debating'
-        ? `debating · opens soon`
-        : `closes T+${b.vote_closes_at_tick} (${b.vote_closes_at_tick - row.current_tick})`;
-      const mine = b.my_vote ? `— you voted **${b.my_vote}**` : (b.status === 'voting' ? '— **you have not voted**' : '');
+        ? tr(L, 'dc.cmd.debating')
+        : tr(L, 'dc.cmd.closes', { tick: b.vote_closes_at_tick, left: b.vote_closes_at_tick - row.current_tick });
+      const mine = b.my_vote
+        ? tr(L, 'dc.cmd.youVoted', { vote: voteWord(L, b.my_vote) })
+        : (b.status === 'voting' ? tr(L, 'dc.cmd.notVoted') : '');
       return `**${b.title}**\n${state} ${mine}`;
     }).join('\n\n').slice(0, 3500),
-    footer: footer(row),
+    footer: footer(row, L),
   });
 }
 
 // ---------------------------------------------------------------------------
 
-export async function cmdMap(env, discordId) {
-  const r = await resolveCaller(env, discordId);
+export async function cmdMap(env, discordId, interaction = null) {
+  const r = await resolveCaller(env, discordId, interaction);
   if (r.error) return r.error;
-  const { row } = r;
+  const { row, L } = r;
   // Discord fetches embed.image.url itself, so pointing at the public PNG
   // route avoids a multipart upload entirely AND guarantees the image is
   // current at the moment it renders rather than when we sent it.
@@ -246,10 +260,10 @@ export async function cmdMap(env, discordId) {
     data: {
       flags: EPHEMERAL,
       embeds: [{
-        title: `🗺️ ${row.game_name} — territory`,
+        title: tr(L, 'dc.cmd.mapTitle', { name: row.game_name }),
         color: COLOR,
         image: { url },
-        footer: footer(row),
+        footer: footer(row, L),
       }],
     },
   };
@@ -269,14 +283,14 @@ export async function cmdMap(env, discordId) {
  * and quietly adding a deception mechanic from a chat command is a
  * game-design decision rather than a bot feature.
  */
-export async function cmdMsg(env, discordId, opts) {
-  const r = await resolveCaller(env, discordId);
+export async function cmdMsg(env, discordId, opts, interaction = null) {
+  const r = await resolveCaller(env, discordId, interaction);
   if (r.error) return r.error;
-  const { user, row } = r;
+  const { user, row, L } = r;
 
   const to = String(opts.to ?? '').trim();
   const text = String(opts.text ?? '').trim();
-  if (!to || !text) return reply('Usage: `/msg to:<faction or "all"> text:<your message>`');
+  if (!to || !text) return reply(tr(L, 'dc.cmd.msgUsage'));
 
   const factions = (await env.DB
     .prepare(`SELECT id, name FROM game_factions
@@ -303,8 +317,8 @@ export async function cmdMsg(env, discordId, opts) {
 
   if (to.toLowerCase() === 'all' || to.toLowerCase() === 'broadcast') {
     const out = await send({ scope: 'broadcast', body: text, signed: 1 });
-    if (!out.ok) return reply(`Could not send: ${out.payload?.error?.message ?? 'rejected'}`);
-    return reply(`📡 Broadcast sent to every faction in **${row.game_name}**.`);
+    if (!out.ok) return reply(tr(L, 'dc.cmd.couldNotSend', { msg: out.payload?.error?.message ?? tr(L, 'dc.cmd.rejected') }));
+    return reply(tr(L, 'dc.cmd.broadcastSent', { game: row.game_name }));
   }
 
   // Match on name, case-insensitively: exact first, then unique prefix,
@@ -316,18 +330,18 @@ export async function cmdMsg(env, discordId, opts) {
   if (!hits.length) hits = factions.filter(f => f.name.toLowerCase().includes(lower));
 
   if (!hits.length) {
-    return reply(`No faction matches "${to}". In this game: ${factions.map(f => `**${f.name}**`).join(', ') || '(none)'}`);
+    return reply(tr(L, 'dc.cmd.noMatch', { to, list: factions.map(f => `**${f.name}**`).join(', ') || tr(L, 'dc.cmd.none') }));
   }
   if (hits.length > 1) {
-    return reply(`"${to}" matches ${hits.length} factions: ${hits.map(f => `**${f.name}**`).join(', ')}. Be more specific.`);
+    return reply(tr(L, 'dc.cmd.manyMatch', { to, n: hits.length, list: hits.map(f => `**${f.name}**`).join(', ') }));
   }
 
   const target = hits[0];
   const out = await send({
     scope: 'dm', body: text, signed: 1, recipient_faction_ids: [target.id],
   });
-  if (!out.ok) return reply(`Could not send: ${out.payload?.error?.message ?? 'rejected'}`);
-  return reply(`✉️ Sent to **${target.name}**.`);
+  if (!out.ok) return reply(tr(L, 'dc.cmd.couldNotSend', { msg: out.payload?.error?.message ?? tr(L, 'dc.cmd.rejected') }));
+  return reply(tr(L, 'dc.cmd.sentTo', { name: target.name }));
 }
 
 export const READ_COMMANDS = {

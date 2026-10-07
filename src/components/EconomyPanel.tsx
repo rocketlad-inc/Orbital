@@ -26,6 +26,8 @@ import { SHIP_UPKEEP, upkeepSplitFor, type ShipClassName } from '../game/shipCla
 import { partsCost, sanitizeParts } from '../game/shipParts';
 import { TECH_DEFS } from '../game/techs';
 import { apiFetch } from '../multiplayer/api';
+import { t, tn } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 import './EconomyPanel.css';
 
 type Point = {
@@ -43,7 +45,10 @@ type EconomyResponse = {
 
 type ResKey = 'metal' | 'credits' | 'science';
 const RES_ORDER: ResKey[] = ['metal', 'credits', 'science'];
-const RES_LABEL: Record<ResKey, string> = { metal: 'Metal', credits: 'Credits', science: 'Science' };
+// A function, not a constant: a constant would freeze the language at import.
+const resLabel = (k: ResKey): string => (
+  k === 'metal' ? t('econ.res.metal') : k === 'credits' ? t('econ.res.credits') : t('econ.res.science')
+);
 
 // Three series, validated as a categorical SET against this panel's own
 // surface (#0d131c) with --pairs all rather than adjacent-only: worst
@@ -64,14 +69,17 @@ const INK: Record<ResKey, string> = {
 
 // Only "colony" is irregular, but a naive `${cls}s` printed "colonys"
 // on the very first render of this table, so the plurals are named.
-const CLASS_PLURAL: Record<ShipClassName, string> = {
-  corvette: 'Corvettes',
-  frigate: 'Frigates',
-  destroyer: 'Destroyers',
-  freighter: 'Freighters',
-  colony: 'Colony ships',
-  mega_destroyer: 'Mega Destroyers',
-  mobile_foundry: 'Mobile Foundries',
+const classPlural = (cls: ShipClassName): string | undefined => {
+  switch (cls) {
+    case 'corvette': return t('econ.class.corvette');
+    case 'frigate': return t('econ.class.frigate');
+    case 'destroyer': return t('econ.class.destroyer');
+    case 'freighter': return t('econ.class.freighter');
+    case 'colony': return t('econ.class.colony');
+    case 'mega_destroyer': return t('econ.class.mega_destroyer');
+    case 'mobile_foundry': return t('econ.class.mobile_foundry');
+    default: return undefined;
+  }
 };
 
 type Triple = { metal: number; credits: number; science: number };
@@ -91,6 +99,7 @@ function signed(v: number, dp = 2): string {
 }
 
 export const EconomyPanel: React.FC<{ gameId: string }> = ({ gameId }) => {
+  useI18n();
   const { gameState } = useGameContext();
   const [hist, setHist] = useState<EconomyResponse | null>(null);
 
@@ -237,39 +246,42 @@ export const EconomyPanel: React.FC<{ gameId: string }> = ({ gameId }) => {
     <div className="econ">
       {/* ---------------- OUTPUT ---------------- */}
       <h4 className="econ-h">
-        Output · per tick
-        <span className="econ-sub">what each world sends to the empire pool</span>
+        {t('econ.out.h')}
+        <span className="econ-sub">{t('econ.out.sub')}</span>
       </h4>
       <table className="econ-table">
         <thead>
           <tr>
-            <th scope="col">World</th>
+            <th scope="col">{t('econ.out.world')}</th>
             <th scope="col" className="econ-num">
-              <i className="econ-dot" style={{ background: INK.metal }} aria-hidden />Metal
+              <i className="econ-dot" style={{ background: INK.metal }} aria-hidden />{t('econ.res.metal')}
             </th>
             <th scope="col" className="econ-num">
-              <i className="econ-dot" style={{ background: INK.credits }} aria-hidden />Credits
+              <i className="econ-dot" style={{ background: INK.credits }} aria-hidden />{t('econ.res.credits')}
             </th>
             <th scope="col" className="econ-num">
-              <i className="econ-dot" style={{ background: INK.science }} aria-hidden />Science
+              <i className="econ-dot" style={{ background: INK.science }} aria-hidden />{t('econ.res.science')}
             </th>
           </tr>
         </thead>
         <tbody>
           {worlds.length === 0 && (
-            <tr><td colSpan={4} className="econ-muted">No settlements yet.</td></tr>
+            <tr><td colSpan={4} className="econ-muted">{t('econ.out.none')}</td></tr>
           )}
           {worlds.map(w => (
             <tr key={w.id}>
               <th scope="row">
                 <span className="econ-world">{w.name}</span>
                 <span className="econ-where">
-                  {w.where} · {w.type} · pop {w.pop}
+                  {w.where} · {w.type} · {t('econ.out.pop', { n: w.pop })}
                   {!w.docked && (
                     <em
                       className="econ-raw"
-                      title={`Raw world — it banks ${Math.round((1 - NO_COLLECTOR_POOL_FRACTION) * 100)}% of its yield on-site and only ${Math.round(NO_COLLECTOR_POOL_FRACTION * 100)}% reaches the pool. Terraform it to ship everything.`}
-                    > · raw, {Math.round(NO_COLLECTOR_POOL_FRACTION * 100)}%</em>
+                      title={t('econ.out.rawTip', {
+                        kept: Math.round((1 - NO_COLLECTOR_POOL_FRACTION) * 100),
+                        sent: Math.round(NO_COLLECTOR_POOL_FRACTION * 100),
+                      })}
+                    > · {t('econ.out.raw', { pct: Math.round(NO_COLLECTOR_POOL_FRACTION * 100) })}</em>
                   )}
                 </span>
               </th>
@@ -279,7 +291,7 @@ export const EconomyPanel: React.FC<{ gameId: string }> = ({ gameId }) => {
             </tr>
           ))}
           <tr className="econ-r--sub">
-            <th scope="row">Total output</th>
+            <th scope="row">{t('econ.out.total')}</th>
             <td className="econ-num">{n(poolTotal.metal)}</td>
             <td className="econ-num">{n(poolTotal.credits)}</td>
             <td className="econ-num">{n(poolTotal.science)}</td>
@@ -287,8 +299,8 @@ export const EconomyPanel: React.FC<{ gameId: string }> = ({ gameId }) => {
           {strandedShown && (
             <tr className="econ-r--faint">
               <th scope="row">
-                Gross produced
-                <span className="econ-where">the difference banks locally on raw worlds</span>
+                {t('econ.out.gross')}
+                <span className="econ-where">{t('econ.out.grossNote')}</span>
               </th>
               <td className="econ-num">{n(grossTotal.metal)}</td>
               <td className="econ-num">{n(grossTotal.credits)}</td>
@@ -309,9 +321,9 @@ export const EconomyPanel: React.FC<{ gameId: string }> = ({ gameId }) => {
           <tbody>
             <tr>
               <th scope="row">
-                Mining
+                {t('econ.mining.h')}
                 <span className="econ-where">
-                  averaged over the run — rocks arrive in loads, not per tick
+                  {t('econ.mining.note')}
                 </span>
               </th>
               <td className="econ-num">{n(mining.metal)}</td>
@@ -324,25 +336,25 @@ export const EconomyPanel: React.FC<{ gameId: string }> = ({ gameId }) => {
 
       {/* ---------------- COSTS ---------------- */}
       <h4 className="econ-h">
-        Costs · per tick
-        <span className="econ-sub">fleet upkeep by class, plus construction</span>
+        {t('econ.costs.h')}
+        <span className="econ-sub">{t('econ.costs.sub')}</span>
       </h4>
       <table className="econ-table">
         <thead>
           <tr>
-            <th scope="col">Line</th>
-            <th scope="col" className="econ-num">Ships</th>
-            <th scope="col" className="econ-num">Metal</th>
-            <th scope="col" className="econ-num">Credits</th>
+            <th scope="col">{t('econ.costs.line')}</th>
+            <th scope="col" className="econ-num">{t('econ.costs.ships')}</th>
+            <th scope="col" className="econ-num">{t('econ.res.metal')}</th>
+            <th scope="col" className="econ-num">{t('econ.res.credits')}</th>
           </tr>
         </thead>
         <tbody>
           {fleetCosts.length === 0 && (
-            <tr><td colSpan={4} className="econ-muted">No fleet to pay for.</td></tr>
+            <tr><td colSpan={4} className="econ-muted">{t('econ.costs.noFleet')}</td></tr>
           )}
           {fleetCosts.map(c => (
             <tr key={c.cls}>
-              <th scope="row">{CLASS_PLURAL[c.cls] ?? c.cls}</th>
+              <th scope="row">{classPlural(c.cls) ?? c.cls}</th>
               <td className="econ-num econ-muted">{c.count}</td>
               <td className="econ-num">{c.metal === 0 ? '—' : `−${n(c.metal)}`}</td>
               <td className="econ-num">{c.credits === 0 ? '—' : `−${n(c.credits)}`}</td>
@@ -350,11 +362,11 @@ export const EconomyPanel: React.FC<{ gameId: string }> = ({ gameId }) => {
           ))}
           <tr>
             <th scope="row">
-              Construction
+              {t('econ.costs.construction')}
               <span className="econ-where">
                 {hist
-                  ? `averaged over ${hist.averages.sample_ticks} recorded tick${hist.averages.sample_ticks === 1 ? '' : 's'}`
-                  : 'awaiting history'}
+                  ? tn('econ.costs.avgOver', hist.averages.sample_ticks, { n: hist.averages.sample_ticks })
+                  : t('econ.costs.awaiting')}
               </span>
             </th>
             <td className="econ-num econ-muted">—</td>
@@ -362,7 +374,7 @@ export const EconomyPanel: React.FC<{ gameId: string }> = ({ gameId }) => {
             <td className="econ-num">{buildAvg.credits === 0 ? '—' : `−${n(buildAvg.credits)}`}</td>
           </tr>
           <tr className="econ-r--sub">
-            <th scope="row">Total costs</th>
+            <th scope="row">{t('econ.costs.total')}</th>
             <td className="econ-num econ-muted" />
             <td className="econ-num">{costTotal.metal === 0 ? '—' : `−${n(costTotal.metal)}`}</td>
             <td className="econ-num">{costTotal.credits === 0 ? '—' : `−${n(costTotal.credits)}`}</td>
@@ -375,12 +387,12 @@ export const EconomyPanel: React.FC<{ gameId: string }> = ({ gameId }) => {
         <tbody>
           <tr className="econ-r--net">
             <th scope="row">
-              Net per tick
-              <span className="econ-where">output less costs</span>
+              {t('econ.net.h')}
+              <span className="econ-where">{t('econ.net.sub')}</span>
             </th>
             {RES_ORDER.map(k => (
               <td key={k} className={`econ-num ${net[k] > 0 ? 'is-pos' : net[k] < 0 ? 'is-neg' : ''}`}>
-                <span className="econ-netk">{RES_LABEL[k]}</span>
+                <span className="econ-netk">{resLabel(k)}</span>
                 {signed(net[k])}
               </td>
             ))}
@@ -390,22 +402,18 @@ export const EconomyPanel: React.FC<{ gameId: string }> = ({ gameId }) => {
 
       {upkeepMul !== 1 && (
         <p className="econ-note">
-          A Senate law has fleet upkeep at ×{n(upkeepMul)}; the cost lines above are
-          the billed amounts, not the base rates.
+          {t('econ.net.senateNote', { mul: n(upkeepMul) })}
         </p>
       )}
 
       {/* ---------------- TREND ---------------- */}
       <h4 className="econ-h">
-        Income over time
-        <span className="econ-sub">per tick, as actually banked</span>
+        {t('econ.trend.h')}
+        <span className="econ-sub">{t('econ.trend.sub')}</span>
       </h4>
       <ResourceTrend points={plot} />
       <p className="econ-note">
-        The trend is measured, not projected: each point is that tick's change
-        in the pool with upkeep and spending added back. Trade payouts, salvage
-        and refunds land in it too, so it runs above or below the table
-        whenever something other than a settlement pays you.
+        {t('econ.trend.note')}
       </p>
     </div>
   );
@@ -420,14 +428,14 @@ export const EconomyPanel: React.FC<{ gameId: string }> = ({ gameId }) => {
  * each tuned to flatter its own series.
  */
 export function ResourceTrend({ points }: { points: Point[] }) {
+  useI18n();
   const [hover, setHover] = useState<number | null>(null);
   const W = 560, H = 200, PAD_L = 46, PAD_R = 46, PAD_T = 12, PAD_B = 24;
 
   if (points.length < 2) {
     return (
       <div className="econ-chart econ-chart--empty">
-        The trend needs at least two recorded ticks. It starts drawing
-        after the next tick.
+        {t('econ.trend.empty')}
       </div>
     );
   }
@@ -447,7 +455,7 @@ export function ResourceTrend({ points }: { points: Point[] }) {
     <figure className="econ-chart">
       <svg
         viewBox={`0 0 ${W} ${H}`} className="econ-svg" role="img"
-        aria-label={`Per-tick income for metal, credits and science, ticks ${points[0].tick} to ${points[points.length - 1].tick}`}
+        aria-label={t('econ.trend.aria', { from: points[0].tick, to: points[points.length - 1].tick })}
         onMouseLeave={() => setHover(null)}
         onMouseMove={(e) => {
           const r = e.currentTarget.getBoundingClientRect();
@@ -492,10 +500,10 @@ export function ResourceTrend({ points }: { points: Point[] }) {
         {RES_ORDER.map(k => (
           <span key={k}>
             <i className="econ-dot" style={{ background: INK[k] }} aria-hidden />
-            {RES_LABEL[k]} <b>{n(val(points[idx], k))}</b>
+            {resLabel(k)} <b>{n(val(points[idx], k))}</b>
           </span>
         ))}
-        <span className="econ-legend__t">tick {points[idx].tick}</span>
+        <span className="econ-legend__t">{t('econ.trend.tick', { n: points[idx].tick })}</span>
       </figcaption>
     </figure>
   );

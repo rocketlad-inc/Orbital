@@ -32,11 +32,15 @@
 // a retry, a double tick or a worker restart cannot produce two.
 // ============================================================
 
+import { tr, trn } from './i18n.js';
+
 /** A digest is worth sending only if one of these is non-zero. */
 function anything(d) {
   return d.arrived > 0 || d.killed > 0 || d.lost > 0 || d.gained > 0 || d.built > 0 || banked(d.income) > 0;
 }
 
+// [income key, English label]. The label a player SEES comes from the
+// catalog (alert.turn.src.<key>); the English here is the fallback.
 const SOURCES = [
   ['delivered', 'Freighters'],
   ['terraformed', 'Terraformed'],
@@ -73,7 +77,7 @@ function bundle(v) {
  * where it came from: "Freighters 500M 80C · Terraformed 120M 30C 20S ·
  * Raw worlds 20M 10C 10S". Null when nothing was banked.
  */
-export function incomeLines(income) {
+export function incomeLines(income, L = 'en') {
   if (!income || banked(income) <= 0) return null;
   const sum = { metal: 0, gold: 0, science: 0 };
   for (const v of sourcesOf(income)) {
@@ -82,16 +86,16 @@ export function incomeLines(income) {
     sum.science += v.science ?? 0;
   }
   const head = [
-    Math.round(sum.metal) > 0 ? `+${fmt(sum.metal)} metal` : null,
-    Math.round(sum.gold) > 0 ? `+${fmt(sum.gold)} credits` : null,
-    Math.round(sum.science) > 0 ? `+${fmt(sum.science)} science` : null,
+    Math.round(sum.metal) > 0 ? tr(L, 'alert.turn.metal', { n: fmt(sum.metal) }) : null,
+    Math.round(sum.gold) > 0 ? tr(L, 'alert.turn.credits', { n: fmt(sum.gold) }) : null,
+    Math.round(sum.science) > 0 ? tr(L, 'alert.turn.science', { n: fmt(sum.science) }) : null,
   ].filter(Boolean).join(' · ');
   if (!head) return null;
   const from = SOURCES
-    .map(([k, label]) => (income[k] && bundle(income[k]) ? `${label} ${bundle(income[k])}` : null))
+    .map(([k]) => (income[k] && bundle(income[k]) ? `${tr(L, `alert.turn.src.${k}`)} ${bundle(income[k])}` : null))
     .filter(Boolean)
     .join(' · ');
-  return { head: `${head} to the pool`, from };
+  return { head: tr(L, 'alert.turn.toPool', { head }), from };
 }
 
 /**
@@ -123,7 +127,7 @@ const ROUTES_NAMED = 2;
  * glance wants; the hull and the tonnage are one tap away in the game.
  * A partner's route names the partner: "Belt Run (Solar Directorate)".
  */
-export function deliveredLine(shipments) {
+export function deliveredLine(shipments, L = 'en') {
   if (!shipments || shipments.length === 0) return null;
   const names = [];
   for (const s of shipments) {
@@ -131,7 +135,7 @@ export function deliveredLine(shipments) {
     if (!names.includes(label)) names.push(label);
   }
   const more = names.length - ROUTES_NAMED;
-  return `Delivered: ${names.slice(0, ROUTES_NAMED).join(', ')}${more > 0 ? ` +${more}` : ''}`;
+  return tr(L, 'alert.turn.delivered', { names: `${names.slice(0, ROUTES_NAMED).join(', ')}${more > 0 ? ` +${more}` : ''}` });
 }
 
 /**
@@ -141,22 +145,22 @@ export function deliveredLine(shipments) {
  * delivered. The per-source breakdown lives in the game and on the
  * watch's tick screen, not in the notification.
  */
-function line(d) {
+function line(d, L = 'en') {
   const parts = [];
-  if (d.lost > 0) parts.push(`${d.lost} lost`);
-  if (d.killed > 0) parts.push(`${d.killed} killed`);
-  if (d.gained > 0) parts.push(`${d.gained} ${d.gained === 1 ? 'world' : 'worlds'} claimed`);
+  if (d.lost > 0) parts.push(tr(L, 'alert.turn.lost', { n: d.lost }));
+  if (d.killed > 0) parts.push(tr(L, 'alert.turn.killed', { n: d.killed }));
+  if (d.gained > 0) parts.push(trn(L, 'alert.turn.claimed', d.gained));
   if (d.arrived > 0) {
     const named = d.arrivals ?? [];
     if (named.length > 0 && named.length <= 2) {
-      parts.push(named.map(a => `${a.ship} reached ${a.body}`).join(' · '));
+      parts.push(named.map(a => tr(L, 'alert.turn.reached', { ship: a.ship, body: a.body })).join(' · '));
     } else {
-      parts.push(`${d.arrived} fleets arrived`);
+      parts.push(tr(L, 'alert.turn.arrived', { n: d.arrived }));
     }
   }
-  if (d.built > 0) parts.push(`${d.built} built`);
-  const body = [parts.join(' · '), deliveredLine(d.shipments)].filter(Boolean).join('\n');
-  return body || 'All quiet';
+  if (d.built > 0) parts.push(tr(L, 'alert.turn.built', { n: d.built }));
+  const body = [parts.join(' · '), deliveredLine(d.shipments, L)].filter(Boolean).join('\n');
+  return body || tr(L, 'alert.turn.quiet');
 }
 
 /** How many shipments are named one to a line before the rest are counted. */
@@ -167,15 +171,17 @@ const SHIPMENTS_NAMED = 3;
  * (Phobos Run)". A delivery on a partner's route names the partner:
  * "(Solar Directorate · Belt Run)".
  */
-export function shipmentLines(shipments) {
+export function shipmentLines(shipments, L = 'en') {
   if (!shipments || shipments.length === 0) return [];
   const lines = shipments.slice(0, SHIPMENTS_NAMED).map(s => {
     const what = bundle(s);
     const via = [s.partner, s.route].filter(Boolean).join(' · ');
-    return `${s.ship} delivered ${what || 'an empty hold'} to ${s.at}${via ? ` (${via})` : ''}`;
+    return tr(L, 'alert.turn.shipment', {
+      ship: s.ship, what: what || tr(L, 'alert.turn.emptyHold'), at: s.at, via: via ? ` (${via})` : '',
+    });
   });
   const more = shipments.length - SHIPMENTS_NAMED;
-  if (more > 0) lines.push(`+${more} more ${more === 1 ? 'shipment' : 'shipments'}`);
+  if (more > 0) lines.push(trn(L, 'alert.turn.moreShipments', more));
   return lines;
 }
 
@@ -353,13 +359,13 @@ export async function turnDigest(env, notify, gameId, gameName, tick) {
       category: 'turn',
       dedupeKey: `turn:${gameId}:${tick}`,
       url: '/',
-      embed: {
+      embed: (L) => ({
         // TICK, the game's own word for it (Lorne), not "turn"; the total
         // banked rides in the title so the glance gets it first. The game's
         // name only when this player is in more than one.
-        title: [`Tick ${tick}`, bankedShort(d.income), multiGame.has(me.user_id) ? gameName : null].filter(Boolean).join(' · '),
-        description: line(d),
-      },
+        title: [tr(L, 'alert.turn.tick', { n: tick }), bankedShort(d.income), multiGame.has(me.user_id) ? gameName : null].filter(Boolean).join(' · '),
+        description: line(d, L),
+      }),
     }).catch(() => {});
   }
 }

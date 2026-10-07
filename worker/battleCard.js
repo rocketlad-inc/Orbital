@@ -19,6 +19,7 @@ import {
   createSurface, fillRect, fillCircle, fillRadial, drawText, textWidth,
   encodePng, hexToRgb, drawLine,
 } from './heraldPng.js';
+import { tr } from './i18n.js';
 
 /** Ticks either side that count as the same engagement. */
 const BATTLE_WINDOW = 2;
@@ -241,14 +242,14 @@ export async function publishBattles(env, gameId, tick) {
     const data = await buildBattleData(env, gameId, h.body_id, tick);
     if (!data) continue;
     const url = `${origin}/battle/${encodeURIComponent(gameId)}/${encodeURIComponent(h.body_id)}/${tick}.png`;
-    await discord.postChannelEmbed(env, {
-      title: `⚔️ Battle of ${data.body}`,
+    await discord.postChannelEmbed(env, (L) => ({
+      title: tr(L, 'feed.battle.title', { body: data.body }),
       description: data.holding
-        ? `**${data.total}** hulls destroyed. **${data.holding.name}** holds the field.`
-        : `**${data.total}** hulls destroyed. The field is abandoned.`,
+        ? tr(L, 'feed.battle.holds', { n: data.total, name: data.holding.name })
+        : tr(L, 'feed.battle.abandoned', { n: data.total }),
       color: 0xff5e3a,
       image: { url },
       footer: { text: `Orbital · ${data.gameName} · T+${tick}` },
-    }, gameId, { headline: data.total >= BATTLE_HEADLINE_LOSSES });
+    }), gameId, { headline: data.total >= BATTLE_HEADLINE_LOSSES });
   }
 }

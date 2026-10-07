@@ -115,8 +115,9 @@ describe('market — wiring', () => {
     // The fourth tab is STANDING now, not Treaties: war became a thing
     // you declare, so the tab that used to list paperwork leads with who
     // you are at war with and the button that changes it.
-    const order = ['Market', 'Private', 'Routes', 'Standing']
-      .map(l => dock.replace(/\r/g, '').indexOf(`\n              ${l}`));
+    // The labels are catalog keys now (trade.dock.*); source order is screen order.
+    const order = ['market', 'private', 'routes', 'standing']
+      .map(l => dock.replace(/\r/g, '').indexOf(`\n              {t('trade.dock.${l}')}`));
     expect(order.every(i => i > 0)).toBe(true);
     expect(order[0]).toBeLessThan(order[1]);
     expect(order[1]).toBeLessThan(order[2]);

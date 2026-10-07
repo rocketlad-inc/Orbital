@@ -12,6 +12,8 @@
 // skin restyles the habitats, the landing pad and the station hub.
 // ============================================================
 
+import { tk } from '../i18n/core';
+
 export type CitySkin = 'towers' | 'hive' | 'spires' | 'domes' | 'ziggurat';
 export type StationSkin = 'hub' | 'wheel' | 'citadel' | 'spindle' | 'lattice';
 
@@ -26,19 +28,19 @@ export interface SkinDef<T extends string> {
 }
 
 export const CITY_SKINS: SkinDef<CitySkin>[] = [
-  { id: 'towers', name: 'Standard towers', short: 'Towers', blurb: 'Block towers on a landing pad.', free: true },
-  { id: 'hive', name: 'Hive', short: 'Hive', blurb: 'Clustered hexagonal towers on a hex pad.' },
-  { id: 'spires', name: 'Needle spires', short: 'Spires', blurb: 'Tall thin spires with beacon tips.' },
-  { id: 'domes', name: 'Arcology domes', short: 'Domes', blurb: 'Glass domes with towers inside.' },
-  { id: 'ziggurat', name: 'Terraced ziggurats', short: 'Ziggurats', blurb: 'Stepped pyramids, lit at the summit.' },
+  { id: 'towers', get name() { return tk('data.skin.city.towers.name', 'Standard towers'); }, get short() { return tk('data.skin.city.towers.short', 'Towers'); }, get blurb() { return tk('data.skin.city.towers.blurb', 'Block towers on a landing pad.'); }, free: true },
+  { id: 'hive', get name() { return tk('data.skin.city.hive.name', 'Hive'); }, get short() { return tk('data.skin.city.hive.short', 'Hive'); }, get blurb() { return tk('data.skin.city.hive.blurb', 'Clustered hexagonal towers on a hex pad.'); } },
+  { id: 'spires', get name() { return tk('data.skin.city.spires.name', 'Needle spires'); }, get short() { return tk('data.skin.city.spires.short', 'Spires'); }, get blurb() { return tk('data.skin.city.spires.blurb', 'Tall thin spires with beacon tips.'); } },
+  { id: 'domes', get name() { return tk('data.skin.city.domes.name', 'Arcology domes'); }, get short() { return tk('data.skin.city.domes.short', 'Domes'); }, get blurb() { return tk('data.skin.city.domes.blurb', 'Glass domes with towers inside.'); } },
+  { id: 'ziggurat', get name() { return tk('data.skin.city.ziggurat.name', 'Terraced ziggurats'); }, get short() { return tk('data.skin.city.ziggurat.short', 'Ziggurats'); }, get blurb() { return tk('data.skin.city.ziggurat.blurb', 'Stepped pyramids, lit at the summit.'); } },
 ];
 
 export const STATION_SKINS: SkinDef<StationSkin>[] = [
-  { id: 'hub', name: 'Standard hub', short: 'Hub', blurb: 'A docking ring between solar wings.', free: true },
-  { id: 'wheel', name: 'Wheel', short: 'Wheel', blurb: 'A spoked habitat ring, the classic station.' },
-  { id: 'citadel', name: 'Citadel', short: 'Citadel', blurb: 'An armoured octagon with corner bastions.' },
-  { id: 'spindle', name: 'Spindle', short: 'Spindle', blurb: 'A long axial hull with docking rings at each end.' },
-  { id: 'lattice', name: 'Lattice', short: 'Lattice', blurb: 'An open truss frame with suspended spheres.' },
+  { id: 'hub', get name() { return tk('data.skin.station.hub.name', 'Standard hub'); }, get short() { return tk('data.skin.station.hub.short', 'Hub'); }, get blurb() { return tk('data.skin.station.hub.blurb', 'A docking ring between solar wings.'); }, free: true },
+  { id: 'wheel', get name() { return tk('data.skin.station.wheel.name', 'Wheel'); }, get short() { return tk('data.skin.station.wheel.short', 'Wheel'); }, get blurb() { return tk('data.skin.station.wheel.blurb', 'A spoked habitat ring, the classic station.'); } },
+  { id: 'citadel', get name() { return tk('data.skin.station.citadel.name', 'Citadel'); }, get short() { return tk('data.skin.station.citadel.short', 'Citadel'); }, get blurb() { return tk('data.skin.station.citadel.blurb', 'An armoured octagon with corner bastions.'); } },
+  { id: 'spindle', get name() { return tk('data.skin.station.spindle.name', 'Spindle'); }, get short() { return tk('data.skin.station.spindle.short', 'Spindle'); }, get blurb() { return tk('data.skin.station.spindle.blurb', 'A long axial hull with docking rings at each end.'); } },
+  { id: 'lattice', get name() { return tk('data.skin.station.lattice.name', 'Lattice'); }, get short() { return tk('data.skin.station.lattice.short', 'Lattice'); }, get blurb() { return tk('data.skin.station.lattice.blurb', 'An open truss frame with suspended spheres.'); } },
 ];
 
 export const FREE_CITY_SKIN: CitySkin = 'towers';

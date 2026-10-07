@@ -12,6 +12,8 @@ import { deriveSecondary } from '../game/colorUtils';
 import { makeSystemRootOf, systemLabel as systemLabelOf } from '../game/systemGrouping';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { EconomyPanel } from './EconomyPanel';
+import { t, tn } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 import './OverviewPanel.css';
 // Borrow the Fleet panel's chrome so the two overview screens read as one
 // family: same scroll shell, same collapsible system headers, same card
@@ -33,6 +35,7 @@ interface SettlementsPanelProps {
 type Filter = 'all' | 'player' | 'enemy' | 'cities' | 'stations' | 'economy';
 
 export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) => {
+  useI18n();
   const { gameState, selectSettlement, selectBody, focusBody, selectedSettlementId } = useGameContext();
   const empireMul = empireYieldMultipliers(gameState);
   const mpActions = useMultiplayerActions();
@@ -127,8 +130,8 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
   }, [gameState.factions]);
 
   const factionOf = (ownedBy: string): { name: string; color: string; color2: string } => {
-    if (ownedBy === 'player') return { name: 'You', color: '#4ecdc4', color2: deriveSecondary('#4ecdc4') };
-    if (ownedBy === 'enemy') return { name: 'Enemy', color: '#ff5e5e', color2: deriveSecondary('#ff5e5e') };
+    if (ownedBy === 'player') return { name: t('settle.owner.you'), color: '#4ecdc4', color2: deriveSecondary('#4ecdc4') };
+    if (ownedBy === 'enemy') return { name: t('settle.owner.enemy'), color: '#ff5e5e', color2: deriveSecondary('#ff5e5e') };
     const f = factionById.get(ownedBy);
     if (f) return f;
     // Unknown id: show the short suffix, never the game-namespaced id.
@@ -198,16 +201,16 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
     <div className="overview-panel">
       <div className="overview-panel__header">
         <div className="overview-panel__title">
-          <div className="overview-panel__title-main">Empire</div>
+          <div className="overview-panel__title-main">{t('settle.title')}</div>
           <div className="overview-panel__title-sub">
             {/* Singular where it is one: this read "1 player · 1 cities". */}
-            {playerStats.total} {playerStats.total === 1 ? 'settlement' : 'settlements'}
-            {' · '}{playerStats.cities} {playerStats.cities === 1 ? 'city' : 'cities'}
-            {' · '}{playerStats.stations} {playerStats.stations === 1 ? 'station' : 'stations'}
-            {' · '}pop {playerStats.totalPop}
+            {tn('settle.count.settlements', playerStats.total)}
+            {' · '}{tn('settle.count.cities', playerStats.cities)}
+            {' · '}{tn('settle.count.stations', playerStats.stations)}
+            {' · '}{t('settle.pop', { n: playerStats.totalPop })}
             {playerStats.total > 0 && (
               <>
-                {' · stockpile '}
+                {` · ${t('settle.stockpile')} `}
                 <span style={{ color: '#a0a0a0' }}>{Math.floor(playerStats.stockpile.ore)}M</span>
                 {' '}
                 <span style={{ color: '#ffd700' }}>{Math.floor(playerStats.stockpile.credits)}C</span>
@@ -229,7 +232,7 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
             className={`filter-chip ${filter === f ? 'active' : ''}`}
             onClick={() => setFilter(f)}
           >
-            {f}
+            {t(`settle.filter.${f}` as 'settle.filter.all')}
           </button>
         ))}
       </div>
@@ -259,11 +262,11 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
           {rows.length === 0 ? (
             <div className="overview-empty">
               {filter === 'enemy'
-                ? 'No rival settlements in sensor range. Build sensors, or send a ship to look.'
-                : 'No settlements match the filter.'}
+                ? t('settle.empty.enemy')
+                : t('settle.empty.filter')}
               {filter === 'player' && (
                 <div style={{ marginTop: 8, fontSize: 10 }}>
-                  Deploy a city or station from a body's inspector to start a colony.
+                  {t('settle.empty.hint')}
                 </div>
               )}
             </div>
@@ -283,9 +286,9 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
                     <span className="fleet-sys__dot" style={{ background: system.rootBody?.color || '#888' }} aria-hidden />
                     <span className="fleet-sys__name">{system.label}</span>
                     <span className="fleet-sys__meta">
-                      {cities > 0 && `${cities} ${cities === 1 ? 'city' : 'cities'}`}
+                      {cities > 0 && tn('settle.count.cities', cities)}
                       {cities > 0 && stations > 0 && ' · '}
-                      {stations > 0 && `${stations} station${stations === 1 ? '' : 's'}`}
+                      {stations > 0 && tn('settle.count.stations', stations)}
                     </span>
                   </button>
 
@@ -300,7 +303,7 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
                             key={s.id}
                             className={`set-card${isSelected ? ' set-card--selected' : ''}`}
                             onClick={() => handleRowClick(s.id, s.bodyId)}
-                            title={`${s.name} — ${def.displayName} on ${body?.name ?? s.bodyId}`}
+                            title={t('settle.cardTitle', { name: s.name, kind: def.displayName, body: body?.name ?? s.bodyId })}
                           >
                             <span
                               className="set-card__icon"
@@ -317,9 +320,9 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
                               </span>
                               <span className="set-card__l2">
                                 {ownerBadge(s.ownedBy)}
-                                <span className="set-card__pop" title="Population">pop {s.population}</span>
+                                <span className="set-card__pop" title={t('settle.populationTitle')}>{t('settle.pop', { n: s.population })}</span>
                                 {ownerFreighters.length > 0 && (
-                                  <span className="set-card__frt" title="Freighters docked here">
+                                  <span className="set-card__frt" title={t('settle.freightersTitle')}>
                                     ⛟{ownerFreighters.length}
                                   </span>
                                 )}
@@ -331,10 +334,10 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
                                 <span className={yields.credits > 0 ? 'prod-rate prod-rate--credits' : 'prod-rate prod-rate--zero'}>
                                   {yields.credits > 0 ? `+${yields.credits.toFixed(1)}C` : '—'}
                                 </span>
-                                <span className="set-card__stock" title="Banked on site">
+                                <span className="set-card__stock" title={t('settle.bankedTitle')}>
                                   {hasStock
                                     ? `${Math.floor(s.stockpile.ore)}M ${Math.floor(s.stockpile.credits)}C`
-                                    : 'empty'}
+                                    : t('settle.empty.stock')}
                                 </span>
                               </span>
                               {renderHpBar(s)}

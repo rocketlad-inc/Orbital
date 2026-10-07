@@ -10,6 +10,8 @@ import { Changelog } from './Changelog';
 import { PressKit } from './PressKit';
 import { Credits } from './Credits';
 import { LandingHome } from './LandingHome';
+import { t, tk, type Key } from '../i18n/core';
+import { useI18n, LanguageSwitch } from '../i18n/react';
 
 interface LandingProps {
   /** Triggered by the Login button or any CTA. Reveals the auth overlay. */
@@ -75,6 +77,16 @@ const PAGE_META: Record<LandingTab, { title: string; description: string }> = {
   },
 };
 
+/** Title and description for the tab, in the player's language. The press,
+ *  privacy, changelog and credits pages are English documents, so theirs stay. */
+function pageMeta(tab: LandingTab): { title: string; description: string } {
+  const m = PAGE_META[tab];
+  if (tab === 'about' || tab === 'howto') {
+    return { title: tk(`site.meta.${tab}.title`, m.title), description: tk(`site.meta.${tab}.desc`, m.description) };
+  }
+  return m;
+}
+
 function tabFromPath(): LandingTab {
   if (typeof window === 'undefined') return 'about';
   return TAB_PATHS[window.location.pathname] ?? 'about';
@@ -84,6 +96,7 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, authed = false, onEx
   const starfieldRef = useRef<HTMLCanvasElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [tab, setTab] = useState<LandingTab>(tabFromPath);
+  const { lang } = useI18n();
 
   // Keep the address bar in step with the tab, so the link a player
   // copies is the page they are looking at. pushState (not replaceState)
@@ -108,7 +121,7 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, authed = false, onEx
   // static HTML carries no canonical on purpose: one pointing at "/" would
   // tell search engines /changelog and /how-to-play are duplicates of it.
   useEffect(() => {
-    const meta = PAGE_META[tab];
+    const meta = pageMeta(tab);
     const prevTitle = document.title;
     document.title = meta.title;
     const desc = document.querySelector('meta[name="description"]');
@@ -122,7 +135,7 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, authed = false, onEx
       document.title = prevTitle.startsWith('Orbital') ? 'Orbital' : prevTitle;
       if (desc && prevDesc !== null) desc.setAttribute('content', prevDesc);
     };
-  }, [tab]);
+  }, [tab, lang]);
 
   // Switching tabs scrolls back to the top — otherwise you land
   // mid-page in the new content with no idea where you are. NOTE:
@@ -202,34 +215,35 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, authed = false, onEx
 
       {/* Top nav */}
       <header className="landing-nav">
-        <button className="landing-brand" onClick={() => setTab('about')} aria-label="Orbital home">
+        <button className="landing-brand" onClick={() => setTab('about')} aria-label={t('site.homeAria')}>
           <span className="brand-glyph" aria-hidden>◉</span>
           <span className="brand-text">ORBITAL</span>
         </button>
-        <nav className="landing-nav-tabs" aria-label="Sections">
+        <nav className="landing-nav-tabs" aria-label={t('site.sectionsAria')}>
           {([
-            ['about', 'The game'],
-            ['howto', 'How to play'],
-            ['changelog', 'Changelog'],
-            ['press', 'Press'],
-          ] as Array<[LandingTab, string]>).map(([t, label]) => (
+            ['about', 'site.nav.about'],
+            ['howto', 'site.nav.howto'],
+            ['changelog', 'site.nav.changelog'],
+            ['press', 'site.nav.press'],
+          ] as Array<[LandingTab, Key]>).map(([id, labelKey]) => (
             <button
-              key={t}
-              className={`landing-tab-btn${tab === t ? ' is-active' : ''}`}
-              aria-current={tab === t ? 'page' : undefined}
-              onClick={() => setTab(t)}
+              key={id}
+              className={`landing-tab-btn${tab === id ? ' is-active' : ''}`}
+              aria-current={tab === id ? 'page' : undefined}
+              onClick={() => setTab(id)}
             >
-              {label}
+              {t(labelKey)}
             </button>
           ))}
         </nav>
         <div className="landing-nav-actions">
+          <LanguageSwitch compact />
           {authed ? (
-            <button className="landing-cta-btn" onClick={onExit}>← Back to game</button>
+            <button className="landing-cta-btn" onClick={onExit}>{t('site.back')}</button>
           ) : (
             <>
-              <button className="landing-login-btn" onClick={onSignIn}>Sign in</button>
-              <button className="landing-cta-btn" onClick={onSignIn}>Play free</button>
+              <button className="landing-login-btn" onClick={onSignIn}>{t('site.signIn')}</button>
+              <button className="landing-cta-btn" onClick={onSignIn}>{t('site.playFree')}</button>
             </>
           )}
         </div>
@@ -245,7 +259,7 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, authed = false, onEx
 
       {tab === 'changelog' && (
         <Changelog
-          ctaLabel={authed ? '← BACK TO GAME' : 'PLAY ORBITAL'}
+          ctaLabel={authed ? t('site.changelogBack') : t('site.changelogPlay')}
           onCta={authed ? (onExit ?? onSignIn) : onSignIn}
         />
       )}
@@ -257,14 +271,14 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, authed = false, onEx
           <div className="landing-footer__brand">
             <span className="brand-glyph" aria-hidden>◉</span>
             <span className="brand-text">ORBITAL</span>
-            <p className="landing-footer__tag">A free multiplayer strategy game set across the real solar system.</p>
+            <p className="landing-footer__tag">{t('site.footerTag')}</p>
           </div>
-          <nav className="landing-footer__links" aria-label="Site">
-            <button className="footer-link" onClick={() => setTab('howto')}>How to play</button>
-            <button className="footer-link" onClick={() => setTab('changelog')}>Changelog</button>
-            <button className="footer-link" onClick={() => setTab('press')}>Press kit</button>
-            <button className="footer-link" onClick={() => setTab('privacy')}>Privacy</button>
-            <button className="footer-link" onClick={() => setTab('credits')}>Credits</button>
+          <nav className="landing-footer__links" aria-label={t('site.footerAria')}>
+            <button className="footer-link" onClick={() => setTab('howto')}>{t('site.nav.howto')}</button>
+            <button className="footer-link" onClick={() => setTab('changelog')}>{t('site.nav.changelog')}</button>
+            <button className="footer-link" onClick={() => setTab('press')}>{t('site.footer.press')}</button>
+            <button className="footer-link" onClick={() => setTab('privacy')}>{t('site.footer.privacy')}</button>
+            <button className="footer-link" onClick={() => setTab('credits')}>{t('site.footer.credits')}</button>
           </nav>
         </div>
         <div className="landing-footer__legal">© {new Date().getFullYear()} Orbital · orbital-empire.com</div>

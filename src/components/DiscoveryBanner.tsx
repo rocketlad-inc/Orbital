@@ -23,6 +23,8 @@ import { useGameContext } from '../state/gameContext';
 import { SECRET_DEFS } from '../game/secrets';
 import type { Body } from '../types';
 import { ackDiscovery } from '../game/discoveryAck';
+import { t } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 import './DiscoveryBanner.css';
 
 interface Discovery {
@@ -44,6 +46,7 @@ function stripPrefix(msg: string): string {
 }
 
 export const DiscoveryBanner: React.FC = () => {
+  useI18n();
   const { gameState, selectBody, focusBody } = useGameContext();
 
   // Body ids whose reveal we've already enqueued. Seeded with everything
@@ -84,10 +87,10 @@ export const DiscoveryBanner: React.FC = () => {
         bodyId: b.id,
         tick: sec.discoveredAtTick,
         bodyName: b.name,
-        title: def?.displayName ?? 'Discovery',
-        reward: def ? stripPrefix(def.discoveryMessage) : 'A secret uncovered',
+        title: def?.displayName ?? t('discovery.fallback.title'),
+        reward: def ? stripPrefix(def.discoveryMessage) : t('discovery.fallback.reward'),
         mine,
-        discovererName: mine ? 'You' : (who?.name ?? 'A rival'),
+        discovererName: mine ? t('discovery.you') : (who?.name ?? t('discovery.aRival')),
         discovererColor: who?.color ?? '#e879f9',
       });
     }
@@ -139,17 +142,17 @@ export const DiscoveryBanner: React.FC = () => {
         <span className="discovery-banner__glyph">✦</span>
         <div className="discovery-banner__body">
           <div className="discovery-banner__head">
-            {current.mine ? 'DISCOVERY' : `${current.discovererName} — DISCOVERY`}
+            {current.mine ? t('discovery.head') : t('discovery.headRival', { name: current.discovererName })}
             <span className="discovery-banner__where"> · {current.bodyName}</span>
           </div>
           <div className="discovery-banner__title">{current.title}</div>
           <div className="discovery-banner__reward">{current.reward}</div>
         </div>
-        {current.mine && <span className="discovery-banner__cta">JUMP TO ›</span>}
+        {current.mine && <span className="discovery-banner__cta">{t('discovery.jumpTo')}</span>}
         <button
           className="discovery-banner__close"
           onClick={(e) => { e.stopPropagation(); dismiss(); }}
-          aria-label="Dismiss"
+          aria-label={t('discovery.dismiss')}
         >×</button>
       </div>
     </div>

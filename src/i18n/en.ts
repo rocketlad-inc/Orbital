@@ -9,7 +9,9 @@
 // and both plural forms.
 // ============================================================
 
-export const en = {
+import { ship, map, econ, social, review, guide, data, helpers } from './parts/en';
+
+const base = {
   // ---- language picker ----
   'lang.label': 'Language',
 
@@ -288,3 +290,7 @@ export const en = {
   'invite.join': 'Join the Discord',
   'invite.no': 'No thanks',
 } as const;
+
+/** Base keys (lobby, sign-in, email settings...) plus one part per area. */
+export const en = { ...base, ...ship, ...map, ...econ, ...social, ...review, ...guide, ...data, ...helpers } as const;
+export { base as enBase };

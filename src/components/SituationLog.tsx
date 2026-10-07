@@ -48,6 +48,8 @@ import { iconClassFor, ShipIcon } from './ShipIcons';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- ShipClassName — type import for work in flight
 import type { ShipClassName } from '../game/shipClasses';
 import { apiFetch } from '../multiplayer/api';
+import { t, tk } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 import './SituationLog.css';
 import './DockRail.css';
 
@@ -115,6 +117,7 @@ interface Props {
 }
 
 export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData }) => {
+  useI18n();
   const { gameState, selectShip, selectBody, focusBody, updateCamera } = useGameContext();
   // The trade dock counts market posts you have not looked at and
   // announces the number; this panel has no fetch of its own.
@@ -368,23 +371,23 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
   const totalCount = visibleItems.length;
 
   return (
-    <div className={`dock-panel sit-panel-shell${open ? ' is-open' : ''}`} role="region" aria-label="Situation Report">
+    <div className={`dock-panel sit-panel-shell${open ? ' is-open' : ''}`} role="region" aria-label={t('situation.aria')}>
       <div className="sit-panel__head">
         <span className="sit-panel__title">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
             <path d="M5 6h14M5 10h14M5 14h9M5 18h9" />
           </svg>
-          SITUATION REPORT
+          {t('situation.title')}
         </span>
-        <button onClick={close} className="sit-panel__close" aria-label="Close">×</button>
+        <button onClick={close} className="sit-panel__close" aria-label={t('situation.close')}>×</button>
       </div>
 
       {totalCount === 0 ? (
         <div className="sit-panel__empty">
           <div className="sit-panel__empty-icon">✓</div>
-          <div>Nothing requires your attention.</div>
+          <div>{t('situation.empty')}</div>
           <div className="sit-panel__empty-sub">
-            Items appear here when a ship arrives, a build queue runs dry, a vote opens, or threats are inbound.
+            {t('situation.emptySub')}
           </div>
         </div>
       ) : (
@@ -392,7 +395,7 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
           {grouped.map(g => (
             <section key={g.tier} className={`sit-tier sit-tier--${g.tier}`}>
               <header className="sit-tier__head">
-                <span className="sit-tier__label">{TIER_LABEL[g.tier]}</span>
+                <span className="sit-tier__label">{tk(`situation.tier.${g.tier}`, TIER_LABEL[g.tier])}</span>
                 <span className="sit-tier__count">{g.items.length}</span>
               </header>
               <ul className="sit-tier__list">
@@ -403,10 +406,10 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
                       <button
                         className={`sit-item sit-item--${it.severity}`}
                         onClick={() => handleClick(it)}
-                        title={it.hint ?? 'Click to focus'}
+                        title={it.hint ?? t('situation.clickFocus')}
                       >
                         <span className="sit-item__title">
-                          {isNew && <span className="sit-item__new" aria-label="New" />}
+                          {isNew && <span className="sit-item__new" aria-label={t('situation.new')} />}
                           {it.title}
                         </span>
                         {it.subtitle && <span className="sit-item__sub">{it.subtitle}</span>}
@@ -427,15 +430,15 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
                           className="sit-item__dismiss"
                           onClick={() => toggleCollapsed(it.id)}
                           aria-expanded={!collapsed.has(it.id)}
-                          title={collapsed.has(it.id) ? 'Show the order of battle' : 'Fold this battle away'}
-                          aria-label={`${collapsed.has(it.id) ? 'Expand' : 'Collapse'}: ${it.title}`}
+                          title={collapsed.has(it.id) ? t('situation.showBattle') : t('situation.foldBattle')}
+                          aria-label={`${collapsed.has(it.id) ? t('situation.expand') : t('situation.collapse')}: ${it.title}`}
                         >{collapsed.has(it.id) ? '▸' : '▾'}</button>
                       ) : (
                         <button
                           className="sit-item__dismiss"
                           onClick={() => dismissItem(it.id)}
-                          title="Dismiss"
-                          aria-label={`Dismiss: ${it.title}`}
+                          title={t('situation.dismiss')}
+                          aria-label={`${t('situation.dismiss')}: ${it.title}`}
                         >×</button>
                       )}
                       {/* ORDER OF BATTLE. A fight is the one situation
@@ -490,10 +493,10 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
                                 <span
                                   className="sit-battle__flag"
                                   style={{ color: side.color }}
-                                  title={side.mine ? 'Your forces' : side.factionName}
-                                >{side.mine ? 'YOU' : side.factionName}</span>
+                                  title={side.mine ? t('situation.yourForces') : side.factionName}
+                                >{side.mine ? t('situation.you') : side.factionName}</span>
                                 <span className="sit-battle__count">
-                                  {side.total} · {Math.round(side.damage)} dmg/t
+                                  {side.total} · {t('situation.dmgPerTick', { n: Math.round(side.damage) })}
                                 </span>
                               </div>
                               {/* ICONS, NOT A ROSTER. Forty names is a
@@ -507,7 +510,7 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
                                     type="button"
                                     className="sit-battle__hull"
                                     onClick={() => { close(); selectShip(sh.id); }}
-                                    title={`${sh.name} — ${sh.shipClass}${sh.hpPct != null ? ` · ${sh.hpPct}% hull` : ''}`}
+                                    title={`${sh.name} — ${sh.shipClass}${sh.hpPct != null ? ` · ${t('situation.hullPct', { pct: sh.hpPct })}` : ''}`}
                                     aria-label={sh.name}
                                   >
                                     <ShipIcon

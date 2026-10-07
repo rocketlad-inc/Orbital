@@ -28,6 +28,8 @@ import { PlanetIcon } from '../components/PlanetIcon';
 import { ShipIcon } from '../components/ShipIcons';
 import type { ShipIconClass, ShipIconVariant } from '../components/ShipIcons';
 import { routeStops, routeShips, routePartyColors, routeGradient } from '../game/routeSelectors';
+import { t, tn } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 import './RouteDiagram.css';
 
 export interface RouteDiagramProps {
@@ -62,6 +64,7 @@ export function placeShip(
 }
 
 export const RouteDiagram: React.FC<RouteDiagramProps> = ({ gameState, route }) => {
+  useI18n();
   const stops = routeStops(route);
   const crew = routeShips(route);
   // WHOSE LANE IS THIS. Domestic hauling is one empire's business end to
@@ -133,7 +136,7 @@ export const RouteDiagram: React.FC<RouteDiagramProps> = ({ gameState, route }) 
 
   return (
     <div className="rd" role="img" aria-label={
-      `Route: ${stops.map(s => bodyById.get(s.bodyId)?.name ?? s.bodyId).join(' then ')}, repeating`
+      t('route.diagram.aria', { stops: stops.map(s => bodyById.get(s.bodyId)?.name ?? s.bodyId).join(` ${t('route.diagram.then')} `) })
     }>
       {/* The lane's colours ride as CSS variables so the arrows, the
           stop rings and the loop glyph all read from one source — the
@@ -167,8 +170,9 @@ export const RouteDiagram: React.FC<RouteDiagramProps> = ({ gameState, route }) 
                   {incoming.length > 0 && (
                     <div
                       className="rd-ship is-flying"
-                      title={`${names(incoming)} — under way${
-                        soonest(incoming) != null ? `, arriving in ${soonest(incoming)} ticks` : ''}`}
+                      title={soonest(incoming) != null
+                        ? tn('route.diagram.underWayEta', soonest(incoming) as number, { names: names(incoming) })
+                        : t('route.diagram.underWay', { names: names(incoming) })}
                     >
                       <span className="rd-ship-hulls" aria-hidden>
                         {incoming.map((m, k) => (
@@ -199,11 +203,11 @@ export const RouteDiagram: React.FC<RouteDiagramProps> = ({ gameState, route }) 
                     described half of what happens. */}
                 <div className="rd-act">
                   {route.consolidated
-                    ? 'drop & load'
-                    : s.action === 'dropoff' ? 'drop off' : 'pick up'}
+                    ? t('route.diagram.dropLoad')
+                    : s.action === 'dropoff' ? t('route.diagram.dropOff') : t('route.diagram.pickUp')}
                 </div>
                 {here.length > 0 && (
-                  <div className="rd-ship is-docked" title={`${names(here)} — docked here`}>
+                  <div className="rd-ship is-docked" title={t('route.diagram.docked', { names: names(here) })}>
                     <span className="rd-ship-hulls" aria-hidden>
                       {here.map((m, k) => (
                         <ShipIcon key={k} shipClass={m.cls} variant={m.variant}
@@ -220,7 +224,7 @@ export const RouteDiagram: React.FC<RouteDiagramProps> = ({ gameState, route }) 
         {/* The loop-back. The single most confusing thing about a
             standing route is that it repeats, so say so at the end of
             the chain rather than trusting the player to infer it. */}
-        <div className="rd-loop" title="…then back to the first stop, and round again">
+        <div className="rd-loop" title={t('route.diagram.loopTip')}>
           <span className="rd-loop-glyph" aria-hidden>↻</span>
         </div>
       </div>

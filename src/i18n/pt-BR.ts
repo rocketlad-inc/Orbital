@@ -14,8 +14,9 @@
 // ============================================================
 
 import type { Catalog } from './core';
+import { ship, map, econ, social, review, guide, data, helpers } from './parts/pt-BR';
 
-export const ptBR: Catalog = {
+const base: Catalog = {
   // ---- language picker ----
   'lang.label': 'Idioma',
 
@@ -294,3 +295,6 @@ export const ptBR: Catalog = {
   'invite.join': 'Entrar no Discord',
   'invite.no': 'Agora não',
 };
+
+export const ptBR: Catalog = { ...base, ...ship, ...map, ...econ, ...social, ...review, ...guide, ...data, ...helpers };
+export { base as ptBRBase };

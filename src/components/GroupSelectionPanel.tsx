@@ -29,6 +29,8 @@ import {
 import { makePeaceCheck } from '../game/peace';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { Ship } from '../types';
+import { t, tn } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 import './Outliner.css';
 import './GroupSelectionPanel.css';
 
@@ -71,6 +73,7 @@ export function useGroupOwnsCardSlot(): boolean {
 }
 
 export const GroupSelectionPanel: React.FC = () => {
+  useI18n();
   const {
     gameState, uiState, selectShip, focusBody,
     toggleShipSelection, clearShipSelection, setGroupListOpen,
@@ -171,17 +174,17 @@ export const GroupSelectionPanel: React.FC = () => {
     // `display: none !important` unless it sits inside .bottom-sheet__body,
     // so reusing that class without this wrapper renders an invisible
     // panel on every phone. ShipPanel wraps itself exactly the same way.
-    <BottomSheet open onClose={closeSheet} title={`${ships.length} ships selected`}>
+    <BottomSheet open onClose={closeSheet} title={tn('ship.gsp.selectedTitle', ships.length)}>
       {/* Reuses .ship-panel deliberately: this occupies that exact slot,
           so it carries the same frame, border, slide-in and 55vh cap. A
           bespoke shell would drift from the card it stands in for. */}
       <div className="ship-panel group-selection-panel">
       <div className="panel-header">
-        <span>{ships.length} SHIPS SELECTED</span>
+        <span>{tn('ship.gsp.selectedHeader', ships.length)}</span>
         <button
           className="panel-close"
           onClick={clearShipSelection}
-          title="Clear the selection"
+          title={t('ship.gsp.clear')}
         >✕</button>
       </div>
 
@@ -236,16 +239,16 @@ export const GroupSelectionPanel: React.FC = () => {
                 title={status.title}
               >{status.label}</span>
               {loadout && ship.parts && ship.parts.length > 0 && (
-                <span className="outliner__ship-loadout" title="Fitted parts">{loadout}</span>
+                <span className="outliner__ship-loadout" title={t('ship.gsp.fittedParts')}>{loadout}</span>
               )}
-              <span className="gsp-where" title="Location">{where}</span>
+              <span className="gsp-where" title={t('ship.gsp.location')}>{where}</span>
               <span
                 className={`outliner__hp-dot outliner__hp-dot--${hpClass(r)}`}
                 title={`HP ${Math.round(r * 100)}%`}
               />
               <button
                 className="gsp-drop"
-                title="Remove from selection"
+                title={t('ship.gsp.remove')}
                 onClick={(e) => { e.stopPropagation(); toggleShipSelection(ship.id); }}
               >✕</button>
             </div>
@@ -256,9 +259,9 @@ export const GroupSelectionPanel: React.FC = () => {
             type="button"
             className="gsp-more"
             onClick={() => setShowAll(true)}
-            title="Listing every hull is slow on a large selection"
+            title={t('ship.gsp.moreTip')}
           >
-            and {hidden} more — show all
+            {t('ship.gsp.more', { n: hidden })}
           </button>
         )}
       </div>
