@@ -118,6 +118,20 @@ export const SECRET_DEFS: Record<BodySecretKind, SecretDef> = {
     discoveryMessage: 'DISCOVERY: a deep cache sealed against the cold, worth a destroyer in metal and credits.',
     hostCategories: [],
   },
+  // --- THE FAR SYSTEMS' SIGNATURE FINDS. MP-only, placed server-side by
+  // worker/factions.js FAR_SECRET_PLAN; hostCategories empty like the rest.
+  precursor_orrery: {
+    kind: 'precursor_orrery',
+    displayName: 'Precursor Orrery',
+    discoveryMessage: 'DISCOVERY: a precursor orrery, built to follow the two suns and still turning. A working station, and it is yours.',
+    hostCategories: [],
+  },
+  horizon_archive: {
+    kind: 'horizon_archive',
+    displayName: 'Horizon Archive',
+    discoveryMessage: 'DISCOVERY: a record of everything the ancients measured at the event horizon. A windfall of science.',
+    hostCategories: [],
+  },
 };
 
 /**
