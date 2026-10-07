@@ -17,7 +17,6 @@ import {
   DeliveryOptions,
   Pact,
   PactKind,
-  PACT_LABELS,
   Faction,
   MyFaction,
   ResourceBundle,
@@ -25,7 +24,10 @@ import {
   AssetDealsView,
 } from './api';
 import { logUiEvent } from './telemetry';
-import { TradeComposer } from './TradeComposer';
+import { TradeComposer, pactLabel, resWord } from './TradeComposer';
+import { t, tn, type Key } from '../i18n/core';
+import { useI18n } from '../i18n/react';
+import { apiErrorText } from '../i18n/apiErrors';
 import { focusTradeCard, useTradeFocus } from './tradeFocus';
 import { AssetDealRow } from './AssetDealRow';
 import './AssetDealsCard.css';
@@ -50,11 +52,7 @@ const RESOURCE_COLORS: Record<keyof ResourceBundle, string> = {
 // carries a non-zero amount, advertising a resource that no longer
 // exists and cannot be paid. Legacy rows now read as the metal/gold/
 // science they can actually settle in.
-const RESOURCE_LABELS: Record<string, string> = {
-  metal: 'Metal',
-  gold: 'Credits',
-  science: 'Science',
-};
+const RESOURCE_KEYS = ['metal', 'gold', 'science'] as const;
 
 export function TradesPanel({ gameId, view = 'deals' }: {
   gameId: string;
@@ -62,6 +60,7 @@ export function TradesPanel({ gameId, view = 'deals' }: {
    *  'treaties' is the pacts in force, on a tab of their own. */
   view?: 'deals' | 'treaties';
 }) {
+  useI18n();
   useEffect(() => { logUiEvent(gameId, view === 'treaties' ? 'treaties' : 'trades'); }, [gameId, view]);
   const api = useMemo(() => tradesApi(gameId), [gameId]);
   const [me, setMe] = useState<MyFaction | null>(null);
@@ -81,23 +80,23 @@ export function TradesPanel({ gameId, view = 'deals' }: {
   const assetOutgoing = assetDeals.filter(d => d.i_am_seller);
 
   const runAsset = async (
-    fn: () => Promise<{ ok: boolean; error?: { message?: string } | null }>,
-    fallback: string,
+    fn: () => Promise<{ ok: boolean; error?: { code: string; message: string } | null }>,
+    fallback: Key,
   ) => {
     setBusyAsset(true);
     const res = await fn();
     setBusyAsset(false);
-    if (!res.ok) { setError(res.error?.message ?? fallback); return false; }
+    if (!res.ok) { setError(apiErrorText(res.error, fallback)); return false; }
     setError(null);
     await refresh();
     return true;
   };
   const respondAsset = (id: string, accept: boolean) =>
-    runAsset(() => api.respondAssetDeal(id, accept), 'Server refused the answer.');
+    runAsset(() => api.respondAssetDeal(id, accept), 'trade.err.answer');
   const payAsset = (id: string, shipId: string, destBodyId?: string) =>
-    runAsset(() => api.payAssetDeal(id, shipId, destBodyId), 'Server refused the payment.');
+    runAsset(() => api.payAssetDeal(id, shipId, destBodyId), 'trade.err.payment');
   const cancelAsset = (id: string) =>
-    runAsset(() => api.cancelAssetDeal(id), 'Server refused the cancellation.');
+    runAsset(() => api.cancelAssetDeal(id), 'trade.err.cancellation');
   const [error, setError] = useState<string | null>(null);
   const [composerMode, setComposerMode] = useState<
     | { kind: 'new' }
@@ -117,8 +116,10 @@ export function TradesPanel({ gameId, view = 'deals' }: {
     const req = requirementFor('hull.freighter');
     if (!req) return null;
     const track = TECH_DEFS[req.track]?.name ?? req.track;
-    return { label: req.label, text: `Unlocks at ${track} ${req.level}` };
+    return { label: req.label, where: `${track} ${req.level}` };
   }, [me]);
+  // Built at render, not inside the memo, so it follows the language.
+  const lockText = tradeLock ? t('trade.unlocksAt', { where: tradeLock.where }) : '';
 
   // ONE ROUND TRIP. This used to be six requests every five seconds, per
   // open panel, per player. /trade-summary composes the same six
@@ -221,7 +222,7 @@ export function TradesPanel({ gameId, view = 'deals' }: {
     setError(null);
     const res = await fn();
     if (!res.ok) {
-      setError(res.error?.message ?? 'Action failed');
+      setError(apiErrorText(res.error, 'trade.err.action'));
       return false;
     }
     refresh();
@@ -236,18 +237,16 @@ export function TradesPanel({ gameId, view = 'deals' }: {
           style={{ marginBottom: 8, width: '100%' }}
           onClick={() => setComposerMode({ kind: 'new' })}
           disabled={!me || factions.length < 2}
-          title="A treaty is proposed as an offer: tick the pact you want on either side"
+          title={t('trade.treatyTip')}
         >
-          + Propose a treaty
+          + {t('trade.proposeTreaty')}
         </button>
         <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)', marginBottom: 8, lineHeight: 1.5 }}>
-          Peace is the default; a pact goes further. Non-aggression is free to
-          offer; defence and intel sharing need research. A treaty is answered under
-          PRIVATE like any other offer, and takes effect the moment it is accepted.
+          {t('trade.treatyHint')}
         </div>
         {error && <div className="mp-error" style={{ marginBottom: 8 }}>{error}</div>}
         <div style={{ flex: 1, overflow: 'auto' }}>
-          <TradeSection title="Pacts in force" count={pacts.length} empty="No pacts in force.">
+          <TradeSection title={t('trade.pactsInForceTitle')} count={pacts.length} empty={t('trade.noPactsInForce')}>
             <PactsList pacts={pacts} factionsById={factionsById} />
           </TradeSection>
         </div>
@@ -277,9 +276,9 @@ export function TradesPanel({ gameId, view = 'deals' }: {
         style={{ marginBottom: 8, width: '100%' }}
         onClick={() => setComposerMode({ kind: 'new' })}
         disabled={!me || factions.length < 2 || !!tradeLock}
-        title={tradeLock ? `${tradeLock.label} — ${tradeLock.text}` : undefined}
+        title={tradeLock ? `${tradeLock.label} — ${lockText}` : undefined}
       >
-        {tradeLock ? `🔒 New Offer · ${tradeLock.text}` : '+ New Offer'}
+        {tradeLock ? `🔒 ${t('trade.newOffer')} · ${lockText}` : `+ ${t('trade.newOffer')}`}
       </button>
 
       {error && (
@@ -290,10 +289,10 @@ export function TradesPanel({ gameId, view = 'deals' }: {
         {/* Offers awaiting YOUR answer come first — they're the only
             thing here that goes stale if ignored. */}
         <TradeSection
-          title="Awaiting your answer"
+          title={t('trade.awaiting')}
           count={incoming.length + assetIncoming.length}
           tone={(incoming.length + assetIncoming.length) > 0 ? 'urgent' : undefined}
-          empty="Nobody has offered you a deal."
+          empty={t('trade.awaitingEmpty')}
         >
           {/* A sale you are being offered is a deal awaiting your answer
               like any other, so it sits in this list rather than in a
@@ -322,13 +321,13 @@ export function TradesPanel({ gameId, view = 'deals' }: {
                     handleAction(() => api.accept(trade.id) as any)
                   }
                 >
-                  Accept
+                  {t('trade.accept')}
                 </button>
                 <button
                   className="mp-btn"
                   onClick={() => setComposerMode({ kind: 'counter', original: trade })}
                 >
-                  Counter
+                  {t('trade.counter')}
                 </button>
                 <button
                   className="mp-btn"
@@ -336,7 +335,7 @@ export function TradesPanel({ gameId, view = 'deals' }: {
                     handleAction(() => api.decline(trade.id) as any)
                   }
                 >
-                  Decline
+                  {t('trade.decline')}
                 </button>
               </>
             )}
@@ -346,19 +345,16 @@ export function TradesPanel({ gameId, view = 'deals' }: {
         {/* Then cargo in motion — and specifically legs of it that are
             sitting in a warehouse because you never named a freighter. */}
         <TradeSection
-          title="Shipments in motion"
+          title={t('trade.shipments')}
           count={shipments.length}
           badge={myUnassigned > 0
-            ? `${myUnassigned} leg${myUnassigned === 1 ? '' : 's'} need a freighter`
+            ? tn('trade.legsNeed', myUnassigned)
             : undefined}
           tone={myUnassigned > 0 ? 'urgent' : undefined}
-          empty="Nothing in transit."
+          empty={t('trade.shipmentsEmpty')}
         >
           <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)', marginBottom: 8, lineHeight: 1.5 }}>
-            Accepted deals ship physically: each side loads its goods onto a
-            freighter at one of its <b>terraformed worlds</b>, and the cargo
-            lands in the other side's pool on arrival. Freighters can be
-            raided — escort what you can't afford to lose.
+            {t('trade.shipPre')} <b>{t('trade.shipBold')}</b>{t('trade.shipPost')}
           </div>
           <TradeList
             trades={shipments}
@@ -376,19 +372,19 @@ export function TradesPanel({ gameId, view = 'deals' }: {
             the same story — "your leg needs a freighter" is the one
             state that goes nowhere without you. */}
         <TradeSection
-          title="Standing routes"
+          title={t('trade.routes')}
           count={agreements.length}
           badge={(() => {
             const n = agreements.filter(a =>
               a.status === 'active'
               && sendsSomething(a.i_send)
               && !a.legs.some(l => l.mine)).length;
-            return n > 0 ? `${n} route${n === 1 ? '' : 's'} need a freighter` : undefined;
+            return n > 0 ? tn('trade.routesNeed', n) : undefined;
           })()}
           tone={agreements.some(a =>
             a.status === 'active' && sendsSomething(a.i_send) && !a.legs.some(l => l.mine))
             ? 'urgent' : undefined}
-          empty="No standing trade routes. Propose one with the Standing route option in a new offer."
+          empty={t('trade.routesEmpty')}
         >
           {agreements.map(a => (
             <AgreementCard
@@ -403,9 +399,9 @@ export function TradesPanel({ gameId, view = 'deals' }: {
         </TradeSection>
 
         <TradeSection
-          title="Your offers out"
+          title={t('trade.offersOut')}
           count={outgoing.length + assetOutgoing.length}
-          empty="You have no offers on the table."
+          empty={t('trade.offersOutEmpty')}
         >
           {assetOutgoing.map(d => (
             <AssetDealRow
@@ -430,7 +426,7 @@ export function TradesPanel({ gameId, view = 'deals' }: {
                   handleAction(() => api.cancel(trade.id) as any)
                 }
               >
-                Withdraw
+                {t('trade.withdraw')}
               </button>
             )}
           />
@@ -440,7 +436,7 @@ export function TradesPanel({ gameId, view = 'deals' }: {
             visible from here, where they used to be. */}
         {pacts.length > 0 && (
           <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)', margin: '6px 0 10px' }}>
-            {pacts.length} pact{pacts.length === 1 ? '' : 's'} in force —{' '}
+            {tn('trade.pactsLine', pacts.length)} —{' '}
             <button
               style={{
                 font: 'inherit', background: 'none', border: 0, padding: 0, cursor: 'pointer',
@@ -449,17 +445,17 @@ export function TradesPanel({ gameId, view = 'deals' }: {
               onClick={() => {
                 try { window.dispatchEvent(new CustomEvent('tradedock:tab', { detail: { tab: 'treaties' } })); } catch {}
               }}
-            >see TREATIES</button>
+            >{t('trade.seeTreaties')}</button>
           </div>
         )}
 
         {/* Settled business folds away: it's a record, not a decision,
             and it grows without bound. */}
         <TradeSection
-          title="Settled"
+          title={t('trade.settled')}
           count={history.length}
           collapsible
-          empty="No resolved trades yet."
+          empty={t('trade.settledEmpty')}
         >
           <TradeList
             trades={history}
@@ -590,6 +586,7 @@ function TradeCard({
   api?: ReturnType<typeof tradesApi>;
   onChanged?: () => void;
 }) {
+  useI18n();
   const proposer = factionsById.get(trade.proposer_faction_id);
   const responder = factionsById.get(trade.responder_faction_id);
   const isMineOutgoing = me?.id === trade.proposer_faction_id;
@@ -610,7 +607,7 @@ function TradeCard({
       <div className="tp-row__t">
         <span className="tp-row__dot" style={{ background: otherParty?.color ?? '#8aa0b4' }} />
         <span className="tp-row__nm" style={{ color: otherParty?.color ?? 'var(--mp-fg)' }}>
-          {otherParty?.name ?? 'unknown'}
+          {otherParty?.name ?? t('trade.unknown')}
         </span>
         {showStatus && (
           <span
@@ -626,10 +623,10 @@ function TradeCard({
             className="tp-pill"
             style={{ color: '#ffb84d', borderColor: 'rgba(255,184,77,0.55)' }}
             title={trade.status === 'accepted'
-              ? 'This deal was struck by taking a post on the open market'
-              : 'A private counter to a post on the open market — the post is still up'}
+              ? t('trade.marketDealTip')
+              : t('trade.marketCounterTip')}
           >
-            Market
+            {t('trade.dock.market')}
           </span>
         )}
       </div>
@@ -641,9 +638,9 @@ function TradeCard({
       )}
 
       <div className="tp-row__d">
-        <BundleLine label="They send" bundle={theyGive} pacts={theyGivePacts} />
+        <BundleLine label={t('trade.theySend')} bundle={theyGive} pacts={theyGivePacts} />
         <span className="tp-row__sep"> · </span>
-        <BundleLine label="you send" bundle={youGive} pacts={youGivePacts} />
+        <BundleLine label={t('trade.youSendLower')} bundle={youGive} pacts={youGivePacts} />
       </div>
 
       {/* DO I NEED A FREIGHTER? The one thing a standing offer never
@@ -657,17 +654,13 @@ function TradeCard({
         <div className="tp-row__hull">
           {trade.offered_ship_id
             ? (isMineOutgoing
-              ? <>You've committed <b>{trade.offered_ship_name ?? 'a freighter'}</b> to this run
-                  — it starts hauling the moment they accept.</>
-              : <><b>{otherParty?.name ?? 'They'}</b> has committed{' '}
-                  <b>{trade.offered_ship_name ?? 'a freighter'}</b> to fly it. Accept and the lane
-                  starts at once, collecting and delivering at both ends —{' '}
-                  <b>you don't need to assign a freighter.</b></>)
+              ? <>{t('trade.hull.minePre')} <b>{trade.offered_ship_name ?? t('trade.aFreighter')}</b> {t('trade.hull.minePost')}</>
+              : <><b>{otherParty?.name ?? t('trade.they')}</b> {t('trade.hull.theirsMid')}{' '}
+                  <b>{trade.offered_ship_name ?? t('trade.aFreighter')}</b> {t('trade.hull.theirsPost')}{' '}
+                  <b>{t('trade.hull.noAssign')}</b></>)
             : (isMineOutgoing
-              ? <>No freighter pinned — you'll each assign one from the Trades panel after
-                  they accept.</>
-              : <>No freighter pinned to this offer — after accepting, each side assigns one
-                  before anything ships.</>)}
+              ? <>{t('trade.hull.noPinMine')}</>
+              : <>{t('trade.hull.noPinTheirs')}</>)}
         </div>
       )}
 
@@ -679,7 +672,7 @@ function TradeCard({
 
       {trade.parent_offer_id && (
         <div style={{ marginTop: 4, fontSize: 9, color: '#b8c8d6' }}>
-          ↳ counter-offer
+          ↳ {t('trade.counterOffer')}
         </div>
       )}
 
@@ -717,11 +710,14 @@ function TradeCard({
 // ----------------------------------------------------------------
 // Delivery legs
 
-const LEG_STATUS_TEXT: Record<string, string> = {
-  to_pickup: 'freighter heading to your dock to load',
-  outbound: 'cargo aboard — en route to their world',
-  delivered: 'delivered',
-  lost: 'freighter destroyed — cargo lost',
+const legStatusText = (status: string): string | undefined => {
+  switch (status) {
+    case 'to_pickup': return t('trade.leg.toPickup');
+    case 'outbound': return t('trade.leg.outbound');
+    case 'delivered': return t('trade.leg.delivered');
+    case 'lost': return t('trade.leg.lost');
+    default: return undefined;
+  }
 };
 
 function legManifest(d: TradeDelivery): string {
@@ -731,7 +727,7 @@ function legManifest(d: TradeDelivery): string {
   if (d.fuel) bits.push(`${Math.round(d.fuel)}F`);
   if (d.gold) bits.push(`${Math.round(d.gold)}C`);
   if (d.science) bits.push(`${Math.round(d.science)}S`);
-  return bits.join(' ') || 'nothing';
+  return bits.join(' ') || t('market.nothing');
 }
 
 function DeliveryLegRow({
@@ -744,6 +740,7 @@ function DeliveryLegRow({
   api: ReturnType<typeof tradesApi>;
   onChanged?: () => void;
 }) {
+  useI18n();
   const [assigning, setAssigning] = useState(false);
   const mine = delivery.sender_faction_id === me?.id;
   const sender = factionsById.get(delivery.sender_faction_id);
@@ -760,29 +757,29 @@ function DeliveryLegRow({
 
   const statusText = delivery.status === 'unassigned'
     ? (mine
-        ? 'needs a freighter — nothing ships until you assign one'
-        : `waiting for ${sender?.name ?? 'them'} to assign a freighter`)
+        ? t('trade.leg.needsFreighter')
+        : t('trade.waitingFor', { name: sender?.name ?? t('trade.them') }))
     : (mine
-        ? LEG_STATUS_TEXT[delivery.status] ?? delivery.status
+        ? legStatusText(delivery.status) ?? delivery.status
         : delivery.status === 'outbound'
-          ? 'their cargo is aboard — inbound to your world'
+          ? t('trade.leg.theirOutbound')
           : delivery.status === 'to_pickup'
-            ? 'their freighter is heading out to load'
-            : LEG_STATUS_TEXT[delivery.status] ?? delivery.status);
+            ? t('trade.leg.theirPickup')
+            : legStatusText(delivery.status) ?? delivery.status);
 
   return (
     <div style={{ fontSize: 10 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <span style={{ color }}>{icon}</span>
         <span style={{ color: '#d8e4ee' }}>
-          {mine ? 'You send' : `${sender?.name ?? 'They'} sends`}{' '}
+          {mine ? t('trade.youSend') : t('trade.sends', { name: sender?.name ?? t('trade.they') })}{' '}
           <b>{legManifest(delivery)}</b>
         </span>
         <span style={{ color, flex: 1 }}>— {statusText}</span>
         {mine && delivery.status === 'unassigned' && (
           <button className="mp-btn mp-btn--primary" style={{ fontSize: 9, padding: '2px 8px' }}
             onClick={() => setAssigning(a => !a)}>
-            {assigning ? 'Close' : 'Assign freighter'}
+            {assigning ? t('trade.close') : t('trade.assignFreighter')}
           </button>
         )}
       </div>
@@ -806,6 +803,7 @@ function AssignShipmentForm({
   api: ReturnType<typeof tradesApi>;
   onDone: () => void;
 }) {
+  useI18n();
   const [opts, setOpts] = useState<DeliveryOptions | null>(null);
   const [shipId, setShipId] = useState('');
   const [destId, setDestId] = useState('');
@@ -816,7 +814,7 @@ function AssignShipmentForm({
     let dead = false;
     api.deliveryOptions(trade.id, delivery.id).then((res) => {
       if (dead) return;
-      if (!res.ok) { setErr(res.error?.message ?? 'Could not load options'); return; }
+      if (!res.ok) { setErr(apiErrorText(res.error, 'trade.err.options')); return; }
       setOpts(res.data);
       // Preselect the obvious choices: a freighter already sitting at
       // one of your collectors (instant load), and the only target if
@@ -833,35 +831,34 @@ function AssignShipmentForm({
     setBusy(true); setErr(null);
     const res = await api.assignDelivery(trade.id, delivery.id, shipId, destId);
     setBusy(false);
-    if (!res.ok) { setErr(res.error?.message ?? 'Assign failed'); return; }
+    if (!res.ok) { setErr(apiErrorText(res.error, 'trade.err.assign')); return; }
     onDone();
   };
 
   if (err && !opts) return <div className="mp-error" style={{ marginTop: 4 }}>{err}</div>;
-  if (!opts) return <div style={{ color: '#8aa0b4', marginTop: 4 }}>Loading options…</div>;
+  if (!opts) return <div style={{ color: '#8aa0b4', marginTop: 4 }}>{t('trade.loadingOptions')}</div>;
 
   return (
     <div style={{ marginTop: 6, padding: 6, border: '1px solid #2a3d50', borderRadius: 3, display: 'flex', flexDirection: 'column', gap: 6 }}>
       {opts.freighters.length === 0 ? (
         <div style={{ color: '#ffb84d' }}>
-          No idle freighter. Build one, or free one from its trade route —
-          this shipment waits until a hull is available.
+          {t('trade.noIdleShipment')}
         </div>
       ) : (
         <>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 2, color: '#8aa0b4' }}>
-            FREIGHTER
+            {t('trade.freighterCaps')}
             <select value={shipId} onChange={(e) => setShipId(e.target.value)}
               style={{ background: '#0a0e14', color: '#d8e4ee', border: '1px solid #2a3d50', fontFamily: 'inherit', fontSize: 10, padding: 3 }}>
               {opts.freighters.map(f => (
                 <option key={f.id} value={f.id}>
-                  {f.name}{f.at_collector ? ' · at the dock (loads instantly)' : ' · will burn to your nearest dock first'}
+                  {f.name}{f.at_collector ? ` · ${t('trade.atDock')}` : ` · ${t('trade.willBurn')}`}
                 </option>
               ))}
             </select>
           </label>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 2, color: '#8aa0b4' }}>
-            DELIVER TO (their terraformed world)
+            {t('trade.deliverToTheirs')}
             <select value={destId} onChange={(e) => setDestId(e.target.value)}
               style={{ background: '#0a0e14', color: '#d8e4ee', border: '1px solid #2a3d50', fontFamily: 'inherit', fontSize: 10, padding: 3 }}>
               {opts.targets.map(t => (
@@ -871,7 +868,7 @@ function AssignShipmentForm({
           </label>
           {err && <div className="mp-error">{err}</div>}
           <button className="mp-btn mp-btn--primary" disabled={busy || !shipId || !destId} onClick={submit}>
-            {busy ? 'Assigning…' : 'Launch shipment'}
+            {busy ? t('trade.assigning') : t('trade.launch')}
           </button>
         </>
       )}
@@ -892,24 +889,25 @@ function BundleLine({
   bundle: ResourceBundle;
   pacts: PactKind[];
 }) {
+  useI18n();
   const parts: React.ReactNode[] = [];
-  (Object.keys(RESOURCE_LABELS) as (keyof ResourceBundle)[]).forEach((k) => {
+  RESOURCE_KEYS.forEach((k) => {
     const v = bundle[k];
     if (!v) return;
     parts.push(
       <span key={k} style={{ color: RESOURCE_COLORS[k] }}>
-        {fmtAmount(v)} {RESOURCE_LABELS[k].toLowerCase()}
+        {fmtAmount(v)} {resWord(k)}
       </span>,
     );
   });
   for (const pk of pacts ?? []) {
-    parts.push(<span key={`p:${pk}`} style={{ color: '#4ecdc4' }}>{PACT_LABELS[pk]}</span>);
+    parts.push(<span key={`p:${pk}`} style={{ color: '#4ecdc4' }}>{pactLabel(pk)}</span>);
   }
   return (
     <>
       <span className="tp-row__lbl">{label} </span>
       {parts.length === 0
-        ? <span className="tp-row__nil">nothing</span>
+        ? <span className="tp-row__nil">{t('market.nothing')}</span>
         : parts.map((el, i) => (
           <React.Fragment key={i}>{i > 0 ? ', ' : ''}{el}</React.Fragment>
         ))}
@@ -932,8 +930,9 @@ function PactsList({
   pacts: Pact[];
   factionsById: Map<string, Faction>;
 }) {
+  useI18n();
   if (!pacts.length) {
-    return <div className="mp-empty" style={{ textAlign: 'center', padding: 16, color: '#b8c8d6' }}>No active pacts.</div>;
+    return <div className="mp-empty" style={{ textAlign: 'center', padding: 16, color: '#b8c8d6' }}>{t('trade.noActivePacts')}</div>;
   }
   return (
     <>
@@ -942,14 +941,14 @@ function PactsList({
           <div className="tp-row__t">
             <span className="tp-row__dot" style={{ background: '#4ecdc4' }} />
             <span className="tp-row__nm" style={{ color: '#4ecdc4' }}>
-              {PACT_LABELS[p.kind]}
+              {pactLabel(p.kind)}
             </span>
             <span className="tp-pill" style={{ color: '#4ecdc4', borderColor: '#4ecdc4' }}>
-              in force
+              {t('trade.inForce')}
             </span>
           </div>
           <div className="tp-row__d">
-            with{' '}
+            {t('trade.with')}{' '}
             {p.counterparty_faction_ids.map((id, i) => {
               const f = factionsById.get(id);
               return (
@@ -959,8 +958,8 @@ function PactsList({
               );
             })}
             <span className="tp-row__when">
-              {' '}· signed T+{p.signed_at_tick}
-              {p.expires_at_tick != null && ` · expires T+${p.expires_at_tick}`}
+              {' '}· {t('trade.signed', { n: p.signed_at_tick })}
+              {p.expires_at_tick != null && ` · ${t('trade.expires', { n: p.expires_at_tick })}`}
             </span>
           </div>
         </div>
@@ -978,32 +977,39 @@ function agreementEndText(
 ): string | null {
   if (trade.agreement_status !== 'ended') return null;
   const at = trade.agreement_ended_at_tick;
-  const when = at != null ? ` (tick ${at})` : '';
+  const when = at != null ? ` ${t('trade.end.tick', { n: at })}` : '';
   switch (trade.agreement_ended_reason) {
     case 'starved': {
       // Name WHO ran dry. "a shipment could not be covered" left both
       // parties assuming it was the other one who failed to pay.
       const by = trade.agreement_ended_by_faction_id;
-      const who = by == null ? 'a side'
-        : by === myFactionId ? 'you'
-        : (partnerName ?? 'your partner');
-      return `Ended${when} — ${who} could not cover the shipment for 10 ticks running.`;
+      const who = by == null ? t('trade.end.aSide')
+        : by === myFactionId ? t('trade.end.you')
+        : (partnerName ?? t('trade.end.yourPartner'));
+      return t('trade.end.starved', { when, who });
     }
-    case 'war':       return `Ended${when} — you exchanged fire.`;
-    case 'ship_lost': return `Ended${when} — a freighter on the route was destroyed.`;
-    case 'eliminated':return `Ended${when} — a party was eliminated.`;
-    case 'cancelled': return `Called off${when}.`;
-    default:          return `Ended${when}.`;
+    case 'war':       return t('trade.end.war', { when });
+    case 'ship_lost': return t('trade.end.shipLost', { when });
+    case 'eliminated':return t('trade.end.eliminated', { when });
+    case 'cancelled': return t('trade.end.calledOff', { when });
+    default:          return t('trade.end.ended', { when });
   }
 }
 
 /** The badge should read as the DEAL's state, not the handshake's. */
 function dealLabel(trade: TradeOffer): string {
   if (trade.agreement_status === 'ended') {
-    return trade.agreement_ended_reason === 'cancelled' ? 'called off' : 'ended';
+    return trade.agreement_ended_reason === 'cancelled' ? t('trade.pill.calledOff') : t('trade.pill.ended');
   }
-  if (trade.agreement_status === 'active') return 'running';
-  return trade.status;
+  if (trade.agreement_status === 'active') return t('trade.pill.running');
+  switch (trade.status) {
+    case 'open': return t('trade.status.open');
+    case 'accepted': return t('trade.status.accepted');
+    case 'declined': return t('trade.status.declined');
+    case 'cancelled': return t('trade.status.cancelled');
+    case 'countered': return t('trade.status.countered');
+    default: return trade.status;
+  }
 }
 
 function dealColor(trade: TradeOffer): string {
@@ -1035,17 +1041,20 @@ function sendsSomething(b: ResourceBundle): boolean {
 function bundleText(b: ResourceBundle): string {
   const bits: string[] = [];
   for (const k of ['metal', 'gold', 'science'] as const) {
-    if (b[k] > 0) bits.push(`${b[k]} ${RESOURCE_LABELS[k].toLowerCase()}`);
+    if (b[k] > 0) bits.push(`${b[k]} ${resWord(k)}`);
   }
-  return bits.length ? bits.join(' · ') : 'nothing';
+  return bits.length ? bits.join(' · ') : t('market.nothing');
 }
 
-const ENDED_REASON_TEXT: Record<string, string> = {
-  cancelled: 'called off',
-  starved: 'ended — a shipment couldn\'t be covered',
-  war: 'ended — you exchanged fire',
-  ship_lost: 'ended — a freighter was destroyed',
-  eliminated: 'ended — a party was eliminated',
+const endedReasonText = (reason: string): string | undefined => {
+  switch (reason) {
+    case 'cancelled': return t('trade.reason.cancelled');
+    case 'starved': return t('trade.reason.starved');
+    case 'war': return t('trade.reason.war');
+    case 'ship_lost': return t('trade.reason.shipLost');
+    case 'eliminated': return t('trade.reason.eliminated');
+    default: return undefined;
+  }
 };
 
 function AgreementCard({
@@ -1060,6 +1069,7 @@ function AgreementCard({
    *  read gameState.carrierCap (see the note at the top of the file). */
   carrierCap: number;
 }) {
+  useI18n();
   const [commissioning, setCommissioning] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -1101,14 +1111,14 @@ function AgreementCard({
     // lane, and it is carrying for both of you. Name what actually
     // stops, since this is the confirm for an irreversible action.
     const what = lane
-      ? `The shared lane stops${crew.length > 1 ? ' and both freighters come free' : ''}.`
-      : 'Both legs stop.';
+      ? (crew.length > 1 ? t('trade.endLaneBoth') : t('trade.endLane'))
+      : t('trade.endLegs');
     if (!window.confirm(
-      `End your standing route with ${partner?.name ?? 'this empire'}? ${what}`)) return;
+      t('trade.endConfirm', { name: partner?.name ?? t('trade.thisEmpire'), what }))) return;
     setBusy(true); setErr(null);
     const res = await api.cancelAgreement(a.id);
     setBusy(false);
-    if (!res.ok) { setErr(res.error?.message ?? 'Cancel failed'); return; }
+    if (!res.ok) { setErr(apiErrorText(res.error, 'trade.err.cancel')); return; }
     onChanged();
   };
 
@@ -1125,24 +1135,24 @@ function AgreementCard({
           {a.status === 'active' ? '⟳' : '⏹'}
         </span>
         <span style={{ color: '#d8e4ee', flex: 1 }}>
-          Route with <b style={{ color: partner?.color ?? '#d8e4ee' }}>{partner?.name ?? 'unknown'}</b>
+          {t('trade.routeWith')} <b style={{ color: partner?.color ?? '#d8e4ee' }}>{partner?.name ?? t('trade.unknown')}</b>
           {a.status === 'ended' && a.ended_reason && (
-            <span style={{ color: '#ff5e5e' }}> — {ENDED_REASON_TEXT[a.ended_reason] ?? a.ended_reason}</span>
+            <span style={{ color: '#ff5e5e' }}> — {endedReasonText(a.ended_reason) ?? a.ended_reason}</span>
           )}
         </span>
         {/* The deal and the lane that flies it are one arrangement on two
             tabs. Only offered once a lane exists to be shown. */}
         {a.status === 'active' && a.legs.length > 0 && (
           <button className="mp-btn" style={{ fontSize: 9, padding: '2px 8px' }}
-            title="Show the freight lane flying this deal, under ROUTES"
+            title={t('trade.viewLaneTip')}
             onClick={() => focusTradeCard('route', a.id)}>
-            View lane
+            {t('trade.viewLane')}
           </button>
         )}
         {a.status === 'active' && (
           <button className="mp-btn" style={{ fontSize: 9, padding: '2px 8px' }}
             disabled={busy} onClick={cancel}>
-            End route
+            {t('trade.endRoute')}
           </button>
         )}
       </div>
@@ -1151,26 +1161,26 @@ function AgreementCard({
         {/* THE TERMS, which are true either way. */}
         {iShip && (
           <div>
-            ▲ You ship <b>{bundleText(a.i_send)}</b> per run
+            ▲ {t('trade.youShip')} <b>{bundleText(a.i_send)}</b> {t('trade.perRun')}
             {!lane && (myLeg
               ? <span style={{ color: '#6ee7b7' }}>
-                  {' '}— running · {myLeg.loops_completed} run{myLeg.loops_completed === 1 ? '' : 's'} completed
+                  {' '}— {t('trade.pill.running')} · {tn('trade.runsDone', myLeg.loops_completed)}
                 </span>
               : a.status === 'active'
-                ? <span style={{ color: '#ffb84d' }}> — needs a freighter; nothing ships until you assign one</span>
+                ? <span style={{ color: '#ffb84d' }}> — {t('trade.needsFreighterShort')}</span>
                 : null)}
           </div>
         )}
         {theyShip && (
           <div>
-            ▼ They ship <b>{bundleText(a.i_receive)}</b> per run
-            {a.my_tariff_pct > 0 && <span> (you receive −{a.my_tariff_pct}% tariff)</span>}
+            ▼ {t('trade.theyShip')} <b>{bundleText(a.i_receive)}</b> {t('trade.perRun')}
+            {a.my_tariff_pct > 0 && <span> ({t('trade.tariffNote', { pct: a.my_tariff_pct })})</span>}
             {!lane && (theirLeg
               ? <span style={{ color: '#6ee7b7' }}>
-                  {' '}— running · {theirLeg.loops_completed} run{theirLeg.loops_completed === 1 ? '' : 's'} completed
+                  {' '}— {t('trade.pill.running')} · {tn('trade.runsDone', theirLeg.loops_completed)}
                 </span>
               : a.status === 'active'
-                ? <span style={{ color: '#8aa0b4' }}> — waiting for {partner?.name ?? 'them'} to assign a freighter</span>
+                ? <span style={{ color: '#8aa0b4' }}> — {t('trade.waitingFor', { name: partner?.name ?? t('trade.them') })}</span>
                 : null)}
           </div>
         )}
@@ -1181,36 +1191,38 @@ function AgreementCard({
         {lane && (
           <div className="tp-lane">
             <div className="tp-lane__hd">
-              ⇄ One lane, both directions
+              ⇄ {t('trade.oneLane')}
               <span className="tp-lane__runs">
                 {lane.loops_completed > 0
-                  ? `${lane.loops_completed} run${lane.loops_completed === 1 ? '' : 's'} completed`
-                  : 'no runs yet'}
+                  ? tn('trade.runsDone', lane.loops_completed)
+                  : t('trade.noRuns')}
               </span>
             </div>
             <div className="tp-lane__crew">
               {crew.length > 0
-                ? <>Flown by {crew.map((cr, i) => (
+                ? <>{t('trade.flownBy')} {crew.map((cr, i) => (
                     <React.Fragment key={cr.ship_id}>
                       {i > 0 && ', '}
                       <b style={{ color: cr.mine ? '#6ee7b7' : (partner?.color ?? '#d8e4ee') }}>
-                        {cr.name ?? 'a freighter'}
+                        {cr.name ?? t('trade.aFreighter')}
                       </b>
                     </React.Fragment>
                   ))}
-                  {' '}— each collects and delivers at both ends.</>
+                  {' '}— {t('trade.eachCollects')}</>
                 : <span style={{ color: '#ffb84d' }}>
-                    No freighter on it. Nothing moves until one is assigned.
+                    {t('trade.noFreighterOn')}
                   </span>}
             </div>
             {/* The question the old copy got wrong in both directions. */}
             {crew.length > 0 && (
               <div className="tp-lane__owe">
                 {iHaveHullOnLane && theyHaveHullOnLane
-                  ? 'Both of you have a hull on it — neither side owes a freighter.'
+                  ? t('trade.owe.both')
                   : iHaveHullOnLane
-                    ? `Your freighter carries both sides' goods. ${partner?.name ?? 'They'} need not assign one.${laneHasRoom ? ' A second hull would double the run.' : ''}`
-                    : `${partner?.name ?? 'Their'} freighter carries your goods too. You need not assign one.${laneHasRoom ? ' Adding yours would double the run.' : ''}`}
+                    ? t('trade.owe.mine', { who: partner?.name ?? t('trade.they') }) + (laneHasRoom ? ` ${t('trade.owe.secondHull')}` : '')
+                    : (partner?.name
+                      ? t('trade.owe.theirsNamed', { name: partner.name })
+                      : t('trade.owe.theirs')) + (laneHasRoom ? ` ${t('trade.owe.addYours')}` : '')}
               </div>
             )}
             {/* THE CAP, STATED. "Adding yours would double the run" was
@@ -1226,13 +1238,13 @@ function AgreementCard({
                 invisible on touch entirely. */}
             {crew.length > 0 && (
               <div className="tp-lane__cap">
-                {crew.length} of {carrierCap} freighter{carrierCap === 1 ? '' : 's'} on this lane
-                {!laneHasRoom && nextConvoyTech ? ` — ${nextConvoyTech} raises the cap.` : '.'}
+                {tn('trade.capLine', carrierCap, { have: crew.length })}
+                {!laneHasRoom && nextConvoyTech ? ` — ${t('trade.raisesCap', { tech: nextConvoyTech })}` : '.'}
               </div>
             )}
             {lane.stalled_since_tick != null && (
               <div className="tp-lane__warn">
-                Stalled — this lane cancels itself unless a freighter is assigned.
+                {t('trade.stalledLane')}
               </div>
             )}
           </div>
@@ -1244,8 +1256,7 @@ function AgreementCard({
             this panel is where the deal is managed. */}
         {split && a.status === 'active' && (
           <div className="tp-lane__warn">
-            This deal is also running a one-way leg beside the lane. Merge them from the
-            route's card in Empire → Trade so every freighter works both ends.
+            {t('trade.splitWarn')}
           </div>
         )}
       </div>
@@ -1253,7 +1264,7 @@ function AgreementCard({
       {needsMe && (
         <button className="mp-btn mp-btn--primary" style={{ fontSize: 9, padding: '2px 8px', marginTop: 6 }}
           onClick={() => setCommissioning(c => !c)}>
-          {commissioning ? 'Close' : 'Assign freighter'}
+          {commissioning ? t('trade.close') : t('trade.assignFreighter')}
         </button>
       )}
       {commissioning && (
@@ -1278,6 +1289,7 @@ function CommissionForm({
   api: ReturnType<typeof tradesApi>;
   onDone: () => void;
 }) {
+  useI18n();
   const [opts, setOpts] = useState<{ targets: { body_id: string; body_name: string }[];
     freighters: { id: string; name: string; body_id: string; at_collector: boolean }[] } | null>(null);
   const [shipId, setShipId] = useState('');
@@ -1289,7 +1301,7 @@ function CommissionForm({
     let dead = false;
     api.agreementOptions(agreement.id).then((res) => {
       if (dead) return;
-      if (!res.ok) { setErr(res.error?.message ?? 'Could not load options'); return; }
+      if (!res.ok) { setErr(apiErrorText(res.error, 'trade.err.options')); return; }
       setOpts(res.data);
       const atDock = res.data.freighters.find(f => f.at_collector);
       setShipId((atDock ?? res.data.freighters[0])?.id ?? '');
@@ -1303,40 +1315,38 @@ function CommissionForm({
     setBusy(true); setErr(null);
     const res = await api.commissionLeg(agreement.id, shipId, destId);
     setBusy(false);
-    if (!res.ok) { setErr(res.error?.message ?? 'Could not assign the freighter'); return; }
+    if (!res.ok) { setErr(apiErrorText(res.error, 'trade.err.commission')); return; }
     onDone();
   };
 
   if (err && !opts) return <div className="mp-error" style={{ marginTop: 4 }}>{err}</div>;
-  if (!opts) return <div style={{ color: '#8aa0b4', marginTop: 4 }}>Loading options…</div>;
+  if (!opts) return <div style={{ color: '#8aa0b4', marginTop: 4 }}>{t('trade.loadingOptions')}</div>;
 
   return (
     <div style={{ marginTop: 6, padding: 6, border: '1px solid #2a3d50', borderRadius: 3, display: 'flex', flexDirection: 'column', gap: 6, fontSize: 10 }}>
       {opts.freighters.length === 0 ? (
         <div style={{ color: '#ffb84d' }}>
-          No idle freighter. Build one, or free one up — this route sits
-          idle until a hull is pinned to it.
+          {t('trade.noIdleRoute')}
         </div>
       ) : opts.targets.length === 0 ? (
         <div style={{ color: '#ffb84d' }}>
-          Your partner has no collector to receive at. The route can't run
-          until they build one.
+          {t('trade.noCollector')}
         </div>
       ) : (
         <>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 2, color: '#8aa0b4' }}>
-            FREIGHTER — pinned to this route until it ends
+            {t('trade.freighterPinned')}
             <select value={shipId} onChange={(e) => setShipId(e.target.value)}
               style={{ background: '#0a0e14', color: '#d8e4ee', border: '1px solid #2a3d50', fontFamily: 'inherit', fontSize: 10, padding: 3 }}>
               {opts.freighters.map(f => (
                 <option key={f.id} value={f.id}>
-                  {f.name}{f.at_collector ? ' · at the dock (loads instantly)' : ' · will burn to your nearest dock first'}
+                  {f.name}{f.at_collector ? ` · ${t('trade.atDock')}` : ` · ${t('trade.willBurn')}`}
                 </option>
               ))}
             </select>
           </label>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 2, color: '#8aa0b4' }}>
-            DELIVER TO
+            {t('trade.deliverTo')}
             <select value={destId} onChange={(e) => setDestId(e.target.value)}
               style={{ background: '#0a0e14', color: '#d8e4ee', border: '1px solid #2a3d50', fontFamily: 'inherit', fontSize: 10, padding: 3 }}>
               {opts.targets.map(t => (
@@ -1346,7 +1356,7 @@ function CommissionForm({
           </label>
           <button className="mp-btn mp-btn--primary" style={{ fontSize: 9, alignSelf: 'flex-start' }}
             disabled={busy || !shipId || !destId} onClick={submit}>
-            {busy ? 'Starting…' : 'Start the route'}
+            {busy ? t('trade.starting') : t('trade.startRoute')}
           </button>
         </>
       )}
