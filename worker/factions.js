@@ -1458,6 +1458,13 @@ function secretBandEdges() {
 
 export function categorizeBodyForSecret(b) {
   if (b.type === 'star') return null;
+  // A FAR-SYSTEM WORLD IS IN NONE OF SOL'S BANDS. Its orbit is measured
+  // from its own barycenter, so a radius test against Sol's edges is
+  // meaningless: Reliquary (Cygnus, 3400 from ITS centre) scored as a
+  // Kuiper world, and one far gate in twenty put its twin in Cygnus -- a
+  // third way in that was never a sun gate. The far systems carry their
+  // own discoveries (FAR_SECRET_PLAN).
+  if (b.far_system) return null;
   if (b.type === 'moon') {
     const parent = BODY_CATALOG.find(x => x.id === b.parent);
     if (parent && (parent.type === 'gas-giant' || parent.type === 'ice-giant')) return 'moon-outer';
@@ -1526,6 +1533,50 @@ export function pickSecretPlacements(rand, ownership) {
     const pick = candidates[Math.floor(rand() * candidates.length)];
     claimed.add(pick.id);
     placements.set(pick.id, kind);
+  }
+  return placements;
+}
+
+// ---------- the far systems' discoveries ----------
+//
+// Lorne, 2026-10-06: "We need to sprinkle some discoveries into the new
+// systems" -- themed existing kinds plus one signature find each, 4-5 a
+// system. Their own pool, so the far systems never take a find from Sol,
+// and their own seeded stream (`|far-secrets`), so turning far_systems on
+// never moves a Sol secret. One host per entry, drawn from its list.
+export const FAR_SECRET_PLAN = [
+  // CENTAURI, the garden.
+  { kind: 'ancient_city',     hosts: ['verdant', 'thistle', 'sorrel'] },
+  { kind: 'ancient_databank', hosts: ['prismara', 'scoria', 'umber'] },
+  { kind: 'derelict_warship', hosts: ['flint', 'tinder', 'ember', 'pyrite'] },
+  { kind: 'resource_cache',   hosts: ['cinder', 'clinker'] },
+  // Signature: a precursor station still running, handed to the finder
+  // -- and stations are what Centauri's suns pay double for.
+  { kind: 'precursor_orrery', hosts: ['crimson', 'farspire'] },
+  // CYGNUS, the graveyard.
+  { kind: 'ancient_station',  hosts: ['requiem', 'lacrimosa', 'sanctus'] },
+  { kind: 'ancient_capital',  hosts: ['cenotaph', 'epitaph', 'votive', 'marrow'] },
+  { kind: 'ancient_relay',    hosts: ['reliquary'] },
+  { kind: 'deep_cache',       hosts: ['gilt'] },
+  // Signature: a record of measurements taken at the event horizon, paid
+  // out as science (HORIZON_ARCHIVE_SCIENCE, room.js).
+  { kind: 'horizon_archive',  hosts: ['elegy', 'vesper', 'threnody'] },
+];
+
+/** Far-system secret placements: Map<templateId, kind>, one per plan
+ *  entry, from the hosts present in `templateIds` and not in `blocked`
+ *  (owned or settled worlds, for a running game). */
+export function pickFarSecretPlacements(rand, templateIds, blocked = new Set()) {
+  const present = new Set(templateIds);
+  const placements = new Map();
+  for (const { kind, hosts } of FAR_SECRET_PLAN) {
+    // Draw over the whole list first so the stream is the same whatever is
+    // blocked, then fall to the next free host in the list.
+    const start = Math.floor(rand() * hosts.length);
+    for (let i = 0; i < hosts.length; i++) {
+      const h = hosts[(start + i) % hosts.length];
+      if (present.has(h) && !blocked.has(h) && !placements.has(h)) { placements.set(h, kind); break; }
+    }
   }
   return placements;
 }
@@ -1788,7 +1839,12 @@ export async function seedGameWorld(env, gameId) {
     return { ...body, angle0: ((host.angle0 + (body.phase_offset ?? Math.PI)) % TAU + TAU) % TAU };
   });
 
-  const claimable = CATALOG.filter(b => b.type !== 'star');
+  // Never a far-system world: the way out there is the sun gates. A
+  // player who made no pick was being seated from this pool, and with
+  // far_systems on it held Verdant and Requiem. Leaving them out also
+  // keeps the shuffle -- and every secret and rock drawn after it -- the
+  // same whether the dial is on or off.
+  const claimable = CATALOG.filter(b => b.type !== 'star' && !b.far_system);
   const needed = memberRows.length * WORLDS_PER_PLAYER;
   if (claimable.length < needed) {
     throw new Error(
@@ -2076,6 +2132,12 @@ export async function seedGameWorld(env, gameId) {
   // seeded from map_seed) so two players entering the same lobby see
   // the same layout. Only un-owned bodies get secrets.
   const secretPlacements = pickSecretPlacements(rand, ownership);
+  if (CATALOG.some(b => b.far_system)) {
+    const far = pickFarSecretPlacements(
+      makeRand(`${String(game.map_seed || gameId)}|far-secrets`),
+      CATALOG.filter(b => b.far_system).map(b => b.id), new Set(ownership.keys()));
+    for (const [id, kind] of far) secretPlacements.set(id, kind);
+  }
 
   // METEOROIDS — appended AFTER the editor's edits and the global
   // scales, deliberately. An L3 rock is pinned to its host's orbit
@@ -2495,6 +2557,15 @@ export async function backfillMissingBodies(env, gameId, { farOnly = false } = {
   }
   if (stmts.length > 0) await env.DB.batch(stmts);
 
+  // ...and their discoveries, from the same stream the seeder draws.
+  if (farSystems) {
+    try {
+      inserted += await backfillFarSecrets(env, gameId);
+    } catch (e) {
+      console.error('far secret backfill failed', e);
+    }
+  }
+
   // THE FAR SYSTEMS' ROCKS reach a running game here too, generated from
   // the same scaled geometry and the same seeded stream the seeder uses,
   // so a backfilled game gets the rocks a fresh one would have.
@@ -2506,6 +2577,32 @@ export async function backfillMissingBodies(env, gameId, { farOnly = false } = {
     }
   }
   return inserted;
+}
+
+/** Hide the far systems' discoveries in a running game that has none.
+ *  Once only: if any far world already carries a secret (found or not),
+ *  the game has its set. Worlds someone owns or has settled are skipped,
+ *  so nobody's colony becomes a dig site. Returns how many it hid. */
+export async function backfillFarSecrets(env, gameId) {
+  const rows = (await env.DB
+    .prepare(`SELECT b.id, b.template_id, b.secret_kind, b.owner_faction_id,
+                     (SELECT COUNT(*) FROM game_settlements s
+                       WHERE s.body_id = b.id AND s.destroyed_at_tick IS NULL) AS settled
+                FROM game_bodies b WHERE b.game_id = ?`)
+    .bind(gameId).all()).results ?? [];
+  const farIds = new Set(BODY_CATALOG.filter(b => b.far_system).map(b => b.id));
+  const far = rows.filter(r => farIds.has(r.template_id));
+  if (far.length === 0 || far.some(r => r.secret_kind)) return 0;
+  const blocked = new Set(far.filter(r => r.owner_faction_id || Number(r.settled) > 0).map(r => r.template_id));
+  const game = await env.DB.prepare('SELECT map_seed FROM games WHERE id = ?').bind(gameId).first();
+  const picks = pickFarSecretPlacements(
+    makeRand(`${String(game?.map_seed || gameId)}|far-secrets`), far.map(r => r.template_id), blocked);
+  if (picks.size === 0) return 0;
+  await env.DB.batch([...picks].map(([tpl, kind]) => env.DB
+    .prepare(`UPDATE game_bodies SET secret_kind = ?, secret_revealed = 0
+               WHERE game_id = ? AND template_id = ? AND secret_kind IS NULL`)
+    .bind(kind, gameId, tpl)));
+  return picks.size;
 }
 
 async function backfillFarRocks(env, gameId, geometryFor, bodyRowIdFor) {

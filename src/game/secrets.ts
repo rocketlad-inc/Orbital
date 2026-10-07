@@ -119,6 +119,20 @@ export const SECRET_DEFS: Record<BodySecretKind, SecretDef> = {
     get discoveryMessage() { return tk('data.secret.deep_cache.found', 'DISCOVERY: a deep cache sealed against the cold, worth a destroyer in metal and credits.'); },
     hostCategories: [],
   },
+  // --- THE FAR SYSTEMS' SIGNATURE FINDS. MP-only, placed server-side by
+  // worker/factions.js FAR_SECRET_PLAN; hostCategories empty like the rest.
+  precursor_orrery: {
+    kind: 'precursor_orrery',
+    get displayName() { return tk('data.secret.precursor_orrery.name', 'Precursor Orrery'); },
+    get discoveryMessage() { return tk('data.secret.precursor_orrery.found', 'DISCOVERY: a precursor orrery, built to follow the two suns and still turning. A working station, and it is yours.'); },
+    hostCategories: [],
+  },
+  horizon_archive: {
+    kind: 'horizon_archive',
+    get displayName() { return tk('data.secret.horizon_archive.name', 'Horizon Archive'); },
+    get discoveryMessage() { return tk('data.secret.horizon_archive.found', 'DISCOVERY: a record of everything the ancients measured at the event horizon. A windfall of science.'); },
+    hostCategories: [],
+  },
 };
 
 /**

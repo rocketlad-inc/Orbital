@@ -2885,6 +2885,15 @@ DISCOVERY_PAYOFFS.far_gate = [
   'uncovered an ancient gate in the outer system, and found its twin standing open on another distant world',
   'lit up a dead gate at the edge of the system; its partner answered from another world out there',
 ];
+// THE FAR SYSTEMS' SIGNATURE FINDS (factions.js FAR_SECRET_PLAN).
+DISCOVERY_PAYOFFS.precursor_orrery = [
+  "found a precursor orrery still tracking Centauri's two suns, and took it over as a working station",
+  'woke an ancient station built to follow the binary dance; it flies their banner now, and the suns pay it double',
+];
+DISCOVERY_PAYOFFS.horizon_archive = [
+  "recovered the Horizon Archive, the ancients' record of the event horizon, and a windfall of science with it",
+  'cracked an archive of measurements taken at the edge of the black hole; their researchers will be reading it for years',
+];
 DISCOVERY_PAYOFFS.deep_cache = [
   'cracked a deep cache sealed against the cold, worth a destroyer in metal and credits',
   'dug out a stockpile the ancients buried past the planets, and came home a destroyer richer',
