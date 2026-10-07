@@ -25,6 +25,8 @@ import {
 import {
   RESEARCH_UNLOCKS, UnlockRow, isMegastructureUnlock, megastructureHowTo, MEGASTRUCTURE_REASSURANCE,
 } from '../game/researchUnlocks';
+import { t, tn } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 import './TechTree.css';
 
 export type CellState = 'owned' | 'next' | 'locked';
@@ -93,6 +95,7 @@ interface TechTreeProps {
 export const TechTree: React.FC<TechTreeProps> = ({
   levels, gatingEnabled, onQueuePath, committed,
 }) => {
+  useI18n();
   const rows = useMemo(() => buildTechTree(levels), [levels]);
 
   const { earned, total } = useMemo(() => {
@@ -118,11 +121,11 @@ export const TechTree: React.FC<TechTreeProps> = ({
   return (
     <div className="techtree">
       <div className="techtree__legend">
-        <span className="techtree__sum">{earned} of {total} unlocks earned</span>
-        <span className="techtree__key techtree__key--owned">researched</span>
-        <span className="techtree__key techtree__key--next">next level</span>
-        <span className="techtree__key techtree__key--locked">locked</span>
-        <span className="techtree__key techtree__key--mega">◆ megastructure</span>
+        <span className="techtree__sum">{t('econ.tree.earned', { earned, total })}</span>
+        <span className="techtree__key techtree__key--owned">{t('econ.tree.researched')}</span>
+        <span className="techtree__key techtree__key--next">{t('econ.tree.nextLevel')}</span>
+        <span className="techtree__key techtree__key--locked">{t('econ.tree.locked')}</span>
+        <span className="techtree__key techtree__key--mega">◆ {t('econ.tree.megastructure')}</span>
       </div>
 
       {/* The tree marks WHICH unlocks are megastructures; this says how
@@ -130,7 +133,7 @@ export const TechTree: React.FC<TechTreeProps> = ({
           written down nowhere. Folded by default: it is reference, and
           the grid is what this view is for. */}
       <details className="techtree__mega">
-        <summary>◆ How megastructures are built</summary>
+        <summary>◆ {t('econ.tree.megaHow')}</summary>
         <ol>
           {megastructureHowTo().map((step, i) => <li key={i}>{step}</li>)}
         </ol>
@@ -139,19 +142,18 @@ export const TechTree: React.FC<TechTreeProps> = ({
 
       {!gatingEnabled && (
         <div className="techtree__note">
-          This game predates feature gating — everything below is already
-          available to you, whatever your level.
+          {t('econ.tree.noGating')}
         </div>
       )}
 
       <div className="techtree__scroll">
         <div className="techtree__grid">
-          <div className="techtree__corner">Lv</div>
+          <div className="techtree__corner">{t('econ.tree.lv')}</div>
           {ALL_TECH_IDS.map((id) => (
             <div key={id} className="techtree__head" title={TECH_DEFS[id].description}>
               <span className="techtree__head-icon">{TECH_DEFS[id].icon}</span>
               <span className="techtree__head-name">{TECH_DEFS[id].name}</span>
-              <span className="techtree__head-lvl">Lv {levels[id] ?? 0}</span>
+              <span className="techtree__head-lvl">{t('econ.tree.lvN', { n: levels[id] ?? 0 })}</span>
             </div>
           ))}
 
@@ -159,8 +161,9 @@ export const TechTree: React.FC<TechTreeProps> = ({
             <React.Fragment key={row.level}>
               <div
                 className="techtree__gutter"
-                title={`${row.cost} science for level ${row.level}`
-                  + ` · ${cumulative[row.level - 1].toLocaleString()} to take a track this far`}
+                title={t('econ.tree.gutterTip', {
+                  cost: row.cost, level: row.level, total: cumulative[row.level - 1].toLocaleString(),
+                })}
               >
                 <span className="techtree__gutter-lvl">{row.level}</span>
                 {row.uniformCost && (
@@ -177,15 +180,14 @@ export const TechTree: React.FC<TechTreeProps> = ({
                 const canQueue = !!onQueuePath && cell.state !== 'owned' && !onWay;
                 const steps = cell.level - (committed?.[cell.track] ?? levels[cell.track] ?? 0);
                 const queueHint = canQueue
-                  ? `\n\nClick to queue ${steps} ${TECH_DEFS[cell.track].name} `
-                    + `${steps === 1 ? 'level' : 'levels'} and reach this.`
+                  ? '\n\n' + tn('econ.tree.queueHint', steps, { name: TECH_DEFS[cell.track].name })
                   : onWay && cell.state !== 'owned'
-                    ? '\n\nAlready covered by your research queue.'
+                    ? '\n\n' + t('econ.tree.onWay')
                     : '';
                 const baseTitle = empty
-                  ? `${TECH_DEFS[cell.track].name} ${cell.level}: ${TECH_DEFS[cell.track].effectText}, no new unlock`
+                  ? t('econ.tree.noUnlock', { name: TECH_DEFS[cell.track].name, level: cell.level, effect: TECH_DEFS[cell.track].effectText })
                   : cell.unlocks.map(u => (isMegastructureUnlock(u.feature)
-                    ? `${u.label} — MEGASTRUCTURE\n${u.blurb}\nBuilt from a colony ship carrying a Construction Module. `
+                    ? t('econ.tree.megaTip', { label: u.label, blurb: u.blurb }) + ' '
                       + MEGASTRUCTURE_REASSURANCE
                     : `${u.label} — ${u.blurb}`)).join('\n\n');
                 return (
@@ -222,7 +224,7 @@ export const TechTree: React.FC<TechTreeProps> = ({
                         >
                           {isMegastructureUnlock(u.feature) && <span aria-hidden>◆ </span>}
                           {u.label}
-                          {isMegastructureUnlock(u.feature) && <span className="techtree__sr"> (megastructure)</span>}
+                          {isMegastructureUnlock(u.feature) && <span className="techtree__sr">{` ${t('econ.tree.megaSr')}`}</span>}
                         </span>
                       ))
                     )}
@@ -235,9 +237,7 @@ export const TechTree: React.FC<TechTreeProps> = ({
       </div>
 
       <div className="techtree__foot">
-        Every level pays its track's passive bonus. Cells showing only a
-        percentage are scaling levels — they still make everything you
-        already own better.
+        {t('econ.tree.foot')}
       </div>
     </div>
   );
