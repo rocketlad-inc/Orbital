@@ -55,7 +55,9 @@ describe('megastructure guidance — where it is shown', () => {
     expect(tree).toMatch(/megastructureHowTo\(\)\.map/);
     // Not by colour alone.
     expect(tree).toMatch(/◆ /);
-    expect(tree).toMatch(/\(megastructure\)/);
+    // The label is a catalog entry now; the English text must still read "(megastructure)".
+    expect(tree).toMatch(/econ\.tree\.megaSr/);
+    expect(read('i18n/parts/en/econ.ts')).toMatch(/'econ\.tree\.megaSr': '\(megastructure\)'/);
   });
 
   it('the research cards and the Situation Report say what to do next', () => {
@@ -71,7 +73,7 @@ describe('megastructure guidance — where it is shown', () => {
     const card = read('multiplayer/MegastructureCard.tsx');
     expect(card).toMatch(/export const MegastructureModuleHint/);
     // And the moment of committing answers the fear the playtest named.
-    expect(card).toMatch(/\{MEGASTRUCTURE_REASSURANCE\}/);
+    expect(card).toMatch(/\{megastructureReassurance\(\)\}/);
     expect(card).toMatch(/nothing on your worlds is touched/);
   });
 });

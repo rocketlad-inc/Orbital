@@ -26,6 +26,8 @@ import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext'
 import { logUiEvent } from '../multiplayer/telemetry';
 import { enqueueDetonation, spawnDiscoveryBloom } from '../render/combatFx';
 import type { ChronicleFocus } from '../types';
+import { t } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 // (MOON_ORBIT_MIN_PARENT_PX no longer imported — the recap frames by
 //  content extent now, not by the moon-ring LOD gate. See the zoom block.)
 
@@ -113,6 +115,7 @@ function fxFor(line: string): 'boom' | 'bloom' | 'spark' | undefined {
 }
 
 export const RecapOverlay: React.FC = () => {
+  useI18n();
   const { gameState, focusBody, updateCamera } = useGameContext();
   const [scenes, setScenes] = useState<Scene[] | null>(null);  // null = no offer
   const [playing, setPlaying] = useState(false);
@@ -232,13 +235,13 @@ export const RecapOverlay: React.FC = () => {
         else enqueueDetonation(`recap_${Date.now()}_${bid}`, bid, null);
       }, FX_DELAY_MS);
     }
-    const t = setTimeout(() => {
+    const advance = setTimeout(() => {
       setIdx(i => {
         if (!scenes || i + 1 >= scenes.length) { setPlaying(false); setScenes(null); return i; }
         return i + 1;
       });
     }, sceneMs);
-    return () => { clearTimeout(t); if (fxT) clearTimeout(fxT); };
+    return () => { clearTimeout(advance); if (fxT) clearTimeout(fxT); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scene]);
 
@@ -322,16 +325,16 @@ export const RecapOverlay: React.FC = () => {
                     background: 'rgba(10,16,24,0.96)', border: '1px solid #4ecdc4', borderRadius: 8,
                     padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 14,
                     boxShadow: '0 8px 30px rgba(0,0,0,0.5)' }}>
-        <span style={{ ...mono, fontSize: 11, color: '#8a9fb3' }}>WHILE YOU WERE AWAY</span>
+        <span style={{ ...mono, fontSize: 11, color: '#8a9fb3' }}>{t('recap.away')}</span>
         <button onClick={() => { setIdx(0); setPlaying(true); }}
                 style={{ ...mono, fontSize: 12, color: '#0a1018', background: '#4ecdc4', border: 'none',
                          borderRadius: 4, padding: '7px 14px', cursor: 'pointer', fontWeight: 700 }}>
-          ▶ WATCH RECAP · {scenes.length}
+          {t('recap.watch', { n: scenes.length })}
         </button>
-        <button onClick={dismiss} title="Dismiss (Esc)"
+        <button onClick={dismiss} title={t('recap.dismiss')}
                 style={{ ...mono, fontSize: 11, color: '#8a9fb3', background: 'transparent',
                          border: '1px solid #24344a', borderRadius: 4, padding: '6px 10px', cursor: 'pointer' }}>
-          SKIP
+          {t('recap.skip')}
         </button>
       </div>
     );
@@ -362,20 +365,20 @@ export const RecapOverlay: React.FC = () => {
                                    background: i === idx ? '#4ecdc4' : '#2a3d50' }} />
           ))}
           <button onClick={(e) => { e.stopPropagation(); next(); }}
-                  title="Next scene (or click anywhere)"
+                  title={t('recap.nextTitle')}
                   style={{ marginLeft: 12, fontFamily: 'Orbitron, system-ui, sans-serif',
                            letterSpacing: '0.14em', fontSize: 11, color: '#4ecdc4',
                            background: 'rgba(78,205,196,0.08)', border: '1px solid #2a4a4a',
                            borderRadius: 4, padding: '4px 12px', cursor: 'pointer' }}>
-            {idx + 1 < scenes.length ? 'NEXT ▸' : 'DONE ✓'}
+            {idx + 1 < scenes.length ? t('recap.next') : t('recap.done')}
           </button>
         </div>
       </div>
-      <button onClick={(e) => { e.stopPropagation(); dismiss(); }} title="Dismiss (Esc)"
+      <button onClick={(e) => { e.stopPropagation(); dismiss(); }} title={t('recap.dismiss')}
               style={{ ...mono, position: 'absolute', top: 18, right: 18, fontSize: 12, color: '#8a9fb3',
                        background: 'transparent', border: '1px solid #24344a', borderRadius: 4,
                        padding: '6px 12px', cursor: 'pointer', zIndex: 61 }}>
-        ✕ SKIP
+        {t('recap.skipX')}
       </button>
     </div>
     </>

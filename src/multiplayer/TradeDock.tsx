@@ -12,6 +12,8 @@ import { openScreen } from './telemetry';
 import { marketApi } from './api';
 import { countUnseenPosts } from './marketSeen';
 import { FreighterStrip } from './FreighterStrip';
+import { t, tn } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 import './TradeDock.css';
 import type { TradeRoute } from '../types';
 
@@ -48,6 +50,7 @@ import type { TradeRoute } from '../types';
 type TradeTab = 'market' | 'private' | 'routes' | 'treaties';
 
 export function TradeDock() {
+  useI18n();
   const { gameState } = useGameContext();
   const mp = useMultiplayerActions();
   const gameId = mp?.gameId ?? null;
@@ -202,13 +205,13 @@ export function TradeDock() {
       <div className="mp-dock-head">
         <span className="mp-dock-head__title">
           <TradeGlyph />
-          Trade
+          {t('trade.dock.title')}
         </span>
         <button
           className="mp-dock-collapse-btn"
           onClick={close}
-          title="Close panel"
-          aria-label="Close trade panel"
+          title={t('trade.dock.close')}
+          aria-label={t('trade.dock.closeAria')}
         >×</button>
       </div>
       {railOpen && (
@@ -218,11 +221,11 @@ export function TradeDock() {
             <button
               className={tab === 'market' ? 'active' : ''}
               onClick={() => setTab('market')}
-              title="Open posts — offers anyone can take, visible to every faction"
+              title={t('trade.dock.marketTip')}
             >
-              Market{unseen > 0 && (
+              {t('trade.dock.market')}{unseen > 0 && (
                 <span
-                  title={`${unseen} new post${unseen > 1 ? 's' : ''} since you last looked`}
+                  title={tn('trade.dock.newPosts', unseen)}
                   style={{
                     marginLeft: 4, padding: '0 5px', fontSize: 9,
                     background: 'rgba(168,184,200,0.25)', color: '#d8e4ee', borderRadius: 8,
@@ -235,10 +238,10 @@ export function TradeDock() {
               className={tab === 'private' ? 'active' : ''}
               onClick={() => setTab('private')}
               title={pending > 0
-                ? `${pending} trade action${pending > 1 ? 's' : ''} pending — offers or unassigned freighters`
-                : 'Offers, counters and agreements between factions'}
+                ? tn('trade.dock.pending', pending)
+                : t('trade.dock.privateTip')}
             >
-              Private{pending > 0 && (
+              {t('trade.dock.private')}{pending > 0 && (
                 <span style={{
                   marginLeft: 4, padding: '0 5px', fontSize: 9,
                   background: '#ffb84d', color: '#0a0e14', borderRadius: 8,
@@ -249,18 +252,18 @@ export function TradeDock() {
             <button
               className={tab === 'routes' ? 'active' : ''}
               onClick={() => setTab('routes')}
-              title="Your freight itineraries and the crews running them"
+              title={t('trade.dock.routesTip')}
             >
-              Routes
+              {t('trade.dock.routes')}
             </button>
             {/* Pacts are diplomacy, not freight. They sat at the bottom of
                 PRIVATE's long scroll, under five sections about cargo. */}
             <button
               className={tab === 'treaties' ? 'active' : ''}
               onClick={() => setTab('treaties')}
-              title="Where you stand with every empire, and the pacts in force"
+              title={t('trade.dock.standingTip')}
             >
-              Standing
+              {t('trade.dock.standing')}
             </button>
           </div>
           <div className="mp-dock-body">

@@ -2,9 +2,12 @@ import React, { useCallback, useState } from 'react';
 import { useAuth } from './AuthContext';
 import { apiFetch } from './api';
 import { GoogleSignInButton } from './GoogleSignInButton';
+import { t, getLang } from '../i18n/core';
+import { useI18n, LanguageSwitch } from '../i18n/react';
 import './multiplayer.css';
 
 export function AuthOverlay({ onGuest }: { onGuest?: () => void }) {
+  useI18n();
   const { signIn, signUp, signInWithGoogle, googleClientId } = useAuth();
   const [mode, setMode] = useState<'login' | 'signup' | 'forgot'>('login');
   const [resetSent, setResetSent] = useState(false);
@@ -21,10 +24,10 @@ export function AuthOverlay({ onGuest }: { onGuest?: () => void }) {
     if (mode === 'forgot') {
       // The server answers the same whether or not the address has an
       // account, so this screen says the same thing either way too.
-      const res = await apiFetch('/api/auth/forgot', { method: 'POST', body: JSON.stringify({ email }) });
+      const res = await apiFetch('/api/auth/forgot', { method: 'POST', body: JSON.stringify({ email, locale: getLang() }) });
       setBusy(false);
       if (res.ok) setResetSent(true);
-      else setError('Could not send the link. Try again in a moment.');
+      else setError(t('auth.err.sendFailed'));
       return;
     }
     const err = mode === 'signup'
@@ -44,30 +47,27 @@ export function AuthOverlay({ onGuest }: { onGuest?: () => void }) {
 
   return (
     <div className="mp-overlay">
+      <div className="mp-lang"><LanguageSwitch /></div>
       <form className="mp-card" onSubmit={onSubmit}>
         <h1 className="mp-title">ORBITAL</h1>
-        <div className="mp-subtitle">{mode === 'forgot' ? 'RESET YOUR PASSWORD' : 'SIGN IN TO COMMAND'}</div>
+        <div className="mp-subtitle">{mode === 'forgot' ? t('auth.subtitle.forgot') : t('auth.subtitle.signin')}</div>
 
         {mode === 'forgot' ? (
           resetSent ? (
             <>
               <p className="mp-auth-note">
-                If there is an account for <strong>{email}</strong>, a reset link is on its way.
-                It works once and expires in an hour. Check your spam folder if it hasn&rsquo;t
-                arrived in a few minutes.
+                {t('auth.sentBefore')}<strong>{email}</strong>{t('auth.sentAfter')}
               </p>
               <button
                 type="button"
                 className="mp-submit"
                 onClick={() => { setMode('login'); setResetSent(false); setError(null); }}
-              >Back to sign in</button>
+              >{t('auth.backToSignin')}</button>
             </>
           ) : (
             <>
-              <p className="mp-auth-note">
-                Enter the email you signed up with and we&rsquo;ll send you a link to choose a new password.
-              </p>
-              <label className="mp-label" htmlFor="auth-forgot-email">Email</label>
+              <p className="mp-auth-note">{t('auth.forgotIntro')}</p>
+              <label className="mp-label" htmlFor="auth-forgot-email">{t('common.email')}</label>
               <input
                 id="auth-forgot-email"
                 name="username"
@@ -82,13 +82,13 @@ export function AuthOverlay({ onGuest }: { onGuest?: () => void }) {
                 onChange={(e) => setEmail(e.target.value)}
               />
               <button className="mp-submit" type="submit" disabled={busy}>
-                {busy ? 'Sending…' : 'Send reset link'}
+                {busy ? t('auth.sending') : t('auth.sendLink')}
               </button>
               <button
                 type="button"
                 className="mp-auth-link"
                 onClick={() => { setMode('login'); setError(null); }}
-              >Back to sign in</button>
+              >{t('auth.backToSignin')}</button>
             </>
           )
         ) : (<>
@@ -97,12 +97,12 @@ export function AuthOverlay({ onGuest }: { onGuest?: () => void }) {
             type="button"
             className={`mp-tab ${mode === 'login' ? 'active' : ''}`}
             onClick={() => { setMode('login'); setError(null); }}
-          >Sign in</button>
+          >{t('auth.tab.signin')}</button>
           <button
             type="button"
             className={`mp-tab ${mode === 'signup' ? 'active' : ''}`}
             onClick={() => { setMode('signup'); setError(null); }}
-          >Create account</button>
+          >{t('auth.tab.signup')}</button>
         </div>
 
         {googleClientId && (
@@ -114,14 +114,14 @@ export function AuthOverlay({ onGuest }: { onGuest?: () => void }) {
               disabled={busy}
             />
             <div style={{ textAlign: 'center', fontSize: 10, color: '#6b8195', letterSpacing: '0.12em' }}>
-              — OR USE EMAIL —
+              {t('auth.orEmail')}
             </div>
           </div>
         )}
 
         {mode === 'signup' && (
           <>
-            <label className="mp-label" htmlFor="auth-callsign">Call sign</label>
+            <label className="mp-label" htmlFor="auth-callsign">{t('auth.callSign')}</label>
             <input
               id="auth-callsign"
               name="displayName"
@@ -138,7 +138,7 @@ export function AuthOverlay({ onGuest }: { onGuest?: () => void }) {
         {/* Stable id/name + autocomplete=username so Safari/password
             managers treat this as ONE persistent login form (username +
             password pair) and don't re-prompt to save on each edit. */}
-        <label className="mp-label" htmlFor="auth-email">Email</label>
+        <label className="mp-label" htmlFor="auth-email">{t('common.email')}</label>
         <input
           id="auth-email"
           name="username"
@@ -153,7 +153,7 @@ export function AuthOverlay({ onGuest }: { onGuest?: () => void }) {
           onChange={(e) => setEmail(e.target.value)}
         />
 
-        <label className="mp-label" htmlFor="auth-password">Password</label>
+        <label className="mp-label" htmlFor="auth-password">{t('common.password')}</label>
         <input
           id="auth-password"
           name="password"
@@ -167,14 +167,14 @@ export function AuthOverlay({ onGuest }: { onGuest?: () => void }) {
         />
 
         <button className="mp-submit" type="submit" disabled={busy}>
-          {mode === 'signup' ? 'Create account' : 'Sign in'}
+          {mode === 'signup' ? t('auth.tab.signup') : t('auth.tab.signin')}
         </button>
         {mode === 'login' && (
           <button
             type="button"
             className="mp-auth-link"
             onClick={() => { setMode('forgot'); setError(null); setResetSent(false); }}
-          >Forgot password?</button>
+          >{t('auth.forgotLink')}</button>
         )}
         </>)}
 

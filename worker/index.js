@@ -21,6 +21,7 @@ import { matchBackfillSweep } from './analytics.js';
 import { GIT_SHA, BUILT_AT } from './_version.js';
 import { maybeRunDailyDigest } from './digest.js';
 import * as mail from './email.js';
+import { normalizeLocale } from './i18n.js';
 
 export { Room } from './room.js';
 
@@ -203,6 +204,7 @@ async function handleSignup(req, env) {
   const email = body.email.trim().toLowerCase();
   const displayName = (body.display_name?.trim() || email.split('@')[0]).slice(0, 40);
   const passwordHash = await hashPassword(body.password);
+  const locale = normalizeLocale(body.locale);
   const id = newUserId();
   const now = Date.now();
 
@@ -216,6 +218,7 @@ async function handleSignup(req, env) {
     throw e;
   }
   await stampSignupSource(env.DB, id, body.attribution);
+  if (locale) await env.DB.prepare('UPDATE users SET locale = ? WHERE id = ?').bind(locale, id).run();
 
   // Seed the standard-issue "Default" templates. Migration 0039 does the
   // same for accounts that already existed; this covers new signups.
@@ -239,7 +242,7 @@ async function handleSignup(req, env) {
 
   const { token, expiresAt } = await createSession(env.DB, id, req.headers.get('user-agent'));
   // Never throws; a mail outage must not fail a signup.
-  await mail.sendWelcome(env, { id, email, display_name: displayName });
+  await mail.sendWelcome(env, { id, email, display_name: displayName, locale });
   return json(
     { user: { id, email, display_name: displayName, ...(await noteVisit(env, id)) } },
     { status: 201, headers: { 'set-cookie': sessionCookie(token, expiresAt) } },
@@ -276,7 +279,7 @@ async function handleForgotPassword(req, env) {
   const addr = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
   if (!EMAIL_RE.test(addr) || /@agents\.orbital\.local$/i.test(addr)) return ok;
   const user = await env.DB
-    .prepare('SELECT id, email, display_name FROM users WHERE email = ?')
+    .prepare('SELECT id, email, display_name, locale FROM users WHERE email = ?')
     .bind(addr).first();
   if (!user) return ok;
   const now = Date.now();
@@ -289,8 +292,10 @@ async function handleForgotPassword(req, env) {
   await env.DB
     .prepare('INSERT INTO password_resets (token_hash, user_id, created_ms, expires_ms) VALUES (?, ?, ?, ?)')
     .bind(tokenHash, user.id, now, now + RESET_TTL_MS).run();
+  // No saved language yet: write in the one the page was showing.
   await mail.sendPasswordReset(
-    env, user, `https://orbital-empire.com/reset-password?token=${token}`, tokenHash,
+    env, { ...user, locale: user.locale ?? normalizeLocale(body.locale) },
+    `https://orbital-empire.com/reset-password?token=${token}`, tokenHash,
   );
   return ok;
 }
@@ -526,7 +531,9 @@ async function handleGoogleAuth(req, env) {
           .bind(userId, userEmail, userDisplayName, googleSub, now, now)
           .run();
         await stampSignupSource(env.DB, userId, body.attribution);
-        await mail.sendWelcome(env, { id: userId, email: userEmail, display_name: userDisplayName });
+        const gLocale = normalizeLocale(body.locale);
+        if (gLocale) await env.DB.prepare('UPDATE users SET locale = ? WHERE id = ?').bind(gLocale, userId).run();
+        await mail.sendWelcome(env, { id: userId, email: userEmail, display_name: userDisplayName, locale: gLocale });
       } catch (e) {
         // Race: another request created the same email between the lookup
         // and the insert. Re-fetch and attach.
@@ -594,7 +601,7 @@ async function noteVisit(env, userId) {
       .run();
     const row = await env.DB
       .prepare(
-        `SELECT u.email, u.visit_count, u.discord_prompt_ms, u.commission_ask_ms,
+        `SELECT u.email, u.locale, u.visit_count, u.discord_prompt_ms, u.commission_ask_ms,
                 COALESCE(s.minutes, 0) AS minutes,
                 EXISTS (SELECT 1 FROM user_entitlements e WHERE e.user_id = u.id) AS owned
            FROM users u LEFT JOIN analytics_user_seen s ON s.user_id = u.id
@@ -618,12 +625,27 @@ async function noteVisit(env, userId) {
     return {
       invite_discord: invite ? FEEDBACK_DISCORD_URL : null,
       commission_ask: commissionAsk,
+      // The language the player chose (null = follow the device). The
+      // client applies it, so it follows them from browser to phone app.
+      locale: normalizeLocale(row?.locale),
     };
   } catch (e) {
     // Bookkeeping only: a failure here must never block signing in.
     console.error('noteVisit failed', e);
-    return { invite_discord: null, commission_ask: false };
+    return { invite_discord: null, commission_ask: false, locale: null };
   }
+}
+
+// PUT /api/users/me/locale  { locale: 'en' | 'pt-BR' | null }
+// The language for this account's emails, Discord messages and the app.
+// null = no preference (follow the device).
+async function handleSetLocale(req, env, session) {
+  const body = await readJson(req);
+  const raw = body?.locale;
+  const locale = raw == null ? null : normalizeLocale(raw);
+  if (raw != null && !locale) return err(400, 'bad_request', 'unsupported language');
+  await env.DB.prepare('UPDATE users SET locale = ? WHERE id = ?').bind(locale, session.user_id).run();
+  return json({ ok: true, locale });
 }
 
 /** Minutes of play before the Commission thank-you card may appear. */
@@ -2053,6 +2075,7 @@ export default {
       if (req.method === 'POST' && url.pathname === '/api/rooms/join-by-code') return handleJoinByCode(req, env, session);
       if (req.method === 'GET'  && url.pathname === '/api/users/me/rooms') return handleListMyRooms(req, env, session);
       if (req.method === 'PUT'  && url.pathname === '/api/users/me/autoload') return handleSetAutoload(req, env, session);
+      if (req.method === 'PUT'  && url.pathname === '/api/users/me/locale') return handleSetLocale(req, env, session);
       if (req.method === 'POST' && url.pathname === '/api/users/me/discord-invite') return handleDiscordInviteAnswer(req, env, session);
       if (req.method === 'POST' && url.pathname === '/api/users/me/commission-ask') return handleCommissionAskAnswer(req, env, session);
       if (req.method === 'GET'  && url.pathname === '/api/users/me/email-prefs') return handleGetEmailPrefs(req, env, session);

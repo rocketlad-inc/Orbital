@@ -17,10 +17,14 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from './api';
 import { isAndroidApp } from '../platform/appShell';
+import { t } from '../i18n/core';
+import { tRich } from '../i18n/rich';
+import { useI18n } from '../i18n/react';
 
 type Token = { token: string; label: string | null; created_ms: number; last_used_ms: number | null };
 
 export function WidgetLink() {
+  useI18n();
   const [tokens, setTokens] = useState<Token[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -29,7 +33,7 @@ export function WidgetLink() {
   const load = useCallback(async () => {
     const res = await apiFetch<{ tokens: Token[] }>('/api/me/widget-tokens');
     if (res.ok) { setTokens(res.data.tokens); setErr(null); }
-    else setErr('Could not load your widget links.');
+    else setErr(t('mp.widget.errLoad'));
   }, []);
   useEffect(() => { void load(); }, [load]);
 
@@ -40,7 +44,7 @@ export function WidgetLink() {
     });
     setBusy(false);
     if (res.ok) await load();
-    else setErr('Could not create a widget link.');
+    else setErr(t('mp.widget.errCreate'));
   };
 
   const revoke = async (token: string) => {
@@ -50,7 +54,7 @@ export function WidgetLink() {
     });
     setBusy(false);
     if (res.ok) await load();
-    else setErr('Could not revoke that link.');
+    else setErr(t('mp.widget.errRevoke'));
   };
 
   if (tokens === null) return null;
@@ -61,15 +65,13 @@ export function WidgetLink() {
 
   return (
     <div style={{ marginTop: 18 }}>
-      <div style={head}>Home screen widget</div>
+      <div style={head}>{t('mp.widget.head')}</div>
       <div style={sub}>
-        A picture of your empire that updates on its own — the Herald's map of the
-        system, with your resources and anything waiting on you along the bottom.
+        {t('mp.widget.intro')}
       </div>
       {isAndroidApp() && (
         <div style={{ ...sub, marginTop: 6 }}>
-          Long-press your home screen &rarr; Widgets &rarr; Orbital to add it, then tap
-          <b style={{ color: '#cdd9e4' }}> Send to widget</b> below.
+          {tRich('mp.widget.android', { send: <b style={{ color: '#cdd9e4' }}>{t('mp.widget.send')}</b> })}
         </div>
       )}
 
@@ -78,7 +80,7 @@ export function WidgetLink() {
       {!current ? (
         <button type="button" onClick={create} disabled={busy}
           style={{ ...pill, marginTop: 10, padding: '6px 12px', opacity: busy ? 0.5 : 1 }}
-        >Create a widget link</button>
+        >{t('mp.widget.create')}</button>
       ) : (
         <>
           {/* The card itself, live. Nothing explains what this is faster
@@ -86,7 +88,7 @@ export function WidgetLink() {
               works before anyone puts it on a home screen. */}
           <img
             src={url}
-            alt="Your Orbital widget: the system map with your status"
+            alt={t('mp.widget.alt')}
             style={{
               display: 'block', width: '100%', maxWidth: 420, marginTop: 10,
               borderRadius: 8, border: '1px solid rgba(96,130,160,.28)',
@@ -111,7 +113,7 @@ export function WidgetLink() {
                 type="button"
                 onClick={() => { window.location.href = `orbital://widget?token=${current.token}`; }}
                 style={{ ...pill, padding: '6px 12px', borderColor: '#4ecdc4', color: '#4ecdc4' }}
-              >Send to widget</button>
+              >{t('mp.widget.send')}</button>
             )}
             <button
               type="button"
@@ -124,31 +126,29 @@ export function WidgetLink() {
                   // Clipboard access is refused often enough (insecure
                   // context, permissions) that failing silently would
                   // read as a dead button. The URL is on screen anyway.
-                  setErr('Could not copy — select the link above instead.');
+                  setErr(t('mp.widget.errCopy'));
                 }
               }}
               style={{ ...pill, padding: '6px 12px', borderColor: '#4ecdc4', color: '#4ecdc4' }}
-            >{copied ? 'Copied' : 'Copy link'}</button>
+            >{copied ? t('mp.widget.copied') : t('mp.widget.copy')}</button>
             <button type="button" onClick={() => revoke(current.token)} disabled={busy}
               style={{ ...pill, padding: '6px 12px', opacity: busy ? 0.5 : 1 }}
-            >Revoke</button>
+            >{t('mp.widget.revoke')}</button>
           </div>
 
           {/* The halves, for whoever wants them. Small widget sizes are
               the real reason the status-only card stays: the map's
               small print stops being legible well before the bar does. */}
           <div style={{ ...sub, marginTop: 12 }}>
-            Two other shapes on the same link, if you want them:{' '}
-            <a href={mapUrl} style={link} target="_blank" rel="noreferrer">map only</a>
+            {t('mp.widget.shapes')}{' '}
+            <a href={mapUrl} style={link} target="_blank" rel="noreferrer">{t('mp.widget.mapOnly')}</a>
             {' · '}
-            <a href={cardUrl} style={link} target="_blank" rel="noreferrer">status only</a>
-            {' '}(better on a small widget, where the map&rsquo;s labels get tiny).
+            <a href={cardUrl} style={link} target="_blank" rel="noreferrer">{t('mp.widget.statusOnly')}</a>
+            {' '}{t('mp.widget.small')}
           </div>
 
           <div style={{ ...sub, marginTop: 12 }}>
-            Treat these like a password. Anyone holding them can see your resources,
-            what is waiting on you, and your game's map. They cannot give orders, read your
-            messages, or sign in as you. Revoking stops all of them immediately.
+            {t('mp.widget.password')}
           </div>
         </>
       )}

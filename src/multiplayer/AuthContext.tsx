@@ -1,6 +1,8 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { apiFetch, User } from './api';
 import { attributionForSignup } from './attribution';
+import { getLang, setLang, isLang } from '../i18n/core';
+import { apiErrorText } from '../i18n/apiErrors';
 
 interface AuthContextValue {
   user: User | null;
@@ -27,6 +29,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [googleClientId, setGoogleClientId] = useState<string | null>(null);
 
+  // The language saved on the account wins over this browser's: it is how
+  // a player's choice follows them to the phone app and the next device.
+  // (Not persisted locally: the account stays the source of truth.)
+  useEffect(() => {
+    const saved = user?.locale;
+    if (saved && isLang(saved) && saved !== getLang()) setLang(saved, false);
+  }, [user?.locale]);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -51,18 +61,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       body: JSON.stringify({ email, password }),
     });
     if (res.ok) { setUser(res.data.user); return null; }
-    return res.error?.message ?? 'Sign in failed';
+    return apiErrorText(res.error, 'auth.err.signInFailed');
   }, []);
 
   const signUp = useCallback(async (email: string, password: string, displayName?: string) => {
-    const body: Record<string, unknown> = { email, password, attribution: attributionForSignup() };
+    const body: Record<string, unknown> = { email, password, attribution: attributionForSignup(), locale: getLang() };
     if (displayName?.trim()) body.display_name = displayName.trim();
     const res = await apiFetch<{ user: User }>('/api/auth/signup', {
       method: 'POST',
       body: JSON.stringify(body),
     });
     if (res.ok) { setUser(res.data.user); return null; }
-    return res.error?.message ?? 'Sign up failed';
+    return apiErrorText(res.error, 'auth.err.signUpFailed');
   }, []);
 
   const signInWithGoogle = useCallback(async (idToken: string) => {
@@ -70,10 +80,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       method: 'POST',
       // Attribution rides along on every Google sign-in; the server only
       // uses it when this sign-in creates the account.
-      body: JSON.stringify({ id_token: idToken, attribution: attributionForSignup() }),
+      body: JSON.stringify({ id_token: idToken, attribution: attributionForSignup(), locale: getLang() }),
     });
     if (res.ok) { setUser(res.data.user); return null; }
-    return res.error?.message ?? 'Google sign-in failed';
+    return apiErrorText(res.error, 'auth.err.googleFailed');
   }, []);
 
   const refresh = useCallback(async () => {

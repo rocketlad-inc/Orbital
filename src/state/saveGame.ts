@@ -20,6 +20,7 @@
 
 import { GameState } from '../types';
 import { createCircularOrbit } from '../physics/orbitalMechanics';
+import { t } from '../i18n/core';
 
 const STORAGE_PREFIX = 'orbital.save.v1';
 const INDEX_KEY = `${STORAGE_PREFIX}.index`;
@@ -278,9 +279,9 @@ export async function importSave(file: File): Promise<SaveMeta> {
   const text = await file.text();
   let parsed: SaveBlob;
   try { parsed = JSON.parse(text); }
-  catch { throw new Error('Not valid JSON.'); }
+  catch { throw new Error(t('helper.save.badJson')); }
 
-  if (!parsed?.meta || !parsed?.state) throw new Error('File is not an Orbital save.');
+  if (!parsed?.meta || !parsed?.state) throw new Error(t('helper.save.notSave'));
   // Same v1 → v2 migration as readSave — exported saves can be
   // brought forward across the Bezier→Torch boundary without losing
   // them; in-flight transfers get force-finished.
@@ -290,12 +291,12 @@ export async function importSave(file: File): Promise<SaveMeta> {
   }
   if (parsed.meta.schemaVersion !== SAVE_SCHEMA_VERSION) {
     throw new Error(
-      `Save was written against schema v${parsed.meta.schemaVersion}, this build expects v${SAVE_SCHEMA_VERSION}.`,
+      t('helper.save.schema', { found: parsed.meta.schemaVersion, expected: SAVE_SCHEMA_VERSION }),
     );
   }
 
   const meta = writeSave(parsed.state, `${parsed.meta.name} (imported)`);
-  if (!meta) throw new Error('Could not store the imported save (storage may be full).');
+  if (!meta) throw new Error(t('helper.save.storeFail'));
   return meta;
 }
 
@@ -310,11 +311,11 @@ export function formatBytes(n: number): string {
 export function formatSavedAt(ms: number): string {
   const delta = Date.now() - ms;
   const mins = Math.floor(delta / 60_000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
+  if (mins < 1) return t('helper.ago.now');
+  if (mins < 60) return t('helper.ago.m', { n: mins });
   const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
+  if (hrs < 24) return t('helper.ago.h', { n: hrs });
   const days = Math.floor(hrs / 24);
-  if (days < 30) return `${days}d ago`;
+  if (days < 30) return t('helper.ago.d', { n: days });
   return new Date(ms).toLocaleDateString();
 }

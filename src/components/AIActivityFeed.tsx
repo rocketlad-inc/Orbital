@@ -8,6 +8,8 @@
 
 import React, { useState } from 'react';
 import { useGameContext } from '../state/gameContext';
+import { t, tn } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 import './AIActivityFeed.css';
 
 const KIND_GLYPH: Record<string, string> = {
@@ -33,6 +35,7 @@ const KIND_COLOR: Record<string, string> = {
 };
 
 export const AIActivityFeed: React.FC = () => {
+  useI18n();
   const { gameState } = useGameContext();
   const [collapsed, setCollapsed] = useState(false);
 
@@ -50,10 +53,10 @@ export const AIActivityFeed: React.FC = () => {
       <button
         className="ai-feed ai-feed--collapsed"
         onClick={() => setCollapsed(false)}
-        title="Show AI activity"
+        title={t('site.ai.show')}
       >
         <span className="ai-feed-glyph">⌬</span>
-        <span className="ai-feed-collapsed-text">AI</span>
+        <span className="ai-feed-collapsed-text">{t('site.ai.short')}</span>
       </button>
     );
   }
@@ -63,17 +66,17 @@ export const AIActivityFeed: React.FC = () => {
       <header className="ai-feed-head">
         <span className="ai-feed-title">
           <span className="ai-feed-glyph">⌬</span>
-          AI ACTIVITY
+          {t('site.ai.title')}
         </span>
         <button
           className="ai-feed-collapse"
           onClick={() => setCollapsed(true)}
-          title="Collapse"
+          title={t('site.ai.collapse')}
         >−</button>
       </header>
 
       {recent.length === 0 ? (
-        <div className="ai-feed-empty">No AI activity yet — the enemy is still planning…</div>
+        <div className="ai-feed-empty">{t('site.ai.empty')}</div>
       ) : (
         <ul className="ai-feed-list">
           {recent.map(entry => {
@@ -97,8 +100,7 @@ export const AIActivityFeed: React.FC = () => {
       )}
 
       <footer className="ai-feed-foot">
-        {aiFactions.length} AI {aiFactions.length === 1 ? 'faction' : 'factions'} ·
-        {' '}showing last {recent.length}
+        {tn('site.ai.footer', aiFactions.length, { shown: recent.length })}
       </footer>
     </div>
   );

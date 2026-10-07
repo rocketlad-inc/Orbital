@@ -12,6 +12,7 @@
 // ============================================================
 
 import { ShipClassName, SHIP_CLASSES } from './shipClasses';
+import { t, tk } from '../i18n/core';
 
 export type ShipPartId = 'kinetic' | 'energy' | 'shield' | 'armor' | 'engine' | 'detonator' | 'flak' | 'repair' | 'mining' | 'construction' | 'colony';
 
@@ -133,128 +134,128 @@ export const DEFAULT_LOADOUTS: Record<ShipClassName, ShipPartId[]> = {
 export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
   kinetic: {
     id: 'kinetic',
-    name: 'Kinetic Mount',
-    blurb: '+40% hull base damage (kinetic), +10% more per ⚔ Weapons level. Strong against 🪨 armor. Each 🛡 shield cuts damage by 22% (compounding).',
+    get name() { return tk('data.part.kinetic.name', 'Kinetic Mount'); },
+    get blurb() { return tk('data.part.kinetic.blurb', '+40% hull base damage (kinetic), +10% more per ⚔ Weapons level. Strong against 🪨 armor. Each 🛡 shield cuts damage by 22% (compounding).'); },
     cost: { ore: 8, credits: 1 },
     allowedOn: ['corvette', 'frigate', 'destroyer'],
     techTrack: 'weapons',
-    techNote: 'Kinetic Weapons tech: +10%/lvl to this mount',
+    get techNote() { return tk('data.part.kinetic.tech', 'Kinetic Weapons tech: +10%/lvl to this mount'); },
     damageType: 'kinetic',
   },
   energy: {
     id: 'energy',
-    name: 'Energy Mount',
-    blurb: '+40% hull base damage (energy), +10% more per ⚔ Weapons level. Strong against 🛡 shields. Each 🪨 armor plate cuts damage by 22% (compounding).',
+    get name() { return tk('data.part.energy.name', 'Energy Mount'); },
+    get blurb() { return tk('data.part.energy.blurb', '+40% hull base damage (energy), +10% more per ⚔ Weapons level. Strong against 🛡 shields. Each 🪨 armor plate cuts damage by 22% (compounding).'); },
     cost: { ore: 1, credits: 8 },
     allowedOn: ['corvette', 'frigate', 'destroyer'],
     techTrack: 'energy_weapons',
-    techNote: 'Energy Weapons tech: +10%/lvl to this mount',
+    get techNote() { return tk('data.part.energy.tech', 'Energy Weapons tech: +10%/lvl to this mount'); },
     damageType: 'energy',
   },
   shield: {
     id: 'shield',
-    name: 'Shield Array',
-    blurb: '+35% hull base HP, +8% more per 🛡 Defense level. Cuts incoming ⚔ KINETIC by 22% per array, compounding: 22% / 39% / 53% for 1 / 2 / 3. No effect on ⚡ energy.',
+    get name() { return tk('data.part.shield.name', 'Shield Array'); },
+    get blurb() { return tk('data.part.shield.blurb', '+35% hull base HP, +8% more per 🛡 Defense level. Cuts incoming ⚔ KINETIC by 22% per array, compounding: 22% / 39% / 53% for 1 / 2 / 3. No effect on ⚡ energy.'); },
     cost: { ore: 8, credits: 1 },
     allowedOn: ['corvette', 'frigate', 'destroyer', 'freighter'],
     techTrack: 'shields',
-    techNote: 'Shields tech: +8%/lvl to this array',
+    get techNote() { return tk('data.part.shield.tech', 'Shields tech: +8%/lvl to this array'); },
   },
   armor: {
     id: 'armor',
-    name: 'Armor Plate',
-    blurb: '+35% hull base HP, +8% more per 🛡 Defense level. Cuts incoming ⚡ ENERGY by 22% per plate, compounding: 22% / 39% / 53% for 1 / 2 / 3. No effect on ⚔ kinetic.',
+    get name() { return tk('data.part.armor.name', 'Armor Plate'); },
+    get blurb() { return tk('data.part.armor.blurb', '+35% hull base HP, +8% more per 🛡 Defense level. Cuts incoming ⚡ ENERGY by 22% per plate, compounding: 22% / 39% / 53% for 1 / 2 / 3. No effect on ⚔ kinetic.'); },
     cost: { ore: 1, credits: 8 },
     allowedOn: ['corvette', 'frigate', 'destroyer', 'freighter'],
     techTrack: 'armor',
-    techNote: 'Armor tech: +8%/lvl to this plate',
+    get techNote() { return tk('data.part.armor.tech', 'Armor tech: +8%/lvl to this plate'); },
   },
   engine: {
     id: 'engine',
-    name: 'Booster Engine',
-    blurb: '+speed per engine: arrives sooner AND harder to hit. Caps out.',
+    get name() { return tk('data.part.engine.name', 'Booster Engine'); },
+    get blurb() { return tk('data.part.engine.blurb', '+speed per engine: arrives sooner AND harder to hit. Caps out.'); },
     cost: { ore: 2, credits: 6 },
     allowedOn: ['corvette', 'frigate', 'destroyer', 'freighter'],
     techTrack: 'propulsion',
-    techNote: 'Propulsion tech: +6%/lvl to this part',
+    get techNote() { return tk('data.part.engine.tech', 'Propulsion tech: +6%/lvl to this part'); },
   },
   flak: {
     id: 'flak',
     // Says what it does AND what it does not, because "no damage" is the
     // first thing a player needs to know before they spend a slot.
-    blurb: 'No damage. Slows every enemy hull in the battle by 5% per mount '
+    get blurb() { return tk('data.part.flak.blurb', 'No damage. Slows every enemy hull in the battle by 5% per mount '
       + '(compounding, floor 50%), which makes them easier for your WHOLE fleet '
-      + 'to hit. Worth far more against fast swarms than against heavies.',
-    name: 'Flak Battery',
+      + 'to hit. Worth far more against fast swarms than against heavies.'); },
+    get name() { return tk('data.part.flak.name', 'Flak Battery'); },
     cost: { ore: 9, credits: 3 },
     allowedOn: ['corvette', 'frigate', 'destroyer'],
     techTrack: 'armor',
-    techNote: 'Point defence — unlocked on the Defense track',
+    get techNote() { return tk('data.part.flak.tech', 'Point defence — unlocked on the Defense track'); },
   },
   detonator: {
     id: 'detonator',
-    name: 'Fusion Detonator',
+    get name() { return tk('data.part.detonator.name', 'Fusion Detonator'); },
     // Full disclosure lives in detonatorDisclosure(); this short line
     // still names all three consequences per the spec's UX rule.
-    blurb: 'Self-destruct charge: massive blast, hits friend AND foe, ship is destroyed.',
+    get blurb() { return tk('data.part.detonator.blurb', 'Self-destruct charge: massive blast, hits friend AND foe, ship is destroyed.'); },
     cost: { ore: 10, credits: 10 },
     allowedOn: ['corvette', 'frigate', 'destroyer'],
     techTrack: 'weapons',
-    techNote: 'Weapons tech: +5%/lvl to blast (half rate)',
+    get techNote() { return tk('data.part.detonator.tech', 'Weapons tech: +5%/lvl to blast (half rate)'); },
   },
   mining: {
     id: 'mining',
-    name: 'Mining Rig',
+    get name() { return tk('data.part.mining.name', 'Mining Rig'); },
     // The rate note is a COMMENT, not player copy. The blurb used to end
     // with "MIRRORS MINE_RATE_PER_TICK in worker/room.js", which rendered
     // verbatim in the ship panel — a source-file reference sitting in the
     // middle of flavour text. Mirrors MINE_RATE_PER_TICK in
     // worker/room.js and MANUAL_MINE_RATE in worker/meteoroidTick.js;
     // miningMirrors.test.ts is what actually enforces that.
-    blurb: 'Cutting head and ore hopper. Required to work a meteoroid — '
+    get blurb() { return tk('data.part.mining.blurb', 'Cutting head and ore hopper. Required to work a meteoroid — '
       + 'a freighter without one cannot crew a mining run at all. Fills '
       + '50 a tick while parked on the rock, and it cannot leave until '
-      + 'the run is done.',
+      + 'the run is done.'); },
     cost: { ore: 12, credits: 6 },
     allowedOn: ['freighter'],
     techTrack: 'industry',
-    techNote: "Extraction is industry's business",
+    get techNote() { return tk('data.part.mining.tech', "Extraction is industry's business"); },
   },
   colony: {
     id: 'colony',
-    name: 'Colony Module',
-    blurb: 'Habitats, seed stock and a landing stage. Lets this ship '
+    get name() { return tk('data.part.colony.name', 'Colony Module'); },
+    get blurb() { return tk('data.part.colony.blurb', 'Habitats, seed stock and a landing stage. Lets this ship '
       + 'found a city or station on a body it is orbiting. The ship is '
-      + 'spent doing it.',
+      + 'spent doing it.'); },
     cost: { ore: 0, credits: 0 },
     allowedOn: ['colony'],
     techTrack: 'industry',
-    techNote: 'Standard fit — no research needed',
+    get techNote() { return tk('data.part.colony.tech', 'Standard fit — no research needed'); },
   },
   construction: {
     id: 'construction',
-    name: 'Construction Module',
+    get name() { return tk('data.part.construction.name', 'Construction Module'); },
     // Fits a COLONY ship, which is the only hull that already exists to
     // be spent founding something. A framework consumes its carrier the
     // same way a settlement does, so the part rides the hull whose whole
     // purpose is being used up on arrival.
-    blurb: 'Foundation rig and survey gear. Lets a colony ship lay the '
+    get blurb() { return tk('data.part.construction.blurb', 'Foundation rig and survey gear. Lets a colony ship lay the '
       + 'framework for a megastructure anywhere on the map — the site '
       + 'takes an orbit from wherever it lands, and the ship is spent '
-      + 'building it.',
+      + 'building it.'); },
     cost: { ore: 60, credits: 40 },
     allowedOn: ['colony'],
     techTrack: 'industry',
-    techNote: 'Society 8 — the door to everything enormous',
+    get techNote() { return tk('data.part.construction.tech', 'Society 8 — the door to everything enormous'); },
   },
   repair: {
     id: 'repair',
-    name: 'Repair Bay',
-    blurb: `Field tender: repairs ONE friendly ship parked at the same body — the worst off — at ${REPAIR_TENDER_PER_BAY} HP/tick. Works anywhere, no station needed. Only fits a freighter.`,
+    get name() { return tk('data.part.repair.name', 'Repair Bay'); },
+    get blurb() { return tk('data.part.repair.blurb', 'Field tender: repairs ONE friendly ship parked at the same body — the worst off — at {rate} HP/tick. Works anywhere, no station needed. Only fits a freighter.', { rate: REPAIR_TENDER_PER_BAY }); },
     cost: { ore: 4, credits: 10 },
     allowedOn: ['freighter'],
     techTrack: 'armor',
-    techNote: 'Flat rate — repair scales with shipyards, not tech',
+    get techNote() { return tk('data.part.repair.tech', 'Flat rate — repair scales with shipyards, not tech'); },
   },
 };
 
@@ -292,7 +293,7 @@ const GLYPH_ORDER: ShipPartId[] = ['kinetic', 'energy', 'shield', 'armor', 'engi
 export function loadoutSummary(parts: readonly string[] | undefined): string | null {
   if (!parts) return null;
   const clean = sanitizeParts(parts);
-  if (clean.length === 0) return 'bare hull';
+  if (clean.length === 0) return t('build.bareHull');
   return GLYPH_ORDER
     .map(id => {
       const n = clean.filter(p => p === id).length;
@@ -716,5 +717,5 @@ export function detonatorDamage(hpMax: number, detonatorCount: number, weaponsLv
 export function detonatorDisclosure(damage: number): string {
   // The percentage is DERIVED, never typed: this string said "50%" for a
   // full release after the constant moved to 25% (clownking's report).
-  return `Detonate: deal ${damage} damage (${Math.round(DETONATOR_HP_FRAC * 100)}% of max HP per detonator) to every ship in this orbit — friend or foe alike. This ship is destroyed.`;
+  return t('helper.det.disclosure', { damage, pct: Math.round(DETONATOR_HP_FRAC * 100) });
 }

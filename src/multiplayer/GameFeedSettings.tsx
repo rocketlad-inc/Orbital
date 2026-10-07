@@ -11,11 +11,17 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from './api';
 import { DiscordServerFeed } from './DiscordServerFeed';
+import { t, tk, LANGS } from '../i18n/core';
+import { apiErrorText } from '../i18n/apiErrors';
+import { useI18n } from '../i18n/react';
 
 export type FeedLevel = 'off' | 'headlines' | 'all';
 
 export interface FeedView {
   level: FeedLevel;
+  /** The language this game's feed posts in (the host's pick); null means
+   *  "same as the host's own language". */
+  feed_locale?: string | null;
   thread_url: string | null;
   following: boolean;
   discord_linked: boolean;
@@ -59,7 +65,8 @@ const box: React.CSSProperties = {
 };
 const dim: React.CSSProperties = { color: '#8a9fb3', fontSize: 11, lineHeight: 1.45 };
 
-export const GameFeedSettings: React.FC<{ gameId: string; title?: string }> = ({ gameId, title = 'Discord game feed' }) => {
+export const GameFeedSettings: React.FC<{ gameId: string; title?: string }> = ({ gameId, title }) => {
+  useI18n();
   const [view, setView] = useState<FeedView | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -78,7 +85,15 @@ export const GameFeedSettings: React.FC<{ gameId: string; title?: string }> = ({
       method: 'PUT', body: JSON.stringify({ level }),
     });
     setBusy(false);
-    if (res.ok) setView(res.data); else setError(res.error?.message ?? 'Could not change the feed');
+    if (res.ok) setView(res.data); else setError(apiErrorText(res.error, 'mp.feed.errLevel'));
+  };
+  const setLocale = async (value: string) => {
+    setBusy(true); setError(null);
+    const res = await apiFetch<FeedView>(`/api/games/${encodeURIComponent(gameId)}/feed`, {
+      method: 'PUT', body: JSON.stringify({ feed_locale: value || null }),
+    });
+    setBusy(false);
+    if (res.ok) setView(res.data); else setError(apiErrorText(res.error, 'mp.feed.lang.err'));
   };
   const setFollow = async (follow: boolean) => {
     setBusy(true); setError(null);
@@ -86,7 +101,7 @@ export const GameFeedSettings: React.FC<{ gameId: string; title?: string }> = ({
       method: 'POST', body: JSON.stringify({ follow }),
     });
     setBusy(false);
-    if (res.ok) setView(res.data); else setError(res.error?.message ?? 'Could not change following');
+    if (res.ok) setView(res.data); else setError(apiErrorText(res.error, 'mp.feed.errFollow'));
   };
 
   const on = view.level !== 'off';
@@ -96,10 +111,10 @@ export const GameFeedSettings: React.FC<{ gameId: string; title?: string }> = ({
   return (
     <div style={box} data-testid="game-feed-settings">
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-        <span style={{ fontWeight: 700, letterSpacing: '.04em' }}>{title}</span>
+        <span style={{ fontWeight: 700, letterSpacing: '.04em' }}>{title ?? t('mp.feed.title')}</span>
         {view.is_host ? (
           <select
-            aria-label="Discord game feed"
+            aria-label={t('mp.feed.ariaLabel')}
             data-testid="game-feed-level"
             value={view.level}
             disabled={busy}
@@ -111,21 +126,40 @@ export const GameFeedSettings: React.FC<{ gameId: string; title?: string }> = ({
             }}
           >
             {(['off', 'headlines', 'all'] as FeedLevel[]).map(l => (
-              <option key={l} value={l}>{FEED_LEVEL_LABEL[l]}</option>
+              <option key={l} value={l}>{tk(`mp.feed.level.${l}`, FEED_LEVEL_LABEL[l])}</option>
             ))}
           </select>
         ) : (
-          <span style={{ color: on ? '#4ecdc4' : '#8a9fb3' }}>{FEED_LEVEL_LABEL[view.level]}</span>
+          <span style={{ color: on ? '#4ecdc4' : '#8a9fb3' }}>{tk(`mp.feed.level.${view.level}`, FEED_LEVEL_LABEL[view.level])}</span>
         )}
       </div>
       <div style={dim}>
-        {FEED_LEVEL_HINT[view.level]}
-        {view.is_host && !on && ' Only the host can turn it on.'}
+        {tk(`mp.feed.hint.${view.level}`, FEED_LEVEL_HINT[view.level])}
+        {view.is_host && !on && t('mp.feed.onlyHost')}
       </div>
+      {view.is_host && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+          <span style={dim}>{t('mp.feed.lang.label')}</span>
+          <select
+            aria-label={t('mp.feed.lang.aria')}
+            data-testid="game-feed-locale"
+            value={view.feed_locale ?? ''}
+            disabled={busy}
+            onChange={e => void setLocale(e.target.value)}
+            style={{
+              background: '#070c12', color: '#d6e2ec', border: '1px solid #2a3d50', borderRadius: 4,
+              fontFamily: 'inherit', fontSize: 12, padding: '4px 6px',
+            }}
+          >
+            <option value="">{t('mp.feed.lang.host')}</option>
+            {LANGS.map(l => <option key={l.code} value={l.code}>{l.name}</option>)}
+          </select>
+        </div>
+      )}
       <DiscordServerFeed gameId={gameId} view={view} onChange={setView} />
       {on && !inOwnServer && !view.forum_configured && (
         <div style={{ ...dim, color: '#ffb84d' }}>
-          The game-feed forum is not set up on the Discord server yet, so nothing will post until it is.
+          {t('mp.feed.noForum')}
         </div>
       )}
       {on && !inOwnServer && (
@@ -139,24 +173,24 @@ export const GameFeedSettings: React.FC<{ gameId: string; title?: string }> = ({
                 disabled={busy}
                 onChange={e => void setFollow(e.target.checked)}
               />
-              Follow on Discord
+              {t('mp.feed.follow')}
             </label>
           ) : (
-            <span style={dim}>Link your Discord account to follow this game there.</span>
+            <span style={dim}>{t('mp.feed.linkFirst')}</span>
           )}
           {view.thread_url && (
             <a href={view.thread_url} target="_blank" rel="noreferrer" style={{ color: '#4ecdc4', fontSize: 12 }}>
-              Open the game's post
+              {t('mp.feed.openPost')}
             </a>
           )}
         </div>
       )}
       {view.discord_invite && !inOwnServer && (
         <div style={dim}>
-          Not on the Orbital Discord yet?{' '}
+          {t('mp.feed.notOn')}{' '}
           <a href={view.discord_invite} target="_blank" rel="noreferrer" data-testid="game-feed-invite"
-            style={{ color: '#4ecdc4' }}>Join the server</a>
-          {on ? " to see this game's feed." : '.'}
+            style={{ color: '#4ecdc4' }}>{t('mp.feed.join')}</a>
+          {on ? t('mp.feed.seeFeed') : '.'}
         </div>
       )}
       {error && <div style={{ ...dim, color: '#ff8a8a' }}>{error}</div>}

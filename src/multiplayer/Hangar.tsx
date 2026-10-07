@@ -23,9 +23,12 @@ import { PREMIUM_EMBLEM_IDS } from '../game/emblems';
 import { WEBSITE_ORIGIN } from '../platform/appShell';
 import { SkinPicker, SkinField } from './SkinPicker';
 import {
-  COMMISSION_FACTS, COMMISSION_NAME, COMMISSION_PRICE, HOLDER_MARK, canBuyHere, logCommission,
-  COMMISSION_DISCORD_DETAIL,
+  COMMISSION_LINES, COMMISSION_EMBLEMS, COMMISSION_CITY_SKINS, COMMISSION_STATION_SKINS, COMMISSION_STRUCTURE_LOOKS,
+  COMMISSION_PRICE, HOLDER_MARK, canBuyHere, logCommission,
 } from './commission';
+import { t, tk } from '../i18n/core';
+import { useI18n } from '../i18n/react';
+import { apiErrorText } from '../i18n/apiErrors';
 import './Hangar.css';
 
 /** The goods, drawn: one premium line on each hull class. */
@@ -49,6 +52,7 @@ export function Hangar({ onRedeemed, giftJustBought }: {
   /** Back from a gift checkout: watch for the code to land. */
   giftJustBought: boolean;
 }) {
+  useI18n();
   const { user, refresh } = useAuth();
   const holder = !!user?.is_premium;
   const sellable = canBuyHere();
@@ -111,7 +115,7 @@ export function Hangar({ onRedeemed, giftJustBought }: {
     const url = await startCommissionCheckout('profile', { gift });
     if (url) { window.location.assign(url); return; }
     setBusy(null);
-    setErr('Could not start checkout. Try again in a minute.');
+    setErr(t('hangar.err.checkout'));
   };
 
   const redeem = async () => {
@@ -121,7 +125,7 @@ export function Hangar({ onRedeemed, giftJustBought }: {
     });
     setRedeeming(false);
     if (!res.ok) {
-      setRedeemMsg(res.error?.message ?? 'That code did not work.');
+      setRedeemMsg(apiErrorText(res.error, 'hangar.err.redeem'));
       // A code that can never work again is not "pending" any more.
       if (res.error?.code === 'no_such_gift' || res.error?.code === 'already_redeemed' || res.error?.code === 'bad_code') {
         try { localStorage.removeItem(PENDING_GIFT_KEY); } catch { /* fine */ }
@@ -143,7 +147,7 @@ export function Hangar({ onRedeemed, giftJustBought }: {
     setSkinErr(null); setSkinBusy(true);
     setSkinDraft(d => ({ ...d, [field]: value }));
     const res = await apiFetch('/api/users/me/skins', { method: 'PATCH', body: JSON.stringify({ [field]: value }) });
-    if (!res.ok) setSkinErr(res.error?.message ?? 'Could not save that style.');
+    if (!res.ok) setSkinErr(apiErrorText(res.error, 'hangar.err.skin'));
     await refresh();
     setSkinDraft({});
     setSkinBusy(false);
@@ -157,7 +161,7 @@ export function Hangar({ onRedeemed, giftJustBought }: {
 
   return (
     <section className="pp-section hg" aria-labelledby="hg-title">
-      <div className="pp-h" id="hg-title">HANGAR</div>
+      <div className="pp-h" id="hg-title">{t('hangar.title')}</div>
 
       <div className={`hg-card${holder ? ' is-holder' : ''}`}>
         <div className="hg-goods" aria-hidden>
@@ -173,33 +177,37 @@ export function Hangar({ onRedeemed, giftJustBought }: {
         {holder ? (
           <>
             <div className="hg-title">
-              <span className="hg-mark" aria-hidden>{HOLDER_MARK}</span> You hold the {COMMISSION_NAME}
+              <span className="hg-mark" aria-hidden>{HOLDER_MARK}</span> {t('hangar.youHold', { name: t('hangar.commissionName') })}
             </div>
             <p className="hg-body">
-              Thank you for supporting Orbital. Your lines and flags are in the ship designer, the lobby flag
-              section and every megastructure's look picker, your colony and station styles are just below,
-              and the {HOLDER_MARK} beside your name shows other commanders.
+              {t('hangar.holderBody', { mark: HOLDER_MARK })}
             </p>
             <p className="hg-perk" data-testid="hangar-discord">
-              <b>Your games in your own Discord.</b> In any game you host, open its Discord game feed
-              settings and press <b>Connect your server</b>.
+              <b>{t('hangar.perk.title')}</b> {t('hangar.perk.hostPre')}{' '}
+              <b>{t('feed.connect')}</b>.
             </p>
           </>
         ) : (
           <>
-            <div className="hg-title">{COMMISSION_NAME}</div>
-            <p className="hg-body">{COMMISSION_FACTS} Orbital is free and stays free; this is how you can support it.</p>
+            <div className="hg-title">{t('hangar.commissionName')}</div>
+            <p className="hg-body">{t('hangar.facts', {
+              lines: COMMISSION_LINES, emblems: COMMISSION_EMBLEMS, cities: COMMISSION_CITY_SKINS,
+              stations: COMMISSION_STATION_SKINS, looks: COMMISSION_STRUCTURE_LOOKS, price: tk('mp.commission.price', COMMISSION_PRICE),
+            })} {t('hangar.free')}</p>
             <p className="hg-perk" data-testid="hangar-discord">
-              <b>Your games in your own Discord.</b> {COMMISSION_DISCORD_DETAIL}
+              <b>{t('hangar.perk.title')}</b> {t('hangar.discordDetail')}
             </p>
             {sellable ? (
               <button className="pp-btn pp-btn--primary" disabled={busy !== null} onClick={() => void buy(false)}>
-                {busy === 'self' ? 'Opening checkout…' : `Get the Commission · ${COMMISSION_PRICE}`}
+                {busy === 'self' ? t('hangar.opening') : t('feed.buy', { price: tk('mp.commission.price', COMMISSION_PRICE) })}
               </button>
             ) : (
               <p className="hg-offsite">
-                The Commission is bought on the Orbital website, not in the app. It unlocks here the next
-                time you sign in. <span className="hg-where">{WEBSITE_ORIGIN.replace('https://', '')}</span>
+                {/* Words: hangar.offsite. English promise (appShell.test reads it here):
+                    the Commission is bought on the Orbital website, not in the app.
+                    It unlocks here the next time you sign in. */}
+                {t('hangar.offsite')}{' '}
+                <span className="hg-where">{WEBSITE_ORIGIN.replace('https://', '')}</span>
               </p>
             )}
           </>
@@ -209,10 +217,9 @@ export function Hangar({ onRedeemed, giftJustBought }: {
 
       {/* ---- colony & station style ---- */}
       <div className="hg-skins">
-        <div className="hg-sub-h">Colony &amp; station style</div>
+        <div className="hg-sub-h">{t('hangar.skins.title')}</div>
         <p className="hg-sub">
-          How your cities and stations look in every game. Weapons, labs, forges and the rest keep their
-          shapes in every style, so rivals still read your strength. You can change it per game in the lobby.
+          {t('hangar.skins.body')}
         </p>
         <SkinPicker
           city={citySkin}
@@ -228,15 +235,15 @@ export function Hangar({ onRedeemed, giftJustBought }: {
       {/* ---- gifts ---- */}
       {sellable && (
         <div className="hg-gift">
-          <div className="hg-sub-h">Give it to a friend</div>
+          <div className="hg-sub-h">{t('hangar.gift.title')}</div>
           <p className="hg-body">
-            Buy a Commission for someone else and you get a code to pass on. It is theirs when they redeem it.
+            {t('hangar.gift.body')}
           </p>
           <button className="pp-btn" disabled={busy !== null} onClick={() => void buy(true)}>
-            {busy === 'gift' ? 'Opening checkout…' : `Buy a gift · ${COMMISSION_PRICE}`}
+            {busy === 'gift' ? t('hangar.opening') : t('hangar.gift.buy', { price: tk('mp.commission.price', COMMISSION_PRICE) })}
           </button>
           {giftJustBought && gifts.length === 0 && (
-            <p className="hg-sub">Your code is on its way; it appears here in a few seconds.</p>
+            <p className="hg-sub">{t('hangar.gift.coming')}</p>
           )}
           {gifts.length > 0 && (
             <ul className="hg-gifts">
@@ -244,13 +251,13 @@ export function Hangar({ onRedeemed, giftJustBought }: {
                 <li key={g.code} className={g.voided ? 'is-void' : g.redeemed_at ? 'is-used' : ''}>
                   <code>{g.code}</code>
                   <span className="hg-gift__state">
-                    {g.voided ? 'refunded'
-                      : g.redeemed_at ? `redeemed${g.redeemed_by_name ? ` by ${g.redeemed_by_name}` : ''}`
-                        : 'not yet redeemed'}
+                    {g.voided ? t('hangar.gift.refunded')
+                      : g.redeemed_at ? (g.redeemed_by_name ? t('hangar.gift.redeemedBy', { name: g.redeemed_by_name }) : t('hangar.gift.redeemed'))
+                        : t('hangar.gift.pending')}
                   </span>
                   {!g.voided && !g.redeemed_at && (
                     <button className="pp-btn" onClick={() => void copy(g.code)}>
-                      {copied === g.code ? 'Link copied' : 'Copy gift link'}
+                      {copied === g.code ? t('hangar.gift.copied') : t('hangar.gift.copy')}
                     </button>
                   )}
                 </li>
@@ -265,19 +272,19 @@ export function Hangar({ onRedeemed, giftJustBought }: {
           account once redeemed on the web) */}
       {!holder && sellable && (
         <div className="hg-redeem">
-          <div className="hg-sub-h">Have a gift code?</div>
+          <div className="hg-sub-h">{t('hangar.redeem.title')}</div>
           <div className="hg-redeem__row">
             <input
               className="pp-input"
               value={code}
               placeholder="XXXX-XXXX-XXXX"
               maxLength={20}
-              aria-label="Gift code"
+              aria-label={t('hangar.redeem.aria')}
               onChange={e => { setCode(e.target.value); setRedeemMsg(null); }}
               onKeyDown={e => { if (e.key === 'Enter' && code.trim()) void redeem(); }}
             />
             <button className="pp-btn pp-btn--primary" disabled={redeeming || !code.trim()} onClick={() => void redeem()}>
-              {redeeming ? 'Redeeming…' : 'Redeem'}
+              {redeeming ? t('hangar.redeeming') : t('hangar.redeem')}
             </button>
           </div>
           {redeemMsg && <div className="pp-error hg-err">{redeemMsg}</div>}

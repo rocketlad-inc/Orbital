@@ -14,8 +14,11 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
 import { useTutorial } from '../state/tutorial';
+import { t } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 
 export const TutorialPromptModal: React.FC = () => {
+  useI18n();
   const { completed, active, start, skip } = useTutorial();
   // Suppression rules:
   //  - already completed → never show
@@ -26,7 +29,7 @@ export const TutorialPromptModal: React.FC = () => {
   return createPortal(
     <div
       role="dialog"
-      aria-label="Take the tutorial?"
+      aria-label={t('tutorial.prompt.aria')}
       style={{
         position: 'fixed', inset: 0, zIndex: 2900,
         background: 'rgba(5, 8, 14, 0.78)',
@@ -46,15 +49,13 @@ export const TutorialPromptModal: React.FC = () => {
         }}
       >
         <div style={{ fontSize: 10, letterSpacing: '0.16em', color: '#b8c8d6', marginBottom: 4 }}>
-          WELCOME, COMMANDER
+          {t('tutorial.prompt.eyebrow')}
         </div>
         <div style={{ fontSize: 20, fontWeight: 700, color: '#ffb84d', marginBottom: 12 }}>
-          New to Orbital?
+          {t('tutorial.prompt.title')}
         </div>
         <div style={{ fontSize: 13, lineHeight: 1.5, color: '#d8e4ee', marginBottom: 18 }}>
-          We can walk you through the menus, the map, and the main
-          flows — transfers, building, settlements, research.
-          Takes a few minutes. You can skip any time.
+          {t('tutorial.prompt.body')}
         </div>
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
           <button
@@ -65,7 +66,7 @@ export const TutorialPromptModal: React.FC = () => {
               border: '1px solid #2a3d50', borderRadius: 4, cursor: 'pointer',
               fontFamily: 'inherit', fontSize: 12, letterSpacing: '0.08em',
             }}
-          >NO THANKS</button>
+          >{t('tutorial.prompt.no')}</button>
           <button
             onClick={start}
             style={{
@@ -74,7 +75,7 @@ export const TutorialPromptModal: React.FC = () => {
               border: 'none', borderRadius: 4, cursor: 'pointer',
               fontFamily: 'inherit', fontSize: 12, fontWeight: 700, letterSpacing: '0.08em',
             }}
-          >▶ SHOW ME</button>
+          >{t('tutorial.prompt.yes')}</button>
         </div>
       </div>
     </div>,

@@ -61,6 +61,8 @@ import { MultiplayerGameProvider } from './multiplayer/MultiplayerGameProvider';
 import { apiFetch, RoomSummary } from './multiplayer/api';
 import { logger } from './game/logger';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { t } from './i18n/core';
+import { useI18n } from './i18n/react';
 import './multiplayer/multiplayer.css';
 import './App.css';
 import './styles/mobile.css';
@@ -437,6 +439,7 @@ const LEGACY_PRIORITY_ROOM_KEY = 'orbital.priority_room';
 const LEGACY_LAST_ROOM_KEY = 'orbital.last_room';
 
 function AppShell() {
+  useI18n();
   const { user, loading } = useAuth();
   // index.html carries the marketing page's long search title; a signed-in
   // player's tab just says "Orbital" (the landing sets its own per page).
@@ -754,7 +757,7 @@ function AppShell() {
   if (loading) {
     return (
       <div className="mp-overlay">
-        <div className="mp-card">Loading…</div>
+        <div className="mp-card">{t('site.loading')}</div>
       </div>
     );
   }

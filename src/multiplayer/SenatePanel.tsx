@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  apiFetch, fmtTicksReal, realSuffix,
+  apiFetch, realSuffix,
   ActiveLaw, Faction, LawPhrase, SenateProposal, SenateSession, SenateSlider,
 } from './api';
 import { logUiEvent } from './telemetry';
@@ -8,6 +8,37 @@ import { DiscordLink } from './DiscordLink';
 import { FactionEmblem } from '../components/FactionEmblem';
 import { hasFeature, requirementFor } from '../game/researchUnlocks';
 import { TECH_DEFS } from '../game/techs';
+import { t, tn, tk } from '../i18n/core';
+import type { Key } from '../i18n/core';
+import { useI18n } from '../i18n/react';
+import { apiErrorText } from '../i18n/apiErrors';
+
+/** A translated sentence with React nodes (a bold name) standing in its
+ *  {placeholders}; plain text placeholders go through t() as usual. */
+function rich(key: Key, parts: Record<string, React.ReactNode>): React.ReactNode[] {
+  return t(key).split(/\{(\w+)\}/g).map((s, i) => (i % 2 === 1
+    ? <React.Fragment key={i}>{parts[s] ?? `{${s}}`}</React.Fragment>
+    : s));
+}
+
+/** "5 ticks · ~5h": fmtTicksReal's wall-clock arithmetic with the word
+ *  "ticks" in the player's language. */
+function ticksReal(ticks: number, tickMs?: number | null): string {
+  const base = tn('senate.ticks', ticks);
+  if (!tickMs || tickMs <= 0 || ticks <= 0) return base;
+  const ms = ticks * tickMs;
+  const mins = ms / 60_000;
+  const hours = ms / 3_600_000;
+  const human = mins < 60
+    ? `~${Math.max(1, Math.round(mins))}m`
+    : hours < 48
+      ? `~${Math.round(hours)}h`
+      : `~${Math.round(hours / 24)}d`;
+  return `${base} · ${human}`;
+}
+
+/** What a player reads for a ballot direction. */
+const voteWord = (v: string): string => tk(`senate.vote.${v}`, v);
 
 // Per-proposal duration bounds. The MINIMUM is six real hours for each
 // phase, which in ticks depends on the game's cadence — so the server
@@ -32,14 +63,14 @@ type BillKind =
 // Law (global multiplier)", "Production Sanction (½ target yield, 14t)"
 // — which describes the machinery rather than the decision. Each now
 // says what the bill DOES and, where it matters, how long for.
-const BILL_KIND_LABELS: Record<BillKind, string> = {
-  slider_law:          'Change a rule for everyone (or for one player)',
-  trade_embargo:       'Cut one player off from trade (14 ticks)',
-  war_authorization:   'Let everyone hit one player twice as hard (21 ticks)',
-  production_sanction: 'Halve one player\'s income (14 ticks)',
-  reparations:         'Make one player pay everyone else',
-  chancellor_vote:     'Vote someone the winner — this ENDS the game',
-  repeal_law:          'Strike down a law that is currently in force',
+const BILL_KIND_LABELS: Record<BillKind, Key> = {
+  slider_law:          'senate.bill.slider_law',
+  trade_embargo:       'senate.bill.trade_embargo',
+  war_authorization:   'senate.bill.war_authorization',
+  production_sanction: 'senate.bill.production_sanction',
+  reparations:         'senate.bill.reparations',
+  chancellor_vote:     'senate.bill.chancellor_vote',
+  repeal_law:          'senate.bill.repeal_law',
 };
 
 /** Bill kinds that need a faction id in their payload. Drives the target
@@ -88,6 +119,7 @@ type WeightDetail = {
  * explanation into a target list.
  */
 function WeightCard({ detail }: { detail: WeightDetail | null }) {
+  useI18n();
   if (!detail) return null;
   const near = detail.contesting.filter(s => s.need <= 1);
   return (
@@ -104,33 +136,32 @@ function WeightCard({ detail }: { detail: WeightDetail | null }) {
       </span>
       <div style={{ minWidth: 0 }}>
       <div style={{ fontSize: 11, color: 'var(--mp-fg)', fontWeight: 600 }}>
-        Your vote weight
+        {t('senate.weight.title')}
       </div>
       <div style={{ fontSize: 10.5, color: 'var(--mp-fg-dim)', marginTop: 3, lineHeight: 1.55 }}>
         {detail.rule}
       </div>
       <div style={{ fontSize: 10.5, marginTop: 6, lineHeight: 1.6 }}>
-        <span style={{ color: 'var(--mp-fg-dim)' }}>Base {detail.base}</span>
+        <span style={{ color: 'var(--mp-fg-dim)' }}>{t('senate.weight.base', { n: detail.base })}</span>
         {detail.controlled.length > 0 ? (
           <>
             <span style={{ color: 'var(--mp-fg-dim)' }}> + </span>
             {detail.controlled.map((s, i) => (
               <span key={s.label}>
                 {i > 0 && <span style={{ color: 'var(--mp-fg-dim)' }}> + </span>}
-                <span style={{ color: '#6ee7b7' }} title={`You hold ${s.held} of ${s.total} bodies here`}>
+                <span style={{ color: '#6ee7b7' }} title={t('senate.weight.held', { held: s.held, total: s.total })}>
                   {s.label}
                 </span>
               </span>
             ))}
           </>
         ) : (
-          <span style={{ color: 'var(--mp-fg-dim)' }}> — you control no system outright yet.</span>
+          <span style={{ color: 'var(--mp-fg-dim)' }}>{' '}{t('senate.weight.none')}</span>
         )}
       </div>
       {near.length > 0 && (
         <div style={{ fontSize: 10.5, color: '#ffb84d', marginTop: 6, lineHeight: 1.6 }}>
-          One more body would win you{' '}
-          {near.map(s => s.label).join(', ')}.
+          {t('senate.weight.near', { labels: near.map(s => s.label).join(', ') })}
         </div>
       )}
       </div>
@@ -152,6 +183,7 @@ function SessionCard({ session, factions, myFactionId, tickMs }: {
   myFactionId: string | null;
   tickMs: number | null;
 }) {
+  useI18n();
   // Defensive against a version skew during rollout: for ~40s after a
   // deploy a new bundle can be talking to the old worker, which returns
   // no session at all — and a half-populated one is just as possible if
@@ -174,22 +206,22 @@ function SessionCard({ session, factions, myFactionId, tickMs }: {
         {term && chair ? (
           <>
             <span className="mp-swatch" style={{ background: chair.color }} />
-            <strong>{session.is_chairman ? 'You hold the gavel' : `${chair.name} holds the gavel`}</strong>
+            <strong>{session.is_chairman ? t('senate.session.youGavel') : t('senate.session.theyGavel', { name: chair.name })}</strong>
           </>
         ) : (
-          <strong>The senate is not in session</strong>
+          <strong>{t('senate.session.none')}</strong>
         )}
       </div>
       {term && (
         <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)', marginTop: 3 }}>
-          Term {term.term_index + 1} · {term.ticks_remaining} of {session.term_ticks} ticks left{realSuffix(term.ticks_remaining, tickMs)}
-          {(session.open_bills ?? 0) > 0 && ` · ${session.open_bills} of ${session.max_open_bills ?? 3} votes open`}
+          {t('senate.session.term', { n: term.term_index + 1, left: term.ticks_remaining, total: session.term_ticks })}{realSuffix(term.ticks_remaining, tickMs)}
+          {(session.open_bills ?? 0) > 0 && ` · ${t('senate.session.votesOpen', { open: session.open_bills ?? 0, max: session.max_open_bills ?? 3 })}`}
         </div>
       )}
       {session.is_chairman && (
         <div style={{ fontSize: 10, color: session.can_propose ? '#6ee7b7' : '#ffb84d', marginTop: 3 }}>
           {session.can_propose
-            ? `Yours to set the agenda — ${session.bills_left_this_term ?? session.bills_per_term ?? 2} of ${session.bills_per_term ?? 2} bills left this term. A vote may finish after your term ends.`
+            ? t('senate.session.agenda', { left: session.bills_left_this_term ?? session.bills_per_term ?? 2, per: session.bills_per_term ?? 2 })
             : session.cannot_propose_reason}
         </div>
       )}
@@ -200,8 +232,8 @@ function SessionCard({ session, factions, myFactionId, tickMs }: {
       {!session.is_chairman && term && (
         <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)', marginTop: 3 }}>
           {iAmWaiting
-            ? `You are among ${waitingCount} yet to hold the gavel this round.`
-            : 'You have already held the gavel this round.'}
+            ? t('senate.session.waiting', { n: waitingCount })
+            : t('senate.session.held')}
         </div>
       )}
     </div>
@@ -228,6 +260,7 @@ function LawsCard({ laws, tickMs, onRepeal }: {
    *  chamber gate is closed, or the caller doesn't offer it). */
   onRepeal?: (law: ActiveLaw) => void;
 }) {
+  useI18n();
   if (laws.length === 0) return null;
   return (
     <div style={{
@@ -236,7 +269,7 @@ function LawsCard({ laws, tickMs, onRepeal }: {
       background: 'rgba(255,207,112,0.06)',
     }}>
       <div style={{ fontSize: 12, fontWeight: 700, color: '#ffcf70', marginBottom: 6 }}>
-        ⚖ LAW OF THE LAND
+        {t('senate.laws.title')}
       </div>
       {laws.map((law) => (
         <div
@@ -252,7 +285,7 @@ function LawsCard({ laws, tickMs, onRepeal }: {
             </strong>
             {law.target_faction_id && (
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                <span style={{ color: 'var(--mp-fg-dim)' }}>on</span>
+                <span style={{ color: 'var(--mp-fg-dim)' }}>{t('senate.laws.on')}</span>
                 <FactionEmblem
                   emblem={law.target_emblem}
                   fallbackKey={law.target_faction_id}
@@ -260,12 +293,12 @@ function LawsCard({ laws, tickMs, onRepeal }: {
                   color={law.target_color ?? '#9fb4c6'}
                 />
                 <span style={{ color: law.target_color ?? 'var(--mp-fg)' }}>
-                  {law.target_name ?? 'a faction'}
+                  {law.target_name ?? t('senate.laws.aFaction')}
                 </span>
               </span>
             )}
             <span style={{ color: 'var(--mp-fg-dim)', marginLeft: 'auto', whiteSpace: 'nowrap' }}>
-              {law.ticks_left} ticks left{realSuffix(law.ticks_left, tickMs)}
+              {tn('senate.laws.ticksLeft', law.ticks_left)}{realSuffix(law.ticks_left, tickMs)}
             </span>
           </div>
           {/* Line 2: what it actually does, in one sentence, from the
@@ -273,9 +306,9 @@ function LawsCard({ laws, tickMs, onRepeal }: {
               "Ship Build Cost Multiplier −50%". */}
           <div style={{ color: 'var(--mp-fg)' }}>
             {law.effect_text
-              ?? `${law.label} is set to ${law.value}.`}
+              ?? t('senate.laws.setTo', { label: law.label, value: law.value })}
             {!law.target_faction_id && (
-              <span style={{ color: 'var(--mp-fg-dim)' }}> Applies to everyone.</span>
+              <span style={{ color: 'var(--mp-fg-dim)' }}> {t('senate.laws.everyone')}</span>
             )}
           </div>
           {/* Line 3: the bill it came from, so a law reads as the
@@ -283,7 +316,7 @@ function LawsCard({ laws, tickMs, onRepeal }: {
               changed. Quoted because it's a player's own words. */}
           {law.proposal_title && (
             <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)' }}>
-              Passed as “{law.proposal_title}”
+              {t('senate.laws.passedAs', { title: law.proposal_title })}
             </div>
           )}
           {/* Line 4: the way out. A law now stands for a full term, so
@@ -293,7 +326,7 @@ function LawsCard({ laws, tickMs, onRepeal }: {
           {onRepeal && law.proposal_id && (
             <button
               onClick={() => onRepeal(law)}
-              title={`Draft a bill to strike down “${law.proposal_title ?? law.law_name}” before its window closes`}
+              title={t('senate.laws.repealTip', { title: law.proposal_title ?? law.law_name ?? '' })}
               style={{
                 marginTop: 3,
                 background: 'transparent',
@@ -308,7 +341,7 @@ function LawsCard({ laws, tickMs, onRepeal }: {
               }}
               data-testid={`law-repeal-${law.proposal_id}`}
             >
-              ⚖ MOVE TO REPEAL
+              {t('senate.laws.repeal')}
             </button>
           )}
         </div>
@@ -317,12 +350,12 @@ function LawsCard({ laws, tickMs, onRepeal }: {
   );
 }
 
-const STATUS_LABEL: Record<SenateProposal['status'], string> = {
-  debating:  'DEBATING',
-  voting:    'VOTING NOW',
-  passed:    'RATIFIED',
-  failed:    'FAILED',
-  withdrawn: 'WITHDRAWN',
+const STATUS_LABEL: Record<SenateProposal['status'], Key> = {
+  debating:  'senate.status.debating',
+  voting:    'senate.status.voting',
+  passed:    'senate.status.passed',
+  failed:    'senate.status.failed',
+  withdrawn: 'senate.status.withdrawn',
 };
 
 export function SenatePanel({
@@ -330,6 +363,7 @@ export function SenatePanel({
 }: {
   gameId: string;
 }) {
+  useI18n();
   useEffect(() => { logUiEvent(gameId, 'senate'); }, [gameId]);
   const [sliders, setSliders] = useState<SenateSlider[]>([]);
   const [currentTick, setCurrentTick] = useState<number>(0);
@@ -426,7 +460,7 @@ export function SenatePanel({
     const req = requirementFor(feat);
     if (!req) return null;
     const track = TECH_DEFS[req.track]?.name ?? req.track;
-    return { label: req.label, text: `Unlocks at ${track} ${req.level}` };
+    return { label: req.label, tier: `${track} ${req.level}` };
   }, [kind, myTech]);
 
   const refresh = useCallback(async () => {
@@ -476,8 +510,8 @@ export function SenatePanel({
 
   useEffect(() => {
     refresh();
-    const t = setInterval(refresh, 5000);
-    return () => clearInterval(t);
+    const iv = setInterval(refresh, 5000);
+    return () => clearInterval(iv);
   }, [refresh]);
 
   // Learn caller's faction id once so the Withdraw button knows when
@@ -522,7 +556,7 @@ export function SenatePanel({
     e.preventDefault();
     setError(null);
     if (!title.trim() || !summary.trim()) {
-      setError('Title and summary are required.');
+      setError(t('senate.err.titleSummary'));
       return;
     }
     // Per-kind body shape — server validates each branch in
@@ -536,7 +570,7 @@ export function SenatePanel({
       vote_ticks: voteTicks,
     };
     if (kind === 'slider_law') {
-      if (!selectedSlider) { setError('Pick a slider.'); return; }
+      if (!selectedSlider) { setError(t('senate.err.pickSlider')); return; }
       body.slider_id = selectedSlider.id;
       body.target_value = target;
       // Omitted entirely when empty: the server reads a missing/blank
@@ -547,34 +581,26 @@ export function SenatePanel({
       // on the law itself (LawsCard), so an empty one means the player
       // switched the kind by hand without picking a target.
       if (!repealTargetId) {
-        setError('Pick the law to repeal — use REPEAL on a law under LAW OF THE LAND.');
+        setError(t('senate.err.pickLaw'));
         return;
       }
       body.target_proposal_id = repealTargetId;
     } else if (kind === 'chancellor_vote') {
-      if (!targetFactionId) { setError('Pick a candidate.'); return; }
+      if (!targetFactionId) { setError(t('senate.err.pickCandidate')); return; }
       // The chancellor bill is ONE-SHOT per faction: a failed bid burns
       // your only attempt forever. That consequence lived in a server
       // comment and nowhere in the UI (usability report) — make the
       // player say it out loud before the die is cast.
-      const candidateName = factions.find(f => f.id === targetFactionId)?.name ?? 'the candidate';
-      const confirmed = window.confirm(
-        `Call the Chancellor election for ${candidateName}?\n\n` +
-        'THIS IS YOUR FACTION\'S ONLY ATTEMPT — ever. If the bill fails ' +
-        'on the floor, you can never call another Chancellor vote this ' +
-        'game. If it passes, the game ends immediately with ' +
-        `${candidateName} as Supreme Chancellor.\n\n` +
-        'Count your votes first: each faction has 1 vote, plus 1 for every '
-          + 'system it controls.',
-      );
+      const candidateName = factions.find(f => f.id === targetFactionId)?.name ?? t('senate.compose.theCandidate');
+      const confirmed = window.confirm(t('senate.chancellor.confirm', { name: candidateName }));
       if (!confirmed) return;
       body.candidate_faction_id = targetFactionId;
     } else {
       // Targeted sanctions: trade_embargo, war_authorization,
       // production_sanction, reparations
-      if (!targetFactionId) { setError('Pick a target faction.'); return; }
+      if (!targetFactionId) { setError(t('senate.err.pickTarget')); return; }
       if (targetFactionId === myFactionId) {
-        setError('Cannot target your own faction.');
+        setError(t('senate.err.noSelf'));
         return;
       }
       body.target_faction_id = targetFactionId;
@@ -585,7 +611,7 @@ export function SenatePanel({
       body: JSON.stringify(body),
     });
     setBusy(false);
-    if (!res.ok) { setError(res.error?.message ?? 'Could not propose'); return; }
+    if (!res.ok) { setError(apiErrorText(res.error, 'senate.err.propose')); return; }
     setTitle(''); setSummary('');
     setTargetFactionId(''); setSliderTargetId('');
     // Reset to the floor, not to a legacy default below it.
@@ -603,7 +629,7 @@ export function SenatePanel({
         method: 'POST',
         body: JSON.stringify({ vote }),
       });
-      if (!res.ok) setError(res.error?.message ?? 'Vote failed');
+      if (!res.ok) setError(apiErrorText(res.error, 'senate.err.vote'));
       refresh();
     } finally {
       setVoting(null);
@@ -615,7 +641,7 @@ export function SenatePanel({
     const res = await apiFetch(`/api/games/${gameId}/senate/proposals/${proposalId}/withdraw`, {
       method: 'POST',
     });
-    if (!res.ok) setError(res.error?.message ?? 'Withdraw failed');
+    if (!res.ok) setError(apiErrorText(res.error, 'senate.err.withdraw'));
     refresh();
   }
 
@@ -697,10 +723,10 @@ export function SenatePanel({
           setKind('repeal_law');
           setRepealTargetId(law.proposal_id ?? '');
           setRepealTargetName(name);
-          setTitle(`Repeal: ${name}`.slice(0, 80));
+          setTitle(t('senate.repeal.title', { name }).slice(0, 80));
           setSummary(
-            (`Strike down “${law.proposal_title ?? name}” before its window closes. `
-              + (law.effect_text ? `It currently means: ${law.effect_text}` : '')).trim().slice(0, 500),
+            (`${t('senate.repeal.summary', { title: law.proposal_title ?? name })} `
+              + (law.effect_text ? t('senate.repeal.means', { effect: law.effect_text }) : '')).trim().slice(0, 500),
           );
           setError(null);
           // The drawer is a <details>; open it and bring it into view, or
@@ -734,12 +760,12 @@ export function SenatePanel({
           in debate, and otherwise says plainly when nothing is open. */}
       {(floorBills.length > 0 || votingBills.length === 0) && (
         <section className="sp-sect">
-          <div className="sp-sect__h"><span className="sp-lbl">The floor</span></div>
+          <div className="sp-sect__h"><span className="sp-lbl">{t('senate.floor')}</span></div>
           {floorBills.length === 0 && (
             <div className="sp-empty">
               {session?.is_chairman === true
-                ? 'No bill on the floor. Propose one below.'
-                : 'No bill on the floor. The chairman sets the agenda.'}
+                ? t('senate.floor.none.chair')
+                : t('senate.floor.none')}
             </div>
           )}
           {floorBills.map((p) => renderFloorBill(p))}
@@ -764,8 +790,7 @@ export function SenatePanel({
           padding: 11, marginBottom: 14, marginTop: 14,
           fontSize: 10.5, color: 'var(--mp-fg-dim)', lineHeight: 1.55,
         }}>
-          Your empire holds no settlements, so it has no seat in the Senate.
-          Found a settlement to take it back.
+          {t('senate.noSeat')}
         </div>
       ) : <WeightCard detail={weight} />}
       <Chamber
@@ -787,10 +812,10 @@ export function SenatePanel({
           not_chairman gate stays the real authority. */}
       {session?.is_chairman === true && (
       <details className="sp-disc" id="sp-compose">
-      <summary>＋ Propose a bill</summary>
+      <summary>{t('senate.compose.summary')}</summary>
       <div className="sp-disc__body">
       <form onSubmit={propose}>
-        <label className="mp-label">Kind</label>
+        <label className="mp-label">{t('senate.compose.kind')}</label>
         <select
           className="mp-select"
           value={kind}
@@ -810,7 +835,7 @@ export function SenatePanel({
             const noChancellor = k === 'chancellor_vote' && session?.chancellor_available === false;
             return (
               <option key={k} value={k} disabled={noChancellor}>
-                {BILL_KIND_LABELS[k]}{noChancellor ? ' (one per term — not now)' : ''}
+                {t(BILL_KIND_LABELS[k])}{noChancellor ? t('senate.compose.onePerTerm') : ''}
               </option>
             );
           })}
@@ -818,7 +843,7 @@ export function SenatePanel({
 
         {kind === 'slider_law' && (
           <>
-            <label className="mp-label">What should this law change?</label>
+            <label className="mp-label">{t('senate.compose.what')}</label>
             <select
               className="mp-select"
               value={sliderId}
@@ -838,7 +863,7 @@ export function SenatePanel({
                   {selectedSlider.description}
                   {selectedSlider.current && !selectedSlider.current.at_default && (
                     <> <span style={{ color: '#ffcf70' }}>
-                      Right now: {selectedSlider.current.effect}
+                      {t('senate.compose.rightNow', { effect: selectedSlider.current.effect })}
                     </span></>
                   )}
                 </div>
@@ -850,7 +875,7 @@ export function SenatePanel({
                     which nor what any number would do. A drag with a
                     live sentence under it keeps every value reachable
                     while making the consequence impossible to miss. */}
-                <label className="mp-label">How far?</label>
+                <label className="mp-label">{t('senate.compose.howFar')}</label>
                 <input
                   className="mp-range"
                   type="range"
@@ -874,14 +899,14 @@ export function SenatePanel({
                         {said?.name ?? fmtNum(target)}
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--mp-fg)' }}>
-                        {said?.effect ?? `Sets the value to ${fmtNum(target)}.`}
+                        {said?.effect ?? t('senate.compose.setsValue', { v: fmtNum(target) })}
                       </div>
                       {/* A bill at the default passes and does nothing.
                           Worth saying out loud BEFORE someone spends a
                           whole term's floor time on it. */}
                       {nothing && (
                         <div style={{ fontSize: 10, color: '#ff8a5c', marginTop: 2 }}>
-                          Drag the bar — a bill that changes nothing still uses up your turn.
+                          {t('senate.compose.dragBar')}
                         </div>
                       )}
                     </div>
@@ -897,27 +922,26 @@ export function SenatePanel({
                     will reject. */}
                 {selectedSlider.per_faction !== false && (
                   <>
-                    <label className="mp-label">Who does it apply to?</label>
+                    <label className="mp-label">{t('senate.compose.who')}</label>
                     <select
                       className="mp-select"
                       value={sliderTargetId}
                       onChange={(e) => setSliderTargetId(e.target.value)}
                     >
-                      <option value="">Everyone</option>
+                      <option value="">{t('senate.compose.everyone')}</option>
                       {factions.map(f => (
                         <option key={f.id} value={f.id}>
-                          Only {f.name}{f.id === myFactionId ? ' (you)' : ''}
+                          {t('senate.compose.only', { name: f.name })}{f.id === myFactionId ? ` ${t('senate.you')}` : ''}
                         </option>
                       ))}
                     </select>
                     <div style={{ fontSize: 11, color: 'var(--mp-fg-dim)', marginTop: 4 }}>
                       {sliderTargetId
-                        ? `Only ${factions.find(f => f.id === sliderTargetId)?.name ?? 'they'} feel it.`
-                          + ' Everyone else carries on under the current rule.'
+                        ? t('senate.compose.onlyFeel', { name: factions.find(f => f.id === sliderTargetId)?.name ?? t('senate.compose.they') })
                           + (sliderTargetId === myFactionId
-                            ? ' You are naming yourself — the floor still has to vote for it.'
+                            ? ` ${t('senate.compose.onlySelf')}`
                             : '')
-                        : 'Everyone feels it, including you.'}
+                        : t('senate.compose.everyoneFeels')}
                     </div>
                   </>
                 )}
@@ -938,17 +962,15 @@ export function SenatePanel({
             {repealTargetId ? (
               <>
                 <div style={{ color: '#ff8080', fontWeight: 700 }}>
-                  Striking down: {repealTargetName || 'a standing law'}
+                  {t('senate.repeal.striking', { name: repealTargetName || t('senate.repeal.aStanding') })}
                 </div>
                 <div style={{ color: 'var(--mp-fg-dim)' }}>
-                  Ends its window the moment this passes — the floor still has
-                  to vote for it, and the law keeps running until they do.
+                  {t('senate.repeal.ends')}
                 </div>
               </>
             ) : (
               <div style={{ color: '#ff8080' }}>
-                Pick a law first — use <b>⚖ MOVE TO REPEAL</b> on a row under
-                LAW OF THE LAND above.
+                {t('senate.repeal.pickPre')} <b>{t('senate.laws.repeal')}</b> {t('senate.repeal.pickPost')}
               </div>
             )}
           </div>
@@ -957,33 +979,32 @@ export function SenatePanel({
         {NEEDS_TARGET[kind] && (
           <>
             <label className="mp-label">
-              {kind === 'chancellor_vote' ? 'Candidate (can be yourself)' : 'Target faction'}
+              {kind === 'chancellor_vote' ? t('senate.compose.candidate') : t('senate.compose.target')}
             </label>
             <select
               className="mp-select"
               value={targetFactionId}
               onChange={(e) => setTargetFactionId(e.target.value)}
             >
-              <option value="">— choose —</option>
+              <option value="">{t('senate.compose.choose')}</option>
               {factions
                 // Sanctions can't target self; chancellor_vote can. Filter
                 // accordingly so an invalid choice isn't even presented.
                 .filter(f => kind === 'chancellor_vote' || f.id !== myFactionId)
                 .map(f => (
                   <option key={f.id} value={f.id}>
-                    {f.name}{f.id === myFactionId ? ' (you)' : ''}
+                    {f.name}{f.id === myFactionId ? ` ${t('senate.you')}` : ''}
                   </option>
                 ))}
             </select>
             {kind === 'chancellor_vote' && (
               <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)', marginTop: 4, fontStyle: 'italic' }}>
-                One attempt per faction per game. If this bill PASSES, the
-                candidate wins — match ends. Failed bids burn your shot.
+                {t('senate.compose.oneAttempt')}
               </div>
             )}
           </>
         )}
-        <label className="mp-label">Title</label>
+        <label className="mp-label">{t('senate.compose.title')}</label>
         <input
           className="mp-input"
           type="text"
@@ -991,7 +1012,7 @@ export function SenatePanel({
           value={title}
           onChange={(e) => setTitle(e.target.value)}
         />
-        <label className="mp-label">Summary</label>
+        <label className="mp-label">{t('senate.compose.summaryLbl')}</label>
         <textarea
           className="mp-textarea"
           maxLength={500}
@@ -1003,12 +1024,11 @@ export function SenatePanel({
             The chancellor election's length is fixed by the server. */}
         {kind === 'chancellor_vote' ? (
           <div style={{ fontSize: 11, color: 'var(--mp-fg-dim)', marginTop: 8, lineHeight: 1.45 }}>
-            A Chancellor election always runs <b>{chancellorTicks} ticks</b>{realSuffix(chancellorTicks, tickMs)} and
-            needs no quorum: it passes if more weight votes for it than against. One per term.
+            {t('senate.compose.chancellorPre')} <b>{tn('senate.ticks', chancellorTicks)}</b>{realSuffix(chancellorTicks, tickMs)} {t('senate.compose.chancellorPost')}
           </div>
         ) : (
           <div style={{ marginTop: 8 }}>
-            <label className="mp-label">Voting lasts ({minVote}–{voteMax} ticks)</label>
+            <label className="mp-label">{t('senate.compose.lasts', { min: minVote, max: voteMax })}</label>
             <input
               className="mp-input"
               type="number"
@@ -1021,9 +1041,9 @@ export function SenatePanel({
           </div>
         )}
         <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)', marginTop: 4 }}>
-          Voting opens now · closes at tick {currentTick + (kind === 'chancellor_vote' ? chancellorTicks : voteTicks)}
+          {t('senate.compose.closesAt', { n: currentTick + (kind === 'chancellor_vote' ? chancellorTicks : voteTicks) })}
           {session?.term && currentTick + (kind === 'chancellor_vote' ? chancellorTicks : voteTicks) > session.term.end_tick
-            && ' (after your term ends, which is fine)'}
+            && ` ${t('senate.compose.afterTerm')}`}
         </div>
 
         {proposeLock && (
@@ -1032,10 +1052,10 @@ export function SenatePanel({
             border: '1px solid rgba(255, 184, 77, 0.4)', borderRadius: 4,
             background: 'rgba(255, 184, 77, 0.06)', padding: '8px 10px',
           }}>
-            🔒 Setting the Senate agenda unlocks at <b>{proposeLock.text.replace(/^Unlocks at\s*/i, '')}</b>.
+            {t('senate.lock.pre')} <b>{proposeLock.tier}</b>.
             {kind === 'chancellor_vote'
-              ? ' The Chancellor election needs the higher tier.'
-              : ' You can still vote on other factions’ bills now.'}
+              ? ` ${t('senate.lock.chancellor')}`
+              : ` ${t('senate.lock.others')}`}
           </div>
         )}
         {/* The gavel gate is separate from the research gate and reported
@@ -1057,18 +1077,18 @@ export function SenatePanel({
           type="submit"
           style={{ marginTop: 10 }}
           disabled={busy || !!proposeLock || (!!session && !session.can_propose)}
-          title={proposeLock ? `${proposeLock.label} — ${proposeLock.text}`
+          title={proposeLock ? `${proposeLock.label} — ${t('senate.lock.text', { tier: proposeLock.tier })}`
                : session?.cannot_propose_reason ?? undefined}
         >
-          {busy ? 'Submitting…'
-            : proposeLock ? '🔒 Proposal locked'
+          {busy ? t('senate.compose.submitting')
+            : proposeLock ? t('senate.compose.locked')
             // The composer is chairman-only, so "not your floor" was never
             // the reason: it is a spent term budget or a full chamber.
             : (session && !session.can_propose)
-              ? (session.floor_busy ? '🔨 Chamber full'
-                : session.bills_left_this_term === 0 ? '🔨 No bills left this term'
-                : "🔨 Can't propose now")
-            : 'Submit proposal'}
+              ? (session.floor_busy ? t('senate.compose.full')
+                : session.bills_left_this_term === 0 ? t('senate.compose.noBills')
+                : t('senate.compose.cant'))
+            : t('senate.compose.submit')}
         </button>
       </form>
       </div>
@@ -1078,19 +1098,19 @@ export function SenatePanel({
       {/* Settled business, one line each. It is a record, not a decision,
           and it grows without bound. */}
       <details className="sp-disc is-quiet">
-        <summary>Resolved bills · {resolvedBills.length}</summary>
+        <summary>{t('senate.resolved', { n: resolvedBills.length })}</summary>
         <div className="sp-disc__body">
           {resolvedBills.length === 0 && (
-            <div className="sp-empty">Nothing has come to a vote yet.</div>
+            <div className="sp-empty">{t('senate.resolved.none')}</div>
           )}
           {resolvedBills.map((p) => {
             const yea = p.totals?.yea?.weight ?? 0;
             const nay = p.totals?.nay?.weight ?? 0;
             const verdict = p.status === 'passed'
-              ? `PASSED ${yea}–${nay}`
+              ? t('senate.verdict.passed', { yea, nay })
               : p.status === 'failed'
-                ? `FAILED ${yea}–${nay}`
-                : 'WITHDRAWN';
+                ? t('senate.verdict.failed', { yea, nay })
+                : t('senate.status.withdrawn');
             // "Who voted no on my bill" is a question a player literally
             // typed into chat. The ballots are public record — put them
             // one click away instead of zero clicks from nowhere.
@@ -1112,14 +1132,14 @@ export function SenatePanel({
                       return (
                         <span key={b.faction_id} className={`sp-roll__chip is-${b.vote}`}>
                           <span className="sp-roll__dot" style={{ background: f?.color ?? '#8aa0b4' }} />
-                          {f?.name ?? '???'} · {b.vote} ({b.weight})
+                          {f?.name ?? '???'} · {voteWord(b.vote)} ({b.weight})
                         </span>
                       );
                     })}
                     {absent.map(f => (
                       <span key={f.id} className="sp-roll__chip is-absent">
                         <span className="sp-roll__dot" style={{ background: f.color }} />
-                        {f.name} · never voted
+                        {f.name} · {t('senate.neverVoted')}
                       </span>
                     ))}
                   </div>
@@ -1165,14 +1185,14 @@ export function SenatePanel({
                 </>
               )}
               <span style={{ color: STATUS_COLORS[p.status], fontWeight: 600 }}>
-                {STATUS_LABEL[p.status]}
+                {t(STATUS_LABEL[p.status])}
               </span>
-              {p.status === 'debating' && (<><span>·</span><span>voting opens T+{ticksUntilOpen}</span></>)}
+              {p.status === 'debating' && (<><span>·</span><span>{t('senate.floorBill.opens', { n: ticksUntilOpen })}</span></>)}
               {p.status === 'voting' && (
-                <><span>·</span><span style={{ color: STATUS_COLORS.voting }}>closes in T+{ticksUntilClose}</span></>
+                <><span>·</span><span style={{ color: STATUS_COLORS.voting }}>{t('senate.floorBill.closes', { n: ticksUntilClose })}</span></>
               )}
               {(p.status === 'passed' || p.status === 'failed') && p.resolved_at_tick != null && (
-                <><span>·</span><span>at tick {p.resolved_at_tick}</span></>
+                <><span>·</span><span>{t('senate.floorBill.atTick', { n: p.resolved_at_tick })}</span></>
               )}
             </div>
             <div className="psummary">{p.summary}</div>
@@ -1191,7 +1211,7 @@ export function SenatePanel({
               padding: '1px 6px', marginTop: 4, letterSpacing: '0.08em',
               textTransform: 'uppercase',
             }}>
-              {(BILL_KIND_LABELS[p.kind as BillKind] ?? p.kind).split(' (')[0]}
+              {(BILL_KIND_LABELS[p.kind as BillKind] ? t(BILL_KIND_LABELS[p.kind as BillKind]) : p.kind).split(' (')[0]}
             </div>
 
             <VoteBar totals={p.totals} quorum={p.quorum} />
@@ -1201,21 +1221,21 @@ export function SenatePanel({
                 <button
                   className={`mp-vote-btn yea ${my === 'yea' ? 'mine' : ''}`}
                   onClick={() => castVote(p.id, 'yea')}
-                >Yea</button>
+                >{t('senate.yea')}</button>
                 <button
                   className={`mp-vote-btn nay ${my === 'nay' ? 'mine' : ''}`}
                   onClick={() => castVote(p.id, 'nay')}
-                >Nay</button>
+                >{t('senate.nay')}</button>
                 <button
                   className={`mp-vote-btn abstain ${my === 'abstain' ? 'mine' : ''}`}
                   onClick={() => castVote(p.id, 'abstain')}
-                >Abstain</button>
+                >{t('senate.abstain')}</button>
               </div>
             )}
             {p.status === 'debating' && (
               <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)', marginTop: 4, fontStyle: 'italic' }}>
-                Voting opens in {fmtTicksReal(ticksUntilOpen, tickMs)}.
-                {my && <> Your early vote: <strong>{my}</strong></>}
+                {t('senate.floorBill.opensIn', { time: ticksReal(ticksUntilOpen, tickMs) })}
+                {my && <> {t('senate.floorBill.early')} <strong>{voteWord(my)}</strong></>}
               </div>
             )}
             {/* Withdraw is proposer-only + debating-only (server-side gate). Mirror
@@ -1235,9 +1255,9 @@ export function SenatePanel({
                     cursor: 'pointer',
                     borderRadius: 2,
                   }}
-                  title="Pull this proposal off the floor before voting opens"
+                  title={t('senate.floorBill.withdrawTip')}
                 >
-                  ✕ Withdraw
+                  {t('senate.floorBill.withdraw')}
                 </button>
               </div>
             )}
@@ -1273,6 +1293,7 @@ function ProposalEffectLine({
    *  answers. Null renders the old vague line rather than a wrong number. */
   reparationsPer?: number | null;
 }) {
+  useI18n();
   const k = p.kind as BillKind;
   const targetId = p.payload?.target_faction_id || p.payload?.candidate_faction_id;
   const targetName = targetId ? (factionsById.get(targetId)?.name ?? targetId) : null;
@@ -1280,7 +1301,7 @@ function ProposalEffectLine({
     <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)', marginTop: 4 }}>
       {s}
       {p.effect_until_tick != null && p.status === 'passed' && (
-        <> · active until tick {p.effect_until_tick}</>
+        <> · {t('senate.fx.activeUntil', { n: p.effect_until_tick })}</>
       )}
     </div>
   );
@@ -1292,12 +1313,12 @@ function ProposalEffectLine({
     const said = lawPhrase(sliders, p.payload.slider_id, p.payload.target_value);
     const def = sliders.find(s => s.id === p.payload?.slider_id);
     return wrap(<>
-      <strong style={{ color: 'var(--mp-fg)' }}>{said?.name ?? def?.label ?? 'A rule change'}</strong>
+      <strong style={{ color: 'var(--mp-fg)' }}>{said?.name ?? def?.label ?? t('senate.fx.ruleChange')}</strong>
       {' — '}
-      {said?.effect ?? `${def?.label ?? 'A rule'} changes.`}
+      {said?.effect ?? t('senate.fx.ruleChanges', { label: def?.label ?? t('senate.fx.aRule') })}
       {targetName
-        ? <> Hits <strong>{targetName}</strong> alone; everyone else keeps the current rule.</>
-        : <> Applies to <strong>everyone</strong>, including whoever proposed it.</>}
+        ? <>{' '}{rich('senate.fx.hitsAlone', { name: <strong>{targetName}</strong> })}</>
+        : <>{' '}{rich('senate.fx.appliesAll', { everyone: <strong>{t('senate.fx.everyoneWord')}</strong> })}</>}
     </>);
   }
   // REPEAL aims at a law, so it has no target FACTION to describe — its
@@ -1305,20 +1326,19 @@ function ProposalEffectLine({
   // the repeal was filed so the card reads correctly even after the law
   // it names has gone.
   if (k === 'repeal_law') {
-    const t = p.payload?.target_title as string | undefined;
-    const e = p.payload?.target_effect as string | undefined;
+    const targetTitle = p.payload?.target_title as string | undefined;
+    const targetEffect = p.payload?.target_effect as string | undefined;
     return wrap(<>
-      <strong style={{ color: 'var(--mp-fg)' }}>Repeal</strong>
-      {' — ends '}
-      <strong>{t ?? 'a standing law'}</strong>
-      {' the moment this passes.'}
-      {e ? <> It currently means: {e}</> : null}
+      <strong style={{ color: 'var(--mp-fg)' }}>{t('senate.fx.repeal')}</strong>
+      {rich('senate.fx.repealEnds', { title: <strong>{targetTitle ?? t('senate.repeal.aStanding')}</strong> })}
+      {targetEffect ? <> {t('senate.fx.currently', { effect: targetEffect })}</> : null}
     </>);
   }
   if (!targetName) return null;
-  if (k === 'trade_embargo')       return wrap(<><strong>{targetName}</strong> can't trade with anyone for 14 ticks</>);
-  if (k === 'war_authorization')   return wrap(<>Everyone hits <strong>{targetName}</strong> twice as hard for 21 ticks, and every peace deal they hold is torn up</>);
-  if (k === 'production_sanction') return wrap(<><strong>{targetName}</strong>'s settlements produce half as much for 14 ticks</>);
+  const who = <strong>{targetName}</strong>;
+  if (k === 'trade_embargo')       return wrap(<>{rich('senate.fx.embargo', { name: who })}</>);
+  if (k === 'war_authorization')   return wrap(<>{rich('senate.fx.war', { name: who })}</>);
+  if (k === 'production_sanction') return wrap(<>{rich('senate.fx.sanction', { name: who })}</>);
   if (k === 'reparations') {
     // A BILL THAT MOVES MONEY MUST SAY HOW MUCH. This read "hands
     // credits to every other player" -- no figure anywhere, while the
@@ -1337,15 +1357,18 @@ function ProposalEffectLine({
     // cannot disagree with itself about how many players there are.
     const others = Math.max(0, (p.quorum?.eligible ?? 0) - 1);
     if (reparationsPer == null || others === 0) {
-      return wrap(<><strong>{targetName}</strong> hands credits to every other player, right away</>);
+      return wrap(<>{rich('senate.fx.reparationsVague', { name: who })}</>);
     }
     return wrap(<>
-      <strong>{targetName}</strong> hands <strong>{fmtNum(reparationsPer)} credits</strong> to each of
-      the other {others} {others === 1 ? 'player' : 'players'} right away
-      {' '}&mdash; {fmtNum(reparationsPer * others)} in total, or as much of it as they can afford.
+      {rich('senate.fx.reparations', {
+        name: who,
+        amount: <strong>{t('senate.fx.credits', { n: fmtNum(reparationsPer) })}</strong>,
+        players: tn('senate.fx.players', others),
+        total: fmtNum(reparationsPer * others),
+      })}
     </>);
   }
-  if (k === 'chancellor_vote')     return wrap(<>If this passes, <strong>{targetName}</strong> wins the game</>);
+  if (k === 'chancellor_vote')     return wrap(<>{rich('senate.fx.chancellor', { name: who })}</>);
   return null;
 }
 
@@ -1377,6 +1400,7 @@ function VoteBar({ totals, quorum }: {
   totals: SenateProposal['totals'];
   quorum?: SenateProposal['quorum'];
 }) {
+  useI18n();
   const yeaW     = totals?.yea?.weight     ?? 0;
   const nayW     = totals?.nay?.weight     ?? 0;
   const abstainW = totals?.abstain?.weight ?? 0;
@@ -1391,10 +1415,10 @@ function VoteBar({ totals, quorum }: {
       color: quorum.met ? '#6ee7b7' : '#ffb84d',
     }}>
       {quorum.met
-        ? `✓ Quorum met — ${quorum.cast} voted, ${quorum.required} needed`
-        : `⚠ Needs quorum — ${quorum.cast} of ${quorum.required} voted`}
+        ? t('senate.quorum.met', { cast: quorum.cast, required: quorum.required })
+        : t('senate.quorum.needs', { cast: quorum.cast, required: quorum.required })}
       <span style={{ color: 'var(--mp-fg-dim)' }}>
-        {' '}(majority of {quorum.eligible} living factions)
+        {' '}{t('senate.quorum.majority', { n: quorum.eligible })}
       </span>
     </div>
   ) : null;
@@ -1402,7 +1426,7 @@ function VoteBar({ totals, quorum }: {
   if (total === 0) {
     return (
       <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)', marginTop: 4 }}>
-        No votes cast yet.
+        {t('senate.noVotes')}
         {quorumLine}
       </div>
     );
@@ -1428,9 +1452,7 @@ function VoteBar({ totals, quorum }: {
         <div style={{ width: `${pctA}%`, background: '#8a9fb3' }} />
       </div>
       <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)', marginTop: 4 }}>
-        Yea {yeaW} ({totals.yea.count}) ·
-        Nay {nayW} ({totals.nay.count}) ·
-        Abstain {abstainW} ({totals.abstain.count})
+        {`${t('senate.yea')} ${yeaW} (${totals.yea.count}) · ${t('senate.nay')} ${nayW} (${totals.nay.count}) · ${t('senate.abstain')} ${abstainW} (${totals.abstain.count})`}
       </div>
       {quorumLine}
     </div>
@@ -1474,6 +1496,7 @@ function ActionableBills({
    *  own effect, the way it does while it is still in debate. */
   sliders: SenateSlider[];
 }) {
+  useI18n();
   const open = proposals.filter(p => p.status === 'voting');
   if (open.length === 0) return null;
   // The deadline lives in the section header, where the mockup put it —
@@ -1482,9 +1505,9 @@ function ActionableBills({
   return (
     <section className="sp-sect">
       <div className="sp-sect__h">
-        <span className="sp-lbl">Needs your vote</span>
+        <span className="sp-lbl">{t('senate.needsVote')}</span>
         <span className="sp-lbl" style={{ color: '#ff6b6b' }}>
-          closes in {fmtTicksReal(soonest, tickMs)}
+          {t('senate.closesIn', { time: ticksReal(soonest, tickMs) })}
         </span>
       </div>
       {open.map(p => (
@@ -1530,6 +1553,7 @@ function VoteCard({
   sliders: SenateSlider[];
   reparationsPer?: number | null;
 }) {
+  useI18n();
   const proposer = p.proposer_faction_id ? factionsById.get(p.proposer_faction_id) : null;
   const yea = p.totals?.yea?.weight ?? 0;
   const nay = p.totals?.nay?.weight ?? 0;
@@ -1547,12 +1571,12 @@ function VoteCard({
     <div className={`sp-vc${isChancellor ? ' is-chancellor' : ''}`}>
       <div className="sp-vc__t">
         <span className="sp-vc__n">{p.title}</span>
-        <span className="sp-vc__s">Voting</span>
+        <span className="sp-vc__s">{t('senate.vc.voting')}</span>
       </div>
       <div className="sp-vc__m">
         {isChancellor
-          ? <>Chancellor vote · {proposer?.name ?? 'unknown'} · <b>if it passes, they win</b></>
-          : <>{p.kind.replace(/_/g, ' ')}{proposer ? ` · ${proposer.name}` : ''}</>}
+          ? <>{rich('senate.vc.chancellor', { name: proposer?.name ?? t('comms.unknown'), note: <b>{t('senate.vc.theyWin')}</b> })}</>
+          : <>{tk(`senate.kind.${p.kind}`, p.kind.replace(/_/g, ' '))}{proposer ? ` · ${proposer.name}` : ''}</>}
       </div>
       {/* WHAT THE BILL ACTUALLY DOES (clownking, 2026-08-14: "I saw it in
           discord, so I know it's for cheaper fleets again, but I don't
@@ -1577,19 +1601,19 @@ function VoteCard({
         />
       )}
       <div className="sp-tally">
-        {yea > 0 && <div style={{ width: `${pct(yea)}%`, background: '#6ee7b7' }}>YEA {yea}</div>}
-        {nay > 0 && <div style={{ width: `${pct(nay)}%`, background: '#ff6b6b' }}>NAY {nay}</div>}
-        {abs > 0 && <div style={{ width: `${pct(abs)}%`, background: '#8a9fb3' }}>ABS {abs}</div>}
-        {uncast > 0 && <div className="none" style={{ width: `${pct(uncast)}%` }}>{uncast} uncast</div>}
+        {yea > 0 && <div style={{ width: `${pct(yea)}%`, background: '#6ee7b7' }}>{t('senate.vc.yeaN', { n: yea })}</div>}
+        {nay > 0 && <div style={{ width: `${pct(nay)}%`, background: '#ff6b6b' }}>{t('senate.vc.nayN', { n: nay })}</div>}
+        {abs > 0 && <div style={{ width: `${pct(abs)}%`, background: '#8a9fb3' }}>{t('senate.vc.absN', { n: abs })}</div>}
+        {uncast > 0 && <div className="none" style={{ width: `${pct(uncast)}%` }}>{t('senate.vc.uncast', { n: uncast })}</div>}
       </div>
-      <div className="sp-tally__cap">share of the {chamber}-vote chamber</div>
+      <div className="sp-tally__cap">{t('senate.vc.share', { n: chamber })}</div>
       {/* Turnout, not just the tally. With no quorum the bill is decided
           by whoever shows up, so the uncast share is the number that says
           whether you can still change the outcome. */}
       <div className="sp-turnout">
-        <b>Turnout {cast} of {chamber}.</b>{' '}
-        A bill needs more yea than nay among votes cast — a tie kills it.
-        {' '}{yea > 0 ? `${yea} nay blocks this outright.` : 'Nobody has voted yea yet.'}
+        <b>{t('senate.vc.turnout', { cast, chamber })}</b>{' '}
+        {t('senate.vc.rule')}
+        {' '}{yea > 0 ? t('senate.vc.blocks', { n: yea }) : t('senate.vc.nobodyYea')}
       </div>
       {/* QUORUM, for every bill but the chancellor's. This card was the
           chancellor's, which has none; since bills stopped spending time
@@ -1604,9 +1628,9 @@ function VoteCard({
           style={{ color: p.quorum.met ? '#6ee7b7' : '#ffb84d' }}
         >
           {p.quorum.met
-            ? `✓ Quorum met — ${p.quorum.cast} voted, ${p.quorum.required} needed`
-            : `⚠ Needs quorum — ${p.quorum.cast} of ${p.quorum.required} voted; short of that it dies uncounted`}
-          {' '}(majority of {p.quorum.eligible} living factions)
+            ? t('senate.quorum.met', { cast: p.quorum.cast, required: p.quorum.required })
+            : t('senate.quorum.needsDies', { cast: p.quorum.cast, required: p.quorum.required })}
+          {' '}{t('senate.quorum.majority', { n: p.quorum.eligible })}
         </div>
       )}
       <div className="sp-votebtns">
@@ -1615,21 +1639,21 @@ function VoteCard({
           disabled={busy === p.id}
           onClick={() => onVote(p.id, 'yea')}
         >
-          Yea{my === 'yea' ? ' ✓' : ''}
+          {t('senate.yea')}{my === 'yea' ? ' ✓' : ''}
         </button>
         <button
           className={`sp-vb sp-vb--nay${my === 'nay' ? ' is-cast' : ''}`}
           disabled={busy === p.id}
           onClick={() => onVote(p.id, 'nay')}
         >
-          Nay{my === 'nay' ? ' ✓' : ''}
+          {t('senate.nay')}{my === 'nay' ? ' ✓' : ''}
         </button>
         <button
           className={`sp-vb sp-vb--abs${my === 'abstain' ? ' is-cast' : ''}`}
           disabled={busy === p.id}
           onClick={() => onVote(p.id, 'abstain')}
         >
-          Abstain{my === 'abstain' ? ' ✓' : ''}
+          {t('senate.abstain')}{my === 'abstain' ? ' ✓' : ''}
         </button>
       </div>
       {/* WITHDRAW, the proposer's, until anyone else has voted -- the
@@ -1643,14 +1667,14 @@ function VoteCard({
             data-testid="vc-withdraw"
             onClick={() => onWithdraw(p.id)}
             disabled={busy === p.id}
-            title="Take the bill back. Only until another senator votes on it."
+            title={t('senate.vc.withdrawTip')}
             style={{
               background: 'transparent', border: '1px solid var(--mp-border)',
               color: 'var(--mp-fg-dim)', padding: '4px 10px', fontSize: 10,
               letterSpacing: '0.08em', cursor: 'pointer', fontFamily: 'inherit',
             }}
           >
-            WITHDRAW
+            {t('senate.vc.withdraw')}
           </button>
         </div>
       )}
@@ -1684,6 +1708,7 @@ function Chamber({
    *  removes a seat, and eliminated factions are already filtered out. */
   quorum: { required: number; eligible: number } | null;
 }) {
+  useI18n();
   const seated = factions
     .filter(f => f.status !== 'eliminated')
     .map(f => ({ f, w: voteWeightOf(f) }))
@@ -1718,8 +1743,8 @@ function Chamber({
   if (!ballots) {
     const all = bucket(() => true, true);
     groups.push({
-      key: 'all', label: 'The floor', tint: '#a8b8c8',
-      tip: 'no bill on the floor', seats: all, weight: weigh(all), always: true,
+      key: 'all', label: t('senate.floor'), tint: '#a8b8c8',
+      tip: t('senate.chamber.tip.none'), seats: all, weight: weigh(all), always: true,
     });
   } else {
     const mk = (key: string, label: string, tint: string, tip: string,
@@ -1728,29 +1753,29 @@ function Chamber({
       const seats = bucket(pick, voted);
       groups.push({ key, label, tint, tip, seats, weight: weigh(seats), always });
     };
-    mk('yea', 'Yea', '#6ee7b7', 'voted yea', v => v === 'yea', true);
-    mk('nay', 'Nay', '#ff5e5e', 'voted nay', v => v === 'nay', true);
+    mk('yea', t('senate.yea'), '#6ee7b7', t('senate.chamber.tip.yea'), v => v === 'yea', true);
+    mk('nay', t('senate.nay'), '#ff5e5e', t('senate.chamber.tip.nay'), v => v === 'nay', true);
     // Abstain and silence share the bottom rail because neither picks a
     // side — but they are NOT the same thing, so an abstention keeps a
     // filled seat (it counts toward quorum) while silence stays
     // outlined (it does not).
-    mk('abstain', 'Abstained', '#c4b5fd', 'abstained — counts toward quorum',
+    mk('abstain', t('senate.chamber.abstained'), '#c4b5fd', t('senate.chamber.tip.abstain'),
        v => v === 'abstain', true);
-    mk('novote', 'Not voted', '#8a9fb3', 'has not voted',
+    mk('novote', t('senate.chamber.notVoted'), '#8a9fb3', t('senate.chamber.tip.novote'),
        v => v === undefined, false, true);
   }
   return (
     <>
       <div className="sp-sect__h" style={{ marginTop: 14 }}>
-        <span className="sp-lbl">The chamber</span>
+        <span className="sp-lbl">{t('senate.chamber')}</span>
         <span className="sp-lbl">
-          {quorum ? `quorum ${quorum.required} of ${quorum.eligible}` : `${total} votes`}
+          {quorum ? t('senate.chamber.quorum', { required: quorum.required, eligible: quorum.eligible }) : tn('senate.votes', total)}
         </span>
       </div>
       {ballots && billTitle && (
         <div className="sp-turnout" data-testid="chamber-bill" style={{ marginTop: 2 }}>
-          Seats show the vote on <b>{billTitle}</b>
-          {otherOpen > 0 ? `, the next to close (${otherOpen} other vote${otherOpen === 1 ? '' : 's'} open).` : '.'}
+          {rich('senate.chamber.seatsShow', { title: <b>{billTitle}</b> })}
+          {otherOpen > 0 ? tn('senate.chamber.otherOpen', otherOpen) : '.'}
         </div>
       )}
       {/* Seats split by HOW the seat voted, not just whether it did.
@@ -1765,7 +1790,7 @@ function Chamber({
             <div className="sp-side__h">
               <span style={{ color: g.tint }}>{g.label}</span>
               <span className="sp-side__n">
-                {g.weight}{g.weight === 1 ? ' vote' : ' votes'}
+                {tn('senate.votes', g.weight)}
               </span>
             </div>
             <div className="sp-seats">
@@ -1777,8 +1802,7 @@ function Chamber({
                   style={voted
                     ? { background: f.color, color: readableInk(f.color) }
                     : { color: f.color }}
-                  title={`${f.name} — ${weightById.get(f.id)} vote`
-                    + (weightById.get(f.id) === 1 ? '' : 's') + ` — ${g.tip}`}
+                  title={t('senate.seat.tip', { name: f.name, votes: tn('senate.votes', weightById.get(f.id) ?? 0), tip: g.tip })}
                 >
                   {/* The faction's EMBLEM, not its initials. Initials
                       were actively ambiguous here — "Cerean Union" and
@@ -1810,11 +1834,10 @@ function Chamber({
         ))}
       </div>
       <div className="sp-note">
-        {ballots ? 'Outlined seats have not voted. ' : `${total} votes in the chamber. `}
+        {ballots ? t('senate.chamber.outlined') : t('senate.chamber.total', { n: total })}{' '}
         {quorum
-          ? `A bill needs ${quorum.required} of the ${quorum.eligible} living factions to vote `
-            + '— yea, nay, or abstain — before the tally counts. Dormant factions keep their seat.'
-          : 'Dormant factions keep their seat while alive.'}
+          ? t('senate.chamber.noteQuorum', { required: quorum.required, eligible: quorum.eligible })
+          : t('senate.chamber.noteDormant')}
       </div>
     </>
   );

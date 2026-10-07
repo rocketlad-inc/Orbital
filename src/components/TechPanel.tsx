@@ -13,11 +13,13 @@ import {
   effectAtLevel, nextLevelCost,
   TECH_MAX_LEVEL, levelsToQueue, levelForQueueSlot,
 } from '../game/techs';
-import { unlocksAt, isMegastructureUnlock, megastructureNextStep } from '../game/researchUnlocks';
+import { unlocksAt, isMegastructureUnlock, megastructureNextStep, unlockLabelOf, unlockBlurbOf } from '../game/researchUnlocks';
 import { TechTree } from './TechTree';
 import { computeIncomePerTick } from '../game/settlements';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { humanizeMpError } from '../multiplayer/errorMessages';
+import { t, tn } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 import './OverviewPanel.css';
 import './TechPanel.css';
 
@@ -30,6 +32,7 @@ interface TechPanelProps {
 }
 
 export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
+  useI18n();
   const {
     gameState, startResearch, cancelResearch,
     enqueueResearch, dequeueResearch, moveResearchUp,
@@ -71,14 +74,14 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
     const q = (tech.queue ?? []) as TechId[];
     const room = RESEARCH_QUEUE_CAP - q.length;
     if (room <= 0) {
-      setResearchError(`Research queue is full (${RESEARCH_QUEUE_CAP}). Remove something first.`);
+      setResearchError(t('econ.tech.queueFull', { cap: RESEARCH_QUEUE_CAP }));
       return;
     }
     const add = Math.min(n, room);
     // The server truncates silently at the cap; say so here instead of
     // dropping entries the player watched themselves add.
     if (add < n) {
-      setResearchError(`Queue holds ${RESEARCH_QUEUE_CAP} — added ${add} of ${n} ${TECH_DEFS[id].name} levels.`);
+      setResearchError(t('econ.tech.queueHolds', { cap: RESEARCH_QUEUE_CAP, add, n, name: TECH_DEFS[id].name }));
     }
     sendQueue([...q, ...Array(add).fill(id)]);
   };
@@ -105,7 +108,7 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
       target: targetLevel,
     });
     if (need <= 0) {
-      setResearchError(`${TECH_DEFS[track].name} ${targetLevel} is already covered by your current research and queue.`);
+      setResearchError(t('econ.tech.alreadyCovered', { name: TECH_DEFS[track].name, level: targetLevel }));
       return;
     }
     setResearchError(null);
@@ -184,23 +187,23 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
     <div className="overview-panel">
       <div className="overview-panel__header">
         <div className="overview-panel__title">
-          <div className="overview-panel__title-main">Research</div>
+          <div className="overview-panel__title-main">{t('econ.tech.title')}</div>
           <div className="overview-panel__title-sub">
-            {totalLevels} levels researched · {Math.floor(playerScience)} science available
+            {t('econ.tech.subtitle', { levels: totalLevels, sci: Math.floor(playerScience) })}
             {activeDef && (
-              <> · researching <span style={{ color: '#6ee7b7' }}>{activeDef.name} {activeLevel + 1}</span></>
+              <> · {t('econ.tech.researching')} <span style={{ color: '#6ee7b7' }}>{activeDef.name} {activeLevel + 1}</span></>
             )}
           </div>
         </div>
         <div className="tech-viewtoggle">
-          {([['tracks', 'Tracks'], ['tree', 'Full tree']] as const).map(([v, label]) => (
+          {([['tracks', t('econ.tech.tracks')], ['tree', t('econ.tech.fullTree')]] as const).map(([v, label]) => (
             <button
               key={v}
               className={`tech-viewtoggle__btn ${view === v ? 'is-on' : ''}`}
               onClick={() => setView(v)}
               title={v === 'tree'
-                ? 'Every track and every level, with what each one unlocks'
-                : 'Research cards for each track'}
+                ? t('econ.tech.treeTip')
+                : t('econ.tech.tracksTip')}
             >{label}</button>
           ))}
         </div>
@@ -213,24 +216,24 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
             <div className="tech-active__icon">{activeDef.icon}</div>
             <div className="tech-active__info">
               <div className="tech-active__name">
-                {activeDef.name} <span className="tech-active__lvl">→ level {activeLevel + 1}</span>
+                {activeDef.name} <span className="tech-active__lvl">→ {t('econ.tech.levelN', { n: activeLevel + 1 })}</span>
               </div>
               <div className="tech-active__effect">
-                Next: {activeDef.effectText} (total +{((activeLevel + 1) * activeDef.perLevel * 100).toFixed(0)}%)
+                {t('econ.tech.next', { effect: activeDef.effectText, pct: ((activeLevel + 1) * activeDef.perLevel * 100).toFixed(0) })}
               </div>
               <div className="tech-active__bar">
                 <div className="tech-active__bar-fill" style={{ width: `${activePct}%` }} />
               </div>
               <div className="tech-active__bar-text">
-                {Math.floor(tech.progress)} / {activeCost} science · {Math.floor(activePct)}%
+                {t('econ.tech.progress', { done: Math.floor(tech.progress), cost: activeCost, pct: Math.floor(activePct) })}
                 {etaTicks != null && (
                   <span style={{ color: '#6ee7b7', marginLeft: 6 }}>
-                    · done in {etaTicks} tick{etaTicks === 1 ? '' : 's'}
+                    · {tn('econ.tech.doneIn', etaTicks, { n: etaTicks })}
                   </span>
                 )}
                 {etaTicks == null && scienceRate <= 0 && (
                   <span style={{ color: '#ff5e5e', marginLeft: 6 }}>
-                    · stalled — no science income
+                    · {t('econ.tech.stalled')}
                   </span>
                 )}
               </div>
@@ -238,8 +241,8 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
             <button
               className="tech-active__cancel"
               onClick={cancelResearch}
-              title="Cancel research (loses progress)"
-            >Cancel</button>
+              title={t('econ.tech.cancelTip')}
+            >{t('econ.tech.cancel')}</button>
           </div>
         </div>
       )}
@@ -258,7 +261,7 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
           }}
         >
           <span style={{ fontSize: 10, color: '#b8c8d6', letterSpacing: '0.1em', marginRight: 4 }}>
-            QUEUE
+            {t('econ.tech.queue')}
           </span>
           {(queue as TechId[]).map((qid, qi) => {
             const qdef = TECH_DEFS[qid];
@@ -272,15 +275,15 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                   border: '1px solid #4ecdc4', borderRadius: 4,
                   fontSize: 11, color: '#d8e4ee',
                 }}
-                title={`${qdef.name} → level ${qlvl + 1}`}
+                title={t('econ.tech.queueChipTip', { name: qdef.name, level: qlvl + 1 })}
               >
                 <span style={{ color: '#b8c8d6', fontSize: 9 }}>{qi + 1}.</span>
                 <span>{qdef.icon} {qdef.name}</span>
                 {qi > 0 && (
                   <button
                     onClick={() => moveResearchUp(qid)}
-                    title="Move up"
-                    aria-label="Move up"
+                    title={t('econ.tech.moveUp')}
+                    aria-label={t('econ.tech.moveUp')}
                     style={{
                       width: 16, height: 16, padding: 0,
                       background: 'transparent', border: 'none',
@@ -290,8 +293,8 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                 )}
                 <button
                   onClick={() => dequeueResearch(qid)}
-                  title="Remove from queue"
-                  aria-label="Remove"
+                  title={t('econ.tech.removeFromQueue')}
+                  aria-label={t('econ.tech.remove')}
                   style={{
                     width: 16, height: 16, padding: 0,
                     background: 'transparent', border: 'none',
@@ -318,7 +321,7 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
           }}
         >
           <span style={{ fontSize: 10, color: '#b8c8d6', letterSpacing: '0.1em', marginRight: 4 }}>
-            QUEUE ↓
+            {t('econ.tech.queue')} ↓
           </span>
           {(queue as TechId[]).map((qid, qi) => {
             const qdef = TECH_DEFS[qid];
@@ -341,14 +344,14 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                   border: '1px solid #4ecdc4', borderRadius: 4,
                   fontSize: 11, color: '#d8e4ee',
                 }}
-                title={`${qdef.name} → level ${qlvl}`}
+                title={t('econ.tech.queueChipTip', { name: qdef.name, level: qlvl })}
               >
                 <span style={{ color: '#b8c8d6', fontSize: 9 }}>{qi + 1}.</span>
                 <span>{qdef.icon} {qdef.name}</span>
                 {qi > 0 && (
                   <button
                     onClick={() => mpMoveUp(qi)}
-                    title="Move up" aria-label="Move up"
+                    title={t('econ.tech.moveUp')} aria-label={t('econ.tech.moveUp')}
                     style={{
                       width: 28, height: 28, padding: 0,
                       background: 'transparent', border: 'none',
@@ -358,7 +361,7 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                 )}
                 <button
                   onClick={() => mpDequeue(qi)}
-                  title="Remove from queue" aria-label="Remove"
+                  title={t('econ.tech.removeFromQueue')} aria-label={t('econ.tech.remove')}
                   style={{
                     width: 28, height: 28, padding: 0,
                     background: 'transparent', border: 'none',
@@ -388,7 +391,7 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
             // same accounting (margin already provides side padding).
             width: 'calc(100% - 24px)',
           }}
-          title="Click to dismiss"
+          title={t('econ.tech.dismiss')}
         >⚠ {researchError}</button>
       )}
 
@@ -425,13 +428,13 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                   <div className="tech-card__icon">{def.icon}</div>
                   <div className="tech-card__name">{def.name}</div>
                   <div className="tech-card__level">
-                    {isMaxed ? `MAX ${TECH_MAX_LEVEL}` : `Lv ${lvl}`}
+                    {isMaxed ? t('econ.tech.max', { n: TECH_MAX_LEVEL }) : t('econ.tree.lvN', { n: lvl })}
                   </div>
                 </div>
                 <div className="tech-card__desc">{def.description}</div>
 
                 <div className="tech-card__effect">
-                  <div className="tech-card__effect-label">Per level</div>
+                  <div className="tech-card__effect-label">{t('econ.tech.perLevel')}</div>
                   <div className="tech-card__effect-value">{def.effectText}</div>
                 </div>
 
@@ -442,27 +445,27 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                     unlock rungs are pure scaling and say so. */}
                 {!isMaxed && (
                   <div className="tech-card__effect">
-                    <div className="tech-card__effect-label">Lv {lvl + 1} unlocks</div>
+                    <div className="tech-card__effect-label">{t('econ.tech.unlocks', { n: lvl + 1 })}</div>
                     <div className="tech-card__effect-value">
                       {(() => {
                         const next = unlocksAt(id, lvl + 1);
                         if (next.length === 0) {
-                          return <span style={{ color: '#b8c8d6' }}>scaling only</span>;
+                          return <span style={{ color: '#b8c8d6' }}>{t('econ.tech.scalingOnly')}</span>;
                         }
                         // A megastructure is a different KIND of unlock and
                         // says so, with what it takes to actually build one.
                         const mega = next.some(u => isMegastructureUnlock(u.feature));
                         return (
                           <>
-                            <span style={{ color: '#ffb84d' }} title={next.map(u => u.blurb).join(' · ')}>
-                              {next.map(u => (isMegastructureUnlock(u.feature) ? `◆ ${u.label}` : u.label)).join(', ')}
+                            <span style={{ color: '#ffb84d' }} title={next.map(u => unlockBlurbOf(u)).join(' · ')}>
+                              {next.map(u => (isMegastructureUnlock(u.feature) ? `◆ ${unlockLabelOf(u)}` : unlockLabelOf(u))).join(', ')}
                             </span>
                             {mega && (
                               <div style={{ fontSize: 10, color: '#b8c8d6', marginTop: 3, lineHeight: 1.45 }}>
                                 <span style={{
                                   color: '#ffb84d', border: '1px solid rgba(255,184,77,0.5)', borderRadius: 8,
                                   padding: '0 5px', fontSize: 9, letterSpacing: '0.08em', marginRight: 5,
-                                }}>MEGASTRUCTURE</span>
+                                }}>{t('econ.tech.megaBadge')}</span>
                                 {megastructureNextStep(tech.levels)}
                               </div>
                             )}
@@ -474,13 +477,13 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                 )}
 
                 <div className="tech-card__effect">
-                  <div className="tech-card__effect-label">Current</div>
+                  <div className="tech-card__effect-label">{t('econ.tech.current')}</div>
                   <div className="tech-card__effect-value">
                     {lvl === 0 ? (
-                      <span style={{ color: '#b8c8d6' }}>no bonus</span>
+                      <span style={{ color: '#b8c8d6' }}>{t('econ.tech.noBonus')}</span>
                     ) : (
                       <span style={{ color: '#6ee7b7' }}>
-                        +{(effectAtLevel(def, lvl) * 100).toFixed(0)}% effect
+                        {t('econ.tech.effectPct', { pct: (effectAtLevel(def, lvl) * 100).toFixed(0) })}
                       </span>
                     )}
                   </div>
@@ -489,14 +492,14 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                 <div className="tech-card__cost">
                   {isMaxed ? (
                     <>
-                      <span style={{ color: '#b8c8d6' }}>Max level reached</span>
+                      <span style={{ color: '#b8c8d6' }}>{t('econ.tech.maxReached')}</span>
                       <span style={{ color: '#ffb84d' }}>—</span>
                     </>
                   ) : (
                     <>
-                      <span style={{ color: '#b8c8d6' }}>Lv {lvl + 1} cost</span>
+                      <span style={{ color: '#b8c8d6' }}>{t('econ.tech.lvCost', { n: lvl + 1 })}</span>
                       <span style={{ color: cost <= playerScience ? '#6ee7b7' : '#ffb84d' }}>
-                        {cost} sci
+                        {t('econ.tech.sci', { n: cost })}
                       </span>
                     </>
                   )}
@@ -517,8 +520,8 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                       textAlign: 'center',
                       cursor: 'default',
                     }}
-                    title="This tech has reached the global cap."
-                  >★ MAXED</div>
+                    title={t('econ.tech.maxedTip')}
+                  >★ {t('econ.tech.maxed')}</div>
                 ) : mpActions ? (
                   (() => {
                     // Banked science is applied the moment you commit
@@ -588,21 +591,21 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                     disabled={inFlight.has(id)}
                     title={instant
                       ? (isActive
-                          ? `Complete ${def.name} now — your banked science covers the remaining cost.`
-                          : `Unlock ${def.name} instantly — your banked science (${Math.floor(playerScience)}) covers the ${cost} cost.`)
+                          ? t('econ.tech.completeTip', { name: def.name })
+                          : t('econ.tech.unlockTip', { name: def.name, bank: Math.floor(playerScience), cost }))
                       : isActive
-                        ? `Currently researching ${def.name} — ${progressPct}% of ${cost} science. Click to apply banked science (${Math.floor(playerScience)}).`
-                        : `Commit to ${def.name}. Banked science is applied immediately; income fills the rest (${Math.ceil(afterBank)} of ${cost} science still needed).`}
+                        ? t('econ.tech.activeTip', { name: def.name, pct: progressPct, cost, bank: Math.floor(playerScience) })
+                        : t('econ.tech.commitTip', { name: def.name, need: Math.ceil(afterBank), cost })}
                   >
                     {inFlight.has(id)
                       ? '…'
                       : instant
-                        ? (isActive ? '⚡ Complete now' : '⚡ Unlock now')
+                        ? (isActive ? t('econ.tech.completeNow') : t('econ.tech.unlockNow'))
                         : isActive
-                          ? `Researching · ${progressPct}%`
+                          ? t('econ.tech.researchingPct', { pct: progressPct })
                           : scienceRate > 0
-                            ? `Set project · ${Math.ceil(afterBank / scienceRate)}t`
-                            : `Set project (${Math.ceil(afterBank)} sci)`}
+                            ? t('econ.tech.setProjectEta', { n: Math.ceil(afterBank / scienceRate) })
+                            : t('econ.tech.setProjectSci', { n: Math.ceil(afterBank) })}
                   </button>
                   {/* Always available, including for the tech being
                       researched right now — stacking levels of one track
@@ -611,10 +614,10 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                     className="tech-card__action"
                     onClick={() => mpEnqueue(id)}
                     title={isActive
-                      ? `Queue another level of ${def.name} behind the one you are researching`
-                      : `Queue ${def.name} to research after your current project`}
+                      ? t('econ.tech.queueAnotherTip', { name: def.name })
+                      : t('econ.tech.queueAfterTip', { name: def.name })}
                     style={{ borderColor: '#4ecdc4', color: '#4ecdc4' }}
-                  >+ Queue{queueCount > 0 ? ` \u00d7${queueCount}` : ''}</button>
+                  >+ {t('econ.tech.queueBtn')}{queueCount > 0 ? ` \u00d7${queueCount}` : ''}</button>
                   {/* The card has no position of its own, so its −
                       trims the LAST copy of this tech: the stack
                       shrinks from the far end, a level at a time. */}
@@ -623,10 +626,10 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                       className="tech-card__action tech-card__action--minus"
                       onClick={() => mpDequeue((queue as TechId[]).lastIndexOf(id))}
                       title={queueCount > 1
-                        ? `Drop one queued ${def.name} (${queueCount} stacked)`
-                        : `Remove ${def.name} from the queue (position ${queueIndex + 1})`}
+                        ? t('econ.tech.dropOneTip', { name: def.name, n: queueCount })
+                        : t('econ.tech.removeNamedTip', { name: def.name, pos: queueIndex + 1 })}
                       style={{ borderColor: '#ff5e5e', color: '#ff5e5e' }}
-                      aria-label={`Remove one queued ${def.name}`}
+                      aria-label={t('econ.tech.removeOneAria', { name: def.name })}
                     >{'\u2212'}</button>
                   )}
                   </div>
@@ -636,31 +639,31 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                   <button
                     className="tech-card__action active"
                     onClick={cancelResearch}
-                    title="Cancel current research (loses progress)"
-                  >Cancel</button>
+                    title={t('econ.tech.cancelCurrentTip')}
+                  >{t('econ.tech.cancel')}</button>
                 ) : isQueued ? (
                   <button
                     className="tech-card__action"
                     onClick={() => dequeueResearch(id)}
-                    title={`Remove from queue (position ${queueIndex + 1})`}
+                    title={t('econ.tech.removePosTip', { pos: queueIndex + 1 })}
                     style={{ borderColor: '#ff5e5e', color: '#ff5e5e' }}
-                  >Remove (#{queueIndex + 1})</button>
+                  >{t('econ.tech.removeNum', { pos: queueIndex + 1 })}</button>
                 ) : (
                   <div style={{ display: 'flex', gap: 4 }}>
                     <button
                       className="tech-card__action"
                       onClick={() => startResearch(id)}
                       title={tech.researching
-                        ? `Switch focus to ${def.name} (abandons current progress)`
-                        : `Start researching ${def.name}`}
-                    >Research</button>
+                        ? t('econ.tech.switchTip', { name: def.name })
+                        : t('econ.tech.startTip', { name: def.name })}
+                    >{t('econ.tech.research')}</button>
                     {tech.researching && (
                       <button
                         className="tech-card__action"
                         onClick={() => enqueueResearch(id)}
-                        title={`Queue ${def.name} after current research`}
+                        title={t('econ.tech.queueAfterCurrentTip', { name: def.name })}
                         style={{ borderColor: '#4ecdc4', color: '#4ecdc4' }}
-                      >+ Queue</button>
+                      >+ {t('econ.tech.queueBtn')}</button>
                     )}
                   </div>
                 )}

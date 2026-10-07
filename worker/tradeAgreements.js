@@ -16,6 +16,8 @@
 // they are donating cargo to a partner who has stopped reciprocating.
 // ============================================================
 
+import { tr } from './i18n.js';
+
 /** Human copy per reason. Second person, because these go out as DMs to
  *  both parties and "your agreement" reads better than "the agreement". */
 const REASON_TEXT = {
@@ -189,16 +191,19 @@ export async function endAgreement(env, gameId, ag, reason, tick, opts = {}) {
           // Per agreement, not per tick — a route that dies once must
           // not DM on every subsequent pass.
           dedupeKey: `agreement_end:${ag.id}`,
-          embed: {
-            title: '📉 A standing trade agreement has ended',
+          embed: (L) => ({
+            title: tr(L, 'alert.agreement.title'),
             description: [
-              `Your agreement with **${other?.name ?? 'another empire'}** ${REASON_TEXT[reason] ?? 'ended'}.`,
+              tr(L, 'alert.agreement.body', {
+                other: other?.name ?? tr(L, 'alert.agreement.anotherEmpire'),
+                reason: L === 'en' ? (REASON_TEXT[reason] ?? 'ended') : tr(L, `alert.agreement.reason.${reason}`),
+              }),
               opts.detail ? `\n${opts.detail}` : '',
-              '\nThe freighters have stopped. You can negotiate a new one at any time.',
+              `\n${tr(L, 'alert.agreement.stopped')}`,
             ].join(''),
             color: 0xff5e5e,
             footer: { text: `Orbital · ${game?.name ?? 'game'} · T+${tick}` },
-          },
+          }),
         });
       }
     } catch (e) {

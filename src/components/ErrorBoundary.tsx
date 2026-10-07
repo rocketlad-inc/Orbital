@@ -13,6 +13,8 @@
 import React from 'react';
 import { logger } from '../game/logger';
 import { GIT_SHA } from '../_version';
+import { t } from '../i18n/core';
+import { tRich } from '../i18n/rich';
 
 interface Props {
   children: React.ReactNode;
@@ -104,13 +106,10 @@ export class ErrorBoundary extends React.Component<Props, State> {
             marginBottom: 12,
             fontFamily: 'var(--font-display)',
           }}>
-            ⚠ SOMETHING BROKE
+            {t('errorboundary.title')}
           </div>
           <div style={{ fontSize: 11, color: '#8aa0b4', marginBottom: 12, lineHeight: 1.5 }}>
-            The UI hit an error and rendered this fallback so the whole
-            app doesn't disappear. The crash has been written to the
-            diagnostic log — open the side menu and click <strong>Download Log</strong>
-            to grab the full trace.
+            {tRich('errorboundary.body', { button: <strong>{t('errorboundary.downloadLog')}</strong> })}
           </div>
           <div style={{
             background: 'rgba(255, 94, 94, 0.08)',
@@ -142,7 +141,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
                 cursor: 'pointer',
               }}
             >
-              TRY AGAIN
+              {t('errorboundary.retry')}
             </button>
             <button
               onClick={() => {
@@ -163,7 +162,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
                 cursor: 'pointer',
               }}
             >
-              RELOAD PAGE
+              {t('errorboundary.reload')}
             </button>
           </div>
         </div>

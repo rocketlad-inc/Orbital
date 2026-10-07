@@ -16,6 +16,9 @@
 // ============================================================
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { t } from '../i18n/core';
+import { apiErrorText } from '../i18n/apiErrors';
+import { useI18n } from '../i18n/react';
 
 interface Pending { code: string; at: number }
 
@@ -23,6 +26,7 @@ interface Pending { code: string; at: number }
 const POLL_MS = 20_000;
 
 export function WatchOrdersPrompt() {
+  useI18n();
   const [pending, setPending] = useState<Pending | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -67,14 +71,14 @@ export function WatchOrdersPrompt() {
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) {
-        setError(j?.error?.message ?? 'That did not go through — ask again from the watch.');
+        setError(apiErrorText(j?.error, 'mp.watch.errFail'));
         setBusy(false);
         return;
       }
       answered.current.add(pending.code);
       setPending(null);
     } catch {
-      setError('Could not reach Orbital. Try again.');
+      setError(t('mp.watch.errNet'));
     }
     setBusy(false);
   };
@@ -84,20 +88,17 @@ export function WatchOrdersPrompt() {
   return (
     <div className="mp-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="watch-orders-title">
       <div className="mp-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="mp-modal__title" id="watch-orders-title">⌚ Your watch is asking to give orders</div>
+        <div className="mp-modal__title" id="watch-orders-title">{t('mp.watch.title')}</div>
         <div className="mp-modal__desc">
-          Allow it and the watch can retreat, detonate and move your ships, set their stances
-          and targets, answer trade and peace offers, reply to messages, and order ships at your
-          shipyards.
+          {t('mp.watch.p1')}
           <br /><br />
-          Say no and the watch keeps working — it just cannot give orders. You can revoke this
-          later from your account settings.
+          {t('mp.watch.p2')}
           {error && <><br /><br /><span style={{ color: 'var(--mp-hostile)' }}>{error}</span></>}
         </div>
         <div className="mp-modal__actions">
-          <button type="button" className="mp-btn" onClick={() => decide(false)} disabled={busy}>Not now</button>
+          <button type="button" className="mp-btn" onClick={() => decide(false)} disabled={busy}>{t('mp.watch.notNow')}</button>
           <button type="button" className="mp-btn mp-btn--primary" onClick={() => decide(true)} disabled={busy}>
-            {busy ? 'Allowing…' : 'Allow orders'}
+            {busy ? t('mp.watch.allowing') : t('mp.watch.allow')}
           </button>
         </div>
       </div>

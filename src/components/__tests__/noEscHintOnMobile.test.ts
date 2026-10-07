@@ -18,7 +18,8 @@ function visibleEscHints(file: string): Array<{ line: number; text: string; cont
   const out: Array<{ line: number; text: string; context: string }> = [];
   lines.forEach((l, i) => {
     if (/title=/.test(l)) return;
-    if (/<kbd>Esc<\/kbd>/i.test(l) || /\(Esc\)'/.test(l)) {
+    // A label is either a literal ending "(Esc)'" or, once translated, a catalog key ending in Esc.
+    if (/<kbd>Esc<\/kbd>/i.test(l) || /\(Esc\)'/.test(l) || /t\('[\w.]*Esc'\)/.test(l)) {
       out.push({ line: i + 1, text: l.trim(), context: lines.slice(Math.max(0, i - 2), i + 1).join('\n') });
     }
   });

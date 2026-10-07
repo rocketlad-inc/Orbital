@@ -15,6 +15,9 @@
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { GIT_SHA, BUILT_AT } from '../_version';
+import { t } from '../i18n/core';
+import { tRich } from '../i18n/rich';
+import { useI18n } from '../i18n/react';
 import './VersionBanner.css';
 
 interface VersionResponse {
@@ -26,6 +29,7 @@ const POLL_MS = 5 * 60 * 1000;  // 5 minutes
 const SHORT = (sha: string) => sha.slice(0, 7);
 
 export const VersionBanner: React.FC = () => {
+  useI18n();
   const [serverSha, setServerSha] = useState<string | null>(null);
   const [dismissed, setDismissed] = useState(false);
 
@@ -70,7 +74,7 @@ export const VersionBanner: React.FC = () => {
           Placement lives in VersionBanner.css. */}
       <div
         className={`version-badge${mismatch ? ' version-badge--stale' : ''}`}
-        title={`Build ${GIT_SHA}\n${BUILT_AT}\n${mismatch ? 'A newer version is live on the server. Reload to update.' : 'Up to date'}`}
+        title={`${t('banner.build', { sha: GIT_SHA })}\n${BUILT_AT}\n${mismatch ? t('banner.stale') : t('banner.upToDate')}`}
         onClick={() => {
           try { navigator.clipboard.writeText(GIT_SHA); } catch { /* ignore */ }
         }}
@@ -109,8 +113,10 @@ export const VersionBanner: React.FC = () => {
           }}
         >
           <span>
-            ⚠ A newer build is live. You're on <strong>{SHORT(GIT_SHA)}</strong>,
-            server is <strong>{SHORT(serverSha!)}</strong>. Hard-reload to update.
+            {tRich('banner.newer', {
+              mine: <strong>{SHORT(GIT_SHA)}</strong>,
+              server: <strong>{SHORT(serverSha!)}</strong>,
+            })}
           </span>
           <button
             onClick={() => {
@@ -136,7 +142,7 @@ export const VersionBanner: React.FC = () => {
               borderRadius: 2,
             }}
           >
-            Reload
+            {t('banner.reload')}
           </button>
           <button
             onClick={() => setDismissed(true)}
@@ -150,7 +156,7 @@ export const VersionBanner: React.FC = () => {
               cursor: 'pointer',
               borderRadius: 2,
             }}
-            title="Hide until the next mismatch"
+            title={t('banner.dismiss')}
           >
             ✕
           </button>

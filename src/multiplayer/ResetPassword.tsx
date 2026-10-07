@@ -9,9 +9,13 @@
 
 import React, { useState } from 'react';
 import { apiFetch } from './api';
+import { t } from '../i18n/core';
+import { useI18n, LanguageSwitch } from '../i18n/react';
+import { apiErrorText } from '../i18n/apiErrors';
 import './multiplayer.css';
 
 export function ResetPassword({ token }: { token: string }) {
+  useI18n();
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -21,7 +25,7 @@ export function ResetPassword({ token }: { token: string }) {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    if (password !== confirm) { setError('The two passwords don’t match.'); return; }
+    if (password !== confirm) { setError(t('reset.err.mismatch')); return; }
     setBusy(true);
     const res = await apiFetch('/api/auth/reset', {
       method: 'POST',
@@ -29,7 +33,7 @@ export function ResetPassword({ token }: { token: string }) {
     });
     setBusy(false);
     if (res.ok) setDone(true);
-    else setError(res.error?.message ?? 'Could not reset the password. Try again.');
+    else setError(apiErrorText(res.error, 'reset.err.failed'));
   }
 
   // A full page load, not a state flip: the new session cookie is already
@@ -38,32 +42,27 @@ export function ResetPassword({ token }: { token: string }) {
 
   return (
     <div className="mp-overlay">
+      <div className="mp-lang"><LanguageSwitch /></div>
       <form className="mp-card" onSubmit={onSubmit}>
         <h1 className="mp-title">ORBITAL</h1>
-        <div className="mp-subtitle">{done ? 'PASSWORD CHANGED' : 'CHOOSE A NEW PASSWORD'}</div>
+        <div className="mp-subtitle">{done ? t('reset.subtitleDone') : t('reset.subtitle')}</div>
 
         {done ? (
           <>
-            <p className="mp-auth-note">
-              Your password is changed and you&rsquo;re signed in. Every other device has been
-              signed out.
-            </p>
-            <button type="button" className="mp-submit" onClick={goToGame}>Continue to Orbital</button>
+            <p className="mp-auth-note">{t('reset.doneBody')}</p>
+            <button type="button" className="mp-submit" onClick={goToGame}>{t('reset.continue')}</button>
           </>
         ) : !token ? (
           <>
-            <p className="mp-auth-note">
-              This link is missing its code. Open the link from your email again, or ask for a new one
-              from the sign-in screen.
-            </p>
-            <button type="button" className="mp-submit" onClick={goToGame}>Go to sign in</button>
+            <p className="mp-auth-note">{t('reset.noToken')}</p>
+            <button type="button" className="mp-submit" onClick={goToGame}>{t('reset.toSignin')}</button>
           </>
         ) : (
           <>
             {/* A hidden username field lets password managers file the new
                 password against the right account. */}
             <input type="text" name="username" autoComplete="username" hidden readOnly value="" />
-            <label className="mp-label" htmlFor="reset-password">New password</label>
+            <label className="mp-label" htmlFor="reset-password">{t('reset.newPw')}</label>
             <input
               id="reset-password"
               name="new-password"
@@ -77,7 +76,7 @@ export function ResetPassword({ token }: { token: string }) {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
-            <label className="mp-label" htmlFor="reset-confirm">Type it again</label>
+            <label className="mp-label" htmlFor="reset-confirm">{t('reset.again')}</label>
             <input
               id="reset-confirm"
               name="confirm-password"
@@ -90,11 +89,11 @@ export function ResetPassword({ token }: { token: string }) {
               value={confirm}
               onChange={(e) => setConfirm(e.target.value)}
             />
-            <p className="mp-auth-note">At least 8 characters.</p>
+            <p className="mp-auth-note">{t('reset.minLength')}</p>
             <button className="mp-submit" type="submit" disabled={busy}>
-              {busy ? 'Saving…' : 'Set new password'}
+              {busy ? t('reset.saving') : t('reset.submit')}
             </button>
-            <button type="button" className="mp-auth-link" onClick={goToGame}>Back to sign in</button>
+            <button type="button" className="mp-auth-link" onClick={goToGame}>{t('auth.backToSignin')}</button>
           </>
         )}
 

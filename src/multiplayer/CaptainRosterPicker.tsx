@@ -24,6 +24,9 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { apiFetch } from './api';
 import { CaptainAvatar } from '../components/CaptainAvatar';
+import { t } from '../i18n/core';
+import { useI18n } from '../i18n/react';
+import { apiErrorText } from '../i18n/apiErrors';
 
 interface RosterEntry {
   name: string;
@@ -75,6 +78,7 @@ const PICKER_PX = 64;
 const PICKER_TRAY_PX = 264;
 
 export const CaptainRosterPicker: React.FC<{ roomId: string }> = ({ roomId }) => {
+  useI18n();
   const [open, setOpen] = useState(false);
   const [data, setData] = useState<RosterPayload | null>(null);
   const [roster, setRoster] = useState<RosterEntry[]>([]);
@@ -90,7 +94,7 @@ export const CaptainRosterPicker: React.FC<{ roomId: string }> = ({ roomId }) =>
     setBusy(true);
     const res = await apiFetch<RosterPayload>(`/api/lobby/rooms/${roomId}/captains`);
     setBusy(false);
-    if (!res.ok) { setMsg(res.error?.message ?? 'Could not load your officers'); return; }
+    if (!res.ok) { setMsg(apiErrorText(res.error, 'captains.err.load')); return; }
     setData(res.data);
     setRoster(res.data.roster);
     setMsg(null);
@@ -100,7 +104,7 @@ export const CaptainRosterPicker: React.FC<{ roomId: string }> = ({ roomId }) =>
 
   const traitName = useMemo(() => {
     const m = new Map<string, string>();
-    for (const t of data?.traits ?? []) m.set(t.id, t.name);
+    for (const tr of data?.traits ?? []) m.set(tr.id, tr.name);
     return (id: string) => m.get(id) ?? id;
   }, [data]);
 
@@ -108,7 +112,7 @@ export const CaptainRosterPicker: React.FC<{ roomId: string }> = ({ roomId }) =>
    *  nothing about the choice they just made. */
   const traitBlurb = useMemo(() => {
     const m = new Map<string, string>();
-    for (const t of data?.traits ?? []) m.set(t.id, t.blurb ?? '');
+    for (const tr of data?.traits ?? []) m.set(tr.id, tr.blurb ?? '');
     return (id: string) => m.get(id) ?? '';
   }, [data]);
 
@@ -134,9 +138,9 @@ export const CaptainRosterPicker: React.FC<{ roomId: string }> = ({ roomId }) =>
     setRoster(prev => {
       if (a === b) return prev;
       const next = prev.slice();
-      const t = next[a].trait;
+      const held = next[a].trait;
       next[a] = { ...next[a], trait: next[b].trait };
-      next[b] = { ...next[b], trait: t };
+      next[b] = { ...next[b], trait: held };
       return next;
     });
     setSwapFor(null);
@@ -151,7 +155,7 @@ export const CaptainRosterPicker: React.FC<{ roomId: string }> = ({ roomId }) =>
       body: JSON.stringify({ roster, dealtTraits: data.dealtTraits }),
     });
     setBusy(false);
-    setMsg(res.ok ? 'Officers appointed.' : (res.error?.message ?? 'Could not save'));
+    setMsg(res.ok ? t('captains.saved') : apiErrorText(res.error, 'captains.err.save'));
     if (res.ok) setData({ ...data, saved: true });
   };
 
@@ -182,10 +186,10 @@ export const CaptainRosterPicker: React.FC<{ roomId: string }> = ({ roomId }) =>
           style={{ width: 'auto', margin: 0, padding: '6px 12px' }}
           onClick={() => setOpen(true)}
         >
-          ★ Your first ten captains
+          {t('captains.open')}
         </button>
         <span className="mp-saved" style={{ marginLeft: 8, opacity: 0.7 }}>
-          optional — they are already named and posted
+          {t('captains.optional')}
         </span>
       </div>
     );
@@ -233,27 +237,25 @@ export const CaptainRosterPicker: React.FC<{ roomId: string }> = ({ roomId }) =>
         background: '#0a0e14', borderBottom: '1px solid #16222e',
         margin: '-16px -16px 8px', padding: '16px 16px 8px',
       }}>
-        <div className="mp-section-title" style={{ marginTop: 0, marginBottom: 0 }}>Your first ten captains</div>
+        <div className="mp-section-title" style={{ marginTop: 0, marginBottom: 0 }}>{t('captains.title')}</div>
         <button
           type="button"
           onClick={() => setOpen(false)}
           className="mp-modal-close"
-          aria-label="Close captain roster"
-          title="Close"
+          aria-label={t('captains.close.aria')}
+          title={t('captains.close')}
         >&times;</button>
       </div>
       <div style={{ fontSize: 12, color: '#8aa0b4', margin: '0 0 8px', lineHeight: 1.5 }}>
-        These ten sail with your opening fleet. Rename them, pick their faces, and
-        decide who carries which trait — the traits below are what you were dealt,
-        {data?.freeTraitChoice ? ' and you may set them freely.' : ' and officers TRADE traits rather than picking new ones.'}
+        {data?.freeTraitChoice ? t('captains.intro.free') : t('captains.intro.trade')}
       </div>
       {poolSummary && (
         <div style={{ fontSize: 11, color: '#b8c8d6', marginBottom: 10 }}>
-          <span style={{ color: '#5f7488' }}>YOUR POOL: </span>{poolSummary}
+          <span style={{ color: '#5f7488' }}>{t('captains.pool')} </span>{poolSummary}
         </div>
       )}
 
-      {busy && !roster.length && <div style={{ fontSize: 12, color: '#8aa0b4' }}>Mustering…</div>}
+      {busy && !roster.length && <div style={{ fontSize: 12, color: '#8aa0b4' }}>{t('captains.mustering')}</div>}
 
       <div style={{
         display: 'grid', gap: 10,
@@ -269,7 +271,7 @@ export const CaptainRosterPicker: React.FC<{ roomId: string }> = ({ roomId }) =>
         >
           <button
             onClick={() => { setPickingFor(pickingFor === i ? null : i); setSwapFor(null); }}
-            title="Change portrait"
+            title={t('captains.changePortrait')}
             style={{ background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', flexShrink: 0 }}
           >
             <CaptainAvatar avatarId={c.avatar_id} size={PORTRAIT_PX} />
@@ -292,8 +294,8 @@ export const CaptainRosterPicker: React.FC<{ roomId: string }> = ({ roomId }) =>
                   onChange={(e) => setEntry(i, { trait: e.target.value })}
                   style={{ width: 'auto', fontSize: 12, padding: '2px 6px' }}
                 >
-                  {(data?.traits ?? []).map(t => (
-                    <option key={t.id} value={t.id}>{t.name}</option>
+                  {(data?.traits ?? []).map(tr => (
+                    <option key={tr.id} value={tr.id}>{tr.name}</option>
                   ))}
                 </select>
               ) : (
@@ -308,7 +310,7 @@ export const CaptainRosterPicker: React.FC<{ roomId: string }> = ({ roomId }) =>
                       background: 'transparent', border: 'none', color: '#5f7488',
                       cursor: 'pointer', fontSize: 11, textDecoration: 'underline',
                     }}
-                  >swap</button>
+                  >{t('captains.swap')}</button>
                 </>
               )}
               <span style={{ fontSize: 11, color: '#4ecdc4' }}>{traitBlurb(c.trait)}</span>
@@ -323,13 +325,13 @@ export const CaptainRosterPicker: React.FC<{ roomId: string }> = ({ roomId }) =>
               rows={2}
               value={c.bio ?? ''}
               onChange={(e) => setEntry(i, { bio: e.target.value })}
-              placeholder="A line about this officer…"
+              placeholder={t('captains.bioPlaceholder')}
               style={{ marginTop: 5, fontSize: 11, minHeight: 34 }}
             />
 
             {swapFor === i && (
               <div style={{ marginTop: 6, fontSize: 11, color: '#8aa0b4' }}>
-                Trade {traitName(c.trait)} with:
+                {t('captains.tradeWith', { trait: traitName(c.trait) })}
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
                   {roster.map((o, j) => (j === i ? null : (
                     <button
@@ -359,7 +361,7 @@ export const CaptainRosterPicker: React.FC<{ roomId: string }> = ({ roomId }) =>
                   gap: 8, padding: '4px 6px', background: '#0d1420',
                   borderBottom: '1px solid #1b2836', fontSize: 11, color: '#8aa0b4',
                 }}>
-                  <span>Click through them — the portrait updates as you go</span>
+                  <span>{t('captains.clickThrough')}</span>
                   <button
                     onClick={() => setPickingFor(null)}
                     style={{
@@ -367,7 +369,7 @@ export const CaptainRosterPicker: React.FC<{ roomId: string }> = ({ roomId }) =>
                       color: '#d8e4ee', cursor: 'pointer', fontSize: 11, padding: '2px 10px',
                       flexShrink: 0,
                     }}
-                  >Done</button>
+                  >{t('captains.done')}</button>
                 </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: 6 }}>
                 {(data?.avatars ?? []).map(a => (
@@ -400,7 +402,7 @@ export const CaptainRosterPicker: React.FC<{ roomId: string }> = ({ roomId }) =>
             onClick={save}
             disabled={busy}
           >
-            {data?.saved ? 'Update officers' : 'Appoint these ten'}
+            {data?.saved ? t('captains.update') : t('captains.appoint')}
           </button>
           <button
             onClick={reroll}
@@ -409,7 +411,7 @@ export const CaptainRosterPicker: React.FC<{ roomId: string }> = ({ roomId }) =>
               background: 'transparent', border: '1px solid #2a3d50', borderRadius: 3,
               color: '#8aa0b4', cursor: 'pointer', fontSize: 12, padding: '6px 10px', marginLeft: 8,
             }}
-          >Deal again</button>
+          >{t('captains.dealAgain')}</button>
           <span className="mp-saved" style={{ marginLeft: 8 }}>{msg || ''}</span>
         </div>
       )}

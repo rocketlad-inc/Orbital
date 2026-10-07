@@ -29,13 +29,16 @@ import { useFeatureGate } from '../hooks/useFeatureGate';
 import { RESOURCE_COLORS } from '../game/resourceColors';
 import { trackPendingBuild, resolveServerOrderId } from '../game/optimisticBuilds';
 import './BuildPanel.css';
-import { COMMISSION_LINES, COMMISSION_NAME } from '../multiplayer/commission';
+import { COMMISSION_LINES } from '../multiplayer/commission';
 import { MEGASTRUCTURES } from '../game/megastructures';
+import { t, tn } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 
 /** Optional explicit body. Omitted, the panel follows the map selection
  *  (the body inspector's use); supplied, it builds at that body instead
  *  (the Mobile Foundry's YARD tab, where a SHIP is what's selected). */
 export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
+  useI18n();
   const { gameState, uiState, buildShip, cancelBuild, updateGameState } = useGameContext();
   const mpActions = useMultiplayerActions();
   const gate = useFeatureGate();
@@ -164,7 +167,7 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
   // under your feet mid-game with no other notice.
   const lawPct = Math.round(Math.abs(1 - priceLaw) * 100);
   const lawNote = priceLaw !== 1
-    ? `Senate law: ship costs ${priceLaw < 1 ? `−${lawPct}%` : `+${lawPct}%`}`
+    ? t('build.lawNote', { pct: priceLaw < 1 ? `−${lawPct}%` : `+${lawPct}%` })
     : '';
 
   const ordersHere = gameState.buildOrders.filter(bo => bo.bodyId === body.id);
@@ -356,8 +359,8 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
     const base = stats ? stats.hp : SERVER_HULL_BASE[cls].hp;
     const out = deliveredHp(cls, stats);
     return out === base
-      ? `${base} HP on delivery`
-      : `${base} HP hull + defense tech = ${out} HP on delivery`;
+      ? t('build.hpPlain', { base })
+      : t('build.hpTech', { base, out });
   };
 
   // Effective entries = the optimistic overlay, else the explicit server
@@ -393,7 +396,7 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
       const cls = (e.bareClass ?? 'corvette') as BuildableClassName;
       return {
         key: `b:${cls}`, shipClass: cls,
-        name: `Bare ${SHIP_CLASSES[cls].displayName}`, parts: [],
+        name: t('build.bare', { name: SHIP_CLASSES[cls].displayName }), parts: [],
       };
     })
     .filter((r): r is BuildRow => r !== null);
@@ -463,13 +466,13 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
 
   return (
     <div className="build-panel">
-      <div className="section-title">BUILD</div>
+      <div className="section-title">{t('build.title')}</div>
 
       {/* Build slots — visible capacity. Filled pips = builds in flight,
           hollow = free. Full row turns amber with a "build a Shipyard"
           nudge so the player knows how to get more. */}
       <div className={`build-slots${slotsFull ? ' build-slots--full' : ''}`}>
-        <span className="build-slots__label">BUILD SLOTS</span>
+        <span className="build-slots__label">{t('build.slots')}</span>
         <span className="build-slots__pips" aria-hidden="true">
           {Array.from({ length: totalSlots }).map((_, i) => (
             <span
@@ -483,8 +486,8 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
       {slotsFull && (
         <div className="build-slots__hint">
           {mpActions
-            ? 'All slots busy — new builds are charged now and wait in the queue. Add/upgrade a Shipyard for more concurrent slots.'
-            : 'All slots busy — wait for a build to finish, or add/upgrade a Shipyard on a station here for more.'}
+            ? t('build.slotsFullMp')
+            : t('build.slotsFullSp')}
         </div>
       )}
 
@@ -497,9 +500,12 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
         <div
           className="build-slots__hint"
           style={{ color: '#9fdcff' }}
-          title="Builds here spend this body's LOCAL stockpile first, then your faction POOL. Raw worlds bank 90% of their yield locally — building ships on-site is how you spend it without hauling."
+          title={t('build.localTip')}
         >
-          LOCAL {Math.floor(localStock.ore)}M {Math.floor(localStock.credits)}C · POOL {Math.floor(playerRes.ore)}M {Math.floor(playerRes.credits)}C — local spends first
+          {t('build.localLine', {
+            lm: Math.floor(localStock.ore), lc: Math.floor(localStock.credits),
+            pm: Math.floor(playerRes.ore), pc: Math.floor(playerRes.credits),
+          })}
         </div>
       )}
 
@@ -507,7 +513,7 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
         <input
           type="text"
           className="build-name-input"
-          placeholder="Custom name (optional)"
+          placeholder={t('build.namePlaceholder')}
           value={customName}
           onChange={(e) => setCustomName(e.target.value)}
           onKeyDown={(e) => {
@@ -523,16 +529,16 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
           className="build-name-commit"
           onClick={handleCommitName}
           disabled={customName.trim().length === 0}
-          title="Save this name for the next ship you BUILD"
+          title={t('build.commitTip')}
         >
-          COMMIT
+          {t('build.commit')}
         </button>
       </div>
 
       {pendingNames.length > 0 && (
         <div className="build-name-queue">
           <div className="build-name-queue__label">
-            NEXT BUILD{pendingNames.length > 1 ? `S (${pendingNames.length})` : ''}:
+            {tn('build.nextBuild', pendingNames.length)}
           </div>
           {pendingNames.map((n, i) => (
             <span key={`${n}:${i}`} className="build-name-chip">
@@ -543,8 +549,8 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
                 onClick={() =>
                   setPendingNames(prev => prev.filter((_, idx) => idx !== i))
                 }
-                aria-label={`Remove ${n} from the build-name queue`}
-                title="Remove from the queue"
+                aria-label={t('build.nameRemoveAria', { name: n })}
+                title={t('build.nameRemoveTip')}
               >
                 ✕
               </button>
@@ -555,7 +561,7 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
 
       {buildingOrders.length > 0 && (
         <div className="build-queue">
-          <div className="queue-label">BUILDING</div>
+          <div className="queue-label">{t('build.building')}</div>
           {buildingOrders.map(bo => {
             const progress = (gameState.currentTick - bo.startTick) / (bo.completeTick - bo.startTick);
             const remaining = Math.max(0, bo.completeTick - gameState.currentTick);
@@ -565,7 +571,7 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
                   <span className="build-name">{bo.shipName}</span>
                   <span className="build-class">{bo.shipClass.toUpperCase()}</span>
                   {loadoutSummary(bo.parts) && bo.parts && bo.parts.length > 0 && (
-                    <span className="build-loadout" title="Fitted parts (snapshot at queue time)">
+                    <span className="build-loadout" title={t('build.fittedTip')}>
                       {loadoutSummary(bo.parts)}
                     </span>
                   )}
@@ -577,9 +583,9 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
                 {bo.botched && (
                   <span
                     className="build-botched"
-                    title="A rush went badly — this hull will be delivered at HALF health."
+                    title={t('build.botchedTip')}
                     style={{ color: '#ff8a5c', fontSize: 11, whiteSpace: 'nowrap' }}
-                  >⚠ half-hull</span>
+                  >⚠ {t('build.halfHull')}</span>
                 )}
                 {mpActions && remaining > 1 && (
                   <RushControl
@@ -615,7 +621,7 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
                       });
                     }
                   }}
-                  title="Cancel this build (refunds the cost)"
+                  title={t('build.cancelTip')}
                 >✕</button>
               </div>
             );
@@ -629,7 +635,7 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
           bar; cancel refunds like any other order. */}
       {waitingOrders.length > 0 && (
         <div className="build-queue build-queue--waiting">
-          <div className="queue-label">QUEUED (waiting for slot)</div>
+          <div className="queue-label">{t('build.queued')}</div>
           {waitingOrders.map((bo, i) => (
             <div key={bo.id} className="build-item build-item--waiting" style={{ opacity: 0.75 }}>
               <div className="build-info">
@@ -640,7 +646,7 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
                 <span className="build-name">{bo.shipName}</span>
                 <span className="build-class">{bo.shipClass.toUpperCase()}</span>
                 {loadoutSummary(bo.parts) && bo.parts && bo.parts.length > 0 && (
-                  <span className="build-loadout" title="Fitted parts (snapshot at queue time)">
+                  <span className="build-loadout" title={t('build.fittedTip')}>
                     {loadoutSummary(bo.parts)}
                   </span>
                 )}
@@ -649,10 +655,10 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
                   return (
                     <span
                       className="build-eta"
-                      title="Estimated start once a build slot frees"
+                      title={t('build.etaTip')}
                       style={{ marginLeft: 'auto', fontSize: 10, opacity: 0.75, whiteSpace: 'nowrap' }}
                     >
-                      {ticksAway === 0 ? 'starts next tick' : `starts ~${ticksAway}t`}
+                      {ticksAway === 0 ? t('build.startsNext') : t('build.startsIn', { n: ticksAway })}
                     </span>
                   );
                 })()}
@@ -677,7 +683,7 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
                     });
                   }
                 }}
-                title="Cancel this queued build (refunds the cost)"
+                title={t('build.cancelQueuedTip')}
               >✕</button>
             </div>
           ))}
@@ -728,10 +734,10 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
           const shortCredits = Math.max(0, rowCostCredits - playerRes.credits - localC);
           const canAfford = shortFuel === 0 && shortOre === 0 && shortCredits === 0;
           const shortBits: string[] = [];
-          if (shortFuel    > 0) shortBits.push(`+${shortFuel} fuel`);
-          if (shortOre     > 0) shortBits.push(`+${shortOre} metal`);
-          if (shortCredits > 0) shortBits.push(`+${shortCredits} cr`);
-          const shortLabel = shortBits.length > 0 ? `Need ${shortBits.join(', ')}` : '';
+          if (shortFuel    > 0) shortBits.push(t('build.shortFuel', { n: shortFuel }));
+          if (shortOre     > 0) shortBits.push(t('build.shortMetal', { n: shortOre }));
+          if (shortCredits > 0) shortBits.push(t('build.shortCr', { n: shortCredits }));
+          const shortLabel = shortBits.length > 0 ? t('build.need', { list: shortBits.join(', ') }) : '';
           // Research gate. Locked hulls stay VISIBLE rather than being
           // filtered out — seeing the destroyer sitting there with
           // "Unlocks at Construction 5" is what makes the tech tree
@@ -774,11 +780,11 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
                         setIconChoice(prev => ({ ...prev, [cls]: next }));
                       }}
                       title={activeDesign
-                        ? `Icon from design "${activeDesign.name}" — click to change it in the designer`
-                        : `Icon: ${ICON_VARIANT_NAMES[cls][iconChoice[cls]]} (click to cycle)${isPremium ? ''
+                        ? t('build.iconFromDesign', { name: activeDesign.name })
+                        : t('build.iconCycle', { icon: ICON_VARIANT_NAMES[cls][iconChoice[cls]] }) + (isPremium ? ''
                           // A fact, not an ask: mid-play, the hint only says
                           // where the other lines are and that you can look.
-                          : ` · ${COMMISSION_LINES} more lines come with the ${COMMISSION_NAME}; preview them in the ship designer`}`}
+                          : ` · ${t('build.iconMoreLines', { n: COMMISSION_LINES, name: t('build.commissionName') })}`)}
                       style={{
                         background: 'transparent', border: 'none',
                         padding: 0, cursor: 'pointer',
@@ -797,8 +803,8 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
                   <button
                     onClick={() => openShipDesigner(cls)}
                     title={activeDesign
-                      ? `Active design: ${activeDesign.name} — click to edit loadouts`
-                      : 'No active design (bare hull) — click to open the ship designer'}
+                      ? t('build.activeDesignTip', { name: activeDesign.name })
+                      : t('build.noDesignTip')}
                     style={{
                       background: 'transparent',
                       border: '1px solid #2a3d50', borderRadius: 3,
@@ -810,20 +816,20 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
                       textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                     }}
                   >
-                    ⚙ {activeDesign ? activeDesign.name.toUpperCase() : 'DESIGN'}
+                    ⚙ {activeDesign ? activeDesign.name.toUpperCase() : t('build.design')}
                   </button>
                 )}
               </div>
               <div className="class-stats">
                 <span className="stat">FP:{designStats ? designStats.damagePerTick : SERVER_HULL_BASE[cls].damagePerTick}</span>
-                <span className="stat" title="Speed: how fast it arrives, and how hard it is to hit.">
+                <span className="stat" title={t('build.speedTip')}>
                   SPD:{combatSpeedOf(cls, designParts).toFixed(2)}
                 </span>
                 <span className="stat" title={hpTitle(cls, designStats)}>
                   HP:{deliveredHp(cls, designStats)}
                 </span>
                 {designStats && designStats.travelTimeMult < 1 && (
-                  <span className="stat" title="Engine parts: travel-time multiplier">
+                  <span className="stat" title={t('build.engineTip')}>
                     ⏱×{designStats.travelTimeMult.toFixed(2)}
                   </span>
                 )}
@@ -864,14 +870,14 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
                   lock
                     ? `${lock.label} — ${lock.text}`
                   : capacityBlocks
-                    ? `All ${totalSlots} build slots busy — finish a build, or add a Shipyard to a station here`
+                    ? t('build.allBusyTip', { n: totalSlots })
                     : canAfford
                       ? slotsFull
-                        ? `Queue a ${def.displayName}${activeDesign ? ` [${activeDesign.name}]` : ''} (${rowCostOre}M ${rowCostCredits}C, charged now — starts when a slot frees)`
-                        : `Build a ${def.displayName}${activeDesign ? ` [${activeDesign.name}]` : ''} (${rowCostOre}M ${rowCostCredits}C, ${def.buildTime} ticks)`
+                        ? t('build.queueClassTip', { name: def.displayName, design: activeDesign ? ` [${activeDesign.name}]` : '', m: rowCostOre, c: rowCostCredits })
+                        : t('build.buildClassTip', { name: def.displayName, design: activeDesign ? ` [${activeDesign.name}]` : '', m: rowCostOre, c: rowCostCredits, n: def.buildTime })
                       : shortLabel}
               >
-                {lock ? '🔒 LOCKED' : `BUILD · ${def.buildTime}t`}
+                {lock ? `🔒 ${t('build.locked')}` : t('build.buildT', { n: def.buildTime })}
               </button>
               {lock && (
                 // The unlock condition, stated inline. A player should
@@ -920,16 +926,16 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
             className="section-title"
             style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
           >
-            <span>BUILD LIST</span>
+            <span>{t('build.list')}</span>
             <button
               onClick={() => openShipDesigner()}
-              title="Open the ship designer to create and edit loadouts"
+              title={t('build.designerTip')}
               style={{
                 background: 'transparent', border: '1px solid #2a3d50',
                 borderRadius: 3, color: '#8aa0b4', fontFamily: 'inherit',
                 fontSize: 8, letterSpacing: '0.08em', padding: '2px 6px', cursor: 'pointer',
               }}
-            >⚙ DESIGNER</button>
+            >⚙ {t('build.designer')}</button>
           </div>
 
           {pickerOpen ? (
@@ -940,7 +946,7 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
               }}
             >
               <div style={{ fontSize: 9, letterSpacing: '0.1em', color: '#8aa0b4', marginBottom: 4 }}>
-                ADD A LOADOUT TO YOUR LIST
+                {t('build.addTitle')}
               </div>
               {mpBuildable.map(cls => {
                 const lock = gate.lockReason(HULL_FEATURE[cls]);
@@ -977,7 +983,7 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
                         style={pickerRowStyle}
                       >
                         <ShipIcon shipClass={cls} size={16} />
-                        <span style={{ fontSize: 11, color: '#9fb4c6' }}>Bare {SHIP_CLASSES[cls].displayName}</span>
+                        <span style={{ fontSize: 11, color: '#9fb4c6' }}>{t('build.bare', { name: SHIP_CLASSES[cls].displayName })}</span>
                         <span style={{ marginLeft: 'auto', color: '#4ecdc4', fontSize: 14 }}>+</span>
                       </button>
                     )}
@@ -990,7 +996,7 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
                         <ShipIcon shipClass={cls} variant={d.iconVariant} size={16} />
                         <span style={{ fontSize: 11 }}>{d.name}</span>
                         <span style={{ fontSize: 9, color: '#8aa0b4', marginLeft: 6 }}>
-                          {loadoutSummary(d.parts) || 'bare hull'}
+                          {loadoutSummary(d.parts) || t('build.bareHull')}
                         </span>
                         <span style={{ marginLeft: 'auto', color: '#4ecdc4', fontSize: 14 }}>+</span>
                       </button>
@@ -1005,7 +1011,7 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
                     background: 'transparent', border: 'none', color: '#8aa0b4',
                     fontFamily: 'inherit', fontSize: 10, letterSpacing: '0.06em', cursor: 'pointer',
                   }}
-                >CLOSE</button>
+                >{t('build.close')}</button>
               </div>
             </div>
           ) : (
@@ -1017,12 +1023,12 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
                 fontFamily: 'inherit', fontSize: 11, letterSpacing: '0.08em',
                 cursor: 'pointer', marginBottom: 8,
               }}
-            >+ ADD LOADOUT</button>
+            >+ {t('build.addLoadout')}</button>
           )}
 
           {buildRows.length === 0 && !pickerOpen && (
             <div style={{ fontSize: 10, color: '#8aa0b4', padding: '4px 2px 8px' }}>
-              Your build list is empty. Add a loadout above to start building.
+              {t('build.listEmpty')}
             </div>
           )}
 
@@ -1039,9 +1045,9 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
               const canAfford = shortOre === 0 && shortCredits === 0;
               const qty = getRowQty(row.key);
               const shortBits: string[] = [];
-              if (shortOre > 0) shortBits.push(`+${shortOre} metal`);
-              if (shortCredits > 0) shortBits.push(`+${shortCredits} cr`);
-              const shortLabel = shortBits.length > 0 ? `Need ${shortBits.join(', ')}` : '';
+              if (shortOre > 0) shortBits.push(t('build.shortMetal', { n: shortOre }));
+              if (shortCredits > 0) shortBits.push(t('build.shortCr', { n: shortCredits }));
+              const shortLabel = shortBits.length > 0 ? t('build.need', { list: shortBits.join(', ') }) : '';
               return (
                 <div key={row.key} className={`build-class-row ${!canAfford ? 'disabled' : ''}`}>
                   <div className="class-info">
@@ -1053,14 +1059,14 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
                   </div>
                   <div className="class-stats">
                     <span className="stat">FP:{dstats ? dstats.damagePerTick : SERVER_HULL_BASE[row.shipClass].damagePerTick}</span>
-                    <span className="stat" title="Speed: how fast it arrives, and how hard it is to hit.">
+                    <span className="stat" title={t('build.speedTip')}>
                       SPD:{combatSpeedOf(row.shipClass, row.parts).toFixed(2)}
                     </span>
                     <span className="stat" title={hpTitle(row.shipClass, dstats)}>
                       HP:{deliveredHp(row.shipClass, dstats)}
                     </span>
                     {dstats && dstats.travelTimeMult < 1 && (
-                      <span className="stat" title="Engine parts: travel-time multiplier">
+                      <span className="stat" title={t('build.engineTip')}>
                         ⏱×{dstats.travelTimeMult.toFixed(2)}
                       </span>
                     )}
@@ -1081,13 +1087,13 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
                     <button
                       onClick={() => bumpRowQty(row.key, -1)}
                       disabled={qty <= 1}
-                      aria-label="Fewer"
+                      aria-label={t('build.fewer')}
                       style={{ background: '#14202c', color: '#9fb4c6', border: 'none', width: 18, height: 20, cursor: 'pointer', fontSize: 12 }}
                     >−</button>
                     <span style={{ minWidth: 16, textAlign: 'center', fontSize: 11 }}>{qty}</span>
                     <button
                       onClick={() => bumpRowQty(row.key, 1)}
-                      aria-label="More"
+                      aria-label={t('build.more')}
                       style={{ background: '#14202c', color: '#9fb4c6', border: 'none', width: 18, height: 20, cursor: 'pointer', fontSize: 12 }}
                     >+</button>
                   </div>
@@ -1096,15 +1102,17 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
                     disabled={!canAfford}
                     onClick={() => handleBuildRow(row)}
                     title={canAfford
-                      ? `${slotsFull ? 'Queue' : 'Build'} ${qty > 1 ? `${qty}× ` : ''}${row.name} (${rowCostOre}M ${rowCostCredits}C each)`
+                      ? t(slotsFull ? 'build.queueRowTip' : 'build.buildRowTip', {
+                        qty: qty > 1 ? `${qty}× ` : '', name: row.name, m: rowCostOre, c: rowCostCredits,
+                      })
                       : shortLabel}
                   >
-                    {qty > 1 ? `BUILD ×${qty}` : `BUILD · ${def.buildTime}t`}
+                    {qty > 1 ? t('build.buildQty', { n: qty }) : t('build.buildT', { n: def.buildTime })}
                   </button>
                   <button
                     className="build-cancel"
                     onClick={() => removeRow(row)}
-                    title="Remove this loadout from the build list (keeps the design)"
+                    title={t('build.removeLoadoutTip')}
                   >✕</button>
                   {!canAfford && shortLabel && (
                     <div
@@ -1135,7 +1143,7 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
             fontFamily: 'inherit', textAlign: 'left',
             cursor: 'pointer', width: '100%',
           }}
-          title="Click to dismiss"
+          title={t('build.dismiss')}
         >⚠ {buildError}</button>
       )}
 
@@ -1166,6 +1174,7 @@ export const RushControl: React.FC<{
    *  predates the build_cost payload (rollout window). */
   buildCost?: import('../types').GameState['buildCost'];
 }> = ({ order, remaining, constructionLvl, buildCost }) => {
+  useI18n();
   const mpActions = useMultiplayerActions();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -1240,7 +1249,7 @@ export const RushControl: React.FC<{
           }
           setOpen(o => !o);
         }}
-        title={`Rush: pay the ship's price again to halve remaining build time (${(order.rushCount ?? 0) > 0 ? `rushed ×${order.rushCount} — ` : ''}25% risk of half-hull delivery)`}
+        title={t('build.rush.tip', { done: (order.rushCount ?? 0) > 0 ? `${t('build.rush.rushed', { n: order.rushCount ?? 0 })} — ` : '' })}
         style={{
           background: 'rgba(255, 200, 80, 0.12)',
           border: '1px solid rgba(255, 200, 80, 0.5)',
@@ -1252,7 +1261,7 @@ export const RushControl: React.FC<{
         <div
           ref={popRef}
           role="dialog"
-          aria-label="Confirm rush"
+          aria-label={t('build.rush.confirmAria')}
           style={{
             position: 'fixed', zIndex: 2000,
             right: anchor.right,
@@ -1263,18 +1272,18 @@ export const RushControl: React.FC<{
             fontSize: 11, lineHeight: 1.5, color: '#c8d8e8',
           }}
         >
-          <div style={{ fontWeight: 700, color: '#ffcf70', marginBottom: 4 }}>⚡ RUSH BUILD</div>
+          <div style={{ fontWeight: 700, color: '#ffcf70', marginBottom: 4 }}>⚡ {t('build.rush.title')}</div>
           <div>
-            Cost: <b>{buildCost ? '' : '≈'}{quoteOre}M {quoteCr}C</b> (full ship price)
+            {t('build.rush.cost')} <b>{buildCost ? '' : '≈'}{quoteOre}M {quoteCr}C</b> {t('build.rush.fullPrice')}
           </div>
           {rushLawed && (
             <div style={{ color: '#ffcf70', marginTop: 2 }}>
-              ⚖ Senate law is setting this price
+              ⚖ {t('build.rush.law')}
             </div>
           )}
-          <div>Delivery: T-{remaining.toFixed(0)} → <b>T-{newRemaining}</b></div>
+          <div>{t('build.rush.delivery')} T-{remaining.toFixed(0)} → <b>T-{newRemaining}</b></div>
           <div style={{ color: '#ff8a5c', marginTop: 2 }}>
-            25% risk: delivered at <b>half hull</b>{order.botched ? ' (already botched — no further risk)' : ''}
+            {t('build.rush.riskPre')} <b>{t('build.rush.halfHull')}</b>{order.botched ? ` ${t('build.rush.botched')}` : ''}
           </div>
           {error && <div style={{ color: '#ff5e5e', marginTop: 4 }}>⚠ {error}</div>}
           <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
@@ -1286,7 +1295,7 @@ export const RushControl: React.FC<{
                 mpActions.rushBuild(order.id).then(res => {
                   setBusy(false);
                   if (res.ok) setOpen(false);
-                  else setError(humanizeMpError(res.code, res.error ?? 'Rush failed.', 'build'));
+                  else setError(humanizeMpError(res.code, res.error ?? t('build.rush.failed'), 'build'));
                 });
               }}
               style={{
@@ -1294,7 +1303,7 @@ export const RushControl: React.FC<{
                 border: '1px solid rgba(255, 200, 80, 0.6)', borderRadius: 4,
                 color: '#ffcf70', cursor: 'pointer', padding: '3px 0', fontSize: 11,
               }}
-            >{busy ? '…' : 'CONFIRM'}</button>
+            >{busy ? '…' : t('build.rush.confirm')}</button>
             <button
               disabled={busy}
               onClick={() => setOpen(false)}
@@ -1303,7 +1312,7 @@ export const RushControl: React.FC<{
                 border: '1px solid #3a5068', borderRadius: 4,
                 color: '#9fb4c6', cursor: 'pointer', padding: '3px 0', fontSize: 11,
               }}
-            >CANCEL</button>
+            >{t('build.rush.cancel')}</button>
           </div>
         </div>,
         document.body,

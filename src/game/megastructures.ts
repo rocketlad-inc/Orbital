@@ -10,6 +10,8 @@
 // MULTIPLAYER ONLY. SP has no megastructures and never sends any.
 // ============================================================
 
+import { t, tk } from '../i18n/core';
+
 export type MegastructureKind =
   | 'warp_gate' | 'weapons_station' | 'gravity_sink'
   | 'deep_array' | 'null_field'
@@ -48,86 +50,86 @@ export const MEGASTRUCTURES: Record<MegastructureKind, MegastructureDef> = {
   // Warp Gate halved 2026-09-21 (Lorne) -- MIRROR of worker/megastructures.js.
   warp_gate: {
     kind: 'warp_gate',
-    label: 'Warp Gate',
+    get label() { return tk('data.mega.warp_gate.label', 'Warp Gate'); },
     family: 'fixed',
     feature: 'mega.warpGate',
     cost: { metal: 2500, credits: 3500 },
     radius: 1.9,
     color: '#7fd4ff',
     glyph: '◎',
-    blurb: 'Two-way transit to exactly one partner. Anyone may use it.',
+    get blurb() { return tk('data.mega.warp_gate.blurb', 'Two-way transit to exactly one partner. Anyone may use it.'); },
     effect: {},
   },
   weapons_station: {
     kind: 'weapons_station',
-    label: 'Weapons Station',
+    get label() { return tk('data.mega.weapons_station.label', 'Weapons Station'); },
     family: 'fixed',
     feature: 'mega.weaponsStation',
     cost: { metal: 7000, credits: 5000 },
     radius: 1.6,
     color: '#ff8a6b',
     glyph: '✷',
-    blurb: 'Destroyer-tier guns with reach into transit lanes, and it fires on three at once.',
+    get blurb() { return tk('data.mega.weapons_station.blurb', 'Destroyer-tier guns with reach into transit lanes, and it fires on three at once.'); },
     effect: { range: 700, damagePerTick: 22.5, targets: 3 },
   },
   gravity_sink: {
     kind: 'gravity_sink',
-    label: 'Gravity Sink',
+    get label() { return tk('data.mega.gravity_sink.label', 'Gravity Sink'); },
     family: 'fixed',
     feature: 'mega.gravitySink',
     cost: { metal: 4000, credits: 4000 },
     radius: 1.5,
     color: '#b98cff',
     glyph: '◌',
-    blurb: 'Holds crossing ships for 8 ticks. You choose who is caught.',
+    get blurb() { return tk('data.mega.gravity_sink.blurb', 'Holds crossing ships for 8 ticks. You choose who is caught.'); },
     effect: { range: 500, holdTicks: 8 },
   },
   deep_array: {
     kind: 'deep_array',
-    label: 'Deep Space Array',
+    get label() { return tk('data.mega.deep_array.label', 'Deep Space Array'); },
     family: 'fixed',
     feature: 'mega.deepArray',
     cost: { metal: 3500, credits: 4500 },
     radius: 1.5,
     color: '#6ee7b7',
     glyph: '≋',
-    blurb: 'A sensor bubble anywhere you can pay to put one.',
+    get blurb() { return tk('data.mega.deep_array.blurb', 'A sensor bubble anywhere you can pay to put one.'); },
     effect: { sensorRange: 1100 },
   },
   null_field: {
     kind: 'null_field',
-    label: 'Null Field',
+    get label() { return tk('data.mega.null_field.label', 'Null Field'); },
     family: 'fixed',
     feature: 'mega.nullField',
     cost: { metal: 4000, credits: 4000 },
     radius: 1.4,
     color: '#4a5f7a',
     glyph: '⊘',
-    blurb: 'Blinds rival sensors inside its radius.',
+    get blurb() { return tk('data.mega.null_field.blurb', 'Blinds rival sensors inside its radius.'); },
     effect: { blindRange: 700 },
   },
   mega_destroyer: {
     kind: 'mega_destroyer',
-    label: 'Mega Destroyer',
+    get label() { return tk('data.mega.mega_destroyer.label', 'Mega Destroyer'); },
     family: 'mobile',
     feature: 'mega.megaDestroyer',
     cost: { metal: 12000, credits: 8000 },
     radius: 1.8,
     color: '#ff5e5e',
     glyph: '✹',
-    blurb: 'Strips the terraforming off a world. Cannot use gates.',
+    get blurb() { return tk('data.mega.mega_destroyer.blurb', 'Strips the terraforming off a world. Cannot use gates.'); },
     effect: {},
   },
   mobile_foundry: {
     kind: 'mobile_foundry',
-    label: 'Mobile Foundry',
+    get label() { return tk('data.mega.mobile_foundry.label', 'Mobile Foundry'); },
     family: 'mobile',
     feature: 'mega.mobileFoundry',
     cost: { metal: 9000, credits: 11000 },
     radius: 1.7,
     color: '#ffb84d',
     glyph: '⬢',
-    blurb: 'A shipyard that moves. Four hulls at once, wherever it is.',
+    get blurb() { return tk('data.mega.mobile_foundry.blurb', 'A shipyard that moves. Four hulls at once, wherever it is.'); },
     effect: { buildSlots: 4 },
   },
 };
@@ -302,25 +304,19 @@ export function effectSummary(kind: MegastructureKind): string {
   const e = MEGASTRUCTURES[kind].effect;
   switch (kind) {
     case 'warp_gate':
-      return 'Two-way transit to one partner gate at a quarter of the normal '
-        + 'burn. Anyone may use it.';
+      return t('helper.mega.effect.warp_gate');
     case 'weapons_station':
-      return `${e.damagePerTick} damage a tick to ${e.targets} targets at once, out to `
-        + `${e.range} units — and it reaches ships in mid-burn.`;
+      return t('helper.mega.effect.weapons_station', { damage: e.damagePerTick ?? '', targets: e.targets ?? '', range: e.range ?? '' });
     case 'gravity_sink':
-      return `Pins crossing hulls for ${e.holdTicks} ticks within ${e.range} units. `
-        + 'You choose who passes.';
+      return t('helper.mega.effect.gravity_sink', { ticks: e.holdTicks ?? '', range: e.range ?? '' });
     case 'deep_array':
-      return `A ${e.sensorRange}-unit sensor bubble, nearly three times a station's reach.`;
+      return t('helper.mega.effect.deep_array', { range: e.sensorRange ?? '' });
     case 'null_field':
-      return `Blinds rival sensors within ${e.blindRange} units. Only a hull `
-        + 'in the same system sees through it.';
+      return t('helper.mega.effect.null_field', { range: e.blindRange ?? '' });
     case 'mega_destroyer':
-      return 'Launches as a hull. Strips a world of terraforming and everything '
-        + 'living on it. Crawls, and cannot use gates.';
+      return t('helper.mega.effect.mega_destroyer');
     case 'mobile_foundry':
-      return `Launches as a hull. ${e.buildSlots} build slots wherever it parks, `
-        + 'and it makes a body buildable at all.';
+      return t('helper.mega.effect.mobile_foundry', { slots: e.buildSlots ?? '' });
     default:
       return '';
   }
@@ -334,13 +330,13 @@ export const MEGA_STRIKE_CHARGE_TICKS = 24;
 /** The one thing a player most needs to weigh against the price. */
 export function headlineFor(kind: MegastructureKind): string {
   switch (kind) {
-    case 'warp_gate':       return 'Defeats distance';
-    case 'weapons_station': return 'Denies an area';
-    case 'gravity_sink':    return 'Stops a fleet';
-    case 'deep_array':      return 'Sees everything';
-    case 'null_field':      return 'Hides everything';
-    case 'mega_destroyer':  return 'Ends a world';
-    case 'mobile_foundry':  return 'A shipyard that moves';
+    case 'warp_gate':       return t('helper.mega.head.warp_gate');
+    case 'weapons_station': return t('helper.mega.head.weapons_station');
+    case 'gravity_sink':    return t('helper.mega.head.gravity_sink');
+    case 'deep_array':      return t('helper.mega.head.deep_array');
+    case 'null_field':      return t('helper.mega.head.null_field');
+    case 'mega_destroyer':  return t('helper.mega.head.mega_destroyer');
+    case 'mobile_foundry':  return t('helper.mega.head.mobile_foundry');
     default:                return '';
   }
 }

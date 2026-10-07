@@ -6631,4 +6631,17 @@ ALTER TABLE game_ship_nodes ADD COLUMN accel_max REAL;
 
 ALTER TABLE game_ship_nodes ADD COLUMN accel_tau REAL;
 ` },
+  { name: "0160_user_locale.sql", sql: `-- The language a player chose (see worker/i18n.js). NULL = never chose:
+-- the app follows the device, and emails go out in English.
+ALTER TABLE users ADD COLUMN locale TEXT;
+` },
+  { name: "0161_feed_locale.sql", sql: `-- 0161: the language a game's Discord feed is written in (worker/gameFeed.js).
+--
+-- A feed is ONE thread everybody reads, so its language is the game's, not
+-- each reader's: the host picks it in the game's feed settings. NULL = the
+-- host did not pick, and the feed follows the host's own language
+-- (users.locale, 0160), else English. Values are the locales worker/i18n.js
+-- supports ('en', 'pt-BR').
+ALTER TABLE game_feeds ADD COLUMN feed_locale TEXT;
+` },
 ];

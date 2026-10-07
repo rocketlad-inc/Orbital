@@ -35,6 +35,7 @@
 // ============================================================
 
 import { sendPush } from './webpush.js';
+import { localeFromAcceptLanguage, pickLocale, tr } from './i18n.js';
 
 /** Discord embeds are markdown; a notification body is plain text. */
 function plain(s) {
@@ -114,7 +115,7 @@ export async function pushToUser(env, opts) {
       actions: actions.slice(0, 2).map(a => ({
         action: String(a.id),
         title: String(a.label),
-        ...(a.reply ? { type: 'text', placeholder: String(a.placeholder ?? 'Reply') } : {}),
+        ...(a.reply ? { type: 'text', placeholder: String(a.placeholder ?? tr(opts.locale, 'alert.reply')) } : {}),
       })),
       act: Object.fromEntries(actions.slice(0, 2).map(a => [String(a.id), a.verb])),
     };
@@ -219,24 +220,27 @@ async function handleUnsubscribe(req, env, { session }) {
 /** "Does this actually work on my phone?" — answerable without waiting
  *  for a game event, which is the difference between a feature people
  *  trust and one they assume is broken. */
-async function handleTest(_req, env, { session }) {
+async function handleTest(req, env, { session }) {
+  const urow = await env.DB.prepare('SELECT locale FROM users WHERE id = ?').bind(session.user_id).first().catch(() => null);
+  const L = pickLocale(urow?.locale, localeFromAcceptLanguage(req.headers.get('accept-language')));
   const res = await pushToUser(env, {
     userId: session.user_id,
     category: 'dm',
+    locale: L,
     embed: {
-      title: 'Orbital notifications are on',
-      description: 'This is what an alert looks like. Trade offers, senate votes and your daily report will arrive here.',
+      title: tr(L, 'alert.test.title'),
+      description: tr(L, 'alert.test.body'),
     },
     url: '/',
   });
   if (!res.sent) {
-    const why = res.reason === 'no_subscription' ? 'this device is not subscribed yet'
-      : res.reason === 'opted_out' ? 'notifications for this category are switched off'
-      : res.reason === 'not_configured' ? 'push is not set up on this server'
+    const why = res.reason === 'no_subscription' ? tr(L, 'alert.test.noSub')
+      : res.reason === 'opted_out' ? tr(L, 'alert.test.optedOut')
+      : res.reason === 'not_configured' ? tr(L, 'alert.test.notConfigured')
       // Name the push service's own answer. "Refused" alone cost a round
       // of guessing; the status says which of key, endpoint or payload.
-      : res.removed ? `the push service no longer knows this device (HTTP ${res.status ?? '?'}); press Turn on notifications again`
-      : `the push service refused it (HTTP ${res.status ?? '?'}${res.detail ? `: ${String(res.detail).slice(0, 120)}` : ''})`;
+      : res.removed ? tr(L, 'alert.test.gone', { status: res.status ?? '?' })
+      : tr(L, 'alert.test.refused', { status: res.status ?? '?', detail: res.detail ? `: ${String(res.detail).slice(0, 120)}` : '' });
     return err(409, 'not_sent', why);
   }
   return json({ ok: true, devices: res.devices });

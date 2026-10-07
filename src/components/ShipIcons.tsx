@@ -7,6 +7,7 @@
 import React from 'react';
 import { lighten, darken } from '../render/colors';
 import { shipDesign, hasShipDesign, hullInnerSvg, hullName } from '../render/hulls';
+import { tk } from '../i18n/core';
 
 // A/B/C — the original three; D/E/F — the first expansion; G/H/I — the
 // 2026-08 expansion (more icon options, DESIGN-fleet-economy follow-up).
@@ -1458,9 +1459,17 @@ export const ShipIcon: React.FC<ShipIconProps> = ({ shipClass, variant, size = 2
 };
 
 // Picker names follow the new designs (premium line names are unchanged).
+// Each name becomes a getter, so the picker, the gallery and the map label
+// follow the language. The catalog key is the English name itself (a name
+// shared by several classes, like Specter, is translated once).
 for (const cls of Object.keys(ICON_VARIANT_NAMES) as ShipIconClass[]) {
   for (const v of ALL_VARIANTS) {
-    const n = hullName(cls, v);
-    if (n) ICON_VARIANT_NAMES[cls][v] = n;
+    const english = hullName(cls, v) ?? ICON_VARIANT_NAMES[cls][v];
+    if (!english) continue;
+    Object.defineProperty(ICON_VARIANT_NAMES[cls], v, {
+      enumerable: true,
+      configurable: true,
+      get: () => tk('data.hull.' + english.toLowerCase().replace(/[^a-z0-9]+/g, '_'), english),
+    });
   }
 }

@@ -17,6 +17,8 @@ import { BattleRecap, type Detail as BattleDetailPayload } from './BattleReview'
 import { TheatreCanvas, type TheatreDetail } from './TheatreRecap';
 import type { CinemaDetail } from './BattleCinema';
 import { lazyChunk } from '../util/lazyChunk';
+import { t, tn, type Key } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 
 // Lazy: this is what pulls three.js in, and a reader who only wants the
 // flat recap should not download a renderer to get it.
@@ -27,7 +29,15 @@ const NEUTRAL = '#8a9fb3';
 
 const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 100) : 0);
 
+/** t() whose catalog string marks bold with **; values are defused so a name containing ** cannot flip it. */
+function richT(key: Key, vars: Record<string, string | number>): React.ReactNode[] {
+  const safe: Record<string, string | number> = {};
+  for (const k of Object.keys(vars)) safe[k] = String(vars[k]).replace(/\*\*/g, '*\u200b*');
+  return t(key, safe).split('**').map((part, i) => (i % 2 ? <b key={i}>{part}</b> : part));
+}
+
 export function SharedRecap({ token }: { token: string }) {
+  useI18n();
   const [d, setD] = useState<BattleDetailPayload | null>(null);
   const [err, setErr] = useState<string | null>(null);
   // The campaign this battle was part of, fetched only if the reader asks
@@ -49,10 +59,10 @@ export function SharedRecap({ token }: { token: string }) {
       try {
         const res = await fetch(`/api/recap/${encodeURIComponent(token)}/cinema`);
         if (dead) return;
-        if (!res.ok) { setFilmErr('The film could not be loaded.'); return; }
+        if (!res.ok) { setFilmErr(t('review.shared.filmErr')); return; }
         setFilm(await res.json());
       } catch {
-        if (!dead) setFilmErr('Could not reach the server.');
+        if (!dead) setFilmErr(t('review.shared.noServer'));
       }
     })();
     return () => { dead = true; };
@@ -65,10 +75,10 @@ export function SharedRecap({ token }: { token: string }) {
       try {
         const res = await fetch(`/api/recap/${encodeURIComponent(token)}/system`);
         if (dead) return;
-        if (!res.ok) { setSysErr('The wider campaign could not be loaded.'); return; }
+        if (!res.ok) { setSysErr(t('review.shared.sysErr')); return; }
         setSystem(await res.json());
       } catch {
-        if (!dead) setSysErr('Could not reach the server.');
+        if (!dead) setSysErr(t('review.shared.noServer'));
       }
     })();
     return () => { dead = true; };
@@ -84,13 +94,13 @@ export function SharedRecap({ token }: { token: string }) {
         if (dead) return;
         if (!res.ok) {
           setErr(res.status === 404
-            ? 'This recap link is not valid, or has been turned off.'
-            : `Could not load this recap (HTTP ${res.status}).`);
+            ? t('review.shared.badLink')
+            : t('review.shared.loadFail', { status: res.status }));
           return;
         }
         setD(await res.json());
       } catch {
-        if (!dead) setErr('Could not reach the server.');
+        if (!dead) setErr(t('review.shared.noServer'));
       }
     })();
     return () => { dead = true; };
@@ -103,7 +113,7 @@ export function SharedRecap({ token }: { token: string }) {
   const wider = !!d?.theatre && d.theatre.battle_count > 1;
 
   useEffect(() => {
-    if (b) document.title = `${b.body_name ?? 'Deep space'} — Orbital battle recap`;
+    if (b) document.title = t('review.shared.docTitle', { name: b.body_name ?? t('review.deepSpace') });
   }, [b]);
 
   return (
@@ -112,12 +122,12 @@ export function SharedRecap({ token }: { token: string }) {
         <a className="shared-recap__brand" href="/">ORBITAL</a>
 
         {err && <div className="shared-recap__err">{err}</div>}
-        {!d && !err && <div className="shared-recap__loading">Loading the recap…</div>}
+        {!d && !err && <div className="shared-recap__loading">{t('review.shared.loading')}</div>}
 
         {d && b && (
           <>
             <h1 className="shared-recap__title">
-              {b.body_name ?? 'Deep space'}
+              {b.body_name ?? t('review.deepSpace')}
               <span className="shared-recap__tick">T+{b.started_tick}–{b.ended_tick ?? b.last_fire_tick}</span>
             </h1>
 
@@ -135,11 +145,10 @@ export function SharedRecap({ token }: { token: string }) {
 
             <div className="shared-recap__campaign">
               <span>
-                Watch it as a film: the fleets staged in 3D, with the
-                camera moving through the action.
+                {t('review.shared.filmPitch')}
               </span>
               <button onClick={() => setShowFilm(v => !v)}>
-                {showFilm ? 'Close the film' : 'Watch the film'}
+                {showFilm ? t('review.shared.closeFilm') : t('review.shared.watchFilm')}
               </button>
             </div>
 
@@ -148,23 +157,25 @@ export function SharedRecap({ token }: { token: string }) {
               : film
                 ? (
                   <React.Suspense fallback={
-                    <div className="shared-recap__loading">Loading the renderer…</div>
+                    <div className="shared-recap__loading">{t('review.shared.loadingRenderer')}</div>
                   }>
                     <BattleCinema detail={film} />
                   </React.Suspense>
                 )
-                : <div className="shared-recap__loading">Assembling the film…</div>)}
+                : <div className="shared-recap__loading">{t('review.shared.assembling')}</div>)}
 
             {wider && (
               <div className="shared-recap__campaign">
                 <span>
-                  One engagement in the fight for{' '}
-                  <b>{d.theatre!.anchor_name ?? 'this system'}</b> —{' '}
-                  {d.theatre!.battle_count} of them between T+{d.theatre!.started_tick} and
-                  {' '}T+{d.theatre!.last_fire_tick}.
+                  {richT('review.shared.campaign', {
+                    name: d.theatre!.anchor_name ?? t('review.shared.thisSystem'),
+                    n: d.theatre!.battle_count,
+                    a: d.theatre!.started_tick,
+                    b: d.theatre!.last_fire_tick,
+                  })}
                 </span>
                 <button onClick={() => setShowSystem(v => !v)}>
-                  {showSystem ? 'Show this engagement' : 'Watch the whole system'}
+                  {showSystem ? t('review.shared.showEngagement') : t('review.shared.watchSystem')}
                 </button>
               </div>
             )}
@@ -174,18 +185,18 @@ export function SharedRecap({ token }: { token: string }) {
                 ? <div className="shared-recap__err">{sysErr}</div>
                 : system
                   ? <TheatreCanvas d={system} />
-                  : <div className="shared-recap__loading">Loading the campaign…</div>)
+                  : <div className="shared-recap__loading">{t('review.shared.loadingCampaign')}</div>)
               : <BattleRecap d={d} />}
 
             <div className="shared-recap__stats">
-              {span} tick{span === 1 ? '' : 's'} · {b.shots} shots · {pct(b.hits, b.shots)}% hit
-              {b.ships_lost > 0 && <> · <b style={{ color: '#ff8a80' }}>{b.ships_lost} lost</b></>}
-              {b.victor && <> · victor <b>{b.victor.name}</b></>}
+              {tn('review.ticks', span, { n: span })} · {tn('review.shots', b.shots, { n: b.shots })} · {t('review.shared.hitPct', { pct: pct(b.hits, b.shots) })}
+              {b.ships_lost > 0 && <> · <b style={{ color: '#ff8a80' }}>{t('review.shared.lost', { n: b.ships_lost })}</b></>}
+              {b.victor && <> · {richT('review.shared.victor', { name: b.victor.name ?? '' })}</>}
             </div>
 
             <div className="shared-recap__foot">
-              Every shot in this recap was recorded as it happened.{' '}
-              <a href="/">Play Orbital</a>
+              {t('review.shared.foot')}{' '}
+              <a href="/">{t('review.shared.play')}</a>
             </div>
           </>
         )}

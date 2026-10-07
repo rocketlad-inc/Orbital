@@ -104,7 +104,11 @@ for (const [name, overrides] of Object.entries(SETUPS)) {
   const farTpls = [...b.byTpl.keys()].filter(t => FAR.has(t) || /^mtr_c(en|yg)_/.test(t));
   check(`the backfill adds every far body a fresh game has (${farTpls.length})`,
     farTpls.every(t => a.byTpl.has(t)), farTpls.filter(t => !a.byTpl.has(t)).join(', '));
-  check('...and nothing else', added === farTpls.length, `${added} added, ${farTpls.length} expected`);
+  // Counted as ROWS: the return value also counts the far discoveries
+  // the backfill places on those bodies (factions.js backfillFarSecrets).
+  const rowsNow = (await live.DB.prepare(`SELECT COUNT(*) n FROM game_bodies WHERE game_id='glive'`).first()).n;
+  check('...and no other body', rowsNow - before === farTpls.length,
+    `${rowsNow - before} rows added, ${farTpls.length} expected (backfill reported ${added})`);
 
   const diffs = [];
   for (const t of farTpls) {

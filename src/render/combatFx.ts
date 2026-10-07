@@ -1361,8 +1361,16 @@ export function drawBattleDamageStates(
     const recent = dmgTick !== undefined && rc.t - dmgTick < DAMAGE_SHOW_TICKS;
     const crippled = frac < 0.34;
     if (!recent && !crippled) continue;
+    // ONLY ON A HULL THAT WAS DRAWN. A parked hull with no hitbox and no
+    // fleet slot was not drawn this frame (culled, folded, fogged); its
+    // fire resolved to a computed point and burned in empty space at the
+    // screen edge -- forever, for a crippled hull ("artifacts on the edge
+    // of the screen when having the game open for a while").
+    if (rc.shipHitboxes && !rc.fleetSlots?.has(s.id)) {
+      if (s.transit ? (transitCanvasPos && !transitCanvasPos.has(s.id)) : !rc.shipHitboxes.has(s.id)) continue;
+    }
     const cp = shipCanvasPos(s, rc, transitCanvasPos);
-    if (!cp) continue;
+    if (!cp || offScreen(cp, rc)) continue;
     const sev = Math.max(recent ? 0.5 : 0.25, 1 - frac);
     const ramp = recent ? battleDamageRamp(s.id, dmgTick!, nowMs) : 1;
     if (ramp <= 0.01) continue;
@@ -1377,7 +1385,7 @@ export function drawBattleDamageStates(
     const crippled = frac < 0.34;
     if (!recent && !crippled) continue;
     const cp = settlementCanvasPos(stl, rc);
-    if (!cp) continue;
+    if (!cp || offScreen(cp, rc)) continue;
     const sev = Math.max(recent ? 0.5 : 0.25, 1 - frac);
     const ramp = recent ? battleDamageRamp(stl.id, dmgTick!, nowMs) : 1;
     if (ramp <= 0.01) continue;
@@ -1922,6 +1930,11 @@ export function drawSinkTethers(
   transitCanvasPos?: Map<string, { x: number; y: number }>,
 ): void {
   const c = rc.ctx;
+  // Hull-level detail: in the galaxy view every held hull has folded into
+  // its system, and a dozen "HELD 8T" tags stacked on one point inside
+  // the ring (seen at full zoom-out, 2026-10-06) told nobody anything.
+  const fade = 1 - (rc.galaxyAlpha ?? 0);
+  if (fade <= 0.01) return;
   let opened = false;
 
   for (const ship of ships) {
@@ -1941,7 +1954,7 @@ export function drawSinkTethers(
       ?? shipCanvasPos(ship, rc, transitCanvasPos);
     if (!hp) continue;
 
-    if (!opened) { c.save(); opened = true; }
+    if (!opened) { c.save(); c.globalAlpha = c.globalAlpha * fade; opened = true; }
 
     // The tether: dashes crawling from the hull TOWARD the sink, so the
     // direction of the pull is unmistakable.

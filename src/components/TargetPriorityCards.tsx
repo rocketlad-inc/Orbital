@@ -24,6 +24,8 @@ import type { TargetPriorityKey } from '../types';
 import { TARGET_PRIORITY_DEFAULT } from '../types';
 import { hitChanceOf } from '../game/shipParts';
 import './TargetPriorityCards.css';
+import { t } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 
 /** Categories the player may NOT rank. Settlements are pinned to the
  *  bottom (Lorne: "too OP to walk right up and blow away someone's
@@ -44,14 +46,18 @@ function withPinned(order: TargetPriorityKey[]): TargetPriorityKey[] {
 const MOVABLE_COUNT = (order: TargetPriorityKey[]) =>
   order.filter(k => !PINNED_LAST.has(k)).length;
 
-const CATEGORY_META: Record<TargetPriorityKey, { label: string; sub: string; glyph: string }> = {
-  corvette:   { label: 'CORVETTES',   sub: 'fast screens',          glyph: '▸' },
-  frigate:    { label: 'FRIGATES',    sub: 'line warships',         glyph: '▶' },
-  destroyer:  { label: 'DESTROYERS',  sub: 'heavy hitters',         glyph: '◆' },
-  capital:    { label: 'CAPITALS',    sub: 'mega hulls',            glyph: '✹' },
-  civilian:   { label: 'CIVILIANS',   sub: 'freighters + colony',   glyph: '○' },
-  settlement: { label: 'SETTLEMENTS', sub: 'stations + cities',     glyph: '⬢' },
+const CATEGORY_GLYPH: Record<TargetPriorityKey, string> = {
+  corvette: '▸', frigate: '▶', destroyer: '◆', capital: '✹', civilian: '○', settlement: '⬢',
 };
+
+/** Label + sub-line per category, read at render so a language flip shows. */
+function categoryMeta(key: TargetPriorityKey): { label: string; sub: string; glyph: string } {
+  return {
+    label: t(`ship.tpc.cat.${key}.label` as const),
+    sub: t(`ship.tpc.cat.${key}.sub` as const),
+    glyph: CATEGORY_GLYPH[key],
+  };
+}
 
 /** Height of one card INCLUDING its gap — must match the CSS. Drag math
  *  keys off this, so the two files move together or the preview drifts. */
@@ -110,6 +116,7 @@ export interface TargetPriorityCardsProps {
 export const TargetPriorityCards: React.FC<TargetPriorityCardsProps> = ({
   value, onChange, disabled, note, autoOrder, ownSpeed,
 }) => {
+  useI18n();
   const auto = value == null;
   // withPinned is belt and braces: autoTargetOrderFor and the default
   // already end in 'settlement', but a stored row from before the pin
@@ -192,16 +199,16 @@ export const TargetPriorityCards: React.FC<TargetPriorityCardsProps> = ({
   return (
     <div className={`tpc${auto ? ' tpc--auto' : ''}${disabled ? ' tpc--disabled' : ''}`}>
       <div className="tpc-head">
-        <span className="tpc-title">TARGET PRIORITY</span>
+        <span className="tpc-title">{t('ship.tpc.title')}</span>
         {auto ? (
-          <span className="tpc-badge tpc-badge--auto" title="Peer targeting: closest to this ship's own speed first, slower before faster on a tie; warships before civilians before settlements. Drag a card to take manual control.">AUTO</span>
+          <span className="tpc-badge tpc-badge--auto" title={t('ship.tpc.autoTip')}>{t('ship.tpc.auto')}</span>
         ) : (
           <button
             className="tpc-badge tpc-badge--reset"
             disabled={disabled}
             onClick={() => onChange(null)}
-            title="Back to auto — peer targeting by speed, warships first."
-          >RESET</button>
+            title={t('ship.tpc.resetTip')}
+          >{t('ship.tpc.reset')}</button>
         )}
       </div>
       {note && <div className="tpc-note">{note}</div>}
@@ -210,7 +217,7 @@ export const TargetPriorityCards: React.FC<TargetPriorityCardsProps> = ({
         style={{ height: order.length * CARD_STRIDE - 6 }}
       >
         {order.map((key, idx) => {
-          const meta = CATEGORY_META[key];
+          const meta = categoryMeta(key);
           const dragging = dragIdx === idx;
           const locked = idx >= movable;
           // Where this card should SIT right now: its own slot, shifted
@@ -230,7 +237,7 @@ export const TargetPriorityCards: React.FC<TargetPriorityCardsProps> = ({
               className={`tpc-card${dragging ? ' tpc-card--drag' : ''}${locked ? ' tpc-card--locked' : ''}`}
               style={{ transform: `translateY(${y}px)` }}
               title={locked
-                ? 'Always engaged last — a fleet has to be beaten before what it defends can be shot at.'
+                ? t('ship.tpc.lockedTip')
                 : undefined}
               onPointerDown={onPointerDown(idx)}
               onPointerMove={onPointerMove(idx)}
@@ -245,16 +252,16 @@ export const TargetPriorityCards: React.FC<TargetPriorityCardsProps> = ({
                   {locked && <span className="tpc-lock" aria-hidden="true">🔒</span>}
                 </span>
                 <span className="tpc-sub">
-                  {locked ? 'always last — clear the fleet first' : meta.sub}
+                  {locked ? t('ship.tpc.lockedSub') : meta.sub}
                 </span>
               </span>
               {ownSpeed !== undefined && (
                 <span
                   className="tpc-hit"
-                  title={`This ship lands ${Math.round(100 * hitChanceOf(ownSpeed, CATEGORY_SPEED[key]))}% of its shots on a stock ${meta.label.toLowerCase()} hull. Engines on the target lower it.`}
+                  title={t('ship.tpc.hitTip', { pct: Math.round(100 * hitChanceOf(ownSpeed, CATEGORY_SPEED[key])), label: meta.label.toLowerCase() })}
                 >
                   {Math.round(100 * hitChanceOf(ownSpeed, CATEGORY_SPEED[key]))}%
-                  <span className="tpc-hit__sub">to hit</span>
+                  <span className="tpc-hit__sub">{t('ship.tpc.toHit')}</span>
                 </span>
               )}
               {/* Locked cards render no nudges at all — a disabled pair
@@ -264,13 +271,13 @@ export const TargetPriorityCards: React.FC<TargetPriorityCardsProps> = ({
                 <span className="tpc-nudges">
                   <button
                     className="tpc-nudge" disabled={disabled || idx === 0}
-                    onClick={() => nudge(idx, -1)} title="Raise priority"
-                    aria-label={`Raise ${meta.label} priority`}
+                    onClick={() => nudge(idx, -1)} title={t('ship.tpc.raise')}
+                    aria-label={t('ship.tpc.raiseLabel', { label: meta.label })}
                   >▲</button>
                   <button
                     className="tpc-nudge" disabled={disabled || idx === movable - 1}
-                    onClick={() => nudge(idx, 1)} title="Lower priority"
-                    aria-label={`Lower ${meta.label} priority`}
+                    onClick={() => nudge(idx, 1)} title={t('ship.tpc.lower')}
+                    aria-label={t('ship.tpc.lowerLabel', { label: meta.label })}
                   >▼</button>
                 </span>
               )}
@@ -281,11 +288,10 @@ export const TargetPriorityCards: React.FC<TargetPriorityCardsProps> = ({
       <div className="tpc-foot">
         {auto
           ? (autoOrder
-            ? 'Auto: this ship’s actual order — closest speed first, slower before faster. Drag to override.'
-            : 'Auto: closest speed first, slower before faster — drag to override.')
-          : 'Engages the first ranked category present. Within a rank: closest speed.'}
-        {' '}Settlements are always last: clear the defending fleet before
-        you can bombard.
+            ? t('ship.tpc.footAutoShip')
+            : t('ship.tpc.footAuto'))
+          : t('ship.tpc.footCustom')}
+        {' '}{t('ship.tpc.footPinned')}
       </div>
     </div>
   );

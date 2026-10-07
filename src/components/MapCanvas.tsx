@@ -64,7 +64,11 @@ import {
 import { buildBadgeSegments, layoutBadgePills } from '../render/fleetBadge';
 import { useCamera } from '../state/cameraStore';
 import { fleetFormationGroups, FLEET_ARC_WIDTH } from '../render/fleetFormation';
-import { computeSystemRegions } from '../render/systemRegions';
+import { computeSystemRegions, claimsFromSettlements } from '../render/systemRegions';
+import {
+  summariseStarSystems, galaxyLayerAlpha, galaxyRingRadius, galaxyLabelBox, galaxySubline, paintGalaxyRings,
+  GALAXY_NAME_FONT, GALAXY_SUB_FONT, GALAXY_RING_WIDTH, type GalaxyRing, type StarSystemSummary,
+} from '../render/galaxyLayer';
 import { getEmblemImage } from '../render/emblemCache';
 import { BUILDING_DEFS, buildingLevel } from '../game/settlements';
 import { boxSingleTarget, cyclePick, orderPickHits } from '../render/mapPick';
@@ -105,7 +109,7 @@ import {
 } from '../render/bodyPresentation';
 import type { BodyPresentation } from '../render/bodyPresentation';
 import { MIN_CAMERA_SCALE, transitHullScale } from '../render/cameraLimits';
-import { isGateInFlight, landingSiteIdOf } from '../game/farSystems';
+import { isGateInFlight } from '../game/farSystems';
 import { reachSpec } from '../game/structureReach';
 import { forecastIntercepts, reachOf } from '../game/firingWindows';
 import { COLORS, withOpacity, lighten } from '../render/colors';
@@ -129,6 +133,7 @@ import { menuScaleFor, zOf, furnitureOpacity } from '../game/worldMenu/camera';
 import { drawWorldMenuCloseup } from '../render/worldMenuCloseup';
 import { useCanvasTouchInput } from '../hooks/useCanvasTouchInput';
 import { GIT_SHA } from '../_version';
+import { t, tk, getLang, subscribeLang } from '../i18n/core';
 import { exploredStorageKey, loadExplored, saveExplored } from '../game/exploredBodies';
 import './MapCanvas.css';
 import { getPlacement, cancelPlacement } from '../game/megastructurePlacement';
@@ -424,6 +429,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
   // Starfield: generated once and regenerated when canvas size changes
   const starfieldRef = useRef<StarfieldCache | null>(null);
+  /** Galaxy-view summaries (worlds held per empire per star system),
+   *  rebuilt only when the bodies or the claims change. */
+  const galaxyMemoRef = useRef<{ bodies: unknown; claims: unknown; out: StarSystemSummary[] } | null>(null);
 
   /** Intercept markers, recomputed once per TICK rather than per frame —
    *  every trajectory feeding them is a committed burn, so nothing in the
@@ -1553,6 +1561,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           if (!sel || sel.transit || !sel.orbit?.parentBodyId) return null;
           return { bodyId: sel.orbit.parentBodyId, px: shipIconSize(sel.class, true) + 4 };
         })(),
+        // A sun gate in flight is presented like a ship: never folded.
+        tNow,
       );
       presentationRef.current = renderContext.presentation;
       // Every drawn world is a keep-out for labels AND badges this frame,
@@ -1578,6 +1588,65 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // behaves identically in a 1x game and a SYSTEM_SCALE=2 one.
     const spans = systemSpans(renderContext);
     const regionFade = systemRegionOpacityFor(spans, camera.scale, gameState.bodies);
+
+    // THE GALAXY VIEW (render/galaxyLayer.ts), MP only: once Sol's worlds
+    // have shrunk into a token, every star system gets a ring split by the
+    // worlds each empire holds, and its name. Worked out HERE, before the
+    // wash, the world pass and the badges, because all three give way to
+    // it: the wash and the stars' names fade by galaxyAlpha, and the name
+    // boxes are reserved now so badges and text step around them.
+    let galaxyRings: GalaxyRing[] = [];
+    let galaxyAlpha = 0;
+    if (renderContext.presentation && layerOn('ownership')) {
+      // Keyed on the SOURCE arrays: the settlements fallback builds a new
+      // claims array every call, which would rebuild this every frame.
+      const claimSrc = gameState.settlementClaims && gameState.settlementClaims.length > 0
+        ? gameState.settlementClaims
+        : gameState.settlements;
+      const memo = galaxyMemoRef.current;
+      const summaries = memo && memo.bodies === gameState.bodies && memo.claims === claimSrc
+        ? memo.out
+        : summariseStarSystems(gameState.bodies,
+          claimSrc === gameState.settlementClaims
+            ? gameState.settlementClaims ?? []
+            : claimsFromSettlements(gameState.settlements));
+      galaxyMemoRef.current = { bodies: gameState.bodies, claims: claimSrc, out: summaries };
+      const sol = summaries.find(s => !bodyById2.get(s.anchorId)?.parent);
+      galaxyAlpha = galaxyLayerAlpha((sol?.outerR ?? 0) * camera.scale);
+      if (galaxyAlpha > 0) {
+        const W1 = ctx.canvas.width, H1 = ctx.canvas.height;
+        for (const s of summaries) {
+          const anchor = bodyById2.get(s.anchorId);
+          if (!anchor) continue;
+          const wp = bodyPosition(anchor, renderTick(), gameState.bodies);
+          const cp = worldToCanvas(wp.x, wp.y, renderContext);
+          const r = galaxyRingRadius(s.outerR * camera.scale);
+          if (cp.x < -r - 120 || cp.y < -r - 120 || cp.x > W1 + r + 120 || cp.y > H1 + r + 120) continue;
+          ctx.font = GALAXY_NAME_FONT;
+          const nameW = ctx.measureText(s.name.toUpperCase()).width;
+          ctx.font = GALAXY_SUB_FONT;
+          const subW = ctx.measureText(galaxySubline(s)).width;
+          const label = galaxyLabelBox(cp.x, cp.y, r, nameW, subW);
+          reserveRect(`galaxy:${s.anchorId}`, label.x, label.y, label.w, label.h, s.name);
+          galaxyRings.push({ summary: s, x: cp.x, y: cp.y, r, label });
+        }
+      }
+    }
+    renderContext.galaxyAlpha = galaxyAlpha;
+    /** Once the rings are mostly in, every count badge whose anchor sits
+     *  inside a ring folds into ONE badge for that system, placed round the
+     *  ring: per-world and per-fleet badges scattered across a 50px token
+     *  were the clutter the galaxy view is meant to clear. Null below that. */
+    const galaxyBadgeAgg = galaxyAlpha >= 0.5 ? new Map<GalaxyRing, Map<string, number>>() : null;
+    const foldIntoGalaxyRing = (x: number, y: number, counts: Map<string, number>): boolean => {
+      if (!galaxyBadgeAgg) return false;
+      const g = galaxyRings.find(rg => Math.hypot(x - rg.x, y - rg.y) < rg.r);
+      if (!g) return false;
+      let agg = galaxyBadgeAgg.get(g);
+      if (!agg) { agg = new Map(); galaxyBadgeAgg.set(g, agg); }
+      for (const [fid, n] of counts) agg.set(fid, (agg.get(fid) ?? 0) + n);
+      return true;
+    };
     // Structure-derived, so it costs a pass over the body list — skipped
     // entirely once we're zoomed past the overlay's fade-out.
     const systemRegions = regionFade > 0
@@ -2152,7 +2221,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         requestLabel({
           id: `threat:${body.id}`,
           kind: 'threat',
-          text: '⚠ THREAT',
+          text: t('map.threat'),
           x: cp.x,
           y: cp.y,
           radius: baseR + 6,
@@ -3261,9 +3330,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // It is there to be READ: counting sixty-four specks is not
         // something anyone should have to do to answer "how big is that
         // fleet".
-        drawBadge(`fleetbadge:${leadId}`, hb.x, hb.y, hb.r,
-          new Map([[lead.ownedBy, marker.memberCount]]), false, 1,
-          { x: hb.x + hb.r + 3, y: hb.y - hb.r - 3 });
+        const fleetCount = new Map([[lead.ownedBy, marker.memberCount]]);
+        if (!foldIntoGalaxyRing(hb.x, hb.y, fleetCount)) {
+          drawBadge(`fleetbadge:${leadId}`, hb.x, hb.y, hb.r, fleetCount, false, 1,
+            { x: hb.x + hb.r + 3, y: hb.y - hb.r - 3 });
+        }
       }
     }
 
@@ -3345,6 +3416,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         if (alpha <= 0.01) continue;
         const bp = bodyPosition(body, renderTick(), gameState.bodies);
         const cp = worldToCanvas(bp.x, bp.y, renderContext);
+        if (foldIntoGalaxyRing(cp.x, cp.y, counts)) continue;
         const radius = pres ? drawnRadiusOf(pres, body, lodScale) : Math.max(3, (body.radius ?? 4) * camera.scale);
         drawBadge(`badge:${bodyId}`, cp.x, cp.y, radius + 4, counts, false, alpha);
       }
@@ -3354,8 +3426,16 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         if (!body) continue;
         const bp = bodyPosition(body, renderTick(), gameState.bodies);
         const cp = worldToCanvas(bp.x, bp.y, renderContext);
+        if (foldIntoGalaxyRing(cp.x, cp.y, counts)) continue;
         const radius = pres ? drawnRadiusOf(pres, body, lodScale) : Math.max(4, (body.radius ?? 5) * camera.scale);
         drawBadge(`sysbadge:${anchorId}`, cp.x, cp.y, radius + 5, counts, true, 1);
+      }
+      // One badge per galaxy ring, round the ring: below it first, the name
+      // having already claimed the space above.
+      if (galaxyBadgeAgg) {
+        for (const [g, counts] of galaxyBadgeAgg) {
+          drawBadge(`galaxybadge:${g.summary.anchorId}`, g.x, g.y, g.r + GALAXY_RING_WIDTH, counts, true, 1);
+        }
       }
     }
 
@@ -3646,7 +3726,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         : null;
       drawRendezvousPreview(
         rv, theirPath, renderContext,
-        (isMine && followed) ? `MEET ${followed.name} · T+${Math.round(rv.meetTick)}` : undefined,
+        (isMine && followed) ? t('map.meet', { name: followed.name, tick: Math.round(rv.meetTick) }) : undefined,
         leaderLeg?.arriveTick ?? null,
         renderTick(),
       );
@@ -3822,6 +3902,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           seen.push({ pos: vp, range: px / Math.max(1e-9, sc) });
         }
         drawFogOfWarOverlay(seen, renderContext, 1, { wash: regionFade });
+        // Over the fog, like the badges: a ring is read, not shaded.
+        paintGalaxyRings(ctx, galaxyRings, galaxyAlpha, 'player', (fid) => {
+          const f = gameState.factions.find(fa => fa.id === fid);
+          return f?.color ?? (fid === 'player' ? COLORS.neutral : COLORS.danger);
+        });
         for (const f of deferredBadgePaints) f();
       } else {
         drawFogOfWarOverlay(rings, renderContext, 1 - regionFade);
@@ -4311,13 +4396,20 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             pickId = body.id;
           }
         }
-        // Clicking the thing still flying out of the Sun means "go where
-        // it is going": its landing site (worker/sunGates.js). The gate
-        // itself is refused as a target until it lands.
+        // THE SQUID CANNOT BE TARGETED IN FLIGHT (Lorne, 2026-10-07:
+        // "Refuse the click. Cant target the Squid in transit"). This
+        // click used to be read as "go where it is going" and quietly
+        // swapped in its landing site out in the Far Reach: a player who
+        // clicked the squid passing Venus to board it sent five hulls on
+        // a 40-tick burn to the edge of the system. Now it is refused, out
+        // loud, and the pick stays open so another target can be chosen.
+        // The landing site is still a target, clicked as itself.
         const picked = pickId ? gameState.bodies.find(b => b.id === pickId) : undefined;
         if (picked && isGateInFlight(picked, renderTick())) {
-          const site = landingSiteIdOf(picked.id);
-          pickId = gameState.bodies.some(b => b.id === site) ? site : null;
+          window.dispatchEvent(new CustomEvent('orbital-transfer-refused', {
+            detail: { reason: 'gate_in_flight', landsAt: Math.ceil(picked.emerge!.untilTick) },
+          }));
+          return;
         }
         if (pickId) {
           window.dispatchEvent(new CustomEvent('orbital-transfer-confirm', {
@@ -4341,12 +4433,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         pickCycleRef.current = cyc && cyc.order.length > 1 ? cyc.order : null;
         hitShip = cyc?.id ?? null;
         if (cyc && cyc.order.length > 1) {
-          const name = gameState.ships.find(sh => sh.id === cyc.id)?.name ?? 'Ship';
+          const name = gameState.ships.find(sh => sh.id === cyc.id)?.name ?? t('map.toast.shipFallback');
           window.dispatchEvent(new CustomEvent('orbital:toast', {
             detail: {
               kind: 'info',
-              text: `${name} — ${cyc.index + 1} of ${cyc.order.length} here. `
-                + `${touch ? 'Tap' : 'Click'} again for the next.`,
+              text: t(touch ? 'map.toast.cycleTap' : 'map.toast.cycleClick',
+                { name, i: cyc.index + 1, n: cyc.order.length }),
             },
           }));
         }
@@ -4456,7 +4548,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // place" because it names the actual rule.
           console.warn('placeFramework rejected', res.code, res.error);
           window.dispatchEvent(new CustomEvent('orbital:toast', {
-            detail: { kind: 'error', text: res.error ?? 'Could not place the foundation.' },
+            detail: { kind: 'error', text: res.error ?? t('map.toast.placeFailed') },
           }));
         }
       });
@@ -4652,9 +4744,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         if (pendingTargetRef.current !== bodyId) {
           pendingTargetRef.current = bodyId;
           hoverBody(bodyId);
-          const name = gameState.bodies.find(b => b.id === bodyId)?.name ?? 'it';
+          const name = gameState.bodies.find(b => b.id === bodyId)?.name ?? t('map.toast.itFallback');
           window.dispatchEvent(new CustomEvent('orbital:toast', {
-            detail: { kind: 'info', text: `Tap ${name} again to add this leg` },
+            detail: { kind: 'info', text: t('map.toast.tapAgain', { name }) },
           }));
           return;
         }
@@ -4818,6 +4910,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // tween's self-driven frames never call a stale one.
   useEffect(() => { renderRef.current = render; }, [render]);
 
+  // Canvas text is translated at draw time, so a language switch only has
+  // to ask for one more frame (no React re-render of this component).
+  useEffect(() => subscribeLang(() => renderRef.current()), []);
+
   // Unmount-only: kill any pending tween continuation frame.
   useEffect(() => () => {
     if (tweenRafRef.current != null) cancelAnimationFrame(tweenRafRef.current);
@@ -4932,7 +5028,18 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // map was giant). Reset the transform and keep the loop alive.
         console.error('render frame failed', e);
         const c = canvasRef.current?.getContext('2d');
-        if (c) c.setTransform(1, 0, 0, 1, 0, 0);
+        if (c) {
+          // Unwind every save() the throw skipped past (restore() on an
+          // empty stack is a no-op), then reset what restore cannot reach.
+          // Only the transform was reset before: a leaked clip left the
+          // edges uncleared and a leaked 'lighter' smeared every later
+          // frame, until reload.
+          for (let i = 0; i < 64; i++) c.restore();
+          c.setTransform(1, 0, 0, 1, 0, 0);
+          c.globalAlpha = 1;
+          c.globalCompositeOperation = 'source-over';
+          c.setLineDash([]);
+        }
       }
       perf.recordDraw(performance.now() - t0);
       // ZOOM + CANVAS BYTES, from the loop that actually knows them.
@@ -5076,14 +5183,40 @@ function getShipCanvasPos(
   };
 }
 
+/** The HUD's words. The English text stays in drawHUD (it is the lookup key,
+ *  and a source test reads it); this maps it to the catalog and remembers the
+ *  answer per language, because drawHUD runs inside the render loop and must
+ *  not look anything up per frame. */
+const HUD_KEYS: Record<string, string> = {
+  'PAUSED': 'map.hud.paused',
+  'Tick:': 'map.hud.tick',
+  'Scale:': 'map.hud.scale',
+  'Drag: pan · Pinch: zoom · Tap: select · Hold a ship: select several': 'map.hud.hintMobile',
+  'Right-drag: pan | Scroll: zoom | Click: select | Double-click: focus': 'map.hud.hintDesktop',
+  'SELECT TARGET BODY': 'map.hud.selectTarget',
+  'Tap a body to transfer': 'map.hud.tapBody',
+  'Click a body to transfer | ESC to cancel | Right-click to cancel': 'map.hud.clickBody',
+  'FOCUSED:': 'map.hud.focused',
+  'SOI:': 'map.hud.soi',
+};
+let hudLang = '';
+const hudCache = new Map<string, string>();
+function hudTr(english: string): string {
+  const lang = getLang();
+  if (lang !== hudLang) { hudCache.clear(); hudLang = lang; }
+  let s = hudCache.get(english);
+  if (s === undefined) { s = tk(HUD_KEYS[english], english); hudCache.set(english, s); }
+  return s;
+}
+
 function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
-  const speedLabel = ctx.simSpeed && ctx.simSpeed > 0 ? `${ctx.simSpeed}×` : 'PAUSED';
+  const speedLabel = ctx.simSpeed && ctx.simSpeed > 0 ? `${ctx.simSpeed}×` : hudTr('PAUSED');
   ctx.ctx.fillStyle = COLORS.fgDim;
   ctx.ctx.font = '12px "Audiowide", monospace';
   ctx.ctx.textAlign = 'left';
   ctx.ctx.textBaseline = 'top';
-  ctx.ctx.fillText(`Tick: ${ctx.t.toFixed(1)} | ${speedLabel}`, 16, 16);
-  ctx.ctx.fillText(`Scale: ${ctx.camera.scale.toFixed(2)}x`, 16, 32);
+  ctx.ctx.fillText(`${hudTr('Tick:')} ${ctx.t.toFixed(1)} | ${speedLabel}`, 16, 16);
+  ctx.ctx.fillText(`${hudTr('Scale:')} ${ctx.camera.scale.toFixed(2)}x`, 16, 32);
 
   ctx.ctx.fillStyle = COLORS.fgFaint;
   ctx.ctx.font = '10px "Audiowide", monospace';
@@ -5092,23 +5225,23 @@ function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
   // The LAYOUT's verdict (useIsMobile stamps data-mobile-shell), not the
   // pointer media query, which some mouse-driven desktops answer 'coarse'.
   const mobileShell = document.documentElement.hasAttribute('data-mobile-shell');
-  const hint = mobileShell
+  const hint = hudTr(mobileShell
     ? 'Drag: pan · Pinch: zoom · Tap: select · Hold a ship: select several'
-    : 'Right-drag: pan | Scroll: zoom | Click: select | Double-click: focus';
+    : 'Right-drag: pan | Scroll: zoom | Click: select | Double-click: focus');
   ctx.ctx.fillText(hint, 16, ctx.canvas.height - 32);
 
   if (targetSelectionMode) {
     ctx.ctx.fillStyle = COLORS.warning;
     ctx.ctx.font = 'bold 12px "Audiowide", monospace';
     ctx.ctx.textAlign = 'center';
-    ctx.ctx.fillText('SELECT TARGET BODY', ctx.canvas.width / 2, 16);
+    ctx.ctx.fillText(hudTr('SELECT TARGET BODY'), ctx.canvas.width / 2, 16);
     ctx.ctx.fillStyle = COLORS.fgDim;
     ctx.ctx.font = '10px "Audiowide", monospace';
     // No Esc key or right button on a phone; its Cancel is the banner
     // ShipPanel floats at the bottom during targeting.
-    ctx.ctx.fillText(mobileShell
+    ctx.ctx.fillText(hudTr(mobileShell
       ? 'Tap a body to transfer'
-      : 'Click a body to transfer | ESC to cancel | Right-click to cancel', ctx.canvas.width / 2, 32);
+      : 'Click a body to transfer | ESC to cancel | Right-click to cancel'), ctx.canvas.width / 2, 32);
   }
 
   if (ctx.camera.focusedBodyId) {
@@ -5117,10 +5250,10 @@ function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
       ctx.ctx.fillStyle = COLORS.info;
       ctx.ctx.font = 'bold 12px "Audiowide", monospace';
       ctx.ctx.textAlign = 'center';
-      ctx.ctx.fillText(`FOCUSED: ${focusedBody.name.toUpperCase()}`, ctx.canvas.width / 2, targetSelectionMode ? 52 : 32);
+      ctx.ctx.fillText(`${hudTr('FOCUSED:')} ${focusedBody.name.toUpperCase()}`, ctx.canvas.width / 2, targetSelectionMode ? 52 : 32);
       ctx.ctx.fillStyle = COLORS.fgDim;
       ctx.ctx.font = '10px "Audiowide", monospace';
-      ctx.ctx.fillText(`SOI: ${focusedBody.soi.toFixed(0)} km`, ctx.canvas.width / 2, targetSelectionMode ? 68 : 48);
+      ctx.ctx.fillText(`${hudTr('SOI:')} ${focusedBody.soi.toFixed(0)} km`, ctx.canvas.width / 2, targetSelectionMode ? 68 : 48);
     }
   }
 

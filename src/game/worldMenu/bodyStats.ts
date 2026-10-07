@@ -99,6 +99,19 @@ export function readoutFor(
  * a moon sees its parent + siblings; a planet sees its moons.
  * Null-safe (spec C6): unknown/absent ids return [].
  */
+/**
+ * Which orb slot the i-th neighbour takes: 0 is the parent's (biggest)
+ * slot, 1..3 the others in order. The old rule, max(1, i), assumed the
+ * parent always sat at index 0 -- true for a moon, but a PLANET's list is
+ * just its moons, so moon 0 and moon 1 both landed in slot 1 and drew on
+ * top of each other (Mars: "PHOBOS" and "DEIMOS" printed over one orb).
+ */
+export function orbSlotIndex(i: number, neighbors: readonly Pick<Body, 'id'>[], parentId?: string | null): number {
+  const hasParent = !!parentId && neighbors[0]?.id === parentId;
+  if (hasParent && i === 0) return 0;
+  return Math.min(3, hasParent ? i : i + 1);
+}
+
 export function neighborsOf(bodyId: string | null | undefined, bodies: Body[]): Body[] {
   if (!bodyId) return [];
   const body = bodies.find(b => b.id === bodyId);

@@ -25,6 +25,7 @@
 import type { GameState, Ship } from '../types';
 import { refitFee, sanitizeParts } from './shipParts';
 import type { ShipClassName } from './shipClasses';
+import { t } from '../i18n/core';
 
 export interface RefitStatus {
   designId: string;
@@ -45,14 +46,16 @@ export interface RefitStatus {
 }
 
 const fmtFee = (f: { ore: number; credits: number }) =>
-  [f.ore > 0 ? `${Math.round(f.ore)} metal` : null, f.credits > 0 ? `${Math.round(f.credits)} credits` : null]
-    .filter(Boolean).join(' + ') || 'no charge';
+  [
+    f.ore > 0 ? t('helper.fee.metal', { n: Math.round(f.ore) }) : null,
+    f.credits > 0 ? t('helper.fee.credits', { n: Math.round(f.credits) }) : null,
+  ].filter(Boolean).join(' + ') || t('helper.fee.none');
 
 export function refitStatus(ship: Ship, gs: GameState): RefitStatus | null {
   const designId = ship.refitPendingDesignId;
   if (!designId) return null;
   const design = (gs.shipDesigns ?? []).find(d => d.id === designId);
-  const nameOf = (id: string) => gs.bodies.find(b => b.id === id)?.name ?? 'a friendly world';
+  const nameOf = (id: string) => gs.bodies.find(b => b.id === id)?.name ?? t('helper.refit.aFriendlyWorld');
   const friendly = new Set(
     gs.settlements.filter(s => s.ownedBy === ship.ownedBy).map(s => s.bodyId),
   );
@@ -60,8 +63,8 @@ export function refitStatus(ship: Ship, gs: GameState): RefitStatus | null {
   if (!design || design.shipClass !== ship.class) {
     return {
       designId, designName: design?.name ?? null, fee: { ore: 0, credits: 0 }, where: null,
-      blocked: { reason: 'design_gone', text: 'Its design was deleted — the refit will be dropped' },
-      text: 'Its design was deleted — the refit will be dropped',
+      blocked: { reason: 'design_gone', text: t('helper.refit.designGone') },
+      text: t('helper.refit.designGone'),
     };
   }
   const fee = refitFee(
@@ -98,15 +101,15 @@ export function refitStatus(ship: Ship, gs: GameState): RefitStatus | null {
 
   let blocked: RefitStatus['blocked'] = null;
   if (short) {
-    blocked = { reason: 'cant_afford', text: `Waiting for ${fmtFee(fee)} — it fits as soon as you can pay` };
+    blocked = { reason: 'cant_afford', text: t('helper.refit.cantAfford', { fee: fmtFee(fee) }) };
   } else if (!where) {
-    blocked = { reason: 'no_friendly_stop', text: 'No friendly world on its course — send it to one' };
+    blocked = { reason: 'no_friendly_stop', text: t('helper.refit.noStop') };
   }
 
   const whenText = !where ? ''
-    : where.kind === 'here' ? `Fits at ${where.name} next tick`
-    : where.kind === 'arrival' ? `Fits at ${where.name}, tick ${where.tick}`
-    : `Fits next time its route reaches ${where.name}`;
+    : where.kind === 'here' ? t('helper.refit.fitsHere', { name: where.name })
+    : where.kind === 'arrival' ? t('helper.refit.fitsArrival', { name: where.name, tick: where.tick ?? '' })
+    : t('helper.refit.fitsRoute', { name: where.name });
 
   return {
     designId, designName: design.name, fee, where, blocked,

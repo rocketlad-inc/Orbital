@@ -35,6 +35,8 @@ import {
   normalizeResources, validateOfferedShip, handleAccept, handleAssignDelivery, tradeRowToJson,
 } from './trades.js';
 import { getSliderResolver } from './senate.js';
+import { tr } from './i18n.js';
+import { resWord, fmtN } from './alertText.js';
 
 const GAME_ID_RE = /^[A-Za-z0-9_-]{6,32}$/;
 const POST_ID_RE = /^[A-Za-z0-9_-]{6,64}$/;
@@ -69,7 +71,8 @@ const bundleOf = (row, prefix) => ({
   science: Number(row[`${prefix}_science`] ?? 0),
 });
 const nonZero = (b) => KEYS.filter(k => (b[k] ?? 0) > 0);
-const words = (b) => nonZero(b).map(k => `**${Math.round(b[k]).toLocaleString('en-US')}** ${WORD[k]}`).join(' + ') || '_nothing_';
+const words = (b, L = 'en') => nonZero(b)
+  .map(k => `**${fmtN(L, b[k])}** ${L === 'en' ? WORD[k] : resWord(L, k)}`).join(' + ') || tr(L, 'alert.nothing');
 
 /** Units a post is sold in: its whole offer amount if divisible, else 1. */
 function totalUnits(row) {
@@ -253,13 +256,14 @@ async function notifyLapsed(env, gameId, tick) {
     const rem = remainingOf(p);
     await notify.sendDm(env, {
       userId: uid, gameId, category: 'market', dedupeKey: `market-lapsed:${p.id}`,
-      embed: {
-        title: '⌛ Your market post expired',
-        description: `Nobody took **${words(rem.offer).replace(/\*\*/g, '')}** for ${words(rem.request)}.\n`
-          + 'Renew it from the Trade panel (MARKET · Mine), or post it again at a better price.',
+      embed: (L) => ({
+        title: tr(L, 'alert.market.lapsedTitle'),
+        description: tr(L, 'alert.market.lapsedBody', {
+          offer: words(rem.offer, L).replace(/\*\*/g, ''), request: words(rem.request, L),
+        }),
         color: 0x8a9fb3,
         footer: { text: `Orbital · T+${tick}` },
-      },
+      }),
     });
   }
 }
@@ -500,22 +504,26 @@ async function handlePost(req, env, { session, params }) {
       const p = pairPrice(res.offer, res.request);
       await Promise.allSettled(others.map(o => notify.sendDm(env, {
         userId: o.user_id, gameId, category: 'market', dedupeKey: `market-post:${id}:${o.user_id}`,
-        embed: {
-          title: `📣 ${poster.name} posted to the market`,
+        embed: (L) => ({
+          title: tr(L, 'alert.market.posted', { name: poster.name }),
           description: [
-            `**Gives:** ${words(res.offer)}`,
-            `**Wants:** ${words(res.request)}`,
-            p ? `_${p.price >= 1 ? p.price.toFixed(1) : p.price.toFixed(2)} ${WORD[p.quote]} per ${WORD[p.base]}_` : null,
-            recurring ? '_A standing route: these are per-run amounts._' : null,
-            divisible ? '_Sold in parts — the button takes all of it; open the game to take less._' : null,
+            tr(L, 'alert.market.gives', { what: words(res.offer, L) }),
+            tr(L, 'alert.market.wants', { what: words(res.request, L) }),
+            p ? tr(L, 'alert.market.rate', {
+              price: p.price >= 1 ? p.price.toFixed(1) : p.price.toFixed(2),
+              quote: L === 'en' ? WORD[p.quote] : resWord(L, p.quote),
+              base: L === 'en' ? WORD[p.base] : resWord(L, p.base),
+            }) : null,
+            recurring ? tr(L, 'alert.market.recurring') : null,
+            divisible ? tr(L, 'alert.market.divisible') : null,
             note ? `\n_"${note}"_` : null,
           ].filter(Boolean).join('\n'),
           color: 0xffb84d,
-          footer: { text: `Orbital · ${roomName} · T+${tick} · first to take it strikes the deal` },
-        },
-        components: [{
+          footer: { text: tr(L, 'alert.market.footer', { room: roomName, tick }) },
+        }),
+        components: (L) => [{
           type: 1,
-          components: [{ type: 2, style: 3, label: 'Take it', custom_id: `orb:m:${gameId}:${id}` }],
+          components: [{ type: 2, style: 3, label: tr(L, 'alert.market.take'), custom_id: `orb:m:${gameId}:${id}` }],
         }],
       })));
     }

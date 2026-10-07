@@ -40,6 +40,7 @@
 import { authorizeWear } from './wear.js';
 import { mintWidgetToken } from './widget.js';
 import { sendDm } from './notify.js';
+import { tr } from './i18n.js';
 
 /** How long an unanswered ask stays askable. Long enough to pick the
  *  phone up, short enough that a forgotten tap does not sit there for a
@@ -131,11 +132,10 @@ export async function handleWearRequestOrders(req, env, { params }) {
     category: 'security',
     dedupeKey: `wearorders:${code}`,
     url: '/',
-    embed: {
-      title: 'Your watch can now give orders',
-      description: 'A watch already paired to this account asked for fleet orders and was allowed. '
-        + 'If that was not you, revoke it in your account settings.',
-    },
+    embed: (L) => ({
+      title: tr(L, 'alert.wear.title'),
+      description: tr(L, 'alert.wear.body'),
+    }),
   }).catch(() => {});
 
   return json({ ok: true, allowed: true });

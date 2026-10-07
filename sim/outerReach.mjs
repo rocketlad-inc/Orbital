@@ -336,6 +336,33 @@ const gateSeize = await seize(A.user_id, hostGate.body_id);
 check('CONTROL: a neutral gate still cannot be taken', gateSeize?.error?.code === 'ancient',
   JSON.stringify(gateSeize).slice(0, 160));
 
+// ===== DERELICT WARSHIP (Lorne, 2026-10-07: "a modern, updated destroyer")
+// It was minted from pre-ladder literals: 180 HP, 10 damage, no parts.
+// Now it is what the finder's own yard would launch today.
+{
+  const { computeShipStats, shipBaseStatsFromCfg, DEFAULT_LOADOUTS } = await import('../worker/shipDesigns.js');
+  const wreckWorld = at('derelict_warship')?.id;
+  check('a derelict warship is seeded', !!wreckWorld);
+  await park(B.id, wreckWorld, 'corvette');
+  await runTick();
+  const wreck = await DB.prepare(
+    `SELECT * FROM game_ships WHERE game_id = ? AND parent_body_id = ? AND ship_class = 'destroyer'`)
+    .bind(G, wreckWorld).first();
+  const design = await DB.prepare(
+    `SELECT parts_json FROM game_ship_designs WHERE game_id = ? AND faction_id = ? AND ship_class = 'destroyer' AND is_active = 1`)
+    .bind(G, B.id).first();
+  const parts = design ? JSON.parse(design.parts_json) : DEFAULT_LOADOUTS.destroyer;
+  const want = computeShipStats('destroyer', parts, {}, shipBaseStatsFromCfg(null));
+  check('the salvaged destroyer is claimed by its finder, fitted with their active design',
+    !!wreck && wreck.owner_faction_id === B.id && JSON.parse(wreck.parts_json ?? '[]').join() === parts.join(),
+    JSON.stringify(wreck && { owner: wreck.owner_faction_id, parts: wreck.parts_json }));
+  check('...with the stats a yard gives a destroyer today, and full fuel',
+    !!wreck && Math.abs(wreck.hp_max - want.hp) < 1e-6 && Math.abs(wreck.hp - want.hp) < 1e-6
+      && Math.abs(wreck.damage_per_tick - want.damage_per_tick) < 1e-6 && wreck.fuel === 300,
+    JSON.stringify(wreck && { hp: wreck.hp, hp_max: wreck.hp_max, dmg: wreck.damage_per_tick, fuel: wreck.fuel })
+      + ` want ${want.hp}/${want.damage_per_tick}`);
+}
+
 // ===== the chronicle says what happened ======================================
 const chron = (await DB.prepare(
   `SELECT payload FROM chronicle_entries WHERE game_id = ? AND kind = 'secret_discovered'`).bind(G).all()).results

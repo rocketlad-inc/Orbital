@@ -24,8 +24,11 @@
 
 import React, { useEffect, useState } from 'react';
 import { apiFetch, startCommissionCheckout } from './api';
-import { canBuyHere, logCommission, COMMISSION_NAME, COMMISSION_PRICE, HOLDER_MARK } from './commission';
+import { canBuyHere, logCommission, COMMISSION_PRICE, HOLDER_MARK } from './commission';
 import type { FeedView } from './GameFeedSettings';
+import { t, tk } from '../i18n/core';
+import { useI18n } from '../i18n/react';
+import { apiErrorText } from '../i18n/apiErrors';
 
 const PITCH_KEY = 'orbital.discordFeedPitch.dismissed';
 const readDismissed = () => { try { return localStorage.getItem(PITCH_KEY) === '1'; } catch { return false; } };
@@ -69,12 +72,13 @@ export const DiscordServerFeed: React.FC<{
   view: FeedView;
   onChange: (v: FeedView) => void;
 }> = ({ gameId, view, onChange }) => {
+  useI18n();
   const [dismissed, setDismissed] = useState(readDismissed);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const sellable = canBuyHere();
   const server = view.server ?? null;
-  const host = view.host_name ?? 'The host';
+  const host = view.host_name ?? t('feed.theHost');
 
   // The host comes back from Discord's tab: pick up the new destination.
   useEffect(() => {
@@ -96,51 +100,53 @@ export const DiscordServerFeed: React.FC<{
     setBusy(true); setError(null);
     const res = await apiFetch<FeedView>(`/api/games/${encodeURIComponent(gameId)}/feed/server`, { method: 'DELETE' });
     setBusy(false);
-    if (res.ok) onChange(res.data); else setError(res.error?.message ?? 'Could not change it');
+    if (res.ok) onChange(res.data); else setError(apiErrorText(res.error, 'feed.err.change'));
   };
   const buy = async (gift: boolean) => {
     logCommission('discord-feed', 'click');
     const url = await startCommissionCheckout('discord-feed', { gift });
     if (url) window.location.assign(url);
-    else setError('Could not start checkout. Try again from your profile.');
+    else setError(t('feed.err.checkout'));
   };
   const dismiss = () => { logCommission('discord-feed', 'dismiss'); writeDismissed(); setDismissed(true); };
 
   const howTo = (
     <details data-testid="server-feed-howto">
-      <summary style={{ ...dim, cursor: 'pointer', color: '#b7a3e6' }}>How it works</summary>
+      <summary style={{ ...dim, cursor: 'pointer', color: '#b7a3e6' }}>{t('feed.howItWorks')}</summary>
       <ol style={{ ...dim, margin: '4px 0 2px', paddingLeft: 18 }}>
-        {SERVER_FEED_STEPS.map(s => <li key={s}>{s}</li>)}
+        {SERVER_FEED_STEPS.map((s, i) => <li key={s}>{tk(`feed.step.${i}`, s)}</li>)}
       </ol>
       <ul style={{ ...dim, margin: '2px 0', paddingLeft: 18 }}>
-        {SERVER_FEED_TIPS.map(s => <li key={s}>{s}</li>)}
+        {SERVER_FEED_TIPS.map((s, i) => <li key={s}>{tk(`feed.tip.${i}`, s)}</li>)}
       </ul>
     </details>
   );
 
   // ---- connected (or paused) ----------------------------------------------------
   if (server) {
-    const where = `#${server.channel_name ?? 'channel'}${server.guild_name ? ` in ${server.guild_name}` : ''}`;
+    const where = `#${server.channel_name ?? t('feed.channelFallback')}${server.guild_name ? t('feed.inGuild', { guild: server.guild_name }) : ''}`;
     return (
       <div style={card} data-testid="server-feed">
-        <span style={head}>{HOLDER_MARK} Posting to {where}</span>
+        <span style={head}>{HOLDER_MARK} {t('feed.postingTo', { where })}</span>
         {server.active ? (
           <span style={dim}>
-            This game&apos;s feed goes to {server.kind === 'forum' ? 'its own post in that forum' : 'that channel'},
-            {' '}courtesy of {host}&apos;s {COMMISSION_NAME}.
+            {t('feed.goesTo', {
+              dest: server.kind === 'forum' ? t('feed.destForum') : t('feed.destChannel'),
+              host, name: t('hangar.commissionName'),
+            })}
           </span>
         ) : (
           <span style={{ ...dim, color: '#ffb84d' }} data-testid="server-feed-paused">
-            Paused: it needs {host}&apos;s {COMMISSION_NAME}. Until then the game posts to the Orbital forum.
+            {t('feed.paused', { host, name: t('hangar.commissionName') })}
           </span>
         )}
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-          {server.url && <a href={server.url} target="_blank" rel="noreferrer" style={link}>Open in Discord</a>}
+          {server.url && <a href={server.url} target="_blank" rel="noreferrer" style={link}>{t('feed.openDiscord')}</a>}
           {view.is_host && (
             <>
-              <button type="button" style={btn(false)} disabled={busy} onClick={connect}>Change channel</button>
+              <button type="button" style={btn(false)} disabled={busy} onClick={connect}>{t('feed.changeChannel')}</button>
               <button type="button" style={btn(false)} disabled={busy} onClick={() => void disconnect()}
-                data-testid="server-feed-disconnect">Use the Orbital forum</button>
+                data-testid="server-feed-disconnect">{t('feed.useForum')}</button>
             </>
           )}
         </div>
@@ -154,16 +160,15 @@ export const DiscordServerFeed: React.FC<{
   if (view.is_host && view.host_holds_commission) {
     return (
       <div style={card} data-testid="server-feed">
-        <span style={head}>{HOLDER_MARK} Post this game in your own Discord server</span>
+        <span style={head}>{HOLDER_MARK} {t('feed.postOwn.title')}</span>
         <span style={dim}>
-          Wars, battles, Senate votes and the daily Herald, in a channel your group already reads,
-          with a link that lets your friends join the game.
+          {t('feed.postOwn.body')}
         </span>
         {view.server_connect_ready === false ? (
-          <span style={{ ...dim, color: '#ffb84d' }}>Orbital&apos;s Discord bot is not set up yet. Check back soon.</span>
+          <span style={{ ...dim, color: '#ffb84d' }}>{t('feed.botNotReady')}</span>
         ) : (
           <button type="button" style={btn(true)} onClick={connect} data-testid="server-feed-connect">
-            Connect your server
+            {t('feed.connect')}
           </button>
         )}
         {howTo}
@@ -175,34 +180,36 @@ export const DiscordServerFeed: React.FC<{
   if (!view.is_host && view.host_holds_commission) {
     return (
       <div style={{ ...dim }} data-testid="server-feed-ask">
-        {HOLDER_MARK} {host} can send this game&apos;s feed to your group&apos;s own Discord server
-        from these settings.
+        {HOLDER_MARK} {t('feed.hostCanSend', { host })}
       </div>
     );
   }
 
   // ---- nobody here holds it: the pitch (host) or the gift (player) ---------------
+  // The words live in the catalog (feed.pitch.*), e.g. "to a channel on
+  // your own server". Source-reading tests (commissionDiscordCopy) look for
+  // that phrase here.
   if (!pitching) return null;
   return (
     <div style={card} data-testid={view.is_host ? 'server-feed-pitch' : 'server-feed-gift'}>
-      <span style={head}>{HOLDER_MARK} Your game, in your Discord</span>
+      <span style={head}>{HOLDER_MARK} {t('feed.pitch.title')}</span>
       <span style={dim}>
-        Send this game&apos;s wars, battles, Senate votes and the daily Herald to a channel on
-        {view.is_host ? ' your own server' : ' your group’s server'}, with a link that lets friends join.
-        {' '}It comes with the {COMMISSION_NAME}: {COMMISSION_PRICE}, once.
-        {view.is_host ? '' : ` ${host} hosts this game, so the Commission has to be theirs: you can gift it.`}
+        {t(view.is_host ? 'feed.pitch.bodyHost' : 'feed.pitch.bodyPlayer', {
+          name: t('hangar.commissionName'), price: tk('mp.commission.price', COMMISSION_PRICE),
+        })}
+        {view.is_host ? '' : ` ${t('feed.pitch.giftNote', { host })}`}
       </span>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         {sellable ? (
           <button type="button" style={btn(true)} onClick={() => void buy(!view.is_host)}
             data-testid="server-feed-buy">
-            {view.is_host ? `Get the Commission · ${COMMISSION_PRICE}` : `Gift it to ${host} · ${COMMISSION_PRICE}`}
+            {view.is_host ? t('feed.buy', { price: tk('mp.commission.price', COMMISSION_PRICE) }) : t('feed.gift', { host, price: tk('mp.commission.price', COMMISSION_PRICE) })}
           </button>
         ) : (
-          <span style={dim}>Get it on the Orbital website; it unlocks here at your next sign-in.</span>
+          <span style={dim}>{t('feed.webOnly')}</span>
         )}
         <button type="button" style={{ ...btn(false), border: 'none', padding: '5px 4px' }} onClick={dismiss}>
-          Not now
+          {t('feed.notNow')}
         </button>
       </div>
       {error && <span style={{ ...dim, color: '#ff8a8a' }}>{error}</span>}

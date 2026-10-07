@@ -34,12 +34,20 @@
 // takes the posts directly. The Commission is checked on EVERY post, so a
 // refunded one falls back to the Orbital forum without anyone touching it.
 // Linking, DMs and the Orbital forum stay free for everyone.
+//
+// THE FEED'S LANGUAGE is per game (game_feeds.feed_locale, 0161): the host
+// picks one for the game, or leaves it on "same as mine" (NULL), in which
+// case it is the host's own users.locale, else English. One thread, one
+// language: every post a game makes goes through feedLocale() below. The
+// Herald's own prose (worker/digest.js) is still English; only the frame
+// this file writes around it is translated.
 // ============================================================================
 
 import { json, err, readJson } from './trades.js';
 import { FEEDBACK_DISCORD_URL } from './links.js';
 import { hasEntitlement } from './store.js';
-import { page, discordClientId, tokenFailurePage } from './discordOauth.js';
+import { page, discordClientId, tokenFailurePage, pageLocale } from './discordOauth.js';
+import { tr, trn, pickLocale, normalizeLocale } from './i18n.js';
 
 const DISCORD_API = 'https://discord.com/api/v10';
 export const FEED_LEVELS = ['off', 'headlines', 'all'];
@@ -75,6 +83,27 @@ export async function feedRow(env, gameId) {
                      server_channel_kind, server_thread_id, server_by_user_id
                 FROM game_feeds WHERE game_id = ?`)
     .bind(gameId).first();
+}
+
+/**
+ * The language this game's feed posts in: the host's pick for the game
+ * (game_feeds.feed_locale), else the HOST's own language (users.locale),
+ * else English. One read. Never throws: a feed that cannot tell speaks
+ * English rather than not at all.
+ */
+export async function feedLocale(env, gameId) {
+  try {
+    const row = await env.DB
+      .prepare(`SELECT f.feed_locale AS feed_locale, u.locale AS host_locale
+                  FROM rooms r
+                  LEFT JOIN game_feeds f ON f.game_id = r.id
+                  LEFT JOIN users u ON u.id = r.host_id
+                 WHERE r.id = ?`)
+      .bind(gameId).first();
+    return pickLocale(row?.feed_locale, row?.host_locale);
+  } catch {
+    return 'en';
+  }
 }
 
 /** Does this game's feed take a post of this weight? Pure. */
@@ -114,12 +143,12 @@ export async function ensureThread(env, gameId) {
   const room = await env.DB.prepare('SELECT name FROM rooms WHERE id = ?').bind(gameId).first();
   const name = String(room?.name ?? gameId).slice(0, 100);
   const origin = (env.PUBLIC_ORIGIN || 'https://orbital-empire.com').replace(/\/+$/, '');
+  const L = await feedLocale(env, gameId);
   const res = await botFetch(env, 'POST', `/channels/${forum}/threads`, {
     name,
     auto_archive_duration: 10080,
     message: {
-      content: `📡 **${name}**: this game's feed. Follow this post to get its news; `
-        + `players can also follow from the game's notification settings.\n${origin}/?room=${encodeURIComponent(gameId)}`,
+      content: tr(L, 'feed.thread.intro', { name, url: `${origin}/?room=${encodeURIComponent(gameId)}` }),
     },
   });
   if (!res.ok) {
@@ -141,7 +170,7 @@ export async function ensureThread(env, gameId) {
       const main = await discord.resolveChannelIdPublic(env);
       if (main) {
         await botFetch(env, 'POST', `/channels/${main}/messages`, {
-          content: `📡 **${name}** has a game feed: <#${won}>. Follow it there for that game's news.`,
+          content: tr(L, 'feed.thread.pointer', { name, thread: won }),
           allowed_mentions: { parse: [] },
         });
       }
@@ -193,8 +222,9 @@ export async function feedTarget(env, gameId, { headline = false } = {}) {
     ? (server.kind === 'forum' ? await ensureServerThread(env, gameId, row) : server.channelId)
     : await ensureThread(env, gameId);
   if (threadId && d.skippedNote > 0) {
+    const L = await feedLocale(env, gameId);
     await postToThread(env, threadId, {
-      content: `⏩ ${d.skippedNote} more update${d.skippedNote === 1 ? '' : 's'} skipped: this game moves fast, so its feed is capped at ${FAST_CAP} posts every ${FAST_WINDOW_MS / 60000} minutes. The Herald covers the rest.`,
+      content: trn(L, 'feed.skipped', d.skippedNote, { cap: FAST_CAP, minutes: FAST_WINDOW_MS / 60000 }),
     }).catch(() => {});
   }
   return threadId;
@@ -250,13 +280,14 @@ export async function serverDestination(env, row) {
 async function welcomeText(env, gameId, hostName) {
   const room = await env.DB.prepare('SELECT name, invite_code FROM rooms WHERE id = ?').bind(gameId).first();
   const origin = (env.PUBLIC_ORIGIN || 'https://orbital-empire.com').replace(/\/+$/, '');
-  const name = String(room?.name ?? 'This game');
+  const L = await feedLocale(env, gameId);
+  const name = String(room?.name ?? tr(L, 'feed.welcome.thisGame'));
   const lines = [
-    `📡 **${name}** reports here now: wars, battles, Senate votes and the daily Herald, as they happen.`,
-    `Brought to you by ${hostName ?? 'the host'}'s Commander's Commission ❖.`,
+    tr(L, 'feed.welcome.reports', { name }),
+    hostName ? tr(L, 'feed.welcome.by', { host: hostName }) : tr(L, 'feed.welcome.byHost'),
     room?.invite_code
-      ? `Want in? Join the game: ${origin}/?invite=${encodeURIComponent(room.invite_code)}&from=discord-feed`
-      : `Play Orbital free: ${origin}/?from=discord-feed`,
+      ? tr(L, 'feed.welcome.join', { url: `${origin}/?invite=${encodeURIComponent(room.invite_code)}&from=discord-feed` })
+      : tr(L, 'feed.welcome.free', { url: `${origin}/?from=discord-feed` }),
   ];
   return { name, content: lines.join('\n') };
 }
@@ -290,18 +321,19 @@ async function ensureServerThread(env, gameId, row) {
  */
 export async function handleConnectStart(req, env, { session, params, url }) {
   const { gameId } = params;
-  if (!GAME_ID_RE.test(gameId)) return page('No such game', 'That link is broken.', false);
+  // The host's browser speaks for itself (Accept-Language), then their
+  // saved language.
+  const L = await pageLocale(env, req, session?.user_id);
+  if (!GAME_ID_RE.test(gameId)) return page(tr(L, 'dc.fc.noGame'), tr(L, 'dc.fc.noGameBody'), false, L);
   const c = await caller(env, gameId, session);
-  if (c.error) return page('Not your game', 'Only a player in this game can change its feed.', false);
-  if (!c.isHost) return page('Only the host can do this', "Ask the game's host to connect their server.", false);
+  if (c.error) return page(tr(L, 'dc.fc.notYours'), tr(L, 'dc.fc.notYoursBody'), false, L);
+  if (!c.isHost) return page(tr(L, 'dc.fc.onlyHost'), tr(L, 'dc.fc.onlyHostBody'), false, L);
   if (!(await hasEntitlement(env, session.user_id))) {
-    return page('A Commission feature',
-      "Sending a game's feed to your own Discord server comes with the Commander's Commission. "
-      + 'You can get it from your profile in Orbital.', false);
+    return page(tr(L, 'dc.fc.commission'), tr(L, 'dc.fc.commissionBody'), false, L);
   }
   const clientId = await discordClientId(env);
   if (!clientId || !env.DISCORD_CLIENT_SECRET || !env.DISCORD_BOT_TOKEN) {
-    return page('Not available yet', "Orbital's Discord bot is not set up on this server yet.", false);
+    return page(tr(L, 'dc.fc.notReady'), tr(L, 'dc.fc.notReadyBody'), false, L);
   }
   const nonce = crypto.randomUUID().replace(/-/g, '');
   const now = Date.now();
@@ -321,24 +353,28 @@ export async function handleConnectStart(req, env, { session, params, url }) {
 }
 
 /** GET /api/discord/feed/callback -- Discord sends the host back here. */
-export async function handleConnectCallback(_req, env, { url }) {
+export async function handleConnectCallback(req, env, { url }) {
   const code = url.searchParams.get('code');
   const state = String(url.searchParams.get('state') ?? '');
   const [gameId, nonce] = state.split('.');
+  let L = await pageLocale(env, req);
   if (url.searchParams.get('error') || !code || !gameId || !nonce || !GAME_ID_RE.test(gameId)) {
-    return page('Nothing was connected', 'You can try again from the game whenever you like.', false);
+    return page(tr(L, 'dc.fc.nothing'), tr(L, 'dc.fc.nothingBody'), false, L);
   }
   // Consume the state ONCE (a replayed callback connects nothing).
   const key = `feed:${gameId}:${nonce}`;
   const st = await env.DB.prepare('SELECT user_id, expires_at FROM discord_link_codes WHERE code = ?').bind(key).first();
   await env.DB.prepare('DELETE FROM discord_link_codes WHERE code = ?').bind(key).run();
+  // Now we know who is connecting: their saved language, when the
+  // browser did not say one.
+  L = await pageLocale(env, req, st?.user_id);
   if (!st || st.expires_at < Date.now()) {
-    return page('That link expired', 'Head back to the game and press Connect again.', false);
+    return page(tr(L, 'dc.fc.expired'), tr(L, 'dc.fc.expiredBody'), false, L);
   }
   // Re-check the rules: minutes may have passed on Discord's page.
   const room = await env.DB.prepare('SELECT host_id FROM rooms WHERE id = ?').bind(gameId).first();
   if (!room || room.host_id !== st.user_id || !(await hasEntitlement(env, st.user_id))) {
-    return page('Could not connect', "Only the game's host, holding the Commission, can connect a server.", false);
+    return page(tr(L, 'dc.fc.cannot'), tr(L, 'dc.fc.cannotBody'), false, L);
   }
 
   const tokenRes = await fetch(DISCORD_TOKEN, {
@@ -352,11 +388,11 @@ export async function handleConnectCallback(_req, env, { url }) {
       redirect_uri: serverRedirectUri(env, url),
     }),
   });
-  if (!tokenRes.ok) return tokenFailurePage(tokenRes, 'connection', 'feed connect');
+  if (!tokenRes.ok) return tokenFailurePage(tokenRes, 'connection', 'feed connect', L);
   const tok = await tokenRes.json();
   const hook = tok.webhook;
   if (!hook?.channel_id) {
-    return page('No channel was picked', 'Try again, and choose the channel the game should post in.', false);
+    return page(tr(L, 'dc.fc.noChannel'), tr(L, 'dc.fc.noChannelBody'), false, L);
   }
   // The webhook was only Discord's way of telling us the channel; the bot
   // posts as itself. Remove it so the server's integrations stay tidy.
@@ -365,8 +401,7 @@ export async function handleConnectCallback(_req, env, { url }) {
   }
   const chRes = await botFetch(env, 'GET', `/channels/${hook.channel_id}`);
   if (!chRes.ok) {
-    return page('Orbital cannot see that channel',
-      'Give the Orbital role permission to view and post in it, then connect again.', false);
+    return page(tr(L, 'dc.fc.cannotSee'), tr(L, 'dc.fc.cannotSeeBody'), false, L);
   }
   const ch = await chRes.json();
   const kind = ch.type === 15 || ch.type === 16 ? 'forum' : 'text';
@@ -401,12 +436,13 @@ export async function handleConnectCallback(_req, env, { url }) {
     posted = res.ok;
     if (!res.ok) console.error('server feed welcome failed', gameId, res.status, await res.text().catch(() => ''));
   }
-  const where = `#${(ch.name ?? 'your channel').replace(/[<>&]/g, '')}`
-    + (guildName ? ` in ${String(guildName).replace(/[<>&]/g, '')}` : '');
+  const channel = (ch.name ?? tr(L, 'dc.fc.yourChannel')).replace(/[<>&]/g, '');
+  const where = guildName
+    ? tr(L, 'dc.fc.whereIn', { channel, guild: String(guildName).replace(/[<>&]/g, '') })
+    : tr(L, 'dc.fc.where', { channel });
   return posted
-    ? page('Connected', `This game now posts to ${where}. You can close this tab and head back to Orbital.`)
-    : page('Connected, but Orbital cannot post there yet',
-      `Give the Orbital role permission to send messages in ${where}; the next update will arrive by itself.`, false);
+    ? page(tr(L, 'dc.fc.connected'), tr(L, 'dc.fc.connectedBody', { where }), true, L)
+    : page(tr(L, 'dc.fc.connectedNoPost'), tr(L, 'dc.fc.connectedNoPostBody', { where }), false, L);
 }
 
 /** DELETE /api/games/:gameId/feed/server -- host only. Back to the Orbital forum. */
@@ -463,8 +499,15 @@ async function feedView(env, gameId, userId, isHost) {
     // to the Orbital forum until the host has it again.
     active: !!(await serverDestination(env, row)),
   } : null;
+  // The host's pick for the feed's language; null = "same as the host's".
+  let feedLoc = null;
+  try {
+    feedLoc = normalizeLocale((await env.DB
+      .prepare('SELECT feed_locale FROM game_feeds WHERE game_id = ?').bind(gameId).first())?.feed_locale);
+  } catch { /* the column arrives with migration 0161 */ }
   return {
     level: row?.level ?? 'off',
+    feed_locale: feedLoc,
     thread_url: row?.thread_id && row?.guild_id
       ? `https://discord.com/channels/${row.guild_id}/${row.thread_id}` : null,
     server,
@@ -494,7 +537,12 @@ export async function handleGetFeed(_req, env, { session, params }) {
   return json(await feedView(env, gameId, session.user_id, c.isHost));
 }
 
-/** PUT /api/games/:gameId/feed  { level } — host only. */
+/**
+ * PUT /api/games/:gameId/feed  { level?, feed_locale? } — host only.
+ * `feed_locale` is the language the game's posts are written in ('en',
+ * 'pt-BR'); null / '' / 'host' = same as the host's own language. Either
+ * field alone is fine, so changing the language never touches the level.
+ */
 export async function handleSetFeed(req, env, { session, params }) {
   const { gameId } = params;
   if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'bad game id');
@@ -502,12 +550,26 @@ export async function handleSetFeed(req, env, { session, params }) {
   if (c.error) return c.error;
   if (!c.isHost) return err(403, 'not_host', 'only the host can turn the game feed on or off');
   const body = await readJson(req);
-  const level = String(body?.level ?? '');
-  if (!FEED_LEVELS.includes(level)) return err(400, 'bad_request', `level must be one of ${FEED_LEVELS.join(', ')}`);
-  await env.DB
-    .prepare(`INSERT INTO game_feeds (game_id, level, updated_ms) VALUES (?, ?, ?)
-              ON CONFLICT(game_id) DO UPDATE SET level = excluded.level, updated_ms = excluded.updated_ms`)
-    .bind(gameId, level, Date.now()).run();
+  const hasLocale = body && Object.prototype.hasOwnProperty.call(body, 'feed_locale');
+  const hasLevel = body && body.level !== undefined;
+  if (hasLevel || !hasLocale) {
+    const level = String(body?.level ?? '');
+    if (!FEED_LEVELS.includes(level)) return err(400, 'bad_request', `level must be one of ${FEED_LEVELS.join(', ')}`);
+    await env.DB
+      .prepare(`INSERT INTO game_feeds (game_id, level, updated_ms) VALUES (?, ?, ?)
+                ON CONFLICT(game_id) DO UPDATE SET level = excluded.level, updated_ms = excluded.updated_ms`)
+      .bind(gameId, level, Date.now()).run();
+  }
+  if (hasLocale) {
+    const raw = body.feed_locale;
+    const sameAsHost = raw == null || raw === '' || raw === 'host';
+    const loc = sameAsHost ? null : normalizeLocale(raw);
+    if (!sameAsHost && !loc) return err(400, 'bad_request', 'feed_locale must be a supported language or null');
+    await env.DB
+      .prepare(`INSERT INTO game_feeds (game_id, level, feed_locale, updated_ms) VALUES (?, 'off', ?, ?)
+                ON CONFLICT(game_id) DO UPDATE SET feed_locale = excluded.feed_locale, updated_ms = excluded.updated_ms`)
+      .bind(gameId, loc, Date.now()).run();
+  }
   return json(await feedView(env, gameId, session.user_id, c.isHost));
 }
 

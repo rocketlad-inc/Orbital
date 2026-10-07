@@ -53,6 +53,8 @@
 // ============================================================================
 
 import { json, err, readJson, newId, callerFaction, loadGame, notifyRoom } from './trades.js';
+import { tr } from './i18n.js';
+import { pactName } from './alertText.js';
 
 const GAME_ID_RE = /^[A-Za-z0-9_-]{6,32}$/;
 
@@ -189,15 +191,16 @@ async function parties(env, gameId, session, body) {
 }
 
 /** A war starting or ending is a headline on the game's Discord feed.
+ *  `build` is a function of the feed's language: (L) => embed.
  *  Best-effort: a Discord hiccup must never fail the declaration. */
-async function announceWar(env, gameId, tick, embed) {
+async function announceWar(env, gameId, tick, build) {
   try {
     const room = await env.DB.prepare('SELECT name FROM rooms WHERE id = ?').bind(gameId).first();
     const discord = await import('./discord.js');
-    await discord.postChannelEmbed(env, {
-      ...embed,
+    await discord.postChannelEmbed(env, (L) => ({
+      ...build(L),
       footer: { text: `Orbital · ${room?.name ?? gameId} · T+${tick}` },
-    }, gameId, { headline: true });
+    }), gameId, { headline: true });
   } catch (e) {
     console.error('war announce failed', e);
   }
@@ -237,13 +240,13 @@ export async function handleDeclare(req, env, { session, params }) {
     war_id: id, broke_pacts: broken.map(t => t.kind),
   });
   await notifyRoom(env, gameId, { type: 'wars_changed' });
-  await announceWar(env, gameId, tick, {
-    title: `⚔️ ${me.name} declares war on ${them.name}`,
+  await announceWar(env, gameId, tick, (L) => ({
+    title: tr(L, 'feed.war.declared', { me: me.name, them: them.name }),
     description: broken.length
-      ? `Declared over a standing ${broken.map(t => t.kind.replace(/_/g, ' ')).join(' and ')}, which is now broken.`
-      : 'Their ships may fire on each other from this tick.',
+      ? tr(L, 'feed.war.brokenPacts', { pacts: broken.map(t => pactName(L, t.kind)).join(tr(L, 'feed.war.and')) })
+      : tr(L, 'feed.war.fromTick'),
     color: 0xff5e3a,
-  });
+  }));
   return json({
     ok: true, war_id: id, at_war_with: them.id,
     broke_pacts: broken.map(t => t.kind),
@@ -277,11 +280,11 @@ export async function handleEnd(req, env, { session, params }) {
       offered_by: war.ceasefire_by,
     });
     await notifyRoom(env, gameId, { type: 'wars_changed' });
-    await announceWar(env, gameId, tick, {
-      title: `🕊️ Peace between ${me.name} and ${them.name}`,
-      description: `The war is over after ${tick - war.declared_at_tick} ticks.`,
+    await announceWar(env, gameId, tick, (L) => ({
+      title: tr(L, 'feed.war.peace', { me: me.name, them: them.name }),
+      description: tr(L, 'feed.war.peaceBody', { n: tick - war.declared_at_tick }),
       color: 0x6ee7b7,
-    });
+    }));
     return json({
       ok: true, state: 'ended', war_id: war.id,
       ticks_fought: tick - war.declared_at_tick,

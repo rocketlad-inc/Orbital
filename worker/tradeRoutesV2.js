@@ -18,6 +18,7 @@ import { projectRoute, holdCapFor, CARGO_CAP, dysonSupplyNeed } from './routeMat
 import { maySupplySite, excludedFundersOf, constructionPartners } from './megastructures.js';
 import { factionTechLevels, gatingEnabled, hasFeature } from './researchUnlocks.js';
 import { holdLanding, landHoldStatement } from './landHold.js';
+import { tr, trn } from './i18n.js';
 
 const GAME_ID_RE  = /^[A-Za-z0-9_-]{6,32}$/;
 const ROUTE_ID_RE = /^[A-Za-z0-9_:.-]{6,80}$/;
@@ -1188,14 +1189,12 @@ async function handleConsolidate(req, env, { session, params }) {
       await notify.sendDm(env, {
         userId: f.user_id, gameId, category: 'economy',
         dedupeKey: `consolidated:${ag.id}`,
-        embed: {
-          title: '🚚 Lane folded into one circuit',
-          description: `Your standing trade now runs as **one lane with ${ordered.length} `
-            + `freighter${ordered.length === 1 ? '' : 's'}** — every hull collects and delivers at `
-            + 'BOTH ends instead of flying home empty. Same ships, twice the trade.',
+        embed: (L) => ({
+          title: tr(L, 'alert.lane.title'),
+          description: trn(L, 'alert.lane.body', ordered.length),
           color: 0x4ecdc4,
           footer: { text: `Orbital · T+${tick}` },
-        },
+        }),
       });
     }
   } catch (e) { console.error('consolidation DM failed', e); }

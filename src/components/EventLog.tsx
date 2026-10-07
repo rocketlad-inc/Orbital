@@ -23,6 +23,8 @@ import { useGameContext } from '../state/gameContext';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { useIsMobile } from '../hooks/useIsMobile';
 import type { ChronicleFocus } from '../types';
+import { t, tn } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 import './DockRail.css';
 import './EventLog.css';
 
@@ -81,36 +83,36 @@ function colorizeFactions(
  */
 function logEntryIcon(entry: string): { icon: string; color: string; label: string } {
   const s = entry.toLowerCase();
-  if (s.includes('dyson')) return { icon: '☀', color: '#fbbf24', label: 'Megaproject' };
-  if (s.includes('victory') || s.includes(' wins')) return { icon: '♛', color: '#6ee7b7', label: 'Victory' };
+  if (s.includes('dyson')) return { icon: '☀', color: '#fbbf24', label: t('eventlog.cat.megaproject') };
+  if (s.includes('victory') || s.includes(' wins')) return { icon: '♛', color: '#6ee7b7', label: t('eventlog.cat.victory') };
   if (s.includes('discovery') || s.includes('databank') || s.includes('warp gate') || s.includes('stargate')) {
-    return { icon: '✦', color: '#e879f9', label: 'Discovery' };
+    return { icon: '✦', color: '#e879f9', label: t('eventlog.cat.discovery') };
   }
   // Diplomacy buckets — order matters: 'broke ... pact' must match
   // before the generic 'pact' word in 'signed Defense Pact'.
-  if (s.includes('broke') && s.includes('pact'))   return { icon: '⚔', color: '#ff5e5e', label: 'Pact broken' };
+  if (s.includes('broke') && s.includes('pact'))   return { icon: '⚔', color: '#ff5e5e', label: t('eventlog.cat.pactBroken') };
   // Text-presentation peace symbol (☮ + VS15) so it honours the cyan color
   // and stays monochrome like the other glyphs — the dove emoji rendered
   // colour-locked and inconsistent across OSes.
-  if (s.includes('signed') && s.includes('pact'))  return { icon: '☮︎', color: '#a78bfa', label: 'Pact signed' };
-  if (s.includes('senate')) return { icon: '§', color: '#ffd700', label: 'Senate' };
-  if (s.includes('traded') && s.includes(' → '))   return { icon: '⚖', color: '#ffb84d', label: 'Trade' };
-  if (s.includes('captured')) return { icon: '⚑', color: '#ffd700', label: 'Capture' };
-  if (s.includes('founded')) return { icon: '⌂', color: '#6ee7b7', label: 'Settlement' };
+  if (s.includes('signed') && s.includes('pact'))  return { icon: '☮︎', color: '#a78bfa', label: t('eventlog.cat.pactSigned') };
+  if (s.includes('senate')) return { icon: '§', color: '#ffd700', label: t('eventlog.cat.senate') };
+  if (s.includes('traded') && s.includes(' → '))   return { icon: '⚖', color: '#ffb84d', label: t('eventlog.cat.trade') };
+  if (s.includes('captured')) return { icon: '⚑', color: '#ffd700', label: t('eventlog.cat.capture') };
+  if (s.includes('founded')) return { icon: '⌂', color: '#6ee7b7', label: t('eventlog.cat.settlement') };
   // 'completed' catches building_completed ("… completed mint L3"), which
   // otherwise matched nothing here and fell through to the generic 'Event'
   // bucket — so finishing a Forge read as uncategorised grey while the
   // corvette it built read as Industry.
   if (s.includes('launched') || s.includes('rolled out') || s.includes('built')
       || s.includes('completed')) {
-    return { icon: '✦', color: '#4ecdc4', label: 'Industry' };
+    return { icon: '✦', color: '#4ecdc4', label: t('eventlog.cat.industry') };
   }
-  if (s.includes('destroyed') || s.includes('collapsed')) return { icon: '✖', color: '#ff5e5e', label: 'Destruction' };
+  if (s.includes('destroyed') || s.includes('collapsed')) return { icon: '✖', color: '#ff5e5e', label: t('eventlog.cat.destruction') };
   if (s.includes('take fire') || (s.includes('takes ') && s.includes('damage'))) {
-    return { icon: '⚔', color: '#ffb84d', label: 'Under fire' };
+    return { icon: '⚔', color: '#ffb84d', label: t('eventlog.cat.underFire') };
   }
-  if (s.includes(' hits ')) return { icon: '⚔', color: '#ffb84d', label: 'Combat' };
-  return { icon: '›', color: '#8a9fb3', label: 'Event' };
+  if (s.includes(' hits ')) return { icon: '⚔', color: '#ffb84d', label: t('eventlog.cat.combat') };
+  return { icon: '›', color: '#8a9fb3', label: t('eventlog.cat.event') };
 }
 
 /** Minimal renderer for the herald's Discord-flavored markdown:
@@ -173,6 +175,7 @@ function readBookmarkKey(): string {
  * Pattern mirrors SituationLog exactly so the two panels feel cohesive.
  */
 export const EventLog: React.FC = () => {
+  useI18n();
   const { gameState, selectShip, selectBody, focusBody } = useGameContext();
   const mpActions = useMultiplayerActions();
   // A phone has no Esc key: the footer drops the keyboard hint there.
@@ -227,7 +230,7 @@ export const EventLog: React.FC = () => {
     const res = await mpActions.editChronicleFlavor(entryId, draft.trim() || null);
     setSaving(false);
     if (res.ok) { cancelEdit(); }
-    else { setEditError(res.error ?? 'Could not save.'); }
+    else { setEditError(res.error ?? t('eventlog.saveFail')); }
   };
   const revertEdit = async (entryId: string) => {
     if (!mpActions || saving) return;
@@ -398,7 +401,7 @@ export const EventLog: React.FC = () => {
         <div
           className={`dock-panel event-log-shell${open ? ' is-open' : ''}`}
           role="region"
-          aria-label="Event Log"
+          aria-label={t('eventlog.aria')}
         >
           <div className="event-log__head">
             <span className="event-log__title">
@@ -411,23 +414,23 @@ export const EventLog: React.FC = () => {
                       font: 'inherit', letterSpacing: 'inherit', padding: 0,
                       color: view === 'log' ? 'inherit' : '#5b7185',
                     }}
-                  >EVENT LOG</button>
+                  >{t('eventlog.title')}</button>
                   <span style={{ color: '#33475c', margin: '0 6px' }}>|</span>
                   <button
                     onClick={openHerald}
-                    title="The Orbital Herald — today's edition, same paper the Discord digest prints"
+                    title={t('eventlog.heraldTitle')}
                     style={{
                       background: 'transparent', border: 'none', cursor: 'pointer',
                       font: 'inherit', letterSpacing: 'inherit', padding: 0,
                       color: view === 'herald' ? '#ffd27a' : '#5b7185',
                     }}
-                  >🗞 HERALD</button>
+                  >{t('eventlog.herald')}</button>
                 </>
-              ) : 'EVENT LOG'}
+              ) : t('eventlog.title')}
             </span>
             {view === 'log' && (
               <button
-                title="Replay the last 12 ticks as a camera recap"
+                title={t('eventlog.recapTitle')}
                 style={{ marginLeft: 10, fontSize: 10, letterSpacing: '0.12em',
                          color: '#4ecdc4', background: 'rgba(78,205,196,0.08)',
                          border: '1px solid #2a4a4a', borderRadius: 4,
@@ -435,30 +438,30 @@ export const EventLog: React.FC = () => {
                 onClick={() => window.dispatchEvent(
                   new CustomEvent('orbital:play-recap', { detail: { ticks: 12 } }),
                 )}
-              >▶ RECAP 12t</button>
+              >{t('eventlog.recap')}</button>
             )}
             {view === 'herald' && (
               <button
-                title="Fetch a fresh edition"
+                title={t('eventlog.latestTitle')}
                 disabled={heraldBusy}
                 style={{ marginLeft: 10, fontSize: 10, letterSpacing: '0.12em',
                          color: '#ffd27a', background: 'rgba(255,210,122,0.08)',
                          border: '1px solid #4a3e2a', borderRadius: 4,
                          padding: '3px 8px', cursor: 'pointer' }}
                 onClick={fetchHerald}
-              >{heraldBusy ? '…' : '↻ LATEST'}</button>
+              >{heraldBusy ? '…' : t('eventlog.latest')}</button>
             )}
-            <button className="event-log__close" onClick={close} title="Close (Esc)">×</button>
+            <button className="event-log__close" onClick={close} title={t('eventlog.close')}>×</button>
           </div>
           {view === 'herald' && mpActions ? (
             <div className="event-log__body" style={{ padding: '10px 14px' }}>
               {heraldError && (
                 <div style={{ color: '#ff8a5c', fontSize: 11 }}>
-                  The presses jammed — hit ↻ LATEST to try again.
+                  {t('eventlog.pressesJammed')}
                 </div>
               )}
               {!herald && !heraldError && (
-                <div style={{ color: '#7d93a8', fontSize: 11 }}>Printing today's edition…</div>
+                <div style={{ color: '#7d93a8', fontSize: 11 }}>{t('eventlog.printing')}</div>
               )}
               {herald && (
                 <div style={{ fontSize: 12, lineHeight: 1.55, color: '#c8d8e8' }}>
@@ -480,7 +483,7 @@ export const EventLog: React.FC = () => {
                     </div>
                   ))}
                   <div style={{ fontSize: 9, color: '#5b7185', letterSpacing: '0.08em' }}>
-                    T+{herald.tick} · last {herald.window_hours}h · The Orbital Herald
+                    {t('eventlog.heraldFoot', { tick: herald.tick, hours: herald.window_hours })}
                   </div>
                 </div>
               )}
@@ -488,7 +491,7 @@ export const EventLog: React.FC = () => {
           ) : (
           <div className="event-log__body">
             {totalCount === 0 ? (
-              <div className="event-log__empty">No events yet. Combat results and game milestones will appear here.</div>
+              <div className="event-log__empty">{t('eventlog.empty')}</div>
             ) : (
               // Render newest-first — combatLog is append-only so the
               // last index is the most recent. Reversed via a copy so
@@ -523,7 +526,7 @@ export const EventLog: React.FC = () => {
                           type="button"
                           className="event-log__row__headline"
                           onClick={() => toggleExpand(i)}
-                          title={isOpen ? 'Collapse' : 'Expand'}
+                          title={isOpen ? t('eventlog.collapse') : t('eventlog.expand')}
                         >
                           {/* Category kicker — colored per category so the
                               log is scannable by type at a glance. */}
@@ -552,8 +555,8 @@ export const EventLog: React.FC = () => {
                             className="event-log__row__ctl event-log__row__jump"
                             style={{ color }}
                             onClick={jump}
-                            title="Take me there — center the camera on this location"
-                            aria-label="Take me there"
+                            title={t('eventlog.takeMeTitle')}
+                            aria-label={t('eventlog.takeMe')}
                           >
                             <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"
                                  fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
@@ -567,8 +570,8 @@ export const EventLog: React.FC = () => {
                           type="button"
                           className={'event-log__row__ctl event-log__chevron' + (isOpen ? ' is-open' : '')}
                           onClick={() => toggleExpand(i)}
-                          title={isOpen ? 'Collapse' : 'Expand'}
-                          aria-label={isOpen ? 'Collapse' : 'Expand'}
+                          title={isOpen ? t('eventlog.collapse') : t('eventlog.expand')}
+                          aria-label={isOpen ? t('eventlog.collapse') : t('eventlog.expand')}
                           aria-expanded={isOpen}
                         >
                           <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"
@@ -593,7 +596,7 @@ export const EventLog: React.FC = () => {
                                   maxLength={500}
                                   rows={4}
                                   autoFocus
-                                  placeholder="Rewrite this event in your own words…"
+                                  placeholder={t('eventlog.rewritePlaceholder')}
                                   onChange={(e) => setDraft(e.target.value)}
                                 />
                                 <div className="event-log__row__edit-actions">
@@ -602,21 +605,21 @@ export const EventLog: React.FC = () => {
                                     className="event-log__row__edit-save"
                                     disabled={saving}
                                     onClick={() => meta && saveEdit(meta.entryId)}
-                                  >{saving ? 'Saving…' : 'Save'}</button>
+                                  >{saving ? t('eventlog.saving') : t('eventlog.save')}</button>
                                   <button
                                     type="button"
                                     className="event-log__row__edit-cancel"
                                     disabled={saving}
                                     onClick={cancelEdit}
-                                  >Cancel</button>
+                                  >{t('eventlog.cancel')}</button>
                                   {meta?.isOverride && (
                                     <button
                                       type="button"
                                       className="event-log__row__edit-revert"
                                       disabled={saving}
                                       onClick={() => revertEdit(meta.entryId)}
-                                      title="Discard the custom text and restore the generated flavor"
-                                    >Revert to default</button>
+                                      title={t('eventlog.revertTitle')}
+                                    >{t('eventlog.revert')}</button>
                                   )}
                                 </div>
                                 {editError && <div className="event-log__row__edit-error">{editError}</div>}
@@ -629,7 +632,7 @@ export const EventLog: React.FC = () => {
                                 {/* Attribution footer for player-rewritten events. */}
                                 {meta?.isOverride && meta.editedByName && (
                                   <div className="event-log__row__attribution">
-                                    — rewritten by {meta.editedByName}
+                                    {t('eventlog.rewrittenBy', { name: meta.editedByName })}
                                   </div>
                                 )}
                                 <div className="event-log__row__actions">
@@ -639,9 +642,9 @@ export const EventLog: React.FC = () => {
                                       className="event-log__row__focus"
                                       style={{ borderColor: color, color }}
                                       onClick={onFocus}
-                                      title="Center the camera on this location"
+                                      title={t('eventlog.centerTitle')}
                                     >
-                                      ◎ Take me there
+                                      {t('eventlog.takeMeBtn')}
                                     </button>
                                   )}
                                   {meta?.canEdit && mpActions && (
@@ -649,9 +652,9 @@ export const EventLog: React.FC = () => {
                                       type="button"
                                       className="event-log__row__edit-btn"
                                       onClick={() => beginEdit(i, meta.isOverride ? flavorText : '')}
-                                      title={meta.isOverride ? 'Rewrite this event' : 'Add your own flavor to this event'}
+                                      title={meta.isOverride ? t('eventlog.rewriteTitle') : t('eventlog.addFlavorTitle')}
                                     >
-                                      ✎ {meta.isOverride ? 'Edit' : 'Rewrite'}
+                                      {meta.isOverride ? t('eventlog.editBtn') : t('eventlog.rewriteBtn')}
                                     </button>
                                   )}
                                 </div>
@@ -668,9 +671,9 @@ export const EventLog: React.FC = () => {
           )}
           <footer className="event-log__foot">
             {view === 'herald'
-              ? 'The Orbital Herald'
-              : <>{totalCount} {totalCount === 1 ? 'entry' : 'entries'}</>}
-            {!isMobile && <> · Press <kbd>Esc</kbd> to close</>}
+              ? t('eventlog.heraldName')
+              : <>{tn('eventlog.entries', totalCount, { n: totalCount })}</>}
+            {!isMobile && <> · {t('eventlog.pressEsc').split('{key}')[0]}<kbd>Esc</kbd>{t('eventlog.pressEsc').split('{key}')[1]}</>}
           </footer>
         </div>
       )}

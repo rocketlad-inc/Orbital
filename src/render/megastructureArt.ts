@@ -31,13 +31,14 @@
 // ============================================================
 
 import type { MegastructureKind } from '../game/megastructures';
+import { tk } from '../i18n/core';
 
 /** How far through the build each visual stage begins. */
 export const BUILD_STAGES = [
-  { at: 0.00, name: 'Keel laid' },
-  { at: 0.25, name: 'Frame' },
-  { at: 0.50, name: 'Plating' },
-  { at: 0.75, name: 'Fitting out' },
+  { at: 0.00, get name() { return tk('data.buildStage.keel.name', 'Keel laid'); } },
+  { at: 0.25, get name() { return tk('data.buildStage.frame.name', 'Frame'); } },
+  { at: 0.50, get name() { return tk('data.buildStage.plating.name', 'Plating'); } },
+  { at: 0.75, get name() { return tk('data.buildStage.fitting.name', 'Fitting out'); } },
 ] as const;
 
 /** The stage label for a progress fraction — also used by the panel, so
