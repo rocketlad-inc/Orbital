@@ -3,8 +3,8 @@
 //
 // A ship lights its engine at 0.02g, and the push BUILDS the longer it
 // burns — EXPONENTIALLY: it doubles about every 8.5 ticks, so it barely
-// moves at first and climbs steeply later, reaching 1g at 48 ticks and
-// holding there. At the flip it turns round and brakes at BRAKE_MUL x
+// moves at first and climbs steeply later, reaching its CAP of 0.1g at
+// about 20 ticks and holding there. At the flip it turns round and brakes at BRAKE_MUL x
 // whatever push it had reached, so it arrives at rest. A moon hop hardly
 // gets off the floor; a long haul spends most of its burn near the top,
 // which is what makes the outer system crossable.
@@ -18,6 +18,15 @@
 //   Neptune-Pluto 54 -> 35 T    Pluto-Makemake 66 -> 39 T  Makemake-Sedna 75 -> 42 T
 // (A flat 1g push shipped for 21 minutes that day too, and was far too
 // fast: Earth-Mars in 4 T.)
+//
+// CAPPED AT 0.1g (Lorne, 2026-10-06, late: "maybe we just need to cap
+// acceleration? I had no idea we had these kinds of speeds available").
+// The build-up rate is unchanged, only its top: anything shorter than a
+// long Kuiper haul never reached 0.1g anyway, so it is untouched. 1g cap
+// -> 0.1g cap:
+//   Io-Callisto 10 -> 10 T    Earth-Mars 18 -> 18 T    Earth-Jupiter 23 -> 23 T
+//   Neptune-Pluto 35 -> 38 T  Pluto-Makemake 39 -> 44 T  Makemake-Sedna 42 -> 49 T
+//   Earth-Centauri direct 82 -> 159 T (the far systems, where they exist)
 //
 // Legs keep the build they were committed with — exponential (accel_tau),
 // linear (accel_ramp) or flat — and this file integrates all three.
@@ -36,11 +45,18 @@ export const G_ANCHOR = 4 * 132.6;
  *  client. 0.05 until 2026-10-06 evening. */
 export const SHIP_ENGINE_G = 0.02;
 
-/** Where the build tops out, in g (before parts). */
-export const MAX_ENGINE_G = 1;
+/** Where the build tops out, in g (before parts). 1 until 2026-10-06 late. */
+export const MAX_ENGINE_G = 0.1;
 
-/** Ticks of burning to build from SHIP_ENGINE_G to MAX_ENGINE_G. */
-export const RAMP_TICKS = 48;
+/** How fast the push builds: ticks for it to grow by a factor of e,
+ *  ~12.3 (doubling every ~8.5). FIXED, not derived from the cap: it is
+ *  the rate the 1g build had (0.02g -> 1g in 48 ticks), and capping the
+ *  top was meant to leave every short trip exactly as it was. */
+export const GROWTH_TAU = 48 / Math.log(1 / 0.02);
+
+/** Ticks of burning to build from SHIP_ENGINE_G to MAX_ENGINE_G at that
+ *  rate: ~19.7. */
+export const RAMP_TICKS = GROWTH_TAU * Math.log(MAX_ENGINE_G / SHIP_ENGINE_G);
 
 /** Braking thrust as a multiple of the push reached at the flip. */
 export const BRAKE_MUL = 9;
@@ -54,9 +70,6 @@ export const fromG = (g) => g * G_ANCHOR;
 /** Base launch push, game units / tick^2. */
 export const SHIP_ENGINE_ACCEL = fromG(SHIP_ENGINE_G);
 
-/** Ticks for the push to grow by a factor of e, so it climbs from launch
- *  to the top in RAMP_TICKS: ~12.3 ticks (doubling every ~8.5). */
-export const GROWTH_TAU = RAMP_TICKS / Math.log(MAX_ENGINE_G / SHIP_ENGINE_G);
 
 /** The build for a hull that launches at `a0`: exponential (tau, in
  *  ticks) up to the top, proportional to a0 so engine parts lift the
