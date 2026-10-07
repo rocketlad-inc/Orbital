@@ -189,7 +189,7 @@ export function SharedRecap({ token }: { token: string }) {
               : <BattleRecap d={d} />}
 
             <div className="shared-recap__stats">
-              {tn('review.ticks', span)} · {tn('review.shots', b.shots)} · {t('review.shared.hitPct', { pct: pct(b.hits, b.shots) })}
+              {tn('review.ticks', span, { n: span })} · {tn('review.shots', b.shots, { n: b.shots })} · {t('review.shared.hitPct', { pct: pct(b.hits, b.shots) })}
               {b.ships_lost > 0 && <> · <b style={{ color: '#ff8a80' }}>{t('review.shared.lost', { n: b.ships_lost })}</b></>}
               {b.victor && <> · {richT('review.shared.victor', { name: b.victor.name ?? '' })}</>}
             </div>
