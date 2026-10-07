@@ -10,6 +10,7 @@ export { social } from './social';
 export { review } from './review';
 export { guide } from './guide';
 export { data } from './data';
+export { helpers } from './helpers';
 
 /** Which key prefixes each area may use. */
 export const PART_PREFIXES: Record<string, string[]> = {
@@ -20,4 +21,5 @@ export const PART_PREFIXES: Record<string, string[]> = {
   review: ['review.', 'theatre.', 'replay.', 'story.', 'recap.', 'eventlog.', 'situation.', 'combat.', 'discovery.'],
   guide: ['tutorial.', 'howto.', 'site.', 'banner.', 'errorboundary.', 'saveload.', 'mp.', 'landing.'],
   data: ['data.'],
+  helpers: ['helper.'],
 };

@@ -9,7 +9,7 @@
 // and both plural forms.
 // ============================================================
 
-import { ship, map, econ, social, review, guide, data } from './parts/en';
+import { ship, map, econ, social, review, guide, data, helpers } from './parts/en';
 
 const base = {
   // ---- language picker ----
@@ -292,5 +292,5 @@ const base = {
 } as const;
 
 /** Base keys (lobby, sign-in, email settings...) plus one part per area. */
-export const en = { ...base, ...ship, ...map, ...econ, ...social, ...review, ...guide, ...data } as const;
+export const en = { ...base, ...ship, ...map, ...econ, ...social, ...review, ...guide, ...data, ...helpers } as const;
 export { base as enBase };

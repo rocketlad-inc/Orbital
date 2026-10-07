@@ -14,7 +14,7 @@
 // ============================================================
 
 import type { Catalog } from './core';
-import { ship, map, econ, social, review, guide, data } from './parts/pt-BR';
+import { ship, map, econ, social, review, guide, data, helpers } from './parts/pt-BR';
 
 const base: Catalog = {
   // ---- language picker ----
@@ -296,5 +296,5 @@ const base: Catalog = {
   'invite.no': 'Agora não',
 };
 
-export const ptBR: Catalog = { ...base, ...ship, ...map, ...econ, ...social, ...review, ...guide, ...data };
+export const ptBR: Catalog = { ...base, ...ship, ...map, ...econ, ...social, ...review, ...guide, ...data, ...helpers };
 export { base as ptBRBase };
