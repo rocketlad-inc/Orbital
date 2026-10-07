@@ -29,6 +29,7 @@ import {
 } from './megastructures.js';
 import { makeRouteMath } from './routeMath.js';
 import { getActiveSliders } from './senate.js';
+import { hullLimits, legRefusal, LEG_REFUSAL_MESSAGE } from './legGuard.js';
 import { effectiveHpMaxOf } from './effectiveHp.js';
 import { startingRankFor } from './captains.js';
 import { holdLanding, landHoldStatement } from './landHold.js';
@@ -345,6 +346,35 @@ const MAX_BATCH_TRANSFERS = 250;
 // parsed by the same function); each order succeeds or fails on its own,
 // and the response says which.
 /**
+ * THE LEG GUARD (worker/legGuard.js): a leg no faster than the hull's
+ * engines allow. Returns [status, code, message] or null.
+ *
+ * Distance is the straight line from the launch point to where the
+ * target will be at arrival: the plan's own launch point when it sent
+ * one, else the world the leg really departs from (`fromBodyId`, the
+ * ship's own for a first leg, the previous leg's target for a chained
+ * one) at departure. A rendezvous is judged on its burn alone.
+ */
+async function legSpeedRefusal(rm, a0max, p, fromBodyId) {
+  if (!(a0max > 0) || p.arrivalT == null) return null;
+  let distance = null;
+  if (!p.rv) {
+    try {
+      const to = await rm.bodyPosAt(p.targetBodyId, p.arrivalT);
+      const from = p.plan
+        ? { x: p.plan.lx, y: p.plan.ly }
+        : (fromBodyId ? await rm.bodyPosAt(fromBodyId, p.scheduledT) : null);
+      if (from && to) distance = Math.hypot(to.x - from.x, to.y - from.y);
+    } catch { distance = null; }
+  }
+  const why = legRefusal({
+    a0max, plan: p.plan, depart: p.scheduledT, arrive: p.arrivalT, distance,
+  });
+  if (!why) return null;
+  return [409, 'too_fast', LEG_REFUSAL_MESSAGE[why] ?? 'that leg is faster than this hull can fly'];
+}
+
+/**
  * A SUN GATE CANNOT BE CHASED (worker/sunGates.js). While one is still
  * flying out of the Sun, every server position function already has it
  * on its final orbit, so a leg aimed at it is drawn chasing the gate and
@@ -396,8 +426,17 @@ async function handleCommitTransfers(req, env, ctx) {
   const live = parsed.map((p, i) => (p ? i : -1)).filter(i => i >= 0);
   const shipIds = [...new Set(live.map(i => results[i].ship_id))];
   const ships = new Map((await selectInChunks(shipIds, 1, (chunk, ph) => env.DB
-    .prepare(`SELECT id, owner_faction_id FROM game_ships WHERE game_id = ? AND id IN (${ph})`)
+    .prepare(`SELECT id, owner_faction_id, parent_body_id FROM game_ships WHERE game_id = ? AND id IN (${ph})`)
     .bind(gameId, ...chunk).all())).map(r => [r.id, r]));
+  // The leg guard's inputs: each hull's limits, and where a chained leg
+  // without a launch plan departs from (the last live leg's target).
+  const limits = await hullLimits(env.DB, gameId, shipIds);
+  const lastTarget = new Map((await selectInChunks(shipIds, 0, (chunk, ph) => env.DB
+    .prepare(`SELECT ship_id, target_body_id FROM game_ship_nodes
+               WHERE ship_id IN (${ph}) AND status IN ('committed','in_transit')
+               ORDER BY sequence`)
+    .bind(...chunk).all())).map(r => [r.ship_id, r.target_body_id]));
+  const routeMath = makeRouteMath(env.DB, gameId);
   const hauling = new Set((await selectInChunks(shipIds, 0, (chunk, ph) => env.DB
     .prepare(`SELECT DISTINCT ship_id FROM trade_deliveries
                WHERE resolved_at_tick IS NULL AND ship_id IN (${ph})`)
@@ -455,6 +494,16 @@ async function handleCommitTransfers(req, env, ctx) {
       brokenChain.add(shipId);
       continue;
     }
+    const departsFrom = p.replace ? ship.parent_body_id : (lastTarget.get(shipId) ?? ship.parent_body_id);
+    const fast = await legSpeedRefusal(routeMath, limits.get(shipId), p, departsFrom);
+    if (fast) {
+      console.warn('leg guard refused', { gameId, shipId, code: fast[1], message: fast[2] });
+      fail(i, ...fast);
+      brokenChain.add(shipId);
+      continue;
+    }
+    // The next leg of this hull's route departs from this one's target.
+    lastTarget.set(shipId, p.targetBodyId);
     // A fresh route clears any earlier refusal for this hull.
     if (p.replace) brokenChain.delete(shipId);
     if (p.replace) {
@@ -495,7 +544,7 @@ async function handleCommitTransfer(req, env, ctx) {
   if (!me) return err(403, 'not_member', 'not in this game');
 
   const ship = await env.DB
-    .prepare('SELECT id, owner_faction_id, fuel FROM game_ships WHERE id = ? AND game_id = ?')
+    .prepare('SELECT id, owner_faction_id, fuel, parent_body_id FROM game_ships WHERE id = ? AND game_id = ?')
     .bind(shipId, gameId)
     .first();
   if (!ship) return err(404, 'not_found', 'ship not found');
@@ -529,6 +578,20 @@ async function handleCommitTransfer(req, env, ctx) {
   if (!target) return err(404, 'not_found', 'target body not found');
   const flying = emergingTargetRefusal(target);
   if (flying) return err(...flying);
+  {
+    const limits = await hullLimits(env.DB, gameId, [shipId]);
+    const prior = body.replace === true ? null : await env.DB
+      .prepare(`SELECT target_body_id FROM game_ship_nodes
+                 WHERE ship_id = ? AND status IN ('committed','in_transit')
+                 ORDER BY sequence DESC LIMIT 1`)
+      .bind(shipId).first();
+    const fast = await legSpeedRefusal(makeRouteMath(env.DB, gameId), limits.get(shipId),
+      parsed, prior?.target_body_id ?? ship.parent_body_id);
+    if (fast) {
+      console.warn('leg guard refused', { gameId, shipId, code: fast[1], message: fast[2] });
+      return err(...fast);
+    }
+  }
 
   // FOG HOLDS AT THE API, NOT JUST IN THE UI.
   //
