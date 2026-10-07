@@ -60,7 +60,7 @@ import {
   drawInterceptMarkersLayer,
   clipSegmentToRect,
 } from '../render/mapRenderer';
-import { buildBadgeSegments } from '../render/fleetBadge';
+import { buildBadgeSegments, layoutBadgePills } from '../render/fleetBadge';
 import { useCamera } from '../state/cameraStore';
 import { fleetFormationGroups, FLEET_ARC_WIDTH } from '../render/fleetFormation';
 import { computeSystemRegions } from '../render/systemRegions';
@@ -3019,16 +3019,17 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // already been reserved with the collision solver at the old
       // width.
       const emblemPx = fs;
-      let totalW = 0;
-      for (const e of entries) {
-        totalW += emblemPx + c2d.measureText(e.label).width + padX * 2 + gap;
-      }
-      totalW = Math.max(0, totalW - gap);
+      // Rows of at most four pills (layoutBadgePills): eight empires at
+      // one place were one strip wider than the system it labelled.
+      const layout = layoutBadgePills(
+        entries.map(e => emblemPx + c2d.measureText(e.label).width + padX * 2),
+        pillH, gap,
+      );
       // Pass the visible pill text so an overlap report can say WHAT
       // collided ("▸12 ▸3") instead of only which body it belonged to.
-      const slot = reserveBox(id, ax, ay, anchorR, totalW, pillH,
+      const slot = reserveBox(id, ax, ay, anchorR, layout.w, layout.h,
         entries.map(e => `▸${e.label}`).join(' '))
-        ?? (fallback ? { x: fallback.x, y: fallback.y - pillH } : null);
+        ?? (fallback ? { x: fallback.x, y: fallback.y - layout.h } : null);
       if (!slot) { c2d.restore(); return; }
       const paintAlpha = c2d.globalAlpha;
       c2d.restore();
@@ -3038,10 +3039,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       c2d.font = `800 ${fs}px 'Audiowide', sans-serif`;
       c2d.textAlign = 'left';
       c2d.textBaseline = 'middle';
-      const cy = slot.y + pillH / 2;
-      let x = slot.x;
       const anyCtx = c2d as any;
-      for (const e of entries) {
+      entries.forEach((e, ei) => {
+        const at = layout.pills[ei];
+        const x = slot.x + at.x;
+        const cy = slot.y + at.y + pillH / 2;
         const { factionId: fid, label: count } = e;
         const { p, s, emblem } = badgeTonesOf(fid);
         const ink = lighten(s, 1.45);
@@ -3050,7 +3052,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // number. Null while the raster loads (or for a faction with
         // no emblem) — the "▸" fallback keeps the badge complete.
         const img = getEmblemImage(emblem, p);
-        const pillW = emblemPx + c2d.measureText(count).width + padX * 2;
+        const pillW = at.w;
         c2d.beginPath();
         if (typeof anyCtx.roundRect === 'function') anyCtx.roundRect(x, cy - pillH / 2, pillW, pillH, 5);
         else anyCtx.rect(x, cy - pillH / 2, pillW, pillH);
@@ -3070,8 +3072,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           c2d.fillText('▸', x + padX + (emblemPx - aw) / 2, cy + 0.5);
         }
         c2d.fillText(count, x + padX + emblemPx, cy + 0.5);
-        x += pillW + gap;
-      }
+      });
       c2d.restore();
       };
       if (renderContext.presentation) deferredBadgePaints.push(paint);
