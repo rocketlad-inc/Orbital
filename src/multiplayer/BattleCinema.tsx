@@ -22,6 +22,8 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createStage, TICK_MS, type Stage } from '../render3d/BattleStage';
+import { t, tn, type Key } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 import './BattleCinema.css';
 import type { TheatreDetail } from './TheatreRecap';
 
@@ -39,7 +41,16 @@ export interface CinemaDetail extends TheatreDetail { shots?: ShotRow[] }
 
 const fmt = (n: number) => Math.round(n * 10) / 10;
 
+/** t() whose catalog string marks bold with ** (so word order can differ per
+ *  language). Values are defused first so a name containing ** cannot flip it. */
+function richT(key: Key, vars: Record<string, string | number>): React.ReactNode[] {
+  const safe: Record<string, string | number> = {};
+  for (const k of Object.keys(vars)) safe[k] = String(vars[k]).replace(/\*\*/g, '*\u200b*');
+  return t(key, safe).split('**').map((part, i) => (i % 2 ? <strong key={i}>{part}</strong> : part));
+}
+
 export function BattleCinema({ detail }: { detail: CinemaDetail }) {
+  useI18n();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const stageRef = useRef<Stage | null>(null);
   const [beats, setBeats] = useState(0);
@@ -66,9 +77,9 @@ export function BattleCinema({ detail }: { detail: CinemaDetail }) {
     return m;
   }, [detail]);
   const who = (id: string | null) =>
-    (id && (shipName.get(id) || id.slice(-6))) || 'unknown';
+    (id && (shipName.get(id) || id.slice(-6))) || t('review.cinema.unknown');
   const factionName = (fid: string | null) =>
-    (fid && detail.factions[fid]?.name) || 'Unaligned';
+    (fid && detail.factions[fid]?.name) || t('review.cinema.unaligned');
   const factionColor = (fid: string | null) =>
     (fid && detail.factions[fid]?.color) || '#8a9fb3';
 
@@ -163,7 +174,7 @@ export function BattleCinema({ detail }: { detail: CinemaDetail }) {
         <button
           type="button"
           onClick={() => (pos >= beats ? replay() : setPlaying(p => !p))}
-          aria-label={pos >= beats ? 'Replay' : playing ? 'Pause' : 'Play'}
+          aria-label={pos >= beats ? t('review.cinema.replay') : playing ? t('review.cinema.pause') : t('review.cinema.play')}
         >
           {pos >= beats ? '↺' : playing ? '‖' : '▶'}
         </button>
@@ -171,14 +182,14 @@ export function BattleCinema({ detail }: { detail: CinemaDetail }) {
           type="range" min={0} max={Math.max(0.001, beats)} step={0.01}
           value={pos}
           onChange={e => { setPlaying(false); seek(Number(e.target.value)); }}
-          aria-label="Scrub"
+          aria-label={t('review.cinema.scrub')}
         />
         <span className="cinema-clock">
           {elapsed.toFixed(1)}s / {total.toFixed(1)}s
         </span>
         <select
           value={speed} onChange={e => setSpeed(Number(e.target.value))}
-          aria-label="Speed"
+          aria-label={t('review.cinema.speed')}
         >
           <option value={0.5}>0.5&times;</option>
           <option value={1}>1&times;</option>
@@ -188,24 +199,24 @@ export function BattleCinema({ detail }: { detail: CinemaDetail }) {
       </div>
 
       <ol className="cinema-log">
-        {ticks.map((t, i) => {
-          const rows = byTick.get(t) ?? [];
+        {ticks.map((tickNo, i) => {
+          const rows = byTick.get(tickNo) ?? [];
           const kills = rows.filter(r => r.killed);
           const dmg = rows.reduce((a, r) => a + (r.damage || 0), 0);
           const held = rows.reduce(
             (a, r) => a + Math.max(0, (r.damage_raw || 0) - (r.damage || 0)), 0);
           return (
             <li
-              key={t}
-              className={t === liveTick ? 'tick live' : 'tick'}
+              key={tickNo}
+              className={tickNo === liveTick ? 'tick live' : 'tick'}
               onClick={() => { setPlaying(false); seek(i); }}
             >
               <div className="tick-head">
-                <span className="tick-n">Tick {t}</span>
+                <span className="tick-n">{t('review.cinema.tick', { n: tickNo })}</span>
                 <span className="tick-sum">
-                  {rows.length} shot{rows.length === 1 ? '' : 's'}
-                  {' · '}{fmt(dmg)} damage
-                  {held > 0.05 ? ` · ${fmt(held)} absorbed` : ''}
+                  {tn('review.cinema.shots', rows.length)}
+                  {' · '}{t('review.cinema.damage', { n: fmt(dmg) })}
+                  {held > 0.05 ? ` · ${t('review.cinema.absorbed', { n: fmt(held) })}` : ''}
                 </span>
               </div>
               {kills.map((k, n) => (
@@ -214,11 +225,13 @@ export function BattleCinema({ detail }: { detail: CinemaDetail }) {
                     className="pip"
                     style={{ background: factionColor(k.attacker_faction_id) }}
                   />
-                  <strong>{who(k.target_ship_id)}</strong>
-                  {` (${k.target_class ?? 'ship'}, ${factionName(k.target_faction_id)})`}
-                  {' destroyed by '}
-                  <strong>{who(k.attacker_ship_id)}</strong>
-                  {` — ${fmt(k.damage)} damage`}
+                  {richT('review.cinema.kill', {
+                    target: who(k.target_ship_id),
+                    cls: k.target_class ?? t('review.cinema.ship'),
+                    faction: factionName(k.target_faction_id),
+                    attacker: who(k.attacker_ship_id),
+                    dmg: fmt(k.damage),
+                  })}
                 </div>
               ))}
             </li>
