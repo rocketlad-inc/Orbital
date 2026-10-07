@@ -4191,6 +4191,10 @@ export function drawBody(
     // Destroyed outright (0141). First in the chain, ahead of lightweight
     // mode: "this is no longer a world" is information, not decoration.
     drawDebrisField(body, canvasPos, radius, ctx);
+  } else if (body.type === 'megastructure' && body.emerge && ctx.t < body.emerge.untilTick) {
+    // A sun gate in flight, in every mode like the ships it moves like:
+    // where the thing everyone is racing for IS is information.
+    drawEmergingGate(body, canvasPos, radius, ctx);
   } else if (isLightweight()) {
     drawFlatBody(body, canvasPos, radius, ctx);
   } else if (body.mineralKind) {
@@ -4201,8 +4205,6 @@ export function drawBody(
     // Rocks never reach the client undiscovered, so anything with a
     // mineral kind is something this player has surveyed and should see.
     drawMeteoroidBody(body, canvasPos, radius, ctx);
-  } else if (body.type === 'megastructure' && body.emerge && ctx.t < body.emerge.untilTick) {
-    drawEmergingGate(body, canvasPos, radius, ctx);
   } else if (body.type === 'megastructure' && templateIdOf(body.id).startsWith('sungate_')) {
     // Either end of a sun gate, at rest: what the thing from the Sun
     // turned into, not a warp gate somebody built.

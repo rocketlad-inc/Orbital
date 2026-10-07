@@ -1579,6 +1579,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           if (!sel || sel.transit || !sel.orbit?.parentBodyId) return null;
           return { bodyId: sel.orbit.parentBodyId, px: shipIconSize(sel.class, true) + 4 };
         })(),
+        // A sun gate in flight is presented like a ship: never folded.
+        tNow,
       );
       presentationRef.current = renderContext.presentation;
       // Every drawn world is a keep-out for labels AND badges this frame,
