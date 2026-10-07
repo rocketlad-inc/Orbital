@@ -119,6 +119,9 @@ orders.push(leg(`${G}:s2`, { replace: false, scheduled_t: 61, arrival_t: 70 }));
 // A route whose first leg is refused: its second leg must NOT commit.
 orders.push(leg(`${G}:x1`, { target_body_id: `${G}:nowhere` }));
 orders.push(leg(`${G}:x1`, { replace: false, scheduled_t: 61, arrival_t: 70 }));
+// THE LEG GUARD (worker/legGuard.js): a modified client claiming Mars to
+// Eris in one tick, chained after a legal first leg.
+orders.push(leg(`${G}:s5`, { replace: false, scheduled_t: 61, arrival_t: 62, target_body_id: `${G}:eris` }));
 
 calls = 0;
 const res = await call('POST', `/api/games/${G}/transfers`, { orders });
@@ -130,6 +133,8 @@ check(`all ${N} fleet hulls committed`, results.slice(0, N).every(r => r.ok && r
 check('a rival hull is refused, not_owner', results[N]?.ok === false && results[N]?.error?.code === 'not_owner', JSON.stringify(results[N]));
 check('a bad body is refused, bad_request', results[N + 1]?.ok === false && results[N + 1]?.error?.code === 'bad_request', JSON.stringify(results[N + 1]));
 check('a chained leg in the same batch is accepted', results[N + 2]?.ok === true, JSON.stringify(results[N + 2]));
+check('a leg faster than the hull can fly is refused, too_fast',
+  results[N + 5]?.ok === false && results[N + 5]?.error?.code === 'too_fast', JSON.stringify(results[N + 5]));
 check('a refused first leg refuses the rest of that route', results[N + 3]?.ok === false
   && results[N + 4]?.ok === false && results[N + 4]?.error?.code === 'chain_broken', JSON.stringify(results.slice(N + 3)));
 

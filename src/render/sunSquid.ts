@@ -339,3 +339,76 @@ export function drawSunSquid(g: G, cx: number, cy: number, pose: SunSquidPose) {
 
   g.restore();
 }
+
+/**
+ * THE OMEN ON THE SUN: the six ticks between "something strange is
+ * emerging from the Sun" and a gate coming out. Until now the warning
+ * went to every phone and the map's Sun looked exactly as it always had.
+ *
+ * A dark shape surfaces near the limb, swelling as the moment nears
+ * (`k`, 0 at the warning, 1 as it breaks free), with a gold rim where the
+ * photosphere boils off it; slow ripples run across the disc; and in the
+ * last third two lamp eyes open in the dark, the squid's own. Where on the
+ * disc is `angle` (the caller seeds it: where the gate will actually fly
+ * stays secret until it does).
+ */
+export function drawSunOmen(
+  g: G, cx: number, cy: number, coreR: number, k: number, angle: number, now: number,
+) {
+  const t = clamp01(k);
+  if (coreR < 3) return;
+  g.save();
+  g.translate(cx, cy);
+
+  // Ripples across the disc, clipped to it: the Sun is disturbed.
+  g.save();
+  g.beginPath(); g.arc(0, 0, coreR, 0, TWO_PI); g.clip();
+  for (let i = 0; i < 3; i++) {
+    const phase = ((now / 2600) + i / 3) % 1;
+    const r = coreR * (0.15 + 0.95 * phase);
+    g.strokeStyle = `rgba(90, 30, 10, ${0.22 * (1 - phase) * (0.4 + 0.6 * t)})`;
+    g.lineWidth = Math.max(1, coreR * 0.035);
+    g.beginPath();
+    g.arc(Math.cos(angle) * coreR * 0.55, Math.sin(angle) * coreR * 0.55, r, 0, TWO_PI);
+    g.stroke();
+  }
+  g.restore();
+
+  // The shape, rising from inside the disc toward the limb along `angle`.
+  const dist = coreR * (0.45 + 0.5 * t);
+  const sx = Math.cos(angle) * dist, sy = Math.sin(angle) * dist;
+  const len = coreR * (0.18 + 0.32 * t), wid = coreR * (0.1 + 0.16 * t);
+  g.save();
+  g.translate(sx, sy);
+  g.rotate(angle);
+  // Gold rim: the photosphere boiling off it.
+  const pulse = 0.5 + 0.5 * Math.sin(now / 340);
+  const rim = g.createRadialGradient(0, 0, 0, 0, 0, len * 1.8);
+  rim.addColorStop(0, `rgba(${GLOW_HOT}, ${0.35 + 0.25 * pulse * t})`);
+  rim.addColorStop(1, `rgba(${GLOW}, 0)`);
+  g.fillStyle = rim;
+  g.beginPath(); g.ellipse(0, 0, len * 1.8, wid * 1.8, 0, 0, TWO_PI); g.fill();
+  // The dark body itself.
+  g.fillStyle = `rgba(28, 12, 34, ${0.55 + 0.4 * t})`;
+  g.beginPath();
+  g.moveTo(len, 0);
+  g.bezierCurveTo(len * 0.4, -wid, -len * 0.6, -wid * 0.9, -len, 0);
+  g.bezierCurveTo(-len * 0.6, wid * 0.9, len * 0.4, wid, len, 0);
+  g.closePath();
+  g.fill();
+  // Its eyes, late: the thing is looking out.
+  if (t > 0.66) {
+    const e = (t - 0.66) / 0.34;
+    for (const s of [-1, 1]) {
+      const ex = -len * 0.35, ey = s * wid * 0.45;
+      const er = Math.max(1, wid * 0.28);
+      const eye = g.createRadialGradient(ex, ey, 0, ex, ey, er * 2);
+      eye.addColorStop(0, `rgba(${GLOW_HOT}, ${e})`);
+      eye.addColorStop(1, `rgba(${GLOW}, 0)`);
+      g.fillStyle = eye;
+      g.beginPath(); g.arc(ex, ey, er * 2, 0, TWO_PI); g.fill();
+    }
+  }
+  g.restore();
+  g.restore();
+}

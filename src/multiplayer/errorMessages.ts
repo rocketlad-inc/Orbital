@@ -125,6 +125,12 @@ export function humanizeMpError(
     case 'no_surface':
       return 'A city cannot be deployed on this body type — stars, gas giants and ice giants have no surface.';
 
+    case 'too_fast':
+      // worker/legGuard.js: the leg is faster than this hull's engines.
+      // Only a modified client, or one planning on a stale burn for a
+      // tick after a change, ever sees it.
+      return 'That order is faster than this ship can fly. Reload to pick up the current engines and try again.';
+
     case 'gate_in_flight':
       // worker/actions.js emergingTargetRefusal.
       return 'That gate is still flying out of the Sun. Send ships to its landing site instead.';

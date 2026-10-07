@@ -53,6 +53,7 @@ import {
   shipLane,
   shipLaneOnly,
   drawnShipWorldPos,
+  recordShipWorldPosAs,
   isRevealedWarpGate,
   torchTrajectorySamples,
   computeTransitLanes,
@@ -89,6 +90,7 @@ import {
   discoveryVariantForSecret,
   drawDiscoveryBlooms,
   diedByChronicle,
+  shipCanvasPos,
 } from '../render/combatFx';
 import { drainVisibleFx } from '../render/pendingFx';
 import { bodyPosition, bodyById } from '../physics/orbitalMechanics';
@@ -1527,6 +1529,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // Megastructure build state. Keyed on local body id, matching
       // the ids on the bodies the renderer is iterating.
       megastructures: gameState.megastructures,
+      // The omen on the Sun while a gate's warning runs (sunSquid.ts).
+      sunGateEmergeTick: gameState.sunGateNext?.emergeTick ?? null,
     };
 
     // Drawn worlds, kept for the badge pass below to extend with hulls.
@@ -3142,7 +3146,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             hb = { x: tp.x, y: tp.y, r: size / 2 + 3 };
           }
         }
-        if (!hb) continue;               // flagship fogged or off-screen
+        if (!hb) {
+          // Flagship off-screen (or fogged): its escorts are not drawn, but
+          // they are wherever it is, and a death among them belongs there,
+          // not at a raw orbit point the layout never uses.
+          if (!lead.transit) for (const eid of marker.escortIds) recordShipWorldPosAs(eid, leadId);
+          continue;
+        }
         fleetSlots.set(leadId, { x: hb.x, y: hb.y });
         fleetSlotHits.set(leadId, { x: hb.x, y: hb.y, r: hb.r, lead: leadId });
 
@@ -3439,7 +3449,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           world = drawnShipWorldPos(fx.shipId) ?? null;
           if (!world) {
             const sh = shipById2.get(fx.shipId);
-            if (sh) world = shipWorldPosition(sh, nowTick, gameState.bodies);
+            // Its place this frame the way the weapon FX find it (its slot,
+            // its hitbox, or its spot in the world's layout), and only then
+            // its raw orbit, which a laid-out world does not use.
+            const cp = sh ? shipCanvasPos(sh, renderContext, transitShipCanvasPosRef.current) : null;
+            if (cp) world = canvasToWorld(cp.x, cp.y, renderContext);
+            else if (sh) world = shipWorldPosition(sh, nowTick, gameState.bodies);
           }
         }
         if (!world && shipEvent && fx.kind === 'damage') {

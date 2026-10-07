@@ -10580,7 +10580,13 @@ export class Room {
            FROM game_megastructures m
            JOIN game_bodies b ON b.id = m.body_id
           WHERE m.game_id = ? AND m.status = 'complete'
-            AND m.completed_at_tick >= ?
+            AND m.completed_at_tick >= ? AND m.completed_at_tick <= ?
+            -- NOT A SUN GATE (sunGates.js). Nobody built one: it has its
+            -- own story (sun_gate_opened), and its completed_at_tick is
+            -- stamped with its ARRIVAL the moment it leaves the Sun, so
+            -- this sweep, which had no upper bound, announced both ends
+            -- "operational under An unflagged force" at departure.
+            AND m.transit_fraction IS NULL
             AND b.destroyed_at_tick IS NULL
             AND NOT EXISTS (
               SELECT 1 FROM chronicle_entries c
@@ -10593,7 +10599,7 @@ export class Room {
       // and a route unload lands after this sweep has already run. A
       // Weapons Station finished at tick 551 and was never announced.
       // The two-tick window keeps it from backfilling old history.
-      .bind(gameId, tick - 2).all()).results ?? [];
+      .bind(gameId, tick - 2, tick).all()).results ?? [];
     if (done.length === 0) return 0;
 
     for (const d of done) {

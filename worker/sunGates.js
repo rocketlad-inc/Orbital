@@ -411,11 +411,22 @@ async function chronicleOnce(DB, id, gameId, tick, kind, bodyId, payload) {
 }
 
 /** Tell every player in the game: phone, watch and Discord, one call each
- *  (notify.sendDm fans out), deduped on the event. */
+ *  (notify.sendDm fans out), deduped on the event. And the game's own
+ *  Discord feed, as a HEADLINE post: the biggest public moment a game
+ *  has, live, rather than only in the next morning's Herald. Called once
+ *  per moment (chronicleOnce gates it), so the feed gets each beat once;
+ *  a game whose host never turned the feed on posts nowhere. */
 async function tellEveryone(env, gameId, tick, dedupeKey, title, lines) {
+  let feedEmbed = null;
   try {
     const notify = await import('./notify.js');
     const room = await env.DB.prepare('SELECT name FROM rooms WHERE id = ?').bind(gameId).first();
+    feedEmbed = {
+      title,
+      description: lines.join('\n'),
+      color: 0xffc86b,
+      footer: { text: `Orbital · ${room?.name ?? gameId} · T+${tick}` },
+    };
     const users = (await env.DB.prepare(
       `SELECT DISTINCT user_id FROM game_factions WHERE game_id = ? AND user_id IS NOT NULL`,
     ).bind(gameId).all()).results ?? [];
@@ -435,6 +446,13 @@ async function tellEveryone(env, gameId, tick, dedupeKey, title, lines) {
     }
   } catch (e) {
     console.error('sun gate notification failed', e);
+  }
+  if (!feedEmbed) return;
+  try {
+    const discord = await import('./discord.js');
+    await discord.postChannelEmbed(env, feedEmbed, gameId, { headline: true });
+  } catch (e) {
+    console.error('sun gate feed post failed', e);
   }
 }
 

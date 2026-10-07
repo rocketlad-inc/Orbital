@@ -68,7 +68,9 @@ function inline(sql, params) {
   return sql.replace(/\?(\d+)?/g, (_, n) => lit(params[n ? Number(n) - 1 : i++]));
 }
 function remoteQuery(sql) {
-  const oneLine = sql.replace(/\s+/g, ' ').trim();
+  // Line comments go first: the query is sent as ONE line, where a
+  // `--` would comment out everything after it.
+  const oneLine = sql.replace(/--[^\n]*/g, ' ').replace(/\s+/g, ' ').trim();
   const out = execSync(
     `npx wrangler d1 execute ${DB_NAME}${ENV_FLAG} --remote --json --command "${oneLine.replace(/"/g, '\\"')}"`,
     { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] },

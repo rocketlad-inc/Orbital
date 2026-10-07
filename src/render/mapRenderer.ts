@@ -20,7 +20,7 @@ import { sampleTorchTrajectory, torchPositionFromSamples, trajectoryTangentAt, i
 import { rendezvousStateAt } from '../physics/rendezvous.js';
 import { STRAIGHT_LINE_TRAJECTORIES } from '../game/featureFlags';
 import { COLORS, withOpacity, lighten, darken } from './colors';
-import { drawSunSquid, sunGateHeading, sunGateMorph } from './sunSquid';
+import { drawSunSquid, drawSunOmen, sunGateHeading, sunGateMorph } from './sunSquid';
 import { isSunGateSite } from '../game/farSystems';
 import { requestLabel, clearOfKeepOuts, reserveRect } from './labelLayer';
 import { visibleFogHoles } from './fogHoles';
@@ -65,8 +65,15 @@ import {
   drawStructureGlyph,
 } from './megastructureArt';
 
+/** Ticks of warning before a gate leaves the Sun (worker/sunGates.js
+ *  SUN_GATE_WARNING_TICKS). */
+const SUN_GATE_OMEN_TICKS = 6;
+
 export interface RenderContext {
   ctx: CanvasRenderingContext2D;
+  /** The tick the next sun gate comes out of the Sun, while its warning
+   *  is running (state.js sun_gate_next): the Sun shows the omen. */
+  sunGateEmergeTick?: number | null;
   /** Megastructure build state, keyed on LOCAL body id. A site is a
    *  body; this is the part a body cannot express. */
   megastructures?: Record<string, MegastructureState>;
@@ -4228,6 +4235,13 @@ export function drawBody(
     drawWarpGateBody(body, canvasPos, radius, ctx);
   } else if (body.type === 'star') {
     drawStarBody(body, canvasPos, radius, ctx);
+    // THE OMEN (sunSquid.ts): the six ticks before a gate comes out, the
+    // Sun itself shows something rising through it.
+    const emerge = ctx.sunGateEmergeTick;
+    if (body.id === 'sol' && emerge != null && ctx.t < emerge && ctx.t >= emerge - SUN_GATE_OMEN_TICKS) {
+      drawSunOmen(ctx.ctx, canvasPos.x, canvasPos.y, radius * 0.85,
+        1 - (emerge - ctx.t) / SUN_GATE_OMEN_TICKS, (emerge * 2.39996) % (Math.PI * 2), ctx.nowMs ?? 0);
+    }
     // Dyson Sphere lattice — the win-condition megaproject finally has
     // a face on the map. Segments of the sun-cage light up with real
     // construction progress; a completed sphere reads as a full golden
@@ -4770,6 +4784,14 @@ function recordDrawnShipWorldPos(shipId: string, x: number, y: number): void {
   else lastDrawnShipWorldPos.set(shipId, { x, y });
 }
 
+/** For a hull that rides with another this frame without being drawn on
+ *  its own (an escort whose flagship is off-screen): it is where its
+ *  flagship last was, which is where its death belongs too. */
+export function recordShipWorldPosAs(shipId: string, asShipId: string): void {
+  const at = lastDrawnShipWorldPos.get(asShipId);
+  if (at) recordDrawnShipWorldPos(shipId, at.x, at.y);
+}
+
 /**
  * Class lane base + deterministic per-hull jitter, in world units.
  *
@@ -4974,6 +4996,15 @@ export function drawEscortHull(
         ship.class as MegastructureKind, color,
         (ship.iconVariant as StructureVariant | undefined) ?? null, trim)
     : getShipIconImage(ship.class as ShipIconClass, color, ship.iconVariant, trim);
+
+  // DEATH FX GO WHERE THE HULL WAS DRAWN. drawShip records every hull it
+  // draws; escorts never came through it, so a dead escort's explosion and
+  // wreck fell back to its raw orbit point -- which the whole-orbit layout
+  // does not use, so they went off elsewhere on the ring (Lorne: "the
+  // explosion effects are happening at some other point in the orbit").
+  const at = canvasToWorld(x, y, ctx);
+  recordDrawnShipWorldPos(ship.id, at.x, at.y);
+  if (img) recordDrawnLook(ship.id, img, size, heading);
 
   g.save();
   g.translate(x, y);
