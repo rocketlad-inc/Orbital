@@ -14,6 +14,7 @@ import {
   buildingLevel,
   canHostCity,
 } from '../settlements';
+import { t } from '../../i18n/core';
 
 /** The build columns the menu shows. Lab is hostType 'any' in
  *  BUILDING_DEFS — on a surface-capable world it lives in the SURFACE
@@ -88,10 +89,10 @@ export function costText(kind: BuildingKind, currentLevel: number): string {
   const parts: string[] = [];
   // Display sweep: the resource is METAL everywhere players see it —
   // `ore` survives only as the internal field name.
-  if (c.ore) parts.push(`${c.ore} metal`);
-  if (c.credits) parts.push(`${c.credits} cr`);
-  if (c.fuel) parts.push(`${c.fuel} fuel`);
-  return parts.join(' + ') || 'free';
+  if (c.ore) parts.push(t('worldmenu.cost.metal', { n: c.ore }));
+  if (c.credits) parts.push(t('worldmenu.cost.cr', { n: c.credits }));
+  if (c.fuel) parts.push(t('worldmenu.cost.fuel', { n: c.fuel }));
+  return parts.join(' + ') || t('worldmenu.cost.free');
 }
 
 export type BuildStatus =
@@ -124,7 +125,7 @@ export function buildStatus(
       level,
       targetLevel: q.targetLevel,
       ticksLeft,
-      text: `building LV ${q.targetLevel} · T-${ticksLeft}`,
+      text: t('worldmenu.status.building', { lv: q.targetLevel, ticks: ticksLeft }),
     };
   }
   // Queued behind the active build. A kind can appear more than once
@@ -138,19 +139,19 @@ export function buildStatus(
       level,
       targetLevel: backlog[at].targetLevel,
       position: at + 1,
-      text: `queued #${at + 1} · LV ${backlog[at].targetLevel}`,
+      text: t('worldmenu.status.backlogged', { pos: at + 1, lv: backlog[at].targetLevel }),
     };
   }
   if (level === 0) {
-    return { state: 'ready', level, text: `not built · ${costText(kind, 0)}` };
+    return { state: 'ready', level, text: t('worldmenu.status.notBuilt', { cost: costText(kind, 0) }) };
   }
-  return { state: 'ready', level, text: `LV ${level} ↑ · ${costText(kind, level)}` };
+  return { state: 'ready', level, text: t('worldmenu.status.upgrade', { lv: level, cost: costText(kind, level) }) };
 }
 
 /** The lock wording when a column has no socket to build into. */
 export function noHostText(column: 'surface' | 'orbit', body: Pick<Body, 'type'>): string {
   if (column === 'surface') {
-    return canHostCity(body as Body) ? 'no city yet' : 'no surface';
+    return canHostCity(body as Body) ? t('worldmenu.noCityYet') : t('worldmenu.noSurface');
   }
-  return 'no station yet';
+  return t('worldmenu.noStationYet');
 }

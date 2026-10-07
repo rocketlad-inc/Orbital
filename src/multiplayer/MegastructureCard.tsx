@@ -626,7 +626,7 @@ export const MegastructureCard: React.FC = () => {
               </label>
             ))}
             <div className="megac__warn">
-              {t('megastructure.sinkWarn', { n: MEGASTRUCTURES.gravity_sink.effect.holdTicks })}
+              {t('megastructure.sinkWarn', { n: MEGASTRUCTURES.gravity_sink.effect.holdTicks ?? '' })}
             </div>
           </div>
         );
@@ -736,7 +736,7 @@ export const MegastructurePicker: React.FC<{
               style={locked ? { opacity: 0.45, cursor: 'not-allowed' } : undefined}
               onClick={() => { if (locked) return; setOpen(false); setPendingKind(null); onBegin(pendingKind, v); }}
               title={locked
-                ? t('megastructure.picker.lockedTitle', { name: STRUCTURE_VARIANT_NAMES[pendingKind][v] })
+                ? t('megastructure.picker.lockedTitle', { name: STRUCTURE_VARIANT_NAMES[pendingKind][v] ?? '' })
                 : STRUCTURE_VARIANT_NAMES[pendingKind][v]}
             >
               {/* Drawn in YOUR colours, because that is how it will
