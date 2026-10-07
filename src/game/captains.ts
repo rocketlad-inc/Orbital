@@ -6,6 +6,8 @@
 // (torch plans are client-computed and server-trusted).
 // ============================================================
 
+import { tk } from '../i18n/core';
+
 export interface CaptainTraitDef {
   name: string;
   icon: string;
@@ -20,13 +22,44 @@ export const CAPTAIN_TRAITS: Record<string, CaptainTraitDef> = {
   // dmgMul mirrors the server's traitMul(_,'dmgMul') in worker/room.js.
   // It was blurb-only until the ship card started quoting real expected
   // damage — the number silently omitted the Gunner bonus.
-  gunner:        { name: 'Gunner',        icon: '🎯', blurb: '+10% weapon damage', dmgMul: 1.10 },
-  bulwark:       { name: 'Bulwark',       icon: '🛡', blurb: '+10% max hull', hpMul: 1.10 },
-  wrench:        { name: 'Wrench',        icon: '🔧', blurb: '+50% repair rate' },
-  voidrunner:    { name: 'Voidrunner',    icon: '💨', blurb: '+10% engine acceleration', accelMul: 1.10 },
-  pathfinder:    { name: 'Pathfinder',    icon: '🧭', blurb: '+15% sensor range' },
-  quartermaster: { name: 'Quartermaster', icon: '📦', blurb: '+25% cargo hold' },
-  colonist:      { name: 'Colonist',      icon: '🏗', blurb: '−20% settlement founding cost' },
+  gunner: {
+    get name() { return tk('data.trait.gunner.name', 'Gunner'); },
+    icon: '🎯',
+    get blurb() { return tk('data.trait.gunner.blurb', '+10% weapon damage'); },
+    dmgMul: 1.10,
+  },
+  bulwark: {
+    get name() { return tk('data.trait.bulwark.name', 'Bulwark'); },
+    icon: '🛡',
+    get blurb() { return tk('data.trait.bulwark.blurb', '+10% max hull'); },
+    hpMul: 1.10,
+  },
+  wrench: {
+    get name() { return tk('data.trait.wrench.name', 'Wrench'); },
+    icon: '🔧',
+    get blurb() { return tk('data.trait.wrench.blurb', '+50% repair rate'); },
+  },
+  voidrunner: {
+    get name() { return tk('data.trait.voidrunner.name', 'Voidrunner'); },
+    icon: '💨',
+    get blurb() { return tk('data.trait.voidrunner.blurb', '+10% engine acceleration'); },
+    accelMul: 1.10,
+  },
+  pathfinder: {
+    get name() { return tk('data.trait.pathfinder.name', 'Pathfinder'); },
+    icon: '🧭',
+    get blurb() { return tk('data.trait.pathfinder.blurb', '+15% sensor range'); },
+  },
+  quartermaster: {
+    get name() { return tk('data.trait.quartermaster.name', 'Quartermaster'); },
+    icon: '📦',
+    get blurb() { return tk('data.trait.quartermaster.blurb', '+25% cargo hold'); },
+  },
+  colonist: {
+    get name() { return tk('data.trait.colonist.name', 'Colonist'); },
+    icon: '🏗',
+    get blurb() { return tk('data.trait.colonist.blurb', '−20% settlement founding cost'); },
+  },
 };
 
 // 48 imported portraits (public/portraits, via scripts/import-portraits.js).

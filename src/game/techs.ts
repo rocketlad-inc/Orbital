@@ -14,6 +14,8 @@
 // to read the current modifier for a faction.
 // ============================================================
 
+import { tk } from '../i18n/core';
+
 /**
  * Hard cap on per-track tech level. Reaching this for every track
  * triggers Science Victory. Server mirror lives in worker/actions.js.
@@ -133,61 +135,61 @@ export const RESEARCH_COST_SCALING = 2.5;
 export const TECH_DEFS: Record<TechId, TechDef> = {
   weapons: {
     id: 'weapons',
-    name: 'Weapons',
-    description: 'Guns, and what you bolt them to. Unlocks ⚔ kinetic mounts, then the ☠ detonator, then ⚡ energy mounts — and scales every mount you fit. Shields only stop kinetic; armor only stops energy.',
+    get name() { return tk('data.tech.weapons.name', 'Weapons'); },
+    get description() { return tk('data.tech.weapons.desc', 'Guns, and what you bolt them to. Unlocks ⚔ kinetic mounts, then the ☠ detonator, then ⚡ energy mounts — and scales every mount you fit. Shields only stop kinetic; armor only stops energy.'); },
     icon: '⚔',
     perLevel: 0.10,
-    effectText: '+10% ship damage',
+    get effectText() { return tk('data.tech.weapons.effect', '+10% ship damage'); },
     baseCost: RESEARCH_BASE_COST,
     costScaling: RESEARCH_COST_SCALING,
   },
   armor: {
     id: 'armor',
-    name: 'Defense',
-    description: 'Staying alive. Unlocks 🛡 shield arrays, then 🪨 armor plate, then planetary shields and damage control — and scales every point of hull you fit.',
+    get name() { return tk('data.tech.armor.name', 'Defense'); },
+    get description() { return tk('data.tech.armor.desc', 'Staying alive. Unlocks 🛡 shield arrays, then 🪨 armor plate, then planetary shields and damage control — and scales every point of hull you fit.'); },
     icon: '🛡',
     perLevel: 0.08,
-    effectText: '+8% ship HP',
+    get effectText() { return tk('data.tech.armor.effect', '+8% ship HP'); },
     baseCost: RESEARCH_BASE_COST,
     costScaling: RESEARCH_COST_SCALING,
   },
   propulsion: {
     id: 'propulsion',
-    name: 'Propulsion',
-    description: 'Moving things. Unlocks the freighter and everything it does, then 🔥 booster engines and transfer lanes.',
+    get name() { return tk('data.tech.propulsion.name', 'Propulsion'); },
+    get description() { return tk('data.tech.propulsion.desc', 'Moving things. Unlocks the freighter and everything it does, then 🔥 booster engines and transfer lanes.'); },
     icon: '🚀',
     perLevel: 0.06,
-    effectText: '+6% per 🔥 booster engine',
+    get effectText() { return tk('data.tech.propulsion.effect', '+6% per 🔥 booster engine'); },
     baseCost: RESEARCH_BASE_COST,
     costScaling: RESEARCH_COST_SCALING,
   },
   construction: {
     id: 'construction',
-    name: 'Construction',
-    description: 'Building big. Unlocks orbital stations, shipyards, the frigate and destroyer hulls, asteroid thrusters, and the Dyson foundation.',
+    get name() { return tk('data.tech.construction.name', 'Construction'); },
+    get description() { return tk('data.tech.construction.desc', 'Building big. Unlocks orbital stations, shipyards, the frigate and destroyer hulls, asteroid thrusters, and the Dyson foundation.'); },
     icon: '🔧',
     perLevel: 0.05,
-    effectText: '-5% ship build cost',
+    get effectText() { return tk('data.tech.construction.effect', '-5% ship build cost'); },
     baseCost: RESEARCH_BASE_COST,
     costScaling: RESEARCH_COST_SCALING,
   },
   industry: {
     id: 'industry',
-    name: 'Society',
-    description: 'Everything civilian. Unlocks the lab, forge and mint, then diplomatic pacts, senate proposals, and the Chancellor election.',
+    get name() { return tk('data.tech.industry.name', 'Society'); },
+    get description() { return tk('data.tech.industry.desc', 'Everything civilian. Unlocks the lab, forge and mint, then diplomatic pacts, senate proposals, and the Chancellor election.'); },
     icon: '⛏',
     perLevel: 0.10,
-    effectText: '+10% settlement yield',
+    get effectText() { return tk('data.tech.industry.effect', '+10% settlement yield'); },
     baseCost: RESEARCH_BASE_COST,
     costScaling: RESEARCH_COST_SCALING,
   },
   sensors: {
     id: 'sensors',
-    name: 'Sensors',
-    description: 'Knowing things. Every level widens your scan radius AND peels back another layer of what your rivals are doing.',
+    get name() { return tk('data.tech.sensors.name', 'Sensors'); },
+    get description() { return tk('data.tech.sensors.desc', 'Knowing things. Every level widens your scan radius AND peels back another layer of what your rivals are doing.'); },
     icon: '📡',
     perLevel: 0.12,
-    effectText: '+12% sensor range',
+    get effectText() { return tk('data.tech.sensors.effect', '+12% sensor range'); },
     baseCost: RESEARCH_BASE_COST,
     costScaling: RESEARCH_COST_SCALING,
   },
