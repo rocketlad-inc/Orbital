@@ -55,7 +55,7 @@ import {
 import { setWorldMenuActive, setWorldMenuOpenBodyId } from '../game/worldMenu/store';
 import { columnsFor, buildStatus, noHostText } from '../game/worldMenu/buildRules';
 import { hpColor } from '../game/worldMenu/combatDisplay';
-import { readoutFor, neighborsOf } from '../game/worldMenu/bodyStats';
+import { readoutFor, neighborsOf, orbSlotIndex } from '../game/worldMenu/bodyStats';
 import { worldControl, settlementLivery } from '../game/worldMenu/settlementControl';
 import { empireYieldMultipliers } from '../game/yieldMultipliers';
 import { PART_FRACS } from '../render/worldMenuCloseup';
@@ -452,10 +452,14 @@ export const WorldMenuOverlay: React.FC = () => {
   // the map draws.
   const staOwnerId = readout?.station ? here.find(x => x.id === readout.station!.settlementId)?.ownedBy : undefined;
   const staSkin = gameState.factions.find(f => f.id === staOwnerId)?.stationSkin ?? null;
-  const neighbors = useMemo(
-    () => neighborsOf(openId, gameState.bodies).slice(0, 4),
-    [openId, gameState.bodies],
-  );
+  const neighbors = useMemo(() => {
+    // Four orb slots: the parent's plus three. A planet has no parent, so
+    // only three of its moons fit; a fourth (Jupiter's) stacked on the third.
+    const list = neighborsOf(openId, gameState.bodies);
+    const self = gameState.bodies.find(b => b.id === openId);
+    const hasParent = !!self?.parent && list[0]?.id === self.parent;
+    return list.slice(0, hasParent ? 4 : 3);
+  }, [openId, gameState.bodies]);
   const parentBody = body?.parent && body.parent !== 'sol'
     ? gameState.bodies.find(b => b.id === body.parent)
     : undefined;
@@ -598,7 +602,7 @@ export const WorldMenuOverlay: React.FC = () => {
     const rigLive = !!readout.station;
     let over = 0;
     for (let i = 0; i < neighbors.length; i++) {
-      const sl = ORB_SLOTS[neighbors[i].id === body.parent ? 0 : Math.min(3, Math.max(1, i))];
+      const sl = ORB_SLOTS[orbSlotIndex(i, neighbors, body.parent)];
       const right = cx + sl.dx + sl.r;
       over = Math.max(over, right - (vw - dockW - ORB_GUTTER));
       // Only orbs level with the rig can actually hit it.
@@ -963,9 +967,9 @@ export const WorldMenuOverlay: React.FC = () => {
       <svg className="wm-orbs" width={vw} height={vh} aria-hidden="true">
         {neighbors.map((nb, i) => {
           const isParent = nb.id === body.parent;
-          // parent occupies index 0 of the neighbors array, so sibling
-          // indexes 1..3 map straight onto slots 1..3 (no double-count).
-          const slot = ORB_SLOTS[isParent ? 0 : Math.min(3, Math.max(1, i))];
+          // orbSlotIndex: the parent (when listed, always first) takes slot
+          // 0 and the rest fill 1..3 in order; a planet's moons start at 1.
+          const slot = ORB_SLOTS[orbSlotIndex(i, neighbors, body.parent)];
           // dx is absolute px offset from `cx` (post-shift), so the
           // cluster rides with the planet and is safely right of the
           // centred info panel. y is absolute px from the top.
