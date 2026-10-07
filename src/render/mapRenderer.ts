@@ -4394,7 +4394,8 @@ export function drawBody(
         force: isSelected,
       });
     }
-    ctx.ctx.restore();
+    // (A restore() stood here with no save() since d875e07a: it popped
+    // the CALLER's state whenever drawBody ran inside a save().)
   } else {
     // Label no longer qualifies — forget its appear time so the next
     // qualification fades in again from zero.
@@ -5272,7 +5273,17 @@ export function drawShip(
   // dressing, and hitbox entirely. Selected ships are exempt - their
   // selection brackets/labels may straddle the edge during a fly-to.
   if (!isSelected) {
-    const m = 100;
+    // 100px was sized for a lone sprite. A laid-out hull can be up to 2x
+    // full size and a fleet's lead carries its escort block, which reaches
+    // hundreds of px astern at k (battleLayoutLive). Culling the lead on
+    // its CENTRE blinked whole on-screen blocks out at the screen edge as
+    // the layout turned ("artifacts on the edge of the screen").
+    let m = 100;
+    if (battleK >= 0) {
+      const blk = liveBattle?.blocks.get(ship.id);
+      m += Math.max(shipIconSize(ship.class, false) * battleSpriteScale(battleK) * 0.75,
+        blk ? blk.clearR * 2 * battleK : 0);
+    }
     if (canvasPos.x < -m || canvasPos.y < -m
         || canvasPos.x > ctx.canvas.width + m
         || canvasPos.y > ctx.canvas.height + m) {

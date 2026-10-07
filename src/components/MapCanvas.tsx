@@ -5039,7 +5039,18 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // map was giant). Reset the transform and keep the loop alive.
         console.error('render frame failed', e);
         const c = canvasRef.current?.getContext('2d');
-        if (c) c.setTransform(1, 0, 0, 1, 0, 0);
+        if (c) {
+          // Unwind every save() the throw skipped past (restore() on an
+          // empty stack is a no-op), then reset what restore cannot reach.
+          // Only the transform was reset before: a leaked clip left the
+          // edges uncleared and a leaked 'lighter' smeared every later
+          // frame, until reload.
+          for (let i = 0; i < 64; i++) c.restore();
+          c.setTransform(1, 0, 0, 1, 0, 0);
+          c.globalAlpha = 1;
+          c.globalCompositeOperation = 'source-over';
+          c.setLineDash([]);
+        }
       }
       perf.recordDraw(performance.now() - t0);
       // ZOOM + CANVAS BYTES, from the loop that actually knows them.
