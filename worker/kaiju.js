@@ -155,7 +155,7 @@ async function ownersOf(DB, gameId, factionIds) {
  * site, and writes the game_kaiju row. Idempotent: every id is fixed per
  * game, and a retried tick finds the row and does nothing.
  */
-export async function launchKaiju(env, gameId, tick, { sys, arrival, fromBodyId, landedNear }, conf, hooks) {
+export async function launchKaiju(env, gameId, tick, { sys, arrival, fromBodyId, landedNear, targetId = null }, conf, hooks) {
   const DB = env.DB;
   if (await loadKaiju(DB, gameId)) return null;
   const dials = kaijuDials(conf);
@@ -170,7 +170,10 @@ export async function launchKaiju(env, gameId, tick, { sys, arrival, fromBodyId,
   const { hp, perTick } = kaijuHp(ships, dials);
 
   const fid = kaijuFactionId(gameId), sid = kaijuShipId(gameId);
-  const site = `${gameId}:sungate_${sys.key}_site`;
+  // Where it is going: the landing site of the gate it carries, or (a
+  // launch into a game whose gates are already open) that gate itself.
+  const site = targetId ?? `${gameId}:sungate_${sys.key}_site`;
+  const carried = !targetId;
   await DB.batch([
     // user_id NULL, status 'monster': no seat, no vote, no victory, no
     // research, and every "active empires" query passes it by.
@@ -186,7 +189,7 @@ export async function launchKaiju(env, gameId, tick, { sys, arrival, fromBodyId,
           orbit_m0, orbit_epoch, orbit_direction,
           fuel, fuel_max, status, built_at_tick,
           hp, hp_max, damage_per_tick, stance)
-       VALUES (?, ?, ?, ?, 'kaiju', ?, 6, 6, 0, 0, ?, 1, 0, 0, 'active', ?, ?, ?, ?, 'aggressive')`,
+       VALUES (?, ?, ?, ?, 'kaiju', ?, 6, 6, 0, 0, ?, 1, 0, 0, 'active', ?, ?, ?, ?, 'attack')`,
     ).bind(sid, gameId, fid, KAIJU_NAME, fromBodyId, tick, tick, hp, hp, dials.damage),
     DB.prepare(
       `INSERT OR IGNORE INTO game_kaiju
@@ -201,18 +204,46 @@ export async function launchKaiju(env, gameId, tick, { sys, arrival, fromBodyId,
 
   if (await chronicleOnce(DB, `${gameId}:kaiju:launched`, gameId, tick, 'kaiju_launched', site,
     { system: sys.label, arrive_tick: arrival, near: landedNear ?? null, hp,
-      fleet_per_tick: Math.round(perTick), appetite: dials.appetite })) {
+      fleet_per_tick: Math.round(perTick), appetite: dials.appetite, carried })) {
     await tellEveryone(env, gameId, tick, 'kaiju:launched', (L) => ({
       title: tr(L, 'feed.kaiju.launchedTitle', { system: sys.label }),
       lines: [
         landedNear
           ? tr(L, 'feed.kaiju.launchedNear', { near: landedNear, tick: arrival })
           : tr(L, 'feed.kaiju.launchedAt', { tick: arrival }),
-        tr(L, 'feed.kaiju.launchedHunt', { hp: hp.toLocaleString('en-US'), n: dials.appetite }),
+        tr(L, carried ? 'feed.kaiju.launchedHunt' : 'feed.kaiju.launchedHuntGate',
+          { hp: hp.toLocaleString('en-US'), n: dials.appetite }),
       ],
     }), { color: FEED_COLOR });
   }
   return { hp, arrival };
+}
+
+/**
+ * LAUNCH IT NOW, into a game whose sun gates are already open (a host
+ * tool: scripts/launch-kaiju.mjs). Nothing to carry, so it burns at 2g
+ * from its far system straight for that system's Sol gate, and hunts
+ * from there. `sysKey` picks the system; otherwise the first with an
+ * open gate. Refuses a game that has already had one.
+ */
+export async function launchKaijuNow(env, gameId, tick, conf, hooks, { sysKey = null } = {}) {
+  const DB = env.DB;
+  if (await loadKaiju(DB, gameId)) return { error: 'already_had_one' };
+  for (const sys of SUN_GATE_SYSTEMS.filter(s => !sysKey || s.key === sysKey)) {
+    const gate = await DB
+      .prepare(`SELECT b.id, b.name FROM game_bodies b
+                  JOIN game_megastructures m ON m.body_id = b.id
+                 WHERE b.id = ? AND b.destroyed_at_tick IS NULL AND m.status = 'complete'
+                   AND (b.emerge_until_tick IS NULL OR b.emerge_until_tick <= ?)`)
+      .bind(solGateId(gameId, sys), tick).first();
+    if (!gate) continue;
+    const fromBodyId = `${gameId}:${sys.barycenter}`;
+    const T = await flightTo(makeRouteMath(DB, gameId), fromBodyId, gate.id, tick);
+    const made = await launchKaiju(env, gameId, tick,
+      { sys, arrival: tick + T, fromBodyId, landedNear: null, targetId: gate.id }, conf, hooks);
+    return made ? { ...made, system: sys.label, gate: gate.name } : { error: 'already_had_one' };
+  }
+  return { error: 'no_open_gate' };
 }
 
 /** Its omen, SUN_GATE_WARNING_TICKS before launch (sunGates.js). */
@@ -405,12 +436,14 @@ export async function advanceKaiju(env, gameId, tick, conf, hooks) {
       .bind(gameId, prey.id).all()).results ?? []).map(r => r.f)]);
   const n = Number(k.eaten) + 1;
   const gate = k._arrived
-    ? await DB.prepare('SELECT name FROM game_bodies WHERE id = ?').bind(gateId).first() : null;
+    ? await DB.prepare('SELECT name, emerge_from_tick FROM game_bodies WHERE id = ?').bind(gateId).first() : null;
+  // It carried the gate in if the gate appeared the tick it landed.
+  const carried = !!gate && Number(gate.emerge_from_tick) === Number(k.arrive_tick);
   if (await chronicleOnce(DB, `${gameId}:kaiju:hunt:${prey.id}`, gameId, tick, 'kaiju_hunting', prey.id,
     { world: prey.name, body_name: prey.name, arrive_tick: tick + T, settled: prey.settled,
       first: !!k._arrived, nth: n,
       ...(k._arrived ? {
-        gate: gate?.name ?? null,
+        gate: gate?.name ?? null, carried,
         system: SUN_GATE_SYSTEMS.find(x => x.key === k.sys_key)?.label ?? null,
       } : {}) })) {
     if (k._arrived) {
@@ -418,7 +451,7 @@ export async function advanceKaiju(env, gameId, tick, conf, hooks) {
       await tellEveryone(env, gameId, tick, 'kaiju:arrived', (L) => ({
         title: tr(L, 'feed.kaiju.arrivedTitle'),
         lines: [
-          tr(L, 'feed.kaiju.arrivedGate', { gate: gate?.name ?? '' }),
+          tr(L, carried ? 'feed.kaiju.arrivedGate' : 'feed.kaiju.arrivedPast', { gate: gate?.name ?? '' }),
           tr(L, 'feed.kaiju.arrivedPrey', { world: prey.name, tick: tick + T }),
         ],
       }), { color: FEED_COLOR });

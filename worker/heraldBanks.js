@@ -999,3 +999,26 @@ export const KAIJU_DEAD_HEADLINE = [
   c => `A CARCASS AT ${c.world.toUpperCase()}`,
   () => `THE SALVAGE RUSH BEGINS`,
 ];
+
+/** Its arrival in a game whose gates were already open (launchKaijuNow):
+ *  it brought no gate, it came to the one that was there. */
+export const KAIJU_ARRIVED_OPEN = [
+  c => `The Leviathan reached the ${c.gate} this cycle and did not stop to rest. It turned for ${c.world}.`,
+  c => `It is here. The creature from ${c.system} came to rest beside the ${c.gate}, then set course for ${c.world}.`,
+  c => `The Leviathan arrived at the Far Reach end of the ${c.gate} on schedule. Its first meal: ${c.world}.`,
+  c => `Arrival. The thing from ${c.system} is in the system, and it is going for ${c.world}.`,
+  c => `The Leviathan braked to a stop by the ${c.gate} and looked around. Then it went for ${c.world}.`,
+  c => `The long burn from ${c.system} ended at the ${c.gate}. The hunt began a moment later, with ${c.world}.`,
+  c => `It came in on time, right on top of the ${c.gate}, and it is already moving on ${c.world}.`,
+  c => `Contact. The Leviathan is in the Far Reach beside the ${c.gate}, and every settlement on ${c.world} has been told it is next.`,
+  c => `The creature has arrived. It stopped by the ${c.gate}, the door it knows, and chose ${c.world}.`,
+  c => `The wait is over. The Leviathan is at the ${c.gate} and burning for ${c.world}.`,
+  c => `The Far Reach has a predator. The Leviathan arrived by the ${c.gate} this cycle and picked ${c.world}.`,
+  c => `It did not need a gate of its own. The Leviathan came to the ${c.gate} and is now headed for ${c.world}.`,
+  c => `The Leviathan is in the system. It stopped beside the ${c.gate} long enough to turn, and went for ${c.world}.`,
+  c => `The monster from ${c.system} has landed by the ${c.gate}. ${c.world} is first.`,
+  c => `The forecasts were right to the tick: the Leviathan reached the ${c.gate}, and it is going for ${c.world}.`,
+  c => `It came out of the dark between the stars and stopped by the ${c.gate}. Then it went for ${c.world}.`,
+  c => `The Leviathan's flight from ${c.system} is over. Its hunt is not: ${c.world} is the first target.`,
+  c => `By the ${c.gate}, the Leviathan uncurled, lit its jet again, and set off for ${c.world}.`,
+];
