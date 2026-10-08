@@ -1022,3 +1022,38 @@ export const KAIJU_ARRIVED_OPEN = [
   c => `The Leviathan's flight from ${c.system} is over. Its hunt is not: ${c.world} is the first target.`,
   c => `By the ${c.gate}, the Leviathan uncurled, lit its jet again, and set off for ${c.world}.`,
 ];
+
+/** Its first strike on a world that was never living (kaiju.js): no
+ *  biosphere to strip, so it burns the surface bare, then breaks it. */
+export const KAIJU_SCORCHED = [
+  c => `The first strike landed on ${c.world}. There was no biosphere to take, so it took everything else${c.lost ? `: ${c.lost} settlement${c.lost === 1 ? '' : 's'}, gone` : ''}. It is winding up again.`,
+  c => `${c.world} has been scorched to bare rock${c.lost ? `, ${c.lost} settlement${c.lost === 1 ? '' : 's'} with it` : ''}. The Leviathan has not moved. The second strike is charging.`,
+  c => `The Leviathan burned ${c.world} clean this cycle. Nothing stands on it now, and the creature is gathering itself to break the world.`,
+  c => `First barrel: ${c.world}'s surface, scorched. Second barrel: charging now.`,
+  c => `Every structure on ${c.world} is ash. The beast above it has started the second wind-up.`,
+  c => `${c.world} is still a world, for one more day. The Leviathan scorched it this cycle and is charging the strike that ends it.`,
+  c => `The Leviathan's first strike on ${c.world} left nothing standing${c.lost ? `; ${c.lost} settlement${c.lost === 1 ? ' is' : 's are'} gone` : ''}. The rock itself is next.`,
+  c => `It does not eat a world in one bite. ${c.world} was scorched this cycle; the breaking comes a day later.`,
+  c => `Fire first, then the end. ${c.world} took the fire this cycle.`,
+  c => `The glow over ${c.world} let go and the surface burned. The Leviathan is winding up again above what is left.`,
+  c => `${c.world} is scorched. Anyone who wants to save the rock has one more day to kill the beast.`,
+  c => `The Leviathan has burned ${c.world} bare and stayed to finish it. The second charge has begun.`,
+  c => `Half of the double tap has landed on ${c.world}. Nothing on the surface survived it.`,
+  c => `The first strike scoured ${c.world}${c.lost ? ` and the ${c.lost} settlement${c.lost === 1 ? '' : 's'} on it` : ''}. The creature is charging again, slower and brighter.`,
+  c => `There is nothing left on ${c.world} to defend, but the world itself is still there, for a day.`,
+  c => `${c.world} has been burned clean from orbit by a living thing. The thing is charging the strike that will break it.`,
+  c => `Scorched: ${c.world}. Next: the end of ${c.world}, unless somebody intervenes.`,
+  c => `The Leviathan's fire swept ${c.world} this cycle. It has settled in to wind up the second.`,
+];
+export const KAIJU_SCORCHED_HEADLINE = [
+  c => `${c.world.toUpperCase()} SCORCHED`,
+  () => `THE FIRST BARREL`,
+  () => `IT IS CHARGING AGAIN`,
+  c => `ASH ON ${c.world.toUpperCase()}`,
+  c => `${c.world.toUpperCase()} BURNED BARE`,
+  () => `ONE STRIKE DOWN, ONE TO GO`,
+  () => `NOTHING LEFT STANDING`,
+  () => `THE DOUBLE TAP BEGINS`,
+  c => `ONE MORE DAY FOR ${c.world.toUpperCase()}`,
+  () => `FIRE FIRST, THEN THE END`,
+];
