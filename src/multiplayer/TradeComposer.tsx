@@ -29,6 +29,7 @@ import {
   fmtTicksAsTime as fmtTicksAsTimeT, ttlLabel as ttlLabelT,
 } from './marketMath';
 import { t } from '../i18n/core';
+import { cannotAfford } from '../game/tradeAfford';
 import { useI18n } from '../i18n/react';
 import { apiErrorText } from '../i18n/apiErrors';
 
@@ -301,7 +302,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
   // Check whether you actually have what you're offering
   const overspend: Partial<Record<keyof ResourceBundle, number>> = {};
   for (const k of RESOURCE_KEYS) {
-    if (offer[k] > me[k]) overspend[k] = me[k];
+    if (cannotAfford(me[k], offer[k])) overspend[k] = me[k];
   }
   const hasOverspend = Object.keys(overspend).length > 0;
 
