@@ -29,6 +29,7 @@ export const SHIP_SLOT_COUNTS = {
   // that produced them.
   mega_destroyer: 0,
   mobile_foundry: 0,
+  kaiju: 0,
 };
 
 /**

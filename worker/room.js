@@ -38,7 +38,8 @@ import {
   maySupplySite, excludedFundersOf, constructionPartners, gateTransitTicks,
 } from './megastructures.js';
 import { NON_WORLD_TYPES, stationTypeMul } from './systems.js';
-import { advanceSunGates, mainSystemSql } from './sunGates.js';
+import { advanceSunGates, mainSystemSql, tellEveryone } from './sunGates.js';
+import { advanceKaiju } from './kaiju.js';
 import { legDilation } from './wellDilation.js';
 import { binaryCloseness, binaryStarRow } from './binaryDance.js';
 const MAIN_SYSTEM = mainSystemSql();
@@ -5304,8 +5305,13 @@ export class Room {
     // 2c-bis. The sun gates (sunGates.js): the omen, each gate leaving
     // the Sun, each one opening. A no-op unless the game has the far
     // systems, and one read a tick outside the event.
+    // The Leviathan (kaiju.js) moves on the same planner trade routes use.
+    const kaijuHooks = {
+      planLeg: (shipId, factionId, fromId, toId, arrive) =>
+        this.planLegForShip(gameId, tick, shipId, factionId, fromId, toId, arrive),
+    };
     try {
-      await advanceSunGates(this.env, gameId, tick, CFG);
+      await advanceSunGates(this.env, gameId, tick, CFG, kaijuHooks);
     } catch (e) {
       console.error('advanceSunGates failed', e);
     }
@@ -5323,6 +5329,16 @@ export class Room {
       await this.resolveMegaStrikes(gameId, tick);
     } catch (e) {
       console.error('resolveMegaStrikes failed', e);
+    }
+
+    // 2d-ter-bis. The Leviathan decides, after its strikes have landed:
+    // a world it just broke is rubble by now, and it moves on.
+    if (Number(CFG.kaiju) === 1) {
+      try {
+        await advanceKaiju(this.env, gameId, tick, CFG, kaijuHooks);
+      } catch (e) {
+        console.error('advanceKaiju failed', e);
+      }
     }
 
     // 2d-quater. Structures under siege: hostile hulls holding the orbit
@@ -10948,7 +10964,7 @@ export class Room {
       .prepare(
         `SELECT s.id, s.name, s.owner_faction_id, s.parent_body_id,
                 s.strike_target_body_id AS target, s.strike_ready_tick AS ready,
-                s.strike_mode AS mode, s.status
+                s.strike_mode AS mode, s.status, s.ship_class
            FROM game_ships s
           WHERE s.game_id = ? AND s.strike_ready_tick IS NOT NULL`,
       )
@@ -10995,8 +11011,9 @@ export class Room {
       if (ordered !== now) { await clear(); continue; }
 
       if (ordered === 'obliterate') {
-        await this.obliterateWorld(gameId, tick, sh, target);
+        const lost = await this.obliterateWorld(gameId, tick, sh, target);
         fired += 1;
+        if (sh.ship_class === 'kaiju') await this.announceKaijuStrike(gameId, tick, target, 'obliterate', lost);
         continue;
       }
 
@@ -11051,7 +11068,7 @@ export class Room {
               // Herald) look the world up by; with only `world` every
               // strike printed as "a living world".
               body_name: target.name,
-              cause: 'mega_destroyer',
+              cause: sh.ship_class === 'kaiju' ? 'kaiju' : 'mega_destroyer',
               ship: sh.name,
               settlements_lost: doomed.length,
             }),
@@ -11059,8 +11076,22 @@ export class Room {
           )
           .run();
       } catch { /* chronicle is decoration; never fail a strike over it */ }
+      if (sh.ship_class === 'kaiju') await this.announceKaijuStrike(gameId, tick, target, 'sterilise', doomed.length);
     }
     return fired;
+  }
+
+  /** The Leviathan (kaiju.js) has just struck a world: everyone hears. */
+  async announceKaijuStrike(gameId, tick, target, mode, settlementsLost) {
+    try {
+      await tellEveryone(this.env, gameId, tick, `kaiju:strike:${target.id}:${mode}`, (L) => ({
+        title: tr(L, mode === 'sterilise' ? 'feed.kaiju.stripTitle' : 'feed.kaiju.breakTitle', { world: target.name }),
+        lines: [tr(L, mode === 'sterilise' ? 'feed.kaiju.stripBody' : 'feed.kaiju.breakBody',
+          { world: target.name, n: Number(settlementsLost) || 0 })],
+      }), { color: 0xb44dff });
+    } catch (e) {
+      console.error('kaiju strike announce failed', e);
+    }
   }
 
   /**
@@ -11127,11 +11158,14 @@ export class Room {
             body_name: target.name,
             ship: sh.name,
             settlements_lost: doomed.length,
+            // The Leviathan (kaiju.js), not an empire's Mega Destroyer.
+            ...(sh.ship_class === 'kaiju' ? { cause: 'kaiju' } : {}),
           }),
           Date.now(),
         )
         .run();
     } catch { /* chronicle is decoration; never fail a strike over it */ }
+    return doomed.length;
   }
 
   async resolveSecretReveal(gameId, tick) {

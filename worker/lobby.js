@@ -1161,7 +1161,7 @@ async function buildSummaries(env, rows, userId) {
       WHERE m.room_id IN (%IN%) ORDER BY m.joined_at`, lobbyIds);
   const factionsRows = await rowsIn(env,
     `SELECT game_id, id, name, color, emblem, status, user_id, slot
-       FROM game_factions WHERE game_id IN (%IN%) ORDER BY slot`, gameIds);
+       FROM game_factions WHERE game_id IN (%IN%) AND status <> 'monster' ORDER BY slot`, gameIds);
   const worlds = await rowsIn(env,
     `SELECT game_id, owner_faction_id AS fid, COUNT(DISTINCT body_id) AS n
        FROM game_settlements WHERE game_id IN (%IN%) AND hp > 0

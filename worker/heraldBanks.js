@@ -677,3 +677,145 @@ export const MINE_EXHAUSTED_HEADLINE = [
   c => `THE WORKINGS GO QUIET`,
   c => `${c.rockPlain.toUpperCase()} CLOSES ITS LOGS`,
 ];
+
+// ============================================================
+// THE LEVIATHAN (kaiju.js). One story per edition: every moment it had
+// in the edition, oldest first, under the latest moment's headline.
+// ============================================================
+
+export const KAIJU_OMEN = [
+  c => `Observatories pointed at ${c.system} this cycle report movement where none should be: something very large, turning slowly toward the Sun. It is expected to move within ${c.wait} ticks.`,
+  c => `The deep scopes have found something alive at ${c.system}. It is enormous, it is awake, and it is facing this way. Forecasters give it ${c.wait} ticks.`,
+  c => `A shape the size of a moon has stirred at ${c.system}. Nobody has a name for it yet. The best guess is that it leaves in ${c.wait} ticks, and comes here.`,
+  c => `${c.system} is not empty after all. Something there has begun to move, and every long-range instrument in the system has turned to watch it. ${c.wait} ticks, they say.`,
+  c => `The second door was supposed to come out of the Sun. Instead, the scopes are watching ${c.system}, where something vast is gathering itself. It is due to move in ${c.wait} ticks.`,
+  c => `Something at ${c.system} has noticed us. The stirring began this cycle; the launch, if that is the word, is expected in ${c.wait} ticks.`,
+];
+export const KAIJU_OMEN_HEADLINE = [
+  c => `SOMETHING STIRS AT ${c.system.toUpperCase()}`,
+  () => `IT IS FACING THIS WAY`,
+  c => `${c.wait} TICKS`,
+  () => `THE SCOPES SEE A SHAPE`,
+  () => `NOT EMPTY AFTER ALL`,
+];
+
+export const KAIJU_LAUNCHED = [
+  c => `A living thing the size of a moon has left ${c.system} on a 2g burn for the Sun${c.near ? `, aimed at the Far Reach out past ${c.near}` : ''}. It is due at tick ${c.arrive}, it carries a gate, and it eats worlds. Every empire is at war with it.`,
+  c => `The Leviathan is coming. It cleared ${c.system} this cycle at two gravities and will reach the edge of the system at tick ${c.arrive}. Its hide is rated at ${c.hp} points. Its appetite: ${c.appetite} worlds.`,
+  c => `It has launched. The thing at ${c.system} is now a squid of impossible size on a hard burn toward us, landing at tick ${c.arrive}${c.near ? ` near ${c.near}` : ''}. Settled moons and small worlds are what it eats first.`,
+  c => `What the scopes saw stirring has gone to full burn. The Leviathan left ${c.system} at 2g and will stop in the Far Reach at tick ${c.arrive}. Fleets that want to meet it know where to wait.`,
+  c => `The second gate is coming after all, in the arms of a monster. The Leviathan launched from ${c.system} this cycle and lands at tick ${c.arrive}. ${c.hp} hit points. It answers to no one and makes no peace.`,
+  c => `There is a creature on its way from ${c.system}, and it is not coming to trade. Arrival: tick ${c.arrive}. Its landing site is marked; every admiralty in the system has already looked at it.`,
+];
+export const KAIJU_LAUNCHED_HEADLINE = [
+  () => `THE LEVIATHAN IS COMING`,
+  c => `ARRIVAL AT TICK ${c.arrive}`,
+  () => `A MONSTER ON A 2G BURN`,
+  c => `${c.hp} HIT POINTS, NO TREATIES`,
+  () => `IT EATS WORLDS`,
+];
+
+export const KAIJU_ARRIVED = [
+  c => `The Leviathan reached the Far Reach this cycle and dropped the ${c.gate} where it stopped. Then it turned, and went for ${c.world}.`,
+  c => `It is here. The Leviathan stopped at the edge of the system, left a gate behind it like a shed skin, and set course for ${c.world}.`,
+  c => `The creature from ${c.system} has arrived. A gate now sits where it came to rest; the creature itself is already burning for ${c.world}.`,
+  c => `The Leviathan made its landing on schedule, uncurled, and left the ${c.gate} hanging in the Far Reach. Its first meal: ${c.world}.`,
+  c => `Arrival. The gate is open, and the thing that carried it is hungry. ${c.world} is first.`,
+  c => `It came in on time and did not stop to rest. The ${c.gate} is down in the Far Reach and the Leviathan is headed for ${c.world}.`,
+];
+export const KAIJU_HUNTING = [
+  c => `The Leviathan has turned toward ${c.world}.`,
+  c => `Next on its list: ${c.world}.`,
+  c => `It is moving again, this time for ${c.world}.`,
+  c => `The beast has picked its next world. ${c.world} has until it arrives.`,
+  c => `${c.world} is in its path now.`,
+  c => `The Leviathan set off for ${c.world}, unhurried and enormous.`,
+];
+export const KAIJU_HUNTING_HEADLINE = [
+  c => `IT IS COMING FOR ${c.world.toUpperCase()}`,
+  c => `${c.world.toUpperCase()} IS NEXT`,
+  () => `THE HUNT BEGINS`,
+  () => `THE LEVIATHAN HAS LANDED`,
+  () => `IT IS HERE`,
+];
+
+export const KAIJU_CHARGING = [
+  c => `Over ${c.world} it has begun to wind up. The strike lands at tick ${c.fires}.`,
+  c => `The Leviathan has settled over ${c.world} and started to glow. Tick ${c.fires} is when it strikes.`,
+  c => `It is charging over ${c.world}. Anyone who means to stop it has until tick ${c.fires}.`,
+  c => `${c.world} has a day. The Leviathan is winding up above it, and fires at tick ${c.fires}.`,
+  c => `Above ${c.world}, the creature has gone still and bright. That is the wind-up; the strike is at tick ${c.fires}.`,
+  c => `The charge over ${c.world} has begun. It ends at tick ${c.fires}, one way or the other.`,
+];
+export const KAIJU_CHARGING_HEADLINE = [
+  c => `${c.world.toUpperCase()} HAS ONE DAY`,
+  c => `STRIKE AT TICK ${c.fires}`,
+  () => `IT IS WINDING UP`,
+  c => `THE GLOW OVER ${c.world.toUpperCase()}`,
+  () => `KILL IT OR LOSE IT`,
+];
+
+export const KAIJU_STRIPPED = [
+  c => `The first strike landed. ${c.world} is barren again${c.lost ? `, and ${c.lost} settlement${c.lost === 1 ? '' : 's'} died with its biosphere` : ''}. The Leviathan is winding up for the second.`,
+  c => `${c.world} lost everything living this cycle${c.lost ? `, ${c.lost} settlement${c.lost === 1 ? '' : 's'} included` : ''}. The creature did not leave. It is charging again.`,
+  c => `The Leviathan stripped ${c.world} to rock. It is still there, and it is winding up again: this is a double tap.`,
+  c => `What took years to grow on ${c.world} took one strike to undo. The beast is already charging the second.`,
+];
+export const KAIJU_STRIPPED_HEADLINE = [
+  c => `${c.world.toUpperCase()} STRIPPED`,
+  () => `THE FIRST BARREL`,
+  () => `IT IS CHARGING AGAIN`,
+  c => `A DEAD SKY OVER ${c.world.toUpperCase()}`,
+];
+
+export const KAIJU_BROKEN = [
+  c => `${c.world} is gone. The Leviathan broke it apart this cycle${c.lost ? `, with ${c.lost} settlement${c.lost === 1 ? '' : 's'} on it` : ''}; what is left is a debris field.`,
+  c => `The strike landed and ${c.world} came apart. It is rubble now, and it no longer counts as a world.`,
+  c => `The Leviathan has eaten ${c.world}. A debris field holds its orbit${c.lost ? `, and ${c.lost} settlement${c.lost === 1 ? ' is' : 's are'} lost` : ''}.`,
+  c => `There used to be a world called ${c.world}. The Leviathan finished it this cycle.`,
+  c => `${c.world} is a ring of rubble after the Leviathan's strike. The map is one world smaller.`,
+];
+export const KAIJU_BROKEN_HEADLINE = [
+  c => `${c.world.toUpperCase()} IS GONE`,
+  c => `THE LEVIATHAN EATS ${c.world.toUpperCase()}`,
+  () => `ONE WORLD FEWER`,
+  c => `RUBBLE WHERE ${c.world.toUpperCase()} WAS`,
+];
+
+export const KAIJU_LEAVING = [
+  c => `The Leviathan has had enough. ${c.worlds ? `It took ${c.worlds}. ` : ''}It is heading back to the ${c.gate}.`,
+  c => `It is leaving. ${c.worlds ? `${c.worlds}: that was the meal. ` : ''}The creature has turned for the ${c.gate} and home.`,
+  c => `Sated, the Leviathan has set course for the ${c.gate}.${c.worlds ? ` It leaves behind the rubble of ${c.worlds}.` : ''}`,
+  c => `The beast is going back the way it came, toward the ${c.gate}.${c.worlds ? ` ${c.worlds} will not be coming back.` : ''}`,
+];
+export const KAIJU_LEAVING_HEADLINE = [
+  () => `IT HAS EATEN ITS FILL`,
+  () => `THE LEVIATHAN TURNS FOR HOME`,
+  () => `LEAVING, FOR NOW`,
+];
+
+export const KAIJU_GONE = [
+  c => `The Leviathan went back through the ${c.gate} this cycle. Nobody knows if it will return.`,
+  c => `It is gone, through the ${c.gate} and out of reach. The scopes are still watching the far side.`,
+  c => `The ${c.gate} took the Leviathan home. The system is quieter, and smaller.`,
+];
+export const KAIJU_GONE_HEADLINE = [
+  () => `THE LEVIATHAN IS GONE`,
+  () => `BACK THROUGH THE GATE`,
+  () => `WILL IT COME BACK?`,
+];
+
+export const KAIJU_DEAD = [
+  c => `The Leviathan is dead. It fell at ${c.world}${c.killer ? `, and ${c.killer} landed the killing blow` : ''}. Its carcass is a salvage field of ${c.tons} tonnes of metal.`,
+  c => `It died. The creature from beyond the Sun came apart at ${c.world}${c.killer ? ` under fire from ${c.killer}` : ''}. ${c.tons} tonnes of it are still there for anyone with a mining rig.`,
+  c => `The monster has been killed at ${c.world}.${c.killer ? ` The last shot was fired by ${c.killer}.` : ''} What remains is ${c.tons} tonnes of salvage, and every freighter in the system wants some.`,
+  c => `They did it. The Leviathan is a carcass at ${c.world}${c.killer ? `, finished by ${c.killer}` : ''}, worth ${c.tons} tonnes of metal to whoever mines it first.`,
+  c => `The hunt is over, and the hunter lost. The Leviathan died at ${c.world}${c.killer ? `; ${c.killer} fired last` : ''}. Its body, ${c.tons} tonnes of it, is open for salvage.`,
+];
+export const KAIJU_DEAD_HEADLINE = [
+  () => `THE LEVIATHAN IS DEAD`,
+  c => `KILLED AT ${c.world.toUpperCase()}`,
+  c => `${c.tons} TONNES OF MONSTER`,
+  () => `THE HUNTER FALLS`,
+  () => `SALVAGE RIGHTS OPEN`,
+];

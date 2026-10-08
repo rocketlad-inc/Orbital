@@ -255,7 +255,11 @@ export const SUN_GATE_SITE_TEMPLATE = 'sun_gate_site';
  * Returns { arrival, landedNear } or null when the far system is not on
  * this board (far_systems was off when it was seeded).
  */
-export async function spawnSunGatePair(env, gameId, sys, emergeTick, conf, otherGate = null) {
+export async function spawnSunGatePair(env, gameId, sys, emergeTick, conf, otherGate = null, opts = {}) {
+  // opts.kaiju: THE LEVIATHAN CARRIES THIS ONE (kaiju.js). Nothing leaves
+  // the Sun: the gate is dropped where the beast stops, so it appears
+  // whole at the arrival, and the flight is timed from the far system's
+  // barycenter (where the beast launches) instead of from the Sun.
   const DB = env.DB;
   const bodies = (await DB
     .prepare(`SELECT ${BODY_COLS} FROM game_bodies WHERE game_id = ? AND destroyed_at_tick IS NULL`)
@@ -268,11 +272,16 @@ export async function spawnSunGatePair(env, gameId, sys, emergeTick, conf, other
   const band = farReachBand(bodies);
   const r = band.inner + rand() * (band.outer - band.inner);
   const solR = Number(sol.radius) || 50;
-  const arrival = emergeTick + emergeFlightTicks(r - solR);
-
   // Where everything else will be when it stops.
   const rm = makeRouteMath(DB, gameId);
   rm.preloadBodies(bodies);
+  const kaiju = !!opts.kaiju;
+  const baryAtLaunch = kaiju ? await rm.bodyPosAt(bary.id, emergeTick) : null;
+  // From the Sun's surface, or (the Leviathan) from the far system to
+  // about where the Far Reach is; refined below once the bearing is known.
+  let arrival = emergeTick + emergeFlightTicks(kaiju
+    ? Math.max(1, Math.hypot(baryAtLaunch.x, baryAtLaunch.y) - r)
+    : r - solR);
   const solWorlds = bodies.filter(b => b.parent_body_id === sol.id
     && b.type !== 'megastructure' && !isFarSystemBody(b));
   const avoid = [];
@@ -294,6 +303,15 @@ export async function spawnSunGatePair(env, gameId, sys, emergeTick, conf, other
     && b.type !== 'star' && b.type !== 'black_hole');
   const period = periodForRadius(sol, r, orbitPeers);
   const landed = { x: Math.cos(bearing) * r, y: Math.sin(bearing) * r };
+  // The Leviathan's real trip: the far barycenter at launch to the spot
+  // it stops on (Sol sits at the origin). Everything below is pinned to
+  // this arrival, so the gate is exactly on `bearing` when it lands.
+  if (kaiju) {
+    arrival = emergeTick + emergeFlightTicks(
+      Math.hypot(landed.x - baryAtLaunch.x, landed.y - baryAtLaunch.y));
+  }
+  // A carried gate does not exist until it is dropped.
+  const gateFrom = kaiju ? arrival : emergeTick;
 
   // The Sol world it stops nearest, for "out past Eris" in the news.
   let landedNear = null, nearD = Infinity;
@@ -341,7 +359,7 @@ export async function spawnSunGatePair(env, gameId, sys, emergeTick, conf, other
   const gateAngle0 = angle0For(bearing, period, arrival);
   await DB.batch([
     insBody(a, SUN_GATE_TEMPLATE, sys.solGate, sol.id, r, period,
-      gateAngle0, '#ffc86b', emergeTick, arrival),
+      gateAngle0, '#ffc86b', gateFrom, arrival),
     // The landing site: the gate's final orbit, from now until it lands.
     // No emerge_until_tick: it does not fly, it is simply there.
     DB.prepare(
@@ -371,7 +389,7 @@ export async function spawnSunGatePair(env, gameId, sys, emergeTick, conf, other
     ).bind(gameId, f.id, gid, emergeTick))));
   }
 
-  return { arrival, landedNear };
+  return { arrival, landedNear, fromBodyId: bary.id };
 }
 
 /**
@@ -402,7 +420,7 @@ export async function handOffLandingSite(DB, gameId, sys, tick) {
 }
 
 /** One public chronicle row, once. Returns true if THIS call wrote it. */
-async function chronicleOnce(DB, id, gameId, tick, kind, bodyId, payload) {
+export async function chronicleOnce(DB, id, gameId, tick, kind, bodyId, payload) {
   const res = await DB.prepare(
     `INSERT OR IGNORE INTO chronicle_entries
        (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
@@ -417,7 +435,9 @@ async function chronicleOnce(DB, id, gameId, tick, kind, bodyId, payload) {
  *  has, live, rather than only in the next morning's Herald. Called once
  *  per moment (chronicleOnce gates it), so the feed gets each beat once;
  *  a game whose host never turned the feed on posts nowhere. */
-async function tellEveryone(env, gameId, tick, dedupeKey, build) {
+export async function tellEveryone(env, gameId, tick, dedupeKey, build, opts = {}) {
+  // opts.only: user ids to DM instead of everyone (the feed still posts
+  // unless opts.feed === false). opts.color: the embed's stripe.
   // `build` is a function of the language: (L) => ({ title, lines }). Each
   // player's DM is written in their own; the feed post in the game's.
   let feedEmbed = null;
@@ -429,13 +449,15 @@ async function tellEveryone(env, gameId, tick, dedupeKey, build) {
       return {
         title,
         description: lines.join('\n'),
-        color: 0xffc86b,
+        color: opts.color ?? 0xffc86b,
         footer: { text: `Orbital · ${room?.name ?? gameId} · T+${tick}` },
       };
     };
-    const users = (await env.DB.prepare(
-      `SELECT DISTINCT user_id FROM game_factions WHERE game_id = ? AND user_id IS NOT NULL`,
-    ).bind(gameId).all()).results ?? [];
+    const users = Array.isArray(opts.only)
+      ? opts.only.filter(Boolean).map(user_id => ({ user_id }))
+      : (await env.DB.prepare(
+        `SELECT DISTINCT user_id FROM game_factions WHERE game_id = ? AND user_id IS NOT NULL`,
+      ).bind(gameId).all()).results ?? [];
     for (const u of users) {
       await notify.sendDm(env, {
         userId: u.user_id,
@@ -448,7 +470,7 @@ async function tellEveryone(env, gameId, tick, dedupeKey, build) {
   } catch (e) {
     console.error('sun gate notification failed', e);
   }
-  if (!feedEmbed) return;
+  if (!feedEmbed || opts.feed === false) return;
   try {
     const discord = await import('./discord.js');
     await discord.postChannelEmbed(env, feedEmbed, gameId, { headline: true });
@@ -463,7 +485,7 @@ async function tellEveryone(env, gameId, tick, dedupeKey, build) {
  * Costs one read per tick before the omen and after the last gate is
  * open; a handful while the event is running.
  */
-export async function advanceSunGates(env, gameId, tick, conf) {
+export async function advanceSunGates(env, gameId, tick, conf, hooks = null) {
   if (Number(conf?.far_systems) !== 1) return { stage: 'off' };
   const DB = env.DB;
 
@@ -494,13 +516,20 @@ export async function advanceSunGates(env, gameId, tick, conf) {
 
   let prior = null;
   for (const step of plan) {
+    // THE LEVIATHAN CARRIES THE SECOND GATE (kaiju.js), when the host
+    // has it on. It needs the room's leg planner, so a caller without
+    // one (a sim driving the gates alone) gets the plain gate.
+    const kaiju = step.index === 1 && Number(conf?.kaiju) === 1 && typeof hooks?.planLeg === 'function';
+    const K = kaiju ? await import('./kaiju.js') : null;
     // EVERY GATE GETS ITS WARNING. The first is the omen above; each
     // later one is told the same way, SUN_GATE_WARNING_TICKS ahead, so a
     // second gate never comes out of the Sun unannounced. Which system it
     // leads to stays secret until it is out.
     if (step.index > 0 && tick >= step.emergeTick - SUN_GATE_WARNING_TICKS && tick < step.emergeTick) {
       const wait = step.emergeTick - tick;
-      if (await chronicleOnce(DB, `${gameId}:sungate:omen:${step.index}`, gameId, tick, 'sun_gate_omen', solId,
+      if (kaiju) {
+        await K.kaijuOmen(env, gameId, tick, step.sys, wait);
+      } else if (await chronicleOnce(DB, `${gameId}:sungate:omen:${step.index}`, gameId, tick, 'sun_gate_omen', solId,
         { gate_in: wait, index: step.index })) {
         await tellEveryone(env, gameId, tick, `omen:${step.index}`, (L) => ({
           title: tr(L, 'feed.gate.omen2Title'),
@@ -515,13 +544,18 @@ export async function advanceSunGates(env, gameId, tick, conf) {
          FROM game_bodies WHERE id = ?`,
     ).bind(id).first();
     if (!row) {
-      const made = await spawnSunGatePair(env, gameId, step.sys, step.emergeTick, conf, prior);
+      const made = await spawnSunGatePair(env, gameId, step.sys, step.emergeTick, conf, prior,
+        { kaiju });
       if (!made) return { stage: 'no_far_systems', omen };
       row = await DB.prepare(
         `SELECT id, name, orbit_radius, orbit_period, angle0, emerge_until_tick
            FROM game_bodies WHERE id = ?`,
       ).bind(id).first();
-      if (await chronicleOnce(DB, `${gameId}:sungate:emerged:${step.sys.key}`, gameId, tick,
+      if (kaiju) {
+        await K.launchKaiju(env, gameId, tick, {
+          sys: step.sys, arrival: made.arrival, fromBodyId: made.fromBodyId, landedNear: made.landedNear,
+        }, conf, hooks);
+      } else if (await chronicleOnce(DB, `${gameId}:sungate:emerged:${step.sys.key}`, gameId, tick,
         'sun_gate_emerged', id,
         { gate: step.sys.solGate, system: step.sys.label, arrive_tick: made.arrival,
           near: made.landedNear, index: step.index })) {
@@ -537,11 +571,22 @@ export async function advanceSunGates(env, gameId, tick, conf) {
       }
     }
     const arrival = Number(row?.emerge_until_tick);
+    // A launch that died half way (the gate rows went in, the beast did
+    // not) is retried from what was stored, until the gate would open.
+    if (kaiju && row && Number.isFinite(arrival) && tick < arrival
+      && !(await DB.prepare('SELECT 1 AS x FROM game_kaiju WHERE game_id = ?').bind(gameId).first())) {
+      await K.launchKaiju(env, gameId, tick, {
+        sys: step.sys, arrival, fromBodyId: `${gameId}:${step.sys.barycenter}`, landedNear: null,
+      }, conf, hooks);
+    }
     if (Number.isFinite(arrival) && tick >= arrival) {
       await handOffLandingSite(DB, gameId, step.sys, tick);
+      // The Leviathan's own arrival is the news (kaiju.js); the row is
+      // still written, so everything that reads "is it open" agrees.
       if (await chronicleOnce(DB, `${gameId}:sungate:open:${step.sys.key}`, gameId, tick,
         'sun_gate_opened', id,
-        { gate: step.sys.solGate, system: step.sys.label, index: step.index })) {
+        { gate: step.sys.solGate, system: step.sys.label, index: step.index, kaiju })
+        && !kaiju) {
         await tellEveryone(env, gameId, tick, `open:${step.sys.key}`, (L) => ({
           title: tr(L, 'feed.gate.openTitle', { gate: step.sys.solGate }),
           lines: [tr(L, 'feed.gate.openBody', { system: step.sys.label })],

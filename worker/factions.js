@@ -1311,6 +1311,13 @@ export const SHIP_COMBAT_STATS = {
   // Built hulls keep the hp_max they launched with; this is for new ones.
   mega_destroyer: { hp: 6000, damage_per_tick: 350, speed: 0.08 },
   mobile_foundry: { hp: 4600, damage_per_tick: 0,  speed: 0.14 },
+  // THE LEVIATHAN (kaiju.js). Nobody builds one. Lorne, 2026-10-07:
+  // "something absurd like 20,000 HP and make it deal 50 dmg at frigate
+  // level speeds, despite being visibly huge" -- a world-eater that
+  // barely scratches a fleet, and is as hard to hit as a frigate. The HP
+  // here is the cap; the hull's real hp_max is rolled at launch from the
+  // game's fleets (kaijuHp), and damage comes from the host's dial.
+  kaiju:     { hp: 20000, damage_per_tick: 50, speed: 0.50 },
   corvette:  { hp: 40,  damage_per_tick: 3.5,    speed: 0.85 },
   // x5 per tier against a x10 price ladder (Lorne, 2026-09-21): a
   // bigger hull is concentration, not a bargain. Built hulls keep the

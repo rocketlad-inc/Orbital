@@ -1,0 +1,290 @@
+// ============================================================
+// THE LEVIATHAN — the second sun gate carried in on a monster, driven
+// end to end through the REAL resolveTick (worker/kaiju.js).
+//
+// Lorne, 2026-10-07: launches from the unconnected far system at 2g,
+// announced in the log; leaves the gate where it lands; then goes for
+// the closest settled moons and small worlds one at a time, double-
+// tapping each like a Mega Destroyer with the same wind-up. Picks:
+// HP scaled to the game's fleets (capped 20,000), never a homeworld,
+// leaves after N worlds, and a killed one leaves a carcass to salvage.
+//
+// Two games on live map dials:
+//   A. The full hunt, with nobody shooting back: omen, launch, landing,
+//      every hunt and strike, the leave and the exit through the gate.
+//   B. The kill: a fleet waiting at its first prey, a beast on 1 HP.
+//
+// Run: node sim/kaiju.mjs
+// ============================================================
+
+import { SimD1 } from './d1.mjs';
+import { MIGRATIONS } from '../worker/_migrations_bundle.js';
+import {
+  kaijuHp, kaijuDials, pickPrey, kaijuShipId, kaijuFactionId, kaijuCarcassId,
+} from '../worker/kaiju.js';
+import { sunGatePlan, gateOrder, solGateId, siteId, emergeFlightTicks } from '../worker/sunGates.js';
+import { hostilePairs, pairKey, atWarSql } from '../worker/wars.js';
+import { invalidate } from '../worker/gameConfig.js';
+
+let bad = 0;
+const check = (label, ok, detail = '') => {
+  console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok || detail === '' ? '' : `\n        ${detail}`}`);
+  if (!ok) bad++;
+};
+
+// ---- 1. The pure rules ------------------------------------------------
+{
+  const d = kaijuDials({});
+  check('defaults: appetite 3, one wind-up of fleet fire, 2,000..20,000 HP, 50 damage',
+    d.appetite === 3 && d.hpTicks === 24 && d.hpMin === 2000 && d.hpMax === 20000 && d.damage === 50,
+    JSON.stringify(d));
+  // The table Lorne picked from: a destroyer lands 26% of 87.5 on a 0.50
+  // target, a frigate 50% of 17.5, a corvette 74% of 3.5.
+  const fleet = (n, cls, dmg) => Array.from({ length: n }, () => ({ ship_class: cls, damage_per_tick: dmg }));
+  const tiny = kaijuHp(fleet(5, 'corvette', 3.5), d);
+  check('a game of five corvettes gets the floor', tiny.hp === 2000, JSON.stringify(tiny));
+  const mid = kaijuHp([...fleet(60, 'corvette', 3.5), ...fleet(4, 'frigate', 17.5), ...fleet(1, 'destroyer', 87.5)], d);
+  check('a mid game is sized to one wind-up of everything it has',
+    mid.hp > 2000 && mid.hp < 20000 && Math.abs(mid.hp - mid.perTick * 24) <= 100,
+    `${mid.hp} HP from ${mid.perTick.toFixed(1)}/tick`);
+  const big = kaijuHp([...fleet(330, 'corvette', 3.5), ...fleet(146, 'frigate', 17.5)], d);
+  check('a big game hits the 20,000 cap', big.hp === 20000, JSON.stringify(big));
+  check('...and a host can move the cap', kaijuHp(fleet(330, 'frigate', 17.5), kaijuDials({ kaiju_hp_max: 50000 })).hp > 20000);
+
+  const W = (id, type, settled, x, parent = 'sol') => ({ id, type, settled, x, y: 0, parent_body_id: parent });
+  const from = { x: 1000, y: 0 };
+  check('settled before unsettled, even when farther',
+    pickPrey([W('near', 'dwarf', false, 900), W('far', 'dwarf', true, 100)], from).id === 'far');
+  check('a moon before the planet it circles',
+    pickPrey([W('jup', 'terrestrial', true, 950), W('io', 'moon', true, 400, 'jup')], from).id === 'io');
+  check('...but an unsettled moon does not shield a settled planet',
+    pickPrey([W('jup', 'terrestrial', true, 950), W('io', 'moon', false, 940, 'jup')], from).id === 'jup');
+  check('nearest first within a tier',
+    pickPrey([W('a', 'dwarf', true, 100), W('b', 'dwarf', true, 800)], from).id === 'b');
+  check('nothing left, nothing picked', pickPrey([], from) === null);
+}
+
+// ---- 2. A real game ---------------------------------------------------
+const LIVE = { far_systems: 1, system_scale: 4, moon_scale: 8, body_scale: 2, outer_orbit_speedup: 4 };
+
+async function seed(G, extra) {
+  const DB = new SimD1(':memory:');
+  DB.applyMigrations(MIGRATIONS);
+  const env = { DB, ROOM: { idFromName: () => 'x', get: () => ({ fetch: async () => new Response('{}') }) } };
+  const now = Date.now();
+  for (const u of ['u1', 'u2']) {
+    await DB.prepare(`INSERT INTO users (id,email,display_name,password_hash,created_at) VALUES (?,?,?,'x',?)`)
+      .bind(u, `${u}@t`, u, now).run();
+  }
+  await DB.prepare(`INSERT INTO rooms (id,name,host_id,created_at,updated_at) VALUES (?,'Deep','u1',?,?)`).bind(G, now, now).run();
+  await DB.prepare(`INSERT INTO games (id,status,map_seed,current_tick,tick_interval_ms,created_at,started_at)
+                    VALUES (?,'setup','kaiju',0,3600000,?,?)`).bind(G, now, now).run();
+  await DB.prepare(`INSERT INTO room_members (room_id,user_id,joined_at,chosen_starting_body) VALUES (?,'u1',?,'earth')`).bind(G, now).run();
+  await DB.prepare(`INSERT INTO room_members (room_id,user_id,joined_at,chosen_starting_body) VALUES (?,'u2',?,'mars')`).bind(G, now).run();
+  await DB.prepare(`INSERT INTO game_configs (id, name, status, overrides, created_ms, updated_ms) VALUES (?, 'k', 'archived', ?, 0, 0)`)
+    .bind(`cfg_${G}`, JSON.stringify({ ...LIVE, kaiju: 1, sun_gate_start: 5, sun_gate_end: 5, sun_gate_interval: 10, ...extra })).run();
+  await DB.prepare(`UPDATE games SET config_id = ? WHERE id = ?`).bind(`cfg_${G}`, G).run();
+  invalidate(G);
+  const factions = await import('../worker/factions.js');
+  await factions.seedGameWorld(env, G);
+  await DB.prepare(`UPDATE games SET status='active' WHERE id=?`).bind(G).run();
+  const fA = (await DB.prepare(`SELECT id, capital_body_id FROM game_factions WHERE game_id=? AND user_id='u1'`).bind(G).first());
+  const fB = (await DB.prepare(`SELECT id, capital_body_id FROM game_factions WHERE game_id=? AND user_id='u2'`).bind(G).first());
+  // Prey: settlements out on small worlds and moons, by template.
+  const settle = async (tpl, owner, type = 'station') => {
+    const id = `${G}:${tpl}`;
+    await DB.prepare(
+      `INSERT INTO game_settlements (id, game_id, body_id, owner_faction_id, type, name,
+         hp, hp_max, population, surface_angle, created_at_tick)
+       VALUES (?, ?, ?, ?, ?, ?, 400, 400, 1, 0, 0)`,
+    ).bind(`st_${G}_${tpl}`, G, id, owner, type, `${tpl} base`).run();
+    await DB.prepare('UPDATE game_bodies SET owner_faction_id = ? WHERE id = ?').bind(owner, id).run();
+  };
+  const { Room } = await import('../worker/room.js');
+  const store = new Map();
+  const room = new Room({
+    storage: {
+      async get(k) { return store.get(k); }, async put(k, v) { store.set(k, v); },
+      async delete(k) { return store.delete(k); }, async list() { return new Map(store); },
+      async deleteAll() { store.clear(); }, setAlarm() {}, getAlarm() { return null; },
+    },
+    blockConcurrencyWhile: async (f) => f(),
+    getWebSockets: () => [],
+    broadcast: () => {},
+  }, env);
+  const run = async (t) => {
+    await DB.prepare('UPDATE games SET current_tick = ? WHERE id = ?').bind(t, G).run();
+    await room.resolveTick(G, t);
+  };
+  return { env, DB, fA, fB, settle, run };
+}
+
+const kRow = (DB, G) => DB.prepare('SELECT * FROM game_kaiju WHERE game_id = ?').bind(G).first();
+const kShip = (DB, G) => DB.prepare('SELECT * FROM game_ships WHERE id = ?').bind(kaijuShipId(G)).first();
+const kinds = async (DB, G) => (await DB.prepare(
+  `SELECT kind, tick_number, body_id, payload FROM chronicle_entries
+    WHERE game_id = ? AND (kind LIKE 'kaiju_%' OR (kind IN ('terraform_destroyed','world_obliterated')
+      AND json_extract(payload, '$.cause') = 'kaiju') OR kind LIKE 'sun_gate_%')
+    ORDER BY tick_number, created_at_ms`).bind(G).all()).results ?? [];
+
+// ---- A. The hunt --------------------------------------------------------
+{
+  const G = 'gkaiju';
+  const { DB, fA, fB, settle, run } = await seed(G, { kaiju_appetite: 2 });
+  for (const tpl of ['pluto', 'titan', 'callisto', 'eris']) await settle(tpl, fA.id);
+  await settle('ganymede', fB.id);
+  // Living world: the double tap.
+  await DB.prepare('UPDATE game_bodies SET terraformed_at_tick = 1 WHERE id = ?').bind(`${G}:titan`).run();
+
+  const plan = sunGatePlan(G, 5, { sun_gate_interval: 10 });
+  const kSys = plan[1].sys;
+  check(`the second gate is the Leviathan's, from ${kSys.label}`, plan[1].emergeTick === 21, String(plan[1].emergeTick));
+
+  const log = [];
+  let prev = null;
+  const targets = [];
+  let launchedAt = null;
+  for (let t = 1; t <= 400; t++) {
+    await run(t);
+    const k = await kRow(DB, G);
+    if (k && launchedAt == null) launchedAt = t;
+    if (k && (k.phase !== prev?.phase || k.target_body_id !== prev?.target_body_id)) {
+      log.push(`T${t} ${k.phase} -> ${k.target_body_id ?? '-'} (eaten ${k.eaten})`);
+      if (k.target_body_id && !targets.includes(k.target_body_id)) targets.push(k.target_body_id);
+    }
+    prev = k;
+    if (k?.phase === 'gone') break;
+  }
+  console.log('      ' + log.join('\n      '));
+  const k = await kRow(DB, G);
+  const ship = await kShip(DB, G);
+  const fac = await DB.prepare('SELECT * FROM game_factions WHERE id = ?').bind(kaijuFactionId(G)).first();
+  const rows = await kinds(DB, G);
+  const has = (kind, pred = () => true) => rows.some(r => r.kind === kind && pred(JSON.parse(r.payload || '{}'), r));
+
+  check('the omen is written six ticks before the launch, naming the system',
+    has('kaiju_omen', (p, r) => r.tick_number === 15 && p.system === kSys.label), JSON.stringify(rows.filter(r => r.kind === 'kaiju_omen')));
+  check('no plain "something else from the Sun" omen for that gate',
+    !has('sun_gate_omen', p => Number(p.index) === 1));
+  check('it launches on the tick the second gate was due', launchedAt === 21, String(launchedAt));
+  check('the beast belongs to a monster faction with no seat',
+    fac?.status === 'monster' && fac.user_id == null && ship?.owner_faction_id === fac.id, JSON.stringify(fac));
+  check('with no fleets in the game it gets the floor HP', ship?.hp_max === 2000, String(ship?.hp_max));
+  const launch = rows.find(r => r.kind === 'kaiju_launched');
+  const lp = JSON.parse(launch?.payload || '{}');
+  check('the launch is announced with its arrival tick', !!launch && lp.arrive_tick === k.arrive_tick, launch?.payload);
+  {
+    // The flight: from the far barycenter to the landing site at 2g.
+    const site = await DB.prepare('SELECT * FROM game_bodies WHERE id = ?').bind(siteId(G, kSys)).first();
+    const T = k.arrive_tick - k.launched_at_tick;
+    check('the trip is a 2g burn across interstellar space (dozens of ticks)', T >= 15 && T <= 80, `${T} ticks`);
+    check('the landing site existed from the launch', site?.emerge_from_tick === 21, JSON.stringify(site?.emerge_from_tick));
+    const gate = await DB.prepare('SELECT * FROM game_bodies WHERE id = ?').bind(solGateId(G, kSys)).first();
+    check('the gate itself does not exist until it is dropped',
+      gate?.emerge_from_tick === k.arrive_tick && gate?.emerge_until_tick === k.arrive_tick, JSON.stringify(gate));
+  }
+  check('on landing the hunt begins and the gate opens', has('kaiju_hunting', p => p.first === true)
+    && has('sun_gate_opened', p => p.kaiju === true));
+  const capitals = new Set([fA.capital_body_id, fB.capital_body_id]);
+  check('never once a homeworld', targets.every(t => !capitals.has(t)), targets.join(', '));
+  check('its first prey is a settled moon or small world',
+    !!targets[1] && ['pluto', 'titan', 'callisto', 'eris', 'ganymede'].some(x => targets[1] === `${G}:${x}`),
+    targets.join(', '));
+  check('it winds up for the full Mega Destroyer charge before every strike',
+    rows.filter(r => r.kind === 'kaiju_charging').every(r => JSON.parse(r.payload).fires_at_tick - r.tick_number === 24));
+  const broken = rows.filter(r => r.kind === 'world_obliterated');
+  check('it broke exactly its appetite of worlds (2)', broken.length === 2 && k.eaten === 2,
+    `${broken.length} broken, eaten ${k.eaten}: ${k.eaten_json}`);
+  const titanBroken = broken.some(r => r.body_id === `${G}:titan`);
+  if (titanBroken) {
+    check('a living world took two strikes: stripped, then broken',
+      has('terraform_destroyed', (p, r) => r.body_id === `${G}:titan`));
+  }
+  const settlementsLeft = (await DB.prepare(
+    `SELECT COUNT(*) n FROM game_settlements WHERE game_id = ? AND destroyed_at_tick IS NULL AND body_id IN (${broken.map(() => '?').join(',')})`,
+  ).bind(G, ...broken.map(r => r.body_id)).first()).n;
+  check('everything on a broken world is gone', settlementsLeft === 0, String(settlementsLeft));
+  check('then it left, and went through the gate', has('kaiju_leaving', p => p.why === 'full') && has('kaiju_gone')
+    && k.phase === 'gone' && ship.status === 'departed', `${k.phase} / ${ship.status}`);
+  const caps = (await DB.prepare(`SELECT COUNT(*) n FROM game_captains WHERE ship_id = ?`).bind(ship.id).first()).n;
+  check('nobody ever crewed it', caps === 0);
+
+  // At war with everyone, and nobody can make peace.
+  const war = await hostilePairs({ DB }, G);
+  check('every empire is at war with it', war.has(pairKey(fac.id, fA.id)) && war.has(pairKey(fac.id, fB.id))
+    && !war.has(pairKey(fA.id, fB.id)));
+  const w = await DB.prepare(`SELECT ${atWarSql('?2', '?3')} AS w`).bind(G, fA.id, fac.id).first();
+  const p = await DB.prepare(`SELECT ${atWarSql('?2', '?3')} AS w`).bind(G, fA.id, fB.id).first();
+  check('...and the SQL rule agrees', Number(w.w) === 1 && Number(p.w) === 0, JSON.stringify([w, p]));
+  const victory = (await DB.prepare(`SELECT COUNT(*) n FROM game_factions WHERE game_id = ? AND status = 'active'`).bind(G).first()).n;
+  check('it is not an "active empire" for victory, senate or elimination', victory === 2, String(victory));
+}
+
+// ---- B. The kill --------------------------------------------------------
+{
+  const G = 'gkaijukill';
+  const { DB, fA, settle, run } = await seed(G, { kaiju_appetite: 3 });
+  await settle('pluto', fA.id);
+  let t = 1;
+  for (; t <= 400; t++) {
+    await run(t);
+    const k = await kRow(DB, G);
+    if (k?.phase === 'hunting' && k.target_body_id) break;
+  }
+  const k0 = await kRow(DB, G);
+  // A fleet waits where it is headed, and its hide is down to almost nothing.
+  for (let i = 0; i < 6; i++) {
+    await DB.prepare(
+      `INSERT INTO game_ships (id, game_id, owner_faction_id, name, ship_class, parent_body_id,
+         orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, orbit_direction,
+         fuel, fuel_max, status, built_at_tick, hp, hp_max, damage_per_tick)
+       VALUES (?, ?, ?, ?, 'destroyer', ?, 8, 8, 0, 0, 0, 1, 99, 99, 'active', 0, 1000, 1000, 87.5)`,
+    ).bind(`${G}:hunter${i}`, G, fA.id, `Harpoon ${i}`, k0.target_body_id).run();
+  }
+  await DB.prepare('UPDATE game_ships SET hp = 1 WHERE id = ?').bind(kaijuShipId(G)).run();
+  let dead = null;
+  for (t += 1; t <= 600; t++) {
+    await run(t);
+    const k = await kRow(DB, G);
+    if (k?.phase === 'dead') { dead = k; break; }
+  }
+  check('a fleet waiting at its prey kills it', !!dead, `phase ${(await kRow(DB, G))?.phase}`);
+  if (dead) {
+    const carcass = await DB.prepare('SELECT * FROM game_bodies WHERE id = ?').bind(kaijuCarcassId(G)).first();
+    check('its carcass stays where it died, as a metal salvage field',
+      carcass?.type === 'meteoroid' && carcass.mineral_kind === 'metal'
+      && carcass.mineral_remaining === 1000 && carcass.parent_body_id === dead.died_at_body_id,
+      JSON.stringify(carcass && { type: carcass.type, kind: carcass.mineral_kind, left: carcass.mineral_remaining, parent: carcass.parent_body_id, died: dead.died_at_body_id }));
+    const seen = (await DB.prepare(`SELECT COUNT(*) n FROM game_body_discoveries WHERE body_id = ?`).bind(kaijuCarcassId(G)).first()).n;
+    check('every empire knows where the carcass is', seen === 2, String(seen));
+    const rows = await kinds(DB, G);
+    const d = rows.find(r => r.kind === 'kaiju_dead');
+    const p = JSON.parse(d?.payload || '{}');
+    check('the death is in the log with the killer named', !!d && !!p.killer_faction_name, d?.payload);
+  }
+}
+
+// ---- C. The double tap --------------------------------------------------
+{
+  const G = 'gkaijutap';
+  const { DB, fA, settle, run } = await seed(G, { kaiju_appetite: 1 });
+  await settle('titan', fA.id, 'city');
+  await DB.prepare('UPDATE game_bodies SET terraformed_at_tick = 1 WHERE id = ?').bind(`${G}:titan`).run();
+  for (let t = 1; t <= 400; t++) {
+    await run(t);
+    if ((await kRow(DB, G))?.phase === 'gone') break;
+  }
+  const rows = await kinds(DB, G);
+  const at = (kind) => rows.filter(r => r.kind === kind && r.body_id === `${G}:titan`);
+  const charges = at('kaiju_charging');
+  check('a living world: wind-up, strip, wind-up again, break',
+    charges.length === 2 && at('terraform_destroyed').length === 1 && at('world_obliterated').length === 1
+    && JSON.parse(charges[0].payload).mode === 'sterilise' && JSON.parse(charges[1].payload).mode === 'obliterate'
+    && at('terraform_destroyed')[0].tick_number < at('world_obliterated')[0].tick_number,
+    rows.map(r => `T${r.tick_number} ${r.kind}`).join(', '));
+  const k = await kRow(DB, G);
+  check('...counted as ONE world eaten, then it leaves', k.eaten === 1 && k.phase === 'gone', `${k.eaten} ${k.phase}`);
+}
+
+if (bad) { console.log(`\n${bad} FAILED`); process.exit(1); }
+console.log('\nALL LEVIATHAN CHECKS PASS');
