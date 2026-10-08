@@ -103,7 +103,7 @@ import { torchPositionFromSamples } from '../physics/torchTransfer';
 import type { InterceptMarker } from '../render/mapRenderer';
 import { shipIconSize, rendererCanvasMb, drawStructureReach, parkedOrbitMap } from '../render/mapRenderer';
 import {
-  liveBattleFor, escortBlockSpacing, type BattleUnit, type LiveBattle,
+  liveBattleFor, escortBlockSpacing, battleSolves, type BattleUnit, type LiveBattle,
 } from '../render/battleLayoutLive';
 import {
   computePresentation, drawnRadiusOf, hullReveal, hullSize, isBarycenter,
@@ -2257,7 +2257,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       const fc = fp ? worldToCanvas(fp.x, fp.y, renderContext) : null;
       perf.recordCam(!!fc, fc?.x ?? 0, fc?.y ?? 0, renderContext.camera.scale,
         !!camTweenRef.current, !!wheelFollowRef.current,
-        renderContext.canvas.width, renderContext.canvas.height);
+        renderContext.canvas.width, renderContext.canvas.height,
+        fb ? battleSolves(fb.id) : 0);
       // Pixel probe (render/wmPixelProbe): sample the city's tag and a bit
       // of surface right after the close-up, and again at frame end.
       wmProbeFrame(performance.now(), !!fc);
@@ -2389,7 +2390,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             const station = gameState.settlements.find(
               st => st.bodyId === bodyId && st.type === 'station' && st.hp > 0);
             const lb = liveBattleFor(bodyId, body.radius, atBody[0].orbit.direction ?? 1,
-              units, owners, station?.id);
+              units, owners, station?.id, { nowMs: performance.now() });
             liveBattles.set(bodyId, lb);
             for (const u of units) formationMap.set(u.id, { index: 0, total: 1, battle: lb });
             continue;
