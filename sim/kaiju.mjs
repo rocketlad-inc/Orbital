@@ -212,6 +212,20 @@ const kinds = async (DB, G) => (await DB.prepare(
       prey.length >= 2 && rs.every((r, i) => i === 0 || r < rs[i - 1] + 1e-6),
       prey.map((t, i) => `${t.split(':')[1]}@${Math.round(rs[i])}`).join(' > '));
   }
+  {
+    // 2g across the dark, 0.5g between worlds so fleets can catch it.
+    const { fromG } = await import('../worker/burn.js');
+    const legs = (await DB.prepare(`SELECT sequence, accel_max, accel, arrival_at_tick, committed_at_tick
+                                       FROM game_ship_nodes WHERE ship_id = ? ORDER BY sequence`)
+      .bind(kaijuShipId(G)).all()).results;
+    const push = (n) => Math.max(Number(n.accel_max) || 0, Number(n.accel) || 0);
+    const inSystem = legs.slice(1);
+    check('between worlds its push never passes 0.5g',
+      inSystem.length >= 2 && inSystem.every(n => push(n) <= fromG(0.5) * 1.02),
+      legs.map(n => `${(push(n) / fromG(1)).toFixed(2)}g`).join(', '));
+    check('...while the crossing from its star runs hotter', push(legs[0]) > fromG(0.5),
+      `${(push(legs[0]) / fromG(1)).toFixed(2)}g`);
+  }
   check('it winds up for the full Mega Destroyer charge before every strike',
     rows.filter(r => r.kind === 'kaiju_charging').every(r => JSON.parse(r.payload).fires_at_tick - r.tick_number === 24));
   const broken = rows.filter(r => r.kind === 'world_obliterated');

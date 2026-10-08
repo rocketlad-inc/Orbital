@@ -452,6 +452,12 @@ export const SCHEMA = [
     label: 'Leviathan: HP cap', def: 20000, min: 100, max: 500000, step: 100,
   },
   {
+    id: 'kaiju_hunt_g', group: 'map', type: 'number',
+    label: 'Leviathan: top push between worlds (g)', def: 0.5, min: 0.05, max: 5, step: 0.05,
+    help: 'Its burn inside the system, on the ships\' own build-up (they top out at 0.1g), '
+      + 'so fleets can intercept it. The crossing from its star is always 2g.',
+  },
+  {
     id: 'kaiju_damage', group: 'map', type: 'number',
     label: 'Leviathan: damage per tick', def: 50, min: 0, max: 5000, step: 1,
   },
