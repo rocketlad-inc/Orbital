@@ -2472,10 +2472,15 @@ export function useSituationItems(
           push({
             id: 'kaiju:inbound',
             category: 'threat',
+            ...(beast ? { entity: `ship:${beast.id}` } : {}),
             title: 'A Leviathan is coming',
             subtitle: `It lands in the Far Reach at T+${kj.arriveTick} (${left} tick${left === 1 ? '' : 's'}), ${hp}. `
               + 'It eats settled moons and small worlds. Its landing site is marked',
-            focus: { kind: 'body', bodyId: `sungate_${kj.systemKey}_site` },
+            // The beast itself: what everyone wants to look at, wherever
+            // it is. Its landing place when the hull is not in view yet.
+            focus: beast
+              ? { kind: 'ship', shipId: beast.id }
+              : { kind: 'body', bodyId: kj.targetBodyId ?? `sungate_${kj.systemKey}_site` },
             severity: 'warn',
             sortKey: left,
           });

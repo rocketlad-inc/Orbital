@@ -191,16 +191,24 @@ export async function launchKaiju(env, gameId, tick, { sys, arrival, fromBodyId,
           hp, hp_max, damage_per_tick, stance)
        VALUES (?, ?, ?, ?, 'kaiju', ?, 6, 6, 0, 0, ?, 1, 0, 0, 'active', ?, ?, ?, ?, 'attack')`,
     ).bind(sid, gameId, fid, KAIJU_NAME, fromBodyId, tick, tick, hp, hp, dials.damage),
-    DB.prepare(
-      `INSERT OR IGNORE INTO game_kaiju
-         (game_id, ship_id, faction_id, sys_key, launched_at_tick, arrive_tick,
-          hp_max, appetite, phase, target_body_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'inbound', ?)`,
-    ).bind(gameId, sid, fid, sys.key, tick, arrival, hp, dials.appetite, site),
   ]);
-  // Everyone can see it: a moon-sized thing on a 2g burn is not a sensor
-  // contact, it is the news.
-  await hooks.planLeg(sid, fid, fromBodyId, site, arrival);
+  // Its leg, once: a retried launch finds the one already planned.
+  const planned = await DB
+    .prepare(`SELECT 1 AS x FROM game_ship_nodes
+               WHERE ship_id = ? AND status IN ('planned', 'committed', 'in_transit') LIMIT 1`)
+    .bind(sid).first();
+  if (!planned) await hooks.planLeg(sid, fid, fromBodyId, site, arrival);
+  // THE ROW GOES IN LAST. It is what makes the tick start steering the
+  // beast (advanceKaiju), and a beast it can see with no leg yet is one it
+  // "relaunches": a launch from outside the tick (scripts/launch-kaiju.mjs,
+  // seconds between writes) raced the live tick exactly that way on
+  // staging and flew with two legs.
+  await DB.prepare(
+    `INSERT OR IGNORE INTO game_kaiju
+       (game_id, ship_id, faction_id, sys_key, launched_at_tick, arrive_tick,
+        hp_max, appetite, phase, target_body_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'inbound', ?)`,
+  ).bind(gameId, sid, fid, sys.key, tick, arrival, hp, dials.appetite, site).run();
 
   if (await chronicleOnce(DB, `${gameId}:kaiju:launched`, gameId, tick, 'kaiju_launched', site,
     { system: sys.label, arrive_tick: arrival, near: landedNear ?? null, hp,
