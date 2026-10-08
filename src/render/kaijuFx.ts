@@ -488,3 +488,51 @@ export function resetKaijuFx(): void {
 export function lastKaijuDrawn(): { shipId: string | null; at: Drawn | null } {
   return { shipId: lastDrawnShip, at: lastDrawn };
 }
+
+// ---- the carcass ------------------------------------------------------------
+
+/** What is left of it: the same body, every light out. A ghost of violet
+ *  still in the hide, so it reads as the Leviathan and not a rock. */
+export const CARCASS_PALETTE: SquidPalette = {
+  glow: '96, 82, 112', hot: '128, 118, 138', eye: '58, 34, 42',
+  dark: '#0c0a10', mid: '#29222f', lit: '#463c50',
+  fin: 'rgba(72, 60, 86, 0.55)',
+};
+
+/**
+ * THE CARCASS (Lorne, 2026-10-08: "make the carcass look like a squid
+ * carcass"). The salvage body it leaves (worker/kaiju.js die(), template
+ * leviathan_carcass) draws as the animal itself: dead grey, lights out,
+ * arms hanging, tumbling slowly in orbit of the world it fell at. As the
+ * mining rigs strip it (`left`, 1 -> 0) it shrinks and darkens, and a
+ * few loose chunks of hide drift around it.
+ */
+export function drawKaijuCarcass(
+  g: G, x: number, y: number, size: number, nowMs: number, left: number, seed: number,
+): void {
+  const f = clamp01(left);
+  const s = size * (0.62 + 0.38 * f);
+  const heading = ((seed % 628) / 100) + nowMs / 52000;
+  g.save();
+  g.globalAlpha *= 0.55 + 0.45 * f;
+  drawSunSquid(g, x, y, {
+    u: s / 6, ringR: 0, heading, morph: 0, thrust: 0, now: nowMs + seed, palette: CARCASS_PALETTE, motion: 0.05,
+  });
+  g.restore();
+  // Loose pieces of it, and a little of what the rigs are after.
+  const r = mulberry32(seed + 5);
+  g.save();
+  for (let i = 0; i < 7; i++) {
+    const a = r() * TWO_PI + nowMs / (30000 + 9000 * r());
+    const d = s * (0.45 + 0.35 * r());
+    const px = x + Math.cos(a) * d, py = y + Math.sin(a) * d * 0.7;
+    const w = s * (0.02 + 0.03 * r());
+    g.fillStyle = i % 3 === 0 ? CARCASS_PALETTE.lit : CARCASS_PALETTE.mid;
+    g.save(); g.translate(px, py); g.rotate(a * 2); g.fillRect(-w, -w * 0.5, w * 2, w); g.restore();
+    if (i % 2 === 0) {
+      g.fillStyle = `rgba(200, 190, 210, ${(0.25 + 0.35 * f).toFixed(3)})`;
+      g.fillRect(px + w, py, 1.2, 1.2);
+    }
+  }
+  g.restore();
+}
