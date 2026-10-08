@@ -236,6 +236,18 @@ const kinds = async (DB, G) => (await DB.prepare(
     check('a living world took two strikes: stripped, then broken',
       has('terraform_destroyed', (p, r) => r.body_id === `${G}:titan`));
   }
+  // Two strikes for every world, living or not (Lorne, 2026-10-08):
+  // scorch or strip, then break, 24 T apart.
+  {
+    const per = broken.map(b => {
+      const first = rows.filter(r => r.kind === 'terraform_destroyed' && r.body_id === b.body_id);
+      return { w: b.body_id.split(':')[1], n: first.length, gap: first[0] ? b.tick_number - first[0].tick_number : null,
+        raw: first[0] ? !!JSON.parse(first[0].payload).raw : null };
+    });
+    check('every world it broke took two strikes, a day apart',
+      per.length > 0 && per.every(p => p.n === 1 && p.gap === 24), JSON.stringify(per));
+    check('...a raw world scorched first, not skipped to the kill', per.some(p => p.raw === true), JSON.stringify(per));
+  }
   const settlementsLeft = (await DB.prepare(
     `SELECT COUNT(*) n FROM game_settlements WHERE game_id = ? AND destroyed_at_tick IS NULL AND body_id IN (${broken.map(() => '?').join(',')})`,
   ).bind(G, ...broken.map(r => r.body_id)).first()).n;

@@ -2105,14 +2105,16 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       if (ev.kind === 'kaiju_charging') {
         const world = (parsed.world as string) ?? 'a world';
         return `${t}  🦑 The Leviathan is winding up over ${world} — it strikes at T+${Number(parsed.fires_at_tick)}`
-          + (parsed.mode === 'sterilise' ? ', stripping its biosphere' : ', breaking it apart')
+          + (parsed.mode !== 'sterilise' ? ', breaking it apart'
+            : parsed.raw ? ', scorching every settlement off it' : ', stripping its biosphere')
           + '. Kill it first';
       }
       if ((ev.kind === 'terraform_destroyed' || ev.kind === 'world_obliterated') && parsed.cause === 'kaiju') {
         const where = (parsed.body_name as string) ?? (parsed.world as string) ?? 'a world';
         const lost = Number(parsed.settlements_lost) || 0;
         return ev.kind === 'terraform_destroyed'
-          ? `${t}  🦑 ${where.toUpperCase()} STRIPPED — the Leviathan burned its biosphere away`
+          ? `${t}  🦑 ${where.toUpperCase()} ${parsed.raw ? 'SCORCHED — the Leviathan burned its surface bare'
+            : 'STRIPPED — the Leviathan burned its biosphere away'}`
             + `${lost ? ` with ${lost} settlement${lost === 1 ? '' : 's'}` : ''}, and is winding up again`
           : `${t}  🦑 ${where.toUpperCase()} IS GONE — the Leviathan broke it apart`
             + `${lost ? `, with ${lost} settlement${lost === 1 ? '' : 's'}` : ''}. A debris field orbits where it stood`;

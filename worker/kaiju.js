@@ -498,7 +498,17 @@ function parseEaten(k) {
 /** Wind up over the world it is sitting on (resolveMegaStrikes fires it). */
 async function arm(env, gameId, tick, k, ship, world) {
   const DB = env.DB;
-  const mode = world.terraformed_at_tick != null ? 'sterilise' : 'obliterate';
+  // TWO STRIKES, EVERY WORLD (Lorne, 2026-10-08: "The first fire should
+  // wipe out terraforming, the second fire should destroy it ... two days
+  // to murder a planet fully"). The first scorches it: terraforming gone,
+  // every settlement gone, living or raw. The second, once it has scorched
+  // this world on this visit, breaks it.
+  const now = await DB.prepare('SELECT terraformed_at_tick, sterilised_at_tick FROM game_bodies WHERE id = ?')
+    .bind(world.id).first();
+  const scorched = now?.terraformed_at_tick == null && now?.sterilised_at_tick != null
+    && Number(now.sterilised_at_tick) >= Number(k.launched_at_tick);
+  const mode = scorched ? 'obliterate' : 'sterilise';
+  const raw = now?.terraformed_at_tick == null;
   const fires = tick + MEGA_STRIKE_CHARGE_TICKS;
   await DB.prepare(`UPDATE game_ships SET strike_target_body_id = ?, strike_ready_tick = ?, strike_mode = ?
                      WHERE id = ?`)
@@ -508,11 +518,13 @@ async function arm(env, gameId, tick, k, ship, world) {
                             WHERE game_id = ? AND body_id = ? AND destroyed_at_tick IS NULL`)
       .bind(gameId, world.id).all()).results ?? []).map(r => r.f)]);
   if (await chronicleOnce(DB, `${gameId}:kaiju:charge:${world.id}:${mode}`, gameId, tick, 'kaiju_charging',
-    world.id, { world: world.name, body_name: world.name, fires_at_tick: fires, mode })) {
+    world.id, { world: world.name, body_name: world.name, fires_at_tick: fires, mode,
+      ...(mode === 'sterilise' && raw ? { raw: true } : {}) })) {
     if (owners.length > 0) {
       await tellEveryone(env, gameId, tick, `kaiju:charge:${world.id}:${mode}`, (L) => ({
         title: tr(L, 'feed.kaiju.chargeTitle', { world: world.name }),
-        lines: [tr(L, mode === 'sterilise' ? 'feed.kaiju.chargeSterilise' : 'feed.kaiju.chargeObliterate',
+        lines: [tr(L, mode === 'obliterate' ? 'feed.kaiju.chargeObliterate'
+          : raw ? 'feed.kaiju.chargeScour' : 'feed.kaiju.chargeSterilise',
           { world: world.name, tick: fires })],
       }), { color: FEED_COLOR, only: owners, feed: false });
     }

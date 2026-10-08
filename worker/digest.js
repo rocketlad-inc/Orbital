@@ -46,6 +46,7 @@ import {
   MINE_EXHAUSTED, MINE_EXHAUSTED_HEADLINE,
   KAIJU_OMEN, KAIJU_OMEN_HEADLINE, KAIJU_LAUNCHED, KAIJU_LAUNCHED_HEADLINE,
   KAIJU_ARRIVED, KAIJU_ARRIVED_OPEN, KAIJU_HUNTING, KAIJU_HUNTING_HEADLINE,
+  KAIJU_SCORCHED, KAIJU_SCORCHED_HEADLINE,
   KAIJU_CHARGING, KAIJU_CHARGING_HEADLINE, KAIJU_STRIPPED, KAIJU_STRIPPED_HEADLINE,
   KAIJU_BROKEN, KAIJU_BROKEN_HEADLINE, KAIJU_LEAVING, KAIJU_LEAVING_HEADLINE,
   KAIJU_GONE, KAIJU_GONE_HEADLINE, KAIJU_DEAD, KAIJU_DEAD_HEADLINE,
@@ -9038,7 +9039,9 @@ function buildFrontierStories(rows, used, locator, factionNames) {
     if ((row.kind === 'terraform_destroyed' || row.kind === 'world_obliterated') && p.cause === 'kaiju') {
       const ctx = { world: p.body_name ?? p.world ?? 'a world', lost: Number(p.settlements_lost) || 0 };
       kaijuStory(row, 4, row.kind === 'terraform_destroyed'
-        ? mkStory(975, used, 'kaiju_stripped', KAIJU_STRIPPED, 'kaiju_stripped_hl', KAIJU_STRIPPED_HEADLINE, ctx)
+        ? (p.raw
+          ? mkStory(975, used, 'kaiju_scorched', KAIJU_SCORCHED, 'kaiju_scorched_hl', KAIJU_SCORCHED_HEADLINE, ctx)
+          : mkStory(975, used, 'kaiju_stripped', KAIJU_STRIPPED, 'kaiju_stripped_hl', KAIJU_STRIPPED_HEADLINE, ctx))
         : mkStory(990, used, 'kaiju_broken', KAIJU_BROKEN, 'kaiju_broken_hl', KAIJU_BROKEN_HEADLINE, ctx));
       continue;
     }

@@ -11008,7 +11008,12 @@ export class Room {
       // only ever have meant 'sterilise'.
       const ordered = sh.mode === 'obliterate' ? 'obliterate' : 'sterilise';
       const now = target.terraformed_at_tick != null ? 'sterilise' : 'obliterate';
-      if (ordered !== now) { await clear(); continue; }
+      // THE LEVIATHAN ALWAYS FIRES TWICE (kaiju.js, Lorne 2026-10-08:
+      // "two days to murder a planet fully"): its first strike scorches a
+      // raw world too, burning off every settlement, then it breaks it.
+      const kaijuScour = sh.ship_class === 'kaiju' && ordered === 'sterilise';
+      if (ordered !== now && !kaijuScour) { await clear(); continue; }
+      const raw = target.terraformed_at_tick == null;
 
       if (ordered === 'obliterate') {
         const lost = await this.obliterateWorld(gameId, tick, sh, target);
@@ -11069,6 +11074,8 @@ export class Room {
               // strike printed as "a living world".
               body_name: target.name,
               cause: sh.ship_class === 'kaiju' ? 'kaiju' : 'mega_destroyer',
+              // A world it scorched that was never living (kaiju only).
+              ...(raw ? { raw: true } : {}),
               ship: sh.name,
               settlements_lost: doomed.length,
             }),
@@ -11076,7 +11083,7 @@ export class Room {
           )
           .run();
       } catch { /* chronicle is decoration; never fail a strike over it */ }
-      if (sh.ship_class === 'kaiju') await this.announceKaijuStrike(gameId, tick, target, 'sterilise', doomed.length);
+      if (sh.ship_class === 'kaiju') await this.announceKaijuStrike(gameId, tick, target, raw ? 'scour' : 'sterilise', doomed.length);
     }
     return fired;
   }
@@ -11085,8 +11092,10 @@ export class Room {
   async announceKaijuStrike(gameId, tick, target, mode, settlementsLost) {
     try {
       await tellEveryone(this.env, gameId, tick, `kaiju:strike:${target.id}:${mode}`, (L) => ({
-        title: tr(L, mode === 'sterilise' ? 'feed.kaiju.stripTitle' : 'feed.kaiju.breakTitle', { world: target.name }),
-        lines: [tr(L, mode === 'sterilise' ? 'feed.kaiju.stripBody' : 'feed.kaiju.breakBody',
+        title: tr(L, mode === 'sterilise' ? 'feed.kaiju.stripTitle'
+          : mode === 'scour' ? 'feed.kaiju.scourTitle' : 'feed.kaiju.breakTitle', { world: target.name }),
+        lines: [tr(L, mode === 'sterilise' ? 'feed.kaiju.stripBody'
+          : mode === 'scour' ? 'feed.kaiju.scourBody' : 'feed.kaiju.breakBody',
           { world: target.name, n: Number(settlementsLost) || 0 })],
       }), { color: 0xb44dff });
     } catch (e) {
