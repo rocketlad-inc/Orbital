@@ -32,6 +32,7 @@
 //            number a player means by "input lag".
 // ============================================================
 
+import { wmProbeTake } from '../render/wmPixelProbe';
 import React, { useEffect, useState } from 'react';
 import { GIT_SHA } from '../_version';
 
@@ -311,10 +312,11 @@ class PerfBus {
       const c = this.cam;
       if (c.frames > 0) {
         phases.wmcam = [Math.round(c.maxJump * 10) / 10, c.jumps];
-        phases.wmev = [c.tween, c.follow];
-        phases.wmetc = [c.scaleJumps, c.flips];
-        phases.wmrsz = [c.resizes, 0];
-        phases.wmn = [c.frames, 0];
+        // (wmev / wmetc / wmrsz read 0 on Lorne's machine through a full
+        // quiver; dropped to leave room in the field for the pixel probe.)
+        phases.wmn = [c.frames, c.tween + c.follow + c.scaleJumps + c.flips + c.resizes];
+        const px = wmProbeTake();
+        if (px) Object.assign(phases, px);
       }
       c.frames = 0; c.maxJump = 0; c.jumps = 0; c.scaleJumps = 0;
       c.tween = 0; c.follow = 0; c.flips = 0; c.resizes = 0;
