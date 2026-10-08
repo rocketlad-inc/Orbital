@@ -18,6 +18,7 @@
 import { getActiveSliders, getSliderResolver } from './senate.js';
 import { tr } from './i18n.js';
 import { resWord, pactName } from './alertText.js';
+import { cannotAfford } from './tradeAfford.js';
 import {
   factionTechLevels, gatingEnabled, hasFeature, lockedError,
 } from './researchUnlocks.js';
@@ -307,7 +308,7 @@ async function handlePropose(req, env, { session, params }) {
   // Proposer must currently hold what they're offering. (Soft check — accept
   // will re-verify atomically.)
   for (const k of RESOURCE_KEYS) {
-    if (proposer[k] < res.offer[k]) {
+    if (cannotAfford(proposer[k], res.offer[k])) {
       return err(400, 'insufficient_resources', `you don't have ${res.offer[k]} ${k} to offer`);
     }
   }
@@ -1064,7 +1065,7 @@ async function handleCounter(req, env, { session, params }) {
   if (!newResponder) return err(409, 'opponent_missing', 'original proposer is gone');
 
   for (const k of RESOURCE_KEYS) {
-    if (newProposer[k] < res.offer[k]) {
+    if (cannotAfford(newProposer[k], res.offer[k])) {
       return err(400, 'insufficient_resources', `you don't have ${res.offer[k]} ${k} to offer`);
     }
   }
