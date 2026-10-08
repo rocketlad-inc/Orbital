@@ -12,6 +12,7 @@ import { cfg as loadGameConfig } from './gameConfig.js';
 import { visualsSwitches } from './botSettings.js';
 import { orbitAngle, legProgress } from './orbitPos.js';
 import { SHIP_ENGINE_G, BRAKE_MUL, MAX_ENGINE_G, RAMP_TICKS, GROWTH_TAU } from './burn.js';
+import { hostilePairs } from './wars.js';
 
 // GET /api/games/:gameId/state — full renderer snapshot.
 //
@@ -672,12 +673,9 @@ const peaceRowsP = env.DB
   // FOG-FREE, like the pacts and for the same reason: who is at war with
   // whom is common knowledge — a declaration is a public act — and the
   // combat-FX layer has to agree with what the tick will actually do.
-  const war_pairs = ((await env.DB
-    .prepare(`SELECT faction_a, faction_b FROM game_wars
-               WHERE game_id = ? AND ended_at_tick IS NULL`)
-    .bind(gameId).all()).results ?? [])
-    .map(r => (r.faction_a < r.faction_b
-      ? `${r.faction_a}|${r.faction_b}` : `${r.faction_b}|${r.faction_a}`));
+  // The SAME rule the tick uses (wars.js hostilePairs), so the Leviathan
+  // (kaiju.js), at war with everyone, is drawn fighting everyone.
+  const war_pairs = [...await hostilePairs(env, gameId)];
 
   // Allies — factions the caller co-signs an ACTIVE defense-pact or
   // intel-share treaty with. They share sensor vision: the fog CTEs
@@ -1153,7 +1151,10 @@ const shipsP = env.DB
                -- Total Awareness (sensors 10): every enemy ship, fog or
                -- no fog. ?5 = 1 only when the caller has intel.allShips.
                -- ...except inside a rival Null Field (?6, computeJammedIds).
-               OR (1 = ?5 AND s.id NOT IN (SELECT value FROM json_each(?6))))`,
+               OR (1 = ?5 AND s.id NOT IN (SELECT value FROM json_each(?6)))
+               -- THE LEVIATHAN (kaiju.js) is the news, not a contact:
+               -- everyone sees it, everywhere, all the time.
+               OR s.ship_class = 'kaiju')`,
     )
     .bind(gameId, presenceFactionIds, sensorVisibleBodyIds, sensorVisibleShipIds, seeAllShips ? 1 : 0, jammedShipIds, jammedStructureIds)
     .all();
@@ -2138,7 +2139,11 @@ const tradeRoutesP = env.DB
       const cur = Number(game.current_tick) || 0;
       const step = sunGatePlan(gameId, Number(game.sun_gate_tick), gconf).find(s => s.emergeTick > cur);
       if (step && cur >= step.emergeTick - SUN_GATE_WARNING_TICKS) {
-        sunGateNext = { emerge_tick: step.emergeTick, index: step.index };
+        // kaiju: this one arrives on the Leviathan (kaiju.js), so the
+        // countdown is to a launch from `system`, not a shape in the Sun.
+        const kaiju = step.index === 1 && Number(gconf?.kaiju) === 1;
+        sunGateNext = { emerge_tick: step.emergeTick, index: step.index,
+          ...(kaiju ? { kaiju: true, system: step.sys.label } : {}) };
       }
       const rows = (await env.DB.prepare(
         `SELECT body_id, actor_faction_id, tick_number, payload FROM chronicle_entries
@@ -2155,6 +2160,33 @@ const tradeRoutesP = env.DB
     } catch (e) {
       console.error('sun gate state failed', e);
     }
+  }
+
+  // THE LEVIATHAN (kaiju.js): its whole state is public, like the beast.
+  // One indexed read, null in every game that never had one.
+  let kaiju = null;
+  try {
+    const k = await env.DB.prepare(
+      `SELECT ship_id, faction_id, sys_key, launched_at_tick, arrive_tick, hp_max,
+              appetite, eaten, eaten_json, phase, target_body_id, died_at_tick,
+              died_at_body_id, carcass_body_id, gone_at_tick
+         FROM game_kaiju WHERE game_id = ?`,
+    ).bind(gameId).first();
+    if (k) {
+      let eaten = [];
+      try { eaten = JSON.parse(k.eaten_json || '[]'); } catch { eaten = []; }
+      kaiju = {
+        ship_id: k.ship_id, faction_id: k.faction_id, system_key: k.sys_key,
+        launched_at_tick: k.launched_at_tick, arrive_tick: k.arrive_tick, hp_max: k.hp_max,
+        appetite: k.appetite, eaten: Array.isArray(eaten) ? eaten : [], phase: k.phase,
+        target_body_id: k.target_body_id, died_at_tick: k.died_at_tick,
+        died_at_body_id: k.died_at_body_id, carcass_body_id: k.carcass_body_id,
+        gone_at_tick: k.gone_at_tick,
+      };
+    }
+  } catch (e) {
+    // A database without 0162 yet: no beast.
+    if (!/no such table/i.test(String(e?.message))) console.error('kaiju state failed', e);
   }
 
   const dysonSphere = (game.dyson_controller_faction_id || (game.dyson_max_hp ?? 0) > 0) ? {
@@ -2223,6 +2255,7 @@ const tradeRoutesP = env.DB
       sun_gate_tick: game.sun_gate_tick ?? null,
       sun_gate_next: sunGateNext,
       sun_gate_firsts: sunGateFirsts,
+      kaiju,
       // THE BURN SHIPS FLY (burn.js): launch push in g, the top of the
       // build and how many ticks it takes, and the brake as a multiple of
       // the push reached. Sent so the client plans every leg with the

@@ -79,10 +79,20 @@ function ordered(a, b) {
  * anywhere; it is what a missing key means.
  */
 export async function hostilePairs(env, gameId) {
+  // THE LEVIATHAN IS AT WAR WITH EVERYONE (kaiju.js). It has no row in
+  // game_wars and can never get one: nobody can declare on it and nobody
+  // can make peace with it. The second half pairs it with every other
+  // faction, in the same round trip, and returns nothing in a game
+  // without one.
   const rows = (await env.DB
     .prepare(
       `SELECT faction_a, faction_b FROM game_wars
-        WHERE game_id = ? AND ended_at_tick IS NULL`,
+        WHERE game_id = ?1 AND ended_at_tick IS NULL
+       UNION ALL
+       SELECT m.id AS faction_a, f.id AS faction_b
+         FROM game_factions m
+         JOIN game_factions f ON f.game_id = m.game_id AND f.id <> m.id
+        WHERE m.game_id = ?1 AND m.status = 'monster'`,
     )
     .bind(gameId)
     .all()).results ?? [];
@@ -102,10 +112,13 @@ export async function hostilePairs(env, gameId) {
  * orientations are checked.
  */
 export function atWarSql(me, other, game = '?1') {
-  return `EXISTS (SELECT 1 FROM game_wars w
+  // ...or one of them is the Leviathan (kaiju.js), at war with everyone.
+  return `(EXISTS (SELECT 1 FROM game_wars w
              WHERE w.game_id = ${game} AND w.ended_at_tick IS NULL
                AND ((w.faction_a = ${me} AND w.faction_b = ${other})
-                 OR (w.faction_a = ${other} AND w.faction_b = ${me})))`;
+                 OR (w.faction_a = ${other} AND w.faction_b = ${me})))
+           OR (${me} <> ${other} AND EXISTS (SELECT 1 FROM game_factions mf
+             WHERE mf.id IN (${me}, ${other}) AND mf.status = 'monster')))`;
 }
 
 /** The open war row for a pair, or null. */
@@ -187,6 +200,11 @@ async function parties(env, gameId, session, body) {
     .bind(gameId, targetId)
     .first();
   if (!them) return { error: err(404, 'not_found', 'no such faction in this game') };
+  // The Leviathan (kaiju.js) is at war with everyone already, and there
+  // is no talking to it: no declaration, no ceasefire.
+  if (them.status === 'monster') {
+    return { error: err(409, 'monster', `${them.name} cannot be reasoned with`) };
+  }
   return { me, them };
 }
 

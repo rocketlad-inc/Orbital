@@ -81,7 +81,9 @@ export async function loadGame(env, gameId) {
 
 export async function loadFaction(env, gameId, factionId) {
   return env.DB
-    .prepare('SELECT id, game_id, name, color, metal, fuel, gold, science FROM game_factions WHERE game_id = ? AND id = ?')
+    // Never the Leviathan (kaiju.js): nobody trades with it.
+    .prepare(`SELECT id, game_id, name, color, metal, fuel, gold, science FROM game_factions
+               WHERE game_id = ? AND id = ? AND status <> 'monster'`)
     .bind(gameId, factionId)
     .first();
 }

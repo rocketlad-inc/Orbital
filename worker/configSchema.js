@@ -423,6 +423,38 @@ export const SCHEMA = [
     label: 'Sun gates: ticks between gates', def: 40, min: 1, max: 1000, step: 1,
     help: 'Gap between the first gate leaving the Sun and the second.',
   },
+  // THE LEVIATHAN (worker/kaiju.js). Staging first: 0 is production's answer.
+  {
+    id: 'kaiju', group: 'map', type: 'int',
+    label: 'Leviathan: the second gate arrives on a monster', def: 0, min: 0, max: 1, step: 1,
+    danger: true,
+    help: 'The second sun gate does not leave the Sun. A colossal squid launches from '
+      + 'the unconnected far system at 2g, drops the gate where it stops, then hunts '
+      + 'settled moons and small worlds (never a homeworld) until it has eaten its fill.',
+  },
+  {
+    id: 'kaiju_appetite', group: 'map', type: 'int',
+    label: 'Leviathan: worlds it eats before it leaves', def: 3, min: 1, max: 50, step: 1,
+    help: 'Counted when a world becomes rubble. It then flies back through its gate.',
+  },
+  {
+    id: 'kaiju_hp_ticks', group: 'map', type: 'int',
+    label: 'Leviathan: HP = ticks of every fleet firing at once', def: 24, min: 1, max: 500, step: 1,
+    help: 'Rolled at launch: every armed hull in the game, hitting at its real odds, '
+      + 'kills it in this many ticks. 24 is one strike wind-up.',
+  },
+  {
+    id: 'kaiju_hp_min', group: 'map', type: 'int',
+    label: 'Leviathan: HP floor', def: 2000, min: 100, max: 200000, step: 100,
+  },
+  {
+    id: 'kaiju_hp_max', group: 'map', type: 'int',
+    label: 'Leviathan: HP cap', def: 20000, min: 100, max: 500000, step: 100,
+  },
+  {
+    id: 'kaiju_damage', group: 'map', type: 'number',
+    label: 'Leviathan: damage per tick', def: 50, min: 0, max: 5000, step: 1,
+  },
   {
     id: 'system_scale', group: 'map', type: 'number',
     label: 'System scale (orbit spread)', def: 1, min: 0.1, max: 10, step: 0.05,

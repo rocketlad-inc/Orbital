@@ -76,7 +76,7 @@ export async function buildTerritoryData(env, gameId) {
   const factionRows = (await env.DB
     .prepare(
       `SELECT id, name, color, color2, status, emblem
-         FROM game_factions WHERE game_id = ? ORDER BY slot`,
+         FROM game_factions WHERE game_id = ? AND status <> 'monster' ORDER BY slot`,
     )
     .bind(gameId)
     .all()).results ?? [];

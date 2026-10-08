@@ -44,6 +44,11 @@ import {
   SENATE_REAPED, SENATE_REAPED_HEADLINE,
   TRADE_SHIPMENT_LOST, TRADE_SHIPMENT_LOST_HEADLINE,
   MINE_EXHAUSTED, MINE_EXHAUSTED_HEADLINE,
+  KAIJU_OMEN, KAIJU_OMEN_HEADLINE, KAIJU_LAUNCHED, KAIJU_LAUNCHED_HEADLINE,
+  KAIJU_ARRIVED, KAIJU_HUNTING, KAIJU_HUNTING_HEADLINE,
+  KAIJU_CHARGING, KAIJU_CHARGING_HEADLINE, KAIJU_STRIPPED, KAIJU_STRIPPED_HEADLINE,
+  KAIJU_BROKEN, KAIJU_BROKEN_HEADLINE, KAIJU_LEAVING, KAIJU_LEAVING_HEADLINE,
+  KAIJU_GONE, KAIJU_GONE_HEADLINE, KAIJU_DEAD, KAIJU_DEAD_HEADLINE,
 } from './heraldBanks.js';
 import { activeSanctions } from './senate.js';
 
@@ -7222,6 +7227,9 @@ function buildTerraformStories(rows, used, factionNames) {
         : mkStory(430, used, 'terraform_unowned', TERRAFORM_COMPLETE_UNOWNED,
           'terraform_unowned_hl', TERRAFORM_COMPLETE_UNOWNED_HEADLINE,
           { world, worldPlain: world }));
+    } else if ((row.kind === 'terraform_destroyed' || row.kind === 'world_obliterated') && p.cause === 'kaiju') {
+      // The Leviathan's strikes are beats of ITS story (buildFrontierStories).
+      continue;
     } else if (row.kind === 'terraform_destroyed' && p.cause === 'mega_destroyer') {
       battles.push(mkStory(820, used, 'mega_sterilised', MEGA_STERILISED, 'mega_sterilised_hl', MEGA_STERILISED_HEADLINE, {
         faction: row.actor_faction_id ? faction : null,
@@ -7687,6 +7695,15 @@ async function fetchStandingTotals(env, gameId, uptoTick, factionNames = new Map
       totals.eliminated = new Set(elim.map(r => factionNames.get(r.fid)).filter(Boolean));
     } catch { totals.eliminated = new Set(); }
 
+    // monsters: the Leviathan (kaiju.js) is nobody's empire and holds no
+    // row in the standings, however many hulls it sinks.
+    try {
+      const m = (await env.DB
+        .prepare(`SELECT id FROM game_factions WHERE game_id = ? AND status = 'monster'`)
+        .bind(gameId).all()).results ?? [];
+      totals.monsters = new Set(m.map(r => factionNames.get(r.id)).filter(Boolean));
+    } catch { totals.monsters = new Set(); }
+
     // warStarted: has anyone died yet? The war-weary footer printed in
     // a zero-combat opening edition of a zone literally named Peace.
     // Its own query and its own try: the first cut read a const scoped
@@ -7877,6 +7894,7 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
   // and every one of them silently evaporated in the reassignment.
   const holdings = totals?.holdings instanceof Map ? totals.holdings : null;
   const eliminatedSet = totals?.eliminated instanceof Set ? totals.eliminated : null;
+  const monsters = totals?.monsters instanceof Set ? totals.monsters : null;
   const dyson = totals?.dyson ?? null;
   const prevHoldings = totals?.prevHoldings instanceof Map ? totals.prevHoldings : null;
   const firstWindow = totals?.firstWindow === true;
@@ -7956,6 +7974,7 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
     .map(([name, s]) => ({ name, ...s, net: (s.built - s.lost) + 3 * (s.founded - s.razed) }))
     .filter(r => totals.has(r.name) || holdings?.has(r.name)
       || r.built || r.lost || r.founded || r.razed)
+    .filter(r => !monsters?.has(r.name))
     .sort((a, z) => z.net - a.net);
   if (rank.length < 2) return null;
 
@@ -8974,8 +8993,71 @@ function buildFrontierStories(rows, used, locator, factionNames) {
   // headline of the LATEST moment, at the highest weight of them.
   const sunGate = [];
   const sunGateStory = (row, rank, story) => sunGate.push({ tick: Number(row.tick_number) || 0, rank, story });
+  // THE LEVIATHAN (kaiju.js) is one story the same way: omen, launch,
+  // landing, each hunt and wind-up, each world, and how it ended.
+  const kaiju = [];
+  const kaijuStory = (row, rank, story) => kaiju.push({ tick: Number(row.tick_number) || 0, rank, story });
   for (const row of rows) {
     const p = safeJson(row.payload);
+    if (row.kind === 'kaiju_omen') {
+      kaijuStory(row, 0, mkStory(900, used, 'kaiju_omen', KAIJU_OMEN, 'kaiju_omen_hl', KAIJU_OMEN_HEADLINE, {
+        system: p.system ?? 'a far star', wait: Math.max(1, Math.round(Number(p.launch_in) || 6)),
+      }));
+      continue;
+    }
+    if (row.kind === 'kaiju_launched') {
+      kaijuStory(row, 1, mkStory(960, used, 'kaiju_launched', KAIJU_LAUNCHED, 'kaiju_launched_hl', KAIJU_LAUNCHED_HEADLINE, {
+        system: p.system ?? 'a far star', near: p.near ?? null,
+        arrive: Math.round(Number(p.arrive_tick) || 0),
+        hp: Number(p.hp || 0).toLocaleString('en-US'), appetite: Number(p.appetite) || 3,
+      }));
+      continue;
+    }
+    if (row.kind === 'kaiju_hunting') {
+      const world = p.world ?? 'a world';
+      kaijuStory(row, 2, p.first
+        ? mkStory(970, used, 'kaiju_arrived', KAIJU_ARRIVED, 'kaiju_hunting_hl', KAIJU_HUNTING_HEADLINE, {
+          world, gate: p.gate ?? 'gate', system: p.system ?? 'beyond the Sun',
+        })
+        : mkStory(930, used, 'kaiju_hunting', KAIJU_HUNTING, 'kaiju_hunting_hl', KAIJU_HUNTING_HEADLINE, { world }));
+      continue;
+    }
+    if (row.kind === 'kaiju_charging') {
+      kaijuStory(row, 3, mkStory(940, used, 'kaiju_charging', KAIJU_CHARGING, 'kaiju_charging_hl', KAIJU_CHARGING_HEADLINE, {
+        world: p.world ?? 'a world', fires: Math.round(Number(p.fires_at_tick) || 0),
+      }));
+      continue;
+    }
+    if ((row.kind === 'terraform_destroyed' || row.kind === 'world_obliterated') && p.cause === 'kaiju') {
+      const ctx = { world: p.body_name ?? p.world ?? 'a world', lost: Number(p.settlements_lost) || 0 };
+      kaijuStory(row, 4, row.kind === 'terraform_destroyed'
+        ? mkStory(975, used, 'kaiju_stripped', KAIJU_STRIPPED, 'kaiju_stripped_hl', KAIJU_STRIPPED_HEADLINE, ctx)
+        : mkStory(990, used, 'kaiju_broken', KAIJU_BROKEN, 'kaiju_broken_hl', KAIJU_BROKEN_HEADLINE, ctx));
+      continue;
+    }
+    if (row.kind === 'kaiju_leaving') {
+      const eaten = Array.isArray(p.eaten) ? p.eaten : [];
+      kaijuStory(row, 5, mkStory(950, used, 'kaiju_leaving', KAIJU_LEAVING, 'kaiju_leaving_hl', KAIJU_LEAVING_HEADLINE, {
+        // Never empty: the banks name what it ate in every sentence.
+        gate: p.gate ?? 'gate', worlds: eaten.length ? joinList(eaten) : 'nothing at all',
+      }));
+      continue;
+    }
+    if (row.kind === 'kaiju_gone') {
+      kaijuStory(row, 6, mkStory(940, used, 'kaiju_gone', KAIJU_GONE, 'kaiju_gone_hl', KAIJU_GONE_HEADLINE, {
+        gate: p.gate ?? 'gate',
+      }));
+      continue;
+    }
+    if (row.kind === 'kaiju_dead') {
+      kaijuStory(row, 7, mkStory(1000, used, 'kaiju_dead', KAIJU_DEAD, 'kaiju_dead_hl', KAIJU_DEAD_HEADLINE, {
+        world: p.world ?? 'deep space', tons: Number(p.tons || 0).toLocaleString('en-US'),
+        killer: p.killer_faction_name ?? null,
+      }));
+      continue;
+    }
+    // The gate it carried opening is its landing, told above.
+    if (row.kind === 'sun_gate_opened' && p.kaiju) continue;
     const actor = factionNames.get(row.actor_faction_id) ?? 'An unflagged force';
     const other = row.target_faction_id
       ? (factionNames.get(row.target_faction_id) ?? 'a rival') : 'a rival';
@@ -9145,6 +9227,15 @@ function buildFrontierStories(rows, used, locator, factionNames) {
         }));
     }
   }
+  if (kaiju.length) {
+    kaiju.sort((a, b) => a.tick - b.tick || a.rank - b.rank);
+    const latest = kaiju[kaiju.length - 1].story;
+    stories.push({
+      ...latest,
+      text: kaiju.map(s => s.story.text).join('\n\n'),
+      weight: Math.max(...kaiju.map(s => s.story.weight)),
+    });
+  }
   if (sunGate.length) {
     sunGate.sort((a, b) => a.tick - b.tick || a.rank - b.rank);
     const latest = sunGate[sunGate.length - 1].story;
@@ -9192,6 +9283,8 @@ export const HERALD_HANDLED_KINDS = new Set([
   // frontier
   'asteroid_launched', 'gate_transit', 'gate_link_severed',
   'sun_gate_omen', 'sun_gate_emerged', 'sun_gate_opened',
+  'kaiju_omen', 'kaiju_launched', 'kaiju_hunting', 'kaiju_charging',
+  'kaiju_leaving', 'kaiju_gone', 'kaiju_dead',
   'meteoroid_exhausted',
   'asset_sold', 'secret_discovered', 'ancient_databank', 'meteoroid_found',
   // campaign

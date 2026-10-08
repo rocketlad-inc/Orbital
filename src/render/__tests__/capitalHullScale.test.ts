@@ -242,7 +242,8 @@ describe('every ship draw path handles capital hulls', () => {
   it('the transit fallback dot never fires for a capital hull', () => {
     // Belt and braces: even with the branch above present, the old
     // else-branch would still paint a dot on top if it were reachable.
-    expect(fnBody('drawTorchTransitShip')).toMatch(/\} else if \(!capital\) \{/);
+    // (The Leviathan, kaiju.js, draws itself too and skips it the same way.)
+    expect(fnBody('drawTorchTransitShip')).toMatch(/\} else if \(!capital(?: && !kaiju)?\) \{/);
   });
 });
 

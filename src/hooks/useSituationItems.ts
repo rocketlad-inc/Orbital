@@ -2372,7 +2372,7 @@ export function useSituationItems(
       const next = gameState.sunGateNext;
       const omen = gameState.sunGateTick;
       const warnAt = next !== undefined
-        ? (next ? { out: next.emergeTick - tick, index: next.index } : null)
+        ? (next ? { out: next.emergeTick - tick, index: next.index, kaiju: !!next.kaiju, system: next.system } : null)
         : (omen != null && tick >= omen && gates.length === 0
           ? { out: omen + SUN_GATE_WARNING_TICKS - tick, index: 0 } : null);
       if (warnAt) {
@@ -2380,10 +2380,16 @@ export function useSituationItems(
         push({
           id: `sun_gate:omen:${warnAt.index}`,
           category: 'sun_gate',
-          title: warnAt.index === 0
-            ? 'Something strange is emerging from the Sun'
-            : 'Something else is emerging from the Sun',
-          subtitle: out > 0 ? `Out in ${out} tick${out === 1 ? '' : 's'}` : 'Any moment now',
+          // The Leviathan's warning is not on the Sun (worker/kaiju.js).
+          title: 'kaiju' in warnAt && warnAt.kaiju
+            ? `Something is stirring at ${warnAt.system ?? 'a far star'}`
+            : warnAt.index === 0
+              ? 'Something strange is emerging from the Sun'
+              : 'Something else is emerging from the Sun',
+          subtitle: 'kaiju' in warnAt && warnAt.kaiju
+            ? (out > 0 ? `Something enormous is turning toward the Sun. It moves in ${out} tick${out === 1 ? '' : 's'}`
+              : 'It is moving now')
+            : out > 0 ? `Out in ${out} tick${out === 1 ? '' : 's'}` : 'Any moment now',
           focus: { kind: 'body', bodyId: 'sol' },
           severity: 'warn',
           sortKey: out,
@@ -2445,6 +2451,81 @@ export function useSituationItems(
             severity: 'normal',
             sortKey: -first.tick,
           });
+        }
+      }
+    } catch { /* defensive */ }
+
+    // ---- The Leviathan (worker/kaiju.js) ----
+    // Everyone's, like the gates: one row for whatever it is doing now,
+    // louder when it is your world in its path, and its carcass as an
+    // opportunity once it is dead.
+    try {
+      const kj = gameState.kaiju;
+      if (kj) {
+        const beast = gameState.ships.find(s => s.id === kj.shipId || s.class === 'kaiju');
+        const hp = beast ? `${Math.round(beast.hp ?? 0).toLocaleString('en-US')} / ${kj.hpMax.toLocaleString('en-US')} HP` : '';
+        const target = kj.targetBodyId ? bodies.find(b => b.id === kj.targetBodyId) : undefined;
+        const mineTarget = !!target && target.ownedBy === factionId;
+        const ate = kj.eaten.length;
+        if (kj.phase === 'inbound') {
+          const left = Math.max(0, kj.arriveTick - tick);
+          push({
+            id: 'kaiju:inbound',
+            category: 'threat',
+            title: 'A Leviathan is coming',
+            subtitle: `It lands in the Far Reach at T+${kj.arriveTick} (${left} tick${left === 1 ? '' : 's'}), ${hp}. `
+              + 'It eats settled moons and small worlds. Its landing site is marked',
+            focus: { kind: 'body', bodyId: `sungate_${kj.systemKey}_site` },
+            severity: 'warn',
+            sortKey: left,
+          });
+        } else if (kj.phase === 'hunting' && beast) {
+          const charging = beast.strikeReadyTick != null;
+          const where = target?.name ?? 'a world';
+          const fires = beast.strikeReadyTick ?? 0;
+          push({
+            id: 'kaiju:hunting',
+            category: 'threat',
+            entity: `ship:${beast.id}`,
+            title: charging
+              ? `The Leviathan is winding up over ${mineTarget ? 'your world ' : ''}${where}`
+              : `The Leviathan is coming for ${mineTarget ? 'your world ' : ''}${where}`,
+            subtitle: charging
+              ? `It strikes at T+${fires} (${Math.max(0, fires - tick)} ticks). Kill it first: ${hp}`
+              : `${hp}. It has eaten ${ate} of ${kj.appetite} world${kj.appetite === 1 ? '' : 's'}`,
+            focus: { kind: 'ship', shipId: beast.id },
+            severity: mineTarget || charging ? 'danger' : 'warn',
+            sortKey: charging ? fires - tick : 0,
+          });
+        } else if (kj.phase === 'leaving' && beast) {
+          push({
+            id: 'kaiju:leaving',
+            category: 'threat',
+            entity: `ship:${beast.id}`,
+            title: 'The Leviathan is leaving',
+            subtitle: `It took ${ate} world${ate === 1 ? '' : 's'}${ate ? ` (${kj.eaten.join(', ')})` : ''} and is heading back to its gate. ${hp}`,
+            focus: { kind: 'ship', shipId: beast.id },
+            severity: 'normal',
+            sortKey: 0,
+          });
+        } else if (kj.phase === 'dead' && kj.carcassBodyId && kj.diedAtTick != null
+          && tick - kj.diedAtTick <= SUN_GATE_NEWS_TICKS) {
+          const carcass = bodies.find(b => b.id === kj.carcassBodyId);
+          const left = carcass?.mineralRemaining;
+          if (carcass && (left == null || left > 0)) {
+            push({
+              id: 'kaiju:carcass',
+              category: 'discovery',
+              tier: 'opportunity',
+              entity: `body:${carcass.id}`,
+              title: 'The Leviathan is dead',
+              subtitle: `Its carcass is a salvage field${left != null ? ` of ${Math.round(left).toLocaleString('en-US')} t of metal` : ''}. `
+                + 'Send a freighter with a mining rig',
+              focus: { kind: 'body', bodyId: carcass.id },
+              severity: 'normal',
+              sortKey: -kj.diedAtTick,
+            });
+          }
         }
       }
     } catch { /* defensive */ }

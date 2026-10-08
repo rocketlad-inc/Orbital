@@ -38,6 +38,9 @@ export type ShipIconClass = 'corvette' | 'frigate' | 'destroyer' | 'freighter' |
 export function iconClassFor(shipClass: string): ShipIconClass {
   if (shipClass === 'mega_destroyer') return 'destroyer';
   if (shipClass === 'mobile_foundry') return 'freighter';
+  // The Leviathan has no hull to borrow; in a row of icons it reads as the
+  // heaviest thing there is. The map draws the real animal (sunSquid.ts).
+  if (shipClass === 'kaiju') return 'destroyer';
   return (['corvette', 'frigate', 'destroyer', 'freighter', 'colony'] as const)
     .includes(shipClass as ShipIconClass) ? shipClass as ShipIconClass : 'corvette';
 }

@@ -33,6 +33,8 @@ export const data = {
   'data.ship.colony.desc': 'Consumable settler transport. Deploying a settlement consumes it.',
   'data.ship.mega_destroyer.name': 'Mega Destroyer',
   'data.ship.mega_destroyer.desc': 'A world-killer that barely moves. Strips terraforming, cannot use gates, and everyone sees it coming for days.',
+  'data.ship.kaiju.name': 'Leviathan',
+  'data.ship.kaiju.desc': 'A living thing the size of a moon. It eats worlds, makes no peace, and every empire is at war with it.',
   'data.ship.mobile_foundry.name': 'Mobile Foundry',
   'data.ship.mobile_foundry.desc': 'A shipyard that moves. Builds four hulls at once, wherever you park it.',
   'data.part.kinetic.name': 'Kinetic Mount',

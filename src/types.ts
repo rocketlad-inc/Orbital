@@ -304,7 +304,7 @@ export interface Ship {
   // shipyard can make: capital hulls come out of a megastructure site.
   // See BuildableClassName for the buildable subset.
   class: 'corvette' | 'frigate' | 'destroyer' | 'freighter' | 'colony'
-    | 'mega_destroyer' | 'mobile_foundry';
+    | 'mega_destroyer' | 'mobile_foundry' | 'kaiju';
   ownedBy: string;                      // faction id
 
   // Current state
@@ -1203,7 +1203,9 @@ export interface GameState {
   /** A sun gate due out of the Sun within the warning window: the tick it
    *  comes out and its place in the order (0 = the first). Not where it
    *  leads; that stays secret until it is out. Null otherwise. */
-  sunGateNext?: { emergeTick: number; index: number } | null;
+  sunGateNext?: { emergeTick: number; index: number; kaiju?: boolean; system?: string } | null;
+  /** THE LEVIATHAN (worker/kaiju.js). Null in a game that never had one. */
+  kaiju?: KaijuState | null;
   /** The first hull through each sun gate (local gate id, either end). */
   sunGateFirsts?: Array<{ gateId: string; factionId: string | null; tick: number; ship: string | null; toSystem: string | null }>;
   /** Megastructure build state, keyed on the site's body id. The site
@@ -1458,4 +1460,27 @@ export interface ManeuverRenderHints {
   committedBurnColor: string;           // amber solid
   captureColor: string;                 // green
   escapeColor: string;                  // red
+}
+
+/** Where the Leviathan is in its life (worker/kaiju.js game_kaiju.phase). */
+export type KaijuPhase = 'inbound' | 'hunting' | 'leaving' | 'gone' | 'dead';
+
+/** The Leviathan's public state (/state game.kaiju). Body ids are local. */
+export interface KaijuState {
+  /** Server ship id, as Ship.id carries it. */
+  shipId: string;
+  factionId: string;
+  launchedAtTick: number;
+  arriveTick: number;
+  hpMax: number;
+  appetite: number;
+  /** Names of the worlds it has broken, in order. */
+  eaten: string[];
+  phase: KaijuPhase;
+  targetBodyId: string | null;
+  diedAtTick: number | null;
+  diedAtBodyId: string | null;
+  carcassBodyId: string | null;
+  goneAtTick: number | null;
+  systemKey: string;
 }

@@ -32,6 +32,8 @@ export const data: Catalog = {
   'data.ship.colony.desc': 'Transporte de colonos descartável. Implantar um assentamento a consome.',
   'data.ship.mega_destroyer.name': 'Mega Destróier',
   'data.ship.mega_destroyer.desc': 'Um destruidor de mundos que mal se move. Remove a terraformação, não pode usar portais e todos o veem chegando por dias.',
+  'data.ship.kaiju.name': 'Leviatã',
+  'data.ship.kaiju.desc': 'Um ser vivo do tamanho de uma lua. Devora mundos, não faz a paz, e todo império está em guerra com ele.',
   'data.ship.mobile_foundry.name': 'Fundição Móvel',
   'data.ship.mobile_foundry.desc': 'Um estaleiro que se move. Constrói quatro cascos ao mesmo tempo, onde quer que você o estacione.',
   'data.part.kinetic.name': 'Canhão Cinético',
