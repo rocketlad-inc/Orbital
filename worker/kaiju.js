@@ -43,6 +43,7 @@ import { SHIP_COMBAT_STATS } from './factions.js';
 import { shipSpeed, hitChance } from './shipDesigns.js';
 import { MEGA_STRIKE_CHARGE_TICKS } from './actions.js';
 import { makeRouteMath } from './routeMath.js';
+import { legTicks, SHIP_ENGINE_ACCEL, MAX_ENGINE_G } from './burn.js';
 import {
   emergeFlightTicks, solGateId, chronicleOnce, tellEveryone, mainSystemSql, SUN_GATE_SYSTEMS, seededRand,
 } from './sunGates.js';
@@ -74,6 +75,8 @@ export function kaijuDials(conf) {
     hpMin: Math.min(cap, Math.max(100, num(conf?.kaiju_hp_min, 2000))),
     hpMax: cap,
     damage: Math.max(0, num(conf?.kaiju_damage, SHIP_COMBAT_STATS.kaiju.damage_per_tick)),
+    // Top push between worlds, in g (huntTicks).
+    huntG: Math.min(5, Math.max(0.05, num(conf?.kaiju_hunt_g, 0.5))),
   };
 }
 
@@ -292,14 +295,31 @@ async function preyWorlds(DB, gameId, tick, rm) {
 }
 
 /** Ticks for the beast to fly from `fromId` (now) to `toId`, at 2g. */
-async function flightTo(rm, fromId, toId, tick) {
+async function flightTo(rm, fromId, toId, tick, huntG = null) {
   const a = await rm.bodyPosAt(fromId, tick);
-  let T = emergeFlightTicks(1);
+  const ticksFor = (d) => (huntG ? huntTicks(d, huntG) : emergeFlightTicks(d));
+  let T = ticksFor(1);
   for (let i = 0; i < 3; i++) {
     const b = await rm.bodyPosAt(toId, tick + T);
-    T = emergeFlightTicks(Math.hypot(b.x - a.x, b.y - a.y));
+    T = ticksFor(Math.hypot(b.x - a.x, b.y - a.y));
   }
   return T;
+}
+
+/**
+ * IN THE SYSTEM IT IS CATCHABLE (Lorne, 2026-10-08: "It can get up to 2g
+ * on the way to Sol, but we should cap its acceleration at probably .5g
+ * in system so it's POSSIBLE to intercept it"). Between worlds it flies
+ * the ships' own burn (burn.js: a build that grows from launch, a 9x
+ * brake), every acceleration scaled so the push tops out at `g` instead
+ * of a hull's MAX_ENGINE_G. Scaling every acceleration by s is the same
+ * trip as a hull flying d/s, so: the hull's ticks over d * MAX / g. At
+ * 0.5g that is a bit over half a warship's time on any hop; the planner
+ * (planLegForShip -> shapeForArrival) then draws exactly that shape.
+ * The crossing from its own star stays the 2g even burn.
+ */
+export function huntTicks(d, g) {
+  return Math.max(1, Math.ceil(legTicks(Math.max(1, d) * (MAX_ENGINE_G / g), SHIP_ENGINE_ACCEL)));
 }
 
 /**
@@ -307,6 +327,7 @@ async function flightTo(rm, fromId, toId, tick) {
  * (room.js 2d-ter), so a world it just broke is already rubble here.
  */
 export async function advanceKaiju(env, gameId, tick, conf, hooks) {
+  const dials = kaijuDials(conf);
   const DB = env.DB;
   const k = await loadKaiju(DB, gameId);
   if (!k || k.phase === 'dead' || k.phase === 'gone') return { phase: k?.phase ?? 'none' };
@@ -338,7 +359,7 @@ export async function advanceKaiju(env, gameId, tick, conf, hooks) {
       // Knocked off its course somehow; head for the gate again.
       const rm = makeRouteMath(DB, gameId);
       await hooks.planLeg(ship.id, k.faction_id, ship.parent_body_id, gateId,
-        tick + await flightTo(rm, ship.parent_body_id, gateId, tick));
+        tick + await flightTo(rm, ship.parent_body_id, gateId, tick, dials.huntG));
       return { phase: 'leaving' };
     }
     // Through it. 'departed' is not 'active', so every live query lets
@@ -415,7 +436,7 @@ export async function advanceKaiju(env, gameId, tick, conf, hooks) {
   }
 
   // Full: go home.
-  if (Number(k.eaten) >= Number(k.appetite)) return leave(env, gameId, tick, k, ship, rm, gateId, 'full', hooks);
+  if (Number(k.eaten) >= Number(k.appetite)) return leave(env, gameId, tick, k, ship, rm, gateId, 'full', hooks, dials.huntG);
 
   // Next.
   const worlds = await preyWorlds(DB, gameId, tick, rm);
@@ -423,14 +444,14 @@ export async function advanceKaiju(env, gameId, tick, conf, hooks) {
   // Seeded on the game and the meal, so a retried tick picks the same.
   const prey = pickPrey(worlds, Math.hypot(from.x, from.y),
     Number(k.appetite) - Number(k.eaten), seededRand(`${gameId}|kaiju|meal|${Number(k.eaten)}`));
-  if (!prey) return leave(env, gameId, tick, k, ship, rm, gateId, 'nothing_left', hooks);
+  if (!prey) return leave(env, gameId, tick, k, ship, rm, gateId, 'nothing_left', hooks, dials.huntG);
 
   if (prey.id === here) {
     await DB.prepare('UPDATE game_kaiju SET target_body_id = ? WHERE game_id = ?').bind(prey.id, gameId).run();
     k.target_body_id = prey.id;
     return arm(env, gameId, tick, k, ship, prey);
   }
-  const T = await flightTo(rm, here, prey.id, tick);
+  const T = await flightTo(rm, here, prey.id, tick, dials.huntG);
   await hooks.planLeg(ship.id, k.faction_id, here, prey.id, tick + T);
   await DB.prepare('UPDATE game_kaiju SET target_body_id = ? WHERE game_id = ?').bind(prey.id, gameId).run();
 
@@ -500,12 +521,12 @@ async function arm(env, gameId, tick, k, ship, world) {
 }
 
 /** Full, or nothing left it may eat: back to the gate. */
-async function leave(env, gameId, tick, k, ship, rm, gateId, why, hooks) {
+async function leave(env, gameId, tick, k, ship, rm, gateId, why, hooks, huntG) {
   const DB = env.DB;
   await DB.prepare(`UPDATE game_kaiju SET phase = 'leaving', target_body_id = ? WHERE game_id = ?`)
     .bind(gateId, gameId).run();
   if (ship.parent_body_id !== gateId) {
-    const T = await flightTo(rm, ship.parent_body_id, gateId, tick);
+    const T = await flightTo(rm, ship.parent_body_id, gateId, tick, huntG);
     await hooks.planLeg(ship.id, k.faction_id, ship.parent_body_id, gateId, tick + T);
   }
   const eaten = parseEaten(k);
