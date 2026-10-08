@@ -170,6 +170,17 @@ function seedOf(s: string): number {
  * `order` is the factions in share order; `stationId` asks for the
  * world's station to be placed opposite the fight.
  */
+/** A changed roster must hold this long before it replaces a world's
+ *  layout (see liveBattleFor's `dwell`). */
+export const ROSTER_DWELL_MS = 1500;
+/** Pending roster per world: the key first seen and when. */
+const pending = new Map<string, { key: string; since: number }>();
+/** Layout solves per world, for the world-menu probe. */
+const solveCounts = new Map<string, number>();
+export function battleSolves(bodyId: string): number {
+  return solveCounts.get(bodyId) ?? 0;
+}
+
 export function liveBattleFor(
   bodyId: string,
   bodyRadius: number,
@@ -177,11 +188,27 @@ export function liveBattleFor(
   units: readonly BattleUnit[],
   order: readonly string[],
   stationId?: string,
+  /** STICKY ROSTER. With a clock, a changed roster replaces the world's
+   *  layout only once it has held for ROSTER_DWELL_MS. The roster leaves
+   *  out rival hulls the viewer cannot see, and fog is recomputed every
+   *  ~140ms: a hull on the edge of sensor cover flickered in and out,
+   *  every flicker re-solved the whole world, and every ship (and the
+   *  station) kept gliding between two layouts -- the world-menu
+   *  "quiver" (Lorne, 2026-10-07). A genuine arrival just waits a beat
+   *  (drawn on its orbit meanwhile) before gliding into its place. */
+  dwell?: { nowMs: number; ms?: number },
 ): LiveBattle {
   const refR = battleReferenceRadius(bodyRadius);
   const key = battleKey(refR, dir, units, order, stationId);
   const hit = cache.get(bodyId);
-  if (hit && hit.key === key) return hit;
+  if (hit && hit.key === key) { pending.delete(bodyId); return hit; }
+  if (hit && dwell) {
+    const p = pending.get(bodyId);
+    if (!p || p.key !== key) { pending.set(bodyId, { key, since: dwell.nowMs }); return hit; }
+    if (dwell.nowMs - p.since < (dwell.ms ?? ROSTER_DWELL_MS)) return hit;
+  }
+  pending.delete(bodyId);
+  solveCounts.set(bodyId, (solveCounts.get(bodyId) ?? 0) + 1);
   const blocks = new Map<string, BlockGeometry>();
   const leadOf = new Map<string, string>();
   for (const u of units) for (const e of u.escortIds ?? []) leadOf.set(e, u.id);
@@ -297,6 +324,8 @@ export function battleShipOffsetPx(
 /** Test hook: clear every cached battle and glide. */
 export function resetLiveBattles(): void {
   cache.clear();
+  pending.clear();
+  solveCounts.clear();
   glides.clear();
   lastSweep = 0;
 }

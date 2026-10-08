@@ -32,6 +32,7 @@
 //            number a player means by "input lag".
 // ============================================================
 
+import { wmProbeTake } from '../render/wmPixelProbe';
 import React, { useEffect, useState } from 'react';
 import { GIT_SHA } from '../_version';
 
@@ -64,6 +65,9 @@ class PerfBus {
     frames: 0, maxJump: 0, jumps: 0, last: null as null | { x: number; y: number; s: number },
     scaleJumps: 0, tween: 0, follow: 0, flips: 0, resizes: 0,
     lastWm: false, lastW: 0, lastH: 0,
+    // Layout solves of the focused world seen this window (min/max of a
+    // running count), and its world id so a new world restarts the count.
+    solveLo: -1, solveHi: -1,
   };
   private phaseCur: Record<string, number> = {};
   private phaseT = 0;
@@ -209,8 +213,12 @@ class PerfBus {
   /** One frame of the world-menu probe: where the focused world's centre
    *  is on screen, the camera scale, whether an ease or a wheel-glide is
    *  running, and the canvas size. Only frames with a menu open count. */
-  recordCam(wm: boolean, x: number, y: number, scale: number, tween: boolean, follow: boolean, w: number, h: number) {
+  recordCam(wm: boolean, x: number, y: number, scale: number, tween: boolean, follow: boolean, w: number, h: number, solves = 0) {
     const c = this.cam;
+    if (wm) {
+      if (c.solveLo < 0 || solves < c.solveLo) c.solveLo = solves;
+      if (solves > c.solveHi) c.solveHi = solves;
+    }
     if (wm !== c.lastWm) { if (c.frames > 0) c.flips++; c.lastWm = wm; c.last = null; }
     if (!wm || document.visibilityState !== 'visible') return;
     c.frames++;
@@ -311,12 +319,16 @@ class PerfBus {
       const c = this.cam;
       if (c.frames > 0) {
         phases.wmcam = [Math.round(c.maxJump * 10) / 10, c.jumps];
-        phases.wmev = [c.tween, c.follow];
-        phases.wmetc = [c.scaleJumps, c.flips];
-        phases.wmrsz = [c.resizes, 0];
-        phases.wmn = [c.frames, 0];
+        // (wmev / wmetc / wmrsz read 0 on Lorne's machine through a full
+        // quiver; dropped to leave room in the field for the pixel probe.)
+        phases.wmn = [c.frames, c.tween + c.follow + c.scaleJumps + c.flips + c.resizes];
+        // wmlay: [times the focused world's layout re-solved in the window, 0]
+        phases.wmlay = [c.solveHi >= 0 ? c.solveHi - c.solveLo : 0, 0];
+        const px = wmProbeTake();
+        if (px) Object.assign(phases, px);
       }
       c.frames = 0; c.maxJump = 0; c.jumps = 0; c.scaleJumps = 0;
+      c.solveLo = -1; c.solveHi = -1;
       c.tween = 0; c.follow = 0; c.flips = 0; c.resizes = 0;
     }
     const longFrames = this.longFrames;
