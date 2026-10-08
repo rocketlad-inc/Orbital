@@ -88,18 +88,77 @@ export function wmProbeSample(
   } catch { /* diagnostics must never disturb the game */ }
 }
 
+// ---- DOM probe -------------------------------------------------------
+// The canvas probes above read steady through a full quiver. "Lorneland
+// and the city" are also the two lines of the menu's TOP PANEL, which is
+// HTML centred over the planet by translateX(-50%) on a max-content box:
+// anything that changes its width re-centres it. Every menu frame this
+// reads where the panel's name, its city row and the map canvas sit on
+// the page, and how wide the panel is, and keeps the biggest move from
+// one frame to the next.
+interface Mv { last: number | null; max: number; n: number }
+const mv = (): Mv => ({ last: null, max: 0, n: 0 });
+const dom = {
+  nameX: mv(), nameY: mv(), cityX: mv(), cityY: mv(), topW: mv(), cv: mv(),
+  wLo: Infinity, wHi: -Infinity, text: '', textN: 0, frames: 0,
+};
+function track(m: Mv, v: number): void {
+  if (m.last !== null) {
+    const d = Math.abs(v - m.last);
+    if (d > m.max) m.max = d;
+    if (d > 0.05) m.n++;
+  }
+  m.last = v;
+}
+
+export function wmDomProbe(open: boolean, cv: HTMLCanvasElement): void {
+  if (!open) {
+    for (const m of [dom.nameX, dom.nameY, dom.cityX, dom.cityY, dom.topW, dom.cv]) m.last = null;
+    dom.text = '';
+    return;
+  }
+  try {
+    const top = document.querySelector('.wm-top') as HTMLElement | null;
+    if (!top) return;
+    dom.frames++;
+    const tr = top.getBoundingClientRect();
+    track(dom.topW, tr.width);
+    if (tr.width < dom.wLo) dom.wLo = tr.width;
+    if (tr.width > dom.wHi) dom.wHi = tr.width;
+    const nm = top.querySelector('.wm-name');
+    if (nm) { const r = nm.getBoundingClientRect(); track(dom.nameX, r.left); track(dom.nameY, r.top); }
+    const city = top.querySelector('.wm-settlement');
+    if (city) { const r = city.getBoundingClientRect(); track(dom.cityX, r.left); track(dom.cityY, r.top); }
+    const cr = cv.getBoundingClientRect();
+    track(dom.cv, cr.left + cr.top * 1000);
+    const txt = top.textContent ?? '';
+    if (dom.text && txt !== dom.text) dom.textN++;
+    dom.text = txt;
+  } catch { /* diagnostics must never disturb the game */ }
+}
+
 /** The window's results for the heartbeat, then reset. Null if no menu. */
 export function wmProbeTake(): Record<string, [number, number]> | null {
   const any = stages.mid.lastTag || stages.end.lastTag || stages.mid.maxShift || stages.end.maxShift
     || stages.mid.maxDiff || stages.end.maxDiff || maxTf;
   const r1 = (v: number) => Math.round(v * 10) / 10;
-  const out: Record<string, [number, number]> | null = any ? {
-    wmtagm: [r1(stages.mid.maxShift), stages.mid.shifts],
-    wmtage: [r1(stages.end.maxShift), stages.end.shifts],
-    wmpatm: [r1(stages.mid.maxDiff), stages.mid.diffs],
-    wmpate: [r1(stages.end.maxDiff), stages.end.diffs],
-    wmtf: [r1(maxTf), 0],
+  const r2 = (v: number) => Math.round(v * 100) / 100;
+  // (wmtag / wmpat / wmtf: the canvas read steady through every quiver;
+  // dropped so the DOM fields fit the heartbeat's 600 characters.)
+  const out: Record<string, [number, number]> | null = any || dom.frames ? {
+    // [biggest frame-to-frame move in CSS px, frames it moved]
+    wmdx: [r2(dom.nameX.max), dom.nameX.n],
+    wmdy: [r2(dom.nameY.max), dom.nameY.n],
+    wmcx: [r2(dom.cityX.max), dom.cityX.n],
+    wmcy: [r2(dom.cityY.max), dom.cityY.n],
+    wmtw: [r2(dom.topW.max), dom.topW.n],
+    wmcv: [r2(dom.cv.max), dom.cv.n],
+    // [panel width range, text changes] over [frames]
+    wmw: [dom.frames ? r1(dom.wHi - dom.wLo) : 0, dom.textN],
+    wmdf: [dom.frames, dom.frames ? Math.round(dom.wHi) : 0],
   } : null;
+  for (const m of [dom.nameX, dom.nameY, dom.cityX, dom.cityY, dom.topW, dom.cv]) { m.max = 0; m.n = 0; }
+  dom.wLo = Infinity; dom.wHi = -Infinity; dom.textN = 0; dom.frames = 0;
   for (const k of ['mid', 'end'] as const) {
     const s = stages[k];
     s.maxShift = 0; s.shifts = 0; s.maxDiff = 0; s.diffs = 0;

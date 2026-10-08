@@ -322,8 +322,7 @@ class PerfBus {
         // (wmev / wmetc / wmrsz read 0 on Lorne's machine through a full
         // quiver; dropped to leave room in the field for the pixel probe.)
         phases.wmn = [c.frames, c.tween + c.follow + c.scaleJumps + c.flips + c.resizes];
-        // wmlay: [times the focused world's layout re-solved in the window, 0]
-        phases.wmlay = [c.solveHi >= 0 ? c.solveHi - c.solveLo : 0, 0];
+        // (wmlay, layout re-solves, read 0 after the dwell; dropped for room.)
         const px = wmProbeTake();
         if (px) Object.assign(phases, px);
       }

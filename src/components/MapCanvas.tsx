@@ -6,7 +6,7 @@ import {
   takeRouteFit, fitToPoints, offerPickCluster,
 } from '../game/routePick/store';
 import { perf } from '../multiplayer/PerfHud';
-import { wmProbeFrame, wmProbeSample } from '../render/wmPixelProbe';
+import { wmProbeFrame, wmProbeSample, wmDomProbe } from '../render/wmPixelProbe';
 import { requestLabel, flushLabels, reserveBox, reserveRect, resetReservations, setKeepOutDiscs } from '../render/labelLayer';
 import { smoothedTick, shipDisplayTick } from '../render/tickPhase';
 import { useGameContext } from '../state/gameContext';
@@ -2262,6 +2262,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // Pixel probe (render/wmPixelProbe): sample the city's tag and a bit
       // of surface right after the close-up, and again at frame end.
       wmProbeFrame(performance.now(), !!fc);
+      wmDomProbe(!!fc, renderContext.canvas);
       wmProbeCircle = fc && fb
         ? { x: fc.x, y: fc.y, r: drawnRadiusOf(renderContext.presentation, fb, renderContext.camera.scale) }
         : null;
