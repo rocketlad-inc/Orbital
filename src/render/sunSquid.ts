@@ -82,6 +82,9 @@ export interface SunSquidPose {
   now: number;
   /** Colours; the sun gate's gold when absent. */
   palette?: SquidPalette;
+  /** How alive it moves, 0..1 (default 1). The Leviathan's carcass
+   *  drifts at a twentieth of a living animal's pace. */
+  motion?: number;
 }
 
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
@@ -136,7 +139,8 @@ function ribbon(g: G, pts: P[], w0: number, w1: number) {
  * are converted from world angles into that frame.
  */
 export function drawSunSquid(g: G, cx: number, cy: number, pose: SunSquidPose) {
-  const { u, ringR: rho, heading, now } = pose;
+  const { u, ringR: rho, heading } = pose;
+  const now = pose.now * (pose.motion ?? 1);
   // The palette, under the names the drawing below has always used.
   const pal = pose.palette ?? SUN_PALETTE;
   const GLOW = pal.glow, GLOW_HOT = pal.hot, EYE = pal.eye ?? pal.hot;

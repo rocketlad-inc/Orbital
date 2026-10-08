@@ -45,7 +45,7 @@ import { getShipClass } from '../game/shipClasses';
 // its own copies only because its branch predated planetTexture; the
 // duplicates are removed there and it re-exports nothing seeded.
 import { drawDeathDebris, sterilisationProgress } from './combatFx';
-import { noteKaijuDrawn, kaijuHoldsWorldWhole } from './kaijuFx';
+import { noteKaijuDrawn, kaijuHoldsWorldWhole, drawKaijuCarcass } from './kaijuFx';
 import { getStructureIconImage, getScaffoldImage } from './structureIconCache';
 import type { StructureVariant } from '../components/StructureIcons';
 import {
@@ -2776,6 +2776,10 @@ function drawLandingSite(canvasPos: { x: number; y: number }, radius: number, ct
  *  the ring. Null for everything else. */
 function sunGateArtRadius(body: Body, radius: number, t: number, scale: number): number | null {
   if (isSunGateSite(body)) return Math.max(9, Math.min(radius, 40)) * 1.9;
+  // The Leviathan's carcass draws as the whole animal (drawKaijuCarcass).
+  if (templateIdOf(body.id) === 'leviathan_carcass') {
+    return shipIconSize('kaiju', false) * transitHullScale(scale) * 0.9 * 0.55;
+  }
   if (body.type !== 'megastructure' || !templateIdOf(body.id).startsWith('sungate_')) return null;
   if (body.emerge && t < body.emerge.untilTick) {
     return sunSquidUnit(scale) * 1.3;
@@ -4248,6 +4252,13 @@ export function drawBody(
     // Destroyed outright (0141). First in the chain, ahead of lightweight
     // mode: "this is no longer a world" is information, not decoration.
     drawDebrisField(body, canvasPos, radius, ctx);
+  } else if (templateIdOf(body.id) === 'leviathan_carcass') {
+    // The Leviathan's carcass (kaijuFx.ts): the animal, dead, sized like
+    // the hull it was. In every mode: it is the salvage everyone is after.
+    const left = (body.mineralInitial ?? 0) > 0 ? (body.mineralRemaining ?? 0) / (body.mineralInitial as number) : 1;
+    drawKaijuCarcass(ctx.ctx, canvasPos.x, canvasPos.y,
+      shipIconSize('kaiju', false) * transitHullScale(ctx.camera.scale) * 0.9,
+      ctx.nowMs ?? 0, left, hashStr(body.id));
   } else if (body.type === 'megastructure' && body.emerge && ctx.t < body.emerge.untilTick) {
     // A sun gate in flight, in every mode like the ships it moves like:
     // where the thing everyone is racing for IS is information.
