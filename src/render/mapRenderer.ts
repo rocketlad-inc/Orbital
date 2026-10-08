@@ -45,6 +45,7 @@ import { getShipClass } from '../game/shipClasses';
 // its own copies only because its branch predated planetTexture; the
 // duplicates are removed there and it re-exports nothing seeded.
 import { drawDeathDebris, sterilisationProgress } from './combatFx';
+import { noteKaijuDrawn, kaijuHoldsWorldWhole } from './kaijuFx';
 import { getStructureIconImage, getScaffoldImage } from './structureIconCache';
 import type { StructureVariant } from '../components/StructureIcons';
 import {
@@ -4242,7 +4243,8 @@ export function drawBody(
   if (isSunGateSite(body)) {
     // A landing site is a marker, in every mode (drawLandingSite).
     drawLandingSite(canvasPos, radius, ctx);
-  } else if (body.obliteratedAtTick != null) {
+  } else if (body.obliteratedAtTick != null && !kaijuHoldsWorldWhole(body.id, ctx.nowMs ?? 0)) {
+    // (Still whole while the Leviathan is crushing it: kaijuFx.ts.)
     // Destroyed outright (0141). First in the chain, ahead of lightweight
     // mode: "this is no longer a world" is information, not decoration.
     drawDebrisField(body, canvasPos, radius, ctx);
@@ -5105,6 +5107,9 @@ function drawKaijuHull(
   heading: number, iconSize: number, thrust: number,
 ) {
   const now = ctx.nowMs ?? performance.now();
+  // Where it is, for its strike and death set pieces (kaijuFx.ts).
+  const w = canvasToWorld(pos.x, pos.y, ctx);
+  noteKaijuDrawn(ship.id, w.x, w.y, heading, iconSize);
   drawSunSquid(ctx.ctx, pos.x, pos.y, {
     u: iconSize / 6, ringR: 0, heading, morph: 0, thrust, now, palette: LEVIATHAN_PALETTE,
   });

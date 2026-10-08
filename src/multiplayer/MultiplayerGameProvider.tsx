@@ -2656,12 +2656,19 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
   try {
     ingestChronicleFx(
       srv.game.id,
-      orderedEvents.map(ev => ({
-        id: ev.id,
-        kind: ev.kind,
-        bodyId: stripGameId(ev.body_id) ?? undefined,
-        shipId: stripGameId(ev.ship_id) ?? undefined,
-      })),
+      orderedEvents.map(ev => {
+        let cause: string | undefined;
+        if (ev.kind === 'terraform_destroyed' || ev.kind === 'world_obliterated') {
+          try { cause = JSON.parse(ev.payload || '{}')?.cause ?? undefined; } catch { cause = undefined; }
+        }
+        return {
+          id: ev.id,
+          kind: ev.kind,
+          bodyId: stripGameId(ev.body_id) ?? undefined,
+          shipId: stripGameId(ev.ship_id) ?? undefined,
+          cause,
+        };
+      }),
     );
   } catch { /* cosmetics must never break state deserialization */ }
 

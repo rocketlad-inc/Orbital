@@ -29,7 +29,9 @@
 /** Chronicle kinds worth a visual, mapped to how they should play. */
 export type PendingFxKind =
   | 'destruction' | 'detonation' | 'impact' | 'discovery' | 'damage'
-  | 'sterilise' | 'built' | 'gateflash';
+  | 'sterilise' | 'built' | 'gateflash'
+  // The Leviathan (kaijuFx.ts): its two strikes and its death.
+  | 'kaiju_scorch' | 'kaiju_break' | 'kaiju_death';
 
 const KIND_MAP: Record<string, PendingFxKind> = {
   ship_destroyed: 'destruction',
@@ -61,6 +63,13 @@ const KIND_MAP: Record<string, PendingFxKind> = {
   // flourish — a completion is a celebration, a gate is a spin-up.
   megastructure_complete: 'built',
   gate_transit: 'gateflash',
+  kaiju_dead: 'kaiju_death',
+};
+
+/** The same chronicle kinds, when the Leviathan did it (payload cause). */
+const KAIJU_KIND_MAP: Record<string, PendingFxKind> = {
+  terraform_destroyed: 'kaiju_scorch',
+  world_obliterated: 'kaiju_break',
 };
 
 export interface PendingFx {
@@ -126,6 +135,8 @@ export interface ChronicleFxSource {
   kind: string;
   bodyId?: string;
   shipId?: string;
+  /** payload.cause, where the row has one ('kaiju', 'mega_destroyer'). */
+  cause?: string;
 }
 
 /**
@@ -141,7 +152,10 @@ export function ingestChronicleFx(gameId: string, entries: ChronicleFxSource[]):
   loadPlayed(gameId);
   const nowMs = performance.now();
   for (const e of entries) {
-    const kind = KIND_MAP[e.kind];
+    // The Leviathan's death is its own set piece (kaiju_dead), never a
+    // generic boom and wreck on top of it.
+    if (e.kind === 'ship_destroyed' && e.shipId && /(^|:)leviathan$/.test(e.shipId)) continue;
+    const kind = (e.cause === 'kaiju' ? KAIJU_KIND_MAP[e.kind] : undefined) ?? KIND_MAP[e.kind];
     if (!kind) continue;
     if (!e.bodyId && !e.shipId) continue; // nowhere to draw it
     if (played.has(e.id)) continue;

@@ -1775,18 +1775,20 @@ interface Sterilisation {
   entryId: string;
   bodyId: string;
   startMs: number;
+  /** False for the Leviathan (kaijuFx.ts draws its arms instead). */
+  beam: boolean;
 }
 
 const sterilisations: Sterilisation[] = [];
 const seenSteriliseIds = new Set<string>();
 
 /** Queue the death of a world. Idempotent on the chronicle entry id. */
-export function spawnSterilisation(entryId: string, bodyId: string): void {
+export function spawnSterilisation(entryId: string, bodyId: string, opts: { beam?: boolean } = {}): void {
   if (seenSteriliseIds.has(entryId)) return;
   if (seenSteriliseIds.size > 2000) seenSteriliseIds.clear();
   seenSteriliseIds.add(entryId);
   if (sterilisations.length >= STERILISE_CAP) sterilisations.shift();
-  sterilisations.push({ entryId, bodyId, startMs: performance.now() });
+  sterilisations.push({ entryId, bodyId, startMs: performance.now(), beam: opts.beam !== false });
 }
 
 /** Keeps the render loop alive while a world is dying. */
@@ -1844,7 +1846,7 @@ export function drawSterilisations(rc: RenderContext, nowMs: number): void {
     c.save();
     c.globalCompositeOperation = 'lighter';
 
-    if (k < STERILISE_FIRE_END) {
+    if (k < STERILISE_FIRE_END && x.beam) {
       const bk = Math.min(1, k / STERILISE_BEAM_END);
       const hold = k < STERILISE_BEAM_END ? Math.min(1, k / 0.03)
         : 1 - (k - STERILISE_BEAM_END) / (STERILISE_FIRE_END - STERILISE_BEAM_END);
