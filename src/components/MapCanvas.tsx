@@ -6,7 +6,6 @@ import {
   takeRouteFit, fitToPoints, offerPickCluster,
 } from '../game/routePick/store';
 import { perf } from '../multiplayer/PerfHud';
-import { wmProbeFrame, wmProbeSample, wmDomProbe } from '../render/wmPixelProbe';
 import { requestLabel, flushLabels, reserveBox, reserveRect, resetReservations, setKeepOutDiscs } from '../render/labelLayer';
 import { smoothedTick, shipDisplayTick } from '../render/tickPhase';
 import { useGameContext } from '../state/gameContext';
@@ -103,7 +102,7 @@ import { torchPositionFromSamples } from '../physics/torchTransfer';
 import type { InterceptMarker } from '../render/mapRenderer';
 import { shipIconSize, rendererCanvasMb, drawStructureReach, parkedOrbitMap } from '../render/mapRenderer';
 import {
-  liveBattleFor, escortBlockSpacing, battleSolves, type BattleUnit, type LiveBattle,
+  liveBattleFor, escortBlockSpacing, type BattleUnit, type LiveBattle,
 } from '../render/battleLayoutLive';
 import {
   computePresentation, drawnRadiusOf, hullReveal, hullSize, isBarycenter,
@@ -2243,30 +2242,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // (zoom out of it and the camera stays focused), and the close-up kept
     // painting a faint skyline and the capital's name tag over the
     // overworld globe and its fleet at scale ~2-3 (zoom audit, 2026-09-26).
-    let wmProbeCircle: { x: number; y: number; r: number } | null = null;
     const wmOpen = isWorldMenuActive() && !!camera.focusedBodyId
       && getWorldMenuOpenBodyId() === camera.focusedBodyId;
     if (wmOpen) {
       drawWorldMenuCloseup(renderContext, gameState.settlements, 'player');
-    }
-    {
-      // World-menu camera probe (PerfHud.recordCam): the focused world's
-      // on-screen centre this frame, as the close-up places the city.
-      const fb = wmOpen ? bodyById2.get(camera.focusedBodyId!) : undefined;
-      const fp = fb ? bodyPosition(fb, renderContext.t, gameState.bodies) : null;
-      const fc = fp ? worldToCanvas(fp.x, fp.y, renderContext) : null;
-      perf.recordCam(!!fc, fc?.x ?? 0, fc?.y ?? 0, renderContext.camera.scale,
-        !!camTweenRef.current, !!wheelFollowRef.current,
-        renderContext.canvas.width, renderContext.canvas.height,
-        fb ? battleSolves(fb.id) : 0);
-      // Pixel probe (render/wmPixelProbe): sample the city's tag and a bit
-      // of surface right after the close-up, and again at frame end.
-      wmProbeFrame(performance.now(), !!fc);
-      wmDomProbe(!!fc, renderContext.canvas);
-      wmProbeCircle = fc && fb
-        ? { x: fc.x, y: fc.y, r: drawnRadiusOf(renderContext.presentation, fb, renderContext.camera.scale) }
-        : null;
-      if (wmProbeCircle) wmProbeSample('mid', renderContext.canvas, renderContext.ctx, wmProbeCircle);
     }
 
     // Build a co-orbit formation map: ships sharing the same parent body
@@ -3938,7 +3917,6 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     drawHUD(renderContext, uiState.targetSelectionMode);
 
     perf.phase('fog_paint');
-    if (wmProbeCircle) wmProbeSample('end', renderContext.canvas, renderContext.ctx, wmProbeCircle);
     perf.phaseCommit();
     // Camera tween in flight → self-drive one more frame. The normal
     // render cadence is state-change-driven; a paused sim would freeze
