@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useCallback, useState, useMemo } from 'react';
+import { spawnKaijuStrike, spawnKaijuDeath, drawKaijuFx, isKaijuShipId } from '../render/kaijuFx';
 import { refitStatus } from '../game/refitStatus';
 import { routeForShip } from '../game/routeSelectors';
 import {
@@ -1330,6 +1331,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // just left the player's (moving) sensor coverage — a fog-out,
           // not a death. The server chronicles actual kills; require one.
           if (!diedByChronicle(id, nowMs)) continue;
+          // The Leviathan dies its own death (kaijuFx), right here and
+          // now if you are watching it; no generic boom, no wreck.
+          if (pos.cls === 'kaiju' || isKaijuShipId(id)) {
+            spawnKaijuDeath(`live:${id}`, '');
+            listDiffFlashedShipsRef.current.add(id);
+            continue;
+          }
           // Prefer the position the renderer actually DREW the hull at
           // last frame — battle-line arcs and lane offsets place ships
           // far from their textbook orbital point, and a wreck on the
@@ -3574,6 +3582,24 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           if (fx.bodyId) spawnDiscoveryBloom(fx.id, fx.bodyId, 'stargate');
           return;
         }
+        // THE LEVIATHAN (kaijuFx.ts). Its first strike burns the surface
+        // with the Mega Destroyer's own fire and ash, minus the gun beam:
+        // its arms are the weapon, drawn by kaijuFx.
+        if (fx.kind === 'kaiju_scorch') {
+          if (fx.bodyId) {
+            spawnSterilisation(fx.id, fx.bodyId, { beam: false });
+            spawnKaijuStrike(fx.id, fx.bodyId, 'scorch');
+          }
+          return;
+        }
+        if (fx.kind === 'kaiju_break') {
+          if (fx.bodyId) spawnKaijuStrike(fx.id, fx.bodyId, 'break');
+          return;
+        }
+        if (fx.kind === 'kaiju_death') {
+          if (fx.bodyId) spawnKaijuDeath(fx.id, fx.bodyId);
+          return;
+        }
         if (fx.kind === 'sterilise') {
           // The body is the anchor: the beam, the fire and the ash all
           // key off where the planet is drawn this frame, so it rides
@@ -3747,6 +3773,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // After the blooms so the fire sits over the body and its
       // dressing rather than under them.
       drawSterilisations(renderContext, nowMs);
+      drawKaijuFx(renderContext, nowMs);
       // Above the hulls: the tether is an explanation, and an
       // explanation drawn under the thing it explains is decoration.
       drawSinkTethers(
