@@ -2169,16 +2169,20 @@ const tradeRoutesP = env.DB
     const k = await env.DB.prepare(
       `SELECT ship_id, faction_id, sys_key, launched_at_tick, arrive_tick, hp_max,
               appetite, eaten, eaten_json, phase, target_body_id, died_at_tick,
-              died_at_body_id, carcass_body_id, gone_at_tick
+              died_at_body_id, carcass_body_id, gone_at_tick, revealed_at_tick
          FROM game_kaiju WHERE game_id = ?`,
     ).bind(gameId).first();
     if (k) {
       let eaten = [];
       try { eaten = JSON.parse(k.eaten_json || '[]'); } catch { eaten = []; }
+      // Until it attacks it is an unknown object: no size, no appetite.
+      const known = k.revealed_at_tick != null;
       kaiju = {
         ship_id: k.ship_id, faction_id: k.faction_id, system_key: k.sys_key,
-        launched_at_tick: k.launched_at_tick, arrive_tick: k.arrive_tick, hp_max: k.hp_max,
-        appetite: k.appetite, eaten: Array.isArray(eaten) ? eaten : [], phase: k.phase,
+        launched_at_tick: k.launched_at_tick, arrive_tick: k.arrive_tick,
+        hp_max: known ? k.hp_max : null,
+        appetite: known ? k.appetite : null,
+        revealed_at_tick: k.revealed_at_tick ?? null, eaten: Array.isArray(eaten) ? eaten : [], phase: k.phase,
         target_body_id: k.target_body_id, died_at_tick: k.died_at_tick,
         died_at_body_id: k.died_at_body_id, carcass_body_id: k.carcass_body_id,
         gone_at_tick: k.gone_at_tick,

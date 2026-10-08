@@ -1476,6 +1476,8 @@ export interface KaijuState {
   appetite: number;
   /** Names of the worlds it has broken, in order. */
   eaten: string[];
+  /** Null until its first attack; until then it is an unknown object. */
+  revealedAtTick: number | null;
   phase: KaijuPhase;
   targetBodyId: string | null;
   diedAtTick: number | null;

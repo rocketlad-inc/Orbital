@@ -151,11 +151,15 @@ const kinds = async (DB, G) => (await DB.prepare(
   const log = [];
   let prev = null;
   const targets = [];
-  let launchedAt = null;
+  let launchedAt = null, nameAtLaunch = null, factionAtLaunch = null;
   for (let t = 1; t <= 400; t++) {
     await run(t);
     const k = await kRow(DB, G);
-    if (k && launchedAt == null) launchedAt = t;
+    if (k && launchedAt == null) {
+      launchedAt = t;
+      nameAtLaunch = (await kShip(DB, G))?.name;
+      factionAtLaunch = (await DB.prepare('SELECT name FROM game_factions WHERE id = ?').bind(kaijuFactionId(G)).first())?.name;
+    }
     if (k && (k.phase !== prev?.phase || k.target_body_id !== prev?.target_body_id)) {
       log.push(`T${t} ${k.phase} -> ${k.target_body_id ?? '-'} (eaten ${k.eaten})`);
       if (k.target_body_id && !targets.includes(k.target_body_id)) targets.push(k.target_body_id);
@@ -190,6 +194,21 @@ const kinds = async (DB, G) => (await DB.prepare(
     const gate = await DB.prepare('SELECT * FROM game_bodies WHERE id = ?').bind(solGateId(G, kSys)).first();
     check('the gate itself does not exist until it is dropped',
       gate?.emerge_from_tick === k.arrive_tick && gate?.emerge_until_tick === k.arrive_tick, JSON.stringify(gate));
+  }
+  {
+    // A mystery until it attacks (Lorne, 2026-10-08).
+    const rev = rows.find(r => r.kind === 'kaiju_revealed');
+    const firstCharge = rows.find(r => r.kind === 'kaiju_charging');
+    check('it launches nameless: an unknown contact owned by "Unknown"',
+      nameAtLaunch === 'Unknown contact' && factionAtLaunch === 'Unknown', `${nameAtLaunch} / ${factionAtLaunch}`);
+    check('it is revealed at its first wind-up, not before',
+      !!rev && !!firstCharge && rev.tick_number === firstCharge.tick_number && k.revealed_at_tick === rev.tick_number,
+      `${rev?.tick_number} vs ${firstCharge?.tick_number}`);
+    check('...and from then on it is the Leviathan, by name', ship.name === 'Leviathan' && fac.name === 'The Leviathan',
+      `${ship.name} / ${fac.name}`);
+    const early = rows.filter(r => r.tick_number < rev.tick_number || (r.kind !== 'kaiju_revealed' && r.tick_number === rev.tick_number && r.kind !== 'kaiju_charging'));
+    check('nothing written before the reveal names it',
+      early.every(r => !/leviathan/i.test(r.payload || '')), early.filter(r => /leviathan/i.test(r.payload || '')).map(r => r.kind).join(', '));
   }
   check('on landing the hunt begins and the gate opens', has('kaiju_hunting', p => p.first === true)
     && has('sun_gate_opened', p => p.kaiju === true));
@@ -277,6 +296,13 @@ const kinds = async (DB, G) => (await DB.prepare(
   check('the Herald leads with the whole hunt, a paragraph a moment',
     lead.length >= 8 && lead.filter(p => /Leviathan|creature|beast|monster|gate/i.test(p)).length >= 5,
     `${lead.length} paragraphs\n${text.slice(0, 600)}`);
+  {
+    const paras = h.description.split('\n\n').slice(1);
+    const at = paras.findIndex(p => /Leviathan/.test(p));
+    check('the Herald keeps the mystery until the reveal paragraph',
+      at > 2 && paras.slice(0, at).every(p => !/Leviathan|creature|monster|alive/i.test(p)),
+      paras.slice(0, Math.max(at, 0) + 1).join('\n---\n').slice(0, 900));
+  }
   check('...and the Leviathan holds no row in the standings',
     !h.fields.some(f => /Where things stand/.test(f.name) && /Leviathan/.test(f.value)),
     h.fields.find(f => /Where things stand/.test(f.name))?.value);

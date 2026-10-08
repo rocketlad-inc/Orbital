@@ -3,6 +3,7 @@
 // passed in by the caller for the same reason.
 import type { ShipPartId } from './shipParts';
 import { tk } from '../i18n/core';
+import { kaijuRevealed } from './kaijuReveal';
 // ============================================================
 // Ship Class Definitions — Expanse-inspired fleet roster
 // ============================================================
@@ -231,7 +232,10 @@ const MOBILE_FOUNDRY: ShipClassDef = {
 
 const KAIJU: ShipClassDef = {
   className: 'kaiju',
-  get displayName() { return tk('data.ship.kaiju.name', 'Leviathan'); },
+  // Nameless until it attacks (kaijuReveal.ts).
+  get displayName() {
+    return kaijuRevealed() ? tk('data.ship.kaiju.name', 'Leviathan') : tk('data.ship.kaiju.unknown', 'Unknown contact');
+  },
   icon: '🦑',
   get description() { return tk('data.ship.kaiju.desc', 'A living thing the size of a moon. It eats worlds, '
     + 'makes no peace, and every empire is at war with it.'); },
