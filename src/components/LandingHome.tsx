@@ -87,7 +87,7 @@ export const FAQ: Array<[string, string]> = [
   ['What happens while I’m offline?',
     'Your empire keeps going. Turns resolve on schedule, freighters keep running their routes and armed stations defend themselves. Nobody plays your empire for you, so set your orders before you log off.'],
   ['How many players are in a game?',
-    'Two to eight. Quick Join drops you into the fullest open game, or you can browse the lobby or invite friends to a private game. You can even join a game that has already started, as long as a home world is still free.'],
+    'Two to ten. Quick Join drops you into the fullest open game, or you can browse the lobby or invite friends to a private game. You can even join a game that has already started, as long as a home world is still free.'],
   ['Is Orbital like Neptune’s Pride?',
     'If you have played Neptune’s Pride, the rhythm will feel familiar: a shared map, turns that run on a real clock, and alliances that matter. Orbital sets it in the real solar system and adds orbital flight, ship design, a Senate that writes the rules, and three different ways to win.'],
 ];
