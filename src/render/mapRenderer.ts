@@ -8222,7 +8222,9 @@ export function drawFogOfWarOverlay(
   rings: Array<{ pos: { x: number; y: number }; range: number }>,
   ctx: RenderContext,
   strength: number = 1,
-  edge?: { wash: number },
+  /** `cuts`: rival Null Fields (visibility.nullFieldCuts). Inside one,
+   *  coverage is dimmed again except where a `pierce` sensor reaches. */
+  edge?: { wash: number; cuts?: Array<{ pos: { x: number; y: number }; range: number; pierce: Array<{ pos: { x: number; y: number }; range: number }> }> },
 ) {
   if (strength <= 0) return;
   const w = ctx.canvas.width;
@@ -8246,7 +8248,8 @@ export function drawFogOfWarOverlay(
     const cp = worldToCanvas(r.pos.x, r.pos.y, ctx);
     return { x: cp.x, y: cp.y, r: r.range * ctx.camera.scale };
   }), w, h);
-  if (coversAll) return;
+  const cuts = edge?.cuts ?? [];
+  if (coversAll && !cuts.length) return;
 
   if (edge) {
     // DIRECT, NOT COMPOSITED. Since the fog stopped switching off at full
@@ -8270,8 +8273,47 @@ export function drawFogOfWarOverlay(
       c.closePath();
     }
     c.fillStyle = `rgba(8, 12, 18, ${dimE.toFixed(3)})`;
-    c.fill('evenodd');
+    if (!coversAll) c.fill('evenodd');
     c.restore();
+    // RIVAL NULL FIELDS. Seen ground inside one is dimmed back to fog,
+    // except what a ship parked in the field's own system reaches: the
+    // same rule the server uses to withhold what is in there.
+    for (const cut of cuts) {
+      const cp = worldToCanvas(cut.pos.x, cut.pos.y, ctx);
+      const cr = cut.range * ctx.camera.scale;
+      if (!(cr > 0) || cp.x + cr < 0 || cp.y + cr < 0 || cp.x - cr > w || cp.y - cr > h) continue;
+      const pierce = visibleFogHoles(cut.pierce.map(r => {
+        const pp = worldToCanvas(r.pos.x, r.pos.y, ctx);
+        return { x: pp.x, y: pp.y, r: r.range * ctx.camera.scale };
+      }), w, h);
+      if (pierce.coversAll) continue;
+      c.save();
+      c.beginPath();
+      c.arc(cp.x, cp.y, cr, 0, Math.PI * 2);
+      c.clip();
+      if (!coversAll) {
+        // Only where you could otherwise see: the fog outside is dim already.
+        c.beginPath();
+        for (const loop of sensorEdgeLoops(arcs)) {
+          const f = loop[0];
+          c.moveTo(f.x + Math.cos(f.a0) * f.r, f.y + Math.sin(f.a0) * f.r);
+          for (const a of loop) c.arc(a.x, a.y, a.r, a.a0, a.a1);
+          c.closePath();
+        }
+        c.clip('evenodd');
+      }
+      c.beginPath();
+      c.rect(0, 0, w, h);
+      for (const loop of sensorEdgeLoops(sensorEdgeArcs(pierce.holes))) {
+        const f = loop[0];
+        c.moveTo(f.x + Math.cos(f.a0) * f.r, f.y + Math.sin(f.a0) * f.r);
+        for (const a of loop) c.arc(a.x, a.y, a.r, a.a0, a.a1);
+        c.closePath();
+      }
+      c.fillStyle = `rgba(8, 12, 18, ${dimE.toFixed(3)})`;
+      c.fill('evenodd');
+      c.restore();
+    }
     // The outline fades out in the galaxy view: Sol's coverage there is a
     // lumpy blob round a 20px system, and the ring is the read.
     const lineAlpha = 1 - (ctx.galaxyAlpha ?? 0);
