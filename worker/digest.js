@@ -45,7 +45,7 @@ import {
   TRADE_SHIPMENT_LOST, TRADE_SHIPMENT_LOST_HEADLINE,
   MINE_EXHAUSTED, MINE_EXHAUSTED_HEADLINE,
   KAIJU_OMEN, KAIJU_OMEN_HEADLINE, KAIJU_LAUNCHED, KAIJU_LAUNCHED_HEADLINE,
-  KAIJU_ARRIVED, KAIJU_HUNTING, KAIJU_HUNTING_HEADLINE,
+  KAIJU_ARRIVED, KAIJU_ARRIVED_OPEN, KAIJU_HUNTING, KAIJU_HUNTING_HEADLINE,
   KAIJU_CHARGING, KAIJU_CHARGING_HEADLINE, KAIJU_STRIPPED, KAIJU_STRIPPED_HEADLINE,
   KAIJU_BROKEN, KAIJU_BROKEN_HEADLINE, KAIJU_LEAVING, KAIJU_LEAVING_HEADLINE,
   KAIJU_GONE, KAIJU_GONE_HEADLINE, KAIJU_DEAD, KAIJU_DEAD_HEADLINE,
@@ -9006,19 +9006,26 @@ function buildFrontierStories(rows, used, locator, factionNames) {
       continue;
     }
     if (row.kind === 'kaiju_launched') {
-      kaijuStory(row, 1, mkStory(960, used, 'kaiju_launched', KAIJU_LAUNCHED, 'kaiju_launched_hl', KAIJU_LAUNCHED_HEADLINE, {
+      const ctx = {
         system: p.system ?? 'a far star', near: p.near ?? null,
         arrive: Math.round(Number(p.arrive_tick) || 0),
         hp: Number(p.hp || 0).toLocaleString('en-US'), appetite: Number(p.appetite) || 3,
-      }));
+      };
+      // Launched into a game whose gates are already open (launchKaijuNow):
+      // it carries nothing, so no sentence that says it does.
+      const bank = p.carried === false ? KAIJU_LAUNCHED.filter(f => !/gate/i.test(f(ctx))) : KAIJU_LAUNCHED;
+      kaijuStory(row, 1, mkStory(960, used, p.carried === false ? 'kaiju_launched_open' : 'kaiju_launched',
+        bank, 'kaiju_launched_hl', KAIJU_LAUNCHED_HEADLINE.filter(f => p.carried !== false || !/gate/i.test(f(ctx))), ctx));
       continue;
     }
     if (row.kind === 'kaiju_hunting') {
       const world = p.world ?? 'a world';
       kaijuStory(row, 2, p.first
-        ? mkStory(970, used, 'kaiju_arrived', KAIJU_ARRIVED, 'kaiju_hunting_hl', KAIJU_HUNTING_HEADLINE, {
-          world, gate: p.gate ?? 'gate', system: p.system ?? 'beyond the Sun',
-        })
+        ? mkStory(970, used, p.carried === false ? 'kaiju_arrived_open' : 'kaiju_arrived',
+          p.carried === false ? KAIJU_ARRIVED_OPEN : KAIJU_ARRIVED,
+          'kaiju_hunting_hl', KAIJU_HUNTING_HEADLINE.filter(f => p.carried !== false || !/gate/i.test(f({ world }))), {
+            world, gate: p.gate ?? 'gate', system: p.system ?? 'beyond the Sun',
+          })
         : mkStory(930, used, 'kaiju_hunting', KAIJU_HUNTING, 'kaiju_hunting_hl', KAIJU_HUNTING_HEADLINE, { world }));
       continue;
     }

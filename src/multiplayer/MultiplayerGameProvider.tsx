@@ -2096,7 +2096,9 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       if (ev.kind === 'kaiju_hunting') {
         const world = (parsed.world as string) ?? 'a world';
         return parsed.first
-          ? `${t}  🦑 THE LEVIATHAN HAS ARRIVED — it dropped the ${(parsed.gate as string) ?? 'gate'} where it stopped, `
+          ? `${t}  🦑 THE LEVIATHAN HAS ARRIVED — ${parsed.carried === false
+            ? `it came to rest beside the ${(parsed.gate as string) ?? 'gate'}`
+            : `it dropped the ${(parsed.gate as string) ?? 'gate'} where it stopped`}, `
             + `and is going for ${world} (there at T+${Number(parsed.arrive_tick)})`
           : `${t}  🦑 The Leviathan is coming for ${world} — there at T+${Number(parsed.arrive_tick)}`;
       }

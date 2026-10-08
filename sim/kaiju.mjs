@@ -116,7 +116,7 @@ async function seed(G, extra) {
     await DB.prepare('UPDATE games SET current_tick = ? WHERE id = ?').bind(t, G).run();
     await room.resolveTick(G, t);
   };
-  return { env, DB, fA, fB, settle, run };
+  return { env, DB, fA, fB, settle, run, room };
 }
 
 const kRow = (DB, G) => DB.prepare('SELECT * FROM game_kaiju WHERE game_id = ?').bind(G).first();
@@ -301,6 +301,49 @@ const kinds = async (DB, G) => (await DB.prepare(
     rows.map(r => `T${r.tick_number} ${r.kind}`).join(', '));
   const k = await kRow(DB, G);
   check('...counted as ONE world eaten, then it leaves', k.eaten === 1 && k.phase === 'gone', `${k.eaten} ${k.phase}`);
+}
+
+// ---- D. Launched into a game whose gates are already open ---------------
+{
+  const G = 'gkaijunow';
+  const { DB, fA, settle, run, room } = await seed(G, { kaiju: 0, kaiju_appetite: 1 });
+  await settle('titania', fA.id);
+  let t = 1;
+  for (; t <= 120; t++) await run(t);
+  const open = (await DB.prepare(`SELECT COUNT(*) n FROM game_megastructures WHERE game_id = ? AND transit_fraction IS NOT NULL`).bind(G).first()).n;
+  check('with the dial off, both gates come out of the Sun as before', open === 4 && !(await kRow(DB, G)), String(open));
+  // The host tool: turn it on and launch it now.
+  const cfgRow = await DB.prepare('SELECT overrides FROM game_configs WHERE id = ?').bind(`cfg_${G}`).first();
+  await DB.prepare('UPDATE game_configs SET overrides = ? WHERE id = ?')
+    .bind(JSON.stringify({ ...JSON.parse(cfgRow.overrides), kaiju: 1 }), `cfg_${G}`).run();
+  invalidate(G);
+  const { launchKaijuNow } = await import('../worker/kaiju.js');
+  const { cfg } = await import('../worker/gameConfig.js');
+  const conf = await cfg({ DB }, G);
+  await DB.prepare('UPDATE games SET current_tick = ? WHERE id = ?').bind(t, G).run();
+  const made = await launchKaijuNow({ DB }, G, t, conf, {
+    planLeg: (shipId, factionId, fromId, toId, arrive) => room.planLegForShip(G, t, shipId, factionId, fromId, toId, arrive),
+  });
+  check('launchKaijuNow sends it at an open gate', !!made?.hp && !!made.gate, JSON.stringify(made));
+  const again = await launchKaijuNow({ DB }, G, t, conf, { planLeg: async () => {} });
+  check('...and only once a game', again?.error === 'already_had_one', JSON.stringify(again));
+  const k0 = await kRow(DB, G);
+  for (t += 1; t <= k0.arrive_tick + 120; t++) {
+    await run(t);
+    if ((await kRow(DB, G))?.phase === 'gone') break;
+  }
+  const rows = await kinds(DB, G);
+  const launch = rows.find(r => r.kind === 'kaiju_launched');
+  const arrived = rows.find(r => r.kind === 'kaiju_hunting' && JSON.parse(r.payload).first);
+  check('it says it brought no gate, and that it came to one',
+    JSON.parse(launch?.payload || '{}').carried === false && JSON.parse(arrived?.payload || '{}').carried === false,
+    `${launch?.payload} / ${arrived?.payload}`);
+  const k = await kRow(DB, G);
+  check('...then hunts and leaves like any other', k.eaten === 1 && k.phase === 'gone', `${k.eaten} ${k.phase}`);
+  const { composeHeraldForTickRange } = await import('../worker/digest.js');
+  const h = await composeHeraldForTickRange({ DB }, { id: G, name: 'Now' }, t - 400, t);
+  const lead = h.description.split('\n\n').slice(1).join('\n');
+  check('the Herald never claims it carried a gate in', !/(carries|carrying|dropped|left|set|shed|let go of|unfolded)[^.]*gate/i.test(lead), lead);
 }
 
 if (bad) { console.log(`\n${bad} FAILED`); process.exit(1); }
