@@ -208,6 +208,14 @@ export function pickBearing(rand, r, avoid, toward = null, minSep = 0) {
 
 const norm = (a) => ((a % TWO_PI) + TWO_PI) % TWO_PI;
 
+/** The far gate's bearing from its barycenter: somewhere in the quadrant
+ *  facing Sol. Exported for scripts/face-far-gates.mjs, which moves the
+ *  far ends already placed before this rule. */
+export function farGateBearing(rand, farR, solAt, baryAt) {
+  const towardSol = Math.atan2(solAt.y - baryAt.y, solAt.x - baryAt.x);
+  return pickBearing(rand, farR, [], towardSol);
+}
+
 /** angle0 that puts a circular orbit of `period` at `angle` on `tick`. */
 export function angle0For(angle, period, tick) {
   const p = Number(period) || 0;
@@ -311,7 +319,12 @@ export async function spawnSunGatePair(env, gameId, sys, emergeTick, conf, other
   const outermost = Math.max(100, ...farWorlds.map(b => Number(b.orbit_ra ?? b.orbit_radius) || 0));
   const farR = outermost * FAR_GATE_RADIUS_MUL;
   const farPeriod = periodForRadius(bary, farR, orbitPeers);
-  const farBearing = rand() * TWO_PI;
+  // THE QUADRANT FACING SOL (Lorne, 2026-10-08): the far end opens on the
+  // side of its system that looks back home, 45 degrees either side of
+  // the line to the Sun, as the near end faces its system. Pinned to the
+  // arrival like the near end (angle0For): its year is tens of thousands
+  // of ticks, so it stays on that side for the life of a game.
+  const farBearing = angle0For(farGateBearing(rand, farR, solAt, baryAt), farPeriod, arrival);
 
   const bodyScale = Number(conf?.body_scale) > 0 ? Number(conf.body_scale) : 1;
   const gateR = (MEGASTRUCTURES.warp_gate?.radius ?? 1.9) * bodyScale * SUN_GATE_SIZE_MUL;
