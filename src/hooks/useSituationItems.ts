@@ -2467,15 +2467,18 @@ export function useSituationItems(
         const target = kj.targetBodyId ? bodies.find(b => b.id === kj.targetBodyId) : undefined;
         const mineTarget = !!target && target.ownedBy === factionId;
         const ate = kj.eaten.length;
+        const known = kj.revealedAtTick != null;
+        const sys = kj.systemKey === 'cygnus' ? 'Cygnus X-1' : kj.systemKey === 'centauri' ? 'Centauri' : 'a far star';
         if (kj.phase === 'inbound') {
           const left = Math.max(0, kj.arriveTick - tick);
+          // Nameless until it attacks (worker/kaiju.js reveal).
           push({
             id: 'kaiju:inbound',
             category: 'threat',
             ...(beast ? { entity: `ship:${beast.id}` } : {}),
-            title: 'A Leviathan is coming',
-            subtitle: `It lands in the Far Reach at T+${kj.arriveTick} (${left} tick${left === 1 ? '' : 's'}), ${hp}. `
-              + 'It eats worlds from the outer system inward, never a homeworld. Its landing site is marked',
+            title: `Something is coming from ${sys}`,
+            subtitle: `It stops in the Far Reach at T+${kj.arriveTick} (${left} tick${left === 1 ? '' : 's'}). `
+              + 'Nobody knows what it is, and it does not answer hails. Its landing site is marked',
             // The beast itself: what everyone wants to look at, wherever
             // it is. Its landing place when the hull is not in view yet.
             focus: beast
@@ -2483,6 +2486,19 @@ export function useSituationItems(
               : { kind: 'body', bodyId: kj.targetBodyId ?? `sungate_${kj.systemKey}_site` },
             severity: 'warn',
             sortKey: left,
+          });
+        } else if (kj.phase === 'hunting' && beast && !known) {
+          // Landed, still a mystery: it has not attacked anything yet.
+          const where = target?.name ?? 'somewhere further in';
+          push({
+            id: 'kaiju:object',
+            category: 'threat',
+            entity: `ship:${beast.id}`,
+            title: `The object is moving toward ${mineTarget ? 'your world ' : ''}${where}`,
+            subtitle: 'It opened a gate where it landed, and it has not stopped since. Nobody knows what it wants',
+            focus: { kind: 'ship', shipId: beast.id },
+            severity: mineTarget ? 'danger' : 'warn',
+            sortKey: 0,
           });
         } else if (kj.phase === 'hunting' && beast) {
           const charging = beast.strikeReadyTick != null;

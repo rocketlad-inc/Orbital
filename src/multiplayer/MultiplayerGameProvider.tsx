@@ -26,6 +26,7 @@ import {
 } from '../types';
 import type { Wreck } from '../types';
 import type { KaijuPhase } from '../types';
+import { setKaijuRevealed } from '../game/kaijuReveal';
 import { parseTargetPriority } from './targetPriority';
 import { sanitizeParts, engineAccelMultiplier, setServerHullBase } from '../game/shipParts';
 import { traitMul as captainTraitMul } from '../game/captains';
@@ -107,6 +108,8 @@ interface ServerState {
       target_body_id: string | null; died_at_tick: number | null;
       died_at_body_id: string | null; carcass_body_id: string | null;
       gone_at_tick: number | null;
+      /** Null until its first attack: until then it is an unknown object. */
+      revealed_at_tick?: number | null;
     } | null;
     /** The first hull through each sun gate. */
     sun_gate_firsts?: Array<{ gate_id: string; faction_id: string | null; tick: number; ship: string | null; to_system: string | null }>;
@@ -1256,6 +1259,7 @@ function classifyChronicleEvent(kind: string): { category: LogCategory; level: L
     case 'kaiju_omen':
     case 'kaiju_launched':
     case 'kaiju_hunting':
+    case 'kaiju_revealed':
     case 'kaiju_charging':
       return { category: 'THREAT', level: 'WARN' };
     case 'kaiju_leaving':
@@ -2082,25 +2086,32 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       // THE LEVIATHAN (worker/kaiju.js), every moment of it.
       if (ev.kind === 'kaiju_omen') {
         const system = (parsed.system as string) ?? 'a far star';
-        return `${t}  🦑 Something is stirring at ${system} — something enormous, turning toward the Sun. `
+        return `${t}  ✶ Something is stirring at ${system} — something enormous, turning toward the Sun. `
           + `It moves in ${Number(parsed.launch_in) || 6} ticks`;
       }
       if (ev.kind === 'kaiju_launched') {
         const system = (parsed.system as string) ?? 'a far star';
         const near = parsed.near as string | undefined;
-        const hp = Number(parsed.hp) || 0;
-        return `${t}  🦑 A LEVIATHAN HAS LEFT ${system.toUpperCase()} — a living thing the size of a moon, burning for the Sun at 2g. `
-          + `It reaches the Far Reach${near ? ` out past ${near}` : ''} at T+${Number(parsed.arrive_tick)}, `
-          + `with ${hp.toLocaleString('en-US')} HP. Every empire is at war with it`;
+        // Nameless until it attacks (kaiju_revealed).
+        return `${t}  ✶ SOMETHING HAS LEFT ${system.toUpperCase()} — an object on a burn no engine could make, `
+          + `heading for the Sun. It stops in the Far Reach${near ? ` out past ${near}` : ''} at T+${Number(parsed.arrive_tick)}. `
+          + 'It does not answer hails';
       }
       if (ev.kind === 'kaiju_hunting') {
         const world = (parsed.world as string) ?? 'a world';
         return parsed.first
-          ? `${t}  🦑 THE LEVIATHAN HAS ARRIVED — ${parsed.carried === false
+          ? `${t}  ✶ THE OBJECT HAS ARRIVED — ${parsed.carried === false
             ? `it came to rest beside the ${(parsed.gate as string) ?? 'gate'}`
-            : `it dropped the ${(parsed.gate as string) ?? 'gate'} where it stopped`}, `
-            + `and is going for ${world} (there at T+${Number(parsed.arrive_tick)})`
+            : `where it stopped, the ${(parsed.gate as string) ?? 'gate'} has opened`}. `
+            + `It is moving again, toward ${world} (there at T+${Number(parsed.arrive_tick)})`
           : `${t}  🦑 The Leviathan is coming for ${world} — there at T+${Number(parsed.arrive_tick)}`;
+      }
+      if (ev.kind === 'kaiju_revealed') {
+        const world = (parsed.world as string) ?? 'a world';
+        const hp = Number(parsed.hp) || 0;
+        return `${t}  🦑 IT IS ALIVE — the thing from ${(parsed.system as string) || 'the far star'} is a creature the size of a moon: `
+          + `the LEVIATHAN. It is winding up over ${world} to strike at T+${Number(parsed.fires_at_tick)}, `
+          + `with ${hp.toLocaleString('en-US')} HP. Every empire is at war with it`;
       }
       if (ev.kind === 'kaiju_charging') {
         const world = (parsed.world as string) ?? 'a world';
@@ -2992,13 +3003,14 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         kaiju: !!srv.game.sun_gate_next.kaiju, system: srv.game.sun_gate_next.system,
       }
       : null,
-    kaiju: srv.game.kaiju ? {
+    kaiju: (setKaijuRevealed(!srv.game.kaiju || srv.game.kaiju.revealed_at_tick != null), srv.game.kaiju) ? {
       shipId: srv.game.kaiju.ship_id,
       factionId: srv.game.kaiju.faction_id,
       launchedAtTick: srv.game.kaiju.launched_at_tick,
       arriveTick: srv.game.kaiju.arrive_tick,
-      hpMax: srv.game.kaiju.hp_max,
-      appetite: srv.game.kaiju.appetite,
+      hpMax: srv.game.kaiju.hp_max ?? 0,
+      appetite: srv.game.kaiju.appetite ?? 0,
+      revealedAtTick: srv.game.kaiju.revealed_at_tick ?? null,
       eaten: srv.game.kaiju.eaten ?? [],
       phase: srv.game.kaiju.phase as KaijuPhase,
       targetBodyId: srv.game.kaiju.target_body_id ? (stripGameId(srv.game.kaiju.target_body_id) ?? null) : null,

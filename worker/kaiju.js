@@ -55,6 +55,12 @@ export const kaijuFactionId = (gameId) => `${gameId}:leviathan_f`;
 export const kaijuCarcassId = (gameId) => `${gameId}:leviathan_carcass`;
 export const KAIJU_NAME = 'Leviathan';
 export const KAIJU_FACTION_NAME = 'The Leviathan';
+/** UNTIL IT ATTACKS IT HAS NO NAME (Lorne, 2026-10-08: "Keep the players
+ *  wondering until it attacks"). Its hull and owner carry these until its
+ *  first wind-up (reveal), so nothing that quotes a name, the combat log
+ *  included, can give it away early. */
+export const KAIJU_UNKNOWN_NAME = 'Unknown contact';
+export const KAIJU_UNKNOWN_FACTION = 'Unknown';
 /** Its colour on the map and in the log: deep-sea violet, nobody's. */
 export const KAIJU_COLOR = '#b44dff';
 const FEED_COLOR = 0xb44dff;
@@ -178,7 +184,7 @@ export async function launchKaiju(env, gameId, tick, { sys, arrival, fromBodyId,
       `INSERT OR IGNORE INTO game_factions
          (id, game_id, user_id, slot, name, color, status, joined_at)
        VALUES (?, ?, NULL, ?, ?, ?, 'monster', ?)`,
-    ).bind(fid, gameId, KAIJU_SLOT, KAIJU_FACTION_NAME, KAIJU_COLOR, Date.now()),
+    ).bind(fid, gameId, KAIJU_SLOT, KAIJU_UNKNOWN_FACTION, KAIJU_COLOR, Date.now()),
     DB.prepare(
       `INSERT OR IGNORE INTO game_ships
          (id, game_id, owner_faction_id, name, ship_class,
@@ -187,7 +193,7 @@ export async function launchKaiju(env, gameId, tick, { sys, arrival, fromBodyId,
           fuel, fuel_max, status, built_at_tick,
           hp, hp_max, damage_per_tick, stance)
        VALUES (?, ?, ?, ?, 'kaiju', ?, 6, 6, 0, 0, ?, 1, 0, 0, 'active', ?, ?, ?, ?, 'attack')`,
-    ).bind(sid, gameId, fid, KAIJU_NAME, fromBodyId, tick, tick, hp, hp, dials.damage),
+    ).bind(sid, gameId, fid, KAIJU_UNKNOWN_NAME, fromBodyId, tick, tick, hp, hp, dials.damage),
   ]);
   // Its leg, once: a retried launch finds the one already planned.
   const planned = await DB
@@ -513,6 +519,7 @@ async function arm(env, gameId, tick, k, ship, world) {
   await DB.prepare(`UPDATE game_ships SET strike_target_body_id = ?, strike_ready_tick = ?, strike_mode = ?
                      WHERE id = ?`)
     .bind(world.id, fires, mode, ship.id).run();
+  if (k.revealed_at_tick == null) await reveal(env, gameId, tick, k, ship, world, fires);
   const owners = await ownersOf(DB, gameId, [world.owner_faction_id,
     ...((await DB.prepare(`SELECT DISTINCT owner_faction_id AS f FROM game_settlements
                             WHERE game_id = ? AND body_id = ? AND destroyed_at_tick IS NULL`)
@@ -530,6 +537,36 @@ async function arm(env, gameId, tick, k, ship, world) {
     }
   }
   return { phase: 'hunting', charging: true, mode, fires };
+}
+
+/**
+ * THE REVEAL: its first wind-up over a world. Until now it was an object
+ * nobody could name; now it is the Leviathan, by name, everywhere at once
+ * (its hull, its owner, the log, every phone, the feed and the Herald),
+ * with its HP and its appetite, while the world under it still has a day.
+ */
+async function reveal(env, gameId, tick, k, ship, world, fires) {
+  const DB = env.DB;
+  await DB.batch([
+    DB.prepare('UPDATE game_kaiju SET revealed_at_tick = ? WHERE game_id = ? AND revealed_at_tick IS NULL')
+      .bind(tick, gameId),
+    DB.prepare('UPDATE game_ships SET name = ? WHERE id = ?').bind(KAIJU_NAME, ship.id),
+    DB.prepare('UPDATE game_factions SET name = ? WHERE id = ?').bind(KAIJU_FACTION_NAME, k.faction_id),
+  ]);
+  k.revealed_at_tick = tick;
+  const system = SUN_GATE_SYSTEMS.find(x => x.key === k.sys_key)?.label ?? '';
+  const hp = Number(ship.hp ?? k.hp_max) || 0;
+  if (await chronicleOnce(DB, `${gameId}:kaiju:revealed`, gameId, tick, 'kaiju_revealed', world.id,
+    { world: world.name, body_name: world.name, system, hp, hp_max: Number(k.hp_max) || 0,
+      appetite: Number(k.appetite) || 0, fires_at_tick: fires })) {
+    await tellEveryone(env, gameId, tick, 'kaiju:revealed', (L) => ({
+      title: tr(L, 'feed.kaiju.revealTitle'),
+      lines: [
+        tr(L, 'feed.kaiju.revealBody', { system, world: world.name }),
+        tr(L, 'feed.kaiju.revealStakes', { hp: hp.toLocaleString('en-US'), tick: fires, n: Number(k.appetite) || 0 }),
+      ],
+    }), { color: FEED_COLOR });
+  }
 }
 
 /** Full, or nothing left it may eat: back to the gate. */

@@ -46,6 +46,7 @@ import { getShipClass } from '../game/shipClasses';
 // duplicates are removed there and it re-exports nothing seeded.
 import { drawDeathDebris, sterilisationProgress } from './combatFx';
 import { noteKaijuDrawn, kaijuHoldsWorldWhole, drawKaijuCarcass } from './kaijuFx';
+import { kaijuRevealed } from '../game/kaijuReveal';
 import { getStructureIconImage, getScaffoldImage } from './structureIconCache';
 import type { StructureVariant } from '../components/StructureIcons';
 import {
@@ -5560,7 +5561,8 @@ export function drawShip(
     if (leftSide !== undefined) {
       const labelX = xFor(leftSide);
       ctx.ctx.fillText(nm, leftSide ? labelX + blockW - textW : labelX, canvasPos.y - 6);
-      drawShipHpBar(ship, leftSide ? labelX + blockW - 36 : labelX, canvasPos.y + 3, ctx);
+      // The Leviathan shows no HP until it has shown itself (kaijuReveal.ts).
+      if (!kaiju || kaijuRevealed()) drawShipHpBar(ship, leftSide ? labelX + blockW - 36 : labelX, canvasPos.y + 3, ctx);
       if (tag) drawCommissionTag(ctx, tag, leftSide ? labelX + blockW - tagW : labelX, canvasPos.y + 13);
       // Name + HP bar (+ line tag), claimed so a body label steps around them.
       reserveRect(`shipname:${ship.id}`, labelX, canvasPos.y - 12, Math.max(30, blockW), blockH, nm);
@@ -7129,7 +7131,7 @@ function drawTorchTransitShip(
     const nm = shipLabelName(ship.name);
     ctx.ctx.fillText(nm, labelX, canvasPos.y - 6);
     const nameW = ctx.ctx.measureText(nm).width;
-    drawShipHpBar(ship, labelX, canvasPos.y + 3, ctx);
+    if (!kaiju || kaijuRevealed()) drawShipHpBar(ship, labelX, canvasPos.y + 3, ctx);
     // Never while selected, so it cannot collide with the ETA line below.
     const tag = commissionTag(ship, isSelected, ctx.hoveredShipId === ship.id);
     const tagW = tag ? drawCommissionTag(ctx, tag, labelX, canvasPos.y + 13) : 0;

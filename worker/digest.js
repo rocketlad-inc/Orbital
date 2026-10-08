@@ -45,7 +45,8 @@ import {
   TRADE_SHIPMENT_LOST, TRADE_SHIPMENT_LOST_HEADLINE,
   MINE_EXHAUSTED, MINE_EXHAUSTED_HEADLINE,
   KAIJU_OMEN, KAIJU_OMEN_HEADLINE, KAIJU_LAUNCHED, KAIJU_LAUNCHED_HEADLINE,
-  KAIJU_ARRIVED, KAIJU_ARRIVED_OPEN, KAIJU_HUNTING, KAIJU_HUNTING_HEADLINE,
+  KAIJU_ARRIVED, KAIJU_ARRIVED_OPEN, KAIJU_ARRIVED_HEADLINE, KAIJU_HUNTING, KAIJU_HUNTING_HEADLINE,
+  KAIJU_REVEALED, KAIJU_REVEALED_HEADLINE,
   KAIJU_SCORCHED, KAIJU_SCORCHED_HEADLINE,
   KAIJU_CHARGING, KAIJU_CHARGING_HEADLINE, KAIJU_STRIPPED, KAIJU_STRIPPED_HEADLINE,
   KAIJU_BROKEN, KAIJU_BROKEN_HEADLINE, KAIJU_LEAVING, KAIJU_LEAVING_HEADLINE,
@@ -9021,24 +9022,33 @@ function buildFrontierStories(rows, used, locator, factionNames) {
     }
     if (row.kind === 'kaiju_hunting') {
       const world = p.world ?? 'a world';
-      kaijuStory(row, 2, p.first
+      kaijuStory(row, 3, p.first
+        // Still nameless when it lands: it is revealed by its first attack.
         ? mkStory(970, used, p.carried === false ? 'kaiju_arrived_open' : 'kaiju_arrived',
           p.carried === false ? KAIJU_ARRIVED_OPEN : KAIJU_ARRIVED,
-          'kaiju_hunting_hl', KAIJU_HUNTING_HEADLINE.filter(f => p.carried !== false || !/gate/i.test(f({ world }))), {
+          'kaiju_arrived_hl', KAIJU_ARRIVED_HEADLINE.filter(f => p.carried !== false || !/gate/i.test(f({ world }))), {
             world, gate: p.gate ?? 'gate', system: p.system ?? 'beyond the Sun',
           })
         : mkStory(930, used, 'kaiju_hunting', KAIJU_HUNTING, 'kaiju_hunting_hl', KAIJU_HUNTING_HEADLINE, { world }));
       continue;
     }
+    if (row.kind === 'kaiju_revealed') {
+      kaijuStory(row, 3.5, mkStory(985, used, 'kaiju_revealed', KAIJU_REVEALED, 'kaiju_revealed_hl', KAIJU_REVEALED_HEADLINE, {
+        world: p.world ?? 'a world', system: p.system || 'beyond the Sun',
+        hp: Number(p.hp || 0).toLocaleString('en-US'), appetite: Number(p.appetite) || 5,
+        fires: Math.round(Number(p.fires_at_tick) || 0),
+      }));
+      continue;
+    }
     if (row.kind === 'kaiju_charging') {
-      kaijuStory(row, 3, mkStory(940, used, 'kaiju_charging', KAIJU_CHARGING, 'kaiju_charging_hl', KAIJU_CHARGING_HEADLINE, {
+      kaijuStory(row, 4, mkStory(940, used, 'kaiju_charging', KAIJU_CHARGING, 'kaiju_charging_hl', KAIJU_CHARGING_HEADLINE, {
         world: p.world ?? 'a world', fires: Math.round(Number(p.fires_at_tick) || 0),
       }));
       continue;
     }
     if ((row.kind === 'terraform_destroyed' || row.kind === 'world_obliterated') && p.cause === 'kaiju') {
       const ctx = { world: p.body_name ?? p.world ?? 'a world', lost: Number(p.settlements_lost) || 0 };
-      kaijuStory(row, 4, row.kind === 'terraform_destroyed'
+      kaijuStory(row, 2, row.kind === 'terraform_destroyed'
         ? (p.raw
           ? mkStory(975, used, 'kaiju_scorched', KAIJU_SCORCHED, 'kaiju_scorched_hl', KAIJU_SCORCHED_HEADLINE, ctx)
           : mkStory(975, used, 'kaiju_stripped', KAIJU_STRIPPED, 'kaiju_stripped_hl', KAIJU_STRIPPED_HEADLINE, ctx))
@@ -9293,7 +9303,7 @@ export const HERALD_HANDLED_KINDS = new Set([
   // frontier
   'asteroid_launched', 'gate_transit', 'gate_link_severed',
   'sun_gate_omen', 'sun_gate_emerged', 'sun_gate_opened',
-  'kaiju_omen', 'kaiju_launched', 'kaiju_hunting', 'kaiju_charging',
+  'kaiju_omen', 'kaiju_launched', 'kaiju_hunting', 'kaiju_revealed', 'kaiju_charging',
   'kaiju_leaving', 'kaiju_gone', 'kaiju_dead',
   'meteoroid_exhausted',
   'asset_sold', 'secret_discovered', 'ancient_databank', 'meteoroid_found',
