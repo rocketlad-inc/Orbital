@@ -13,7 +13,7 @@ import fs from 'fs';
 import path from 'path';
 import {
   battleReferenceRadius, fleetBlockGeometry, liveBattleFor, battlePlacement, battleScale,
-  resetLiveBattles, escortBlockSpacing, FLEET_ESCORT_SCALE, type BattleUnit,
+  resetLiveBattles, escortBlockSpacing, FLEET_ESCORT_SCALE, battleSolves, ROSTER_DWELL_MS, type BattleUnit,
 } from '../battleLayoutLive';
 import { escortOffsets, escortSpacingFor, escortGlyphFor } from '../fleetGrouping';
 
@@ -117,6 +117,30 @@ test('a roster change glides: no jump on the frame it happens, settled a couple 
   // Settled on the new place (the wheel turns meanwhile; compare radii
   // and the angle with the wheel's 3s turn taken off).
   expect(p.r).toBeCloseTo(target.r, 0);
+});
+
+test('a hull flickering in and out of fog does not re-solve the world (the quiver)', () => {
+  const r = roster();
+  const flicker = [...r, unit('b-edge', 'b', 30, 'sb')];
+  const first = liveBattleFor('mars', MARS_R, 1, r, ['a', 'b'], 'stn', { nowMs: 0 });
+  const solves0 = battleSolves('mars');
+  // Fog recomputes every ~140ms; the edge hull toggles each time.
+  for (let t = 140; t <= 5000; t += 140) {
+    const lb = liveBattleFor('mars', MARS_R, 1, (t / 140) % 2 ? flicker : r, ['a', 'b'], 'stn', { nowMs: t });
+    expect(lb).toBe(first);
+  }
+  expect(battleSolves('mars')).toBe(solves0);
+});
+
+test('a roster change that holds replaces the layout after the dwell', () => {
+  const r = roster();
+  const more = [...r, unit('b-new', 'b', 30, 'sb')];
+  const first = liveBattleFor('mars', MARS_R, 1, r, ['a', 'b'], 'stn', { nowMs: 0 });
+  expect(liveBattleFor('mars', MARS_R, 1, more, ['a', 'b'], 'stn', { nowMs: 100 })).toBe(first);
+  expect(liveBattleFor('mars', MARS_R, 1, more, ['a', 'b'], 'stn', { nowMs: 100 + ROSTER_DWELL_MS - 1 })).toBe(first);
+  const next = liveBattleFor('mars', MARS_R, 1, more, ['a', 'b'], 'stn', { nowMs: 100 + ROSTER_DWELL_MS });
+  expect(next).not.toBe(first);
+  expect(next.layout.placements.has('b-new')).toBe(true);
 });
 
 test('noses point forward in the wheel’s sense, either way round', () => {

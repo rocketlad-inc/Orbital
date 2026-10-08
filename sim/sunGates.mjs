@@ -298,6 +298,18 @@ check(`tick 21: the second gate (to ${order[1].label}) leaves, ten ticks later`,
     `${(o0 * 180 / Math.PI).toFixed(1)} degrees off`);
   check(`the ${order[1].label} gate stopped facing ${order[1].label}`, o1 <= Math.PI / 4 + 1e-6,
     `${(o1 * 180 / Math.PI).toFixed(1)} degrees off`);
+  // ...and each far end sits in the quadrant of its system facing Sol
+  // (Lorne, 2026-10-08): the line home from a barycenter is its own
+  // bearing from the Sun, turned round.
+  for (const [i, sys, tick] of [[0, order[0], arrive0], [1, order[1], at]]) {
+    const far = await DB.prepare(`SELECT * FROM game_bodies WHERE id = ?`).bind(farGateId(G, sys)).first();
+    const bary = bodies.find(b => b.template_id === sys.barycenter);
+    const home = orbitAngle(bary.angle0, bary.orbit_period, tick) + Math.PI;
+    const a = orbitAngle(far.angle0, far.orbit_period, tick);
+    const o = Math.abs(((a - home) % (2 * Math.PI) + 3 * Math.PI) % (2 * Math.PI) - Math.PI);
+    check(`the far end of gate ${i + 1} (${sys.label}) faces Sol`, o <= Math.PI / 4 + 1e-6,
+      `${(o * 180 / Math.PI).toFixed(1)} degrees off`);
+  }
   // Not "opposite sides": where the two systems sit is the map's call,
   // and a live board has had them under sixty degrees apart. Only that
   // the second never stops on top of the first.

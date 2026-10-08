@@ -1960,6 +1960,51 @@ export function drawAncientRuins(g: CanvasRenderingContext2D, nowMs: number): vo
  *
  * Liang-Barsky, which is a handful of divides and no allocation.
  */
+/**
+ * FAR OFF-CANVAS: more than a full screen beyond every edge, radius
+ * included. Such a thing can never reach the screen, and it must never
+ * reach the GPU either.
+ *
+ * Once the far systems put Centauri 530K units from Sol, opening a world
+ * there sent every Sol planet, trajectory, escort and plume to the canvas
+ * at 1.7e8-3.1e8 px (measured, 2026-10-07). An Adreno clips that cleanly;
+ * a GTX 980 through ANGLE/D3D11 rasterised it as garbage across the view:
+ * globe textures smeared into vertical bars and hull icons stretched into
+ * columns over the world being looked at ("this happens whenever I click
+ * on a planet in another solar system"). Cull it first.
+ */
+export function farOffCanvas(rc: RenderContext, x: number, y: number, r = 0): boolean {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return true;
+  const w = rc.canvas.width, h = rc.canvas.height;
+  const m = Math.max(w, h) + Math.max(0, r);
+  return x < -m || y < -m || x > w + m || y > h + m;
+}
+
+/** A polyline writer that never hands the canvas a far off-screen point:
+ *  each segment is clipped to the screen plus a screen of margin, and a
+ *  clipped start lifts the pen. Dashes restart only where a segment was
+ *  cut, which is off-screen by construction. */
+export function safePolyline(c: CanvasRenderingContext2D, w: number, h: number) {
+  const m = Math.max(w, h);
+  let lx = NaN, ly = NaN;
+  let penAt: { x: number; y: number } | null = null;
+  return {
+    move(x: number, y: number) { lx = x; ly = y; penAt = null; },
+    line(x: number, y: number) {
+      if (!Number.isFinite(lx) || !Number.isFinite(x) || !Number.isFinite(y)) { lx = x; ly = y; penAt = null; return; }
+      const s = clipSegmentToRect(lx, ly, x, y, w, h, m);
+      if (s) {
+        if (!penAt || penAt.x !== s.x1 || penAt.y !== s.y1) c.moveTo(s.x1, s.y1);
+        c.lineTo(s.x2, s.y2);
+        penAt = { x: s.x2, y: s.y2 };
+      } else {
+        penAt = null;
+      }
+      lx = x; ly = y;
+    },
+  };
+}
+
 export function clipSegmentToRect(
   x1: number, y1: number, x2: number, y2: number,
   w: number, h: number, margin = 64,
@@ -4153,6 +4198,11 @@ export function drawBody(
   const radius = (body.mineralKind || body.type === 'megastructure')
     ? Math.max(3, body.radius * ctx.camera.scale)
     : drawnRadiusOf(ctx.presentation, body, ctx.camera.scale);
+  // Far off-screen: nothing of it can show, and at far-system distances
+  // its coordinates are big enough to break some GPUs (farOffCanvas).
+  // Suns get extra reach for their glow.
+  const reach = (body.type === 'star' || body.type === 'black_hole') ? radius * 6 : radius * 2;
+  if (farOffCanvas(ctx, canvasPos.x, canvasPos.y, reach)) return;
 
   // ROUTE PICKING. While the composer is asking for a stop, worlds it
   // will not accept fade back and the ones already on the circuit wear
@@ -5001,6 +5051,7 @@ export function drawEscortHull(
   baseSizePx: number,
   heading: number,
 ): void {
+  if (farOffCanvas(ctx, x, y, baseSizePx * 2)) return;
   const g = ctx.ctx;
   const color = shipColor(ship, ctx.factions);
   // Capped at 1: `baseSizePx` is the slot a destroyer fills, and a
@@ -6303,29 +6354,31 @@ export function drawTorchTrajectory(
     if (nextIdx <= splitAt) {
       ctx.ctx.strokeStyle = '#6ee7b7';
       ctx.ctx.beginPath();
-      ctx.ctx.moveTo(shipCP.x, shipCP.y);
+      const boost = safePolyline(ctx.ctx, ctx.canvas.width, ctx.canvas.height);
+      boost.move(shipCP.x, shipCP.y);
       for (let i = nextIdx; i <= splitAt; i++) {
         const cp = worldToCanvas(samples[i].x, samples[i].y, ctx);
-        ctx.ctx.lineTo(cp.x, cp.y);
+        boost.line(cp.x, cp.y);
       }
       ctx.ctx.stroke();
     }
     // Brake leg (pink).
     ctx.ctx.strokeStyle = '#fda4af';
     ctx.ctx.beginPath();
+    const brake = safePolyline(ctx.ctx, ctx.canvas.width, ctx.canvas.height);
     if (nextIdx > splitAt) {
       // Ship already flipped — brake run starts at the hull.
-      ctx.ctx.moveTo(shipCP.x, shipCP.y);
+      brake.move(shipCP.x, shipCP.y);
       for (let i = nextIdx; i < samples.length; i++) {
         const cp = worldToCanvas(samples[i].x, samples[i].y, ctx);
-        ctx.ctx.lineTo(cp.x, cp.y);
+        brake.line(cp.x, cp.y);
       }
     } else {
       // Ship still boosting — brake leg stitches to the green at the flip.
       for (let i = splitAt; i < samples.length; i++) {
         const cp = worldToCanvas(samples[i].x, samples[i].y, ctx);
-        if (i === splitAt) ctx.ctx.moveTo(cp.x, cp.y);
-        else ctx.ctx.lineTo(cp.x, cp.y);
+        if (i === splitAt) brake.move(cp.x, cp.y);
+        else brake.line(cp.x, cp.y);
       }
     }
     ctx.ctx.stroke();
@@ -6351,7 +6404,10 @@ export function drawTorchTrajectory(
     }
 
     ctx.ctx.globalAlpha = baseAlpha;
-    if (useGradient) {
+    // A gradient whose ends sit far off-screen is a flat colour on screen
+    // anyway, and its endpoints are the coordinates farOffCanvas exists
+    // to keep away from the GPU.
+    if (useGradient && !farOffCanvas(ctx, shipCP.x, shipCP.y) && !farOffCanvas(ctx, destCP.x, destCP.y)) {
       const grad = ctx.ctx.createLinearGradient(shipCP.x, shipCP.y, destCP.x, destCP.y);
       grad.addColorStop(0, withOpacity(color, 0.85));
       grad.addColorStop(1, withOpacity(color, 0.15));
@@ -6361,10 +6417,11 @@ export function drawTorchTrajectory(
     }
     if (crawl) ctx.ctx.lineDashOffset = crawlOffset;
     ctx.ctx.beginPath();
-    ctx.ctx.moveTo(shipCP.x, shipCP.y);
+    const ahead = safePolyline(ctx.ctx, ctx.canvas.width, ctx.canvas.height);
+    ahead.move(shipCP.x, shipCP.y);
     for (let i = nextIdx; i < samples.length; i++) {
       const cp = worldToCanvas(samples[i].x, samples[i].y, ctx);
-      ctx.ctx.lineTo(cp.x, cp.y);
+      ahead.line(cp.x, cp.y);
     }
     ctx.ctx.stroke();
     ctx.ctx.globalAlpha = baseAlpha;
@@ -6372,8 +6429,8 @@ export function drawTorchTrajectory(
     // Static line (planned previews, queued legs, out-of-window):
     // same gradient treatment, anchored at the line start since the
     // ship hasn't departed yet.
-    if (useGradient) {
-      const startCP = worldToCanvas(samples[0].x, samples[0].y, ctx);
+    const startCP = worldToCanvas(samples[0].x, samples[0].y, ctx);
+    if (useGradient && !farOffCanvas(ctx, startCP.x, startCP.y) && !farOffCanvas(ctx, destCP.x, destCP.y)) {
       const grad = ctx.ctx.createLinearGradient(startCP.x, startCP.y, destCP.x, destCP.y);
       grad.addColorStop(0, withOpacity(color, 0.85));
       grad.addColorStop(1, withOpacity(color, 0.15));
@@ -6382,10 +6439,11 @@ export function drawTorchTrajectory(
       ctx.ctx.strokeStyle = color.startsWith('#') ? withOpacity(color, 0.4) : color;
     }
     ctx.ctx.beginPath();
+    const line = safePolyline(ctx.ctx, ctx.canvas.width, ctx.canvas.height);
     for (let i = 0; i < samples.length; i++) {
       const cp = worldToCanvas(samples[i].x, samples[i].y, ctx);
-      if (i === 0) ctx.ctx.moveTo(cp.x, cp.y);
-      else ctx.ctx.lineTo(cp.x, cp.y);
+      if (i === 0) line.move(cp.x, cp.y);
+      else line.line(cp.x, cp.y);
     }
     ctx.ctx.stroke();
   }
@@ -6429,6 +6487,7 @@ function strokeTrajectoryNotch(
   const dy = B.y - A.y;
   const len = Math.hypot(dx, dy);
   if (len < 1e-3) return false;
+  if (farOffCanvas(ctx, px, py, halfLen)) return false;
   const nx = -dy / len;
   const ny = dx / len;
   ctx.ctx.moveTo(px - nx * halfLen, py - ny * halfLen);
@@ -6787,6 +6846,8 @@ function drawTorchTransitShip(
   const lerpedPos = departureBlend(ship.id, truePos, ctx.nowMs ?? performance.now());
   const canvasPos = worldToCanvas(lerpedPos.x, lerpedPos.y, ctx);
   recordDrawnShipWorldPos(ship.id, lerpedPos.x, lerpedPos.y);
+  // Hull, plume and glow, all within a few hull lengths (farOffCanvas).
+  if (farOffCanvas(ctx, canvasPos.x, canvasPos.y, 200)) return;
   const shipColorValue = shipColor(ship, ctx.factions);
 
   // Phase detection: BOOST (engine fires prograde toward intercept) vs
@@ -7458,6 +7519,7 @@ export function drawStation(
     }
   }
   ctx.stationCanvasPos?.set(settlement.id, canvasPos);
+  if (farOffCanvas(ctx, canvasPos.x, canvasPos.y, 200)) return;
 
   const color = settlementColor(settlement, factions);
   const size = Math.max(3, 4 * Math.min(1.5, Math.sqrt(ctx.camera.scale)));
@@ -7842,9 +7904,15 @@ export function drawSettlement(
 ) {
   // Bubble UNDER the sprite: the settlement should read as being inside
   // its shield, not behind a pane of glass.
-  drawShieldBubble(settlement, body, ctx);
+  // A city and its shield sit on their world; a station keeps its own
+  // check (drawStation) because it records where it is drawn first.
+  const bp = bodyPosition(body, ctx.t, ctx.bodies);
+  const bcp = worldToCanvas(bp.x, bp.y, ctx);
+  const nearby = !farOffCanvas(ctx, bcp.x, bcp.y,
+    drawnRadiusOf(ctx.presentation, body, ctx.camera.scale) * 3 + 200);
+  if (nearby) drawShieldBubble(settlement, body, ctx);
   if (settlement.type === 'city') {
-    drawCity(settlement, body, factions, ctx, isSelected);
+    if (nearby) drawCity(settlement, body, factions, ctx, isSelected);
   } else {
     drawStation(settlement, body, factions, ctx, isSelected);
   }

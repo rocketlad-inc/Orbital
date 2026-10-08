@@ -24,7 +24,7 @@ import { settlementWorldPosition } from '../game/settlements';
 import { bodyPosition, localPositionAt } from '../physics/orbitalMechanics';
 import { shipDisplayTick, spinNowMs } from './tickPhase';
 import { withOpacity, COLORS } from './colors';
-import { RenderContext, worldToCanvas, drawnShipLook, drawnShipWorldPos, nearestDrawnCapital } from './mapRenderer';
+import { RenderContext, worldToCanvas, drawnShipLook, drawnShipWorldPos, nearestDrawnCapital, farOffCanvas, clipSegmentToRect } from './mapRenderer';
 import { hashStr, mulberry32 } from './planetTexture';
 import { isLightweight } from './lightweightMode';
 import { drawnRadiusOf } from './bodyPresentation';
@@ -1522,6 +1522,7 @@ function drawContestedBodies(
     const cp = worldToCanvas(bp.x, bp.y, rc);
     const planetR = Math.max(4, body.radius * rc.camera.scale);
     const ringR = planetR + Math.max(14, planetR * 0.9);
+    if (farOffCanvas(rc, cp.x, cp.y, ringR)) continue;
     // Slow red pulse — a front line you can spot from altitude.
     const pulse = 0.5 + 0.5 * Math.sin(nowMs / 700);
     c.save();
@@ -1953,21 +1954,30 @@ export function drawSinkTethers(
       ?? transitCanvasPos?.get(ship.id)
       ?? shipCanvasPos(ship, rc, transitCanvasPos);
     if (!hp) continue;
+    // Clipped to the screen (plus a screen): at far-system zoom either end
+    // can be 1e8 px out, which some GPUs rasterise as garbage (farOffCanvas).
+    const W = rc.canvas.width, H = rc.canvas.height;
+    const tether = clipSegmentToRect(hp.x, hp.y, sp.x, sp.y, W, H, Math.max(W, H));
+    const hullOn = !farOffCanvas(rc, hp.x, hp.y, 30);
+    if (!tether && !hullOn) continue;
 
     if (!opened) { c.save(); c.globalAlpha = c.globalAlpha * fade; opened = true; }
 
     // The tether: dashes crawling from the hull TOWARD the sink, so the
     // direction of the pull is unmistakable.
-    const phase = (nowMs / 90) % 14;
-    c.setLineDash([5, 9]);
-    c.lineDashOffset = phase;
-    c.strokeStyle = 'rgba(160, 120, 255, 0.55)';
-    c.lineWidth = 1.5;
-    c.beginPath();
-    c.moveTo(hp.x, hp.y);
-    c.lineTo(sp.x, sp.y);
-    c.stroke();
-    c.setLineDash([]);
+    if (tether) {
+      const phase = (nowMs / 90) % 14;
+      c.setLineDash([5, 9]);
+      c.lineDashOffset = phase;
+      c.strokeStyle = 'rgba(160, 120, 255, 0.55)';
+      c.lineWidth = 1.5;
+      c.beginPath();
+      c.moveTo(tether.x1, tether.y1);
+      c.lineTo(tether.x2, tether.y2);
+      c.stroke();
+      c.setLineDash([]);
+    }
+    if (!hullOn) continue;
 
     // A collar on the hull — it is caught, not merely aimed at.
     const grip = 0.75 + 0.25 * Math.sin(nowMs / 260);
