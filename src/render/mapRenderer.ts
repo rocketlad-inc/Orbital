@@ -5378,6 +5378,8 @@ export function drawShip(
     // its CENTRE blinked whole on-screen blocks out at the screen edge as
     // the layout turned ("artifacts on the edge of the screen").
     let m = 100;
+    // The Leviathan reaches far past its centre (it is drawn at world scale).
+    if (ship.class === 'kaiju') m += drawnRadiusOf(ctx.presentation, parentBody, ctx.camera.scale) * 2.2;
     if (battleK >= 0) {
       const blk = liveBattle?.blocks.get(ship.id);
       m += Math.max(shipIconSize(ship.class, false) * battleSpriteScale(battleK) * 0.75,
@@ -5394,18 +5396,29 @@ export function drawShip(
   // Faction-colored: cyan for player, red for enemy.
   const shipColorValue = shipColor(ship, ctx.factions);
 
-  const iconSize = shipIconSize(ship.class, isSelected)
+  const hullSize = shipIconSize(ship.class, isSelected)
     * (battleK >= 0 ? battleSpriteScale(battleK) : (ship.transit || isSelected) ? 1 : sizeScale);
+  // THE LEVIATHAN IS HUGE (Lorne, 2026-10-08: "make it huge"). Parked
+  // hulls are drawn to the scale of their world, which shrank it smaller
+  // than the moon it was eating. Over a world it is at least twice that
+  // world's drawn width, so it reads as wrapped round it; never smaller
+  // than its own hull size. It still shrinks with the zoom, because the
+  // world does.
+  const iconSize = ship.class === 'kaiju'
+    ? Math.max(hullSize, drawnRadiusOf(ctx.presentation, parentBody, ctx.camera.scale) * 4.4)
+    : hullSize;
 
   // Record the true drawn box for hit-testing: canvasPos already carries
   // the orbit spin, tick interpolation AND the formation spread, so a
   // click reads exactly where the hull is — including stacked ships that
   // were fanned apart. Radius covers the sprite (half its size) with a
-  // small floor so a tiny far-zoom icon is still an easy target.
+  // small floor so a tiny far-zoom icon is still an easy target. The
+  // Leviathan keeps its HULL-sized target, not its drawn one: drawn over
+  // a world it would otherwise swallow every click meant for the world.
   ctx.shipHitboxes?.set(ship.id, {
     x: canvasPos.x,
     y: canvasPos.y,
-    r: Math.max(iconSize / 2 + 3, SHIP_MIN_HIT_RADIUS),
+    r: Math.max(hullSize / 2 + 3, SHIP_MIN_HIT_RADIUS),
   });
 
   // Damage flash sits beneath the icon so the icon stays at full opacity.
