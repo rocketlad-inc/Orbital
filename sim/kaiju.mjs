@@ -35,8 +35,8 @@ const check = (label, ok, detail = '') => {
 // ---- 1. The pure rules ------------------------------------------------
 {
   const d = kaijuDials({});
-  check('defaults: appetite 3, one wind-up of fleet fire, 2,000..20,000 HP, 50 damage',
-    d.appetite === 3 && d.hpTicks === 24 && d.hpMin === 2000 && d.hpMax === 20000 && d.damage === 50,
+  check('defaults: appetite 5, one wind-up of fleet fire, 2,000..20,000 HP, 50 damage',
+    d.appetite === 5 && d.hpTicks === 24 && d.hpMin === 2000 && d.hpMax === 20000 && d.damage === 50,
     JSON.stringify(d));
   // The table Lorne picked from: a destroyer lands 26% of 87.5 on a 0.50
   // target, a frigate 50% of 17.5, a corvette 74% of 3.5.
@@ -51,17 +51,25 @@ const check = (label, ok, detail = '') => {
   check('a big game hits the 20,000 cap', big.hp === 20000, JSON.stringify(big));
   check('...and a host can move the cap', kaijuHp(fleet(330, 'frigate', 17.5), kaijuDials({ kaiju_hp_max: 50000 })).hp > 20000);
 
-  const W = (id, type, settled, x, parent = 'sol') => ({ id, type, settled, x, y: 0, parent_body_id: parent });
-  const from = { x: 1000, y: 0 };
-  check('settled before unsettled, even when farther',
-    pickPrey([W('near', 'dwarf', false, 900), W('far', 'dwarf', true, 100)], from).id === 'far');
-  check('a moon before the planet it circles',
-    pickPrey([W('jup', 'terrestrial', true, 950), W('io', 'moon', true, 400, 'jup')], from).id === 'io');
-  check('...but an unsettled moon does not shield a settled planet',
-    pickPrey([W('jup', 'terrestrial', true, 950), W('io', 'moon', false, 940, 'jup')], from).id === 'jup');
-  check('nearest first within a tier',
-    pickPrey([W('a', 'dwarf', true, 100), W('b', 'dwarf', true, 800)], from).id === 'b');
-  check('nothing left, nothing picked', pickPrey([], from) === null);
+  // Lorne, 2026-10-08: outer system first, then down the well at random.
+  const { seededRand } = await import('../worker/sunGates.js');
+  const map = Array.from({ length: 50 }, (_, i) => ({ id: `w${i}`, r: (i + 1) * 20 }));   // 20..1000
+  const picks = (fromR, left) => Array.from({ length: 300 },
+    (_, n) => pickPrey(map, fromR, left, seededRand(`p${n}`)));
+  {
+    const first = picks(1200, 5);
+    check('the first of five is from the outer fifth of the map',
+      first.every(w => w.r > 800), `${Math.min(...first.map(w => w.r))}`);
+    check('...picked at random within it', new Set(first.map(w => w.id)).size >= 8, `${new Set(first.map(w => w.id)).size} distinct`);
+    const mid = picks(600, 3);
+    check('every meal is further in than where it is', mid.every(w => w.r < 600), `${Math.max(...mid.map(w => w.r))}`);
+    check('...from the outer third of what is left inside it', mid.every(w => w.r > 380), `${Math.min(...mid.map(w => w.r))}`);
+    const last = picks(600, 1);
+    check('the last meal can be anywhere further in',
+      Math.min(...last.map(w => w.r)) <= 100 && last.every(w => w.r < 600));
+  }
+  check('nothing further in, nothing picked', pickPrey(map, 10, 3, seededRand('x')) === null
+    && pickPrey([], 1000, 5, seededRand('y')) === null);
 }
 
 // ---- 2. A real game ---------------------------------------------------
@@ -187,9 +195,23 @@ const kinds = async (DB, G) => (await DB.prepare(
     && has('sun_gate_opened', p => p.kaiju === true));
   const capitals = new Set([fA.capital_body_id, fB.capital_body_id]);
   check('never once a homeworld', targets.every(t => !capitals.has(t)), targets.join(', '));
-  check('its first prey is a settled moon or small world',
-    !!targets[1] && ['pluto', 'titan', 'callisto', 'eris', 'ganymede'].some(x => targets[1] === `${G}:${x}`),
-    targets.join(', '));
+  {
+    // Down the well: each world it goes for is closer to the Sun than the
+    // last (heliocentric distance of the world's own system).
+    const helio = async (id) => {
+      let b = await DB.prepare('SELECT parent_body_id, orbit_radius FROM game_bodies WHERE id = ?').bind(id).first();
+      while (b && b.parent_body_id && b.parent_body_id !== `${G}:sol`) {
+        b = await DB.prepare('SELECT parent_body_id, orbit_radius FROM game_bodies WHERE id = ?').bind(b.parent_body_id).first();
+      }
+      return Number(b?.orbit_radius) || 0;
+    };
+    const prey = targets.slice(1, -1);   // site first, gate last
+    const rs = [];
+    for (const t of prey) rs.push(await helio(t));
+    check('it works down the well, every meal further in',
+      prey.length >= 2 && rs.every((r, i) => i === 0 || r < rs[i - 1] + 1e-6),
+      prey.map((t, i) => `${t.split(':')[1]}@${Math.round(rs[i])}`).join(' > '));
+  }
   check('it winds up for the full Mega Destroyer charge before every strike',
     rows.filter(r => r.kind === 'kaiju_charging').every(r => JSON.parse(r.payload).fires_at_tick - r.tick_number === 24));
   const broken = rows.filter(r => r.kind === 'world_obliterated');
@@ -287,6 +309,12 @@ const kinds = async (DB, G) => (await DB.prepare(
   const { DB, fA, settle, run } = await seed(G, { kaiju_appetite: 1 });
   await settle('titan', fA.id, 'city');
   await DB.prepare('UPDATE game_bodies SET terraformed_at_tick = 1 WHERE id = ?').bind(`${G}:titan`).run();
+  // Titan the only world it may eat (the rest already rubble), so the
+  // random pick has to be the living world.
+  await DB.prepare(`UPDATE game_bodies SET obliterated_at_tick = 0
+                     WHERE game_id = ? AND id <> ? AND type IN ('terrestrial', 'dwarf', 'moon')
+                       AND id NOT IN (SELECT capital_body_id FROM game_factions WHERE capital_body_id IS NOT NULL)`)
+    .bind(G, `${G}:titan`).run();
   for (let t = 1; t <= 400; t++) {
     await run(t);
     if ((await kRow(DB, G))?.phase === 'gone') break;

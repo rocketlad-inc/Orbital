@@ -429,12 +429,12 @@ export const SCHEMA = [
     label: 'Leviathan: the second gate arrives on a monster', def: 0, min: 0, max: 1, step: 1,
     danger: true,
     help: 'The second sun gate does not leave the Sun. A colossal squid launches from '
-      + 'the unconnected far system at 2g, drops the gate where it stops, then hunts '
-      + 'settled moons and small worlds (never a homeworld) until it has eaten its fill.',
+      + 'the unconnected far system at 2g, drops the gate where it stops, then eats '
+      + 'worlds at random down the well, outer system first (never a homeworld).',
   },
   {
     id: 'kaiju_appetite', group: 'map', type: 'int',
-    label: 'Leviathan: worlds it eats before it leaves', def: 3, min: 1, max: 50, step: 1,
+    label: 'Leviathan: worlds it eats before it leaves', def: 5, min: 1, max: 50, step: 1,
     help: 'Counted when a world becomes rubble. It then flies back through its gate.',
   },
   {

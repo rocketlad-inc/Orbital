@@ -2475,7 +2475,7 @@ export function useSituationItems(
             ...(beast ? { entity: `ship:${beast.id}` } : {}),
             title: 'A Leviathan is coming',
             subtitle: `It lands in the Far Reach at T+${kj.arriveTick} (${left} tick${left === 1 ? '' : 's'}), ${hp}. `
-              + 'It eats settled moons and small worlds. Its landing site is marked',
+              + 'It eats worlds from the outer system inward, never a homeworld. Its landing site is marked',
             // The beast itself: what everyone wants to look at, wherever
             // it is. Its landing place when the hull is not in view yet.
             focus: beast

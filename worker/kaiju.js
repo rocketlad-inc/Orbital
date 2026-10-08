@@ -10,8 +10,8 @@
 //     when and where; this file is the beast.)
 //   - Where it stops it leaves the gate.
 //   - Then it hunts terrestrial worlds, dwarfs and moons one at a time,
-//     settled ones first, moons before the world they circle, nearest
-//     first so it works down the well from the Far Reach. Each one it
+//     always further in than it is, chosen at random (pickPrey): it
+//     starts in the outer system and works down the well. Each one it
 //     double-taps like a Mega Destroyer: a living world is stripped,
 //     then broken; a raw one is broken. Every strike winds up for the
 //     Mega Destroyer's whole charge, and it has to sit there to fire.
@@ -44,7 +44,7 @@ import { shipSpeed, hitChance } from './shipDesigns.js';
 import { MEGA_STRIKE_CHARGE_TICKS } from './actions.js';
 import { makeRouteMath } from './routeMath.js';
 import {
-  emergeFlightTicks, solGateId, chronicleOnce, tellEveryone, mainSystemSql, SUN_GATE_SYSTEMS,
+  emergeFlightTicks, solGateId, chronicleOnce, tellEveryone, mainSystemSql, SUN_GATE_SYSTEMS, seededRand,
 } from './sunGates.js';
 import { tr } from './i18n.js';
 
@@ -69,7 +69,7 @@ export function kaijuDials(conf) {
   const cap = Math.max(100, num(conf?.kaiju_hp_max, SHIP_COMBAT_STATS.kaiju.hp));
   return {
     on: Number(conf?.kaiju) === 1,
-    appetite: Math.max(1, Math.round(num(conf?.kaiju_appetite, 3))),
+    appetite: Math.max(1, Math.round(num(conf?.kaiju_appetite, 5))),
     hpTicks: Math.max(1, num(conf?.kaiju_hp_ticks, 24)),
     hpMin: Math.min(cap, Math.max(100, num(conf?.kaiju_hp_min, 2000))),
     hpMax: cap,
@@ -101,31 +101,25 @@ export function kaijuHp(ships, dials) {
 /**
  * WHAT IT GOES FOR NEXT. Pure, so the order is testable.
  *
- * `worlds`: candidate rows with { id, parent_body_id, type, settled,
- * x, y } already filtered to living, unowned-by-a-capital prey in the
- * main system. `from`: where the beast is.
+ * Lorne, 2026-10-08: "try and eat 5 worlds, starting in the outer system
+ * and then choosing worlds down the well at random."
  *
- *   1. Settled before unsettled (Lorne: "priority should be worlds with
- *      settlements").
- *   2. A moon before the world it circles: within a tier, a planet with
- *      a prey moon still standing in that tier waits for it ("starting
- *      with moons and working down the well").
- *   3. Nearest first. It arrives in the Far Reach, so nearest-first is
- *      also outermost-first: it works inward.
+ * `worlds`: candidate rows with { id, r } already filtered to living
+ * prey in the main system that is nobody's homeworld, `r` being its
+ * distance from the Sun now. `fromR`: the beast's own distance. `left`:
+ * meals still to go. `rand`: a seeded 0..1.
+ *
+ * Only worlds further in than it is now: it always goes down the well.
+ * Of those, the outermost 1/left of them, and one of THOSE at random. So
+ * the first of five comes from the outer fifth of the map, and the
+ * descent is spread across the whole appetite instead of diving for the
+ * Sun on the first meal; the last meal can be anywhere further in.
  */
-export function pickPrey(worlds, from) {
-  if (worlds.length === 0) return null;
-  const settled = worlds.filter(w => w.settled);
-  const tier = settled.length > 0 ? settled : worlds;
-  const moonParents = new Set(tier.filter(w => w.type === 'moon').map(w => w.parent_body_id));
-  const ready = tier.filter(w => !moonParents.has(w.id));
-  const pool = ready.length > 0 ? ready : tier;
-  let best = null, bestD = Infinity;
-  for (const w of pool) {
-    const d = Math.hypot(w.x - from.x, w.y - from.y);
-    if (d < bestD || (d === bestD && best && w.id < best.id)) { best = w; bestD = d; }
-  }
-  return best;
+export function pickPrey(worlds, fromR, left, rand) {
+  const inward = worlds.filter(w => w.r < fromR).sort((a, b) => b.r - a.r || (a.id < b.id ? -1 : 1));
+  if (inward.length === 0) return null;
+  const band = inward.slice(0, Math.max(1, Math.ceil(inward.length / Math.max(1, left))));
+  return band[Math.min(band.length - 1, Math.floor(rand() * band.length))];
 }
 
 /** Bodies a carcass can orbit. Anything else (the gate, a landing site,
@@ -292,7 +286,7 @@ async function preyWorlds(DB, gameId, tick, rm) {
   const out = [];
   for (const r of rows) {
     const p = await rm.bodyPosAt(r.id, tick);
-    out.push({ ...r, settled: Number(r.settled) === 1, x: p.x, y: p.y });
+    out.push({ ...r, settled: Number(r.settled) === 1, x: p.x, y: p.y, r: Math.hypot(p.x, p.y) });
   }
   return out;
 }
@@ -426,7 +420,9 @@ export async function advanceKaiju(env, gameId, tick, conf, hooks) {
   // Next.
   const worlds = await preyWorlds(DB, gameId, tick, rm);
   const from = await rm.bodyPosAt(here, tick);
-  const prey = pickPrey(worlds, from);
+  // Seeded on the game and the meal, so a retried tick picks the same.
+  const prey = pickPrey(worlds, Math.hypot(from.x, from.y),
+    Number(k.appetite) - Number(k.eaten), seededRand(`${gameId}|kaiju|meal|${Number(k.eaten)}`));
   if (!prey) return leave(env, gameId, tick, k, ship, rm, gateId, 'nothing_left', hooks);
 
   if (prey.id === here) {
