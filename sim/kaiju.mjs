@@ -218,6 +218,23 @@ const kinds = async (DB, G) => (await DB.prepare(
   check('...and the SQL rule agrees', Number(w.w) === 1 && Number(p.w) === 0, JSON.stringify([w, p]));
   const victory = (await DB.prepare(`SELECT COUNT(*) n FROM game_factions WHERE game_id = ? AND status = 'active'`).bind(G).first()).n;
   check('it is not an "active empire" for victory, senate or elimination', victory === 2, String(victory));
+
+  // The Herald: one Leviathan story an edition, a paragraph a moment.
+  const { composeHeraldForTickRange } = await import('../worker/digest.js');
+  const h = await composeHeraldForTickRange({ DB }, { id: G, name: 'Deep' }, 0, k.gone_at_tick);
+  const text = `${h.title}\n${h.description}\n${h.fields.map(f => `${f.name}\n${f.value}`).join('\n')}`;
+  // It leads the edition: the lead story is the description, a paragraph
+  // a moment. (A battle desk story may also name it, as the attacker.)
+  const lead = h.description.split('\n\n').slice(1);
+  check('the Herald leads with the whole hunt, a paragraph a moment',
+    lead.length >= 8 && lead.filter(p => /Leviathan|creature|beast|monster|gate/i.test(p)).length >= 5,
+    `${lead.length} paragraphs\n${text.slice(0, 600)}`);
+  check('...and the Leviathan holds no row in the standings',
+    !h.fields.some(f => /Where things stand/.test(f.name) && /Leviathan/.test(f.value)),
+    h.fields.find(f => /Where things stand/.test(f.name))?.value);
+  check('...with nothing unfilled in it', !/undefined|NaN|\{|\}/.test(text), text.slice(0, 600));
+  console.log(`      Herald: ${h.title}`);
+  if (process.argv.includes('--herald')) console.log(text);
 }
 
 // ---- B. The kill --------------------------------------------------------

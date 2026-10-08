@@ -25,6 +25,7 @@ import {
   Captain, BuildingKind,
 } from '../types';
 import type { Wreck } from '../types';
+import type { KaijuPhase } from '../types';
 import { parseTargetPriority } from './targetPriority';
 import { sanitizeParts, engineAccelMultiplier, setServerHullBase } from '../game/shipParts';
 import { traitMul as captainTraitMul } from '../game/captains';
@@ -97,7 +98,16 @@ interface ServerState {
     /** The sun-gate omen tick (worker/sunGates.js); null until rolled. */
     sun_gate_tick?: number | null;
     /** The next gate within its warning window (sunGates.js / state.js). */
-    sun_gate_next?: { emerge_tick: number; index: number } | null;
+    sun_gate_next?: { emerge_tick: number; index: number; kaiju?: boolean; system?: string } | null;
+    /** THE LEVIATHAN (worker/kaiju.js), public. Null in a game without one. */
+    kaiju?: {
+      ship_id: string; faction_id: string; system_key: string;
+      launched_at_tick: number; arrive_tick: number; hp_max: number;
+      appetite: number; eaten: string[]; phase: string;
+      target_body_id: string | null; died_at_tick: number | null;
+      died_at_body_id: string | null; carcass_body_id: string | null;
+      gone_at_tick: number | null;
+    } | null;
     /** The first hull through each sun gate. */
     sun_gate_firsts?: Array<{ gate_id: string; faction_id: string | null; tick: number; ship: string | null; to_system: string | null }>;
     transit_range_in_system_mul?: number;
@@ -1041,6 +1051,7 @@ function translateShipClass(serverClass: string): Ship['class'] {
     // mis-wired.
     case 'mega_destroyer':
     case 'mobile_foundry':
+    case 'kaiju':
       return serverClass;
     case 'cargo':
     case 'hauler':
@@ -1241,6 +1252,16 @@ function classifyChronicleEvent(kind: string): { category: LogCategory; level: L
     case 'sun_gate_emerged':
     case 'sun_gate_opened':
       return { category: 'SYSTEM', level: 'WARN' };
+    // The Leviathan (worker/kaiju.js): a threat to everyone, until it is not.
+    case 'kaiju_omen':
+    case 'kaiju_launched':
+    case 'kaiju_hunting':
+    case 'kaiju_charging':
+      return { category: 'THREAT', level: 'WARN' };
+    case 'kaiju_leaving':
+    case 'kaiju_gone':
+    case 'kaiju_dead':
+      return { category: 'SYSTEM', level: 'WARN' };
     case 'gate_transit':
       return { category: 'SYSTEM', level: 'INFO' };
     case 'settlement_built':
@@ -1386,7 +1407,10 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     if (s.ownedBy === callerFactionId) s.ownedBy = PLAYER_TOKEN;
   }
 
-  const factions: Faction[] = srv.factions.map(f => ({
+  // THE LEVIATHAN'S OWNER IS NOT AN EMPIRE (worker/kaiju.js): no seat in
+  // the standings, the diplomacy list, the senate or the scoreboard. Its
+  // hull draws in its own colours and its name rides on the ship.
+  const factions: Faction[] = srv.factions.filter(f => f.status !== 'monster').map(f => ({
     id: f.id === callerFactionId ? PLAYER_TOKEN : f.id,
     name: f.name,
     color: f.color,
@@ -2055,6 +2079,60 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       // printed as one: "X drove an asteroid into a living world", for a
       // gun, with the world unnamed (it wrote `world`, this read
       // `body_name`). Its own line now.
+      // THE LEVIATHAN (worker/kaiju.js), every moment of it.
+      if (ev.kind === 'kaiju_omen') {
+        const system = (parsed.system as string) ?? 'a far star';
+        return `${t}  🦑 Something is stirring at ${system} — something enormous, turning toward the Sun. `
+          + `It moves in ${Number(parsed.launch_in) || 6} ticks`;
+      }
+      if (ev.kind === 'kaiju_launched') {
+        const system = (parsed.system as string) ?? 'a far star';
+        const near = parsed.near as string | undefined;
+        const hp = Number(parsed.hp) || 0;
+        return `${t}  🦑 A LEVIATHAN HAS LEFT ${system.toUpperCase()} — a living thing the size of a moon, burning for the Sun at 2g. `
+          + `It reaches the Far Reach${near ? ` out past ${near}` : ''} at T+${Number(parsed.arrive_tick)}, `
+          + `with ${hp.toLocaleString('en-US')} HP. Every empire is at war with it`;
+      }
+      if (ev.kind === 'kaiju_hunting') {
+        const world = (parsed.world as string) ?? 'a world';
+        return parsed.first
+          ? `${t}  🦑 THE LEVIATHAN HAS ARRIVED — it dropped the ${(parsed.gate as string) ?? 'gate'} where it stopped, `
+            + `and is going for ${world} (there at T+${Number(parsed.arrive_tick)})`
+          : `${t}  🦑 The Leviathan is coming for ${world} — there at T+${Number(parsed.arrive_tick)}`;
+      }
+      if (ev.kind === 'kaiju_charging') {
+        const world = (parsed.world as string) ?? 'a world';
+        return `${t}  🦑 The Leviathan is winding up over ${world} — it strikes at T+${Number(parsed.fires_at_tick)}`
+          + (parsed.mode === 'sterilise' ? ', stripping its biosphere' : ', breaking it apart')
+          + '. Kill it first';
+      }
+      if ((ev.kind === 'terraform_destroyed' || ev.kind === 'world_obliterated') && parsed.cause === 'kaiju') {
+        const where = (parsed.body_name as string) ?? (parsed.world as string) ?? 'a world';
+        const lost = Number(parsed.settlements_lost) || 0;
+        return ev.kind === 'terraform_destroyed'
+          ? `${t}  🦑 ${where.toUpperCase()} STRIPPED — the Leviathan burned its biosphere away`
+            + `${lost ? ` with ${lost} settlement${lost === 1 ? '' : 's'}` : ''}, and is winding up again`
+          : `${t}  🦑 ${where.toUpperCase()} IS GONE — the Leviathan broke it apart`
+            + `${lost ? `, with ${lost} settlement${lost === 1 ? '' : 's'}` : ''}. A debris field orbits where it stood`;
+      }
+      if (ev.kind === 'kaiju_leaving') {
+        const eaten = Array.isArray(parsed.eaten) ? (parsed.eaten as string[]) : [];
+        return `${t}  🦑 The Leviathan ${parsed.why === 'full' ? 'has eaten its fill' : 'has nothing left it will eat'}`
+          + `${eaten.length ? ` (${eaten.join(', ')})` : ''} — it is heading back to the ${(parsed.gate as string) ?? 'gate'}`;
+      }
+      if (ev.kind === 'kaiju_gone') {
+        return `${t}  🦑 The Leviathan went back through the ${(parsed.gate as string) ?? 'gate'}. Nobody knows if it will return`;
+      }
+      if (ev.kind === 'kaiju_dead') {
+        const where = (parsed.world as string) ?? 'deep space';
+        const killer = parsed.killer_faction_name as string | undefined;
+        const ship = parsed.killer_ship_name as string | undefined;
+        const tons = Number(parsed.tons) || 0;
+        return `${t}  🦑 THE LEVIATHAN IS DEAD — it fell at ${where}`
+          + `${killer ? `; ${killer}${ship ? `, aboard the ${ship},` : ''} landed the killing blow` : ''}. `
+          + `Its carcass is ${tons.toLocaleString('en-US')} t of metal for any mining rig`;
+      }
+
       if (ev.kind === 'terraform_destroyed' && parsed.cause === 'mega_destroyer') {
         const owner = nameOfFaction(ev.actor_faction_id, parsed.faction_name as string | undefined);
         const where = (parsed.body_name as string) ?? (parsed.world as string) ?? 'a living world';
@@ -2898,8 +2976,27 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     systemScale: srv.game.system_scale ?? 1,
     sunGateTick: srv.game.sun_gate_tick ?? null,
     sunGateNext: srv.game.sun_gate_next
-      ? { emergeTick: srv.game.sun_gate_next.emerge_tick, index: srv.game.sun_gate_next.index }
+      ? {
+        emergeTick: srv.game.sun_gate_next.emerge_tick, index: srv.game.sun_gate_next.index,
+        kaiju: !!srv.game.sun_gate_next.kaiju, system: srv.game.sun_gate_next.system,
+      }
       : null,
+    kaiju: srv.game.kaiju ? {
+      shipId: srv.game.kaiju.ship_id,
+      factionId: srv.game.kaiju.faction_id,
+      launchedAtTick: srv.game.kaiju.launched_at_tick,
+      arriveTick: srv.game.kaiju.arrive_tick,
+      hpMax: srv.game.kaiju.hp_max,
+      appetite: srv.game.kaiju.appetite,
+      eaten: srv.game.kaiju.eaten ?? [],
+      phase: srv.game.kaiju.phase as KaijuPhase,
+      targetBodyId: srv.game.kaiju.target_body_id ? (stripGameId(srv.game.kaiju.target_body_id) ?? null) : null,
+      diedAtTick: srv.game.kaiju.died_at_tick,
+      diedAtBodyId: srv.game.kaiju.died_at_body_id ? (stripGameId(srv.game.kaiju.died_at_body_id) ?? null) : null,
+      carcassBodyId: srv.game.kaiju.carcass_body_id ? (stripGameId(srv.game.kaiju.carcass_body_id) ?? null) : null,
+      goneAtTick: srv.game.kaiju.gone_at_tick,
+      systemKey: srv.game.kaiju.system_key,
+    } : null,
     sunGateFirsts: (srv.game.sun_gate_firsts ?? []).map(f => ({
       gateId: stripGameId(f.gate_id) ?? f.gate_id,
       factionId: f.faction_id ? (f.faction_id === callerFactionId ? PLAYER_TOKEN : f.faction_id) : null,

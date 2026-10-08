@@ -12,6 +12,7 @@ import { cfg as loadGameConfig } from './gameConfig.js';
 import { visualsSwitches } from './botSettings.js';
 import { orbitAngle, legProgress } from './orbitPos.js';
 import { SHIP_ENGINE_G, BRAKE_MUL, MAX_ENGINE_G, RAMP_TICKS, GROWTH_TAU } from './burn.js';
+import { hostilePairs } from './wars.js';
 
 // GET /api/games/:gameId/state — full renderer snapshot.
 //
@@ -672,12 +673,9 @@ const peaceRowsP = env.DB
   // FOG-FREE, like the pacts and for the same reason: who is at war with
   // whom is common knowledge — a declaration is a public act — and the
   // combat-FX layer has to agree with what the tick will actually do.
-  const war_pairs = ((await env.DB
-    .prepare(`SELECT faction_a, faction_b FROM game_wars
-               WHERE game_id = ? AND ended_at_tick IS NULL`)
-    .bind(gameId).all()).results ?? [])
-    .map(r => (r.faction_a < r.faction_b
-      ? `${r.faction_a}|${r.faction_b}` : `${r.faction_b}|${r.faction_a}`));
+  // The SAME rule the tick uses (wars.js hostilePairs), so the Leviathan
+  // (kaiju.js), at war with everyone, is drawn fighting everyone.
+  const war_pairs = [...await hostilePairs(env, gameId)];
 
   // Allies — factions the caller co-signs an ACTIVE defense-pact or
   // intel-share treaty with. They share sensor vision: the fog CTEs

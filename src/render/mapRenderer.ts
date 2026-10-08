@@ -20,7 +20,7 @@ import { sampleTorchTrajectory, torchPositionFromSamples, trajectoryTangentAt, i
 import { rendezvousStateAt } from '../physics/rendezvous.js';
 import { STRAIGHT_LINE_TRAJECTORIES } from '../game/featureFlags';
 import { COLORS, withOpacity, lighten, darken } from './colors';
-import { drawSunSquid, drawSunOmen, sunGateHeading, sunGateMorph } from './sunSquid';
+import { drawSunSquid, drawSunOmen, sunGateHeading, sunGateMorph, LEVIATHAN_PALETTE } from './sunSquid';
 import { isSunGateSite } from '../game/farSystems';
 import { transitHullScale } from './cameraLimits';
 import { requestLabel, clearOfKeepOuts, reserveRect } from './labelLayer';
@@ -4497,6 +4497,10 @@ const SHIP_ICON_REST_SIZE: Record<string, number> = {
   // (was 42 / 51 / 48 / 66 / 76 / 68).
   mega_destroyer: 58,
   mobile_foundry: 52,
+  // THE LEVIATHAN (worker/kaiju.js): "visibly huge" (Lorne). Half again a
+  // Mega Destroyer, the biggest thing anyone builds, on the same zoom
+  // curves every hull uses, so it still shrinks when you pull out.
+  kaiju: 88,
   corvette: 10,
   frigate: 16,
   freighter: 15,
@@ -4589,7 +4593,8 @@ function drawStrikeCharge(
 }
 
 export function shipIconSize(shipClass: string, isSelected: boolean): number {
-  const scale = isCapitalHull(shipClass) ? SHIP_ICON_SCALE : SHIP_ICON_SCALE * REGULAR_SHIP_BOOST;
+  const scale = (isCapitalHull(shipClass) || shipClass === 'kaiju')
+    ? SHIP_ICON_SCALE : SHIP_ICON_SCALE * REGULAR_SHIP_BOOST;
   return ((SHIP_ICON_REST_SIZE[shipClass] ?? 18) + (isSelected ? 4 : 0)) * scale;
 }
 
@@ -5037,6 +5042,27 @@ export function drawEscortHull(
   g.restore();
 }
 
+/**
+ * THE LEVIATHAN, drawn (worker/kaiju.js). Not a sprite: the sun gate's
+ * squid (sunSquid.ts) in its own abyssal palette, sized like a hull, its
+ * jet burning in flight and idling at rest. Winding up over a world it
+ * wears the Mega Destroyer's charge ring, since it is the same threat on
+ * the same clock.
+ */
+function drawKaijuHull(
+  ship: Ship, ctx: RenderContext, pos: { x: number; y: number },
+  heading: number, iconSize: number, thrust: number,
+) {
+  const now = ctx.nowMs ?? performance.now();
+  drawSunSquid(ctx.ctx, pos.x, pos.y, {
+    u: iconSize / 6, ringR: 0, heading, morph: 0, thrust, now, palette: LEVIATHAN_PALETTE,
+  });
+  if (ship.strikeReadyTick != null) {
+    const left = Math.max(0, ship.strikeReadyTick - ctx.t);
+    drawStrikeCharge(ctx.ctx, pos.x, pos.y, iconSize, 1 - left / MEGA_STRIKE_CHARGE_TICKS, now);
+  }
+}
+
 export function drawShip(
   ship: Ship,
   ctx: RenderContext,
@@ -5333,11 +5359,13 @@ export function drawShip(
   // fallback, so fifty freighter runs of world-killer rendered as a
   // pixel. They are drawn from the same hardware kit as the structure
   // that built them, which is also where they came from.
-  const icon = (isLightweight() || isCapitalHull(ship.class)) ? null : getShipIconImage(
+  const kaiju = ship.class === 'kaiju';
+  if (kaiju) drawKaijuHull(ship, ctx, canvasPos, heading, iconSize, 0.12);
+  const icon = (kaiju || isLightweight() || isCapitalHull(ship.class)) ? null : getShipIconImage(
     ship.class as ShipIconClass, shipColorValue, ship.iconVariant,
     trimColor,
   );
-  if (!isLightweight() && isCapitalHull(ship.class)) {
+  if (!kaiju && !isLightweight() && isCapitalHull(ship.class)) {
     const cg = ctx.ctx;
     cg.save();
     cg.translate(canvasPos.x, canvasPos.y);
@@ -5410,7 +5438,7 @@ export function drawShip(
     if (dressed && (ship.rank ?? 0) >= 5) {
       drawRankChevron(ctx.ctx, canvasPos, iconSize);
     }
-  } else {
+  } else if (!kaiju) {
     // Icon still rasterizing — fall back to the original dot + tick so the
     // map never appears empty.
     const shipSize = isSelected ? 5 : 4;
@@ -5432,7 +5460,7 @@ export function drawShip(
   }
 
   // Ship name label — hover/selection only (see RenderContext.hoveredShipId).
-  if (isSelected || ctx.hoveredShipId === ship.id) {
+  if (isSelected || ctx.hoveredShipId === ship.id || kaiju) {
     ctx.ctx.fillStyle = isSelected ? '#ffb84d' : shipColorValue;
     ctx.ctx.font = '9px "Audiowide", monospace';
     ctx.ctx.textAlign = 'left';
@@ -6871,7 +6899,7 @@ function drawTorchTransitShip(
   const turnFade = shaped ? Math.abs(Math.cos(Math.PI * flipTurn)) : 1;
   const plumeLen = !shaped ? 1 : (isBrake ? 1.4 : ramped ? 0.7 + 0.7 * share : 1) * turnFade;
   const shapedPlume = !shaped ? 1 : (ramped && !isBrake ? 0.8 + 0.2 * share : 1) * turnFade;
-  if (thrusting && thrustVis > 0 && shapedPlume > 0.02) {
+  if (thrusting && thrustVis > 0 && shapedPlume > 0.02 && ship.class !== 'kaiju') {
     const cosH = Math.cos(heading);
     const sinH = Math.sin(heading);
     drawThrustExhaust(
@@ -6920,6 +6948,13 @@ function drawTorchTransitShip(
   // engine had lost its ship. The parked path already had this branch;
   // the transit path never got it.
   const capital = isCapitalHull(ship.class);
+  const kaiju = ship.class === 'kaiju';
+  if (kaiju) {
+    // Its own jet, not a hull's exhaust (skipped above): hard on the push
+    // and the brake, cold across the flip.
+    drawKaijuHull(ship, ctx, canvasPos, heading, iconSize,
+      thrusting ? Math.max(0.3, shapedPlume) : 0.1);
+  }
   if (capital) {
     if (dressed && shipIsRetreating(ship)) {
       drawRetreatWake(ctx.ctx, canvasPos, heading, iconSize, trimColor ?? shipColorValue, ctx.nowMs, ship.id);
@@ -6962,7 +6997,7 @@ function drawTorchTransitShip(
     if (dressed && (ship.rank ?? 0) >= 5) drawRankChevron(ctx.ctx, canvasPos, iconSize);
   }
 
-  const icon = capital ? null : getShipIconImage(
+  const icon = (capital || kaiju) ? null : getShipIconImage(
     ship.class as ShipIconClass, shipColorValue, ship.iconVariant,
     trimColor,
   );
@@ -6982,7 +7017,7 @@ function drawTorchTransitShip(
     if (dressed && (ship.rank ?? 0) >= 5) {
       drawRankChevron(ctx.ctx, canvasPos, iconSize);
     }
-  } else if (!capital) {
+  } else if (!capital && !kaiju) {
     const shipSize = isSelected ? 5 : 4;
     ctx.ctx.fillStyle = shipColorValue;
     ctx.ctx.beginPath();
@@ -7007,7 +7042,7 @@ function drawTorchTransitShip(
   // Ship name — hover/selection only (see RenderContext.hoveredShipId).
   // Stack is NAME / HP BAR / ETA, so the bar slots between them and the
   // ETA drops 8px rather than colliding with it.
-  const named = isSelected || ctx.hoveredShipId === ship.id;
+  const named = isSelected || ctx.hoveredShipId === ship.id || kaiju;
   if (named) {
     const labelX = canvasPos.x + iconSize / 2 + 4;
     ctx.ctx.fillStyle = isSelected ? '#ffb84d' : shipColorValue;

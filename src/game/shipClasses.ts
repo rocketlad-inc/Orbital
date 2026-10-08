@@ -11,7 +11,10 @@ export type ShipClassName = 'corvette' | 'frigate' | 'destroyer' | 'freighter' |
   // CAPITAL HULLS. Not buildable at a shipyard at any price — they
   // come out of a megastructure site and nowhere else, which is why
   // they are absent from BUILDABLE_CLASSES and from SHIP_BUILD_COST.
-  | 'mega_destroyer' | 'mobile_foundry';
+  | 'mega_destroyer' | 'mobile_foundry'
+  // THE LEVIATHAN (worker/kaiju.js). Nobody builds or owns one: it is the
+  // monster that carries the second sun gate in, and hunts worlds.
+  | 'kaiju';
 
 export interface ShipClassDef {
   className: ShipClassName;
@@ -226,6 +229,29 @@ const MOBILE_FOUNDRY: ShipClassDef = {
   size: 13,
 };
 
+const KAIJU: ShipClassDef = {
+  className: 'kaiju',
+  get displayName() { return tk('data.ship.kaiju.name', 'Leviathan'); },
+  icon: '🦑',
+  get description() { return tk('data.ship.kaiju.desc', 'A living thing the size of a moon. It eats worlds, '
+    + 'makes no peace, and every empire is at war with it.'); },
+  firepower: 50,
+  // The CAP. Its real hp_max is rolled at launch from the game's fleets.
+  hp: 20000,
+  pdcRating: 0,
+  range: 30,
+  // MIRRORS SHIP_COMBAT_STATS.kaiju in worker/factions.js.
+  damagePerTick: 50,
+  speed: 0.5,
+  fuelCapacity: 0,
+  speedModifier: 1,
+  cargoCapacity: 0,
+  cost: { fuel: 0, ore: 0, credits: 0 },
+  buildTime: 0,
+  canHarvest: false,
+  size: 20,
+};
+
 export const SHIP_CLASSES: Record<ShipClassName, ShipClassDef> = {
   corvette: CORVETTE,
   frigate: FRIGATE,
@@ -234,6 +260,7 @@ export const SHIP_CLASSES: Record<ShipClassName, ShipClassDef> = {
   colony: COLONY,
   mega_destroyer: MEGA_DESTROYER,
   mobile_foundry: MOBILE_FOUNDRY,
+  kaiju: KAIJU,
 };
 
 /** Hulls a SHIPYARD can be told to make.
@@ -272,6 +299,7 @@ export const SHIP_UPKEEP: Record<ShipClassName, { credits: number; ore: number }
   // below re-weighs them by build cost like every other hull.
   mega_destroyer: { credits: 6,    ore: 6 },
   mobile_foundry: { credits: 5,    ore: 5 },
+  kaiju:          { credits: 0,    ore: 0 },
 };
 
 /**

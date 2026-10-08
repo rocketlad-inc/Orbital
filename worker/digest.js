@@ -7695,6 +7695,15 @@ async function fetchStandingTotals(env, gameId, uptoTick, factionNames = new Map
       totals.eliminated = new Set(elim.map(r => factionNames.get(r.fid)).filter(Boolean));
     } catch { totals.eliminated = new Set(); }
 
+    // monsters: the Leviathan (kaiju.js) is nobody's empire and holds no
+    // row in the standings, however many hulls it sinks.
+    try {
+      const m = (await env.DB
+        .prepare(`SELECT id FROM game_factions WHERE game_id = ? AND status = 'monster'`)
+        .bind(gameId).all()).results ?? [];
+      totals.monsters = new Set(m.map(r => factionNames.get(r.id)).filter(Boolean));
+    } catch { totals.monsters = new Set(); }
+
     // warStarted: has anyone died yet? The war-weary footer printed in
     // a zero-combat opening edition of a zone literally named Peace.
     // Its own query and its own try: the first cut read a const scoped
@@ -7885,6 +7894,7 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
   // and every one of them silently evaporated in the reassignment.
   const holdings = totals?.holdings instanceof Map ? totals.holdings : null;
   const eliminatedSet = totals?.eliminated instanceof Set ? totals.eliminated : null;
+  const monsters = totals?.monsters instanceof Set ? totals.monsters : null;
   const dyson = totals?.dyson ?? null;
   const prevHoldings = totals?.prevHoldings instanceof Map ? totals.prevHoldings : null;
   const firstWindow = totals?.firstWindow === true;
@@ -7964,6 +7974,7 @@ function standingsField(rows, factionNames, totals = new Map(), priorNames = nul
     .map(([name, s]) => ({ name, ...s, net: (s.built - s.lost) + 3 * (s.founded - s.razed) }))
     .filter(r => totals.has(r.name) || holdings?.has(r.name)
       || r.built || r.lost || r.founded || r.razed)
+    .filter(r => !monsters?.has(r.name))
     .sort((a, z) => z.net - a.net);
   if (rank.length < 2) return null;
 
@@ -9027,7 +9038,8 @@ function buildFrontierStories(rows, used, locator, factionNames) {
     if (row.kind === 'kaiju_leaving') {
       const eaten = Array.isArray(p.eaten) ? p.eaten : [];
       kaijuStory(row, 5, mkStory(950, used, 'kaiju_leaving', KAIJU_LEAVING, 'kaiju_leaving_hl', KAIJU_LEAVING_HEADLINE, {
-        gate: p.gate ?? 'gate', worlds: eaten.length ? joinList(eaten) : '',
+        // Never empty: the banks name what it ate in every sentence.
+        gate: p.gate ?? 'gate', worlds: eaten.length ? joinList(eaten) : 'nothing at all',
       }));
       continue;
     }

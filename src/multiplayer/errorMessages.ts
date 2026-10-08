@@ -137,6 +137,10 @@ export function humanizeMpError(
       // worker/actions.js emergingTargetRefusal.
       return t('mp.err.gateInFlight');
 
+    case 'monster':
+      // worker/wars.js: no declaring on, or making peace with, the Leviathan.
+      return t('mp.err.monster');
+
     case 'not_terraformed':
       return t('mp.err.notTerraformed');
 

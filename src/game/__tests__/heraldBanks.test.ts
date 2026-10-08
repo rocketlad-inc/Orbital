@@ -58,6 +58,15 @@ const CTX = {
   arrive: 287,
   near: 'Eris',
   shipPlain: 'Chetzemoka',
+  // The Leviathan (kaiju.js).
+  world: 'Callisto',
+  hp: '12,400',
+  appetite: 3,
+  fires: 312,
+  lost: 2,
+  worlds: 'Titan and Callisto',
+  tons: '6,200',
+  killer: 'The Solar Expanse',
 };
 
 type Template = (c: typeof CTX) => string;

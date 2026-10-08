@@ -39,6 +39,34 @@ const HIDE_DARK = '#1c1029';
 const HIDE_MID = '#3b2150';
 const HIDE_LIT = '#6a4a86';
 
+/** The colours it is drawn in. RGB triples (no alpha) for the lights,
+ *  CSS colours for the hide. */
+export interface SquidPalette {
+  glow: string;
+  hot: string;
+  /** The lamp eyes' core; the glow colour when absent. */
+  eye?: string;
+  dark: string;
+  mid: string;
+  lit: string;
+  fin: string;
+}
+
+/** The sun gate: gold lights on a bruise-purple hide. */
+export const SUN_PALETTE: SquidPalette = {
+  glow: GLOW, hot: GLOW_HOT, dark: HIDE_DARK, mid: HIDE_MID, lit: HIDE_LIT,
+  fin: 'rgba(122, 90, 152, 0.75)',
+};
+
+/** THE LEVIATHAN (worker/kaiju.js): the same animal from the deep end of
+ *  another star. Abyssal violet light, a black hide, and eyes that burn
+ *  red, so nobody mistakes it for the gate that came out of the Sun. */
+export const LEVIATHAN_PALETTE: SquidPalette = {
+  glow: '180, 100, 255', hot: '236, 214, 255', eye: '255, 70, 100',
+  dark: '#07040f', mid: '#1a0f2e', lit: '#382062',
+  fin: 'rgba(84, 52, 140, 0.8)',
+};
+
 export interface SunSquidPose {
   /** Squid size unit in px. The mantle is ~2.4u long, the arms ~2.6u. */
   u: number;
@@ -52,6 +80,8 @@ export interface SunSquidPose {
   thrust: number;
   /** performance.now(), for the motion. */
   now: number;
+  /** Colours; the sun gate's gold when absent. */
+  palette?: SquidPalette;
 }
 
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
@@ -107,6 +137,10 @@ function ribbon(g: G, pts: P[], w0: number, w1: number) {
  */
 export function drawSunSquid(g: G, cx: number, cy: number, pose: SunSquidPose) {
   const { u, ringR: rho, heading, now } = pose;
+  // The palette, under the names the drawing below has always used.
+  const pal = pose.palette ?? SUN_PALETTE;
+  const GLOW = pal.glow, GLOW_HOT = pal.hot, EYE = pal.eye ?? pal.hot;
+  const HIDE_DARK = pal.dark, HIDE_MID = pal.mid, HIDE_LIT = pal.lit;
   const m = clamp01(pose.morph);
   const thrust = clamp01(pose.thrust) * (1 - m);
   const spin = sunGateSpin(now);
@@ -269,7 +303,7 @@ export function drawSunSquid(g: G, cx: number, cy: number, pose: SunSquidPose) {
 
     // Fins at the tip: thin, translucent, flexing.
     const flex = 0.08 * Math.sin(now / 420);
-    g.fillStyle = 'rgba(122, 90, 152, 0.75)';
+    g.fillStyle = pal.fin;
     for (const s of [-1, 1]) {
       g.beginPath();
       g.moveTo(u * 2.45, 0);
@@ -320,8 +354,8 @@ export function drawSunSquid(g: G, cx: number, cy: number, pose: SunSquidPose) {
     for (const s of [-1, 1]) {
       const ex = -u * 0.24, ey = s * u * 0.32;
       const eye = g.createRadialGradient(ex, ey, 0, ex, ey, u * 0.2);
-      eye.addColorStop(0, `rgba(${GLOW_HOT}, 1)`);
-      eye.addColorStop(0.35, `rgba(${GLOW}, 0.8)`);
+      eye.addColorStop(0, `rgba(${EYE}, 1)`);
+      eye.addColorStop(0.35, `rgba(${EYE === GLOW_HOT ? GLOW : EYE}, 0.8)`);
       eye.addColorStop(1, `rgba(${GLOW}, 0)`);
       g.fillStyle = eye;
       g.beginPath(); g.arc(ex, ey, u * 0.2, 0, TWO_PI); g.fill();

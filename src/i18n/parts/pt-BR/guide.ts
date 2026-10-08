@@ -658,6 +658,7 @@ export const guide: Catalog = {
   'mp.err.noSurface': 'Não é possível implantar uma cidade neste tipo de corpo — estrelas, gigantes gasosos e gigantes de gelo não têm superfície.',
   'mp.err.tooFast': 'Essa ordem é mais rápida do que a nave consegue voar. Recarregue a página para pegar os propulsores atuais e tente de novo.',
   'mp.err.gateInFlight': 'Esse portal ainda está voando para fora do Sol. Envie as naves ao local de pouso dele.',
+  'mp.err.monster': 'Não há como negociar com o Leviatã. Todo império já está em guerra com ele, e não existe paz possível.',
   'mp.err.gateInFlightClick': 'Esse portal ainda está voando para fora do Sol e não pode ser alvo em voo. Ele pousa em T+{tick}.',
   'mp.err.notTerraformed': 'Este mundo ainda é bruto — cidades precisam de um mundo terraformado. Crie uma rota de suprimentos de cargueiro até aqui para terraformá-lo, ou implante uma Estação agora.',
   'mp.err.originNotTerraformed': 'As viagens de terraformação e de Dyson carregam o seu ESTOQUE, e o estoque só fica na doca de um mundo terraformado — escolha um deles como origem.',

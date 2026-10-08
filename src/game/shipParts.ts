@@ -89,6 +89,7 @@ export const SHIP_SLOT_COUNTS: Record<ShipClassName, number> = {
   // structure that built them, not from fittings.
   mega_destroyer: 0,
   mobile_foundry: 0,
+  kaiju: 0,
 };
 
 /** Standard-issue fitting per hull — the "Default" template every player
@@ -106,6 +107,7 @@ export const DEFAULT_LOADOUTS: Record<ShipClassName, ShipPartId[]> = {
   colony:    ['colony'],
   mega_destroyer: [],
   mobile_foundry: [],
+  kaiju: [],
 };
 
 /**
@@ -621,6 +623,7 @@ export const SERVER_HULL_BASE: Record<
 > = {
   mega_destroyer: { hp: 6000, damagePerTick: 350, speed: 0.08 },
   mobile_foundry: { hp: 4600, damagePerTick: 0, speed: 0.14 },
+  kaiju: { hp: 20000, damagePerTick: 50, speed: 0.50 },
   corvette: { hp: 40, damagePerTick: 3.5, speed: 0.85 },
   frigate: { hp: 200, damagePerTick: 17.5, speed: 0.50 },
   destroyer: { hp: 1000, damagePerTick: 87.5, speed: 0.30 },
