@@ -116,16 +116,23 @@ export const GroupIntercept: React.FC<GroupInterceptProps> = ({ ships, onClose, 
   // Dock the desktop pop-out beside the group's panel.
   useLayoutEffect(() => {
     if (isMobile) { setPopAt(null); return undefined; }
+    const panel = () => document.querySelector('.group-selection-panel') ?? document.querySelector('.ship-panel');
     const place = () => {
-      const el = document.querySelector('.group-selection-panel') ?? document.querySelector('.ship-panel');
-      const r = el?.getBoundingClientRect();
+      const r = panel()?.getBoundingClientRect();
+      // Clamped, and measured again when the panel's slide-in ends (see
+      // the ship panel's dock).
       setPopAt(r && r.width > 0
         ? { left: Math.round(r.right + 8), top: Math.max(8, Math.round(r.top)) }
         : { left: 16, top: 70 });
     };
     place();
+    const el = panel();
     window.addEventListener('resize', place);
-    return () => window.removeEventListener('resize', place);
+    el?.addEventListener('animationend', place);
+    return () => {
+      window.removeEventListener('resize', place);
+      el?.removeEventListener('animationend', place);
+    };
   }, [isMobile, selectionKey]);
 
   const close = () => {
