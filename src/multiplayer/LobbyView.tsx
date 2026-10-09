@@ -79,6 +79,7 @@ const TICK_INTERVAL_OPTIONS: Array<{ label: string; value: number }> = [
   { label: '7.5min',               value: 450_000 },
   { label: '30min (lunch break)',  value: 1_800_000 },
   { label: '1h (async · DEFAULT)', value: 3_600_000 },
+  { label: '2h (12×/day)',         value: 7_200_000 },
   { label: '6h (4×/day)',          value: 21_600_000 },
   { label: '12h (2×/day)',         value: 43_200_000 },
   { label: '24h (1×/day)',         value: 86_400_000 },

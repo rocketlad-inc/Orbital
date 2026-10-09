@@ -439,6 +439,10 @@ export function SenatePanel({
    *  Server-sent (see senate.js) rather than mirrored: it is quoted to
    *  voters, and a stale copy would misstate what a bill actually does. */
   const [reparationsPer, setReparationsPer] = useState<number | null>(null);
+  /** What the chairman may name per recipient, server-sent like the figure above. */
+  const [reparationsRange, setReparationsRange] = useState<{ min: number; max: number }>({ min: 1, max: 5000 });
+  /** The chairman's figure for a reparations bill. Blank = the server's default (reparationsPer). */
+  const [repAmount, setRepAmount] = useState<string>('');
   const [voteMax, setVoteMax] = useState<number>(VOTE_MAX_FALLBACK);
   const [voteTicks, setVoteTicks] = useState<number>(1);
 
@@ -470,6 +474,8 @@ export function SenatePanel({
         min_window_ticks?: number; debate_max_ticks?: number; vote_max_ticks?: number;
         min_debate_ticks?: number; min_vote_ticks?: number;
         reparations_per_faction?: number;
+        reparations_min_per_faction?: number;
+        reparations_max_per_faction?: number;
       }>(`/api/games/${gameId}/senate/sliders`),
       apiFetch<{
         proposals: SenateProposal[]; session?: SenateSession;
@@ -487,6 +493,9 @@ export function SenatePanel({
       const vFloor = sRes.data.min_vote_ticks ?? sRes.data.min_window_ticks;
       if (typeof sRes.data.reparations_per_faction === 'number') {
         setReparationsPer(sRes.data.reparations_per_faction);
+      }
+      if (typeof sRes.data.reparations_min_per_faction === 'number' && typeof sRes.data.reparations_max_per_faction === 'number') {
+        setReparationsRange({ min: sRes.data.reparations_min_per_faction, max: sRes.data.reparations_max_per_faction });
       }
       if (typeof vFloor === 'number' && vFloor > 0) {
         setMinVote(vFloor);
@@ -604,6 +613,19 @@ export function SenatePanel({
         return;
       }
       body.target_faction_id = targetFactionId;
+      if (kind === 'reparations') {
+        // The chairman names how much each recipient gets. Blank sends
+        // nothing and the server uses its default, the same figure the
+        // field's placeholder shows.
+        if (repAmount.trim() !== '') {
+          const n = Number(repAmount);
+          if (!Number.isInteger(n) || n < reparationsRange.min || n > reparationsRange.max) {
+            setError(t('senate.err.repAmount', { min: fmtNum(reparationsRange.min), max: fmtNum(reparationsRange.max) }));
+            return;
+          }
+          body.amount_per_faction = n;
+        }
+      }
     }
     setBusy(true);
     const res = await apiFetch(`/api/games/${gameId}/senate/proposals`, {
@@ -613,7 +635,7 @@ export function SenatePanel({
     setBusy(false);
     if (!res.ok) { setError(apiErrorText(res.error, 'senate.err.propose')); return; }
     setTitle(''); setSummary('');
-    setTargetFactionId(''); setSliderTargetId('');
+    setTargetFactionId(''); setSliderTargetId(''); setRepAmount('');
     // Reset to the floor, not to a legacy default below it.
     setVoteTicks(minVote);
     refresh();
@@ -1002,6 +1024,36 @@ export function SenatePanel({
                 {t('senate.compose.oneAttempt')}
               </div>
             )}
+            {kind === 'reparations' && (
+              <>
+                <label className="mp-label">{t('senate.compose.repAmount')}</label>
+                <input
+                  className="mp-input"
+                  type="number"
+                  inputMode="numeric"
+                  min={reparationsRange.min}
+                  max={reparationsRange.max}
+                  step={1}
+                  value={repAmount}
+                  placeholder={String(reparationsPer ?? 200)}
+                  onChange={(e) => setRepAmount(e.target.value)}
+                />
+                <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)', marginTop: 4, fontStyle: 'italic' }}>
+                  {(() => {
+                    // Say what the number adds up to BEFORE the bill is
+                    // filed: recipients are every other living faction.
+                    const per = repAmount.trim() === '' ? (reparationsPer ?? 0) : Number(repAmount);
+                    const others = factions.filter(f => f.status === 'active' && f.id !== targetFactionId).length;
+                    if (!targetFactionId || !Number.isFinite(per) || per <= 0 || others <= 0) {
+                      return t('senate.compose.repHelpNoTarget', { min: fmtNum(reparationsRange.min), max: fmtNum(reparationsRange.max) });
+                    }
+                    return t('senate.compose.repHelp', {
+                      players: tn('senate.fx.players', others), amount: fmtNum(per), total: fmtNum(per * others),
+                    });
+                  })()}
+                </div>
+              </>
+            )}
           </>
         )}
         <label className="mp-label">{t('senate.compose.title')}</label>
@@ -1356,15 +1408,18 @@ function ProposalEffectLine({
     // the same number the quorum line quotes. Reusing it means the card
     // cannot disagree with itself about how many players there are.
     const others = Math.max(0, (p.quorum?.eligible ?? 0) - 1);
-    if (reparationsPer == null || others === 0) {
+    // The chairman names the figure when filing; a bill filed before that
+    // was possible carries none and paid the server default.
+    const billPer = typeof p.payload?.amount_per_faction === 'number' ? p.payload.amount_per_faction : reparationsPer;
+    if (billPer == null || others === 0) {
       return wrap(<>{rich('senate.fx.reparationsVague', { name: who })}</>);
     }
     return wrap(<>
       {rich('senate.fx.reparations', {
         name: who,
-        amount: <strong>{t('senate.fx.credits', { n: fmtNum(reparationsPer) })}</strong>,
+        amount: <strong>{t('senate.fx.credits', { n: fmtNum(billPer) })}</strong>,
         players: tn('senate.fx.players', others),
-        total: fmtNum(reparationsPer * others),
+        total: fmtNum(billPer * others),
       })}
     </>);
   }

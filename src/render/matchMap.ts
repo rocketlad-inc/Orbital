@@ -16,7 +16,7 @@
 import { hashStr, mulberry32 } from './planetTexture';
 import { MIN_CAMERA_SCALE } from './cameraLimits';
 import {
-  BODY_LABEL_ROW_HEIGHT, bodyLabelAlwaysOn, computeTransitLanes,
+  BODY_LABEL_ROW_HEIGHT, bodyLabelAlwaysOn, computeTransitFormations, placeInFormation,
   drawAsteroidBeltDust, drawBody, drawOrbit, drawOwnershipLayer,
   drawSettlement, drawShip, drawStarfield, drawSystemRegions,
   drawTorchTrajectory, drawTransitShip, generateStarfield, planBodyLabels,
@@ -950,18 +950,17 @@ export function createMatchMap(
       if (o) b.ownedBy = o; else delete (b as { ownedBy?: string }).ownedBy;
     }
 
-    // LANES BEFORE THE CONTEXT. Hulls sharing a route get consecutive
-    // perpendicular offsets so a fleet under way flies abreast instead of
-    // stacking into one line with nine sprites on it. The trajectory
-    // layer and the hull both read this same map, which is why it has to
-    // exist before either is drawn.
-    const transitLanes = computeTransitLanes(gameShips);
+    // FORMATIONS BEFORE THE CONTEXT. Hulls sharing a course fly one line
+    // in an arrowhead round their true position (computeTransitFormations)
+    // instead of stacking nine sprites on one point. The line and the hull
+    // both read this map, which is why it has to exist before either.
+    const transitFormations = computeTransitFormations(gameShips);
 
     const rc: RenderContext = {
       ctx, canvas,
       camera: { x: cam.x, y: cam.y, scale: cam.scale },
       t,
-      transitLanes,
+      transitFormations,
       bodies: gameBodies,
       factions: gameFactions,
       settlements: gameSettlements,
@@ -1245,7 +1244,7 @@ export function createMatchMap(
       discs.push({ x: cp.x, y: cp.y, r: Math.max(3, b.radius * cam.scale) });
     }
 
-    // Hulls between worlds, on the game's trajectory art and in its lanes.
+    // Hulls between worlds, on the game's trajectory art, in formation.
     const transiting = new Set<string>();
     for (const sh of gameShips) {
       if (!sh.transit) continue;
@@ -1253,7 +1252,7 @@ export function createMatchMap(
       const samples = drawTorchTrajectory(
         sh.transit.currentTransfer, gameBodies, rc, undefined, true,
         false, curTick, sh.id);
-      drawTransitShip(sh, rc, false, samples, transitScale);
+      drawTransitShip(sh, rc, false, placeInFormation(sh.id, samples, rc, transitScale), transitScale);
     }
 
     // Where the caption ends up, so the body names can keep clear of it.

@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
+    "@cloudflare/puppeteer": "1.4.0",
     "@resvg/resvg-wasm": "^2.6.2",
     "@types/three": "^0.160.0",
     "ajv": "^8.20.0",
@@ -35,6 +36,7 @@
     "sim:migrations": "node sim/migrationRerun.mjs",
     "sim:senate": "node sim/senateTerms.mjs",
     "sim:laws": "node sim/senateLaws.mjs",
+    "sim:reparations": "node sim/senateReparations.mjs",
     "sim:unload": "node sim/unloadHold.mjs",
     "sim:fog": "node sim/fogFlicker.mjs",
     "sim:hold": "node sim/cargoHold.mjs",

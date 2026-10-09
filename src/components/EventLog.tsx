@@ -25,6 +25,7 @@ import { useIsMobile } from '../hooks/useIsMobile';
 import type { ChronicleFocus } from '../types';
 import { t, tn } from '../i18n/core';
 import { useI18n } from '../i18n/react';
+import { recapUrl } from '../multiplayer/RecapShare';
 import './DockRail.css';
 import './EventLog.css';
 
@@ -127,6 +128,40 @@ function logEntryIcon(entry: string): { icon: string; color: string; label: stri
  *  asking future editors to be careful. */
 const SAFE_LINK = /^(\/[^/]|https:\/\/orbital-empire\.com\/)/;
 
+/** Copy a battle's public replay link (its unfurl is the battle's own
+ *  card), or hand it to the phone's share sheet where there is one. */
+function RecapCopy({ token }: { token: string }) {
+  const [done, setDone] = React.useState(false);
+  const isMobile = useIsMobile();
+  const url = recapUrl(token);
+  const go = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (isMobile && typeof navigator.share === 'function') {
+      try { await navigator.share({ url }); return; } catch { /* dismissed: fall through to copy */ }
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      setDone(true);
+      setTimeout(() => setDone(false), 2000);
+    } catch { /* no clipboard: the link itself is still there */ }
+  };
+  return (
+    <button
+      type="button"
+      onClick={go}
+      title={t('eventlog.shareRecapTitle')}
+      style={{
+        marginLeft: 6, padding: '1px 6px', fontSize: 10, lineHeight: 1.4, cursor: 'pointer',
+        color: done ? '#6ee7a8' : '#8fd8ff', background: 'transparent',
+        border: '1px solid rgba(143, 216, 255, 0.4)', borderRadius: 4, verticalAlign: 'baseline',
+      }}
+    >
+      {done ? t('eventlog.shareCopied') : t('eventlog.shareRecap')}
+    </button>
+  );
+}
+
 function renderHeraldMd(text: string): React.ReactNode[] {
   const out: React.ReactNode[] = [];
   // Split on links first so a label containing bold still renders.
@@ -145,6 +180,9 @@ function renderHeraldMd(text: string): React.ReactNode[] {
           {link[1]}
         </a>,
       );
+      // A battle story's replay link: one tap to pass it on.
+      const recap = /\/recap\/([A-Za-z0-9_-]{8,64})/.exec(link[2]);
+      if (recap) out.push(<RecapCopy key={`s${ci}`} token={recap[1]} />);
       return;
     }
     const parts = chunk.split('**');
@@ -180,7 +218,10 @@ export const EventLog: React.FC = () => {
   const mpActions = useMultiplayerActions();
   // A phone has no Esc key: the footer drops the keyboard hint there.
   const isMobile = useIsMobile();
+  // `entries` is the ENGLISH headline: the icon / category classifier below
+  // reads it. `shown` is the same row in the player's language, for display.
   const entries = gameState.combatLog;
+  const shown = gameState.combatLogDisplay ?? entries;
   const flavors = gameState.chronicleFlavor;
   const focuses = gameState.chronicleFocus;
   const metas = gameState.chronicleMeta;
@@ -539,7 +580,7 @@ export const EventLog: React.FC = () => {
                               style={{ color }}
                               aria-hidden="true"
                             >{icon}</span>
-                            <span className="event-log__text">{tint(entry)}</span>
+                            <span className="event-log__text">{tint(shown[i] ?? entry)}</span>
                           </span>
                         </button>
                         {/* Jump + chevron: two equal 32px tap targets with
@@ -584,7 +625,7 @@ export const EventLog: React.FC = () => {
                       {isOpen && (() => {
                         const onFocus = jump;
                         const meta = metas?.[i] ?? null;
-                        const flavorText = flavors?.[i] ?? entry;
+                        const flavorText = flavors?.[i] ?? shown[i] ?? entry;
                         const isEditing = editingIndex === i;
                         return (
                           <div className="event-log__row__body">

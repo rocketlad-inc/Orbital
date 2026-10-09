@@ -25,23 +25,29 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from './api';
-import { getShipIconImage } from '../render/shipIconCache';
 import { getEmblemImage } from '../render/emblemCache';
 import {
-  getPlanetTexture, getTerraformedTexture, terraformFraction, hashStr, mulberry32,
+  getPlanetTexture, getTerraformedTexture, terraformFraction, hashStr, mulberry32, getGlobe,
 } from '../render/planetTexture';
+import { paintGlobe } from '../render/paintGlobe';
 import {
-  drawBurn,
-  drawTexturedDisk, drawSphereLighting, drawThrustExhaust,
-  drawMuzzleFlash, drawShieldFlare,
-  drawFireball, drawImpactFlash, drawBoltGlow, drawTaperedBolt, drawWreck,
-  FIREBALL_LIFE_MS,
-  ENERGY_COLOR,
+  drawTexturedDisk, drawSphereLighting, drawThrustExhaust, drawWreck,
 } from '../render/fxPrimitives';
 import { drawCityCluster, drawStationStructure } from '../render/isoStructures';
 import { deriveSecondary } from '../game/colorUtils';
+import { countPart } from '../game/shipParts';
+import { FX_TUNING } from '../render/fxTuning';
+import {
+  battleReferenceRadius, battleSpriteScale, BATTLE_STATION_PX,
+} from '../render/battleLayoutLive';
 import { toRenderBody, stripGameId } from './bodyIdentity';
-import { ShipIconClass, ShipIconVariant } from '../components/ShipIcons';
+import { layoutRecap, glideSlot, type RecapBeat, type RecapUnit, type RecapLayout } from './recapLayout';
+import {
+  iconClassOf, gameHullPx, hullImage, recapClock, drawVolley, drawHullWreck, drawDeathBlast,
+  drawDamageFire, wreckAlpha, burnPose, WRECK_LIFE_TICKS, LAUNCH_SPREAD, flightFrac,
+} from './recapFx';
+import { ShipIconVariant } from '../components/ShipIcons';
+import { recordRecapGif, downloadBlob, gifSpan } from './recapGif';
 import type { Body } from '../types';
 import { t as tr, tn as trn } from '../i18n/core';
 import { useI18n } from '../i18n/react';
@@ -65,23 +71,37 @@ const NEUTRAL = '#8a9fb3';
 
 const CANVAS_W = 860, CANVAS_H = 520;
 const TICK_MS = 2200;
-const LAUNCH_SPREAD = 0.34, FLIGHT_FRAC = 0.28, BURY_MS = 110, DRAIN_MS = 420;
+const DRAIN_MS = 420;
 const LIGHT_X = 0.74, LIGHT_Y = 0.67;
 /** Orbital planes seen from the same angle as the single-battle recap. */
 const TILT = 0.58;
-/** How far off a body its combatants hold. */
+/** How far off a body its combatants hold (world spacing only now: the
+ *  hulls themselves are placed by the game's battle layout). */
 const GUARD_RING = 26;
-const SHIP_PX: Record<string, number> = {
-  corvette: 15, frigate: 18, freighter: 17, colony: 17, destroyer: 22,
-};
-const ICON_CLASSES: ShipIconClass[] = ['corvette', 'frigate', 'destroyer', 'freighter', 'colony'];
-const iconClassOf = (cls: string | null): ShipIconClass | null => {
-  const c = (cls ?? '').toLowerCase();
-  return (ICON_CLASSES as string[]).includes(c) ? (c as ShipIconClass) : null;
-};
-const shipPx = (cls: string | null) => SHIP_PX[(cls ?? '').toLowerCase()] ?? 16;
-/** How long a wreck stays on the board — about nine ticks. */
+/** How long a settlement's ruin stays on the board — about nine ticks.
+ *  A hull's wreck fades as the map's do (recapFx WRECK_LIFE_TICKS). */
 const WRECK_LIFE_MS = 9 * 2200;
+/** Where a world's fight sits on its orbit (the near face, down and to
+ *  the right, as in the single-battle recap), and how fast it turns. */
+const ENGAGEMENT_BEARING = 0.9;
+const THEATRE_ORBIT_RATE = 0.00004;
+/** A hull arriving from off the board brakes into its slot over this much
+ *  of its first beat; one crossing from another world flies over this
+ *  much. Nothing it fires or takes goes off until it is there (Lorne,
+ *  2026-10-09: "the firing before they arrive is confusing"). */
+const ARRIVE_FRAC = 0.3;
+const CROSS_FRAC = 0.42;
+/** A hull that has left the fight boosts off the board over this much of
+ *  the beat AFTER its last one. */
+const DEPART_FRAC = 0.45;
+/** A jump of this many ticks or more between beats is a LULL: the system
+ *  view plays every campaign fought in a system as one reel (worker
+ *  systemCampaigns), and a campaign only ends after BATTLE_QUIET_TICKS (6)
+ *  quiet ticks, so a gap of 7+ is where one campaign stopped and the next
+ *  began. It gets a card saying how long the quiet lasted. */
+const LATER_TICKS = 7;
+/** Roughly when in its beat a hull that died then went up, ms. */
+const KILL_AT_MS = (LAUNCH_SPREAD / 2 + flightFrac(TICK_MS)) * TICK_MS;
 
 /** '#rrggbb' -> [r, g, b], so a faction colour can tint a plume. */
 function rgbOf(hex: string): [number, number, number] {
@@ -134,6 +154,9 @@ export interface TheatreDetail {
   theatre: {
     id: string; anchor_body_id: string | null; anchor_name: string | null;
     started_tick: number; last_fire_tick: number; ended_tick: number | null;
+    /** Every campaign the reel strings together (the whole system's war),
+     *  oldest first. Absent from payloads built before 2026-10-09. */
+    campaigns?: Array<{ id: string; started_tick: number; last_fire_tick: number }>;
     status: string; battle_count: number; shots: number; ships_lost: number;
     body_ids: string[]; faction_ids: string[];
   };
@@ -146,6 +169,71 @@ export interface TheatreDetail {
     name: string; color: string | null; color2?: string | null; emblem?: string | null;
   }>;
 }
+
+/** Ellipse squash of the worlds' layout around the anchor. */
+const SQUASH = 0.78;
+
+/**
+ * Where every world sits and how big it is drawn (see "The worlds DO NOT
+ * MOVE" above). Pure, so the per-world battle layouts can be solved once
+ * against the same radii the draw loop paints.
+ */
+/** A world as both the record and the renderer know it. */
+type RBody = TBody & Body;
+
+function boardGeometry(renderBodies: RBody[], rawBodies: TBody[], anchorId: string | null) {
+  const anchor = renderBodies.find(
+    b => b.id === anchorId || `${b.id}` === `${anchorId}`.split(':').pop()) ?? renderBodies[0];
+  const moons = renderBodies.filter(b => b.id !== anchor?.id);
+
+  const SPAN = Math.min(CANVAS_W, CANVAS_H) * 0.42;
+  const cx = CANVAS_W * 0.46, cy = CANVAS_H * 0.50;
+  // Scale hierarchy, restored. Radii are proportional across a wide
+  // range instead of clamped into one narrow band, where a moon came
+  // out the same size as its primary and a warship came out bigger
+  // than the moon it was orbiting.
+  const anchorR = Math.max(34, Math.min(74, 22 + (Number(anchor?.radius) || 2) * 14));
+  const moonR = (b: RBody) => Math.max(7, Math.min(22, 4 + (Number(b.radius) || 1) * 9));
+  // Clear of the anchor's battle, which starts where its tilted orbit
+  // clears the disc (anchorR / TILT, recapLayout) and runs about another
+  // radius deep.
+  const ORBIT_FLOOR = anchorR / TILT + anchorR * 0.9 + 30;
+
+  const ordered = [...moons].sort(
+    (a, b) => (Number(a.orbitRadius) || 0) - (Number(b.orbitRadius) || 0));
+  const phase = ((hashStr(anchor?.id ?? 'anchor') % 1000) / 1000) * Math.PI * 2;
+  const placed = new Map<string, { x: number; y: number; r: number; rx: number }>();
+  ordered.forEach((m, k) => {
+    const n = Math.max(1, ordered.length);
+    const rx = n === 1
+      ? (ORBIT_FLOOR + SPAN) / 2
+      : ORBIT_FLOOR + (k / (n - 1)) * Math.max(0, SPAN - ORBIT_FLOOR);
+    const a = phase + ((k + 0.5) / n) * Math.PI * 2;
+    placed.set(m.id, {
+      x: cx + Math.cos(a) * rx, y: cy + Math.sin(a) * rx * SQUASH,
+      r: moonR(m), rx,
+    });
+  });
+
+  const bodyPos = (b: RBody | undefined) => {
+    if (!b || b.id === anchor?.id) return { x: cx, y: cy, r: anchorR };
+    const p = placed.get(b.id);
+    if (!p) return { x: cx, y: cy, r: anchorR };
+    return { x: p.x, y: p.y, r: p.r };
+  };
+  const bodyById = new Map<string, RBody>();
+  for (let k = 0; k < renderBodies.length; k++) {
+    const rb = renderBodies[k];
+    bodyById.set(rb.id, rb);
+    const raw = rawBodies.find(x => toRenderBody(x).id === rb.id);
+    if (raw) bodyById.set(raw.id, rb);
+  }
+  return { anchor, moons, SPAN, cx, cy, bodyPos, bodyById };
+}
+
+/** The campaign's eased camera, carried from one frame to the next. */
+interface CamState { x: number; y: number; k: number; ready: boolean; prevMs: number }
+const freshCam = (): CamState => ({ x: CANVAS_W / 2, y: CANVAS_H / 2, k: 1, ready: false, prevMs: 0 });
 
 const clampFrame = (pos: number, len: number) => {
   if (!(len > 0)) return 0;
@@ -314,7 +402,14 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
   const last = useRef(0);
   /** Eased camera. Lives in a ref because it settles across frames and
    *  must not drive React renders. */
-  const cam = useRef({ x: CANVAS_W / 2, y: CANVAS_H / 2, k: 1, ready: false });
+  const cam = useRef<CamState>(freshCam());
+  /** The campaign's renderer, for the GIF recorder (set by the draw effect). */
+  const renderRef = useRef<((g: CanvasRenderingContext2D, p: number, nowMs: number, cs: CamState) => void) | null>(null);
+  /** GIF recording: progress 0..1 while it runs, null otherwise. */
+  const [gifProgress, setGifProgress] = useState<number | null>(null);
+  const [gifFailed, setGifFailed] = useState(false);
+  /** Set by a second click while a GIF records: stops it. */
+  const gifCancel = useRef(false);
 
   const colorOf = useCallback(
     (fid: string | null) => (fid && d.factions[fid]?.color) || NEUTRAL, [d.factions]);
@@ -330,22 +425,29 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
       fid: string | null; cls: string | null; name: string | null;
       kind: string; variant: ShipIconVariant | undefined; rank: number;
       energy: boolean; diedTick: number | null; mods: string | null;
+      /** Shield and armor parts: what an impact looks like on it. */
+      shields: number; armor: number;
     }>();
     for (const b of d.battles) {
       for (const p of b.participants) {
         if (m.has(p.ship_id)) continue;
         let energy = false;
+        let shields = 0, armor = 0;
         try {
           const parts = p.parts ? JSON.parse(p.parts) : null;
-          if (Array.isArray(parts)) energy = parts.filter((x: string) => x === 'energy').length
-            > parts.filter((x: string) => x === 'kinetic').length;
+          if (Array.isArray(parts)) {
+            energy = parts.filter((x: string) => x === 'energy').length
+              > parts.filter((x: string) => x === 'kinetic').length;
+            shields = countPart(parts, 'shield');
+            armor = countPart(parts, 'armor');
+          }
         } catch { /* an unreadable loadout is a kinetic one */ }
         m.set(p.ship_id, {
           fid: p.faction_id, cls: p.ship_class, name: p.ship_name,
           kind: p.kind ?? 'ship',
           variant: (p.icon_variant as ShipIconVariant) || undefined,
           rank: Number(p.rank) || 0, energy, diedTick: p.died_tick,
-          mods: p.modules ?? null,
+          mods: p.modules ?? null, shields, armor,
         });
       }
     }
@@ -417,14 +519,17 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
    * cost somebody something, so holding on every one of them would just
    * be a slower flat rhythm.
    */
-  const weights = useMemo(() => beats.map((b) => {
+  const weights = useMemo(() => beats.map((b, i) => {
+    // The first beat after a lull carries the "N ticks later" card, and
+    // is held long enough to read it.
+    const later = i > 0 && b.tick - beats[i - 1].tick >= LATER_TICKS ? 0.45 : 0;
     let kills = 0;
     for (const [, slot] of b.at) for (const r of slot.roster) if (r.dead === 1) kills++;
-    if (kills >= 2) return 1.55;
-    if (kills === 1) return 1.15;
+    if (kills >= 2) return 1.55 + later;
+    if (kills === 1) return 1.15 + later;
     let shots = 0;
     for (const [, slot] of b.at) shots += slot.shots.length;
-    return shots > 0 ? 0.82 : 0.6;
+    return (shots > 0 ? 0.82 : 0.6) + later;
   }), [beats]);
 
   /** Which factions were eliminated, and on which beat. The largest
@@ -492,16 +597,72 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
     return keep.length ? keep : all;
   }, [d.bodies, d.battles, d.theatre.anchor_body_id]);
 
-  const seats = useMemo(() => {
-    const m = new Map<string, number>();
-    const sides = [...new Set([...hulls.values()].map(h => h.fid ?? 'none'))];
-    for (const [id, h] of hulls) {
-      const si = Math.max(0, sides.indexOf(h.fid ?? 'none'));
-      const base = (si / Math.max(1, sides.length)) * Math.PI * 2;
-      m.set(id, base + ((hashStr(id) % 1000) / 1000 - 0.5) * 1.5);
+  const geo = useMemo(
+    () => boardGeometry(renderBodies, d.bodies, d.theatre.anchor_body_id),
+    [renderBodies, d.bodies, d.theatre.anchor_body_id]);
+
+  /**
+   * Every world's battle, beat by beat, laid out by the game's rule: the
+   * whole-orbit layout (recapLayout, the same one the single-battle recap
+   * uses), sticky, so a hull that leaves or dies leaves a gap and nobody
+   * else moves. Hulls are the map's own sizes at the scale the map would
+   * draw them at THAT world (battleLayoutLive: ships fixed in scale to
+   * their planet, capped at twice full size), so a destroyer outweighs a
+   * corvette as it does on the map and a moon's fight is drawn smaller
+   * than the primary's. Cities stay on the globe.
+   */
+  const worldLayouts = useMemo(() => {
+    const worlds = new Set<string>();
+    for (const b of beats) for (const [, w] of b.where) worlds.add(w);
+    const order = [...new Set([...hulls.values()].map(h => h.fid ?? 'none'))].sort();
+    const allBodies = [geo.anchor, ...geo.moons].filter(Boolean) as RBody[];
+    const out = new Map<string, { lay: RecapLayout; kw: number; stationPx: number }>();
+    for (const w of worlds) {
+      const rb = geo.bodyById.get(w);
+      const p = geo.bodyPos(rb);
+      const kw = battleSpriteScale(p.r / battleReferenceRadius(Number(rb?.radius) || 1));
+      // The station rig at the map's size for this world, never bigger
+      // than the theatre has always drawn it.
+      const stationPx = 88 * Math.min(0.55, (BATTLE_STATION_PX * kw) / 88);
+      // Room before the next world over.
+      let near = Infinity;
+      for (const o of allBodies) {
+        if (o === rb || (!rb && o === geo.anchor)) continue;
+        const q = geo.bodyPos(o);
+        near = Math.min(near, Math.hypot(q.x - p.x, q.y - p.y) - q.r);
+      }
+      const rMax = Math.max(p.r / TILT + p.r * 0.9,
+        Math.min(p.r * 3.5, Number.isFinite(near) ? near * 0.8 : p.r * 3.5));
+      const wbeats: RecapBeat[] = beats.map(b => {
+        const units: RecapUnit[] = [];
+        let stationId: string | undefined;
+        for (const [id, at] of b.where) {
+          if (at !== w) continue;
+          const h = hulls.get(id);
+          if (!h || (h.diedTick != null && b.tick > h.diedTick)) continue;
+          if (h.kind === 'city') continue;
+          if (h.kind === 'station') {
+            if (!stationId) { stationId = id; continue; }
+            units.push({ id, faction: h.fid ?? 'none', size: stationPx, armed: true });
+            continue;
+          }
+          const cls = (h.cls ?? '').toLowerCase();
+          units.push({
+            id, faction: h.fid ?? 'none', size: (gameHullPx(cls) ?? 30) * kw,
+            armed: armedIds.has(id) || (cls !== 'freighter' && cls !== 'colony'),
+          });
+        }
+        return { units, stationId };
+      });
+      out.set(w, {
+        lay: layoutRecap(wbeats, {
+          planetR: p.r, tilt: TILT, rMax, stationPx, seed: hashStr(w) % 100000, order,
+        }),
+        kw, stationPx,
+      });
     }
-    return m;
-  }, [hulls]);
+    return out;
+  }, [beats, hulls, geo, armedIds]);
 
   const stars = useMemo(() => {
     const rng = mulberry32(hashStr(d.theatre.id + ':stars'));
@@ -513,9 +674,8 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
 
   useEffect(() => {
     for (const [, h] of hulls) {
-      const cls = iconClassOf(h.cls);
-      if (!cls) continue;
-      getShipIconImage(cls, colorOf(h.fid), h.variant, trimOf(h.fid));
+      if (!iconClassOf(h.cls)) continue;
+      hullImage(h.cls, colorOf(h.fid), h.variant, trimOf(h.fid));
     }
   }, [hulls, colorOf, trimOf]);
 
@@ -541,68 +701,24 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
   useEffect(() => {
     const canvas = cv.current;
     if (!canvas) return;
-    const g = canvas.getContext('2d');
-    if (!g) return;
+    const screen = canvas.getContext('2d');
+    if (!screen) return;
     let live = true;
     let handle = 0;
-    let prevMs = 0;
 
-    const anchorId = d.theatre.anchor_body_id;
-    const anchor = renderBodies.find(
-      b => b.id === anchorId || `${b.id}` === `${anchorId}`.split(':').pop()) ?? renderBodies[0];
-    const moons = renderBodies.filter(b => b.id !== anchor?.id);
+    const { anchor, moons, SPAN, cx, cy, bodyPos, bodyById } = geo;
 
-    const SPAN = Math.min(CANVAS_W, CANVAS_H) * 0.42;
-    const cx = CANVAS_W * 0.46, cy = CANVAS_H * 0.50;
-    // Scale hierarchy, restored. Radii are proportional across a wide
-    // range instead of clamped into one narrow band, where a moon came
-    // out the same size as its primary and a warship came out bigger
-    // than the moon it was orbiting.
-    const anchorR = Math.max(34, Math.min(74, 22 + (Number(anchor?.radius) || 2) * 14));
-    const moonR = (b: TBody) => Math.max(7, Math.min(22, 4 + (Number(b.radius) || 1) * 9));
-    const SQUASH = 0.78;
-    const ORBIT_FLOOR = anchorR + GUARD_RING * 2 + 30;
+    // One picture of the campaign at position p and clock nowMs, into any
+    // canvas, with its own eased camera cs: the screen keeps one across
+    // frames, the GIF recorder starts a fresh one.
+    const render = (g: CanvasRenderingContext2D, p: number, nowMs: number, cs: CamState) => {
+      const dtMs = cs.prevMs ? Math.min(80, nowMs - cs.prevMs) : 16;
+      cs.prevMs = nowMs;
 
-    const ordered = [...moons].sort(
-      (a, b) => (Number(a.orbitRadius) || 0) - (Number(b.orbitRadius) || 0));
-    const phase = ((hashStr(anchor?.id ?? 'anchor') % 1000) / 1000) * Math.PI * 2;
-    const placed = new Map<string, { x: number; y: number; r: number; rx: number }>();
-    ordered.forEach((m, k) => {
-      const n = Math.max(1, ordered.length);
-      const rx = n === 1
-        ? (ORBIT_FLOOR + SPAN) / 2
-        : ORBIT_FLOOR + (k / (n - 1)) * Math.max(0, SPAN - ORBIT_FLOOR);
-      const a = phase + ((k + 0.5) / n) * Math.PI * 2;
-      placed.set(m.id, {
-        x: cx + Math.cos(a) * rx, y: cy + Math.sin(a) * rx * SQUASH,
-        r: moonR(m), rx,
-      });
-    });
-
-    const bodyPos = (b: TBody | undefined) => {
-      if (!b || b.id === anchor?.id) return { x: cx, y: cy, r: anchorR };
-      const p = placed.get(b.id);
-      if (!p) return { x: cx, y: cy, r: anchorR };
-      return { x: p.x, y: p.y, r: p.r };
-    };
-    const bodyById = new Map<string, typeof renderBodies[number]>();
-    for (let k = 0; k < renderBodies.length; k++) {
-      const rb = renderBodies[k];
-      bodyById.set(rb.id, rb);
-      bodyById.set(d.bodies[k].id, rb);
-    }
-
-    const draw = (nowMs: number) => {
-      if (!live) return;
-      handle = requestAnimationFrame(draw);
-      const dtMs = prevMs ? Math.min(80, nowMs - prevMs) : 16;
-      prevMs = nowMs;
-
-      const i = clampFrame(posRef.current, beats.length);
-      const t = Math.min(1, Math.max(0, posRef.current - i));
+      const i = clampFrame(p, beats.length);
+      const t = Math.min(1, Math.max(0, p - i));
       const beat = beats[i];
       if (!beat) return;
-      const nextBeat = beats[Math.min(beats.length - 1, i + 1)];
       const beatMs = t * TICK_MS;
 
       // ---- camera ----------------------------------------------------
@@ -633,7 +749,8 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       for (const bid of focusIds) {
         const p = bodyPos(bodyById.get(bid));
-        const pad = p.r + GUARD_RING + 34;
+        // The world and its battle, which starts clear of the disc.
+        const pad = Math.max(p.r + GUARD_RING + 34, p.r / TILT + p.r * 0.9 + 16);
         minX = Math.min(minX, p.x - pad); maxX = Math.max(maxX, p.x + pad);
         minY = Math.min(minY, p.y - pad); maxY = Math.max(maxY, p.y + pad);
       }
@@ -666,26 +783,26 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
       const driftY = Math.cos(nowMs / 6700) * 7 / kHot;
       const wantX = (wide ? CANVAS_W / 2 : (minX + maxX) / 2) + OFF_X + driftX;
       const wantY = (wide ? CANVAS_H / 2 : (minY + maxY) / 2) + OFF_Y + driftY;
-      if (!cam.current.ready) {
-        cam.current = { x: wantX, y: wantY, k: kHot, ready: true };
+      if (!cs.ready) {
+        cs.x = wantX; cs.y = wantY; cs.k = kHot; cs.ready = true;
       } else {
         // Ease, never cut. A hard cut on a board this abstract reads as
         // a glitch; a settle reads as a camera.
         const e = 1 - Math.exp(-Math.max(0, Math.min(400, dtMs)) / 260);
-        cam.current.x += (wantX - cam.current.x) * e;
-        cam.current.y += (wantY - cam.current.y) * e;
-        cam.current.k += (kHot - cam.current.k) * e;
+        cs.x += (wantX - cs.x) * e;
+        cs.y += (wantY - cs.y) * e;
+        cs.k += (kHot - cs.k) * e;
       }
-      const K = cam.current.k;
-      const toScreenX = (x: number) => (x - cam.current.x) * K + CANVAS_W / 2;
-      const toScreenY = (y: number) => (y - cam.current.y) * K + CANVAS_H / 2;
+      const K = cs.k;
+      const toScreenX = (x: number) => (x - cs.x) * K + CANVAS_W / 2;
+      const toScreenY = (y: number) => (y - cs.y) * K + CANVAS_H / 2;
 
       g.fillStyle = '#05070c';
       g.fillRect(0, 0, CANVAS_W, CANVAS_H);
       // Stars sit behind the camera move and drift a little against it,
       // which is the only depth cue a flat board gets.
       for (const s of stars) {
-        const px = (s.x - cam.current.x * 0.06) % CANVAS_W;
+        const px = (s.x - cs.x * 0.06) % CANVAS_W;
         g.fillStyle = `rgba(203, 225, 245, ${(s.a * (0.75 + 0.25 * Math.sin(nowMs / 900 + s.ph))).toFixed(3)})`;
         g.beginPath();
         g.arc(px < 0 ? px + CANVAS_W : px, s.y, s.r, 0, Math.PI * 2);
@@ -696,7 +813,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
       g.save();
       g.translate(CANVAS_W / 2, CANVAS_H / 2);
       g.scale(K, K);
-      g.translate(-cam.current.x, -cam.current.y);
+      g.translate(-cs.x, -cs.y);
 
       /** Labels and callouts are collected here and drawn after the
        *  transform is released, at a fixed size — text that scales with
@@ -708,6 +825,22 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
 
       const paintWorld = (b: TBody, p: { x: number; y: number; r: number }) => {
         const tf = terraformFraction(b as unknown as Body, beat.tick);
+        // The world as the map draws it: its real-map globe where it has
+        // one (terraformed twin and all), the procedural texture otherwise.
+        const globe = getGlobe(b as unknown as Body, tf >= 1);
+        if (globe) {
+          paintGlobe(g, b as unknown as Body, tf >= 1, globe, p.x, p.y, p.r, nowMs);
+          if (tf > 0 && tf < 1) {
+            const tfGlobe = getGlobe(b as unknown as Body, true);
+            if (tfGlobe) {
+              g.save(); g.globalAlpha = tf;
+              paintGlobe(g, b as unknown as Body, true, tfGlobe, p.x, p.y, p.r, nowMs);
+              g.restore();
+            }
+          }
+          drawSphereLighting(g, p.x, p.y, p.r, LIGHT_X, LIGHT_Y);
+          return;
+        }
         const tex = tf >= 1
           ? (getTerraformedTexture(b as unknown as Body) ?? getPlanetTexture(b as unknown as Body))
           : getPlanetTexture(b as unknown as Body);
@@ -741,7 +874,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         return Math.max(0, 1 + m / (sr * 0.9 + 1));
       };
       const shown = new Map<string, number>();
-      const paintFramed = (b: TBody) => {
+      const paintFramed = (b: RBody) => {
         const p = bodyPos(b);
         const f = framing(p);
         shown.set(b.id, f);
@@ -751,19 +884,61 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         paintWorld(b, p);
         g.restore();
       };
-      if (anchor) paintFramed(anchor);
-      for (const m of moons) paintFramed(m);
 
-      const guardAngle = (hullId: string) => (seats.get(hullId) ?? 0) + nowMs * 0.00004;
-      const stationAt = (bodyId: string | undefined, hullId: string) => {
-        const b = bodyId ? bodyById.get(bodyId) : undefined;
-        const p = bodyPos(b);
-        const a = guardAngle(hullId);
-        // Hulls fan across two lanes so a crowded world does not become
-        // one overlapping smear.
-        const lane = (hashStr(hullId) % 3) * 13;
-        const ring = p.r + GUARD_RING + lane;
-        return { x: p.x + Math.cos(a) * ring, y: p.y + Math.sin(a) * ring * TILT };
+      // ---- where every hull is -----------------------------------------
+      // Each world's battle is the game's whole-orbit layout (worldLayouts),
+      // turning slowly, the fight centred on the near face. A hull keeps
+      // its slot while it stays; when the board changes it GLIDES to its
+      // new one, as on the map.
+      const prevBeat = i > 0 ? beats[i - 1] : null;
+      // Where each hull was last on the board. A hull leaves the roster
+      // the tick after it dies, so this is the only record of where its
+      // wreck belongs.
+      const lastSeenAt = new Map<string, string>();
+      for (let n = 0; n <= i; n++) {
+        for (const [bid, slot] of beats[n].at) {
+          for (const r of slot.roster) lastSeenAt.set(r.id, bid);
+        }
+      }
+      const glideU = 1 - Math.exp(-beatMs / 260);
+      const spin = ENGAGEMENT_BEARING + nowMs * THEATRE_ORBIT_RATE;
+      /** The world a hull crossed FROM to get here this beat, if it did. */
+      const crossedFrom = (id: string) => {
+        const was = prevBeat?.where.get(id);
+        const now = beat.where.get(id);
+        return was && now && was !== now ? was : null;
+      };
+      /** How much of this beat a hull spends moving into place (arriving
+       *  from off the board, or crossing from another world), or null.
+       *  Nothing it fires or takes goes off until it is there. */
+      const movingUntil = (id: string | null) => {
+        if (!id) return null;
+        if (arrived.get(id) === beat.tick) return ARRIVE_FRAC;
+        if (crossedFrom(id)) return CROSS_FRAC;
+        return null;
+      };
+      const slotAt = (w: string, id: string) => {
+        const L = worldLayouts.get(w)?.lay;
+        if (!L) return null;
+        const now = L.beats[i]?.get(id);
+        if (!now) return L.carry[i]?.get(id) ?? null;
+        const was = i > 0 ? L.carry[i - 1]?.get(id) : undefined;
+        return was && movingUntil(id) == null ? glideSlot(was, now, glideU) : now;
+      };
+      /** A hull's place in its world's orbit, and its heading there. */
+      const homeAt = (w: string | undefined, id: string) => {
+        const p = bodyPos(w ? bodyById.get(w) : undefined);
+        const sl = w ? slotAt(w, id) : null;
+        if (!sl) return { x: p.x, y: p.y - p.r - 6, heading: 0, depth: 1 };
+        const a = sl.theta + spin;
+        // Prograde plus the layout's small jitter, seen through the tilt.
+        const h = a + Math.PI / 2 + sl.jitter;
+        return {
+          x: p.x + Math.cos(a) * sl.r, y: p.y + Math.sin(a) * sl.r * TILT,
+          heading: Math.atan2(Math.sin(h) * TILT, Math.cos(h)),
+          // Positive on the near side of the world, negative behind it.
+          depth: Math.sin(a),
+        };
       };
       const offSystem = (p: { x: number; y: number }) => {
         const dx = p.x - cx, dy = p.y - cy;
@@ -771,50 +946,96 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         const far = SPAN * 1.9 + 120;
         return { x: cx + (dx / len) * far, y: cy + (dy / len) * far * TILT };
       };
+      /** A hull's drawn size at a world: its map size at that world's
+       *  scale, times the layout's fit. */
+      const sizeAt = (w: string | undefined, cls: string | null) => {
+        const L = w ? worldLayouts.get(w) : undefined;
+        return (gameHullPx(cls) ?? 30) * (L?.kw ?? 0.3) * (L?.lay.k ?? 1);
+      };
+      const stationPxAt = (w: string | undefined) => {
+        const L = w ? worldLayouts.get(w) : undefined;
+        return (L?.stationPx ?? 48) * (L?.lay.k ?? 1);
+      };
 
+      /**
+       * Where a hull is right now, which way it points, and its burn. On
+       * station it rides its orbit. Arriving from off the board it is
+       * already on its brake, turned round with the flame ahead of it;
+       * crossing from another world it boosts, flips at the middle and
+       * brakes, as the map's shaped burns fly (recapFx burnPose). Leaving
+       * the board it boosts away nose-first.
+       */
       const posOf = (id: string) => {
         const here = beat.where.get(id);
-        const a = stationAt(here, id);
-        const glide = t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t);
-        if (arrived.get(id) === beat.tick) {
-          const far = offSystem(a);
-          const u = 1 - (1 - t) * (1 - t);
+        const h = hulls.get(id);
+        const home = homeAt(here, id);
+        const size = sizeAt(here, h?.cls ?? null);
+        const still = { x: home.x, y: home.y, heading: home.heading, burn: 0, plume: 1, size, moving: false, depth: home.depth };
+        if (arrived.get(id) === beat.tick && t < ARRIVE_FRAC) {
+          const k = t / ARRIVE_FRAC;
+          const far = offSystem(home);
+          const u = 1 - (1 - k) * (1 - k);
+          const travel = Math.atan2(home.y - far.y, home.x - far.x);
+          const pose = burnPose(k, travel, home.heading, true);
           return {
-            x: far.x + (a.x - far.x) * u, y: far.y + (a.y - far.y) * u,
-            moving: true as const, from: far, to: a, burn: Math.max(0, 1 - t * t * 1.15),
+            x: far.x + (home.x - far.x) * u, y: far.y + (home.y - far.y) * u,
+            heading: pose.heading, burn: pose.burn, plume: pose.lengthMul, size, moving: true, depth: 1,
           };
         }
-        if (left.get(id) === beat.tick) {
-          const far = offSystem(a);
-          const u = t * t;
+        // A hull on its LAST beat holds its place and fights it out; it
+        // leaves at the start of the next one (see "leaving the board"
+        // below). Flying it out across this beat had it shot at while
+        // streaking off the edge of the frame, and a hull that came for
+        // one tick left before anyone could see it fight.
+        const from = crossedFrom(id);
+        if (from && t < CROSS_FRAC) {
+          const k = t / CROSS_FRAC;
+          const start = homeAt(from, id);
+          // Even burn: speeds up to the flip, slows down after it.
+          const u = k < 0.5 ? 2 * k * k : 1 - 2 * (1 - k) * (1 - k);
+          const travel = Math.atan2(home.y - start.y, home.x - start.x);
+          const pose = burnPose(k, travel, home.heading, false);
           return {
-            x: a.x + (far.x - a.x) * u, y: a.y + (far.y - a.y) * u,
-            moving: true as const, from: a, to: far, burn: Math.min(1, 0.25 + t * 0.95),
+            x: start.x + (home.x - start.x) * u, y: start.y + (home.y - start.y) * u,
+            heading: pose.heading, burn: pose.burn, plume: pose.lengthMul,
+            size: sizeAt(from, h?.cls ?? null) + (size - sizeAt(from, h?.cls ?? null)) * u,
+            moving: true, depth: 1,
           };
         }
-        const to = nextBeat.where.get(id) ?? here;
-        if (!to || to === here) {
-          return { ...a, moving: false as const, from: a, to: a, burn: 0 };
-        }
-        const b = stationAt(to, id);
-        return {
-          x: a.x + (b.x - a.x) * glide, y: a.y + (b.y - a.y) * glide,
-          moving: true as const, from: a, to: b,
-          burn: Math.max(0, 1 - Math.abs(t - 0.5) * 2) * 0.9 + 0.1,
-        };
+        return still;
+      };
+      /** A combatant's hit radius, for where fire leaves and lands. */
+      const hitROf = (id: string) => {
+        const h = hulls.get(id);
+        const here = beat.where.get(id) ?? lastSeenAt.get(id);
+        if (h?.kind === 'station') return stationPxAt(here) * 0.3;
+        if (h?.kind === 'city') return bodyPos(here ? bodyById.get(here) : undefined).r * 0.3;
+        const s = sizeAt(here, h?.cls ?? null);
+        return s / 2 + s * 0.1;
       };
 
-      const shotClock = (sh: TFrame['shot_log'][number], tick: number) => {
-        const launch = ((hashStr(`${sh.a ?? ''}>${sh.t ?? ''}@${tick}`) % 997) / 997) * LAUNCH_SPREAD;
-        return { launch, arriveMs: (launch + FLIGHT_FRAC) * TICK_MS };
-      };
+      // ---- the beat's clock ---------------------------------------------
+      // Every volley on its own clock (recapFx recapClock): in the order
+      // the server resolved them, rolling across the beat, and none to or
+      // from a hull still moving into place.
       const allShots: TFrame['shot_log'] = [];
       for (const [, slot] of beat.at) for (const sh of slot.shots) allShots.push(sh);
+      const clock = recapClock(allShots, beat.tick, TICK_MS, movingUntil);
+      const flightMs = flightFrac(TICK_MS) * TICK_MS;
       const landed = new Map<string, number>();
+      const firstHitMs = new Map<string, number>();
       for (const sh of allShots) {
         if (!sh.t || !sh.hit) continue;
-        const k = Math.max(0, Math.min(1, (beatMs - shotClock(sh, beat.tick).arriveMs) / DRAIN_MS));
+        const at = clock.arriveMsOf(sh);
+        const k = Math.max(0, Math.min(1, (beatMs - at) / DRAIN_MS));
         if (k > 0) landed.set(sh.t, (landed.get(sh.t) ?? 0) + sh.dmg * k);
+        if (sh.dmg > 0 && at < (firstHitMs.get(sh.t) ?? Infinity)) firstHitMs.set(sh.t, at);
+      }
+      const hitLastBeat = new Set<string>();
+      if (prevBeat) {
+        for (const [, slot] of prevBeat.at) {
+          for (const sh of slot.shots) if (sh.t && sh.hit && sh.dmg > 0) hitLastBeat.add(sh.t);
+        }
       }
       const hpNow = new Map<string, { hp: number; max: number | null; dead: boolean }>();
       for (const [, slot] of beat.at) {
@@ -825,22 +1046,27 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
           });
         }
       }
-      const killAt = (LAUNCH_SPREAD / 2 + FLIGHT_FRAC) * TICK_MS;
 
       // ---- combatants -------------------------------------------------
-      // Where each hull was last on the board. A hull leaves the roster
-      // the tick after it dies, so this is the only record of where its
-      // wreck belongs.
-      const lastSeenAt = new Map<string, string>();
-      for (let n = 0; n <= i; n++) {
-        for (const [bid, slot] of beats[n].at) {
-          for (const r of slot.roster) lastSeenAt.set(r.id, bid);
-        }
-      }
-      const blasts: Array<{ x: number; y: number; k: number; id: string; s: number }> = [];
-      const wrecks: Array<{
-        x: number; y: number; size: number; age: number; id: string; col: string;
-      }> = [];
+      const blasts: Array<{ x: number; y: number; r: number; since: number; id: string }> = [];
+      type Wreck = { depth: number; x: number; y: number; size: number; heading: number; age: number; id: string; col: string; ship: boolean; cls: string | null; fid: string | null; variant: ShipIconVariant | undefined };
+      const wrecks: Wreck[] = [];
+      const wreckOf = (id: string, w: string | undefined, age: number) => {
+        const h = hulls.get(id);
+        if (!h) return;
+        const ship = h.kind === 'ship';
+        if (age >= (ship ? WRECK_LIFE_TICKS * TICK_MS : WRECK_LIFE_MS)) return;
+        const q = homeAt(w, id);
+        wrecks.push({
+          depth: q.depth, x: q.x, y: q.y, heading: q.heading, age, id, col: colorOf(h.fid), ship,
+          size: ship ? sizeAt(w, h.cls) : Math.max(8, stationPxAt(w) * 0.3),
+          cls: h.cls, fid: h.fid, variant: h.variant,
+        });
+      };
+      // Painted in depth order once every hull is placed: behind the
+      // worlds, then the worlds, then in front of them.
+      const behindQ: Array<() => void> = [];
+      const frontQ: Array<() => void> = [];
       const drawn = new Set<string>();
       for (const [id, bodyId] of beat.where) {
         if (drawn.has(id)) continue;
@@ -849,42 +1075,26 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         if (!h) continue;
         if (h.diedTick != null && beat.tick > h.diedTick) {
           // A kill site stays a kill site.
-          const q = stationAt(bodyId, id);
-          const age = (beat.tick - h.diedTick) * TICK_MS + (beatMs - killAt);
-          if (age < WRECK_LIFE_MS) {
-            wrecks.push({
-              x: q.x, y: q.y, size: Math.max(13, shipPx(h.cls) * 0.95),
-              age, id, col: colorOf(h.fid),
-            });
-          }
+          wreckOf(id, bodyId, (beat.tick - h.diedTick) * TICK_MS + (beatMs - KILL_AT_MS));
           continue;
         }
         const st = hpNow.get(id);
         const q = posOf(id);
         const col = colorOf(h.fid);
         const bp = bodyPos(bodyById.get(bodyId));
-        // A warship is never bigger than the world it is orbiting.
-        const size = h.kind === 'ship'
-          ? Math.min(shipPx(h.cls), Math.max(9, bp.r * 0.72))
-          : Math.min(22, Math.max(11, bp.r * 0.5));
+        const size = q.size;
 
-        if (st?.dead && beatMs > killAt) {
-          const since = beatMs - killAt;
-          // A ship coming apart, at close range. The map's blast reads as
-          // a pop at forty pixels and as a wireframe gizmo at two
-          // hundred — this is the version with a fireball in it.
-          if (since < FIREBALL_LIFE_MS) {
-            blasts.push({ x: q.x, y: q.y, k: since / FIREBALL_LIFE_MS, id,
-              s: Math.max(0.9, size / 15) });
-          }
-          // The wreck starts here, inside the fire, not on the next beat.
+        if (st?.dead && beatMs > clock.killMsOf(id)) {
+          const since = beatMs - clock.killMsOf(id);
+          // The death, as the map draws one: a fireball sized to what
+          // died, and the hull coming apart as itself inside it.
+          blasts.push({ x: q.x, y: q.y, r: hitROf(id), since, id });
           wrecks.push({
-            x: q.x, y: q.y, size: Math.max(13, shipPx(h.cls) * 0.95),
-            age: since, id, col,
+            depth: q.depth, x: q.x, y: q.y, heading: q.heading, age: since, id, col, ship: h.kind === 'ship',
+            size: h.kind === 'ship' ? size : Math.max(8, stationPxAt(bodyId) * 0.3),
+            cls: h.cls, fid: h.fid, variant: h.variant,
           });
           if (since > 90 && since < 1700) {
-            const killer = h.fid;
-            void killer;
             callouts.push({
               x: q.x, y: q.y,
               head: tr('review.battle.lost', { name: h.name ?? tr('theatre.hull') }),
@@ -899,6 +1109,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
           continue;
         }
 
+        const paint = () => {
         if (h.kind === 'city') {
           const fa = 0.45 + ((hashStr(id) % 1000) / 1000) * 2.2;
           g.save();
@@ -909,15 +1120,14 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         } else if (h.kind === 'station') {
           let mods: Record<string, number> = {};
           try { mods = h.mods ? JSON.parse(h.mods) : {}; } catch { /* bare ring */ }
-          const onPx = size * 0.55 * K;
-          const tiny = onPx < 15;
+          const stPx = stationPxAt(bodyId);
+          const tiny = stPx * K < 26;
           if (tiny) {
             // Below this the rig's panels and struts land on sub-pixel
-            // strokes and read as a smear of garbled glyphs.
+            // strokes and read as a smear of garbled glyphs: a hull with
+            // two panels off it instead.
             g.save();
-            // A hull with two panels off it. The earlier hexagon read as
-            // an unlabelled marker rather than as a structure.
-            const hw = Math.max(2.6, size * 0.3), hh = Math.max(1.6, size * 0.17);
+            const hw = Math.max(2.6, stPx * 0.18), hh = Math.max(1.6, stPx * 0.1);
             g.fillStyle = col;
             g.fillRect(q.x - hw * 0.42, q.y - hh, hw * 0.84, hh * 2);
             g.strokeStyle = col;
@@ -932,66 +1142,63 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
             g.globalAlpha = 1;
             g.restore();
           } else {
-          g.save();
-          g.translate(q.x, q.y);
-          g.scale(0.55, 0.55);
-          drawStationStructure(g, {
-            weaponsLevel: Math.max(Number(mods.weapons) || 0, armedIds.has(id) ? 1 : 0),
-            shipyardLevel: Number(mods.shipyard) || 0,
-            labLevel: Number(mods.lab) || 0,
-            thrustersLevel: Number(mods.thrusters) || 0,
-            factionColor: col, builds: [], nowMs,
-          });
-          g.restore();
-          }
-          // The rig is grey metal whoever owns it, so it read as nobody's.
-          if (tiny) { /* the mark carries its own identity; no ring */ } else {
-          g.save();
-          g.globalAlpha = 0.9;
-          g.strokeStyle = col;
-          g.lineWidth = 1.5;
-          g.lineCap = 'round';
-          const rr = size * 0.8;
-          for (let n = 0; n < 4; n++) {
-            const a0 = n * (Math.PI / 2) + Math.PI / 4 - 0.3;
-            g.beginPath();
-            g.arc(q.x, q.y, rr, a0, a0 + 0.6);
-            g.stroke();
-          }
-          g.restore();
+            g.save();
+            g.translate(q.x, q.y);
+            g.scale(stPx / 88, stPx / 88);
+            drawStationStructure(g, {
+              weaponsLevel: Math.max(Number(mods.weapons) || 0, armedIds.has(id) ? 1 : 0),
+              shipyardLevel: Number(mods.shipyard) || 0,
+              labLevel: Number(mods.lab) || 0,
+              thrustersLevel: Number(mods.thrusters) || 0,
+              factionColor: col, builds: [], nowMs,
+            });
+            g.restore();
+            // The rig is grey metal whoever owns it, so it read as nobody's.
+            g.save();
+            g.globalAlpha = 0.9;
+            g.strokeStyle = col;
+            g.lineWidth = 1.5;
+            g.lineCap = 'round';
+            const rr = stPx * 0.5;
+            for (let n = 0; n < 4; n++) {
+              const a0 = n * (Math.PI / 2) + Math.PI / 4 - 0.3;
+              g.beginPath();
+              g.arc(q.x, q.y, rr, a0, a0 + 0.6);
+              g.stroke();
+            }
+            g.restore();
           }
         } else {
-          const ga = guardAngle(id);
-          const heading = q.moving
-            ? Math.atan2(q.to.y - q.from.y, q.to.x - q.from.x)
-            : Math.atan2(Math.cos(ga) * TILT, -Math.sin(ga));
-          const burn = q.moving ? q.burn
-            // Station-keeping. A hull in orbit is under power, and a fleet
-            // that goes dark the moment it stops crossing reads as a set of
-            // decals rather than as ships.
-            : 0.2 + 0.06 * Math.sin(nowMs / 420 + hashStr(id) % 100);
-          if (burn > 0.02) {
+          const heading = q.heading;
+          if (q.burn > 0.02) {
             const dir = { x: Math.cos(heading), y: Math.sin(heading) };
             drawThrustExhaust(g,
               { x: q.x - dir.x * size * 0.42, y: q.y - dir.y * size * 0.42 },
-              dir, size, burn, h.cls ?? undefined, rgbOf(col));
-          }
-          const cls = iconClassOf(h.cls);
-          const icon = cls ? getShipIconImage(cls, col, h.variant, trimOf(h.fid)) : null;
-          if (icon) {
+              dir, size, q.burn, h.cls ?? undefined, rgbOf(col), undefined, q.plume);
+          } else {
+            // Engine idle glow at the stern, as the map does it: parked
+            // hulls that do not glow read as cardboard.
+            const pulse = 0.6 + 0.4 * Math.sin(nowMs / 420 + ((hashStr(id) % 1000) / 1000) * Math.PI * 2);
+            const gx = q.x - Math.cos(heading) * size * 0.46;
+            const gy = q.y - Math.sin(heading) * size * 0.46;
+            const gr = Math.max(0.8, size * 0.2);
             g.save();
-            g.translate(q.x, q.y);
-            g.rotate(heading);
-            g.drawImage(icon, -size / 2, -size / 2, size, size);
+            g.globalCompositeOperation = 'lighter';
+            g.fillStyle = `rgba(255, 158, 74, ${(0.16 * pulse).toFixed(3)})`;
+            g.beginPath(); g.arc(gx, gy, gr, 0, Math.PI * 2); g.fill();
+            g.fillStyle = `rgba(255, 220, 168, ${(0.28 * pulse).toFixed(3)})`;
+            g.beginPath(); g.arc(gx, gy, gr * 0.45, 0, Math.PI * 2); g.fill();
             g.restore();
+          }
+          const icon = hullImage(h.cls, col, h.variant, trimOf(h.fid));
+          g.save();
+          g.translate(q.x, q.y);
+          g.rotate(heading);
+          if (icon) {
+            g.drawImage(icon, -size / 2, -size / 2, size, size);
           } else {
             // A hull whose icon has not finished generating still has to
-            // read as a hull. The old fallback was a plain disc, which
-            // two reviewers picked out as the only colourless objects on
-            // screen and took for placeholder art.
-            g.save();
-            g.translate(q.x, q.y);
-            g.rotate(heading);
+            // read as a hull, in its owner's colour.
             g.fillStyle = col;
             g.beginPath();
             g.moveTo(size * 0.5, 0);
@@ -1000,13 +1207,53 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
             g.lineTo(-size * 0.32, -size * 0.3);
             g.closePath();
             g.fill();
-            g.restore();
           }
+          g.restore();
         }
 
-        if (st && st.max && st.hp < st.max * 0.8) {
-          drawBurn(g, q.x, q.y, size * 0.62,
-            Math.min(1, (0.8 - st.hp / st.max) / 0.55), nowMs, hashStr(id));
+        // On fire, by the map's rule (recapFx drawDamageFire).
+        if (st && st.max) {
+          drawDamageFire(g, q.x, q.y,
+            h.kind === 'ship' ? size / 2 + 1 : (h.kind === 'station' ? stationPxAt(bodyId) * 0.25 : bp.r * 0.3),
+            Math.max(0, Math.min(1, st.hp / st.max)),
+            { firstHitMs: firstHitMs.get(id) ?? null, beatMs, hitLastBeat: hitLastBeat.has(id) },
+            id, nowMs, 1, 1.5);
+        }
+        };
+        (q.depth < 0 && h.kind !== 'city' ? behindQ : frontQ).push(paint);
+      }
+
+      // ---- leaving the board ----------------------------------------------
+      // A hull whose last beat was the previous one (and which did not
+      // die) boosts away nose-first over the start of this one, from the
+      // place it held, under no fire: everything it was part of is over.
+      if (prevBeat) {
+        for (const [id, lt] of left) {
+          if (lt !== prevBeat.tick || beat.where.has(id) || t >= DEPART_FRAC) continue;
+          const h = hulls.get(id);
+          if (!h || h.kind !== 'ship') continue;
+          const w = prevBeat.where.get(id);
+          const home = homeAt(w, id);
+          const far = offSystem(home);
+          const k = t / DEPART_FRAC;
+          const u = k * k;
+          const x = home.x + (far.x - home.x) * u, y = home.y + (far.y - home.y) * u;
+          const heading = Math.atan2(far.y - home.y, far.x - home.x);
+          const size = sizeAt(w, h.cls);
+          const col = colorOf(h.fid);
+          frontQ.push(() => {
+            const dir = { x: Math.cos(heading), y: Math.sin(heading) };
+            drawThrustExhaust(g,
+              { x: x - dir.x * size * 0.42, y: y - dir.y * size * 0.42 },
+              dir, size, Math.min(1, 0.25 + k * 0.95), h.cls ?? undefined, rgbOf(col));
+            const icon = hullImage(h.cls, col, h.variant, trimOf(h.fid));
+            if (!icon) return;
+            g.save();
+            g.translate(x, y);
+            g.rotate(heading);
+            g.drawImage(icon, -size / 2, -size / 2, size, size);
+            g.restore();
+          });
         }
       }
 
@@ -1016,103 +1263,76 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         if (drawn.has(id) || h.kind !== 'ship') continue;
         const bid = lastSeenAt.get(id);
         if (!bid) continue;
-        // Age measured from the instant of the kill, on the same clock the
-        // blast used, so the two are one continuous event.
-        const age = (beat.tick - h.diedTick) * TICK_MS + (beatMs - killAt);
-        if (age >= WRECK_LIFE_MS) continue;
-        const q = stationAt(bid, id);
-        wrecks.push({
-          x: q.x, y: q.y, size: Math.max(13, shipPx(h.cls) * 0.95),
-          age, id, col: colorOf(h.fid),
-        });
+        wreckOf(id, bid, (beat.tick - h.diedTick) * TICK_MS + (beatMs - KILL_AT_MS));
       }
-      // Debris under the fire: it is thrown from inside the blast and
-      // emerges as the core fades.
-      for (const w of wrecks) {
-        drawWreck(g, w.x, w.y, w.size, w.age, WRECK_LIFE_MS, w.id, w.col);
-      }
+      // Wrecks under the fire: the hull in charred pieces as the map
+      // draws one, fading over WRECK_LIFE_TICKS; a settlement's ruin as
+      // before.
+      const paintWreck = (w: Wreck, dim: number) => {
+        const img = w.ship ? hullImage(w.cls, colorOf(w.fid), w.variant, trimOf(w.fid)) : null;
+        if (img) {
+          drawHullWreck(g, img, w.size, w.heading, w.x, w.y, w.age, w.id, wreckAlpha(w.age, TICK_MS) * dim);
+        } else {
+          g.save(); g.globalAlpha = dim;
+          drawWreck(g, w.x, w.y, Math.max(8, w.size), w.age, WRECK_LIFE_MS, w.id, w.col);
+          g.restore();
+        }
+      };
+      // BEHIND THE WORLDS: dimmer, and the world paints over them, as in
+      // the single-battle recap. Hulls on the far side of a world were
+      // drawn over its face.
+      for (const w of wrecks) if (w.depth < 0) paintWreck(w, 0.55);
+      for (const p of behindQ) { g.save(); g.globalAlpha = 0.55; p(); g.restore(); }
+      if (anchor) paintFramed(anchor);
+      for (const m of moons) paintFramed(m);
+      // ON AND IN FRONT OF THEM.
+      for (const p of frontQ) p();
+      for (const w of wrecks) if (w.depth >= 0) paintWreck(w, 1);
 
       // ---- detonations, over every hull ----------------------------------
-      g.save();
-      g.globalCompositeOperation = 'lighter';
-      for (const b of blasts) drawFireball(g, b.x, b.y, b.k, b.id, b.s);
-      g.restore();
+      for (const b of blasts) drawDeathBlast(g, b.x, b.y, b.r, b.since, b.id);
 
       // ---- fire ---------------------------------------------------------
-      // Fire is drawn OVER the worlds, deliberately. An earlier cut
-      // punched every body out of this layer so a shot vanished behind a
-      // limb; tracers and beams now stay on top of whatever they cross.
+      // Fire is drawn OVER the worlds, deliberately: tracers and beams stay
+      // on top of whatever they cross. Each volley as the map draws it
+      // (recapFx drawVolley).
       g.save();
       g.globalCompositeOperation = 'lighter';
       for (const sh of allShots) {
         if (!sh.a || !sh.t) continue;
         const shooter = hulls.get(sh.a);
         if (shooter?.diedTick != null && beat.tick > shooter.diedTick) continue;
-        const w = shotClock(sh, beat.tick);
-        if (t < w.launch) continue;
-        const sinceHit = beatMs - w.arriveMs;
-        if (sinceHit > BURY_MS) continue;
-        const flown = Math.min(1, (t - w.launch) / FLIGHT_FRAC);
+        const within = beatMs - clock.launchOf(sh) * TICK_MS;
+        if (within < 0 || within > flightMs + FX_TUNING.impactMs) continue;
         const from = posOf(sh.a), to = posOf(sh.t);
-        const ang = Math.atan2(to.y - from.y, to.x - from.x);
-        const ex = from.x + (to.x - from.x) * flown;
-        const ey = from.y + (to.y - from.y) * flown;
-        const reach = Math.hypot(ex - from.x, ey - from.y);
-        const gap = Math.hypot(to.x - from.x, to.y - from.y);
         // A THIRD world in the way blocks the shot outright.
         //
         // Deliberately not "is any world between them". Two hulls in
         // orbit around the SAME world are on opposite sides of it as
         // often as not, so that rule silently dropped most of the
-        // battle: the shot counter ticked over a sky with no fire in
-        // it. Fire between hulls at one world is drawn and clipped by
-        // that world's disc; only a shot that would have to cross a
-        // different world is dropped.
-        if (sh.a && sh.t) {
-          const aAt = beat.where.get(sh.a), tAt = beat.where.get(sh.t);
-          if (aAt && tAt && aAt !== tAt) {
-            const mx = (from.x + to.x) / 2, my = (from.y + to.y) / 2;
-            let blocked = false;
-            for (const b of renderBodies) {
-              if (b.id === aAt || b.id === tAt) continue;
-              const bq = bodyPos(b);
-              if (Math.hypot(mx - bq.x, my - bq.y) < bq.r) { blocked = true; break; }
-            }
-            if (blocked) continue;
+        // battle. Only a shot that would have to cross a different world
+        // is dropped.
+        const aAt = beat.where.get(sh.a), tAt = beat.where.get(sh.t);
+        if (aAt && tAt && aAt !== tAt) {
+          const mx = (from.x + to.x) / 2, my = (from.y + to.y) / 2;
+          let blocked = false;
+          for (const b of renderBodies) {
+            if (b.id === aAt || b.id === tAt) continue;
+            const bq = bodyPos(b);
+            if (Math.hypot(mx - bq.x, my - bq.y) < bq.r) { blocked = true; break; }
           }
+          if (blocked) continue;
         }
-        const energy = sh.e != null ? sh.e >= 0.5 : (hulls.get(sh.a)?.energy ?? false);
-        const streak = Math.min(reach, Math.max(12, Math.min(26, gap * 0.24)));
-        const bury = sinceHit > 0 ? Math.min(1, sinceHit / BURY_MS) : 0;
-        const lance = Math.min(reach, Math.max(48, Math.min(118, gap * 0.34)));
-        const tail = energy ? lance * (1 - bury * 0.55) : streak * (1 - bury);
-        if (tail <= 0.5) continue;
-        const bcol = colorOf(hulls.get(sh.a)?.fid ?? null);
-        const balpha = (sh.hit ? 0.95 : 0.4) * (energy ? 1 - bury : 1);
-        drawBoltGlow(g, ex - Math.cos(ang) * tail, ey - Math.sin(ang) * tail,
-          ex, ey, bcol, balpha, energy, 0.6);
-        drawTaperedBolt(g, ex - Math.cos(ang) * tail, ey - Math.sin(ang) * tail,
-          ex, ey, bcol, balpha, energy);
-
-        // Muzzle and impact, held long enough to actually be seen. At
-        // 130ms they existed and nobody ever caught one.
-        const sinceFire = beatMs - w.launch * TICK_MS;
-        if (sinceFire >= 0 && sinceFire < 440) {
-          drawMuzzleFlash(g, from.x, from.y, ang,
-            energy ? ENERGY_COLOR : colorOf(hulls.get(sh.a)?.fid ?? null),
-            (1 - sinceFire / 440) * 0.95, 1.25);
-        }
-        // Every round that lands leaves a mark. Reviewers counted beams
-        // that simply stopped at their target with nothing happening.
-        if (sh.hit && sinceHit >= 0 && sinceHit < 540) {
-          const held = (sh.abs ?? 0) > (sh.dmg || 0) * 0.5;
-          const tint = held ? '#8fd8ff' : (energy ? '#bfe9ff' : '#ffcf8a');
-          drawImpactFlash(g, to.x, to.y, sinceHit / 540, tint, held ? 1.35 : 1.15);
-          if (!sh.kill) {
-            drawShieldFlare(g, to.x, to.y, 9, ang + Math.PI,
-              (1 - sinceHit / 540) * 0.55, tint);
-          }
-        }
+        const target = hulls.get(sh.t);
+        drawVolley(g, {
+          from, to, sR: hitROf(sh.a), tR: hitROf(sh.t),
+          energy: sh.e != null ? sh.e >= 0.5 : (shooter?.energy ?? false),
+          hit: !!sh.hit, dmg: sh.dmg || 0, abs: sh.abs ?? 0,
+          targetKind: (target?.kind as 'ship' | 'station' | 'city') ?? 'ship',
+          targetShields: target?.shields ?? 0, targetArmor: target?.armor ?? 0,
+          shooterCls: shooter?.cls ?? undefined,
+          within, flightMs, seed: hashStr(`${sh.a}>${sh.t}@${beat.tick}`), nowMs,
+        });
       }
       g.restore();
 
@@ -1153,7 +1373,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
       g.restore();
       // World names, over everything, with a plate so a hull cannot bury
       // the name of the place being fought over.
-      const nameWorld = (b: TBody) => {
+      const nameWorld = (b: RBody) => {
         const p = bodyPos(b);
         const sx = toScreenX(p.x), sy = toScreenY(p.y + p.r) + 16;
         // A world the camera has cropped gets no label: half a name
@@ -1426,6 +1646,43 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         }
       };
 
+      // ---- a lull ---------------------------------------------------------
+      // The reel strings every campaign in the system together and skips
+      // the quiet between them; this says how long the quiet was and where
+      // the fighting picks up, so a jump from Callisto to Ganymede reads as
+      // the war moving on rather than as a cut.
+      const lull = i > 0 ? beat.tick - beats[i - 1].tick : 0;
+      if (lull >= LATER_TICKS) {
+        const a = Math.min(1, t / 0.06) * (1 - Math.max(0, (t - 0.42) / 0.16));
+        if (a > 0.01) {
+          const where = [...new Set((hotBodies.length ? hotBodies : [...beat.at.keys()])
+            .map(id => bodyById.get(id)?.name).filter(Boolean))].join(' · ');
+          const head = trn('theatre.later', lull, { n: lull }).toUpperCase();
+          const sub = `T+${beats[i - 1].tick} → T+${beat.tick}${where ? `  ·  ${where}` : ''}`;
+          g.save();
+          g.globalAlpha = a;
+          g.textAlign = 'center';
+          g.font = 'bold 20px system-ui';
+          const wHead = g.measureText(head).width;
+          g.font = '11px system-ui';
+          const w = Math.max(wHead, g.measureText(sub).width) + 40;
+          const x0 = CANVAS_W / 2 - w / 2, y0 = 30, h = 54;
+          g.fillStyle = 'rgba(8, 12, 19, 0.92)';
+          g.fillRect(x0, y0, w, h);
+          g.strokeStyle = 'rgba(255, 208, 122, 0.45)';
+          g.lineWidth = 1;
+          g.strokeRect(x0 + 0.5, y0 + 0.5, w - 1, h - 1);
+          g.fillStyle = '#ffd07a';
+          g.fillRect(x0, y0, w, 2);
+          g.font = 'bold 20px system-ui';
+          g.fillText(head, CANVAS_W / 2, y0 + 27);
+          g.fillStyle = '#9fc2dc';
+          g.font = '11px system-ui';
+          g.fillText(sub, CANVAS_W / 2, y0 + 44);
+          g.restore();
+        }
+      }
+
       // ---- HUD ----------------------------------------------------------
       drawHud(g, {
         hideStandings: i >= beats.length - 1 && t > 0.14,
@@ -1441,10 +1698,58 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
       paintEnding();
     };
 
+    const draw = (nowMs: number) => {
+      if (!live) return;
+      handle = requestAnimationFrame(draw);
+      render(screen, posRef.current, nowMs, cam.current);
+    };
+    renderRef.current = render;
     handle = requestAnimationFrame(draw);
-    return () => { live = false; cancelAnimationFrame(handle); };
-  }, [beats, arrived, left, hulls, seats, stars, armedIds, eliminated, colorOf, trimOf,
+    return () => {
+      live = false;
+      cancelAnimationFrame(handle);
+      if (renderRef.current === render) renderRef.current = null;
+    };
+  }, [beats, arrived, left, hulls, geo, worldLayouts, stars, armedIds, eliminated, colorOf, trimOf,
       renderBodies, d.bodies, d.factions, d.theatre]);
+
+  /** Record the whole campaign as a GIF and download it (recapGif),
+   *  paced as playback paces it. A second click while it records stops it. */
+  const makeGif = useCallback(async () => {
+    const render = renderRef.current;
+    if (!render || beats.length === 0) return;
+    setPlaying(false);
+    setGifFailed(false);
+    const span = gifSpan(beats.length);
+    gifCancel.current = false;
+    // The recorder's own camera, eased from the clip's first frame.
+    const cs = freshCam();
+    setGifProgress(0);
+    let shown = -1;
+    try {
+      const blob = await recordRecapGif({
+        render: (g, p, nowMs) => render(g, p, nowMs, cs),
+        srcW: CANVAS_W, srcH: CANVAS_H, from: span.from, to: span.to, tickMs: TICK_MS,
+        advance: (p, ms) => p + ms / (TICK_MS * (weights[clampFrame(p, weights.length)] ?? 1)),
+        cancelled: () => gifCancel.current,
+        onProgress: k => {
+          const pct = Math.floor(k * 100);
+          if (pct !== shown) { shown = pct; setGifProgress(k); }
+        },
+      });
+      if (blob) {
+        const place = (d.theatre.anchor_name ?? '').toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'system';
+        const tick = beats[clampFrame(span.from, beats.length)]?.tick ?? 0;
+        downloadBlob(blob, `orbital-${place}-system-T${tick}.gif`);
+      }
+    } catch (e) {
+      console.error('campaign gif failed', e);
+      setGifFailed(true);
+    } finally {
+      setGifProgress(null);
+    }
+  }, [beats, weights, d.theatre.anchor_name]);
 
   if (beats.length === 0) {
     return <div style={{ color: NEUTRAL, padding: 8 }}>{tr('theatre.noFrames')}</div>;
@@ -1463,6 +1768,18 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
             color: '#cfe0ee', padding: '3px 10px', cursor: 'pointer', fontSize: 11,
           }}
         >{playing ? tr('review.battle.pause') : tr('theatre.play')}</button>
+        <button
+          onClick={() => { if (gifProgress != null) gifCancel.current = true; else void makeGif(); }}
+          title={gifProgress != null ? tr('review.battle.gifCancel') : tr('review.battle.gifTitle')}
+          style={{
+            background: '#16273a', border: '1px solid #3d6b96', borderRadius: 5,
+            color: '#cfe0ee', padding: '3px 10px', fontSize: 11, whiteSpace: 'nowrap',
+            cursor: gifProgress != null ? 'progress' : 'pointer',
+            opacity: gifProgress != null ? 0.8 : 1,
+          }}
+        >{gifProgress != null
+            ? tr('review.battle.gifRecording', { pct: Math.round(gifProgress * 100) })
+            : tr('review.battle.gif')}</button>
         <input
           type="range" min={0} max={Math.max(0.0001, beats.length - 1 + 0.98)} step={0.02}
           value={Number.isFinite(pos) ? pos : 0}
@@ -1478,6 +1795,9 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
           T+{beats[idx].tick} · {idx + 1}/{beats.length}
         </span>
       </div>
+      {gifFailed && (
+        <div style={{ fontSize: 11, color: '#ff8a80', marginTop: 4 }}>{tr('review.battle.gifFailed')}</div>
+      )}
     </div>
   );
 }

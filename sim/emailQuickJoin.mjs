@@ -40,7 +40,7 @@ const ROOM = {
   get: (id) => ({
     async fetch(url, init) {
       const path = new URL(typeof url === 'string' ? url : url.url).pathname;
-      doCalls.push({ id, path });
+      doCalls.push({ id, path, body: init?.body });
       if (path === '/settings') return Response.json({});
       return Response.json({ ok: true });
     },
@@ -519,6 +519,48 @@ sent.length = 0;
 await call('POST', '/api/auth/forgot', { body: { email: 'luiza@example.com' } });
 check('and with neither, English', sent.length === 1 && sent[0].subject === 'Reset your Orbital password');
 sent.length = 0;
+
+// ---- plain pages follow the language -------------------------------------
+
+{
+  const ptId = PT.data.user.id;
+  await DB.prepare("UPDATE users SET locale = 'pt-BR' WHERE id = ?").bind(ptId).run();   // an earlier check cleared it
+  const tok = (await mail.unsubscribeUrl(env, ptId, 'herald')).split('t=')[1];
+  const ptPage = await call('GET', `/api/email/unsubscribe?t=${tok}`);
+  check('the unsubscribe page is in the account language (Portuguese), html lang and all',
+    ptPage.status === 200 && /Inscrição cancelada/.test(ptPage.data) && /lang="pt-BR"/.test(ptPage.data)
+      && /Arauto diário/.test(ptPage.data) && !/Unsubscribed/.test(ptPage.data), String(ptPage.data).slice(0, 200));
+  const enTok = (await mail.unsubscribeUrl(env, A.id, 'games')).split('t=')[1];
+  const enPage = await call('GET', `/api/email/unsubscribe?t=${enTok}`);
+  check('an English account still gets the English page, byte for byte',
+    /<title>Unsubscribed · Orbital<\/title>/.test(enPage.data) && /You won&#39;t get game updates by email any more\. Account emails, like password resets, still arrive\./.test(enPage.data)
+      && /lang="en"/.test(enPage.data), String(enPage.data).slice(0, 300));
+  const badPt = await worker.fetch(new Request('https://orbital-empire.com/api/email/unsubscribe?t=nope', { headers: { 'accept-language': 'pt-BR,pt;q=0.9' } }), env, execCtx);
+  const badTxt = await badPt.text();
+  check('an invalid link follows the browser language when no account is known',
+    badPt.status === 400 && /Link inválido/.test(badTxt));
+  const go = await worker.fetch(new Request('https://orbital-empire.com/api/email/go?t=' + 'a'.repeat(43), { headers: { 'accept-language': 'pt-BR' } }), env, execCtx);
+  const goTxt = await go.text();
+  check('the email sign-in handoff page speaks Portuguese to a Portuguese browser',
+    /Levando você até a sua vaga/.test(goTxt) && /lang="pt-BR"/.test(goTxt) && /Continuar/.test(goTxt), goTxt.slice(0, 120));
+  const goEn = await worker.fetch(new Request('https://orbital-empire.com/api/email/go?t=' + 'a'.repeat(43)), env, execCtx);
+  check('and English otherwise', /Taking you to your seat…/.test(await goEn.text()));
+}
+
+// ---- the 2-hour tick cadence ------------------------------------------------
+
+{
+  const H = await signup('Tick');
+  const mk = await call('POST', '/api/rooms', { cookie: H.cookie, body: { name: 'Two hours', max_players: 3 } });
+  const rid = mk.data.room?.id ?? mk.data.room_id ?? mk.data.id;
+  const two = await call('PATCH', `/api/lobby/rooms/${rid}/settings`, { cookie: H.cookie, body: { tick_interval_ms: 7_200_000 } });
+  check('a host can set a 2-hour tick before the game starts', two.status === 200, two);
+  const odd = await call('PATCH', `/api/lobby/rooms/${rid}/settings`, { cookie: H.cookie, body: { tick_interval_ms: 5_400_000 } });
+  check('a cadence that is not on the list (1.5h) is still refused', odd.status === 400, odd.status);
+  // The cadence lives in the Room DO (faked here): check what the worker told it.
+  const cadences = doCalls.filter(c => c.id === rid && c.path === '/settings').map(c => JSON.parse(c.body ?? '{}').tick_interval_ms);
+  check('the 2h cadence reached the room, and the refused 1.5h did not', cadences.includes(7_200_000) && !cadences.includes(5_400_000), cadences);
+}
 
 // ---- no binding, no mail ---------------------------------------------------
 

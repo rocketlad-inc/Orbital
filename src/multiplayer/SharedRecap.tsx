@@ -12,11 +12,13 @@
 // link is that they see what you saw.
 // ============================================================
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { BattleRecap, type Detail as BattleDetailPayload } from './BattleReview';
+import { DISCORD_GIF_MAX_BYTES, type AutoGif } from './recapGif';
 import { TheatreCanvas, type TheatreDetail } from './TheatreRecap';
 import type { CinemaDetail } from './BattleCinema';
 import { lazyChunk } from '../util/lazyChunk';
+import { RecapShareBar, RecapJoinCta } from './RecapShare';
 import { t, tn, type Key } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 
@@ -51,6 +53,36 @@ export function SharedRecap({ token }: { token: string }) {
   const [showFilm, setShowFilm] = useState(false);
   const [filmErr, setFilmErr] = useState<string | null>(null);
   const [sysErr, setSysErr] = useState<string | null>(null);
+
+  // THE REPLAY POST'S GIF JOB (worker/recapGif.js). The server opens this
+  // page in headless Chrome with ?gifjob=&nonce=; the recap records its
+  // GIF and it is POSTed back with the nonce, then window.__recapGif tells
+  // the waiting renderer it is done. A reader never has these params.
+  const gifJob = useMemo(() => {
+    const q = new URLSearchParams(window.location.search);
+    const job = q.get('gifjob'), nonce = q.get('nonce');
+    return job && nonce ? { job, nonce } : null;
+  }, []);
+  const autoGif = useMemo<AutoGif | undefined>(() => (gifJob ? {
+    maxBytes: DISCORD_GIF_MAX_BYTES,
+    upload: async (blob, span) => {
+      const q = `job=${encodeURIComponent(gifJob.job)}&nonce=${encodeURIComponent(gifJob.nonce)}`;
+      const res = await fetch(`/api/recap/${encodeURIComponent(token)}/gif?${q}`, {
+        method: 'POST',
+        body: blob,
+        headers: {
+          'content-type': 'image/gif',
+          'x-gif-from': String(span.fromTick),
+          'x-gif-ticks': String(span.ticks),
+          'x-gif-total': String(span.total),
+        },
+      });
+      return res.ok;
+    },
+    done: (ok, info) => {
+      (window as unknown as { __recapGif?: unknown }).__recapGif = { done: true, ok, info };
+    },
+  } : undefined), [gifJob, token]);
 
   useEffect(() => {
     if (!showFilm || film) return;
@@ -90,9 +122,10 @@ export function SharedRecap({ token }: { token: string }) {
       try {
         // Deliberately a bare fetch rather than apiFetch: there is no
         // session here and nothing to attach to the request.
-        const res = await fetch(`/api/recap/${encodeURIComponent(token)}`);
+        const res = await fetch(`/api/recap/${encodeURIComponent(token)}${gifJob ? '?render=gif' : ''}`);
         if (dead) return;
         if (!res.ok) {
+          if (autoGif) autoGif.done(false, `recap http ${res.status}`);
           setErr(res.status === 404
             ? t('review.shared.badLink')
             : t('review.shared.loadFail', { status: res.status }));
@@ -100,11 +133,12 @@ export function SharedRecap({ token }: { token: string }) {
         }
         setD(await res.json());
       } catch {
+        if (autoGif) autoGif.done(false, 'recap fetch failed');
         if (!dead) setErr(t('review.shared.noServer'));
       }
     })();
     return () => { dead = true; };
-  }, [token]);
+  }, [token, gifJob, autoGif]);
 
   const b = d?.battle;
   const span = b ? (b.ended_tick ?? b.last_fire_tick) - b.started_tick + 1 : 0;
@@ -186,13 +220,19 @@ export function SharedRecap({ token }: { token: string }) {
                 : system
                   ? <TheatreCanvas d={system} />
                   : <div className="shared-recap__loading">{t('review.shared.loadingCampaign')}</div>)
-              : <BattleRecap d={d} />}
+              : <BattleRecap d={d} autoGif={autoGif} />}
 
             <div className="shared-recap__stats">
               {tn('review.ticks', span, { n: span })} · {tn('review.shots', b.shots, { n: b.shots })} · {t('review.shared.hitPct', { pct: pct(b.hits, b.shots) })}
               {b.ships_lost > 0 && <> · <b style={{ color: '#ff8a80' }}>{t('review.shared.lost', { n: b.ships_lost })}</b></>}
               {b.victor && <> · {richT('review.shared.victor', { name: b.victor.name ?? '' })}</>}
             </div>
+
+            <RecapShareBar
+              token={token}
+              text={t('review.shared.share.text', { name: b.body_name ?? t('review.deepSpace') })}
+            />
+            <RecapJoinCta />
 
             <div className="shared-recap__foot">
               {t('review.shared.foot')}{' '}

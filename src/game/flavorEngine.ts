@@ -17,10 +17,18 @@
 //   - Deterministic by event id: the same event always renders the
 //     same flavor for every viewer, so an MP log reads consistently
 //     across clients. Different events of the same kind get variety.
+//   - Languages: one bank per language (flavorBank.ts = English,
+//     flavorBank.pt-BR.ts = Brazilian Portuguese), entry for entry the
+//     same shape. Everything English-grammar-specific (class names,
+//     "level N", "for", population words, travel phrases, leader
+//     titles, vote outcomes) lives in flavorLocale.ts.
 // ============================================================
 
 import { FLAVOR_BANK } from './flavorBank';
+import { FLAVOR_BANK_PT } from './flavorBank.pt-BR';
 import { TECH_DEFS } from './techs';
+import { agreeArticles, lexFor, type FlavorLex, type Gender, type Noun } from './flavorLocale';
+import { catalogs, getLang, type Lang } from '../i18n/core';
 
 // ------------------------------------------------------------
 // Inputs the engine needs from the caller (resolved client-side
@@ -86,30 +94,12 @@ const KIND_MAP: Record<string, string> = {
   // asteroid_launched.
 };
 
-// Secret-kind -> readable {secretName}. Matches the secrets the
-// server seeds (see worker/factions.js / src/game/secrets.ts).
-const SECRET_NAME: Record<string, string> = {
-  portal_to_sun:    'warp gate',
-  warp_gate:        'warp gate',
-  ancient_city:     'ancient databank',
-  free_collector:   'derelict freight hub',
-  pre_terraformed:  'pre-terraformed world',
-  derelict_warship: 'derelict warship',
-  resource_cache:   'buried resource cache',
-};
-
-// Deterministic leader-title pool. Picked by hashing the faction
-// name so a given faction always has the same title across events
-// and clients.
-const LEADER_TITLES = [
-  'Emperor', 'Premier', 'Director', 'First Speaker', 'President',
-  'Prime Minister', 'Chancellor', 'Consul', 'Administrator', 'Sovereign',
-];
-
-const PACT_LABEL: Record<string, string> = {
-  nap:          'Non-Aggression Pact',
-  defense_pact: 'Defense Pact',
-  intel_share:  'Intel-Share Pact',
+// One bank per language. Entry N of a kind means the same thing in
+// every language (same tokens, same order), so the per-event start index
+// below picks the matching variant whenever the banks are the same length.
+const BANKS: Record<Lang, Record<string, string[]>> = {
+  'en': FLAVOR_BANK,
+  'pt-BR': FLAVOR_BANK_PT,
 };
 
 // ------------------------------------------------------------
@@ -127,27 +117,8 @@ function hashStr(s: string): number {
   return h >>> 0;
 }
 
-function leaderTitle(factionName: string): string {
-  return LEADER_TITLES[hashStr(factionName) % LEADER_TITLES.length];
-}
-
-// Bucket a body's orbit radius into a travel-distance phrase. Best
-// effort — always returns SOMETHING so {distance} variants aren't
-// needlessly skipped (the prose reads fine with any bucket).
-function distanceBucket(body: FlavorBody | undefined): string {
-  const r = body?.orbitRadius;
-  if (r == null || !Number.isFinite(r)) return 'across the system';
-  // Thresholds are rough relative bands across the seeded system —
-  // inner planets, belt, gas giants, Kuiper. Tuned against the body
-  // catalog's orbit radii; exact values don't matter, only the
-  // ordering of the bands.
-  // SCALED with SYSTEM_SCALE in worker/factions.js: the system was
-  // spread 2x, so unscaled bands would have described every haul one
-  // category too short — the Belt reading as "across the inner system".
-  if (r < 800)  return 'a short hop';
-  if (r < 1800) return 'across the inner system';
-  if (r < 3600) return 'the long haul to the Belt';
-  return 'out past the gas giants';
+function leaderTitle(lex: FlavorLex, factionName: string): string {
+  return lex.leaderTitles[hashStr(factionName) % lex.leaderTitles.length];
 }
 
 // ------------------------------------------------------------
@@ -158,23 +129,13 @@ function distanceBucket(body: FlavorBody | undefined): string {
 
 const VAR_RE = /\{(\w+)\}/g;
 
-// Settlement `population` is an internal game stat (1-10, tracks
-// development tier — see src/game/settlements.ts GROWTH_INTERVAL).
-// For narrative purposes it stands in for a much larger populace:
-// 1 pop = 200,000 people. Purely a display-layer read — the stored
-// stat itself is untouched, this only affects what prose shows.
-const POP_PER_UNIT = 200_000;
-function formatPopulation(units: number): string {
-  const people = units * POP_PER_UNIT;
-  if (people >= 1_000_000) {
-    const millions = people / 1_000_000;
-    const str = Number.isInteger(millions) ? String(millions) : millions.toFixed(1);
-    return `${str} million`;
-  }
-  return people.toLocaleString('en-US');
-}
-
-function fillTemplate(tpl: string, vars: Record<string, string | undefined>): string | null {
+function fillTemplate(
+  tplIn: string,
+  vars: Record<string, string | undefined>,
+  genders?: Record<string, Gender>,
+): string | null {
+  // Portuguese: "o {shipClass}" becomes "a {shipClass}" for a feminine noun.
+  const tpl = genders ? agreeArticles(tplIn, genders) : tplIn;
   let missing = false;
   const out = tpl.replace(VAR_RE, (_m, key: string) => {
     const v = vars[key];
@@ -185,26 +146,29 @@ function fillTemplate(tpl: string, vars: Record<string, string | undefined>): st
 }
 
 // ------------------------------------------------------------
-// Per-kind variable resolution. Returns the {var} map for an event,
-// or null when the kind has no bank / can't be enriched. Names that
-// can't resolve are simply left undefined; fillTemplate then skips
-// any variant that needs them.
+// Per-kind variable resolution. Returns the {var} map for an event
+// (plus the gender of its noun tokens, for Portuguese article
+// agreement), or null when the kind has no bank / can't be enriched.
+// Names that can't resolve are simply left undefined; fillTemplate
+// then skips any variant that needs them.
 // ------------------------------------------------------------
 
-function fmtBundle(b: unknown): string | undefined {
-  if (!b || typeof b !== 'object') return undefined;
-  const o = b as Record<string, number>;
-  const parts: string[] = [];
-  if ((o.metal ?? 0) > 0)   parts.push(`${o.metal} metal`);
-  if ((o.fuel ?? 0) > 0)    parts.push(`${o.fuel} fuel`);
-  if ((o.gold ?? 0) > 0)    parts.push(`${o.gold} credits`);
-  if ((o.science ?? 0) > 0) parts.push(`${o.science} science`);
-  return parts.length ? parts.join(', ') : undefined;
+interface Resolved {
+  vars: Record<string, string | undefined>;
+  genders: Record<string, Gender>;
 }
 
-function resolveVars(ev: FlavorEvent, ctx: FlavorContext): Record<string, string | undefined> | null {
+function resolveVars(ev: FlavorEvent, ctx: FlavorContext, lang: Lang): Resolved | null {
   const bankKey = KIND_MAP[ev.kind];
-  if (!bankKey || !FLAVOR_BANK[bankKey]) return null;
+  if (!bankKey || !BANKS[lang][bankKey]) return null;
+
+  const lex = lexFor(lang);
+  const genders: Record<string, Gender> = {};
+  /** Noun token: text goes in the var map, gender (pt-BR) beside it. */
+  const noun = (key: string, n: Noun | undefined): string | undefined => {
+    if (n?.g) genders[key] = n.g;
+    return n?.text;
+  };
 
   const p = ev.payload;
   const str = (k: string): string | undefined => {
@@ -230,236 +194,250 @@ function resolveVars(ev: FlavorEvent, ctx: FlavorContext): Record<string, string
     for (const b of ctx.bodies.values()) if (b.name === name) return b;
     return undefined;
   };
+  // Bucket a body's orbit radius into a travel-distance phrase. Best
+  // effort — always returns SOMETHING so {distance} variants aren't
+  // needlessly skipped (the prose reads fine with any bucket).
+  const distanceBucket = (body: FlavorBody | undefined): string => lex.distance(body?.orbitRadius);
 
   const tick = `T+${ev.tick}`;
 
   // Common: actor faction + capital + title.
   const actorFac = facById(ev.actorFactionId);
 
-  switch (ev.kind) {
-    case 'ship_destroyed': {
-      // Bank {actor} = killer, {partner} = victim (owner).
-      const killer = facName(facById(p.killer_faction_id as string | null), p.killer_faction_name as string | undefined);
-      const victim = facName(actorFac, p.owner_faction_name as string | undefined);
-      return {
-        actor: killer,
-        partner: victim,
-        shipName: str('ship_name'),
-        shipClass: (str('ship_class') ?? '').replace(/^\w/, c => c.toUpperCase()) || undefined,
-        body: str('body_name'),
-        hpLost: num('hp_lost'),
-        // Only set on ships that had a captain aboard — older chronicle
-        // rows (pre-captains) and captain-less ships leave this
-        // undefined, which fillTemplate treats as "skip any variant
-        // that needs it."
-        captainName: str('captain_name'),
-        tick,
-      };
+  const vars = ((): Record<string, string | undefined> | null => {
+    switch (ev.kind) {
+      case 'ship_destroyed': {
+        // Bank {actor} = killer, {partner} = victim (owner).
+        const killer = facName(facById(p.killer_faction_id as string | null), p.killer_faction_name as string | undefined);
+        const victim = facName(actorFac, p.owner_faction_name as string | undefined);
+        return {
+          actor: killer,
+          partner: victim,
+          shipName: str('ship_name'),
+          shipClass: noun('shipClass', lex.shipClass(str('ship_class'))),
+          body: str('body_name'),
+          hpLost: num('hp_lost'),
+          // Only set on ships that had a captain aboard — older chronicle
+          // rows (pre-captains) and captain-less ships leave this
+          // undefined, which fillTemplate treats as "skip any variant
+          // that needs it."
+          captainName: str('captain_name'),
+          tick,
+        };
+      }
+      case 'settlement_destroyed': {
+        const destroyer = facName(facById(p.killer_faction_id as string | null), p.killer_faction_name as string | undefined);
+        const owner = facName(actorFac, p.owner_faction_name as string | undefined);
+        return {
+          actor: destroyer,
+          partner: owner,
+          settlementName: str('settlement_name'),
+          settlementType: noun('settlementType', lex.settlementType(str('settlement_type'))),
+          body: str('body_name'),
+          // "population 6" reads like a stat, not a loss. Scaled to
+          // people (200,000 per pop unit) so the templates below can
+          // land the actual weight of a settlement falling.
+          popLost: (() => {
+            const raw = num('pop_lost');
+            return raw ? lex.population(Number(raw)) : undefined;
+          })(),
+          tick,
+        };
+      }
+      case 'settlement_built': {
+        const body = bodyByName(str('body_name'));
+        return {
+          actor: facName(actorFac, p.owner_faction_name as string | undefined),
+          settlementName: str('settlement_name'),
+          settlementType: noun('settlementType', lex.settlementType(str('settlement_type'))),
+          body: str('body_name'),
+          bodyType: noun('bodyType', lex.bodyType(body?.type)),
+          distance: distanceBucket(body),
+          tick,
+        };
+      }
+      case 'ship_built': {
+        return {
+          actor: facName(actorFac, p.owner_faction_name as string | undefined),
+          shipName: str('ship_name'),
+          shipClass: noun('shipClass', lex.shipClass(str('ship_class'))),
+          body: str('body_name'),
+          tick,
+        };
+      }
+      case 'building_completed': {
+        return {
+          actor: facName(actorFac, p.owner_faction_name as string | undefined),
+          building: noun('building', lex.building(str('building_kind'))),
+          settlementName: str('settlement_name'),
+          body: str('body_name'),
+          tick,
+        };
+      }
+      case 'secret_discovered': {
+        const body = bodyByName(str('body_name'));
+        return {
+          actor: facName(actorFac),
+          secretName: noun('secretName', lex.secretName(str('kind'))),
+          body: str('body_name'),
+          bodyType: noun('bodyType', lex.bodyType(body?.type)),
+          tick,
+        };
+      }
+      case 'trade_accepted': {
+        const offer = lex.bundle(p.offer);
+        const request = lex.bundle(p.request);
+        // "1 science for 1 metal" style — needs at least one side.
+        return {
+          actor: facName(facById(ev.actorFactionId)),
+          partner: facName(facById(ev.targetFactionId)),
+          resourceTraded: lex.trade(offer, request),
+          tick,
+        };
+      }
+      case 'treaty_signed':
+      case 'treaty_broken': {
+        const a = facById(ev.actorFactionId);
+        const b = facById(ev.targetFactionId);
+        const partnerCap = bodyById(b?.capitalBodyId);
+        return {
+          actor: facName(a),
+          partner: facName(b),
+          actorCapital: capitalName(a),
+          partnerCapital: capitalName(b),
+          actorLeaderTitle: a ? leaderTitle(lex, a.name) : undefined,
+          partnerLeaderTitle: b ? leaderTitle(lex, b.name) : undefined,
+          pactType: lex.pactType(str('kind')),
+          distance: distanceBucket(partnerCap),
+          tick,
+        };
+      }
+      case 'senate_vote': {
+        // outcome is the server's status string ('passed' / 'failed' /
+        // etc.). title is the bill's display name. proposer = actor.
+        return {
+          actor: facName(actorFac),
+          voteTitle: str('title'),
+          voteOutcome: lex.voteOutcome(str('outcome')),
+          tick,
+        };
+      }
+      case 'senate_law_expired': {
+        // The actor is the faction that PROPOSED the law, not one that
+        // acted now — nobody repeals it, the clock simply runs out. The
+        // prose has to carry that or it reads as someone striking it down.
+        const inForce = p.ticks_in_force;
+        return {
+          actor: facName(actorFac),
+          voteTitle: str('title'),
+          ticksInForce: typeof inForce === 'number' ? String(inForce) : undefined,
+          tick,
+        };
+      }
+      case 'senate_reaped': {
+        // A bill that never even opened for voting. Rare — this is the
+        // safety net firing — so the prose stays factual rather than witty.
+        return {
+          actor: facName(actorFac),
+          voteTitle: str('title'),
+          tick,
+        };
+      }
+      case 'senate_term': {
+        // faction_name is carried in the payload because a term outlives
+        // nothing — but the actor lookup can still miss for a faction the
+        // caller cannot see, and a chairman announcement with no name is
+        // worse than none.
+        // num() returns a STRING (every flavor var is a string), so the
+        // arithmetic here reads the raw payload instead of round-tripping
+        // through it. term_index is 0-based on the wire and 1-based in
+        // prose — nobody says "term zero".
+        const rawStart = p.start_tick;
+        const rawEnd = p.end_tick;
+        const rawIdx = p.term_index;
+        const span = (typeof rawStart === 'number' && typeof rawEnd === 'number')
+          ? rawEnd - rawStart : undefined;
+        return {
+          actor: facName(actorFac, p.faction_name as string | undefined),
+          termNumber: typeof rawIdx === 'number' ? String(rawIdx + 1) : undefined,
+          termEnd: num('end_tick'),
+          termSpan: span != null ? String(span) : undefined,
+          tick,
+        };
+      }
+      case 'asteroid_impact': {
+        return {
+          actor: facName(actorFac),
+          // partner (target owner) often isn't in the payload — those
+          // variants skip and fall to a partner-free one or the headline.
+          partner: facName(facById(p.target_owner_faction_id as string | null), p.target_owner_faction_name as string | undefined),
+          body: str('target_name'),
+          bodyType: noun('bodyType', lex.bodyType(bodyByName(str('target_name'))?.type)),
+          settlementName: str('settlement_name'),
+          tick,
+        };
+      }
+      case 'tech_advanced': {
+        // Payload: { tech_id, level, faction_name }. Show WHO advanced WHICH
+        // tech to what level. techName from the catalog / TECH_DEFS; fall
+        // back to a prettified id if the catalog ever drifts.
+        const techId = str('tech_id');
+        const def = techId ? (TECH_DEFS as Record<string, { name: string }>)[techId] : undefined;
+        // The English name is read from the English catalog (not from
+        // TECH_DEFS.name, which follows the UI language) so a requested
+        // language never leaks the other one.
+        const enName = techId
+          ? ((catalogs().en as Record<string, string | undefined>)[`data.tech.${techId}.name`] ?? def?.name)
+          : undefined;
+        return {
+          actor: facName(actorFac, p.faction_name as string | undefined),
+          techName: lex.techName(techId, enName),
+          techLevel: lex.techLevel(num('level')),
+          tick,
+        };
+      }
+      case 'victory': {
+        // detail is always populated (src/game/victory.ts, worker/senate.js
+        // chancellor path) and already names the specific condition, so
+        // the templates below lean on it rather than re-deriving one from
+        // victoryType.
+        return {
+          actor: facName(actorFac),
+          detail: lex.victoryDetail(str('detail')),
+          tick,
+        };
+      }
+      default:
+        return null;
     }
-    case 'settlement_destroyed': {
-      const destroyer = facName(facById(p.killer_faction_id as string | null), p.killer_faction_name as string | undefined);
-      const owner = facName(actorFac, p.owner_faction_name as string | undefined);
-      return {
-        actor: destroyer,
-        partner: owner,
-        settlementName: str('settlement_name'),
-        settlementType: str('settlement_type') ?? 'settlement',
-        body: str('body_name'),
-        // "population 6" reads like a stat, not a loss. Scaled to
-        // people (200,000 per pop unit) so the templates below can
-        // land the actual weight of a settlement falling.
-        popLost: (() => {
-          const raw = num('pop_lost');
-          return raw ? formatPopulation(Number(raw)) : undefined;
-        })(),
-        tick,
-      };
-    }
-    case 'settlement_built': {
-      const body = bodyByName(str('body_name'));
-      return {
-        actor: facName(actorFac, p.owner_faction_name as string | undefined),
-        settlementName: str('settlement_name'),
-        settlementType: str('settlement_type') ?? 'settlement',
-        body: str('body_name'),
-        bodyType: body?.type,
-        distance: distanceBucket(body),
-        tick,
-      };
-    }
-    case 'ship_built': {
-      return {
-        actor: facName(actorFac, p.owner_faction_name as string | undefined),
-        shipName: str('ship_name'),
-        shipClass: (str('ship_class') ?? '').replace(/^\w/, c => c.toUpperCase()) || undefined,
-        body: str('body_name'),
-        tick,
-      };
-    }
-    case 'building_completed': {
-      const bk = str('building_kind');
-      return {
-        actor: facName(actorFac, p.owner_faction_name as string | undefined),
-        building: bk ? bk.replace(/^\w/, c => c.toUpperCase()) : undefined,
-        settlementName: str('settlement_name'),
-        body: str('body_name'),
-        tick,
-      };
-    }
-    case 'secret_discovered': {
-      const body = bodyByName(str('body_name'));
-      const secretKind = str('kind');
-      return {
-        actor: facName(actorFac),
-        secretName: secretKind ? (SECRET_NAME[secretKind] ?? secretKind.replace(/_/g, ' ')) : undefined,
-        body: str('body_name'),
-        bodyType: body?.type,
-        tick,
-      };
-    }
-    case 'trade_accepted': {
-      const offer = fmtBundle(p.offer);
-      const request = fmtBundle(p.request);
-      // "1 science for 1 metal" style — needs at least one side.
-      let resourceTraded: string | undefined;
-      if (offer && request) resourceTraded = `${offer} for ${request}`;
-      else if (offer) resourceTraded = offer;
-      else if (request) resourceTraded = request;
-      return {
-        actor: facName(facById(ev.actorFactionId)),
-        partner: facName(facById(ev.targetFactionId)),
-        resourceTraded,
-        tick,
-      };
-    }
-    case 'treaty_signed':
-    case 'treaty_broken': {
-      const a = facById(ev.actorFactionId);
-      const b = facById(ev.targetFactionId);
-      const partnerCap = bodyById(b?.capitalBodyId);
-      return {
-        actor: facName(a),
-        partner: facName(b),
-        actorCapital: capitalName(a),
-        partnerCapital: capitalName(b),
-        actorLeaderTitle: a ? leaderTitle(a.name) : undefined,
-        partnerLeaderTitle: b ? leaderTitle(b.name) : undefined,
-        pactType: PACT_LABEL[str('kind') ?? ''] ?? undefined,
-        distance: distanceBucket(partnerCap),
-        tick,
-      };
-    }
-    case 'senate_vote': {
-      // outcome is the server's status string ('passed' / 'failed' /
-      // etc.). title is the bill's display name. proposer = actor.
-      const outcome = str('outcome');
-      return {
-        actor: facName(actorFac),
-        voteTitle: str('title'),
-        voteOutcome: outcome,
-        tick,
-      };
-    }
-    case 'senate_law_expired': {
-      // The actor is the faction that PROPOSED the law, not one that
-      // acted now — nobody repeals it, the clock simply runs out. The
-      // prose has to carry that or it reads as someone striking it down.
-      const inForce = p.ticks_in_force;
-      return {
-        actor: facName(actorFac),
-        voteTitle: str('title'),
-        ticksInForce: typeof inForce === 'number' ? String(inForce) : undefined,
-        tick,
-      };
-    }
-    case 'senate_reaped': {
-      // A bill that never even opened for voting. Rare — this is the
-      // safety net firing — so the prose stays factual rather than witty.
-      return {
-        actor: facName(actorFac),
-        voteTitle: str('title'),
-        tick,
-      };
-    }
-    case 'senate_term': {
-      // faction_name is carried in the payload because a term outlives
-      // nothing — but the actor lookup can still miss for a faction the
-      // caller cannot see, and a chairman announcement with no name is
-      // worse than none.
-      // num() returns a STRING (every flavor var is a string), so the
-      // arithmetic here reads the raw payload instead of round-tripping
-      // through it. term_index is 0-based on the wire and 1-based in
-      // prose — nobody says "term zero".
-      const rawStart = p.start_tick;
-      const rawEnd = p.end_tick;
-      const rawIdx = p.term_index;
-      const span = (typeof rawStart === 'number' && typeof rawEnd === 'number')
-        ? rawEnd - rawStart : undefined;
-      return {
-        actor: facName(actorFac, p.faction_name as string | undefined),
-        termNumber: typeof rawIdx === 'number' ? String(rawIdx + 1) : undefined,
-        termEnd: num('end_tick'),
-        termSpan: span != null ? String(span) : undefined,
-        tick,
-      };
-    }
-    case 'asteroid_impact': {
-      const targetBody = bodyByName(str('target_name'));
-      return {
-        actor: facName(actorFac),
-        // partner (target owner) often isn't in the payload — those
-        // variants skip and fall to a partner-free one or the headline.
-        partner: facName(facById(p.target_owner_faction_id as string | null), p.target_owner_faction_name as string | undefined),
-        body: str('target_name'),
-        bodyType: targetBody?.type,
-        settlementName: str('settlement_name'),
-        tick,
-      };
-    }
-    case 'tech_advanced': {
-      // Payload: { tech_id, level, faction_name }. Show WHO advanced WHICH
-      // tech to what level. techName from TECH_DEFS; fall back to a
-      // prettified id if the catalog ever drifts.
-      const techId = str('tech_id');
-      const def = techId ? (TECH_DEFS as Record<string, { name: string }>)[techId] : undefined;
-      const techName = def?.name
-        ?? (techId ? techId.replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase()) : undefined);
-      const lvl = num('level');
-      return {
-        actor: facName(actorFac, p.faction_name as string | undefined),
-        techName,
-        techLevel: lvl != null ? `level ${lvl}` : undefined,
-        tick,
-      };
-    }
-    case 'victory': {
-      // detail is always populated (src/game/victory.ts, worker/senate.js
-      // chancellor path) and already names the specific condition, so
-      // the templates below lean on it rather than re-deriving one from
-      // victoryType.
-      return {
-        actor: facName(actorFac),
-        detail: str('detail'),
-        tick,
-      };
-    }
-    default:
-      return null;
-  }
+  })();
+  return vars ? { vars, genders } : null;
 }
 
 // ------------------------------------------------------------
 // Public: generate a flavor string for an event, or null.
+//
+// `lang` defaults to the player's current language, so existing
+// callers need no change. Each language walks its OWN bank with the
+// same per-event hash; the banks are kept entry-for-entry parallel
+// (a test enforces equal length and equal tokens), so an event lands
+// on the same variant everywhere. If a bank ever differs in length the
+// modulo is taken against that language's own length.
 // ------------------------------------------------------------
 
-export function generateFlavor(ev: FlavorEvent, ctx: FlavorContext): string | null {
+export function generateFlavor(
+  ev: FlavorEvent,
+  ctx: FlavorContext,
+  lang: Lang = getLang(),
+): string | null {
   const bankKey = KIND_MAP[ev.kind];
   if (!bankKey) return null;
-  const variants = FLAVOR_BANK[bankKey];
+  const variants = BANKS[lang]?.[bankKey];
   if (!variants || variants.length === 0) return null;
 
-  const vars = resolveVars(ev, ctx);
-  if (!vars) return null;
+  const resolved = resolveVars(ev, ctx, lang);
+  if (!resolved) return null;
+  const genders = lang === 'pt-BR' ? resolved.genders : undefined;
 
   // Deterministic rotation: start at a per-event offset so different
   // events of the same kind pick different variants, but the SAME
@@ -468,7 +446,7 @@ export function generateFlavor(ev: FlavorEvent, ctx: FlavorContext): string | nu
   const start = hashStr(ev.id) % variants.length;
   for (let i = 0; i < variants.length; i++) {
     const tpl = variants[(start + i) % variants.length];
-    const filled = fillTemplate(tpl, vars);
+    const filled = fillTemplate(tpl, resolved.vars, genders);
     if (filled) return filled;
   }
   return null;

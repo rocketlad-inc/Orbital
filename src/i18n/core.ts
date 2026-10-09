@@ -99,6 +99,20 @@ export function t(key: Key, vars?: Record<string, string | number>): string {
   return fill(lookup(key, current), vars);
 }
 
+/** `t` for an EXPLICIT language instead of the player's current one. For
+ *  text that must be built in a language other than the one on screen (the
+ *  event-log headlines are built twice: once in English for the audit log
+ *  and the classifiers, once in the player's language for display). */
+export function tIn(lang: Lang, key: Key, vars?: Record<string, string | number>): string {
+  return fill(lookup(key, lang), vars);
+}
+
+/** `tk` for an explicit language: a run-time key with an English fallback. */
+export function tkIn(lang: Lang, key: string, english: string, vars?: Record<string, string | number>): string {
+  const own = (CATALOGS[lang] as Record<string, string | undefined>)[key];
+  return fill(own ?? english, vars);
+}
+
 /** Translate a key that is built at run time (`data.tech.${id}.name`) or
  *  that lives next to the data it names. `english` is what shows when the
  *  language is English or the catalog has no entry, so adding a new tech,
@@ -113,16 +127,26 @@ export type PluralKey = Extract<Key, `${string}_other`> extends `${infer B}_othe
 
 /** Translate a counted phrase. `{n}` is filled in automatically. */
 export function tn(key: PluralKey, n: number, vars?: Record<string, string | number>): string {
-  const rule = new Intl.PluralRules(current).select(n);   // zero|one|two|few|many|other
-  const pick = (r: string) => (CATALOGS[current] as Record<string, string | undefined>)[`${key}_${r}`];
+  return tnIn(current, key, n, vars);
+}
+
+/** `tn` for an explicit language (same plural rules and fallbacks). */
+export function tnIn(lang: Lang, key: PluralKey, n: number, vars?: Record<string, string | number>): string {
+  const rule = new Intl.PluralRules(lang).select(n);   // zero|one|two|few|many|other
+  const pick = (r: string) => (CATALOGS[lang] as Record<string, string | undefined>)[`${key}_${r}`];
   const s = pick(rule) ?? (en as Record<string, string>)[`${key}_${rule}`]
     ?? pick('other') ?? (en as Record<string, string>)[`${key}_other`] ?? String(key);
-  return fill(s, { n: fmtNumber(n), ...vars });
+  return fill(s, { n: fmtNumberIn(lang, n), ...vars });
 }
 
 /** 7.5 reads "7,5" in Portuguese. */
 export function fmtNumber(n: number, opts?: Intl.NumberFormatOptions): string {
   return new Intl.NumberFormat(current, opts).format(n);
+}
+
+/** `fmtNumber` for an explicit language. */
+export function fmtNumberIn(lang: Lang, n: number, opts?: Intl.NumberFormatOptions): string {
+  return new Intl.NumberFormat(lang, opts).format(n);
 }
 
 /** "2 days ago", "yesterday": the browser already knows every language's

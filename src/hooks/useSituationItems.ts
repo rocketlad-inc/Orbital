@@ -74,6 +74,8 @@ import { forecastIntercepts } from '../game/firingWindows';
 import { MEGASTRUCTURES, MEGA_MAX_HP, isBreached } from '../game/megastructures';
 import { shipyardBodyIds } from '../game/repair';
 import { deriveSecondary } from '../game/colorUtils';
+// `tr`/`trn`/`trk` rather than t/tn/tk: this file has plenty of locals named `t`.
+import { t as tr, tn as trn, tk as trk, fmtNumber, getLang } from '../i18n/core';
 
 // Building kinds each settlement type can host (mirrors BuildPanel /
 // the map's world-overlay chips). Used to ask "is there anything here I
@@ -116,6 +118,30 @@ function canPay(have: ResBundle, cost: ResBundle): boolean {
  *  so the situation-report subtitle is just the payoff clause. */
 function stripDiscoveryPrefix(msg: string): string {
   return msg.replace(/^\s*DISCOVERY\s*[:—-]\s*/i, '');
+}
+
+/** "5 ticks" / "1 tick". The count goes in as typed (tn would group a long
+ *  runway as "1,500"), and the unit follows the language. */
+function ticksText(n: number): string {
+  return trn('helper.sit.ticks', n, { n });
+}
+
+/** A hull class id as a lower-case word inside a sentence ("frigate").
+ *  The id itself stays the fallback, so a class with no entry still reads. */
+function shipClassText(cls: string): string {
+  return trk(`helper.sit.cls.${cls}`, cls);
+}
+
+/** "city" / "station" as a word inside a sentence. */
+function settleTypeText(type: string): string {
+  return trk(`helper.sit.settleType.${type}`, type);
+}
+
+/** The completion stamp keeps the raw "forge L2"; this says it in the
+ *  player's language. */
+function buildingLabelText(label: string): string {
+  const m = /^(\S+) (L\d+)$/.exec(label);
+  return m ? `${trk(`helper.sit.bld.${m[1]}`, m[1])} ${m[2]}` : label;
 }
 
 // ------------------------------------------------------------
@@ -242,10 +268,13 @@ const SUN_GATE_NEWS_TICKS = 24;
 
 export type SituationTier = 'now' | 'decision' | 'opportunity';
 
+// Getters, not strings: the label is read at render time, in whatever
+// language is current. The words live with the screen that shows them
+// (situation.tier.*, review part).
 export const TIER_LABEL: Record<SituationTier, string> = {
-  now:         'Now',
-  decision:    'Needs a decision',
-  opportunity: 'Opportunities',
+  get now() { return tr('situation.tier.now'); },
+  get decision() { return tr('situation.tier.decision'); },
+  get opportunity() { return tr('situation.tier.opportunity'); },
 };
 
 const TIER_ORDER: SituationTier[] = ['now', 'decision', 'opportunity'];
@@ -429,49 +458,12 @@ export interface SituationItem {
   entity?: string;
 }
 
-export const CATEGORY_LABEL: Record<SituationCategory, string> = {
-  in_combat:       'In combat now',
-  capital_lost:    'Capital lost',
-  threat:          'Incoming threats',
-  intercept:       'Intercept inbound',
-  structure_siege: 'Structure under attack',
-  strike_incoming: 'World-killer charging',
-  strike_mine:     'Your strike is charging',
-  rock_running_dry: 'Rock running dry',
-  arrived:         'Recently arrived',
-  created:         'Newly created',
-  incoming_trade:  'Incoming trade offers',
-  market_new:      'New on the open market',
-  trade_needs_ship: 'Trades waiting on a freighter',
-  vote_open:       'Senate vote open',
-  idle_shipyard:   'Planets awaiting construction',
-  idle_freighter:  'Idle freighters',
-  stranded:        'Stranded stockpiles',
-  terraform_stalled: 'Terraforming stalled',
-  terraform_unstarted: 'Claimed worlds awaiting terraforming',
-  tech_available:  'Research idle',
-  building_idle:   'Building slots empty',
-  building_done:   'Construction complete',
-  refit_done:      'Refit complete',
-  refit_waiting:   'Refit waiting',
-  research_done:   'Research complete',
-  research_stall:  'Research stalled',
-  damaged:         'Damaged and quiet',
-  idle_colony:     'Idle colony ships',
-  broken_route:    'Broken trade routes',
-  vote_closed:     'Votes resolved',
-  discovery:       'Discoveries',
-  idle_captain:    'Captains unassigned',
-  fleet_leaderless: 'Fleets without a flag',
-  fleet_arrears:   'Fleet upkeep unpaid',
-  upkeep_mix:      'Upkeep outruns income',
-  dyson_project:   'Dyson Sphere',
-  dyson_threat:    'Rival megaproject',
-  domination_watch: 'Domination race',
-  sun_gate: 'The sun gates',
-  sanction_on_me:  'Senate sanctions against you',
-  sanction_window: 'Sanction windows',
-};
+/** The group heading for a category, in the current language. (A function
+ *  rather than the old constant table, which would have frozen the language
+ *  at import.) Words: helper.sit.cat.<category>. */
+export function categoryLabel(category: SituationCategory): string {
+  return trk(`helper.sit.cat.${category}`, category);
+}
 
 // ------------------------------------------------------------
 // MP data passed in (SP gets empty arrays)
@@ -716,6 +708,10 @@ export function useSituationItems(
     }
   }, [gameState.settlements, gameState.factionTech, mpData, factionId, tick]);
 
+  // The rows carry translated text, so the language is an input to them: a
+  // switch re-renders the caller (useI18n) and this recomputes in the new one.
+  const lang = getLang();
+
   // --- Derive the item list ---
   return useMemo(() => {
     const items: SituationItem[] = [];
@@ -751,9 +747,11 @@ export function useSituationItems(
           push({
             id: `rock_dry:${st.bodyId}`,
             category: 'rock_running_dry',
-            title: `${rock.name} is nearly worked out`,
-            subtitle: `${Math.round(left)} ${rock.mineralKind === 'gold' ? 'credits' : 'metal'} left`
-              + ' — point the run at another rock before it stops paying.',
+            title: tr('helper.sit.rockDry.title', { name: rock.name }),
+            subtitle: tr('helper.sit.rockDry.sub', {
+              amount: Math.round(left),
+              kind: tr(rock.mineralKind === 'gold' ? 'helper.sit.kind.credits' : 'helper.sit.kind.metal'),
+            }),
             severity: 'warn',
             sortKey: left,
             focus: { kind: 'body', bodyId: st.bodyId },
@@ -765,14 +763,14 @@ export function useSituationItems(
     const arr = gameState.fleetArrears;
     if (arr && (arr.credits > 0 || arr.ore > 0)) {
       const owed = [
-        arr.credits > 0 ? `${Math.ceil(arr.credits)} CR` : null,
-        arr.ore > 0 ? `${Math.ceil(arr.ore)} metal` : null,
+        arr.credits > 0 ? tr('helper.sit.owed.cr', { n: Math.ceil(arr.credits) }) : null,
+        arr.ore > 0 ? tr('helper.sit.owed.metal', { n: Math.ceil(arr.ore) }) : null,
       ].filter(Boolean).join(', ');
       push({
         id: 'fleet_arrears',
         category: 'fleet_arrears',
-        title: 'Fleet upkeep unpaid — ships fight at −25% damage',
-        subtitle: `Owing ${owed}. Clears automatically as income lands.`,
+        title: tr('helper.sit.arrears.title'),
+        subtitle: tr('helper.sit.arrears.sub', { owed }),
         severity: 'danger',
         sortKey: 0,
         focus: { kind: 'panel', panel: 'fleet' },
@@ -795,21 +793,25 @@ export function useSituationItems(
     if (!(arr && (arr.credits > 0 || arr.ore > 0))) {
       const led = economyLedger(gameState);
       for (const w of upkeepMixWarnings(led)) {
-        const name = w.currency === 'metal' ? 'metal' : 'credits';
+        const name = tr(w.currency === 'metal' ? 'helper.sit.kind.metal' : 'helper.sit.kind.credits');
         const ticks = Math.floor(w.line.runway ?? 0);
         // Name the swap, not just the shortfall. The fix is a refit
         // toward the other side of the parts axis, and saying which way
         // is the difference between a warning and a chore.
-        const swap = w.currency === 'metal'
-          ? 'Energy weapons and armour bill credits instead'
-          : 'Kinetic weapons and shields bill metal instead';
+        const swap = tr(w.currency === 'metal'
+          ? 'helper.sit.upkeepMix.swapMetal'
+          : 'helper.sit.upkeepMix.swapCredits');
         push({
           id: `upkeep_mix_${w.currency}`,
           category: 'upkeep_mix',
-          title: `Your fleet bills more ${name} than you earn`,
-          subtitle: `${w.line.upkeep.toFixed(1)}/tick out, ${w.line.income.toFixed(1)}/tick in`
-            + ` — about ${ticks} tick${ticks === 1 ? '' : 's'} of ${name} left.`
-            + ` ${swap}; refit to move the bill.`,
+          title: tr('helper.sit.upkeepMix.title', { name }),
+          subtitle: tr('helper.sit.upkeepMix.sub', {
+            out: w.line.upkeep.toFixed(1),
+            inc: w.line.income.toFixed(1),
+            ticks: ticksText(ticks),
+            name,
+            swap,
+          }),
           severity: w.urgent ? 'danger' : 'warn',
           sortKey: w.line.runway ?? 0,
           focus: { kind: 'panel', panel: 'fleet' },
@@ -830,7 +832,7 @@ export function useSituationItems(
     // the poll is and make the countdown jitter.
     for (const sx of gameState.senateSanctions ?? []) {
       if (sx.ticksLeft <= 0) continue;
-      const t = `${sx.ticksLeft} tick${sx.ticksLeft === 1 ? '' : 's'}`;
+      const t = ticksText(sx.ticksLeft);
       const mine = sx.targetFactionId === factionId;
       const who = factionName(gameState, sx.targetFactionId);
       // Sorting by ticksLeft puts the sanction about to LAPSE at the top:
@@ -840,16 +842,16 @@ export function useSituationItems(
       if (mine) {
         const copy: Record<string, { title: string; sub: string }> = {
           war_authorization: {
-            title: 'War Authorization against you — all damage you take is DOUBLED',
-            sub: `Lapses in ${t}. Peace pacts were broken when it passed.`,
+            title: tr('helper.sit.sanction.war.title'),
+            sub: tr('helper.sit.sanction.war.sub', { ticks: t }),
           },
           trade_embargo: {
-            title: 'Trade embargo against you — deliveries are blocked',
-            sub: `Lapses in ${t}. Freighters en route will not land cargo.`,
+            title: tr('helper.sit.sanction.embargo.title'),
+            sub: tr('helper.sit.sanction.embargo.sub', { ticks: t }),
           },
           production_sanction: {
-            title: 'Production sanction against you — settlement yields halved',
-            sub: `Lapses in ${t}.`,
+            title: tr('helper.sit.sanction.production.title'),
+            sub: tr('helper.sit.sanction.production.sub', { ticks: t }),
           },
         };
         const c = copy[sx.kind];
@@ -874,8 +876,8 @@ export function useSituationItems(
       push({
         id: `sanction_window:${sx.targetFactionId}`,
         category: 'sanction_window',
-        title: `Strike window: double damage to ${who}`,
-        subtitle: `War Authorization lapses in ${t}.`,
+        title: tr('helper.sit.sanction.window.title', { who }),
+        subtitle: tr('helper.sit.sanction.window.sub', { ticks: t }),
         severity: 'warn',
         sortKey,
         focus: { kind: 'panel', panel: 'senate' },
@@ -899,8 +901,8 @@ export function useSituationItems(
             id: 'dyson_project',
             category: 'dyson_project',
             tier: 'now',
-            title: `Dyson Sphere UNDER ATTACK — ${pct}% and taking fire`,
-            subtitle: 'Damage burns accumulated progress. Defend the foundation or lose the project.',
+            title: tr('helper.sit.dyson.attack.title', { pct }),
+            subtitle: tr('helper.sit.dyson.attack.sub'),
             severity: 'danger',
             sortKey: 0,
             focus: foundation ? { kind: 'body', bodyId: foundation.bodyId } : undefined,
@@ -910,8 +912,8 @@ export function useSituationItems(
             id: 'dyson_project',
             category: 'dyson_project',
             tier: 'decision',
-            title: `Dyson Sphere stalled at ${pct}% — no freighters at Sol`,
-            subtitle: 'Park freighters at Sol to pump your resource pool into the sphere.',
+            title: tr('helper.sit.dyson.stalled.title', { pct }),
+            subtitle: tr('helper.sit.dyson.stalled.sub'),
             severity: 'warn',
             focus: foundation ? { kind: 'body', bodyId: foundation.bodyId } : undefined,
           });
@@ -919,8 +921,8 @@ export function useSituationItems(
           push({
             id: 'dyson_project',
             category: 'dyson_project',
-            title: `Dyson Sphere at ${pct}% — ${pumps} freighter${pumps === 1 ? '' : 's'} pumping`,
-            subtitle: 'Completion wins the match by Engineering Victory.',
+            title: trn('helper.sit.dyson.pumping', pumps, { pct }),
+            subtitle: tr('helper.sit.dyson.pumping.sub'),
             severity: 'normal',
             focus: foundation ? { kind: 'body', bodyId: foundation.bodyId } : undefined,
           });
@@ -932,7 +934,9 @@ export function useSituationItems(
           category: 'dyson_threat',
           // Past 75% this IS the game ending — NOW tier, red.
           tier: pct >= 75 ? 'now' : 'decision',
-          title: `${rival?.name ?? 'A rival'}'s Dyson Sphere at ${pct}%`,
+          title: rival?.name != null
+            ? tr('helper.sit.dyson.threat.title', { name: rival.name, pct })
+            : tr('helper.sit.dyson.threat.titleUnknown', { pct }),
           // BOTH HALVES OF THE OLD LINE WERE WRONG once king-of-the-hill
           // landed, and wrong in the direction that loses games:
           //
@@ -954,9 +958,9 @@ export function useSituationItems(
           // A player who read the old line would kill the station, hand the
           // attacker 80% of a finished sphere, and never learn they could
           // have taken it instead. Say what actually happens.
-          subtitle: 'Whoever controls it when it completes wins — including you, if you take it. '
-            + 'Bombarding the foundation grinds the progress down with it; killing it outright leaves '
-            + `${Math.round((1 - DYSON_ABANDON_LOSS_PCT) * 100)}% standing for whoever claims Sol next.`,
+          subtitle: tr('helper.sit.dyson.threat.sub', {
+            keep: Math.round((1 - DYSON_ABANDON_LOSS_PCT) * 100),
+          }),
           severity: pct >= 75 ? 'danger' : 'warn',
           sortKey: 100 - pct,
           focus: foundation ? { kind: 'body', bodyId: foundation.bodyId } : undefined,
@@ -995,14 +999,17 @@ export function useSituationItems(
           category: myWorld && !mine ? 'strike_incoming' : 'strike_mine',
           tier: myWorld && !mine ? 'now' : 'decision',
           title: myWorld && !mine
-            ? `${world.name} ${obliterate ? 'is destroyed' : 'dies'} in ${left} tick${left === 1 ? '' : 's'}`
-            : `Your strike on ${world.name} — T–${left}`,
+            ? tr(obliterate ? 'helper.sit.strike.destroyed' : 'helper.sit.strike.dies',
+              { world: world.name, ticks: ticksText(left) })
+            : tr('helper.sit.strike.mine.title', { world: world.name, left }),
           subtitle: myWorld && !mine
-            ? `A Mega Destroyer is charging over ${world.name}.`
-              + `${doomed > 0 ? ` ${doomed} settlement${doomed === 1 ? '' : 's'} of yours will be lost.` : ''}`
-              + `${obliterate ? ' The world itself goes with them: it will be a debris field.' : ''}`
-              + ' Force it off the world and the charge breaks.'
-            : 'It breaks if the hull moves. Nothing else stops it.',
+            ? [
+              tr('helper.sit.strike.sub.charging', { world: world.name }),
+              ...(doomed > 0 ? [trn('helper.sit.strike.sub.lost', doomed)] : []),
+              ...(obliterate ? [tr('helper.sit.strike.sub.debris')] : []),
+              tr('helper.sit.strike.sub.force'),
+            ].join(' ')
+            : tr('helper.sit.strike.mine.sub'),
           severity: myWorld && !mine ? 'danger' : 'warn',
           // Soonest first — a strike firing in two ticks outranks one
           // twenty ticks out, whatever else is in the tier.
@@ -1010,7 +1017,7 @@ export function useSituationItems(
           entity: `body:${world.id}`,
           // The row is ABOUT the world; the thing you need to look at to
           // act is the HULL, which may be the only object you can reach.
-          alt: { label: 'Show the hull', focus: { kind: 'ship', shipId: sh.id } },
+          alt: { label: tr('helper.sit.strike.showHull'), focus: { kind: 'ship', shipId: sh.id } },
           focus: { kind: 'body', bodyId: world.id },
         });
       }
@@ -1049,12 +1056,11 @@ export function useSituationItems(
           category: 'structure_siege',
           tier: breached ? 'now' : besiegers > 0 ? 'now' : 'decision',
           title: breached
-            ? `${body.name} is breached — boardable now`
-            : `${body.name} under attack — hull ${pct}%`,
+            ? tr('helper.sit.siege.breached', { body: body.name })
+            : tr('helper.sit.siege.attack', { body: body.name, pct }),
           subtitle: besiegers > 0
-            ? `${besiegers} hostile warship${besiegers === 1 ? '' : 's'} holding the orbit. `
-              + 'Clear them off and it repairs itself.'
-            : `${def?.label ?? 'Structure'} is repairing — nobody is on it.`,
+            ? trn('helper.sit.siege.hostiles', besiegers)
+            : tr('helper.sit.siege.repairing', { label: def?.label ?? tr('helper.sit.structure') }),
           severity: breached ? 'danger' : besiegers > 0 ? 'danger' : 'warn',
           sortKey: pct,
           // Same key shape the rest of the file uses, so a breached
@@ -1094,17 +1100,25 @@ export function useSituationItems(
         const pct = Math.round((leaderN / claimable.length) * 100);
         if (leader && pct >= 45) {
           const mineLead = leader === factionId;
-          const name = mineLead
-            ? 'You'
-            : gameState.factions.find(f => f.id === leader)?.name ?? 'A rival';
+          const leadName = mineLead
+            ? undefined
+            : gameState.factions.find(f => f.id === leader)?.name;
           push({
             id: 'domination_watch',
             category: 'domination_watch',
             tier: !mineLead && pct >= 55 ? 'now' : mineLead ? 'opportunity' : 'decision',
-            title: `${name} control${mineLead ? '' : 's'} ${pct}% of the map — 60% wins`,
+            title: mineLead
+              ? tr('helper.sit.dom.you', { pct })
+              : leadName != null
+                ? tr('helper.sit.dom.other', { name: leadName, pct })
+                : tr('helper.sit.dom.rival', { pct }),
             subtitle: mineLead
-              ? `${leaderN} of ${claimable.length} worlds. Claim ${Math.floor(claimable.length * 0.6) + 1 - leaderN} more for a Domination Victory.`
-              : 'Take worlds back or expand faster — at 60% the game ends.',
+              ? tr('helper.sit.dom.sub.you', {
+                n: leaderN,
+                total: claimable.length,
+                more: Math.floor(claimable.length * 0.6) + 1 - leaderN,
+              })
+              : tr('helper.sit.dom.sub.other'),
             severity: mineLead ? 'normal' : pct >= 55 ? 'danger' : 'warn',
             sortKey: 100 - pct,
           });
@@ -1188,10 +1202,10 @@ export function useSituationItems(
       push({
         id: `capital_lost:${cap.eventId}`,
         category: 'capital_lost',
-        title: `Your capital on ${cap.bodyName} has fallen`,
+        title: tr('helper.sit.capital.title', { body: cap.bodyName }),
         subtitle: cap.killerName
-          ? `Destroyed by ${cap.killerName}. Retake the world or found a new city.`
-          : 'Retake the world or found a new city.',
+          ? tr('helper.sit.capital.sub.killer', { killer: cap.killerName })
+          : tr('helper.sit.capital.sub'),
         focus: { kind: 'body', bodyId: cap.bodyId },
         severity: 'danger',
         entity: `body:${cap.bodyId}`,
@@ -1226,8 +1240,8 @@ export function useSituationItems(
       push({
         id: `arrived:${ship.id}`,
         category: 'arrived',
-        title: `${ship.name} arrived at ${where}`,
-        subtitle: 'Awaiting orders',
+        title: tr('helper.sit.arrived.title', { ship: ship.name, where }),
+        subtitle: tr('helper.sit.awaiting'),
         focus: { kind: 'ship', shipId: ship.id },
         severity: 'normal',
         entity: `ship:${ship.id}`,
@@ -1243,9 +1257,9 @@ export function useSituationItems(
         id: `arrived:fleet:${key}`,
         category: 'arrived',
         title: members.length === 1
-          ? `${lead.name} (${name}) arrived at ${where}`
-          : `${name} (${members.length} ships) arrived at ${where}`,
-        subtitle: 'Awaiting orders',
+          ? tr('helper.sit.arrived.fleet.one', { ship: lead.name, fleet: name, where })
+          : tr('helper.sit.arrived.fleet.many', { fleet: name, count: members.length, where }),
+        subtitle: tr('helper.sit.awaiting'),
         focus: { kind: 'ship', shipId: lead.id },
         severity: 'normal',
         entity: `ship:${lead.id}`,
@@ -1373,35 +1387,47 @@ export function useSituationItems(
       // line and lives in the row's tooltip, because a sentence that is
       // identical on every row is not information, it is wallpaper.
       const when = inc.open
-        ? `firing now, ${inc.duration.toFixed(1)}t left`
-        : `fires T+${inc.opensAt.toFixed(0)} for ${inc.duration.toFixed(1)}t`;
+        ? tr('helper.sit.intercept.firingNow', { dur: inc.duration.toFixed(1) })
+        : tr('helper.sit.intercept.fires', {
+          at: inc.opensAt.toFixed(0),
+          dur: inc.duration.toFixed(1),
+        });
       // A freighter's reach is 0, so it never answers however close it
       // gets. Saying so is the point — that silence is a rule, not a bug.
       const trade = outg
-        ? `they ~${Math.round(inc.hitChance * 100)}%, you ~${Math.round(outg.hitChance * 100)}%`
-        : `they ~${Math.round(inc.hitChance * 100)}%, you cannot answer`;
+        ? tr('helper.sit.intercept.trade', {
+          they: Math.round(inc.hitChance * 100),
+          you: Math.round(outg.hitChance * 100),
+        })
+        : tr('helper.sit.intercept.noAnswer', { they: Math.round(inc.hitChance * 100) });
       push({
         id: `intercept:${ship.id}`,
         category: 'intercept',
         // BOTH HULLS IN THE TITLE. "hostile on an intercepting course"
         // spent the whole line saying what the category already says,
         // and left the attacker's name buried in the body text.
-        title: `${closest.shipName} is intercepting ${ship.name}`,
+        title: tr('helper.sit.intercept.title', { foe: closest.shipName, ship: ship.name }),
         subtitle: `${closest.faction} · ${when} · ${trade}`,
         hint: outg
-          ? `A committed burn can't be re-aimed — neither of you can break off.`
-            + ` ${closest.shipName} fires T+${inc.opensAt.toFixed(0)}–${inc.closesAt.toFixed(0)};`
-            + ` you answer T+${outg.opensAt.toFixed(0)}–${outg.closesAt.toFixed(0)}.`
-          : `A committed burn can't be re-aimed — you cannot break off, and this`
-            + ` hull carries no weapon that reaches. ${closest.shipName} fires`
-            + ` T+${inc.opensAt.toFixed(0)}–${inc.closesAt.toFixed(0)}.`,
+          ? tr('helper.sit.intercept.hint.both', {
+            foe: closest.shipName,
+            a: inc.opensAt.toFixed(0),
+            b: inc.closesAt.toFixed(0),
+            c: outg.opensAt.toFixed(0),
+            d: outg.closesAt.toFixed(0),
+          })
+          : tr('helper.sit.intercept.hint.oneWay', {
+            foe: closest.shipName,
+            a: inc.opensAt.toFixed(0),
+            b: inc.closesAt.toFixed(0),
+          }),
         // Row click stays on YOUR hull — it is the asset at risk and the
         // one you may still have decisions about. SHOW ME goes to the
         // attacker, which is the question the warning actually raises.
         focus: { kind: 'ship', shipId: ship.id },
         alt: {
-          label: 'Show me',
-          title: `Centre the map on ${closest.shipName}`,
+          label: tr('helper.sit.intercept.show'),
+          title: tr('helper.sit.intercept.showTitle', { name: closest.shipName }),
           focus: { kind: 'ship', shipId: closest.shipId },
         },
         severity: 'danger',
@@ -1428,8 +1454,8 @@ export function useSituationItems(
       push({
         id: `created:${ship.id}`,
         category: 'created',
-        title: `${ship.name} (${ship.class}) launched at ${where}`,
-        subtitle: 'Awaiting orders',
+        title: tr('helper.sit.created.title', { ship: ship.name, cls: shipClassText(ship.class), where }),
+        subtitle: tr('helper.sit.awaiting'),
         focus: { kind: 'ship', shipId: ship.id },
         severity: 'normal',
         entity: `ship:${ship.id}`,
@@ -1464,8 +1490,9 @@ export function useSituationItems(
           id: `idle_shipyard:${body.id}`,
           category: 'idle_shipyard',
           tier: 'decision',
-          title: `${body.name} yard idle — hostiles ${hostilesHere ? 'present' : 'inbound'}`,
-          subtitle: 'Build defenses',
+          title: tr(hostilesHere ? 'helper.sit.yard.hostilesPresent' : 'helper.sit.yard.hostilesInbound',
+            { body: body.name }),
+          subtitle: tr('helper.sit.yard.defense'),
           focus: { kind: 'body', bodyId: body.id },
           severity: 'warn',
         });
@@ -1477,8 +1504,8 @@ export function useSituationItems(
         push({
           id: `idle_shipyard:${body.id}`,
           category: 'idle_shipyard',
-          title: `${body.name} shipyard idle`,
-          subtitle: 'No ship in production',
+          title: tr('helper.sit.yard.idle', { body: body.name }),
+          subtitle: tr('helper.sit.yard.idleSub'),
           focus: { kind: 'body', bodyId: body.id },
           severity: 'normal',
           entity: `body:${body.id}`,
@@ -1504,8 +1531,8 @@ export function useSituationItems(
       push({
         id: 'idle_freighter:all',
         category: 'idle_freighter',
-        title: `${idleFreighters.length} freighters idle`,
-        subtitle: `${names} +${idleFreighters.length - 2} more · no trade routes`,
+        title: tr('helper.sit.freighters.idleMany', { n: idleFreighters.length }),
+        subtitle: tr('helper.sit.freighters.idleManySub', { names, more: idleFreighters.length - 2 }),
         focus: { kind: 'ship', shipId: idleFreighters[0].id },
         severity: 'normal',
       });
@@ -1514,8 +1541,8 @@ export function useSituationItems(
         push({
           id: `idle_freighter:${ship.id}`,
           category: 'idle_freighter',
-          title: `${ship.name} parked at ${bodyName(ship.orbit.parentBodyId)}`,
-          subtitle: 'No trade route assigned',
+          title: tr('helper.sit.freighters.parked', { ship: ship.name, where: bodyName(ship.orbit.parentBodyId) }),
+          subtitle: tr('helper.sit.freighters.noRoute'),
           focus: { kind: 'ship', shipId: ship.id },
           severity: 'normal',
           entity: `ship:${ship.id}`,
@@ -1533,12 +1560,14 @@ export function useSituationItems(
       const idleCaptains = (gameState.captains ?? []).filter(c => c.status === 'active' && !c.shipId);
       if (idleCaptains.length > 0) {
         const names = idleCaptains.slice(0, 2).map(c => c.name).join(', ');
-        const more = idleCaptains.length > 2 ? ` +${idleCaptains.length - 2} more` : '';
+        const more = idleCaptains.length - 2;
         push({
           id: 'idle_captain:bank',
           category: 'idle_captain',
-          title: `${idleCaptains.length} captain${idleCaptains.length === 1 ? '' : 's'} unassigned`,
-          subtitle: `${names}${more} · waiting in the bank`,
+          title: trn('helper.sit.captains.unassigned', idleCaptains.length),
+          subtitle: more > 0
+            ? tr('helper.sit.captains.subMore', { names, more })
+            : tr('helper.sit.captains.sub', { names }),
           focus: { kind: 'panel', panel: 'fleet' },
           severity: 'normal',
         });
@@ -1571,8 +1600,8 @@ export function useSituationItems(
       push({
         id: `stranded:body:${bodyId}`,
         category: 'stranded',
-        title: `${body?.name ?? '?'} stockpile growing`,
-        subtitle: `${Math.round(total)} units banked on this raw world — haul it home with a freighter logistics route, or spend it building ships here`,
+        title: tr('helper.sit.stranded.title', { body: body?.name ?? '?' }),
+        subtitle: tr('helper.sit.stranded.sub', { n: Math.round(total) }),
         focus: { kind: 'body', bodyId },
         severity: 'normal',
         // Biggest pile first among stockpiles, but behind any row with
@@ -1609,8 +1638,11 @@ export function useSituationItems(
         push({
           id: `terraform_stalled:${b.id}`,
           category: 'terraform_stalled',
-          title: `${b.name} terraforming stalled`,
-          subtitle: `${Math.round(b.terraformAcc?.metal ?? 0)}M · ${Math.round(b.terraformAcc?.credits ?? 0)}C delivered, but no supply route is feeding the meter`,
+          title: tr('helper.sit.tf.stalled.title', { body: b.name }),
+          subtitle: tr('helper.sit.tf.stalled.sub', {
+            metal: Math.round(b.terraformAcc?.metal ?? 0),
+            credits: Math.round(b.terraformAcc?.credits ?? 0),
+          }),
           focus: { kind: 'body', bodyId: b.id },
           severity: 'normal',
           sortKey: 5e8 - acc,
@@ -1663,11 +1695,11 @@ export function useSituationItems(
           id: 'terraform_unstarted',
           category: 'terraform_unstarted',
           title: waiting.length === 1
-            ? `${first.name} is claimed but still raw`
-            : `${waiting.length} claimed worlds still raw`,
+            ? tr('helper.sit.tf.unstarted.one', { body: first.name })
+            : tr('helper.sit.tf.unstarted.many', { n: waiting.length }),
           subtitle: freeHaulers > 0
-            ? `${freeHaulers} idle freighter${freeHaulers === 1 ? '' : 's'} — set a terraform route to start the payload`
-            : 'No idle freighter — terraforming needs one dedicated to the run',
+            ? trn('helper.sit.tf.unstarted.idle', freeHaulers)
+            : tr('helper.sit.tf.unstarted.none'),
           focus: { kind: 'body', bodyId: first.id },
           severity: 'normal',
           sortKey: 4.9e8 - waiting.length,
@@ -1691,8 +1723,8 @@ export function useSituationItems(
           tier: closing ? 'now' : undefined,
           title: v.title,
           subtitle: closing
-            ? `Closes in ${closesIn}t — vote now`
-            : `Voting closes in ${closesIn}t`,
+            ? tr('helper.sit.vote.closing', { n: closesIn })
+            : tr('helper.sit.vote.open', { n: closesIn }),
           focus: { kind: 'panel', panel: 'senate' },
           severity: closing ? 'danger' : 'warn',
           sortKey: closesIn,
@@ -1706,8 +1738,10 @@ export function useSituationItems(
         push({
           id: `incoming_trade:${t.id}`,
           category: 'incoming_trade',
-          title: `Trade offer from ${t.proposer_faction_name ?? 'another faction'}`,
-          subtitle: 'Open in Trades to respond',
+          title: t.proposer_faction_name != null
+            ? tr('helper.sit.trade.offer', { name: t.proposer_faction_name })
+            : tr('helper.sit.trade.offerUnknown'),
+          subtitle: tr('helper.sit.trade.offerSub'),
           focus: { kind: 'panel', panel: 'trades' },
           severity: 'warn',
         });
@@ -1721,8 +1755,8 @@ export function useSituationItems(
       push({
         id: 'market_new',
         category: 'market_new',
-        title: n === 1 ? 'A new post on the open market' : `${n} new posts on the open market`,
-        subtitle: 'Open the board to see what is for sale',
+        title: trn('helper.sit.market.new', n),
+        subtitle: tr('helper.sit.market.sub'),
         focus: { kind: 'panel', panel: 'market' },
         severity: 'normal',
       });
@@ -1772,21 +1806,28 @@ export function useSituationItems(
         if (g0.threatenedSettlementCount > 0) {
           stake.push(g0.threatenedSettlementCount === 1 && g0.threatenedSettlementNames[0]
             ? g0.threatenedSettlementNames[0]
-            : `${g0.threatenedSettlementCount} settlements`);
+            : tr('helper.sit.threat.settlements', { n: g0.threatenedSettlementCount }));
         }
         if (g0.threatenedShipCount > 0) {
-          stake.push(`${g0.threatenedShipCount} ship${g0.threatenedShipCount === 1 ? '' : 's'}`);
+          stake.push(trn('helper.sit.threat.ships', g0.threatenedShipCount));
         }
         // Owned-but-empty body: nothing stationed, but losing the claim
         // still matters — say so rather than showing a bare ETA.
         const hasStake = stake.length > 0;
-        const stakeText = hasStake ? `${stake.join(' + ')} at risk` : 'undefended';
+        const stakeText = hasStake
+          ? tr('helper.sit.threat.atRisk', { stake: stake.join(' + ') })
+          : tr('helper.sit.threat.undefended');
 
         push({
           id: `threat:${bodyId}`,
           category: 'threat',
-          title: `${n} hostile${n === 1 ? '' : 's'} inbound → ${body.name}`,
-          subtitle: `${who} ${classes.join('/')} · ETA ${eta}t · ${stakeText}`,
+          title: trn('helper.sit.threat.inbound', n, { body: body.name }),
+          subtitle: tr('helper.sit.threat.sub', {
+            who,
+            classes: classes.map(shipClassText).join('/'),
+            eta,
+            stake: stakeText,
+          }),
           focus: { kind: 'body', bodyId },
           // Settlements/ships in the crosshairs = red; a claim-jumper
           // heading for an empty rock = amber.
@@ -1832,7 +1873,7 @@ export function useSituationItems(
       // own row from the `damaged` block below, which is the one that
       // asks for a decision.
       const battles = new Map<string, {
-        bodyId: string | null; where: string; count: number; worst: number | null; worstShip: string | null;
+        bodyId: string | null; where: string; named: boolean; count: number; worst: number | null; worstShip: string | null;
       }>();
       /** Every hull at a contested body, MINE AND THEIRS, so the row can
        *  draw an order of battle. Only bodies where I am actually
@@ -1847,7 +1888,8 @@ export function useSituationItems(
         if (!engaged) continue;
 
         const bodyId = s.orbit.parentBodyId ?? null;
-        const where = bodies.find(b => b.id === bodyId)?.name ?? 'deep space';
+        const foundWhere = bodies.find(b => b.id === bodyId)?.name;
+        const where = foundWhere ?? tr('helper.sit.deepSpace');
         // TRUE max (rank × armor tech × Bulwark), matching FleetPanel /
         // ShipPanel / Outliner — the stored hpMax is the build-time base,
         // and dividing by it read veteran hulls at 156% HP (playtest).
@@ -1857,7 +1899,7 @@ export function useSituationItems(
           : null;
         const key = bodyId ?? 'deep-space';
         const cur = battles.get(key)
-          ?? { bodyId, where, count: 0, worst: null, worstShip: null };
+          ?? { bodyId, where, named: foundWhere != null, count: 0, worst: null, worstShip: null };
         cur.count += 1;
         if (pct != null && (cur.worst == null || pct < cur.worst)) {
           cur.worst = pct;
@@ -1888,7 +1930,7 @@ export function useSituationItems(
               .sort((x, y) => x.name.localeCompare(y.name));
             return {
               factionId: fid,
-              factionName: fac?.name ?? (fid === factionId ? 'You' : 'Unknown'),
+              factionName: fac?.name ?? tr(fid === factionId ? 'helper.sit.you' : 'helper.sit.unknown'),
               color: c1,
               color2: fac?.color2 || deriveSecondary(c1),
               mine: fid === factionId,
@@ -1918,13 +1960,15 @@ export function useSituationItems(
         push({
           id: `in_combat:body:${key}`,
           category: 'in_combat',
-          title: `Battle of ${b.where}`,
+          title: b.named
+            ? tr('helper.sit.battle.title', { where: b.where })
+            : tr('helper.sit.battle.titleDeep'),
           // Only cite a worst hull when one is actually hurt. "worst
           // Give Peace a Chance at 100% HP" is a sentence that says
           // nothing, and it was the loudest line on the card.
           subtitle: b.worst != null && b.worst < 100
-            ? `${b.count} of yours engaged · worst ${b.worstShip} at ${b.worst}%`
-            : `${b.count} of yours engaged · no losses yet`,
+            ? tr('helper.sit.battle.sub.worst', { count: b.count, ship: b.worstShip ?? '', pct: b.worst })
+            : tr('helper.sit.battle.sub.clean', { count: b.count }),
           focus: b.bodyId ? { kind: 'watch', bodyId: b.bodyId } : undefined,
           severity: hurt ? 'danger' : 'warn',
           sortKey: b.worst ?? 100,      // worst battle first
@@ -1960,8 +2004,10 @@ export function useSituationItems(
         push({
           id: `in_combat:settlement:${st.id}`,
           category: 'in_combat',
-          title: firedUpon ? `${st.name} under fire` : `${st.name} — hostiles overhead`,
-          subtitle: `${st.type} on ${where}${pct != null ? ` · ${pct}% HP` : ''}`,
+          title: tr(firedUpon ? 'helper.sit.settle.underFire' : 'helper.sit.settle.overhead', { name: st.name }),
+          subtitle: pct != null
+            ? tr('helper.sit.settle.onHp', { type: settleTypeText(st.type), where, pct })
+            : tr('helper.sit.settle.on', { type: settleTypeText(st.type), where }),
           focus: { kind: 'body', bodyId: st.bodyId },
           severity: hurt ? 'danger' : 'warn',
           sortKey: pct ?? 100,
@@ -1999,10 +2045,10 @@ export function useSituationItems(
             // rail badge, which meant this never actually surfaced —
             // the whole point of replacing the affordable-tech list.
             tier: 'decision',
-            title: 'No research project',
+            title: tr('helper.sit.research.none'),
             subtitle: science > 0
-              ? `${science} science banked · pick a track`
-              : 'pick a track to start accumulating',
+              ? tr('helper.sit.research.noneBanked', { n: science })
+              : tr('helper.sit.research.noneSub'),
             focus: { kind: 'panel', panel: 'research' },
             severity: 'warn',
           });
@@ -2027,8 +2073,12 @@ export function useSituationItems(
           id: `refit_done:${r.shipId}:${r.tick}`,
           category: 'refit_done',
           entity: `ship:${r.shipId}`,
-          title: `${sh.name} refitted to ${r.designName ?? 'its new design'}`,
-          subtitle: r.bodyName ? `at ${r.bodyName}, tick ${r.tick}` : `tick ${r.tick}`,
+          title: r.designName != null
+            ? tr('helper.sit.refit.done', { ship: sh.name, design: r.designName })
+            : tr('helper.sit.refit.doneNoDesign', { ship: sh.name }),
+          subtitle: r.bodyName
+            ? tr('helper.sit.refit.doneAt', { body: r.bodyName, tick: r.tick })
+            : tr('helper.sit.refit.doneTick', { tick: r.tick }),
           focus: { kind: 'ship', shipId: r.shipId },
           severity: 'normal',
           sortKey: -r.tick,
@@ -2042,7 +2092,9 @@ export function useSituationItems(
           id: `refit_waiting:${sh.id}`,
           category: 'refit_waiting',
           entity: `ship:${sh.id}`,
-          title: `${sh.name}: refit to ${st.designName ?? 'its design'} is waiting`,
+          title: st.designName != null
+            ? tr('helper.sit.refit.wait', { ship: sh.name, design: st.designName })
+            : tr('helper.sit.refit.waitNoDesign', { ship: sh.name }),
           subtitle: st.blocked.text,
           focus: { kind: 'ship', shipId: sh.id },
           severity: 'warn',
@@ -2062,8 +2114,8 @@ export function useSituationItems(
             id: `building_done:${s.id}`,
             category: 'building_done',
             entity: `settlement:${s.id}`,
-            title: `${done.label} complete at ${s.name}`,
-            subtitle: 'Building slot free',
+            title: tr('helper.sit.building.done', { label: buildingLabelText(done.label), where: s.name }),
+            subtitle: tr('helper.sit.building.doneSub'),
             focus: { kind: 'body', bodyId: s.bodyId },
             severity: 'normal',
             sortKey: done.tick,
@@ -2084,8 +2136,8 @@ export function useSituationItems(
             id: `building_idle:${s.id}`,
             category: 'building_idle',
             entity: `settlement:${s.id}`,
-            title: `${s.name} building nothing`,
-            subtitle: 'No upgrade under construction',
+            title: tr('helper.sit.building.idle', { name: s.name }),
+            subtitle: tr('helper.sit.building.idleSub'),
             focus: { kind: 'body', bodyId: s.bodyId },
             severity: 'normal',
           });
@@ -2125,13 +2177,15 @@ export function useSituationItems(
           // News, not a decision, while the next project is under way.
           tier: researchingNow ? 'opportunity' : undefined,
           title: megaOpened.length
-            ? `Megastructure unlocked: ${megaOpened.join(', ')}`
-            : `${name} ${done.level} complete`,
+            ? tr('helper.sit.research.mega', { list: megaOpened.join(', ') })
+            : tr('helper.sit.research.complete', { name, level: done.level }),
           subtitle: megaOpened.length
             ? megastructureNextStep(gameState.factionTech?.[factionId]?.levels ?? {})
             : opened.length
-              ? `Unlocked: ${opened.slice(0, 3).join(', ')}${opened.length > 3 ? ` +${opened.length - 3}` : ''}`
-              : 'Pick the next project',
+              ? (opened.length > 3
+                ? tr('helper.sit.research.unlockedMore', { list: opened.slice(0, 3).join(', '), more: opened.length - 3 })
+                : tr('helper.sit.research.unlocked', { list: opened.slice(0, 3).join(', ') }))
+              : tr('helper.sit.research.pickNext'),
           focus: { kind: 'panel', panel: 'research' },
           severity: 'normal',
           sortKey: done.tick,
@@ -2152,14 +2206,18 @@ export function useSituationItems(
           push({
             id: 'research_stall',
             category: 'research_stall',
-            title: 'Research stalled — no science income',
-            subtitle: 'Build a Lab, or route science to your pool',
+            title: tr('helper.sit.research.stall'),
+            subtitle: tr('helper.sit.research.stallSub'),
             focus: { kind: 'panel', panel: 'research' },
             severity: 'warn',
           });
         }
       }
     } catch { /* defensive */ }
+
+    // Each damaged SHIP row's HP percent, so folding a fleet's rows can name
+    // the weakest hull without reading the number back out of translated text.
+    const damagedPct = new Map<string, number>();
 
     // ---- Hurt, and no longer shooting ----
     // in_combat clears a few ticks after the last shot, so a settlement
@@ -2174,8 +2232,8 @@ export function useSituationItems(
           id: `damaged:settlement:${s.id}`,
           category: 'damaged',
           entity: `settlement:${s.id}`,
-          title: `${s.name} at ${Math.round(r * 100)}% HP`,
-          subtitle: 'Damaged and undefended',
+          title: tr('helper.sit.damaged.title', { name: s.name, pct: Math.round(r * 100) }),
+          subtitle: tr('helper.sit.damaged.settlementSub'),
           focus: { kind: 'body', bodyId: s.bodyId },
           severity: r <= 0.25 ? 'danger' : 'warn',
           sortKey: r,
@@ -2210,6 +2268,7 @@ export function useSituationItems(
         // damaged hull flying INTO a fight still wants raising.
         const retreating = !!ship.transit
           && yards.has(ship.transit.currentTransfer?.targetBodyId ?? '');
+        damagedPct.set(`damaged:ship:${ship.id}`, Math.round(r * 100));
         push({
           id: `damaged:ship:${ship.id}`,
           category: 'damaged',
@@ -2222,12 +2281,12 @@ export function useSituationItems(
           // decision has been taken, and this is now just a status.
           tier: (ship.transit || docked) ? 'opportunity' : undefined,
           entity: `ship:${ship.id}`,
-          title: `${ship.name} at ${Math.round(r * 100)}% HP`,
+          title: tr('helper.sit.damaged.title', { name: ship.name, pct: Math.round(r * 100) }),
           subtitle: docked
-            ? 'Repairing at a shipyard'
+            ? tr('helper.sit.damaged.docked')
             : retreating
-              ? 'Damaged — falling back to a shipyard'
-              : ship.transit ? 'Damaged — in transit, act on arrival' : 'Damaged — pull it back or repair',
+              ? tr('helper.sit.damaged.retreating')
+              : ship.transit ? tr('helper.sit.damaged.transit') : tr('helper.sit.damaged.idle'),
           focus: { kind: 'ship', shipId: ship.id },
           // A hull that is being fixed is not an emergency, however low
           // it has dropped — the number is only alarming while nothing
@@ -2251,8 +2310,8 @@ export function useSituationItems(
           id: `idle_colony:${ship.id}`,
           category: 'idle_colony',
           entity: `ship:${ship.id}`,
-          title: `${ship.name} idle at ${bodyName(ship.orbit.parentBodyId)}`,
-          subtitle: 'Colony ship — expansion stalled',
+          title: tr('helper.sit.idleColony.title', { ship: ship.name, where: bodyName(ship.orbit.parentBodyId) }),
+          subtitle: tr('helper.sit.idleColony.sub'),
           focus: { kind: 'ship', shipId: ship.id },
           severity: 'normal',
         });
@@ -2265,7 +2324,7 @@ export function useSituationItems(
     // dead indefinitely while both players assumed it was running.
     try {
       for (const t of (gameState.tradesAwaitingShip ?? [])) {
-        const who = t.partnerName ?? 'a rival';
+        const who = t.partnerName;
         const owed = [
           t.myGoods.metal ? `${t.myGoods.metal}M` : '',
           t.myGoods.credits ? `${t.myGoods.credits}C` : '',
@@ -2275,10 +2334,12 @@ export function useSituationItems(
         push({
           id: `trade_needs_ship:${t.agreementId}`,
           category: 'trade_needs_ship',
-          title: `Trade with ${who} needs a freighter`,
+          title: who != null
+            ? tr('helper.sit.tradeShip.title', { who })
+            : tr('helper.sit.tradeShip.titleRival'),
           subtitle: owed
-            ? `Nothing ships until you assign one — you owe ${owed} per run`
-            : 'Nothing ships until you assign a freighter',
+            ? tr('helper.sit.tradeShip.sub', { owed })
+            : tr('helper.sit.tradeShip.subNone'),
           focus: { kind: 'panel', panel: 'trades' },
           severity: 'warn',
           sortKey: t.createdAtTick,
@@ -2324,16 +2385,16 @@ export function useSituationItems(
           ? (!hasEnd(r.originBodyId) ? { bodyId: r.originBodyId } : undefined)
           : stops.find(s => s.action !== 'mine' && !hasEnd(s.bodyId));
         const reason = !ship
-          ? 'Hauler lost'
+          ? tr('helper.sit.route.haulerLost')
           : unheld
-            ? `No holding at ${bodyName(unheld.bodyId)}`
+            ? tr('helper.sit.route.noHolding', { where: bodyName(unheld.bodyId) })
             : null;
         if (!reason) continue;
         push({
           id: `broken_route:${r.id}`,
           category: 'broken_route',
-          title: `Trade route broken — ${reason}`,
-          subtitle: 'Reassign or clear the route',
+          title: tr('helper.sit.route.broken', { reason }),
+          subtitle: tr('helper.sit.route.brokenSub'),
           focus: { kind: 'panel', panel: 'trades' },
           severity: 'warn',
         });
@@ -2346,8 +2407,8 @@ export function useSituationItems(
         push({
           id: `vote_closed:${id}`,
           category: 'vote_closed',
-          title: `Vote closed — ${v.title}`,
-          subtitle: 'Result in Senate',
+          title: tr('helper.sit.voteClosed.title', { title: v.title }),
+          subtitle: tr('helper.sit.voteClosed.sub'),
           focus: { kind: 'panel', panel: 'senate' },
           severity: 'normal',
           sortKey: v.tick,
@@ -2382,14 +2443,14 @@ export function useSituationItems(
           category: 'sun_gate',
           // The Leviathan's warning is not on the Sun (worker/kaiju.js).
           title: 'kaiju' in warnAt && warnAt.kaiju
-            ? `Something is stirring at ${warnAt.system ?? 'a far star'}`
+            ? tr('helper.sit.gate.stirring', { sys: warnAt.system ?? tr('helper.sit.farStar') })
             : warnAt.index === 0
-              ? 'Something strange is emerging from the Sun'
-              : 'Something else is emerging from the Sun',
+              ? tr('helper.sit.gate.emergingFirst')
+              : tr('helper.sit.gate.emergingNext'),
           subtitle: 'kaiju' in warnAt && warnAt.kaiju
-            ? (out > 0 ? `Something enormous is turning toward the Sun. It moves in ${out} tick${out === 1 ? '' : 's'}`
-              : 'It is moving now')
-            : out > 0 ? `Out in ${out} tick${out === 1 ? '' : 's'}` : 'Any moment now',
+            ? (out > 0 ? tr('helper.sit.gate.kaijuTurning', { ticks: ticksText(out) })
+              : tr('helper.sit.gate.kaijuNow'))
+            : out > 0 ? tr('helper.sit.gate.outIn', { ticks: ticksText(out) }) : tr('helper.sit.gate.anyMoment'),
           focus: { kind: 'body', bodyId: 'sol' },
           severity: 'warn',
           sortKey: out,
@@ -2403,17 +2464,17 @@ export function useSituationItems(
           const span = Math.max(1, g.emerge.untilTick - g.emerge.fromTick);
           const f = (tick - g.emerge.fromTick) / span;
           const title = f >= 0.8
-            ? `The gate to ${sys} is unfolding at its landing site`
+            ? tr('helper.sit.gate.unfolding', { sys })
             : f >= 0.5
-              ? `The gate to ${sys} has turned and is braking`
-              : `A gate to ${sys} is burning out of the Sun`;
+              ? tr('helper.sit.gate.braking', { sys })
+              : tr('helper.sit.gate.burning', { sys });
           const left = g.emerge.untilTick - tick;
           push({
             id: `sun_gate:flight:${g.id}`,
             category: 'sun_gate',
             entity: `body:${g.id}`,
             title,
-            subtitle: `Opens at T+${g.emerge.untilTick} (${left} tick${left === 1 ? '' : 's'}) — send ships to its landing site to be first through`,
+            subtitle: tr('helper.sit.gate.flightSub', { until: g.emerge.untilTick, ticks: ticksText(left) }),
             // Focus the SITE when there is one: that is the place to send
             // ships, and the gate itself cannot be targeted until it lands.
             focus: { kind: 'body', bodyId: bodies.some(b => b.id === `${g.id}_site`) ? `${g.id}_site` : g.id },
@@ -2430,8 +2491,8 @@ export function useSituationItems(
             category: 'sun_gate',
             tier: 'opportunity',
             entity: `body:${g.id}`,
-            title: `The ${g.name} is open`,
-            subtitle: `Nobody has been through yet. Park a ship on it to launch to ${sys} at a tenth of the burn`,
+            title: tr('helper.sit.gate.open', { gate: g.name }),
+            subtitle: tr('helper.sit.gate.openSub', { sys }),
             focus: { kind: 'body', bodyId: g.id },
             severity: 'normal',
             sortKey: -opened,
@@ -2440,13 +2501,19 @@ export function useSituationItems(
         // THE FIRST HULL THROUGH: news for everyone, a triumph for one.
         if (first && tick - first.tick <= SUN_GATE_NEWS_TICKS) {
           const mine = first.factionId === factionId;
-          const who = mine ? 'You were' : `${first.factionId ? factionName(gameState, first.factionId) : 'Someone'} was`;
+          const firstName = first.factionId ? factionName(gameState, first.factionId) : null;
           push({
             id: `sun_gate:first:${g.id}`,
             category: 'sun_gate',
             entity: `body:${g.id}`,
-            title: `${who} first through the ${g.name}`,
-            subtitle: `${first.ship ? `The ${first.ship}` : 'Their hull'} is crossing to ${first.toSystem ?? sys}. The gate is open to everyone`,
+            title: mine
+              ? tr('helper.sit.gate.firstYou', { gate: g.name })
+              : firstName != null
+                ? tr('helper.sit.gate.firstNamed', { name: firstName, gate: g.name })
+                : tr('helper.sit.gate.firstSomeone', { gate: g.name }),
+            subtitle: first.ship
+              ? tr('helper.sit.gate.firstSubShip', { ship: first.ship, dest: first.toSystem ?? sys })
+              : tr('helper.sit.gate.firstSubHull', { dest: first.toSystem ?? sys }),
             focus: { kind: 'body', bodyId: g.id },
             severity: 'normal',
             sortKey: -first.tick,
@@ -2463,12 +2530,14 @@ export function useSituationItems(
       const kj = gameState.kaiju;
       if (kj) {
         const beast = gameState.ships.find(s => s.id === kj.shipId || s.class === 'kaiju');
-        const hp = beast ? `${Math.round(beast.hp ?? 0).toLocaleString('en-US')} / ${kj.hpMax.toLocaleString('en-US')} HP` : '';
+        const hp = beast
+          ? tr('helper.sit.kaiju.hp', { cur: fmtNumber(Math.round(beast.hp ?? 0)), max: fmtNumber(kj.hpMax) })
+          : '';
         const target = kj.targetBodyId ? bodies.find(b => b.id === kj.targetBodyId) : undefined;
         const mineTarget = !!target && target.ownedBy === factionId;
         const ate = kj.eaten.length;
         const known = kj.revealedAtTick != null;
-        const sys = kj.systemKey === 'cygnus' ? 'Cygnus X-1' : kj.systemKey === 'centauri' ? 'Centauri' : 'a far star';
+        const sys = kj.systemKey === 'cygnus' ? 'Cygnus X-1' : kj.systemKey === 'centauri' ? 'Centauri' : tr('helper.sit.farStar');
         if (kj.phase === 'inbound') {
           const left = Math.max(0, kj.arriveTick - tick);
           // Nameless until it attacks (worker/kaiju.js reveal).
@@ -2476,9 +2545,8 @@ export function useSituationItems(
             id: 'kaiju:inbound',
             category: 'threat',
             ...(beast ? { entity: `ship:${beast.id}` } : {}),
-            title: `Something is coming from ${sys}`,
-            subtitle: `It stops in the Far Reach at T+${kj.arriveTick} (${left} tick${left === 1 ? '' : 's'}). `
-              + 'Nobody knows what it is, and it does not answer hails. Its landing site is marked',
+            title: tr('helper.sit.kaiju.somethingComing', { sys }),
+            subtitle: tr('helper.sit.kaiju.inboundSub', { arrive: kj.arriveTick, ticks: ticksText(left) }),
             // The beast itself: what everyone wants to look at, wherever
             // it is. Its landing place when the hull is not in view yet.
             focus: beast
@@ -2489,31 +2557,31 @@ export function useSituationItems(
           });
         } else if (kj.phase === 'hunting' && beast && !known) {
           // Landed, still a mystery: it has not attacked anything yet.
-          const where = target?.name ?? 'somewhere further in';
+          const where = target?.name ?? tr('helper.sit.kaiju.somewhere');
           push({
             id: 'kaiju:object',
             category: 'threat',
             entity: `ship:${beast.id}`,
-            title: `The object is moving toward ${mineTarget ? 'your world ' : ''}${where}`,
-            subtitle: 'It opened a gate where it landed, and it has not stopped since. Nobody knows what it wants',
+            title: tr(mineTarget ? 'helper.sit.kaiju.objectMovingMine' : 'helper.sit.kaiju.objectMoving', { where }),
+            subtitle: tr('helper.sit.kaiju.objectSub'),
             focus: { kind: 'ship', shipId: beast.id },
             severity: mineTarget ? 'danger' : 'warn',
             sortKey: 0,
           });
         } else if (kj.phase === 'hunting' && beast) {
           const charging = beast.strikeReadyTick != null;
-          const where = target?.name ?? 'a world';
+          const where = target?.name ?? tr('helper.sit.kaiju.aWorld');
           const fires = beast.strikeReadyTick ?? 0;
           push({
             id: 'kaiju:hunting',
             category: 'threat',
             entity: `ship:${beast.id}`,
             title: charging
-              ? `The Leviathan is winding up over ${mineTarget ? 'your world ' : ''}${where}`
-              : `The Leviathan is coming for ${mineTarget ? 'your world ' : ''}${where}`,
+              ? tr(mineTarget ? 'helper.sit.kaiju.windingUpMine' : 'helper.sit.kaiju.windingUp', { where })
+              : tr(mineTarget ? 'helper.sit.kaiju.comingMine' : 'helper.sit.kaiju.coming', { where }),
             subtitle: charging
-              ? `It strikes at T+${fires} (${Math.max(0, fires - tick)} ticks). Kill it first: ${hp}`
-              : `${hp}. It has eaten ${ate} of ${kj.appetite} world${kj.appetite === 1 ? '' : 's'}`,
+              ? tr('helper.sit.kaiju.chargingSub', { fires, left: Math.max(0, fires - tick), hp })
+              : trn('helper.sit.kaiju.huntingSub', kj.appetite, { hp, ate }),
             focus: { kind: 'ship', shipId: beast.id },
             severity: mineTarget || charging ? 'danger' : 'warn',
             sortKey: charging ? fires - tick : 0,
@@ -2523,8 +2591,10 @@ export function useSituationItems(
             id: 'kaiju:leaving',
             category: 'threat',
             entity: `ship:${beast.id}`,
-            title: 'The Leviathan is leaving',
-            subtitle: `It took ${ate} world${ate === 1 ? '' : 's'}${ate ? ` (${kj.eaten.join(', ')})` : ''} and is heading back to its gate. ${hp}`,
+            title: tr('helper.sit.kaiju.leaving'),
+            subtitle: ate
+              ? trn('helper.sit.kaiju.leavingSub', ate, { list: ` (${kj.eaten.join(', ')})`, hp })
+              : tr('helper.sit.kaiju.leavingNone', { hp }),
             focus: { kind: 'ship', shipId: beast.id },
             severity: 'normal',
             sortKey: 0,
@@ -2539,9 +2609,10 @@ export function useSituationItems(
               category: 'discovery',
               tier: 'opportunity',
               entity: `body:${carcass.id}`,
-              title: 'The Leviathan is dead',
-              subtitle: `Its carcass is a salvage field${left != null ? ` of ${Math.round(left).toLocaleString('en-US')} t of metal` : ''}. `
-                + 'Send a freighter with a mining rig',
+              title: tr('helper.sit.kaiju.dead'),
+              subtitle: left != null
+                ? tr('helper.sit.kaiju.carcassSubAmt', { amount: fmtNumber(Math.round(left)) })
+                : tr('helper.sit.kaiju.carcassSub'),
               focus: { kind: 'body', bodyId: carcass.id },
               severity: 'normal',
               sortKey: -kj.diedAtTick,
@@ -2569,8 +2640,13 @@ export function useSituationItems(
           id: `discovery:${b.id}`,
           category: 'discovery',
           entity: `body:${b.id}`,
-          title: `${def?.displayName ?? 'Discovery'} at ${b.name}`,
-          subtitle: def ? stripDiscoveryPrefix(def.discoveryMessage) : 'A secret uncovered',
+          title: tr('helper.sit.discovery.title', {
+            name: def?.displayName ?? tr('helper.sit.discovery.fallbackName'),
+            body: b.name,
+          }),
+          subtitle: def
+            ? stripDiscoveryPrefix(def.discoveryMessage)
+            : tr('helper.sit.discovery.fallbackSub'),
           focus: { kind: 'body', bodyId: b.id },
           severity: 'normal',
           sortKey: -sec.discoveredAtTick,   // newest first within the tier
@@ -2588,8 +2664,8 @@ export function useSituationItems(
         push({
           id: `fleet_leaderless:${f.id}`,
           category: 'fleet_leaderless',
-          title: `${f.name} is leaderless`,
-          subtitle: 'Promote a member captain to restore command',
+          title: tr('helper.sit.fleetLeaderless.title', { name: f.name }),
+          subtitle: tr('helper.sit.fleetLeaderless.sub'),
           focus: anchor ? { kind: 'ship', shipId: anchor } : undefined,
           severity: 'warn',
         });
@@ -2635,12 +2711,16 @@ export function useSituationItems(
         rows.forEach(r => fold.add(r));
         const worst = rows.reduce((a, b) => ((b.sortKey ?? 1) < (a.sortKey ?? 1) ? b : a));
         const fleetId = key.split('|')[0];
-        const fleetName = (gameState.fleets ?? []).find(f => f.id === fleetId)?.name ?? 'Fleet';
+        const fleetName = (gameState.fleets ?? []).find(f => f.id === fleetId)?.name ?? tr('helper.sit.fleet');
         items.push({
           ...worst,
           id: `damaged:fleet:${key}`,
           entity: `fleet:${fleetId}`,
-          title: `${fleetName}: ${rows.length} hulls damaged, weakest ${worst.title.replace(/^.* at /, '')}`,
+          title: tr('helper.sit.damaged.fleet', {
+            fleet: fleetName,
+            n: rows.length,
+            weakest: tr('helper.sit.hpPct', { pct: damagedPct.get(worst.id) ?? 0 }),
+          }),
           severity: rows.reduce<SituationItem['severity']>(
             (s, r) => (sevRank[r.severity] > sevRank[s] ? r.severity : s), 'normal'),
         });
@@ -2667,7 +2747,9 @@ export function useSituationItems(
       || ((a.sortKey ?? MAXK) - (b.sortKey ?? MAXK)),
     );
     return visible;
-  }, [gameState, factionId, tick, mpData]);
+    // `lang` is read through tr()/trn() inside, not by name, so the lint rule cannot see it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameState, factionId, tick, mpData, lang]);
 }
 
 /** Render-friendly grouping by urgency tier (what the panel shows). */

@@ -1,7 +1,7 @@
 import { buildCostFactors } from './buildCost.js';
 import { tr } from './i18n.js';
 import { NON_WORLD_TYPES } from './systems.js';
-import { SUN_GATE_SYSTEMS } from './sunGates.js';
+import { recordGateTransit } from './sunGates.js';
 import { selectInChunks, runInChunks } from './sqlChunk.js';
 import { holdCapFor } from './routeMath.js';
 import { routeRoleForClass } from './tradeRoutesV2.js';
@@ -4218,44 +4218,8 @@ async function handleGateTransit(req, env, ctx) {
   // THE MOUTH IT LEFT FROM. A gate flinging a hull across the system
   // showed nothing at either end — the ship simply appeared in flight,
   // which is the one part of the mechanic a player cannot infer.
-  //
-  // The FIRST hull through a sun gate is front-page news (digest.js), so
-  // the row says whether this is it. Asked before this row is written.
-  let first = false;
-  const sunGate = gate.transit_fraction != null;
-  if (sunGate) {
-    try {
-      const prior = await env.DB
-        .prepare(
-          `SELECT 1 AS x FROM chronicle_entries
-            WHERE game_id = ? AND kind = 'gate_transit' AND body_id IN (?, ?) LIMIT 1`,
-        )
-        .bind(gameId, gate.body_id, far.id).first();
-      first = !prior;
-    } catch { first = false; }
-  }
-  try {
-    await env.DB
-      .prepare(
-        `INSERT INTO chronicle_entries
-          (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
-         VALUES (?, ?, ?, 'gate_transit', ?, ?, ?, 'public', ?)`,
-      )
-      .bind(
-        `gtx_${crypto.randomUUID().slice(0, 10)}`, gameId, tick,
-        me.id, gate.body_id,
-        JSON.stringify({
-          from: gate.name, to: far.name, ship: ship.name, sun_gate: sunGate, first,
-          // Both far ends are called "Sol Gate", so name the system the
-          // hull is bound for: the far system outbound, Sol coming home.
-          to_system: sunGate
-            ? (SUN_GATE_SYSTEMS.find(x => x.solGate === gate.name)?.label ?? 'Sol')
-            : null,
-        }),
-        Date.now(),
-      )
-      .run();
-  } catch { /* decoration */ }
+  await recordGateTransit(env.DB, gameId, tick, me.id,
+    { id: gate.body_id, name: gate.name }, far, ship.name, gate.transit_fraction != null);
 
   return json({
     ok: true,

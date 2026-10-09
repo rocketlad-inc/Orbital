@@ -63,7 +63,9 @@ describe('megastructure guidance — where it is shown', () => {
   it('the research cards and the Situation Report say what to do next', () => {
     expect(read('components/TechPanel.tsx')).toMatch(/megastructureNextStep\(tech\.levels\)/);
     const sit = read('hooks/useSituationItems.ts');
-    expect(sit).toMatch(/Megastructure unlocked: \$\{megaOpened\.join\(', '\)\}/);
+    // The row text is a catalog entry now; the English must still read "Megastructure unlocked: <list>".
+    expect(sit).toMatch(/helper\.sit\.research\.mega', \{ list: megaOpened\.join\(', '\) \}/);
+    expect(read('i18n/parts/en/helpers.ts')).toMatch(/'helper\.sit\.research\.mega': 'Megastructure unlocked: \{list\}'/);
     expect(sit).toMatch(/megastructureNextStep\(/);
   });
 

@@ -21,9 +21,12 @@ import { matchBackfillSweep } from './analytics.js';
 import { GIT_SHA, BUILT_AT } from './_version.js';
 import { maybeRunDailyDigest } from './digest.js';
 import * as mail from './email.js';
-import { normalizeLocale } from './i18n.js';
+import { normalizeLocale, tr, pickLocale, localeFromAcceptLanguage } from './i18n.js';
 
 export { Room } from './room.js';
+// The battle replay GIF renderer (worker/recapGif.js): one Durable Object
+// that queues closed battles and draws each in Cloudflare Browser Rendering.
+export { RecapGif } from './recapGif.js';
 
 // Tracks which migrations have been applied so /api/__init can be re-run
 // safely to apply just the new ones. D1 manages this internally when
@@ -345,18 +348,28 @@ async function handleUnsubscribe(req, env, url) {
   if (parsed) await mail.setEmailPref(env, parsed.userId, parsed.category, false);
   // RFC 8058 one-click: the mail client POSTs and wants a bare 200.
   if (req.method === 'POST') return new Response(parsed ? 'ok' : 'invalid', { status: parsed ? 200 : 400 });
-  const what = parsed ? (parsed.category === 'herald' ? 'the daily Herald' : 'game updates') : null;
+  // Signed out, from an email: the account's saved language if the link is
+  // valid, else the browser's.
+  let L = localeFromAcceptLanguage(req.headers.get('accept-language'));
+  if (parsed) {
+    try {
+      const u = await env.DB.prepare('SELECT locale FROM users WHERE id = ?').bind(parsed.userId).first();
+      L = pickLocale(u?.locale, L);
+    } catch { /* the browser's language will do */ }
+  }
+  L = pickLocale(L);
+  const title = tr(L, parsed ? 'page.unsub.titleOk' : 'page.unsub.titleBad');
   const msg = parsed
-    ? `You won't get ${what} by email any more. Account emails, like password resets, still arrive.`
-    : 'That unsubscribe link is not valid. You can change your email settings from your Profile in the game.';
-  const page = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${parsed ? 'Unsubscribed' : 'Link not valid'} · Orbital</title></head>
+    ? tr(L, parsed.category === 'herald' ? 'page.unsub.msgHerald' : 'page.unsub.msgGames')
+    : tr(L, 'page.unsub.msgBad');
+  const page = `<!doctype html><html lang="${L}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${mail.esc(title)} · Orbital</title></head>
 <body style="margin:0;background:#05080d;color:#dbe6f0;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
 <main style="max-width:520px;margin:12vh auto;padding:0 20px">
 <div style="color:#ffb84d;letter-spacing:.3em;font-weight:700;font-size:14px;margin-bottom:22px">ORBITAL</div>
-<h1 style="font-size:24px;margin:0 0 12px">${parsed ? 'Unsubscribed' : 'Link not valid'}</h1>
+<h1 style="font-size:24px;margin:0 0 12px">${mail.esc(title)}</h1>
 <p style="line-height:1.6;color:#b8c8d6">${mail.esc(msg)}</p>
-<p style="margin-top:26px"><a href="/?settings=email" style="color:#4ecdc4">Email settings</a> · <a href="/" style="color:#4ecdc4">Back to Orbital</a></p>
+<p style="margin-top:26px"><a href="/?settings=email" style="color:#4ecdc4">${mail.esc(tr(L, 'page.unsub.settings'))}</a> · <a href="/" style="color:#4ecdc4">${mail.esc(tr(L, 'page.unsub.back'))}</a></p>
 </main></body></html>`;
   return new Response(page, { status: parsed ? 200 : 400, headers: { 'content-type': 'text/html; charset=utf-8' } });
 }
@@ -1330,6 +1343,7 @@ import * as skins from './skins.js';
 import * as economy from './economy.js';
 import * as heraldStrip from './heraldStrip.js';
 import * as battleCard from './battleCard.js';
+import * as recapShare from './recapShare.js';
 import * as widget from './widget.js';
 import * as wear from './wear.js';
 import * as wearWorlds from './wearWorlds.js';
@@ -1440,6 +1454,31 @@ export default {
     // the screenshotter loads). Matched BEFORE the /api gate so the URL
     // stays human-friendly; feature-module routes only run under /api/*.
     {
+      // A shared battle recap: its picture, and the app's page wearing this
+      // battle's link-preview tags (worker/recapShare.js). /recap/* is in
+      // run_worker_first. Any failure serves the plain app page, which
+      // renders the recap exactly as before.
+      const rcm = url.pathname.match(recapShare.RECAP_CARD_RE);
+      if (rcm && req.method === 'GET') {
+        try {
+          await ensureMigrated(env);
+          return await recapShare.handleRecapCard(req, env, rcm[1]);
+        } catch (e) {
+          console.error('recap card failed', e);
+          return new Response('card unavailable', { status: 500 });
+        }
+      }
+      const rpm = url.pathname.match(recapShare.RECAP_PAGE_RE);
+      if (rpm && req.method === 'GET') {
+        try {
+          await ensureMigrated(env);
+          return await recapShare.handleRecapPage(req, env, rpm[1]);
+        } catch (e) {
+          console.error('recap page failed', e);
+          return env.ASSETS.fetch(req);
+        }
+      }
+
       const bm = url.pathname.match(battleCard.BATTLE_PNG_RE);
       if (bm && req.method === 'GET') {
         try {
@@ -1958,6 +1997,27 @@ export default {
       }
       if (req.method === 'GET' && url.pathname.startsWith('/api/recap/')) {
         return analytics.handlePublicRecap(req, env, url);
+      }
+      // The recap page, opened by the replay GIF renderer, handing back the
+      // GIF it recorded. Checked against the job's one-time nonce.
+      if (req.method === 'POST' && /^\/api\/recap\/[^/]+\/gif\/?$/.test(url.pathname)) {
+        const { handleGifUpload } = await import('./recapGif.js');
+        const token = decodeURIComponent(url.pathname.split('/')[3]);
+        return handleGifUpload(req, env, token);
+      }
+      // The replay GIF renderer's operator view: a dry-run render that
+      // posts nothing, and the last renders. Agent key only, and the same
+      // 404 as an unmapped route for anyone without it.
+      {
+        const im = /^\/api\/internal\/recap-gif\/(dry-run|post|status)\/?$/.exec(url.pathname);
+        if (im) {
+          const presented = req.headers.get('x-agent-key');
+          if (!env.AGENT_KEY || !presented || !(await constantTimeEqual(presented, env.AGENT_KEY))) {
+            return err(404, 'not_found', 'not found');
+          }
+          const { handleRecapGifInternal } = await import('./recapGif.js');
+          return handleRecapGifInternal(req, env, im[1]);
+        }
       }
 
       if (req.method === 'GET' && url.pathname === '/api/devlog') {

@@ -1449,19 +1449,19 @@ async function buildBattleDetail(env, gameId, battleId, { shots: wantShots }) {
   // The other engagements in the same campaign, so a recap can offer
   // "this was part of the fight for the Mars system" instead of
   // presenting one body's scrap as the whole story.
+  // Every campaign in the same system counts (systemCampaigns): the
+  // system view plays them all, so the offer says so.
   let theatre = null;
   if (battle.theatre_id) {
     const t = await env.DB
       .prepare('SELECT * FROM battle_theatres WHERE id = ?').bind(battle.theatre_id).first();
     if (t) {
+      const { merged, campaigns } = await systemCampaigns(env, gameId, t);
       const siblings = (await env.DB
-        .prepare(
-          `SELECT id, body_id, body_name, started_tick, ended_tick, last_fire_tick,
-                  shots, ships_lost
-             FROM battles WHERE theatre_id = ? ORDER BY started_tick ASC`,
-        )
-        .bind(battle.theatre_id).all()).results ?? [];
-      theatre = { ...t, battles: siblings };
+        .prepare(SYSTEM_BATTLES_SQL(
+          'id, body_id, body_name, started_tick, ended_tick, last_fire_tick, shots, ships_lost', 80))
+        .bind(gameId, t.id, gameId, t.anchor_body_id).all()).results ?? [];
+      theatre = { ...merged, campaigns, battles: siblings };
     }
   }
 
@@ -1670,21 +1670,83 @@ async function handleTheatreDetail(req, env, { session, params }) {
   return buildTheatreDetail(env, gameId, theatreId);
 }
 
-/** Everything the system view needs for one campaign. Split out so a
- *  SHARED link renders from the identical payload — same reason the
- *  battle detail was. */
+/**
+ * EVERY campaign fought in one system, as one.
+ *
+ * A campaign (theatre) closes once all its worlds have been quiet for
+ * BATTLE_QUIET_TICKS, which in a slow game cuts one war into pieces:
+ * UBGE 30m's fighting round Jupiter came out as four campaigns (Jupiter,
+ * then Jupiter and Callisto, then Ganymede, then Io, hours apart), and
+ * the system view showed only the one a link was opened from (Lorne,
+ * 2026-10-09: "there's been fighting at every moon of jupiter, but the
+ * system view only shows jupiter and Callisto"). The records stay as
+ * they are; the system view reads every campaign with the same anchor
+ * world and plays them as one reel, its lulls collapsed (TheatreRecap).
+ *
+ * Returns the merged rollup (the opened campaign's id, everything else
+ * summed or spanned) and the campaigns it covers. JSON columns come back
+ * as JSON strings, as the raw row has them.
+ */
+async function systemCampaigns(env, gameId, theatre) {
+  const rows = theatre.anchor_body_id
+    ? (await env.DB
+      .prepare(
+        `SELECT * FROM battle_theatres WHERE game_id = ? AND anchor_body_id = ?
+          ORDER BY started_tick ASC LIMIT 200`,
+      )
+      .bind(gameId, theatre.anchor_body_id).all()).results ?? []
+    : [];
+  if (!rows.some(r => r.id === theatre.id)) rows.push(theatre);
+  const parse = (j) => { try { return JSON.parse(j || '[]'); } catch { return []; } };
+  const sum = (k) => rows.reduce((n, r) => n + (Number(r[k]) || 0), 0);
+  const active = rows.some(r => r.status === 'active');
+  const merged = {
+    ...theatre,
+    started_tick: Math.min(...rows.map(r => r.started_tick)),
+    last_fire_tick: Math.max(...rows.map(r => r.last_fire_tick)),
+    ended_tick: active ? null : Math.max(...rows.map(r => r.ended_tick ?? r.last_fire_tick)),
+    status: active ? 'active' : 'ended',
+    battle_count: sum('battle_count'),
+    shots: sum('shots'),
+    hits: sum('hits'),
+    damage: sum('damage'),
+    ships_lost: sum('ships_lost'),
+    body_ids: JSON.stringify([...new Set(rows.flatMap(r => parse(r.body_ids)))]),
+    faction_ids: JSON.stringify([...new Set(rows.flatMap(r => parse(r.faction_ids)))]),
+  };
+  if ('settlements_lost' in theatre) merged.settlements_lost = sum('settlements_lost');
+  return {
+    merged,
+    campaigns: rows.map(r => ({ id: r.id, started_tick: r.started_tick, last_fire_tick: r.last_fire_tick })),
+  };
+}
+
+/** The battles of every campaign in a theatre's system (systemCampaigns),
+ *  oldest first, capped to the most recent `cap`. */
+const SYSTEM_BATTLES_SQL = (cols, cap) =>
+  `SELECT * FROM (
+     SELECT ${cols} FROM battles
+      WHERE game_id = ?
+        AND (theatre_id = ? OR theatre_id IN (
+              SELECT id FROM battle_theatres
+               WHERE game_id = ? AND anchor_body_id IS NOT NULL AND anchor_body_id = ?))
+      ORDER BY started_tick DESC LIMIT ${cap})
+   ORDER BY started_tick ASC`;
+
+/** Everything the system view needs for one campaign — and, since
+ *  2026-10-09, every other campaign fought in the same system
+ *  (systemCampaigns). Split out so a SHARED link renders from the
+ *  identical payload — same reason the battle detail was. */
 async function buildTheatreDetail(env, gameId, theatreId) {
-  const theatre = await env.DB
+  const opened = await env.DB
     .prepare('SELECT * FROM battle_theatres WHERE id = ? AND game_id = ?')
     .bind(theatreId, gameId).first();
-  if (!theatre) return err(404, 'not_found', 'no such theatre');
+  if (!opened) return err(404, 'not_found', 'no such theatre');
+  const { merged: theatre, campaigns } = await systemCampaigns(env, gameId, opened);
 
   const battleRows = (await env.DB
-    .prepare(
-      `SELECT * FROM battles WHERE theatre_id = ? AND game_id = ?
-        ORDER BY started_tick ASC`,
-    )
-    .bind(theatreId, gameId).all()).results ?? [];
+    .prepare(SYSTEM_BATTLES_SQL('*', 80))
+    .bind(gameId, opened.id, gameId, opened.anchor_body_id).all()).results ?? [];
 
   const battles = [];
   for (const b of battleRows) {
@@ -1741,6 +1803,8 @@ async function buildTheatreDetail(env, gameId, theatreId) {
       ...theatre,
       body_ids: (() => { try { return JSON.parse(theatre.body_ids || '[]'); } catch { return []; } })(),
       faction_ids: (() => { try { return JSON.parse(theatre.faction_ids || '[]'); } catch { return []; } })(),
+      // The campaigns this reel strings together, oldest first.
+      campaigns,
     },
     battles,
     bodies: bodies.map(b => ({
@@ -2415,17 +2479,19 @@ export async function handlePublicRecap(req, env, url) {
   if (!share) return err(404, 'not_found', 'no such recap');
 
   // Fire-and-forget: a view counter must never cost the reader the page.
-  try {
+  // The replay GIF renderer's headless visit (render=gif) is not a reader.
+  if (url.searchParams.get('render') !== 'gif') try {
     await env.DB
       .prepare('UPDATE battle_shares SET views = views + 1 WHERE token = ?')
       .bind(token).run();
   } catch (e) { console.error('share view count failed', e); }
 
   if (wantSystem) {
-    // The campaign the shared battle belonged to. Reached ONLY through
-    // the share's own battle row, so a link still exposes exactly the
-    // fight it names and the wider action that fight was part of —
-    // never an arbitrary campaign, and never another match.
+    // The campaign the shared battle belonged to, with every other
+    // campaign fought in the same system (systemCampaigns). Reached ONLY
+    // through the share's own battle row, so a link still exposes exactly
+    // the fight it names and the war in that system it was part of —
+    // never another system's campaigns, and never another match.
     const battle = await env.DB
       .prepare('SELECT theatre_id FROM battles WHERE id = ? AND game_id = ?')
       .bind(share.battle_id, share.game_id).first();

@@ -132,6 +132,9 @@ export const RecapOverlay: React.FC = () => {
   useEffect(() => {
     if (evaluatedRef.current) return;
     const log = gameState.combatLog ?? [];
+    // Classification (MAJOR_RE, fxFor, the body-name scrape) reads the
+    // English `log`; captions show the player's language.
+    const shown = gameState.combatLogDisplay ?? log;
     if (log.length === 0) return;
     evaluatedRef.current = true;
 
@@ -160,7 +163,7 @@ export const RecapOverlay: React.FC = () => {
     // battle is thirty rows and ONE place; the captions stack.
     const built: Scene[] = [];
     for (const m of majors) {
-      const line = flavor[m.i] || log[m.i];
+      const line = flavor[m.i] || shown[m.i] || log[m.i];
       const last = built[built.length - 1];
       if (last && last.bodyId && last.bodyId === m.bodyId) {
         if (last.lines.length < 3) last.lines.push(line);
@@ -169,7 +172,7 @@ export const RecapOverlay: React.FC = () => {
       }
     }
     setScenes(built.slice(-SCENE_CAP));
-  }, [gameState.combatLog, gameState.chronicleFocus, gameState.chronicleFlavor, gameState.ships, gameState.bodies]);
+  }, [gameState.combatLog, gameState.combatLogDisplay, gameState.chronicleFocus, gameState.chronicleFlavor, gameState.ships, gameState.bodies]);
 
   const scene = playing && scenes ? scenes[idx] : null;
   const sceneMs = SCENE_MS;
@@ -257,6 +260,7 @@ export const RecapOverlay: React.FC = () => {
     const onPlay = (e: Event) => {
       const ticks = (e as CustomEvent).detail?.ticks ?? 12;
       const log = gameState.combatLog ?? [];
+      const shown = gameState.combatLogDisplay ?? log;
       const focus = gameState.chronicleFocus ?? [];
       const flavor = gameState.chronicleFlavor ?? [];
       const cutoff = (gameState.currentTick ?? 0) - ticks;
@@ -271,7 +275,7 @@ export const RecapOverlay: React.FC = () => {
       const built: Scene[] = [];
       for (const i of picks) {
         const bodyId = resolveSceneBody(log[i] ?? '', focus[i], gameState.ships, gameState.bodies);
-        const line = flavor[i] || log[i];
+        const line = flavor[i] || shown[i] || log[i];
         const last = built[built.length - 1];
         if (last && last.bodyId && last.bodyId === bodyId) {
           if (last.lines.length < 3) last.lines.push(line);
@@ -286,7 +290,7 @@ export const RecapOverlay: React.FC = () => {
     window.addEventListener('orbital:play-recap', onPlay as EventListener);
     return () => window.removeEventListener('orbital:play-recap', onPlay as EventListener);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gameState.combatLog, gameState.chronicleFocus, gameState.chronicleFlavor, gameState.currentTick, gameState.ships, gameState.bodies]);
+  }, [gameState.combatLog, gameState.combatLogDisplay, gameState.chronicleFocus, gameState.chronicleFlavor, gameState.currentTick, gameState.ships, gameState.bodies]);
 
   // While PLAYING, every other surface gets out of the way — the world
   // menu especially: focusBody zooms the camera in, and focus-zoom is

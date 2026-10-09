@@ -25,6 +25,7 @@
 // ============================================================================
 
 import { createSession, sessionCookie } from './auth.js';
+import { tr, pickLocale, localeFromAcceptLanguage } from './i18n.js';
 
 const SITE = 'https://orbital-empire.com';
 export const LOGIN_TOKEN_TTL_MS = 7 * 24 * 3600 * 1000;
@@ -80,10 +81,11 @@ export async function pruneLoginTokens(env, nowMs = Date.now()) {
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 /** GET: the page that posts the token. Spends nothing. */
-export function landingPage(token) {
+export function landingPage(token, locale = 'en') {
   const t = TOKEN_RE.test(token ?? '') ? token : '';
+  const L = pickLocale(locale);
   return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="${L}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex"><meta name="referrer" content="no-referrer">
 <title>Orbital</title>
 <style>
@@ -95,10 +97,10 @@ export function landingPage(token) {
 </style></head>
 <body><main>
   <div class="brand">ORBITAL</div>
-  <p>Taking you to your seat…</p>
+  <p>${esc(tr(L, 'page.go.taking'))}</p>
   <form id="go" method="post" action="/api/email/go">
     <input type="hidden" name="t" value="${esc(t)}">
-    <button type="submit">Continue</button>
+    <button type="submit">${esc(tr(L, 'page.go.continue'))}</button>
   </form>
 </main>
 <script>document.getElementById('go').submit();</script>
@@ -132,8 +134,10 @@ export async function spendLoginToken(env, token, userAgent, nowMs = Date.now())
   return { ok: true, roomId: row.room_id, cookie: sessionCookie(sess, expiresAt) };
 }
 
-async function handleGet(_req, _env, ctx) {
-  return new Response(landingPage(ctx.url.searchParams.get('t')), {
+async function handleGet(req, _env, ctx) {
+  // The link is opened from an email, signed out: the browser's language is all we know.
+  const L = localeFromAcceptLanguage(req.headers.get('accept-language'));
+  return new Response(landingPage(ctx.url.searchParams.get('t'), L), {
     headers: {
       'content-type': 'text/html; charset=utf-8',
       'cache-control': 'no-store',

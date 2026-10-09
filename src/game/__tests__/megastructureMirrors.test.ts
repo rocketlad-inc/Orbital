@@ -558,8 +558,9 @@ describe('seizing a structure is recorded', () => {
   const actions = fs.readFileSync(
     path.resolve(__dirname, '../../..', 'worker/actions.js'), 'utf8',
   );
+  // The headline formatter lives in eventText.ts (moved out of the provider).
   const provider = fs.readFileSync(
-    path.resolve(__dirname, '../../', 'multiplayer/MultiplayerGameProvider.tsx'), 'utf8',
+    path.resolve(__dirname, '../../', 'multiplayer/eventText.ts'), 'utf8',
   );
 
   it.each(['megastructure_captured', 'megastructure_destroyed'])(
@@ -593,7 +594,9 @@ describe('a structure under attack raises a situation row', () => {
 
   it('has a category, a label and a tier', () => {
     expect(sit).toMatch(/'structure_siege'/);
-    expect(sit).toMatch(/structure_siege: 'Structure under attack'/);
+    // The label is a catalog entry now (helper.sit.cat.*); the English must still read the same.
+    expect(fs.readFileSync(path.resolve(__dirname, '../../', 'i18n/parts/en/helpers.ts'), 'utf8'))
+      .toMatch(/'helper\.sit\.cat\.structure_siege': 'Structure under attack'/);
     expect(sit).toMatch(/structure_siege: 'now'/);
   });
 
@@ -661,8 +664,9 @@ describe('a charging strike is visible to the target', () => {
   const renderer = fs.readFileSync(
     path.resolve(__dirname, '../../', 'render/mapRenderer.ts'), 'utf8',
   );
+  // The headline formatter lives in eventText.ts (moved out of the provider).
   const provider = fs.readFileSync(
-    path.resolve(__dirname, '../../', 'multiplayer/MultiplayerGameProvider.tsx'), 'utf8',
+    path.resolve(__dirname, '../../', 'multiplayer/eventText.ts'), 'utf8',
   );
   const state = fs.readFileSync(
     path.resolve(__dirname, '../../..', 'worker/state.js'), 'utf8',
@@ -1326,7 +1330,7 @@ describe('structures go derelict when their faction dies', () => {
 
   it('both events are readable', () => {
     const provider = fs.readFileSync(
-      path.resolve(__dirname, '../../', 'multiplayer/MultiplayerGameProvider.tsx'), 'utf8',
+      path.resolve(__dirname, '../../', 'multiplayer/eventText.ts'), 'utf8',
     );
     expect(provider).toMatch(/megastructure_abandoned/);
     expect(provider).toMatch(/megastructure_claimed/);
