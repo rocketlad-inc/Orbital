@@ -27,6 +27,7 @@ import type { GameState, SinglePlayerConfig } from './types';
 import { prewarmShipIcons } from './render/shipIconCache';
 import { COLORS } from './render/colors';
 import { AuthProvider, useAuth } from './multiplayer/AuthContext';
+import { useCommissionHandoff, useRefreshOnReturn } from './multiplayer/commissionHandoff';
 import { TurnBasedSettingsProvider } from './state/turnBasedSettings';
 import { MapLayersProvider } from './state/mapLayers';
 import { TutorialProvider } from './state/tutorial';
@@ -440,7 +441,7 @@ const LEGACY_LAST_ROOM_KEY = 'orbital.last_room';
 
 function AppShell() {
   useI18n();
-  const { user, loading } = useAuth();
+  const { user, loading, refresh: refreshAuth } = useAuth();
   // index.html carries the marketing page's long search title; a signed-in
   // player's tab just says "Orbital" (the landing sets its own per page).
   useEffect(() => {
@@ -707,6 +708,11 @@ function AppShell() {
       tabRoom.set(res.data.room_id);
     })();
   }, [user]);
+
+  // The Android app's Commission button lands here, in the phone's browser
+  // (?commission=buy): the checkout starts once signed in.
+  useCommissionHandoff(user);
+  useRefreshOnReturn(refreshAuth);
 
   // Watch the selected room for game start. While roomGameId is null the
   // lobby + dock are shown but the game canvas / MultiplayerGameProvider

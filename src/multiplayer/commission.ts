@@ -9,8 +9,8 @@
 //   - show the goods; ask at most once per moment, never mid-play
 //   - every card dismisses for good
 //   - nothing that touches the game is for sale
-//   - the Android app shows no buy button (store rules): it can name the
-//     Commission, never sell it
+//   - the Android app never sells (store rules): its buy buttons open the
+//     website in the phone's own browser, and checkout starts there
 //
 // The facts are COMPUTED from the same sets the pickers lock, so the copy
 // can never undersell the goods again (the old pitch said "ten ship
@@ -22,7 +22,7 @@ import { PREMIUM_VARIANTS } from '../components/ShipIcons';
 import { PREMIUM_EMBLEM_IDS } from '../game/emblems';
 import { premiumStructureLookCount } from '../components/StructureIcons';
 import { CITY_SKINS, STATION_SKINS } from '../game/settlementSkins';
-import { isAndroidApp } from '../platform/appShell';
+import { isAndroidApp, BROWSER_HANDOFF_PARAM, WEBSITE_ORIGIN } from '../platform/appShell';
 import { TELEMETRY_SESSION_ID } from './telemetry';
 
 export const COMMISSION_NAME = 'Commander’s Commission';
@@ -62,10 +62,47 @@ export const HOLDER_TITLE = `Holds the ${COMMISSION_NAME} — supports Orbital`;
 
 /** Can this client SELL it? False in the Android app, where the store
  *  requires purchases of digital goods to go elsewhere. Showing and
- *  previewing the goods is fine everywhere; a buy button is not. */
+ *  previewing the goods is fine everywhere; in the app the buy button
+ *  becomes openCommissionInBrowser. */
 export function canBuyHere(): boolean {
   return !isAndroidApp();
 }
+
+let leftForBrowser = false;
+/** The app sent the player to the browser to buy (useRefreshOnReturn). */
+export function sentToBrowser(): boolean { return leftForBrowser; }
+
+const APP_PACKAGE = 'com.orbitalempire.game';
+const PLAY_LISTING = `https://play.google.com/store/apps/details?id=${APP_PACKAGE}`;
+
+/** Where the app's link out lands: the site, which starts the checkout
+ *  itself once signed in (useCommissionHandoff). */
+export function commissionHandoffUrl(surface: CommissionSurface, opts: { gift?: boolean } = {}): string {
+  const q = new URLSearchParams({ [BROWSER_HANDOFF_PARAM]: 'buy', from: surface });
+  if (opts.gift) q.set('gift', '1');
+  return `${WEBSITE_ORIGIN}/?${q.toString()}`;
+}
+
+/** THE APP'S BUY BUTTON (Lorne, 2026-10-08: "make sure the app doesnt try
+ *  to do this and instead links the customer to the browser"). Opens the
+ *  site in the phone's own browser, where the checkout starts. A plain
+ *  link cannot: every orbital-empire.com link opens the app again. So it
+ *  goes through the app's own orbital://browser (BrowserLinkActivity),
+ *  as an intent: URL so that an app too old to have that screen falls
+ *  back to its Play listing, i.e. the update, instead of doing nothing. */
+export function openCommissionInBrowser(surface: CommissionSurface, opts: { gift?: boolean } = {}): void {
+  logCommission(surface, 'click');
+  leftForBrowser = true;
+  const page = encodeURIComponent(commissionHandoffUrl(surface, opts));
+  window.location.href = `intent://browser?url=${page}#Intent;scheme=orbital;package=${APP_PACKAGE};`
+    + `S.browser_fallback_url=${encodeURIComponent(PLAY_LISTING)};end`;
+}
+
+/** Every surface a checkout can start from (worker/store.js keeps the
+ *  same allow-list): a handoff naming anything else is not one of ours. */
+export const COMMISSION_SURFACES: readonly CommissionSurface[] = [
+  'profile', 'lobby-flag', 'designer', 'endgame', 'thanks-card', 'skins', 'discord-feed',
+];
 
 const viewed = new Set<string>();
 

@@ -34,7 +34,6 @@ export const social = {
   'feed.pitch.giftNote': '{host} hosts this game, so the Commission has to be theirs: you can gift it.',
   'feed.buy': 'Get the Commission · {price}',
   'feed.gift': 'Gift it to {host} · {price}',
-  'feed.webOnly': 'Get it on the Orbital website; it unlocks here at your next sign-in.',
   'feed.notNow': 'Not now',
 
   // ---- Standing panel ----
@@ -136,7 +135,7 @@ export const social = {
   'hangar.perk.hostPre': 'In any game you host, open its Discord game feed settings and press',
   'hangar.free': 'Orbital is free and stays free; this is how you can support it.',
   'hangar.opening': 'Opening checkout…',
-  'hangar.offsite': 'The Commission is bought on the Orbital website, not in the app. It unlocks here the next time you sign in.',
+  'hangar.offsite': 'Bought on the Orbital website, not in the app: this opens it in your browser. It unlocks here when you come back.',
   'hangar.skins.title': 'Colony & station style',
   'hangar.skins.body': 'How your cities and stations look in every game. Weapons, labs, forges and the rest keep their shapes in every style, so rivals still read your strength. You can change it per game in the lobby.',
   'hangar.gift.title': 'Give it to a friend',
@@ -489,7 +488,6 @@ export const social = {
   'roomlobby.flag.upsell': '🔒 The dimmed flags, {lines} more ship lines and {discord} come with the {name}. {rule}',
   'roomlobby.flag.discord': 'your games in your own Discord server',
   'roomlobby.flag.rule': 'Nothing that changes the game.',
-  'roomlobby.flag.unlockWeb': 'Unlock them with the Commission, on the Orbital website.',
   'roomlobby.flag.preview': 'Preview:',
   'roomlobby.flag.autoTrim': '(trim auto-derived)',
   'roomlobby.flag.noEmblem': '(no emblem — one will be assigned)',

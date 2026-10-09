@@ -8,7 +8,7 @@ import { EMBLEM_IDS, PREMIUM_EMBLEM_IDS, EMBLEM_NAMES } from '../game/emblems';
 import { startCommissionCheckout } from './api';
 import { isAndroidApp } from '../platform/appShell';
 import {
-  COMMISSION_LINES, COMMISSION_PRICE, HOLDER_MARK, logCommission,
+  COMMISSION_LINES, COMMISSION_PRICE, HOLDER_MARK, logCommission, openCommissionInBrowser,
   COMMISSION_DISCORD, COMMISSION_NO_GAMEPLAY,
 } from './commission';
 import { FactionEmblem, FlagChip } from '../components/FactionEmblem';
@@ -1192,13 +1192,17 @@ function FactionFlagPicker({
               rule: tk('roomlobby.flag.rule', COMMISSION_NO_GAMEPLAY),
             })}
           </span>
-          {/* The app does not sell it; see ProfilePanel. */}
+          {/* The app does not sell it: its button opens the website in the
+              phone's browser (openCommissionInBrowser). */}
           {isAndroidApp() ? (
-            <span style={{ fontSize: 10, color: 'var(--mp-fg-dim, #8aa0b4)' }}>
-              {/* Words: roomlobby.flag.unlockWeb ("Unlock them with the Commission,
-                  on the Orbital website."). The app does not sell. */}
-              {t('roomlobby.flag.unlockWeb')}
-            </span>
+            <button
+              type="button"
+              className="mp-btn"
+              style={{ fontSize: 10, padding: '3px 8px' }}
+              onClick={() => openCommissionInBrowser('lobby-flag')}
+            >
+              {t('mp.commission.inBrowser', { price: tk('mp.commission.price', COMMISSION_PRICE) })}
+            </button>
           ) : (
             <button
               type="button"

@@ -24,7 +24,7 @@ import { WEBSITE_ORIGIN } from '../platform/appShell';
 import { SkinPicker, SkinField } from './SkinPicker';
 import {
   COMMISSION_LINES, COMMISSION_EMBLEMS, COMMISSION_CITY_SKINS, COMMISSION_STATION_SKINS, COMMISSION_STRUCTURE_LOOKS,
-  COMMISSION_PRICE, HOLDER_MARK, canBuyHere, logCommission,
+  COMMISSION_PRICE, HOLDER_MARK, canBuyHere, logCommission, openCommissionInBrowser,
 } from './commission';
 import { t, tk } from '../i18n/core';
 import { useI18n } from '../i18n/react';
@@ -202,13 +202,18 @@ export function Hangar({ onRedeemed, giftJustBought }: {
                 {busy === 'self' ? t('hangar.opening') : t('feed.buy', { price: tk('mp.commission.price', COMMISSION_PRICE) })}
               </button>
             ) : (
-              <p className="hg-offsite">
-                {/* Words: hangar.offsite. English promise (appShell.test reads it here):
-                    the Commission is bought on the Orbital website, not in the app.
-                    It unlocks here the next time you sign in. */}
-                {t('hangar.offsite')}{' '}
-                <span className="hg-where">{WEBSITE_ORIGIN.replace('https://', '')}</span>
-              </p>
+              <>
+                <button className="pp-btn pp-btn--primary" onClick={() => openCommissionInBrowser('profile')}>
+                  {t('mp.commission.inBrowser', { price: tk('mp.commission.price', COMMISSION_PRICE) })}
+                </button>
+                <p className="hg-offsite">
+                  {/* Words: hangar.offsite. English promise (appShell.test reads it here):
+                      bought on the Orbital website, not in the app: the button opens
+                      it in your browser. It unlocks here when you come back. */}
+                  {t('hangar.offsite')}{' '}
+                  <span className="hg-where">{WEBSITE_ORIGIN.replace('https://', '')}</span>
+                </p>
+              </>
             )}
           </>
         )}
@@ -232,40 +237,44 @@ export function Hangar({ onRedeemed, giftJustBought }: {
         {skinErr && <div className="pp-error hg-err">{skinErr}</div>}
       </div>
 
-      {/* ---- gifts ---- */}
-      {sellable && (
-        <div className="hg-gift">
-          <div className="hg-sub-h">{t('hangar.gift.title')}</div>
-          <p className="hg-body">
-            {t('hangar.gift.body')}
-          </p>
+      {/* ---- gifts ---- (in the app the button opens the browser) */}
+      <div className="hg-gift">
+        <div className="hg-sub-h">{t('hangar.gift.title')}</div>
+        <p className="hg-body">
+          {t('hangar.gift.body')}
+        </p>
+        {sellable ? (
           <button className="pp-btn" disabled={busy !== null} onClick={() => void buy(true)}>
             {busy === 'gift' ? t('hangar.opening') : t('hangar.gift.buy', { price: tk('mp.commission.price', COMMISSION_PRICE) })}
           </button>
-          {giftJustBought && gifts.length === 0 && (
-            <p className="hg-sub">{t('hangar.gift.coming')}</p>
-          )}
-          {gifts.length > 0 && (
-            <ul className="hg-gifts">
-              {gifts.map(g => (
-                <li key={g.code} className={g.voided ? 'is-void' : g.redeemed_at ? 'is-used' : ''}>
-                  <code>{g.code}</code>
-                  <span className="hg-gift__state">
-                    {g.voided ? t('hangar.gift.refunded')
-                      : g.redeemed_at ? (g.redeemed_by_name ? t('hangar.gift.redeemedBy', { name: g.redeemed_by_name }) : t('hangar.gift.redeemed'))
-                        : t('hangar.gift.pending')}
-                  </span>
-                  {!g.voided && !g.redeemed_at && (
-                    <button className="pp-btn" onClick={() => void copy(g.code)}>
-                      {copied === g.code ? t('hangar.gift.copied') : t('hangar.gift.copy')}
-                    </button>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
+        ) : (
+          <button className="pp-btn" onClick={() => openCommissionInBrowser('profile', { gift: true })}>
+            {t('mp.commission.giftInBrowser')}
+          </button>
+        )}
+        {giftJustBought && gifts.length === 0 && (
+          <p className="hg-sub">{t('hangar.gift.coming')}</p>
+        )}
+        {gifts.length > 0 && (
+          <ul className="hg-gifts">
+            {gifts.map(g => (
+              <li key={g.code} className={g.voided ? 'is-void' : g.redeemed_at ? 'is-used' : ''}>
+                <code>{g.code}</code>
+                <span className="hg-gift__state">
+                  {g.voided ? t('hangar.gift.refunded')
+                    : g.redeemed_at ? (g.redeemed_by_name ? t('hangar.gift.redeemedBy', { name: g.redeemed_by_name }) : t('hangar.gift.redeemed'))
+                      : t('hangar.gift.pending')}
+                </span>
+                {!g.voided && !g.redeemed_at && (
+                  <button className="pp-btn" onClick={() => void copy(g.code)}>
+                    {copied === g.code ? t('hangar.gift.copied') : t('hangar.gift.copy')}
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
 
       {/* ---- redeem ---- (website only: in the app the Commission is
           named, never bought or redeemed; it simply arrives on the

@@ -16,6 +16,7 @@ jest.mock('../commission', () => ({
   ...jest.requireActual('../commission'),
   canBuyHere: () => mockSellable,
   logCommission: jest.fn(),
+  openCommissionInBrowser: jest.fn(),
 }));
 jest.mock('../api', () => ({
   apiFetch: jest.fn(async () => ({ ok: false })),
@@ -26,6 +27,8 @@ jest.mock('../api', () => ({
 import { DiscordServerFeed, SERVER_FEED_STEPS } from '../DiscordServerFeed';
 // eslint-disable-next-line import/first
 import { startCommissionCheckout } from '../api';
+// eslint-disable-next-line import/first
+import { openCommissionInBrowser } from '../commission';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -75,12 +78,24 @@ test('the pitch dismisses for good', () => {
   expect(q(mount(view()), 'server-feed-pitch')).toBeNull();
 });
 
-test('the Android app shows the goods but no buy button', () => {
+test('the Android app sends the buyer to the browser, never to checkout', () => {
   mockSellable = false;
   const h = mount(view());
   expect(q(h, 'server-feed-pitch')).not.toBeNull();
   expect(q(h, 'server-feed-buy')).toBeNull();
-  expect(h.textContent).toMatch(/Orbital website/);
+  const out = q(h, 'server-feed-browser') as HTMLButtonElement;
+  expect(out.textContent).toMatch(/in your browser/);
+  act(() => { out.click(); });
+  expect(openCommissionInBrowser).toHaveBeenCalledWith('discord-feed', { gift: false });
+  expect(startCommissionCheckout).not.toHaveBeenCalled();
+});
+
+test('in the app, another player gifts it to the host from the browser too', () => {
+  mockSellable = false;
+  (openCommissionInBrowser as jest.Mock).mockClear();
+  const h = mount(view({ is_host: false }));
+  act(() => { (q(h, 'server-feed-browser') as HTMLButtonElement).click(); });
+  expect(openCommissionInBrowser).toHaveBeenCalledWith('discord-feed', { gift: true });
 });
 
 test('a host holding the Commission gets the Connect button and the steps', () => {

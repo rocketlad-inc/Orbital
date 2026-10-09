@@ -36,7 +36,6 @@ export const social: Catalog = {
   'feed.pitch.giftNote': '{host} é o anfitrião deste jogo, então a Comissão precisa ser dele: você pode dar de presente.',
   'feed.buy': 'Obter a Comissão · {price}',
   'feed.gift': 'Dar de presente a {host} · {price}',
-  'feed.webOnly': 'Obtenha no site do Orbital; ela é liberada aqui no seu próximo login.',
   'feed.notNow': 'Agora não',
 
   // ---- Standing panel ----
@@ -138,7 +137,7 @@ export const social: Catalog = {
   'hangar.perk.hostPre': 'Em qualquer jogo que você hospedar, abra as configurações do feed do Discord e toque em',
   'hangar.free': 'O Orbital é gratuito e continuará sendo; é assim que você pode apoiá-lo.',
   'hangar.opening': 'Abrindo o pagamento…',
-  'hangar.offsite': 'A Comissão é comprada no site do Orbital, não no app. Ela é liberada aqui no seu próximo login.',
+  'hangar.offsite': 'Comprada no site do Orbital, não no app: isto abre o site no seu navegador. Ela é liberada aqui quando você voltar.',
   'hangar.skins.title': 'Estilo de colônia e estação',
   'hangar.skins.body': 'Como suas cidades e estações aparecem em todos os jogos. Armas, laboratórios, forjas e o restante mantêm a forma em todos os estilos, então os rivais ainda percebem sua força. Você pode mudar isso por jogo, na sala.',
   'hangar.gift.title': 'Dê de presente a um amigo',
@@ -491,7 +490,6 @@ export const social: Catalog = {
   'roomlobby.flag.upsell': '🔒 As bandeiras esmaecidas, mais {lines} linhas de naves e {discord} vêm com a {name}. {rule}',
   'roomlobby.flag.discord': 'seus jogos no seu próprio servidor do Discord',
   'roomlobby.flag.rule': 'Nada que altere o jogo.',
-  'roomlobby.flag.unlockWeb': 'Desbloqueie com a Comissão, no site do Orbital.',
   'roomlobby.flag.preview': 'Prévia:',
   'roomlobby.flag.autoTrim': '(acabamento automático)',
   'roomlobby.flag.noEmblem': '(sem emblema — um será atribuído)',
