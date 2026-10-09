@@ -7193,6 +7193,42 @@ async function handlePatchDesign(req, env, ctx) {
   });
 }
 
+// POST /api/games/:gameId/designs/:designId/restyle
+//
+// Give every live hull of the design's class the design's LOOK, now and
+// free: icon_variant only, nothing else changes (Shipwright, 2026-10-08:
+// "Restyle 14 destroyers"). Refit-fleet never copied the look on its
+// immediate path (only the tick's deferred refit did), so buying a look
+// and choosing it left the whole fleet flying the old one. A Commission
+// look still needs the entitlement, re-checked here like every save.
+async function handleRestyleFleet(req, env, ctx) {
+  const { gameId, designId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+  const design = await env.DB
+    .prepare('SELECT id, faction_id, ship_class, icon_variant FROM game_ship_designs WHERE id = ? AND game_id = ?')
+    .bind(designId, gameId)
+    .first();
+  if (!design) return err(404, 'not_found', 'design not found');
+  if (design.faction_id !== me.id) return err(403, 'not_owner', 'not your design');
+  const look = design.icon_variant ?? null;
+  if (look != null) {
+    const badIcon = await validateIconVariant(env, ctx.session.user_id, look);
+    if (badIcon) return err(badIcon.code === 'premium_required' ? 403 : 400, badIcon.code, badIcon.message);
+  }
+  // NULL means the class default, on the design and on a hull alike.
+  const res = await env.DB
+    .prepare(
+      `UPDATE game_ships SET icon_variant = ?
+        WHERE game_id = ? AND owner_faction_id = ? AND ship_class = ? AND status = 'active'
+          AND icon_variant IS NOT ?`,
+    )
+    .bind(look, gameId, me.id, design.ship_class, look)
+    .run();
+  return json({ ok: true, restyled: res.meta?.changes ?? 0, icon_variant: look });
+}
+
 // POST /api/games/:gameId/designs/:designId/refit-fleet
 // (DESIGN-fleet-economy §2)
 //
@@ -7997,6 +8033,12 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/designs\/(?<designId>[^/]+)\/refit-fleet$/,
     auth: 'required',
     handle: handleRefitFleet,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/designs\/(?<designId>[^/]+)\/restyle$/,
+    auth: 'required',
+    handle: handleRestyleFleet,
   },
   {
     method: 'POST',

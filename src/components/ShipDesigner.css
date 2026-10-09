@@ -303,6 +303,14 @@
 .sd-hint--matchup { color: #b8c8d6; }
 .sd-hint strong { color: #d6e2ec; font-weight: 400; }
 
+/* restyle: the fleet takes the saved look */
+.sd-restyle {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+  margin-top: 6px; padding: 10px; border: 1px solid #2a3d50; border-radius: 5px; background: rgba(14, 21, 30, 0.7);
+}
+.sd-restyle__head { font-size: 10px; font-weight: 700; letter-spacing: 0.08em; }
+.sd-restyle__body { font-size: 9px; color: #8aa0b4; line-height: 1.5; }
+
 /* Commission offer, while a paid look is on the ship */
 .sd-offer {
   flex: 0 0 auto; margin: 0 12px 12px; padding: 10px 12px;

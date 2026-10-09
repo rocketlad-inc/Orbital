@@ -352,6 +352,27 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   }, [selected, gameState.ships, activeClass]);
   const draftMatchesSelected = selected != null && sameLoadout(draftParts, baselineParts);
 
+  // --- Restyle: live hulls of this class not flying the saved look ----
+  const restyleCount = useMemo(() => {
+    if (!selected) return 0;
+    const want = selected.iconVariant ?? null;
+    return gameState.ships.filter(s =>
+      s.ownedBy === 'player' && s.class === activeClass && (s.iconVariant ?? null) !== want).length;
+  }, [selected, gameState.ships, activeClass]);
+  /** The look on the ship is the saved one (not an unsaved pick or a preview). */
+  const lookSaved = selected != null && !previewIcon
+    && (draftIcon ?? null) === (selected.iconVariant ?? null);
+  const [restyleNote, setRestyleNote] = useState<string | null>(null);
+  const doRestyle = async () => {
+    if (!mpActions || busy || !selected) return;
+    setBusy(true);
+    setRestyleNote(null);
+    const res = await mpActions.restyleFleet(selected.id);
+    setBusy(false);
+    if (!res.ok) { setError(res.error ?? t('ship.sd.refitFailed')); return; }
+    setRestyleNote(t('ship.sd.restyled', { n: res.restyled ?? 0 }));
+  };
+
   const refresh = async () => {
     if (!mpActions) return;
     const rows = await mpActions.getDesigns();
@@ -367,6 +388,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
     setPreviewIcon(undefined);
     setError(null);
     setRefitNote(null);
+    setRestyleNote(null);
   };
 
   const refreshTemplates = async () => {
@@ -1036,6 +1058,23 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                 <div className="sd-looks">{looksStd.map(lookTile)}</div>
                 <div className="sd-lib__head sd-lib__head--paid">{t('ship.sd.looksCommission', { n: looksCom.length })}</div>
                 <div className="sd-looks">{looksCom.map(lookTile)}</div>
+                {/* Give the fleet this look: free, look only, now. */}
+                {selected && (restyleCount > 0 || restyleNote) && (
+                  <div className="sd-restyle" data-testid="sd-restyle">
+                    <span className="sd-restyle__head">{t('ship.sd.restyleHead')}</span>
+                    {restyleCount > 0 && (
+                      <span className="sd-restyle__body">
+                        {lookSaved ? t('ship.sd.restyleBody', { n: restyleCount }) : t('ship.sd.restyleSaveFirst')}
+                      </span>
+                    )}
+                    {restyleCount > 0 && (
+                      <button className="sd-btn sd-btn--refit" disabled={busy || !lookSaved} onClick={doRestyle}>
+                        {t('ship.sd.restyleBtn', { n: restyleCount })}
+                      </button>
+                    )}
+                    {restyleNote && <span className="sd-refit__note">{restyleNote}</span>}
+                  </div>
+                )}
               </div>
             )}
 
