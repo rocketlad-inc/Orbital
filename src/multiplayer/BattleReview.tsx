@@ -50,7 +50,11 @@ import {
 } from '../render/fxArt';
 import { FX_TUNING, kineticRoundsOf, burstSlots } from '../render/fxTuning';
 import { deriveSecondary } from '../game/colorUtils';
-import { ShipIconClass, ShipIconVariant } from '../components/ShipIcons';
+import { ShipIconClass, ShipIconVariant, iconClassFor } from '../components/ShipIcons';
+import { shipIconSize } from '../render/mapRenderer';
+import { isCapitalHull } from '../render/megastructureArt';
+import { getStructureIconImage } from '../render/structureIconCache';
+import type { MegastructureKind } from '../game/megastructures';
 import { Body } from '../types';
 import { t as tr, tn as trn, tk } from '../i18n/core';
 import { useI18n } from '../i18n/react';
@@ -779,17 +783,41 @@ const ENGAGEMENT_BEARING = 0.9;
  *  on-screen size: at that scale the shaded hull swallowed the owner's
  *  colour and every ship read as grey, which defeats the entire point of
  *  drawing the real sprite in the real livery. */
-const RECAP_ICON_SIZE: Record<string, number> = {
-  corvette: 23, frigate: 28, freighter: 27, colony: 27, destroyer: 36,
-};
+//
+// THE GAME'S LADDER, NOT A RECAP ONE (Lorne, 2026-10-09: "make the ships
+// sized appropriately to each other"). The recap kept its own table
+// (corvette 23, frigate 28, destroyer 36), which flattened the map's
+// Bold ladder: a destroyer read as a slightly large corvette, and the
+// capital hulls, missing from it, drew as 18px dots. Every hull is now
+// the map's own shipIconSize, scaled so a corvette stays the 23px it
+// always was here; the fit in recapLayout shrinks the lot together if a
+// fight is too big for the frame.
+const RECAP_CORVETTE_PX = 23;
+const RECAP_SHIP_SCALE = RECAP_CORVETTE_PX / shipIconSize('corvette', false);
 const ICON_CLASSES: ShipIconClass[] = ['corvette', 'frigate', 'destroyer', 'freighter', 'colony'];
 
+/** The silhouette a hull class borrows (capitals have their own art; see
+ *  hullImage), or null when the class is not a hull at all. */
 function iconClassOf(cls: string | null): ShipIconClass | null {
   const c = (cls ?? '').toLowerCase();
-  return (ICON_CLASSES as string[]).includes(c) ? (c as ShipIconClass) : null;
+  if ((ICON_CLASSES as string[]).includes(c)) return c as ShipIconClass;
+  if (isCapitalHull(c) || c === 'kaiju') return iconClassFor(c);
+  return null;
 }
 function iconSizeOf(cls: string | null): number {
-  return RECAP_ICON_SIZE[(cls ?? '').toLowerCase()] ?? 18;
+  const c = (cls ?? '').toLowerCase();
+  return iconClassOf(c) ? shipIconSize(c, false) * RECAP_SHIP_SCALE : 18;
+}
+/** The sprite a hull is drawn with, as the map draws it: a capital hull
+ *  from the structure sheet it was built from, everything else its own
+ *  ship icon. */
+function hullImage(
+  cls: string | null, color: string, variant: ShipIconVariant | undefined, trim: string | undefined,
+): CanvasImageSource | null {
+  const c = (cls ?? '').toLowerCase();
+  if (isCapitalHull(c)) return getStructureIconImage(c as MegastructureKind, color, null, trim);
+  const ic = iconClassOf(c);
+  return ic ? getShipIconImage(ic, color, variant, trim) : null;
 }
 /** A station's drawn width: the 88-unit rig at the 0.85 it is drawn at. */
 const RECAP_STATION_PX = 75;
@@ -1309,10 +1337,9 @@ export function BattleRecap({ d }: { d: Detail }) {
   // first needed — otherwise the opening beat plays as fallback dots.
   useEffect(() => {
     for (const p of d.participants) {
-      const cls = iconClassOf(p.ship_class);
-      if (!cls) continue;
+      if (!iconClassOf(p.ship_class)) continue;
       const col = (p.faction_id && d.factions[p.faction_id]?.color) || NEUTRAL;
-      getShipIconImage(cls, col, (p.icon_variant as ShipIconVariant) || undefined, trimOf(p.faction_id));
+      hullImage(p.ship_class, col, (p.icon_variant as ShipIconVariant) || undefined, trimOf(p.faction_id));
     }
   }, [d.participants, d.factions, trimOf]);
 
@@ -1697,8 +1724,7 @@ export function BattleRecap({ d }: { d: Detail }) {
             g.restore();
           }
 
-          const cls = iconClassOf(r.cls ?? meta?.cls ?? null);
-          const icon = cls ? getShipIconImage(cls, col, meta?.variant, trimOf(r.fid)) : null;
+          const icon = hullImage(r.cls ?? meta?.cls ?? null, col, meta?.variant, trimOf(r.fid));
           if (icon) {
             g.save();
             g.translate(q.x, q.y);
@@ -1761,7 +1787,7 @@ export function BattleRecap({ d }: { d: Detail }) {
         // Destroyers, every settlement (there are few and they are
         // landmarks) and anything dying. Labelling frigates too turned the
         // near limb into a stack of overlapping names.
-        if (iconSizeOf(r.cls ?? meta?.cls ?? null) >= 34 || kind !== 'ship' || dying) {
+        if (iconSizeOf(r.cls ?? meta?.cls ?? null) >= iconSizeOf('destroyer') || kind !== 'ship' || dying) {
           const a = angOf(r.id);
           const outX = Math.cos(a) >= 0 ? 1 : -1;
           g.fillStyle = dying ? '#ff8a80' : (kind === 'ship' ? '#cfe0ee' : '#e2d7b8');
@@ -1796,8 +1822,7 @@ export function BattleRecap({ d }: { d: Detail }) {
         const q = posOf(id);
         const row = rowById.get(id);
         const meta = hulls.get(id);
-        const cls = iconClassOf(row?.cls ?? meta?.cls ?? null);
-        const img = cls ? getShipIconImage(cls, colorOf(row?.fid ?? null), meta?.variant, trimOf(row?.fid ?? null)) : null;
+        const img = hullImage(row?.cls ?? meta?.cls ?? null, colorOf(row?.fid ?? null), meta?.variant, trimOf(row?.fid ?? null));
         const size = sizeOf(row?.cls ?? meta?.cls ?? null);
         if (!img) {
           drawWreckShards(g, q.x, q.y, Math.max(6, size * 0.5), Math.min(0.5, ageMs / 4000), id, nowMs);
