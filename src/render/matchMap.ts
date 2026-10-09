@@ -1030,8 +1030,14 @@ export function createMatchMap(
     resetReservations();
 
     drawStarfield(starfield, rc);
-    drawSystemRegions(
-      computeSystemRegions(gameBodies, gameFactions, gameSettlements), rc);
+    // Territory is a system-wide answer, and a battle recap only carries
+    // one world's settlements (worker/recapMap.js), so the wash came out
+    // as a flat disc of one empire's colour around the battle. The
+    // world's own ownership ring still says who holds it.
+    if (!focus) {
+      drawSystemRegions(
+        computeSystemRegions(gameBodies, gameFactions, gameSettlements), rc);
+    }
 
     // Cosmetic specks through the belt, so it stops reading as five
     // lonely rocks all sitting at the same radius.
