@@ -680,6 +680,16 @@ const FLIGHT_FRAC = FX_TUNING.boltMs / TICK_MS;
 const KILL_AT_MS = (LAUNCH_SPREAD / 2 + FLIGHT_FRAC) * TICK_MS;
 /** Beats a wreck holds and fades over: combatFx WRECK_LIFE_TICKS. */
 const WRECK_LIFE_TICKS = 6;
+/** A hull arriving mid-fight brakes into its slot over this much of its
+ *  first beat, and nothing it fires or takes goes off until it is there.
+ *  It used to fly in across the whole beat while that beat's volleys
+ *  were already crossing it: "the firing before they arrive is
+ *  confusing" (Lorne, 2026-10-09). */
+const ARRIVE_FRAC = 0.3;
+/** Latest a volley may launch and still land, and finish its impact,
+ *  inside the beat. Fire to or from an arriving hull is fitted between
+ *  ARRIVE_FRAC and this, in the same order. */
+const LAUNCH_LAST = 1 - FLIGHT_FRAC - FX_TUNING.impactMs / TICK_MS - 0.01;
 /** Damage drains over this long once a round lands, so the bar moves
  *  with the hit that caused it. */
 const DRAIN_MS = 420;
@@ -1416,15 +1426,30 @@ export function BattleRecap({ d }: { d: Detail }) {
       // same on every replay.
       const shotIndex = new Map(frame.shot_log.map((sh, n) => [sh, n]));
       const nShots = Math.max(1, frame.shot_log.length);
+      // A hull arriving this beat neither fires nor is fired on until it
+      // has braked into its slot (ARRIVE_FRAC): its shots, both ways, are
+      // fitted into the rest of the launch window in the same order.
+      const arrivingNow = (id: string | null) => !!id && comings.arrived.get(id) === frame.tick;
       const shotClock = (sh: Frame['shot_log'][number], tick: number) => {
         const nudge = (hashStr(`${sh.a ?? ''}>${sh.t ?? ''}@${tick}`) % 997) / 997;
-        const launch = (((shotIndex.get(sh) ?? 0) + 0.15 + nudge * 0.7) / nShots) * LAUNCH_SPREAD;
+        const slot = ((shotIndex.get(sh) ?? 0) + 0.15 + nudge * 0.7) / nShots;
+        const launch = arrivingNow(sh.a) || arrivingNow(sh.t)
+          ? ARRIVE_FRAC + slot * (LAUNCH_LAST - ARRIVE_FRAC)
+          : slot * LAUNCH_SPREAD;
         return { launch, arriveMs: (launch + FLIGHT_FRAC) * TICK_MS };
       };
-      /** When the shot that killed this hull actually lands. */
+      /** When a hull that dies this beat goes up: as the LAST round to
+       *  hit it lands. Its killing shot is usually that round, but a hit
+       *  held back for an arrival can land later, and a round must never
+       *  fly into a wreck. */
       const killTimes = new Map<string, number>();
       for (const sh of frame.shot_log) {
         if (sh.kill && sh.t) killTimes.set(sh.t, shotClock(sh, frame.tick).arriveMs);
+      }
+      for (const sh of frame.shot_log) {
+        if (!sh.t || !sh.hit || !killTimes.has(sh.t)) continue;
+        const at = shotClock(sh, frame.tick).arriveMs;
+        if (at > killTimes.get(sh.t)!) killTimes.set(sh.t, at);
       }
       const killMs = (id: string) =>
         killTimes.get(id) ?? (LAUNCH_SPREAD / 2 + FLIGHT_FRAC) * TICK_MS;
@@ -1577,7 +1602,8 @@ export function BattleRecap({ d }: { d: Detail }) {
       /** How far through its arrival (or departure) a hull is, 0→1, and
        *  −1 when it is simply on station. */
       const transitOf = (id: string) => {
-        if (comings.arrived.get(id) === frame.tick) return t;
+        // Arrived and on station for the rest of the beat.
+        if (comings.arrived.get(id) === frame.tick) return t < ARRIVE_FRAC ? t / ARRIVE_FRAC : -1;
         if (comings.left.get(id) === frame.tick) return t;   // outbound
         return -1;
       };
@@ -1673,23 +1699,44 @@ export function BattleRecap({ d }: { d: Detail }) {
           drawCityCluster(g, { population: 4 } as never, col);
           g.restore();
         } else {
-          // A hull under way points where it is going; on station it
-          // rides its orbit.
+          // A hull under way: leaving, it boosts nose-first; arriving, it
+          // BRAKES, as the map's shaped burns do (mapRenderer
+          // drawTorchShip): it comes in already turned round, engine
+          // toward its slot and the flame blazing ahead of its motion,
+          // and only as the burn dies does it swing onto its orbit. On
+          // station it rides its orbit.
           const k = transitOf(r.id);
           const leaving = isLeaving(r.id);
           let heading = tangentOf(r.id);
+          let travel = heading;
+          let turnFade = 1;
           if (k >= 0) {
             const ahead = posOf(r.id);
             const behind = leaving ? onStation(r.id) : approachFrom(r.id);
-            heading = Math.atan2(ahead.y - behind.y, ahead.x - behind.x);
+            travel = Math.atan2(ahead.y - behind.y, ahead.x - behind.x);
+            heading = travel;
+            if (!leaving) {
+              // Retrograde for the brake, then a quick smoothstep turn
+              // onto the orbit over the last fifth of the arrival, the
+              // plume dying mid-turn as the map's flip does.
+              const u = Math.max(0, Math.min(1, (k - 0.8) / 0.2));
+              const settle = u * u * (3 - 2 * u);
+              const retro = travel + Math.PI;
+              let d = (tangentOf(r.id) - retro) % (Math.PI * 2);
+              if (d > Math.PI) d -= Math.PI * 2;
+              if (d < -Math.PI) d += Math.PI * 2;
+              heading = retro + d * settle;
+              turnFade = 1 - settle;
+            }
           }
 
           if (k >= 0) {
-            // Coming in hot and burning it off. The real plume, with the
-            // per-class bell geometry the map uses, at an intensity that
-            // falls away as the hull settles onto its station — and the
-            // reverse on the way out, lighting up as it leaves.
-            const burn = leaving ? Math.min(1, 0.25 + k * 0.95) : Math.max(0, 1 - k * k * 1.15);
+            // The real plume, with the per-class bell geometry the map
+            // uses, out of the hull's own stern: behind it on the way out,
+            // lighting up as it leaves; AHEAD of it on the way in (the
+            // hull is turned round), long through the hard brake (the
+            // map's 1.4) and falling away as it settles onto its station.
+            const burn = leaving ? Math.min(1, 0.25 + k * 0.95) : Math.max(0, 1 - k * k * 1.15) * turnFade;
             if (burn > 0.02) {
               const dir = { x: Math.cos(heading), y: Math.sin(heading) };
               const bell = {
@@ -1698,14 +1745,16 @@ export function BattleRecap({ d }: { d: Detail }) {
               };
               g.save();
               g.globalAlpha = dim;
-              drawThrustExhaust(g, bell, dir, size, burn * 1.1, r.cls ?? undefined);
+              drawThrustExhaust(g, bell, dir, size, burn * 1.1, r.cls ?? undefined,
+                undefined, undefined, leaving ? 1 : 1.4);
               g.restore();
             }
             if (!leaving) {
-              // The wake it drags in behind it, in the owner's trim.
+              // The wake it drags in behind it along its path, in the
+              // owner's trim: off its line of travel, not its nose.
               g.save();
               g.globalAlpha = dim * (1 - k) * 0.9;
-              drawRetreatWake(g, q, heading, size, trimOf(r.fid) ?? col, nowMs, r.id);
+              drawRetreatWake(g, q, travel, size, trimOf(r.fid) ?? col, nowMs, r.id);
               g.restore();
             }
           } else {
