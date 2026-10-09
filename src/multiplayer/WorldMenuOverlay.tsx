@@ -19,6 +19,7 @@
 // ============================================================
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useGameContext } from '../state/gameContext';
 import { useCamera } from '../state/cameraStore';
 import { useMultiplayerActions } from './MultiplayerActionsContext';
@@ -26,7 +27,8 @@ import type { MpActionResult } from './MultiplayerActionsContext';
 import { useFeatureGate } from '../hooks/useFeatureGate';
 import { BUILDING_FEATURE } from '../game/researchUnlocks';
 import { BUILDABLE_CLASSES, getShipClass } from '../game/shipClasses';
-import { sanitizeParts, partsCost, computeDesignStats } from '../game/shipParts';
+import { sanitizeParts, partsCost, computeDesignStats, PART_GLYPH } from '../game/shipParts';
+import type { ShipPartId } from '../game/shipParts';
 import { RESOURCE_LETTER_COLORS } from '../game/resourceColors';
 import { trackPendingBuild, resolveServerOrderId } from '../game/optimisticBuilds';
 
@@ -34,7 +36,7 @@ import { shipyardSlotsAtBody, canHostCity, canHostStation, isRawWorld, suggestSe
 import { EditableName } from '../components/EditableName';
 import { RushControl } from '../components/BuildPanel';
 import { humanizeMpError } from './errorMessages';
-import { ShipIcon } from '../components/ShipIcons';
+import { ShipIcon, ICON_VARIANT_NAMES, DEFAULT_SHIP_ICONS } from '../components/ShipIcons';
 import { randomShipName } from '../game/shipNames';
 import { pickFromPool } from '../game/namePools';
 import { deriveSecondary } from '../game/colorUtils';
@@ -1268,6 +1270,22 @@ const WmFleet: React.FC<{
       ?? gameState.shipDesigns?.find(d => d.shipClass === cls && d.isActive);
   const activeVariant = (cls: (typeof BUILDABLE_CLASSES)[number]) =>
     activeDesignOf(cls)?.iconVariant;
+  /** The look's NAME, under the hull: the design is the ship you get. */
+  const lookNameOf = (cls: (typeof BUILDABLE_CLASSES)[number]) =>
+    ICON_VARIANT_NAMES[cls]?.[activeVariant(cls) ?? DEFAULT_SHIP_ICONS[cls]] ?? '';
+  /** Step the picked design for a hull (desktop arrows). */
+  const cycleDesign = (cls: (typeof BUILDABLE_CLASSES)[number], dir: 1 | -1) => {
+    const list = buildChoices(cls, gameState.shipDesigns);
+    if (list.length < 2) return;
+    const cur = activeDesignOf(cls);
+    const i = Math.max(0, list.findIndex(d => d.id === cur?.id));
+    const next = list[(i + dir + list.length) % list.length];
+    setTemplatePick(p => ({ ...p, [cls]: next.id }));
+  };
+  /** Phone: the hull whose design sheet is open. */
+  const [pickFor, setPickFor] = useState<(typeof BUILDABLE_CLASSES)[number] | null>(null);
+  const openDesigner = (cls?: (typeof BUILDABLE_CLASSES)[number]) =>
+    window.dispatchEvent(new CustomEvent('orbital:open-ship-designer', { detail: { shipClass: cls } }));
 
   // Price dials, same as BuildPanel: host config x senate
   // ship_build_cost_multiplier x Construction discount, all folded into
@@ -1905,20 +1923,32 @@ const WmFleet: React.FC<{
               {/* single row: icon+name left, all meta stacked in the
                   right-side blank space — nothing wraps or spills. */}
               <span className="wm-shipmain">
-                <ShipIcon shipClass={cls} variant={activeVariant(cls)} size={18} color={p1} color2={p2} />
+                <ShipIcon shipClass={cls} variant={activeVariant(cls)} size={30} color={p1} color2={p2} />
                 <span className="wm-shipnm">{h.lock ? '🔒 ' : ''}{h.def.displayName.toUpperCase()}</span>
               </span>
               <span className="wm-shipmeta">
                 {h.costOre}m · {h.costCredits}c · {h.def.buildTime}t
               </span>
             </button>
-            {h.templates.length > 1 && !h.lock && templateSelect(cls, h, 'wm-shiptemplate')}
+            {h.templates.length > 0 && !h.lock && (
+              <button
+                type="button"
+                className="wm-shipdesign"
+                onClick={() => setPickFor(cls)}
+                aria-label={t('worldmenu.pick.change')}
+                data-testid={`wm-shipdesign-${cls}`}
+              >
+                <span className="wm-shipdesign__nm">{h.picked?.name ?? h.templates[0].name}</span>
+                <span className="wm-shipdesign__look">{lookNameOf(cls)}</span>
+                <span className="wm-shipdesign__caret" aria-hidden>▾</span>
+              </button>
+            )}
             </div>
           );
         })}
         <button
           className="wm-shipcell design"
-          onClick={() => window.dispatchEvent(new CustomEvent('orbital:open-ship-designer'))}
+          onClick={() => openDesigner()}
         >
           <span className="wm-shipmain"><span className="wm-shipnm">{t('worldmenu.design')}</span></span>
           <span className="wm-shipmeta">{t('worldmenu.customHull')}</span>
@@ -1938,13 +1968,26 @@ const WmFleet: React.FC<{
           return (
             <div key={cls} className={`wm-hullrow${h.lock ? ' is-locked' : ''}`} data-testid={`wm-hull-${cls}`}>
               <span className="wm-hullnm">
-                <ShipIcon shipClass={cls} variant={activeVariant(cls)} size={18} color={p1} color2={p2} />
-                {h.def.displayName.toUpperCase()}
+                <ShipIcon shipClass={cls} variant={activeVariant(cls)} size={36} color={p1} color2={p2} />
+                <span className="wm-hullnm__txt">
+                  {h.def.displayName.toUpperCase()}
+                  {!h.lock && <i className="wm-hullnm__look">{lookNameOf(cls)}</i>}
+                </span>
               </span>
               {h.lock ? (
                 <span className="wm-hulllock" title={h.lock}>🔒 {h.lockObj?.label}</span>
               ) : h.templates.length > 0 ? (
-                templateSelect(cls, h, 'wm-hulltpl')
+                <span className="wm-hullpick">
+                  {h.templates.length > 1 && (
+                    <button type="button" className="wm-hullstep" onClick={() => cycleDesign(cls, -1)}
+                      aria-label={t('worldmenu.pick.prev')}>‹</button>
+                  )}
+                  {templateSelect(cls, h, 'wm-hulltpl')}
+                  {h.templates.length > 1 && (
+                    <button type="button" className="wm-hullstep" onClick={() => cycleDesign(cls, 1)}
+                      aria-label={t('worldmenu.pick.next')}>›</button>
+                  )}
+                </span>
               ) : (
                 <span className="wm-hulltpl is-bare" title={t('worldmenu.bareTitle')}>{tk('worldmenu.bareHull', 'Bare hull')}</span>
               )}
@@ -1962,11 +2005,88 @@ const WmFleet: React.FC<{
         })}
         <button
           className="wm-hulldesign"
-          onClick={() => window.dispatchEvent(new CustomEvent('orbital:open-ship-designer'))}
+          onClick={() => openDesigner()}
         >{t('worldmenu.designTemplate')}</button>
       </div>
       )}
       </div>
+      {/* PHONE: choose a design for one hull. Opened from the cell's
+          design line; tapping a row picks it for this yard (the same
+          templatePick the desktop select writes), BUILD builds it. */}
+      {pickFor && (() => {
+        const cls = pickFor;
+        const h = hullInfo(cls);
+        const def = getShipClass(cls);
+        const list = h.templates;
+        const picked = activeDesignOf(cls);
+        return createPortal(
+          <div className="wm-dsheet__scrim" onClick={() => setPickFor(null)}>
+            <section
+              className="wm-dsheet"
+              role="dialog"
+              aria-modal="true"
+              aria-label={t('worldmenu.pick.title')}
+              onClick={e => e.stopPropagation()}
+              data-testid="wm-dsheet"
+            >
+              <div className="wm-dsheet__grip" aria-hidden />
+              <div className="wm-dsheet__head">
+                <span className="wm-dsheet__ttl">
+                  <i>{def.displayName.toUpperCase()}</i>
+                  <b>{t('worldmenu.pick.title')}</b>
+                </span>
+                <button type="button" className="wm-dsheet__x" onClick={() => setPickFor(null)} aria-label={t('worldmenu.cancel')}>×</button>
+              </div>
+              <div className="wm-dsheet__list">
+                {list.map(d => {
+                  const parts = sanitizeParts(d.parts);
+                  const pc = partsCost(parts, cls);
+                  const on = d.id === picked?.id;
+                  return (
+                    <button
+                      key={d.id}
+                      type="button"
+                      className={`wm-dsheet__row${on ? ' is-on' : ''}`}
+                      aria-pressed={on}
+                      onClick={() => setTemplatePick(p => ({ ...p, [cls]: d.id }))}
+                    >
+                      <ShipIcon shipClass={cls} variant={d.iconVariant} size={52} color={p1} color2={p2} />
+                      <span className="wm-dsheet__txt">
+                        <span className="wm-dsheet__nm">
+                          {d.name}
+                          {d.isActive && <span className="wm-dsheet__active">{t('ship.sd.active')}</span>}
+                        </span>
+                        <span className="wm-dsheet__look">{ICON_VARIANT_NAMES[cls]?.[d.iconVariant ?? DEFAULT_SHIP_ICONS[cls]]}</span>
+                        <span className="wm-dsheet__parts">
+                          {parts.length === 0 ? t('ship.sd.bareHull') : parts.map(pp => PART_GLYPH[pp as ShipPartId] ?? '?').join(' ')}
+                        </span>
+                        <span className="wm-dsheet__cost">
+                          {priced(def.cost.ore + pc.ore)}m · {priced(def.cost.credits + pc.credits)}c · {def.buildTime}t
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="wm-dsheet__foot">
+                <button type="button" className="wm-dsheet__edit" onClick={() => { setPickFor(null); openDesigner(cls); }}>
+                  {t('worldmenu.pick.edit')}
+                </button>
+                <button
+                  type="button"
+                  className="wm-dsheet__build"
+                  disabled={h.disabled}
+                  title={h.lock ?? (h.noYard ? t('worldmenu.buildYardFirst') : h.priceWhy)}
+                  onClick={() => { setPickFor(null); void buildShip(cls); }}
+                >
+                  {t('worldmenu.pick.build', { name: picked?.name ?? def.displayName })}
+                </button>
+              </div>
+            </section>
+          </div>,
+          document.body,
+        );
+      })()}
     </section>
   );
 };

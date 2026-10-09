@@ -59,7 +59,8 @@ describe('the desktop yard', () => {
 
   it('every unlocked hull row has a template picker (or says it builds bare)', () => {
     const hulls = fleet.slice(fleet.indexOf('className="wm-hulls"'));
-    expect(hulls).toMatch(/h\.templates\.length > 0 \? \(\s*templateSelect\(cls, h, 'wm-hulltpl'\)/);
+    // (the picker sits between the < > design arrows since 2026-10-08)
+    expect(hulls).toMatch(/h\.templates\.length > 0 \? \(\s*<span className="wm-hullpick">[\s\S]{0,400}templateSelect\(cls, h, 'wm-hulltpl'\)/);
     expect(hulls).toMatch(/Bare hull/);
     // BUILD is its own button, so the picker can live in the row
     expect(hulls).toMatch(/className="wm-hullbuild"[\s\S]{0,300}onClick=\{\(\) => buildShip\(cls\)\}/);

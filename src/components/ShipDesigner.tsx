@@ -187,6 +187,9 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   const [rightTab, setRightTab] = useState<'loadout' | 'look' | 'stats'>('loadout');
   /** Phone: the design library opens over the stage from the header. */
   const [libOpen, setLibOpen] = useState(false);
+  /** The player asked for a blank hull (+ New design). Otherwise the
+   *  designer shows the class's ACTIVE design: the ship you build. */
+  const [blank, setBlank] = useState(false);
   /** Refit-bar feedback ("Refitted 4, 2 pending"). */
   const [refitNote, setRefitNote] = useState<string | null>(null);
 
@@ -370,6 +373,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   /** Load a template into the editor as a new unsaved design. */
   const loadTemplate = (t: ShipTemplate) => {
     setLibOpen(false);
+    setBlank(true);
     setSelectedId(null);
     setDraftName(t.name);
     setDraftParts(sanitizeParts(t.parts));
@@ -402,6 +406,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   };
 
   const switchClass = (cls: BuildableClassName) => {
+    setBlank(false);
     setActiveClass(cls);
     setPreviewIcon(undefined);
     setSelectedId(null);
@@ -539,6 +544,16 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
       + '.',
     );
   };
+
+  // Open on the class's active design: the stage shows the ship the yard
+  // builds, not a bare default hull. Never over a blank the player asked
+  // for, and never over a design they are already editing.
+  useEffect(() => {
+    if (blank || selectedId != null) return;
+    const active = classDesigns.find(d => d.isActive);
+    if (active) loadDesign(active);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeClass, classDesigns, blank, selectedId]);
 
   // MP-only feature — GameUI already gates the mount, but be defensive.
   if (!mpActions) return null;
@@ -846,7 +861,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
             </div>
             {classDesigns.length === 0 && <div className="sd-hint">{t('ship.sd.noDesigns')}</div>}
             {classDesigns.map(designRow)}
-            <button className="sd-new" onClick={() => loadDesign(null)}>{t('ship.sd.newClassDesign', { cls: clsName })}</button>
+            <button className="sd-new" onClick={() => { loadDesign(null); setBlank(true); }}>{t('ship.sd.newClassDesign', { cls: clsName })}</button>
 
             <div className="sd-lib__head sd-lib__head--sub">{t('ship.sd.templatesHead')}</div>
             {templates === null ? (
