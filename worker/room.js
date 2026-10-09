@@ -12296,6 +12296,14 @@ export class Room {
           .bind(newRecapToken(), row.id, gameId, nowMs)
           .run();
       } catch (e) { console.error('recap token mint failed', e); }
+
+      // The battle card went to Discord while the fighting was still on,
+      // before this link existed. Now that it does, the feed gets the
+      // replay: the same gates as the card (worker/recapShare.js).
+      try {
+        const { publishReplay } = await import('./recapShare.js');
+        await publishReplay(this.env, gameId, row.id);
+      } catch (e) { console.error('replay post failed', e); }
     }
 
     // A campaign ends when the last engagement in it does. Doing this

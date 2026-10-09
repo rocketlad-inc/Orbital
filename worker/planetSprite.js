@@ -17,6 +17,17 @@ const CACHE_MAX = 200;
  * rasteriser cannot start. Shared by the planet sprites and the face map.
  */
 export async function rasterSvgPng(svg, px) {
+  const img = await rasterSvgPixels(svg, px);
+  return img ? encodePng(img) : null;
+}
+
+/**
+ * An SVG rasterised to straight-alpha RGBA pixels { w, h, data }, or null
+ * when the rasteriser cannot start. For callers that composite the art
+ * into a bigger picture (the recap's link-preview card) rather than
+ * serving it alone.
+ */
+export async function rasterSvgPixels(svg, px) {
   try {
     const { default: wasm } = await import('./resvgWasm.js');
     configureRasterizer(wasm);
@@ -36,13 +47,13 @@ export async function rasterSvgPng(svg, px) {
     data[i + 1] = Math.min(255, Math.round((src[i + 1] * 255) / a));
     data[i + 2] = Math.min(255, Math.round((src[i + 2] * 255) / a));
   }
-  const png = await encodePng({ w: img.width, h: img.height, data });
+  const out = { w: img.width, h: img.height, data };
   img.free?.();
-  return png;
+  return out;
 }
 
 /** The world's globe as base64 PNG, or null (no globe, or not found). */
-async function globePngOf(req, env, body) {
+export async function globePngOf(req, env, body) {
   const name = globeNameOf(body);
   if (!name || !env?.ASSETS) return null;
   try {
