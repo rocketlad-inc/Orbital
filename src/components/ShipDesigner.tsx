@@ -52,6 +52,7 @@ import { PART_FEATURE } from '../game/researchUnlocks';
 import { useFeatureGate } from '../hooks/useFeatureGate';
 import { t, tn, tk } from '../i18n/core';
 import { useI18n } from '../i18n/react';
+import { deriveSecondary } from '../game/colorUtils';
 import './ShipDesigner.css';
 
 interface ShipDesignerProps {
@@ -156,7 +157,6 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   const [draftName, setDraftName] = useState('');
   const [draftParts, setDraftParts] = useState<ShipPartId[]>([]);
   const [draftIcon, setDraftIcon] = useState<ShipIconVariant | undefined>(undefined);
-  const [iconMenuOpen, setIconMenuOpen] = useState(false);
   // A Commission line shown on the avatar for a look, never saved: the
   // design keeps draftIcon, and the save paths never read this. Showing
   // the goods on the player's own hull is the whole pitch (insight
@@ -166,7 +166,6 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   // and the build queue both re-check the entitlement server-side.
   const { user } = useAuth();
   const isPremium = !!user?.is_premium;
-  const iconDropdownRef = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** Cross-game template library. null = still loading. */
@@ -184,12 +183,10 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   /** Transient refusal toast ("Slots full — unfit a part first"). */
   const [flash, setFlash] = useState<string | null>(null);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** Palette drawer collapse (desktop). Mobile always shows it inline. */
-  const [drawerOpen, setDrawerOpen] = useState(true);
-  /** Library strip collapse — designs/templates picker above the canvas. */
-  const [libraryOpen, setLibraryOpen] = useState(false);
-  /** Mobile stat sheet expansion (sticky footer → full detail). */
-  const [statsSheetOpen, setStatsSheetOpen] = useState(false);
+  /** Right column: fit parts, pick the look, or read the numbers. */
+  const [rightTab, setRightTab] = useState<'loadout' | 'look' | 'stats'>('loadout');
+  /** Phone: the design library opens over the stage from the header. */
+  const [libOpen, setLibOpen] = useState(false);
   /** Refit-bar feedback ("Refitted 4, 2 pending"). */
   const [refitNote, setRefitNote] = useState<string | null>(null);
 
@@ -199,18 +196,6 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
     flashTimer.current = setTimeout(() => setFlash(null), 2200);
   };
   useEffect(() => () => { if (flashTimer.current) clearTimeout(flashTimer.current); }, []);
-
-  // Close the icon dropdown on any outside click while it's open.
-  useEffect(() => {
-    if (!iconMenuOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (iconDropdownRef.current && !iconDropdownRef.current.contains(e.target as Node)) {
-        setIconMenuOpen(false);
-      }
-    };
-    window.addEventListener('mousedown', onDown);
-    return () => window.removeEventListener('mousedown', onDown);
-  }, [iconMenuOpen]);
 
   // Load the account-level template library once when the designer opens.
   useEffect(() => {
@@ -231,16 +216,16 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Esc closes the icon dropdown first if it's open, otherwise the modal.
+  // Esc closes the phone library first if it's open, otherwise the modal.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
-      if (iconMenuOpen) { setIconMenuOpen(false); return; }
+      if (libOpen) { setLibOpen(false); return; }
       onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose, iconMenuOpen]);
+  }, [onClose, libOpen]);
 
   const stateDesigns = gameState.shipDesigns;
   const classDesigns = useMemo(() => {
@@ -366,6 +351,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   };
 
   const loadDesign = (d: ShipDesign | null) => {
+    setLibOpen(false);
     setSelectedId(d?.id ?? null);
     setDraftName(d?.name ?? '');
     setDraftParts(d ? sanitizeParts(d.parts) : []);
@@ -383,6 +369,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
 
   /** Load a template into the editor as a new unsaved design. */
   const loadTemplate = (t: ShipTemplate) => {
+    setLibOpen(false);
     setSelectedId(null);
     setDraftName(t.name);
     setDraftParts(sanitizeParts(t.parts));
@@ -561,7 +548,6 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   // class leaves the preview behind (its name belongs to the old class).
   const shownIcon = previewIcon ?? iconVariant;
   const allowedParts = ALL_PART_IDS.filter(p => SHIP_PART_DEFS[p].allowedOn.includes(activeClass));
-  const activeDesignForClass = classDesigns.find(d => d.isActive) ?? null;
 
   // Socket ring geometry: N sockets evenly spaced, starting at 12
   // o'clock. Percent-based so the ring scales with the canvas.
@@ -726,219 +712,180 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
     </div>
   );
 
+  // The ship as it flies: the empire's own two colours, the same pair the
+  // map, the World Menu and the build queue paint hulls with.
+  const pf = gameState.factions.find(f => f.id === 'player');
+  const p1 = pf?.color ?? '#4fc3f7';
+  const p2 = (pf as { color2?: string } | undefined)?.color2 || deriveSecondary(p1);
+
+  const partGlyphs = (parts: readonly string[]) =>
+    parts.length === 0 ? t('ship.sd.bareHull') : parts.map(p => PART_GLYPH[p as ShipPartId] ?? '?').join(' ');
+
+  const looksStd = ALL_VARIANTS.filter(v => !PREMIUM_VARIANTS.has(v));
+  const looksCom = ALL_VARIANTS.filter(v => PREMIUM_VARIANTS.has(v));
+  const pickLook = (v: ShipIconVariant) => {
+    const locked = !isPremium && PREMIUM_VARIANTS.has(v);
+    if (locked) {
+      setPreviewIcon(v);
+      logCommission('designer', 'view');
+    } else {
+      setDraftIcon(v);
+      setPreviewIcon(undefined);
+    }
+  };
+  const lookTile = (v: ShipIconVariant) => {
+    const locked = !isPremium && PREMIUM_VARIANTS.has(v);
+    const on = v === shownIcon;
+    return (
+      <button
+        key={v}
+        type="button"
+        className={`sd-look ${on ? 'is-on' : ''} ${PREMIUM_VARIANTS.has(v) ? 'is-paid' : ''}`}
+        aria-pressed={on}
+        title={locked
+          ? t('ship.sd.previewLineTip', { line: ICON_VARIANT_NAMES[activeClass][v], commission: tk('mp.commission.name', COMMISSION_NAME) })
+          : undefined}
+        onClick={() => pickLook(v)}
+      >
+        <ShipIcon shipClass={activeClass} variant={v} size={60} color={p1} color2={p2} />
+        <span className="sd-look__name">
+          {locked && <span aria-hidden>🔒 </span>}
+          {ICON_VARIANT_NAMES[activeClass][v]}
+          {v === DEFAULT_SHIP_ICONS[activeClass] && <span className="sd-look__dflt"> · {t('ship.sd.default')}</span>}
+        </span>
+      </button>
+    );
+  };
+
+  const designRow = (d: ShipDesign) => (
+    <div
+      key={d.id}
+      className={`sd-dz ${d.id === selectedId ? 'is-on' : ''}`}
+      onClick={() => loadDesign(d)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); loadDesign(d); } }}
+    >
+      <ShipIcon shipClass={d.shipClass} variant={d.iconVariant} size={44} color={p1} color2={p2} />
+      <span className="sd-dz__text">
+        <span className="sd-dz__name">
+          {d.name}
+          {d.isActive && <span className="sd-badge" title={t('ship.sd.activeBadgeTip')}>{t('ship.sd.active')}</span>}
+        </span>
+        <span className="sd-dz__look">{ICON_VARIANT_NAMES[d.shipClass][d.iconVariant ?? DEFAULT_SHIP_ICONS[d.shipClass]]}</span>
+        <span className="sd-dz__parts">{partGlyphs(d.parts)}</span>
+      </span>
+      <span className="sd-dz__acts">
+        {d.isActive ? (
+          <button className="sd-mini-btn" disabled={busy}
+            onClick={e => { e.stopPropagation(); setActiveDesign(d, false); }}
+            title={t('ship.sd.unsetTip')}>{t('ship.sd.unset')}</button>
+        ) : (
+          <button className="sd-mini-btn" disabled={busy}
+            onClick={e => { e.stopPropagation(); setActiveDesign(d, true); }}
+            title={t('ship.sd.setActiveTip')}>{t('ship.sd.setActive')}</button>
+        )}
+        <button className="sd-mini-btn sd-mini-btn--danger" disabled={busy}
+          onClick={e => { e.stopPropagation(); deleteDesign(d); }}
+          title={t('ship.sd.deleteDesignTip')} aria-label={t('ship.sd.deleteDesignTip')}>✕</button>
+      </span>
+    </div>
+  );
+
+  const templateRow = (tpl: ShipTemplate & { gameName?: string | null }, canDelete: boolean) => (
+    <div key={tpl.id} className="sd-tz">
+      <ShipIcon shipClass={activeClass} variant={tpl.iconVariant} size={28} color={p1} color2={p2} />
+      <span className="sd-tz__text">
+        <span className="sd-tz__name">{tpl.name}</span>
+        <span className="sd-tz__meta">{partGlyphs(tpl.parts)}{tpl.gameName ? ` · ${tpl.gameName}` : ''}</span>
+      </span>
+      <button className="sd-mini-btn sd-mini-btn--go" disabled={busy} onClick={() => loadTemplate(tpl)} title={t('ship.sd.loadTip')}>{t('ship.sd.load')}</button>
+      {canDelete && (
+        <button className="sd-mini-btn sd-mini-btn--danger" disabled={busy} onClick={() => deleteTemplate(tpl)}
+          title={t('ship.sd.deleteTemplateTip')} aria-label={t('ship.sd.deleteTemplateTip')}>✕</button>
+      )}
+    </div>
+  );
+
+  const clsName = SHIP_CLASSES[activeClass].displayName;
+
   return (
     <div className="ship-designer-overlay" onClick={onClose}>
       <div className="sd" onClick={e => e.stopPropagation()}>
-        {/* ---------- Header: title + class tabs + close ---------- */}
+        {/* ---------- Header: title + hull classes + close ---------- */}
         <div className="sd-header">
           <span className="sd-title">{t('ship.sd.title')}</span>
-          <div className="sd-tabs">
+          <div className="sd-tabs" role="tablist" aria-label={t('ship.sd.title')}>
             {BUILDABLE_CLASSES.filter(cls => (SHIP_SLOT_COUNTS[cls] ?? 0) > 0).map(cls => (
               <button
                 key={cls}
+                role="tab"
+                aria-selected={cls === activeClass}
                 className={`sd-tab ${cls === activeClass ? 'active' : ''}`}
                 onClick={() => switchClass(cls)}
               >
-                <ShipIcon shipClass={cls} size={14} />
+                <ShipIcon shipClass={cls} variant={(freshDesigns ?? stateDesigns ?? []).find(d => d.shipClass === cls && d.isActive)?.iconVariant}
+                  size={24} color={p1} color2={p2} />
                 <span className="sd-tab__name">{SHIP_CLASSES[cls].displayName}</span>
                 <span className="sd-tab__slots">{SHIP_SLOT_COUNTS[cls]}◯</span>
               </button>
             ))}
           </div>
+          <button className="sd-libbtn" onClick={() => setLibOpen(o => !o)} aria-expanded={libOpen}>
+            {t('ship.sd.designsBtn')} {libOpen ? '▴' : '▾'}
+          </button>
           <button className="sd-close" onClick={onClose} aria-label={t('ship.sd.close')}>✕</button>
         </div>
 
         <div className="sd-main">
-          {/* ---------- Center column: canvas + palette drawer ---------- */}
-          <div className="sd-center">
-            {/* Library strip: saved designs + cross-game templates. */}
-            <div className="sd-library">
-              <button
-                className="sd-library__toggle"
-                onClick={() => setLibraryOpen(o => !o)}
-                aria-expanded={libraryOpen}
-              >
-                {libraryOpen ? '▾' : '▸'} {t('ship.sd.library')}
-                <span className="sd-library__meta">
-                  {tn('ship.sd.designs', classDesigns.length)}
-                  {activeDesignForClass ? ` · ${t('ship.sd.activeName', { name: activeDesignForClass.name })}` : ` · ${t('ship.sd.buildsBare')}`}
-                </span>
-              </button>
-              {libraryOpen && (
-                <div className="sd-library__body">
-                  {classDesigns.length === 0 && (
-                    <div className="sd-hint">
-                      {t('ship.sd.noDesigns')}
-                    </div>
-                  )}
-                  {classDesigns.map(d => (
-                    <div
-                      key={d.id}
-                      className={`sd-library__row ${d.id === selectedId ? 'selected' : ''}`}
-                      onClick={() => loadDesign(d)}
-                    >
-                      <ShipIcon shipClass={d.shipClass} variant={d.iconVariant} size={16} />
-                      <span className="sd-library__row-name">
-                        {d.name}
-                        <span className="sd-library__row-parts">
-                          {d.parts.length === 0 ? t('ship.sd.bareHull') : d.parts.map(p => PART_GLYPH[p as ShipPartId] ?? '?').join(' ')}
-                        </span>
-                      </span>
-                      {d.isActive ? (
-                        <>
-                          <span className="sd-badge" title={t('ship.sd.activeBadgeTip')}>{t('ship.sd.active')}</span>
-                          <button
-                            className="sd-mini-btn"
-                            disabled={busy}
-                            onClick={e => { e.stopPropagation(); setActiveDesign(d, false); }}
-                            title={t('ship.sd.unsetTip')}
-                          >{t('ship.sd.unset')}</button>
-                        </>
-                      ) : (
-                        <button
-                          className="sd-mini-btn"
-                          disabled={busy}
-                          onClick={e => { e.stopPropagation(); setActiveDesign(d, true); }}
-                          title={t('ship.sd.setActiveTip')}
-                        >{t('ship.sd.setActive')}</button>
-                      )}
-                      <button
-                        className="sd-mini-btn sd-mini-btn--danger"
-                        disabled={busy}
-                        onClick={e => { e.stopPropagation(); deleteDesign(d); }}
-                        title={t('ship.sd.deleteDesignTip')}
-                      >✕</button>
-                    </div>
-                  ))}
-                  <div className="sd-library__subhead">{t('ship.sd.templatesHead')}</div>
-                  {templates === null ? (
-                    <div className="sd-hint">{t('ship.sd.loadingTemplates')}</div>
-                  ) : classTemplates.length === 0 ? (
-                    <div className="sd-hint">
-                      {t('ship.sd.noTemplates')}
-                    </div>
-                  ) : classTemplates.map(tpl => (
-                    <div key={tpl.id} className="sd-library__row">
-                      <ShipIcon shipClass={activeClass} variant={tpl.iconVariant} size={16} />
-                      <span className="sd-library__row-name">
-                        {tpl.name}
-                        <span className="sd-library__row-parts">
-                          {tpl.parts.length === 0 ? t('ship.sd.bareHull') : tpl.parts.map(p => PART_GLYPH[p as ShipPartId] ?? '?').join(' ')}
-                        </span>
-                      </span>
-                      <button className="sd-mini-btn" disabled={busy} onClick={() => loadTemplate(tpl)} title={t('ship.sd.loadTip')}>{t('ship.sd.load')}</button>
-                      <button className="sd-mini-btn sd-mini-btn--danger" disabled={busy} onClick={() => deleteTemplate(tpl)} title={t('ship.sd.deleteTemplateTip')}>✕</button>
-                    </div>
-                  ))}
-
-                  {/* Loadouts from your other games. Read-only: LOAD drops
-                      one into the editor and SAVE runs the ordinary create
-                      path, so this game's tech still decides what fits. */}
-                  {classPastDesigns.length > 0 && (
-                    <>
-                      <div className="sd-library__subhead">{t('ship.sd.otherGames')}</div>
-                      {classPastDesigns.map(tpl => (
-                        <div key={tpl.id} className="sd-library__row">
-                          <ShipIcon shipClass={activeClass} variant={tpl.iconVariant} size={16} />
-                          <span className="sd-library__row-name">
-                            {tpl.name}
-                            <span className="sd-library__row-parts">
-                              {tpl.parts.length === 0
-                                ? t('ship.sd.bareHull')
-                                : tpl.parts.map(p => PART_GLYPH[p as ShipPartId] ?? '?').join(' ')}
-                              {tpl.gameName ? ` · ${tpl.gameName}` : ''}
-                            </span>
-                          </span>
-                          <button
-                            className="sd-mini-btn"
-                            disabled={busy}
-                            onClick={() => loadTemplate(tpl)}
-                            title={t('ship.sd.loadTip')}
-                          >{t('ship.sd.load')}</button>
-                        </div>
-                      ))}
-                    </>
-                  )}
-                </div>
-              )}
+          {/* ---------- Left: this game's designs + the account library ---------- */}
+          <aside className={`sd-lib ${libOpen ? 'is-open' : ''}`}>
+            <div className="sd-lib__head">
+              <span>{t('ship.sd.designsHead', { cls: clsName })}</span>
+              <span className="sd-lib__count">{classDesigns.length}/12</span>
             </div>
+            {classDesigns.length === 0 && <div className="sd-hint">{t('ship.sd.noDesigns')}</div>}
+            {classDesigns.map(designRow)}
+            <button className="sd-new" onClick={() => loadDesign(null)}>{t('ship.sd.newClassDesign', { cls: clsName })}</button>
 
-            {/* Name + icon row */}
+            <div className="sd-lib__head sd-lib__head--sub">{t('ship.sd.templatesHead')}</div>
+            {templates === null ? (
+              <div className="sd-hint">{t('ship.sd.loadingTemplates')}</div>
+            ) : classTemplates.length === 0 ? (
+              <div className="sd-hint">{t('ship.sd.noTemplates')}</div>
+            ) : classTemplates.map(tpl => templateRow(tpl, true))}
+
+            {classPastDesigns.length > 0 && (
+              <>
+                <div className="sd-lib__head sd-lib__head--sub">{t('ship.sd.otherGames')}</div>
+                {classPastDesigns.map(tpl => templateRow(tpl, false))}
+              </>
+            )}
+          </aside>
+
+          {/* ---------- Centre: the ship as it flies ---------- */}
+          <div className="sd-stage">
             <div className="sd-name-row">
               <input
                 className="sd-name-input"
+                aria-label={t('ship.sd.namePlaceholder')}
                 placeholder={selected ? selected.name : t('ship.sd.namePlaceholder')}
                 value={draftName}
                 maxLength={32}
                 onChange={e => setDraftName(e.target.value)}
               />
-              <div className="sd-icon-dd" ref={iconDropdownRef}>
-                <button
-                  type="button"
-                  className={`sd-icon-btn ${iconMenuOpen ? 'open' : ''}`}
-                  onClick={() => setIconMenuOpen(o => !o)}
-                  aria-haspopup="listbox"
-                  aria-expanded={iconMenuOpen}
-                  title={t('ship.sd.changeIcon')}
-                >
-                  <ShipIcon shipClass={activeClass} variant={iconVariant} size={18} />
-                  <span className="sd-icon-caret" aria-hidden>▾</span>
-                </button>
-                {iconMenuOpen && (
-                  <div className="sd-icon-menu" role="listbox" aria-label={t('ship.sd.shipIcon')}>
-                    {ALL_VARIANTS.map(v => {
-                      const isDefault = v === DEFAULT_SHIP_ICONS[activeClass];
-                      // Premium lines render for everyone — locked, not
-                      // hidden; the hull you can see but not fly is the ad.
-                      // Clicking one PREVIEWS it on the avatar (not saved).
-                      const locked = !isPremium && PREMIUM_VARIANTS.has(v);
-                      return (
-                        <button
-                          key={v}
-                          type="button"
-                          role="option"
-                          aria-selected={v === iconVariant}
-                          className={`sd-icon-option ${v === iconVariant ? 'selected' : ''} ${locked ? 'is-locked' : ''}`}
-                          title={locked
-                            ? t('ship.sd.previewLineTip', { line: ICON_VARIANT_NAMES[activeClass][v], commission: tk('mp.commission.name', COMMISSION_NAME) })
-                            : undefined}
-                          onClick={() => {
-                            if (locked) {
-                              setPreviewIcon(v);
-                              logCommission('designer', 'view');
-                            } else {
-                              setDraftIcon(v);
-                              setPreviewIcon(undefined);
-                            }
-                            setIconMenuOpen(false);
-                          }}
-                        >
-                          <ShipIcon shipClass={activeClass} variant={v} size={22} />
-                          <span>
-                            {ICON_VARIANT_NAMES[activeClass][v]}
-                            {isDefault && <span className="sd-icon-default"> · {t('ship.sd.default')}</span>}
-                            {locked && <span aria-hidden> 🔒</span>}
-                          </span>
-                          {v === iconVariant && <span aria-hidden>✓</span>}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-              {selected && (
-                <button className="sd-mini-btn" onClick={() => loadDesign(null)}>{t('ship.sd.newDesign')}</button>
-              )}
+            </div>
+            <div className="sd-lookline">
+              <span className="sd-lookline__cls">{clsName}</span>
+              <span className={`sd-lookchip ${PREMIUM_VARIANTS.has(shownIcon) ? 'is-paid' : ''}`}>
+                {PREMIUM_VARIANTS.has(shownIcon) ? '❖ ' : ''}{ICON_VARIANT_NAMES[activeClass][shownIcon]}
+              </span>
             </div>
 
-            {/* ---------- THE CANVAS: avatar + socket ring ---------- */}
             <div className={`sd-canvas ${dragging ? 'sd-canvas--dragging' : ''}`} data-tutorial-id="designer-canvas">
+              <div className="sd-canvas__ring" aria-hidden />
               <div className="sd-canvas__avatar">
-                {/* Component avatar: the portrait physically grows the
-                    fitted hardware (barrel, emitter, plating, plume,
-                    shield bubble) — live, as parts land in sockets. */}
-                <ShipIcon shipClass={activeClass} variant={shownIcon} size={96} parts={draftParts} />
-                <div className="sd-canvas__hull-name">{SHIP_CLASSES[activeClass].displayName}</div>
+                <ShipIcon shipClass={activeClass} variant={shownIcon} size={260} parts={draftParts} color={p1} color2={p2} />
               </div>
               {Array.from({ length: slots }).map((_, i) => {
                 const part = draftParts[i] as ShipPartId | undefined;
@@ -971,200 +918,192 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                   </button>
                 );
               })}
-              <div className="sd-canvas__slots-label">
-                {t('ship.sd.slotsLabel', { used: draftParts.length, slots })}
-              </div>
+              {previewIcon && (
+                <div className="sd-previewchip" role="status">{t('ship.sd.previewChip', { line: ICON_VARIANT_NAMES[activeClass][previewIcon] })}</div>
+              )}
               {!dragHintSeen && draftParts.length === 0 && slots > 0 && (
-                <div className="sd-drag-hint" aria-hidden>
-                  {t('ship.sd.dragHint')}
-                </div>
+                <div className="sd-drag-hint" aria-hidden>{t('ship.sd.dragHint')}</div>
               )}
               {flash && <div className="sd-flash" role="alert">⚠ {flash}</div>}
-              {nDetonators > 0 && (
-                <div className="sd-canvas__det-warning">⚠ {detonatorDisclosure(detDamage)}</div>
-              )}
-              {previewIcon && (
-                <div className="sd-preview" role="status">
-                  <span>
-                    {t('ship.sd.previewA')} <b>{ICON_VARIANT_NAMES[activeClass][previewIcon]}</b>{t('ship.sd.previewB', { commission: tk('mp.commission.name', COMMISSION_NAME), discord: tk('mp.commission.discord', COMMISSION_DISCORD) })}
-                  </span>
+            </div>
+            <div className="sd-canvas__slots-label">{t('ship.sd.slotsLabel', { used: draftParts.length, slots })}</div>
+            {nDetonators > 0 && (
+              <div className="sd-canvas__det-warning">⚠ {detonatorDisclosure(detDamage)}</div>
+            )}
+
+            {/* the at-a-glance strip: what this hull is */}
+            <div className="sd-strip">
+              <div className="sd-strip__cell"><span>{t('ship.sd.maxHp')}</span><b><Delta from={hpOut(base.hp)} to={hpOut(stats.hp)} /></b></div>
+              <div className="sd-strip__cell"><span>{t('ship.sd.dmgVolley')}</span><b><Delta from={base.damagePerTick} to={stats.damagePerTick} /></b></div>
+              <div className="sd-strip__cell"><span>{t('ship.sd.speed')}</span><b><Delta from={base.speed} to={stats.speed} /></b></div>
+              <div className="sd-strip__cell" title={costNote}><span>{t('ship.sd.costShip')}</span><b>{priced(hullDef.cost.ore + draftCost.ore)}M {priced(hullDef.cost.credits + draftCost.credits)}C</b></div>
+              <div className="sd-strip__cell"><span>{t('ship.sd.upkeep')}</span><b>{upkeepLabel}</b></div>
+            </div>
+          </div>
+
+          {/* ---------- Right: LOADOUT / LOOK / STATS ---------- */}
+          <div className="sd-side" data-tutorial-id="designer-stats">
+            <div className="sd-sidetabs" role="tablist">
+              {(['loadout', 'look', 'stats'] as const).map(k => (
+                <button key={k} role="tab" aria-selected={rightTab === k}
+                  className={`sd-sidetab ${rightTab === k ? 'active' : ''}`}
+                  onClick={() => setRightTab(k)}>
+                  {t(`ship.sd.tab.${k}` as const)}
+                </button>
+              ))}
+            </div>
+
+            {rightTab === 'loadout' && (
+              <div className="sd-pane">
+                {activeClass === 'freighter' && <div className="sd-hint">{t('ship.sd.freighterHint')}</div>}
+                {allowedParts.map(pid => {
+                  const def = SHIP_PART_DEFS[pid];
+                  const n = countPart(draftParts, pid);
+                  const isDet = pid === 'detonator';
+                  const lock = gate.lockReason(PART_FEATURE[pid]);
+                  const next = nextCopyCost(pid, n);
+                  const full = !lock && draftParts.length >= slots;
+                  const firstIdx = draftParts.indexOf(pid);
+                  return (
+                    <div
+                      key={pid}
+                      className={[
+                        'sd-part',
+                        isDet ? 'sd-part--detonator' : '',
+                        lock ? 'sd-part--locked' : '',
+                        dragging === pid ? 'sd-part--dragging' : '',
+                      ].filter(Boolean).join(' ')}
+                      draggable={!lock}
+                      onDragStart={e => {
+                        if (lock) { e.preventDefault(); return; }
+                        e.dataTransfer.setData('text/orbital-part', pid);
+                        e.dataTransfer.effectAllowed = 'copy';
+                        setDragging(pid);
+                      }}
+                      onDragEnd={() => setDragging(null)}
+                      title={`${def.blurb}\n${def.techNote}${lock ? `\n🔒 ${lock.text}` : ''}`}
+                    >
+                      <span className="sd-part__glyph">{PART_GLYPH[pid]}</span>
+                      <span className="sd-part__text">
+                        <span className="sd-part__name">
+                          {def.name}
+                          {n > 0 && <span className="sd-part__fitted"> ×{n}</span>}
+                        </span>
+                        <span className={`sd-part__price ${lock ? 'is-lock' : ''}`}
+                          title={n > 0 ? t('ship.sd.escalateTip', { mult: PART_STACK_ESCALATION }) : t('ship.sd.basePrice')}>
+                          {lock ? `🔒 ${lock.text}` : <>{n > 0 && <span className="sd-part__price-nth">#{n + 1} </span>}{next.ore}M {next.credits}C</>}
+                        </span>
+                        <span className="sd-part__blurb">{def.blurb}</span>
+                        {counterText(pid) && (
+                          <span className="sd-part__counter">{t('ship.sd.countered', { text: counterText(pid) ?? '' })}</span>
+                        )}
+                        {isDet && <span className="sd-part__counter sd-part__counter--det">{t('ship.sd.detWarn')}</span>}
+                      </span>
+                      <span className="sd-part__btns">
+                        <button type="button" className="sd-step" disabled={firstIdx < 0}
+                          aria-label={t('ship.sd.unfitTip', { name: def.name })}
+                          onClick={() => { if (firstIdx >= 0) unfitSocket(firstIdx); }}>−</button>
+                        <button type="button" className="sd-step sd-step--go" aria-disabled={!!lock || full}
+                          aria-label={t('ship.sd.clickToFit')}
+                          onClick={() => { if (!lock) fitPart(pid); else showFlash(t('ship.sd.partLockedShort', { name: def.name, reason: lock.text })); }}>+</button>
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {rightTab === 'look' && (
+              <div className="sd-pane">
+                <div className="sd-lib__head">{t('ship.sd.looksStandard', { n: looksStd.length })}</div>
+                <div className="sd-looks">{looksStd.map(lookTile)}</div>
+                <div className="sd-lib__head sd-lib__head--paid">{t('ship.sd.looksCommission', { n: looksCom.length })}</div>
+                <div className="sd-looks">{looksCom.map(lookTile)}</div>
+              </div>
+            )}
+
+            {rightTab === 'stats' && (
+              <div className="sd-pane">
+                <div className="sd-side__stats">{statRows}</div>
+                {/* COMBAT V2's core rule, live: a player fitting an engine
+                    watches these numbers move and learns the whole system. */}
+                <div className="sd-hit">
+                  <div className="sd-hit__title">{t('ship.sd.hitTitle')}</div>
+                  <div className="sd-hit__row">
+                    {(['corvette', 'frigate', 'destroyer'] as ShipClassName[]).map(hc => {
+                      const p = hitChanceOf(stats.speed, HULL_BASE[hc].speed);
+                      return (
+                        <div key={hc} className="sd-hit__cell" title={t('ship.sd.vsBare', { cls: hc, speed: HULL_BASE[hc].speed })}>
+                          <span className="sd-hit__pct">{(100 * p).toFixed(0)}%</span>
+                          <span className="sd-hit__lbl">{t(`ship.sd.abbr.${hc as 'corvette' | 'frigate' | 'destroyer'}` as const)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="sd-hit__foot">{t('ship.sd.hitFoot')}</div>
+                </div>
+                {outgoingHint && <div className="sd-hint sd-hint--matchup">{outgoingHint}</div>}
+                <div className="sd-hint sd-hint--matchup">{incomingHint}</div>
+                <div className="sd-hint">
+                  <strong>{t('ship.sd.tipShields')}</strong>{' '}{t('ship.sd.tipA')}{' '}
+                  <strong>{t('ship.sd.tipArmor')}</strong>{' '}{t('ship.sd.tipB')}{' '}
+                  <em>{t('ship.sd.tipCompound')}</em>{' '}
+                  {t('ship.sd.tipC', { ladder: reductionLadder(3), hp: SERVER_HULL_BASE[activeClass].hp, dmg: SERVER_HULL_BASE[activeClass].damagePerTick })}
+                  {hpOut(100) !== 100 && (
+                    <> {t('ship.sd.tipTech', { mult: (hpOut(1000) / 1000).toFixed(2) })}</>
+                  )}
+                  {' '}{t('ship.sd.tipBuilds')}
+                </div>
+              </div>
+            )}
+
+            {/* The offer, while a Commission look is on the ship. */}
+            {previewIcon && (
+              <div className="sd-offer" role="status">
+                <span className="sd-offer__text">
+                  {t('ship.sd.previewA')} <b>{ICON_VARIANT_NAMES[activeClass][previewIcon]}</b>{t('ship.sd.previewB', { commission: tk('mp.commission.name', COMMISSION_NAME), discord: tk('mp.commission.discord', COMMISSION_DISCORD) })}
+                </span>
+                <span className="sd-offer__btns">
                   {canBuyHere() && (
                     <button
                       type="button"
-                      className="sd-preview__get"
+                      className="sd-offer__get"
                       onClick={() => {
                         logCommission('designer', 'click');
                         void startCommissionCheckout('designer').then(url => { if (url) window.location.assign(url); });
                       }}
                     >{t('ship.sd.getIt', { price: tk('mp.commission.price', COMMISSION_PRICE) })}</button>
                   )}
-                  <button type="button" className="sd-preview__end" onClick={() => setPreviewIcon(undefined)}>
+                  <button type="button" className="sd-offer__end" onClick={() => setPreviewIcon(undefined)}>
                     {t('ship.sd.endPreview')}
                   </button>
-                </div>
-              )}
-            </div>
-
-            {/* ---------- Palette drawer ---------- */}
-            <div className={`sd-drawer ${drawerOpen ? 'open' : ''}`}>
-              <button
-                className="sd-drawer__toggle"
-                onClick={() => setDrawerOpen(o => !o)}
-                aria-expanded={drawerOpen}
-              >
-                {drawerOpen ? '▾' : '▴'} {t('ship.sd.parts')}
-                {activeClass === 'freighter' && (
-                  <span className="sd-drawer__hint">{t('ship.sd.freighterHint')}</span>
-                )}
-              </button>
-              {drawerOpen && (
-                <div className="sd-drawer__body">
-                  {allowedParts.map(pid => {
-                    const def = SHIP_PART_DEFS[pid];
-                    const n = countPart(draftParts, pid);
-                    const isDet = pid === 'detonator';
-                    const lock = gate.lockReason(PART_FEATURE[pid]);
-                    const next = nextCopyCost(pid, n);
-                    const full = !lock && draftParts.length >= slots;
-                    return (
-                      <div
-                        key={pid}
-                        className={[
-                          'sd-part',
-                          isDet ? 'sd-part--detonator' : '',
-                          lock ? 'sd-part--locked' : '',
-                          dragging === pid ? 'sd-part--dragging' : '',
-                        ].filter(Boolean).join(' ')}
-                        draggable={!lock}
-                        onDragStart={e => {
-                          if (lock) { e.preventDefault(); return; }
-                          e.dataTransfer.setData('text/orbital-part', pid);
-                          e.dataTransfer.effectAllowed = 'copy';
-                          setDragging(pid);
-                        }}
-                        onDragEnd={() => setDragging(null)}
-                        onClick={() => { if (!lock) fitPart(pid); else showFlash(t('ship.sd.partLockedShort', { name: def.name, reason: lock.text })); }}
-                        title={`${def.blurb}\n${def.techNote}${lock ? `\n🔒 ${lock.text}` : ''}\n${t('ship.sd.clickToFit')}`}
-                        role="button"
-                        aria-disabled={!!lock || full}
-                      >
-                        <span className="sd-part__glyph">{PART_GLYPH[pid]}</span>
-                        <span className="sd-part__text">
-                          <span className="sd-part__name">
-                            {def.name}
-                            {n > 0 && <span className="sd-part__fitted"> ×{n}</span>}
-                            {lock && <span className="sd-part__lock"> 🔒</span>}
-                          </span>
-                          <span className="sd-part__blurb">{def.blurb}</span>
-                          {counterText(pid) && (
-                            <span className="sd-part__counter">{t('ship.sd.countered', { text: counterText(pid) ?? '' })}</span>
-                          )}
-                          {isDet && (
-                            <span className="sd-part__counter" style={{ color: '#ff8a5c' }}>
-                              {t('ship.sd.detWarn')}
-                            </span>
-                          )}
-                        </span>
-                        <span className="sd-part__price" title={n > 0 ? t('ship.sd.escalateTip', { mult: PART_STACK_ESCALATION }) : t('ship.sd.basePrice')}>
-                          {n > 0 && <span className="sd-part__price-nth">#{n + 1}</span>}
-                          {next.ore}M {next.credits}C
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* ---------- Right sidebar: stats + refit + actions ---------- */}
-          <div className="sd-side" data-tutorial-id="designer-stats">
-            <div className="sd-side__title">
-              {selected ? t('ship.sd.editing', { name: selected.name }) : t('ship.sd.newTitle')}
-              {selected && !draftMatchesSelected && <span className="sd-side__dirty"> · {t('ship.sd.unsaved')}</span>}
-            </div>
-            <div className="sd-side__stats">{statRows}</div>
-            {/* COMBAT V2's core rule, live. A player fitting an engine watches
-                these numbers move and learns the whole system without reading
-                a word of documentation — which matters because animations are
-                unchanged, so a hit and a miss look identical on the map. This
-                is the only place the rule is stated. */}
-            <div className="sd-hit">
-              <div className="sd-hit__title">{t('ship.sd.hitTitle')}</div>
-              <div className="sd-hit__row">
-                {(['corvette', 'frigate', 'destroyer'] as ShipClassName[]).map(hc => {
-                  const p = hitChanceOf(stats.speed, HULL_BASE[hc].speed);
-                  return (
-                    <div key={hc} className="sd-hit__cell" title={t('ship.sd.vsBare', { cls: hc, speed: HULL_BASE[hc].speed })}>
-                      <span className="sd-hit__glyph">{hc === 'corvette' ? '▹' : hc === 'frigate' ? '▰' : '▮'}</span>
-                      <span className="sd-hit__pct">{(100 * p).toFixed(0)}%</span>
-                      <span className="sd-hit__lbl">{t(`ship.sd.abbr.${hc as 'corvette' | 'frigate' | 'destroyer'}` as const)}</span>
-                    </div>
-                  );
-                })}
+                </span>
               </div>
-              <div className="sd-hit__foot">
-                {t('ship.sd.hitFoot')}
-              </div>
-            </div>
-            {outgoingHint && <div className="sd-hint sd-hint--matchup">{outgoingHint}</div>}
-            <div className="sd-hint sd-hint--matchup">{incomingHint}</div>
-            <div className="sd-hint">
-              <strong>{t('ship.sd.tipShields')}</strong>{' '}{t('ship.sd.tipA')}{' '}
-              <strong>{t('ship.sd.tipArmor')}</strong>{' '}{t('ship.sd.tipB')}{' '}
-              <em>{t('ship.sd.tipCompound')}</em>{' '}
-              {t('ship.sd.tipC', { ladder: reductionLadder(3), hp: SERVER_HULL_BASE[activeClass].hp, dmg: SERVER_HULL_BASE[activeClass].damagePerTick })}
-              {hpOut(100) !== 100 && (
-                <> {t('ship.sd.tipTech', { mult: (hpOut(1000) / 1000).toFixed(2) })}</>
-              )}
-              {' '}{t('ship.sd.tipBuilds')}
-            </div>
-            {refitBar}
-            {noteLine}
-            {error && (
-              <button className="sd-error" onClick={() => setError(null)} title={t('ship.sd.dismiss')}>
-                ⚠ {error}
-              </button>
             )}
-            {actionButtons}
           </div>
         </div>
 
-        {/* ---------- Mobile sticky stat footer ---------- */}
-        <div className="sd-footer">
+        {/* ---------- Footer: status, refit, actions ---------- */}
+        <div className="sd-foot">
           <button
-            className="sd-footer__summary"
-            onClick={() => setStatsSheetOpen(o => !o)}
-            aria-expanded={statsSheetOpen}
+            className="sd-foot__summary"
+            onClick={() => { setRightTab('stats'); }}
           >
             <span>{hpOut(stats.hp)} HP</span>
             <span>{t('ship.sd.dmgN', { n: stats.damagePerTick })}</span>
             <span>{priced(hullDef.cost.ore + draftCost.ore)}M {priced(hullDef.cost.credits + draftCost.credits)}C</span>
             <span>{upkeepLabel}</span>
-            <span aria-hidden>{statsSheetOpen ? '▾' : '▴'}</span>
           </button>
-          {statsSheetOpen && (
-            <div className="sd-footer__sheet">
-              <div className="sd-side__stats">{statRows}</div>
-              {refitBar}
-              {noteLine}
-              {error && (
-                <button className="sd-error" onClick={() => setError(null)}>⚠ {error}</button>
-              )}
-              {actionButtons}
-            </div>
+          <span className="sd-foot__status">
+            {selected ? t('ship.sd.editing', { name: selected.name }) : t('ship.sd.newTitle')}
+            {selected && !draftMatchesSelected && <b> · {t('ship.sd.unsaved')}</b>}
+          </span>
+          {refitBar}
+          {noteLine}
+          {error && (
+            <button className="sd-error" onClick={() => setError(null)} title={t('ship.sd.dismiss')}>⚠ {error}</button>
           )}
-          {!statsSheetOpen && (
-            <div className="sd-footer__cta">
-              <button
-                className="sd-btn sd-btn--primary"
-                disabled={busy}
-                onClick={() => save(true)}
-              >
-                {selected ? t('ship.sd.saveActivate') : t('ship.sd.createActivate')}
-              </button>
-            </div>
-          )}
+          {actionButtons}
         </div>
       </div>
     </div>
