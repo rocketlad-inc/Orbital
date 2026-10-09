@@ -53,7 +53,7 @@ const PATH_FOR_TAB: Partial<Record<LandingTab, string>> = {
 const PAGE_META: Record<LandingTab, { title: string; description: string }> = {
   about: {
     title: 'Orbital — Free Real-Time Space Strategy Game in Your Browser',
-    description: 'A free multiplayer space strategy game set across the real solar system. Two to eight players, turns that keep running while you’re offline, and three ways to win.',
+    description: 'A free multiplayer space strategy game set across the real solar system. Two to ten players, turns that keep running while you’re offline, and three ways to win.',
   },
   howto: {
     title: 'How to Play Orbital — Space Strategy Guide for New Commanders',

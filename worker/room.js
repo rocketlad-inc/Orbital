@@ -6625,8 +6625,13 @@ export class Room {
         if (inTransitIds.has(sh.id)) {
           const plan = launchPlans.get(sh.id);
           if (!plan) return null;              // pre-0088 node: no plan
-          const st8 = shipStateAt(plan, tick);
-          return { x: st8.x, y: st8.y };
+          // shipStateAt returns { pos, vel }. This read st8.x, which is
+          // undefined: the distance came out NaN, NaN never fails the
+          // range test below, and every armed hull in flight anywhere
+          // in the system was "in range" (Will, 2026-10-08: two
+          // corvettes leaving Pluto shot dead by the Varda battery
+          // ~10,000 units away). sim/stationReach.mjs.
+          return shipStateAt(plan, tick).pos;
         }
         return bodyPosSync(sh.parent_body_id, tick);
       };
@@ -6658,7 +6663,9 @@ export class Room {
           if (!tp) continue;
           const dx = tp.x - sp.x;
           const dy = tp.y - sp.y;
-          if (dx * dx + dy * dy > reach2) continue;
+          // Written as "not within" so a position that fails to resolve
+          // (NaN) is out of range, never in it.
+          if (!(dx * dx + dy * dy <= reach2)) continue;
           inRange.push({ ship: t, d2: dx * dx + dy * dy });
         }
         if (inRange.length === 0) continue;

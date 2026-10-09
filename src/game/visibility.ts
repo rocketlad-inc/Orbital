@@ -13,6 +13,7 @@
 import { Body, Ship, Settlement } from '../types';
 import { bodyPosition, orbitWorldPos } from '../physics/orbitalMechanics';
 import { settlementWorldPosition, buildingLevel } from './settlements';
+import { MEGASTRUCTURES, isBreached } from './megastructures';
 
 // === Sensor ranges (world units) ============================
 
@@ -243,6 +244,81 @@ export function coverageRings(
     rings.push({ pos: bodyPosition(b, tick, bodies), range: a.range * runtimeSensorScale });
   }
   return rings;
+}
+
+/** The system a body sits in: its star-orbiting ancestor (a planet with
+ *  its moons is one system). Mirrors systemOf in worker/state.js. */
+export function systemOfBody(bodyId: string | undefined | null, byId: ReadonlyMap<string, Body>): string | null {
+  if (!bodyId) return null;
+  let cur = byId.get(bodyId);
+  let out: string | null = cur ? cur.id : null;
+  for (let hops = 0; hops < 8 && cur; hops++) {
+    const parent = cur.parent ? byId.get(cur.parent) : undefined;
+    if (!parent || parent.type === 'star') { out = cur.id; break; }
+    cur = parent;
+    out = parent.id;
+  }
+  return out;
+}
+
+/** A structure as the coverage pass needs it. */
+interface SensorStructure {
+  bodyId: string;
+  kind: string;
+  status: string;
+  hp?: number;
+}
+
+/** A Deep Space Array or Null Field is offline once breached (worker/
+ *  state.js reads `m.hp > MEGA_BREACH_HP`). An unknown hp is a full one. */
+export function structureOnline(m: SensorStructure): boolean {
+  return m.status === 'complete' && !(typeof m.hp === 'number' && isBreached({ hp: m.hp }));
+}
+
+/**
+ * Where a RIVAL Null Field cuts the viewer's coverage, and which of the
+ * viewer's sensors see through it -- worker/state.js's blinds/revealedBy:
+ *   - a field held by you or an ally never blinds you; an unowned
+ *     (abandoned) field blinds nobody; a breached one is offline;
+ *   - inside a field, only a friendly SHIP whose system is the field's
+ *     own system sees (a hull on the spot beats the jammer; telescopes,
+ *     settlements and arrays reading from outside do not). A ship in
+ *     flight counts for the system it launched from, as on the server.
+ * Without this the map drew a jammed region as seen, and rival hulls the
+ * server was withholding read as an empty sky (sensor audit, 2026-10-08).
+ */
+export function nullFieldCuts(
+  factionId: string,
+  structures: readonly SensorStructure[],
+  ships: Ship[],
+  bodies: Body[],
+  tick: number,
+  allies: ReadonlySet<string> = NO_ALLIES,
+  drawnTransitPos?: ReadonlyMap<string, { x: number; y: number }>,
+): Array<{ pos: { x: number; y: number }; range: number; pierce: Array<{ pos: { x: number; y: number }; range: number }> }> {
+  const byId = new Map(bodies.map(b => [b.id, b]));
+  const out: Array<{ pos: { x: number; y: number }; range: number; pierce: Array<{ pos: { x: number; y: number }; range: number }> }> = [];
+  const blindRange = MEGASTRUCTURES.null_field.effect.blindRange ?? 0;
+  for (const m of structures) {
+    if (m.kind !== 'null_field' || !structureOnline(m)) continue;
+    const body = byId.get(m.bodyId);
+    if (!body || body.destroyedAtTick != null) continue;
+    const owner = body.ownedBy;
+    if (!owner || isFriendly(owner, factionId, allies)) continue;
+    const system = systemOfBody(m.bodyId, byId);
+    const pierce: Array<{ pos: { x: number; y: number }; range: number }> = [];
+    for (const s of ships) {
+      if (!isFriendly(s.ownedBy, factionId, allies)) continue;
+      if (!system || systemOfBody(s.orbit?.parentBodyId, byId) !== system) continue;
+      const pathfinder = !!s.captainTraits?.includes('pathfinder');
+      pierce.push({
+        pos: shipWorldPosition(s, tick, bodies, drawnTransitPos),
+        range: shipSensorRange(s.class) * (pathfinder ? PATHFINDER_SENSOR_MUL : 1),
+      });
+    }
+    out.push({ pos: bodyPosition(body, tick, bodies), range: blindRange * runtimeSensorScale, pierce });
+  }
+  return out;
 }
 
 /**

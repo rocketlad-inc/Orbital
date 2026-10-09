@@ -5,6 +5,7 @@ import {
 const MAIN_SYSTEM = mainSystemSql();
 import { DEFAULT_LOADOUTS } from './shipDesigns.js';
 import { gatingEnabled, factionTechLevels, hasFeature } from './researchUnlocks.js';
+import { allyIds } from './allies.js';
 import { isEmblemId, defaultEmblemFor } from './emblems.js';
 // ============================================================================
 // Faction agent module.
@@ -2702,6 +2703,16 @@ async function handleListFactions(_req, env, ctx) {
   const seeCensus = canSee('intel.fleetCensus');
   const seeEconomy = canSee('intel.economy');
   const seeResearch = canSee('intel.research');
+  // Capital Ping (Sensors 1), same rule as /state: a rival's capital pin
+  // is earned; yours and your vision partners' are not secret. This list
+  // used to send every capital ungated, so the drawer told you what the
+  // map had just hidden.
+  const seeCapitals = canSee('intel.capitals');
+  let partners = new Set();
+  if (!seeCapitals && myId) {
+    const g = await env.DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
+    partners = new Set(await allyIds(env, gameId, myId, g?.current_tick ?? 0));
+  }
 
   // Tech levels, grouped by faction. Loaded unconditionally: the caller
   // ALWAYS sees their own levels (they're yours — there is nothing to
@@ -2728,6 +2739,7 @@ async function handleListFactions(_req, env, ctx) {
     // or a closed one, never half.
     if (!mine && !seeEconomy) { f.metal = null; f.gold = null; f.science = null; }
     f.ship_count = (mine || seeCensus) ? fullCount : null;
+    if (!mine && !seeCapitals && !partners.has(f.id)) f.capital_body_id = null;
     // Worlds held. NOT intel-gated, unlike fleet census and economy:
     // political borders are already public (the map paints them for
     // everyone via settlement_claims), and this is a WIN CONDITION —

@@ -76,6 +76,8 @@
     "sim:email": "esbuild sim/emailQuickJoin.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/emailQuickJoin.mjs && node node_modules/.cache/emailQuickJoin.mjs",
     "sim:leave": "esbuild sim/lobbyLeave.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/lobbyLeave.mjs && node node_modules/.cache/lobbyLeave.mjs",
     "sim:fleetlock": "esbuild sim/fleetCombatLock.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/fleetCombatLock.mjs && node node_modules/.cache/fleetCombatLock.mjs",
+    "sim:stationreach": "node sim/stationReach.mjs",
+    "sim:sensors": "esbuild sim/sensorAudit.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/sensorAudit.mjs && node node_modules/.cache/sensorAudit.mjs",
     "sim:dyson": "esbuild sim/dysonRoutes.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/dysonRoutes.mjs && node node_modules/.cache/dysonRoutes.mjs",
     "sim:assetpay": "esbuild sim/assetPayment.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/assetPayment.mjs && node node_modules/.cache/assetPayment.mjs",
     "sim:refitroute": "esbuild sim/refitOnRoute.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/refitOnRoute.mjs && node node_modules/.cache/refitOnRoute.mjs",

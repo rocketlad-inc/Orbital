@@ -3,6 +3,7 @@ import { apiFetch } from './api';
 import { useAuth } from './AuthContext';
 import { AdminAnalytics } from './AdminAnalytics';
 import { DevlogAdmin } from './DevlogAdmin';
+import { EmailAdmin } from './EmailAdmin';
 import { BotControl } from './BotControl';
 import { Editor } from './Editor';
 import { ProfilePanel } from './ProfilePanel';
@@ -28,7 +29,7 @@ import './lobby.css';
 // the room view. The lobby never knows about ticks or game state beyond
 // the summaries /api/lobby/browse and /api/lobby/mine hand it.
 
-type Tab = 'my' | 'past' | 'browse' | 'create' | 'code' | 'profile' | 'admin' | 'bot' | 'editor' | 'devlog';
+type Tab = 'my' | 'past' | 'browse' | 'create' | 'code' | 'profile' | 'admin' | 'bot' | 'editor' | 'devlog' | 'email';
 
 interface Props {
   onEnterRoom: (roomId: string) => void;
@@ -128,6 +129,7 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
                 <NavItem small active={tab === 'bot'} onClick={() => setTab('bot')}>{t('lobby.nav.bot')}</NavItem>
                 <NavItem small active={tab === 'editor'} onClick={() => setTab('editor')}>{t('lobby.nav.editor')}</NavItem>
                 <NavItem small active={tab === 'devlog'} onClick={() => setTab('devlog')}>{t('lobby.nav.devlog')}</NavItem>
+                <NavItem small active={tab === 'email'} onClick={() => setTab('email')}>{t('lobby.nav.email')}</NavItem>
               </>
             )}
           </nav>
@@ -201,6 +203,7 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
         {tab === 'bot' && user?.is_admin && <div className="lx-legacy lx-legacy--wide"><BotControl /></div>}
         {tab === 'editor' && user?.is_admin && <div className="lx-legacy lx-legacy--wide"><Editor /></div>}
         {tab === 'devlog' && user?.is_admin && <div className="lx-legacy lx-legacy--wide"><DevlogAdmin /></div>}
+        {tab === 'email' && user?.is_admin && <div className="lx-legacy lx-legacy--wide"><EmailAdmin /></div>}
       </main>
     </div>
   );

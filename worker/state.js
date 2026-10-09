@@ -13,6 +13,7 @@ import { visualsSwitches } from './botSettings.js';
 import { orbitAngle, legProgress } from './orbitPos.js';
 import { SHIP_ENGINE_G, BRAKE_MUL, MAX_ENGINE_G, RAMP_TICKS, GROWTH_TAU } from './burn.js';
 import { hostilePairs } from './wars.js';
+import { allyIdsQuery } from './allies.js';
 
 // GET /api/games/:gameId/state — full renderer snapshot.
 //
@@ -258,7 +259,11 @@ export function buildFriendlySensors(
   const blinds = [];
   for (const m of megas) {
     if (m.kind !== 'null_field' || m.status !== 'complete') continue;
-    if (m.owner_faction_id && friendly.has(m.owner_faction_id)) continue;
+    // Nobody's field jams nobody. An abandoned field loses its owner
+    // (the body's owner goes NULL when its empire dies), and it went on
+    // blinding every player for the rest of the game -- while an
+    // abandoned Array, by the same owner rule, rightly grants nothing.
+    if (!m.owner_faction_id || friendly.has(m.owner_faction_id)) continue;
     const eff = MEGASTRUCTURES[m.kind]?.effect ?? {};
     const range = (eff.blindRange ?? 0) * sensorScale;
     if (range <= 0) continue;
@@ -297,6 +302,15 @@ function blindsOver(pos, blinds) {
  * point, so parking one hull in a system does not open a hole through a
  * second jammer that also happens to cover it.
  */
+/** Ship columns that are a rival's private orders (see /state). */
+export const RIVAL_ORDER_FIELDS = [
+  'arrival_action', 'arrival_guard', 'deploy_on_arrival',
+  'detonate_at_tick', 'detonate_at_guard', 'detonate_on_hostile', 'detonate_mine_mode',
+  'detonate_hp_pct', 'retreat_body_id', 'home_body_id', 'target_priority',
+  'mining_body_id', 'refit_pending_design_id',
+  'fuel', 'cargo_fuel', 'cargo_metal', 'cargo_gold', 'cargo_science',
+];
+
 export function revealedBy(pos, sensors, blinds) {
   const over = blinds && blinds.length ? blindsOver(pos, blinds) : null;
   for (const sen of sensors) {
@@ -589,22 +603,9 @@ const buildPartnerRowsP = env.DB
     .bind(gameId, me.id, game.current_tick)
     .all();
 
-const allyRowsP = env.DB
-    .prepare(
-      `SELECT DISTINCT ts2.faction_id AS ally_id
-         FROM treaties t
-         JOIN treaty_signatories ts1
-           ON ts1.treaty_id = t.id AND ts1.faction_id = ?2 AND ts1.signed_at_tick IS NOT NULL
-         JOIN treaty_signatories ts2
-           ON ts2.treaty_id = t.id AND ts2.faction_id != ?2 AND ts2.signed_at_tick IS NOT NULL
-        WHERE t.game_id = ?1
-          AND t.status = 'active'
-          AND t.broken_at_tick IS NULL
-          AND t.kind IN ('defense_pact', 'intel_share')
-          AND (t.expires_at_tick IS NULL OR t.expires_at_tick > ?3)`,
-    )
-    .bind(gameId, me.id, game.current_tick)
-    .all();
+// Vision partners (worker/allies.js): active defense / intel-share
+// pacts with a partner that is still in the game.
+const allyRowsP = allyIdsQuery(env, gameId, me.id, game.current_tick);
 const peaceRowsP = env.DB
     .prepare(
       `SELECT DISTINCT ts2.faction_id AS peace_id
@@ -927,6 +928,13 @@ __mark('sensors-done');
          SELECT DISTINCT parent_body_id AS bid
            FROM game_ships
           WHERE game_id = ?1 AND owner_faction_id IN (SELECT value FROM json_each(?2)) AND status = 'active'
+            -- A hull in flight is not AT the world it left: parent_body_id
+            -- still names its origin for the whole leg, which kept that
+            -- world, its moons, parent and siblings lit (and every rival
+            -- hull parked there revealed) until it arrived (sensor audit,
+            -- 2026-10-08). Its own sensor bubble travels with it instead.
+            AND NOT EXISTS (SELECT 1 FROM game_ship_nodes pn
+                             WHERE pn.ship_id = game_ships.id AND pn.status = 'in_transit')
          UNION
          SELECT id AS bid FROM game_bodies
           WHERE game_id = ?1 AND owner_faction_id IN (SELECT value FROM json_each(?2))
@@ -1044,6 +1052,13 @@ const shipsP = env.DB
          SELECT DISTINCT parent_body_id AS bid
            FROM game_ships
           WHERE game_id = ?1 AND owner_faction_id IN (SELECT value FROM json_each(?2)) AND status = 'active'
+            -- A hull in flight is not AT the world it left: parent_body_id
+            -- still names its origin for the whole leg, which kept that
+            -- world, its moons, parent and siblings lit (and every rival
+            -- hull parked there revealed) until it arrived (sensor audit,
+            -- 2026-10-08). Its own sensor bubble travels with it instead.
+            AND NOT EXISTS (SELECT 1 FROM game_ship_nodes pn
+                             WHERE pn.ship_id = game_ships.id AND pn.status = 'in_transit')
          UNION
          SELECT id AS bid FROM game_bodies
           WHERE game_id = ?1 AND owner_faction_id IN (SELECT value FROM json_each(?2))
@@ -1275,6 +1290,13 @@ const settlementsP = env.DB
          SELECT DISTINCT parent_body_id AS bid
            FROM game_ships
           WHERE game_id = ?1 AND owner_faction_id IN (SELECT value FROM json_each(?2)) AND status = 'active'
+            -- A hull in flight is not AT the world it left: parent_body_id
+            -- still names its origin for the whole leg, which kept that
+            -- world, its moons, parent and siblings lit (and every rival
+            -- hull parked there revealed) until it arrived (sensor audit,
+            -- 2026-10-08). Its own sensor bubble travels with it instead.
+            AND NOT EXISTS (SELECT 1 FROM game_ship_nodes pn
+                             WHERE pn.ship_id = game_ships.id AND pn.status = 'in_transit')
          UNION
          SELECT id AS bid FROM game_bodies
           WHERE game_id = ?1 AND owner_faction_id IN (SELECT value FROM json_each(?2))
@@ -1736,6 +1758,31 @@ const tradeRoutesP = env.DB
         s.captain_avatar = null;
         s.captain_traits = null;
       }
+    }
+  }
+
+  // A rival's ORDERS are not something any sensor reads off a hull:
+  // where it will go next, what it does on arrival, when it blows
+  // itself up, what it would retreat to, what it is mining, what it is
+  // being refitted into, and its fuel and hold. These rode along on
+  // every visible rival ship at every Sensors level (sensor audit,
+  // 2026-10-08). Allies keep them -- you plan with your partners.
+  // Still public on purpose: a strike target and its charge timer (the
+  // victim's countdown and the charge FX), stance and the retreat
+  // threshold (the map's hold fade and retreat wake show what a hull is
+  // visibly doing).
+  for (const s of ships) {
+    if (friendlySet.has(s.owner_faction_id)) continue;
+    for (const k of RIVAL_ORDER_FIELDS) s[k] = null;
+  }
+  // A rival fleet's flag captain is the same secret as a rival ship's
+  // captain: name and traits behind Deep Scan, rank stays (it is on the
+  // ships already).
+  if (!seeLoadouts) {
+    for (const fl of fleets) {
+      if (friendlySet.has(fl.faction_id)) continue;
+      fl.flag_captain_name = null;
+      fl.flag_captain_traits = null;
     }
   }
 

@@ -79,6 +79,13 @@ export async function sendEmail(env, opts) {
     if (dedupeKey) return { sent: false, reason: 'already_sent' };
   }
 
+  // Open tracking, for the mail that asks for it: the marker becomes a
+  // 1x1 picture named after THIS send's log row (see openPixelTag).
+  let body = html;
+  if (typeof body === 'string' && body.includes(OPEN_PIXEL)) {
+    body = body.replace(OPEN_PIXEL, logId != null ? await openPixelTag(env, logId) : '');
+  }
+
   const headers = {};
   if (category && userId) {
     const unsub = await unsubscribeUrl(env, userId, category);
@@ -94,7 +101,7 @@ export async function sendEmail(env, opts) {
       from: FROM,
       replyTo: REPLY_TO,
       subject,
-      html,
+      html: body,
       text,
       ...(Object.keys(headers).length ? { headers } : {}),
     });
@@ -179,6 +186,37 @@ export async function readUnsubscribeToken(env, t) {
 }
 
 // ---------------------------------------------------------------------------
+// Opens. A template that wants them puts OPEN_PIXEL in its html; sendEmail
+// swaps it for a picture whose URL names the send's email_log row, signed
+// so nobody can mark someone else's mail opened. GET /api/email/o/<t>.gif
+// (worker/emailAdmin.js) stamps the row.
+// ---------------------------------------------------------------------------
+
+export const OPEN_PIXEL = '%%OPEN_PIXEL%%';
+
+export async function openToken(env, logId) {
+  if (!env.EMAIL_LINK_SECRET) return null;
+  return `${logId}.${(await hmac(env, `open:${logId}`)).slice(0, 22)}`;
+}
+
+async function openPixelTag(env, logId) {
+  const t = await openToken(env, logId);
+  if (!t) return '';
+  return `<img src="${SITE}/api/email/o/${t}.gif" width="1" height="1" alt="" style="display:block;width:1px;height:1px;border:0;opacity:0">`;
+}
+
+/** The email_log id a pixel token names, or null if it is not ours. */
+export async function readOpenToken(env, t) {
+  if (!env.EMAIL_LINK_SECRET || typeof t !== 'string') return null;
+  const m = /^(\d{1,15})\.([A-Za-z0-9_-]{22})$/.exec(t);
+  if (!m) return null;
+  const want = (await hmac(env, `open:${m[1]}`)).slice(0, 22);
+  let diff = 0;
+  for (let i = 0; i < 22; i++) diff |= want.charCodeAt(i) ^ m[2].charCodeAt(i);
+  return diff === 0 ? Number(m[1]) : null;
+}
+
+// ---------------------------------------------------------------------------
 // Templates
 // ---------------------------------------------------------------------------
 
@@ -204,6 +242,7 @@ const FONT = "'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
  * @param p.cta        {label, url} optional button
  * @param p.footer     trusted HTML: why you got this
  * @param p.unsubUrl   optional
+ * @param p.hero       optional {src, alt, href}: a full-width picture under the logo
  * @param p.locale     the reader's language (footer links, <html lang>)
  */
 export function layout(p) {
@@ -227,6 +266,7 @@ export function layout(p) {
       <a href="${SITE}" style="text-decoration:none"><img src="${LOGO_URL}" width="132" alt="ORBITAL" style="display:block;border:0;height:auto;color:${C.gold};font-family:${FONT};font-size:22px;font-weight:700;letter-spacing:.2em"></a>
       <div style="height:18px"></div>
     </td></tr>
+    ${p.hero ? `<tr><td style="padding:0;line-height:0;border-bottom:1px solid ${C.border}"><a href="${esc(p.hero.href ?? SITE)}"><img src="${esc(p.hero.src)}" width="580" alt="${esc(p.hero.alt ?? '')}" style="display:block;width:100%;max-width:580px;height:auto;border:0;color:${C.dim};font-family:${FONT};font-size:13px;line-height:1.4"></a></td></tr>` : ''}
     <tr><td style="padding:26px 32px 6px;font-family:${FONT}">
       <h1 style="margin:0 0 14px;color:${C.ink};font-size:22px;line-height:1.3;font-weight:700">${esc(p.heading)}</h1>
       <div style="color:${C.ink};font-size:15px;line-height:1.6">${p.body}</div>

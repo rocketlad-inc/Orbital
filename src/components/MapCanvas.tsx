@@ -123,7 +123,7 @@ import { fleetEscortBlend,
 } from '../render/fleetGrouping';
 import { getShipClass } from '../game/shipClasses';
 import { computeIncomingThreats, threatenedBodyIds } from '../game/threats';
-import { computeVisibility, payloadVisibility, factionSensorRings, coverageRings } from '../game/visibility';
+import { computeVisibility, payloadVisibility, factionSensorRings, coverageRings, nullFieldCuts, structureOnline } from '../game/visibility';
 import { MEGASTRUCTURES } from '../game/megastructures';
 // World menu (MULTIPLAYER ONLY): every use below is gated on
 // isWorldMenuActive(), which only the MP-mounted overlay ever sets —
@@ -3911,7 +3911,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // stay outside it, dimmed: known by intel, not by sensors.
         const arrays: Array<{ bodyId: string; range: number }> = [];
         for (const m of Object.values(gameState.megastructures ?? {})) {
-          if (m.kind !== 'deep_array' || m.status !== 'complete') continue;
+          // Breached is offline, as on the server (structureOnline).
+          if (m.kind !== 'deep_array' || !structureOnline(m)) continue;
           const owner = bodyById2.get(m.bodyId)?.ownedBy;
           if (!owner || (owner !== 'player' && !alliedSet.has(owner))) continue;
           arrays.push({ bodyId: m.bodyId, range: MEGASTRUCTURES.deep_array.effect.sensorRange ?? 0 });
@@ -3929,7 +3930,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           const px = drawnRadiusOf(renderContext.presentation, vb, sc) + PRESENCE_BUBBLE_PX;
           seen.push({ pos: vp, range: px / Math.max(1e-9, sc) });
         }
-        drawFogOfWarOverlay(seen, renderContext, 1, { wash: regionFade });
+        const cuts = nullFieldCuts(
+          'player', Object.values(gameState.megastructures ?? {}), gameState.ships,
+          gameState.bodies, renderTick(), alliedSet, transitShipWorldPosRef.current,
+        );
+        drawFogOfWarOverlay(seen, renderContext, 1, { wash: regionFade, cuts });
         // Over the fog, like the badges: a ring is read, not shaded.
         paintGalaxyRings(ctx, galaxyRings, galaxyAlpha, 'player', (fid) => {
           const f = gameState.factions.find(fa => fa.id === fid);

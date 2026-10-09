@@ -365,9 +365,9 @@ export function MapEditor({
         </svg>
 
         <div style={{ fontSize: 11.5, marginTop: 6,
-          color: capitalPool < 8 ? '#ff9d5c' : '#6ee7b7' }}>
+          color: capitalPool < 10 ? '#ff9d5c' : '#6ee7b7' }}>
           {capitalPool} world{capitalPool === 1 ? '' : 's'} can be a starting capital
-          {capitalPool < 8 && ' — below the 8-player maximum, so a full lobby would fail to start'}
+          {capitalPool < 10 && ' — below the 10-player maximum, so a full lobby would fail to start'}
           {systemScale !== 1 && ` · orbits ×${systemScale}`}
           {bodyScale !== 1 && ` · bodies ×${bodyScale}`}
         </div>

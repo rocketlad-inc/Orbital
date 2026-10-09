@@ -75,7 +75,7 @@ routes hit the worker; everything else falls through to the SPA bundle.
 - **Mode picker** — after login the player picks Single Player or Multiplayer.
   If the player is already a member of an in-progress game, the picker
   auto-redirects them to it.
-- **Lobby** — create rooms (2–8 players), browse open rooms, join, host
+- **Lobby** — create rooms (2–10 players), browse open rooms, join, host
   controls (kick, ready-check, start game). Lobby presence over WebSocket
   via the `Room` Durable Object.
 - **Faction identity** — pick empire name + bio per room.

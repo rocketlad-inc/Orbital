@@ -1,0 +1,159 @@
+/* Email admin (EmailAdmin.tsx). Same dark admin shell as AdminAnalytics:
+   teal for what you can act on, gold for the one thing that sends mail. */
+
+.em { display: flex; flex-direction: column; gap: 22px; }
+
+.em-error, .em-note {
+  font-size: 12.5px; padding: 8px 10px; border-radius: 6px; line-height: 1.45;
+}
+.em-error { color: #ffb3b3; background: rgba(255, 116, 116, 0.08); border: 1px solid rgba(255, 116, 116, 0.35); }
+.em-note { color: #bfeee9; background: rgba(78, 205, 196, 0.07); border: 1px solid rgba(78, 205, 196, 0.3); }
+
+/* ---- buttons ---- */
+.em-btn {
+  background: rgba(20, 32, 46, 0.85);
+  border: 1px solid rgba(96, 130, 160, 0.4);
+  border-radius: 6px;
+  color: #cdd9e4;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 7px 14px;
+  cursor: pointer;
+}
+.em-btn:hover:not(:disabled) { border-color: #4ecdc4; color: #e8f6f5; }
+.em-btn:disabled { opacity: 0.45; cursor: default; }
+.em-btn:focus-visible { outline: 2px solid #4ecdc4; outline-offset: 2px; }
+.em-btn--go { background: #ffb84d; border-color: #ffb84d; color: #1d1404; }
+.em-btn--go:hover:not(:disabled) { color: #1d1404; filter: brightness(1.08); border-color: #ffb84d; }
+
+/* ---- the switch ---- */
+.em-status {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap;
+  padding: 12px 14px; border-radius: 8px;
+  background: rgba(20, 32, 46, 0.85); border: 1px solid rgba(96, 130, 160, 0.35);
+}
+.em-status.is-on { border-color: rgba(110, 231, 168, 0.45); }
+.em-status__main { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; min-width: 0; }
+.em-status__pill {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 4px 10px; border-radius: 999px;
+  color: #a9bccd; background: rgba(150, 180, 210, 0.1);
+}
+.em-status__dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.em-status.is-on .em-status__pill { color: #6ee7a8; background: rgba(110, 231, 168, 0.12); }
+.em-status__line { font-size: 13px; color: #cdd9e4; }
+.em-status__side { display: flex; align-items: center; gap: 12px; }
+.em-status__waiting { font-size: 12.5px; color: #8a9fb3; }
+.em-status__waiting b { color: #e8eef5; font-size: 15px; }
+
+/* ---- tiles ---- */
+.em-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(124px, 1fr));
+  gap: 8px;
+}
+.em-tile {
+  padding: 10px 12px; border-radius: 8px;
+  background: rgba(20, 32, 46, 0.85); border: 1px solid rgba(96, 130, 160, 0.3);
+}
+.em-tile--accent { border-color: rgba(78, 205, 196, 0.5); }
+.em-tile__label { font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: #7d8fa3; }
+.em-tile__value { font-size: 24px; font-weight: 700; color: #e8eef5; font-variant-numeric: tabular-nums; margin: 2px 0; }
+.em-tile__sub { font-size: 11.5px; color: #8a9fb3; }
+.em-split { display: flex; flex-direction: column; gap: 3px; margin-top: 10px; font-size: 12px; color: #8a9fb3; }
+.em-split b { color: #a9bccd; font-weight: 600; }
+
+/* ---- the 14-day chart: one series, so no legend; the caption names it ---- */
+.em-chart { margin: 16px 0 0; }
+.em-chart__title { font-size: 11.5px; color: #8a9fb3; margin-bottom: 8px; }
+.em-chart__plot {
+  display: flex; align-items: flex-end; gap: 2px; height: 96px;
+  border-bottom: 1px solid rgba(96, 130, 160, 0.3);
+}
+.em-chart__col {
+  position: relative; flex: 1 1 0; height: 100%;
+  display: flex; align-items: flex-end; outline: none;
+}
+.em-chart__bar {
+  width: 100%; min-height: 0; background: #4ecdc4; border-radius: 4px 4px 0 0; opacity: 0.85;
+}
+.em-chart__col:hover .em-chart__bar, .em-chart__col:focus-visible .em-chart__bar { opacity: 1; }
+.em-chart__tip {
+  display: none; position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
+  z-index: 2; white-space: nowrap; pointer-events: none;
+  font-size: 11.5px; color: #cdd9e4; line-height: 1.4;
+  background: #0c131b; border: 1px solid rgba(96, 130, 160, 0.45); border-radius: 6px; padding: 6px 8px;
+}
+.em-chart__tip b { color: #e8eef5; }
+.em-chart__col:hover .em-chart__tip, .em-chart__col:focus-visible .em-chart__tip { display: block; }
+.em-chart__col:first-child .em-chart__tip { left: 0; transform: none; }
+.em-chart__col:last-child .em-chart__tip { left: auto; right: 0; transform: none; }
+.em-chart__axis { display: flex; justify-content: space-between; font-size: 10.5px; color: #6f8296; margin-top: 4px; }
+
+/* ---- segmented tabs in the section title ---- */
+.em-seg { display: inline-flex; border: 1px solid rgba(96, 130, 160, 0.35); border-radius: 6px; overflow: hidden; }
+.em-seg button {
+  background: none; border: none; cursor: pointer;
+  font-size: 11.5px; letter-spacing: 0; color: #8a9fb3; padding: 4px 10px;
+}
+.em-seg button + button { border-left: 1px solid rgba(96, 130, 160, 0.35); }
+.em-seg button.is-on { background: rgba(78, 205, 196, 0.14); color: #7fd8cf; }
+
+/* ---- editor + preview ---- */
+.em-edit {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 980px) { .em-edit { grid-template-columns: 1fr; } }
+
+.em-fields { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.em-field { display: flex; flex-direction: column; gap: 4px; }
+.em-field__label {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-size: 11px; color: #8aa0b4;
+}
+.em-field.is-set .em-field__label { color: #ffcb7a; }
+.em-field__vars { font-family: ui-monospace, monospace; font-size: 10.5px; color: #6f8296; }
+.em-field__reset {
+  margin-left: auto; background: none; border: none; cursor: pointer;
+  font-size: 11px; color: #7fd8cf; padding: 0;
+}
+.em-field textarea, .em-field input {
+  width: 100%; box-sizing: border-box; resize: vertical;
+  font: inherit; font-size: 13px; line-height: 1.45; color: #e8eef5;
+  background: #0c131b; border: 1px solid #22303f; border-radius: 6px; padding: 7px 9px;
+}
+.em-field textarea::placeholder, .em-field input::placeholder { color: #5f7286; }
+.em-field textarea:focus, .em-field input:focus { outline: none; border-color: #4ecdc4; }
+.em-field.is-set textarea, .em-field.is-set input { border-color: rgba(255, 184, 77, 0.45); }
+
+.em-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.em-dirty { font-size: 11.5px; color: #ffcb7a; }
+.em-saved { font-size: 11.5px; color: #6f8296; }
+
+.em-preview { position: sticky; top: 8px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.em-preview__meta {
+  display: flex; flex-direction: column; gap: 4px;
+  font-size: 12.5px; color: #e8eef5;
+  padding: 9px 11px; border-radius: 6px; background: #0c131b; border: 1px solid #22303f;
+}
+.em-preview__meta span {
+  display: inline-block; min-width: 92px; font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: #6f8296;
+}
+.em-preview__src { font-size: 11.5px; color: #8a9fb3; }
+.em-preview__frame {
+  width: 100%; height: 820px; border: 1px solid #22303f; border-radius: 6px; background: #05080d;
+}
+
+/* ---- table ---- */
+.em-table td { vertical-align: top; }
+.em-row--failed td { opacity: 0.7; }
+.em-good { color: #6ee7a8; }
+.em-bad { color: #ff9a9a; }
+.em-tag {
+  margin-left: 6px; font-size: 10px; padding: 1px 5px; border-radius: 4px;
+  color: #ffcb7a; border: 1px solid rgba(255, 184, 77, 0.35);
+}
