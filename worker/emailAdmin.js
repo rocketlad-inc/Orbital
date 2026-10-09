@@ -20,7 +20,7 @@ import {
   TEMPLATE_ID, EDITABLE_FIELDS, EDITABLE_LOCALES, MAX_FIELD_CHARS, WINBACK_HERO_SRC,
   WINBACK_AFTER_MS, WINBACK_HOURLY_CAP,
   cleanOverrides, loadWinbackTemplate, composeWinback, renderWinback,
-  planWinback, eligibleAccounts, openLobbies, cardDetails,
+  planWinback, eligibleAccounts, openLobbies, cardDetails, pendingInvitations,
 } from './winback.js';
 
 const json = (o, status = 200) =>
@@ -60,6 +60,9 @@ export async function winbackMetrics(env, nowMs = Date.now()) {
     .prepare(
       `SELECT e.id, e.user_id, e.kind, e.ok, e.error, e.created_ms, e.opened_ms, e.open_count,
               u.display_name, u.email, u.email_games, u.last_visit_ms,
+              (SELECT r.name FROM rooms r WHERE r.id = e.room_id) AS room_name,
+              EXISTS (SELECT 1 FROM email_login_tokens t
+                       WHERE t.user_id = e.user_id AND t.purpose = 'winback' AND t.used_ms IS NOT NULL) AS signed_in,
               (SELECT c.created_ms FROM email_log c WHERE c.dedupe_key = 'winback_click:' || e.user_id) AS clicked_ms,
               (SELECT MIN(m.joined_at) FROM room_members m
                 WHERE m.user_id = e.user_id AND m.joined_at >= e.created_ms) AS joined_ms,
@@ -97,6 +100,7 @@ export async function winbackMetrics(env, nowMs = Date.now()) {
     if (recent.length < 40) {
       recent.push({
         name: r.display_name ?? '(deleted account)', email: r.email ?? null, mode,
+        room_name: r.room_name ?? null, signed_in: !!r.signed_in,
         sent_ms: r.created_ms, ok: r.ok === 1, error: r.ok === 1 ? null : (r.error ?? 'failed'),
         opened_ms: r.opened_ms ?? null, open_count: r.open_count ?? 0,
         clicked_ms: r.clicked_ms ?? null, joined_ms: r.joined_ms ?? null, playing,
@@ -122,7 +126,11 @@ async function winbackQueue(env, tpl, nowMs = Date.now()) {
     )
     .bind(nowMs - WINBACK_AFTER_MS).first();
   const waiting = Number(c?.n) || 0;
-  const plan = planWinback({ eligible: await eligibleAccounts(env, nowMs), lobbies: await openLobbies(env, nowMs) });
+  const plan = planWinback({
+    eligible: await eligibleAccounts(env, nowMs),
+    lobbies: await openLobbies(env, nowMs),
+    pending: await pendingInvitations(env, nowMs),
+  });
   const nextRunMs = (Math.floor(nowMs / 3600000) + 1) * 3600000;
   return {
     waiting,
@@ -130,8 +138,11 @@ async function winbackQueue(env, tpl, nowMs = Date.now()) {
     next_run_ms: tpl.enabled ? nextRunMs : null,
     next: {
       mode: plan.mode,
-      count: plan.recipients.length,
-      room: plan.room ? { name: plan.room.name, n: plan.room.n, max_players: plan.room.max_players } : null,
+      reason: plan.reason ?? null,
+      count: plan.sends.length,
+      rooms: plan.rooms.map(({ room, count, pending }) => ({
+        name: room.name, n: room.n, max_players: room.max_players, count, pending: pending ?? 0,
+      })),
     },
     hourly_cap: WINBACK_HOURLY_CAP,
   };
@@ -230,7 +241,9 @@ async function handleTest(req, env, ctx) {
   const d = await readDraft(req);
   if (d.error) return err(400, 'bad_request', d.error);
   const { room } = d.mode === 'seat' ? await previewRoom(env) : { room: null };
-  const c = composeWinback(d.locale, d.mode, room, d.overrides);
+  // The test's button opens the lobby without taking a seat: a test click
+  // once sat Lorne in a stranger's game (2026-10-09).
+  const c = composeWinback(d.locale, d.mode, room, d.overrides, { test: true });
   const m = renderWinback(c);
   // One test per 20 seconds per admin: a double-click is not two emails.
   const slot = Math.floor(Date.now() / 20000);

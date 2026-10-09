@@ -28,7 +28,7 @@ const payload = {
     recent: [{ name: 'milky', email: 'm@x.com', mode: 'seat', sent_ms: Date.now() - 3600_000, ok: true, error: null,
       opened_ms: Date.now() - 1800_000, open_count: 1, clicked_ms: null, joined_ms: null, playing: false, unsubscribed: false }],
   },
-  queue: { waiting: 37, enabled: false, next_run_ms: null, hourly_cap: 20, next: { mode: 'pool', count: 8, room: null } },
+  queue: { waiting: 37, enabled: false, next_run_ms: null, hourly_cap: 20, next: { mode: 'pool', count: 8, rooms: [] } },
 };
 
 let puts: unknown[] = [];

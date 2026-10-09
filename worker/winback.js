@@ -7,17 +7,24 @@
 // `winback:<user>`), so a backfill of every old account and the steady
 // trickle of new ones are the same query.
 //
-// WHERE TO: never a specific seat. Seats fill and lobbies start while an
-// email sits unread, so the button is /?play=winback and the room is
-// chosen when it is CLICKED, by Quick Join (worker/index.js
-// handleQuickJoin): the open lobby with the fewest seats left, or a fresh
-// self-starting room. The email only names the best lobby at send time,
-// as a hook.
+// WHERE TO: an existing game whenever there is one. Each email names ONE
+// joinable lobby (worker/matchmaking.js: public, a free seat, and able to
+// start), and its button (/?play=winback&seat=<lobby>) seats the reader
+// there through Quick Join if it still has room when they click. If it
+// filled or started meanwhile, Quick Join's usual order takes over: the
+// next joinable lobby, closest to starting first, and only then a fresh
+// self-starting room.
 //
 // HOW MANY, and when there is nowhere to go (planWinback):
-//   seat  an open public lobby exists. Mail at most two people per open
-//         seat (not everyone clicks), capped per hour, newest signups
-//         first; the next hour sends more if seats are still open.
+//   seat  joinable lobbies exist. Each one gets two invitations per open
+//         seat (not everyone clicks), fullest lobby first, newest signups
+//         first, capped per hour. Invitations still out from the last day
+//         count against a lobby, so the next hour only tops up the
+//         difference. Twelve emails never all chase the same last seat.
+//
+// The button signs its reader in (worker/emailLogin.js): most of these
+// people have not been back since they signed up, and a forgotten
+// password should not stand between them and the seat.
 //   pool  nothing is open, but at least POOL_MIN people are waiting. Mail
 //         POOL_SIZE of them in the same minute: the first to click opens
 //         a Quick Join room, and everyone after lands in it, so they fill
@@ -31,19 +38,26 @@
 
 import { tr, trn, normalizeLocale } from './i18n.js';
 import { emailConfigured, sendEmail, layout, textLayout, esc, unsubscribeUrl, OPEN_PIXEL } from './email.js';
+import { joinableLobbies } from './matchmaking.js';
 
 export const WINBACK_AFTER_MS = 48 * 3600 * 1000;
 export const WINBACK_HOURLY_CAP = 20;
 export const WINBACK_PER_SEAT = 2;
 export const POOL_MIN = 4;
 export const POOL_SIZE = 8;
-/** Quick Join's own freshness bar: a lobby untouched for a week is a trap. */
-const LOBBY_FRESH_MS = 7 * 24 * 3600 * 1000;
 /** The self-starting room a pool click opens (worker/index.js QUICK_JOIN_SEATS). */
 const POOL_ROOM_SEATS = 5;
 
 /** The button. App.tsx reads ?play=winback once the reader is signed in. */
 export const WINBACK_URL = 'https://orbital-empire.com/?play=winback&from=winback';
+/** A test email's button: the lobby, without taking anyone's seat. */
+export const WINBACK_TEST_URL = 'https://orbital-empire.com/?from=winback-test';
+
+/** The button for one email: the lobby it names goes first at click time. */
+export function winbackUrl(roomId, { test = false } = {}) {
+  if (test) return WINBACK_TEST_URL;
+  return roomId ? `${WINBACK_URL}&seat=${encodeURIComponent(roomId)}` : WINBACK_URL;
+}
 /** The header picture: a crop of the Battle of Mars press still (a JPEG,
  *  because Outlook will not show WebP). */
 export const WINBACK_HERO_SRC = 'https://orbital-empire.com/press/email/winback-hero.jpg';
@@ -134,22 +148,69 @@ export async function loadWinbackTemplate(env) {
 /**
  * Decide this hour's sends. Pure, so the rules are testable without a DB.
  *
+ * Each open seat is worth WINBACK_PER_SEAT invitations IN TOTAL, not per
+ * hour: invitations already out for a lobby (sent within the last
+ * INVITE_WINDOW_MS to someone who has not sat down anywhere since) count
+ * against it, and only the difference is sent. A lobby whose seats are
+ * all spoken for is left alone until those invitations lapse or fill.
+ *
  * @param eligible  waiting accounts, newest signup first
- * @param lobbies   open public lobbies, best first (fewest seats left)
- * @returns {{ mode: 'seat'|'pool'|'hold', recipients: object[], room: object|null }}
+ * @param lobbies   joinable lobbies, best first (fewest seats left)
+ * @param pending   { [lobbyId]: invitations still out }
+ * @returns {{ mode: 'seat'|'pool'|'hold', reason?: string, sends: {user, room}[],
+ *             recipients: object[], rooms: {room, count, pending}[] }}
+ *   room is null for a pool send; reason says why a hold is a hold
  */
-export function planWinback({ eligible, lobbies }) {
-  if (!eligible.length) return { mode: 'hold', recipients: [], room: null };
+export function planWinback({ eligible, lobbies, pending = {} }) {
+  const hold = (reason, rooms = []) => ({ mode: 'hold', reason, sends: [], recipients: [], rooms });
+  if (!eligible.length) return hold('nobody_waiting');
   const open = lobbies.filter(l => l.n < l.max_players);
   if (open.length) {
-    const seats = open.reduce((s, l) => s + (l.max_players - l.n), 0);
-    const budget = Math.min(WINBACK_HOURLY_CAP, seats * WINBACK_PER_SEAT);
-    return { mode: 'seat', recipients: eligible.slice(0, budget), room: open[0] };
+    const sends = [];
+    const rooms = [];
+    let next = 0;
+    for (const room of open) {
+      const out = Math.max(0, Number(pending[room.id]) || 0);
+      const want = Math.max(0, (room.max_players - room.n) * WINBACK_PER_SEAT - out);
+      let count = 0;
+      while (count < want && next < eligible.length && sends.length < WINBACK_HOURLY_CAP) {
+        sends.push({ user: eligible[next++], room });
+        count++;
+      }
+      if (count || out) rooms.push({ room, count, pending: out });
+    }
+    if (!sends.length) return hold('invited', rooms);
+    return { mode: 'seat', sends, recipients: sends.map(s => s.user), rooms };
   }
   if (eligible.length >= POOL_MIN) {
-    return { mode: 'pool', recipients: eligible.slice(0, POOL_SIZE), room: null };
+    const sends = eligible.slice(0, POOL_SIZE).map(user => ({ user, room: null }));
+    return { mode: 'pool', sends, recipients: sends.map(s => s.user), rooms: [] };
   }
-  return { mode: 'hold', recipients: [], room: null };
+  return hold('too_few');
+}
+
+/** How long an unanswered invitation still holds its seat. */
+export const INVITE_WINDOW_MS = 24 * 3600 * 1000;
+
+/**
+ * Invitations still out, per lobby: win-back emails from the last day that
+ * named a lobby, to people who have not sat down anywhere since.
+ */
+export async function pendingInvitations(env, nowMs = Date.now()) {
+  try {
+    const rows = (await env.DB
+      .prepare(
+        `SELECT e.room_id, COUNT(*) AS n
+           FROM email_log e
+          WHERE e.kind = 'winback_seat' AND e.ok = 1 AND e.room_id IS NOT NULL AND e.created_ms > ?
+            AND NOT EXISTS (SELECT 1 FROM room_members m WHERE m.user_id = e.user_id AND m.joined_at >= e.created_ms)
+          GROUP BY e.room_id`,
+      )
+      .bind(nowMs - INVITE_WINDOW_MS).all()).results ?? [];
+    return Object.fromEntries(rows.map(r => [r.room_id, Number(r.n) || 0]));
+  } catch {
+    return {}; // before 0165 there is no room_id: count nothing, as before
+  }
 }
 
 export async function eligibleAccounts(env, nowMs) {
@@ -171,23 +232,9 @@ export async function eligibleAccounts(env, nowMs) {
     .all()).results ?? [];
 }
 
-/** The same rooms Quick Join would seat someone in, best first. */
+/** The lobbies Quick Join would seat someone in, best first. */
 export async function openLobbies(env, nowMs) {
-  return (await env.DB
-    .prepare(
-      `SELECT r.id, r.name, r.max_players, r.quick_join,
-              (SELECT COUNT(*) FROM room_members m WHERE m.room_id = r.id) AS n
-         FROM rooms r
-        WHERE r.status = 'lobby'
-          AND r.password_hash IS NULL
-          AND r.updated_at > ?
-          AND NOT EXISTS (SELECT 1 FROM games g WHERE g.id = r.id)
-        ORDER BY (r.max_players - (SELECT COUNT(*) FROM room_members m WHERE m.room_id = r.id)) ASC,
-                 r.updated_at DESC
-        LIMIT 10`,
-    )
-    .bind(nowMs - LOBBY_FRESH_MS)
-    .all()).results ?? [];
+  return joinableLobbies(env, nowMs);
 }
 
 // ---------------------------------------------------------------------------
@@ -254,7 +301,7 @@ function emptyCell() {
  * @param card { name, n, max, quick, host, members:[{name,is_host}], tickMs, forming }
  *   forming = the pool case: a game that opens when the first reader clicks.
  */
-export function roomCardHtml(L, card, ctaLabel = tr(L, 'email.winback.cta')) {
+export function roomCardHtml(L, card, ctaLabel = tr(L, 'email.winback.cta'), href = WINBACK_URL) {
   const open = Math.max(0, card.max - card.n);
   const members = (card.members ?? []).slice(0, 10);
   const empties = Math.min(open, 10 - members.length);
@@ -281,7 +328,7 @@ export function roomCardHtml(L, card, ctaLabel = tr(L, 'email.winback.cta')) {
   <tr><td style="padding:8px 18px 0;font:13px ${CARD_FONT};color:${K.ink3}">${esc(tr(L, 'email.winback.card.players', { n: card.n, max: card.max }))} · <b style="color:${K.teal};font-weight:600">${esc(tr(L, 'email.winback.card.open', { n: open }))}</b></td></tr>
   <tr><td style="padding:12px 18px 0;font:13px ${CARD_FONT};color:${K.ink2}"><span style="color:${K.ink3};font-size:11px;letter-spacing:.12em;text-transform:uppercase">${esc(tr(L, 'email.winback.card.speed'))}</span>&nbsp;&nbsp;${esc(turnSpeed(L, card.tickMs))}</td></tr>
   <tr><td style="padding:16px 18px 18px">
-    <a href="${esc(WINBACK_URL)}" style="display:block;background:${K.gold};color:${K.goldInk};font:700 15px/42px ${CARD_FONT};text-align:center;text-decoration:none;border-radius:10px">${esc(ctaLabel)}</a>
+    <a href="${esc(href)}" style="display:block;background:${K.gold};color:${K.goldInk};font:700 15px/42px ${CARD_FONT};text-align:center;text-decoration:none;border-radius:10px">${esc(ctaLabel)}</a>
   </td></tr>
 </table>`;
 }
@@ -301,7 +348,7 @@ function roomCardText(L, card) {
  * Everything one reader sees. Exported for the preview and the tests.
  * @param room  for 'seat': { name, n, max_players, quick_join, host_name, members, tick_ms }
  */
-export function composeWinback(locale, mode, room, overrides = {}) {
+export function composeWinback(locale, mode, room, overrides = {}, { test = false, href = null } = {}) {
   const L = normalizeLocale(locale) ?? 'en';
   const T = makeT(L, overrides);
   const seat = mode === 'seat' && !!room;
@@ -317,7 +364,10 @@ export function composeWinback(locale, mode, room, overrides = {}) {
       : T('email.winback.pool.autostart', { n: POOL_ROOM_SEATS }),
     T('email.winback.l2'),
   ];
-  const cta = { label: T('email.winback.cta'), url: WINBACK_URL };
+  // A real send passes `href`: the reader's own sign-in link
+  // (worker/emailLogin.js), which lands on the same seat link.
+  const url = href || winbackUrl(seat ? room.id : null, { test });
+  const cta = { label: T('email.winback.cta'), url };
   return {
     L,
     subject: T(seat ? 'email.winback.seat.subject' : 'email.winback.pool.subject'),
@@ -328,10 +378,10 @@ export function composeWinback(locale, mode, room, overrides = {}) {
     intro,
     after,
     card,
-    cardHtml: roomCardHtml(L, card, cta.label),
+    cardHtml: roomCardHtml(L, card, cta.label, url),
     lines: [intro, '', ...roomCardText(L, card), '', ...after],
     cta,
-    hero: { src: overrides?.hero_src || WINBACK_HERO_SRC, alt: T('email.winback.heroAlt'), href: WINBACK_URL },
+    hero: { src: overrides?.hero_src || WINBACK_HERO_SRC, alt: T('email.winback.heroAlt'), href: url },
     footer: T('email.winback.footer'),
   };
 }
@@ -360,12 +410,17 @@ export function renderWinback(c, { unsubUrl = null, trackOpens = false } = {}) {
   };
 }
 
-async function sendWinback(env, user, mode, room, overrides) {
-  const c = composeWinback(user.locale, mode, room, overrides);
+async function sendWinback(env, user, mode, room, overrides, nowMs) {
+  const roomId = mode === 'seat' && room ? room.id : null;
+  // The button signs its reader in (a week, once); null falls back to the
+  // plain seat link, which works after an ordinary sign-in.
+  const { issueLoginLink } = await import('./emailLogin.js');
+  const href = await issueLoginLink(env, { userId: user.id, roomId, nowMs });
+  const c = composeWinback(user.locale, mode, room, overrides, { href });
   const unsubUrl = await unsubscribeUrl(env, user.id, 'games');
   return sendEmail(env, {
     userId: user.id, to: user.email, kind: `winback_${mode}`, category: 'games',
-    dedupeKey: `winback:${user.id}`,
+    dedupeKey: `winback:${user.id}`, roomId,
     ...renderWinback(c, { unsubUrl, trackOpens: true }),
   });
 }
@@ -412,18 +467,25 @@ export async function maybeSendWinbackEmails(env, nowMs = Date.now()) {
   } catch {
     return; // this hour already ran
   }
+  const { pruneLoginTokens } = await import('./emailLogin.js');
+  await pruneLoginTokens(env, nowMs);
   const eligible = await eligibleAccounts(env, nowMs);
   if (!eligible.length) return;
-  const plan = planWinback({ eligible, lobbies: await openLobbies(env, nowMs) });
-  if (!plan.recipients.length) return;
-  let room = plan.room;
-  if (room) {
-    try { room = await cardDetails(env, room); }
-    catch (e) { console.error('winback card details failed', e); }
+  const plan = planWinback({
+    eligible,
+    lobbies: await openLobbies(env, nowMs),
+    pending: await pendingInvitations(env, nowMs),
+  });
+  if (!plan.sends.length) return;
+  // Each named lobby's card (who sits there, its speed), looked up once.
+  const detailed = new Map();
+  for (const { room } of plan.rooms) {
+    try { detailed.set(room.id, await cardDetails(env, room)); }
+    catch (e) { console.error('winback card details failed', e); detailed.set(room.id, room); }
   }
-  for (const user of plan.recipients) {
+  for (const { user, room } of plan.sends) {
     try {
-      await sendWinback(env, user, plan.mode, room, tpl.overrides);
+      await sendWinback(env, user, plan.mode, room ? detailed.get(room.id) ?? room : null, tpl.overrides, nowMs);
     } catch (e) {
       console.error(`winback send failed for ${user.id}`, e);
     }
