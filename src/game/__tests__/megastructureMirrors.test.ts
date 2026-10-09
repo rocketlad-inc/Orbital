@@ -593,7 +593,9 @@ describe('a structure under attack raises a situation row', () => {
 
   it('has a category, a label and a tier', () => {
     expect(sit).toMatch(/'structure_siege'/);
-    expect(sit).toMatch(/structure_siege: 'Structure under attack'/);
+    // The label is a catalog entry now (helper.sit.cat.*); the English must still read the same.
+    expect(fs.readFileSync(path.resolve(__dirname, '../../', 'i18n/parts/en/helpers.ts'), 'utf8'))
+      .toMatch(/'helper\.sit\.cat\.structure_siege': 'Structure under attack'/);
     expect(sit).toMatch(/structure_siege: 'now'/);
   });
 
