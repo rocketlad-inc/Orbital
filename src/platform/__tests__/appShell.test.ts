@@ -85,6 +85,9 @@ describe('the Commission storefronts', () => {
       // The game-feed card (own Discord server): the goods and the
       // Connect everywhere; buy and gift only where it can sell.
       'multiplayer/DiscordServerFeed.tsx': /\{sellable \? \(/,
+      // The Commission on the whole fleet (designer): the fleet everywhere,
+      // get and gift only where it can sell.
+      'components/CommissionFleetPreview.tsx': /\{sellable && \(/,
     };
     for (const [rel, gate] of Object.entries(gated)) {
       expect(read(rel)).toMatch(gate);

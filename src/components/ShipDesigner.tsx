@@ -53,6 +53,8 @@ import { useFeatureGate } from '../hooks/useFeatureGate';
 import { t, tn, tk } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import { deriveSecondary } from '../game/colorUtils';
+import { DesignLibrary } from './DesignLibrary';
+import { CommissionFleetPreview } from './CommissionFleetPreview';
 import './ShipDesigner.css';
 
 interface ShipDesignerProps {
@@ -195,6 +197,10 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   /** The player asked for a blank hull (+ New design). Otherwise the
    *  designer shows the class's ACTIVE design: the ship you build. */
   const [blank, setBlank] = useState(false);
+  /** The full Design Library takes over the designer's body. */
+  const [libraryView, setLibraryView] = useState(false);
+  /** The previewed Commission look on the whole fleet. */
+  const [fleetPreview, setFleetPreview] = useState(false);
   /** Refit-bar feedback ("Refitted 4, 2 pending"). */
   const [refitNote, setRefitNote] = useState<string | null>(null);
 
@@ -228,12 +234,13 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
+      if (fleetPreview) { setFleetPreview(false); return; }
       if (libOpen) { setLibOpen(false); return; }
       onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose, libOpen]);
+  }, [onClose, libOpen, fleetPreview]);
 
   const stateDesigns = gameState.shipDesigns;
   const classDesigns = useMemo(() => {
@@ -879,6 +886,32 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
           <button className="sd-close" onClick={onClose} aria-label={t('ship.sd.close')}>✕</button>
         </div>
 
+        {libraryView ? (
+          <DesignLibrary
+            designs={freshDesigns ?? stateDesigns ?? []}
+            templates={templates ?? []}
+            pastDesigns={pastDesigns ?? []}
+            initialClass={activeClass}
+            p1={p1}
+            p2={p2}
+            busy={busy}
+            priced={priced}
+            onEdit={d => {
+              setActiveClass(d.shipClass as BuildableClassName);
+              setBlank(false);
+              loadDesign(d);
+              setLibraryView(false);
+            }}
+            onSetActive={d => { void setActiveDesign(d, true); }}
+            onLoad={tpl => {
+              setActiveClass(tpl.shipClass as BuildableClassName);
+              loadTemplate(tpl as ShipTemplate);
+              setLibraryView(false);
+            }}
+            onDeleteTemplate={tpl => { void deleteTemplate(tpl as ShipTemplate); }}
+            onClose={() => setLibraryView(false)}
+          />
+        ) : (
         <div className="sd-main">
           {/* ---------- Left: this game's designs + the account library ---------- */}
           <aside className={`sd-lib ${libOpen ? 'is-open' : ''}`}>
@@ -903,6 +936,9 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                 {classPastDesigns.map(tpl => templateRow(tpl, false))}
               </>
             )}
+            <button className="sd-dl-open" onClick={() => { setLibOpen(false); setLibraryView(true); }} data-testid="sd-open-library">
+              {t('ship.sd.dl.open', { n: (freshDesigns ?? stateDesigns ?? []).length + (templates?.length ?? 0) + (pastDesigns?.length ?? 0) })}
+            </button>
           </aside>
 
           {/* ---------- Centre: the ship as it flies ---------- */}
@@ -1124,6 +1160,9 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                 <span className="sd-offer__text">
                   {t('ship.sd.previewA')} <b>{ICON_VARIANT_NAMES[activeClass][previewIcon]}</b>{t('ship.sd.previewB', { commission: tk('mp.commission.name', COMMISSION_NAME), discord: tk('mp.commission.discord', COMMISSION_DISCORD) })}
                 </span>
+                <button type="button" className="sd-offer__fleet" onClick={() => setFleetPreview(true)} data-testid="sd-fleet-preview">
+                  {t('ship.sd.cfp.open')}
+                </button>
                 <span className="sd-offer__btns">
                   {canBuyHere() && (
                     <button
@@ -1143,8 +1182,14 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
             )}
           </div>
         </div>
+        )}
+
+        {fleetPreview && previewIcon && (
+          <CommissionFleetPreview initialLine={previewIcon} p1={p1} p2={p2} onClose={() => setFleetPreview(false)} />
+        )}
 
         {/* ---------- Footer: status, refit, actions ---------- */}
+        {!libraryView && (
         <div className="sd-foot">
           <button
             className="sd-foot__summary"
@@ -1166,6 +1211,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
           )}
           {actionButtons}
         </div>
+        )}
       </div>
     </div>
   );
