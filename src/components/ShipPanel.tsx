@@ -525,13 +525,19 @@ export const ShipPanel: React.FC = () => {
     if (!rendezvousOpen || isMobile) { setRvPopAt(null); return undefined; }
     const place = () => {
       const r = panelRef.current?.getBoundingClientRect();
-      // Never above the window: measured mid-scroll of an ancestor, the
-      // panel's top can read negative, and the pop-out kept that.
+      // Never above the window. The panel slides in from translateY(-110%)
+      // (ShipPanel.css), so a measure taken mid-slide reads far above it;
+      // animationend measures again once it has landed.
       if (r) setRvPopAt({ left: Math.round(r.right + 8), top: Math.max(8, Math.round(r.top)) });
     };
     place();
+    const el = panelRef.current;
     window.addEventListener('resize', place);
-    return () => window.removeEventListener('resize', place);
+    el?.addEventListener('animationend', place);
+    return () => {
+      window.removeEventListener('resize', place);
+      el?.removeEventListener('animationend', place);
+    };
   }, [rendezvousOpen, isMobile, shipTab, ship?.id]);
 
   // The map's half of the picker: rings on what this hull can catch, the
