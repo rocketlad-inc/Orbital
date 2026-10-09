@@ -137,6 +137,109 @@ export function filterRow(row, { bodyId, participants, kept }) {
   return { t: row.t, kind: row.kind, state };
 }
 
+/**
+ * Why the battle happened and what it was for, as the record has it.
+ *
+ *   wars    the wars open between its empires when the first shot was
+ *           fired: who declared, when, and whether it broke an oath to
+ *   stake   whose capital the world was, whether it had been terraformed
+ *           by then, and what it yields
+ *   series  the battles before and after this one in the same war, with
+ *           their own recap links
+ *
+ * All of it is public in the game: a declaration is announced to every
+ * empire and the Herald, capitals wear a star on the map, and yields are
+ * on every world card. Who held the world before and after is not here:
+ * the client reads that from the reel's own settlements.
+ */
+export async function recapContext(env, share) {
+  const b = await env.DB
+    .prepare(
+      `SELECT id, body_id, started_tick, COALESCE(ended_tick, last_fire_tick) AS ended_tick, faction_ids
+         FROM battles WHERE id = ? AND game_id = ?`,
+    )
+    .bind(share.battle_id, share.game_id).first();
+  if (!b) return err(404, 'not_found', 'no such battle');
+  let fids = [];
+  try { fids = JSON.parse(b.faction_ids || '[]'); } catch { fids = []; }
+  if (!Array.isArray(fids)) fids = [];
+  const inBattle = new Set(fids);
+
+  // Wars open at the first shot, between two empires that were both there.
+  const warRows = (await env.DB
+    .prepare(
+      `SELECT faction_a, faction_b, declared_by, declared_at_tick, ended_at_tick, origin
+         FROM game_wars
+        WHERE game_id = ? AND declared_at_tick <= ?
+          AND (ended_at_tick IS NULL OR ended_at_tick >= ?)
+        ORDER BY declared_at_tick`,
+    )
+    .bind(share.game_id, b.started_tick, b.started_tick).all()).results ?? [];
+  const wars = warRows
+    .filter(w => inBattle.has(w.faction_a) && inBattle.has(w.faction_b))
+    .map(w => ({
+      a: w.faction_a, b: w.faction_b, declaredBy: w.declared_by,
+      declaredAt: w.declared_at_tick, origin: w.origin ?? null,
+    }));
+
+  // The world, as it stood.
+  let stake = null;
+  if (b.body_id) {
+    const body = await env.DB
+      .prepare(
+        `SELECT yield_metal, yield_gold, yield_science, terraformed_at_tick, type
+           FROM game_bodies WHERE id = ? AND game_id = ?`,
+      )
+      .bind(b.body_id, share.game_id).first();
+    const capital = await env.DB
+      .prepare('SELECT id FROM game_factions WHERE game_id = ? AND capital_body_id = ? LIMIT 1')
+      .bind(share.game_id, b.body_id).first();
+    if (body) {
+      stake = {
+        capitalOf: capital?.id ?? null,
+        terraformed: body.terraformed_at_tick != null && body.terraformed_at_tick <= b.ended_tick,
+        type: body.type,
+        yields: { metal: body.yield_metal ?? 0, credits: body.yield_gold ?? 0, science: body.yield_science ?? 0 },
+      };
+    }
+  }
+
+  // The same war's other battles: any battle both sides of one of these
+  // wars fought in, inside the war's span.
+  let series = { prev: null, next: null, count: 0 };
+  if (wars.length) {
+    const w = wars[0];
+    const rows = (await env.DB
+      .prepare(
+        `SELECT bt.id, bt.body_name, bt.started_tick, bt.ships_lost, bt.faction_ids,
+                (SELECT s.token FROM battle_shares s
+                  WHERE s.battle_id = bt.id AND s.created_by IS NULL AND s.revoked_at_ms IS NULL
+                  ORDER BY s.created_at_ms LIMIT 1) AS token
+           FROM battles bt
+          WHERE bt.game_id = ? AND bt.started_tick >= ? AND bt.status = 'ended'
+          ORDER BY bt.started_tick`,
+      )
+      .bind(share.game_id, w.declaredAt).all()).results ?? [];
+    const inWar = rows.filter(r => {
+      let f = [];
+      try { f = JSON.parse(r.faction_ids || '[]'); } catch { f = []; }
+      return Array.isArray(f) && f.includes(w.a) && f.includes(w.b);
+    });
+    const at = inWar.findIndex(r => r.id === b.id);
+    const pick = (r) => (r && r.token
+      ? { token: r.token, name: r.body_name, tick: r.started_tick, lost: r.ships_lost }
+      : null);
+    series = {
+      prev: at > 0 ? pick(inWar[at - 1]) : null,
+      next: at >= 0 && at < inWar.length - 1 ? pick(inWar[at + 1]) : null,
+      count: inWar.length,
+      index: at >= 0 ? at + 1 : null,
+    };
+  }
+
+  return json({ wars, stake, series });
+}
+
 /** The battle's rows, from the keyframe it needs to the aftermath. */
 export async function recapMapReplay(env, share) {
   const b = await battleOf(env, share);

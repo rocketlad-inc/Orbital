@@ -24,7 +24,10 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createMatchMap } from '../render/matchMap';
 import type { MatchSummary, SnapshotRow, ReplayStage } from '../render/matchWorld';
 import type { Detail } from './BattleReview';
-import { pacing, filmSeconds, standingsAt, kills as allKills, ace as aceOf, phaseAt } from './battleFilmModel';
+import {
+  pacing, filmSeconds, standingsAt, kills as allKills, ace as aceOf, phaseAt,
+  holderOf, outcomeOf, betrayals, type RecapContext,
+} from './battleFilmModel';
 import { t, tn } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import './BattleFilm.css';
@@ -46,6 +49,10 @@ export function BattleFilm({ token, d, onUnavailable }: {
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
   const [titleLeft, setTitleLeft] = useState(TITLE_SECONDS);
+  // The war around the fight, and who held the world before and after
+  // it, read off the reel itself (the database only knows the owner now).
+  const [ctx, setCtx] = useState<RecapContext | null>(null);
+  const [holders, setHolders] = useState<{ before: string | null; after: string | null } | null>(null);
   const posRef = useRef(0);
   const playRef = useRef(false);
   const speedRef = useRef(1);
@@ -76,6 +83,16 @@ export function BattleFilm({ token, d, onUnavailable }: {
     return () => { dead = true; };
   }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Context is a nice-to-have: without it the film still plays.
+  useEffect(() => {
+    let dead = false;
+    fetch(`/api/recap/${encodeURIComponent(token)}/context`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(j => { if (!dead && j && Array.isArray(j.wars)) setCtx(j); })
+      .catch(() => { /* the film plays without it */ });
+    return () => { dead = true; };
+  }, [token]);
+
   const battle = useMemo(() => summary?.focus
     ? { start: summary.focus.battleStart, end: summary.focus.battleEnd }
     : { start: d.battle.started_tick, end: d.battle.ended_tick ?? d.battle.last_fire_tick }, [summary, d]);
@@ -102,6 +119,13 @@ export function BattleFilm({ token, d, onUnavailable }: {
     stage.applyRows(rows);
     posRef.current = range.lo;
     setPos(range.lo);
+    try {
+      const bodyId = summary.focus.bodyId;
+      setHolders({
+        before: holderOf(stage.worldAt(battle.start).stls.values(), bodyId),
+        after: holderOf(stage.worldAt(range.hi).stls.values(), bodyId),
+      });
+    } catch { /* no holder line, nothing else lost */ }
 
     const fit = () => {
       const r = cv.getBoundingClientRect();
@@ -188,6 +212,26 @@ export function BattleFilm({ token, d, onUnavailable }: {
   const victor = d.battle.victor;
   const showTitle = !loading && titleLeft > 0 && pos <= range.lo + 0.01;
 
+  // ---- the story around it, in words --------------------------------
+  const fname = (fid: string | null | undefined) => (fid && d.factions[fid]?.name) || t('review.film.someone');
+  const fcol = (fid: string | null | undefined) => (fid && d.factions[fid]?.color) || '#cfe0ee';
+  const war = ctx?.wars[0] ?? null;
+  const warLine = war && (() => {
+    const by = war.declaredBy ?? war.a;
+    const on = by === war.a ? war.b : war.a;
+    return t(war.origin === 'pact_broken' ? 'review.film.why.oath' : 'review.film.why.declared',
+      { a: fname(by), b: fname(on), n: war.declaredAt });
+  })();
+  const capitalLine = ctx?.stake?.capitalOf ? t('review.film.stake.capital', { name: place, owner: fname(ctx.stake.capitalOf) }) : null;
+  const outcome = holders ? outcomeOf(holders.before, holders.after) : null;
+  const outcomeLine = !outcome ? null
+    : outcome.kind === 'fell' ? t(outcome.from ? 'review.film.outcome.fell' : 'review.film.outcome.taken', { name: place, owner: fname(outcome.to), from: fname(outcome.from) })
+      : outcome.kind === 'held' ? t('review.film.outcome.held', { name: place, owner: fname(outcome.by) })
+        : t('review.film.outcome.emptied', { name: place, owner: fname(outcome.from) });
+  const outcomeColor = !outcome ? undefined
+    : outcome.kind === 'fell' ? fcol(outcome.to) : outcome.kind === 'held' ? fcol(outcome.by) : '#ffb3a6';
+  const betrayed = betrayals(d.battle.pacts_broken_during);
+
   return (
     <div className="bfilm" ref={boxRef}>
       <div className="bfilm__screen">
@@ -205,10 +249,14 @@ export function BattleFilm({ token, d, onUnavailable }: {
 
             <ol className="bfilm__board" aria-label={t('review.film.board')}>
               {board.slice(0, 6).map(s => (
-                <li key={s.factionId} className={s.alive === 0 && s.total > 0 && tick >= battle.start ? 'is-out' : ''}>
+                // Out only once everything it brought has arrived and died;
+                // a fleet still on its way is not a fleet destroyed.
+                <li key={s.factionId} className={s.arrived === s.total && s.alive === 0 ? 'is-out' : s.arrived === 0 ? 'is-coming' : ''}>
                   <span className="bfilm__swatch" style={{ background: s.color }} />
                   <span className="bfilm__name">{s.name}</span>
-                  <span className="bfilm__count">{s.alive}<small>/{s.total}</small></span>
+                  {s.arrived === 0
+                    ? <span className="bfilm__count bfilm__count--coming">{t('review.film.arriving')}</span>
+                    : <span className="bfilm__count">{s.alive}<small>/{s.total}</small></span>}
                   <span className="bfilm__bar"><span style={{ width: `${s.total ? (100 * s.alive) / s.total : 0}%`, background: s.color }} /></span>
                 </li>
               ))}
@@ -245,6 +293,12 @@ export function BattleFilm({ token, d, onUnavailable }: {
               {t('review.film.turns', { a: battle.start, b: battle.end })}
               {summary?.game.name ? ` · ${summary.game.name}` : ''}
             </div>
+            {(warLine || capitalLine) && (
+              <div className="bfilm__why">
+                {warLine && <div>{warLine}</div>}
+                {capitalLine && <div>{capitalLine}</div>}
+              </div>
+            )}
           </div>
         )}
 
@@ -254,6 +308,7 @@ export function BattleFilm({ token, d, onUnavailable }: {
             <div className="bfilm__verdict" style={{ color: victor?.color ?? '#e6f0f8' }}>
               {victor ? t('review.film.wins', { name: victor.name ?? '' }) : t('review.film.noVictor')}
             </div>
+            {outcomeLine && <div className="bfilm__outcome" style={{ color: outcomeColor }}>{outcomeLine}</div>}
             <div className="bfilm__toll">
               {tn('review.film.toll', d.battle.ships_lost, { n: d.battle.ships_lost, turns: battle.end - battle.start + 1 })}
             </div>
@@ -295,6 +350,46 @@ export function BattleFilm({ token, d, onUnavailable }: {
           <option value={2}>2×</option>
         </select>
       </div>
+
+      {(warLine || capitalLine || (holders?.before && !ended) || betrayed.length > 0 || ctx?.series.prev || ctx?.series.next) && (
+        <section className="bfilm__context" aria-label={t('review.film.context')}>
+          {warLine && (
+            <div className="bfilm__row"><span className="bfilm__k">{t('review.film.k.why')}</span><span>{warLine}</span></div>
+          )}
+          {(capitalLine || holders?.before) && (
+            <div className="bfilm__row">
+              <span className="bfilm__k">{t('review.film.k.stake')}</span>
+              <span>
+                {capitalLine ?? (holders?.before ? t('review.film.held.before', { name: place, owner: fname(holders.before) }) : '')}
+                {ctx?.stake?.terraformed ? ` ${t('review.film.stake.terraformed')}` : ''}
+              </span>
+            </div>
+          )}
+          {betrayed.map(([a, b]) => (
+            <div className="bfilm__row bfilm__row--alert" key={`${a}|${b}`}>
+              <span className="bfilm__k">{t('review.film.k.betrayal')}</span>
+              <span>{t('review.film.betrayal', { a: fname(a), b: fname(b) })}</span>
+            </div>
+          ))}
+          {(ctx?.series.prev || ctx?.series.next) && (
+            <nav className="bfilm__series" aria-label={t('review.film.k.series')}>
+              {ctx.series.index && ctx.series.count > 1 && (
+                <span className="bfilm__k">{t('review.film.series', { i: ctx.series.index, n: ctx.series.count })}</span>
+              )}
+              {ctx.series.prev && (
+                <a href={`/recap/${encodeURIComponent(ctx.series.prev.token)}`}>
+                  {t('review.film.prev', { name: ctx.series.prev.name ?? t('review.deepSpace') })}
+                </a>
+              )}
+              {ctx.series.next && (
+                <a href={`/recap/${encodeURIComponent(ctx.series.next.token)}`}>
+                  {t('review.film.next', { name: ctx.series.next.name ?? t('review.deepSpace') })}
+                </a>
+              )}
+            </nav>
+          )}
+        </section>
+      )}
     </div>
   );
 }

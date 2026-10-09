@@ -1,6 +1,6 @@
 // THE BATTLE RECAP'S STORY (battleFilmModel.ts): pace, board, kills, ace.
 
-import { pacing, filmSeconds, standingsAt, kills, ace, phaseAt } from '../battleFilmModel';
+import { pacing, filmSeconds, standingsAt, kills, ace, phaseAt, holderOf, outcomeOf, betrayals } from '../battleFilmModel';
 import type { Detail } from '../BattleReview';
 
 const P = (o: Partial<Detail['participants'][number]>) => ({
@@ -63,6 +63,12 @@ describe('the board', () => {
     const b = standingsAt(detail(), 100);
     expect(b.map(s => [s.name, s.alive, s.total])).toEqual([['Frowny Face', 1, 2], ['The UTEF', 2, 2]]);
   });
+  it('a fleet still on its way is arriving, not destroyed', () => {
+    const late = detail({ participants: [P({ ship_id: 'x', faction_id: 'f2', first_tick: 106 })] });
+    expect(standingsAt(late, 101)[0]).toMatchObject({ arrived: 0, alive: 0, total: 1 });
+    expect(standingsAt(late, 106)[0]).toMatchObject({ arrived: 1, alive: 1, total: 1 });
+  });
+
   it('counts losses as they happen, and reinforcements as they arrive', () => {
     expect(standingsAt(detail(), 105).map(s => [s.name, s.alive])).toEqual([['Frowny Face', 1], ['The UTEF', 1]]);
     expect(standingsAt(detail(), 108).map(s => [s.name, s.alive])).toEqual([['Frowny Face', 0], ['The UTEF', 1]]);
@@ -89,6 +95,28 @@ describe('the ace', () => {
   });
   it('is nobody when nobody killed', () => {
     expect(ace(detail({ participants: [P({})] }))).toBeNull();
+  });
+});
+
+describe('the world before and after', () => {
+  const stls = (...rows: Array<[string, string | null, number]>) => rows.map(([body, fid, pop]) => ({ body, fid, pop }));
+
+  it('the holder is whoever has the most people there', () => {
+    expect(holderOf(stls(['g:mars', 'f1', 2], ['g:mars', 'f2', 5], ['g:earth', 'f3', 9]), 'g:mars')).toBe('f2');
+    expect(holderOf(stls(['g:earth', 'f3', 9]), 'g:mars')).toBeNull();
+  });
+
+  it('says whether the world fell, held or was left empty', () => {
+    expect(outcomeOf('f1', 'f2')).toEqual({ kind: 'fell', to: 'f2', from: 'f1' });
+    expect(outcomeOf(null, 'f2')).toEqual({ kind: 'fell', to: 'f2', from: null });
+    expect(outcomeOf('f1', 'f1')).toEqual({ kind: 'held', by: 'f1' });
+    expect(outcomeOf('f1', null)).toEqual({ kind: 'emptied', from: 'f1' });
+    expect(outcomeOf(null, null)).toBeNull();
+  });
+
+  it('betrayals come from the pairs at peace at the start and not at the end', () => {
+    expect(betrayals(['g:f1|g:f2', 'bad', ''])).toEqual([['g:f1', 'g:f2']]);
+    expect(betrayals(undefined)).toEqual([]);
   });
 });
 

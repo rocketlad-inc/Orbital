@@ -51,6 +51,8 @@ export interface Standing {
   total: number;
   /** Arrived by this tick and not yet destroyed. */
   alive: number;
+  /** Arrived by this tick, destroyed or not. Zero = still on the way. */
+  arrived: number;
 }
 
 /**
@@ -65,10 +67,11 @@ export function standingsAt(d: Detail, tick: number): Standing[] {
     let s = per.get(p.faction_id);
     if (!s) {
       const f = d.factions[p.faction_id];
-      s = { factionId: p.faction_id, name: f?.name ?? 'Unknown empire', color: f?.color ?? '#8a9fb3', total: 0, alive: 0 };
+      s = { factionId: p.faction_id, name: f?.name ?? 'Unknown empire', color: f?.color ?? '#8a9fb3', total: 0, alive: 0, arrived: 0 };
       per.set(p.faction_id, s);
     }
     s.total++;
+    if (p.first_tick <= tick) s.arrived++;
     if (p.first_tick <= tick && (p.died_tick == null || p.died_tick > tick)) s.alive++;
   }
   return [...per.values()].sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
@@ -122,6 +125,58 @@ export function ace(d: Detail): Ace | null {
   const f = best.faction_id ? d.factions[best.faction_id] : undefined;
   return { ship: best.ship_name || 'a hull', captain: best.captain_name ?? null,
     faction: f?.name ?? '', color: f?.color ?? '#8a9fb3', kills: best.kills };
+}
+
+// ---- the war around it ---------------------------------------------------
+
+/** /api/recap/<token>/context (worker/recapMap.js recapContext). */
+export interface RecapContext {
+  wars: Array<{ a: string; b: string; declaredBy: string | null; declaredAt: number; origin: string | null }>;
+  stake: { capitalOf: string | null; terraformed: boolean; type: string | null;
+    yields: { metal: number; credits: number; science: number } } | null;
+  series: {
+    prev: { token: string; name: string | null; tick: number; lost: number } | null;
+    next: { token: string; name: string | null; tick: number; lost: number } | null;
+    count: number; index?: number | null;
+  };
+}
+
+/**
+ * Who held a world at a tick, off the reel's own settlements: the empire
+ * with the most people there (a city outranks a station of the same size).
+ * This is the owner THEN; the database only knows the owner now.
+ */
+export function holderOf(
+  stls: Iterable<{ body: string; fid: string | null; pop: number }>, bodyId: string,
+): string | null {
+  let best: { fid: string; pop: number } | null = null;
+  for (const s of stls) {
+    if (s.body !== bodyId || !s.fid) continue;
+    const pop = Number(s.pop) || 0;
+    if (!best || pop > best.pop) best = { fid: s.fid, pop };
+  }
+  return best?.fid ?? null;
+}
+
+export type Outcome =
+  | { kind: 'fell'; to: string; from: string | null }
+  | { kind: 'held'; by: string }
+  | { kind: 'emptied'; from: string }
+  | null;
+
+/** What the battle did to the world. */
+export function outcomeOf(before: string | null, after: string | null): Outcome {
+  if (after && after !== before) return { kind: 'fell', to: after, from: before };
+  if (after && after === before) return { kind: 'held', by: after };
+  if (!after && before) return { kind: 'emptied', from: before };
+  return null;
+}
+
+/** Pairs that were at peace when it began and not by its end: "a|b" keys. */
+export function betrayals(pairs: string[] | null | undefined): Array<[string, string]> {
+  return (pairs ?? [])
+    .map(p => p.split('|'))
+    .filter((x): x is [string, string] => x.length === 2 && !!x[0] && !!x[1]);
 }
 
 /** Which part of the reel a tick is in. */
