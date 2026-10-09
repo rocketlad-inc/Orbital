@@ -57,7 +57,8 @@ import {
   recordShipWorldPosAs,
   isRevealedWarpGate,
   torchTrajectorySamples,
-  computeTransitLanes,
+  computeTransitFormations,
+  placeInFormation,
   drawTransitRangeRing,
   drawInterceptMarkersLayer,
   clipSegmentToRect,
@@ -1470,15 +1471,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       if (nowMs - startMs >= 1000) buildFlashStartRef.current.delete(key);
     }
 
-    // Transit lanes for this frame. Cheap (one pass over ships, only those
-    // in transit group at all) and it must be computed BEFORE the context is
-    // built, because the trajectory layer, the hull and the click hit-test
-    // all read the same map.
-    const transitLanes = computeTransitLanes(gameState.ships);
+    // Transit formations are filled in below, once fog and fleet folding
+    // say which hulls this frame draws (renderContext.transitFormations).
     const renderContext: RenderContext = {
       ctx,
       canvas: canvasRef.current,
-      transitLanes,
       // camScale (not camera.scale) — the eased-camera tween renders the
       // interpolated scale; reading the raw target here would snap zoom
       // while position eased.
@@ -1988,6 +1985,17 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     for (const m of merged.markers) {
       for (const id of m.escortIds) escortLead.set(id, m.leadShipId);
     }
+
+    // FORMATIONS: hulls sharing one course fly one line, in an arrowhead
+    // round their true position (computeTransitFormations). Built from the
+    // hulls this frame DRAWS: a folded fleet member already rides astern of
+    // its flagship, and a rival hull fog hides must not leave a hole in its
+    // formation. Before every trajectory layer, which all read it.
+    const transitFormations = computeTransitFormations(gameState.ships.filter(s =>
+      s.transit
+      && (s.ownedBy === 'player' || visibleShipIds.has(s.id))
+      && fleetGrouping.draws.has(s.id) && !foldedShipIds.has(s.id)));
+    renderContext.transitFormations = transitFormations;
 
     // ONE LINE PER FLEET, BY THE SAME RULES AS A SHIP. The flagship is
     // drawn and draws every line a lone ship would — its course, queued
@@ -2697,15 +2705,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     //
     // Order matters where hulls overlap, and gameState.ships arrives grouped
     // by faction — so one faction's hulls were always painted last and the
-    // other always lost ("blue ships are under yellows"). Sorting by lane
-    // makes the layering a property of WHERE a ship is rather than WHO owns
-    // it: lanes run back-to-front, so an overlap reads as depth, and no
-    // faction is systematically buried. Ships with no lane (alone on their
-    // route, or parked) sort as 0 and keep their existing relative order —
+    // other always lost ("blue ships are under yellows"). A formation paints
+    // from the back rows forward, so its lead is on top and an overlap reads
+    // as depth rather than as ownership. Ships in no formation (alone on
+    // their course, or parked) sort as 0 and keep their relative order —
     // Array.prototype.sort is stable, so parked hulls are undisturbed.
     perf.phase('bodies_overlays');
     const drawOrder = [...gameState.ships].sort((a, b) =>
-      (transitLanes.get(a.id) ?? 0) - (transitLanes.get(b.id) ?? 0));
+      -(transitFormations.get(a.id)?.slot ?? 0) + (transitFormations.get(b.id)?.slot ?? 0));
     for (const ship of drawOrder) {
       // Fog of war: skip enemy ships the player can't currently see
       if (ship.ownedBy !== 'player' && !visibleShipIds.has(ship.id)) continue;
@@ -2893,12 +2900,17 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // who can't lean on hue alone.
           !!tradeLeg,
           isSelected && !tradeLeg, renderTick(),
-          // Lane offset: the returned samples are what the hull is lerped
-          // along AND what the click hit-test reads below, so passing the
-          // id here moves line, ship and hitbox together.
-          ship.id,
+          // In a formation, the lead strokes the one course for everyone;
+          // a selected hull always shows its own.
+          isSelected ? undefined : ship.id,
         );
         ctx.restore();
+        // This hull's place in its formation. Everything below (range
+        // ring, sprite, click hit-test) reads `placed`, so they move
+        // together; the line above stays on the true course.
+        const placed = samples && samples.length > 0
+          ? placeInFormation(ship.id, samples, renderContext, transitShipScale(camera.scale))
+          : samples;
         // Weapons-range ring for the hull you just clicked. BEFORE the ship
         // so the icon sits on top of its own bubble rather than inside a
         // line drawn over it.
@@ -2915,11 +2927,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // means teaching both this and the forecast the same test, not
         // just this one.
         if (isSelected && ship.transit && gameState.transitCombatEnabled
-            && samples && samples.length > 0) {
+            && placed && placed.length > 0) {
           // `false` here drew every ring at deep-space size, including over
           // a moon where the real reach is halved — the ring Lorne was
           // reading when he said range looked inverted.
-          const ringAt = torchPositionFromSamples(samples, renderTick());
+          const ringAt = torchPositionFromSamples(placed, renderTick());
           const ringInSystem = makeInSystem(gameState.bodies, renderTick())(ringAt);
           drawTransitRangeRing(
             ship, renderContext, ringAt,
@@ -2931,13 +2943,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // else. No destination-fit clamp: shrinking a hull toward a tiny
         // target turned interplanetary ships into 6px nubs at system
         // zoom, which is not a ship on a line — it is a blob on a line.
-        drawTransitShip(ship, renderContext, isSelected, samples, transitShipScale(camera.scale));
+        drawTransitShip(ship, renderContext, isSelected, placed, transitShipScale(camera.scale));
         // Cache the canvas position the renderer just drew at, so the
         // click hit-test uses the SAME polyline-lerped point (not the
         // diverging ship.transit.pos integration). Matches the lerp
         // drawTorchTransitShip does internally. See transitShipCanvasPosRef.
-        if (samples && samples.length > 0) {
-          const lerped = torchPositionFromSamples(samples, renderTick());
+        if (placed && placed.length > 0) {
+          const lerped = torchPositionFromSamples(placed, renderTick());
           const cp = worldToCanvas(lerped.x, lerped.y, renderContext);
           transitShipCanvasPosRef.current.set(ship.id, cp);
           // The WORLD-space twin of this point is NOT written here. It

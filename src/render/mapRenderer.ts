@@ -181,11 +181,11 @@ export interface RenderContext {
   /** Where each station was DRAWN this frame (canvas px), so combat FX
    *  fire from and at the station the player sees. */
   stationCanvasPos?: Map<string, { x: number; y: number }>;
-  /** Perpendicular lane offset in SCREEN PIXELS for each in-transit ship,
-   *  keyed by ship id — see computeTransitLanes. Ships sharing a route get
-   *  consecutive lanes so they fly abreast instead of stacking. Absent or
-   *  missing entry = draw on the true path. */
-  transitLanes?: Map<string, number>;
+  /** Hulls sharing one course, keyed by ship id — see
+   *  computeTransitFormations. The lead draws the one true line; every
+   *  member's sprite holds its place in the arrowhead (placeInFormation).
+   *  Absent or missing entry = a lone hull on its own line. */
+  transitFormations?: Map<string, TransitSlot>;
 }
 
 /**
@@ -6133,98 +6133,193 @@ export function torchTrajectorySamples(
   return out;
 }
 
-// === TRANSIT LANES ==========================================
-// Two hulls flying the same route share one plan, and the sample array is
-// cached BY that plan (see torchTrajectorySamples) — so without this they
-// drew at the identical point: one ship visible, the rest hidden under it,
-// and a stack of dashed lines painted over each other.
+// === TRANSIT FORMATIONS =====================================
+// Hulls that left the same world on the same tick for the same target
+// fly ONE course. Not byte-identical: each launches from its own point on
+// the parking orbit, so the flip tick differs in the fourth decimal and
+// the start point by a world unit or two. The old lanes keyed on the
+// exact flip tick and so never grouped these at all; they drew 1-2px
+// apart, every hull on top of the next, each with its own line. On prod
+// 304 of 476 ships in flight shared a course with at least one other, in
+// groups of up to 25.
 //
-// Each ship gets a deterministic lane: a small perpendicular offset from
-// the shared path, in SCREEN PIXELS so the separation looks the same at
-// every zoom (a world-space offset would vanish at system view and gape
-// at full zoom — the pixel-floor lesson from the recap effects).
+// The first answer was LANES: each hull's whole trajectory shifted
+// sideways 13px. Two things wrong with it (Lorne, 2026-10-09, over a
+// screenshot of Uranus): a destroyer is 84px long, so 13px lanes still
+// piled the sprites on each other; and every hull drew its own parallel
+// copy of the line, so a squadron painted a fan of courses none of which
+// was the real one, with the ships sitting off their true path.
 //
-// The offset is applied to the SAMPLES, which is why it lands in exactly
-// one place: drawTorchTrajectory returns them, the hull is lerped along
-// them, and MapCanvas's click hit-test reads the same lerp. Ship, line and
-// hitbox therefore move together by construction — the alternative
-// (offsetting the drawn hull alone) is the "ship visibly off its own
-// polyline" bug the comments on drawTorchTransitShip warn about.
-// Spacing has to clear the SPRITE, not just the dot: a hull plus its
-// engine glow is ~25px across at transit scale, so the first pass at 7px
-// still had neighbours overlapping (Lorne: "blue ships are under yellows").
-// The plume trails ALONG the lane, so only the beam-width matters here.
-const TRANSIT_LANE_SPACING_PX = 13;
-// A ten-hull fleet at full spacing would smear 117px off its own course, so
-// the total spread is capped and spacing compresses to fit inside it.
-const TRANSIT_LANE_SPREAD_MAX_PX = 62;
+// Now: ONE line, the true course, drawn once by the formation's lead.
+// The hulls hold an arrowhead around their real position: the lead on
+// the line, the rest in rows behind it, symmetric about the line,
+// pointed along the line of travel. Spacing comes from the biggest hull
+// in the group, so a destroyer squadron opens up and a corvette pack
+// stays tight.
+//
+// The offset is applied to the hull's SAMPLES (placeInFormation), which
+// the hull is lerped along and the click hit-test reads: sprite and
+// hitbox move together by construction, the reason the lanes did it the
+// same way.
+
+export interface TransitSlot {
+  /** The course this hull shares (start|arrive|target, then the lead). */
+  key: string;
+  /** The lead's course: every member is placed off THIS, so the shape
+   *  holds at any zoom (a member's own course can sit a world unit off,
+   *  which is a hundred pixels zoomed right in). */
+  leadPlan: TorchTransferPlan;
+  /** Place in the formation: 0 is the lead, on the line. */
+  slot: number;
+  /** Hulls in the formation. */
+  count: number;
+  /** Largest resting icon size in the formation (shipIconSize, unselected). */
+  iconRest: number;
+}
+
+/** Row depth and in-row spacing, in HULL LENGTHS of the biggest member. */
+export const FORMATION_ROW_DEPTH = 0.8;
+export const FORMATION_ABREAST = 1.0;
+/** A 25-hull formation of destroyers at full spacing would run 500px
+ *  deep; past this it closes up, never below FORMATION_MIN_SQUEEZE. */
+export const FORMATION_MAX_DEPTH_PX = 220;
+export const FORMATION_MIN_SQUEEZE = 0.6;
+/** Two courses are one when their start points and their intercepts each
+ *  lie within this share of the trip's length. */
+export const FORMATION_SAME_COURSE = 0.02;
+
+function sameCourse(a: TorchTransferPlan, b: TorchTransferPlan): boolean {
+  const trip = Math.hypot(a.interceptPos.x - a.startPos.x, a.interceptPos.y - a.startPos.y);
+  const tol = Math.max(1e-6, trip * FORMATION_SAME_COURSE);
+  return Math.hypot(a.startPos.x - b.startPos.x, a.startPos.y - b.startPos.y) <= tol
+    && Math.hypot(a.interceptPos.x - b.interceptPos.x, a.interceptPos.y - b.interceptPos.y) <= tol;
+}
 
 /**
- * Lane offsets for every ship currently in transit, keyed by ship id.
+ * Who flies in formation with whom, keyed by ship id. Only hulls that
+ * share a course with another hull get an entry; a lone hull flies its
+ * own line, untouched.
  *
- * Assigned PER ROUTE rather than hashed per ship. The first pass hashed the
- * id into one of five lanes, which collides by the birthday problem — with
- * five hulls on one route a shared lane is more likely than not, and a
- * collision is a total overlap. Grouping by the plan and handing out
- * consecutive lanes makes same-route stacking impossible by construction.
+ * Pass only the hulls this frame will DRAW: a fleet's folded hulls ride
+ * astern of their flagship already, and a hull fog hides must not leave
+ * a gap in a rival's formation that counts it for you.
  *
- * Ships are grouped by the identity that decides whether they'd draw on the
- * same pixels: the burn schedule and the target. Two hulls that left the
- * same body on the same tick for the same world share a path; hulls that
- * launched at different ticks diverge on their own.
- *
- * Sorted by id inside each group so the assignment is stable frame to frame
- * (a lane that reshuffles reads as jitter), and centred so the fleet
- * straddles its true course instead of hanging off one side.
+ * The lead is the biggest hull (ties by id), so a destroyer heads its
+ * escorts; the order is stable frame to frame, since a formation that
+ * reshuffles reads as jitter.
  */
-export function computeTransitLanes(ships: Ship[]): Map<string, number> {
-  const groups = new Map<string, Ship[]>();
-  for (const s of ships) {
-    const p = s.transit?.currentTransfer;
-    if (!p) continue;
-    const key = `${p.startTick}|${p.flipTick}|${p.arriveTick}|${p.targetBodyId}`;
-    let arr = groups.get(key);
-    if (!arr) { arr = []; groups.set(key, arr); }
+export function computeTransitFormations(ships: readonly Ship[]): Map<string, TransitSlot> {
+  // Bucket by what must match exactly (whole ticks and the target), then
+  // split each bucket into courses that actually coincide: two hulls can
+  // leave DIFFERENT worlds on the same tick for the same target and
+  // arrival, and those must not be drawn as one formation.
+  const buckets = new Map<string, Ship[]>();
+  const sorted = ships.filter(s => s.transit?.currentTransfer && !s.plannedRendezvous)
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  for (const s of sorted) {
+    const p = s.transit!.currentTransfer;
+    const key = `${Math.round(p.startTick)}|${Math.round(p.arriveTick)}|${p.targetBodyId}`;
+    let arr = buckets.get(key);
+    if (!arr) { arr = []; buckets.set(key, arr); }
     arr.push(s);
   }
-  const out = new Map<string, number>();
-  for (const arr of groups.values()) {
-    if (arr.length < 2) continue;            // alone on this route: true path
-    arr.sort((a, b) => (a.id < b.id ? -1 : 1));
-    const spacing = Math.min(
-      TRANSIT_LANE_SPACING_PX,
-      TRANSIT_LANE_SPREAD_MAX_PX / (arr.length - 1),
-    );
-    const mid = (arr.length - 1) / 2;
-    for (let i = 0; i < arr.length; i++) out.set(arr[i].id, (i - mid) * spacing);
+  const out = new Map<string, TransitSlot>();
+  for (const [bucketKey, arr] of buckets) {
+    if (arr.length < 2) continue;
+    const courses: Ship[][] = [];
+    for (const s of arr) {
+      const p = s.transit!.currentTransfer;
+      const home = courses.find(c => sameCourse(c[0].transit!.currentTransfer, p));
+      if (home) home.push(s); else courses.push([s]);
+    }
+    for (const group of courses) {
+      if (group.length < 2) continue;
+      const size = new Map(group.map(s => [s.id, shipIconSize(s.class, false)]));
+      group.sort((a, b) => (size.get(b.id)! - size.get(a.id)!) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+      const lead = group[0];
+      const key = `${bucketKey}|${lead.id}`;
+      const iconRest = size.get(lead.id)!;
+      const leadPlan = lead.transit!.currentTransfer;
+      group.forEach((s, slot) => out.set(s.id, { key, leadPlan, slot, count: group.length, iconRest }));
+    }
   }
   return out;
 }
 
-/** Shift a polyline sideways by `world` units, perpendicular to its own
- *  local heading, so the result runs parallel to the original curve.
- *  Returns a NEW array — the input may be the shared per-plan cache. */
-function offsetSamplesPerpendicular(
-  samples: Array<{ t: number; x: number; y: number }>,
-  world: number,
-): Array<{ t: number; x: number; y: number }> {
-  const out: Array<{ t: number; x: number; y: number }> = [];
-  for (let i = 0; i < samples.length; i++) {
-    // Central difference for the tangent; one-sided at the ends.
-    const a = samples[Math.max(0, i - 1)];
-    const b = samples[Math.min(samples.length - 1, i + 1)];
-    let tx = b.x - a.x;
-    let ty = b.y - a.y;
-    const len = Math.hypot(tx, ty);
-    if (len < 1e-9) { out.push(samples[i]); continue; }
-    tx /= len; ty /= len;
-    out.push({
-      t: samples[i].t,
-      x: samples[i].x - ty * world,   // perpendicular = (-ty, tx)
-      y: samples[i].y + tx * world,
-    });
+/**
+ * Where a slot stands, in units of the formation's spacing: `back` rows
+ * behind the lead, `side` half-spacings off the line (+ is to the left
+ * of travel). Row r holds r+1 hulls, filled from the middle out, so a
+ * part-filled last row stays balanced about the line.
+ */
+export function formationSlot(slot: number): { back: number; side: number } {
+  let row = 0;
+  while (((row + 1) * (row + 2)) / 2 <= slot) row++;
+  const i = slot - (row * (row + 1)) / 2;
+  // Positions in this row: -row, -row+2, ..., row (half-spacings).
+  const cols: number[] = [];
+  for (let c = -row; c <= row; c += 2) cols.push(c === 0 ? 0 : c);   // never -0
+  cols.sort((a, b) => Math.abs(a) - Math.abs(b) || b - a);
+  return { back: row, side: cols[i] };
+}
+
+/** Rows a formation of `count` hulls occupies. */
+function formationRows(count: number): number {
+  return formationSlot(Math.max(0, count - 1)).back + 1;
+}
+
+/**
+ * The formation's spacing for this frame, in screen pixels.
+ * `sizeScale` is the same zoom multiplier the hull is drawn at.
+ */
+export function formationSpacingPx(f: TransitSlot, sizeScale: number): { depth: number; abreast: number } {
+  const hull = f.iconRest * sizeScale;
+  let depth = hull * FORMATION_ROW_DEPTH;
+  let abreast = hull * FORMATION_ABREAST;
+  const rows = formationRows(f.count) - 1;
+  if (rows > 0 && rows * depth > FORMATION_MAX_DEPTH_PX) {
+    const k = Math.max(FORMATION_MIN_SQUEEZE, FORMATION_MAX_DEPTH_PX / (rows * depth));
+    depth *= k;
+    abreast *= k;
   }
-  return out;
+  return { depth, abreast };
+}
+
+/**
+ * This hull's samples, moved to its place in its formation. The line is
+ * still drawn from the TRUE samples (by the lead); these only place the
+ * sprite and its hitbox. Returns the input untouched for the lead and
+ * for any hull not in a formation. Never mutates: the input may be the
+ * shared per-plan cache.
+ */
+export function placeInFormation(
+  shipId: string,
+  samples: Array<{ t: number; x: number; y: number }>,
+  ctx: RenderContext,
+  sizeScale: number,
+): Array<{ t: number; x: number; y: number }> {
+  const f = ctx.transitFormations?.get(shipId);
+  if (!f || f.slot === 0 || samples.length < 2 || !(ctx.camera.scale > 0)) return samples;
+  // Off the LEAD's course, not this hull's own near-copy of it.
+  const base = ctx.bodies ? torchTrajectorySamples(f.leadPlan, ctx.bodies) : samples;
+  if (base.length < 2) return samples;
+  const tan = trajectoryTangentAt(base, ctx.t);
+  if (!tan) return samples;
+  const { back, side } = formationSlot(f.slot);
+  const sp = formationSpacingPx(f, sizeScale);
+  const along = -back * sp.depth / ctx.camera.scale;          // behind the lead
+  const across = (side * sp.abreast) / 2 / ctx.camera.scale;   // half-spacings
+  // Left of travel = (ty, -tx) in canvas (y down) coordinates.
+  const dx = tan.x * along + tan.y * across;
+  const dy = tan.y * along - tan.x * across;
+  return base.map(p => ({ t: p.t, x: p.x + dx, y: p.y + dy }));
+}
+
+/** True when this hull's course is drawn by another hull (its lead). */
+export function courseDrawnByLead(ctx: RenderContext, shipId: string | undefined): boolean {
+  if (!shipId) return false;
+  const f = ctx.transitFormations?.get(shipId);
+  return !!f && f.slot !== 0;
 }
 
 export function drawTorchTrajectory(
@@ -6245,12 +6340,13 @@ export function drawTorchTrajectory(
    */
   currentTick?: number,
   /**
-   * The ship this line belongs to. When set, the path is shifted into that
-   * hull's transit lane (see TRANSIT_LANE_SPACING_PX) so ships sharing a
-   * route stop stacking. Omit for plan previews (queued/planned legs) —
-   * those aren't a specific hull in flight and should draw on the true path.
+   * The hull this line belongs to. When that hull flies in a formation
+   * and is not its lead, the line is NOT stroked (the lead draws the one
+   * true course for all of them) and the true samples are returned for
+   * placeInFormation. Omit for plan previews and for a hull whose own
+   * course must show (the selected one).
    */
-  laneShipId?: string,
+  formationShipId?: string,
 ): Array<{ t: number; x: number; y: number }> {
   // Playtester said the curved torch arcs were unreadable —
   // straight-line mode draws a single segment from start to end.
@@ -6284,16 +6380,8 @@ export function drawTorchTrajectory(
     }
   }
 
-  // Slide into this hull's lane. Applied AFTER the fade sub-sampling above
-  // so both the 2-sample and 24-sample paths get it, and only when the lane
-  // is non-zero (the centre lane skips the copy entirely). px -> world via
-  // camera.scale, which is px per world unit.
-  if (laneShipId) {
-    const px = ctx.transitLanes?.get(laneShipId) ?? 0;
-    if (px !== 0 && ctx.camera.scale > 0) {
-      samples = offsetSamplesPerpendicular(samples, px / ctx.camera.scale);
-    }
-  }
+  // One course, one line: a formation's lead strokes it for everyone.
+  if (courseDrawnByLead(ctx, formationShipId)) return samples;
 
   // LIGHTWEIGHT MODE: no trajectory lines.
   //
@@ -8058,7 +8146,7 @@ export function drawAllTransfersLayer(
       false,
       false,
       ctx.t,           // enable trail fade behind the ship
-      ship.id,         // this hull's transit lane
+      ship.id,         // a formation's course is drawn once, by its lead
     );
     ctx.ctx.restore();
   }
@@ -8118,7 +8206,7 @@ export function drawEnemyTrajectoriesLayer(
       !targetOwned,
       false,
       ctx.t,           // enable trail fade behind the ship
-      ship.id,         // this hull's transit lane
+      ship.id,         // a formation's course is drawn once, by its lead
     );
     ctx.ctx.restore();
   }
