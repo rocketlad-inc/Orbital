@@ -92,7 +92,7 @@ export const GroupIntercept: React.FC<GroupInterceptProps> = ({ ships, onClose, 
   ), [options, lang]);
   const selected = options.find(o => o.key === selectedKey && o.ok) ?? null;
 
-  useInterceptOverlay('group-bar', !!lead, options, selectedKey, showing, myPos, gameState.bodies, lang);
+  useInterceptOverlay('group-bar', !!lead, options, selectedKey, showing, myPos, gameState.bodies, gameState.currentTick, lang);
 
   const clearPreview = () => {
     if (previewFor.current) previewRendezvous(previewFor.current, null);

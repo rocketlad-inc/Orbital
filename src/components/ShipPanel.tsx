@@ -550,6 +550,7 @@ export const ShipPanel: React.FC = () => {
     rvShowing,
     ship?.orbit ? orbitWorldPos(ship.orbit, gameState.currentTick, gameState.bodies) : null,
     gameState.bodies,
+    gameState.currentTick,
     uiLang,
   );
 

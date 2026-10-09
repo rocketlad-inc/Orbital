@@ -1,7 +1,10 @@
 // ============================================================
 // The intercept picker, on the map (state/interceptOverlay.ts).
 //
-//   - a ring on every group you can catch, in its standing colour, so
+//   - the pick bracketed in white with a TARGET tag, and its own course
+//     to where it lands (a ring in its standing colour was lost among
+//     allied sensor bubbles of the same teal);
+//   - a ring on every other group you can catch, in its standing colour, so
 //     the picker's list and the map point at the same hulls;
 //   - the meeting at the door, which had no mark at all (a match draws
 //     its own through the rendezvous preview);
@@ -13,7 +16,7 @@
 // ============================================================
 
 import type { RenderContext } from './mapRenderer';
-import { worldToCanvas, farOffCanvas, TRAJECTORY_COLORS } from './mapRenderer';
+import { worldToCanvas, farOffCanvas, safePolyline, TRAJECTORY_COLORS } from './mapRenderer';
 import { withOpacity } from './colors';
 import type { InterceptOverlay } from '../state/interceptOverlay';
 
@@ -61,26 +64,16 @@ export function drawInterceptOverlay(
   }
 
   // ---- rings on what you can catch -----------------------------------
-  const pulse = 0.5 + 0.5 * Math.sin(nowMs * 0.004);
-  const ringed = new Set<string>();
+  // The pick is not ringed: it gets the target treatment below.
+  const ringed = new Set<string>(o.target ? [o.target.leadId] : []);
   for (const t of o.targets) {
     if (ringed.has(t.leadId)) continue;
     ringed.add(t.leadId);
     const hb = hullAt(t.leadId);
     if (!hb || farOffCanvas(rc, hb.x, hb.y, hb.r + 20)) continue;
     const r = Math.max(10, hb.r) + 6;
-    if (t.selected) {
-      c.strokeStyle = withOpacity(t.color, 0.25 + 0.3 * pulse);
-      c.lineWidth = 6;
-      c.beginPath();
-      c.arc(hb.x, hb.y, r + 2 + 2 * pulse, 0, Math.PI * 2);
-      c.stroke();
-      c.strokeStyle = withOpacity(t.color, 0.95);
-      c.lineWidth = 2.5;
-    } else {
-      c.strokeStyle = withOpacity(t.color, 0.7);
-      c.lineWidth = 1.5;
-    }
+    c.strokeStyle = withOpacity(t.color, 0.7);
+    c.lineWidth = 1.5;
     c.beginPath();
     c.arc(hb.x, hb.y, r, 0, Math.PI * 2);
     c.stroke();
@@ -121,5 +114,113 @@ export function drawInterceptOverlay(
       c.fillText(o.meet.label, lx, ly);
     }
   }
+
+  if (o.target) drawTarget(rc, o.target, hullAt, nowMs);
+  c.restore();
+}
+
+/**
+ * The pick: its own course, from where it is now to where it lands, and
+ * white brackets on its lead hull with a TARGET tag. White, not the
+ * standing colour: at SHOW's zoom an allied target's teal ring vanished
+ * among the allied sensor bubbles of the same teal. The course keeps the
+ * standing colour, over a dark underlay so it reads across any wash, and
+ * its dashes crawl toward the destination so the direction is plain.
+ */
+function drawTarget(
+  rc: RenderContext,
+  t: NonNullable<InterceptOverlay['target']>,
+  hullAt: (shipId: string) => Hit | null,
+  nowMs: number,
+): void {
+  const c = rc.ctx;
+  const w = c.canvas.width, h = c.canvas.height;
+
+  // ---- their course ----------------------------------------------------
+  if (t.path.length >= 2) {
+    const pts = t.path.map(p => worldToCanvas(p.x, p.y, rc));
+    const trace = () => {
+      c.beginPath();
+      const pen = safePolyline(c, w, h);
+      pen.move(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) pen.line(pts[i].x, pts[i].y);
+    };
+    c.save();
+    c.lineCap = 'round';
+    c.lineJoin = 'round';
+    c.setLineDash([]);
+    c.strokeStyle = 'rgba(3, 7, 13, 0.6)';
+    c.lineWidth = 6;
+    trace();
+    c.stroke();
+    c.setLineDash([9, 6]);
+    c.lineDashOffset = -((nowMs / 40) % 15);
+    c.strokeStyle = withOpacity(t.color, 0.95);
+    c.lineWidth = 2.5;
+    trace();
+    c.stroke();
+    c.setLineDash([]);
+    // Where they land.
+    const end = pts[pts.length - 1];
+    if (!farOffCanvas(rc, end.x, end.y, 12)) {
+      c.fillStyle = t.color;
+      c.strokeStyle = '#ffffff';
+      c.lineWidth = 1.5;
+      c.beginPath();
+      c.arc(end.x, end.y, 4.5, 0, Math.PI * 2);
+      c.fill();
+      c.stroke();
+    }
+    c.restore();
+  }
+
+  // ---- the hull --------------------------------------------------------
+  const hb = hullAt(t.leadId);
+  const at = hb ?? (t.path.length ? { ...worldToCanvas(t.path[0].x, t.path[0].y, rc), r: 10 } : null);
+  if (!at || farOffCanvas(rc, at.x, at.y, 40)) return;
+  const pulse = 0.5 + 0.5 * Math.sin(nowMs * 0.005);
+  const R = Math.max(16, at.r + 8) + 2 * pulse;
+  const arm = Math.max(6, R * 0.45);
+  c.save();
+  c.fillStyle = withOpacity(t.color, 0.14);
+  c.beginPath();
+  c.arc(at.x, at.y, R * 0.9, 0, Math.PI * 2);
+  c.fill();
+  const brackets = () => {
+    c.beginPath();
+    for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+      const cx = at.x + sx * R, cy = at.y + sy * R;
+      c.moveTo(cx, cy - sy * arm);
+      c.lineTo(cx, cy);
+      c.lineTo(cx - sx * arm, cy);
+    }
+  };
+  c.lineCap = 'square';
+  c.strokeStyle = 'rgba(3, 7, 13, 0.7)';
+  c.lineWidth = 5;
+  brackets();
+  c.stroke();
+  c.strokeStyle = '#ffffff';
+  c.lineWidth = 2.5;
+  brackets();
+  c.stroke();
+
+  // TARGET tag above it, kept on screen.
+  c.font = 'bold 11px var(--font-body), monospace';
+  c.textAlign = 'center';
+  c.textBaseline = 'middle';
+  const tw = c.measureText(t.label).width;
+  const bw = tw + 12, bh = 18;
+  const lx = Math.max(bw / 2 + 4, Math.min(w - bw / 2 - 4, at.x));
+  const ly = Math.max(bh / 2 + 4, at.y - R - 14);
+  c.fillStyle = 'rgba(6, 12, 20, 0.88)';
+  c.strokeStyle = t.color;
+  c.lineWidth = 1;
+  c.beginPath();
+  c.rect(lx - bw / 2, ly - bh / 2, bw, bh);
+  c.fill();
+  c.stroke();
+  c.fillStyle = '#ffffff';
+  c.fillText(t.label, lx, ly + 0.5);
   c.restore();
 }

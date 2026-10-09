@@ -24,6 +24,16 @@ export interface InterceptOverlay {
   targets: InterceptOverlayTarget[];
   /** A meeting at the door (world coordinates), when that is the pick. */
   meet: { x: number; y: number; label: string } | null;
+  /** The pick itself: bracketed on the map and its own course drawn, from
+   *  where it is now to where it lands (world points, in order). A ring
+   *  in its standing colour was lost among allied sensor bubbles of the
+   *  same teal once SHOW zoomed out (playtest, 2026-10-09). */
+  target: {
+    leadId: string;
+    label: string;
+    color: string;
+    path: Array<{ x: number; y: number }>;
+  } | null;
   /** World box of the course while SHOW is on; the veil leaves it clear. */
   focus: { minX: number; minY: number; maxX: number; maxY: number } | null;
 }

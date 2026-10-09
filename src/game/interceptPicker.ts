@@ -206,3 +206,76 @@ export function freeMapArea(isMobile: boolean, popLeft: number | null, W: number
   }
   return { l: (popLeft ?? 296) + POPOUT_WIDTH + 24, r: W - 72, t: 70, b: H - 24 };
 }
+
+// ---- radar labels ------------------------------------------------------
+
+export interface ScopeLabelItem {
+  key: string;
+  /** Blip centre on the scope. */
+  x: number;
+  y: number;
+  /** Width the label wants, px. */
+  w: number;
+  /** Placed even if it has to overlap (the pick). */
+  must?: boolean;
+}
+export interface ScopeLabelBox { left: number; top: number; width: number; align: 'left' | 'center' }
+
+/**
+ * Where each blip's name goes, or nowhere. A busy scope piled names on
+ * top of each other (playtest, 2026-10-09: "UCS FF-112" printed over
+ * "VAS FF-112"), so names are placed in priority order and each takes the
+ * first spot that is clear of every name already placed and of every
+ * blip: outward from the centre, the other side, under, over. A name with
+ * no clear spot is left off; its blip still names itself on hover and in
+ * the card. Never past the scope's edge, where the pop-out clips.
+ */
+export function placeScopeLabels(
+  items: readonly ScopeLabelItem[],
+  size: number,
+  blip: number,
+  gap = 5,
+  h = 15,
+): Map<string, ScopeLabelBox> {
+  const C = size / 2;
+  type Rect = { l: number; t: number; r: number; b: number };
+  const hit = (a: Rect, b: Rect) => a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b;
+  const blips: Array<Rect & { key: string }> = items.map(i => ({
+    key: i.key, l: i.x - blip / 2, t: i.y - blip / 2, r: i.x + blip / 2, b: i.y + blip / 2,
+  }));
+  const me: Rect = { l: C - 13, t: C - 13, r: C + 13, b: C + 13 };
+  const placed: Rect[] = [];
+  const out = new Map<string, ScopeLabelBox>();
+  const MIN_W = 56;
+  for (const it of items) {
+    const want = Math.max(MIN_W, it.w);
+    const right = (): ScopeLabelBox | null => {
+      const left = it.x + blip / 2 + gap;
+      const width = Math.min(want, size - left - 2);
+      return width >= MIN_W ? { left, top: it.y - h / 2, width, align: 'left' } : null;
+    };
+    const leftSide = (): ScopeLabelBox | null => {
+      const edge = it.x - blip / 2 - gap;
+      const width = Math.min(want, edge - 2);
+      return width >= MIN_W ? { left: edge - width, top: it.y - h / 2, width, align: 'left' } : null;
+    };
+    const under = (dy: number): ScopeLabelBox => {
+      const width = Math.min(want, size - 4);
+      return { left: Math.max(2, Math.min(size - width - 2, it.x - width / 2)), top: dy, width, align: 'center' };
+    };
+    const tries = [
+      ...(it.x > C ? [right(), leftSide()] : [leftSide(), right()]),
+      under(it.y + blip / 2 + 2),
+      under(it.y - blip / 2 - 2 - h),
+    ].filter((b): b is ScopeLabelBox => !!b && b.top >= 0 && b.top + h <= size);
+    const clear = tries.find(b => {
+      const r: Rect = { l: b.left, t: b.top, r: b.left + b.width, b: b.top + h };
+      return !hit(r, me) && !placed.some(p => hit(r, p)) && !blips.some(o => o.key !== it.key && hit(r, o));
+    });
+    const box = clear ?? (it.must ? tries[0] : undefined);
+    if (!box) continue;
+    out.set(it.key, box);
+    placed.push({ l: box.left, t: box.top, r: box.left + box.width, b: box.top + h });
+  }
+  return out;
+}
