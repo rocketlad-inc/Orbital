@@ -31,7 +31,7 @@
 //                          DISCORD_DIGEST_WEBHOOK's channel if unset
 // ============================================================
 
-import { castVoteCore, loadProposalTotals } from './senate.js';
+import { castVoteCore, loadProposalTotals, reparationsAmountOf } from './senate.js';
 import { WEIGHT_RULE } from './systems.js';
 import { isAdminEmail } from './analytics.js';
 import { tr, trn, pickLocale, normalizeLocale } from './i18n.js';
@@ -259,7 +259,7 @@ function billEffect(L, row, sliderById, targetName, describe) {
     case 'production_sanction':
       return tr(L, 'dc.eff.sanction', { who });
     case 'reparations':
-      return tr(L, 'dc.eff.reparations', { who });
+      return tr(L, 'dc.eff.reparations', { who, amount: reparationsAmountOf(payload) });
     case 'chancellor_vote':
       return tr(L, 'dc.eff.chancellor', { who });
     default:

@@ -463,10 +463,29 @@ const WAR_AUTH_EFFECT_TICKS        = 21;
 const PROD_SANCTION_EFFECT_TICKS   = 14;
 const PROD_SANCTION_MULTIPLIER     = 0.5;   // half yield while active
 
-/** Reparations: target pays this many credits to every other active
- *  faction. Capped by what the target actually has — they don't go
- *  negative; the transfer is shrunk proportionally if they can't pay. */
+/** Reparations: target pays credits to every other active faction. The
+ *  CHAIRMAN names the amount per recipient when filing the bill; a bill
+ *  filed without one (an older client, or one already on the floor when
+ *  this shipped) pays REPARATIONS_PER_FACTION, which is what every
+ *  reparations bill paid before the amount was theirs to set.
+ *  Whatever is asked, the payout is capped by what the target actually
+ *  has: they don't go negative, and the transfer is shrunk
+ *  proportionally if they can't pay. */
 const REPARATIONS_PER_FACTION = 200;
+/** Bounds on the chairman's figure. The ceiling is only there to keep a
+ *  typo (an extra zero) from being the whole bill; the target's real
+ *  balance is the cap that matters. */
+export const REPARATIONS_MIN_PER_FACTION = 1;
+export const REPARATIONS_MAX_PER_FACTION = 5000;
+
+/** The per-recipient amount a reparations bill carries: its own, or the
+ *  historic default for a bill that never named one. */
+export function reparationsAmountOf(payload) {
+  const n = Math.floor(Number(payload?.amount_per_faction));
+  return Number.isFinite(n) && n >= REPARATIONS_MIN_PER_FACTION && n <= REPARATIONS_MAX_PER_FACTION
+    ? n
+    : REPARATIONS_PER_FACTION;
+}
 
 // ============================================================
 // THE FLOOR, SINCE THE 2026-09-26 REFRESH (Lorne, from his players):
@@ -1176,6 +1195,10 @@ async function handleListSliders(_req, env, { params, session }) {
     // bounds are: the card quotes it to voters, and a client-side copy
     // of a server constant is the drift this file already warns about.
     reparations_per_faction: REPARATIONS_PER_FACTION,
+    // The range the chairman may name per recipient (the figure above is
+    // the form's starting value).
+    reparations_min_per_faction: REPARATIONS_MIN_PER_FACTION,
+    reparations_max_per_faction: REPARATIONS_MAX_PER_FACTION,
     min_debate_ticks: MIN_DEBATE_TICKS,
     min_vote_ticks: MIN_VOTE_TICKS,
     debate_max_ticks: DEBATE_MAX_TICKS,
@@ -1478,7 +1501,7 @@ async function handleCreateProposal(req, env, { params, session }) {
  * clients can show "Embargo against Mars Confederacy" in the toast
  * without an extra round-trip.
  */
-async function buildBillPayload(env, gameId, proposerFactionId, kind, body) {
+export async function buildBillPayload(env, gameId, proposerFactionId, kind, body) {
   // REPEAL: aims at a standing law, not a faction. Validated here so a
   // bill that could never resolve sensibly is refused at the door rather
   // than sitting on the floor for a term and then no-opping.
@@ -1603,6 +1626,30 @@ async function buildBillPayload(env, gameId, proposerFactionId, kind, body) {
     .bind(targetId, gameId, 'active')
     .first();
   if (!target) return { error: err(404, 'not_found', `target faction not found / not active`) };
+
+  // Reparations: the chairman names how much each recipient gets. Left
+  // out, it is the historic default (older clients keep working); named,
+  // it must be a whole number inside the bounds, so a typo is refused at
+  // the door rather than voted on.
+  if (kind === 'reparations') {
+    let amount = REPARATIONS_PER_FACTION;
+    if (body.amount_per_faction != null && body.amount_per_faction !== '') {
+      const n = Number(body.amount_per_faction);
+      if (!Number.isInteger(n) || n < REPARATIONS_MIN_PER_FACTION || n > REPARATIONS_MAX_PER_FACTION) {
+        return {
+          error: err(
+            400, 'bad_request',
+            `amount_per_faction must be a whole number of credits from ${REPARATIONS_MIN_PER_FACTION} to ${REPARATIONS_MAX_PER_FACTION}`,
+          ),
+        };
+      }
+      amount = n;
+    }
+    return {
+      data: { target_faction_id: targetId, amount_per_faction: amount },
+      broadcast: { target_faction_id: targetId, target_faction_name: target.name, amount_per_faction: amount },
+    };
+  }
 
   return {
     data: { [targetField]: targetId },
@@ -2036,14 +2083,15 @@ async function applyBillEffects(env, gameId, tick, proposal, payload, effectUnti
       .all()).results ?? [];
     if (recipients.length === 0) return { transferred: 0, recipients: 0 };
 
-    // Target pays REPARATIONS_PER_FACTION per recipient, capped by their
-    // current gold (no negative balances). If they can't pay full freight
-    // we pro-rate so every recipient gets the same partial slice.
+    // Target pays the bill's amount per recipient (the chairman's figure,
+    // else the historic default), capped by their current gold (no
+    // negative balances). If they can't pay full freight we pro-rate so
+    // every recipient gets the same partial slice.
     const targetRow = await env.DB
       .prepare(`SELECT gold FROM game_factions WHERE id = ? AND game_id = ?`)
       .bind(target, gameId).first();
     const targetGold = Number(targetRow?.gold ?? 0);
-    const desired = REPARATIONS_PER_FACTION * recipients.length;
+    const desired = reparationsAmountOf(payload) * recipients.length;
     const totalTransfer = Math.min(targetGold, desired);
     const perRecipient = Math.floor(totalTransfer / recipients.length);
     if (perRecipient <= 0) return { transferred: 0, recipients: recipients.length, capped: true };

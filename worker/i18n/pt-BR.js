@@ -198,7 +198,7 @@ export const PT_BR = {
   'dc.eff.war1': 'Todos causam **o dobro de dano** a **{who}** por **21 turnos**.',
   'dc.eff.war2': 'Também **rompe todos os tratados de {who}** — pactos de não agressão, pactos de defesa e compartilhamento de inteligência.',
   'dc.eff.sanction': 'Reduz pela metade a coleta de recursos de **{who}** por **14 turnos**.',
-  'dc.eff.reparations': '**{who}** paga **200 créditos a cada outra facção** imediatamente (limitado ao que realmente tiver).',
+  'dc.eff.reparations': '**{who}** paga **{amount} créditos a cada outra facção** imediatamente (limitado ao que realmente tiver).',
   'dc.eff.chancellor': 'Elege **{who}** Chanceler. **Isso pode encerrar o jogo.**',
   'dc.vote.closes': '\nA votação fecha no turno **{tick}**.',
   'dc.vote.weightNote': '_{rule} Você pode mudar o seu voto até a votação fechar._',
