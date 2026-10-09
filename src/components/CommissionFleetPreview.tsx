@@ -3,8 +3,8 @@
 // in your empire's colours (Shipwright, 2026-10-08). Opened from the
 // designer's offer while a Commission look is on the ship: one line, the
 // whole fleet, and the other lines a tap away. Sells only where the
-// client can sell (canBuyHere: never in the Android app); previewing is
-// fine everywhere.
+// client can sell (canBuyHere); in the Android app the same buttons open
+// the website in the phone's browser. Previewing is fine everywhere.
 // ============================================================
 
 import React, { useEffect, useState } from 'react';
@@ -15,7 +15,7 @@ import { SHIP_CLASSES } from '../game/shipClasses';
 import {
   COMMISSION_NAME, COMMISSION_PRICE, COMMISSION_DISCORD, COMMISSION_NO_GAMEPLAY, COMMISSION_LINES,
   COMMISSION_EMBLEMS, COMMISSION_CITY_SKINS, COMMISSION_STATION_SKINS, COMMISSION_STRUCTURE_LOOKS,
-  canBuyHere, logCommission,
+  canBuyHere, logCommission, openCommissionInBrowser,
 } from '../multiplayer/commission';
 import { startCommissionCheckout } from '../multiplayer/api';
 import { t, tk } from '../i18n/core';
@@ -92,6 +92,16 @@ export const CommissionFleetPreview: React.FC<Props> = ({ initialLine, p1, p2, o
                 {tk('mp.commission.get', 'Get the Commission · {price}', { price: tk('mp.commission.price', COMMISSION_PRICE) })}
               </button>
               <button type="button" className="cfp__quiet" onClick={() => buy(true)}>{t('ship.sd.cfp.gift')}</button>
+            </>
+          )}
+          {!sellable && (
+            <>
+              <button type="button" className="cfp__get" onClick={() => openCommissionInBrowser('designer')}>
+                {t('mp.commission.inBrowser', { price: tk('mp.commission.price', COMMISSION_PRICE) })}
+              </button>
+              <button type="button" className="cfp__quiet" onClick={() => openCommissionInBrowser('designer', { gift: true })}>
+                {t('mp.commission.giftInBrowser')}
+              </button>
             </>
           )}
           <button type="button" className="cfp__quiet" onClick={onClose}>{t('ship.sd.cfp.close')}</button>

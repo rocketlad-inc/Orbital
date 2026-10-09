@@ -20,6 +20,8 @@ const UA_FOLD7 = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, 
 
 function setEnv(opts: { app: boolean; innerWidth: number; screenWidth: number; standalone?: boolean; ua?: string }) {
   window.localStorage.clear();
+  // A fresh tab: appShell also remembers the app per tab (sessionStorage).
+  window.sessionStorage.clear();
   Object.defineProperty(document, 'referrer', {
     configurable: true,
     get: () => (opts.app ? 'android-app://com.orbitalempire.game/' : ''),

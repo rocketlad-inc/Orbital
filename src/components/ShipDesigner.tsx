@@ -34,7 +34,7 @@ import { useMultiplayerActions, ServerShipDesign, ServerShipTemplate } from '../
 import { logUiEvent } from '../multiplayer/telemetry';
 import { useAuth } from '../multiplayer/AuthContext';
 import { startCommissionCheckout } from '../multiplayer/api';
-import { COMMISSION_NAME, COMMISSION_PRICE, COMMISSION_DISCORD, canBuyHere, logCommission } from '../multiplayer/commission';
+import { COMMISSION_NAME, COMMISSION_PRICE, COMMISSION_DISCORD, canBuyHere, logCommission, openCommissionInBrowser } from '../multiplayer/commission';
 import { ShipClassName, BuildableClassName, SHIP_CLASSES, BUILDABLE_CLASSES, upkeepSplitFor } from '../game/shipClasses';
 import { deliveredHullHp } from '../game/combat';
 import {
@@ -1173,6 +1173,11 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                         void startCommissionCheckout('designer').then(url => { if (url) window.location.assign(url); });
                       }}
                     >{t('ship.sd.getIt', { price: tk('mp.commission.price', COMMISSION_PRICE) })}</button>
+                  )}
+                  {!canBuyHere() && (
+                    <button type="button" className="sd-offer__get" onClick={() => openCommissionInBrowser('designer')}>
+                      {t('mp.commission.inBrowser', { price: tk('mp.commission.price', COMMISSION_PRICE) })}
+                    </button>
                   )}
                   <button type="button" className="sd-offer__end" onClick={() => setPreviewIcon(undefined)}>
                     {t('ship.sd.endPreview')}

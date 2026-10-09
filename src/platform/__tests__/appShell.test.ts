@@ -8,8 +8,9 @@ import path from 'path';
 // the app. Say so in the app." That is not a preference — Google Play
 // requires digital goods sold inside a Play-distributed app to go
 // through Play Billing, and Orbital's $10 Commission is Stripe. So the
-// packaged build must never show a buy button, and must say where the
-// button went.
+// packaged build never starts a checkout. Since 2026-10-08 ("links the
+// customer to the browser") its buy buttons open the website in the
+// phone's own browser instead (openCommissionInBrowser).
 //
 // These tests pin the detection and both storefronts.
 // ============================================================
@@ -34,6 +35,14 @@ describe('app shell detection', () => {
     expect(src).toMatch(/orbital\.shell\.androidApp/);
   });
 
+  it('the shared copy of that memory only counts while displayed as an app', () => {
+    // A TWA shares Chrome's storage: the localStorage flag is also seen by
+    // every Chrome tab on the phone, and 290 prod reports from plain tabs
+    // called themselves the app. The browser the app links out to must
+    // be able to sell. (Behaviour: appShellDetect.test.ts.)
+    expect(src).toMatch(/return read\('local', STORE_KEY\) && displayedAsApp\(\);/);
+  });
+
   it('treats a browser-installed PWA as standalone but NOT as the app', () => {
     // Policy follows distribution, not chrome: a home-screen install
     // from the browser is still the open web and may sell normally.
@@ -52,9 +61,11 @@ describe('the Commission storefronts', () => {
     expect(hg).toMatch(/bought on the Orbital website, not in the app/);
     // The entitlement is account-wide, so the copy must not imply the
     // player has to buy twice.
-    expect(hg).toMatch(/unlocks here the\s+next\s+time you sign in/);
-    // Gifts are bought AND redeemed on the website only.
-    expect(hg).toMatch(/\{sellable && \(/);
+    expect(hg).toMatch(/It unlocks here when you come back/);
+    // In the app, buying and gifting open the browser.
+    expect(hg).toMatch(/openCommissionInBrowser\('profile'\)/);
+    expect(hg).toMatch(/openCommissionInBrowser\('profile', \{ gift: true \}\)/);
+    // Redeeming a code stays on the website.
     expect(hg).toMatch(/\{!holder && sellable && \(/);
   });
 
@@ -66,7 +77,7 @@ describe('the Commission storefronts', () => {
   it('the lobby flag picker does the same', () => {
     const lv = read('multiplayer/LobbyView.tsx');
     expect(lv).toMatch(/isAndroidApp\(\) \? \(/);
-    expect(lv).toMatch(/on the Orbital website/);
+    expect(lv).toMatch(/openCommissionInBrowser\('lobby-flag'\)/);
   });
 
   it('no checkout can be started from the packaged app', () => {
@@ -88,6 +99,8 @@ describe('the Commission storefronts', () => {
       // The Commission on the whole fleet (designer): the fleet everywhere,
       // get and gift only where it can sell.
       'components/CommissionFleetPreview.tsx': /\{sellable && \(/,
+      // The website end of the app's link out: never from inside the app.
+      'multiplayer/commissionHandoff.ts': /if \(!canBuyHere\(\)\) return;/,
     };
     for (const [rel, gate] of Object.entries(gated)) {
       expect(read(rel)).toMatch(gate);
@@ -102,6 +115,33 @@ describe('the Commission storefronts', () => {
       .map(f => path.relative(root, f).replace(/\\/g, '/'))
       .filter(f => !callers.includes(f));
     expect(offenders).toEqual([]);
+  });
+
+  it('where it cannot sell, every storefront links out to the browser', () => {
+    // Lorne, 2026-10-08: "make sure the app doesnt try to do this and
+    // instead links the customer to the browser". Not words, a button.
+    const linkOut: Record<string, RegExp> = {
+      'multiplayer/Hangar.tsx': /openCommissionInBrowser\('profile'\)/,
+      'multiplayer/LobbyView.tsx': /openCommissionInBrowser\('lobby-flag'\)/,
+      'multiplayer/SkinPicker.tsx': /openCommissionInBrowser\(surface\)/,
+      'multiplayer/DiscordServerFeed.tsx': /openCommissionInBrowser\('discord-feed'/,
+      'components/ShipDesigner.tsx': /\{!canBuyHere\(\) && \(\s*<button[^\n]*openCommissionInBrowser\('designer'\)/,
+      'components/CommissionFleetPreview.tsx': /\{!sellable && \(\s*<>\s*<button[^\n]*openCommissionInBrowser\('designer'\)/,
+    };
+    for (const [rel, re] of Object.entries(linkOut)) expect(read(rel)).toMatch(re);
+  });
+
+  it('the link out goes through the app, never a plain link to the site', () => {
+    // Every orbital-empire.com link opens the APP (autoVerify), so only the
+    // app's own orbital://browser screen can reach the browser.
+    const cm = read('multiplayer/commission.ts');
+    expect(cm).toMatch(/intent:\/\/browser\?url=/);
+    expect(cm).toMatch(/scheme=orbital;package=\$\{APP_PACKAGE\}/);
+    const manifest = fs.readFileSync(path.join(__dirname, '..', '..', '..',
+      'android', 'app', 'src', 'main', 'AndroidManifest.xml'), 'utf8');
+    expect(manifest).toMatch(/android:name="\.BrowserLinkActivity"/);
+    expect(manifest).toMatch(/android:scheme="orbital" android:host="browser"/);
+    expect(manifest).toMatch(/<queries>/);
   });
 });
 

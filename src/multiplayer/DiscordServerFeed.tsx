@@ -24,7 +24,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { apiFetch, startCommissionCheckout } from './api';
-import { canBuyHere, logCommission, COMMISSION_PRICE, HOLDER_MARK } from './commission';
+import { canBuyHere, logCommission, openCommissionInBrowser, COMMISSION_PRICE, HOLDER_MARK } from './commission';
 import type { FeedView } from './GameFeedSettings';
 import { t, tk } from '../i18n/core';
 import { useI18n } from '../i18n/react';
@@ -206,7 +206,10 @@ export const DiscordServerFeed: React.FC<{
             {view.is_host ? t('feed.buy', { price: tk('mp.commission.price', COMMISSION_PRICE) }) : t('feed.gift', { host, price: tk('mp.commission.price', COMMISSION_PRICE) })}
           </button>
         ) : (
-          <span style={dim}>{t('feed.webOnly')}</span>
+          <button type="button" style={btn(true)} onClick={() => openCommissionInBrowser('discord-feed', { gift: !view.is_host })}
+            data-testid="server-feed-browser">
+            {view.is_host ? t('mp.commission.inBrowser', { price: tk('mp.commission.price', COMMISSION_PRICE) }) : t('mp.commission.giftInBrowser')}
+          </button>
         )}
         <button type="button" style={{ ...btn(false), border: 'none', padding: '5px 4px' }} onClick={dismiss}>
           {t('feed.notNow')}

@@ -21,7 +21,7 @@ import {
 import { Settlement } from '../types';
 import { deriveSecondary } from '../game/colorUtils';
 import {
-  COMMISSION_NAME, COMMISSION_PRICE, COMMISSION_DISCORD, COMMISSION_NO_GAMEPLAY, canBuyHere, logCommission,
+  COMMISSION_NAME, COMMISSION_PRICE, COMMISSION_DISCORD, COMMISSION_NO_GAMEPLAY, canBuyHere, logCommission, openCommissionInBrowser,
 } from './commission';
 import { t, tk } from '../i18n/core';
 import { useI18n } from '../i18n/react';
@@ -167,7 +167,9 @@ export function SkinPicker({
               {opening ? t('mp.skin.opening') : t('mp.commission.get', { price: tk('mp.commission.price', COMMISSION_PRICE) })}
             </button>
           ) : (
-            <span className="skp-dim">{t('mp.skin.dim')}</span>
+            <button type="button" className="skp-buy" onClick={() => openCommissionInBrowser(surface)}>
+              {t('mp.commission.inBrowser', { price: tk('mp.commission.price', COMMISSION_PRICE) })}
+            </button>
           )}
         </div>
       )}
