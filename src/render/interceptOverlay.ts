@@ -110,10 +110,15 @@ export function drawInterceptOverlay(
       c.stroke();
       c.font = '10px var(--font-body), monospace';
       c.textAlign = 'center';
+      // Kept on screen: a SHOW frames the meeting near the edge often
+      // enough (a phone is narrow) that a centred label lost its start.
+      const half = c.measureText(o.meet.label).width / 2 + 4;
+      const lx = Math.max(half, Math.min(w - half, mp.x));
+      const ly = Math.max(14, mp.y - 20);
       c.fillStyle = 'rgba(6, 12, 20, 0.75)';
-      c.fillText(o.meet.label, mp.x + 1, mp.y - 19);
+      c.fillText(o.meet.label, lx + 1, ly + 1);
       c.fillStyle = withOpacity(TRAJECTORY_COLORS.mine, 0.95);
-      c.fillText(o.meet.label, mp.x, mp.y - 20);
+      c.fillText(o.meet.label, lx, ly);
     }
   }
   c.restore();

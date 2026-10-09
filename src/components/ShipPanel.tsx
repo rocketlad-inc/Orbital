@@ -439,6 +439,10 @@ export const ShipPanel: React.FC = () => {
   // on the map describing a plan nobody is looking at any more.
   const rvShipId = ship?.id ?? null;
   useEffect(() => {
+    // The picker is a pop-out now, not a list folded into ORDERS: one
+    // left open must not spring open again on the next hull selected
+    // (the panel stays mounted between selections, and so did this).
+    setRendezvousOpen(false);
     setRendezvousId(null);
     setRvPeek(false);
     // THE ERROR BELONGED TO THE LAST HULL. transferError is written by
@@ -994,6 +998,11 @@ export const ShipPanel: React.FC = () => {
       setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
       return;
     }
+    // Sent: the picker's job is done. Left open, it only hid while the
+    // hull flew, and sprang back with the old pick on a RECALL LAUNCH.
+    // The fleet's mixed result below shows on the ORDERS tab.
+    setRendezvousId(null);
+    setRendezvousOpen(false);
     if (mates.length > 0) {
       const total = mates.length + 1;
       const got = 1 + mateOk;

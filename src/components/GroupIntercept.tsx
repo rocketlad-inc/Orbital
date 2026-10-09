@@ -106,9 +106,11 @@ export const GroupIntercept: React.FC<GroupInterceptProps> = ({ ships, onClose, 
     setShowing(false);
   };
   // Leaving by any road — ✕, Escape on the bar, the group changing —
-  // takes the preview and the borrowed camera with it.
+  // takes the preview with it. The camera comes back only on ✕ or BACK
+  // TO SHIP, as in the ship panel: a new group is usually picked ON the
+  // framed view, and jumping away from it would lose what was clicked.
   const clearRef = useRef(() => {});
-  clearRef.current = () => { clearPreview(); if (camBefore.current) updateCamera(camBefore.current); };
+  clearRef.current = clearPreview;
   useEffect(() => () => clearRef.current(), []);
 
   // Dock the desktop pop-out beside the group's panel.
