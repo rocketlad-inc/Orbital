@@ -852,8 +852,6 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         paintWorld(b, p);
         g.restore();
       };
-      if (anchor) paintFramed(anchor);
-      for (const m of moons) paintFramed(m);
 
       // ---- where every hull is -----------------------------------------
       // Each world's battle is the game's whole-orbit layout (worldLayouts),
@@ -899,13 +897,15 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
       const homeAt = (w: string | undefined, id: string) => {
         const p = bodyPos(w ? bodyById.get(w) : undefined);
         const sl = w ? slotAt(w, id) : null;
-        if (!sl) return { x: p.x, y: p.y - p.r - 6, heading: 0 };
+        if (!sl) return { x: p.x, y: p.y - p.r - 6, heading: 0, depth: 1 };
         const a = sl.theta + spin;
         // Prograde plus the layout's small jitter, seen through the tilt.
         const h = a + Math.PI / 2 + sl.jitter;
         return {
           x: p.x + Math.cos(a) * sl.r, y: p.y + Math.sin(a) * sl.r * TILT,
           heading: Math.atan2(Math.sin(h) * TILT, Math.cos(h)),
+          // Positive on the near side of the world, negative behind it.
+          depth: Math.sin(a),
         };
       };
       const offSystem = (p: { x: number; y: number }) => {
@@ -938,7 +938,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         const h = hulls.get(id);
         const home = homeAt(here, id);
         const size = sizeAt(here, h?.cls ?? null);
-        const still = { x: home.x, y: home.y, heading: home.heading, burn: 0, plume: 1, size, moving: false };
+        const still = { x: home.x, y: home.y, heading: home.heading, burn: 0, plume: 1, size, moving: false, depth: home.depth };
         if (arrived.get(id) === beat.tick && t < ARRIVE_FRAC) {
           const k = t / ARRIVE_FRAC;
           const far = offSystem(home);
@@ -947,7 +947,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
           const pose = burnPose(k, travel, home.heading, true);
           return {
             x: far.x + (home.x - far.x) * u, y: far.y + (home.y - far.y) * u,
-            heading: pose.heading, burn: pose.burn, plume: pose.lengthMul, size, moving: true,
+            heading: pose.heading, burn: pose.burn, plume: pose.lengthMul, size, moving: true, depth: 1,
           };
         }
         if (left.get(id) === beat.tick) {
@@ -956,7 +956,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
           return {
             x: home.x + (far.x - home.x) * u, y: home.y + (far.y - home.y) * u,
             heading: Math.atan2(far.y - home.y, far.x - home.x),
-            burn: Math.min(1, 0.25 + t * 0.95), plume: 1, size, moving: true,
+            burn: Math.min(1, 0.25 + t * 0.95), plume: 1, size, moving: true, depth: 1,
           };
         }
         const from = crossedFrom(id);
@@ -971,7 +971,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
             x: start.x + (home.x - start.x) * u, y: start.y + (home.y - start.y) * u,
             heading: pose.heading, burn: pose.burn, plume: pose.lengthMul,
             size: sizeAt(from, h?.cls ?? null) + (size - sizeAt(from, h?.cls ?? null)) * u,
-            moving: true,
+            moving: true, depth: 1,
           };
         }
         return still;
@@ -1021,7 +1021,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
 
       // ---- combatants -------------------------------------------------
       const blasts: Array<{ x: number; y: number; r: number; since: number; id: string }> = [];
-      type Wreck = { x: number; y: number; size: number; heading: number; age: number; id: string; col: string; ship: boolean; cls: string | null; fid: string | null; variant: ShipIconVariant | undefined };
+      type Wreck = { depth: number; x: number; y: number; size: number; heading: number; age: number; id: string; col: string; ship: boolean; cls: string | null; fid: string | null; variant: ShipIconVariant | undefined };
       const wrecks: Wreck[] = [];
       const wreckOf = (id: string, w: string | undefined, age: number) => {
         const h = hulls.get(id);
@@ -1030,11 +1030,15 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         if (age >= (ship ? WRECK_LIFE_TICKS * TICK_MS : WRECK_LIFE_MS)) return;
         const q = homeAt(w, id);
         wrecks.push({
-          x: q.x, y: q.y, heading: q.heading, age, id, col: colorOf(h.fid), ship,
+          depth: q.depth, x: q.x, y: q.y, heading: q.heading, age, id, col: colorOf(h.fid), ship,
           size: ship ? sizeAt(w, h.cls) : Math.max(8, stationPxAt(w) * 0.3),
           cls: h.cls, fid: h.fid, variant: h.variant,
         });
       };
+      // Painted in depth order once every hull is placed: behind the
+      // worlds, then the worlds, then in front of them.
+      const behindQ: Array<() => void> = [];
+      const frontQ: Array<() => void> = [];
       const drawn = new Set<string>();
       for (const [id, bodyId] of beat.where) {
         if (drawn.has(id)) continue;
@@ -1058,7 +1062,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
           // died, and the hull coming apart as itself inside it.
           blasts.push({ x: q.x, y: q.y, r: hitROf(id), since, id });
           wrecks.push({
-            x: q.x, y: q.y, heading: q.heading, age: since, id, col, ship: h.kind === 'ship',
+            depth: q.depth, x: q.x, y: q.y, heading: q.heading, age: since, id, col, ship: h.kind === 'ship',
             size: h.kind === 'ship' ? size : Math.max(8, stationPxAt(bodyId) * 0.3),
             cls: h.cls, fid: h.fid, variant: h.variant,
           });
@@ -1077,6 +1081,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
           continue;
         }
 
+        const paint = () => {
         if (h.kind === 'city') {
           const fa = 0.45 + ((hashStr(id) % 1000) / 1000) * 2.2;
           g.save();
@@ -1186,6 +1191,8 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
             { firstHitMs: firstHitMs.get(id) ?? null, beatMs, hitLastBeat: hitLastBeat.has(id) },
             id, nowMs, 1, 1.5);
         }
+        };
+        (q.depth < 0 && h.kind !== 'city' ? behindQ : frontQ).push(paint);
       }
 
       // ---- what is left of the dead --------------------------------------
@@ -1199,14 +1206,26 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
       // Wrecks under the fire: the hull in charred pieces as the map
       // draws one, fading over WRECK_LIFE_TICKS; a settlement's ruin as
       // before.
-      for (const w of wrecks) {
+      const paintWreck = (w: Wreck, dim: number) => {
         const img = w.ship ? hullImage(w.cls, colorOf(w.fid), w.variant, trimOf(w.fid)) : null;
         if (img) {
-          drawHullWreck(g, img, w.size, w.heading, w.x, w.y, w.age, w.id, wreckAlpha(w.age, TICK_MS));
+          drawHullWreck(g, img, w.size, w.heading, w.x, w.y, w.age, w.id, wreckAlpha(w.age, TICK_MS) * dim);
         } else {
+          g.save(); g.globalAlpha = dim;
           drawWreck(g, w.x, w.y, Math.max(8, w.size), w.age, WRECK_LIFE_MS, w.id, w.col);
+          g.restore();
         }
-      }
+      };
+      // BEHIND THE WORLDS: dimmer, and the world paints over them, as in
+      // the single-battle recap. Hulls on the far side of a world were
+      // drawn over its face.
+      for (const w of wrecks) if (w.depth < 0) paintWreck(w, 0.55);
+      for (const p of behindQ) { g.save(); g.globalAlpha = 0.55; p(); g.restore(); }
+      if (anchor) paintFramed(anchor);
+      for (const m of moons) paintFramed(m);
+      // ON AND IN FRONT OF THEM.
+      for (const p of frontQ) p();
+      for (const w of wrecks) if (w.depth >= 0) paintWreck(w, 1);
 
       // ---- detonations, over every hull ----------------------------------
       for (const b of blasts) drawDeathBlast(g, b.x, b.y, b.r, b.since, b.id);
