@@ -1,0 +1,138 @@
+{
+  "components/BuildPanel.tsx": [
+    "JSX|METAL:",
+    "JSX|SPD:"
+  ],
+  "components/EventLog.tsx": [
+    "JSX|Esc"
+  ],
+  "components/FleetPanel.tsx": [
+    "ATTR|`${Math.round(hp)} / ${Math.round(hpMax)} HP`"
+  ],
+  "components/GroupSelectionPanel.tsx": [
+    "ATTR|`${def.displayName} — ${status.title}`",
+    "ATTR|`HP ${Math.round(r * 100)}%`"
+  ],
+  "components/Landing.tsx": [
+    "JSX|ORBITAL",
+    "JSX|Orbital · orbital-empire.com"
+  ],
+  "components/ShipDesigner.tsx": [
+    "ATTR|`${def.blurb}\\n${def.techNote}${lock ? `\\n🔒 ${lock.text}` : ''}`"
+  ],
+  "components/ShipPanel.tsx": [
+    "JSX|&mdash;",
+    "JSX|&middot;",
+    "JSX|&rarr;"
+  ],
+  "components/SituationLog.tsx": [
+    "ATTR|`${it.alt.label}: ${it.title}`"
+  ],
+  "components/TopBar.tsx": [
+    "JSX|&nbsp;·&nbsp;",
+    "JSX|Bump any faction's pools",
+    "JSX|DEBUG",
+    "JSX|Esc",
+    "JSX|Grant Resources",
+    "JSX|ORBITAL",
+    "JSX|localStorage",
+    "JSX|v0.3 alpha ·"
+  ],
+  "multiplayer/AuthOverlay.tsx": [
+    "JSX|ORBITAL"
+  ],
+  "multiplayer/BattleCinema.tsx": [
+    "JSX|0.5&times;",
+    "JSX|1&times;",
+    "JSX|2&times;",
+    "JSX|4&times;"
+  ],
+  "multiplayer/BattleReview.tsx": [
+    "ATTR|Create a link anyone can open to watch this recap",
+    "ATTR|Create a link anyone can open to watch this whole match",
+    "ATTR|Turned aside by shields and armor",
+    "ATTR|`rank ${p.rank}`",
+    "JSX|% hit",
+    "JSX|Assembling the film…",
+    "JSX|Dealt",
+    "JSX|Fate",
+    "JSX|Held",
+    "JSX|Hit%",
+    "JSX|Hull",
+    "JSX|Kills",
+    "JSX|Loading battles…",
+    "JSX|Loading the renderer…",
+    "JSX|Loading…",
+    "JSX|No battles recorded for this match yet. A battle opens on the first shot at a body and closes after six quiet ticks — ma",
+    "JSX|Pick a battle to review.",
+    "JSX|Taken",
+    "JSX|The battle view hit an error:",
+    "JSX|The rest of the analytics still works. The full trace is in the diagnostic log.",
+    "JSX|This was one engagement in the fight for",
+    "JSX|and T+",
+    "JSX|capt.",
+    "JSX|committed",
+    "JSX|dealt",
+    "JSX|engagements",
+    "JSX|hits (",
+    "JSX|hulls lost across the campaign",
+    "JSX|live",
+    "JSX|lost",
+    "JSX|of them between T+",
+    "JSX|part of the fight for",
+    "JSX|shots ·",
+    "JSX|tick",
+    "JSX|victor",
+    "JSX|· lost",
+    "JSX|· took",
+    "JSX|⚠ a pact broke during this fight"
+  ],
+  "multiplayer/CaptainRosterPicker.tsx": [
+    "JSX|&times;"
+  ],
+  "multiplayer/DiscordLink.tsx": [
+    "JSX|/link",
+    "JSX|Discord",
+    "JSX|code"
+  ],
+  "multiplayer/Hangar.tsx": [
+    "ATTR|XXXX-XXXX-XXXX"
+  ],
+  "multiplayer/MatchReplay.tsx": [
+    "JSX|15&times;",
+    "JSX|4&times;",
+    "JSX|60&times;",
+    "JSX|fetch",
+    "JSX|frames",
+    "JSX|rows",
+    "JSX|ships@tick",
+    "JSX|stage"
+  ],
+  "multiplayer/MultiplayerLobby.tsx": [
+    "ATTR|ABCD-EFGH",
+    "ATTR|Preview",
+    "JSX|ORBITAL"
+  ],
+  "multiplayer/NotificationSettings.tsx": [
+    "JSX|/notify",
+    "JSX|Discord"
+  ],
+  "multiplayer/ResetPassword.tsx": [
+    "JSX|ORBITAL"
+  ],
+  "multiplayer/SettlementTradeTab.tsx": [
+    "ATTR|`${sh.name} — ${ctx.where}, ${ctx.doing}`"
+  ],
+  "multiplayer/SharedFilm.tsx": [
+    "JSX|orbital-empire.com"
+  ],
+  "multiplayer/SharedRecap.tsx": [
+    "JSX|ORBITAL"
+  ],
+  "multiplayer/TheatreRecap.tsx": [
+    "JSX|Loading the campaign…"
+  ],
+  "multiplayer/TradeComposer.tsx": [
+    "ATTR|`${f.name} — ${f.where}`"
+  ]
+}

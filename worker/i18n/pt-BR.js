@@ -603,4 +603,15 @@ export const PT_BR = {
   'feed.kaiju.deadKiller': '**{faction}** deu o golpe final.',
   'feed.kaiju.deadKillerShip': '**{faction}**, a bordo da **{ship}**, deu o golpe final.',
   'feed.kaiju.carcass': 'A carcaça é um campo de salvamento: **{tons} t** de metal para qualquer cargueiro com equipamento de mineração.',
+
+  // --- plain pages the worker serves (unsubscribe, the email sign-in handoff) ---
+  'page.unsub.titleOk': 'Inscrição cancelada',
+  'page.unsub.titleBad': 'Link inválido',
+  'page.unsub.msgHerald': 'Você não receberá mais o Arauto diário por e-mail. Os e-mails da conta, como a redefinição de senha, continuam chegando.',
+  'page.unsub.msgGames': 'Você não receberá mais avisos de jogo por e-mail. Os e-mails da conta, como a redefinição de senha, continuam chegando.',
+  'page.unsub.msgBad': 'Esse link de cancelamento não é válido. Você pode mudar suas configurações de e-mail no seu Perfil, dentro do jogo.',
+  'page.unsub.settings': 'Configurações de e-mail',
+  'page.unsub.back': 'Voltar ao Orbital',
+  'page.go.taking': 'Levando você até a sua vaga…',
+  'page.go.continue': 'Continuar',
 };

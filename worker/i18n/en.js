@@ -605,4 +605,15 @@ export const EN = {
   'feed.kaiju.deadKiller': '**{faction}** landed the killing blow.',
   'feed.kaiju.deadKillerShip': '**{faction}**, aboard the **{ship}**, landed the killing blow.',
   'feed.kaiju.carcass': 'Its carcass is a salvage field: **{tons} t** of metal for any freighter with a mining rig.',
+
+  // --- plain pages the worker serves (unsubscribe, the email sign-in handoff) ---
+  'page.unsub.titleOk': 'Unsubscribed',
+  'page.unsub.titleBad': 'Link not valid',
+  'page.unsub.msgHerald': 'You won\'t get the daily Herald by email any more. Account emails, like password resets, still arrive.',
+  'page.unsub.msgGames': 'You won\'t get game updates by email any more. Account emails, like password resets, still arrive.',
+  'page.unsub.msgBad': 'That unsubscribe link is not valid. You can change your email settings from your Profile in the game.',
+  'page.unsub.settings': 'Email settings',
+  'page.unsub.back': 'Back to Orbital',
+  'page.go.taking': 'Taking you to your seat…',
+  'page.go.continue': 'Continue',
 };

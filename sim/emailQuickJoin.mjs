@@ -520,6 +520,33 @@ await call('POST', '/api/auth/forgot', { body: { email: 'luiza@example.com' } })
 check('and with neither, English', sent.length === 1 && sent[0].subject === 'Reset your Orbital password');
 sent.length = 0;
 
+// ---- plain pages follow the language -------------------------------------
+
+{
+  const ptId = PT.data.user.id;
+  await DB.prepare("UPDATE users SET locale = 'pt-BR' WHERE id = ?").bind(ptId).run();   // an earlier check cleared it
+  const tok = (await mail.unsubscribeUrl(env, ptId, 'herald')).split('t=')[1];
+  const ptPage = await call('GET', `/api/email/unsubscribe?t=${tok}`);
+  check('the unsubscribe page is in the account language (Portuguese), html lang and all',
+    ptPage.status === 200 && /Inscrição cancelada/.test(ptPage.data) && /lang="pt-BR"/.test(ptPage.data)
+      && /Arauto diário/.test(ptPage.data) && !/Unsubscribed/.test(ptPage.data), String(ptPage.data).slice(0, 200));
+  const enTok = (await mail.unsubscribeUrl(env, A.id, 'games')).split('t=')[1];
+  const enPage = await call('GET', `/api/email/unsubscribe?t=${enTok}`);
+  check('an English account still gets the English page, byte for byte',
+    /<title>Unsubscribed · Orbital<\/title>/.test(enPage.data) && /You won&#39;t get game updates by email any more\. Account emails, like password resets, still arrive\./.test(enPage.data)
+      && /lang="en"/.test(enPage.data), String(enPage.data).slice(0, 300));
+  const badPt = await worker.fetch(new Request('https://orbital-empire.com/api/email/unsubscribe?t=nope', { headers: { 'accept-language': 'pt-BR,pt;q=0.9' } }), env, execCtx);
+  const badTxt = await badPt.text();
+  check('an invalid link follows the browser language when no account is known',
+    badPt.status === 400 && /Link inválido/.test(badTxt));
+  const go = await worker.fetch(new Request('https://orbital-empire.com/api/email/go?t=' + 'a'.repeat(43), { headers: { 'accept-language': 'pt-BR' } }), env, execCtx);
+  const goTxt = await go.text();
+  check('the email sign-in handoff page speaks Portuguese to a Portuguese browser',
+    /Levando você até a sua vaga/.test(goTxt) && /lang="pt-BR"/.test(goTxt) && /Continuar/.test(goTxt), goTxt.slice(0, 120));
+  const goEn = await worker.fetch(new Request('https://orbital-empire.com/api/email/go?t=' + 'a'.repeat(43)), env, execCtx);
+  check('and English otherwise', /Taking you to your seat…/.test(await goEn.text()));
+}
+
 // ---- no binding, no mail ---------------------------------------------------
 
 const quiet = await mail.sendEmail({ DB }, { to: 'x@example.com', kind: 't', subject: 's', html: 'h', text: 't' });

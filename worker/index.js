@@ -21,7 +21,7 @@ import { matchBackfillSweep } from './analytics.js';
 import { GIT_SHA, BUILT_AT } from './_version.js';
 import { maybeRunDailyDigest } from './digest.js';
 import * as mail from './email.js';
-import { normalizeLocale } from './i18n.js';
+import { normalizeLocale, tr, pickLocale, localeFromAcceptLanguage } from './i18n.js';
 
 export { Room } from './room.js';
 
@@ -345,18 +345,28 @@ async function handleUnsubscribe(req, env, url) {
   if (parsed) await mail.setEmailPref(env, parsed.userId, parsed.category, false);
   // RFC 8058 one-click: the mail client POSTs and wants a bare 200.
   if (req.method === 'POST') return new Response(parsed ? 'ok' : 'invalid', { status: parsed ? 200 : 400 });
-  const what = parsed ? (parsed.category === 'herald' ? 'the daily Herald' : 'game updates') : null;
+  // Signed out, from an email: the account's saved language if the link is
+  // valid, else the browser's.
+  let L = localeFromAcceptLanguage(req.headers.get('accept-language'));
+  if (parsed) {
+    try {
+      const u = await env.DB.prepare('SELECT locale FROM users WHERE id = ?').bind(parsed.userId).first();
+      L = pickLocale(u?.locale, L);
+    } catch { /* the browser's language will do */ }
+  }
+  L = pickLocale(L);
+  const title = tr(L, parsed ? 'page.unsub.titleOk' : 'page.unsub.titleBad');
   const msg = parsed
-    ? `You won't get ${what} by email any more. Account emails, like password resets, still arrive.`
-    : 'That unsubscribe link is not valid. You can change your email settings from your Profile in the game.';
-  const page = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${parsed ? 'Unsubscribed' : 'Link not valid'} · Orbital</title></head>
+    ? tr(L, parsed.category === 'herald' ? 'page.unsub.msgHerald' : 'page.unsub.msgGames')
+    : tr(L, 'page.unsub.msgBad');
+  const page = `<!doctype html><html lang="${L}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${mail.esc(title)} · Orbital</title></head>
 <body style="margin:0;background:#05080d;color:#dbe6f0;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
 <main style="max-width:520px;margin:12vh auto;padding:0 20px">
 <div style="color:#ffb84d;letter-spacing:.3em;font-weight:700;font-size:14px;margin-bottom:22px">ORBITAL</div>
-<h1 style="font-size:24px;margin:0 0 12px">${parsed ? 'Unsubscribed' : 'Link not valid'}</h1>
+<h1 style="font-size:24px;margin:0 0 12px">${mail.esc(title)}</h1>
 <p style="line-height:1.6;color:#b8c8d6">${mail.esc(msg)}</p>
-<p style="margin-top:26px"><a href="/?settings=email" style="color:#4ecdc4">Email settings</a> · <a href="/" style="color:#4ecdc4">Back to Orbital</a></p>
+<p style="margin-top:26px"><a href="/?settings=email" style="color:#4ecdc4">${mail.esc(tr(L, 'page.unsub.settings'))}</a> · <a href="/" style="color:#4ecdc4">${mail.esc(tr(L, 'page.unsub.back'))}</a></p>
 </main></body></html>`;
   return new Response(page, { status: parsed ? 200 : 400, headers: { 'content-type': 'text/html; charset=utf-8' } });
 }
