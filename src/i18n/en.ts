@@ -56,6 +56,7 @@ const base = {
   'lobby.nav.bot': 'Bot',
   'lobby.nav.editor': 'Editor',
   'lobby.nav.devlog': 'Devlog',
+  'lobby.nav.email': 'Email',
   'lobby.profileTitle': 'Profile and settings',
   'lobby.signOut': 'Sign out',
   'lobby.commander': 'Commander',

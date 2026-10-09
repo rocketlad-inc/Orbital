@@ -79,6 +79,13 @@ export async function sendEmail(env, opts) {
     if (dedupeKey) return { sent: false, reason: 'already_sent' };
   }
 
+  // Open tracking, for the mail that asks for it: the marker becomes a
+  // 1x1 picture named after THIS send's log row (see openPixelTag).
+  let body = html;
+  if (typeof body === 'string' && body.includes(OPEN_PIXEL)) {
+    body = body.replace(OPEN_PIXEL, logId != null ? await openPixelTag(env, logId) : '');
+  }
+
   const headers = {};
   if (category && userId) {
     const unsub = await unsubscribeUrl(env, userId, category);
@@ -94,7 +101,7 @@ export async function sendEmail(env, opts) {
       from: FROM,
       replyTo: REPLY_TO,
       subject,
-      html,
+      html: body,
       text,
       ...(Object.keys(headers).length ? { headers } : {}),
     });
@@ -176,6 +183,37 @@ export async function readUnsubscribeToken(env, t) {
   let diff = 0;
   for (let i = 0; i < want.length; i++) diff |= want.charCodeAt(i) ^ sig.charCodeAt(i);
   return diff === 0 ? { userId, category } : null;
+}
+
+// ---------------------------------------------------------------------------
+// Opens. A template that wants them puts OPEN_PIXEL in its html; sendEmail
+// swaps it for a picture whose URL names the send's email_log row, signed
+// so nobody can mark someone else's mail opened. GET /api/email/o/<t>.gif
+// (worker/emailAdmin.js) stamps the row.
+// ---------------------------------------------------------------------------
+
+export const OPEN_PIXEL = '%%OPEN_PIXEL%%';
+
+export async function openToken(env, logId) {
+  if (!env.EMAIL_LINK_SECRET) return null;
+  return `${logId}.${(await hmac(env, `open:${logId}`)).slice(0, 22)}`;
+}
+
+async function openPixelTag(env, logId) {
+  const t = await openToken(env, logId);
+  if (!t) return '';
+  return `<img src="${SITE}/api/email/o/${t}.gif" width="1" height="1" alt="" style="display:block;width:1px;height:1px;border:0;opacity:0">`;
+}
+
+/** The email_log id a pixel token names, or null if it is not ours. */
+export async function readOpenToken(env, t) {
+  if (!env.EMAIL_LINK_SECRET || typeof t !== 'string') return null;
+  const m = /^(\d{1,15})\.([A-Za-z0-9_-]{22})$/.exec(t);
+  if (!m) return null;
+  const want = (await hmac(env, `open:${m[1]}`)).slice(0, 22);
+  let diff = 0;
+  for (let i = 0; i < 22; i++) diff |= want.charCodeAt(i) ^ m[2].charCodeAt(i);
+  return diff === 0 ? Number(m[1]) : null;
 }
 
 // ---------------------------------------------------------------------------

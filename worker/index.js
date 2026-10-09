@@ -1339,6 +1339,7 @@ import * as fleets from './fleets.js';
 import * as discord from './discord.js';
 import * as discordOauth from './discordOauth.js';
 import * as configAdmin from './configAdmin.js';
+import * as emailAdmin from './emailAdmin.js';
 import * as analytics from './analytics.js';
 import * as adminDashboard from './adminDashboard.js';
 import * as store from './store.js';
@@ -1363,7 +1364,7 @@ import * as devlog from './devlog.js';
 import * as gameFeed from './gameFeed.js';
 import { carryNamePools } from './namePoolHistory.js';
 
-const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, analytics, configAdmin, store, skins, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed];
+const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, analytics, configAdmin, emailAdmin, store, skins, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed];
 
 function matchPattern(pattern, pathname) {
   if (typeof pattern === 'string') {
@@ -2009,6 +2010,13 @@ export default {
       // redirect chain.
       if (req.method === 'GET' && url.pathname === '/api/discord/feed/callback') {
         return dispatchFeatureRoute(req, env, url, null);
+      }
+
+      // An email's open pixel (worker/emailAdmin.js): fetched by a mail
+      // client or its image proxy, never with our cookie. The token is
+      // signed; the handler always answers with the picture.
+      if (req.method === 'GET' && url.pathname.startsWith('/api/email/o/')) {
+        return (await dispatchFeatureRoute(req, env, url, null)) ?? new Response(null, { status: 404 });
       }
 
       // everything below requires a session

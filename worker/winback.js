@@ -30,7 +30,7 @@
 // ============================================================================
 
 import { tr, trn, normalizeLocale } from './i18n.js';
-import { emailConfigured, sendEmail, layout, textLayout, esc, unsubscribeUrl } from './email.js';
+import { emailConfigured, sendEmail, layout, textLayout, esc, unsubscribeUrl, OPEN_PIXEL } from './email.js';
 
 export const WINBACK_AFTER_MS = 48 * 3600 * 1000;
 export const WINBACK_HOURLY_CAP = 20;
@@ -47,6 +47,89 @@ export const WINBACK_URL = 'https://orbital-empire.com/?play=winback&from=winbac
 /** The header picture: a crop of the Battle of Mars press still (a JPEG,
  *  because Outlook will not show WebP). */
 export const WINBACK_HERO_SRC = 'https://orbital-empire.com/press/email/winback-hero.jpg';
+
+// ---------------------------------------------------------------------------
+// The editable copy (admin panel, worker/emailAdmin.js). Every line of the
+// message itself can be rewritten per language; the room card's labels
+// cannot, because they mirror the game browser's. An override that is
+// missing or blank falls back to the catalog (worker/i18n/*.js), so
+// "reset to default" is deleting the override, and a new language gets
+// the catalog's words until someone edits them.
+// ---------------------------------------------------------------------------
+
+export const TEMPLATE_ID = 'winback';
+export const EDITABLE_LOCALES = ['en', 'pt-BR'];
+export const EDITABLE_FIELDS = [
+  { key: 'email.winback.seat.subject', label: 'Subject (a game is filling up)', vars: [] },
+  { key: 'email.winback.seat.preheader', label: 'Preview text (a game is filling up)', vars: ['name', 'n', 'max'] },
+  { key: 'email.winback.seat.heading', label: 'Heading (a game is filling up)', vars: [] },
+  { key: 'email.winback.seat.l1', label: 'Intro, above the card (a game is filling up)', vars: [] },
+  { key: 'email.winback.seat.autostart', label: 'Under the card: a Quick Join lobby', vars: [] },
+  { key: 'email.winback.seat.host', label: 'Under the card: a lobby its host starts', vars: [] },
+  { key: 'email.winback.pool.subject', label: 'Subject (a new game is forming)', vars: [] },
+  { key: 'email.winback.pool.preheader', label: 'Preview text (a new game is forming)', vars: [] },
+  { key: 'email.winback.pool.heading', label: 'Heading (a new game is forming)', vars: [] },
+  { key: 'email.winback.pool.l1', label: 'Intro, above the card (a new game is forming)', vars: [] },
+  { key: 'email.winback.pool.autostart', label: 'Under the card (a new game is forming)', vars: ['n'] },
+  { key: 'email.winback.l2', label: 'Closing line (both versions)', vars: [] },
+  { key: 'email.winback.cta', label: 'Button', vars: [] },
+  { key: 'email.winback.footer', label: 'Footer: why you got this', vars: [] },
+  { key: 'email.winback.heroAlt', label: 'Header picture description (shown when pictures are off)', vars: [] },
+];
+const EDITABLE_KEYS = new Set(EDITABLE_FIELDS.map(f => f.key));
+export const MAX_FIELD_CHARS = 600;
+
+function fillVars(s, vars) {
+  return String(s).replace(/\{(\w+)\}/g, (m, k) => (vars && vars[k] != null ? String(vars[k]) : m));
+}
+
+/** tr(), but an admin override wins when it says something. */
+function makeT(L, overrides) {
+  const mine = overrides?.[L] ?? {};
+  return (key, vars) => {
+    const o = mine[key];
+    return typeof o === 'string' && o.trim() ? fillVars(o, vars) : tr(L, key, vars);
+  };
+}
+
+/**
+ * Keep only what the editor may set: known keys, known languages, short
+ * strings, and an https picture. Returns { overrides } or { error }.
+ */
+export function cleanOverrides(input) {
+  if (!input || typeof input !== 'object') return { overrides: {} };
+  const out = {};
+  for (const L of EDITABLE_LOCALES) {
+    const src = input[L];
+    if (!src || typeof src !== 'object') continue;
+    for (const [k, v] of Object.entries(src)) {
+      if (!EDITABLE_KEYS.has(k) || typeof v !== 'string') continue;
+      const s = v.trim();
+      if (!s) continue;
+      if (s.length > MAX_FIELD_CHARS) return { error: `${k} is longer than ${MAX_FIELD_CHARS} characters` };
+      (out[L] ??= {})[k] = s;
+    }
+  }
+  if (typeof input.hero_src === 'string' && input.hero_src.trim()) {
+    const u = input.hero_src.trim();
+    if (!/^https:\/\/[^\s"'<>]+$/.test(u) || u.length > 500) return { error: 'The header picture must be an https:// address' };
+    out.hero_src = u;
+  }
+  return { overrides: out };
+}
+
+/** The saved template: { enabled, overrides, updated_ms }. Off if never saved. */
+export async function loadWinbackTemplate(env) {
+  let row = null;
+  try {
+    row = await env.DB
+      .prepare('SELECT enabled, overrides, updated_ms, updated_by FROM email_templates WHERE id = ?')
+      .bind(TEMPLATE_ID).first();
+  } catch { /* table missing until 0164 runs: off */ }
+  let overrides = {};
+  try { overrides = JSON.parse(row?.overrides || '{}') || {}; } catch { overrides = {}; }
+  return { enabled: row?.enabled === 1, overrides, updated_ms: row?.updated_ms ?? null, updated_by: row?.updated_by ?? null };
+}
 
 /**
  * Decide this hour's sends. Pure, so the rules are testable without a DB.
@@ -69,7 +152,7 @@ export function planWinback({ eligible, lobbies }) {
   return { mode: 'hold', recipients: [], room: null };
 }
 
-async function eligibleAccounts(env, nowMs) {
+export async function eligibleAccounts(env, nowMs) {
   return (await env.DB
     .prepare(
       `SELECT u.id, u.email, u.display_name, u.locale
@@ -89,7 +172,7 @@ async function eligibleAccounts(env, nowMs) {
 }
 
 /** The same rooms Quick Join would seat someone in, best first. */
-async function openLobbies(env, nowMs) {
+export async function openLobbies(env, nowMs) {
   return (await env.DB
     .prepare(
       `SELECT r.id, r.name, r.max_players, r.quick_join,
@@ -171,7 +254,7 @@ function emptyCell() {
  * @param card { name, n, max, quick, host, members:[{name,is_host}], tickMs, forming }
  *   forming = the pool case: a game that opens when the first reader clicks.
  */
-export function roomCardHtml(L, card) {
+export function roomCardHtml(L, card, ctaLabel = tr(L, 'email.winback.cta')) {
   const open = Math.max(0, card.max - card.n);
   const members = (card.members ?? []).slice(0, 10);
   const empties = Math.min(open, 10 - members.length);
@@ -198,7 +281,7 @@ export function roomCardHtml(L, card) {
   <tr><td style="padding:8px 18px 0;font:13px ${CARD_FONT};color:${K.ink3}">${esc(tr(L, 'email.winback.card.players', { n: card.n, max: card.max }))} · <b style="color:${K.teal};font-weight:600">${esc(tr(L, 'email.winback.card.open', { n: open }))}</b></td></tr>
   <tr><td style="padding:12px 18px 0;font:13px ${CARD_FONT};color:${K.ink2}"><span style="color:${K.ink3};font-size:11px;letter-spacing:.12em;text-transform:uppercase">${esc(tr(L, 'email.winback.card.speed'))}</span>&nbsp;&nbsp;${esc(turnSpeed(L, card.tickMs))}</td></tr>
   <tr><td style="padding:16px 18px 18px">
-    <a href="${esc(WINBACK_URL)}" style="display:block;background:${K.gold};color:${K.goldInk};font:700 15px/42px ${CARD_FONT};text-align:center;text-decoration:none;border-radius:10px">${esc(tr(L, 'email.winback.cta'))}</a>
+    <a href="${esc(WINBACK_URL)}" style="display:block;background:${K.gold};color:${K.goldInk};font:700 15px/42px ${CARD_FONT};text-align:center;text-decoration:none;border-radius:10px">${esc(ctaLabel)}</a>
   </td></tr>
 </table>`;
 }
@@ -218,67 +301,77 @@ function roomCardText(L, card) {
  * Everything one reader sees. Exported for the preview and the tests.
  * @param room  for 'seat': { name, n, max_players, quick_join, host_name, members, tick_ms }
  */
-export function composeWinback(locale, mode, room) {
+export function composeWinback(locale, mode, room, overrides = {}) {
   const L = normalizeLocale(locale) ?? 'en';
+  const T = makeT(L, overrides);
   const seat = mode === 'seat' && !!room;
   const card = seat
     ? { name: room.name, n: room.n, max: room.max_players, quick: room.quick_join === 1,
         host: room.host_name ?? tr(L, 'email.defaultName'), members: room.members ?? [], tickMs: room.tick_ms }
     : { name: tr(L, 'email.winback.card.newName'), n: 0, max: POOL_ROOM_SEATS, quick: true,
         members: [], tickMs: DEFAULT_TICK_MS, forming: true };
-  const intro = tr(L, seat ? 'email.winback.seat.l1' : 'email.winback.pool.l1');
+  const intro = T(seat ? 'email.winback.seat.l1' : 'email.winback.pool.l1');
   const after = [
     seat
-      ? tr(L, room.quick_join === 1 ? 'email.winback.seat.autostart' : 'email.winback.seat.host')
-      : tr(L, 'email.winback.pool.autostart', { n: POOL_ROOM_SEATS }),
-    tr(L, 'email.winback.l2'),
+      ? T(room.quick_join === 1 ? 'email.winback.seat.autostart' : 'email.winback.seat.host')
+      : T('email.winback.pool.autostart', { n: POOL_ROOM_SEATS }),
+    T('email.winback.l2'),
   ];
+  const cta = { label: T('email.winback.cta'), url: WINBACK_URL };
   return {
     L,
-    subject: tr(L, seat ? 'email.winback.seat.subject' : 'email.winback.pool.subject'),
+    subject: T(seat ? 'email.winback.seat.subject' : 'email.winback.pool.subject'),
     preheader: seat
-      ? tr(L, 'email.winback.seat.preheader', { name: room.name, n: room.n, max: room.max_players })
-      : tr(L, 'email.winback.pool.preheader'),
-    heading: tr(L, seat ? 'email.winback.seat.heading' : 'email.winback.pool.heading'),
+      ? T('email.winback.seat.preheader', { name: room.name, n: room.n, max: room.max_players })
+      : T('email.winback.pool.preheader'),
+    heading: T(seat ? 'email.winback.seat.heading' : 'email.winback.pool.heading'),
     intro,
     after,
     card,
-    cardHtml: roomCardHtml(L, card),
+    cardHtml: roomCardHtml(L, card, cta.label),
     lines: [intro, '', ...roomCardText(L, card), '', ...after],
-    cta: { label: tr(L, 'email.winback.cta'), url: WINBACK_URL },
-    hero: { src: WINBACK_HERO_SRC, alt: tr(L, 'email.winback.heroAlt'), href: WINBACK_URL },
-    footer: tr(L, 'email.winback.footer'),
+    cta,
+    hero: { src: overrides?.hero_src || WINBACK_HERO_SRC, alt: T('email.winback.heroAlt'), href: WINBACK_URL },
+    footer: T('email.winback.footer'),
   };
 }
 
 /** The whole email body: intro, the card (it carries the button), the rest. */
-export function winbackBodyHtml(c) {
+export function winbackBodyHtml(c, { trackOpens = false } = {}) {
   const p = s => `<p style="margin:0 0 14px">${esc(s)}</p>`;
-  return p(c.intro) + c.cardHtml + c.after.map(p).join('');
+  return p(c.intro) + c.cardHtml + c.after.map(p).join('') + (trackOpens ? OPEN_PIXEL : '');
 }
 
-async function sendWinback(env, user, mode, room) {
-  const c = composeWinback(user.locale, mode, room);
-  const unsubUrl = await unsubscribeUrl(env, user.id, 'games');
-  return sendEmail(env, {
-    userId: user.id, to: user.email, kind: `winback_${mode}`, category: 'games',
-    dedupeKey: `winback:${user.id}`,
+/** The full message, as sendEmail wants it. Shared by the cron and the
+ *  admin panel's preview and test send, so all three are the same mail. */
+export function renderWinback(c, { unsubUrl = null, trackOpens = false } = {}) {
+  return {
     subject: c.subject,
     html: layout({
       locale: c.L,
       preheader: c.preheader,
       heading: c.heading,
       hero: c.hero,
-      body: winbackBodyHtml(c),
+      body: winbackBodyHtml(c, { trackOpens }),
       footer: esc(c.footer),
       unsubUrl,
     }),
     text: textLayout({ locale: c.L, heading: c.heading, lines: c.lines, cta: c.cta, footer: c.footer, unsubUrl }),
+  };
+}
+
+async function sendWinback(env, user, mode, room, overrides) {
+  const c = composeWinback(user.locale, mode, room, overrides);
+  const unsubUrl = await unsubscribeUrl(env, user.id, 'games');
+  return sendEmail(env, {
+    userId: user.id, to: user.email, kind: `winback_${mode}`, category: 'games',
+    dedupeKey: `winback:${user.id}`,
+    ...renderWinback(c, { unsubUrl, trackOpens: true }),
   });
 }
 
 /** Who is already in the lobby, its host, and its turn speed, for the card. */
-async function cardDetails(env, room) {
+export async function cardDetails(env, room) {
   const members = (await env.DB
     .prepare(
       `SELECT u.display_name AS name, (m.user_id = r.host_id) AS is_host
@@ -307,6 +400,10 @@ async function cardDetails(env, room) {
  */
 export async function maybeSendWinbackEmails(env, nowMs = Date.now()) {
   if (!emailConfigured(env) || !env.EMAIL_LINK_SECRET) return;
+  // Off until switched on in the admin panel, and checked before the run
+  // marker so a switched-off email leaves no trace in the log.
+  const tpl = await loadWinbackTemplate(env);
+  if (!tpl.enabled) return;
   const hour = Math.floor(nowMs / 3600000);
   try {
     await env.DB
@@ -326,7 +423,7 @@ export async function maybeSendWinbackEmails(env, nowMs = Date.now()) {
   }
   for (const user of plan.recipients) {
     try {
-      await sendWinback(env, user, plan.mode, room);
+      await sendWinback(env, user, plan.mode, room, tpl.overrides);
     } catch (e) {
       console.error(`winback send failed for ${user.id}`, e);
     }
