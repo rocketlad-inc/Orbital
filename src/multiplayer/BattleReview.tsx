@@ -1673,23 +1673,44 @@ export function BattleRecap({ d }: { d: Detail }) {
           drawCityCluster(g, { population: 4 } as never, col);
           g.restore();
         } else {
-          // A hull under way points where it is going; on station it
-          // rides its orbit.
+          // A hull under way: leaving, it boosts nose-first; arriving, it
+          // BRAKES, as the map's shaped burns do (mapRenderer
+          // drawTorchShip): it comes in already turned round, engine
+          // toward its slot and the flame blazing ahead of its motion,
+          // and only as the burn dies does it swing onto its orbit. On
+          // station it rides its orbit.
           const k = transitOf(r.id);
           const leaving = isLeaving(r.id);
           let heading = tangentOf(r.id);
+          let travel = heading;
+          let turnFade = 1;
           if (k >= 0) {
             const ahead = posOf(r.id);
             const behind = leaving ? onStation(r.id) : approachFrom(r.id);
-            heading = Math.atan2(ahead.y - behind.y, ahead.x - behind.x);
+            travel = Math.atan2(ahead.y - behind.y, ahead.x - behind.x);
+            heading = travel;
+            if (!leaving) {
+              // Retrograde for the brake, then a quick smoothstep turn
+              // onto the orbit over the last fifth of the arrival, the
+              // plume dying mid-turn as the map's flip does.
+              const u = Math.max(0, Math.min(1, (k - 0.8) / 0.2));
+              const settle = u * u * (3 - 2 * u);
+              const retro = travel + Math.PI;
+              let d = (tangentOf(r.id) - retro) % (Math.PI * 2);
+              if (d > Math.PI) d -= Math.PI * 2;
+              if (d < -Math.PI) d += Math.PI * 2;
+              heading = retro + d * settle;
+              turnFade = 1 - settle;
+            }
           }
 
           if (k >= 0) {
-            // Coming in hot and burning it off. The real plume, with the
-            // per-class bell geometry the map uses, at an intensity that
-            // falls away as the hull settles onto its station — and the
-            // reverse on the way out, lighting up as it leaves.
-            const burn = leaving ? Math.min(1, 0.25 + k * 0.95) : Math.max(0, 1 - k * k * 1.15);
+            // The real plume, with the per-class bell geometry the map
+            // uses, out of the hull's own stern: behind it on the way out,
+            // lighting up as it leaves; AHEAD of it on the way in (the
+            // hull is turned round), long through the hard brake (the
+            // map's 1.4) and falling away as it settles onto its station.
+            const burn = leaving ? Math.min(1, 0.25 + k * 0.95) : Math.max(0, 1 - k * k * 1.15) * turnFade;
             if (burn > 0.02) {
               const dir = { x: Math.cos(heading), y: Math.sin(heading) };
               const bell = {
@@ -1698,14 +1719,16 @@ export function BattleRecap({ d }: { d: Detail }) {
               };
               g.save();
               g.globalAlpha = dim;
-              drawThrustExhaust(g, bell, dir, size, burn * 1.1, r.cls ?? undefined);
+              drawThrustExhaust(g, bell, dir, size, burn * 1.1, r.cls ?? undefined,
+                undefined, undefined, leaving ? 1 : 1.4);
               g.restore();
             }
             if (!leaving) {
-              // The wake it drags in behind it, in the owner's trim.
+              // The wake it drags in behind it along its path, in the
+              // owner's trim: off its line of travel, not its nose.
               g.save();
               g.globalAlpha = dim * (1 - k) * 0.9;
-              drawRetreatWake(g, q, heading, size, trimOf(r.fid) ?? col, nowMs, r.id);
+              drawRetreatWake(g, q, travel, size, trimOf(r.fid) ?? col, nowMs, r.id);
               g.restore();
             }
           } else {
