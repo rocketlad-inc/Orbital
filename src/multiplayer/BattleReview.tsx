@@ -28,7 +28,6 @@ import { lazyChunk } from '../util/lazyChunk';
 
 import { toRenderBody } from './bodyIdentity';
 import { layoutRecap, glideSlot, type RecapBeat, type RecapUnit } from './recapLayout';
-import { getShipIconImage } from '../render/shipIconCache';
 import { getEmblemImage } from '../render/emblemCache';
 import {
   getPlanetTexture, getTerraformedTexture, getCloudTexture,
@@ -36,7 +35,7 @@ import {
 } from '../render/planetTexture';
 import { paintGlobe } from '../render/paintGlobe';
 import {
-  drawWreckShards, drawTexturedDisk, drawSphereLighting, drawBurn,
+  drawWreckShards, drawTexturedDisk, drawSphereLighting,
   drawThrustExhaust, drawRankChevron, drawRetreatWake,
   drawNightLights,
 } from '../render/fxPrimitives';
@@ -44,17 +43,13 @@ import {
 // and city cluster the map and the world menu use.
 import { drawCityCluster, drawStationStructure } from '../render/isoStructures';
 import { damageProfile, countPart } from '../game/shipParts';
-import {
-  drawRound, drawMuzzle, drawBeam, drawCharge, drawSparks, drawHullHit, drawShieldHit, drawScorch,
-  glowAt, ENERGY_FX, drawExplosion, drawHullBreakup,
-} from '../render/fxArt';
-import { FX_TUNING, kineticRoundsOf, burstSlots } from '../render/fxTuning';
+import { FX_TUNING } from '../render/fxTuning';
 import { deriveSecondary } from '../game/colorUtils';
-import { ShipIconClass, ShipIconVariant, iconClassFor } from '../components/ShipIcons';
-import { shipIconSize } from '../render/mapRenderer';
-import { isCapitalHull } from '../render/megastructureArt';
-import { getStructureIconImage } from '../render/structureIconCache';
-import type { MegastructureKind } from '../game/megastructures';
+import { ShipIconVariant } from '../components/ShipIcons';
+import {
+  iconClassOf, gameHullPx, hullImage, recapClock, drawVolley, drawHullWreck, drawDeathBlast,
+  drawDamageFire, wreckAlpha, burnPose, LAUNCH_SPREAD, flightFrac,
+} from './recapFx';
 import { Body } from '../types';
 import { t as tr, tn as trn, tk } from '../i18n/core';
 import { useI18n } from '../i18n/react';
@@ -662,34 +657,21 @@ function ShareButton({ gameId, battleId }: { gameId: string; battleId: string })
 // ------------------------------------------------------------
 
 const TICK_MS = 2200;          // a tick reads as a beat, not a flicker
-// A volley is not a single event. Every gun on the board opening at the
-// instant the beat starts, and every round landing together, is a drum
-// hit rather than a battle — so each shot gets its own launch time,
-// IN THE ORDER THE SERVER RESOLVED THEM (the shot log's order), spread
-// across most of the beat. Fire rolls down the line as a barrage, and a
-// killing shot lands after the hits that came before it. At 0.34, with
-// a hashed slot per shot, a fleet's fire read as one synchronized salvo
-// (Lorne, 2026-10-09). The last volley still lands, and its impact
-// finishes, inside the beat.
-const LAUNCH_SPREAD = 0.48;    // volleys go off across this much of a beat
-/** Each volley is in the air for the game's own bolt time (a kinetic
- *  burst's last round, or a beam's whole burn), as a share of the beat. */
-const FLIGHT_FRAC = FX_TUNING.boltMs / TICK_MS;
+// A volley is not a single event: each shot gets its own launch time, in
+// the order the server resolved them, spread across most of the beat
+// (recapFx recapClock, shared with the whole-system view).
+/** Each volley is in the air for the game's own bolt time, as a share of
+ *  the beat. */
+const FLIGHT_FRAC = flightFrac(TICK_MS);
 /** Roughly when in its beat a hull that died then went up, ms: for a
  *  wreck's age on later beats. */
 const KILL_AT_MS = (LAUNCH_SPREAD / 2 + FLIGHT_FRAC) * TICK_MS;
-/** Beats a wreck holds and fades over: combatFx WRECK_LIFE_TICKS. */
-const WRECK_LIFE_TICKS = 6;
 /** A hull arriving mid-fight brakes into its slot over this much of its
  *  first beat, and nothing it fires or takes goes off until it is there.
  *  It used to fly in across the whole beat while that beat's volleys
  *  were already crossing it: "the firing before they arrive is
  *  confusing" (Lorne, 2026-10-09). */
 const ARRIVE_FRAC = 0.3;
-/** Latest a volley may launch and still land, and finish its impact,
- *  inside the beat. Fire to or from an arriving hull is fitted between
- *  ARRIVE_FRAC and this, in the same order. */
-const LAUNCH_LAST = 1 - FLIGHT_FRAC - FX_TUNING.impactMs / TICK_MS - 0.01;
 /** Damage drains over this long once a round lands, so the bar moves
  *  with the hit that caused it. */
 const DRAIN_MS = 420;
@@ -803,31 +785,10 @@ const ENGAGEMENT_BEARING = 0.9;
 // always was here; the fit in recapLayout shrinks the lot together if a
 // fight is too big for the frame.
 const RECAP_CORVETTE_PX = 23;
-const RECAP_SHIP_SCALE = RECAP_CORVETTE_PX / shipIconSize('corvette', false);
-const ICON_CLASSES: ShipIconClass[] = ['corvette', 'frigate', 'destroyer', 'freighter', 'colony'];
-
-/** The silhouette a hull class borrows (capitals have their own art; see
- *  hullImage), or null when the class is not a hull at all. */
-function iconClassOf(cls: string | null): ShipIconClass | null {
-  const c = (cls ?? '').toLowerCase();
-  if ((ICON_CLASSES as string[]).includes(c)) return c as ShipIconClass;
-  if (isCapitalHull(c) || c === 'kaiju') return iconClassFor(c);
-  return null;
-}
+const RECAP_SHIP_SCALE = RECAP_CORVETTE_PX / (gameHullPx('corvette') ?? 30);
 function iconSizeOf(cls: string | null): number {
-  const c = (cls ?? '').toLowerCase();
-  return iconClassOf(c) ? shipIconSize(c, false) * RECAP_SHIP_SCALE : 18;
-}
-/** The sprite a hull is drawn with, as the map draws it: a capital hull
- *  from the structure sheet it was built from, everything else its own
- *  ship icon. */
-function hullImage(
-  cls: string | null, color: string, variant: ShipIconVariant | undefined, trim: string | undefined,
-): CanvasImageSource | null {
-  const c = (cls ?? '').toLowerCase();
-  if (isCapitalHull(c)) return getStructureIconImage(c as MegastructureKind, color, null, trim);
-  const ic = iconClassOf(c);
-  return ic ? getShipIconImage(ic, color, variant, trim) : null;
+  const px = gameHullPx(cls);
+  return px ? px * RECAP_SHIP_SCALE : 18;
 }
 /** A station's drawn width: the 88-unit rig at the 0.85 it is drawn at. */
 const RECAP_STATION_PX = 75;
@@ -1420,39 +1381,14 @@ export function BattleRecap({ d }: { d: Detail }) {
       // Damage applied so far this beat, so a hull's bar drains as the
       // bolts reach it rather than snapping at the tick boundary.
       const beatMs = t * TICK_MS;
-      // Each shot keeps its own clock: its slot in the shot log's order,
-      // with a seeded nudge inside the slot so the barrage is not a
-      // metronome. Never past the next slot, so the order holds, and the
-      // same on every replay.
-      const shotIndex = new Map(frame.shot_log.map((sh, n) => [sh, n]));
-      const nShots = Math.max(1, frame.shot_log.length);
-      // A hull arriving this beat neither fires nor is fired on until it
-      // has braked into its slot (ARRIVE_FRAC): its shots, both ways, are
-      // fitted into the rest of the launch window in the same order.
-      const arrivingNow = (id: string | null) => !!id && comings.arrived.get(id) === frame.tick;
-      const shotClock = (sh: Frame['shot_log'][number], tick: number) => {
-        const nudge = (hashStr(`${sh.a ?? ''}>${sh.t ?? ''}@${tick}`) % 997) / 997;
-        const slot = ((shotIndex.get(sh) ?? 0) + 0.15 + nudge * 0.7) / nShots;
-        const launch = arrivingNow(sh.a) || arrivingNow(sh.t)
-          ? ARRIVE_FRAC + slot * (LAUNCH_LAST - ARRIVE_FRAC)
-          : slot * LAUNCH_SPREAD;
-        return { launch, arriveMs: (launch + FLIGHT_FRAC) * TICK_MS };
-      };
-      /** When a hull that dies this beat goes up: as the LAST round to
-       *  hit it lands. Its killing shot is usually that round, but a hit
-       *  held back for an arrival can land later, and a round must never
-       *  fly into a wreck. */
-      const killTimes = new Map<string, number>();
-      for (const sh of frame.shot_log) {
-        if (sh.kill && sh.t) killTimes.set(sh.t, shotClock(sh, frame.tick).arriveMs);
-      }
-      for (const sh of frame.shot_log) {
-        if (!sh.t || !sh.hit || !killTimes.has(sh.t)) continue;
-        const at = shotClock(sh, frame.tick).arriveMs;
-        if (at > killTimes.get(sh.t)!) killTimes.set(sh.t, at);
-      }
-      const killMs = (id: string) =>
-        killTimes.get(id) ?? (LAUNCH_SPREAD / 2 + FLIGHT_FRAC) * TICK_MS;
+      // Each shot keeps its own clock (recapFx recapClock): its slot in
+      // the shot log's order, and a hull arriving this beat neither fires
+      // nor is fired on until it has braked into its slot (ARRIVE_FRAC).
+      const clock = recapClock(frame.shot_log, frame.tick, TICK_MS,
+        (id) => (id && comings.arrived.get(id) === frame.tick ? ARRIVE_FRAC : null));
+      const shotClock = (sh: Frame['shot_log'][number], _tick: number) =>
+        ({ launch: clock.launchOf(sh), arriveMs: clock.arriveMsOf(sh) });
+      const killMs = clock.killMsOf;
 
       // Damage drains from the moment ITS OWN round lands, so a bar moves
       // with the hit that caused it rather than with the tick boundary.
@@ -1709,24 +1645,20 @@ export function BattleRecap({ d }: { d: Detail }) {
           const leaving = isLeaving(r.id);
           let heading = tangentOf(r.id);
           let travel = heading;
-          let turnFade = 1;
+          let burn = 0, plumeLen = 1;
           if (k >= 0) {
             const ahead = posOf(r.id);
             const behind = leaving ? onStation(r.id) : approachFrom(r.id);
             travel = Math.atan2(ahead.y - behind.y, ahead.x - behind.x);
             heading = travel;
+            burn = Math.min(1, 0.25 + k * 0.95);
             if (!leaving) {
-              // Retrograde for the brake, then a quick smoothstep turn
-              // onto the orbit over the last fifth of the arrival, the
-              // plume dying mid-turn as the map's flip does.
-              const u = Math.max(0, Math.min(1, (k - 0.8) / 0.2));
-              const settle = u * u * (3 - 2 * u);
-              const retro = travel + Math.PI;
-              let d = (tangentOf(r.id) - retro) % (Math.PI * 2);
-              if (d > Math.PI) d -= Math.PI * 2;
-              if (d < -Math.PI) d += Math.PI * 2;
-              heading = retro + d * settle;
-              turnFade = 1 - settle;
+              // Retrograde for the brake, then a quick turn onto the orbit
+              // over the last fifth of the arrival (recapFx burnPose).
+              const pose = burnPose(k, travel, tangentOf(r.id), true);
+              heading = pose.heading;
+              burn = pose.burn;
+              plumeLen = pose.lengthMul;
             }
           }
 
@@ -1736,7 +1668,6 @@ export function BattleRecap({ d }: { d: Detail }) {
             // lighting up as it leaves; AHEAD of it on the way in (the
             // hull is turned round), long through the hard brake (the
             // map's 1.4) and falling away as it settles onto its station.
-            const burn = leaving ? Math.min(1, 0.25 + k * 0.95) : Math.max(0, 1 - k * k * 1.15) * turnFade;
             if (burn > 0.02) {
               const dir = { x: Math.cos(heading), y: Math.sin(heading) };
               const bell = {
@@ -1746,7 +1677,7 @@ export function BattleRecap({ d }: { d: Detail }) {
               g.save();
               g.globalAlpha = dim;
               drawThrustExhaust(g, bell, dir, size, burn * 1.1, r.cls ?? undefined,
-                undefined, undefined, leaving ? 1 : 1.4);
+                undefined, undefined, plumeLen);
               g.restore();
             }
             if (!leaving) {
@@ -1797,23 +1728,9 @@ export function BattleRecap({ d }: { d: Detail }) {
         // (combatFx drawBattleDamageStates): a hull hit this beat or last
         // catches fire a moment after the round lands, and a crippled one
         // (under FX_TUNING.crippledBelow) burns until it dies.
-        {
-          const hitAt = firstHitMs.get(r.id);
-          const recent = (hitAt != null && beatMs >= hitAt) || tookLastBeat.has(r.id);
-          const crippled = frac < FX_TUNING.crippledBelow;
-          if (recent || crippled) {
-            let ramp = 1;
-            if (hitAt != null && !tookLastBeat.has(r.id) && !crippled) {
-              const phase = ((hashStr(r.id) % 1000) / 1000) * FX_TUNING.igniteDelayMs;
-              ramp = Math.max(0, Math.min(1, (beatMs - hitAt - phase) / FX_TUNING.igniteRampMs));
-            }
-            const sev = Math.max(recent ? 0.5 : 0.25, 1 - frac);
-            const baseR = kind === 'ship' ? size / 2 + 3 : 11;
-            if (ramp > 0.01) {
-              drawBurn(g, q.x, q.y, Math.max(6, baseR * 0.8), sev * ramp * dim, nowMs, hashStr(r.id));
-            }
-          }
-        }
+        drawDamageFire(g, q.x, q.y, kind === 'ship' ? size / 2 + 3 : 11, frac,
+          { firstHitMs: firstHitMs.get(r.id) ?? null, beatMs, hitLastBeat: tookLastBeat.has(r.id) },
+          r.id, nowMs, dim);
 
         // Damage as the map's own hp bar — same geometry, same three
         // colours. An earlier cut ringed each hull instead, and a ring in
@@ -1877,9 +1794,7 @@ export function BattleRecap({ d }: { d: Detail }) {
           drawWreckShards(g, q.x, q.y, Math.max(6, size * 0.5), Math.min(0.5, ageMs / 4000), id, nowMs);
           return;
         }
-        const k = ageMs / (WRECK_LIFE_TICKS * TICK_MS);
-        const alpha = Math.max(0.3, k < 0.66 ? 1 : 1 - (k - 0.66) / 0.34);
-        drawHullBreakup(g, { img, size, heading: tangentOf(id) }, q.x, q.y, 1, ageMs, hashStr(id), alpha);
+        drawHullWreck(g, img, size, tangentOf(id), q.x, q.y, ageMs, id, wreckAlpha(ageMs, TICK_MS, 0.3));
       };
       /** How long ago a hull that died on an earlier beat went up, ms. */
       const wreckAge = (ago: number) => ago * TICK_MS + beatMs - KILL_AT_MS;
@@ -1984,99 +1899,21 @@ export function BattleRecap({ d }: { d: Detail }) {
         const w = shotClock(s, frame.tick);
         const within = beatMs - w.launch * TICK_MS;
         if (within < 0 || within > flightMs + FX_TUNING.impactMs) continue;
-
-        const from = posOf(s.a), to = posOf(s.t);
         const shooter = board.find(r => r.id === s.a);
         const target = board.find(r => r.id === s.t);
-        // The weapon this volley was actually fired with, recorded per
-        // shot (0097). Falls back to the hull's loadout for battles taped
-        // before that, and to kinetic for anything older still.
-        const energy = (s.e != null ? s.e >= 0.5 : (hulls.get(s.a)?.energy ?? false));
-        const sR = hitROf(s.a), tR = hitROf(s.t);
-        const seed = hashStr(`${s.a}>${s.t}@${frame.tick}`);
-        const hitAng = Math.atan2(from.y - to.y, from.x - to.x);
-        let faceX = to.x + Math.cos(hitAng) * tR * 0.3;
-        let faceY = to.y + Math.sin(hitAng) * tR * 0.3;
-        // A settlement whose defences held most of the volley is hit ON
-        // ITS SHIELD, as the map draws a shielded settlement: the fire
-        // stops at the bubble and the bubble lights where it lands.
-        const tKind = (target?.kind as Kind) ?? stOf(s.t).kind;
-        const bubble = s.hit && tKind !== 'ship' && (s.abs ?? 0) > (s.dmg || 0) * 0.5
-          ? { x: to.x, y: to.y, r: tR * 1.6 + 6 } : null;
-        if (bubble) {
-          faceX = bubble.x + Math.cos(hitAng) * bubble.r;
-          faceY = bubble.y + Math.sin(hitAng) * bubble.r;
-        }
-        // A miss is aimed past the hull, not into it.
-        if (!s.hit) {
-          const side = (seed & 1) ? 1 : -1;
-          const off = tR * 1.4 + 8;
-          faceX = to.x + Math.cos(hitAng + Math.PI / 2) * off * side - Math.cos(hitAng) * tR;
-          faceY = to.y + Math.sin(hitAng + Math.PI / 2) * off * side - Math.sin(hitAng) * tR;
-        }
-
-        const ang0 = Math.atan2(faceY - from.y, faceX - from.x);
-        const mx = from.x + Math.cos(ang0) * sR * 0.45;
-        const my = from.y + Math.sin(ang0) * sR * 0.45;
-        if (within < flightMs) {
-          if (energy) {
-            const bw = Math.max(1.5, Math.min(3.4, sR * 0.11));
-            if (within < FX_TUNING.chargeMs) {
-              drawCharge(g, mx, my, bw * 2.4, within / FX_TUNING.chargeMs, nowMs, seed);
-            } else {
-              const bk = (within - FX_TUNING.chargeMs) / Math.max(1, flightMs - FX_TUNING.chargeMs);
-              const beamA = (bk < 0.12 ? bk / 0.12 : bk > 0.75 ? 1 - (bk - 0.75) / 0.25 : 1)
-                * (s.hit ? 1 : 0.55);
-              drawBeam(g, mx, my, faceX, faceY, bw, beamA, nowMs, seed);
-              if (s.hit && !bubble) {
-                drawScorch(g, faceX, faceY, tR * 0.35, Math.min(0.9, bk * 0.5), hitAng, seed ^ 0x51);
-              }
-            }
-          } else {
-            const rw = Math.max(1.1, Math.min(2.4, sR * 0.075));
-            const burst = burstSlots(kineticRoundsOf(shooter?.cls ?? hulls.get(s.a)?.cls ?? undefined));
-            const gap = FX_TUNING.roundGapMs;
-            const flight = Math.max(120, flightMs - (burst.slots - 1) * gap);
-            for (let rd = burst.first; rd < burst.slots; rd++) {
-              const w2 = within - rd * gap;
-              if (w2 < 0) continue;
-              const k = w2 / flight;
-              if (w2 < FX_TUNING.muzzleMs) drawMuzzle(g, mx, my, ang0, sR * 0.6, 1 - w2 / FX_TUNING.muzzleMs);
-              if (k >= 1) {
-                const lk = (k - 1) / 0.35;
-                if (s.hit && lk < 1 && !bubble) drawHullHit(g, faceX, faceY, hitAng, tR * 0.28, lk, seed + rd);
-                continue;
-              }
-              const hx = mx + (faceX - mx) * k, hy = my + (faceY - my) * k;
-              const dist = Math.hypot(faceX - mx, faceY - my);
-              const len = Math.min(dist * k, Math.max(10, Math.min(30, dist * 0.14)) * Math.max(0.7, rw / 1.6));
-              const ux = (faceX - mx) / (dist || 1), uy = (faceY - my) / (dist || 1);
-              drawRound(g, hx - ux * len, hy - uy * len, hx, hy, rw, s.hit ? 1 : 0.6);
-            }
-          }
-          continue;
-        }
-
-        // The volley lands.
-        if (!s.hit) continue;
-        const ik = (within - flightMs) / FX_TUNING.impactMs;
         const tMeta = hulls.get(s.t);
-        if (bubble) {
-          drawShieldHit(g, bubble.x, bubble.y, bubble.r, hitAng, ik, 0.8, seed,
-            energy ? ENERGY_FX : undefined);
-        } else if (energy) {
-          if ((tMeta?.armor ?? 0) > 0) {
-            glowAt(g, faceX, faceY, tR * 0.5, ENERGY_FX.core, ENERGY_FX.glow, (1 - ik) * 0.6);
-            drawSparks(g, faceX, faceY, hitAng, 1.9, 6, tR * 1.5, ik, seed, ENERGY_FX, Math.max(0.8, tR * 0.06));
-          } else {
-            drawScorch(g, faceX, faceY, tR * 0.42, 0.45 + ik * 0.55, hitAng, seed ^ 0x51);
-          }
-        } else if (tKind === 'ship' && (tMeta?.shields ?? 0) > 0) {
-          drawShieldHit(g, to.x, to.y, Math.max(8, tR + 3), hitAng, ik,
-            Math.min(1, (tMeta?.shields ?? 0) / 3), seed);
-        } else {
-          drawHullHit(g, faceX, faceY, hitAng, tR * 0.5, ik, seed);
-        }
+        drawVolley(g, {
+          from: posOf(s.a), to: posOf(s.t), sR: hitROf(s.a), tR: hitROf(s.t),
+          // The weapon this volley was actually fired with, recorded per
+          // shot (0097). Falls back to the hull's loadout for battles taped
+          // before that, and to kinetic for anything older still.
+          energy: s.e != null ? s.e >= 0.5 : (hulls.get(s.a)?.energy ?? false),
+          hit: !!s.hit, dmg: s.dmg || 0, abs: s.abs ?? 0,
+          targetKind: (target?.kind as Kind) ?? stOf(s.t).kind,
+          targetShields: tMeta?.shields ?? 0, targetArmor: tMeta?.armor ?? 0,
+          shooterCls: shooter?.cls ?? hulls.get(s.a)?.cls ?? undefined,
+          within, flightMs, seed: hashStr(`${s.a}>${s.t}@${frame.tick}`), nowMs,
+        });
       }
       g.restore();
 
@@ -2093,10 +1930,7 @@ export function BattleRecap({ d }: { d: Detail }) {
         const isShip = ((r.kind as Kind) ?? stOf(r.id).kind) === 'ship';
         if (isShip) drawWreck(r.id, sinceMs);
         else drawWreckShards(g, q.x, q.y, RECAP_STATION_PX * 0.4 * shipK, Math.min(0.5, sinceMs / 4000), r.id, nowMs);
-        const R = (isShip ? hitROf(r.id) : RECAP_STATION_PX * 0.5 * shipK) * 1.3;
-        if (sinceMs < FX_TUNING.explosionMs) {
-          drawExplosion(g, q.x, q.y, R, sinceMs / FX_TUNING.explosionMs, hashStr(r.id) >>> 0);
-        }
+        drawDeathBlast(g, q.x, q.y, isShip ? hitROf(r.id) : RECAP_STATION_PX * 0.5 * shipK, sinceMs, r.id);
       }
 
       // ---- what the shots actually did ---------------------------------
