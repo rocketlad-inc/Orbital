@@ -53,6 +53,8 @@ module.exports = {
     ReadableStream: 'readonly',
     WritableStream: 'readonly',
     TransformStream: 'readonly',
+    HTMLRewriter: 'readonly',
+    caches: 'readonly',
     AbortController: 'readonly',
     AbortSignal: 'readonly',
     Event: 'readonly',

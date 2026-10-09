@@ -1330,6 +1330,7 @@ import * as skins from './skins.js';
 import * as economy from './economy.js';
 import * as heraldStrip from './heraldStrip.js';
 import * as battleCard from './battleCard.js';
+import * as recapShare from './recapShare.js';
 import * as widget from './widget.js';
 import * as wear from './wear.js';
 import * as wearWorlds from './wearWorlds.js';
@@ -1440,6 +1441,31 @@ export default {
     // the screenshotter loads). Matched BEFORE the /api gate so the URL
     // stays human-friendly; feature-module routes only run under /api/*.
     {
+      // A shared battle recap: its picture, and the app's page wearing this
+      // battle's link-preview tags (worker/recapShare.js). /recap/* is in
+      // run_worker_first. Any failure serves the plain app page, which
+      // renders the recap exactly as before.
+      const rcm = url.pathname.match(recapShare.RECAP_CARD_RE);
+      if (rcm && req.method === 'GET') {
+        try {
+          await ensureMigrated(env);
+          return await recapShare.handleRecapCard(req, env, rcm[1]);
+        } catch (e) {
+          console.error('recap card failed', e);
+          return new Response('card unavailable', { status: 500 });
+        }
+      }
+      const rpm = url.pathname.match(recapShare.RECAP_PAGE_RE);
+      if (rpm && req.method === 'GET') {
+        try {
+          await ensureMigrated(env);
+          return await recapShare.handleRecapPage(req, env, rpm[1]);
+        } catch (e) {
+          console.error('recap page failed', e);
+          return env.ASSETS.fetch(req);
+        }
+      }
+
       const bm = url.pathname.match(battleCard.BATTLE_PNG_RE);
       if (bm && req.method === 'GET') {
         try {

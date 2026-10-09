@@ -17,6 +17,7 @@ import { BattleRecap, type Detail as BattleDetailPayload } from './BattleReview'
 import { TheatreCanvas, type TheatreDetail } from './TheatreRecap';
 import type { CinemaDetail } from './BattleCinema';
 import { lazyChunk } from '../util/lazyChunk';
+import { RecapShareBar, RecapJoinCta } from './RecapShare';
 import { t, tn, type Key } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 
@@ -193,6 +194,12 @@ export function SharedRecap({ token }: { token: string }) {
               {b.ships_lost > 0 && <> · <b style={{ color: '#ff8a80' }}>{t('review.shared.lost', { n: b.ships_lost })}</b></>}
               {b.victor && <> · {richT('review.shared.victor', { name: b.victor.name ?? '' })}</>}
             </div>
+
+            <RecapShareBar
+              token={token}
+              text={t('review.shared.share.text', { name: b.body_name ?? t('review.deepSpace') })}
+            />
+            <RecapJoinCta />
 
             <div className="shared-recap__foot">
               {t('review.shared.foot')}{' '}

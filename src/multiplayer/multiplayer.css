@@ -2674,6 +2674,39 @@
 }
 .shared-recap__campaign button:hover { background: #1d3450; }
 
+/* Passing a battle on (RecapShare.tsx). Quiet controls under the player;
+   the copy button is the one most people want, so it leads. */
+.recap-share {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: 14px 0 0;
+}
+.recap-share__label { font-size: 12px; color: #8a9fb3; margin-right: 2px; }
+.recap-share__btn {
+  font: inherit; font-size: 12px; line-height: 1;
+  padding: 7px 12px; border-radius: 6px; cursor: pointer; text-decoration: none;
+  color: #cfe0ee; background: #101b28; border: 1px solid #2b4257;
+}
+.recap-share__btn:hover { background: #16273a; border-color: #3d6b96; }
+.recap-share__btn:focus-visible { outline: 2px solid #4ecdc4; outline-offset: 2px; }
+.recap-share__btn--main { border-color: #3d6b96; color: #e6f0f8; }
+
+/* The door into the game: the one gold button on the page. */
+.recap-cta {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  margin: 18px 0 0; padding: 14px 16px; border-radius: 10px;
+  background: linear-gradient(180deg, #121b27, #0d131c);
+  border: 1px solid #2a3647;
+}
+.recap-cta__text { flex: 1 1 320px; min-width: 0; }
+.recap-cta__title { font-size: 15px; font-weight: 700; color: #e8f0f7; margin-bottom: 4px; }
+.recap-cta__body { font-size: 13px; line-height: 1.5; color: #aebdcc; }
+.recap-cta__btn {
+  flex: 0 0 auto; display: inline-block; padding: 11px 22px; border-radius: 10px;
+  background: #ffb84d; color: #1d1404; font-weight: 700; font-size: 15px; text-decoration: none;
+}
+.recap-cta__btn:hover { filter: brightness(1.08); }
+.recap-cta__btn:focus-visible { outline: 2px solid #4ecdc4; outline-offset: 2px; }
+
 /* ---- Modal close control ----
    A bare glyph is not a button: nothing to aim at, no hover, no focus ring,
    and on a phone a 20px character is well under the ~44px a thumb needs.
