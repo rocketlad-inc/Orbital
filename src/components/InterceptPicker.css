@@ -1,0 +1,256 @@
+/* ============================================================
+   InterceptPicker — pop-out (desktop) and sheet page (phone).
+   Built from the panel's own tokens: the modal box, .maneuver-btn,
+   .rv-search, and the stance toggle's segmented buttons.
+   ============================================================ */
+
+.ip--popout {
+  position: fixed;
+  z-index: 1150;               /* over panels and map chrome, under true modals (1200) */
+  display: flex;
+  flex-direction: column;
+  width: 392px;
+  min-width: 0;
+  max-width: none;
+  max-height: calc(100vh - 72px);
+  box-sizing: border-box;
+  font-family: var(--font-body);
+  color: #d8e4ee;
+}
+.ip__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px;
+}
+.ip__foot {
+  border-top: 1px solid #2a3d50;
+  padding: 10px 14px 12px;
+}
+
+.ip-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.ip-note { font-size: 9px; color: #8aa0b4; line-height: 1.4; }
+
+/* Same shape as .orders-stance-toggle. */
+.ip-seg {
+  display: flex;
+  flex: none;
+  border: 1px solid #2a3d50;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.ip-seg button {
+  background: transparent;
+  border: none;
+  border-right: 1px solid #2a3d50;
+  color: #b8c8d6;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 600;
+  font-family: var(--font-body);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  transition: all 0.2s ease;
+}
+.ip-seg button:last-child { border-right: none; }
+.ip-seg button:hover { background: rgba(78, 205, 196, 0.15); color: #4ecdc4; }
+.ip-seg button.is-on { background: rgba(78, 205, 196, 0.25); color: #4ecdc4; }
+
+.ip-search { flex: 1; min-width: 0; margin: 0; }
+.ip-count {
+  font-size: 9px;
+  color: #7a8a9a;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.ip-out-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9px;
+  color: #8aa0b4;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.ip-out-toggle input { margin: 0; accent-color: #4ecdc4; }
+.ip-empty { font-size: 10px; color: #7a8a9a; line-height: 1.45; }
+
+/* ---- LIST ---- */
+.ip-list { display: flex; flex-direction: column; gap: 6px; }
+.ip-head {
+  font-size: 9px;
+  color: #7a8a9a;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.ip-head--out { padding-top: 6px; }
+.ip-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border-radius: 3px;
+  border: 1px solid #22303f;
+  background: transparent;
+  color: #d8e4ee;
+  font-family: var(--font-body);
+  text-align: left;
+  cursor: pointer;
+}
+.ip-card:hover { border-color: #2f5f60; }
+.ip-card.is-on { border-color: #4ecdc4; background: rgba(78, 205, 196, 0.12); }
+.ip-card--static { cursor: default; }
+.ip-card:focus-visible, .ip-blip:focus-visible, .ip-seg button:focus-visible { outline: 2px solid #4ecdc4; outline-offset: 2px; }
+.ip-card__l1 { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ip-card__names { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ip-card__name { font-size: 12px; color: #d8e4ee; }
+.ip-card__name.is-war { color: #ff5e5e; }
+.ip-card__owner { font-size: 9px; }
+.ip-card__time { margin-left: auto; font-size: 15px; color: #d8e4ee; white-space: nowrap; }
+.ip-card__l2 { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ip-card__meta { flex: 1; min-width: 0; font-size: 9px; color: #b8c8d6; line-height: 1.4; }
+.ip-card__route { font-size: 9px; color: #7a8a9a; }
+.ip-tag { color: #4ecdc4; }
+.ip-tag--match { color: #6ee7b7; }
+
+/* The game's standing chips (StandingPanel). */
+.ip-chip { margin-left: auto; flex: none; font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; }
+.ip-chip--war { color: #ff5a5a; font-weight: 700; }
+.ip-chip--allied { color: #4ecdc4; }
+.ip-chip--peace { color: rgba(147, 163, 184, 0.85); text-transform: none; letter-spacing: 0; font-style: italic; }
+.ip-chip--yours { color: #4fc3f7; }
+
+.ip-out {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px dashed #22303f;
+  border-radius: 3px;
+  opacity: 0.8;
+}
+.ip-out__names { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.ip-out__name { font-size: 10px; color: #b8c8d6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ip-out__sub { font-size: 8px; color: #7a8a9a; }
+.ip-out__why { font-size: 9px; color: #7a8a9a; white-space: nowrap; }
+
+/* ---- RADAR ---- */
+.ip-radar { position: relative; flex: none; align-self: center; }
+.ip-radar__svg { position: absolute; left: 0; top: 0; }
+.ip-radar__disc { fill: #070b11; stroke: #22303f; }
+.ip-radar__ring { fill: none; stroke: #1c2a38; }
+.ip-radar__axis { stroke: #121b25; }
+.ip-radar__label { fill: #5a6a7a; font-size: 8px; font-family: var(--font-body); }
+.ip-radar__course { stroke: #4ecdc4; stroke-width: 1.5; stroke-dasharray: 3 4; }
+.ip-radar__spare { stroke: #4ecdc4; stroke-width: 3; stroke-linecap: round; }
+.ip-radar__me {
+  position: absolute;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.ip-ghost {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #5a6a7a;
+  opacity: 0.75;
+}
+.ip-pin {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  background: #9a8c7c;
+  border: 2px solid #ffffff;
+  z-index: 2;
+  pointer-events: none;
+}
+.ip-blip {
+  position: absolute;
+  z-index: 2;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 2px solid;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 14, 20, 0.9);
+  cursor: pointer;
+}
+.ip-blip.is-on {
+  z-index: 3;
+  background: rgba(78, 205, 196, 0.18);
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.14);
+}
+.ip-blip.is-dim, .ip-blip__label.is-dim { opacity: 0.15; }
+.ip-blip__n {
+  position: absolute;
+  right: -9px;
+  bottom: -6px;
+  min-width: 16px;
+  padding: 1px 3px;
+  box-sizing: border-box;
+  border-radius: 7px;
+  background: #0a0e14;
+  border: 1px solid #2a3d50;
+  color: #d8e4ee;
+  font-family: var(--font-body);
+  font-size: 8px;
+  line-height: 10px;
+  text-align: center;
+}
+.ip-blip__label {
+  position: absolute;
+  z-index: 4;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(7, 11, 17, 0.86);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-sizing: border-box;
+  pointer-events: none;
+  font-size: 9px;
+  color: #d8e4ee;
+}
+.ip-blip__label.is-war { color: #ff5e5e; }
+.ip-blip__label.is-on { color: #ffffff; font-weight: 700; border: 1px solid #4ecdc4; }
+.ip-blip__when { color: #8aa0b4; }
+
+/* ---- the pick ---- */
+.ip-selected { display: flex; flex-direction: column; gap: 8px; }
+.ip-timing { display: flex; flex-direction: column; gap: 4px; font-size: 10px; }
+.ip-timing > span { display: flex; justify-content: space-between; gap: 8px; }
+.ip-timing > span > span { color: #8aa0b4; }
+.ip-timing b { font-weight: 400; color: #d8e4ee; white-space: nowrap; }
+.ip-timing > .ip-spare { align-self: flex-end; font-size: 9px; color: #4ecdc4; }
+.ip-msg { font-size: 10px; line-height: 1.4; }
+.ip-msg--error { color: #ff8a8a; }
+.ip-msg--note { color: #8aa0b4; }
+.ip-actions { display: flex; gap: 6px; }
+.ip-actions .maneuver-btn { flex: 0 0 auto; padding: 7px 12px; }
+.ip-actions .ip-commit { flex: 1; min-width: 0; }
+.ip-actions .ip-commit:disabled { opacity: 0.45; cursor: default; }
+
+/* ---- phone sheet ---- */
+.ip--sheet { display: flex; flex-direction: column; gap: 8px; }
+.ip--sheet .ip-search { min-height: 40px; font-size: 13px; }
+.ip--sheet .ip-card { min-height: 64px; }
+.ip--sheet .ip-seg button { padding: 8px 12px; font-size: 10px; }
+.ip--sheet .ip-actions .maneuver-btn { min-height: 44px; font-size: 11px; }
+.ip-back, .ip-unpeek { align-self: flex-start; min-height: 36px; padding: 6px 12px; }

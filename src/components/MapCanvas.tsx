@@ -63,6 +63,8 @@ import {
   clipSegmentToRect,
 } from '../render/mapRenderer';
 import { buildBadgeSegments, layoutBadgePills } from '../render/fleetBadge';
+import { drawInterceptOverlay } from '../render/interceptOverlay';
+import { getInterceptOverlay } from '../state/interceptOverlay';
 import { useCamera } from '../state/cameraStore';
 import { fleetFormationGroups, FLEET_ARC_WIDTH } from '../render/fleetFormation';
 import { computeSystemRegions, claimsFromSettlements } from '../render/systemRegions';
@@ -3953,6 +3955,20 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         for (const f of deferredBadgePaints) f();
       } else {
         drawFogOfWarOverlay(rings, renderContext, 1 - regionFade);
+      }
+    }
+
+    // The intercept picker's half of the map (ShipPanel / GroupActionBar):
+    // rings on what can be caught, the meeting at the door, the SHOW veil.
+    {
+      const io = getInterceptOverlay();
+      if (io) {
+        drawInterceptOverlay(renderContext, io, (id) => {
+          const hb = shipHitboxesRef.current.get(id);
+          if (hb) return hb;
+          const tp = transitShipCanvasPosRef.current.get(id);
+          return tp ? { x: tp.x, y: tp.y, r: 14 } : null;
+        }, nowMs);
       }
     }
 

@@ -20,6 +20,10 @@ interface BottomSheetProps {
   className?: string;
   /** Render-as for the inner content container. */
   children: React.ReactNode;
+  /** 'tall' while picking from a long list (the map behind is not what
+   *  you are looking at); 'peek' after a pick, so the map above shows
+   *  the course. Default: the usual 55% of the screen. */
+  size?: 'tall' | 'peek';
 }
 
 const DRAG_DISMISS_THRESHOLD = 80; // px downward swipe required to close
@@ -40,6 +44,7 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({
   title,
   className,
   children,
+  size,
 }) => {
   useI18n();
   const isMobile = useIsMobile();
@@ -110,7 +115,7 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({
   return (
     <>
       <div
-        className="bottom-sheet"
+        className={`bottom-sheet${size ? ` bottom-sheet--${size}` : ''}`}
         ref={sheetRef}
         role="dialog"
         aria-modal="false"

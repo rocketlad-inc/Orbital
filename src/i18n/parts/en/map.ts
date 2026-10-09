@@ -3,6 +3,8 @@ export const map = {
   // ---- MapCanvas ----
   'map.threat': '⚠ THREAT',
   'map.meet': 'MEET {name} · T+{tick}',
+  'map.meetAt': 'MEET {name} AT {dest} · T+{tick}',
+  'map.target': 'TARGET · {name}',
   'map.toast.shipFallback': 'Ship',
   'map.toast.cycleTap': '{name} — {i} of {n} here. Tap again for the next.',
   'map.toast.cycleClick': '{name} — {i} of {n} here. Click again for the next.',

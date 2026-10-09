@@ -1570,3 +1570,12 @@
   font-size: 9px;
   margin-bottom: 4px;
 }
+
+/* Phone: the intercept picker takes over the sheet; the panel stays
+   mounted (its state survives) but steps aside. Has to outrank the
+   sheet's own panel rules, which force display:block !important at up to
+   :root[data-mobile-shell] .bottom-sheet__body .ship-panel (shellJs.css,
+   four classes) — so this one carries five. */
+.ship-panel.ship-panel--away,
+.bottom-sheet__body .ship-panel.ship-panel--away,
+:root[data-mobile-shell] .bottom-sheet__body .ship-panel.ship-panel--away { display: none !important; }
