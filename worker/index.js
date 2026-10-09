@@ -1050,8 +1050,16 @@ const QUICK_ROOM_NAMES = [
   'Enceladus', 'Iapetus', 'Miranda', 'Oberon', 'Titania', 'Triton', 'Proteus', 'Charon', 'Eris', 'Phobos',
 ];
 
-async function handleQuickJoin(_req, env, session) {
+async function handleQuickJoin(req, env, session) {
   const now = Date.now();
+
+  // Arrived from the win-back email's button: count the click once.
+  let body = null;
+  try { body = await req.json(); } catch { /* the lobby button sends none */ }
+  if (body?.via === 'winback') {
+    const { recordWinbackClick } = await import('./winback.js');
+    await recordWinbackClick(env, session.user_id);
+  }
 
   // Already sitting in a Quick Join room that has not started? Back you
   // go, rather than opening a second one on every click.
@@ -1842,6 +1850,14 @@ export default {
           await mail.sweepFullLobbies(env);
         } catch (e) {
           console.error('full-lobby sweep failed', e);
+        }
+        // Signed up, never sat down: one email, once an hour at most
+        // (worker/winback.js). Self-gating; never throws.
+        try {
+          const winback = await import('./winback.js');
+          await winback.maybeSendWinbackEmails(env);
+        } catch (e) {
+          console.error('winback cron failed', e);
         }
         try {
           const sitrep = await import('./situationReport.js');

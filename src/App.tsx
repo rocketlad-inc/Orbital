@@ -676,6 +676,35 @@ function AppShell() {
     })();
   }, [user]);
 
+  // Win-back email fast path (worker/winback.js): ?play=winback seats the
+  // reader through Quick Join once they're signed in, so the room is
+  // picked at click time, not when the email was sent. Same shape as the
+  // invite path above: wait for auth, try once, strip the param.
+  const playRedeemedRef = React.useRef(false);
+  useEffect(() => {
+    if (playRedeemedRef.current) return;
+    if (!user) return;
+    const play = new URLSearchParams(window.location.search).get('play');
+    if (play !== 'winback') return;
+
+    playRedeemedRef.current = true;
+    (async () => {
+      const res = await apiFetch<{ ok: true; room_id: string }>('/api/rooms/quick-join', {
+        method: 'POST',
+        body: JSON.stringify({ via: 'winback' }),
+      });
+      const url = new URL(window.location.href);
+      url.searchParams.delete('play');
+      window.history.replaceState({}, '', url.toString());
+      if (!res.ok) return; // the lobby, with its own Quick Join button
+      setMode('multiplayer');
+      localStorage.setItem(MODE_STORAGE_KEY, 'multiplayer');
+      setSelectedRoomId(res.data.room_id);
+      setRoomGameId(null);
+      tabRoom.set(res.data.room_id);
+    })();
+  }, [user]);
+
   // Watch the selected room for game start. While roomGameId is null the
   // lobby + dock are shown but the game canvas / MultiplayerGameProvider
   // stays unmounted (there's no /state to poll yet). Once the host starts

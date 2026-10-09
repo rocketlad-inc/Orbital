@@ -55,6 +55,21 @@ export const PT_BR = {
   'email.full.cta': 'Iniciar o jogo',
   'email.full.footer': 'Você está recebendo este e-mail porque é o anfitrião desta sala no Orbital.',
 
+  // --- reconquista: cadastrou-se há 48h+, nunca entrou num jogo -----------
+  'email.winback.seat.subject': 'Um jogo de Orbital está enchendo',
+  'email.winback.seat.preheader': '{name} tem {n} de {max} comandantes. Ainda há lugar para você.',
+  'email.winback.seat.heading': 'Um jogo está enchendo',
+  'email.winback.seat.l1': 'Você se cadastrou no Orbital, mas ainda não entrou em nenhum jogo. Agora mesmo {name} tem {n} de {max} comandantes e está esperando o resto.',
+  'email.winback.seat.autostart': 'Ele começa sozinho assim que a última vaga for preenchida.',
+  'email.winback.seat.host': 'O anfitrião inicia o jogo quando houver comandantes suficientes.',
+  'email.winback.pool.subject': 'Um novo jogo de Orbital está se formando',
+  'email.winback.pool.preheader': 'Um jogo novo para novos comandantes. Todos começam iguais.',
+  'email.winback.pool.heading': 'Um novo jogo está se formando',
+  'email.winback.pool.l1': 'Você se cadastrou no Orbital, mas ainda não entrou em nenhum jogo. Estamos reunindo novos comandantes num jogo novo: o primeiro a clicar abre a sala, e o jogo começa sozinho quando {n} tiverem entrado.',
+  'email.winback.l2': 'Os turnos correm num relógio, uma hora cada por padrão, então alguns minutos por dia bastam para enviar frotas, colonizar mundos e fazer aliados e inimigos pelo Sistema Solar.',
+  'email.winback.cta': 'Pegar um lugar',
+  'email.winback.footer': 'Você está recebendo este e-mail porque se cadastrou no Orbital. Enviamos isto uma única vez.',
+
   // --- a game ends --------------------------------------------------------
   'email.over.subjectWon': 'Você venceu {name}',
   'email.over.subjectLost': '{name}: {winner} venceu',

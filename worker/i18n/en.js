@@ -54,6 +54,21 @@ export const EN = {
   'email.full.cta': 'Start the game',
   'email.full.footer': 'You are getting this because you host this lobby on Orbital.',
 
+  // --- win-back: signed up 48h+ ago, never joined a game ------------------
+  'email.winback.seat.subject': 'A game of Orbital is filling up',
+  'email.winback.seat.preheader': '{name} has {n} of {max} commanders. There is room for you.',
+  'email.winback.seat.heading': 'A game is filling up',
+  'email.winback.seat.l1': 'You signed up for Orbital but haven’t joined a game yet. Right now {name} has {n} of {max} commanders and is waiting on the rest.',
+  'email.winback.seat.autostart': 'It starts on its own the moment the last seat fills.',
+  'email.winback.seat.host': 'The host starts it once enough commanders are in.',
+  'email.winback.pool.subject': 'A new game of Orbital is forming',
+  'email.winback.pool.preheader': 'A fresh game for new commanders. Everyone starts even.',
+  'email.winback.pool.heading': 'A new game is forming',
+  'email.winback.pool.l1': 'You signed up for Orbital but haven’t joined a game yet. We’re gathering new commanders into a fresh game: the first to click opens it, and it starts on its own when {n} have joined.',
+  'email.winback.l2': 'Turns run on a clock, an hour each by default, so a few minutes a day is enough to send fleets, settle worlds and make allies and enemies across the solar system.',
+  'email.winback.cta': 'Take a seat',
+  'email.winback.footer': 'You are getting this because you signed up for Orbital. We only send this once.',
+
   // --- a game ends --------------------------------------------------------
   'email.over.subjectWon': 'You won {name}',
   'email.over.subjectLost': '{name}: {winner} wins',
