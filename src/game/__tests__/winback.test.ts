@@ -1,14 +1,16 @@
 // THE WIN-BACK EMAIL (worker/winback.js): who gets mailed this hour, and
 // what each version says.
 //
-// The rules that matter: never more mail than the open seats can absorb,
-// pool the waiting into one fresh game when nothing is open, and hold
-// rather than send three people to wait alone. And every line has to
-// render in both languages with no stray {placeholder}.
+// The rules that matter: invite people into the games that already exist,
+// spread across every open lobby so nobody chases a seat twelve others
+// were sent to; never more mail than the open seats can absorb; pool the
+// waiting into one fresh game only when nothing is open, and hold rather
+// than send three people to wait alone. And every line has to render in
+// both languages with no stray {placeholder}.
 
 import {
   planWinback, composeWinback, initials, avatarHex,
-  WINBACK_HOURLY_CAP, WINBACK_PER_SEAT, POOL_MIN, POOL_SIZE, WINBACK_URL,
+  WINBACK_HOURLY_CAP, WINBACK_PER_SEAT, POOL_MIN, POOL_SIZE, WINBACK_URL, WINBACK_TEST_URL,
 } from '../../../worker/winback.js';
 import { initials as browserInitials } from '../../multiplayer/LobbyCards';
 
@@ -19,16 +21,32 @@ const lobby = (n: number, max: number, extra: object = {}) =>
 describe('planWinback', () => {
   it('sends nothing when nobody is waiting', () => {
     expect(planWinback({ eligible: [], lobbies: [lobby(3, 5)] }))
-      .toEqual({ mode: 'hold', recipients: [], room: null });
+      .toEqual({ mode: 'hold', sends: [], recipients: [], rooms: [] });
   });
 
-  it('mails two people per open seat, best lobby named', () => {
-    const best = lobby(3, 5);
-    const plan = planWinback({ eligible: people(30), lobbies: [best, lobby(1, 8)] });
+  it('spreads invitations across every open lobby, two per seat', () => {
+    const near = lobby(3, 5);   // 2 seats
+    const wide = lobby(1, 8);   // 7 seats
+    const plan = planWinback({ eligible: people(30), lobbies: [near, wide] });
     expect(plan.mode).toBe('seat');
-    expect(plan.room).toBe(best);
-    // 2 + 7 open seats -> 18 sends
-    expect(plan.recipients).toHaveLength((2 + 7) * WINBACK_PER_SEAT);
+    expect(plan.rooms.map(r => [r.room.id, r.count])).toEqual([[near.id, 4], [wide.id, 14]]);
+    expect(plan.sends).toHaveLength((2 + 7) * WINBACK_PER_SEAT);
+    // each email names the lobby its reader was assigned to
+    expect(plan.sends.slice(0, 4).every(s => s.room === near)).toBe(true);
+    expect(plan.sends.slice(4).every(s => s.room === wide)).toBe(true);
+  });
+
+  it('the first batch on 2026-10-09: twelve people no longer chase one seat', () => {
+    // test (3/4), Pallas (4/5, Quick), Diplo (2/6): six seats between them
+    const lobbies = [lobby(3, 4, { id: 'test' }), lobby(4, 5, { id: 'pallas' }), lobby(2, 6, { id: 'diplo' })];
+    const plan = planWinback({ eligible: people(12), lobbies });
+    const per = Object.fromEntries(plan.rooms.map(r => [r.room.id, r.count]));
+    expect(per).toEqual({ test: 2, pallas: 2, diplo: 8 });
+  });
+
+  it('fills the lobby closest to starting first when invitations run short', () => {
+    const plan = planWinback({ eligible: people(3), lobbies: [lobby(4, 5, { id: 'a' }), lobby(1, 6, { id: 'b' })] });
+    expect(plan.rooms.map(r => [r.room.id, r.count])).toEqual([['a', 2], ['b', 1]]);
   });
 
   it('never exceeds the hourly cap, however many seats are open', () => {
@@ -49,7 +67,8 @@ describe('planWinback', () => {
   it('pools the waiting into one fresh game when nothing is open', () => {
     const plan = planWinback({ eligible: people(50), lobbies: [] });
     expect(plan.mode).toBe('pool');
-    expect(plan.room).toBeNull();
+    expect(plan.rooms).toEqual([]);
+    expect(plan.sends.every(s => s.room === null)).toBe(true);
     expect(plan.recipients).toHaveLength(POOL_SIZE);
   });
 
@@ -86,8 +105,10 @@ describe('composeWinback', () => {
           expect(s).not.toMatch(/[{}]|undefined|NaN|email\.winback/);
         }
         expect(c.cardHtml).not.toMatch(/undefined|NaN|email\.winback|\{n\}|\{max\}|\{host\}/);
-        expect(c.cardHtml).toContain(`href="${WINBACK_URL.replace(/&/g, '&amp;')}"`);
-        expect(c.cta.url).toBe(WINBACK_URL);
+        const want = mode === 'seat' && room && (room as { id?: string }).id
+          ? `${WINBACK_URL}&seat=${(room as { id: string }).id}` : WINBACK_URL;
+        expect(c.cta.url).toBe(want);
+        expect(c.cardHtml).toContain(`href="${want.replace(/&/g, '&amp;')}"`);
       });
     }
   }
@@ -120,6 +141,19 @@ describe('composeWinback', () => {
     expect(c.cardHtml).toContain('0 of 5 players');
     expect(c.cardHtml).toContain('1-hour turns');
     expect((c.cardHtml.match(/dashed/g) ?? []).length).toBe(5);
+  });
+
+  it('the button names the lobby the email shows', () => {
+    const c = composeWinback('en', 'seat', seated(3, 5, { id: 'PV48OAq76SrJ' }));
+    expect(c.cta.url).toBe('https://orbital-empire.com/?play=winback&from=winback&seat=PV48OAq76SrJ');
+    expect(c.hero.href).toBe(c.cta.url);
+  });
+
+  it('a test email never takes a seat', () => {
+    const c = composeWinback('en', 'seat', seated(3, 5), {}, { test: true });
+    expect(c.cta.url).toBe(WINBACK_TEST_URL);
+    expect(c.cta.url).not.toContain('play=');
+    expect(c.cardHtml).not.toContain('play=winback');
   });
 
   it('player names are escaped', () => {

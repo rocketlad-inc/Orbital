@@ -130,8 +130,8 @@ async function winbackQueue(env, tpl, nowMs = Date.now()) {
     next_run_ms: tpl.enabled ? nextRunMs : null,
     next: {
       mode: plan.mode,
-      count: plan.recipients.length,
-      room: plan.room ? { name: plan.room.name, n: plan.room.n, max_players: plan.room.max_players } : null,
+      count: plan.sends.length,
+      rooms: plan.rooms.map(({ room, count }) => ({ name: room.name, n: room.n, max_players: room.max_players, count })),
     },
     hourly_cap: WINBACK_HOURLY_CAP,
   };
@@ -230,7 +230,9 @@ async function handleTest(req, env, ctx) {
   const d = await readDraft(req);
   if (d.error) return err(400, 'bad_request', d.error);
   const { room } = d.mode === 'seat' ? await previewRoom(env) : { room: null };
-  const c = composeWinback(d.locale, d.mode, room, d.overrides);
+  // The test's button opens the lobby without taking a seat: a test click
+  // once sat Lorne in a stranger's game (2026-10-09).
+  const c = composeWinback(d.locale, d.mode, room, d.overrides, { test: true });
   const m = renderWinback(c);
   // One test per 20 seconds per admin: a double-click is not two emails.
   const slot = Math.floor(Date.now() / 20000);

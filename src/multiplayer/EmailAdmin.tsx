@@ -49,7 +49,7 @@ interface Payload {
   metrics: { totals: Counts; byMode: Record<Mode, Counts>; daily: Day[]; recent: Recent[] };
   queue: {
     waiting: number; enabled: boolean; next_run_ms: number | null; hourly_cap: number;
-    next: { mode: 'seat' | 'pool' | 'hold'; count: number; room: { name: string; n: number; max_players: number } | null };
+    next: { mode: 'seat' | 'pool' | 'hold'; count: number; rooms: { name: string; n: number; max_players: number; count: number }[] };
   };
 }
 
@@ -201,7 +201,7 @@ export const EmailAdmin: React.FC = () => {
   const nextLine = !q.enabled
     ? `Off. ${q.waiting} player${q.waiting === 1 ? '' : 's'} would be eligible.`
     : q.next.mode === 'seat'
-      ? `Next run ${clock(q.next_run_ms!)}: ${q.next.count} email${q.next.count === 1 ? '' : 's'} about ${q.next.room?.name} (${q.next.room?.n} of ${q.next.room?.max_players}).`
+      ? `Next run ${clock(q.next_run_ms!)}: ${q.next.count} email${q.next.count === 1 ? '' : 's'} inviting players to ${q.next.rooms.map(r => `${r.name} (${r.n} of ${r.max_players}, ${r.count} invited)`).join(', ')}.`
       : q.next.mode === 'pool'
         ? `Next run ${clock(q.next_run_ms!)}: ${q.next.count} emails gathering a new game.`
         : `Next run ${clock(q.next_run_ms!)}: holding. Nothing is open and too few are waiting to fill a game together.`;
