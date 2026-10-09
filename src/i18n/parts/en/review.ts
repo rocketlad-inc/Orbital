@@ -190,8 +190,9 @@ export const review = {
   'review.battle.play': '▶ Play',
   'review.battle.scrub': 'Scrub the battle',
   'review.battle.gif': '⤓ GIF',
-  'review.battle.gifTitle': 'Download this stretch of the battle as a GIF (up to {n} ticks from where the slider is)',
-  'review.battle.gifRecording': 'Making GIF… {pct}%',
+  'review.battle.gifTitle': 'Download the whole fight as a GIF (long fights make long, large files)',
+  'review.battle.gifCancel': 'Stop making the GIF',
+  'review.battle.gifRecording': 'Making GIF… {pct}% · ✕',
   'review.battle.gifFailed': 'The GIF could not be made in this browser.',
   // ---- theatre (campaign) recap canvas ----
   'theatre.fightFor': 'THE FIGHT FOR {name}',

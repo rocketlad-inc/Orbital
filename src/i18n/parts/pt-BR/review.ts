@@ -192,8 +192,9 @@ export const review: Catalog = {
   'review.battle.play': '▶ Reproduzir',
   'review.battle.scrub': 'Navegar pela batalha',
   'review.battle.gif': '⤓ GIF',
-  'review.battle.gifTitle': 'Baixar este trecho da batalha como GIF (até {n} turnos a partir do controle deslizante)',
-  'review.battle.gifRecording': 'Gerando GIF… {pct}%',
+  'review.battle.gifTitle': 'Baixar a luta inteira como GIF (lutas longas geram arquivos longos e grandes)',
+  'review.battle.gifCancel': 'Parar de gerar o GIF',
+  'review.battle.gifRecording': 'Gerando GIF… {pct}% · ✕',
   'review.battle.gifFailed': 'Não foi possível gerar o GIF neste navegador.',
   // ---- theatre (campaign) recap canvas ----
   'theatre.fightFor': 'A LUTA POR {name}',

@@ -29,7 +29,7 @@ import { lazyChunk } from '../util/lazyChunk';
 import { toRenderBody } from './bodyIdentity';
 import { layoutRecap, glideSlot, type RecapBeat, type RecapUnit } from './recapLayout';
 import {
-  recordRecapGif, downloadBlob, gifSpan, GIF_MAX_BEATS, type RecapRender,
+  recordRecapGif, downloadBlob, gifSpan, type RecapRender,
 } from './recapGif';
 import { getEmblemImage } from '../render/emblemCache';
 import {
@@ -2063,20 +2063,23 @@ export function BattleRecap({ d }: { d: Detail }) {
   }, [frames, stations, formation, colorOf, trimOf, hulls, killerOf, phantoms, fixtures,
       comings, stars, d.battle.id, d.battle.body_name, d.sides, d.factions, renderBody, recapLayout]);
 
-  /** Record the stretch of the battle the slider is on as a GIF and
-   *  download it (recapGif). */
+  /** Record the whole battle as a GIF and download it (recapGif). A
+   *  second click while it records stops it. */
   const [gifFailed, setGifFailed] = useState(false);
+  const gifCancel = useRef(false);
   const makeGif = useCallback(async () => {
     const render = renderRef.current;
     if (!render || frames.length === 0) return;
     setPlaying(false);
     setGifFailed(false);
-    const span = gifSpan(posRef.current, frames.length);
+    const span = gifSpan(frames.length);
+    gifCancel.current = false;
     setGifProgress(0);
     let shown = -1;
     try {
       const blob = await recordRecapGif({
         render, srcW: CANVAS_W, srcH: CANVAS_H, from: span.from, to: span.to, tickMs: TICK_MS,
+        cancelled: () => gifCancel.current,
         onProgress: k => {
           const pct = Math.floor(k * 100);
           if (pct !== shown) { shown = pct; setGifProgress(k); }
@@ -2120,9 +2123,8 @@ export function BattleRecap({ d }: { d: Detail }) {
           }}
         >{playing ? tr('review.battle.pause') : tr('review.battle.play')}</button>
         <button
-          onClick={makeGif}
-          disabled={gifProgress != null}
-          title={tr('review.battle.gifTitle', { n: GIF_MAX_BEATS })}
+          onClick={() => { if (gifProgress != null) gifCancel.current = true; else void makeGif(); }}
+          title={gifProgress != null ? tr('review.battle.gifCancel') : tr('review.battle.gifTitle')}
           style={{
             background: '#16273a', border: '1px solid #3d6b96', borderRadius: 5,
             color: '#cfe0ee', padding: '3px 10px', fontSize: 11, whiteSpace: 'nowrap',

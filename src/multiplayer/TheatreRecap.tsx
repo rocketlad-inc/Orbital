@@ -47,7 +47,7 @@ import {
   drawDamageFire, wreckAlpha, burnPose, WRECK_LIFE_TICKS, LAUNCH_SPREAD, flightFrac,
 } from './recapFx';
 import { ShipIconVariant } from '../components/ShipIcons';
-import { recordRecapGif, downloadBlob, gifSpan, GIF_MAX_BEATS } from './recapGif';
+import { recordRecapGif, downloadBlob, gifSpan } from './recapGif';
 import type { Body } from '../types';
 import { t as tr, tn as trn } from '../i18n/core';
 import { useI18n } from '../i18n/react';
@@ -408,6 +408,8 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
   /** GIF recording: progress 0..1 while it runs, null otherwise. */
   const [gifProgress, setGifProgress] = useState<number | null>(null);
   const [gifFailed, setGifFailed] = useState(false);
+  /** Set by a second click while a GIF records: stops it. */
+  const gifCancel = useRef(false);
 
   const colorOf = useCallback(
     (fid: string | null) => (fid && d.factions[fid]?.color) || NEUTRAL, [d.factions]);
@@ -1711,14 +1713,15 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
   }, [beats, arrived, left, hulls, geo, worldLayouts, stars, armedIds, eliminated, colorOf, trimOf,
       renderBodies, d.bodies, d.factions, d.theatre]);
 
-  /** Record the stretch of the campaign the slider is on as a GIF and
-   *  download it (recapGif), paced as playback paces it. */
+  /** Record the whole campaign as a GIF and download it (recapGif),
+   *  paced as playback paces it. A second click while it records stops it. */
   const makeGif = useCallback(async () => {
     const render = renderRef.current;
     if (!render || beats.length === 0) return;
     setPlaying(false);
     setGifFailed(false);
-    const span = gifSpan(posRef.current, beats.length);
+    const span = gifSpan(beats.length);
+    gifCancel.current = false;
     // The recorder's own camera, eased from the clip's first frame.
     const cs = freshCam();
     setGifProgress(0);
@@ -1728,6 +1731,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         render: (g, p, nowMs) => render(g, p, nowMs, cs),
         srcW: CANVAS_W, srcH: CANVAS_H, from: span.from, to: span.to, tickMs: TICK_MS,
         advance: (p, ms) => p + ms / (TICK_MS * (weights[clampFrame(p, weights.length)] ?? 1)),
+        cancelled: () => gifCancel.current,
         onProgress: k => {
           const pct = Math.floor(k * 100);
           if (pct !== shown) { shown = pct; setGifProgress(k); }
@@ -1765,9 +1769,8 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
           }}
         >{playing ? tr('review.battle.pause') : tr('theatre.play')}</button>
         <button
-          onClick={makeGif}
-          disabled={gifProgress != null}
-          title={tr('review.battle.gifTitle', { n: GIF_MAX_BEATS })}
+          onClick={() => { if (gifProgress != null) gifCancel.current = true; else void makeGif(); }}
+          title={gifProgress != null ? tr('review.battle.gifCancel') : tr('review.battle.gifTitle')}
           style={{
             background: '#16273a', border: '1px solid #3d6b96', borderRadius: 5,
             color: '#cfe0ee', padding: '3px 10px', fontSize: 11, whiteSpace: 'nowrap',

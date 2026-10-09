@@ -20,22 +20,17 @@ export const GIF_FRAME_MS = 80;
 /** Width of the GIF; the recap's 760x440 scales to 600x347. Big enough to
  *  read the names, small enough for a Discord or Reddit post. */
 export const GIF_WIDTH = 600;
-/** The longest stretch one GIF covers, in beats (ticks): about 18
- *  seconds at the recap's 2.2s a beat. Past that a GIF stops being a
- *  clip and the file stops fitting where people post. */
-export const GIF_MAX_BEATS = 8;
-/** A hard ceiling on frames (about 32 seconds), whatever the pacing. */
-const MAX_FRAMES = 400;
+/** A ceiling on frames (12 minutes at 12.5 fps) against a runaway record,
+ *  not a clip length. */
+const MAX_FRAMES = 9000;
 
-/** Which stretch of the battle a GIF covers: from the start of the beat
- *  the slider is on (the whole fight when it is short or the slider is at
- *  the start), for at most GIF_MAX_BEATS beats. */
-export function gifSpan(pos: number, beats: number): { from: number; to: number } {
-  const end = beats - 1 + 0.98;
-  let from = beats <= GIF_MAX_BEATS ? 0 : Math.max(0, Math.floor(pos));
-  // Not a sliver at the very end: back up so the clip is a full length.
-  if (end - from < Math.min(GIF_MAX_BEATS, end)) from = Math.max(0, end - GIF_MAX_BEATS);
-  return { from, to: Math.min(end, from + GIF_MAX_BEATS) };
+/** What a GIF covers: the WHOLE fight, at the recap's own pace. It was
+ *  eight ticks from the slider, which "cut off early" (Lorne, 2026-10-09);
+ *  he chose the whole fight at real speed over speeding long fights up.
+ *  Long fights make long, big files: the 55-tick Mars fight runs about two
+ *  minutes. */
+export function gifSpan(beats: number): { from: number; to: number } {
+  return { from: 0, to: Math.max(0.98, beats - 1 + 0.98) };
 }
 
 export interface RecordOptions {

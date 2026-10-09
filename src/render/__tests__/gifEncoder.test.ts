@@ -4,7 +4,7 @@
 // transparent holes, so the decoder composites them as a viewer would).
 
 import { buildPalette, paletteMapper, GifWriter, GIF_TRANSPARENT } from '../gifEncoder';
-import { gifSpan, GIF_MAX_BEATS } from '../../multiplayer/recapGif';
+import { gifSpan } from '../../multiplayer/recapGif';
 
 function lzwDecode(data: Uint8Array, minCodeSize: number, count: number): Uint8Array {
   const out = new Uint8Array(count);
@@ -128,15 +128,15 @@ describe('GIF writer', () => {
 });
 
 describe('which stretch a recap GIF covers', () => {
+  // The whole fight, every time: an 8-tick clip from the slider "cut off
+  // early" (Lorne, 2026-10-09).
   it('takes a short fight whole', () => {
-    expect(gifSpan(3.4, 5)).toEqual({ from: 0, to: 4.98 });
+    expect(gifSpan(5)).toEqual({ from: 0, to: 4.98 });
   });
-  it('starts a long fight at the beat the slider is on', () => {
-    expect(gifSpan(12.6, 55)).toEqual({ from: 12, to: 12 + GIF_MAX_BEATS });
+  it('takes a long fight whole, to the end of its last beat', () => {
+    expect(gifSpan(55)).toEqual({ from: 0, to: 54.98 });
   });
-  it('backs up near the end so the clip is full length', () => {
-    const s = gifSpan(53.2, 55);
-    expect(s.to).toBeCloseTo(54.98);
-    expect(s.to - s.from).toBeCloseTo(GIF_MAX_BEATS);
+  it('covers a one-tick fight', () => {
+    expect(gifSpan(1)).toEqual({ from: 0, to: 0.98 });
   });
 });
