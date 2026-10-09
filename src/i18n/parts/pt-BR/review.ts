@@ -199,6 +199,8 @@ export const review: Catalog = {
   'theatre.fightFor': 'A LUTA POR {name}',
   'theatre.battles_one': '{n} batalha',
   'theatre.battles_other': '{n} batalhas',
+  'theatre.later_one': '{n} turno depois',
+  'theatre.later_other': '{n} turnos depois',
   'theatre.holdingFire': 'sem disparos',
   'theatre.worldsHot_one': '{n} mundo sob fogo',
   'theatre.worldsHot_other': '{n} mundos sob fogo',

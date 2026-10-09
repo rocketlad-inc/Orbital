@@ -197,6 +197,8 @@ export const review = {
   'theatre.fightFor': 'THE FIGHT FOR {name}',
   'theatre.battles_one': '{n} battle',
   'theatre.battles_other': '{n} battles',
+  'theatre.later_one': '{n} tick later',
+  'theatre.later_other': '{n} ticks later',
   'theatre.holdingFire': 'holding fire',
   'theatre.worldsHot_one': '{n} world under fire',
   'theatre.worldsHot_other': '{n} worlds under fire',

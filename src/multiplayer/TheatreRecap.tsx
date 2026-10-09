@@ -91,6 +91,12 @@ const THEATRE_ORBIT_RATE = 0.00004;
  *  2026-10-09: "the firing before they arrive is confusing"). */
 const ARRIVE_FRAC = 0.3;
 const CROSS_FRAC = 0.42;
+/** A jump of this many ticks or more between beats is a LULL: the system
+ *  view plays every campaign fought in a system as one reel (worker
+ *  systemCampaigns), and a campaign only ends after BATTLE_QUIET_TICKS (6)
+ *  quiet ticks, so a gap of 7+ is where one campaign stopped and the next
+ *  began. It gets a card saying how long the quiet lasted. */
+const LATER_TICKS = 7;
 /** Roughly when in its beat a hull that died then went up, ms. */
 const KILL_AT_MS = (LAUNCH_SPREAD / 2 + flightFrac(TICK_MS)) * TICK_MS;
 
@@ -145,6 +151,9 @@ export interface TheatreDetail {
   theatre: {
     id: string; anchor_body_id: string | null; anchor_name: string | null;
     started_tick: number; last_fire_tick: number; ended_tick: number | null;
+    /** Every campaign the reel strings together (the whole system's war),
+     *  oldest first. Absent from payloads built before 2026-10-09. */
+    campaigns?: Array<{ id: string; started_tick: number; last_fire_tick: number }>;
     status: string; battle_count: number; shots: number; ships_lost: number;
     body_ids: string[]; faction_ids: string[];
   };
@@ -505,14 +514,17 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
    * cost somebody something, so holding on every one of them would just
    * be a slower flat rhythm.
    */
-  const weights = useMemo(() => beats.map((b) => {
+  const weights = useMemo(() => beats.map((b, i) => {
+    // The first beat after a lull carries the "N ticks later" card, and
+    // is held long enough to read it.
+    const later = i > 0 && b.tick - beats[i - 1].tick >= LATER_TICKS ? 0.45 : 0;
     let kills = 0;
     for (const [, slot] of b.at) for (const r of slot.roster) if (r.dead === 1) kills++;
-    if (kills >= 2) return 1.55;
-    if (kills === 1) return 1.15;
+    if (kills >= 2) return 1.55 + later;
+    if (kills === 1) return 1.15 + later;
     let shots = 0;
     for (const [, slot] of b.at) shots += slot.shots.length;
-    return shots > 0 ? 0.82 : 0.6;
+    return (shots > 0 ? 0.82 : 0.6) + later;
   }), [beats]);
 
   /** Which factions were eliminated, and on which beat. The largest
@@ -1598,6 +1610,43 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
           g.restore();
         }
       };
+
+      // ---- a lull ---------------------------------------------------------
+      // The reel strings every campaign in the system together and skips
+      // the quiet between them; this says how long the quiet was and where
+      // the fighting picks up, so a jump from Callisto to Ganymede reads as
+      // the war moving on rather than as a cut.
+      const lull = i > 0 ? beat.tick - beats[i - 1].tick : 0;
+      if (lull >= LATER_TICKS) {
+        const a = Math.min(1, t / 0.06) * (1 - Math.max(0, (t - 0.42) / 0.16));
+        if (a > 0.01) {
+          const where = [...new Set((hotBodies.length ? hotBodies : [...beat.at.keys()])
+            .map(id => bodyById.get(id)?.name).filter(Boolean))].join(' · ');
+          const head = trn('theatre.later', lull, { n: lull }).toUpperCase();
+          const sub = `T+${beats[i - 1].tick} → T+${beat.tick}${where ? `  ·  ${where}` : ''}`;
+          g.save();
+          g.globalAlpha = a;
+          g.textAlign = 'center';
+          g.font = 'bold 20px system-ui';
+          const wHead = g.measureText(head).width;
+          g.font = '11px system-ui';
+          const w = Math.max(wHead, g.measureText(sub).width) + 40;
+          const x0 = CANVAS_W / 2 - w / 2, y0 = 30, h = 54;
+          g.fillStyle = 'rgba(8, 12, 19, 0.92)';
+          g.fillRect(x0, y0, w, h);
+          g.strokeStyle = 'rgba(255, 208, 122, 0.45)';
+          g.lineWidth = 1;
+          g.strokeRect(x0 + 0.5, y0 + 0.5, w - 1, h - 1);
+          g.fillStyle = '#ffd07a';
+          g.fillRect(x0, y0, w, 2);
+          g.font = 'bold 20px system-ui';
+          g.fillText(head, CANVAS_W / 2, y0 + 27);
+          g.fillStyle = '#9fc2dc';
+          g.font = '11px system-ui';
+          g.fillText(sub, CANVAS_W / 2, y0 + 44);
+          g.restore();
+        }
+      }
 
       // ---- HUD ----------------------------------------------------------
       drawHud(g, {
