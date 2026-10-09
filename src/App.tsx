@@ -684,17 +684,20 @@ function AppShell() {
   useEffect(() => {
     if (playRedeemedRef.current) return;
     if (!user) return;
-    const play = new URLSearchParams(window.location.search).get('play');
-    if (play !== 'winback') return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('play') !== 'winback') return;
+    // The lobby the email showed: tried first while it still has a seat.
+    const seat = params.get('seat');
 
     playRedeemedRef.current = true;
     (async () => {
       const res = await apiFetch<{ ok: true; room_id: string }>('/api/rooms/quick-join', {
         method: 'POST',
-        body: JSON.stringify({ via: 'winback' }),
+        body: JSON.stringify({ via: 'winback', ...(seat ? { prefer_room: seat } : {}) }),
       });
       const url = new URL(window.location.href);
       url.searchParams.delete('play');
+      url.searchParams.delete('seat');
       window.history.replaceState({}, '', url.toString());
       if (!res.ok) return; // the lobby, with its own Quick Join button
       setMode('multiplayer');

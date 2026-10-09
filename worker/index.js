@@ -1028,14 +1028,17 @@ async function createRoom(env, session, { name, maxPlayers, passwordHash = null,
 //
 // One button: seat me in the game closest to starting, or open one.
 //
-// Candidates are rooms still in the lobby, with no password, a free
-// seat, activity in the last week (a lobby nobody has touched for a
-// week is a trap, not a game), and the caller not already in them.
-// The one with the FEWEST seats left wins, most recently active first.
+// Candidates are the JOINABLE lobbies (worker/matchmaking.js): public,
+// not started, a free seat, touched in the last week, and able to start
+// (a Quick Join room, or a host seen in the last 48 hours), minus any the
+// caller already sits in. The one with the FEWEST seats left wins, most
+// recently active first. A win-back email's button names the lobby the
+// email showed (prefer_room); that one is tried first while it is still
+// joinable, and the usual order takes over if it is not.
 //
 // The seat is taken with a conditional INSERT that re-counts inside the
-// statement, so two players racing for the last seat cannot both get it:
-// the loser falls through to the next candidate.
+// statement (takeSeat), so two players racing for the last seat cannot
+// both get it: the loser falls through to the next candidate.
 //
 // Nothing found: a new room, the caller hosting, four open seats. Those
 // rooms are marked quick_join and START THEMSELVES when the last seat
@@ -1044,7 +1047,6 @@ async function createRoom(env, session, { name, maxPlayers, passwordHash = null,
 // ============================================================
 
 const QUICK_JOIN_SEATS = 5;                  // the host + four open seats
-const QUICK_JOIN_FRESH_MS = 7 * 24 * 3600 * 1000;
 const QUICK_ROOM_NAMES = [
   'Ceres', 'Vesta', 'Pallas', 'Hygiea', 'Io', 'Europa', 'Ganymede', 'Callisto', 'Titan', 'Rhea',
   'Enceladus', 'Iapetus', 'Miranda', 'Oberon', 'Titania', 'Triton', 'Proteus', 'Charon', 'Eris', 'Phobos',
@@ -1072,35 +1074,15 @@ async function handleQuickJoin(req, env, session) {
     .bind(session.user_id).first();
   if (waiting) return json({ ok: true, room_id: waiting.id, joined: false, created: false, started: false });
 
-  const candidates = (await env.DB
-    .prepare(
-      `SELECT r.id, r.max_players,
-              (SELECT COUNT(*) FROM room_members m WHERE m.room_id = r.id) AS n
-         FROM rooms r
-        WHERE r.status = 'lobby'
-          AND r.password_hash IS NULL
-          AND r.updated_at > ?
-          AND NOT EXISTS (SELECT 1 FROM games g WHERE g.id = r.id)
-          AND NOT EXISTS (SELECT 1 FROM room_members m WHERE m.room_id = r.id AND m.user_id = ?)
-        ORDER BY (r.max_players - (SELECT COUNT(*) FROM room_members m WHERE m.room_id = r.id)) ASC,
-                 r.updated_at DESC
-        LIMIT 10`,
-    )
-    .bind(now - QUICK_JOIN_FRESH_MS, session.user_id)
-    .all()).results ?? [];
+  const { joinableLobbies, takeSeat } = await import('./matchmaking.js');
+  const preferred = typeof body?.prefer_room === 'string' && /^[A-Za-z0-9_-]{6,40}$/.test(body.prefer_room)
+    ? await joinableLobbies(env, now, { excludeUserId: session.user_id, roomId: body.prefer_room, limit: 1 })
+    : [];
+  const rest = await joinableLobbies(env, now, { excludeUserId: session.user_id });
+  const candidates = [...preferred, ...rest.filter(r => !preferred.some(p => p.id === r.id))];
 
   for (const c of candidates) {
-    if (c.n >= c.max_players) continue;
-    const ins = await env.DB
-      .prepare(
-        `INSERT OR IGNORE INTO room_members (room_id, user_id, joined_at)
-         SELECT ?1, ?2, ?3
-          WHERE (SELECT COUNT(*) FROM room_members WHERE room_id = ?1)
-              < (SELECT max_players FROM rooms WHERE id = ?1 AND status = 'lobby')`,
-      )
-      .bind(c.id, session.user_id, now)
-      .run();
-    if ((ins.meta?.changes ?? 0) === 1) {
+    if (await takeSeat(env, c.id, session.user_id, now)) {
       const started = await admitMember(env, c.id, session);
       return json({ ok: true, room_id: c.id, joined: true, created: false, started });
     }
@@ -1340,6 +1322,7 @@ import * as discord from './discord.js';
 import * as discordOauth from './discordOauth.js';
 import * as configAdmin from './configAdmin.js';
 import * as emailAdmin from './emailAdmin.js';
+import * as emailLogin from './emailLogin.js';
 import * as analytics from './analytics.js';
 import * as adminDashboard from './adminDashboard.js';
 import * as store from './store.js';
@@ -1364,7 +1347,7 @@ import * as devlog from './devlog.js';
 import * as gameFeed from './gameFeed.js';
 import { carryNamePools } from './namePoolHistory.js';
 
-const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, analytics, configAdmin, emailAdmin, store, skins, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed];
+const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, analytics, configAdmin, emailAdmin, emailLogin, store, skins, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed];
 
 function matchPattern(pattern, pathname) {
   if (typeof pattern === 'string') {
@@ -2017,6 +2000,12 @@ export default {
       // signed; the handler always answers with the picture.
       if (req.method === 'GET' && url.pathname.startsWith('/api/email/o/')) {
         return (await dispatchFeatureRoute(req, env, url, null)) ?? new Response(null, { status: 404 });
+      }
+
+      // An email's sign-in button (worker/emailLogin.js): the reader has
+      // no session yet; that is the point. The token is the credential.
+      if (url.pathname === '/api/email/go' && (req.method === 'GET' || req.method === 'POST')) {
+        return dispatchFeatureRoute(req, env, url, null);
       }
 
       // everything below requires a session

@@ -394,6 +394,9 @@ export interface MultiplayerActions {
     refitted?: string[]; pending?: string[];
     charged?: { ore: number; credits: number };
   }>;
+  /** Give every live hull of the design's class its look: free, look
+   *  only. `restyled` is how many hulls changed. */
+  restyleFleet: (designId: string) => Promise<MpActionResult & { restyled?: number }>;
   /** The in-game Orbital Herald edition — the same clustered newspaper
    *  the Discord digest posts, composed read-only over the last 24h.
    *  null on any failure (the reader shows a "presses jammed" note). */
@@ -1240,6 +1243,14 @@ export function MultiplayerActionsProvider({
         code: res.error?.code,
         error: res.error?.message ?? t('mp.act.refit'),
       };
+    },
+    async restyleFleet(designId) {
+      const res = await apiFetch<{ ok: boolean; restyled: number }>(
+        `/api/games/${gameId}/designs/${encodeURIComponent(designId)}/restyle`,
+        { method: 'POST' },
+      );
+      if (res.ok) return { ok: true, restyled: res.data.restyled ?? 0 };
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? t('mp.act.refit') };
     },
     async cancelNode(nodeId) {
       const res = await apiFetch<{ ok: boolean }>(
