@@ -218,7 +218,10 @@ export const EventLog: React.FC = () => {
   const mpActions = useMultiplayerActions();
   // A phone has no Esc key: the footer drops the keyboard hint there.
   const isMobile = useIsMobile();
+  // `entries` is the ENGLISH headline: the icon / category classifier below
+  // reads it. `shown` is the same row in the player's language, for display.
   const entries = gameState.combatLog;
+  const shown = gameState.combatLogDisplay ?? entries;
   const flavors = gameState.chronicleFlavor;
   const focuses = gameState.chronicleFocus;
   const metas = gameState.chronicleMeta;
@@ -577,7 +580,7 @@ export const EventLog: React.FC = () => {
                               style={{ color }}
                               aria-hidden="true"
                             >{icon}</span>
-                            <span className="event-log__text">{tint(entry)}</span>
+                            <span className="event-log__text">{tint(shown[i] ?? entry)}</span>
                           </span>
                         </button>
                         {/* Jump + chevron: two equal 32px tap targets with
@@ -622,7 +625,7 @@ export const EventLog: React.FC = () => {
                       {isOpen && (() => {
                         const onFocus = jump;
                         const meta = metas?.[i] ?? null;
-                        const flavorText = flavors?.[i] ?? entry;
+                        const flavorText = flavors?.[i] ?? shown[i] ?? entry;
                         const isEditing = editingIndex === i;
                         return (
                           <div className="event-log__row__body">

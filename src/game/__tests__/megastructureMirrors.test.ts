@@ -558,8 +558,9 @@ describe('seizing a structure is recorded', () => {
   const actions = fs.readFileSync(
     path.resolve(__dirname, '../../..', 'worker/actions.js'), 'utf8',
   );
+  // The headline formatter lives in eventText.ts (moved out of the provider).
   const provider = fs.readFileSync(
-    path.resolve(__dirname, '../../', 'multiplayer/MultiplayerGameProvider.tsx'), 'utf8',
+    path.resolve(__dirname, '../../', 'multiplayer/eventText.ts'), 'utf8',
   );
 
   it.each(['megastructure_captured', 'megastructure_destroyed'])(
@@ -663,8 +664,9 @@ describe('a charging strike is visible to the target', () => {
   const renderer = fs.readFileSync(
     path.resolve(__dirname, '../../', 'render/mapRenderer.ts'), 'utf8',
   );
+  // The headline formatter lives in eventText.ts (moved out of the provider).
   const provider = fs.readFileSync(
-    path.resolve(__dirname, '../../', 'multiplayer/MultiplayerGameProvider.tsx'), 'utf8',
+    path.resolve(__dirname, '../../', 'multiplayer/eventText.ts'), 'utf8',
   );
   const state = fs.readFileSync(
     path.resolve(__dirname, '../../..', 'worker/state.js'), 'utf8',
@@ -1328,7 +1330,7 @@ describe('structures go derelict when their faction dies', () => {
 
   it('both events are readable', () => {
     const provider = fs.readFileSync(
-      path.resolve(__dirname, '../../', 'multiplayer/MultiplayerGameProvider.tsx'), 'utf8',
+      path.resolve(__dirname, '../../', 'multiplayer/eventText.ts'), 'utf8',
     );
     expect(provider).toMatch(/megastructure_abandoned/);
     expect(provider).toMatch(/megastructure_claimed/);
