@@ -2,7 +2,7 @@
 // commissionHandoff — the other end of the app's buy button.
 //
 // In the Android app a Commission button opens the phone's browser on
-// /?commission=buy&from=<surface>[&gift=1] (openCommissionInBrowser). Here,
+// /?commission=buy&surface=<surface>[&gift=1] (openCommissionInBrowser). Here,
 // in that browser, the checkout starts by itself as soon as the player is
 // signed in: the app's tap was the decision, and making them find the
 // button a second time on a different screen is how a sale is lost.
@@ -24,7 +24,7 @@ export interface Handoff { surface: CommissionSurface; gift: boolean }
 export function readHandoff(search: string): Handoff | null {
   const q = new URLSearchParams(search);
   if (q.get(BROWSER_HANDOFF_PARAM) !== 'buy') return null;
-  const from = q.get('from') as CommissionSurface | null;
+  const from = q.get('surface') as CommissionSurface | null;
   return {
     surface: from && COMMISSION_SURFACES.includes(from) ? from : 'profile',
     gift: q.get('gift') === '1',
@@ -33,7 +33,7 @@ export function readHandoff(search: string): Handoff | null {
 
 function strip(): void {
   const url = new URL(window.location.href);
-  for (const k of [BROWSER_HANDOFF_PARAM, 'from', 'gift']) url.searchParams.delete(k);
+  for (const k of [BROWSER_HANDOFF_PARAM, 'surface', 'gift']) url.searchParams.delete(k);
   window.history.replaceState({}, '', url.toString());
 }
 

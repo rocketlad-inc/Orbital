@@ -60,7 +60,7 @@ test('the app opened again later, from recents, is still the app', () => {
 
 test('the browser the app links out to can sell, and keeps selling after a reload', () => {
   // The app hands Chrome the page; Chrome reports the app as its referrer.
-  newTab('/?commission=buy&from=designer', { referrer: APP, standalone: false });
+  newTab('/?commission=buy&surface=designer', { referrer: APP, standalone: false });
   expect(isAndroidApp()).toBe(false);
   // The handoff strips its parameter; a reload keeps the referrer.
   reload('/');
@@ -68,6 +68,6 @@ test('the browser the app links out to can sell, and keeps selling after a reloa
 });
 
 test('the parameter alone does not make the app a browser', () => {
-  newTab('/?commission=buy&from=designer', { referrer: APP, standalone: true });
+  newTab('/?commission=buy&surface=designer', { referrer: APP, standalone: true });
   expect(isAndroidApp()).toBe(true);
 });
