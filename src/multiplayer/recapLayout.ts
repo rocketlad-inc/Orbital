@@ -86,6 +86,21 @@ const K_FLOOR = 0.5;
 export function layoutRecap(beats: readonly RecapBeat[], o: RecapLayoutOptions): RecapLayout {
   const tilt = Math.max(0.2, Math.min(1, o.tilt));
   const clearOf = (sizePx: number) => (sizePx * CLEAR_FRAC) / tilt;
+  // CLEAR OF THE DISC (Lorne, 2026-10-09: "expand the orbit a bit so
+  // ships don't spend a whole arc of the battle behind the planet"). Seen
+  // through the tilt, a hull straight behind the world sits only r x tilt
+  // above its centre, so anything inside planetR / tilt vanished behind
+  // the disc for a whole arc of every turn. The band starts there instead:
+  // on the far side the hulls skim just over the world's top limb, and
+  // every one of them stays in view all the way round.
+  //
+  // The solver keeps every body at least its own clearance (+3) off the
+  // radius it is given, and starts the band a whole BIGGEST clearance off
+  // it, so one destroyer pushed every corvette out with it. Handing it
+  // the clear-of-disc radius less the SMALLEST clearance keeps each hull's
+  // centre over the limb without that extra ring of empty space.
+  const minClear = Math.min(...beats.flatMap(b => b.units.map(u => clearOf(u.size))), Infinity);
+  const innerR = Math.max(o.planetR, o.planetR / tilt - (Number.isFinite(minClear) ? minClear + 3 : 0));
 
   const keyOf = (b: RecapBeat) =>
     `${b.stationId ?? ''}|${b.units.map(u => u.id).sort().join(',')}`;
@@ -96,7 +111,7 @@ export function layoutRecap(beats: readonly RecapBeat[], o: RecapLayoutOptions):
     }));
     const order = o.order.filter(f => b.units.some(u => u.faction === f));
     for (const u of b.units) if (!order.includes(u.faction)) order.push(u.faction);
-    return layoutOrbitBattle(ships, o.planetR, {
+    return layoutOrbitBattle(ships, innerR, {
       seed: o.seed,
       factionOrder: order,
       station: b.stationId ? { id: b.stationId, clearR: clearOf(o.stationPx * k) } : undefined,
@@ -105,7 +120,7 @@ export function layoutRecap(beats: readonly RecapBeat[], o: RecapLayoutOptions):
   /** How far the beat's farthest sprite edge reaches, px. */
   const reach = (b: RecapBeat, k: number) => {
     const lay = solve(b, k);
-    let out = o.planetR;
+    let out = innerR;
     const sizeBy = new Map(b.units.map(u => [u.id, u.size * k]));
     for (const p of lay.placements.values()) out = Math.max(out, p.r + (sizeBy.get(p.id) ?? 0) / 2);
     if (lay.station) out = Math.max(out, lay.station.r + (o.stationPx * k) / 2);
@@ -121,14 +136,16 @@ export function layoutRecap(beats: readonly RecapBeat[], o: RecapLayoutOptions):
       + (b.stationId ? o.stationPx * o.stationPx : 0);
     if (need > most) { most = need; busiest = b; }
   }
-  if (busiest && busiest.units.length > 0) {
-    for (let pass = 0; pass < 6; pass++) {
-      const out = reach(busiest, k);
-      if (out <= o.rMax) break;
-      const room = Math.max(1, o.rMax - o.planetR);
-      k = Math.max(K_FLOOR, k * Math.min(0.97, (room / Math.max(1, out - o.planetR)) * 0.98));
-      if (k === K_FLOOR) break;
+  // The LARGEST scale that fits, by bisection. Shrinking in proportion to
+  // the overflow overshot badly: a fight a few pixels too deep lost a
+  // third of its sprite size.
+  if (busiest && busiest.units.length > 0 && reach(busiest, 1) > o.rMax) {
+    let lo = K_FLOOR, hi = 1;
+    for (let pass = 0; pass < 7; pass++) {
+      const mid = (lo + hi) / 2;
+      if (reach(busiest, mid) <= o.rMax) lo = mid; else hi = mid;
     }
+    k = lo;
   }
 
   const solved = new Map<string, Map<string, RecapSlot>>();
@@ -179,7 +196,7 @@ export function layoutRecap(beats: readonly RecapBeat[], o: RecapLayoutOptions):
         const sizeOf = new Map(b.units.map(u => [u.id, u.size * k]));
         if (b.stationId) sizeOf.set(b.stationId, o.stationPx * k);
         placeNewcomers(slots, newcomers.map(id => ({ id, slot: want.get(id)! })),
-          id => clearOf(sizeOf.get(id) ?? 0), o.planetR);
+          id => clearOf(sizeOf.get(id) ?? 0), innerR);
       }
     }
     out.push(slots);

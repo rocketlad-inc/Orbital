@@ -696,7 +696,10 @@ const LIGHT_X = 0.74, LIGHT_Y = 0.67;
 // actually see. Ships passing behind the planet is not a problem to route
 // around — it is the thing that sells the geometry.
 const CANVAS_W = 760, CANVAS_H = 440;
-const BODY_CX = CANVAS_W * 0.42, BODY_CY = CANVAS_H * 0.52, BODY_R = 84;
+// 0.46, not 0.42: the battle's band now starts clear of the disc (see
+// recapLayout), and the left edge of the frame is what limits how wide a
+// fight can spread before its hulls shrink.
+const BODY_CX = CANVAS_W * 0.46, BODY_CY = CANVAS_H * 0.52, BODY_R = 84;
 
 /** ry/rx for every orbit drawn here — the orbital plane seen from about
  *  20° above it. Dead side-on reads as a line, dead flat reads as a

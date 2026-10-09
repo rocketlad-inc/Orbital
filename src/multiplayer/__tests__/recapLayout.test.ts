@@ -88,6 +88,14 @@ describe('recap battle layout', () => {
     expect(screenOverlaps(b, lay.beats[1], lay.k)).toBeLessThanOrEqual(0.5);
   });
 
+  it('keeps every hull in view behind the world (its orbit clears the disc)', () => {
+    const b = beat({ f1: 9, f2: 6, f3: 4 }, 23, true);
+    b.units.push({ id: 'big', faction: 'f1', size: 64, armed: true });
+    const lay = layoutRecap([b], OPTS);
+    // Straight behind the world, a hull is drawn r x TILT above its centre.
+    for (const s of lay.beats[0].values()) expect(s.r * TILT).toBeGreaterThanOrEqual(OPTS.planetR - 0.5);
+  });
+
   it('glides the short way round', () => {
     const g = glideSlot({ r: 100, theta: 3.0, jitter: 0 }, { r: 120, theta: -3.0, jitter: 0 }, 0.5);
     expect(g.r).toBe(110);

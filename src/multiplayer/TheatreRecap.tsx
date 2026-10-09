@@ -181,7 +181,10 @@ function boardGeometry(renderBodies: RBody[], rawBodies: TBody[], anchorId: stri
   // than the moon it was orbiting.
   const anchorR = Math.max(34, Math.min(74, 22 + (Number(anchor?.radius) || 2) * 14));
   const moonR = (b: RBody) => Math.max(7, Math.min(22, 4 + (Number(b.radius) || 1) * 9));
-  const ORBIT_FLOOR = anchorR + GUARD_RING * 2 + 30;
+  // Clear of the anchor's battle, which starts where its tilted orbit
+  // clears the disc (anchorR / TILT, recapLayout) and runs about another
+  // radius deep.
+  const ORBIT_FLOOR = anchorR / TILT + anchorR * 0.9 + 30;
 
   const ordered = [...moons].sort(
     (a, b) => (Number(a.orbitRadius) || 0) - (Number(b.orbitRadius) || 0));
@@ -601,7 +604,8 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         const q = geo.bodyPos(o);
         near = Math.min(near, Math.hypot(q.x - p.x, q.y - p.y) - q.r);
       }
-      const rMax = Math.max(p.r * 2 + 10, Math.min(p.r * 3.5, Number.isFinite(near) ? near * 0.75 : p.r * 3.5));
+      const rMax = Math.max(p.r / TILT + p.r * 0.9,
+        Math.min(p.r * 3.5, Number.isFinite(near) ? near * 0.8 : p.r * 3.5));
       const wbeats: RecapBeat[] = beats.map(b => {
         const units: RecapUnit[] = [];
         let stationId: string | undefined;
@@ -718,7 +722,8 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       for (const bid of focusIds) {
         const p = bodyPos(bodyById.get(bid));
-        const pad = p.r + GUARD_RING + 34;
+        // The world and its battle, which starts clear of the disc.
+        const pad = Math.max(p.r + GUARD_RING + 34, p.r / TILT + p.r * 0.9 + 16);
         minX = Math.min(minX, p.x - pad); maxX = Math.max(maxX, p.x + pad);
         minY = Math.min(minY, p.y - pad); maxY = Math.max(maxY, p.y + pad);
       }
