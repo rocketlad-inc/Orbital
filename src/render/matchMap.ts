@@ -1333,6 +1333,10 @@ export function createMatchMap(
     }
 
     for (const e of events) {
+      // A battle recap is pushed in on its world, where this whole-world
+      // flash becomes a flat disc over the fight for the whole tick. Its
+      // losses are already the blasts, the wrecks and the kill feed.
+      if (focus) break;
       if (e.tick !== curTick || !e.bodyId || !byId.has(e.bodyId)) continue;
       const p = toPx(pos(e.bodyId, t));
       const r0 = (bodyR.get(e.bodyId) ?? 4) * cam.scale;
