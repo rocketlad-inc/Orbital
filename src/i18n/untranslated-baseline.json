@@ -117,6 +117,9 @@
     "JSX|/notify",
     "JSX|Discord"
   ],
+  "multiplayer/RecapShare.tsx": [
+    "JSX|Reddit"
+  ],
   "multiplayer/ResetPassword.tsx": [
     "JSX|ORBITAL"
   ],
