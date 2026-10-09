@@ -28,8 +28,9 @@ import { apiFetch } from './api';
 import { getShipIconImage } from '../render/shipIconCache';
 import { getEmblemImage } from '../render/emblemCache';
 import {
-  getPlanetTexture, getTerraformedTexture, terraformFraction, hashStr, mulberry32,
+  getPlanetTexture, getTerraformedTexture, terraformFraction, hashStr, mulberry32, getGlobe,
 } from '../render/planetTexture';
+import { paintGlobe } from '../render/paintGlobe';
 import {
   drawBurn,
   drawTexturedDisk, drawSphereLighting, drawThrustExhaust,
@@ -708,6 +709,22 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
 
       const paintWorld = (b: TBody, p: { x: number; y: number; r: number }) => {
         const tf = terraformFraction(b as unknown as Body, beat.tick);
+        // The world as the map draws it: its real-map globe where it has
+        // one (terraformed twin and all), the procedural texture otherwise.
+        const globe = getGlobe(b as unknown as Body, tf >= 1);
+        if (globe) {
+          paintGlobe(g, b as unknown as Body, tf >= 1, globe, p.x, p.y, p.r, nowMs);
+          if (tf > 0 && tf < 1) {
+            const tfGlobe = getGlobe(b as unknown as Body, true);
+            if (tfGlobe) {
+              g.save(); g.globalAlpha = tf;
+              paintGlobe(g, b as unknown as Body, true, tfGlobe, p.x, p.y, p.r, nowMs);
+              g.restore();
+            }
+          }
+          drawSphereLighting(g, p.x, p.y, p.r, LIGHT_X, LIGHT_Y);
+          return;
+        }
         const tex = tf >= 1
           ? (getTerraformedTexture(b as unknown as Body) ?? getPlanetTexture(b as unknown as Body))
           : getPlanetTexture(b as unknown as Body);

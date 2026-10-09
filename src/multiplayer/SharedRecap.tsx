@@ -25,10 +25,6 @@ import { useI18n } from '../i18n/react';
 // flat recap should not download a renderer to get it.
 const BattleCinema = lazyChunk('cinema', () =>
   import('./BattleCinema').then(m => ({ default: m.BattleCinema })));
-// The map player brings the game's whole map renderer; lazy so the page's
-// first paint is the header and the classic recap's data, not a bundle.
-const BattleFilm = lazyChunk('battle-film', () =>
-  import('./BattleFilm').then(m => ({ default: m.BattleFilm })));
 
 const NEUTRAL = '#8a9fb3';
 
@@ -56,12 +52,6 @@ export function SharedRecap({ token }: { token: string }) {
   const [showFilm, setShowFilm] = useState(false);
   const [filmErr, setFilmErr] = useState<string | null>(null);
   const [sysErr, setSysErr] = useState<string | null>(null);
-  // The battle on the game's own map (BattleFilm) is the default; a
-  // battle without a map record (deep space, or recorded before the
-  // match recorder) keeps the classic recap. `classic` is the reader's
-  // own choice to switch back.
-  const [mapOk, setMapOk] = useState(true);
-  const [classic, setClassic] = useState(false);
 
   useEffect(() => {
     if (!showFilm || film) return;
@@ -197,19 +187,7 @@ export function SharedRecap({ token }: { token: string }) {
                 : system
                   ? <TheatreCanvas d={system} />
                   : <div className="shared-recap__loading">{t('review.shared.loadingCampaign')}</div>)
-              : (mapOk && !classic)
-                ? (
-                  <React.Suspense fallback={<div className="shared-recap__loading">{t('review.shared.loadingRenderer')}</div>}>
-                    <BattleFilm token={token} d={d} onUnavailable={() => setMapOk(false)} />
-                  </React.Suspense>
-                )
-                : <BattleRecap d={d} />}
-
-            {!showSystem && mapOk && (
-              <button type="button" className="shared-recap__viewswitch" onClick={() => setClassic(c => !c)}>
-                {classic ? t('review.film.mapView') : t('review.film.classic')}
-              </button>
-            )}
+              : <BattleRecap d={d} />}
 
             <div className="shared-recap__stats">
               {tn('review.ticks', span, { n: span })} · {tn('review.shots', b.shots, { n: b.shots })} · {t('review.shared.hitPct', { pct: pct(b.hits, b.shots) })}

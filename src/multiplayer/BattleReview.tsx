@@ -31,8 +31,9 @@ import { getShipIconImage } from '../render/shipIconCache';
 import { getEmblemImage } from '../render/emblemCache';
 import {
   getPlanetTexture, getTerraformedTexture, getCloudTexture,
-  terraformFraction, hashStr, mulberry32,
+  terraformFraction, hashStr, mulberry32, getGlobe,
 } from '../render/planetTexture';
+import { paintGlobe } from '../render/paintGlobe';
 import {
   drawBolt, drawBlast, drawDebris, drawWreckShards, drawMuzzleFlash,
   drawShieldFlare, drawTexturedDisk, drawSphereLighting, drawBurn,
@@ -1724,7 +1725,23 @@ export function BattleRecap({ d }: { d: Detail }) {
         // Surface drift is wall-clock, like the map's: ticks are minutes
         // apart, so a tick-driven spin would be frozen.
         const drift = nowMs * bodyR * 0.000035;
-        if (tex) {
+        // THE WORLD AS THE MAP DRAWS IT. A world with a real-map globe
+        // (public/globes) wears it here too, turning the way it does on
+        // the map, terraformed twin and all. The procedural texture below
+        // is only for worlds with no globe, or while one is loading.
+        const globe = getGlobe(body, tf >= 1);
+        if (globe) {
+          paintGlobe(g, body, tf >= 1, globe, cx, cy, bodyR, nowMs);
+          if (tf > 0 && tf < 1) {
+            const tfGlobe = getGlobe(body, true);
+            if (tfGlobe) {
+              g.save(); g.globalAlpha = tf;
+              paintGlobe(g, body, true, tfGlobe, cx, cy, bodyR, nowMs);
+              g.restore();
+            }
+          }
+          drawSphereLighting(g, cx, cy, bodyR, LIGHT_X, LIGHT_Y);
+        } else if (tex) {
           drawTexturedDisk(g, tex, cx, cy, bodyR, drift);
           if (tf > 0 && tf < 1) {
             const tfTex = getTerraformedTexture(body);

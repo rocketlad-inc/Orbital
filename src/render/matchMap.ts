@@ -53,28 +53,11 @@ const iconClassOf = (c: string | null): ShipIconClass =>
 
 type Body = MatchSummary['bodies'][number];
 
-/**
- * ONE BATTLE, NOT A MATCH. The shared battle recap (BattleFilm) plays a
- * single engagement through this same stage, so a recap always wears the
- * game's current art: its globes, its battle layout, its fire. In focus
- * mode the camera holds the battle's world for the whole reel, the page
- * sets the pace, and the film's own chrome (empire panel, captions,
- * timeline) stays off: the page draws a recap's overlays itself.
- */
-export interface MatchMapOptions {
-  focus?: {
-    bodyId: string;
-    /** Seconds of film per tick; the page compresses quiet ticks. */
-    rateAt?: (tick: number) => number;
-  };
-}
-
 export function createMatchMap(
-  summary: MatchSummary, canvas: HTMLCanvasElement, opts: MatchMapOptions = {},
+  summary: MatchSummary, canvas: HTMLCanvasElement,
 ): ReplayStage & { _shots: () => unknown[];
   _audit: (tick: number, frac?: number) => unknown[];
   _deaths: (tick: number) => unknown[] } {
-  const focus = opts.focus ?? null;
   const ctx = canvas.getContext('2d')!;
   let W = canvas.width || 1280, H = canvas.height || 720, DPR = 1;
 
@@ -401,11 +384,6 @@ export function createMatchMap(
     shots = [];
     const lo = summary.ticks.lo ?? 0, hi = summary.ticks.hi ?? lo;
     if (hi < lo) return;
-    // A battle recap is one held scene on its world, start to finish.
-    if (focus) {
-      shots = [{ from: lo, to: hi + 1, bodyId: focus.bodyId, weight: 1, rate: 1, note: 'battle' }];
-      return;
-    }
     const cands: Shot[] = [];
 
     // --- battles at one world, merged into one engagement --------------
@@ -562,7 +540,6 @@ export function createMatchMap(
 
   /** Seconds of film per tick at this point in the match. */
   const rateAt = (tick: number) => {
-    if (focus?.rateAt) return focus.rateAt(tick);
     if (!shots.length) rebuildShots();
     const sh = shots.find(x => tick >= x.from && tick < x.to);
     return sh ? sh.rate : 1;
@@ -607,12 +584,10 @@ export function createMatchMap(
   // The panel is wider: three of eight empire names were truncated in
   // every frame, and there was dead canvas to its left in nearly all
   // of them.
-  // A battle recap has no panel and no canvas timeline: the page's
-  // overlays sit over the map, and the camera uses the whole frame.
-  const PANEL_W = focus ? 0 : 300;
-  const SAFE = focus ? 24 : 44;
+  const PANEL_W = 300;
+  const SAFE = 44;
   /** The timeline lives here; the camera must never compose under it. */
-  const SAFE_BOTTOM = focus ? 0 : 78;
+  const SAFE_BOTTOM = 78;
 
   const fitAll = (t: number) => {
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -733,10 +708,8 @@ export function createMatchMap(
     // look like it is obeying a rule the viewer cannot infer. The
     // subject is held between roughly a fifth and a third of the frame.
     const vh = H - SAFE_BOTTOM - SAFE;
-    // A battle recap is about the fight at this one world, so it sits
-    // closer: the world and the hulls ringed around it fill the frame.
-    sc = Math.max(sc, vh * (focus ? 0.15 : 0.10) / Math.max(2, br));
-    sc = Math.min(sc, vh * (focus ? 0.21 : 0.19) / Math.max(2, br));
+    sc = Math.max(sc, vh * 0.10 / Math.max(2, br));
+    sc = Math.min(sc, vh * 0.19 / Math.max(2, br));
     target.scale = sc;
     // If the box does not actually fit at the scale we settled on, the
     // box centre is a lie -- centre on the subject instead.
@@ -1030,14 +1003,8 @@ export function createMatchMap(
     resetReservations();
 
     drawStarfield(starfield, rc);
-    // Territory is a system-wide answer, and a battle recap only carries
-    // one world's settlements (worker/recapMap.js), so the wash came out
-    // as a flat disc of one empire's colour around the battle. The
-    // world's own ownership ring still says who holds it.
-    if (!focus) {
-      drawSystemRegions(
-        computeSystemRegions(gameBodies, gameFactions, gameSettlements), rc);
-    }
+    drawSystemRegions(
+      computeSystemRegions(gameBodies, gameFactions, gameSettlements), rc);
 
     // Cosmetic specks through the belt, so it stops reading as five
     // lonely rocks all sitting at the same radius.
@@ -1303,9 +1270,6 @@ export function createMatchMap(
 
     // Events at this tick: battles pulse, losses flash, foundings ring.
     for (const b of summary.battles) {
-      // A battle recap is ALL battle: a pulsing "fight here" ring around
-      // the only world on screen says nothing.
-      if (focus) break;
       const end = b.ended_tick ?? b.started_tick;
       if (curTick < b.started_tick || curTick > end || !b.body_id) continue;
       const id = b.body_id;
@@ -1333,10 +1297,6 @@ export function createMatchMap(
     }
 
     for (const e of events) {
-      // A battle recap is pushed in on its world, where this whole-world
-      // flash becomes a flat disc over the fight for the whole tick. Its
-      // losses are already the blasts, the wrecks and the kill feed.
-      if (focus) break;
       if (e.tick !== curTick || !e.bodyId || !byId.has(e.bodyId)) continue;
       const p = toPx(pos(e.bodyId, t));
       const r0 = (bodyR.get(e.bodyId) ?? 4) * cam.scale;
@@ -1352,8 +1312,6 @@ export function createMatchMap(
       }
     }
 
-    // A battle recap's words are the page's overlays, not these.
-    if (!focus) {
     // CAPTION: VERB-LED, WITH A CONSEQUENCE. The old fallback said
     // "Body — Empire", a sentence that is true on every tick of the
     // match, so the director's cuts read as stopping on nothing.
@@ -1693,10 +1651,8 @@ export function createMatchMap(
       }
     }
 
-    }   // end film-only words
-
     ctx.restore();   // end map clip
-    if (!focus) drawHud(t);
+    drawHud(t);
   }
 
   // ---- HUD: the clock and the empires ---------------------------------

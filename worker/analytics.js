@@ -2401,9 +2401,8 @@ export async function handlePublicFilm(req, env, url) {
  * the rest of the match.
  */
 export async function handlePublicRecap(req, env, url) {
-  // /api/recap/<token>, /api/recap/<token>/system, /api/recap/<token>/cinema,
-  // /api/recap/<token>/map, /api/recap/<token>/map/replay
-  const m = /^\/api\/recap\/([^/]+)(?:\/(system|cinema|map|map\/replay|context))?\/?$/.exec(url.pathname);
+  // /api/recap/<token>, /api/recap/<token>/system, /api/recap/<token>/cinema
+  const m = /^\/api\/recap\/([^/]+)(?:\/(system|cinema))?\/?$/.exec(url.pathname);
   if (!m) return err(404, 'not_found', 'no such recap');
   const [, token, mode] = m;
   const wantSystem = mode === 'system';
@@ -2414,15 +2413,6 @@ export async function handlePublicRecap(req, env, url) {
     )
     .bind(token).first();
   if (!share) return err(404, 'not_found', 'no such recap');
-
-  // The battle on the game's own map (worker/recapMap.js): filtered to the
-  // fight so a link is never a window onto the live game. Not a view: the
-  // page's first call already counted this reader.
-  if (mode === 'map' || mode === 'map/replay' || mode === 'context') {
-    const rm = await import('./recapMap.js');
-    if (mode === 'context') return rm.recapContext(env, share);
-    return mode === 'map' ? rm.recapMapSummary(env, share) : rm.recapMapReplay(env, share);
-  }
 
   // Fire-and-forget: a view counter must never cost the reader the page.
   try {
