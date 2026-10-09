@@ -29,7 +29,7 @@
 // even with everyone else.
 // ============================================================================
 
-import { tr, normalizeLocale } from './i18n.js';
+import { tr, trn, normalizeLocale } from './i18n.js';
 import { emailConfigured, sendEmail, layout, textLayout, esc, unsubscribeUrl } from './email.js';
 
 export const WINBACK_AFTER_MS = 48 * 3600 * 1000;
@@ -44,6 +44,9 @@ const POOL_ROOM_SEATS = 5;
 
 /** The button. App.tsx reads ?play=winback once the reader is signed in. */
 export const WINBACK_URL = 'https://orbital-empire.com/?play=winback&from=winback';
+/** The header picture: a crop of the Battle of Mars press still (a JPEG,
+ *  because Outlook will not show WebP). */
+export const WINBACK_HERO_SRC = 'https://orbital-empire.com/press/email/winback-hero.jpg';
 
 /**
  * Decide this hour's sends. Pure, so the rules are testable without a DB.
@@ -104,17 +107,132 @@ async function openLobbies(env, nowMs) {
     .all()).results ?? [];
 }
 
-/** Subject, lines and button for one reader. Exported for the preview. */
+// ---------------------------------------------------------------------------
+// The room card: the game browser's open-lobby card (src/multiplayer/
+// LobbyCards.tsx GameCard + lobby.css .lx-card), rebuilt for mail. Mail
+// clients have no flex or grid and are unreliable with rgba, so it is
+// tables, and every tint is pre-blended onto the card's own surface.
+// ---------------------------------------------------------------------------
+
+const K = {
+  surface: '#121b27',   // --lx-surface-2
+  line: '#222d3c',      // --lx-line over the surface
+  ink: '#e8f0f7', ink2: '#aebdcc', ink3: '#7a8ca0',
+  teal: '#4ecdc4', chip: '#193039',             // .lx-chip--open
+  gold: '#ffb84d', goldInk: '#1d1404',
+  gold2: '#ffcb7a', tagBg: '#25282a', tagLine: '#594a32',  // .lx-tag--quick
+  emptySeat: '#3a4757', // --lx-line-2, dashed
+};
+const CARD_FONT = "'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+const DEFAULT_TICK_MS = 3600000;
+
+/** LobbyCards.tsx initials(): letters and digits only, first + last. */
+export function initials(name) {
+  const parts = String(name ?? '').replace(/[^\p{L}\p{N}\s]+/gu, ' ').trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  const a = parts[0][0] ?? '';
+  const b = parts.length > 1 ? parts[parts.length - 1][0] : (parts[0][1] ?? '');
+  return (a + b).toUpperCase();
+}
+
+/** LobbyCards.tsx hueOf() + .lx-avatar__initials hsl(h 45% 38%), as hex:
+ *  the same name gets the same colour in the inbox as in the browser. */
+export function avatarHex(name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  h %= 360;
+  const s = 0.45, l = 0.38;
+  const k = n => (n + h / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  return '#' + [f(0), f(8), f(4)].map(x => Math.round(x * 255).toString(16).padStart(2, '0')).join('');
+}
+
+/** LobbyCards.tsx turnSpeed(): "1-hour turns", "30-minute turns". */
+function turnSpeed(L, ms) {
+  const s = (ms > 0 ? ms : DEFAULT_TICK_MS) / 1000;
+  const tenth = x => Math.round(x * 10) / 10;
+  if (s < 60) return trn(L, 'email.winback.card.turnsSec', Math.round(s));
+  const m = s / 60;
+  if (m < 60) return trn(L, 'email.winback.card.turnsMin', tenth(m));
+  return trn(L, 'email.winback.card.turnsHour', tenth(m / 60));
+}
+
+function avatarCell(p) {
+  const ring = p.is_host ? `border:2px solid ${K.gold};width:28px;height:28px;` : 'width:32px;height:32px;';
+  return `<td style="padding:0 6px 0 0"><div title="${esc(p.name)}" style="${ring}border-radius:50%;background:${avatarHex(p.name)};color:#ffffff;font:700 12px/${p.is_host ? 28 : 32}px ${CARD_FONT};text-align:center">${esc(initials(p.name))}</div></td>`;
+}
+
+function emptyCell() {
+  return `<td style="padding:0 6px 0 0"><div style="width:29px;height:29px;border-radius:50%;border:1.5px dashed ${K.emptySeat}"></div></td>`;
+}
+
+/**
+ * @param card { name, n, max, quick, host, members:[{name,is_host}], tickMs, forming }
+ *   forming = the pool case: a game that opens when the first reader clicks.
+ */
+export function roomCardHtml(L, card) {
+  const open = Math.max(0, card.max - card.n);
+  const members = (card.members ?? []).slice(0, 10);
+  const empties = Math.min(open, 10 - members.length);
+  const avatars = members.map(avatarCell).join('') + Array.from({ length: empties }, emptyCell).join('');
+  const sub = card.forming
+    ? tr(L, 'email.winback.card.forming')
+    : tr(L, 'email.winback.card.hosted', { host: card.host });
+  const quick = card.quick
+    ? `<span style="display:inline-block;padding:3px 8px;border-radius:6px;background:${K.tagBg};border:1px solid ${K.tagLine};color:${K.gold2};font:600 12px ${CARD_FONT}">${esc(tr(L, 'email.winback.card.quick'))}</span>`
+    : '';
+  return `
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:6px 0 20px;background:${K.surface};border:1px solid ${K.line};border-radius:14px">
+  <tr><td style="padding:18px 18px 0">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+      <td align="left"><span style="display:inline-block;padding:5px 10px;border-radius:999px;background:${K.chip};color:${K.teal};font:600 13px ${CARD_FONT}">&#9679;&nbsp;${esc(trn(L, 'email.winback.card.status', open))}</span></td>
+      <td align="right">${quick}</td>
+    </tr></table>
+  </td></tr>
+  <tr><td style="padding:12px 18px 0;font:700 20px/1.2 ${CARD_FONT};color:${K.ink}">${esc(card.name)}</td></tr>
+  <tr><td style="padding:4px 18px 0;font:13px ${CARD_FONT};color:${K.ink3}">${esc(sub)}</td></tr>
+  <tr><td style="padding:14px 18px 0">
+    <table role="presentation" cellpadding="0" cellspacing="0"><tr>${avatars}</tr></table>
+  </td></tr>
+  <tr><td style="padding:8px 18px 0;font:13px ${CARD_FONT};color:${K.ink3}">${esc(tr(L, 'email.winback.card.players', { n: card.n, max: card.max }))} · <b style="color:${K.teal};font-weight:600">${esc(tr(L, 'email.winback.card.open', { n: open }))}</b></td></tr>
+  <tr><td style="padding:12px 18px 0;font:13px ${CARD_FONT};color:${K.ink2}"><span style="color:${K.ink3};font-size:11px;letter-spacing:.12em;text-transform:uppercase">${esc(tr(L, 'email.winback.card.speed'))}</span>&nbsp;&nbsp;${esc(turnSpeed(L, card.tickMs))}</td></tr>
+  <tr><td style="padding:16px 18px 18px">
+    <a href="${esc(WINBACK_URL)}" style="display:block;background:${K.gold};color:${K.goldInk};font:700 15px/42px ${CARD_FONT};text-align:center;text-decoration:none;border-radius:10px">${esc(tr(L, 'email.winback.cta'))}</a>
+  </td></tr>
+</table>`;
+}
+
+/** The card as plain text, for the text part. */
+function roomCardText(L, card) {
+  const open = Math.max(0, card.max - card.n);
+  const sub = card.forming ? tr(L, 'email.winback.card.forming') : tr(L, 'email.winback.card.hosted', { host: card.host });
+  return [
+    `[ ${card.name} ]  ${trn(L, 'email.winback.card.status', open)}`,
+    sub,
+    `${tr(L, 'email.winback.card.players', { n: card.n, max: card.max })} · ${tr(L, 'email.winback.card.open', { n: open })} · ${turnSpeed(L, card.tickMs)}`,
+  ];
+}
+
+/**
+ * Everything one reader sees. Exported for the preview and the tests.
+ * @param room  for 'seat': { name, n, max_players, quick_join, host_name, members, tick_ms }
+ */
 export function composeWinback(locale, mode, room) {
   const L = normalizeLocale(locale) ?? 'en';
-  const seat = mode === 'seat' && room;
-  const lines = seat
-    ? [
-        tr(L, 'email.winback.seat.l1', { name: room.name, n: room.n, max: room.max_players }),
-        tr(L, room.quick_join === 1 ? 'email.winback.seat.autostart' : 'email.winback.seat.host'),
-      ]
-    : [tr(L, 'email.winback.pool.l1', { n: POOL_ROOM_SEATS })];
-  lines.push(tr(L, 'email.winback.l2'));
+  const seat = mode === 'seat' && !!room;
+  const card = seat
+    ? { name: room.name, n: room.n, max: room.max_players, quick: room.quick_join === 1,
+        host: room.host_name ?? tr(L, 'email.defaultName'), members: room.members ?? [], tickMs: room.tick_ms }
+    : { name: tr(L, 'email.winback.card.newName'), n: 0, max: POOL_ROOM_SEATS, quick: true,
+        members: [], tickMs: DEFAULT_TICK_MS, forming: true };
+  const intro = tr(L, seat ? 'email.winback.seat.l1' : 'email.winback.pool.l1');
+  const after = [
+    seat
+      ? tr(L, room.quick_join === 1 ? 'email.winback.seat.autostart' : 'email.winback.seat.host')
+      : tr(L, 'email.winback.pool.autostart', { n: POOL_ROOM_SEATS }),
+    tr(L, 'email.winback.l2'),
+  ];
   return {
     L,
     subject: tr(L, seat ? 'email.winback.seat.subject' : 'email.winback.pool.subject'),
@@ -122,10 +240,21 @@ export function composeWinback(locale, mode, room) {
       ? tr(L, 'email.winback.seat.preheader', { name: room.name, n: room.n, max: room.max_players })
       : tr(L, 'email.winback.pool.preheader'),
     heading: tr(L, seat ? 'email.winback.seat.heading' : 'email.winback.pool.heading'),
-    lines,
+    intro,
+    after,
+    card,
+    cardHtml: roomCardHtml(L, card),
+    lines: [intro, '', ...roomCardText(L, card), '', ...after],
     cta: { label: tr(L, 'email.winback.cta'), url: WINBACK_URL },
+    hero: { src: WINBACK_HERO_SRC, alt: tr(L, 'email.winback.heroAlt'), href: WINBACK_URL },
     footer: tr(L, 'email.winback.footer'),
   };
+}
+
+/** The whole email body: intro, the card (it carries the button), the rest. */
+export function winbackBodyHtml(c) {
+  const p = s => `<p style="margin:0 0 14px">${esc(s)}</p>`;
+  return p(c.intro) + c.cardHtml + c.after.map(p).join('');
 }
 
 async function sendWinback(env, user, mode, room) {
@@ -139,13 +268,37 @@ async function sendWinback(env, user, mode, room) {
       locale: c.L,
       preheader: c.preheader,
       heading: c.heading,
-      body: c.lines.map(l => `<p style="margin:0 0 14px">${esc(l)}</p>`).join(''),
-      cta: c.cta,
+      hero: c.hero,
+      body: winbackBodyHtml(c),
       footer: esc(c.footer),
       unsubUrl,
     }),
     text: textLayout({ locale: c.L, heading: c.heading, lines: c.lines, cta: c.cta, footer: c.footer, unsubUrl }),
   });
+}
+
+/** Who is already in the lobby, its host, and its turn speed, for the card. */
+async function cardDetails(env, room) {
+  const members = (await env.DB
+    .prepare(
+      `SELECT u.display_name AS name, (m.user_id = r.host_id) AS is_host
+         FROM room_members m JOIN users u ON u.id = m.user_id JOIN rooms r ON r.id = m.room_id
+        WHERE m.room_id = ? ORDER BY m.joined_at`,
+    )
+    .bind(room.id).all()).results ?? [];
+  // A lobby's speed lives in its Room DO until the game starts (the
+  // game browser asks the same way, worker/lobby.js).
+  let tickMs = DEFAULT_TICK_MS;
+  try {
+    const res = await env.ROOM.get(env.ROOM.idFromName(room.id)).fetch('https://room/settings');
+    if (res.ok) tickMs = (await res.json()).tick_interval_ms || DEFAULT_TICK_MS;
+  } catch { /* the default is what an untouched lobby runs at */ }
+  return {
+    ...room,
+    members: members.map(m => ({ name: m.name || 'Player', is_host: !!m.is_host })),
+    host_name: members.find(m => m.is_host)?.name ?? null,
+    tick_ms: tickMs,
+  };
 }
 
 /**
@@ -165,9 +318,15 @@ export async function maybeSendWinbackEmails(env, nowMs = Date.now()) {
   const eligible = await eligibleAccounts(env, nowMs);
   if (!eligible.length) return;
   const plan = planWinback({ eligible, lobbies: await openLobbies(env, nowMs) });
+  if (!plan.recipients.length) return;
+  let room = plan.room;
+  if (room) {
+    try { room = await cardDetails(env, room); }
+    catch (e) { console.error('winback card details failed', e); }
+  }
   for (const user of plan.recipients) {
     try {
-      await sendWinback(env, user, plan.mode, plan.room);
+      await sendWinback(env, user, plan.mode, room);
     } catch (e) {
       console.error(`winback send failed for ${user.id}`, e);
     }

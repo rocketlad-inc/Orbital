@@ -204,6 +204,7 @@ const FONT = "'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
  * @param p.cta        {label, url} optional button
  * @param p.footer     trusted HTML: why you got this
  * @param p.unsubUrl   optional
+ * @param p.hero       optional {src, alt, href}: a full-width picture under the logo
  * @param p.locale     the reader's language (footer links, <html lang>)
  */
 export function layout(p) {
@@ -227,6 +228,7 @@ export function layout(p) {
       <a href="${SITE}" style="text-decoration:none"><img src="${LOGO_URL}" width="132" alt="ORBITAL" style="display:block;border:0;height:auto;color:${C.gold};font-family:${FONT};font-size:22px;font-weight:700;letter-spacing:.2em"></a>
       <div style="height:18px"></div>
     </td></tr>
+    ${p.hero ? `<tr><td style="padding:0;line-height:0;border-bottom:1px solid ${C.border}"><a href="${esc(p.hero.href ?? SITE)}"><img src="${esc(p.hero.src)}" width="580" alt="${esc(p.hero.alt ?? '')}" style="display:block;width:100%;max-width:580px;height:auto;border:0;color:${C.dim};font-family:${FONT};font-size:13px;line-height:1.4"></a></td></tr>` : ''}
     <tr><td style="padding:26px 32px 6px;font-family:${FONT}">
       <h1 style="margin:0 0 14px;color:${C.ink};font-size:22px;line-height:1.3;font-weight:700">${esc(p.heading)}</h1>
       <div style="color:${C.ink};font-size:15px;line-height:1.6">${p.body}</div>

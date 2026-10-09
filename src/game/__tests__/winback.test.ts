@@ -7,9 +7,10 @@
 // render in both languages with no stray {placeholder}.
 
 import {
-  planWinback, composeWinback,
+  planWinback, composeWinback, initials, avatarHex,
   WINBACK_HOURLY_CAP, WINBACK_PER_SEAT, POOL_MIN, POOL_SIZE, WINBACK_URL,
 } from '../../../worker/winback.js';
+import { initials as browserInitials } from '../../multiplayer/LobbyCards';
 
 const people = (k: number) => Array.from({ length: k }, (_, i) => ({ id: `u${i}` }));
 const lobby = (n: number, max: number, extra: object = {}) =>
@@ -59,35 +60,92 @@ describe('planWinback', () => {
   });
 });
 
+const members = [
+  { name: 'Rocketlad', is_host: true },
+  { name: 'milky', is_host: false },
+  { name: 'Iron Anna', is_host: false },
+];
+const seated = (n: number, max: number, extra: object = {}) =>
+  lobby(n, max, { members: members.slice(0, n), host_name: 'Rocketlad', tick_ms: 1_800_000, ...extra });
+
 describe('composeWinback', () => {
   const cases: Array<[string, 'seat' | 'pool', object | null]> = [
-    ['seat, self-starting', 'seat', lobby(3, 5)],
-    ['seat, host starts', 'seat', lobby(6, 10, { quick_join: 0 })],
+    ['seat, self-starting', 'seat', seated(3, 5)],
+    ['seat, host starts', 'seat', seated(3, 10, { quick_join: 0 })],
+    ['seat, details unavailable', 'seat', lobby(3, 5)],
     ['pool', 'pool', null],
   ];
   for (const locale of ['en', 'pt-BR']) {
     for (const [label, mode, room] of cases) {
-      it(`${locale}: ${label} renders every line`, () => {
+      it(`${locale}: ${label} renders every line and the card`, () => {
         const c = composeWinback(locale, mode, room);
-        const all = [c.subject, c.preheader, c.heading, ...c.lines, c.cta.label, c.footer];
+        const all = [c.subject, c.preheader, c.heading, c.intro, ...c.after, ...c.lines.filter(Boolean), c.cta.label, c.footer];
         for (const s of all) {
           expect(typeof s).toBe('string');
           expect(s.length).toBeGreaterThan(0);
-          expect(s).not.toMatch(/[{}]|undefined|email\.winback/);
+          expect(s).not.toMatch(/[{}]|undefined|NaN|email\.winback/);
         }
+        expect(c.cardHtml).not.toMatch(/undefined|NaN|email\.winback|\{n\}|\{max\}|\{host\}/);
+        expect(c.cardHtml).toContain(`href="${WINBACK_URL.replace(/&/g, '&amp;')}"`);
         expect(c.cta.url).toBe(WINBACK_URL);
       });
     }
   }
 
-  it('names the game and its head count when there is a seat', () => {
-    const c = composeWinback('en', 'seat', lobby(3, 5));
-    expect(c.lines[0]).toContain('Open game · Titan has 3 of 5 commanders');
-    expect(c.lines[1]).toMatch(/starts on its own/);
+  it('the card shows the lobby the way the game browser does', () => {
+    const c = composeWinback('en', 'seat', seated(3, 5));
+    expect(c.cardHtml).toContain('Open game · Titan');
+    expect(c.cardHtml).toContain('Open · 2 seats left');
+    expect(c.cardHtml).toContain('Hosted by Rocketlad');
+    expect(c.cardHtml).toContain('3 of 5 players');
+    expect(c.cardHtml).toContain('2 open');
+    expect(c.cardHtml).toContain('30-minute turns');
+    expect(c.cardHtml).toContain('>Quick<');
+    // three faces, two dashed empty seats, the host ringed in gold
+    expect((c.cardHtml.match(/title="/g) ?? []).length).toBe(3);
+    expect((c.cardHtml.match(/dashed/g) ?? []).length).toBe(2);
+    expect(c.cardHtml).toMatch(/border:2px solid #ffb84d[^>]*>RO</);
+    expect(c.after[0]).toMatch(/starts on its own/);
   });
 
-  it('says the host starts a regular lobby, not that it starts itself', () => {
-    const c = composeWinback('en', 'seat', lobby(6, 10, { quick_join: 0 }));
-    expect(c.lines[1]).toMatch(/host starts it/);
+  it('a regular lobby says the host starts it, and wears no Quick tag', () => {
+    const c = composeWinback('en', 'seat', seated(3, 10, { quick_join: 0 }));
+    expect(c.after[0]).toMatch(/host starts it/);
+    expect(c.cardHtml).not.toContain('>Quick<');
+  });
+
+  it('the pool card is a fresh game with every seat empty', () => {
+    const c = composeWinback('en', 'pool', null);
+    expect(c.cardHtml).toContain('A new game');
+    expect(c.cardHtml).toContain('0 of 5 players');
+    expect(c.cardHtml).toContain('1-hour turns');
+    expect((c.cardHtml.match(/dashed/g) ?? []).length).toBe(5);
+  });
+
+  it('player names are escaped', () => {
+    const c = composeWinback('en', 'seat', seated(1, 5, { members: [{ name: '<b>x</b>', is_host: true }], host_name: '<b>x</b>' }));
+    expect(c.cardHtml).not.toContain('<b>x</b>');
+  });
+});
+
+describe('the card matches the game browser', () => {
+  it('initials are the game browser\'s own', () => {
+    for (const name of ['[agent] lobby-review', 'Rocketlad', 'Iron Anna', 'milky#1099', 'ação real', '', '!!!']) {
+      expect(initials(name)).toBe(browserInitials(name));
+    }
+  });
+
+  it('avatar colour is the browser\'s hsl(h 45% 38%) for the same name', () => {
+    // hueOf('milky') in LobbyCards.tsx, then CSS hsl(h 45% 38%)
+    let h = 0;
+    for (const ch of 'milky') h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    h %= 360;
+    const hex = avatarHex('milky');
+    const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255);
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    expect((max + min) / 2).toBeCloseTo(0.38, 1);
+    let hue = max === r ? ((g - b) / (max - min)) % 6 : max === g ? (b - r) / (max - min) + 2 : (r - g) / (max - min) + 4;
+    hue = (hue * 60 + 360) % 360;
+    expect(Math.abs(hue - h)).toBeLessThan(2);
   });
 });
