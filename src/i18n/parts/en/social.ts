@@ -458,6 +458,7 @@ export const social = {
   'roomlobby.tick.450000': '7.5min',
   'roomlobby.tick.1800000': '30min (lunch break)',
   'roomlobby.tick.3600000': '1h (async · DEFAULT)',
+  'roomlobby.tick.7200000': '2h (12×/day)',
   'roomlobby.tick.21600000': '6h (4×/day)',
   'roomlobby.tick.43200000': '12h (2×/day)',
   'roomlobby.tick.86400000': '24h (1×/day)',

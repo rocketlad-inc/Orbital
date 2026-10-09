@@ -1163,6 +1163,7 @@ const SideMenu: React.FC<SideMenuProps> = ({
     { label: '5m',   value:   300_000 },
     { label: '30m',  value: 1_800_000 },
     { label: '1h',   value: 3_600_000 },
+    { label: '2h',   value: 7_200_000 },
     { label: '6h',   value: 21_600_000 },
     { label: '12h',  value: 43_200_000 },
     { label: '24h',  value: 86_400_000 },

@@ -90,6 +90,7 @@ const sameColor = (a, b) => {
 //   7.5min               — the old default, 8x the default pace
 //   30min                — lunch-break sessions
 //   1h (DEFAULT)         — async play
+//   2h                   — async play, twelve turns a day
 //   6h / 12h             — async play at slower paces
 //   24h                  — turn-based "one tick a day"
 const ALLOWED_TICK_INTERVALS = new Set([
@@ -100,6 +101,7 @@ const ALLOWED_TICK_INTERVALS = new Set([
   450_000,
   1_800_000,
   3_600_000,
+  7_200_000,
   21_600_000,
   43_200_000,
   86_400_000,
