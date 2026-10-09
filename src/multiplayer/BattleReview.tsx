@@ -28,6 +28,9 @@ import { lazyChunk } from '../util/lazyChunk';
 
 import { toRenderBody } from './bodyIdentity';
 import { layoutRecap, glideSlot, type RecapBeat, type RecapUnit } from './recapLayout';
+import {
+  recordRecapGif, downloadBlob, gifSpan, GIF_MAX_BEATS, type RecapRender,
+} from './recapGif';
 import { getEmblemImage } from '../render/emblemCache';
 import {
   getPlanetTexture, getTerraformedTexture, getCloudTexture,
@@ -1078,6 +1081,10 @@ export function BattleRecap({ d }: { d: Detail }) {
   const raf = useRef<number | null>(null);
   const last = useRef<number>(0);
   const posRef = useRef(0);
+  /** The recap's renderer, for the GIF recorder (set by the draw effect). */
+  const renderRef = useRef<RecapRender | null>(null);
+  /** GIF recording: progress 0..1 while it runs, null otherwise. */
+  const [gifProgress, setGifProgress] = useState<number | null>(null);
   posRef.current = pos;
 
   const frames = d.frames;
@@ -1345,8 +1352,8 @@ export function BattleRecap({ d }: { d: Detail }) {
   useEffect(() => {
     const canvas = cv.current;
     if (!canvas) return;
-    const g = canvas.getContext('2d');
-    if (!g) return;
+    const screen = canvas.getContext('2d');
+    if (!screen) return;
     let live = true;
     let handle = 0;
     // Every sprite is drawn at the one scale the layout was fitted at.
@@ -1357,11 +1364,10 @@ export function BattleRecap({ d }: { d: Detail }) {
     for (const p of phantoms) rowById.set(p.row.id, p.row);
     for (const f of frames) for (const r of f.roster) rowById.set(r.id, r);
 
-    const draw = (nowMs: number) => {
-      if (!live) return;
-      handle = requestAnimationFrame(draw);
-      const W = canvas.width, H = canvas.height;
-      const p = posRef.current;
+    // One picture of the recap at position p and clock nowMs, into
+    // any canvas: the screen every frame, or the GIF recorder offscreen.
+    const render = (g: CanvasRenderingContext2D, p: number, nowMs: number) => {
+      const W = g.canvas.width, H = g.canvas.height;
       const i = clampFrame(p, frames.length);
       const t = Math.min(1, Math.max(0, p - i));
       const frame = frames[i];
@@ -2042,10 +2048,53 @@ export function BattleRecap({ d }: { d: Detail }) {
       }
     };
 
+    const draw = (nowMs: number) => {
+      if (!live) return;
+      handle = requestAnimationFrame(draw);
+      render(screen, posRef.current, nowMs);
+    };
+    renderRef.current = render;
     handle = requestAnimationFrame(draw);
-    return () => { live = false; cancelAnimationFrame(handle); };
+    return () => {
+      live = false;
+      cancelAnimationFrame(handle);
+      if (renderRef.current === render) renderRef.current = null;
+    };
   }, [frames, stations, formation, colorOf, trimOf, hulls, killerOf, phantoms, fixtures,
       comings, stars, d.battle.id, d.battle.body_name, d.sides, d.factions, renderBody, recapLayout]);
+
+  /** Record the stretch of the battle the slider is on as a GIF and
+   *  download it (recapGif). */
+  const [gifFailed, setGifFailed] = useState(false);
+  const makeGif = useCallback(async () => {
+    const render = renderRef.current;
+    if (!render || frames.length === 0) return;
+    setPlaying(false);
+    setGifFailed(false);
+    const span = gifSpan(posRef.current, frames.length);
+    setGifProgress(0);
+    let shown = -1;
+    try {
+      const blob = await recordRecapGif({
+        render, srcW: CANVAS_W, srcH: CANVAS_H, from: span.from, to: span.to, tickMs: TICK_MS,
+        onProgress: k => {
+          const pct = Math.floor(k * 100);
+          if (pct !== shown) { shown = pct; setGifProgress(k); }
+        },
+      });
+      if (blob) {
+        const place = (d.battle.body_name ?? '').toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'battle';
+        const tick = frames[clampFrame(span.from, frames.length)]?.tick ?? 0;
+        downloadBlob(blob, `orbital-${place}-T${tick}.gif`);
+      }
+    } catch (e) {
+      console.error('recap gif failed', e);
+      setGifFailed(true);
+    } finally {
+      setGifProgress(null);
+    }
+  }, [frames, d.battle.body_name]);
 
   if (frames.length === 0) {
     return <div style={{ color: NEUTRAL, padding: 8 }}>{tr('review.battle.noFrames')}</div>;
@@ -2070,6 +2119,19 @@ export function BattleRecap({ d }: { d: Detail }) {
             color: '#cfe0ee', padding: '3px 10px', cursor: 'pointer', fontSize: 11,
           }}
         >{playing ? tr('review.battle.pause') : tr('review.battle.play')}</button>
+        <button
+          onClick={makeGif}
+          disabled={gifProgress != null}
+          title={tr('review.battle.gifTitle', { n: GIF_MAX_BEATS })}
+          style={{
+            background: '#16273a', border: '1px solid #3d6b96', borderRadius: 5,
+            color: '#cfe0ee', padding: '3px 10px', fontSize: 11, whiteSpace: 'nowrap',
+            cursor: gifProgress != null ? 'progress' : 'pointer',
+            opacity: gifProgress != null ? 0.8 : 1,
+          }}
+        >{gifProgress != null
+            ? tr('review.battle.gifRecording', { pct: Math.round(gifProgress * 100) })
+            : tr('review.battle.gif')}</button>
         <input
           type="range" min={0} max={Math.max(0.0001, frames.length - 1)} step={0.02}
           value={Number.isFinite(pos) ? pos : 0}
@@ -2085,6 +2147,9 @@ export function BattleRecap({ d }: { d: Detail }) {
           T+{frames[idx].tick} · {idx + 1}/{frames.length}
         </span>
       </div>
+      {gifFailed && (
+        <div style={{ fontSize: 11, color: '#ff8a80', marginTop: 4 }}>{tr('review.battle.gifFailed')}</div>
+      )}
     </div>
   );
 }
