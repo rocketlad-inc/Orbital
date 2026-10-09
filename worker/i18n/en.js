@@ -200,7 +200,7 @@ export const EN = {
   'dc.eff.war1': 'Everyone deals **double damage** to **{who}** for **21 ticks**.',
   'dc.eff.war2': 'Also **breaks every treaty {who} holds** — NAPs, defense pacts and intel-sharing alike.',
   'dc.eff.sanction': 'Halves **{who}**\'s resource harvest for **14 ticks**.',
-  'dc.eff.reparations': '**{who}** pays **200 credits to every other faction** immediately (capped at what they actually hold).',
+  'dc.eff.reparations': '**{who}** pays **{amount} credits to every other faction** immediately (capped at what they actually hold).',
   'dc.eff.chancellor': 'Elects **{who}** Chancellor. **This can end the game.**',
   'dc.vote.closes': '\nVoting closes at tick **{tick}**.',
   'dc.vote.weightNote': '_{rule} You can change your vote until it closes._',

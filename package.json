@@ -36,6 +36,7 @@
     "sim:migrations": "node sim/migrationRerun.mjs",
     "sim:senate": "node sim/senateTerms.mjs",
     "sim:laws": "node sim/senateLaws.mjs",
+    "sim:reparations": "node sim/senateReparations.mjs",
     "sim:unload": "node sim/unloadHold.mjs",
     "sim:fog": "node sim/fogFlicker.mjs",
     "sim:hold": "node sim/cargoHold.mjs",
