@@ -525,7 +525,9 @@ export const ShipPanel: React.FC = () => {
     if (!rendezvousOpen || isMobile) { setRvPopAt(null); return undefined; }
     const place = () => {
       const r = panelRef.current?.getBoundingClientRect();
-      if (r) setRvPopAt({ left: Math.round(r.right + 8), top: Math.round(r.top) });
+      // Never above the window: measured mid-scroll of an ancestor, the
+      // panel's top can read negative, and the pop-out kept that.
+      if (r) setRvPopAt({ left: Math.round(r.right + 8), top: Math.max(8, Math.round(r.top)) });
     };
     place();
     window.addEventListener('resize', place);
