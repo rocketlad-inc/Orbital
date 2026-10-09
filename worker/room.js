@@ -38,7 +38,7 @@ import {
   maySupplySite, excludedFundersOf, constructionPartners, gateTransitTicks,
 } from './megastructures.js';
 import { NON_WORLD_TYPES, stationTypeMul } from './systems.js';
-import { advanceSunGates, mainSystemSql, tellEveryone } from './sunGates.js';
+import { advanceSunGates, mainSystemSql, tellEveryone, recordGateTransit } from './sunGates.js';
 import { advanceKaiju } from './kaiju.js';
 import { legDilation } from './wellDilation.js';
 import { binaryCloseness, binaryStarRow } from './binaryDance.js';
@@ -50,6 +50,12 @@ const megaPairKey = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 
 /** Hull classes the 'capital' target-priority category selects. */
 const CAPITAL_CLASSES = new Set(['mega_destroyer', 'mobile_foundry']);
+
+/** Gate autopilot rule B (gateAutopilot): a leg shorter than this is
+ *  never worth asking the planner about, and a re-route must save at
+ *  least this much to be taken. */
+const GATE_AUTOPILOT_MIN_LEG = 20;
+const GATE_AUTOPILOT_MIN_SAVING = 3;
 import { SHIP_COMBAT_STATS, parkPhaseFor, categorizeBodyForSecret, BODY_CATALOG } from './factions.js';
 import { launchCompletedMobileSites, capitalHullInsert } from './megaLaunch.js';
 
@@ -3645,6 +3651,34 @@ export class Room {
     // 9x brake), so the plan falls out of the leg the planner just sized:
     // shapeForArrival(d, T). Same shape the client posts, so both sides
     // integrate one plan.
+    const { lx, ly, lvx, lvy, acc, flip, brk, rmp, amax, atau } =
+      await this.legLaunchPlan(tick, shipId, fromBodyId, targetBodyId, arrive, bodyPosAt);
+
+    await this.env.DB
+      .prepare(
+        `INSERT INTO game_ship_nodes
+           (id, game_id, ship_id, sequence, anchor_kind, target_body_id,
+            scheduled_t, arrival_at_tick, dv_prograde, dv_normal, dv_radial, fuel_cost,
+            launch_x, launch_y, launch_vx, launch_vy, accel, flip_tick, brake_accel,
+            accel_ramp, accel_max, accel_tau,
+            status, committed_at_tick)
+         VALUES (?, ?, ?, ?, 'absolute', ?, ?, ?, 0, 0, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'committed', ?)`,
+      )
+      .bind(nodeId, gameId, shipId, seq, targetBodyId, tick, arrive,
+            lx, ly, lvx, lvy, acc, flip, brk, rmp, amax, atau, tick)
+      .run();
+    flyingShips.add(shipId);
+    return arrive;
+  }
+
+  /**
+   * The burn a server-planned leg flies: launch point and velocity, and
+   * the push-flip-brake shape that lands it at `arrive`. Every field is
+   * null when a body is missing — the leg still flies, it just cannot be
+   * fought in transit. Shared by planLegForShip (new legs) and the gate
+   * autopilot (legs it re-plans in place).
+   */
+  async legLaunchPlan(tick, shipId, fromBodyId, targetBodyId, arrive, bodyPosAt) {
     let lx = null, ly = null, lvx = null, lvy = null, acc = null, flip = null, brk = null;
     let rmp = null, amax = null, atau = null;
     try {
@@ -3716,22 +3750,250 @@ export class Room {
       // never the leg itself — the route has to keep running.
       console.error('trade leg: launch plan failed', e, { shipId });
     }
+    return { lx, ly, lvx, lvy, acc, flip, brk, rmp, amax, atau };
+  }
 
-    await this.env.DB
-      .prepare(
+  /**
+   * GATE AUTOPILOT. A gate's discount is applied to the leg, not to a
+   * button.
+   *
+   * A gate crossing used to happen only through LAUNCH TO, a button on a
+   * hull already parked on the gate. Everything else flew the ordinary
+   * burn: a colony ship chained "Centauri Gate, then Sol Gate" arrived at
+   * the gate and then flew the whole way across interstellar space at full
+   * price, 156 T instead of 16 (The NEXT Zone, 2026-10-09). The player had
+   * routed it through the gate; the game just did not believe them.
+   *
+   * Applied here, as each leg DEPARTS, because this is the one place every
+   * leg passes through: the ship panel, fleet orders, chains, the watch,
+   * build orders. Two rules:
+   *
+   *   A. A leg from one end of an open gate to its other end IS a crossing,
+   *      however it was ordered. Any gate, warp or sun: the order says it.
+   *   B. A long leg that a SUN GATE shortens is re-routed through it: fly to
+   *      the gate, cross, fly on. Sun gates only — they join systems, and
+   *      nobody means "the long way to Centauri". Inside Sol a player's
+   *      own warp gates stay the player's call (and a rival's gate is a
+   *      door into their space, not a shortcut to take on someone's behalf).
+   *
+   * Re-planned legs keep their node id and sequence; the legs added for
+   * rule B are planned for real when they depart (the ':gw' ids), and every
+   * later leg of the hull's route slides by the time saved, so a chain
+   * through a gate keeps its shape.
+   *
+   * Never throws: a failure flies the leg exactly as it was ordered.
+   */
+  async gateAutopilot(gameId, tick, departures) {
+    const cands = departures.filter(d =>
+      d.rv_follow_ship_id == null && d.rv_meet_tick == null
+      // The Death Star does not fit (handleGateTransit), nor the squid.
+      && d.ship_class !== 'mega_destroyer' && d.ship_class !== 'kaiju'
+      // Trade legs (and escorts paced to them) are planned gate-aware
+      // already; a manual LAUNCH TO is a crossing already.
+      && !String(d.id).includes(':tr') && !String(d.id).includes(':gn_'));
+    if (!cands.length) return;
+    const pairs = await this.gatePairsForTick(gameId, tick);
+    if (!pairs.length) return;
+
+    // WHERE EACH HULL REALLY LEAVES FROM. A chained leg departs on the
+    // tick its predecessor lands, and departures run before arrivals, so
+    // the ship row still names the body it left last time.
+    const ids = [...new Set(cands.map(d => d.ship_id))];
+    const landing = new Map();
+    for (let k = 0; k < ids.length; k += 90) {
+      const chunk = ids.slice(k, k + 90);
+      const rows = (await this.env.DB
+        .prepare(
+          `SELECT ship_id, target_body_id, sequence FROM game_ship_nodes
+            WHERE status = 'in_transit' AND ship_id IN (${chunk.map(() => '?').join(',')})`,
+        )
+        .bind(...chunk).all()).results ?? [];
+      for (const r of rows) {
+        const prev = landing.get(r.ship_id);
+        if (!prev || r.sequence > prev.sequence) landing.set(r.ship_id, r);
+      }
+    }
+
+    const rm = makeRouteMath(this.env.DB, gameId);
+    for (const d of cands) {
+      try {
+        const fly = landing.get(d.ship_id);
+        const from = fly && fly.sequence < d.sequence ? fly.target_body_id : d.dep_body_id;
+        await this.gateAutopilotLeg(gameId, tick, d, from, pairs, rm);
+      } catch (e) {
+        console.error('gate autopilot failed; flying the leg as ordered', e, { nodeId: d.id });
+      }
+    }
+  }
+
+  async gateAutopilotLeg(gameId, tick, d, from, pairs, rm) {
+    const to = d.target_body_id;
+    if (!from || !to || from === to) return;
+    const fac = d.owner_faction_id;
+
+    // A. Gate to its own far end: the crossing.
+    const pair = pairs.find(p => (p.a === from && p.b === to) || (p.b === from && p.a === to));
+    if (pair) {
+      const hop = gateTransitTicks(await rm.computeLegTicks(fac, from, to, tick), pair.fraction);
+      await this.replanLeg(tick, d, from, to, tick + hop, rm);
+      const names = (await this.env.DB
+        .prepare('SELECT id, name FROM game_bodies WHERE id IN (?, ?)')
+        .bind(from, to).all()).results ?? [];
+      const nm = id => names.find(r => r.id === id)?.name ?? null;
+      await recordGateTransit(this.env.DB, gameId, tick, fac,
+        { id: from, name: nm(from) }, { id: to, name: nm(to) }, d.ship_name, pair.fraction != null);
+      return;
+    }
+
+    // A leg the autopilot added, now departing: planned for real, here.
+    const added = String(d.id).includes(':gw');
+
+    // B. A long leg a sun gate shortens. Cheap test first: the leg's own
+    // booked duration. A short hop never needs the planner.
+    const sun = pairs.filter(p => p.fraction != null);
+    const booked = Number(d.arrival_at_tick) - tick;
+    if (sun.length && !added && Number.isFinite(booked) && booked >= GATE_AUTOPILOT_MIN_LEG) {
+      const best = await planGateAwareHop({
+        computeLegTicks: rm.computeLegTicks, gateTransitTicks, gates: sun,
+        factionId: fac, fromId: from, toId: to, tick,
+      });
+      const direct = await rm.computeLegTicks(fac, from, to, tick);
+      if (best.viaGate && best.total <= Math.min(direct, booked) - GATE_AUTOPILOT_MIN_SAVING) {
+        await this.rerouteThroughGate(gameId, tick, d, from, to, best, sun, rm);
+        return;
+      }
+    }
+
+    if (added) {
+      await this.replanLeg(tick, d, from, to, tick + await rm.computeLegTicks(fac, from, to, tick), rm);
+    }
+  }
+
+  /** Rule B: this leg becomes the first of [to the gate], [across], [on]. */
+  async rerouteThroughGate(gameId, tick, d, from, to, best, sun, rm) {
+    const fac = d.owner_faction_id;
+    // Sitting on the near end already: the first leg IS the crossing.
+    const crossingFirst = sun.some(p => (p.a === from && p.b === best.target) || (p.b === from && p.a === best.target));
+    const near = crossingFirst ? from : best.target;
+    const p = sun.find(q => q.a === near || q.b === near);
+    const far = p.a === near ? p.b : p.a;
+
+    const legs = [];
+    let t = tick;
+    if (!crossingFirst) {
+      legs.push({ to: near, arrive: t + best.ticks });
+      t += best.ticks;
+    }
+    const hop = gateTransitTicks(await rm.computeLegTicks(fac, near, far, t), p.fraction);
+    legs.push({ to: far, arrive: t + hop });
+    t += hop;
+    if (far !== to) legs.push({ to, arrive: t + await rm.computeLegTicks(fac, far, to, t) });
+
+    // The first leg flies now, re-planned in place; the slide it reports
+    // is measured against the leg's ORIGINAL arrival, so it lands on the
+    // rest of the route only once, below.
+    const original = Number(d.arrival_at_tick);
+    const [first, ...rest] = legs;
+    await this.replanLeg(tick, d, from, first.to, first.arrive, rm, { slide: false });
+    const DB = this.env.DB;
+    const stmts = [
+      // Room in the sequence for the added legs, so the route still
+      // reads in order (and the next chained order still departs from
+      // its true last stop).
+      DB.prepare(`UPDATE game_ship_nodes SET sequence = sequence + ?
+                   WHERE ship_id = ? AND sequence > ?`)
+        .bind(rest.length, d.ship_id, d.sequence),
+    ];
+    let sched = first.arrive;
+    rest.forEach((leg, k) => {
+      stmts.push(DB.prepare(
         `INSERT INTO game_ship_nodes
            (id, game_id, ship_id, sequence, anchor_kind, target_body_id,
             scheduled_t, arrival_at_tick, dv_prograde, dv_normal, dv_radial, fuel_cost,
-            launch_x, launch_y, launch_vx, launch_vy, accel, flip_tick, brake_accel,
-            accel_ramp, accel_max, accel_tau,
             status, committed_at_tick)
-         VALUES (?, ?, ?, ?, 'absolute', ?, ?, ?, 0, 0, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'committed', ?)`,
+         VALUES (?, ?, ?, ?, 'absolute', ?, ?, ?, 0, 0, 0, 0, 'committed', ?)`,
+      ).bind(`${d.ship_id}:gw${tick}:n${d.sequence + k + 1}`, gameId, d.ship_id,
+             d.sequence + k + 1, leg.to, sched, leg.arrive, tick));
+      sched = leg.arrive;
+    });
+    const slide = legs[legs.length - 1].arrive - original;
+    // Read before the batch renumbers them: the rest of the route, as it
+    // stands, slid behind the last added leg.
+    stmts.push(...await this.slideRoute(d.ship_id, d.sequence, slide, to, rm));
+    await DB.batch(stmts);
+    console.log('gate autopilot: rerouted', { gameId, nodeId: d.id, from, to, via: near, saved: -slide });
+  }
+
+  /**
+   * Re-plan a departing leg in place: new target and arrival, a launch plan
+   * that matches them, and (unless told not to) every later leg of the
+   * route slid by the change, so a chain keeps its waits. Mutates `d` so
+   * the departure pass promotes the leg it now is.
+   */
+  async replanLeg(tick, d, from, to, arrive, rm, { slide = true } = {}) {
+    const old = Number(d.arrival_at_tick);
+    const plan = await this.legLaunchPlan(tick, d.ship_id, from, to, arrive, rm.bodyPosAt);
+    const DB = this.env.DB;
+    const stmts = [DB.prepare(
+      `UPDATE game_ship_nodes
+          SET target_body_id = ?, arrival_at_tick = ?,
+              launch_x = ?, launch_y = ?, launch_vx = ?, launch_vy = ?,
+              accel = ?, flip_tick = ?, brake_accel = ?,
+              accel_ramp = ?, accel_max = ?, accel_tau = ?,
+              dv_prograde = 0, dv_normal = 0, dv_radial = 0
+        WHERE id = ?`,
+    ).bind(to, arrive, plan.lx, plan.ly, plan.lvx, plan.lvy, plan.acc, plan.flip, plan.brk,
+           plan.rmp, plan.amax, plan.atau, d.id)];
+    if (slide) stmts.push(...await this.slideRoute(d.ship_id, d.sequence, arrive - old, to, rm));
+    await DB.batch(stmts);
+    d.target_body_id = to;
+    d.arrival_at_tick = arrive;
+  }
+
+  /**
+   * The statements that slide a hull's queued legs after `afterSeq` by
+   * `by` ticks, each re-aimed from where it will now really leave: a
+   * leg's launch point is a position AT its departure tick, so moving the
+   * tick without moving the point would draw the hull leaving from where
+   * the body used to be. Rows are addressed by id, so this composes with
+   * a batch that renumbers them. Intercepts only slide; their plan is the
+   * target ship's, not a body's.
+   */
+  async slideRoute(shipId, afterSeq, by, departFrom, rm) {
+    if (!Number.isFinite(by) || by === 0) return [];
+    const rows = (await this.env.DB
+      .prepare(
+        `SELECT id, sequence, target_body_id, scheduled_t, arrival_at_tick, rv_meet_tick, rv_follow_ship_id
+           FROM game_ship_nodes
+          WHERE ship_id = ? AND status = 'committed' AND sequence > ?
+          ORDER BY sequence`,
       )
-      .bind(nodeId, gameId, shipId, seq, targetBodyId, tick, arrive,
-            lx, ly, lvx, lvy, acc, flip, brk, rmp, amax, atau, tick)
-      .run();
-    flyingShips.add(shipId);
-    return arrive;
+      .bind(shipId, afterSeq).all()).results ?? [];
+    const DB = this.env.DB;
+    const out = [];
+    let from = departFrom;
+    for (const r of rows) {
+      const sched = Number(r.scheduled_t) + by;
+      const arrive = r.arrival_at_tick == null ? null : Number(r.arrival_at_tick) + by;
+      const intercept = r.rv_meet_tick != null || r.rv_follow_ship_id != null;
+      if (intercept || arrive == null || !from || !r.target_body_id) {
+        out.push(DB.prepare('UPDATE game_ship_nodes SET scheduled_t = ?, arrival_at_tick = ? WHERE id = ?')
+          .bind(sched, arrive, r.id));
+      } else {
+        const plan = await this.legLaunchPlan(sched, shipId, from, r.target_body_id, arrive, rm.bodyPosAt);
+        out.push(DB.prepare(
+          `UPDATE game_ship_nodes
+              SET scheduled_t = ?, arrival_at_tick = ?,
+                  launch_x = ?, launch_y = ?, launch_vx = ?, launch_vy = ?,
+                  accel = ?, flip_tick = ?, brake_accel = ?,
+                  accel_ramp = ?, accel_max = ?, accel_tau = ?
+            WHERE id = ?`,
+        ).bind(sched, arrive, plan.lx, plan.ly, plan.lvx, plan.lvy, plan.acc, plan.flip, plan.brk,
+               plan.rmp, plan.amax, plan.atau, r.id));
+      }
+      from = r.target_body_id ?? from;
+    }
+    return out;
   }
 
   async peacePairs(gameId, tick) {
@@ -4865,8 +5127,9 @@ export class Room {
     const departures = (await this.env.DB
       .prepare(
         `SELECT n.id, n.ship_id, n.target_body_id, n.scheduled_t,
-                n.arrival_at_tick,
-                s.parent_body_id AS dep_body_id
+                n.arrival_at_tick, n.sequence, n.rv_meet_tick, n.rv_follow_ship_id,
+                s.parent_body_id AS dep_body_id, s.ship_class, s.owner_faction_id,
+                s.name AS ship_name
            FROM game_ship_nodes n
            JOIN game_ships s ON s.id = n.ship_id
           WHERE n.game_id = ?
@@ -4877,6 +5140,15 @@ export class Room {
       )
       .bind(gameId, tick)
       .all()).results ?? [];
+
+    // Through a gate, a leg flies at the gate's discount however it was
+    // ordered (gateAutopilot). Before the promotion, which reads the
+    // arrival it may have changed.
+    try {
+      await this.gateAutopilot(gameId, tick, departures);
+    } catch (e) {
+      console.error('gate autopilot pass failed', e);
+    }
 
     for (const d of departures) {
       // arrival_at_tick is set at intent-recording time by

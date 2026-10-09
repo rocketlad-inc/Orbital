@@ -66,6 +66,7 @@ import { MEGA_STRIKE_CHARGE_TICKS, MEGASTRUCTURES } from '../game/megastructures
 import { isCapitalHull } from '../render/megastructureArt';
 import { BuildPanel } from './BuildPanel';
 import { fleetPath } from '../multiplayer/fleetWire';
+import { gateRouteFor } from '../game/gateRoute';
 import { t, tn } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 
@@ -1214,6 +1215,23 @@ export const ShipPanel: React.FC = () => {
 
   // Queue (torch chained legs).
   const queuedTransits = ship.queuedTransits || [];
+
+  // THROUGH A GATE, SAID BEFORE IT LAUNCHES. The client posts the
+  // ordinary burn and the server applies the gate as the leg departs
+  // (gateRoute.ts), so until then the card's own ETA is the long way
+  // round. This line says what will really happen.
+  const gateNote = (fromId: string | null | undefined, toId: string, ticks: number) => {
+    if (!isOwn) return null;
+    const r = gateRouteFor(gameState.bodies, gameState.megastructures, fromId, toId, ticks, ship.class);
+    if (!r) return null;
+    return (
+      <div className="order-details" style={{ color: '#7dd3fc' }}>
+        ◎ {r.crossing
+          ? t('ship.panel.viaGateCrossing', { gate: r.gateName, n: String(r.etaTicks ?? 1) })
+          : t('ship.panel.viaGate', { gate: r.gateName })}
+      </div>
+    );
+  };
 
   // WHAT COMMIT WOULD LAUNCH -- derived ONCE and offered in two places.
   //
@@ -2899,6 +2917,7 @@ export const ShipPanel: React.FC = () => {
                               <div className="order-details">
                                 {t('ship.panel.etaDv', { eta: Math.max(0, plan.arriveTick - gameState.currentTick).toFixed(0), dv: plan.totalDv.toFixed(2) })}
                               </div>
+                              {pendingNode && gateNote(ship.orbit.parentBodyId, plan.targetBodyId, plan.arriveTick - plan.startTick)}
                             </>
                           )}
                         </div>
@@ -2931,6 +2950,7 @@ export const ShipPanel: React.FC = () => {
                               <div className="order-details">
                                 {t('ship.panel.dvTrip', { dv: plan.totalDv.toFixed(2), n: tripTime.toFixed(0) })}
                               </div>
+                              {gateNote(ship.orbit.parentBodyId, plan.targetBodyId, tripTime)}
                             </>
                           )}
                         </div>
@@ -2978,6 +2998,10 @@ export const ShipPanel: React.FC = () => {
                   ))}
                   {queuedTransits.map((qt, i) => {
                     const targetBody = gameState.bodies.find(b => b.id === qt.targetBodyId);
+                    // A chained leg leaves from wherever the one before it lands.
+                    const legFrom = i > 0 ? queuedTransits[i - 1].targetBodyId
+                      : (ship.plannedTransit?.targetBodyId ?? ship.transit?.currentTransfer.targetBodyId
+                        ?? ship.orbit.parentBodyId);
                     return (
                       <div key={`${qt.targetBodyId}-${qt.startTick}-${i}`} className="order-item status-queued">
                         <div className="order-info">
@@ -2985,6 +3009,7 @@ export const ShipPanel: React.FC = () => {
                           <div className="order-details">
                             {t('ship.panel.queuedLine', { dv: qt.totalDv.toFixed(2), tick: qt.arriveTick.toFixed(0) })}
                           </div>
+                          {gateNote(legFrom, qt.targetBodyId, qt.arriveTick - qt.startTick)}
                         </div>
                         <div className="order-actions">
                           <button className="delete-btn" onClick={() => handleRemoveQueuedTransfer(i)}>✕</button>

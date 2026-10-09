@@ -610,3 +610,50 @@ export async function advanceSunGates(env, gameId, tick, conf, hooks = null) {
   }
   return { stage: 'running', omen };
 }
+
+// ---- a hull going through -------------------------------------------------
+
+/**
+ * The chronicle row for one hull going through a gate: the map's mouth
+ * flash, and the Herald's "first through" story for a sun gate.
+ *
+ * Shared by the manual LAUNCH button (actions.js) and the gate autopilot
+ * (room.js), so a crossing reads the same however it was ordered.
+ * `gate` and `far` are { id, name }. Decoration: never throws.
+ */
+export async function recordGateTransit(DB, gameId, tick, factionId, gate, far, shipName, sunGate) {
+  try {
+    // The FIRST hull through a sun gate is front-page news (digest.js),
+    // so the row says whether this is it. Asked before it is written.
+    let first = false;
+    if (sunGate) {
+      const prior = await DB
+        .prepare(
+          `SELECT 1 AS x FROM chronicle_entries
+            WHERE game_id = ? AND kind = 'gate_transit' AND body_id IN (?, ?) LIMIT 1`,
+        )
+        .bind(gameId, gate.id, far.id).first();
+      first = !prior;
+    }
+    await DB
+      .prepare(
+        `INSERT INTO chronicle_entries
+          (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
+         VALUES (?, ?, ?, 'gate_transit', ?, ?, ?, 'public', ?)`,
+      )
+      .bind(
+        `gtx_${crypto.randomUUID().slice(0, 10)}`, gameId, tick,
+        factionId, gate.id,
+        JSON.stringify({
+          from: gate.name, to: far.name, ship: shipName, sun_gate: sunGate, first,
+          // Both far ends are called "Sol Gate", so name the system the
+          // hull is bound for: the far system outbound, Sol coming home.
+          to_system: sunGate
+            ? (SUN_GATE_SYSTEMS.find(x => x.solGate === gate.name)?.label ?? 'Sol')
+            : null,
+        }),
+        Date.now(),
+      )
+      .run();
+  } catch { /* decoration */ }
+}

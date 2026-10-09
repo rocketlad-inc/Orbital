@@ -498,6 +498,8 @@ export const ship = {
   'ship.panel.fullySettled': '{name} is already fully settled',
   'ship.panel.gateLaunchTip': 'Launch to {dest} at {share} of the normal burn. The hull is in flight and can be intercepted on the way.',
   'ship.panel.gateLeg': 'gate leg → {name}',
+  'ship.panel.viaGateCrossing': 'Crosses the {gate} at launch: about T-{n}',
+  'ship.panel.viaGate': 'Goes through the {gate} at launch: the ETA drops then',
   'ship.panel.goTo': 'Go to {name}',
   'ship.panel.goToCaps': 'GO TO',
   'ship.panel.gunTransit': 'The spinal gun cannot charge under burn. Park it over a terraformed world.',

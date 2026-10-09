@@ -500,6 +500,8 @@ export const ship: Catalog = {
   'ship.panel.fullySettled': '{name} já está totalmente colonizado',
   'ship.panel.gateLaunchTip': 'Lançar para {dest} com {share} da manobra normal. O casco fica em voo e pode ser interceptado no caminho.',
   'ship.panel.gateLeg': 'trecho de portal → {name}',
+  'ship.panel.viaGateCrossing': 'Atravessa o {gate} no lançamento: cerca de T-{n}',
+  'ship.panel.viaGate': 'Passa pelo {gate} no lançamento: o ETA cai nessa hora',
   'ship.panel.goTo': 'Ir para {name}',
   'ship.panel.goToCaps': 'IR PARA',
   'ship.panel.gunTransit': 'O canhão espinhal não carrega durante uma manobra. Estacione-o sobre um mundo terraformado.',
