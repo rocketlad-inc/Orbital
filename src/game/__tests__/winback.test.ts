@@ -21,7 +21,7 @@ const lobby = (n: number, max: number, extra: object = {}) =>
 describe('planWinback', () => {
   it('sends nothing when nobody is waiting', () => {
     expect(planWinback({ eligible: [], lobbies: [lobby(3, 5)] }))
-      .toEqual({ mode: 'hold', sends: [], recipients: [], rooms: [] });
+      .toEqual({ mode: 'hold', reason: 'nobody_waiting', sends: [], recipients: [], rooms: [] });
   });
 
   it('spreads invitations across every open lobby, two per seat', () => {
@@ -42,6 +42,39 @@ describe('planWinback', () => {
     const plan = planWinback({ eligible: people(12), lobbies });
     const per = Object.fromEntries(plan.rooms.map(r => [r.room.id, r.count]));
     expect(per).toEqual({ test: 2, pallas: 2, diplo: 8 });
+  });
+
+  it('counts invitations already out, and only tops up the difference', () => {
+    // Diplo has 4 seats (8 invitations' worth); 5 are still out from last hour
+    const diplo = lobby(2, 6, { id: 'diplo' });
+    const plan = planWinback({ eligible: people(20), lobbies: [diplo], pending: { diplo: 5 } });
+    expect(plan.rooms).toEqual([{ room: diplo, count: 3, pending: 5 }]);
+    expect(plan.sends).toHaveLength(3);
+  });
+
+  it('holds when every open seat already has its invitations out', () => {
+    const pallas = lobby(4, 5, { id: 'pallas' });
+    const plan = planWinback({ eligible: people(20), lobbies: [pallas], pending: { pallas: 2 } });
+    expect(plan.mode).toBe('hold');
+    expect(plan.reason).toBe('invited');
+    expect(plan.rooms).toEqual([{ room: pallas, count: 0, pending: 2 }]);
+  });
+
+  it('a saturated lobby does not stop invitations to the next one', () => {
+    const plan = planWinback({
+      eligible: people(20),
+      lobbies: [lobby(4, 5, { id: 'a' }), lobby(1, 4, { id: 'b' })],
+      pending: { a: 2, elsewhere: 9 },
+    });
+    expect(plan.rooms.map(r => [r.room.id, r.count, r.pending])).toEqual([['a', 0, 2], ['b', 6, 0]]);
+  });
+
+  it('a real send can carry its own sign-in link', () => {
+    const href = 'https://orbital-empire.com/api/email/go?t=abc';
+    const c = composeWinback('en', 'seat', seated(3, 5, { id: 'PV48OAq76SrJ' }), {}, { href });
+    expect(c.cta.url).toBe(href);
+    expect(c.hero.href).toBe(href);
+    expect(c.cardHtml).toContain(`href="${href}"`);
   });
 
   it('fills the lobby closest to starting first when invitations run short', () => {

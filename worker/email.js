@@ -59,10 +59,11 @@ export function emailConfigured(env) {
  * @param opts.html
  * @param opts.text
  * @param opts.category    'games' | 'herald' — adds the unsubscribe headers
+ * @param opts.roomId      the lobby/game the mail is about, when there is one
  * @returns {{sent:boolean, reason?:string}}
  */
 export async function sendEmail(env, opts) {
-  const { userId = null, to, kind, dedupeKey = null, subject, html, text, category = null } = opts;
+  const { userId = null, to, kind, dedupeKey = null, subject, html, text, category = null, roomId = null } = opts;
   if (!emailConfigured(env)) return { sent: false, reason: 'not_configured' };
   if (!to || UNDELIVERABLE.test(to)) return { sent: false, reason: 'undeliverable' };
 
@@ -71,8 +72,8 @@ export async function sendEmail(env, opts) {
   let logId = null;
   try {
     const res = await env.DB
-      .prepare('INSERT INTO email_log (user_id, kind, dedupe_key, ok, created_ms) VALUES (?, ?, ?, 1, ?)')
-      .bind(userId, kind, dedupeKey, Date.now())
+      .prepare('INSERT INTO email_log (user_id, kind, dedupe_key, ok, created_ms, room_id) VALUES (?, ?, ?, 1, ?, ?)')
+      .bind(userId, kind, dedupeKey, Date.now(), roomId)
       .run();
     logId = res.meta?.last_row_id ?? null;
   } catch {

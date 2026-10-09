@@ -35,6 +35,7 @@ interface Recent {
   name: string; email: string | null; mode: Mode; sent_ms: number; ok: boolean; error: string | null;
   opened_ms: number | null; open_count: number; clicked_ms: number | null; joined_ms: number | null;
   playing: boolean; unsubscribed: boolean;
+  room_name?: string | null; signed_in?: boolean;
 }
 interface Payload {
   enabled: boolean;
@@ -49,7 +50,12 @@ interface Payload {
   metrics: { totals: Counts; byMode: Record<Mode, Counts>; daily: Day[]; recent: Recent[] };
   queue: {
     waiting: number; enabled: boolean; next_run_ms: number | null; hourly_cap: number;
-    next: { mode: 'seat' | 'pool' | 'hold'; count: number; rooms: { name: string; n: number; max_players: number; count: number }[] };
+    next: {
+      mode: 'seat' | 'pool' | 'hold';
+      reason?: 'invited' | 'too_few' | 'nobody_waiting' | null;
+      count: number;
+      rooms: { name: string; n: number; max_players: number; count: number; pending?: number }[];
+    };
   };
 }
 
@@ -198,13 +204,19 @@ export const EmailAdmin: React.FC = () => {
   const { totals, byMode, daily, recent } = data.metrics;
   const q = data.queue;
   const maxDay = Math.max(1, ...daily.map(d => d.sent));
+  const lobbyWords = (r: Payload['queue']['next']['rooms'][number]) =>
+    `${r.name} (${r.n} of ${r.max_players}${r.count ? `, ${r.count} new` : ''}${r.pending ? `, ${r.pending} already invited` : ''})`;
   const nextLine = !q.enabled
     ? `Off. ${q.waiting} player${q.waiting === 1 ? '' : 's'} would be eligible.`
     : q.next.mode === 'seat'
-      ? `Next run ${clock(q.next_run_ms!)}: ${q.next.count} email${q.next.count === 1 ? '' : 's'} inviting players to ${q.next.rooms.map(r => `${r.name} (${r.n} of ${r.max_players}, ${r.count} invited)`).join(', ')}.`
+      ? `Next run ${clock(q.next_run_ms!)}: ${q.next.count} email${q.next.count === 1 ? '' : 's'} inviting players to ${q.next.rooms.map(lobbyWords).join(', ')}.`
       : q.next.mode === 'pool'
         ? `Next run ${clock(q.next_run_ms!)}: ${q.next.count} emails gathering a new game.`
-        : `Next run ${clock(q.next_run_ms!)}: holding. Nothing is open and too few are waiting to fill a game together.`;
+        : q.next.reason === 'invited'
+          ? `Next run ${clock(q.next_run_ms!)}: holding. Every open seat already has invitations out: ${q.next.rooms.map(lobbyWords).join(', ')}.`
+          : q.next.reason === 'nobody_waiting'
+            ? `Next run ${clock(q.next_run_ms!)}: nobody is waiting.`
+            : `Next run ${clock(q.next_run_ms!)}: holding. Nothing is open and too few are waiting to fill a game together.`;
 
   return (
     <div className="aa em">
@@ -386,16 +398,19 @@ export const EmailAdmin: React.FC = () => {
           <div className="aa-scroll-x">
             <table className="aa-table em-table">
               <thead>
-                <tr><th>Player</th><th>Version</th><th>Sent</th><th>Opened</th><th>Clicked</th><th>Joined</th><th>Playing</th></tr>
+                <tr><th>Player</th><th>Invited to</th><th>Sent</th><th>Opened</th><th>Clicked</th><th>Joined</th><th>Playing</th></tr>
               </thead>
               <tbody>
                 {recent.map((r, i) => (
                   <tr key={i} className={r.ok ? '' : 'em-row--failed'}>
                     <td title={r.email ?? ''}>{r.name}{r.unsubscribed && <span className="em-tag">unsubscribed</span>}</td>
-                    <td>{r.mode === 'seat' ? 'Filling up' : 'Forming'}</td>
+                    <td>{r.mode === 'pool' ? 'A new game' : (r.room_name ?? 'An open game')}</td>
                     <td>{r.ok ? ago(now, r.sent_ms) : <span className="em-bad">failed: {r.error}</span>}</td>
                     <td>{r.opened_ms ? `${ago(now, r.opened_ms)}${r.open_count > 1 ? ` ×${r.open_count}` : ''}` : '—'}</td>
-                    <td>{r.clicked_ms ? ago(now, r.clicked_ms) : '—'}</td>
+                    <td>
+                      {r.clicked_ms ? ago(now, r.clicked_ms) : '—'}
+                      {r.signed_in && <span className="em-tag em-tag--ok" title="Signed in with the email's button">by link</span>}
+                    </td>
                     <td>{r.joined_ms ? <span className="em-good">{ago(now, r.joined_ms)}</span> : '—'}</td>
                     <td>{r.playing ? <span className="em-good">yes</span> : '—'}</td>
                   </tr>

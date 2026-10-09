@@ -1322,6 +1322,7 @@ import * as discord from './discord.js';
 import * as discordOauth from './discordOauth.js';
 import * as configAdmin from './configAdmin.js';
 import * as emailAdmin from './emailAdmin.js';
+import * as emailLogin from './emailLogin.js';
 import * as analytics from './analytics.js';
 import * as adminDashboard from './adminDashboard.js';
 import * as store from './store.js';
@@ -1346,7 +1347,7 @@ import * as devlog from './devlog.js';
 import * as gameFeed from './gameFeed.js';
 import { carryNamePools } from './namePoolHistory.js';
 
-const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, analytics, configAdmin, emailAdmin, store, skins, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed];
+const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, analytics, configAdmin, emailAdmin, emailLogin, store, skins, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed];
 
 function matchPattern(pattern, pathname) {
   if (typeof pattern === 'string') {
@@ -1999,6 +2000,12 @@ export default {
       // signed; the handler always answers with the picture.
       if (req.method === 'GET' && url.pathname.startsWith('/api/email/o/')) {
         return (await dispatchFeatureRoute(req, env, url, null)) ?? new Response(null, { status: 404 });
+      }
+
+      // An email's sign-in button (worker/emailLogin.js): the reader has
+      // no session yet; that is the point. The token is the credential.
+      if (url.pathname === '/api/email/go' && (req.method === 'GET' || req.method === 'POST')) {
+        return dispatchFeatureRoute(req, env, url, null);
       }
 
       // everything below requires a session
