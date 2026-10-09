@@ -77,6 +77,10 @@ export interface RenderContext {
   /** The tick the next sun gate comes out of the Sun, while its warning
    *  is running (state.js sun_gate_next): the Sun shows the omen. */
   sunGateEmergeTick?: number | null;
+  /** The body the omen shows on: the Sun for a gate, but the far
+   *  system's own heart when the Leviathan is bringing it (it launches
+   *  from there, not from the Sun). Local id; 'sol' when absent. */
+  sunGateOmenBodyId?: string | null;
   /** Megastructure build state, keyed on LOCAL body id. A site is a
    *  body; this is the part a body cannot express. */
   megastructures?: Record<string, MegastructureState>;
@@ -1458,6 +1462,17 @@ function getBlackHoleDisk(diskR: number): HTMLCanvasElement | null {
   c.putImageData(img, 0, 0);
   bhDiskCache.set(size, cv);
   return cv;
+}
+
+/** THE OMEN (sunSquid.ts): the six ticks before a gate comes out, its
+ *  source shows something rising through it. The Sun for a gate; the far
+ *  system's heart for the Leviathan, which launches from there. */
+function drawGateOmen(body: Body, canvasPos: { x: number; y: number }, radius: number, ctx: RenderContext) {
+  const emerge = ctx.sunGateEmergeTick;
+  if (emerge == null || ctx.t >= emerge || ctx.t < emerge - SUN_GATE_OMEN_TICKS) return;
+  if (body.id !== (ctx.sunGateOmenBodyId ?? 'sol')) return;
+  drawSunOmen(ctx.ctx, canvasPos.x, canvasPos.y, radius * 0.85,
+    1 - (emerge - ctx.t) / SUN_GATE_OMEN_TICKS, (emerge * 2.39996) % (Math.PI * 2), ctx.nowMs ?? 0);
 }
 
 function drawBlackHoleBody(
@@ -4310,13 +4325,7 @@ export function drawBody(
     drawWarpGateBody(body, canvasPos, radius, ctx);
   } else if (body.type === 'star') {
     drawStarBody(body, canvasPos, radius, ctx);
-    // THE OMEN (sunSquid.ts): the six ticks before a gate comes out, the
-    // Sun itself shows something rising through it.
-    const emerge = ctx.sunGateEmergeTick;
-    if (body.id === 'sol' && emerge != null && ctx.t < emerge && ctx.t >= emerge - SUN_GATE_OMEN_TICKS) {
-      drawSunOmen(ctx.ctx, canvasPos.x, canvasPos.y, radius * 0.85,
-        1 - (emerge - ctx.t) / SUN_GATE_OMEN_TICKS, (emerge * 2.39996) % (Math.PI * 2), ctx.nowMs ?? 0);
-    }
+    drawGateOmen(body, canvasPos, radius, ctx);
     // Dyson Sphere lattice — the win-condition megaproject finally has
     // a face on the map. Segments of the sun-cage light up with real
     // construction progress; a completed sphere reads as a full golden
@@ -4326,6 +4335,7 @@ export function drawBody(
     }
   } else if (body.type === 'black_hole') {
     drawBlackHoleBody(body, canvasPos, radius, ctx);
+    drawGateOmen(body, canvasPos, radius, ctx);
   } else if (body.type === 'gas_giant') {
     drawGasGiantBody(body, canvasPos, radius, ctx);
   } else {

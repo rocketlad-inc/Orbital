@@ -343,6 +343,13 @@ const FOG_MAX_AGE_MS = 140;
 /** The sensor edge's bubble round a world you can see by presence: past
  *  its drawn disc, room for the hulls parked round it, in px. */
 const PRESENCE_BUBBLE_PX = 36;
+/** Where the Leviathan's omen shows, by the system it launches from
+ *  (state.js sun_gate_next.system, the SUN_GATE_SYSTEMS label): the far
+ *  system's heart, never the Sun it does not come out of. */
+const KAIJU_OMEN_BODY: Record<string, string> = {
+  'Cygnus X-1': 'cygnus_x',
+  Centauri: 'centauri_a',
+};
 let fogState: unknown = null;
 let fogAt = -1e9;
 let fogVis: ReturnType<typeof computeVisibility> | null = null;
@@ -1529,6 +1536,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       megastructures: gameState.megastructures,
       // The omen on the Sun while a gate's warning runs (sunSquid.ts).
       sunGateEmergeTick: gameState.sunGateNext?.emergeTick ?? null,
+      sunGateOmenBodyId: gameState.sunGateNext?.kaiju
+        ? (KAIJU_OMEN_BODY[gameState.sunGateNext.system ?? ''] ?? 'sol')
+        : 'sol',
     };
 
     // Drawn worlds, kept for the badge pass below to extend with hulls.
