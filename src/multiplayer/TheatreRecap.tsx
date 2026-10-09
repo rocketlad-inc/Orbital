@@ -91,6 +91,9 @@ const THEATRE_ORBIT_RATE = 0.00004;
  *  2026-10-09: "the firing before they arrive is confusing"). */
 const ARRIVE_FRAC = 0.3;
 const CROSS_FRAC = 0.42;
+/** A hull that has left the fight boosts off the board over this much of
+ *  the beat AFTER its last one. */
+const DEPART_FRAC = 0.45;
 /** A jump of this many ticks or more between beats is a LULL: the system
  *  view plays every campaign fought in a system as one reel (worker
  *  systemCampaigns), and a campaign only ends after BATTLE_QUIET_TICKS (6)
@@ -977,15 +980,11 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
             heading: pose.heading, burn: pose.burn, plume: pose.lengthMul, size, moving: true, depth: 1,
           };
         }
-        if (left.get(id) === beat.tick) {
-          const far = offSystem(home);
-          const u = t * t;
-          return {
-            x: home.x + (far.x - home.x) * u, y: home.y + (far.y - home.y) * u,
-            heading: Math.atan2(far.y - home.y, far.x - home.x),
-            burn: Math.min(1, 0.25 + t * 0.95), plume: 1, size, moving: true, depth: 1,
-          };
-        }
+        // A hull on its LAST beat holds its place and fights it out; it
+        // leaves at the start of the next one (see "leaving the board"
+        // below). Flying it out across this beat had it shot at while
+        // streaking off the edge of the frame, and a hull that came for
+        // one tick left before anyone could see it fight.
         const from = crossedFrom(id);
         if (from && t < CROSS_FRAC) {
           const k = t / CROSS_FRAC;
@@ -1220,6 +1219,40 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
         }
         };
         (q.depth < 0 && h.kind !== 'city' ? behindQ : frontQ).push(paint);
+      }
+
+      // ---- leaving the board ----------------------------------------------
+      // A hull whose last beat was the previous one (and which did not
+      // die) boosts away nose-first over the start of this one, from the
+      // place it held, under no fire: everything it was part of is over.
+      if (prevBeat) {
+        for (const [id, lt] of left) {
+          if (lt !== prevBeat.tick || beat.where.has(id) || t >= DEPART_FRAC) continue;
+          const h = hulls.get(id);
+          if (!h || h.kind !== 'ship') continue;
+          const w = prevBeat.where.get(id);
+          const home = homeAt(w, id);
+          const far = offSystem(home);
+          const k = t / DEPART_FRAC;
+          const u = k * k;
+          const x = home.x + (far.x - home.x) * u, y = home.y + (far.y - home.y) * u;
+          const heading = Math.atan2(far.y - home.y, far.x - home.x);
+          const size = sizeAt(w, h.cls);
+          const col = colorOf(h.fid);
+          frontQ.push(() => {
+            const dir = { x: Math.cos(heading), y: Math.sin(heading) };
+            drawThrustExhaust(g,
+              { x: x - dir.x * size * 0.42, y: y - dir.y * size * 0.42 },
+              dir, size, Math.min(1, 0.25 + k * 0.95), h.cls ?? undefined, rgbOf(col));
+            const icon = hullImage(h.cls, col, h.variant, trimOf(h.fid));
+            if (!icon) return;
+            g.save();
+            g.translate(x, y);
+            g.rotate(heading);
+            g.drawImage(icon, -size / 2, -size / 2, size, size);
+            g.restore();
+          });
+        }
       }
 
       // ---- what is left of the dead --------------------------------------
