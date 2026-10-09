@@ -120,7 +120,7 @@ export const GroupIntercept: React.FC<GroupInterceptProps> = ({ ships, onClose, 
       const el = document.querySelector('.group-selection-panel') ?? document.querySelector('.ship-panel');
       const r = el?.getBoundingClientRect();
       setPopAt(r && r.width > 0
-        ? { left: Math.round(r.right + 8), top: Math.round(r.top) }
+        ? { left: Math.round(r.right + 8), top: Math.max(8, Math.round(r.top)) }
         : { left: 16, top: 70 });
     };
     place();
