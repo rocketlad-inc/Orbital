@@ -75,10 +75,26 @@ export async function handleGifUpload(req, env, token) {
 
 /** The operator's view (index.js gates it on the agent key):
  *  POST dry-run {token} renders a battle's GIF on the server without
- *  posting it; GET status lists the last renders and the queue. */
+ *  posting it; POST post {token, gameId} renders it and posts the replay
+ *  for real, into the feed of `gameId` (default: the battle's own game),
+ *  under that feed's rules; GET status lists the last renders and the
+ *  queue. */
 export async function handleRecapGifInternal(req, env, action) {
   if (!env.RECAP_GIF) return new Response('not here', { status: 404 });
   if (action === 'status') return stubOf(env).fetch('https://recap-gif/status');
+  if (action === 'post' && req.method === 'POST') {
+    const { token, gameId } = await req.json().catch(() => ({}));
+    if (!token) return new Response('token required', { status: 400 });
+    const share = await env.DB
+      .prepare(`SELECT s.battle_id, b.game_id FROM battle_shares s JOIN battles b ON b.id = s.battle_id
+                 WHERE s.token = ? AND s.revoked_at_ms IS NULL`)
+      .bind(token).first();
+    if (!share) return new Response('no such recap', { status: 404 });
+    return stubOf(env).fetch('https://recap-gif/enqueue', {
+      method: 'POST',
+      body: JSON.stringify({ token, battleId: share.battle_id, gameId: gameId || share.game_id }),
+    });
+  }
   if (action === 'dry-run' && req.method === 'POST') {
     const { token } = await req.json().catch(() => ({}));
     if (!token) return new Response('token required', { status: 400 });

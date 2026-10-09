@@ -2009,7 +2009,7 @@ export default {
       // posts nothing, and the last renders. Agent key only, and the same
       // 404 as an unmapped route for anyone without it.
       {
-        const im = /^\/api\/internal\/recap-gif\/(dry-run|status)\/?$/.exec(url.pathname);
+        const im = /^\/api\/internal\/recap-gif\/(dry-run|post|status)\/?$/.exec(url.pathname);
         if (im) {
           const presented = req.headers.get('x-agent-key');
           if (!env.AGENT_KEY || !presented || !(await constantTimeEqual(presented, env.AGENT_KEY))) {
