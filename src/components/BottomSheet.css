@@ -92,3 +92,8 @@
   padding: 12px 16px 24px;
   -webkit-overflow-scrolling: touch;
 }
+
+/* Intercept picker sizes (ShipPanel). Tall while choosing from a list
+   or the radar; a peek after a pick so the map above shows the course. */
+.bottom-sheet--tall { max-height: 82vh; }
+.bottom-sheet--peek { max-height: min(340px, 48vh); }

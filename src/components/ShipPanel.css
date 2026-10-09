@@ -1570,3 +1570,8 @@
   font-size: 9px;
   margin-bottom: 4px;
 }
+
+/* Phone: the intercept picker takes over the sheet; the panel stays
+   mounted (its state survives) but steps aside. Beats the sheet's own
+   panel rules, which set display with high specificity. */
+.ship-panel.ship-panel--away { display: none !important; }
