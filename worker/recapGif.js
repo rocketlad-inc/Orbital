@@ -73,6 +73,22 @@ export async function handleGifUpload(req, env, token) {
   });
 }
 
+/** The operator's view (index.js gates it on the agent key):
+ *  POST dry-run {token} renders a battle's GIF on the server without
+ *  posting it; GET status lists the last renders and the queue. */
+export async function handleRecapGifInternal(req, env, action) {
+  if (!env.RECAP_GIF) return new Response('not here', { status: 404 });
+  if (action === 'status') return stubOf(env).fetch('https://recap-gif/status');
+  if (action === 'dry-run' && req.method === 'POST') {
+    const { token } = await req.json().catch(() => ({}));
+    if (!token) return new Response('token required', { status: 400 });
+    return stubOf(env).fetch('https://recap-gif/enqueue', {
+      method: 'POST', body: JSON.stringify({ token, dryRun: true }),
+    });
+  }
+  return new Response('not found', { status: 404 });
+}
+
 export class RecapGif {
   constructor(state, env) {
     this.state = state;
@@ -84,16 +100,24 @@ export class RecapGif {
     const st = this.state.storage;
 
     if (url.pathname === '/enqueue') {
-      const { gameId, battleId, token } = await req.json();
-      if (!gameId || !battleId || !token) return new Response('bad job', { status: 400 });
+      const { gameId, battleId, token, dryRun } = await req.json();
+      if (!token || (!dryRun && (!gameId || !battleId))) return new Response('bad job', { status: 400 });
       const id = crypto.randomUUID();
       const nonce = [...crypto.getRandomValues(new Uint8Array(16))]
         .map(b => b.toString(16).padStart(2, '0')).join('');
       // Keys sort by time, so jobs run in the order battles closed.
       await st.put(`job:${String(Date.now()).padStart(15, '0')}:${id}`,
-        { id, nonce, gameId, battleId, token, queuedAt: Date.now() });
+        { id, nonce, gameId, battleId, token, dryRun: !!dryRun, queuedAt: Date.now() });
       if ((await st.getAlarm()) == null) await st.setAlarm(Date.now() + 1000);
       return new Response('queued');
+    }
+
+    // The last renders, newest first: what was made, how big, how long.
+    if (url.pathname === '/status') {
+      const rows = [...(await st.list({ prefix: 'result:', reverse: true, limit: 20 })).values()];
+      const queued = (await st.list({ prefix: 'job:' })).size;
+      return new Response(JSON.stringify({ queued, results: rows }, null, 2),
+        { headers: { 'content-type': 'application/json' } });
     }
 
     if (url.pathname === '/upload') {
@@ -113,6 +137,12 @@ export class RecapGif {
         ticks: Number(req.headers.get('x-gif-ticks')) || 0,
         total: Number(req.headers.get('x-gif-total')) || 0,
       };
+      // A dry run (the agent-key test route) proves the render and stops
+      // here: nothing is posted anywhere.
+      if (active.dryRun) {
+        await st.put(`active:${jobId}`, { ...active, uploaded: true, posted: false, bytes: bytes.length, span });
+        return new Response('dry run: not posted');
+      }
       const { replayPost, postReplay } = await import('./recapShare.js');
       const post = await replayPost(this.env, active.battleId);
       let posted = false;
@@ -121,7 +151,7 @@ export class RecapGif {
           { name: 'battle.gif', type: 'image/gif', bytes }, span);
         posted = !!r?.posted;
       }
-      await st.put(`active:${jobId}`, { ...active, uploaded: true, posted, bytes: bytes.length });
+      await st.put(`active:${jobId}`, { ...active, uploaded: true, posted, bytes: bytes.length, span });
       console.log('recap gif posted', active.battleId, bytes.length, span, posted);
       return new Response(posted ? 'posted' : 'not posted', { status: posted ? 200 : 502 });
     }
@@ -136,14 +166,24 @@ export class RecapGif {
     const [key, job] = next;
     await st.delete(key);
     await st.put(`active:${job.id}`, job);
+    const t0 = Date.now();
+    let error = null, page = null;
     try {
-      await this.render(job);
+      page = await this.render(job);
     } catch (e) {
+      error = String(e?.message ?? e).slice(0, 300);
       console.error('recap gif render failed', job.battleId, e);
     }
-    // No GIF made it: the battle still gets its replay post.
     const done = await st.get(`active:${job.id}`);
-    if (!done?.posted) {
+    await st.put(`result:${String(Date.now()).padStart(15, '0')}`, {
+      token: job.token, battleId: job.battleId ?? null, dryRun: !!job.dryRun,
+      uploaded: !!done?.uploaded, posted: !!done?.posted, bytes: done?.bytes ?? null,
+      span: done?.span ?? null, ms: Date.now() - t0, page, error,
+    });
+    const old = [...(await st.list({ prefix: 'result:' })).keys()];
+    if (old.length > 50) await st.delete(old.slice(0, old.length - 50));
+    // No GIF made it: the battle still gets its replay post.
+    if (!done?.posted && !job.dryRun) {
       try {
         const { replayPost, postReplay } = await import('./recapShare.js');
         const post = await replayPost(this.env, job.battleId);
@@ -174,6 +214,7 @@ export class RecapGif {
         { timeout: RENDER_TIMEOUT_MS, polling: 2000 });
       const result = await page.evaluate('JSON.stringify(window.__recapGif)');
       console.log('recap gif page', job.battleId, result);
+      return result;
     } finally {
       await browser.close().catch(() => {});
     }

@@ -2005,6 +2005,20 @@ export default {
         const token = decodeURIComponent(url.pathname.split('/')[3]);
         return handleGifUpload(req, env, token);
       }
+      // The replay GIF renderer's operator view: a dry-run render that
+      // posts nothing, and the last renders. Agent key only, and the same
+      // 404 as an unmapped route for anyone without it.
+      {
+        const im = /^\/api\/internal\/recap-gif\/(dry-run|status)\/?$/.exec(url.pathname);
+        if (im) {
+          const presented = req.headers.get('x-agent-key');
+          if (!env.AGENT_KEY || !presented || !(await constantTimeEqual(presented, env.AGENT_KEY))) {
+            return err(404, 'not_found', 'not found');
+          }
+          const { handleRecapGifInternal } = await import('./recapGif.js');
+          return handleRecapGifInternal(req, env, im[1]);
+        }
+      }
 
       if (req.method === 'GET' && url.pathname === '/api/devlog') {
         return devlog.routes
