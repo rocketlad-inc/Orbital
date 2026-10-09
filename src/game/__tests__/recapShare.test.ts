@@ -97,8 +97,9 @@ describe('routes', () => {
 
 describe('the replay goes to Discord when a battle closes', () => {
   /** A D1 that answers the summary's queries for one battle. */
-  function env(shipsLost: number, posts: any[], { cardsOff = false, token = 'tok12345678' } = {}) {
+  function env(shipsLost: number, posts: any[], { cardsOff = false, token = 'tok12345678', feed = 'all' as string | null } = {}) {
     const first = async (sql: string) => {
+      if (sql.includes('FROM game_feeds')) return feed ? { game_id: 'g', level: feed } : null;
       if (sql.includes('FROM battle_shares WHERE battle_id')) return token ? { token } : null;
       if (sql.includes('FROM battle_shares s')) {
         return { token, id: 'b1', game_id: 'g', body_id: null, body_name: 'Mars', started_tick: 115, ended_tick: 169,
@@ -154,6 +155,34 @@ describe('the replay goes to Discord when a battle closes', () => {
     ({ publishReplay: publish } = await import('../../../worker/recapShare.js'));
     await publish(env(45, posts), 'g', 'b1');
     expect(posts).toHaveLength(0);
+  });
+
+  it('posts nothing, and renders nothing, when the game feed would not take it', async () => {
+    const posts: any[] = [];
+    const queued: any[] = [];
+    jest.doMock('../../../worker/botSettings.js', () => ({ getSettings: async () => ({}) }));
+    jest.doMock('../../../worker/discord.js', () => ({ postChannelEmbed: async () => { posts.push(1); return { posted: true }; } }));
+    jest.doMock('../../../worker/recapGif.js', () => ({ queueBattleGif: async (...a: unknown[]) => { queued.push(a); return true; } }));
+    const { publishReplay: publish } = await import('../../../worker/recapShare.js');
+    await publish(env(45, posts, { feed: null }), 'g', 'b1');          // feed never set up
+    await publish(env(45, posts, { feed: 'off' }), 'g', 'b1');
+    await publish(env(5, posts, { feed: 'headlines' }), 'g', 'b1');    // not a headline (under 10 lost)
+    expect(posts).toHaveLength(0);
+    expect(queued).toHaveLength(0);
+    await publish(env(12, posts, { feed: 'headlines' }), 'g', 'b1');   // a headline
+    expect(queued).toHaveLength(1);
+  });
+
+  it('hands the post to the GIF renderer when there is one, instead of posting now', async () => {
+    const posts: any[] = [];
+    const queued: any[] = [];
+    jest.doMock('../../../worker/botSettings.js', () => ({ getSettings: async () => ({}) }));
+    jest.doMock('../../../worker/discord.js', () => ({ postChannelEmbed: async () => { posts.push(1); return { posted: true }; } }));
+    jest.doMock('../../../worker/recapGif.js', () => ({ queueBattleGif: async (...a: unknown[]) => { queued.push(a); return true; } }));
+    const { publishReplay: publish } = await import('../../../worker/recapShare.js');
+    await publish(env(45, posts), 'g', 'b1');
+    expect(posts).toHaveLength(0);
+    expect(queued).toEqual([[expect.anything(), 'g', 'b1', 'tok12345678']]);
   });
 
   it('never throws, whatever breaks', async () => {

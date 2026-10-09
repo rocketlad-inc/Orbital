@@ -267,6 +267,14 @@ export async function publishReplay(env, gameId, battleId) {
   try {
     const post = await replayPost(env, battleId);
     if (!post) return;
+    // Nothing to do when this game's feed would not take the post: it is
+    // off, or at 'headlines' and this is not one. Checked HERE, before the
+    // GIF, so a battle in a game with its feed off never spends browser
+    // time on a GIF nobody would see. (The fast-game cap is still applied
+    // when the post goes out.)
+    const feed = await import('./gameFeed.js');
+    const row = await feed.feedRow(env, gameId);
+    if (!row || !feed.levelAdmits(row.level, post.sum.shipsLost >= REPLAY_HEADLINE_LOST)) return;
     // With a browser to draw it in, the replay waits for its GIF and goes
     // out as one message (recapGif.js), which posts the plain embed itself
     // if the GIF cannot be made.
