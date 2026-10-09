@@ -680,6 +680,16 @@ const FLIGHT_FRAC = FX_TUNING.boltMs / TICK_MS;
 const KILL_AT_MS = (LAUNCH_SPREAD / 2 + FLIGHT_FRAC) * TICK_MS;
 /** Beats a wreck holds and fades over: combatFx WRECK_LIFE_TICKS. */
 const WRECK_LIFE_TICKS = 6;
+/** A hull arriving mid-fight brakes into its slot over this much of its
+ *  first beat, and nothing it fires or takes goes off until it is there.
+ *  It used to fly in across the whole beat while that beat's volleys
+ *  were already crossing it: "the firing before they arrive is
+ *  confusing" (Lorne, 2026-10-09). */
+const ARRIVE_FRAC = 0.3;
+/** Latest a volley may launch and still land, and finish its impact,
+ *  inside the beat. Fire to or from an arriving hull is fitted between
+ *  ARRIVE_FRAC and this, in the same order. */
+const LAUNCH_LAST = 1 - FLIGHT_FRAC - FX_TUNING.impactMs / TICK_MS - 0.01;
 /** Damage drains over this long once a round lands, so the bar moves
  *  with the hit that caused it. */
 const DRAIN_MS = 420;
@@ -1416,15 +1426,30 @@ export function BattleRecap({ d }: { d: Detail }) {
       // same on every replay.
       const shotIndex = new Map(frame.shot_log.map((sh, n) => [sh, n]));
       const nShots = Math.max(1, frame.shot_log.length);
+      // A hull arriving this beat neither fires nor is fired on until it
+      // has braked into its slot (ARRIVE_FRAC): its shots, both ways, are
+      // fitted into the rest of the launch window in the same order.
+      const arrivingNow = (id: string | null) => !!id && comings.arrived.get(id) === frame.tick;
       const shotClock = (sh: Frame['shot_log'][number], tick: number) => {
         const nudge = (hashStr(`${sh.a ?? ''}>${sh.t ?? ''}@${tick}`) % 997) / 997;
-        const launch = (((shotIndex.get(sh) ?? 0) + 0.15 + nudge * 0.7) / nShots) * LAUNCH_SPREAD;
+        const slot = ((shotIndex.get(sh) ?? 0) + 0.15 + nudge * 0.7) / nShots;
+        const launch = arrivingNow(sh.a) || arrivingNow(sh.t)
+          ? ARRIVE_FRAC + slot * (LAUNCH_LAST - ARRIVE_FRAC)
+          : slot * LAUNCH_SPREAD;
         return { launch, arriveMs: (launch + FLIGHT_FRAC) * TICK_MS };
       };
-      /** When the shot that killed this hull actually lands. */
+      /** When a hull that dies this beat goes up: as the LAST round to
+       *  hit it lands. Its killing shot is usually that round, but a hit
+       *  held back for an arrival can land later, and a round must never
+       *  fly into a wreck. */
       const killTimes = new Map<string, number>();
       for (const sh of frame.shot_log) {
         if (sh.kill && sh.t) killTimes.set(sh.t, shotClock(sh, frame.tick).arriveMs);
+      }
+      for (const sh of frame.shot_log) {
+        if (!sh.t || !sh.hit || !killTimes.has(sh.t)) continue;
+        const at = shotClock(sh, frame.tick).arriveMs;
+        if (at > killTimes.get(sh.t)!) killTimes.set(sh.t, at);
       }
       const killMs = (id: string) =>
         killTimes.get(id) ?? (LAUNCH_SPREAD / 2 + FLIGHT_FRAC) * TICK_MS;
@@ -1577,7 +1602,8 @@ export function BattleRecap({ d }: { d: Detail }) {
       /** How far through its arrival (or departure) a hull is, 0→1, and
        *  −1 when it is simply on station. */
       const transitOf = (id: string) => {
-        if (comings.arrived.get(id) === frame.tick) return t;
+        // Arrived and on station for the rest of the beat.
+        if (comings.arrived.get(id) === frame.tick) return t < ARRIVE_FRAC ? t / ARRIVE_FRAC : -1;
         if (comings.left.get(id) === frame.tick) return t;   // outbound
         return -1;
       };
