@@ -660,10 +660,14 @@ function ShareButton({ gameId, battleId }: { gameId: string; battleId: string })
 const TICK_MS = 2200;          // a tick reads as a beat, not a flicker
 // A volley is not a single event. Every gun on the board opening at the
 // instant the beat starts, and every round landing together, is a drum
-// hit rather than a battle — so each shot gets its own launch time inside
-// the first part of the beat, seeded from its shooter and the tick so
-// playback is identical every time.
-const LAUNCH_SPREAD = 0.34;    // volleys go off across this much of a beat
+// hit rather than a battle — so each shot gets its own launch time,
+// IN THE ORDER THE SERVER RESOLVED THEM (the shot log's order), spread
+// across most of the beat. Fire rolls down the line as a barrage, and a
+// killing shot lands after the hits that came before it. At 0.34, with
+// a hashed slot per shot, a fleet's fire read as one synchronized salvo
+// (Lorne, 2026-10-09). The last volley still lands, and its impact
+// finishes, inside the beat.
+const LAUNCH_SPREAD = 0.48;    // volleys go off across this much of a beat
 /** Each volley is in the air for the game's own bolt time (a kinetic
  *  burst's last round, or a beam's whole burn), as a share of the beat. */
 const FLIGHT_FRAC = FX_TUNING.boltMs / TICK_MS;
@@ -1379,11 +1383,15 @@ export function BattleRecap({ d }: { d: Detail }) {
       // Damage applied so far this beat, so a hull's bar drains as the
       // bolts reach it rather than snapping at the tick boundary.
       const beatMs = t * TICK_MS;
-      // Each shot keeps its own clock. Seeded from shooter, target and
-      // tick, so a replay is identical every time and one hull's volley
-      // does not go off on the same frame as everybody else's.
+      // Each shot keeps its own clock: its slot in the shot log's order,
+      // with a seeded nudge inside the slot so the barrage is not a
+      // metronome. Never past the next slot, so the order holds, and the
+      // same on every replay.
+      const shotIndex = new Map(frame.shot_log.map((sh, n) => [sh, n]));
+      const nShots = Math.max(1, frame.shot_log.length);
       const shotClock = (sh: Frame['shot_log'][number], tick: number) => {
-        const launch = ((hashStr(`${sh.a ?? ''}>${sh.t ?? ''}@${tick}`) % 997) / 997) * LAUNCH_SPREAD;
+        const nudge = (hashStr(`${sh.a ?? ''}>${sh.t ?? ''}@${tick}`) % 997) / 997;
+        const launch = (((shotIndex.get(sh) ?? 0) + 0.15 + nudge * 0.7) / nShots) * LAUNCH_SPREAD;
         return { launch, arriveMs: (launch + FLIGHT_FRAC) * TICK_MS };
       };
       /** When the shot that killed this hull actually lands. */

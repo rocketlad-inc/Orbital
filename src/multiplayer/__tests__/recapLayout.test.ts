@@ -63,6 +63,31 @@ describe('recap battle layout', () => {
     expect(lay.carry[1].get('f1-0')).toEqual(lay.beats[0].get('f1-0'));
   });
 
+  it('does not move anyone when a hull leaves or dies', () => {
+    const a = beat({ f1: 6, f2: 5 });
+    const b = { units: a.units.filter(u => u.id !== 'f1-2' && u.id !== 'f2-0') };
+    const lay = layoutRecap([a, b], OPTS);
+    for (const u of b.units) expect(lay.beats[1].get(u.id)).toEqual(lay.beats[0].get(u.id));
+  });
+
+  it('fits an arrival in without moving the hulls already there', () => {
+    const a = beat({ f1: 6, f2: 5 });
+    const b = { units: [...a.units, { id: 'f1-new', faction: 'f1', size: 28, armed: true },
+      { id: 'f2-new', faction: 'f2', size: 36, armed: true }] };
+    const lay = layoutRecap([a, b], OPTS);
+    for (const u of a.units) expect(lay.beats[1].get(u.id)).toEqual(lay.beats[0].get(u.id));
+    expect(lay.beats[1].has('f1-new')).toBe(true);
+    expect(screenOverlaps(b, lay.beats[1], lay.k)).toBeLessThanOrEqual(0.5);
+  });
+
+  it('re-solves when a new side joins the fight', () => {
+    const a = beat({ f1: 4, f2: 4 });
+    const b = beat({ f1: 4, f2: 4, f3: 4 });
+    const lay = layoutRecap([a, b], OPTS);
+    expect(lay.beats[1].size).toBe(12);
+    expect(screenOverlaps(b, lay.beats[1], lay.k)).toBeLessThanOrEqual(0.5);
+  });
+
   it('glides the short way round', () => {
     const g = glideSlot({ r: 100, theta: 3.0, jitter: 0 }, { r: 120, theta: -3.0, jitter: 0 }, 0.5);
     expect(g.r).toBe(110);

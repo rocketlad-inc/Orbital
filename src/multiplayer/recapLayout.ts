@@ -132,10 +132,7 @@ export function layoutRecap(beats: readonly RecapBeat[], o: RecapLayoutOptions):
   }
 
   const solved = new Map<string, Map<string, RecapSlot>>();
-  const out: Map<string, RecapSlot>[] = [];
-  const carry: Map<string, RecapSlot>[] = [];
-  let last = new Map<string, RecapSlot>();
-  for (const b of beats) {
+  const fresh = (b: RecapBeat) => {
     const key = keyOf(b);
     let slots = solved.get(key);
     if (!slots) {
@@ -148,11 +145,116 @@ export function layoutRecap(beats: readonly RecapBeat[], o: RecapLayoutOptions):
       }
       solved.set(key, slots);
     }
+    return slots;
+  };
+
+  // STICKY. Lorne, the same day: "the orbit of the ships keeps rapidly
+  // readjusting whenever ships leave or explode." Re-solving every beat
+  // moved every survivor whenever one hull went. So a beat only re-solves
+  // the whole fight when a side that was NOT on the board joins it (or
+  // the station changes): its share of the orbit has to come from
+  // somewhere. Otherwise a hull that leaves or dies just leaves a gap,
+  // and a hull that arrives takes the place a full solve would give it,
+  // nudged clear of the hulls already there, which do not move.
+  const out: Map<string, RecapSlot>[] = [];
+  const carry: Map<string, RecapSlot>[] = [];
+  let last = new Map<string, RecapSlot>();
+  let live = new Map<string, RecapSlot>();
+  let liveFactions = new Set<string>();
+  let liveStation: string | undefined;
+  for (const b of beats) {
+    const factions = new Set(b.units.map(u => u.faction));
+    const was = live, wasFactions = liveFactions;
+    const newSide = [...factions].some(f => !wasFactions.has(f));
+    let slots: Map<string, RecapSlot>;
+    if (was.size === 0 || newSide || b.stationId !== liveStation) {
+      slots = fresh(b);
+    } else {
+      slots = new Map();
+      const ids = [...b.units.map(u => u.id), ...(b.stationId ? [b.stationId] : [])];
+      const newcomers = ids.filter(id => !was.has(id));
+      for (const id of ids) if (was.has(id)) slots.set(id, was.get(id)!);
+      if (newcomers.length > 0) {
+        const want = fresh(b);
+        const sizeOf = new Map(b.units.map(u => [u.id, u.size * k]));
+        if (b.stationId) sizeOf.set(b.stationId, o.stationPx * k);
+        placeNewcomers(slots, newcomers.map(id => ({ id, slot: want.get(id)! })),
+          id => clearOf(sizeOf.get(id) ?? 0), o.planetR);
+      }
+    }
     out.push(slots);
+    live = slots;
+    liveFactions = factions;
+    liveStation = b.stationId;
     last = new Map([...last, ...slots]);
     carry.push(last);
   }
   return { beats: out, carry, k };
+}
+
+/** Add `incoming` to `slots` where a full solve wanted them, then push
+ *  ONLY the newcomers apart from everything (the hulls already placed
+ *  never move) until no clearances overlap. */
+function placeNewcomers(
+  slots: Map<string, RecapSlot>,
+  incoming: Array<{ id: string; slot: RecapSlot }>,
+  clearOf: (id: string) => number,
+  planetR: number,
+): void {
+  const fixed = [...slots.entries()].map(([id, s]) => ({
+    x: s.r * Math.cos(s.theta), y: s.r * Math.sin(s.theta), c: clearOf(id),
+  }));
+  const moving = incoming.map(({ id, slot }) => ({
+    id, jitter: slot.jitter, c: clearOf(id),
+    x: slot.r * Math.cos(slot.theta), y: slot.r * Math.sin(slot.theta),
+  }));
+  for (let it = 0; it < 240; it++) {
+    let moved = false;
+    for (let i = 0; i < moving.length; i++) {
+      const a = moving[i];
+      const others = [
+        ...fixed.map(f => ({ ...f, share: 1 })),
+        ...moving.filter((_, j) => j !== i).map(m => ({ x: m.x, y: m.y, c: m.c, share: 0.5 })),
+      ];
+      for (const o of others) {
+        const dx = a.x - o.x, dy = a.y - o.y;
+        const need = a.c + o.c + 2;
+        const d2 = dx * dx + dy * dy;
+        if (d2 >= need * need) continue;
+        const d = Math.sqrt(d2) || 0.01;
+        const ux = d2 > 0 ? dx / d : Math.cos(i + it), uy = d2 > 0 ? dy / d : Math.sin(i + it);
+        a.x += ux * (need - d) * o.share;
+        a.y += uy * (need - d) * o.share;
+        moved = true;
+      }
+      // Off the planet, always.
+      const r = Math.hypot(a.x, a.y) || 1;
+      const rMin = planetR + a.c + 3;
+      if (r < rMin) { a.x *= rMin / r; a.y *= rMin / r; }
+    }
+    if (!moved) break;
+  }
+  // Boxed in (between hulls that cannot move and the planet, pushing
+  // shuffles it back and forth): take the nearest free spot instead,
+  // searching outward from where the relaxation left it.
+  const placed = [...fixed];
+  const freeAt = (x: number, y: number, c: number) =>
+    Math.hypot(x, y) >= planetR + c + 3
+    && placed.every(f => Math.hypot(x - f.x, y - f.y) >= c + f.c + 2);
+  for (const m of moving) {
+    if (!freeAt(m.x, m.y, m.c)) {
+      search: for (let rho = 3; rho <= 600; rho += 3) {
+        const steps = Math.max(8, Math.ceil((Math.PI * 2 * rho) / 3));
+        for (let s = 0; s < steps; s++) {
+          const a = (s / steps) * Math.PI * 2;
+          const x = m.x + Math.cos(a) * rho, y = m.y + Math.sin(a) * rho;
+          if (freeAt(x, y, m.c)) { m.x = x; m.y = y; break search; }
+        }
+      }
+    }
+    placed.push(m);
+    slots.set(m.id, { r: Math.hypot(m.x, m.y), theta: Math.atan2(m.y, m.x), jitter: m.jitter });
+  }
 }
 
 /** Ease a unit from one place to the next, the short way round. */
