@@ -1230,6 +1230,12 @@ export interface GameState {
    *  declare; DOMINATION_FRACTION is the fallback. */
   dominationFraction?: number;
   combatLog: string[];                 // recent combat events (machine-truth headlines)
+  /** The combatLog headlines in the player's current language, parallel-
+   *  indexed (same array as combatLog when the language is English).
+   *  DISPLAY ONLY: classifiers, the audit log and exports read the English
+   *  combatLog. Multiplayer only; absent in single-player, so readers fall
+   *  back to combatLog[i]. */
+  combatLogDisplay?: string[];
   /** MP: the caller's most recent CAPITAL loss still in the /state event
    *  window (settlement_destroyed with is_capital). Drives the NOW-tier
    *  Situation row and a one-shot alert — losing the capital used to be
