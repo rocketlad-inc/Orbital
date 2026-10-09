@@ -187,6 +187,11 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   const [rightTab, setRightTab] = useState<'loadout' | 'look' | 'stats'>('loadout');
   /** Phone: the design library opens over the stage from the header. */
   const [libOpen, setLibOpen] = useState(false);
+  const tabsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = tabsRef.current?.querySelector('.sd-tab.active') as HTMLElement | null;
+    el?.scrollIntoView?.({ block: 'nearest', inline: 'center' });
+  }, [activeClass]);
   /** The player asked for a blank hull (+ New design). Otherwise the
    *  designer shows the class's ACTIVE design: the ship you build. */
   const [blank, setBlank] = useState(false);
@@ -830,7 +835,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
         {/* ---------- Header: title + hull classes + close ---------- */}
         <div className="sd-header">
           <span className="sd-title">{t('ship.sd.title')}</span>
-          <div className="sd-tabs" role="tablist" aria-label={t('ship.sd.title')}>
+          <div className="sd-tabs" role="tablist" aria-label={t('ship.sd.title')} ref={tabsRef}>
             {BUILDABLE_CLASSES.filter(cls => (SHIP_SLOT_COUNTS[cls] ?? 0) > 0).map(cls => (
               <button
                 key={cls}
@@ -933,9 +938,6 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                   </button>
                 );
               })}
-              {previewIcon && (
-                <div className="sd-previewchip" role="status">{t('ship.sd.previewChip', { line: ICON_VARIANT_NAMES[activeClass][previewIcon] })}</div>
-              )}
               {!dragHintSeen && draftParts.length === 0 && slots > 0 && (
                 <div className="sd-drag-hint" aria-hidden>{t('ship.sd.dragHint')}</div>
               )}
@@ -1068,6 +1070,11 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                     <> {t('ship.sd.tipTech', { mult: (hpOut(1000) / 1000).toFixed(2) })}</>
                   )}
                   {' '}{t('ship.sd.tipBuilds')}
+                </div>
+                <div className="sd-phoneonly">
+                  {refitBar}
+                  {noteLine}
+                  {actionButtons}
                 </div>
               </div>
             )}
