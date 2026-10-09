@@ -47,6 +47,7 @@ import {
   drawDamageFire, wreckAlpha, burnPose, WRECK_LIFE_TICKS, LAUNCH_SPREAD, flightFrac,
 } from './recapFx';
 import { ShipIconVariant } from '../components/ShipIcons';
+import { recordRecapGif, downloadBlob, gifSpan, GIF_MAX_BEATS } from './recapGif';
 import type { Body } from '../types';
 import { t as tr, tn as trn } from '../i18n/core';
 import { useI18n } from '../i18n/react';
@@ -218,6 +219,10 @@ function boardGeometry(renderBodies: RBody[], rawBodies: TBody[], anchorId: stri
   return { anchor, moons, SPAN, cx, cy, bodyPos, bodyById };
 }
 
+/** The campaign's eased camera, carried from one frame to the next. */
+interface CamState { x: number; y: number; k: number; ready: boolean; prevMs: number }
+const freshCam = (): CamState => ({ x: CANVAS_W / 2, y: CANVAS_H / 2, k: 1, ready: false, prevMs: 0 });
+
 const clampFrame = (pos: number, len: number) => {
   if (!(len > 0)) return 0;
   const i = Math.floor(Number(pos));
@@ -385,7 +390,12 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
   const last = useRef(0);
   /** Eased camera. Lives in a ref because it settles across frames and
    *  must not drive React renders. */
-  const cam = useRef({ x: CANVAS_W / 2, y: CANVAS_H / 2, k: 1, ready: false });
+  const cam = useRef<CamState>(freshCam());
+  /** The campaign's renderer, for the GIF recorder (set by the draw effect). */
+  const renderRef = useRef<((g: CanvasRenderingContext2D, p: number, nowMs: number, cs: CamState) => void) | null>(null);
+  /** GIF recording: progress 0..1 while it runs, null otherwise. */
+  const [gifProgress, setGifProgress] = useState<number | null>(null);
+  const [gifFailed, setGifFailed] = useState(false);
 
   const colorOf = useCallback(
     (fid: string | null) => (fid && d.factions[fid]?.color) || NEUTRAL, [d.factions]);
@@ -674,22 +684,22 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
   useEffect(() => {
     const canvas = cv.current;
     if (!canvas) return;
-    const g = canvas.getContext('2d');
-    if (!g) return;
+    const screen = canvas.getContext('2d');
+    if (!screen) return;
     let live = true;
     let handle = 0;
-    let prevMs = 0;
 
     const { anchor, moons, SPAN, cx, cy, bodyPos, bodyById } = geo;
 
-    const draw = (nowMs: number) => {
-      if (!live) return;
-      handle = requestAnimationFrame(draw);
-      const dtMs = prevMs ? Math.min(80, nowMs - prevMs) : 16;
-      prevMs = nowMs;
+    // One picture of the campaign at position p and clock nowMs, into any
+    // canvas, with its own eased camera cs: the screen keeps one across
+    // frames, the GIF recorder starts a fresh one.
+    const render = (g: CanvasRenderingContext2D, p: number, nowMs: number, cs: CamState) => {
+      const dtMs = cs.prevMs ? Math.min(80, nowMs - cs.prevMs) : 16;
+      cs.prevMs = nowMs;
 
-      const i = clampFrame(posRef.current, beats.length);
-      const t = Math.min(1, Math.max(0, posRef.current - i));
+      const i = clampFrame(p, beats.length);
+      const t = Math.min(1, Math.max(0, p - i));
       const beat = beats[i];
       if (!beat) return;
       const beatMs = t * TICK_MS;
@@ -756,26 +766,26 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
       const driftY = Math.cos(nowMs / 6700) * 7 / kHot;
       const wantX = (wide ? CANVAS_W / 2 : (minX + maxX) / 2) + OFF_X + driftX;
       const wantY = (wide ? CANVAS_H / 2 : (minY + maxY) / 2) + OFF_Y + driftY;
-      if (!cam.current.ready) {
-        cam.current = { x: wantX, y: wantY, k: kHot, ready: true };
+      if (!cs.ready) {
+        cs.x = wantX; cs.y = wantY; cs.k = kHot; cs.ready = true;
       } else {
         // Ease, never cut. A hard cut on a board this abstract reads as
         // a glitch; a settle reads as a camera.
         const e = 1 - Math.exp(-Math.max(0, Math.min(400, dtMs)) / 260);
-        cam.current.x += (wantX - cam.current.x) * e;
-        cam.current.y += (wantY - cam.current.y) * e;
-        cam.current.k += (kHot - cam.current.k) * e;
+        cs.x += (wantX - cs.x) * e;
+        cs.y += (wantY - cs.y) * e;
+        cs.k += (kHot - cs.k) * e;
       }
-      const K = cam.current.k;
-      const toScreenX = (x: number) => (x - cam.current.x) * K + CANVAS_W / 2;
-      const toScreenY = (y: number) => (y - cam.current.y) * K + CANVAS_H / 2;
+      const K = cs.k;
+      const toScreenX = (x: number) => (x - cs.x) * K + CANVAS_W / 2;
+      const toScreenY = (y: number) => (y - cs.y) * K + CANVAS_H / 2;
 
       g.fillStyle = '#05070c';
       g.fillRect(0, 0, CANVAS_W, CANVAS_H);
       // Stars sit behind the camera move and drift a little against it,
       // which is the only depth cue a flat board gets.
       for (const s of stars) {
-        const px = (s.x - cam.current.x * 0.06) % CANVAS_W;
+        const px = (s.x - cs.x * 0.06) % CANVAS_W;
         g.fillStyle = `rgba(203, 225, 245, ${(s.a * (0.75 + 0.25 * Math.sin(nowMs / 900 + s.ph))).toFixed(3)})`;
         g.beginPath();
         g.arc(px < 0 ? px + CANVAS_W : px, s.y, s.r, 0, Math.PI * 2);
@@ -786,7 +796,7 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
       g.save();
       g.translate(CANVAS_W / 2, CANVAS_H / 2);
       g.scale(K, K);
-      g.translate(-cam.current.x, -cam.current.y);
+      g.translate(-cs.x, -cs.y);
 
       /** Labels and callouts are collected here and drawn after the
        *  transform is released, at a fixed size — text that scales with
@@ -1604,10 +1614,56 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
       paintEnding();
     };
 
+    const draw = (nowMs: number) => {
+      if (!live) return;
+      handle = requestAnimationFrame(draw);
+      render(screen, posRef.current, nowMs, cam.current);
+    };
+    renderRef.current = render;
     handle = requestAnimationFrame(draw);
-    return () => { live = false; cancelAnimationFrame(handle); };
+    return () => {
+      live = false;
+      cancelAnimationFrame(handle);
+      if (renderRef.current === render) renderRef.current = null;
+    };
   }, [beats, arrived, left, hulls, geo, worldLayouts, stars, armedIds, eliminated, colorOf, trimOf,
       renderBodies, d.bodies, d.factions, d.theatre]);
+
+  /** Record the stretch of the campaign the slider is on as a GIF and
+   *  download it (recapGif), paced as playback paces it. */
+  const makeGif = useCallback(async () => {
+    const render = renderRef.current;
+    if (!render || beats.length === 0) return;
+    setPlaying(false);
+    setGifFailed(false);
+    const span = gifSpan(posRef.current, beats.length);
+    // The recorder's own camera, eased from the clip's first frame.
+    const cs = freshCam();
+    setGifProgress(0);
+    let shown = -1;
+    try {
+      const blob = await recordRecapGif({
+        render: (g, p, nowMs) => render(g, p, nowMs, cs),
+        srcW: CANVAS_W, srcH: CANVAS_H, from: span.from, to: span.to, tickMs: TICK_MS,
+        advance: (p, ms) => p + ms / (TICK_MS * (weights[clampFrame(p, weights.length)] ?? 1)),
+        onProgress: k => {
+          const pct = Math.floor(k * 100);
+          if (pct !== shown) { shown = pct; setGifProgress(k); }
+        },
+      });
+      if (blob) {
+        const place = (d.theatre.anchor_name ?? '').toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'system';
+        const tick = beats[clampFrame(span.from, beats.length)]?.tick ?? 0;
+        downloadBlob(blob, `orbital-${place}-system-T${tick}.gif`);
+      }
+    } catch (e) {
+      console.error('campaign gif failed', e);
+      setGifFailed(true);
+    } finally {
+      setGifProgress(null);
+    }
+  }, [beats, weights, d.theatre.anchor_name]);
 
   if (beats.length === 0) {
     return <div style={{ color: NEUTRAL, padding: 8 }}>{tr('theatre.noFrames')}</div>;
@@ -1626,6 +1682,19 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
             color: '#cfe0ee', padding: '3px 10px', cursor: 'pointer', fontSize: 11,
           }}
         >{playing ? tr('review.battle.pause') : tr('theatre.play')}</button>
+        <button
+          onClick={makeGif}
+          disabled={gifProgress != null}
+          title={tr('review.battle.gifTitle', { n: GIF_MAX_BEATS })}
+          style={{
+            background: '#16273a', border: '1px solid #3d6b96', borderRadius: 5,
+            color: '#cfe0ee', padding: '3px 10px', fontSize: 11, whiteSpace: 'nowrap',
+            cursor: gifProgress != null ? 'progress' : 'pointer',
+            opacity: gifProgress != null ? 0.8 : 1,
+          }}
+        >{gifProgress != null
+            ? tr('review.battle.gifRecording', { pct: Math.round(gifProgress * 100) })
+            : tr('review.battle.gif')}</button>
         <input
           type="range" min={0} max={Math.max(0.0001, beats.length - 1 + 0.98)} step={0.02}
           value={Number.isFinite(pos) ? pos : 0}
@@ -1641,6 +1710,9 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
           T+{beats[idx].tick} · {idx + 1}/{beats.length}
         </span>
       </div>
+      {gifFailed && (
+        <div style={{ fontSize: 11, color: '#ff8a80', marginTop: 4 }}>{tr('review.battle.gifFailed')}</div>
+      )}
     </div>
   );
 }

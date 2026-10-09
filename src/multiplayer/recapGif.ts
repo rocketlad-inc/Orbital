@@ -24,6 +24,8 @@ export const GIF_WIDTH = 600;
  *  seconds at the recap's 2.2s a beat. Past that a GIF stops being a
  *  clip and the file stops fitting where people post. */
 export const GIF_MAX_BEATS = 8;
+/** A hard ceiling on frames (about 32 seconds), whatever the pacing. */
+const MAX_FRAMES = 400;
 
 /** Which stretch of the battle a GIF covers: from the start of the beat
  *  the slider is on (the whole fight when it is short or the slider is at
@@ -44,6 +46,10 @@ export interface RecordOptions {
   from: number;
   to: number;
   tickMs: number;
+  /** How playback advances: the position `ms` after `pos`. Defaults to a
+   *  steady tickMs a beat; the whole-system view holds costly beats
+   *  longer and runs quiet ones short. */
+  advance?: (pos: number, ms: number) => number;
   onProgress?: (k: number) => void;
   /** Checked between frames; true stops the recording. */
   cancelled?: () => boolean;
@@ -63,11 +69,16 @@ export async function recordRecapGif(o: RecordOptions): Promise<Blob | null> {
   og.imageSmoothingEnabled = true;
   og.imageSmoothingQuality = 'high';
 
-  const n = Math.max(2, Math.ceil(((o.to - o.from) * o.tickMs) / GIF_FRAME_MS));
+  // Every frame's playback position, stepped as playback would step it.
+  const step = o.advance ?? ((p: number, ms: number) => p + ms / o.tickMs);
+  const at: number[] = [];
+  for (let p = o.from; p < o.to && at.length < MAX_FRAMES; p = step(p, GIF_FRAME_MS)) at.push(p);
+  if (at.length < 2) at.push(o.to);
+  const n = at.length;
   // A fixed clock origin, so the same span records the same GIF.
   const t0 = 100000;
   const grab = (k: number) => {
-    o.render(sg, o.from + (k * GIF_FRAME_MS) / o.tickMs, t0 + k * GIF_FRAME_MS);
+    o.render(sg, at[k], t0 + k * GIF_FRAME_MS);
     og.drawImage(src, 0, 0, outW, outH);
     return og.getImageData(0, 0, outW, outH).data;
   };
