@@ -221,6 +221,9 @@
   border-radius: 3px;
   background: rgba(7, 11, 17, 0.86);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-sizing: border-box;
   pointer-events: none;
   font-size: 9px;
   color: #d8e4ee;

@@ -272,6 +272,12 @@ const PickerList: React.FC<{
 
 // ---- RADAR ---------------------------------------------------------------
 
+// Radar blip labels: gap from the blip, the narrowest a side label may be
+// before it moves under the blip instead, and that under-label's width.
+const LABEL_GAP = 5;
+const LABEL_MIN = 72;
+const LABEL_BELOW_W = 140;
+
 const PickerRadar: React.FC<{
   entries: PickerEntry[];
   out: PickerEntry[];
@@ -321,10 +327,25 @@ const PickerRadar: React.FC<{
         if (!pt) return null;
         const on = e.key === selectedKey;
         const dim = !!dimmed?.has(e.key) && !on;
-        const right = pt.x > C;
         // A crowded scope labels its fleets and the pick; the rest name
         // themselves on hover and in the selected card.
         const labelled = on || entries.length <= 8 || e.ships > 1;
+        // Outward from the centre when there is room, else the other side,
+        // else under the blip. Never past the scope's edge: the pop-out
+        // clips there, and a name cut to "on Tide" is no name.
+        const roomRight = size - (pt.x + BLIP / 2 + LABEL_GAP) - 2;
+        const roomLeft = pt.x - BLIP / 2 - LABEL_GAP - 2;
+        const side = pt.x > C
+          ? (roomRight >= LABEL_MIN ? 'right' : roomLeft >= LABEL_MIN ? 'left' : 'below')
+          : (roomLeft >= LABEL_MIN ? 'left' : roomRight >= LABEL_MIN ? 'right' : 'below');
+        const labelStyle: React.CSSProperties = side === 'right'
+          ? { left: pt.x + BLIP / 2 + LABEL_GAP, top: pt.y - 8, maxWidth: roomRight }
+          : side === 'left'
+            ? { right: size - (pt.x - BLIP / 2 - LABEL_GAP), top: pt.y - 8, maxWidth: roomLeft }
+            : {
+              left: Math.max(2, Math.min(size - LABEL_BELOW_W - 2, pt.x - LABEL_BELOW_W / 2)),
+              top: pt.y + BLIP / 2 + 3, width: LABEL_BELOW_W, textAlign: 'center',
+            };
         return (
           <React.Fragment key={e.key}>
             <button
@@ -340,9 +361,7 @@ const PickerRadar: React.FC<{
             </button>
             {labelled && <span
               className={`ip-blip__label${e.standing === 'war' ? ' is-war' : ''}${dim ? ' is-dim' : ''}`}
-              style={right
-                ? { left: pt.x + BLIP / 2 + 5, top: pt.y - 8 }
-                : { right: size - (pt.x - BLIP / 2 - 5), top: pt.y - 8 }}
+              style={labelStyle}
             >
               {e.name}<span className="ip-blip__when"> · {t('ship.rv.ticks', { n: e.meetIn })}</span>
             </span>}
