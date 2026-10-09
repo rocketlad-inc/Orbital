@@ -78,7 +78,8 @@ const PLAY_LISTING = `https://play.google.com/store/apps/details?id=${APP_PACKAG
 /** Where the app's link out lands: the site, which starts the checkout
  *  itself once signed in (useCommissionHandoff). */
 export function commissionHandoffUrl(surface: CommissionSurface, opts: { gift?: boolean } = {}): string {
-  const q = new URLSearchParams({ [BROWSER_HANDOFF_PARAM]: 'buy', from: surface });
+  // Not ?from=: that is signup attribution, which strips it at load.
+  const q = new URLSearchParams({ [BROWSER_HANDOFF_PARAM]: 'buy', surface });
   if (opts.gift) q.set('gift', '1');
   return `${WEBSITE_ORIGIN}/?${q.toString()}`;
 }

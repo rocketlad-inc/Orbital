@@ -1,6 +1,6 @@
 /**
  * The website end of the app's "get it in your browser" (2026-10-08).
- * The app opens /?commission=buy&from=<surface>[&gift=1] in the phone's
+ * The app opens /?commission=buy&surface=<surface>[&gift=1] in the phone's
  * browser; there, the checkout starts by itself once signed in, once.
  */
 import React, { act } from 'react';
@@ -22,6 +22,8 @@ import { readHandoff, useCommissionHandoff } from '../commissionHandoff';
 import { commissionHandoffUrl } from '../commission';
 // eslint-disable-next-line import/first
 import { startCommissionCheckout } from '../api';
+// eslint-disable-next-line import/first
+import { captureAttribution, TAG_PARAMS } from '../attribution';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -48,9 +50,9 @@ beforeEach(() => {
 
 test('the URL the app sends round-trips: surface and gift', () => {
   const url = commissionHandoffUrl('designer', { gift: true });
-  expect(url).toBe('https://orbital-empire.com/?commission=buy&from=designer&gift=1');
+  expect(url).toBe('https://orbital-empire.com/?commission=buy&surface=designer&gift=1');
   expect(readHandoff(new URL(url).search)).toEqual({ surface: 'designer', gift: true });
-  expect(readHandoff('?commission=buy&from=nonsense')).toEqual({ surface: 'profile', gift: false });
+  expect(readHandoff('?commission=buy&surface=nonsense')).toEqual({ surface: 'profile', gift: false });
   expect(readHandoff('?room=abc')).toBeNull();
 });
 
@@ -62,6 +64,18 @@ test('signed in: the checkout starts once, and the parameter is gone', () => {
   expect(window.location.search).toBe('');
   rerender({ is_premium: false });
   expect(startCommissionCheckout).toHaveBeenCalledTimes(1);
+});
+
+test('the surface survives the page load (attribution strips its own tags first)', () => {
+  // Found on the dev server: the handoff once used ?from=, which signup
+  // attribution owns and strips at startup, so every link-out sale was
+  // labelled 'profile'.
+  landOn(commissionHandoffUrl('skins'));
+  captureAttribution();
+  const q = new URL(commissionHandoffUrl('skins')).searchParams;
+  expect(TAG_PARAMS.filter(k => q.has(k))).toEqual([]);
+  mount({ is_premium: false });
+  expect(startCommissionCheckout).toHaveBeenCalledWith('skins', { gift: false });
 });
 
 test('signed out: it waits for sign-in', () => {

@@ -32,7 +32,7 @@ export interface Attribution {
 
 /** Link tags we read and then tidy out of the address bar, so a player
  *  who copies the URL to a friend doesn't pass our tag along with it. */
-const TAG_PARAMS = ['from', 'ref', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'];
+export const TAG_PARAMS = ['from', 'ref', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'];
 
 function read(): Attribution | null {
   try {
