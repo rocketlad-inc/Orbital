@@ -1,6 +1,6 @@
 import {
   groupFlights, makeupOf, standingOf, scopeTMax, scopeRadius, layoutScope,
-  worldBoxOf, framingCamera,
+  worldBoxOf, framingCamera, placeScopeLabels,
 } from '../interceptPicker';
 import type { Fleet, Ship } from '../../types';
 
@@ -147,5 +147,54 @@ describe('SHOW framing', () => {
       expect(q.y).toBeGreaterThanOrEqual(area.t);
       expect(q.y).toBeLessThanOrEqual(area.b);
     }
+  });
+});
+
+describe('radar labels', () => {
+  const SIZE = 360, BLIP = 32, H = 15;
+  // The playtest cluster (2026-10-09): five blips bunched low-right of
+  // centre, where every name was printed over its neighbour's.
+  const cluster = [
+    { key: 'a', x: 268, y: 318, w: 150 },
+    { key: 'b', x: 238, y: 352 - 70, w: 120 },
+    { key: 'c', x: 222, y: 300, w: 130 },
+    { key: 'd', x: 196, y: 320, w: 160 },
+    { key: 'e', x: 210, y: 345, w: 140 },
+    { key: 'f', x: 236, y: 336, w: 150 },
+  ];
+  const rect = (b: { left: number; top: number; width: number }) => ({ l: b.left, t: b.top, r: b.left + b.width, b: b.top + H });
+  const hit = (p: ReturnType<typeof rect>, q: ReturnType<typeof rect>) => p.l < q.r && q.l < p.r && p.t < q.b && q.t < p.b;
+
+  it('never prints a name over another name or another blip', () => {
+    const out = placeScopeLabels(cluster, SIZE, BLIP);
+    const boxes = [...out.entries()].map(([k, b]) => ({ k, r: rect(b) }));
+    for (const x of boxes) {
+      for (const y of boxes) if (x !== y) expect(hit(x.r, y.r)).toBe(false);
+      for (const c of cluster) {
+        if (c.key === x.k) continue;
+        expect(hit(x.r, { l: c.x - BLIP / 2, t: c.y - BLIP / 2, r: c.x + BLIP / 2, b: c.y + BLIP / 2 })).toBe(false);
+      }
+    }
+  });
+
+  it('keeps every name inside the scope', () => {
+    for (const b of placeScopeLabels(cluster, SIZE, BLIP).values()) {
+      expect(b.left).toBeGreaterThanOrEqual(0);
+      expect(b.left + b.width).toBeLessThanOrEqual(SIZE);
+      expect(b.top).toBeGreaterThanOrEqual(0);
+      expect(b.top + H).toBeLessThanOrEqual(SIZE);
+    }
+  });
+
+  it('always names the pick, even in a crowd', () => {
+    const crowd = cluster.map((c, i) => ({ ...c, must: i === cluster.length - 1 }));
+    expect(placeScopeLabels(crowd, SIZE, BLIP).has('f')).toBe(true);
+  });
+
+  it('labels a lone blip outward from the centre', () => {
+    const left = placeScopeLabels([{ key: 'w', x: 120, y: 180, w: 100 }], SIZE, BLIP).get('w')!;
+    expect(left.left + left.width).toBeLessThan(120);
+    const right = placeScopeLabels([{ key: 'e', x: 250, y: 180, w: 60 }], SIZE, BLIP).get('e')!;
+    expect(right.left).toBeGreaterThan(250);
   });
 });

@@ -16,7 +16,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { ShipIcon, type ShipIconClass, type ShipIconVariant } from './ShipIcons';
-import { layoutScope, scopeRadius, scopeTMax, SCOPE_RINGS, type Standing } from '../game/interceptPicker';
+import { layoutScope, placeScopeLabels, scopeRadius, scopeTMax, SCOPE_RINGS, type Standing } from '../game/interceptPicker';
 import { t, tn } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import './InterceptPicker.css';
@@ -272,11 +272,10 @@ const PickerList: React.FC<{
 
 // ---- RADAR ---------------------------------------------------------------
 
-// Radar blip labels: gap from the blip, the narrowest a side label may be
-// before it moves under the blip instead, and that under-label's width.
-const LABEL_GAP = 5;
-const LABEL_MIN = 72;
-const LABEL_BELOW_W = 140;
+// Radar blip labels: an estimate of a name's width at the label's 9px,
+// for placing it before it is drawn (placeScopeLabels).
+const LABEL_CHAR_PX = 5.6;
+const LABEL_PAD_PX = 9;
 
 const PickerRadar: React.FC<{
   entries: PickerEntry[];
@@ -296,6 +295,19 @@ const PickerRadar: React.FC<{
     [entries, R, tMax, C, BLIP],
   );
   const rings = SCOPE_RINGS.filter(r => r <= tMax);
+  // Names in priority order -- the pick, then the biggest groups, then the
+  // soonest -- each in the first clear spot, or left off.
+  const labels = useMemo(() => {
+    const order = [...entries].sort((a, b) =>
+      (a.key === selectedKey ? -1 : 0) - (b.key === selectedKey ? -1 : 0)
+      || b.ships - a.ships || a.meetIn - b.meetIn);
+    return placeScopeLabels(order.flatMap(e => {
+      const pt = layout.get(e.key);
+      if (!pt) return [];
+      const text = `${e.name} · ${t('ship.rv.ticks', { n: e.meetIn })}`;
+      return [{ key: e.key, x: pt.x, y: pt.y, w: text.length * LABEL_CHAR_PX + LABEL_PAD_PX, must: e.key === selectedKey }];
+    }), size, BLIP);
+  }, [entries, layout, selectedKey, size, BLIP]);
   const sel = selectedKey ? layout.get(selectedKey) : undefined;
   const selEntry = entries.find(e => e.key === selectedKey);
   // Ring labels along the emptiest diagonal of a typical board (down-right).
@@ -327,25 +339,9 @@ const PickerRadar: React.FC<{
         if (!pt) return null;
         const on = e.key === selectedKey;
         const dim = !!dimmed?.has(e.key) && !on;
-        // A crowded scope labels its fleets and the pick; the rest name
-        // themselves on hover and in the selected card.
-        const labelled = on || entries.length <= 8 || e.ships > 1;
-        // Outward from the centre when there is room, else the other side,
-        // else under the blip. Never past the scope's edge: the pop-out
-        // clips there, and a name cut to "on Tide" is no name.
-        const roomRight = size - (pt.x + BLIP / 2 + LABEL_GAP) - 2;
-        const roomLeft = pt.x - BLIP / 2 - LABEL_GAP - 2;
-        const side = pt.x > C
-          ? (roomRight >= LABEL_MIN ? 'right' : roomLeft >= LABEL_MIN ? 'left' : 'below')
-          : (roomLeft >= LABEL_MIN ? 'left' : roomRight >= LABEL_MIN ? 'right' : 'below');
-        const labelStyle: React.CSSProperties = side === 'right'
-          ? { left: pt.x + BLIP / 2 + LABEL_GAP, top: pt.y - 8, maxWidth: roomRight }
-          : side === 'left'
-            ? { right: size - (pt.x - BLIP / 2 - LABEL_GAP), top: pt.y - 8, maxWidth: roomLeft }
-            : {
-              left: Math.max(2, Math.min(size - LABEL_BELOW_W - 2, pt.x - LABEL_BELOW_W / 2)),
-              top: pt.y + BLIP / 2 + 3, width: LABEL_BELOW_W, textAlign: 'center',
-            };
+        // Placed above; a name with no clear spot names itself on hover
+        // and in the selected card instead.
+        const box = labels.get(e.key);
         return (
           <React.Fragment key={e.key}>
             <button
@@ -359,9 +355,9 @@ const PickerRadar: React.FC<{
               <ShipIcon size={BLIP - 9} shipClass={e.icon.cls} variant={e.icon.variant} parts={e.icon.parts} color={e.icon.color} color2={e.icon.color2} />
               {e.ships > 1 && <span className="ip-blip__n">{e.ships}</span>}
             </button>
-            {labelled && <span
-              className={`ip-blip__label${e.standing === 'war' ? ' is-war' : ''}${dim ? ' is-dim' : ''}`}
-              style={labelStyle}
+            {box && <span
+              className={`ip-blip__label${e.standing === 'war' ? ' is-war' : ''}${dim ? ' is-dim' : ''}${on ? ' is-on' : ''}`}
+              style={{ left: box.left, top: box.top, maxWidth: box.width, textAlign: box.align }}
             >
               {e.name}<span className="ip-blip__when"> · {t('ship.rv.ticks', { n: e.meetIn })}</span>
             </span>}
