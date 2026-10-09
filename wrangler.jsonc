@@ -38,12 +38,18 @@
   ],
   "durable_objects": {
     "bindings": [
-      { "name": "ROOM", "class_name": "Room" }
+      { "name": "ROOM", "class_name": "Room" },
+      // The battle replay GIF queue + renderer (worker/recapGif.js).
+      { "name": "RECAP_GIF", "class_name": "RecapGif" }
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["Room"] }
+    { "tag": "v1", "new_sqlite_classes": ["Room"] },
+    { "tag": "v2", "new_sqlite_classes": ["RecapGif"] }
   ],
+  // Cloudflare Browser Rendering: headless Chrome that opens a battle's
+  // recap page and records its GIF for the Discord replay post.
+  "browser": { "binding": "BROWSER" },
   "triggers": {
     "crons": [
       "* * * * *"
@@ -105,12 +111,15 @@
       ],
       "durable_objects": {
         "bindings": [
-          { "name": "ROOM", "class_name": "Room" }
+          { "name": "ROOM", "class_name": "Room" },
+          { "name": "RECAP_GIF", "class_name": "RecapGif" }
         ]
       },
       "migrations": [
-        { "tag": "v1", "new_sqlite_classes": ["Room"] }
+        { "tag": "v1", "new_sqlite_classes": ["Room"] },
+        { "tag": "v2", "new_sqlite_classes": ["RecapGif"] }
       ],
+      "browser": { "binding": "BROWSER" },
       "assets": {
         "directory": "build/",
         "binding": "ASSETS",

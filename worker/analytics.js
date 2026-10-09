@@ -2479,7 +2479,8 @@ export async function handlePublicRecap(req, env, url) {
   if (!share) return err(404, 'not_found', 'no such recap');
 
   // Fire-and-forget: a view counter must never cost the reader the page.
-  try {
+  // The replay GIF renderer's headless visit (render=gif) is not a reader.
+  if (url.searchParams.get('render') !== 'gif') try {
     await env.DB
       .prepare('UPDATE battle_shares SET views = views + 1 WHERE token = ?')
       .bind(token).run();

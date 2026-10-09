@@ -558,6 +558,7 @@ export const PT_BR = {
   'feed.replay.title': '🎬 Batalha de {body}: o replay',
   'feed.replay.titleWon': '🎬 Batalha de {body}: {name} vence',
   'feed.replay.body': '**{n}** naves perdidas em {turns} turnos. [Assista ao replay]({url}): cada tiro, como aconteceu.',
+  'feed.replay.gifTail': 'O GIF mostra os últimos {n} de {total} turnos.',
   'feed.gate.omenTitle': '☀ Algo estranho está surgindo do Sol',
   'feed.gate.omenBody': 'Todos os observatórios do sistema se voltaram para o Sol. Seja o que for, vai sair em **{n} turnos**.',
   'feed.gate.omen2Title': '☀ Mais alguma coisa está surgindo do Sol',

@@ -560,6 +560,7 @@ export const EN = {
   'feed.replay.title': '🎬 Battle of {body}: the replay',
   'feed.replay.titleWon': '🎬 Battle of {body}: {name} wins',
   'feed.replay.body': '**{n}** ships lost over {turns} turns. [Watch the replay]({url}): every shot, as it happened.',
+  'feed.replay.gifTail': 'The GIF shows the final {n} of {total} turns.',
   'feed.gate.omenTitle': '☀ Something strange is emerging from the Sun',
   'feed.gate.omenBody': 'Every observatory in the system has turned to the Sun. Whatever it is, it will be out in **{n} ticks**.',
   'feed.gate.omen2Title': '☀ Something else is emerging from the Sun',

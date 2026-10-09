@@ -24,6 +24,9 @@ import * as mail from './email.js';
 import { normalizeLocale, tr, pickLocale, localeFromAcceptLanguage } from './i18n.js';
 
 export { Room } from './room.js';
+// The battle replay GIF renderer (worker/recapGif.js): one Durable Object
+// that queues closed battles and draws each in Cloudflare Browser Rendering.
+export { RecapGif } from './recapGif.js';
 
 // Tracks which migrations have been applied so /api/__init can be re-run
 // safely to apply just the new ones. D1 manages this internally when
@@ -1994,6 +1997,13 @@ export default {
       }
       if (req.method === 'GET' && url.pathname.startsWith('/api/recap/')) {
         return analytics.handlePublicRecap(req, env, url);
+      }
+      // The recap page, opened by the replay GIF renderer, handing back the
+      // GIF it recorded. Checked against the job's one-time nonce.
+      if (req.method === 'POST' && /^\/api\/recap\/[^/]+\/gif\/?$/.test(url.pathname)) {
+        const { handleGifUpload } = await import('./recapGif.js');
+        const token = decodeURIComponent(url.pathname.split('/')[3]);
+        return handleGifUpload(req, env, token);
       }
 
       if (req.method === 'GET' && url.pathname === '/api/devlog') {

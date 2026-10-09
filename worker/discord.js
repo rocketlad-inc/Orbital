@@ -742,6 +742,37 @@ export async function postChannelEmbed(env, embed, gameId = null, { headline = f
 }
 
 /**
+ * postChannelEmbed with a FILE attached, sent as one message: the battle
+ * replay GIF (worker/recapGif.js). The embed can show the file inline by
+ * naming it as its image, `attachment://<name>`. Same channel rules as
+ * postChannelEmbed. `file` is { name, type, bytes }.
+ */
+export async function postChannelFile(env, embed, file, gameId = null, { headline = false } = {}) {
+  if (!env.DISCORD_BOT_TOKEN) return { posted: false, reason: 'no_bot_token' };
+  const channelId = gameId ? await channelForGame(env, gameId, { headline }) : await resolveChannelId(env);
+  if (!channelId) return { posted: false, reason: 'no_channel' };
+  const built = typeof embed === 'function'
+    ? embed(gameId ? await feedLocaleOf(env, gameId) : 'en')
+    : embed;
+  const form = new FormData();
+  form.append('payload_json', JSON.stringify({
+    embeds: [built],
+    attachments: [{ id: 0, filename: file.name }],
+  }));
+  form.append('files[0]', new Blob([file.bytes], { type: file.type }), file.name);
+  const res = await fetch(`${DISCORD_API}/channels/${channelId}/messages`, {
+    method: 'POST',
+    headers: { authorization: `Bot ${env.DISCORD_BOT_TOKEN}` },
+    body: form,
+  });
+  if (!res.ok) {
+    console.error(`channel file post failed ${res.status}`, await res.text().catch(() => ''));
+    return { posted: false, reason: `http_${res.status}` };
+  }
+  return { posted: true };
+}
+
+/**
  * Re-render a proposal's posted card in place.
  *
  * Called after ANY vote, not just Discord ones. Votes cast in-game used

@@ -29,7 +29,7 @@ import { lazyChunk } from '../util/lazyChunk';
 import { toRenderBody } from './bodyIdentity';
 import { layoutRecap, glideSlot, type RecapBeat, type RecapUnit } from './recapLayout';
 import {
-  recordRecapGif, downloadBlob, gifSpan, type RecapRender,
+  recordRecapGif, downloadBlob, gifSpan, type RecapRender, type AutoGif,
 } from './recapGif';
 import { getEmblemImage } from '../render/emblemCache';
 import {
@@ -807,6 +807,11 @@ const RECAP_R_MAX = Math.min(
 /** Time constant of a hull's glide to its new place when the board
  *  changes, ms: battleLayoutLive's GLIDE_MS. */
 const RECAP_GLIDE_MS = 260;
+/** The replay post's GIF: fights up to this many beats are recorded whole
+ *  first (at about 0.38 MB a beat that is just under Discord's limit);
+ *  longer ones start from their final AUTO_GIF_TAIL beats. */
+const AUTO_GIF_WHOLE_MAX = 24;
+const AUTO_GIF_TAIL = 22;
 
 type Kind = 'ship' | 'station' | 'city';
 
@@ -1073,7 +1078,12 @@ function makeStars(seed: string, w: number, h: number) {
   }));
 }
 
-export function BattleRecap({ d }: { d: Detail }) {
+export function BattleRecap({ d, autoGif }: {
+  d: Detail;
+  /** Record a GIF on load and hand it over (the Discord replay post's GIF
+   *  job, worker/recapGif.js, opening this recap in headless Chrome). */
+  autoGif?: AutoGif;
+}) {
   useI18n();
   const cv = useRef<HTMLCanvasElement | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -2062,6 +2072,50 @@ export function BattleRecap({ d }: { d: Detail }) {
     };
   }, [frames, stations, formation, colorOf, trimOf, hulls, killerOf, phantoms, fixtures,
       comings, stars, d.battle.id, d.battle.body_name, d.sides, d.factions, renderBody, recapLayout]);
+
+  // THE REPLAY POST'S GIF. Opened by the server's GIF job, the recap
+  // records itself once its art has loaded: the whole fight when that
+  // fits under Discord's upload limit, otherwise the FINAL ticks, as many
+  // as fit, ending on the result (Lorne's pick, 2026-10-09). A long fight
+  // starts from a guess at what fits rather than rendering the whole
+  // thing only to throw it away; each try that comes out too big narrows
+  // the window from what that try weighed.
+  useEffect(() => {
+    if (!autoGif || frames.length === 0) return;
+    let dead = false;
+    const wait = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+    (async () => {
+      // Hull sprites, emblems and globe maps arrive asynchronously.
+      await wait(4000);
+      for (let n = 0; n < 50 && !renderRef.current; n++) await wait(200);
+      const render = renderRef.current;
+      if (dead) return;
+      if (!render) { autoGif.done(false, 'no renderer'); return; }
+      const total = frames.length;
+      const end = total - 1 + 0.98;
+      let from = total > AUTO_GIF_WHOLE_MAX ? total - AUTO_GIF_TAIL : 0;
+      const stopped = () => dead;
+      for (let attempt = 0; attempt < 4 && !dead; attempt++) {
+        const blob = await recordRecapGif({
+          render, srcW: CANVAS_W, srcH: CANVAS_H, from, to: end, tickMs: TICK_MS,
+          cancelled: stopped,
+        });
+        if (!blob) break;
+        if (blob.size <= autoGif.maxBytes) {
+          const ok = await autoGif.upload(blob, { fromTick: frames[from].tick, ticks: total - from, total });
+          autoGif.done(ok, `${blob.size} bytes, beats ${from}-${total}`);
+          return;
+        }
+        const perBeat = blob.size / (total - from);
+        const fit = Math.max(1, Math.floor((autoGif.maxBytes * 0.9) / perBeat));
+        const next = Math.max(from + 1, total - fit);
+        if (next >= total) break;
+        from = next;
+      }
+      if (!dead) autoGif.done(false, 'no gif small enough');
+    })().catch(e => autoGif.done(false, String(e)));
+    return () => { dead = true; };
+  }, [autoGif, frames]);
 
   /** Record the whole battle as a GIF and download it (recapGif). A
    *  second click while it records stops it. */

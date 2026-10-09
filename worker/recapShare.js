@@ -265,32 +265,62 @@ const REPLAY_HEADLINE_LOST = 10;
  */
 export async function publishReplay(env, gameId, battleId) {
   try {
-    if (!env.DISCORD_BOT_TOKEN) return;
-    const cfg = await (await import('./botSettings.js')).getSettings(env);
-    if (cfg.battle_cards_enabled === false) return;
-    const share = await env.DB
-      .prepare('SELECT token FROM battle_shares WHERE battle_id = ? AND created_by IS NULL AND revoked_at_ms IS NULL ORDER BY created_at_ms LIMIT 1')
-      .bind(battleId).first();
-    if (!share) return;
-    const sum = await recapSummary(env, share.token);
-    if (!sum || sum.shipsLost < REPLAY_MIN_LOST) return;
-    const { tr } = await import('./i18n.js');
-    const discord = await import('./discord.js');
-    const url = `${SITE}/recap/${share.token}?from=discord-replay`;
-    const colour = parseInt(String(sum.victor?.color || '#ff5e3a').replace('#', ''), 16) || 0xff5e3a;
-    await discord.postChannelEmbed(env, (L) => ({
-      title: sum.victor
-        ? tr(L, 'feed.replay.titleWon', { body: sum.bodyName, name: sum.victor.name })
-        : tr(L, 'feed.replay.title', { body: sum.bodyName }),
-      url,
-      description: tr(L, 'feed.replay.body', { n: sum.shipsLost, turns: sum.turns, url }),
-      color: colour,
-      image: { url: `${SITE}/recap/${share.token}/card.png` },
-      footer: { text: `Orbital · ${sum.gameName} · T+${sum.startTick}–${sum.endTick}` },
-    }), gameId, { headline: sum.shipsLost >= REPLAY_HEADLINE_LOST });
+    const post = await replayPost(env, battleId);
+    if (!post) return;
+    // With a browser to draw it in, the replay waits for its GIF and goes
+    // out as one message (recapGif.js), which posts the plain embed itself
+    // if the GIF cannot be made.
+    const { queueBattleGif } = await import('./recapGif.js');
+    if (await queueBattleGif(env, gameId, battleId, post.token)) return;
+    await postReplay(env, gameId, post, null, null);
   } catch (e) {
     console.error('publishReplay failed', e);
   }
+}
+
+/** Whether a battle gets a replay post, and what goes in it: null when it
+ *  does not (no bot, battle cards off, no public link, too small a fight). */
+export async function replayPost(env, battleId) {
+  if (!env.DISCORD_BOT_TOKEN) return null;
+  const cfg = await (await import('./botSettings.js')).getSettings(env);
+  if (cfg.battle_cards_enabled === false) return null;
+  const share = await env.DB
+    .prepare('SELECT token FROM battle_shares WHERE battle_id = ? AND created_by IS NULL AND revoked_at_ms IS NULL ORDER BY created_at_ms LIMIT 1')
+    .bind(battleId).first();
+  if (!share) return null;
+  const sum = await recapSummary(env, share.token);
+  if (!sum || sum.shipsLost < REPLAY_MIN_LOST) return null;
+  return { token: share.token, sum };
+}
+
+/**
+ * Send the replay post. With `file` (the battle GIF) it carries the GIF
+ * as its picture, in the same message; without, the still battle card.
+ * `span` says what the GIF covers ({ fromTick, ticks, total }), so a GIF
+ * of only the final turns of a long fight says so.
+ */
+export async function postReplay(env, gameId, post, file, span) {
+  const { tr } = await import('./i18n.js');
+  const discord = await import('./discord.js');
+  const { sum, token } = post;
+  const url = `${SITE}/recap/${token}?from=discord-replay`;
+  const colour = parseInt(String(sum.victor?.color || '#ff5e3a').replace('#', ''), 16) || 0xff5e3a;
+  const tail = file && span && span.total > 0 && span.ticks > 0 && span.ticks < span.total;
+  const embed = (L) => ({
+    title: sum.victor
+      ? tr(L, 'feed.replay.titleWon', { body: sum.bodyName, name: sum.victor.name })
+      : tr(L, 'feed.replay.title', { body: sum.bodyName }),
+    url,
+    description: tr(L, 'feed.replay.body', { n: sum.shipsLost, turns: sum.turns, url })
+      + (tail ? `\n${tr(L, 'feed.replay.gifTail', { n: span.ticks, total: span.total })}` : ''),
+    color: colour,
+    image: { url: file ? `attachment://${file.name}` : `${SITE}/recap/${token}/card.png` },
+    footer: { text: `Orbital · ${sum.gameName} · T+${sum.startTick}–${sum.endTick}` },
+  });
+  const opts = { headline: sum.shipsLost >= REPLAY_HEADLINE_LOST };
+  return file
+    ? discord.postChannelFile(env, embed, file, gameId, opts)
+    : discord.postChannelEmbed(env, embed, gameId, opts);
 }
 
 // ---------------------------------------------------------------------------

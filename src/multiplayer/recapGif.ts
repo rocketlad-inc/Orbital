@@ -20,6 +20,17 @@ export const GIF_FRAME_MS = 80;
 /** Width of the GIF; the recap's 760x440 scales to 600x347. Big enough to
  *  read the names, small enough for a Discord or Reddit post. */
 export const GIF_WIDTH = 600;
+/** The largest GIF the Discord replay post can carry (worker/recapGif.js
+ *  GIF_MAX_BYTES: Discord's 10 MB upload limit less room for the message). */
+export const DISCORD_GIF_MAX_BYTES = Math.floor(9.5 * 1024 * 1024);
+
+/** What the replay-post GIF job does with the GIF it records. */
+export interface AutoGif {
+  maxBytes: number;
+  upload: (blob: Blob, span: { fromTick: number; ticks: number; total: number }) => Promise<boolean>;
+  done: (ok: boolean, info: string) => void;
+}
+
 /** A ceiling on frames (12 minutes at 12.5 fps) against a runaway record,
  *  not a clip length. */
 const MAX_FRAMES = 9000;

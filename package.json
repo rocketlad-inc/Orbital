@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
+    "@cloudflare/puppeteer": "1.4.0",
     "@resvg/resvg-wasm": "^2.6.2",
     "@types/three": "^0.160.0",
     "ajv": "^8.20.0",
