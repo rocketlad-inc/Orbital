@@ -94,6 +94,10 @@ const CROSS_FRAC = 0.42;
 /** A hull that has left the fight boosts off the board over this much of
  *  the beat AFTER its last one. */
 const DEPART_FRAC = 0.45;
+/** The smallest sprite scale a world's battle is drawn at: a corvette
+ *  15px, the size the system view drew one before it took the map's
+ *  ladder (frigate 24, destroyer 42). */
+const THEATRE_MIN_K = 0.5;
 /** A jump of this many ticks or more between beats is a LULL: the system
  *  view plays every campaign fought in a system as one reel (worker
  *  systemCampaigns), and a campaign only ends after BATTLE_QUIET_TICKS (6)
@@ -620,7 +624,14 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
     for (const w of worlds) {
       const rb = geo.bodyById.get(w);
       const p = geo.bodyPos(rb);
-      const kw = battleSpriteScale(p.r / battleReferenceRadius(Number(rb?.radius) || 1));
+      // The map's scale for this world, but never below THEATRE_MIN_K: a
+      // giant like Jupiter drew a corvette at 8px, a third of the battle
+      // recap's, and the fleet read as dust. Never so big a destroyer is
+      // wider than the world it orbits, either (small moons keep small
+      // ships). The hull-to-hull ratios are the map's either way.
+      const kw = Math.min(
+        Math.max(battleSpriteScale(p.r / battleReferenceRadius(Number(rb?.radius) || 1)), THEATRE_MIN_K),
+        (2 * p.r) / (gameHullPx('destroyer') ?? 84));
       // The station rig at the map's size for this world, never bigger
       // than the theatre has always drawn it.
       const stationPx = 88 * Math.min(0.55, (BATTLE_STATION_PX * kw) / 88);
@@ -749,10 +760,18 @@ export function TheatreCanvas({ d }: { d: TheatreDetail }) {
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       for (const bid of focusIds) {
         const p = bodyPos(bodyById.get(bid));
-        // The world and its battle, which starts clear of the disc.
-        const pad = Math.max(p.r + GUARD_RING + 34, p.r / TILT + p.r * 0.9 + 16);
-        minX = Math.min(minX, p.x - pad); maxX = Math.max(maxX, p.x + pad);
-        minY = Math.min(minY, p.y - pad); maxY = Math.max(maxY, p.y + pad);
+        // The world and the battle actually round it THIS beat: as far out
+        // as its hulls sit, which the turning orbit carries to either side
+        // and, foreshortened by the tilt, above and below. Framing by the
+        // widest band the layout COULD use left Jupiter's fight a speck in
+        // an empty box (Lorne, 2026-10-09: "why the ships sooooo tiny").
+        let reach = p.r;
+        const slots = worldLayouts.get(bid)?.lay.beats[i];
+        if (slots) for (const s of slots.values()) reach = Math.max(reach, s.r);
+        const padX = Math.max(p.r + GUARD_RING + 34, reach + 22);
+        const padY = Math.max(p.r + GUARD_RING + 20, reach * TILT + 22);
+        minX = Math.min(minX, p.x - padX); maxX = Math.max(maxX, p.x + padX);
+        minY = Math.min(minY, p.y - padY); maxY = Math.max(maxY, p.y + padY);
       }
       if (!Number.isFinite(minX)) { minX = 0; minY = 0; maxX = CANVAS_W; maxY = CANVAS_H; }
       // Establishing wide on the first beat and the last: a campaign

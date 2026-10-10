@@ -34,6 +34,7 @@ import { getShipClass, ShipClassName } from '../game/shipClasses';
 import type { TargetPriorityKey } from '../types';
 import { TargetPriorityCards } from './TargetPriorityCards';
 import { ChainOrderEditor } from './ChainOrderEditor';
+import { GroupIntercept } from './GroupIntercept';
 import { useBulkChain } from '../hooks/useBulkChain';
 import { useIsMobile } from '../hooks/useIsMobile';
 import type { ChainStep } from '../physics/chainPlanner';
@@ -73,6 +74,9 @@ export const GroupActionBar: React.FC = () => {
   const [showChain, setShowChain] = useState(false);
   const [chain, setChain] = useState<ChainStep[]>([]);
   const bulkChain = useBulkChain();
+  // INTERCEPT for the group: the ship panel's picker, solved from one
+  // parked hull, ordered per hull (GroupIntercept).
+  const [showIntercept, setShowIntercept] = useState(false);
   // Touch layout: the order rows fold away behind two toggles, because a
   // phone-width bar holding every button at once covers a third of the map.
   const [showSend, setShowSend] = useState(false);
@@ -128,6 +132,9 @@ export const GroupActionBar: React.FC = () => {
   const gunners = ships.filter(isArmed);
   const flagCandidate = mine.find(s => !!s.captainName || !!s.captainId) ?? null;
   const canFormFleet = mine.length >= 2;
+  // Only a parked hull can set off to meet anyone; one in flight keeps
+  // the course it is on.
+  const interceptors = mine.filter(s => !s.transit).length;
 
   // SAME CLASS. Every ship of yours of any class already in the group,
   // for "all my destroyers" without finding each one. Nothing did this on
@@ -248,6 +255,7 @@ export const GroupActionBar: React.FC = () => {
     // it succeeds.
     setShowChain(false);
     setChain([]);
+    setShowIntercept(false);
   }, [uiState.selectedShipIds]);
   // A world prompt belongs to the mode it was raised in.
   useEffect(() => { if (!selectMode) setWorldPrompt(null); }, [selectMode]);
@@ -402,6 +410,21 @@ export const GroupActionBar: React.FC = () => {
       onClick={() => setShowChain(v => !v)}
     >{t('grp.chain')}</button>
   );
+  const interceptButton = mpActions && (
+    <button
+      className={`group-bar__btn${showIntercept ? ' group-bar__btn--active' : ''}`}
+      disabled={interceptors === 0}
+      title={interceptors === 0 ? t('grp.interceptNone') : t('grp.interceptTip')}
+      onClick={() => setShowIntercept(v => !v)}
+    >{touch ? t('grp.interceptMore') : t('grp.intercept')}</button>
+  );
+  const interceptPicker = showIntercept && interceptors > 0 && (
+    <GroupIntercept
+      ships={ships}
+      onClose={() => setShowIntercept(false)}
+      onSent={(msg) => { setNotice(msg); setShowIntercept(false); }}
+    />
+  );
   const formFleetButton = canFormFleet && (
     <button
       className="group-bar__btn"
@@ -494,6 +517,9 @@ export const GroupActionBar: React.FC = () => {
 
   // ---- touch: the contextual action bar of selection mode ---------------
   if (touch) {
+    // The picker's sheet takes the bar's place; ✕ or a sent order brings
+    // the bar back.
+    if (interceptPicker) return interceptPicker;
     const hint = notice
       ?? (ships.length === 0
         ? t('grp.hintTouchEmpty')
@@ -553,6 +579,7 @@ export const GroupActionBar: React.FC = () => {
               onClick={() => setShowSend(v => !v)}
               disabled={routable.length === 0}
             >{t('grp.sendMore')}</button>
+            {interceptButton}
             {formFleetButton}
             {sameClassButton}
             {mpActions && (
@@ -592,6 +619,7 @@ export const GroupActionBar: React.FC = () => {
             {stanceButtons}
             {targetingButton}
             {chainButton}
+            {interceptButton}
           </span>
         )}
         {formFleetButton}
@@ -608,6 +636,7 @@ export const GroupActionBar: React.FC = () => {
           map gesture — both call groupMove. */}
       {destinationPicker}
       {flyouts}
+      {interceptPicker}
 
       <div className="group-bar__hint">
         {notice ?? t('grp.hintDesktop')}

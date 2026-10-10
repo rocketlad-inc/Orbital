@@ -5,6 +5,8 @@ export const map: Catalog = {
   // ---- MapCanvas ----
   'map.threat': '⚠ AMEAÇA',
   'map.meet': 'ENCONTRO {name} · T+{tick}',
+  'map.meetAt': 'ENCONTRO {name} EM {dest} · T+{tick}',
+  'map.target': 'ALVO · {name}',
   'map.toast.shipFallback': 'Nave',
   'map.toast.cycleTap': '{name} — {i} de {n} aqui. Toque de novo para a próxima.',
   'map.toast.cycleClick': '{name} — {i} de {n} aqui. Clique de novo para a próxima.',

@@ -1,18 +1,14 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from 'react';
 import { NON_WORLD_TYPES } from '../game/victory';
 import { useGameContext } from '../state/gameContext';
-import { Ship, Body, Settlement, TradeRoute, TargetPriorityKey } from '../types';
+import { Ship, Body, Settlement, TradeRoute, TargetPriorityKey, CameraState } from '../types';
 import { TargetPriorityCards, autoTargetOrderFor } from './TargetPriorityCards';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { deriveSecondary } from '../game/colorUtils';
 import { maintenanceRatesForShip, REPAIR_PER_TICK_PER_TENDER_BAY } from '../game/maintenance';
 import { nearestRefitBodyId, preferredYardBodyId, isDamagedShip } from '../game/repair';
 import { effectiveShipMaxHp, shipWorldPosition, attackerDamageFactors } from '../game/combat';
-import { bodyPosition } from '../physics/orbitalMechanics';
-import { torchTrajectorySamples, trajectoryRole } from '../render/mapRenderer';
-import { filterIntercepts } from '../game/interceptSearch';
-import { torchPositionFromSamples } from '../physics/torchTransfer';
-import { solveRendezvous } from '../physics/rendezvous.js';
+import { orbitWorldPos } from '../physics/orbitalMechanics';
 import { predictTarget, enemyFlakOn, SETTLEMENT_COMBAT_SPEED } from '../game/targeting';
 import { traitSummary, traitBrief, rankTierLabel, rerollAvatarId } from '../game/captains';
 import { CaptainAvatar } from './CaptainAvatar';
@@ -71,6 +67,14 @@ import { fleetPath } from '../multiplayer/fleetWire';
 import { gateRouteFor } from '../game/gateRoute';
 import { t, tn } from '../i18n/core';
 import { useI18n } from '../i18n/react';
+import { createPortal } from 'react-dom';
+import { InterceptPicker, STANDING_RING, type PickerEntry } from './InterceptPicker';
+import { solveIntercepts, courseBox, type InterceptOption } from '../game/interceptOptions';
+import { interceptPickerEntries } from './interceptEntries';
+import { framingCamera, freeMapArea } from '../game/interceptPicker';
+import { getCamera } from '../state/cameraStore';
+import { planHullIntercept } from '../multiplayer/interceptCommit';
+import { useInterceptOverlay } from './useInterceptOverlay';
 
 // Order-independent key for a parts loadout, so two designs with the same
 // multiset of parts compare equal regardless of slot order.
@@ -119,12 +123,6 @@ const SHIP_TABS: Array<{ key: ShipPanelTab }> = [
   { key: 'cargo' },
   { key: 'log' },
 ];
-
-/** Hostile hull names in the intercept list. Red on request (Noah), not
- *  the map's amber hostile-trajectory tint: in a list the job is to jump
- *  out of a column of teal "yours" rows, and it is the same red the
- *  panel already uses for danger. */
-const RV_HOSTILE_RED = '#ff5e5e';
 
 export const ShipPanel: React.FC = () => {
   const { lang: uiLang } = useI18n();
@@ -212,9 +210,20 @@ export const ShipPanel: React.FC = () => {
   const [rendezvousId, setRendezvousId] = useState<string | null>(null);
   const [rendezvousBusy, setRendezvousBusy] = useState(false);
   const [rendezvousOpen, setRendezvousOpen] = useState(false);
-  // Filter for the intercept list. A live board offered 192 contacts in
-  // one scroll box — "it also definitely needs a search bar" (Noah).
-  const [rvQuery, setRvQuery] = useState('');
+  // THE INTERCEPT PICKER (InterceptPicker): a pop-out beside the panel on
+  // desktop, a page of the sheet on a phone. Picking a target no longer
+  // throws the camera out to the whole system; SHOW does that on request
+  // and BACK TO SHIP puts the camera back exactly where it was.
+  const [rvShowing, setRvShowing] = useState(false);
+  const rvCamBefore = useRef<CameraState | null>(null);
+  // Phone: after a pick the sheet drops to a peek so the course shows.
+  const [rvPeek, setRvPeek] = useState(false);
+  // A MEET pick stages the plain leg to their door as the ship's planned
+  // move, so the map draws it; remembered so closing the picker clears
+  // only what the picker staged.
+  const rvStagedMoveFor = useRef<string | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [rvPopAt, setRvPopAt] = useState<{ left: number; top: number } | null>(null);
   // FLEET tab member list: capped until asked. Every row is an icon, a
   // bar and three labels rebuilt on each /state poll, and an uncapped
   // 147-row list is the exact shape that made a megafleet crawl.
@@ -433,9 +442,12 @@ export const ShipPanel: React.FC = () => {
   // on the map describing a plan nobody is looking at any more.
   const rvShipId = ship?.id ?? null;
   useEffect(() => {
+    // The picker is a pop-out now, not a list folded into ORDERS: one
+    // left open must not spring open again on the next hull selected
+    // (the panel stays mounted between selections, and so did this).
+    setRendezvousOpen(false);
     setRendezvousId(null);
-    // A search typed for one hull means nothing on the next.
-    setRvQuery('');
+    setRvPeek(false);
     // THE ERROR BELONGED TO THE LAST HULL. transferError is written by
     // the move/intercept flows and was never cleared when the panel
     // moved on, so "No matched intercept of Parana exists from here"
@@ -443,9 +455,19 @@ export const ShipPanel: React.FC = () => {
     // gone — reported as the game still acting on a removed order.
     setTransferError(null);
     setTransferNote(null);
+    setRvShowing(false);
+    rvCamBefore.current = null;
     if (!rvShipId) return undefined;
-    return () => { previewRendezvous(rvShipId, null); };
-  }, [rvShipId, previewRendezvous]);
+    return () => {
+      previewRendezvous(rvShipId, null);
+      // A meeting-at-the-door preview the picker staged as this hull's
+      // planned move goes with it.
+      if (rvStagedMoveFor.current === rvShipId) {
+        cancelTorchPreview(rvShipId);
+        rvStagedMoveFor.current = null;
+      }
+    };
+  }, [rvShipId, previewRendezvous, cancelTorchPreview]);
 
   // SOLVED ONCE PER TICK, NOT ONCE PER FRAME.
   //
@@ -471,78 +493,69 @@ export const ShipPanel: React.FC = () => {
     .map(t => `${t.id}:${t.transit!.currentTransfer!.targetBodyId}:${t.transit!.currentTransfer!.arriveTick}`)
     .join('|');
 
-  const rendezvousCandidates = useMemo(() => {
-    // Collapsed is the default, and the solve is the most expensive
-    // thing this panel does — so do not do it until asked.
+  // ONE ANSWER PER GROUP IN FLIGHT (game/interceptOptions.ts): a fleet,
+  // or loose hulls of one empire bound for one world on one tick, solved
+  // once from its lead. The rule is unchanged — a true rendezvous before
+  // they land, or reaching their door no later than they do — but groups
+  // you can't catch are kept, with the reason, for the picker's "can't
+  // reach" view instead of silently vanishing.
+  const interceptOptions = useMemo((): InterceptOption[] => {
+    // Closed is the default, and the solve is the most expensive thing
+    // this panel does — so do not do it until asked.
     if (!rendezvousOpen) return [];
     if (!ship || ship.transit) return [];
-    const now = gameState.currentTick;
-    return gameState.ships
-            .filter(t => t.id !== ship.id && t.transit && (t.hp ?? 1) > 0
-                      && !!t.transit.currentTransfer?.targetBodyId)
-            .map(t => {
-              const tr = t.transit!.currentTransfer;
-              const dest = gameState.bodies.find(b => b.id === tr.targetBodyId);
-              if (!dest) return null;
-              const theirEta = tr.arriveTick;
-              if (theirEta <= now) return null;          // already parking
-              const myPlan = planLegFor(ship.id, dest.id);
-              if (!myPlan) return null;                   // no course at all
-              // Sampled once per candidate — the solver asks ~29 times.
-              const theirSamples = torchTrajectorySamples(tr, gameState.bodies);
-              if (!theirSamples || theirSamples.length < 2) return null;
-
-              // TRUE RENDEZVOUS first: a burn/coast/burn that matches
-              // their velocity in open space, so the two fly the rest
-              // of the leg together instead of merely sharing a door.
-              //
-              // It usually returns null, and that is the design: for
-              // most geometries no pair of burns closes both the
-              // position and the velocity gap in time. Falling back to
-              // the destination is not a consolation prize — per the
-              // chase analysis, the door is where the value is anyway.
-              const rv = solveRendezvous(
-                { x: myPlan.startPos.x, y: myPlan.startPos.y },
-                { x: myPlan.startVel.x, y: myPlan.startVel.y },
-                myPlan.acceleration,
-                // SOLVE AGAINST WHERE THE HULL IS DRAWN.
-                //
-                // ship.transit.pos is a separate integration that drifts
-                // from the polyline the renderer lerps the sprite along
-                // — the same divergence that once put sensor rings ahead
-                // of their own ship. Solving against it placed the
-                // meeting somewhere the target visibly was not, which is
-                // exactly how this surfaced: a crosshair in empty space.
-                (tick) => {
-                  const q1 = torchPositionFromSamples(theirSamples, tick);
-                  const h = 0.01;
-                  const q2 = torchPositionFromSamples(theirSamples, tick + h);
-                  return {
-                    pos: { x: q1.x, y: q1.y },
-                    vel: { x: (q2.x - q1.x) / h, y: (q2.y - q1.y) / h },
-                  };
-                },
-                now,
-                theirEta,
-              );
-
-              // The filter that makes this list worth reading: arriving
-              // after they have parked is not a rendezvous, it is a late
-              // visit to an empty orbit.
-              if (!rv && myPlan.arriveTick > theirEta) return null;
-              const meetIn = rv
-                ? Math.max(0, rv.meetTick - now)
-                : Math.max(0, theirEta - now);
-              return { t, dest, theirEta, myPlan, rv, meetIn };
-            })
-            .filter((c): c is NonNullable<typeof c> => c !== null)
-            .sort((a, b) => a.meetIn - b.meetIn);
+    // Your own fleet flies with you; it is not something to intercept.
+    const crew = ship.fleetId
+      ? new Set(gameState.ships.filter(s => s.fleetId === ship.fleetId).map(s => s.id))
+      : undefined;
+    return solveIntercepts(ship, gameState, planLegFor, crew);
   // planLegFor is stable; bodies only matter through the plans. And
   // gameState.ships is read inside but deliberately NOT a dep:
   // flightSignature is its meaningful projection, and depending on the
   // array itself is the ~450ms-per-click bug this replaces.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rendezvousOpen, ship?.id, ship?.transit, flightSignature, gameState.currentTick, gameState.bodies]);
+
+  // What the picker shows for each group (components/interceptEntries).
+  const interceptEntries = useMemo((): PickerEntry[] => {
+    if (!ship || !ship.orbit || interceptOptions.length === 0) return [];
+    return interceptPickerEntries(interceptOptions, gameState, orbitWorldPos(ship.orbit, gameState.currentTick, gameState.bodies));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [interceptOptions, uiLang]);
+
+  // Dock the desktop pop-out beside the panel, and keep it there.
+  useLayoutEffect(() => {
+    if (!rendezvousOpen || isMobile) { setRvPopAt(null); return undefined; }
+    const place = () => {
+      const r = panelRef.current?.getBoundingClientRect();
+      // Never above the window. The panel slides in from translateY(-110%)
+      // (ShipPanel.css), so a measure taken mid-slide reads far above it;
+      // animationend measures again once it has landed.
+      if (r) setRvPopAt({ left: Math.round(r.right + 8), top: Math.max(8, Math.round(r.top)) });
+    };
+    place();
+    const el = panelRef.current;
+    window.addEventListener('resize', place);
+    el?.addEventListener('animationend', place);
+    return () => {
+      window.removeEventListener('resize', place);
+      el?.removeEventListener('animationend', place);
+    };
+  }, [rendezvousOpen, isMobile, shipTab, ship?.id]);
+
+  // The map's half of the picker: rings on what this hull can catch, the
+  // meeting at the door, and the veil while SHOW has the camera.
+  useInterceptOverlay(
+    'ship-panel',
+    rendezvousOpen && !!ship && ship.ownedBy === 'player' && !ship.transit && !!mpActions,
+    interceptOptions,
+    rendezvousId,
+    rvShowing,
+    ship?.orbit ? orbitWorldPos(ship.orbit, gameState.currentTick, gameState.bodies) : null,
+    gameState.bodies,
+    gameState.currentTick,
+    uiLang,
+  );
 
   const transferHandlerRef = useRef<(bodyId: string, waitTicks?: number) => void>(() => {});
 
@@ -850,6 +863,200 @@ export const ShipPanel: React.FC = () => {
   };
 
   const isOwn = ship.ownedBy === 'player';
+
+  // ---- INTERCEPT PICKER ---------------------------------------------------
+  // Open only for your own parked hull (a committed burn cannot be re-aimed).
+  const rvOpenNow = rendezvousOpen && isOwn && !!mpActions && !ship.transit;
+  const rvSelected = interceptOptions.find(o => o.key === rendezvousId && o.ok) ?? null;
+  const rvFleet = ship.fleetId ? gameState.fleets.find(f => f.id === ship.fleetId) ?? null : null;
+  const rvFleetSize = rvFleet ? gameState.ships.filter(s => s.fleetId === rvFleet.id).length : 1;
+  const rvGroupName = (o: InterceptOption) => o.fleet?.name ?? o.lead.name;
+
+  const clearRvPreview = () => {
+    previewRendezvous(ship.id, null);
+    if (rvStagedMoveFor.current === ship.id) {
+      cancelTorchPreview(ship.id);
+      rvStagedMoveFor.current = null;
+    }
+  };
+  const restoreRvCamera = () => {
+    if (rvCamBefore.current) updateCamera(rvCamBefore.current);
+    rvCamBefore.current = null;
+    setRvShowing(false);
+  };
+  const closeIntercept = () => {
+    clearRvPreview();
+    restoreRvCamera();
+    setRendezvousId(null);
+    setRvPeek(false);
+    setRendezvousOpen(false);
+  };
+
+  // SHOW: today's zoom-out, on request. It frames your hull, their hull
+  // and the meeting point inside the map the panels leave uncovered —
+  // beside the pop-out on a desktop, above the sheet on a phone.
+  const frameIntercept = (o: InterceptOption) => {
+    const box = courseBox(o, shipWorldPosition(ship, gameState.currentTick, gameState.bodies), gameState.bodies);
+    if (!box) return;
+    const W = window.innerWidth, H = window.innerHeight;
+    // focusedBodyId is cleared FIRST — while it is set, x/y are an
+    // offset (see releaseFocusPosition), not the world point at centre.
+    updateCamera({
+      focusedBodyId: undefined,
+      ...framingCamera(box, freeMapArea(isMobile, rvPopAt?.left ?? null, W, H), W, H),
+    });
+  };
+  const toggleShowIntercept = () => {
+    if (!rvSelected) return;
+    if (rvShowing) { restoreRvCamera(); return; }
+    rvCamBefore.current = { ...getCamera() };
+    frameIntercept(rvSelected);
+    setRvShowing(true);
+  };
+
+  // PICKING NO LONGER MOVES THE CAMERA. It draws the course from where
+  // you are: a match through the rendezvous preview, a meeting at the
+  // door as the plain leg there (staged as the ship's planned move, the
+  // same arc MOVE TO TARGET draws).
+  const pickIntercept = (key: string) => {
+    const o = interceptOptions.find(x => x.key === key && x.ok);
+    if (!o) return;
+    setRendezvousId(key);
+    setTransferError(null);
+    setTransferNote(null);
+    if (isMobile) setRvPeek(true);
+    if (o.rv) {
+      if (rvStagedMoveFor.current === ship.id) {
+        cancelTorchPreview(ship.id);
+        rvStagedMoveFor.current = null;
+      }
+      previewRendezvous(ship.id, {
+        p0: { x: o.myPlan.startPos.x, y: o.myPlan.startPos.y },
+        v0: { x: o.myPlan.startVel.x, y: o.myPlan.startVel.y },
+        accel: o.myPlan.acceleration,
+        A: o.rv.A, B: o.rv.B,
+        startTick: gameState.currentTick, meetTick: o.rv.meetTick,
+        followShipId: o.lead.id,
+      });
+    } else {
+      previewRendezvous(ship.id, null);
+      if (planTorchPreview(ship.id, o.dest.id)) rvStagedMoveFor.current = ship.id;
+    }
+    if (rvShowing) frameIntercept(o);
+  };
+
+  // The order itself, unchanged from the old MATCH COURSE / MEET AT
+  // button: the flagship flies the course it was shown, every other hull
+  // of the fleet solves its own intercept of the same target, and the
+  // fleet's mixed result is reported.
+  const commitIntercept = async () => {
+    const chosen = rvSelected;
+    if (!chosen || !mpActions || rendezvousBusy) return;
+    const chosenName = rvGroupName(chosen);
+    // Guard the double-click: both posts carry replace:true, so the
+    // second would cancel the leg the first just created.
+    setRendezvousBusy(true);
+    // The launch below replaces the staged preview, so it is no longer
+    // the picker's to clear.
+    rvStagedMoveFor.current = null;
+    // Fly it locally too, or the hull sits parked until the next /state
+    // poll and the button reads as dead. A MATCH IS NOT A TRIP TO THEIR
+    // DESTINATION: keep the rendezvous preview staged so the committed
+    // manoeuvre is still the one on screen until the server confirms it.
+    launchTorchTransfer(ship.id, chosen.dest.id);
+    if (chosen.rv) {
+      previewRendezvous(ship.id, {
+        p0: { x: chosen.myPlan.startPos.x, y: chosen.myPlan.startPos.y },
+        v0: { x: chosen.myPlan.startVel.x, y: chosen.myPlan.startVel.y },
+        accel: chosen.myPlan.acceleration,
+        A: chosen.rv.A, B: chosen.rv.B,
+        startTick: chosen.myPlan.startTick,
+        meetTick: chosen.rv.meetTick,
+        followShipId: chosen.lead.id,
+      });
+    }
+    const res = await mpActions.transfer({
+      shipId: ship.id,
+      targetBodyId: chosen.dest.id,
+      scheduledT: chosen.myPlan.startTick,
+      // A TRUE MATCH ARRIVES WHEN THEY DO: flying together means sharing
+      // their arrival, not landing on my own schedule.
+      arrivalT: chosen.rv ? chosen.theirEta : chosen.myPlan.arriveTick,
+      launch: launchFromPlan(chosen.myPlan),
+      ...(chosen.rv ? {
+        rendezvous: {
+          ax: chosen.rv.A.x, ay: chosen.rv.A.y,
+          bx: chosen.rv.B.x, by: chosen.rv.B.y,
+          meetTick: chosen.rv.meetTick,
+          followShipId: chosen.lead.id,
+        },
+      } : {}),
+      dvPrograde: chosen.myPlan.totalDv,
+      fuelCost: Math.round(chosen.myPlan.totalDv * 10),
+      replace: true,
+    });
+    // THE WHOLE FLEET GOES: each mate solves its OWN intercept of the
+    // same target from where it sits (a shared target, not a shared
+    // trajectory) and commits it the same way.
+    const mates = orderedHulls().filter(m => m.id !== ship.id);
+    let mateOk = 0;
+    let mateMatched = 0;
+    const mateFlying = mates.filter(m => m.transit).length;
+    const matePlans = mates
+      .filter(m => !m.transit)
+      .map(m => planHullIntercept(m.id, chosen.lead.id, { enqueueIntercept, launchTorchTransfer, previewRendezvous }))
+      .filter((p): p is NonNullable<typeof p> => !!p);
+    if (matePlans.length > 0) {
+      const results = await mpActions.transferMany(matePlans.map(p => p.intent));
+      results.forEach((r, i) => { if (r.ok) { mateOk++; if (matePlans[i].matched) mateMatched++; } });
+    }
+    setRendezvousBusy(false);
+    rvCamBefore.current = null;
+    setRvShowing(false);
+    setRvPeek(false);
+    if (!res.ok) {
+      setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
+      return;
+    }
+    // Sent: the picker's job is done. Left open, it only hid while the
+    // hull flew, and sprang back with the old pick on a RECALL LAUNCH.
+    // The fleet's mixed result below shows on the ORDERS tab.
+    setRendezvousId(null);
+    setRendezvousOpen(false);
+    if (mates.length > 0) {
+      const total = mates.length + 1;
+      const got = 1 + mateOk;
+      const matched = (chosen.rv ? 1 : 0) + mateMatched;
+      const flyingNote = mateFlying > 0 ? ` ${t('ship.panel.mateFlying', { n: mateFlying })}` : '';
+      setTransferError(
+        got < total
+          ? `${t('ship.panel.ivPlotted', { got, total, name: chosenName })}${flyingNote}`
+          : matched === total || matched === 0
+            ? null
+            : t('ship.panel.ivMatched', { matched, total, name: chosenName, dest: chosen.dest.name }),
+      );
+    }
+  };
+
+  const rvMyFaction = gameState.factions.find(f => f.id === 'player');
+  const rvPickerShared = {
+    entries: interceptEntries,
+    selectedKey: rvSelected?.key ?? null,
+    onSelect: pickIntercept,
+    showing: rvShowing,
+    onShow: toggleShowIntercept,
+    onCommit: () => { void commitIntercept(); },
+    busy: rendezvousBusy,
+    message: transferError
+      ? { kind: 'error' as const, text: transferError }
+      : transferNote ? { kind: 'note' as const, text: transferNote } : null,
+    meIcon: (
+      <ShipIcon size={24} shipClass={iconClassFor(ship.class)} variant={ship.iconVariant} parts={ship.parts}
+        color={rvMyFaction?.color ?? STANDING_RING.yours} color2={rvMyFaction?.color2} />
+    ),
+    now: gameState.currentTick,
+    note: rvFleet && rvFleetSize > 1 ? t('ship.rv.fleetNote', { n: rvFleetSize, fleet: rvFleet.name }) : null,
+  };
 
   // Plain computation, not useMemo — this sits after the panel's early
   // `if (!ship) return null`, so a hook here would break the rules of
@@ -1618,8 +1825,29 @@ export const ShipPanel: React.FC = () => {
         </div>
       )}
 
-      <BottomSheet open={!hideForTargeting} onClose={deselectShip} title={t('ship.panel.shipTitle', { name: ship.name })}>
-      <div className="ship-panel" data-tutorial-id="ship-panel">
+      <BottomSheet
+        open={!hideForTargeting}
+        onClose={deselectShip}
+        title={rvOpenNow && isMobile ? t('ship.rv.title', { name: ship.name }) : t('ship.panel.shipTitle', { name: ship.name })}
+        size={rvOpenNow && isMobile ? (rvPeek && rvSelected ? 'peek' : 'tall') : undefined}
+      >
+      {/* PHONE: the intercept picker is a page of this sheet. The panel
+          stays mounted underneath (its state survives) but is hidden, and
+          with it the sticky COMMIT bar that used to cover the list. */}
+      {rvOpenNow && isMobile && (
+        <InterceptPicker
+          variant="sheet"
+          {...rvPickerShared}
+          onBack={closeIntercept}
+          peek={rvPeek}
+          onUnpeek={() => setRvPeek(false)}
+        />
+      )}
+      <div
+        className={`ship-panel${rvOpenNow && isMobile ? ' ship-panel--away' : ''}`}
+        data-tutorial-id="ship-panel"
+        ref={panelRef}
+      >
         <div className="panel-header">
           <span>
             {t('ship.panel.shipColon')}{' '}
@@ -2029,11 +2257,11 @@ export const ShipPanel: React.FC = () => {
               <button
                 type="button"
                 className={`maneuver-btn${rendezvousOpen ? ' is-armed' : ''}`}
-                onClick={() => setRendezvousOpen(o => !o)}
+                onClick={() => (rendezvousOpen ? closeIntercept() : setRendezvousOpen(true))}
                 aria-expanded={rendezvousOpen}
                 title={t('ship.panel.interceptTip')}
               >
-                {t('ship.panel.intercept')} {rendezvousOpen ? '▾' : '▸'}
+                {t('ship.panel.intercept')} ▸
               </button>
             )}
           </div>
@@ -2078,342 +2306,6 @@ export const ShipPanel: React.FC = () => {
               {exploreNotice}
             </div>
           )}
-
-          {/* RENDEZVOUS — meet a ship in flight at the door it is
-              heading for (DESIGN-transit-combat.md, "the missing order").
-
-              The order system could only ever say "go to a body", which
-              made escorting impossible unless you happened to be at the
-              same body on the same tick, and interception a lottery.
-              This is the cheap 90% of the fix: read where they are going
-              and when they get there, then plan an ordinary transfer
-              timed to land with them. No new solver — and the chase
-              analysis says that is where the value is anyway, because
-              you catch things at the door, never in the open.
-
-              ONLY REACHABLE CONTACTS ARE LISTED. A raw list of everything
-              in flight is mostly noise: most of it you cannot possibly
-              meet, and a picker whose entries silently fail is worse than
-              one that is short. Every candidate is planned against before
-              it is offered, and anything you would reach after it has
-              already parked is dropped.
-
-              Sensor-gated by construction — the list is built from
-              gameState.ships, which is already what this player can see. */}
-          {isOwn && mpActions && !ship.transit && (() => {
-            const now = gameState.currentTick;
-            const candidates = rendezvousCandidates;
-
-            const chosen = candidates.find(c => c.t.id === rendezvousId) ?? null;
-            const rvAllies = new Set(gameState.alliedFactionIds ?? []);
-            const rvShown = filterIntercepts(candidates, rvQuery, (c) => ({
-              shipName: c.t.name,
-              ownerName: c.t.ownedBy === 'player'
-                ? t('ship.panel.yours')
-                : (gameState.factions.find(f => f.id === c.t.ownedBy)?.name ?? ''),
-              destName: c.dest.name,
-            }));
-
-            // Frame the whole plan: my hull, theirs, and the door they are
-            // both heading for.
-            //
-            // focusedBodyId is cleared FIRST because while it is set the
-            // camera's x/y are an offset pinned to (0,0) — writing world
-            // coordinates into it teleports the view to the Sun. Same trap
-            // the WASD pan hit (see releaseFocusPosition).
-            const frameOn = (c: NonNullable<(typeof candidates)[number]>) => {
-              const pts = [
-                shipWorldPosition(ship, now, gameState.bodies),
-                shipWorldPosition(c.t, now, gameState.bodies),
-                bodyPosition(c.dest, c.theirEta, gameState.bodies),
-              ].filter((p): p is { x: number; y: number } => !!p);
-              if (pts.length === 0) return;
-              const xs = pts.map(p => p.x);
-              const ys = pts.map(p => p.y);
-              const minX = Math.min(...xs), maxX = Math.max(...xs);
-              const minY = Math.min(...ys), maxY = Math.max(...ys);
-              // Generous margin: a torch arc bows well outside the straight
-              // line between its endpoints, so a tight box would crop the
-              // very curve this is meant to show.
-              const w = Math.max(40, (maxX - minX) * 1.9);
-              const h = Math.max(40, (maxY - minY) * 1.9);
-              const vw = Math.max(320, window.innerWidth);
-              const vh = Math.max(320, window.innerHeight);
-              const scale = Math.max(0.02, Math.min(3, Math.min(vw / w, vh / h)));
-              updateCamera({
-                focusedBodyId: undefined,
-                x: (minX + maxX) / 2,
-                y: (minY + maxY) / 2,
-                scale,
-                zoomLevel: scale > 1.2 ? 3 : scale > 0.35 ? 2 : 1,
-              });
-            };
-
-            return (
-              <div className="maneuver-section" style={{ marginTop: 8 }}>
-                {/* THE LIST ONLY. Its header moved into the button grid
-                    above (the fourth button), so what expands here is
-                    the list itself, directly under the button that
-                    opened it. Still collapsed by default: a hundred
-                    contacts is a wall of rows that pushes the manoeuvre
-                    controls off screen, and most of the time nobody is
-                    shopping for an intercept.
-                    Player-facing name only (Lorne). The solver, the
-                    stored plan and every field stay `rendezvous` —
-                    renaming those would touch the physics module, the
-                    API and three migrations for a label change. */}
-                {rendezvousOpen && candidates.length > 0 && (
-                  <>
-                    {/* SEARCH. Matches the hull, its owner or where it is
-                        going, so "stonekin", "mega" and "jupiter" all
-                        find the same Mega Destroyer. */}
-                    <input
-                      type="search"
-                      className="rv-search"
-                      value={rvQuery}
-                      onChange={(e) => setRvQuery(e.target.value)}
-                      placeholder={t('ship.panel.rvSearch')}
-                      aria-label={t('ship.panel.rvSearchLabel')}
-                    />
-                    <div className="rv-count">
-                      {rvShown.length === candidates.length
-                        ? t('ship.panel.reachable', { n: candidates.length })
-                        : t('ship.panel.reachableOf', { n: rvShown.length, total: candidates.length })}
-                    </div>
-                  </>
-                )}
-                {rendezvousOpen && candidates.length > 0 && rvShown.length === 0 && (
-                  <div style={{ fontSize: 10, color: '#7a8a9a', lineHeight: 1.45, padding: '4px 0' }}>
-                    {t('ship.panel.noContact', { q: rvQuery.trim() })}
-                  </div>
-                )}
-                {!rendezvousOpen ? null : candidates.length === 0 ? (
-                  <div style={{ fontSize: 10, color: '#7a8a9a', lineHeight: 1.45, padding: '4px 0' }}>
-                    {t('ship.panel.nothingReach')}
-                  </div>
-                ) : (
-                  <div style={{ maxHeight: 190, overflowY: 'auto', margin: '2px 0 6px' }}>
-                    {rvShown.map((c) => {
-                      const isMine = c.t.ownedBy === 'player';
-                      const owner = gameState.factions.find(f => f.id === c.t.ownedBy);
-                      const who = isMine ? t('ship.panel.yours') : (owner?.name ?? t('ship.panel.rival'));
-                      const tint = isMine ? '#4ecdc4' : (owner?.color ?? '#8a9fb3');
-                      // HOSTILES READ RED AT A GLANCE (Noah). Who counts
-                      // as hostile is the map's own rule — trajectoryRole:
-                      // anyone neither you nor an ally — so the list and
-                      // the map never disagree about a hull. The owner
-                      // label keeps its faction colour; that says WHO.
-                      const hostile = trajectoryRole(c.t, 'player', rvAllies) === 'hostile';
-                      const on = c.t.id === rendezvousId;
-                      return (
-                        <button
-                          key={c.t.id}
-                          onClick={() => {
-                            setRendezvousId(c.t.id);
-                            frameOn(c);
-                            // SHOW THE COURSE, not just the row. A picker
-                            // that names a meeting without drawing it asks
-                            // the player to take the solver's word for a
-                            // manoeuvre they cannot picture — and this one
-                            // is a shape nothing else in the game flies.
-                            previewRendezvous(ship.id, c.rv ? {
-                              p0: { x: c.myPlan.startPos.x, y: c.myPlan.startPos.y },
-                              v0: { x: c.myPlan.startVel.x, y: c.myPlan.startVel.y },
-                              accel: c.myPlan.acceleration,
-                              A: c.rv.A, B: c.rv.B,
-                              startTick: now, meetTick: c.rv.meetTick,
-                              followShipId: c.t.id,
-                            } : null);
-                          }}
-                          title={t('ship.panel.frameTip', { name: c.t.name, dest: c.dest.name, tick: Math.round(c.theirEta) })}
-                          style={{
-                            display: 'flex', alignItems: 'center', gap: 8, width: '100%',
-                            textAlign: 'left', cursor: 'pointer',
-                            background: on ? 'rgba(78,205,196,0.12)' : 'transparent',
-                            border: '1px solid ' + (on ? '#4ecdc4' : '#22303f'),
-                            borderRadius: 3, padding: '5px 7px', marginBottom: 3,
-                            color: '#d8e4ee', font: 'inherit', fontSize: 11,
-                          }}
-                        >
-                          <ShipIcon
-                            shipClass={iconClassFor(c.t.class)}
-                            variant={c.t.iconVariant}
-                            size={18}
-                            parts={c.t.parts}
-                          />
-                          <span style={{ flex: 1, minWidth: 0 }}>
-                            <span style={{
-                              display: 'block', overflow: 'hidden',
-                              textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                            }}>
-                              <span style={hostile ? { color: RV_HOSTILE_RED } : undefined}>{c.t.name}</span>
-                              <span style={{ color: tint, fontSize: 9, marginLeft: 5 }}>{who}</span>
-                            </span>
-                            <span style={{ display: 'block', fontSize: 9, color: '#7a8a9a' }}>
-                              → {c.dest.name} · {c.rv ? t('ship.panel.matchIn', { n: Math.round(c.meetIn) }) : t('ship.panel.meetIn', { n: Math.round(c.meetIn) })}
-                              {c.rv && (
-                                <span style={{ color: '#6ee7b7', marginLeft: 5 }}>
-                                  ⇌ {t('ship.panel.flyTogether')}
-                                </span>
-                              )}
-                            </span>
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-                {chosen && (
-                  <button
-                    className="maneuver-btn"
-                    style={{ width: '100%', opacity: rendezvousBusy ? 0.45 : 1 }}
-                    disabled={rendezvousBusy}
-                    onClick={async () => {
-                      if (rendezvousBusy) return;
-                      // Guard the double-click: both posts carry
-                      // replace:true, so the second would cancel the leg
-                      // the first just created.
-                      setRendezvousBusy(true);
-                      // Fly it locally too, or the hull sits parked until
-                      // the next /state poll and the button reads as dead.
-                      //
-                      // A MATCH IS NOT A TRIP TO THEIR DESTINATION. This
-                      // used to stage only the plain transfer, so the
-                      // moment you committed an interception the panel
-                      // showed a route to Mars — the arc you had just
-                      // been shown simply vanished. Keep the preview
-                      // staged so the committed manoeuvre is still the
-                      // one on screen until the server confirms it.
-                      launchTorchTransfer(ship.id, chosen.dest.id);
-                      if (chosen.rv) {
-                        previewRendezvous(ship.id, {
-                          p0: { x: chosen.myPlan.startPos.x, y: chosen.myPlan.startPos.y },
-                          v0: { x: chosen.myPlan.startVel.x, y: chosen.myPlan.startVel.y },
-                          accel: chosen.myPlan.acceleration,
-                          A: chosen.rv.A, B: chosen.rv.B,
-                          startTick: chosen.myPlan.startTick,
-                          meetTick: chosen.rv.meetTick,
-                          followShipId: chosen.t.id,
-                        });
-                      }
-                      const res = await mpActions.transfer({
-                        shipId: ship.id,
-                        targetBodyId: chosen.dest.id,
-                        scheduledT: chosen.myPlan.startTick,
-                        // A TRUE MATCH ARRIVES WHEN THEY DO. Sending my
-                        // own ETA made the server fly a plain leg to
-                        // their planet on my schedule, so the pair split
-                        // up again the moment they touched. Flying
-                        // together means sharing their arrival.
-                        arrivalT: chosen.rv ? chosen.theirEta : chosen.myPlan.arriveTick,
-                        launch: launchFromPlan(chosen.myPlan),
-                        // A real match flies its own two arcs and then
-                        // adopts their plan; without one this is the
-                        // plain transfer to their destination.
-                        ...(chosen.rv ? {
-                          rendezvous: {
-                            ax: chosen.rv.A.x, ay: chosen.rv.A.y,
-                            bx: chosen.rv.B.x, by: chosen.rv.B.y,
-                            meetTick: chosen.rv.meetTick,
-                            followShipId: chosen.t.id,
-                          },
-                        } : {}),
-                        dvPrograde: chosen.myPlan.totalDv,
-                        fuelCost: Math.round(chosen.myPlan.totalDv * 10),
-                        replace: true,
-                      });
-                      // THE WHOLE FLEET GOES. This committed the open
-                      // panel's hull and nothing else, so MATCH COURSE
-                      // sent the flagship off alone and left the fleet
-                      // parked — under a header promising that every
-                      // order commands the whole squadron. Each mate now
-                      // solves its OWN intercept of the same target from
-                      // where it sits (a shared target, not a shared
-                      // trajectory, as the chained intercept already
-                      // does) and commits it the same way as above.
-                      //
-                      // The flagship keeps the course computed for this
-                      // panel, which is the one the player was shown.
-                      const mates = orderedHulls().filter(m => m.id !== ship.id);
-                      let mateOk = 0;
-                      let mateMatched = 0;
-                      let mateFlying = 0;
-                      await Promise.all(mates.map(async m => {
-                        // Already under way: this plans a departure
-                        // from orbit, which a hull in flight doesn't have.
-                        if (m.transit) { mateFlying++; return; }
-                        const leg = enqueueIntercept(m.id, chosen.t.id, 0, { fromNow: true });
-                        if (!leg) return;
-                        // Locally too, or a folded mate sits parked at
-                        // the origin until the next poll and the fleet
-                        // shows up split for a moment.
-                        launchTorchTransfer(m.id, leg.targetBodyId);
-                        if (leg.rv) {
-                          previewRendezvous(m.id, {
-                            p0: { x: leg.startPos.x, y: leg.startPos.y },
-                            v0: { x: leg.startVel.x, y: leg.startVel.y },
-                            accel: leg.acceleration,
-                            A: leg.rv.A, B: leg.rv.B,
-                            startTick: leg.startTick,
-                            meetTick: leg.rv.meetTick,
-                            followShipId: leg.rv.followShipId,
-                          });
-                        }
-                        const r = await mpActions.transfer({
-                          shipId: m.id,
-                          targetBodyId: leg.targetBodyId,
-                          scheduledT: leg.startTick,
-                          // A matched leg already carries THEIR arrival.
-                          arrivalT: leg.arriveTick,
-                          launch: launchFromPlan(leg),
-                          ...(leg.rv ? {
-                            rendezvous: {
-                              ax: leg.rv.A.x, ay: leg.rv.A.y,
-                              bx: leg.rv.B.x, by: leg.rv.B.y,
-                              meetTick: leg.rv.meetTick,
-                              followShipId: leg.rv.followShipId,
-                            },
-                          } : {}),
-                          dvPrograde: leg.totalDv,
-                          fuelCost: Math.round(leg.totalDv * 10),
-                          replace: true,
-                        });
-                        if (r.ok) { mateOk++; if (leg.rv) mateMatched++; }
-                      }));
-                      setRendezvousBusy(false);
-                      if (!res.ok) {
-                        setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
-                        return;
-                      }
-                      // Say what the FLEET got. Half a squadron matching
-                      // and half chasing the destination is exactly what
-                      // the player needs to hear; the flagship's result
-                      // alone would hide it.
-                      if (mates.length > 0) {
-                        const total = mates.length + 1;
-                        const got = 1 + mateOk;
-                        const matched = (chosen.rv ? 1 : 0) + mateMatched;
-                        const flyingNote = mateFlying > 0
-                          ? ` ${t('ship.panel.mateFlying', { n: mateFlying })}`
-                          : '';
-                        setTransferError(
-                          got < total
-                            ? `${t('ship.panel.ivPlotted', { got, total, name: chosen.t.name })}${flyingNote}`
-                            : matched === total || matched === 0
-                              ? null
-                              : t('ship.panel.ivMatched', { matched, total, name: chosen.t.name, dest: chosen.dest.name }),
-                        );
-                      }
-                    }}
-                  >
-                    {chosen.rv
-                      ? '⇌ ' + t('ship.panel.matchCourse', { name: chosen.t.name.toUpperCase() })
-                      : '⇉ ' + t('ship.panel.meetAt', { name: chosen.t.name.toUpperCase(), dest: chosen.dest.name.toUpperCase() })}
-                  </button>
-                )}
-              </div>
-            );
-          })()}
 
           {/* RETROFIT — take the active design for this hull's class.
               Only rendered when there is genuinely something to do:
@@ -4295,6 +4187,18 @@ export const ShipPanel: React.FC = () => {
         </div>
       </div>
       </BottomSheet>
+
+      {/* DESKTOP: the intercept picker pops out beside the panel. */}
+      {rvOpenNow && !isMobile && rvPopAt && createPortal(
+        <InterceptPicker
+          variant="popout"
+          {...rvPickerShared}
+          title={t('ship.rv.title', { name: ship.name })}
+          onClose={closeIntercept}
+          style={{ left: rvPopAt.left, top: rvPopAt.top }}
+        />,
+        document.body,
+      )}
 
       {transferModalOpen && (
         <TransferTargetPicker
