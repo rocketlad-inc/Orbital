@@ -30,6 +30,7 @@
     "sim:herald": "node sim/heraldShapes.mjs",
     "sim:colors": "node sim/colorClash.mjs",
     "sim:emblems": "node sim/emblemClash.mjs",
+    "sim:chain": "node sim/chainedLegs.mjs",
     "sim:trade": "node sim/tradeRoutes.mjs",
     "sim:trade2": "node sim/tradeRoutesV2.mjs",
     "sim:trademig": "node sim/tradeMigration.mjs",
