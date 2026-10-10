@@ -186,7 +186,10 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
   // Foundry slots stack on the ground yards, matching the server total
   // in foundrySlotsAt — if the panel quoted a smaller number the player
   // would see orders accepted past a limit the UI insisted on.
-  const totalSlots = shipyardSlotsAtBody(body.id, 'player', gameState.settlements)
+  // The base slot comes with a SETTLEMENT (worker buildSlotsAt): a foundry
+  // over a world where you have nothing else is exactly its 4 slots, as
+  // its card says. It used to read 5.
+  const totalSlots = (hasMySettlement ? shipyardSlotsAtBody(body.id, 'player', gameState.settlements) : 0)
     + foundriesHere * (MEGASTRUCTURES.mobile_foundry.effect.buildSlots ?? 0);
   const usedSlots = buildingOrders.length;
   const slotsFull = usedSlots >= totalSlots;

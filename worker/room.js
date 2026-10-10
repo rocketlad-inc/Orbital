@@ -27,13 +27,14 @@ import {
 import { rendezvousStateAt } from '../src/physics/rendezvous.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
 import { selectInChunks } from './sqlChunk.js';
+import { refundBuildLedger } from './buildRefund.js';
 import { hostilePairs } from './wars.js';
 import { assetState, voidDeal, ASSET_TRADE_PREFIX, owedOn, payIntoDeal } from './assetDeals.js';
 import { legProgress } from './orbitPos.js';
 import { SHIP_ENGINE_ACCEL, legTicks as burnLegTicks, shapeForArrival } from './burn.js';
 import { effectiveHpMaxOf } from './effectiveHp.js';
 import {
-  periodForRadius, MEGASTRUCTURES, MEGA_MU, bodyPositionAt, foundrySlotsAt,
+  periodForRadius, MEGASTRUCTURES, MEGA_MU, bodyPositionAt, foundrySlotsAt, buildSlotsAt, hasSettlementAt,
   MEGA_MAX_HP, MEGA_REGEN_PER_TICK, MEGA_BREACH_HP, stationDamage,
   maySupplySite, excludedFundersOf, constructionPartners, gateTransitTicks,
 } from './megastructures.js';
@@ -4688,6 +4689,7 @@ export class Room {
       .prepare(
         `SELECT q.id, q.body_id, q.faction_id, q.ship_class, q.completes_at_tick,
                 q.icon_variant, q.ship_name, q.parts_json, q.rush_count, q.botched,
+                q.charge_json, q.queued_at_tick,
                 -- THE CASCADE, resolved in SQL so there is one answer and
                 -- no second round trip per hull: the row's own order wins,
                 -- and a row with none takes whatever its yard is doing.
@@ -4751,19 +4753,32 @@ export class Room {
      // each row so one poison build can't take the game down.
      try {
       // Defense in depth vs. the settlement-loss cancellation (§3.4): a
-      // ship only rolls out if its faction STILL holds a living
-      // settlement at the body at completion time. Covers destruction
-      // paths that miss the explicit cancel (asteroid impacts, future
-      // mechanics) — no yard, no ship.
-      const yardStill = await this.env.DB
-        .prepare(
-          `SELECT 1 AS x FROM game_settlements
-            WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
-              AND destroyed_at_tick IS NULL
-            LIMIT 1`,
-        )
-        .bind(gameId, b.body_id, b.faction_id)
-        .first();
+      // hull does not roll out at a world where its faction LOST a
+      // settlement while it was on the ways. Covers destruction paths
+      // that miss the explicit cancel (asteroid impacts, future
+      // mechanics).
+      //
+      // THE FOUNDRY IS A YARD. This used to demand a living settlement,
+      // full stop, so every order laid down at a Mobile Foundry over a
+      // world you had not settled (which is what a foundry is for) was
+      // cancelled on the tick it should have rolled out, and kept its
+      // price. In UBGE not one foundry-built hull ever launched: Léo
+      // Freitas lost four corvettes and a rushed colony ship at Aya and
+      // two corvettes at Dysnomia (2026-10-09). And the foundry's own
+      // card promises that "anything still on the ways is finished where
+      // it was laid down" when it moves on, so a foundry that has left is
+      // no reason to stop a hull either. Only a lost settlement is.
+      const yardStill = await hasSettlementAt(this.env, gameId, b.body_id, b.faction_id)
+        || (await foundrySlotsAt(this.env, gameId, b.body_id, b.faction_id)) > 0
+        || !(await this.env.DB
+          .prepare(
+            `SELECT 1 AS x FROM game_settlements
+              WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
+                AND destroyed_at_tick IS NOT NULL AND destroyed_at_tick >= ?
+              LIMIT 1`,
+          )
+          .bind(gameId, b.body_id, b.faction_id, Number(b.queued_at_tick) || 0)
+          .first());
       if (!yardStill) {
         await this.env.DB
           .prepare('UPDATE game_body_build_queue SET cancelled_at_tick = ? WHERE id = ? AND cancelled_at_tick IS NULL')
@@ -5056,28 +5071,31 @@ export class Room {
         const promotions = [];
         for (const [key, rows] of groups) {
           const [bodyId, factionId] = key.split('|');
-          const yardRows = (await this.env.DB
-            .prepare(
-              `SELECT buildings_json FROM game_settlements
-                WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
-                  AND type = 'station' AND destroyed_at_tick IS NULL`,
-            )
-            .bind(gameId, bodyId, factionId)
-            .all()).results ?? [];
-          let shipyardLevels = 0;
-          for (const row of yardRows) {
-            if (!row.buildings_json) continue;
-            try {
-              const b = JSON.parse(row.buildings_json) || {};
-              shipyardLevels += Number(b.shipyard ?? 0) || 0;
-            } catch { /* ignore malformed */ }
-          }
           // Same total the queue endpoint used when it accepted these
-          // orders. If the promoter counted only ground yards, a
-          // foundry's extra slots would be honoured at queue time and
-          // then quietly ignored forever after.
-          const slots = 1 + shipyardLevels
-            + await foundrySlotsAt(this.env, gameId, bodyId, factionId);
+          // orders (buildSlotsAt). If the promoter counted only ground
+          // yards, a foundry's extra slots would be honoured at queue time
+          // and then quietly ignored forever after.
+          const slots = await buildSlotsAt(this.env, gameId, bodyId, factionId);
+          // NO YARD LEFT AT ALL (the foundry moved on and you never settled
+          // here): orders still WAITING were never laid down and never will
+          // be. Hand back what they paid, from the charge ledger, rather
+          // than leave them stranded, charged and forever "waiting".
+          if (slots <= 0) {
+            for (const w of rows) {
+              try {
+                const flip = await this.env.DB
+                  .prepare('UPDATE game_body_build_queue SET cancelled_at_tick = ? WHERE id = ? AND cancelled_at_tick IS NULL')
+                  .bind(tick, w.id).run();
+                if (flip.meta?.changes) {
+                  const row = await this.env.DB
+                    .prepare('SELECT charge_json FROM game_body_build_queue WHERE id = ?')
+                    .bind(w.id).first();
+                  await refundBuildLedger(this.env.DB, gameId, factionId, row?.charge_json);
+                }
+              } catch (e) { console.error('stranded build refund failed', w.id, e); }
+            }
+            continue;
+          }
           const active = await this.env.DB
             .prepare(
               `SELECT COUNT(*) AS c FROM game_body_build_queue

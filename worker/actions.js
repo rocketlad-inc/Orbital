@@ -23,7 +23,7 @@ import {
 } from './researchUnlocks.js';
 import {
   MEGASTRUCTURES, MEGA_BODY_TYPE, MEGA_MU, deriveSiteOrbit, soiHolderAt,
-  isComplete, remainingFor, progressOf, foundrySlotsAt, applyCapture,
+  isComplete, remainingFor, progressOf, foundrySlotsAt, buildSlotsAt, applyCapture,
   isBreached, isAbandoned, MEGA_MAX_HP, MEGA_BREACH_HP, GATE_TRANSIT_FRACTION,
   gateTransitTicks,
   maySupplySite, excludedFundersOf, constructionPartners,
@@ -1492,25 +1492,10 @@ async function handleQueueBuild(req, env, ctx) {
   // status='waiting' (still charged up front) and promoted FIFO by the
   // room.js tick pass as active builds complete. Only status='building'
   // rows count against the slots.
-  const yardRows = (await env.DB
-    .prepare(
-      `SELECT buildings_json FROM game_settlements
-        WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
-          AND type = 'station' AND destroyed_at_tick IS NULL`,
-    )
-    .bind(gameId, bodyId, me.id)
-    .all()).results ?? [];
-  let shipyardLevels = 0;
-  for (const row of yardRows) {
-    if (!row.buildings_json) continue;
-    try {
-      const b = JSON.parse(row.buildings_json) || {};
-      shipyardLevels += Number(b.shipyard ?? 0) || 0;
-    } catch { /* ignore malformed */ }
-  }
-  // Foundries add their slots on top of the ground yards. Four hulls
-  // at once, wherever it is parked.
-  const slots = 1 + shipyardLevels + await foundrySlotsAt(env, gameId, bodyId, me.id);
+  // Foundries add their slots on top of the ground yards: four hulls at
+  // once, wherever one is parked. buildSlotsAt is the one count, shared
+  // with the tick's promoter.
+  const slots = await buildSlotsAt(env, gameId, bodyId, me.id);
   // Completed builds are DELETED from this table (room.js), so any
   // non-cancelled status='building' row is occupying a slot right now.
   // (Rows predating migration 0037 read status='building' via the
