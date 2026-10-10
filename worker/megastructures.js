@@ -481,6 +481,58 @@ export function applyCapture(row) {
  * ACTIVE hulls only: a destroyed foundry stops being a shipyard the
  * moment it dies, including for orders already waiting.
  */
+/** True when this faction has a living settlement (city or station) at
+ *  the body. */
+export async function hasSettlementAt(env, gameId, bodyId, factionId) {
+  const row = await env.DB
+    .prepare(
+      `SELECT 1 AS x FROM game_settlements
+        WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
+          AND destroyed_at_tick IS NULL
+        LIMIT 1`,
+    )
+    .bind(gameId, bodyId, factionId)
+    .first();
+  return !!row;
+}
+
+/**
+ * Concurrent build slots this faction has at a body.
+ *
+ * THE BASE SLOT COMES WITH A SETTLEMENT. Every world of yours builds one
+ * hull at a time, each Shipyard level adds one, and a parked Mobile
+ * Foundry adds its own (4). A foundry over a world where you have
+ * nothing else is exactly the foundry: 4 slots, as its card says. It
+ * used to get the base slot too, so the card said 4 and the queue took
+ * 5 (Léo Freitas, UBGE, 2026-10-09).
+ *
+ * One function for the queue endpoint and the tick's FIFO promoter, so
+ * the two can never count differently.
+ */
+export async function buildSlotsAt(env, gameId, bodyId, factionId) {
+  let base = 0;
+  let shipyardLevels = 0;
+  if (await hasSettlementAt(env, gameId, bodyId, factionId)) {
+    base = 1;
+    const yardRows = (await env.DB
+      .prepare(
+        `SELECT buildings_json FROM game_settlements
+          WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
+            AND type = 'station' AND destroyed_at_tick IS NULL`,
+      )
+      .bind(gameId, bodyId, factionId)
+      .all()).results ?? [];
+    for (const row of yardRows) {
+      if (!row.buildings_json) continue;
+      try {
+        const b = JSON.parse(row.buildings_json) || {};
+        shipyardLevels += Number(b.shipyard ?? 0) || 0;
+      } catch { /* ignore malformed */ }
+    }
+  }
+  return base + shipyardLevels + await foundrySlotsAt(env, gameId, bodyId, factionId);
+}
+
 export async function foundrySlotsAt(env, gameId, bodyId, factionId) {
   const row = await env.DB
     .prepare(
