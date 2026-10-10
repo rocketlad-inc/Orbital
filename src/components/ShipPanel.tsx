@@ -38,6 +38,8 @@ import { EditableName } from './EditableName';
 import { iconClassFor, ShipIcon } from './ShipIcons';
 import { HullIcon } from './StructureIcons';
 import { launchFromPlan } from '../physics/torchTransfer';
+import { requeueAfter } from '../physics/requeue';
+import { fleetEngineAccel } from '../game/fleetPace';
 import { solveLockstepThrottle } from '../physics/lockstep';
 import { planExploreTour, type ExploreScope } from '../game/autoExplore';
 import { canHostCity, canHostStation, isRawWorld, suggestSettlementName } from '../game/settlements';
@@ -770,13 +772,22 @@ export const ShipPanel: React.FC = () => {
       console.warn('[transfer] launchTorchTransfer rejected', { shipId: owningShip.id, target: preview.targetBodyId });
       return [];
     }
-    // Snapshot the queue BEFORE we post — launchTorchTransfer didn't
-    // touch queuedTransits, but each one needs to land on the server
-    // too so the alarm fires the chained burn at the right tick. Each
-    // q.startTick is already chained from the previous leg's arriveTick
-    // (set at enqueue time in gameContext), so we can post each leg
-    // verbatim and the server's alarm scheduler does the right thing.
-    const queuedAtCommit = owningShip.queuedTransits ?? [];
+    // The queue rides along to the server, so the alarm fires each
+    // chained burn in turn. NOT VERBATIM: a queued leg was planned off
+    // whatever came before it when it was queued, which is not this new
+    // first leg. Wil (UBGE, T99) queued Ganymede -> Io, then sent his
+    // squadron to Europa first; the Io leg went up unchanged, still
+    // launching from Ganymede at T102.55, and when the squadron reached
+    // Europa it flew on to Io from Ganymede: an instant jump across the
+    // Jovian system. Each queued leg is re-planned from where the new
+    // first leg parks the ship (requeueAfter), keeping the waits between
+    // queued legs.
+    const queuedAtCommit = requeueAfter(
+      owningShip.queuedTransits ?? [],
+      preview.rv ? null : plan,
+      gameState.bodies,
+      fleetEngineAccel(owningShip, gameState.ships, gameState.factions, gameState.factionTech),
+    );
 
     // The torch-derived arrival goes to the server so its DB row, the
     // alarm's in_transit→arrive transition, and the other clients' MP
@@ -813,9 +824,8 @@ export const ShipPanel: React.FC = () => {
         },
       } : {}),
     }];
-    // Each queued leg was chained off plannedTransit's arriveTick at
-    // enqueue time, so its scheduledT lines up with when the previous
-    // leg parks the ship. replace:false → append.
+    // Each queued leg now starts where and when the one before it parks
+    // the ship (requeueAfter). replace:false → append.
     for (const q of queuedAtCommit) {
       intents.push({
         shipId: owningShip.id,

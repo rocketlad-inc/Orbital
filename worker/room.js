@@ -5128,6 +5128,7 @@ export class Room {
       .prepare(
         `SELECT n.id, n.ship_id, n.target_body_id, n.scheduled_t,
                 n.arrival_at_tick, n.sequence, n.rv_meet_tick, n.rv_follow_ship_id,
+                n.launch_x, n.launch_y,
                 s.parent_body_id AS dep_body_id, s.ship_class, s.owner_faction_id,
                 s.name AS ship_name
            FROM game_ship_nodes n
@@ -5150,7 +5151,96 @@ export class Room {
       console.error('gate autopilot pass failed', e);
     }
 
+    // ONE LEG AT A TIME, FROM WHERE THE SHIP IS (2026-10-09).
+    //
+    // A committed leg used to take off the moment its scheduled_t came up,
+    // whatever else its hull was doing, and fly the launch point stored
+    // with it. A client that re-posted a queued leg planned off an older
+    // route (ShipPanel did, see src/physics/requeue.ts) therefore put a
+    // squadron on a SECOND course mid-flight, starting somewhere it had
+    // never been. Wil, UBGE T103: eight hulls flying Ganymede -> Europa
+    // took off for Io from Ganymede's T102.55 position, a jump of ~400
+    // units across the Jovian system, "teleported to base in the middle of
+    // the fight". Live games still carried hulls with two legs in flight.
+    //
+    // So a leg waits while its hull is still flying an earlier one, and a
+    // leg whose plan does not start where (and when) the hull really is
+    // gets re-planned here, from its true departure world, the same way
+    // the server plans every route leg (computeLegTicks + legLaunchPlan).
+    const departedNow = new Set();
+    const routeMath = departures.length ? makeRouteMath(this.env.DB, gameId) : null;
+    const flyingRows = departures.length ? await selectInChunks(
+      [...new Set(departures.map(d => d.ship_id))], 0, (chunk, ph) => this.env.DB
+        .prepare(`SELECT id, ship_id, target_body_id, arrival_at_tick FROM game_ship_nodes
+                   WHERE status = 'in_transit' AND ship_id IN (${ph})`)
+        .bind(...chunk).all()) : [];
+    const flyingBy = new Map();
+    for (const r of flyingRows) {
+      if (!flyingBy.has(r.ship_id)) flyingBy.set(r.ship_id, []);
+      flyingBy.get(r.ship_id).push(r);
+    }
+    const radiusCache = new Map();
+    const bodyRadius = async (id) => {
+      if (!radiusCache.has(id)) {
+        const r = await this.env.DB.prepare('SELECT radius FROM game_bodies WHERE id = ?').bind(id).first();
+        radiusCache.set(id, Number(r?.radius) || 0);
+      }
+      return radiusCache.get(id);
+    };
+
     for (const d of departures) {
+      if (departedNow.has(d.ship_id)) continue;   // one leg per hull per tick
+      const others = (flyingBy.get(d.ship_id) ?? []).filter(o => o.id !== d.id);
+      // Still flying an earlier leg past this tick: this one waits for it.
+      if (others.some(o => o.arrival_at_tick == null || Number(o.arrival_at_tick) > tick)) continue;
+      // Landing this tick (2b parks it below): the next leg leaves from THERE.
+      const landing = others.find(o => o.arrival_at_tick != null && Number(o.arrival_at_tick) <= tick);
+      const fromBodyId = landing?.target_body_id ?? d.dep_body_id;
+
+      try {
+        // Only a leg CHAINED behind one landing now is checked. A first leg
+        // may legitimately launch from open space (a redirect mid-flight
+        // replaces the burn the hull was on), so its stored point stands.
+        const planned = d.launch_x != null && d.launch_y != null && d.rv_meet_tick == null;
+        let stale = false;
+        if (planned && landing && d.target_body_id) {
+          const at = Number(d.scheduled_t);
+          // Arrivals are stored rounded up to the tick, so a chained leg may
+          // be timed up to a tick before it; more than that, it was planned
+          // to leave before the ship got there.
+          const leftEarly = at < Number(landing.arrival_at_tick) - 1;
+          const here = await routeMath.bodyPosAt(fromBodyId, at);
+          // A parked hull launches from its park orbit, never further out.
+          const slack = parkOrbitRadius(await bodyRadius(fromBodyId)) * 1.5 + 2;
+          stale = leftEarly
+            || Math.hypot(Number(d.launch_x) - here.x, Number(d.launch_y) - here.y) > slack;
+        }
+        if (stale) {
+          const legTicks = await routeMath.computeLegTicks(d.owner_faction_id, fromBodyId, d.target_body_id, tick);
+          const arrive = tick + Math.max(1, legTicks);
+          const lp = await this.legLaunchPlan(tick, d.ship_id, fromBodyId, d.target_body_id, arrive, routeMath.bodyPosAt);
+          await this.env.DB
+            .prepare(
+              `UPDATE game_ship_nodes
+                  SET status = 'in_transit', scheduled_t = ?, arrival_at_tick = ?,
+                      launch_x = ?, launch_y = ?, launch_vx = ?, launch_vy = ?,
+                      accel = ?, flip_tick = ?, brake_accel = ?,
+                      accel_ramp = ?, accel_max = ?, accel_tau = ?
+                WHERE id = ?`,
+            )
+            .bind(tick, arrive, lp.lx, lp.ly, lp.lvx, lp.lvy, lp.acc, lp.flip, lp.brk,
+                  lp.rmp, lp.amax, lp.atau, d.id)
+            .run();
+          console.warn('depart: re-planned a leg that did not start where its ship is',
+            { node: d.id, from: fromBodyId, to: d.target_body_id, scheduled: d.scheduled_t, tick, arrive });
+          departedNow.add(d.ship_id);
+          continue;
+        }
+      } catch (e) {
+        // A failed check must not ground the fleet: fly the leg as stored.
+        console.error('depart continuity check failed', d.id, e);
+      }
+      departedNow.add(d.ship_id);
       // arrival_at_tick is set at intent-recording time by
       // handleCommitTransfer (the client posts a precomputed value
       // derived from plain distance/SHIP_SPEED). Trust it. We used
