@@ -369,6 +369,19 @@ try {
   check('KPI: online now reads the live events, robots excluded', ov.kpis.online_now === onlineWant, `${ov.kpis.online_now} vs ${onlineWant}`);
   check('KPI: games — two running, one finished; the robot-only game is not counted',
     ov.kpis.games_active === 2 && ov.kpis.games_completed === 1, JSON.stringify(ov.kpis));
+  const gamesOn = (a, b) => new Set(counted.filter(e => e.at >= a && e.at < b && e.game).map(e => e.game)).size;
+  let gameDays = 0, gameDaysPrev = 0;
+  for (let d = w0; d < today; d += DAY_MS) gameDays += gamesOn(d, d + DAY_MS);
+  for (let d = p0; d < w0; d += DAY_MS) gameDaysPrev += gamesOn(d, d + DAY_MS);
+  check('KPI: active-game days last week vs the week before (real players only)',
+    ov.kpis.game_days_week === gameDays && ov.kpis.game_days_prev_week === gameDaysPrev,
+    `${ov.kpis.game_days_week}/${ov.kpis.game_days_prev_week} vs ${gameDays}/${gameDaysPrev}`);
+  check('daily: games per day = distinct games a real player was in',
+    ov.daily.every(d => d.games === gamesOn(d.day_ms, d.day_ms + DAY_MS)),
+    JSON.stringify(ov.daily.map(d => [d.games, gamesOn(d.day_ms, d.day_ms + DAY_MS)]).filter(([a, b]) => a !== b)));
+  const liveWant = GAMES.filter(g => g.status === 'active' && counted.some(e => e.game === g.id && e.at >= Date.now() - DAY_MS)).length;
+  check('KPI: active games in the last 24h = running games with a real heartbeat',
+    ov.kpis.games_live_24h === liveWant, `${ov.kpis.games_live_24h} vs ${liveWant}`);
   check('daily series is 30 dense days ending today',
     ov.daily.length === 30 && ov.daily[29].day_ms === today && ov.daily.every((d, i) => i === 0 || d.day_ms - ov.daily[i - 1].day_ms === DAY_MS));
   const signupsWant = REAL.filter(u => created[u] >= w0 && created[u] < today).length;

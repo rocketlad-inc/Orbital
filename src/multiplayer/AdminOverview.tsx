@@ -33,9 +33,13 @@ type Kpis = {
   minutes_today: number; minutes_week: number; minutes_prev_week: number;
   signups_week: number; signups_prev_week: number; signups_today: number;
   games_active: number; games_quiet: number; games_completed: number;
+  /** Running games a real player was in during the last 24 hours. */
+  games_live_24h?: number;
+  /** Sum over the days of games with a real player that day (7 complete days). */
+  game_days_week?: number; game_days_prev_week?: number;
   commissions_total: number; commissions_week: number;
 };
-type DailyRow = { day_ms: number; players: number; minutes: number; actions: number; signups: number };
+type DailyRow = { day_ms: number; players: number; games?: number; minutes: number; actions: number; signups: number };
 type UsageRow = {
   kind: string; n30: number; prev30: number; total: number;
   /** Refused, and tries that carry an outcome at all (0152). Rates divide by judged. */
@@ -293,6 +297,13 @@ function Pulse({ data, onGo }: { data: Overview; onGo: (t: Tab) => void }) {
         />
         <RefusalKpi usage={data.usage} onGo={() => onGo('friction')} />
         <Kpi
+          label="Active games · last 24h"
+          value={n(k.games_live_24h ?? 0)}
+          delta={[k.game_days_week ?? 0, k.game_days_prev_week ?? 0]}
+          spark={done.map(d => d.games ?? 0)}
+          onClick={() => onGo('games')}
+        />
+        <Kpi
           label="Games running"
           value={n(k.games_active)}
           foot={k.games_quiet
@@ -393,9 +404,10 @@ function MiniSpark({ values }: { values: number[] }) {
 
 // ---------- 30-day chart ----------
 
-type ChartMetric = 'players' | 'minutes' | 'signups' | 'actions';
+type ChartMetric = 'players' | 'games' | 'minutes' | 'signups' | 'actions';
 const CHART_METRICS: Array<{ id: ChartMetric; label: string; title: string }> = [
   { id: 'players', label: 'Players', title: 'Players per day' },
+  { id: 'games', label: 'Active games', title: 'Games with a player in them, per day' },
   { id: 'minutes', label: 'Time played', title: 'Time played per day' },
   { id: 'signups', label: 'New players', title: 'New players per day' },
   { id: 'actions', label: 'Actions', title: 'Player actions per day' },
@@ -412,7 +424,7 @@ function niceMax(v: number): number {
 function DailyChart({ days }: { days: DailyRow[] }) {
   const [metric, setMetric] = useState<ChartMetric>('players');
   const [hover, setHover] = useState<number | null>(null);
-  const val = (d: DailyRow) => d[metric];
+  const val = (d: DailyRow) => d[metric] ?? 0;
   const top = niceMax(Math.max(...days.map(val), 0));
   const fmt = (v: number) => (metric === 'minutes' ? hours(v) : n(v));
   const def = CHART_METRICS.find(m => m.id === metric)!;
@@ -440,6 +452,7 @@ function DailyChart({ days }: { days: DailyRow[] }) {
       <div className="ao-readout" aria-live="polite">
         <span className="ao-readout__day">{shown === last ? 'Today so far' : dayLabel(d.day_ms)}</span>
         <span><b>{n(d.players)}</b> players</span>
+        <span><b>{n(d.games ?? 0)}</b> active games</span>
         <span><b>{hours(d.minutes)}</b> played</span>
         <span><b>{n(d.signups)}</b> new</span>
         <span><b>{n(d.actions)}</b> actions</span>
