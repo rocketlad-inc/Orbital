@@ -1,0 +1,157 @@
+/* AdminGameActivity: the Games tab's growth chart (AdminGameActivity.tsx).
+   Mounted inside .ao, so it uses the dashboard's tokens. Game size is
+   one teal ramp, brightest = most players, because size is an order,
+   not a set of categories. The average line is plain ink; started and
+   ended are neutral greys, told apart by direction and label. */
+
+.ga {
+  --ga-big: #5fd8cf;
+  --ga-mid: #389890;
+  --ga-solo: #255f5b;
+  --ga-start: var(--ao-ink-2);
+  --ga-end: #5b6d80;
+}
+
+.ga-stats {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.ga-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 12px 14px;
+  border-radius: var(--ao-radius-s);
+  background: var(--ao-surface-2);
+  border: 1px solid var(--ao-line);
+}
+.ga-stat__label { font-size: 12px; font-weight: 600; color: var(--ao-ink-2); }
+.ga-stat__value {
+  font-family: var(--ao-data);
+  font-size: 26px;
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+  color: var(--ao-ink);
+}
+.ga-stat__foot { font-size: 12px; color: var(--ao-ink-3); }
+
+.ga-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin-bottom: 8px;
+  font-size: 12.5px;
+  color: var(--ao-ink-2);
+}
+.ga-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.ga-sw { display: inline-block; width: 11px; height: 11px; border-radius: 3px; }
+.ga-sw--line { height: 2px; width: 16px; border-radius: 1px; background: var(--ao-ink); }
+.ga-sw--start { background: var(--ga-start); }
+.ga-sw--end { background: var(--ga-end); }
+.ga-sw.ga-c-big, .ga-size.ga-c-big { background: var(--ga-big); }
+.ga-sw.ga-c-mid, .ga-size.ga-c-mid { background: var(--ga-mid); }
+.ga-sw.ga-c-solo, .ga-size.ga-c-solo { background: var(--ga-solo); }
+
+.ga-readout { margin-bottom: 6px; }
+
+.ga-plot { position: relative; width: 100%; min-width: 0; outline: none; border-radius: 8px; }
+.ga-plot:focus-visible { box-shadow: 0 0 0 2px rgba(var(--ao-teal-rgb), 0.55); }
+/* Fluid: a fixed-width svg would hold the panel open, and the width
+   observer would never see it shrink. */
+.ga-svg { display: block; width: 100%; height: auto; overflow: visible; }
+
+.ga-grid { stroke: var(--ao-line); stroke-width: 1; }
+.ga-axis { stroke: var(--ao-line-2); stroke-width: 1; }
+.ga-ylab, .ga-xlab {
+  font-family: var(--ao-data);
+  font-size: 11px;
+  fill: var(--ao-ink-3);
+}
+.ga-band { fill: rgba(var(--ao-teal-rgb), 0.08); }
+
+.ga-svg .ga-c-big { fill: var(--ga-big); }
+.ga-svg .ga-c-mid { fill: var(--ga-mid); }
+.ga-svg .ga-c-solo { fill: var(--ga-solo); }
+/* Today is still filling in: faded, so it is not read as a drop. */
+.ga-svg .ga-today { opacity: 0.45; }
+
+.ga-avg-halo { fill: none; stroke: var(--ao-surface-3); stroke-width: 5; stroke-linejoin: round; stroke-linecap: round; opacity: 0.9; }
+.ga-avg { fill: none; stroke: var(--ao-ink); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.ga-avg-dot { fill: var(--ao-ink); stroke: var(--ao-surface-3); stroke-width: 2; }
+
+.ga-start { fill: var(--ga-start); }
+.ga-end { fill: var(--ga-end); }
+.ga-hit { fill: transparent; cursor: pointer; }
+
+.ga-tbtn {
+  padding: 6px 12px;
+  border-radius: 9px;
+  border: 1px solid var(--ao-line-2);
+  background: transparent;
+  color: var(--ao-ink-2);
+  font-size: 13px;
+  cursor: pointer;
+}
+.ga-tbtn:hover { color: var(--ao-ink); }
+.ga-tbtn.is-on { background: var(--ao-surface-3); color: var(--ao-ink); }
+
+/* ---- the day's games ---- */
+.ga-day { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--ao-line); }
+.ga-day__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-bottom: 10px; font-size: 12.5px; }
+.ga-day__title { font-size: 14px; font-weight: 700; color: var(--ao-ink); }
+.ga-games {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 8px;
+}
+.ga-game {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr);
+  grid-template-areas: "dot name" ". meta" ". tags";
+  column-gap: 10px;
+  row-gap: 3px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: var(--ao-radius-s);
+  border: 1px solid var(--ao-line);
+  background: var(--ao-surface-2);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+.ga-game:hover { border-color: var(--ao-line-2); }
+.ga-game:focus-visible { outline: 2px solid rgba(var(--ao-teal-rgb), 0.6); outline-offset: 1px; }
+.ga-game--quiet { opacity: 0.75; }
+.ga-size { grid-area: dot; width: 10px; height: 10px; border-radius: 3px; background: var(--ao-line-2); }
+.ga-game__name { grid-area: name; font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ga-game__meta { grid-area: meta; font-size: 12px; color: var(--ao-ink-3); }
+.ga-game__meta b { font-family: var(--ao-data); font-weight: 400; color: var(--ao-ink); }
+.ga-game__tags { grid-area: tags; display: flex; gap: 6px; flex-wrap: wrap; }
+.ga-game__tags:empty { display: none; }
+.ga-tag {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--ao-line-2);
+  color: var(--ao-ink-2);
+}
+.ga-tag--started { border-color: rgba(174, 189, 204, 0.5); color: var(--ao-ink); }
+.ga-tag--ended { color: var(--ao-ink-3); }
+
+.ga-table { margin-top: 16px; max-height: 420px; overflow-y: auto; }
+.ga-table tr.is-kept td { background: rgba(var(--ao-teal-rgb), 0.07); }
+
+@media (max-width: 1080px) {
+  .ga-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .ga-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ga-stat__value { font-size: 22px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ga-game { transition: none; }
+}

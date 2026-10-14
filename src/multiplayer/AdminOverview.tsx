@@ -23,6 +23,7 @@ import { apiFetch } from './api';
 import { ago, labelForKind, playTime } from './adminFormat';
 import { FrictionRows } from './GameStory';
 import { span } from './storyVerdict';
+import { GameActivity } from './AdminGameActivity';
 import './AdminOverview.css';
 
 // ---------- payload types (worker/adminDashboard.js) ----------
@@ -223,7 +224,12 @@ export function AdminOverview({ onOpenGame }: { onOpenGame: (id: string) => void
       </nav>
 
       {tab === 'pulse' && <Pulse data={data} onGo={setTab} />}
-      {tab === 'games' && <GamesPanel refreshKey={listKey} kpis={k} onOpen={onOpenGame} />}
+      {tab === 'games' && (
+        <div className="ao-stack">
+          <GameActivity refreshKey={listKey} onOpen={onOpenGame} />
+          <GamesPanel refreshKey={listKey} kpis={k} onOpen={onOpenGame} />
+        </div>
+      )}
       {tab === 'players' && <PlayersPanel refreshKey={listKey} onOpenGame={onOpenGame} />}
       {tab === 'growth' && <Growth data={data} />}
       {tab === 'friction' && <FrictionTab data={data} />}

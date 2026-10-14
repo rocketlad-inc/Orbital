@@ -382,6 +382,19 @@ try {
   const liveWant = GAMES.filter(g => g.status === 'active' && counted.some(e => e.game === g.id && e.at >= Date.now() - DAY_MS)).length;
   check('KPI: active games in the last 24h = running games with a real heartbeat',
     ov.kpis.games_live_24h === liveWant, `${ov.kpis.games_live_24h} vs ${liveWant}`);
+  const act = (await call('/api/admin/games/activity')).body;
+  const actDays = new Map();
+  for (const [d, g] of act.rows) actDays.set(d, (actDays.get(d) ?? 0) + 1);
+  check('activity: per-day game counts agree with the Pulse series',
+    ov.daily.every(d => (actDays.get(d.day_ms) ?? 0) === d.games),
+    JSON.stringify(ov.daily.filter(d => (actDays.get(d.day_ms) ?? 0) !== d.games).map(d => [d.day_ms, d.games, actDays.get(d.day_ms)])));
+  const realPerGameDay = (d, g) => new Set(counted.filter(e => e.game === g && e.at >= d && e.at < d + DAY_MS).map(e => e.user)).size;
+  check('activity: players per game-day are real players only',
+    act.rows.every(([d, g, p]) => p === realPerGameDay(d, g)));
+  check('activity: the robot-only game never appears', !act.rows.some(r => r[1] === 'gqaaaaaaaaaa') && !act.games.gqaaaaaaaaaa);
+  check('activity: every game in the rows is named', act.rows.every(r => act.games[r[1]]?.name));
+  check('activity: live = the Pulse tile', act.live.length === ov.kpis.games_live_24h, `${act.live.length} vs ${ov.kpis.games_live_24h}`);
+  check('activity: a non-admin gets a 404', (await call('/api/admin/games/activity', { user_id: 'y', email: 'ann@players.test.org' })).status === 404);
   check('daily series is 30 dense days ending today',
     ov.daily.length === 30 && ov.daily[29].day_ms === today && ov.daily.every((d, i) => i === 0 || d.day_ms - ov.daily[i - 1].day_ms === DAY_MS));
   const signupsWant = REAL.filter(u => created[u] >= w0 && created[u] < today).length;
