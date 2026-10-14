@@ -12,7 +12,7 @@ import {
   getOrCreateAgentUser,
   isValidAgentHandle,
 } from './auth.js';
-import { validateParts, DEFAULT_LOADOUTS } from './shipDesigns.js';
+import { validateParts, DEFAULT_LOADOUTS, LENIENT } from './shipDesigns.js';
 import { verifyGoogleIdToken } from './google.js';
 import { stampSignupSource } from './attribution.js';
 import { isAdminSession } from './admins.js';
@@ -780,7 +780,10 @@ async function handleCreateShipTemplate(req, env, session) {
   const shipClass = body.ship_class;
   // validateParts owns the slot-count + per-class legality rules, so a
   // template can never encode a loadout the designer would reject.
-  const v = validateParts(shipClass, body.parts ?? []);
+  // An account template is a library across games, so it may hold the
+  // Expanded Hardpoints slot; a game's own design save re-checks it
+  // against that faction's tech.
+  const v = validateParts(shipClass, body.parts ?? [], LENIENT);
   if (!v.ok) return err(400, 'bad_request', v.error);
 
   const name = typeof body.name === 'string' ? body.name.trim().slice(0, 40) : '';

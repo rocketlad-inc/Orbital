@@ -62,6 +62,8 @@ export const helpers: Catalog = {
   'helper.unlock.hull.destroyer.blurb': 'Seis vagas. A peça de cerco.',
   'helper.unlock.building.thrusters.label': 'Propulsores de Trajetória',
   'helper.unlock.building.thrusters.blurb': 'Instale motores em um asteroide e aponte-o para alguém.',
+  'helper.unlock.ship.extraSlot.label': 'Pontos de Fixação Ampliados',
+  'helper.unlock.ship.extraSlot.blurb': 'Um encaixe a mais em toda nave de guerra e cargueiro: corvetas 3, fragatas 5, destróieres 7, cargueiros 2.',
   'helper.unlock.dyson.label': 'Fundação de Dyson',
   'helper.unlock.dyson.blurb': 'Abre o caminho de vitória por engenharia.',
   'helper.unlock.building.lab.label': 'Laboratório',

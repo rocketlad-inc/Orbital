@@ -38,7 +38,7 @@ import { COMMISSION_NAME, COMMISSION_PRICE, COMMISSION_DISCORD, canBuyHere, logC
 import { ShipClassName, BuildableClassName, SHIP_CLASSES, BUILDABLE_CLASSES, upkeepSplitFor } from '../game/shipClasses';
 import { deliveredHullHp } from '../game/combat';
 import {
-  ShipPartId, ALL_PART_IDS, SHIP_PART_DEFS, SHIP_SLOT_COUNTS,
+  ShipPartId, ALL_PART_IDS, SHIP_PART_DEFS, SHIP_SLOT_COUNTS, slotCountFor,
   sanitizeParts, computeDesignStats, partsCost, countPart,
   detonatorDamage, detonatorDisclosure, SERVER_HULL_BASE, PART_GLYPH,
   damageProfile, refitFee, PART_STACK_ESCALATION, reductionPct, reductionLadder,
@@ -258,7 +258,8 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   );
 
   const techLevels = gameState.factionTech['player']?.levels ?? {};
-  const slots = SHIP_SLOT_COUNTS[activeClass];
+  // Expanded Hardpoints (Construction 8) adds one.
+  const slots = slotCountFor(activeClass, techLevels);
   const hullDef = SHIP_CLASSES[activeClass];
   const stats = computeDesignStats(activeClass, draftParts, techLevels);
   // Quote the hull the yard will DELIVER. computeDesignStats returns the
@@ -876,7 +877,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                 <ShipIcon shipClass={cls} variant={(freshDesigns ?? stateDesigns ?? []).find(d => d.shipClass === cls && d.isActive)?.iconVariant}
                   size={24} color={p1} color2={p2} />
                 <span className="sd-tab__name">{SHIP_CLASSES[cls].displayName}</span>
-                <span className="sd-tab__slots">{SHIP_SLOT_COUNTS[cls]}◯</span>
+                <span className="sd-tab__slots">{slotCountFor(cls, techLevels)}◯</span>
               </button>
             ))}
           </div>

@@ -59,6 +59,9 @@ export const REQUIREMENTS = {
   'hull.frigate':          { track: 'construction', level: 3, label: 'Frigate' },
   'hull.destroyer':        { track: 'construction', level: 6, label: 'Destroyer' },
   'building.thrusters':    { track: 'construction', level: 7, label: 'Trajectory Thrusters' },
+  // A bonus, not a gate: read off the level directly (shipDesigns.js
+  // slotCountFor), so it is listed for the label and the research card.
+  'ship.extraSlot':        { track: 'construction', level: 8, label: 'Expanded Hardpoints' },
   'dyson':                 { track: 'construction', level: 10, label: 'Dyson Foundation' },
   // Society (the 'industry' track)
   'building.lab':          { track: 'industry', level: 1, label: 'Laboratory' },

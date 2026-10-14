@@ -7011,7 +7011,8 @@ async function handleCreateDesign(req, env, ctx) {
   if (name.length > DESIGN_NAME_MAX) {
     return err(400, 'bad_request', `design name too long (max ${DESIGN_NAME_MAX} chars)`);
   }
-  const v = validateParts(shipClass, body.parts ?? []);
+  // Slots by the faction's own tech (Expanded Hardpoints, Construction 8).
+  const v = validateParts(shipClass, body.parts ?? [], await factionTechLevels(env, gameId, me.id));
   if (!v.ok) return err(400, 'bad_parts', v.error);
   const partsGate = await requireParts(env, gameId, me.id, v.parts);
   if (partsGate) return partsGate;
@@ -7095,7 +7096,7 @@ async function handlePatchDesign(req, env, ctx) {
   }
   let partsJson = row.parts_json ?? null;
   if (body.parts !== undefined) {
-    const v = validateParts(row.ship_class, body.parts ?? []);
+    const v = validateParts(row.ship_class, body.parts ?? [], await factionTechLevels(env, gameId, me.id));
     if (!v.ok) return err(400, 'bad_parts', v.error);
     const partsGate = await requireParts(env, gameId, me.id, v.parts);
     if (partsGate) return partsGate;

@@ -38,7 +38,7 @@ export type FeatureId =
   // — Construction —
   | 'settlement.city' | 'building.shipyard'
   | 'hull.frigate' | 'hull.destroyer'
-  | 'building.thrusters' | 'dyson'
+  | 'building.thrusters' | 'ship.extraSlot' | 'dyson'
   // — Society —
   | 'building.lab' | 'building.forge' | 'building.mint'
   | 'pacts' | 'senate.propose' | 'senate.chancellor'
@@ -192,6 +192,9 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
     label: 'Destroyer', blurb: 'Six slots. The siege piece.' },
   { track: 'construction', level: 7, feature: 'building.thrusters',
     label: 'Trajectory Thrusters', blurb: 'Fit an asteroid with engines and aim it at someone.' },
+  // A bonus, not a gate (shipParts.ts slotCountFor reads the level).
+  { track: 'construction', level: 8, feature: 'ship.extraSlot',
+    label: 'Expanded Hardpoints', blurb: 'One more slot on every warship and freighter: corvettes 3, frigates 5, destroyers 7, freighters 2.' },
   { track: 'construction', level: 10, feature: 'dyson',
     label: 'Dyson Foundation', blurb: 'Opens the engineering victory path.' },
 
