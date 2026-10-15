@@ -14,6 +14,12 @@
 // win-back batch pointed twelve people at "test", a lobby whose host
 // had been gone six days: it could fill, and it could never begin.
 //
+// SOLAR SYSTEM ONLY (Lorne, 2026-10-15: "Quick join only on the solar
+// system map"). A lobby on a custom map is never offered to a stranger:
+// they chose a game, not a map, and a Map Maker system can be anything.
+// Custom-map lobbies are found through Browse, where the card names the
+// map. The win-back email shares this rule, for the same reason.
+//
 // Best first: fewest seats left (closest to starting), then most
 // recently active.
 // ============================================================================
@@ -36,6 +42,7 @@ export async function joinableLobbies(env, nowMs = Date.now(), { excludeUserId =
           AND r.password_hash IS NULL
           AND r.updated_at > ?1
           AND NOT EXISTS (SELECT 1 FROM games g WHERE g.id = r.id)
+          AND r.custom_map_id IS NULL
           AND (r.quick_join = 1 OR COALESCE(h.last_visit_ms, 0) > ?2)
           AND (?3 IS NULL OR NOT EXISTS (SELECT 1 FROM room_members m WHERE m.room_id = r.id AND m.user_id = ?3))
           AND (?4 IS NULL OR r.id = ?4)

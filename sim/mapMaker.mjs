@@ -357,5 +357,19 @@ check('the gallery is staging-only too', await (async () => {
   return res.status === 404;
 })());
 
+// ---- Quick Join is Solar System only ---------------------------------------
+{
+  const { joinableLobbies } = await import('../worker/matchmaking.js');
+  const now = Date.now();
+  await DB.prepare(`UPDATE users SET last_visit_ms = ? WHERE id = 'u0'`).bind(now).run();
+  await DB.prepare(`INSERT INTO rooms (id,name,host_id,status,max_players,created_at,updated_at,quick_join) VALUES ('qj_sol','Sol lobby','u0','lobby',4,?,?,1)`).bind(now, now).run();
+  await DB.prepare(`INSERT INTO rooms (id,name,host_id,status,max_players,created_at,updated_at,quick_join,custom_map_id,custom_map_json) VALUES ('qj_map','Map lobby','u0','lobby',4,?,?,1,'map_x','{}')`).bind(now, now).run();
+  const open = (await joinableLobbies({ DB }, now, { limit: 50 })).map(r => r.id);
+  check('Quick Join offers a Solar System lobby', open.includes('qj_sol'), open.join(','));
+  check('Quick Join never offers a custom-map lobby', !open.includes('qj_map'), open.join(','));
+  const pinned = (await joinableLobbies({ DB }, now, { roomId: 'qj_map' })).map(r => r.id);
+  check('…not even when asked for by name', pinned.length === 0, pinned.join(','));
+}
+
 console.log(bad === 0 ? '\nALL MAP MAKER CHECKS PASS' : `\n${bad} FAILED`);
 process.exit(bad === 0 ? 0 : 1);
