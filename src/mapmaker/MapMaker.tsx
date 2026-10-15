@@ -16,14 +16,18 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import './mapmaker.css';
 import { apiFetch, startCommissionCheckout } from '../multiplayer/api';
-import { canBuyHere, openCommissionInBrowser, COMMISSION_NAME, COMMISSION_PRICE } from '../multiplayer/commission';
+import { canBuyHere, openCommissionInBrowser } from '../multiplayer/commission';
 import { useIsMobile } from '../hooks/useIsMobile';
 import {
   type CustomMap, type MapIssue, type MapBodyType, type MapBackdrop, blankMap, normalizeMap, checkMap, generateMap, startWorlds, sectorOf,
   NAME_THEMES, TYPE_INFO,
 } from '../game/customMap';
+import { getLang, t, tn, type Key } from '../i18n/core';
+import { useI18n } from '../i18n/react';
+import { tMarkup, tRich } from '../i18n/rich';
 import { MapView, type Tool } from './MapView';
-import { BodyInspector, SunInspector, MapInspector, SectorInspector, BulkBar, Stepper, BACKDROP_LABEL } from './Inspector';
+import { BodyInspector, SunInspector, MapInspector, SectorInspector, BulkBar, Stepper } from './Inspector';
+import { typeLabel, themeLabel, backdropLabel, issueText, issueTitle, mapApiError, touchKey } from './mmText';
 import {
   placeBody, deleteBodies, duplicateBodies, placeSymmetric, ringOf, scatterAsteroids, matchBodies, type MatchAspect,
   addSector, deleteSectors,
@@ -45,14 +49,31 @@ type Hist = { past: CustomMap[]; present: CustomMap; future: CustomMap[] };
 
 const DRAFT_KEY = 'orbital.mapmaker.draft';
 const COACH_KEY = 'orbital.mapmaker.coached';
-const PALETTE: Array<{ tool: Tool; label: string }> = [
-  { tool: 'terrestrial', label: 'Planet' }, { tool: 'gas-giant', label: 'Gas giant' },
-  { tool: 'ice-giant', label: 'Ice giant' }, { tool: 'moon', label: 'Moon' },
-  { tool: 'dwarf', label: 'Dwarf' }, { tool: 'belt', label: 'Asteroid belt' },
-  { tool: 'asteroid', label: 'Asteroid' }, { tool: 'rock', label: 'Rock' },
-];
+/** The world tools, labelled at render (typeLabel) in the player's language. */
+const PALETTE: Array<MapBodyType | 'belt'> = ['terrestrial', 'gas-giant', 'ice-giant', 'moon', 'dwarf', 'belt', 'asteroid', 'rock'];
 const RING_TYPES: MapBodyType[] = ['terrestrial', 'dwarf', 'gas-giant', 'ice-giant', 'asteroid'];
 const SYMMETRY = [1, 2, 3, 4, 5, 6, 8];
+/** What a share code looks like (a format, not words). */
+const CODE_EXAMPLE = 'ORB-7KQ2-HELN';
+
+/** A name the maker gives a map, in the player's language at the moment
+ *  it is made: a Portuguese player's remix is "X (cópia)", not "X (copy)".
+ *  The server names copies in English; the client renames them. */
+function localCopyName(name: string): string {
+  const m = / \(copy\)$/.exec(name);
+  return m && getLang() !== 'en' ? t('mm.name.copy', { name: name.slice(0, m.index) }) : name;
+}
+
+/** Open a map in the workshop. `dirty`: the client changed it after the
+ *  server saved it (a renamed copy), so it autosaves straight away. */
+type OpenMap = (map: CustomMap, id: string | null, dirty?: boolean) => void;
+
+/** Open a copy the server just made (a remix or an imported code). */
+function openCopy(onOpen: OpenMap, raw: CustomMap, id: string) {
+  const map = normalizeMap(raw);
+  const name = localCopyName(map.name);
+  onOpen(name === map.name ? map : normalizeMap({ ...map, name }), id, name !== map.name);
+}
 
 function saveDraft(map: CustomMap, id: string | null) {
   try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ map, id, at: Date.now() })); } catch { /* private mode */ }
@@ -74,10 +95,10 @@ function PaletteIcon({ tool }: { tool: Tool }) {
   if (tool === 'scatter') return <span className="mm-pal__spray" aria-hidden />;
   if (tool === 'ring') return <span className="mm-pal__ringtool" aria-hidden />;
   if (tool === 'sector') return <span className="mm-pal__sector" aria-hidden />;
-  const t = tool as MapBodyType;
-  const d = { terrestrial: 22, 'gas-giant': 30, 'ice-giant': 26, moon: 14, dwarf: 16, asteroid: 10, rock: 8 }[t] ?? 16;
-  const c = TYPE_INFO[t].color;
-  const gas = t === 'gas-giant';
+  const ty = tool as MapBodyType;
+  const d = { terrestrial: 22, 'gas-giant': 30, 'ice-giant': 26, moon: 14, dwarf: 16, asteroid: 10, rock: 8 }[ty] ?? 16;
+  const c = TYPE_INFO[ty].color;
+  const gas = ty === 'gas-giant';
   return (
     <span
       className="mm-pal__disc" aria-hidden
@@ -120,23 +141,27 @@ function thumbOf(map: CustomMap): Thumb {
 
 /** The issue chip's drawer. */
 function Checklist({ issues, onShow, onClose }: { issues: MapIssue[]; onShow: (ids: string[]) => void; onClose: () => void }) {
+  useI18n();
   return (
-    <div className="mm-drawer" role="dialog" aria-label="Is it ready to play?">
+    <div className="mm-drawer" role="dialog" aria-label={t('mm.check.title')}>
       <div className="mm-drawer__head">
-        <b>Is it ready to play?</b>
-        <span className="mm-mono">checked as you edit</span>
-        <button className="mm-icon" aria-label="Close" onClick={onClose}>✕</button>
+        <b>{t('mm.check.title')}</b>
+        <span className="mm-mono">{t('mm.check.live')}</span>
+        <button className="mm-icon" aria-label={t('mm.close')} onClick={onClose}>✕</button>
       </div>
-      {[...issues].sort((a, b) => ({ block: 0, warn: 1, ok: 2 }[a.level] - { block: 0, warn: 1, ok: 2 }[b.level])).map(i => (
-        <div key={i.code} className={`mm-issue is-${i.level}`}>
-          <span className="mm-issue__mark" aria-hidden>{i.level === 'ok' ? '✓' : i.level === 'warn' ? '!' : '✕'}</span>
-          <div className="mm-issue__t">
-            <b>{i.title}</b>
-            <span>{i.detail}</span>
+      {[...issues].sort((a, b) => ({ block: 0, warn: 1, ok: 2 }[a.level] - { block: 0, warn: 1, ok: 2 }[b.level])).map(i => {
+        const tx = issueText(i);
+        return (
+          <div key={i.code} className={`mm-issue is-${i.level}`}>
+            <span className="mm-issue__mark" aria-hidden>{i.level === 'ok' ? '✓' : i.level === 'warn' ? '!' : '✕'}</span>
+            <div className="mm-issue__t">
+              <b>{tx.title}</b>
+              <span>{tx.detail}</span>
+            </div>
+            {i.level !== 'ok' && i.bodyIds.length > 0 && <button className="mm-btn is-small" onClick={() => onShow(i.bodyIds)}>{t('mm.check.showMe')}</button>}
           </div>
-          {i.level !== 'ok' && i.bodyIds.length > 0 && <button className="mm-btn is-small" onClick={() => onShow(i.bodyIds)}>Show me</button>}
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -149,6 +174,7 @@ function HostPanel({
   onSaveFirst: () => Promise<Summary | null>; onToggleSecrets: (on: boolean) => void;
   onPublished: (s: Summary) => void; onEditPitch: () => void; onClose: () => void;
 }) {
+  useI18n();
   const starts = startWorlds(map).worlds.length;
   const most = Math.max(2, Math.min(10, starts));
   const [seats, setSeats] = useState(most);
@@ -167,22 +193,22 @@ function HostPanel({
     setBusy(true); setError(null);
     // The lobby copies the saved map, so save what's on screen first.
     const s = await onSaveFirst();
-    if (!s) { setBusy(false); setError('The map did not save, so no lobby was opened.'); return; }
+    if (!s) { setBusy(false); setError(t('mm.host.saveFailed')); return; }
     const res = await apiFetch<{ room: { id: string } }>(`/api/maps/${s.id}/host`, {
       method: 'POST', body: JSON.stringify({ name, max_players: seats, password: password || undefined }),
     });
     setBusy(false);
-    if (!res.ok) { setError(res.error?.message ?? 'Could not open the lobby.'); return; }
+    if (!res.ok) { setError(mapApiError(res.error, 'mm.host.openFailed')); return; }
     try { sessionStorage.setItem('orbital.tab_room', res.data.room.id); } catch { /* private mode */ }
     window.location.href = '/';
   };
   const publish = async (on: boolean) => {
     setPubBusy(true); setPubError(null);
     const s = await onSaveFirst();
-    if (!s) { setPubBusy(false); setPubError('Save the map first.'); return; }
+    if (!s) { setPubBusy(false); setPubError(t('mm.pub.saveFirst')); return; }
     const res = await apiFetch<{ summary: Summary }>(`/api/maps/${s.id}/publish`, { method: 'POST', body: JSON.stringify({ on }) });
     setPubBusy(false);
-    if (!res.ok) { setPubError(res.error?.message ?? 'Could not change that.'); return; }
+    if (!res.ok) { setPubError(mapApiError(res.error, 'mm.pub.failed')); return; }
     onPublished(res.data.summary);
   };
   const buy = async () => {
@@ -191,75 +217,77 @@ function HostPanel({
   };
 
   return (
-    <div className="mm-modal" role="dialog" aria-label="Share and host">
+    <div className="mm-modal" role="dialog" aria-label={t('mm.host.aria')}>
       <div className="mm-modal__card">
-        <div className="mm-modal__head"><b>Share &amp; host</b><button className="mm-icon" aria-label="Close" onClick={onClose}>✕</button></div>
+        <div className="mm-modal__head"><b>{t('mm.host.title')}</b><button className="mm-icon" aria-label={t('mm.close')} onClick={onClose}>✕</button></div>
         <div className="mm-modal__cols">
           <div className="mm-modal__stack">
             <section className="mm-panel">
-              <h3>Share this map</h3>
+              <h3>{t('mm.share.title')}</h3>
               {summary ? (
                 <>
                   <div className="mm-row">
-                    <input className="mm-input is-code" readOnly value={summary.share_code} aria-label="Share code" />
-                    <button className="mm-btn" onClick={() => { navigator.clipboard?.writeText(summary.share_code); setCopied(true); }}>{copied ? 'Copied' : 'Copy'}</button>
+                    <input className="mm-input is-code" readOnly value={summary.share_code} aria-label={t('mm.share.codeAria')} />
+                    <button className="mm-btn" onClick={() => { navigator.clipboard?.writeText(summary.share_code); setCopied(true); }}>{copied ? t('mm.share.copied') : t('mm.share.copy')}</button>
                   </div>
-                  <p className="mm-note">Anyone with the code can open a copy in their own Map Maker. Your original stays yours.</p>
+                  <p className="mm-note">{t('mm.share.note')}</p>
                 </>
-              ) : <p className="mm-note">Save the map to get its share code.</p>}
+              ) : <p className="mm-note">{t('mm.share.needSave')}</p>}
               <label className="mm-check">
                 <input type="checkbox" checked={map.settings.shareHidesSecrets} onChange={(e) => onToggleSecrets(e.target.checked)} />
-                <span>Keep hidden discoveries secret in shared copies</span>
+                <span>{t('mm.share.hideSecrets')}</span>
               </label>
             </section>
             <section className="mm-panel">
-              <h3>Publish to the gallery</h3>
+              <h3>{t('mm.pub.title')}</h3>
               <div className="mm-pub">
                 <MiniSystem thumb={thumbOf(map)} size={86} />
                 <div className="mm-pub__t">
                   <b>{map.name}</b>
-                  {map.blurb ? <span className="mm-note">{map.blurb}</span> : <span className="mm-note is-dim">No pitch yet. <button className="mm-link" onClick={onEditPitch}>Write one</button>: it is what makes people open a map.</span>}
+                  {map.blurb
+                    ? <span className="mm-note">{map.blurb}</span>
+                    : <span className="mm-note is-dim">{tRich('mm.pub.noPitch', { link: <button className="mm-link" onClick={onEditPitch}>{t('mm.pub.writeOne')}</button> })}</span>}
                 </div>
               </div>
               {blockers.length > 0 && !published ? (
-                <p className="mm-note is-bad">Fix the blockers first: {blockers.map(b => b.title).join('; ')}.</p>
+                <p className="mm-note is-bad">{t('mm.pub.fixFirst', { list: blockers.map(issueTitle).join('; ') })}</p>
               ) : (
                 <button className={`mm-btn is-wide${published ? '' : ' is-teal'}`} disabled={pubBusy} onClick={() => publish(!published)}>
-                  {pubBusy ? '…' : published ? 'Unpublish' : 'Publish for everyone to play and remix'}
+                  {pubBusy ? '…' : published ? t('mm.pub.unpublish') : t('mm.pub.publish')}
                 </button>
               )}
-              {published && <p className="mm-note">Live in the gallery. Remixed ×{summary?.remix_count ?? 0}, hosted ×{summary?.hosted_count ?? 0}.</p>}
+              {published && <p className="mm-note">{t('mm.pub.live', { remixed: summary?.remix_count ?? 0, hosted: summary?.hosted_count ?? 0 })}</p>}
               {pubError && <p className="mm-note is-bad">{pubError}</p>}
             </section>
           </div>
           <section className="mm-panel is-gold">
-            <h3>❖ Host a game on {map.name}</h3>
+            <h3>{t('mm.host.heading', { name: map.name })}</h3>
             {blockers.length > 0 ? (
-              <p className="mm-note is-bad">Not yet: {blockers.map(b => b.title).join('; ')}. See the checklist.</p>
+              <p className="mm-note is-bad">{t('mm.host.notYet', { list: blockers.map(issueTitle).join('; ') })}</p>
             ) : canHost ? (
               <>
                 <div className="mm-grid2">
-                  <label className="mm-field"><span className="mm-field__l">LOBBY NAME</span>
+                  <label className="mm-field"><span className="mm-field__l">{t('mm.host.lobbyName')}</span>
                     <input className="mm-input" value={name} maxLength={60} onChange={(e) => setName(e.target.value)} />
                   </label>
-                  <label className="mm-field"><span className="mm-field__l">SEATS · up to {most}</span>
-                    <Stepper label="Seats" value={seats} min={2} max={most} onChange={setSeats} />
+                  <label className="mm-field"><span className="mm-field__l">{t('mm.host.seats', { n: most })}</span>
+                    <Stepper label={t('mm.host.seatsAria')} value={seats} min={2} max={most} onChange={setSeats} />
                   </label>
-                  <label className="mm-field"><span className="mm-field__l">PASSWORD (optional)</span>
+                  <label className="mm-field"><span className="mm-field__l">{t('mm.host.password')}</span>
                     <input className="mm-input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
                   </label>
                 </div>
-                <button className="mm-btn is-gold is-wide" disabled={busy} onClick={host}>{busy ? 'Opening…' : 'Open the lobby'}</button>
+                <button className="mm-btn is-gold is-wide" disabled={busy} onClick={host}>{busy ? t('mm.host.opening') : t('mm.host.open')}</button>
                 {error && <p className="mm-note is-bad">{error}</p>}
-                <p className="mm-note">The lobby keeps a copy of the map as it is now: later edits never change a game already set up. It seats one player per start world.</p>
+                <p className="mm-note">{t('mm.host.copyNote')}</p>
               </>
             ) : (
               <>
-                <p className="mm-note">Hosting a game on your own map is part of the {COMMISSION_NAME} ({COMMISSION_PRICE}, once). Players who join don't need it.</p>
+                <p className="mm-note">{t('mm.host.needCommission', { name: t('hangar.commissionName'), price: t('mp.commission.price') })}</p>
                 {sellable ? (
-                  <button className="mm-btn is-gold is-wide" onClick={buy}>Get the Commission</button>
+                  <button className="mm-btn is-gold is-wide" onClick={buy}>{t('feed.buy', { price: t('mp.commission.price') })}</button>
                 ) : (
-                  <button className="mm-btn is-gold is-wide" onClick={() => openCommissionInBrowser('map-maker')}>Get the Commission in your browser</button>
+                  <button className="mm-btn is-gold is-wide" onClick={() => openCommissionInBrowser('map-maker')}>{t('mp.commission.inBrowser', { price: t('mp.commission.price') })}</button>
                 )}
               </>
             )}
@@ -271,7 +299,8 @@ function HostPanel({
 }
 
 /** The public gallery: everyone's published maps, to play or remix. */
-function Gallery({ onOpen }: { onOpen: (map: CustomMap, id: string | null) => void }) {
+function Gallery({ onOpen }: { onOpen: OpenMap }) {
+  useI18n();
   const [sort, setSort] = useState<'popular' | 'new'>('popular');
   const [q, setQ] = useState('');
   const [items, setItems] = useState<GalleryItem[] | null>(null);
@@ -281,49 +310,51 @@ function Gallery({ onOpen }: { onOpen: (map: CustomMap, id: string | null) => vo
 
   useEffect(() => {
     let live = true;
-    const t = window.setTimeout(async () => {
+    const timer = window.setTimeout(async () => {
       const res = await apiFetch<{ items: GalleryItem[]; next: string | null }>(`/api/maps/gallery?sort=${sort}&q=${encodeURIComponent(q.trim())}&limit=30`);
       if (!live) return;
-      if (res.ok) { setItems(res.data.items); setError(null); } else setError(res.error?.message ?? 'The gallery did not load.');
+      if (res.ok) { setItems(res.data.items); setError(null); } else setError(mapApiError(res.error, 'mm.gal.loadFailed'));
     }, q ? 250 : 0);
-    return () => { live = false; window.clearTimeout(t); };
+    return () => { live = false; window.clearTimeout(timer); };
   }, [sort, q]);
 
   const look = async (item: GalleryItem) => {
     const res = await apiFetch<{ map: CustomMap; item: GalleryItem }>(`/api/maps/gallery/${item.id}`);
     if (res.ok) setPeek({ item: res.data.item ?? item, map: normalizeMap(res.data.map) });
-    else setError(res.error?.message ?? 'That map did not open.');
+    else setError(mapApiError(res.error, 'mm.gal.openFailed'));
   };
   const remix = async (item: GalleryItem) => {
     setBusy(true);
     const res = await apiFetch<{ map: CustomMap; summary: Summary }>(`/api/maps/${item.id}/remix`, { method: 'POST' });
     setBusy(false);
-    if (res.ok) onOpen(normalizeMap(res.data.map), res.data.summary.id);
-    else setError(res.error?.message ?? 'Could not remix that map.');
+    if (res.ok) openCopy(onOpen, res.data.map, res.data.summary.id);
+    else setError(mapApiError(res.error, 'mm.gal.remixFailed'));
   };
 
   return (
     <div className="mm-gallery">
       <div className="mm-row mm-row--wrap">
         <div className="mm-seg">
-          <button className={`mm-chip${sort === 'popular' ? ' is-on' : ''}`} onClick={() => setSort('popular')}>Most played</button>
-          <button className={`mm-chip${sort === 'new' ? ' is-on' : ''}`} onClick={() => setSort('new')}>Newest</button>
+          <button className={`mm-chip${sort === 'popular' ? ' is-on' : ''}`} onClick={() => setSort('popular')}>{t('mm.gal.popular')}</button>
+          <button className={`mm-chip${sort === 'new' ? ' is-on' : ''}`} onClick={() => setSort('new')}>{t('mm.gal.newest')}</button>
         </div>
         <span className="mm-top__fill" />
-        <input className="mm-input mm-gallery__q" placeholder="Search maps" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search maps" />
+        <input className="mm-input mm-gallery__q" placeholder={t('mm.gal.search')} value={q} onChange={(e) => setQ(e.target.value)} aria-label={t('mm.gal.search')} />
       </div>
       {error && <p className="mm-note is-bad">{error}</p>}
-      {items === null && !error && <p className="mm-note">Loading the gallery…</p>}
-      {items?.length === 0 && <p className="mm-note">{q ? 'No published map has that name.' : 'Nobody has published a map yet. Yours could be the first.'}</p>}
+      {items === null && !error && <p className="mm-note">{t('mm.gal.loading')}</p>}
+      {items?.length === 0 && <p className="mm-note">{q ? t('mm.gal.noMatch') : t('mm.gal.empty')}</p>}
       <div className="mm-gallery__grid">
         {items?.map(it => (
           <button key={it.id} className="mm-gcard" onClick={() => look(it)}>
             <MiniSystem thumb={it.thumb} size={140} />
             <span className="mm-gcard__t">
               <b>{it.name}</b>
-              <span className="mm-mono">by {it.author}{it.mine ? ' (you)' : ''}</span>
+              <span className="mm-mono">{t(it.mine ? 'mm.gal.byYou' : 'mm.gal.by', { name: it.author })}</span>
               {it.blurb && <span className="mm-gcard__blurb">{it.blurb}</span>}
-              <span className="mm-mono">{it.starts} seats · {it.bodies} bodies · played ×{it.hosted_count} · remixed ×{it.remix_count}</span>
+              <span className="mm-mono">
+                {[tn('mm.n.seats', it.starts), tn('mm.n.bodies', it.bodies), t('mm.played', { n: it.hosted_count }), t('mm.remixed', { n: it.remix_count })].join(' · ')}
+              </span>
             </span>
           </button>
         ))}
@@ -331,18 +362,20 @@ function Gallery({ onOpen }: { onOpen: (map: CustomMap, id: string | null) => vo
       {peek && (
         <div className="mm-modal" role="dialog" aria-label={peek.item.name}>
           <div className="mm-modal__card is-narrow">
-            <div className="mm-modal__head"><b>{peek.item.name}</b><button className="mm-icon" aria-label="Close" onClick={() => setPeek(null)}>✕</button></div>
+            <div className="mm-modal__head"><b>{peek.item.name}</b><button className="mm-icon" aria-label={t('mm.close')} onClick={() => setPeek(null)}>✕</button></div>
             <div className="mm-peek">
               <MiniSystem thumb={thumbOf(peek.map)} size={260} />
               <div className="mm-peek__t">
-                <span className="mm-mono">by {peek.item.author}</span>
+                <span className="mm-mono">{t('mm.gal.by', { name: peek.item.author })}</span>
                 {peek.map.blurb && <p className="mm-peek__blurb">{peek.map.blurb}</p>}
-                <span className="mm-mono">{startWorlds(peek.map).worlds.length} start worlds · {peek.map.bodies.length} bodies · {BACKDROP_LABEL[peek.map.settings.backdrop]}</span>
-                <span className="mm-mono">played ×{peek.item.hosted_count} · remixed ×{peek.item.remix_count}</span>
+                <span className="mm-mono">
+                  {[tn('mm.n.startWorlds', startWorlds(peek.map).worlds.length), tn('mm.n.bodies', peek.map.bodies.length), backdropLabel(peek.map.settings.backdrop)].join(' · ')}
+                </span>
+                <span className="mm-mono">{t('mm.played', { n: peek.item.hosted_count })} · {t('mm.remixed', { n: peek.item.remix_count })}</span>
                 <button className="mm-btn is-primary is-wide" disabled={busy} onClick={() => remix(peek.item)}>
-                  {busy ? 'Copying…' : peek.item.mine ? 'Open a copy' : 'Remix it: a copy of your own'}
+                  {busy ? t('mm.gal.copying') : peek.item.mine ? t('mm.gal.openCopy') : t('mm.gal.remix')}
                 </button>
-                <p className="mm-note">Your copy is yours to change, rename and host. Hidden discoveries may arrive as surprises.</p>
+                <p className="mm-note">{t('mm.gal.remixNote')}</p>
               </div>
             </div>
           </div>
@@ -353,7 +386,8 @@ function Gallery({ onOpen }: { onOpen: (map: CustomMap, id: string | null) => vo
 }
 
 /** The first screen: templates, the generator, your maps, the gallery. */
-function StartScreen({ onOpen, onExit }: { onOpen: (map: CustomMap, id: string | null) => void; onExit: () => void }) {
+function StartScreen({ onOpen, onExit }: { onOpen: OpenMap; onExit: () => void }) {
+  useI18n();
   const [tab, setTab] = useState<'build' | 'gallery'>('build');
   const [maps, setMaps] = useState<Summary[] | null>(null);
   const [code, setCode] = useState('');
@@ -364,30 +398,37 @@ function StartScreen({ onOpen, onExit }: { onOpen: (map: CustomMap, id: string |
   const refresh = useCallback(async () => {
     const res = await apiFetch<{ maps: Summary[] }>('/api/maps');
     if (res.ok) setMaps(res.data.maps);
-    else setError(res.status === 404 ? 'The Map Maker is not open on this server yet.' : res.error?.message ?? 'Could not load your maps.');
+    else setError(res.status === 404 ? t('mm.start.closed') : mapApiError(res.error, 'mm.start.loadFailed'));
   }, []);
   useEffect(() => { refresh(); }, [refresh]);
 
   const open = async (id: string) => {
     const res = await apiFetch<{ map: CustomMap }>(`/api/maps/${id}`);
     if (res.ok) onOpen(normalizeMap(res.data.map), id);
-    else setError(res.error?.message ?? 'Could not open that map.');
+    else setError(mapApiError(res.error, 'mm.start.openFailed'));
   };
   const remove = async (s: Summary) => {
-    if (!window.confirm(`Delete "${s.name}"? This cannot be undone.`)) return;
+    if (!window.confirm(t('mm.start.deleteConfirm', { name: s.name }))) return;
     await apiFetch(`/api/maps/${s.id}`, { method: 'DELETE' });
     refresh();
   };
   const importCode = async () => {
     setError(null);
     const res = await apiFetch<{ map: CustomMap; summary: Summary }>('/api/maps/import', { method: 'POST', body: JSON.stringify({ code }) });
-    if (res.ok) onOpen(normalizeMap(res.data.map), res.data.summary.id);
-    else setError(res.error?.message ?? 'That code did not open a map.');
+    if (res.ok) openCopy(onOpen, res.data.map, res.data.summary.id);
+    else setError(mapApiError(res.error, 'mm.start.codeFailed'));
   };
   const sol = async () => {
     const res = await apiFetch<{ map: CustomMap }>('/api/maps/template/sol');
-    if (res.ok) onOpen(normalizeMap(res.data.map), null);
-    else setError(res.error?.message ?? 'Could not load the Solar System.');
+    if (!res.ok) { setError(mapApiError(res.error, 'mm.start.solFailed')); return; }
+    const m = normalizeMap(res.data.map);
+    // The server names the template in English; a fresh map takes the player's language.
+    onOpen(getLang() !== 'en' && m.name === 'Our Solar System' ? { ...m, name: t('mm.tpl.sol.t') } : m, null);
+  };
+  /** A rolled system, named in the player's language ("Sistema Helion"). */
+  const roll = () => {
+    const m = generateMap({ ...gen });
+    onOpen(getLang() === 'en' ? m : normalizeMap({ ...m, name: t('mm.name.generated', { sun: m.sun.name }) }), null);
   };
   const slider = (key: keyof typeof gen, label: string, min: number, max: number, step: number, fmt: (v: number) => string) => (
     <label className="mm-field">
@@ -400,92 +441,94 @@ function StartScreen({ onOpen, onExit }: { onOpen: (map: CustomMap, id: string |
   return (
     <div className="mm-start">
       <header className="mm-top">
-        <button className="mm-brand" onClick={onExit} title="Back to the lobby">‹ MAP MAKER</button>
+        <button className="mm-brand" onClick={onExit} title={t('mm.backToLobby')}>‹ {t('mm.brand')}</button>
         <div className="mm-seg mm-top__tabs" role="tablist">
-          <button role="tab" aria-selected={tab === 'build'} className={`mm-chip${tab === 'build' ? ' is-on' : ''}`} onClick={() => setTab('build')}>Build</button>
-          <button role="tab" aria-selected={tab === 'gallery'} className={`mm-chip${tab === 'gallery' ? ' is-on' : ''}`} onClick={() => setTab('gallery')}>Gallery</button>
+          <button role="tab" aria-selected={tab === 'build'} className={`mm-chip${tab === 'build' ? ' is-on' : ''}`} onClick={() => setTab('build')}>{t('mm.start.tabBuild')}</button>
+          <button role="tab" aria-selected={tab === 'gallery'} className={`mm-chip${tab === 'gallery' ? ' is-on' : ''}`} onClick={() => setTab('gallery')}>{t('mm.start.tabGallery')}</button>
         </div>
         <span className="mm-top__fill" />
         <label className="mm-top__code">
-          <span>Have a share code?</span>
-          <input className="mm-input" placeholder="ORB-7KQ2-HELN" value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') importCode(); }} />
+          <span>{t('mm.start.haveCode')}</span>
+          <input className="mm-input" placeholder={CODE_EXAMPLE} value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') importCode(); }} />
         </label>
-        <button className="mm-btn is-teal" onClick={importCode} disabled={!code.trim()}>Open</button>
+        <button className="mm-btn is-teal" onClick={importCode} disabled={!code.trim()}>{t('mm.start.open')}</button>
       </header>
       {tab === 'gallery' ? (
         <div className="mm-start__body is-single">
           <div className="mm-start__main">
-            <h1 className="mm-h1">The gallery</h1>
-            <p className="mm-note">Systems other players built and published. Open one, remix it, make it yours.</p>
+            <h1 className="mm-h1">{t('mm.gal.h1')}</h1>
+            <p className="mm-note">{t('mm.gal.intro')}</p>
             <Gallery onOpen={onOpen} />
           </div>
         </div>
       ) : (
         <div className="mm-start__body">
           <div className="mm-start__main">
-            <h1 className="mm-h1">Start a new map</h1>
-            <p className="mm-note">Pick a starting point. Everything on it can be changed.</p>
+            <h1 className="mm-h1">{t('mm.start.h1')}</h1>
+            <p className="mm-note">{t('mm.start.intro')}</p>
             {error && <p className="mm-note is-bad">{error}</p>}
             <div className="mm-templates">
-              <button className="mm-tpl" onClick={() => onOpen(blankMap('My system'), null)}>
+              <button className="mm-tpl" onClick={() => onOpen(blankMap(t('mm.name.mySystem')), null)}>
                 <span className="mm-tpl__art is-blank" aria-hidden><span className="mm-tpl__sun" /></span>
-                <b>Just a sun</b><span>An empty star. Build every world yourself.</span>
+                <b>{t('mm.tpl.blank.t')}</b><span>{t('mm.tpl.blank.d')}</span>
               </button>
               <button className="mm-tpl" onClick={sol}>
                 <span className="mm-tpl__art is-sol" aria-hidden><span className="mm-tpl__sun" /></span>
-                <b>Our Solar System</b><span>The planets, their moons, the belt and the Kuiper worlds, ready to rename and reshape.</span>
+                <b>{t('mm.tpl.sol.t')}</b><span>{t('mm.tpl.sol.d')}</span>
               </button>
               <button className="mm-tpl" onClick={() => setTab('gallery')}>
                 <span className="mm-tpl__art is-gallery" aria-hidden><span className="mm-tpl__sun" /></span>
-                <b>Remix someone's</b><span>Browse the gallery of published systems and start from one.</span>
+                <b>{t('mm.tpl.remix.t')}</b><span>{t('mm.tpl.remix.d')}</span>
               </button>
               {draft && draft.map.bodies.length > 0 && (
                 <button className="mm-tpl" onClick={() => onOpen(draft.map, draft.id)}>
                   <span className="mm-tpl__art is-draft" aria-hidden><MiniSystem thumb={thumbOf(draft.map)} size={104} /></span>
-                  <b>Carry on: {draft.map.name}</b><span>Where you left off, {draft.map.bodies.length} bodies.</span>
+                  <b>{t('mm.tpl.draft.t', { name: draft.map.name })}</b><span>{tn('mm.tpl.draft.d', draft.map.bodies.length)}</span>
                 </button>
               )}
             </div>
 
             <section className="mm-gen">
-              <div className="mm-gen__head"><b>Generate one for me</b><span className="mm-note">Set the shape, roll, then edit anything you don't like.</span></div>
+              <div className="mm-gen__head"><b>{t('mm.gen.title')}</b><span className="mm-note">{t('mm.gen.note')}</span></div>
               <div className="mm-gen__grid">
-                {slider('planets', 'PLANETS', 2, 14, 1, v => String(v))}
-                {slider('moonsMax', 'MOONS PER PLANET (MOST)', 0, 6, 1, v => `0–${v}`)}
-                {slider('belts', 'ASTEROID BELTS', 0, 3, 1, v => String(v))}
-                {slider('richness', 'RICHNESS', 0.4, 2.5, 0.1, v => (v < 0.8 ? 'Lean' : v < 1.3 ? 'Fair' : v < 1.9 ? 'Generous' : 'Lavish'))}
-                {slider('starts', 'START WORLDS', 2, 10, 1, v => String(v))}
-                {slider('spread', 'SPREAD', 0.6, 1.6, 0.05, v => (v < 0.85 ? 'Tight' : v < 1.2 ? 'Even' : 'Wide'))}
+                {slider('planets', t('mm.gen.planets'), 2, 14, 1, v => String(v))}
+                {slider('moonsMax', t('mm.gen.moons'), 0, 6, 1, v => `0–${v}`)}
+                {slider('belts', t('mm.gen.belts'), 0, 3, 1, v => String(v))}
+                {slider('richness', t('mm.gen.richness'), 0.4, 2.5, 0.1, v => t(v < 0.8 ? 'mm.gen.lean' : v < 1.3 ? 'mm.gen.fair' : v < 1.9 ? 'mm.gen.generous' : 'mm.gen.lavish'))}
+                {slider('starts', t('mm.gen.starts'), 2, 10, 1, v => String(v))}
+                {slider('spread', t('mm.gen.spread'), 0.6, 1.6, 0.05, v => t(v < 0.85 ? 'mm.gen.tight' : v < 1.2 ? 'mm.gen.even' : 'mm.gen.wide'))}
               </div>
               <div className="mm-row mm-row--wrap">
-                <span className="mm-field__l">NAME THEME</span>
-                {NAME_THEMES.map(t => <button key={t} className={`mm-chip${gen.theme === t ? ' is-on' : ''}`} onClick={() => setGen({ ...gen, theme: t })}>{t}</button>)}
+                <span className="mm-field__l">{t('mm.gen.theme')}</span>
+                {NAME_THEMES.map(th => <button key={th} className={`mm-chip${gen.theme === th ? ' is-on' : ''}`} onClick={() => setGen({ ...gen, theme: th })}>{themeLabel(th)}</button>)}
                 <span className="mm-top__fill" />
-                <span className="mm-mono">seed {gen.seed}</span>
-                <button className="mm-btn is-primary" onClick={() => onOpen(generateMap({ ...gen }), null)}>Roll a system</button>
+                <span className="mm-mono">{t('mm.gen.seed', { n: gen.seed })}</span>
+                <button className="mm-btn is-primary" onClick={roll}>{t('mm.gen.roll')}</button>
               </div>
             </section>
           </div>
 
           <aside className="mm-start__side">
-            <div className="mm-sec">YOUR MAPS</div>
-            {maps === null && !error && <p className="mm-note">Loading…</p>}
-            {maps?.length === 0 && <p className="mm-note">No saved maps yet.</p>}
+            <div className="mm-sec">{t('mm.start.yourMaps')}</div>
+            {maps === null && !error && <p className="mm-note">{t('mm.loading')}</p>}
+            {maps?.length === 0 && <p className="mm-note">{t('mm.start.noMaps')}</p>}
             {maps?.map(s => (
               <div key={s.id} className="mm-mapcard">
                 <button className="mm-mapcard__open" onClick={() => open(s.id)}>
                   <span className="mm-mapcard__art" style={{ background: `radial-gradient(circle, ${s.sun_color} 0 6px, #101a26 7px)` }} aria-hidden />
                   <span className="mm-mapcard__t">
                     <b>{s.name}</b>
-                    <span className="mm-mono">{s.bodies} bodies · {new Date(s.updated_ms).toLocaleDateString()}{s.hosted_count ? ` · hosted ×${s.hosted_count}` : ''}</span>
+                    <span className="mm-mono">
+                      {[tn('mm.n.bodies', s.bodies), new Date(s.updated_ms).toLocaleDateString(), ...(s.hosted_count ? [t('mm.hosted', { n: s.hosted_count })] : [])].join(' · ')}
+                    </span>
                   </span>
-                  {s.published && <span className="mm-tag is-pub">PUBLISHED</span>}
-                  <span className={`mm-tag ${s.blockers ? 'is-bad' : 'is-ok'}`}>{s.blockers ? `${s.blockers} BLOCKER${s.blockers > 1 ? 'S' : ''}` : 'READY'}</span>
+                  {s.published && <span className="mm-tag is-pub">{t('mm.start.published')}</span>}
+                  <span className={`mm-tag ${s.blockers ? 'is-bad' : 'is-ok'}`}>{s.blockers ? tn('mm.start.blockers', s.blockers) : t('mm.start.ready')}</span>
                 </button>
-                <button className="mm-icon" aria-label={`Delete ${s.name}`} onClick={() => remove(s)}>✕</button>
+                <button className="mm-icon" aria-label={t('mm.start.deleteAria', { name: s.name })} onClick={() => remove(s)}>✕</button>
               </div>
             ))}
-            <div className="mm-gold-note"><b>❖ {COMMISSION_NAME} holders</b> host games on their own maps. Anyone can build, save, publish a map and join a game on one.</div>
+            <div className="mm-gold-note">{tMarkup('mm.start.holders', { name: t('hangar.commissionName') })}</div>
           </aside>
         </div>
       )}
@@ -495,35 +538,28 @@ function StartScreen({ onOpen, onExit }: { onOpen: (map: CustomMap, id: string |
 
 /** First visit only: three short tips over the map. */
 function Coach({ touch, onDone }: { touch: boolean; onDone: () => void }) {
-  const steps = touch
-    ? [
-      ['Tap + to add worlds', 'Pick a planet, a moon, a belt or a paint tool, then tap the map. It keeps placing until you tap Done.'],
-      ['Tap a world to shape it', 'Its sheet slides up: name, resources, look, lore and secrets. Drag a selected world to move it.'],
-      ['Long-press to gather', 'Long-press worlds (or empty space, then drag) to select a group and change them all at once.'],
-    ]
-    : [
-      ['Pick, then click', 'Choose a world on the left, then click the map. Symmetry places it several ways round the sun at once.'],
-      ['Click a world to shape it', 'Name it, set what it yields, paint its surface, write its lore, hide a discovery.'],
-      ['Drag to gather', 'Drag across empty space to select a group, then change them all from the bar under the map.'],
-    ];
+  useI18n();
+  const kind = touch ? 'touch' : 'mouse';
+  const steps = [1, 2, 3].map(n => [t(`mm.coach.${kind}${n}.t` as Key), t(`mm.coach.${kind}${n}.d` as Key)]);
   const [i, setI] = useState(0);
   return (
-    <div className="mm-coach" role="dialog" aria-label="How the Map Maker works">
-      <span className="mm-mono">{i + 1} of {steps.length}</span>
+    <div className="mm-coach" role="dialog" aria-label={t('mm.coach.aria')}>
+      <span className="mm-mono">{t('mm.coach.step', { i: i + 1, n: steps.length })}</span>
       <b>{steps[i][0]}</b>
       <p>{steps[i][1]}</p>
       <div className="mm-row mm-row--end">
-        <button className="mm-btn is-small" onClick={onDone}>Skip</button>
+        <button className="mm-btn is-small" onClick={onDone}>{t('mm.coach.skip')}</button>
         {i < steps.length - 1
-          ? <button className="mm-btn is-small is-primary" onClick={() => setI(i + 1)}>Next</button>
-          : <button className="mm-btn is-small is-primary" onClick={onDone}>Start building</button>}
+          ? <button className="mm-btn is-small is-primary" onClick={() => setI(i + 1)}>{t('mm.coach.next')}</button>
+          : <button className="mm-btn is-small is-primary" onClick={onDone}>{t('mm.coach.go')}</button>}
       </div>
     </div>
   );
 }
 
 /** The workshop: the map, the tools, the inspector. */
-function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialId: string | null; onExit: () => void }) {
+function Workshop({ initial, initialId, dirty, onExit }: { initial: CustomMap; initialId: string | null; dirty?: boolean; onExit: () => void }) {
+  useI18n();
   const mobile = useIsMobile();
   const [hist, setHist] = useState<Hist>({ past: [], present: initial, future: [] });
   const pending = useRef<CustomMap | null>(null);
@@ -549,7 +585,7 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
   const [showHost, setShowHost] = useState(false);
   // 'fresh': a template or a roll nobody has touched yet. It is not
   // autosaved, so browsing templates never fills your map list.
-  const [saveState, setSaveState] = useState<'fresh' | 'saved' | 'unsaved' | 'saving' | 'error'>(initialId ? 'saved' : 'fresh');
+  const [saveState, setSaveState] = useState<'fresh' | 'saved' | 'unsaved' | 'saving' | 'error'>(initialId ? (dirty ? 'unsaved' : 'saved') : 'fresh');
   const [saveError, setSaveError] = useState<string | null>(null);
   const [treeQ, setTreeQ] = useState('');
   const [folded, setFolded] = useState<Set<string>>(new Set());
@@ -596,6 +632,9 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
     });
     touched();
   }, []);
+  /** The name field, cleaned on blur. Cleared, it takes the default name
+   *  in the player's language ("Sistema sem nome"), not the cleaner's. */
+  const commitName = () => commit(normalizeMap({ ...map, name: map.name.trim() || t('mm.name.untitled') }));
   const undo = useCallback(() => { setHist(h => (h.past.length ? { past: h.past.slice(0, -1), present: h.past[h.past.length - 1], future: [h.present, ...h.future] } : h)); touched(); }, []);
   const redo = useCallback(() => { setHist(h => (h.future.length ? { past: [...h.past, h.present], present: h.future[0], future: h.future.slice(1) } : h)); touched(); }, []);
 
@@ -616,7 +655,7 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
       ? await apiFetch<{ map: CustomMap; summary: Summary }>(`/api/maps/${id}`, { method: 'PUT', body })
       : await apiFetch<{ map: CustomMap; summary: Summary }>('/api/maps', { method: 'POST', body });
     saving.current = false;
-    if (!res.ok) { setSaveState('error'); setSaveError(res.error?.message ?? 'Could not save.'); return null; }
+    if (!res.ok) { setSaveState('error'); setSaveError(mapApiError(res.error, 'mm.save.failed')); return null; }
     setMapId(res.data.summary.id);
     idRef.current = res.data.summary.id;
     setSummary(s => ({ ...(s ?? {}), ...res.data.summary }));
@@ -627,8 +666,8 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
   // Autosave: a few seconds after the last edit, never mid-drag.
   useEffect(() => {
     if (saveState !== 'unsaved' || map.bodies.length === 0) return;
-    const t = window.setTimeout(() => { if (!pending.current) save(); }, 3000);
-    return () => window.clearTimeout(t);
+    const timer = window.setTimeout(() => { if (!pending.current) save(); }, 3000);
+    return () => window.clearTimeout(timer);
   }, [map, saveState, save]);
 
   // Keyboard: undo/redo, delete, duplicate, select all, Esc.
@@ -666,11 +705,11 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
     });
     if (ids.length) { setMapSheet(false); setSheet('peek'); }
   };
-  const onPlace = (t: Tool, parent: string, orbit: number, angle: number) => {
-    if (t === 'sector') return;
-    const r = t === 'ring' ? ringOf(map, ringType, ringCount, orbit, angle, theme)
-      : parent !== 'sun' || t === 'belt' || t === 'moon' || t === 'scatter' ? placeBody(map, t as Exclude<Tool, 'scatter' | 'ring' | 'sector'>, parent, orbit, angle, theme)
-        : placeSymmetric(map, t as Exclude<Tool, 'scatter' | 'ring' | 'sector'>, orbit, angle, theme, symmetry);
+  const onPlace = (tl: Tool, parent: string, orbit: number, angle: number) => {
+    if (tl === 'sector') return;
+    const r = tl === 'ring' ? ringOf(map, ringType, ringCount, orbit, angle, theme)
+      : parent !== 'sun' || tl === 'belt' || tl === 'moon' || tl === 'scatter' ? placeBody(map, tl as Exclude<Tool, 'scatter' | 'ring' | 'sector'>, parent, orbit, angle, theme)
+        : placeSymmetric(map, tl as Exclude<Tool, 'scatter' | 'ring' | 'sector'>, orbit, angle, theme, symmetry);
     commit(r.map, r.ids);
   };
   const onScatter = (pts: Array<{ orbit: number; angle: number }>) => {
@@ -686,7 +725,7 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
     commit(matchBodies(map, srcId, picking.ids, picking.aspects), picking.ids);
     setPicking(null);
   };
-  const pickTool = (t: Tool) => { setTool(tool === t ? null : t); setPalOpen(false); setPicking(null); };
+  const pickTool = (tl: Tool) => { setTool(tool === tl ? null : tl); setPalOpen(false); setPicking(null); };
 
   const selIds = [...selection].filter(id => id === 'sun' || map.bodies.some(b => b.id === id)
     || (id.startsWith('sector:') && map.sectors.some(x => `sector:${x.id}` === id)));
@@ -735,7 +774,7 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
         const sct = sectorOf(map, b);
         if ((sct?.id ?? null) !== lastSector) {
           lastSector = sct?.id ?? null;
-          rows.push({ id: sct ? `sector:${sct.id}` : `loose:${b.id}`, name: sct ? sct.name : 'Outside every sector', color: sct?.color ?? '#8fa6ba', depth: 0, tag: '', moons: 0, head: true });
+          rows.push({ id: sct ? `sector:${sct.id}` : `loose:${b.id}`, name: sct ? sct.name : '', color: sct?.color ?? '#8fa6ba', depth: 0, tag: '', moons: 0, head: true });
         }
       }
       rows.push({ id: b.id, name: b.name, color: b.color, depth: 0, tag: b.start ? '✦' : b.secret ? '?' : b.type === 'asteroid' ? '·' : '', moons: moons.length });
@@ -746,64 +785,65 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
   }, [map, treeQ, folded]);
   const fold = (id: string) => setFolded(f => { const n = new Set(f); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
-  const status = blockers ? `✕ ${blockers} blocker${blockers > 1 ? 's' : ''}` : warnings ? `! ${warnings} warning${warnings > 1 ? 's' : ''}` : '✓ Ready to play';
+  const status = blockers ? tn('mm.status.blockers', blockers) : warnings ? tn('mm.status.warnings', warnings) : t('mm.status.ready');
   const statusCls = blockers ? ' is-bad' : warnings ? ' is-warn' : ' is-ok';
-  const saveLabel = saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? 'Saved' : saveState === 'error' ? 'Retry save' : 'Save';
+  const saveLabel = t(saveState === 'saving' ? 'mm.save.saving' : saveState === 'saved' ? 'mm.save.saved' : saveState === 'error' ? 'mm.save.retry' : 'mm.save.save');
+  const hint = (base: string) => t(touchKey(base, mobile));
   const toolHint = picking
-    ? `${mobile ? 'Tap' : 'Click'} the world to copy from`
-    : tool === 'scatter' ? `Drag across the map to spray asteroids`
-      : tool === 'ring' ? (mobile ? 'Tap an orbit' : 'Click where the ring should circle')
-      : tool === 'sector' ? (mobile ? 'Drag from one orbit to another' : 'Drag from one orbit out to another to draw a sector')
-        : tool === 'moon' ? `${mobile ? 'Tap' : 'Click'} beside a planet to give it a moon`
-          : tool === 'belt' ? `${mobile ? 'Tap' : 'Click'} where the belt should circle`
-            : tool ? `${mobile ? 'Tap' : 'Click'} to place${symmetry > 1 ? ` · ${symmetry} ways round the sun` : ''}` : null;
+    ? hint('mm.hint.pick')
+    : tool === 'scatter' ? t('mm.hint.scatter')
+      : tool === 'ring' ? hint('mm.hint.ring')
+      : tool === 'sector' ? hint('mm.hint.sector')
+        : tool === 'moon' ? hint('mm.hint.moon')
+          : tool === 'belt' ? hint('mm.hint.belt')
+            : tool ? (symmetry > 1 ? t('mm.hint.withSym', { hint: hint('mm.hint.place'), n: symmetry }) : hint('mm.hint.place')) : null;
 
   const tools = (
     <>
-      <div className="mm-sec">{mobile ? 'WORLDS' : 'CLICK, THEN CLICK THE MAP'}</div>
+      <div className="mm-sec">{mobile ? t('mm.tools.worlds') : t('mm.tools.pickThenClick')}</div>
       <div className="mm-pal">
         {PALETTE.map(p => (
-          <button key={p.tool} className={`mm-pal__btn${tool === p.tool ? ' is-on' : ''}`} onClick={() => pickTool(p.tool)} aria-pressed={tool === p.tool}>
-            <PaletteIcon tool={p.tool} />
-            <span>{p.label}</span>
+          <button key={p} className={`mm-pal__btn${tool === p ? ' is-on' : ''}`} onClick={() => pickTool(p)} aria-pressed={tool === p}>
+            <PaletteIcon tool={p} />
+            <span>{typeLabel(p)}</span>
           </button>
         ))}
       </div>
-      <div className="mm-sec">PAINT</div>
+      <div className="mm-sec">{t('mm.tools.paint')}</div>
       <div className="mm-pal is-paint">
         <button className={`mm-pal__btn${tool === 'scatter' ? ' is-on' : ''}`} onClick={() => pickTool('scatter')} aria-pressed={tool === 'scatter'}>
-          <PaletteIcon tool="scatter" /><span>Spray asteroids</span>
+          <PaletteIcon tool="scatter" /><span>{t('mm.tools.spray')}</span>
         </button>
         <button className={`mm-pal__btn${tool === 'ring' ? ' is-on' : ''}`} onClick={() => pickTool('ring')} aria-pressed={tool === 'ring'}>
-          <PaletteIcon tool="ring" /><span>Ring of worlds</span>
+          <PaletteIcon tool="ring" /><span>{t('mm.tools.ring')}</span>
         </button>
         <button className={`mm-pal__btn is-wide${tool === 'sector' ? ' is-on' : ''}`} onClick={() => pickTool('sector')} aria-pressed={tool === 'sector'}>
-          <PaletteIcon tool="sector" /><span>Draw a sector</span>
+          <PaletteIcon tool="sector" /><span>{t('mm.tools.sector')}</span>
         </button>
       </div>
       {tool === 'ring' && (
         <div className="mm-box is-tight">
           <div className="mm-row mm-row--wrap">
-            <span className="mm-field__l">HOW MANY</span>
-            <Stepper label="Worlds in the ring" value={ringCount} min={2} max={12} onChange={setRingCount} />
+            <span className="mm-field__l">{t('mm.tools.howMany')}</span>
+            <Stepper label={t('mm.tools.ringCount')} value={ringCount} min={2} max={12} onChange={setRingCount} />
           </div>
           <div className="mm-row mm-row--wrap">
-            {RING_TYPES.map(t => <button key={t} className={`mm-chip is-small${ringType === t ? ' is-on' : ''}`} onClick={() => setRingType(t)}>{TYPE_INFO[t].label}</button>)}
+            {RING_TYPES.map(ty => <button key={ty} className={`mm-chip is-small${ringType === ty ? ' is-on' : ''}`} onClick={() => setRingType(ty)}>{typeLabel(ty)}</button>)}
           </div>
         </div>
       )}
-      <div className="mm-sec mm-sec--row"><span>SYMMETRY</span><span className="mm-mono">{symmetry > 1 ? `${symmetry} ways` : 'off'}</span></div>
-      <div className="mm-sym" role="radiogroup" aria-label="Symmetry">
+      <div className="mm-sec mm-sec--row"><span>{t('mm.tools.symmetry')}</span><span className="mm-mono">{symmetry > 1 ? t('mm.tools.ways', { n: symmetry }) : t('mm.tools.off')}</span></div>
+      <div className="mm-sym" role="radiogroup" aria-label={t('mm.tools.symmetryAria')}>
         {SYMMETRY.map(n => (
           <button key={n} role="radio" aria-checked={symmetry === n} className={`mm-chip is-small${symmetry === n ? ' is-on' : ''}`} onClick={() => setSymmetry(n)}>
-            {n === 1 ? 'Off' : `×${n}`}
+            {n === 1 ? t('mm.tools.offChip') : `×${n}`}
           </button>
         ))}
       </div>
       <div className="mm-row mm-row--wrap">
-        <span className="mm-field__l">NEW NAMES</span>
-        <select className="mm-input is-small" value={theme} onChange={(e) => setTheme(e.target.value)} aria-label="Name theme for new worlds">
-          {NAME_THEMES.map(t => <option key={t} value={t}>{t}</option>)}
+        <span className="mm-field__l">{t('mm.tools.newNames')}</span>
+        <select className="mm-input is-small" value={theme} onChange={(e) => setTheme(e.target.value)} aria-label={t('mm.tools.themeAria')}>
+          {NAME_THEMES.map(th => <option key={th} value={th}>{themeLabel(th)}</option>)}
         </select>
       </div>
     </>
@@ -811,11 +851,11 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
 
   const treeView = (
     <>
-      <div className="mm-sec">YOUR SYSTEM · {map.bodies.length} BODIES</div>
-      <input className="mm-input is-small mm-tree__q" placeholder="Find a world" value={treeQ} onChange={(e) => setTreeQ(e.target.value)} aria-label="Find a world" />
+      <div className="mm-sec">{tn('mm.tree.title', map.bodies.length)}</div>
+      <input className="mm-input is-small mm-tree__q" placeholder={t('mm.tree.find')} value={treeQ} onChange={(e) => setTreeQ(e.target.value)} aria-label={t('mm.tree.find')} />
       <div className="mm-tree">
         <button className={`mm-tree__row${selection.has('sun') ? ' is-sel' : ''}`} onClick={(e) => { onSelect(['sun'], e.shiftKey ? 'toggle' : 'replace'); setListOpen(false); }}>
-          <span className="mm-dot" style={{ background: map.sun.color }} />{map.sun.name}<span className="mm-tree__tag">SUN</span>
+          <span className="mm-dot" style={{ background: map.sun.color }} />{map.sun.name}<span className="mm-tree__tag">{t('mm.tree.sun')}</span>
         </button>
         {tree.map(r => (r.head ? (
           r.id.startsWith('sector:')
@@ -824,11 +864,11 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
                 {r.name.toUpperCase()}
               </button>
             )
-            : <div key={r.id} className="mm-tree__head is-loose">{r.name.toUpperCase()}</div>
+            : <div key={r.id} className="mm-tree__head is-loose">{t('mm.tree.loose').toUpperCase()}</div>
         ) : (
           <div key={r.id} className="mm-tree__line" style={{ paddingLeft: r.depth * 16 }}>
             {r.depth === 0 && r.moons > 0
-              ? <button className="mm-tree__fold" aria-label={folded.has(r.id) ? 'Show moons' : 'Hide moons'} onClick={() => fold(r.id)}>{folded.has(r.id) ? '▸' : '▾'}</button>
+              ? <button className="mm-tree__fold" aria-label={folded.has(r.id) ? t('mm.tree.showMoons') : t('mm.tree.hideMoons')} onClick={() => fold(r.id)}>{folded.has(r.id) ? '▸' : '▾'}</button>
               : <span className="mm-tree__fold" />}
             <button className={`mm-tree__row${selection.has(r.id) ? ' is-sel' : ''}`}
               onClick={(e) => { onSelect([r.id], e.shiftKey || e.ctrlKey || e.metaKey ? 'toggle' : 'replace'); setListOpen(false); }}>
@@ -851,7 +891,7 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
       : bulkIds.length > 1 && mobile
         ? <BulkBar compact map={map} ids={bulkIds} theme={theme} onChange={commit} onClear={() => setSelection(new Set())} onMatch={(a) => { setPicking({ aspects: a, ids: bulkIds }); setTool(null); }} />
         : bulkIds.length > 1
-          ? <div className="mm-insp"><div className="mm-insp__body"><div className="mm-sec">{bulkIds.length} SELECTED</div><p className="mm-note">Use the bar under the map to change them all at once. Shift-click a world to add or drop it.</p></div></div>
+          ? <div className="mm-insp"><div className="mm-insp__body"><div className="mm-sec">{t('mm.sel.count', { n: bulkIds.length })}</div><p className="mm-note">{t('mm.sel.note')}</p></div></div>
           : <MapInspector map={map} theme={theme} touch={mobile} onChange={commit} onTransient={transient}
             onDrawSector={() => { setTool('sector'); setMapSheet(false); setPicking(null); }}
             onPickSector={(id) => { setSelection(new Set([`sector:${id}`])); setMapSheet(false); setSheet('peek'); }} />;
@@ -859,11 +899,11 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
   const lensPanel = lens && (
     <div className={`mm-lenspanel${lensOpen ? '' : ' is-folded'}`}>
       <button className="mm-lenspanel__head" onClick={() => setLensOpen(o => !o)} aria-expanded={lensOpen}>
-        <b>Fairness</b>
+        <b>{t('mm.lens.title')}</b>
         <span className={`mm-tag ${lens.score >= 80 ? 'is-ok' : lens.score >= 55 ? 'is-warn' : 'is-bad'}`}>{lens.score}%</span>
-        <span className="mm-mono">{lensOpen ? '▾' : '▸'} {lens.starts.length} starts</span>
+        <span className="mm-mono">{lensOpen ? '▾' : '▸'} {tn('mm.n.starts', lens.starts.length)}</span>
       </button>
-      {lensOpen && <p className="mm-note">What lies nearest each start world at the opening. 100% means every player's neighbourhood is worth the same.</p>}
+      {lensOpen && <p className="mm-note">{t('mm.lens.note')}</p>}
       {lensOpen && [...lens.starts].sort((a, b) => b.total - a.total).map(s => (
         <button key={s.id} className="mm-lensrow" onClick={() => onSelect([s.id], 'replace')}>
           <span className="mm-dot" style={{ background: s.color }} />
@@ -872,7 +912,7 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
           <span className="mm-lensrow__bar"><span style={{ width: `${(s.total / Math.max(1, ...lens.starts.map(x => x.total))) * 100}%`, background: s.color }} /></span>
         </button>
       ))}
-      {lensOpen && <span className="mm-mono">metal · credits · science per tick</span>}
+      {lensOpen && <span className="mm-mono">{t('mm.lens.key')}</span>}
     </div>
   );
   const noLens = lensOn && !lens;
@@ -889,22 +929,22 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
       {!mobile && (
         <div className="mm-stage__ctl">
           <button className={`mm-btn is-small${scale === 'true' ? ' is-on' : ''}`} onClick={() => setScale(scale === 'compressed' ? 'true' : 'compressed')}>
-            {scale === 'compressed' ? 'Compressed distances' : 'True distances'}
+            {scale === 'compressed' ? t('mm.stage.compressed') : t('mm.stage.true')}
           </button>
-          <button className="mm-btn is-small" onClick={() => setFit(f => f + 1)}>Fit system</button>
-          <button className={`mm-btn is-small${lensOn ? ' is-on' : ''}`} onClick={() => setLensOn(l => !l)}>Fairness lens</button>
+          <button className="mm-btn is-small" onClick={() => setFit(f => f + 1)}>{t('mm.stage.fit')}</button>
+          <button className={`mm-btn is-small${lensOn ? ' is-on' : ''}`} onClick={() => setLensOn(l => !l)}>{t('mm.stage.lens')}</button>
         </div>
       )}
       {toolHint && (
         <div className="mm-toolhint">
           <span>{toolHint}</span>
-          {tool === 'ring' && <Stepper label="Worlds in the ring" value={ringCount} min={2} max={12} onChange={setRingCount} />}
-          <button className="mm-btn is-small is-primary" onClick={() => { setTool(null); setPicking(null); }}>{picking ? 'Cancel' : 'Done'}</button>
+          {tool === 'ring' && <Stepper label={t('mm.tools.ringCount')} value={ringCount} min={2} max={12} onChange={setRingCount} />}
+          <button className="mm-btn is-small is-primary" onClick={() => { setTool(null); setPicking(null); }}>{picking ? t('mm.cancel') : t('mm.done')}</button>
         </div>
       )}
       {lensPanel}
-      {noLens && <div className="mm-lenspanel"><p className="mm-note">The lens needs at least two start worlds.</p></div>}
-      {!mobile && <div className="mm-stage__hint mm-mono">Drag empty space to select a group · Shift-click adds · Right-drag pans · Wheel zooms</div>}
+      {noLens && <div className="mm-lenspanel"><p className="mm-note">{t('mm.lens.needTwo')}</p></div>}
+      {!mobile && <div className="mm-stage__hint mm-mono">{t('mm.stage.help')}</div>}
       {showCheck && <Checklist issues={issues} onShow={(ids) => { setSelection(new Set(ids)); setShowCheck(false); setSheet('peek'); }} onClose={() => setShowCheck(false)} />}
       {!mobile && bulkIds.length > 1 && !picking && (
         <BulkBar map={map} ids={bulkIds} theme={theme} onChange={commit} onClear={() => setSelection(new Set())} onMatch={(a) => { setPicking({ aspects: a, ids: bulkIds }); setTool(null); }} />
@@ -928,27 +968,27 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
     return (
       <div className="mm-work is-mobile">
         <header className="mm-top">
-          <button className="mm-icon" aria-label="Back to your maps" onClick={onExit}>‹</button>
-          <input className="mm-top__mname" value={map.name} maxLength={40} aria-label="Map name"
-            onChange={(e) => transient({ ...map, name: e.target.value })} onBlur={() => commit(normalizeMap(map))} />
-          <button className="mm-icon" aria-label="Undo" disabled={!hist.past.length} onClick={undo}>
+          <button className="mm-icon" aria-label={t('mm.backToMaps')} onClick={onExit}>‹</button>
+          <input className="mm-top__mname" value={map.name} maxLength={40} aria-label={t('mm.mapName')}
+            onChange={(e) => transient({ ...map, name: e.target.value })} onBlur={commitName} />
+          <button className="mm-icon" aria-label={t('mm.undo')} disabled={!hist.past.length} onClick={undo}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M9 14L4 9l5-5" /><path d="M4 9h11a5 5 0 010 10h-3" /></svg>
           </button>
-          <button className="mm-icon" aria-label="Redo" disabled={!hist.future.length} onClick={redo}>
+          <button className="mm-icon" aria-label={t('mm.redo')} disabled={!hist.future.length} onClick={redo}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M15 14l5-5-5-5" /><path d="M20 9H9a5 5 0 000 10h3" /></svg>
           </button>
           <button className={`mm-status is-dot${statusCls}`} aria-label={status} onClick={() => setShowCheck(s => !s)}>{blockers ? '✕' : warnings ? '!' : '✓'}</button>
-          <button className="mm-icon" aria-label="More" onClick={() => setMenuOpen(true)}>⋯</button>
+          <button className="mm-icon" aria-label={t('mm.mob.more')} onClick={() => setMenuOpen(true)}>⋯</button>
         </header>
         {saveError && <div className="mm-banner is-bad">{saveError}</div>}
         <div className="mm-work__body">{stage}</div>
 
         {!tool && !picking && (
           <>
-            <button className="mm-fab" aria-label="Add to the map" onClick={() => setPalOpen(true)}>
+            <button className="mm-fab" aria-label={t('mm.mob.add')} onClick={() => setPalOpen(true)}>
               <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
             </button>
-            {!showSheet && <button className="mm-fab is-left" aria-label="The whole map: pitch, mood, sky" onClick={() => { setMapSheet(true); setSheet('full'); }}>
+            {!showSheet && <button className="mm-fab is-left" aria-label={t('mm.mob.wholeMap')} onClick={() => { setMapSheet(true); setSheet('full'); }}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4z" /><path d="M14 6l4 4" /></svg>
             </button>}
           </>
@@ -957,8 +997,8 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
         {showSheet && !tool && !picking && (
           <div className={`mm-sheet is-${sheet}`}>
             <div className="mm-sheet__bar">
-              <button className="mm-sheet__grip" aria-label={sheet === 'peek' ? 'Expand' : 'Shrink'} onClick={() => setSheet(sheet === 'peek' ? 'full' : 'peek')} />
-              <button className="mm-icon" aria-label="Close" onClick={() => { setSelection(new Set()); setMapSheet(false); }}>✕</button>
+              <button className="mm-sheet__grip" aria-label={sheet === 'peek' ? t('mm.mob.expand') : t('mm.mob.shrink')} onClick={() => setSheet(sheet === 'peek' ? 'full' : 'peek')} />
+              <button className="mm-icon" aria-label={t('mm.close')} onClick={() => { setSelection(new Set()); setMapSheet(false); }}>✕</button>
             </div>
             <div className="mm-sheet__body" onFocus={() => setSheet('full')}>{inspector}</div>
           </div>
@@ -967,7 +1007,7 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
         {palOpen && (
           <div className="mm-scrim" onClick={() => setPalOpen(false)}>
             <div className="mm-sheet is-full is-pal" onClick={(e) => e.stopPropagation()}>
-              <div className="mm-sheet__bar"><b>Add to the map</b><button className="mm-icon" aria-label="Close" onClick={() => setPalOpen(false)}>✕</button></div>
+              <div className="mm-sheet__bar"><b>{t('mm.mob.add')}</b><button className="mm-icon" aria-label={t('mm.close')} onClick={() => setPalOpen(false)}>✕</button></div>
               <div className="mm-sheet__body mm-rail is-sheet">{tools}</div>
             </div>
           </div>
@@ -975,7 +1015,7 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
         {listOpen && (
           <div className="mm-scrim" onClick={() => setListOpen(false)}>
             <div className="mm-sheet is-full" onClick={(e) => e.stopPropagation()}>
-              <div className="mm-sheet__bar"><b>Every world</b><button className="mm-icon" aria-label="Close" onClick={() => setListOpen(false)}>✕</button></div>
+              <div className="mm-sheet__bar"><b>{t('mm.mob.everyWorld')}</b><button className="mm-icon" aria-label={t('mm.close')} onClick={() => setListOpen(false)}>✕</button></div>
               <div className="mm-sheet__body mm-rail is-sheet">{treeView}</div>
             </div>
           </div>
@@ -984,14 +1024,14 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
           <div className="mm-scrim" onClick={() => setMenuOpen(false)}>
             <div className="mm-menu" onClick={(e) => e.stopPropagation()} role="menu">
               <button role="menuitem" onClick={() => { save(); setMenuOpen(false); }}>{saveLabel}{saveState === 'saved' ? ' ✓' : ''}</button>
-              <button role="menuitem" className="is-gold" onClick={() => { setShowHost(true); setMenuOpen(false); }}>❖ Share, publish &amp; host</button>
-              <button role="menuitem" onClick={() => { setListOpen(true); setMenuOpen(false); }}>Every world ({map.bodies.length})</button>
-              <button role="menuitem" onClick={() => { setLensOn(l => !l); setMenuOpen(false); }}>{lensOn ? 'Hide' : 'Show'} the fairness lens</button>
-              <button role="menuitem" onClick={() => { setPreview(p => !p); setMenuOpen(false); }}>{preview ? 'Stop motion' : 'Preview in motion'}</button>
-              <button role="menuitem" onClick={() => { setScale(scale === 'compressed' ? 'true' : 'compressed'); setMenuOpen(false); }}>{scale === 'compressed' ? 'True distances' : 'Compressed distances'}</button>
-              <button role="menuitem" onClick={() => { setFit(f => f + 1); setMenuOpen(false); }}>Fit the system</button>
-              <button role="menuitem" onClick={() => { setSelection(new Set()); setMapSheet(true); setSheet('full'); setMenuOpen(false); }}>Pitch, mood &amp; sky</button>
-              <button role="menuitem" onClick={() => { setCoach(true); setMenuOpen(false); }}>How it works</button>
+              <button role="menuitem" className="is-gold" onClick={() => { setShowHost(true); setMenuOpen(false); }}>{t('mm.mob.shareAll')}</button>
+              <button role="menuitem" onClick={() => { setListOpen(true); setMenuOpen(false); }}>{t('mm.mob.everyWorldN', { n: map.bodies.length })}</button>
+              <button role="menuitem" onClick={() => { setLensOn(l => !l); setMenuOpen(false); }}>{lensOn ? t('mm.mob.lensHide') : t('mm.mob.lensShow')}</button>
+              <button role="menuitem" onClick={() => { setPreview(p => !p); setMenuOpen(false); }}>{preview ? t('mm.stage.stop') : t('mm.stage.preview')}</button>
+              <button role="menuitem" onClick={() => { setScale(scale === 'compressed' ? 'true' : 'compressed'); setMenuOpen(false); }}>{scale === 'compressed' ? t('mm.stage.true') : t('mm.stage.compressed')}</button>
+              <button role="menuitem" onClick={() => { setFit(f => f + 1); setMenuOpen(false); }}>{t('mm.mob.fit')}</button>
+              <button role="menuitem" onClick={() => { setSelection(new Set()); setMapSheet(true); setSheet('full'); setMenuOpen(false); }}>{t('mm.mob.pitch')}</button>
+              <button role="menuitem" onClick={() => { setCoach(true); setMenuOpen(false); }}>{t('mm.mob.how')}</button>
             </div>
           </div>
         )}
@@ -1003,27 +1043,29 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
   return (
     <div className="mm-work">
       <header className="mm-top">
-        <button className="mm-brand" onClick={onExit} title="Back to your maps">‹ MAP MAKER</button>
+        <button className="mm-brand" onClick={onExit} title={t('mm.backToMaps')}>‹ {t('mm.brand')}</button>
         <span className="mm-top__div" />
         <label className="mm-top__name">
-          <span>MAP NAME</span>
-          <input value={map.name} maxLength={40} aria-label="Map name"
-            onChange={(e) => transient({ ...map, name: e.target.value })} onBlur={() => commit(normalizeMap(map))} />
+          <span>{t('mm.mapNameLabel')}</span>
+          <input value={map.name} maxLength={40} aria-label={t('mm.mapName')}
+            onChange={(e) => transient({ ...map, name: e.target.value })} onBlur={commitName} />
         </label>
         <div className="mm-row">
-          <button className="mm-icon" aria-label="Undo" title="Undo (Ctrl+Z)" disabled={!hist.past.length} onClick={undo}>
+          <button className="mm-icon" aria-label={t('mm.undo')} title={t('mm.undoKey')} disabled={!hist.past.length} onClick={undo}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M9 14L4 9l5-5" /><path d="M4 9h11a5 5 0 010 10h-3" /></svg>
           </button>
-          <button className="mm-icon" aria-label="Redo" title="Redo (Ctrl+Y)" disabled={!hist.future.length} onClick={redo}>
+          <button className="mm-icon" aria-label={t('mm.redo')} title={t('mm.redoKey')} disabled={!hist.future.length} onClick={redo}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M15 14l5-5-5-5" /><path d="M20 9H9a5 5 0 000 10h3" /></svg>
           </button>
         </div>
         <span className="mm-top__fill" />
-        <span className={`mm-savestate is-${saveState}`}>{saveState === 'saved' ? 'All changes saved' : saveState === 'saving' ? 'Saving…' : saveState === 'error' ? 'Not saved' : saveState === 'fresh' ? 'Not saved yet' : 'Autosaves in a moment'}</span>
-        <button className={`mm-status${statusCls}`} onClick={() => setShowCheck(s => !s)}>{blockers || warnings ? `${status} · checklist` : status}</button>
-        <button className={`mm-btn${preview ? ' is-on' : ''}`} onClick={() => setPreview(p => !p)}>{preview ? 'Stop motion' : 'Preview in motion'}</button>
+        <span className={`mm-savestate is-${saveState}`}>
+          {t(saveState === 'saved' ? 'mm.save.allSaved' : saveState === 'saving' ? 'mm.save.saving' : saveState === 'error' ? 'mm.save.notSaved' : saveState === 'fresh' ? 'mm.save.notYet' : 'mm.save.soon')}
+        </span>
+        <button className={`mm-status${statusCls}`} onClick={() => setShowCheck(s => !s)}>{blockers || warnings ? t('mm.status.withList', { status }) : status}</button>
+        <button className={`mm-btn${preview ? ' is-on' : ''}`} onClick={() => setPreview(p => !p)}>{preview ? t('mm.stage.stop') : t('mm.stage.preview')}</button>
         <button className="mm-btn is-teal" onClick={save} disabled={saveState === 'saving'}>{saveLabel}</button>
-        <button className="mm-btn is-gold" onClick={() => setShowHost(true)}>❖ Share &amp; host</button>
+        <button className="mm-btn is-gold" onClick={() => setShowHost(true)}>{t('mm.top.share')}</button>
       </header>
       {saveError && <div className="mm-banner is-bad">{saveError}</div>}
 
@@ -1041,11 +1083,11 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
 }
 
 const MapMaker: React.FC<{ onExit: () => void }> = ({ onExit }) => {
-  const [open, setOpen] = useState<{ map: CustomMap; id: string | null; key: number } | null>(null);
+  const [open, setOpen] = useState<{ map: CustomMap; id: string | null; key: number; dirty?: boolean } | null>(null);
   if (!open) {
-    return <StartScreen onExit={onExit} onOpen={(map, id) => setOpen({ map, id, key: Date.now() })} />;
+    return <StartScreen onExit={onExit} onOpen={(map, id, dirty) => setOpen({ map, id, key: Date.now(), dirty })} />;
   }
-  return <Workshop key={open.key} initial={open.map} initialId={open.id} onExit={() => setOpen(null)} />;
+  return <Workshop key={open.key} initial={open.map} initialId={open.id} dirty={open.dirty} onExit={() => setOpen(null)} />;
 };
 
 export default MapMaker;
