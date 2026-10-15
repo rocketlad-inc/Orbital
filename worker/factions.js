@@ -2957,9 +2957,10 @@ async function countSystemsPerFaction(env, gameId) {
     .prepare(
       // Same column set as the senate's bodiesForWeight: orbit geometry
       // feeds the belt clustering, without which every rock is a system.
+      // look_json carries a custom map's authored sectors.
       `SELECT id, template_id, name, type, parent_body_id,
               orbit_period, orbit_radius, orbit_rp, orbit_ra,
-              owner_faction_id, obliterated_at_tick
+              owner_faction_id, obliterated_at_tick, look_json
          FROM game_bodies
         WHERE game_id = ? AND destroyed_at_tick IS NULL`,
     )

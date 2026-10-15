@@ -671,9 +671,12 @@ async function bodiesForWeight(env, gameId) {
       // is its own. Without these columns every rock counts separately.
       // obliterated_at_tick: a debris field stays in the grouping (its
       // moons still belong to it) but isWorld drops it from the count.
+      // look_json: a custom map's authored sectors are systems too
+      // (systems.js bodySector); left out, the senate counts automatic
+      // systems the outliner and the map no longer show.
       `SELECT id, template_id, name, type, parent_body_id,
               orbit_period, orbit_radius, orbit_rp, orbit_ra,
-              owner_faction_id, obliterated_at_tick
+              owner_faction_id, obliterated_at_tick, look_json
          FROM game_bodies
         WHERE game_id = ? AND destroyed_at_tick IS NULL`,
     )
