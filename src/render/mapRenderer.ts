@@ -9411,7 +9411,10 @@ function drawRegionLabel(
   // the ground it's printed on.
   // NB: lighten() takes a channel MULTIPLIER, not a 0..1 blend — so this
   // ramps 1.0 (untouched) -> 1.5 (brighter), never below 1.
-  const ink = owned ? lighten(color, lerp(1, 1.5, intensity)) : REGION_NEUTRAL;
+  // An authored sector nobody holds keeps a hint of the map maker's own
+  // colour on its NAME (at the neutral alphas below); the fill stays the
+  // neutral grey every unheld region wears.
+  const ink = owned ? lighten(color, lerp(1, 1.5, intensity)) : (region.accent ?? REGION_NEUTRAL);
   const titleAlpha = owned ? lerp(0.85, 1, intensity) : lerp(0.5, 0.8, intensity);
   const subAlpha = owned ? lerp(0.6, 0.9, intensity) : lerp(0.45, 0.75, intensity);
 
