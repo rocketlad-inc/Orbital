@@ -364,7 +364,13 @@ export function checkMap(input) {
   const tight = [];
   for (let i = 1; i < suns.length; i++) {
     const a = suns[i - 1], b = suns[i];
-    if (b.orbit - a.orbit < (bodySoi(map, a) + bodySoi(map, b)) * 0.5) tight.push([a, b]);
+    if (b.orbit - a.orbit >= (bodySoi(map, a) + bodySoi(map, b)) * 0.5) continue;
+    // Worlds sharing (nearly) one orbit are only crowded if they also sit
+    // close round it: a mirrored map puts four homes on one orbit a
+    // quarter-turn apart, and that is the point, not a clash.
+    const pa = bodyPos(map, a), pb = bodyPos(map, b);
+    if (Math.abs(b.orbit - a.orbit) < 1 && Math.hypot(pa.x - pb.x, pa.y - pb.y) > (bodySoi(map, a) + bodySoi(map, b)) * 2) continue;
+    tight.push([a, b]);
   }
   if (tight.length) {
     add('warn', 'orbits_close', `${tight.length} pair${tight.length > 1 ? 's' : ''} of orbits nearly touching`,
