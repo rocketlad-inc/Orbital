@@ -153,7 +153,7 @@ describe('composeWinback', () => {
     expect(c.cardHtml).toContain('Hosted by Rocketlad');
     expect(c.cardHtml).toContain('3 of 5 players');
     expect(c.cardHtml).toContain('2 open');
-    expect(c.cardHtml).toContain('30-minute turns');
+    expect(c.cardHtml).toContain('30-minute ticks');
     expect(c.cardHtml).toContain('>Quick<');
     // three faces, two dashed empty seats, the host ringed in gold
     expect((c.cardHtml.match(/title="/g) ?? []).length).toBe(3);
@@ -172,7 +172,7 @@ describe('composeWinback', () => {
     const c = composeWinback('en', 'pool', null);
     expect(c.cardHtml).toContain('A new game');
     expect(c.cardHtml).toContain('0 of 5 players');
-    expect(c.cardHtml).toContain('1-hour turns');
+    expect(c.cardHtml).toContain('1-hour ticks');
     expect((c.cardHtml.match(/dashed/g) ?? []).length).toBe(5);
   });
 

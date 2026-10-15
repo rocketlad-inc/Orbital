@@ -27,7 +27,7 @@ const LONG = [
   'Orbital is a real-time strategy game played across the whole Sol system: the inner planets, the '
   + 'asteroid belt, the gas giants and their moons, and out past Pluto to the Kuiper Belt. It runs in '
   + 'a web browser on desktop, tablet and phone, and it is free to play.',
-  'The clock never stops. Each game ticks on a real schedule, an hour a turn by default, whether or '
+  'The clock never stops. Each game ticks on a real schedule, an hour a tick by default, whether or '
   + 'not you are logged in. Players drop in to give orders: a fleet sent last night has arrived, '
   + 'fought and repaired by morning.',
   'Up to ten empires share a system. They settle cities and stations, terraform raw worlds into '
@@ -43,7 +43,7 @@ const FACTS: Array<[string, React.ReactNode]> = [
   ['Genre', 'Real-time multiplayer 4X strategy'],
   ['Setting', 'The Sol system, Mercury to the Kuiper Belt'],
   ['Players', '2 to 10 per game'],
-  ['Pace', 'Runs on a real clock, one turn an hour by default; hosts can pick faster games'],
+  ['Pace', 'Runs on a real clock, one tick an hour by default; hosts can pick faster games'],
   ['Platforms', 'Web browser on desktop, tablet and phone. Android and Wear OS apps in testing'],
   ['Price', 'Free to play'],
   ['Status', 'Alpha, in active development since May 2026'],
@@ -52,7 +52,7 @@ const FACTS: Array<[string, React.ReactNode]> = [
 
 const FEATURES = [
   ['Real trajectories', 'Ships fly continuous-thrust burns between any two bodies. Distance and engine decide the flight time, and once a fleet commits it is on its way.'],
-  ['A game that keeps going', 'Turns tick on a real clock. Empires run while their players sleep, and a Situation Report says what changed while you were away.'],
+  ['A game that keeps going', 'The game ticks on a real clock. Empires run while their players sleep, and a Situation Report says what changed while you were away.'],
   ['Settle and terraform', 'Cities on planets, stations in orbit. Raw worlds hoard what they mine; terraform them and they pay their full yield home.'],
   ['Fleets and a ship designer', 'Design hulls part by part, crew them with captains, and send them out as fleets. Veterans get deadlier with every kill.'],
   ['Superweapons', 'Mega Destroyers can sterilise a world, and a second strike reduces it to a debris field. Wrecked cities can be rebuilt or razed by whoever takes them.'],

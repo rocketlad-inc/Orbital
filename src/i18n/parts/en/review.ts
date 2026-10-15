@@ -68,7 +68,7 @@ export const review = {
   'review.shared.share.native': 'Share…',
   'review.shared.share.text': 'The Battle of {name}, replayed shot by shot in Orbital',
   'review.shared.cta.title': 'This happened in a real game of Orbital.',
-  'review.shared.cta.body': 'A free multiplayer strategy game set across the real solar system: up to ten players, turns that keep running while you’re away, and fleets that fight like this.',
+  'review.shared.cta.body': 'A free multiplayer strategy game set across the real solar system: up to ten players, a clock that keeps running while you’re away, and fleets that fight like this.',
   'review.shared.cta.play': 'Play free',
   // ---- battle cinema ----
   'review.cinema.unknown': 'unknown',

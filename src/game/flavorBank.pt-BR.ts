@@ -20,8 +20,8 @@
 //     {building} always sits behind the carrier "edifício".
 //   - {voteOutcome} is "passou" / "não passou" (no participle), {techLevel}
 //     is "nível N" (so "ao {techLevel}"), {distance} is an adverbial phrase.
-//   - "ciclo" is the prose word for a stretch of time, "turnos" for ticks
-//     (glossary: turn / tick = turno).
+//   - "ciclo" is the prose word for a stretch of time, "ticks" for ticks
+//     (glossary: tick = tick, the loanword; there are no turns).
 
 export const FLAVOR_BANK_PT: Record<string, string[]> = {
   pact_signed: [
@@ -191,7 +191,7 @@ export const FLAVOR_BANK_PT: Record<string, string[]> = {
     "Em silêncio e exatamente no prazo, “{voteTitle}” deixou de valer.",
     "A lei de {actor}, “{voteTitle}”, chegou ao vencimento. As regras antigas voltam.",
     "“{voteTitle}” esgotou o seu prazo. O que era obrigatório voltou a ser apenas opcional.",
-    "Os livros se fecham sobre “{voteTitle}”; vigorou por {ticksInForce} turnos.",
+    "Os livros se fecham sobre “{voteTitle}”; vigorou por {ticksInForce} ticks.",
     "Nenhuma mão se ergueu contra “{voteTitle}” — o tempo simplesmente acabou.",
   ],
   // The safety net catching a bill that never opened for voting. Rare
@@ -211,13 +211,13 @@ export const FLAVOR_BANK_PT: Record<string, string[]> = {
   // coronation rather than a rotation were cut.
   chairman_seated: [
     "O malhete passa para {actor}. Até T+{termEnd}, cabe a essa facção definir a pauta.",
-    "{actor} assume a presidência no mandato {termNumber}. O plenário é seu por {termSpan} turnos — nem um a mais.",
+    "{actor} assume a presidência no mandato {termNumber}. O plenário é seu por {termSpan} ticks — nem um a mais.",
     "Sorteio feito. {actor} preside, e os assuntos da câmara são o que {actor} disser que são até T+{termEnd}.",
     "{actor} assume a presidência. As delegações que queriam algo na pauta neste mandato já estão no corredor.",
     "O rodízio recai sobre {actor}, que agora ocupa a única cadeira capaz de convocar uma votação. O mandato {termNumber} começa.",
-    "Pelo sorteio, {actor} preside o mandato {termNumber}. São {termSpan} turnos para gastar, e nenhum jeito de guardá-los.",
+    "Pelo sorteio, {actor} preside o mandato {termNumber}. São {termSpan} ticks para gastar, e nenhum jeito de guardá-los.",
     "A presidência cabe a {actor}. O que não for levado ao plenário neste mandato morre sem ser proposto.",
-    "{actor} tomou assento na presidência. Os peticionários têm {termSpan} turnos para ser convincentes.",
+    "{actor} tomou assento na presidência. Os peticionários têm {termSpan} ticks para ser convincentes.",
     "O mandato {termNumber} começa com {actor} segurando o malhete — um cargo que expira em T+{termEnd}, como todos.",
     "{actor} preside. O poder de legislar da câmara está, por ora, na agenda de uma única facção.",
   ],

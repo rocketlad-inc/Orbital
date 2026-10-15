@@ -67,7 +67,7 @@ export function until(ms: number | null | undefined, now = Date.now()): string {
   return relativeTime(ms - now);
 }
 
-/** "7.5-minute turns", "1-hour turns". */
+/** "7.5-minute ticks", "1-hour ticks". */
 /** What a game runs at when its host never picks a speed: one hour a
  *  tick (Lorne, 2026-09-30). Must match DEFAULT_TICK_INTERVAL_MS in
  *  worker/lobby.js, which is what actually starts the game. */

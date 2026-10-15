@@ -97,7 +97,7 @@ describe('data catalog', () => {
     expect(SHIP_CLASSES.destroyer.displayName).toBe('Destróier');
     expect(SHIP_CLASSES.mobile_foundry.displayName).toBe('Fundição Móvel');
     expect(TECH_DEFS.sensors.name).toBe('Sensores');
-    expect(SHIP_PART_DEFS.repair.blurb).toContain(`${REPAIR_TENDER_PER_BAY} HP/turno`);
+    expect(SHIP_PART_DEFS.repair.blurb).toContain(`${REPAIR_TENDER_PER_BAY} HP/tick`);
     expect(MEGASTRUCTURES.warp_gate.label).toBe('Portal de Dobra');
     setLang('en', false);
     expect(SHIP_CLASSES.destroyer.displayName).toBe('Destroyer');

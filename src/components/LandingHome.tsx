@@ -83,13 +83,13 @@ export const FAQ: Array<[string, string]> = [
   ['Do I need to download anything?',
     'No. Orbital runs in any modern browser on desktop, tablet or phone. Sign in with Google or an email address and join a game straight away.'],
   ['How long does a game last?',
-    'There is no turn limit: a game runs until someone wins. The default is one turn an hour, which suits checking in a few times a day. Hosts can choose anything from a turn a minute to a turn a day.'],
+    'There is no time limit: a game runs until someone wins. The default is one tick an hour, which suits checking in a few times a day. Hosts can choose anything from a tick a minute to a tick a day.'],
   ['What happens while I’m offline?',
-    'Your empire keeps going. Turns resolve on schedule, freighters keep running their routes and armed stations defend themselves. Nobody plays your empire for you, so set your orders before you log off.'],
+    'Your empire keeps going. Ticks resolve on schedule, freighters keep running their routes and armed stations defend themselves. Nobody plays your empire for you, so set your orders before you log off.'],
   ['How many players are in a game?',
     'Two to ten. Quick Join drops you into the fullest open game, or you can browse the lobby or invite friends to a private game. You can even join a game that has already started, as long as a home world is still free.'],
   ['Is Orbital like Neptune’s Pride?',
-    'If you have played Neptune’s Pride, the rhythm will feel familiar: a shared map, turns that run on a real clock, and alliances that matter. Orbital sets it in the real solar system and adds orbital flight, ship design, a Senate that writes the rules, and three different ways to win.'],
+    'If you have played Neptune’s Pride, the rhythm will feel familiar: a shared map, ticks that run on a real clock, and alliances that matter. Orbital sets it in the real solar system and adds orbital flight, ship design, a Senate that writes the rules, and three different ways to win.'],
 ];
 
 export const LandingHome: React.FC<Props> = ({ onSignIn }) => {
@@ -127,7 +127,7 @@ export const LandingHome: React.FC<Props> = ({ onSignIn }) => {
       </div>
     </section>
 
-    {/* ── How a turn works ─────────────────────────────────── */}
+    {/* ── How a tick works ─────────────────────────────────── */}
     <section className="lh-section" id="how-it-plays" aria-labelledby="lh-loop">
       <header className="lh-head">
         <p className="lh-kicker">{t('landing.loop.kicker')}</p>

@@ -196,7 +196,7 @@ const text = (r) => `${r.data?.content ?? ''} ${(r.data?.embeds ?? []).map(e => 
                            ('fEn','gloc','uEn',1,'Embers','#4ecdc4','active',NULL,0,1,10,0,20,30,0,0)`).run();
   r = await slash('status', 'D_BR');
   const t = text(r);
-  check('/status in Portuguese: fields and footer', /Recursos/.test(t) && /Domínios/.test(t) && /Construção/.test(t) && /próximo turno|T\+100/.test(r.data.embeds[0].footer.text), t);
+  check('/status in Portuguese: fields and footer', /Recursos/.test(t) && /Domínios/.test(t) && /Construção/.test(t) && /próximo tick|T\+100/.test(r.data.embeds[0].footer.text), t);
   r = await slash('status', 'D_EN');
   check('/status in English is the original wording', /Resources/.test(text(r)) && /Holdings/.test(text(r)) && /Building/.test(text(r)));
   r = await slash('fleet', 'D_BR');
@@ -394,7 +394,7 @@ const text = (r) => `${r.data?.content ?? ''} ${(r.data?.embeds ?? []).map(e => 
   let out = await discord.publishLawExpired(env, 'gfeed1', { title: 'Cheap ships', kind: 'slider_law', ticksInForce: 24 });
   let p = posted.find(x => x.channel === 'thread1');
   check('a law-lapsed card is posted in the host\'s Portuguese', out.posted && p?.body.embeds[0].title === '⌛  Expirou — Cheap ships'
-    && /Lei de regra/.test(p.body.embeds[0].description) && /24\*\* turnos/.test(p.body.embeds[0].description), p?.body.embeds[0]);
+    && /Lei de regra/.test(p.body.embeds[0].description) && /24\*\* ticks/.test(p.body.embeds[0].description), p?.body.embeds[0]);
   await put('uHost', { feed_locale: 'en' });
   posted.length = 0;
   await discord.publishLawExpired(env, 'gfeed1', { title: 'Cheap ships', kind: 'slider_law', ticksInForce: 24 });
