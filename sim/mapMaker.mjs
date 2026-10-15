@@ -73,9 +73,10 @@ for (const u of ['u0', 'u1', 'u2']) {
 }
 const { routes, solTemplate } = await import('../worker/customMaps.js');
 async function call(method, path, userId, body) {
+  const pathname = path.split('?')[0];
   for (const r of routes) {
     if (r.method !== method) continue;
-    const m = typeof r.pattern === 'string' ? (r.pattern === path ? { groups: {} } : null) : path.match(r.pattern);
+    const m = typeof r.pattern === 'string' ? (r.pattern === pathname ? { groups: {} } : null) : pathname.match(r.pattern);
     if (!m) continue;
     const req = new Request(`https://x${path}`, { method, body: body ? JSON.stringify(body) : undefined });
     const res = await r.handle(req, env, { url: new URL(`https://x${path}`), params: m.groups ?? {}, session: { user_id: userId, email: `${userId}@t` } });
@@ -96,11 +97,18 @@ check('...and edits save', put.status === 200 && put.body.map.bodies.some(b => b
 const secretHost = gen.bodies.find(b => !b.start && b.type !== 'rock');
 secretHost.secret = 'ancient_city';
 secretHost.type = 'terrestrial';
+secretHost.secretName = 'The Weeping Spire';
+secretHost.secretText = 'Its bells still ring for a city nobody remembers.';
+const loreWorld = gen.bodies.find(b => b.start);
+loreWorld.lore = 'Where the first ships came down.';
+gen.blurb = 'Six worlds round a hungry sun.';
 await call('PUT', `/api/maps/${id}`, 'u0', { map: gen });
 const copy = await call('POST', '/api/maps/import', 'u1', { code: made.body.summary.share_code });
 check('a share code opens a copy for someone else', copy.status === 201 && copy.body.map.name.endsWith('(copy)'));
 check('...with the hand-placed discoveries turned to chance',
   copy.body.map.bodies.every(b => b.secret == null || b.secret === 'random'));
+check('...and no custom discovery name or message left to give it away',
+  copy.body.map.bodies.every(b => !b.secretName && !b.secretText));
 check('a bad code says what a code looks like', (await call('POST', '/api/maps/import', 'u1', { code: 'hello' })).status === 400);
 const list = await call('GET', '/api/maps', 'u0');
 check('your maps list, and you cannot host without the Commission',
@@ -118,7 +126,7 @@ check('the Map Maker is staging-only', await (async () => {
 })());
 
 // ---- 4. A game seeded from it ----------------------------------------------
-const room = 'gmap1';
+const room = 'gmap01';
 await DB.prepare(`INSERT INTO rooms (id,name,host_id,created_at,updated_at,custom_map_id,custom_map_json) VALUES (?, 'Map game','u0',0,0,?,?)`)
   .bind(room, id, JSON.stringify(normalizeMap(gen))).run();
 await DB.prepare(`INSERT INTO games (id,status,map_seed,current_tick,created_at) VALUES (?, 'setup','map-seed',0,0)`).bind(room).run();
@@ -147,6 +155,64 @@ check('a lobby pick of a start world is honoured; a pick of Earth is not',
     && caps.find(c => c.user_id === 'u1').capital_body_id !== `${room}:earth`);
 const secretRow = bodies.find(b => b.template_id === `cm_${secretHost.id}`);
 check('the hand-placed discovery is where its maker hid it', secretRow?.secret_kind === 'ancient_city', secretRow?.secret_kind);
+check("...with its maker's own name and message stored beside it",
+  secretRow?.secret_name === 'The Weeping Spire' && secretRow?.secret_text === 'Its bells still ring for a city nobody remembers.',
+  `${secretRow?.secret_name} / ${secretRow?.secret_text}`);
+const loreRow = bodies.find(b => b.template_id === `cm_${loreWorld.id}`);
+check("a world's lore reaches the game in its look", JSON.parse(loreRow?.look_json ?? '{}').lore === 'Where the first ships came down.',
+  loreRow?.look_json);
+check('no world without a custom discovery carries custom words',
+  bodies.filter(b => b.id !== secretRow?.id).every(b => b.secret_name == null && b.secret_text == null));
+
+// The state a player receives: the words are withheld until the find.
+const { routes: stateRoutes } = await import('../worker/state.js');
+const stateRoute = stateRoutes.find(r => r.method === 'GET' && r.pattern.test(`/api/games/${room}/state`));
+async function stateAs(uid) {
+  const res = await stateRoute.handle(new Request(`https://x/api/games/${room}/state`), env,
+    { session: { user_id: uid }, params: { gameId: room } });
+  const j = await res.json();
+  if (!res.ok) throw new Error(`${res.status} ${JSON.stringify(j)}`);
+  return j;
+}
+const before = (await stateAs('u1')).bodies.find(b => b.id === secretRow.id);
+check("before it is found, nobody is sent the discovery's words",
+  before && before.secret_name == null && before.secret_text == null && before.secret_kind == null,
+  JSON.stringify(before && { k: before.secret_kind, n: before.secret_name }));
+
+// A ship parks there; the tick reveals it.
+const finder = (await DB.prepare(`SELECT id FROM game_factions WHERE game_id = ? AND user_id = 'u1'`).bind(room).first()).id;
+await DB.prepare(
+  `INSERT INTO game_ships (id, game_id, owner_faction_id, name, ship_class, parent_body_id, status,
+     orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, orbit_direction,
+     fuel, fuel_max, hp, hp_max, damage_per_tick, built_at_tick, home_body_id)
+   VALUES (?, ?, ?, 'Scout', 'corvette', ?, 'active', 30, 30, 0, 0, 0, 1, 300, 300, 40, 40, 3, 0, ?)`,
+).bind(`${room}:scout`, room, finder, secretRow.id, secretRow.id).run();
+const { Room } = await import('../worker/room.js');
+const doStore = new Map();
+const gameRoom = new Room({
+  storage: {
+    async get(k) { return doStore.get(k); }, async put(k, v) { doStore.set(k, v); },
+    async delete(k) { return doStore.delete(k); }, async list() { return new Map(doStore); },
+    async deleteAll() { doStore.clear(); }, setAlarm() {}, getAlarm() { return null; },
+  },
+  blockConcurrencyWhile: async (f) => f(),
+  broadcast: () => {},
+}, env);
+await gameRoom.resolveSecretReveal(room, 5);
+const news = await DB.prepare(`SELECT payload FROM chronicle_entries WHERE game_id = ? AND kind = 'secret_discovered'`).bind(room).first();
+const told = JSON.parse(news?.payload ?? '{}');
+check("the reveal is told in the maker's words",
+  told.custom_name === 'The Weeping Spire' && told.custom_text === 'Its bells still ring for a city nobody remembers.'
+    && told.message === `${secretRow.name}: The Weeping Spire — Its bells still ring for a city nobody remembers.`,
+  news?.payload);
+const ruins = await DB.prepare(`SELECT owner_faction_id FROM game_settlements WHERE body_id = ? AND type = 'city'`).bind(secretRow.id).first();
+check("...and the reward is still the kind's (an ancient city for the finder), its sentence kept beside",
+  ruins?.owner_faction_id === finder && /long-abandoned colony/.test(told.reward_message ?? ''), JSON.stringify(ruins));
+const after = (await stateAs('u2')).bodies.find(b => b.id === secretRow.id);
+check('once found, every player is sent its name and message',
+  after?.secret_kind === 'ancient_city' && after?.secret_name === 'The Weeping Spire'
+    && after?.secret_text === 'Its bells still ring for a city nobody remembers.',
+  JSON.stringify(after && { k: after.secret_kind, n: after.secret_name }));
 const chance = map.bodies.filter(b => b.secret === 'random').map(b => bodies.find(x => x.template_id === `cm_${b.id}`));
 check('the ones left to chance got a kind', chance.length > 0 && chance.every(b => b.secret_kind && b.secret_kind !== 'random'),
   chance.map(b => b?.secret_kind).join(','));
@@ -178,6 +244,118 @@ await factions.seedGameWorld(env, plainRoom);
 const solRows = (await DB.prepare('SELECT template_id, look_json FROM game_bodies WHERE game_id = ?').bind(plainRoom).all()).results;
 check('an ordinary game still seeds Sol, with no looks', solRows.some(b => b.template_id === 'earth') && solRows.every(b => !b.look_json));
 check('...and its catalogue path is unchanged by the map pass', mapToCatalog(gen)[0].id === 'sol');
+
+// ---- 5. The gallery and remixes -------------------------------------------
+const blank = await call('POST', '/api/maps', 'u1', { map: blankMap('Empty Sky') });
+const blocked = await call('POST', `/api/maps/${blank.body.summary.id}/publish`, 'u1', { on: true });
+check('a map the checklist blocks cannot be published, and says why',
+  blocked.status === 409 && blocked.body.error?.code === 'map_blocked'
+    && blocked.body.blockers?.some(i => i.code === 'too_few_starts'),
+  JSON.stringify(blocked.body).slice(0, 200));
+check('nobody publishes a map that is not theirs',
+  (await call('POST', `/api/maps/${id}/publish`, 'u1', { on: true })).status === 404);
+const pub = await call('POST', `/api/maps/${id}/publish`, 'u0', { on: true });
+check('a hostable map publishes; its summary says so, with its blurb and remix count',
+  pub.status === 200 && pub.body.summary.published === true && pub.body.summary.remix_count === 0
+    && pub.body.summary.blurb === 'Six worlds round a hungry sun.',
+  JSON.stringify(pub.body.summary));
+let gal = await call('GET', '/api/maps/gallery', 'u2');
+check('the gallery lists published maps only',
+  gal.status === 200 && gal.body.items.length === 1 && gal.body.items[0].id === id
+    && !gal.body.items.some(i => i.id === blank.body.summary.id),
+  JSON.stringify(gal.body.items.map(i => i.id)));
+const card = gal.body.items[0];
+const sunKids = normalizeMap(gen).bodies.filter(b => b.parent === 'sun');
+check('a gallery card carries author, counts, start worlds and a sun-children-only thumb',
+  card.author === 'U0' && card.mine === false && card.starts === startWorlds(normalizeMap(gen)).worlds.length
+    && card.thumb.bodies.length === sunKids.length && card.thumb.bodies.every(t => t.length === 5)
+    && card.thumb.backdrop === 'deep' && typeof card.thumb.sun.color === 'string' && card.blurb === gen.blurb,
+  JSON.stringify(card).slice(0, 300));
+check('...and marks your own map as yours', (await call('GET', '/api/maps/gallery', 'u0')).body.items[0].mine === true);
+
+// Three more published maps, with counts and dates set by hand to pin the orders.
+const seedPub = async (owner, name, hosted, remixes, publishedMs) => {
+  const m = await call('POST', '/api/maps', owner, { map: generateMap({ seed: publishedMs, planets: 6, starts: 4 }), name });
+  await DB.prepare('UPDATE custom_maps SET published = 1, published_ms = ?, hosted_count = ?, remix_count = ? WHERE id = ?')
+    .bind(publishedMs, hosted, remixes, m.body.summary.id).run();
+  return m.body.summary.id;
+};
+await DB.prepare('UPDATE custom_maps SET published_ms = 1000 WHERE id = ?').bind(id).run(); // score 0
+const mA = await seedPub('u1', 'Alpha Reach', 2, 0, 3000); // score 6
+const mB = await seedPub('u2', 'Beta Drift', 0, 5, 2000);  // score 5
+const mC = await seedPub('u2', 'Gamma Alpha', 2, 0, 4000); // score 6, newer than Alpha Reach
+const ids = (r) => r.body.items.map(i => i.id).join(',');
+gal = await call('GET', '/api/maps/gallery?sort=popular', 'u0');
+check('popular = hosted x3 + remixes, newest first on a tie', ids(gal) === [mC, mA, mB, id].join(','), ids(gal));
+gal = await call('GET', '/api/maps/gallery?sort=new', 'u0');
+check('new = most recently published first', ids(gal) === [mC, mA, mB, id].join(',') && gal.body.next === null, ids(gal));
+const pages = [];
+let cursor = '';
+for (let i = 0; i < 6; i++) {
+  const p = await call('GET', `/api/maps/gallery?sort=popular&limit=1${cursor ? `&before=${encodeURIComponent(cursor)}` : ''}`, 'u0');
+  pages.push(...p.body.items.map(x => x.id));
+  if (!p.body.next) break;
+  cursor = p.body.next;
+}
+const pagesNew = [];
+cursor = '';
+for (let i = 0; i < 6; i++) {
+  const p = await call('GET', `/api/maps/gallery?sort=new&limit=2${cursor ? `&before=${encodeURIComponent(cursor)}` : ''}`, 'u0');
+  pagesNew.push(...p.body.items.map(x => x.id));
+  if (!p.body.next) break;
+  cursor = p.body.next;
+}
+check('paging by cursor walks each order without a gap or a repeat',
+  pages.join(',') === [mC, mA, mB, id].join(',') && pagesNew.join(',') === [mC, mA, mB, id].join(','),
+  `${pages.join(',')} | ${pagesNew.join(',')}`);
+gal = await call('GET', '/api/maps/gallery?q=alpha', 'u0');
+check('search matches the name, any case', ids(gal) === [mC, mA].join(','), ids(gal));
+check('a bad cursor is refused', (await call('GET', '/api/maps/gallery?before=nonsense', 'u0')).status === 400);
+
+// Preview, then remix.
+const peek = await call('GET', `/api/maps/gallery/${id}`, 'u1');
+const peekSecret = peek.body.map?.bodies.find(b => b.id === secretHost.id);
+check('a gallery preview hides the maker\'s hand-placed discoveries from others',
+  peek.status === 200 && peek.body.item.id === id && peekSecret?.secret === 'random'
+    && !peekSecret.secretName && !peekSecret.secretText,
+  JSON.stringify(peekSecret));
+const ownPeek = (await call('GET', `/api/maps/gallery/${id}`, 'u0')).body.map.bodies.find(b => b.id === secretHost.id);
+check('...but not from the maker', ownPeek.secret === 'ancient_city' && ownPeek.secretName === 'The Weeping Spire');
+check('an unpublished map cannot be previewed by anyone else',
+  (await call('GET', `/api/maps/gallery/${blank.body.summary.id}`, 'u0')).status === 404);
+const remix = await call('POST', `/api/maps/${id}/remix`, 'u1');
+const rmSecret = remix.body.map?.bodies.find(b => b.id === secretHost.id);
+const srcAfter = await DB.prepare('SELECT remix_count FROM custom_maps WHERE id = ?').bind(id).first();
+const rmRow = remix.status === 201
+  ? await DB.prepare('SELECT owner_user_id, copied_from, published FROM custom_maps WHERE id = ?').bind(remix.body.summary.id).first() : null;
+check('a remix copies the map into your maps, unpublished, secrets hidden, and counts',
+  remix.status === 201 && remix.body.map.name.endsWith('(copy)') && rmSecret?.secret === 'random' && !rmSecret.secretName
+    && rmRow?.owner_user_id === 'u1' && rmRow?.copied_from === id && rmRow?.published === 0
+    && Number(srcAfter.remix_count) === 1 && remix.body.summary.published === false,
+  JSON.stringify({ s: remix.status, n: remix.body.map?.name, rmRow, c: srcAfter.remix_count }));
+const ownRemix = await call('POST', `/api/maps/${id}/remix`, 'u0');
+const srcAfterOwn = await DB.prepare('SELECT remix_count FROM custom_maps WHERE id = ?').bind(id).first();
+check('remixing your own map copies it whole and does not count',
+  ownRemix.status === 201 && Number(srcAfterOwn.remix_count) === 1
+    && ownRemix.body.map.bodies.find(b => b.id === secretHost.id)?.secretName === 'The Weeping Spire');
+check('remixing someone\'s unpublished map is refused',
+  (await call('POST', `/api/maps/${blank.body.summary.id}/remix`, 'u0')).status === 404);
+await DB.prepare(`INSERT INTO users (id,email,display_name,password_hash,created_at) VALUES ('u3','u3@t','U3','x',0)`).run();
+for (let i = 0; i < 50; i++) {
+  await DB.prepare(`INSERT INTO custom_maps (id, owner_user_id, name, map_json, share_code, hosted_count, created_ms, updated_ms)
+                    VALUES (?, 'u3', 'x', '{}', ?, 0, 0, 0)`).bind(`map_cap${i}`, `ORB-CAP${i}`).run();
+}
+check('a remix respects the 50-map cap',
+  (await call('POST', `/api/maps/${id}/remix`, 'u3')).body.error?.code === 'too_many_maps');
+const unpub = await call('POST', `/api/maps/${id}/publish`, 'u0', { on: false });
+gal = await call('GET', '/api/maps/gallery?sort=new', 'u2');
+check('unpublishing takes a map out of the gallery',
+  unpub.body.summary.published === false && !gal.body.items.some(i => i.id === id), ids(gal));
+check('the gallery is staging-only too', await (async () => {
+  const r = routes.find(x => x.method === 'GET' && x.pattern === '/api/maps/gallery');
+  const res = await r.handle(new Request('https://x/api/maps/gallery'), { DB }, { session: { user_id: 'u0' } });
+  return res.status === 404;
+})());
 
 console.log(bad === 0 ? '\nALL MAP MAKER CHECKS PASS' : `\n${bad} FAILED`);
 process.exit(bad === 0 ? 0 : 1);

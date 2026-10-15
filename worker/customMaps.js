@@ -14,7 +14,7 @@ import { BODY_CATALOG, STARTING_BODY_OPTIONS } from './factions.js';
 import { hasEntitlement } from './store.js';
 import { isAdminEmail } from './admins.js';
 import {
-  normalizeMap, checkMap, blankMap, TYPE_INFO, newBodyId,
+  normalizeMap, checkMap, blankMap, TYPE_INFO, newBodyId, hostBlockers, startWorlds,
 } from '../src/game/customMap.js';
 
 const MAX_MAPS_PER_USER = 50;
@@ -59,11 +59,56 @@ function summary(row, map) {
     blockers: issues.filter(i => i.level === 'block').length,
     warnings: issues.filter(i => i.level === 'warn').length,
     sun_color: map.sun.color,
+    // The gallery (0167).
+    published: Number(row.published ?? 0) === 1,
+    published_ms: row.published_ms ?? null,
+    remix_count: row.remix_count ?? 0,
+    blurb: map.blurb ?? '',
   };
 }
 
 function parseStored(text) {
   try { return normalizeMap(JSON.parse(text)); } catch { return blankMap(); }
+}
+
+/** THE SECRET-HIDING RULE, said once (import, remix, gallery preview): a
+ *  map whose owner keeps its discoveries secret reaches anyone else with
+ *  every hand-placed discovery turned to "left to chance", and with no
+ *  custom name or message to give the answer away. Mutates and returns
+ *  the map. */
+function hideSecretsFor(map, ownerId, viewerId) {
+  if (ownerId === viewerId || !map.settings?.shareHidesSecrets) return map;
+  for (const b of map.bodies) {
+    if (b.secret) b.secret = 'random';
+    b.secretName = '';
+    b.secretText = '';
+  }
+  return map;
+}
+
+/** A gallery card: everything the browser needs to list a map and draw a
+ *  mini system, and nothing more. `thumb.bodies` is the sun's own
+ *  children only (moons omitted), each [orbit, angle, radius, color, type]. */
+function galleryItem(row, map, viewerId) {
+  const r1 = (n) => Math.round(Number(n) * 10) / 10;
+  return {
+    id: row.id,
+    name: row.name,
+    blurb: map.blurb ?? '',
+    author: row.author ?? null,
+    hosted_count: row.hosted_count ?? 0,
+    remix_count: row.remix_count ?? 0,
+    published_ms: row.published_ms ?? null,
+    bodies: map.bodies.length,
+    starts: startWorlds(map).worlds.length,
+    thumb: {
+      sun: { color: map.sun.color, size: map.sun.size },
+      backdrop: map.settings?.backdrop ?? 'deep',
+      bodies: map.bodies.filter(b => b.parent === 'sun')
+        .map(b => [Math.round(b.orbit), Math.round(b.angle * 1000) / 1000, r1(b.radius), b.color, b.type]),
+    },
+    mine: row.owner_user_id === viewerId,
+  };
 }
 
 /** Read and clean a map from a request body; [map] or [null, response]. */
@@ -164,17 +209,141 @@ async function handleImport(req, env, ctx) {
   if (!CODE_RE.test(code)) return err(400, 'bad_code', 'a share code looks like ORB-7KQ2-HELN');
   const src = await env.DB.prepare('SELECT * FROM custom_maps WHERE share_code = ?').bind(code).first();
   if (!src) return err(404, 'not_found', 'no map has that code');
-  const map = parseStored(src.map_json);
-  if (src.owner_user_id !== ctx.session.user_id && map.settings.shareHidesSecrets) {
-    for (const b of map.bodies) if (b.secret) b.secret = 'random';
-  }
+  return copyAsMine(env, ctx, src);
+}
+
+/** A copy of `src` (a custom_maps row) in the caller's maps: secrets
+ *  hidden by the rule above, "(copy)" on the name, copied_from set, and
+ *  the 50-map cap respected. 201 {map, summary} or the refusal. */
+async function copyAsMine(env, ctx, src) {
+  const map = hideSecretsFor(parseStored(src.map_json), src.owner_user_id, ctx.session.user_id);
   map.name = normalizeMap({ ...map, name: `${map.name} (copy)` }).name;
   const req2 = new Request('https://x/api/maps', { method: 'POST', body: JSON.stringify({ map }) });
   const res = await handleCreate(req2, env, ctx);
   if (res.status === 201) {
     const out = await res.json();
     await env.DB.prepare('UPDATE custom_maps SET copied_from = ? WHERE id = ?').bind(src.id, out.summary.id).run();
+    out.summary.copied_from = src.id;
     return json(out, { status: 201 });
+  }
+  return res;
+}
+
+// ---- THE GALLERY (0167) ------------------------------------------------------
+// Published maps from everyone. Publishing is the owner's choice and needs
+// a map that could actually be hosted; remixing copies a published map
+// (or your own) into your maps under the same secret-hiding rule as a
+// share code.
+
+// POST /api/maps/:id/publish {on: boolean}
+async function handlePublish(req, env, ctx) {
+  const row = await ownMap(env, ctx.session, ctx.params.id);
+  if (!row) return err(404, 'not_found', 'map not found');
+  const body = await readJson(req);
+  if (!body || typeof body.on !== 'boolean') return err(400, 'bad_request', 'on (true or false) required');
+  const map = parseStored(row.map_json);
+  const now = Date.now();
+  if (body.on) {
+    const blockers = hostBlockers(map);
+    if (blockers.length > 0) {
+      return json({
+        error: { code: 'map_blocked', message: 'fix what the checklist blocks before publishing' },
+        blockers,
+      }, { status: 409 });
+    }
+    if (!String(row.name ?? '').trim()) return err(400, 'name_required', 'give the map a name before publishing');
+    // A map already in the gallery keeps its place in "new".
+    const publishedMs = Number(row.published ?? 0) === 1 && row.published_ms ? row.published_ms : now;
+    await env.DB.prepare('UPDATE custom_maps SET published = 1, published_ms = ? WHERE id = ?')
+      .bind(publishedMs, row.id).run();
+    return json({ summary: summary({ ...row, published: 1, published_ms: publishedMs }, map) });
+  }
+  await env.DB.prepare('UPDATE custom_maps SET published = 0 WHERE id = ?').bind(row.id).run();
+  return json({ summary: summary({ ...row, published: 0 }, map) });
+}
+
+const GALLERY_MAX = 30;
+const SCORE_SQL = '(c.hosted_count * 3 + c.remix_count)';
+
+// GET /api/maps/gallery?sort=popular|new&q=&limit=30&before=<cursor>
+//
+// Keyset pagination: `before` is the `next` value of the previous page,
+// an opaque string. Popular = hosted*3 + remixes, then newest; New =
+// newest published first. q is a case-insensitive match on the name.
+async function handleGallery(_req, env, ctx) {
+  const sp = ctx.url?.searchParams ?? new URLSearchParams();
+  const sort = sp.get('sort') === 'new' ? 'new' : 'popular';
+  const limit = Math.max(1, Math.min(GALLERY_MAX, Math.floor(Number(sp.get('limit')) || GALLERY_MAX)));
+  const q = String(sp.get('q') ?? '').trim().slice(0, 40);
+  const where = ['c.published = 1'];
+  const binds = [];
+  if (q) {
+    where.push(`c.name LIKE ? ESCAPE '\\'`);
+    binds.push(`%${q.replace(/[\\%_]/g, ch => `\\${ch}`)}%`);
+  }
+  // The cursor: "score.published_ms.id" (popular) or "published_ms.id" (new).
+  const before = String(sp.get('before') ?? '');
+  if (before) {
+    const parts = before.split('.');
+    const id = parts.pop();
+    const nums = parts.map(Number);
+    const okId = MAP_ID_RE.test(String(id));
+    if (sort === 'new' && okId && nums.length === 1 && nums.every(Number.isFinite)) {
+      where.push('(c.published_ms < ? OR (c.published_ms = ? AND c.id < ?))');
+      binds.push(nums[0], nums[0], id);
+    } else if (sort === 'popular' && okId && nums.length === 2 && nums.every(Number.isFinite)) {
+      where.push(`(${SCORE_SQL} < ? OR (${SCORE_SQL} = ? AND (c.published_ms < ? OR (c.published_ms = ? AND c.id < ?))))`);
+      binds.push(nums[0], nums[0], nums[1], nums[1], id);
+    } else {
+      return err(400, 'bad_cursor', 'that page cursor is not valid');
+    }
+  }
+  const order = sort === 'new'
+    ? 'c.published_ms DESC, c.id DESC'
+    : `${SCORE_SQL} DESC, c.published_ms DESC, c.id DESC`;
+  const rows = (await env.DB.prepare(
+    `SELECT c.id, c.owner_user_id, c.name, c.map_json, c.hosted_count, c.remix_count, c.published_ms,
+            ${SCORE_SQL} AS score, u.display_name AS author
+       FROM custom_maps c LEFT JOIN users u ON u.id = c.owner_user_id
+      WHERE ${where.join(' AND ')}
+      ORDER BY ${order}
+      LIMIT ?`,
+  ).bind(...binds, limit).all()).results ?? [];
+  const items = rows.map(r => galleryItem(r, parseStored(r.map_json), ctx.session.user_id));
+  const last = rows[rows.length - 1];
+  const next = rows.length === limit && last
+    ? (sort === 'new' ? `${last.published_ms}.${last.id}` : `${last.score}.${last.published_ms}.${last.id}`)
+    : null;
+  return json({ items, next, sort });
+}
+
+/** A map the caller may see in the gallery: published, or their own. */
+async function galleryRow(env, session, id) {
+  if (!MAP_ID_RE.test(String(id))) return null;
+  return env.DB.prepare(
+    `SELECT c.*, u.display_name AS author
+       FROM custom_maps c LEFT JOIN users u ON u.id = c.owner_user_id
+      WHERE c.id = ? AND (c.published = 1 OR c.owner_user_id = ?)`,
+  ).bind(id, session.user_id).first();
+}
+
+// GET /api/maps/gallery/:id — {map, item}: a published map to preview
+// before remixing, under the secret-hiding rule.
+async function handleGalleryGet(_req, env, ctx) {
+  const row = await galleryRow(env, ctx.session, ctx.params.id);
+  if (!row) return err(404, 'not_found', 'map not found');
+  const map = hideSecretsFor(parseStored(row.map_json), row.owner_user_id, ctx.session.user_id);
+  return json({ map, item: galleryItem(row, map, ctx.session.user_id) });
+}
+
+// POST /api/maps/:id/remix — a published map (or your own) copied into
+// your maps. Counts as a remix only when it is somebody else's.
+async function handleRemix(_req, env, ctx) {
+  const src = await galleryRow(env, ctx.session, ctx.params.id);
+  if (!src) return err(404, 'not_found', 'map not found');
+  const res = await copyAsMine(env, ctx, src);
+  if (res.status === 201 && src.owner_user_id !== ctx.session.user_id) {
+    await env.DB.prepare('UPDATE custom_maps SET remix_count = remix_count + 1 WHERE id = ?').bind(src.id).run();
   }
   return res;
 }
@@ -228,6 +397,10 @@ export const routes = [
   { method: 'POST', pattern: '/api/maps', auth: 'required', handle: gate(handleCreate) },
   { method: 'POST', pattern: '/api/maps/import', auth: 'required', handle: gate(handleImport) },
   { method: 'GET', pattern: '/api/maps/template/sol', auth: 'required', handle: gate(handleSolTemplate) },
+  { method: 'GET', pattern: '/api/maps/gallery', auth: 'required', handle: gate(handleGallery) },
+  { method: 'GET', pattern: /^\/api\/maps\/gallery\/(?<id>map_[A-Za-z0-9]+)$/, auth: 'required', handle: gate(handleGalleryGet) },
+  { method: 'POST', pattern: /^\/api\/maps\/(?<id>map_[A-Za-z0-9]+)\/publish$/, auth: 'required', handle: gate(handlePublish) },
+  { method: 'POST', pattern: /^\/api\/maps\/(?<id>map_[A-Za-z0-9]+)\/remix$/, auth: 'required', handle: gate(handleRemix) },
   { method: 'GET', pattern: /^\/api\/maps\/(?<id>map_[A-Za-z0-9]+)$/, auth: 'required', handle: gate(handleGet) },
   { method: 'PUT', pattern: /^\/api\/maps\/(?<id>map_[A-Za-z0-9]+)$/, auth: 'required', handle: gate(handlePut) },
   { method: 'DELETE', pattern: /^\/api\/maps\/(?<id>map_[A-Za-z0-9]+)$/, auth: 'required', handle: gate(handleDelete) },
@@ -238,7 +411,6 @@ export const routes = [
 export async function customSeatCap(env, roomId) {
   const map = await roomCustomMap(env, roomId);
   if (!map) return null;
-  const { startWorlds } = await import('../src/game/customMap.js');
   return startWorlds(map).worlds.length;
 }
 
