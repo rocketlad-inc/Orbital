@@ -74,6 +74,8 @@ export interface MapIssueParams {
   /** each sector's name and how many worlds it holds */
   list?: Array<[string, number]>;
   placed?: number; chance?: number; max?: number;
+  /** the sector start worlds share (sector_starts) */
+  sector?: string;
 }
 
 export interface TypeInfo {
