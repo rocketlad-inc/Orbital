@@ -806,3 +806,18 @@
 @media (prefers-reduced-motion: reduce) {
   .lx *, .lx *::before, .lx *::after { animation: none !important; transition: none !important; }
 }
+
+/* The game creator's map choice (Map Maker maps, Commission to host). */
+.lx-choice__opt.is-locked .lx-choice__title { opacity: .85; }
+.lx-lock { color: #ffd166; }
+.lx-mapgate { margin-top: 10px; padding: 12px 14px; border: 1px solid #ffb84d55; border-radius: 10px; background: #ffb84d0d; display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.lx-mapgate p { margin: 0; }
+.lx-maplist { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.lx-mappick { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.03); color: inherit; font: inherit; cursor: pointer; text-align: left; }
+.lx-mappick:hover { border-color: rgba(78,205,196,.5); }
+.lx-mappick.is-active { border-color: #4ecdc4; background: rgba(78,205,196,.08); }
+.lx-mappick__sun { width: 14px; height: 14px; border-radius: 50%; flex: none; box-shadow: 0 0 8px currentColor; }
+.lx-mappick__name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lx-mappick__tag { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: #6ee7b7; }
+.lx-mappick__tag.is-bad { color: #ff5e5e; }
+.lx-seg__opt:disabled { opacity: .3; cursor: not-allowed; }

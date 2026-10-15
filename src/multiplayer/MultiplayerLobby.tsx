@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { apiFetch } from './api';
+import { apiFetch, startCommissionCheckout } from './api';
+import { canBuyHere, openCommissionInBrowser, logCommission, COMMISSION_PRICE, HOLDER_MARK } from './commission';
+import { normalizeMap, startWorlds, hostBlockers } from '../game/customMap';
 import { useAuth } from './AuthContext';
 import { AdminAnalytics } from './AdminAnalytics';
 import { DevlogAdmin } from './DevlogAdmin';
@@ -10,7 +12,7 @@ import { ProfilePanel } from './ProfilePanel';
 import { ThanksCard } from './CommissionMoments';
 import { GameCard, GameSummary, initials, DEFAULT_TICK_INTERVAL_MS } from './LobbyCards';
 import { LobbyStarfield } from './LobbyStarfield';
-import { t, tn } from '../i18n/core';
+import { t, tn, tk } from '../i18n/core';
 import { useI18n, LanguageSwitch } from '../i18n/react';
 import { apiErrorText } from '../i18n/apiErrors';
 import { saveLocale } from '../i18n/account';
@@ -665,10 +667,124 @@ function BrowsePanel({
 
 // ---------- Create ----------
 
+type SavedMap = { id: string; name: string; bodies: number; blockers: number; sun_color: string };
+
+/**
+ * THE MAP CHOICE (Lorne, 2026-10-15: "a 'use custom map' option in the
+ * game creator, which is locked if you dont have the commission"). The
+ * standard Solar System, or one of your own maps from the Map Maker.
+ * Hosting on a custom map is the Commission; without it the option shows
+ * locked with the way to get it. Hidden wherever the Map Maker is not
+ * open (its routes 404), so prod's creator is unchanged until it ships.
+ */
+function MapChoice({
+  maps, useCustom, setUseCustom, mapId, setMapId, seats, blocked,
+}: {
+  maps: { list: SavedMap[]; canHost: boolean };
+  useCustom: boolean; setUseCustom: (v: boolean) => void;
+  mapId: string | null; setMapId: (id: string) => void;
+  seats: number | null; blocked: string[];
+}) {
+  const sellable = canBuyHere();
+  const price = tk('mp.commission.price', COMMISSION_PRICE);
+  return (
+    <div className="lx-field">
+      <span className="lx-field__label">{t('lobby.create.map')}</span>
+      <div className="lx-choice" role="radiogroup" aria-label={t('lobby.create.map')}>
+        <button type="button" role="radio" aria-checked={!useCustom}
+          className={`lx-choice__opt ${!useCustom ? 'is-active' : ''}`} onClick={() => setUseCustom(false)}>
+          <span className="lx-choice__title">{t('lobby.create.mapStandard')}</span>
+          <span className="lx-choice__desc">{t('lobby.create.mapStandardDesc')}</span>
+        </button>
+        <button type="button" role="radio" aria-checked={useCustom}
+          className={`lx-choice__opt ${useCustom ? 'is-active' : ''}${maps.canHost ? '' : ' is-locked'}`} onClick={() => setUseCustom(true)}>
+          <span className="lx-choice__title">
+            {t('lobby.create.mapCustom')}
+            {!maps.canHost && <span className="lx-lock" title={t('hangar.commissionName')}> {HOLDER_MARK}</span>}
+          </span>
+          <span className="lx-choice__desc">{t('lobby.create.mapCustomDesc')}</span>
+        </button>
+      </div>
+
+      {useCustom && !maps.canHost && (
+        <div className="lx-mapgate">
+          <p className="lx-muted">{t('lobby.create.mapLocked', { name: t('hangar.commissionName'), price })}</p>
+          {sellable ? (
+            <button type="button" className="lx-btn lx-btn--primary" onClick={() => {
+              logCommission('map-maker', 'click');
+              void startCommissionCheckout('map-maker').then(url => { if (url) window.location.assign(url); });
+            }}>
+              {t('feed.buy', { price })}
+            </button>
+          ) : (
+            <button type="button" className="lx-btn lx-btn--primary" onClick={() => openCommissionInBrowser('map-maker')}>
+              {t('mp.commission.inBrowser', { price })}
+            </button>
+          )}
+        </div>
+      )}
+
+      {useCustom && maps.canHost && (
+        maps.list.length === 0 ? (
+          <div className="lx-mapgate">
+            <p className="lx-muted">{t('lobby.create.mapNone')}</p>
+            <button type="button" className="lx-btn lx-btn--ghost" onClick={() => { window.location.href = '/?mapmaker'; }}>{t('lobby.create.mapOpenMaker')}</button>
+          </div>
+        ) : (
+          <div className="lx-maplist" role="radiogroup" aria-label={t('lobby.create.mapPick')}>
+            {maps.list.map(m => (
+              <button type="button" key={m.id} role="radio" aria-checked={mapId === m.id}
+                className={`lx-mappick ${mapId === m.id ? 'is-active' : ''}`} onClick={() => setMapId(m.id)}>
+                <span className="lx-mappick__sun" style={{ background: m.sun_color }} aria-hidden />
+                <span className="lx-mappick__name">{m.name}</span>
+                <span className="lx-muted lx-small">{t('lobby.create.mapBodies', { n: m.bodies })}</span>
+                <span className={`lx-mappick__tag ${m.blockers ? 'is-bad' : ''}`}>
+                  {m.blockers ? t('lobby.create.mapToFix', { n: m.blockers }) : t('lobby.create.mapReady')}
+                </span>
+              </button>
+            ))}
+            {mapId && seats != null && <p className="lx-muted lx-small">{t('lobby.create.mapSeats', { n: seats })}</p>}
+            {blocked.length > 0 && <p className="lx-error">{t('lobby.create.mapBlocked', { list: blocked.join('; ') })}</p>}
+          </div>
+        )
+      )}
+    </div>
+  );
+}
+
 function CreatePanel({ onCreated, hostName }: { onCreated: (id: string) => void; hostName: string }) {
   useI18n();
   const [name, setName] = useState('');
   const [maxPlayers, setMaxPlayers] = useState(4);
+  // null: no Map Maker on this server, so no map choice at all.
+  const [maps, setMaps] = useState<{ list: SavedMap[]; canHost: boolean } | null>(null);
+  const [useCustom, setUseCustom] = useState(false);
+  const [mapId, setMapId] = useState<string | null>(null);
+  const [mapSeats, setMapSeats] = useState<number | null>(null);
+  const [mapBlocked, setMapBlocked] = useState<string[]>([]);
+  useEffect(() => {
+    let live = true;
+    apiFetch<{ maps: SavedMap[]; can_host: boolean }>('/api/maps').then(res => {
+      if (live && res.ok) setMaps({ list: res.data.maps, canHost: !!res.data.can_host });
+    });
+    return () => { live = false; };
+  }, []);
+  // The picked map decides the seats: one per start world, ten at most.
+  useEffect(() => {
+    if (!mapId) { setMapSeats(null); setMapBlocked([]); return; }
+    let live = true;
+    apiFetch<{ map: unknown }>(`/api/maps/${mapId}`).then(res => {
+      if (!live || !res.ok) return;
+      const m = normalizeMap(res.data.map);
+      const n = Math.max(2, Math.min(10, startWorlds(m).worlds.length));
+      setMapSeats(n);
+      setMapBlocked(hostBlockers(m).map(i => i.title));
+      setMaxPlayers(p => Math.min(p, n));
+    });
+    return () => { live = false; };
+  }, [mapId]);
+  const custom = useCustom && !!maps;
+  const customReady = custom && !!maps?.canHost && !!mapId && mapBlocked.length === 0;
   const [isPrivate, setIsPrivate] = useState(false);
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -682,8 +798,11 @@ function CreatePanel({ onCreated, hostName }: { onCreated: (id: string) => void;
     const trimmed = name.trim();
     if (!trimmed) { setError(t('lobby.create.err.name')); return; }
     if (isPrivate && password.length < 4) { setError(t('lobby.create.err.pw')); return; }
+    if (custom && !customReady) { setError(t('lobby.create.err.map')); return; }
     setBusy(true);
-    const res = await apiFetch<{ room: { id: string; invite_code?: string } }>('/api/rooms', {
+    // A custom map hosts through the Map Maker's route: the server copies
+    // the saved map into the room and checks the Commission again.
+    const res = await apiFetch<{ room: { id: string; invite_code?: string } }>(custom ? `/api/maps/${mapId}/host` : '/api/rooms', {
       method: 'POST',
       body: JSON.stringify({ name: trimmed, max_players: maxPlayers, password: isPrivate ? password : undefined }),
     });
@@ -770,11 +889,17 @@ function CreatePanel({ onCreated, hostName }: { onCreated: (id: string) => void;
                 role="radio"
                 aria-checked={maxPlayers === n}
                 className={`lx-seg__opt ${maxPlayers === n ? 'is-active' : ''}`}
+                disabled={custom && mapSeats != null && n > mapSeats}
                 onClick={() => setMaxPlayers(n)}
               >{n}</button>
             ))}
           </div>
         </div>
+
+        {maps && (
+          <MapChoice maps={maps} useCustom={useCustom} setUseCustom={setUseCustom}
+            mapId={mapId} setMapId={setMapId} seats={mapSeats} blocked={mapBlocked} />
+        )}
 
         <div className="lx-field">
           <span className="lx-field__label">{t('lobby.create.who')}</span>
@@ -808,7 +933,7 @@ function CreatePanel({ onCreated, hostName }: { onCreated: (id: string) => void;
 
         {error && <div className="lx-error" role="alert">{error}</div>}
 
-        <button type="submit" className="lx-btn lx-btn--primary lx-btn--lg lx-btn--block" disabled={busy}>
+        <button type="submit" className="lx-btn lx-btn--primary lx-btn--lg lx-btn--block" disabled={busy || (custom && !customReady)}>
           {busy ? t('lobby.create.busy') : t('lobby.create.submit')}
         </button>
         <p className="lx-muted lx-small">{t('lobby.create.next')}</p>

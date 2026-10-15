@@ -102,6 +102,9 @@ describe('the Commission storefronts', () => {
       // The website end of the app's link out: never from inside the app.
       // Map Maker hosting: build everywhere, buy only where it can sell.
       'mapmaker/MapMaker.tsx': /\{sellable \? \(/,
+      // The game creator's map choice: locked without the Commission,
+      // with the buy button only where it can sell.
+      'multiplayer/MultiplayerLobby.tsx': /\{sellable \? \(/,
       'multiplayer/commissionHandoff.ts': /if \(!canBuyHere\(\)\) return;/,
     };
     for (const [rel, gate] of Object.entries(gated)) {
@@ -128,6 +131,7 @@ describe('the Commission storefronts', () => {
       'multiplayer/SkinPicker.tsx': /openCommissionInBrowser\(surface\)/,
       'multiplayer/DiscordServerFeed.tsx': /openCommissionInBrowser\('discord-feed'/,
       'mapmaker/MapMaker.tsx': /openCommissionInBrowser\('map-maker'\)/,
+      'multiplayer/MultiplayerLobby.tsx': /openCommissionInBrowser\('map-maker'\)/,
       'components/ShipDesigner.tsx': /\{!canBuyHere\(\) && \(\s*<button[^\n]*openCommissionInBrowser\('designer'\)/,
       'components/CommissionFleetPreview.tsx': /\{!sellable && \(\s*<>\s*<button[^\n]*openCommissionInBrowser\('designer'\)/,
     };
