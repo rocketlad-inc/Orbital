@@ -1383,7 +1383,7 @@ async function handleQueueBuild(req, env, ctx) {
     // Premium letters (J-S) additionally require the cosmetics
     // entitlement — checked HERE, not just in the picker UI, because
     // the picker lock is decoration and this INSERT is the state.
-    const badIcon = await validateIconVariant(env, ctx.session.user_id, body.icon_variant);
+    const badIcon = await validateIconVariant(env, ctx.session.user_id, body.icon_variant, shipClass);
     if (badIcon) return err(badIcon.code === 'premium_required' ? 403 : 400, badIcon.code, badIcon.message);
     iconVariant = body.icon_variant;
   }
@@ -7018,7 +7018,7 @@ async function handleCreateDesign(req, env, ctx) {
   if (partsGate) return partsGate;
   let iconVariant = null;
   if (body.icon_variant != null) {
-    const badIcon = await validateIconVariant(env, ctx.session.user_id, body.icon_variant);
+    const badIcon = await validateIconVariant(env, ctx.session.user_id, body.icon_variant, shipClass);
     if (badIcon) return err(badIcon.code === 'premium_required' ? 403 : 400, badIcon.code, badIcon.message);
     iconVariant = body.icon_variant;
   }
@@ -7106,7 +7106,7 @@ async function handlePatchDesign(req, env, ctx) {
   if (body.icon_variant !== undefined) {
     if (body.icon_variant === null) iconVariant = null;
     else {
-      const badIcon = await validateIconVariant(env, ctx.session.user_id, body.icon_variant);
+      const badIcon = await validateIconVariant(env, ctx.session.user_id, body.icon_variant, row.ship_class);
       if (badIcon) return err(badIcon.code === 'premium_required' ? 403 : 400, badIcon.code, badIcon.message);
       iconVariant = body.icon_variant;
     }
@@ -7164,7 +7164,7 @@ async function handleRestyleFleet(req, env, ctx) {
   if (design.faction_id !== me.id) return err(403, 'not_owner', 'not your design');
   const look = design.icon_variant ?? null;
   if (look != null) {
-    const badIcon = await validateIconVariant(env, ctx.session.user_id, look);
+    const badIcon = await validateIconVariant(env, ctx.session.user_id, look, design.ship_class);
     if (badIcon) return err(badIcon.code === 'premium_required' ? 403 : 400, badIcon.code, badIcon.message);
   }
   // NULL means the class default, on the design and on a hull alike.

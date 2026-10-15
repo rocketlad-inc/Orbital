@@ -45,7 +45,7 @@ import {
   hitChanceOf, SERVER_HULL_BASE as HULL_BASE,
 } from '../game/shipParts';
 import {
-  ShipIcon, ShipIconVariant, ALL_VARIANTS, ICON_VARIANT_NAMES, DEFAULT_SHIP_ICONS, PREMIUM_VARIANTS,
+  ShipIcon, ShipIconVariant, ALL_VARIANTS, ICON_VARIANT_NAMES, DEFAULT_SHIP_ICONS, PREMIUM_VARIANTS, canUseLook, isKeptLook,
 } from './ShipIcons';
 import type { ShipDesign } from '../types';
 import { PART_FEATURE } from '../game/researchUnlocks';
@@ -774,7 +774,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   const looksStd = ALL_VARIANTS.filter(v => !PREMIUM_VARIANTS.has(v));
   const looksCom = ALL_VARIANTS.filter(v => PREMIUM_VARIANTS.has(v));
   const pickLook = (v: ShipIconVariant) => {
-    const locked = !isPremium && PREMIUM_VARIANTS.has(v);
+    const locked = !canUseLook(activeClass, v, isPremium, user?.look_grants);
     if (locked) {
       setPreviewIcon(v);
       logCommission('designer', 'view');
@@ -784,7 +784,9 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
     }
   };
   const lookTile = (v: ShipIconVariant) => {
-    const locked = !isPremium && PREMIUM_VARIANTS.has(v);
+    const locked = !canUseLook(activeClass, v, isPremium, user?.look_grants);
+    // Kept: a look this player built with before it joined the Commission.
+    const kept = !isPremium && isKeptLook(activeClass, v, user?.look_grants);
     const on = v === shownIcon;
     return (
       <button
@@ -794,7 +796,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
         aria-pressed={on}
         title={locked
           ? t('ship.sd.previewLineTip', { line: ICON_VARIANT_NAMES[activeClass][v], commission: tk('mp.commission.name', COMMISSION_NAME) })
-          : undefined}
+          : kept ? t('ship.sd.keptLookTip', { line: ICON_VARIANT_NAMES[activeClass][v] }) : undefined}
         onClick={() => pickLook(v)}
       >
         <ShipIcon shipClass={activeClass} variant={v} size={60} color={p1} color2={p2} />

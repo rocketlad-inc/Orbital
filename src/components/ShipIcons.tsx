@@ -1406,15 +1406,28 @@ export const ALL_VARIANTS: ShipIconVariant[] = [
   'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
 ];
 
-/** The Commission's letters: the J-S lines, plus every design the visual
- *  overhaul added (T and the U-Y homage line), and Z, the Medieval Series. UI gates pickers on this + is_premium; the
- *  SERVER re-checks the entitlement on every save (worker/store.js
- *  validateIconVariant) — this set is a mirror for rendering locks,
- *  never the enforcement. */
+/** The Commission's letters: everything but A and B (which hold every
+ *  class's default). C-I were free until 2026-10-15; a player who had
+ *  built with one keeps it for that hull class (look_grants, 0166). UI
+ *  gates pickers through canUseLook; the SERVER re-checks on every save
+ *  (worker/store.js validateIconVariant) — this set is a mirror for
+ *  rendering locks, never the enforcement. */
 export const PREMIUM_VARIANTS: ReadonlySet<ShipIconVariant> = new Set<ShipIconVariant>([
+  'C', 'D', 'E', 'F', 'G', 'H', 'I',
   'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S',
   'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
 ]);
+
+/** A paid look this account kept from before it joined the Commission. */
+export function isKeptLook(cls: ShipIconClass, v: ShipIconVariant, grants?: readonly string[] | null): boolean {
+  return PREMIUM_VARIANTS.has(v) && !!grants?.includes(`${cls}:${v}`);
+}
+
+/** May this account SAVE look v on hull class cls? Free, the Commission,
+ *  or kept from before. A mirror of the server's rule, for the pickers. */
+export function canUseLook(cls: ShipIconClass, v: ShipIconVariant, isPremium: boolean, grants?: readonly string[] | null): boolean {
+  return !PREMIUM_VARIANTS.has(v) || isPremium || isKeptLook(cls, v, grants);
+}
 
 /** Player-chosen default icon variant per class. */
 export const DEFAULT_SHIP_ICONS: Record<ShipIconClass, ShipIconVariant> = {

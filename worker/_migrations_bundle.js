@@ -6697,4 +6697,104 @@ CREATE TABLE IF NOT EXISTS game_kaiju (
 
 ALTER TABLE game_kaiju ADD COLUMN revealed_at_tick INTEGER;
 ` },
+  { name: "0164_email_templates.sql", sql: `-- ============================================================
+-- 0164 — an editable win-back email, and whether mail gets opened
+--
+-- email_templates holds the admin panel's edits to an automated email
+-- (worker/emailAdmin.js): an on/off switch and per-language overrides of
+-- the copy. A missing row, or enabled = 0, means the email does not send,
+-- so the win-back ships switched off until Lorne turns it on.
+--
+-- email_log gains the open: a 1x1 picture in the email, fetched from
+-- /api/email/o/<signed id>.gif, stamps the first open and counts the rest.
+-- Opens are a floor and a ceiling at once: clients that block pictures
+-- never report one, and Apple Mail fetches every picture on delivery.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS email_templates (
+  id          TEXT PRIMARY KEY,
+  enabled     INTEGER NOT NULL DEFAULT 0,
+  overrides   TEXT NOT NULL DEFAULT '{}',
+  updated_ms  INTEGER,
+  updated_by  TEXT
+);
+
+ALTER TABLE email_log ADD COLUMN opened_ms INTEGER;
+ALTER TABLE email_log ADD COLUMN open_count INTEGER NOT NULL DEFAULT 0;
+` },
+  { name: "0165_email_login_and_invites.sql", sql: `-- ============================================================
+-- 0165 — sign in from the win-back email; remember who was invited where
+--
+-- email_login_tokens: a link in an email that signs its reader in, like a
+-- password reset (only the SHA-256 is stored; one use; seven days). The
+-- win-back email's button carries one, so a player who forgot their
+-- password still lands in their seat with one click (worker/emailLogin.js).
+-- room_id is the lobby the email named; the sign-in sends them there.
+--
+-- email_log.room_id: the lobby a win-back email invited its reader to.
+-- The hourly planner counts the invitations still out for each lobby and
+-- only tops up the difference, instead of inviting two more people per
+-- open seat every hour (worker/winback.js).
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS email_login_tokens (
+  token_hash  TEXT PRIMARY KEY,
+  user_id     TEXT NOT NULL,
+  purpose     TEXT NOT NULL,
+  room_id     TEXT,
+  created_ms  INTEGER NOT NULL,
+  expires_ms  INTEGER NOT NULL,
+  used_ms     INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_email_login_tokens_expiry ON email_login_tokens(expires_ms);
+
+ALTER TABLE email_log ADD COLUMN room_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_email_log_kind_room ON email_log(kind, room_id, created_ms);
+` },
+  { name: "0166_look_grants.sql", sql: `-- ============================================================
+-- 0166 - grandfathered ship looks
+--
+-- On 2026-10-15 the free ship looks narrowed from A-I to A and B on
+-- every hull (A and B hold every class's default). C-Z come with the
+-- Commander's Commission. A player who had ALREADY built with a look
+-- that became paid keeps it, for that hull class: one row per
+-- (player, class, look) found at cutover in their ships (every game,
+-- every status, destroyed ones too), in-game designs, build queue and
+-- account templates.
+--
+-- Only C-I are granted: J-Z were always Commission looks, so nobody
+-- could have built with them without it.
+--
+-- worker/store.js validateIconVariant reads this. Rerunnable: the
+-- inserts are OR IGNORE, so a second pass only adds what is new.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS user_look_grants (
+  user_id     TEXT    NOT NULL,
+  ship_class  TEXT    NOT NULL,
+  variant     TEXT    NOT NULL,
+  granted_at  INTEGER NOT NULL,
+  PRIMARY KEY (user_id, ship_class, variant)
+);
+
+INSERT OR IGNORE INTO user_look_grants (user_id, ship_class, variant, granted_at)
+SELECT DISTINCT f.user_id, s.ship_class, s.icon_variant, CAST(strftime('%s', 'now') AS INTEGER) * 1000
+  FROM game_ships s JOIN game_factions f ON f.id = s.owner_faction_id
+ WHERE f.user_id IS NOT NULL AND s.icon_variant IN ('C', 'D', 'E', 'F', 'G', 'H', 'I');
+
+INSERT OR IGNORE INTO user_look_grants (user_id, ship_class, variant, granted_at)
+SELECT DISTINCT f.user_id, d.ship_class, d.icon_variant, CAST(strftime('%s', 'now') AS INTEGER) * 1000
+  FROM game_ship_designs d JOIN game_factions f ON f.id = d.faction_id
+ WHERE f.user_id IS NOT NULL AND d.icon_variant IN ('C', 'D', 'E', 'F', 'G', 'H', 'I');
+
+INSERT OR IGNORE INTO user_look_grants (user_id, ship_class, variant, granted_at)
+SELECT DISTINCT f.user_id, q.ship_class, q.icon_variant, CAST(strftime('%s', 'now') AS INTEGER) * 1000
+  FROM game_body_build_queue q JOIN game_factions f ON f.id = q.faction_id
+ WHERE f.user_id IS NOT NULL AND q.icon_variant IN ('C', 'D', 'E', 'F', 'G', 'H', 'I');
+
+INSERT OR IGNORE INTO user_look_grants (user_id, ship_class, variant, granted_at)
+SELECT DISTINCT t.user_id, t.ship_class, t.icon_variant, CAST(strftime('%s', 'now') AS INTEGER) * 1000
+  FROM user_ship_templates t
+ WHERE t.user_id IS NOT NULL AND t.icon_variant IN ('C', 'D', 'E', 'F', 'G', 'H', 'I');
+` },
 ];

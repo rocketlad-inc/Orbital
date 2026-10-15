@@ -699,6 +699,9 @@ async function handleMe(req, env) {
     // entitlement server-side — a spoofed flag shows options the server
     // will then refuse to persist.
     is_premium: await store.hasEntitlement(env, session.user_id),
+    // Ship looks kept from before C-I joined the Commission (0166), as
+    // 'class:letter'. UI only; every save path re-checks the grant.
+    look_grants: await store.lookGrants(env, session.user_id).catch(() => []),
     // Account-default colony and station skins (0154); null = the free look.
     ...(await env.DB.prepare('SELECT city_skin, station_skin FROM users WHERE id = ?')
       .bind(session.user_id).first().catch(() => null) ?? {}),
@@ -793,7 +796,7 @@ async function handleCreateShipTemplate(req, env, session) {
   if (body.icon_variant != null) {
     // Account-level templates carry icon picks across games, so the
     // entitlement gate applies here exactly as on the in-game paths.
-    const badIcon = await store.validateIconVariant(env, session.user_id, body.icon_variant);
+    const badIcon = await store.validateIconVariant(env, session.user_id, body.icon_variant, shipClass);
     if (badIcon) return err(badIcon.code === 'premium_required' ? 403 : 400, badIcon.code, badIcon.message);
     iconVariant = body.icon_variant;
   }

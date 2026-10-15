@@ -903,6 +903,7 @@ export const ship: Catalog = {
   'ship.sd.previewA': 'Visualizando a linha',
   'ship.sd.previewB': ', parte da {commission} (com todas as outras linhas, novas bandeiras e {discord}). Não é salva com o projeto.',
   'ship.sd.previewLineTip': 'Visualize a linha {line} no seu casco — uma linha da {commission}',
+  'ship.sd.keptLookTip': 'A linha {line} continua sua: você construiu com ela antes de ela entrar na Comissão',
   'ship.sd.refitFailed': 'A readaptação falhou.',
   'ship.sd.refitFee': 'Taxa = metade do preço das peças adicionadas, por casco. Remoções não reembolsam nada.',
   'ship.sd.refitFleet': '⟳ READAPTAR FROTA · {ore}M {credits}C',

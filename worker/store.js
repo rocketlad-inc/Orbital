@@ -60,14 +60,15 @@ export const SKUS = {
   },
 };
 
-// Ship icon variants: A-I free; J-S and T-Y (the visual overhaul's new
-// designs, homage line included) premium (mirror of PREMIUM_VARIANTS
-// in src/components/ShipIcons.tsx — same keep-in-sync arrangement as
-// emblems). One validator for every save path so the rule can't drift
-// between the build queue, the designer and the account template store.
+// Ship icon variants: A and B free on every hull (they hold every class's
+// default); C-Z come with the Commission (mirror of PREMIUM_VARIANTS in
+// src/components/ShipIcons.tsx — same keep-in-sync arrangement as
+// emblems). C-I were free until 2026-10-15; anyone who had built with
+// one keeps it for that hull class (user_look_grants, migration 0166).
+// One validator for every save path so the rule can't drift between the
+// build queue, the designer and the account template store.
 const ICON_VARIANT_RE = /^[A-Z]$/;
-// Z = the Medieval Series (src/render/hulls/medieval.ts), Commission-only.
-const PREMIUM_ICON_VARIANTS = new Set(['J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z']);
+const PREMIUM_ICON_VARIANTS = new Set('CDEFGHIJKLMNOPQRSTUVWXYZ'.split(''));
 
 // Megastructure looks: ONE per kind is free, the default 'A'; every other
 // look on every kind needs the Commission (2026-10-05). A rule, not a
@@ -84,19 +85,41 @@ export async function validateStructureVariant(env, userId, kind, v) {
 }
 
 /**
- * Validate a player-supplied icon variant. Returns null when acceptable,
- * else { code, message } for the caller to wrap in its own err() helper
- * (premium_required should map to 403, the rest to 400). Free letters
- * never touch the database; premium letters cost one indexed PK lookup.
+ * Validate a player-supplied icon variant for a hull class. Returns null
+ * when acceptable, else { code, message } for the caller to wrap in its
+ * own err() helper (premium_required should map to 403, the rest to 400).
+ * Free letters never touch the database; a paid letter is allowed with
+ * the Commission or a grandfathered grant for exactly this class and look.
  */
-export async function validateIconVariant(env, userId, v) {
+export async function validateIconVariant(env, userId, v, shipClass) {
   if (typeof v !== 'string' || !ICON_VARIANT_RE.test(v)) {
     return { code: 'bad_request', message: 'invalid icon_variant' };
   }
-  if (PREMIUM_ICON_VARIANTS.has(v) && !(await hasEntitlement(env, userId))) {
+  if (PREMIUM_ICON_VARIANTS.has(v) && !(await hasEntitlement(env, userId))
+      && !(await hasLookGrant(env, userId, shipClass, v))) {
     return { code: 'premium_required', message: 'that icon line needs the Commander\u2019s Commission' };
   }
   return null;
+}
+
+/** A look this player built with before it joined the Commission (0166). */
+async function hasLookGrant(env, userId, shipClass, v) {
+  if (!userId || typeof shipClass !== 'string') return false;
+  const row = await env.DB
+    .prepare('SELECT 1 AS x FROM user_look_grants WHERE user_id = ? AND ship_class = ? AND variant = ?')
+    .bind(userId, shipClass, v)
+    .first();
+  return !!row;
+}
+
+/** Every grandfathered look, as 'class:letter', for the pickers. */
+export async function lookGrants(env, userId) {
+  if (!userId) return [];
+  const r = await env.DB
+    .prepare('SELECT ship_class, variant FROM user_look_grants WHERE user_id = ? ORDER BY ship_class, variant')
+    .bind(userId)
+    .all();
+  return (r.results ?? []).map(g => `${g.ship_class}:${g.variant}`);
 }
 
 /** Same question for a flag emblem pick. */
