@@ -13,13 +13,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CustomMap, MapBody, MapBodyType } from '../game/customMap';
 import { bodyYear } from '../game/customMap';
 import {
-  discR, sunR, displayPos, displayToOrbit, orbitToDisplay, systemExtent, type Scale,
+  discR, sunR, displayPos, displayToOrbit, orbitToDisplay, systemExtent, sunOrbitToDisplay, type Scale,
 } from './geometry';
 import { worldArt } from './planetArt';
 import type { Fairness } from './fairness';
 
 export type PlaceTool = MapBodyType | 'belt';
-export type Tool = PlaceTool | 'scatter' | 'ring';
+export type Tool = PlaceTool | 'scatter' | 'ring' | 'sector';
 
 export interface MapViewProps {
   map: CustomMap;
@@ -44,6 +44,10 @@ export interface MapViewProps {
   onScatter: (points: Array<{ orbit: number; angle: number }>) => void;
   onMove: (id: string, orbit: number, angle: number, phase: 'start' | 'move' | 'end') => void;
   onPick: (id: string) => void;
+  /** A band dragged out with the sector tool, in orbit units. */
+  onSectorDraw: (inner: number, outer: number) => void;
+  /** A selected sector's inner or outer edge dragged. */
+  onSectorEdge: (id: string, which: 'inner' | 'outer', orbit: number, phase: 'move' | 'end') => void;
   onCancelTool: () => void;
 }
 
@@ -53,7 +57,9 @@ type Drag =
   | { kind: 'pan'; sx: number; sy: number; vx: number; vy: number; moved: boolean }
   | { kind: 'lasso'; sx: number; sy: number; ex: number; ey: number; additive: boolean }
   | { kind: 'scatter'; pts: Array<{ x: number; y: number }>; lx: number; ly: number }
-  | { kind: 'tap'; sx: number; sy: number; wx: number; wy: number };
+  | { kind: 'tap'; sx: number; sy: number; wx: number; wy: number }
+  | { kind: 'band'; r0: number; r1: number }
+  | { kind: 'edge'; id: string; which: 'inner' | 'outer' };
 
 type Readout = { x: number; y: number; lines: string[]; snapId: string | null };
 
@@ -70,7 +76,7 @@ const SNAP_PX = 9;
 
 export const MapView: React.FC<MapViewProps> = ({
   map, scale, selection, tool, preview, fitSignal, touch, symmetry, ringCount, lens, picking,
-  onSelect, onPlace, onScatter, onMove, onPick, onCancelTool,
+  onSelect, onPlace, onScatter, onMove, onPick, onSectorDraw, onSectorEdge, onCancelTool,
 }) => {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
@@ -261,12 +267,28 @@ export const MapView: React.FC<MapViewProps> = ({
     if (pointers.current.size > 2) return;
 
     const id = hitAt(w.sx, w.sy);
+    const r = Math.hypot(w.x, w.y);
+    // A sector's name selects it.
+    const label = (e.target as Element).closest?.('[data-sector]')?.getAttribute('data-sector');
+    if (label && !tool && !picking) { onSelect([`sector:${label}`], e.shiftKey ? 'toggle' : 'replace'); return; }
+    // A selected sector's edge drags.
+    const selSector = map.sectors.find(x => selection.has(`sector:${x.id}`));
+    if (selSector && !tool && !picking && e.button === 0) {
+      const reach = (touch ? 16 : 7) / view.z;
+      const which = Math.abs(r - sunOrbitToDisplay(selSector.outer, scale)) < reach ? 'outer'
+        : Math.abs(r - sunOrbitToDisplay(selSector.inner, scale)) < reach ? 'inner' : null;
+      if (which) { setDrag({ kind: 'edge', id: selSector.id, which }); return; }
+    }
 
     if (e.button === 1 || e.button === 2 || spaceDown) {
       setDrag({ kind: 'pan', sx: e.clientX, sy: e.clientY, vx: view.x, vy: view.y, moved: true });
       return;
     }
     if (picking) { if (id && id !== 'sun') onPick(id); return; }
+    if (tool === 'sector') {
+      setDrag({ kind: 'band', r0: r, r1: r });
+      return;
+    }
     if (tool === 'scatter') {
       setDrag({ kind: 'scatter', pts: [{ x: w.x, y: w.y }], lx: w.sx, ly: w.sy });
       return;
@@ -330,6 +352,10 @@ export const MapView: React.FC<MapViewProps> = ({
       if (far) { setGhost(null); setDrag({ kind: 'pan', sx: drag.sx, sy: drag.sy, vx: view.x, vy: view.y, moved: true }); }
     } else if (drag.kind === 'lasso') {
       setDrag({ ...drag, ex: w.sx, ey: w.sy });
+    } else if (drag.kind === 'band') {
+      setDrag({ ...drag, r1: Math.hypot(w.x, w.y) });
+    } else if (drag.kind === 'edge') {
+      onSectorEdge(drag.id, drag.which, Math.round(displayToOrbit(map, 'sun', Math.hypot(w.x, w.y), scale)), 'move');
     } else if (drag.kind === 'scatter') {
       if (Math.hypot(w.sx - drag.lx, w.sy - drag.ly) < 16) return;
       const jitter = () => ((Math.random() - 0.5) * 10) / view.z;
@@ -366,6 +392,12 @@ export const MapView: React.FC<MapViewProps> = ({
     } else if (drag?.kind === 'tap') {
       place(drag.wx, drag.wy);
       setGhost(null);
+    } else if (drag?.kind === 'band') {
+      const a = displayToOrbit(map, 'sun', drag.r0, scale), b = displayToOrbit(map, 'sun', drag.r1, scale);
+      if (Math.abs(drag.r1 - drag.r0) * view.z > 6) onSectorDraw(Math.round(Math.min(a, b)), Math.round(Math.max(a, b)));
+    } else if (drag?.kind === 'edge') {
+      const sct = map.sectors.find(x => x.id === drag.id);
+      if (sct) onSectorEdge(sct.id, drag.which, drag.which === 'inner' ? sct.inner : sct.outer, 'end');
     } else if (drag?.kind === 'scatter') {
       onScatter(drag.pts.map(p => ({
         orbit: displayToOrbit(map, 'sun', Math.max(sunR(map) + 30, Math.hypot(p.x, p.y)), scale),
@@ -457,6 +489,30 @@ export const MapView: React.FC<MapViewProps> = ({
           <clipPath id="mm_disc" clipPathUnits="objectBoundingBox"><circle cx="0.5" cy="0.5" r="0.5" /></clipPath>
         </defs>
         <g transform={`translate(${size.w / 2 - view.x * z} ${size.h / 2 - view.y * z}) scale(${z})`}>
+          {/* sectors: bands of orbit, under everything */}
+          {map.sectors.map(sct => {
+            const ri = sunOrbitToDisplay(sct.inner, scale), ro = sunOrbitToDisplay(sct.outer, scale);
+            const sel = selection.has(`sector:${sct.id}`);
+            return (
+              <g key={`sec_${sct.id}`} className={`mm-sector${sel ? ' is-sel' : ''}`}>
+                <circle r={(ri + ro) / 2} fill="none" stroke={sct.color} strokeOpacity={sel ? 0.16 : 0.07} strokeWidth={Math.max(0, ro - ri)} pointerEvents="none" />
+                <circle r={ri} className="mm-sector__edge" stroke={sct.color} />
+                <circle r={ro} className="mm-sector__edge" stroke={sct.color} />
+                {sel && (
+                  <>
+                    <circle r={ri} className="mm-sector__grip" stroke={sct.color} strokeWidth={px(touch ? 10 : 5)} />
+                    <circle r={ro} className="mm-sector__grip" stroke={sct.color} strokeWidth={px(touch ? 10 : 5)} />
+                  </>
+                )}
+                <text data-sector={sct.id} y={-ro + px(14 * fs)} className="mm-sector__label" fill={sct.color} fontSize={px(10 * fs)}>
+                  {sct.name.toUpperCase()}
+                </text>
+              </g>
+            );
+          })}
+          {drag?.kind === 'band' && (
+            <circle r={(drag.r0 + drag.r1) / 2} fill="none" stroke="#4ecdc4" strokeOpacity={0.18} strokeWidth={Math.abs(drag.r1 - drag.r0)} pointerEvents="none" />
+          )}
           {sunOrbits.map(b => (
             <circle key={`o_${b.id}`} r={orbitToDisplay(map, b, scale)}
               className={`mm-orbit${selection.has(b.id) ? ' is-sel' : ''}${snapped === b.id ? ' is-snap' : ''}`} />
@@ -540,7 +596,7 @@ export const MapView: React.FC<MapViewProps> = ({
           {drag?.kind === 'scatter' && drag.pts.map((p, i) => (
             <circle key={`sc_${i}`} cx={p.x} cy={p.y} r={px(3)} className="mm-ghost" />
           ))}
-          {tool && ghost && tool !== 'scatter' && (
+          {tool && ghost && tool !== 'scatter' && tool !== 'sector' && (
             tool === 'moon'
               ? (ghostHost
                 ? <circle cx={ghost.x} cy={ghost.y} r={Math.max(px(4), discR({ type: 'moon', radius: 1.5 }))} className="mm-ghost" />

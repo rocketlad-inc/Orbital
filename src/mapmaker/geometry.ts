@@ -50,6 +50,11 @@ export function displayPos(
   return { x: pp.x + Math.cos(a) * r, y: pp.y + Math.sin(a) * r };
 }
 
+/** Display radius of an orbit round the sun (a sector's edge). */
+export function sunOrbitToDisplay(orbit: number, scale: Scale): number {
+  return scale === 'true' ? orbit * 0.6 : K_SUN * Math.sqrt(Math.max(0, orbit));
+}
+
 /** The furthest anything draws from the sun, for "Fit system". */
 export function systemExtent(map: CustomMap, scale: Scale): number {
   let ext = sunR(map) * 2;
@@ -57,5 +62,6 @@ export function systemExtent(map: CustomMap, scale: Scale): number {
     if (b.parent !== 'sun') continue;
     ext = Math.max(ext, orbitToDisplay(map, b, scale) + discR(b) + 40);
   }
+  for (const s of map.sectors) ext = Math.max(ext, sunOrbitToDisplay(s.outer, scale) + 20);
   return ext;
 }

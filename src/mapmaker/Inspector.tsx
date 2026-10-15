@@ -4,15 +4,16 @@
 
 import React, { useState } from 'react';
 import {
-  type CustomMap, type MapBody, type MapBodyType, type MapSecret, type MapBackdrop,
+  type CustomMap, type MapBody, type MapBodyType, type MapSecret, type MapBackdrop, type MapSector,
   TYPE_INFO, SURFACES, MAP_SECRETS, NAME_THEMES, RESOURCE_MAX, SUN_LIMITS, BACKDROPS, TEXT_LIMITS, MAX_BODIES,
+  MAX_SECTORS, SECTOR_COLORS,
   canStartOn, secretFits, bodyYear, makeName, startWorlds,
 } from '../game/customMap';
 import { SECRET_DEFS } from '../game/secrets';
 import {
   PRESETS, MOODS, addMoons, changeType, deleteBodies, duplicateBodies, updateBodies, bulkResources,
   spaceEvenly, renameByTheme, recolor, markStart, setSecret, scaleSize, colorForSurface, takenNames,
-  mirrorBodies, applyMood, rerollZone,
+  mirrorBodies, applyMood, rerollZone, updateSector, deleteSectors, sectorMembers, suggestSectors,
   type ResMode, type ResKey, type MatchAspect,
 } from './ops';
 import { worldArt } from './planetArt';
@@ -380,7 +381,8 @@ export const SunInspector: React.FC<{ map: CustomMap; onChange: Change; onTransi
 /** Nothing selected: the whole map -- its pitch, its sky, its mood. */
 export const MapInspector: React.FC<{
   map: CustomMap; theme: string; touch: boolean; onChange: Change; onTransient: (m: CustomMap) => void;
-}> = ({ map, theme, touch, onChange, onTransient }) => {
+  onDrawSector: () => void; onPickSector: (id: string) => void;
+}> = ({ map, theme, touch, onChange, onTransient, onDrawSector, onPickSector }) => {
   const [confirm, setConfirm] = useState<'inner' | 'outer' | null>(null);
   const reroll = (zone: 'inner' | 'outer') => { const r = rerollZone(map, zone, theme); onChange(r.map, r.ids); setConfirm(null); };
   const tap = touch ? 'Tap' : 'Click';
@@ -425,6 +427,28 @@ export const MapInspector: React.FC<{
           ))}
         </div>
 
+        <div className="mm-sec mm-sec--row"><span>SECTORS</span><span className="mm-mono">{map.sectors.length}/{MAX_SECTORS}</span></div>
+        {map.sectors.length === 0 ? (
+          <p className="mm-note">Sectors are the regions players fight over: the senate gives one vote for each sector you hold most of. Draw bands of orbit, or let the map suggest some. Without them, worlds group automatically (a planet with its moons).</p>
+        ) : (
+          <div className="mm-sectors">
+            {map.sectors.map(sct => (
+              <button key={sct.id} className="mm-sectorrow" onClick={() => onPickSector(sct.id)}>
+                <span className="mm-dot" style={{ background: sct.color }} />
+                <span className="mm-sectorrow__n">{sct.name}</span>
+                <span className="mm-mono">{sectorMembers(map, sct.id).filter(b => b.type !== 'rock').length} worlds</span>
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="mm-row mm-row--wrap">
+          <button className="mm-btn" disabled={map.sectors.length >= MAX_SECTORS} onClick={onDrawSector}>Draw a sector</button>
+          <button className="mm-btn" disabled={map.bodies.length < 2} onClick={() => onChange(suggestSectors(map, Math.max(3, Math.min(6, map.sectors.length || 4))))}>
+            {map.sectors.length ? 'Re-suggest' : 'Suggest sectors'}
+          </button>
+          {map.sectors.length > 0 && <button className="mm-btn is-danger" onClick={() => onChange(deleteSectors(map, map.sectors.map(x => x.id)))}>Clear all</button>}
+        </div>
+
         <div className="mm-sec">RE-ROLL HALF THE SYSTEM</div>
         {confirm ? (
           <div className="mm-box">
@@ -441,6 +465,61 @@ export const MapInspector: React.FC<{
           </div>
         )}
         {!touch && <p className="mm-note">{map.bodies.length} bodies. Ctrl+Z undoes, Delete removes, Ctrl+D duplicates, Ctrl+A selects everything.</p>}
+      </div>
+    </div>
+  );
+};
+
+/** One sector: its name, colour, edges and the worlds inside. */
+export const SectorInspector: React.FC<{
+  map: CustomMap; sector: MapSector; onChange: Change; onTransient: (m: CustomMap) => void;
+  onSelectWorlds: (ids: string[]) => void;
+}> = ({ map, sector, onChange, onTransient, onSelectWorlds }) => {
+  const set = (p: Partial<MapSector>) => onChange(updateSector(map, sector.id, p), [`sector:${sector.id}`]);
+  const members = sectorMembers(map, sector.id);
+  const worlds = members.filter(b => b.type !== 'rock');
+  const starts = members.filter(b => b.start);
+  const i = map.sectors.findIndex(x => x.id === sector.id);
+  const inside = map.sectors[i - 1], outside = map.sectors[i + 1];
+  return (
+    <div className="mm-insp">
+      <div className="mm-insp__head">
+        <span className="mm-sectorbadge" style={{ borderColor: sector.color }} aria-hidden><span style={{ background: sector.color }} /></span>
+        <div className="mm-insp__id">
+          <input className="mm-insp__name" value={sector.name} aria-label="Sector name" maxLength={24}
+            onChange={(e) => onTransient(updateSector(map, sector.id, { name: e.target.value }, false))}
+            onBlur={(e) => set({ name: e.target.value })} />
+          <span className="mm-insp__sub">Sector · orbits {sector.inner} to {sector.outer}</span>
+        </div>
+      </div>
+      <div className="mm-insp__body">
+        <div className="mm-sec">COLOUR</div>
+        <div className="mm-swatches">
+          {SECTOR_COLORS.map(c => <button key={c} className={`mm-swatch${sector.color === c ? ' is-on' : ''}`} style={{ background: c }} aria-label={`Colour ${c}`} onClick={() => set({ color: c })} />)}
+          <input type="color" className="mm-swatch is-custom" value={sector.color} aria-label="Pick any colour"
+            onChange={(e) => onTransient(updateSector(map, sector.id, { color: e.target.value }, false))} onBlur={(e) => set({ color: e.target.value })} />
+        </div>
+        <div className="mm-grid2">
+          <Field label="INNER EDGE">
+            <Stepper label="Inner edge" value={sector.inner} min={inside ? inside.outer : 0} max={sector.outer - 10} step={10} onChange={(v) => set({ inner: v })} />
+          </Field>
+          <Field label="OUTER EDGE">
+            <Stepper label="Outer edge" value={sector.outer} min={sector.inner + 10} max={outside ? outside.inner : 15400} step={10} onChange={(v) => set({ outer: v })} />
+          </Field>
+        </div>
+        <p className="mm-note">Drag either edge on the map to move it. Bands never overlap: an edge stops where the next sector starts.</p>
+        <div className="mm-box">
+          <b className="mm-sectorstat">{worlds.length} world{worlds.length === 1 ? '' : 's'}{starts.length ? ` · ${starts.length} start${starts.length === 1 ? '' : 's'}` : ''}</b>
+          <div className="mm-row mm-row--wrap">
+            {worlds.slice(0, 18).map(b => <span key={b.id} className="mm-pill">{b.name}</span>)}
+            {worlds.length > 18 && <span className="mm-mono">+{worlds.length - 18}</span>}
+          </div>
+          <p className="mm-note">Whoever holds the most of these worlds controls {sector.name}: one more vote in the senate. A tie leaves it contested and worth nothing.</p>
+        </div>
+        <div className="mm-row mm-row--end">
+          <button className="mm-btn" disabled={!worlds.length} onClick={() => onSelectWorlds(worlds.map(b => b.id))}>Select its worlds</button>
+          <button className="mm-btn is-danger" onClick={() => onChange(deleteSectors(map, [sector.id]), [])}>Delete sector</button>
+        </div>
       </div>
     </div>
   );

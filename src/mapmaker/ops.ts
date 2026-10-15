@@ -2,8 +2,9 @@
 // next, so undo is just keeping the old map and bulk edits are loops.
 
 import {
-  type CustomMap, type MapBody, type MapBodyType, type MapYields, type MapSecret, type MapSurface, type MapBackdrop,
+  type CustomMap, type MapBody, type MapBodyType, type MapYields, type MapSecret, type MapSurface, type MapBackdrop, type MapSector,
   TYPE_INFO, newBodyId, makeName, normalizeMap, canStartOn, secretFits, generateMap, ORBIT_LIMITS, RESOURCE_MAX, MAX_BODIES,
+  MAX_SECTORS, SECTOR_COLORS, newSectorId, sectorOf,
 } from '../game/customMap';
 import type { PlaceTool } from './MapView';
 
@@ -421,4 +422,78 @@ export function rerollZone(map: CustomMap, zone: 'inner' | 'outer', theme: strin
   const cands = fresh.filter(b => canStartOn(b.type) && b.parent === 'sun').sort((a, b) => b.radius - a.radius);
   for (const b of cands.slice(0, starts)) { b.start = true; b.secret = null; b.yields.science = Math.max(2, b.yields.science); }
   return { map: normalizeMap({ ...map, bodies: [...keep, ...fresh] }), ids: fresh.filter(b => b.parent === 'sun').map(b => b.id) };
+}
+
+// ---- sectors -------------------------------------------------------------
+
+export const SECTOR_NAMES = [
+  'The Inner Reach', 'The Bright Worlds', 'The Belt', 'The Middle Kingdoms', 'The Outer Reach', 'The Far Dark',
+  'The Frontier', 'The Shallows', 'The Deep', 'The Rim', 'The Marches', 'The Verge',
+];
+function freshSectorName(map: CustomMap): string {
+  const taken = new Set(map.sectors.map(s => s.name.toLowerCase()));
+  return SECTOR_NAMES.find(n => !taken.has(n.toLowerCase())) ?? `Sector ${map.sectors.length + 1}`;
+}
+
+/** A new band from `inner` to `outer`. Where it overlaps a band already
+ *  drawn, the new one gives way (normalizeMap trims it to the gap). */
+export function addSector(map: CustomMap, inner: number, outer: number): { map: CustomMap; id: string | null } {
+  if (map.sectors.length >= MAX_SECTORS) return { map, id: null };
+  const id = newSectorId(new Set(map.sectors.map(s => s.id)));
+  const lo = Math.min(inner, outer), hi = Math.max(inner, outer);
+  const color = SECTOR_COLORS.find(c => !map.sectors.some(s => s.color === c)) ?? SECTOR_COLORS[map.sectors.length % SECTOR_COLORS.length];
+  // Existing bands keep their ground: only the new one is trimmed.
+  const others = map.sectors;
+  let a = lo, b = hi;
+  for (const s of others) {
+    if (s.inner <= a && s.outer > a) a = s.outer;
+    if (s.inner < b && s.outer >= b) b = s.inner;
+  }
+  if (b - a < 10) return { map, id: null };
+  const next = normalizeMap({ ...map, sectors: [...others, { id, name: freshSectorName(map), color, inner: a, outer: b }] });
+  return { map: next, id: next.sectors.some(s => s.id === id) ? id : null };
+}
+
+export function updateSector(map: CustomMap, id: string, patch: Partial<MapSector>, clean = true): CustomMap {
+  const sectors = map.sectors.map(s => (s.id === id ? { ...s, ...patch } : s));
+  return clean ? normalizeMap({ ...map, sectors }) : { ...map, sectors };
+}
+
+export function deleteSectors(map: CustomMap, ids: Iterable<string>): CustomMap {
+  const gone = new Set(ids);
+  return normalizeMap({ ...map, sectors: map.sectors.filter(s => !gone.has(s.id)) });
+}
+
+/** The worlds orbiting the sun inside a band, moons with them. */
+export function sectorMembers(map: CustomMap, id: string): MapBody[] {
+  return map.bodies.filter(b => sectorOf(map, b)?.id === id);
+}
+
+/**
+ * A first draft of sectors: the sun's worlds split at the widest gaps
+ * between their orbits (on a log scale, as orbits space out), into
+ * `count` bands that each hold at least one world. Replaces any drawn.
+ */
+export function suggestSectors(map: CustomMap, count = 4): CustomMap {
+  const orbits = [...new Set(map.bodies.filter(b => b.parent === 'sun').map(b => b.orbit))].sort((a, b) => a - b);
+  if (orbits.length < 2) return map;
+  const k = Math.max(2, Math.min(count, orbits.length, MAX_SECTORS));
+  const gaps = orbits.slice(1).map((o, i) => ({ i: i + 1, g: Math.log(o / orbits[i]) }))
+    .sort((a, b) => b.g - a.g).slice(0, k - 1).map(x => x.i).sort((a, b) => a - b);
+  const cuts = [0, ...gaps, orbits.length];
+  const bare = { ...map, sectors: [] as MapSector[] };
+  const sectors: MapSector[] = [];
+  for (let j = 0; j < cuts.length - 1; j++) {
+    const first = orbits[cuts[j]], last = orbits[cuts[j + 1] - 1];
+    // Edges halfway (geometrically) between neighbouring groups.
+    const inner = j === 0 ? Math.max(0, first * 0.8) : Math.sqrt(orbits[cuts[j] - 1] * first);
+    const outer = j === cuts.length - 2 ? last * 1.15 + 20 : Math.sqrt(last * orbits[cuts[j + 1]]);
+    sectors.push({
+      id: newSectorId(new Set(sectors.map(s => s.id))),
+      name: SECTOR_NAMES[j] ?? `Sector ${j + 1}`,
+      color: SECTOR_COLORS[j % SECTOR_COLORS.length],
+      inner: Math.round(inner), outer: Math.round(outer),
+    });
+  }
+  return normalizeMap({ ...bare, sectors });
 }

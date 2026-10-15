@@ -536,3 +536,22 @@ body:has(.stg-banner) .mm-start, body:has(.stg-banner) .mm-work { top: 23px; }
 .mm-work.is-mobile .mm-moods { grid-template-columns: repeat(2, 1fr); }
 .mm-work.is-mobile .mm-modal__card { border-radius: 14px; }
 .mm-work.is-mobile .mm-insp__name { font-size: 18px; }
+
+/* ---- sectors -------------------------------------------------------------- */
+.mm-sector__edge { fill: none; stroke-width: 1; stroke-opacity: .5; stroke-dasharray: 6 5; vector-effect: non-scaling-stroke; pointer-events: none; }
+.mm-sector.is-sel .mm-sector__edge { stroke-opacity: .95; stroke-dasharray: none; }
+.mm-sector__grip { fill: none; stroke-opacity: .25; vector-effect: non-scaling-stroke; cursor: ew-resize; pointer-events: none; }
+.mm-sector__label { text-anchor: middle; font-family: 'Audiowide', sans-serif; letter-spacing: .16em; cursor: pointer; paint-order: stroke; stroke: #0a0e14; stroke-width: 3px; stroke-linejoin: round; }
+.mm-sector.is-sel .mm-sector__label { text-decoration: underline; }
+.mm-pal__btn.is-wide { grid-column: 1 / -1; flex-direction: row; justify-content: center; gap: 10px; min-height: 44px; padding: 8px; }
+.mm-pal__sector { width: 28px; height: 28px; display: block; border-radius: 50%; border: 5px solid #b98cff55; box-shadow: inset 0 0 0 1px #b98cff, 0 0 0 1px #b98cff; }
+.mm-tree__head { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 10px 8px 4px; font: 9.5px 'Audiowide', sans-serif; letter-spacing: .16em; cursor: pointer; }
+.mm-tree__head:hover, .mm-tree__head.is-sel { text-decoration: underline; }
+.mm-tree__head.is-loose { color: var(--mm-muted); cursor: default; text-decoration: none; }
+.mm-sectors { display: flex; flex-direction: column; gap: 4px; }
+.mm-sectorrow { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--mm-panel2); border: 1px solid var(--mm-line-soft); border-radius: 7px; color: var(--mm-text2); font: 12px 'Chivo Mono', monospace; cursor: pointer; text-align: left; }
+.mm-sectorrow:hover { border-color: var(--mm-line); color: var(--mm-text); }
+.mm-sectorrow__n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mm-sectorbadge { width: 52px; height: 52px; flex: none; border-radius: 50%; border: 10px solid; opacity: .85; display: grid; place-items: center; }
+.mm-sectorbadge span { width: 10px; height: 10px; border-radius: 50%; }
+.mm-sectorstat { font-weight: 400; font-size: 13px; }

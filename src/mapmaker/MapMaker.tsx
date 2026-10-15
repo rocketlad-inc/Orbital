@@ -19,13 +19,14 @@ import { apiFetch, startCommissionCheckout } from '../multiplayer/api';
 import { canBuyHere, openCommissionInBrowser, COMMISSION_NAME, COMMISSION_PRICE } from '../multiplayer/commission';
 import { useIsMobile } from '../hooks/useIsMobile';
 import {
-  type CustomMap, type MapIssue, type MapBodyType, type MapBackdrop, blankMap, normalizeMap, checkMap, generateMap, startWorlds,
+  type CustomMap, type MapIssue, type MapBodyType, type MapBackdrop, blankMap, normalizeMap, checkMap, generateMap, startWorlds, sectorOf,
   NAME_THEMES, TYPE_INFO,
 } from '../game/customMap';
 import { MapView, type Tool } from './MapView';
-import { BodyInspector, SunInspector, MapInspector, BulkBar, Stepper, BACKDROP_LABEL } from './Inspector';
+import { BodyInspector, SunInspector, MapInspector, SectorInspector, BulkBar, Stepper, BACKDROP_LABEL } from './Inspector';
 import {
   placeBody, deleteBodies, duplicateBodies, placeSymmetric, ringOf, scatterAsteroids, matchBodies, type MatchAspect,
+  addSector, updateSector, deleteSectors,
 } from './ops';
 import { fairness } from './fairness';
 import type { Scale } from './geometry';
@@ -72,6 +73,7 @@ function PaletteIcon({ tool }: { tool: Tool }) {
   if (tool === 'rock') return <span className="mm-pal__rock" aria-hidden />;
   if (tool === 'scatter') return <span className="mm-pal__spray" aria-hidden />;
   if (tool === 'ring') return <span className="mm-pal__ringtool" aria-hidden />;
+  if (tool === 'sector') return <span className="mm-pal__sector" aria-hidden />;
   const t = tool as MapBodyType;
   const d = { terrestrial: 22, 'gas-giant': 30, 'ice-giant': 26, moon: 14, dwarf: 16, asteroid: 10, rock: 8 }[t] ?? 16;
   const c = TYPE_INFO[t].color;
@@ -644,8 +646,9 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
         const ids = [...selection].filter(id => id !== 'sun');
         if (ids.length) { const r = duplicateBodies(map, ids, theme); commit(r.map, r.ids); }
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
-        const ids = [...selection].filter(id => id !== 'sun');
-        if (ids.length) commit(deleteBodies(map, ids), []);
+        const secs = [...selection].filter(id => id.startsWith('sector:')).map(id => id.slice(7));
+        const ids = [...selection].filter(id => id !== 'sun' && !id.startsWith('sector:'));
+        if (ids.length || secs.length) commit(deleteSectors(deleteBodies(map, ids), secs), []);
       } else if (e.key === 'Escape') { setTool(null); setPicking(null); setSelection(new Set()); setShowCheck(false); }
     };
     window.addEventListener('keydown', onKey);
@@ -664,9 +667,10 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
     if (ids.length) { setMapSheet(false); setSheet('peek'); }
   };
   const onPlace = (t: Tool, parent: string, orbit: number, angle: number) => {
+    if (t === 'sector') return;
     const r = t === 'ring' ? ringOf(map, ringType, ringCount, orbit, angle, theme)
-      : parent !== 'sun' || t === 'belt' || t === 'moon' || t === 'scatter' ? placeBody(map, t as Exclude<Tool, 'scatter' | 'ring'>, parent, orbit, angle, theme)
-        : placeSymmetric(map, t, orbit, angle, theme, symmetry);
+      : parent !== 'sun' || t === 'belt' || t === 'moon' || t === 'scatter' ? placeBody(map, t as Exclude<Tool, 'scatter' | 'ring' | 'sector'>, parent, orbit, angle, theme)
+        : placeSymmetric(map, t as Exclude<Tool, 'scatter' | 'ring' | 'sector'>, orbit, angle, theme, symmetry);
     commit(r.map, r.ids);
   };
   const onScatter = (pts: Array<{ orbit: number; angle: number }>) => {
@@ -684,20 +688,44 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
   };
   const pickTool = (t: Tool) => { setTool(tool === t ? null : t); setPalOpen(false); setPicking(null); };
 
-  const selIds = [...selection].filter(id => id === 'sun' || map.bodies.some(b => b.id === id));
+  const selIds = [...selection].filter(id => id === 'sun' || map.bodies.some(b => b.id === id)
+    || (id.startsWith('sector:') && map.sectors.some(x => `sector:${x.id}` === id)));
   const single = selIds.length === 1 ? selIds[0] : null;
-  const singleBody = single && single !== 'sun' ? map.bodies.find(b => b.id === single) ?? null : null;
-  const bulkIds = selIds.filter(id => id !== 'sun');
+  const singleSector = single?.startsWith('sector:') ? map.sectors.find(x => `sector:${x.id}` === single) ?? null : null;
+  const singleBody = single && single !== 'sun' && !singleSector ? map.bodies.find(b => b.id === single) ?? null : null;
+  const bulkIds = selIds.filter(id => id !== 'sun' && !id.startsWith('sector:'));
+  const onSectorDraw = (inner: number, outer: number) => {
+    const r = addSector(map, inner, outer);
+    if (r.id) { commit(r.map, [`sector:${r.id}`]); setTool(null); setMapSheet(false); setSheet('peek'); }
+  };
+  const onSectorEdge = (id: string, which: 'inner' | 'outer', orbit: number, phase: 'move' | 'end') => {
+    if (phase === 'end') { commit(normalizeMap(map), [`sector:${id}`]); return; }
+    const i = map.sectors.findIndex(x => x.id === id);
+    const sct = map.sectors[i];
+    if (!sct) return;
+    // An edge stops at its neighbour and never crosses its own other edge.
+    const lo = which === 'inner' ? (map.sectors[i - 1]?.outer ?? 0) : sct.inner + 10;
+    const hi = which === 'inner' ? sct.outer - 10 : (map.sectors[i + 1]?.inner ?? 15400);
+    transient(updateSector(map, id, { [which]: Math.max(lo, Math.min(hi, orbit)) }, false));
+  };
 
   // The tree: the sun's worlds in orbit order, each with its moons.
   const tree = useMemo(() => {
     const q = treeQ.trim().toLowerCase();
     const sunKids = map.bodies.filter(b => b.parent === 'sun').sort((a, b) => a.orbit - b.orbit);
-    const rows: Array<{ id: string; name: string; color: string; depth: number; tag: string; moons: number }> = [];
+    const rows: Array<{ id: string; name: string; color: string; depth: number; tag: string; moons: number; head?: boolean }> = [];
+    let lastSector: string | null | undefined;
     for (const b of sunKids) {
       const moons = map.bodies.filter(x => x.parent === b.id).sort((a, c) => a.orbit - c.orbit);
       const hitMoons = q ? moons.filter(m => m.name.toLowerCase().includes(q)) : moons;
       if (q && !b.name.toLowerCase().includes(q) && !hitMoons.length) continue;
+      if (map.sectors.length) {
+        const sct = sectorOf(map, b);
+        if ((sct?.id ?? null) !== lastSector) {
+          lastSector = sct?.id ?? null;
+          rows.push({ id: sct ? `sector:${sct.id}` : `loose:${b.id}`, name: sct ? sct.name : 'Outside every sector', color: sct?.color ?? '#8fa6ba', depth: 0, tag: '', moons: 0, head: true });
+        }
+      }
       rows.push({ id: b.id, name: b.name, color: b.color, depth: 0, tag: b.start ? '✦' : b.secret ? '?' : b.type === 'asteroid' ? '·' : '', moons: moons.length });
       if (folded.has(b.id) && !q) continue;
       for (const m of hitMoons) rows.push({ id: m.id, name: m.name, color: m.color, depth: 1, tag: m.start ? '✦' : m.secret ? '?' : '', moons: 0 });
@@ -713,6 +741,7 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
     ? `${mobile ? 'Tap' : 'Click'} the world to copy from`
     : tool === 'scatter' ? `Drag across the map to spray asteroids`
       : tool === 'ring' ? (mobile ? 'Tap an orbit' : 'Click where the ring should circle')
+      : tool === 'sector' ? (mobile ? 'Drag from one orbit to another' : 'Drag from one orbit out to another to draw a sector')
         : tool === 'moon' ? `${mobile ? 'Tap' : 'Click'} beside a planet to give it a moon`
           : tool === 'belt' ? `${mobile ? 'Tap' : 'Click'} where the belt should circle`
             : tool ? `${mobile ? 'Tap' : 'Click'} to place${symmetry > 1 ? ` · ${symmetry} ways round the sun` : ''}` : null;
@@ -735,6 +764,9 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
         </button>
         <button className={`mm-pal__btn${tool === 'ring' ? ' is-on' : ''}`} onClick={() => pickTool('ring')} aria-pressed={tool === 'ring'}>
           <PaletteIcon tool="ring" /><span>Ring of worlds</span>
+        </button>
+        <button className={`mm-pal__btn is-wide${tool === 'sector' ? ' is-on' : ''}`} onClick={() => pickTool('sector')} aria-pressed={tool === 'sector'}>
+          <PaletteIcon tool="sector" /><span>Draw a sector</span>
         </button>
       </div>
       {tool === 'ring' && (
@@ -773,7 +805,15 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
         <button className={`mm-tree__row${selection.has('sun') ? ' is-sel' : ''}`} onClick={(e) => { onSelect(['sun'], e.shiftKey ? 'toggle' : 'replace'); setListOpen(false); }}>
           <span className="mm-dot" style={{ background: map.sun.color }} />{map.sun.name}<span className="mm-tree__tag">SUN</span>
         </button>
-        {tree.map(r => (
+        {tree.map(r => (r.head ? (
+          r.id.startsWith('sector:')
+            ? (
+              <button key={r.id} className={`mm-tree__head${selection.has(r.id) ? ' is-sel' : ''}`} style={{ color: r.color }} onClick={() => { onSelect([r.id], 'replace'); setListOpen(false); }}>
+                {r.name.toUpperCase()}
+              </button>
+            )
+            : <div key={r.id} className="mm-tree__head is-loose">{r.name.toUpperCase()}</div>
+        ) : (
           <div key={r.id} className="mm-tree__line" style={{ paddingLeft: r.depth * 16 }}>
             {r.depth === 0 && r.moons > 0
               ? <button className="mm-tree__fold" aria-label={folded.has(r.id) ? 'Show moons' : 'Hide moons'} onClick={() => fold(r.id)}>{folded.has(r.id) ? '▸' : '▾'}</button>
@@ -785,12 +825,14 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
               <span className="mm-tree__tag">{r.tag}</span>
             </button>
           </div>
-        ))}
+        )))}
       </div>
     </>
   );
 
-  const inspector = single === 'sun'
+  const inspector = singleSector
+    ? <SectorInspector key={singleSector.id} map={map} sector={singleSector} onChange={commit} onTransient={transient} onSelectWorlds={(ids) => setSelection(new Set(ids))} />
+    : single === 'sun'
     ? <SunInspector map={map} onChange={commit} onTransient={transient} />
     : singleBody
       ? <BodyInspector key={singleBody.id} map={map} body={singleBody} theme={theme} onChange={commit} onTransient={transient} />
@@ -798,7 +840,9 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
         ? <BulkBar compact map={map} ids={bulkIds} theme={theme} onChange={commit} onClear={() => setSelection(new Set())} onMatch={(a) => { setPicking({ aspects: a, ids: bulkIds }); setTool(null); }} />
         : bulkIds.length > 1
           ? <div className="mm-insp"><div className="mm-insp__body"><div className="mm-sec">{bulkIds.length} SELECTED</div><p className="mm-note">Use the bar under the map to change them all at once. Shift-click a world to add or drop it.</p></div></div>
-          : <MapInspector map={map} theme={theme} touch={mobile} onChange={commit} onTransient={transient} />;
+          : <MapInspector map={map} theme={theme} touch={mobile} onChange={commit} onTransient={transient}
+            onDrawSector={() => { setTool('sector'); setMapSheet(false); setPicking(null); }}
+            onPickSector={(id) => { setSelection(new Set([`sector:${id}`])); setMapSheet(false); setSheet('peek'); }} />;
 
   const lensPanel = lens && (
     <div className={`mm-lenspanel${lensOpen ? '' : ' is-folded'}`}>
@@ -827,6 +871,7 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
         map={map} scale={scale} selection={selection} tool={tool} preview={preview} fitSignal={fit}
         touch={mobile} symmetry={symmetry} ringCount={ringCount} lens={lens} picking={!!picking}
         onSelect={onSelect} onPlace={onPlace} onScatter={onScatter} onMove={onMove} onPick={onPick}
+        onSectorDraw={onSectorDraw} onSectorEdge={onSectorEdge}
         onCancelTool={() => { setTool(null); setPicking(null); }}
       />
       {!mobile && (
