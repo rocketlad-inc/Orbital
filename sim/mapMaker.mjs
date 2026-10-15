@@ -153,6 +153,11 @@ check('every capital is one of the map\'s start worlds',
 check('a lobby pick of a start world is honoured; a pick of Earth is not',
   caps.find(c => c.user_id === 'u0').capital_body_id === `${room}:${pickOne}`
     && caps.find(c => c.user_id === 'u1').capital_body_id !== `${room}:earth`);
+const capCities = (await DB.prepare(`SELECT s.owner_faction_id, s.body_id FROM game_settlements s WHERE s.game_id = ? AND s.type = 'city'`).bind(room).all()).results;
+const capRows = (await DB.prepare('SELECT id, capital_body_id FROM game_factions WHERE game_id = ?').bind(room).all()).results;
+check('every empire starts with a capital city on its start world',
+  capRows.length === 3 && capRows.every(f => capCities.some(c => c.owner_faction_id === f.id && c.body_id === f.capital_body_id)),
+  `${capCities.length} cities for ${capRows.length} empires`);
 const secretRow = bodies.find(b => b.template_id === `cm_${secretHost.id}`);
 check('the hand-placed discovery is where its maker hid it', secretRow?.secret_kind === 'ancient_city', secretRow?.secret_kind);
 check("...with its maker's own name and message stored beside it",

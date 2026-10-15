@@ -2430,7 +2430,12 @@ export async function seedGameWorld(env, gameId) {
   //     there normally.
   for (const f of factionRows) {
     const capTpl = f.capital_template_id;
-    const bodyTpl = BODY_CATALOG.find(b => b.id === capTpl);
+    // CATALOG, not BODY_CATALOG: on a custom map the capital is a `cm_`
+    // world that only this game's catalogue knows. Looking it up in the
+    // shipped one found nothing, so every Map Maker game started with no
+    // capital city and its homes fell to nobody on the first tick (found
+    // by the four-agent playtest, 2026-10-15).
+    const bodyTpl = CATALOG.find(b => b.id === capTpl);
     if (!bodyTpl) continue;
     const cityId = `${gameId}:c${f.slot}_${capTpl}`;
     // Surface angle is random per faction so cities don't all stack at 0.
