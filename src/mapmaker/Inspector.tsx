@@ -1,18 +1,21 @@
-// The Map Maker's right-hand panel: one world (World / Look / Secrets),
-// the sun, or -- with a group selected -- the bulk bar along the bottom.
+// The Map Maker's side panel: one world (World / Look / Story /
+// Secrets), the sun, the whole map when nothing is selected, and -- with
+// a group selected -- the bulk bar.
 
 import React, { useState } from 'react';
 import {
-  type CustomMap, type MapBody, type MapBodyType, type MapSecret,
-  TYPE_INFO, SURFACES, MAP_SECRETS, NAME_THEMES, RESOURCE_MAX, SUN_LIMITS,
+  type CustomMap, type MapBody, type MapBodyType, type MapSecret, type MapBackdrop,
+  TYPE_INFO, SURFACES, MAP_SECRETS, NAME_THEMES, RESOURCE_MAX, SUN_LIMITS, BACKDROPS, TEXT_LIMITS,
   canStartOn, secretFits, bodyYear, makeName, startWorlds,
 } from '../game/customMap';
 import { SECRET_DEFS } from '../game/secrets';
 import {
-  PRESETS, addMoon, changeType, deleteBodies, duplicateBodies, updateBodies, bulkResources,
+  PRESETS, MOODS, addMoons, changeType, deleteBodies, duplicateBodies, updateBodies, bulkResources,
   spaceEvenly, renameByTheme, recolor, markStart, setSecret, scaleSize, colorForSurface, takenNames,
-  type ResMode, type ResKey,
+  mirrorBodies, applyMood, rerollZone,
+  type ResMode, type ResKey, type MatchAspect,
 } from './ops';
+import { worldArt } from './planetArt';
 
 type Change = (next: CustomMap, select?: string[]) => void;
 
@@ -29,6 +32,9 @@ const STAR_SWATCHES = [
 const SURFACE_LABEL: Record<string, string> = {
   verdant: 'Verdant', ocean: 'Ocean', desert: 'Desert', rocky: 'Rocky', barren: 'Barren',
   ice: 'Ice', lava: 'Lava', toxic: 'Toxic', gas: 'Gas bands', storm: 'Storms',
+};
+export const BACKDROP_LABEL: Record<MapBackdrop, string> = {
+  deep: 'Deep space', blue: 'Blue nebula', crimson: 'Crimson nebula', emerald: 'Emerald nebula', violet: 'Violet nebula', amber: 'Amber dust',
 };
 const TYPES_FOR_SUN: MapBodyType[] = ['terrestrial', 'gas-giant', 'ice-giant', 'dwarf', 'asteroid', 'rock'];
 
@@ -66,28 +72,59 @@ function Slider({ value, min, max, step = 1, onChange, onCommit, label }: {
   );
 }
 
+/** − value + : big enough for a thumb, typeable with a keyboard. */
+export function Stepper({ value, min, max, step = 1, label, onChange }: {
+  value: number; min: number; max: number; step?: number; label: string; onChange: (v: number) => void;
+}) {
+  const set = (v: number) => onChange(Math.min(max, Math.max(min, Math.round(v / step) * step)));
+  return (
+    <span className="mm-step">
+      <button type="button" className="mm-step__b" aria-label={`Less ${label}`} onClick={() => set(value - step)} disabled={value <= min}>−</button>
+      <input className="mm-step__v" type="number" inputMode="numeric" min={min} max={max} step={step} value={value} aria-label={label}
+        onChange={(e) => set(Number(e.target.value))} />
+      <button type="button" className="mm-step__b" aria-label={`More ${label}`} onClick={() => set(value + step)} disabled={value >= max}>+</button>
+    </span>
+  );
+}
+
+/** A world's face as the game paints it. */
+export function WorldFace({ body, size = 48 }: { body: Pick<MapBody, 'id' | 'type' | 'color' | 'surface' | 'rings'>; size?: number }) {
+  const art = body.type === 'rock' ? null : worldArt(body, 128);
+  return (
+    <span className={`mm-face${body.rings ? ' has-rings' : ''}`} style={{ width: size, height: size }} aria-hidden>
+      {art
+        ? <img src={art} alt="" />
+        : <span className="mm-face__flat" style={{ background: `radial-gradient(circle at 35% 32%, #fff8, ${body.color} 55%, #0008)` }} />}
+    </span>
+  );
+}
+
 /** One world. */
 export const BodyInspector: React.FC<{
   map: CustomMap; body: MapBody; theme: string; onChange: Change; onTransient: (m: CustomMap) => void;
 }> = ({ map, body, theme, onChange, onTransient }) => {
-  const [tab, setTab] = useState<'world' | 'look' | 'secrets'>('world');
+  const [tab, setTab] = useState<'world' | 'look' | 'story' | 'secrets'>('world');
   const info = TYPE_INFO[body.type];
   const patch = (p: Partial<MapBody>) => onChange(updateBodies(map, [body.id], () => p));
   const live = (p: Partial<MapBody>) => onTransient(updateBodies(map, [body.id], () => p));
+  // Text mid-typing skips the cleaner, which trims: a trailing space
+  // would vanish under the cursor. It is cleaned on blur.
+  const liveText = (p: Partial<MapBody>) => onTransient({ ...map, bodies: map.bodies.map(x => (x.id === body.id ? { ...x, ...p } : x)) });
   const moons = map.bodies.filter(b => b.parent === body.id);
   const parent = body.parent === 'sun' ? null : map.bodies.find(b => b.id === body.parent);
   const year = Math.round(bodyYear(map, body));
   const st = startWorlds(map);
   const typeChoices: MapBodyType[] = body.type === 'moon' ? ['moon', ...TYPES_FOR_SUN] : TYPES_FOR_SUN;
+  const fixedSecret = !!body.secret && body.secret !== 'random';
 
   return (
     <div className="mm-insp">
       <div className="mm-insp__head">
-        <span className="mm-insp__disc" style={{ background: `radial-gradient(circle at 35% 32%, #fff8, ${body.color} 55%, #0008)` }} />
+        <WorldFace body={body} size={52} />
         <div className="mm-insp__id">
           <input
             className="mm-insp__name" value={body.name} aria-label="World name" maxLength={24}
-            onChange={(e) => live({ name: e.target.value })}
+            onChange={(e) => liveText({ name: e.target.value })}
             onBlur={(e) => patch({ name: e.target.value })}
           />
           <span className="mm-insp__sub">
@@ -107,9 +144,11 @@ export const BodyInspector: React.FC<{
       </div>
 
       <div className="mm-tabs" role="tablist">
-        {(['world', 'look', 'secrets'] as const).map(t => (
+        {(['world', 'look', 'story', 'secrets'] as const).map(t => (
           <button key={t} role="tab" aria-selected={tab === t} className={`mm-chip${tab === t ? ' is-on' : ''}`} onClick={() => setTab(t)}>
-            {t === 'world' ? 'World' : t === 'look' ? 'Look' : 'Secrets'}
+            {t === 'world' ? 'World' : t === 'look' ? 'Look' : t === 'story' ? 'Story' : 'Secrets'}
+            {t === 'story' && body.lore ? ' ·' : ''}
+            {t === 'secrets' && body.secret ? ' ?' : ''}
           </button>
         ))}
       </div>
@@ -142,10 +181,8 @@ export const BodyInspector: React.FC<{
                   <Slider label={r.label} value={body.yields[r.key]} min={0} max={RESOURCE_MAX}
                     onChange={(v) => live({ yields: { ...body.yields, [r.key]: v } })}
                     onCommit={() => onChange(map)} />
-                  <input
-                    className="mm-num" type="number" min={0} max={RESOURCE_MAX} value={body.yields[r.key]} aria-label={`${r.label} per tick`}
-                    onChange={(e) => patch({ yields: { ...body.yields, [r.key]: Number(e.target.value) } })}
-                  />
+                  <Stepper label={`${r.label} per tick`} value={body.yields[r.key]} min={0} max={RESOURCE_MAX}
+                    onChange={(v) => patch({ yields: { ...body.yields, [r.key]: v } })} />
                 </div>
               ))}
               <div className="mm-row mm-row--wrap">
@@ -158,7 +195,7 @@ export const BodyInspector: React.FC<{
 
           <div className="mm-grid2">
             <Field label="ORBIT DISTANCE">
-              <input className="mm-input" type="number" value={Math.round(body.orbit)} min={1}
+              <input className="mm-input" type="number" inputMode="numeric" value={Math.round(body.orbit)} min={1}
                 onChange={(e) => patch({ orbit: Number(e.target.value) })} />
             </Field>
             <Field label="YEAR">
@@ -195,7 +232,8 @@ export const BodyInspector: React.FC<{
               <div className="mm-sec">MOONS</div>
               <div className="mm-row mm-row--wrap">
                 {moons.map(m => <span key={m.id} className="mm-pill">{m.name}</span>)}
-                <button className="mm-chip is-dashed" onClick={() => { const r = addMoon(map, body.id, theme); onChange(r.map, [body.id]); }}>+ Add moon</button>
+                <button className="mm-chip is-dashed" onClick={() => { const r = addMoons(map, body.id, 1, theme); onChange(r.map, [body.id]); }}>+ Moon</button>
+                <button className="mm-chip is-dashed" onClick={() => { const r = addMoons(map, body.id, 3, theme); onChange(r.map, [body.id]); }}>+ 3 moons</button>
               </div>
             </div>
           )}
@@ -209,6 +247,10 @@ export const BodyInspector: React.FC<{
 
       {tab === 'look' && (
         <div className="mm-insp__body">
+          <div className="mm-look">
+            <WorldFace body={body} size={132} />
+            <p className="mm-note">This is the face the game paints on {body.name}. Players see this exact world.</p>
+          </div>
           <div className="mm-sec">COLOUR</div>
           <div className="mm-swatches">
             {SWATCHES.map(c => (
@@ -239,6 +281,19 @@ export const BodyInspector: React.FC<{
         </div>
       )}
 
+      {tab === 'story' && (
+        <div className="mm-insp__body">
+          <div className="mm-sec mm-sec--row"><span>A LINE OF LORE</span><span className="mm-mono">{(body.lore ?? '').length}/{TEXT_LIMITS.lore}</span></div>
+          <textarea
+            className="mm-input mm-text" rows={4} maxLength={TEXT_LIMITS.lore}
+            placeholder={`What is ${body.name}? A cradle, a graveyard, a rumour…`}
+            value={body.lore ?? ''} aria-label="World lore"
+            onChange={(e) => liveText({ lore: e.target.value })} onBlur={(e) => patch({ lore: e.target.value })}
+          />
+          <p className="mm-note">Players read it when they open this world in the game.</p>
+        </div>
+      )}
+
       {tab === 'secrets' && (
         <div className="mm-insp__body">
           {body.type === 'rock' ? (
@@ -263,6 +318,21 @@ export const BodyInspector: React.FC<{
                   );
                 })}
               </div>
+              {fixedSecret && (
+                <div className="mm-box">
+                  <div className="mm-sec">TELL IT YOUR WAY (OPTIONAL)</div>
+                  <Field label="ITS NAME">
+                    <input className="mm-input" maxLength={TEXT_LIMITS.secretName} placeholder={secretName(body.secret!)}
+                      value={body.secretName ?? ''} onChange={(e) => liveText({ secretName: e.target.value })} onBlur={(e) => patch({ secretName: e.target.value })} />
+                  </Field>
+                  <Field label={`WHAT THE FINDER READS · ${(body.secretText ?? '').length}/${TEXT_LIMITS.secretText}`}>
+                    <textarea className="mm-input mm-text" rows={3} maxLength={TEXT_LIMITS.secretText}
+                      placeholder="The hatch opens on a hall of sleeping engines…"
+                      value={body.secretText ?? ''} onChange={(e) => liveText({ secretText: e.target.value })} onBlur={(e) => patch({ secretText: e.target.value })} />
+                  </Field>
+                  <p className="mm-note">The reward is still the {secretName(body.secret!)}; only the words change. Nobody sees them before it is found.</p>
+                </div>
+              )}
               {body.start && <p className="mm-note">Start worlds hide nothing: whoever starts here would get it for free.</p>}
             </>
           )}
@@ -307,27 +377,83 @@ export const SunInspector: React.FC<{ map: CustomMap; onChange: Change; onTransi
   );
 };
 
-/** Nothing selected: what to do next. */
-export const EmptyInspector: React.FC<{ map: CustomMap }> = ({ map }) => (
-  <div className="mm-insp">
-    <div className="mm-insp__body">
-      <div className="mm-sec">GETTING STARTED</div>
-      <ol className="mm-steps">
-        <li>Pick something on the left, then click the map to place it.</li>
-        <li>Click a world to name it, shape it and set what it yields.</li>
-        <li>Drag a world to move it. Drag empty space to select a group, then change them all at once.</li>
-        <li>Mark where players start, hide a few discoveries, and check the list at the top.</li>
-      </ol>
-      <p className="mm-note">{map.bodies.length} bodies so far. Ctrl+Z undoes, Delete removes, Ctrl+D duplicates, Ctrl+A selects everything.</p>
-    </div>
-  </div>
-);
+/** Nothing selected: the whole map -- its pitch, its sky, its mood. */
+export const MapInspector: React.FC<{
+  map: CustomMap; theme: string; touch: boolean; onChange: Change; onTransient: (m: CustomMap) => void;
+}> = ({ map, theme, touch, onChange, onTransient }) => {
+  const [confirm, setConfirm] = useState<'inner' | 'outer' | null>(null);
+  const reroll = (zone: 'inner' | 'outer') => { const r = rerollZone(map, zone, theme); onChange(r.map, r.ids); setConfirm(null); };
+  const tap = touch ? 'Tap' : 'Click';
+  return (
+    <div className="mm-insp">
+      <div className="mm-insp__body">
+        {map.bodies.length < 3 && (
+          <>
+            <div className="mm-sec">GETTING STARTED</div>
+            <ol className="mm-steps">
+              <li>{touch ? 'Tap + and pick a world, then tap the map.' : 'Pick something on the left, then click the map to place it.'}</li>
+              <li>{tap} a world to name it, shape it and set what it yields.</li>
+              <li>{touch ? 'Long-press worlds to gather a group, then change them all at once.' : 'Drag a world to move it. Drag empty space to select a group.'}</li>
+              <li>Mark where players start, hide a few discoveries, and check the list at the top.</li>
+            </ol>
+          </>
+        )}
+        <div className="mm-sec mm-sec--row"><span>THE PITCH</span><span className="mm-mono">{map.blurb.length}/{TEXT_LIMITS.blurb}</span></div>
+        <textarea className="mm-input mm-text" rows={3} maxLength={TEXT_LIMITS.blurb}
+          placeholder="Two empires, one dying star, and a moon nobody should land on…"
+          value={map.blurb} aria-label="Map pitch"
+          onChange={(e) => onTransient({ ...map, blurb: e.target.value })} onBlur={(e) => onChange({ ...map, blurb: e.target.value })} />
+        <p className="mm-note">Shown in the gallery and on the lobby of every game on this map.</p>
 
-/** A group selected: the bar along the bottom of the map. */
+        <div className="mm-sec">MOOD · RESTYLE EVERYTHING</div>
+        <div className="mm-moods">
+          {MOODS.map(m => (
+            <button key={m.id} className={`mm-mood is-${m.backdrop}`} onClick={() => onChange(applyMood(map, m))} title={m.blurb}>
+              <span className="mm-mood__sun" style={{ background: m.sun }} />
+              <b>{m.label}</b>
+            </button>
+          ))}
+        </div>
+
+        <div className="mm-sec">THE SKY BEHIND</div>
+        <div className="mm-row mm-row--wrap">
+          {BACKDROPS.map(bd => (
+            <button key={bd} className={`mm-chip is-small mm-bd is-${bd}${map.settings.backdrop === bd ? ' is-on' : ''}`}
+              onClick={() => onChange({ ...map, settings: { ...map.settings, backdrop: bd } })}>
+              {BACKDROP_LABEL[bd]}
+            </button>
+          ))}
+        </div>
+
+        <div className="mm-sec">RE-ROLL HALF THE SYSTEM</div>
+        {confirm ? (
+          <div className="mm-box">
+            <p className="mm-note">Replace every {confirm} world, its moons and belts with new ones? Undo brings them back.</p>
+            <div className="mm-row mm-row--end">
+              <button className="mm-btn" onClick={() => setConfirm(null)}>Keep them</button>
+              <button className="mm-btn is-primary" onClick={() => reroll(confirm)}>Re-roll the {confirm} system</button>
+            </div>
+          </div>
+        ) : (
+          <div className="mm-row">
+            <button className="mm-btn" disabled={map.bodies.length < 2} onClick={() => setConfirm('inner')}>Inner worlds</button>
+            <button className="mm-btn" disabled={map.bodies.length < 2} onClick={() => setConfirm('outer')}>Outer worlds</button>
+          </div>
+        )}
+        {!touch && <p className="mm-note">{map.bodies.length} bodies. Ctrl+Z undoes, Delete removes, Ctrl+D duplicates, Ctrl+A selects everything.</p>}
+      </div>
+    </div>
+  );
+};
+
+/** A group selected: the bar along the bottom of the map (or, on a
+ *  phone, the action grid in the sheet). */
 export const BulkBar: React.FC<{
-  map: CustomMap; ids: string[]; theme: string; onChange: Change; onClear: () => void;
-}> = ({ map, ids, theme, onChange, onClear }) => {
-  const [open, setOpen] = useState<null | 'res' | 'size' | 'name' | 'color' | 'secret'>(null);
+  map: CustomMap; ids: string[]; theme: string; compact?: boolean;
+  onChange: Change; onClear: () => void;
+  onMatch: (aspects: Set<MatchAspect>) => void;
+}> = ({ map, ids, theme, compact, onChange, onClear, onMatch }) => {
+  const [open, setOpen] = useState<null | 'res' | 'size' | 'name' | 'color' | 'secret' | 'mirror' | 'match' | 'mood'>(null);
   const [mode, setMode] = useState<ResMode>('range');
   const [keep, setKeep] = useState(true);
   const [rows, setRows] = useState<Record<ResKey, { on: boolean; a: number; b: number }>>({
@@ -337,16 +463,20 @@ export const BulkBar: React.FC<{
   const [nameTheme, setNameTheme] = useState(theme);
   const [color, setColor] = useState('#9a8a78');
   const [vary, setVary] = useState(true);
+  const [ways, setWays] = useState(4);
+  const [aspects, setAspects] = useState<Set<MatchAspect>>(new Set(['resources', 'look']));
   const bodies = map.bodies.filter(b => ids.includes(b.id));
   const can = (types: (b: MapBody) => boolean) => bodies.some(types);
   const range = (k: ResKey) => {
     const vs = bodies.filter(b => b.type !== 'rock').map(b => b.yields[k]);
     return vs.length ? `${Math.min(...vs)}–${Math.max(...vs)}` : '–';
   };
-  const apply = (next: CustomMap) => { onChange(next, ids); setOpen(null); };
+  const apply = (next: CustomMap, select: string[] = ids) => { onChange(next, select); setOpen(null); };
+  const toggle = (k: typeof open) => setOpen(open === k ? null : k);
+  const roots = bodies.filter(b => b.parent === 'sun').length;
 
   return (
-    <div className="mm-bulk">
+    <div className={`mm-bulk${compact ? ' is-compact' : ''}`}>
       {open === 'res' && (
         <div className="mm-pop" role="dialog" aria-label="Resources for the selection">
           <div className="mm-pop__head">
@@ -364,8 +494,8 @@ export const BulkBar: React.FC<{
             return (
               <div key={r.key} className="mm-res">
                 <label className="mm-check is-tight"><input type="checkbox" checked={row.on} onChange={(e) => setRow({ on: e.target.checked })} /><span className={`mm-res__l ${r.cls}`}>{r.label}</span></label>
-                <input className="mm-num" type="number" step={mode === 'multiply' ? 0.25 : 1} value={row.a} aria-label={`${r.label} ${mode === 'range' ? 'low' : 'value'}`} onChange={(e) => setRow({ a: Number(e.target.value) })} />
-                {mode === 'range' && <><span className="mm-mono">to</span><input className="mm-num" type="number" value={row.b} aria-label={`${r.label} high`} onChange={(e) => setRow({ b: Number(e.target.value) })} /></>}
+                <input className="mm-num" type="number" inputMode="decimal" step={mode === 'multiply' ? 0.25 : 1} value={row.a} aria-label={`${r.label} ${mode === 'range' ? 'low' : 'value'}`} onChange={(e) => setRow({ a: Number(e.target.value) })} />
+                {mode === 'range' && <><span className="mm-mono">to</span><input className="mm-num" type="number" inputMode="numeric" value={row.b} aria-label={`${r.label} high`} onChange={(e) => setRow({ b: Number(e.target.value) })} /></>}
               </div>
             );
           })}
@@ -405,6 +535,18 @@ export const BulkBar: React.FC<{
           <div className="mm-row mm-row--end"><button className="mm-btn is-primary" onClick={() => apply(recolor(map, ids, color, vary))}>Recolour</button></div>
         </div>
       )}
+      {open === 'mood' && (
+        <div className="mm-pop is-small">
+          <div className="mm-pop__head"><b>Restyle {bodies.length}</b><span className="mm-mono">surfaces and colours</span></div>
+          <div className="mm-moods">
+            {MOODS.map(m => (
+              <button key={m.id} className={`mm-mood is-${m.backdrop}`} onClick={() => apply(applyMood(map, m, ids))} title={m.blurb}>
+                <span className="mm-mood__sun" style={{ background: m.sun }} /><b>{m.label}</b>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       {open === 'secret' && (
         <div className="mm-pop">
           <div className="mm-pop__head"><b>Discoveries on {bodies.length} worlds</b><span className="mm-mono">skipped where a kind does not fit</span></div>
@@ -417,21 +559,52 @@ export const BulkBar: React.FC<{
           </div>
         </div>
       )}
+      {open === 'mirror' && (
+        <div className="mm-pop is-small">
+          <div className="mm-pop__head"><b>Mirror round the sun</b><span className="mm-mono">{roots} world{roots === 1 ? '' : 's'} × {ways}</span></div>
+          <div className="mm-seg">
+            {[2, 3, 4, 5, 6, 8].map(n => <button key={n} className={`mm-chip${ways === n ? ' is-on' : ''}`} onClick={() => setWays(n)}>{n} ways</button>)}
+          </div>
+          <p className="mm-note">Copies each selected world (with its moons, start mark and discovery) {ways - 1} more time{ways > 2 ? 's' : ''}, evenly round the sun: every player gets the same neighbourhood.</p>
+          <div className="mm-row mm-row--end">
+            <button className="mm-btn is-primary" onClick={() => { const r = mirrorBodies(map, ids, ways, theme); apply(r.map, r.ids); }}>Mirror {ways} ways</button>
+          </div>
+        </div>
+      )}
+      {open === 'match' && (
+        <div className="mm-pop is-small">
+          <div className="mm-pop__head"><b>Make them match a world</b></div>
+          <div className="mm-row mm-row--wrap">
+            {([['resources', 'Resources'], ['look', 'Look'], ['size', 'Size'], ['secret', 'Discovery']] as Array<[MatchAspect, string]>).map(([k, l]) => (
+              <label key={k} className="mm-check is-tight">
+                <input type="checkbox" checked={aspects.has(k)} onChange={(e) => { const n = new Set(aspects); if (e.target.checked) n.add(k); else n.delete(k); setAspects(n); }} />
+                <span>{l}</span>
+              </label>
+            ))}
+          </div>
+          <div className="mm-row mm-row--end">
+            <button className="mm-btn is-primary" disabled={!aspects.size} onClick={() => { onMatch(aspects); setOpen(null); }}>Pick the world to copy</button>
+          </div>
+        </div>
+      )}
 
       <div className="mm-bulk__bar">
         <span className="mm-bulk__count">{bodies.length} selected</span>
-        <span className="mm-bulk__sep" />
-        <button className={`mm-bbtn${open === 'res' ? ' is-on' : ''}`} onClick={() => setOpen(open === 'res' ? null : 'res')}>Resources</button>
-        <button className={`mm-bbtn${open === 'size' ? ' is-on' : ''}`} onClick={() => setOpen(open === 'size' ? null : 'size')}>Size</button>
-        {can(b => b.parent === 'sun') && <button className="mm-bbtn" onClick={() => apply(spaceEvenly(map, ids))} title="Even spacing between the innermost and outermost selected">Space orbits evenly</button>}
-        <button className={`mm-bbtn${open === 'name' ? ' is-on' : ''}`} onClick={() => setOpen(open === 'name' ? null : 'name')}>Rename by theme</button>
-        <button className={`mm-bbtn${open === 'color' ? ' is-on' : ''}`} onClick={() => setOpen(open === 'color' ? null : 'color')}>Recolour</button>
+        {!compact && <span className="mm-bulk__sep" />}
+        <button className={`mm-bbtn${open === 'res' ? ' is-on' : ''}`} onClick={() => toggle('res')}>Resources</button>
+        <button className={`mm-bbtn${open === 'match' ? ' is-on' : ''}`} onClick={() => toggle('match')}>Match a world</button>
+        {roots > 0 && <button className={`mm-bbtn${open === 'mirror' ? ' is-on' : ''}`} onClick={() => toggle('mirror')}>Mirror</button>}
+        <button className={`mm-bbtn${open === 'size' ? ' is-on' : ''}`} onClick={() => toggle('size')}>Size</button>
+        {can(b => b.parent === 'sun') && <button className="mm-bbtn" onClick={() => apply(spaceEvenly(map, ids))} title="Even spacing between the innermost and outermost selected">Space evenly</button>}
+        <button className={`mm-bbtn${open === 'name' ? ' is-on' : ''}`} onClick={() => toggle('name')}>Rename</button>
+        <button className={`mm-bbtn${open === 'color' ? ' is-on' : ''}`} onClick={() => toggle('color')}>Recolour</button>
+        <button className={`mm-bbtn${open === 'mood' ? ' is-on' : ''}`} onClick={() => toggle('mood')}>Mood</button>
         {can(b => canStartOn(b.type)) && (
           bodies.every(b => !canStartOn(b.type) || b.start)
             ? <button className="mm-bbtn" onClick={() => apply(markStart(map, ids, false))}>Unmark start</button>
             : <button className="mm-bbtn" onClick={() => apply(markStart(map, ids, true))}>Mark as start</button>
         )}
-        <button className={`mm-bbtn${open === 'secret' ? ' is-on' : ''}`} onClick={() => setOpen(open === 'secret' ? null : 'secret')}>Discoveries</button>
+        <button className={`mm-bbtn${open === 'secret' ? ' is-on' : ''}`} onClick={() => toggle('secret')}>Discoveries</button>
         <button className="mm-bbtn" onClick={() => { const r = duplicateBodies(map, ids, theme); onChange(r.map, r.ids); }}>Duplicate</button>
         <button className="mm-bbtn is-danger" onClick={() => onChange(deleteBodies(map, ids), [])}>Delete</button>
         <button className="mm-bbtn" onClick={onClear} aria-label="Clear selection">✕</button>

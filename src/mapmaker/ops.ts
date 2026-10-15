@@ -2,8 +2,8 @@
 // next, so undo is just keeping the old map and bulk edits are loops.
 
 import {
-  type CustomMap, type MapBody, type MapBodyType, type MapYields, type MapSecret,
-  TYPE_INFO, newBodyId, makeName, normalizeMap, canStartOn, secretFits, ORBIT_LIMITS, RESOURCE_MAX,
+  type CustomMap, type MapBody, type MapBodyType, type MapYields, type MapSecret, type MapSurface, type MapBackdrop,
+  TYPE_INFO, newBodyId, makeName, normalizeMap, canStartOn, secretFits, generateMap, ORBIT_LIMITS, RESOURCE_MAX, MAX_BODIES,
 } from '../game/customMap';
 import type { PlaceTool } from './MapView';
 
@@ -227,3 +227,198 @@ export const PRESETS: Array<{ label: string; y: MapYields }> = [
   { label: 'Credit world', y: { metal: 2, credits: 12, science: 2 } },
   { label: 'Research world', y: { metal: 2, credits: 2, science: 12 } },
 ];
+
+// ---- paint tools, symmetry, moods ---------------------------------------
+
+/** Several moons at once, each just outside the last. */
+export function addMoons(map: CustomMap, planetId: string, n: number, theme: string): { map: CustomMap; ids: string[] } {
+  let m = map;
+  const ids: string[] = [];
+  for (let i = 0; i < n; i++) {
+    const r = addMoon(m, planetId, theme);
+    m = r.map;
+    ids.push(...r.ids);
+  }
+  return { map: m, ids };
+}
+
+/** The same placement repeated round the sun, `n` ways. */
+export function placeSymmetric(
+  map: CustomMap, tool: PlaceTool, orbit: number, angle: number, theme: string, n: number,
+): { map: CustomMap; ids: string[] } {
+  let m = map;
+  const ids: string[] = [];
+  for (let k = 0; k < Math.max(1, n); k++) {
+    const r = placeBody(m, tool, 'sun', orbit, angle + (k * Math.PI * 2) / Math.max(1, n), theme);
+    m = r.map;
+    ids.push(...r.ids);
+  }
+  return { map: m, ids };
+}
+
+/** `n` worlds of one type spaced evenly round one orbit. */
+export function ringOf(
+  map: CustomMap, type: MapBodyType, n: number, orbit: number, angle: number, theme: string,
+): { map: CustomMap; ids: string[] } {
+  return placeSymmetric(map, type === 'moon' ? 'dwarf' : type, orbit, angle, theme, n);
+}
+
+/** A spray of asteroids, one per point. */
+export function scatterAsteroids(
+  map: CustomMap, points: Array<{ orbit: number; angle: number }>, theme: string,
+): { map: CustomMap; ids: string[] } {
+  const taken = takenNames(map);
+  const ids = idsOf(map);
+  const out: MapBody[] = [];
+  const room = Math.max(0, MAX_BODIES - map.bodies.length);
+  for (const p of points.slice(0, room)) {
+    const id = newBodyId(ids);
+    ids.add(id);
+    const name = makeName(theme, taken, Math.random, map.bodies.length + out.length, map.sun.name);
+    taken.add(name.toLowerCase());
+    out.push({
+      id, name, type: 'asteroid', parent: 'sun', orbit: p.orbit, angle: p.angle,
+      radius: 0.5 + Math.random() * 0.6,
+      yields: { metal: 2 + Math.floor(Math.random() * 3), credits: Math.floor(Math.random() * 2), science: Math.floor(Math.random() * 2) },
+      color: TYPE_INFO.asteroid.color, surface: TYPE_INFO.asteroid.surface, rings: false, start: false, secret: null,
+    });
+  }
+  return { map: normalizeMap({ ...map, bodies: [...map.bodies, ...out] }), ids: out.map(b => b.id) };
+}
+
+/**
+ * Mirror a selection round the sun: `n` copies in all, each turned a
+ * further 1/n of a circle, with their moons, start marks and hidden
+ * discoveries -- the quick road to a fair competitive map.
+ */
+export function mirrorBodies(map: CustomMap, ids: Iterable<string>, n: number, theme: string): { map: CustomMap; ids: string[] } {
+  const want = new Set(ids);
+  // Mirror whole systems: a selected moon brings its planet.
+  for (const b of map.bodies) if (want.has(b.id) && b.parent !== 'sun') want.add(b.parent);
+  const roots = map.bodies.filter(b => want.has(b.id) && b.parent === 'sun');
+  const src = map.bodies.filter(b => roots.some(r => r.id === b.id || r.id === b.parent));
+  const taken = takenNames(map);
+  const allIds = idsOf(map);
+  const copies: MapBody[] = [];
+  const picked: string[] = roots.map(r => r.id);
+  for (let k = 1; k < Math.max(2, n); k++) {
+    const remap = new Map<string, string>();
+    for (const b of src) { const id = newBodyId(allIds); allIds.add(id); remap.set(b.id, id); }
+    for (const b of src) {
+      const name = makeName(theme, taken, Math.random, copies.length, map.sun.name);
+      taken.add(name.toLowerCase());
+      const id = remap.get(b.id)!;
+      copies.push({
+        ...b, id, name,
+        parent: remap.get(b.parent) ?? b.parent,
+        angle: b.parent === 'sun' ? b.angle + (k * Math.PI * 2) / n : b.angle,
+      });
+      if (b.parent === 'sun') picked.push(id);
+    }
+  }
+  const room = MAX_BODIES - map.bodies.length;
+  return { map: normalizeMap({ ...map, bodies: [...map.bodies, ...copies.slice(0, Math.max(0, room))] }), ids: picked };
+}
+
+export type MatchAspect = 'resources' | 'look' | 'size' | 'secret';
+
+/** Copy chosen aspects of one world onto others. */
+export function matchBodies(map: CustomMap, srcId: string, ids: Iterable<string>, aspects: Set<MatchAspect>): CustomMap {
+  const src = map.bodies.find(b => b.id === srcId);
+  if (!src) return map;
+  const targets = new Set([...ids].filter(id => id !== srcId));
+  return updateBodies(map, targets, b => ({
+    ...(aspects.has('resources') && b.type !== 'rock' && src.type !== 'rock' ? { yields: { ...src.yields } } : {}),
+    ...(aspects.has('look') ? { color: src.color, surface: src.surface, rings: src.rings } : {}),
+    ...(aspects.has('size') ? { radius: src.radius } : {}),
+    ...(aspects.has('secret') && secretFits(src.secret, b.type) && !b.start
+      ? { secret: src.secret ?? null, secretName: src.secretName, secretText: src.secretText } : {}),
+  }));
+}
+
+/** A whole-map style in one click. */
+export interface Mood {
+  id: string; label: string; blurb: string;
+  sun: string; backdrop: MapBackdrop;
+  /** surfaces a rocky world may take (one picked per world) */
+  rocky: MapSurface[];
+  giants: string[]; ice: string[]; small: string;
+}
+export const MOODS: Mood[] = [
+  { id: 'garden', label: 'Garden', blurb: 'Green worlds and blue seas under a warm sun.', sun: '#ffd180', backdrop: 'emerald',
+    rocky: ['verdant', 'verdant', 'ocean'], giants: ['#d4a574', '#e0c08a'], ice: ['#73c2d6'], small: '#a0a6ad' },
+  { id: 'ice-age', label: 'Ice Age', blurb: 'A pale sun and frozen worlds.', sun: '#fff1d6', backdrop: 'blue',
+    rocky: ['ice', 'ice', 'barren'], giants: ['#c6d8e0', '#a9c8ff'], ice: ['#cfe8f2', '#9fd3e6'], small: '#d6e4ea' },
+  { id: 'hellscape', label: 'Hellscape', blurb: 'Molten crusts round a red star.', sun: '#ff9b5e', backdrop: 'crimson',
+    rocky: ['lava', 'lava', 'rocky'], giants: ['#c1440e', '#a8562a'], ice: ['#8a5a6b'], small: '#6b5a52' },
+  { id: 'dunes', label: 'Desert Worlds', blurb: 'Sand seas and dry rock, scorched gold.', sun: '#ffd180', backdrop: 'amber',
+    rocky: ['desert', 'desert', 'rocky'], giants: ['#e0c08a', '#c98b5a'], ice: ['#c9b48a'], small: '#b8a080' },
+  { id: 'bloom', label: 'Toxic Bloom', blurb: 'Acid greens under a violet sky.', sun: '#a9c8ff', backdrop: 'violet',
+    rocky: ['toxic', 'toxic', 'ocean'], giants: ['#9ab83c', '#7a9a5c'], ice: ['#6fa8c9'], small: '#8a9a7a' },
+  { id: 'classic', label: 'Classic', blurb: 'Every world back to the plain look of its type.', sun: '#ffd180', backdrop: 'deep',
+    rocky: [], giants: [], ice: [], small: '' },
+];
+
+export function applyMood(map: CustomMap, mood: Mood, ids?: Iterable<string> | null): CustomMap {
+  const only = ids ? new Set(ids) : null;
+  const pick = <T,>(xs: T[]) => xs[Math.floor(Math.random() * xs.length)];
+  const next = updateBodies(map, map.bodies.filter(b => !only || only.has(b.id)).map(b => b.id), b => {
+    if (mood.id === 'classic') {
+      const info = TYPE_INFO[b.type];
+      return { color: info.color, surface: info.surface };
+    }
+    if (b.type === 'gas-giant') return { color: pick(mood.giants), surface: 'gas' };
+    if (b.type === 'ice-giant') return { color: pick(mood.ice), surface: 'storm' };
+    if (b.type === 'asteroid' || b.type === 'rock') return { color: mood.small };
+    if (b.type === 'moon' && Math.random() < 0.6) return { color: mood.small, surface: mood.rocky.includes('ice') ? 'ice' : 'barren' };
+    const s = pick(mood.rocky);
+    return { surface: s, color: colorForSurface(s, b.color) };
+  });
+  if (only) return next;
+  return { ...next, sun: { ...next.sun, color: mood.sun }, settings: { ...next.settings, backdrop: mood.backdrop } };
+}
+
+/**
+ * Re-roll half the system: the inner or the outer worlds (split at the
+ * middle of the sun's worlds) are replaced by freshly generated ones in
+ * the same span of orbits, keeping as many start worlds as were there.
+ */
+export function rerollZone(map: CustomMap, zone: 'inner' | 'outer', theme: string): { map: CustomMap; ids: string[] } {
+  const kids = map.bodies.filter(b => b.parent === 'sun' && b.type !== 'asteroid' && b.type !== 'rock').sort((a, b) => a.orbit - b.orbit);
+  if (kids.length < 2) return { map, ids: [] };
+  const half = Math.ceil(kids.length / 2);
+  const split = Math.sqrt(kids[half - 1].orbit * kids[Math.min(half, kids.length - 1)].orbit);
+  const inZone = (o: number) => (zone === 'inner' ? o <= split : o > split);
+  const gone = new Set(map.bodies.filter(b => b.parent === 'sun' && inZone(b.orbit)).map(b => b.id));
+  for (const b of map.bodies) if (gone.has(b.parent)) gone.add(b.id);
+  const removed = map.bodies.filter(b => gone.has(b.id) && b.parent === 'sun');
+  const worlds = removed.filter(b => b.type !== 'asteroid' && b.type !== 'rock');
+  if (!worlds.length) return { map, ids: [] };
+  const starts = map.bodies.filter(b => gone.has(b.id) && b.start).length;
+  const lo = Math.min(...removed.map(b => b.orbit)), hi = Math.max(...removed.map(b => b.orbit));
+  const gen = generateMap({
+    theme, planets: Math.max(2, worlds.length), belts: removed.some(b => b.type === 'asteroid') ? 1 : 0, starts: 2,
+  });
+  const gKids = gen.bodies.filter(b => b.parent === 'sun');
+  const gLo = Math.min(...gKids.map(b => b.orbit)), gHi = Math.max(...gKids.map(b => b.orbit));
+  const span = (o: number) => {
+    if (gHi <= gLo || hi <= lo) return lo;
+    const f = Math.log(o / gLo) / Math.log(gHi / gLo);
+    return lo * Math.pow(hi / lo, f);
+  };
+  const keep = map.bodies.filter(b => !gone.has(b.id));
+  const taken = new Set([map.sun.name, ...keep.map(b => b.name)].map(n => n.toLowerCase()));
+  const allIds = new Set(keep.map(b => b.id));
+  const remap = new Map<string, string>();
+  for (const b of gen.bodies) { const id = newBodyId(allIds); allIds.add(id); remap.set(b.id, id); }
+  const fresh: MapBody[] = gen.bodies.map((b, i) => {
+    let name = b.name;
+    if (taken.has(name.toLowerCase())) name = makeName(theme, taken, Math.random, i, map.sun.name);
+    taken.add(name.toLowerCase());
+    return { ...b, id: remap.get(b.id)!, name, parent: remap.get(b.parent) ?? 'sun', orbit: b.parent === 'sun' ? span(b.orbit) : b.orbit, start: false };
+  });
+  // As many start worlds as the zone had, on its roomiest worlds.
+  const cands = fresh.filter(b => canStartOn(b.type) && b.parent === 'sun').sort((a, b) => b.radius - a.radius);
+  for (const b of cands.slice(0, starts)) { b.start = true; b.secret = null; b.yields.science = Math.max(2, b.yields.science); }
+  return { map: normalizeMap({ ...map, bodies: [...keep, ...fresh] }), ids: fresh.filter(b => b.parent === 'sun').map(b => b.id) };
+}

@@ -127,11 +127,7 @@ describe('server surface', () => {
   // respond, pay and cancel are all reachable from the economy tab. The
   // list is empty on purpose — an empty KNOWN_DEAD is the goal state,
   // not a sign the rule stopped doing anything.
-  //
-  // maps/:id/remix (customMaps.js, staging-only): the Map Maker gallery's
-  // server half landed before its client (src/mapmaker). Delete this
-  // entry when the gallery's Remix button calls it.
-  const KNOWN_DEAD: string[] = ['/remix'];
+  const KNOWN_DEAD: string[] = [];
 
   // A CALLER CAN LIVE IN THE WORKER TOO. Some pages are server-rendered
   // with their own inline script (worker/panel.js serves the desktop
