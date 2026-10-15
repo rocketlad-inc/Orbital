@@ -15,13 +15,16 @@ import { tk } from '../i18n/core';
 // across every class: Specter, Talon, Corsair, Aurora, Bastion, Mirage,
 // Tempest, Sovereign, Drake, Eclipse). The picker dropdown at ship
 // construction lets the player override the default per-build. Server
-// validators accept /^[A-Y]$/ (T-Y added with the visual overhaul) with J–S requiring the cosmetics
-// entitlement — keep in sync with worker/store.js.
+// validators accept /^[A-Z]$/ (T-Y added with the visual overhaul, Z the
+// Medieval Series) with J–Z requiring the cosmetics entitlement — keep in
+// sync with worker/store.js.
 export type ShipIconVariant =
   | 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I'
   | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S'
   // T: the free twentieth design; U-Y: the homage line (visual overhaul).
-  | 'T' | 'U' | 'V' | 'W' | 'X' | 'Y';
+  | 'T' | 'U' | 'V' | 'W' | 'X' | 'Y'
+  // Z: the Medieval Series (src/render/hulls/medieval.ts).
+  | 'Z';
 export type ShipIconClass = 'corvette' | 'frigate' | 'destroyer' | 'freighter' | 'colony';
 
 /**
@@ -1385,32 +1388,32 @@ const REGISTRY: Record<ShipIconClass, Partial<Record<ShipIconVariant, React.FC<I
  *  dropdown and the ?icons gallery. */
 export const ICON_VARIANT_NAMES: Record<ShipIconClass, Record<ShipIconVariant, string>> = {
   corvette:  { A: 'Dart',      B: 'Delta',     C: 'Gunship',     D: 'Needle',     E: 'Dart-Fin',   F: 'Raptor',   G: 'Viper',    H: 'Scythe',    I: 'Wasp',
-               J: 'Specter',   K: 'Talon',     L: 'Corsair',     M: 'Aurora',     N: 'Bastion',    O: 'Mirage',   P: 'Tempest',  Q: 'Sovereign', R: 'Drake', S: 'Eclipse', T: 'Trine', U: 'Crossfoil', V: 'Hexwing', W: 'Stinger', X: 'Quadpod', Y: 'Kitefox' },
+               J: 'Specter',   K: 'Talon',     L: 'Corsair',     M: 'Aurora',     N: 'Bastion',    O: 'Mirage',   P: 'Tempest',  Q: 'Sovereign', R: 'Drake', S: 'Eclipse', T: 'Trine', U: 'Crossfoil', V: 'Hexwing', W: 'Stinger', X: 'Quadpod', Y: 'Kitefox', Z: 'Spear' },
   frigate:   { A: 'Cruciform', B: 'Diamond',   C: 'Triple-Turret', D: 'Starship', E: 'Hawk',       F: 'Carrier',  G: 'Trident',  H: 'Manta',     I: 'Lance',
-               J: 'Specter',   K: 'Talon',     L: 'Corsair',     M: 'Aurora',     N: 'Bastion',    O: 'Mirage',   P: 'Tempest',  Q: 'Sovereign', R: 'Drake', S: 'Eclipse', T: 'Trimaran', U: 'Saucerwing', V: 'Stormhawk', W: 'Warbird', X: 'Nightjar', Y: 'Brawler' },
+               J: 'Specter',   K: 'Talon',     L: 'Corsair',     M: 'Aurora',     N: 'Bastion',    O: 'Mirage',   P: 'Tempest',  Q: 'Sovereign', R: 'Drake', S: 'Eclipse', T: 'Trimaran', U: 'Saucerwing', V: 'Stormhawk', W: 'Warbird', X: 'Nightjar', Y: 'Brawler', Z: 'Longsword' },
   destroyer: { A: 'Hexagon',   B: 'Wedge',     C: 'Capital',     D: 'Dreadnought', E: 'Railgun',   F: 'Broadside', G: 'Citadel', H: 'Hammer',    I: 'Leviathan',
-               J: 'Specter',   K: 'Talon',     L: 'Corsair',     M: 'Aurora',     N: 'Bastion',    O: 'Mirage',   P: 'Tempest',  Q: 'Sovereign', R: 'Drake', S: 'Eclipse', T: 'Twin Keel', U: 'Flightdeck', V: 'Dagger', W: 'Ironclad', X: 'Marauder', Y: 'Siegespine' },
+               J: 'Specter',   K: 'Talon',     L: 'Corsair',     M: 'Aurora',     N: 'Bastion',    O: 'Mirage',   P: 'Tempest',  Q: 'Sovereign', R: 'Drake', S: 'Eclipse', T: 'Twin Keel', U: 'Flightdeck', V: 'Dagger', W: 'Ironclad', X: 'Marauder', Y: 'Siegespine', Z: 'Warhammer' },
   freighter: { A: 'Containers', B: 'Tug',      C: 'Bulk',        D: 'Tanker',     E: 'Ring',       F: 'Barge',    G: 'Clipper',  H: 'Gantry',    I: 'Hive',
-               J: 'Specter',   K: 'Talon',     L: 'Corsair',     M: 'Aurora',     N: 'Bastion',    O: 'Mirage',   P: 'Tempest',  Q: 'Sovereign', R: 'Drake', S: 'Eclipse', T: 'Caravan', U: 'Mandible', V: 'Wanderer', W: 'Towline', X: 'Moonhopper', Y: 'Skimmer' },
+               J: 'Specter',   K: 'Talon',     L: 'Corsair',     M: 'Aurora',     N: 'Bastion',    O: 'Mirage',   P: 'Tempest',  Q: 'Sovereign', R: 'Drake', S: 'Eclipse', T: 'Caravan', U: 'Mandible', V: 'Wanderer', W: 'Towline', X: 'Moonhopper', Y: 'Skimmer', Z: 'Battle Axe' },
   colony:    { A: 'Ark',       B: 'Ark',       C: 'Ark',         D: 'Ark',        E: 'Ark',        F: 'Ark',      G: 'Ark',      H: 'Ark',       I: 'Ark',
-               J: 'Specter',   K: 'Talon',     L: 'Corsair',     M: 'Aurora',     N: 'Bastion',    O: 'Mirage',   P: 'Tempest',  Q: 'Sovereign', R: 'Drake', S: 'Eclipse', T: 'Nautilus', U: 'Longreach', V: 'Wheelhouse', W: 'Grand Liner', X: 'Shieldbearer', Y: 'Two-Deck' },
+               J: 'Specter',   K: 'Talon',     L: 'Corsair',     M: 'Aurora',     N: 'Bastion',    O: 'Mirage',   P: 'Tempest',  Q: 'Sovereign', R: 'Drake', S: 'Eclipse', T: 'Nautilus', U: 'Longreach', V: 'Wheelhouse', W: 'Grand Liner', X: 'Shieldbearer', Y: 'Two-Deck', Z: 'Kite Shield' },
 };
 
 /** Every variant id, ordered for the gallery + picker. */
 export const ALL_VARIANTS: ShipIconVariant[] = [
   'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I',
   'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S',
-  'T', 'U', 'V', 'W', 'X', 'Y',
+  'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
 ];
 
 /** The Commission's letters: the J-S lines, plus every design the visual
- *  overhaul added (T and the U-Y homage line). UI gates pickers on this + is_premium; the
+ *  overhaul added (T and the U-Y homage line), and Z, the Medieval Series. UI gates pickers on this + is_premium; the
  *  SERVER re-checks the entitlement on every save (worker/store.js
  *  validateIconVariant) — this set is a mirror for rendering locks,
  *  never the enforcement. */
 export const PREMIUM_VARIANTS: ReadonlySet<ShipIconVariant> = new Set<ShipIconVariant>([
   'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S',
-  'T', 'U', 'V', 'W', 'X', 'Y',
+  'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
 ]);
 
 /** Player-chosen default icon variant per class. */

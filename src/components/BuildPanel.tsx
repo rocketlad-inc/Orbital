@@ -335,8 +335,9 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
           }
         });
     } else {
-      // Single-player: local state is canonical.
-      const success = buildShip(body.id, shipClass, name, variant);
+      // Single-player: local state is canonical. SP predates the Z line
+      // (and the Commission), so a Z pick builds the class default there.
+      const success = buildShip(body.id, shipClass, name, variant === 'Z' ? undefined : variant);
       if (!success && fromQueue) {
         setPendingNames(prev => [fromQueue, ...prev]);
       }

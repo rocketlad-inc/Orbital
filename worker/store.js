@@ -65,8 +65,9 @@ export const SKUS = {
 // in src/components/ShipIcons.tsx — same keep-in-sync arrangement as
 // emblems). One validator for every save path so the rule can't drift
 // between the build queue, the designer and the account template store.
-const ICON_VARIANT_RE = /^[A-Y]$/;
-const PREMIUM_ICON_VARIANTS = new Set(['J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y']);
+const ICON_VARIANT_RE = /^[A-Z]$/;
+// Z = the Medieval Series (src/render/hulls/medieval.ts), Commission-only.
+const PREMIUM_ICON_VARIANTS = new Set(['J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z']);
 
 // Megastructure looks: ONE per kind is free, the default 'A'; every other
 // look on every kind needs the Commission (2026-10-05). A rule, not a

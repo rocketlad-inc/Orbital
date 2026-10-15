@@ -43,7 +43,7 @@ describe('engine bells', () => {
 
   it('an unknown letter burns from the class default, like the icon it draws', () => {
     for (const cls of ['corvette', 'frigate', 'destroyer']) {
-      expect(driveBellsFor(cls, 'Z')).toEqual(driveBellsFor(cls, DEFAULT_SHIP_ICONS[cls as keyof typeof DEFAULT_SHIP_ICONS]));
+      expect(driveBellsFor(cls, '9')).toEqual(driveBellsFor(cls, DEFAULT_SHIP_ICONS[cls as keyof typeof DEFAULT_SHIP_ICONS]));
     }
     expect(driveBellsFor('warp_toaster', null)).toBeNull();
   });

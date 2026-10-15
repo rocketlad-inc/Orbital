@@ -227,6 +227,82 @@ const GLYPHS: Record<EmblemId, (p: GlyphProps) => React.ReactElement> = {
     <path d="M31.5 16 L19 19 L21 16 L19 13z" />
     <circle cx="16" cy="16" r="3" />
   </>, title),
+  // ---- The space wing (Commander's Commission, Oct 2026) ----
+  binary: ({ title }) => wrap(<>
+    {/* Two four-point stars, a big one and its twin, on one shared orbit. */}
+    <ellipse cx="16" cy="16" rx="14.5" ry="6" fill="none" stroke="currentColor"
+      strokeWidth="1.9" transform="rotate(-32 16 16)" />
+    <path d="M10 10.5 L12.2 17 L18.6 19.2 L12.2 21.4 L10 27.8 L7.8 21.4 L1.4 19.2 L7.8 17z" />
+    <path d="M22.5 4.6 L24 9.1 L28.5 10.6 L24 12.1 L22.5 16.6 L21 12.1 L16.5 10.6 L21 9.1z" />
+  </>, title),
+
+  station: ({ title }) => wrap(<>
+    {/* A habitat ring seen at a tilt, spokes to a hub, the spindle through
+        it with a docking module on top. (Face-on, a spoked ring read as a
+        ship's wheel.) */}
+    <ellipse cx="16" cy="18" rx="14" ry="6.6" fill="none" stroke="currentColor" strokeWidth="3.6" />
+    <rect x="3" y="17" width="26" height="2" rx="1" />
+    <rect x="14.4" y="3.4" width="3.2" height="25" rx="1.2" />
+    <rect x="11.4" y="1" width="9.2" height="4.6" rx="1.2" />
+    <circle cx="16" cy="18" r="3.6" />
+  </>, title),
+
+  blackhole: ({ title }) => wrap(<>
+    {/* The dark is the empty middle: a bright photon ring around nothing,
+        the accretion disc crossing in front of it. */}
+    <circle cx="16" cy="15" r="8.6" fill="none" stroke="currentColor" strokeWidth="2.8" />
+    <circle cx="16" cy="15" r="12.4" fill="none" stroke="currentColor" strokeWidth="1.1" opacity="0.55" />
+    <path fillRule="evenodd"
+      d="M0.5 17.2 Q16 10.4 31.5 17.2 Q16 24 0.5 17.2z M8.5 17.2 Q16 15.4 23.5 17.2 Q16 19 8.5 17.2z" />
+  </>, title),
+
+  pulsar: ({ title }) => wrap(<>
+    {/* A small hot star throwing two opposed beams. */}
+    <path d="M14.6 13.4 L3.2 0.8 L0.8 3.2 L13.4 14.6z" />
+    <path d="M17.4 18.6 L28.8 31.2 L31.2 28.8 L18.6 17.4z" />
+    <path d="M14.2 13 L1 6.5 L1 0.6 L6.5 1z" opacity="0.45" />
+    <path d="M17.8 19 L31 25.5 L31 31.4 L25.5 31z" opacity="0.45" />
+    <circle cx="16" cy="16" r="4.6" />
+    <circle cx="16" cy="16" r="8" fill="none" stroke="currentColor" strokeWidth="1.6" />
+  </>, title),
+
+  eclipse: ({ title }) => wrap(<>
+    {/* Totality: a corona of rays around a dark disc, and the diamond-ring bead. */}
+    {Array.from({ length: 16 }, (_, i) => (
+      <rect key={i} x="15.1" y={i % 2 ? 2.6 : 0.6} width="1.8" height={i % 2 ? 4.4 : 6.4} rx="0.9"
+        transform={`rotate(${i * 22.5} 16 16)`} />
+    ))}
+    <circle cx="16" cy="16" r="8.4" fill="none" stroke="currentColor" strokeWidth="2.4" />
+    <circle cx="21.9" cy="10.1" r="2.6" />
+  </>, title),
+
+  satellite: ({ title }) => wrap(<g transform="rotate(-35 16 16)">
+    {/* A body, two split solar wings and a dish. */}
+    <rect x="12.4" y="11.6" width="7.2" height="8.8" rx="1.2" />
+    <rect x="1" y="12.6" width="4.6" height="6.8" rx="0.6" />
+    <rect x="6.3" y="12.6" width="4.6" height="6.8" rx="0.6" />
+    <rect x="21.1" y="12.6" width="4.6" height="6.8" rx="0.6" />
+    <rect x="26.4" y="12.6" width="4.6" height="6.8" rx="0.6" />
+    <rect x="10.6" y="15.2" width="11" height="1.6" />
+    <rect x="15.2" y="7.4" width="1.6" height="4.6" />
+    <path d="M11 7.6 Q16 11 21 7.6 Q16 4.2 11 7.6z" />
+  </g>, title),
+
+  helmet: ({ title }) => wrap(<>
+    {/* An astronaut's helmet: the visor is cut out, with one glint across it. */}
+    <path fillRule="evenodd"
+      d="M16 2.5 C8 2.5 3.5 8.5 3.5 15.5 C3.5 20.5 5 23.5 7.5 25.5 L24.5 25.5 C27 23.5 28.5 20.5 28.5 15.5 C28.5 8.5 24 2.5 16 2.5z M9.5 10 L22.5 10 Q25 10 25 12.5 L25 16.5 Q25 20 21.5 20 L10.5 20 Q7 20 7 16.5 L7 12.5 Q7 10 9.5 10z" />
+    <path d="M10.5 12 L14 12 L11 18 L9 18z" opacity="0.6" />
+    <rect x="6.5" y="26.5" width="19" height="4" rx="1.6" />
+  </>, title),
+
+  saucer: ({ title }) => wrap(<>
+    {/* A flying saucer: dome, rim with lights, and a beam below. */}
+    <path d="M9.5 13.6 Q10.4 5.4 16 5.4 Q21.6 5.4 22.5 13.6z" />
+    <path fillRule="evenodd"
+      d="M0.8 17.5 Q16 9.4 31.2 17.5 Q16 25.6 0.8 17.5z M8.4 17.6 a1.4 1.4 0 1 0 0.01 0z M16 18.6 a1.4 1.4 0 1 0 0.01 0z M23.6 17.6 a1.4 1.4 0 1 0 0.01 0z" />
+    <path d="M12.5 23.2 L19.5 23.2 L24 31.5 L8 31.5z" opacity="0.45" />
+  </>, title),
   // Double V — the Double Victory campaign's mark: two concentric V
   // bands, the outer enclosing the inner.
   //

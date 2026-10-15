@@ -81,7 +81,7 @@ function serverTemplateToClient(t: ServerShipTemplate): ShipTemplate {
     try { parts = sanitizeParts(JSON.parse(t.parts_json)); } catch { /* bare hull */ }
   }
   let iv: ShipDesign['iconVariant'];
-  if (t.icon_variant && /^[A-Y]$/.test(t.icon_variant)) {
+  if (t.icon_variant && /^[A-Z]$/.test(t.icon_variant)) {
     iv = t.icon_variant as ShipDesign['iconVariant'];
   }
   return {
@@ -102,7 +102,7 @@ function serverDesignToClient(d: ServerShipDesign): ShipDesign {
     try { parts = sanitizeParts(JSON.parse(d.parts_json)); } catch { /* bare hull */ }
   }
   let iv: ShipDesign['iconVariant'];
-  if (d.icon_variant && /^[A-Y]$/.test(d.icon_variant)) {
+  if (d.icon_variant && /^[A-Z]$/.test(d.icon_variant)) {
     iv = d.icon_variant as ShipDesign['iconVariant'];
   }
   return {

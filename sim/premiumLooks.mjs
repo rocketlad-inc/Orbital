@@ -29,7 +29,7 @@ const env = {
 };
 
 const FREE = 'ABCDEFGHI'.split('');
-const PREMIUM = 'JKLMNOPQRSTUVWXY'.split('');
+const PREMIUM = 'JKLMNOPQRSTUVWXYZ'.split(''); // Z = the Medieval Series
 
 for (const v of FREE) {
   check(`hull ${v} is free`, (await validateIconVariant(env, 'free', v)) === null);
@@ -39,7 +39,9 @@ for (const v of PREMIUM) {
   check(`hull ${v} is refused without the Commission`, r?.code === 'premium_required', JSON.stringify(r));
   check(`hull ${v} is allowed with it`, (await validateIconVariant(env, 'paid', v)) === null);
 }
-check('a letter past Y is still invalid', (await validateIconVariant(env, 'paid', 'Z'))?.code === 'bad_request');
+for (const bad of ['a', 'z', 'AA', '[']) {
+  check(`${bad} is not a hull letter`, (await validateIconVariant(env, 'paid', bad))?.code === 'bad_request');
+}
 
 // One look per megastructure is free (the default, A); every other look
 // on every kind needs the Commission (2026-10-05).

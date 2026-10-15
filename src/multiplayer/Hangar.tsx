@@ -19,7 +19,7 @@ import { apiFetch, startCommissionCheckout } from './api';
 import { useAuth } from './AuthContext';
 import { ShipIcon, ShipIconClass, ShipIconVariant } from '../components/ShipIcons';
 import { FactionEmblem } from '../components/FactionEmblem';
-import { PREMIUM_EMBLEM_IDS } from '../game/emblems';
+import { EmblemId } from '../game/emblems';
 import { WEBSITE_ORIGIN } from '../platform/appShell';
 import { SkinPicker, SkinField } from './SkinPicker';
 import {
@@ -31,11 +31,14 @@ import { useI18n } from '../i18n/react';
 import { apiErrorText } from '../i18n/apiErrors';
 import './Hangar.css';
 
-/** The goods, drawn: one premium line on each hull class. */
+/** The goods, drawn: premium lines across the hull classes, newest
+ *  (the Medieval Series, Z) first. */
 const SHOWCASE: Array<[ShipIconClass, ShipIconVariant]> = [
-  ['destroyer', 'S'], ['frigate', 'R'], ['corvette', 'J'],
-  ['freighter', 'V'], ['colony', 'X'], ['destroyer', 'Y'],
+  ['destroyer', 'Z'], ['frigate', 'Z'], ['freighter', 'Z'],
+  ['corvette', 'J'], ['colony', 'X'], ['destroyer', 'S'],
 ];
+/** The flags in the row: the space wing first, then the classics. */
+const SHOWCASE_EMBLEMS: EmblemId[] = ['blackhole', 'station', 'binary', 'dragon', 'kraken'];
 
 type Gift = {
   code: string; created_at: number; redeemed_at: number | null;
@@ -169,7 +172,7 @@ export function Hangar({ onRedeemed, giftJustBought }: {
             <ShipIcon key={`${cls}${v}${i}`} shipClass={cls} variant={v} size={30} />
           ))}
           <span className="hg-sep" />
-          {PREMIUM_EMBLEM_IDS.slice(0, 5).map(id => (
+          {SHOWCASE_EMBLEMS.map(id => (
             <FactionEmblem key={id} emblem={id} fallbackKey={id} size={20} />
           ))}
         </div>
