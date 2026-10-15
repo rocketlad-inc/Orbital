@@ -737,9 +737,11 @@ __mark('wave2-done');
       // the caller's fog. Reusing it keeps /state at the same query count.
       // obliterated_at_tick: isWorld drops a debris field from the
       // senate count, and reads undefined as "still a world" (0141).
+      // look_json: a custom map's authored sectors are senate systems
+      // (systems.js bodySector).
       `SELECT id, template_id, name, type, parent_body_id,
               orbit_radius, orbit_period, angle0, orbit_rp, orbit_ra,
-              owner_faction_id, obliterated_at_tick
+              owner_faction_id, obliterated_at_tick, look_json
          FROM game_bodies WHERE game_id = ?1 AND destroyed_at_tick IS NULL`,
     )
     .bind(gameId)

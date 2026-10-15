@@ -172,7 +172,7 @@ export async function wearWorldsData(env, userId) {
     env.DB.prepare(
       `SELECT id, template_id, name, type, parent_body_id, radius, orbit_radius, orbit_period,
               angle0, color, owner_faction_id, terraformed_at_tick, yield_metal,
-              obliterated_at_tick
+              obliterated_at_tick, look_json
          FROM game_bodies
         WHERE game_id = ?1 AND destroyed_at_tick IS NULL`,
     ).bind(gameId).all(),

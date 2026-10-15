@@ -227,6 +227,10 @@ export interface BodyLook {
   star?: string;
   /** A line of flavour the map maker wrote for this world (plain text). */
   lore?: string;
+  /** The map maker's SECTOR this world (or its planet) sits in. On a
+   *  custom map it replaces the automatic system everywhere: see
+   *  bodySector in game/systemGrouping.ts. */
+  sector?: { id: string; name: string; color: string };
 }
 
 export type BodySecretKind =

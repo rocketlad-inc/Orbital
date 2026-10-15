@@ -30,7 +30,7 @@ import {
   createSurface, fillRect, fillVGrad, fillRadial, fillCircle, strokeCircle,
   strokeEllipse, drawLine, hatchRect, drawText, textWidth, encodePng, hexToRgb,
 } from './heraldPng.js';
-import { CORE_TEMPLATES, CORE_LABEL, findBelts } from './systems.js';
+import { CORE_TEMPLATES, CORE_LABEL, findBelts, bodySector } from './systems.js';
 
 // CORE_TEMPLATES / CORE_LABEL and the belt grouping come from systems.js —
 // the same source the senate counts and the client map draws from. This
@@ -86,6 +86,10 @@ export async function buildTerritoryData(env, gameId) {
       `SELECT b.id, b.template_id, b.name, b.type, b.parent_body_id,
               b.orbit_radius, b.orbit_period, b.orbit_rp, b.orbit_ra,
               b.owner_faction_id,
+              -- A custom map's authored sectors ride on the look
+              -- (systems.js bodySector); without it they silently turn
+              -- back into automatic planet columns here.
+              b.look_json,
               -- LIVING settlements only, and only when ONE faction has any.
               -- This was "first settlement row on the body, LIMIT 1", with
               -- no destroyed filter: once a world was neutralised (body
@@ -185,6 +189,8 @@ export async function buildTerritoryData(env, gameId) {
   const sectors = [];
   const coreBodies = [];
   const belts = new Map();
+  /** sector id -> { label, bodies, moons }: a custom map's own sectors. */
+  const authored = new Map();
 
   // Which rocks belong to which belt, decided by the SHARED rule so the
   // Herald, the map and the senate cut the belts in the same place. A
@@ -205,9 +211,21 @@ export async function buildTerritoryData(env, gameId) {
         : b.type === 'terrestrial' ? 'p' : 'd',
       combat: combatBodies.has(b.id),
     };
+    const moons = moonsOf(b.id);
+    // AN AUTHORED SECTOR OUTRANKS EVERYTHING (custom maps): its worlds
+    // and their moons pool into one column named for it, exactly as the
+    // senate counts it (systems.js makeSystemRootOf). Before the Core
+    // test on purpose: the map maker's band wins.
+    const sector = bodySector(b);
+    if (sector) {
+      if (!authored.has(sector.id)) authored.set(sector.id, { label: sector.name, bodies: [], moons: [] });
+      const band = authored.get(sector.id);
+      band.bodies.push(entry);
+      for (const m of moons) band.moons.push(m);
+      continue;
+    }
     if (CORE_TEMPLATES.has(b.template_id)) { coreBodies.push(entry); continue; }
 
-    const moons = moonsOf(b.id);
     const beltLabel = beltOfBody.get(b.id);
     if (beltLabel) {
       // A BELT'S MOONS ARE IN THE BELT. This used to push the rock and
@@ -244,7 +262,10 @@ export async function buildTerritoryData(env, gameId) {
       starOwner,
     });
   }
-  for (const [label, band] of belts) {
+  // Authored sectors and belts are both pooled bands: ordered by MEDIAN
+  // radius, widened by what they hold.
+  for (const band of [...authored.values(), ...[...belts].map(([label, b]) => ({ label, ...b }))]) {
+    const { label } = band;
     // Order a pooled band by its MEDIAN radius, not its innermost rock.
     // Kuiper's nearest object (Black Sky, 2200) sits inside Neptune's
     // orbit, so min() sorted the whole outer reach in front of Neptune.
