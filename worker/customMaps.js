@@ -196,15 +196,34 @@ async function handleGet(_req, env, ctx) {
   return json({ map, summary: summary(row, map) });
 }
 
-// PUT /api/maps/:id {map}
+// PUT /api/maps/:id {map, base_updated_ms?}
+// base_updated_ms: the updated_ms the editor last opened or saved. When
+// the map was saved since (another tab, another device), the edit is
+// refused as 'stale' rather than written over that newer save; the
+// editor then keeps its version as a new map. Without it (older
+// clients), last write wins as before.
 async function handlePut(req, env, ctx) {
   const row = await ownMap(env, ctx.session, ctx.params.id);
   if (!row) return err(404, 'not_found', 'map not found');
+  // readJson keeps its size cap; a bad body is answered by mapFromBody.
+  const peek = await readJson(req.clone());
+  const base = Number.isFinite(peek?.base_updated_ms) ? Number(peek.base_updated_ms) : null;
+  const stale = () => json({
+    error: { code: 'stale', message: 'this map was saved somewhere else since you opened it' },
+    summary: summary(row, parseStored(row.map_json)),
+  }, { status: 409 });
+  if (base != null && Number(row.updated_ms) > base) return stale();
   const [got, bad] = await mapFromBody(req);
   if (bad) return bad;
-  const now = Date.now();
-  await env.DB.prepare('UPDATE custom_maps SET name = ?, map_json = ?, updated_ms = ? WHERE id = ?')
-    .bind(got.map.name, got.text, now, row.id).run();
+  const now = Math.max(Date.now(), Number(row.updated_ms) + 1);
+  // The base is checked again INSIDE the write, so two saves racing from
+  // the same base cannot both land.
+  const res = base != null
+    ? await env.DB.prepare('UPDATE custom_maps SET name = ?, map_json = ?, updated_ms = ? WHERE id = ? AND updated_ms <= ?')
+      .bind(got.map.name, got.text, now, row.id, base).run()
+    : await env.DB.prepare('UPDATE custom_maps SET name = ?, map_json = ?, updated_ms = ? WHERE id = ?')
+      .bind(got.map.name, got.text, now, row.id).run();
+  if (base != null && (res.meta?.changes ?? 1) === 0) return stale();
   return json({ map: got.map, summary: summary({ ...row, name: got.map.name, updated_ms: now }, got.map) });
 }
 

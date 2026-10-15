@@ -94,6 +94,21 @@ check('...and nobody else can read it', (await call('GET', `/api/maps/${id}`, 'u
 gen.bodies[0].name = 'Renamed';
 const put = await call('PUT', `/api/maps/${id}`, 'u0', { map: gen });
 check('...and edits save', put.status === 200 && put.body.map.bodies.some(b => b.name === 'Renamed'));
+{
+  // Two devices: each saves from the updated_ms it opened. The second
+  // save, made from a base the first has moved past, is refused, and the
+  // first device's edit stays.
+  const base = put.body.summary.updated_ms;
+  const a = await call('PUT', `/api/maps/${id}`, 'u0', { map: { ...gen, blurb: 'From the laptop.' }, base_updated_ms: base });
+  const b = await call('PUT', `/api/maps/${id}`, 'u0', { map: { ...gen, blurb: 'From the phone.' }, base_updated_ms: base });
+  const now = await call('GET', `/api/maps/${id}`, 'u0');
+  check('a save from an up-to-date base lands and moves updated_ms on', a.status === 200 && a.body.summary.updated_ms > base,
+    JSON.stringify(a.body).slice(0, 160));
+  check('a save from a base another save moved past is refused as stale, not written over it',
+    b.status === 409 && b.body.error?.code === 'stale' && now.body.map.blurb === 'From the laptop.', `${b.status} ${now.body.map.blurb}`);
+  const c = await call('PUT', `/api/maps/${id}`, 'u0', { map: { ...gen, blurb: '' }, base_updated_ms: a.body.summary.updated_ms });
+  check('...and the next save from the new base lands', c.status === 200, String(c.status));
+}
 const secretHost = gen.bodies.find(b => !b.start && b.type !== 'rock');
 secretHost.secret = 'ancient_city';
 secretHost.type = 'terrestrial';
