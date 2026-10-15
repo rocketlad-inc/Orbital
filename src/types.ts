@@ -225,6 +225,8 @@ export interface BodyLook {
   surface?: string | null;
   rings?: boolean;
   star?: string;
+  /** A line of flavour the map maker wrote for this world (plain text). */
+  lore?: string;
 }
 
 export type BodySecretKind =
@@ -258,6 +260,12 @@ export interface BodySecret {
   /** True once a real gate body orbits this host, which makes the host
    *  an ordinary world again rather than the gate itself. */
   supersededByGate?: boolean;
+  /** MP custom maps only: the map maker's own name and message for this
+   *  hand-placed discovery, shown verbatim (player-written, never
+   *  translated) in place of the kind's title and flavour. The reward is
+   *  still the kind's. */
+  customName?: string;
+  customText?: string;
 }
 
 /**

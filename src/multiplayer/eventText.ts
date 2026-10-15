@@ -101,6 +101,28 @@ export function secretMessage(lang: Lang, p: Payload): string | null {
   }
 }
 
+/** A custom map's hand-placed discovery (worker/room.js, 0167): the map
+ *  maker's own name and/or message, verbatim. With only a name, the
+ *  kind's own sentence (in this language) follows it; with only a
+ *  message, the usual DISCOVERY heading leads it. Null when the find
+ *  carries no custom words. */
+export function customSecretMessage(lang: Lang, p: Payload): string | null {
+  const name = typeof p.custom_name === 'string' && p.custom_name ? p.custom_name : null;
+  const text = typeof p.custom_text === 'string' && p.custom_text ? p.custom_text : null;
+  if (!name && !text) return null;
+  const body = typeof p.body_name === 'string' ? p.body_name : '';
+  const T = (k: EvKey, vars?: Vars) => tIn(lang, `eventlog.ev.${k}` as Key, vars);
+  let tail = text;
+  if (!tail) {
+    const sentence = secretMessage(lang, p);
+    if (!sentence) return null;
+    // Every kind's sentence reads "{body}: HEADING — what happened".
+    const rest = sentence.startsWith(`${body}: `) ? sentence.slice(body.length + 2) : sentence;
+    tail = rest.replace(/^[^—]*—\s*/, '');
+  }
+  return T('secret.custom', { body, name: name ?? T('secret.discovery'), text: tail });
+}
+
 export function formatChronicleEvent(
   ev: ChronicleEventRow,
   ctx: EventTextCtx,
@@ -607,7 +629,8 @@ export function formatChronicleEvent(
     // structure (kind + names + amounts), falling back to the server text.
     const owner = nameOfFaction(ev.actor_faction_id);
     const server = (parsed.message as string) ?? null;
-    const rebuilt = en ? null : secretMessage(lang, parsed);
+    const custom = customSecretMessage(lang, parsed);
+    const rebuilt = custom ?? (en ? null : secretMessage(lang, parsed));
     const msg = rebuilt ?? server ?? T('secret.fallback', {
       kind: String(parsed.kind ?? T('fb.something')),
       body: String(parsed.body_name ?? T('fb.aBody')),

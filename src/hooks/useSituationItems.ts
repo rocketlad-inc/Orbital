@@ -2641,12 +2641,15 @@ export function useSituationItems(
           category: 'discovery',
           entity: `body:${b.id}`,
           title: tr('helper.sit.discovery.title', {
-            name: def?.displayName ?? tr('helper.sit.discovery.fallbackName'),
+            name: sec.customName || (def?.displayName ?? tr('helper.sit.discovery.fallbackName')),
             body: b.name,
           }),
-          subtitle: def
-            ? stripDiscoveryPrefix(def.discoveryMessage)
-            : tr('helper.sit.discovery.fallbackSub'),
+          // A custom map's own message (MP only, verbatim) before the
+          // kind's reward line.
+          subtitle: sec.customText
+            || (def
+              ? stripDiscoveryPrefix(def.discoveryMessage)
+              : tr('helper.sit.discovery.fallbackSub')),
           focus: { kind: 'body', bodyId: b.id },
           severity: 'normal',
           sortKey: -sec.discoveredAtTick,   // newest first within the tier

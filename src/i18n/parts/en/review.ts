@@ -402,6 +402,10 @@ export const review = {
   // discoveries (rebuilt from the payload for non-English display)
   'eventlog.ev.secret.line': '{owner}: {msg}',
   'eventlog.ev.secret.fallback': '{kind} at {body}',
+  // A custom map's hand-placed discovery: {name} and {text} are the map
+  // maker's own words, shown verbatim.
+  'eventlog.ev.secret.custom': '{body}: {name} — {text}',
+  'eventlog.ev.secret.discovery': 'DISCOVERY',
   'eventlog.ev.secret.portal_to_sun': '{body}: DISCOVERY — an ancient stargate, and its twin in close solar orbit. The pair is live: anything that can reach one end steps out of the other.',
   'eventlog.ev.secret.ancient_city': '{body}: DISCOVERY — a long-abandoned colony reactivates under your banner — a free city with a working Lab.',
   'eventlog.ev.secret.pre_terraformed': '{body}: DISCOVERY — a world the ancients already prepped for life. Terraformed and waiting; claim it and build.',

@@ -261,6 +261,10 @@ interface ServerState {
     secret_revealed?: number;
     secret_discovered_by_faction_id?: string | null;
     secret_discovered_at_tick?: number | null;
+    /** A custom map's hand-placed discovery: its maker's own name and
+     *  message (0167). Revealed secrets only, like secret_kind. */
+    secret_name?: string | null;
+    secret_text?: string | null;
     /** Eccentric Kepler elements for Kuiper-class rogue asteroids.
      *  Migration 0024. All four nullable; when present the client
      *  bodyPosition uses Kepler propagation instead of the circular
@@ -713,6 +717,8 @@ function bodyToClient(b: ServerState['bodies'][number]): Body {
         revealed: true,
         discoveredByFactionId: b.secret_discovered_by_faction_id ?? undefined,
         discoveredAtTick: b.secret_discovered_at_tick ?? undefined,
+        ...(b.secret_name ? { customName: String(b.secret_name) } : {}),
+        ...(b.secret_text ? { customText: String(b.secret_text) } : {}),
       }
     : undefined;
   // Active ram plan — present when this body has been diverted as an
@@ -801,7 +807,10 @@ function parseLook(raw: string | null | undefined): import('../types').BodyLook 
   if (!raw) return undefined;
   try {
     const v = JSON.parse(raw);
-    return v && typeof v === 'object' ? v : undefined;
+    if (!v || typeof v !== 'object') return undefined;
+    // Lore is player-written: a plain string or nothing.
+    if (v.lore != null && typeof v.lore !== 'string') delete v.lore;
+    return v;
   } catch {
     return undefined;
   }
