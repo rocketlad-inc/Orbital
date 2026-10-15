@@ -162,6 +162,11 @@ export interface Body {
    *  ordinary orbit and this is absent. */
   emerge?: { fromTick: number; untilTick: number };
 
+  /** A custom map's look (the Map Maker, 0166): the surface style and
+   *  rings its maker chose, or for the sun its colour. Shipped worlds
+   *  have their own art and no look. */
+  look?: BodyLook;
+
   /** Set when the body has been destroyed — either smashed into a
    *  target via its own ram plan, or wiped by an incoming impact
    *  (planets don't get destroyed, but asteroids can collide
@@ -214,6 +219,13 @@ export interface RamPlan {
 /** Set when a REAL gate body has been spawned in orbit of this host.
  *  The host is then an ordinary world again — see isRevealedWarpGate. */
 export type BodySecretSuperseded = boolean;
+
+/** See Body.look. */
+export interface BodyLook {
+  surface?: string | null;
+  rings?: boolean;
+  star?: string;
+}
 
 export type BodySecretKind =
   | 'portal_to_sun'

@@ -1,0 +1,89 @@
+// Types for customMap.js (plain JS so the worker can import it too).
+
+export type MapBodyType = 'terrestrial' | 'gas-giant' | 'ice-giant' | 'dwarf' | 'moon' | 'asteroid' | 'rock';
+export type MapSurface = 'verdant' | 'ocean' | 'desert' | 'rocky' | 'barren' | 'ice' | 'lava' | 'toxic' | 'gas' | 'storm';
+export type MapSecret =
+  | 'ancient_city' | 'pre_terraformed' | 'derelict_warship' | 'resource_cache' | 'ancient_databank'
+  | 'ancient_capital' | 'ancient_relay' | 'ancient_station' | 'deep_cache';
+
+export interface MapYields { metal: number; credits: number; science: number }
+
+export interface MapBody {
+  id: string;
+  name: string;
+  type: MapBodyType;
+  /** 'sun', or (moons only) the id of the world it orbits. */
+  parent: string;
+  /** Distance from its parent, map units (catalogue units). */
+  orbit: number;
+  /** Where on its orbit, radians. */
+  angle: number;
+  radius: number;
+  yields: MapYields;
+  color: string;
+  surface: MapSurface | null;
+  rings?: boolean;
+  start?: boolean;
+  secret?: MapSecret | 'random' | null;
+  mineral?: { kind: 'metal' | 'gold'; tons: number };
+}
+
+export interface MapSun { name: string; color: string; size: number; mass: number }
+
+export interface CustomMap {
+  v: number;
+  name: string;
+  sun: MapSun;
+  bodies: MapBody[];
+  settings: { shareHidesSecrets: boolean };
+}
+
+export interface MapIssue {
+  level: 'ok' | 'warn' | 'block';
+  code: string;
+  title: string;
+  detail: string;
+  bodyIds: string[];
+}
+
+export interface TypeInfo {
+  label: string;
+  radius: [number, number, number];
+  mu: number;
+  soi: number;
+  color: string;
+  surface: MapSurface | null;
+}
+
+export const MAP_VERSION: number;
+export const MAX_BODIES: number;
+export const MAX_NAME: number;
+export const BODY_TYPES: MapBodyType[];
+export const TYPE_INFO: Record<MapBodyType, TypeInfo>;
+export const SURFACES: MapSurface[];
+export const MAP_SECRETS: MapSecret[];
+export const ORBIT_LIMITS: { sun: [number, number]; moon: [number, number] };
+export const RESOURCE_MAX: number;
+export const SUN_LIMITS: { size: [number, number]; mass: [number, number] };
+export const SUN_YEAR_K: number;
+export const NAME_THEMES: string[];
+
+export function secretFits(kind: string | null | undefined, type: MapBodyType): boolean;
+export function canStartOn(type: MapBodyType): boolean;
+export function blankMap(name?: string): CustomMap;
+export function newBodyId(taken: Set<string>, rand?: () => number): string;
+export function normalizeMap(input: unknown): CustomMap;
+export function bodyYear(map: CustomMap, body: MapBody): number;
+export function bodySoi(map: CustomMap, body: MapBody): number;
+export function bodyPos(map: CustomMap, body: MapBody, dAngle?: number): { x: number; y: number };
+export function startWorlds(map: CustomMap): { worlds: MapBody[]; marked: boolean };
+export function checkMap(map: unknown): MapIssue[];
+export function hostBlockers(map: unknown): MapIssue[];
+export function mapToCatalog(map: unknown): Array<Record<string, unknown>>;
+export function startTemplateIds(map: unknown): Set<string>;
+export function makeName(theme: string, taken?: Set<string>, rand?: () => number, index?: number, sunName?: string): string;
+export function seededRand(seed: string | number): () => number;
+export function generateMap(opts?: {
+  seed?: number | string; theme?: string; planets?: number; moonsMin?: number; moonsMax?: number;
+  belts?: number; richness?: number; starts?: number; spread?: number; name?: string;
+}): CustomMap;

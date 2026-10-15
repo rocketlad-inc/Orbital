@@ -496,9 +496,16 @@ export function terraformTint(body: Body): { r: number; g: number; b: number } {
   }
 }
 
+/** A custom map's surface style (the Map Maker), as the biome it paints. */
+const LOOK_BIOME: Record<string, Biome> = {
+  verdant: 'verdant', ocean: 'oceanic', desert: 'arid', toxic: 'arid', ice: 'tundra', lava: 'volcanic',
+};
+
 export function terraformBiome(body: Body): Biome {
   const curated = CURATED_BIOME[body.id];
   if (curated) return curated;
+  const chosen = body.look?.surface ? LOOK_BIOME[body.look.surface] : undefined;
+  if (chosen) return chosen;
 
   // Procedural / far-system bodies: read their character off the same
   // properties a player can see. Heat falls off with distance, so orbit
@@ -700,11 +707,22 @@ export function paintSurfaceOnto(c: CanvasRenderingContext2D, body: Body, varian
   // takes the state and paints a dead Earth when it is not terraformed:
   // same continents, no water, no life — which reads as Earth, ruined,
   // rather than as some other planet.
-  const tf = variant === 'terraformed'
+  // A CUSTOM WORLD WEARS THE SURFACE ITS MAKER CHOSE (the Map Maker):
+  // a living style paints with that biome's palette even raw, and gas or
+  // storm paints banded cloud whatever the type. Shipped worlds carry no
+  // look and are untouched.
+  const lookSurface = body.look?.surface ?? null;
+  const livingLook = !!lookSurface && lookSurface in LOOK_BIOME;
+  const tf = (variant === 'terraformed' || livingLook)
     && body.id !== 'earth'
     && (body.type === 'terrestrial' || body.type === 'dwarf' || body.type === 'moon'
         || body.type === 'asteroid')
     ? terraformPalette(body) : null;
+  if (lookSurface === 'gas' || lookSurface === 'storm') {
+    if (lookSurface === 'storm') paintIceGiant(c, base, rand);
+    else paintGasGiant(c, base, rand);
+    return;
+  }
 
   // Hand-authored worlds keep their signature art (ported from the
   // old drawSurfaceFeatures), everything else gets a seeded recipe.

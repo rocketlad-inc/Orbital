@@ -998,6 +998,50 @@ async function handleCreateRoom(req, env, session) {
   return json({ room }, { status: 201 });
 }
 
+// POST /api/maps/:id/host {name?, max_players?, password?} — open a lobby
+// on one of your custom maps (the Map Maker). The Commission's: hosting a
+// game on your own map is what it buys; anyone may join one. The room
+// takes a SNAPSHOT of the map, so editing it later never changes a game
+// already set up, and it seats one player per start world.
+async function handleHostMap(req, env, session, mapId) {
+  if (!customMaps.mapMakerEnabled(env)) return err(404, 'not_found', 'not found');
+  if (!(await customMaps.canHostMaps(env, session))) {
+    return err(402, 'commission_required',
+      "Hosting a game on your own map is part of the Commander's Commission. Anyone can join one.");
+  }
+  const row = await env.DB
+    .prepare('SELECT * FROM custom_maps WHERE id = ? AND owner_user_id = ?')
+    .bind(mapId, session.user_id).first();
+  if (!row) return err(404, 'not_found', 'map not found');
+  const cm = await import('../src/game/customMap.js');
+  let map;
+  try { map = cm.normalizeMap(JSON.parse(row.map_json)); } catch { return err(409, 'bad_map', 'that map could not be read'); }
+  const blockers = cm.hostBlockers(map);
+  if (blockers.length > 0) {
+    return json({ error: { code: 'map_blocked', message: blockers.map(b => b.title).join('; '), blockers } }, { status: 409 });
+  }
+  const body = (await readJson(req)) ?? {};
+  const starts = cm.startWorlds(map).worlds.length;
+  const most = Math.min(MAX_SEATS, starts);
+  const want = Number.isInteger(body.max_players) ? body.max_players : most;
+  const maxPlayers = Math.max(2, Math.min(most, want));
+  const rawName = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : map.name;
+  const name = rawName.slice(0, 60);
+  let passwordHash = null;
+  if (typeof body.password === 'string' && body.password.length > 0) {
+    if (body.password.length < 4) return err(400, 'bad_request', 'password must be at least 4 characters');
+    if (body.password.length > 100) return err(400, 'bad_request', 'password too long');
+    passwordHash = await hashPassword(body.password);
+  }
+  const room = await createRoom(env, session, { name, maxPlayers, passwordHash });
+  await env.DB.batch([
+    env.DB.prepare('UPDATE rooms SET custom_map_id = ?, custom_map_json = ? WHERE id = ?')
+      .bind(row.id, JSON.stringify(map), room.id),
+    env.DB.prepare('UPDATE custom_maps SET hosted_count = hosted_count + 1 WHERE id = ?').bind(row.id),
+  ]);
+  return json({ room: { ...room, custom_map: { name: map.name, bodies: map.bodies.length } } }, { status: 201 });
+}
+
 /** A room row, its host as first member, and its DO. Shared by the Create
  *  Room form and Quick Join. */
 async function createRoom(env, session, { name, maxPlayers, passwordHash = null, quickJoin = false }) {
@@ -1339,6 +1383,7 @@ import * as emailLogin from './emailLogin.js';
 import * as analytics from './analytics.js';
 import * as adminDashboard from './adminDashboard.js';
 import * as store from './store.js';
+import * as customMaps from './customMaps.js';
 import * as skins from './skins.js';
 import * as economy from './economy.js';
 import * as heraldStrip from './heraldStrip.js';
@@ -1361,7 +1406,7 @@ import * as devlog from './devlog.js';
 import * as gameFeed from './gameFeed.js';
 import { carryNamePools } from './namePoolHistory.js';
 
-const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, analytics, configAdmin, emailAdmin, emailLogin, store, skins, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed];
+const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, analytics, configAdmin, emailAdmin, emailLogin, store, skins, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed, customMaps];
 
 function matchPattern(pattern, pathname) {
   if (typeof pattern === 'string') {
@@ -2145,6 +2190,10 @@ export default {
 
       if (req.method === 'GET'  && url.pathname === '/api/rooms') return handleListRooms(req, env);
       if (req.method === 'POST' && url.pathname === '/api/rooms') return handleCreateRoom(req, env, session);
+      {
+        const hm = req.method === 'POST' && url.pathname.match(/^\/api\/maps\/(map_[A-Za-z0-9]+)\/host$/);
+        if (hm) return handleHostMap(req, env, session, hm[1]);
+      }
       if (req.method === 'POST' && url.pathname === '/api/rooms/join-by-code') return handleJoinByCode(req, env, session);
       if (req.method === 'GET'  && url.pathname === '/api/users/me/rooms') return handleListMyRooms(req, env, session);
       if (req.method === 'PUT'  && url.pathname === '/api/users/me/autoload') return handleSetAutoload(req, env, session);

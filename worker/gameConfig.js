@@ -79,6 +79,19 @@ export async function cfg(env, gameId) {
     base.bodies = {};
   }
 
+  if (gameId) {
+    try {
+      const room = await env.DB.prepare('SELECT custom_map_id FROM rooms WHERE id = ?').bind(gameId).first();
+      if (room?.custom_map_id) {
+        base.far_systems = 0;
+        if ('kaiju' in base) base.kaiju = 0;
+        base.randomize_orbits = 0;
+        base.bodies = {};
+        base.custom_map = true;
+      }
+    } catch { /* no custom maps column yet: an ordinary game */ }
+  }
+
   cache.set(key, { at: Date.now(), value: base });
   return base;
 }

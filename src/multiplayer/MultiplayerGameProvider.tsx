@@ -278,6 +278,8 @@ interface ServerState {
     ram_arrive_tick?: number | null;
     /** A body flying out of its parent (0157): the sun gates. */
     emerge_from_tick?: number | null;
+    /** A custom map's look (0166), JSON. */
+    look_json?: string | null;
     emerge_until_tick?: number | null;
     ram_acceleration?: number | null;
     ram_start_pos_x?: number | null;
@@ -790,7 +792,19 @@ function bodyToClient(b: ServerState['bodies'][number]): Body {
       && Number(b.emerge_until_tick) > Number(b.emerge_from_tick)
       ? { fromTick: Number(b.emerge_from_tick), untilTick: Number(b.emerge_until_tick) }
       : undefined,
+    look: parseLook(b.look_json),
   };
+}
+
+/** A custom map's look column, or undefined (shipped worlds have none). */
+function parseLook(raw: string | null | undefined): import('../types').BodyLook | undefined {
+  if (!raw) return undefined;
+  try {
+    const v = JSON.parse(raw);
+    return v && typeof v === 'object' ? v : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Server game_fleets rows -> client Fleet[] (DESIGN-fleets.md). Ships

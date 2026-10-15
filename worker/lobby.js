@@ -229,6 +229,11 @@ async function handleUpdateSettings(req, env, ctx) {
     if ((count?.c ?? 0) > body.max_players) {
       return err(409, 'too_many_members', 'reduce member count before lowering max_players');
     }
+    // A custom map seats one player per start world.
+    const cap = await (await import('./customMaps.js')).customSeatCap(env, roomId);
+    if (cap != null && body.max_players > cap) {
+      return err(409, 'map_seats', `this map has ${cap} start worlds, so it seats at most ${cap}`);
+    }
     updates.max_players = body.max_players;
   }
   // Tick cadence and match length — host can edit before game start. See
@@ -579,6 +584,7 @@ async function handleLobbySnapshot(_req, env, ctx) {
   if (!settings) return err(404, 'not_found', 'room not found');
   const snapRes = await roomStub(env, roomId).fetch('https://room/snapshot');
   const snap = snapRes.ok ? await snapRes.json() : { members: [], connected: [], ready: {} };
+  const customOptions = await customMapOptions(env, roomId);
 
   // === Membership: D1 is the source of truth ===========================
   // The DO's `members` map is updated lazily — only when a user opens a
@@ -640,9 +646,33 @@ async function handleLobbySnapshot(_req, env, ctx) {
     game_started: settings.game_id != null,
     game_id: settings.game_id,
     // Catalog of bodies players can pick as their capital. Currently
-    // every terrestrial planet plus the larger moons.
-    starting_body_options: factions.STARTING_BODY_OPTIONS,
+    // every terrestrial planet plus the larger moons -- or, in a room
+    // hosted on a custom map (the Map Maker), that map's start worlds.
+    starting_body_options: customOptions?.options ?? factions.STARTING_BODY_OPTIONS,
+    custom_map: customOptions?.info ?? null,
   });
+}
+
+/** A custom-map room's start worlds, in the lobby's option shape, and
+ *  what the lobby shows about the map. Null for an ordinary room. */
+async function customMapOptions(env, roomId) {
+  try {
+    const { roomCustomMap } = await import('./customMaps.js');
+    const map = await roomCustomMap(env, roomId);
+    if (!map) return null;
+    const { startWorlds } = await import('../src/game/customMap.js');
+    const options = startWorlds(map).worlds.map(b => ({
+      id: `cm_${b.id}`,
+      name: b.name,
+      type: b.type,
+      parent: b.parent === 'sun' ? 'sol' : `cm_${b.parent}`,
+      yield: { metal: b.yields.metal, fuel: 0, gold: b.yields.credits, science: b.yields.science },
+    }));
+    return { options, info: { name: map.name, sun: map.sun.name, bodies: map.bodies.length } };
+  } catch (e) {
+    console.error('custom map options failed', e);
+    return null;
+  }
 }
 
 // PATCH /api/lobby/rooms/:roomId/me — caller updates their own empire identity.
@@ -801,7 +831,8 @@ async function handlePatchMe(req, env, ctx) {
     if (body.chosen_starting_body === null || body.chosen_starting_body === '') {
       sets.push('chosen_starting_body = NULL');
     } else {
-      if (!factions.isValidStartingBody(body.chosen_starting_body)) {
+      const canStart = await factions.startingBodyValidator(env, roomId);
+      if (!canStart(body.chosen_starting_body)) {
         return err(400, 'bad_request', 'invalid starting body');
       }
       // Reject if another member of this room already claimed it.
@@ -1060,6 +1091,10 @@ async function handleRaiseSeats(req, env, ctx) {
   if (!room) return err(404, 'not_found', 'room not found');
   if (want <= room.max_players) {
     return err(400, 'raise_only', `seats can only be raised in a running game (it has ${room.max_players})`);
+  }
+  const cap = await (await import('./customMaps.js')).customSeatCap(env, roomId);
+  if (cap != null && want > cap) {
+    return err(409, 'map_seats', `this map has ${cap} start worlds, so it seats at most ${cap}`);
   }
   await env.DB
     .prepare('UPDATE rooms SET max_players = ?, updated_at = ? WHERE id = ?')

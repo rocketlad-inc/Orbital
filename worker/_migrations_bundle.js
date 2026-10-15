@@ -6697,4 +6697,87 @@ CREATE TABLE IF NOT EXISTS game_kaiju (
 
 ALTER TABLE game_kaiju ADD COLUMN revealed_at_tick INTEGER;
 ` },
+  { name: "0164_email_templates.sql", sql: `-- ============================================================
+-- 0164 — an editable win-back email, and whether mail gets opened
+--
+-- email_templates holds the admin panel's edits to an automated email
+-- (worker/emailAdmin.js): an on/off switch and per-language overrides of
+-- the copy. A missing row, or enabled = 0, means the email does not send,
+-- so the win-back ships switched off until Lorne turns it on.
+--
+-- email_log gains the open: a 1x1 picture in the email, fetched from
+-- /api/email/o/<signed id>.gif, stamps the first open and counts the rest.
+-- Opens are a floor and a ceiling at once: clients that block pictures
+-- never report one, and Apple Mail fetches every picture on delivery.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS email_templates (
+  id          TEXT PRIMARY KEY,
+  enabled     INTEGER NOT NULL DEFAULT 0,
+  overrides   TEXT NOT NULL DEFAULT '{}',
+  updated_ms  INTEGER,
+  updated_by  TEXT
+);
+
+ALTER TABLE email_log ADD COLUMN opened_ms INTEGER;
+ALTER TABLE email_log ADD COLUMN open_count INTEGER NOT NULL DEFAULT 0;
+` },
+  { name: "0165_email_login_and_invites.sql", sql: `-- ============================================================
+-- 0165 — sign in from the win-back email; remember who was invited where
+--
+-- email_login_tokens: a link in an email that signs its reader in, like a
+-- password reset (only the SHA-256 is stored; one use; seven days). The
+-- win-back email's button carries one, so a player who forgot their
+-- password still lands in their seat with one click (worker/emailLogin.js).
+-- room_id is the lobby the email named; the sign-in sends them there.
+--
+-- email_log.room_id: the lobby a win-back email invited its reader to.
+-- The hourly planner counts the invitations still out for each lobby and
+-- only tops up the difference, instead of inviting two more people per
+-- open seat every hour (worker/winback.js).
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS email_login_tokens (
+  token_hash  TEXT PRIMARY KEY,
+  user_id     TEXT NOT NULL,
+  purpose     TEXT NOT NULL,
+  room_id     TEXT,
+  created_ms  INTEGER NOT NULL,
+  expires_ms  INTEGER NOT NULL,
+  used_ms     INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_email_login_tokens_expiry ON email_login_tokens(expires_ms);
+
+ALTER TABLE email_log ADD COLUMN room_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_email_log_kind_room ON email_log(kind, room_id, created_ms);
+` },
+  { name: "0166_custom_maps.sql", sql: `-- The Map Maker (Lorne, 2026-10-14): player-built star systems.
+--
+-- custom_maps holds each player's maps as the JSON the Map Maker edits
+-- (src/game/customMap.js normalizeMap is the format). share_code lets
+-- anyone open a copy of a map; copied_from records where a copy came from.
+CREATE TABLE IF NOT EXISTS custom_maps (
+  id            TEXT PRIMARY KEY,
+  owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name          TEXT NOT NULL,
+  map_json      TEXT NOT NULL,
+  share_code    TEXT NOT NULL UNIQUE,
+  copied_from   TEXT,
+  hosted_count  INTEGER NOT NULL DEFAULT 0,
+  created_ms    INTEGER NOT NULL,
+  updated_ms    INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_custom_maps_owner ON custom_maps(owner_user_id, updated_ms);
+
+-- A room hosted on a custom map carries a SNAPSHOT of it, taken when it
+-- was hosted: editing the map afterwards never changes a game already set
+-- up. seedGameWorld builds the system from the snapshot.
+ALTER TABLE rooms ADD COLUMN custom_map_id TEXT;
+ALTER TABLE rooms ADD COLUMN custom_map_json TEXT;
+
+-- A custom world's look: {surface, rings} for a world, {star} for a sun.
+-- Shipped worlds have their own art keyed on their template id and leave
+-- this NULL.
+ALTER TABLE game_bodies ADD COLUMN look_json TEXT;
+` },
 ];

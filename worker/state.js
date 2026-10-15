@@ -1017,6 +1017,8 @@ __mark('sensors-done');
               ram_total_dv, ram_owned_by_faction_id,
               mineral_kind, mineral_remaining, mineral_initial, exhausted_at_tick,
               emerge_from_tick, emerge_until_tick,
+              -- A custom map's look (the Map Maker, 0166): surface, rings, star.
+              look_json,
               -- A rock you have SURVEYED. Distinct from visible_to_me,
               -- which is "in sensor range this instant": discovery is
               -- permanent and per faction, so a meteoroid you found last

@@ -1094,7 +1094,23 @@ const STAR_LOOK: Record<string, StarLook> = {
   },
 };
 function starLookOf(body: Body): StarLook | null {
+  // A custom map's sun (the Map Maker) wears the nearest of the real
+  // stars' looks to the colour its maker picked: those are photographed
+  // and tuned, and a look per arbitrary colour would rebuild the corona.
+  if (body.look?.star) return STAR_LOOK[nearestStarLook(body.look.star)] ?? STAR_LOOK.sol;
   return STAR_LOOK[templateIdOf(body.id)] ?? null;
+}
+
+/** Which real star a custom sun's colour reads as: blue, white, orange
+ *  or yellow, by its warmth and its blue. */
+function nearestStarLook(hex: string): string {
+  const n = parseInt(String(hex).replace('#', ''), 16);
+  if (!Number.isFinite(n)) return 'sol';
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  if (b > r) return 'hde_226868';
+  if (b > 200 && g > 220) return 'centauri_a';
+  if (g < 170) return 'centauri_b';
+  return 'sol';
 }
 
 function paintCoronaLayer(
@@ -1716,7 +1732,8 @@ const RING_RX = 1.9;         // × body radius
 const RING_RY = 0.55;
 
 function bodyHasRings(body: Body): boolean {
-  return idMatchesTemplate(body.id, 'saturn') || idMatchesTemplate(body.id, 'uranus');
+  return idMatchesTemplate(body.id, 'saturn') || idMatchesTemplate(body.id, 'uranus')
+    || !!body.look?.rings;
 }
 
 function drawRingArcs(
