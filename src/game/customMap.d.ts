@@ -58,6 +58,22 @@ export interface MapIssue {
   title: string;
   detail: string;
   bodyIds: string[];
+  /** The counts and names the English title/detail were built from, so
+   *  the client can rebuild them in the player's language. */
+  params?: MapIssueParams;
+}
+
+export interface MapIssueParams {
+  count?: number; marked?: boolean; seats?: number;
+  /** start worlds sharing a planet's orbit, by group */
+  groups?: string[][];
+  /** the first few pairs of orbits nearly touching; `more` if there are others */
+  pairs?: string[][]; more?: boolean;
+  names?: string[];
+  metal?: number; credits?: number; science?: number;
+  /** each sector's name and how many worlds it holds */
+  list?: Array<[string, number]>;
+  placed?: number; chance?: number; max?: number;
 }
 
 export interface TypeInfo {

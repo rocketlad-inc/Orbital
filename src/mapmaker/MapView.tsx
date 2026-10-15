@@ -17,6 +17,8 @@ import {
 } from './geometry';
 import { worldArt } from './planetArt';
 import type { Fairness } from './fairness';
+import { t } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 
 export type PlaceTool = MapBodyType | 'belt';
 export type Tool = PlaceTool | 'scatter' | 'ring' | 'sector';
@@ -78,6 +80,7 @@ export const MapView: React.FC<MapViewProps> = ({
   map, scale, selection, tool, preview, fitSignal, touch, symmetry, ringCount, lens, picking,
   onSelect, onPlace, onScatter, onMove, onPick, onSectorDraw, onSectorEdge, onCancelTool,
 }) => {
+  useI18n();
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
   const [view, setView] = useState<View>({ x: 0, y: 0, z: 0.2 });
@@ -234,12 +237,12 @@ export const MapView: React.FC<MapViewProps> = ({
     const inner = ring.filter(o => o < orbit).pop();
     const outer = ring.find(o => o > orbit);
     const gaps = [
-      inner != null ? `${Math.round(orbit - inner)} out from the next world in` : null,
-      outer != null ? `${Math.round(outer - orbit)} in from the next world out` : null,
+      inner != null ? t('mm.view.gapIn', { n: Math.round(orbit - inner) }) : null,
+      outer != null ? t('mm.view.gapOut', { n: Math.round(outer - orbit) }) : null,
     ].filter(Boolean).join(' · ');
     setReadout({
       x: sx, y: sy, snapId: snap?.id ?? null,
-      lines: [`Orbit ${Math.round(orbit)} · year ${year} ticks`, snap ? `On ${snap.name}’s orbit` : (gaps || 'Nothing else round here')],
+      lines: [t('mm.view.orbit', { orbit: Math.round(orbit), year }), snap ? t('mm.view.onOrbit', { name: snap.name }) : (gaps || t('mm.view.alone'))],
     });
     return { orbit, angle };
   };
@@ -465,7 +468,7 @@ export const MapView: React.FC<MapViewProps> = ({
       onContextMenu={(e) => e.preventDefault()}
       onKeyDown={(e) => { if (e.key === 'Escape') onCancelTool(); }}
       role="application"
-      aria-label="Star system map"
+      aria-label={t('mm.view.aria')}
     >
       <svg width={size.w} height={size.h} className="mm-map__svg">
         <defs>
@@ -627,7 +630,7 @@ export const MapView: React.FC<MapViewProps> = ({
       {readout && (
         <div className="mm-readout" style={{ left: Math.min(readout.x + 18, size.w - 240), top: Math.max(4, readout.y - (touch ? 84 : 12)) }}>
           {readout.lines.map((l, i) => <div key={i} className={i === 1 && readout.snapId ? 'is-snap' : undefined}>{l}</div>)}
-          {!touch && !readout.snapId && <div className="mm-readout__hint">Hold Alt to place freely</div>}
+          {!touch && !readout.snapId && <div className="mm-readout__hint">{t('mm.view.alt')}</div>}
         </div>
       )}
     </div>

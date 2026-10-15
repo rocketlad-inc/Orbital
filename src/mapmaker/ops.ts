@@ -7,6 +7,7 @@ import {
   MAX_SECTORS, SECTOR_COLORS, newSectorId, sectorOf,
 } from '../game/customMap';
 import type { PlaceTool } from './MapView';
+import { tk } from '../i18n/core';
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
@@ -430,9 +431,15 @@ export const SECTOR_NAMES = [
   'The Inner Reach', 'The Bright Worlds', 'The Belt', 'The Middle Kingdoms', 'The Outer Reach', 'The Far Dark',
   'The Frontier', 'The Shallows', 'The Deep', 'The Rim', 'The Marches', 'The Verge',
 ];
+/** The default names in the player's language at the moment a sector is
+ *  drawn. They are saved with the map, like any name the player types. */
+function sectorNames(): string[] {
+  return SECTOR_NAMES.map((n, i) => tk(`mm.sectorName.${i + 1}`, n));
+}
+const numberedSector = (n: number) => tk('mm.sectorName.n', 'Sector {n}', { n });
 function freshSectorName(map: CustomMap): string {
   const taken = new Set(map.sectors.map(s => s.name.toLowerCase()));
-  return SECTOR_NAMES.find(n => !taken.has(n.toLowerCase())) ?? `Sector ${map.sectors.length + 1}`;
+  return sectorNames().find(n => !taken.has(n.toLowerCase())) ?? numberedSector(map.sectors.length + 1);
 }
 
 /** A new band from `inner` to `outer`. Where it overlaps a band already
@@ -498,6 +505,7 @@ export function suggestSectors(map: CustomMap, count = 4): CustomMap {
   const cuts = [0, ...chosen.sort((a, b) => a - b), orbits.length];
   const bare = { ...map, sectors: [] as MapSector[] };
   const sectors: MapSector[] = [];
+  const names = sectorNames();
   for (let j = 0; j < cuts.length - 1; j++) {
     const first = orbits[cuts[j]], last = orbits[cuts[j + 1] - 1];
     // Edges halfway (geometrically) between neighbouring groups.
@@ -505,7 +513,7 @@ export function suggestSectors(map: CustomMap, count = 4): CustomMap {
     const outer = j === cuts.length - 2 ? Math.max(last, all[all.length - 1]) * 1.15 + 20 : Math.sqrt(last * orbits[cuts[j + 1]]);
     sectors.push({
       id: newSectorId(new Set(sectors.map(s => s.id))),
-      name: SECTOR_NAMES[j] ?? `Sector ${j + 1}`,
+      name: names[j] ?? numberedSector(j + 1),
       color: SECTOR_COLORS[j % SECTOR_COLORS.length],
       inner: Math.round(inner), outer: Math.round(outer),
     });
