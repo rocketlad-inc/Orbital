@@ -42,10 +42,15 @@ export interface CustomMap {
   /** The map's pitch: shown in the gallery and the lobby. */
   blurb: string;
   bodies: MapBody[];
+  /** Sorted outward, never overlapping. Empty: automatic grouping. */
+  sectors: MapSector[];
   settings: { shareHidesSecrets: boolean; backdrop: MapBackdrop };
 }
 
 export type MapBackdrop = 'deep' | 'blue' | 'crimson' | 'emerald' | 'violet' | 'amber';
+
+/** A band of orbit round the sun, inner <= orbit < outer (map units). */
+export interface MapSector { id: string; name: string; color: string; inner: number; outer: number }
 
 export interface MapIssue {
   level: 'ok' | 'warn' | 'block';
@@ -76,6 +81,10 @@ export const RESOURCE_MAX: number;
 export const SUN_LIMITS: { size: [number, number]; mass: [number, number] };
 export const SUN_YEAR_K: number;
 export const BACKDROPS: MapBackdrop[];
+export const MAX_SECTORS: number;
+export const SECTOR_COLORS: string[];
+export function sectorOf(map: CustomMap, body: MapBody): MapSector | null;
+export function newSectorId(taken: Set<string>, rand?: () => number): string;
 export const TEXT_LIMITS: { blurb: number; lore: number; secretName: number; secretText: number };
 export const NAME_THEMES: string[];
 

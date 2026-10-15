@@ -69,11 +69,26 @@ export const SUN_YEAR_K = 0.0808;
 /** The sky behind the system: a deep-space tint. */
 export const BACKDROPS = ['deep', 'blue', 'crimson', 'emerald', 'violet', 'amber'];
 export const TEXT_LIMITS = { blurb: 400, lore: 200, secretName: 40, secretText: 240 };
+/**
+ * SECTORS are bands of orbit round the sun, drawn by the map maker. On a
+ * custom map they REPLACE the game's automatic "systems" (worker/
+ * systems.js, src/game/systemGrouping.ts) for every world inside them:
+ * senate vote weight, the outliner's headers, the map's region shading,
+ * the Herald's strip. A moon is in its planet's sector. A world outside
+ * every band groups automatically, as on any map.
+ *
+ * Bands, not slices: worlds orbit at different speeds, so a wedge would
+ * lose its planets within days. A band holds what orbits inside it
+ * forever.
+ */
+export const MAX_SECTORS = 12;
+export const SECTOR_COLORS = ['#4ecdc4', '#ffb84d', '#b98cff', '#6ee7b7', '#ff6b9d', '#7fd4ff', '#e8e36b', '#ff8a5c'];
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 const ID_RE = /^[a-z0-9]{1,12}$/;
+const SECTOR_ID_RE = /^s[a-z0-9]{1,11}$/;
 /** Free text a player wrote: control characters out, runs of blank lines
  *  squeezed, trimmed and capped. Never HTML: every reader renders it as
  *  plain text. */
@@ -91,6 +106,7 @@ export function blankMap(name = 'Untitled system') {
     sun: { name: 'Helion', color: '#ffd180', size: 50, mass: 1 },
     blurb: '',
     bodies: [],
+    sectors: [],
     settings: { shareHidesSecrets: true, backdrop: 'deep' },
   };
 }
@@ -120,6 +136,7 @@ export function normalizeMap(input) {
     },
     blurb: cleanText(m.blurb, TEXT_LIMITS.blurb),
     bodies: [],
+    sectors: normalizeSectors(m.sectors),
     settings: {
       shareHidesSecrets: m.settings?.shareHidesSecrets !== false,
       backdrop: BACKDROPS.includes(m.settings?.backdrop) ? m.settings.backdrop : 'deep',
@@ -192,6 +209,58 @@ export function normalizeMap(input) {
   // Parents before children, so the seeder can insert in order.
   out.bodies.sort((a, b) => (a.parent === 'sun' ? 0 : 1) - (b.parent === 'sun' ? 0 : 1));
   return out;
+}
+
+/** Bands sorted outward, never overlapping (a later band starts where
+ *  the one inside it ends), each at least 10 wide, at most MAX_SECTORS. */
+function normalizeSectors(input) {
+  const raw = Array.isArray(input) ? input.slice(0, MAX_SECTORS * 2) : [];
+  const seen = new Set();
+  const out = [];
+  for (const s of raw) {
+    if (!s || typeof s !== 'object' || !SECTOR_ID_RE.test(s.id) || seen.has(s.id)) continue;
+    seen.add(s.id);
+    let inner = clamp(num(s.inner, 0), 0, ORBIT_LIMITS.sun[1] * 1.1);
+    let outer = clamp(num(s.outer, inner + 100), 0, ORBIT_LIMITS.sun[1] * 1.1);
+    if (outer < inner) [inner, outer] = [outer, inner];
+    out.push({
+      id: s.id,
+      name: cleanName(s.name, 'Sector'),
+      color: COLOR_RE.test(s.color) ? s.color : SECTOR_COLORS[out.length % SECTOR_COLORS.length],
+      inner: Math.round(inner),
+      outer: Math.round(outer),
+    });
+  }
+  out.sort((a, b) => a.inner - b.inner);
+  const kept = [];
+  for (const s of out) {
+    const prev = kept[kept.length - 1];
+    if (prev && s.inner < prev.outer) s.inner = prev.outer;
+    if (s.outer - s.inner < 10) continue;
+    kept.push(s);
+    if (kept.length >= MAX_SECTORS) break;
+  }
+  return kept;
+}
+
+/** The sector a body is in: by its own orbit, or (a moon) its planet's. */
+export function sectorOf(map, body) {
+  if (!map.sectors?.length) return null;
+  let orbit = body.orbit;
+  if (body.parent !== 'sun') {
+    const p = map.bodies.find(x => x.id === body.parent);
+    if (!p) return null;
+    orbit = p.orbit;
+  }
+  return map.sectors.find(s => orbit >= s.inner && orbit < s.outer) ?? null;
+}
+
+/** A fresh sector id, unique within `taken`. */
+export function newSectorId(taken, rand = Math.random) {
+  for (;;) {
+    const id = 's' + Math.floor(rand() * 36 ** 6).toString(36);
+    if (!taken.has(id)) return id;
+  }
 }
 
 function cleanName(v, fallback, max = MAX_NAME) {
@@ -337,6 +406,28 @@ export function checkMap(input) {
       `Metal ${tot.metal} · credits ${tot.credits} · science ${tot.science} per tick if every world is claimed.`);
   }
 
+  if (map.sectors.length) {
+    const worldsIn = (s) => world.filter(b => sectorOf(map, b)?.id === s.id);
+    const empty = map.sectors.filter(s => worldsIn(s).length === 0);
+    if (empty.length) {
+      add('warn', 'sector_empty', `${empty.length} empty sector${empty.length > 1 ? 's' : ''}`,
+        `${empty.map(s => s.name).join(', ')} hold${empty.length === 1 ? 's' : ''} no worlds: nobody can ever control ${empty.length === 1 ? 'it' : 'them'}. Widen ${empty.length === 1 ? 'it' : 'them'} or move a world in.`);
+    }
+    const loose = world.filter(b => b.parent === 'sun' && !sectorOf(map, b));
+    if (loose.length) {
+      add('warn', 'sector_loose', `${loose.length} world${loose.length > 1 ? 's' : ''} outside every sector`,
+        'They group the automatic way (a planet with its moons, rubble into belts). Widen a band to take them in, if you mean them to belong.',
+        loose.map(b => b.id));
+    }
+    const names = new Map();
+    for (const s of map.sectors) names.set(s.name.toLowerCase(), (names.get(s.name.toLowerCase()) ?? 0) + 1);
+    if ([...names.values()].some(n => n > 1)) {
+      add('warn', 'sector_names', 'Two sectors share a name', 'The senate and the outliner name sectors; give each its own.');
+    }
+    add('ok', 'sectors', `${map.sectors.length} sector${map.sectors.length > 1 ? 's' : ''}`,
+      `${map.sectors.map(s => `${s.name} (${worldsIn(s).length})`).join(' · ')}. Each is one vote in the senate for whoever holds most of its worlds.`);
+  }
+
   const secrets = map.bodies.filter(b => b.secret);
   add('ok', 'secrets', 'Discoveries',
     secrets.length
@@ -374,6 +465,7 @@ export function mapToCatalog(input) {
   }];
   for (const b of map.bodies) {
     const info = TYPE_INFO[b.type];
+    const sec = sectorOf(map, b);
     const entry = {
       id: idOf(b.id),
       name: b.name,
@@ -387,7 +479,15 @@ export function mapToCatalog(input) {
       angle0: b.angle,
       color: b.color,
       yield: { metal: b.yields.metal, fuel: 0, gold: b.yields.credits, science: b.yields.science },
-      look: { surface: b.surface, rings: b.rings, ...(b.lore ? { lore: b.lore } : {}) },
+      look: {
+        surface: b.surface, rings: b.rings,
+        ...(b.lore ? { lore: b.lore } : {}),
+        // The sector travels with each body (look_json), so every place
+        // that groups bodies -- server and client -- reads it off the row
+        // it already has. Band radii stay in map units; the game draws a
+        // sector round its members' real (scaled) orbits.
+        ...(sec ? { sector: { id: sec.id, name: sec.name, color: sec.color } } : {}),
+      },
       custom_start: b.start,
       custom_secret: b.secret,
       custom_secret_name: b.secretName || null,
