@@ -668,7 +668,10 @@ async function customMapOptions(env, roomId) {
       parent: b.parent === 'sun' ? 'sol' : `cm_${b.parent}`,
       yield: { metal: b.yields.metal, fuel: 0, gold: b.yields.credits, science: b.yields.science },
     }));
-    return { options, info: { name: map.name, sun: map.sun.name, bodies: map.bodies.length } };
+    return {
+      options,
+      info: { name: map.name, sun: map.sun.name, bodies: map.bodies.length, blurb: map.blurb || '' },
+    };
   } catch (e) {
     console.error('custom map options failed', e);
     return null;
@@ -1183,7 +1186,9 @@ const ROOM_COLS = `r.id, r.name, r.status AS room_status, r.max_players, r.host_
   r.quick_join, (r.password_hash IS NOT NULL) AS has_password, u.display_name AS host_name,
   (SELECT COUNT(*) FROM room_members m WHERE m.room_id = r.id) AS member_count,
   g.status AS game_status, g.current_tick, g.tick_interval_ms, g.started_at, g.next_tick_at,
-  g.winner_faction_id, g.victory_type, g.completed_at`;
+  g.winner_faction_id, g.victory_type, g.completed_at,
+  CASE WHEN r.custom_map_json IS NOT NULL AND json_valid(r.custom_map_json)
+       THEN json_extract(r.custom_map_json, '$.name') END AS custom_map_name`;
 
 async function buildSummaries(env, rows, userId) {
   const ids = rows.map(r => r.id);
@@ -1272,6 +1277,8 @@ async function buildSummaries(env, rows, userId) {
       quick_join: r.quick_join === 1,
       host_id: r.host_id,
       host_name: r.host_name,
+      // A room hosted on a Map Maker map: the map's name, for the card.
+      custom_map_name: r.custom_map_name ?? null,
       created_at: r.created_at,
       updated_at: r.updated_at,
       started_at: r.started_at ?? null,

@@ -273,6 +273,9 @@ export type RoomSnapshot = {
   game_started: boolean;
   game_id: string | null;
   starting_body_options?: StartingBodyOption[];
+  /** A room hosted on a Map Maker map (staging): the snapshot's name,
+   *  its sun, how many bodies, and its maker's pitch (plain text). */
+  custom_map?: { name: string; sun?: string; bodies?: number; blurb?: string } | null;
 };
 
 export type Faction = {

@@ -220,6 +220,7 @@ const base: Catalog = {
   'card.tag.pin': 'Abre ao iniciar',
   'card.tag.pinTitle': 'Abre automaticamente quando você inicia o Orbital',
   'card.fact.speed': 'Ritmo',
+  'card.fact.map': 'Mapa',
   'card.fact.you': 'Você',
   'card.fact.leading': 'Na frente',
   'card.fact.winner': 'Vencedor',

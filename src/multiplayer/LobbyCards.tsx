@@ -51,6 +51,8 @@ export interface GameSummary {
   winner: { name: string; color: string | null; emblem: string | null; victory_type: string | null } | null;
   me: { name: string; color: string | null; emblem: string | null; worlds: number; rank: number | null; out: boolean } | null;
   archived_at_ms?: number | null;
+  /** A room hosted on a Map Maker map: that map's name (player-written). */
+  custom_map_name?: string | null;
 }
 
 // ---------- words ----------
@@ -236,6 +238,9 @@ export function GameCard({ g, now, variant, busy, onPrimary, menu, pinned, myUse
 
       <div className="lx-card__facts">
         {speed && <span className="lx-fact"><span className="lx-fact__k">{t('card.fact.speed')}</span>{speed}</span>}
+        {g.custom_map_name && (
+          <span className="lx-fact"><span className="lx-fact__k">{t('card.fact.map')}</span>{g.custom_map_name}</span>
+        )}
         {g.me && (g.phase === 'live' || g.phase === 'finished') && (
           <span className="lx-fact">
             <span className="lx-fact__k">{t('card.fact.you')}</span>

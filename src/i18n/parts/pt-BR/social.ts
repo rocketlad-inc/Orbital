@@ -441,6 +441,7 @@ export const social: Catalog = {
   'roomlobby.invite.locked': 'Protegida por senha',
   'roomlobby.invite.copied': '✓ copiado',
   'roomlobby.status': 'Situação',
+  'roomlobby.customMap': 'Mapa personalizado',
   'roomlobby.status.running': 'Em andamento · turno {n}',
   'roomlobby.status.lobby': 'Sala · {count}/{max} · {ready} prontos',
   'roomlobby.ready': '✓ Pronto',

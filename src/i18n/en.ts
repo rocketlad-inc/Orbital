@@ -215,6 +215,7 @@ const base = {
   'card.tag.pin': 'Auto-loads',
   'card.tag.pinTitle': 'Opens automatically when you launch Orbital',
   'card.fact.speed': 'Speed',
+  'card.fact.map': 'Map',
   'card.fact.you': 'You',
   'card.fact.leading': 'Leading',
   'card.fact.winner': 'Winner',
