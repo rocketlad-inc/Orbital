@@ -679,12 +679,14 @@ type SavedMap = { id: string; name: string; bodies: number; blockers: number; su
  * open (its routes 404), so prod's creator is unchanged until it ships.
  */
 function MapChoice({
-  maps, useCustom, setUseCustom, mapId, setMapId, seats, blocked,
+  maps, useCustom, setUseCustom, mapId, setMapId, seats, blocked, load,
 }: {
   maps: { list: SavedMap[]; canHost: boolean };
   useCustom: boolean; setUseCustom: (v: boolean) => void;
   mapId: string | null; setMapId: (id: string) => void;
   seats: number | null; blocked: string[];
+  /** The picked map being read for its seats and blockers. */
+  load: 'idle' | 'loading' | 'ok' | 'error';
 }) {
   const sellable = canBuyHere();
   const price = tk('mp.commission.price', COMMISSION_PRICE);
@@ -738,13 +740,15 @@ function MapChoice({
                 className={`lx-mappick ${mapId === m.id ? 'is-active' : ''}`} onClick={() => setMapId(m.id)}>
                 <span className="lx-mappick__sun" style={{ background: m.sun_color }} aria-hidden />
                 <span className="lx-mappick__name">{m.name}</span>
-                <span className="lx-muted lx-small">{t('lobby.create.mapBodies', { n: m.bodies })}</span>
+                <span className="lx-muted lx-small">{tn('lobby.create.mapBodies', m.bodies)}</span>
                 <span className={`lx-mappick__tag ${m.blockers ? 'is-bad' : ''}`}>
                   {m.blockers ? t('lobby.create.mapToFix', { n: m.blockers }) : t('lobby.create.mapReady')}
                 </span>
               </button>
             ))}
-            {mapId && seats != null && <p className="lx-muted lx-small">{t('lobby.create.mapSeats', { n: seats })}</p>}
+            {mapId && load === 'loading' && <p className="lx-muted lx-small">{t('lobby.create.mapLoading')}</p>}
+            {mapId && load === 'error' && <p className="lx-error" role="alert">{t('lobby.create.mapLoadFailed')}</p>}
+            {mapId && load === 'ok' && seats != null && <p className="lx-muted lx-small">{t('lobby.create.mapSeats', { n: seats })}</p>}
             {blocked.length > 0 && <p className="lx-error">{t('lobby.create.mapBlocked', { list: blocked.join('; ') })}</p>}
           </div>
         )
@@ -763,6 +767,7 @@ function CreatePanel({ onCreated, hostName }: { onCreated: (id: string) => void;
   const [mapId, setMapId] = useState<string | null>(null);
   const [mapSeats, setMapSeats] = useState<number | null>(null);
   const [mapBlocked, setMapBlocked] = useState<string[]>([]);
+  const [mapLoad, setMapLoad] = useState<'idle' | 'loading' | 'ok' | 'error'>('idle');
   useEffect(() => {
     let live = true;
     apiFetch<{ maps: SavedMap[]; can_host: boolean }>('/api/maps').then(res => {
@@ -772,11 +777,17 @@ function CreatePanel({ onCreated, hostName }: { onCreated: (id: string) => void;
   }, []);
   // The picked map decides the seats: one per start world, ten at most.
   useEffect(() => {
-    if (!mapId) { setMapSeats(null); setMapBlocked([]); return; }
+    // A new pick starts from nothing: the last map's seats and blockers
+    // never stand in for this one's while it loads.
+    setMapSeats(null); setMapBlocked([]);
+    if (!mapId) { setMapLoad('idle'); return; }
+    setMapLoad('loading');
     let live = true;
     apiFetch<{ map: unknown }>(`/api/maps/${mapId}`).then(res => {
-      if (!live || !res.ok) return;
+      if (!live) return;
+      if (!res.ok) { setMapLoad('error'); return; }
       const m = normalizeMap(res.data.map);
+      setMapLoad('ok');
       const n = Math.max(2, Math.min(10, startWorlds(m).worlds.length));
       setMapSeats(n);
       setMapBlocked(hostBlockers(m).map(issueTitle));
@@ -785,7 +796,7 @@ function CreatePanel({ onCreated, hostName }: { onCreated: (id: string) => void;
     return () => { live = false; };
   }, [mapId]);
   const custom = useCustom && !!maps;
-  const customReady = custom && !!maps?.canHost && !!mapId && mapBlocked.length === 0;
+  const customReady = custom && !!maps?.canHost && !!mapId && mapLoad === 'ok' && mapBlocked.length === 0;
   const [isPrivate, setIsPrivate] = useState(false);
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -899,7 +910,7 @@ function CreatePanel({ onCreated, hostName }: { onCreated: (id: string) => void;
 
         {maps && (
           <MapChoice maps={maps} useCustom={useCustom} setUseCustom={setUseCustom}
-            mapId={mapId} setMapId={setMapId} seats={mapSeats} blocked={mapBlocked} />
+            mapId={mapId} setMapId={setMapId} seats={mapSeats} blocked={mapBlocked} load={mapLoad} />
         )}
 
         <div className="lx-field">

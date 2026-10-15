@@ -49,6 +49,11 @@ const base: Catalog = {
   'err.too_few_players': 'Um jogo precisa de pelo menos 2 jogadores para começar.',
   'err.invalid_token': 'Esse link de redefinição expirou ou já foi usado. Peça um novo.',
   'err.raise_only': 'Num jogo em andamento, só dá para aumentar o número de vagas.',
+  'err.map_blocked': 'Esse mapa ainda não está pronto para hospedar. Abra no Criador de Mapas para corrigir.',
+  'err.commission_required': 'Hospedar um jogo no seu próprio mapa exige a Comissão do Comandante.',
+  'err.map_seats': 'Esse mapa tem menos mundos iniciais do que vagas. Escolha menos jogadores.',
+  'err.seed_failed': 'Não foi possível preparar o jogo. A sala está aberta de novo; tente começar mais uma vez.',
+  'err.stale': 'Este mapa foi salvo em outro lugar depois que você o abriu.',
 
   // ---- lobby: header + navigation ----
   'lobby.nav.label': 'Sala',
@@ -173,7 +178,10 @@ const base: Catalog = {
   'lobby.create.mapNone': 'Você ainda não tem mapas salvos. Crie um, salve, e ele aparece aqui.',
   'lobby.create.mapOpenMaker': 'Abrir o Criador de Mapas',
   'lobby.create.mapPick': 'Qual mapa?',
-  'lobby.create.mapBodies': '{n} corpos',
+  'lobby.create.mapBodies_one': '{n} corpo',
+  'lobby.create.mapBodies_other': '{n} corpos',
+  'lobby.create.mapLoading': 'Lendo o mapa…',
+  'lobby.create.mapLoadFailed': 'Não foi possível ler esse mapa. Escolha de novo ou tente outro.',
   'lobby.create.mapReady': 'Pronto',
   'lobby.create.mapToFix': '{n} a corrigir',
   'lobby.create.mapSeats': 'Até {n} lugares: um por mundo inicial.',

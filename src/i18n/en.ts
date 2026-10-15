@@ -44,6 +44,11 @@ const base = {
   'err.too_few_players': 'A game needs at least 2 players to start.',
   'err.invalid_token': 'This reset link has expired or was already used. Ask for a new one.',
   'err.raise_only': 'Seats can only be raised in a running game.',
+  'err.map_blocked': 'That map is not ready to host yet. Open it in the Map Maker to fix it.',
+  'err.commission_required': 'Hosting a game on your own map needs the Commander’s Commission.',
+  'err.map_seats': 'That map has fewer start worlds than seats. Choose fewer players.',
+  'err.seed_failed': 'The game could not be set up. The lobby is open again; try starting it once more.',
+  'err.stale': 'This map was saved somewhere else since you opened it.',
 
   // ---- lobby: header + navigation ----
   'lobby.nav.label': 'Lobby',
@@ -168,7 +173,10 @@ const base = {
   'lobby.create.mapNone': 'You have no saved maps yet. Build one, save it, and it appears here.',
   'lobby.create.mapOpenMaker': 'Open the Map Maker',
   'lobby.create.mapPick': 'Which map?',
-  'lobby.create.mapBodies': '{n} bodies',
+  'lobby.create.mapBodies_one': '{n} body',
+  'lobby.create.mapBodies_other': '{n} bodies',
+  'lobby.create.mapLoading': 'Reading the map…',
+  'lobby.create.mapLoadFailed': 'Could not read that map. Pick it again, or try another.',
   'lobby.create.mapReady': 'Ready',
   'lobby.create.mapToFix': '{n} to fix',
   'lobby.create.mapSeats': 'Seats up to {n}: one per start world.',
