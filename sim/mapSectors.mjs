@@ -177,6 +177,12 @@ check('...in order out from the sun, among the automatic columns',
   cols.indexOf('Inner Reach') < cols.indexOf('The Shoals') && cols.indexOf('The Shoals') < cols.indexOf('Loner')
   && cols.indexOf('Loner') < cols.indexOf('Far'), cols.join(' | '));
 
+const { renderStripPng, renderStripPage } = await import('../worker/heraldStrip.js');
+const png = await renderStripPng(env, room, { data: herald, width: 550, height: 440 });
+const html = renderStripPage(herald, { width: 1200, height: 420 });
+check('...and both renderers draw it', png?.byteLength > 1000 && html.includes('Inner Reach') && html.includes('The Shoals'),
+  `png ${png?.byteLength}`);
+
 // ---- every SELECT that feeds a grouping asks for look_json ----------------------
 // Driven above: senate.js bodiesForWeight, state.js sensorBodies, factions.js
 // countSystemsPerFaction, heraldStrip.js. The watch's needs a paired
