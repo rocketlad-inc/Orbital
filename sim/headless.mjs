@@ -89,7 +89,7 @@ function makeState(broadcasts) {
  * other — which matters more than it sounds: a shared DB would let one
  * game's chronicle rows leak into another's statistics.
  */
-export async function runGame({ ticks = 200, players = 4, seed = 'sim-seed-0001', quiet = false, doctrines = null, doctrineOffset = 0, config = null } = {}) {
+export async function runGame({ ticks = 200, players = 4, seed = 'sim-seed-0001', quiet = false, doctrines = null, doctrineOffset = 0, config = null, customMap = null } = {}) {
   const TICKS = ticks, PLAYERS = players, SEED = seed;
   const log = quiet ? () => {} : (...a) => console.log(...a);
   const t0 = Date.now();
@@ -141,6 +141,14 @@ export async function runGame({ ticks = 200, players = 4, seed = 'sim-seed-0001'
     await DB.prepare(
       `INSERT INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)`,
     ).bind(roomId, u, now).run();
+  }
+
+  // A Map Maker map (src/game/customMap.js format): the room carries its
+  // snapshot exactly as handleHostMap writes it, so the real seeder takes
+  // the custom-map branch (sim/customMapGame.mjs).
+  if (customMap) {
+    await DB.prepare('UPDATE rooms SET custom_map_id = ?, custom_map_json = ? WHERE id = ?')
+      .bind('map_sim', JSON.stringify(customMap), roomId).run();
   }
 
   // ---- start the game with the REAL seeder --------------------------------
