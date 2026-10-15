@@ -63,5 +63,7 @@ export function systemExtent(map: CustomMap, scale: Scale): number {
     ext = Math.max(ext, orbitToDisplay(map, b, scale) + discR(b) + 40);
   }
   for (const s of map.sectors) ext = Math.max(ext, sunOrbitToDisplay(s.outer, scale) + 20);
-  return ext;
+  // An empty sun opens on a system-sized view (out to about Saturn), so
+  // the first world or sector drawn lands at a real distance.
+  return Math.max(ext, sunOrbitToDisplay(2000, scale));
 }

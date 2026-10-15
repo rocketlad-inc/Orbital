@@ -475,19 +475,34 @@ export function sectorMembers(map: CustomMap, id: string): MapBody[] {
  * `count` bands that each hold at least one world. Replaces any drawn.
  */
 export function suggestSectors(map: CustomMap, count = 4): CustomMap {
-  const orbits = [...new Set(map.bodies.filter(b => b.parent === 'sun').map(b => b.orbit))].sort((a, b) => a - b);
+  // Cut between WORLDS (rubble falls where it falls), at the widest gaps
+  // that still leave every band a fair share: no band of one rock beside
+  // a band of thirty.
+  const sunKids = map.bodies.filter(b => b.parent === 'sun');
+  const worldOrbits = sunKids.filter(b => b.type !== 'asteroid' && b.type !== 'rock').map(b => b.orbit);
+  const orbits = [...new Set(worldOrbits.length >= 2 ? worldOrbits : sunKids.map(b => b.orbit))].sort((a, b) => a - b);
   if (orbits.length < 2) return map;
   const k = Math.max(2, Math.min(count, orbits.length, MAX_SECTORS));
-  const gaps = orbits.slice(1).map((o, i) => ({ i: i + 1, g: Math.log(o / orbits[i]) }))
-    .sort((a, b) => b.g - a.g).slice(0, k - 1).map(x => x.i).sort((a, b) => a - b);
-  const cuts = [0, ...gaps, orbits.length];
+  const minSize = Math.max(1, Math.floor(orbits.length / (k * 1.6)));
+  const ranked = orbits.slice(1).map((o, i) => ({ i: i + 1, g: Math.log(o / orbits[i]) })).sort((a, b) => b.g - a.g);
+  const chosen: number[] = [];
+  const fits = (c: number) => {
+    const all = [0, ...chosen, c, orbits.length].sort((a, b) => a - b);
+    return all.slice(1).every((x, j) => x - all[j] >= minSize);
+  };
+  for (const g of ranked) {
+    if (chosen.length >= k - 1) break;
+    if (fits(g.i)) chosen.push(g.i);
+  }
+  const all = sunKids.map(b => b.orbit).sort((a, b) => a - b);
+  const cuts = [0, ...chosen.sort((a, b) => a - b), orbits.length];
   const bare = { ...map, sectors: [] as MapSector[] };
   const sectors: MapSector[] = [];
   for (let j = 0; j < cuts.length - 1; j++) {
     const first = orbits[cuts[j]], last = orbits[cuts[j + 1] - 1];
     // Edges halfway (geometrically) between neighbouring groups.
-    const inner = j === 0 ? Math.max(0, first * 0.8) : Math.sqrt(orbits[cuts[j] - 1] * first);
-    const outer = j === cuts.length - 2 ? last * 1.15 + 20 : Math.sqrt(last * orbits[cuts[j + 1]]);
+    const inner = j === 0 ? Math.max(0, Math.min(first, all[0]) * 0.8) : Math.sqrt(orbits[cuts[j] - 1] * first);
+    const outer = j === cuts.length - 2 ? Math.max(last, all[all.length - 1]) * 1.15 + 20 : Math.sqrt(last * orbits[cuts[j + 1]]);
     sectors.push({
       id: newSectorId(new Set(sectors.map(s => s.id))),
       name: SECTOR_NAMES[j] ?? `Sector ${j + 1}`,

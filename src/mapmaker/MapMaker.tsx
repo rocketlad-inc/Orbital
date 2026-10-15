@@ -26,7 +26,7 @@ import { MapView, type Tool } from './MapView';
 import { BodyInspector, SunInspector, MapInspector, SectorInspector, BulkBar, Stepper, BACKDROP_LABEL } from './Inspector';
 import {
   placeBody, deleteBodies, duplicateBodies, placeSymmetric, ringOf, scatterAsteroids, matchBodies, type MatchAspect,
-  addSector, updateSector, deleteSectors,
+  addSector, deleteSectors,
 } from './ops';
 import { fairness } from './fairness';
 import type { Scale } from './geometry';
@@ -703,10 +703,22 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
     const i = map.sectors.findIndex(x => x.id === id);
     const sct = map.sectors[i];
     if (!sct) return;
-    // An edge stops at its neighbour and never crosses its own other edge.
-    const lo = which === 'inner' ? (map.sectors[i - 1]?.outer ?? 0) : sct.inner + 10;
-    const hi = which === 'inner' ? sct.outer - 10 : (map.sectors[i + 1]?.inner ?? 15400);
-    transient(updateSector(map, id, { [which]: Math.max(lo, Math.min(hi, orbit)) }, false));
+    // A shared edge (two bands touching) moves both bands; a free edge
+    // stops at its neighbour. Neither crosses a band's own other edge.
+    const prev = map.sectors[i - 1], next = map.sectors[i + 1];
+    if (which === 'inner') {
+      const shared = !!prev && prev.outer === sct.inner;
+      const lo = shared ? prev.inner + 10 : (prev?.outer ?? 0);
+      const v = Math.max(lo, Math.min(sct.outer - 10, orbit));
+      const sectors = map.sectors.map(x => (x.id === id ? { ...x, inner: v } : shared && x.id === prev!.id ? { ...x, outer: v } : x));
+      transient({ ...map, sectors });
+    } else {
+      const shared = !!next && next.inner === sct.outer;
+      const hi = shared ? next.outer - 10 : (next?.inner ?? 15400);
+      const v = Math.max(sct.inner + 10, Math.min(hi, orbit));
+      const sectors = map.sectors.map(x => (x.id === id ? { ...x, outer: v } : shared && x.id === next!.id ? { ...x, inner: v } : x));
+      transient({ ...map, sectors });
+    }
   };
 
   // The tree: the sun's worlds in orbit order, each with its moons.
