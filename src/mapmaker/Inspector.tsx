@@ -507,7 +507,7 @@ export const SectorInspector: React.FC<{
             <Stepper label="Outer edge" value={sector.outer} min={sector.inner + 10} max={outside ? outside.inner : 15400} step={10} onChange={(v) => set({ outer: v })} />
           </Field>
         </div>
-        <p className="mm-note">Drag either edge on the map to move it. Bands never overlap: an edge stops where the next sector starts.</p>
+        <p className="mm-note">Drag either edge on the map to move it. Where two sectors touch, the shared edge moves both; bands never overlap.</p>
         <div className="mm-box">
           <b className="mm-sectorstat">{worlds.length} world{worlds.length === 1 ? '' : 's'}{starts.length ? ` · ${starts.length} start${starts.length === 1 ? '' : 's'}` : ''}</b>
           <div className="mm-row mm-row--wrap">
