@@ -57,6 +57,7 @@ const base: Catalog = {
   'lobby.nav.browse': 'Explorar',
   'lobby.nav.create': 'Criar um jogo',
   'lobby.nav.code': 'Entrar com código',
+  'lobby.nav.mapMaker': 'Criador de Mapas',
   'lobby.nav.analytics': 'Análises',
   'lobby.nav.bot': 'Bot',
   'lobby.nav.editor': 'Editor',

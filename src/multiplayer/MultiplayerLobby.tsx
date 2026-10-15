@@ -103,6 +103,17 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
 
   const displayName = user?.display_name || user?.email || t('lobby.commander');
 
+  // Staging-only tools (the Map Maker). /api/_version says which server
+  // this is; a failed probe means "not staging".
+  const [onStaging, setOnStaging] = useState(false);
+  useEffect(() => {
+    let live = true;
+    fetch('/api/_version').then(r => r.json())
+      .then(j => { if (live) setOnStaging(j?.env === 'staging'); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, []);
+
   return (
     <div className="lx">
       <LobbyStarfield />
@@ -120,6 +131,10 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
             <NavItem active={tab === 'browse'} onClick={() => setTab('browse')}>{t('lobby.nav.browse')}</NavItem>
             <NavItem active={tab === 'create'} onClick={() => setTab('create')}>{t('lobby.nav.create')}</NavItem>
             <NavItem active={tab === 'code'} onClick={() => setTab('code')}>{t('lobby.nav.code')}</NavItem>
+            {/* The Map Maker (src/mapmaker): staging only until it ships. */}
+            {onStaging && (
+              <NavItem active={false} onClick={() => { window.location.href = '/?mapmaker'; }}>{t('lobby.nav.mapMaker')}</NavItem>
+            )}
             {/* Live-ops tools, allow-listed admins only. Display-only flag;
                 every /api/admin route re-checks server-side. */}
             {user?.is_admin && (

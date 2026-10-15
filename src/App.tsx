@@ -76,6 +76,8 @@ import './styles/shellJs.css';
 // The orbital-battle layout test page (/?battle). Lazy: it is a tool,
 // not the game, so it stays out of the main bundle.
 const BattleSandbox = React.lazy(() => import('./battleSandbox/BattleSandbox'));
+// The Map Maker (?mapmaker): its own screen, out of the main bundle.
+const MapMaker = React.lazy(() => import('./mapmaker/MapMaker'));
 
 /** Which engine the session is in. 'singleplayer' is unreachable — SP
  *  entry is retired — but the union survives because SinglePlayerView is
@@ -962,6 +964,24 @@ function AppRouter() {
     typeof window !== 'undefined' &&
     new URLSearchParams(window.location.search).has('battle'),
   );
+  const [mapMakerMode, setMapMakerMode] = useState(() =>
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).has('mapmaker'),
+  );
+  if (mapMakerMode) {
+    return (
+      <React.Suspense fallback={<div style={{ position: 'fixed', inset: 0, background: '#0a0e14' }} />}>
+        <MapMaker
+          onExit={() => {
+            const url = new URL(window.location.href);
+            url.searchParams.delete('mapmaker');
+            window.history.replaceState({}, '', url.toString());
+            setMapMakerMode(false);
+          }}
+        />
+      </React.Suspense>
+    );
+  }
   if (battleMode) {
     return (
       <React.Suspense fallback={<div style={{ position: 'fixed', inset: 0, background: '#060a11' }} />}>

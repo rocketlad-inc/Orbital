@@ -52,6 +52,7 @@ const base = {
   'lobby.nav.browse': 'Browse',
   'lobby.nav.create': 'Create a game',
   'lobby.nav.code': 'Join with code',
+  'lobby.nav.mapMaker': 'Map Maker',
   'lobby.nav.analytics': 'Analytics',
   'lobby.nav.bot': 'Bot',
   'lobby.nav.editor': 'Editor',
