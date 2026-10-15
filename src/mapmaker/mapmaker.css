@@ -417,7 +417,10 @@ body:has(.stg-banner) .mm-start, body:has(.stg-banner) .mm-work { top: 23px; }
   position: absolute; left: 12px; bottom: 34px; width: 280px; max-width: calc(100% - 24px); max-height: 60%; overflow-y: auto; z-index: 3;
   background: #0d141df0; border: 1px solid var(--mm-line); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px;
 }
-.mm-lenspanel__head { display: flex; align-items: center; justify-content: space-between; }
+.mm-lenspanel__head { display: flex; align-items: center; gap: 10px; background: none; border: 0; padding: 0; color: inherit; font: inherit; cursor: pointer; text-align: left; }
+.mm-lenspanel__head .mm-mono { margin-left: auto; }
+.mm-lenspanel.is-folded { width: auto; }
+.mm-toolhint .mm-step { flex: none; }
 .mm-lenspanel__head b { font-weight: 400; }
 .mm-lensrow { display: grid; grid-template-columns: 10px 1fr auto; grid-template-areas: 'd n v' 'b b b'; gap: 3px 8px; align-items: center; background: none; border: 0; color: var(--mm-text2); cursor: pointer; text-align: left; padding: 3px 0; font: 11.5px 'Chivo Mono', monospace; }
 .mm-lensrow .mm-dot { grid-area: d; }

@@ -540,6 +540,7 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
   const [scale, setScale] = useState<Scale>('compressed');
   const [preview, setPreview] = useState(false);
   const [lensOn, setLensOn] = useState(false);
+  const [lensOpen, setLensOpen] = useState(() => !window.matchMedia?.('(max-width: 1023px)').matches);
   const [picking, setPicking] = useState<{ aspects: Set<MatchAspect>; ids: string[] } | null>(null);
   const [fit, setFit] = useState(0);
   const [showCheck, setShowCheck] = useState(false);
@@ -711,14 +712,14 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
   const toolHint = picking
     ? `${mobile ? 'Tap' : 'Click'} the world to copy from`
     : tool === 'scatter' ? `Drag across the map to spray asteroids`
-      : tool === 'ring' ? `${mobile ? 'Tap' : 'Click'} where the ring of ${ringCount} should circle`
+      : tool === 'ring' ? (mobile ? 'Tap an orbit' : 'Click where the ring should circle')
         : tool === 'moon' ? `${mobile ? 'Tap' : 'Click'} beside a planet to give it a moon`
           : tool === 'belt' ? `${mobile ? 'Tap' : 'Click'} where the belt should circle`
             : tool ? `${mobile ? 'Tap' : 'Click'} to place${symmetry > 1 ? ` · ${symmetry} ways round the sun` : ''}` : null;
 
   const tools = (
     <>
-      <div className="mm-sec">{mobile ? 'ADD TO THE MAP' : 'CLICK, THEN CLICK THE MAP'}</div>
+      <div className="mm-sec">{mobile ? 'WORLDS' : 'CLICK, THEN CLICK THE MAP'}</div>
       <div className="mm-pal">
         {PALETTE.map(p => (
           <button key={p.tool} className={`mm-pal__btn${tool === p.tool ? ' is-on' : ''}`} onClick={() => pickTool(p.tool)} aria-pressed={tool === p.tool}>
@@ -800,13 +801,14 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
           : <MapInspector map={map} theme={theme} touch={mobile} onChange={commit} onTransient={transient} />;
 
   const lensPanel = lens && (
-    <div className="mm-lenspanel">
-      <div className="mm-lenspanel__head">
+    <div className={`mm-lenspanel${lensOpen ? '' : ' is-folded'}`}>
+      <button className="mm-lenspanel__head" onClick={() => setLensOpen(o => !o)} aria-expanded={lensOpen}>
         <b>Fairness</b>
         <span className={`mm-tag ${lens.score >= 80 ? 'is-ok' : lens.score >= 55 ? 'is-warn' : 'is-bad'}`}>{lens.score}%</span>
-      </div>
-      <p className="mm-note">What lies nearest each start world at the opening. 100% means every player's neighbourhood is worth the same.</p>
-      {[...lens.starts].sort((a, b) => b.total - a.total).map(s => (
+        <span className="mm-mono">{lensOpen ? '▾' : '▸'} {lens.starts.length} starts</span>
+      </button>
+      {lensOpen && <p className="mm-note">What lies nearest each start world at the opening. 100% means every player's neighbourhood is worth the same.</p>}
+      {lensOpen && [...lens.starts].sort((a, b) => b.total - a.total).map(s => (
         <button key={s.id} className="mm-lensrow" onClick={() => onSelect([s.id], 'replace')}>
           <span className="mm-dot" style={{ background: s.color }} />
           <span className="mm-lensrow__n">{s.name}</span>
@@ -814,7 +816,7 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
           <span className="mm-lensrow__bar"><span style={{ width: `${(s.total / Math.max(1, ...lens.starts.map(x => x.total))) * 100}%`, background: s.color }} /></span>
         </button>
       ))}
-      <span className="mm-mono">metal · credits · science per tick</span>
+      {lensOpen && <span className="mm-mono">metal · credits · science per tick</span>}
     </div>
   );
   const noLens = lensOn && !lens;
@@ -839,6 +841,7 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
       {toolHint && (
         <div className="mm-toolhint">
           <span>{toolHint}</span>
+          {tool === 'ring' && <Stepper label="Worlds in the ring" value={ringCount} min={2} max={12} onChange={setRingCount} />}
           <button className="mm-btn is-small is-primary" onClick={() => { setTool(null); setPicking(null); }}>{picking ? 'Cancel' : 'Done'}</button>
         </div>
       )}
