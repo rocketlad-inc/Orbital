@@ -342,7 +342,6 @@ body:has(.stg-banner) .mm-start, body:has(.stg-banner) .mm-work { top: 23px; }
   .mm-h1 { font-size: 21px; }
   .mm-start .mm-brand { font-size: 12px; letter-spacing: .08em; }
 }
-}
 @media (prefers-reduced-motion: reduce) {
   .mm-tpl, .mm-btn, .mm-chip { transition: none; }
   .mm-tpl:hover { transform: none; }
