@@ -180,6 +180,8 @@ export const mapmaker = {
   'mm.issue.sectorLoose.title_one': '{n} world outside every sector',
   'mm.issue.sectorLoose.title_other': '{n} worlds outside every sector',
   'mm.issue.sectorLoose.detail': 'They group the automatic way (a planet with its moons, rubble into belts). Widen a band to take them in, if you mean them to belong.',
+  'mm.issue.sectorStarts.title': '{n} start worlds share {sector}',
+  'mm.issue.sectorStarts.detail': '{names} all start in {sector}. It is contested from the first tick and gives nobody a senate vote until one empire holds most of it. Fine for a brawl over the home ring; for a race, give each home a band of its own.',
   'mm.issue.sectorNames.title': 'Two sectors share a name',
   'mm.issue.sectorNames.detail': 'The senate and the outliner name sectors; give each its own.',
   'mm.issue.sectors.title_one': '{n} sector',

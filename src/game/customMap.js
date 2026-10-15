@@ -429,6 +429,19 @@ export function checkMap(input) {
         `${empty.map(s => s.name).join(', ')} hold${empty.length === 1 ? 's' : ''} no worlds: nobody can ever control ${empty.length === 1 ? 'it' : 'them'}. Widen ${empty.length === 1 ? 'it' : 'them'} or move a world in.`,
         [], { count: empty.length, names: empty.map(s => s.name) });
     }
+    // START WORLDS SHARING A SECTOR (the four-agent playtest, 2026-10-15:
+    // four mirrored homes on one orbit sat in one band, so the senate saw
+    // a four-way tie for 650 ticks and every empire stayed at one vote).
+    // Bands are orbits, so homes on one orbit always share a band. That
+    // can be the point (a brawl over the home ring), so this warns.
+    const starts = startWorlds(map).worlds;
+    for (const s of map.sectors) {
+      const here = starts.filter(b => sectorOf(map, b)?.id === s.id);
+      if (here.length < 2) continue;
+      add('warn', 'sector_starts', `${here.length} start worlds share ${s.name}`,
+        `${here.map(b => b.name).join(', ')} all start in ${s.name}. It is contested from the first tick and gives nobody a senate vote until one empire holds most of it. Fine for a brawl over the home ring; for a race, give each home a band of its own.`,
+        here.map(b => b.id), { count: here.length, sector: s.name, names: here.map(b => b.name) });
+    }
     const loose = world.filter(b => b.parent === 'sun' && !sectorOf(map, b));
     if (loose.length) {
       add('warn', 'sector_loose', `${loose.length} world${loose.length > 1 ? 's' : ''} outside every sector`,

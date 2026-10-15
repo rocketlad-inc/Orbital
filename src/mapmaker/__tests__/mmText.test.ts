@@ -41,6 +41,11 @@ function everyIssue(): MapIssue[] {
         { id: 'sa2', name: 'Same', color: '#ffb84d', inner: 500, outer: 700 },
       ],
     }),
+    // sector_starts: two start worlds in one band
+    withBodies([
+      body('ua', { orbit: 500, start: true, name: 'UA', yields: { metal: 2, credits: 2, science: 3 } }),
+      body('ub', { orbit: 520, angle: 3, start: true, name: 'UB', yields: { metal: 2, credits: 2, science: 3 } }),
+    ], { sectors: [{ id: 'su1', name: 'Home Ring', color: '#4ecdc4', inner: 400, outer: 700 }] }),
     // max_bodies
     withBodies(Array.from({ length: 200 }, (_, i) => body(`m${i}`, { name: `W${i}`, orbit: 200 + i * 60 }))),
   ];
@@ -56,7 +61,7 @@ describe('Map Maker text', () => {
     const codes = everyIssue().map(i => i.code).sort();
     expect(codes).toEqual([
       'max_bodies', 'moon_far', 'names', 'names_dup', 'no_resources', 'none_credits', 'none_metal', 'none_science',
-      'orbits_close', 'resources', 'secrets', 'sector_empty', 'sector_loose', 'sector_names', 'sectors',
+      'orbits_close', 'resources', 'secrets', 'sector_empty', 'sector_loose', 'sector_names', 'sector_starts', 'sectors',
       'start_no_science', 'starts', 'starts_close', 'too_few_starts',
     ]);
   });

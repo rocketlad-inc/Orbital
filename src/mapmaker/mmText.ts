@@ -97,6 +97,11 @@ function translateIssue(i: MapIssue): { title: string; detail: string } | null {
       return { title: pl('mm.issue.sectorEmpty.title', n), detail: pl('mm.issue.sectorEmpty.detail', n, { names: (p.names ?? []).join(', ') }) };
     case 'sector_loose':
       return { title: pl('mm.issue.sectorLoose.title', n), detail: t('mm.issue.sectorLoose.detail') };
+    case 'sector_starts':
+      return {
+        title: t('mm.issue.sectorStarts.title', { n, sector: p.sector ?? '' }),
+        detail: t('mm.issue.sectorStarts.detail', { names: listJoin(p.names ?? []), sector: p.sector ?? '' }),
+      };
     case 'sector_names':
       return { title: t('mm.issue.sectorNames.title'), detail: t('mm.issue.sectorNames.detail') };
     case 'sectors':

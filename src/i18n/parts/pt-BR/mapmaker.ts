@@ -181,6 +181,8 @@ export const mapmaker: Catalog = {
   'mm.issue.sectorLoose.title_one': '{n} mundo fora de qualquer setor',
   'mm.issue.sectorLoose.title_other': '{n} mundos fora de qualquer setor',
   'mm.issue.sectorLoose.detail': 'Eles se agrupam do jeito automático (um planeta com suas luas, os destroços em cinturões). Alargue uma faixa para incluí-los, se a ideia é que façam parte dela.',
+  'mm.issue.sectorStarts.title': '{n} mundos iniciais dividem {sector}',
+  'mm.issue.sectorStarts.detail': '{names} começam todos em {sector}. Ele fica disputado desde o primeiro tique e não dá voto no Senado a ninguém até que um império controle a maior parte. Bom para uma briga pelo anel natal; para uma corrida, dê a cada lar uma faixa própria.',
   'mm.issue.sectorNames.title': 'Dois setores com o mesmo nome',
   'mm.issue.sectorNames.detail': 'O Senado e a lista de mundos chamam os setores pelo nome; dê a cada um o seu.',
   'mm.issue.sectors.title_one': '{n} setor',
