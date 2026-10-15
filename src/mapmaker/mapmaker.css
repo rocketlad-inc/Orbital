@@ -25,6 +25,8 @@
   overflow: hidden;
 }
 .mm-start *, .mm-work * { box-sizing: border-box; }
+/* Under the staging stripe, never beneath it. */
+body:has(.stg-banner) .mm-start, body:has(.stg-banner) .mm-work { top: 23px; }
 .mm-mono { font-family: 'Chivo Mono', ui-monospace, monospace; font-size: 11px; color: var(--mm-muted); font-variant-numeric: tabular-nums; }
 
 /* ---- controls ------------------------------------------------------- */

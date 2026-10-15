@@ -265,8 +265,14 @@ export const MapView: React.FC<MapViewProps> = ({
 
           {map.bodies.map(b => {
             const p = pos.get(b.id)!;
-            const r = discR(b);
             const sel = selection.has(b.id);
+            // Never smaller than a few screen pixels, or the whole-system
+            // view is specks. A moon waits until it clears its planet.
+            if (b.parent !== 'sun' && !sel) {
+              const host = map.bodies.find(x => x.id === b.parent);
+              if (host && (orbitToDisplay(map, b, scale) - discR(host)) * z < 5) return null;
+            }
+            const r = Math.max(discR(b), px(b.type === 'asteroid' || b.type === 'rock' ? 1.6 : b.parent === 'sun' ? 4.5 : 2.5));
             const gas = b.surface === 'gas' || b.surface === 'storm';
             return (
               <g key={b.id} data-body={b.id} className="mm-body" transform={`translate(${p.x} ${p.y})`}>
@@ -289,7 +295,7 @@ export const MapView: React.FC<MapViewProps> = ({
                     <text className="mm-badge__t" fontSize={px(8)} dy={px(3)}>?</text>
                   </g>
                 )}
-                {b.type !== 'asteroid' && b.type !== 'rock' && (z * r > 2.5 || sel) && (
+                {b.type !== 'asteroid' && b.type !== 'rock' && (b.parent === 'sun' || z * r > 4 || sel) && (
                   <text y={r + px(13)} className={`mm-label${b.start ? ' is-start' : ''}${sel ? ' is-sel' : ''}`} fontSize={px(b.parent === 'sun' ? 10.5 : 9)}>
                     {b.name.toUpperCase()}{b.start ? ' ✦' : ''}
                   </text>
