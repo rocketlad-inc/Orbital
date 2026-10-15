@@ -11583,6 +11583,7 @@ export class Room {
       .prepare(
         `SELECT b.id AS body_id, b.name AS body_name, b.radius AS body_radius,
                 b.secret_kind AS kind,
+                b.secret_name AS custom_name, b.secret_text AS custom_text,
                 (SELECT s.owner_faction_id FROM game_ships s
                   WHERE s.game_id = b.game_id
                     AND s.parent_body_id = b.id
@@ -11599,7 +11600,7 @@ export class Room {
 
     for (const row of unrevealed) {
       if (!row.discoverer) continue; // no ship parked here yet
-      const { body_id, body_name, body_radius, kind, discoverer } = row;
+      const { body_id, body_name, body_radius, kind, discoverer, custom_name, custom_text } = row;
       const stmts = [];
       let chronicleMessage = `${body_name}: DISCOVERY — ${kind.replace(/_/g, ' ')}`;
       // Extra structured fields the Herald digest reads instead of
@@ -11838,6 +11839,24 @@ export class Room {
           chronicleExtra = { science: HORIZON_ARCHIVE_SCIENCE };
           break;
         }
+      }
+
+      // A custom map's hand-placed discovery may carry its maker's own
+      // name and message (0167). They replace what the find is CALLED and
+      // what it SAYS; the reward above is the kind's, unchanged, and the
+      // kind's own sentence rides along as reward_message so the payoff
+      // is never hidden behind the flavour.
+      if (custom_name || custom_text) {
+        const rewardMessage = chronicleMessage;
+        const title = custom_name || 'DISCOVERY';
+        const tail = custom_text || rewardMessage.replace(/^[^:]*:\s*DISCOVERY\s*[—-]\s*/, '');
+        chronicleMessage = `${body_name}: ${title} — ${tail}`;
+        chronicleExtra = {
+          ...chronicleExtra,
+          ...(custom_name ? { custom_name } : {}),
+          ...(custom_text ? { custom_text } : {}),
+          reward_message: rewardMessage,
+        };
       }
 
       // Chronicle the discovery. Best-effort; never block the reveal.

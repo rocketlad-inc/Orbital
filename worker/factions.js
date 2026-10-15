@@ -2346,6 +2346,21 @@ export async function seedGameWorld(env, gameId) {
         .bind(JSON.stringify(b.look), bodyRowIdFor(b.id), gameId),
     );
   }
+  // 2a') A hand-placed discovery's own name and message (0167), beside
+  //      its kind. Only where the kind the maker chose was actually placed
+  //      (a start world carries none). state.js withholds both until the
+  //      discovery is revealed, exactly like secret_kind.
+  if (customMap) {
+    for (const b of CATALOG) {
+      if (!b.custom_secret || b.custom_secret === 'random') continue;
+      if (secretPlacements.get(b.id) !== b.custom_secret) continue;
+      if (!b.custom_secret_name && !b.custom_secret_text) continue;
+      stmts.push(
+        env.DB.prepare('UPDATE game_bodies SET secret_name = ?, secret_text = ? WHERE id = ? AND game_id = ?')
+          .bind(b.custom_secret_name || null, b.custom_secret_text || null, bodyRowIdFor(b.id), gameId),
+      );
+    }
+  }
 
   // 2b) Mineral loads for the meteoroids.
   //

@@ -1019,6 +1019,9 @@ __mark('sensors-done');
               emerge_from_tick, emerge_until_tick,
               -- A custom map's look (the Map Maker, 0166): surface, rings, star.
               look_json,
+              -- A hand-placed discovery's own name + message (0167).
+              -- Withheld below until revealed, like secret_kind.
+              secret_name, secret_text,
               -- A rock you have SURVEYED. Distinct from visible_to_me,
               -- which is "in sensor range this instant": discovery is
               -- permanent and per faction, so a meteoroid you found last
@@ -1201,18 +1204,23 @@ const shipsP = env.DB
           secret_revealed: 1,
           secret_discovered_by_faction_id: b.secret_discovered_by_faction_id,
           secret_discovered_at_tick: b.secret_discovered_at_tick,
+          secret_name: b.secret_name ?? null,
+          secret_text: b.secret_text ?? null,
         }
       : {
           secret_kind: null,
           secret_revealed: 0,
           secret_discovered_by_faction_id: null,
           secret_discovered_at_tick: null,
+          secret_name: null,
+          secret_text: null,
         };
     if (b.visible_to_me) {
       const {
         visible_to_me,
         secret_kind, secret_revealed,
         secret_discovered_by_faction_id, secret_discovered_at_tick,
+        secret_name, secret_text,
         ...rest
       } = b;
       return { ...rest, ...secretFields };
@@ -1221,6 +1229,7 @@ const shipsP = env.DB
       visible_to_me, owner_faction_id, development_level, fortification_level, shipyard_level,
       secret_kind, secret_revealed,
       secret_discovered_by_faction_id, secret_discovered_at_tick,
+      secret_name, secret_text,
       ...rest
     } = b;
     return {

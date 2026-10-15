@@ -5949,7 +5949,13 @@ function buildDiscoveryStories(rows, used, locator, factionNames) {
     const payoff = payoffBank ? payoffBank[Math.floor(Math.random() * payoffBank.length)] : DISCOVERY_PAYOFF_FALLBACK;
 
     const leadIn = pickTemplate('discovery_leadin', DISCOVERY_LEADIN, used);
-    const text = `${leadIn}at ${locBody.full}, ${b(faction)} ${payoff}.`;
+    // A custom map's hand-placed find may carry its maker's own name
+    // (0167): the Herald calls it by that name. Stripped of markdown so a
+    // player-written name cannot restyle the paper.
+    const customName = typeof p.custom_name === 'string'
+      ? p.custom_name.replace(/[*_`~|>#\[\]]/g, '').trim().slice(0, 40) : '';
+    const text = `${leadIn}at ${locBody.full}, ${b(faction)} ${payoff}.`
+      + (customName ? ` The find is known as “${customName}”.` : '');
     const headline = pickTemplate('discovery_hl', DISCOVERY_HEADLINE, used)({ bodyName: locBody.name, faction });
     stories.push({ text, headline, weight: 250 + Math.random() });
   }
