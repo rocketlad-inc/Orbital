@@ -318,11 +318,16 @@ export function startWorlds(map) {
  * re-runs before hosting: level 'block' stops a game being hosted, 'warn'
  * is advice, 'ok' is a reassurance line. Each names the bodies involved
  * so "Show me" can select them.
+ *
+ * Titles and details are English (the server sends blocker titles in a
+ * 409). `params` carries the counts and names each sentence is built
+ * from, so the client can rebuild it in the player's language
+ * (src/mapmaker/mmText.ts issueText, keyed by `code`).
  */
 export function checkMap(input) {
   const map = normalizeMap(input);
   const out = [];
-  const add = (level, code, title, detail, bodyIds = []) => out.push({ level, code, title, detail, bodyIds });
+  const add = (level, code, title, detail, bodyIds = [], params = {}) => out.push({ level, code, title, detail, bodyIds, params });
   const world = map.bodies.filter(b => b.type !== 'rock');
 
   const st = startWorlds(map);
@@ -331,15 +336,16 @@ export function checkMap(input) {
       st.marked
         ? 'A game needs at least 2. Mark more planets, moons or dwarfs with "Players may start here".'
         : 'A game needs at least 2 worlds a player can start on: a planet, moon or dwarf of medium size or bigger with science 2+.',
-      st.worlds.map(b => b.id));
+      st.worlds.map(b => b.id), { count: st.worlds.length, marked: st.marked });
   } else {
     add('ok', 'starts', `Start worlds: ${st.worlds.length}`,
       `${st.marked ? 'Marked by you.' : 'Picked automatically: planets, moons and dwarfs big enough, with science.'} Seats up to ${Math.min(10, st.worlds.length)} players.`,
-      st.worlds.map(b => b.id));
+      st.worlds.map(b => b.id), { count: st.worlds.length, marked: st.marked, seats: Math.min(10, st.worlds.length) });
     const dull = st.worlds.filter(b => b.yields.science < 2);
     if (dull.length) {
       add('warn', 'start_no_science', `${dull.length} start world${dull.length > 1 ? 's have' : ' has'} little science`,
-        'Research needs science 2 or more at home. Players starting there will fall behind.', dull.map(b => b.id));
+        'Research needs science 2 or more at home. Players starting there will fall behind.', dull.map(b => b.id),
+        { count: dull.length });
     }
     // Two start worlds in one moon system: next-door neighbours from tick 1.
     const regionOf = (b) => (b.parent === 'sun' ? b.id : b.parent);
@@ -352,7 +358,7 @@ export function checkMap(input) {
     if (crowded.length) {
       add('warn', 'starts_close', 'Start worlds share a planet\'s orbit',
         `${crowded.map(g => g.map(b => b.name).join(' and ')).join('; ')} start as next-door neighbours. Their first wars will be early.`,
-        crowded.flat().map(b => b.id));
+        crowded.flat().map(b => b.id), { groups: crowded.map(g => g.map(b => b.name)) });
     }
   }
 
@@ -369,7 +375,8 @@ export function checkMap(input) {
   if (tight.length) {
     add('warn', 'orbits_close', `${tight.length} pair${tight.length > 1 ? 's' : ''} of orbits nearly touching`,
       `${tight.slice(0, 3).map(([a, b]) => `${a.name} and ${b.name}`).join('; ')}${tight.length > 3 ? '…' : ''}. Space them out so each world reads on its own.`,
-      [...new Set(tight.flat().map(b => b.id))]);
+      [...new Set(tight.flat().map(b => b.id))],
+      { count: tight.length, pairs: tight.slice(0, 3).map(([a, b]) => [a.name, b.name]), more: tight.length > 3 });
   }
 
   // Moons that would leave their planet's pull.
@@ -377,7 +384,7 @@ export function checkMap(input) {
   if (strays.length) {
     add('warn', 'moon_far', 'Moons far from their planet',
       `${strays.map(b => b.name).join(', ')} orbit${strays.length === 1 ? 's' : ''} very wide. They read as their planet's, but take a long trip to reach.`,
-      strays.map(b => b.id));
+      strays.map(b => b.id), { count: strays.length, names: strays.map(b => b.name) });
   }
 
   const names = new Map();
@@ -388,7 +395,8 @@ export function checkMap(input) {
   const dupes = [...names.values()].filter(ids => ids.length > 1);
   if (dupes.length) {
     add('warn', 'names_dup', `${dupes.length} name${dupes.length > 1 ? 's are' : ' is'} used twice`,
-      'Players tell worlds apart by name. Give each its own.', dupes.flat().filter(id => id !== 'sun'));
+      'Players tell worlds apart by name. Give each its own.', dupes.flat().filter(id => id !== 'sun'),
+      { count: dupes.length });
   } else {
     add('ok', 'names', 'Names', 'Every world has its own name.');
   }
@@ -403,7 +411,8 @@ export function checkMap(input) {
       if (tot[k] === 0) add('warn', `none_${k}`, `No ${label} on the map`, `Nothing yields ${label}. Players will be stuck without it.`);
     }
     add('ok', 'resources', 'Resources across the map',
-      `Metal ${tot.metal} · credits ${tot.credits} · science ${tot.science} per tick if every world is claimed.`);
+      `Metal ${tot.metal} · credits ${tot.credits} · science ${tot.science} per tick if every world is claimed.`,
+      [], { ...tot });
   }
 
   if (map.sectors.length) {
@@ -411,13 +420,14 @@ export function checkMap(input) {
     const empty = map.sectors.filter(s => worldsIn(s).length === 0);
     if (empty.length) {
       add('warn', 'sector_empty', `${empty.length} empty sector${empty.length > 1 ? 's' : ''}`,
-        `${empty.map(s => s.name).join(', ')} hold${empty.length === 1 ? 's' : ''} no worlds: nobody can ever control ${empty.length === 1 ? 'it' : 'them'}. Widen ${empty.length === 1 ? 'it' : 'them'} or move a world in.`);
+        `${empty.map(s => s.name).join(', ')} hold${empty.length === 1 ? 's' : ''} no worlds: nobody can ever control ${empty.length === 1 ? 'it' : 'them'}. Widen ${empty.length === 1 ? 'it' : 'them'} or move a world in.`,
+        [], { count: empty.length, names: empty.map(s => s.name) });
     }
     const loose = world.filter(b => b.parent === 'sun' && !sectorOf(map, b));
     if (loose.length) {
       add('warn', 'sector_loose', `${loose.length} world${loose.length > 1 ? 's' : ''} outside every sector`,
         'They group the automatic way (a planet with its moons, rubble into belts). Widen a band to take them in, if you mean them to belong.',
-        loose.map(b => b.id));
+        loose.map(b => b.id), { count: loose.length });
     }
     const names = new Map();
     for (const s of map.sectors) names.set(s.name.toLowerCase(), (names.get(s.name.toLowerCase()) ?? 0) + 1);
@@ -425,16 +435,19 @@ export function checkMap(input) {
       add('warn', 'sector_names', 'Two sectors share a name', 'The senate and the outliner name sectors; give each its own.');
     }
     add('ok', 'sectors', `${map.sectors.length} sector${map.sectors.length > 1 ? 's' : ''}`,
-      `${map.sectors.map(s => `${s.name} (${worldsIn(s).length})`).join(' · ')}. Each is one vote in the senate for whoever holds most of its worlds.`);
+      `${map.sectors.map(s => `${s.name} (${worldsIn(s).length})`).join(' · ')}. Each is one vote in the senate for whoever holds most of its worlds.`,
+      [], { count: map.sectors.length, list: map.sectors.map(s => [s.name, worldsIn(s).length]) });
   }
 
   const secrets = map.bodies.filter(b => b.secret);
+  const placed = secrets.filter(b => b.secret !== 'random').length;
   add('ok', 'secrets', 'Discoveries',
     secrets.length
-      ? `${secrets.filter(b => b.secret !== 'random').length} hand-placed, ${secrets.filter(b => b.secret === 'random').length} left to chance.`
-      : 'None hidden. Add some from a world\'s Secrets tab, or leave the map without.');
+      ? `${placed} hand-placed, ${secrets.length - placed} left to chance.`
+      : 'None hidden. Add some from a world\'s Secrets tab, or leave the map without.',
+    [], { placed, chance: secrets.length - placed });
   if (map.bodies.length >= MAX_BODIES) {
-    add('warn', 'max_bodies', `${MAX_BODIES} bodies`, 'That is the most one map can hold.');
+    add('warn', 'max_bodies', `${MAX_BODIES} bodies`, 'That is the most one map can hold.', [], { max: MAX_BODIES });
   }
   return out;
 }
