@@ -9,7 +9,7 @@
 // 'staging', so shipping this file to production exposes nothing.
 // ============================================================
 
-import { json, err, readJson } from './trades.js';
+import { json, err } from './trades.js';
 import { BODY_CATALOG, STARTING_BODY_OPTIONS } from './factions.js';
 import { hasEntitlement } from './store.js';
 import { isAdminEmail } from './admins.js';
@@ -19,6 +19,21 @@ import {
 
 const MAX_MAPS_PER_USER = 50;
 const MAX_JSON_BYTES = 200_000;
+/** A request body is read as text and refused before parsing when it is
+ *  far past anything a map can be (security review: a huge body cost CPU
+ *  and memory before the 200 KB map cap was ever checked). */
+const MAX_BODY_BYTES = 1_000_000;
+async function readJson(req) {
+  try {
+    const declared = Number(req.headers.get('content-length') ?? 0);
+    if (declared > MAX_BODY_BYTES) return null;
+    const text = await req.text();
+    if (text.length > MAX_BODY_BYTES) return null;
+    return JSON.parse(text);
+  } catch { return null; }
+}
+/** Bytes, not UTF-16 units: an emoji-heavy map counted half its size. */
+const byteLength = (text) => new TextEncoder().encode(text).length;
 const MAP_ID_RE = /^[A-Za-z0-9_-]{6,40}$/;
 const CODE_RE = /^ORB-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
 
@@ -120,7 +135,7 @@ async function mapFromBody(req) {
   const map = normalizeMap(raw);
   if (typeof body.name === 'string' && body.name.trim()) map.name = normalizeMap({ ...map, name: body.name }).name;
   const text = JSON.stringify(map);
-  if (text.length > MAX_JSON_BYTES) return [null, err(413, 'too_large', 'that map is too large to save')];
+  if (byteLength(text) > MAX_JSON_BYTES) return [null, err(413, 'too_large', 'that map is too large to save')];
   return [{ map, text }];
 }
 
@@ -150,11 +165,6 @@ async function handleList(_req, env, ctx) {
 async function handleCreate(req, env, ctx) {
   const [got, bad] = await mapFromBody(req);
   if (bad) return bad;
-  const count = await env.DB.prepare('SELECT COUNT(*) AS n FROM custom_maps WHERE owner_user_id = ?')
-    .bind(ctx.session.user_id).first();
-  if (Number(count?.n ?? 0) >= MAX_MAPS_PER_USER) {
-    return err(409, 'too_many_maps', `you can keep up to ${MAX_MAPS_PER_USER} maps; delete one first`);
-  }
   const now = Date.now();
   const id = newMapId();
   let code = randomCode();
@@ -163,10 +173,17 @@ async function handleCreate(req, env, ctx) {
     if (!clash) break;
     code = randomCode();
   }
-  await env.DB.prepare(
+  // The cap is checked INSIDE the insert, so ten saves racing at 49
+  // maps cannot all get through (security review: 10 concurrent POSTs
+  // left 59 rows).
+  const ins = await env.DB.prepare(
     `INSERT INTO custom_maps (id, owner_user_id, name, map_json, share_code, copied_from, hosted_count, created_ms, updated_ms)
-     VALUES (?, ?, ?, ?, ?, NULL, 0, ?, ?)`,
-  ).bind(id, ctx.session.user_id, got.map.name, got.text, code, now, now).run();
+     SELECT ?, ?, ?, ?, ?, NULL, 0, ?, ?
+      WHERE (SELECT COUNT(*) FROM custom_maps WHERE owner_user_id = ?) < ?`,
+  ).bind(id, ctx.session.user_id, got.map.name, got.text, code, now, now, ctx.session.user_id, MAX_MAPS_PER_USER).run();
+  if ((ins.meta?.changes ?? 0) !== 1) {
+    return err(409, 'too_many_maps', `you can keep up to ${MAX_MAPS_PER_USER} maps; delete one first`);
+  }
   const row = await env.DB.prepare('SELECT * FROM custom_maps WHERE id = ?').bind(id).first();
   return json({ map: got.map, summary: summary(row, got.map) }, { status: 201 });
 }
@@ -309,7 +326,13 @@ async function handleGallery(_req, env, ctx) {
       ORDER BY ${order}
       LIMIT ?`,
   ).bind(...binds, limit).all()).results ?? [];
-  const items = rows.map(r => galleryItem(r, parseStored(r.map_json), ctx.session.user_id));
+  // A published map later edited into one nobody can host stays
+  // published (autosave would otherwise yank it mid-edit) but is kept
+  // out of the gallery until it is fixed.
+  const items = rows
+    .map(r => [r, parseStored(r.map_json)])
+    .filter(([, m]) => hostBlockers(m).length === 0)
+    .map(([r, m]) => galleryItem(r, m, ctx.session.user_id));
   const last = rows[rows.length - 1];
   const next = rows.length === limit && last
     ? (sort === 'new' ? `${last.published_ms}.${last.id}` : `${last.score}.${last.published_ms}.${last.id}`)
@@ -343,7 +366,13 @@ async function handleRemix(_req, env, ctx) {
   if (!src) return err(404, 'not_found', 'map not found');
   const res = await copyAsMine(env, ctx, src);
   if (res.status === 201 && src.owner_user_id !== ctx.session.user_id) {
-    await env.DB.prepare('UPDATE custom_maps SET remix_count = remix_count + 1 WHERE id = ?').bind(src.id).run();
+    // Once per person per map: remix-and-delete in a loop counts once.
+    const first = await env.DB.prepare(
+      'INSERT OR IGNORE INTO custom_map_remixes (map_id, user_id, created_ms) VALUES (?, ?, ?)',
+    ).bind(src.id, ctx.session.user_id, Date.now()).run();
+    if ((first.meta?.changes ?? 0) === 1) {
+      await env.DB.prepare('UPDATE custom_maps SET remix_count = remix_count + 1 WHERE id = ?').bind(src.id).run();
+    }
   }
   return res;
 }

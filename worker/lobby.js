@@ -455,6 +455,12 @@ export async function startGame(env, roomId) {
 
   const count = await env.DB.prepare('SELECT COUNT(*) AS c FROM room_members WHERE room_id = ?').bind(roomId).first();
   if ((count?.c ?? 0) < 2) return { error: err(409, 'too_few_players', 'need at least 2 players to start') };
+  // A custom map seats one player per start world, whoever let more in
+  // (the host's add-member tool skips the cap on purpose).
+  const mapSeats = await (await import('./customMaps.js')).customSeatCap(env, roomId).catch(() => null);
+  if (mapSeats != null && (count?.c ?? 0) > mapSeats) {
+    return { error: err(409, 'map_seats', `this map has ${mapSeats} start worlds; ${count.c} players are in the lobby`) };
+  }
 
   // Pull configured tick cadence from the DO (the host may have edited it
   // in the lobby); otherwise the default, one hour a tick.
@@ -512,10 +518,30 @@ export async function startGame(env, roomId) {
       await factions.seedGameWorld(env, roomId);
     }
   } catch (e) {
-    // Best-effort: surface in logs but don't unwind the start; the Faction
-    // agent's seeding is expected to be idempotent and retryable.
-    console.error('seedGameWorld failed', e);
+    // A world that failed to seed is UNDONE, not announced. Carrying on
+    // used to broadcast the start and email every player about a game
+    // with no factions and no bodies that nothing could ever recover (a
+    // bad custom map reached it: security review, 2026-10-15). The room
+    // goes back to its lobby and the host is told.
+    console.error('seedGameWorld failed; undoing the start', e);
+    try {
+      await env.DB.batch([
+        ...['game_settlements', 'game_ships', 'game_bodies', 'game_factions', 'chronicle_entries'].map(tbl =>
+          env.DB.prepare(`DELETE FROM ${tbl} WHERE game_id = ?`).bind(roomId)),
+        env.DB.prepare('DELETE FROM games WHERE id = ?').bind(roomId),
+        env.DB.prepare("UPDATE rooms SET status = 'lobby', updated_at = ? WHERE id = ?").bind(Date.now(), roomId),
+      ]);
+    } catch (undo) {
+      console.error('undoing a failed start also failed', undo);
+    }
+    return { error: err(500, 'seed_failed', 'the game could not be set up; the lobby is open again') };
   }
+  // "Played ×N" in the gallery: a game that actually began on the map.
+  try {
+    await env.DB.prepare(
+      'UPDATE custom_maps SET hosted_count = hosted_count + 1 WHERE id = (SELECT custom_map_id FROM rooms WHERE id = ?)',
+    ).bind(roomId).run();
+  } catch { /* the gallery counter is not worth failing a start over */ }
 
   await roomStub(env, roomId).fetch('https://room/game-started', {
     method: 'POST',

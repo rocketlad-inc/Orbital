@@ -362,6 +362,72 @@ check('the gallery is staging-only too', await (async () => {
   return res.status === 404;
 })());
 
+// ---- the security review's findings (2026-10-15) ----------------------------
+{
+  // 1. An id or colour that is not a string never survives the cleaner.
+  const poison = normalizeMap({ bodies: [
+    { id: 'aa', type: 'terrestrial', orbit: 400, start: true, yields: { science: 3 } },
+    { id: 'bb', type: 'terrestrial', orbit: 2000, start: true, yields: { science: 3 } },
+    { id: 'cc', type: 'gas-giant', orbit: 1200 },
+    { id: ['cc'], type: 'gas-giant', orbit: 3000, color: ['#00ff00'] },
+    { id: [['aa']], type: 'terrestrial', orbit: 900, start: true },
+  ], sun: { color: ['#ffffff'] }, sectors: [{ id: ['sx'], name: 'X', inner: 1, outer: 99 }] });
+  const ids = poison.bodies.map(b => b.id);
+  check('an array id is dropped, never kept as a twin of a real one',
+    ids.every(i => typeof i === 'string') && new Set(ids).size === ids.length && ids.length === 3, JSON.stringify(ids));
+  check('an array colour falls back to a real colour',
+    typeof poison.sun.color === 'string' && poison.bodies.every(b => typeof b.color === 'string') && poison.sectors.length === 0);
+  // 8. Invisible characters leave names.
+  const sneaky = normalizeMap({ name: 'Good‮evil\u0000​name', bodies: [{ id: 'a1', type: 'dwarf', orbit: 300, name: 'Ka\u0007ro⁦n' }] });
+  check('names lose control, zero-width and bidi characters',
+    sneaky.name === 'Goodevilname' && sneaky.bodies[0].name === 'Karon', `${JSON.stringify(sneaky.name)} ${JSON.stringify(sneaky.bodies[0].name)}`);
+  // 6. The size cap counts bytes.
+  // CJK is 3 bytes a character: about 300 KB of bytes in about 100k characters.
+  const kanji = (n) => '漢'.repeat(n);
+  const fat = { name: 'Fat', blurb: kanji(400), bodies: Array.from({ length: 200 }, (_, i) => ({
+    id: `f${i}`, type: 'terrestrial', orbit: 100 + i * 50, name: kanji(24), lore: kanji(200),
+    secret: 'resource_cache', secretName: kanji(40), secretText: kanji(240) })) };
+  const fatRes = await call('POST', '/api/maps', 'u2', { map: fat });
+  check('the 200 KB map cap counts bytes, not characters', fatRes.status === 413, `${fatRes.status} ${JSON.stringify(fatRes.body).slice(0, 120)}`);
+  // 4. The 50-map cap holds when saves race.
+  await DB.prepare(`INSERT INTO users (id,email,display_name,password_hash,created_at) VALUES ('u9','u9@t','U9','x',0)`).run();
+  for (let i = 0; i < 49; i++) {
+    await DB.prepare(`INSERT INTO custom_maps (id, owner_user_id, name, map_json, share_code, hosted_count, created_ms, updated_ms)
+                      VALUES (?, 'u9', 'x', '{}', ?, 0, 0, 0)`).bind(`map_race${i}`, `ORB-RACE${i}`).run();
+  }
+  const racers = await Promise.all(Array.from({ length: 10 }, () => call('POST', '/api/maps', 'u9', { map: blankMap('race') })));
+  const n9 = (await DB.prepare(`SELECT COUNT(*) n FROM custom_maps WHERE owner_user_id = 'u9'`).first()).n;
+  check('ten saves racing at 49 maps leave exactly 50', n9 === 50 && racers.filter(r => r.status === 201).length === 1,
+    `${n9} maps, ${racers.filter(r => r.status === 201).length} created`);
+  // 3. A remix counts once per person.
+  const pubMap = await call('POST', '/api/maps', 'u0', { map: gen, name: 'Counted' });
+  await call('POST', `/api/maps/${pubMap.body.summary.id}/publish`, 'u0', { on: true });
+  for (let i = 0; i < 4; i++) {
+    const rx = await call('POST', `/api/maps/${pubMap.body.summary.id}/remix`, 'u1');
+    if (rx.status === 201) await call('DELETE', `/api/maps/${rx.body.summary.id}`, 'u1');
+  }
+  const rc = (await DB.prepare('SELECT remix_count FROM custom_maps WHERE id = ?').bind(pubMap.body.summary.id).first()).remix_count;
+  check('remix-and-delete four times counts as one remix', rc === 1, `remix_count ${rc}`);
+  // 5. A published map edited into an unhostable one leaves the gallery.
+  await call('PUT', `/api/maps/${pubMap.body.summary.id}`, 'u0', { map: blankMap('Broken now') });
+  const galNow = await call('GET', '/api/maps/gallery?sort=new', 'u2');
+  check('a published map with blockers is kept out of the gallery', !galNow.body.items.some(i => i.id === pubMap.body.summary.id));
+}
+// 2. More players than start worlds: the start is refused, not half-made.
+{
+  const lobby = await import('../worker/lobby.js');
+  const two = normalizeMap({ bodies: [
+    { id: 'w1', type: 'terrestrial', orbit: 300, start: true, yields: { science: 3 } },
+    { id: 'w2', type: 'terrestrial', orbit: 900, start: true, yields: { science: 3 } },
+  ] });
+  await DB.prepare(`INSERT INTO rooms (id,name,host_id,status,max_players,created_at,updated_at,custom_map_id,custom_map_json) VALUES ('crowd','Crowd','u0','lobby',2,0,0,'map_c',?)`).bind(JSON.stringify(two)).run();
+  for (const u of ['u0', 'u1', 'u2']) await DB.prepare('INSERT INTO room_members (room_id,user_id,joined_at) VALUES (?,?,0)').bind('crowd', u).run();
+  const res = await lobby.startGame({ ...env, ROOM: { idFromName: (x) => x, get: () => ({ fetch: async () => new Response('{}') }) } }, 'crowd');
+  const gameRow = await DB.prepare(`SELECT 1 x FROM games WHERE id = 'crowd'`).first();
+  check('three players on a two-start map cannot start it (and nothing is half-made)',
+    res.error && !gameRow, JSON.stringify(res.error ? 'refused' : res).slice(0, 120));
+}
+
 // ---- Quick Join is Solar System only ---------------------------------------
 {
   const { joinableLobbies } = await import('../worker/matchmaking.js');

@@ -1033,26 +1033,32 @@ async function handleHostMap(req, env, session, mapId) {
     if (body.password.length > 100) return err(400, 'bad_request', 'password too long');
     passwordHash = await hashPassword(body.password);
   }
-  const room = await createRoom(env, session, { name, maxPlayers, passwordHash });
-  await env.DB.batch([
-    env.DB.prepare('UPDATE rooms SET custom_map_id = ?, custom_map_json = ? WHERE id = ?')
-      .bind(row.id, JSON.stringify(map), room.id),
-    env.DB.prepare('UPDATE custom_maps SET hosted_count = hosted_count + 1 WHERE id = ?').bind(row.id),
-  ]);
+  // "Played ×N" counts games that START on the map (lobby.startGame), not
+  // lobbies opened: host-and-delete in a loop no longer inflates it.
+  const room = await createRoom(env, session, {
+    name, maxPlayers, passwordHash, customMap: { id: row.id, json: JSON.stringify(map) },
+  });
   return json({ room: { ...room, custom_map: { name: map.name, bodies: map.bodies.length } } }, { status: 201 });
 }
 
 /** A room row, its host as first member, and its DO. Shared by the Create
  *  Room form and Quick Join. */
-async function createRoom(env, session, { name, maxPlayers, passwordHash = null, quickJoin = false }) {
+async function createRoom(env, session, { name, maxPlayers, passwordHash = null, quickJoin = false, customMap = null }) {
   const id = newRoomId();
   const inviteCode = newInviteCode();
   const now = Date.now();
 
   await env.DB.batch([
     env.DB
-      .prepare('INSERT INTO rooms (id, name, host_id, status, max_players, created_at, updated_at, invite_code, password_hash, quick_join) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .bind(id, name, session.user_id, 'lobby', maxPlayers, now, now, inviteCode, passwordHash, quickJoin ? 1 : 0),
+      // A Map Maker room is born with its map in the same row: never an
+      // instant as a plain Sol lobby (security review: two writes left a
+      // window where Quick Join could seat a stranger, and a failed second
+      // write left a Sol game behind a custom map's name).
+      .prepare(customMap
+        ? 'INSERT INTO rooms (id, name, host_id, status, max_players, created_at, updated_at, invite_code, password_hash, quick_join, custom_map_id, custom_map_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        : 'INSERT INTO rooms (id, name, host_id, status, max_players, created_at, updated_at, invite_code, password_hash, quick_join) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .bind(...[id, name, session.user_id, 'lobby', maxPlayers, now, now, inviteCode, passwordHash, quickJoin ? 1 : 0,
+        ...(customMap ? [customMap.id, customMap.json] : [])]),
     env.DB
       .prepare('INSERT INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)')
       .bind(id, session.user_id, now),
@@ -1296,13 +1302,26 @@ async function handleJoinRoom(req, env, session, roomId) {
     // Capacity gate: skip for returning players (they're not adding a new
     // seat, just patching one back into the books).
     if (!returningPlayer) {
-      const count = await env.DB.prepare('SELECT COUNT(*) AS c FROM room_members WHERE room_id = ?').bind(roomId).first();
-      if ((count?.c ?? 0) >= room.max_players) return err(403, 'room_full', 'room is full');
+      // The seat count is checked INSIDE the insert (as takeSeat does), so
+      // two joiners racing for the last seat cannot both get it. On a
+      // custom map an extra member was fatal: one more player than start
+      // worlds and the game could not seed (security review).
+      const ins = await env.DB
+        .prepare(
+          `INSERT OR IGNORE INTO room_members (room_id, user_id, joined_at)
+           SELECT ?1, ?2, ?3
+            WHERE (SELECT COUNT(*) FROM room_members WHERE room_id = ?1)
+                < (SELECT max_players FROM rooms WHERE id = ?1)`,
+        )
+        .bind(roomId, session.user_id, Date.now())
+        .run();
+      if ((ins.meta?.changes ?? 0) !== 1) return err(403, 'room_full', 'room is full');
+    } else {
+      await env.DB
+        .prepare('INSERT OR IGNORE INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)')
+        .bind(roomId, session.user_id, Date.now())
+        .run();
     }
-    await env.DB
-      .prepare('INSERT OR IGNORE INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)')
-      .bind(roomId, session.user_id, Date.now())
-      .run();
     // A Quick Join room can be joined from Browse too, and fills (and
     // starts) the same way whichever door the last player came through.
     await admitMember(env, roomId, session);

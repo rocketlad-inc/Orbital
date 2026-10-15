@@ -89,13 +89,24 @@ const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 const ID_RE = /^[a-z0-9]{1,12}$/;
 const SECTOR_ID_RE = /^s[a-z0-9]{1,11}$/;
+/** RegExp.test stringifies: ["aa"] passes ID_RE as "aa" and is then kept
+ *  as an array, which no Set or === can match, so duplicate ids and
+ *  array colours slipped through to the seeder and broke the game start
+ *  (security review, 2026-10-15). Every id and colour must BE a string. */
+const isId = (v) => typeof v === 'string' && ID_RE.test(v);
+const isColor = (v) => typeof v === 'string' && COLOR_RE.test(v);
+const isSectorId = (v) => typeof v === 'string' && SECTOR_ID_RE.test(v);
+/** Invisible and direction-flipping characters: control codes, zero-width
+ *  marks, bidi overrides. A name that holds them can read as something
+ *  else in the Herald, a Discord post or the chronicle. */
+const INVISIBLE = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
 /** Free text a player wrote: control characters out, runs of blank lines
  *  squeezed, trimmed and capped. Never HTML: every reader renders it as
  *  plain text. */
 function cleanText(v, max) {
   if (typeof v !== 'string') return '';
   // eslint-disable-next-line no-control-regex
-  return v.replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, '').replace(/\n{3,}/g, '\n\n').trim().slice(0, max);
+  return v.replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, '').replace(/\n{3,}/g, '\n\n').replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g, '').trim().slice(0, max);
 }
 
 /** A blank map: one sun. */
@@ -130,7 +141,7 @@ export function normalizeMap(input) {
     name: cleanName(m.name, 'Untitled system', 40),
     sun: {
       name: cleanName(sunIn.name, 'Helion'),
-      color: COLOR_RE.test(sunIn.color) ? sunIn.color : '#ffd180',
+      color: isColor(sunIn.color) ? sunIn.color : '#ffd180',
       size: clamp(num(sunIn.size, 50), ...SUN_LIMITS.size),
       mass: clamp(num(sunIn.mass, 1), ...SUN_LIMITS.mass),
     },
@@ -147,7 +158,7 @@ export function normalizeMap(input) {
   const typeOf = new Map();
   for (const b of raw) {
     if (!b || typeof b !== 'object') continue;
-    if (!ID_RE.test(b.id) || seen.has(b.id)) continue;
+    if (!isId(b.id) || seen.has(b.id)) continue;
     if (!BODY_TYPES.includes(b.type)) continue;
     seen.add(b.id);
     typeOf.set(b.id, b.type);
@@ -177,7 +188,7 @@ export function normalizeMap(input) {
         credits: clamp(Math.round(num(y.credits, 0)), 0, RESOURCE_MAX),
         science: clamp(Math.round(num(y.science, 0)), 0, RESOURCE_MAX),
       },
-      color: COLOR_RE.test(b.color) ? b.color : info.color,
+      color: isColor(b.color) ? b.color : info.color,
       surface: SURFACES.includes(b.surface) ? b.surface : info.surface,
       rings: !!b.rings && (b.type === 'gas-giant' || b.type === 'ice-giant' || b.type === 'terrestrial'),
       start: !!b.start && canStartOn(b.type),
@@ -218,7 +229,7 @@ function normalizeSectors(input) {
   const seen = new Set();
   const out = [];
   for (const s of raw) {
-    if (!s || typeof s !== 'object' || !SECTOR_ID_RE.test(s.id) || seen.has(s.id)) continue;
+    if (!s || typeof s !== 'object' || !isSectorId(s.id) || seen.has(s.id)) continue;
     seen.add(s.id);
     let inner = clamp(num(s.inner, 0), 0, ORBIT_LIMITS.sun[1] * 1.1);
     let outer = clamp(num(s.outer, inner + 100), 0, ORBIT_LIMITS.sun[1] * 1.1);
@@ -226,7 +237,7 @@ function normalizeSectors(input) {
     out.push({
       id: s.id,
       name: cleanName(s.name, 'Sector'),
-      color: COLOR_RE.test(s.color) ? s.color : SECTOR_COLORS[out.length % SECTOR_COLORS.length],
+      color: isColor(s.color) ? s.color : SECTOR_COLORS[out.length % SECTOR_COLORS.length],
       inner: Math.round(inner),
       outer: Math.round(outer),
     });
@@ -264,7 +275,7 @@ export function newSectorId(taken, rand = Math.random) {
 }
 
 function cleanName(v, fallback, max = MAX_NAME) {
-  const s = typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, max) : '';
+  const s = typeof v === 'string' ? v.replace(INVISIBLE, '').replace(/\s+/g, ' ').trim().slice(0, max) : '';
   return s || fallback;
 }
 
