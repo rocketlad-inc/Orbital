@@ -66,11 +66,22 @@ export const SUN_LIMITS = { size: [30, 90], mass: [0.4, 2.5] };
 
 /** Sol's own law for a year: T = 0.0808 r^1.5 (Earth 372 -> 580). */
 export const SUN_YEAR_K = 0.0808;
+/** The sky behind the system: a deep-space tint. */
+export const BACKDROPS = ['deep', 'blue', 'crimson', 'emerald', 'violet', 'amber'];
+export const TEXT_LIMITS = { blurb: 400, lore: 200, secretName: 40, secretText: 240 };
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 const ID_RE = /^[a-z0-9]{1,12}$/;
+/** Free text a player wrote: control characters out, runs of blank lines
+ *  squeezed, trimmed and capped. Never HTML: every reader renders it as
+ *  plain text. */
+function cleanText(v, max) {
+  if (typeof v !== 'string') return '';
+  // eslint-disable-next-line no-control-regex
+  return v.replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, '').replace(/\n{3,}/g, '\n\n').trim().slice(0, max);
+}
 
 /** A blank map: one sun. */
 export function blankMap(name = 'Untitled system') {
@@ -78,8 +89,9 @@ export function blankMap(name = 'Untitled system') {
     v: MAP_VERSION,
     name,
     sun: { name: 'Helion', color: '#ffd180', size: 50, mass: 1 },
+    blurb: '',
     bodies: [],
-    settings: { shareHidesSecrets: true },
+    settings: { shareHidesSecrets: true, backdrop: 'deep' },
   };
 }
 
@@ -106,8 +118,12 @@ export function normalizeMap(input) {
       size: clamp(num(sunIn.size, 50), ...SUN_LIMITS.size),
       mass: clamp(num(sunIn.mass, 1), ...SUN_LIMITS.mass),
     },
+    blurb: cleanText(m.blurb, TEXT_LIMITS.blurb),
     bodies: [],
-    settings: { shareHidesSecrets: m.settings?.shareHidesSecrets !== false },
+    settings: {
+      shareHidesSecrets: m.settings?.shareHidesSecrets !== false,
+      backdrop: BACKDROPS.includes(m.settings?.backdrop) ? m.settings.backdrop : 'deep',
+    },
   };
   const raw = Array.isArray(m.bodies) ? m.bodies.slice(0, MAX_BODIES) : [];
   const seen = new Set();
@@ -149,7 +165,16 @@ export function normalizeMap(input) {
       rings: !!b.rings && (b.type === 'gas-giant' || b.type === 'ice-giant' || b.type === 'terrestrial'),
       start: !!b.start && canStartOn(b.type),
       secret: (b.secret === 'random' || MAP_SECRETS.includes(b.secret)) && secretFits(b.secret, b.type) ? b.secret : null,
+      lore: cleanText(b.lore, TEXT_LIMITS.lore),
+      secretName: '',
+      secretText: '',
     };
+    // A hand-placed discovery can carry its own name and message. A
+    // discovery left to chance has no fixed kind to describe, so none.
+    if (body.secret && body.secret !== 'random') {
+      body.secretName = cleanText(b.secretName, TEXT_LIMITS.secretName).replace(/\n/g, ' ');
+      body.secretText = cleanText(b.secretText, TEXT_LIMITS.secretText);
+    }
     if (b.type === 'rock') {
       const mn = b.mineral && typeof b.mineral === 'object' ? b.mineral : {};
       body.mineral = {
@@ -159,6 +184,8 @@ export function normalizeMap(input) {
       body.yields = { metal: 0, credits: 0, science: 0 };
       body.start = false;
       body.secret = null;
+      body.secretName = '';
+      body.secretText = '';
     }
     out.bodies.push(body);
   }
@@ -360,9 +387,11 @@ export function mapToCatalog(input) {
       angle0: b.angle,
       color: b.color,
       yield: { metal: b.yields.metal, fuel: 0, gold: b.yields.credits, science: b.yields.science },
-      look: { surface: b.surface, rings: b.rings },
+      look: { surface: b.surface, rings: b.rings, ...(b.lore ? { lore: b.lore } : {}) },
       custom_start: b.start,
       custom_secret: b.secret,
+      custom_secret_name: b.secretName || null,
+      custom_secret_text: b.secretText || null,
     };
     if (b.type === 'rock') {
       entry.mineral_kind = b.mineral.kind;

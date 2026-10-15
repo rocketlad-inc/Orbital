@@ -26,6 +26,11 @@ export interface MapBody {
   start?: boolean;
   secret?: MapSecret | 'random' | null;
   mineral?: { kind: 'metal' | 'gold'; tons: number };
+  /** A line of flavour, shown to players with the world. */
+  lore?: string;
+  /** A hand-placed discovery's own name and message (optional). */
+  secretName?: string;
+  secretText?: string;
 }
 
 export interface MapSun { name: string; color: string; size: number; mass: number }
@@ -34,9 +39,13 @@ export interface CustomMap {
   v: number;
   name: string;
   sun: MapSun;
+  /** The map's pitch: shown in the gallery and the lobby. */
+  blurb: string;
   bodies: MapBody[];
-  settings: { shareHidesSecrets: boolean };
+  settings: { shareHidesSecrets: boolean; backdrop: MapBackdrop };
 }
+
+export type MapBackdrop = 'deep' | 'blue' | 'crimson' | 'emerald' | 'violet' | 'amber';
 
 export interface MapIssue {
   level: 'ok' | 'warn' | 'block';
@@ -66,6 +75,8 @@ export const ORBIT_LIMITS: { sun: [number, number]; moon: [number, number] };
 export const RESOURCE_MAX: number;
 export const SUN_LIMITS: { size: [number, number]; mass: [number, number] };
 export const SUN_YEAR_K: number;
+export const BACKDROPS: MapBackdrop[];
+export const TEXT_LIMITS: { blurb: number; lore: number; secretName: number; secretText: number };
 export const NAME_THEMES: string[];
 
 export function secretFits(kind: string | null | undefined, type: MapBodyType): boolean;
