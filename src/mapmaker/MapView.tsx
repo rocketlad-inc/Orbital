@@ -176,6 +176,30 @@ export const MapView: React.FC<MapViewProps> = ({
     onPlace(tool, 'sun', displayToOrbit(map, 'sun', d, scale), Math.atan2(wy, wx));
   };
 
+  /** A moon too close to its planet to see at this zoom. */
+  const moonHidden = (b: MapBody) => {
+    if (b.parent === 'sun' || selection.has(b.id)) return false;
+    const host = map.bodies.find(x => x.id === b.parent);
+    return !!host && (orbitToDisplay(map, b, scale) - discR(host)) * view.z < 5;
+  };
+  /** The world nearest the pointer, within reach of a finger (or a
+   *  mouse): the nearest centre wins, so a moon beside its planet never
+   *  steals a tap meant for the planet. */
+  const hitAt = (sx: number, sy: number): string | null => {
+    let best: string | null = null, bd = Infinity;
+    const consider = (id: string, wx: number, wy: number, r: number) => {
+      const d = Math.hypot(size.w / 2 + (wx - view.x) * view.z - sx, size.h / 2 + (wy - view.y) * view.z - sy);
+      if (d <= Math.max(r * view.z, touch ? 20 : 9) && d < bd) { bd = d; best = id; }
+    };
+    consider('sun', 0, 0, sunR(map));
+    for (const b of map.bodies) {
+      if (moonHidden(b)) continue;
+      const p = pos.get(b.id)!;
+      consider(b.id, p.x, p.y, discR(b));
+    }
+    return best;
+  };
+
   const cancelPress = () => { if (press.current) { window.clearTimeout(press.current); press.current = null; } };
 
   /** A world being dragged: where it would land, snapped to a nearby
@@ -236,8 +260,7 @@ export const MapView: React.FC<MapViewProps> = ({
     }
     if (pointers.current.size > 2) return;
 
-    const target = (e.target as Element).closest('[data-body]') as HTMLElement | null;
-    const id = target?.getAttribute('data-body') ?? null;
+    const id = hitAt(w.sx, w.sy);
 
     if (e.button === 1 || e.button === 2 || spaceDown) {
       setDrag({ kind: 'pan', sx: e.clientX, sy: e.clientY, vx: view.x, vy: view.y, moved: true });
@@ -337,8 +360,8 @@ export const MapView: React.FC<MapViewProps> = ({
       }
     } else if (drag?.kind === 'pan' && touch && !drag.moved) {
       // A tap: select what was under the finger, or clear.
-      const hit = document.elementFromPoint(e.clientX, e.clientY)?.closest('[data-body]');
-      const id = hit?.getAttribute('data-body') ?? null;
+      const at = toWorld(e.clientX, e.clientY);
+      const id = hitAt(at.sx, at.sy);
       onSelect(id ? [id] : [], 'replace');
     } else if (drag?.kind === 'tap') {
       place(drag.wx, drag.wy);
@@ -463,10 +486,7 @@ export const MapView: React.FC<MapViewProps> = ({
             const sel = selection.has(b.id);
             // Never smaller than a few screen pixels, or the whole-system
             // view is specks. A moon waits until it clears its planet.
-            if (b.parent !== 'sun' && !sel) {
-              const host = map.bodies.find(x => x.id === b.parent);
-              if (host && (orbitToDisplay(map, b, scale) - discR(host)) * z < 5) return null;
-            }
+            if (moonHidden(b)) return null;
             const r = Math.max(discR(b), px(b.type === 'asteroid' || b.type === 'rock' ? 1.6 : b.parent === 'sun' ? 4.5 : 2.5));
             // The game's own art once a disc is big enough to show it.
             const art = b.type !== 'rock' && z * r >= 7 ? worldArt(b) : null;

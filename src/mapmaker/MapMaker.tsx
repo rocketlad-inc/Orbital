@@ -544,7 +544,9 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
   const [fit, setFit] = useState(0);
   const [showCheck, setShowCheck] = useState(false);
   const [showHost, setShowHost] = useState(false);
-  const [saveState, setSaveState] = useState<'saved' | 'unsaved' | 'saving' | 'error'>(initialId ? 'saved' : 'unsaved');
+  // 'fresh': a template or a roll nobody has touched yet. It is not
+  // autosaved, so browsing templates never fills your map list.
+  const [saveState, setSaveState] = useState<'fresh' | 'saved' | 'unsaved' | 'saving' | 'error'>(initialId ? 'saved' : 'fresh');
   const [saveError, setSaveError] = useState<string | null>(null);
   const [treeQ, setTreeQ] = useState('');
   const [folded, setFolded] = useState<Set<string>>(new Set());
@@ -804,7 +806,7 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
         <span className={`mm-tag ${lens.score >= 80 ? 'is-ok' : lens.score >= 55 ? 'is-warn' : 'is-bad'}`}>{lens.score}%</span>
       </div>
       <p className="mm-note">What lies nearest each start world at the opening. 100% means every player's neighbourhood is worth the same.</p>
-      {lens.starts.sort((a, b) => b.total - a.total).map(s => (
+      {[...lens.starts].sort((a, b) => b.total - a.total).map(s => (
         <button key={s.id} className="mm-lensrow" onClick={() => onSelect([s.id], 'replace')}>
           <span className="mm-dot" style={{ background: s.color }} />
           <span className="mm-lensrow__n">{s.name}</span>
@@ -883,8 +885,12 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
 
         {!tool && !picking && (
           <>
-            <button className="mm-fab" aria-label="Add to the map" onClick={() => setPalOpen(true)}>+</button>
-            {!showSheet && <button className="mm-fab is-left" aria-label="The whole map: pitch, mood, sky" onClick={() => { setMapSheet(true); setSheet('full'); }}>✎</button>}
+            <button className="mm-fab" aria-label="Add to the map" onClick={() => setPalOpen(true)}>
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+            </button>
+            {!showSheet && <button className="mm-fab is-left" aria-label="The whole map: pitch, mood, sky" onClick={() => { setMapSheet(true); setSheet('full'); }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4z" /><path d="M14 6l4 4" /></svg>
+            </button>}
           </>
         )}
 
@@ -953,7 +959,7 @@ function Workshop({ initial, initialId, onExit }: { initial: CustomMap; initialI
           </button>
         </div>
         <span className="mm-top__fill" />
-        <span className={`mm-savestate is-${saveState}`}>{saveState === 'saved' ? 'All changes saved' : saveState === 'saving' ? 'Saving…' : saveState === 'error' ? 'Not saved' : 'Autosaves in a moment'}</span>
+        <span className={`mm-savestate is-${saveState}`}>{saveState === 'saved' ? 'All changes saved' : saveState === 'saving' ? 'Saving…' : saveState === 'error' ? 'Not saved' : saveState === 'fresh' ? 'Not saved yet' : 'Autosaves in a moment'}</span>
         <button className={`mm-status${statusCls}`} onClick={() => setShowCheck(s => !s)}>{blockers || warnings ? `${status} · checklist` : status}</button>
         <button className={`mm-btn${preview ? ' is-on' : ''}`} onClick={() => setPreview(p => !p)}>{preview ? 'Stop motion' : 'Preview in motion'}</button>
         <button className="mm-btn is-teal" onClick={save} disabled={saveState === 'saving'}>{saveLabel}</button>

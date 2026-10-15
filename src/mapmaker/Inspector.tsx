@@ -5,7 +5,7 @@
 import React, { useState } from 'react';
 import {
   type CustomMap, type MapBody, type MapBodyType, type MapSecret, type MapBackdrop,
-  TYPE_INFO, SURFACES, MAP_SECRETS, NAME_THEMES, RESOURCE_MAX, SUN_LIMITS, BACKDROPS, TEXT_LIMITS,
+  TYPE_INFO, SURFACES, MAP_SECRETS, NAME_THEMES, RESOURCE_MAX, SUN_LIMITS, BACKDROPS, TEXT_LIMITS, MAX_BODIES,
   canStartOn, secretFits, bodyYear, makeName, startWorlds,
 } from '../game/customMap';
 import { SECRET_DEFS } from '../game/secrets';
@@ -474,6 +474,8 @@ export const BulkBar: React.FC<{
   const apply = (next: CustomMap, select: string[] = ids) => { onChange(next, select); setOpen(null); };
   const toggle = (k: typeof open) => setOpen(open === k ? null : k);
   const roots = bodies.filter(b => b.parent === 'sun').length;
+  const rootIds = new Set(bodies.map(b => (b.parent === 'sun' ? b.id : b.parent)));
+  const mirrorCost = map.bodies.filter(b => rootIds.has(b.id) || rootIds.has(b.parent)).length;
 
   return (
     <div className={`mm-bulk${compact ? ' is-compact' : ''}`}>
@@ -566,6 +568,9 @@ export const BulkBar: React.FC<{
             {[2, 3, 4, 5, 6, 8].map(n => <button key={n} className={`mm-chip${ways === n ? ' is-on' : ''}`} onClick={() => setWays(n)}>{n} ways</button>)}
           </div>
           <p className="mm-note">Copies each selected world (with its moons, start mark and discovery) {ways - 1} more time{ways > 2 ? 's' : ''}, evenly round the sun: every player gets the same neighbourhood.</p>
+          {map.bodies.length + mirrorCost * (ways - 1) > MAX_BODIES && (
+            <p className="mm-note is-bad">That is {mirrorCost * (ways - 1)} new bodies and a map holds {MAX_BODIES}: only {Math.max(0, MAX_BODIES - map.bodies.length)} would fit. Mirror fewer worlds, or fewer ways.</p>
+          )}
           <div className="mm-row mm-row--end">
             <button className="mm-btn is-primary" onClick={() => { const r = mirrorBodies(map, ids, ways, theme); apply(r.map, r.ids); }}>Mirror {ways} ways</button>
           </div>
