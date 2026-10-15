@@ -810,6 +810,17 @@ function parseLook(raw: string | null | undefined): import('../types').BodyLook 
     if (!v || typeof v !== 'object') return undefined;
     // Lore is player-written: a plain string or nothing.
     if (v.lore != null && typeof v.lore !== 'string') delete v.lore;
+    // A sector regroups the senate, the outliner and the map, so only a
+    // well-formed one survives: string id and name, #rrggbb colour.
+    if (v.sector != null) {
+      const s = v.sector;
+      const ok = s && typeof s === 'object'
+        && typeof s.id === 'string' && s.id
+        && typeof s.name === 'string' && s.name
+        && typeof s.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(s.color);
+      if (ok) v.sector = { id: s.id, name: s.name, color: s.color };
+      else delete v.sector;
+    }
     return v;
   } catch {
     return undefined;
