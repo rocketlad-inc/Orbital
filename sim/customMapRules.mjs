@@ -217,6 +217,9 @@ const body = (b) => ({ id: `r${(n++).toString(36)}`, rings: false, start: false,
     `${data.starName} ${data.starColor}`);
   const page = strip.renderStripPage(data);
   check('7 the strip page carries the star name', page.includes('"starName":"ARDENT"'));
+  let png = null;
+  try { png = await strip.renderStripPng(env, gameId, { data }); } catch (e) { png = e; }
+  check('7 the strip PNG renders with the custom star', png instanceof Uint8Array && png.length > 1000, String(png?.message ?? png?.length));
 
   // 8: the locator.
   const digest = await import('../worker/digest.js');
