@@ -259,7 +259,10 @@ async function handleOverview(req, env, { session }) {
         WHERE day_ms >= ?4 AND qa = 0`,
       today, w0, p0, m0),
 
+    // games = games a real player spent a minute in that day (a
+    // heartbeat, the same test as the 24h tile; '' = the lobby).
     q(`SELECT day_ms, COUNT(DISTINCT user_id) AS players,
+              COUNT(DISTINCT CASE WHEN minutes > 0 AND game_id <> '' THEN game_id END) AS games,
               SUM(minutes) AS minutes, SUM(actions) AS actions
          FROM analytics_user_day
         WHERE day_ms >= ?1 AND qa = 0
@@ -279,9 +282,12 @@ async function handleOverview(req, env, { session }) {
       now - 5 * 60_000),
 
     // "Quiet" = running, but no real player has acted in 24 hours.
+    // "Live" = running, and a real player was in it in the last 24 hours
+    // (a heartbeat, so watching counts, not only acting).
     one(`SELECT SUM(g.status = 'active') AS active,
                 SUM(g.status = 'completed') AS completed,
-                SUM(g.status = 'active' AND COALESCE(s.last_action_ms, 0) < ?1) AS quiet
+                SUM(g.status = 'active' AND COALESCE(s.last_action_ms, 0) < ?1) AS quiet,
+                SUM(g.status = 'active' AND COALESCE(s.last_beat_ms, 0) >= ?1) AS live
            FROM games g LEFT JOIN analytics_game_seen s ON s.game_id = g.id
           WHERE g.status IN ('active', 'completed')
             AND EXISTS (SELECT 1 FROM game_factions f JOIN users u ON u.id = f.user_id
@@ -402,12 +408,16 @@ async function handleOverview(req, env, { session }) {
     daily.push({
       day_ms: d,
       players: r?.players ?? 0,
+      games: r?.games ?? 0,
       minutes: r?.minutes ?? 0,
       actions: r?.actions ?? 0,
       signups: signupsByDay.get(d) ?? 0,
     });
   }
   const sumSignups = (a, b) => signups.reduce((s, r) => s + (r.day_ms >= a && r.day_ms < b ? r.n : 0), 0);
+  // Game-days: a game counts once for each day a real player was in it.
+  // Over 7 days that is 7x the average number of active games per day.
+  const sumGameDays = (a, b) => daily.reduce((s, r) => s + (r.day_ms >= a && r.day_ms < b ? r.games : 0), 0);
 
   // Median time from signup to each first step.
   const medianOf = (kinds) => {
@@ -442,6 +452,9 @@ async function handleOverview(req, env, { session }) {
       games_active: games?.active ?? 0,
       games_quiet: games?.quiet ?? 0,
       games_completed: games?.completed ?? 0,
+      games_live_24h: games?.live ?? 0,
+      game_days_week: sumGameDays(w0, today),
+      game_days_prev_week: sumGameDays(p0, w0),
       commissions_total: commission?.total ?? 0,
       commissions_week: commission?.week ?? 0,
     },
@@ -967,8 +980,62 @@ async function handleCommissionFunnel(req, env, { session, url }) {
   });
 }
 
+/**
+ * GET /api/admin/games/activity?days=N — the Games tab's growth chart.
+ *
+ * One row per (UTC day, game) a real player spent at least a minute in
+ * (a heartbeat: the same test as the Pulse tile), with how many real
+ * players were there. The client stacks them by game size, averages
+ * them and lists a day's games, so it gets the rows rather than sums.
+ * Also every game started or ended in the window, and the running games
+ * with a real player in the last rolling 24 hours.
+ *
+ * Reads only the rollup (a few rows per game per day) and games/rooms.
+ */
+async function handleGameActivity(req, env, { session, url }) {
+  const gate = requireAdmin(session);
+  if (gate) return gate;
+  const now = Date.now();
+  const days = intParam(url, 'days', 400, 7, 400);
+  const since = floorDay(now) - (days - 1) * DAY_MS;
+  const realGame = `EXISTS (SELECT 1 FROM game_factions f JOIN users u ON u.id = f.user_id
+                             WHERE f.game_id = g.id AND ${notQa('u.email')})`;
+  const [rows, games, live] = await Promise.all([
+    env.DB.prepare(
+      `SELECT day_ms, game_id, COUNT(DISTINCT user_id) AS players,
+              SUM(minutes) AS minutes, SUM(actions) AS actions
+         FROM analytics_user_day
+        WHERE day_ms >= ?1 AND qa = 0 AND minutes > 0 AND game_id <> ''
+        GROUP BY day_ms, game_id
+        ORDER BY day_ms`,
+    ).bind(since).all(),
+    env.DB.prepare(
+      `SELECT g.id, COALESCE(r.name, g.id) AS name, g.status, g.started_at, g.completed_at
+         FROM games g LEFT JOIN rooms r ON r.id = g.id
+        WHERE (g.started_at >= ?1 OR g.completed_at >= ?1
+               OR g.id IN (SELECT game_id FROM analytics_user_day
+                            WHERE day_ms >= ?1 AND qa = 0 AND minutes > 0))
+          AND ${realGame}`,
+    ).bind(since).all(),
+    env.DB.prepare(
+      `SELECT g.id FROM games g JOIN analytics_game_seen s ON s.game_id = g.id
+        WHERE g.status = 'active' AND s.last_beat_ms >= ?1 AND ${realGame}`,
+    ).bind(now - DAY_MS).all(),
+  ]);
+  return json({
+    now,
+    since,
+    rows: (rows.results ?? []).map(r => [r.day_ms, r.game_id, r.players, r.minutes, r.actions]),
+    games: Object.fromEntries((games.results ?? []).map(g => [g.id, {
+      name: g.name, status: g.status, started_at: g.started_at ?? null, completed_at: g.completed_at ?? null,
+    }])),
+    live: (live.results ?? []).map(r => r.id),
+  });
+}
+
 export const routes = [
   { method: 'GET', pattern: '/api/admin/overview', auth: 'required', handle: handleOverview },
+  { method: 'GET', pattern: '/api/admin/games/activity', auth: 'required', handle: handleGameActivity },
   { method: 'GET', pattern: '/api/admin/commission', auth: 'required', handle: handleCommissionFunnel },
   { method: 'GET', pattern: '/api/admin/games', auth: 'required', handle: handleAdminGames },
   { method: 'GET', pattern: '/api/admin/players', auth: 'required', handle: handleAdminPlayers },

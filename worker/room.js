@@ -269,7 +269,7 @@ export async function salvagedDestroyer(env, gameId, factionId) {
   const CFG = await loadGameConfig(env, gameId).catch(() => null);
   const stats = computeShipStats('destroyer', parts, tech, shipBaseStatsFromCfg(CFG));
   const defenseLvl = Math.max(Number(tech.armor ?? 0), Number(tech.shields ?? 0));
-  const iconVariant = design?.icon_variant && /^[A-Y]$/.test(design.icon_variant) ? design.icon_variant : null;
+  const iconVariant = design?.icon_variant && /^[A-Z]$/.test(design.icon_variant) ? design.icon_variant : null;
   return {
     parts,
     iconVariant,

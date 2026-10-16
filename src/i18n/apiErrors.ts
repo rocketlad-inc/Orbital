@@ -50,6 +50,7 @@ const BY_CODE: Record<string, Key> = {
   map_seats: 'err.map_seats',
   seed_failed: 'err.seed_failed',
   stale: 'err.stale',
+  taken_down: 'err.taken_down',
 };
 
 /** The message to show for an API error. `fallback` is the localized

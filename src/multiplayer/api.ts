@@ -164,6 +164,9 @@ export type User = {
   // is_admin: unlocks premium pickers in the UI, but every save path
   // re-checks the entitlement server-side.
   is_premium?: boolean;
+  // Ship looks this account built with before they joined the Commission
+  // (0166), as 'class:letter'. They stay usable for that hull class.
+  look_grants?: string[];
   // Colony / station skin, the account default (0154). null = the free
   // look. Saved via PATCH /api/users/me/skins.
   city_skin?: string | null;

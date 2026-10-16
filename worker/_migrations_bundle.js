@@ -6751,7 +6751,53 @@ CREATE INDEX IF NOT EXISTS idx_email_login_tokens_expiry ON email_login_tokens(e
 ALTER TABLE email_log ADD COLUMN room_id TEXT;
 CREATE INDEX IF NOT EXISTS idx_email_log_kind_room ON email_log(kind, room_id, created_ms);
 ` },
-  { name: "0166_custom_maps.sql", sql: `-- The Map Maker (Lorne, 2026-10-14): player-built star systems.
+  { name: "0166_look_grants.sql", sql: `-- ============================================================
+-- 0166 - grandfathered ship looks
+--
+-- On 2026-10-15 the free ship looks narrowed from A-I to A and B on
+-- every hull (A and B hold every class's default). C-Z come with the
+-- Commander's Commission. A player who had ALREADY built with a look
+-- that became paid keeps it, for that hull class: one row per
+-- (player, class, look) found at cutover in their ships (every game,
+-- every status, destroyed ones too), in-game designs, build queue and
+-- account templates.
+--
+-- Only C-I are granted: J-Z were always Commission looks, so nobody
+-- could have built with them without it.
+--
+-- worker/store.js validateIconVariant reads this. Rerunnable: the
+-- inserts are OR IGNORE, so a second pass only adds what is new.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS user_look_grants (
+  user_id     TEXT    NOT NULL,
+  ship_class  TEXT    NOT NULL,
+  variant     TEXT    NOT NULL,
+  granted_at  INTEGER NOT NULL,
+  PRIMARY KEY (user_id, ship_class, variant)
+);
+
+INSERT OR IGNORE INTO user_look_grants (user_id, ship_class, variant, granted_at)
+SELECT DISTINCT f.user_id, s.ship_class, s.icon_variant, CAST(strftime('%s', 'now') AS INTEGER) * 1000
+  FROM game_ships s JOIN game_factions f ON f.id = s.owner_faction_id
+ WHERE f.user_id IS NOT NULL AND s.icon_variant IN ('C', 'D', 'E', 'F', 'G', 'H', 'I');
+
+INSERT OR IGNORE INTO user_look_grants (user_id, ship_class, variant, granted_at)
+SELECT DISTINCT f.user_id, d.ship_class, d.icon_variant, CAST(strftime('%s', 'now') AS INTEGER) * 1000
+  FROM game_ship_designs d JOIN game_factions f ON f.id = d.faction_id
+ WHERE f.user_id IS NOT NULL AND d.icon_variant IN ('C', 'D', 'E', 'F', 'G', 'H', 'I');
+
+INSERT OR IGNORE INTO user_look_grants (user_id, ship_class, variant, granted_at)
+SELECT DISTINCT f.user_id, q.ship_class, q.icon_variant, CAST(strftime('%s', 'now') AS INTEGER) * 1000
+  FROM game_body_build_queue q JOIN game_factions f ON f.id = q.faction_id
+ WHERE f.user_id IS NOT NULL AND q.icon_variant IN ('C', 'D', 'E', 'F', 'G', 'H', 'I');
+
+INSERT OR IGNORE INTO user_look_grants (user_id, ship_class, variant, granted_at)
+SELECT DISTINCT t.user_id, t.ship_class, t.icon_variant, CAST(strftime('%s', 'now') AS INTEGER) * 1000
+  FROM user_ship_templates t
+ WHERE t.user_id IS NOT NULL AND t.icon_variant IN ('C', 'D', 'E', 'F', 'G', 'H', 'I');
+` },
+  { name: "0167_custom_maps.sql", sql: `-- The Map Maker (Lorne, 2026-10-14): player-built star systems.
 --
 -- custom_maps holds each player's maps as the JSON the Map Maker edits
 -- (src/game/customMap.js normalizeMap is the format). share_code lets
@@ -6780,7 +6826,7 @@ ALTER TABLE rooms ADD COLUMN custom_map_json TEXT;
 -- this NULL.
 ALTER TABLE game_bodies ADD COLUMN look_json TEXT;
 ` },
-  { name: "0167_map_gallery.sql", sql: `-- The Map Maker, part two (Lorne, 2026-10-15): a public gallery of
+  { name: "0168_map_gallery.sql", sql: `-- The Map Maker, part two (Lorne, 2026-10-15): a public gallery of
 -- player-built systems, remixes, and a hand-placed discovery's own words.
 --
 -- published / published_ms: the owner put the map in the public gallery.
@@ -6799,7 +6845,7 @@ CREATE INDEX IF NOT EXISTS idx_custom_maps_gallery_new ON custom_maps(published,
 ALTER TABLE game_bodies ADD COLUMN secret_name TEXT;
 ALTER TABLE game_bodies ADD COLUMN secret_text TEXT;
 ` },
-  { name: "0168_map_remix_ledger.sql", sql: `-- One remix per person per map (security review, 2026-10-15): the
+  { name: "0169_map_remix_ledger.sql", sql: `-- One remix per person per map (security review, 2026-10-15): the
 -- gallery's "remixed ×N" counted every remix call, so one player could
 -- inflate a map's rank by remixing and deleting in a loop. A remix now
 -- counts only the first time this player copies this map.
@@ -6809,5 +6855,12 @@ CREATE TABLE IF NOT EXISTS custom_map_remixes (
   created_ms INTEGER NOT NULL,
   PRIMARY KEY (map_id, user_id)
 );
+` },
+  { name: "0170_map_takedown.sql", sql: `-- Gallery moderation (Map Maker launch, 2026-10-16): an admin can take a
+-- published map out of the gallery, and the owner cannot republish it.
+-- The map itself is untouched: it stays in its owner's list and can
+-- still be hosted privately.
+ALTER TABLE custom_maps ADD COLUMN taken_down_ms INTEGER;
+ALTER TABLE custom_maps ADD COLUMN taken_down_by TEXT;
 ` },
 ];

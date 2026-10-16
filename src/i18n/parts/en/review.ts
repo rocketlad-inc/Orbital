@@ -68,7 +68,7 @@ export const review = {
   'review.shared.share.native': 'Share…',
   'review.shared.share.text': 'The Battle of {name}, replayed shot by shot in Orbital',
   'review.shared.cta.title': 'This happened in a real game of Orbital.',
-  'review.shared.cta.body': 'A free multiplayer strategy game set across the real solar system: up to ten players, turns that keep running while you’re away, and fleets that fight like this.',
+  'review.shared.cta.body': 'A free multiplayer strategy game set across the real solar system: up to ten players, a clock that keeps running while you’re away, and fleets that fight like this.',
   'review.shared.cta.play': 'Play free',
   // ---- battle cinema ----
   'review.cinema.unknown': 'unknown',
@@ -192,6 +192,14 @@ export const review = {
   'review.battle.gif': '⤓ GIF',
   'review.battle.gifTitle': 'Download the whole fight as a GIF (long fights make long, large files)',
   'review.battle.gifCancel': 'Stop making the GIF',
+  'review.battle.video': '⤓ Vertical video',
+  'review.battle.videoTitle': 'Record a 9:16 video of the deadliest stretch of the fight, for TikTok, Shorts and Reels (records in real time)',
+  'review.battle.videoRecording': 'Recording… {pct}% · ✕',
+  'review.battle.videoFailed': 'This browser cannot record video. Try Chrome on a computer.',
+  'review.video.hook': '{n} ships lost at {body}',
+  'review.video.sub': 'A real battle from a real game of Orbital',
+  'review.video.endTitle': 'Play free',
+  'review.video.endLine': 'The real solar system. Up to ten players. Turns that keep running while you are away.',
   'review.battle.gifRecording': 'Making GIF… {pct}% · ✕',
   'review.battle.gifFailed': 'The GIF could not be made in this browser.',
   // ---- theatre (campaign) recap canvas ----

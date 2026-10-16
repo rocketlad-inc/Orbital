@@ -33,7 +33,10 @@ export type EmblemId =
   // Premium wing (Commander's Commission). Same permanence rule as the
   // free two dozen: a stored 'dragon' draws a dragon forever.
   | 'dragon' | 'kraken' | 'galaxy' | 'nova' | 'raven'
-  | 'serpent' | 'swords' | 'atom' | 'hourglass' | 'compass';
+  | 'serpent' | 'swords' | 'atom' | 'hourglass' | 'compass'
+  // The space wing (Oct 2026), also the Commission's.
+  | 'binary' | 'station' | 'blackhole' | 'pulsar' | 'eclipse'
+  | 'satellite' | 'helmet' | 'saucer';
 
 /** Catalog order — drives the picker grid and the default rotation.
  *  25 entries against a max_players cap of 10 means uniqueness is always
@@ -59,6 +62,8 @@ export const EMBLEM_IDS: EmblemId[] = [
 export const PREMIUM_EMBLEM_IDS: EmblemId[] = [
   'dragon', 'kraken', 'galaxy', 'nova', 'raven',
   'serpent', 'swords', 'atom', 'hourglass', 'compass',
+  // The space wing (Oct 2026). Appended: picker order.
+  'binary', 'station', 'blackhole', 'pulsar', 'eclipse', 'satellite', 'helmet', 'saucer',
 ];
 
 /** Human labels for tooltips and the Herald's prose. */
@@ -97,6 +102,14 @@ export const EMBLEM_NAMES: Record<EmblemId, string> = {
   get atom() { return tk('data.emblem.atom', 'Atom'); },
   get hourglass() { return tk('data.emblem.hourglass', 'Hourglass'); },
   get compass() { return tk('data.emblem.compass', 'Compass Rose'); },
+  get binary() { return tk('data.emblem.binary', 'Binary Star'); },
+  get station() { return tk('data.emblem.station', 'Ring Station'); },
+  get blackhole() { return tk('data.emblem.blackhole', 'Black Hole'); },
+  get pulsar() { return tk('data.emblem.pulsar', 'Pulsar'); },
+  get eclipse() { return tk('data.emblem.eclipse', 'Eclipse'); },
+  get satellite() { return tk('data.emblem.satellite', 'Satellite'); },
+  get helmet() { return tk('data.emblem.helmet', 'Star Helmet'); },
+  get saucer() { return tk('data.emblem.saucer', 'Saucer'); },
   get doublev() { return tk('data.emblem.doublev', 'Double V'); },
   get rocket() { return tk('data.emblem.rocket', 'Rocket'); },
 };

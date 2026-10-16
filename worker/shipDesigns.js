@@ -33,6 +33,31 @@ export const SHIP_SLOT_COUNTS = {
 };
 
 /**
+ * EXPANDED HARDPOINTS (Construction 8; clownking's idea, Lorne
+ * 2026-10-14): one more slot on every hull that fits gear. Corvette 3,
+ * frigate 5, destroyer 7, freighter 2. The colony ship keeps its one
+ * slot: it exists to carry the Construction Module, nothing else fits.
+ *
+ * Read straight off the tech level, NOT through hasFeature: a game with
+ * research gating off grandfathers every UNLOCK as open, and this is a
+ * bonus, not an unlock. Open there, every old game would get it for free.
+ * KEEP IN SYNC with src/game/shipParts.ts.
+ */
+export const EXTRA_SLOT_CLASSES = new Set(['corvette', 'frigate', 'destroyer', 'freighter']);
+export const EXTRA_SLOT_LEVEL = 8;   // construction
+/** validateParts' `levels` for a STORED loadout: see validateParts. */
+export const LENIENT = Symbol('stored loadout');
+
+/** Slots this hull has for a faction at these tech levels. */
+export function slotCountFor(shipClass, levels) {
+  const base = SHIP_SLOT_COUNTS[shipClass];
+  if (base == null) return null;
+  const extra = EXTRA_SLOT_CLASSES.has(shipClass)
+    && Number(levels?.construction ?? 0) >= EXTRA_SLOT_LEVEL ? 1 : 0;
+  return base + extra;
+}
+
+/**
  * Part catalog. Effects are BASE values; tech tracks scale the part
  * effect (not the hull base — a bare hull is identical to today's ship
  * no matter the tech level, which is the live-game migration story):
@@ -171,8 +196,14 @@ const DETONATOR_TECH_PER_LVL = WEAPONS_TECH_PER_LVL / 2;  // Weapons at half rat
  * Returns { ok: true, parts } with a clean string[] on success, or
  * { ok: false, error } with a player-readable message.
  */
-export function validateParts(shipClass, parts) {
-  const slots = SHIP_SLOT_COUNTS[shipClass];
+export function validateParts(shipClass, parts, levels = null) {
+  // `levels` is the faction's tech: Expanded Hardpoints adds a slot.
+  // LENIENT is a sentinel for READING stored loadouts (parsePartsJson):
+  // they were checked when written, so the bonus slot always counts.
+  const slots = levels === LENIENT
+    ? (SHIP_SLOT_COUNTS[shipClass] == null ? null
+      : SHIP_SLOT_COUNTS[shipClass] + (EXTRA_SLOT_CLASSES.has(shipClass) ? 1 : 0))
+    : slotCountFor(shipClass, levels);
   if (slots == null) return { ok: false, error: `unknown ship_class: ${shipClass}` };
   if (parts == null) return { ok: true, parts: [] };
   if (!Array.isArray(parts)) return { ok: false, error: 'parts must be an array of part ids' };
@@ -400,7 +431,8 @@ export function parsePartsJson(shipClass, partsJson) {
   if (!partsJson) return [];
   try {
     const raw = JSON.parse(partsJson);
-    const v = validateParts(shipClass, raw);
+    // A hull built with Expanded Hardpoints keeps its extra part forever.
+    const v = validateParts(shipClass, raw, LENIENT);
     return v.ok ? v.parts : [];
   } catch {
     return [];

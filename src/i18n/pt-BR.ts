@@ -5,7 +5,7 @@
 // Glossary, so the same word means the same thing everywhere:
 //   game / match ........ jogo        seat ........... vaga
 //   lobby (waiting room)  sala        host ........... anfitrião
-//   turn / tick ......... turno       empire ......... império
+//   tick ................ tick (the loanword; never "tick": there are no turns)       empire ......... império
 //   world ............... mundo       fleet .......... frota
 //   Herald .............. Arauto      Senate ......... Senado
 //   Quick join .......... Entrada rápida
@@ -54,6 +54,7 @@ const base: Catalog = {
   'err.map_seats': 'Esse mapa tem menos mundos iniciais do que vagas. Escolha menos jogadores.',
   'err.seed_failed': 'Não foi possível preparar o jogo. A sala está aberta de novo; tente começar mais uma vez.',
   'err.stale': 'Este mapa foi salvo em outro lugar depois que você o abriu.',
+  'err.taken_down': 'Este mapa foi removido da galeria por um moderador e não pode ser publicado de novo. Você ainda pode jogá-lo em particular.',
 
   // ---- lobby: header + navigation ----
   'lobby.nav.label': 'Sala',
@@ -156,7 +157,7 @@ const base: Catalog = {
 
   // ---- lobby: Create ----
   'lobby.create.title': 'Criar um jogo',
-  'lobby.create.intro': 'Você é o anfitrião. Dá para mudar a velocidade dos turnos na sala antes de começar.',
+  'lobby.create.intro': 'Você é o anfitrião. Dá para mudar a velocidade dos ticks na sala antes de começar.',
   'lobby.create.nameLabel': 'Nome do jogo',
   'lobby.create.namePlaceholder': 'O Pacto de Inara',
   'lobby.create.players': 'Jogadores',
@@ -216,12 +217,12 @@ const base: Catalog = {
   'card.status.open_one': 'Aberto · {n} vaga restante',
   'card.status.open_other': 'Aberto · {n} vagas restantes',
   'card.status.full': 'Cheio · aguardando o anfitrião',
-  'card.status.live': 'Em andamento · Turno {n}',
+  'card.status.live': 'Em andamento · Tick {n}',
   'card.status.finished': 'Terminado',
   'card.started': 'Começou {when}',
-  'card.nextTurn': 'próximo turno {when}',
+  'card.nextTurn': 'próximo tick {when}',
   'card.anyMoment': 'a qualquer momento',
-  'card.ended': 'Terminou {when}, no turno {n}',
+  'card.ended': 'Terminou {when}, no tick {n}',
   'card.hosted': 'Anfitrião: {host} · aberto {when}',
   'card.hostedYou': 'você',
   'card.cta.resume': 'Continuar',
@@ -258,12 +259,12 @@ const base: Catalog = {
   'card.autoload': 'Abrir automaticamente ao iniciar',
   'card.autoloadOn': 'Abre direto neste jogo',
   'card.autoloadOff': 'Abre esta página em vez disso',
-  'card.turns.sec_one': 'turnos de {n} segundo',
-  'card.turns.sec_other': 'turnos de {n} segundos',
-  'card.turns.min_one': 'turnos de {n} minuto',
-  'card.turns.min_other': 'turnos de {n} minutos',
-  'card.turns.hour_one': 'turnos de {n} hora',
-  'card.turns.hour_other': 'turnos de {n} horas',
+  'card.turns.sec_one': 'ticks de {n} segundo',
+  'card.turns.sec_other': 'ticks de {n} segundos',
+  'card.turns.min_one': 'ticks de {n} minuto',
+  'card.turns.min_other': 'ticks de {n} minutos',
+  'card.turns.hour_one': 'ticks de {n} hora',
+  'card.turns.hour_other': 'ticks de {n} horas',
   'card.players': '{n} de {max} jogadores',
   'card.openCount': '{n} abertas',
   'card.openSeat': 'Vaga aberta',

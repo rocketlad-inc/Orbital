@@ -92,6 +92,21 @@ export const SHIP_SLOT_COUNTS: Record<ShipClassName, number> = {
   kaiju: 0,
 };
 
+/** EXPANDED HARDPOINTS (Construction 8): one more slot on every hull
+ *  that fits gear: corvette 3, frigate 5, destroyer 7, freighter 2. The
+ *  colony ship keeps its one (it carries the Construction Module only).
+ *  Read off the tech level directly, never through hasFeature: a game
+ *  with gating off grandfathers UNLOCKS, and this is a bonus.
+ *  KEEP IN SYNC with worker/shipDesigns.js. */
+export const EXTRA_SLOT_CLASSES: ReadonlySet<string> = new Set(['corvette', 'frigate', 'destroyer', 'freighter']);
+export const EXTRA_SLOT_LEVEL = 8;
+
+/** Slots this hull has for a faction at these tech levels. */
+export function slotCountFor(shipClass: ShipClassName, levels?: Partial<Record<string, number>> | null): number {
+  const base = SHIP_SLOT_COUNTS[shipClass] ?? 0;
+  return base + (EXTRA_SLOT_CLASSES.has(shipClass) && (levels?.construction ?? 0) >= EXTRA_SLOT_LEVEL ? 1 : 0);
+}
+
 /** Standard-issue fitting per hull — the "Default" template every player
  *  starts with, and the fallback when no design is active.
  *  KEEP IN SYNC with DEFAULT_LOADOUTS in worker/shipDesigns.js. */

@@ -13,7 +13,7 @@ import { humanizeMpError } from '../multiplayer/errorMessages';
 import {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- ShipIconClass — icon refactor in flight
   ShipIcon, ShipIconVariant, ShipIconClass, ICON_VARIANT_NAMES,
-  ALL_VARIANTS, DEFAULT_SHIP_ICONS, PREMIUM_VARIANTS,
+  ALL_VARIANTS, DEFAULT_SHIP_ICONS, canUseLook,
 } from './ShipIcons';
 import { openShipDesigner } from './ShipDesigner';
 import {
@@ -335,8 +335,9 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
           }
         });
     } else {
-      // Single-player: local state is canonical.
-      const success = buildShip(body.id, shipClass, name, variant);
+      // Single-player: local state is canonical. SP predates the Z line
+      // (and the Commission), so a Z pick builds the class default there.
+      const success = buildShip(body.id, shipClass, name, variant === 'Z' ? undefined : variant);
       if (!success && fromQueue) {
         setPendingNames(prev => [fromQueue, ...prev]);
       }
@@ -771,13 +772,12 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
                       onClick={() => {
                         if (activeDesign) { openShipDesigner(cls); return; }
                         // Cycle to the next variant this account may
-                        // actually SAVE: free letters always, J-S only
-                        // with the Commission. Skipping (rather than
-                        // showing a lock mid-cycle) keeps the single-
-                        // click affordance dumb and predictable.
-                        const allowed = isPremium
-                          ? ALL_VARIANTS
-                          : ALL_VARIANTS.filter(v => !PREMIUM_VARIANTS.has(v));
+                        // actually SAVE: A and B always, the rest with the
+                        // Commission or kept from before (look_grants).
+                        // Skipping (rather than showing a lock mid-cycle)
+                        // keeps the single-click affordance dumb and
+                        // predictable.
+                        const allowed = ALL_VARIANTS.filter(v => canUseLook(cls, v, isPremium, user?.look_grants));
                         const cur = allowed.indexOf(iconChoice[cls]);
                         const next = allowed[(cur + 1) % allowed.length];
                         setIconChoice(prev => ({ ...prev, [cls]: next }));

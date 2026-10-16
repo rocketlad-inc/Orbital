@@ -38,14 +38,14 @@ import { COMMISSION_NAME, COMMISSION_PRICE, COMMISSION_DISCORD, canBuyHere, logC
 import { ShipClassName, BuildableClassName, SHIP_CLASSES, BUILDABLE_CLASSES, upkeepSplitFor } from '../game/shipClasses';
 import { deliveredHullHp } from '../game/combat';
 import {
-  ShipPartId, ALL_PART_IDS, SHIP_PART_DEFS, SHIP_SLOT_COUNTS,
+  ShipPartId, ALL_PART_IDS, SHIP_PART_DEFS, SHIP_SLOT_COUNTS, slotCountFor,
   sanitizeParts, computeDesignStats, partsCost, countPart,
   detonatorDamage, detonatorDisclosure, SERVER_HULL_BASE, PART_GLYPH,
   damageProfile, refitFee, PART_STACK_ESCALATION, reductionPct, reductionLadder,
   hitChanceOf, SERVER_HULL_BASE as HULL_BASE,
 } from '../game/shipParts';
 import {
-  ShipIcon, ShipIconVariant, ALL_VARIANTS, ICON_VARIANT_NAMES, DEFAULT_SHIP_ICONS, PREMIUM_VARIANTS,
+  ShipIcon, ShipIconVariant, ALL_VARIANTS, ICON_VARIANT_NAMES, DEFAULT_SHIP_ICONS, PREMIUM_VARIANTS, canUseLook, isKeptLook,
 } from './ShipIcons';
 import type { ShipDesign } from '../types';
 import { PART_FEATURE } from '../game/researchUnlocks';
@@ -81,7 +81,7 @@ function serverTemplateToClient(t: ServerShipTemplate): ShipTemplate {
     try { parts = sanitizeParts(JSON.parse(t.parts_json)); } catch { /* bare hull */ }
   }
   let iv: ShipDesign['iconVariant'];
-  if (t.icon_variant && /^[A-Y]$/.test(t.icon_variant)) {
+  if (t.icon_variant && /^[A-Z]$/.test(t.icon_variant)) {
     iv = t.icon_variant as ShipDesign['iconVariant'];
   }
   return {
@@ -102,7 +102,7 @@ function serverDesignToClient(d: ServerShipDesign): ShipDesign {
     try { parts = sanitizeParts(JSON.parse(d.parts_json)); } catch { /* bare hull */ }
   }
   let iv: ShipDesign['iconVariant'];
-  if (d.icon_variant && /^[A-Y]$/.test(d.icon_variant)) {
+  if (d.icon_variant && /^[A-Z]$/.test(d.icon_variant)) {
     iv = d.icon_variant as ShipDesign['iconVariant'];
   }
   return {
@@ -258,7 +258,8 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   );
 
   const techLevels = gameState.factionTech['player']?.levels ?? {};
-  const slots = SHIP_SLOT_COUNTS[activeClass];
+  // Expanded Hardpoints (Construction 8) adds one.
+  const slots = slotCountFor(activeClass, techLevels);
   const hullDef = SHIP_CLASSES[activeClass];
   const stats = computeDesignStats(activeClass, draftParts, techLevels);
   // Quote the hull the yard will DELIVER. computeDesignStats returns the
@@ -773,7 +774,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   const looksStd = ALL_VARIANTS.filter(v => !PREMIUM_VARIANTS.has(v));
   const looksCom = ALL_VARIANTS.filter(v => PREMIUM_VARIANTS.has(v));
   const pickLook = (v: ShipIconVariant) => {
-    const locked = !isPremium && PREMIUM_VARIANTS.has(v);
+    const locked = !canUseLook(activeClass, v, isPremium, user?.look_grants);
     if (locked) {
       setPreviewIcon(v);
       logCommission('designer', 'view');
@@ -783,7 +784,9 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
     }
   };
   const lookTile = (v: ShipIconVariant) => {
-    const locked = !isPremium && PREMIUM_VARIANTS.has(v);
+    const locked = !canUseLook(activeClass, v, isPremium, user?.look_grants);
+    // Kept: a look this player built with before it joined the Commission.
+    const kept = !isPremium && isKeptLook(activeClass, v, user?.look_grants);
     const on = v === shownIcon;
     return (
       <button
@@ -793,7 +796,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
         aria-pressed={on}
         title={locked
           ? t('ship.sd.previewLineTip', { line: ICON_VARIANT_NAMES[activeClass][v], commission: tk('mp.commission.name', COMMISSION_NAME) })
-          : undefined}
+          : kept ? t('ship.sd.keptLookTip', { line: ICON_VARIANT_NAMES[activeClass][v] }) : undefined}
         onClick={() => pickLook(v)}
       >
         <ShipIcon shipClass={activeClass} variant={v} size={60} color={p1} color2={p2} />
@@ -876,7 +879,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                 <ShipIcon shipClass={cls} variant={(freshDesigns ?? stateDesigns ?? []).find(d => d.shipClass === cls && d.isActive)?.iconVariant}
                   size={24} color={p1} color2={p2} />
                 <span className="sd-tab__name">{SHIP_CLASSES[cls].displayName}</span>
-                <span className="sd-tab__slots">{SHIP_SLOT_COUNTS[cls]}◯</span>
+                <span className="sd-tab__slots">{slotCountFor(cls, techLevels)}◯</span>
               </button>
             ))}
           </div>

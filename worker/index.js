@@ -12,7 +12,7 @@ import {
   getOrCreateAgentUser,
   isValidAgentHandle,
 } from './auth.js';
-import { validateParts, DEFAULT_LOADOUTS } from './shipDesigns.js';
+import { validateParts, DEFAULT_LOADOUTS, LENIENT } from './shipDesigns.js';
 import { verifyGoogleIdToken } from './google.js';
 import { stampSignupSource } from './attribution.js';
 import { isAdminSession } from './admins.js';
@@ -699,6 +699,9 @@ async function handleMe(req, env) {
     // entitlement server-side — a spoofed flag shows options the server
     // will then refuse to persist.
     is_premium: await store.hasEntitlement(env, session.user_id),
+    // Ship looks kept from before C-I joined the Commission (0166), as
+    // 'class:letter'. UI only; every save path re-checks the grant.
+    look_grants: await store.lookGrants(env, session.user_id).catch(() => []),
     // Account-default colony and station skins (0154); null = the free look.
     ...(await env.DB.prepare('SELECT city_skin, station_skin FROM users WHERE id = ?')
       .bind(session.user_id).first().catch(() => null) ?? {}),
@@ -780,7 +783,10 @@ async function handleCreateShipTemplate(req, env, session) {
   const shipClass = body.ship_class;
   // validateParts owns the slot-count + per-class legality rules, so a
   // template can never encode a loadout the designer would reject.
-  const v = validateParts(shipClass, body.parts ?? []);
+  // An account template is a library across games, so it may hold the
+  // Expanded Hardpoints slot; a game's own design save re-checks it
+  // against that faction's tech.
+  const v = validateParts(shipClass, body.parts ?? [], LENIENT);
   if (!v.ok) return err(400, 'bad_request', v.error);
 
   const name = typeof body.name === 'string' ? body.name.trim().slice(0, 40) : '';
@@ -790,7 +796,7 @@ async function handleCreateShipTemplate(req, env, session) {
   if (body.icon_variant != null) {
     // Account-level templates carry icon picks across games, so the
     // entitlement gate applies here exactly as on the in-game paths.
-    const badIcon = await store.validateIconVariant(env, session.user_id, body.icon_variant);
+    const badIcon = await store.validateIconVariant(env, session.user_id, body.icon_variant, shipClass);
     if (badIcon) return err(badIcon.code === 'premium_required' ? 403 : 400, badIcon.code, badIcon.message);
     iconVariant = body.icon_variant;
   }

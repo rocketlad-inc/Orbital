@@ -486,8 +486,12 @@ check('a mega destroyer draws as itself, the way the game now does',
   raster.iconKey('mega_destroyer', 'F', 90) === `mega_destroyer:F~${WEAR_ART_VERSION}:green`);
 check('an unknown class still draws a ship, never nothing',
   raster.iconKey('warp_toaster', null, 90).startsWith('corvette:'));
+// Every letter A-Z has a design now (Z = the Medieval Series), so the
+// undrawn letter here is one no build will ever have.
 check('a letter with no design falls back to the class default, not to garbage',
-  raster.iconKey('frigate', 'Z', 90) === `frigate:${raster.DEFAULT_SHIP_ICONS.frigate}~${WEAR_ART_VERSION}:green`);
+  raster.iconKey('frigate', '9', 90) === `frigate:${raster.DEFAULT_SHIP_ICONS.frigate}~${WEAR_ART_VERSION}:green`);
+check('the Medieval Series draws as itself on the card',
+  raster.iconKey('frigate', 'Z', 90) === `frigate:Z~${WEAR_ART_VERSION}:green`);
 check("the watch app's own unversioned keys still draw",
   !!raster.iconSvg('corvette:B:green', 64) && !!raster.parseIconKey('freighter:A:green'));
 check('health maps onto the situation log colour ramp',

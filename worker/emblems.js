@@ -33,6 +33,8 @@ export const EMBLEM_IDS = [
 export const PREMIUM_EMBLEM_IDS = [
   'dragon', 'kraken', 'galaxy', 'nova', 'raven',
   'serpent', 'swords', 'atom', 'hourglass', 'compass',
+  // The space wing (Oct 2026).
+  'binary', 'station', 'blackhole', 'pulsar', 'eclipse', 'satellite', 'helmet', 'saucer',
 ];
 
 const PREMIUM_EMBLEM_SET = new Set(PREMIUM_EMBLEM_IDS);

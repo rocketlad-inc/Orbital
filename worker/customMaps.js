@@ -297,6 +297,8 @@ async function handlePublish(req, env, ctx) {
   const map = parseStored(row.map_json);
   const now = Date.now();
   if (body.on) {
+    // Taken down by an admin: it stays the owner's, but not the gallery's.
+    if (row.taken_down_ms) return err(403, 'taken_down', 'this map was removed from the gallery and cannot be republished');
     const blockers = hostBlockers(map);
     if (blockers.length > 0) {
       return json({
@@ -392,7 +394,20 @@ async function handleGalleryGet(_req, env, ctx) {
   const row = await galleryRow(env, ctx.session, ctx.params.id);
   if (!row) return err(404, 'not_found', 'map not found');
   const map = hideSecretsFor(parseStored(row.map_json), row.owner_user_id, ctx.session.user_id);
-  return json({ map, item: galleryItem(row, map, ctx.session.user_id) });
+  return json({ map, item: galleryItem(row, map, ctx.session.user_id), can_moderate: isAdminEmail(ctx.session.email) });
+}
+
+// POST /api/maps/:id/takedown — an admin takes a published map out of the
+// gallery for good (the owner cannot republish it). 404 to anyone else.
+async function handleTakedown(_req, env, ctx) {
+  if (!isAdminEmail(ctx.session.email)) return err(404, 'not_found', 'not found');
+  const id = String(ctx.params.id);
+  if (!MAP_ID_RE.test(id)) return err(404, 'not_found', 'map not found');
+  const res = await env.DB.prepare(
+    'UPDATE custom_maps SET published = 0, taken_down_ms = ?, taken_down_by = ? WHERE id = ?',
+  ).bind(Date.now(), String(ctx.session.email), id).run();
+  if ((res.meta?.changes ?? 0) === 0) return err(404, 'not_found', 'map not found');
+  return json({ ok: true });
 }
 
 // POST /api/maps/:id/remix — a published map (or your own) copied into
@@ -467,6 +482,7 @@ export const routes = [
   { method: 'GET', pattern: /^\/api\/maps\/gallery\/(?<id>map_[A-Za-z0-9]+)$/, auth: 'required', handle: gate(handleGalleryGet) },
   { method: 'POST', pattern: /^\/api\/maps\/(?<id>map_[A-Za-z0-9]+)\/publish$/, auth: 'required', handle: gate(handlePublish) },
   { method: 'POST', pattern: /^\/api\/maps\/(?<id>map_[A-Za-z0-9]+)\/remix$/, auth: 'required', handle: gate(handleRemix) },
+  { method: 'POST', pattern: /^\/api\/maps\/(?<id>map_[A-Za-z0-9]+)\/takedown$/, auth: 'required', handle: gate(handleTakedown) },
   { method: 'GET', pattern: /^\/api\/maps\/(?<id>map_[A-Za-z0-9]+)$/, auth: 'required', handle: gate(handleGet) },
   { method: 'PUT', pattern: /^\/api\/maps\/(?<id>map_[A-Za-z0-9]+)$/, auth: 'required', handle: gate(handlePut) },
   { method: 'DELETE', pattern: /^\/api\/maps\/(?<id>map_[A-Za-z0-9]+)$/, auth: 'required', handle: gate(handleDelete) },

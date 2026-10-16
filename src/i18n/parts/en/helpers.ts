@@ -60,6 +60,8 @@ export const helpers = {
   'helper.unlock.hull.destroyer.blurb': 'Six slots. The siege piece.',
   'helper.unlock.building.thrusters.label': 'Trajectory Thrusters',
   'helper.unlock.building.thrusters.blurb': 'Fit an asteroid with engines and aim it at someone.',
+  'helper.unlock.ship.extraSlot.label': 'Expanded Hardpoints',
+  'helper.unlock.ship.extraSlot.blurb': 'One more slot on every warship and freighter: corvettes 3, frigates 5, destroyers 7, freighters 2.',
   'helper.unlock.dyson.label': 'Dyson Foundation',
   'helper.unlock.dyson.blurb': 'Opens the engineering victory path.',
   'helper.unlock.building.lab.label': 'Laboratory',

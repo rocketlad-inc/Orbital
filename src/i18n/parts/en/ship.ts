@@ -901,6 +901,7 @@ export const ship = {
   'ship.sd.previewA': 'Previewing the',
   'ship.sd.previewB': ' line, part of the {commission} (with every other line, new flags and {discord}). Not saved with the design.',
   'ship.sd.previewLineTip': 'Preview the {line} line on your hull — a {commission} line',
+  'ship.sd.keptLookTip': 'The {line} line is yours to keep: you built with it before it joined the Commission',
   'ship.sd.refitFailed': 'Refit failed.',
   'ship.sd.refitFee': 'Fee = half the added parts\' price per hull. Removals refund nothing.',
   'ship.sd.refitFleet': '⟳ REFIT FLEET · {ore}M {credits}C',

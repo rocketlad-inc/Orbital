@@ -15,7 +15,7 @@ import { CaptainAvatar } from './CaptainAvatar';
 import { summarizeFleet, fleetHeadlineStatus } from '../game/fleetSummary';
 import {
   ShipPartId, SHIP_PART_DEFS, countPart, detonatorDamage, detonatorDisclosure,
-  PART_GLYPH, SHIP_SLOT_COUNTS, ALL_PART_IDS, sanitizeParts,
+  PART_GLYPH, SHIP_SLOT_COUNTS, slotCountFor, ALL_PART_IDS, sanitizeParts,
   hitChanceOf, damageProfile, defenseMitigation, MITIGATION_FLOOR, refitFee,
 } from '../game/shipParts';
 import { TransferIntent, MpActionResult, useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
@@ -3877,6 +3877,7 @@ export const ShipPanel: React.FC = () => {
               shipClass={iconClassFor(ship.class)}
               maxHp={maxHp}
               weaponsLvl={gameState.factionTech['player']?.levels?.weapons ?? 0}
+              levels={isOwn ? gameState.factionTech['player']?.levels : undefined}
             />
           )}
 
@@ -5228,11 +5229,15 @@ const ShipLoadoutSection: React.FC<{
   shipClass: ShipClassName;
   maxHp: number;
   weaponsLvl: number;
-}> = ({ parts, shipClass, maxHp, weaponsLvl }) => {
+  /** The owner's tech, for Expanded Hardpoints; absent for a rival's
+   *  hull, which shows what it carries and no more. */
+  levels?: Partial<Record<string, number>>;
+}> = ({ parts, shipClass, maxHp, weaponsLvl, levels }) => {
   useI18n();
-  const totalSlots = SHIP_SLOT_COUNTS[shipClass] ?? 0;
-  if (totalSlots === 0) return null;
   const fitted = sanitizeParts(parts);
+  const totalSlots = (SHIP_SLOT_COUNTS[shipClass] ?? 0) === 0 ? 0
+    : Math.max(slotCountFor(shipClass, levels), fitted.length);
+  if (totalSlots === 0) return null;
 
   // Slot chips: fitted parts first (in fit order), then dimmed empties.
   const slots: (ShipPartId | null)[] = [...fitted];

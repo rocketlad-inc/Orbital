@@ -452,6 +452,24 @@ check('the gallery is staging-only too', await (async () => {
   check('deep space adds no sky', deep.look.backdrop === undefined, JSON.stringify(deep.look));
 }
 
+// ---- gallery moderation ------------------------------------------------------
+{
+  const pm = await call('POST', '/api/maps', 'u0', { map: gen, name: 'Moderated' });
+  const mid = pm.body.summary.id;
+  await call('POST', `/api/maps/${mid}/publish`, 'u0', { on: true });
+  const notAdmin = await call('POST', `/api/maps/${mid}/takedown`, 'u1');
+  check('a player cannot take a map down', notAdmin.status === 404);
+  const adminTd = await routes.find(r => String(r.pattern).includes('takedown')).handle(
+    new Request(`https://x/api/maps/${mid}/takedown`, { method: 'POST' }), env,
+    { params: { id: mid }, session: { user_id: 'u2', email: 'lcfeeser@gmail.com' } });
+  check('an admin can', adminTd.status === 200);
+  const galAfter = await call('GET', '/api/maps/gallery?sort=new', 'u2');
+  check('...and it leaves the gallery', !galAfter.body.items.some(i => i.id === mid));
+  const again = await call('POST', `/api/maps/${mid}/publish`, 'u0', { on: true });
+  check('...and its owner cannot republish it', again.status === 403 && again.body.error?.code === 'taken_down', JSON.stringify(again.body).slice(0, 120));
+  check('...but still has the map', (await call('GET', `/api/maps/${mid}`, 'u0')).status === 200);
+}
+
 // ---- the launch switch --------------------------------------------------------
 {
   const prod = { DB };   // no ORBITAL_ENV: production

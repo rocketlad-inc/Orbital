@@ -21,14 +21,17 @@ import { FREIGHTER } from './freighter';
 import { COLONY } from './colony';
 import { MEGA_DESTROYER, MOBILE_FOUNDRY, STRUCTURES, SCAFFOLD } from './capital';
 import { CORVETTE_HOMAGE, FRIGATE_HOMAGE, DESTROYER_HOMAGE, FREIGHTER_HOMAGE, COLONY_HOMAGE } from './homage';
+import { CORVETTE_MEDIEVAL, FRIGATE_MEDIEVAL, DESTROYER_MEDIEVAL, FREIGHTER_MEDIEVAL, COLONY_MEDIEVAL } from './medieval';
 
 export interface HullDesign { name: string; note?: string; premium?: boolean; parts: unknown[] }
 type DesignSet = Record<string, HullDesign>;
 
 const SHIP_SETS: Record<string, DesignSet> = {
-  corvette: { ...CORVETTE, ...CORVETTE_HOMAGE }, frigate: { ...FRIGATE, ...FRIGATE_HOMAGE },
-  destroyer: { ...DESTROYER, ...DESTROYER_HOMAGE }, freighter: { ...FREIGHTER, ...FREIGHTER_HOMAGE },
-  colony: { ...COLONY, ...COLONY_HOMAGE },
+  corvette: { ...CORVETTE, ...CORVETTE_HOMAGE, ...CORVETTE_MEDIEVAL },
+  frigate: { ...FRIGATE, ...FRIGATE_HOMAGE, ...FRIGATE_MEDIEVAL },
+  destroyer: { ...DESTROYER, ...DESTROYER_HOMAGE, ...DESTROYER_MEDIEVAL },
+  freighter: { ...FREIGHTER, ...FREIGHTER_HOMAGE, ...FREIGHTER_MEDIEVAL },
+  colony: { ...COLONY, ...COLONY_HOMAGE, ...COLONY_MEDIEVAL },
   mega_destroyer: MEGA_DESTROYER, mobile_foundry: MOBILE_FOUNDRY,
 };
 

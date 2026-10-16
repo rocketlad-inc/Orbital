@@ -353,7 +353,7 @@ function Gallery({ onOpen }: { onOpen: OpenMap }) {
   const [q, setQ] = useState('');
   const [items, setItems] = useState<GalleryItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [peek, setPeek] = useState<{ item: GalleryItem; map: CustomMap } | null>(null);
+  const [peek, setPeek] = useState<{ item: GalleryItem; map: CustomMap; canModerate?: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -367,9 +367,17 @@ function Gallery({ onOpen }: { onOpen: OpenMap }) {
   }, [sort, q]);
 
   const look = async (item: GalleryItem) => {
-    const res = await apiFetch<{ map: CustomMap; item: GalleryItem }>(`/api/maps/gallery/${item.id}`);
-    if (res.ok) setPeek({ item: res.data.item ?? item, map: normalizeMap(res.data.map) });
+    const res = await apiFetch<{ map: CustomMap; item: GalleryItem; can_moderate?: boolean }>(`/api/maps/gallery/${item.id}`);
+    if (res.ok) setPeek({ item: res.data.item ?? item, map: normalizeMap(res.data.map), canModerate: !!res.data.can_moderate });
     else setError(mapApiError(res.error, 'mm.gal.openFailed'));
+  };
+  const takedown = async (item: GalleryItem) => {
+    setBusy(true);
+    const res = await apiFetch(`/api/maps/${item.id}/takedown`, { method: 'POST' });
+    setBusy(false);
+    if (!res.ok) { setError(mapApiError(res.error, 'mm.gal.takedownFailed')); return; }
+    setPeek(null);
+    setItems(list => (list ?? []).filter(i => i.id !== item.id));
   };
   const remix = async (item: GalleryItem) => {
     setBusy(true);
@@ -407,13 +415,19 @@ function Gallery({ onOpen }: { onOpen: OpenMap }) {
           </button>
         ))}
       </div>
-      {peek && <GalleryPeek item={peek.item} map={peek.map} busy={busy} onRemix={() => remix(peek.item)} onClose={() => setPeek(null)} />}
+      {peek && (
+        <GalleryPeek item={peek.item} map={peek.map} busy={busy} onRemix={() => remix(peek.item)} onClose={() => setPeek(null)}
+          canModerate={peek.canModerate} onTakedown={() => takedown(peek.item)} />
+      )}
     </div>
   );
 }
 
 /** One gallery map, close up, with its remix button. */
-function GalleryPeek({ item, map, busy, onRemix, onClose }: { item: GalleryItem; map: CustomMap; busy: boolean; onRemix: () => void; onClose: () => void }) {
+function GalleryPeek({ item, map, busy, onRemix, onClose, canModerate, onTakedown }: {
+  item: GalleryItem; map: CustomMap; busy: boolean; onRemix: () => void; onClose: () => void;
+  canModerate?: boolean; onTakedown?: () => void;
+}) {
   useI18n();
   const modal = useModal(onClose);
   return (
@@ -433,6 +447,13 @@ function GalleryPeek({ item, map, busy, onRemix, onClose }: { item: GalleryItem;
               {busy ? t('mm.gal.copying') : item.mine ? t('mm.gal.openCopy') : t('mm.gal.remix')}
             </button>
             <p className="mm-note">{t('mm.gal.remixNote')}</p>
+            {/* Moderation: admins take a map out of the gallery for good. */}
+            {canModerate && onTakedown && !item.mine && (
+              <button className="mm-btn is-danger is-wide" disabled={busy}
+                onClick={() => { if (window.confirm(t('mm.gal.takedownConfirm', { name: item.name }))) onTakedown(); }}>
+                {t('mm.gal.takedown')}
+              </button>
+            )}
           </div>
         </div>
       </div>
