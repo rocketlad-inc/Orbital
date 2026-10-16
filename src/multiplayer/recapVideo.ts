@@ -267,15 +267,23 @@ export async function recordVerticalVideo(o: RecordVideoOptions): Promise<{ blob
   // timeline however long it took to draw.
   const pause = () => { if (rec.state === 'recording') rec.pause(); };
   const resume = () => { if (rec.state === 'paused') rec.resume(); };
+  // A timer asked for 33ms runs a few ms over, and that added up to an
+  // eighth too long (28.4s for a 25.2s clip). So the time actually
+  // RECORDED is tracked, and each frame is held for whatever brings the
+  // total back to where frame k should end.
+  let recorded = 0;
   rec.start(1000);
   pause();
   for (let k = 0; k < total; k++) {
     if (o.cancelled?.()) { resume(); rec.stop(); await stopped; return null; }
     drawFrame(k);
     resume();
+    const on = performance.now();
     track.requestFrame?.();
-    await new Promise<void>(r => setTimeout(r, FRAME_MS));
+    const hold = Math.max(4, (k + 1) * FRAME_MS - recorded);
+    await new Promise<void>(r => setTimeout(r, hold));
     pause();
+    recorded += performance.now() - on;
     o.onProgress?.((k + 1) / total);
   }
   resume();
