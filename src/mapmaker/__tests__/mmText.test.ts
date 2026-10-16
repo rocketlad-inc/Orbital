@@ -46,6 +46,15 @@ function everyIssue(): MapIssue[] {
       body('ua', { orbit: 500, start: true, name: 'UA', yields: { metal: 2, credits: 2, science: 3 } }),
       body('ub', { orbit: 520, angle: 3, start: true, name: 'UB', yields: { metal: 2, credits: 2, science: 3 } }),
     ], { sectors: [{ id: 'su1', name: 'Home Ring', color: '#4ecdc4', inner: 400, outer: 700 }] }),
+    // sun_close (inside the sun's disc), moon_inside (inside its planet),
+    // moons_overlap (a wide moon system reaching its neighbour)
+    withBodies([
+      body('va', { orbit: 60 }),
+      body('vb', { orbit: 1000 }),
+      body('vc', { type: 'moon', parent: 'vb', orbit: 6, radius: 1.5, name: 'VC' }),
+      body('vd', { type: 'moon', parent: 'vb', orbit: 100, radius: 1.5, name: 'VD' }),
+      body('ve', { orbit: 1080 }),
+    ]),
     // max_bodies
     withBodies(Array.from({ length: 200 }, (_, i) => body(`m${i}`, { name: `W${i}`, orbit: 200 + i * 60 }))),
   ];
@@ -60,9 +69,9 @@ describe('Map Maker text', () => {
   it('the fixtures reach every checklist code', () => {
     const codes = everyIssue().map(i => i.code).sort();
     expect(codes).toEqual([
-      'max_bodies', 'moon_far', 'names', 'names_dup', 'no_resources', 'none_credits', 'none_metal', 'none_science',
+      'max_bodies', 'moon_far', 'moon_inside', 'moons_overlap', 'names', 'names_dup', 'no_resources', 'none_credits', 'none_metal', 'none_science',
       'orbits_close', 'resources', 'secrets', 'sector_empty', 'sector_loose', 'sector_names', 'sector_starts', 'sectors',
-      'start_no_science', 'starts', 'starts_close', 'too_few_starts',
+      'start_no_science', 'starts', 'starts_close', 'sun_close', 'too_few_starts',
     ]);
   });
 

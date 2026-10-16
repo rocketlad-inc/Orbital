@@ -78,6 +78,18 @@ function translateIssue(i: MapIssue): { title: string; detail: string } | null {
       };
     case 'moon_far':
       return { title: t('mm.issue.moonFar.title'), detail: pl('mm.issue.moonFar.detail', n, { names: (p.names ?? []).join(', ') }) };
+    case 'sun_close':
+      return {
+        title: pl('mm.issue.sunClose.title', n),
+        detail: pl('mm.issue.sunClose.detail', n, { names: (p.names ?? []).join(', '), sun: p.sun ?? '', min: p.min ?? 0 }),
+      };
+    case 'moon_inside':
+      return { title: pl('mm.issue.moonInside.title', n), detail: pl('mm.issue.moonInside.detail', n, { names: (p.names ?? []).join(', ') }) };
+    case 'moons_overlap':
+      return {
+        title: pl('mm.issue.moonsOverlap.title', n),
+        detail: t('mm.issue.moonsOverlap.detail', { list: (p.pairs ?? []).map(listJoin).join('; ') + (p.more ? '…' : '') }),
+      };
     case 'names_dup':
       return { title: pl('mm.issue.namesDup.title', n), detail: t('mm.issue.namesDup.detail') };
     case 'names':
