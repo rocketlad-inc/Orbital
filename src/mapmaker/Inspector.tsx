@@ -2,22 +2,22 @@
 // Secrets), the sun, the whole map when nothing is selected, and -- with
 // a group selected -- the bulk bar.
 
-import React, { useState } from 'react';
+import React, { useId, useRef, useState } from 'react';
 import {
   type CustomMap, type MapBody, type MapBodyType, type MapSecret, type MapSector,
   TYPE_INFO, SURFACES, MAP_SECRETS, NAME_THEMES, RESOURCE_MAX, SUN_LIMITS, BACKDROPS, TEXT_LIMITS, MAX_BODIES,
-  MAX_SECTORS, SECTOR_COLORS,
+  MAX_SECTORS, SECTOR_COLORS, ORBIT_LIMITS,
   canStartOn, secretFits, bodyYear, makeName, startWorlds,
 } from '../game/customMap';
 import { t, tn, type Key } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import {
-  PRESETS, MOODS, addMoons, changeType, deleteBodies, duplicateBodies, updateBodies, bulkResources,
+  PRESETS, MOODS, MOONLESS_TYPES, addMoons, changeType, deleteBodies, duplicateBodies, updateBodies, bulkResources,
   spaceEvenly, renameByTheme, recolor, markStart, setSecret, scaleSize, colorForSurface, takenNames,
   mirrorBodies, applyMood, rerollZone, updateSector, deleteSectors, sectorMembers, suggestSectors,
   type ResMode, type ResKey, type MatchAspect,
 } from './ops';
-import { worldArt } from './planetArt';
+import { worldArt, useArtTick } from './planetArt';
 import {
   typeLabel, surfaceLabel, backdropLabel, themeLabel, presetLabel, moodLabel, moodBlurb, starLabel,
   secretName, secretHint, touchKey,
@@ -45,6 +45,68 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   return <label className="mm-field"><span className="mm-field__l">{label}</span>{children}</label>;
 }
 
+/** A caption over a control that is not one input (a stepper): a
+ *  <label> round it would forward a tap on the caption to its first
+ *  button, the "−". */
+export function FieldGroup({ label, children }: { label: string; children: React.ReactNode }) {
+  const id = useId();
+  return (
+    <div className="mm-field" role="group" aria-labelledby={id}>
+      <span className="mm-field__l" id={id}>{label}</span>{children}
+    </div>
+  );
+}
+
+/** What a name field puts back when it is cleared: the name it had when
+ *  it took focus (the cleaner's fallback would be English). */
+function useNameGuard(current: string) {
+  const before = useRef(current);
+  return {
+    onFocus: () => { before.current = current; },
+    keep: (typed: string) => (typed.trim() ? typed : before.current),
+  };
+}
+
+const clampTo = (v: number, min: number, max: number, step?: number) => {
+  let c = Math.min(max, Math.max(min, v));
+  if (step) c = Math.min(max, Math.max(min, Math.round(c / step) * step));
+  // Float steps (0.25) land exactly, not on 0.7500000001.
+  return Math.round(c * 1e6) / 1e6;
+};
+
+/**
+ * A typed number that does not fight the typist: it edits as text and
+ * only commits (clamped) on blur or Enter. Escape, or anything that is
+ * not a number, puts the last good value back. One commit, one undo step.
+ */
+export function NumberField({ value, min, max, step, label, className = 'mm-input', decimal, onCommit }: {
+  value: number; min: number; max: number; step?: number; label?: string; className?: string; decimal?: boolean;
+  onCommit: (v: number) => void;
+}) {
+  const [text, setText] = useState<string | null>(null);
+  const show = (v: number) => String(Math.round(v * 1e6) / 1e6);
+  const commit = () => {
+    if (text == null) return;
+    setText(null);
+    const v = Number(text.trim().replace(',', '.'));
+    if (!text.trim() || !Number.isFinite(v)) return;
+    const c = clampTo(v, min, max, step);
+    if (c !== value) onCommit(c);
+  };
+  return (
+    <input
+      className={className} type="text" inputMode={decimal ? 'decimal' : 'numeric'} aria-label={label}
+      value={text ?? show(value)}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') { e.preventDefault(); commit(); }
+        else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setText(null); }
+      }}
+    />
+  );
+}
+
 function Slider({ value, min, max, step = 1, onChange, onCommit, label }: {
   value: number; min: number; max: number; step?: number; label: string;
   onChange: (v: number) => void; onCommit?: () => void;
@@ -62,12 +124,11 @@ export function Stepper({ value, min, max, step = 1, label, onChange }: {
   value: number; min: number; max: number; step?: number; label: string; onChange: (v: number) => void;
 }) {
   useI18n();
-  const set = (v: number) => onChange(Math.min(max, Math.max(min, Math.round(v / step) * step)));
+  const set = (v: number) => { const c = clampTo(v, min, max, step); if (c !== value) onChange(c); };
   return (
     <span className="mm-step">
       <button type="button" className="mm-step__b" aria-label={t('mm.step.less', { label })} onClick={() => set(value - step)} disabled={value <= min}>−</button>
-      <input className="mm-step__v" type="number" inputMode="numeric" min={min} max={max} step={step} value={value} aria-label={label}
-        onChange={(e) => set(Number(e.target.value))} />
+      <NumberField className="mm-step__v" value={value} min={min} max={max} step={step} label={label} onCommit={set} />
       <button type="button" className="mm-step__b" aria-label={t('mm.step.more', { label })} onClick={() => set(value + step)} disabled={value >= max}>+</button>
     </span>
   );
@@ -75,6 +136,7 @@ export function Stepper({ value, min, max, step = 1, label, onChange }: {
 
 /** A world's face as the game paints it. */
 export function WorldFace({ body, size = 48 }: { body: Pick<MapBody, 'id' | 'type' | 'color' | 'surface' | 'rings'>; size?: number }) {
+  useArtTick();
   const art = body.type === 'rock' ? null : worldArt(body, 128);
   return (
     <span className={`mm-face${body.rings ? ' has-rings' : ''}`} style={{ width: size, height: size }} aria-hidden>
@@ -103,6 +165,8 @@ export const BodyInspector: React.FC<{
   const st = startWorlds(map);
   const typeChoices: MapBodyType[] = body.type === 'moon' ? ['moon', ...TYPES_FOR_SUN] : TYPES_FOR_SUN;
   const fixedSecret = !!body.secret && body.secret !== 'random';
+  const nameGuard = useNameGuard(body.name);
+  const orbitLim = body.parent === 'sun' ? ORBIT_LIMITS.sun : ORBIT_LIMITS.moon;
 
   return (
     <div className="mm-insp">
@@ -111,8 +175,9 @@ export const BodyInspector: React.FC<{
         <div className="mm-insp__id">
           <input
             className="mm-insp__name" value={body.name} aria-label={t('mm.world.nameAria')} maxLength={24}
+            onFocus={nameGuard.onFocus}
             onChange={(e) => liveText({ name: e.target.value })}
-            onBlur={(e) => patch({ name: e.target.value })}
+            onBlur={(e) => patch({ name: nameGuard.keep(e.target.value) })}
           />
           <span className="mm-insp__sub">
             {parent
@@ -184,8 +249,8 @@ export const BodyInspector: React.FC<{
 
           <div className="mm-grid2">
             <Field label={t('mm.world.orbit')}>
-              <input className="mm-input" type="number" inputMode="numeric" value={Math.round(body.orbit)} min={1}
-                onChange={(e) => patch({ orbit: Number(e.target.value) })} />
+              <NumberField value={Math.round(body.orbit)} min={orbitLim[0]} max={orbitLim[1]} step={1}
+                onCommit={(v) => patch({ orbit: v })} />
             </Field>
             <Field label={t('mm.world.year')}>
               <input className="mm-input is-ro" readOnly value={tn('mm.n.ticks', year)} />
@@ -196,10 +261,13 @@ export const BodyInspector: React.FC<{
             </Field>
             <Field label={t('mm.world.type')}>
               <select className="mm-input" value={body.type} onChange={(e) => onChange(changeType(map, body.id, e.target.value as MapBodyType))}>
-                {typeChoices.map(ty => <option key={ty} value={ty}>{typeLabel(ty)}</option>)}
+                {typeChoices.map(ty => (
+                  <option key={ty} value={ty} disabled={moons.length > 0 && MOONLESS_TYPES.has(ty) && ty !== body.type}>{typeLabel(ty)}</option>
+                ))}
               </select>
             </Field>
           </div>
+          {moons.length > 0 && <p className="mm-note">{t('mm.world.typeMoonsNote')}</p>}
 
           {canStartOn(body.type) && (
             <div className="mm-box">
@@ -336,13 +404,15 @@ export const SunInspector: React.FC<{ map: CustomMap; onChange: Change; onTransi
   useI18n();
   const set = (p: Partial<CustomMap['sun']>) => onChange({ ...map, sun: { ...map.sun, ...p } });
   const live = (p: Partial<CustomMap['sun']>) => onTransient({ ...map, sun: { ...map.sun, ...p } });
+  const nameGuard = useNameGuard(map.sun.name);
   return (
     <div className="mm-insp">
       <div className="mm-insp__head">
         <span className="mm-insp__disc" style={{ background: `radial-gradient(circle at 40% 38%, #fff, ${map.sun.color} 45%, #c2531c)` }} />
         <div className="mm-insp__id">
           <input className="mm-insp__name" value={map.sun.name} aria-label={t('mm.sun.nameAria')} maxLength={24}
-            onChange={(e) => live({ name: e.target.value })} onBlur={(e) => set({ name: e.target.value })} />
+            onFocus={nameGuard.onFocus}
+            onChange={(e) => live({ name: e.target.value })} onBlur={(e) => set({ name: nameGuard.keep(e.target.value) })} />
           <span className="mm-insp__sub">{t('mm.sun.sub')}</span>
         </div>
       </div>
@@ -471,14 +541,16 @@ export const SectorInspector: React.FC<{
   const starts = members.filter(b => b.start);
   const i = map.sectors.findIndex(x => x.id === sector.id);
   const inside = map.sectors[i - 1], outside = map.sectors[i + 1];
+  const nameGuard = useNameGuard(sector.name);
   return (
     <div className="mm-insp">
       <div className="mm-insp__head">
         <span className="mm-sectorbadge" style={{ borderColor: sector.color }} aria-hidden><span style={{ background: sector.color }} /></span>
         <div className="mm-insp__id">
           <input className="mm-insp__name" value={sector.name} aria-label={t('mm.sector.nameAria')} maxLength={24}
+            onFocus={nameGuard.onFocus}
             onChange={(e) => onTransient(updateSector(map, sector.id, { name: e.target.value }, false))}
-            onBlur={(e) => set({ name: e.target.value })} />
+            onBlur={(e) => set({ name: nameGuard.keep(e.target.value) })} />
           <span className="mm-insp__sub">{t('mm.sector.sub', { inner: sector.inner, outer: sector.outer })}</span>
         </div>
       </div>
@@ -490,12 +562,12 @@ export const SectorInspector: React.FC<{
             onChange={(e) => onTransient(updateSector(map, sector.id, { color: e.target.value }, false))} onBlur={(e) => set({ color: e.target.value })} />
         </div>
         <div className="mm-grid2">
-          <Field label={t('mm.sector.innerL')}>
+          <FieldGroup label={t('mm.sector.innerL')}>
             <Stepper label={t('mm.sector.inner')} value={sector.inner} min={inside ? inside.outer : 0} max={sector.outer - 10} step={10} onChange={(v) => set({ inner: v })} />
-          </Field>
-          <Field label={t('mm.sector.outerL')}>
+          </FieldGroup>
+          <FieldGroup label={t('mm.sector.outerL')}>
             <Stepper label={t('mm.sector.outer')} value={sector.outer} min={sector.inner + 10} max={outside ? outside.inner : 15400} step={10} onChange={(v) => set({ outer: v })} />
-          </Field>
+          </FieldGroup>
         </div>
         <p className="mm-note">{t('mm.sector.edgeNote')}</p>
         <div className="mm-box">
@@ -567,8 +639,15 @@ export const BulkBar: React.FC<{
             return (
               <div key={r.key} className="mm-res">
                 <label className="mm-check is-tight"><input type="checkbox" checked={row.on} onChange={(e) => setRow({ on: e.target.checked })} /><span className={`mm-res__l ${r.cls}`}>{res}</span></label>
-                <input className="mm-num" type="number" inputMode="decimal" step={mode === 'multiply' ? 0.25 : 1} value={row.a} aria-label={t(mode === 'range' ? 'mm.bulk.low' : 'mm.bulk.value', { res })} onChange={(e) => setRow({ a: Number(e.target.value) })} />
-                {mode === 'range' && <><span className="mm-mono">{t('mm.bulk.to')}</span><input className="mm-num" type="number" inputMode="numeric" value={row.b} aria-label={t('mm.bulk.high', { res })} onChange={(e) => setRow({ b: Number(e.target.value) })} /></>}
+                <NumberField className="mm-num" decimal={mode === 'multiply'} step={mode === 'multiply' ? 0.05 : 1}
+                  min={mode === 'add' ? -RESOURCE_MAX : 0} max={mode === 'multiply' ? 10 : RESOURCE_MAX}
+                  value={row.a} label={t(mode === 'range' ? 'mm.bulk.low' : 'mm.bulk.value', { res })} onCommit={(v) => setRow({ a: v })} />
+                {mode === 'range' && (
+                  <>
+                    <span className="mm-mono">{t('mm.bulk.to')}</span>
+                    <NumberField className="mm-num" step={1} min={0} max={RESOURCE_MAX} value={row.b} label={t('mm.bulk.high', { res })} onCommit={(v) => setRow({ b: v })} />
+                  </>
+                )}
               </div>
             );
           })}

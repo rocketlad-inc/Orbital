@@ -26,7 +26,7 @@ import { getLang, t, tn, type Key } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import { tMarkup, tRich } from '../i18n/rich';
 import { MapView, type Tool } from './MapView';
-import { BodyInspector, SunInspector, MapInspector, SectorInspector, BulkBar, Stepper } from './Inspector';
+import { BodyInspector, SunInspector, MapInspector, SectorInspector, BulkBar, Stepper, FieldGroup } from './Inspector';
 import { typeLabel, themeLabel, backdropLabel, issueText, issueTitle, mapApiError, touchKey } from './mmText';
 import {
   placeBody, deleteBodies, duplicateBodies, placeSymmetric, ringOf, scatterAsteroids, matchBodies, type MatchAspect,
@@ -64,27 +64,73 @@ function localCopyName(name: string): string {
   return m && getLang() !== 'en' ? t('mm.name.copy', { name: name.slice(0, m.index) }) : name;
 }
 
-/** Open a map in the workshop. `dirty`: the client changed it after the
- *  server saved it (a renamed copy), so it autosaves straight away. */
-type OpenMap = (map: CustomMap, id: string | null, dirty?: boolean) => void;
+/** Open a map in the workshop. `dirty`: it holds changes the server does
+ *  not have yet (a renamed copy, a recovered draft), so it autosaves
+ *  straight away. `base`: the server's updated_ms for the version this
+ *  starts from, so a save never writes over a newer one made elsewhere. */
+type OpenMap = (map: CustomMap, id: string | null, opts?: OpenOpts) => void;
 
 /** Open a copy the server just made (a remix or an imported code). */
-function openCopy(onOpen: OpenMap, raw: CustomMap, id: string) {
+function openCopy(onOpen: OpenMap, raw: CustomMap, s: Summary) {
   const map = normalizeMap(raw);
   const name = localCopyName(map.name);
-  onOpen(name === map.name ? map : normalizeMap({ ...map, name }), id, name !== map.name);
+  onOpen(name === map.name ? map : normalizeMap({ ...map, name }), s.id, { dirty: name !== map.name, base: s.updated_ms ?? null });
 }
 
-function saveDraft(map: CustomMap, id: string | null) {
-  try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ map, id, at: Date.now() })); } catch { /* private mode */ }
+/**
+ * THE DRAFT: one slot on this device holding changes not yet saved, so
+ * a closed tab or a dropped connection loses nothing. It is written only
+ * while there ARE unsaved changes (opening a template never overwrites
+ * it) and cleared once that map saves. `sid` names the workshop session
+ * that wrote it.
+ */
+type Draft = { map: CustomMap; id: string | null; base: number | null; sid: string; at: number };
+function saveDraft(d: Omit<Draft, 'at'>) {
+  try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ ...d, at: Date.now() })); } catch { /* private mode */ }
 }
-function loadDraft(): { map: CustomMap; id: string | null; at: number } | null {
+function loadDraft(): Draft | null {
   try {
     const raw = localStorage.getItem(DRAFT_KEY);
     if (!raw) return null;
     const d = JSON.parse(raw);
-    return { map: normalizeMap(d.map), id: typeof d.id === 'string' ? d.id : null, at: Number(d.at) || 0 };
+    return {
+      map: normalizeMap(d.map), id: typeof d.id === 'string' ? d.id : null,
+      base: Number.isFinite(d.base) ? Number(d.base) : null, sid: typeof d.sid === 'string' ? d.sid : '', at: Number(d.at) || 0,
+    };
   } catch { return null; }
+}
+/** Drop the draft if it is this session's or this map's. */
+function clearDraft(sid: string, id: string | null) {
+  try {
+    const d = loadDraft();
+    if (d && (d.sid === sid || (id && d.id === id))) localStorage.removeItem(DRAFT_KEY);
+  } catch { /* private mode */ }
+}
+
+/** A field that brings up the keyboard (so the phone sheet makes room). */
+function typesText(el: EventTarget | null): boolean {
+  if (el instanceof HTMLTextAreaElement) return true;
+  return el instanceof HTMLInputElement && ['text', 'search', 'number', 'email', 'password', 'url', 'tel'].includes(el.type);
+}
+
+/** A dialog over the page: it takes focus, closes on Escape, and hands
+ *  focus back to whatever had it when it shuts. */
+function useModal(onClose: () => void) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const close = useRef(onClose);
+  close.current = onClose;
+  useEffect(() => {
+    const before = document.activeElement as HTMLElement | null;
+    ref.current?.focus();
+    return () => { if (before && document.contains(before)) before.focus?.(); };
+  }, []);
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key !== 'Escape') return;
+    // Not the workshop's own Escape (which clears the selection) too.
+    e.stopPropagation();
+    close.current();
+  };
+  return { ref, onKeyDown, tabIndex: -1, 'aria-modal': true as const };
 }
 function coached(): boolean { try { return localStorage.getItem(COACH_KEY) === '1'; } catch { return true; } }
 function markCoached() { try { localStorage.setItem(COACH_KEY, '1'); } catch { /* private mode */ } }
@@ -142,8 +188,9 @@ function thumbOf(map: CustomMap): Thumb {
 /** The issue chip's drawer. */
 function Checklist({ issues, onShow, onClose }: { issues: MapIssue[]; onShow: (ids: string[]) => void; onClose: () => void }) {
   useI18n();
+  const modal = useModal(onClose);
   return (
-    <div className="mm-drawer" role="dialog" aria-label={t('mm.check.title')}>
+    <div className="mm-drawer" role="dialog" aria-label={t('mm.check.title')} {...modal}>
       <div className="mm-drawer__head">
         <b>{t('mm.check.title')}</b>
         <span className="mm-mono">{t('mm.check.live')}</span>
@@ -188,6 +235,7 @@ function HostPanel({
   const blockers = checkMap(map).filter(i => i.level === 'block');
   const sellable = canBuyHere();
   const published = !!summary?.published;
+  const modal = useModal(onClose);
 
   const host = async () => {
     setBusy(true); setError(null);
@@ -217,7 +265,7 @@ function HostPanel({
   };
 
   return (
-    <div className="mm-modal" role="dialog" aria-label={t('mm.host.aria')}>
+    <div className="mm-modal" role="dialog" aria-label={t('mm.host.aria')} {...modal}>
       <div className="mm-modal__card">
         <div className="mm-modal__head"><b>{t('mm.host.title')}</b><button className="mm-icon" aria-label={t('mm.close')} onClick={onClose}>✕</button></div>
         <div className="mm-modal__cols">
@@ -270,9 +318,9 @@ function HostPanel({
                   <label className="mm-field"><span className="mm-field__l">{t('mm.host.lobbyName')}</span>
                     <input className="mm-input" value={name} maxLength={60} onChange={(e) => setName(e.target.value)} />
                   </label>
-                  <label className="mm-field"><span className="mm-field__l">{t('mm.host.seats', { n: most })}</span>
+                  <FieldGroup label={t('mm.host.seats', { n: most })}>
                     <Stepper label={t('mm.host.seatsAria')} value={seats} min={2} max={most} onChange={setSeats} />
-                  </label>
+                  </FieldGroup>
                   <label className="mm-field"><span className="mm-field__l">{t('mm.host.password')}</span>
                     <input className="mm-input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
                   </label>
@@ -327,7 +375,7 @@ function Gallery({ onOpen }: { onOpen: OpenMap }) {
     setBusy(true);
     const res = await apiFetch<{ map: CustomMap; summary: Summary }>(`/api/maps/${item.id}/remix`, { method: 'POST' });
     setBusy(false);
-    if (res.ok) openCopy(onOpen, res.data.map, res.data.summary.id);
+    if (res.ok) openCopy(onOpen, res.data.map, res.data.summary);
     else setError(mapApiError(res.error, 'mm.gal.remixFailed'));
   };
 
@@ -359,28 +407,35 @@ function Gallery({ onOpen }: { onOpen: OpenMap }) {
           </button>
         ))}
       </div>
-      {peek && (
-        <div className="mm-modal" role="dialog" aria-label={peek.item.name}>
-          <div className="mm-modal__card is-narrow">
-            <div className="mm-modal__head"><b>{peek.item.name}</b><button className="mm-icon" aria-label={t('mm.close')} onClick={() => setPeek(null)}>✕</button></div>
-            <div className="mm-peek">
-              <MiniSystem thumb={thumbOf(peek.map)} size={260} />
-              <div className="mm-peek__t">
-                <span className="mm-mono">{t('mm.gal.by', { name: peek.item.author })}</span>
-                {peek.map.blurb && <p className="mm-peek__blurb">{peek.map.blurb}</p>}
-                <span className="mm-mono">
-                  {[tn('mm.n.startWorlds', startWorlds(peek.map).worlds.length), tn('mm.n.bodies', peek.map.bodies.length), backdropLabel(peek.map.settings.backdrop)].join(' · ')}
-                </span>
-                <span className="mm-mono">{t('mm.played', { n: peek.item.hosted_count })} · {t('mm.remixed', { n: peek.item.remix_count })}</span>
-                <button className="mm-btn is-primary is-wide" disabled={busy} onClick={() => remix(peek.item)}>
-                  {busy ? t('mm.gal.copying') : peek.item.mine ? t('mm.gal.openCopy') : t('mm.gal.remix')}
-                </button>
-                <p className="mm-note">{t('mm.gal.remixNote')}</p>
-              </div>
-            </div>
+      {peek && <GalleryPeek item={peek.item} map={peek.map} busy={busy} onRemix={() => remix(peek.item)} onClose={() => setPeek(null)} />}
+    </div>
+  );
+}
+
+/** One gallery map, close up, with its remix button. */
+function GalleryPeek({ item, map, busy, onRemix, onClose }: { item: GalleryItem; map: CustomMap; busy: boolean; onRemix: () => void; onClose: () => void }) {
+  useI18n();
+  const modal = useModal(onClose);
+  return (
+    <div className="mm-modal" role="dialog" aria-label={item.name} {...modal}>
+      <div className="mm-modal__card is-narrow">
+        <div className="mm-modal__head"><b>{item.name}</b><button className="mm-icon" aria-label={t('mm.close')} onClick={onClose}>✕</button></div>
+        <div className="mm-peek">
+          <MiniSystem thumb={thumbOf(map)} size={260} />
+          <div className="mm-peek__t">
+            <span className="mm-mono">{t('mm.gal.by', { name: item.author })}</span>
+            {map.blurb && <p className="mm-peek__blurb">{map.blurb}</p>}
+            <span className="mm-mono">
+              {[tn('mm.n.startWorlds', startWorlds(map).worlds.length), tn('mm.n.bodies', map.bodies.length), backdropLabel(map.settings.backdrop)].join(' · ')}
+            </span>
+            <span className="mm-mono">{t('mm.played', { n: item.hosted_count })} · {t('mm.remixed', { n: item.remix_count })}</span>
+            <button className="mm-btn is-primary is-wide" disabled={busy} onClick={onRemix}>
+              {busy ? t('mm.gal.copying') : item.mine ? t('mm.gal.openCopy') : t('mm.gal.remix')}
+            </button>
+            <p className="mm-note">{t('mm.gal.remixNote')}</p>
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -403,8 +458,8 @@ function StartScreen({ onOpen, onExit }: { onOpen: OpenMap; onExit: () => void }
   useEffect(() => { refresh(); }, [refresh]);
 
   const open = async (id: string) => {
-    const res = await apiFetch<{ map: CustomMap }>(`/api/maps/${id}`);
-    if (res.ok) onOpen(normalizeMap(res.data.map), id);
+    const res = await apiFetch<{ map: CustomMap; summary?: Summary }>(`/api/maps/${id}`);
+    if (res.ok) onOpen(normalizeMap(res.data.map), id, { base: res.data.summary?.updated_ms ?? null });
     else setError(mapApiError(res.error, 'mm.start.openFailed'));
   };
   const remove = async (s: Summary) => {
@@ -415,7 +470,7 @@ function StartScreen({ onOpen, onExit }: { onOpen: OpenMap; onExit: () => void }
   const importCode = async () => {
     setError(null);
     const res = await apiFetch<{ map: CustomMap; summary: Summary }>('/api/maps/import', { method: 'POST', body: JSON.stringify({ code }) });
-    if (res.ok) openCopy(onOpen, res.data.map, res.data.summary.id);
+    if (res.ok) openCopy(onOpen, res.data.map, res.data.summary);
     else setError(mapApiError(res.error, 'mm.start.codeFailed'));
   };
   const sol = async () => {
@@ -481,7 +536,11 @@ function StartScreen({ onOpen, onExit }: { onOpen: OpenMap; onExit: () => void }
                 <b>{t('mm.tpl.remix.t')}</b><span>{t('mm.tpl.remix.d')}</span>
               </button>
               {draft && draft.map.bodies.length > 0 && (
-                <button className="mm-tpl" onClick={() => onOpen(draft.map, draft.id)}>
+                <button className="mm-tpl" onClick={() => onOpen(draft.map, draft.id, {
+                  // A draft from before 2026-10-15 (no sid) was written on
+                  // every change, saved or not: it opens as it always did.
+                  dirty: !!draft.sid, base: draft.base, sid: draft.sid || undefined,
+                })}>
                   <span className="mm-tpl__art is-draft" aria-hidden><MiniSystem thumb={thumbOf(draft.map)} size={104} /></span>
                   <b>{t('mm.tpl.draft.t', { name: draft.map.name })}</b><span>{tn('mm.tpl.draft.d', draft.map.bodies.length)}</span>
                 </button>
@@ -519,7 +578,7 @@ function StartScreen({ onOpen, onExit }: { onOpen: OpenMap; onExit: () => void }
                   <span className="mm-mapcard__t">
                     <b>{s.name}</b>
                     <span className="mm-mono">
-                      {[tn('mm.n.bodies', s.bodies), new Date(s.updated_ms).toLocaleDateString(), ...(s.hosted_count ? [t('mm.hosted', { n: s.hosted_count })] : [])].join(' · ')}
+                      {[tn('mm.n.bodies', s.bodies), new Date(s.updated_ms).toLocaleDateString(getLang()), ...(s.hosted_count ? [t('mm.hosted', { n: s.hosted_count })] : [])].join(' · ')}
                     </span>
                   </span>
                   {s.published && <span className="mm-tag is-pub">{t('mm.start.published')}</span>}
@@ -557,16 +616,64 @@ function Coach({ touch, onDone }: { touch: boolean; onDone: () => void }) {
   );
 }
 
-/** The workshop: the map, the tools, the inspector. */
-function Workshop({ initial, initialId, dirty, onExit }: { initial: CustomMap; initialId: string | null; dirty?: boolean; onExit: () => void }) {
+type SaveState = 'fresh' | 'saved' | 'unsaved' | 'saving' | 'error';
+/** States that hold changes the server does not have. */
+const DIRTY: ReadonlySet<SaveState> = new Set<SaveState>(['unsaved', 'saving', 'error']);
+/** Autosave waits this long after the last edit. */
+const AUTOSAVE_MS = 3000;
+/** The draft is written this long after the last edit (and at once on exit). */
+const DRAFT_MS = 1000;
+
+/** What the workshop opens with besides the map itself. */
+type OpenOpts = { dirty?: boolean; base?: number | null; sid?: string };
+
+/** A sector edge dragged to `orbit`. A shared edge (two bands touching)
+ *  moves both bands; a free edge stops at its neighbour. Neither crosses
+ *  a band's own other edge. Null when the sector is gone. */
+function edgeMoved(m: CustomMap, id: string, which: 'inner' | 'outer', orbit: number): CustomMap | null {
+  const i = m.sectors.findIndex(x => x.id === id);
+  const sct = m.sectors[i];
+  if (!sct) return null;
+  const prev = m.sectors[i - 1], next = m.sectors[i + 1];
+  if (which === 'inner') {
+    const shared = !!prev && prev.outer === sct.inner;
+    const lo = shared ? prev.inner + 10 : (prev?.outer ?? 0);
+    const v = Math.max(lo, Math.min(sct.outer - 10, orbit));
+    return { ...m, sectors: m.sectors.map(x => (x.id === id ? { ...x, inner: v } : shared && x.id === prev!.id ? { ...x, outer: v } : x)) };
+  }
+  const shared = !!next && next.inner === sct.outer;
+  const hi = shared ? next.outer - 10 : (next?.inner ?? 15400);
+  const v = Math.max(sct.inner + 10, Math.min(hi, orbit));
+  return { ...m, sectors: m.sectors.map(x => (x.id === id ? { ...x, outer: v } : shared && x.id === next!.id ? { ...x, inner: v } : x)) };
+}
+
+const same = (a: CustomMap, b: CustomMap) => a === b || JSON.stringify(a) === JSON.stringify(b);
+
+/** The workshop: the map, the tools, the inspector. (Exported for its
+ *  save tests.) */
+export function Workshop({ initial, initialId, opts, onExit }: { initial: CustomMap; initialId: string | null; opts: OpenOpts; onExit: () => void }) {
   useI18n();
   const mobile = useIsMobile();
-  const [hist, setHist] = useState<Hist>({ past: [], present: initial, future: [] });
+  // The history lives in a ref as well as in state, so an edit knows at
+  // once whether it changed anything: a no-op is no undo step, and does
+  // not mark the map unsaved (a focus and blur on a fresh template must
+  // not autosave it into "Your maps").
+  const histRef = useRef<Hist>({ past: [], present: initial, future: [] });
+  const [hist, setHistState] = useState<Hist>(histRef.current);
+  const putHist = useCallback((h: Hist) => { histRef.current = h; setHistState(h); }, []);
+  /** The map before a live edit (typing, a slider, a drag) began. */
   const pending = useRef<CustomMap | null>(null);
+  /** A world or a sector edge is being dragged on the map right now. */
+  const dragging = useRef(false);
+  /** Bumped by every change; savedVersion is the one the server has. */
   const version = useRef(0);
-  const saving = useRef(false);
+  const savedVersion = useRef(opts.dirty ? -1 : 0);
   const map = hist.present;
   const [mapId, setMapId] = useState<string | null>(initialId);
+  const idRef = useRef(mapId);
+  /** The server's updated_ms for the version this editor builds on. */
+  const baseRef = useRef<number | null>(opts.base ?? null);
+  const sid = useMemo(() => opts.sid || Math.random().toString(36).slice(2), [opts.sid]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [canHost, setCanHost] = useState(false);
   const [selection, setSelection] = useState<Set<string>>(new Set());
@@ -585,8 +692,12 @@ function Workshop({ initial, initialId, dirty, onExit }: { initial: CustomMap; i
   const [showHost, setShowHost] = useState(false);
   // 'fresh': a template or a roll nobody has touched yet. It is not
   // autosaved, so browsing templates never fills your map list.
-  const [saveState, setSaveState] = useState<'fresh' | 'saved' | 'unsaved' | 'saving' | 'error'>(initialId ? (dirty ? 'unsaved' : 'saved') : 'fresh');
+  const [saveState, setSaveState] = useState<SaveState>(opts.dirty ? 'unsaved' : initialId ? 'saved' : 'fresh');
   const [saveError, setSaveError] = useState<string | null>(null);
+  /** A word about a save the player should know of (a conflict copy). */
+  const [notice, setNotice] = useState<string | null>(null);
+  /** Bumped to re-arm the autosave after a save that edits overtook. */
+  const [kick, setKick] = useState(0);
   const [treeQ, setTreeQ] = useState('');
   const [folded, setFolded] = useState<Set<string>>(new Set());
   const [coach, setCoach] = useState(() => !coached());
@@ -606,69 +717,184 @@ function Workshop({ initial, initialId, dirty, onExit }: { initial: CustomMap; i
     apiFetch<{ maps: Summary[]; can_host: boolean }>('/api/maps').then(res => {
       if (res.ok) {
         setCanHost(res.data.can_host);
-        if (initialId) setSummary(res.data.maps.find(m => m.id === initialId) ?? null);
+        // A save that answered first knows better.
+        if (initialId) setSummary(prev => prev ?? res.data.maps.find(m => m.id === initialId) ?? null);
       }
     });
   }, [initialId]);
-  useEffect(() => { saveDraft(map, mapId); }, [map, mapId]);
 
-  const touched = () => { version.current++; setSaveState('unsaved'); };
+  const isDirty = useCallback(() => version.current !== savedVersion.current, []);
+  const writeDraft = useCallback(() => {
+    saveDraft({ map: histRef.current.present, id: idRef.current, base: baseRef.current, sid });
+  }, [sid]);
+  // The draft follows unsaved changes (only those), a second behind.
+  useEffect(() => {
+    if (!DIRTY.has(saveState)) return;
+    const timer = window.setTimeout(writeDraft, DRAFT_MS);
+    return () => window.clearTimeout(timer);
+  }, [map, saveState, writeDraft]);
+  // ...and is written at once when the workshop goes with changes unsaved.
+  useEffect(() => () => { if (isDirty()) writeDraft(); }, [isDirty, writeDraft]);
+  // Closing the tab with changes unsaved asks first.
+  useEffect(() => {
+    if (!DIRTY.has(saveState)) return;
+    const onUnload = (e: BeforeUnloadEvent) => {
+      writeDraft();
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onUnload);
+    return () => window.removeEventListener('beforeunload', onUnload);
+  }, [saveState, writeDraft]);
+
+  const touched = useCallback(() => { version.current++; setSaveState('unsaved'); }, []);
   /** A committed edit: the old map goes on the undo stack. */
   const commit = useCallback((next: CustomMap, select?: string[]) => {
-    setHist(h => {
-      const base = pending.current ?? h.present;
-      pending.current = null;
-      if (JSON.stringify(base) === JSON.stringify(next) && h.present === next) return h;
-      return { past: [...h.past.slice(-99), base], present: next, future: [] };
-    });
+    const h = histRef.current;
+    const base = pending.current ?? h.present;
+    const live = pending.current !== null;
+    pending.current = null;
     if (select) setSelection(new Set(select));
+    if (same(base, next)) {
+      // Nothing changed. A live edit that came back to where it began
+      // just shows the map as it was.
+      if (live && h.present !== next) putHist({ ...h, present: next });
+      return;
+    }
+    putHist({ past: [...h.past.slice(-99), base], present: next, future: [] });
     touched();
-  }, []);
-  /** A live edit mid-drag or mid-slide: shown, not yet an undo step. */
+  }, [putHist, touched]);
+  /** A live edit mid-drag, mid-slide or mid-typing: shown, not yet an
+   *  undo step. */
   const transient = useCallback((next: CustomMap) => {
-    setHist(h => {
-      if (!pending.current) pending.current = h.present;
-      return { ...h, present: next };
-    });
+    const h = histRef.current;
+    if (!pending.current) pending.current = h.present;
+    putHist({ ...h, present: next });
     touched();
-  }, []);
+  }, [putHist, touched]);
+  /** Fold a live edit whose commit will never come (its field went away
+   *  before it blurred) into the history as one undo step. */
+  const flushPending = useCallback(() => {
+    const base = pending.current;
+    if (!base || dragging.current) return;
+    pending.current = null;
+    const h = histRef.current;
+    if (same(base, h.present)) return;
+    putHist({ past: [...h.past.slice(-99), base], present: h.present, future: [] });
+  }, [putHist]);
   /** The name field, cleaned on blur. Cleared, it takes the default name
    *  in the player's language ("Sistema sem nome"), not the cleaner's. */
-  const commitName = () => commit(normalizeMap({ ...map, name: map.name.trim() || t('mm.name.untitled') }));
-  const undo = useCallback(() => { setHist(h => (h.past.length ? { past: h.past.slice(0, -1), present: h.past[h.past.length - 1], future: [h.present, ...h.future] } : h)); touched(); }, []);
-  const redo = useCallback(() => { setHist(h => (h.future.length ? { past: [...h.past, h.present], present: h.future[0], future: h.future.slice(1) } : h)); touched(); }, []);
+  const commitName = () => {
+    const m = histRef.current.present;
+    commit(normalizeMap({ ...m, name: m.name.trim() || t('mm.name.untitled') }));
+  };
+  const undo = useCallback(() => {
+    if (dragging.current) return;
+    flushPending();
+    const h = histRef.current;
+    if (!h.past.length) return;
+    putHist({ past: h.past.slice(0, -1), present: h.past[h.past.length - 1], future: [h.present, ...h.future] });
+    touched();
+  }, [flushPending, putHist, touched]);
+  const redo = useCallback(() => {
+    if (dragging.current) return;
+    flushPending();
+    const h = histRef.current;
+    if (!h.future.length) return;
+    putHist({ past: [...h.past, h.present], present: h.future[0], future: h.future.slice(1) });
+    touched();
+  }, [flushPending, putHist, touched]);
 
-  const mapRef = useRef(map);
-  mapRef.current = map;
-  const idRef = useRef(mapId);
-  idRef.current = mapId;
-  /** Save to the server. Edits made while a save is in flight keep the
-   *  map "unsaved" so the autosave goes round again. */
-  const save = useCallback(async (): Promise<Summary | null> => {
-    if (saving.current) return null;
-    saving.current = true;
+  const summaryRef = useRef<Summary | null>(null);
+  summaryRef.current = summary ?? summaryRef.current;
+  const inflight = useRef<Promise<Summary | null> | null>(null);
+  /** One save to the server. A map deleted elsewhere (404) is saved as a
+   *  new map; one saved elsewhere since it was opened ('stale') is never
+   *  written over: this version becomes a new map, "X (conflict)". */
+  const saveOnce = useCallback(async (): Promise<Summary | null> => {
     const v = version.current;
-    const id = idRef.current;
+    const prevId = idRef.current;
+    // Nothing new since the last save: its answer stands.
+    if (v === savedVersion.current && prevId && summaryRef.current) return summaryRef.current;
     setSaveState('saving'); setSaveError(null);
-    const body = JSON.stringify({ map: normalizeMap(mapRef.current) });
-    const res = id
-      ? await apiFetch<{ map: CustomMap; summary: Summary }>(`/api/maps/${id}`, { method: 'PUT', body })
-      : await apiFetch<{ map: CustomMap; summary: Summary }>('/api/maps', { method: 'POST', body });
-    saving.current = false;
-    if (!res.ok) { setSaveState('error'); setSaveError(mapApiError(res.error, 'mm.save.failed')); return null; }
-    setMapId(res.data.summary.id);
-    idRef.current = res.data.summary.id;
-    setSummary(s => ({ ...(s ?? {}), ...res.data.summary }));
-    setSaveState(version.current === v ? 'saved' : 'unsaved');
-    return res.data.summary;
-  }, []);
+    const m = normalizeMap(histRef.current.present);
+    type Saved = { map: CustomMap; summary: Summary };
+    const post = (mm: CustomMap) => apiFetch<Saved>('/api/maps', { method: 'POST', body: JSON.stringify({ map: mm }) });
+    let sent = m;
+    let asNew = !prevId;
+    let res = prevId
+      ? await apiFetch<Saved>(`/api/maps/${prevId}`, {
+        method: 'PUT', body: JSON.stringify({ map: m, ...(baseRef.current != null ? { base_updated_ms: baseRef.current } : {}) }),
+      })
+      : await post(m);
+    let conflict = false;
+    if (!res.ok && prevId && res.status === 404) {
+      res = await post(m);
+      asNew = true;
+    } else if (!res.ok && prevId && res.error?.code === 'stale') {
+      sent = normalizeMap({ ...m, name: t('mm.name.conflict', { name: m.name }) });
+      res = await post(sent);
+      asNew = true;
+      conflict = res.ok;
+    }
+    if (!res.ok) {
+      setSaveState('error');
+      setSaveError(mapApiError(res.error, 'mm.save.failed'));
+      return null;
+    }
+    const s = res.data.summary;
+    idRef.current = s.id;
+    setMapId(s.id);
+    baseRef.current = s.updated_ms ?? null;
+    const merged = asNew ? s : { ...(summaryRef.current ?? {}), ...s };
+    summaryRef.current = merged;
+    setSummary(merged);
+    if (conflict) {
+      // The workshop now edits the new map: show its name.
+      const h = histRef.current;
+      putHist({ ...h, present: { ...h.present, name: sent.name } });
+      setNotice(t('mm.save.conflict', { name: sent.name }));
+    }
+    savedVersion.current = v;
+    if (version.current === v) {
+      setSaveState('saved');
+      clearDraft(sid, s.id);
+    } else {
+      // Edited while it saved: go round again.
+      setSaveState('unsaved');
+      setKick(k => k + 1);
+    }
+    return merged;
+  }, [putHist, sid]);
+  /** Save. One at a time: a save asked for during another (the autosave,
+   *  Host, Publish) waits for it, then saves whatever is new since. */
+  const save = useCallback(async (): Promise<Summary | null> => {
+    while (inflight.current) await inflight.current;
+    const p = saveOnce();
+    inflight.current = p;
+    try { return await p; } finally { if (inflight.current === p) inflight.current = null; }
+  }, [saveOnce]);
 
-  // Autosave: a few seconds after the last edit, never mid-drag.
+  // Autosave: a few seconds after the last edit, never mid-drag (the
+  // drag's end is an edit, and re-arms it).
   useEffect(() => {
     if (saveState !== 'unsaved' || map.bodies.length === 0) return;
-    const timer = window.setTimeout(() => { if (!pending.current) save(); }, 3000);
+    const timer = window.setTimeout(() => { if (!dragging.current) void save(); }, AUTOSAVE_MS);
     return () => window.clearTimeout(timer);
-  }, [map, saveState, save]);
+  }, [map, saveState, save, kick]);
+
+  /** Back to the start screen: save first; if that fails, ask. */
+  const exiting = useRef(false);
+  const exit = async () => {
+    if (exiting.current) return;
+    exiting.current = true;
+    flushPending();
+    if (isDirty() && histRef.current.present.bodies.length > 0) {
+      const s = await save();
+      if (!s && !window.confirm(t('mm.exit.confirm'))) { exiting.current = false; return; }
+    }
+    onExit();
+  };
 
   // Keyboard: undo/redo, delete, duplicate, select all, Esc.
   useEffect(() => {
@@ -716,9 +942,14 @@ function Workshop({ initial, initialId, dirty, onExit }: { initial: CustomMap; i
     const r = scatterAsteroids(map, pts, theme);
     commit(r.map, r.ids);
   };
+  /** A world dragged: built from the map as it was before the drag, so
+   *  the end lands exactly where the pointer left it. */
   const onMove = (id: string, orbit: number, angle: number, phase: 'start' | 'move' | 'end') => {
-    if (phase === 'end') { commit(map); return; }
-    transient(normalizeMap({ ...map, bodies: map.bodies.map(b => (b.id === id ? { ...b, orbit, angle } : b)) }));
+    const base = pending.current ?? histRef.current.present;
+    const next = normalizeMap({ ...base, bodies: base.bodies.map(b => (b.id === id ? { ...b, orbit, angle } : b)) });
+    if (phase === 'end') { dragging.current = false; commit(next); return; }
+    dragging.current = true;
+    transient(next);
   };
   const onPick = (srcId: string) => {
     if (!picking) return;
@@ -738,27 +969,24 @@ function Workshop({ initial, initialId, dirty, onExit }: { initial: CustomMap; i
     if (r.id) { commit(r.map, [`sector:${r.id}`]); setTool(null); setMapSheet(false); setSheet('peek'); }
   };
   const onSectorEdge = (id: string, which: 'inner' | 'outer', orbit: number, phase: 'move' | 'end') => {
-    if (phase === 'end') { commit(normalizeMap(map), [`sector:${id}`]); return; }
-    const i = map.sectors.findIndex(x => x.id === id);
-    const sct = map.sectors[i];
-    if (!sct) return;
-    // A shared edge (two bands touching) moves both bands; a free edge
-    // stops at its neighbour. Neither crosses a band's own other edge.
-    const prev = map.sectors[i - 1], next = map.sectors[i + 1];
-    if (which === 'inner') {
-      const shared = !!prev && prev.outer === sct.inner;
-      const lo = shared ? prev.inner + 10 : (prev?.outer ?? 0);
-      const v = Math.max(lo, Math.min(sct.outer - 10, orbit));
-      const sectors = map.sectors.map(x => (x.id === id ? { ...x, inner: v } : shared && x.id === prev!.id ? { ...x, outer: v } : x));
-      transient({ ...map, sectors });
-    } else {
-      const shared = !!next && next.inner === sct.outer;
-      const hi = shared ? next.outer - 10 : (next?.inner ?? 15400);
-      const v = Math.max(sct.inner + 10, Math.min(hi, orbit));
-      const sectors = map.sectors.map(x => (x.id === id ? { ...x, outer: v } : shared && x.id === next!.id ? { ...x, inner: v } : x));
-      transient({ ...map, sectors });
+    const base = pending.current ?? histRef.current.present;
+    const next = edgeMoved(base, id, which, orbit);
+    if (phase === 'end') {
+      dragging.current = false;
+      commit(next ? normalizeMap(next) : histRef.current.present, [`sector:${id}`]);
+      return;
     }
+    if (!next) return;
+    dragging.current = true;
+    transient(next);
   };
+
+  // Whatever the inspector shows. When it changes (a new selection, the
+  // phone sheet shut), a live edit in the old one is folded into the
+  // history: its field unmounted before it could blur and commit.
+  const showSheet = selIds.length > 0 || mapSheet;
+  const inspectorKey = `${mobile && !showSheet ? 'shut:' : ''}${singleSector ? `sector:${singleSector.id}` : single === 'sun' ? 'sun' : singleBody ? `body:${singleBody.id}` : bulkIds.length > 1 ? 'bulk' : 'map'}`;
+  useEffect(() => { flushPending(); }, [inspectorKey, flushPending]);
 
   // The tree: the sun's worlds in orbit order, each with its moons.
   const tree = useMemo(() => {
@@ -953,6 +1181,13 @@ function Workshop({ initial, initialId, dirty, onExit }: { initial: CustomMap; i
     </main>
   );
 
+  const noticeBanner = notice && (
+    <div className="mm-banner is-note" role="status">
+      <span>{notice}</span>
+      <button className="mm-icon is-small" aria-label={t('mm.close')} onClick={() => setNotice(null)}>✕</button>
+    </div>
+  );
+
   const hostPanel = showHost && (
     <HostPanel
       map={map} summary={summary} canHost={canHost} onSaveFirst={save}
@@ -964,11 +1199,10 @@ function Workshop({ initial, initialId, dirty, onExit }: { initial: CustomMap; i
   );
 
   if (mobile) {
-    const showSheet = selIds.length > 0 || mapSheet;
     return (
       <div className="mm-work is-mobile">
         <header className="mm-top">
-          <button className="mm-icon" aria-label={t('mm.backToMaps')} onClick={onExit}>‹</button>
+          <button className="mm-icon" aria-label={t('mm.backToMaps')} onClick={exit}>‹</button>
           <input className="mm-top__mname" value={map.name} maxLength={40} aria-label={t('mm.mapName')}
             onChange={(e) => transient({ ...map, name: e.target.value })} onBlur={commitName} />
           <button className="mm-icon" aria-label={t('mm.undo')} disabled={!hist.past.length} onClick={undo}>
@@ -981,6 +1215,7 @@ function Workshop({ initial, initialId, dirty, onExit }: { initial: CustomMap; i
           <button className="mm-icon" aria-label={t('mm.mob.more')} onClick={() => setMenuOpen(true)}>⋯</button>
         </header>
         {saveError && <div className="mm-banner is-bad">{saveError}</div>}
+        {noticeBanner}
         <div className="mm-work__body">{stage}</div>
 
         {!tool && !picking && (
@@ -1000,7 +1235,7 @@ function Workshop({ initial, initialId, dirty, onExit }: { initial: CustomMap; i
               <button className="mm-sheet__grip" aria-label={sheet === 'peek' ? t('mm.mob.expand') : t('mm.mob.shrink')} onClick={() => setSheet(sheet === 'peek' ? 'full' : 'peek')} />
               <button className="mm-icon" aria-label={t('mm.close')} onClick={() => { setSelection(new Set()); setMapSheet(false); }}>✕</button>
             </div>
-            <div className="mm-sheet__body" onFocus={() => setSheet('full')}>{inspector}</div>
+            <div className="mm-sheet__body" onFocus={(e) => { if (typesText(e.target)) setSheet('full'); }}>{inspector}</div>
           </div>
         )}
 
@@ -1043,7 +1278,7 @@ function Workshop({ initial, initialId, dirty, onExit }: { initial: CustomMap; i
   return (
     <div className="mm-work">
       <header className="mm-top">
-        <button className="mm-brand" onClick={onExit} title={t('mm.backToMaps')}>‹ {t('mm.brand')}</button>
+        <button className="mm-brand" onClick={exit} title={t('mm.backToMaps')}>‹ {t('mm.brand')}</button>
         <span className="mm-top__div" />
         <label className="mm-top__name">
           <span>{t('mm.mapNameLabel')}</span>
@@ -1068,6 +1303,7 @@ function Workshop({ initial, initialId, dirty, onExit }: { initial: CustomMap; i
         <button className="mm-btn is-gold" onClick={() => setShowHost(true)}>{t('mm.top.share')}</button>
       </header>
       {saveError && <div className="mm-banner is-bad">{saveError}</div>}
+      {noticeBanner}
 
       <div className="mm-work__body">
         <aside className="mm-rail">
@@ -1083,11 +1319,11 @@ function Workshop({ initial, initialId, dirty, onExit }: { initial: CustomMap; i
 }
 
 const MapMaker: React.FC<{ onExit: () => void }> = ({ onExit }) => {
-  const [open, setOpen] = useState<{ map: CustomMap; id: string | null; key: number; dirty?: boolean } | null>(null);
+  const [open, setOpen] = useState<{ map: CustomMap; id: string | null; key: number; opts: OpenOpts } | null>(null);
   if (!open) {
-    return <StartScreen onExit={onExit} onOpen={(map, id, dirty) => setOpen({ map, id, key: Date.now(), dirty })} />;
+    return <StartScreen onExit={onExit} onOpen={(map, id, opts) => setOpen({ map, id, key: Date.now(), opts: opts ?? {} })} />;
   }
-  return <Workshop key={open.key} initial={open.map} initialId={open.id} dirty={open.dirty} onExit={() => setOpen(null)} />;
+  return <Workshop key={open.key} initial={open.map} initialId={open.id} opts={open.opts} onExit={() => setOpen(null)} />;
 };
 
 export default MapMaker;

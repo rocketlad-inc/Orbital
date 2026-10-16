@@ -15,7 +15,7 @@ import { bodyYear } from '../game/customMap';
 import {
   discR, sunR, displayPos, displayToOrbit, orbitToDisplay, systemExtent, sunOrbitToDisplay, type Scale,
 } from './geometry';
-import { worldArt } from './planetArt';
+import { worldArt, useArtTick } from './planetArt';
 import type { Fairness } from './fairness';
 import { t } from '../i18n/core';
 import { useI18n } from '../i18n/react';
@@ -48,7 +48,9 @@ export interface MapViewProps {
   onPick: (id: string) => void;
   /** A band dragged out with the sector tool, in orbit units. */
   onSectorDraw: (inner: number, outer: number) => void;
-  /** A selected sector's inner or outer edge dragged. */
+  /** A selected sector's inner or outer edge dragged. Every drag that
+   *  moved ends with one 'end', even when a pinch or the browser cuts it
+   *  short. */
   onSectorEdge: (id: string, which: 'inner' | 'outer', orbit: number, phase: 'move' | 'end') => void;
   onCancelTool: () => void;
 }
@@ -81,8 +83,15 @@ export const MapView: React.FC<MapViewProps> = ({
   onSelect, onPlace, onScatter, onMove, onPick, onSectorDraw, onSectorEdge, onCancelTool,
 }) => {
   useI18n();
+  useArtTick();
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
+  /** The real size has arrived (the first fit ran on the 800x600 guess). */
+  const [sized, setSized] = useState(false);
+  /** Where a world or an edge being dragged last landed: 'end' reports
+   *  this, not the map of whatever render the pointer-up closed over. */
+  const lastMove = useRef<{ orbit: number; angle: number } | null>(null);
+  const lastEdge = useRef<number | null>(null);
   const [view, setView] = useState<View>({ x: 0, y: 0, z: 0.2 });
   const [drag, setDrag] = useState<Drag | null>(null);
   const [ghost, setGhost] = useState<{ x: number; y: number } | null>(null);
@@ -96,18 +105,24 @@ export const MapView: React.FC<MapViewProps> = ({
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => setSize({ w: el.clientWidth, h: el.clientHeight }));
+    const measure = () => {
+      const w = el.clientWidth, h = el.clientHeight;
+      setSize({ w, h });
+      if (w > 0 && h > 0) setSized(true);
+    };
+    const ro = new ResizeObserver(measure);
     ro.observe(el);
-    setSize({ w: el.clientWidth, h: el.clientHeight });
+    measure();
     return () => ro.disconnect();
   }, []);
 
-  // Fit the system whenever asked (a new map, "Fit system", a scale switch).
+  // Fit the system whenever asked (a new map, "Fit system", a scale
+  // switch), and once more when the real size first arrives.
   useEffect(() => {
     const ext = systemExtent(map, scale);
     setView({ x: 0, y: 0, z: Math.max(0.02, Math.min(3, Math.min(size.w, size.h) / (2 * ext * 1.05))) });
   // eslint-disable-next-line react-hooks/exhaustive-deps -- refit on demand, not on every edit
-  }, [fitSignal, scale, size.w > 0 && size.h > 0]);
+  }, [fitSignal, scale, sized]);
 
   // Motion preview: every world runs along its orbit, a year in a few seconds.
   useEffect(() => {
@@ -124,14 +139,25 @@ export const MapView: React.FC<MapViewProps> = ({
   }, [preview]);
   const spin = useCallback((b: MapBody) => (preview ? (2 * Math.PI * time) / Math.max(4, bodyYear(map, b)) : 0),
     [preview, time, map]);
+  /** How far the preview has turned a world at this orbit round this
+   *  parent: a drop or a drag subtracts it, so the world lands under the
+   *  pointer and not a preview's turn away. */
+  const spinAt = (parent: string, orbit: number) => (preview ? spin({ parent, orbit } as MapBody) : 0);
 
   useEffect(() => {
     const typing = (t: EventTarget | null) => t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement;
     const down = (e: KeyboardEvent) => { if (e.code === 'Space' && !typing(e.target)) setSpaceDown(true); };
     const up = (e: KeyboardEvent) => { if (e.code === 'Space') setSpaceDown(false); };
+    // Space released in another window never sends its keyup here.
+    const blur = () => setSpaceDown(false);
     window.addEventListener('keydown', down);
     window.addEventListener('keyup', up);
-    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); };
+    window.addEventListener('blur', blur);
+    return () => {
+      window.removeEventListener('keydown', down);
+      window.removeEventListener('keyup', up);
+      window.removeEventListener('blur', blur);
+    };
   }, []);
 
   // The page's own scroll and zoom must not steal the wheel.
@@ -178,11 +204,13 @@ export const MapView: React.FC<MapViewProps> = ({
       if (!host) return;
       const hp = pos.get(host.id)!;
       const d = Math.max(discR(host) + 8, Math.hypot(wx - hp.x, wy - hp.y));
-      onPlace('moon', host.id, displayToOrbit(map, host.id, d, scale), Math.atan2(wy - hp.y, wx - hp.x));
+      const orbit = displayToOrbit(map, host.id, d, scale);
+      onPlace('moon', host.id, orbit, Math.atan2(wy - hp.y, wx - hp.x) - spinAt(host.id, orbit));
       return;
     }
     const d = Math.max(sunR(map) + 30, Math.hypot(wx, wy));
-    onPlace(tool, 'sun', displayToOrbit(map, 'sun', d, scale), Math.atan2(wy, wx));
+    const orbit = displayToOrbit(map, 'sun', d, scale);
+    onPlace(tool, 'sun', orbit, Math.atan2(wy, wx) - spinAt('sun', orbit));
   };
 
   /** A moon too close to its planet to see at this zoom. */
@@ -220,7 +248,7 @@ export const MapView: React.FC<MapViewProps> = ({
       cx = pp.x; cy = pp.y;
     }
     let d = Math.hypot(wx - cx, wy - cy);
-    const angle = Math.atan2(wy - cy, wx - cx);
+    const pointerAngle = Math.atan2(wy - cy, wx - cx);
     const peers = map.bodies.filter(x => x.id !== b.id && x.parent === b.parent && x.type !== 'asteroid' && x.type !== 'rock');
     let snap: MapBody | null = null;
     if (!noSnap) {
@@ -244,7 +272,21 @@ export const MapView: React.FC<MapViewProps> = ({
       x: sx, y: sy, snapId: snap?.id ?? null,
       lines: [t('mm.view.orbit', { orbit: Math.round(orbit), year }), snap ? t('mm.view.onOrbit', { name: snap.name }) : (gaps || t('mm.view.alone'))],
     });
-    return { orbit, angle };
+    return { orbit, angle: pointerAngle - spinAt(b.parent, orbit) };
+  };
+
+  /** A drag of a world or a sector edge that moved: report its 'end'
+   *  from where it last landed. */
+  const endDrag = (d: Drag | null) => {
+    if (d?.kind === 'body' && d.moved && lastMove.current) {
+      onMove(d.id, lastMove.current.orbit, lastMove.current.angle, 'end');
+    } else if (d?.kind === 'edge') {
+      const sct = map.sectors.find(x => x.id === d.id);
+      const orbit = lastEdge.current ?? (sct ? (d.which === 'inner' ? sct.inner : sct.outer) : null);
+      if (orbit != null) onSectorEdge(d.id, d.which, orbit, 'end');
+    }
+    lastMove.current = null;
+    lastEdge.current = null;
   };
 
   const onPointerDown = (e: React.PointerEvent) => {
@@ -255,10 +297,7 @@ export const MapView: React.FC<MapViewProps> = ({
     // A second finger: pinch. Whatever the first finger was doing stops.
     if (pointers.current.size === 2) {
       cancelPress();
-      if (drag?.kind === 'body' && drag.moved) {
-        const b = map.bodies.find(x => x.id === drag.id);
-        if (b) onMove(b.id, b.orbit, b.angle, 'end');
-      }
+      endDrag(drag);
       const [a, c] = [...pointers.current.values()];
       const mid = toWorld((a.x + c.x) / 2, (a.y + c.y) / 2);
       pinch.current = { d0: Math.max(10, Math.hypot(a.x - c.x, a.y - c.y)), z0: view.z, wx: mid.x, wy: mid.y };
@@ -280,7 +319,7 @@ export const MapView: React.FC<MapViewProps> = ({
       const reach = (touch ? 16 : 7) / view.z;
       const which = Math.abs(r - sunOrbitToDisplay(selSector.outer, scale)) < reach ? 'outer'
         : Math.abs(r - sunOrbitToDisplay(selSector.inner, scale)) < reach ? 'inner' : null;
-      if (which) { setDrag({ kind: 'edge', id: selSector.id, which }); return; }
+      if (which) { lastEdge.current = null; setDrag({ kind: 'edge', id: selSector.id, which }); return; }
     }
 
     if (e.button === 1 || e.button === 2 || spaceDown) {
@@ -358,7 +397,9 @@ export const MapView: React.FC<MapViewProps> = ({
     } else if (drag.kind === 'band') {
       setDrag({ ...drag, r1: Math.hypot(w.x, w.y) });
     } else if (drag.kind === 'edge') {
-      onSectorEdge(drag.id, drag.which, Math.round(displayToOrbit(map, 'sun', Math.hypot(w.x, w.y), scale)), 'move');
+      const orbit = Math.round(displayToOrbit(map, 'sun', Math.hypot(w.x, w.y), scale));
+      lastEdge.current = orbit;
+      onSectorEdge(drag.id, drag.which, orbit, 'move');
     } else if (drag.kind === 'scatter') {
       if (Math.hypot(w.sx - drag.lx, w.sy - drag.ly) < 16) return;
       const jitter = () => ((Math.random() - 0.5) * 10) / view.z;
@@ -368,6 +409,7 @@ export const MapView: React.FC<MapViewProps> = ({
       const b = map.bodies.find(x => x.id === drag.id);
       if (!b) return;
       const at = dragTo(b, w.x, w.y, w.sx, w.sy, e.altKey);
+      lastMove.current = at;
       onMove(b.id, at.orbit, at.angle, drag.moved ? 'move' : 'start');
       if (!drag.moved) setDrag({ ...drag, moved: true });
     }
@@ -382,8 +424,7 @@ export const MapView: React.FC<MapViewProps> = ({
     }
     if (drag?.kind === 'body') {
       if (drag.moved) {
-        const b = map.bodies.find(x => x.id === drag.id);
-        if (b) onMove(b.id, b.orbit, b.angle, 'end');
+        endDrag(drag);
       } else if (touch) {
         onSelect([drag.id], 'replace');
       }
@@ -399,13 +440,12 @@ export const MapView: React.FC<MapViewProps> = ({
       const a = displayToOrbit(map, 'sun', drag.r0, scale), b = displayToOrbit(map, 'sun', drag.r1, scale);
       if (Math.abs(drag.r1 - drag.r0) * view.z > 6) onSectorDraw(Math.round(Math.min(a, b)), Math.round(Math.max(a, b)));
     } else if (drag?.kind === 'edge') {
-      const sct = map.sectors.find(x => x.id === drag.id);
-      if (sct) onSectorEdge(sct.id, drag.which, drag.which === 'inner' ? sct.inner : sct.outer, 'end');
+      endDrag(drag);
     } else if (drag?.kind === 'scatter') {
-      onScatter(drag.pts.map(p => ({
-        orbit: displayToOrbit(map, 'sun', Math.max(sunR(map) + 30, Math.hypot(p.x, p.y)), scale),
-        angle: Math.atan2(p.y, p.x),
-      })));
+      onScatter(drag.pts.map(p => {
+        const orbit = displayToOrbit(map, 'sun', Math.max(sunR(map) + 30, Math.hypot(p.x, p.y)), scale);
+        return { orbit, angle: Math.atan2(p.y, p.x) - spinAt('sun', orbit) };
+      }));
     } else if (drag?.kind === 'lasso') {
       const x0 = Math.min(drag.sx, drag.ex), x1 = Math.max(drag.sx, drag.ex);
       const y0 = Math.min(drag.sy, drag.ey), y1 = Math.max(drag.sy, drag.ey);
@@ -422,6 +462,22 @@ export const MapView: React.FC<MapViewProps> = ({
       }
     }
     setDrag(null);
+    setReadout(null);
+  };
+
+  /** The browser took the pointer (a system gesture, a scroll, an alert):
+   *  nothing is placed, selected, sprayed or drawn. A world or an edge
+   *  already moving stops where it is. */
+  const onPointerCancel = (e: React.PointerEvent) => {
+    pointers.current.delete(e.pointerId);
+    cancelPress();
+    if (pinch.current) {
+      if (pointers.current.size < 2) { pinch.current = null; setDrag(null); }
+      return;
+    }
+    endDrag(drag);
+    setDrag(null);
+    setGhost(null);
     setReadout(null);
   };
 
@@ -462,11 +518,12 @@ export const MapView: React.FC<MapViewProps> = ({
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
+      onPointerCancel={onPointerCancel}
       onPointerLeave={(e) => { if (e.pointerType !== 'touch') setGhost(null); }}
       onWheel={onWheel}
       onContextMenu={(e) => e.preventDefault()}
       onKeyDown={(e) => { if (e.key === 'Escape') onCancelTool(); }}
+      tabIndex={0}
       role="application"
       aria-label={t('mm.view.aria')}
     >

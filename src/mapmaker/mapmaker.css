@@ -555,3 +555,19 @@ body:has(.stg-banner) .mm-start, body:has(.stg-banner) .mm-work { top: 23px; }
 .mm-sectorbadge { width: 52px; height: 52px; flex: none; border-radius: 50%; border: 10px solid; opacity: .85; display: grid; place-items: center; }
 .mm-sectorbadge span { width: 10px; height: 10px; border-radius: 50%; }
 .mm-sectorstat { font-weight: 400; font-size: 13px; }
+
+/* ---- review fixes (2026-10-15) ----------------------------------------- */
+.mm-banner.is-note { display: flex; align-items: center; gap: 12px; background: #4ecdc41a; color: var(--mm-text); border-bottom: 1px solid #4ecdc444; }
+.mm-banner.is-note > span { flex: 1; }
+/* The map takes focus (for Escape) without a box round the whole stage. */
+.mm-map:focus { outline: none; }
+.mm-map:focus-visible { outline: 1px solid #4ecdc455; outline-offset: -1px; }
+.mm-modal:focus, .mm-drawer:focus { outline: none; }
+/* iOS Safari zooms the page into any field under 16px. The phone layout,
+   and every maker screen at phone and tablet widths (useIsMobile's own
+   rule), keep every field at 16px. */
+.mm-work.is-mobile .mm-input, .mm-work.is-mobile .mm-step__v, .mm-work.is-mobile .mm-num,
+.mm-work.is-mobile .mm-top__mname { font-size: 16px; }
+@media (max-width: 1023px), (hover: none) and (pointer: coarse) and (max-width: 1399px) {
+  .mm-input, .mm-input.is-small, .mm-input.is-code, .mm-step__v, .mm-num, .mm-top__mname, .mm-top__name input { font-size: 16px; }
+}
