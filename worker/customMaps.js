@@ -37,9 +37,26 @@ const byteLength = (text) => new TextEncoder().encode(text).length;
 const MAP_ID_RE = /^[A-Za-z0-9_-]{6,40}$/;
 const CODE_RE = /^ORB-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
 
-/** The Map Maker is a staging feature until it ships. */
-export function mapMakerEnabled(env) {
-  return env?.ORBITAL_ENV === 'staging';
+/**
+ * Is the Map Maker open to this player? Always on staging. On prod, the
+ * `map_maker_enabled` runtime setting (admin Live Ops panel, no deploy)
+ * opens it to everyone; while it is off, admins still have it, so the
+ * house maps can be built and published before launch.
+ */
+export async function mapMakerEnabled(env, session = null) {
+  if (env?.ORBITAL_ENV === 'staging') return true;
+  if (session?.email && isAdminEmail(session.email)) return true;
+  try {
+    const { getSetting } = await import('./botSettings.js');
+    return (await getSetting(env, 'map_maker_enabled')) === true;
+  } catch {
+    return false;
+  }
+}
+
+// GET /api/maps/enabled — {enabled}: does the lobby show the Map Maker?
+async function handleEnabled(_req, env, ctx) {
+  return json({ enabled: await mapMakerEnabled(env, ctx.session) });
 }
 
 /** May this player host a game on a custom map? The Commission, or an
@@ -146,7 +163,7 @@ async function ownMap(env, session, id) {
 }
 
 const gate = (handler) => async (req, env, ctx) => {
-  if (!mapMakerEnabled(env)) return err(404, 'not_found', 'not found');
+  if (!(await mapMakerEnabled(env, ctx.session))) return err(404, 'not_found', 'not found');
   return handler(req, env, ctx);
 };
 
@@ -441,6 +458,7 @@ async function handleSolTemplate() {
 }
 
 export const routes = [
+  { method: 'GET', pattern: '/api/maps/enabled', auth: 'required', handle: handleEnabled },
   { method: 'GET', pattern: '/api/maps', auth: 'required', handle: gate(handleList) },
   { method: 'POST', pattern: '/api/maps', auth: 'required', handle: gate(handleCreate) },
   { method: 'POST', pattern: '/api/maps/import', auth: 'required', handle: gate(handleImport) },

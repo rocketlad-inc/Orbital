@@ -106,13 +106,13 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
 
   const displayName = user?.display_name || user?.email || t('lobby.commander');
 
-  // Staging-only tools (the Map Maker). /api/_version says which server
-  // this is; a failed probe means "not staging".
-  const [onStaging, setOnStaging] = useState(false);
+  // The Map Maker's button: the server says whether it is open to this
+  // player (always on staging; on prod, the launch switch, or an admin).
+  const [mapMaker, setMapMaker] = useState(false);
   useEffect(() => {
     let live = true;
-    fetch('/api/_version').then(r => r.json())
-      .then(j => { if (live) setOnStaging(j?.env === 'staging'); })
+    apiFetch<{ enabled: boolean }>('/api/maps/enabled')
+      .then(res => { if (live) setMapMaker(res.ok && !!res.data.enabled); })
       .catch(() => {});
     return () => { live = false; };
   }, []);
@@ -134,8 +134,8 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
             <NavItem active={tab === 'browse'} onClick={() => setTab('browse')}>{t('lobby.nav.browse')}</NavItem>
             <NavItem active={tab === 'create'} onClick={() => setTab('create')}>{t('lobby.nav.create')}</NavItem>
             <NavItem active={tab === 'code'} onClick={() => setTab('code')}>{t('lobby.nav.code')}</NavItem>
-            {/* The Map Maker (src/mapmaker): staging only until it ships. */}
-            {onStaging && (
+            {/* The Map Maker (src/mapmaker), behind its launch switch. */}
+            {mapMaker && (
               <NavItem active={false} onClick={() => { window.location.href = '/?mapmaker'; }}>{t('lobby.nav.mapMaker')}</NavItem>
             )}
             {/* Live-ops tools, allow-listed admins only. Display-only flag;

@@ -1004,7 +1004,7 @@ async function handleCreateRoom(req, env, session) {
 // takes a SNAPSHOT of the map, so editing it later never changes a game
 // already set up, and it seats one player per start world.
 async function handleHostMap(req, env, session, mapId) {
-  if (!customMaps.mapMakerEnabled(env)) return err(404, 'not_found', 'not found');
+  if (!(await customMaps.mapMakerEnabled(env, session))) return err(404, 'not_found', 'not found');
   if (!(await customMaps.canHostMaps(env, session))) {
     return err(402, 'commission_required',
       "Hosting a game on your own map is part of the Commander's Commission. Anyone can join one.");

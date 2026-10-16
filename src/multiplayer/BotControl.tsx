@@ -179,6 +179,14 @@ export function BotControl() {
                   onChange={v => writeSetting('visuals_minimal', v)} /></td>
               </tr>
               <tr>
+                <td>Map Maker (launch switch)</td>
+                <td style={{ color: '#8a9fb3', fontSize: 12 }}>
+                  Opens the Map Maker and custom-map games to every player. While off, only admins see it (to build the house maps). Staging is always on.
+                </td>
+                <td><Toggle on={!!s.map_maker_enabled} busy={busy === 'map_maker_enabled'}
+                  onChange={v => writeSetting('map_maker_enabled', v)} /></td>
+              </tr>
+              <tr>
                 <td>The Orbital Herald (channel)</td>
                 <td>
                   <select
