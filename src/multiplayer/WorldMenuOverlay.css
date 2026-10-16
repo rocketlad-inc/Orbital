@@ -61,6 +61,12 @@
 }
 .wm-owner.neutral { border-color: #6b8195; color: #6b8195; }
 .wm-desc { color: #6b8195; font-size: 10.5px; max-width: 52ch; line-height: 1.45; }
+/* A custom map's lore line and a revealed find's own words (the Map Maker). */
+.wm-lore { color: #8fa3b8; font-size: 10.5px; font-style: italic; max-width: 52ch; line-height: 1.45; white-space: pre-line; }
+.wm-find { color: #d8c4f5; font-size: 10.5px; max-width: 52ch; line-height: 1.45; display: flex; gap: 6px; flex-wrap: wrap; align-items: baseline; }
+.wm-find-glyph { color: #c084fc; }
+.wm-find b { font-weight: 700; letter-spacing: 0.04em; }
+.wm-find-text { font-style: italic; color: #b9a8d6; white-space: pre-line; }
 /* A constraint, not colour — so it reads warmer than .wm-desc's cool grey
    and sits in the amber this UI already uses for "you cannot spend your
    way out of this". Same metrics otherwise, so the two stack cleanly when
@@ -568,6 +574,8 @@
   padding: 6px 10px; gap: 2px;
 }
 .wm-mobile .wm-top.collapsed .wm-desc,
+.wm-mobile .wm-top.collapsed .wm-lore,
+.wm-mobile .wm-top.collapsed .wm-find,
 .wm-mobile .wm-top.collapsed .wm-metrics,
 .wm-mobile .wm-top.collapsed .wm-settlements,
 .wm-mobile .wm-top.collapsed .wm-stock,

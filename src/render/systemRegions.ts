@@ -32,7 +32,8 @@
 
 import { Body, Faction, Settlement } from '../types';
 import {
-  CORE_MEMBER_IDS, CORE_LABEL, findBelts, isEccentricRogue, isStellarAnchor,
+  CORE_MEMBER_IDS, CORE_LABEL, findBelts, isEccentricRogue, isStellarAnchor, bodySector,
+  Sector, isCustomMapBodies,
 } from '../game/systemGrouping';
 import { deriveSecondary } from '../game/colorUtils';
 
@@ -124,6 +125,10 @@ export interface SystemRegion {
    *  combined territory instead of collapsing to one. Undefined for a
    *  normal single-system region (renderer falls back to `label`). */
   labels?: Array<{ label: string; anchorBodyId?: string; rInner: number; rOuter: number }>;
+  /** An authored sector's own colour (custom maps). Only ever a hint on
+   *  the label of a region nobody holds outright: the fill follows the
+   *  same owner / contested / unowned rule as every other region. */
+  accent?: string;
 }
 
 /** A political claim: some faction has a live settlement on this body.
@@ -338,10 +343,60 @@ export function computeSystemRegions(
     const inABelt = new Set<string>();
     for (const belt of beltList) for (const m of belt.members) inABelt.add(m.id);
 
+    // --- authored sectors (custom maps) ---
+    //
+    // A map maker's sector replaces the automatic grouping for every
+    // world inside it (systemGrouping.bodySector), so here it replaces
+    // the lanes those worlds would have drawn: ONE annulus per sector,
+    // spanning its members' real orbit radii, padded the way a belt is
+    // (8% each side) and never narrower than a member's moon system.
+    // The band radii the map maker drew are in map units and never
+    // reach the game; the members' orbits are the truth.
+    const inASector = new Set<string>();
+    const sectorRuns = new Map<string, { sector: Sector; worlds: Body[] }>();
+    for (const b of orbiters) {
+      const s = bodySector(b);
+      if (!s) continue;
+      inASector.add(b.id);
+      const run = sectorRuns.get(s.id) ?? { sector: s, worlds: [] };
+      run.worlds.push(b);
+      sectorRuns.set(s.id, run);
+    }
+    for (const { sector, worlds } of Array.from(sectorRuns.values())) {
+      const moons = worlds.flatMap(b => childrenOf.get(b.id) ?? []);
+      for (const m of moons) inASector.add(m.id);
+      let rInner = Infinity;
+      let rOuter = 0;
+      for (const b of worlds) {
+        const ms = childrenOf.get(b.id) ?? [];
+        const moonReach = ms.length ? Math.max(...ms.map(m => m.orbitRadius)) * SYSTEM_DISC_PAD : 0;
+        const half = Math.max(b.orbitRadius * 0.08, moonReach);
+        rInner = Math.min(rInner, b.orbitRadius - half);
+        rOuter = Math.max(rOuter, b.orbitRadius + half);
+      }
+      const members = [...worlds, ...moons];
+      regions.push({
+        id: `sector:${star.id}:${sector.id}`,
+        label: sector.name,
+        shape: {
+          kind: 'band',
+          starBodyId: star.id,
+          rInner: Math.max(0, rInner),
+          rOuter,
+          // A middle world, so the name sits among the sector's own.
+          labelAnchorBodyId: worlds[Math.floor(worlds.length / 2)].id,
+        },
+        bodyIds: members.map(m => m.id),
+        ownership: ownershipOf(members, claimList, factions),
+        accent: sector.color,
+      });
+    }
+
     // --- planet systems: star-orbiters that have moons ---
     const solitaries: Body[] = [];
     for (const b of orbiters) {
       if (inABelt.has(b.id)) continue;   // the belt draws it
+      if (inASector.has(b.id)) continue; // the sector draws it
       const moons = childrenOf.get(b.id) ?? [];
       if (moons.length === 0) { solitaries.push(b); continue; }
       const members = [b, ...moons];
@@ -447,7 +502,7 @@ export function computeSystemRegions(
     // and the outliner must agree on what The Core contains.
     // The star is not among its own `orbiters`, so pull it in explicitly
     // — "include the sun in the Core" is the whole point.
-    const planets = orbiters.filter(b => CORE_MEMBER_IDS.has(b.id));
+    const planets = orbiters.filter(b => CORE_MEMBER_IDS.has(b.id) && !inASector.has(b.id));
     const coreBodies = CORE_MEMBER_IDS.has(star.id) ? [star, ...planets] : planets;
     if (coreBodies.length) {
       // Outer edge follows the outermost core planet's own lane, so the
@@ -463,7 +518,8 @@ export function computeSystemRegions(
         : star;
       regions.push({
         id: `core:${star.id}`,
-        label: CORE_LABEL,
+        // A custom map's star is not "The Core": it is called its name.
+        label: isCustomMapBodies(bodies) ? star.name : CORE_LABEL,
         shape: {
           kind: 'band',
           starBodyId: star.id,

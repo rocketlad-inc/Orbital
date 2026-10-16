@@ -439,6 +439,7 @@ export const social = {
   'roomlobby.invite.locked': 'Password-protected',
   'roomlobby.invite.copied': '✓ copied',
   'roomlobby.status': 'Status',
+  'roomlobby.customMap': 'Custom map',
   'roomlobby.status.running': 'In progress · tick {n}',
   'roomlobby.status.lobby': 'Lobby · {count}/{max} · {ready} ready',
   'roomlobby.ready': '✓ Ready',

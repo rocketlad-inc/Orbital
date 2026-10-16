@@ -102,7 +102,7 @@ export function openCommissionInBrowser(surface: CommissionSurface, opts: { gift
 /** Every surface a checkout can start from (worker/store.js keeps the
  *  same allow-list): a handoff naming anything else is not one of ours. */
 export const COMMISSION_SURFACES: readonly CommissionSurface[] = [
-  'profile', 'lobby-flag', 'designer', 'endgame', 'thanks-card', 'skins', 'discord-feed',
+  'profile', 'lobby-flag', 'designer', 'endgame', 'thanks-card', 'skins', 'discord-feed', 'map-maker',
 ];
 
 const viewed = new Set<string>();

@@ -34,6 +34,9 @@ interface Discovery {
   bodyName: string;
   title: string;
   reward: string;
+  /** A custom map's discovery message, written by the map's maker:
+   *  shown verbatim, never translated. */
+  flavor?: string;
   mine: boolean;
   discovererName: string;
   discovererColor: string;
@@ -87,8 +90,11 @@ export const DiscoveryBanner: React.FC = () => {
         bodyId: b.id,
         tick: sec.discoveredAtTick,
         bodyName: b.name,
-        title: def?.displayName ?? t('discovery.fallback.title'),
+        // A custom map's hand-placed find may carry its maker's own name
+        // and message; the reward line is still the kind's.
+        title: sec.customName || (def?.displayName ?? t('discovery.fallback.title')),
         reward: def ? stripPrefix(def.discoveryMessage) : t('discovery.fallback.reward'),
+        flavor: sec.customText || undefined,
         mine,
         discovererName: mine ? t('discovery.you') : (who?.name ?? t('discovery.aRival')),
         discovererColor: who?.color ?? '#e879f9',
@@ -146,6 +152,7 @@ export const DiscoveryBanner: React.FC = () => {
             <span className="discovery-banner__where"> · {current.bodyName}</span>
           </div>
           <div className="discovery-banner__title">{current.title}</div>
+          {current.flavor && <div className="discovery-banner__flavor">{current.flavor}</div>}
           <div className="discovery-banner__reward">{current.reward}</div>
         </div>
         {current.mine && <span className="discovery-banner__cta">{t('discovery.jumpTo')}</span>}

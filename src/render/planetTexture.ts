@@ -59,7 +59,12 @@ export function mulberry32(seed: number): () => number {
 // observed as multi-second frames at high zoom. 160 × 256²px RGBA
 // ≈ 40MB worst case, and in practice only bodies that ever exceeded
 // the 8px threshold allocate at all.
-const CACHE_CAP = 160;
+//
+// A CUSTOM MAP HOLDS UP TO 200 BODIES (src/game/customMap.js MAX_BODIES),
+// so 160 thrashed on a full one. 256 covers 200 with headroom for the
+// worlds mid-crossfade (raw + terraformed at once): ~64MB worst case,
+// and still only for worlds that ever drew big enough to texture.
+const CACHE_CAP = 256;
 const cache = new Map<string, HTMLCanvasElement | null>();
 
 // ------------------------------------------------------------
@@ -496,9 +501,16 @@ export function terraformTint(body: Body): { r: number; g: number; b: number } {
   }
 }
 
+/** A custom map's surface style (the Map Maker), as the biome it paints. */
+const LOOK_BIOME: Record<string, Biome> = {
+  verdant: 'verdant', ocean: 'oceanic', desert: 'arid', toxic: 'arid', ice: 'tundra', lava: 'volcanic',
+};
+
 export function terraformBiome(body: Body): Biome {
   const curated = CURATED_BIOME[body.id];
   if (curated) return curated;
+  const chosen = body.look?.surface ? LOOK_BIOME[body.look.surface] : undefined;
+  if (chosen) return chosen;
 
   // Procedural / far-system bodies: read their character off the same
   // properties a player can see. Heat falls off with distance, so orbit
@@ -700,11 +712,26 @@ export function paintSurfaceOnto(c: CanvasRenderingContext2D, body: Body, varian
   // takes the state and paints a dead Earth when it is not terraformed:
   // same continents, no water, no life — which reads as Earth, ruined,
   // rather than as some other planet.
+  // A CUSTOM WORLD WEARS THE SURFACE ITS MAKER CHOSE (the Map Maker) AS
+  // ITS TERRAFORMED FACE: a living style (verdant, ocean, desert...) is
+  // the biome terraformBiome() picks, so terraforming visibly turns the
+  // world into what its maker drew. RAW, it paints like any raw world, in
+  // its own colour -- it used to wear the living palette from tick 0, so
+  // every default 'verdant' planet looked terraformed already and the
+  // payload changed nothing on screen. Gas or storm is a deliberate style
+  // and paints banded cloud raw and terraformed alike. Shipped worlds
+  // carry no look and are untouched.
+  const lookSurface = body.look?.surface ?? null;
   const tf = variant === 'terraformed'
     && body.id !== 'earth'
     && (body.type === 'terrestrial' || body.type === 'dwarf' || body.type === 'moon'
         || body.type === 'asteroid')
     ? terraformPalette(body) : null;
+  if (lookSurface === 'gas' || lookSurface === 'storm') {
+    if (lookSurface === 'storm') paintIceGiant(c, base, rand);
+    else paintGasGiant(c, base, rand);
+    return;
+  }
 
   // Hand-authored worlds keep their signature art (ported from the
   // old drawSurfaceFeatures), everything else gets a seeded recipe.

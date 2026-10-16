@@ -197,6 +197,12 @@ export async function discoverMeteoroids(env, gameId, tick, posOf, sensorScale =
  */
 export async function replenishKuiper(env, gameId, tick, rand, posOf, sensorScale = 1) {
   if (tick % RESTOCK_INTERVAL !== 0) return { added: 0 };
+  // A custom map (the Map Maker) has the rocks its maker placed, and no
+  // Kuiper Belt to restock.
+  try {
+    const cm = await env.DB.prepare('SELECT custom_map_id FROM rooms WHERE id = ?').bind(gameId).first();
+    if (cm?.custom_map_id) return { added: 0 };
+  } catch { /* no custom maps column yet */ }
 
   // SOL'S Kuiper rocks only: the far systems carry eccentric rocks of
   // their own (meteoroids.js), and counted here they would hold Sol's

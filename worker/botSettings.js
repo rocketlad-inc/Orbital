@@ -40,6 +40,10 @@ export const DEFAULTS = {
    *  every /state as game.visuals; see visualsSwitches below. */
   visuals_still_worlds: false,
   visuals_minimal: false,
+  /** THE MAP MAKER'S LAUNCH SWITCH (worker/customMaps.js mapMakerEnabled).
+   *  Off: only admins see it (so the house maps can be built and published
+   *  before launch). On: everyone. Staging is always on. */
+  map_maker_enabled: false,
 };
 
 /** All settings, defaults merged with any stored overrides. */

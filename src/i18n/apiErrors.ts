@@ -44,6 +44,13 @@ const BY_CODE: Record<string, Key> = {
   too_few_players: 'err.too_few_players',
   invalid_token: 'err.invalid_token',
   raise_only: 'err.raise_only',
+  // The Map Maker's hosting and saving refusals.
+  map_blocked: 'err.map_blocked',
+  commission_required: 'err.commission_required',
+  map_seats: 'err.map_seats',
+  seed_failed: 'err.seed_failed',
+  stale: 'err.stale',
+  taken_down: 'err.taken_down',
 };
 
 /** The message to show for an API error. `fallback` is the localized

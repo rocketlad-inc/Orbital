@@ -261,6 +261,10 @@ interface ServerState {
     secret_revealed?: number;
     secret_discovered_by_faction_id?: string | null;
     secret_discovered_at_tick?: number | null;
+    /** A custom map's hand-placed discovery: its maker's own name and
+     *  message (0167). Revealed secrets only, like secret_kind. */
+    secret_name?: string | null;
+    secret_text?: string | null;
     /** Eccentric Kepler elements for Kuiper-class rogue asteroids.
      *  Migration 0024. All four nullable; when present the client
      *  bodyPosition uses Kepler propagation instead of the circular
@@ -278,6 +282,8 @@ interface ServerState {
     ram_arrive_tick?: number | null;
     /** A body flying out of its parent (0157): the sun gates. */
     emerge_from_tick?: number | null;
+    /** A custom map's look (0166), JSON. */
+    look_json?: string | null;
     emerge_until_tick?: number | null;
     ram_acceleration?: number | null;
     ram_start_pos_x?: number | null;
@@ -711,6 +717,8 @@ function bodyToClient(b: ServerState['bodies'][number]): Body {
         revealed: true,
         discoveredByFactionId: b.secret_discovered_by_faction_id ?? undefined,
         discoveredAtTick: b.secret_discovered_at_tick ?? undefined,
+        ...(b.secret_name ? { customName: String(b.secret_name) } : {}),
+        ...(b.secret_text ? { customText: String(b.secret_text) } : {}),
       }
     : undefined;
   // Active ram plan — present when this body has been diverted as an
@@ -790,7 +798,36 @@ function bodyToClient(b: ServerState['bodies'][number]): Body {
       && Number(b.emerge_until_tick) > Number(b.emerge_from_tick)
       ? { fromTick: Number(b.emerge_from_tick), untilTick: Number(b.emerge_until_tick) }
       : undefined,
+    look: parseLook(b.look_json),
   };
+}
+
+/** A custom map's look column, or undefined (shipped worlds have none). */
+function parseLook(raw: string | null | undefined): import('../types').BodyLook | undefined {
+  if (!raw) return undefined;
+  try {
+    const v = JSON.parse(raw);
+    if (!v || typeof v !== 'object') return undefined;
+    // Lore is player-written: a plain string or nothing.
+    if (v.lore != null && typeof v.lore !== 'string') delete v.lore;
+    // The sky and the sun's colour are drawn, so only known values pass.
+    if (v.backdrop != null && !['blue', 'crimson', 'emerald', 'violet', 'amber'].includes(v.backdrop)) delete v.backdrop;
+    if (v.star != null && !(typeof v.star === 'string' && /^#[0-9a-fA-F]{6}$/.test(v.star))) delete v.star;
+    // A sector regroups the senate, the outliner and the map, so only a
+    // well-formed one survives: string id and name, #rrggbb colour.
+    if (v.sector != null) {
+      const s = v.sector;
+      const ok = s && typeof s === 'object'
+        && typeof s.id === 'string' && s.id
+        && typeof s.name === 'string' && s.name
+        && typeof s.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(s.color);
+      if (ok) v.sector = { id: s.id, name: s.name, color: s.color };
+      else delete v.sector;
+    }
+    return v;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Server game_fleets rows -> client Fleet[] (DESIGN-fleets.md). Ships

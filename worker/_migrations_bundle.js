@@ -6797,4 +6797,70 @@ SELECT DISTINCT t.user_id, t.ship_class, t.icon_variant, CAST(strftime('%s', 'no
   FROM user_ship_templates t
  WHERE t.user_id IS NOT NULL AND t.icon_variant IN ('C', 'D', 'E', 'F', 'G', 'H', 'I');
 ` },
+  { name: "0167_custom_maps.sql", sql: `-- The Map Maker (Lorne, 2026-10-14): player-built star systems.
+--
+-- custom_maps holds each player's maps as the JSON the Map Maker edits
+-- (src/game/customMap.js normalizeMap is the format). share_code lets
+-- anyone open a copy of a map; copied_from records where a copy came from.
+CREATE TABLE IF NOT EXISTS custom_maps (
+  id            TEXT PRIMARY KEY,
+  owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name          TEXT NOT NULL,
+  map_json      TEXT NOT NULL,
+  share_code    TEXT NOT NULL UNIQUE,
+  copied_from   TEXT,
+  hosted_count  INTEGER NOT NULL DEFAULT 0,
+  created_ms    INTEGER NOT NULL,
+  updated_ms    INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_custom_maps_owner ON custom_maps(owner_user_id, updated_ms);
+
+-- A room hosted on a custom map carries a SNAPSHOT of it, taken when it
+-- was hosted: editing the map afterwards never changes a game already set
+-- up. seedGameWorld builds the system from the snapshot.
+ALTER TABLE rooms ADD COLUMN custom_map_id TEXT;
+ALTER TABLE rooms ADD COLUMN custom_map_json TEXT;
+
+-- A custom world's look: {surface, rings} for a world, {star} for a sun.
+-- Shipped worlds have their own art keyed on their template id and leave
+-- this NULL.
+ALTER TABLE game_bodies ADD COLUMN look_json TEXT;
+` },
+  { name: "0168_map_gallery.sql", sql: `-- The Map Maker, part two (Lorne, 2026-10-15): a public gallery of
+-- player-built systems, remixes, and a hand-placed discovery's own words.
+--
+-- published / published_ms: the owner put the map in the public gallery.
+-- remix_count: how many OTHER players copied it from there (the owner's
+-- own copies never count).
+ALTER TABLE custom_maps ADD COLUMN published INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE custom_maps ADD COLUMN published_ms INTEGER;
+ALTER TABLE custom_maps ADD COLUMN remix_count INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS idx_custom_maps_gallery_popular ON custom_maps(published, hosted_count);
+CREATE INDEX IF NOT EXISTS idx_custom_maps_gallery_new ON custom_maps(published, published_ms);
+
+-- A hand-placed discovery's custom name and message, written by the map's
+-- maker. Stored beside secret_kind and, like it, never sent to a player
+-- until the discovery is revealed (worker/state.js). NULL = the kind's
+-- own name and message.
+ALTER TABLE game_bodies ADD COLUMN secret_name TEXT;
+ALTER TABLE game_bodies ADD COLUMN secret_text TEXT;
+` },
+  { name: "0169_map_remix_ledger.sql", sql: `-- One remix per person per map (security review, 2026-10-15): the
+-- gallery's "remixed ×N" counted every remix call, so one player could
+-- inflate a map's rank by remixing and deleting in a loop. A remix now
+-- counts only the first time this player copies this map.
+CREATE TABLE IF NOT EXISTS custom_map_remixes (
+  map_id     TEXT NOT NULL,
+  user_id    TEXT NOT NULL,
+  created_ms INTEGER NOT NULL,
+  PRIMARY KEY (map_id, user_id)
+);
+` },
+  { name: "0170_map_takedown.sql", sql: `-- Gallery moderation (Map Maker launch, 2026-10-16): an admin can take a
+-- published map out of the gallery, and the owner cannot republish it.
+-- The map itself is untouched: it stays in its owner's list and can
+-- still be hosted privately.
+ALTER TABLE custom_maps ADD COLUMN taken_down_ms INTEGER;
+ALTER TABLE custom_maps ADD COLUMN taken_down_by TEXT;
+` },
 ];

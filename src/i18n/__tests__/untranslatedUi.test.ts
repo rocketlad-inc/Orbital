@@ -1,7 +1,8 @@
 // A ratchet against new English text sneaking into the player-facing UI.
 //
-// It parses every component under src/components and src/multiplayer and
-// collects the text a player would read that does NOT go through t()/tn()/tk():
+// It parses every component under src/components, src/multiplayer and
+// src/mapmaker, and collects the text a player would read that does NOT go
+// through t()/tn()/tk():
 // JSX text between tags, and string literals in title / aria-label /
 // placeholder / alt / label attributes. The hits that exist today are the
 // reviewed baseline below (brand names, symbols, admin-only screens, code
@@ -64,7 +65,7 @@ function hitsIn(file: string): string[] {
 
 function scan(): Record<string, string[]> {
   const result: Record<string, string[]> = {};
-  for (const root of ['components', 'multiplayer']) {
+  for (const root of ['components', 'multiplayer', 'mapmaker']) {
     for (const f of listFiles(path.join(SRC, root))) {
       const h = hitsIn(f);
       if (h.length) result[path.relative(SRC, f).replace(/\\/g, '/')] = h;

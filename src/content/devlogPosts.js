@@ -16,6 +16,74 @@
 
 export const SEED_POSTS = [
   {
+    slug: 'map-maker',
+    title: 'The Map Maker: Build Your Own Star System',
+    date: '16 October 2026',
+    lede: 'Design a whole star system, from the sun outward: every world, moon, belt and sector, '
+        + 'what each one yields, what is hidden on it and what it looks like. Then host a game on it, '
+        + 'publish it to the gallery, or remix somebody else’s.',
+    charts: false,
+    html: `
+<p>Every game of Orbital so far has been played in the same place: our Solar System, its far gates, and whatever lies beyond them. That map is not going anywhere. But from today you can build your own.</p>
+<p>Open <strong>Map Maker</strong> from the lobby. Build a system, save it, and either play it with your friends or publish it for everyone. It works on your phone as well as your desktop, in English and in Portuguese.</p>
+
+<h2>Starting a map</h2>
+<ul>
+<li><strong>Just a sun.</strong> An empty star. Every world is yours to place.</li>
+<li><strong>Our Solar System.</strong> The real thing, ready to rename and reshape.</li>
+<li><strong>Generate one.</strong> Set how many planets, moons, belts and start worlds, how rich and how spread out, pick a naming theme, and roll. Then change anything you do not like.</li>
+<li><strong>Remix someone else’s.</strong> Pick a map from the gallery and make a copy of your own.</li>
+</ul>
+
+<h2>Placing worlds</h2>
+<p>Pick a type from the palette (planet, gas giant, ice giant, moon, dwarf, asteroid, asteroid belt, or a mineable rock), then click the map to place it. On a phone, tap <strong>+</strong>, pick, and tap the map. Moons snap to the nearest planet. Drag any world to move it: it snaps onto other worlds’ orbits, and a readout shows its orbit, its year and how far it sits from its neighbours.</p>
+<p>A few tools do more at once:</p>
+<ul>
+<li><strong>Symmetry</strong> places a world two to eight ways round the sun in one click.</li>
+<li><strong>Mirror</strong> copies a selected group round the sun, moons and start worlds included. It is the quick road to a fair map.</li>
+<li><strong>Ring of worlds</strong> lays any number of worlds evenly on one orbit.</li>
+<li><strong>Spray asteroids</strong> scatters a field wherever you drag.</li>
+<li><strong>Re-roll</strong> replaces just the inner or the outer half of the system with freshly generated worlds.</li>
+</ul>
+
+<h2>Shaping each world</h2>
+<p>Click a world to open it. Every world has four tabs.</p>
+<ul>
+<li><strong>World:</strong> its metal, credits and science per tick, its size and type, its moons, and whether players may start there.</li>
+<li><strong>Look:</strong> its colour, its surface (verdant, ocean, desert, rocky, barren, ice, lava, toxic, gas bands or storms) and rings. The game paints it with the same planet art it uses everywhere. A world starts raw; the surface you choose is what it becomes once an empire terraforms it, and the tab shows you both.</li>
+<li><strong>Story:</strong> a line of lore. Players read it when they open the world in the game.</li>
+<li><strong>Secrets:</strong> hide a discovery for the first empire to park a ship there. Pick exactly what it is, or leave it to chance. You can give a hand-placed discovery its own name and message; nobody sees them until it is found, and the reward is still the real thing.</li>
+</ul>
+<p>Click the sun for its colour (any colour you like: the game builds its glow and flares from it), its size, and its mass. A heavier sun swings its worlds round faster. Click empty space for the map itself: its pitch, its sky (deep space or one of five nebulae) and its <strong>mood</strong>, which restyles every world, the sun and the sky in one click.</p>
+
+<h2>Changing many worlds at once</h2>
+<p>Drag a box across the map to select a group, or long-press worlds on a phone. A bar appears with everything you can do to all of them at once: set, add, multiply or randomise their resources (keeping the rich ones richer if you like), make them all match one world, resize, rename by theme, recolour, restyle, space their orbits evenly, mark or unmark start worlds, hide discoveries, duplicate, mirror or delete.</p>
+
+<h2>Sectors</h2>
+<p>Sectors are the regions players fight over. Draw one by dragging from one orbit out to another, or let the map suggest a set. Each sector is a band of orbit with a name and a colour. On your map they replace the usual planetary systems everywhere: in the outliner, on the map, in the Herald, and in the <strong>senate</strong>, where whoever holds the most worlds in a sector gets one more vote. A world outside every band groups the usual way.</p>
+
+<h2>Is it fair? Is it ready?</h2>
+<p>The checklist at the top watches the map as you build. It warns you about things worth knowing (worlds too close together, start worlds that share a sector, a world inside the sun, moons with nothing to give) and only stops you hosting when the map cannot be played at all: fewer than two start worlds. Turn on the <strong>fairness lens</strong> to see what lies nearest each start world at the opening, with a score for how even it is.</p>
+
+<h2>Playing on your map</h2>
+<p>When you create a game, choose <strong>A custom map</strong> and pick one of yours. Hosting a game on your own map is part of the <strong>Commander’s Commission</strong> ($10, once). Anybody can build maps, publish them, and join a game on one; only the host needs the Commission.</p>
+<ul>
+<li>A game seats one player per start world, up to ten.</li>
+<li>The game keeps a copy of the map as it was when you opened the lobby. Editing the map later never changes a game already set up.</li>
+<li>Quick Join only ever puts people into Solar System games. Custom-map games are found in Browse, where the card names the map.</li>
+</ul>
+
+<h2>Sharing, the gallery and remixing</h2>
+<p>Every saved map has a share code. Anyone with it can open a copy in their own Map Maker. Tick <em>keep hidden discoveries secret</em> and copies arrive with your hand-placed discoveries turned into surprises.</p>
+<p><strong>Publish</strong> a map to put it in the gallery, where everyone can browse it by most played or newest, search it, preview it, and remix it into a copy of their own. Each map shows how many games have been played on it and how many times it has been remixed. Maps that break the rules can be removed from the gallery.</p>
+
+<h2>Saving</h2>
+<p>The Map Maker saves as you go. You can keep up to fifty maps. If you edit the same map on two devices, neither overwrites the other: the older copy is saved as a separate map marked <em>conflict</em>.</p>
+
+<p>We cannot wait to see what you build.</p>
+`,
+  },
+  {
     slug: 'megastructures',
     title: 'Megastructures: Building Things That Outlive Your Fleet',
     date: '25 August 2026',

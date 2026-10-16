@@ -51,6 +51,22 @@ export const CORE_SYSTEM_ID = 'core';
 export const CORE_MEMBER_IDS = new Set(['sol', 'mercury', 'venus']);
 export const CORE_LABEL = 'The Core';
 
+/** A Map Maker map's worlds have `cm_<id>` ids (src/game/customMap.js
+ *  mapToCatalog); its star keeps 'sol'. MIRROR of CUSTOM_TEMPLATE_PREFIX
+ *  in worker/systems.js. */
+export const CUSTOM_TEMPLATE_PREFIX = 'cm_';
+const customCache = new WeakMap<Body[], boolean>();
+/** Is this body list a custom map? Sol-only rules (The Core, the Kuiper
+ *  bands, dwarfs in belts) are off for it. MIRROR of isCustomMapBodies in
+ *  worker/systems.js. */
+export function isCustomMapBodies(bodies: Body[]): boolean {
+  const hit = customCache.get(bodies);
+  if (hit !== undefined) return hit;
+  const out = bodies.some(b => b.id.startsWith(CUSTOM_TEMPLATE_PREFIX));
+  customCache.set(bodies, out);
+  return out;
+}
+
 /** A star, black hole, or barycenter anchor — the thing planets orbit.
  *  These do NOT head a planetary system; they're the level above it. */
 export function isStellarAnchor(b: Body): boolean {
@@ -58,6 +74,50 @@ export function isStellarAnchor(b: Body): boolean {
     || b.type === 'star'
     || b.type === 'black_hole'
     || b.orbitPeriod >= PRETEND_ORBIT_PERIOD;
+}
+
+// ---------------------------------------------------------------------------
+// Sectors — authored on a custom map. MIRROR of bodySector() in
+// worker/systems.js; the two MUST agree, or the senate counts a different
+// map from the one the outliner and the map show.
+//
+// A Map Maker map can draw SECTORS, named bands of orbit round the sun.
+// On such a map a sector REPLACES the automatic grouping for every world
+// inside it, moons included, and outranks ring adoption, the belts and
+// The Core. A world outside every band groups as it always has. Maps with
+// no sectors never reach any of this.
+// ---------------------------------------------------------------------------
+
+/** Root keys for a sector. MIRROR of SECTOR_PREFIX in worker/systems.js. */
+export const SECTOR_PREFIX = 'sector:';
+const SECTOR_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+export type Sector = { id: string; name: string; color: string };
+
+/** The authored sector a body sits in, or null. The shape is checked
+ *  again here (parseLook already did) because a malformed sector would
+ *  regroup the whole map. */
+export function bodySector(b: Body | undefined | null): Sector | null {
+  const s = b?.look?.sector;
+  if (!b || !s || typeof s !== 'object') return null;
+  if (typeof s.id !== 'string' || !s.id) return null;
+  if (typeof s.name !== 'string' || !s.name) return null;
+  if (typeof s.color !== 'string' || !SECTOR_COLOR_RE.test(s.color)) return null;
+  if (isStellarAnchor(b)) return null;
+  return s;
+}
+
+/** Every sector on the map by root key. Memoized per bodies-array. */
+const sectorsCache = new WeakMap<Body[], Map<string, Sector>>();
+export function sectorsOf(bodies: Body[]): Map<string, Sector> {
+  const hit = sectorsCache.get(bodies);
+  if (hit) return hit;
+  const out = new Map<string, Sector>();
+  for (const b of bodies) {
+    const s = bodySector(b);
+    if (s && !out.has(SECTOR_PREFIX + s.id)) out.set(SECTOR_PREFIX + s.id, s);
+  }
+  sectorsCache.set(bodies, out);
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -93,9 +153,40 @@ export const FAR_BELT_LABELS: Record<string, string> = {
   bh_barycenter: 'The Ossuary',
 };
 
-/** Rubble — the only things that form belts. */
-export function isBeltable(b: Body): boolean {
+/** Rubble — the only things that form belts. On a custom map only
+ *  asteroids: its dwarfs are worlds a maker placed, often start worlds,
+ *  and are each their own place. MIRROR of isBeltable in worker/systems.js. */
+export function isBeltable(b: Body, custom = false): boolean {
+  if (custom) return b.type === 'asteroid';
   return b.type === 'asteroid' || b.type === 'dwarf';
+}
+
+/** A custom map's belts: sorted rubble chained by BELT_RATIO, each run of
+ *  BELT_MIN_MEMBERS or more one belt, 'Asteroid Belt', 'Asteroid Belt 2'...
+ *  outward. MIRROR of customBelts in worker/systems.js. */
+export function customBelts(sorted: Body[]): Belt[] {
+  const belts: Belt[] = [];
+  let run: Body[] = [];
+  const flush = () => {
+    if (run.length >= BELT_MIN_MEMBERS) {
+      const radii = run.map(b => b.orbitRadius);
+      const median = radii[Math.floor(radii.length / 2)];
+      const n = belts.length + 1;
+      belts.push({
+        id: `belt:${Math.round(median)}`,
+        label: n === 1 ? 'Asteroid Belt' : `Asteroid Belt ${n}`,
+        members: run.slice(), laneMembers: run.slice(),
+      });
+    }
+    run = [];
+  };
+  for (const b of sorted) {
+    const prev = run[run.length - 1];
+    if (prev && b.orbitRadius <= prev.orbitRadius * BELT_RATIO) run.push(b);
+    else { flush(); run = [b]; }
+  }
+  flush();
+  return belts;
 }
 
 /** What counts as a planet, for "where does the outer system start" and
@@ -155,11 +246,14 @@ export function coOrbitalHosts(bodies: Body[]): Map<string, string> {
   const hit = coOrbitalCache.get(bodies);
   if (hit) return hit;
   const anchors = new Set(bodies.filter(isStellarAnchor).map(b => b.id));
-  const planets = bodies.filter(b => b.parent && anchors.has(b.parent) && PLANET_TYPES.has(b.type));
+  // An authored sector is never adopted and never adopts (systems.js).
+  const planets = bodies.filter(b => b.parent && anchors.has(b.parent) && PLANET_TYPES.has(b.type)
+    && !bodySector(b));
   const out = new Map<string, string>();
   for (const b of bodies) {
     if (!b.parent || !anchors.has(b.parent)) continue;
     if (PLANET_TYPES.has(b.type) || b.type === 'star') continue;
+    if (bodySector(b)) continue;
     // A CROSSING ORBIT IS NOT A RING (Lorne). The three seeded rogues
     // carry nominal radii that land on Uranus and Neptune, but each
     // sweeps from inside the asteroid belt to past Eris — they are
@@ -247,9 +341,11 @@ export function findBelts(bodies: Body[]): Belt[] {
   // dwarf is its own place (2026-10-06).
   const roots = new Set(bodies.filter(b => !b.parent).map(b => b.id));
   const adopted = coOrbitalHosts(bodies);
+  const custom = isCustomMapBodies(bodies);
+  // A rock in an authored sector is the sector's, not a belt's.
   const isRubble = (b: Body) =>
     !!b.parent && anchors.has(b.parent) && roots.has(b.parent)
-    && isBeltable(b) && !adopted.has(b.id);
+    && isBeltable(b, custom) && !adopted.has(b.id) && !bodySector(b);
 
   // Clustering runs on ring-dwellers ONLY. A rogue's nominal radius is a
   // fiction, so letting it into the chain would drag a belt's extent
@@ -257,6 +353,10 @@ export function findBelts(bodies: Body[]): Belt[] {
   const rubble = bodies
     .filter(b => isRubble(b) && !isEccentricRogue(b))
     .sort((a, b) => a.orbitRadius - b.orbitRadius);
+
+  // A custom map: no Plutinos, no Kuiper cliff, no far systems. MIRROR of
+  // the same branch in worker/systems.js.
+  if (custom) return customBelts(rubble);
 
   const clusters: Body[][] = [];
   for (const b of rubble) {
@@ -339,7 +439,7 @@ export function findBelts(bodies: Body[]): Belt[] {
   for (const b of bodies) {
     const p = b.parent;
     if (!p || roots.has(p) || !anchors.has(p)) continue;
-    if (!isBeltable(b) || adopted.has(b.id) || isEccentricRogue(b)) continue;
+    if (!isBeltable(b) || adopted.has(b.id) || isEccentricRogue(b) || bodySector(b)) continue;
     const arr = farByAnchor.get(p) ?? [];
     arr.push(b);
     farByAnchor.set(p, arr);
@@ -439,11 +539,16 @@ export function makeSystemRootOf(bodies: Body[]): (bodyId: string) => string {
   const cache = new Map<string, string>();
   const belts = beltsOf(bodies);
   const adopted = coOrbitalHosts(bodies);
+  const custom = isCustomMapBodies(bodies);
   return (bodyId: string): string => {
     const hit = cache.get(bodyId);
     if (hit) return hit;
-    // Sharing a planet's ring outranks everything: that body is part of
-    // the planet's system.
+    // AN AUTHORED SECTOR OUTRANKS EVERYTHING (custom maps). MIRROR of
+    // the same line in worker/systems.js.
+    const own = bodySector(byId.get(bodyId));
+    if (own) { const k = SECTOR_PREFIX + own.id; cache.set(bodyId, k); return k; }
+    // Sharing a planet's ring outranks everything else: that body is
+    // part of the planet's system.
     const ring = adopted.get(bodyId);
     if (ring) { cache.set(bodyId, ring); return ring; }
     // Belt membership outranks the parent walk: a belt rock's parent IS
@@ -464,6 +569,14 @@ export function makeSystemRootOf(bodies: Body[]): (bodyId: string) => string {
       cur = parent;
     }
     const rawRoot = cur?.id ?? bodyId;
+    // A moon is in its world's sector, even if its own look forgot to say.
+    const rootSector = bodySector(cur);
+    if (rootSector) {
+      const k = SECTOR_PREFIX + rootSector.id;
+      for (const id of chain) cache.set(id, k);
+      cache.set(bodyId, k);
+      return k;
+    }
     // COLLAPSES APPLY TO THE ROOT, NOT THE BODY, so a satellite follows
     // its world wherever that world files — the same reason the Core
     // collapse is written this way. Without the belt line here, giving
@@ -482,7 +595,8 @@ export function makeSystemRootOf(bodies: Body[]): (bodyId: string) => string {
       cache.set(bodyId, rootRing);
       return rootRing;
     }
-    const root = CORE_MEMBER_IDS.has(rawRoot) ? CORE_SYSTEM_ID : rawRoot;
+    // A custom map has no Core: its star is its own place, by its name.
+    const root = !custom && CORE_MEMBER_IDS.has(rawRoot) ? CORE_SYSTEM_ID : rawRoot;
     for (const id of chain) cache.set(id, root);
     cache.set(bodyId, root);
     return root;
@@ -505,6 +619,10 @@ export function systemLabel(bodies: Body[], rootId: string): string {
   // Synthetic roots — no body carries these ids, so name them before the
   // lookup below falls through to shouting the raw id.
   if (rootId === CORE_SYSTEM_ID) return regionLabel(CORE_LABEL);
+  // An authored sector is called what the map maker called it — the
+  // player's own words, never translated.
+  const sector = sectorsOf(bodies).get(rootId);
+  if (sector) return sector.name;
   const belt = beltsOf(bodies).byId.get(rootId);
   if (belt) return regionLabel(belt.label);
   const root = bodies.find(b => b.id === rootId);
@@ -532,6 +650,9 @@ export function regionLabel(label: string): string {
   }
   const inner = /^Inner Belt (\d+)$/.exec(label);
   if (inner) return t('helper.sys.innerBelt', { n: inner[1] });
+  // A custom map's second and later belts (customBelts).
+  const nth = /^Asteroid Belt (\d+)$/.exec(label);
+  if (nth) return `${t('helper.sys.asteroidBelt')} ${nth[1]}`;
   const far = /^(.+) Belt$/.exec(label);
   if (far) return t('helper.sys.beltOf', { name: far[1] });
   return label;

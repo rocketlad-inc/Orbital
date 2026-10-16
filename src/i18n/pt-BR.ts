@@ -14,7 +14,7 @@
 // ============================================================
 
 import type { Catalog } from './core';
-import { ship, map, econ, social, review, guide, data, helpers } from './parts/pt-BR';
+import { ship, map, econ, social, review, guide, data, helpers, mapmaker } from './parts/pt-BR';
 
 const base: Catalog = {
   // ---- language picker ----
@@ -49,6 +49,12 @@ const base: Catalog = {
   'err.too_few_players': 'Um jogo precisa de pelo menos 2 jogadores para começar.',
   'err.invalid_token': 'Esse link de redefinição expirou ou já foi usado. Peça um novo.',
   'err.raise_only': 'Num jogo em andamento, só dá para aumentar o número de vagas.',
+  'err.map_blocked': 'Esse mapa ainda não está pronto para hospedar. Abra no Criador de Mapas para corrigir.',
+  'err.commission_required': 'Hospedar um jogo no seu próprio mapa exige a Comissão do Comandante.',
+  'err.map_seats': 'Esse mapa tem menos mundos iniciais do que vagas. Escolha menos jogadores.',
+  'err.seed_failed': 'Não foi possível preparar o jogo. A sala está aberta de novo; tente começar mais uma vez.',
+  'err.stale': 'Este mapa foi salvo em outro lugar depois que você o abriu.',
+  'err.taken_down': 'Este mapa foi removido da galeria por um moderador e não pode ser publicado de novo. Você ainda pode jogá-lo em particular.',
 
   // ---- lobby: header + navigation ----
   'lobby.nav.label': 'Sala',
@@ -57,6 +63,7 @@ const base: Catalog = {
   'lobby.nav.browse': 'Explorar',
   'lobby.nav.create': 'Criar um jogo',
   'lobby.nav.code': 'Entrar com código',
+  'lobby.nav.mapMaker': 'Criador de Mapas',
   'lobby.nav.analytics': 'Análises',
   'lobby.nav.bot': 'Bot',
   'lobby.nav.editor': 'Editor',
@@ -163,6 +170,24 @@ const base: Catalog = {
   'lobby.create.submit': 'Criar jogo',
   'lobby.create.busy': 'Criando…',
   'lobby.create.next': 'Em seguida você recebe um link e um código de convite para compartilhar.',
+  'lobby.create.map': 'Mapa',
+  'lobby.create.mapStandard': 'O Sistema Solar',
+  'lobby.create.mapStandardDesc': 'O mapa padrão: Sol, seus planetas e luas, os portões distantes.',
+  'lobby.create.mapCustom': 'Um mapa personalizado',
+  'lobby.create.mapCustomDesc': 'Um dos seus próprios sistemas estelares do Criador de Mapas.',
+  'lobby.create.mapLocked': 'Hospedar uma partida no seu próprio mapa faz parte da {name} ({price}, uma vez). Qualquer um pode entrar.',
+  'lobby.create.mapNone': 'Você ainda não tem mapas salvos. Crie um, salve, e ele aparece aqui.',
+  'lobby.create.mapOpenMaker': 'Abrir o Criador de Mapas',
+  'lobby.create.mapPick': 'Qual mapa?',
+  'lobby.create.mapBodies_one': '{n} corpo',
+  'lobby.create.mapBodies_other': '{n} corpos',
+  'lobby.create.mapLoading': 'Lendo o mapa…',
+  'lobby.create.mapLoadFailed': 'Não foi possível ler esse mapa. Escolha de novo ou tente outro.',
+  'lobby.create.mapReady': 'Pronto',
+  'lobby.create.mapToFix': '{n} a corrigir',
+  'lobby.create.mapSeats': 'Até {n} lugares: um por mundo inicial.',
+  'lobby.create.mapBlocked': 'Não está pronto para hospedar: {list}. Abra no Criador de Mapas para corrigir.',
+  'lobby.create.err.map': 'Escolha um mapa pronto para hospedar.',
   'lobby.create.previewTitle': 'Como aparece em Explorar',
   'lobby.create.previewName': 'Seu jogo',
   'lobby.create.err.name': 'Dê um nome ao seu jogo.',
@@ -219,6 +244,7 @@ const base: Catalog = {
   'card.tag.pin': 'Abre ao iniciar',
   'card.tag.pinTitle': 'Abre automaticamente quando você inicia o Orbital',
   'card.fact.speed': 'Ritmo',
+  'card.fact.map': 'Mapa',
   'card.fact.you': 'Você',
   'card.fact.leading': 'Na frente',
   'card.fact.winner': 'Vencedor',
@@ -297,5 +323,5 @@ const base: Catalog = {
   'invite.no': 'Agora não',
 };
 
-export const ptBR: Catalog = { ...base, ...ship, ...map, ...econ, ...social, ...review, ...guide, ...data, ...helpers };
+export const ptBR: Catalog = { ...base, ...ship, ...map, ...econ, ...social, ...review, ...guide, ...data, ...helpers, ...mapmaker };
 export { base as ptBRBase };

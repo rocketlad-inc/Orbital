@@ -9,7 +9,7 @@
 // and both plural forms.
 // ============================================================
 
-import { ship, map, econ, social, review, guide, data, helpers } from './parts/en';
+import { ship, map, econ, social, review, guide, data, helpers, mapmaker } from './parts/en';
 
 const base = {
   // ---- language picker ----
@@ -44,6 +44,12 @@ const base = {
   'err.too_few_players': 'A game needs at least 2 players to start.',
   'err.invalid_token': 'This reset link has expired or was already used. Ask for a new one.',
   'err.raise_only': 'Seats can only be raised in a running game.',
+  'err.map_blocked': 'That map is not ready to host yet. Open it in the Map Maker to fix it.',
+  'err.commission_required': 'Hosting a game on your own map needs the Commander’s Commission.',
+  'err.map_seats': 'That map has fewer start worlds than seats. Choose fewer players.',
+  'err.seed_failed': 'The game could not be set up. The lobby is open again; try starting it once more.',
+  'err.stale': 'This map was saved somewhere else since you opened it.',
+  'err.taken_down': 'This map was removed from the gallery by a moderator and cannot be published again. You can still play it privately.',
 
   // ---- lobby: header + navigation ----
   'lobby.nav.label': 'Lobby',
@@ -52,6 +58,7 @@ const base = {
   'lobby.nav.browse': 'Browse',
   'lobby.nav.create': 'Create a game',
   'lobby.nav.code': 'Join with code',
+  'lobby.nav.mapMaker': 'Map Maker',
   'lobby.nav.analytics': 'Analytics',
   'lobby.nav.bot': 'Bot',
   'lobby.nav.editor': 'Editor',
@@ -158,6 +165,24 @@ const base = {
   'lobby.create.submit': 'Create game',
   'lobby.create.busy': 'Creating…',
   'lobby.create.next': 'Next you get an invite link and code to share.',
+  'lobby.create.map': 'Map',
+  'lobby.create.mapStandard': 'The Solar System',
+  'lobby.create.mapStandardDesc': 'The standard map: Sol, its planets and moons, the far gates.',
+  'lobby.create.mapCustom': 'A custom map',
+  'lobby.create.mapCustomDesc': 'One of your own star systems from the Map Maker.',
+  'lobby.create.mapLocked': 'Hosting a game on your own map is part of the {name} ({price}, once). Anyone can join one.',
+  'lobby.create.mapNone': 'You have no saved maps yet. Build one, save it, and it appears here.',
+  'lobby.create.mapOpenMaker': 'Open the Map Maker',
+  'lobby.create.mapPick': 'Which map?',
+  'lobby.create.mapBodies_one': '{n} body',
+  'lobby.create.mapBodies_other': '{n} bodies',
+  'lobby.create.mapLoading': 'Reading the map…',
+  'lobby.create.mapLoadFailed': 'Could not read that map. Pick it again, or try another.',
+  'lobby.create.mapReady': 'Ready',
+  'lobby.create.mapToFix': '{n} to fix',
+  'lobby.create.mapSeats': 'Seats up to {n}: one per start world.',
+  'lobby.create.mapBlocked': 'Not ready to host: {list}. Open it in the Map Maker to fix.',
+  'lobby.create.err.map': 'Pick a map that is ready to host.',
   'lobby.create.previewTitle': 'How it appears in Browse',
   'lobby.create.previewName': 'Your game',
   'lobby.create.err.name': 'Give your game a name.',
@@ -214,6 +239,7 @@ const base = {
   'card.tag.pin': 'Auto-loads',
   'card.tag.pinTitle': 'Opens automatically when you launch Orbital',
   'card.fact.speed': 'Speed',
+  'card.fact.map': 'Map',
   'card.fact.you': 'You',
   'card.fact.leading': 'Leading',
   'card.fact.winner': 'Winner',
@@ -293,5 +319,5 @@ const base = {
 } as const;
 
 /** Base keys (lobby, sign-in, email settings...) plus one part per area. */
-export const en = { ...base, ...ship, ...map, ...econ, ...social, ...review, ...guide, ...data, ...helpers } as const;
+export const en = { ...base, ...ship, ...map, ...econ, ...social, ...review, ...guide, ...data, ...helpers, ...mapmaker } as const;
 export { base as enBase };

@@ -187,7 +187,7 @@ export type User = {
  *  of these (worker/store.js COMMISSION_SURFACES) and labels each sale
  *  with it, so the dashboard can say which surface sells. */
 export type CommissionSurface = 'profile' | 'lobby-flag' | 'designer' | 'endgame' | 'thanks-card' | 'skins'
-  | 'discord-feed';
+  | 'discord-feed' | 'map-maker';
 
 /** Start the Commander's Commission purchase. Resolves to the Stripe
  *  Checkout URL to navigate to, or null when purchases aren't enabled,
@@ -251,7 +251,20 @@ export type StartingBodyOption = {
   name: string;
   type: 'terrestrial' | 'moon';
   parent: string | null;
+  /** A custom map's start moon: its planet's name (parent is a cm_ id). */
+  parent_name?: string | null;
   yield: { metal: number; fuel: number; gold: number; science: number };
+};
+
+/** A custom-map lobby's backdrop: its sun and start worlds (with the
+ *  planets start moons circle), in map units (worker/lobby.js). */
+export type CustomMapPreview = {
+  sun: { name: string; color: string; size: number };
+  bodies: Array<{
+    id: string; name: string; type: string; parent: string;
+    orbit: number; angle: number; radius: number; color: string;
+    surface?: string | null; rings?: boolean;
+  }>;
 };
 
 export type RoomSettings = {
@@ -276,6 +289,9 @@ export type RoomSnapshot = {
   game_started: boolean;
   game_id: string | null;
   starting_body_options?: StartingBodyOption[];
+  /** A room hosted on a Map Maker map (staging): the snapshot's name,
+   *  its sun, how many bodies, and its maker's pitch (plain text). */
+  custom_map?: { name: string; sun?: string; bodies?: number; blurb?: string; preview?: CustomMapPreview } | null;
 };
 
 export type Faction = {

@@ -229,6 +229,11 @@ async function handleUpdateSettings(req, env, ctx) {
     if ((count?.c ?? 0) > body.max_players) {
       return err(409, 'too_many_members', 'reduce member count before lowering max_players');
     }
+    // A custom map seats one player per start world.
+    const cap = await (await import('./customMaps.js')).customSeatCap(env, roomId);
+    if (cap != null && body.max_players > cap) {
+      return err(409, 'map_seats', `this map has ${cap} start worlds, so it seats at most ${cap}`);
+    }
     updates.max_players = body.max_players;
   }
   // Tick cadence and match length — host can edit before game start. See
@@ -450,6 +455,12 @@ export async function startGame(env, roomId) {
 
   const count = await env.DB.prepare('SELECT COUNT(*) AS c FROM room_members WHERE room_id = ?').bind(roomId).first();
   if ((count?.c ?? 0) < 2) return { error: err(409, 'too_few_players', 'need at least 2 players to start') };
+  // A custom map seats one player per start world, whoever let more in
+  // (the host's add-member tool skips the cap on purpose).
+  const mapSeats = await (await import('./customMaps.js')).customSeatCap(env, roomId).catch(() => null);
+  if (mapSeats != null && (count?.c ?? 0) > mapSeats) {
+    return { error: err(409, 'map_seats', `this map has ${mapSeats} start worlds; ${count.c} players are in the lobby`) };
+  }
 
   // Pull configured tick cadence from the DO (the host may have edited it
   // in the lobby); otherwise the default, one hour a tick.
@@ -507,10 +518,30 @@ export async function startGame(env, roomId) {
       await factions.seedGameWorld(env, roomId);
     }
   } catch (e) {
-    // Best-effort: surface in logs but don't unwind the start; the Faction
-    // agent's seeding is expected to be idempotent and retryable.
-    console.error('seedGameWorld failed', e);
+    // A world that failed to seed is UNDONE, not announced. Carrying on
+    // used to broadcast the start and email every player about a game
+    // with no factions and no bodies that nothing could ever recover (a
+    // bad custom map reached it: security review, 2026-10-15). The room
+    // goes back to its lobby and the host is told.
+    console.error('seedGameWorld failed; undoing the start', e);
+    try {
+      await env.DB.batch([
+        ...['game_settlements', 'game_ships', 'game_bodies', 'game_factions', 'chronicle_entries'].map(tbl =>
+          env.DB.prepare(`DELETE FROM ${tbl} WHERE game_id = ?`).bind(roomId)),
+        env.DB.prepare('DELETE FROM games WHERE id = ?').bind(roomId),
+        env.DB.prepare("UPDATE rooms SET status = 'lobby', updated_at = ? WHERE id = ?").bind(Date.now(), roomId),
+      ]);
+    } catch (undo) {
+      console.error('undoing a failed start also failed', undo);
+    }
+    return { error: err(500, 'seed_failed', 'the game could not be set up; the lobby is open again') };
   }
+  // "Played ×N" in the gallery: a game that actually began on the map.
+  try {
+    await env.DB.prepare(
+      'UPDATE custom_maps SET hosted_count = hosted_count + 1 WHERE id = (SELECT custom_map_id FROM rooms WHERE id = ?)',
+    ).bind(roomId).run();
+  } catch { /* the gallery counter is not worth failing a start over */ }
 
   await roomStub(env, roomId).fetch('https://room/game-started', {
     method: 'POST',
@@ -579,6 +610,7 @@ async function handleLobbySnapshot(_req, env, ctx) {
   if (!settings) return err(404, 'not_found', 'room not found');
   const snapRes = await roomStub(env, roomId).fetch('https://room/snapshot');
   const snap = snapRes.ok ? await snapRes.json() : { members: [], connected: [], ready: {} };
+  const customOptions = await customMapOptions(env, roomId);
 
   // === Membership: D1 is the source of truth ===========================
   // The DO's `members` map is updated lazily — only when a user opens a
@@ -640,9 +672,64 @@ async function handleLobbySnapshot(_req, env, ctx) {
     game_started: settings.game_id != null,
     game_id: settings.game_id,
     // Catalog of bodies players can pick as their capital. Currently
-    // every terrestrial planet plus the larger moons.
-    starting_body_options: factions.STARTING_BODY_OPTIONS,
+    // every terrestrial planet plus the larger moons -- or, in a room
+    // hosted on a custom map (the Map Maker), that map's start worlds.
+    starting_body_options: customOptions?.options ?? factions.STARTING_BODY_OPTIONS,
+    custom_map: customOptions?.info ?? null,
   });
+}
+
+/** A custom-map room's start worlds, in the lobby's option shape, and
+ *  what the lobby shows about the map. Null for an ordinary room. */
+async function customMapOptions(env, roomId) {
+  try {
+    const { roomCustomMap } = await import('./customMaps.js');
+    const map = await roomCustomMap(env, roomId);
+    if (!map) return null;
+    const { startWorlds } = await import('../src/game/customMap.js');
+    const byId = new Map(map.bodies.map(b => [b.id, b]));
+    const starts = startWorlds(map).worlds;
+    const options = starts.map(b => ({
+      id: `cm_${b.id}`,
+      name: b.name,
+      type: b.type,
+      parent: b.parent === 'sun' ? 'sol' : `cm_${b.parent}`,
+      // The card names a moon's planet, not its catalogue id.
+      parent_name: b.parent === 'sun' ? null : (byId.get(b.parent)?.name ?? null),
+      yield: { metal: b.yields.metal, fuel: 0, gold: b.yields.credits, science: b.yields.science },
+    }));
+    // THE LOBBY'S BACKDROP MAP draws this map, not Sol: the sun and the
+    // start worlds (with the planet each start moon circles), at their
+    // authored orbits. Nothing else -- no discoveries, no other worlds.
+    const shown = new Map();
+    for (const b of starts) {
+      shown.set(b.id, b);
+      const p = b.parent !== 'sun' ? byId.get(b.parent) : null;
+      if (p) shown.set(p.id, p);
+    }
+    const preview = {
+      sun: { name: map.sun.name, color: map.sun.color, size: map.sun.size },
+      bodies: [...shown.values()].map(b => ({
+        id: `cm_${b.id}`,
+        name: b.name,
+        type: b.type,
+        parent: b.parent === 'sun' ? 'sol' : `cm_${b.parent}`,
+        orbit: b.orbit,
+        angle: b.angle,
+        radius: b.radius,
+        color: b.color,
+        surface: b.surface,
+        rings: b.rings,
+      })),
+    };
+    return {
+      options,
+      info: { name: map.name, sun: map.sun.name, bodies: map.bodies.length, blurb: map.blurb || '', preview },
+    };
+  } catch (e) {
+    console.error('custom map options failed', e);
+    return null;
+  }
 }
 
 // PATCH /api/lobby/rooms/:roomId/me — caller updates their own empire identity.
@@ -801,7 +888,8 @@ async function handlePatchMe(req, env, ctx) {
     if (body.chosen_starting_body === null || body.chosen_starting_body === '') {
       sets.push('chosen_starting_body = NULL');
     } else {
-      if (!factions.isValidStartingBody(body.chosen_starting_body)) {
+      const canStart = await factions.startingBodyValidator(env, roomId);
+      if (!canStart(body.chosen_starting_body)) {
         return err(400, 'bad_request', 'invalid starting body');
       }
       // Reject if another member of this room already claimed it.
@@ -1061,6 +1149,10 @@ async function handleRaiseSeats(req, env, ctx) {
   if (want <= room.max_players) {
     return err(400, 'raise_only', `seats can only be raised in a running game (it has ${room.max_players})`);
   }
+  const cap = await (await import('./customMaps.js')).customSeatCap(env, roomId);
+  if (cap != null && want > cap) {
+    return err(409, 'map_seats', `this map has ${cap} start worlds, so it seats at most ${cap}`);
+  }
   await env.DB
     .prepare('UPDATE rooms SET max_players = ?, updated_at = ? WHERE id = ?')
     .bind(want, Date.now(), roomId).run();
@@ -1148,7 +1240,9 @@ const ROOM_COLS = `r.id, r.name, r.status AS room_status, r.max_players, r.host_
   r.quick_join, (r.password_hash IS NOT NULL) AS has_password, u.display_name AS host_name,
   (SELECT COUNT(*) FROM room_members m WHERE m.room_id = r.id) AS member_count,
   g.status AS game_status, g.current_tick, g.tick_interval_ms, g.started_at, g.next_tick_at,
-  g.winner_faction_id, g.victory_type, g.completed_at`;
+  g.winner_faction_id, g.victory_type, g.completed_at,
+  CASE WHEN r.custom_map_json IS NOT NULL AND json_valid(r.custom_map_json)
+       THEN json_extract(r.custom_map_json, '$.name') END AS custom_map_name`;
 
 async function buildSummaries(env, rows, userId) {
   const ids = rows.map(r => r.id);
@@ -1237,6 +1331,8 @@ async function buildSummaries(env, rows, userId) {
       quick_join: r.quick_join === 1,
       host_id: r.host_id,
       host_name: r.host_name,
+      // A room hosted on a Map Maker map: the map's name, for the card.
+      custom_map_name: r.custom_map_name ?? null,
       created_at: r.created_at,
       updated_at: r.updated_at,
       started_at: r.started_at ?? null,

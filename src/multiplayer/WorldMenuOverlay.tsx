@@ -836,6 +836,16 @@ export const WorldMenuOverlay: React.FC = () => {
           </div>
         </div>
         {flavor && !mobile && <div className="wm-desc">{flavor}</div>}
+        {/* A custom map's world lore and a revealed hand-placed find, in
+            the map maker's own words: plain text, never translated. */}
+        {body.look?.lore && <div className="wm-lore">{body.look.lore}</div>}
+        {body.secret?.revealed && (body.secret.customName || body.secret.customText) && (
+          <div className="wm-find">
+            <span className="wm-find-glyph">✦</span>
+            {body.secret.customName && <b>{body.secret.customName}</b>}
+            {body.secret.customText && <span className="wm-find-text">{body.secret.customText}</span>}
+          </div>
+        )}
         {/* The immovable note is a RULE, so unlike flavour it is NOT
             hidden on mobile: it answers "why is there no thrusters
             button on this rock", and that question is just as reachable

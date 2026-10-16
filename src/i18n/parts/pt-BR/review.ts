@@ -412,6 +412,8 @@ export const review: Catalog = {
   // discoveries (rebuilt from the payload for non-English display)
   'eventlog.ev.secret.line': '{owner}: {msg}',
   'eventlog.ev.secret.fallback': '{kind} em {body}',
+  'eventlog.ev.secret.custom': '{body}: {name} — {text}',
+  'eventlog.ev.secret.discovery': 'DESCOBERTA',
   'eventlog.ev.secret.portal_to_sun': '{body}: DESCOBERTA — um portal estelar antigo e seu gêmeo em órbita solar próxima. O par está ativo: tudo que alcançar uma ponta sai pela outra.',
   'eventlog.ev.secret.ancient_city': '{body}: DESCOBERTA — uma colônia abandonada há muito tempo é reativada sob a sua bandeira — uma cidade grátis com um Laboratório funcionando.',
   'eventlog.ev.secret.pre_terraformed': '{body}: DESCOBERTA — um mundo que os antigos já prepararam para a vida. Terraformado e à espera; reivindique-o e construa.',

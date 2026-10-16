@@ -162,6 +162,11 @@ export interface Body {
    *  ordinary orbit and this is absent. */
   emerge?: { fromTick: number; untilTick: number };
 
+  /** A custom map's look (the Map Maker, 0166): the surface style and
+   *  rings its maker chose, or for the sun its colour. Shipped worlds
+   *  have their own art and no look. */
+  look?: BodyLook;
+
   /** Set when the body has been destroyed — either smashed into a
    *  target via its own ram plan, or wiped by an incoming impact
    *  (planets don't get destroyed, but asteroids can collide
@@ -215,6 +220,22 @@ export interface RamPlan {
  *  The host is then an ordinary world again — see isRevealedWarpGate. */
 export type BodySecretSuperseded = boolean;
 
+/** See Body.look. */
+export interface BodyLook {
+  surface?: string | null;
+  rings?: boolean;
+  star?: string;
+  /** The custom map's sky behind the system (on the star's look):
+   *  blue | crimson | emerald | violet | amber. Absent: deep space. */
+  backdrop?: string;
+  /** A line of flavour the map maker wrote for this world (plain text). */
+  lore?: string;
+  /** The map maker's SECTOR this world (or its planet) sits in. On a
+   *  custom map it replaces the automatic system everywhere: see
+   *  bodySector in game/systemGrouping.ts. */
+  sector?: { id: string; name: string; color: string };
+}
+
 export type BodySecretKind =
   | 'portal_to_sun'
   | 'warp_gate'
@@ -246,6 +267,12 @@ export interface BodySecret {
   /** True once a real gate body orbits this host, which makes the host
    *  an ordinary world again rather than the gate itself. */
   supersededByGate?: boolean;
+  /** MP custom maps only: the map maker's own name and message for this
+   *  hand-placed discovery, shown verbatim (player-written, never
+   *  translated) in place of the kind's title and flavour. The reward is
+   *  still the kind's. */
+  customName?: string;
+  customText?: string;
 }
 
 /**

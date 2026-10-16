@@ -417,6 +417,12 @@ export const BodyInspector: React.FC = () => {
           );
         })()}
 
+        {/* A custom map's world lore (the Map Maker), as WorldMenuOverlay
+            shows it: one italic line, plain text, multiplayer only. */}
+        {mpActionsTopCard && body.look?.lore && (
+          <div className="body-focus__lore">{body.look.lore}</div>
+        )}
+
         {/* Too massive to move — see bodyImmovableNote. Shown on every
             dwarf, not just ones you hold, so the answer is there while
             you are still deciding where to put the station. */}

@@ -1004,17 +1004,67 @@ async function handleCreateRoom(req, env, session) {
   return json({ room }, { status: 201 });
 }
 
+// POST /api/maps/:id/host {name?, max_players?, password?} — open a lobby
+// on one of your custom maps (the Map Maker). The Commission's: hosting a
+// game on your own map is what it buys; anyone may join one. The room
+// takes a SNAPSHOT of the map, so editing it later never changes a game
+// already set up, and it seats one player per start world.
+async function handleHostMap(req, env, session, mapId) {
+  if (!(await customMaps.mapMakerEnabled(env, session))) return err(404, 'not_found', 'not found');
+  if (!(await customMaps.canHostMaps(env, session))) {
+    return err(402, 'commission_required',
+      "Hosting a game on your own map is part of the Commander's Commission. Anyone can join one.");
+  }
+  const row = await env.DB
+    .prepare('SELECT * FROM custom_maps WHERE id = ? AND owner_user_id = ?')
+    .bind(mapId, session.user_id).first();
+  if (!row) return err(404, 'not_found', 'map not found');
+  const cm = await import('../src/game/customMap.js');
+  let map;
+  try { map = cm.normalizeMap(JSON.parse(row.map_json)); } catch { return err(409, 'bad_map', 'that map could not be read'); }
+  const blockers = cm.hostBlockers(map);
+  if (blockers.length > 0) {
+    return json({ error: { code: 'map_blocked', message: blockers.map(b => b.title).join('; '), blockers } }, { status: 409 });
+  }
+  const body = (await readJson(req)) ?? {};
+  const starts = cm.startWorlds(map).worlds.length;
+  const most = Math.min(MAX_SEATS, starts);
+  const want = Number.isInteger(body.max_players) ? body.max_players : most;
+  const maxPlayers = Math.max(2, Math.min(most, want));
+  const rawName = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : map.name;
+  const name = rawName.slice(0, 60);
+  let passwordHash = null;
+  if (typeof body.password === 'string' && body.password.length > 0) {
+    if (body.password.length < 4) return err(400, 'bad_request', 'password must be at least 4 characters');
+    if (body.password.length > 100) return err(400, 'bad_request', 'password too long');
+    passwordHash = await hashPassword(body.password);
+  }
+  // "Played ×N" counts games that START on the map (lobby.startGame), not
+  // lobbies opened: host-and-delete in a loop no longer inflates it.
+  const room = await createRoom(env, session, {
+    name, maxPlayers, passwordHash, customMap: { id: row.id, json: JSON.stringify(map) },
+  });
+  return json({ room: { ...room, custom_map: { name: map.name, bodies: map.bodies.length } } }, { status: 201 });
+}
+
 /** A room row, its host as first member, and its DO. Shared by the Create
  *  Room form and Quick Join. */
-async function createRoom(env, session, { name, maxPlayers, passwordHash = null, quickJoin = false }) {
+async function createRoom(env, session, { name, maxPlayers, passwordHash = null, quickJoin = false, customMap = null }) {
   const id = newRoomId();
   const inviteCode = newInviteCode();
   const now = Date.now();
 
   await env.DB.batch([
     env.DB
-      .prepare('INSERT INTO rooms (id, name, host_id, status, max_players, created_at, updated_at, invite_code, password_hash, quick_join) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .bind(id, name, session.user_id, 'lobby', maxPlayers, now, now, inviteCode, passwordHash, quickJoin ? 1 : 0),
+      // A Map Maker room is born with its map in the same row: never an
+      // instant as a plain Sol lobby (security review: two writes left a
+      // window where Quick Join could seat a stranger, and a failed second
+      // write left a Sol game behind a custom map's name).
+      .prepare(customMap
+        ? 'INSERT INTO rooms (id, name, host_id, status, max_players, created_at, updated_at, invite_code, password_hash, quick_join, custom_map_id, custom_map_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        : 'INSERT INTO rooms (id, name, host_id, status, max_players, created_at, updated_at, invite_code, password_hash, quick_join) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .bind(...[id, name, session.user_id, 'lobby', maxPlayers, now, now, inviteCode, passwordHash, quickJoin ? 1 : 0,
+        ...(customMap ? [customMap.id, customMap.json] : [])]),
     env.DB
       .prepare('INSERT INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)')
       .bind(id, session.user_id, now),
@@ -1258,13 +1308,26 @@ async function handleJoinRoom(req, env, session, roomId) {
     // Capacity gate: skip for returning players (they're not adding a new
     // seat, just patching one back into the books).
     if (!returningPlayer) {
-      const count = await env.DB.prepare('SELECT COUNT(*) AS c FROM room_members WHERE room_id = ?').bind(roomId).first();
-      if ((count?.c ?? 0) >= room.max_players) return err(403, 'room_full', 'room is full');
+      // The seat count is checked INSIDE the insert (as takeSeat does), so
+      // two joiners racing for the last seat cannot both get it. On a
+      // custom map an extra member was fatal: one more player than start
+      // worlds and the game could not seed (security review).
+      const ins = await env.DB
+        .prepare(
+          `INSERT OR IGNORE INTO room_members (room_id, user_id, joined_at)
+           SELECT ?1, ?2, ?3
+            WHERE (SELECT COUNT(*) FROM room_members WHERE room_id = ?1)
+                < (SELECT max_players FROM rooms WHERE id = ?1)`,
+        )
+        .bind(roomId, session.user_id, Date.now())
+        .run();
+      if ((ins.meta?.changes ?? 0) !== 1) return err(403, 'room_full', 'room is full');
+    } else {
+      await env.DB
+        .prepare('INSERT OR IGNORE INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)')
+        .bind(roomId, session.user_id, Date.now())
+        .run();
     }
-    await env.DB
-      .prepare('INSERT OR IGNORE INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)')
-      .bind(roomId, session.user_id, Date.now())
-      .run();
     // A Quick Join room can be joined from Browse too, and fills (and
     // starts) the same way whichever door the last player came through.
     await admitMember(env, roomId, session);
@@ -1345,6 +1408,7 @@ import * as emailLogin from './emailLogin.js';
 import * as analytics from './analytics.js';
 import * as adminDashboard from './adminDashboard.js';
 import * as store from './store.js';
+import * as customMaps from './customMaps.js';
 import * as skins from './skins.js';
 import * as economy from './economy.js';
 import * as heraldStrip from './heraldStrip.js';
@@ -1367,7 +1431,7 @@ import * as devlog from './devlog.js';
 import * as gameFeed from './gameFeed.js';
 import { carryNamePools } from './namePoolHistory.js';
 
-const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, analytics, configAdmin, emailAdmin, emailLogin, store, skins, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed];
+const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, analytics, configAdmin, emailAdmin, emailLogin, store, skins, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed, customMaps];
 
 function matchPattern(pattern, pathname) {
   if (typeof pattern === 'string') {
@@ -2151,6 +2215,10 @@ export default {
 
       if (req.method === 'GET'  && url.pathname === '/api/rooms') return handleListRooms(req, env);
       if (req.method === 'POST' && url.pathname === '/api/rooms') return handleCreateRoom(req, env, session);
+      {
+        const hm = req.method === 'POST' && url.pathname.match(/^\/api\/maps\/(map_[A-Za-z0-9]+)\/host$/);
+        if (hm) return handleHostMap(req, env, session, hm[1]);
+      }
       if (req.method === 'POST' && url.pathname === '/api/rooms/join-by-code') return handleJoinByCode(req, env, session);
       if (req.method === 'GET'  && url.pathname === '/api/users/me/rooms') return handleListMyRooms(req, env, session);
       if (req.method === 'PUT'  && url.pathname === '/api/users/me/autoload') return handleSetAutoload(req, env, session);

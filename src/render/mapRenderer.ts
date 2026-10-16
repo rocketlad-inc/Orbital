@@ -478,6 +478,45 @@ export function generateStarfield(width: number, height: number): StarfieldCache
 // its world-space rect through worldToCanvas.
 // ------------------------------------------------------------
 
+// ------------------------------------------------------------
+// A custom map's SKY (the Map Maker's "sky behind"): two soft washes
+// in screen space, the same two the editor draws behind its stage, so
+// the system a maker painted against a violet sky plays under one. It
+// does not move with the camera: it is the sky, not a place. Painted
+// once per viewport size and colour, then one drawImage a frame.
+// ------------------------------------------------------------
+
+const BACKDROP_COLOR: Record<string, string> = {
+  blue: '#0f2440', crimson: '#33121a', emerald: '#0f2b22', violet: '#24143a', amber: '#2e2010',
+};
+let backdropCache: { key: string; canvas: HTMLCanvasElement } | null = null;
+
+function drawMapBackdrop(ctx: RenderContext) {
+  const star = ctx.bodies.find(b => b.look?.backdrop);
+  const color = star?.look?.backdrop ? BACKDROP_COLOR[star.look.backdrop] : undefined;
+  if (!color || typeof document === 'undefined') return;
+  const w = ctx.canvas.width, h = ctx.canvas.height;
+  const key = `${w}x${h}|${color}`;
+  if (!backdropCache || backdropCache.key !== key) {
+    const cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    const g = cv.getContext('2d');
+    if (!g) return;
+    const wash = (fx: number, fy: number, fr: number) => {
+      const r = Math.max(w, h) * fr;
+      const grad = g.createRadialGradient(w * fx, h * fy, 0, w * fx, h * fy, r);
+      grad.addColorStop(0, withOpacity(color, 1));
+      grad.addColorStop(1, withOpacity(color, 0));
+      g.fillStyle = grad;
+      g.fillRect(0, 0, w, h);
+    };
+    wash(0.3, 0.3, 0.62);
+    wash(0.75, 0.7, 0.55);
+    backdropCache = { key, canvas: cv };
+  }
+  ctx.ctx.drawImage(backdropCache.canvas, 0, 0);
+}
+
 const NEBULA_TEX_SIZE = 256;
 /** World-space radius of the wash. */
 const NEBULA_WORLD_R = 30000;
@@ -571,6 +610,7 @@ function drawSystemNebulae(ctx: RenderContext) {
 export function drawStarfield(cache: StarfieldCache | null, ctx: RenderContext) {
   if (!cache) return;
 
+  drawMapBackdrop(ctx);
   drawSystemNebulae(ctx);
 
   const cw = ctx.canvas.width;
@@ -1059,6 +1099,10 @@ const CORONA_CACHE_CAP = 6;
  * Unknown stars keep the procedural face and borrow Sol's glow.
  */
 interface StarLook {
+  /** Cache key for the corona (a custom sun's colour); defaults to photo. */
+  key?: string;
+  /** A custom sun: its photosphere is recoloured toward this. */
+  tint?: string;
   photo: string;
   base: [string, string, string];      // corona radial: inner, mid, outer
   lobes: [string, string];             // the two counter-rotating layers
@@ -1093,8 +1137,49 @@ const STAR_LOOK: Record<string, StarLook> = {
     flare: ['142, 186, 255', '232, 242, 255'],
   },
 };
+/** The Map Maker's four star presets, each the real star it was named
+ *  after: those keep their photographed, hand-tuned looks. */
+const PRESET_STAR: Record<string, string> = {
+  '#ffd180': 'sol', '#fff1d6': 'centauri_a', '#ff9b5e': 'centauri_b', '#a9c8ff': 'hde_226868',
+};
+const customStarLooks = new Map<string, StarLook>();
+/** ANY COLOUR A MAKER PICKS. A custom sun keeps the nearest real star's
+ *  surface (its texture), recoloured toward the chosen colour, and wears
+ *  a corona, glow and flares built from that colour: a green sun glows
+ *  green. One look per colour, cached; the corona caches by its key. */
+function customStarLook(hex: string): StarLook {
+  const hit = customStarLooks.get(hex);
+  if (hit) return hit;
+  const n = parseInt(hex.slice(1), 16);
+  const rgb: [number, number, number] = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  const toward = (t: number, to: number) => rgb.map(c => Math.round(c + (to - c) * t)).join(', ');
+  const look: StarLook = {
+    key: `custom${hex}`,
+    tint: hex,
+    photo: nearestStarLook(hex),
+    base: [toward(0.35, 255), toward(0, 0), toward(0.18, 0)],
+    lobes: [`rgba(${toward(0.25, 255)}, 0.10)`, `rgba(${toward(0, 0)}, 0.09)`],
+    flare: [toward(0, 0), toward(0.75, 255)],
+  };
+  customStarLooks.set(hex, look);
+  return look;
+}
 function starLookOf(body: Body): StarLook | null {
+  const hex = body.look?.star?.toLowerCase();
+  if (hex) return STAR_LOOK[PRESET_STAR[hex]] ?? customStarLook(hex);
   return STAR_LOOK[templateIdOf(body.id)] ?? null;
+}
+
+/** Which real star a custom sun's colour reads as: blue, white, orange
+ *  or yellow, by its warmth and its blue. */
+function nearestStarLook(hex: string): string {
+  const n = parseInt(String(hex).replace('#', ''), 16);
+  if (!Number.isFinite(n)) return 'sol';
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  if (b > r) return 'hde_226868';
+  if (b > 200 && g > 220) return 'centauri_a';
+  if (g < 170) return 'centauri_b';
+  return 'sol';
 }
 
 function paintCoronaLayer(
@@ -1142,7 +1227,7 @@ function getCoronaLayers(coreR: number, look: StarLook = STAR_LOOK.sol): [HTMLCa
   // changes only repaint on bucket crossings, not every frame.
   let size = 64;
   while (size < coreR * 4 && size < 2048) size *= 2;
-  const key = `${size}|${look.photo}`;
+  const key = `${size}|${look.key ?? look.photo}`;
   const hit = coronaCache.get(key);
   if (hit !== undefined) {
     coronaCache.delete(key);
@@ -1270,6 +1355,17 @@ export function drawStarBody(
     c.translate(canvasPos.x, canvasPos.y);
     c.rotate(nowMs * 0.0000042);
     c.drawImage(photo, -coreR, -coreR, coreR * 2, coreR * 2);
+    // A custom sun's colour: hue and saturation from the maker's pick,
+    // light and shadow from the photographed surface underneath.
+    const tint = starLookOf(body)?.tint;
+    if (tint) {
+      c.globalCompositeOperation = 'color';
+      c.globalAlpha = 0.85;
+      c.fillStyle = tint;
+      c.beginPath();
+      c.arc(0, 0, coreR, 0, Math.PI * 2);
+      c.fill();
+    }
     c.restore();
     return;
   }
@@ -1716,7 +1812,8 @@ const RING_RX = 1.9;         // × body radius
 const RING_RY = 0.55;
 
 function bodyHasRings(body: Body): boolean {
-  return idMatchesTemplate(body.id, 'saturn') || idMatchesTemplate(body.id, 'uranus');
+  return idMatchesTemplate(body.id, 'saturn') || idMatchesTemplate(body.id, 'uranus')
+    || !!body.look?.rings;
 }
 
 function drawRingArcs(
@@ -9394,7 +9491,10 @@ function drawRegionLabel(
   // the ground it's printed on.
   // NB: lighten() takes a channel MULTIPLIER, not a 0..1 blend — so this
   // ramps 1.0 (untouched) -> 1.5 (brighter), never below 1.
-  const ink = owned ? lighten(color, lerp(1, 1.5, intensity)) : REGION_NEUTRAL;
+  // An authored sector nobody holds keeps a hint of the map maker's own
+  // colour on its NAME (at the neutral alphas below); the fill stays the
+  // neutral grey every unheld region wears.
+  const ink = owned ? lighten(color, lerp(1, 1.5, intensity)) : (region.accent ?? REGION_NEUTRAL);
   const titleAlpha = owned ? lerp(0.85, 1, intensity) : lerp(0.5, 0.8, intensity);
   const subAlpha = owned ? lerp(0.6, 0.9, intensity) : lerp(0.45, 0.75, intensity);
 

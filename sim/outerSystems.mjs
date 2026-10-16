@@ -242,7 +242,7 @@ check('the client draws the same three outer groups',
 check('the client files a rogue by the same outermost-band walk',
   /outerBands\.find\(x => reach >= x\.inner\)/.test(clientSrc));
 check('the client drops the satellite test too',
-  /isBeltable\(b\) && !adopted\.has\(b\.id\)/.test(clientSrc));
+  /isBeltable\(b(, custom)?\) && !adopted\.has\(b\.id\)/.test(clientSrc));
 check('the client folds a moon into its world\'s belt',
   /const rootBelt = belts\.byBody\.get\(rawRoot\)/.test(clientSrc));
 

@@ -11,6 +11,7 @@ export { review } from './review';
 export { guide } from './guide';
 export { data } from './data';
 export { helpers } from './helpers';
+export { mapmaker } from './mapmaker';
 
 /** Which key prefixes each area may use. */
 export const PART_PREFIXES: Record<string, string[]> = {
@@ -22,4 +23,5 @@ export const PART_PREFIXES: Record<string, string[]> = {
   guide: ['tutorial.', 'howto.', 'site.', 'banner.', 'errorboundary.', 'saveload.', 'mp.', 'landing.'],
   data: ['data.'],
   helpers: ['helper.'],
+  mapmaker: ['mm.'],
 };

@@ -1240,6 +1240,13 @@
   color: var(--mp-hostile);
   border-color: color-mix(in srgb, var(--mp-hostile) 45%, transparent);
 }
+/* A room hosted on a custom map: its name and its maker's pitch. */
+.lobby-custom-map { margin-bottom: 10px; }
+.lobby-custom-map__name { font-size: 13px; font-weight: 700; color: #e2e8f0; letter-spacing: 0.04em; }
+.lobby-custom-map__blurb {
+  font-size: 11px; font-style: italic; color: #94a3b8; line-height: 1.45;
+  margin-top: 3px; white-space: pre-line; overflow-wrap: anywhere;
+}
 .lobby-panel__title {
   min-width: 0;
   overflow: hidden;

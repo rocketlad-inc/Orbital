@@ -791,6 +791,17 @@ function RoomDetail({
         </div>
       )}
 
+      {snap.custom_map && (
+        <div className="lobby-custom-map">
+          <div className="mp-section-title">{t('roomlobby.customMap')}</div>
+          {/* The map's name and pitch are player-written: plain text. */}
+          <div className="lobby-custom-map__name">{snap.custom_map.name}</div>
+          {snap.custom_map.blurb && (
+            <div className="lobby-custom-map__blurb">{snap.custom_map.blurb}</div>
+          )}
+        </div>
+      )}
+
       <div className="mp-section-title">{t('roomlobby.status')}</div>
       <div className="mp-row" style={{ justifyContent: 'space-between' }}>
         <span style={{ fontSize: 11 }}>
@@ -1329,7 +1340,7 @@ function StartingBodyPicker({
             >
               <div className="lobby-body-card__name">{opt.name}</div>
               <div className="lobby-body-card__sub">
-                {opt.type}{opt.parent && opt.parent !== 'sol' ? ` · ${opt.parent}` : ''}
+                {opt.type}{opt.parent && opt.parent !== 'sol' ? ` · ${opt.parent_name ?? opt.parent}` : ''}
               </div>
               <div className="lobby-body-card__yields">
                 {opt.yield.metal > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.M }}>M{opt.yield.metal}</span>}
