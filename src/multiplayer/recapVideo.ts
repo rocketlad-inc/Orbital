@@ -10,9 +10,10 @@
 // card with where to play. The browser's own MediaRecorder writes it
 // (MP4 where Chrome offers it, WebM otherwise; TikTok takes both).
 //
-// MediaRecorder stamps frames by wall clock, so recording runs in REAL
-// TIME: a 25-second clip takes 25 seconds. Frames are still drawn on a
-// fixed step, so a busy machine drops nothing from the clip itself.
+// MediaRecorder stamps frames by wall clock, so recording takes at least
+// REAL TIME: a 25-second clip takes 25 seconds plus however long the
+// frames take to draw. The recorder is paused while each frame is drawn,
+// so a slow machine records a slower RUN, never a slower CLIP.
 //
 // TikTok covers the top tabs, the right-hand buttons and the bottom
 // caption with its own UI; every word here stays out of those zones
@@ -258,18 +259,26 @@ export async function recordVerticalVideo(o: RecordVideoOptions): Promise<{ blob
     }
   };
 
+  // THE RECORDER IS PAUSED WHILE A FRAME IS DRAWN. MediaRecorder stamps
+  // frames by the wall clock, so a frame that took 90ms to draw on a slow
+  // machine came out 90ms long: the first clip, recorded in headless
+  // Chrome, ran 70 seconds instead of 25, in slow motion. Paused time is
+  // not recorded, so each frame now gets exactly its 1/30s on the
+  // timeline however long it took to draw.
+  const pause = () => { if (rec.state === 'recording') rec.pause(); };
+  const resume = () => { if (rec.state === 'paused') rec.resume(); };
   rec.start(1000);
-  const start = performance.now();
+  pause();
   for (let k = 0; k < total; k++) {
-    if (o.cancelled?.()) { rec.stop(); await stopped; return null; }
+    if (o.cancelled?.()) { resume(); rec.stop(); await stopped; return null; }
     drawFrame(k);
+    resume();
     track.requestFrame?.();
+    await new Promise<void>(r => setTimeout(r, FRAME_MS));
+    pause();
     o.onProgress?.((k + 1) / total);
-    // Real time: the recorder stamps frames by the wall clock.
-    const due = start + (k + 1) * FRAME_MS;
-    const wait = due - performance.now();
-    await new Promise<void>(r => setTimeout(r, Math.max(0, wait)));
   }
+  resume();
   rec.stop();
   await stopped;
   track.stop();
