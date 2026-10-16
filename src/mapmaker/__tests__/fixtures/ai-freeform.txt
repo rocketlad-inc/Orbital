@@ -1,0 +1,172 @@
+Here's a fictional star system for your space strategy game. It's built around a cooling orange dwarf called Kaelor, with scorched rocks close in, a living world in the middle, a shattered belt, and dark ice giants out at the edge.
+
+```json
+{
+  "system": {
+    "id": "ashen-lantern",
+    "name": "Ashen Lantern",
+    "star": {
+      "name": "Kaelor",
+      "spectralClass": "K3V",
+      "luminosity": 0.42,
+      "colorHex": "#ffb36b"
+    },
+    "bodies": [
+      {
+        "id": "cinder",
+        "name": "Cinder",
+        "type": "scorched_rock",
+        "orbitAU": 0.38,
+        "diameterKm": 4870,
+        "moons": [],
+        "resources": { "iron": 9, "silicon": 6, "sulfur": 5 },
+        "playerStart": false,
+        "description": "A glassy, airless world that glows faintly on the night side."
+      },
+      {
+        "id": "veyra",
+        "name": "Veyra",
+        "type": "volcanic",
+        "orbitAU": 0.61,
+        "diameterKm": 6250,
+        "moons": [
+          {
+            "id": "ember",
+            "name": "Ember",
+            "diameterKm": 1100,
+            "resources": { "sulfur": 4, "volatiles": 3 }
+          }
+        ],
+        "resources": { "iron": 7, "titanium": 5, "sulfur": 8 },
+        "playerStart": false,
+        "description": "Lava rivers braid the surface, and the crust hides rich titanium veins."
+      },
+      {
+        "id": "thessaly",
+        "name": "Thessaly",
+        "type": "temperate",
+        "orbitAU": 1.0,
+        "diameterKm": 12700,
+        "moons": [
+          {
+            "id": "lune_prime",
+            "name": "Lune Prime",
+            "diameterKm": 3470,
+            "resources": { "water_ice": 6, "silicon": 4 }
+          },
+          {
+            "id": "tessel",
+            "name": "Tessel",
+            "diameterKm": 900,
+            "resources": { "organics": 3 }
+          }
+        ],
+        "resources": { "water_ice": 6, "iron": 6, "organics": 5, "silicon": 4 },
+        "playerStart": true,
+        "description": "Deep teal oceans under thin white cloud. The most balanced world in the system."
+      },
+      {
+        "id": "halcyon",
+        "name": "Halcyon",
+        "type": "desert",
+        "orbitAU": 2.7,
+        "diameterKm": 8900,
+        "moons": [
+          {
+            "id": "sable",
+            "name": "Sable",
+            "diameterKm": 1600,
+            "resources": { "silicon": 5, "iron": 3 }
+          },
+          {
+            "id": "glint",
+            "name": "Glint",
+            "diameterKm": 620,
+            "resources": { "helium3": 2 }
+          }
+        ],
+        "resources": { "silicon": 8, "iron": 5, "helium3": 3 },
+        "playerStart": true,
+        "description": "Wind-carved dunes of crystal sand that catch the light like glass."
+      },
+      {
+        "id": "orrin",
+        "name": "Orrin",
+        "type": "gas_giant",
+        "orbitAU": 4.5,
+        "diameterKm": 116000,
+        "moons": [
+          { "id": "vael", "name": "Vael", "diameterKm": 3100, "resources": { "water_ice": 5 } },
+          { "id": "sorrow", "name": "Sorrow", "diameterKm": 1400, "resources": { "organics": 4 } },
+          { "id": "quill", "name": "Quill", "diameterKm": 800, "resources": { "volatiles": 4 } },
+          { "id": "nim", "name": "Nim", "diameterKm": 500, "resources": { "exotic_crystal": 1 } }
+        ],
+        "resources": { "helium3": 7, "hydrogen": 9, "volatiles": 4 },
+        "playerStart": false,
+        "description": "A banded giant whose storms can be seen from every other world."
+      },
+      {
+        "id": "drift",
+        "name": "Drift",
+        "type": "ice_giant",
+        "orbitAU": 7.2,
+        "diameterKm": 50700,
+        "moons": [
+          { "id": "hollow", "name": "Hollow", "diameterKm": 1200, "resources": { "water_ice": 7 } },
+          { "id": "frost", "name": "Frost", "diameterKm": 900, "resources": { "water_ice": 5, "volatiles": 2 } },
+          { "id": "wicker", "name": "Wicker", "diameterKm": 300, "resources": { "exotic_crystal": 2 } }
+        ],
+        "resources": { "helium3": 4, "water_ice": 8, "hydrogen": 6 },
+        "playerStart": true,
+        "description": "A pale blue giant tilted on its side, with a faint ring of frozen methane."
+      },
+      {
+        "id": "nocturne",
+        "name": "Nocturne",
+        "type": "frozen_dwarf",
+        "orbitAU": 11.0,
+        "diameterKm": 2370,
+        "moons": [
+          { "id": "hush", "name": "Hush", "diameterKm": 450, "resources": { "water_ice": 4 } }
+        ],
+        "resources": { "water_ice": 5, "nitrogen": 6, "organics": 2 },
+        "playerStart": false,
+        "description": "A frozen dwarf world whose surface is still cooling from its first light."
+      },
+      {
+        "id": "umbra",
+        "name": "Umbra",
+        "type": "dark_ice",
+        "orbitAU": 18.5,
+        "diameterKm": 1800,
+        "moons": [
+          { "id": "wisp", "name": "Wisp", "diameterKm": 180, "resources": { "exotic_crystal": 3 } }
+        ],
+        "resources": { "exotic_crystal": 5, "water_ice": 3, "helium3": 1 },
+        "playerStart": false,
+        "description": "The last world in the system. Its surface absorbs nearly all the light that reaches it."
+      }
+    ],
+    "asteroidBelts": [
+      {
+        "id": "morrow_shards",
+        "name": "The Morrow Shards",
+        "innerAU": 1.6,
+        "outerAU": 2.3,
+        "density": "dense",
+        "resources": { "iron": 8, "nickel": 6, "platinum": 3, "exotic_crystal": 1 },
+        "description": "The debris of a world that never finished forming. Mining here is dangerous and rewarding."
+      }
+    ]
+  }
+}
+```
+
+A few notes on the design:
+
+- **Player starts:** Thessaly, Halcyon, and Drift are flagged with `playerStart: true`. Thessaly is the balanced home world, Halcyon is the silicon and industry start, and Drift is the fuel start, which makes it a good fit for a player who plans to build a big fleet early.
+- **Resource scale:** every resource is a 1 to 10 abundance rating, so you can map those numbers directly to extraction rates or yields.
+- **Belt placement:** the Morrow Shards sit between Thessaly and Halcyon, which puts them in the middle of the system and makes them contested. Platinum and exotic crystal are rare enough that they're worth fighting over.
+- **Rare resources:** exotic crystal shows up only on Nim, Wicker, Wisp, Umbra, and the Shards, so every expedition out to the edge has a reason to exist.
+
+If you tell me your engine's schema or naming conventions, I can reshape this to match. I can also rebalance the resources for a particular faction style or add a hazard field, such as radiation or gravity wells, to each body.

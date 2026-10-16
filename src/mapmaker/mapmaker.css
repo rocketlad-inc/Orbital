@@ -577,3 +577,17 @@ body:has(.stg-banner) .mm-start, body:has(.stg-banner) .mm-work { top: 23px; }
 .mm-look.is-two .mm-note { grid-column: 1 / -1; }
 .mm-look__face { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; }
 .mm-look__face figcaption { font-size: 9.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--mm-muted); }
+
+/* Import: make a map with an AI chat, or open a map file */
+.mm-tpl__art.is-import { background: radial-gradient(circle at 50% 50%, transparent 0 30px, #b98cff44 31px, transparent 32px), radial-gradient(ellipse at 50% 50%, #161a30, var(--mm-ground) 72%); }
+.mm-tpl__braces { position: absolute; right: 14px; bottom: 10px; font: 15px 'Chivo Mono', monospace; color: #b98cff; letter-spacing: .1em; }
+.mm-imp { width: 920px; transition: border-color .12s, box-shadow .12s; }
+.mm-imp.is-over { border-color: var(--mm-teal); box-shadow: 0 0 0 2px #4ecdc466, 0 20px 60px #000c; }
+.mm-imp__steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; color: var(--mm-text2); font: 12px/1.5 'Chivo Mono', monospace; }
+.mm-imp__prompt summary { cursor: pointer; color: var(--mm-muted); font: 11px 'Chivo Mono', monospace; }
+.mm-imp__prompt pre { margin: 8px 0 0; max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-word; padding: 10px; border-radius: 8px; background: var(--mm-ground); border: 1px solid var(--mm-line-soft); color: var(--mm-text2); font: 10.5px/1.5 'Chivo Mono', monospace; }
+.mm-imp__text { font: 11.5px/1.5 'Chivo Mono', monospace; resize: vertical; min-height: 160px; }
+.mm-banner.is-import { align-items: flex-start; max-height: 38vh; overflow-y: auto; }
+.mm-banner.is-import > div { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.mm-banner.is-import b { font-weight: 400; }
+.mm-banner.is-import ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 2px; }

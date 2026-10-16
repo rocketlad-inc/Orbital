@@ -1,0 +1,296 @@
+Here is TRAPPIST-1 for seven players. Real data used: the planets' true orbit ratios (b through h, from 0.0115 to 0.0619 AU), real sizes scaled so Earth = 3 (b 1.12, c 1.10, d 0.79, e 0.92, f 1.05, g 1.13, h 0.76 Earth radii), and the real order of surfaces: scorched b and c, the temperate d to g, an icy h. The whole real system is only about 0.06 AU across, which is smaller than the game's 60-unit minimum orbit. So I scaled all orbits by one factor (b at 100 units), which keeps the true spacing. The sun is a tiny, dim red dwarf, so I used the minimum size and mass the game allows. The real system has no known moons, belt or outer planets. I added a few clearly labelled hypothetical ones so every player has worlds to fight over.
+
+{
+  "name": "TRAPPIST-1: Seven Worlds",
+  "blurb": "Seven Earth-sized worlds packed tighter than Mercury's orbit around a dim red dwarf. Each player starts on one real planet, b through h. Hypothetical moons, rocks and a distant ice giant are there to contest.",
+  "sun": {
+    "name": "TRAPPIST-1",
+    "color": "#ff5a2e",
+    "size": 30,
+    "mass": 0.4
+  },
+  "settings": {
+    "backdrop": "crimson"
+  },
+  "sectors": [
+    { "name": "Planet b Lane", "inner": 70, "outer": 120 },
+    { "name": "Planet c Lane", "inner": 120, "outer": 165 },
+    { "name": "Planet d Lane", "inner": 165, "outer": 222 },
+    { "name": "Planet e Lane", "inner": 222, "outer": 293 },
+    { "name": "Planet f Lane", "inner": 293, "outer": 370 },
+    { "name": "Planet g Lane", "inner": 370, "outer": 470 },
+    { "name": "Planet h Lane", "inner": 470, "outer": 600 },
+    { "name": "The Cold Debris", "inner": 600, "outer": 900 },
+    { "name": "The Dark Beyond", "inner": 900, "outer": 3000 }
+  ],
+  "bodies": [
+    {
+      "id": "tb",
+      "name": "TRAPPIST-1 b",
+      "type": "terrestrial",
+      "parent": "sun",
+      "orbit": 100,
+      "angle": 0.3,
+      "radius": 3.35,
+      "surface": "lava",
+      "yields": { "metal": 6, "credits": 2, "science": 3 },
+      "start": true,
+      "lore": "Innermost world, one face always turned to the star. Its dayside is hot enough to melt rock."
+    },
+    {
+      "id": "tc",
+      "name": "TRAPPIST-1 c",
+      "type": "terrestrial",
+      "parent": "sun",
+      "orbit": 137,
+      "angle": 1.2,
+      "radius": 3.29,
+      "surface": "toxic",
+      "yields": { "metal": 5, "credits": 3, "science": 3 },
+      "start": true,
+      "lore": "A rocky, Venus-like world wrapped in a thick, choking atmosphere."
+    },
+    {
+      "id": "td",
+      "name": "TRAPPIST-1 d",
+      "type": "terrestrial",
+      "parent": "sun",
+      "orbit": 193,
+      "angle": 2.3,
+      "radius": 2.36,
+      "surface": "desert",
+      "yields": { "metal": 4, "credits": 3, "science": 4 },
+      "start": true,
+      "lore": "The smallest of the warm worlds, near the hot edge of where liquid water could exist."
+    },
+    {
+      "id": "te",
+      "name": "TRAPPIST-1 e",
+      "type": "terrestrial",
+      "parent": "sun",
+      "orbit": 253,
+      "angle": 3.4,
+      "radius": 2.76,
+      "surface": "verdant",
+      "yields": { "metal": 3, "credits": 4, "science": 4 },
+      "start": true,
+      "lore": "Dense and rocky, and the most Earth-like of the seven. Astronomers watch it closest for signs of life."
+    },
+    {
+      "id": "tf",
+      "name": "TRAPPIST-1 f",
+      "type": "terrestrial",
+      "parent": "sun",
+      "orbit": 334,
+      "angle": 4.3,
+      "radius": 3.13,
+      "surface": "ocean",
+      "yields": { "metal": 3, "credits": 4, "science": 4 },
+      "start": true,
+      "lore": "Probably rich in water, with deep oceans or thick ice beneath a hazy sky."
+    },
+    {
+      "id": "tg",
+      "name": "TRAPPIST-1 g",
+      "type": "terrestrial",
+      "parent": "sun",
+      "orbit": 406,
+      "angle": 5.2,
+      "radius": 3.39,
+      "surface": "ocean",
+      "yields": { "metal": 2, "credits": 5, "science": 4 },
+      "start": true,
+      "lore": "The largest of the seven, a possible water world under a deep atmosphere."
+    },
+    {
+      "id": "th",
+      "name": "TRAPPIST-1 h",
+      "type": "terrestrial",
+      "parent": "sun",
+      "orbit": 536,
+      "angle": 6.0,
+      "radius": 2.26,
+      "surface": "ice",
+      "yields": { "metal": 3, "credits": 3, "science": 5 },
+      "start": true,
+      "lore": "The outermost known world, small and frozen, where noon is as dim as a deep twilight."
+    },
+    {
+      "id": "dmoon",
+      "name": "Tide (hypothetical)",
+      "type": "moon",
+      "parent": "td",
+      "orbit": 8,
+      "angle": 0.8,
+      "radius": 1,
+      "surface": "barren",
+      "yields": { "metal": 3, "credits": 1, "science": 1 },
+      "lore": "No moon of d has been found. If one existed, the neighbouring worlds' pull would keep it hot and cracked."
+    },
+    {
+      "id": "emoon",
+      "name": "Echo (hypothetical)",
+      "type": "moon",
+      "parent": "te",
+      "orbit": 9,
+      "angle": 2.6,
+      "radius": 1.1,
+      "surface": "rocky",
+      "yields": { "metal": 2, "credits": 2, "science": 2 },
+      "lore": "A guessed-at companion to e, close enough to see its oceans by the light of the red sun."
+    },
+    {
+      "id": "gmoon",
+      "name": "Mirror (hypothetical)",
+      "type": "moon",
+      "parent": "tg",
+      "orbit": 10,
+      "angle": 4.0,
+      "radius": 1.3,
+      "surface": "ice",
+      "yields": { "metal": 1, "credits": 2, "science": 3 },
+      "secret": "ancient_databank",
+      "secretName": "The Resonance Archive",
+      "secretText": "Seven worlds in a perfect chain, and someone recorded every orbit."
+    },
+    {
+      "id": "hmoon",
+      "name": "Frost Wake (hypothetical)",
+      "type": "moon",
+      "parent": "th",
+      "orbit": 9,
+      "angle": 1.7,
+      "radius": 1,
+      "surface": "ice",
+      "yields": { "metal": 2, "credits": 1, "science": 3 },
+      "lore": "A frozen chip of h, far enough out to escape the star's tidal grip."
+    },
+    {
+      "id": "ash1",
+      "name": "Cinder Shard",
+      "type": "asteroid",
+      "parent": "sun",
+      "orbit": 168,
+      "angle": 3.9,
+      "radius": 0.6,
+      "yields": { "metal": 8, "credits": 1, "science": 0 },
+      "lore": "A loose scrap of rock, torn out of the chain by the pull of the inner worlds."
+    },
+    {
+      "id": "ash2",
+      "name": "Lagrange Fragment",
+      "type": "asteroid",
+      "parent": "sun",
+      "orbit": 295,
+      "angle": 0.9,
+      "radius": 0.7,
+      "yields": { "metal": 7, "credits": 2, "science": 1 },
+      "secret": "derelict_warship",
+      "secretName": "The Drifting Ark",
+      "secretText": "A survey ship that never finished its count of the seven."
+    },
+    {
+      "id": "ash3",
+      "name": "Chain Link",
+      "type": "asteroid",
+      "parent": "sun",
+      "orbit": 440,
+      "angle": 2.0,
+      "radius": 0.7,
+      "yields": { "metal": 7, "credits": 1, "science": 1 }
+    },
+    {
+      "id": "ash4",
+      "name": "Dim Stone",
+      "type": "asteroid",
+      "parent": "sun",
+      "orbit": 590,
+      "angle": 3.3,
+      "radius": 0.8,
+      "yields": { "metal": 8, "credits": 2, "science": 0 }
+    },
+    {
+      "id": "belt1",
+      "name": "Outer Rubble",
+      "type": "asteroid",
+      "parent": "sun",
+      "orbit": 680,
+      "angle": 4.8,
+      "radius": 0.9,
+      "yields": { "metal": 9, "credits": 2, "science": 0 }
+    },
+    {
+      "id": "belt2",
+      "name": "Red Gravel",
+      "type": "asteroid",
+      "parent": "sun",
+      "orbit": 740,
+      "angle": 1.5,
+      "radius": 0.7,
+      "yields": { "metal": 8, "credits": 1, "science": 1 }
+    },
+    {
+      "id": "rock1",
+      "name": "Gold Crumb",
+      "type": "rock",
+      "parent": "sun",
+      "orbit": 640,
+      "angle": 5.7,
+      "mineral": { "kind": "gold", "tons": 1800 }
+    },
+    {
+      "id": "rock2",
+      "name": "Iron Splinter",
+      "type": "rock",
+      "parent": "sun",
+      "orbit": 710,
+      "angle": 2.9,
+      "mineral": { "kind": "metal", "tons": 3200 }
+    },
+    {
+      "id": "rock3",
+      "name": "Dull Nugget",
+      "type": "rock",
+      "parent": "sun",
+      "orbit": 790,
+      "angle": 0.2,
+      "mineral": { "kind": "metal", "tons": 2400 }
+    },
+    {
+      "id": "rock4",
+      "name": "Ember Fleck",
+      "type": "rock",
+      "parent": "sun",
+      "orbit": 365,
+      "angle": 5.9,
+      "mineral": { "kind": "gold", "tons": 900 }
+    },
+    {
+      "id": "wanderer",
+      "name": "The Wanderer",
+      "type": "dwarf",
+      "parent": "sun",
+      "orbit": 1050,
+      "angle": 3.0,
+      "radius": 1.4,
+      "surface": "barren",
+      "yields": { "metal": 4, "credits": 2, "science": 3 },
+      "secret": "deep_cache",
+      "secretName": "Outpost Zero",
+      "secretText": "Supplies stashed here long before anyone reached the seven worlds.",
+      "lore": "A hypothetical dwarf far beyond h, a long way out and almost never lit."
+    },
+    {
+      "id": "warden",
+      "name": "Far Warden (hypothetical)",
+      "type": "ice-giant",
+      "parent": "sun",
+      "orbit": 1600,
+      "angle": 4.6,
+      "radius": 5,
+      "surface": "ice",
+      "yields": { "metal": 1, "credits": 3, "science": 8 },
+      "lore": "No giant has been found around TRAPPIST-1, but a cold one this far out would be hard to see."
+    }
+  ]
+}

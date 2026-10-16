@@ -20,7 +20,7 @@ import { canBuyHere, openCommissionInBrowser } from '../multiplayer/commission';
 import { useIsMobile } from '../hooks/useIsMobile';
 import {
   type CustomMap, type MapIssue, type MapBodyType, type MapBackdrop, blankMap, normalizeMap, checkMap, generateMap, startWorlds, sectorOf,
-  NAME_THEMES, TYPE_INFO,
+  NAME_THEMES, TYPE_INFO, MAX_BODIES,
 } from '../game/customMap';
 import { getLang, t, tn, type Key } from '../i18n/core';
 import { useI18n } from '../i18n/react';
@@ -34,6 +34,8 @@ import {
 } from './ops';
 import { fairness } from './fairness';
 import type { Scale } from './geometry';
+import { importMapText, exportMapText, exportFileName, IMPORT_MAX_CHARS, type ImportNote, type ImportError } from './importMap';
+import { buildAiPrompt } from './aiPrompt';
 
 type Summary = {
   id: string; name: string; share_code: string; updated_ms: number; hosted_count: number;
@@ -232,6 +234,7 @@ function HostPanel({
   const [pubBusy, setPubBusy] = useState(false);
   const [pubError, setPubError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [aiCopied, setAiCopied] = useState(false);
   const blockers = checkMap(map).filter(i => i.level === 'block');
   const sellable = canBuyHere();
   const published = !!summary?.published;
@@ -306,6 +309,16 @@ function HostPanel({
               )}
               {published && <p className="mm-note">{t('mm.pub.live', { remixed: summary?.remix_count ?? 0, hosted: summary?.hosted_count ?? 0 })}</p>}
               {pubError && <p className="mm-note is-bad">{pubError}</p>}
+            </section>
+            <section className="mm-panel">
+              <h3>{t('mm.file.title')}</h3>
+              <div className="mm-row mm-row--wrap">
+                <button className="mm-btn" onClick={() => downloadMap(map)}>{t('mm.file.download')}</button>
+                <button className="mm-btn" onClick={() => { navigator.clipboard?.writeText(buildAiPrompt(normalizeMap(map))); setAiCopied(true); }}>
+                  {aiCopied ? t('mm.file.aiCopied') : t('mm.file.ai')}
+                </button>
+              </div>
+              <p className="mm-note">{t('mm.file.note')}</p>
             </section>
           </div>
           <section className="mm-panel is-gold">
@@ -461,6 +474,102 @@ function GalleryPeek({ item, map, busy, onRemix, onClose, canModerate, onTakedow
   );
 }
 
+/** The map as a .json file, downloaded. */
+function downloadMap(map: CustomMap) {
+  const url = URL.createObjectURL(new Blob([exportMapText(map)], { type: 'application/json' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = exportFileName(map);
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+/** Notes too small to tell the author about. */
+const QUIET_NOTES: ReadonlySet<string> = new Set(['parentByName']);
+
+/** One line of the import report, in the player's language. */
+function importNoteText(n: ImportNote): string {
+  const more = n.names && n.n > n.names.length ? ` +${n.n - n.names.length}` : '';
+  return t(`mm.imp.note.${n.code}` as Key, { n: n.n, names: (n.names ?? []).join(', ') + more, max: MAX_BODIES });
+}
+
+/** Make a map with any AI chat, or open a map file: copy the prompt,
+ *  paste the answer (or pick or drop a file), open it in the editor. */
+function ImportPanel({ onOpen, onClose }: { onOpen: OpenMap; onClose: () => void }) {
+  useI18n();
+  const [text, setText] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [over, setOver] = useState(false);
+  const [showPrompt, setShowPrompt] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const modal = useModal(onClose);
+  const prompt = useMemo(() => buildAiPrompt(), []);
+
+  const fail = (e: ImportError, detail?: string) => setError(t(`mm.imp.err.${e}` as Key, { detail: detail ?? '' }));
+  const readFile = async (file: File | undefined | null) => {
+    if (!file) return;
+    if (file.size > IMPORT_MAX_CHARS) { fail('tooBig'); return; }
+    setError(null);
+    setText(await file.text());
+  };
+  const go = () => {
+    const r = importMapText(text);
+    if (!r.ok) { fail(r.error, r.detail); return; }
+    // Opened with changes the server does not have, so it autosaves into
+    // "Your maps" like any edit; the report says what was altered.
+    onOpen(r.map, null, { dirty: true, notes: r.notes.filter(n => !QUIET_NOTES.has(n.code)) });
+  };
+  const copy = async () => {
+    // No clipboard (an in-app browser, a denied permission): show the
+    // prompt so it can be selected and copied by hand.
+    try { await navigator.clipboard.writeText(prompt); setCopied(true); } catch { setCopied(false); setShowPrompt(true); }
+  };
+
+  return (
+    <div className="mm-modal" role="dialog" aria-label={t('mm.imp.title')} {...modal}>
+      <div className={`mm-modal__card mm-imp${over ? ' is-over' : ''}`}
+        onDragOver={(e) => { e.preventDefault(); setOver(true); }}
+        onDragLeave={(e) => { if (e.currentTarget === e.target) setOver(false); }}
+        onDrop={(e) => { e.preventDefault(); setOver(false); void readFile(e.dataTransfer.files?.[0]); }}>
+        <div className="mm-modal__head"><b>{t('mm.imp.title')}</b><button className="mm-icon" aria-label={t('mm.close')} onClick={onClose}>✕</button></div>
+        <div className="mm-modal__cols">
+          <section className="mm-panel">
+            <h3>{t('mm.imp.aiTitle')}</h3>
+            <ol className="mm-imp__steps">
+              <li>{t('mm.imp.step1')}</li>
+              <li>{t('mm.imp.step2')}</li>
+              <li>{t('mm.imp.step3')}</li>
+            </ol>
+            <button className="mm-btn is-primary is-wide" onClick={copy}>{copied ? t('mm.imp.copied') : t('mm.imp.copy')}</button>
+            <details className="mm-imp__prompt" open={showPrompt} onToggle={(e) => setShowPrompt(e.currentTarget.open)}>
+              <summary>{t('mm.imp.see')}</summary>
+              <pre>{prompt}</pre>
+            </details>
+          </section>
+          <section className="mm-panel">
+            <h3>{t('mm.imp.pasteTitle')}</h3>
+            <textarea className="mm-input mm-imp__text" rows={9} value={text} spellCheck={false}
+              placeholder={t('mm.imp.placeholder')} aria-label={t('mm.imp.pasteTitle')}
+              onChange={(e) => { setText(e.target.value); setError(null); }} />
+            <div className="mm-row mm-row--wrap">
+              <button className="mm-btn" onClick={() => fileRef.current?.click()}>{t('mm.imp.file')}</button>
+              <span className="mm-note">{t('mm.imp.drop')}</span>
+              <input ref={fileRef} type="file" accept=".json,.txt,application/json,text/plain" hidden
+                onChange={(e) => { void readFile(e.target.files?.[0]); e.target.value = ''; }} />
+            </div>
+            {error && <p className="mm-note is-bad" role="alert">{error}</p>}
+            <button className="mm-btn is-teal is-wide" disabled={!text.trim()} onClick={go}>{t('mm.imp.open')}</button>
+            <p className="mm-note">{t('mm.imp.openNote')}</p>
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** The first screen: templates, the generator, your maps, the gallery. */
 function StartScreen({ onOpen, onExit }: { onOpen: OpenMap; onExit: () => void }) {
   useI18n();
@@ -468,6 +577,7 @@ function StartScreen({ onOpen, onExit }: { onOpen: OpenMap; onExit: () => void }
   const [maps, setMaps] = useState<Summary[] | null>(null);
   const [code, setCode] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
   const [gen, setGen] = useState({ planets: 7, moonsMin: 0, moonsMax: 3, belts: 1, richness: 1, starts: 8, spread: 1, theme: 'Mythic', seed: Math.floor(Math.random() * 99999) });
   const draft = useMemo(loadDraft, []);
 
@@ -552,6 +662,10 @@ function StartScreen({ onOpen, onExit }: { onOpen: OpenMap; onExit: () => void }
                 <span className="mm-tpl__art is-sol" aria-hidden><span className="mm-tpl__sun" /></span>
                 <b>{t('mm.tpl.sol.t')}</b><span>{t('mm.tpl.sol.d')}</span>
               </button>
+              <button className="mm-tpl" onClick={() => setImporting(true)}>
+                <span className="mm-tpl__art is-import" aria-hidden><span className="mm-tpl__sun" /><span className="mm-tpl__braces">{'{ }'}</span></span>
+                <b>{t('mm.tpl.import.t')}</b><span>{t('mm.tpl.import.d')}</span>
+              </button>
               <button className="mm-tpl" onClick={() => setTab('gallery')}>
                 <span className="mm-tpl__art is-gallery" aria-hidden><span className="mm-tpl__sun" /></span>
                 <b>{t('mm.tpl.remix.t')}</b><span>{t('mm.tpl.remix.d')}</span>
@@ -612,6 +726,7 @@ function StartScreen({ onOpen, onExit }: { onOpen: OpenMap; onExit: () => void }
           </aside>
         </div>
       )}
+      {importing && <ImportPanel onOpen={onOpen} onClose={() => setImporting(false)} />}
     </div>
   );
 }
@@ -646,7 +761,7 @@ const AUTOSAVE_MS = 3000;
 const DRAFT_MS = 1000;
 
 /** What the workshop opens with besides the map itself. */
-type OpenOpts = { dirty?: boolean; base?: number | null; sid?: string };
+type OpenOpts = { dirty?: boolean; base?: number | null; sid?: string; notes?: ImportNote[] };
 
 /** A sector edge dragged to `orbit`. A shared edge (two bands touching)
  *  moves both bands; a free edge stops at its neighbour. Neither crosses
@@ -717,6 +832,8 @@ export function Workshop({ initial, initialId, opts, onExit }: { initial: Custom
   const [saveError, setSaveError] = useState<string | null>(null);
   /** A word about a save the player should know of (a conflict copy). */
   const [notice, setNotice] = useState<string | null>(null);
+  /** What the importer changed, shown until dismissed (null: not an import). */
+  const [importNotes, setImportNotes] = useState<ImportNote[] | null>(opts.notes ?? null);
   /** Bumped to re-arm the autosave after a save that edits overtook. */
   const [kick, setKick] = useState(0);
   const [treeQ, setTreeQ] = useState('');
@@ -1209,6 +1326,17 @@ export function Workshop({ initial, initialId, opts, onExit }: { initial: Custom
     </div>
   );
 
+  const importBanner = importNotes && (
+    <div className="mm-banner is-note is-import" role="status">
+      <div>
+        <b>{importNotes.length ? t('mm.imp.done') : t('mm.imp.doneClean')}</b>
+        {importNotes.length > 0 && <ul>{importNotes.map(n => <li key={n.code}>{importNoteText(n)}</li>)}</ul>}
+        <span className="mm-note">{t('mm.imp.doneCheck')}</span>
+      </div>
+      <button className="mm-icon is-small" aria-label={t('mm.close')} onClick={() => setImportNotes(null)}>✕</button>
+    </div>
+  );
+
   const hostPanel = showHost && (
     <HostPanel
       map={map} summary={summary} canHost={canHost} onSaveFirst={save}
@@ -1237,6 +1365,7 @@ export function Workshop({ initial, initialId, opts, onExit }: { initial: Custom
         </header>
         {saveError && <div className="mm-banner is-bad">{saveError}</div>}
         {noticeBanner}
+        {importBanner}
         <div className="mm-work__body">{stage}</div>
 
         {!tool && !picking && (
@@ -1325,6 +1454,7 @@ export function Workshop({ initial, initialId, opts, onExit }: { initial: Custom
       </header>
       {saveError && <div className="mm-banner is-bad">{saveError}</div>}
       {noticeBanner}
+      {importBanner}
 
       <div className="mm-work__body">
         <aside className="mm-rail">
