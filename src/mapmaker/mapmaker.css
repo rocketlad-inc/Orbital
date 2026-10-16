@@ -571,3 +571,9 @@ body:has(.stg-banner) .mm-start, body:has(.stg-banner) .mm-work { top: 23px; }
 @media (max-width: 1023px), (hover: none) and (pointer: coarse) and (max-width: 1399px) {
   .mm-input, .mm-input.is-small, .mm-input.is-code, .mm-step__v, .mm-num, .mm-top__mname, .mm-top__name input { font-size: 16px; }
 }
+
+/* the Look tab: now, and once terraformed */
+.mm-look.is-two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; align-items: start; }
+.mm-look.is-two .mm-note { grid-column: 1 / -1; }
+.mm-look__face { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.mm-look__face figcaption { font-size: 9.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--mm-muted); }

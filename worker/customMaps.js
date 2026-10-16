@@ -475,9 +475,17 @@ export const routes = [
 /** Seats a custom-map room can hold: one per start world (capped at the
  *  game's seat maximum by the caller). Null for an ordinary room. */
 export async function customSeatCap(env, roomId) {
-  const map = await roomCustomMap(env, roomId);
-  if (!map) return null;
-  return startWorlds(map).worlds.length;
+  // A room whose snapshot cannot be read has no seat cap to offer: the
+  // lobby's settings edits carry on, and the start refuses cleanly
+  // (seed_failed, lobby reopened) rather than every edit erroring.
+  try {
+    const map = await roomCustomMap(env, roomId);
+    if (!map) return null;
+    return startWorlds(map).worlds.length;
+  } catch (e) {
+    console.error('customSeatCap: unreadable custom map', roomId, e);
+    return null;
+  }
 }
 
 /** For seeding: the snapshot a room was hosted with, cleaned.

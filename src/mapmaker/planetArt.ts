@@ -29,14 +29,15 @@ const CACHE_MAX = 1500;
 /** Paints waiting, oldest request first. A request past QUEUE_MAX drops
  *  the oldest: a colour dragged through a hundred shades only needs the
  *  last few. */
-const queue = new Map<string, { b: ArtKey; px: number }>();
+export type ArtVariant = 'raw' | 'terraformed';
+const queue = new Map<string, { b: ArtKey; px: number; variant: ArtVariant }>();
 const QUEUE_MAX = 400;
 /** Milliseconds of painting per slice. */
 const SLICE_MS = 8;
 const listeners = new Set<() => void>();
 let scheduled = false;
 
-function paint(b: ArtKey, px: number): string | null {
+function paint(b: ArtKey, px: number, variant: ArtVariant): string | null {
   try {
     const src = document.createElement('canvas');
     src.width = src.height = TEX_SIZE;
@@ -46,7 +47,7 @@ function paint(b: ArtKey, px: number): string | null {
       id: `cm_${b.id}`, name: '', type: GAME_TYPE[b.type], color: b.color,
       look: { surface: b.surface },
     } as unknown as Body;
-    paintSurfaceOnto(c, body, 'raw');
+    paintSurfaceOnto(c, body, variant);
     const out = document.createElement('canvas');
     out.width = out.height = px;
     const o = out.getContext('2d');
@@ -73,7 +74,7 @@ function runSlice() {
   for (const key of [...queue.keys()].reverse()) {
     const job = queue.get(key)!;
     queue.delete(key);
-    remember(key, paint(job.b, job.px));
+    remember(key, paint(job.b, job.px, job.variant));
     painted++;
     if (performance.now() - t0 > SLICE_MS) break;
   }
@@ -93,8 +94,8 @@ function schedule() {
  *  null while it waits (or where no canvas exists: tests, very old
  *  browsers). Components that show it call useArtTick to redraw when it
  *  arrives. */
-export function worldArt(b: ArtKey, px = 96): string | null {
-  const key = `${b.id}|${b.type}|${b.color}|${b.surface}|${px}`;
+export function worldArt(b: ArtKey, px = 96, variant: ArtVariant = 'raw'): string | null {
+  const key = `${b.id}|${b.type}|${b.color}|${b.surface}|${px}|${variant}`;
   const hit = cache.get(key);
   if (hit !== undefined) {
     // Recently used: to the back of the line for eviction.
@@ -104,7 +105,7 @@ export function worldArt(b: ArtKey, px = 96): string | null {
   }
   if (typeof window === 'undefined') return null;
   queue.delete(key);
-  queue.set(key, { b: { id: b.id, type: b.type, color: b.color, surface: b.surface }, px });
+  queue.set(key, { b: { id: b.id, type: b.type, color: b.color, surface: b.surface }, px, variant });
   while (queue.size > QUEUE_MAX) queue.delete(queue.keys().next().value as string);
   schedule();
   return null;

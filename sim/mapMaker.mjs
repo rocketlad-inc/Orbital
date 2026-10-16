@@ -443,6 +443,27 @@ check('the gallery is staging-only too', await (async () => {
     res.error && !gameRow, JSON.stringify(res.error ? 'refused' : res).slice(0, 120));
 }
 
+// ---- the launch switch --------------------------------------------------------
+{
+  const prod = { DB };   // no ORBITAL_ENV: production
+  const list = routes.find(r => r.method === 'GET' && r.pattern === '/api/maps');
+  const enabled = routes.find(r => r.method === 'GET' && r.pattern === '/api/maps/enabled');
+  const ask = async (route, session) => route.handle(new Request('https://x/api/maps'), prod, { session });
+  const player = { user_id: 'u1', email: 'u1@t' };
+  const { isAdminEmail } = await import('../worker/admins.js');
+  const adminEmail = 'lcfeeser@gmail.com';
+  check("(the sim's admin email is on the admin list)", isAdminEmail(adminEmail));
+  check('on prod with the switch off, a player gets 404', (await ask(list, player)).status === 404);
+  check('...and the lobby is told to hide the button', (await (await ask(enabled, player)).json()).enabled === false);
+  if (adminEmail) {
+    check('...but an admin can use it (to build the house maps)', (await ask(list, { user_id: 'u0', email: adminEmail })).status === 200);
+  }
+  const { setSetting } = await import('../worker/botSettings.js');
+  if (typeof setSetting === 'function') await setSetting(prod, 'map_maker_enabled', true);
+  else await DB.prepare("INSERT OR REPLACE INTO bot_settings (key, value) VALUES ('map_maker_enabled', 'true')").run();
+  check('with the switch on, every player can use it', (await ask(list, player)).status === 200 && (await (await ask(enabled, player)).json()).enabled === true);
+}
+
 // ---- Quick Join is Solar System only ---------------------------------------
 {
   const { joinableLobbies } = await import('../worker/matchmaking.js');

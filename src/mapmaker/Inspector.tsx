@@ -135,9 +135,11 @@ export function Stepper({ value, min, max, step = 1, label, onChange }: {
 }
 
 /** A world's face as the game paints it. */
-export function WorldFace({ body, size = 48 }: { body: Pick<MapBody, 'id' | 'type' | 'color' | 'surface' | 'rings'>; size?: number }) {
+export function WorldFace({ body, size = 48, variant = 'raw' }: {
+  body: Pick<MapBody, 'id' | 'type' | 'color' | 'surface' | 'rings'>; size?: number; variant?: 'raw' | 'terraformed';
+}) {
   useArtTick();
-  const art = body.type === 'rock' ? null : worldArt(body, 128);
+  const art = body.type === 'rock' ? null : worldArt(body, 128, variant);
   return (
     <span className={`mm-face${body.rings ? ' has-rings' : ''}`} style={{ width: size, height: size }} aria-hidden>
       {art
@@ -146,6 +148,9 @@ export function WorldFace({ body, size = 48 }: { body: Pick<MapBody, 'id' | 'typ
     </span>
   );
 }
+
+/** Surfaces that come alive when terraformed (planetTexture LOOK_BIOME). */
+const LIVING = new Set(['verdant', 'ocean', 'desert', 'toxic', 'ice', 'lava']);
 
 /** One world. */
 export const BodyInspector: React.FC<{
@@ -304,10 +309,20 @@ export const BodyInspector: React.FC<{
 
       {tab === 'look' && (
         <div className="mm-insp__body">
-          <div className="mm-look">
-            <WorldFace body={body} size={132} />
-            <p className="mm-note">{t('mm.look.note', { name: body.name })}</p>
-          </div>
+          {/* A raw world paints raw; the living surface its maker chose is
+              the face it takes once an empire terraforms it. Both shown. */}
+          {['terrestrial', 'dwarf', 'moon', 'asteroid'].includes(body.type) && body.surface && LIVING.has(body.surface) ? (
+            <div className="mm-look is-two">
+              <figure className="mm-look__face"><WorldFace body={body} size={112} /><figcaption>{t('mm.look.now')}</figcaption></figure>
+              <figure className="mm-look__face"><WorldFace body={body} size={112} variant="terraformed" /><figcaption>{t('mm.look.after')}</figcaption></figure>
+              <p className="mm-note">{t('mm.look.noteTwo', { name: body.name })}</p>
+            </div>
+          ) : (
+            <div className="mm-look">
+              <WorldFace body={body} size={132} />
+              <p className="mm-note">{t('mm.look.note', { name: body.name })}</p>
+            </div>
+          )}
           <div className="mm-sec">{t('mm.colour')}</div>
           <div className="mm-swatches">
             {SWATCHES.map(c => (
