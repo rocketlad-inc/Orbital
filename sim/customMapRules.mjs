@@ -166,7 +166,7 @@ const body = (b) => ({ id: `r${(n++).toString(36)}`, rings: false, start: false,
     bodies: [
       home,
       giant,
-      body({ name: 'Vesk', type: 'terrestrial', parent: 'sun', orbit: 700, radius: 3, start: true }),
+      body({ name: 'Vesk', type: 'terrestrial', parent: 'sun', orbit: 950, radius: 3, start: true }),
       body({ name: 'Farhold', type: 'dwarf', parent: 'sun', orbit: 3000, radius: 2, start: true }),
       body({ name: 'Shard1', type: 'asteroid', parent: 'sun', orbit: 2000, radius: 0.7 }),
       body({ name: 'Shard2', type: 'asteroid', parent: 'sun', orbit: 2050, radius: 0.7 }),
@@ -174,8 +174,10 @@ const body = (b) => ({ id: `r${(n++).toString(36)}`, rings: false, start: false,
     ],
   });
   const raw = mapToCatalog(map);
-  check('4 a custom map\'s belt edge is its outermost planet', factions.customBeltRadius(raw, 2) === 2400, String(factions.customBeltRadius(raw, 2)));
-  check('4 a map with no planets has no speed-up edge', factions.customBeltRadius(raw.filter(b => b.type !== 'terrestrial' && b.type !== 'gas-giant'), 1) === Infinity);
+  // Guarded so the sim also runs (and fails) against the code before the fix.
+  const edge = factions.customBeltRadius ?? (() => NaN);
+  check('4 a custom map\'s belt edge is its outermost planet', edge(raw, 2) === 2400, String(edge(raw, 2)));
+  check('4 a map with no planets has no speed-up edge', edge(raw.filter(b => b.type !== 'terrestrial' && b.type !== 'gas-giant'), 1) === Infinity);
 
   hush();
   const r = await runGame({ ticks: 1, players: 3, seed: 'cmr-game', quiet: true, customMap: map, config: { outer_orbit_speedup: 4 } });
@@ -185,8 +187,8 @@ const body = (b) => ({ id: `r${(n++).toString(36)}`, rings: false, start: false,
   const rows = (await DB.prepare('SELECT * FROM game_bodies WHERE game_id = ?').bind(gameId).all()).results;
   const tpl = (name) => rows.find(b => b.name === name);
   const want = (name) => raw.find(b => b.name === name).orbit_period;
-  // Vesk (700) sits inside Colossus (1200): Sol's Ceres edge (~700 x scale)
-  // would have sped it up too. Farhold (3000) is past the last planet.
+  // Vesk (950) sits inside Colossus (1200) but past Sol's Ceres edge (720),
+  // which used to speed it up. Farhold (3000) is past the last planet.
   const ratio = (name) => want(name) / tpl(name).orbit_period;
   check('4 a world inside the outermost planet keeps its year', Math.abs(ratio('Vesk') - 1) < 1e-9 && Math.abs(ratio('Aurel') - 1) < 1e-9,
     `Vesk x${ratio('Vesk')}, Aurel x${ratio('Aurel')}`);
@@ -200,7 +202,8 @@ const body = (b) => ({ id: `r${(n++).toString(36)}`, rings: false, start: false,
 
   // 12: the star's mu.
   const star = rows.find(b => b.type === 'star');
-  check('12 the custom star carries Sol\'s mu x its mass', Math.abs(star.mu - factions.SOL_MU * 2) < 1e-6, String(star.mu));
+  const SOL_MU = 4 * Math.PI * Math.PI * Math.pow(460, 3) / Math.pow(800, 2);
+  check('12 the custom star carries Sol\'s mu x its mass', Math.abs(star.mu - SOL_MU * 2) < 1e-6, String(star.mu));
 
   // 9: default names.
   const facs = (await DB.prepare('SELECT f.name, b.name AS cap FROM game_factions f JOIN game_bodies b ON b.id = f.capital_body_id WHERE f.game_id = ?').bind(gameId).all()).results;
@@ -218,7 +221,7 @@ const body = (b) => ({ id: `r${(n++).toString(36)}`, rings: false, start: false,
   // 8: the locator.
   const digest = await import('../worker/digest.js');
   const ids = ['Farhold', 'Shard2', 'Aurel'].map(nm => tpl(nm).id);
-  const loc = await digest.buildBodyLocator(env, gameId, ids);
+  const loc = digest.buildBodyLocator ? await digest.buildBodyLocator(env, gameId, ids) : new Map();
   const full = ids.map(id => loc.get(id)?.full ?? '');
   check('8 the locator never says Kuiper Belt on a custom map', full.every(f => !/Kuiper/.test(f)), full.join(' | '));
   check('8 an asteroid is placed in its belt', /in the \*\*Asteroid Belt\*\*/.test(full[1]), full[1]);
@@ -244,7 +247,7 @@ const body = (b) => ({ id: `r${(n++).toString(36)}`, rings: false, start: false,
   check('Sol: the strip still says SOL in stock gold', data.starName === null && data.starColor === null && strip.renderStripPage(data).includes('"SOL"'));
   const digest = await import('../worker/digest.js');
   const eris = rows.find(b => b.template_id === 'eris');
-  const loc = await digest.buildBodyLocator(env, gameId, [eris.id]);
+  const loc = digest.buildBodyLocator ? await digest.buildBodyLocator(env, gameId, [eris.id]) : new Map();
   check('Sol: a far dwarf is still in the Kuiper Belt', loc.get(eris.id)?.full === '**Eris** in the **Kuiper Belt**', loc.get(eris.id)?.full);
 }
 
