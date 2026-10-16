@@ -23,7 +23,7 @@ export const IMPORT_MAX_CHARS = 1_000_000;
 
 export type ImportNoteCode =
   | 'overCap' | 'skipped' | 'auOrbits' | 'kmOrbits' | 'kmMoons' | 'orbitsMade' | 'orbitsClamped' | 'degrees'
-  | 'kmRadius' | 'yieldsScaled' | 'typeGuessed' | 'madeMoons' | 'moonsLifted' | 'orphanMoons'
+  | 'kmRadius' | 'yieldsScaled' | 'yieldsMapped' | 'beltsSpread' | 'typeGuessed' | 'madeMoons' | 'moonsLifted' | 'orphanMoons'
   | 'startsDropped' | 'secretUnknown' | 'secretsDropped' | 'surfaceUnknown' | 'sectorsDropped' | 'parentByName';
 
 /** One thing the importer changed or guessed. `n` counts it; `names`
@@ -185,6 +185,30 @@ function quantity(v: unknown): { n: number; unit: '' | 'au' | 'km' | 'deg' | 'ra
   return { n, unit };
 }
 
+const COLOR_KEYS = ['color', 'colour', 'hex', 'colorHex', 'hexColor', 'colourHex'];
+/** Which yield a resource name is most like, by its stem. */
+const RESOURCE_STEMS: Array<['metal' | 'credits' | 'science', string[]]> = [
+  ['science', ['science', 'research', 'knowledge', 'tech', 'data', 'exotic', 'artifact', 'artefact', 'relic', 'xeno', 'anomal', 'dark']],
+  ['metal', ['metal', 'ore', 'mineral', 'iron', 'nickel', 'titan', 'platin', 'copper', 'silic', 'alumin', 'uran', 'cobalt', 'tungst', 'steel', 'alloy', 'industr', 'rare', 'heavy', 'stone', 'material']],
+  ['credits', ['credit', 'gold', 'money', 'trade', 'income', 'wealth', 'commerc', 'energy', 'fuel', 'hydrogen', 'helium', 'deuter', 'volatil', 'water', 'ice', 'food', 'organic', 'agri', 'luxur', 'goods', 'spice', 'crystal', 'gas', 'nitrogen', 'oxygen', 'carbon', 'sulf', 'methane', 'ammonia']],
+];
+const PLAIN_YIELDS = new Set(['metal', 'metals', 'ore', 'minerals', 'credits', 'gold', 'money', 'science', 'research']);
+function resourceKind(key: string): 'metal' | 'credits' | 'science' | null {
+  const k = squash(key);
+  if (!k) return null;
+  for (const [cat, stems] of RESOURCE_STEMS) if (stems.some(st => k.startsWith(st))) return cat;
+  return null;
+}
+/** An amount: a number, or a word for one ("rich", "scarce"). */
+function abundance(v: unknown): number {
+  const q = quantity(v);
+  if (q) return q.n;
+  if (v === true) return 3;
+  const w = squash(text(v));
+  return ({ none: 0, trace: 1, scarce: 2, poor: 2, low: 2, little: 2, some: 4, moderate: 5, medium: 5, average: 5, fair: 5,
+    good: 7, high: 8, rich: 8, abundant: 9, plentiful: 9, vast: 12, extreme: 12 } as Record<string, number>)[w] ?? 0;
+}
+
 const truthy = (v: unknown) => v === true || v === 1 || (typeof v === 'string' && /^(yes|true|y|1|x)$/i.test(v.trim()));
 const text = (v: unknown) => (typeof v === 'string' ? v : typeof v === 'number' ? String(v) : '');
 
@@ -226,7 +250,7 @@ const SURFACE_ALIASES: Record<string, MapSurface> = {
   ocean: 'ocean', water: 'ocean', oceanic: 'ocean', sea: 'ocean', aquatic: 'ocean',
   desert: 'desert', arid: 'desert', sand: 'desert', dune: 'desert', dry: 'desert',
   rocky: 'rocky', rock: 'rocky', stone: 'rocky', mountainous: 'rocky', cratered: 'rocky',
-  barren: 'barren', dead: 'barren', grey: 'barren', gray: 'barren', airless: 'barren', dust: 'barren',
+  barren: 'barren', dead: 'barren', scorched: 'barren', burnt: 'barren', grey: 'barren', gray: 'barren', airless: 'barren', dust: 'barren',
   ice: 'ice', icy: 'ice', frozen: 'ice', snow: 'ice', glacial: 'ice', tundra: 'ice',
   lava: 'lava', volcanic: 'lava', molten: 'lava', magma: 'lava', infernal: 'lava',
   toxic: 'toxic', acid: 'toxic', acidic: 'toxic', poison: 'toxic', sulfur: 'toxic', sulphur: 'toxic', haze: 'toxic',
@@ -264,7 +288,7 @@ const SUN_WORDS = new Set(['sun', 'star', 'sol', 'primary', 'root', 'system', 'c
 
 /** A planet's radius in km to map units: Earth (6371 km) is 3, and the
  *  square root keeps Jupiter (69911 km) at about 10 rather than 33. */
-const kmToRadius = (km: number) => 3 * Math.sqrt(km / 6371);
+const kmToRadius = (km: number) => Math.round(30 * Math.sqrt(km / 6371)) / 10;
 /** Map units per AU (Earth's orbit) and per km from a moon's planet (the
  *  Moon's 384,400 km is 20). */
 const AU = 372;
@@ -324,7 +348,7 @@ export function importMapValue(value: unknown): ImportResult {
   const starRaw = pick(root, ['sun', 'star', 'primary', 'centralStar']);
   const star: Obj = isObj(starRaw) ? starRaw : typeof starRaw === 'string' ? { name: starRaw } : {};
   const spectral = text(pick(star, ['spectralClass', 'spectralType', 'class', 'type']) ?? pick(root, ['spectralClass', 'starClass'])).trim().toUpperCase();
-  const sunColor = hexColor(pick(star, ['color', 'colour', 'hex'])) ?? hexColor(pick(root, ['starColor', 'sunColor'])) ?? STAR_CLASS[spectral[0]] ?? undefined;
+  const sunColor = hexColor(pick(star, COLOR_KEYS)) ?? hexColor(pick(root, ['starColor', 'sunColor'])) ?? STAR_CLASS[spectral[0]] ?? undefined;
   const sunSizeQ = quantity(pick(star, ['size', 'radius']));
   const sunMassQ = quantity(pick(star, ['mass', 'solarMass', 'solarMasses']));
   const sunName = text(pick(star, ['name', 'title']) ?? pick(root, ['starName', 'sunName'])).trim();
@@ -364,6 +388,38 @@ export function importMapValue(value: unknown): ImportResult {
     const list = pick(star, [key]);
     if (list && typeof list === 'object' && !listed.has(list)) { listed.add(list); walk(list, hint, null, 0); }
   }
+  // Belts given as a band ({ inner: 1.6, outer: 2.3 }) rather than as
+  // bodies: a ring of asteroids spread through it, carrying its resources.
+  for (const owner of [root, star]) {
+    const raw = pick(owner, ['asteroidBelts', 'belts', 'asteroidBelt', 'belt']);
+    const list = Array.isArray(raw) ? raw : isObj(raw) ? [raw] : [];
+    for (const belt of list) {
+      if (!isObj(belt)) continue;
+      const name = text(pick(belt, ['name', 'title'])).trim() || 'Belt';
+      const members = pick(belt, ['asteroids', 'bodies', 'members', 'objects']);
+      if (Array.isArray(members) && members.length) { walk(members, 'asteroid', null, 0); note('beltsSpread', name); continue; }
+      const auKeys = pick(belt, ['innerAU', 'outerAU', 'orbitAU', 'distanceAU', 'au']) !== undefined;
+      const inner = quantity(pick(belt, ['inner', 'innerAU', 'innerRadius', 'innerOrbit', 'innerEdge', 'from', 'start', 'min']));
+      const outer = quantity(pick(belt, ['outer', 'outerAU', 'outerRadius', 'outerOrbit', 'outerEdge', 'to', 'end', 'max']));
+      const mid = quantity(pick(belt, ['orbit', 'orbitAU', 'distance', 'distanceAU', 'au', 'radius']));
+      const lo = inner?.n ?? (mid ? mid.n * 0.95 : null);
+      const hi = outer?.n ?? (mid ? mid.n * 1.05 : null);
+      if (lo == null || hi == null || !(hi > 0)) continue;
+      const unit = auKeys || [inner, outer, mid].some(q => q?.unit === 'au') ? ' AU' : [inner, outer, mid].some(q => q?.unit === 'km') ? ' km' : '';
+      const count = Math.round(Math.min(12, Math.max(2, quantity(pick(belt, ['count', 'asteroidCount', 'number']))?.n ?? 6)));
+      const resources = pick(belt, ['yields', 'resources', 'output']);
+      const lore = text(pick(belt, ['lore', 'description', 'desc', 'flavor', 'flavour']));
+      walk(Array.from({ length: count }, (_, k) => ({
+        name: `${name.slice(0, 20)} ${k + 1}`,
+        type: 'asteroid',
+        orbit: `${lo + ((hi - lo) * (k + 0.5)) / count}${unit}`,
+        angle: `${Math.round((k * 360) / count + 37 * k) % 360}°`,
+        ...(resources !== undefined ? { resources } : {}),
+        ...(k === 0 && lore ? { lore } : {}),
+      })), 'asteroid', null, 0);
+      note('beltsSpread', name);
+    }
+  }
   if (!flat.length && !isObj(starRaw) && !sunName && pick(root, ['name', 'title']) === undefined) {
     return { ok: false, error: 'notAMap' };
   }
@@ -387,6 +443,8 @@ export function importMapValue(value: unknown): ImportResult {
 
   // Types and parents.
   const types: MapBodyType[] = [];
+  /** A surface read from the type itself ("volcanic"). */
+  const typeLook: Array<MapSurface | undefined> = [];
   const parentIdx: Array<number | null> = [];
   flat.forEach((f, i) => {
     const t = text(pick(f.src, ['type', 'kind', 'class', 'category', 'bodyType']));
@@ -395,9 +453,15 @@ export function importMapValue(value: unknown): ImportResult {
       const s = squash(t);
       type = TYPE_ALIASES[s] ?? null;
       if (!type) {
+        // Only a comet or a meteoroid is a mineable rock; a "scorched
+        // rock" or a "rocky world" is a planet.
         type = /icegiant|neptun/.test(s) ? 'ice-giant' : /gas|jovian|giant/.test(s) ? 'gas-giant' : /dwarf/.test(s) ? 'dwarf'
-          : /moon|satellite/.test(s) ? 'moon' : /asteroid/.test(s) ? 'asteroid' : /comet|meteor|ore|rock/.test(s) && !/planet/.test(s) ? 'rock'
-          : /planet|world|terra/.test(s) ? 'terrestrial' : null;
+          : /moon|satellite/.test(s) ? 'moon' : /asteroid/.test(s) ? 'asteroid' : /comet|meteor/.test(s) ? 'rock'
+          : /planet|world|terra|rock/.test(s) ? 'terrestrial' : null;
+        // "volcanic", "temperate", "desert_planet": a look given in the
+        // type. A planet (unless it said otherwise), wearing that look.
+        const look = SURFACE_ALIASES[s] ?? Object.entries(SURFACE_ALIASES).find(([k]) => k.length > 3 && s.includes(k))?.[1];
+        if (look && (!type || type === 'terrestrial' || type === 'dwarf' || type === 'moon')) { type ??= 'terrestrial'; typeLook[i] = look; }
         note('typeGuessed', f.name || t);
       }
     }
@@ -491,14 +555,18 @@ export function importMapValue(value: unknown): ImportResult {
   // Angles: radians, unless any is past a full turn (degrees). Missing
   // ones are spread by the golden angle so worlds don't line up.
   const angleQ = flat.map(f => quantity(pick(f.src, ['angle', 'position', 'phase', 'theta', 'longitude', 'meanAnomaly', 'startAngle', 'angleDeg', 'degrees'])));
-  const inDegrees = angleQ.some(q => q && (q.unit === 'deg' || (q.unit === '' && Math.abs(q.n) > Math.PI * 2 + 0.01)));
+  // Only bare numbers are judged; one that says "°" is converted alone.
+  const inDegrees = angleQ.some(q => q && q.unit === '' && Math.abs(q.n) > Math.PI * 2 + 0.01);
   if (inDegrees) note('degrees');
   const angles = angleQ.map((q, i) => (q ? (q.unit === 'deg' || (q.unit === '' && inDegrees) ? (q.n * Math.PI) / 180 : q.n) : (i * 2.39996) % (Math.PI * 2)));
 
   // Sizes: map units, words, or kilometres.
   const radii = flat.map((f, i) => {
     const info = TYPE_INFO[types[i]];
-    const v = pick(f.src, ['radius', 'size', 'diameter', 'radiusKm']);
+    const km = quantity(pick(f.src, ['radiusKm', 'radius_km']));
+    const kmD = quantity(pick(f.src, ['diameterKm', 'diameter_km']));
+    if (km || kmD) { note('kmRadius', f.name); return kmToRadius(km ? km.n : kmD!.n / 2); }
+    const v = pick(f.src, ['radius', 'size', 'diameter']);
     if (typeof v === 'string') {
       const w = squash(v);
       const at = ({ tiny: 0, small: 0.2, medium: 0.5, average: 0.5, normal: 0.5, large: 0.8, big: 0.8, huge: 1, massive: 1, giant: 1 } as Record<string, number>)[w];
@@ -514,15 +582,36 @@ export function importMapValue(value: unknown): ImportResult {
 
   // Yields: a 0–30 scale. A map that used a bigger one is scaled down
   // whole, so its worlds keep their balance against each other.
+  // Inside a yields object, a resource of the AI's own naming (iron,
+  // helium-3, exotic crystal) counts toward the yield it is most like.
+  const mappedKeys = new Set<string>();
   const yieldsRaw = flat.map(f => {
+    const out = { metal: 0, credits: 0, science: 0 };
     const y = pick(f.src, ['yields', 'yield', 'resources', 'output', 'production', 'economy']);
-    const o: Obj = isObj(y) ? y : f.src;
-    const n = (keys: string[]) => { const q = quantity(pick(o, keys)); return q && q.n > 0 ? q.n : 0; };
-    return {
-      metal: n(['metal', 'metals', 'ore', 'minerals', 'iron', 'industry']),
-      credits: n(['credits', 'gold', 'money', 'trade', 'income', 'wealth', 'commerce']),
-      science: n(['science', 'research', 'knowledge', 'tech', 'technology']),
+    const add = (key: string, v: unknown) => {
+      const cat = resourceKind(key);
+      const amount = abundance(v);
+      if (!cat || !(amount > 0)) return;
+      out[cat] += amount;
+      // Named once per resource; the plain synonyms need no word.
+      const k = squash(key);
+      if (!PLAIN_YIELDS.has(k) && !mappedKeys.has(k)) { mappedKeys.add(k); note('yieldsMapped', key); }
     };
+    if (isObj(y)) for (const [k, v] of Object.entries(y)) add(k, v);
+    else if (Array.isArray(y)) {
+      // ["iron", "water"] or [{ "type": "iron", "amount": 6 }]
+      for (const it of y) {
+        if (typeof it === 'string') add(it, 3);
+        else if (isObj(it)) add(text(pick(it, ['name', 'type', 'resource', 'kind'])), pick(it, ['amount', 'value', 'quantity', 'abundance', 'level', 'rate']) ?? 3);
+      }
+    } else {
+      // Loose on the body: only the plain names, not every number it has.
+      for (const k of ['metal', 'credits', 'science', 'gold', 'research']) {
+        const v = pick(f.src, [k]);
+        if (v !== undefined) add(k, v);
+      }
+    }
+    return out;
   });
   const maxYield = Math.max(0, ...yieldsRaw.flatMap(y => [y.metal, y.credits, y.science]));
   const yScale = maxYield > RESOURCE_MAX ? RESOURCE_MAX / maxYield : 1;
@@ -540,6 +629,7 @@ export function importMapValue(value: unknown): ImportResult {
         ?? Object.entries(SURFACE_ALIASES).find(([k]) => w.includes(k))?.[1];
       if (!surface && type !== 'rock') note('surfaceUnknown', f.name || surfaceRaw);
     }
+    surface ??= typeLook[i];
 
     let secret: MapSecret | 'random' | null = null;
     let secretName = '', secretText = '';
@@ -573,7 +663,7 @@ export function importMapValue(value: unknown): ImportResult {
       angle: angles[i],
       radius: radii[i],
       yields: { metal: y.metal * yScale, credits: y.credits * yScale, science: y.science * yScale },
-      color: hexColor(pick(s, ['color', 'colour', 'hex'])) ?? undefined,
+      color: hexColor(pick(s, COLOR_KEYS)) ?? undefined,
       surface,
       rings: truthy(pick(s, ['rings', 'hasRings', 'ringed', 'ring'])) || (Array.isArray(pick(s, ['rings'])) && (pick(s, ['rings']) as unknown[]).length > 0),
       start: wantsStart,

@@ -503,6 +503,7 @@ function ImportPanel({ onOpen, onClose }: { onOpen: OpenMap; onClose: () => void
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [over, setOver] = useState(false);
+  const [showPrompt, setShowPrompt] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const modal = useModal(onClose);
   const prompt = useMemo(() => buildAiPrompt(), []);
@@ -522,7 +523,9 @@ function ImportPanel({ onOpen, onClose }: { onOpen: OpenMap; onClose: () => void
     onOpen(r.map, null, { dirty: true, notes: r.notes.filter(n => !QUIET_NOTES.has(n.code)) });
   };
   const copy = async () => {
-    try { await navigator.clipboard.writeText(prompt); setCopied(true); } catch { setCopied(false); }
+    // No clipboard (an in-app browser, a denied permission): show the
+    // prompt so it can be selected and copied by hand.
+    try { await navigator.clipboard.writeText(prompt); setCopied(true); } catch { setCopied(false); setShowPrompt(true); }
   };
 
   return (
@@ -541,7 +544,7 @@ function ImportPanel({ onOpen, onClose }: { onOpen: OpenMap; onClose: () => void
               <li>{t('mm.imp.step3')}</li>
             </ol>
             <button className="mm-btn is-primary is-wide" onClick={copy}>{copied ? t('mm.imp.copied') : t('mm.imp.copy')}</button>
-            <details className="mm-imp__prompt">
+            <details className="mm-imp__prompt" open={showPrompt} onToggle={(e) => setShowPrompt(e.currentTarget.open)}>
               <summary>{t('mm.imp.see')}</summary>
               <pre>{prompt}</pre>
             </details>

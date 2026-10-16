@@ -309,6 +309,8 @@ export const mapmaker = {
   'mm.imp.note.degrees': 'Angles read as degrees and converted.',
   'mm.imp.note.kmRadius': 'Size read as kilometres and scaled: {names}.',
   'mm.imp.note.yieldsScaled': 'Yields went up to {n}: all were scaled to fit 0-30, keeping their balance.',
+  'mm.imp.note.yieldsMapped': 'Resources counted as the nearest yield (metal, credits or science): {names}.',
+  'mm.imp.note.beltsSpread': 'Belt made into asteroids spread along it: {names}.',
   'mm.imp.note.typeGuessed': 'Type guessed, check it: {names}.',
   'mm.imp.note.madeMoons': 'Listed under another world, so made its moon: {names}.',
   'mm.imp.note.moonsLifted': 'Moon of a moon, now orbits the planet: {names}.',

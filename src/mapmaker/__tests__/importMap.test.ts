@@ -198,6 +198,49 @@ Let me know if you want changes!`);
   });
 });
 
+// Real answers from chat AIs (2026-10-16): two given the prompt, one
+// asked cold with no format at all.
+describe('real AI answers', () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const fs = require('fs') as typeof import('fs');
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const path = require('path') as typeof import('path');
+  const fixture = (f: string) => fs.readFileSync(path.join(__dirname, 'fixtures', f), 'utf8');
+
+  it('a prompted answer in Portuguese imports untouched and hostable', () => {
+    const r = ok(fixture('ai-prompted-ptbr.txt'));
+    expect(r.notes).toEqual([]);
+    expect(r.map.bodies.filter(b => b.start).length).toBe(6);
+    expect(checkMap(r.map).filter(i => i.level === 'block')).toEqual([]);
+  });
+
+  it('a prompted answer from real astronomy imports untouched', () => {
+    const r = ok(fixture('ai-prompted-realdata.txt'));
+    expect(r.notes).toEqual([]);
+    expect(r.map.bodies.filter(b => b.start).length).toBe(7);
+  });
+
+  it('a no-format answer still becomes a playable map, every change reported', () => {
+    const r = ok(fixture('ai-freeform.txt'));
+    expect(r.map.name).toBe('Ashen Lantern');
+    expect(r.map.sun).toMatchObject({ name: 'Kaelor', color: '#ffb36b' });
+    // "scorched_rock" is a planet, not a mineable rock; "volcanic" is a look.
+    expect(byName(r, 'Cinder')).toMatchObject({ type: 'terrestrial', surface: 'rocky' });
+    expect(byName(r, 'Veyra')).toMatchObject({ type: 'terrestrial', surface: 'lava' });
+    expect(byName(r, 'Thessaly').orbit).toBe(372);
+    expect(byName(r, 'Thessaly').radius).toBe(3);
+    // Its belt, a band in AU, became asteroids through the band.
+    const belt = r.map.bodies.filter(b => b.type === 'asteroid');
+    expect(belt.length).toBe(6);
+    expect(belt.every(b => b.orbit > 1.6 * 372 && b.orbit < 2.3 * 372 && b.yields.metal > 0)).toBe(true);
+    expect(byName(r, 'Ember').parent).toBe(byName(r, 'Veyra').id);
+    expect(byName(r, 'Thessaly').yields.metal).toBeGreaterThan(0);
+    expect(codes(r)).toEqual(expect.arrayContaining(['beltsSpread', 'kmRadius', 'yieldsMapped', 'orbitsMade', 'startsDropped']));
+    expect(r.map.bodies.filter(b => b.start).map(b => b.name).sort()).toEqual(['Halcyon', 'Thessaly']);
+    expect(checkMap(r.map).filter(i => i.level === 'block')).toEqual([]);
+  });
+});
+
 describe('the AI prompt', () => {
   it('has an example the importer reads with no notes and no blockers', () => {
     const prompt = buildAiPrompt();

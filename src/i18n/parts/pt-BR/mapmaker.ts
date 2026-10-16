@@ -310,6 +310,8 @@ export const mapmaker: Catalog = {
   'mm.imp.note.degrees': 'Ângulos lidos como graus e convertidos.',
   'mm.imp.note.kmRadius': 'Tamanho lido como quilômetros e ajustado: {names}.',
   'mm.imp.note.yieldsScaled': 'As produções iam até {n}: todas foram reduzidas para caber em 0-30, mantendo o equilíbrio.',
+  'mm.imp.note.yieldsMapped': 'Recursos contados como a produção mais próxima (metal, créditos ou ciência): {names}.',
+  'mm.imp.note.beltsSpread': 'Cinturão transformado em asteroides espalhados por ele: {names}.',
   'mm.imp.note.typeGuessed': 'Tipo deduzido, confira: {names}.',
   'mm.imp.note.madeMoons': 'Listado dentro de outro mundo, virou lua dele: {names}.',
   'mm.imp.note.moonsLifted': 'Lua de uma lua, agora orbita o planeta: {names}.',
