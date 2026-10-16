@@ -31,6 +31,9 @@ import { layoutRecap, glideSlot, type RecapBeat, type RecapUnit } from './recapL
 import {
   recordRecapGif, downloadBlob, gifSpan, type RecapRender, type AutoGif,
 } from './recapGif';
+import {
+  recordVerticalVideo, highlightSpan, canRecordVideo, type VideoText, type RecapFrameState,
+} from './recapVideo';
 import { getEmblemImage } from '../render/emblemCache';
 import {
   getPlanetTexture, getTerraformedTexture, getCloudTexture,
@@ -812,6 +815,9 @@ const RECAP_GLIDE_MS = 260;
  *  longer ones start from their final AUTO_GIF_TAIL beats. */
 const AUTO_GIF_WHOLE_MAX = 24;
 const AUTO_GIF_TAIL = 22;
+/** A vertical video covers this many beats (about 22 seconds, the sweet
+ *  spot for a TikTok) before its end card. */
+const VIDEO_BEATS = 10;
 
 type Kind = 'ship' | 'station' | 'city';
 
@@ -1078,11 +1084,17 @@ function makeStars(seed: string, w: number, h: number) {
   }));
 }
 
-export function BattleRecap({ d, autoGif }: {
+export function BattleRecap({ d, autoGif, videoText, videoSpan }: {
   d: Detail;
   /** Record a GIF on load and hand it over (the Discord replay post's GIF
    *  job, worker/recapGif.js, opening this recap in headless Chrome). */
   autoGif?: AutoGif;
+  /** The vertical video's own words, when given (the share page reads
+   *  them from ?hook= and ?sub=); otherwise written from the battle. */
+  videoText?: { hook?: string; sub?: string };
+  /** The vertical video's stretch, in beats, when given (?vfrom=&vbeats=);
+   *  otherwise the battle's deadliest stretch (highlightSpan). */
+  videoSpan?: { from: number; to: number };
 }) {
   useI18n();
   const cv = useRef<HTMLCanvasElement | null>(null);
@@ -1376,7 +1388,9 @@ export function BattleRecap({ d, autoGif }: {
 
     // One picture of the recap at position p and clock nowMs, into
     // any canvas: the screen every frame, or the GIF recorder offscreen.
-    const render = (g: CanvasRenderingContext2D, p: number, nowMs: number) => {
+    const render = (g: CanvasRenderingContext2D, p: number, nowMs: number,
+      opts?: { hud?: boolean; onState?: (s: RecapFrameState) => void }) => {
+      const hud = opts?.hud !== false;
       const W = g.canvas.width, H = g.canvas.height;
       const i = clampFrame(p, frames.length);
       const t = Math.min(1, Math.max(0, p - i));
@@ -1885,9 +1899,11 @@ export function BattleRecap({ d, autoGif }: {
       for (const [id, ago] of deadBefore) if (depthOf(id) >= 0) drawWreck(id, wreckAge(ago));
       for (const r of infront) drawCombatant(r, 1);
 
-      g.fillStyle = '#9dbdd8';
-      g.font = '13px system-ui'; g.textAlign = 'left';
-      g.fillText(d.battle.body_name ?? tr('review.deepSpaceLower'), 12, H - 14);
+      if (hud) {
+        g.fillStyle = '#9dbdd8';
+        g.font = '13px system-ui'; g.textAlign = 'left';
+        g.fillText(d.battle.body_name ?? tr('review.deepSpaceLower'), 12, H - 14);
+      }
 
       // ---- weapons ---------------------------------------------------
       // The game's fire, volley for volley (combatFx drawEngagementFire,
@@ -2029,6 +2045,14 @@ export function BattleRecap({ d, autoGif }: {
       }
 
       // ---- HUD --------------------------------------------------------
+      // The vertical video draws its own, from this.
+      opts?.onState?.({
+        tick: frame.tick,
+        standings: standings.map(s => ({
+          name: s.name, color: s.color, alive: s.alive, committed: s.committed, lost: s.lost,
+        })),
+      });
+      if (!hud) return;
       // Who is in this, and how the sides stand RIGHT NOW. Without it a
       // viewer watches coloured hulls trade fire with no idea which
       // colour is losing.
@@ -2117,6 +2141,57 @@ export function BattleRecap({ d, autoGif }: {
     return () => { dead = true; };
   }, [autoGif, frames]);
 
+  /** Record a 9:16 video of the battle's deadliest stretch, for TikTok,
+   *  Shorts and Reels, and download it (recapVideo). A second click while
+   *  it records stops it. Recording runs in real time. */
+  const [videoProgress, setVideoProgress] = useState<number | null>(null);
+  const [videoFailed, setVideoFailed] = useState(false);
+  const videoCancel = useRef(false);
+  const makeVideo = useCallback(async () => {
+    const render = renderRef.current;
+    if (!render || frames.length === 0) return;
+    setPlaying(false);
+    setVideoFailed(false);
+    videoCancel.current = false;
+    const deaths = frames.map(f => f.roster.filter(r => r.dead === 1).length);
+    const span = videoSpan ?? highlightSpan(deaths, VIDEO_BEATS);
+    const lost = d.sides.reduce((n, s) => n + (Number(s.lost) || 0), 0);
+    const body = d.battle.body_name ?? tr('review.deepSpace');
+    const text: VideoText = {
+      hook: videoText?.hook || tr('review.video.hook', { n: lost, body }),
+      sub: videoText?.sub || tr('review.video.sub'),
+      endTitle: tr('review.video.endTitle'),
+      endUrl: 'orbital-empire.com',
+      endLine: tr('review.video.endLine'),
+    };
+    setVideoProgress(0);
+    let shown = -1;
+    try {
+      const res = await recordVerticalVideo({
+        render, srcW: CANVAS_W, srcH: CANVAS_H, focusX: BODY_CX,
+        from: span.from, to: span.to, tickMs: TICK_MS, text,
+        cancelled: () => videoCancel.current,
+        onProgress: k => {
+          const pct = Math.floor(k * 100);
+          if (pct !== shown) { shown = pct; setVideoProgress(k); }
+        },
+      });
+      if (res) {
+        const place = (d.battle.body_name ?? '').toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'battle';
+        const tick = frames[clampFrame(span.from, frames.length)]?.tick ?? 0;
+        downloadBlob(res.blob, `orbital-${place}-T${tick}-vertical.${res.ext}`);
+      } else if (!videoCancel.current) {
+        setVideoFailed(true);
+      }
+    } catch (e) {
+      console.error('recap video failed', e);
+      setVideoFailed(true);
+    } finally {
+      setVideoProgress(null);
+    }
+  }, [frames, d.battle.body_name, d.sides, videoText, videoSpan]);
+
   /** Record the whole battle as a GIF and download it (recapGif). A
    *  second click while it records stops it. */
   const [gifFailed, setGifFailed] = useState(false);
@@ -2188,6 +2263,20 @@ export function BattleRecap({ d, autoGif }: {
         >{gifProgress != null
             ? tr('review.battle.gifRecording', { pct: Math.round(gifProgress * 100) })
             : tr('review.battle.gif')}</button>
+        {canRecordVideo() && (
+          <button
+            onClick={() => { if (videoProgress != null) videoCancel.current = true; else void makeVideo(); }}
+            title={videoProgress != null ? tr('review.battle.gifCancel') : tr('review.battle.videoTitle')}
+            style={{
+              background: '#16273a', border: '1px solid #3d6b96', borderRadius: 5,
+              color: '#cfe0ee', padding: '3px 10px', fontSize: 11, whiteSpace: 'nowrap',
+              cursor: videoProgress != null ? 'progress' : 'pointer',
+              opacity: videoProgress != null ? 0.8 : 1,
+            }}
+          >{videoProgress != null
+              ? tr('review.battle.videoRecording', { pct: Math.round(videoProgress * 100) })
+              : tr('review.battle.video')}</button>
+        )}
         <input
           type="range" min={0} max={Math.max(0.0001, frames.length - 1)} step={0.02}
           value={Number.isFinite(pos) ? pos : 0}
@@ -2205,6 +2294,9 @@ export function BattleRecap({ d, autoGif }: {
       </div>
       {gifFailed && (
         <div style={{ fontSize: 11, color: '#ff8a80', marginTop: 4 }}>{tr('review.battle.gifFailed')}</div>
+      )}
+      {videoFailed && (
+        <div style={{ fontSize: 11, color: '#ff8a80', marginTop: 4 }}>{tr('review.battle.videoFailed')}</div>
       )}
     </div>
   );

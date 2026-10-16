@@ -63,6 +63,20 @@ export function SharedRecap({ token }: { token: string }) {
     const job = q.get('gifjob'), nonce = q.get('nonce');
     return job && nonce ? { job, nonce } : null;
   }, []);
+  // The vertical video's words and stretch, when a link sets them:
+  // ?hook=&sub= for the text, ?vfrom=&vbeats= for which beats. For cutting
+  // marketing clips; a reader's link has none and gets the defaults.
+  const { videoText, videoSpan } = useMemo(() => {
+    const q = new URLSearchParams(window.location.search);
+    const hook = q.get('hook') ?? undefined, sub = q.get('sub') ?? undefined;
+    const vfrom = Number(q.get('vfrom')), vbeats = Number(q.get('vbeats'));
+    return {
+      videoText: hook || sub ? { hook, sub } : undefined,
+      videoSpan: q.has('vfrom') && Number.isFinite(vfrom) && vbeats > 0
+        ? { from: Math.max(0, vfrom), to: Math.max(0, vfrom) + vbeats - 1 + 0.98 }
+        : undefined,
+    };
+  }, []);
   const autoGif = useMemo<AutoGif | undefined>(() => (gifJob ? {
     maxBytes: DISCORD_GIF_MAX_BYTES,
     upload: async (blob, span) => {
@@ -220,7 +234,7 @@ export function SharedRecap({ token }: { token: string }) {
                 : system
                   ? <TheatreCanvas d={system} />
                   : <div className="shared-recap__loading">{t('review.shared.loadingCampaign')}</div>)
-              : <BattleRecap d={d} autoGif={autoGif} />}
+              : <BattleRecap d={d} autoGif={autoGif} videoText={videoText} videoSpan={videoSpan} />}
 
             <div className="shared-recap__stats">
               {tn('review.ticks', span, { n: span })} · {tn('review.shots', b.shots, { n: b.shots })} · {t('review.shared.hitPct', { pct: pct(b.hits, b.shots) })}
