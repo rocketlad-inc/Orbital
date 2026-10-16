@@ -443,13 +443,26 @@ export async function customSeatCap(env, roomId) {
   return startWorlds(map).worlds.length;
 }
 
-/** For seeding: the snapshot a room was hosted with, cleaned, or null. */
+/** For seeding: the snapshot a room was hosted with, cleaned.
+ *
+ *  NULL MEANS "NO CUSTOM MAP", NOTHING ELSE. A room that was hosted on a
+ *  map (custom_map_id set, or a snapshot present) whose snapshot is missing
+ *  or will not parse THROWS: swallowing that used to return null, and the
+ *  seeder built Sol under a custom room's rules (cfg() keys custom_map off
+ *  custom_map_id). The seeder's caller (lobby.startGame) undoes the start.
+ *  A failed lookup throws too: it cannot tell the two apart. */
 export async function roomCustomMap(env, gameId) {
+  const row = await env.DB.prepare('SELECT custom_map_id, custom_map_json FROM rooms WHERE id = ?').bind(gameId).first();
+  if (!row?.custom_map_json && !row?.custom_map_id) return null;
+  if (!row.custom_map_json) throw new Error(`room ${gameId}: hosted on custom map ${row.custom_map_id} but carries no snapshot`);
+  let parsed;
   try {
-    const row = await env.DB.prepare('SELECT custom_map_json FROM rooms WHERE id = ?').bind(gameId).first();
-    if (!row?.custom_map_json) return null;
-    return normalizeMap(JSON.parse(row.custom_map_json));
-  } catch {
-    return null;
+    parsed = JSON.parse(row.custom_map_json);
+  } catch (e) {
+    throw new Error(`room ${gameId}: custom map snapshot is not JSON (${e?.message || e})`);
   }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`room ${gameId}: custom map snapshot is not a map`);
+  }
+  return normalizeMap(parsed);
 }

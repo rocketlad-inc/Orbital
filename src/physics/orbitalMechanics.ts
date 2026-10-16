@@ -59,7 +59,13 @@ export const GRAVITATIONAL_PARAMS = {
  * Uses per-body mu field when available, falls back to type-based defaults.
  */
 export function muOf(bodyId: string, bodies: Body[]): number {
-  if (bodyId === 'sol') return GRAVITATIONAL_PARAMS.SOL;
+  // THE GAME'S OWN STAR when it carries a μ: a custom map's sun is seeded
+  // with Sol's μ times its mass (worker/factions.js). Sol itself is seeded
+  // with mu 0 everywhere, so it keeps the constant below.
+  if (bodyId === 'sol') {
+    const star = Array.isArray(bodies) ? bodyById(bodies, 'sol') : undefined;
+    return star?.mu != null && star.mu > 0 ? star.mu : GRAVITATIONAL_PARAMS.SOL;
+  }
   const body = bodyById(bodies, bodyId);
   if (!body) return 100;
   if (body.mu != null && body.mu > 0) return body.mu;
