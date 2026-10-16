@@ -438,6 +438,8 @@ export const mapmaker: Catalog = {
   'mm.world.addMoon': '+ Lua',
   'mm.world.add3Moons': '+ 3 luas',
   'mm.look.now': 'Agora',
+  'mm.sun.anyColour': 'Qualquer cor',
+  'mm.sun.colourNote': 'As quatro estrelas com nome usam a aparência real delas. Qualquer outra cor ganha brilho, erupções e tom de superfície próprios no jogo.',
   'mm.look.after': 'Depois de terraformado',
   'mm.look.noteTwo': 'Os jogadores veem {name} primeiro em estado bruto, como à esquerda. A superfície que você escolhe é o mundo em que ele se torna quando um império o terraforma.',
   'mm.look.note': 'Este é o rosto que o jogo pinta em {name}. Os jogadores veem exatamente este mundo.',

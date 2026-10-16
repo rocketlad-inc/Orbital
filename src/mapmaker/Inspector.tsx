@@ -439,7 +439,14 @@ export const SunInspector: React.FC<{ map: CustomMap; onChange: Change; onTransi
               <span className="mm-dot" style={{ background: s.c }} />{starLabel(s.c, s.label)}
             </button>
           ))}
+          {/* Any colour at all: the game builds the sun's glow from it. */}
+          <label className={`mm-chip${STAR_SWATCHES.some(s => s.c === map.sun.color) ? '' : ' is-on'}`}>
+            <input type="color" className="mm-swatch is-custom" value={map.sun.color} aria-label={t('mm.sun.anyColour')}
+              onChange={(e) => live({ color: e.target.value })} onBlur={(e) => set({ color: e.target.value })} />
+            {t('mm.sun.anyColour')}
+          </label>
         </div>
+        <p className="mm-note">{t('mm.sun.colourNote')}</p>
         <Field label={t('mm.sizeVal', { n: Math.round(map.sun.size) })}>
           <Slider label={t('mm.sun.sizeAria')} value={map.sun.size} min={SUN_LIMITS.size[0]} max={SUN_LIMITS.size[1]} onChange={(v) => live({ size: v })} onCommit={() => onChange(map)} />
         </Field>

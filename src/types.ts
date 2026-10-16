@@ -225,6 +225,9 @@ export interface BodyLook {
   surface?: string | null;
   rings?: boolean;
   star?: string;
+  /** The custom map's sky behind the system (on the star's look):
+   *  blue | crimson | emerald | violet | amber. Absent: deep space. */
+  backdrop?: string;
   /** A line of flavour the map maker wrote for this world (plain text). */
   lore?: string;
   /** The map maker's SECTOR this world (or its planet) sits in. On a

@@ -443,6 +443,15 @@ check('the gallery is staging-only too', await (async () => {
     res.error && !gameRow, JSON.stringify(res.error ? 'refused' : res).slice(0, 120));
 }
 
+// ---- the sun and the sky reach the game ---------------------------------------
+{
+  const skyMap = normalizeMap({ sun: { color: '#3fe08a' }, settings: { backdrop: 'violet' }, bodies: [] });
+  const star = mapToCatalog(skyMap)[0];
+  check("the map's sun colour and sky ride on the star's look", star.look.star === '#3fe08a' && star.look.backdrop === 'violet', JSON.stringify(star.look));
+  const deep = mapToCatalog(normalizeMap({ bodies: [] }))[0];
+  check('deep space adds no sky', deep.look.backdrop === undefined, JSON.stringify(deep.look));
+}
+
 // ---- the launch switch --------------------------------------------------------
 {
   const prod = { DB };   // no ORBITAL_ENV: production

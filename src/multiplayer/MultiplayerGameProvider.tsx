@@ -810,6 +810,9 @@ function parseLook(raw: string | null | undefined): import('../types').BodyLook 
     if (!v || typeof v !== 'object') return undefined;
     // Lore is player-written: a plain string or nothing.
     if (v.lore != null && typeof v.lore !== 'string') delete v.lore;
+    // The sky and the sun's colour are drawn, so only known values pass.
+    if (v.backdrop != null && !['blue', 'crimson', 'emerald', 'violet', 'amber'].includes(v.backdrop)) delete v.backdrop;
+    if (v.star != null && !(typeof v.star === 'string' && /^#[0-9a-fA-F]{6}$/.test(v.star))) delete v.star;
     // A sector regroups the senate, the outliner and the map, so only a
     // well-formed one survives: string id and name, #rrggbb colour.
     if (v.sector != null) {

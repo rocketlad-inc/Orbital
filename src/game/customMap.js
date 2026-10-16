@@ -575,7 +575,8 @@ export function mapToCatalog(input) {
     orbit_radius: 0, orbit_period: 0, angle0: 0,
     color: map.sun.color,
     yield: { metal: 0, fuel: 0, gold: 0, science: 0 },
-    look: { star: map.sun.color },
+    // The sun's colour, and the map's sky (deep space draws nothing extra).
+    look: { star: map.sun.color, ...(map.settings.backdrop && map.settings.backdrop !== 'deep' ? { backdrop: map.settings.backdrop } : {}) },
   }];
   for (const b of map.bodies) {
     const info = TYPE_INFO[b.type];
