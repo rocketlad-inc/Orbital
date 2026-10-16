@@ -19,6 +19,13 @@ function idsOf(map: CustomMap): Set<string> {
   return new Set(map.bodies.map(b => b.id));
 }
 
+/** The ids of `ids` still on `map`: normalizeMap drops bodies past the
+ *  200 cap, and a selection of ids that are not there selects nothing. */
+function present(map: CustomMap, ids: string[]): string[] {
+  const have = idsOf(map);
+  return ids.filter(id => have.has(id));
+}
+
 const SURFACE_COLOR: Record<string, string> = {
   verdant: '#4f8a3c', ocean: '#2f8fd6', desert: '#c9a36b', rocky: '#9a8a78', barren: '#a0a6ad',
   ice: '#cfe8f2', lava: '#d65a2a', toxic: '#9ab83c', gas: '#d4a574', storm: '#6fa8c9',
@@ -63,7 +70,8 @@ export function placeBody(
   } else {
     out.push(mk(tool, orbit, angle));
   }
-  return { map: normalizeMap({ ...map, bodies: [...map.bodies, ...out] }), ids: out.map(b => b.id) };
+  const next = normalizeMap({ ...map, bodies: [...map.bodies, ...out] });
+  return { map: next, ids: present(next, out.map(b => b.id)) };
 }
 
 /** A new moon for a planet, just outside its outermost moon. */
@@ -108,7 +116,8 @@ export function duplicateBodies(map: CustomMap, ids: Iterable<string>, theme: st
     });
     if (want.has(b.id)) picked.push(id);
   }
-  return { map: normalizeMap({ ...map, bodies: [...map.bodies, ...copies] }), ids: picked };
+  const next = normalizeMap({ ...map, bodies: [...map.bodies, ...copies] });
+  return { map: next, ids: present(next, picked) };
 }
 
 export type ResMode = 'set' | 'add' | 'multiply' | 'range';
@@ -202,11 +211,16 @@ export function scaleSize(map: CustomMap, ids: Iterable<string>, factor: number)
   return updateBodies(map, ids, b => ({ radius: b.radius * factor }));
 }
 
+/** Types no moon can orbit: a world with moons cannot become one (its
+ *  moons would be flung loose round the sun). */
+export const MOONLESS_TYPES: ReadonlySet<MapBodyType> = new Set<MapBodyType>(['asteroid', 'rock', 'moon']);
+
 /** Change a world's type, keeping what still makes sense. A moon turned
  *  into a planet leaves its planet for the sun, at its planet's orbit. */
 export function changeType(map: CustomMap, id: string, type: MapBodyType): CustomMap {
   const b = map.bodies.find(x => x.id === id);
   if (!b || b.type === type) return map;
+  if (MOONLESS_TYPES.has(type) && map.bodies.some(x => x.parent === id)) return map;
   const info = TYPE_INFO[type];
   const patch: Partial<MapBody> = {
     type, radius: info.radius[2], surface: info.surface, color: info.color,
@@ -255,7 +269,7 @@ export function placeSymmetric(
     m = r.map;
     ids.push(...r.ids);
   }
-  return { map: m, ids };
+  return { map: m, ids: present(m, ids) };
 }
 
 /** `n` worlds of one type spaced evenly round one orbit. */
@@ -319,7 +333,8 @@ export function mirrorBodies(map: CustomMap, ids: Iterable<string>, n: number, t
     }
   }
   const room = MAX_BODIES - map.bodies.length;
-  return { map: normalizeMap({ ...map, bodies: [...map.bodies, ...copies.slice(0, Math.max(0, room))] }), ids: picked };
+  const next = normalizeMap({ ...map, bodies: [...map.bodies, ...copies.slice(0, Math.max(0, room))] });
+  return { map: next, ids: present(next, picked) };
 }
 
 export type MatchAspect = 'resources' | 'look' | 'size' | 'secret';
@@ -390,17 +405,27 @@ export function rerollZone(map: CustomMap, zone: 'inner' | 'outer', theme: strin
   if (kids.length < 2) return { map, ids: [] };
   const half = Math.ceil(kids.length / 2);
   const split = Math.sqrt(kids[half - 1].orbit * kids[Math.min(half, kids.length - 1)].orbit);
-  const inZone = (o: number) => (zone === 'inner' ? o <= split : o > split);
-  const gone = new Set(map.bodies.filter(b => b.parent === 'sun' && inZone(b.orbit)).map(b => b.id));
+  // Worlds split by RANK, so worlds sharing one orbit still split in two
+  // ("inner" never takes the whole system); rubble by orbit.
+  const innerWorlds = new Set(kids.slice(0, half).map(b => b.id));
+  const inZone = (b: MapBody) => {
+    const inner = b.type !== 'asteroid' && b.type !== 'rock' ? innerWorlds.has(b.id) : b.orbit <= split;
+    return zone === 'inner' ? inner : !inner;
+  };
+  const gone = new Set(map.bodies.filter(b => b.parent === 'sun' && inZone(b)).map(b => b.id));
   for (const b of map.bodies) if (gone.has(b.parent)) gone.add(b.id);
   const removed = map.bodies.filter(b => gone.has(b.id) && b.parent === 'sun');
   const worlds = removed.filter(b => b.type !== 'asteroid' && b.type !== 'rock');
   if (!worlds.length) return { map, ids: [] };
   const starts = map.bodies.filter(b => gone.has(b.id) && b.start).length;
   const lo = Math.min(...removed.map(b => b.orbit)), hi = Math.max(...removed.map(b => b.orbit));
-  const gen = generateMap({
-    theme, planets: Math.max(2, worlds.length), belts: removed.some(b => b.type === 'asteroid') ? 1 : 0, starts: 2,
+  // Enough worlds that can be start worlds (moons and dwarfs count) to
+  // keep every start the zone had: a few rolls, a planet more each time.
+  const roll = (extra: number) => generateMap({
+    theme, planets: Math.max(2, worlds.length) + extra, belts: removed.some(b => b.type === 'asteroid') ? 1 : 0, starts: 2,
   });
+  let gen = roll(0);
+  for (let extra = 1; extra <= 6 && gen.bodies.filter(b => canStartOn(b.type)).length < starts; extra++) gen = roll(extra);
   const gKids = gen.bodies.filter(b => b.parent === 'sun');
   const gLo = Math.min(...gKids.map(b => b.orbit)), gHi = Math.max(...gKids.map(b => b.orbit));
   const span = (o: number) => {
@@ -419,8 +444,10 @@ export function rerollZone(map: CustomMap, zone: 'inner' | 'outer', theme: strin
     taken.add(name.toLowerCase());
     return { ...b, id: remap.get(b.id)!, name, parent: remap.get(b.parent) ?? 'sun', orbit: b.parent === 'sun' ? span(b.orbit) : b.orbit, start: false };
   });
-  // As many start worlds as the zone had, on its roomiest worlds.
-  const cands = fresh.filter(b => canStartOn(b.type) && b.parent === 'sun').sort((a, b) => b.radius - a.radius);
+  // As many start worlds as the zone had (moons count, as they did), on
+  // its roomiest worlds: the sun's own first, then moons.
+  const cands = fresh.filter(b => canStartOn(b.type))
+    .sort((a, b) => Number(a.parent !== 'sun') - Number(b.parent !== 'sun') || b.radius - a.radius);
   for (const b of cands.slice(0, starts)) { b.start = true; b.secret = null; b.yields.science = Math.max(2, b.yields.science); }
   return { map: normalizeMap({ ...map, bodies: [...keep, ...fresh] }), ids: fresh.filter(b => b.parent === 'sun').map(b => b.id) };
 }
@@ -443,7 +470,8 @@ function freshSectorName(map: CustomMap): string {
 }
 
 /** A new band from `inner` to `outer`. Where it overlaps a band already
- *  drawn, the new one gives way (normalizeMap trims it to the gap). */
+ *  drawn, the new one gives way: it keeps the widest free stretch, or is
+ *  refused when there is none. */
 export function addSector(map: CustomMap, inner: number, outer: number): { map: CustomMap; id: string | null } {
   if (map.sectors.length >= MAX_SECTORS) return { map, id: null };
   const id = newSectorId(new Set(map.sectors.map(s => s.id)));
@@ -451,11 +479,16 @@ export function addSector(map: CustomMap, inner: number, outer: number): { map: 
   const color = SECTOR_COLORS.find(c => !map.sectors.some(s => s.color === c)) ?? SECTOR_COLORS[map.sectors.length % SECTOR_COLORS.length];
   // Existing bands keep their ground: only the new one is trimmed.
   const others = map.sectors;
-  let a = lo, b = hi;
-  for (const s of others) {
-    if (s.inner <= a && s.outer > a) a = s.outer;
-    if (s.inner < b && s.outer >= b) b = s.inner;
+  const sorted = [...others].sort((x, y) => x.inner - y.inner);
+  let a = 0, b = 0, at = lo;
+  const gap = (from: number, to: number) => { if (to - from > b - a) { a = from; b = to; } };
+  for (const s of sorted) {
+    if (s.outer <= at) continue;
+    if (s.inner >= hi) break;
+    gap(at, Math.min(hi, s.inner));
+    at = Math.max(at, s.outer);
   }
+  gap(at, hi);
   if (b - a < 10) return { map, id: null };
   const next = normalizeMap({ ...map, sectors: [...others, { id, name: freshSectorName(map), color, inner: a, outer: b }] });
   return { map: next, id: next.sectors.some(s => s.id === id) ? id : null };
@@ -488,7 +521,15 @@ export function suggestSectors(map: CustomMap, count = 4): CustomMap {
   const sunKids = map.bodies.filter(b => b.parent === 'sun');
   const worldOrbits = sunKids.filter(b => b.type !== 'asteroid' && b.type !== 'rock').map(b => b.orbit);
   const orbits = [...new Set(worldOrbits.length >= 2 ? worldOrbits : sunKids.map(b => b.orbit))].sort((a, b) => a - b);
-  if (orbits.length < 2) return map;
+  if (!orbits.length) return map;
+  if (orbits.length < 2) {
+    // Everything on one orbit: one band round it.
+    const o = orbits[0];
+    return normalizeMap({
+      ...map,
+      sectors: [{ id: newSectorId(new Set()), name: sectorNames()[0], color: SECTOR_COLORS[0], inner: Math.round(o * 0.8), outer: Math.round(o * 1.15 + 20) }],
+    });
+  }
   const k = Math.max(2, Math.min(count, orbits.length, MAX_SECTORS));
   const minSize = Math.max(1, Math.floor(orbits.length / (k * 1.6)));
   const ranked = orbits.slice(1).map((o, i) => ({ i: i + 1, g: Math.log(o / orbits[i]) })).sort((a, b) => b.g - a.g);
