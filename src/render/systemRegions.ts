@@ -33,7 +33,7 @@
 import { Body, Faction, Settlement } from '../types';
 import {
   CORE_MEMBER_IDS, CORE_LABEL, findBelts, isEccentricRogue, isStellarAnchor, bodySector,
-  Sector,
+  Sector, isCustomMapBodies,
 } from '../game/systemGrouping';
 import { deriveSecondary } from '../game/colorUtils';
 
@@ -518,7 +518,8 @@ export function computeSystemRegions(
         : star;
       regions.push({
         id: `core:${star.id}`,
-        label: CORE_LABEL,
+        // A custom map's star is not "The Core": it is called its name.
+        label: isCustomMapBodies(bodies) ? star.name : CORE_LABEL,
         shape: {
           kind: 'band',
           starBodyId: star.id,

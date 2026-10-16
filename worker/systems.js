@@ -37,6 +37,23 @@
  *  Mirrors PRETEND_ORBIT_PERIOD in systemGrouping.ts. */
 const PRETEND_ORBIT_PERIOD = 1e9;
 
+/** A Map Maker map's worlds carry `cm_<id>` templates (src/game/customMap.js
+ *  mapToCatalog); its star keeps 'sol'. Mirror of CUSTOM_TEMPLATE_PREFIX
+ *  in src/game/systemGrouping.ts. */
+export const CUSTOM_TEMPLATE_PREFIX = 'cm_';
+const customCache = new WeakMap();
+/** Is this body list a custom map? Memoized per bodies-array. Sol's rules
+ *  that only make sense for Sol (The Core, the Kuiper bands, dwarfs in
+ *  belts) are switched off for it. */
+export function isCustomMapBodies(bodies) {
+  if (!Array.isArray(bodies)) return false;
+  const hit = customCache.get(bodies);
+  if (hit !== undefined) return hit;
+  const out = bodies.some(b => templateOf(b).startsWith(CUSTOM_TEMPLATE_PREFIX));
+  customCache.set(bodies, out);
+  return out;
+}
+
 /** Sol, Mercury and Venus read as one place. Splitting them into three
  *  systems — two of which are a single scorched rock apiece — is noise.
  *  These are TEMPLATE ids; a DB body id is `<gameId>:<template>`. */
@@ -311,7 +328,13 @@ export const FAR_REACH_TEMPLATES = new Set([
  *  seeded rogues carry nominal radii that land on Uranus and Neptune. */
 const CO_ORBITAL_TOLERANCE = 0.05;
 
-function isBeltable(b) {
+function isBeltable(b, custom = false) {
+  // ON A CUSTOM MAP ONLY RUBBLE MAKES A BELT (2026-10-15). A dwarf there
+  // is a world its maker placed on purpose, often a start world: chaining
+  // every dwarf past the last planet into one "Kuiper Belt" merged three
+  // unrelated homes at 800, 2000 and 5000 into a single contested senate
+  // seat. Sol keeps its dwarf belts.
+  if (custom) return b.type === 'asteroid';
   return b.type === 'asteroid' || b.type === 'dwarf';
 }
 
@@ -380,6 +403,35 @@ function isEccentricRogue(b) {
   return ra > rp * ROGUE_ECCENTRICITY_RATIO;
 }
 
+/** A custom map's belts: sorted rubble chained by BELT_RATIO, each run of
+ *  BELT_MIN_MEMBERS or more one belt, labelled 'Asteroid Belt',
+ *  'Asteroid Belt 2'... outward. Mirror of customBelts in
+ *  src/game/systemGrouping.ts. */
+export function customBelts(sorted, radiusOf) {
+  const belts = [];
+  let run = [];
+  const flush = () => {
+    if (run.length >= BELT_MIN_MEMBERS) {
+      const radii = run.map(radiusOf);
+      const median = radii[Math.floor(radii.length / 2)];
+      const n = belts.length + 1;
+      belts.push({
+        id: `belt:${Math.round(median)}`,
+        label: n === 1 ? 'Asteroid Belt' : `Asteroid Belt ${n}`,
+        members: run.slice(), laneMembers: run.slice(),
+      });
+    }
+    run = [];
+  };
+  for (const b of sorted) {
+    const prev = run[run.length - 1];
+    if (prev && radiusOf(b) <= radiusOf(prev) * BELT_RATIO) run.push(b);
+    else { flush(); run = [b]; }
+  }
+  flush();
+  return belts;
+}
+
 /**
  * Cluster star-orbiting rubble into belts. Naming is structural: a belt
  * whose median orbit sits inside the outermost planet system is an
@@ -405,16 +457,23 @@ export function findBelts(bodies) {
   // dwarf is its own place (2026-10-06).
   const roots = new Set(bodies.filter(b => !b.parent_body_id).map(b => b.id));
   const adopted = coOrbitalHosts(bodies);
+  const custom = isCustomMapBodies(bodies);
   // A rock in an authored sector is the sector's, not a belt's.
   const isRubble = (b) => !!b.parent_body_id && anchors.has(b.parent_body_id)
     && roots.has(b.parent_body_id)
-    && isBeltable(b) && !adopted.has(b.id) && !bodySector(b);
+    && isBeltable(b, custom) && !adopted.has(b.id) && !bodySector(b);
 
   // Clustering runs on ring-dwellers ONLY — a rogue's nominal radius is
   // a fiction and would decide where the chain breaks.
   const rubble = bodies
     .filter(b => isRubble(b) && !isEccentricRogue(b))
     .sort((a, b) => (a.orbit_radius ?? 0) - (b.orbit_radius ?? 0));
+
+  // A CUSTOM MAP HAS NO PLUTINOS, NO KUIPER CLIFF AND NO FAR SYSTEMS:
+  // its asteroids chain by orbit ratio, BELT_MIN_MEMBERS or more to a
+  // belt, wherever they sit. Named in order outward. Mirror of the same
+  // branch in systemGrouping.ts.
+  if (custom) return customBelts(rubble, (b) => b.orbit_radius ?? 0);
 
   const clusters = [];
   for (const b of rubble) {
@@ -605,6 +664,7 @@ export function makeSystemRootOf(bodies) {
   const cache = new Map();
   const belts = beltsOf(bodies);
   const adopted = coOrbitalHosts(bodies);
+  const custom = isCustomMapBodies(bodies);
   return (bodyId) => {
     const hit = cache.get(bodyId);
     if (hit) return hit;
@@ -657,7 +717,8 @@ export function makeSystemRootOf(bodies) {
       cache.set(bodyId, rootRing);
       return rootRing;
     }
-    const root = (cur && CORE_TEMPLATES.has(templateOf(cur))) ? CORE_SYSTEM_ID : raw;
+    // A custom map has no Core: its star is its own place, by its name.
+    const root = (cur && !custom && CORE_TEMPLATES.has(templateOf(cur))) ? CORE_SYSTEM_ID : raw;
     for (const id of chain) cache.set(id, root);
     cache.set(bodyId, root);
     return root;
