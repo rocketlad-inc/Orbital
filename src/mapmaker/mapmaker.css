@@ -310,7 +310,7 @@ body:has(.stg-banner) .mm-start, body:has(.stg-banner) .mm-work { top: 23px; }
 .mm-issue.is-ok .mm-issue__t b { color: var(--mm-text2); }
 
 /* ---- share & host ----------------------------------------------------- */
-.mm-modal { position: fixed; inset: 0; z-index: 60; background: #04070bcc; display: grid; place-items: center; padding: 16px; }
+.mm-modal { position: fixed; inset: 0; z-index: 60; background: #04070bcc; display: grid; grid-template-columns: minmax(0, 1fr); place-items: center; padding: 16px; }
 .mm-modal__card { width: 860px; max-width: 100%; max-height: 100%; overflow-y: auto; background: var(--mm-panel); border: 1px solid var(--mm-line); border-radius: 12px; box-shadow: 0 20px 60px #000c; }
 .mm-modal__head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--mm-line-soft); }
 .mm-modal__head b { font-weight: 400; font-size: 16px; }
