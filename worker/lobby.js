@@ -687,16 +687,44 @@ async function customMapOptions(env, roomId) {
     const map = await roomCustomMap(env, roomId);
     if (!map) return null;
     const { startWorlds } = await import('../src/game/customMap.js');
-    const options = startWorlds(map).worlds.map(b => ({
+    const byId = new Map(map.bodies.map(b => [b.id, b]));
+    const starts = startWorlds(map).worlds;
+    const options = starts.map(b => ({
       id: `cm_${b.id}`,
       name: b.name,
       type: b.type,
       parent: b.parent === 'sun' ? 'sol' : `cm_${b.parent}`,
+      // The card names a moon's planet, not its catalogue id.
+      parent_name: b.parent === 'sun' ? null : (byId.get(b.parent)?.name ?? null),
       yield: { metal: b.yields.metal, fuel: 0, gold: b.yields.credits, science: b.yields.science },
     }));
+    // THE LOBBY'S BACKDROP MAP draws this map, not Sol: the sun and the
+    // start worlds (with the planet each start moon circles), at their
+    // authored orbits. Nothing else -- no discoveries, no other worlds.
+    const shown = new Map();
+    for (const b of starts) {
+      shown.set(b.id, b);
+      const p = b.parent !== 'sun' ? byId.get(b.parent) : null;
+      if (p) shown.set(p.id, p);
+    }
+    const preview = {
+      sun: { name: map.sun.name, color: map.sun.color, size: map.sun.size },
+      bodies: [...shown.values()].map(b => ({
+        id: `cm_${b.id}`,
+        name: b.name,
+        type: b.type,
+        parent: b.parent === 'sun' ? 'sol' : `cm_${b.parent}`,
+        orbit: b.orbit,
+        angle: b.angle,
+        radius: b.radius,
+        color: b.color,
+        surface: b.surface,
+        rings: b.rings,
+      })),
+    };
     return {
       options,
-      info: { name: map.name, sun: map.sun.name, bodies: map.bodies.length, blurb: map.blurb || '' },
+      info: { name: map.name, sun: map.sun.name, bodies: map.bodies.length, blurb: map.blurb || '', preview },
     };
   } catch (e) {
     console.error('custom map options failed', e);

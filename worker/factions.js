@@ -959,17 +959,22 @@ export function moonReachByParent(catalog = BODY_CATALOG) {
  * The 0.9 keeps a tenth of the clearance as margin — a system that ends
  * exactly on its neighbour's orbit is still two systems sharing a line.
  */
-export function moonScaleCeiling(sysScale = 1, catalog = BODY_CATALOG) {
+export function moonScaleCeiling(sysScale = 1, catalog = BODY_CATALOG, { custom = false } = {}) {
   const reach = moonReachByParent(catalog);
+  // ON A CUSTOM MAP ROCKS ARE NOT OBSTACLES (2026-10-15). On Sol the
+  // mining meteoroids are appended after this clamp and never count; a
+  // Map Maker's rocks arrive in the catalogue as 'meteoroid' and its
+  // asteroids as rubble, and six rocks beside one planet clamped every
+  // moon on the map to 0.02 -- 36 moons inside their planets.
   const solid = catalog
     .filter(b => b.parent === 'sol' && b.orbit_radius > 0 && b.type !== 'asteroid'
-      && !b.far_system)
+      && !b.far_system && !(custom && b.type === 'meteoroid'))
     .map(b => ({ id: b.id, r: b.orbit_radius * sysScale }));
   let ceiling = Infinity;
   for (const p of solid) {
     const rc = reach[p.id];
     if (!rc) continue;
-    let nearest = Infinity;
+    let limit = Infinity;
     for (const o of solid) {
       if (o.id === p.id) continue;
       // CO-ORBITAL BODIES NEVER CLOSE. Orcus rides Pluto's exact orbit
@@ -980,22 +985,51 @@ export function moonScaleCeiling(sysScale = 1, catalog = BODY_CATALOG) {
       // POSITIVE ceiling, that silently switched the clamp off for
       // every map. Caught by sim/moonScale.mjs the day Orcus landed.
       if (o.r === p.r) continue;
-      nearest = Math.min(nearest, Math.abs(o.r - p.r));
+      const gap = Math.abs(o.r - p.r) * 0.9;
+      // A custom map counts what can actually collide: this moon system
+      // against the neighbour's own moon system (or the neighbour itself).
+      // Sol keeps its shipped rule, byte for byte.
+      limit = Math.min(limit, custom ? gap / (rc + (reach[o.id] ?? 0)) : gap / rc);
     }
-    if (Number.isFinite(nearest)) ceiling = Math.min(ceiling, (nearest * 0.9) / rc);
+    if (Number.isFinite(limit)) ceiling = Math.min(ceiling, limit);
   }
   return Number.isFinite(ceiling) && ceiling > 0 ? ceiling : Infinity;
 }
 
-/** The moon scale a map will ACTUALLY be built at, clamped and logged. */
-export function effectiveMoonScale(wanted, sysScale = 1, catalog = BODY_CATALOG) {
-  const ceiling = moonScaleCeiling(sysScale, catalog);
-  if (!(wanted > ceiling)) return wanted;
+/** The moon scale a map will ACTUALLY be built at, clamped and logged.
+ *
+ *  A CUSTOM MAP NEVER SHRINKS BELOW ITS AUTHORED SCALE (1). Its maker
+ *  placed every moon by eye in the Map Maker, which draws moon_scale 1;
+ *  a game dial may spread moons wider, never pull them inside their
+ *  planet. Overlap at scale 1 is the maker's call (checkMap warns
+ *  'moons_overlap'). */
+export function effectiveMoonScale(wanted, sysScale = 1, catalog = BODY_CATALOG, { custom = false } = {}) {
+  const ceiling = moonScaleCeiling(sysScale, catalog, { custom });
+  const floor = custom ? 1 : -Infinity;
+  if (!(wanted > ceiling)) return Math.max(floor, wanted);
+  // Already at the floor: nothing was clamped.
+  if (!(wanted > floor)) return floor;
   console.warn(
     `moon_scale ${wanted} would push a moon system into its neighbour at ` +
-    `system_scale ${sysScale}; clamped to ${ceiling.toFixed(2)}`,
+    `system_scale ${sysScale}; clamped to ${Math.max(floor, ceiling).toFixed(2)}`,
   );
-  return ceiling;
+  return Math.max(floor, ceiling);
+}
+
+/** Sol's gravitational parameter, as the client derives it from Jupiter's
+ *  orbit (src/physics/orbitalMechanics.ts GRAVITATIONAL_PARAMS.SOL). Sol
+ *  itself is seeded with mu 0; only a custom map's star carries one. */
+export const SOL_MU = 4 * Math.PI * Math.PI * Math.pow(460, 3) / Math.pow(800, 2);
+
+/** Where "past the belt" starts on a custom map, in FINAL units: the orbit
+ *  of its outermost planet (terrestrial, gas or ice giant). Infinity, so
+ *  nothing speeds up, when it has none. Sol's is Ceres (seedGameWorld). */
+export function customBeltRadius(catalog, sysScale = 1) {
+  const PLANETS = new Set(['terrestrial', 'gas-giant', 'ice-giant']);
+  const radii = catalog
+    .filter(b => b.parent === 'sol' && PLANETS.has(b.type) && b.orbit_radius > 0)
+    .map(b => b.orbit_radius * sysScale);
+  return radii.length ? Math.max(...radii) : Infinity;
 }
 
 /** How much the far systems are opened up inside, over their catalogue
@@ -1154,6 +1188,13 @@ const FACTION_NAMES = [
   'Meridian Union',
   'Vanguard Assembly',
 ];
+
+/** A custom map's default empire name, from its capital: "House of
+ *  Aurel". Neutral where FACTION_NAMES names Sol's places. */
+export function customFactionName(capitalName) {
+  const n = typeof capitalName === 'string' ? capitalName.trim() : '';
+  return n ? `House of ${n}` : 'Free House';
+}
 
 const FACTION_COLORS = [
   '#ff7043', // ember
@@ -1530,7 +1571,12 @@ export function categorizeBodyForSecret(b) {
 export function customMapSecrets(catalog, ownership, rand) {
   const out = new Map();
   const surface = new Set(['ancient_city', 'pre_terraformed']);
-  const ANY = ['derelict_warship', 'resource_cache', 'ancient_capital', 'ancient_relay', 'ancient_station', 'deep_cache'];
+  // THE ORDINARY POOL. Sol keeps its prizes (the ancient capital ship, the
+  // weapons station, the deep cache) out in the Far Reach and Kuiper
+  // bands; a custom map has no such bands, so left to chance they landed
+  // anywhere -- a free capital ship next door to a home world. A maker
+  // can still hand-place them.
+  const ANY = ['derelict_warship', 'resource_cache', 'ancient_relay'];
   const LIVEABLE = [...ANY, 'ancient_city', 'pre_terraformed', 'ancient_databank'];
   for (const b of catalog) {
     const k = b.custom_secret;
@@ -1872,11 +1918,14 @@ export async function seedGameWorld(env, gameId) {
   // are the map's own (below).
   let customStarts = null;
   let customMap = null;
-  try {
+  // A CUSTOM ROOM WHOSE MAP WILL NOT LOAD IS NOT A SOL GAME. This used to
+  // log and seed Sol while cfg() still said custom (far systems off, no
+  // meteoroid spawns...): a Sol board under a custom room's rules. Now it
+  // throws, and lobby.startGame undoes the start and reopens the lobby.
+  // roomCustomMap returns null only when the room has no custom map.
+  {
     const { roomCustomMap } = await import('./customMaps.js');
     customMap = await roomCustomMap(env, gameId);
-  } catch (e) {
-    console.error('custom map lookup failed, seeding Sol', e);
   }
   if (customMap) {
     const cm = await import('../src/game/customMap.js');
@@ -1884,11 +1933,20 @@ export async function seedGameWorld(env, gameId) {
     const sysScale = seedConf?.system_scale ?? 1;
     const bodyScale = seedConf?.body_scale ?? 1;
     const outerSpeedup = Math.max(1, Number(seedConf?.outer_orbit_speedup) || 1);
-    const ceres = BODY_CATALOG.find(b => b.id === 'ceres');
-    const beltRadius = ceres ? ceres.orbit_radius * sysScale : Infinity;
-    const moonScale = effectiveMoonScale(seedConf?.moon_scale ?? 1, sysScale, raw);
+    // "Past the belt" is SOL's Ceres. A custom map's own boundary is its
+    // outermost planet: worlds beyond it run faster, as Sol's do beyond
+    // the belt. No planets, no speed-up.
+    const beltRadius = customBeltRadius(raw, sysScale);
+    const moonScale = effectiveMoonScale(seedConf?.moon_scale ?? 1, sysScale, raw, { custom: true });
     const moonReach = moonReachByParent(raw);
-    CATALOG = raw.map((body) => (body.type === 'star' ? body : {
+    CATALOG = raw.map((body) => (body.type === 'star' ? {
+      ...body,
+      // THE STAR'S PULL, for hulls parked at it (the client's muOf). Sol
+      // is seeded with mu 0 and the client falls back to Sol's own μ;
+      // a custom sun is Sol's μ times its mass -- the same law its
+      // worlds' years come from (customMap.js SUN_YEAR_K / sqrt(mass)).
+      mu: SOL_MU * (Number(customMap.sun?.mass) > 0 ? Number(customMap.sun.mass) : 1),
+    } : {
       ...body,
       ...scaledGeometry(body, { sysScale, bodyScale, moonScale, moonReach, outerSpeedup, beltRadius }),
       radius: body.radius * bodyScale,
@@ -2061,7 +2119,9 @@ export async function seedGameWorld(env, gameId) {
       id: `${gameId}:f${slot}`,
       slot,
       user_id: m.user_id,
-      name: empire || FACTION_NAMES[slot % FACTION_NAMES.length],
+      // A custom map's default name waits for the capital (below): Sol's
+      // "Mars Combine" and "Belt Syndicate" name places that map lacks.
+      name: empire || (customStarts ? null : FACTION_NAMES[slot % FACTION_NAMES.length]),
       color,
       color2,
       emblem,
@@ -2147,6 +2207,7 @@ export async function seedGameWorld(env, gameId) {
     }
     f.worlds = myWorlds;
     f.capital_body_id = bodyRowIdFor(f.capital_template_id);
+    if (!f.name) f.name = customFactionName(CATALOG.find(b => b.id === f.capital_template_id)?.name);
     myWorlds.forEach((tplId, wIdx) => {
       ownership.set(tplId, { factionId: f.id, isCapital: wIdx === 0 });
     });
@@ -3289,7 +3350,9 @@ export async function seedLateFaction(env, gameId, userId, chosenTemplateId, ide
 
   const empire = (typeof identity.empireName === 'string' ? identity.empireName.trim() : '') || null;
   const bio = (typeof identity.bio === 'string' && identity.bio.trim()) ? identity.bio.trim() : null;
-  const name = empire || FACTION_NAMES[slot % FACTION_NAMES.length];
+  const name = empire || (String(chosenTemplateId).startsWith('cm_')
+    ? customFactionName(body.name)
+    : FACTION_NAMES[slot % FACTION_NAMES.length]);
   // Two-tone (§5): honor lobby color prefs when the latecomer set them
   // (room id == game id); else rotation primary + derived secondary.
   const prefRow = await env.DB

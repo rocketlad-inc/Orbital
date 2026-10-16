@@ -76,6 +76,9 @@ export interface MapIssueParams {
   placed?: number; chance?: number; max?: number;
   /** the sector start worlds share (sector_starts) */
   sector?: string;
+  /** the sun's name, and the orbit worlds must clear (sun_close) */
+  sun?: string;
+  min?: number;
 }
 
 export interface TypeInfo {

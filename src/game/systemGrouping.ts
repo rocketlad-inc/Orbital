@@ -51,6 +51,22 @@ export const CORE_SYSTEM_ID = 'core';
 export const CORE_MEMBER_IDS = new Set(['sol', 'mercury', 'venus']);
 export const CORE_LABEL = 'The Core';
 
+/** A Map Maker map's worlds have `cm_<id>` ids (src/game/customMap.js
+ *  mapToCatalog); its star keeps 'sol'. MIRROR of CUSTOM_TEMPLATE_PREFIX
+ *  in worker/systems.js. */
+export const CUSTOM_TEMPLATE_PREFIX = 'cm_';
+const customCache = new WeakMap<Body[], boolean>();
+/** Is this body list a custom map? Sol-only rules (The Core, the Kuiper
+ *  bands, dwarfs in belts) are off for it. MIRROR of isCustomMapBodies in
+ *  worker/systems.js. */
+export function isCustomMapBodies(bodies: Body[]): boolean {
+  const hit = customCache.get(bodies);
+  if (hit !== undefined) return hit;
+  const out = bodies.some(b => b.id.startsWith(CUSTOM_TEMPLATE_PREFIX));
+  customCache.set(bodies, out);
+  return out;
+}
+
 /** A star, black hole, or barycenter anchor — the thing planets orbit.
  *  These do NOT head a planetary system; they're the level above it. */
 export function isStellarAnchor(b: Body): boolean {
@@ -137,9 +153,40 @@ export const FAR_BELT_LABELS: Record<string, string> = {
   bh_barycenter: 'The Ossuary',
 };
 
-/** Rubble — the only things that form belts. */
-export function isBeltable(b: Body): boolean {
+/** Rubble — the only things that form belts. On a custom map only
+ *  asteroids: its dwarfs are worlds a maker placed, often start worlds,
+ *  and are each their own place. MIRROR of isBeltable in worker/systems.js. */
+export function isBeltable(b: Body, custom = false): boolean {
+  if (custom) return b.type === 'asteroid';
   return b.type === 'asteroid' || b.type === 'dwarf';
+}
+
+/** A custom map's belts: sorted rubble chained by BELT_RATIO, each run of
+ *  BELT_MIN_MEMBERS or more one belt, 'Asteroid Belt', 'Asteroid Belt 2'...
+ *  outward. MIRROR of customBelts in worker/systems.js. */
+export function customBelts(sorted: Body[]): Belt[] {
+  const belts: Belt[] = [];
+  let run: Body[] = [];
+  const flush = () => {
+    if (run.length >= BELT_MIN_MEMBERS) {
+      const radii = run.map(b => b.orbitRadius);
+      const median = radii[Math.floor(radii.length / 2)];
+      const n = belts.length + 1;
+      belts.push({
+        id: `belt:${Math.round(median)}`,
+        label: n === 1 ? 'Asteroid Belt' : `Asteroid Belt ${n}`,
+        members: run.slice(), laneMembers: run.slice(),
+      });
+    }
+    run = [];
+  };
+  for (const b of sorted) {
+    const prev = run[run.length - 1];
+    if (prev && b.orbitRadius <= prev.orbitRadius * BELT_RATIO) run.push(b);
+    else { flush(); run = [b]; }
+  }
+  flush();
+  return belts;
 }
 
 /** What counts as a planet, for "where does the outer system start" and
@@ -294,10 +341,11 @@ export function findBelts(bodies: Body[]): Belt[] {
   // dwarf is its own place (2026-10-06).
   const roots = new Set(bodies.filter(b => !b.parent).map(b => b.id));
   const adopted = coOrbitalHosts(bodies);
+  const custom = isCustomMapBodies(bodies);
   // A rock in an authored sector is the sector's, not a belt's.
   const isRubble = (b: Body) =>
     !!b.parent && anchors.has(b.parent) && roots.has(b.parent)
-    && isBeltable(b) && !adopted.has(b.id) && !bodySector(b);
+    && isBeltable(b, custom) && !adopted.has(b.id) && !bodySector(b);
 
   // Clustering runs on ring-dwellers ONLY. A rogue's nominal radius is a
   // fiction, so letting it into the chain would drag a belt's extent
@@ -305,6 +353,10 @@ export function findBelts(bodies: Body[]): Belt[] {
   const rubble = bodies
     .filter(b => isRubble(b) && !isEccentricRogue(b))
     .sort((a, b) => a.orbitRadius - b.orbitRadius);
+
+  // A custom map: no Plutinos, no Kuiper cliff, no far systems. MIRROR of
+  // the same branch in worker/systems.js.
+  if (custom) return customBelts(rubble);
 
   const clusters: Body[][] = [];
   for (const b of rubble) {
@@ -487,6 +539,7 @@ export function makeSystemRootOf(bodies: Body[]): (bodyId: string) => string {
   const cache = new Map<string, string>();
   const belts = beltsOf(bodies);
   const adopted = coOrbitalHosts(bodies);
+  const custom = isCustomMapBodies(bodies);
   return (bodyId: string): string => {
     const hit = cache.get(bodyId);
     if (hit) return hit;
@@ -542,7 +595,8 @@ export function makeSystemRootOf(bodies: Body[]): (bodyId: string) => string {
       cache.set(bodyId, rootRing);
       return rootRing;
     }
-    const root = CORE_MEMBER_IDS.has(rawRoot) ? CORE_SYSTEM_ID : rawRoot;
+    // A custom map has no Core: its star is its own place, by its name.
+    const root = !custom && CORE_MEMBER_IDS.has(rawRoot) ? CORE_SYSTEM_ID : rawRoot;
     for (const id of chain) cache.set(id, root);
     cache.set(bodyId, root);
     return root;
@@ -596,6 +650,9 @@ export function regionLabel(label: string): string {
   }
   const inner = /^Inner Belt (\d+)$/.exec(label);
   if (inner) return t('helper.sys.innerBelt', { n: inner[1] });
+  // A custom map's second and later belts (customBelts).
+  const nth = /^Asteroid Belt (\d+)$/.exec(label);
+  if (nth) return `${t('helper.sys.asteroidBelt')} ${nth[1]}`;
   const far = /^(.+) Belt$/.exec(label);
   if (far) return t('helper.sys.beltOf', { name: far[1] });
   return label;

@@ -30,7 +30,7 @@ import {
   createSurface, fillRect, fillVGrad, fillRadial, fillCircle, strokeCircle,
   strokeEllipse, drawLine, hatchRect, drawText, textWidth, encodePng, hexToRgb,
 } from './heraldPng.js';
-import { CORE_TEMPLATES, CORE_LABEL, findBelts, bodySector } from './systems.js';
+import { CORE_TEMPLATES, CORE_LABEL, findBelts, bodySector, isCustomMapBodies } from './systems.js';
 
 // CORE_TEMPLATES / CORE_LABEL and the belt grouping come from systems.js —
 // the same source the senate counts and the client map draws from. This
@@ -289,9 +289,26 @@ export async function buildTerritoryData(env, gameId) {
     sectors,
     starOwner: star ? ownerOf(star) : null,
     starCombat: star ? combatBodies.has(star.id) : false,
+    // A CUSTOM MAP'S SUN is called its own name in its own colour; Sol's
+    // strip keeps "SOL" in stock gold (both null there).
+    ...customStar(bodyRows, star),
     bodyCount: bodyRows.length,
     combatCount: combatBodies.size,
   };
+}
+
+/** The sun's label and colour on a custom map (worlds carry `cm_`
+ *  templates; the star keeps 'sol' under the map's name, its colour in
+ *  look_json.star). Null for Sol, so its strip is unchanged. */
+function customStar(bodyRows, star) {
+  if (!star || !isCustomMapBodies(bodyRows)) return { starName: null, starColor: null };
+  let color = null;
+  try {
+    const look = typeof star.look_json === 'string' ? JSON.parse(star.look_json) : null;
+    if (look && typeof look.star === 'string' && /^#[0-9a-fA-F]{6}$/.test(look.star)) color = look.star;
+  } catch { /* no look: the stock gold */ }
+  const name = String(star.name ?? '').trim().toUpperCase() || null;
+  return { starName: name, starColor: color };
 }
 
 // ---------------------------------------------------------------------------
@@ -469,7 +486,7 @@ var FS = COMPACT
 function drawSun(x, cy, r){
   var sunCol = colOf(D.starOwner);
   var sg=c.createRadialGradient(x,cy,3,x,cy,r);
-  sg.addColorStop(0,"rgba(255,236,180,.95)");
+  sg.addColorStop(0,D.starColor ? hexA(D.starColor,.95) : "rgba(255,236,180,.95)");
   sg.addColorStop(.45,hexA(sunCol,.42));
   sg.addColorStop(1,"rgba(255,194,74,0)");
   c.fillStyle=sg; c.beginPath(); c.arc(x,cy,r,0,Math.PI*2); c.fill();
@@ -478,7 +495,7 @@ function drawSun(x, cy, r){
   if(D.starCombat) drawCombatIcon(x+r*0.30, cy-r*0.34, COMPACT?15:13);
   c.textAlign="left"; c.textBaseline="alphabetic";
   c.font='700 '+FS.sun+'px ui-monospace, Menlo, Consolas, monospace';
-  c.fillStyle="#FFD98A"; c.fillText("SOL", x+8, cy+4);
+  c.fillStyle=D.starColor || "#FFD98A"; c.fillText(D.starName ? fitText(c, D.starName, 66) : "SOL", x+8, cy+4);
   if(D.starOwner){
     c.font='600 '+(FS.sun-2)+'px ui-monospace, Menlo, Consolas, monospace';
     c.fillStyle=hexA(sunCol,.95);
@@ -806,10 +823,12 @@ export async function renderStripPng(env, gameId, opts = {}) {
       const scy = yTop + rowH * 0.46, scx = 10;
       const sunCol = colOf(data.starOwner);
       fillRadial(s, X(scx), X(scy), X(sunR), sunCol, 0.42, 0);
-      fillRadial(s, X(scx), X(scy), X(sunR) * 0.5, [255, 236, 180], 0.95, 0);
+      const starRgb = data.starColor ? hexToRgb(data.starColor) : null;
+      fillRadial(s, X(scx), X(scy), X(sunR) * 0.5, starRgb ?? [255, 236, 180], 0.95, 0);
       strokeCircle(s, X(scx), X(scy), X(sunR * 0.42), sunCol, 0.85, 2 * SS);
       if (data.starCombat) combatIcon(scx + sunR * 0.30, scy - sunR * 0.34, 15);
-      drawText(s, 'SOL', X(scx + 8), X(scy) - 3.5 * F_TITLE, F_TITLE, [255, 217, 138], 1, 'left');
+      drawText(s, data.starName ? fit(data.starName, F_TITLE, X(66)) : 'SOL', X(scx + 8), X(scy) - 3.5 * F_TITLE, F_TITLE,
+        starRgb ?? [255, 217, 138], 1, 'left');
       if (data.starOwner) {
         drawText(s, fit(shortName(nameOf(data.starOwner)), F_SMALL, X(70)),
           X(scx + 8), X(scy) + 6, F_SMALL, sunCol, 0.95, 'left');

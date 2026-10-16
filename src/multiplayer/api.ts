@@ -248,7 +248,20 @@ export type StartingBodyOption = {
   name: string;
   type: 'terrestrial' | 'moon';
   parent: string | null;
+  /** A custom map's start moon: its planet's name (parent is a cm_ id). */
+  parent_name?: string | null;
   yield: { metal: number; fuel: number; gold: number; science: number };
+};
+
+/** A custom-map lobby's backdrop: its sun and start worlds (with the
+ *  planets start moons circle), in map units (worker/lobby.js). */
+export type CustomMapPreview = {
+  sun: { name: string; color: string; size: number };
+  bodies: Array<{
+    id: string; name: string; type: string; parent: string;
+    orbit: number; angle: number; radius: number; color: string;
+    surface?: string | null; rings?: boolean;
+  }>;
 };
 
 export type RoomSettings = {
@@ -275,7 +288,7 @@ export type RoomSnapshot = {
   starting_body_options?: StartingBodyOption[];
   /** A room hosted on a Map Maker map (staging): the snapshot's name,
    *  its sun, how many bodies, and its maker's pitch (plain text). */
-  custom_map?: { name: string; sun?: string; bodies?: number; blurb?: string } | null;
+  custom_map?: { name: string; sun?: string; bodies?: number; blurb?: string; preview?: CustomMapPreview } | null;
 };
 
 export type Faction = {

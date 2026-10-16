@@ -1340,7 +1340,7 @@ function StartingBodyPicker({
             >
               <div className="lobby-body-card__name">{opt.name}</div>
               <div className="lobby-body-card__sub">
-                {opt.type}{opt.parent && opt.parent !== 'sol' ? ` · ${opt.parent}` : ''}
+                {opt.type}{opt.parent && opt.parent !== 'sol' ? ` · ${opt.parent_name ?? opt.parent}` : ''}
               </div>
               <div className="lobby-body-card__yields">
                 {opt.yield.metal > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.M }}>M{opt.yield.metal}</span>}

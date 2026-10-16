@@ -53,6 +53,7 @@ import {
   KAIJU_GONE, KAIJU_GONE_HEADLINE, KAIJU_DEAD, KAIJU_DEAD_HEADLINE,
 } from './heraldBanks.js';
 import { activeSanctions } from './senate.js';
+import { makeSystemRootOf, systemLabel, isCustomMapBodies, bodySector } from './systems.js';
 
 /** Publish hour, in US Eastern local time (noon). Checked via Intl
  *  against the America/New_York zone so it stays at local noon across
@@ -1623,13 +1624,13 @@ function mkStory(baseWeight, used, narrativeBankName, narrativeBank, headlineBan
  *  Only `.full` carries markdown (bold proper nouns baked in) —
  *  `.name` stays completely plain because it's the field headline
  *  templates read, and Discord embed titles don't render markdown. */
-async function buildBodyLocator(env, gameId, bodyIds) {
+export async function buildBodyLocator(env, gameId, bodyIds) {
   const ids = [...new Set(bodyIds.filter(Boolean))];
   const byId = new Map();
   if (ids.length > 0) {
     const placeholders = ids.map(() => '?').join(',');
     const rows = (await env.DB
-      .prepare(`SELECT id, name, type, parent_body_id, orbit_radius FROM game_bodies WHERE game_id = ? AND id IN (${placeholders})`)
+      .prepare(`SELECT id, template_id, name, type, parent_body_id, orbit_radius, look_json FROM game_bodies WHERE game_id = ? AND id IN (${placeholders})`)
       .bind(gameId, ...ids)
       .all()).results ?? [];
     for (const r of rows) byId.set(r.id, r);
@@ -1644,12 +1645,38 @@ async function buildBodyLocator(env, gameId, bodyIds) {
     }
   }
 
+  // A CUSTOM MAP HAS NO KUIPER BELT. Its loose worlds are placed by the
+  // map's own grouping: the maker's sector, else the automatic system
+  // (a belt of its asteroids). Loaded only when a custom world is named.
+  let customWhere = null;
+  if (isCustomMapBodies([...byId.values()])) {
+    const all = (await env.DB
+      .prepare(`SELECT id, template_id, name, type, parent_body_id, orbit_radius, orbit_period,
+                       orbit_rp, orbit_ra, look_json
+                  FROM game_bodies WHERE game_id = ?`)
+      .bind(gameId)
+      .all()).results ?? [];
+    const rootOf = makeSystemRootOf(all);
+    const rowOf = new Map(all.map(x => [x.id, x]));
+    customWhere = (r) => {
+      const row = rowOf.get(r.id) ?? r;
+      const sector = bodySector(row);
+      if (sector) return `in **${sector.name}**`;
+      const root = rootOf(r.id);
+      if (root === r.id) return null;          // its own place: the name says it
+      const label = systemLabel(all, root);
+      return label ? `in the **${label}**` : null;
+    };
+  }
+
   const locator = new Map();
   for (const id of ids) {
     const r = byId.get(id);
     if (!r) continue;
     let clause = null;
-    if (r.type === 'moon' && r.parent_body_id) {
+    if (customWhere && r.type !== 'moon' && r.type !== 'star') {
+      clause = customWhere(r);
+    } else if (r.type === 'moon' && r.parent_body_id) {
       const parent = byId.get(r.parent_body_id);
       if (parent) clause = `in the **${parent.name}** system`;
     } else if ((r.type === 'dwarf' || r.type === 'asteroid') && r.parent_body_id) {

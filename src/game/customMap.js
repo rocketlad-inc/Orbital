@@ -84,6 +84,18 @@ export const TEXT_LIMITS = { blurb: 400, lore: 200, secretName: 40, secretText: 
 export const MAX_SECTORS = 12;
 export const SECTOR_COLORS = ['#4ecdc4', '#ffb84d', '#b98cff', '#6ee7b7', '#ff6b9d', '#7fd4ff', '#e8e36b', '#ff8a5c'];
 
+/** Map units clear of the sun's disc a world's near edge must sit, and
+ *  clear of its planet's a moon's (checkMap 'sun_close', 'moon_inside').
+ *  The game draws both at their true radius; the margin is for the glow
+ *  and so the two read apart at a glance. */
+const SUN_MARGIN = 10;
+const MOON_MARGIN = 2;
+/** Planet types, and how near a planet's ring a loose world must sit to be
+ *  filed in its system: worker/systems.js PLANET_TYPES and
+ *  CO_ORBITAL_TOLERANCE (server spellings; this is map data). */
+const PLANET_TYPES = new Set(['terrestrial', 'gas-giant', 'ice-giant']);
+const CO_ORBITAL_TOLERANCE = 0.05;
+
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
@@ -359,7 +371,17 @@ export function checkMap(input) {
         { count: dull.length });
     }
     // Two start worlds in one moon system: next-door neighbours from tick 1.
-    const regionOf = (b) => (b.parent === 'sun' ? b.id : b.parent);
+    // So are a planet and a world sharing its ring: outside a sector the
+    // game files a dwarf or loose moon within 5% of a planet's orbit as
+    // part of that planet's system (worker/systems.js coOrbitalHosts), so
+    // both homes would sit in one senate seat.
+    const ringHost = (b) => {
+      if (b.parent !== 'sun' || PLANET_TYPES.has(b.type) || sectorOf(map, b)) return null;
+      const host = map.bodies.find(p => p.parent === 'sun' && PLANET_TYPES.has(p.type) && !sectorOf(map, p)
+        && Math.abs(p.orbit - b.orbit) <= b.orbit * CO_ORBITAL_TOLERANCE);
+      return host ? host.id : null;
+    };
+    const regionOf = (b) => (b.parent === 'sun' ? (ringHost(b) ?? b.id) : b.parent);
     const byRegion = new Map();
     for (const b of st.worlds) {
       const r = regionOf(b);
@@ -402,6 +424,55 @@ export function checkMap(input) {
     add('warn', 'moon_far', 'Moons far from their planet',
       `${strays.map(b => b.name).join(', ')} orbit${strays.length === 1 ? 's' : ''} very wide. They read as their planet's, but take a long trip to reach.`,
       strays.map(b => b.id), { count: strays.length, names: strays.map(b => b.name) });
+  }
+
+  // WORLDS INSIDE THE SUN. The game draws the sun at its size in map units
+  // and every world at its radius (src/render/bodyPresentation.ts: true
+  // radius x zoom), so a world whose near edge is inside size + margin
+  // sits in the sun's disc and glow. Sizes run to 90, orbits from 60.
+  const scorched = map.bodies.filter(b => b.parent === 'sun' && b.orbit - b.radius < map.sun.size + SUN_MARGIN);
+  if (scorched.length) {
+    add('warn', 'sun_close', `${scorched.length} world${scorched.length > 1 ? 's' : ''} inside the sun`,
+      `${scorched.map(b => b.name).join(', ')} orbit${scorched.length === 1 ? 's' : ''} inside ${map.sun.name}'s disc. Move ${scorched.length === 1 ? 'it' : 'them'} out past ${Math.ceil(map.sun.size + SUN_MARGIN)}, or shrink the sun.`,
+      scorched.map(b => b.id), { count: scorched.length, names: scorched.map(b => b.name), sun: map.sun.name, min: Math.ceil(map.sun.size + SUN_MARGIN) });
+  }
+
+  // MOONS INSIDE THEIR PLANET: the moon's disc touches the planet's.
+  const byId = new Map(map.bodies.map(b => [b.id, b]));
+  const sunk = map.bodies.filter(b => {
+    const p = b.parent !== 'sun' ? byId.get(b.parent) : null;
+    return !!p && b.orbit - b.radius < p.radius + MOON_MARGIN;
+  });
+  if (sunk.length) {
+    add('warn', 'moon_inside', `${sunk.length} moon${sunk.length > 1 ? 's' : ''} inside ${sunk.length > 1 ? 'their planets' : 'its planet'}`,
+      `${sunk.map(b => b.name).join(', ')} orbit${sunk.length === 1 ? 's' : ''} so close ${sunk.length === 1 ? 'it overlaps its' : 'they overlap their'} planet. Widen the orbit.`,
+      sunk.map(b => b.id), { count: sunk.length, names: sunk.map(b => b.name) });
+  }
+
+  // MOON SYSTEMS THAT OVERLAP. The game keeps a custom map's moons at
+  // their drawn orbits (worker/factions.js effectiveMoonScale never
+  // shrinks a custom map below 1), so two worlds whose moons reach into
+  // each other's space stay that way. Same test as the game's clamp:
+  // 90% of the gap against both moon reaches. Pairs orbits_close already
+  // names are left to it.
+  const reachOf = (b) => map.bodies.reduce((r, m) => (m.parent === b.id ? Math.max(r, m.orbit) : r), 0);
+  const tightKey = new Set(tight.map(([a, b]) => `${a.id}|${b.id}`));
+  const tangled = [];
+  for (let i = 0; i < suns.length; i++) {
+    for (let j = i + 1; j < suns.length; j++) {
+      const a = suns[i], b = suns[j];
+      const reach = reachOf(a) + reachOf(b);
+      if (!reach || Math.abs(b.orbit - a.orbit) < 1) continue;
+      if (Math.abs(b.orbit - a.orbit) * 0.9 >= reach) continue;
+      if (tightKey.has(`${a.id}|${b.id}`)) continue;
+      tangled.push([a, b]);
+    }
+  }
+  if (tangled.length) {
+    add('warn', 'moons_overlap', `${tangled.length} pair${tangled.length > 1 ? 's' : ''} of moon systems overlapping`,
+      `${tangled.slice(0, 3).map(([a, b]) => `${a.name} and ${b.name}`).join('; ')}${tangled.length > 3 ? '…' : ''}. Their moons cross each other's space; space the worlds out or pull the moons in.`,
+      [...new Set(tangled.flat().map(b => b.id))],
+      { count: tangled.length, pairs: tangled.slice(0, 3).map(([a, b]) => [a.name, b.name]), more: tangled.length > 3 });
   }
 
   const names = new Map();

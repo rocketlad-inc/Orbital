@@ -184,6 +184,63 @@ describe('authored sectors, both mirrors', () => {
 });
 
 // ---------------------------------------------------------------------------
+// A CUSTOM MAP WITHOUT SECTORS (2026-10-15 audit). Its worlds carry `cm_`
+// ids; Sol's own collapses are off: no Core (the star is its name), no
+// Kuiper/Plutino bands, and dwarfs never chain into a belt -- only three
+// or more asteroids do. Both mirrors, one fixture.
+// ---------------------------------------------------------------------------
+
+const CUSTOM: Spec[] = [
+  { id: 'sol', name: 'Kel', type: 'star', parent: null, r: 0, period: 0 },
+  { id: 'cm_p1', name: 'Hearth', type: 'terrestrial', parent: 'sol', r: 300, owner: 'fA' },
+  { id: 'cm_m1', name: 'Pip', type: 'moon', parent: 'cm_p1', r: 20 },
+  { id: 'cm_d1', name: 'Dwarfa', type: 'dwarf', parent: 'sol', r: 800, owner: 'fA' },
+  { id: 'cm_d2', name: 'Dwarfb', type: 'dwarf', parent: 'sol', r: 2000, owner: 'fB' },
+  { id: 'cm_d3', name: 'Dwarfc', type: 'dwarf', parent: 'sol', r: 5000, owner: 'fC' },
+  { id: 'cm_a1', name: 'Asta', type: 'asteroid', parent: 'sol', r: 1000 },
+  { id: 'cm_a2', name: 'Astb', type: 'asteroid', parent: 'sol', r: 1050 },
+  { id: 'cm_a3', name: 'Astc', type: 'asteroid', parent: 'sol', r: 1100 },
+  { id: 'cm_a4', name: 'Astd', type: 'asteroid', parent: 'sol', r: 6000 },
+  { id: 'cm_a5', name: 'Aste', type: 'asteroid', parent: 'sol', r: 6100 },
+  { id: 'cm_a6', name: 'Astf', type: 'asteroid', parent: 'sol', r: 6200 },
+];
+
+describe('a custom map groups by its own rules, both mirrors', () => {
+  const rows = CUSTOM.map(toRow);
+  const bodies = CUSTOM.map(toBody);
+  const sRoot = server.makeSystemRootOf(rows);
+  const cRoot = makeSystemRootOf(bodies);
+
+  it('every dwarf is its own system (they were one contested Kuiper Belt)', () => {
+    for (const id of ['cm_d1', 'cm_d2', 'cm_d3']) {
+      expect(sRoot(`${G}:${id}`)).toBe(`${G}:${id}`);
+      expect(cRoot(id)).toBe(id);
+    }
+    const w = server.voteWeights(rows, ['fA', 'fB', 'fC']);
+    expect([w.get('fA'), w.get('fB'), w.get('fC')]).toEqual([3, 2, 2]);
+  });
+
+  it('three or more asteroids make a belt, numbered outward', () => {
+    const labels = (bs: { label: string; members: { id: string }[] }[]) => bs.map(b => [b.label, b.members.length]);
+    expect(labels(findBelts(bodies))).toEqual([['Asteroid Belt', 3], ['Asteroid Belt 2', 3]]);
+    expect(labels(server.findBelts(rows))).toEqual([['Asteroid Belt', 3], ['Asteroid Belt 2', 3]]);
+  });
+
+  it('the star is called its name, never The Core', () => {
+    expect(sRoot(`${G}:sol`)).toBe(`${G}:sol`);
+    expect(cRoot('sol')).toBe('sol');
+    expect(server.systemLabel(rows, `${G}:sol`)).toBe('Kel');
+    expect(systemLabel(bodies, 'sol')).toBe('Kel');
+    const regions = computeSystemRegions(bodies, [], []);
+    expect(regions.some(r => r.label === 'The Core')).toBe(false);
+  });
+
+  it('the two mirrors agree on every body', () => {
+    for (const s of CUSTOM) expect(strip(sRoot(`${G}:${s.id}`))).toBe(cRoot(s.id));
+  });
+});
+
+// ---------------------------------------------------------------------------
 // SHIPPED MAPS ARE UNTOUCHED. The whole Sol catalogue (far systems too),
 // with owners sprinkled through it, digested through every grouping
 // output on both sides. The constants were taken from the code as it was

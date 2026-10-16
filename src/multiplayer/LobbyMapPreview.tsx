@@ -30,14 +30,15 @@
 // the actual claim control.
 // ============================================================
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { SHARED_BODIES, BINARY_SYSTEM_BODY_IDS, BLACK_HOLE_SYSTEM_BODY_IDS } from '../state/mockGameState';
 import { bodyPosition } from '../physics/orbitalMechanics';
 import {
   clearCanvas, drawOrbit, drawBody, worldToCanvas, RenderContext,
 } from '../render/mapRenderer';
-import type { RoomSnapshot } from './api';
+import type { Body } from '../types';
+import type { RoomSnapshot, CustomMapPreview } from './api';
 import { t } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 
@@ -47,16 +48,39 @@ import { useI18n } from '../i18n/react';
 const SOL_BODIES = SHARED_BODIES.filter(
   b => !BINARY_SYSTEM_BODY_IDS.has(b.id) && !BLACK_HOLE_SYSTEM_BODY_IDS.has(b.id),
 );
-const BY_ID = new Map(SOL_BODIES.map(b => [b.id, b]));
+const SOL_SYSTEM = { bodies: SOL_BODIES, byId: new Map(SOL_BODIES.map(b => [b.id, b])) };
 
-/** Distance of a body from Sol (a moon's ≈ its parent's orbit radius
- *  plus its own). */
-function solDistance(bodyId: string, depth = 0): number {
+type PreviewSystem = { bodies: Body[]; byId: Map<string, Body> };
+
+/** A CUSTOM-MAP LOBBY DRAWS ITS OWN MAP, not Sol: the sun (still id 'sol',
+ *  under the map's name and colour) and the start worlds the server sent
+ *  (worker/lobby.js customMapOptions), at their authored orbits. */
+export function customPreviewSystem(preview: CustomMapPreview): PreviewSystem {
+  const sun: Body = {
+    id: 'sol', name: preview.sun.name, type: 'star',
+    orbitRadius: 0, orbitPeriod: 0, angle0: 0,
+    radius: preview.sun.size, soi: 0, color: preview.sun.color,
+    look: { star: preview.sun.color },
+  };
+  const rest: Body[] = preview.bodies.map(b => ({
+    id: b.id, name: b.name, type: b.type.replace('-', '_') as Body['type'],
+    parent: b.parent,
+    orbitRadius: b.orbit, orbitPeriod: 100, angle0: b.angle,
+    radius: b.radius, soi: 0, color: b.color,
+    look: { surface: b.surface ?? null, rings: !!b.rings },
+  }));
+  const bodies = [sun, ...rest];
+  return { bodies, byId: new Map(bodies.map(b => [b.id, b])) };
+}
+
+/** Distance of a body from the star (a moon's ≈ its parent's orbit
+ *  radius plus its own). */
+function solDistance(byId: Map<string, Body>, bodyId: string, depth = 0): number {
   if (depth > 6) return 0;  // cycle guard
-  const b = BY_ID.get(bodyId);
+  const b = byId.get(bodyId);
   if (!b) return 0;
   if (!b.parent || b.parent === 'sol') return b.orbitRadius;
-  return solDistance(b.parent, depth + 1) + b.orbitRadius;
+  return solDistance(byId, b.parent, depth + 1) + b.orbitRadius;
 }
 
 interface Camera { x: number; y: number; scale: number; }
@@ -97,12 +121,17 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
     .map(m => `${m.userId}:${m.chosen_starting_body ?? ''}`)
     .join('|');
   const optionsKey = (snap.starting_body_options ?? []).map(o => o.id).join(',');
+  const preview = snap.custom_map?.preview ?? null;
+  const previewKey = preview ? JSON.stringify(preview) : '';
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const system = useMemo(() => (preview ? customPreviewSystem(preview) : SOL_SYSTEM), [previewKey]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx2d = canvas.getContext('2d');
     if (!ctx2d) return;
+    const { bodies: BODIES, byId: BY_ID } = system;
 
     // Compute the target camera for the current size + focus.
     const computeTarget = (w: number, h: number): Camera => {
@@ -112,8 +141,8 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
       // This is the most zoomed-OUT the camera is allowed to go.
       let fit = 200;
       for (const o of options) {
-        fit = Math.max(fit, solDistance(o.id));
-        if (o.parent) fit = Math.max(fit, solDistance(o.parent));
+        fit = Math.max(fit, solDistance(BY_ID, o.id));
+        if (o.parent) fit = Math.max(fit, solDistance(BY_ID, o.parent));
       }
       fit *= 1.25;
       const fullScale = (Math.min(w, h) * 0.46) / fit;
@@ -162,7 +191,7 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
         canvas: { width: w, height: h } as HTMLCanvasElement, // worldToCanvas reads width/height only
         camera: { x: cam.x, y: cam.y, scale: cam.scale },
         t: 0,
-        bodies: SOL_BODIES,
+        bodies: BODIES,
       };
 
       // Visible set: only worlds you can actually START on, plus the
@@ -182,12 +211,12 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
       }
 
       clearCanvas(ctx);
-      for (const b of SOL_BODIES) {
+      for (const b of BODIES) {
         if (b.type === 'star') continue;
         if (!visible.has(b.id)) continue;
         drawOrbit(b, ctx, 'rgba(120, 150, 180, 0.18)', 1);
       }
-      for (const b of SOL_BODIES) {
+      for (const b of BODIES) {
         if (!visible.has(b.id)) continue;
         drawBody(b, ctx);
       }
@@ -214,7 +243,7 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
       for (const bodyId of startIds) {
         const b = BY_ID.get(bodyId);
         if (!b) continue;
-        const wp = bodyPosition(b, 0, SOL_BODIES);
+        const wp = bodyPosition(b, 0, BODIES);
         const cp = worldToCanvas(wp.x, wp.y, ctx);
         const owner = claimedBy.get(bodyId);
         const isMine = !!owner && owner === myUserId;
@@ -358,7 +387,7 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
       window.removeEventListener('resize', kick);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [claimsKey, optionsKey, myUserId, focusBodyId]);
+  }, [claimsKey, optionsKey, myUserId, focusBodyId, system]);
 
   // PORTAL TO BODY — required, not a nicety.
   //
