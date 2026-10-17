@@ -35,6 +35,7 @@ import { PREMIUM_EMBLEM_IDS, EMBLEM_NAMES } from '../game/emblems';
 import { t, tk } from '../i18n/core';
 import { tRich, tMarkup } from '../i18n/rich';
 import { useI18n } from '../i18n/react';
+import { MAP_SURFACES } from './commission';
 import './CommissionThanks.css';
 
 /** How long to wait for the webhook before saying so out loud. The grant
@@ -48,10 +49,13 @@ const HULLS = ['corvette', 'frigate', 'destroyer', 'freighter', 'colony'] as con
 
 export function CommissionThanks({
   unlocked,
+  via,
   onClose,
 }: {
   /** Mirrors auth user.is_premium — flips when the webhook lands. */
   unlocked: boolean;
+  /** Where the purchase began. Bought to host a map: lead back to it. */
+  via?: string | null;
   onClose: () => void;
 }) {
   useI18n();
@@ -135,6 +139,21 @@ export function CommissionThanks({
           })}
         </p>
 
+        <p className="mp-thanks-where" data-testid="thanks-maps">
+          {tRich('mp.thanks2.maps', {
+            title: <strong>{t('mp.thanks2.mapsTitle')}</strong>,
+            maker: <strong>{t('mp.thanks2.mapsMaker')}</strong>,
+            host: <strong>{t('mp.thanks2.mapsHost')}</strong>,
+          })}
+        </p>
+
+        {/* Bought to host a map: the map is where they were going. It
+            waits in Your maps (the panel saved it on the way out). */}
+        {via && MAP_SURFACES.has(via) && (
+          <button type="button" className="mp-thanks-go" onClick={() => { window.location.href = '/?mapmaker'; }}>
+            {t('mp.thanks2.toMap')}
+          </button>
+        )}
         <button type="button" className="mp-thanks-go" onClick={onClose}>
           {t('mp.thanks2.back')}
         </button>

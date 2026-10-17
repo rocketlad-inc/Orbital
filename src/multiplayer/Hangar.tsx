@@ -189,6 +189,9 @@ export function Hangar({ onRedeemed, giftJustBought }: {
               <b>{t('hangar.perk.title')}</b> {t('hangar.perk.hostPre')}{' '}
               <b>{t('feed.connect')}</b>.
             </p>
+            <p className="hg-perk" data-testid="hangar-maps">
+              <b>{t('hangar.mapPerk.title')}</b> {t('hangar.mapPerk.holder')}
+            </p>
           </>
         ) : (
           <>
@@ -199,6 +202,9 @@ export function Hangar({ onRedeemed, giftJustBought }: {
             })} {t('hangar.free')}</p>
             <p className="hg-perk" data-testid="hangar-discord">
               <b>{t('hangar.perk.title')}</b> {t('hangar.discordDetail')}
+            </p>
+            <p className="hg-perk" data-testid="hangar-maps">
+              <b>{t('hangar.mapPerk.title')}</b> {t('hangar.mapPerk.body')}
             </p>
             {sellable ? (
               <button className="pp-btn pp-btn--primary" disabled={busy !== null} onClick={() => void buy(false)}>
