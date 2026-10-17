@@ -163,12 +163,19 @@ await call(storeRoutes, 'POST', '/api/checkout/cosmetics', 'friend', { surface: 
 check('a surface on the allow-list reaches Stripe as given', sent.at(-1)?.['metadata[surface]'] === 'designer');
 await call(storeRoutes, 'POST', '/api/checkout/cosmetics', 'friend', { surface: '<script>' });
 check('anything else reaches Stripe as "other"', sent.at(-1)?.['metadata[surface]'] === 'other');
+// The Map Maker sells hosting from two places, each on its own line, and
+// the trip back from Stripe says which (so a map buyer returns to the map).
+for (const s of ['map-maker', 'lobby-map']) {
+  await call(storeRoutes, 'POST', '/api/checkout/cosmetics', 'friend', { surface: s });
+  check(`the ${s} surface reaches Stripe as given`, sent.at(-1)?.['metadata[surface]'] === s);
+  check(`...and its return trip names it`, sent.at(-1)?.success_url?.endsWith(`/?purchase=success&via=${s}`), sent.at(-1)?.success_url);
+}
 const legacy = await call(storeRoutes, 'POST', '/api/checkout/cosmetics', 'friend');
 check('an old client posting no body still gets a checkout', legacy.status === 200 && sent.at(-1)?.['metadata[gift]'] === '0');
 const logged = await rows(`SELECT user_id, status, payload FROM analytics_events WHERE kind = 'commission/checkout' ORDER BY id`);
 check('every checkout attempt is logged with its outcome',
-  logged.length === 5 && logged[0].status === 409 && JSON.parse(logged[0].payload).result === 'already_owned'
-  && logged.filter(r => r.status === 200).length === 4, JSON.stringify(logged));
+  logged.length === 7 && logged[0].status === 409 && JSON.parse(logged[0].payload).result === 'already_owned'
+  && logged.filter(r => r.status === 200).length === 6, JSON.stringify(logged));
 
 // ---- 6. surface telemetry and the funnel ---------------------------------
 const tel = (user, kind, from) => call(analyticsRoutes, 'POST', '/api/telemetry', user, { kind, payload: { from } });
@@ -179,7 +186,15 @@ await tel('bot', 'commission-view', 'designer'); // a robot: never counted
 await tel('rival', 'commission-dismiss', 'thanks-card');
 check('...stored with no game id, kind prefixed ui/',
   (await rows(`SELECT COUNT(*) AS n FROM analytics_events WHERE kind = 'ui/commission-view' AND game_id IS NULL`))[0].n === 3);
+await tel('friend', 'commission-view', 'map-maker');
+await tel('friend', 'commission-click', 'map-maker');
+await tel('rival', 'commission-view', 'lobby-map');
 const funnel = (await call(dashRoutes, 'GET', '/api/admin/commission', 'admin')).body;
+const mm = funnel.surfaces.find(s => s.surface === 'map-maker');
+const lm = funnel.surfaces.find(s => s.surface === 'lobby-map');
+check('funnel: the Map Maker panel has its own row: view, click, started checkout',
+  mm?.views === 1 && mm?.clicks === 1 && mm?.checkouts === 1, JSON.stringify(mm));
+check('funnel: ...and the game creator\'s map gate its own', lm?.views === 1 && lm?.checkouts === 1, JSON.stringify(lm));
 const designer = funnel.surfaces.find(s => s.surface === 'designer');
 check('funnel: views and viewers per surface, robots excluded', designer.views === 2 && designer.viewers === 2, JSON.stringify(designer));
 check('funnel: clicks and STARTED checkouts per surface (refusals are not checkouts)', designer.clicks === 1 && designer.checkouts === 1);

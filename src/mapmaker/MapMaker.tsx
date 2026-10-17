@@ -16,7 +16,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import './mapmaker.css';
 import { apiFetch, startCommissionCheckout } from '../multiplayer/api';
-import { canBuyHere, openCommissionInBrowser } from '../multiplayer/commission';
+import { canBuyHere, openCommissionInBrowser, logCommission, useCommissionView } from '../multiplayer/commission';
 import { useIsMobile } from '../hooks/useIsMobile';
 import {
   type CustomMap, type MapIssue, type MapBodyType, type MapBackdrop, blankMap, normalizeMap, checkMap, generateMap, startWorlds, sectorOf,
@@ -219,7 +219,8 @@ function Checklist({ issues, onShow, onClose }: { issues: MapIssue[]; onShow: (i
 function HostPanel({
   map, summary, canHost, onSaveFirst, onToggleSecrets, onPublished, onEditPitch, onClose,
 }: {
-  map: CustomMap; summary: Summary | null; canHost: boolean;
+  /** null until the server has said (so a holder never logs a view). */
+  map: CustomMap; summary: Summary | null; canHost: boolean | null;
   onSaveFirst: () => Promise<Summary | null>; onToggleSecrets: (on: boolean) => void;
   onPublished: (s: Summary) => void; onEditPitch: () => void; onClose: () => void;
 }) {
@@ -238,6 +239,10 @@ function HostPanel({
   const blockers = checkMap(map).filter(i => i.level === 'block');
   const sellable = canBuyHere();
   const published = !!summary?.published;
+  const [buying, setBuying] = useState(false);
+  // The pitch is seen when the panel offers the Commission: a map that
+  // could be hosted, by someone who cannot host yet.
+  useCommissionView('map-maker', canHost === false && blockers.length === 0);
   const modal = useModal(onClose);
 
   const host = async () => {
@@ -263,8 +268,14 @@ function HostPanel({
     onPublished(res.data.summary);
   };
   const buy = async () => {
+    logCommission('map-maker', 'click');
+    setBuying(true);
+    // Save on the way out: the map is what they are paying to host, and
+    // an unsaved one would stop the trip to checkout with "Leave site?".
+    await onSaveFirst();
     const url = await startCommissionCheckout('map-maker');
     if (url) window.location.href = url;
+    else setBuying(false);
   };
 
   return (
@@ -325,6 +336,8 @@ function HostPanel({
             <h3>{t('mm.host.heading', { name: map.name })}</h3>
             {blockers.length > 0 ? (
               <p className="mm-note is-bad">{t('mm.host.notYet', { list: blockers.map(issueTitle).join('; ') })}</p>
+            ) : canHost === null ? (
+              <p className="mm-note">{t('mm.loading')}</p>
             ) : canHost ? (
               <>
                 <div className="mm-grid2">
@@ -346,7 +359,7 @@ function HostPanel({
               <>
                 <p className="mm-note">{t('mm.host.needCommission', { name: t('hangar.commissionName'), price: t('mp.commission.price') })}</p>
                 {sellable ? (
-                  <button className="mm-btn is-gold is-wide" onClick={buy}>{t('feed.buy', { price: t('mp.commission.price') })}</button>
+                  <button className="mm-btn is-gold is-wide" disabled={buying} onClick={buy}>{buying ? t('hangar.opening') : t('feed.buy', { price: t('mp.commission.price') })}</button>
                 ) : (
                   <button className="mm-btn is-gold is-wide" onClick={() => openCommissionInBrowser('map-maker')}>{t('mp.commission.inBrowser', { price: t('mp.commission.price') })}</button>
                 )}
@@ -811,7 +824,7 @@ export function Workshop({ initial, initialId, opts, onExit }: { initial: Custom
   const baseRef = useRef<number | null>(opts.base ?? null);
   const sid = useMemo(() => opts.sid || Math.random().toString(36).slice(2), [opts.sid]);
   const [summary, setSummary] = useState<Summary | null>(null);
-  const [canHost, setCanHost] = useState(false);
+  const [canHost, setCanHost] = useState<boolean | null>(null);
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [tool, setTool] = useState<Tool | null>(null);
   const [symmetry, setSymmetry] = useState(1);
