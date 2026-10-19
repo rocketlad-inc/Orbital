@@ -7,6 +7,7 @@
 //   node scripts/studio.mjs tick   <gameId> [n]          [--env staging]
 //   node scripts/studio.mjs record <gameId> shot.json --out clip.mp4
 //                                  [--as studio-terra] [--size 1080x1920] [--env staging]
+//   node scripts/studio.mjs eval   <gameId> "await __studio.ticks(1)" [--as studio-terra]
 //   node scripts/studio.mjs close  <gameId>              [--env staging]
 //
 // A SCENE (worker/studioScene.js) fills a private test game with ships,
@@ -14,8 +15,10 @@
 // director.ts) moves the camera over it and records the map to a video.
 // `record` opens the game in headless Chrome as one of the scene's agent
 // players, hands the shot to window.__studio, and pulls the video back
-// out over the DevTools protocol. No dependencies: Node's own fetch and
-// WebSocket, and the Chrome already on the machine.
+// out over the DevTools protocol. `eval` opens the game the same way and
+// runs a line of JavaScript in it, for checking a target or a tick by
+// hand. No dependencies: Node's own fetch and WebSocket, and the Chrome
+// already on the machine.
 //
 // CREDENTIALS never print. The agent key is read from ~/.orbital-agent-key
 // (production) or ~/.orbital-staging-agent-key (staging); it goes in the
@@ -112,7 +115,7 @@ async function close() {
   console.log(`closed ${gameId}`);
 }
 
-// ---------- record: headless Chrome over the DevTools protocol ----------
+// ---------- headless Chrome over the DevTools protocol ----------
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
@@ -171,13 +174,8 @@ async function launchChrome(port, width, height) {
   return { send, evaluate, close };
 }
 
-async function record() {
-  const [gameId, shotFile] = rest;
-  if (!gameId || !shotFile) die('record needs <gameId> shot.json --out clip.mp4');
-  const out = flag('out') || `orbital-${gameId}.mp4`;
-  const shot = JSON.parse(fs.readFileSync(shotFile, 'utf8'));
-  const [w, h] = (flag('size') || (shot.format === '16:9' ? '1920x1080' : shot.format === '1:1' ? '1080x1080' : '1080x1920')).split('x').map(Number);
-  const handle = flag('as') || 'studio-terra';
+/** Headless Chrome with the game open as an agent player and window.__studio attached. */
+async function openGame(gameId, handle, w, h) {
   const token = await session(handle);
   const port = 9400 + Math.floor(Math.random() * 400);
   const b = await launchChrome(port, w, h);
@@ -186,12 +184,16 @@ async function record() {
     await b.send('Emulation.setEmulatedMedia', { features: [
       { name: 'pointer', value: 'fine' }, { name: 'any-pointer', value: 'fine' }, { name: 'hover', value: 'hover' }, { name: 'any-hover', value: 'hover' }] });
     const host = new URL(BASE).hostname;
-    await b.send('Page.addScriptToEvaluateOnNewDocument', { source: `try { if (location.hostname === ${JSON.stringify(host)}) {
-      sessionStorage.setItem('orbital_agent_token', ${JSON.stringify(token)});
-      localStorage.setItem('orbital.priority_room', ${JSON.stringify(gameId)});
-      localStorage.setItem('orbital.last_room', ${JSON.stringify(gameId)});
-      localStorage.setItem('orbital.tutorial.v1', JSON.stringify({ completed: true, skipped: true }));
-    } } catch (e) {}` });
+    const boot = [
+      `try { if (location.hostname === ${JSON.stringify(host)}) {`,
+      `  sessionStorage.setItem('orbital_agent_token', ${JSON.stringify(token)});`,
+      // The room this tab opens (App.tsx tabRoom). The agent player may sit
+      // in several studio games; without this the app picks one itself.
+      `  sessionStorage.setItem('orbital.tab_room', ${JSON.stringify(gameId)});`,
+      `  localStorage.setItem('orbital.tutorial.v1', JSON.stringify({ completed: true, skipped: true }));`,
+      `} } catch (e) {}`,
+    ].join('\n');
+    await b.send('Page.addScriptToEvaluateOnNewDocument', { source: boot });
     await b.send('Page.navigate', { url: `${BASE}/` });
     let ready = false;
     for (let i = 0; i < 120 && !ready; i++) {
@@ -199,7 +201,22 @@ async function record() {
       ready = await b.evaluate(`!!(window.__studio && document.querySelector('canvas.map-canvas'))`).catch(() => false);
     }
     if (!ready) die('the game did not open with the studio attached: is the handle a member of this game, and is it an admin-visible studio game?');
+    const opened = await b.evaluate('window.__studio.gameId');
+    if (opened !== gameId) die(`the app opened game ${opened}, not ${gameId}; is ${handle} seated in ${gameId}?`);
     await sleep(6000);   // first paint, art, the state poll
+    return b;
+  } catch (e) { await b.close(); throw e; }
+}
+
+async function record() {
+  const [gameId, shotFile] = rest;
+  if (!gameId || !shotFile) die('record needs <gameId> shot.json --out clip.mp4');
+  const out = flag('out') || `orbital-${gameId}.mp4`;
+  const shot = JSON.parse(fs.readFileSync(shotFile, 'utf8'));
+  const [w, h] = (flag('size') || (shot.format === '16:9' ? '1920x1080' : shot.format === '1:1' ? '1080x1080' : '1080x1920')).split('x').map(Number);
+  const handle = flag('as') || 'studio-terra';
+  const b = await openGame(gameId, handle, w, h);
+  try {
     console.error(`recording ${shot.seconds}s at ${w}x${h} as ${handle}…`);
     await b.evaluate(`(() => { window.__studioDone = null; window.__studio.record(${JSON.stringify(shot)}, { download: false })
       .then(() => { window.__studioDone = window.__studio.result; }, e => { window.__studioDone = { ok: false, error: String(e && e.message || e) }; }); return true; })()`);
@@ -223,18 +240,31 @@ async function record() {
     const ext = done.mime === 'video/mp4' ? '.mp4' : '.webm';
     const file = out.endsWith(ext) ? out : out.replace(/\.(mp4|webm)$/i, '') + ext;
     fs.writeFileSync(file, buf);
-    console.log(JSON.stringify({ file, bytes: buf.length, mime: done.mime, seconds: shot.seconds }));
+    const log = await b.evaluate('JSON.stringify(window.__studio.log)').catch(() => '[]');
+    console.log(JSON.stringify({ file, bytes: buf.length, mime: done.mime, seconds: shot.seconds, log: JSON.parse(log) }));
   } finally {
     await b.close();
   }
 }
 
+/** Run JavaScript in the opened game: `await` works, window.__studio is there. */
+async function evalInGame() {
+  const [gameId, code] = rest;
+  if (!gameId || !code) die('eval needs <gameId> "<javascript>"');
+  const b = await openGame(gameId, flag('as') || 'studio-terra', 1080, 1920);
+  try {
+    const wrapped = `(async () => { return (${code}); })()`;
+    const out = await b.evaluate(`(async () => { const r = (0, eval)(${JSON.stringify(wrapped)}); return JSON.stringify({ value: await r, log: window.__studio.log }); })()`);
+    console.log(out);
+  } finally { await b.close(); }
+}
+
 // ---------- main ----------
 
-const COMMANDS = { catalog, apply, tick, record, close };
+const COMMANDS = { catalog, apply, tick, record, close, eval: evalInGame };
 (async () => {
   if (!cmd || !COMMANDS[cmd]) {
-    console.error('usage: node scripts/studio.mjs catalog|apply|tick|record|close … (docs/STUDIO.md)');
+    console.error('usage: node scripts/studio.mjs catalog|apply|tick|record|eval|close … (docs/STUDIO.md)');
     process.exitCode = 2;
     return;
   }
