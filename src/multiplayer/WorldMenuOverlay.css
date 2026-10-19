@@ -172,6 +172,12 @@
   padding: 7px 13px; cursor: pointer;
 }
 .wm-tomap:hover { background: rgba(78, 205, 196, 0.14); }
+.wm-note {
+  position: absolute; bottom: 220px; left: 50%; transform: translateX(-50%);
+  background: rgba(10, 15, 22, 0.95); border: 1px solid #2a3d50; border-radius: 5px;
+  color: #b8c8d6; font-size: 11px; padding: 7px 14px; max-width: 60ch;
+  z-index: 5;
+}
 .wm-err {
   position: absolute; bottom: 220px; left: 50%; transform: translateX(-50%);
   background: rgba(30, 10, 12, 0.95); border: 1px solid #ef5350; border-radius: 5px;

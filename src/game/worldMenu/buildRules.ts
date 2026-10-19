@@ -108,6 +108,20 @@ export type BuildStatus =
  *   settlement = the socket this building lives in (city or station at
  *   the focused body, owned by the viewer), or null when none exists.
  */
+/**
+ * The level an upgrade order for `kind` buys, as THIS screen sees it:
+ * the level built, plus one for each of that kind already on the ways or
+ * lined up behind them, plus one. Sent with the order (target_level) so
+ * the server can refuse a second tap that the screen had not caught up
+ * with, instead of quietly charging for the next level (2026-10-18:
+ * labs, shields and a telescope all bought twice).
+ */
+export function nextBuildingLevel(settlement: Settlement, kind: BuildingKind): number {
+  const ahead = (settlement.buildingQueue?.kind === kind ? 1 : 0)
+    + (settlement.buildingBacklog ?? []).filter(o => o.kind === kind).length;
+  return buildingLevel(settlement, kind) + ahead + 1;
+}
+
 export function buildStatus(
   kind: BuildingKind,
   settlement: Settlement | null,

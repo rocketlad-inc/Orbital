@@ -5784,11 +5784,25 @@ function buildIndustryStories(rows, used, roster = null) {
 function buildColonyStories(rows, used, locator) {
   const stories = [];
 
+  // A NEWCOMER'S CAPITAL IS ITS ARRIVAL, NOT AN EXPANSION. Founding a
+  // homeworld writes both a faction_joined row and a settlement_built row
+  // for the same world, so the report said "breaks ground at Mercury, its
+  // first foothold" and then "took one parcel more at Mercury" about one
+  // event (ciurk, 2026-10-14). The arrival story below tells it; the
+  // capital's founding is dropped from the expansion count, once.
+  const arrivedCapital = new Map(); // faction name -> capital body id
+  for (const row of rows) {
+    if (row.kind !== 'faction_joined') continue;
+    const p = safeJson(row.payload);
+    if (p.name && p.capital_body_id) arrivedCapital.set(p.name, p.capital_body_id);
+  }
   const byFaction = new Map();
   for (const row of rows) {
     if (row.kind !== 'settlement_built') continue;
     const p = safeJson(row.payload);
     const faction = p.owner_faction_name ?? 'An unknown faction';
+    const cap = arrivedCapital.get(faction);
+    if (cap && row.body_id === cap) { arrivedCapital.delete(faction); continue; }
     if (!byFaction.has(faction)) byFaction.set(faction, []);
     byFaction.get(faction).push({ name: p.settlement_name, body: p.body_name, bodyId: row.body_id, type: p.settlement_type });
   }

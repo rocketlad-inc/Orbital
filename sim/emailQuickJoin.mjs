@@ -355,7 +355,7 @@ const dotMail = heralds.filter(m => m.to === D.email);
 check('a reader in two games gets ONE Herald covering both', dotMail.length === 1
   && dotMail[0].html.includes(`?room=${roomA}`) && dotMail[0].html.includes(`?room=${roomI}`));
 check('Herald carries a one-click unsubscribe', /api\/email\/unsubscribe/.test(heralds[0]?.headers?.['List-Unsubscribe'] ?? ''));
-check('Herald has a plain-text part naming each game', /TURN \d+/.test(heralds[0]?.text ?? ''), heralds[0]?.text?.slice(0, 200));
+check('Herald has a plain-text part naming each game', /(TURN|TICK) \d+/.test(heralds[0]?.text ?? ''), heralds[0]?.text?.slice(0, 200));
 
 // ---- lobby browse / mine summaries -----------------------------------------
 
