@@ -25,6 +25,7 @@ import { torchPositionFromSamples } from '../../physics/torchTransfer';
 import { drawnShipWorldPos, torchTrajectorySamples } from '../../render/mapRenderer';
 import { shipWorldPosition } from '../../game/combat';
 import { smoothedTick } from '../../render/tickPhase';
+import { setStudioFullVisuals } from '../../render/lightweightMode';
 import { apiFetch } from '../api';
 
 export type Target = string; // 'earth' | 'ship:<id>' | 'fleet:<id>'
@@ -56,6 +57,8 @@ export interface Shot {
   zoomBoost?: number;
   steps: ShotStep[];
 }
+
+export interface RecordStats { frames: number; draws: number; unchanged: number; rafRuns: number }
 
 export interface DirectorHost {
   gameId: string;
@@ -95,7 +98,11 @@ export class Director {
   /** The last recording, for the Studio bar's download and the CLI's pull. */
   lastBlob: Blob | null = null;
   lastExt = 'mp4';
-  result: { ok: boolean; bytes?: number; mime?: string; error?: string } | null = null;
+  result: { ok: boolean; bytes?: number; mime?: string; error?: string; stats?: RecordStats } | null = null;
+  /** The last recording's accounting: how many frames were asked for,
+   *  how many map draws the clock produced, how many frames came out of
+   *  the map unchanged (Chrome's canvas capture drops those). */
+  stats: RecordStats = { frames: 0, draws: 0, unchanged: 0, rafRuns: 0 };
   progress = 0;
   log: string[] = [];
 
@@ -328,6 +335,9 @@ export class Director {
   private begin(shot: Shot): void {
     this.clock = 0; this.tween = null; this.hold = null; this.caption = null;
     this.hook = shot.hook ?? null; this.progress = 0; this.result = null;
+    // Every effect, every frame: lightweight mode (a phone's or the
+    // server's choice) freezes animation and caps the map at 15fps.
+    setStudioFullVisuals(true);
     this.ui(false);
     this.speed(shot.speed ?? 2500);
   }
@@ -335,6 +345,7 @@ export class Director {
     this.running = false;
     this.speed(null);
     this.ui(true);
+    setStudioFullVisuals(false);
   }
 
   // ---------- record ----------
@@ -370,6 +381,18 @@ export class Director {
     this.begin(shot);
     const fired = new Set<ShotStep>();
     let recorded = 0;
+    this.stats = { frames: 0, draws: 0, unchanged: 0, rafRuns: 0 };
+    // THE MAP IS DRAWN HERE, ONCE PER FRAME. MapCanvas's own loop runs on
+    // requestAnimationFrame, which the virtual clock holds; its draw hook
+    // (__benchDraw, a synchronous render) is called directly instead, so
+    // every recorded frame is a fresh render at this frame's time. Canvas
+    // capture emits nothing for an unchanged canvas, which is how a missed
+    // draw became a dropped frame rather than a repeated one.
+    const draw = (window as unknown as { __benchDraw?: (n?: number) => number }).__benchDraw;
+    const probe = document.createElement('canvas');
+    probe.width = 48; probe.height = 48;
+    const pg = probe.getContext('2d', { willReadFrequently: true })!;
+    let lastHash = -1;
     try {
       rec.start(1000);
       rec.pause();
@@ -382,7 +405,18 @@ export class Director {
           this.step(1 / fps);
           await vclock.real(() => realSleep(0));   // let React commit the camera
         }
-        vclock.advance(frameMs);                    // the map draws this frame
+        this.stats.rafRuns += vclock.advance(frameMs, !draw);   // time moves; the loop draws only without the hook
+        if (draw) { draw(1); this.stats.draws++; }
+        const map = this.host.mapCanvas();
+        if (map) {
+          pg.drawImage(map, 0, 0, 48, 48);
+          const d = pg.getImageData(0, 0, 48, 48).data;
+          let h = 2166136261;
+          for (let i = 0; i < d.length; i += 16) h = Math.imul(h ^ d[i] ^ (d[i + 1] << 8) ^ (d[i + 2] << 16), 16777619) >>> 0;
+          if (h === lastHash) this.stats.unchanged++;
+          lastHash = h;
+        }
+        this.stats.frames++;
         this.compose(g, W, H, shot, inShot ? 0 : (k - (total - endFrames)) / Math.max(1, endFrames));
         rec.resume();
         const on = vclock.realNow();
@@ -406,7 +440,7 @@ export class Director {
     const blob = new Blob(chunks, { type });
     this.lastBlob = blob;
     this.lastExt = type === 'video/mp4' ? 'mp4' : 'webm';
-    this.result = { ok: true, bytes: blob.size, mime: type };
+    this.result = { ok: true, bytes: blob.size, mime: type, stats: { ...this.stats } };
     if (o.download) this.download(o.name);
     return blob;
   }
@@ -559,10 +593,15 @@ function installVirtualClock() {
   window.requestAnimationFrame = (cb: FrameRequestCallback) => { const id = nextId++; queue.push({ id, cb }); return id; };
   window.cancelAnimationFrame = (id: number) => { queue = queue.filter(q => q.id !== id); };
   return {
-    advance(ms: number) {
+    /** Move time by `ms`. With `runCallbacks` the waiting frame callbacks
+     *  run (the map's loop draws); without it they stay queued for the
+     *  next call, or for uninstall. Returns how many ran. */
+    advance(ms: number, runCallbacks = true): number {
       v += ms;
+      if (!runCallbacks) return 0;
       const cbs = queue; queue = [];
       for (const q of cbs) { try { q.cb(baseP + v); } catch (e) { console.error(e); } }
+      return cbs.length;
     },
     async real<T>(fn: () => Promise<T> | T): Promise<T> {
       inReal++;

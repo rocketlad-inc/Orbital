@@ -38,9 +38,15 @@ const listeners = new Set<(on: boolean) => void>();
  *  and turning it off leaves a player who chose lightweight in it. */
 let serverForced = false;
 
+/** The studio's recorder (multiplayer/studio/director.ts) wants every
+ *  effect and every frame, whatever this device or the server's kill
+ *  switch would choose for a player; it is set only while a shot plays. */
+let studioOverride = false;
+export function setStudioFullVisuals(on: boolean): void { studioOverride = on; }
+
 /** Hot path. Called per body and per effect, so it stays a bare read. */
 export function isLightweight(): boolean {
-  return enabled || serverForced;
+  return !studioOverride && (enabled || serverForced);
 }
 
 /** The server's minimal switch (game.visuals.minimal), applied on each

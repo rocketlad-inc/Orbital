@@ -5107,7 +5107,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // Time the draw itself: frame INTERVAL alone can't tell "our canvas
       // work is heavy" from "something else stalled the main thread".
       const t0 = performance.now();
-      const minFrameMs = frameBudget();
+      // The studio's recorder (multiplayer/studio/director.ts) advances
+      // the clock one frame at a time and expects a draw per frame; the
+      // governor exists to spare phones, and a recording is neither.
+      const minFrameMs = document.body.classList.contains('studio-cinema') ? 0 : frameBudget();
       if (minFrameMs && t0 - lastDrawAt < minFrameMs) {
         raf = requestAnimationFrame(loop);
         return;
