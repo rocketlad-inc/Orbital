@@ -235,6 +235,28 @@ export function checkEndingInvariants(p) {
       if (!ids.has(l.factionId) || !(l.shipsLost > 0)) errs.push(`battle ${b.id}: bad loss entry`);
     }
   });
+  // the timeline
+  const tl = p.timeline;
+  if (tl.length < 2 || tl.length > 16) errs.push(`timeline has ${tl.length} moments (want 2..16)`);
+  else {
+    if (tl[0].kind !== 'start') errs.push('timeline does not begin with the start');
+    if (tl[tl.length - 1].kind !== 'victory') errs.push('timeline does not end with the victory');
+    if (tl.filter(m => m.kind === 'start').length !== 1 || tl.filter(m => m.kind === 'victory').length !== 1) errs.push('start/victory not exactly once');
+  }
+  const mIds = new Set();
+  tl.forEach((m, i) => {
+    if (mIds.has(m.id)) errs.push(`moment id ${m.id} twice`);
+    mIds.add(m.id);
+    if (i && tl[i - 1].tick > m.tick) errs.push(`timeline out of order at ${m.id}`);
+    if (!(m.importance >= 0 && m.importance <= 100 && Number.isInteger(m.importance))) errs.push(`${m.id}: importance ${m.importance}`);
+    for (const f of m.factionIds) if (!ids.has(f)) errs.push(`${m.id}: factionId ${f} is not an empire of this game`);
+    if (new Set(m.factionIds).size !== m.factionIds.length) errs.push(`${m.id}: duplicate factionIds`);
+    if (m.clip) {
+      if (m.kind !== 'battle') errs.push(`${m.id}: clip on a ${m.kind}`);
+      else if (!/^\/recap\/[A-Za-z0-9_-]{8,64}$/.test(m.clip.path) || m.clip.path.includes(m.clip.battleId)) errs.push(`${m.id}: clip path ${m.clip.path} is not a bare share-token link`);
+    }
+    if (tl.some((o, j) => j < i && o.tick === m.tick)) errs.push(`${m.id}: shares tick ${m.tick} with another moment`);
+  });
   const text = JSON.stringify(p);
   if (/@/.test(text)) errs.push('payload contains an @ (email?)');
   return errs;

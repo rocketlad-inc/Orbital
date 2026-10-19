@@ -64,4 +64,16 @@ describe.each(FIXTURES)('real-game fixture $name ($id)', ({ id, name, victory })
     expect(p.series.ticks[0]).toBe(1);
     expect(p.series.ticks[p.series.ticks.length - 1]).toBe(p.game.currentTick);
   });
+
+  it('tells a story: start first, victory last, replay links are bare share tokens', () => {
+    const tl = p.timeline;
+    expect(tl.length).toBeGreaterThanOrEqual(8);
+    expect(tl.length).toBeLessThanOrEqual(16);
+    expect(tl[0].kind).toBe('start');
+    expect(tl[tl.length - 1]).toMatchObject({ kind: 'victory', detail: victory, factionIds: [p.game.winnerFactionId] });
+    for (const m of tl.filter(x => x.clip)) {
+      expect(m.kind).toBe('battle');
+      expect(m.clip!.path).toMatch(/^\/recap\/[A-Za-z0-9_-]{8,64}$/);
+    }
+  });
 });
