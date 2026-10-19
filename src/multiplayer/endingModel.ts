@@ -403,3 +403,254 @@ export function peakLeader(factions: readonly EndingFaction[], measure: Measure)
 export function hasSeries(data: EndingPayload): boolean {
   return data.series.ticks.length >= 2;
 }
+
+// ---------------------------------------------------------------------------
+// The timeline ("How it unfolded")
+// ---------------------------------------------------------------------------
+//
+// buildTimeline turns the payload's pivotal moments into view-model rows. It
+// returns catalog KEYS and params, never English: the page calls t()/tn() on
+// them, so the same rows read in either language. A param may itself be a
+// TextRef (a pact kind, a secret) that the page resolves first.
+
+export type TimelineCategory = 'war' | 'power' | 'pact' | 'wonder' | 'edge';
+
+/** A catalog entry to render. With `n` the key is a plural base (tn); without
+ *  it, a plain key (t). Params that are TextRefs are rendered first. */
+export interface TextRef {
+  key: string;
+  n?: number;
+  params?: Record<string, string | number | TextRef>;
+}
+
+export interface TimelineRow {
+  id: string;
+  /** The server's kind, kept even when this build has no sentence for it. */
+  kind: string;
+  category: TimelineCategory;
+  /** importance >= 70: a card with a bigger node, not a plain row. */
+  big: boolean;
+  tick: number;
+  /** 1-based day of the game, from the tick length. null when unknown. */
+  day: number | null;
+  kindLabel: TextRef;
+  title: TextRef;
+  sub: TextRef | null;
+  /** Empires shown as chips under the sentence. */
+  who: EndingFaction[];
+  /** The viewer's empire is in it (for a battle: it lost hulls in it). */
+  mine: boolean;
+  bodyName: string | null;
+  /** Battle moments with a replay link. */
+  clip: { path: string; battleId: string; shots: number; shipsLost: number } | null;
+  /** The loss split of a clipped battle, when the payload carries that fight. */
+  segments: BattleSegment[];
+}
+
+const CATEGORY: Record<string, TimelineCategory> = {
+  start: 'edge', first_blood: 'war', war: 'war', pact: 'pact', pact_broken: 'pact', battle: 'war',
+  eliminated: 'war', lead: 'power', bill: 'power', chancellor: 'power', megastructure: 'wonder',
+  gate: 'wonder', leviathan: 'wonder', discovery: 'wonder', victory: 'power',
+};
+
+export const BIG_BEAT = 70;
+
+/** Details the page has a sentence for; anything else falls back to the generic one. */
+const PACT_KINDS: Record<string, string> = {
+  nap: 'nap', defense_pact: 'defense', defense: 'defense', construction_pact: 'construction',
+  construction: 'construction', intel_share: 'intel', intel: 'intel',
+};
+const BILL_KINDS = new Set(['war_authorization', 'trade_embargo', 'production_sanction', 'reparations']);
+const SECRET_KINDS = new Set([
+  'ancient_capital', 'portal_to_sun', 'far_gate', 'ancient_city', 'derelict_warship', 'pre_terraformed',
+  'free_collector', 'ancient_station', 'ancient_relay', 'ancient_databank', 'resource_cache', 'deep_cache',
+]);
+const SHIP_KINDS = new Set(['corvette', 'frigate', 'destroyer', 'freighter', 'colony', 'mega_destroyer', 'mobile_foundry']);
+const NO_CHIPS = new Set(['victory', 'lead', 'chancellor', 'start']);
+
+const ref = (key: string, params?: TextRef['params'], n?: number): TextRef => ({ key, params, n });
+
+/** Day of the game a tick falls on: 1 for the first 24 real hours. */
+export function dayOfTick(tick: number, tickIntervalMs: number | null | undefined): number | null {
+  if (!tickIntervalMs || tickIntervalMs <= 0 || !Number.isFinite(tick)) return null;
+  return Math.floor((tick * tickIntervalMs) / 86_400_000) + 1;
+}
+
+/** The moments as rows, oldest first. Empty when the payload has no usable
+ *  timeline (an older cached response): the page then hides the section. A
+ *  moment whose actors the payload does not know is skipped, never invented. */
+export function buildTimeline(data: EndingPayload): TimelineRow[] {
+  const moments = Array.isArray(data.timeline) ? data.timeline : [];
+  const byId = new Map(data.factions.map(f => [f.id, f] as const));
+  const battleById = new Map((data.battles ?? []).map(b => [b.id, b] as const));
+  const interval = data.game?.tickIntervalMs;
+  const rows: TimelineRow[] = [];
+
+  for (const m of moments) {
+    if (!m || typeof m.kind !== 'string' || !Number.isFinite(m.tick)) continue;
+    const ids = Array.isArray(m.factionIds) ? m.factionIds : [];
+    const f = (i: number): EndingFaction | null => byId.get(ids[i] ?? '') ?? null;
+    const body = m.bodyName && m.bodyName.trim() ? m.bodyName : null;
+    const n = typeof m.n === 'number' && Number.isFinite(m.n) ? m.n : null;
+    const nm = (x: EndingFaction | null) => (x ? x.name : '');
+    let title: TextRef | null = null;
+    let sub: TextRef | null = null;
+    let who: EndingFaction[] = [];
+    let mine = ids.some(id => byId.get(id)?.isMe);
+    let segments: BattleSegment[] = [];
+    let clip: TimelineRow['clip'] = null;
+    let known = true;
+
+    switch (m.kind) {
+      case 'start':
+        title = ref('ending.tl.start.title');
+        sub = n != null && n > 0 ? ref('ending.tl.start.sub', undefined, n) : null;
+        mine = false;
+        break;
+      case 'first_blood': {
+        // [killer, victim] when the killer is a known empire, else [victim] alone.
+        const two = ids.length > 1;
+        const victim = two ? f(1) : f(0);
+        const killer = two ? f(0) : null;
+        if (!victim) break;
+        if (killer) title = body ? ref('ending.tl.firstBlood.killAt', { killer: nm(killer), victim: nm(victim), body }) : ref('ending.tl.firstBlood.kill', { killer: nm(killer), victim: nm(victim) });
+        else title = body ? ref('ending.tl.firstBlood.lossAt', { victim: nm(victim), body }) : ref('ending.tl.firstBlood.loss', { victim: nm(victim) });
+        sub = m.detail && SHIP_KINDS.has(m.detail) ? ref('ending.tl.firstBlood.sub', { class: ref(`data.ship.${m.detail}.name`) }) : null;
+        who = killer ? [killer, victim] : [victim];
+        break;
+      }
+      case 'war':
+        if (!f(0) || !f(1)) break;
+        title = ref('ending.tl.war.title', { aggressor: nm(f(0)), target: nm(f(1)) });
+        who = [f(0) as EndingFaction, f(1) as EndingFaction];
+        break;
+      case 'pact':
+        if (!f(0) || !f(1)) break;
+        title = ref('ending.tl.pact.title', { a: nm(f(0)), b: nm(f(1)) });
+        sub = ref(`ending.tl.pactKind.${PACT_KINDS[m.detail ?? ''] ?? 'other'}`);
+        who = [f(0) as EndingFaction, f(1) as EndingFaction];
+        break;
+      case 'pact_broken':
+        if (!f(0) || !f(1)) break;
+        title = ref('ending.tl.pactBroken.title', { breaker: nm(f(0)), betrayed: nm(f(1)) });
+        sub = ref('ending.tl.pactBroken.sub', { pact: ref(`ending.tl.pactKind.${PACT_KINDS[m.detail ?? ''] ?? 'other'}`) });
+        who = [f(0) as EndingFaction, f(1) as EndingFaction];
+        break;
+      case 'battle': {
+        title = body ? ref('ending.battle.of', { name: body }) : ref('ending.battle.deepSpace');
+        const lost = m.clip?.shipsLost ?? n;
+        sub = lost != null ? ref('ending.tl.battle.sub', undefined, lost) : null;
+        const full = m.clip ? battleById.get(m.clip.battleId) : undefined;
+        if (m.clip) {
+          clip = { path: m.clip.path, battleId: m.clip.battleId, shots: m.clip.shots, shipsLost: m.clip.shipsLost };
+          if (full) segments = battleSegments(full);
+        }
+        // With the fight's loss split, "you" means you lost hulls in it. A
+        // fight the payload carries no split for cannot say.
+        mine = full ? full.lossesByFaction.some(x => x.shipsLost > 0 && !!byId.get(x.factionId)?.isMe) : false;
+        const chipIds = full ? segments.map(s => s.factionId) : ids;
+        who = chipIds.map(id => byId.get(id)).filter((x): x is EndingFaction => !!x);
+        break;
+      }
+      case 'eliminated': {
+        // [fallen, taker of the last world if known]; n = the fallen empire's peak worlds.
+        const fallen = f(0), taker = f(1);
+        if (!fallen) break;
+        title = ref('ending.tl.eliminated.title', { fallen: nm(fallen) });
+        const peak = n != null && n > 0 ? n : null;
+        if (peak != null && taker) sub = ref('ending.tl.eliminated.subTaker', { taker: nm(taker) }, peak);
+        else if (peak != null) sub = ref('ending.tl.eliminated.sub', undefined, peak);
+        else if (taker) sub = ref('ending.tl.eliminated.taker', { taker: nm(taker) });
+        who = taker ? [fallen, taker] : [fallen];
+        break;
+      }
+      case 'lead':
+        if (!f(0)) break;
+        title = ref('ending.tl.lead.title', { leader: nm(f(0)) });
+        sub = n != null && n > 0 ? ref('ending.tl.lead.sub', undefined, n) : null;
+        break;
+      case 'bill': {
+        const kind = BILL_KINDS.has(m.detail ?? '') ? (m.detail as string) : 'other';
+        title = ref(`ending.tl.bill.${kind}`);
+        if (f(0)) sub = f(1) ? ref('ending.tl.bill.subTarget', { proposer: nm(f(0)), target: nm(f(1)) }) : ref('ending.tl.bill.sub', { proposer: nm(f(0)) });
+        who = [f(0), f(1)].filter((x): x is EndingFaction => !!x);
+        break;
+      }
+      case 'chancellor':
+        if (!f(0)) break;
+        title = ref('ending.tl.chancellor.title', { who: nm(f(0)) });
+        break;
+      case 'megastructure': {
+        // n = build percent; 0 = the foundation was laid.
+        const dyson = m.detail === 'dyson_sphere';
+        const builder = f(0);
+        if (n != null && n > 0) {
+          title = ref(dyson ? 'ending.tl.mega.dysonPct' : 'ending.tl.mega.otherPct', { pct: n });
+          if (builder) sub = ref('ending.tl.mega.sub', { who: nm(builder) });
+        } else if (builder) {
+          title = ref(dyson ? 'ending.tl.mega.dysonBegun' : 'ending.tl.mega.otherBegun', { who: nm(builder) });
+        }
+        break;
+      }
+      case 'gate':
+        if (m.detail === 'first_crossing') {
+          if (!f(0)) break;
+          title = body ? ref('ending.tl.gate.crossing', { who: nm(f(0)), body }) : ref('ending.tl.gate.crossingBare', { who: nm(f(0)) });
+        } else {
+          title = body ? ref('ending.tl.gate.opened', { body }) : ref('ending.tl.gate.openedBare');
+          sub = ref('ending.tl.gate.sub');
+        }
+        break;
+      case 'leviathan':
+        if (m.detail === 'dies') {
+          if (!f(0)) break;
+          title = ref('ending.tl.leviathan.dies', { who: nm(f(0)) });
+          sub = body ? ref('ending.tl.leviathan.diesAt', { body }) : ref('ending.tl.leviathan.diesBare');
+        } else if (m.detail === 'strike') {
+          title = ref('ending.tl.leviathan.strike');
+          sub = body ? ref('ending.tl.leviathan.strikeAt', { body }) : ref('ending.tl.leviathan.strikeBare');
+        } else {
+          title = ref('ending.tl.leviathan.arrives');
+          sub = body ? ref('ending.tl.leviathan.arrivesAt', { body }) : ref('ending.tl.leviathan.arrivesBare');
+        }
+        break;
+      case 'discovery':
+        if (!f(0)) break;
+        title = ref('ending.tl.discovery.title', {
+          who: nm(f(0)),
+          secret: ref(`ending.tl.secret.${SECRET_KINDS.has(m.detail ?? '') ? m.detail : 'other'}`),
+        });
+        sub = body ? ref('ending.tl.discovery.sub', { body }) : null;
+        break;
+      case 'victory': {
+        const w = f(0);
+        title = w ? ref('ending.tl.victory.title', { who: nm(w) }) : ref('ending.tl.victory.noWinner');
+        const way = victoryWay(m.detail);
+        sub = way === 'annihilation' ? ref('ending.verdict.annihilation') : way ? ref(`mp.provider.vl.${way}`) : null;
+        break;
+      }
+      default:
+        // A kind this build has never heard of: a plain row, never a crash.
+        known = false;
+        title = ref('ending.tl.other.title');
+    }
+    if (!title) continue;   // an actor the payload does not know: skip the row
+
+    rows.push({
+      id: String(m.id ?? `${m.kind}-${m.tick}`),
+      kind: m.kind,
+      category: known ? CATEGORY[m.kind] ?? 'edge' : 'edge',
+      big: (m.importance ?? 0) >= BIG_BEAT,
+      tick: m.tick,
+      day: dayOfTick(m.tick, interval),
+      kindLabel: ref(known ? `ending.tl.kind.${m.kind}` : 'ending.tl.kind.other'),
+      title, sub,
+      who: NO_CHIPS.has(m.kind) ? [] : who,
+      mine, bodyName: body, clip, segments,
+    });
+  }
+  return rows;
+}
+
+/** The section needs a story to tell: more than two moments. */
+export const hasTimeline = (data: EndingPayload): boolean => buildTimeline(data).length > 2;
