@@ -78,7 +78,7 @@ import { BUILDING_DEFS, buildingLevel } from '../game/settlements';
 import { boxSingleTarget, cyclePick, orderPickHits } from '../render/mapPick';
 import type { PickHit } from '../render/mapPick';
 import { releaseFocusPosition } from '../game/cameraFocus';
-import { Body as GameBody, BuildingKind, Ship } from '../types';
+import { Body as GameBody, BuildingKind, CameraState, Ship } from '../types';
 import {
   spawnTracer,
   drawTracers,
@@ -933,6 +933,24 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     window.addEventListener('orbital:zoom-step', onZoom as EventListener);
     return () => window.removeEventListener('orbital:zoom-step', onZoom as EventListener);
   }, []);
+
+  // THE STUDIO'S CAMERA (multiplayer/studio/director.ts). A director
+  // eases the camera itself, one frame at a time, so its writes must land
+  // 1:1 like a drag does: the 250ms tween that smooths every other
+  // programmatic move would turn a scripted glide into a lagging chase.
+  useEffect(() => {
+    const onStudio = (e: Event) => {
+      const d = (e as CustomEvent).detail ?? {};
+      const partial: Partial<CameraState> = {};
+      if (Number.isFinite(d.x)) partial.x = d.x;
+      if (Number.isFinite(d.y)) partial.y = d.y;
+      if (Number.isFinite(d.scale) && d.scale > 0) partial.scale = d.scale;
+      if ('focusedBodyId' in d) partial.focusedBodyId = d.focusedBodyId || undefined;
+      directUpdateCamera(partial);
+    };
+    window.addEventListener('orbital:studio-camera', onStudio as EventListener);
+    return () => window.removeEventListener('orbital:studio-camera', onStudio as EventListener);
+  }, [directUpdateCamera]);
 
   // LEAVING SELECTION MODE. Toggling the last ship out ends it, as it does
   // in every list that works this way; a mode entered from the Select
@@ -3984,7 +4002,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
     }
 
-    drawHUD(renderContext, uiState.targetSelectionMode);
+    // The studio's cinema mode (multiplayer/studio/director.ts) records
+    // this canvas, and the tick/scale readouts and control hints are
+    // paint, not DOM, so this is the one place they can be left out.
+    if (!document.body.classList.contains('studio-cinema')) {
+      drawHUD(renderContext, uiState.targetSelectionMode);
+    }
 
     perf.phase('fog_paint');
     perf.phaseCommit();

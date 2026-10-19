@@ -64,6 +64,7 @@ const base = {
   'lobby.nav.editor': 'Editor',
   'lobby.nav.devlog': 'Devlog',
   'lobby.nav.email': 'Email',
+  'lobby.nav.studio': 'Studio',
   'lobby.profileTitle': 'Profile and settings',
   'lobby.signOut': 'Sign out',
   'lobby.commander': 'Commander',
