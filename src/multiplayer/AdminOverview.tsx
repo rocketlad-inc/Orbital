@@ -1304,6 +1304,9 @@ const SURFACE_LABEL: Record<string, string> = {
   endgame: 'End of game',
   'thanks-card': '20-hour thank-you',
   skins: 'Colony & station styles',
+  'discord-feed': 'Discord game feed',
+  'map-maker': 'Map Maker: Share & host',
+  'lobby-map': 'Game creator: custom map',
   other: 'Other / older clients',
   'before tracking': 'Before tracking',
 };

@@ -131,7 +131,7 @@ describe('the Commission storefronts', () => {
       'multiplayer/SkinPicker.tsx': /openCommissionInBrowser\(surface\)/,
       'multiplayer/DiscordServerFeed.tsx': /openCommissionInBrowser\('discord-feed'/,
       'mapmaker/MapMaker.tsx': /openCommissionInBrowser\('map-maker'\)/,
-      'multiplayer/MultiplayerLobby.tsx': /openCommissionInBrowser\('map-maker'\)/,
+      'multiplayer/MultiplayerLobby.tsx': /openCommissionInBrowser\('lobby-map'\)/,
       'components/ShipDesigner.tsx': /\{!canBuyHere\(\) && \(\s*<button[^\n]*openCommissionInBrowser\('designer'\)/,
       'components/CommissionFleetPreview.tsx': /\{!sellable && \(\s*<>\s*<button[^\n]*openCommissionInBrowser\('designer'\)/,
     };
