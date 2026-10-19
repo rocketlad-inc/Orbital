@@ -176,6 +176,7 @@ export function expandScenario(raw) {
   return {
     name, gameId, factions: fx, wars, worlds, ships, fleets, research, orders,
     viewer: typeof raw.viewer === 'string' ? raw.viewer : (fx[0]?.key ?? null),
+    camera: raw.camera !== false,   // observer hulls so the viewer sees every scene world
     seatMe: raw.seat_me === true,
     reset: raw.reset !== false,
     tickIntervalMs: Number.isFinite(Number(raw.tick_interval_ms)) ? Number(raw.tick_interval_ms) : 3600000,
