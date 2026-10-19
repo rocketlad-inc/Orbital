@@ -6919,4 +6919,60 @@ UPDATE game_megastructures
    AND acc_credits >= cost_credits
    AND game_id IN (SELECT id FROM games WHERE status = 'active' AND id <> 'Kai68RfB5BhV');
 ` },
+  { name: "0173_discovery_offers.sql", sql: `-- ============================================================
+-- 0173 — a found ship is an offer the finder can refuse
+-- (worker/discoveryOffers.js).
+--
+-- Lorne, 2026-10-18: "We need to add an option to refuse a structure/craft
+-- a player discovers. Sometimes they can't afford it." A derelict
+-- destroyer or an ancient capital ship now waits here for its finder's
+-- answer instead of being minted on the spot.
+--
+-- status: pending  -> waiting for the finder (expires_tick: claimed for
+--                     them if they never answer, as finds always were)
+--         claimed  -> minted; the body is revealed
+--         refused  -> nothing minted; the find waits for another empire,
+--                     and this one's ships never trigger it again
+--         lapsed   -> the finder's empire was gone when it expired
+-- One row per (body, faction): an empire is asked about a world once.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS discovery_offers (
+  game_id       TEXT NOT NULL,
+  body_id       TEXT NOT NULL,
+  faction_id    TEXT NOT NULL,
+  kind          TEXT NOT NULL,
+  capital_kind  TEXT,
+  status        TEXT NOT NULL DEFAULT 'pending',
+  offered_tick  INTEGER NOT NULL,
+  expires_tick  INTEGER NOT NULL,
+  resolved_tick INTEGER,
+  PRIMARY KEY (body_id, faction_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_discovery_offers_game_status
+  ON discovery_offers (game_id, status, expires_tick);
+` },
+  { name: "0174_thanks_card_once.sql", sql: `-- ============================================================
+-- 0174 - the Commission thank-you card is asked once, really
+--
+-- Until 2026-10-19 the card came back on every visit until the player
+-- answered it (18 players saw it 253 times; one saw it 60 times). The
+-- server now records the showing itself (worker/commissionAsk.js).
+-- Everyone who has already seen it without answering is marked as
+-- asked, so nobody sees it again.
+--
+-- Idempotent: only rows still unmarked are touched, so a rerun changes
+-- nothing (data migrations have run more than once before, see 0172).
+-- ============================================================
+
+UPDATE users
+   SET commission_ask_ms = CAST(strftime('%s', 'now') AS INTEGER) * 1000,
+       commission_ask_action = 'shown'
+ WHERE commission_ask_ms IS NULL
+   AND id IN (SELECT DISTINCT user_id FROM analytics_events
+               WHERE kind = 'ui/commission-view'
+                 AND user_id IS NOT NULL
+                 AND json_extract(payload, '$.from') = 'thanks-card');
+` },
 ];

@@ -4,15 +4,17 @@
 // Everything else about the Commission shows the goods and waits. These
 // two ask, and each obeys the guardrails from the Oct 5 insight report:
 //
-//   EndgameCommission  on the game-over screen, at a high point (you won,
-//                      or your empire survived to the end), once per game,
-//                      never over the map while play is on.
+//   the end-of-game page  (EndingPage.tsx / EndingScreen.tsx) shows the
+//                      Commission at a high point (you won, or your empire
+//                      survived to the end), once per game, never over the
+//                      map while play is on. Its copy comes from here.
 //   ThanksCard         in the lobby, once ever, for a non-holder with 20+
 //                      hours played (worker/index.js noteVisit decides),
 //                      never on the visit the Discord invite shows.
 //
-// Both dismiss for good with one click, carry no countdown or discount,
-// and never appear in the Android app, where nothing is sold.
+// Both show once, carry no countdown or discount, and sell nothing in the
+// Android app: the thank-you card stays hidden there, and the end page's
+// button opens the website in the phone's browser instead.
 // ============================================================
 
 import React, { useEffect, useState } from 'react';
@@ -36,7 +38,7 @@ const FLEET: Array<[ShipIconClass, ShipIconVariant]> = [
 /** The Commission's fixed phrases in the player's language. The constants in
  *  commission.ts are the English source (and what the English catalog must
  *  equal); tk() falls back to them when a catalog has no entry. */
-function commissionPhrases() {
+export function commissionPhrases() {
   return {
     lines: COMMISSION_LINES,
     name: tk('mp.commission.name', COMMISSION_NAME),
@@ -56,64 +58,22 @@ function commissionFacts(): string {
   });
 }
 
-const endgameKey = (gameId: string) => `orbital.commission.endgame.${gameId}`;
-
-/**
- * Under the GAME OVER / VICTORY title. Only for a player whose empire
- * made it to the end (a loss after elimination is a setback, and a
- * setback is no moment to sell anything).
- */
-export function EndgameCommission({ gameId, survived }: { gameId: string; survived: boolean }) {
-  useI18n();
-  const { user } = useAuth();
-  const [gone, setGone] = useState(() => {
-    try { return !!localStorage.getItem(endgameKey(gameId)); } catch { return false; }
-  });
-  const eligible = !gone && survived && !!user && !user.is_premium && canBuyHere();
-
-  useEffect(() => {
-    if (!eligible) return;
-    logCommission('endgame', 'view');
-    // Seen counts as shown: it will not come back for this game, even if
-    // the player simply closes the screen.
-    try { localStorage.setItem(endgameKey(gameId), String(Date.now())); } catch { /* fine */ }
-  }, [eligible, gameId]);
-
-  if (!eligible) return null;
-  return (
-    <div className="cm-end" role="note">
-      <div className="cm-fleet" aria-hidden>
-        {FLEET.map(([cls, v]) => <ShipIcon key={cls} shipClass={cls} variant={v} size={36} />)}
-      </div>
-      <div className="cm-end__text">
-        <div className="cm-title">{t('mp.endgame.title')}</div>
-        <div className="cm-body">
-          {t('mp.endgame.body', commissionPhrases())}
-        </div>
-      </div>
-      <div className="cm-actions">
-        <button
-          className="cm-btn cm-btn--go"
-          onClick={() => {
-            logCommission('endgame', 'click');
-            void startCommissionCheckout('endgame').then(url => { if (url) window.location.assign(url); });
-          }}
-        >{t('mp.endgame.look')}</button>
-        <button
-          className="cm-btn"
-          onClick={() => { logCommission('endgame', 'dismiss'); setGone(true); }}
-        >{t('mp.endgame.notNow')}</button>
-      </div>
-    </div>
-  );
-}
+/** localStorage key that remembers the end-of-game page showed the Commission
+ *  for this game (EndingScreen.tsx: once per game, whatever happens next). */
+export const endgameKey = (gameId: string) => `orbital.commission.endgame.${gameId}`;
 
 /** The one-time thank-you card, at the top of the lobby. */
 export function ThanksCard({ onSeeHangar }: { onSeeHangar: () => void }) {
   useI18n();
   const { user } = useAuth();
   const [gone, setGone] = useState(false);
-  const show = !gone && !!user?.commission_ask && !user.is_premium && canBuyHere();
+  // The server hands the card out once and records it (0174), so a later
+  // /me refresh on this same page says false. Latch it: once shown, it
+  // stays until the player answers or leaves; a reload never brings it back.
+  const [latched, setLatched] = useState(false);
+  const offered = !!user?.commission_ask;
+  useEffect(() => { if (offered) setLatched(true); }, [offered]);
+  const show = !gone && (offered || latched) && !user?.is_premium && canBuyHere();
   useEffect(() => { if (show) logCommission('thanks-card', 'view'); }, [show]);
   if (!show) return null;
 
