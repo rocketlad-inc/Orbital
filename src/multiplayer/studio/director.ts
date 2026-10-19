@@ -445,6 +445,54 @@ export class Director {
     return blob;
   }
 
+  // ---------- film: one frame at a time, for an outside camera ----------
+  //
+  // The Reddit clips were made this way: a stepped clock, one PNG per
+  // frame taken by the DevTools protocol, encoded afterwards. Nothing can
+  // drop a frame, because the screenshot is the frame. The CLI's `film`
+  // command drives these three calls; the map canvas is the whole shot
+  // (cinema mode hides the interface), with no overlays of any kind.
+
+  private film: { vclock: ReturnType<typeof installVirtualClock>; shot: Shot; fired: Set<ShotStep>; k: number; total: number; draw?: (n?: number) => number } | null = null;
+
+  /** Start a stepped shot. Returns the frame count. */
+  openFilm(shot: Shot): number {
+    if (this.running) throw new Error('already running');
+    this.running = true; this.cancelFlag = false;
+    const fps = shot.fps ?? 30;
+    const total = Math.round(shot.seconds * fps);
+    const vclock = installVirtualClock();
+    this.begin(shot);
+    this.stats = { frames: 0, draws: 0, unchanged: 0, rafRuns: 0 };
+    this.film = { vclock, shot, fired: new Set(), k: 0, total, draw: (window as unknown as { __benchDraw?: (n?: number) => number }).__benchDraw };
+    return total;
+  }
+
+  /** Advance one frame: run due steps (ticks wait on the server), move the
+   *  camera, draw the map. Resolves {k, done}; the caller screenshots. */
+  async filmFrame(): Promise<{ k: number; done: boolean }> {
+    const f = this.film;
+    if (!f) throw new Error('openFilm first');
+    const fps = f.shot.fps ?? 30;
+    await f.vclock.real(() => this.fire(f.shot.steps, f.fired));
+    this.step(1 / fps);
+    await f.vclock.real(() => realSleep(0));
+    this.stats.rafRuns += f.vclock.advance(1000 / fps, !f.draw);
+    if (f.draw) { f.draw(1); this.stats.draws++; }
+    this.stats.frames++;
+    f.k++;
+    this.progress = f.k / f.total;
+    return { k: f.k - 1, done: f.k >= f.total };
+  }
+
+  /** Hand the clock back and restore the interface. */
+  closeFilm(): void {
+    const f = this.film;
+    this.film = null;
+    if (f) f.vclock.uninstall();
+    this.end();
+  }
+
   download(name?: string): void {
     if (!this.lastBlob) return;
     const a = document.createElement('a');
