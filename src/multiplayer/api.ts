@@ -167,6 +167,8 @@ export type User = {
   // Ship looks this account built with before they joined the Commission
   // (0166), as 'class:letter'. They stay usable for that hull class.
   look_grants?: string[];
+  // Emblems this account has EARNED (0176), e.g. 'recruiter'.
+  emblem_grants?: string[];
   // Colony / station skin, the account default (0154). null = the free
   // look. Saved via PATCH /api/users/me/skins.
   city_skin?: string | null;
@@ -187,7 +189,9 @@ export type User = {
  *  of these (worker/store.js COMMISSION_SURFACES) and labels each sale
  *  with it, so the dashboard can say which surface sells. */
 export type CommissionSurface = 'profile' | 'lobby-flag' | 'designer' | 'endgame' | 'thanks-card' | 'skins'
-  | 'discord-feed' | 'map-maker' | 'lobby-map';
+  | 'discord-feed' | 'map-maker' | 'lobby-map'
+  // The invite card: a gift Commission for the friend you are inviting.
+  | 'invite';
 
 /** Start the Commander's Commission purchase. Resolves to the Stripe
  *  Checkout URL to navigate to, or null when purchases aren't enabled,
@@ -275,6 +279,8 @@ export type RoomSettings = {
   max_players: number;
   invite_code?: string | null;
   has_password?: boolean;
+  /** When the room was made (ms); the lonely-lobby card waits on it. */
+  created_at?: number | null;
   tick_interval_ms: number;
   game_id: string | null;
   game_status: string | null;

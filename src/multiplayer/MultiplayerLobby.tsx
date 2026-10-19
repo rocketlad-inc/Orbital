@@ -19,6 +19,7 @@ import { useI18n, LanguageSwitch } from '../i18n/react';
 import { apiErrorText } from '../i18n/apiErrors';
 import { saveLocale } from '../i18n/account';
 import './lobby.css';
+import { InviteCard } from './InviteCard';
 
 // Full-screen pre-game lobby: where a signed-in player finds, starts and
 // returns to games. Sections:
@@ -817,7 +818,6 @@ function CreatePanel({ onCreated, hostName }: { onCreated: (id: string) => void;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<{ id: string; invite_code?: string | null } | null>(null);
-  const [copied, setCopied] = useState<'code' | 'link' | null>(null);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -838,15 +838,6 @@ function CreatePanel({ onCreated, hostName }: { onCreated: (id: string) => void;
     setCreated({ id: res.data.room.id, invite_code: res.data.room.invite_code });
   }
 
-  function copy(what: 'code' | 'link') {
-    if (!created?.invite_code) return;
-    const text = what === 'code' ? created.invite_code : `${window.location.origin}?invite=${created.invite_code}`;
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(what);
-      setTimeout(() => setCopied(null), 1600);
-    }).catch(() => { /* clipboard blocked: the code is on screen */ });
-  }
-
   if (created) {
     return (
       <section className="lx-section lx-narrow">
@@ -857,19 +848,11 @@ function CreatePanel({ onCreated, hostName }: { onCreated: (id: string) => void;
             {t('lobby.create.doneBody')}
             {isPrivate ? t('lobby.create.donePrivate') : t('lobby.create.donePublic')}
           </p>
+          {/* The moment the player chose to gather people: one link that
+              opens straight into the game (no password to pass along). */}
           {created.invite_code && (
-            <button type="button" className="lx-code" onClick={() => copy('code')} title={t('lobby.create.copyCodeTitle')}>
-              {created.invite_code.match(/.{1,4}/g)?.join('-')}
-            </button>
+            <InviteCard code={created.invite_code} roomName={name.trim()} taken={1} max={maxPlayers} where="created" />
           )}
-          <div className="lx-row">
-            <button type="button" className="lx-btn lx-btn--ghost" onClick={() => copy('link')}>
-              {copied === 'link' ? t('lobby.create.linkCopied') : t('lobby.create.copyLink')}
-            </button>
-            <button type="button" className="lx-btn lx-btn--ghost" onClick={() => copy('code')}>
-              {copied === 'code' ? t('lobby.create.codeCopied') : t('lobby.create.copyCode')}
-            </button>
-          </div>
           <button className="lx-btn lx-btn--primary lx-btn--lg lx-btn--block" onClick={() => onCreated(created.id)}>
             {t('lobby.create.goLobby')}
           </button>

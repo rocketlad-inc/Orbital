@@ -127,6 +127,7 @@ export const data = {
   'data.emblem.satellite': 'Satellite',
   'data.emblem.helmet': 'Star Helmet',
   'data.emblem.saucer': 'Saucer',
+  'data.emblem.recruiter': 'Recruiter',
   'data.emblem.doublev': 'Double V',
   'data.emblem.rocket': 'Rocket',
   'data.secret.portal_to_sun.name': 'Ancient Stargate',

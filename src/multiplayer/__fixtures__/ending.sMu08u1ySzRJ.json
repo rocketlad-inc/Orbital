@@ -549,5 +549,232 @@
         }
       ]
     }
+  ],
+  "timeline": [
+    {
+      "id": "m1",
+      "kind": "start",
+      "tick": 0,
+      "factionIds": [],
+      "n": 8,
+      "detail": null,
+      "bodyName": null,
+      "clip": null,
+      "importance": 100
+    },
+    {
+      "id": "m2",
+      "bodyName": null,
+      "n": 6,
+      "detail": null,
+      "clip": null,
+      "factionIds": [
+        "sMu08u1ySzRJ:f3"
+      ],
+      "kind": "lead",
+      "tick": 55,
+      "importance": 70
+    },
+    {
+      "id": "m3",
+      "bodyName": "Varda",
+      "n": null,
+      "detail": "ancient_capital",
+      "clip": null,
+      "factionIds": [
+        "sMu08u1ySzRJ:f1"
+      ],
+      "kind": "discovery",
+      "tick": 82,
+      "importance": 75
+    },
+    {
+      "id": "m4",
+      "bodyName": null,
+      "n": null,
+      "detail": null,
+      "clip": null,
+      "factionIds": [
+        "sMu08u1ySzRJ:f6",
+        "sMu08u1ySzRJ:f0"
+      ],
+      "kind": "war",
+      "tick": 129,
+      "importance": 60
+    },
+    {
+      "id": "m5",
+      "bodyName": "Mars",
+      "n": 226,
+      "detail": null,
+      "clip": {
+        "path": "/recap/9HAM2ECHZCXh39SLdAqe",
+        "battleId": "b_206_sMu08u1ySzRJ:mars",
+        "shots": 4973,
+        "shipsLost": 226
+      },
+      "factionIds": [
+        "sMu08u1ySzRJ:f0",
+        "sMu08u1ySzRJ:f4",
+        "sMu08u1ySzRJ:f2",
+        "sMu08u1ySzRJ:f6"
+      ],
+      "kind": "battle",
+      "tick": 206,
+      "importance": 95
+    },
+    {
+      "id": "m6",
+      "bodyName": null,
+      "n": 4,
+      "detail": null,
+      "clip": null,
+      "factionIds": [
+        "sMu08u1ySzRJ:f5",
+        "sMu08u1ySzRJ:f1"
+      ],
+      "kind": "eliminated",
+      "tick": 236,
+      "importance": 60
+    },
+    {
+      "id": "m7",
+      "bodyName": null,
+      "n": 0,
+      "detail": "dyson_sphere",
+      "clip": null,
+      "factionIds": [
+        "sMu08u1ySzRJ:f4"
+      ],
+      "kind": "megastructure",
+      "tick": 258,
+      "importance": 62
+    },
+    {
+      "id": "m8",
+      "bodyName": "Centauri",
+      "n": 1,
+      "detail": "opened",
+      "clip": null,
+      "factionIds": [],
+      "kind": "gate",
+      "tick": 301,
+      "importance": 60
+    },
+    {
+      "id": "m9",
+      "bodyName": "Ganymede",
+      "n": 65,
+      "detail": null,
+      "clip": {
+        "path": "/recap/dyeAJOjKWgSqw_b_P4do",
+        "battleId": "b_408_sMu08u1ySzRJ:ganymede",
+        "shots": 2096,
+        "shipsLost": 65
+      },
+      "factionIds": [
+        "sMu08u1ySzRJ:f3",
+        "sMu08u1ySzRJ:f2",
+        "sMu08u1ySzRJ:f1"
+      ],
+      "kind": "battle",
+      "tick": 408,
+      "importance": 67
+    },
+    {
+      "id": "m10",
+      "bodyName": "MK 2",
+      "n": null,
+      "detail": "arrives",
+      "clip": null,
+      "factionIds": [],
+      "kind": "leviathan",
+      "tick": 414,
+      "importance": 72
+    },
+    {
+      "id": "m11",
+      "bodyName": "MK 2",
+      "n": 0,
+      "detail": "strike",
+      "clip": null,
+      "factionIds": [],
+      "kind": "leviathan",
+      "tick": 462,
+      "importance": 66
+    },
+    {
+      "id": "m12",
+      "bodyName": null,
+      "n": null,
+      "detail": "nap",
+      "clip": null,
+      "factionIds": [
+        "sMu08u1ySzRJ:f1",
+        "sMu08u1ySzRJ:f4"
+      ],
+      "kind": "pact_broken",
+      "tick": 475,
+      "importance": 70
+    },
+    {
+      "id": "m13",
+      "bodyName": "Earth",
+      "n": 223,
+      "detail": null,
+      "clip": {
+        "path": "/recap/sIAKN1vHDvcjrxlYizdC",
+        "battleId": "b_476_sMu08u1ySzRJ:earth",
+        "shots": 5071,
+        "shipsLost": 223
+      },
+      "factionIds": [
+        "sMu08u1ySzRJ:f4",
+        "sMu08u1ySzRJ:f1",
+        "sMu08u1ySzRJ:f0"
+      ],
+      "kind": "battle",
+      "tick": 476,
+      "importance": 94
+    },
+    {
+      "id": "m14",
+      "bodyName": "Weywot",
+      "n": null,
+      "detail": "dies",
+      "clip": null,
+      "factionIds": [
+        "sMu08u1ySzRJ:f3"
+      ],
+      "kind": "leviathan",
+      "tick": 512,
+      "importance": 78
+    },
+    {
+      "id": "m15",
+      "bodyName": null,
+      "n": 75,
+      "detail": "dyson_sphere",
+      "clip": null,
+      "factionIds": [
+        "sMu08u1ySzRJ:f4"
+      ],
+      "kind": "megastructure",
+      "tick": 513,
+      "importance": 66
+    },
+    {
+      "id": "m16",
+      "kind": "victory",
+      "tick": 526,
+      "factionIds": [
+        "sMu08u1ySzRJ:f4"
+      ],
+      "n": null,
+      "detail": "engineering",
+      "bodyName": null,
+      "clip": null,
+      "importance": 100
+    }
   ]
 }

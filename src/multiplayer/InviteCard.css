@@ -1,0 +1,62 @@
+/* InviteCard (InviteCard.tsx): "Invite friends" on the new-room screen
+   and in the room lobby. Teal is the lobby's "friendly / open" colour;
+   gold stays for the one paid action, as everywhere in the lobby. */
+
+.ic {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(78, 205, 196, 0.35);
+  background:
+    radial-gradient(120% 140% at 0% 0%, rgba(78, 205, 196, 0.08), transparent 60%),
+    rgba(255, 255, 255, 0.02);
+  color: var(--lx-ink, #e8f0f7);
+  text-align: left;
+}
+.ic-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.ic-title { margin: 0; font-size: 15px; font-weight: 700; }
+.ic-seats { font-size: 12px; color: var(--lx-teal, #4ecdc4); }
+.ic-body { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--lx-ink-2, #aebdcc); }
+.ic-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ic-btn {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.ic-btn--go {
+  border: 1px solid var(--lx-teal, #4ecdc4);
+  background: rgba(78, 205, 196, 0.16);
+  color: var(--lx-ink, #e8f0f7);
+}
+.ic-btn--go:hover { background: rgba(78, 205, 196, 0.26); }
+.ic-btn:focus-visible { outline: 2px solid var(--lx-teal, #4ecdc4); outline-offset: 2px; }
+.ic-code { font-size: 12px; color: var(--lx-ink-3, #7a8ca0); user-select: all; }
+.ic-code b { font-family: var(--lx-data, 'Chivo Mono', ui-monospace, monospace); font-weight: 400; color: var(--lx-ink-2, #aebdcc); letter-spacing: 0.04em; }
+.ic-gift {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  flex-wrap: wrap;
+  padding-top: 8px;
+  border-top: 1px solid rgba(150, 180, 210, 0.12);
+  font-size: 12px;
+  color: var(--lx-ink-2, #aebdcc);
+}
+.ic-btn--gift {
+  font-size: 12px;
+  padding: 5px 11px;
+  border: 1px solid rgba(255, 184, 77, 0.5);
+  background: rgba(255, 184, 77, 0.1);
+  color: var(--lx-gold, #ffb84d);
+}
+.ic-btn--gift:disabled { opacity: 0.6; cursor: wait; }
+@media (prefers-reduced-motion: no-preference) {
+  .ic-btn { transition: background 120ms ease; }
+}

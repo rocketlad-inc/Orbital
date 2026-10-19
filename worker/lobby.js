@@ -12,7 +12,8 @@
 // during early development so the lobby can be exercised standalone.
 import * as factions from './factions.js';
 import { normalizeSchedule, intervalAt, nextTickAt } from './tickSchedule.js';
-import { normalizeEmblem, isPremiumEmblem } from './emblems.js';
+import { normalizeEmblem, isPremiumEmblem, isEarnedEmblem } from './emblems.js';
+import { hasEmblemGrant } from './invites.js';
 import { validateEmblemChoice } from './store.js';
 import { skinUpdates } from './skins.js';
 // Shared with the client: one definition of what a valid name is, and
@@ -155,7 +156,7 @@ async function loadRoomSettings(env, roomId) {
   // Settings live partly on the rooms row and partly in a small JSON blob
   // hosted in the Room DO. We surface a flat object for the UI.
   const room = await env.DB
-    .prepare('SELECT id, name, host_id, status, max_players, invite_code, password_hash FROM rooms WHERE id = ?')
+    .prepare('SELECT id, name, host_id, status, max_players, invite_code, password_hash, created_at FROM rooms WHERE id = ?')
     .bind(roomId)
     .first();
   if (!room) return null;
@@ -175,6 +176,7 @@ async function loadRoomSettings(env, roomId) {
     max_players: room.max_players,
     invite_code: room.invite_code ?? null,
     has_password: !!room.password_hash,
+    created_at: room.created_at ?? null,
     tick_interval_ms: game?.tick_interval_ms ?? cfg.tick_interval_ms ?? DEFAULT_TICK_INTERVAL_MS,
     game_id: game?.id ?? null,
     game_status: game?.status ?? null,
@@ -199,6 +201,31 @@ async function handleGetSettings(_req, env, ctx) {
   const settings = await loadRoomSettings(env, roomId);
   if (!settings) return err(404, 'not_found', 'room not found');
   return json({ settings });
+}
+
+/**
+ * POST /api/lobby/rooms/:roomId/open-seats — the host of a private lobby
+ * nobody has joined opens it to everyone: the password goes, so Browse
+ * lists it and Quick Join can fill it (matchmaking.joinableLobbies). Oct 19
+ * insight report, Invites idea 4: 13 private lobbies sat for days with
+ * only their brand-new host, who never got to play.
+ */
+async function handleOpenSeats(_req, env, ctx) {
+  const roomId = ctx.params.roomId;
+  const g = await requireHost(env, roomId, ctx.session);
+  if (g.error) return g.error;
+  const existing = await env.DB.prepare('SELECT 1 AS x FROM games WHERE id = ?').bind(roomId).first();
+  if (existing) return err(409, 'already_started', 'the game has already started');
+  await env.DB
+    .prepare(`UPDATE rooms SET password_hash = NULL, updated_at = ? WHERE id = ? AND status = 'lobby'`)
+    .bind(Date.now(), roomId)
+    .run();
+  try {
+    const { logEvent } = await import('./analytics.js');
+    await logEvent(env, { userId: ctx.session.user_id, kind: 'lobby/open-seats', payload: { room: roomId }, status: 200 });
+  } catch { /* counting only */ }
+  const settings = await loadRoomSettings(env, roomId);
+  return json({ ok: true, settings });
 }
 
 async function handleUpdateSettings(req, env, ctx) {
@@ -323,7 +350,7 @@ async function handleAdminAddMember(req, env, ctx) {
     // INSERT OR IGNORE for safety against a race where the same user
     // joined themselves between the check and the insert.
     await env.DB
-      .prepare('INSERT OR IGNORE INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)')
+      .prepare(`INSERT OR IGNORE INTO room_members (room_id, user_id, joined_at, join_method) VALUES (?, ?, ?, 'admin')`)
       .bind(roomId, user.id, Date.now())
       .run();
     await carryNamePools(env, roomId, user.id);
@@ -954,6 +981,10 @@ async function handlePatchMe(req, env, ctx) {
     if (emblem !== null) {
       const badEmblem = await validateEmblemChoice(env, ctx.session.user_id, emblem, isPremiumEmblem);
       if (badEmblem) return err(403, badEmblem.code, badEmblem.message);
+      // Earned emblems (0176) cannot be bought, only earned.
+      if (isEarnedEmblem(emblem) && !(await hasEmblemGrant(env, ctx.session.user_id, emblem))) {
+        return err(403, 'not_earned', 'that emblem is earned: a friend you invited has to play a game');
+      }
     }
     if (emblem === null) {
       sets.push('emblem = NULL');
@@ -1463,6 +1494,7 @@ export const routes = [
   { method: 'GET',  pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)$/, auth: 'required', handle: handleLobbySnapshot },
   { method: 'GET',  pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/settings$/, auth: 'required', handle: handleGetSettings },
   { method: 'PATCH',pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/settings$/, auth: 'required', handle: handleUpdateSettings },
+  { method: 'POST', pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/open-seats$/, auth: 'required', handle: handleOpenSeats },
   { method: 'POST', pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/kick$/, auth: 'required', handle: handleKick },
   { method: 'POST', pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/leave$/, auth: 'required', handle: handleLeave },
   { method: 'POST', pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/admin-add-member$/, auth: 'required', handle: handleAdminAddMember },

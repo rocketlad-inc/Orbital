@@ -14,7 +14,9 @@
 //
 // Cost: two round trips. One (in parallel) for the game row + membership, then
 // ONE env.DB.batch carrying every aggregate. No per-faction loops. Every
-// statement binds <= 4 params (D1 allows 100).
+// statement binds <= 4 params (D1 allows 100). A third, tiny batch happens only
+// when a replayable battle on the timeline has no house replay link yet (see
+// attachClips): the endpoint's one and only write.
 //
 // ---------------------------------------------------------------------------
 // WHERE EACH NUMBER COMES FROM (and why — several tables look interchangeable
@@ -146,12 +148,408 @@ function thin(list, max) {
   return [...new Set(out)];
 }
 
+// ===========================================================================
+// THE TIMELINE: the game's pivotal moments, picked by importance and thinned
+// so they read as a story.
+//
+// Every candidate comes from a REAL row (chronicle_entries, game_wars is
+// mirrored by the war_declared chronicle, senate_proposals, game_megastructures,
+// battles + battle_participants, the holdings sweep). A candidate that cannot
+// name its actors (an id that is not one of the game's empires: a monster seat,
+// a vacated seat, a payload missing the field) is dropped, never invented.
+//
+// Importance is 0-100 and lives in ONE table, below. Selection:
+//   1. the start and the victory are always in;
+//   2. the rest go in by importance (ties: earlier tick first), skipping any
+//      that would crowd one already chosen: on the same tick regardless; within
+//      SPACING ticks (1.5% of the game) of a chosen moment of the SAME kind
+//      that shares an empire (or is also an empire-less world event). Different
+//      kinds may sit close: a war and the battle it started are two beats of
+//      one story. And any beyond a per-kind cap, so no kind drowns the rest;
+//   3. at most MAX_MOMENTS in all; past the 12th only importance >= 45 earns a
+//      place, so a quiet game stays short rather than padded.
+// ===========================================================================
+
+const MAX_MOMENTS = 16;
+const ELIM_WINDOW = 12;          // a fight this close before an elimination is "the last stand"
+const SPACING_FRACTION = 0.015;  // minimum spacing between related moments, of the game length
+const LEAD_HELD_FRACTION = 0.05; // a lead must last this long to be a moment
+
+const IMPORTANCE = {
+  start: 100,
+  victory: 100,
+  // A battle: floor + up to span, by hulls lost relative to the biggest fight.
+  // The three biggest ride high (the biggest scores 95); a "last stand" before
+  // an elimination rides lower.
+  battle: { floor: 55, span: 40 },
+  lastStand: { floor: 40, span: 15 },
+  firstBlood: 55,
+  war: 35,
+  firstWar: 60,
+  warBeforeBattle: 25,           // + when a top fight followed it between those two empires
+  pactBrokenWar: 10,             // + a war that broke a pact is told as the betrayal
+  pactBroken: 50,
+  // An elimination: floor + up to span by how big the fallen empire got
+  // (peak worlds / the largest peak); the first empire to fall earns a bonus.
+  eliminated: { floor: 45, span: 35 },
+  firstElimination: 10,
+  lead: { floor: 40, span: 30 },  // + how long it held, as a % of the game, capped
+  bill: { war_authorization: 55, trade_embargo: 50, production_sanction: 50, reparations: 45 },
+  chancellor: 70,
+  dysonBegun: 62,
+  dysonMilestone: { 25: 50, 50: 56, 75: 66 },
+  megastructure: { mega_destroyer: 50, weapons_station: 42, null_field: 42, gravity_sink: 42, warp_gate: 36, other: 36 },
+  gateOpenedFirst: 60,
+  gateOpened: 50,
+  gateFirstCrossing: 55,
+  leviathan: { arrives: 72, strikeFirst: 66, strike: 52, dies: 78 },
+  // Only the single most valuable discovery of the game is a candidate.
+  discovery: {
+    ancient_capital: 75, portal_to_sun: 66, far_gate: 66, ancient_city: 55, derelict_warship: 50,
+    pre_terraformed: 50, free_collector: 45, ancient_station: 45, ancient_relay: 42, ancient_databank: 40,
+    resource_cache: 30, deep_cache: 40,   // deep_cache +1 per 700 metal+credits, up to +30
+    other: 35,
+  },
+  pact: { defense_pact: 38, construction_pact: 32, nap: 22, intel_share: 22, other: 22 },
+};
+
+/** At most this many moments of a kind. */
+const KIND_CAP = {
+  battle: 5, war: 3, pact_broken: 3, pact: 2, eliminated: 4, lead: 4, bill: 3,
+  chancellor: 1, megastructure: 2, gate: 2, leviathan: 3, discovery: 1, first_blood: 1,
+};
+
+const parseJson = (s) => { try { const v = JSON.parse(s ?? 'null'); return v && typeof v === 'object' ? v : {}; } catch { return {}; } };
+
+/**
+ * Pure: turn the fetched rows into the timeline (without clips; battle moments
+ * carry their battle row in `_battle` for attachClips to resolve and strip).
+ */
+export function buildTimeline(c) {
+  const { currentTick, factions, known, holdStates, placeOf, battleRows, lossesBy, src } = c;
+  const len = Math.max(1, currentTick);
+  const spacing = Math.max(1, Math.round(len * SPACING_FRACTION));
+  const emp = (id) => (id && known.has(id) ? id : null);
+  const nameToId = new Map(factions.map(f => [f.name, f.id]));
+  const peakOf = new Map(factions.map(f => [f.id, f.peak.holdings]));
+  const maxPeak = Math.max(1, ...factions.map(f => f.peak.holdings));
+  const cands = [];
+  const add = (m) => {
+    cands.push({
+      bodyName: null, n: null, detail: null, clip: null, factionIds: [], ...m,
+      importance: Math.max(0, Math.min(100, Math.round(m.importance))),
+    });
+  };
+
+  // -- battles ---------------------------------------------------------------
+  const topShips = Math.max(1, ...battleRows.filter(b => b.is_top).map(b => num(b.ships_lost)));
+  const battleMoments = [];
+  for (const b of battleRows) {
+    const losers = (lossesBy.get(b.id) ?? [])
+      .slice().sort((x, y) => (y.shipsLost - x.shipsLost) || ((placeOf.get(x.factionId) ?? 0) - (placeOf.get(y.factionId) ?? 0)))
+      .map(l => l.factionId);
+    const ids = [...new Set([emp(b.victor_faction_id), ...losers].filter(Boolean))].slice(0, 4);
+    if (!ids.length) continue;
+    const t = b.is_top ? IMPORTANCE.battle : IMPORTANCE.lastStand;
+    const m = {
+      kind: 'battle', tick: num(b.started_tick), factionIds: ids, bodyName: b.body_name ?? null,
+      n: num(b.ships_lost), importance: t.floor + t.span * (num(b.ships_lost) / topShips),
+      _battle: b,
+    };
+    battleMoments.push(m);
+    add(m);
+  }
+
+  // -- wars and betrayed pacts ------------------------------------------------
+  const warWindow = Math.max(5, Math.round(len * 0.03));
+  let firstWar = true;
+  const warKeys = new Set();
+  for (const w of src.wars) {
+    const a = emp(w.a), b = emp(w.b);
+    if (!a || !b || a === b) continue;
+    const t = num(w.t);
+    let imp = firstWar ? IMPORTANCE.firstWar : IMPORTANCE.war;
+    firstWar = false;
+    // a war that was followed by one of the biggest fights between these two
+    if (battleMoments.some(bm => bm._battle.is_top && bm.tick >= t && bm.tick <= t + warWindow
+        && bm.factionIds.includes(a) && bm.factionIds.includes(b))) imp += IMPORTANCE.warBeforeBattle;
+    warKeys.add(`${t}|${a}|${b}`);
+    if (w.broke) {
+      add({ kind: 'pact_broken', tick: t, factionIds: [a, b], detail: String(w.broke), importance: imp + IMPORTANCE.pactBrokenWar });
+    } else {
+      add({ kind: 'war', tick: t, factionIds: [a, b], importance: imp });
+    }
+  }
+  for (const p of src.pactsBroken) {
+    const a = emp(p.a), b = emp(p.b);
+    if (!a || !b || a === b || warKeys.has(`${num(p.t)}|${a}|${b}`)) continue;
+    add({
+      kind: 'pact_broken', tick: num(p.t), factionIds: [a, b], detail: p.pact ?? null,
+      importance: IMPORTANCE.pactBroken + (p.pact === 'defense_pact' ? 5 : 0),
+    });
+  }
+  for (const p of src.pactsSigned) {
+    const a = emp(p.a), b = emp(p.b);
+    if (!a || !b || a === b) continue;
+    add({
+      kind: 'pact', tick: num(p.t), factionIds: [a, b], detail: p.pact ?? null,
+      importance: IMPORTANCE.pact[p.pact] ?? IMPORTANCE.pact.other,
+    });
+  }
+
+  // -- first blood: the earliest destroyed hull of an empire -------------------
+  const fb = src.firstBlood.find(r => emp(r.victim));
+  if (fb) {
+    const killer = emp(fb.killer);
+    add({
+      kind: 'first_blood', tick: num(fb.t), factionIds: killer && killer !== fb.victim ? [killer, fb.victim] : [fb.victim],
+      bodyName: fb.body ?? null, detail: fb.cls ?? null, importance: IMPORTANCE.firstBlood,
+    });
+  }
+
+  // -- eliminations -----------------------------------------------------------
+  const takers = new Map();
+  for (const r of src.lastWorldTakers) {
+    const prev = takers.get(r.fid);
+    if (!prev || num(r.t) >= prev.t) takers.set(r.fid, { t: num(r.t), killer: r.killer });
+  }
+  const elims = src.eliminated.filter(e => emp(e.fid)).sort((x, y) => num(x.t) - num(y.t));
+  elims.forEach((e, i) => {
+    const killer = emp(takers.get(e.fid)?.killer);
+    const peak = peakOf.get(e.fid) ?? 0;
+    add({
+      kind: 'eliminated', tick: num(e.t), factionIds: killer && killer !== e.fid ? [e.fid, killer] : [e.fid], n: peak,
+      importance: IMPORTANCE.eliminated.floor + IMPORTANCE.eliminated.span * (peak / maxPeak) + (i === 0 ? IMPORTANCE.firstElimination : 0),
+    });
+  });
+
+  // -- the lead changes hands, and stays changed --------------------------------
+  const evTicks = [...new Set([...holdStates.values()].flatMap(st => st.map(s => s.tick)))].sort((x, y) => x - y);
+  // Leadership = the one empire strictly ahead in worlds held; a tie keeps the
+  // incumbent. The first leader replaced no one, so it is measured (it ends
+  // when the second begins) but is not itself a change of hands.
+  const allChanges = [];
+  let cur = null;
+  for (const t of evTicks) {
+    const counts = factions.map(f => ({ id: f.id, n: holdingsAt(holdStates.get(f.id), t) }));
+    const max = Math.max(0, ...counts.map(x => x.n));
+    const top = counts.filter(x => x.n === max);
+    if (max > 0 && top.length === 1 && top[0].id !== cur) { cur = top[0].id; allChanges.push({ t, id: cur, n: max }); }
+  }
+  allChanges.forEach((ch, i) => {
+    if (i === 0) return;
+    const end = i + 1 < allChanges.length ? allChanges[i + 1].t : len;
+    const held = end - ch.t;
+    if (held < len * LEAD_HELD_FRACTION) return;
+    add({
+      kind: 'lead', tick: ch.t, factionIds: [ch.id], n: ch.n,
+      importance: IMPORTANCE.lead.floor + Math.min(IMPORTANCE.lead.span, (held / len) * 100),
+    });
+  });
+
+  // -- the Senate -------------------------------------------------------------
+  for (const b of src.bills) {
+    if (b.kind === 'chancellor_vote') {
+      const who = emp(b.candidate) ?? emp(b.proposer);
+      // The election that WON the game is the victory itself, not a moment before it.
+      const winning = c.victoryType === 'chancellor' && who === emp(c.winnerId) && c.victoryTick - num(b.t) <= spacing;
+      if (who && !winning) add({ kind: 'chancellor', tick: num(b.t), factionIds: [who], importance: IMPORTANCE.chancellor });
+      continue;
+    }
+    const proposer = emp(b.proposer);
+    if (!proposer) continue;
+    const target = emp(b.target);
+    add({
+      kind: 'bill', tick: num(b.t), factionIds: target && target !== proposer ? [proposer, target] : [proposer],
+      detail: b.kind, importance: IMPORTANCE.bill[b.kind] ?? 40,
+    });
+  }
+
+  // -- megastructures ----------------------------------------------------------
+  for (const m of src.megastructures) {
+    const who = emp(m.fid);
+    if (!who) continue;
+    add({
+      kind: 'megastructure', tick: num(m.t), factionIds: [who], bodyName: m.body ?? null, detail: m.kind, n: 100,
+      importance: IMPORTANCE.megastructure[m.kind] ?? IMPORTANCE.megastructure.other,
+    });
+  }
+
+  // -- world events (chronicle) -------------------------------------------------
+  let gatesOpened = 0, strikes = 0;
+  let bestSecret = null;
+  for (const e of src.world) {
+    const p = parseJson(e.payload);
+    const t = num(e.t);
+    switch (e.kind) {
+      case 'dyson_initiated': {
+        const who = emp(e.a);
+        if (who) add({ kind: 'megastructure', tick: t, factionIds: [who], detail: 'dyson_sphere', n: 0, importance: IMPORTANCE.dysonBegun });
+        break;
+      }
+      case 'dyson_milestone': {
+        const who = emp(e.a);
+        const pct = num(p.pct);
+        if (who && pct > 0 && pct < 100) {
+          add({ kind: 'megastructure', tick: t, factionIds: [who], detail: 'dyson_sphere', n: pct, importance: IMPORTANCE.dysonMilestone[pct] ?? 45 });
+        }
+        break;
+      }
+      case 'sun_gate_opened':
+        add({
+          kind: 'gate', tick: t, detail: 'opened', bodyName: p.system ?? p.gate ?? null, n: Number.isFinite(Number(p.index)) ? Number(p.index) + 1 : null,
+          importance: gatesOpened++ === 0 ? IMPORTANCE.gateOpenedFirst : IMPORTANCE.gateOpened,
+        });
+        break;
+      case 'gate_transit': {
+        const who = emp(e.a);
+        if (who) add({ kind: 'gate', tick: t, factionIds: [who], detail: 'first_crossing', bodyName: p.to_system ?? p.to ?? null, importance: IMPORTANCE.gateFirstCrossing });
+        break;
+      }
+      case 'kaiju_revealed':
+        add({ kind: 'leviathan', tick: t, detail: 'arrives', bodyName: p.body_name ?? p.world ?? null, importance: IMPORTANCE.leviathan.arrives });
+        break;
+      case 'world_obliterated':
+        add({
+          kind: 'leviathan', tick: t, detail: 'strike', bodyName: p.body_name ?? p.world ?? null, n: Number.isFinite(Number(p.settlements_lost)) ? Number(p.settlements_lost) : null,
+          importance: strikes++ === 0 ? IMPORTANCE.leviathan.strikeFirst : IMPORTANCE.leviathan.strike,
+        });
+        break;
+      case 'kaiju_dead': {
+        const killer = nameToId.get(p.killer_faction_name);
+        add({
+          kind: 'leviathan', tick: t, detail: 'dies', factionIds: killer ? [killer] : [], bodyName: p.body_name ?? p.world ?? null,
+          importance: IMPORTANCE.leviathan.dies,
+        });
+        break;
+      }
+      case 'secret_discovered': {
+        const who = emp(e.a);
+        if (!who) break;
+        const kind = String(p.kind ?? 'other');
+        const cache = num(p.metal) + num(p.credits);
+        const base = IMPORTANCE.discovery[kind] ?? IMPORTANCE.discovery.other;
+        const imp = base + (kind === 'deep_cache' ? Math.min(30, cache / 700) : 0);
+        if (!bestSecret || imp > bestSecret.importance) {
+          bestSecret = {
+            kind: 'discovery', tick: t, factionIds: [who], bodyName: p.body_name ?? null, detail: kind,
+            n: cache > 0 ? cache : null, importance: imp,
+          };
+        }
+        break;
+      }
+      default:
+    }
+  }
+  if (bestSecret) add(bestSecret);
+
+  // -- always: the start and the end ------------------------------------------------
+  const start = {
+    kind: 'start', tick: c.startTick, factionIds: [], n: factions.length, detail: null,
+    bodyName: null, clip: null, importance: IMPORTANCE.start,
+  };
+  const winner = emp(c.winnerId);
+  const victory = {
+    kind: 'victory', tick: Math.max(c.victoryTick, c.startTick), factionIds: winner ? [winner] : [],
+    n: null, detail: c.victoryType ?? null, bodyName: null, clip: null, importance: IMPORTANCE.victory,
+  };
+
+  // -- select, thin, order ---------------------------------------------------------------
+  const share = (a, b) => a.factionIds.some(f => b.factionIds.includes(f));
+  const conflicts = (a, b) => {
+    const dt = Math.abs(a.tick - b.tick);
+    if (dt === 0) return true;
+    // Same kind: the full spacing, when it is about the same empire (or both
+    // are empire-less world events). Different kinds only never share a tick.
+    if (a.kind !== b.kind || dt >= spacing) return false;
+    return share(a, b) || (!a.factionIds.length && !b.factionIds.length);
+  };
+  const chosen = [start, victory];
+  const perKind = new Map();
+  const ranked = cands.slice().sort((x, y) => (y.importance - x.importance) || (x.tick - y.tick));
+  for (const m of ranked) {
+    if (chosen.length >= MAX_MOMENTS) break;
+    if (chosen.length >= 12 && m.importance < 45) continue;
+    if (m.tick < start.tick || m.tick > victory.tick) continue;
+    if ((perKind.get(m.kind) ?? 0) >= (KIND_CAP[m.kind] ?? 3)) continue;
+    if (chosen.some(s => conflicts(m, s))) continue;
+    chosen.push(m);
+    perKind.set(m.kind, (perKind.get(m.kind) ?? 0) + 1);
+  }
+  chosen.sort((x, y) => (x.tick - y.tick) || (y.importance - x.importance));
+  return chosen.map((m, i) => ({ id: `m${i + 1}`, ...m }));
+}
+
+function newShareToken() {
+  const bytes = crypto.getRandomValues(new Uint8Array(15));
+  let s = '';
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/**
+ * Attach replay links to the battle moments that can actually be replayed.
+ *
+ * Replayable = the battle has recorded frames (battle_ticks, what /api/recap
+ * plays back) and shots. The link is the battle's HOUSE share token
+ * (battle_shares.created_by IS NULL, the one the close code mints), so the
+ * Herald, Discord and this page all point at one URL. The token is the
+ * permission: it exposes that one battle and nothing else, and no battle id is
+ * ever used as a link.
+ *
+ * If a replayable battle has no house token (battles closed before the close
+ * code minted one) it is minted here, exactly as the close code does, but
+ * atomically: the unique index is on (battle_id, created_by) and SQLite treats
+ * NULLs as distinct, so INSERT OR IGNORE would NOT stop a second house token.
+ * A single INSERT ... WHERE NOT EXISTS is one statement, and D1 serialises
+ * writes, so two viewers opening the page together mint one token between
+ * them. A battle whose house link was REVOKED (a row exists, none active) is
+ * never re-minted: someone turned that link off.
+ *
+ * This is the endpoint's only write. It is inside try/catch: a failure drops
+ * the clips, never the page. `opts.readOnly` (the prod-fixture script) never
+ * writes: it uses existing tokens and drops the clip when there is none.
+ */
+async function attachClips(env, gameId, timeline, opts) {
+  const need = [];
+  const set = (m, b, token) => {
+    m.clip = { path: `/recap/${token}`, battleId: b.id, shots: whole(b.shots), shipsLost: whole(b.ships_lost) };
+  };
+  for (const m of timeline) {
+    const b = m._battle;
+    delete m._battle;
+    if (m.kind !== 'battle' || !b) continue;
+    if (!(num(b.frames) > 0 && num(b.shots) > 0)) continue;       // nothing to play back
+    if (b.token) set(m, b, b.token);
+    else if (!opts.readOnly && num(b.house_rows) === 0) need.push([m, b]);
+  }
+  if (!need.length) return;
+  try {
+    const now = Date.now();
+    const stmts = need.map(([, b]) => env.DB.prepare(
+      `INSERT INTO battle_shares (token, battle_id, game_id, created_by, created_at_ms)
+       SELECT ?, ?, ?, NULL, ?
+        WHERE NOT EXISTS (SELECT 1 FROM battle_shares WHERE battle_id = ? AND created_by IS NULL)`,
+    ).bind(newShareToken(), b.id, gameId, now, b.id));
+    stmts.push(env.DB.prepare(
+      `SELECT battle_id, token FROM battle_shares
+        WHERE created_by IS NULL AND revoked_at_ms IS NULL AND battle_id IN (${need.map(() => '?').join(',')})`,
+    ).bind(...need.map(([, b]) => b.id)));
+    const res = await env.DB.batch(stmts);
+    const got = new Map(rows(res[res.length - 1]).map(r => [r.battle_id, r.token]));
+    for (const [m, b] of need) if (got.has(b.id)) set(m, b, got.get(b.id));
+  } catch (e) {
+    console.error('ending: clip token mint failed', e);
+  }
+}
+
 /**
  * Build the ending payload.
  *
  * `opts` exists for tooling only (scripts/ending-from-prod.mjs): `asFactionId`
- * picks the viewer's empire directly and `skipMembership` waives the
- * membership check. The HTTP handler never sets either.
+ * picks the viewer's empire directly, `skipMembership` waives the membership
+ * check and `readOnly` forbids the one write the endpoint ever makes (minting
+ * a missing replay token; see attachClips). The HTTP handler sets none.
  *
  * Returns an EndingPayload, or `{ error: { status, code, message } }`.
  */
@@ -187,6 +585,20 @@ export async function buildEnding(env, gameId, viewerUserId, opts = {}) {
   // The same ordering twice (top battles; their per-empire losses) must agree.
   const TOP_BATTLES = `SELECT id FROM battles WHERE game_id = ? AND ships_lost > 0
                         ORDER BY ships_lost DESC, shots DESC, started_tick ASC LIMIT 3`;
+  // Up to four sizeable fights that ended within a quiet window before an
+  // empire was knocked out and in which that empire actually lost hulls: the
+  // last stands. (binds: game, game)
+  const ELIM_BATTLES = `SELECT b.id FROM battles b
+                          JOIN (SELECT actor_faction_id AS fid, MAX(tick_number) AS t FROM chronicle_entries
+                                 WHERE game_id = ? AND kind = 'faction_eliminated' AND actor_faction_id IS NOT NULL
+                                 GROUP BY actor_faction_id) e
+                            ON b.started_tick <= e.t AND b.last_fire_tick >= e.t - ${ELIM_WINDOW}
+                         WHERE b.game_id = ? AND b.ships_lost >= 2
+                           AND EXISTS (SELECT 1 FROM battle_participants p
+                                        WHERE p.battle_id = b.id AND p.faction_id = e.fid AND p.died_tick IS NOT NULL)
+                         GROUP BY b.id ORDER BY b.ships_lost DESC, b.shots DESC LIMIT 4`;
+  // (binds: game x3)
+  const BATTLE_SET = `SELECT id FROM (${TOP_BATTLES}) UNION SELECT id FROM (${ELIM_BATTLES})`;
   // Each empire's single best hull by `v` ("champions"), best first. One row
   // per empire is what the award needs: the winner is the first row and the
   // runner-up the second, however many of the top hulls belong to one fleet.
@@ -270,17 +682,28 @@ export async function buildEnding(env, gameId, viewerUserId, opts = {}) {
                       (SELECT COUNT(*) FROM game_settlements
                         WHERE game_id = ? AND destroyed_at_tick IS NOT NULL) AS setl_destroyed
                  FROM battles WHERE game_id = ?`, g, g),
+    // The battles the page cares about: the three biggest (is_top) plus the
+    // fights that preceded an elimination. With how much of each can be
+    // replayed (battle_ticks frames) and its house share token, if any.
     /* 14 */ q(`SELECT id, body_name, started_tick, ended_tick, last_fire_tick, shots, ships_lost, settlements_lost,
+                      victor_faction_id, status,
+                      id IN (${TOP_BATTLES}) AS is_top,
                       (SELECT COUNT(*) FROM game_settlements st
                         WHERE st.game_id = battles.game_id AND st.body_id = battles.body_id
                           AND st.destroyed_at_tick BETWEEN battles.started_tick
-                              AND COALESCE(battles.ended_tick, battles.last_fire_tick)) AS setl_here
-                 FROM battles WHERE id IN (${TOP_BATTLES})
-                ORDER BY ships_lost DESC, shots DESC, started_tick ASC`, g),
+                              AND COALESCE(battles.ended_tick, battles.last_fire_tick)) AS setl_here,
+                      (SELECT COUNT(*) FROM battle_ticks bt WHERE bt.battle_id = battles.id) AS frames,
+                      (SELECT s.token FROM battle_shares s
+                        WHERE s.battle_id = battles.id AND s.created_by IS NULL AND s.revoked_at_ms IS NULL
+                        ORDER BY s.created_at_ms LIMIT 1) AS token,
+                      (SELECT COUNT(*) FROM battle_shares s2
+                        WHERE s2.battle_id = battles.id AND s2.created_by IS NULL) AS house_rows
+                 FROM battles WHERE id IN (${BATTLE_SET})
+                ORDER BY ships_lost DESC, shots DESC, started_tick ASC`, g, g, g, g),
     /* 15 */ q(`SELECT p.battle_id, p.faction_id AS fid, COUNT(*) AS n FROM battle_participants p
                 WHERE p.died_tick IS NOT NULL AND p.faction_id IS NOT NULL
-                  AND p.battle_id IN (${TOP_BATTLES})
-                GROUP BY p.battle_id, p.faction_id`, g),
+                  AND p.battle_id IN (${BATTLE_SET})
+                GROUP BY p.battle_id, p.faction_id`, g, g, g),
     /* 16 ace */ q(champions(`
                 SELECT s.ship_id, s.ship_name, s.ship_class, s.faction_id, h.v
                   FROM (SELECT k.killer_ship_id AS ship_id, COUNT(*) AS v
@@ -298,11 +721,59 @@ export async function buildEnding(env, gameId, viewerUserId, opts = {}) {
     /* 19 last_stand */ q(champions(`
                 SELECT s.ship_id, s.ship_name, s.ship_class, s.faction_id, MIN(s.low_hp_kills, ${realKills}) AS v
                   FROM game_ship_stats s WHERE s.game_id = ? AND s.low_hp_kills > 0`), g),
-    /* 20 */ q(`SELECT payload FROM chronicle_entries WHERE game_id = ? AND kind = 'victory'
+    /* 20 */ q(`SELECT payload, tick_number AS t FROM chronicle_entries WHERE game_id = ? AND kind = 'victory'
                 ORDER BY tick_number DESC LIMIT 1`, g),
     /* 21 */ q(`SELECT actor_faction_id AS fid, MAX(tick_number) AS t FROM chronicle_entries
                 WHERE game_id = ? AND kind = 'faction_eliminated' AND actor_faction_id IS NOT NULL
                 GROUP BY actor_faction_id`, g),
+    // ---- timeline sources (see buildTimeline) ----
+    /* 22 first blood */ q(`SELECT tick_number AS t, actor_faction_id AS victim,
+                      json_extract(payload, '$.killer_faction_id') AS killer,
+                      json_extract(payload, '$.body_name') AS body,
+                      json_extract(payload, '$.ship_class') AS cls
+                 FROM chronicle_entries WHERE game_id = ? AND kind = 'ship_destroyed' AND json_valid(payload)
+                ORDER BY tick_number, created_at_ms, id LIMIT 12`, g),
+    /* 23 wars */ q(`SELECT tick_number AS t, actor_faction_id AS a, target_faction_id AS b,
+                      json_extract(payload, '$.broke_pacts[0]') AS broke
+                 FROM chronicle_entries WHERE game_id = ? AND kind = 'war_declared' AND json_valid(payload)
+                ORDER BY tick_number LIMIT 200`, g),
+    /* 24 pacts broken */ q(`SELECT tick_number AS t, actor_faction_id AS a, target_faction_id AS b,
+                      json_extract(payload, '$.kind') AS pact
+                 FROM chronicle_entries WHERE game_id = ? AND kind = 'treaty_broken' AND json_valid(payload)
+                ORDER BY tick_number LIMIT 200`, g),
+    /* 25 pacts signed */ q(`SELECT tick_number AS t, actor_faction_id AS a, target_faction_id AS b,
+                      json_extract(payload, '$.kind') AS pact
+                 FROM chronicle_entries WHERE game_id = ? AND kind = 'treaty_signed' AND json_valid(payload)
+                ORDER BY tick_number LIMIT 200`, g),
+    /* 26 who took the last worlds */ q(`SELECT fid, killer, t FROM (
+                  SELECT actor_faction_id AS fid, json_extract(payload, '$.killer_faction_id') AS killer, tick_number AS t
+                    FROM chronicle_entries WHERE game_id = ? AND kind = 'settlement_destroyed' AND json_valid(payload)
+                   UNION ALL
+                  SELECT target_faction_id, actor_faction_id, tick_number
+                    FROM chronicle_entries WHERE game_id = ? AND kind = 'settlement_seized')
+                WHERE fid IN (SELECT actor_faction_id FROM chronicle_entries
+                               WHERE game_id = ? AND kind = 'faction_eliminated')
+                  AND killer IS NOT NULL`, g, g, g),
+    /* 27 bills */ q(`SELECT kind, resolved_at_tick AS t, proposer_faction_id AS proposer,
+                      json_extract(payload, '$.target_faction_id') AS target,
+                      json_extract(payload, '$.candidate_faction_id') AS candidate
+                 FROM senate_proposals
+                WHERE game_id = ? AND json_valid(payload) AND status = 'passed' AND resolved_at_tick IS NOT NULL
+                  AND kind IN ('war_authorization', 'trade_embargo', 'production_sanction', 'reparations', 'chancellor_vote')
+                ORDER BY resolved_at_tick LIMIT 200`, g),
+    /* 28 megastructures */ q(`SELECT m.kind, m.completed_at_tick AS t, m.founded_by_faction_id AS fid, b.name AS body
+                 FROM game_megastructures m LEFT JOIN game_bodies b ON b.id = m.body_id
+                WHERE m.game_id = ? AND m.ancient = 0 AND m.founded_by_faction_id IS NOT NULL
+                  AND m.completed_at_tick IS NOT NULL
+                ORDER BY m.completed_at_tick LIMIT 100`, g),
+    /* 29 world events */ q(`SELECT kind, tick_number AS t, actor_faction_id AS a, payload FROM chronicle_entries
+                WHERE game_id = ? AND json_valid(payload)
+                  AND kind IN ('dyson_initiated', 'dyson_milestone', 'sun_gate_opened', 'gate_transit',
+                               'kaiju_revealed', 'world_obliterated', 'kaiju_dead', 'secret_discovered')
+                  AND (kind <> 'gate_transit' OR (json_extract(payload, '$.sun_gate') = 1 AND json_extract(payload, '$.first') = 1))
+                  AND (kind <> 'world_obliterated' OR json_extract(payload, '$.cause') = 'kaiju')
+                ORDER BY tick_number LIMIT 400`, g),
+    /* 30 start */ q(`SELECT MIN(tick_number) AS t FROM chronicle_entries WHERE game_id = ? AND kind = 'game_started'`, g),
   ]);
   const R = (i) => rows(results[i]);
 
@@ -468,7 +939,8 @@ export async function buildEnding(env, gameId, viewerUserId, opts = {}) {
     l.push({ factionId: r.fid, shipsLost: whole(r.n) });
     lossesBy.set(r.battle_id, l);
   }
-  const battles = R(14).map(b => ({
+  const battleRows = R(14);
+  const battles = battleRows.filter(b => b.is_top).map(b => ({
     id: b.id,
     bodyName: b.body_name ?? null,
     startedTick: whole(b.started_tick),
@@ -479,6 +951,20 @@ export async function buildEnding(env, gameId, viewerUserId, opts = {}) {
     lossesByFaction: (lossesBy.get(b.id) ?? [])
       .sort((a, c) => (c.shipsLost - a.shipsLost) || ((placeOf.get(a.factionId) ?? 0) - (placeOf.get(c.factionId) ?? 0))),
   }));
+
+  // ---- the timeline -------------------------------------------------------------
+  const timeline = buildTimeline({
+    currentTick, factions, known, holdStates, placeOf, battleRows, lossesBy,
+    winnerId: game.winner_faction_id ?? null, victoryType: game.victory_type ?? null,
+    startTick: R(30)[0]?.t != null ? num(R(30)[0].t) : 0,
+    victoryTick: R(20)[0]?.t != null ? num(R(20)[0].t) : currentTick,
+    src: {
+      firstBlood: R(22), wars: R(23), pactsBroken: R(24), pactsSigned: R(25),
+      lastWorldTakers: R(26), bills: R(27), megastructures: R(28), world: R(29),
+      eliminated: R(21),
+    },
+  });
+  await attachClips(env, gameId, timeline, opts);
 
   // ---- the game ---------------------------------------------------------------
   let victoryDetail = null;
@@ -520,6 +1006,7 @@ export async function buildEnding(env, gameId, viewerUserId, opts = {}) {
       wars: warsTotal,
     },
     battles,
+    timeline,
   };
 }
 

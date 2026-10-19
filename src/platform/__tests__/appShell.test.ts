@@ -109,6 +109,8 @@ describe('the Commission storefronts', () => {
       // The end-of-game page shows the plug everywhere; its button sells only
       // where it can, and opens the phone's browser where it cannot.
       'multiplayer/EndingScreen.tsx': /if \(!sellable\) \{ openCommissionInBrowser\('endgame'\); return; \}/,
+      // The invite card's gift line: checkout on the web, the browser in the app.
+      'multiplayer/InviteCard.tsx': /if \(!sellable\) \{ openCommissionInBrowser\('invite', \{ gift: true \}\); return; \}/,
     };
     for (const [rel, gate] of Object.entries(gated)) {
       expect(read(rel)).toMatch(gate);
@@ -138,6 +140,7 @@ describe('the Commission storefronts', () => {
       'components/ShipDesigner.tsx': /\{!canBuyHere\(\) && \(\s*<button[^\n]*openCommissionInBrowser\('designer'\)/,
       'components/CommissionFleetPreview.tsx': /\{!sellable && \(\s*<>\s*<button[^\n]*openCommissionInBrowser\('designer'\)/,
       'multiplayer/EndingScreen.tsx': /openCommissionInBrowser\('endgame'\)/,
+      'multiplayer/InviteCard.tsx': /openCommissionInBrowser\('invite'/,
     };
     for (const [rel, re] of Object.entries(linkOut)) expect(read(rel)).toMatch(re);
   });

@@ -395,6 +395,8 @@ try {
   check('activity: every game in the rows is named', act.rows.every(r => act.games[r[1]]?.name));
   check('activity: live = the Pulse tile', act.live.length === ov.kpis.games_live_24h, `${act.live.length} vs ${ov.kpis.games_live_24h}`);
   check('activity: a non-admin gets a 404', (await call('/api/admin/games/activity', { user_id: 'y', email: 'ann@players.test.org' })).status === 404);
+  check('overview: the invites block is there, with numbers', typeof ov.invites?.signed_up === 'number'
+    && Array.isArray(ov.invites?.seats) && Array.isArray(ov.invites?.top), JSON.stringify(ov.invites));
   check('daily series is 30 dense days ending today',
     ov.daily.length === 30 && ov.daily[29].day_ms === today && ov.daily.every((d, i) => i === 0 || d.day_ms - ov.daily[i - 1].day_ms === DAY_MS));
   const signupsWant = REAL.filter(u => created[u] >= w0 && created[u] < today).length;

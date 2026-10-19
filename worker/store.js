@@ -165,6 +165,8 @@ export const COMMISSION_SURFACES = new Set([
   // panel ('map-maker') or the game creator's locked map choice ('lobby-map').
   'map-maker',
   'lobby-map',
+  // The invite card: a gift for the friend you are inviting (0175).
+  'invite',
 ]);
 
 /** Gift codes: 12 characters from an alphabet with no lookalikes (no

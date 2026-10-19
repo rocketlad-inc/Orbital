@@ -126,6 +126,7 @@ export const data: Catalog = {
   'data.emblem.satellite': 'Satélite',
   'data.emblem.helmet': 'Capacete Estelar',
   'data.emblem.saucer': 'Disco Voador',
+  'data.emblem.recruiter': 'Recrutador',
   'data.emblem.doublev': 'Duplo V',
   'data.emblem.rocket': 'Foguete',
   'data.secret.portal_to_sun.name': 'Portal Estelar Antigo',
