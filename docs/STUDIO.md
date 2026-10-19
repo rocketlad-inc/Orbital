@@ -24,6 +24,17 @@ node scripts/studio.mjs close <gameId>              # when the shoot is over
 
 Check the frames before sending anything: the first seconds and the last. `node scripts/studio.mjs record` prints the file; play it in headless Chrome or open it.
 
+### Film mode: the Reddit way
+
+`record` writes an MP4 inside the page with the hook, captions and end card. For the bare map at full quality, the way the Reddit clips were made, use `film`: one PNG screenshot per frame on a stepped clock, encoded afterwards. Nothing can drop a frame, because the screenshot is the frame.
+
+```bash
+node scripts/studio.mjs film <gameId> shot.json --out frames-dir --name earth-to-europa --as studio-terra
+#   -> frames-dir/00000.png … + frames.json, then earth-to-europa.webp (30 fps) and .gif (15 fps) beside it
+```
+
+Use a `16:9` shot with no `hook` or captions and `"endCard": false`. Default size 1920×1080 (`--size`), encoded at 960 px wide (`--width`). `--encode 0` keeps just the frames; `python scripts/studio-encode.py frames-dir --name NAME` encodes later. Budget about 10 minutes for a 30 s clip: half filming, half encoding.
+
 ## Quick start (person)
 
 1. Lobby → **Studio** tab. Pick an example scene, edit it, **Validate**, then **Apply scene**. Leave "seat me as the viewer faction" ticked: you become that empire, so the game appears under My games and you see everything (the studio gives every faction Sensors 10).
