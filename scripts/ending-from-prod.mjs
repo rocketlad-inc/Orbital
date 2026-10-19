@@ -146,7 +146,7 @@ async function main() {
     as = g?.w ?? 'none';
   }
   const asFactionId = as === 'none' ? null : as;
-  const payload = await buildEnding(prodEnv, gameId, null, { asFactionId, skipMembership: true });
+  const payload = await buildEnding(prodEnv, gameId, null, { asFactionId, skipMembership: true, readOnly: true });
   if (payload.error) {
     console.error(`cannot build: ${payload.error.status} ${payload.error.code} ${payload.error.message}`);
     process.exit(1);

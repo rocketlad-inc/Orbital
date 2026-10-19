@@ -520,5 +520,232 @@
         }
       ]
     }
+  ],
+  "timeline": [
+    {
+      "id": "m1",
+      "kind": "start",
+      "tick": 0,
+      "factionIds": [],
+      "n": 8,
+      "detail": null,
+      "bodyName": null,
+      "clip": null,
+      "importance": 100
+    },
+    {
+      "id": "m2",
+      "bodyName": "Neptune",
+      "n": null,
+      "detail": "portal_to_sun",
+      "clip": null,
+      "factionIds": [
+        "ghhqbPbWz64Y:f1"
+      ],
+      "kind": "discovery",
+      "tick": 52,
+      "importance": 66
+    },
+    {
+      "id": "m3",
+      "bodyName": null,
+      "n": null,
+      "detail": "nap",
+      "clip": null,
+      "factionIds": [
+        "ghhqbPbWz64Y:f1",
+        "ghhqbPbWz64Y:f6"
+      ],
+      "kind": "pact_broken",
+      "tick": 71,
+      "importance": 50
+    },
+    {
+      "id": "m4",
+      "bodyName": null,
+      "n": 10,
+      "detail": null,
+      "clip": null,
+      "factionIds": [
+        "ghhqbPbWz64Y:f4"
+      ],
+      "kind": "lead",
+      "tick": 189,
+      "importance": 70
+    },
+    {
+      "id": "m5",
+      "bodyName": "Haumea",
+      "n": null,
+      "detail": "colony",
+      "clip": null,
+      "factionIds": [
+        "ghhqbPbWz64Y:f6",
+        "ghhqbPbWz64Y:f3"
+      ],
+      "kind": "first_blood",
+      "tick": 212,
+      "importance": 55
+    },
+    {
+      "id": "m6",
+      "bodyName": null,
+      "n": 1,
+      "detail": null,
+      "clip": null,
+      "factionIds": [
+        "ghhqbPbWz64Y:f7",
+        "ghhqbPbWz64Y:f1"
+      ],
+      "kind": "eliminated",
+      "tick": 274,
+      "importance": 56
+    },
+    {
+      "id": "m7",
+      "bodyName": "Earth",
+      "n": 59,
+      "detail": null,
+      "clip": {
+        "path": "/recap/Vo_Fwfj39mNVF6y24pVA",
+        "battleId": "b_292_ghhqbPbWz64Y:earth",
+        "shots": 2150,
+        "shipsLost": 59
+      },
+      "factionIds": [
+        "ghhqbPbWz64Y:f4",
+        "ghhqbPbWz64Y:f0"
+      ],
+      "kind": "battle",
+      "tick": 292,
+      "importance": 82
+    },
+    {
+      "id": "m8",
+      "bodyName": null,
+      "n": 6,
+      "detail": null,
+      "clip": null,
+      "factionIds": [
+        "ghhqbPbWz64Y:f6",
+        "ghhqbPbWz64Y:f5"
+      ],
+      "kind": "eliminated",
+      "tick": 385,
+      "importance": 53
+    },
+    {
+      "id": "m9",
+      "bodyName": "Mercury",
+      "n": 89,
+      "detail": null,
+      "clip": {
+        "path": "/recap/-ggVbWFj0Ysgix_tcsPM",
+        "battleId": "b_459_ghhqbPbWz64Y:mercury",
+        "shots": 4818,
+        "shipsLost": 89
+      },
+      "factionIds": [
+        "ghhqbPbWz64Y:f5",
+        "ghhqbPbWz64Y:f4"
+      ],
+      "kind": "battle",
+      "tick": 459,
+      "importance": 95
+    },
+    {
+      "id": "m10",
+      "bodyName": null,
+      "n": null,
+      "detail": "war_authorization",
+      "clip": null,
+      "factionIds": [
+        "ghhqbPbWz64Y:f5",
+        "ghhqbPbWz64Y:f4"
+      ],
+      "kind": "bill",
+      "tick": 499,
+      "importance": 55
+    },
+    {
+      "id": "m11",
+      "bodyName": null,
+      "n": null,
+      "detail": "war_authorization",
+      "clip": null,
+      "factionIds": [
+        "ghhqbPbWz64Y:f5",
+        "ghhqbPbWz64Y:f4"
+      ],
+      "kind": "bill",
+      "tick": 524,
+      "importance": 55
+    },
+    {
+      "id": "m12",
+      "bodyName": null,
+      "n": 16,
+      "detail": null,
+      "clip": null,
+      "factionIds": [
+        "ghhqbPbWz64Y:f5"
+      ],
+      "kind": "lead",
+      "tick": 533,
+      "importance": 66
+    },
+    {
+      "id": "m13",
+      "bodyName": null,
+      "n": 0,
+      "detail": "dyson_sphere",
+      "clip": null,
+      "factionIds": [
+        "ghhqbPbWz64Y:f1"
+      ],
+      "kind": "megastructure",
+      "tick": 579,
+      "importance": 62
+    },
+    {
+      "id": "m14",
+      "bodyName": null,
+      "n": null,
+      "detail": "nap",
+      "clip": null,
+      "factionIds": [
+        "ghhqbPbWz64Y:f1",
+        "ghhqbPbWz64Y:f5"
+      ],
+      "kind": "pact_broken",
+      "tick": 696,
+      "importance": 70
+    },
+    {
+      "id": "m15",
+      "bodyName": null,
+      "n": 75,
+      "detail": "dyson_sphere",
+      "clip": null,
+      "factionIds": [
+        "ghhqbPbWz64Y:f1"
+      ],
+      "kind": "megastructure",
+      "tick": 705,
+      "importance": 66
+    },
+    {
+      "id": "m16",
+      "kind": "victory",
+      "tick": 720,
+      "factionIds": [
+        "ghhqbPbWz64Y:f5"
+      ],
+      "n": null,
+      "detail": "chancellor",
+      "bodyName": null,
+      "clip": null,
+      "importance": 100
+    }
   ]
 }
