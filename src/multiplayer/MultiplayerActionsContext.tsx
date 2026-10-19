@@ -366,9 +366,13 @@ export interface MultiplayerActions {
   /** THE MISSILE SILO (worker/missiles.js). */
   orderMissiles: (settlementId: string, count: number) => Promise<MpActionResult>;
   cancelMissile: (settlementId: string, orderId: string) => Promise<MpActionResult>;
-  setMissileDefence: (settlementId: string, patch: { auto?: 'off' | 'missiles' | 'fleets'; reserve?: number }) => Promise<MpActionResult>;
+  setMissileDefence: (settlementId: string, patch: { auto?: 'off' | 'missiles' | 'fleets'; reserve?: number; salvo?: number }) => Promise<MpActionResult>;
   launchMissiles: (settlementId: string, targetBodyId: string, count: number) => Promise<MpActionResult & { arriveTick?: number }>;
   missileEta: (fromBodyId: string, toBodyIds: string[]) => Promise<Record<string, number>>;
+  /** A salvo at a hull in flight: it meets the hull's group on the way. */
+  launchMissilesAtShip: (settlementId: string, targetShipId: string, count: number) => Promise<MpActionResult & { meetTick?: number }>;
+  /** For each lead hull: ticks until a salvo leaving now would meet it, or null. */
+  missileIntercepts: (fromBodyId: string, shipIds: string[]) => Promise<Record<string, number | null>>;
   /** Answer a found ship's offer (worker/discoveryOffers.js): claim it
    *  into the fleet, or refuse it and leave it for another empire. */
   claimDiscovery: (bodyId: string) => Promise<MpActionResult>;
@@ -1181,6 +1185,24 @@ export function MultiplayerActionsProvider({
       });
       if (res.ok) return { ok: true, arriveTick: res.data.arrive_tick };
       return { ok: false, code: res.error?.code, error: res.error?.message ?? t('worldmenu.silo.err.failed') };
+    },
+    async launchMissilesAtShip(settlementId, targetShipId, count) {
+      const res = await apiFetch<{ meet_tick: number }>(`/api/games/${gameId}/settlements/${encodeURIComponent(qualify(settlementId))}/missiles/launch`, {
+        method: 'POST', body: JSON.stringify({ target_ship_id: qualify(targetShipId), count }),
+      });
+      if (res.ok) return { ok: true, meetTick: res.data.meet_tick };
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? t('worldmenu.silo.err.failed') };
+    },
+    async missileIntercepts(fromBodyId, shipIds) {
+      if (shipIds.length === 0) return {};
+      const res = await rawApiFetch<{ meet: Record<string, { ticks: number } | null> }>(
+        `/api/games/${gameId}/missiles/intercepts?from=${encodeURIComponent(qualify(fromBodyId))}&ships=${shipIds.map(id => encodeURIComponent(qualify(id))).join(',')}`);
+      if (!res.ok) return {};
+      // Ship ids keep their game prefix on the client (shipToClient), so
+      // the answer is keyed exactly as asked.
+      const out: Record<string, number | null> = {};
+      for (const [k, v] of Object.entries(res.data.meet ?? {})) out[k] = v ? v.ticks : null;
+      return out;
     },
     async missileEta(fromBodyId, toBodyIds) {
       if (toBodyIds.length === 0) return {};

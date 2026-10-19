@@ -2191,6 +2191,17 @@ const MISSILE_STRIKE_HEADLINE = [
   c => `${c.who.toUpperCase()} FIRES ON ${c.body.toUpperCase()}`,
   c => `SALVO STRIKES ${c.body.toUpperCase()}${c.k ? `: ${c.k} LOST` : ''}`,
 ];
+// The same, met in open space (missiles.js detonateInFlight). c.owner:
+// whose ships were caught; c.bodyLoc: where they were going.
+const MISSILE_STRIKE_FLIGHT = [
+  c => `${b(c.who)} missiles caught ${c.owner} ships on their way to ${c.bodyLoc}: ${c.dmg} damage to every hull nearby, ${c.k} destroyed.`,
+  c => `A salvo from ${b(c.who)} met a ${c.owner} formation in flight to ${c.bodyLoc}. ${c.k ? `${c.k} hulls never arrived.` : 'Every hull flew on, scorched.'}`,
+  c => `${c.owner} ships bound for ${c.bodyLoc} flew into ${c.n} missiles fired by ${b(c.who)}${c.k ? `; ${c.k} were lost` : ''}.`,
+];
+const MISSILE_STRIKE_FLIGHT_HEADLINE = [
+  c => `MISSILES INTERCEPT ${c.owner.toUpperCase()} FLEET`,
+  c => `SALVO MEETS SHIPS BOUND FOR ${c.body.toUpperCase()}${c.k ? `: ${c.k} LOST` : ''}`,
+];
 const MISSILE_INTERCEPT = [
   c => `${b(c.who)} shot down ${c.n} incoming missiles over ${c.bodyLoc}${c.through ? `; ${c.through} got through` : ' before they could land'}.`,
   c => `Silos on ${c.bodyLoc} answered a missile attack today: ${c.n} warheads destroyed in the air by ${b(c.who)}.`,
@@ -5182,7 +5193,12 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
     if (row.kind === 'missile_strike') {
       const who = (Array.isArray(p.launcher_names) && p.launcher_names.length) ? p.launcher_names.join(' and ') : 'An unknown silo';
       const ctx = { who, body: locBody.name, bodyLoc: locBody.full, n: Number(p.missiles ?? 0), dmg: Number(p.damage ?? 0), k: Number(p.destroyed_count ?? 0) };
-      stories.push(mkStory(560 + 20 * ctx.k, used, 'missile_strike', MISSILE_STRIKE, 'missile_strike_hl', MISSILE_STRIKE_HEADLINE, ctx));
+      if (p.in_flight) {
+        ctx.owner = p.target_owner_name ?? 'enemy';
+        stories.push(mkStory(560 + 20 * ctx.k, used, 'missile_strike_flight', MISSILE_STRIKE_FLIGHT, 'missile_strike_flight_hl', MISSILE_STRIKE_FLIGHT_HEADLINE, ctx));
+      } else {
+        stories.push(mkStory(560 + 20 * ctx.k, used, 'missile_strike', MISSILE_STRIKE, 'missile_strike_hl', MISSILE_STRIKE_HEADLINE, ctx));
+      }
     } else {
       const ctx = { who: p.by_name ?? 'A defender', body: locBody.name, bodyLoc: locBody.full, n: Number(p.count ?? 0), through: Number(p.got_through ?? 0) };
       stories.push(mkStory(480, used, 'missile_intercept', MISSILE_INTERCEPT, 'missile_intercept_hl', MISSILE_INTERCEPT_HEADLINE, ctx));

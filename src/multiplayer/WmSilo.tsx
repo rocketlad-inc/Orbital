@@ -8,9 +8,12 @@
 //              queue with its countdown, cancel for a full refund
 //   LAUNCH   — a world in this star system, a salvo size, what it would do
 //              (10 damage per missile to EVERY ship in that orbit, yours
-//              too), and a confirm when it would hit your own ships
-//   AUTO-DEFENCE — off / shoot down incoming missiles / also hostile
-//              fleets landing here, and a reserve it never spends
+//              too), and a confirm when it would hit your own ships; or a
+//              group of ships IN FLIGHT here, met on the way (10 per
+//              missile to every hull within 40 units of the meeting)
+//   AUTO-DEFENCE — off / shoot down incoming missiles / also intercept
+//              hostile ships flying here (a salvo per group), and a
+//              reserve it never spends
 // ============================================================
 
 import React, { useEffect, useMemo, useState } from 'react';
@@ -18,6 +21,7 @@ import { useGameContext } from '../state/gameContext';
 import { useMultiplayerActions } from './MultiplayerActionsContext';
 import { humanizeMpError } from './errorMessages';
 import { makePeaceCheck } from '../game/peace';
+import { groupFlights, type FlightGroup } from '../game/interceptPicker';
 import type { Body, Settlement, Ship } from '../types';
 import { t, tn, type Key } from '../i18n/core';
 import { useI18n } from '../i18n/react';
@@ -27,6 +31,10 @@ export const MISSILE_DAMAGE = 10;
 export const MISSILE_COST = { ore: 40, credits: 40 };
 export const MISSILE_BUILD_TICKS = 12;
 export const MISSILES_PER_LEVEL = 5;
+/** Mirrors MISSILE_BLAST_RADIUS in worker/missiles.js. */
+export const MISSILE_BLAST_RADIUS = 40;
+/** A target in flight is keyed by its group's lead hull. */
+const GROUP = 'grp:';
 const ME = 'player';
 
 /** The star system a body is in: Sol's, or a far system's barycentre.
@@ -63,6 +71,7 @@ export const WmSilo: React.FC<{
   const [salvo, setSalvo] = useState(1);
   const [confirm, setConfirm] = useState(false);
   const [eta, setEta] = useState<Record<string, number>>({});
+  const [meets, setMeets] = useState<Record<string, number | null>>({});
 
   const byId = useMemo(() => new Map(gameState.bodies.map(b => [b.id, b])), [gameState.bodies]);
   const atPeace = useMemo(() => makePeaceCheck(gameState.warPairs), [gameState.warPairs]);
@@ -89,6 +98,33 @@ export const WmSilo: React.FC<{
       .sort((a, b) => (b.hostile - a.hostile) || (b.total - a.total));
   }, [gameState.ships, gameState.bodies, body.id, byId, home, atPeace, target]);
 
+  // Other empires' ships in flight to worlds of this star system, one row
+  // per group (the intercept picker's grouping), hostile first.
+  const groups: FlightGroup[] = useMemo(() => {
+    const flying = gameState.ships.filter(s => {
+      const to = s.transit?.currentTransfer?.targetBodyId;
+      return s.class !== 'missile' && s.ownedBy !== ME && !!to && starSystemOf(to, byId) === home;
+    });
+    return groupFlights(flying, gameState.fleets ?? []).sort((a, b) => {
+      const ha = atPeace(ME, a.lead.ownedBy) ? 1 : 0;
+      const hb = atPeace(ME, b.lead.ownedBy) ? 1 : 0;
+      return (ha - hb) || ((a.lead.transit?.currentTransfer?.arriveTick ?? 0) - (b.lead.transit?.currentTransfer?.arriveTick ?? 0));
+    });
+  }, [gameState.ships, gameState.fleets, byId, home, atPeace]);
+  const groupKeys = groups.map(g => g.lead.id).join(',');
+  const ownerName = (fid: string) => gameState.factions.find(f => f.id === fid)?.name ?? t('worldmenu.silo.unknownEmpire');
+
+  // When a salvo leaving now would meet each group: the server's answer
+  // (missiles.js planIntercept), asked fresh each time the list opens.
+  useEffect(() => {
+    if (!picking || !actions) return;
+    const ids = groupKeys ? groupKeys.split(',').slice(0, 30) : [];
+    if (ids.length === 0) return;
+    let live = true;
+    void actions.missileIntercepts(body.id, ids).then(r => { if (live) setMeets(r); });
+    return () => { live = false; };
+  }, [picking, actions, groupKeys, body.id]);
+
   // ETAs for the list, asked once per opening.
   useEffect(() => {
     if (!picking || !actions) return;
@@ -106,10 +142,13 @@ export const WmSilo: React.FC<{
   const pool = gameState.resources?.[ME];
   const canAfford = !pool || ((pool.ore ?? 0) >= MISSILE_COST.ore && (pool.credits ?? 0) >= MISSILE_COST.credits);
   const chosen = worlds.find(w => w.body.id === target) ?? null;
+  const chosenGroup = target?.startsWith(GROUP) ? groups.find(g => g.lead.id === target.slice(GROUP.length)) ?? null : null;
+  const groupMeet = chosenGroup ? meets[chosenGroup.lead.id] : undefined;
   const n = Math.max(1, Math.min(salvo, stock));
   const damage = MISSILE_DAMAGE * n;
   const kills = chosen ? chosen.ships.filter(s => (s.hp ?? s.hpMax ?? 1) <= damage) : [];
   const myKills = kills.filter(s => s.ownedBy === ME).length;
+  const groupKills = chosenGroup ? chosenGroup.members.filter(s => (s.hp ?? s.hpMax ?? 1) <= damage).length : 0;
   const inFlight = gameState.ships.filter(s => s.class === 'missile' && s.ownedBy === ME && s.transit);
 
   const run = async (key: string, fn: () => Promise<{ ok: boolean; error?: string; code?: string }>) => {
@@ -123,8 +162,15 @@ export const WmSilo: React.FC<{
   const cancel = (id: string) => actions && run(`c${id}`, () => actions.cancelMissile(city.id, id));
   const setAuto = (auto: 'off' | 'missiles' | 'fleets') => actions && run('auto', () => actions.setMissileDefence(city.id, { auto }));
   const setReserve = (reserve: number) => actions && run('auto', () => actions.setMissileDefence(city.id, { reserve: Math.max(0, Math.min(cap, reserve)) }));
+  const setAutoSalvo = (s: number) => actions && run('auto', () => actions.setMissileDefence(city.id, { salvo: Math.max(1, Math.min(Math.max(1, cap), s)) }));
   const launch = async () => {
-    if (!actions || !chosen) return;
+    if (!actions) return;
+    if (chosenGroup) {
+      const ok = await run('launch', () => actions.launchMissilesAtShip(city.id, chosenGroup.lead.id, n));
+      if (ok) { setSalvo(1); setTarget(null); }
+      return;
+    }
+    if (!chosen) return;
     if (chosen.mine > 0 && !confirm) { setConfirm(true); return; }
     const ok = await run('launch', () => actions.launchMissiles(city.id, chosen.body.id, n));
     if (ok) { setConfirm(false); setSalvo(1); }
@@ -183,7 +229,13 @@ export const WmSilo: React.FC<{
         <div className="wm-silo-col">
           <span className="wm-silo-h">{t('worldmenu.silo.launch')}</span>
           <button type="button" className="wm-silo-target" aria-expanded={picking} onClick={() => setPicking(p => !p)}>
-            {chosen ? (
+            {chosenGroup ? (
+              <>
+                <span className="wm-silo-tname">{chosenGroup.fleet?.name ?? ownerName(chosenGroup.lead.ownedBy)}</span>
+                <span className="wm-silo-tmeta">{tn('worldmenu.silo.shipsThere', chosenGroup.members.length)}</span>
+                <span className="wm-silo-tmeta">{groupMeet != null ? t('worldmenu.silo.meetIn', { n: groupMeet }) : groupMeet === null ? t('worldmenu.silo.cantCatch') : ''}</span>
+              </>
+            ) : chosen ? (
               <>
                 <span className="wm-silo-tname">{chosen.body.name}</span>
                 <span className="wm-silo-tmeta">{tn('worldmenu.silo.shipsThere', chosen.total)}{chosen.hostile ? ` · ${tn('worldmenu.silo.hostile', chosen.hostile)}` : ''}</span>
@@ -194,7 +246,8 @@ export const WmSilo: React.FC<{
           </button>
           {picking && (
             <div className="wm-silo-list" role="listbox" aria-label={t('worldmenu.silo.pickTarget')}>
-              {worlds.length === 0 && <span className="wm-silo-note">{t('worldmenu.silo.noTargets')}</span>}
+              {worlds.length === 0 && groups.length === 0 && <span className="wm-silo-note">{t('worldmenu.silo.noTargets')}</span>}
+              {worlds.length > 0 && groups.length > 0 && <span className="wm-silo-h2">{t('worldmenu.silo.secWorlds')}</span>}
               {worlds.map(w => (
                 <button key={w.body.id} type="button" role="option" aria-selected={w.body.id === target}
                   className={`wm-silo-opt${w.body.id === target ? ' is-on' : ''}`}
@@ -208,6 +261,25 @@ export const WmSilo: React.FC<{
                   </span>
                 </button>
               ))}
+              {groups.length > 0 && <span className="wm-silo-h2">{t('worldmenu.silo.secFlight')}</span>}
+              {groups.map(g => {
+                const key = `${GROUP}${g.lead.id}`;
+                const tr = g.lead.transit?.currentTransfer;
+                const hostile = !atPeace(ME, g.lead.ownedBy);
+                const m = meets[g.lead.id];
+                return (
+                  <button key={key} type="button" role="option" aria-selected={key === target}
+                    className={`wm-silo-opt${key === target ? ' is-on' : ''}${m === null ? ' is-out' : ''}`}
+                    onClick={() => { setTarget(key); setPicking(false); setConfirm(false); }}>
+                    <span className="wm-silo-tname">{g.fleet?.name ?? ownerName(g.lead.ownedBy)}</span>
+                    <span className="wm-silo-tmeta">{m != null ? t('worldmenu.silo.meetIn', { n: m }) : m === null ? t('worldmenu.silo.cantCatch') : '…'}</span>
+                    <span className="wm-silo-tmeta is-wide">
+                      {hostile ? <b className="is-hostile">{tn('worldmenu.silo.shipsThere', g.members.length)}</b> : tn('worldmenu.silo.shipsThere', g.members.length)}
+                      {tr ? ` ${t('worldmenu.silo.bound', { world: byId.get(tr.targetBodyId)?.name ?? '?', n: Math.max(0, Math.ceil(tr.arriveTick - tick)) })}` : ''}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           )}
           <div className="wm-silo-salvo">
@@ -217,6 +289,17 @@ export const WmSilo: React.FC<{
             <button type="button" className="wm-silo-step" aria-label={t('worldmenu.silo.more')} disabled={n >= stock} onClick={() => { setSalvo(Math.min(stock, n + 1)); setConfirm(false); }}>+</button>
             <span className="wm-silo-note">{t('worldmenu.silo.ofReady', { n: stock })}</span>
           </div>
+          {chosenGroup && stock > 0 && (
+            <div className="wm-silo-preview is-warn">
+              {groupMeet === null ? <span className="is-strong">{t('worldmenu.silo.previewCantCatch')}</span> : (
+                <>
+                  <span className="is-strong">{t('worldmenu.silo.previewIntercept', { dmg: damage, r: MISSILE_BLAST_RADIUS, n: groupMeet ?? '…' })}</span>
+                  <span>{t('worldmenu.silo.previewGroupKills', { n: groupKills, total: chosenGroup.members.length })}</span>
+                  <span className="is-mine">{t('worldmenu.silo.previewNear')}</span>
+                </>
+              )}
+            </div>
+          )}
           {chosen && stock > 0 && (
             <div className={`wm-silo-preview${chosen.mine > 0 ? ' is-warn' : ''}`}>
               <span className="is-strong">{t('worldmenu.silo.previewDamage', { dmg: damage, world: chosen.body.name })}</span>
@@ -226,7 +309,7 @@ export const WmSilo: React.FC<{
           )}
           <div className="wm-silo-launchrow">
             <button type="button" className={`wm-silo-btn is-fire${confirm ? ' is-confirm' : ''}`}
-              disabled={busy !== null || !chosen || stock === 0} onClick={launch}>
+              disabled={busy !== null || (!chosen && !chosenGroup) || stock === 0 || (!!chosenGroup && groupMeet == null)} onClick={launch}>
               {busy === 'launch' ? '…' : confirm ? t('worldmenu.silo.confirmFire', { n }) : t('worldmenu.silo.fire', { n: stock > 0 ? n : 0 })}
             </button>
             {confirm && <button type="button" className="wm-silo-btn" onClick={() => setConfirm(false)}>{t('worldmenu.silo.back')}</button>}
@@ -235,6 +318,11 @@ export const WmSilo: React.FC<{
             <span className="wm-silo-note">
               {t('worldmenu.silo.inFlight')}{' '}
               {inFlight.map(s => {
+                const rv = s.plannedRendezvous;
+                if (rv) {
+                  const prey = gameState.ships.find(x => x.id === rv.followShipId);
+                  return `${s.missileCount ?? 1} → ${t('worldmenu.silo.chasing', { owner: prey ? ownerName(prey.ownedBy) : '?' })} T-${Math.max(0, Math.ceil(rv.meetTick - tick))}`;
+                }
                 const tr = s.transit!.currentTransfer;
                 const to = byId.get(tr.targetBodyId)?.name ?? '?';
                 return `${s.missileCount ?? 1} → ${to} T-${Math.max(0, Math.ceil(tr.arriveTick - tick))}`;
@@ -258,6 +346,14 @@ export const WmSilo: React.FC<{
             <span className="wm-silo-num">{silo.reserve}</span>
             <button type="button" className="wm-silo-step" aria-label={t('worldmenu.silo.more')} disabled={busy !== null || silo.reserve >= cap} onClick={() => setReserve(silo.reserve + 1)}>+</button>
           </div>
+          {silo.auto === 'fleets' && (
+            <div className="wm-silo-salvo">
+              <span className="wm-silo-h2">{t('worldmenu.silo.autoSalvo')}</span>
+              <button type="button" className="wm-silo-step" aria-label={t('worldmenu.silo.fewer')} disabled={busy !== null || silo.salvo <= 1} onClick={() => setAutoSalvo(silo.salvo - 1)}>−</button>
+              <span className="wm-silo-num">{silo.salvo}</span>
+              <button type="button" className="wm-silo-step" aria-label={t('worldmenu.silo.more')} disabled={busy !== null || silo.salvo >= cap} onClick={() => setAutoSalvo(silo.salvo + 1)}>+</button>
+            </div>
+          )}
           {silo.auto !== 'off' && (
             <span className="wm-silo-watch"><i />{t('worldmenu.silo.watching', { world: body.name, n: Math.max(0, stock - silo.reserve) })}</span>
           )}

@@ -85,6 +85,11 @@ const BattleSandbox = React.lazy(() => import('./battleSandbox/BattleSandbox'));
 const EndingPreview = process.env.NODE_ENV !== 'production'
   ? React.lazy(() => import('./multiplayer/EndingPreview'))
   : null;
+// The profile trophy-case preview (/?profile-awards, see ProfileAwardsPreview.tsx).
+// Dev only, same guard as above: it renders a sample built from the fixtures.
+const ProfileAwardsPreview = process.env.NODE_ENV !== 'production'
+  ? React.lazy(() => import('./multiplayer/ProfileAwardsPreview'))
+  : null;
 // The Map Maker (?mapmaker): its own screen, out of the main bundle.
 // lazyChunk, not React.lazy: a tab opened before a deploy reloads once
 // instead of breaking when the Map Maker's (renamed) chunk is fetched.
@@ -986,6 +991,13 @@ function AppRouter() {
     return (
       <React.Suspense fallback={<div style={{ position: 'fixed', inset: 0, background: '#060a10' }} />}>
         <EndingPreview />
+      </React.Suspense>
+    );
+  }
+  if (ProfileAwardsPreview && new URLSearchParams(window.location.search).has('profile-awards')) {
+    return (
+      <React.Suspense fallback={<div style={{ position: 'fixed', inset: 0, background: '#0a0e14' }} />}>
+        <ProfileAwardsPreview />
       </React.Suspense>
     );
   }
