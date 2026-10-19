@@ -1,0 +1,245 @@
+#!/usr/bin/env node
+// ============================================================================
+// studio.mjs — the video studio from the command line, for agents.
+//
+//   node scripts/studio.mjs catalog                      [--env staging]
+//   node scripts/studio.mjs apply  scene.json            [--env staging] [--game <id>]
+//   node scripts/studio.mjs tick   <gameId> [n]          [--env staging]
+//   node scripts/studio.mjs record <gameId> shot.json --out clip.mp4
+//                                  [--as studio-terra] [--size 1080x1920] [--env staging]
+//   node scripts/studio.mjs close  <gameId>              [--env staging]
+//
+// A SCENE (worker/studioScene.js) fills a private test game with ships,
+// cities, wars, fleets and orders. A SHOT (src/multiplayer/studio/
+// director.ts) moves the camera over it and records the map to a video.
+// `record` opens the game in headless Chrome as one of the scene's agent
+// players, hands the shot to window.__studio, and pulls the video back
+// out over the DevTools protocol. No dependencies: Node's own fetch and
+// WebSocket, and the Chrome already on the machine.
+//
+// CREDENTIALS never print. The agent key is read from ~/.orbital-agent-key
+// (production) or ~/.orbital-staging-agent-key (staging); it goes in the
+// X-Agent-Key header of every call, and mints the viewer's session.
+//
+// The manual, with the scene and shot languages: docs/STUDIO.md.
+// ============================================================================
+
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
+
+class Fail extends Error {}
+const die = (m) => { throw new Fail(m); };
+
+const argv = process.argv.slice(2);
+const flag = (k, d = null) => { const i = argv.indexOf(`--${k}`); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
+const positional = argv.filter((a, i) => !a.startsWith('--') && !(i > 0 && argv[i - 1].startsWith('--')));
+const [cmd, ...rest] = positional;
+
+const ENV = flag('env', process.env.ORBITAL_ENV || 'staging');
+const BASE = ENV === 'production' || ENV === 'prod' ? 'https://orbital-empire.com' : 'https://orbital-staging.lcfeeser.workers.dev';
+const KEY_FILE = path.join(os.homedir(), ENV === 'production' || ENV === 'prod' ? '.orbital-agent-key' : '.orbital-staging-agent-key');
+const CHROME = process.env.CHROME || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
+
+function key() {
+  try { return fs.readFileSync(KEY_FILE, 'utf8').trim(); } catch { die(`no agent key at ${KEY_FILE}`); }
+}
+
+/** Mint (and cache for the run) a session for an agent handle. */
+const sessions = new Map();
+async function session(handle) {
+  if (sessions.has(handle)) return sessions.get(handle);
+  const res = await fetch(`${BASE}/api/agent/session`, {
+    method: 'POST', headers: { 'content-type': 'application/json', 'x-agent-key': key() },
+    body: JSON.stringify({ handle }),
+  });
+  if (!res.ok) die(`could not mint a session for ${handle} (${res.status}); is AGENT_KEY set on ${ENV}?`);
+  const d = await res.json();
+  sessions.set(handle, d.token);
+  return d.token;
+}
+
+async function api(method, p, body, handle = 'studio-cli') {
+  const token = await session(handle);
+  const res = await fetch(BASE + p, {
+    method,
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}`, 'x-agent-key': key() },
+    body: body == null ? undefined : JSON.stringify(body),
+  });
+  const text = await res.text();
+  let data; try { data = JSON.parse(text); } catch { data = text; }
+  if (!res.ok) die(`${method} ${p} -> ${res.status} ${typeof data === 'string' ? data.slice(0, 300) : JSON.stringify(data.error ?? data).slice(0, 300)}`);
+  return data;
+}
+
+const strip = (id) => (typeof id === 'string' ? id.replace(/^[^:]+:/, '') : id);
+
+// ---------- commands ----------
+
+async function catalog() {
+  const c = await api('GET', '/api/admin/studio/catalog');
+  console.log(JSON.stringify({ classes: c.classes, loadouts: c.loadouts, emblems: c.emblems,
+    start_worlds: c.bodies.filter(b => b.start).map(b => b.id), worlds: c.bodies.map(b => b.id), examples: Object.keys(c.examples) }, null, 2));
+}
+
+async function apply() {
+  const file = rest[0] || die('apply needs a scene.json');
+  const scene = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (flag('game')) scene.game_id = flag('game');
+  delete scene.seat_me;   // the CLI has no human to seat
+  const out = await api('POST', '/api/admin/studio/games', scene);
+  // Ids as the map knows them (the game prefix stripped), ready for shots.
+  const ships = Object.fromEntries(Object.entries(out.ships).map(([k, ids]) => [k, ids.map(strip)]));
+  const fleets = Object.fromEntries(Object.entries(out.fleets).map(([k, id]) => [k, strip(id)]));
+  console.log(JSON.stringify({ game_id: out.game_id, created: out.created, tick: out.tick, viewer: out.viewer,
+    factions: out.factions.map(f => ({ key: f.key, handle: f.handle, id: strip(f.id) })),
+    ships, fleets, wars: out.wars, orders: out.orders }, null, 2));
+  if (out.created) console.error(`\nScene applied to NEW game ${out.game_id}. Record with:\n  node scripts/studio.mjs record ${out.game_id} shot.json --out clip.mp4 --as ${out.factions.find(f => f.key === out.viewer)?.handle ?? out.factions[0].handle}${ENV !== 'staging' ? ` --env ${ENV}` : ''}`);
+}
+
+async function tick() {
+  const [gameId, n] = rest;
+  if (!gameId) die('tick needs a game id');
+  const out = await api('POST', `/api/admin/studio/games/${gameId}/tick`, { n: Number(n) || 1 });
+  console.log(JSON.stringify({ from: out.from, current_tick: out.current_tick }));
+}
+
+async function close() {
+  const [gameId] = rest;
+  if (!gameId) die('close needs a game id');
+  await api('POST', `/api/admin/studio/games/${gameId}/close`, {});
+  console.log(`closed ${gameId}`);
+}
+
+// ---------- record: headless Chrome over the DevTools protocol ----------
+
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+async function launchChrome(port, width, height) {
+  const profile = path.join(os.tmpdir(), `orbital-studio-${port}`);
+  fs.mkdirSync(profile, { recursive: true });
+  const proc = spawn(CHROME, [
+    '--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`,
+    '--hide-scrollbars', '--no-first-run', '--no-default-browser-check', '--mute-audio',
+    `--window-size=${width},${height}`, '--disable-background-timer-throttling',
+    '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows',
+    '--autoplay-policy=no-user-gesture-required', 'about:blank',
+  ], { stdio: 'ignore' });
+  let ver = null;
+  for (let i = 0; i < 80 && !ver; i++) {
+    await sleep(250);
+    try { ver = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json(); } catch { /* not yet */ }
+  }
+  if (!ver) { proc.kill(); die('Chrome did not start; set CHROME to its path'); }
+  const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+  const page = targets.find(t => t.type === 'page');
+  const ws = new WebSocket(page.webSocketDebuggerUrl);
+  await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
+  let id = 0;
+  const pending = new Map();
+  ws.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.id && pending.has(msg.id)) {
+      const { resolve, reject } = pending.get(msg.id);
+      pending.delete(msg.id);
+      msg.error ? reject(new Error(msg.error.message)) : resolve(msg.result);
+    } else if (msg.method === 'Page.javascriptDialogOpening') {
+      send('Page.handleJavaScriptDialog', { accept: true }).catch(() => {});
+    }
+  };
+  const send = (method, params = {}) => new Promise((resolve, reject) => {
+    const mid = ++id; pending.set(mid, { resolve, reject });
+    ws.send(JSON.stringify({ id: mid, method, params }));
+  });
+  const evaluate = async (expression) => {
+    const r = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
+    if (r.exceptionDetails) throw new Error('page: ' + (r.exceptionDetails.exception?.description ?? r.exceptionDetails.text));
+    return r.result.value;
+  };
+  await send('Page.enable'); await send('Runtime.enable');
+  const close = async () => {
+    try { const v = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json();
+      const b = new WebSocket(v.webSocketDebuggerUrl);
+      await new Promise(r => { b.onopen = r; });
+      b.send(JSON.stringify({ id: 1, method: 'Browser.close' }));
+      await sleep(400);
+    } catch { /* already gone */ }
+    try { proc.kill(); } catch { /* gone */ }
+    try { ws.close(); } catch { /* gone */ }
+  };
+  return { send, evaluate, close };
+}
+
+async function record() {
+  const [gameId, shotFile] = rest;
+  if (!gameId || !shotFile) die('record needs <gameId> shot.json --out clip.mp4');
+  const out = flag('out') || `orbital-${gameId}.mp4`;
+  const shot = JSON.parse(fs.readFileSync(shotFile, 'utf8'));
+  const [w, h] = (flag('size') || (shot.format === '16:9' ? '1920x1080' : shot.format === '1:1' ? '1080x1080' : '1080x1920')).split('x').map(Number);
+  const handle = flag('as') || 'studio-terra';
+  const token = await session(handle);
+  const port = 9400 + Math.floor(Math.random() * 400);
+  const b = await launchChrome(port, w, h);
+  try {
+    await b.send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false });
+    await b.send('Emulation.setEmulatedMedia', { features: [
+      { name: 'pointer', value: 'fine' }, { name: 'any-pointer', value: 'fine' }, { name: 'hover', value: 'hover' }, { name: 'any-hover', value: 'hover' }] });
+    const host = new URL(BASE).hostname;
+    await b.send('Page.addScriptToEvaluateOnNewDocument', { source: `try { if (location.hostname === ${JSON.stringify(host)}) {
+      sessionStorage.setItem('orbital_agent_token', ${JSON.stringify(token)});
+      localStorage.setItem('orbital.priority_room', ${JSON.stringify(gameId)});
+      localStorage.setItem('orbital.last_room', ${JSON.stringify(gameId)});
+      localStorage.setItem('orbital.tutorial.v1', JSON.stringify({ completed: true, skipped: true }));
+    } } catch (e) {}` });
+    await b.send('Page.navigate', { url: `${BASE}/` });
+    let ready = false;
+    for (let i = 0; i < 120 && !ready; i++) {
+      await sleep(1000);
+      ready = await b.evaluate(`!!(window.__studio && document.querySelector('canvas.map-canvas'))`).catch(() => false);
+    }
+    if (!ready) die('the game did not open with the studio attached: is the handle a member of this game, and is it an admin-visible studio game?');
+    await sleep(6000);   // first paint, art, the state poll
+    console.error(`recording ${shot.seconds}s at ${w}x${h} as ${handle}…`);
+    await b.evaluate(`(() => { window.__studioDone = null; window.__studio.record(${JSON.stringify(shot)}, { download: false })
+      .then(() => { window.__studioDone = window.__studio.result; }, e => { window.__studioDone = { ok: false, error: String(e && e.message || e) }; }); return true; })()`);
+    let done = null;
+    const t0 = Date.now();
+    while (!done && Date.now() - t0 < 30 * 60_000) {
+      await sleep(2000);
+      const st = await b.evaluate(`JSON.stringify({ p: window.__studio.progress, d: window.__studioDone })`);
+      const { p, d } = JSON.parse(st);
+      if (d) done = d; else process.stderr.write(`\r  ${Math.round(p * 100)}%   `);
+    }
+    process.stderr.write('\n');
+    if (!done?.ok) die(`recording failed: ${done?.error ?? 'timed out'}`);
+    const chunks = [];
+    for (let i = 0; ; i++) {
+      const c = await b.evaluate(`window.__studio.blobChunk(${i})`);
+      if (!c) break;
+      chunks.push(Buffer.from(c, 'base64'));
+    }
+    const buf = Buffer.concat(chunks);
+    const ext = done.mime === 'video/mp4' ? '.mp4' : '.webm';
+    const file = out.endsWith(ext) ? out : out.replace(/\.(mp4|webm)$/i, '') + ext;
+    fs.writeFileSync(file, buf);
+    console.log(JSON.stringify({ file, bytes: buf.length, mime: done.mime, seconds: shot.seconds }));
+  } finally {
+    await b.close();
+  }
+}
+
+// ---------- main ----------
+
+const COMMANDS = { catalog, apply, tick, record, close };
+(async () => {
+  if (!cmd || !COMMANDS[cmd]) {
+    console.error('usage: node scripts/studio.mjs catalog|apply|tick|record|close … (docs/STUDIO.md)');
+    process.exitCode = 2;
+    return;
+  }
+  await COMMANDS[cmd]();
+})().catch(e => {
+  console.error(e instanceof Fail ? e.message : e);
+  process.exitCode = 1;
+});

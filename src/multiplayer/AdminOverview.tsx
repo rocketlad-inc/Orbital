@@ -1290,6 +1290,8 @@ function Commission({ kpis }: { kpis: Kpis }) {
 type FunnelRow = {
   surface: string; views: number; viewers: number; clicks: number;
   dismissals: number; checkouts: number; paid: number;
+  /** How unpaid checkouts ended: left on the Stripe page, or expired. */
+  cancelled?: number; expired?: number;
 };
 type FunnelData = {
   days: number;
@@ -1357,6 +1359,8 @@ function CommissionFunnel() {
                   <th className="num">Click rate</th>
                   <th className="num">Checkouts</th>
                   <th className="num">Paid</th>
+                  <th className="num" title="Left the Stripe page without paying">Cancelled</th>
+                  <th className="num" title="Never finished; Stripe closed it after 24 hours">Expired</th>
                   <th className="num">Dismissed</th>
                 </tr>
               </thead>
@@ -1370,6 +1374,8 @@ function CommissionFunnel() {
                     <td className="num">{rate(r.clicks, r.views)}</td>
                     <td className="num">{n(r.checkouts)}</td>
                     <td className="num">{n(r.paid)}</td>
+                    <td className="num">{r.cancelled ? n(r.cancelled) : <span className="ao-dim">—</span>}</td>
+                    <td className="num">{r.expired ? n(r.expired) : <span className="ao-dim">—</span>}</td>
                     <td className="num">{r.dismissals ? n(r.dismissals) : <span className="ao-dim">—</span>}</td>
                   </tr>
                 ))}

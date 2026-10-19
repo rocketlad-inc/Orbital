@@ -7,6 +7,7 @@ import { useAuth } from './AuthContext';
 import { AdminAnalytics } from './AdminAnalytics';
 import { DevlogAdmin } from './DevlogAdmin';
 import { EmailAdmin } from './EmailAdmin';
+import { StudioAdmin } from './studio/StudioAdmin';
 import { BotControl } from './BotControl';
 import { Editor } from './Editor';
 import { ProfilePanel } from './ProfilePanel';
@@ -32,7 +33,7 @@ import './lobby.css';
 // the room view. The lobby never knows about ticks or game state beyond
 // the summaries /api/lobby/browse and /api/lobby/mine hand it.
 
-type Tab = 'my' | 'past' | 'browse' | 'create' | 'code' | 'profile' | 'admin' | 'bot' | 'editor' | 'devlog' | 'email';
+type Tab = 'my' | 'past' | 'browse' | 'create' | 'code' | 'profile' | 'admin' | 'bot' | 'editor' | 'devlog' | 'email' | 'studio';
 
 interface Props {
   onEnterRoom: (roomId: string) => void;
@@ -148,6 +149,7 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
                 <NavItem small active={tab === 'editor'} onClick={() => setTab('editor')}>{t('lobby.nav.editor')}</NavItem>
                 <NavItem small active={tab === 'devlog'} onClick={() => setTab('devlog')}>{t('lobby.nav.devlog')}</NavItem>
                 <NavItem small active={tab === 'email'} onClick={() => setTab('email')}>{t('lobby.nav.email')}</NavItem>
+                <NavItem small active={tab === 'studio'} onClick={() => setTab('studio')}>{t('lobby.nav.studio')}</NavItem>
               </>
             )}
           </nav>
@@ -222,6 +224,7 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
         {tab === 'editor' && user?.is_admin && <div className="lx-legacy lx-legacy--wide"><Editor /></div>}
         {tab === 'devlog' && user?.is_admin && <div className="lx-legacy lx-legacy--wide"><DevlogAdmin /></div>}
         {tab === 'email' && user?.is_admin && <div className="lx-legacy lx-legacy--wide"><EmailAdmin /></div>}
+        {tab === 'studio' && user?.is_admin && <div className="lx-legacy lx-legacy--wide"><StudioAdmin onEnterRoom={onEnterRoom} /></div>}
       </main>
     </div>
   );
