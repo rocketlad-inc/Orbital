@@ -52,6 +52,8 @@ const megaPairKey = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 
 /** Hull classes the 'capital' target-priority category selects. */
 const CAPITAL_CLASSES = new Set(['mega_destroyer', 'mobile_foundry']);
+/** How long a disconnected player's lobby ready flag waits for them. */
+const READY_GRACE_MS = 60_000;
 
 /** Gate autopilot rule B (gateAutopilot): a leg shorter than this is
  *  never worth asking the planner about, and a re-route must save at
@@ -322,6 +324,9 @@ export class Room {
     this.state = state;
     this.env = env;
     this.ready = new Map(); // userId -> boolean (transient)
+    // userId -> ms until which a just-disconnected player's ready flag is
+    // held for them (see READY_GRACE_MS).
+    this.readyHeld = new Map();
     // Re-entrancy guard for the tick loop. A DO is single-threaded but
     // `await` on a D1 subrequest yields, letting another event in — and
     // three sources converge on an overdue tick: the scheduled alarm,
@@ -401,6 +406,7 @@ export class Room {
         await this.state.storage.put('members', members);
       }
       this.ready.delete(targetId);
+      this.readyHeld.delete(targetId);
       // Close any open sockets for the kicked user.
       for (const ws of this.state.getWebSockets()) {
         const att = ws.deserializeAttachment();
@@ -734,8 +740,19 @@ export class Room {
         members[userId].displayName = displayName;
         await this.state.storage.put('members', members);
       }
-      // Reset ready on (re)connect — ready is a "right now" signal.
-      this.ready.set(userId, false);
+      // Reset ready on (re)connect — ready is a "right now" signal —
+      // EXCEPT coming straight back. Switching the lobby's own tabs
+      // (Faction, Comms, Senate) closes this socket and opens a new one,
+      // and that unreadied the player every time (OysterCoco,
+      // 2026-10-12). A flag held at close (webSocketClose) survives a
+      // return within READY_GRACE_MS; a player with another socket still
+      // open never left at all.
+      const heldUntil = this.readyHeld.get(userId) ?? 0;
+      this.readyHeld.delete(userId);
+      const stillHere = this.connectedUserIds().includes(userId);
+      if (!(this.ready.get(userId) === true && (stillHere || heldUntil >= Date.now()))) {
+        this.ready.set(userId, false);
+      }
 
       const pair = new WebSocketPair();
       const [client, server] = [pair[0], pair[1]];
@@ -819,11 +836,16 @@ export class Room {
   async webSocketClose(ws) {
     const att = ws.deserializeAttachment();
     if (!att) return;
-    // Clear ready when the user disconnects — ready is "right now I'm here".
-    this.ready.delete(att.userId);
     // Exclude THIS socket: it is still in getWebSockets() during its own
     // close handler, so counting it would announce the leaver as present.
     const connected = this.connectedUserIds(ws);
+    // Ready is "right now I'm here", so a player who has gone is not
+    // counted ready (readyMap only reports connected players). But the
+    // flag is HELD for a moment rather than wiped, so switching lobby tabs
+    // (a close and a reopen) does not unready anyone; see the connect path.
+    if (!connected.includes(att.userId) && this.ready.get(att.userId) === true) {
+      this.readyHeld.set(att.userId, Date.now() + READY_GRACE_MS);
+    }
     this.broadcast({
       type: 'presence',
       members: await this.memberList(),

@@ -32,6 +32,7 @@ import './BodyInspector.css';
 import { anyRouteCollectsFrom , routesIAmPartyTo } from '../game/routeSelectors';
 import { t, tn, tk } from '../i18n/core';
 import { useI18n } from '../i18n/react';
+import { nextBuildingLevel } from '../game/worldMenu/buildRules';
 
 /** Per-Δv METAL cost when an asteroid is rammed via Trajectory Control
  *  Thrusters. Charged once at commit time to the faction pool. Tuned
@@ -1165,10 +1166,13 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
                     // in SP; in MP the server reconciles within ~1.5s
                     // and locks in the cost deduction so the next
                     // /state poll doesn't refund.
+                    // The level THIS render shows, taken before the
+                    // optimistic mutation below moves it on.
+                    const target = nextBuildingLevel(s, kind);
                     const ok = queueBuilding(sid, kind);
                     if (ok && mpActions) {
-                      mpActions.queueBuilding(sid, kind).then(res => {
-                        if (!res.ok) setDeployError(humanizeMpError(res.code, res.error, 'build'));
+                      mpActions.queueBuilding(sid, kind, target).then(res => {
+                        if (!res.ok && res.code !== 'already_queued') setDeployError(humanizeMpError(res.code, res.error, 'build'));
                       });
                     }
                     return ok;
