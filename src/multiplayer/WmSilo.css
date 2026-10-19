@@ -1,0 +1,125 @@
+/* The Missile Silo panel (WmSilo.tsx). It takes the yard box's place
+   (.wm-fleet supplies position, size and ground) when its tab is on. */
+
+/* YARD / MISSILE SILO tabs, on whichever box is showing. */
+.wm-btabs { display: flex; gap: 6px; margin-bottom: 2px; }
+.wm-btabs button {
+  font-family: 'Audiowide', sans-serif; font-size: 10px; letter-spacing: 0.08em;
+  padding: 5px 10px; border-radius: 4px; cursor: pointer;
+  border: 1px solid #2a3d50; background: #0d141d; color: #8fa6ba;
+}
+.wm-btabs button.is-on { border-color: #4ecdc4; background: rgba(78, 205, 196, 0.14); color: #4ecdc4; }
+.wm-btabs button:focus-visible { outline: 2px solid #4ecdc4; outline-offset: 2px; }
+
+.wm-silo { gap: 8px; }
+.wm-silo-head {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding-bottom: 8px; border-bottom: 1px solid #1c2836;
+}
+.wm-silo-title { font-family: 'Audiowide', sans-serif; font-size: 12px; letter-spacing: 0.08em; color: #e6edf3; }
+.wm-silo-sub, .wm-silo-mag-l { font-family: 'Chivo Mono', monospace; font-size: 10.5px; color: #8fa6ba; }
+.wm-silo-mag-l { letter-spacing: 0.16em; font-size: 10px; }
+.wm-silo-fill { flex: 1; }
+.wm-silo-pips { display: flex; gap: 3px; flex-wrap: wrap; max-width: 260px; }
+.wm-silo-pips i { width: 8px; height: 16px; border-radius: 2px; box-sizing: border-box; border: 1px solid #2a3d50; }
+.wm-silo-pips i.is-full { background: #ff8a5c; border-color: #ff8a5c; }
+.wm-silo-pips i.is-queued { border: 1px dashed #ff8a5c; }
+.wm-silo-count { font-family: 'Chivo Mono', monospace; font-size: 15px; color: #fff; }
+.wm-silo-count span { color: #8fa6ba; }
+
+.wm-silo-cols { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.25fr) minmax(0, 0.95fr); min-height: 0; overflow-y: auto; }
+.wm-silo-col { display: flex; flex-direction: column; gap: 8px; padding: 4px 14px; min-width: 0; }
+.wm-silo-col + .wm-silo-col { border-left: 1px solid #1c2836; }
+.wm-silo-col:first-child { padding-left: 0; }
+.wm-silo-h { font-family: 'Audiowide', sans-serif; font-size: 10px; letter-spacing: 0.18em; color: #8fa6ba; }
+.wm-silo-h2 { font-family: 'Chivo Mono', monospace; font-size: 10px; letter-spacing: 0.14em; color: #8fa6ba; }
+.wm-silo-note { font-family: 'Chivo Mono', monospace; font-size: 10px; line-height: 1.5; color: #8fa6ba; }
+.wm-silo-note.is-body { font-size: 10.5px; color: #b8c8d6; }
+
+.wm-silo-buildrow {
+  display: flex; align-items: center; gap: 8px; padding: 7px 8px;
+  border: 1px solid #2a3d50; border-radius: 4px; background: #0d141d;
+}
+.wm-silo-bname { font-family: 'Audiowide', sans-serif; font-size: 11.5px; color: #e6edf3; }
+.wm-silo-cost { flex: 1; font-family: 'Chivo Mono', monospace; font-size: 10.5px; color: #b8c8d6; }
+.wm-silo-cost b { font-weight: 400; color: #ffd166; }
+.wm-silo-queue { display: flex; flex-direction: column; gap: 4px; }
+.wm-silo-qrow {
+  position: relative; display: flex; align-items: center; gap: 8px; padding-bottom: 4px;
+  font-family: 'Chivo Mono', monospace; font-size: 10.5px; color: #d8e4ee;
+}
+.wm-silo-qn { color: #8fa6ba; }
+.wm-silo-qname { flex: 1; }
+.wm-silo-qt { color: #4ecdc4; }
+.wm-silo-bar { position: absolute; left: 0; bottom: 0; height: 3px; border-radius: 2px; background: #4ecdc4; }
+.wm-silo-x { background: none; border: 0; color: #8fa6ba; cursor: pointer; font-size: 11px; padding: 2px 4px; }
+.wm-silo-x:hover:not(:disabled) { color: #ff8a8a; }
+
+.wm-silo-btn {
+  font-family: 'Audiowide', sans-serif; font-size: 10.5px; letter-spacing: 0.04em;
+  padding: 6px 12px; border-radius: 4px; cursor: pointer;
+  border: 1px solid #2a3d50; background: #0d141d; color: #b8c8d6;
+}
+.wm-silo-btn:disabled { opacity: 0.45; cursor: default; }
+.wm-silo-btn.is-teal { border-color: #4ecdc4; background: rgba(78, 205, 196, 0.12); color: #4ecdc4; }
+.wm-silo-btn.is-fire { border-color: #ff8a5c; background: rgba(255, 138, 92, 0.18); color: #ffd2bf; font-size: 11.5px; padding: 8px 14px; }
+.wm-silo-btn.is-fire.is-confirm { background: rgba(255, 92, 92, 0.3); border-color: #ff5e5e; color: #fff; }
+.wm-silo-btn:focus-visible, .wm-silo-step:focus-visible, .wm-silo-target:focus-visible, .wm-silo-opt:focus-visible,
+.wm-silo-seg button:focus-visible { outline: 2px solid #4ecdc4; outline-offset: 2px; }
+
+.wm-silo-target {
+  display: flex; align-items: center; gap: 8px; padding: 7px 10px; text-align: left;
+  border: 1px solid #2a3d50; border-radius: 4px; background: #0d141d; color: #e6edf3; cursor: pointer;
+}
+.wm-silo-tname { flex: 1; font-family: 'Audiowide', sans-serif; font-size: 11.5px; }
+.wm-silo-tname.is-dim { color: #8fa6ba; }
+.wm-silo-tmeta { font-family: 'Chivo Mono', monospace; font-size: 10px; color: #b8c8d6; }
+.wm-silo-list {
+  display: flex; flex-direction: column; gap: 4px; max-height: 168px; overflow-y: auto;
+  padding: 4px; border: 1px solid #2a3d50; border-radius: 4px; background: #0a1019;
+}
+.wm-silo-opt {
+  display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; align-items: center; text-align: left;
+  padding: 6px 8px; border: 1px solid transparent; border-radius: 4px; background: none; color: #e6edf3; cursor: pointer;
+}
+.wm-silo-opt:hover, .wm-silo-opt.is-on { border-color: #ff8a5c; background: rgba(255, 138, 92, 0.08); }
+.wm-silo-opt .is-wide { grid-column: 1 / -1; }
+.wm-silo-opt b { font-weight: 400; }
+.wm-silo-opt b.is-hostile { color: #ff9d9d; }
+.wm-silo-opt b.is-mine { color: #6ee7b7; }
+
+.wm-silo-salvo { display: flex; align-items: center; gap: 8px; }
+.wm-silo-step {
+  width: 28px; height: 28px; border-radius: 4px; cursor: pointer;
+  border: 1px solid #2a3d50; background: #0d141d; color: #e6edf3; font-size: 14px;
+}
+.wm-silo-step:disabled { opacity: 0.4; cursor: default; }
+.wm-silo-num { min-width: 22px; text-align: center; font-family: 'Chivo Mono', monospace; font-size: 16px; color: #fff; }
+.wm-silo-preview {
+  display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-radius: 4px;
+  border: 1px solid rgba(255, 138, 92, 0.35); background: rgba(255, 138, 92, 0.08);
+  font-family: 'Chivo Mono', monospace; font-size: 10.5px; line-height: 1.45; color: #d8e4ee;
+}
+.wm-silo-preview .is-strong { color: #fff; }
+.wm-silo-preview .is-mine { color: #ffb38f; }
+.wm-silo-preview.is-warn { border-color: rgba(255, 94, 94, 0.55); }
+.wm-silo-launchrow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+.wm-silo-seg { display: flex; border: 1px solid #2a3d50; border-radius: 4px; overflow: hidden; }
+.wm-silo-seg button {
+  flex: 1; padding: 7px 4px; border: 0; background: #0d141d; color: #8fa6ba; cursor: pointer;
+  font-family: 'Audiowide', sans-serif; font-size: 9.5px;
+}
+.wm-silo-seg button + button { border-left: 1px solid #2a3d50; }
+.wm-silo-seg button.is-on { background: rgba(78, 205, 196, 0.18); color: #4ecdc4; }
+.wm-silo-watch { display: flex; align-items: center; gap: 6px; font-family: 'Chivo Mono', monospace; font-size: 10.5px; color: #6ee7b7; }
+.wm-silo-watch i { width: 7px; height: 7px; border-radius: 50%; background: #6ee7b7; }
+
+/* Phone: one column, thumb-sized controls. */
+.wm-silo.is-mobile .wm-silo-cols { grid-template-columns: minmax(0, 1fr); }
+.wm-silo.is-mobile .wm-silo-col { padding: 8px 0; }
+.wm-silo.is-mobile .wm-silo-col + .wm-silo-col { border-left: 0; border-top: 1px solid #1c2836; }
+.wm-silo.is-mobile .wm-silo-step { width: 44px; height: 44px; }
+.wm-silo.is-mobile .wm-silo-btn, .wm-silo.is-mobile .wm-silo-target { min-height: 44px; }
+.wm-silo.is-mobile .wm-silo-seg button { min-height: 40px; }
+@media (prefers-reduced-motion: reduce) { .wm-silo * { transition: none !important; } }

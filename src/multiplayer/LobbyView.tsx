@@ -4,7 +4,7 @@ import { CaptainRosterPicker } from './CaptainRosterPicker';
 import { useAuth } from './AuthContext';
 import { LobbyMapPreview } from './LobbyMapPreview';
 import { deriveSecondary, emblemInk } from '../game/colorUtils';
-import { EMBLEM_IDS, PREMIUM_EMBLEM_IDS, EMBLEM_NAMES } from '../game/emblems';
+import { EMBLEM_IDS, PREMIUM_EMBLEM_IDS, EARNED_EMBLEM_IDS, EMBLEM_NAMES } from '../game/emblems';
 import { startCommissionCheckout } from './api';
 import { isAndroidApp } from '../platform/appShell';
 import {
@@ -23,6 +23,7 @@ import { SkinPicker } from './SkinPicker';
 import { t, tk } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import { apiErrorText } from '../i18n/apiErrors';
+import { InviteCard, LonelyLobbyCard, LONELY_LOBBY_MS } from './InviteCard';
 
 /** A pre-game lobby chat line, as broadcast by the room WebSocket
  *  (`{ type: 'chat', from, text, at }`). `key` is assigned client-side
@@ -780,7 +781,15 @@ function RoomDetail({
       </div>
       <div className="lobby-panel__body">
 
-      {inviteCode && !started && (
+      {isHost && !started && snap.settings.has_password && snap.members.length === 1
+        && snap.settings.created_at != null && Date.now() - snap.settings.created_at >= LONELY_LOBBY_MS && (
+        <LonelyLobbyCard roomId={roomId} onOpened={refresh} />
+      )}
+      {inviteCode && !started && snap.members.length < snap.settings.max_players && (
+        <InviteCard code={inviteCode} roomName={snap.settings.name} taken={snap.members.length}
+                    max={snap.settings.max_players} where="lobby" />
+      )}
+      {inviteCode && !started && snap.members.length >= snap.settings.max_players && (
         <div className="mp-invite-strip" onClick={copyInvite} title={t('roomlobby.invite.tip')}>
           <span className="mp-invite-strip__label">{t('roomlobby.invite')}</span>
           <span className="mp-invite-strip__code">{formattedInvite}</span>
@@ -1147,13 +1156,15 @@ function FactionFlagPicker({
       </div>
       <label className="mp-label">{t('roomlobby.flag.emblem')}</label>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
-        {[...EMBLEM_IDS, ...PREMIUM_EMBLEM_IDS].map(id => {
+        {[...EMBLEM_IDS, ...PREMIUM_EMBLEM_IDS, ...EARNED_EMBLEM_IDS].map(id => {
           const selected = myEmblem === id;
           const takenBy = takenEmblems.get(id);
           // Premium emblems render in the grid for everyone — locked, not
           // hidden. A closet nobody can see sells nothing; a lock you can
-          // hover is the storefront.
-          const locked = !isPremium && (PREMIUM_EMBLEM_IDS as string[]).includes(id);
+          // hover is the storefront. EARNED emblems (0176) show the same
+          // way, but money never opens them: only doing the thing does.
+          const earnedLocked = (EARNED_EMBLEM_IDS as string[]).includes(id) && !(user?.emblem_grants ?? []).includes(id);
+          const locked = earnedLocked || (!isPremium && (PREMIUM_EMBLEM_IDS as string[]).includes(id));
           const taken = !!takenBy && !selected;
           return (
             <button
@@ -1184,7 +1195,8 @@ function FactionFlagPicker({
                 cursor: (taken || locked) ? 'not-allowed' : 'pointer',
                 opacity: taken ? 0.55 : locked ? 0.45 : 1,
               }}
-              title={locked ? t('roomlobby.flag.premiumEmblem', { name: EMBLEM_NAMES[id] })
+              title={earnedLocked ? t('roomlobby.flag.earnedEmblem', { name: EMBLEM_NAMES[id] })
+                : locked ? t('roomlobby.flag.premiumEmblem', { name: EMBLEM_NAMES[id] })
                 : taken ? t('roomlobby.flag.emblemTaken', { who: takenBy ?? '', name: EMBLEM_NAMES[id] })
                 : selected ? t('roomlobby.flag.clear') : EMBLEM_NAMES[id]}
               onClick={() => onPick('emblem', selected ? null : id)}

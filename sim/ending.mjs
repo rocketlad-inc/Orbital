@@ -153,6 +153,10 @@ for (const [f, n] of [[A, 12], [B, 40], [C, 7], [D, 2]]) for (let i = 0; i < n; 
 await chron('tech_advanced', 5, A);   // other kinds must not be counted as hulls
 await chron('faction_eliminated', 200, D, { faction_name: 'Delta Remnant' });
 await chron('victory', 300, B, { victoryType: 'engineering', detail: 'Dyson Sphere complete' });
+await ins('game_megastructures', { body_id: G + ':m1', game_id: G, kind: 'null_field', status: 'complete', cost_metal: 1, cost_credits: 1, founded_by_faction_id: A, founded_at_tick: 100, completed_at_tick: 150 });
+await ins('game_megastructures', { body_id: G + ':m2', game_id: G, kind: 'weapons_station', status: 'complete', cost_metal: 1, cost_credits: 1, founded_by_faction_id: null, founded_at_tick: 10, completed_at_tick: 10, ancient: 1 });
+await ins('chronicle_entries', { id: 'cpact', game_id: G, tick_number: 30, kind: 'treaty_signed', actor_faction_id: A, target_faction_id: B,
+  payload: JSON.stringify({ kind: 'defense_pact' }), created_at_ms: 0 });
 
 // -- senate: passed counts C3 A1 B1; failed/debating never count
 let pid = 0;
@@ -243,6 +247,173 @@ for (const [id, mult] of [[X, 7], [Y, 3]]) {
 }
 await ins('game_settlements', { id: 'lx', game_id: L, body_id: `${L}:w1`, owner_faction_id: X, type: 'city', name: 'x', hp: 5, hp_max: 5, created_at_tick: 0 });
 await ins('game_settlements', { id: 'ly', game_id: L, body_id: `${L}:w2`, owner_faction_id: Y, type: 'city', name: 'x', hp: 5, hp_max: 5, created_at_tick: 0 });
+
+// ============================================================================
+// GAME 4: "tl_game": the timeline of a war story. 1000 ticks, five empires, a
+// Leviathan (a monster seat) and an observer seat, and the traps: a lead that
+// did not last, a monster as an actor, a pact-breaking war that also appears
+// as a treaty_broken row, and four battles: one with a house replay link
+// already, one with NO replay data, one with no link at all (to be minted) and
+// one whose house link was revoked.
+// ============================================================================
+const T = 'tl_game';
+await room(T, 'The Long Story', 'completed', {
+  current_tick: 1000, winner_faction_id: `${T}:W`, victory_type: 'chancellor', completed_at: 5_000_000,
+});
+await ins('room_members', { room_id: T, user_id: 'usr_bob_002', joined_at: 0 });
+const tf = {};
+for (const [k, slot, name, extra] of [
+  ['R', 0, 'Red Republic', { user_id: 'usr_bob_002', status: 'eliminated' }],
+  ['W', 1, 'Wren Dominion', { user_id: 'usr_alice_001' }],
+  ['G', 2, 'Green League', { status: 'eliminated' }],
+  ['B', 3, 'Blue Syndicate', {}],
+  ['P', 4, 'Pauper Isles', { status: 'eliminated' }],
+  ['mon', 900, 'The Leviathan', { status: 'monster', color2: null, emblem: null }],
+  ['obs', 901, 'Quiet Observer', { status: 'observer' }],
+]) tf[k] = await faction(T, k, slot, name, extra);
+
+// worlds: [owner, body, created, destroyed]. Leadership: R leads first (not a
+// "change"); W passes it at 100 but G takes it at 140 and W retakes it at 160
+// (neither of those two held 5% = 50 ticks); W's lead at 160 lasts; B's at 500 too.
+const TS = [
+  ...[0, 10, 20, 30].map((t, i) => ['R', `r${i}`, t, 700]),
+  ['W', 'w0', 0, null], ['W', 'w1', 40, null], ['W', 'w2', 60, null], ['W', 'w3', 80, null], ['W', 'w4', 100, null],
+  ['W', 'w5', 160, null], ['W', 'w6', 160, null], ['W', 'w7', 160, null],
+  ['G', 'g0', 0, 900], ...[1, 2, 3, 4, 5, 6].map(i => ['G', `g${i}`, 140, 900]),
+  ['B', 'b0', 0, null], ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map(i => ['B', `b${i}`, 500, null]),
+  ['P', 'p0', 0, 300], ['P', 'p1', 50, 300],
+];
+let tsid = 0;
+for (const [o, body, created, destroyed] of TS) {
+  await ins('game_settlements', {
+    id: `ts${++tsid}`, game_id: T, body_id: `${T}:${body}`, owner_faction_id: tf[o], type: 'city', name: 'x',
+    hp: destroyed == null ? 10 : 0, hp_max: 10, created_at_tick: created, destroyed_at_tick: destroyed,
+  });
+}
+
+let tcid = 0;
+const tchron = (kind, tick, actor, target, payload = {}) => ins('chronicle_entries', {
+  id: `tc${++tcid}`, game_id: T, tick_number: tick, kind, actor_faction_id: actor ? tf[actor] : null,
+  target_faction_id: target ? tf[target] : null, payload: JSON.stringify(payload), created_at_ms: tcid,
+});
+await tchron('game_started', 0, null, null, { factions: [] });
+// the earliest hull lost is the Leviathan's; the first EMPIRE hull (R, by W) is at tick 40
+await tchron('ship_destroyed', 3, 'mon', null, { body_name: 'Titan', ship_class: 'corvette', killer_faction_id: tf.W });
+await tchron('ship_destroyed', 40, 'R', null, { body_name: 'Mars', ship_class: 'frigate', killer_faction_id: tf.W });
+await tchron('ship_destroyed', 41, 'G', null, { body_name: 'Io', ship_class: 'corvette', killer_faction_id: tf.R });
+await tchron('war_declared', 60, 'R', 'W', { broke_pacts: [] });
+await tchron('war_declared', 62, 'mon', 'W', { broke_pacts: [] });                // a monster never declares
+await tchron('war_declared', 440, 'B', 'W', { broke_pacts: ['nap'] });           // pact-breaking war, just before the big battle
+await tchron('treaty_broken', 440, 'B', 'W', { kind: 'nap' });                   // the same event again: told once
+await tchron('war_declared', 446, 'B', 'W', { broke_pacts: ['nap'] });           // the SAME betrayal again 6 ticks later: too close, same empires, same kind
+await tchron('treaty_broken', 520, 'G', 'R', { kind: 'defense_pact' });
+await tchron('faction_eliminated', 300, 'P', null, { faction_name: 'Pauper Isles' });
+await tchron('faction_eliminated', 700, 'R', null, { faction_name: 'Red Republic' });
+await tchron('faction_eliminated', 900, 'G', null, { faction_name: 'Green League' });
+await tchron('settlement_destroyed', 700, 'R', null, { killer_faction_id: tf.W });
+await tchron('settlement_seized', 900, 'B', 'G', { body_name: 'x' });
+await tchron('victory', 1000, 'W', null, { victoryType: 'chancellor', detail: 'Wren elected Supreme Chancellor' });
+let tpid = 0;
+const tbill = (g, kind, status, tick, proposer, payload) => ins('senate_proposals', {
+  id: `tp${++tpid}`, game_id: g, proposer_faction_id: proposer, kind, title: 't', summary: 's', status,
+  payload: JSON.stringify(payload), proposed_at_tick: tick - 5, vote_opens_at_tick: tick - 3, vote_closes_at_tick: tick, resolved_at_tick: tick,
+});
+await tbill(T, 'war_authorization', 'passed', 420, tf.W, { target_faction_id: tf.B });
+await tbill(T, 'war_authorization', 'failed', 430, tf.B, { target_faction_id: tf.W });   // failed bills are not history
+await tbill(T, 'slider_law', 'passed', 100, tf.W, { slider_id: 'x' });                    // a slider is not a pivotal bill
+await tbill(T, 'chancellor_vote', 'passed', 995, tf.W, { candidate_faction_id: tf.W });  // the winning vote: the victory covers it
+
+const tbattle = (id, body, started, last, shots, lost, victor) => ins('battles', {
+  id, game_id: T, body_id: `${T}:${body}`, body_name: body, started_tick: started, last_fire_tick: last, ended_tick: last,
+  started_at_ms: 0, shots, ships_lost: lost, settlements_lost: 0, status: 'ended', victor_faction_id: victor ? tf[victor] : null,
+});
+await tbattle('tb_big', 'Mars', 450, 480, 900, 50, 'W');              // top 3, has a house link
+await tbattle('tb_noframes', 'Venus', 800, 820, 400, 40, 'B');        // top 3, NOTHING recorded to replay
+await tbattle('tb_mid', 'Europa', 650, 690, 300, 30, 'W');            // top 3, replayable, no house link (a player's own only)
+await tbattle('tb_small', 'Luna', 200, 210, 50, 20, 'W');             // not top 3, not before an elimination: not a moment
+await tbattle('tb_laststand', 'Pluto', 880, 895, 100, 30, 'B');        // G's last stand; replayable; house link REVOKED
+let tpart = 0;
+for (const [b, who, n] of [['tb_big', 'R', 2], ['tb_big', 'W', 1], ['tb_big', 'B', 1], ['tb_noframes', 'G', 2], ['tb_noframes', 'B', 1],
+  ['tb_mid', 'R', 2], ['tb_mid', 'W', 1], ['tb_laststand', 'G', 2], ['tb_small', 'B', 1]]) {
+  for (let i = 0; i < n; i++) {
+    await ins('battle_participants', { battle_id: b, ship_id: `tps${++tpart}`, faction_id: tf[who], first_tick: 1, last_tick: 2, died_tick: 2 });
+  }
+}
+for (const [b, frames] of [['tb_big', 4], ['tb_mid', 5], ['tb_small', 2], ['tb_laststand', 3]]) {   // tb_noframes has none
+  for (let i = 0; i < frames; i++) await ins('battle_ticks', { battle_id: b, tick_number: i + 1, seq: i, roster: '[]', shot_log: '[]' });
+}
+const shareRow = (token, battle_id, created_by, revoked) => ins('battle_shares', {
+  token, battle_id, game_id: T, created_by, created_at_ms: 1, revoked_at_ms: revoked ? 2 : null,
+});
+await shareRow('HOUSE_BIG_TOKEN_0001', 'tb_big', null, false);
+await shareRow('HOUSE_SMALL_TOKEN_01', 'tb_small', null, false);
+await shareRow('REVOKED_HOUSE_TOKEN1', 'tb_laststand', null, true);
+await shareRow('USER_MADE_TOKEN_0001', 'tb_mid', 'usr_alice_001', false);   // a player's own link: not the house's
+
+// ============================================================================
+// GAME 5: "tl_world": the timeline of the world's own events: a Leviathan, a
+// sun gate, a Dyson Sphere, a megastructure, a discovery, the Senate and pacts.
+// 500 ticks. A monster, an observer and a vacated actor appear as actors and
+// must never become a timeline actor.
+// ============================================================================
+const W5 = 'tl_world';
+await room(W5, 'The Wide World', 'completed', {
+  current_tick: 500, winner_faction_id: `${W5}:W`, victory_type: 'engineering', completed_at: 5_000_000,
+});
+await ins('room_members', { room_id: W5, user_id: 'usr_alice_001', joined_at: 0 });
+const wf = {};
+for (const [k, slot, name, extra] of [
+  ['W', 0, 'Wren Dominion', { user_id: 'usr_alice_001' }],
+  ['G', 1, 'Green League', {}],
+  ['B', 2, 'Blue Syndicate', {}],
+  ['mon', 900, 'The Leviathan', { status: 'monster', color2: null, emblem: null }],
+  ['obs', 901, 'Quiet Observer', { status: 'observer' }],
+]) wf[k] = await faction(W5, k, slot, name, extra);
+let wcid = 0;
+const wchron = (kind, tick, actor, target, payload = {}) => ins('chronicle_entries', {
+  id: `wc${++wcid}`, game_id: W5, tick_number: tick, kind, actor_faction_id: actor ? wf[actor] : null,
+  target_faction_id: target ? wf[target] : null, payload: JSON.stringify(payload), created_at_ms: wcid,
+});
+await wchron('game_started', 0, null, null, {});
+await wchron('sun_gate_opened', 180, null, null, { gate: 'Centauri Gate', system: 'Centauri', index: 0 });
+await wchron('gate_transit', 190, 'B', null, { sun_gate: true, first: true, to_system: 'Centauri' });
+await wchron('gate_transit', 191, 'W', null, { sun_gate: true, first: false });
+await wchron('kaiju_revealed', 260, null, null, { body_name: 'MK 2' });
+await wchron('world_obliterated', 300, 'mon', null, { body_name: 'MK 2', cause: 'kaiju', settlements_lost: 2 });
+await wchron('kaiju_dead', 330, null, null, { body_name: 'Weywot', killer_faction_name: 'Wren Dominion' });
+await wchron('dyson_initiated', 250, 'W', null, { target_total: 40000 });
+await wchron('dyson_milestone', 400, 'W', null, { pct: 25 });
+await wchron('secret_discovered', 70, 'G', null, { kind: 'ancient_capital', body_name: 'Aya' });
+await wchron('secret_discovered', 90, 'B', null, { kind: 'deep_cache', body_name: 'Ixion', metal: 10000, credits: 10000 });
+await wchron('secret_discovered', 80, 'obs', null, { kind: 'ancient_capital', body_name: 'Nowhere' });   // an observer's: ignored
+await wchron('treaty_signed', 30, 'W', 'G', { kind: 'nap' });
+await wchron('treaty_signed', 120, 'W', 'B', { kind: 'defense_pact' });
+await wchron('victory', 500, 'W', null, { victoryType: 'engineering', detail: 'Dyson Sphere complete' });
+await tbill(W5, 'chancellor_vote', 'passed', 200, wf.G, { candidate_faction_id: wf.G });
+await tbill(W5, 'trade_embargo', 'passed', 455, wf.obs, { target_faction_id: wf.B });      // an observer's bill: ignored
+await ins('game_bodies', { id: `${W5}:mega1`, game_id: W5, template_id: 'x', name: 'Ceres Foundry', type: 'asteroid', radius: 1, mu: 1, color: '#fff' });
+await ins('game_megastructures', { body_id: `${W5}:mega1`, game_id: W5, kind: 'weapons_station', status: 'complete', cost_metal: 1, cost_credits: 1, founded_by_faction_id: wf.W, founded_at_tick: 300, completed_at_tick: 350 });
+await ins('game_megastructures', { body_id: `${W5}:mega2`, game_id: W5, kind: 'weapons_station', status: 'complete', cost_metal: 1, cost_credits: 1, founded_by_faction_id: null, founded_at_tick: 10, completed_at_tick: 10, ancient: 1 });
+
+// ============================================================================
+// GAME 6: "tl_lead": leadership in worlds held. X leads from tick 10 (the first
+// leader replaced nobody), Y passes X at 100 but only for 40 ticks (< 5% of the
+// game), X retakes it at 140 and keeps it, Z passes at 500 and keeps it.
+// ============================================================================
+const LD = 'tl_lead';
+await room(LD, 'Lead Changes', 'completed', { current_tick: 1000, winner_faction_id: `${LD}:Z`, victory_type: 'domination', completed_at: 5_000_000 });
+await ins('room_members', { room_id: LD, user_id: 'usr_alice_001', joined_at: 0 });
+const lf = {};
+for (const [k, slot, name] of [['X', 0, 'Xan'], ['Y', 1, 'Yth'], ['Z', 2, 'Zor']]) lf[k] = await faction(LD, k, slot, name, k === 'X' ? { user_id: 'usr_alice_001' } : {});
+const LS = [
+  ['X', 'x0', 0], ['X', 'x1', 10], ['X', 'x2', 20], ['X', 'x3', 30], ['X', 'x4', 140], ['X', 'x5', 140],
+  ['Y', 'y0', 0], ['Y', 'y1', 40], ['Y', 'y2', 60], ['Y', 'y3', 80], ['Y', 'y4', 100],
+  ['Z', 'z0', 0], ...[1, 2, 3, 4, 5, 6, 7].map(i => ['Z', `z${i}`, 500]),
+];
+let lsid = 0;
+for (const [o, body, created] of LS) {
+  await ins('game_settlements', { id: `ls${++lsid}`, game_id: LD, body_id: `${LD}:${body}`, owner_faction_id: lf[o], type: 'city', name: 'x', hp: 10, hp_max: 10, created_at_tick: created });
+}
 
 // ============================================================================
 // GAME 3: "livegame": still being played.
@@ -396,13 +567,126 @@ eq('no battles, no trades', [lg.battles.length, lg.totals.battles, lg.totals.tra
 eq('victoryDetail null with no chronicle line', lg.game.victoryDetail, null);
 check('a stranger-free read as the winner marks isMe', lg.factions[0].isMe && !lg.factions[1].isMe);
 
+console.log('-- timeline --');
+const houseRows = async (b) => Number((await DB.prepare(
+  'SELECT COUNT(*) AS n FROM battle_shares WHERE battle_id = ? AND created_by IS NULL').bind(b).first()).n);
+const allRows = async (b) => Number((await DB.prepare('SELECT COUNT(*) AS n FROM battle_shares WHERE battle_id = ?').bind(b).first()).n);
+const moment = (tl, kind, tick) => tl.find(m => m.kind === kind && (tick === undefined || m.tick === tick));
+const idsOf = (m) => m?.factionIds;
+
+// -- read-only mode (the prod-fixture script) NEVER writes -----------------
+const ro = await buildEnding(env, T, 'usr_alice_001', { readOnly: true });
+check('read-only: builds', !ro.error, ro.error);
+eq('read-only: the unlinked replayable battle gets no clip and no row is written', [moment(ro.timeline, 'battle', 650)?.clip, await houseRows('tb_mid')], [null, 0]);
+eq('read-only: an existing house link is still used', moment(ro.timeline, 'battle', 450).clip?.path, '/recap/HOUSE_BIG_TOKEN_0001');
+
+// -- the real read (this one mints) ---------------------------------------------
+// two viewers open the page together while a battle has no house link: one token between them
+const [tp, tpTwin] = await Promise.all([buildEnding(env, T, 'usr_alice_001'), buildEnding(env, T, 'usr_bob_002')]);
+const TL = tp.timeline;
+console.log(TL.map(m => `   ${String(m.tick).padStart(4)} ${m.kind.padEnd(12)} ${String(m.importance).padStart(3)} ${m.factionIds.map(f => f.split(':')[1]).join(',').padEnd(7)} ${m.bodyName ?? ''} ${m.n ?? ''} ${m.detail ?? ''} ${m.clip?.path ?? ''}`).join('\n'));
+eq('timeline conforms to the contract and its invariants', [checkEndingShape(tp, CONTRACT), checkEndingInvariants(tp)], [[], []]);
+check('at most 16 moments, at least 10 in a rich game', TL.length <= 16 && TL.length >= 10, TL.length);
+eq('start is first (tick 0, n = empires) and victory last (game end, detail = how, [winner])',
+  [TL[0].kind, TL[0].tick, TL[0].n, TL.at(-1).kind, TL.at(-1).tick, TL.at(-1).detail, TL.at(-1).factionIds],
+  ['start', 0, 5, 'victory', 1000, 'chancellor', [tf.W]]);
+check('ordered by tick', TL.every((m, i) => !i || TL[i - 1].tick <= m.tick));
+{
+  const spacing = 15;   // 1.5% of 1000 ticks
+  let bad = [];
+  for (const a of TL) for (const b of TL) {
+    if (a.id >= b.id) continue;
+    const dt = Math.abs(a.tick - b.tick);
+    if (dt === 0) bad.push(['same tick', a.id, b.id]);
+    if (a.kind === b.kind && dt < spacing && a.factionIds.some(f => b.factionIds.includes(f))) bad.push(['too close', a.id, b.id]);
+  }
+  check('spacing: no two of a kind about the same empire within 1.5% of the game, none on the same tick', bad.length === 0, bad);
+}
+eq('the second betrayal 6 ticks after the first is not told (spacing)', [TL.filter(m => m.kind === 'pact_broken' && m.tick >= 440 && m.tick < 460).length, !!moment(TL, 'pact_broken', 446)], [1, false]);
+eq('lead: only the lasting changes (W@160 n=8, B@500 n=10); not the brief G lead, not W@100, not the first leader',
+  TL.filter(m => m.kind === 'lead').map(m => [m.tick, ...m.factionIds, m.n]), [[160, tf.W, 8], [500, tf.B, 10]]);
+eq('first blood: the earliest EMPIRE hull lost (tick 40, killer first), not the Leviathan\'s at 3',
+  TL.filter(m => m.kind === 'first_blood').map(m => [m.tick, m.factionIds, m.bodyName, m.detail]), [[40, [tf.W, tf.R], 'Mars', 'frigate']]);
+eq('war: the first war at 60 (R on W); the monster\'s "war" at 62 is never told', [idsOf(moment(TL, 'war', 60)), !!moment(TL, 'war', 62)], [[tf.R, tf.W], false]);
+eq('a pact-breaking war is told once, as the betrayal', [TL.filter(m => m.tick === 440).map(m => [m.kind, m.factionIds, m.detail])], [[['pact_broken', [tf.B, tf.W], 'nap']]]);
+eq('a standalone broken pact', [moment(TL, 'pact_broken', 520)?.factionIds, moment(TL, 'pact_broken', 520)?.detail], [[tf.G, tf.R], 'defense_pact']);
+eq('eliminations: fallen first, then who took the last world; n = its peak worlds',
+  TL.filter(m => m.kind === 'eliminated').map(m => [m.tick, m.factionIds, m.n]),
+  [[300, [tf.P], 2], [700, [tf.R, tf.W], 4], [900, [tf.G, tf.B], 7]]);
+eq('a passed war authorization is a bill (proposer, target); failed bills and slider laws are not',
+  TL.filter(m => m.kind === 'bill').map(m => [m.tick, m.factionIds, m.detail]), [[420, [tf.W, tf.B], 'war_authorization']]);
+check('the winning chancellor vote is the victory, not a moment of its own', !TL.some(m => m.kind === 'chancellor'));
+check('importance orders the story: the biggest battle outranks every non-forced moment',
+  TL.filter(m => !['start', 'victory'].includes(m.kind)).every(m => m.importance <= moment(TL, 'battle', 450).importance));
+
+console.log('-- timeline: clips --');
+const battles = TL.filter(m => m.kind === 'battle');
+eq('battle moments: the 3 biggest + the last stand, each by hulls lost', battles.map(m => [m.tick, m.bodyName, m.n]),
+  [[450, 'Mars', 50], [650, 'Europa', 30], [800, 'Venus', 40], [880, 'Pluto', 30]]);
+check('a battle that is not big and not before an elimination is no moment', !TL.some(m => m.bodyName === 'Luna'));
+eq('battle factions: the victor first, then the losers', idsOf(moment(TL, 'battle', 450)), [tf.W, tf.R, tf.B]);
+eq('house link reused: path, battle, shots, hulls',
+  moment(TL, 'battle', 450).clip, { path: '/recap/HOUSE_BIG_TOKEN_0001', battleId: 'tb_big', shots: 900, shipsLost: 50 });
+eq('no recorded frames: the moment stays, the clip does not (and nothing is minted)', [moment(TL, 'battle', 800).clip, await allRows('tb_noframes')], [null, 0]);
+const midClip = moment(TL, 'battle', 650).clip;
+check('a replayable battle with no house link gets one, minted (a player\'s own link is not the house\'s)',
+  midClip && /^\/recap\/[A-Za-z0-9_-]{16,}$/.test(midClip.path) && !midClip.path.includes('USER_MADE') && midClip.battleId === 'tb_mid', midClip);
+eq('exactly one house row for it, plus the player\'s own', [await houseRows('tb_mid'), await allRows('tb_mid')], [1, 2]);
+eq('a REVOKED house link is not re-minted and gives no clip', [moment(TL, 'battle', 880).clip, await houseRows('tb_laststand'), await allRows('tb_laststand')], [null, 1, 1]);
+const again = await buildEnding(env, T, 'usr_bob_002');
+eq('two viewers opening the page at once mint ONE token between them; a third read mints nothing and hands out the same link',
+  [await houseRows('tb_mid'), moment(tpTwin.timeline, 'battle', 650).clip.path, moment(again.timeline, 'battle', 650).clip.path],
+  [1, midClip.path, midClip.path]);
+eq('the unselected battle\'s link is untouched', await allRows('tb_small'), 1);
+check('no battle id used as a link anywhere', !JSON.stringify(tp).match(/"path":"[^"]*tb_/));
+eq('isMe follows the viewer in the timeline game too', [tp.factions.find(f => f.isMe)?.id, again.factions.find(f => f.isMe)?.id], [tf.W, tf.R]);
+
+const tlead = await buildEnding(env, LD, 'usr_alice_001');
+eq('lead: a brief overtake (Y@100, 40 ticks) is not a moment; X retaking it and Z overtaking both are',
+  tlead.timeline.filter(m => m.kind === 'lead').map(m => [m.tick, m.factionIds, m.n]), [[140, [lf.X], 6], [500, [lf.Z], 8]]);
+
+console.log('-- timeline: the world --');
+const tw = await buildEnding(env, W5, 'usr_alice_001');
+check('world game builds and conforms', !tw.error && checkEndingShape(tw, CONTRACT).length === 0 && checkEndingInvariants(tw).length === 0, tw.error ?? checkEndingShape(tw, CONTRACT).concat(checkEndingInvariants(tw)));
+const WL = tw.timeline;
+console.log(WL.map(m => `   ${String(m.tick).padStart(4)} ${m.kind.padEnd(12)} ${String(m.importance).padStart(3)} ${m.factionIds.map(f => f.split(':')[1]).join(',').padEnd(7)} ${m.bodyName ?? ''} ${m.n ?? ''} ${m.detail ?? ''}`).join('\n'));
+eq('the Leviathan: arrives, strikes (cause kaiju; none of it is an empire), dies to the empire named in the payload',
+  WL.filter(m => m.kind === 'leviathan').map(m => [m.tick, m.detail, m.bodyName, m.n, m.factionIds]),
+  [[260, 'arrives', 'MK 2', null, []], [300, 'strike', 'MK 2', 2, []], [330, 'dies', 'Weywot', null, [wf.W]]]);
+eq('a sun gate opens; the first crossing is by an empire (the second crossing is not told)',
+  WL.filter(m => m.kind === 'gate').map(m => [m.tick, m.detail, m.bodyName, m.n, m.factionIds]),
+  [[180, 'opened', 'Centauri', 1, []], [190, 'first_crossing', 'Centauri', null, [wf.B]]]);
+eq('the Dyson Sphere begun and a milestone (a third megastructure moment yields to the cap of two)',
+  WL.filter(m => m.kind === 'megastructure').map(m => [m.tick, m.detail, m.n, m.factionIds]),
+  [[250, 'dyson_sphere', 0, [wf.W]], [400, 'dyson_sphere', 25, [wf.W]]]);
+eq('ONE discovery, the most valuable by an empire (an observer\'s equal find is ignored)',
+  WL.filter(m => m.kind === 'discovery').map(m => [m.tick, m.detail, m.bodyName, m.factionIds]), [[70, 'ancient_capital', 'Aya', [wf.G]]]);
+eq('a non-winning chancellor election; an observer\'s embargo is ignored',
+  [WL.filter(m => m.kind === 'chancellor').map(m => [m.tick, m.factionIds]), WL.some(m => m.kind === 'bill')], [[[200, [wf.G]]], false]);
+eq('past a dozen moments only the weighty stay: the defense pact made it in, the minor NAP after it did not',
+  [WL.length, WL.filter(m => m.kind === 'pact').map(m => [m.tick, m.detail, m.factionIds])], [12, [[120, 'defense_pact', [wf.W, wf.B]]]]);
+eq('a built megastructure is its builder\'s moment (kind, 100% done); an ancient one is nobody\'s',
+  p.timeline.filter(m => m.kind === 'megastructure').map(m => [m.tick, m.detail, m.n, m.factionIds]), [[150, 'null_field', 100, [A]]]);
+eq('a quiet game keeps its pacts, with their kind', p.timeline.filter(m => m.kind === 'pact').map(m => [m.tick, m.detail, m.factionIds]), [[30, 'defense_pact', [A, B]]]);
+eq('engineering victory', [WL.at(-1).detail, WL.at(-1).tick], ['engineering', 500]);
+
+console.log('-- timeline: everywhere --');
+const everyTimeline = [tp, tw, p, lg, obs];
+const seats = [M, tf.mon, tf.obs, wf.mon, wf.obs];
+check('no monster or observer seat in any moment of any game',
+  everyTimeline.every(x => x.timeline.every(m => m.factionIds.every(f => !seats.includes(f)))));
+check('no user ids, emails or display names in any timeline',
+  !USERS.flat().concat(['secret', 'example.test', 'DisplayName']).some(n => JSON.stringify(everyTimeline.map(x => x.timeline)).includes(n)));
+eq('a game with no history still has its start and its end', lg.timeline.map(m => [m.kind, m.tick, m.detail, m.factionIds]),
+  [['start', 0, null, []], ['victory', 6000, 'domination', [X]]]);
+
 console.log('-- cost --');
 DB.queries = 0;
 const t0 = Date.now();
 await buildEnding(env, L, 'usr_cara_003');
 const stmts = DB.queries;
 check(`a 6000-tick read prepares ${stmts} statements (two round trips: 2 parallel + 1 batch) in ${Date.now() - t0} ms`,
-  stmts <= 30 && Date.now() - t0 < 1500, stmts);
+  stmts <= 40 && Date.now() - t0 < 1500, stmts);
 
 console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILED`);
 process.exit(failures === 0 ? 0 : 1);

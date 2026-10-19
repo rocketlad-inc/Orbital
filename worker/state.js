@@ -73,6 +73,8 @@ export const SHIP_SENSOR_RANGE = {
   corvette: 150 * SENSOR_SCALE, frigate: 200 * SENSOR_SCALE,
   destroyer: 175 * SENSOR_SCALE, freighter: 100 * SENSOR_SCALE,
   colony: 75 * SENSOR_SCALE,
+  // A missile salvo (missiles.js) sees nothing: it is a warhead, not a probe.
+  missile: 0,
 };
 export const SETTLEMENT_SENSOR_RANGE = { city: 250 * SENSOR_SCALE, station: 400 * SENSOR_SCALE };
 export const DEFAULT_SHIP_SENSOR_RANGE = 25;
@@ -1129,6 +1131,8 @@ const shipsP = env.DB
               -- animation at this id.
               s.last_target_id,
               s.icon_variant, s.parts_json,
+              -- A missile salvo's size (missiles.js); NULL on every hull.
+              s.missile_count,
               s.strike_target_body_id, s.strike_ready_tick, s.strike_mode,
               -- Refit propagation (§2): non-null means this hull refits
               -- to that design (and pays the fee) at its next friendly
@@ -1381,6 +1385,9 @@ const settlementsP = env.DB
               default_build_order, default_build_order_body_id,
               default_build_order_route_id, default_build_order_fleet_id,
               buildings_json, building_order_json, building_backlog_json,
+              -- The missile silo (0177): magazine, queue, auto-defence.
+              -- Blanked below for anyone but the owner.
+              missile_stock, missile_orders_json, missile_auto, missile_reserve,
               destroyed_at_tick, wrecked_at_tick
          FROM game_settlements
         WHERE game_id = ?1
@@ -1807,6 +1814,12 @@ const tradeRoutesP = env.DB
   // Settlements: same visibility set as ships/bodies above.
   const settlementRows = (await settlementsP).results ?? [];
   const settlements = settlementRows.filter(r => r.destroyed_at_tick == null);
+  // A rival's magazine is not intel anybody has: only the owner sees it.
+  for (const r of settlements) {
+    if (r.owner_faction_id !== me.id) {
+      r.missile_stock = null; r.missile_orders_json = null; r.missile_auto = null; r.missile_reserve = null;
+    }
+  }
   // RUINS (0142): dead settlements that warships left standing. Slim --
   // what the map and the world menu need to offer SEIZE / RAZE.
   // owner_faction_id is the FORMER owner.

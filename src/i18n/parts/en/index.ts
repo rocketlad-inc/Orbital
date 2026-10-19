@@ -18,7 +18,7 @@ export const PART_PREFIXES: Record<string, string[]> = {
   ship: ['ship.', 'fleet.', 'grp.'],
   map: ['map.', 'body.', 'outliner.', 'topbar.', 'dock.', 'threats.', 'settle.', 'megastructure.', 'meteoroid.', 'worldmenu.'],
   econ: ['build.', 'tech.', 'econ.', 'trade.', 'market.', 'route.'],
-  social: ['senate.', 'comms.', 'faction.', 'standing.', 'captains.', 'notify.', 'profile.', 'hangar.', 'roomlobby.', 'shell.', 'bot.', 'feed.'],
+  social: ['senate.', 'comms.', 'faction.', 'standing.', 'captains.', 'notify.', 'profile.', 'hangar.', 'roomlobby.', 'shell.', 'bot.', 'feed.', 'invite.'],
   review: ['review.', 'theatre.', 'replay.', 'story.', 'recap.', 'eventlog.', 'situation.', 'combat.', 'discovery.', 'ending.'],
   guide: ['tutorial.', 'howto.', 'site.', 'banner.', 'errorboundary.', 'saveload.', 'mp.', 'landing.'],
   data: ['data.'],

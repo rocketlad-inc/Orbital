@@ -123,7 +123,7 @@ describe('F · build rules', () => {
   test('F1 [P0]: surface column only on city-capable bodies', () => {
     // shields joined the surface column 2026-08-05 — a city-only
     // building, so a no-surface world must NOT offer it.
-    expect(columnsFor(EARTH).surface).toEqual(['forge', 'mint', 'lab', 'shields']);
+    expect(columnsFor(EARTH).surface).toEqual(['forge', 'mint', 'lab', 'shields', 'missile_silo']);
     expect(columnsFor(SATURN).surface).toEqual([]);
     expect(columnsFor(SATURN).orbit).not.toContain('shields');
   });

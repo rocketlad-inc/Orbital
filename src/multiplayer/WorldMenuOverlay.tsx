@@ -47,6 +47,7 @@ import { StructureIcon, StructureScaffold } from '../components/StructureIcons';
 import { progressOf as progressOfSite } from '../game/megastructures';
 import { composedBodyFlavor, bodyImmovableNote } from '../game/bodyFlavor';
 import { TransferTargetPicker } from '../components/ShipPanel';
+import { WmSilo, MISSILES_PER_LEVEL } from './WmSilo';
 import { Body, BuildingKind, Settlement, SettlementType, Ship } from '../types';
 import { bodyPosition } from '../physics/orbitalMechanics';
 import { isRevealedWarpGate } from '../render/mapRenderer';
@@ -425,6 +426,20 @@ export const WorldMenuOverlay: React.FC = () => {
   // Per SETTLEMENT, not per world: a world can be a rival's while one of
   // its settlements is yours (settlementControl.ts).
   const { myCity, myStation, canCommand } = worldControl(here);
+  // THE MISSILE SILO (WmSilo): a city with one gets a second tab on the
+  // bottom box, beside the yard.
+  const [bottomTab, setBottomTab] = useState<'yard' | 'silo'>('yard');
+  const siloLevel = Number(myCity?.buildings?.missile_silo ?? 0);
+  const siloTabs = siloLevel > 0 && myCity?.missileSilo ? (
+    <div className="wm-btabs" role="tablist" aria-label={t('worldmenu.silo.aria')}>
+      <button type="button" role="tab" aria-selected={bottomTab !== 'silo'} className={bottomTab !== 'silo' ? 'is-on' : ''}
+        onClick={() => setBottomTab('yard')}>{t('worldmenu.silo.tabYard')}</button>
+      <button type="button" role="tab" aria-selected={bottomTab === 'silo'} className={bottomTab === 'silo' ? 'is-on' : ''}
+        onClick={() => setBottomTab('silo')}>
+        {t('worldmenu.silo.tabSilo', { n: myCity.missileSilo.stock, cap: MISSILES_PER_LEVEL * siloLevel })}
+      </button>
+    </div>
+  ) : null;
   // SLOT TAKEN, BY ANYONE. The server's rule is one city and one station
   // PER BODY with no owner filter (actions.js: "this body already has a
   // <type> — only one <type> per body"), so a rival's city occupies the
@@ -566,7 +581,8 @@ export const WorldMenuOverlay: React.FC = () => {
   const COL_W = 168, BTN_H = 54;
   const leftColX = Math.max(railW + 10, cx - cr - COL_W - 26);
   // Column stack height: label (18) + up to 4 buttons (40 + 9 gap).
-  const COL_MAX_H = 18 + 4 * (BTN_H + 9);
+  // Five buttons since the Missile Silo (2026-10-19).
+  const COL_MAX_H = 18 + 5 * (BTN_H + 9);
   // Fleet panel lives with `bottom: 12px`; its measured height (state
   // above) bounds where the surface column can end.
   const colBottomLimit = vh - chromeH.fleet - 20;   // last y a col button can occupy
@@ -1149,7 +1165,7 @@ export const WorldMenuOverlay: React.FC = () => {
                 // dome over the whole settlement, drawn by the closeup
                 // pass. Without this it would fall back to frac 0 and
                 // aim into the gap between MINT and LAB.
-                if (k === 'shields') return null;
+                if (k === 'shields' || k === 'missile_silo') return null;
                 const to = partPos(PART_FRACS[k] ?? 0);
                 if (to.y > vh - 40) return null;
                 const mx = (from.x + to.x) / 2;
@@ -1172,7 +1188,9 @@ export const WorldMenuOverlay: React.FC = () => {
            the thing being scouted. The FOUND CITY / BUILD STATION
            affordances live in the columns and are untouched — settling
            is still how you earn this box. */}
-      {(myCity || myStation) && (
+      {(myCity || myStation) && (siloTabs && bottomTab === 'silo' && myCity ? (
+        <WmSilo city={myCity} body={body} mobile={mobile} tabs={siloTabs} onErr={setErrMsg} />
+      ) : (
         <WmFleet
           bodyId={body.id}
           mobile={mobile}
@@ -1181,8 +1199,9 @@ export const WorldMenuOverlay: React.FC = () => {
           railW={railW}
           onErr={setErrMsg}
           onNote={setNoteMsg}
+          tabs={siloTabs}
         />
-      )}
+      ))}
     </div>
   );
 };
@@ -1200,7 +1219,9 @@ const WmFleet: React.FC<{
   railW: number; onErr: (m: string | null) => void;
   /** Neutral news for the player, e.g. where a refund went. */
   onNote?: (m: string | null) => void;
-}> = ({ bodyId, mobile, isMine, hasStation, railW, onErr, onNote }) => {
+  /** The YARD / MISSILE SILO tabs, when this city has a silo. */
+  tabs?: React.ReactNode;
+}> = ({ bodyId, mobile, isMine, hasStation, railW, onErr, onNote, tabs }) => {
   useI18n();
   const { gameState, updateGameState } = useGameContext();
   // Live view for async rollbacks (a poll may land while the POST flies).
@@ -1779,6 +1800,7 @@ const WmFleet: React.FC<{
       data-testid="wm-fleet"
       data-tutorial-id="wm-build"
     >
+      {tabs}
       {/* SETTINGS STRIP. Slots, the name field and ON COMPLETION are one
           thing -- configuration for the NEXT hull you queue -- so they sit
           together above the two content panes rather than competing with

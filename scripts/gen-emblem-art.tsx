@@ -29,7 +29,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { initWasm, Resvg } from '@resvg/resvg-wasm';
 import { emblemSvgElement } from '../src/components/FactionEmblem';
-import { EMBLEM_IDS, PREMIUM_EMBLEM_IDS } from '../src/game/emblems';
+import { EMBLEM_IDS, PREMIUM_EMBLEM_IDS, EARNED_EMBLEM_IDS } from '../src/game/emblems';
 
 const require = createRequire(import.meta.url);
 await initWasm(readFileSync(require.resolve('@resvg/resvg-wasm/index_bg.wasm')));
@@ -38,7 +38,7 @@ const MASK = 24;
 // The browser bake's threshold, so the free masks keep their shapes.
 const ALPHA_ON = 110;
 
-const ids = [...EMBLEM_IDS, ...PREMIUM_EMBLEM_IDS];
+const ids = [...EMBLEM_IDS, ...PREMIUM_EMBLEM_IDS, ...EARNED_EMBLEM_IDS];
 const svgs: Record<string, string> = {};
 const masks: Record<string, string> = {};
 for (const id of ids) {

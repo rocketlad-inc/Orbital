@@ -391,6 +391,39 @@ async function handleOverview(req, env, { session }) {
       now - 7 * DAY_MS),
   ]);
 
+  // Invites, last 30 days (0175): links opened, the friends they brought
+  // and whether those friends played, shares by where they happened, how
+  // seats were taken, and who brings people in. Opens carry no account,
+  // so they cannot be filtered for robots; everything else is.
+  const inv0 = now - 30 * DAY_MS;
+  const [invOpens, invSignups, invShares, invTop, invSeats] = await Promise.all([
+    one(`SELECT COUNT(*) AS opens, COUNT(DISTINCT code) AS links FROM invite_opens
+          WHERE opened_at >= ?1 AND code IN (SELECT invite_code FROM rooms WHERE invite_code IS NOT NULL)`, inv0),
+    one(`SELECT COUNT(*) AS signed_up,
+                COALESCE(SUM(EXISTS (SELECT 1 FROM game_factions f WHERE f.user_id = u.id)), 0) AS played,
+                COALESCE(SUM(u.referred_how = 'link'), 0) AS named,
+                COUNT(DISTINCT u.referred_by) AS recruiters
+           FROM users u
+          WHERE u.signup_invite_code IS NOT NULL AND u.created_at >= ?1 AND ${notQa('u.email')}`, inv0),
+    q(`SELECT e.kind, COALESCE(json_extract(e.payload, '$.from'), 'other') AS place,
+              COUNT(*) AS n, COUNT(DISTINCT e.user_id) AS players
+         FROM analytics_events e JOIN users u ON u.id = e.user_id
+        WHERE e.kind IN ('ui/invite-share', 'ui/invite-copy') AND e.created_at_ms >= ?1 AND ${notQa('u.email')}
+        GROUP BY 1, 2`, inv0),
+    q(`SELECT r.display_name AS name, COUNT(*) AS invited,
+              SUM(EXISTS (SELECT 1 FROM game_factions f WHERE f.user_id = u.id)) AS played,
+              SUM(u.referred_how = 'link') AS named
+         FROM users u JOIN users r ON r.id = u.referred_by
+        WHERE u.created_at >= ?1 AND ${notQa('u.email')}
+        GROUP BY u.referred_by
+        ORDER BY invited DESC, played DESC
+        LIMIT 10`, inv0),
+    q(`SELECT COALESCE(m.join_method, 'unknown') AS method, COUNT(*) AS n
+         FROM room_members m JOIN users u ON u.id = m.user_id
+        WHERE m.joined_at >= ?1 AND ${notQa('u.email')}
+        GROUP BY 1 ORDER BY n DESC`, inv0),
+  ]);
+
   // 7x24 UTC grid; the client shifts it to the viewer's clock.
   const heatGrid = Array.from({ length: 7 }, () => new Array(24).fill(0));
   for (const r of heat) {
@@ -463,6 +496,17 @@ async function handleOverview(req, env, { session }) {
     usage: usage.slice(0, 80),
     cohorts,
     sources,
+    invites: {
+      opens: invOpens?.opens ?? 0,
+      links: invOpens?.links ?? 0,
+      signed_up: invSignups?.signed_up ?? 0,
+      played: invSignups?.played ?? 0,
+      named: invSignups?.named ?? 0,
+      recruiters: invSignups?.recruiters ?? 0,
+      shares: invShares,
+      top: invTop,
+      seats: invSeats,
+    },
     journey: {
       signed_up: journey?.signed_up ?? 0,
       eligible_1d: journey?.e1 ?? 0,
@@ -942,7 +986,8 @@ async function handleCommissionFunnel(req, env, { session, url }) {
               COUNT(*) AS n, COUNT(DISTINCT e.user_id) AS players
          FROM analytics_events e JOIN users u ON u.id = e.user_id
         WHERE e.game_id IS NULL
-          AND e.kind IN ('ui/commission-view', 'ui/commission-click', 'ui/commission-dismiss', 'commission/checkout')
+          AND e.kind IN ('ui/commission-view', 'ui/commission-click', 'ui/commission-dismiss',
+                         'ui/commission-cancel', 'commission/checkout')
           AND e.created_at_ms >= ?1 AND ${notQa('u.email')}
         GROUP BY 1, 2, 3`, since),
     q(`SELECT COALESCE(surface, 'before tracking') AS surface, source, COUNT(*) AS n
@@ -955,8 +1000,8 @@ async function handleCommissionFunnel(req, env, { session, url }) {
          FROM users WHERE commission_ask_ms >= ?1 GROUP BY 1`, since),
   ]);
 
-  const SURFACES = ['profile', 'lobby-flag', 'designer', 'endgame', 'thanks-card', 'skins', 'discord-feed', 'map-maker', 'lobby-map'];
-  const row = (s) => ({ surface: s, views: 0, viewers: 0, clicks: 0, dismissals: 0, checkouts: 0, paid: 0 });
+  const SURFACES = ['profile', 'lobby-flag', 'designer', 'endgame', 'thanks-card', 'skins', 'discord-feed', 'map-maker', 'lobby-map', 'invite'];
+  const row = (s) => ({ surface: s, views: 0, viewers: 0, clicks: 0, dismissals: 0, checkouts: 0, cancelled: 0, expired: 0, paid: 0 });
   const by = new Map(SURFACES.map(s => [s, row(s)]));
   const get = (s) => { if (!by.has(s)) by.set(s, row(s)); return by.get(s); };
   for (const e of events) {
@@ -965,6 +1010,10 @@ async function handleCommissionFunnel(req, env, { session, url }) {
     else if (e.kind === 'ui/commission-click') r.clicks += e.n;
     else if (e.kind === 'ui/commission-dismiss') r.dismissals += e.n;
     else if (e.kind === 'commission/checkout' && e.result === 'started') r.checkouts += e.n;
+    // How an unpaid checkout ended: left from the Stripe page (the client
+    // logs it on its way back) or abandoned until Stripe expired it.
+    else if (e.kind === 'ui/commission-cancel') r.cancelled += e.n;
+    else if (e.kind === 'commission/checkout' && e.result === 'expired') r.expired += e.n;
   }
   for (const p of paid) if (p.source === 'stripe') get(p.surface).paid += p.n;
   return json({

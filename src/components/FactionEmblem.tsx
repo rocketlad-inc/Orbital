@@ -303,6 +303,19 @@ const GLYPHS: Record<EmblemId, (p: GlyphProps) => React.ReactElement> = {
       d="M0.8 17.5 Q16 9.4 31.2 17.5 Q16 25.6 0.8 17.5z M8.4 17.6 a1.4 1.4 0 1 0 0.01 0z M16 18.6 a1.4 1.4 0 1 0 0.01 0z M23.6 17.6 a1.4 1.4 0 1 0 0.01 0z" />
     <path d="M12.5 23.2 L19.5 23.2 L24 31.5 L8 31.5z" opacity="0.45" />
   </>, title),
+  // ---- Earned (0176): never sold ----
+  recruiter: ({ title }) => wrap(<>
+    {/* A beacon calling others in: a light on a mast, signal arcs either
+        side, a base. Earned when a friend you invited plays a game. */}
+    <circle cx="16" cy="9" r="4" />
+    <path d="M14.4 12.5 L17.6 12.5 L19.6 27 L12.4 27z" />
+    <rect x="8.5" y="26.5" width="15" height="4" rx="1.5" />
+    <path d="M9.6 3.4 A8 8 0 0 0 9.6 14.6" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" />
+    <path d="M22.4 3.4 A8 8 0 0 1 22.4 14.6" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" />
+    <path d="M5.4 0.9 A12.5 12.5 0 0 0 5.4 17.1" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" />
+    <path d="M26.6 0.9 A12.5 12.5 0 0 1 26.6 17.1" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" />
+  </>, title),
+
   // Double V — the Double Victory campaign's mark: two concentric V
   // bands, the outer enclosing the inner.
   //

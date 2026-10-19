@@ -36,7 +36,9 @@ export type EmblemId =
   | 'serpent' | 'swords' | 'atom' | 'hourglass' | 'compass'
   // The space wing (Oct 2026), also the Commission's.
   | 'binary' | 'station' | 'blackhole' | 'pulsar' | 'eclipse'
-  | 'satellite' | 'helmet' | 'saucer';
+  | 'satellite' | 'helmet' | 'saucer'
+  // Earned, not bought (0176): a friend you invited played a game.
+  | 'recruiter';
 
 /** Catalog order — drives the picker grid and the default rotation.
  *  25 entries against a max_players cap of 10 means uniqueness is always
@@ -65,6 +67,11 @@ export const PREMIUM_EMBLEM_IDS: EmblemId[] = [
   // The space wing (Oct 2026). Appended: picker order.
   'binary', 'station', 'blackhole', 'pulsar', 'eclipse', 'satellite', 'helmet', 'saucer',
 ];
+
+/** Earned emblems (0176): granted for something done, never sold, never
+ *  a default. The server keeps the grants (user_emblem_grants) and
+ *  refuses an earned emblem to anyone without one. */
+export const EARNED_EMBLEM_IDS: EmblemId[] = ['recruiter'];
 
 /** Human labels for tooltips and the Herald's prose. */
 export const EMBLEM_NAMES: Record<EmblemId, string> = {
@@ -110,11 +117,12 @@ export const EMBLEM_NAMES: Record<EmblemId, string> = {
   get satellite() { return tk('data.emblem.satellite', 'Satellite'); },
   get helmet() { return tk('data.emblem.helmet', 'Star Helmet'); },
   get saucer() { return tk('data.emblem.saucer', 'Saucer'); },
+  get recruiter() { return tk('data.emblem.recruiter', 'Recruiter'); },
   get doublev() { return tk('data.emblem.doublev', 'Double V'); },
   get rocket() { return tk('data.emblem.rocket', 'Rocket'); },
 };
 
-const EMBLEM_SET = new Set<string>([...EMBLEM_IDS, ...PREMIUM_EMBLEM_IDS]);
+const EMBLEM_SET = new Set<string>([...EMBLEM_IDS, ...PREMIUM_EMBLEM_IDS, ...EARNED_EMBLEM_IDS]);
 
 export function isEmblemId(v: unknown): v is EmblemId {
   return typeof v === 'string' && EMBLEM_SET.has(v);

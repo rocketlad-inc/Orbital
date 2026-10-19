@@ -104,6 +104,7 @@ export function openCommissionInBrowser(surface: CommissionSurface, opts: { gift
  *  same allow-list): a handoff naming anything else is not one of ours. */
 export const COMMISSION_SURFACES: readonly CommissionSurface[] = [
   'profile', 'lobby-flag', 'designer', 'endgame', 'thanks-card', 'skins', 'discord-feed', 'map-maker', 'lobby-map',
+  'invite',
 ];
 
 /** Surfaces that sell hosting on your own map: the thank-you after paying
@@ -114,7 +115,7 @@ const viewed = new Set<string>();
 
 /** Log a surface event: a view (once per surface per page load), a
  *  click, or a dismissal. Fire-and-forget, like all telemetry. */
-export function logCommission(surface: CommissionSurface, action: 'view' | 'click' | 'dismiss'): void {
+export function logCommission(surface: CommissionSurface, action: 'view' | 'click' | 'dismiss' | 'cancel'): void {
   if (action === 'view') {
     if (viewed.has(surface)) return;
     viewed.add(surface);

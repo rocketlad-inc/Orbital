@@ -15,7 +15,11 @@ export type ShipClassName = 'corvette' | 'frigate' | 'destroyer' | 'freighter' |
   | 'mega_destroyer' | 'mobile_foundry'
   // THE LEVIATHAN (worker/kaiju.js). Nobody builds or owns one: it is the
   // monster that carries the second sun gate in, and hunts worlds.
-  | 'kaiju';
+  | 'kaiju'
+  // A MISSILE SALVO in flight (worker/missiles.js): fired from a city's
+  // Missile Silo, never built in a yard, never fights; it lands or is shot
+  // down. Its size is ship.missileCount.
+  | 'missile';
 
 export interface ShipClassDef {
   className: ShipClassName;
@@ -256,6 +260,27 @@ const KAIJU: ShipClassDef = {
   size: 20,
 };
 
+const MISSILE: ShipClassDef = {
+  className: 'missile',
+  get displayName() { return tk('data.ship.missile.name', 'Missile salvo'); },
+  icon: '🚀',
+  get description() { return tk('data.ship.missile.desc', 'Missiles from a silo, in flight. Where they land, each deals 10 damage to every ship in that orbit.'); },
+  firepower: 0,
+  hp: 1,
+  pdcRating: 0,
+  range: 0,
+  // MIRRORS SHIP_COMBAT_STATS.missile in worker/factions.js.
+  damagePerTick: 0,
+  speed: 1,
+  fuelCapacity: 0,
+  speedModifier: 1,
+  cargoCapacity: 0,
+  cost: { fuel: 0, ore: 40, credits: 40 },
+  buildTime: 12,
+  canHarvest: false,
+  size: 4,
+};
+
 export const SHIP_CLASSES: Record<ShipClassName, ShipClassDef> = {
   corvette: CORVETTE,
   frigate: FRIGATE,
@@ -265,6 +290,7 @@ export const SHIP_CLASSES: Record<ShipClassName, ShipClassDef> = {
   mega_destroyer: MEGA_DESTROYER,
   mobile_foundry: MOBILE_FOUNDRY,
   kaiju: KAIJU,
+  missile: MISSILE,
 };
 
 /** Hulls a SHIPYARD can be told to make.
@@ -304,6 +330,7 @@ export const SHIP_UPKEEP: Record<ShipClassName, { credits: number; ore: number }
   mega_destroyer: { credits: 6,    ore: 6 },
   mobile_foundry: { credits: 5,    ore: 5 },
   kaiju:          { credits: 0,    ore: 0 },
+  missile:        { credits: 0,    ore: 0 },
 };
 
 /**

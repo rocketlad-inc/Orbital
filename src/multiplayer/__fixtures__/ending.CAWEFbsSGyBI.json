@@ -413,5 +413,176 @@
         }
       ]
     }
+  ],
+  "timeline": [
+    {
+      "id": "m1",
+      "kind": "start",
+      "tick": 0,
+      "factionIds": [],
+      "n": 6,
+      "detail": null,
+      "bodyName": null,
+      "clip": null,
+      "importance": 100
+    },
+    {
+      "id": "m2",
+      "bodyName": null,
+      "n": null,
+      "detail": null,
+      "clip": null,
+      "factionIds": [
+        "CAWEFbsSGyBI:f4",
+        "CAWEFbsSGyBI:f2"
+      ],
+      "kind": "war",
+      "tick": 81,
+      "importance": 85
+    },
+    {
+      "id": "m3",
+      "bodyName": "Earth",
+      "n": null,
+      "detail": "corvette",
+      "clip": null,
+      "factionIds": [
+        "CAWEFbsSGyBI:f4",
+        "CAWEFbsSGyBI:f2"
+      ],
+      "kind": "first_blood",
+      "tick": 88,
+      "importance": 55
+    },
+    {
+      "id": "m4",
+      "bodyName": null,
+      "n": null,
+      "detail": null,
+      "clip": null,
+      "factionIds": [
+        "CAWEFbsSGyBI:f0",
+        "CAWEFbsSGyBI:f5"
+      ],
+      "kind": "war",
+      "tick": 92,
+      "importance": 60
+    },
+    {
+      "id": "m5",
+      "bodyName": "Titan",
+      "n": 3,
+      "detail": null,
+      "clip": {
+        "path": "/recap/ytKY8rJjf-PN4Xbs2hJ1",
+        "battleId": "b_93_CAWEFbsSGyBI:titan",
+        "shots": 68,
+        "shipsLost": 3
+      },
+      "factionIds": [
+        "CAWEFbsSGyBI:f0",
+        "CAWEFbsSGyBI:f5"
+      ],
+      "kind": "battle",
+      "tick": 93,
+      "importance": 75
+    },
+    {
+      "id": "m6",
+      "bodyName": null,
+      "n": 1,
+      "detail": null,
+      "clip": null,
+      "factionIds": [
+        "CAWEFbsSGyBI:f5",
+        "CAWEFbsSGyBI:f0"
+      ],
+      "kind": "eliminated",
+      "tick": 106,
+      "importance": 56
+    },
+    {
+      "id": "m7",
+      "bodyName": "Venus",
+      "n": 6,
+      "detail": null,
+      "clip": {
+        "path": "/recap/I7Xcpq1ew3Vvc3tfBfWs",
+        "battleId": "b_165_CAWEFbsSGyBI:venus",
+        "shots": 154,
+        "shipsLost": 6
+      },
+      "factionIds": [
+        "CAWEFbsSGyBI:f4",
+        "CAWEFbsSGyBI:f1"
+      ],
+      "kind": "battle",
+      "tick": 165,
+      "importance": 95
+    },
+    {
+      "id": "m8",
+      "bodyName": null,
+      "n": 2,
+      "detail": null,
+      "clip": null,
+      "factionIds": [
+        "CAWEFbsSGyBI:f1",
+        "CAWEFbsSGyBI:f4"
+      ],
+      "kind": "eliminated",
+      "tick": 194,
+      "importance": 47
+    },
+    {
+      "id": "m9",
+      "bodyName": "Varda",
+      "n": null,
+      "detail": "ancient_capital",
+      "clip": null,
+      "factionIds": [
+        "CAWEFbsSGyBI:f0"
+      ],
+      "kind": "discovery",
+      "tick": 624,
+      "importance": 75
+    },
+    {
+      "id": "m10",
+      "bodyName": "Cygnus X-1",
+      "n": 1,
+      "detail": "opened",
+      "clip": null,
+      "factionIds": [],
+      "kind": "gate",
+      "tick": 647,
+      "importance": 60
+    },
+    {
+      "id": "m11",
+      "bodyName": "Centauri",
+      "n": null,
+      "detail": "first_crossing",
+      "clip": null,
+      "factionIds": [
+        "CAWEFbsSGyBI:f0"
+      ],
+      "kind": "gate",
+      "tick": 764,
+      "importance": 55
+    },
+    {
+      "id": "m12",
+      "kind": "victory",
+      "tick": 6233,
+      "factionIds": [
+        "CAWEFbsSGyBI:f0"
+      ],
+      "n": null,
+      "detail": "domination",
+      "bodyName": null,
+      "clip": null,
+      "importance": 100
+    }
   ]
 }

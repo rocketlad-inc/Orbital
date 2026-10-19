@@ -710,6 +710,8 @@ async function handleMe(req, env) {
     // Ship looks kept from before C-I joined the Commission (0166), as
     // 'class:letter'. UI only; every save path re-checks the grant.
     look_grants: await store.lookGrants(env, session.user_id).catch(() => []),
+    // Earned emblems (0176), granted here the first time they are due.
+    emblem_grants: await invites.emblemGrants(env, session.user_id),
     // Account-default colony and station skins (0154); null = the free look.
     ...(await env.DB.prepare('SELECT city_skin, station_skin FROM users WHERE id = ?')
       .bind(session.user_id).first().catch(() => null) ?? {}),
@@ -1074,8 +1076,8 @@ async function createRoom(env, session, { name, maxPlayers, passwordHash = null,
       .bind(...[id, name, session.user_id, 'lobby', maxPlayers, now, now, inviteCode, passwordHash, quickJoin ? 1 : 0,
         ...(customMap ? [customMap.id, customMap.json] : [])]),
     env.DB
-      .prepare('INSERT INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)')
-      .bind(id, session.user_id, now),
+      .prepare(`INSERT INTO room_members (room_id, user_id, joined_at, join_method) VALUES (?, ?, ?, ?)`)
+      .bind(id, session.user_id, now, quickJoin ? 'quick' : 'host'),
   ]);
   // The host's name bank from their last game (worker/namePoolHistory.js).
   await carryNamePools(env, id, session.user_id);
@@ -1272,7 +1274,13 @@ async function handleDeleteRoom(req, env, session, roomId) {
   return json({ ok: true });
 }
 
-async function handleJoinRoom(req, env, session, roomId) {
+// opts.viaCode: the caller holds the room's invite code. Codes are shown
+// only to the room's members and cannot feasibly be guessed (32^8), so a
+// code is proof of an invitation and the password is not asked again
+// (Oct 19 insight report, Invites idea 2: "one secret"). The browse door
+// (POST /api/rooms/:id/join) still asks for it.
+async function handleJoinRoom(req, env, session, roomId, opts = {}) {
+  const method = opts.viaCode ? 'code' : 'browse';
   if (!ROOM_ID_RE.test(roomId)) return err(400, 'bad_request', 'invalid room id');
   const room = await env.DB
     .prepare('SELECT id, max_players, status, password_hash FROM rooms WHERE id = ?')
@@ -1304,7 +1312,7 @@ async function handleJoinRoom(req, env, session, roomId) {
   // Password gate: only enforce for users brand-new to the room (not
   // already a member AND not a returning player). A returning player
   // already passed this gate when they originally joined.
-  if (!already && !returningPlayer && room.password_hash) {
+  if (!already && !returningPlayer && room.password_hash && !opts.viaCode) {
     const body = await readJson(req);
     const supplied = typeof body?.password === 'string' ? body.password : '';
     if (!supplied) return err(401, 'password_required', 'room is password-protected');
@@ -1322,12 +1330,12 @@ async function handleJoinRoom(req, env, session, roomId) {
       // worlds and the game could not seed (security review).
       const ins = await env.DB
         .prepare(
-          `INSERT OR IGNORE INTO room_members (room_id, user_id, joined_at)
-           SELECT ?1, ?2, ?3
+          `INSERT OR IGNORE INTO room_members (room_id, user_id, joined_at, join_method)
+           SELECT ?1, ?2, ?3, ?4
             WHERE (SELECT COUNT(*) FROM room_members WHERE room_id = ?1)
                 < (SELECT max_players FROM rooms WHERE id = ?1)`,
         )
-        .bind(roomId, session.user_id, Date.now())
+        .bind(roomId, session.user_id, Date.now(), method)
         .run();
       if ((ins.meta?.changes ?? 0) !== 1) return err(403, 'room_full', 'room is full');
     } else {
@@ -1360,7 +1368,7 @@ async function handleJoinByCode(req, env, session) {
     headers: req.headers,
     body: JSON.stringify({ password: body?.password }),
   });
-  return handleJoinRoom(inner, env, session, room.id);
+  return handleJoinRoom(inner, env, session, room.id, { viaCode: true });
 }
 
 async function handleRoomSnapshot(_req, env, _session, roomId) {
@@ -1420,6 +1428,7 @@ import * as store from './store.js';
 import * as customMaps from './customMaps.js';
 import * as skins from './skins.js';
 import * as commissionAsk_ from './commissionAsk.js';
+import * as invites from './invites.js';
 import * as economy from './economy.js';
 import * as heraldStrip from './heraldStrip.js';
 import * as battleCard from './battleCard.js';
@@ -1441,9 +1450,10 @@ import * as devlog from './devlog.js';
 import * as gameFeed from './gameFeed.js';
 import * as ending from './ending.js';
 import * as discoveryOffers from './discoveryOffers.js';
+import * as missiles from './missiles.js';
 import { carryNamePools } from './namePoolHistory.js';
 
-const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, studio, analytics, configAdmin, emailAdmin, emailLogin, store, skins, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed, customMaps, ending, discoveryOffers];
+const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, studio, analytics, configAdmin, emailAdmin, emailLogin, store, skins, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed, customMaps, ending, discoveryOffers, invites, missiles];
 
 function matchPattern(pattern, pathname) {
   if (typeof pattern === 'string') {
@@ -1469,6 +1479,32 @@ function matchPattern(pattern, pathname) {
   return groups;
 }
 
+/** 409 when a write names a missile salvo: in the path (/ships/:id) or as
+ *  a ship id anywhere the ship endpoints take one in a body. Null to go on.
+ *  A body that is not JSON names nothing. */
+async function refuseMissileOrders(req, params) {
+  const ids = new Set();
+  if (params.shipId) ids.add(params.shipId);
+  const type = req.headers.get('content-type') ?? '';
+  if (req.body && (type.includes('json') || type === '')) {
+    try {
+      const body = await req.clone().json();
+      const take = (v) => { if (typeof v === 'string' && v.includes(':')) ids.add(v); };
+      const walk = (o) => {
+        if (!o || typeof o !== 'object') return;
+        take(o.ship_id); take(o.shipId); take(o.flagship_id);
+        for (const k of ['ship_ids', 'shipIds', 'ships']) if (Array.isArray(o[k])) o[k].forEach(x => (typeof x === 'string' ? take(x) : walk(x)));
+        if (Array.isArray(o.orders)) o.orders.forEach(walk);
+        if (o.kind === 'ship') take(o.asset_id);
+      };
+      walk(body);
+    } catch { /* not JSON */ }
+  }
+  // Every salvo's id is `<game>:msl_...` (missiles.js handleLaunch), so the
+  // id alone says it: no read on the hot path of every ship order.
+  return [...ids].some(id => id.includes(':msl_')) ? err(409, 'missile', 'a missile salvo takes no orders') : null;
+}
+
 async function dispatchFeatureRoute(req, env, url, session) {
   for (const mod of FEATURE_MODULES) {
     if (!mod || !Array.isArray(mod.routes)) continue;
@@ -1478,6 +1514,14 @@ async function dispatchFeatureRoute(req, env, url, session) {
       if (params === null) continue;
       if (r.auth === 'required' && !session) {
         return err(401, 'unauthenticated', 'sign in required');
+      }
+      // A MISSILE SALVO TAKES NO ORDERS (missiles.js). It is a ship row so
+      // it can fly and be seen, which also makes it look orderable to every
+      // ship endpoint: a move, a stance, a fleet, a sale, a refit. One
+      // guard here instead of one in each of them.
+      if (req.method !== 'GET' && params.gameId) {
+        const refused = await refuseMissileOrders(req, params);
+        if (refused) return refused;
       }
       return r.handle(req, env, { url, session, params });
     }
@@ -2148,6 +2192,12 @@ export default {
       // no session yet; that is the point. The token is the credential.
       if (url.pathname === '/api/email/go' && (req.method === 'GET' || req.method === 'POST')) {
         return dispatchFeatureRoute(req, env, url, null);
+      }
+
+      // An invite link opened (worker/invites.js): counted whether or not
+      // the visitor is signed in yet, which is the point of counting it.
+      if (req.method === 'POST' && url.pathname === '/api/invite/open') {
+        return dispatchFeatureRoute(req, env, url, await currentSession(req, env).catch(() => null));
       }
 
       // everything below requires a session

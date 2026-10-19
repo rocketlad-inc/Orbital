@@ -39,6 +39,8 @@ const KIND_MAP: Record<string, PendingFxKind> = {
   builds_destroyed: 'destruction',
   ship_detonated: 'detonation',
   asteroid_impact: 'impact',
+  // A missile salvo landing (missiles.js): the same blast at the body.
+  missile_strike: 'impact',
   // A discovery blooms at the body the moment you look at it — the whole
   // reason this queue exists is that these were going unnoticed.
   secret_discovered: 'discovery',

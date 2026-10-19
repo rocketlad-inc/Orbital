@@ -63,6 +63,7 @@ const GATE_AUTOPILOT_MIN_SAVING = 3;
 import { SHIP_COMBAT_STATS, parkPhaseFor, categorizeBodyForSecret, BODY_CATALOG } from './factions.js';
 import { launchCompletedMobileSites } from './megaLaunch.js';
 import { OFFER_KINDS, offerStatements, settleExpiredOffers } from './discoveryOffers.js';
+import { advanceMissileBuilds, resolveMissiles } from './missiles.js';
 // The salvaged destroyer is minted when a find is CLAIMED now
 // (discoveryOffers.js); re-exported for callers that import it from here.
 export { salvagedDestroyer } from './discoveryOffers.js';
@@ -3782,7 +3783,7 @@ export class Room {
     const cands = departures.filter(d =>
       d.rv_follow_ship_id == null && d.rv_meet_tick == null
       // The Death Star does not fit (handleGateTransit), nor the squid.
-      && d.ship_class !== 'mega_destroyer' && d.ship_class !== 'kaiju'
+      && d.ship_class !== 'mega_destroyer' && d.ship_class !== 'kaiju' && d.ship_class !== 'missile'
       // Trade legs (and escorts paced to them) are planned gate-aware
       // already; a manual LAUNCH TO is a crossing already.
       && !String(d.id).includes(':tr') && !String(d.id).includes(':gn_'));
@@ -4673,6 +4674,14 @@ export class Room {
       console.error('settlement-building completion pass failed', e);
     }
 
+    // 0.5-bis. Missile silos (missiles.js): a finished missile joins the
+    // magazine and the next one starts. Its own queue, never the city's.
+    try {
+      await advanceMissileBuilds(this.env, gameId, tick);
+    } catch (e) {
+      console.error('missile build pass failed', e);
+    }
+
     // 1. Build completions. Each row spawns one ship in a small circular
     //    orbit around the building body. Only ACTIVE rows complete —
     //    status='waiting' rows (queued beyond concurrency, see 0037)
@@ -5483,6 +5492,16 @@ export class Room {
       }
     }
 
+    // 2c-missile. MISSILES (missiles.js), right after arrivals and before
+    // anything else in orbit: silos shoot down incoming salvos, what gets
+    // through hits every ship in that orbit, and a silo set to + FLEETS
+    // fires on hostile ships that just landed (none of its own there).
+    try {
+      await resolveMissiles(this.env, gameId, tick, { peace: await this.peacePairs(gameId, tick) });
+    } catch (e) {
+      console.error('missile pass failed', e);
+    }
+
     // 2c-arrive. SCHEDULED DETONATION.
     //
     // The manual endpoint refuses a detonation mid-transfer ("wait for
@@ -5941,7 +5960,9 @@ export class Room {
                 s.captain_id, s.fleet_id, c.traits_json AS captain_traits, c.name AS captain_name
            FROM game_ships s
            LEFT JOIN game_captains c ON c.id = s.captain_id
-          WHERE s.game_id = ? AND s.status = 'active'`,
+          -- A missile salvo (missiles.js) never fights: it lands or is
+          -- shot down in the missile pass.
+          WHERE s.game_id = ? AND s.status = 'active' AND s.ship_class <> 'missile'`,
       )
       .bind(gameId)
       .all()).results ?? [];

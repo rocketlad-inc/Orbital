@@ -85,7 +85,7 @@ import { t as tr, tn as trn, tk as trk, fmtNumber, getLang } from '../i18n/core'
 // list is what a player can actually build. A kind missing here makes a
 // settlement read as "nothing to build" and get nudged as idle when it
 // still has an upgrade available.
-const CITY_BUILDINGS: BuildingKind[] = ['forge', 'mint', 'lab', 'shields'];
+const CITY_BUILDINGS: BuildingKind[] = ['forge', 'mint', 'lab', 'shields', 'missile_silo'];
 const STATION_BUILDINGS: BuildingKind[] = ['weapons', 'lab', 'shipyard'];
 
 /** Cheapest hull anyone can lay down — the floor for "can I build a

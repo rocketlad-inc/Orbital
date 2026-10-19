@@ -80,6 +80,7 @@
     "sim:tenplayers": "node sim/tenPlayers.mjs",
     "sim:discordloc": "esbuild sim/discordLocale.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/discordLocale.mjs && node node_modules/.cache/discordLocale.mjs",
     "sim:email": "esbuild sim/emailQuickJoin.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/emailQuickJoin.mjs && node node_modules/.cache/emailQuickJoin.mjs",
+    "sim:invites": "esbuild sim/invites.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/invites.mjs && node node_modules/.cache/invites.mjs",
     "sim:leave": "esbuild sim/lobbyLeave.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/lobbyLeave.mjs && node node_modules/.cache/lobbyLeave.mjs",
     "sim:fleetlock": "esbuild sim/fleetCombatLock.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/fleetCombatLock.mjs && node node_modules/.cache/fleetCombatLock.mjs",
     "sim:stationreach": "node sim/stationReach.mjs",

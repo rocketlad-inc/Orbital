@@ -10,6 +10,8 @@ import { tradesApi, apiFetch, RoomSnapshot } from './api';
 import { openScreen, logAction } from './telemetry';
 import { connectRoomSocket } from './roomSocket';
 import { t, tn } from '../i18n/core';
+import { shareInvite } from './invite';
+import { useIsMobile } from '../hooks/useIsMobile';
 import { useI18n } from '../i18n/react';
 
 // Multiplayer overlay UI mounted alongside the existing single-player React
@@ -124,6 +126,7 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
   // ACCOUNT section ("Sign Out"), and visually competed with the
   // Outliner + Comms toasts. Removed; signOut import goes with it.
   const { user } = useAuth();
+  const isMobile = useIsMobile();
   // Open/close state owned by the DockRail. `collapsed` is now derived
   // (kept for any descendant code paths that read it); setCollapsed
   // proxies to the rail so all open/close decisions funnel through one
@@ -238,7 +241,13 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
 
   async function copyInvite() {
     if (!invite?.code) return;
-    try { await navigator.clipboard.writeText(invite.code); } catch { /* ignore */ }
+    // A link that opens straight into this game, naming the host as the
+    // sender (worker/invites.js); the share sheet on a phone layout.
+    const r = await shareInvite({
+      code: invite.code, byUserId: user?.id, text: t('invite.text', { room: 'Orbital' }),
+      where: 'game', isMobile,
+    });
+    if (r === 'failed') return;
     setInviteCopied(true);
     setTimeout(() => setInviteCopied(false), 2500);
   }
@@ -643,7 +652,7 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
                 title={t('shell.invite.tip')}
                 style={{ fontSize: 11, letterSpacing: '0.04em' }}
               >
-                {inviteCopied ? `✓ ${invite.code}` : t('shell.invite')}
+                {inviteCopied ? t('shell.invite.done') : t('shell.invite')}
               </button>
             )}
             <button

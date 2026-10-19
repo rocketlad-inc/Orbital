@@ -53,7 +53,8 @@ export function columnsFor(body: Pick<Body, 'type'>): {
       // orbit instead — passive infrastructure, so losing it first costs
       // vision rather than a defence — which also keeps surface at the
       // four buttons COL_MAX_H budgets.
-      surface: ['forge', 'mint', 'lab', 'shields'],
+      // THE MISSILE SILO makes five (2026-10-19): COL_MAX_H budgets five.
+      surface: ['forge', 'mint', 'lab', 'shields', 'missile_silo'],
       orbit: ['weapons', 'shipyard', 'lab', 'telescope'],
     };
   }

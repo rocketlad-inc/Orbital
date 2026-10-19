@@ -15,6 +15,8 @@
 // link that got shared somewhere else still shows where it travelled.
 // ============================================================
 
+import { cleanInviteCode, stampReferral } from './invites.js';
+
 /** Lowercase token: letters, digits, dot, dash, underscore. */
 export function cleanTag(v, max = 40) {
   if (typeof v !== 'string') return null;
@@ -61,7 +63,8 @@ export function readAttribution(raw) {
   const from = cleanTag(raw.from);
   const utmSource = cleanTag(raw.utm_source);
   const referrer = sourceFromReferrer(raw.referrer);
-  const source = from ?? utmSource ?? (raw.invite === true ? 'invite' : null) ?? referrer ?? 'direct';
+  const inviteCode = cleanInviteCode(raw.invite_code);
+  const source = from ?? utmSource ?? (raw.invite === true || inviteCode ? 'invite' : null) ?? referrer ?? 'direct';
   const firstSeen = Number(raw.first_seen_ms);
   return {
     source,
@@ -69,6 +72,9 @@ export function readAttribution(raw) {
     referrer,
     landing: typeof raw.landing === 'string' ? raw.landing.slice(0, 100) : null,
     first_seen_ms: Number.isFinite(firstSeen) && firstSeen > 0 ? Math.floor(firstSeen) : null,
+    // Who sent the invite (0175): the room code and the ?by= on the link.
+    invite_code: inviteCode,
+    by: typeof raw.by === 'string' ? raw.by : null,
   };
 }
 
@@ -92,4 +98,5 @@ export async function stampSignupSource(db, userId, raw) {
   } catch (e) {
     console.error('stampSignupSource failed', e);
   }
+  if (a.invite_code) await stampReferral(db, userId, { inviteCode: a.invite_code, by: a.by });
 }
