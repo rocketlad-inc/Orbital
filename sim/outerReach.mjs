@@ -242,9 +242,19 @@ check('the relay is taken with the same breach-and-SEIZE rule',
   JSON.stringify(relayTaken).slice(0, 160));
 
 // ===== DERELICT CAPITAL ======================================================
+// A found ship waits for its finder's claim (discoveryOffers.js, 2026-10-18).
+async function claimFind(fid, world) {
+  const offer = await DB.prepare(`SELECT status FROM discovery_offers WHERE body_id = ? AND faction_id = ?`)
+    .bind(world, fid).first();
+  check('...the find waits as an offer until its finder claims it', offer?.status === 'pending', JSON.stringify(offer));
+  const { claimOffer } = await import('../worker/discoveryOffers.js');
+  const tick = Number((await DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(G).first()).current_tick);
+  await claimOffer(env, { gameId: G, bodyId: world, factionId: fid, tick });
+}
 const capWorld = at('ancient_capital').id;
 await park(A.id, capWorld, 'corvette');
 await runTick();
+await claimFind(A.id, capWorld);
 const relic = await DB.prepare(
   `SELECT ship_class, owner_faction_id, hp_max, damage_per_tick, parent_body_id FROM game_ships
     WHERE game_id = ? AND id = ?`).bind(G, `${capWorld}_relic`).first();
@@ -345,6 +355,7 @@ check('CONTROL: a neutral gate still cannot be taken', gateSeize?.error?.code ==
   check('a derelict warship is seeded', !!wreckWorld);
   await park(B.id, wreckWorld, 'corvette');
   await runTick();
+  await claimFind(B.id, wreckWorld);
   const wreck = await DB.prepare(
     `SELECT * FROM game_ships WHERE game_id = ? AND parent_body_id = ? AND ship_class = 'destroyer'`)
     .bind(G, wreckWorld).first();

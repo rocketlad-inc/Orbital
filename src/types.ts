@@ -1130,6 +1130,10 @@ export interface GameState {
    * shipped 30/20.
    */
   settlementCost?: { ore: number; credits: number; colonistMult: number };
+  /** MP: ships my empire found that wait for my claim or refusal
+   *  (worker/discoveryOffers.js). Unanswered by expiresTick, they are
+   *  claimed for me. Undefined in SP. */
+  discoveryOffers?: DiscoveryOffer[];
   /** How many freighters one trade route may hold, by my Society
    *  research (DESIGN-trade-v2 §5). Server-owned so the composer
    *  gates on the real ladder instead of hardcoding it. */
@@ -1495,6 +1499,19 @@ export interface ManeuverRenderHints {
   committedBurnColor: string;           // amber solid
   captureColor: string;                 // green
   escapeColor: string;                  // red
+}
+
+/** A found ship waiting for its finder's answer (worker/discoveryOffers.js). */
+export interface DiscoveryOffer {
+  /** Client (stripped) body id. */
+  bodyId: string;
+  bodyName: string;
+  kind: 'derelict_warship' | 'ancient_capital';
+  shipClass: 'destroyer' | 'mega_destroyer' | 'mobile_foundry';
+  offeredTick: number;
+  expiresTick: number;
+  /** What it would add to my fleet bill each tick, Senate law included. */
+  upkeep: { credits: number; ore: number };
 }
 
 /** Where the Leviathan is in its life (worker/kaiju.js game_kaiju.phase). */

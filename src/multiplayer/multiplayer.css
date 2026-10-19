@@ -1212,8 +1212,12 @@
   z-index: 6;
   display: flex;
   flex-direction: column;
-  background: rgba(8, 12, 18, 0.92);
-  backdrop-filter: blur(10px);
+  /* SOLID, not 0.92. Inside the dock this panel is positioned against
+     the dock (which makes its own containing block), so it sits exactly
+     over the dock's own MULTIPLAYER header and its pre-game tab row, and
+     at 92% those showed through as ghost labels: "why are there 2 menus
+     here" (OysterCoco, 2026-10-11; seen again by Lorne 2026-10-19). */
+  background: #080c12;
   border-left: 1px solid #2a3d50;
   box-shadow: -16px 0 48px rgba(0, 0, 0, 0.5);
 }

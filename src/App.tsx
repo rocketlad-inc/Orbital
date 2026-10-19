@@ -51,6 +51,7 @@ import { MegastructureCard } from './multiplayer/MegastructureCard';
 import { VersionBanner } from './components/VersionBanner';
 import { SituationLog } from './components/SituationLog';
 import { DiscoveryBanner } from './components/DiscoveryBanner';
+import { DiscoveryOfferCard } from './components/DiscoveryOfferCard';
 import { RecapOverlay } from './components/RecapOverlay';
 import { EventLog } from './components/EventLog';
 import { GroupActionBar } from './components/GroupActionBar';
@@ -277,6 +278,8 @@ function GameUI({
       {/* Discovery fanfare — animated banner when a body secret is
           uncovered (yours: celebratory + jump-to; a rival's: intel). */}
       <DiscoveryBanner />
+      {/* A found ship waiting for its claim or refusal (MP only). */}
+      {isMultiplayer && <DiscoveryOfferCard />}
       <RecapOverlay />
       {/* Group controls — shift-click's bar on desktop, touch selection
           mode's action bar on a phone. Renders nothing until a group or

@@ -9,6 +9,7 @@ import { MEGASTRUCTURES, MEGA_BREACH_HP } from './megastructures.js';
 import { upkeepSplit, parsePartsJson, shipBaseStatsFromCfg } from './shipDesigns.js';
 import { voteWeights } from './systems.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
+import { offerShipClass } from './discoveryOffers.js';
 import { visualsSwitches } from './botSettings.js';
 import { orbitAngle, legProgress } from './orbitPos.js';
 import { SHIP_ENGINE_G, BRAKE_MUL, MAX_ENGINE_G, RAMP_TICKS, GROWTH_TAU } from './burn.js';
@@ -1969,6 +1970,9 @@ const tradeRoutesP = env.DB
   // without duplicating the slider lookup client-side. KEEP the class
   // table IN SYNC with worker/room.js upkeep pass + src/game/shipClasses.ts.
   let upkeep = { gold: 0, metal: 0, multiplier: 1 };
+  // Found ships waiting for my claim or refusal (discoveryOffers.js), each
+  // with what it would add to the bill above, at the same rates.
+  let discoveryOffers = [];
   let terraform = { cost_metal: 124, cost_credits: 124, duration_ticks: 24 };
   // Hoisted out of the try below: the payload reads it too, and a const
   // scoped to that block is not in scope down there (no-undef caught it).
@@ -2061,6 +2065,33 @@ const tradeRoutesP = env.DB
       });
     }
     byClass.sort((x, y) => (y.gold + y.metal) - (x.gold + x.metal));
+    try {
+      const offerRows = (await env.DB
+        .prepare(
+          `SELECT o.body_id, o.kind, o.capital_kind, o.offered_tick, o.expires_tick, b.name AS body_name
+             FROM discovery_offers o JOIN game_bodies b ON b.id = o.body_id
+            WHERE o.game_id = ? AND o.faction_id = ? AND o.status = 'pending'
+            ORDER BY o.offered_tick`,
+        )
+        .bind(gameId, me.id)
+        .all()).results ?? [];
+      discoveryOffers = offerRows.map((o) => {
+        const shipClass = offerShipClass(o);
+        const rate = UPKEEP[shipClass] ?? { gold: 0, metal: 0 };
+        return {
+          body_id: o.body_id,
+          body_name: o.body_name,
+          kind: o.kind,
+          ship_class: shipClass,
+          offered_tick: o.offered_tick,
+          expires_tick: o.expires_tick,
+          upkeep: {
+            gold: round3((Number(rate.gold) || 0) * mult),
+            metal: round3((Number(rate.metal) || 0) * mult),
+          },
+        };
+      });
+    } catch { /* table not migrated yet: no offers */ }
     upkeep = {
       gold: round3(g * mult), metal: round3(m * mult), multiplier: mult,
       by_class: byClass,
@@ -2391,6 +2422,8 @@ const tradeRoutesP = env.DB
       // 20% less, so that gate DISABLED a build the server would have
       // accepted. `colonist_mult` lets the client apply the same
       // discount it will actually be charged.
+      // Found ships waiting for a claim or refusal (discoveryOffers.js).
+      discovery_offers: discoveryOffers,
       settlement_cost: {
         metal: SETTLEMENT_COST.metal,
         gold: SETTLEMENT_COST.gold,

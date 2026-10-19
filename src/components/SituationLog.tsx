@@ -357,6 +357,12 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
       try {
         window.dispatchEvent(new CustomEvent('orbital:open-panel', { detail: { panel: f.panel } }));
       } catch { /* ignore */ }
+    } else if (f.kind === 'offer') {
+      // The world, and its claim-or-refuse card back on screen.
+      focusBody(f.bodyId);
+      try {
+        window.dispatchEvent(new CustomEvent('orbital:discovery-offer', { detail: { bodyId: f.bodyId } }));
+      } catch { /* ignore */ }
     }
   }
 
