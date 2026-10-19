@@ -7,6 +7,9 @@
   cursor: default;
   align-items: flex-start;
   width: min(92vw, 460px);
+  /* Solid, unlike the passing banner: this is read and acted on, and on a
+     phone the map controls behind it showed through the translucent tint. */
+  background: linear-gradient(135deg, rgba(58, 30, 78, 0.97), rgba(28, 22, 52, 0.97));
 }
 .discovery-offer .discovery-banner__title { white-space: normal; }
 .discovery-offer__where {
