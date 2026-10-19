@@ -57,6 +57,22 @@ describe('expandScenario', () => {
     expect(spec.factions[0].handle).toBe('studio-terra');
   });
 
+  it('reads laws: a slider law for everyone, a sanction with its target and ballots', () => {
+    const spec = expandScenario({
+      ...base(),
+      laws: [
+        { slider: 'combat_damage_multiplier', value: 2 },
+        { kind: 'war_authorization', target: 'mars', yea: ['terra'], nay: ['mars'], ticks: 10 },
+      ],
+    });
+    expect(spec.laws).toHaveLength(2);
+    expect(spec.laws[0]).toMatchObject({ kind: 'law', slider: 'combat_damage_multiplier', value: 2, target: null, proposer: 'terra', ticks: 24, yea: null });
+    expect(spec.laws[1]).toMatchObject({ kind: 'war_authorization', target: 'mars', proposer: 'terra', ticks: 10, yea: ['terra'], nay: ['mars'] });
+    expect(() => expandScenario({ ...base(), laws: [{ kind: 'trade_embargo' }] })).toThrow(/needs a target/);
+    expect(() => expandScenario({ ...base(), laws: [{ slider: 'Bad Slider', value: 1 }] })).toThrow(/slider/);
+    expect(() => expandScenario({ ...base(), laws: [{ kind: 'war_authorization', target: 'venus' }] })).toThrow(/unknown faction/);
+  });
+
   it('parses relative and absolute times', () => {
     const spec = expandScenario({
       ...base(),
