@@ -169,6 +169,7 @@ async function resetStudioRows(env, gameId) {
     env.DB.prepare('DELETE FROM senate_votes WHERE proposal_id LIKE ?').bind(like),
     env.DB.prepare('DELETE FROM senate_effects WHERE game_id = ? AND id LIKE ?').bind(gameId, like),
     env.DB.prepare('DELETE FROM senate_proposals WHERE game_id = ? AND id LIKE ?').bind(gameId, like),
+    env.DB.prepare('DELETE FROM senate_terms WHERE game_id = ? AND id LIKE ?').bind(gameId, like),
   ]);
 }
 
@@ -412,6 +413,23 @@ export async function applyScenario(env, spec, { session = null } = {}) {
     await env.DB.batch(stmts);
     lawIds.push({ id: pid, title, until_tick: tick + l.ticks });
   }
+  // A chamber with laws has a chairman: the first law's proposer holds
+  // the gavel for a term from this tick, unless a term already covers it
+  // (the tick draws one otherwise, and the panel reads "not in session"
+  // until then).
+  if (spec.laws.length) {
+    const covering = await env.DB
+      .prepare('SELECT id FROM senate_terms WHERE game_id = ? AND start_tick <= ? AND end_tick > ? LIMIT 1')
+      .bind(gameId, tick, tick).first();
+    if (!covering) {
+      const prior = await env.DB
+        .prepare('SELECT COALESCE(MAX(term_index), -1) AS i, COALESCE(MAX(bag_cycle), 0) AS c FROM senate_terms WHERE game_id = ?')
+        .bind(gameId).first();
+      await env.DB.prepare(
+        'INSERT INTO senate_terms (id, game_id, faction_id, term_index, bag_cycle, start_tick, end_tick, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).bind(`${gameId}:${STUDIO_MARK}term`, gameId, fid(spec.laws[0].proposer), Number(prior?.i ?? -1) + 1, Number(prior?.c ?? 0), tick, tick + 48, Date.now()).run();
+    }
+  }
 
   // ---- fleets (captains first: a flagship must have one) ----
   const fleetIds = {};
@@ -497,7 +515,7 @@ export async function applyScenario(env, spec, { session = null } = {}) {
     ok: true, game_id: gameId, created, tick,
     factions: spec.factions.map(f => ({ key: f.key, id: factions.get(f.key).id, name: f.name, handle: f.handle,
       seat_me: spec.seatMe && f.key === spec.viewer })),
-    viewer: spec.viewer, ships: shipIds, fleets: fleetIds, wars: warIds.length, orders: done,
+    viewer: spec.viewer, ships: shipIds, fleets: fleetIds, wars: warIds.length, orders: done, laws: lawIds,
   };
 }
 
