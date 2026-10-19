@@ -142,6 +142,7 @@ export function ProfileAwards({ load = fromApi }: { load?: AwardsLoader }) {
 /** One medal: an award kind the player has earned at least once. */
 function Tile({ x }: { x: ProfileAwardTotal }) {
   const k = AWARD_KEYS[x.awardId];
+  const best = fmtNumber(x.best);
   return (
     <li className="pa-tile">
       <span className="pa-tile__gl" aria-hidden><AwardGlyph id={x.awardId} /></span>
@@ -154,7 +155,8 @@ function Tile({ x }: { x: ProfileAwardTotal }) {
       <h3 className="pa-tile__ttl">{t(k.title)}</h3>
       <div className="pa-tile__best">
         <span className="pa-tile__k">{t('profile.awards.best')}</span>
-        <b className="pa-num pa-tile__v">{fmtNumber(x.best)}</b>
+        {/* A figure like 11,414,626 steps down a size rather than break across lines. */}
+        <b className={`pa-num pa-tile__v${best.length >= 8 ? ' pa-tile__v--long' : ''}`}>{best}</b>
         <span className="pa-tile__unit">{tn(k.unit, x.best)}</span>
       </div>
       {x.bestGameName && <div className="pa-tile__game">{x.bestGameName}</div>}

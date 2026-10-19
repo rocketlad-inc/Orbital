@@ -47,12 +47,17 @@ export function ProfileAwardsPreview() {
   }, []);
 
   // `step` counts requests so "pending" can resolve itself over time.
-  const step = useMemo(() => ({ n: 0 }), []);
+  const step = useMemo(() => ({ n: 0, at: null as number | null }), []);
   const load = useCallback(async (): Promise<ApiResult<unknown>> => {
     if (state === 'loading') return new Promise<ApiResult<unknown>>(() => { /* never answers */ });
     if (state === 'failed') return { ok: false, status: 500, error: null };
     const fx = fixtures ?? [];
-    const n = step.n++;
+    // Dev StrictMode runs the section's effect twice back to back; the twin
+    // gets the same answer rather than using up a step.
+    const now = performance.now();
+    const twin = step.at !== null && now - step.at < 300;
+    step.at = now;
+    const n = twin ? Math.max(0, step.n - 1) : step.n++;
     // Request times (ms since load), for checking the re-fetch spacing in a browser.
     const w = window as unknown as { __paCalls?: number[] };
     (w.__paCalls ??= []).push(Math.round(performance.now()));
@@ -74,7 +79,8 @@ export function ProfileAwardsPreview() {
   if (!fixtures) return <div style={{ position: 'fixed', inset: 0, background: '#0a0e14' }} />;
 
   return (
-    <div style={{ minHeight: '100vh', background: '#0a0e14', color: '#d8e4ee', padding: '16px 14px 48px', boxSizing: 'border-box' }}>
+    // The app locks the page itself, so the preview scrolls on its own.
+    <div id="pa-preview" style={{ position: 'fixed', inset: 0, overflowY: 'auto', background: '#0a0e14', color: '#d8e4ee', padding: '16px 14px 48px', boxSizing: 'border-box' }}>
       {/* The profile's own container, so the section inherits what it would there. */}
       <div className="pp">
         <ProfileAwards key={state ?? 'default'} load={load} />
