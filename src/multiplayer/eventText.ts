@@ -127,6 +127,12 @@ export function formatChronicleEvent(
   ev: ChronicleEventRow,
   ctx: EventTextCtx,
   lang: Lang,
+  /** For SHOWING English (combatLogDisplay), not for the machine-truth
+   *  copy: research tracks by their names ("Society") rather than their
+   *  ids ("industry"). The log said "completed industry L3" beside a
+   *  Herald line about Society (ciurk, 2026-10-16). Other languages
+   *  always use names. */
+  opts: { names?: boolean } = {},
 ): string {
   let parsed: Payload = {};
   try {
@@ -173,7 +179,7 @@ export function formatChronicleEvent(
     raw == null ? T('fb.settlement')
       : en ? raw : tkIn(lang, `data.settlement.${raw}.name`, raw).toLowerCase();
   const techText = (raw: string | undefined): string =>
-    raw == null ? T('fb.research') : en ? raw : tkIn(lang, `data.tech.${raw}.name`, raw);
+    raw == null ? T('fb.research') : (en && !opts.names) ? raw : tkIn(lang, `data.tech.${raw}.name`, raw);
   const buildingText = (raw: string | undefined): string =>
     raw == null ? T('fb.building') : en ? raw : tkIn(lang, `data.building.${raw}.name`, raw);
   /** "Frigate T3-900" already leads with the class: do not say it twice. */

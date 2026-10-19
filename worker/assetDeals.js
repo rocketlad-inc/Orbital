@@ -187,6 +187,20 @@ export async function fulfilDeal(env, gameId, deal, tick) {
     ).bind(tick, deal.id),
   ]);
 
+  // THE DEED MOVES THE WORLD. Body ownership is derived from settlements
+  // (recomputeBodyOwnership), and every other path that changes who holds
+  // a settlement re-runs it; this one did not. A world sold here stayed
+  // its seller's on the body row, which is what the Herald strip and the
+  // home-screen widget read first: Callisto and Uranus in one game were
+  // still painted for the empire that had sold them (TheSaltedPork,
+  // 2026-10-16).
+  if (deal.asset_kind === 'settlement' && state.bodyId) {
+    try {
+      const { recomputeBodyOwnership } = await import('./factions.js');
+      await recomputeBodyOwnership(env.DB, gameId, state.bodyId);
+    } catch (e) { console.error('owner recompute after sale failed', deal.id, e); }
+  }
+
   return { ok: true, name: state.name, bodyId: state.bodyId };
 }
 

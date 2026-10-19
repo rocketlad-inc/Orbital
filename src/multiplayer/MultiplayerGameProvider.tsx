@@ -1889,9 +1889,10 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     return msg;
   });
   const displayLang = getLang();
-  const combatLogDisplay: string[] = displayLang === 'en'
-    ? combatLog
-    : orderedEvents.map(ev => formatChronicleEvent(ev, eventTextCtx, displayLang));
+  // English is rebuilt too (cheap, one pass), so the screen can say
+  // "Society" where the machine-truth copy keeps the id "industry".
+  const combatLogDisplay: string[] = orderedEvents.map(ev =>
+    formatChronicleEvent(ev, eventTextCtx, displayLang, { names: true }));
 
   // Prose flavor for the event log — parallel-indexed with combatLog.
   // Resolved from the SAME structured chronicle events the headlines

@@ -404,7 +404,11 @@ export const TopBar: React.FC<TopBarProps> = ({
           it here; that mirror has drifted twice before.
           Empty renders nothing, so a lawless game keeps the old bar. */}
       {(gameState.activeLaws?.length ?? 0) > 0 && (
-        <div className="top-bar__laws" data-testid="topbar-laws">
+        <div className="top-bar__laws" data-testid="topbar-laws"
+          title={gameState.activeLaws!.map(l => `${l.name}: ${l.effect}`).join(' · ')}>
+          {/* Phones: just the scales and the count, so the tick and its
+              countdown always fit (they were pushed off-screen). */}
+          <span className="laws-chip__compact" aria-hidden>⚖ {gameState.activeLaws!.length}</span>
           <div className="laws-chip__label">
             {gameState.activeLaws!.length === 1 ? t('topbar.laws.one') : t('topbar.laws.many', { n: gameState.activeLaws!.length })}
           </div>

@@ -121,6 +121,8 @@ export function CommsPanel({ gameId, onUnreadDelta, focusFaction }: Props) {
    *  check something, and a shared compose box silently re-aims your
    *  half-written private message at everyone. */
   const draftsRef = useRef<Map<string, string>>(new Map());
+  /** A message is on its way: a second Enter must not send it again. */
+  const sendingRef = useRef(false);
   const prevChannelRef = useRef<string>(channelKey('public'));
   useEffect(() => {
     const nowKey = channelKey(channel);
@@ -244,18 +246,33 @@ export function CommsPanel({ gameId, onUnreadDelta, focusFaction }: Props) {
     setError(null);
     const text = body.trim();
     if (!text) return;
+    // ONE SEND AT A TIME, AND THE BOX EMPTIES AT ONCE. It used to clear
+    // only when the server answered, so a second Enter in that moment sent
+    // the same message again (ciurk, 2026-10-16). The text comes back if
+    // the send fails, so nothing typed is lost.
+    if (sendingRef.current) return;
+    sendingRef.current = true;
+    const key = channelKey(channel);
+    setBody('');
+    draftsRef.current.delete(key);
     const payload: { scope: 'dm' | 'broadcast'; body: string; recipient_faction_ids?: string[] } =
       typeof channel === 'string'
         ? { scope: 'broadcast', body: text }
         : { scope: 'dm', body: text, recipient_faction_ids: [channel.factionId] };
-    const res = await apiFetch(`/api/games/${gameId}/messages`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) { setError(apiErrorText(res.error, 'comms.err.send')); return; }
-    draftsRef.current.delete(channelKey(channel));
-    setBody('');
-    refresh();
+    try {
+      const res = await apiFetch(`/api/games/${gameId}/messages`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        setError(apiErrorText(res.error, 'comms.err.send'));
+        setBody(prev => (prev ? prev : text));
+        return;
+      }
+      refresh();
+    } finally {
+      sendingRef.current = false;
+    }
   }
 
   React.useEffect(() => {

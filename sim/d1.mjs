@@ -130,7 +130,12 @@ export class SimD1 {
       const out = [];
       this.db.exec('BEGIN');
       try {
-        for (const s of statements) out.push(await s.run());
+        // Real D1 hands back each statement's rows from a batch, reads
+        // included; run() alone would return an empty result set for a
+        // SELECT. Writes keep their meta (changes / last_row_id).
+        for (const s of statements) {
+          out.push(/^\s*(SELECT|WITH)\b/i.test(s._sql) ? await s.all() : await s.run());
+        }
         this.db.exec('COMMIT');
       } catch (e) {
         this.db.exec('ROLLBACK');

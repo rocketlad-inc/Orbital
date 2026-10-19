@@ -374,6 +374,16 @@ describe('English headlines (the machine-truth contract)', () => {
     setLang('pt-BR', false);
     for (const r of ROWS) expect(formatChronicleEvent(ev(r), ctx, 'en')).toBe(r[6]);
   });
+
+  it('the English SHOWN to players names the research track, the machine copy keeps the id', () => {
+    // ciurk, 2026-10-16: "completed industry L3" beside a Herald line about
+    // Society. The id stays in the machine-truth copy; the screen says the name.
+    setLang('en', false);
+    const row = ROWS.find(r => r[0] === 'tech_advanced level')!;
+    const industry = ev([row[0], row[1], row[2], row[3], row[4], { tech_id: 'industry', level: 3 }, row[6]] as Row);
+    expect(formatChronicleEvent(industry, ctx, 'en')).toBe('T+12  Cerean Union completed industry L3');
+    expect(formatChronicleEvent(industry, ctx, 'en', { names: true })).toBe('T+12  Cerean Union completed Society L3');
+  });
 });
 
 // Words of the English templates. A Portuguese headline must contain none of

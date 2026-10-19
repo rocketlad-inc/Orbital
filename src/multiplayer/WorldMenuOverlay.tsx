@@ -55,7 +55,7 @@ import {
   S1X_FRAC, S1Y_FRAC, Z1_FRAC,
 } from '../game/worldMenu/camera';
 import { setWorldMenuActive, setWorldMenuOpenBodyId } from '../game/worldMenu/store';
-import { columnsFor, buildStatus, noHostText } from '../game/worldMenu/buildRules';
+import { columnsFor, buildStatus, noHostText, nextBuildingLevel } from '../game/worldMenu/buildRules';
 import { hpColor } from '../game/worldMenu/combatDisplay';
 import { readoutFor, neighborsOf, orbSlotIndex } from '../game/worldMenu/bodyStats';
 import { worldControl, settlementLivery } from '../game/worldMenu/settlementControl';
@@ -180,6 +180,8 @@ export const WorldMenuOverlay: React.FC = () => {
 
   const setOpenId = setOpenIdRaw;
   const [errMsg, setErrMsg] = useState<string | null>(null);
+  /** A neutral line, e.g. where a cancelled order's refund went. */
+  const [noteMsg, setNoteMsg] = useState<string | null>(null);
   const camSnapshotRef = useRef<{ x: number; y: number; scale: number; focusedBodyId?: string } | null>(null);
 
   const body: Body | undefined = useMemo(
@@ -476,8 +478,10 @@ export const WorldMenuOverlay: React.FC = () => {
     const waiting = (settlement.buildingBacklog ?? []).find(o => o.kind === kind);
     const res = waiting
       ? await mpActions?.cancelBuilding(settlement.id, waiting.id)
-      : await mpActions?.queueBuilding(settlement.id, kind);
-    if (res && !res.ok) setErrMsg(res.error ?? t('worldmenu.err.buildRejected'));
+      : await mpActions?.queueBuilding(settlement.id, kind, nextBuildingLevel(settlement, kind));
+    // already_queued: the tap the screen had not caught up with. What was
+    // asked for is already happening, so there is nothing to tell them.
+    if (res && !res.ok && res.code !== 'already_queued') setErrMsg(res.error ?? t('worldmenu.err.buildRejected'));
   };
   // Rename a settlement (city OR station). Mirrors BodyInspector: apply
   // the optimistic local change, then PATCH the server; re-throw on
@@ -972,6 +976,7 @@ export const WorldMenuOverlay: React.FC = () => {
       {/* ===== dismissal + error ===== */}
       <button className="wm-tomap" onClick={() => close(true)} data-testid="wm-tomap">{t('worldmenu.toMap')}</button>
       {errMsg && <div className="wm-err">{errMsg}</div>}
+      {!errMsg && noteMsg && <div className="wm-note" role="status">{noteMsg}</div>}
 
       {/* ===== neighbor orbs (desktop only — they don't fit alongside
            the dense mobile panels; mobile navigates via the outliner) ===== */}
@@ -1175,6 +1180,7 @@ export const WorldMenuOverlay: React.FC = () => {
           hasStation={!!myStation}
           railW={railW}
           onErr={setErrMsg}
+          onNote={setNoteMsg}
         />
       )}
     </div>
@@ -1192,7 +1198,9 @@ const WmFleet: React.FC<{
   isMine: boolean;
   hasStation: boolean;
   railW: number; onErr: (m: string | null) => void;
-}> = ({ bodyId, mobile, isMine, hasStation, railW, onErr }) => {
+  /** Neutral news for the player, e.g. where a refund went. */
+  onNote?: (m: string | null) => void;
+}> = ({ bodyId, mobile, isMine, hasStation, railW, onErr, onNote }) => {
   useI18n();
   const { gameState, updateGameState } = useGameContext();
   // Live view for async rollbacks (a poll may land while the POST flies).
@@ -1424,6 +1432,20 @@ const WmFleet: React.FC<{
     // server's, so the next poll puts it back — which is the honest
     // signal that it was not cancelled.
     if (res && !res.ok) onErr(res.error ?? t('worldmenu.err.cantCancel'));
+    // SAY WHERE THE MONEY WENT. An order paid from a raw world's own
+    // stockpile is refunded THERE (the anti-laundering rule), so the pool
+    // in the top bar does not move, and a player who cancelled fifteen
+    // hulls concluded he had been robbed (2026-10-12).
+    if (res && res.ok && res.refund && (res.refund.metal > 0 || res.refund.gold > 0)) {
+      const loc = res.refund.local.find(l => l.metal > 0 || l.gold > 0);
+      if (loc) {
+        const name = gsRef.current.settlements.find(s => loc.settlementId === s.id || loc.settlementId.endsWith(`:${s.id}`))?.name
+          ?? t('worldmenu.q.thisStation');
+        onNote?.(t('worldmenu.q.refundLocal', { metal: loc.metal, gold: loc.gold, name }));
+      } else {
+        onNote?.(t('worldmenu.q.refundPool', { metal: res.refund.metal, gold: res.refund.gold }));
+      }
+    }
   };
 
   // Write the yard's standing order. Optimistic through the same

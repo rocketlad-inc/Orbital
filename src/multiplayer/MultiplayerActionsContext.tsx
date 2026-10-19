@@ -194,7 +194,15 @@ export interface TurnStatus {
  *  this rather than a bare boolean — without the code the UI is forced
  *  to silently reset on rejection, which reads as "the button did
  *  nothing." See src/multiplayer/errorMessages.ts. */
-export type MpActionResult = { ok: true } | { ok: false; code?: string; error: string };
+/** Where a cancelled order's money went (worker handleCancelBuild). */
+export interface BuildRefund {
+  metal: number;
+  gold: number;
+  /** The part that went back to a settlement's own stockpile, because
+   *  that is where it was paid from (a raw world spends local-first). */
+  local: Array<{ settlementId: string; metal: number; gold: number }>;
+}
+export type MpActionResult = { ok: true; refund?: BuildRefund } | { ok: false; code?: string; error: string };
 
 /** Server row shape for a ship design (ship designer §2). */
 export interface ServerShipDesign {
@@ -417,7 +425,10 @@ export interface MultiplayerActions {
   // --- Settlement upgrade buildings (forge/mint/lab/weapons/shipyard) ---
   /** Queue an upgrade. Server charges the current-level cost and writes
    *  building_order_json. Cancelled or completed orders clear that slot. */
-  queueBuilding: (settlementId: string, kind: string) =>
+  /** `targetLevel`: the level the caller's screen believes this buys
+   *  (nextBuildingLevel). The server refuses with `already_queued` when
+   *  it is behind, rather than charging for the level after. */
+  queueBuilding: (settlementId: string, kind: string, targetLevel?: number) =>
     Promise<MpActionResult>;
   /** Cancel an upgrade at a settlement; the server refunds the
    *  cost-at-queue-time. Omit orderId to cancel the IN-FLIGHT build;
@@ -1186,11 +1197,23 @@ export function MultiplayerActionsProvider({
     },
     cancelBuild(orderId) {
       return once(`cancelBuild:${orderId}`, async () => {
-      const res = await apiFetch<{ ok: boolean }>(
+      const res = await apiFetch<{ ok: boolean; refund?: {
+        metal?: number; gold?: number;
+        local?: Array<{ settlement_id: string; metal: number; gold: number }>;
+      } }>(
         `/api/games/${gameId}/builds/${encodeURIComponent(orderId)}`,
         { method: 'DELETE' },
       );
-      if (res.ok) return { ok: true };
+      if (res.ok) {
+        const r = res.data?.refund;
+        return {
+          ok: true,
+          refund: r ? {
+            metal: Number(r.metal ?? 0), gold: Number(r.gold ?? 0),
+            local: (r.local ?? []).map(l => ({ settlementId: l.settlement_id, metal: Number(l.metal) || 0, gold: Number(l.gold) || 0 })),
+          } : undefined,
+        };
+      }
       console.warn('cancelBuild failed', res.error);
       return {
         ok: false,
@@ -1306,11 +1329,11 @@ export function MultiplayerActionsProvider({
     },
     // buildCollector was deleted with the terraforming rework — the
     // server endpoint is gone; terraformed status is the loading dock.
-    queueBuilding(settlementId, kind) {
+    queueBuilding(settlementId, kind, targetLevel) {
       return once(`building:${settlementId}:${kind}`, async () => {
       const res = await apiFetch<{ ok: boolean }>(
         `/api/games/${gameId}/settlements/${encodeURIComponent(settlementId)}/buildings`,
-        { method: 'POST', body: JSON.stringify({ kind }) },
+        { method: 'POST', body: JSON.stringify(targetLevel ? { kind, target_level: targetLevel } : { kind }) },
       );
       if (res.ok) {
         logger.info('ACTION', 'Building upgrade queued', { settlement: settlementId, kind });
