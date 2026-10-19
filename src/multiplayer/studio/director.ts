@@ -55,6 +55,11 @@ export interface Shot {
   endCard?: boolean;
   /** Extra zoom applied when the map is cropped into the video frame. */
   zoomBoost?: number;
+  /** Keep the game's interface (top bar, outliner, dock) in the shot.
+   *  Film mode defaults to true, the way the showcase clips were made;
+   *  record (the phone cut) defaults to false. The painted debug
+   *  readouts and the staging banner are never in a shot. */
+  ui?: boolean;
   steps: ShotStep[];
 }
 
@@ -338,13 +343,15 @@ export class Director {
     // Every effect, every frame: lightweight mode (a phone's or the
     // server's choice) freezes animation and caps the map at 15fps.
     setStudioFullVisuals(true);
-    this.ui(false);
+    document.body.classList.add('studio-filming');   // no debug HUD, no staging banner
+    if (shot.ui) this.host.deselect(); else this.ui(false);
     this.speed(shot.speed ?? 2500);
   }
   private end(): void {
     this.running = false;
     this.speed(null);
     this.ui(true);
+    document.body.classList.remove('studio-filming');
     setStudioFullVisuals(false);
   }
 
@@ -462,7 +469,7 @@ export class Director {
     const fps = shot.fps ?? 30;
     const total = Math.round(shot.seconds * fps);
     const vclock = installVirtualClock();
-    this.begin(shot);
+    this.begin({ ui: true, ...shot });
     this.stats = { frames: 0, draws: 0, unchanged: 0, rafRuns: 0 };
     this.film = { vclock, shot, fired: new Set(), k: 0, total, draw: (window as unknown as { __benchDraw?: (n?: number) => number }).__benchDraw };
     return total;
