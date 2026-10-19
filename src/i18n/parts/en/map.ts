@@ -255,6 +255,7 @@ export const map = {
   'worldmenu.building.mint': 'MINT',
   'worldmenu.building.lab': 'LAB',
   'worldmenu.building.shields': 'SHIELDS',
+  'worldmenu.building.missile_silo': 'MISSILE SILO',
   'worldmenu.building.weapons': 'WEAPONS',
   'worldmenu.building.shipyard': 'SHIPYARD',
   'worldmenu.building.telescope': 'TELESCOPE',

@@ -257,6 +257,7 @@ export const map: Catalog = {
   'worldmenu.building.mint': 'CUNHAGEM',
   'worldmenu.building.lab': 'LAB',
   'worldmenu.building.shields': 'ESCUDOS',
+  'worldmenu.building.missile_silo': 'SILO DE MÍSSEIS',
   'worldmenu.building.weapons': 'ARMAS',
   'worldmenu.building.shipyard': 'ESTALEIRO',
   'worldmenu.building.telescope': 'TELESCÓPIO',

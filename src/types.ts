@@ -878,7 +878,10 @@ export type BuildingKind =
   // by Defense 3 ("Planetary Shields"). CITIES ONLY (per Lorne): ground
   // is what you protect, orbit is what you contest, and a shielded
   // station would let a player fortify orbit itself.
-  | 'shields';
+  | 'shields'
+  // Missile Silo — a city building that builds, stores (5 per level) and
+  // fires single-use missiles (worker/missiles.js).
+  | 'missile_silo';
 
 /**
  * One in-flight upgrade at a settlement. The "ship build queue"

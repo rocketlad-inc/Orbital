@@ -25,7 +25,7 @@ const BODIES = ['Terra', 'Marte', 'Ceres', 'Io', 'Vesta', 'Jove'];
 const FACS = ['f1', 'f2', 'f3'];
 
 const CLASSES = ['frigate', 'corvette', 'destroyer', 'freighter', 'colony', 'mega_destroyer', 'mobile_foundry', 'kaiju'];
-const BUILDINGS = ['forge', 'mint', 'lab', 'weapons', 'shipyard', 'telescope', 'trajectory_thrusters', 'shields'];
+const BUILDINGS = ['forge', 'mint', 'lab', 'weapons', 'shipyard', 'telescope', 'trajectory_thrusters', 'shields', 'missile_silo'];
 const SECRETS = ['portal_to_sun', 'warp_gate', 'ancient_city', 'free_collector', 'pre_terraformed', 'derelict_warship',
   'resource_cache', 'ancient_databank', 'ancient_capital', 'ancient_relay', 'ancient_station', 'far_gate', 'deep_cache',
   'precursor_orrery', 'horizon_archive'];

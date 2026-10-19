@@ -566,7 +566,8 @@ export const WorldMenuOverlay: React.FC = () => {
   const COL_W = 168, BTN_H = 54;
   const leftColX = Math.max(railW + 10, cx - cr - COL_W - 26);
   // Column stack height: label (18) + up to 4 buttons (40 + 9 gap).
-  const COL_MAX_H = 18 + 4 * (BTN_H + 9);
+  // Five buttons since the Missile Silo (2026-10-19).
+  const COL_MAX_H = 18 + 5 * (BTN_H + 9);
   // Fleet panel lives with `bottom: 12px`; its measured height (state
   // above) bounds where the surface column can end.
   const colBottomLimit = vh - chromeH.fleet - 20;   // last y a col button can occupy
@@ -1149,7 +1150,7 @@ export const WorldMenuOverlay: React.FC = () => {
                 // dome over the whole settlement, drawn by the closeup
                 // pass. Without this it would fall back to frac 0 and
                 // aim into the gap between MINT and LAB.
-                if (k === 'shields') return null;
+                if (k === 'shields' || k === 'missile_silo') return null;
                 const to = partPos(PART_FRACS[k] ?? 0);
                 if (to.y > vh - 40) return null;
                 const mx = (from.x + to.x) / 2;

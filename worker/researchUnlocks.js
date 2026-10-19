@@ -10,6 +10,7 @@ export const REQUIREMENTS = {
   // Weapons
   'part.kinetic':          { track: 'weapons', level: 1, label: 'Kinetic Mount' },
   'part.detonator':        { track: 'weapons', level: 5, label: 'Fusion Detonator' },
+  'building.missile_silo': { track: 'weapons', level: 5, label: 'Missile Silo' },
   'part.energy':           { track: 'weapons', level: 2, label: 'Energy Mount' },
   'building.weapons':      { track: 'weapons', level: 3, label: 'Station Weapons' },
   'veteranYards':          { track: 'weapons', level: 4, label: 'Veteran Yards' },
@@ -124,6 +125,7 @@ export const BUILDING_FEATURE = {
   telescope: 'building.telescope',
   armor: 'building.armor',
   trajectory_thrusters: 'building.thrusters',
+  missile_silo: 'building.missile_silo',
 };
 
 /** Ship part id -> feature id. */

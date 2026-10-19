@@ -27,7 +27,7 @@ import { t, tk } from '../i18n/core';
 /** Everything that can be locked. Server mirrors these string ids. */
 export type FeatureId =
   // — Weapons —
-  | 'part.kinetic' | 'part.detonator' | 'part.energy'
+  | 'part.kinetic' | 'part.detonator' | 'part.energy' | 'building.missile_silo'
   | 'building.weapons' | 'veteranYards'
   // — Defense —
   | 'part.shield' | 'part.armor'
@@ -93,6 +93,8 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
     label: 'Veteran Yards', blurb: 'Your new captains start at rank 1 — already blooded.' },
   { track: 'weapons', level: 5, feature: 'part.detonator',
     label: 'Fusion Detonator', blurb: 'Turns a cheap hull into a threat. Hits friend and foe.' },
+  { track: 'weapons', level: 5, feature: 'building.missile_silo',
+    label: 'Missile Silo', blurb: 'A city building that builds and fires missiles: 10 damage to everything in the target orbit, and they stack.' },
   { track: 'weapons', level: 6, feature: 'mega.weaponsStation',
     label: 'Weapons Station', blurb: 'A gun platform that reaches into transit lanes. Too big to ignore and too tough to pass with one fleet.' },
   { track: 'weapons', level: 7, feature: 'mega.megaDestroyer',
@@ -293,6 +295,7 @@ export const BUILDING_FEATURE: Partial<Record<string, FeatureId>> = {
   // 'building.armor' row in RESEARCH_UNLOCKS, and requirementFor() miss
   // means lockReason() returns null, i.e. UNLOCKED.
   trajectory_thrusters: 'building.thrusters',
+  missile_silo: 'building.missile_silo',
 };
 
 /** Ship part id -> feature id. */
