@@ -75,7 +75,7 @@ export function EndingPreview() {
   if (!data || !meta) {
     return (
       <div style={{ position: 'fixed', inset: 0, background: '#060a10', color: '#aebdcc', display: 'grid', placeItems: 'center', fontFamily: 'monospace' }}>
-        ?ending=sMu08u1ySzRJ | ghhqbPbWz64Y | CAWEFbsSGyBI
+        {'?ending=sMu08u1ySzRJ | ghhqbPbWz64Y | CAWEFbsSGyBI'}
       </div>
     );
   }

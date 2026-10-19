@@ -138,20 +138,18 @@ describe('EndingScreen: the report arrives', () => {
 });
 
 describe('EndingScreen: the report fails', () => {
-  for (const status of [404, 403, 409, 500]) {
-    it(`falls back to the verdict, the actions and the Commission on a ${status}`, async () => {
-      const d = withViewer(MEGA, 'Tritalowda');
-      await mount(metaFor(d), async () => ({ ok: false, status, error: null }));
-      expect(host.querySelector('h1')?.textContent).toBe('GAME OVER');
-      expect(text()).toContain('Stonekin of Mars');
-      expect(text()).not.toContain('Final standings');
-      expect(host.querySelectorAll('svg[role="img"]')).toHaveLength(0);
-      expect(button(/Return to lobby/)).toBeDefined();
-      expect(button(/Take a look/)).toBeDefined();
-      expect(text().toLowerCase()).not.toContain('error');
-      expect(text().toLowerCase()).not.toContain('failed');
-    });
-  }
+  it.each([404, 403, 409, 500])('falls back to the verdict, the actions and the Commission on a %i', async (status) => {
+    const d = withViewer(MEGA, 'Tritalowda');
+    await mount(metaFor(d), async () => ({ ok: false, status, error: null }));
+    expect(host.querySelector('h1')?.textContent).toBe('GAME OVER');
+    expect(text()).toContain('Stonekin of Mars');
+    expect(text()).not.toContain('Final standings');
+    expect(host.querySelectorAll('svg[role="img"]')).toHaveLength(0);
+    expect(button(/Return to lobby/)).toBeDefined();
+    expect(button(/Take a look/)).toBeDefined();
+    expect(text().toLowerCase()).not.toContain('error');
+    expect(text().toLowerCase()).not.toContain('failed');
+  });
 
   it('a thrown fetch is the same quiet fallback', async () => {
     const d = withViewer(MEGA, 'winner');
@@ -252,7 +250,7 @@ describe('EndingScreen: the actions', () => {
     const d = withViewer(MEGA, 'Tritalowda');
     await mount(metaFor(d), async () => ({ ok: true, status: 200, data: d }));
     expect(host.querySelector('.ep-cm')).not.toBeNull();
-    act(() => { button(/Watch the match film/)?.click(); });
+    await act(async () => { button(/Watch the match film/)?.click(); });
     expect(host.querySelector('.ep-film')).not.toBeNull();
     expect(host.querySelector('.ep-cm')).toBeNull();
     expect(button(/Hide the match film/)).toBeDefined();

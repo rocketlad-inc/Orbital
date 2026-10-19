@@ -554,6 +554,7 @@ function Battles({ data }: { data: EndingPayload }) {
       </div>
       {data.battles.map(b => {
         const segs = battleSegments(b);
+        const lossText = segs.map(s => `${byId.get(s.factionId)?.name ?? ''}: ${fmtNumber(s.shipsLost)}`).join(', ');
         const span = b.endedTick != null && b.endedTick !== b.startedTick
           ? `${t('ending.chart.tickShort', { n: fmtNumber(b.startedTick) })}–${t('ending.chart.tickShort', { n: fmtNumber(b.endedTick) })}`
           : t('ending.chart.tickShort', { n: fmtNumber(b.startedTick) });
@@ -570,10 +571,11 @@ function Battles({ data }: { data: EndingPayload }) {
                 <span className="ep-num">{fmtNumber(b.shipsLost)}</span>
                 <span>{tn('ending.battle.hullsLost', b.shipsLost)}</span>
               </div>
-              <div className="ep-lossbar" role="img" aria-label={segs.map(s => `${byId.get(s.factionId)?.name ?? ''}: ${fmtNumber(s.shipsLost)}`).join(', ')}>
+              <div className="ep-lossbar" role="img" aria-label={lossText}>
                 {segs.map(s => {
                   const f = byId.get(s.factionId);
-                  return <i key={s.factionId} style={{ width: `${s.pct}%`, background: f?.color ?? '#7a8ca0' }} title={`${f?.name ?? ''}: ${fmtNumber(s.shipsLost)}`} />;
+                  const tip = `${f?.name ?? ''}: ${fmtNumber(s.shipsLost)}`;
+                  return <i key={s.factionId} style={{ width: `${s.pct}%`, background: f?.color ?? '#7a8ca0' }} title={tip} />;
                 })}
               </div>
             </div>
