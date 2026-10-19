@@ -4005,7 +4005,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // The studio's cinema mode (multiplayer/studio/director.ts) records
     // this canvas, and the tick/scale readouts and control hints are
     // paint, not DOM, so this is the one place they can be left out.
-    if (!document.body.classList.contains('studio-cinema')) {
+    if (!document.body.classList.contains('studio-filming')) {
       drawHUD(renderContext, uiState.targetSelectionMode);
     }
 
@@ -5110,7 +5110,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // The studio's recorder (multiplayer/studio/director.ts) advances
       // the clock one frame at a time and expects a draw per frame; the
       // governor exists to spare phones, and a recording is neither.
-      const minFrameMs = document.body.classList.contains('studio-cinema') ? 0 : frameBudget();
+      const minFrameMs = document.body.classList.contains('studio-filming') ? 0 : frameBudget();
       if (minFrameMs && t0 - lastDrawAt < minFrameMs) {
         raf = requestAnimationFrame(loop);
         return;
