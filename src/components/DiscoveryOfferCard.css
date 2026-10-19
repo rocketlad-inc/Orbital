@@ -1,7 +1,8 @@
 /* A found ship waiting for a claim or a refusal: the discovery banner's
-   purple, as a card that stays until answered. Sits just under where the
-   banner would slide in, so a reveal never covers the choice. */
-.discovery-offer-layer { top: 64px; z-index: 61; }
+   purple, as a card that stays until answered. Below the strip that
+   both the discovery banner and "While you were away · Watch recap" use
+   (top 64, about 56 tall), so neither ever covers the choice. */
+.discovery-offer-layer { top: 128px; z-index: 61; }
 .discovery-offer {
   cursor: default;
   align-items: flex-start;
@@ -57,6 +58,6 @@
 .discovery-offer__btn.is-later:hover:not(:disabled) { background: rgba(255, 255, 255, 0.12); }
 .discovery-offer__btn.is-later { border-color: transparent; background: none; color: #b8c8d6; }
 @media (max-width: 600px) {
-  .discovery-offer-layer { top: 56px; }
+  .discovery-offer-layer { top: 124px; }
   .discovery-offer__btn { flex: 1 1 auto; padding: 9px 12px; }
 }
