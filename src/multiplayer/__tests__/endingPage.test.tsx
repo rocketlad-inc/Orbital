@@ -69,6 +69,12 @@ async function mount(meta: EndingMeta, answer: () => Promise<unknown>) {
   (apiFetch as jest.Mock).mockImplementation(async (p: string) => (p.includes('/ending') ? answer() : { ok: true, status: 200, data: {} }));
   await act(async () => { root.render(<EndingScreen gameId="g1" meta={meta} onReturn={returned} />); });
   await act(async () => { await Promise.resolve(); });
+  // The screen is a lazy chunk and its data a mocked fetch: under a loaded
+  // machine (the full suite) two microtask flushes are not always enough, so
+  // wait, boundedly, until the page has actually drawn its actions.
+  for (let i = 0; i < 60 && !/Return to lobby/.test(host.textContent ?? ''); i++) {
+    await act(async () => { await new Promise(r => setTimeout(r, 15)); });
+  }
 }
 const text = () => host.textContent ?? '';
 const button = (label: RegExp) => Array.from(host.querySelectorAll('button')).find(b => label.test(b.textContent ?? ''));
