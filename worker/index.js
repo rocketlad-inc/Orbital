@@ -639,13 +639,16 @@ async function noteVisit(env, userId) {
       && !agent;
     // The one-time Commission thank-you card (0153): only for someone who
     // has clearly chosen to keep playing (20+ hours), never on the same
-    // visit as the Discord invite, never twice, never to a holder.
+    // visit as the Discord invite, never to a holder, and ONCE: the
+    // request that hands it out records the showing (0174), so it never
+    // comes back, answered or not.
     const commissionAsk = !!row
       && !invite
       && !agent
       && !row.owned
       && row.commission_ask_ms == null
-      && row.minutes >= COMMISSION_ASK_MINUTES;
+      && row.minutes >= commissionAsk_.COMMISSION_ASK_MINUTES
+      && await commissionAsk_.claimCommissionAsk(env, userId, now);
     return {
       invite_discord: invite ? FEEDBACK_DISCORD_URL : null,
       commission_ask: commissionAsk,
@@ -672,17 +675,11 @@ async function handleSetLocale(req, env, session) {
   return json({ ok: true, locale });
 }
 
-/** Minutes of play before the Commission thank-you card may appear. */
-const COMMISSION_ASK_MINUTES = 20 * 60;
-
 // POST /api/users/me/commission-ask  { action: 'clicked' | 'dismissed' }
-// Recorded once; after this the card never comes back, whatever was chosen.
+// The answer to the card (already recorded as shown when it was handed out).
 async function handleCommissionAskAnswer(req, env, session) {
   const body = await readJson(req);
-  const action = body?.action === 'clicked' ? 'clicked' : 'dismissed';
-  await env.DB
-    .prepare('UPDATE users SET commission_ask_ms = ?, commission_ask_action = ? WHERE id = ? AND commission_ask_ms IS NULL')
-    .bind(Date.now(), action, session.user_id).run();
+  await commissionAsk_.answerCommissionAsk(env, session.user_id, body?.action);
   return json({ ok: true });
 }
 
@@ -1422,6 +1419,7 @@ import * as studio from './studio.js';
 import * as store from './store.js';
 import * as customMaps from './customMaps.js';
 import * as skins from './skins.js';
+import * as commissionAsk_ from './commissionAsk.js';
 import * as economy from './economy.js';
 import * as heraldStrip from './heraldStrip.js';
 import * as battleCard from './battleCard.js';
