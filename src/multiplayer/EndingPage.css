@@ -389,19 +389,23 @@
   .ep-charts { grid-template-columns: minmax(0, 1fr); }
   .ep-battle { grid-template-columns: minmax(0, 1fr); gap: 10px; }
   .ep-headline { font-size: clamp(40px, 11cqw, 96px); }
+  .ep-trow { grid-template-columns: 36px minmax(0, 1fr) 64px 64px 72px 96px; gap: 10px; padding: 12px 16px; }
+  .ep-thead { padding: 11px 16px; }
+  .ep-who__line { flex-wrap: wrap; row-gap: 3px; }
 }
 
 /* ---- phone ---- */
 @media (max-width: 640px) {
   .ep-wrap { padding: 0 16px 56px; }
-  .ep-trow { grid-template-columns: 30px minmax(0, 1fr) 52px 52px; padding: 11px 14px; gap: 8px; font-size: 14px; }
-  .ep-thead { padding: 10px 14px; }
+  .ep-trow { grid-template-columns: 28px minmax(0, 1fr) 58px 52px; padding: 11px 14px; gap: 8px; font-size: 14px; }
+  .ep-thead { padding: 10px 14px; font-size: 10px; letter-spacing: 0.06em; }
   .ep-hide-s { display: none; }
   .ep-who { gap: 10px; }
   .ep-who__line { flex-wrap: wrap; row-gap: 3px; }
   .ep-who__name { flex: 0 1 auto; }
   .ep-awgrid { grid-template-columns: minmax(0, 1fr); }
-  .ep-aw { min-height: 0; }
+  .ep-aw { min-height: 0; padding: 14px 16px 12px; gap: 4px; }
+  .ep-aw__val { font-size: 30px; margin-top: 4px; }
   .ep-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ep-cm__row { flex-wrap: wrap; row-gap: 2px; }
   .ep-cm__lab { width: 100%; padding: 0 0 2px; }

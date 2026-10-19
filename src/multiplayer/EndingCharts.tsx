@@ -91,7 +91,7 @@ export function EndingChart({ data, measure, title, sub, aria, crosses, height =
   const lines = useMemo(() => chartLines(data, measure), [data, measure]);
   const { ticks } = data.series;
   const narrow = w < 480;
-  const padR = narrow ? 52 : Math.min(112, Math.max(70, Math.round(w * 0.17)));
+  const padR = narrow ? 52 : Math.min(112, Math.max(70, Math.round(w * 0.22)));
   const geom = useMemo<ChartGeom>(
     () => chartGeom(w, height, ticks, maxOfLines(lines), { l: narrow ? 38 : 44, r: padR }),
     [w, height, ticks, lines, narrow, padR],
@@ -362,6 +362,6 @@ export function EndingChart({ data, measure, title, sub, aria, crosses, height =
 
 function clip(s: string, max: number): string {
   if (max < 2) return '';
-  return s.length <= max ? s : `${s.slice(0, Math.max(1, max - 1))}…`;
+  return s.length <= max ? s : `${s.slice(0, Math.max(1, max - 1)).trimEnd()}…`;
 }
 

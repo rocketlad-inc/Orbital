@@ -218,7 +218,10 @@ export function EndingPage({ gameId, meta, status, data, onReturn, renderFilm, p
     setShowFilm(v => !v);
   };
   useEffect(() => {
-    if (showFilm) filmRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    if (!showFilm) return;
+    let calm = false;
+    try { calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { /* no matchMedia */ }
+    filmRef.current?.scrollIntoView?.({ block: 'start', behavior: calm ? 'auto' : 'smooth' });
   }, [showFilm]);
 
   // ---- the report-dependent sections ----
@@ -243,7 +246,7 @@ export function EndingPage({ gameId, meta, status, data, onReturn, renderFilm, p
         <div className="ep-brandbar"><b>{BRAND}</b><span>{t('ending.brand.sub')}</span></div>
 
         {/* ===================== Verdict ===================== */}
-        <header className={`ep-hero${ready && me ? '' : ' ep-hero--solo'}`}>
+        <header className={`ep-hero${(ready && me) || (status === 'loading' && meParty) ? '' : ' ep-hero--solo'}`}>
           <div className="ep-verdict">
             {ready && (
               <div className="ep-eyebrow">
