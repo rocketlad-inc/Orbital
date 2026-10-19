@@ -34,6 +34,8 @@ export const data: Catalog = {
   'data.ship.mega_destroyer.desc': 'Um destruidor de mundos que mal se move. Remove a terraformação, não pode usar portais e todos o veem chegando por dias.',
   'data.ship.kaiju.name': 'Leviatã',
   'data.ship.kaiju.unknown': 'Contato desconhecido',
+  'data.ship.missile.name': 'Salva de mísseis',
+  'data.ship.missile.desc': 'Mísseis de um silo, em voo. Onde caem, cada um causa 10 de dano a toda nave naquela órbita.',
   'data.ship.kaiju.desc': 'Um ser vivo do tamanho de uma lua. Devora mundos, não faz a paz, e todo império está em guerra com ele.',
   'data.ship.mobile_foundry.name': 'Fundição Móvel',
   'data.ship.mobile_foundry.desc': 'Um estaleiro que se move. Constrói quatro cascos ao mesmo tempo, onde quer que você o estacione.',

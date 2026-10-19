@@ -28,6 +28,7 @@ export const SHIP_NAME_POOLS: Record<ShipClassName, string[]> = {
   mega_destroyer: ['Mega Destroyer'],
   mobile_foundry: ['Mobile Foundry'],
   kaiju: ['Leviathan'],
+  missile: ['Missiles'],
   corvette: [
     // Originals
     'Tachi', 'Razorback', 'Pella', 'Chetzemoka', 'Screaming Firehawk',

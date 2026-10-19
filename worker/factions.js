@@ -1378,6 +1378,8 @@ export const SHIP_COMBAT_STATS = {
   // here is the cap; the hull's real hp_max is rolled at launch from the
   // game's fleets (kaijuHp), and damage comes from the host's dial.
   kaiju:     { hp: 40000, damage_per_tick: 50, speed: 0.50 },
+  // A missile salvo (missiles.js): carried, never fought; see SHIP_CLASSES.
+  missile:   { hp: 1, damage_per_tick: 0, speed: 1 },
   corvette:  { hp: 40,  damage_per_tick: 3.5,    speed: 0.85 },
   // x5 per tier against a x10 price ladder (Lorne, 2026-09-21): a
   // bigger hull is concentration, not a bargain. Built hulls keep the

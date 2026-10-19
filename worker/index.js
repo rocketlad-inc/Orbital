@@ -1479,6 +1479,32 @@ function matchPattern(pattern, pathname) {
   return groups;
 }
 
+/** 409 when a write names a missile salvo: in the path (/ships/:id) or as
+ *  a ship id anywhere the ship endpoints take one in a body. Null to go on.
+ *  A body that is not JSON names nothing. */
+async function refuseMissileOrders(req, params) {
+  const ids = new Set();
+  if (params.shipId) ids.add(params.shipId);
+  const type = req.headers.get('content-type') ?? '';
+  if (req.body && (type.includes('json') || type === '')) {
+    try {
+      const body = await req.clone().json();
+      const take = (v) => { if (typeof v === 'string' && v.includes(':')) ids.add(v); };
+      const walk = (o) => {
+        if (!o || typeof o !== 'object') return;
+        take(o.ship_id); take(o.shipId); take(o.flagship_id);
+        for (const k of ['ship_ids', 'shipIds', 'ships']) if (Array.isArray(o[k])) o[k].forEach(x => (typeof x === 'string' ? take(x) : walk(x)));
+        if (Array.isArray(o.orders)) o.orders.forEach(walk);
+        if (o.kind === 'ship') take(o.asset_id);
+      };
+      walk(body);
+    } catch { /* not JSON */ }
+  }
+  // Every salvo's id is `<game>:msl_...` (missiles.js handleLaunch), so the
+  // id alone says it: no read on the hot path of every ship order.
+  return [...ids].some(id => id.includes(':msl_')) ? err(409, 'missile', 'a missile salvo takes no orders') : null;
+}
+
 async function dispatchFeatureRoute(req, env, url, session) {
   for (const mod of FEATURE_MODULES) {
     if (!mod || !Array.isArray(mod.routes)) continue;
@@ -1488,6 +1514,14 @@ async function dispatchFeatureRoute(req, env, url, session) {
       if (params === null) continue;
       if (r.auth === 'required' && !session) {
         return err(401, 'unauthenticated', 'sign in required');
+      }
+      // A MISSILE SALVO TAKES NO ORDERS (missiles.js). It is a ship row so
+      // it can fly and be seen, which also makes it look orderable to every
+      // ship endpoint: a move, a stance, a fleet, a sale, a refit. One
+      // guard here instead of one in each of them.
+      if (req.method !== 'GET' && params.gameId) {
+        const refused = await refuseMissileOrders(req, params);
+        if (refused) return refused;
       }
       return r.handle(req, env, { url, session, params });
     }

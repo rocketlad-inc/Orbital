@@ -331,7 +331,7 @@ export interface Ship {
   // shipyard can make: capital hulls come out of a megastructure site.
   // See BuildableClassName for the buildable subset.
   class: 'corvette' | 'frigate' | 'destroyer' | 'freighter' | 'colony'
-    | 'mega_destroyer' | 'mobile_foundry' | 'kaiju';
+    | 'mega_destroyer' | 'mobile_foundry' | 'kaiju' | 'missile';
   ownedBy: string;                      // faction id
 
   // Current state
@@ -363,6 +363,8 @@ export interface Ship {
    *  fires. Deliberately not gated on ownership — the 48-tick charge
    *  exists so the target can see it winding up. */
   strikeTargetBodyId?: string | null;
+  /** A missile salvo's size (class 'missile', worker/missiles.js). */
+  missileCount?: number | null;
   strikeReadyTick?: number | null;
   /** What the charging strike will do, fixed when it was ordered: strip
    *  a living world's biosphere, or destroy a raw world outright. */
@@ -846,6 +848,8 @@ export interface Settlement {
   /** Upgrades lined up BEHIND buildingQueue, in the order they will run.
    *  Empty/absent when nothing is waiting. */
   buildingBacklog?: SettlementBuildOrder[];
+  /** THE MISSILE SILO (worker/missiles.js). Only the owner's are sent. */
+  missileSilo?: MissileSiloState;
   /** The standing order this yard gives every hull it builds. A queue
    *  row with no order of its own follows this one. */
   defaultBuildOrder?: 'go_to' | 'defensive' | 'hold' | 'trade_route' | 'join_fleet' | 'stay' | null;
@@ -1502,6 +1506,18 @@ export interface ManeuverRenderHints {
   committedBurnColor: string;           // amber solid
   captureColor: string;                 // green
   escapeColor: string;                  // red
+}
+
+/** A city's Missile Silo as its owner sees it (worker/missiles.js). */
+export interface MissileSiloState {
+  /** Missiles ready to fire. */
+  stock: number;
+  /** The build queue: the first is building, the rest wait. */
+  orders: Array<{ id: string; startTick: number | null; completeTick: number | null }>;
+  /** Auto-defence: off, shoot down incoming missiles, or also hostile fleets. */
+  auto: 'off' | 'missiles' | 'fleets';
+  /** Missiles auto-defence never spends. */
+  reserve: number;
 }
 
 /** A found ship waiting for its finder's answer (worker/discoveryOffers.js). */

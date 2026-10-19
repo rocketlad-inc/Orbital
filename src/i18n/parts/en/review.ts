@@ -428,6 +428,10 @@ export const review = {
   'eventlog.ev.gate.transit': '{who} went through the {from}, crossing to {to}',
   // discoveries (rebuilt from the payload for non-English display)
   'eventlog.ev.secret.line': '{owner}: {msg}',
+  'eventlog.ev.missile.launch': 'You launched {n} missiles at {body}: impact at tick {tick}.',
+  'eventlog.ev.missile.strike': '{who} missiles hit {body}: {dmg} damage to every ship in orbit, {k} destroyed.',
+  'eventlog.ev.missile.strikeAuto': '{who} silo fired {n} missiles at ships arriving at {body}: {dmg} damage each, {k} destroyed.',
+  'eventlog.ev.missile.intercepted': '{who} shot down {n} incoming missiles at {body}.',
   'eventlog.ev.secret.offer': 'Your ship found {ship} at {body}. Claim it or refuse it by tick {tick}.',
   'eventlog.ev.secret.refused': 'You left {ship} at {body} for another empire to find.',
   'eventlog.ev.secret.fallback': '{kind} at {body}',

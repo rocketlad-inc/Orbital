@@ -629,6 +629,27 @@ export function formatChronicleEvent(
     return out('◎ ', T('sungate.opened', { gate, system }));
   }
 
+  if (ev.kind === 'missile_launch') {
+    return out('🚀 ', T('missile.launch', {
+      n: Number(parsed.count ?? 0), body: String(parsed.body_name ?? T('fb.aBody')), tick: Number(parsed.arrive_tick ?? 0),
+    }));
+  }
+  if (ev.kind === 'missile_strike') {
+    const who = (Array.isArray(parsed.launcher_names) && parsed.launcher_names.length)
+      ? (parsed.launcher_names as string[]).join(', ') : nameOfFaction(ev.actor_faction_id);
+    const vars = {
+      who, n: Number(parsed.missiles ?? 0), body: String(parsed.body_name ?? T('fb.aBody')),
+      dmg: Number(parsed.damage ?? 0), k: Number(parsed.destroyed_count ?? 0),
+    };
+    return out('🚀 ', parsed.auto ? T('missile.strikeAuto', vars) : T('missile.strike', vars));
+  }
+  if (ev.kind === 'missile_intercepted') {
+    return out('🛡 ', T('missile.intercepted', {
+      who: String(parsed.by_name ?? nameOfFaction(ev.actor_faction_id)),
+      n: Number(parsed.count ?? 0), body: String(parsed.body_name ?? T('fb.aBody')),
+    }));
+  }
+
   if (ev.kind === 'discovery_offer' || ev.kind === 'discovery_refused') {
     const shipKey = parsed.kind === 'ancient_capital'
       ? (parsed.capital_kind === 'mobile_foundry' ? 'mobile_foundry' : 'mega_destroyer')

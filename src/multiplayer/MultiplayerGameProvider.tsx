@@ -376,6 +376,8 @@ interface ServerState {
     captain_traits?: string | null;
     /** Mega Destroyer charge — public, so anyone can see it wind up. */
     strike_target_body_id?: string | null;
+    /** A missile salvo's size (class 'missile'). */
+    missile_count?: number | null;
     strike_ready_tick?: number | null;
     strike_mode?: string | null;
   }>;
@@ -467,6 +469,11 @@ interface ServerState {
     building_order_json?: string | null;
     /** JSON array of upgrades waiting behind building_order_json. */
     building_backlog_json?: string | null;
+    /** The missile silo (0177); null for anyone but the owner. */
+    missile_stock?: number | null;
+    missile_orders_json?: string | null;
+    missile_auto?: string | null;
+    missile_reserve?: number | null;
     /** The standing order this yard gives every hull it builds
      *  (migration 0120). Null on cities and on yards with no opinion. */
     default_build_order?: string | null;
@@ -1069,6 +1076,7 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     // ship panel and the rock card while its hold visibly filled.
     miningBodyId: stripGameId((s as { mining_body_id?: string | null }).mining_body_id) ?? null,
     strikeTargetBodyId,
+    missileCount: s.missile_count ?? null,
     strikeReadyTick,
     strikeMode,
   };
@@ -1099,6 +1107,7 @@ function translateShipClass(serverClass: string): Ship['class'] {
     case 'mega_destroyer':
     case 'mobile_foundry':
     case 'kaiju':
+    case 'missile':
       return serverClass;
     case 'cargo':
     case 'hauler':
@@ -1195,6 +1204,22 @@ function settlementToClient(
         };
       } catch { return undefined; }
     })(),
+    // THE MISSILE SILO (0177): sent only to its owner (null otherwise).
+    missileSilo: s.missile_stock == null ? undefined : {
+      stock: Number(s.missile_stock) || 0,
+      orders: (() => {
+        try {
+          const arr = JSON.parse(s.missile_orders_json ?? '[]');
+          return Array.isArray(arr)
+            ? arr.map((o: { id: string; start_tick?: number | null; complete_tick?: number | null }) => ({
+              id: o.id, startTick: o.start_tick ?? null, completeTick: o.complete_tick ?? null,
+            }))
+            : [];
+        } catch { return []; }
+      })(),
+      auto: s.missile_auto === 'missiles' || s.missile_auto === 'fleets' ? s.missile_auto : 'off',
+      reserve: Number(s.missile_reserve) || 0,
+    },
     // What this yard tells every hull it builds. Ids stripped like all
     // the others so the pickers can match them against gameState.
     defaultBuildOrder: (s.default_build_order ?? null) as Settlement['defaultBuildOrder'],

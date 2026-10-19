@@ -430,6 +430,10 @@ export const review: Catalog = {
   'eventlog.ev.gate.transit': '{who} passou pelo {from}, cruzando para {to}',
   // discoveries (rebuilt from the payload for non-English display)
   'eventlog.ev.secret.line': '{owner}: {msg}',
+  'eventlog.ev.missile.launch': 'Você lançou {n} mísseis contra {body}: impacto no tick {tick}.',
+  'eventlog.ev.missile.strike': 'Mísseis de {who} atingiram {body}: {dmg} de dano a toda nave em órbita, {k} destruídas.',
+  'eventlog.ev.missile.strikeAuto': 'O silo de {who} disparou {n} mísseis contra naves chegando a {body}: {dmg} de dano a cada uma, {k} destruídas.',
+  'eventlog.ev.missile.intercepted': '{who} derrubou {n} mísseis a caminho de {body}.',
   'eventlog.ev.secret.offer': 'Sua nave encontrou {ship} em {body}. Aceite ou recuse até o tick {tick}.',
   'eventlog.ev.secret.refused': 'Você deixou {ship} em {body} para outro império encontrar.',
   'eventlog.ev.secret.fallback': '{kind} em {body}',
