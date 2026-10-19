@@ -247,6 +247,54 @@ async function record() {
   }
 }
 
+/**
+ * Film: one PNG per frame on a stepped clock, the way the Reddit clips were
+ * made, then GIF (15 fps) + WebP (30 fps) via scripts/studio-encode.py.
+ *   node scripts/studio.mjs film <gameId> shot.json --out <dir> [--as handle] [--size 1920x1080] [--width 960]
+ */
+async function film() {
+  const [gameId, shotFile] = rest;
+  if (!gameId || !shotFile) die('film needs <gameId> shot.json --out <dir>');
+  const dir = flag('out') || `orbital-${gameId}-frames`;
+  const shot = JSON.parse(fs.readFileSync(shotFile, 'utf8'));
+  const [w, h] = (flag('size') || (shot.format === '9:16' ? '1080x1920' : shot.format === '1:1' ? '1080x1080' : '1920x1080')).split('x').map(Number);
+  const handle = flag('as') || 'studio-terra';
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true });
+  const b = await openGame(gameId, handle, w, h);
+  try {
+    const total = await b.evaluate(`window.__studio.openFilm(${JSON.stringify(shot)})`);
+    console.error(`filming ${total} frames at ${w}x${h} as ${handle}…`);
+    const frames = [];
+    const t0 = Date.now();
+    for (let k = 0; k < total; k++) {
+      const r = await b.evaluate(`window.__studio.filmFrame().then(r => JSON.stringify(r))`);
+      const { done } = JSON.parse(r);
+      const shotPng = await b.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+      const f = `${String(k).padStart(5, '0')}.png`;
+      fs.writeFileSync(path.join(dir, f), Buffer.from(shotPng.data, 'base64'));
+      frames.push({ f, t: k / (shot.fps ?? 30) });
+      if (k % 30 === 0) process.stderr.write(`\r  ${k}/${total}  ${((Date.now() - t0) / 1000).toFixed(0)}s   `);
+      if (done) break;
+    }
+    process.stderr.write('\n');
+    fs.writeFileSync(path.join(dir, 'frames.json'), JSON.stringify(frames));
+    const stats = await b.evaluate('JSON.stringify(window.__studio.stats)').catch(() => '{}');
+    await b.evaluate('window.__studio.closeFilm()').catch(() => {});
+    console.log(JSON.stringify({ dir, frames: frames.length, seconds: shot.seconds, stats: JSON.parse(stats) }));
+    if (flag('encode') !== '0') {
+      const width = flag('width') || '960';
+      const enc = path.join(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), 'studio-encode.py');
+      const name = flag('name') || path.basename(dir);
+      console.error(`encoding ${name} at ${width}px…`);
+      const r = spawn('python', [enc, dir, '--name', name, '--width', width], { stdio: 'inherit' });
+      await new Promise(res => r.on('exit', res));
+    }
+  } finally {
+    await b.close();
+  }
+}
+
 /** Run JavaScript in the opened game: `await` works, window.__studio is there. */
 async function evalInGame() {
   const [gameId, code] = rest;
@@ -261,7 +309,7 @@ async function evalInGame() {
 
 // ---------- main ----------
 
-const COMMANDS = { catalog, apply, tick, record, close, eval: evalInGame };
+const COMMANDS = { catalog, apply, tick, record, film, close, eval: evalInGame };
 (async () => {
   if (!cmd || !COMMANDS[cmd]) {
     console.error('usage: node scripts/studio.mjs catalog|apply|tick|record|eval|close … (docs/STUDIO.md)');
