@@ -66,6 +66,8 @@ export function ProfilePanel({ onEnterRoom }: { onEnterRoom?: (id: string) => vo
   // from `notice` because a line of text is not what someone who has
   // just paid came back for.
   const [thanks, setThanks] = useState(false);
+  /** The surface the purchase began on (?via=, set by the server). */
+  const [via, setVia] = useState<string | null>(null);
   // Back from buying a GIFT: the Hangar polls for the new code.
   const [giftBought, setGiftBought] = useState(false);
 
@@ -78,7 +80,9 @@ export function ProfilePanel({ onEnterRoom }: { onEnterRoom?: (id: string) => vo
     const q = new URLSearchParams(window.location.search);
     const outcome = q.get('purchase');
     if (!outcome) return;
+    setVia(q.get('via'));
     q.delete('purchase');
+    q.delete('via');
     const rest = q.toString();
     window.history.replaceState(null, '', `${window.location.pathname}${rest ? `?${rest}` : ''}${window.location.hash}`);
     if (outcome === 'success') {
@@ -195,6 +199,7 @@ export function ProfilePanel({ onEnterRoom }: { onEnterRoom?: (id: string) => vo
       {thanks && (
         <CommissionThanks
           unlocked={!!user?.is_premium}
+          via={via}
           onClose={() => setThanks(false)}
         />
       )}

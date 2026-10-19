@@ -17,6 +17,7 @@
 // lines" for a long while after there were sixteen).
 // ============================================================
 
+import { useEffect } from 'react';
 import { apiFetch, CommissionSurface } from './api';
 import { PREMIUM_VARIANTS } from '../components/ShipIcons';
 import { PREMIUM_EMBLEM_IDS } from '../game/emblems';
@@ -102,8 +103,12 @@ export function openCommissionInBrowser(surface: CommissionSurface, opts: { gift
 /** Every surface a checkout can start from (worker/store.js keeps the
  *  same allow-list): a handoff naming anything else is not one of ours. */
 export const COMMISSION_SURFACES: readonly CommissionSurface[] = [
-  'profile', 'lobby-flag', 'designer', 'endgame', 'thanks-card', 'skins', 'discord-feed', 'map-maker',
+  'profile', 'lobby-flag', 'designer', 'endgame', 'thanks-card', 'skins', 'discord-feed', 'map-maker', 'lobby-map',
 ];
+
+/** Surfaces that sell hosting on your own map: the thank-you after paying
+ *  from one of them leads back to the Map Maker. */
+export const MAP_SURFACES: ReadonlySet<string> = new Set(['map-maker', 'lobby-map']);
 
 const viewed = new Set<string>();
 
@@ -122,6 +127,12 @@ export function logCommission(surface: CommissionSurface, action: 'view' | 'clic
       payload: { from: surface },
     }),
   }).catch(() => { /* best-effort */ });
+}
+
+/** Log a surface's view while it is `shown` (once per page load, like
+ *  every view): the funnel's first column. */
+export function useCommissionView(surface: CommissionSurface, shown = true): void {
+  useEffect(() => { if (shown) logCommission(surface, 'view'); }, [surface, shown]);
 }
 
 /** Answer the one-time thank-you card. Recorded once server-side; it

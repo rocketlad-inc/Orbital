@@ -9,6 +9,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from './api';
+import type { TickSchedule } from '../game/tickSchedule';
 import { mapBodyType, stripGameId } from './bodyIdentity';
 import { perf, PerfHud, SoftwareRenderWarning } from './PerfHud';
 import { logger, LogCategory, LogLevel } from '../game/logger';
@@ -73,6 +74,7 @@ interface ServerState {
     status: string;
     current_tick: number;
     tick_interval_ms: number;
+    tick_schedule?: TickSchedule | null;
     next_tick_at: number | null;
     started_at: number | null;
     completed_at?: number | null;
@@ -2245,6 +2247,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     currentTick: srv.game.current_tick,
     nextTickAt: srv.game.next_tick_at,
     tickIntervalMs: srv.game.tick_interval_ms,
+    tickSchedule: srv.game.tick_schedule ?? null,
     bodies,
     ships,
     fleets: mapServerFleets(srv, ships, callerFactionId),

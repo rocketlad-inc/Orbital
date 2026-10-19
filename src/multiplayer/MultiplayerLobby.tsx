@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch, startCommissionCheckout } from './api';
-import { canBuyHere, openCommissionInBrowser, logCommission, COMMISSION_PRICE, HOLDER_MARK } from './commission';
+import { canBuyHere, openCommissionInBrowser, logCommission, useCommissionView, COMMISSION_PRICE, HOLDER_MARK } from './commission';
 import { normalizeMap, startWorlds, hostBlockers } from '../game/customMap';
 import { issueTitle } from '../mapmaker/mmText';
 import { useAuth } from './AuthContext';
@@ -690,6 +690,11 @@ function MapChoice({
 }) {
   const sellable = canBuyHere();
   const price = tk('mp.commission.price', COMMISSION_PRICE);
+  // The gate's pitch is seen when a player without the Commission picks a
+  // custom map: that is the view (not the lock mark on the choice).
+  useCommissionView('lobby-map', useCustom && !maps.canHost);
+  const [buying, setBuying] = useState(false);
+  const [buyError, setBuyError] = useState<string | null>(null);
   return (
     <div className="lx-field">
       <span className="lx-field__label">{t('lobby.create.map')}</span>
@@ -713,17 +718,24 @@ function MapChoice({
         <div className="lx-mapgate">
           <p className="lx-muted">{t('lobby.create.mapLocked', { name: t('hangar.commissionName'), price })}</p>
           {sellable ? (
-            <button type="button" className="lx-btn lx-btn--primary" onClick={() => {
-              logCommission('map-maker', 'click');
-              void startCommissionCheckout('map-maker').then(url => { if (url) window.location.assign(url); });
+            <button type="button" className="lx-btn lx-btn--primary" disabled={buying} onClick={() => {
+              logCommission('lobby-map', 'click');
+              setBuying(true);
+              setBuyError(null);
+              void startCommissionCheckout('lobby-map').then(url => {
+                if (url) { window.location.assign(url); return; }
+                setBuying(false);
+                setBuyError(t('hangar.err.checkout'));
+              });
             }}>
-              {t('feed.buy', { price })}
+              {buying ? t('hangar.opening') : t('feed.buy', { price })}
             </button>
           ) : (
-            <button type="button" className="lx-btn lx-btn--primary" onClick={() => openCommissionInBrowser('map-maker')}>
+            <button type="button" className="lx-btn lx-btn--primary" onClick={() => openCommissionInBrowser('lobby-map')}>
               {t('mp.commission.inBrowser', { price })}
             </button>
           )}
+          {buyError && <p className="lx-muted" role="alert">{buyError}</p>}
         </div>
       )}
 

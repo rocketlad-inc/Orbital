@@ -955,7 +955,7 @@ async function handleCommissionFunnel(req, env, { session, url }) {
          FROM users WHERE commission_ask_ms >= ?1 GROUP BY 1`, since),
   ]);
 
-  const SURFACES = ['profile', 'lobby-flag', 'designer', 'endgame', 'thanks-card'];
+  const SURFACES = ['profile', 'lobby-flag', 'designer', 'endgame', 'thanks-card', 'skins', 'discord-feed', 'map-maker', 'lobby-map'];
   const row = (s) => ({ surface: s, views: 0, viewers: 0, clicks: 0, dismissals: 0, checkouts: 0, paid: 0 });
   const by = new Map(SURFACES.map(s => [s, row(s)]));
   const get = (s) => { if (!by.has(s)) by.set(s, row(s)); return by.get(s); };

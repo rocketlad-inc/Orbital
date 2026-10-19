@@ -43,6 +43,7 @@ import { advanceSunGates, mainSystemSql, tellEveryone, recordGateTransit } from 
 import { advanceKaiju } from './kaiju.js';
 import { legDilation } from './wellDilation.js';
 import { binaryCloseness, binaryStarRow } from './binaryDance.js';
+import { readSchedule, intervalAt, nextTickAt } from './tickSchedule.js';
 const MAIN_SYSTEM = mainSystemSql();
 
 /** Unordered faction-pair key, shared by the tick's combat passes and
@@ -983,10 +984,12 @@ export class Room {
     const gameId = started.gameId;
 
     const game = await this.env.DB
-      .prepare('SELECT status, current_tick, tick_interval_ms, turn_based_enabled, next_tick_at FROM games WHERE id = ?')
+      .prepare('SELECT status, current_tick, tick_interval_ms, turn_based_enabled, next_tick_at, tick_schedule FROM games WHERE id = ?')
       .bind(gameId)
       .first();
     if (!game) return;
+    // Tick speed by time of day (tickSchedule.js), when the host set one.
+    const schedule = readSchedule(game.tick_schedule);
     if (game.status === 'completed' || game.status === 'abandoned') return;
 
     // Turn-Based Mode short-circuit: the alarm doesn't auto-advance time
@@ -1001,9 +1004,9 @@ export class Room {
     }
 
     const now = Date.now();
-    const interval = game.tick_interval_ms ?? 86_400_000;
-    const startTick = game.current_tick ?? 0;
     const scheduled = game.next_tick_at ?? now;
+    const interval = schedule ? intervalAt(schedule, scheduled) : (game.tick_interval_ms ?? 86_400_000);
+    const startTick = game.current_tick ?? 0;
 
     // Early/stale-fire guard. CF can fire an alarm that was armed under a
     // schedule that's since moved — most commonly when the host changes
@@ -1069,11 +1072,21 @@ export class Room {
     // `now` so the alarm doesn't immediately re-fire in a hot loop.
     let nextAt = scheduled + catchUp * interval;
     if (nextAt <= now) nextAt = now + interval;
+    // On a schedule, each step is the speed in force at that moment, cut
+    // short at the next period's start; the speed in force is written
+    // back so everything that reads tick_interval_ms sees today's pace.
+    let speedNow = game.tick_interval_ms;
+    if (schedule) {
+      nextAt = scheduled;
+      for (let k = 0; k < catchUp; k++) nextAt = nextTickAt(schedule, nextAt);
+      if (nextAt <= now) nextAt = nextTickAt(schedule, now);
+      speedNow = intervalAt(schedule, now);
+    }
 
     await this.env.DB.batch([
       this.env.DB
-        .prepare('UPDATE games SET current_tick = ?, next_tick_at = ? WHERE id = ?')
-        .bind(endTick, nextAt, gameId),
+        .prepare('UPDATE games SET current_tick = ?, next_tick_at = ?, tick_interval_ms = ? WHERE id = ?')
+        .bind(endTick, nextAt, speedNow, gameId),
       this.env.DB
         .prepare("INSERT OR REPLACE INTO game_ticks (game_id, tick_number, status, scheduled_at, started_at, completed_at) VALUES (?, ?, 'completed', ?, ?, ?)")
         .bind(gameId, endTick, now, now, now),

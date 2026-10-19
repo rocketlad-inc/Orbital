@@ -161,8 +161,10 @@ export const COMMISSION_SURFACES = new Set([
   'profile', 'lobby-flag', 'designer', 'endgame', 'thanks-card', 'skins',
   // The game-feed settings: "post this game in your own Discord server".
   'discord-feed',
-  // The Map Maker: hosting a game on your own map.
+  // The Map Maker: hosting a game on your own map, from its Share & host
+  // panel ('map-maker') or the game creator's locked map choice ('lobby-map').
   'map-maker',
+  'lobby-map',
 ]);
 
 /** Gift codes: 12 characters from an alphabet with no lookalikes (no
@@ -230,7 +232,7 @@ async function handleCreateCheckout(req, env, { url, session }) {
     'metadata[surface]': surface,
     'metadata[gift]': gift ? '1' : '0',
     customer_email: session.email,
-    success_url: `${origin}/?purchase=${gift ? 'gift' : 'success'}`,
+    success_url: `${origin}/?purchase=${gift ? 'gift' : 'success'}${gift ? '' : `&via=${surface}`}`,
     cancel_url: `${origin}/?purchase=cancelled`,
   });
 
