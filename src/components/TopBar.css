@@ -830,3 +830,97 @@
   overflow: auto;
   padding: 12px 14px 24px;
 }
+
+/* ── TICK SPEED: All day / Day & night (TopBar.tsx HostTickSpeed) ──
+   Design approved 2026-10-19. Day is amber, night is indigo; the
+   game's teal marks what is selected. */
+.tsx__body { display: flex; flex-direction: column; gap: 10px; flex: 1; min-width: 0; }
+.tsx__head { display: flex; align-items: baseline; gap: 8px; }
+.tsx__now { font-family: 'Chivo Mono', monospace; font-size: 10px; color: #8aa0b4; white-space: nowrap; }
+.tsx__wrap { white-space: normal; line-height: 1.45; }
+.tsx-mode {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  border: 1px solid #2a3d50; border-radius: 4px; padding: 2px; background: #0a0f17;
+}
+.tsx-mode button {
+  height: 32px; border: 0; border-radius: 3px; background: transparent;
+  color: #8aa0b4; font: inherit; font-size: 11px; cursor: pointer;
+}
+.tsx-mode button[aria-pressed="true"] { background: rgba(78, 205, 196, 0.16); color: #4ecdc4; }
+.tsx-pills { display: flex; flex-wrap: wrap; gap: 4px; }
+.tsx-pills .side-menu__pill[aria-pressed="true"] {
+  border-color: #4ecdc4; color: #4ecdc4; background: rgba(78, 205, 196, 0.12);
+}
+.tsx-strip-wrap { display: flex; flex-direction: column; gap: 4px; }
+.tsx-strip {
+  position: relative; height: 30px; border-radius: 4px; overflow: hidden;
+  border: 1px solid #2a3d50; background: #0a0f17;
+}
+.tsx-strip--slim { height: 10px; border: 0; border-radius: 3px; }
+.tsx-strip__day, .tsx-strip__night { position: absolute; top: 0; bottom: 0; }
+.tsx-strip__day { background: rgba(232, 163, 61, 0.28); }
+.tsx-strip__night { background: rgba(110, 124, 224, 0.32); }
+.tsx-strip__tick {
+  position: absolute; top: 8px; bottom: 8px; width: 2px; margin-left: -1px;
+  border-radius: 1px; background: #c3caff;
+}
+.tsx-strip__tick--day { background: #ffd38a; }
+.tsx-strip__now { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #ffffff; }
+.tsx-hours { position: relative; height: 13px; font-family: 'Chivo Mono', monospace; font-size: 9px; color: #8aa0b4; }
+.tsx-hours span { position: absolute; top: 0; white-space: nowrap; }
+.tsx-hours--mid { transform: translateX(-50%); }
+.tsx-hours__now { color: #ffffff; background: #0c1119; padding: 0 3px; }
+.tsx-rows { display: flex; flex-direction: column; gap: 6px; }
+.tsx-row {
+  display: grid; grid-template-columns: 62px minmax(0, 1fr) 88px; align-items: center; gap: 6px;
+  padding: 6px; border: 1px solid #1f2d3c; border-radius: 4px;
+}
+.tsx-row--day { background: rgba(232, 163, 61, 0.06); }
+.tsx-row--night { background: rgba(110, 124, 224, 0.07); }
+.tsx-row__name { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+.tsx-step {
+  display: flex; align-items: center; justify-content: space-between;
+  height: 34px; border: 1px solid #2a3d50; border-radius: 4px; min-width: 0;
+}
+.tsx-row--day .tsx-step--speed { border-color: #e8a33d; color: #e8a33d; }
+.tsx-row--night .tsx-step--speed { border-color: #8f9cf0; color: #8f9cf0; }
+.tsx-step span { font-family: 'Chivo Mono', monospace; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tsx-step button {
+  width: 26px; height: 32px; flex: none; border: 0; background: transparent;
+  color: #b8c8d6; font: inherit; font-size: 15px; cursor: pointer;
+}
+.tsx-step button:hover { color: #4ecdc4; }
+.tsx-mode button:focus-visible, .tsx-step button:focus-visible, .tsx-btn:focus-visible, .tsx-clock select:focus-visible {
+  outline: 2px solid #4ecdc4; outline-offset: 1px;
+}
+.tsx-cols {
+  display: grid; grid-template-columns: 62px minmax(0, 1fr) 88px; gap: 6px; padding: 0 6px;
+  font-size: 8px; letter-spacing: 0.1em; text-transform: uppercase; color: #8aa0b4; text-align: center;
+}
+.tsx-total {
+  display: flex; align-items: baseline; gap: 8px; padding: 8px 10px; border-radius: 4px;
+  background: #0a0f17; border: 1px solid #1f2d3c; font-size: 10px; color: #b8c8d6; line-height: 1.4;
+}
+.tsx-total__n { font-family: 'Chivo Mono', monospace; font-size: 20px; color: #d8e4ee; }
+.tsx-clock { display: flex; align-items: center; gap: 8px; font-size: 10px; color: #8aa0b4; }
+.tsx-clock select {
+  flex: 1; min-width: 0; height: 30px; padding: 0 6px; background: #0a0f17; color: #d8e4ee;
+  border: 1px solid #2a3d50; border-radius: 4px; font: inherit; font-size: 10px;
+}
+.tsx-actions { display: flex; gap: 6px; }
+.tsx-btn {
+  height: 32px; padding: 0 14px; border-radius: 4px; border: 1px solid #2a3d50;
+  background: transparent; color: #b8c8d6; font: inherit; font-size: 11px; cursor: pointer;
+}
+.tsx-btn--go { border-color: #4ecdc4; color: #4ecdc4; background: rgba(78, 205, 196, 0.14); }
+.tsx-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.tsx-cells { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; font-size: 10px; color: #d8e4ee; }
+.tsx-cells > div { display: flex; flex-direction: column; gap: 2px; }
+.tsx-cells__day { color: #e8a33d; font-size: 10px; }
+.tsx-cells__night { color: #8f9cf0; font-size: 10px; }
+.tsx-chip {
+  display: inline-flex; align-items: center; gap: 3px; margin-left: 6px; padding: 0 4px;
+  border-radius: 3px; background: rgba(232, 163, 61, 0.12); color: #e8a33d;
+  font-family: 'Chivo Mono', monospace; white-space: nowrap;
+}
+.tsx-chip--night { background: rgba(110, 124, 224, 0.14); color: #8f9cf0; }
