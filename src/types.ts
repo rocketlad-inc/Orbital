@@ -1307,6 +1307,8 @@ export interface GameState {
    *  Undefined in single-player (the local sim loop owns the cadence). */
   nextTickAt?: number | null;
   tickIntervalMs?: number;
+  /** Tick speed by time of day (worker/tickSchedule.js); null = flat. */
+  tickSchedule?: import('./game/tickSchedule').TickSchedule | null;
   /** Active trade routes (freighter ↔ collector). Empty when no
    *  freighter has been assigned. Persisted with the save. Currently
    *  data-only — the execution loop lands next turn. */

@@ -350,7 +350,7 @@ export interface MultiplayerActions {
   /** Assign a captain to one of the caller's ships (swapping any sitting
    *  captain back to the bank) or bench him with shipId=null. */
   assignCaptain: (captainId: string, shipId: string | null) => Promise<MpActionResult>;
-  /** Trigger a ship's detonator (spec §2.2). Deals 50% of the ship's
+  /** Trigger a ship's detonator (spec §2.2). Deals 10% of the ship's
    *  max HP per detonator part to EVERY in-orbit ship at the body —
    *  friend or foe alike — and destroys the ship. The confirming UI
    *  must show the full disclosure copy before calling this. */

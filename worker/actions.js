@@ -2,6 +2,7 @@ import { buildCostFactors } from './buildCost.js';
 import { tr } from './i18n.js';
 import { NON_WORLD_TYPES } from './systems.js';
 import { recordGateTransit } from './sunGates.js';
+import { readSchedule, nextTickAt } from './tickSchedule.js';
 import { selectInChunks, runInChunks } from './sqlChunk.js';
 import { holdCapFor } from './routeMath.js';
 import { routeRoleForClass } from './tradeRoutesV2.js';
@@ -2419,7 +2420,7 @@ async function handleTurnSettings(req, env, ctx) {
   // happens to ping at the right moment). Force a fresh next_tick_at
   // here so the next cron tick or DO alarm wakes the game promptly.
   const prev = await env.DB
-    .prepare('SELECT turn_based_enabled, tick_interval_ms FROM games WHERE id = ?')
+    .prepare('SELECT turn_based_enabled, tick_interval_ms, tick_schedule FROM games WHERE id = ?')
     .bind(gameId)
     .first();
 
@@ -2433,7 +2434,9 @@ async function handleTurnSettings(req, env, ctx) {
   // the cron path; necessary for the natural DO-alarm path.
   if (prev && prev.turn_based_enabled === 1 && enabled === 0) {
     const interval = prev.tick_interval_ms ?? 60_000;
-    const nextAt = Date.now() + interval;
+    // On a time-of-day schedule, the schedule's next tick (tickSchedule.js).
+    const sched = readSchedule(prev.tick_schedule);
+    const nextAt = sched ? nextTickAt(sched, Date.now()) : Date.now() + interval;
     await env.DB
       .prepare('UPDATE games SET next_tick_at = ? WHERE id = ?')
       .bind(nextAt, gameId)
@@ -7726,7 +7729,8 @@ async function handleAssignCaptain(req, env, ctx) {
 // POST /api/games/:gameId/ships/:shipId/detonate
 //
 // Manual detonator trigger (spec §2.2, decided 2026-07-17; fraction
-// halved to 25% in the pacing pass — DETONATOR_HP_FRAC is the truth):
+// halved to 25% in the pacing pass, 10% on 2026-10-18 — DETONATOR_HP_FRAC
+// is the truth):
 //   - damage = DETONATOR_HP_FRAC of the ship's EFFECTIVE max HP per
 //     detonator part, scaled by the owner's Weapons tech at HALF rate
 //     (+5%/lvl), stacking additively across parts.

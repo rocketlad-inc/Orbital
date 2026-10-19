@@ -439,17 +439,17 @@ export const SCHEMA = [
   },
   {
     id: 'kaiju_hp_ticks', group: 'map', type: 'int',
-    label: 'Leviathan: HP = ticks of every fleet firing at once', def: 24, min: 1, max: 500, step: 1,
+    label: 'Leviathan: HP = ticks of every fleet firing at once', def: 48, min: 1, max: 500, step: 1,
     help: 'Rolled at launch: every armed hull in the game, hitting at its real odds, '
-      + 'kills it in this many ticks. 24 is one strike wind-up.',
+      + 'kills it in this many ticks. 48 is two strike wind-ups (doubled 2026-10-18: it died too easily).',
   },
   {
     id: 'kaiju_hp_min', group: 'map', type: 'int',
-    label: 'Leviathan: HP floor', def: 2000, min: 100, max: 200000, step: 100,
+    label: 'Leviathan: HP floor', def: 4000, min: 100, max: 200000, step: 100,
   },
   {
     id: 'kaiju_hp_max', group: 'map', type: 'int',
-    label: 'Leviathan: HP cap', def: 20000, min: 100, max: 500000, step: 100,
+    label: 'Leviathan: HP cap', def: 40000, min: 100, max: 500000, step: 100,
   },
   {
     id: 'kaiju_hunt_g', group: 'map', type: 'number',

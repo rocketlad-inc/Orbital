@@ -35,21 +35,22 @@ const check = (label, ok, detail = '') => {
 // ---- 1. The pure rules ------------------------------------------------
 {
   const d = kaijuDials({});
-  check('defaults: appetite 5, one wind-up of fleet fire, 2,000..20,000 HP, 50 damage',
-    d.appetite === 5 && d.hpTicks === 24 && d.hpMin === 2000 && d.hpMax === 20000 && d.damage === 50,
+  // Doubled on every dial (Lorne, 2026-10-18: "far too weak").
+  check('defaults: appetite 5, two wind-ups of fleet fire, 4,000..40,000 HP, 50 damage',
+    d.appetite === 5 && d.hpTicks === 48 && d.hpMin === 4000 && d.hpMax === 40000 && d.damage === 50,
     JSON.stringify(d));
   // The table Lorne picked from: a destroyer lands 26% of 87.5 on a 0.50
   // target, a frigate 50% of 17.5, a corvette 74% of 3.5.
   const fleet = (n, cls, dmg) => Array.from({ length: n }, () => ({ ship_class: cls, damage_per_tick: dmg }));
   const tiny = kaijuHp(fleet(5, 'corvette', 3.5), d);
-  check('a game of five corvettes gets the floor', tiny.hp === 2000, JSON.stringify(tiny));
+  check('a game of five corvettes gets the floor', tiny.hp === 4000, JSON.stringify(tiny));
   const mid = kaijuHp([...fleet(60, 'corvette', 3.5), ...fleet(4, 'frigate', 17.5), ...fleet(1, 'destroyer', 87.5)], d);
-  check('a mid game is sized to one wind-up of everything it has',
-    mid.hp > 2000 && mid.hp < 20000 && Math.abs(mid.hp - mid.perTick * 24) <= 100,
+  check('a mid game is sized to two wind-ups of everything it has',
+    mid.hp > 4000 && mid.hp < 40000 && Math.abs(mid.hp - mid.perTick * 48) <= 100,
     `${mid.hp} HP from ${mid.perTick.toFixed(1)}/tick`);
   const big = kaijuHp([...fleet(330, 'corvette', 3.5), ...fleet(146, 'frigate', 17.5)], d);
-  check('a big game hits the 20,000 cap', big.hp === 20000, JSON.stringify(big));
-  check('...and a host can move the cap', kaijuHp(fleet(330, 'frigate', 17.5), kaijuDials({ kaiju_hp_max: 50000 })).hp > 20000);
+  check('a big game hits the 40,000 cap', big.hp === 40000, JSON.stringify(big));
+  check('...and a host can move the cap', kaijuHp(fleet(330, 'frigate', 17.5), kaijuDials({ kaiju_hp_max: 80000 })).hp > 40000);
 
   // Lorne, 2026-10-08: outer system first, then down the well at random.
   const { seededRand } = await import('../worker/sunGates.js');
@@ -181,7 +182,7 @@ const kinds = async (DB, G) => (await DB.prepare(
   check('it launches on the tick the second gate was due', launchedAt === 21, String(launchedAt));
   check('the beast belongs to a monster faction with no seat',
     fac?.status === 'monster' && fac.user_id == null && ship?.owner_faction_id === fac.id, JSON.stringify(fac));
-  check('with no fleets in the game it gets the floor HP', ship?.hp_max === 2000, String(ship?.hp_max));
+  check('with no fleets in the game it gets the floor HP', ship?.hp_max === 4000, String(ship?.hp_max));
   const launch = rows.find(r => r.kind === 'kaiju_launched');
   const lp = JSON.parse(launch?.payload || '{}');
   check('the launch is announced with its arrival tick', !!launch && lp.arrive_tick === k.arrive_tick, launch?.payload);
@@ -344,7 +345,7 @@ const kinds = async (DB, G) => (await DB.prepare(
     const carcass = await DB.prepare('SELECT * FROM game_bodies WHERE id = ?').bind(kaijuCarcassId(G)).first();
     check('its carcass stays where it died, as a metal salvage field',
       carcass?.type === 'meteoroid' && carcass.mineral_kind === 'metal'
-      && carcass.mineral_remaining === 1000 && carcass.parent_body_id === dead.died_at_body_id,
+      && carcass.mineral_remaining === 2000 && carcass.parent_body_id === dead.died_at_body_id,
       JSON.stringify(carcass && { type: carcass.type, kind: carcass.mineral_kind, left: carcass.mineral_remaining, parent: carcass.parent_body_id, died: dead.died_at_body_id }));
     const seen = (await DB.prepare(`SELECT COUNT(*) n FROM game_body_discoveries WHERE body_id = ?`).bind(kaijuCarcassId(G)).first()).n;
     check('every empire knows where the carcass is', seen === 2, String(seen));

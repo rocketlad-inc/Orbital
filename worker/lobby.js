@@ -11,6 +11,7 @@
 // `sensor_coverage`, etc. We tolerate the export being missing (no-op import)
 // during early development so the lobby can be exercised standalone.
 import * as factions from './factions.js';
+import { normalizeSchedule, intervalAt, nextTickAt } from './tickSchedule.js';
 import { normalizeEmblem, isPremiumEmblem } from './emblems.js';
 import { validateEmblemChoice } from './store.js';
 import { skinUpdates } from './skins.js';
@@ -1186,8 +1187,11 @@ async function handleChangeTickInterval(req, env, ctx) {
   if (game.status !== 'active') return err(409, 'not_active', `game is ${game.status}`);
 
   const nextAt = Date.now() + newInterval;
+  // A flat speed replaces any time-of-day schedule: the host just said
+  // what the pace is.
   await env.DB
-    .prepare('UPDATE games SET tick_interval_ms = ?, next_tick_at = ? WHERE id = ?')
+    .prepare(`UPDATE games SET tick_interval_ms = ?, next_tick_at = ?, tick_schedule = NULL,
+                  state_version = state_version + 1 WHERE id = ?`)
     .bind(newInterval, nextAt, roomId)
     .run();
   // Re-arm the DO alarm to the new next_tick_at. WITHOUT this, the
@@ -1207,6 +1211,62 @@ async function handleChangeTickInterval(req, env, ctx) {
     console.error('tick-interval rearm poke failed', e);
   }
   return json({ ok: true, tick_interval_ms: newInterval, next_tick_at: nextAt });
+}
+
+/**
+ * PATCH /api/lobby/rooms/:roomId/tick-schedule — host-only. Tick speed by
+ * time of day (worker/tickSchedule.js): body { schedule: null | { tz,
+ * periods: [{ at: 'HH:MM', interval_ms }] } }. null goes back to one flat
+ * speed, whatever is in force now.
+ *
+ * Takes effect at once: the speed in force is written to
+ * tick_interval_ms, and the next tick moves to the schedule's, unless
+ * the one already due comes sooner (saving never delays a tick).
+ */
+async function handleSetTickSchedule(req, env, ctx) {
+  const roomId = ctx.params.roomId;
+  const g = await requireHost(env, roomId, ctx.session);
+  if (g.error) return g.error;
+  let body;
+  try { body = await req.json(); } catch { return err(400, 'bad_request', 'invalid json'); }
+  const game = await env.DB
+    .prepare('SELECT id, status, next_tick_at, tick_interval_ms, turn_based_enabled FROM games WHERE id = ?')
+    .bind(roomId).first();
+  if (!game) return err(404, 'not_found', 'no game in this room yet');
+  if (game.status !== 'active') return err(409, 'not_active', `game is ${game.status}`);
+
+  if (body?.schedule == null) {
+    await env.DB.prepare('UPDATE games SET tick_schedule = NULL, state_version = state_version + 1 WHERE id = ?')
+      .bind(roomId).run();
+    return json({ ok: true, tick_schedule: null, tick_interval_ms: game.tick_interval_ms });
+  }
+  const { schedule, error } = normalizeSchedule(body.schedule, ALLOWED_TICK_INTERVALS);
+  if (error) return err(400, 'bad_request', error);
+
+  const now = Date.now();
+  const speed = intervalAt(schedule, now);
+  const planned = nextTickAt(schedule, now);
+  const nextAt = game.next_tick_at != null && game.next_tick_at > now
+    ? Math.min(game.next_tick_at, planned) : planned;
+  await env.DB
+    // state_version: /state is cached per version, and every player
+    // should see the new schedule now, not at the next tick.
+    .prepare(`UPDATE games SET tick_schedule = ?, tick_interval_ms = ?, next_tick_at = ?,
+                  state_version = state_version + 1 WHERE id = ?`)
+    .bind(JSON.stringify(schedule), speed, game.turn_based_enabled === 1 ? game.next_tick_at : nextAt, roomId)
+    .run();
+  if (game.turn_based_enabled !== 1) {
+    try {
+      await roomStub(env, roomId).fetch('https://room/rearm', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ gameId: roomId }),
+      });
+    } catch (e) {
+      console.error('tick-schedule rearm poke failed', e);
+    }
+  }
+  return json({ ok: true, tick_schedule: schedule, tick_interval_ms: speed, next_tick_at: nextAt });
 }
 
 // ============================================================
@@ -1409,6 +1469,7 @@ export const routes = [
   { method: 'POST', pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/start$/, auth: 'required', handle: handleStart },
   { method: 'POST', pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/force-tick$/, auth: 'required', handle: handleForceTick },
   { method: 'PATCH',pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/tick-interval$/, auth: 'required', handle: handleChangeTickInterval },
+  { method: 'PATCH',pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/tick-schedule$/, auth: 'required', handle: handleSetTickSchedule },
   { method: 'PATCH',pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/seats$/, auth: 'required', handle: handleRaiseSeats },
   { method: 'PATCH',pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/me$/, auth: 'required', handle: handlePatchMe },
   { method: 'GET',  pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/captains$/, auth: 'required', handle: handleGetCaptainRoster },

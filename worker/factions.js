@@ -1377,7 +1377,7 @@ export const SHIP_COMBAT_STATS = {
   // barely scratches a fleet, and is as hard to hit as a frigate. The HP
   // here is the cap; the hull's real hp_max is rolled at launch from the
   // game's fleets (kaijuHp), and damage comes from the host's dial.
-  kaiju:     { hp: 20000, damage_per_tick: 50, speed: 0.50 },
+  kaiju:     { hp: 40000, damage_per_tick: 50, speed: 0.50 },
   corvette:  { hp: 40,  damage_per_tick: 3.5,    speed: 0.85 },
   // x5 per tier against a x10 price ladder (Lorne, 2026-09-21): a
   // bigger hull is concentration, not a bargain. Built hulls keep the
