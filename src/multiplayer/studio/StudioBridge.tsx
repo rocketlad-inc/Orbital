@@ -27,7 +27,9 @@ export function StudioBridge() {
   const deselectRef = useRef({ ship: ctx.deselectShip, body: ctx.deselectBody });
   deselectRef.current = { ship: ctx.deselectShip, body: ctx.deselectBody };
   const gameId = actions?.gameId ?? '';
-  const isAdmin = !!user?.is_admin;
+  // Admins, and the agent players the studio seats (scripts/studio.mjs
+  // records as one of them). The server re-checks every tick request.
+  const isAdmin = !!user?.is_admin || /@agents\.orbital\.local$/.test(user?.email ?? '');
 
   const director = useMemo(() => {
     if (!isAdmin || !gameId) return null;

@@ -64,6 +64,19 @@ async function allowed(req, env, session) {
   return false;
 }
 
+/** An agent player seated in THIS studio game may run its ticks: agent
+ *  accounts exist only through the key, and a seat in a test game is the
+ *  studio's own doing. Nobody else, and never a real game. */
+async function allowedInGame(req, env, session, gameId) {
+  if (await allowed(req, env, session)) return true;
+  if (!session || !/@agents\.orbital\.local$/.test(String(session.email ?? ''))) return false;
+  const row = await env.DB
+    .prepare(`SELECT 1 AS x FROM room_members m JOIN games g ON g.id = m.room_id
+               WHERE m.room_id = ? AND m.user_id = ? AND COALESCE(g.is_test_game, 0) = 1`)
+    .bind(gameId, session.user_id).first();
+  return !!row;
+}
+
 // ---------- the scene ----------
 
 function newRoomId() {
@@ -418,8 +431,8 @@ async function handleApply(req, env, { session }) {
 
 /** Run N ticks now, whoever hosts the room: the studio is the director. */
 async function handleTick(req, env, { session, params }) {
-  if (!(await allowed(req, env, session))) return err(404, 'not_found', 'no such route');
   const { gameId } = params;
+  if (!(await allowedInGame(req, env, session, gameId))) return err(404, 'not_found', 'no such route');
   const g = await env.DB.prepare('SELECT id, is_test_game, current_tick FROM games WHERE id = ?').bind(gameId).first();
   if (!g || (g.is_test_game ?? 0) !== 1) return err(404, 'not_found', 'no such test game');
   const body = await readJson(req);
