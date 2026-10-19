@@ -26,7 +26,7 @@ import {
   Captain, BuildingKind,
 } from '../types';
 import type { Wreck } from '../types';
-import type { KaijuPhase } from '../types';
+import type { KaijuPhase, DiscoveryOffer } from '../types';
 import { setKaijuRevealed } from '../game/kaijuReveal';
 import { parseTargetPriority } from './targetPriority';
 import { sanitizeParts, engineAccelMultiplier, setServerHullBase } from '../game/shipParts';
@@ -53,19 +53,18 @@ import { parseNamePools } from '../game/namePools';
 import { setServerLightweight } from '../render/lightweightMode';
 import { setServerStillWorlds } from '../render/globeSpin';
 import { connectRoomSocket } from './roomSocket';
-import { EndgameCommission } from './CommissionMoments';
 import { binaryClosenessFrom, setBinaryCloseness } from '../game/farSystems';
-import { getLang, t, tk } from '../i18n/core';
+import { getLang, t } from '../i18n/core';
 import { apiErrorText } from '../i18n/apiErrors';
 import { useI18n } from '../i18n/react';
 import { formatChronicleEvent } from './eventText';
 
-// The whole-match recap. Split out of the main bundle: it pulls in the
-// map renderer and the replay machinery, and nobody needs any of that
-// until a match is actually over. lazyChunk (not React.lazy) so a deploy
-// landing mid-session retries the chunk instead of leaving a dead panel.
-const MatchReplay = lazyChunk('match-replay', () =>
-  import('./MatchReplay').then(m => ({ default: m.MatchReplay })));
+// The end-of-game page (and, behind its button, the whole-match film). Split
+// out of the main bundle: it pulls in charts, the map renderer and the replay
+// machinery, and nobody needs any of that until a match is actually over.
+// lazyChunk (not React.lazy) so a deploy landing mid-session retries the
+// chunk instead of leaving a dead overlay.
+const EndingScreen = lazyChunk('ending-page', () => import('./EndingScreen'));
 
 // Shape of /api/games/:gid/state.
 interface ServerState {
@@ -167,6 +166,11 @@ interface ServerState {
      *  the build menu can name WHY a price moved. Absent on a worker
      *  older than the law-aware build menu — callers must default to 1. */
     settlement_cost?: { metal: number; gold: number; colonist_mult: number };
+    /** Found ships waiting for my claim or refusal (worker/discoveryOffers.js). */
+    discovery_offers?: Array<{
+      body_id: string; body_name: string; kind: string; ship_class: string;
+      offered_tick: number; expires_tick: number; upkeep: { gold: number; metal: number };
+    }>;
     /** Freighters one route may hold, by Society research. */
     carrier_cap?: number;
     build_cost?: {
@@ -2300,6 +2304,15 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       credits: srv.me.settlement_cost?.gold ?? 20,
       colonistMult: srv.me.settlement_cost?.colonist_mult ?? 0.8,
     },
+    discoveryOffers: (srv.me.discovery_offers ?? []).map(o => ({
+      bodyId: stripGameId(o.body_id) ?? o.body_id,
+      bodyName: o.body_name,
+      kind: o.kind === 'ancient_capital' ? 'ancient_capital' as const : 'derelict_warship' as const,
+      shipClass: (o.ship_class === 'mega_destroyer' || o.ship_class === 'mobile_foundry' ? o.ship_class : 'destroyer') as DiscoveryOffer['shipClass'],
+      offeredTick: o.offered_tick,
+      expiresTick: o.expires_tick,
+      upkeep: { credits: o.upkeep?.gold ?? 0, ore: o.upkeep?.metal ?? 0 },
+    })),
     // Defaults to 1 for a worker that predates this payload — the
     // conservative end, so an old server never lets the composer offer
     // a convoy the server would then refuse.
@@ -2496,15 +2509,6 @@ const MAX_POLL_INTERVAL_MS = 6000;
  *  genuine stall, never on a merely slow connection. */
 const HUNG_FETCH_MS = 15000;
 
-/** Game-over subtitle per server victory_type (room.js checkVictory,
- *  senate.js). The overlay used to print the raw key ("Victory type:
- *  domination"); unknown keys still fall back to that. */
-const MP_VICTORY_LABEL: Record<string, string> = {
-  engineering: 'Completed the Sol Dyson Sphere',
-  domination: 'Controls more than 60% of the worlds',
-  chancellor: 'Elected Supreme Chancellor by the Senate',
-};
-
 interface GameMeta {
   status: string;
   winnerFactionId: string | null;
@@ -2572,8 +2576,6 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
   );
   const [meta, setMeta] = useState<GameMeta | null>(null);
   const [error, setError] = useState<string | null>(null);
-  /** Whether the end-of-match overlay has the film open. */
-  const [showFilm, setShowFilm] = useState(false);
   /** Set true when the server returns 404. Stops polling + offers an exit. */
   const [missing, setMissing] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
@@ -2914,95 +2916,14 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
             otherwise, so it costs nothing for normal players. */}
         <PerfHud />
         <SoftwareRenderWarning />
-        {gameOver && (
-          <div
-            className="mp-overlay"
-            style={{
-              background: 'rgba(5, 8, 12, 0.86)',
-              zIndex: 6000,
-              flexDirection: 'column',
-              gap: showFilm ? 12 : 16,
-              // With the film open this stops being a centred card and
-              // becomes a page: the reel is 16:9 with a log under it and
-              // will not fit a viewport-centred column on a laptop.
-              overflowY: showFilm ? 'auto' : undefined,
-              justifyContent: showFilm ? 'flex-start' : undefined,
-              padding: showFilm ? '24px 16px' : undefined,
-            }}
-          >
-            <div style={{
-              fontFamily: 'var(--font-body)',
-              fontSize: 28,
-              letterSpacing: '0.32em',
-              color: iWon ? 'var(--mp-friendly)' : 'var(--mp-accent)',
-              textShadow: iWon
-                ? '0 0 24px rgba(78,205,196,0.4)'
-                : '0 0 24px rgba(255,184,77,0.4)',
-            }}>
+        {gameOver && meta && (
+          <React.Suspense fallback={
+            <div className="mp-overlay" style={{ background: '#060a10', zIndex: 6000, color: iWon ? '#4ecdc4' : '#ffb84d', fontFamily: 'var(--font-display)', fontSize: 28, letterSpacing: '0.32em' }}>
               {iWon ? t('mp.provider.victory') : t('mp.provider.gameOver')}
             </div>
-            <div style={{
-              fontFamily: 'var(--mp-mono)',
-              fontSize: 13,
-              color: 'var(--mp-fg)',
-              letterSpacing: '0.12em',
-              textAlign: 'center',
-            }}>
-              {meta?.winnerName ? (
-                <>
-                  <div style={{ color: 'var(--mp-accent)', marginBottom: 6 }}>
-                    {t('mp.provider.wins', { name: meta.winnerName, you: iWon ? t('mp.provider.you') : '' })}
-                  </div>
-                  <div style={{ fontSize: 11, color: 'var(--mp-fg-dim)' }}>
-                    {MP_VICTORY_LABEL[meta.victoryType ?? ''] ? tk(`mp.provider.vl.${meta.victoryType}`, MP_VICTORY_LABEL[meta.victoryType ?? '']) : t('mp.provider.victoryType', { type: meta.victoryType ?? 'hegemony' })}
-                  </div>
-                </>
-              ) : meta?.victoryType === 'annihilation' ? (
-                <div style={{ color: 'var(--mp-fg-dim)' }}>
-                  {t('mp.provider.noSurvivor')}
-                </div>
-              ) : (
-                <div style={{ color: 'var(--mp-fg-dim)' }}>{t('mp.provider.noWinner')}</div>
-              )}
-            </div>
-            <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
-              <button
-                className="mp-submit"
-                style={{ width: 'auto', padding: '10px 24px' }}
-                onClick={() => setShowFilm(v => !v)}
-              >
-                {showFilm ? t('mp.provider.hideFilm') : t('mp.provider.watchFilm')}
-              </button>
-              <button
-                className="mp-submit"
-                style={{ width: 'auto', padding: '10px 24px' }}
-                onClick={() => onGameMissingRef.current?.()}
-              >
-                {t('mp.provider.returnLobby')}
-              </button>
-            </div>
-            {/* The Commission, once per finished game, only for an
-                empire that made it to the end. Not while the film plays. */}
-            {!showFilm && (
-              <EndgameCommission
-                gameId={gameId}
-                survived={iWon || meta?.factions?.find(f => f.id === meta?.myFactionId)?.status === 'active'}
-              />
-            )}
-            {showFilm && (
-              <div style={{ width: 'min(1180px, 96vw)', marginTop: 4 }}>
-                <React.Suspense fallback={
-                  <div style={{
-                    fontFamily: 'var(--mp-mono)', fontSize: 12,
-                    color: 'var(--mp-fg-dim)', textAlign: 'center',
-                    padding: '32px 0',
-                  }}>{t('mp.provider.loadingRenderer')}</div>
-                }>
-                  <MatchReplay gameId={gameId} />
-                </React.Suspense>
-              </div>
-            )}
-          </div>
+          }>
+            <EndingScreen gameId={gameId} meta={meta} onReturn={() => onGameMissingRef.current?.()} />
+          </React.Suspense>
         )}
       </MultiplayerActionsProvider>
     </GameContextProvider>

@@ -439,6 +439,8 @@ export const helpers: Catalog = {
   'helper.sit.discovery.title': '{name} em {body}',
   'helper.sit.discovery.fallbackName': 'Descoberta',
   'helper.sit.discovery.fallbackSub': 'Um segredo revelado',
+  'helper.sit.discoveryOffer.title': 'Aceitar ou recusar: {ship} em {body}',
+  'helper.sit.discoveryOffer.sub': 'Custa {cost} por tick. Entra na sua frota no tick {tick} se não houver resposta',
   'helper.sit.fleetLeaderless.title': '{name} está sem líder',
   'helper.sit.fleetLeaderless.sub': 'Promova um capitão da frota para restabelecer o comando',
   'helper.sit.cat.in_combat': 'Em combate agora',

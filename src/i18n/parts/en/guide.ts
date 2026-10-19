@@ -513,7 +513,6 @@ export const guide = {
   'mp.endgame.title': 'Fly your next fleet in a new line',
   'mp.endgame.body': '{lines} ship lines, new flags and {discord} with the {name}. {noGameplay} {price}, once.',
   'mp.endgame.look': 'Take a look',
-  'mp.endgame.notNow': 'Not now',
   'mp.thanks.closeForGood': 'Close for good',
   'mp.thanks.title': 'Twenty hours in. Thank you for playing.',
   'mp.thanks.body': 'Orbital is free and stays free. If you would like to support it, the {name} is how: {facts} This is the only time we will ask.',

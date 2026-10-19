@@ -81,6 +81,19 @@ async function handleInit(req, env) {
   const NOT_FATAL_RE = /duplicate column|already exists|no such column.*to drop/i;
   for (const m of MIGRATIONS) {
     if (done.has(m.name)) continue;
+    // CLAIM IT BEFORE RUNNING IT (2026-10-19). Every fresh isolate runs
+    // this loop, and after a deploy several start at once: each read
+    // _migrations, saw the new one missing, and ran it. Harmless for
+    // CREATE/ALTER (the second one fails "already exists"), ruinous for a
+    // data migration: 0172 halved live megastructure prices FIVE times
+    // (2500 -> 79) before any isolate stamped it. Now only the isolate
+    // whose INSERT lands applies it; the others skip it. A fatal error
+    // releases the claim so a later isolate retries.
+    const claim = await env.DB
+      .prepare('INSERT OR IGNORE INTO _migrations (name, applied_at) VALUES (?, ?)')
+      .bind(m.name, Date.now())
+      .run();
+    if ((claim.meta?.changes ?? 0) === 0) continue;
     const stmts = m.sql
       .split(/;\s*(?:\r?\n|$)/)
       .map(s => s.replace(/^\s*--.*$/gm, '').trim())
@@ -97,6 +110,8 @@ async function handleInit(req, env) {
           console.warn(`migration ${m.name} stmt skipped (already applied):`, msg);
           continue;
         }
+        await env.DB.prepare('DELETE FROM _migrations WHERE name = ?').bind(m.name).run()
+          .catch(() => { /* the next isolate will see it claimed; logged below */ });
         return json({
           ok: false,
           migration: m.name,
@@ -106,10 +121,6 @@ async function handleInit(req, env) {
         }, { status: 500 });
       }
     }
-    await env.DB
-      .prepare('INSERT INTO _migrations (name, applied_at) VALUES (?, ?)')
-      .bind(m.name, Date.now())
-      .run();
     newlyApplied.push(m.name);
   }
   return json({ ok: true, newlyApplied, alreadyApplied: [...done] });
@@ -628,13 +639,16 @@ async function noteVisit(env, userId) {
       && !agent;
     // The one-time Commission thank-you card (0153): only for someone who
     // has clearly chosen to keep playing (20+ hours), never on the same
-    // visit as the Discord invite, never twice, never to a holder.
+    // visit as the Discord invite, never to a holder, and ONCE: the
+    // request that hands it out records the showing (0174), so it never
+    // comes back, answered or not.
     const commissionAsk = !!row
       && !invite
       && !agent
       && !row.owned
       && row.commission_ask_ms == null
-      && row.minutes >= COMMISSION_ASK_MINUTES;
+      && row.minutes >= commissionAsk_.COMMISSION_ASK_MINUTES
+      && await commissionAsk_.claimCommissionAsk(env, userId, now);
     return {
       invite_discord: invite ? FEEDBACK_DISCORD_URL : null,
       commission_ask: commissionAsk,
@@ -661,17 +675,11 @@ async function handleSetLocale(req, env, session) {
   return json({ ok: true, locale });
 }
 
-/** Minutes of play before the Commission thank-you card may appear. */
-const COMMISSION_ASK_MINUTES = 20 * 60;
-
 // POST /api/users/me/commission-ask  { action: 'clicked' | 'dismissed' }
-// Recorded once; after this the card never comes back, whatever was chosen.
+// The answer to the card (already recorded as shown when it was handed out).
 async function handleCommissionAskAnswer(req, env, session) {
   const body = await readJson(req);
-  const action = body?.action === 'clicked' ? 'clicked' : 'dismissed';
-  await env.DB
-    .prepare('UPDATE users SET commission_ask_ms = ?, commission_ask_action = ? WHERE id = ? AND commission_ask_ms IS NULL')
-    .bind(Date.now(), action, session.user_id).run();
+  await commissionAsk_.answerCommissionAsk(env, session.user_id, body?.action);
   return json({ ok: true });
 }
 
@@ -1410,6 +1418,7 @@ import * as adminDashboard from './adminDashboard.js';
 import * as store from './store.js';
 import * as customMaps from './customMaps.js';
 import * as skins from './skins.js';
+import * as commissionAsk_ from './commissionAsk.js';
 import * as economy from './economy.js';
 import * as heraldStrip from './heraldStrip.js';
 import * as battleCard from './battleCard.js';
@@ -1430,9 +1439,10 @@ import * as battleWidget from './battleWidget.js';
 import * as devlog from './devlog.js';
 import * as gameFeed from './gameFeed.js';
 import * as ending from './ending.js';
+import * as discoveryOffers from './discoveryOffers.js';
 import { carryNamePools } from './namePoolHistory.js';
 
-const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, analytics, configAdmin, emailAdmin, emailLogin, store, skins, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed, customMaps, ending];
+const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, analytics, configAdmin, emailAdmin, emailLogin, store, skins, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed, customMaps, ending, discoveryOffers];
 
 function matchPattern(pattern, pathname) {
   if (typeof pattern === 'string') {

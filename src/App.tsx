@@ -50,6 +50,7 @@ import { MegastructureCard } from './multiplayer/MegastructureCard';
 import { VersionBanner } from './components/VersionBanner';
 import { SituationLog } from './components/SituationLog';
 import { DiscoveryBanner } from './components/DiscoveryBanner';
+import { DiscoveryOfferCard } from './components/DiscoveryOfferCard';
 import { RecapOverlay } from './components/RecapOverlay';
 import { EventLog } from './components/EventLog';
 import { GroupActionBar } from './components/GroupActionBar';
@@ -77,6 +78,12 @@ import { lazyChunk } from './util/lazyChunk';
 // The orbital-battle layout test page (/?battle). Lazy: it is a tool,
 // not the game, so it stays out of the main bundle.
 const BattleSandbox = React.lazy(() => import('./battleSandbox/BattleSandbox'));
+// The end-of-game page preview (/?ending=<gameId>, see EndingPreview.tsx).
+// Dev only: it renders bundled fixtures, and this guard is what keeps both
+// the component and the fixtures out of a production build.
+const EndingPreview = process.env.NODE_ENV !== 'production'
+  ? React.lazy(() => import('./multiplayer/EndingPreview'))
+  : null;
 // The Map Maker (?mapmaker): its own screen, out of the main bundle.
 // lazyChunk, not React.lazy: a tab opened before a deploy reloads once
 // instead of breaking when the Map Maker's (renamed) chunk is fetched.
@@ -275,6 +282,8 @@ function GameUI({
       {/* Discovery fanfare — animated banner when a body secret is
           uncovered (yours: celebratory + jump-to; a rival's: intel). */}
       <DiscoveryBanner />
+      {/* A found ship waiting for its claim or refusal (MP only). */}
+      {isMultiplayer && <DiscoveryOfferCard />}
       <RecapOverlay />
       {/* Group controls — shift-click's bar on desktop, touch selection
           mode's action bar on a phone. Renders nothing until a group or
@@ -971,6 +980,13 @@ function AppRouter() {
     typeof window !== 'undefined' &&
     new URLSearchParams(window.location.search).has('mapmaker'),
   );
+  if (EndingPreview && new URLSearchParams(window.location.search).has('ending')) {
+    return (
+      <React.Suspense fallback={<div style={{ position: 'fixed', inset: 0, background: '#060a10' }} />}>
+        <EndingPreview />
+      </React.Suspense>
+    );
+  }
   if (mapMakerMode) {
     return (
       <React.Suspense fallback={<div style={{ position: 'fixed', inset: 0, background: '#0a0e14' }} />}>
