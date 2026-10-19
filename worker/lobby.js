@@ -1190,7 +1190,8 @@ async function handleChangeTickInterval(req, env, ctx) {
   // A flat speed replaces any time-of-day schedule: the host just said
   // what the pace is.
   await env.DB
-    .prepare('UPDATE games SET tick_interval_ms = ?, next_tick_at = ?, tick_schedule = NULL WHERE id = ?')
+    .prepare(`UPDATE games SET tick_interval_ms = ?, next_tick_at = ?, tick_schedule = NULL,
+                  state_version = state_version + 1 WHERE id = ?`)
     .bind(newInterval, nextAt, roomId)
     .run();
   // Re-arm the DO alarm to the new next_tick_at. WITHOUT this, the
@@ -1235,7 +1236,8 @@ async function handleSetTickSchedule(req, env, ctx) {
   if (game.status !== 'active') return err(409, 'not_active', `game is ${game.status}`);
 
   if (body?.schedule == null) {
-    await env.DB.prepare('UPDATE games SET tick_schedule = NULL WHERE id = ?').bind(roomId).run();
+    await env.DB.prepare('UPDATE games SET tick_schedule = NULL, state_version = state_version + 1 WHERE id = ?')
+      .bind(roomId).run();
     return json({ ok: true, tick_schedule: null, tick_interval_ms: game.tick_interval_ms });
   }
   const { schedule, error } = normalizeSchedule(body.schedule, ALLOWED_TICK_INTERVALS);
@@ -1247,7 +1249,10 @@ async function handleSetTickSchedule(req, env, ctx) {
   const nextAt = game.next_tick_at != null && game.next_tick_at > now
     ? Math.min(game.next_tick_at, planned) : planned;
   await env.DB
-    .prepare('UPDATE games SET tick_schedule = ?, tick_interval_ms = ?, next_tick_at = ? WHERE id = ?')
+    // state_version: /state is cached per version, and every player
+    // should see the new schedule now, not at the next tick.
+    .prepare(`UPDATE games SET tick_schedule = ?, tick_interval_ms = ?, next_tick_at = ?,
+                  state_version = state_version + 1 WHERE id = ?`)
     .bind(JSON.stringify(schedule), speed, game.turn_based_enabled === 1 ? game.next_tick_at : nextAt, roomId)
     .run();
   if (game.turn_based_enabled !== 1) {
