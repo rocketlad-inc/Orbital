@@ -4,9 +4,10 @@
 
 import fs from 'fs';
 import path from 'path';
-import type { EndingFaction, EndingPayload } from '../endingTypes';
+import type { EndingFaction, EndingMoment, EndingPayload } from '../endingTypes';
+import { en } from '../../i18n/en';
 import {
-  awardGroups, battleSegments, chartGeom, chartLines, durationParts, endLabels, hasSeries,
+  awardGroups, battleSegments, buildTimeline, dayOfTick, hasTimeline, TextRef, chartGeom, chartLines, durationParts, endLabels, hasSeries,
   holdingsShare, indexAtOrAfter, linePath, maxOfLines, myStats, nearestIndex, niceMax,
   peakLeader, rankBy, sampleIndexes, survivedTheGame, verdictKind, victoryWay, viewerOf, withViewer,
 } from '../endingModel';
@@ -301,5 +302,167 @@ describe('one empire, no awards, no battles', () => {
     const lines = chartLines(d, 'holdings');
     expect(lines).toHaveLength(1);
     expect(endLabels(lines, chartGeom(600, 240, d.series.ticks, maxOfLines(lines))).length).toBeLessThanOrEqual(1);
+  });
+});
+
+describe('timeline', () => {
+  const keysOf = (r: TextRef): string[] => [
+    r.n !== undefined ? `${r.key}_other` : r.key,
+    ...Object.values(r.params ?? {}).flatMap(v => (typeof v === 'object' ? keysOf(v) : [])),
+  ];
+  const catalog = en as Record<string, string>;
+  const withMoments = (d: EndingPayload, moments: Array<Partial<EndingMoment> & { kind: string }>): EndingPayload => {
+    const x = clone(d);
+    x.timeline = moments.map((m, i) => ({ id: `t${i}`, tick: 10 * (i + 1), importance: 50, factionIds: [], ...m })) as EndingMoment[];
+    return x;
+  };
+  const A = NEXT.factions[0].id, B = NEXT.factions[1].id, C = NEXT.factions[2].id;
+
+  for (const [name, d] of [['NEXT', NEXT], ['MEGA', MEGA], ['SIX', SIX]] as const) {
+    it(`${name}: every real moment becomes a row with a title, in order`, () => {
+      const rows = buildTimeline(d);
+      expect(rows).toHaveLength(d.timeline.length);
+      expect(rows.map(r => r.id)).toEqual(d.timeline.map(m => m.id));
+      for (const r of rows) {
+        expect(r.title.key.length).toBeGreaterThan(0);
+        expect(r.kindLabel.key).toMatch(/^ending\.tl\.kind\./);
+      }
+      for (let i = 1; i < rows.length; i++) expect(rows[i].tick).toBeGreaterThanOrEqual(rows[i - 1].tick);
+    });
+
+    it(`${name}: clips are the fixture's clips, big beats follow importance`, () => {
+      const rows = buildTimeline(d);
+      const fromRows = rows.filter(r => r.clip).map(r => r.clip);
+      const fromFixture = d.timeline.filter(m => m.clip).map(m => m.clip);
+      expect(fromRows).toEqual(fromFixture);
+      expect(fromRows.length).toBeGreaterThan(0);
+      rows.forEach((r, i) => expect(r.big).toBe(d.timeline[i].importance >= 70));
+      for (const r of rows) if (r.clip) expect(r.clip.path).toMatch(/^\/recap\//);
+    });
+
+    it(`${name}: every catalog key a row can ask for exists in English`, () => {
+      for (const r of buildTimeline(d)) {
+        for (const k of [...keysOf(r.title), ...keysOf(r.kindLabel), ...(r.sub ? keysOf(r.sub) : [])]) {
+          expect(catalog[k]).toBeDefined();
+        }
+      }
+    });
+  }
+
+  it('YOU: a battle is yours when you lost hulls in it, other moments when you are named', () => {
+    const d = withViewer(NEXT, 'winner');
+    const me = (viewerOf(d.factions) as EndingFaction).id;
+    for (const r of buildTimeline(d)) {
+      if (r.kind === 'battle') {
+        const full = d.battles.find(b => b.id === r.clip?.battleId);
+        expect(r.mine).toBe(!!full?.lossesByFaction.some(x => x.factionId === me && x.shipsLost > 0));
+      } else if (r.kind !== 'start') {
+        const m = d.timeline.find(x => x.id === r.id) as EndingMoment;
+        expect(r.mine).toBe(m.factionIds.includes(me));
+      }
+    }
+    expect(buildTimeline(withViewer(NEXT, 'none')).some(r => r.mine)).toBe(false);
+  });
+
+  it('a clipped battle carries its loss split, summing to 100', () => {
+    const row = buildTimeline(NEXT).find(r => r.kind === 'battle' && r.segments.length > 0);
+    expect(row).toBeDefined();
+    expect((row as { segments: Array<{ pct: number }> }).segments.reduce((s, x) => s + x.pct, 0)).toBeCloseTo(100, 5);
+  });
+
+  it('day is 1-based from the tick length', () => {
+    expect(dayOfTick(0, 3_600_000)).toBe(1);
+    expect(dayOfTick(23, 3_600_000)).toBe(1);
+    expect(dayOfTick(24, 3_600_000)).toBe(2);
+    expect(dayOfTick(526, 3_600_000)).toBe(22);
+    expect(dayOfTick(5, 0)).toBeNull();
+    expect(dayOfTick(5, null)).toBeNull();
+  });
+
+  it('an unknown future kind renders a generic row, not a crash', () => {
+    const d = withMoments(NEXT, [{ kind: 'start', n: 8 }, { kind: 'time_travel', factionIds: [A] }, { kind: 'victory', factionIds: [A], detail: 'engineering' }]);
+    const rows = buildTimeline(d);
+    expect(rows).toHaveLength(3);
+    expect(rows[1].title.key).toBe('ending.tl.other.title');
+    expect(rows[1].kindLabel.key).toBe('ending.tl.kind.other');
+    expect(rows[1].category).toBe('edge');
+  });
+
+  it('skips a moment whose empire is not in the game, keeps the rest', () => {
+    const d = withMoments(NEXT, [
+      { kind: 'start', n: 8 },
+      { kind: 'war', factionIds: [A, 'ghost'] },
+      { kind: 'lead', factionIds: ['ghost'], n: 3 },
+      { kind: 'eliminated', factionIds: [] },
+      { kind: 'war', factionIds: [A, B] },
+      { kind: 'victory', factionIds: [A], detail: 'engineering' },
+    ]);
+    expect(buildTimeline(d).map(r => r.kind)).toEqual(['start', 'war', 'victory']);
+  });
+
+  it('optional actors degrade: no taker, no killer, no proposer, no winner', () => {
+    const d = withMoments(NEXT, [
+      { kind: 'eliminated', factionIds: [A, 'ghost'], n: 4 },
+      { kind: 'eliminated', factionIds: [A, B], n: 1 },
+      { kind: 'eliminated', factionIds: [A, B], n: 0 },
+      { kind: 'first_blood', factionIds: [A], bodyName: 'Mars', detail: 'corvette' },
+      { kind: 'first_blood', factionIds: ['ghost', B] },
+      { kind: 'bill', factionIds: ['ghost'], detail: 'reparations' },
+      { kind: 'victory', factionIds: [], detail: 'annihilation' },
+    ]);
+    const r = buildTimeline(d);
+    expect(r[0].sub).toMatchObject({ key: 'ending.tl.eliminated.sub', n: 4 });
+    expect(r[1].sub).toMatchObject({ key: 'ending.tl.eliminated.subTaker', n: 1 });
+    expect(r[2].sub?.key).toBe('ending.tl.eliminated.taker');
+    expect(r[3].title.key).toBe('ending.tl.firstBlood.lossAt');
+    expect(r[4].title.key).toBe('ending.tl.firstBlood.loss');
+    expect(r[5].sub).toBeNull();
+    expect(r[6].title.key).toBe('ending.tl.victory.noWinner');
+    expect(r[6].sub?.key).toBe('ending.verdict.annihilation');
+  });
+
+  it('first blood names the killer when known; megastructure foundation vs percent; gates and the Leviathan', () => {
+    const d = withMoments(NEXT, [
+      { kind: 'first_blood', factionIds: [A, B], detail: 'colony' },
+      { kind: 'megastructure', factionIds: [A], detail: 'dyson_sphere', n: 0 },
+      { kind: 'megastructure', factionIds: [A], detail: 'dyson_sphere', n: 75 },
+      { kind: 'megastructure', factionIds: [A], detail: 'warp_gate', n: 0 },
+      { kind: 'gate', bodyName: 'Centauri', detail: 'opened' },
+      { kind: 'gate', bodyName: 'Centauri', detail: 'first_crossing', factionIds: [C] },
+      { kind: 'leviathan', detail: 'arrives' },
+      { kind: 'leviathan', detail: 'strike', bodyName: 'MK 2' },
+      { kind: 'leviathan', detail: 'dies', factionIds: [B], bodyName: 'Weywot' },
+      { kind: 'discovery', factionIds: [A], detail: 'some_new_secret', bodyName: 'Varda' },
+      { kind: 'pact', factionIds: [A, B], detail: 'defense_pact' },
+      { kind: 'pact_broken', factionIds: [A, B], detail: 'brand_new_pact' },
+    ]);
+    const r = buildTimeline(d);
+    expect(r.map(x => x.title.key)).toEqual([
+      'ending.tl.firstBlood.kill', 'ending.tl.mega.dysonBegun', 'ending.tl.mega.dysonPct', 'ending.tl.mega.otherBegun',
+      'ending.tl.gate.opened', 'ending.tl.gate.crossing', 'ending.tl.leviathan.arrives', 'ending.tl.leviathan.strike',
+      'ending.tl.leviathan.dies', 'ending.tl.discovery.title', 'ending.tl.pact.title', 'ending.tl.pactBroken.title',
+    ]);
+    expect(r[0].sub).toMatchObject({ key: 'ending.tl.firstBlood.sub' });
+    expect(r[2].title.params).toEqual({ pct: 75 });
+    expect(r[9].title.params?.secret).toMatchObject({ key: 'ending.tl.secret.other' });
+    expect(r[10].sub?.key).toBe('ending.tl.pactKind.defense');
+    expect((r[11].sub?.params?.pact as TextRef).key).toBe('ending.tl.pactKind.other');
+  });
+
+  it('hides for a missing or tiny timeline', () => {
+    const none = clone(NEXT) as Partial<EndingPayload> as EndingPayload;
+    delete (none as { timeline?: unknown }).timeline;
+    expect(buildTimeline(none)).toEqual([]);
+    expect(hasTimeline(none)).toBe(false);
+    expect(hasTimeline(withMoments(NEXT, [{ kind: 'start', n: 8 }, { kind: 'victory', factionIds: [A], detail: 'engineering' }]))).toBe(false);
+    expect(hasTimeline(NEXT)).toBe(true);
+    expect(buildTimeline(withMoments(NEXT, []))).toEqual([]);
+  });
+
+  it('a spectator and a one-empire game still build', () => {
+    expect(buildTimeline(withViewer(MEGA, 'none')).length).toBe(MEGA.timeline.length);
+    const one = clone(SIX);
+    one.factions = [one.factions[0]];
+    expect(() => buildTimeline(one)).not.toThrow();
   });
 });

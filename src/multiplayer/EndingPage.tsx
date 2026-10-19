@@ -29,7 +29,7 @@ import { DEFAULT_SHIP_ICONS, ShipIcon, ShipIconClass, ShipIconVariant } from '..
 import { deriveSecondary } from '../game/colorUtils';
 import type { EndingAwardId, EndingFaction, EndingPayload } from './endingTypes';
 import {
-  AwardCardModel, awardGroups, battleSegments, durationParts, hasSeries, holdingsShare,
+  AwardCardModel, TextRef, TimelineRow, awardGroups, battleSegments, buildTimeline, durationParts, hasSeries, holdingsShare,
   myStats, peakLeader, Rank, verdictKind, victoryWay, viewerOf,
 } from './endingModel';
 import { EndingChart } from './EndingCharts';
@@ -228,6 +228,7 @@ export function EndingPage({ gameId, meta, status, data, onReturn, renderFilm, p
   const stats = ready && me ? myStats(data.factions, me) : null;
   const groups = useMemo(() => (ready ? awardGroups(data.awards, data.factions) : []), [ready, data]);
   const dur = ready ? durationParts(data.game.durationMs) : null;
+  const timeline = useMemo(() => (ready ? buildTimeline(data) : []), [ready, data]);
 
   let sec = 0;
   const rise = () => ({ className: 'ep-sec', style: { ['--i' as string]: sec++ } as React.CSSProperties });
@@ -346,6 +347,13 @@ export function EndingPage({ gameId, meta, status, data, onReturn, renderFilm, p
               <Standings data={data} />
             </section>
 
+            {/* ===================== How it unfolded ===================== */}
+            {timeline.length > 2 && (
+              <section {...rise()} aria-labelledby="ep-tl-h">
+                <Timeline rows={timeline} data={data} />
+              </section>
+            )}
+
             {/* ===================== Superlatives ===================== */}
             {groups.length > 0 && (
               <section {...rise()} aria-labelledby="ep-awards-h">
@@ -410,6 +418,80 @@ export function EndingPage({ gameId, meta, status, data, onReturn, renderFilm, p
 // ---------------------------------------------------------------------------
 // Sections
 // ---------------------------------------------------------------------------
+
+/** Render a model TextRef in the current language: numbers through fmtNumber,
+ *  nested refs (a pact kind, a secret) first. */
+function renderRef(r: TextRef): string {
+  const params: Record<string, string | number> = {};
+  for (const [k, v] of Object.entries(r.params ?? {})) {
+    params[k] = typeof v === 'number' ? fmtNumber(v) : typeof v === 'string' ? v : renderRef(v);
+  }
+  return r.n !== undefined ? tn(r.key as PluralKey, r.n, params) : tk(r.key, r.key, params);
+}
+
+function Timeline({ rows, data }: { rows: TimelineRow[]; data: EndingPayload }) {
+  const byId = new Map(data.factions.map(f => [f.id, f] as const));
+  const clips = rows.filter(r => r.clip).length;
+  return (
+    <>
+      <SectionHead
+        id="ep-tl-h"
+        title={t('ending.tl.title')}
+        sub={clips > 0 ? tn('ending.tl.subClips', rows.length, { c: fmtNumber(clips) }) : tn('ending.tl.sub', rows.length)}
+      />
+      <ol className="ep-tl" aria-label={t('ending.tl.listLabel')}>
+        {rows.map(r => {
+          const title = renderRef(r.title);
+          const lossText = r.segments.map(s => `${byId.get(s.factionId)?.name ?? ''}: ${fmtNumber(s.shipsLost)}`).join(', ');
+          return (
+            <li key={r.id} className={`ep-tli ep-tli--${r.category}${r.big ? ' is-big' : ''}`}>
+              <div className="ep-tl-when">
+                <div className="ep-tl-tick ep-num">{t('ending.chart.tooltipTick', { n: fmtNumber(r.tick) })}</div>
+                {r.day != null && <div className="ep-tl-day">{t('ending.tl.day', { n: fmtNumber(r.day) })}</div>}
+              </div>
+              <div className="ep-tl-node" aria-hidden><span className="ep-tl-dot" /></div>
+              <div className="ep-tl-body">
+                <div className="ep-tl-kind">{renderRef(r.kindLabel)}{r.mine && <> <YouTag /></>}</div>
+                <div className="ep-tl-title">{title}</div>
+                {r.sub && <div className="ep-tl-sub">{renderRef(r.sub)}</div>}
+                {r.who.length > 0 && (
+                  <div className={`ep-tl-who${r.kind === 'battle' ? '' : ' is-echo'}`}>
+                    {r.who.map(f => (
+                      <span key={f.id}><Emblem f={f} size={18} />{f.name}</span>
+                    ))}
+                  </div>
+                )}
+                {r.clip && (
+                  <>
+                    <div className="ep-tl-clip">
+                      <a
+                        className="ep-btn ep-btn--clip"
+                        href={r.clip.path}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label={t('ending.tl.clipAria', { battle: title })}
+                      ><span aria-hidden>▶</span> {t('ending.tl.clip')}</a>
+                      <span className="ep-num ep-tl-clipmeta">{tn('ending.battle.shots', r.clip.shots)}</span>
+                    </div>
+                    {r.segments.length > 0 && (
+                      <div className="ep-lossbar ep-tl-bar" role="img" aria-label={lossText}>
+                        {r.segments.map(s => {
+                          const f = byId.get(s.factionId);
+                          const tip = `${f?.name ?? ''}: ${fmtNumber(s.shipsLost)}`;
+                          return <i key={s.factionId} style={{ width: `${s.pct}%`, background: f?.color ?? '#7a8ca0' }} title={tip} />;
+                        })}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+    </>
+  );
+}
 
 function Chip({ n, k }: { n: number; k: PluralKey }) {
   // The label key carries no {n}: the figure is set in its own face.

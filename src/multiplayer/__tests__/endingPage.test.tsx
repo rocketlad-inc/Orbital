@@ -37,7 +37,7 @@ import { EndingScreen } from '../EndingScreen';
 // eslint-disable-next-line import/first
 import { EndingMeta } from '../EndingPage';
 // eslint-disable-next-line import/first
-import { withViewer } from '../endingModel';
+import { buildTimeline, withViewer } from '../endingModel';
 // eslint-disable-next-line import/first
 import { setLang } from '../../i18n/core';
 
@@ -47,6 +47,7 @@ const load = (id: string): EndingPayload =>
   JSON.parse(fs.readFileSync(path.join(__dirname, '..', '__fixtures__', `ending.${id}.json`), 'utf8'));
 const MEGA = load('ghhqbPbWz64Y');
 const SIX = load('CAWEFbsSGyBI');
+const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x));
 
 function metaFor(d: EndingPayload): EndingMeta {
   const me = d.factions.find(f => f.isMe);
@@ -264,5 +265,72 @@ describe('EndingScreen: the actions', () => {
     act(() => { host.querySelector('[role="dialog"]')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); });
     expect(returned).not.toHaveBeenCalled();
     expect(host.querySelector('h1')).not.toBeNull();
+  });
+});
+
+describe('EndingScreen: the timeline', () => {
+  const ok = (d: EndingPayload) => async () => ({ ok: true, status: 200, data: d });
+
+  it('sits between the standings and the superlatives, as an ordered list', async () => {
+    const d = withViewer(MEGA, 'Tritalowda');
+    await mount(metaFor(d), ok(d));
+    const sections = Array.from(host.querySelectorAll('section[aria-labelledby]')).map(s => s.getAttribute('aria-labelledby'));
+    expect(sections.indexOf('ep-standings-h')).toBeGreaterThanOrEqual(0);
+    expect(sections.indexOf('ep-tl-h')).toBe(sections.indexOf('ep-standings-h') + 1);
+    expect(sections.indexOf('ep-awards-h')).toBe(sections.indexOf('ep-tl-h') + 1);
+    const list = host.querySelector('ol.ep-tl') as HTMLOListElement;
+    expect(list.querySelectorAll(':scope > li')).toHaveLength(MEGA.timeline.length);
+    expect(text()).toContain('How it unfolded');
+    expect(text()).toContain('The game begins');
+    expect(text()).toContain('Day 1');
+    expect(text()).toContain('Stonekin of Mars wins');
+  });
+
+  it('every clipped battle is a real link to its recap, with an aria-label naming the battle', async () => {
+    const d = withViewer(MEGA, 'Tritalowda');
+    await mount(metaFor(d), ok(d));
+    const links = Array.from(host.querySelectorAll('a.ep-btn--clip')) as HTMLAnchorElement[];
+    const clips = MEGA.timeline.filter(m => m.clip);
+    expect(links).toHaveLength(clips.length);
+    expect(links.map(a => a.getAttribute('href'))).toEqual(clips.map(m => m.clip?.path));
+    for (const a of links) {
+      expect(a.getAttribute('target')).toBe('_blank');
+      expect(a.getAttribute('rel')).toBe('noopener noreferrer');
+      expect(a.getAttribute('aria-label')).toMatch(/^Watch the replay clip: Battle of /);
+      expect(a.textContent).toContain('Watch the clip');
+    }
+  });
+
+  it('YOU tags follow the viewer', async () => {
+    const d = withViewer(MEGA, 'Tritalowda');
+    await mount(metaFor(d), ok(d));
+    const tagged = host.querySelectorAll('.ep-tl .ep-tl-kind .ep-tag--you').length;
+    const expected = buildTimeline(d).filter(r => r.mine).length;
+    expect(tagged).toBe(expected);
+    expect(tagged).toBeGreaterThan(0);
+  });
+
+  it('is hidden for a missing or tiny timeline', async () => {
+    const none = clone(withViewer(MEGA, 'winner')) as Partial<EndingPayload>;
+    delete none.timeline;
+    await mount(metaFor(none as EndingPayload), ok(none as EndingPayload));
+    expect(host.querySelector('ol.ep-tl')).toBeNull();
+    expect(text()).toContain('Final standings');
+    act(() => root.unmount()); root = createRoot(host);
+    const tiny = clone(withViewer(MEGA, 'winner'));
+    tiny.timeline = tiny.timeline.slice(0, 2);
+    await mount(metaFor(tiny), ok(tiny));
+    expect(host.querySelector('ol.ep-tl')).toBeNull();
+  });
+
+  it('reads in Portuguese, with the Portuguese day label and sentences', async () => {
+    const d = withViewer(SIX, 'winner');
+    await mount(metaFor(d), ok(d));
+    await act(async () => { setLang('pt-BR', false); });
+    expect(text()).toContain('Como tudo aconteceu');
+    expect(text()).toContain('O jogo começa');
+    expect(text()).toContain('Dia 1');
+    expect(text()).toContain('Assistir ao clipe');
+    expect(text()).toMatch(/declara guerra a/);
   });
 });
