@@ -190,7 +190,7 @@ export async function applyScenario(env, spec, { session = null } = {}) {
   const fid = (key) => factions.get(key).id;
 
   const bodies = new Map(((await env.DB
-    .prepare('SELECT id, template_id, name, radius, terraformed_at_tick, parent_body_id FROM game_bodies WHERE game_id = ?')
+    .prepare('SELECT id, template_id, name, radius, terraformed_at_tick, parent_body_id, owner_faction_id, destroyed_at_tick FROM game_bodies WHERE game_id = ?')
     .bind(gameId).all()).results ?? []).map(b => [b.template_id, b]));
   const bodyOf = (tpl, where) => {
     const b = bodies.get(tpl);
@@ -280,6 +280,62 @@ export async function applyScenario(env, spec, { session = null } = {}) {
     });
   }
   for (let i = 0; i < shipStmts.length; i += 40) await env.DB.batch(shipStmts.slice(i, i + 40));
+  // THE CAMERA MUST BE IN RANGE. Sensors 10 reveals every hull, but a
+  // world's owner, cities and skyline are presence-fogged: the viewer
+  // sees them only at worlds where it has a ship or a claim, their
+  // moons, their parent and its other moons (state.js visible_bodies).
+  // So each scene world the viewer cannot see gets an observer hull of
+  // the viewer's, parked where the rule lights it without putting the
+  // hull in the fight: the parent planet for a moon, an empty moon for
+  // a planet, the world itself as a last resort. Off with camera:false.
+  const camStmts = [];
+  if (spec.camera !== false && spec.viewer && factions.has(spec.viewer)) {
+    const viewerId = fid(spec.viewer);
+    const byId = new Map([...bodies.values()].map(b => [b.id, b]));
+    const presence = new Set();
+    for (const b of bodies.values()) if (b.owner_faction_id === viewerId) presence.add(b.id);
+    for (const [, r] of shipRows) if (r.owner === spec.viewer) presence.add(r.at.id);
+    const isStar = (b) => b.parent_body_id == null;
+    const lit = (id) => {
+      if (presence.has(id)) return true;
+      const b = byId.get(id);
+      for (const p of presence) {
+        const pb = byId.get(p);
+        if (!pb || isStar(pb)) continue;
+        if (b.parent_body_id === p) return true;                       // moon of a presence world
+        if (pb.parent_body_id === id && !isStar(b)) return true;        // parent of a presence moon
+        if (pb.parent_body_id && pb.parent_body_id === b.parent_body_id && !isStar(byId.get(pb.parent_body_id))) return true; // sibling moon
+      }
+      return false;
+    };
+    const sceneBodies = new Set([...spec.ships.map(g => bodyOf(g.at, 'camera').id), ...spec.worlds.map(w => bodyOf(w.body, 'camera').id)]);
+    const busy = new Set([...shipRows.values()].map(r => r.at.id));
+    for (const id of sceneBodies) {
+      if (lit(id)) continue;
+      const b = byId.get(id);
+      const parent = b.parent_body_id ? byId.get(b.parent_body_id) : null;
+      let anchor = null;
+      if (parent && !isStar(parent)) anchor = parent;                     // a moon: watch from its planet
+      else {
+        const moon = [...bodies.values()].find(m => m.parent_body_id === id && !busy.has(m.id) && m.destroyed_at_tick == null);
+        anchor = moon ?? b;                                                // a planet: from a quiet moon, else itself
+      }
+      const camId = `${gameId}:${STUDIO_MARK}cam_${anchor.template_id}`;
+      if (shipRows.has(camId)) continue;
+      const rp = parkOrbitRadius(Number(anchor.radius));
+      camStmts.push(env.DB.prepare(
+        `INSERT OR REPLACE INTO game_ships
+           (id, game_id, owner_faction_id, name, ship_class, parent_body_id, orbit_rp, orbit_ra, orbit_omega, orbit_m0,
+            orbit_epoch, orbit_direction, fuel, fuel_max, status, built_at_tick, hp, hp_max, damage_per_tick, icon_variant, parts_json, home_body_id)
+         VALUES (?, ?, ?, ?, 'corvette', ?, ?, ?, 0, ?, ?, 1, 80, 80, 'active', ?, 40, 40, 0, 'A', NULL, ?)`)
+        .bind(camId, gameId, viewerId, `Observer ${anchor.name}`, anchor.id, rp, rp, parkPhaseFor(camId), tick, Math.max(0, tick - 1), anchor.id));
+      shipRows.set(camId, { owner: spec.viewer, at: anchor, cls: 'corvette' });
+      presence.add(anchor.id);
+      shipIds.camera = [...(shipIds.camera ?? []), camId];
+    }
+  }
+  if (camStmts.length) await env.DB.batch(camStmts);
+
   const shipsOf = (ref) => {
     const [key, idx] = String(ref).split('.');
     const ids = shipIds[key] ?? [];
