@@ -33,6 +33,17 @@
 .sb-help { color: #7f97aa; font-size: 11px; margin-top: 6px; }
 .sb-help code { color: #9fc2dc; }
 
+/* Filming, with or without the interface: never the staging banner or the
+   build badge, which belong to the deploy and not to the game, and never
+   a discovery offer, which parks a modal card over the planet (the
+   observer hulls find things), nor the newer-build toast a deploy during
+   a take would raise. */
+body.studio-filming .stg-banner,
+body.studio-filming .version-badge,
+body.studio-filming .version-stale-toast,
+body.studio-filming .discovery-banner-layer,
+body.studio-filming .sb { display: none !important; }
+
 /* Cinema: the map alone. The bar keeps its place because it is not under
    .app and carries data-studio-bar. */
 body.studio-cinema .top-bar,

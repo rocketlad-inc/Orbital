@@ -26,7 +26,7 @@ Check the frames before sending anything: the first seconds and the last. `node 
 
 ### Film mode: the Reddit way
 
-`record` writes an MP4 inside the page with the hook, captions and end card. For the bare map at full quality, the way the Reddit clips were made, use `film`: one PNG screenshot per frame on a stepped clock, encoded afterwards. Nothing can drop a frame, because the screenshot is the frame.
+`record` writes an MP4 inside the page with the hook, captions and end card, over the bare map. For the game as it is played, the way the showcase clips were made, use `film`: one PNG screenshot per frame on a stepped clock, encoded afterwards. Nothing can drop a frame, because the screenshot is the frame. Film keeps the interface (top bar, outliner, dock) in the shot; `"ui": false` in the shot drops it. Neither mode ever shows the painted debug readouts, the staging banner or the build badge.
 
 ```bash
 node scripts/studio.mjs film <gameId> shot.json --out frames-dir --name earth-to-europa --as studio-terra
@@ -89,6 +89,17 @@ For a vertical (9:16) recording, the map is cropped to the centre of your window
     { "type": "move",   "ships": "terra_moon", "to": "luna", "depart": "+1" },   // a group, or "group.3" for one hull
     { "type": "strike", "ship": "md.0", "ready": "+2" },                        // Mega Destroyer over its world
     { "type": "trade",  "ship": "fr.0", "from": "mars", "to": "ceres" }         // freighter supply line
+  ],
+
+  "laws": [
+    // Bills that already passed, in force from the tick the scene lands. The Senate tab
+    // shows the settled vote and the law; combat and the economy obey it on the next tick.
+    { "kind": "war_authorization", "target": "mars",      // Mars takes DOUBLE damage for 21 ticks
+      "proposer": "terra", "yea": ["terra", "jove"], "nay": ["mars"] },
+    { "slider": "combat_damage_multiplier", "value": 2 }  // a slider law for everyone: Stronger Guns, 2x damage
+    // kinds: law (default; slider + value, optional target), war_authorization, trade_embargo,
+    // production_sanction. ticks: how long (21 / 14 / 24 by default). title / summary: your own words.
+    // Sliders are listed by the catalog (`sliders`): weapon damage, build cost, metal, credits, research, upkeep, tariff.
   ]
 }
 ```
@@ -118,6 +129,7 @@ What `apply` returns, and what you need from it:
   "speed": 2500,                   // milliseconds one tick glides over on screen (2500 battles, 1000 crossings)
   "endCard": true,                 // ORBITAL · Play free · orbital-empire.com
   "zoomBoost": 1,                  // extra zoom when cropping the map into the frame
+  "ui": true,                      // keep the game's interface in the shot (film: default true; record: default false)
   "steps": [
     { "at": 0,    "do": "focus",   "target": "earth", "px": 520 },        // cut: Earth 520 px across
     { "at": 0,    "do": "caption", "text": "Earth. Three fleets in orbit." },
@@ -136,9 +148,13 @@ What `apply` returns, and what you need from it:
 
 **Targets** are a world id (`earth`, `luna`, `titan`, `sol`), `ship:<id>` or `fleet:<id>`. A target is tracked while the camera holds it, so a moving fleet stays centred.
 
-**Sizing.** `px` is how wide the target's world should be on the map canvas (a 1080×1920 canvas: 520 fills half the width; 160 shows the fight with room; 40 is a dot). `scale` is pixels per world unit when you want a raw number: 0.5 is the default view (a planet and its moons), 0.05 shows a planet's neighbourhood, 0.012 shows the whole solar system out to the Kuiper belt in about a third of the frame. Zooms ease in log space, so they feel even. When in doubt use `px` on a target and let the director work out the scale.
+**Sizing.** `px` is how wide the target's world should be on the map canvas (a 1080×1920 canvas: 520 fills half the width; 160 shows the fight with room; 40 is a dot). `scale` is pixels per world unit when you want a raw number (measured on a 1920-wide frame): 0.5 is the default view (a planet and its moons); **0.15 shows the inner system out to Jupiter and Saturn, the right pull-back for a pan between planets**; 0.035 and below show every outer orbit and the Kuiper worlds, which is busy and makes the planets dots. Zooms ease in log space, so they feel even. When in doubt use `px` on a target and let the director work out the scale.
 
-**Verbs:** `focus` (cut), `pan` (glide, then hold), `zoom`, `follow`, `tick`, `speed`, `caption`, `hook`, `ui`. Captions are the outlined white words; one at a time, each replaces the last.
+**Seeing everything.** The viewer sees every hull (Sensors 10), but a world's owner, cities and skyline are presence-fogged. The studio parks a quiet observer corvette for the viewer wherever a scene world would otherwise be fogged: at the planet for a moon (Jupiter for Europa), at an empty moon for a planet, never in the fight. `"camera": false` turns that off.
+
+**Verbs:** `focus` (cut), `pan` (glide, then hold), `zoom`, `follow`, `tick`, `speed`, `caption`, `hook`, `ui`, `panel`, `click`. Captions are the outlined white words; one at a time, each replaces the last.
+
+**Showing the interface.** `{ "do": "panel", "id": "senate" }` opens a panel the way a tap on the dock would: `senate`, `faction`, `comms` (tabs of the multiplayer dock, 360 px on the right), `trades`, `situation`, `eventlog`, `multiplayer`, `settlements`, `fleet`, `research`; `"id": null` closes whatever is open. `{ "do": "click", "selector": ".sp-disc.is-quiet > summary" }` clicks the first element a CSS selector finds, which is how a shot unfolds a disclosure (the Senate's resolved-bills list, then `.sp-roll > summary` for its ballots). Give a panel a second or so of clip time to load before clicking inside it. Keep the subject on the left two-thirds of the frame while a dock panel is open.
 
 **Ticks during a shot.** `tick` asks the server for N ticks and waits for the map to receive them; the video clock stops meanwhile, so nothing is lost. Arrivals, kills and strikes happen on ticks, so place a `tick` where the action should land. The `speed` setting decides how long each tick's motion plays: with 2500, a ship that arrives on the next tick glides in over 2.5 s.
 
@@ -191,4 +207,31 @@ node scripts/studio.mjs record <id> shot.json --out earth-titan.mp4 --as studio-
 - **Re-shooting.** Re-apply the same scene with `game_id` set: `reset` clears the last attempt's rows and seeds again at the current tick.
 - **Staging vs production.** Staging is the default. On production the studio makes the same private test games (hidden from Browse, not counted anywhere); close them when done.
 - **Frame rate.** Recording is deterministic, so leave `fps` at 30. Headless Chrome draws a busy battle in 50–250 ms a frame; that is why the clip takes minutes and comes out smooth.
-- **What the recording contains.** The map canvas alone: no panels, no bar, no browser. The hook, captions and end card are drawn into the video by the director.
+- **What the recording contains.** `record`: the map canvas alone, with the hook, captions and end card drawn in by the director. `film`: the page as played, interface and all (`ui: false` for the bare map).
+
+## The suite so far, and shots worth making next
+
+Made with this tool (scene + shot in `marketing/sol-wars-screenshots/gifs`, numbered):
+
+- **Battle of Earth to battle of Europa** (18): three fleets at Earth, pull back to 0.15, glide to a lit Europa with two fleets fighting.
+- **The Senate votes double damage** (19): Senate tab open on a passed "Stronger Guns for Terra" law and a war authorization on Mars, ballots unfolded, then the fight at Earth where Mars melts.
+- **Three-way at Earth, war at Titan** (20): the shot that started the module, with the Lunar Wing leaving for the Moon.
+- **Mega Destroyer sterilises Venus** (21): one hull, one world, the strike.
+- **Supply line Mars to Ceres** (22): a freighter on a trade route, camera following the hull.
+
+Worth making, and what each needs:
+
+- **A fleet in flight, fighting** (transit combat): two fleets launched toward each other from Earth and Mars with `move` orders meet in the dark. Needs only a scene and `follow`; the game decides the meeting tick, so budget ticks from the `orders[]` arrival numbers.
+- **The Moon hop, start to finish**: `follow fleet:` with `speed: 1000`, twenty ticks in thirty seconds. Scene-only.
+- **Every weapon in one frame**: four groups each on one preset (kinetic, energy, flak, detonators) at hp 3 so nothing dies early. Scene-only.
+- **An embargo, then a sanction**: `laws` with `trade_embargo` and `production_sanction`, Senate tab open, then the Faction tab showing the yields drop. Scene-only; the shot uses `panel`.
+- **Research and the shipyard**: `panel research` and the Shipwright. The designer opens with the `orbital:open-ship-designer` event; a `click` on the dock's shipyard button does it today.
+- **Terraforming a world**: eight stages. The scene sets `living` only; a stage-by-stage shot needs a `worlds[].terraform` level in the scene language (small server change) and one apply per stage, filmed as a cut sequence.
+- **The Leviathan**: the world-eating squid on the second sun gate. It spawns from the game's `kaiju` flag and the gate sequence, not from a scene; needs a studio switch that places the gate and the kaiju at a chosen world (kaiju.js has the pieces).
+- **Through a sun gate to Centauri**: far systems and the galaxy view. Needs the scene to enable far systems on its game (scripts/enable-far-systems.mjs does it for running games) and a `zoom` past galaxy scale; the drawers are safe at that distance.
+- **Missile silo**: silo on a world, salvo on the map. New feature on `dev`; needs a `worlds[].silo` seed and a `launch` order in the scene language.
+- **A ram**: one hull ordered to ram another at 0.005g, validated server-side. Needs a `ram` order in the scene language.
+- **Discovery: a derelict found**: an observer hull lights a world and finds a ship. It already happens (the card is hidden while filming); a shot that keeps the card needs `ui` to allow it, so add a `cards: true` shot flag before filming this one.
+- **Captain debut and the trophy case**: the captain card on first kill, and the ending page's awards. Both UI; `click` reaches the first, the ending page needs the game to end (close the studio game with a winner: a server verb to add).
+
+Keep each clip under 40 s, 16:9, interface in, no end card: the showcase cut.

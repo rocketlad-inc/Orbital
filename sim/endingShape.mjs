@@ -178,12 +178,22 @@ function validate(value, node, defs, path, errs) {
   }
 }
 
-export function checkEndingShape(payload, contractSource) {
-  const defs = parseContract(contractSource);
-  if (!defs.EndingPayload) return ['contract has no EndingPayload interface'];
+/**
+ * Validate `payload` against interface `rootName` of any contract source that
+ * the parser understands (an `import type` line is ignored, so a contract may
+ * name types from another file only as plain string-union members it declares).
+ */
+export function checkShape(payload, contractSource, rootName, extraSources = []) {
+  const defs = {};
+  for (const src of [...extraSources, contractSource]) Object.assign(defs, parseContract(src));
+  if (!defs[rootName]) return [`contract has no ${rootName} interface`];
   const errs = [];
-  validate(payload, { k: 'ref', name: 'EndingPayload' }, defs, '$', errs);
+  validate(payload, { k: 'ref', name: rootName }, defs, '$', errs);
   return errs;
+}
+
+export function checkEndingShape(payload, contractSource) {
+  return checkShape(payload, contractSource, 'EndingPayload');
 }
 
 /** Things the type system can't say but the page depends on. */

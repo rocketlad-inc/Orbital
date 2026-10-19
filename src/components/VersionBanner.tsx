@@ -89,6 +89,7 @@ export const VersionBanner: React.FC = () => {
           and dismissible (a hard reload would replace it anyway). */}
       {mismatch && !dismissed && (
         <div
+          className="version-stale-toast"
           style={{
             position: 'fixed',
             top: '50%',

@@ -173,8 +173,43 @@ export function expandScenario(raw) {
     }
   });
 
+  // ---- laws: bills that already passed, in force from the tick the scene lands ----
+  // A slider law ('law') names a Senate slider and a value, for everyone or
+  // aimed at one faction. A sanction (war_authorization: the target's ships
+  // take double damage; trade_embargo; production_sanction) always names
+  // its target. Ballots default to everyone-for except the target.
+  const LAW_KINDS = ['law', 'war_authorization', 'trade_embargo', 'production_sanction'];
+  const laws = (Array.isArray(raw.laws) ? raw.laws : []).map((l, i) => {
+    const where = `laws[${i}]`;
+    const kind = l?.kind ?? 'law';
+    if (!LAW_KINDS.includes(kind)) throw new Error(`${where}.kind must be ${LAW_KINDS.join(', ')}`);
+    const target = l?.target == null || l.target === '' ? null : String(l.target);
+    if (target) need(target, where);
+    if (kind !== 'law' && !target) throw new Error(`${where}: a ${kind} needs a target faction`);
+    let slider = null;
+    let value = null;
+    if (kind === 'law') {
+      if (!/^[a-z_]{3,40}$/.test(String(l?.slider))) throw new Error(`${where}.slider must name a Senate slider (the catalog lists them)`);
+      slider = String(l.slider);
+      value = Number(l.value);
+      if (!Number.isFinite(value)) throw new Error(`${where}.value must be a number`);
+    }
+    const proposer = l?.proposer != null ? String(l.proposer) : (fx.find(f => f.key !== target)?.key ?? fx[0]?.key);
+    need(proposer, `${where}.proposer`);
+    const ballots = (v, what) => {
+      if (v == null) return null;
+      if (!Array.isArray(v)) throw new Error(`${where}.${what} must be a list of faction keys`);
+      return v.map((k, j) => { need(String(k), `${where}.${what}[${j}]`); return String(k); });
+    };
+    const defaultTicks = { law: 24, war_authorization: 21, trade_embargo: 14, production_sanction: 14 }[kind];
+    const ticks = Math.max(1, Math.min(500, Math.floor(Number(l?.ticks)) || defaultTicks));
+    const title = typeof l?.title === 'string' && l.title.trim() ? l.title.trim().slice(0, 80) : null;
+    const summary = typeof l?.summary === 'string' && l.summary.trim() ? l.summary.trim().slice(0, 500) : null;
+    return { kind, slider, value, target, proposer, yea: ballots(l?.yea, 'yea'), nay: ballots(l?.nay, 'nay'), ticks, title, summary };
+  });
+
   return {
-    name, gameId, factions: fx, wars, worlds, ships, fleets, research, orders,
+    name, gameId, factions: fx, wars, worlds, ships, fleets, research, orders, laws,
     viewer: typeof raw.viewer === 'string' ? raw.viewer : (fx[0]?.key ?? null),
     camera: raw.camera !== false,   // observer hulls so the viewer sees every scene world
     seatMe: raw.seat_me === true,
@@ -230,6 +265,25 @@ export const EXAMPLES = {
     worlds: [{ body: 'venus', owner: 'terra', living: true, cities: ['Aphrodite Terra', 'Ishtar', 'Maxwell Station'] }],
     ships: [{ key: 'md', owner: 'jove', at: 'venus', class: 'mega_destroyer', count: 1, prefix: 'JHS' }],
     orders: [{ type: 'strike', ship: 'md.0', ready: '+2' }],
+  },
+  senate_double_damage: {
+    name: 'The Senate authorises war',
+    factions: [
+      { key: 'terra', name: 'Terran Directorate', home: 'earth', color: '#4fc3f7', color2: '#0b2a3d', emblem: 'star' },
+      { key: 'mars', name: 'Martian Combine', home: 'mars', color: '#ff4d3a', color2: '#3a0d08', emblem: 'hammer' },
+      { key: 'jove', name: 'Jovian Hegemony', home: 'ganymede', color: '#a879ff', color2: '#22123f', emblem: 'crown' },
+    ],
+    viewer: 'terra',
+    wars: [['terra', 'mars']],
+    // Terra's guns hit twice as hard, and Mars takes double damage: two bills, both passed.
+    laws: [
+      { slider: 'combat_damage_multiplier', value: 2, target: 'terra', proposer: 'terra', title: 'Stronger Guns for Terra', yea: ['terra', 'jove'], nay: ['mars'] },
+      { kind: 'war_authorization', target: 'mars', proposer: 'terra', title: 'War on Mars', yea: ['terra', 'jove'], nay: ['mars'] },
+    ],
+    ships: [
+      { key: 'terra_home', owner: 'terra', at: 'earth', mix: { destroyer: 4, frigate: 4, corvette: 4 }, loadout: 'mixed', hp: 1.5, prefix: 'TDS' },
+      { key: 'mars_siege', owner: 'mars', at: 'earth', mix: { destroyer: 4, frigate: 4, corvette: 4 }, loadout: 'mixed', hp: 1.5, prefix: 'MCS' },
+    ],
   },
   supply_line: {
     name: 'Supply line Mars to Ceres',
