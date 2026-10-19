@@ -132,7 +132,6 @@ await game('g5_game', 'Game Five', { completed: 5000, winner: 'A', seats: { A: {
 await game('g6_game', 'Game Six', { completed: 6000, winner: 'A', seats: { A: { user: A, ships: 1, settle: 2, name: 'Alpha Six' }, AI: {} } });
 await game('g7_game', 'Game Seven', { completed: 7000, winner: 'A', seats: { A: { user: A, name: 'Alpha Seven' }, AI: {} } });   // nothing happened: no awards
 await game('live_game', 'Still Going', { status: 'active', seats: { A: { user: A, ships: 50, name: 'Alpha Live' }, AI: {} } });
-const ALICE_GAMES = ['g7_game', 'g6_game', 'g5_game', 'g4_game', 'g3_game', 'g2_game', 'g1_game'];
 
 const route = routes[0];
 const ask = async (userId, e = env) => {

@@ -16,7 +16,11 @@
 // ONE env.DB.batch carrying every aggregate. No per-faction loops. Every
 // statement binds <= 4 params (D1 allows 100). A third, tiny batch happens only
 // when a replayable battle on the timeline has no house replay link yet (see
-// attachClips): the endpoint's one and only write.
+// attachClips): the endpoint's one write for the page itself. Besides that,
+// opening a finished game stores its awards for the profile's trophy case,
+// once (recordGameAwards -> game_awards, migration 0177; worker/profileAwards.js
+// reads them back). computeGameAwards runs just the stat queries and the same
+// derivation (deriveEmpires) the page uses, so the two cannot disagree.
 //
 // ---------------------------------------------------------------------------
 // WHERE EACH NUMBER COMES FROM (and why — several tables look interchangeable
