@@ -89,6 +89,17 @@ For a vertical (9:16) recording, the map is cropped to the centre of your window
     { "type": "move",   "ships": "terra_moon", "to": "luna", "depart": "+1" },   // a group, or "group.3" for one hull
     { "type": "strike", "ship": "md.0", "ready": "+2" },                        // Mega Destroyer over its world
     { "type": "trade",  "ship": "fr.0", "from": "mars", "to": "ceres" }         // freighter supply line
+  ],
+
+  "laws": [
+    // Bills that already passed, in force from the tick the scene lands. The Senate tab
+    // shows the settled vote and the law; combat and the economy obey it on the next tick.
+    { "kind": "war_authorization", "target": "mars",      // Mars takes DOUBLE damage for 21 ticks
+      "proposer": "terra", "yea": ["terra", "jove"], "nay": ["mars"] },
+    { "slider": "combat_damage_multiplier", "value": 2 }  // a slider law for everyone: Stronger Guns, 2x damage
+    // kinds: law (default; slider + value, optional target), war_authorization, trade_embargo,
+    // production_sanction. ticks: how long (21 / 14 / 24 by default). title / summary: your own words.
+    // Sliders are listed by the catalog (`sliders`): weapon damage, build cost, metal, credits, research, upkeep, tariff.
   ]
 }
 ```
@@ -141,7 +152,9 @@ What `apply` returns, and what you need from it:
 
 **Seeing everything.** The viewer sees every hull (Sensors 10), but a world's owner, cities and skyline are presence-fogged. The studio parks a quiet observer corvette for the viewer wherever a scene world would otherwise be fogged: at the planet for a moon (Jupiter for Europa), at an empty moon for a planet, never in the fight. `"camera": false` turns that off.
 
-**Verbs:** `focus` (cut), `pan` (glide, then hold), `zoom`, `follow`, `tick`, `speed`, `caption`, `hook`, `ui`. Captions are the outlined white words; one at a time, each replaces the last.
+**Verbs:** `focus` (cut), `pan` (glide, then hold), `zoom`, `follow`, `tick`, `speed`, `caption`, `hook`, `ui`, `panel`, `click`. Captions are the outlined white words; one at a time, each replaces the last.
+
+**Showing the interface.** `{ "do": "panel", "id": "senate" }` opens a panel the way a tap on the dock would: `senate`, `faction`, `comms` (tabs of the multiplayer dock, 360 px on the right), `trades`, `situation`, `eventlog`, `multiplayer`, `settlements`, `fleet`, `research`; `"id": null` closes whatever is open. `{ "do": "click", "selector": ".sp-disc.is-quiet > summary" }` clicks the first element a CSS selector finds, which is how a shot unfolds a disclosure (the Senate's resolved-bills list, then `.sp-roll > summary` for its ballots). Give a panel a second or so of clip time to load before clicking inside it. Keep the subject on the left two-thirds of the frame while a dock panel is open.
 
 **Ticks during a shot.** `tick` asks the server for N ticks and waits for the map to receive them; the video clock stops meanwhile, so nothing is lost. Arrivals, kills and strikes happen on ticks, so place a `tick` where the action should land. The `speed` setting decides how long each tick's motion plays: with 2500, a ship that arrives on the next tick glides in over 2.5 s.
 

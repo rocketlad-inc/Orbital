@@ -38,6 +38,7 @@ import {
 } from './factions.js';
 import { computeShipStats, DEFAULT_LOADOUTS, validateParts, LENIENT, SHIP_SLOT_COUNTS } from './shipDesigns.js';
 import { openWarBetween } from './wars.js';
+import { SLIDER_CATALOG, describeSlider } from './senate.js';
 import { ensureCaptainFloor, ensureCaptains } from './captains.js';
 import { EMBLEM_IDS } from './emblems.js';
 import { STUDIO_MARK, SHIP_CLASSES, LOADOUT_PRESETS, FUEL_MAX, TAG, whenTick, expandScenario, EXAMPLES } from './studioScene.js';
@@ -165,6 +166,9 @@ async function resetStudioRows(env, gameId) {
     env.DB.prepare('DELETE FROM game_ships WHERE game_id = ? AND id LIKE ?').bind(gameId, like),
     env.DB.prepare('DELETE FROM game_settlements WHERE game_id = ? AND id LIKE ?').bind(gameId, like),
     env.DB.prepare('DELETE FROM game_fleets WHERE game_id = ? AND id LIKE ?').bind(gameId, like),
+    env.DB.prepare('DELETE FROM senate_votes WHERE proposal_id LIKE ?').bind(like),
+    env.DB.prepare('DELETE FROM senate_effects WHERE game_id = ? AND id LIKE ?').bind(gameId, like),
+    env.DB.prepare('DELETE FROM senate_proposals WHERE game_id = ? AND id LIKE ?').bind(gameId, like),
   ]);
 }
 
@@ -349,6 +353,66 @@ export async function applyScenario(env, spec, { session = null } = {}) {
     if (id) warIds.push(id);
   }
 
+  // ---- laws: bills that passed, in force from this tick ----
+  // The rows a real resolution writes (senate.js applyBillEffects): the
+  // passed proposal, its ballots, and the effect row combat and the
+  // economy read. Nothing here goes through the floor, so the chamber
+  // shows a settled vote and a law in force the moment the scene lands.
+  const lawIds = [];
+  for (let i = 0; i < spec.laws.length; i++) {
+    const l = spec.laws[i];
+    const where = `laws[${i}]`;
+    const pid = `${gameId}:${STUDIO_MARK}law_${i}`;
+    const eid = `${gameId}:${STUDIO_MARK}eff_${i}`;
+    const targetId = l.target ? fid(l.target) : null;
+    const targetName = l.target ? factions.get(l.target).name : null;
+    let kind, payload, title, summary;
+    if (l.kind === 'law') {
+      const d = describeSlider(l.slider, l.value);
+      if (!d) throw new Error(`${where}: unknown Senate slider '${l.slider}'`);
+      kind = 'slider_law';
+      payload = { slider_id: l.slider, target_value: d.value, target_faction_id: targetId };
+      title = l.title ?? (targetId ? `${d.name} for the ${targetName}` : d.name);
+      summary = l.summary ?? d.effect;
+    } else {
+      kind = l.kind;
+      payload = { target_faction_id: targetId };
+      const words = {
+        war_authorization: [`War authorised against the ${targetName}`, `The Senate sanctions war on the ${targetName}. Their ships take double damage for ${l.ticks} ticks.`],
+        trade_embargo: [`Embargo on the ${targetName}`, `No trade deliveries reach the ${targetName} for ${l.ticks} ticks.`],
+        production_sanction: [`Sanctions on the ${targetName}`, `The ${targetName}'s settlements yield half for ${l.ticks} ticks.`],
+      }[kind];
+      title = l.title ?? words[0];
+      summary = l.summary ?? words[1];
+    }
+    const everyone = spec.factions.map(f => f.key);
+    const yea = l.yea ?? everyone.filter(k => k !== l.target);
+    const nay = l.nay ?? (l.target && !yea.includes(l.target) ? [l.target] : []);
+    const castAt = Math.max(0, tick - 1);
+    const stmts = [
+      env.DB.prepare(
+        `INSERT INTO senate_proposals (id, game_id, proposer_faction_id, kind, title, summary, payload, status,
+           proposed_at_tick, vote_opens_at_tick, vote_closes_at_tick, resolved_at_tick, effect_until_tick, debate_ticks, vote_ticks)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'passed', ?, ?, ?, ?, ?, 1, 1)`,
+      ).bind(pid, gameId, fid(l.proposer), kind, title, summary, JSON.stringify(payload),
+        Math.max(0, tick - 2), castAt, tick, tick, tick + l.ticks),
+    ];
+    for (const [vote, keys] of [['yea', yea], ['nay', nay]]) {
+      for (const k of keys) {
+        stmts.push(env.DB.prepare('INSERT OR REPLACE INTO senate_votes (proposal_id, faction_id, vote, weight, cast_at_tick) VALUES (?, ?, ?, 1, ?)')
+          .bind(pid, fid(k), vote, castAt));
+      }
+    }
+    stmts.push(env.DB.prepare(
+      `INSERT INTO senate_effects (id, game_id, slider_id, value, effect_kind, target_faction_id, proposal_id,
+         active_from_tick, active_until_tick, created_at_tick, created_at_ms)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(eid, gameId, l.slider ?? '', l.value ?? 0, l.kind === 'law' ? 'slider' : l.kind, targetId, pid,
+      tick, tick + l.ticks, tick, Date.now()));
+    await env.DB.batch(stmts);
+    lawIds.push({ id: pid, title, until_tick: tick + l.ticks });
+  }
+
   // ---- fleets (captains first: a flagship must have one) ----
   const fleetIds = {};
   if (spec.fleets.length) {
@@ -450,6 +514,9 @@ async function handleCatalog(req, env, { session }) {
     emblems: EMBLEM_IDS,
     bodies: BODY_CATALOG.map(b => ({ id: b.id, name: b.name, type: b.type, parent: b.parent, radius: b.radius, start: isValidStartingBody(b.id) })),
     strike_charge_ticks: MEGA_STRIKE_CHARGE_TICKS,
+    // Senate sliders a scene's `laws` may set: id, label, range, default.
+    sliders: SLIDER_CATALOG.map(s => ({ id: s.id, label: s.label, min: s.min, max: s.max, default: s.default, per_faction: s.perFaction !== false })),
+    sanctions: ['war_authorization', 'trade_embargo', 'production_sanction'],
     examples: EXAMPLES,
   });
 }
@@ -537,6 +604,7 @@ function summarize(spec) {
     wars: spec.wars.length, worlds: spec.worlds.length,
     ships: spec.ships.map(g => `${g.key}: ${g.hulls.length} at ${g.at} (${g.owner})`),
     fleets: spec.fleets.map(f => f.key), orders: spec.orders.map(o => o.type),
+    laws: spec.laws.map(l => l.kind === 'law' ? `${l.slider}=${l.value}${l.target ? ' on ' + l.target : ''}` : `${l.kind} on ${l.target}`),
   };
 }
 

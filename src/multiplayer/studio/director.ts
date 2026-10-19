@@ -39,7 +39,13 @@ export type ShotStep =
   | { at: number; do: 'speed'; ms: number }
   | { at: number; do: 'caption'; text: string; color?: string }
   | { at: number; do: 'hook'; text: string }
-  | { at: number; do: 'ui'; show: boolean };
+  | { at: number; do: 'ui'; show: boolean }
+  | { at: number; do: 'panel'; id: PanelId | null }
+  | { at: number; do: 'click'; selector: string };
+
+/** The game's panels, by the name the dock and the shell know them by. */
+export type PanelId = 'senate' | 'faction' | 'comms' | 'trades' | 'situation' | 'eventlog' | 'multiplayer'
+  | 'settlements' | 'fleet' | 'research';
 
 export interface Shot {
   /** Video shape. 9:16 for TikTok/Shorts/Reels, 16:9 for YouTube and X. */
@@ -223,6 +229,36 @@ export class Director {
     if (!show) this.host.deselect();
   }
 
+  /** Open one of the game's panels the way a tap on the dock would, or
+   *  close whatever is open (null). senate / faction / comms are tabs of
+   *  the multiplayer dock; trades is the trade dock; situation / eventlog
+   *  / multiplayer are the rail's own buttons. */
+  panel(id: PanelId | null): void {
+    const ev = (name: string, detail: unknown) => {
+      try { window.dispatchEvent(new CustomEvent(name, { detail })); } catch { /* no window */ }
+    };
+    if (id === null) {
+      ev('dockrail:set', { active: null });
+      ev('orbital:open-panel', { panel: null });
+      return;
+    }
+    if (id === 'situation' || id === 'eventlog' || id === 'multiplayer') {
+      ev('dockrail:set', { active: id });
+      return;
+    }
+    ev('orbital:open-panel', { panel: id });
+  }
+
+  /** Click the first element a CSS selector finds: a disclosure's
+   *  summary, a tab, a button. Returns false (and notes it) when nothing
+   *  matches, so a shot keeps playing. */
+  click(selector: string): boolean {
+    const el = document.querySelector<HTMLElement>(selector);
+    if (!el) { this.note(`click: nothing matches ${selector}`); return false; }
+    el.click();
+    return true;
+  }
+
   /** Make each server tick glide over `ms` of page time (2500 reads
    *  well for a battle; 1000 for a crossing). The map paints ticks by
    *  the wall clock between /state polls, so the poll is rewritten here. */
@@ -307,6 +343,8 @@ export class Director {
         case 'follow': this.follow(st.target); break;
         case 'speed': this.speed(st.ms); break;
         case 'ui': this.ui(st.show); break;
+        case 'panel': this.panel(st.id); break;
+        case 'click': this.click(st.selector); break;
         case 'hook': this.hook = st.text; break;
         case 'caption': this.caption = { text: st.text, since: this.clock, color: st.color }; break;
         case 'tick': await this.ticks(st.n ?? 1); break;
