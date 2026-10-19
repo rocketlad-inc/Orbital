@@ -54,18 +54,6 @@ export function zoneLabel(tz: string): string {
   return last.replace(/_/g, ' ');
 }
 
-/** The starting point a host edits: day 30m from 08:00, night 1h from
- *  00:00, in their own zone. Lorne's example, 2026-10-18. */
-export function defaultSchedule(): TickSchedule {
-  return {
-    tz: localTimeZone(),
-    periods: [
-      { at: '00:00', interval_ms: 3_600_000 },
-      { at: '08:00', interval_ms: 1_800_000 },
-    ],
-  };
-}
-
 /** "1h from 00:00 · 30m from 08:00", in start order, in the player's language. */
 export function describeSchedule(s: TickSchedule): string {
   return [...s.periods]
@@ -73,3 +61,122 @@ export function describeSchedule(s: TickSchedule): string {
     .map(p => t('topbar.sched.period', { speed: speedLabel(p.interval_ms), at: p.at }))
     .join(' · ');
 }
+
+// ------------------------------------------------------------
+// DAY & NIGHT — the host panel's model (design approved 2026-10-19,
+// claude.ai/artifact/5RoKcC2ouQPJZhTVQraoke): exactly two periods, the
+// faster one called Day. The server still takes up to four.
+// ------------------------------------------------------------
+
+export interface DayNight {
+  tz: string;
+  /** Minutes after local midnight each one starts. */
+  dayAt: number;
+  nightAt: number;
+  dayMs: number;
+  nightMs: number;
+}
+
+export const DEFAULT_DAY_NIGHT = (): DayNight => ({
+  tz: localTimeZone(), dayAt: 8 * 60, nightAt: 0, dayMs: 1_800_000, nightMs: 3_600_000,
+});
+
+const toMin = (at: string): number => {
+  const m = /^(\d\d):(\d\d)$/.exec(at);
+  return m ? Number(m[1]) * 60 + Number(m[2]) : 0;
+};
+const toAt = (min: number): string =>
+  `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+
+/** A stored schedule as Day & night, or null when it is not two periods. */
+export function dayNightOf(s: TickSchedule | null | undefined): DayNight | null {
+  if (!s || s.periods.length !== 2) return null;
+  const [a, b] = s.periods;
+  // Day is the faster one; on a tie, the one starting later in the
+  // morning (a 06:00 start reads as day beside 22:00).
+  const aDay = a.interval_ms !== b.interval_ms
+    ? a.interval_ms < b.interval_ms
+    : Math.abs(toMin(a.at) - 480) <= Math.abs(toMin(b.at) - 480);
+  const day = aDay ? a : b;
+  const night = aDay ? b : a;
+  return { tz: s.tz, dayAt: toMin(day.at), nightAt: toMin(night.at), dayMs: day.interval_ms, nightMs: night.interval_ms };
+}
+
+export function scheduleOf(d: DayNight): TickSchedule {
+  return {
+    tz: d.tz,
+    periods: [
+      { at: toAt(d.dayAt), interval_ms: d.dayMs },
+      { at: toAt(d.nightAt), interval_ms: d.nightMs },
+    ].sort((x, y) => x.at.localeCompare(y.at)),
+  };
+}
+
+/** Is local minute `m` in the day period? */
+export function inDay(d: DayNight, m: number): boolean {
+  return d.dayAt < d.nightAt ? (m >= d.dayAt && m < d.nightAt) : (m >= d.dayAt || m < d.nightAt);
+}
+
+/**
+ * One local day of ticks, on the server's rule (worker/tickSchedule.js
+ * nextTickAt): a step at the speed in force, cut short at the next start
+ * time. Minutes after midnight, so a daylight-saving day is a sketch.
+ */
+export function ticksOfDay(d: DayNight): Array<{ min: number; day: boolean }> {
+  const out: Array<{ min: number; day: boolean }> = [];
+  let t = 0;
+  for (let guard = 0; t < 1440 && guard < 5000; guard++) {
+    const day = inDay(d, t);
+    out.push({ min: t, day });
+    const step = (day ? d.dayMs : d.nightMs) / 60_000;
+    let edge = Infinity;
+    for (const b of [d.dayAt, d.nightAt]) {
+      let gap = (b - t + 1440) % 1440;
+      if (gap === 0) gap = 1440;
+      edge = Math.min(edge, t + gap);
+    }
+    t = Math.min(t + step, edge);
+  }
+  return out;
+}
+
+/** Minutes after midnight in zone `tz` at epoch `ms`. */
+export function localMinutes(tz: string, ms: number): number {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz, hourCycle: 'h23', hour: 'numeric', minute: 'numeric',
+    }).formatToParts(new Date(ms));
+    const v = (k: string) => Number(parts.find(p => p.type === k)?.value ?? 0);
+    return (v('hour') % 24) * 60 + v('minute');
+  } catch {
+    const d = new Date(ms);
+    return d.getHours() * 60 + d.getMinutes();
+  }
+}
+
+/** A local time in the viewer's own style ("8:00 AM", "08:00"). */
+export function clockLabel(min: number): string {
+  const d = new Date(2026, 0, 1, Math.floor(min / 60), min % 60);
+  try {
+    return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(d);
+  } catch {
+    return toAt(min);
+  }
+}
+
+/** "3h 20m" until local minute `to` from `from`, wrapping midnight. */
+export function untilLabel(from: number, to: number): string {
+  let gap = (to - from + 1440) % 1440;
+  if (gap === 0) gap = 1440;
+  const h = Math.floor(gap / 60);
+  const m = gap % 60;
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+/** The zones the Clock menu offers: the common ones for this game's
+ *  players, plus whatever is set and the viewer's own. */
+export const COMMON_ZONES = [
+  'America/Los_Angeles', 'America/Denver', 'America/Chicago', 'America/New_York',
+  'America/Sao_Paulo', 'Europe/London', 'Europe/Berlin', 'Europe/Moscow',
+  'Asia/Kolkata', 'Asia/Singapore', 'Asia/Tokyo', 'Australia/Sydney', 'UTC',
+];
