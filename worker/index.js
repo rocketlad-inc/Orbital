@@ -1415,6 +1415,7 @@ import * as emailAdmin from './emailAdmin.js';
 import * as emailLogin from './emailLogin.js';
 import * as analytics from './analytics.js';
 import * as adminDashboard from './adminDashboard.js';
+import * as studio from './studio.js';
 import * as store from './store.js';
 import * as customMaps from './customMaps.js';
 import * as skins from './skins.js';
@@ -1442,7 +1443,7 @@ import * as ending from './ending.js';
 import * as discoveryOffers from './discoveryOffers.js';
 import { carryNamePools } from './namePoolHistory.js';
 
-const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, analytics, configAdmin, emailAdmin, emailLogin, store, skins, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed, customMaps, ending, discoveryOffers];
+const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, studio, analytics, configAdmin, emailAdmin, emailLogin, store, skins, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed, customMaps, ending, discoveryOffers];
 
 function matchPattern(pattern, pathname) {
   if (typeof pattern === 'string') {

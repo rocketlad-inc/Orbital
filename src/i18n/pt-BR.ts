@@ -69,6 +69,7 @@ const base: Catalog = {
   'lobby.nav.editor': 'Editor',
   'lobby.nav.devlog': 'Novidades',
   'lobby.nav.email': 'E-mail',
+  'lobby.nav.studio': 'Estúdio',
   'lobby.profileTitle': 'Perfil e configurações',
   'lobby.signOut': 'Sair',
   'lobby.commander': 'Comandante',

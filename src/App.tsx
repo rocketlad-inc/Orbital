@@ -37,6 +37,7 @@ import { TutorialPromptModal } from './components/TutorialPromptModal';
 import { AuthOverlay } from './multiplayer/AuthOverlay';
 import { Landing } from './components/Landing';
 import { SharedRecap } from './multiplayer/SharedRecap';
+import { StudioBridge } from './multiplayer/studio/StudioBridge';
 import { ResetPassword } from './multiplayer/ResetPassword';
 import { DiscordInvite } from './multiplayer/DiscordInvite';
 import { ShipIconGalleryPage } from './components/ShipIconGalleryPage';
@@ -239,6 +240,7 @@ function GameUI({
   return (
     <div className="app">
       <MapCanvas width={windowSize.width} height={windowSize.height} />
+      {isMultiplayer && <StudioBridge />}
 
       <TopBar
         activePanel={activePanel}
