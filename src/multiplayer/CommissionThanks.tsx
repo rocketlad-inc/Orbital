@@ -105,6 +105,12 @@ export function CommissionThanks({
           )}
         </div>
 
+        {via && MAP_SURFACES.has(via) && (
+          <button type="button" className="mp-thanks-go is-map" onClick={() => { window.location.href = '/?mapmaker'; }}>
+            {t('mp.thanks2.toMap')}
+          </button>
+        )}
+
         <section className="mp-thanks-goods" aria-busy={!unlocked}>
           <h3>{t('mp.thanks2.lines', { n: icons.length })}</h3>
           <div className="mp-thanks-row">
@@ -147,13 +153,6 @@ export function CommissionThanks({
           })}
         </p>
 
-        {/* Bought to host a map: the map is where they were going. It
-            waits in Your maps (the panel saved it on the way out). */}
-        {via && MAP_SURFACES.has(via) && (
-          <button type="button" className="mp-thanks-go" onClick={() => { window.location.href = '/?mapmaker'; }}>
-            {t('mp.thanks2.toMap')}
-          </button>
-        )}
         <button type="button" className="mp-thanks-go" onClick={onClose}>
           {t('mp.thanks2.back')}
         </button>

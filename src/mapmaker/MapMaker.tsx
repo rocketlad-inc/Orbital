@@ -240,6 +240,7 @@ function HostPanel({
   const sellable = canBuyHere();
   const published = !!summary?.published;
   const [buying, setBuying] = useState(false);
+  const [buyError, setBuyError] = useState<string | null>(null);
   // The pitch is seen when the panel offers the Commission: a map that
   // could be hosted, by someone who cannot host yet.
   useCommissionView('map-maker', canHost === false && blockers.length === 0);
@@ -270,12 +271,14 @@ function HostPanel({
   const buy = async () => {
     logCommission('map-maker', 'click');
     setBuying(true);
+    setBuyError(null);
     // Save on the way out: the map is what they are paying to host, and
     // an unsaved one would stop the trip to checkout with "Leave site?".
     await onSaveFirst();
     const url = await startCommissionCheckout('map-maker');
-    if (url) window.location.href = url;
-    else setBuying(false);
+    if (url) { window.location.href = url; return; }
+    setBuying(false);
+    setBuyError(t('hangar.err.checkout'));
   };
 
   return (
@@ -363,6 +366,7 @@ function HostPanel({
                 ) : (
                   <button className="mm-btn is-gold is-wide" onClick={() => openCommissionInBrowser('map-maker')}>{t('mp.commission.inBrowser', { price: t('mp.commission.price') })}</button>
                 )}
+                {buyError && <p className="mm-note is-bad" role="alert">{buyError}</p>}
               </>
             )}
           </section>
