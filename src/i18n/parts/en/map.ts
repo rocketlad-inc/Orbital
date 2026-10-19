@@ -537,7 +537,7 @@ export const map = {
   'topbar.tickSpeed.later': '{name} starts 30 minutes later',
   'topbar.tickSpeed.faster': '{name} ticks faster',
   'topbar.tickSpeed.slower': '{name} ticks slower',
-  'topbar.tickSpeed.total': 'ticks a day, {night} of them at night. A flat hour gives 24.',
+  'topbar.tickSpeed.total': 'ticks a day, {night} of them at night.',
   'topbar.tickSpeed.clock': 'Clock',
   'topbar.tickSpeed.zoneTime': '{zone} time',
   'topbar.tickSpeed.custom': 'This game has a {n}-period schedule. Saving replaces it with day and night.',

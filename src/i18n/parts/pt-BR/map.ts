@@ -539,7 +539,7 @@ export const map: Catalog = {
   'topbar.tickSpeed.later': '{name} começa 30 minutos depois',
   'topbar.tickSpeed.faster': '{name} com ticks mais rápidos',
   'topbar.tickSpeed.slower': '{name} com ticks mais lentos',
-  'topbar.tickSpeed.total': 'ticks por dia, {night} deles à noite. Uma hora fixa dá 24.',
+  'topbar.tickSpeed.total': 'ticks por dia, {night} deles à noite.',
   'topbar.tickSpeed.clock': 'Relógio',
   'topbar.tickSpeed.zoneTime': 'horário de {zone}',
   'topbar.tickSpeed.custom': 'Esta partida tem um horário de {n} períodos. Salvar o troca por dia e noite.',
