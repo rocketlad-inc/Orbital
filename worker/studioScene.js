@@ -275,8 +275,11 @@ export const EXAMPLES = {
     ],
     viewer: 'terra',
     wars: [['terra', 'mars']],
-    // Mars takes double damage for 21 ticks: the Senate's war authorization.
-    laws: [{ kind: 'war_authorization', target: 'mars', proposer: 'terra', yea: ['terra', 'jove'], nay: ['mars'] }],
+    // Terra's guns hit twice as hard, and Mars takes double damage: two bills, both passed.
+    laws: [
+      { slider: 'combat_damage_multiplier', value: 2, target: 'terra', proposer: 'terra', title: 'Stronger Guns for Terra', yea: ['terra', 'jove'], nay: ['mars'] },
+      { kind: 'war_authorization', target: 'mars', proposer: 'terra', title: 'War on Mars', yea: ['terra', 'jove'], nay: ['mars'] },
+    ],
     ships: [
       { key: 'terra_home', owner: 'terra', at: 'earth', mix: { destroyer: 4, frigate: 4, corvette: 4 }, loadout: 'mixed', hp: 1.5, prefix: 'TDS' },
       { key: 'mars_siege', owner: 'mars', at: 'earth', mix: { destroyer: 4, frigate: 4, corvette: 4 }, loadout: 'mixed', hp: 1.5, prefix: 'MCS' },
