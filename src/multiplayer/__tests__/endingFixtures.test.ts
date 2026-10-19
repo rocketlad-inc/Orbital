@@ -8,20 +8,20 @@
 
 import fs from 'fs';
 import path from 'path';
-import type { EndingPayload } from './endingTypes';
+import type { EndingPayload } from '../endingTypes';
 
 // The checker is a plain ESM module shared with sim/ending.mjs (no types).
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { checkEndingShape, checkEndingInvariants, parseContract } = require('../../sim/endingShape.mjs');
+const { checkEndingShape, checkEndingInvariants, parseContract } = require('../../../sim/endingShape.mjs');
 
-const CONTRACT = fs.readFileSync(path.join(__dirname, 'endingTypes.ts'), 'utf8');
+const CONTRACT = fs.readFileSync(path.join(__dirname, '..', 'endingTypes.ts'), 'utf8');
 const FIXTURES: Array<{ id: string; name: string; victory: string }> = [
   { id: 'sMu08u1ySzRJ', name: 'The NEXT Zone', victory: 'engineering' },
   { id: 'ghhqbPbWz64Y', name: 'The MEGA Zone', victory: 'chancellor' },
   { id: 'CAWEFbsSGyBI', name: '6X 30min', victory: 'domination' },
 ];
 const load = (id: string): EndingPayload =>
-  JSON.parse(fs.readFileSync(path.join(__dirname, '__fixtures__', `ending.${id}.json`), 'utf8'));
+  JSON.parse(fs.readFileSync(path.join(__dirname, '..', '__fixtures__', `ending.${id}.json`), 'utf8'));
 
 describe('ending contract', () => {
   it('parses every interface the page relies on', () => {

@@ -10,7 +10,7 @@
 // the check demands it; there is no second hand-kept list to forget.
 //
 // Used by sim/ending.mjs (the server sim) and by the fixture jest test
-// (src/multiplayer/endingFixtures.test.js), so the real-data fixtures and the
+// (src/multiplayer/__tests__/endingFixtures.test.ts), so the real-data fixtures and the
 // producer are held to the same contract.
 //
 // checkEndingShape(payload, contractSource) -> string[]   (empty = conforms)
