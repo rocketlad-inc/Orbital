@@ -543,68 +543,17 @@ async function attachClips(env, gameId, timeline, opts) {
   }
 }
 
-/**
- * Build the ending payload.
- *
- * `opts` exists for tooling only (scripts/ending-from-prod.mjs): `asFactionId`
- * picks the viewer's empire directly, `skipMembership` waives the membership
- * check and `readOnly` forbids the one write the endpoint ever makes (minting
- * a missing replay token; see attachClips). The HTTP handler sets none.
- *
- * Returns an EndingPayload, or `{ error: { status, code, message } }`.
- */
-export async function buildEnding(env, gameId, viewerUserId, opts = {}) {
-  const [game, member] = await Promise.all([
-    env.DB.prepare(
-      `SELECT g.id, g.status, g.victory_type, g.winner_faction_id, g.current_tick,
-              g.tick_interval_ms, g.started_at, g.completed_at, r.name
-         FROM games g JOIN rooms r ON r.id = g.id
-        WHERE g.id = ?`,
-    ).bind(gameId).first(),
-    opts.skipMembership
-      ? Promise.resolve({ fid: null, rm: 1 })
-      : env.DB.prepare(
-        `SELECT (SELECT id FROM game_factions WHERE game_id = ? AND user_id = ?) AS fid,
-                (SELECT 1 FROM room_members WHERE room_id = ? AND user_id = ?) AS rm`,
-      ).bind(gameId, viewerUserId ?? '', gameId, viewerUserId ?? '').first(),
-  ]);
-  if (!game) return { error: { status: 404, code: 'not_found', message: 'game not found' } };
-  if (!opts.skipMembership && !member?.fid && !member?.rm) {
-    return { error: { status: 403, code: 'not_a_member', message: 'you are not in this game' } };
-  }
-  if (game.status !== 'completed') {
-    return { error: { status: 409, code: 'not_finished', message: 'this game is still being played' } };
-  }
+// ---------------------------------------------------------------------------
+// Shared by the ending page and the profile's trophy case (computeGameAwards).
+// ---------------------------------------------------------------------------
 
-  const currentTick = Math.max(0, whole(game.current_tick));
-  const stride = Math.max(1, Math.ceil(currentTick / (MAX_POINTS - 2)));
-  const q = (sql, ...binds) => env.DB.prepare(sql).bind(...binds);
-  const g = gameId;
-
-  const battleParticipantsOfGame = 'p JOIN battles b ON b.id = p.battle_id WHERE b.game_id = ?';
-  // The same ordering twice (top battles; their per-empire losses) must agree.
-  const TOP_BATTLES = `SELECT id FROM battles WHERE game_id = ? AND ships_lost > 0
-                        ORDER BY ships_lost DESC, shots DESC, started_tick ASC LIMIT 3`;
-  // Up to four sizeable fights that ended within a quiet window before an
-  // empire was knocked out and in which that empire actually lost hulls: the
-  // last stands. (binds: game, game)
-  const ELIM_BATTLES = `SELECT b.id FROM battles b
-                          JOIN (SELECT actor_faction_id AS fid, MAX(tick_number) AS t FROM chronicle_entries
-                                 WHERE game_id = ? AND kind = 'faction_eliminated' AND actor_faction_id IS NOT NULL
-                                 GROUP BY actor_faction_id) e
-                            ON b.started_tick <= e.t AND b.last_fire_tick >= e.t - ${ELIM_WINDOW}
-                         WHERE b.game_id = ? AND b.ships_lost >= 2
-                           AND EXISTS (SELECT 1 FROM battle_participants p
-                                        WHERE p.battle_id = b.id AND p.faction_id = e.fid AND p.died_tick IS NOT NULL)
-                         GROUP BY b.id ORDER BY b.ships_lost DESC, b.shots DESC LIMIT 4`;
-  // (binds: game x3)
-  const BATTLE_SET = `SELECT id FROM (${TOP_BATTLES}) UNION SELECT id FROM (${ELIM_BATTLES})`;
-  // Each empire's single best hull by `v` ("champions"), best first. One row
-  // per empire is what the award needs: the winner is the first row and the
-  // runner-up the second, however many of the top hulls belong to one fleet.
-  // `inner` selects ship_id, ship_name, ship_class, faction_id, v from game_ship_stats s.
-  // The captain (latest one on record) is looked up for the survivors only.
-  const champions = (inner) => `
+const battleParticipantsOfGame = 'p JOIN battles b ON b.id = p.battle_id WHERE b.game_id = ?';
+// Each empire's single best hull by `v` ("champions"), best first. One row
+// per empire is what the award needs: the winner is the first row and the
+// runner-up the second, however many of the top hulls belong to one fleet.
+// `inner` selects ship_id, ship_name, ship_class, faction_id, v from game_ship_stats s.
+// The captain (latest one on record) is looked up for the survivors only.
+const champions = (inner) => `
     SELECT t.ship_id, t.ship_name, t.ship_class, t.faction_id, t.v,
            (SELECT q2.captain_name FROM battle_participants q2
              WHERE q2.ship_id = t.ship_id AND q2.captain_name IS NOT NULL
@@ -613,40 +562,40 @@ export async function buildEnding(env, gameId, viewerUserId, opts = {}) {
               FROM (${inner}) x WHERE x.v > 0) t
      WHERE t.rn = 1
      ORDER BY t.v DESC, t.ship_id`;
-  const realKills =`(SELECT COUNT(*) FROM battle_participants k JOIN battles bk ON bk.id = k.battle_id
+const realKills = `(SELECT COUNT(*) FROM battle_participants k JOIN battles bk ON bk.id = k.battle_id
                        WHERE bk.game_id = s.game_id AND k.killer_ship_id = s.ship_id
                          AND k.died_tick IS NOT NULL)`;
 
-  const results = await env.DB.batch([
-    /* 0  */ q(`SELECT id, name, color, color2, emblem, status, eliminated_at_tick, slot,
+/**
+ * The statements that decide the empires and their awards, keyed by their slot
+ * in buildEnding's batch (the page's own extras fill the other slots). This is
+ * the ONE place those numbers are queried: the ending page and the profile's
+ * awards both run these and hand the rows to deriveEmpires. (binds: game id)
+ */
+function statQueries(q, g) {
+  return {
+    0: q(`SELECT id, name, color, color2, emblem, status, eliminated_at_tick, slot,
                       user_id, metal, gold, science
                  FROM game_factions
                 WHERE game_id = ? AND status NOT IN ('monster', 'observer')
                 ORDER BY slot`, g),
-    /* 1  */ q(`SELECT owner_faction_id AS fid, body_id, created_at_tick AS t0, destroyed_at_tick AS t1
+    1: q(`SELECT owner_faction_id AS fid, body_id, created_at_tick AS t0, destroyed_at_tick AS t1
                  FROM game_settlements WHERE game_id = ?`, g),
-    /* 2  */ q(`SELECT owner_faction_id AS fid, COUNT(*) AS n
+    2: q(`SELECT owner_faction_id AS fid, COUNT(*) AS n
                  FROM game_ships WHERE game_id = ? AND hp > 0 GROUP BY owner_faction_id`, g),
-    /* 3  */ q(`SELECT faction_id AS fid, SUM(level) AS lv, MAX(completed_at_tick) AS done
+    3: q(`SELECT faction_id AS fid, SUM(level) AS lv, MAX(completed_at_tick) AS done
                  FROM faction_techs WHERE game_id = ? GROUP BY faction_id`, g),
-    /* 4  */ q(`SELECT faction_id AS fid, MAX(ships) AS ships, MAX(gold) AS gold
+    4: q(`SELECT faction_id AS fid, MAX(ships) AS ships, MAX(gold) AS gold
                  FROM faction_metrics WHERE game_id = ? GROUP BY faction_id`, g),
-    /* 5  */ q(`SELECT tick_number AS t, faction_id AS fid, gold, science, ships
-                 FROM faction_metrics
-                WHERE game_id = ?
-                  AND (tick_number % ? = 0
-                       OR tick_number = (SELECT MIN(tick_number) FROM faction_metrics WHERE game_id = ?)
-                       OR tick_number = (SELECT MAX(tick_number) FROM faction_metrics WHERE game_id = ?))
-                ORDER BY tick_number`, g, stride, g, g),
-    /* 6  */ q(`SELECT actor_faction_id AS fid, COUNT(*) AS n FROM chronicle_entries
+    6: q(`SELECT actor_faction_id AS fid, COUNT(*) AS n FROM chronicle_entries
                 WHERE game_id = ? AND kind = 'ship_built' AND actor_faction_id IS NOT NULL
                 GROUP BY actor_faction_id`, g),
-    /* 7  */ q(`SELECT proposer_faction_id AS fid, COUNT(*) AS n FROM senate_proposals
+    7: q(`SELECT proposer_faction_id AS fid, COUNT(*) AS n FROM senate_proposals
                 WHERE game_id = ? AND status = 'passed' AND proposer_faction_id IS NOT NULL
                 GROUP BY proposer_faction_id`, g),
-    /* 8  */ q(`SELECT declared_by AS fid, origin, COUNT(*) AS n FROM game_wars
+    8: q(`SELECT declared_by AS fid, origin, COUNT(*) AS n FROM game_wars
                 WHERE game_id = ? GROUP BY declared_by, origin`, g),
-    /* 9  */ q(`SELECT fid, COUNT(*) AS n FROM (
+    9: q(`SELECT fid, COUNT(*) AS n FROM (
                   SELECT proposer_faction_id AS fid FROM trade_offers
                    WHERE game_id = ? AND status = 'accepted'
                      AND (offer_metal + offer_fuel + offer_gold + offer_science
@@ -667,44 +616,16 @@ export async function buildEnding(env, gameId, viewerUserId, opts = {}) {
                    WHERE game_id = ? AND NOT EXISTS (SELECT 1 FROM trade_offers o
                           WHERE o.id = f.trade_offer_id AND o.status = 'accepted')
                 ) GROUP BY fid`, g, g, g, g),
-    /* 10 */ q(`SELECT p.killer_faction_id AS fid, COUNT(*) AS n FROM battle_participants ${battleParticipantsOfGame}
+    10: q(`SELECT p.killer_faction_id AS fid, COUNT(*) AS n FROM battle_participants ${battleParticipantsOfGame}
                   AND p.died_tick IS NOT NULL AND p.killer_faction_id IS NOT NULL
                   AND (p.faction_id IS NULL OR p.faction_id <> p.killer_faction_id)
                 GROUP BY p.killer_faction_id`, g),
-    /* 11 */ q(`SELECT p.faction_id AS fid, COUNT(*) AS n FROM battle_participants ${battleParticipantsOfGame}
+    11: q(`SELECT p.faction_id AS fid, COUNT(*) AS n FROM battle_participants ${battleParticipantsOfGame}
                   AND p.died_tick IS NOT NULL AND p.faction_id IS NOT NULL
                 GROUP BY p.faction_id`, g),
-    /* 12 */ q(`SELECT faction_id AS fid, SUM(damage_dealt) AS n FROM game_ship_stats
+    12: q(`SELECT faction_id AS fid, SUM(damage_dealt) AS n FROM game_ship_stats
                 WHERE game_id = ? AND faction_id IS NOT NULL GROUP BY faction_id`, g),
-    /* 13 */ q(`SELECT COUNT(*) AS battles, COALESCE(SUM(shots), 0) AS shots,
-                      COALESCE(SUM(ships_lost), 0) AS ships_lost,
-                      COALESCE(SUM(settlements_lost), 0) AS settlements_lost,
-                      (SELECT COUNT(*) FROM game_settlements
-                        WHERE game_id = ? AND destroyed_at_tick IS NOT NULL) AS setl_destroyed
-                 FROM battles WHERE game_id = ?`, g, g),
-    // The battles the page cares about: the three biggest (is_top) plus the
-    // fights that preceded an elimination. With how much of each can be
-    // replayed (battle_ticks frames) and its house share token, if any.
-    /* 14 */ q(`SELECT id, body_name, started_tick, ended_tick, last_fire_tick, shots, ships_lost, settlements_lost,
-                      victor_faction_id, status,
-                      id IN (${TOP_BATTLES}) AS is_top,
-                      (SELECT COUNT(*) FROM game_settlements st
-                        WHERE st.game_id = battles.game_id AND st.body_id = battles.body_id
-                          AND st.destroyed_at_tick BETWEEN battles.started_tick
-                              AND COALESCE(battles.ended_tick, battles.last_fire_tick)) AS setl_here,
-                      (SELECT COUNT(*) FROM battle_ticks bt WHERE bt.battle_id = battles.id) AS frames,
-                      (SELECT s.token FROM battle_shares s
-                        WHERE s.battle_id = battles.id AND s.created_by IS NULL AND s.revoked_at_ms IS NULL
-                        ORDER BY s.created_at_ms LIMIT 1) AS token,
-                      (SELECT COUNT(*) FROM battle_shares s2
-                        WHERE s2.battle_id = battles.id AND s2.created_by IS NULL) AS house_rows
-                 FROM battles WHERE id IN (${BATTLE_SET})
-                ORDER BY ships_lost DESC, shots DESC, started_tick ASC`, g, g, g, g),
-    /* 15 */ q(`SELECT p.battle_id, p.faction_id AS fid, COUNT(*) AS n FROM battle_participants p
-                WHERE p.died_tick IS NOT NULL AND p.faction_id IS NOT NULL
-                  AND p.battle_id IN (${BATTLE_SET})
-                GROUP BY p.battle_id, p.faction_id`, g, g, g),
-    /* 16 ace */ q(champions(`
+    16: /* ace */ q(champions(`
                 SELECT s.ship_id, s.ship_name, s.ship_class, s.faction_id, h.v
                   FROM (SELECT k.killer_ship_id AS ship_id, COUNT(*) AS v
                           FROM battle_participants k JOIN battles bk ON bk.id = k.battle_id
@@ -712,77 +633,31 @@ export async function buildEnding(env, gameId, viewerUserId, opts = {}) {
                            AND (k.faction_id IS NULL OR k.killer_faction_id IS NULL OR k.faction_id <> k.killer_faction_id)
                          GROUP BY k.killer_ship_id) h
                   JOIN game_ship_stats s ON s.game_id = ? AND s.ship_id = h.ship_id`), g, g),
-    /* 17 heavy_hitter */ q(champions(`
+    17: /* heavy_hitter */ q(champions(`
                 SELECT s.ship_id, s.ship_name, s.ship_class, s.faction_id, s.damage_dealt AS v
                   FROM game_ship_stats s WHERE s.game_id = ? AND s.damage_dealt > 0`), g),
-    /* 18 iron_wall */ q(champions(`
+    18: /* iron_wall */ q(champions(`
                 SELECT s.ship_id, s.ship_name, s.ship_class, s.faction_id, s.damage_absorbed AS v
                   FROM game_ship_stats s WHERE s.game_id = ? AND s.damage_absorbed > 0`), g),
-    /* 19 last_stand */ q(champions(`
+    19: /* last_stand */ q(champions(`
                 SELECT s.ship_id, s.ship_name, s.ship_class, s.faction_id, MIN(s.low_hp_kills, ${realKills}) AS v
                   FROM game_ship_stats s WHERE s.game_id = ? AND s.low_hp_kills > 0`), g),
-    /* 20 */ q(`SELECT payload, tick_number AS t FROM chronicle_entries WHERE game_id = ? AND kind = 'victory'
-                ORDER BY tick_number DESC LIMIT 1`, g),
-    /* 21 */ q(`SELECT actor_faction_id AS fid, MAX(tick_number) AS t FROM chronicle_entries
+    21: q(`SELECT actor_faction_id AS fid, MAX(tick_number) AS t FROM chronicle_entries
                 WHERE game_id = ? AND kind = 'faction_eliminated' AND actor_faction_id IS NOT NULL
                 GROUP BY actor_faction_id`, g),
-    // ---- timeline sources (see buildTimeline) ----
-    /* 22 first blood */ q(`SELECT tick_number AS t, actor_faction_id AS victim,
-                      json_extract(payload, '$.killer_faction_id') AS killer,
-                      json_extract(payload, '$.body_name') AS body,
-                      json_extract(payload, '$.ship_class') AS cls
-                 FROM chronicle_entries WHERE game_id = ? AND kind = 'ship_destroyed' AND json_valid(payload)
-                ORDER BY tick_number, created_at_ms, id LIMIT 12`, g),
-    /* 23 wars */ q(`SELECT tick_number AS t, actor_faction_id AS a, target_faction_id AS b,
-                      json_extract(payload, '$.broke_pacts[0]') AS broke
-                 FROM chronicle_entries WHERE game_id = ? AND kind = 'war_declared' AND json_valid(payload)
-                ORDER BY tick_number LIMIT 200`, g),
-    /* 24 pacts broken */ q(`SELECT tick_number AS t, actor_faction_id AS a, target_faction_id AS b,
-                      json_extract(payload, '$.kind') AS pact
-                 FROM chronicle_entries WHERE game_id = ? AND kind = 'treaty_broken' AND json_valid(payload)
-                ORDER BY tick_number LIMIT 200`, g),
-    /* 25 pacts signed */ q(`SELECT tick_number AS t, actor_faction_id AS a, target_faction_id AS b,
-                      json_extract(payload, '$.kind') AS pact
-                 FROM chronicle_entries WHERE game_id = ? AND kind = 'treaty_signed' AND json_valid(payload)
-                ORDER BY tick_number LIMIT 200`, g),
-    /* 26 who took the last worlds */ q(`SELECT fid, killer, t FROM (
-                  SELECT actor_faction_id AS fid, json_extract(payload, '$.killer_faction_id') AS killer, tick_number AS t
-                    FROM chronicle_entries WHERE game_id = ? AND kind = 'settlement_destroyed' AND json_valid(payload)
-                   UNION ALL
-                  SELECT target_faction_id, actor_faction_id, tick_number
-                    FROM chronicle_entries WHERE game_id = ? AND kind = 'settlement_seized')
-                WHERE fid IN (SELECT actor_faction_id FROM chronicle_entries
-                               WHERE game_id = ? AND kind = 'faction_eliminated')
-                  AND killer IS NOT NULL`, g, g, g),
-    /* 27 bills */ q(`SELECT kind, resolved_at_tick AS t, proposer_faction_id AS proposer,
-                      json_extract(payload, '$.target_faction_id') AS target,
-                      json_extract(payload, '$.candidate_faction_id') AS candidate
-                 FROM senate_proposals
-                WHERE game_id = ? AND json_valid(payload) AND status = 'passed' AND resolved_at_tick IS NOT NULL
-                  AND kind IN ('war_authorization', 'trade_embargo', 'production_sanction', 'reparations', 'chancellor_vote')
-                ORDER BY resolved_at_tick LIMIT 200`, g),
-    /* 28 megastructures */ q(`SELECT m.kind, m.completed_at_tick AS t, m.founded_by_faction_id AS fid, b.name AS body
-                 FROM game_megastructures m LEFT JOIN game_bodies b ON b.id = m.body_id
-                WHERE m.game_id = ? AND m.ancient = 0 AND m.founded_by_faction_id IS NOT NULL
-                  AND m.completed_at_tick IS NOT NULL
-                ORDER BY m.completed_at_tick LIMIT 100`, g),
-    /* 29 world events */ q(`SELECT kind, tick_number AS t, actor_faction_id AS a, payload FROM chronicle_entries
-                WHERE game_id = ? AND json_valid(payload)
-                  AND kind IN ('dyson_initiated', 'dyson_milestone', 'sun_gate_opened', 'gate_transit',
-                               'kaiju_revealed', 'world_obliterated', 'kaiju_dead', 'secret_discovered')
-                  AND (kind <> 'gate_transit' OR (json_extract(payload, '$.sun_gate') = 1 AND json_extract(payload, '$.first') = 1))
-                  AND (kind <> 'world_obliterated' OR json_extract(payload, '$.cause') = 'kaiju')
-                ORDER BY tick_number LIMIT 400`, g),
-    /* 30 start */ q(`SELECT MIN(tick_number) AS t FROM chronicle_entries WHERE game_id = ? AND kind = 'game_started'`, g),
-  ]);
-  const R = (i) => rows(results[i]);
+  };
+}
+const STAT_SLOTS = Object.keys(statQueries((sql) => sql, '')).map(Number);
 
+/**
+ * Pure: the empires (standings, totals) and the awards from the rows of the
+ * stat queries. `R(i)` returns the rows of slot i. Monster and observer seats
+ * are already excluded by slot 0.
+ */
+function deriveEmpires(game, R) {
   // ---- the empires ---------------------------------------------------------
   const fRows = R(0);
   const known = new Set(fRows.map(f => f.id));
-  const viewerFactionId = opts.asFactionId !== undefined
-    ? opts.asFactionId
-    : (viewerUserId ? (fRows.find(f => f.user_id === viewerUserId)?.id ?? member?.fid ?? null) : null);
 
   // holdings: settlement lifetimes -> per-empire sweeps
   const eventsBy = new Map();
@@ -839,7 +714,7 @@ export async function buildEnding(env, gameId, viewerUserId, opts = {}) {
         : null,
       place: 0,
       isWinner: game.winner_faction_id === f.id,
-      isMe: viewerFactionId != null && viewerFactionId === f.id,
+      isMe: false,                       // buildEnding marks the viewer's empire
       final,
       peak: {
         holdings: Math.max(peakHoldings(f.id), final.holdings),
@@ -916,6 +791,247 @@ export async function buildEnding(env, gameId, viewerUserId, opts = {}) {
   factionAward('merchant', f => f.totals.trades);
   factionAward('statesman', f => f.totals.billsPassed);
 
+
+  return { fRows, known, holdStates, placeOf, factions, awards, techLv, built, bills, warsTotal, tradesTotal };
+}
+
+/**
+ * Every award of a FINISHED game, who earned it, and the empires behind them,
+ * from a smaller batch than the ending page's (just the stat queries). One
+ * function for both the ending page's awards and the profile's trophy case.
+ *
+ * Returns null when the game is unknown or not completed. Otherwise
+ *   { game: { id, name, completedAtMs, winnerFactionId },
+ *     awards: [{ id, factionId, value, tied, ship }],     (contract order)
+ *     empires: Map factionId -> { userId, name, isWinner } }
+ * `tied` is true when the runner-up finished on the very same number. Monster
+ * and observer seats are not empires and appear nowhere; `userId` is null for
+ * an AI or vacated seat.
+ */
+export async function computeGameAwards(env, gameId) {
+  const game = await env.DB.prepare(
+    `SELECT g.id, g.status, g.winner_faction_id, g.completed_at, r.name
+       FROM games g JOIN rooms r ON r.id = g.id WHERE g.id = ?`,
+  ).bind(gameId).first();
+  if (!game || game.status !== 'completed') return null;
+  const q = (sql, ...binds) => env.DB.prepare(sql).bind(...binds);
+  const S = statQueries(q, gameId);
+  const results = await env.DB.batch(STAT_SLOTS.map(i => S[i]));
+  const R = (i) => rows(results[STAT_SLOTS.indexOf(i)]);
+  return awardsOf(game, deriveEmpires(game, R));
+}
+
+/** The computeGameAwards shape from an already-derived game. */
+function awardsOf(game, d) {
+  const empires = new Map(d.factions.map(f => [f.id, { userId: null, name: f.name, isWinner: f.isWinner }]));
+  for (const r of d.fRows) empires.get(r.id).userId = r.user_id ?? null;
+  return {
+    game: {
+      id: game.id,
+      name: game.name,
+      completedAtMs: game.completed_at != null ? num(game.completed_at) : null,
+      winnerFactionId: game.winner_faction_id ?? null,
+    },
+    awards: d.awards.map(a => ({
+      id: a.id,
+      factionId: a.factionId,
+      value: a.value,
+      tied: a.runnerUp != null && a.runnerUp.value === a.value,
+      ship: a.ship ?? null,
+    })),
+    empires,
+  };
+}
+
+/**
+ * Store a finished game's awards for the profile, ONCE. Idempotent:
+ *   * game_awards_state says the game was already worked out -> nothing happens;
+ *   * otherwise one batch inserts a row per award for each HUMAN empire that
+ *     earned it (AI and vacated seats, monsters and observers never get rows)
+ *     and the state marker. INSERT OR IGNORE throughout, so two requests racing
+ *     each other cannot double up.
+ * A game that is not completed is never stored. `computed` lets a caller that
+ * already holds the game's awards (the ending page) skip a second computation.
+ * Returns { computed: boolean, stored: number }.
+ */
+export async function recordGameAwards(env, gameId, computed) {
+  const done = await env.DB.prepare('SELECT 1 AS x FROM game_awards_state WHERE game_id = ?').bind(gameId).first();
+  if (done) return { computed: false, stored: 0 };
+  const c = computed ?? await computeGameAwards(env, gameId);
+  if (!c) return { computed: false, stored: 0 };
+  const now = Date.now();
+  const stmts = [];
+  for (const a of c.awards) {
+    const e = c.empires.get(a.factionId);
+    if (!e || !e.userId) continue;
+    stmts.push(env.DB.prepare(
+      `INSERT OR IGNORE INTO game_awards
+         (game_id, award_id, faction_id, user_id, empire_name, value, tied, ship_name, ship_class, captain_name, won_game, completed_at_ms)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      c.game.id, a.id, a.factionId, e.userId, e.name, a.value, a.tied ? 1 : 0,
+      a.ship?.name ?? null, a.ship?.shipClass ?? null, a.ship?.captainName ?? null,
+      e.isWinner ? 1 : 0, c.game.completedAtMs,
+    ));
+  }
+  stmts.push(env.DB.prepare('INSERT OR IGNORE INTO game_awards_state (game_id, computed_at_ms) VALUES (?, ?)').bind(c.game.id, now));
+  await env.DB.batch(stmts);
+  return { computed: true, stored: stmts.length - 1 };
+}
+
+/**
+ * Build the ending payload.
+ *
+ * `opts` exists for tooling only (scripts/ending-from-prod.mjs): `asFactionId`
+ * picks the viewer's empire directly, `skipMembership` waives the membership
+ * check and `readOnly` forbids the one write the endpoint ever makes (minting
+ * a missing replay token; see attachClips). The HTTP handler sets none.
+ *
+ * Returns an EndingPayload, or `{ error: { status, code, message } }`.
+ */
+export async function buildEnding(env, gameId, viewerUserId, opts = {}) {
+  const [game, member] = await Promise.all([
+    env.DB.prepare(
+      `SELECT g.id, g.status, g.victory_type, g.winner_faction_id, g.current_tick,
+              g.tick_interval_ms, g.started_at, g.completed_at, r.name
+         FROM games g JOIN rooms r ON r.id = g.id
+        WHERE g.id = ?`,
+    ).bind(gameId).first(),
+    opts.skipMembership
+      ? Promise.resolve({ fid: null, rm: 1 })
+      : env.DB.prepare(
+        `SELECT (SELECT id FROM game_factions WHERE game_id = ? AND user_id = ?) AS fid,
+                (SELECT 1 FROM room_members WHERE room_id = ? AND user_id = ?) AS rm`,
+      ).bind(gameId, viewerUserId ?? '', gameId, viewerUserId ?? '').first(),
+  ]);
+  if (!game) return { error: { status: 404, code: 'not_found', message: 'game not found' } };
+  if (!opts.skipMembership && !member?.fid && !member?.rm) {
+    return { error: { status: 403, code: 'not_a_member', message: 'you are not in this game' } };
+  }
+  if (game.status !== 'completed') {
+    return { error: { status: 409, code: 'not_finished', message: 'this game is still being played' } };
+  }
+
+  const currentTick = Math.max(0, whole(game.current_tick));
+  const stride = Math.max(1, Math.ceil(currentTick / (MAX_POINTS - 2)));
+  const q = (sql, ...binds) => env.DB.prepare(sql).bind(...binds);
+  const g = gameId;
+
+  // The same ordering twice (top battles; their per-empire losses) must agree.
+  const TOP_BATTLES = `SELECT id FROM battles WHERE game_id = ? AND ships_lost > 0
+                        ORDER BY ships_lost DESC, shots DESC, started_tick ASC LIMIT 3`;
+  // Up to four sizeable fights that ended within a quiet window before an
+  // empire was knocked out and in which that empire actually lost hulls: the
+  // last stands. (binds: game, game)
+  const ELIM_BATTLES = `SELECT b.id FROM battles b
+                          JOIN (SELECT actor_faction_id AS fid, MAX(tick_number) AS t FROM chronicle_entries
+                                 WHERE game_id = ? AND kind = 'faction_eliminated' AND actor_faction_id IS NOT NULL
+                                 GROUP BY actor_faction_id) e
+                            ON b.started_tick <= e.t AND b.last_fire_tick >= e.t - ${ELIM_WINDOW}
+                         WHERE b.game_id = ? AND b.ships_lost >= 2
+                           AND EXISTS (SELECT 1 FROM battle_participants p
+                                        WHERE p.battle_id = b.id AND p.faction_id = e.fid AND p.died_tick IS NOT NULL)
+                         GROUP BY b.id ORDER BY b.ships_lost DESC, b.shots DESC LIMIT 4`;
+  // (binds: game x3)
+  const BATTLE_SET = `SELECT id FROM (${TOP_BATTLES}) UNION SELECT id FROM (${ELIM_BATTLES})`;
+  const Q = {
+    ...statQueries(q, g),
+    5: q(`SELECT tick_number AS t, faction_id AS fid, gold, science, ships
+                 FROM faction_metrics
+                WHERE game_id = ?
+                  AND (tick_number % ? = 0
+                       OR tick_number = (SELECT MIN(tick_number) FROM faction_metrics WHERE game_id = ?)
+                       OR tick_number = (SELECT MAX(tick_number) FROM faction_metrics WHERE game_id = ?))
+                ORDER BY tick_number`, g, stride, g, g),
+    13: q(`SELECT COUNT(*) AS battles, COALESCE(SUM(shots), 0) AS shots,
+                      COALESCE(SUM(ships_lost), 0) AS ships_lost,
+                      COALESCE(SUM(settlements_lost), 0) AS settlements_lost,
+                      (SELECT COUNT(*) FROM game_settlements
+                        WHERE game_id = ? AND destroyed_at_tick IS NOT NULL) AS setl_destroyed
+                 FROM battles WHERE game_id = ?`, g, g),
+    // The battles the page cares about: the three biggest (is_top) plus the
+    // fights that preceded an elimination. With how much of each can be
+    // replayed (battle_ticks frames) and its house share token, if any.
+    14: q(`SELECT id, body_name, started_tick, ended_tick, last_fire_tick, shots, ships_lost, settlements_lost,
+                      victor_faction_id, status,
+                      id IN (${TOP_BATTLES}) AS is_top,
+                      (SELECT COUNT(*) FROM game_settlements st
+                        WHERE st.game_id = battles.game_id AND st.body_id = battles.body_id
+                          AND st.destroyed_at_tick BETWEEN battles.started_tick
+                              AND COALESCE(battles.ended_tick, battles.last_fire_tick)) AS setl_here,
+                      (SELECT COUNT(*) FROM battle_ticks bt WHERE bt.battle_id = battles.id) AS frames,
+                      (SELECT s.token FROM battle_shares s
+                        WHERE s.battle_id = battles.id AND s.created_by IS NULL AND s.revoked_at_ms IS NULL
+                        ORDER BY s.created_at_ms LIMIT 1) AS token,
+                      (SELECT COUNT(*) FROM battle_shares s2
+                        WHERE s2.battle_id = battles.id AND s2.created_by IS NULL) AS house_rows
+                 FROM battles WHERE id IN (${BATTLE_SET})
+                ORDER BY ships_lost DESC, shots DESC, started_tick ASC`, g, g, g, g),
+    15: q(`SELECT p.battle_id, p.faction_id AS fid, COUNT(*) AS n FROM battle_participants p
+                WHERE p.died_tick IS NOT NULL AND p.faction_id IS NOT NULL
+                  AND p.battle_id IN (${BATTLE_SET})
+                GROUP BY p.battle_id, p.faction_id`, g, g, g),
+    20: q(`SELECT payload, tick_number AS t FROM chronicle_entries WHERE game_id = ? AND kind = 'victory'
+                ORDER BY tick_number DESC LIMIT 1`, g),
+    // ---- timeline sources (see buildTimeline) ----
+    22: /* first blood */ q(`SELECT tick_number AS t, actor_faction_id AS victim,
+                      json_extract(payload, '$.killer_faction_id') AS killer,
+                      json_extract(payload, '$.body_name') AS body,
+                      json_extract(payload, '$.ship_class') AS cls
+                 FROM chronicle_entries WHERE game_id = ? AND kind = 'ship_destroyed' AND json_valid(payload)
+                ORDER BY tick_number, created_at_ms, id LIMIT 12`, g),
+    23: /* wars */ q(`SELECT tick_number AS t, actor_faction_id AS a, target_faction_id AS b,
+                      json_extract(payload, '$.broke_pacts[0]') AS broke
+                 FROM chronicle_entries WHERE game_id = ? AND kind = 'war_declared' AND json_valid(payload)
+                ORDER BY tick_number LIMIT 200`, g),
+    24: /* pacts broken */ q(`SELECT tick_number AS t, actor_faction_id AS a, target_faction_id AS b,
+                      json_extract(payload, '$.kind') AS pact
+                 FROM chronicle_entries WHERE game_id = ? AND kind = 'treaty_broken' AND json_valid(payload)
+                ORDER BY tick_number LIMIT 200`, g),
+    25: /* pacts signed */ q(`SELECT tick_number AS t, actor_faction_id AS a, target_faction_id AS b,
+                      json_extract(payload, '$.kind') AS pact
+                 FROM chronicle_entries WHERE game_id = ? AND kind = 'treaty_signed' AND json_valid(payload)
+                ORDER BY tick_number LIMIT 200`, g),
+    26: /* who took the last worlds */ q(`SELECT fid, killer, t FROM (
+                  SELECT actor_faction_id AS fid, json_extract(payload, '$.killer_faction_id') AS killer, tick_number AS t
+                    FROM chronicle_entries WHERE game_id = ? AND kind = 'settlement_destroyed' AND json_valid(payload)
+                   UNION ALL
+                  SELECT target_faction_id, actor_faction_id, tick_number
+                    FROM chronicle_entries WHERE game_id = ? AND kind = 'settlement_seized')
+                WHERE fid IN (SELECT actor_faction_id FROM chronicle_entries
+                               WHERE game_id = ? AND kind = 'faction_eliminated')
+                  AND killer IS NOT NULL`, g, g, g),
+    27: /* bills */ q(`SELECT kind, resolved_at_tick AS t, proposer_faction_id AS proposer,
+                      json_extract(payload, '$.target_faction_id') AS target,
+                      json_extract(payload, '$.candidate_faction_id') AS candidate
+                 FROM senate_proposals
+                WHERE game_id = ? AND json_valid(payload) AND status = 'passed' AND resolved_at_tick IS NOT NULL
+                  AND kind IN ('war_authorization', 'trade_embargo', 'production_sanction', 'reparations', 'chancellor_vote')
+                ORDER BY resolved_at_tick LIMIT 200`, g),
+    28: /* megastructures */ q(`SELECT m.kind, m.completed_at_tick AS t, m.founded_by_faction_id AS fid, b.name AS body
+                 FROM game_megastructures m LEFT JOIN game_bodies b ON b.id = m.body_id
+                WHERE m.game_id = ? AND m.ancient = 0 AND m.founded_by_faction_id IS NOT NULL
+                  AND m.completed_at_tick IS NOT NULL
+                ORDER BY m.completed_at_tick LIMIT 100`, g),
+    29: /* world events */ q(`SELECT kind, tick_number AS t, actor_faction_id AS a, payload FROM chronicle_entries
+                WHERE game_id = ? AND json_valid(payload)
+                  AND kind IN ('dyson_initiated', 'dyson_milestone', 'sun_gate_opened', 'gate_transit',
+                               'kaiju_revealed', 'world_obliterated', 'kaiju_dead', 'secret_discovered')
+                  AND (kind <> 'gate_transit' OR (json_extract(payload, '$.sun_gate') = 1 AND json_extract(payload, '$.first') = 1))
+                  AND (kind <> 'world_obliterated' OR json_extract(payload, '$.cause') = 'kaiju')
+                ORDER BY tick_number LIMIT 400`, g),
+    30: /* start */ q(`SELECT MIN(tick_number) AS t FROM chronicle_entries WHERE game_id = ? AND kind = 'game_started'`, g),
+  };
+  const results = await env.DB.batch(Array.from({ length: 31 }, (_, i) => Q[i]));
+  const R = (i) => rows(results[i]);
+
+  const D = deriveEmpires(game, R);
+  const { fRows, known, holdStates, placeOf, factions, awards, techLv, built, bills, warsTotal, tradesTotal } = D;
+  const viewerFactionId = opts.asFactionId !== undefined
+    ? opts.asFactionId
+    : (viewerUserId ? (fRows.find(f => f.user_id === viewerUserId)?.id ?? member?.fid ?? null) : null);
+  for (const f of factions) f.isMe = viewerFactionId != null && viewerFactionId === f.id;
+
   // ---- series ---------------------------------------------------------------
   const metricRows = R(5);
   let ticks = [...new Set(metricRows.map(r => num(r.t)))].sort((a, b) => a - b);
@@ -965,6 +1081,13 @@ export async function buildEnding(env, gameId, viewerUserId, opts = {}) {
     },
   });
   await attachClips(env, gameId, timeline, opts);
+
+  // The profile's trophy case keeps these awards: store them now that someone
+  // has opened the finished game (once; see recordGameAwards). Never breaks the page.
+  if (!opts.readOnly) {
+    try { await recordGameAwards(env, gameId, awardsOf(game, D)); }
+    catch (e) { console.error('ending: storing the game awards failed', e); }
+  }
 
   // ---- the game ---------------------------------------------------------------
   let victoryDetail = null;
