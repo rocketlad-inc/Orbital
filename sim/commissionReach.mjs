@@ -189,7 +189,16 @@ check('...stored with no game id, kind prefixed ui/',
 await tel('friend', 'commission-view', 'map-maker');
 await tel('friend', 'commission-click', 'map-maker');
 await tel('rival', 'commission-view', 'lobby-map');
+// How unpaid checkouts end: the client logs a cancel on its way back from
+// Stripe; Stripe's webhook reports a session it expired after 24 hours.
+await tel('friend', 'commission-cancel', 'skins');
+await hook({ ...paidSession('cs_exp1', 'rival', { surface: 'skins' }, 'checkout.session.expired') });
 const funnel = (await call(dashRoutes, 'GET', '/api/admin/commission', 'admin')).body;
+const sk = funnel.surfaces.find(s => s.surface === 'skins');
+check('funnel: a checkout left on the Stripe page counts as cancelled, on its surface', sk?.cancelled === 1, JSON.stringify(sk));
+check('funnel: a checkout Stripe expired counts as expired, on its surface', sk?.expired === 1, JSON.stringify(sk));
+check('...and an expired session grants nothing',
+  (await rows(`SELECT COUNT(*) AS n FROM user_entitlements WHERE stripe_session_id = 'cs_exp1'`))[0].n === 0);
 const mm = funnel.surfaces.find(s => s.surface === 'map-maker');
 const lm = funnel.surfaces.find(s => s.surface === 'lobby-map');
 check('funnel: the Map Maker panel has its own row: view, click, started checkout',

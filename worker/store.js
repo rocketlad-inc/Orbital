@@ -233,7 +233,9 @@ async function handleCreateCheckout(req, env, { url, session }) {
     'metadata[gift]': gift ? '1' : '0',
     customer_email: session.email,
     success_url: `${origin}/?purchase=${gift ? 'gift' : 'success'}${gift ? '' : `&via=${surface}`}`,
-    cancel_url: `${origin}/?purchase=cancelled`,
+    // via= on the way back too, so a cancelled checkout is counted
+    // against the surface that started it (the dashboard funnel).
+    cancel_url: `${origin}/?purchase=cancelled&via=${surface}`,
   });
 
   const res = await fetch('https://api.stripe.com/v1/checkout/sessions', {
@@ -327,6 +329,21 @@ export async function handleStripeWebhook(req, env) {
   // Stripe dashboard showing a successful payment — which is the worst
   // shape a bug in a money path can take. Never shipped: no Stripe key
   // has ever been configured, so nothing was ever charged.
+  // A checkout nobody finished: Stripe expires an open session after 24
+  // hours. Logged against its surface so the funnel can say where buyers
+  // walked away (a cancel on the Stripe page is logged by the client on
+  // its way back). Needs this event enabled on the Stripe webhook.
+  if (event.type === 'checkout.session.expired') {
+    const userId = obj.client_reference_id;
+    if (userId) {
+      const surface = typeof obj.metadata?.surface === 'string' ? obj.metadata.surface.slice(0, 24) : 'other';
+      await logCheckout(env, { user_id: userId }, {
+        surface, gift: obj.metadata?.gift === '1', status: 200, result: 'expired',
+      });
+    }
+    return json({ received: true });
+  }
+
   if (event.type === 'checkout.session.completed'
     || event.type === 'checkout.session.async_payment_succeeded') {
     const userId = obj.client_reference_id;

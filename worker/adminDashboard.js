@@ -942,7 +942,8 @@ async function handleCommissionFunnel(req, env, { session, url }) {
               COUNT(*) AS n, COUNT(DISTINCT e.user_id) AS players
          FROM analytics_events e JOIN users u ON u.id = e.user_id
         WHERE e.game_id IS NULL
-          AND e.kind IN ('ui/commission-view', 'ui/commission-click', 'ui/commission-dismiss', 'commission/checkout')
+          AND e.kind IN ('ui/commission-view', 'ui/commission-click', 'ui/commission-dismiss',
+                         'ui/commission-cancel', 'commission/checkout')
           AND e.created_at_ms >= ?1 AND ${notQa('u.email')}
         GROUP BY 1, 2, 3`, since),
     q(`SELECT COALESCE(surface, 'before tracking') AS surface, source, COUNT(*) AS n
@@ -956,7 +957,7 @@ async function handleCommissionFunnel(req, env, { session, url }) {
   ]);
 
   const SURFACES = ['profile', 'lobby-flag', 'designer', 'endgame', 'thanks-card', 'skins', 'discord-feed', 'map-maker', 'lobby-map'];
-  const row = (s) => ({ surface: s, views: 0, viewers: 0, clicks: 0, dismissals: 0, checkouts: 0, paid: 0 });
+  const row = (s) => ({ surface: s, views: 0, viewers: 0, clicks: 0, dismissals: 0, checkouts: 0, cancelled: 0, expired: 0, paid: 0 });
   const by = new Map(SURFACES.map(s => [s, row(s)]));
   const get = (s) => { if (!by.has(s)) by.set(s, row(s)); return by.get(s); };
   for (const e of events) {
@@ -965,6 +966,10 @@ async function handleCommissionFunnel(req, env, { session, url }) {
     else if (e.kind === 'ui/commission-click') r.clicks += e.n;
     else if (e.kind === 'ui/commission-dismiss') r.dismissals += e.n;
     else if (e.kind === 'commission/checkout' && e.result === 'started') r.checkouts += e.n;
+    // How an unpaid checkout ended: left from the Stripe page (the client
+    // logs it on its way back) or abandoned until Stripe expired it.
+    else if (e.kind === 'ui/commission-cancel') r.cancelled += e.n;
+    else if (e.kind === 'commission/checkout' && e.result === 'expired') r.expired += e.n;
   }
   for (const p of paid) if (p.source === 'stripe') get(p.surface).paid += p.n;
   return json({

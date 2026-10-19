@@ -12,7 +12,8 @@
 // ============================================================
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { apiFetch } from './api';
+import { apiFetch, CommissionSurface } from './api';
+import { logCommission } from './commission';
 import { CommissionThanks } from './CommissionThanks';
 import { useAuth } from './AuthContext';
 import { EmailSettings } from './EmailSettings';
@@ -111,6 +112,10 @@ export function ProfilePanel({ onEnterRoom }: { onEnterRoom?: (id: string) => vo
     }
     if (outcome === 'cancelled') {
       setNotice(t('profile.notice.cancelled'));
+      // Counted against the surface that started the checkout, so the
+      // dashboard can show where buyers walk away from the Stripe page.
+      const via = q.get('via');
+      if (via && /^[a-z-]{2,24}$/.test(via)) logCommission(via as CommissionSurface, 'cancel');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
