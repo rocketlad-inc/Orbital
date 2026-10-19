@@ -37,8 +37,18 @@ export const PREMIUM_EMBLEM_IDS = [
   'binary', 'station', 'blackhole', 'pulsar', 'eclipse', 'satellite', 'helmet', 'saucer',
 ];
 
+// Earned, not bought (0176): granted for something done, kept in
+// user_emblem_grants. Never in a default or a fallback, like the paid
+// wing. 'recruiter': a friend you invited took a seat in a started game.
+export const EARNED_EMBLEM_IDS = ['recruiter'];
+
 const PREMIUM_EMBLEM_SET = new Set(PREMIUM_EMBLEM_IDS);
-const EMBLEM_SET = new Set([...EMBLEM_IDS, ...PREMIUM_EMBLEM_IDS]);
+const EARNED_EMBLEM_SET = new Set(EARNED_EMBLEM_IDS);
+const EMBLEM_SET = new Set([...EMBLEM_IDS, ...PREMIUM_EMBLEM_IDS, ...EARNED_EMBLEM_IDS]);
+
+export function isEarnedEmblem(v) {
+  return typeof v === 'string' && EARNED_EMBLEM_SET.has(v);
+}
 
 export function isEmblemId(v) {
   return typeof v === 'string' && EMBLEM_SET.has(v);

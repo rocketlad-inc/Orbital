@@ -73,6 +73,41 @@ async function handleInviteOpen(req, env, { session }) {
   return new Response(null, { status: 204 });
 }
 
+/**
+ * Grant the Recruiter emblem once a friend this player invited has taken
+ * a seat in a game that started. Cheap and idempotent: called on every
+ * /me, it writes at most once. Returns the player's earned emblems.
+ */
+export async function emblemGrants(env, userId) {
+  if (!userId) return [];
+  try {
+    await env.DB
+      .prepare(`INSERT OR IGNORE INTO user_emblem_grants (user_id, emblem, granted_at)
+                SELECT ?1, 'recruiter', ?2
+                 WHERE NOT EXISTS (SELECT 1 FROM user_emblem_grants WHERE user_id = ?1 AND emblem = 'recruiter')
+                   AND EXISTS (SELECT 1 FROM users f
+                                 JOIN game_factions gf ON gf.user_id = f.id
+                                 JOIN games g ON g.id = gf.game_id
+                                WHERE f.referred_by = ?1 AND g.status IN ('active', 'completed'))`)
+      .bind(userId, Date.now())
+      .run();
+    const r = await env.DB.prepare('SELECT emblem FROM user_emblem_grants WHERE user_id = ? ORDER BY emblem').bind(userId).all();
+    return (r.results ?? []).map(g => g.emblem);
+  } catch (e) {
+    console.error('emblemGrants failed', e);
+    return [];
+  }
+}
+
+/** Has this player earned this emblem? */
+export async function hasEmblemGrant(env, userId, emblem) {
+  const row = await env.DB
+    .prepare('SELECT 1 AS x FROM user_emblem_grants WHERE user_id = ? AND emblem = ?')
+    .bind(userId, emblem)
+    .first();
+  return !!row;
+}
+
 export const routes = [
   { method: 'POST', pattern: '/api/invite/open', auth: 'optional', handle: handleInviteOpen },
 ];

@@ -15,7 +15,7 @@
 // ============================================================
 
 import React, { useEffect, useState } from 'react';
-import { startCommissionCheckout } from './api';
+import { apiFetch, startCommissionCheckout } from './api';
 import { useAuth } from './AuthContext';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { shareInvite, InviteWhere } from './invite';
@@ -93,6 +93,41 @@ export function InviteCard({ code, roomName, taken, max, where }: {
           {opening ? t('invite.card.opening') : t('invite.card.giftBtn', { price: tk('mp.commission.price', COMMISSION_PRICE) })}
         </button>
       </div>
+    </section>
+  );
+}
+
+/** How long a private lobby sits with only its host before we offer to
+ *  open it. Long enough that friends had their chance. */
+export const LONELY_LOBBY_MS = 3 * 3600 * 1000;
+
+/**
+ * A host alone in a private lobby for hours: offer to open the seats to
+ * everyone (Oct 19 insight report, Invites idea 4). One tap removes the
+ * password, so Browse lists the room and Quick Join can fill it. Shown
+ * only to the host, only then; nothing happens without the tap.
+ */
+export function LonelyLobbyCard({ roomId, onOpened }: { roomId: string; onOpened: () => void }) {
+  useI18n();
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  const open = async () => {
+    setBusy(true);
+    const res = await apiFetch(`/api/lobby/rooms/${roomId}/open-seats`, { method: 'POST' });
+    setBusy(false);
+    if (res.ok) { setDone(true); onOpened(); }
+  };
+  return (
+    <section className="ic ic--lonely" aria-labelledby="ic-lonely-title">
+      <h3 id="ic-lonely-title" className="ic-title">{t('roomlobby.lonely.title')}</h3>
+      <p className="ic-body">{done ? t('roomlobby.lonely.done') : t('roomlobby.lonely.body')}</p>
+      {!done && (
+        <div className="ic-row">
+          <button type="button" className="ic-btn ic-btn--go" disabled={busy} onClick={() => void open()}>
+            {busy ? t('roomlobby.lonely.opening') : t('roomlobby.lonely.open')}
+          </button>
+        </div>
+      )}
     </section>
   );
 }

@@ -710,6 +710,8 @@ async function handleMe(req, env) {
     // Ship looks kept from before C-I joined the Commission (0166), as
     // 'class:letter'. UI only; every save path re-checks the grant.
     look_grants: await store.lookGrants(env, session.user_id).catch(() => []),
+    // Earned emblems (0176), granted here the first time they are due.
+    emblem_grants: await invites.emblemGrants(env, session.user_id),
     // Account-default colony and station skins (0154); null = the free look.
     ...(await env.DB.prepare('SELECT city_skin, station_skin FROM users WHERE id = ?')
       .bind(session.user_id).first().catch(() => null) ?? {}),

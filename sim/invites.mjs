@@ -120,5 +120,38 @@ check('...once per browser, and a junk code or id is ignored', opens.length === 
 check('...with the sender, and the account when signed in',
   opens[0].by_user === host.id && opens[1].user_id === friend.id, opens);
 
+// ---- the Recruiter emblem (0176) ---------------------------------------
+const me = async (u) => (await call('GET', '/api/auth/me', { cookie: u.cookie })).data?.user;
+check('no Recruiter emblem before an invited friend has played', !((await me(host)).emblem_grants ?? []).includes('recruiter'),
+  (await me(host)).emblem_grants);
+// The friend's game starts: a games row for the room and a seat in it.
+DB.db.exec('PRAGMA foreign_keys = OFF');
+await DB.prepare(`INSERT INTO games (id, status, map_seed, current_tick, tick_interval_ms, created_at) VALUES (?, 'active', 's', 1, 60000, 0)`).bind(room.id).run();
+await DB.prepare(`INSERT INTO game_factions (id, game_id, user_id, name, color, slot, status, joined_at) VALUES (?, ?, ?, 'F', '#4ecdc4', 0, 'active', 0)`)
+  .bind(`${room.id}:f0`, room.id, friend.id).run();
+DB.db.exec('PRAGMA foreign_keys = ON');
+check('the inviter earns the Recruiter emblem once the friend plays', ((await me(host)).emblem_grants ?? []).includes('recruiter'));
+check('...granted once', (await DB.prepare(`SELECT COUNT(*) AS n FROM user_emblem_grants WHERE user_id = ?`).bind(host.id).first()).n === 1);
+check('someone who invited nobody does not earn it', !((await me(stranger)).emblem_grants ?? []).includes('recruiter'));
+const lobby2 = (await call('POST', '/api/rooms', { cookie: host.cookie, body: { name: 'Second', max_players: 4 } })).data.room;
+await call('POST', '/api/rooms/join-by-code', { cookie: stranger.cookie, body: { code: lobby2.invite_code } });
+const pick = (u, emblem) => call('PATCH', `/api/lobby/rooms/${lobby2.id}/me`, { cookie: u.cookie, body: { emblem } });
+const refused = await pick(stranger, 'recruiter');
+check('an earned emblem is refused to anyone without the grant', refused.status === 403 && refused.data?.error?.code === 'not_earned', refused);
+const flew = await pick(host, 'recruiter');
+check('...and flies for the player who earned it', flew.status === 200, flew);
+
+// ---- opening a lonely lobby's seats ------------------------------------
+const lonely = (await call('POST', '/api/rooms', { cookie: notInvited.cookie, body: { name: 'Alone', max_players: 4, password: 'secret2' } })).data.room;
+const notHost = await call('POST', `/api/lobby/rooms/${lonely.id}/open-seats`, { cookie: stranger.cookie });
+check('only the host can open the seats', notHost.status === 403, notHost);
+const opened = await call('POST', `/api/lobby/rooms/${lonely.id}/open-seats`, { cookie: notInvited.cookie });
+check('the host opens them: the password is gone', opened.status === 200
+  && (await DB.prepare('SELECT password_hash FROM rooms WHERE id = ?').bind(lonely.id).first()).password_hash === null, opened.data);
+const walkIn = await call('POST', `/api/rooms/${lonely.id}/join`, { cookie: badBy.cookie, body: {} });
+check('...so a stranger from Browse walks in with no password', walkIn.status === 200, walkIn.data);
+const startedOpen = await call('POST', `/api/lobby/rooms/${room.id}/open-seats`, { cookie: host.cookie });
+check('a game that has started cannot be opened this way', startedOpen.status === 409, startedOpen);
+
 console.log(failures === 0 ? '\nALL INVITE CHECKS PASS' : `\n${failures} FAILED`);
 process.exit(failures === 0 ? 0 : 1);

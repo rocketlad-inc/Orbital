@@ -397,7 +397,8 @@ async function handleOverview(req, env, { session }) {
   // so they cannot be filtered for robots; everything else is.
   const inv0 = now - 30 * DAY_MS;
   const [invOpens, invSignups, invShares, invTop, invSeats] = await Promise.all([
-    one(`SELECT COUNT(*) AS opens, COUNT(DISTINCT code) AS links FROM invite_opens WHERE opened_at >= ?1`, inv0),
+    one(`SELECT COUNT(*) AS opens, COUNT(DISTINCT code) AS links FROM invite_opens
+          WHERE opened_at >= ?1 AND code IN (SELECT invite_code FROM rooms WHERE invite_code IS NOT NULL)`, inv0),
     one(`SELECT COUNT(*) AS signed_up,
                 COALESCE(SUM(EXISTS (SELECT 1 FROM game_factions f WHERE f.user_id = u.id)), 0) AS played,
                 COALESCE(SUM(u.referred_how = 'link'), 0) AS named,
