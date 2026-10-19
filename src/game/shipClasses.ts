@@ -203,7 +203,7 @@ const MEGA_DESTROYER: ShipClassDef = {
   fuelCapacity: 600,
   speedModifier: 0.35,
   cargoCapacity: 0,
-  cost: { fuel: 0, ore: 12000, credits: 8000 },
+  cost: { fuel: 0, ore: 6000, credits: 4000 },
   buildTime: 0,
   canHarvest: false,
   size: 14,
@@ -224,7 +224,7 @@ const MOBILE_FOUNDRY: ShipClassDef = {
   fuelCapacity: 800,
   speedModifier: 0.6,
   cargoCapacity: 0,
-  cost: { fuel: 0, ore: 9000, credits: 11000 },
+  cost: { fuel: 0, ore: 4500, credits: 5500 },
   buildTime: 0,
   canHarvest: false,
   size: 13,
@@ -241,7 +241,7 @@ const KAIJU: ShipClassDef = {
     + 'makes no peace, and every empire is at war with it.'); },
   firepower: 50,
   // The CAP. Its real hp_max is rolled at launch from the game's fleets.
-  hp: 20000,
+  hp: 40000,
   pdcRating: 0,
   range: 30,
   // MIRRORS SHIP_COMBAT_STATS.kaiju in worker/factions.js.

@@ -65,7 +65,7 @@ export function slotCountFor(shipClass, levels) {
  *   weapon    +40% of hull base dmg/part      × (1 + 0.10·Weapons lvl)
  *   shield    +35% of hull base HP/part       × (1 + 0.08·Armor lvl)
  *   engine    −15% travel time/part (mult.)   × (1 + 0.06·Propulsion lvl)
- *   detonator 50% of ship MAX HP dmg/part     × (1 + 0.05·Weapons lvl)
+ *   detonator 10% of ship MAX HP dmg/part     × (1 + 0.05·Weapons lvl)
  *                                               (HALF the Weapons rate)
  *
  * Costs are per part, added to the hull cost at queue time. Priced
@@ -185,8 +185,11 @@ const SHIELD_HP_PCT        = 0.35;  // of hull base HP, per defensive part
 // halving damage_per_tick left detonators untouched and made ramming a
 // warhead into someone twice as good as shooting them. Suicide runs were
 // already the sharpest tool in the box.
+// Down again to 10% (Lorne, 2026-10-18, after a playtest where 62 blasts
+// killed 397 ships): a frigate's blast still clears corvettes, but no
+// longer kills other frigates.
 // MIRRORS DETONATOR_HP_FRAC in src/game/shipParts.ts.
-const DETONATOR_HP_FRAC    = 0.25;  // of ship MAX HP, per part
+const DETONATOR_HP_FRAC    = 0.10;  // of ship MAX HP, per part
 const WEAPONS_TECH_PER_LVL = 0.10;  // boosts a weapon mount's effect
 const ARMOR_TECH_PER_LVL   = 0.08;  // boosts a defensive part's effect
 const DETONATOR_TECH_PER_LVL = WEAPONS_TECH_PER_LVL / 2;  // Weapons at half rate
@@ -563,7 +566,7 @@ export function defenseMitigation(targetParts, profile) {
 }
 
 /**
- * Detonator blast damage: 50% of the ship's MAX HP per detonator part,
+ * Detonator blast damage: DETONATOR_HP_FRAC (10%) of the ship's MAX HP per detonator part,
  * scaled by Weapons tech at HALF the normal rate (spec §2.2). Applied
  * to EVERY in-orbit ship at the body — including the owner's own.
  */

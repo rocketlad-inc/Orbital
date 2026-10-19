@@ -7729,7 +7729,8 @@ async function handleAssignCaptain(req, env, ctx) {
 // POST /api/games/:gameId/ships/:shipId/detonate
 //
 // Manual detonator trigger (spec §2.2, decided 2026-07-17; fraction
-// halved to 25% in the pacing pass — DETONATOR_HP_FRAC is the truth):
+// halved to 25% in the pacing pass, 10% on 2026-10-18 — DETONATOR_HP_FRAC
+// is the truth):
 //   - damage = DETONATOR_HP_FRAC of the ship's EFFECTIVE max HP per
 //     detonator part, scaled by the owner's Weapons tech at HALF rate
 //     (+5%/lvl), stacking additively across parts.

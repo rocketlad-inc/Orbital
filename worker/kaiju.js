@@ -77,8 +77,8 @@ export function kaijuDials(conf) {
   return {
     on: Number(conf?.kaiju) === 1,
     appetite: Math.max(1, Math.round(num(conf?.kaiju_appetite, 5))),
-    hpTicks: Math.max(1, num(conf?.kaiju_hp_ticks, 24)),
-    hpMin: Math.min(cap, Math.max(100, num(conf?.kaiju_hp_min, 2000))),
+    hpTicks: Math.max(1, num(conf?.kaiju_hp_ticks, 48)),
+    hpMin: Math.min(cap, Math.max(100, num(conf?.kaiju_hp_min, 4000))),
     hpMax: cap,
     damage: Math.max(0, num(conf?.kaiju_damage, SHIP_COMBAT_STATS.kaiju.damage_per_tick)),
     // Top push between worlds, in g (huntTicks).

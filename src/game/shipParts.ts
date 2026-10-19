@@ -341,8 +341,8 @@ const SHIELD_HP_PCT = 0.35;
 const ENGINE_TRAVEL_PCT = 0.15;
 // Halved in the pacing pass alongside every gun — a detonator is damage
 // too, and being priced off MAX HP meant it escaped the change.
-// MIRRORS worker/shipDesigns.js.
-const DETONATOR_HP_FRAC = 0.25;
+// Then down to 10% (Lorne, 2026-10-18). MIRRORS worker/shipDesigns.js.
+const DETONATOR_HP_FRAC = 0.10;
 const WEAPONS_TECH_PER_LVL = 0.10;
 const ARMOR_TECH_PER_LVL = 0.08;
 const PROPULSION_TECH_PER_LVL = 0.06;
@@ -638,7 +638,7 @@ export const SERVER_HULL_BASE: Record<
 > = {
   mega_destroyer: { hp: 6000, damagePerTick: 350, speed: 0.08 },
   mobile_foundry: { hp: 4600, damagePerTick: 0, speed: 0.14 },
-  kaiju: { hp: 20000, damagePerTick: 50, speed: 0.50 },
+  kaiju: { hp: 40000, damagePerTick: 50, speed: 0.50 },
   corvette: { hp: 40, damagePerTick: 3.5, speed: 0.85 },
   frigate: { hp: 200, damagePerTick: 17.5, speed: 0.50 },
   destroyer: { hp: 1000, damagePerTick: 87.5, speed: 0.30 },

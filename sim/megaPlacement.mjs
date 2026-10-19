@@ -191,14 +191,15 @@ const at = (id, tick) => bodyPositionAt(byId.get(id), byId, tick);
       || !(m.cost.metal > 0) || !(m.cost.credits > 0);
   });
   check('every entry has a label, a gate, a family and a price', bad2.length === 0, bad2.join(', '));
-  // Massively expensive is the design, so it is worth asserting rather
-  // than trusting: the cheapest structure still dwarfs the Trajectory
-  // Thrusters at 2,000, today's most expensive building.
+  // Expensive is still the design, though halved (Lorne, 2026-10-18:
+  // "priced completely out of the game"): the cheapest structure still
+  // costs more than the Trajectory Thrusters at 2,000, today's most
+  // expensive building.
   const cheapest = Math.min(...MEGASTRUCTURE_KINDS.map(
     k => MEGASTRUCTURES[k].cost.metal + MEGASTRUCTURES[k].cost.credits,
   ));
-  check('even the cheapest dwarfs the priciest ordinary building',
-    cheapest >= 4 * 2000, `cheapest ${cheapest} vs thrusters 2000`);
+  check('even the cheapest costs more than the priciest ordinary building',
+    cheapest > 2000, `cheapest ${cheapest} vs thrusters 2000`);
 }
 
 console.log(bad === 0 ? '\nALL PASS' : `\n${bad} FAILURE(S)`);
