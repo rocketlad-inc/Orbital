@@ -515,7 +515,6 @@ export const guide: Catalog = {
   'mp.endgame.title': 'Pilote sua próxima frota numa nova linha',
   'mp.endgame.body': '{lines} linhas de naves, bandeiras novas e {discord} com a {name}. {noGameplay} {price}, uma única vez.',
   'mp.endgame.look': 'Dar uma olhada',
-  'mp.endgame.notNow': 'Agora não',
   'mp.thanks.closeForGood': 'Fechar de vez',
   'mp.thanks.title': 'Vinte horas de jogo. Obrigado por jogar.',
   'mp.thanks.body': 'O Orbital é grátis e continua grátis. Se você quiser apoiá-lo, a {name} é o jeito: {facts} Esta é a única vez que vamos pedir.',

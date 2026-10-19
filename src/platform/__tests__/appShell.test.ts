@@ -86,7 +86,7 @@ describe('the Commission storefronts', () => {
     const gated: Record<string, RegExp> = {
       'multiplayer/LobbyView.tsx': /isAndroidApp\(\) \? \(/,
       'multiplayer/Hangar.tsx': /canBuyHere\(\)/,
-      // Both moments refuse to render at all where nothing can be sold.
+      // The thank-you card refuses to render at all where nothing can be sold.
       'multiplayer/CommissionMoments.tsx': /&& canBuyHere\(\);/,
       // The designer preview shows the hull everywhere, the button only here.
       'components/ShipDesigner.tsx': /\{canBuyHere\(\) && \(/,
@@ -106,6 +106,9 @@ describe('the Commission storefronts', () => {
       // with the buy button only where it can sell.
       'multiplayer/MultiplayerLobby.tsx': /\{sellable \? \(/,
       'multiplayer/commissionHandoff.ts': /if \(!canBuyHere\(\)\) return;/,
+      // The end-of-game page shows the plug everywhere; its button sells only
+      // where it can, and opens the phone's browser where it cannot.
+      'multiplayer/EndingScreen.tsx': /if \(!sellable\) \{ openCommissionInBrowser\('endgame'\); return; \}/,
     };
     for (const [rel, gate] of Object.entries(gated)) {
       expect(read(rel)).toMatch(gate);
@@ -134,6 +137,7 @@ describe('the Commission storefronts', () => {
       'multiplayer/MultiplayerLobby.tsx': /openCommissionInBrowser\('lobby-map'\)/,
       'components/ShipDesigner.tsx': /\{!canBuyHere\(\) && \(\s*<button[^\n]*openCommissionInBrowser\('designer'\)/,
       'components/CommissionFleetPreview.tsx': /\{!sellable && \(\s*<>\s*<button[^\n]*openCommissionInBrowser\('designer'\)/,
+      'multiplayer/EndingScreen.tsx': /openCommissionInBrowser\('endgame'\)/,
     };
     for (const [rel, re] of Object.entries(linkOut)) expect(read(rel)).toMatch(re);
   });

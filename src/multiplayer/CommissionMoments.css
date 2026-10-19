@@ -43,24 +43,6 @@
 .cm-btn--go:hover { border-color: #ffb84d; color: #ffd9a0; }
 .cm-btn--quiet { border-color: transparent; }
 
-/* End of game: sits under the title and buttons of the game-over
-   overlay; centred like the rest of that screen, never full-width. */
-.cm-end {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-  margin-top: 18px;
-  padding: 14px 18px;
-  max-width: 460px;
-  border: 1px solid rgba(255, 184, 77, 0.22);
-  border-radius: 10px;
-  background: rgba(255, 184, 77, 0.04);
-  text-align: center;
-  font-family: var(--font-body, inherit);
-}
-.cm-end .cm-body { margin-left: auto; margin-right: auto; }
-
 /* The lobby thank-you: a card at the top of the page, not a modal. */
 .cm-thanks {
   position: relative;

@@ -77,6 +77,12 @@ import { lazyChunk } from './util/lazyChunk';
 // The orbital-battle layout test page (/?battle). Lazy: it is a tool,
 // not the game, so it stays out of the main bundle.
 const BattleSandbox = React.lazy(() => import('./battleSandbox/BattleSandbox'));
+// The end-of-game page preview (/?ending=<gameId>, see EndingPreview.tsx).
+// Dev only: it renders bundled fixtures, and this guard is what keeps both
+// the component and the fixtures out of a production build.
+const EndingPreview = process.env.NODE_ENV !== 'production'
+  ? React.lazy(() => import('./multiplayer/EndingPreview'))
+  : null;
 // The Map Maker (?mapmaker): its own screen, out of the main bundle.
 // lazyChunk, not React.lazy: a tab opened before a deploy reloads once
 // instead of breaking when the Map Maker's (renamed) chunk is fetched.
@@ -971,6 +977,13 @@ function AppRouter() {
     typeof window !== 'undefined' &&
     new URLSearchParams(window.location.search).has('mapmaker'),
   );
+  if (EndingPreview && new URLSearchParams(window.location.search).has('ending')) {
+    return (
+      <React.Suspense fallback={<div style={{ position: 'fixed', inset: 0, background: '#060a10' }} />}>
+        <EndingPreview />
+      </React.Suspense>
+    );
+  }
   if (mapMakerMode) {
     return (
       <React.Suspense fallback={<div style={{ position: 'fixed', inset: 0, background: '#0a0e14' }} />}>
