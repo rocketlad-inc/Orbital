@@ -125,7 +125,7 @@ What `apply` returns, and what you need from it:
 
 **Targets** are a world id (`earth`, `luna`, `titan`, `sol`), `ship:<id>` or `fleet:<id>`. A target is tracked while the camera holds it, so a moving fleet stays centred.
 
-**Sizing.** `px` is how wide the target's world should be on the map canvas (a 1080×1920 canvas: 520 fills half the width; 160 shows the fight with room; 40 is a dot). `scale` is pixels per world unit when you want a raw number: 0.5 is the default view, 0.012 shows a planet with its moons, 0.0045 shows the whole inner system from Sol. Zooms ease in log space, so they feel even.
+**Sizing.** `px` is how wide the target's world should be on the map canvas (a 1080×1920 canvas: 520 fills half the width; 160 shows the fight with room; 40 is a dot). `scale` is pixels per world unit when you want a raw number: 0.5 is the default view (a planet and its moons), 0.05 shows a planet's neighbourhood, 0.012 shows the whole solar system out to the Kuiper belt in about a third of the frame. Zooms ease in log space, so they feel even. When in doubt use `px` on a target and let the director work out the scale.
 
 **Verbs:** `focus` (cut), `pan` (glide, then hold), `zoom`, `follow`, `tick`, `speed`, `caption`, `hook`, `ui`. Captions are the outlined white words; one at a time, each replaces the last.
 
