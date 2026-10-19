@@ -593,6 +593,15 @@ check('...and the rest of Sol is still there',
   const news = (await on.DB.prepare(
     `SELECT payload FROM chronicle_entries WHERE game_id = 'gfar_on' AND kind = 'secret_discovered'`).all()).results
     .map(r => JSON.parse(r.payload));
+  // A FOUND SHIP IS AN OFFER now (discoveryOffers.js, 2026-10-18): it
+  // waits for the finder's claim. sim/discoveryOffers.mjs covers refusal.
+  {
+    const waiting = await on.DB.prepare(
+      `SELECT status FROM discovery_offers WHERE body_id = ? AND faction_id = ?`).bind(wreckHost.id, fid).first();
+    check(`the derelict at ${wreckHost.name} waits for its finder's claim`, waiting?.status === 'pending', JSON.stringify(waiting));
+    const { claimOffer } = await import('../worker/discoveryOffers.js');
+    await claimOffer(on.env, { gameId: 'gfar_on', bodyId: wreckHost.id, factionId: fid, tick: 300 });
+  }
   // THE SALVAGED DESTROYER IS A MODERN ONE: the finder's own active
   // design, on their tech and the game's ship config, full fuel, at the
   // defence ceiling -- not the 180 HP / 10 damage bare hull of old.

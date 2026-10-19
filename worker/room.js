@@ -52,6 +52,8 @@ const megaPairKey = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 
 /** Hull classes the 'capital' target-priority category selects. */
 const CAPITAL_CLASSES = new Set(['mega_destroyer', 'mobile_foundry']);
+/** How long a disconnected player's lobby ready flag waits for them. */
+const READY_GRACE_MS = 60_000;
 
 /** Gate autopilot rule B (gateAutopilot): a leg shorter than this is
  *  never worth asking the planner about, and a re-route must save at
@@ -59,7 +61,11 @@ const CAPITAL_CLASSES = new Set(['mega_destroyer', 'mobile_foundry']);
 const GATE_AUTOPILOT_MIN_LEG = 20;
 const GATE_AUTOPILOT_MIN_SAVING = 3;
 import { SHIP_COMBAT_STATS, parkPhaseFor, categorizeBodyForSecret, BODY_CATALOG } from './factions.js';
-import { launchCompletedMobileSites, capitalHullInsert } from './megaLaunch.js';
+import { launchCompletedMobileSites } from './megaLaunch.js';
+import { OFFER_KINDS, offerStatements, settleExpiredOffers } from './discoveryOffers.js';
+// The salvaged destroyer is minted when a find is CLAIMED now
+// (discoveryOffers.js); re-exported for callers that import it from here.
+export { salvagedDestroyer } from './discoveryOffers.js';
 
 /** Consecutive quiet ticks at a body before its battle is declared
  *  over. Per Lorne: six. Long enough that a fleet drifting out of
@@ -236,51 +242,6 @@ export function pickFarGateTwin(bodies, hostId, gameId) {
   return sorted[Math.floor(h / bands.length) % sorted.length];
 }
 
-/** Fuel a destroyer launches with -- FUEL_MAX in the build path. */
-const DESTROYER_FUEL_MAX = 300;
-
-/**
- * THE SALVAGED DESTROYER IS A MODERN ONE (Lorne, 2026-10-07: "Fix the
- * destroyers you find in discovery so they are a modern, updated
- * destroyer"). It used to be minted from literals frozen before the hull
- * ladder and the designer: 180 HP, 10 damage, no parts -- a bare hull
- * from three economies ago, a fraction of anything a yard turns out now.
- *
- * Now it is exactly what the finder's own yard would launch today: their
- * ACTIVE destroyer design (else the standard-issue fit), stats from
- * computeShipStats on their tech and the game's ship config, full fuel,
- * at the defence-tech ceiling, wearing the design's silhouette.
- */
-export async function salvagedDestroyer(env, gameId, factionId) {
-  const design = await env.DB
-    .prepare(
-      `SELECT parts_json, icon_variant FROM game_ship_designs
-        WHERE game_id = ? AND faction_id = ? AND ship_class = 'destroyer' AND is_active = 1
-        LIMIT 1`,
-    )
-    .bind(gameId, factionId).first();
-  let parts = design ? parsePartsJson('destroyer', design.parts_json) : [];
-  if (parts.length === 0) parts = [...DEFAULT_LOADOUTS.destroyer];
-  const tech = Object.fromEntries(((await env.DB
-    .prepare(
-      `SELECT tech_id, level FROM faction_techs
-        WHERE game_id = ? AND faction_id = ? AND tech_id IN ('weapons','armor','shields')`,
-    )
-    .bind(gameId, factionId).all()).results ?? []).map(r => [r.tech_id, Number(r.level) || 0]));
-  const CFG = await loadGameConfig(env, gameId).catch(() => null);
-  const stats = computeShipStats('destroyer', parts, tech, shipBaseStatsFromCfg(CFG));
-  const defenseLvl = Math.max(Number(tech.armor ?? 0), Number(tech.shields ?? 0));
-  const iconVariant = design?.icon_variant && /^[A-Z]$/.test(design.icon_variant) ? design.icon_variant : null;
-  return {
-    parts,
-    iconVariant,
-    hpMax: stats.hp,
-    hp: stats.hp * (1 + 0.08 * defenseLvl),
-    damage: stats.damage_per_tick,
-    fuel: DESTROYER_FUEL_MAX,
-  };
-}
-
 /** The Horizon Archive (Cygnus's signature find): science paid to the
  *  finder. About one mid-game research level (level 5 costs 839, level 6
  *  1323, actions.js techCostForNext) -- the price of the trip in. */
@@ -322,6 +283,9 @@ export class Room {
     this.state = state;
     this.env = env;
     this.ready = new Map(); // userId -> boolean (transient)
+    // userId -> ms until which a just-disconnected player's ready flag is
+    // held for them (see READY_GRACE_MS).
+    this.readyHeld = new Map();
     // Re-entrancy guard for the tick loop. A DO is single-threaded but
     // `await` on a D1 subrequest yields, letting another event in — and
     // three sources converge on an overdue tick: the scheduled alarm,
@@ -401,6 +365,7 @@ export class Room {
         await this.state.storage.put('members', members);
       }
       this.ready.delete(targetId);
+      this.readyHeld.delete(targetId);
       // Close any open sockets for the kicked user.
       for (const ws of this.state.getWebSockets()) {
         const att = ws.deserializeAttachment();
@@ -734,8 +699,19 @@ export class Room {
         members[userId].displayName = displayName;
         await this.state.storage.put('members', members);
       }
-      // Reset ready on (re)connect — ready is a "right now" signal.
-      this.ready.set(userId, false);
+      // Reset ready on (re)connect — ready is a "right now" signal —
+      // EXCEPT coming straight back. Switching the lobby's own tabs
+      // (Faction, Comms, Senate) closes this socket and opens a new one,
+      // and that unreadied the player every time (OysterCoco,
+      // 2026-10-12). A flag held at close (webSocketClose) survives a
+      // return within READY_GRACE_MS; a player with another socket still
+      // open never left at all.
+      const heldUntil = this.readyHeld.get(userId) ?? 0;
+      this.readyHeld.delete(userId);
+      const stillHere = this.connectedUserIds().includes(userId);
+      if (!(this.ready.get(userId) === true && (stillHere || heldUntil >= Date.now()))) {
+        this.ready.set(userId, false);
+      }
 
       const pair = new WebSocketPair();
       const [client, server] = [pair[0], pair[1]];
@@ -819,11 +795,16 @@ export class Room {
   async webSocketClose(ws) {
     const att = ws.deserializeAttachment();
     if (!att) return;
-    // Clear ready when the user disconnects — ready is "right now I'm here".
-    this.ready.delete(att.userId);
     // Exclude THIS socket: it is still in getWebSockets() during its own
     // close handler, so counting it would announce the leaver as present.
     const connected = this.connectedUserIds(ws);
+    // Ready is "right now I'm here", so a player who has gone is not
+    // counted ready (readyMap only reports connected players). But the
+    // flag is HELD for a moment rather than wiped, so switching lobby tabs
+    // (a close and a reopen) does not unready anyone; see the connect path.
+    if (!connected.includes(att.userId) && this.ready.get(att.userId) === true) {
+      this.readyHeld.set(att.userId, Date.now() + READY_GRACE_MS);
+    }
     this.broadcast({
       type: 'presence',
       members: await this.memberList(),
@@ -5693,6 +5674,13 @@ export class Room {
       await this.resolveSecretReveal(gameId, tick);
     } catch (e) {
       console.error('resolveSecretReveal failed', e);
+    }
+    // A found ship nobody answered for (discoveryOffers.js) is claimed for
+    // its finder when its time runs out, as finds always were.
+    try {
+      await settleExpiredOffers(this.env, gameId, tick);
+    } catch (e) {
+      console.error('settleExpiredOffers failed', e);
     }
 
     // 2c-bis. The sun gates (sunGates.js): the omen, each gate leaving
@@ -11585,7 +11573,6 @@ export class Room {
     const gatePairsToSpawn = [];
     // Outer-reach discoveries that need committed state to stand up,
     // same as the gate pairs: built after each body's batch lands.
-    const capitalsToSpawn = [];
     const ancientsToSpawn = [];
     // Precursor Orreries: a station for the finder, founded through the
     // shared settlement write once the reveal has committed.
@@ -11601,12 +11588,22 @@ export class Room {
                   WHERE s.game_id = b.game_id
                     AND s.parent_body_id = b.id
                     AND s.status = 'active'
+                    -- An empire that REFUSED this find never finds it again
+                    -- (discoveryOffers.js); someone else's ship may.
+                    AND NOT EXISTS (
+                      SELECT 1 FROM discovery_offers o
+                       WHERE o.body_id = b.id AND o.faction_id = s.owner_faction_id
+                         AND o.status IN ('refused', 'lapsed'))
                   ORDER BY s.built_at_tick ASC, s.id ASC
                   LIMIT 1) AS discoverer
            FROM game_bodies b
           WHERE b.game_id = ?
             AND b.secret_kind IS NOT NULL
-            AND b.secret_revealed = 0`,
+            AND b.secret_revealed = 0
+            -- A find already offered to someone waits for their answer.
+            AND NOT EXISTS (
+              SELECT 1 FROM discovery_offers o
+               WHERE o.body_id = b.id AND o.status = 'pending')`,
       )
       .bind(gameId)
       .all()).results ?? [];
@@ -11614,6 +11611,20 @@ export class Room {
     for (const row of unrevealed) {
       if (!row.discoverer) continue; // no ship parked here yet
       const { body_id, body_name, body_radius, kind, discoverer, custom_name, custom_text } = row;
+      // A FOUND SHIP IS AN OFFER (Lorne, 2026-10-18: "Sometimes they can't
+      // afford it"). It waits for its finder's claim or refusal; claiming
+      // mints it and reveals the find (discoveryOffers.js claimOffer).
+      if (OFFER_KINDS.has(kind)) {
+        try {
+          await this.env.DB.batch(offerStatements(this.env, {
+            gameId, bodyId: body_id, bodyName: body_name, kind, factionId: discoverer, tick,
+            capitalKind: kind === 'ancient_capital' ? ancientCapitalKind(gameId, body_id) : null,
+          }));
+        } catch (e) {
+          console.error('discovery offer failed', { body_id, kind }, e);
+        }
+        continue;
+      }
       const stmts = [];
       let chronicleMessage = `${body_name}: DISCOVERY — ${kind.replace(/_/g, ' ')}`;
       // Extra structured fields the Herald digest reads instead of
@@ -11710,35 +11721,8 @@ export class Room {
           chronicleMessage = `${body_name}: DISCOVERY — a world the ancients already prepped for life. Terraformed and waiting; claim it and build.`;
           break;
         }
-        case 'derelict_warship': {
-          // A destroyer for the discoverer, parked in a tight orbit, built
-          // exactly as their own yard would build one today (see
-          // salvagedDestroyer).
-          const shipId = `${gameId}:wreck_${body_id.slice(-8)}_${Math.random().toString(36).slice(2, 6)}`;
-          const rp = parkOrbitRadius(body_radius);
-          const wreck = await salvagedDestroyer(this.env, gameId, discoverer);
-          stmts.push(
-            this.env.DB
-              .prepare(
-                `INSERT INTO game_ships
-                  (id, game_id, owner_faction_id, name, ship_class, parent_body_id,
-                   orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, orbit_direction,
-                   fuel, fuel_max, status, built_at_tick,
-                   hp, hp_max, damage_per_tick, icon_variant, parts_json, home_body_id)
-                 VALUES (?, ?, ?, ?, 'destroyer', ?,
-                         ?, ?, 0, 0, ?, 1,
-                         ?, ?, 'active', ?,
-                         ?, ?, ?, ?, ?, ?)`,
-              )
-              .bind(shipId, gameId, discoverer, `${body_name} Salvage`, body_id,
-                    rp, rp, tick,
-                    wreck.fuel, wreck.fuel, tick,
-                    wreck.hp, wreck.hpMax, wreck.damage, wreck.iconVariant,
-                    JSON.stringify(wreck.parts), body_id),
-          );
-          chronicleMessage = `${body_name}: DISCOVERY — a derelict destroyer is salvageable. Claimed.`;
-          break;
-        }
+        // derelict_warship and ancient_capital never reach this switch:
+        // they wait as offers (discoveryOffers.js), minted on claim.
         case 'resource_cache': {
           stmts.push(
             this.env.DB
@@ -11785,17 +11769,6 @@ export class Room {
         }
 
         // --- THE OUTER REACH ------------------------------------------
-        case 'ancient_capital': {
-          // A found capital ship is minted by the same helper as a built
-          // one, so it can never drift from the real class stats.
-          const capKind = ancientCapitalKind(gameId, body_id);
-          capitalsToSpawn.push({ bodyId: body_id, bodyName: body_name, kind: capKind, discoverer });
-          chronicleMessage = capKind === 'mega_destroyer'
-            ? `${body_name}: DISCOVERY — a derelict Mega Destroyer drifting dark at the edge of the system. Its reactor answers your hail. Claimed.`
-            : `${body_name}: DISCOVERY — a derelict Mobile Foundry, slipways intact. A shipyard at the edge of the system, and it is yours.`;
-          chronicleExtra = { capital_kind: capKind };
-          break;
-        }
         case 'ancient_relay': {
           ancientsToSpawn.push({ bodyId: body_id, bodyName: body_name, kind: 'deep_array', discoverer });
           chronicleMessage = `${body_name}: DISCOVERY — an ancient sensor relay, still listening, answering to nobody. Breach it and seize it to make its eyes yours.`;
@@ -11903,21 +11876,6 @@ export class Room {
           { twinBodyId: g.twinBodyId ?? null });
       } catch (e) {
         console.error('spawnDiscoveredGatePair failed', g, e);
-      }
-    }
-
-    // Step 1c: derelict capital ships, for whoever found them. A
-    // deterministic id + INSERT OR IGNORE, so a retried tick can never
-    // mint a second one.
-    for (const c of capitalsToSpawn) {
-      try {
-        const ins = await capitalHullInsert(this.env, {
-          shipId: `${c.bodyId}_relic`, gameId, ownerId: c.discoverer, kind: c.kind,
-          name: `Relic of ${c.bodyName}`, parentBodyId: c.bodyId, tick,
-        });
-        if (ins) await ins.run();
-      } catch (e) {
-        console.error('ancient capital spawn failed', c, e);
       }
     }
 

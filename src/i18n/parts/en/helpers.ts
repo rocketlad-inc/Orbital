@@ -437,6 +437,8 @@ export const helpers = {
   'helper.sit.discovery.title': '{name} at {body}',
   'helper.sit.discovery.fallbackName': 'Discovery',
   'helper.sit.discovery.fallbackSub': 'A secret uncovered',
+  'helper.sit.discoveryOffer.title': 'Claim or refuse: {ship} at {body}',
+  'helper.sit.discoveryOffer.sub': 'Costs {cost} a tick. Joins your fleet at tick {tick} if not answered',
   'helper.sit.fleetLeaderless.title': '{name} is leaderless',
   'helper.sit.fleetLeaderless.sub': 'Promote a member captain to restore command',
   'helper.sit.cat.in_combat': 'In combat now',

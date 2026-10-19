@@ -1,0 +1,62 @@
+/* A found ship waiting for a claim or a refusal: the discovery banner's
+   purple, as a card that stays until answered. Sits just under where the
+   banner would slide in, so a reveal never covers the choice. */
+.discovery-offer-layer { top: 64px; z-index: 61; }
+.discovery-offer {
+  cursor: default;
+  align-items: flex-start;
+  width: min(92vw, 460px);
+}
+.discovery-offer .discovery-banner__title { white-space: normal; }
+.discovery-offer__where {
+  font: inherit;
+  letter-spacing: 0.08em;
+  color: #b8c8d6;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-transform: none;
+}
+.discovery-offer__where:hover { color: #fff; text-decoration: underline; }
+.discovery-offer__count { color: #b8c8d6; letter-spacing: 0.08em; }
+.discovery-offer__text {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: #d8e4ee;
+}
+.discovery-offer__due {
+  margin: 6px 0 0;
+  font-family: 'Chivo Mono', ui-monospace, monospace;
+  font-size: 11px;
+  color: #b8c8d6;
+}
+.discovery-offer__error { margin: 6px 0 0; font-size: 12px; color: #ff8a8a; }
+.discovery-offer__actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.discovery-offer__btn {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.06);
+  color: #e6edf3;
+}
+.discovery-offer__btn:disabled { opacity: 0.6; cursor: default; }
+.discovery-offer__btn:focus-visible { outline: 2px solid #e879f9; outline-offset: 2px; }
+.discovery-offer__btn.is-claim {
+  border-color: rgba(232, 121, 249, 0.8);
+  background: rgba(232, 121, 249, 0.22);
+  color: #fff;
+}
+.discovery-offer__btn.is-claim:hover:not(:disabled) { background: rgba(232, 121, 249, 0.34); }
+.discovery-offer__btn.is-refuse:hover:not(:disabled),
+.discovery-offer__btn.is-later:hover:not(:disabled) { background: rgba(255, 255, 255, 0.12); }
+.discovery-offer__btn.is-later { border-color: transparent; background: none; color: #b8c8d6; }
+@media (max-width: 600px) {
+  .discovery-offer-layer { top: 56px; }
+  .discovery-offer__btn { flex: 1 1 auto; padding: 9px 12px; }
+}

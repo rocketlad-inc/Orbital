@@ -81,6 +81,19 @@ async function handleInit(req, env) {
   const NOT_FATAL_RE = /duplicate column|already exists|no such column.*to drop/i;
   for (const m of MIGRATIONS) {
     if (done.has(m.name)) continue;
+    // CLAIM IT BEFORE RUNNING IT (2026-10-19). Every fresh isolate runs
+    // this loop, and after a deploy several start at once: each read
+    // _migrations, saw the new one missing, and ran it. Harmless for
+    // CREATE/ALTER (the second one fails "already exists"), ruinous for a
+    // data migration: 0172 halved live megastructure prices FIVE times
+    // (2500 -> 79) before any isolate stamped it. Now only the isolate
+    // whose INSERT lands applies it; the others skip it. A fatal error
+    // releases the claim so a later isolate retries.
+    const claim = await env.DB
+      .prepare('INSERT OR IGNORE INTO _migrations (name, applied_at) VALUES (?, ?)')
+      .bind(m.name, Date.now())
+      .run();
+    if ((claim.meta?.changes ?? 0) === 0) continue;
     const stmts = m.sql
       .split(/;\s*(?:\r?\n|$)/)
       .map(s => s.replace(/^\s*--.*$/gm, '').trim())
@@ -97,6 +110,8 @@ async function handleInit(req, env) {
           console.warn(`migration ${m.name} stmt skipped (already applied):`, msg);
           continue;
         }
+        await env.DB.prepare('DELETE FROM _migrations WHERE name = ?').bind(m.name).run()
+          .catch(() => { /* the next isolate will see it claimed; logged below */ });
         return json({
           ok: false,
           migration: m.name,
@@ -106,10 +121,6 @@ async function handleInit(req, env) {
         }, { status: 500 });
       }
     }
-    await env.DB
-      .prepare('INSERT INTO _migrations (name, applied_at) VALUES (?, ?)')
-      .bind(m.name, Date.now())
-      .run();
     newlyApplied.push(m.name);
   }
   return json({ ok: true, newlyApplied, alreadyApplied: [...done] });
@@ -1429,9 +1440,11 @@ import * as wearOrders from './wearOrders.js';
 import * as battleWidget from './battleWidget.js';
 import * as devlog from './devlog.js';
 import * as gameFeed from './gameFeed.js';
+import * as ending from './ending.js';
+import * as discoveryOffers from './discoveryOffers.js';
 import { carryNamePools } from './namePoolHistory.js';
 
-const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, analytics, configAdmin, emailAdmin, emailLogin, store, skins, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed, customMaps];
+const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, analytics, configAdmin, emailAdmin, emailLogin, store, skins, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed, customMaps, ending, discoveryOffers];
 
 function matchPattern(pattern, pathname) {
   if (typeof pattern === 'string') {
