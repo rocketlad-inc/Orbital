@@ -26,7 +26,7 @@ Check the frames before sending anything: the first seconds and the last. `node 
 
 ### Film mode: the Reddit way
 
-`record` writes an MP4 inside the page with the hook, captions and end card. For the bare map at full quality, the way the Reddit clips were made, use `film`: one PNG screenshot per frame on a stepped clock, encoded afterwards. Nothing can drop a frame, because the screenshot is the frame.
+`record` writes an MP4 inside the page with the hook, captions and end card, over the bare map. For the game as it is played, the way the showcase clips were made, use `film`: one PNG screenshot per frame on a stepped clock, encoded afterwards. Nothing can drop a frame, because the screenshot is the frame. Film keeps the interface (top bar, outliner, dock) in the shot; `"ui": false` in the shot drops it. Neither mode ever shows the painted debug readouts, the staging banner or the build badge.
 
 ```bash
 node scripts/studio.mjs film <gameId> shot.json --out frames-dir --name earth-to-europa --as studio-terra
@@ -118,6 +118,7 @@ What `apply` returns, and what you need from it:
   "speed": 2500,                   // milliseconds one tick glides over on screen (2500 battles, 1000 crossings)
   "endCard": true,                 // ORBITAL · Play free · orbital-empire.com
   "zoomBoost": 1,                  // extra zoom when cropping the map into the frame
+  "ui": true,                      // keep the game's interface in the shot (film: default true; record: default false)
   "steps": [
     { "at": 0,    "do": "focus",   "target": "earth", "px": 520 },        // cut: Earth 520 px across
     { "at": 0,    "do": "caption", "text": "Earth. Three fleets in orbit." },
