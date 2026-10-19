@@ -101,6 +101,11 @@ export class Director {
 
   constructor(host: DirectorHost) { this.host = host; }
 
+  /** The game this director is attached to. A CLI checks it before
+   *  recording: the app opens whichever room it last had, and a shot
+   *  filmed in the wrong game is wrong in every frame. */
+  get gameId(): string { return this.host.gameId; }
+
   // ---------- targets ----------
 
   private tick(): number {
