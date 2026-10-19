@@ -67,7 +67,13 @@ export function ThanksCard({ onSeeHangar }: { onSeeHangar: () => void }) {
   useI18n();
   const { user } = useAuth();
   const [gone, setGone] = useState(false);
-  const show = !gone && !!user?.commission_ask && !user.is_premium && canBuyHere();
+  // The server hands the card out once and records it (0174), so a later
+  // /me refresh on this same page says false. Latch it: once shown, it
+  // stays until the player answers or leaves; a reload never brings it back.
+  const [latched, setLatched] = useState(false);
+  const offered = !!user?.commission_ask;
+  useEffect(() => { if (offered) setLatched(true); }, [offered]);
+  const show = !gone && (offered || latched) && !user?.is_premium && canBuyHere();
   useEffect(() => { if (show) logCommission('thanks-card', 'view'); }, [show]);
   if (!show) return null;
 
