@@ -99,6 +99,51 @@ export interface EndingBattle {
   lossesByFaction: Array<{ factionId: string; shipsLost: number }>;
 }
 
+// ---------------------------------------------------------------------------
+// The timeline: the game's pivotal moments, in order. Structure only: the page
+// turns kind + detail + factions + numbers into a sentence in the player's
+// language. The server picks WHICH moments matter (importance) and thins them
+// so the list reads as a story, not a log: roughly a dozen, always the start
+// and the end, spread over the whole game.
+// ---------------------------------------------------------------------------
+
+export type EndingMomentKind =
+  | 'start'          // the game begins
+  | 'first_blood'    // the first hull destroyed
+  | 'war'            // an empire declares war on another (factionIds = [aggressor, target])
+  | 'pact'           // two empires sign a pact (detail = pact kind)
+  | 'pact_broken'    // a pact is broken (factionIds = [breaker, betrayed])
+  | 'battle'         // one of the biggest fights (clip attached when it can be replayed)
+  | 'eliminated'     // an empire is knocked out (factionIds = [fallen, ...killer if known])
+  | 'lead'           // the lead in worlds held changes hands (factionIds = [new leader])
+  | 'bill'           // a Senate bill passes (detail = bill kind; factionIds = [proposer, target?])
+  | 'chancellor'     // a chancellor is elected (factionIds = [chancellor])
+  | 'megastructure'  // a megastructure is begun or finished (detail = kind; n = stage if known)
+  | 'gate'           // a sun gate opens
+  | 'leviathan'      // the Leviathan arrives, strikes or dies (detail = 'arrives'|'strike'|'dies')
+  | 'discovery'      // an ancient secret is found (detail = secret kind)
+  | 'victory';       // the game ends
+
+export interface EndingMoment {
+  /** Stable within this payload. */
+  id: string;
+  kind: EndingMomentKind;
+  tick: number;
+  /** 0-100. Used to pick and to size: the page may make >= 70 a big beat. */
+  importance: number;
+  /** Primary actors, in the order the kind's comment says. Ids in `factions`. */
+  factionIds: string[];
+  bodyName?: string | null;
+  /** The kind's headline number: hulls lost (battle), worlds (lead), etc. */
+  n?: number | null;
+  /** The kind's closed-vocabulary detail (pact/bill/megastructure/secret/victory kind). */
+  detail?: string | null;
+  /** battle moments: the replay link, when the fight can be replayed. The
+   *  path is relative to the site ("/recap/<token>"); the token is a share
+   *  link that already exposes only that one battle. */
+  clip?: { path: string; battleId: string; shots: number; shipsLost: number } | null;
+}
+
 export interface EndingPayload {
   game: {
     id: string;
@@ -129,4 +174,6 @@ export interface EndingPayload {
   };
   /** The three biggest fights by hulls lost, biggest first. */
   battles: EndingBattle[];
+  /** The pivotal moments, oldest first. See EndingMoment. */
+  timeline: EndingMoment[];
 }
