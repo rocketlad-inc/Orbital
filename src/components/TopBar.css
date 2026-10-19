@@ -243,15 +243,27 @@
 .laws-chip__ttl { color: #ffb84d; flex: 0 0 auto; font-size: 9px; }
 .laws-chip__more { color: #6b8195; font-size: 9px; }
 
+/* The compact law badge: phones only (below). */
+.laws-chip__compact { display: none; color: #c4b5fd; font-size: 11px; font-weight: 700; white-space: nowrap; }
+
 /* Phones: the effect sentence is the first casualty — the law's NAME and
    how long it has left are what fit and what matter at a glance. */
 @media (max-width: 720px) {
   /* min-width floor: this chip is the most shrinkable thing in the bar,
      so without one the flex row squeezes it to a few pixels and the law
      silently disappears — worse than not shipping it. */
-  .top-bar__laws { flex: 0 1 auto; min-width: 104px; max-width: 150px; padding: 0 8px; }
-  .laws-chip__effect { display: none; }
+  .top-bar__laws { flex: 0 0 auto; min-width: 0; max-width: none; padding: 0 8px; }
+  .laws-chip__label, .laws-chip__list { display: none; }
+  .laws-chip__compact { display: inline; }
+  /* The tick and its countdown never give way: a passed law used to push
+     them off the right edge of a phone (Sam, 2026-10-15). */
+  .top-bar__time { flex-shrink: 0; }
 }
+:root[data-mobile-shell] .top-bar__laws { flex: 0 0 auto; min-width: 0; max-width: none; padding: 0 8px; }
+:root[data-mobile-shell] .laws-chip__label,
+:root[data-mobile-shell] .laws-chip__list { display: none; }
+:root[data-mobile-shell] .laws-chip__compact { display: inline; }
+:root[data-mobile-shell] .top-bar__time { flex-shrink: 0; }
 
 .time-display {
   display: flex;

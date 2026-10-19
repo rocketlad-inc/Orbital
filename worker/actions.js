@@ -2909,6 +2909,18 @@ async function handleQueueBuilding(req, env, ctx) {
     (active && active.kind === kind ? 1 : 0)
     + backlog.filter(o => o && o.kind === kind).length;
   const currentLevel = builtLevel + aheadOfUs;
+  // THE LEVEL THE PLAYER MEANT. A second tap that reached us before the
+  // screen showed the first order used to be priced as the NEXT level and
+  // charged: a lab bought as L1 came back as L1 + L2, a telescope twice,
+  // shields L2 + L3 (2026-10-18). The client now says which level it is
+  // buying; if what is already on the ways has moved past that, this
+  // order is the duplicate, and it is refused before anything is taken.
+  // (No target_level = an older client: the old projection stands.)
+  const wanted = Number(body.target_level);
+  if (Number.isFinite(wanted) && wanted > 0 && wanted !== currentLevel + 1) {
+    return err(409, 'already_queued',
+      `${kind} L${wanted} is already on the way. Nothing was charged.`);
+  }
   const cost = buildingCostAt(kind, currentLevel, await buildingCostMult(env, gameId));
   const ticks = buildingTicksAt(kind, currentLevel);
 
