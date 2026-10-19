@@ -69,6 +69,7 @@ import {
 import { SHIP_CLASSES, getShipClass } from '../game/shipClasses';
 import { SECRET_DEFS } from '../game/secrets';
 import { isDiscoveryAcked } from '../game/discoveryAck';
+import { offerTitle, upkeepText } from '../components/DiscoveryOfferCard';
 import { employedShipIds } from '../game/routeSelectors';
 import { forecastIntercepts } from '../game/firingWindows';
 import { MEGASTRUCTURES, MEGA_MAX_HP, isBreached } from '../game/megastructures';
@@ -236,6 +237,7 @@ export type SituationCategory =
   | 'broken_route'   // trade route whose ship or endpoint is gone
   | 'vote_closed'    // MP — a vote you were watching has resolved
   | 'discovery'      // one of YOUR ships uncovered a body secret
+  | 'discovery_offer' // MP — a found ship waiting for your claim or refusal
   | 'idle_captain'   // MP — a captain sits in the bank, unassigned to any ship
   | 'fleet_leaderless' // a fleet lost its flagship — promote a captain
   | 'fleet_arrears' // MP — upkeep unpaid, whole fleet at −25% damage
@@ -340,6 +342,8 @@ const TIER_OF: Record<SituationCategory, SituationTier> = {
   // A find is a reward to notice and act on (a free city to garrison, a
   // salvaged warship to crew), not a chore — a decision-tier prompt.
   discovery:      'decision',
+  // A found ship you must claim or refuse before its deadline.
+  discovery_offer: 'decision',
   // No clock at all — an unassigned captain just sits in the bank
   // until you get around to it, same argument as an idle freighter.
   idle_captain:   'opportunity',
@@ -386,7 +390,9 @@ export type SituationFocus =
    *  world's build screen over the top of it, which is the opposite of
    *  "show me". */
   | { kind: 'watch'; bodyId: string }
-  | { kind: 'panel'; panel: 'research' | 'senate' | 'trades' | 'market' | 'fleet' };
+  | { kind: 'panel'; panel: 'research' | 'senate' | 'trades' | 'market' | 'fleet' }
+  /** Bring back a found ship's claim-or-refuse card (DiscoveryOfferCard). */
+  | { kind: 'offer'; bodyId: string };
 
 export interface SituationItem {
   id: string;                     // unique within the list (category + entity)
@@ -2653,6 +2659,24 @@ export function useSituationItems(
           focus: { kind: 'body', bodyId: b.id },
           severity: 'normal',
           sortKey: -sec.discoveredAtTick,   // newest first within the tier
+        });
+      }
+    } catch { /* defensive */ }
+
+    // ---- Found ships waiting for a claim or refusal (MP) ----
+    // The card answers it; this row keeps it from being lost behind
+    // "Decide later", and says what is at stake and when it lapses.
+    try {
+      for (const o of gameState.discoveryOffers ?? []) {
+        push({
+          id: `discovery_offer:${o.bodyId}`,
+          category: 'discovery_offer',
+          entity: `body:${o.bodyId}`,
+          title: tr('helper.sit.discoveryOffer.title', { ship: offerTitle(o), body: o.bodyName }),
+          subtitle: tr('helper.sit.discoveryOffer.sub', { cost: upkeepText(o.upkeep), tick: o.expiresTick }),
+          focus: { kind: 'offer', bodyId: o.bodyId },
+          severity: o.expiresTick - tick <= 4 ? 'warn' : 'normal',
+          sortKey: o.expiresTick,
         });
       }
     } catch { /* defensive */ }

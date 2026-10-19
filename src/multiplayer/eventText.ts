@@ -623,6 +623,17 @@ export function formatChronicleEvent(
     return out('◎ ', T('sungate.opened', { gate, system }));
   }
 
+  if (ev.kind === 'discovery_offer' || ev.kind === 'discovery_refused') {
+    const shipKey = parsed.kind === 'ancient_capital'
+      ? (parsed.capital_kind === 'mobile_foundry' ? 'mobile_foundry' : 'mega_destroyer')
+      : 'destroyer';
+    const ship = tIn(lang, `discovery.offer.ship.${shipKey}` as Key);
+    const body = String(parsed.body_name ?? T('fb.aBody'));
+    return ev.kind === 'discovery_offer'
+      ? out('✦ ', T('secret.offer', { ship, body, tick: Number(parsed.expires_tick ?? 0) }))
+      : out('✦ ', T('secret.refused', { ship, body }));
+  }
+
   if (ev.kind === 'secret_discovered') {
     // The server writes the English sentence into the payload. English
     // shows it as is; other languages rebuild it from the payload's
