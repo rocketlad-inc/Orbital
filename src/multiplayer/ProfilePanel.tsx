@@ -18,6 +18,7 @@ import { CommissionThanks } from './CommissionThanks';
 import { useAuth } from './AuthContext';
 import { EmailSettings } from './EmailSettings';
 import { Hangar } from './Hangar';
+import { ProfileAwards } from './ProfileAwards';
 import { t, tn, tk } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import { apiErrorText } from '../i18n/apiErrors';
@@ -270,6 +271,9 @@ export function ProfilePanel({ onEnterRoom }: { onEnterRoom?: (id: string) => vo
           {stat(t('profile.stat.bestCaptain'), t('profile.rank', { n: p.best_captain_rank ?? 0 }))}
         </div>
       </section>
+
+      {/* ---- superlatives: the trophy case (fetches itself, hides on failure) ---- */}
+      <ProfileAwards />
 
       {/* ---- history ---- */}
       <section className="pp-section">
