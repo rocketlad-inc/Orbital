@@ -26,7 +26,7 @@ import {
   Captain, BuildingKind,
 } from '../types';
 import type { Wreck } from '../types';
-import type { KaijuPhase } from '../types';
+import type { KaijuPhase, DiscoveryOffer } from '../types';
 import { setKaijuRevealed } from '../game/kaijuReveal';
 import { parseTargetPriority } from './targetPriority';
 import { sanitizeParts, engineAccelMultiplier, setServerHullBase } from '../game/shipParts';
@@ -166,6 +166,11 @@ interface ServerState {
      *  the build menu can name WHY a price moved. Absent on a worker
      *  older than the law-aware build menu — callers must default to 1. */
     settlement_cost?: { metal: number; gold: number; colonist_mult: number };
+    /** Found ships waiting for my claim or refusal (worker/discoveryOffers.js). */
+    discovery_offers?: Array<{
+      body_id: string; body_name: string; kind: string; ship_class: string;
+      offered_tick: number; expires_tick: number; upkeep: { gold: number; metal: number };
+    }>;
     /** Freighters one route may hold, by Society research. */
     carrier_cap?: number;
     build_cost?: {
@@ -2299,6 +2304,15 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       credits: srv.me.settlement_cost?.gold ?? 20,
       colonistMult: srv.me.settlement_cost?.colonist_mult ?? 0.8,
     },
+    discoveryOffers: (srv.me.discovery_offers ?? []).map(o => ({
+      bodyId: stripGameId(o.body_id) ?? o.body_id,
+      bodyName: o.body_name,
+      kind: o.kind === 'ancient_capital' ? 'ancient_capital' as const : 'derelict_warship' as const,
+      shipClass: (o.ship_class === 'mega_destroyer' || o.ship_class === 'mobile_foundry' ? o.ship_class : 'destroyer') as DiscoveryOffer['shipClass'],
+      offeredTick: o.offered_tick,
+      expiresTick: o.expires_tick,
+      upkeep: { credits: o.upkeep?.gold ?? 0, ore: o.upkeep?.metal ?? 0 },
+    })),
     // Defaults to 1 for a worker that predates this payload — the
     // conservative end, so an old server never lets the composer offer
     // a convoy the server would then refuse.

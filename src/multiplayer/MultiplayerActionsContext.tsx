@@ -363,6 +363,10 @@ export interface MultiplayerActions {
    *  friend or foe alike — and destroys the ship. The confirming UI
    *  must show the full disclosure copy before calling this. */
   detonateShip: (shipId: string) => Promise<MpActionResult>;
+  /** Answer a found ship's offer (worker/discoveryOffers.js): claim it
+   *  into the fleet, or refuse it and leave it for another empire. */
+  claimDiscovery: (bodyId: string) => Promise<MpActionResult>;
+  refuseDiscovery: (bodyId: string) => Promise<MpActionResult>;
 
   // --- Turn-Based Mode (MP) ---
   /** Host-only: enable/disable TBM and set ticks_per_turn for this game.
@@ -1133,6 +1137,16 @@ export function MultiplayerActionsProvider({
       if (res.ok) { logger.info('ACTION', 'Captain assigned', { captain: captainId, ship: shipId }); return { ok: true }; }
       console.warn('assignCaptain failed', res.error);
       return { ok: false, code: res.error?.code, error: res.error?.message ?? t('mp.act.assignment') };
+    },
+    async claimDiscovery(bodyId) {
+      const res = await apiFetch(`/api/games/${gameId}/discoveries/${encodeURIComponent(qualify(bodyId))}/claim`, { method: 'POST' });
+      if (res.ok) return { ok: true };
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? t('discovery.offer.failed') };
+    },
+    async refuseDiscovery(bodyId) {
+      const res = await apiFetch(`/api/games/${gameId}/discoveries/${encodeURIComponent(qualify(bodyId))}/refuse`, { method: 'POST' });
+      if (res.ok) return { ok: true };
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? t('discovery.offer.failed') };
     },
     async detonateShip(shipId) {
       const res = await apiFetch(`/api/games/${gameId}/ships/${encodeURIComponent(qualify(shipId))}/detonate`, {

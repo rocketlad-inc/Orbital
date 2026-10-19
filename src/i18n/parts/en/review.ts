@@ -9,6 +9,25 @@ export const review = {
   'discovery.headRival': '{name} — DISCOVERY',
   'discovery.jumpTo': 'JUMP TO ›',
   'discovery.dismiss': 'Dismiss',
+  // ---- a found ship waiting for a claim or a refusal (discoveryOffers.js) ----
+  'discovery.offer.head': 'FOUND',
+  'discovery.offer.aria': '{ship} found at {body}: claim or refuse',
+  'discovery.offer.count': '{i} of {n}',
+  'discovery.offer.ship.destroyer': 'A derelict destroyer, still flightworthy',
+  'discovery.offer.ship.mega_destroyer': 'A derelict Mega Destroyer',
+  'discovery.offer.ship.mobile_foundry': 'A derelict Mobile Foundry',
+  'discovery.offer.claimLine': 'Claim it and it joins your fleet, costing {cost} every tick to keep.',
+  'discovery.offer.fleetNow': 'Your fleet costs {cost} a tick now.',
+  'discovery.offer.refuseLine': 'Refuse it and nothing is charged: it stays here, hidden, for another empire to find.',
+  'discovery.offer.due': 'Not answered by tick {tick} ({n} ticks), it joins your fleet.',
+  'discovery.offer.claim': 'Claim it',
+  'discovery.offer.refuse': 'Refuse',
+  'discovery.offer.later': 'Decide later',
+  'discovery.offer.failed': 'That did not go through. Try again.',
+  'discovery.offer.metal': '{n} metal',
+  'discovery.offer.credit': '{n} credit',
+  'discovery.offer.credits': '{n} credits',
+  'discovery.offer.nothing': 'nothing',
   // ---- combat charts ----
   'combat.matrix.corner': 'firing ↓ / at →',
   'combat.title': 'The numbers behind a fight',
@@ -409,6 +428,8 @@ export const review = {
   'eventlog.ev.gate.transit': '{who} went through the {from}, crossing to {to}',
   // discoveries (rebuilt from the payload for non-English display)
   'eventlog.ev.secret.line': '{owner}: {msg}',
+  'eventlog.ev.secret.offer': 'Your ship found {ship} at {body}. Claim it or refuse it by tick {tick}.',
+  'eventlog.ev.secret.refused': 'You left {ship} at {body} for another empire to find.',
   'eventlog.ev.secret.fallback': '{kind} at {body}',
   // A custom map's hand-placed discovery: {name} and {text} are the map
   // maker's own words, shown verbatim.
