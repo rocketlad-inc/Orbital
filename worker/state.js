@@ -14,6 +14,7 @@ import { orbitAngle, legProgress } from './orbitPos.js';
 import { SHIP_ENGINE_G, BRAKE_MUL, MAX_ENGINE_G, RAMP_TICKS, GROWTH_TAU } from './burn.js';
 import { hostilePairs } from './wars.js';
 import { allyIdsQuery } from './allies.js';
+import { readSchedule } from './tickSchedule.js';
 
 // GET /api/games/:gameId/state — full renderer snapshot.
 //
@@ -448,7 +449,7 @@ async function handleGetState(req, env, ctx) {
 
   const game = await env.DB
     .prepare(
-      `SELECT id, status, current_tick, tick_interval_ms, state_version,
+      `SELECT id, status, current_tick, tick_interval_ms, tick_schedule, state_version,
               next_tick_at, started_at, completed_at, map_seed,
               winner_faction_id, victory_type, gating_enabled,
               dyson_controller_faction_id, dyson_foundation_settlement_id,
@@ -2286,6 +2287,8 @@ const tradeRoutesP = env.DB
       status: game.status,
       current_tick: game.current_tick,
       tick_interval_ms: game.tick_interval_ms,
+      // Speed by time of day (tickSchedule.js), for every player to see.
+      tick_schedule: readSchedule(game.tick_schedule),
       next_tick_at: game.next_tick_at,
       started_at: game.started_at,
       completed_at: game.completed_at,

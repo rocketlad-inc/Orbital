@@ -8,6 +8,10 @@ import { createPortal } from 'react-dom';
 import { NotificationSettingsModal } from '../multiplayer/NotificationSettings';
 import { isLightweight, setLightweight, subscribeLightweight } from '../render/lightweightMode';
 import { useGameContext } from '../state/gameContext';
+import {
+  TickSchedule, TickPeriod, TICK_SPEED_OPTIONS, MAX_TICK_PERIODS,
+  defaultSchedule, describeSchedule, localTimeZone, zoneLabel,
+} from '../game/tickSchedule';
 import { useTurnBasedSettings } from '../state/turnBasedSettings';
 import { computeTurnBudget } from '../game/turnBudget';
 import { useAuth } from '../multiplayer/AuthContext';
@@ -1128,6 +1132,191 @@ interface SideMenuProps {
   onOpenAnalytics?: () => void;
 }
 
+// ----------------------------------------------------------------
+// TICK SPEED BY TIME OF DAY (worker/tickSchedule.js). Asked for over and
+// over (Moitão, 2026-10-05 / 10-09): fast ticks while everyone is awake,
+// slow ones overnight, so nobody wins by staying up. The host sets
+// periods in a time zone; each runs from its start until the next one's.
+// Everyone sees the schedule (TickScheduleLine); only the host edits it.
+// ----------------------------------------------------------------
+const TickScheduleLine: React.FC = () => {
+  useI18n();
+  const { gameState } = useGameContext();
+  const s = gameState.tickSchedule;
+  if (!s) return null;
+  return (
+    <div className="side-menu__item side-menu__item--block" title={s.tz}>
+      <span className="side-menu__item-icon">☾</span>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, flex: 1, minWidth: 0 }}>
+        <span className="side-menu__item-label">{t('topbar.sched.title')}</span>
+        <span className="side-menu__item-hint" style={{ whiteSpace: 'normal' }}>
+          {describeSchedule(s)} ({zoneLabel(s.tz)})
+        </span>
+      </div>
+    </div>
+  );
+};
+
+const allZones = (): string[] => {
+  try {
+    const f = (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf;
+    if (f) return f('timeZone');
+  } catch { /* old browser */ }
+  return [];
+};
+
+const SCHED_INPUT: React.CSSProperties = {
+  background: '#0d1620', color: '#d8e4ee', border: '1px solid #2a3d50',
+  borderRadius: 3, font: 'inherit', fontSize: 11, padding: '1px 4px',
+};
+const PILL_ON: React.CSSProperties = {
+  borderColor: '#4ecdc4', color: '#4ecdc4', background: 'rgba(78, 205, 196, 0.12)',
+};
+
+const HostTickSchedule: React.FC<{ gameId: string }> = ({ gameId }) => {
+  useI18n();
+  const { gameState } = useGameContext();
+  const live = gameState.tickSchedule ?? null;
+  const [draft, setDraft] = useState<TickSchedule | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+  const zones = useMemo(() => {
+    const want = [draft?.tz, live?.tz, localTimeZone()].filter(Boolean) as string[];
+    return Array.from(new Set([...want, ...allZones()]));
+  }, [draft?.tz, live?.tz]);
+
+  const send = async (schedule: TickSchedule | null) => {
+    setBusy(true);
+    setStatus(null);
+    try {
+      const { apiFetch } = await import('../multiplayer/api');
+      const res = await apiFetch<{ tick_schedule: TickSchedule | null }>(
+        `/api/lobby/rooms/${gameId}/tick-schedule`,
+        { method: 'PATCH', body: JSON.stringify({ schedule }) },
+      );
+      if (!res.ok) {
+        setStatus(res.error?.message ?? t('topbar.failed', { status: res.status }));
+      } else {
+        setStatus(schedule ? t('topbar.sched.saved') : t('topbar.sched.off'));
+        setDraft(null);
+      }
+    } catch (e) {
+      setStatus(t('topbar.networkError', { msg: (e as Error)?.message || t('topbar.unknown') }));
+    } finally {
+      setBusy(false);
+      setTimeout(() => setStatus(null), 4000);
+    }
+  };
+
+  const edit = (fn: (d: TickSchedule) => TickSchedule) => setDraft(d => (d ? fn(d) : d));
+  const setPeriod = (i: number, patch: Partial<TickPeriod>) =>
+    edit(d => ({ ...d, periods: d.periods.map((p, k) => (k === i ? { ...p, ...patch } : p)) }));
+
+  return (
+    <div className="side-menu__item side-menu__item--block">
+      <span className="side-menu__item-icon">☾</span>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, minWidth: 0 }}>
+        <span className="side-menu__item-label" style={{ marginBottom: 2 }}>
+          {status ?? (busy ? t('topbar.updating') : t('topbar.sched.title'))}
+        </span>
+        {!draft ? (
+          <>
+            <span className="side-menu__item-hint" style={{ whiteSpace: 'normal' }}>
+              {live ? `${describeSchedule(live)} (${zoneLabel(live.tz)})` : t('topbar.sched.offHint')}
+            </span>
+            <div style={{ display: 'flex', gap: 4 }}>
+              <button
+                className="side-menu__pill"
+                disabled={busy}
+                onClick={() => setDraft(live
+                  ? { ...live, periods: live.periods.map(p => ({ ...p })) }
+                  : defaultSchedule())}
+              >
+                {live ? t('topbar.sched.edit') : t('topbar.sched.setUp')}
+              </button>
+              {live && (
+                <button className="side-menu__pill" disabled={busy} onClick={() => send(null)}>
+                  {t('topbar.sched.turnOff')}
+                </button>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <label className="side-menu__item-hint" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              {t('topbar.sched.zone')}
+              <select
+                value={draft.tz}
+                onChange={e => { const tz = e.target.value; edit(d => ({ ...d, tz })); }}
+                style={{ ...SCHED_INPUT, flex: 1, minWidth: 0, fontSize: 10 }}
+              >
+                {zones.map(z => <option key={z} value={z}>{z.replace(/_/g, ' ')}</option>)}
+              </select>
+            </label>
+            {draft.periods.map((p, i) => (
+              <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 4, borderTop: '1px solid #1c2a38', paddingTop: 6 }}>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <span className="side-menu__item-hint">{t('topbar.sched.from')}</span>
+                  <input
+                    type="time"
+                    step={60}
+                    value={p.at}
+                    onChange={e => { const at = e.target.value; setPeriod(i, { at }); }}
+                    aria-label={t('topbar.sched.from')}
+                    style={SCHED_INPUT}
+                  />
+                  {draft.periods.length > 2 && (
+                    <button
+                      className="side-menu__pill"
+                      style={{ marginLeft: 'auto' }}
+                      onClick={() => edit(d => ({ ...d, periods: d.periods.filter((_, k) => k !== i) }))}
+                      aria-label={t('topbar.sched.remove')}
+                      title={t('topbar.sched.remove')}
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {TICK_SPEED_OPTIONS.map(o => (
+                    <button
+                      key={o.value}
+                      className="side-menu__pill"
+                      aria-pressed={p.interval_ms === o.value}
+                      style={p.interval_ms === o.value ? PILL_ON : undefined}
+                      onClick={() => setPeriod(i, { interval_ms: o.value })}
+                    >
+                      {o.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, borderTop: '1px solid #1c2a38', paddingTop: 6 }}>
+              {draft.periods.length < MAX_TICK_PERIODS && (
+                <button
+                  className="side-menu__pill"
+                  disabled={busy}
+                  onClick={() => edit(d => ({ ...d, periods: [...d.periods, { at: '12:00', interval_ms: 3_600_000 }] }))}
+                >
+                  + {t('topbar.sched.add')}
+                </button>
+              )}
+              <button className="side-menu__pill" disabled={busy} onClick={() => send(draft)} style={PILL_ON}>
+                {t('topbar.sched.save')}
+              </button>
+              <button className="side-menu__pill" disabled={busy} onClick={() => setDraft(null)}>
+                {t('topbar.sched.cancel')}
+              </button>
+            </div>
+            <span className="side-menu__item-hint" style={{ whiteSpace: 'normal' }}>{t('topbar.sched.rule')}</span>
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const SideMenu: React.FC<SideMenuProps> = ({
   onClose, onExitMode, user, onSignOut, onOpenNotifications,
   adminGameId = null, isHost = false,
@@ -1371,6 +1560,9 @@ const SideMenu: React.FC<SideMenuProps> = ({
             <MpTbmHostToggle />
           )}
 
+          {/* Everyone sees the time-of-day schedule; the host edits it below. */}
+          {!isHost && adminGameId && <TickScheduleLine />}
+
           {isHost && adminGameId && (
             <>
               <div className="side-menu__group-label">{t('topbar.admin.group')}</div>
@@ -1409,6 +1601,7 @@ const SideMenu: React.FC<SideMenuProps> = ({
                   </span>
                 </div>
               </div>
+              <HostTickSchedule gameId={adminGameId!} />
               <HostSeatsControl gameId={adminGameId!} />
               <button
                 className="side-menu__item"
