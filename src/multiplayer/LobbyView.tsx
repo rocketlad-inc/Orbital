@@ -23,6 +23,7 @@ import { SkinPicker } from './SkinPicker';
 import { t, tk } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import { apiErrorText } from '../i18n/apiErrors';
+import { InviteCard } from './InviteCard';
 
 /** A pre-game lobby chat line, as broadcast by the room WebSocket
  *  (`{ type: 'chat', from, text, at }`). `key` is assigned client-side
@@ -780,7 +781,11 @@ function RoomDetail({
       </div>
       <div className="lobby-panel__body">
 
-      {inviteCode && !started && (
+      {inviteCode && !started && snap.members.length < snap.settings.max_players && (
+        <InviteCard code={inviteCode} roomName={snap.settings.name} taken={snap.members.length}
+                    max={snap.settings.max_players} where="lobby" />
+      )}
+      {inviteCode && !started && snap.members.length >= snap.settings.max_players && (
         <div className="mp-invite-strip" onClick={copyInvite} title={t('roomlobby.invite.tip')}>
           <span className="mp-invite-strip__label">{t('roomlobby.invite')}</span>
           <span className="mp-invite-strip__code">{formattedInvite}</span>

@@ -60,15 +60,15 @@ export async function joinableLobbies(env, nowMs = Date.now(), { excludeUserId =
  * the INSERT, so two people racing for the last seat cannot both get it.
  * Returns true when this call added the member.
  */
-export async function takeSeat(env, roomId, userId, nowMs = Date.now()) {
+export async function takeSeat(env, roomId, userId, nowMs = Date.now(), joinMethod = 'quick') {
   const ins = await env.DB
     .prepare(
-      `INSERT OR IGNORE INTO room_members (room_id, user_id, joined_at)
-       SELECT ?1, ?2, ?3
+      `INSERT OR IGNORE INTO room_members (room_id, user_id, joined_at, join_method)
+       SELECT ?1, ?2, ?3, ?4
         WHERE (SELECT COUNT(*) FROM room_members WHERE room_id = ?1)
             < (SELECT max_players FROM rooms WHERE id = ?1 AND status = 'lobby')`,
     )
-    .bind(roomId, userId, nowMs)
+    .bind(roomId, userId, nowMs, joinMethod)
     .run();
   return (ins.meta?.changes ?? 0) === 1;
 }

@@ -3646,7 +3646,7 @@ async function handleLateJoin(req, env, ctx) {
     // host chose to bring this person in; the real constraint is unclaimed
     // worlds (enforced in seedLateFaction).
     await env.DB
-      .prepare('INSERT OR IGNORE INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)')
+      .prepare(`INSERT OR IGNORE INTO room_members (room_id, user_id, joined_at, join_method) VALUES (?, ?, ?, 'late')`)
       .bind(gameId, session.user_id, Date.now())
       .run();
   }

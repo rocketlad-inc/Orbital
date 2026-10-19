@@ -1074,8 +1074,8 @@ async function createRoom(env, session, { name, maxPlayers, passwordHash = null,
       .bind(...[id, name, session.user_id, 'lobby', maxPlayers, now, now, inviteCode, passwordHash, quickJoin ? 1 : 0,
         ...(customMap ? [customMap.id, customMap.json] : [])]),
     env.DB
-      .prepare('INSERT INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)')
-      .bind(id, session.user_id, now),
+      .prepare(`INSERT INTO room_members (room_id, user_id, joined_at, join_method) VALUES (?, ?, ?, ?)`)
+      .bind(id, session.user_id, now, quickJoin ? 'quick' : 'host'),
   ]);
   // The host's name bank from their last game (worker/namePoolHistory.js).
   await carryNamePools(env, id, session.user_id);
@@ -1272,7 +1272,13 @@ async function handleDeleteRoom(req, env, session, roomId) {
   return json({ ok: true });
 }
 
-async function handleJoinRoom(req, env, session, roomId) {
+// opts.viaCode: the caller holds the room's invite code. Codes are shown
+// only to the room's members and cannot feasibly be guessed (32^8), so a
+// code is proof of an invitation and the password is not asked again
+// (Oct 19 insight report, Invites idea 2: "one secret"). The browse door
+// (POST /api/rooms/:id/join) still asks for it.
+async function handleJoinRoom(req, env, session, roomId, opts = {}) {
+  const method = opts.viaCode ? 'code' : 'browse';
   if (!ROOM_ID_RE.test(roomId)) return err(400, 'bad_request', 'invalid room id');
   const room = await env.DB
     .prepare('SELECT id, max_players, status, password_hash FROM rooms WHERE id = ?')
@@ -1304,7 +1310,7 @@ async function handleJoinRoom(req, env, session, roomId) {
   // Password gate: only enforce for users brand-new to the room (not
   // already a member AND not a returning player). A returning player
   // already passed this gate when they originally joined.
-  if (!already && !returningPlayer && room.password_hash) {
+  if (!already && !returningPlayer && room.password_hash && !opts.viaCode) {
     const body = await readJson(req);
     const supplied = typeof body?.password === 'string' ? body.password : '';
     if (!supplied) return err(401, 'password_required', 'room is password-protected');
@@ -1322,12 +1328,12 @@ async function handleJoinRoom(req, env, session, roomId) {
       // worlds and the game could not seed (security review).
       const ins = await env.DB
         .prepare(
-          `INSERT OR IGNORE INTO room_members (room_id, user_id, joined_at)
-           SELECT ?1, ?2, ?3
+          `INSERT OR IGNORE INTO room_members (room_id, user_id, joined_at, join_method)
+           SELECT ?1, ?2, ?3, ?4
             WHERE (SELECT COUNT(*) FROM room_members WHERE room_id = ?1)
                 < (SELECT max_players FROM rooms WHERE id = ?1)`,
         )
-        .bind(roomId, session.user_id, Date.now())
+        .bind(roomId, session.user_id, Date.now(), method)
         .run();
       if ((ins.meta?.changes ?? 0) !== 1) return err(403, 'room_full', 'room is full');
     } else {
@@ -1360,7 +1366,7 @@ async function handleJoinByCode(req, env, session) {
     headers: req.headers,
     body: JSON.stringify({ password: body?.password }),
   });
-  return handleJoinRoom(inner, env, session, room.id);
+  return handleJoinRoom(inner, env, session, room.id, { viaCode: true });
 }
 
 async function handleRoomSnapshot(_req, env, _session, roomId) {
@@ -1420,6 +1426,7 @@ import * as store from './store.js';
 import * as customMaps from './customMaps.js';
 import * as skins from './skins.js';
 import * as commissionAsk_ from './commissionAsk.js';
+import * as invites from './invites.js';
 import * as economy from './economy.js';
 import * as heraldStrip from './heraldStrip.js';
 import * as battleCard from './battleCard.js';
@@ -1443,7 +1450,7 @@ import * as ending from './ending.js';
 import * as discoveryOffers from './discoveryOffers.js';
 import { carryNamePools } from './namePoolHistory.js';
 
-const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, studio, analytics, configAdmin, emailAdmin, emailLogin, store, skins, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed, customMaps, ending, discoveryOffers];
+const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, studio, analytics, configAdmin, emailAdmin, emailLogin, store, skins, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed, customMaps, ending, discoveryOffers, invites];
 
 function matchPattern(pattern, pathname) {
   if (typeof pattern === 'string') {
@@ -2148,6 +2155,12 @@ export default {
       // no session yet; that is the point. The token is the credential.
       if (url.pathname === '/api/email/go' && (req.method === 'GET' || req.method === 'POST')) {
         return dispatchFeatureRoute(req, env, url, null);
+      }
+
+      // An invite link opened (worker/invites.js): counted whether or not
+      // the visitor is signed in yet, which is the point of counting it.
+      if (req.method === 'POST' && url.pathname === '/api/invite/open') {
+        return dispatchFeatureRoute(req, env, url, await currentSession(req, env).catch(() => null));
       }
 
       // everything below requires a session

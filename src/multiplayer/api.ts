@@ -187,7 +187,9 @@ export type User = {
  *  of these (worker/store.js COMMISSION_SURFACES) and labels each sale
  *  with it, so the dashboard can say which surface sells. */
 export type CommissionSurface = 'profile' | 'lobby-flag' | 'designer' | 'endgame' | 'thanks-card' | 'skins'
-  | 'discord-feed' | 'map-maker' | 'lobby-map';
+  | 'discord-feed' | 'map-maker' | 'lobby-map'
+  // The invite card: a gift Commission for the friend you are inviting.
+  | 'invite';
 
 /** Start the Commander's Commission purchase. Resolves to the Stripe
  *  Checkout URL to navigate to, or null when purchases aren't enabled,

@@ -323,7 +323,7 @@ async function handleAdminAddMember(req, env, ctx) {
     // INSERT OR IGNORE for safety against a race where the same user
     // joined themselves between the check and the insert.
     await env.DB
-      .prepare('INSERT OR IGNORE INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)')
+      .prepare(`INSERT OR IGNORE INTO room_members (room_id, user_id, joined_at, join_method) VALUES (?, ?, ?, 'admin')`)
       .bind(roomId, user.id, Date.now())
       .run();
     await carryNamePools(env, roomId, user.id);

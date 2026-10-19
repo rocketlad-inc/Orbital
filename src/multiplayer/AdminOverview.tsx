@@ -70,6 +70,8 @@ type Overview = {
   usage: UsageRow[];
   cohorts: Cohort[];
   sources: SourceRow[];
+  /** Invites, last 30 days (0175). Absent from an older server. */
+  invites?: InvitesData;
   journey?: Journey;
   friction?: FrictionRow[];
   crashes?: CrashRow[];
@@ -1052,6 +1054,89 @@ function JourneyFunnel({ journey }: { journey: Journey }) {
   );
 }
 
+type InvitesData = {
+  opens: number; links: number; signed_up: number; played: number; named: number; recruiters: number;
+  shares: Array<{ kind: string; place: string; n: number; players: number }>;
+  top: Array<{ name: string; invited: number; played: number; named: number }>;
+  seats: Array<{ method: string; n: number }>;
+};
+
+const SHARE_PLACE: Record<string, string> = {
+  created: 'New-room screen', lobby: 'Room lobby', game: 'In game (host)', other: 'Other',
+};
+const SEAT_METHOD: Record<string, string> = {
+  host: 'Made the room', code: 'Invite link or code', browse: 'Browse', quick: 'Quick Join',
+  late: 'Joined mid-game', admin: 'Added by an admin', unknown: 'Not recorded (before Oct 19, or repaired)',
+};
+
+/** Who brings players in, and whether the friends they bring play. */
+function InvitesPanel({ inv }: { inv: InvitesData }) {
+  const placeRows = Object.keys(SHARE_PLACE).map(place => {
+    const share = inv.shares.find(s => s.place === place && s.kind === 'ui/invite-share');
+    const copy = inv.shares.find(s => s.place === place && s.kind === 'ui/invite-copy');
+    return { place, shared: share?.n ?? 0, copied: copy?.n ?? 0, players: (share?.players ?? 0) + (copy?.players ?? 0) };
+  }).filter(r => r.shared || r.copied);
+  return (
+    <section className="ao-panel">
+      <PanelHead
+        title="Who brings players in"
+        hint="Last 30 days. An invite is a link to a room that names who sent it; a code typed by hand counts too, credited to the room's host. Recorded from the Oct 19 update on."
+      />
+      <div className="ao-headline">
+        <div className="ao-headline__item"><span className="ao-headline__value">{n(inv.opens)}</span><span className="ao-headline__label">invite links opened</span></div>
+        <div className="ao-headline__item"><span className="ao-headline__value">{n(inv.signed_up)}</span><span className="ao-headline__label">friends signed up</span></div>
+        <div className="ao-headline__item"><span className="ao-headline__value">{inv.signed_up ? `${pctOf(inv.played, inv.signed_up)}%` : '—'}</span><span className="ao-headline__label">of them played a game</span></div>
+        <div className="ao-headline__item"><span className="ao-headline__value">{n(inv.recruiters)}</span><span className="ao-headline__label">players who brought someone</span></div>
+      </div>
+      {inv.top.length > 0 && (
+        <div className="ao-scroll" style={{ marginTop: 14 }}>
+          <table className="ao-table">
+            <thead><tr><th>Recruiter</th><th className="num">Friends signed up</th><th className="num">Played a game</th><th className="num">Named on the link</th></tr></thead>
+            <tbody>
+              {inv.top.map(r => (
+                <tr key={r.name}>
+                  <td>{r.name}</td>
+                  <td className="num">{n(r.invited)}</td>
+                  <td className="num">{n(r.played)}</td>
+                  <td className="num">{n(r.named)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div className="ao-twocol" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 18, marginTop: 14 }}>
+        <div>
+          <h4 className="ao-subhead" style={{ margin: '0 0 6px', fontSize: 13 }}>Where invites were shared</h4>
+          {placeRows.length === 0 ? <div className="ao-none">No invite shared yet.</div> : (
+            <table className="ao-table">
+              <thead><tr><th>Place</th><th className="num">Share sheet</th><th className="num">Link copied</th></tr></thead>
+              <tbody>
+                {placeRows.map(r => (
+                  <tr key={r.place}><td>{SHARE_PLACE[r.place]}</td><td className="num">{n(r.shared)}</td><td className="num">{n(r.copied)}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+        <div>
+          <h4 className="ao-subhead" style={{ margin: '0 0 6px', fontSize: 13 }}>How seats were taken</h4>
+          {inv.seats.length === 0 ? <div className="ao-none">No seats taken.</div> : (
+            <table className="ao-table">
+              <thead><tr><th>Way in</th><th className="num">Seats</th></tr></thead>
+              <tbody>
+                {inv.seats.map(r => (
+                  <tr key={r.method}><td>{SEAT_METHOD[r.method] ?? r.method}</td><td className="num">{n(r.n)}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function Growth({ data }: { data: Overview }) {
   const cohorts = data.cohorts;
   const sum = (key: keyof Cohort) => cohorts.reduce((s, c) => s + (c[key] as number), 0);
@@ -1064,6 +1149,7 @@ function Growth({ data }: { data: Overview }) {
   ];
   return (
     <div className="ao-stack">
+      {data.invites && <InvitesPanel inv={data.invites} />}
       {data.journey && (
         <section className="ao-panel">
           <PanelHead
@@ -1309,6 +1395,7 @@ const SURFACE_LABEL: Record<string, string> = {
   'discord-feed': 'Discord game feed',
   'map-maker': 'Map Maker: Share & host',
   'lobby-map': 'Game creator: custom map',
+  invite: 'Invite card: gift for a friend',
   other: 'Other / older clients',
   'before tracking': 'Before tracking',
 };

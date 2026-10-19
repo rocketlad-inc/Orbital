@@ -104,6 +104,7 @@ export function openCommissionInBrowser(surface: CommissionSurface, opts: { gift
  *  same allow-list): a handoff naming anything else is not one of ours. */
 export const COMMISSION_SURFACES: readonly CommissionSurface[] = [
   'profile', 'lobby-flag', 'designer', 'endgame', 'thanks-card', 'skins', 'discord-feed', 'map-maker', 'lobby-map',
+  'invite',
 ];
 
 /** Surfaces that sell hosting on your own map: the thank-you after paying
