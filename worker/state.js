@@ -1387,7 +1387,7 @@ const settlementsP = env.DB
               buildings_json, building_order_json, building_backlog_json,
               -- The missile silo (0177): magazine, queue, auto-defence.
               -- Blanked below for anyone but the owner.
-              missile_stock, missile_orders_json, missile_auto, missile_reserve,
+              missile_stock, missile_orders_json, missile_auto, missile_reserve, missile_salvo,
               destroyed_at_tick, wrecked_at_tick
          FROM game_settlements
         WHERE game_id = ?1
@@ -1818,6 +1818,7 @@ const tradeRoutesP = env.DB
   for (const r of settlements) {
     if (r.owner_faction_id !== me.id) {
       r.missile_stock = null; r.missile_orders_json = null; r.missile_auto = null; r.missile_reserve = null;
+      r.missile_salvo = null;
     }
   }
   // RUINS (0142): dead settlements that warships left standing. Slim --

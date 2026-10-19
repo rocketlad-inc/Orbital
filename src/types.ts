@@ -1518,6 +1518,8 @@ export interface MissileSiloState {
   auto: 'off' | 'missiles' | 'fleets';
   /** Missiles auto-defence never spends. */
   reserve: number;
+  /** What auto-defence sends at each hostile group it intercepts. */
+  salvo: number;
 }
 
 /** A found ship waiting for its finder's answer (worker/discoveryOffers.js). */

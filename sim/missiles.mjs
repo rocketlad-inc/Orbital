@@ -12,7 +12,10 @@
 //   5. auto-defence MISSILES: incoming salvos shot down one for one, above
 //      the reserve; what gets through still lands
 //   6. auto-defence + FLEETS: hostile ships landing on the silo's world are
-//      hit, but never while the silo's own ships are there
+//      hit (the silo's salvo size), but never while its own ships are there
+//   7. intercepts in flight: a salvo meets a group on the way and bursts;
+//      every hull within 40 units takes 10 per missile, friend or foe;
+//      + FLEETS launches one salvo per hostile group bound for its world
 //
 // Run: node sim/missiles.mjs
 // ============================================================================
@@ -168,7 +171,7 @@ check('...the 2 that got through still land: 20 damage to each frigate', (await 
   JSON.stringify(await Promise.all(vf.map(hpOf))));
 
 // ---- 6. auto-defence: + fleets ---------------------------------------------
-await DB.prepare(`UPDATE game_settlements SET missile_stock = 5, missile_auto = 'fleets', missile_reserve = 0 WHERE id = ?`).bind(cityA.id).run();
+await DB.prepare(`UPDATE game_settlements SET missile_stock = 5, missile_auto = 'fleets', missile_reserve = 0, missile_salvo = 5 WHERE id = ?`).bind(cityA.id).run();
 async function sendTo(shipId, toBodyId, arrive) {
   await DB.prepare(
     `INSERT INTO game_ship_nodes (id, game_id, ship_id, sequence, anchor_kind, target_body_id, scheduled_t, arrival_at_tick,
@@ -179,7 +182,7 @@ async function sendTo(shipId, toBodyId, arrive) {
 const raider = await park(B.id, VENUS, 'corvette', 40);
 await sendTo(raider, EARTH, tick + 1);
 await runTick();
-check('+ FLEETS: a hostile corvette landing on an empty Earth meets the whole magazine (50) and dies',
+check('+ FLEETS: a hostile corvette landing on an empty Earth meets a salvo of 5 (50) and dies',
   (await hpOf(raider)).status === 'destroyed' && Number((await cityOf(EARTH)).missile_stock) === 0,
   JSON.stringify({ raider: await hpOf(raider), stock: (await cityOf(EARTH)).missile_stock }));
 await DB.prepare(`UPDATE game_settlements SET missile_stock = 5 WHERE id = ?`).bind(cityA.id).run();
@@ -193,6 +196,76 @@ check('...but never while the silo\'s own ships are in that orbit', (await hpOf(
 const ok = await call(A.user_id, 'PATCH', silo(cityA), { auto: 'off', reserve: 3 });
 check('auto-defence and its reserve are the owner\'s to set', ok.status === 200 && ok.body.auto === 'off' && ok.body.reserve === 3);
 check('...and an unknown mode is refused', (await call(A.user_id, 'PATCH', silo(cityA), { auto: 'everything' })).status === 400);
+
+// ---- 7. intercepts in flight ----------------------------------------------
+// Real flights: each hull's leg planned by the tick's own planner.
+await DB.prepare(`UPDATE game_settlements SET missile_stock = 8, missile_auto = 'off', missile_reserve = 0 WHERE id = ?`).bind(cityA.id).run();
+await DB.prepare(`DELETE FROM game_ships WHERE game_id = ? AND parent_body_id = ? AND id GLOB ?`).bind(G, EARTH, `${G}:t*`).run();
+async function fly(ids, owner, from, to, arrive = null) {
+  let at = arrive;
+  for (const id of ids) at = Math.max(at ?? 0, await room.planLegForShip(G, tick, id, owner, from, to, arrive));
+  if (arrive == null && ids.length > 1) {
+    await DB.prepare(`DELETE FROM game_ship_nodes WHERE status = 'committed' AND ship_id IN (${ids.map(() => '?').join(',')})`).bind(...ids).run();
+    for (const id of ids) await room.planLegForShip(G, tick, id, owner, from, to, at);
+  }
+  return at;
+}
+const grp = [await park(B.id, MARS, 'corvette', 40), await park(B.id, MARS, 'corvette', 40), await park(B.id, MARS, 'frigate', 270)];
+const tag = await park(A.id, MARS, 'corvette', 40);       // our own hull, flying the same course
+const far = await park(B.id, VENUS, 'corvette', 40);      // nowhere near
+const land = await fly([...grp, tag], B.id, MARS, EARTH);
+await runTick();                                          // they leave Mars
+const flying = await DB.prepare(`SELECT COUNT(*) AS n FROM game_ship_nodes WHERE status = 'in_transit' AND ship_id IN (?, ?, ?, ?)`).bind(...grp, tag).first();
+check('four hulls are flying Mars -> Earth on real plans', flying.n === 4 && land > tick + 3, JSON.stringify({ n: flying.n, land, tick }));
+const meet = await call(A.user_id, 'GET', `/api/games/${G}/missiles/intercepts?from=${encodeURIComponent(EARTH)}&ships=${encodeURIComponent(grp[2])}`);
+const m = meet.body.meet?.[grp[2]];
+check('the picker gets a meeting before they land', meet.status === 200 && m && m.ticks >= 1 && m.meet_tick < land,
+  JSON.stringify({ meet: meet.body, land, tick }));
+check('you cannot aim at your own hull', (await call(A.user_id, 'POST', `${silo(cityA)}/launch`, { target_ship_id: tag, count: 1 })).status === 400);
+check('nor at a hull that is not flying', (await call(A.user_id, 'POST', `${silo(cityA)}/launch`, { target_ship_id: far, count: 1 })).status === 404);
+const L3 = await call(A.user_id, 'POST', `${silo(cityA)}/launch`, { target_ship_id: grp[2], count: 4 });
+const n3 = await DB.prepare('SELECT * FROM game_ship_nodes WHERE ship_id = ?').bind(L3.body.ship_id).first();
+check('a salvo of 4 is launched at the group: a rendezvous arc on the frigate, arriving when they do',
+  L3.status === 200 && n3?.rv_follow_ship_id === grp[2] && n3.rv_meet_tick > tick && n3.arrival_at_tick === land
+  && Number((await cityOf(EARTH)).missile_stock) === 4, JSON.stringify({ L3: L3.body, node: n3 && { rv: n3.rv_follow_ship_id, meet: n3.rv_meet_tick, arr: n3.arrival_at_tick } }));
+while (tick < L3.body.meet_tick - 1) await runTick();
+check('nothing is hit before the meeting', (await hpOf(grp[0])).hp === 40 && (await hpOf(grp[2])).hp === 270);
+await runTick();
+check('at the meeting: 40 to every hull of the group (both corvettes die, the frigate 270 -> 230)',
+  (await hpOf(grp[0])).status === 'destroyed' && (await hpOf(grp[1])).status === 'destroyed' && (await hpOf(grp[2])).hp === 230,
+  JSON.stringify(await Promise.all(grp.map(hpOf))));
+check('...our own corvette flying alongside is caught too: friend or foe', (await hpOf(tag)).status === 'destroyed', JSON.stringify(await hpOf(tag)));
+check('...a hull far away is not', (await hpOf(far)).hp === 40);
+const s3 = await DB.prepare(`SELECT payload FROM chronicle_entries WHERE game_id = ? AND kind = 'missile_strike' ORDER BY tick_number DESC`).bind(G).first();
+const p3 = s3 ? JSON.parse(s3.payload) : null;
+check('...the salvo is spent and the strike is news, marked in flight',
+  (await hpOf(L3.body.ship_id)).status === 'expended' && p3?.in_flight === true && p3.missiles === 4 && p3.destroyed_count === 3,
+  JSON.stringify(p3));
+
+// Auto-intercept: + FLEETS sends its salvo size at each hostile group bound for Earth.
+// (The frigate that survived the strike above is still flying at Earth: out of this test.)
+await DB.prepare(`UPDATE game_ships SET status = 'destroyed', destroyed_at_tick = ? WHERE id = ?`).bind(tick, grp[2]).run();
+await DB.prepare(`UPDATE game_settlements SET missile_stock = 6, missile_auto = 'fleets', missile_reserve = 1, missile_salvo = 4 WHERE id = ?`).bind(cityA.id).run();
+const raid = [await park(B.id, MARS, 'corvette', 40), await park(B.id, MARS, 'corvette', 40)];
+const elsewhere = [await park(B.id, EARTH, 'corvette', 40)];
+const raidLand = await fly(raid, B.id, MARS, EARTH);
+await fly(elsewhere, B.id, EARTH, MARS);
+const salvosAt = async (ids) => (await DB.prepare(
+  `SELECT COUNT(*) AS n FROM game_ship_nodes n JOIN game_ships s ON s.id = n.ship_id
+    WHERE s.ship_class = 'missile' AND n.rv_follow_ship_id IN (${ids.map(() => '?').join(',')})`).bind(...ids).first()).n;
+let fired = 0;
+for (let i = 0; i < 4 && fired === 0; i++) { await runTick(); fired = await salvosAt(raid); }
+check('+ FLEETS: once the raid is catchable, one salvo of 4 goes after it (6 ready, 1 in reserve -> 2 left)',
+  fired === 1 && Number((await cityOf(EARTH)).missile_stock) === 2,
+  JSON.stringify({ fired, stock: (await cityOf(EARTH)).missile_stock, tick, raidLand }));
+await runTick();
+check('...and only one: a group already chased is not fired at again', await salvosAt(raid) === 1);
+check('...ships flying AWAY from Earth are left alone', await salvosAt(elsewhere) === 0);
+while (tick < raidLand - 1 && (await hpOf(raid[0])).status === 'active') await runTick();
+check('...the raid is destroyed in flight, before it lands', (await hpOf(raid[0])).status === 'destroyed' && (await hpOf(raid[1])).status === 'destroyed',
+  JSON.stringify({ raid: await Promise.all(raid.map(hpOf)), tick, raidLand }));
+const okSalvo = await call(A.user_id, 'PATCH', silo(cityA), { salvo: 7 });
+check('the auto salvo size is the owner\'s to set', okSalvo.status === 200 && okSalvo.body.salvo === 7);
 
 console.log(bad === 0 ? '\nALL MISSILE CHECKS PASS' : `\n${bad} FAILED`);
 process.exit(bad === 0 ? 0 : 1);

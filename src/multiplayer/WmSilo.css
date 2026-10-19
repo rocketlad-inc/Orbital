@@ -87,6 +87,8 @@
 .wm-silo-opt b { font-weight: 400; }
 .wm-silo-opt b.is-hostile { color: #ff9d9d; }
 .wm-silo-opt b.is-mine { color: #6ee7b7; }
+.wm-silo-opt.is-out .wm-silo-tname, .wm-silo-opt.is-out .wm-silo-tmeta { color: #6b7f92; }
+.wm-silo-list .wm-silo-h2 { padding: 4px 8px 0; }
 
 .wm-silo-salvo { display: flex; align-items: center; gap: 8px; }
 .wm-silo-step {

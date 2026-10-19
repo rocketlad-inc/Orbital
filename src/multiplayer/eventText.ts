@@ -630,6 +630,12 @@ export function formatChronicleEvent(
   }
 
   if (ev.kind === 'missile_launch') {
+    if (parsed.in_flight) {
+      return out('🚀 ', T(parsed.auto ? 'missile.launchInterceptAuto' : 'missile.launchIntercept', {
+        n: Number(parsed.count ?? 0), who: String(parsed.target_owner_name ?? T('fb.aBody')),
+        k: Number(parsed.target_hulls ?? 0), body: String(parsed.body_name ?? T('fb.aBody')), tick: Number(parsed.meet_tick ?? 0),
+      }));
+    }
     return out('🚀 ', T('missile.launch', {
       n: Number(parsed.count ?? 0), body: String(parsed.body_name ?? T('fb.aBody')), tick: Number(parsed.arrive_tick ?? 0),
     }));
@@ -641,6 +647,9 @@ export function formatChronicleEvent(
       who, n: Number(parsed.missiles ?? 0), body: String(parsed.body_name ?? T('fb.aBody')),
       dmg: Number(parsed.damage ?? 0), k: Number(parsed.destroyed_count ?? 0),
     };
+    if (parsed.in_flight) {
+      return out('🚀 ', T('missile.strikeInFlight', { ...vars, owner: String(parsed.target_owner_name ?? '?') }));
+    }
     return out('🚀 ', parsed.auto ? T('missile.strikeAuto', vars) : T('missile.strike', vars));
   }
   if (ev.kind === 'missile_intercepted') {

@@ -474,6 +474,7 @@ interface ServerState {
     missile_orders_json?: string | null;
     missile_auto?: string | null;
     missile_reserve?: number | null;
+    missile_salvo?: number | null;
     /** The standing order this yard gives every hull it builds
      *  (migration 0120). Null on cities and on yards with no opinion. */
     default_build_order?: string | null;
@@ -1219,6 +1220,7 @@ function settlementToClient(
       })(),
       auto: s.missile_auto === 'missiles' || s.missile_auto === 'fleets' ? s.missile_auto : 'off',
       reserve: Number(s.missile_reserve) || 0,
+      salvo: Number(s.missile_salvo) || 2,
     },
     // What this yard tells every hull it builds. Ids stripped like all
     // the others so the pickers can match them against gameState.
