@@ -207,4 +207,31 @@ node scripts/studio.mjs record <id> shot.json --out earth-titan.mp4 --as studio-
 - **Re-shooting.** Re-apply the same scene with `game_id` set: `reset` clears the last attempt's rows and seeds again at the current tick.
 - **Staging vs production.** Staging is the default. On production the studio makes the same private test games (hidden from Browse, not counted anywhere); close them when done.
 - **Frame rate.** Recording is deterministic, so leave `fps` at 30. Headless Chrome draws a busy battle in 50–250 ms a frame; that is why the clip takes minutes and comes out smooth.
-- **What the recording contains.** The map canvas alone: no panels, no bar, no browser. The hook, captions and end card are drawn into the video by the director.
+- **What the recording contains.** `record`: the map canvas alone, with the hook, captions and end card drawn in by the director. `film`: the page as played, interface and all (`ui: false` for the bare map).
+
+## The suite so far, and shots worth making next
+
+Made with this tool (scene + shot in `marketing/sol-wars-screenshots/gifs`, numbered):
+
+- **Battle of Earth to battle of Europa** (18): three fleets at Earth, pull back to 0.15, glide to a lit Europa with two fleets fighting.
+- **The Senate votes double damage** (19): Senate tab open on a passed "Stronger Guns for Terra" law and a war authorization on Mars, ballots unfolded, then the fight at Earth where Mars melts.
+- **Three-way at Earth, war at Titan** (20): the shot that started the module, with the Lunar Wing leaving for the Moon.
+- **Mega Destroyer sterilises Venus** (21): one hull, one world, the strike.
+- **Supply line Mars to Ceres** (22): a freighter on a trade route, camera following the hull.
+
+Worth making, and what each needs:
+
+- **A fleet in flight, fighting** (transit combat): two fleets launched toward each other from Earth and Mars with `move` orders meet in the dark. Needs only a scene and `follow`; the game decides the meeting tick, so budget ticks from the `orders[]` arrival numbers.
+- **The Moon hop, start to finish**: `follow fleet:` with `speed: 1000`, twenty ticks in thirty seconds. Scene-only.
+- **Every weapon in one frame**: four groups each on one preset (kinetic, energy, flak, detonators) at hp 3 so nothing dies early. Scene-only.
+- **An embargo, then a sanction**: `laws` with `trade_embargo` and `production_sanction`, Senate tab open, then the Faction tab showing the yields drop. Scene-only; the shot uses `panel`.
+- **Research and the shipyard**: `panel research` and the Shipwright. The designer opens with the `orbital:open-ship-designer` event; a `click` on the dock's shipyard button does it today.
+- **Terraforming a world**: eight stages. The scene sets `living` only; a stage-by-stage shot needs a `worlds[].terraform` level in the scene language (small server change) and one apply per stage, filmed as a cut sequence.
+- **The Leviathan**: the world-eating squid on the second sun gate. It spawns from the game's `kaiju` flag and the gate sequence, not from a scene; needs a studio switch that places the gate and the kaiju at a chosen world (kaiju.js has the pieces).
+- **Through a sun gate to Centauri**: far systems and the galaxy view. Needs the scene to enable far systems on its game (scripts/enable-far-systems.mjs does it for running games) and a `zoom` past galaxy scale; the drawers are safe at that distance.
+- **Missile silo**: silo on a world, salvo on the map. New feature on `dev`; needs a `worlds[].silo` seed and a `launch` order in the scene language.
+- **A ram**: one hull ordered to ram another at 0.005g, validated server-side. Needs a `ram` order in the scene language.
+- **Discovery: a derelict found**: an observer hull lights a world and finds a ship. It already happens (the card is hidden while filming); a shot that keeps the card needs `ui` to allow it, so add a `cards: true` shot flag before filming this one.
+- **Captain debut and the trophy case**: the captain card on first kill, and the ending page's awards. Both UI; `click` reaches the first, the ending page needs the game to end (close the studio game with a winner: a server verb to add).
+
+Keep each clip under 40 s, 16:9, interface in, no end card: the showcase cut.
