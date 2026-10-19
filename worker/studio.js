@@ -154,6 +154,10 @@ async function resolveFactions(env, gameId, spec) {
 async function resetStudioRows(env, gameId) {
   const like = `${gameId}:${STUDIO_MARK}%`;
   await env.DB.batch([
+    // The event log keys entries to hulls without ON DELETE: after a
+    // tick of combat, a studio hull is "the ship that fired", and the
+    // hull cannot go until its entries do. A re-shot scene starts clean.
+    env.DB.prepare('DELETE FROM chronicle_entries WHERE game_id = ? AND ship_id LIKE ?').bind(gameId, like),
     env.DB.prepare('DELETE FROM game_ship_nodes WHERE game_id = ? AND ship_id LIKE ?').bind(gameId, like),
     env.DB.prepare('DELETE FROM game_trade_route_ships WHERE game_id = ? AND ship_id LIKE ?').bind(gameId, like),
     env.DB.prepare("DELETE FROM game_trade_route_stops WHERE game_id = ? AND route_id IN (SELECT id FROM game_trade_routes WHERE game_id = ? AND ship_id LIKE ?)").bind(gameId, gameId, like),
