@@ -6156,8 +6156,6 @@ export class Room {
       }
       return e;
     };
-    /** targetId -> ships that landed on it this tick, for kill credit. */
-    const hitByShip = new Map();
 
     // `raw` is pre-mitigation, `dmg` post — the gap is what the target's
     // shields/armor absorbed, which is the whole point of recording both.
@@ -6232,21 +6230,20 @@ export class Room {
           let set = hitBy.get(targetId);
           if (!set) { set = new Set(); hitBy.set(targetId, set); }
           set.add(attackerClass);
-          if (attacker) {
-            let ships = hitByShip.get(targetId);
-            if (!ships) { ships = new Map(); hitByShip.set(targetId, ships); }
-            // Remember how much THIS hull put in, so overkill can be
-            // apportioned by contribution rather than split evenly.
-            ships.set(attacker.id, (ships.get(attacker.id) ?? 0) + dmg);
-          }
         }
       }
       return e;
     };
-    /** Credit a kill to every class that landed on this hull this tick.
-     *  `wasted` is damage beyond what the target had left — apportioned
-     *  across contributors by share of damage dealt. */
-    const tallyKill = (targetId, targetClass, wasted = 0, attackerLowHp) => {
+    /** Credit a kill to every class that landed on this hull this tick
+     *  (the class tally is a matchup table, not a leaderboard). `wasted` is
+     *  damage beyond what the target had left.
+     *
+     *  Per-HULL credit goes to `killerShipId` ALONE — the attacker that did
+     *  the most damage, the same ship veterancy and battle_participants
+     *  name. It used to go to everyone who fired on the target that tick,
+     *  so a corvette with one real kill read 24 and an empire that lost 113
+     *  hulls read 7,502 kills. Null (a settlement did it) credits no hull. */
+    const tallyKill = (targetId, targetClass, wasted = 0, attackerLowHp, killerShipId = null) => {
       const set = hitBy.get(targetId);
       if (set) {
         for (const cls of set) {
@@ -6254,19 +6251,13 @@ export class Room {
           if (e) { e.kills++; e.overkill += wasted / set.size; }
         }
       }
-      const ships = hitByShip.get(targetId);
-      if (!ships) return;
-      let total = 0;
-      for (const v of ships.values()) total += v;
-      for (const [shipId, contributed] of ships) {
-        const st = shipStats.get(shipId);
-        if (!st) continue;
-        st.kills++;
-        if (total > 0) st.overkill += wasted * (contributed / total);
-        // "Last Stand" — a kill landed while the killer was itself
-        // nearly dead. Resolved by the caller, which knows live HP.
-        if (attackerLowHp && attackerLowHp.has(shipId)) st.lowHpKills++;
-      }
+      const st = killerShipId ? shipStats.get(killerShipId) : null;
+      if (!st || killerShipId === targetId) return;
+      st.kills++;
+      st.overkill += wasted;
+      // "Last Stand" — a kill landed while the killer was itself
+      // nearly dead. Resolved by the caller, which knows live HP.
+      if (attackerLowHp && attackerLowHp.has(killerShipId)) st.lowHpKills++;
     };
 
     /** Speed of any combatant. Settlements are not ships but they shoot and
@@ -8532,8 +8523,9 @@ export class Room {
           // Damage past zero is waste: simultaneous resolution means
           // everyone shooting this hull committed their volley before
           // anyone knew it was already dead.
+          const killerShipId = topAttackerShip(shipId);
           tallyKill(shipId, cur.ship_class,
-                    Math.max(0, entry.total - (cur.hp ?? 0)), lowHpAttackers);
+                    Math.max(0, entry.total - (cur.hp ?? 0)), lowHpAttackers, killerShipId);
           losses.push(shipId);
           lostShipRows.push(cur);
           const kf = topAttacker(shipId);
@@ -8544,7 +8536,7 @@ export class Room {
           // to its combat_history (LRU cap 20, applied in the flush
           // below). Settlements firing on ships have no shipId in the
           // byShip map so they correctly don't earn ranks.
-          const killerShipId = topAttackerShip(shipId);
+          // (killerShipId resolved above, so tallyKill credits the same hull.)
           // The hull that actually did it. "Lost to Harmattan" is a
           // better fact than "lost to Center of Gravity", and the ledger
           // has known it all along — killerShipByVictim was declared for
