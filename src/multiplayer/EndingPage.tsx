@@ -27,7 +27,9 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FactionEmblem } from '../components/FactionEmblem';
 import { DEFAULT_SHIP_ICONS, ShipIcon, ShipIconClass, ShipIconVariant } from '../components/ShipIcons';
 import { deriveSecondary } from '../game/colorUtils';
-import type { EndingAwardId, EndingFaction, EndingPayload } from './endingTypes';
+import type { EndingFaction, EndingPayload } from './endingTypes';
+import { AWARD_KEYS, shipLabel } from './awardMeta';
+import { AwardGlyph } from './AwardGlyph';
 import {
   AwardCardModel, TextRef, TimelineRow, awardGroups, battleSegments, buildTimeline, durationParts, hasSeries, holdingsShare,
   myStats, peakLeader, Rank, verdictKind, victoryWay, viewerOf,
@@ -37,7 +39,7 @@ import {
   COMMISSION_CITY_SKINS, COMMISSION_EMBLEMS, COMMISSION_STATION_SKINS, COMMISSION_STRUCTURE_LOOKS,
 } from './commission';
 import { commissionPhrases } from './CommissionMoments';
-import { fmtNumber, getLang, Key, PluralKey, t, tn, tk } from '../i18n/core';
+import { fmtNumber, getLang, PluralKey, t, tn, tk } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import './EndingPage.css';
 
@@ -92,38 +94,6 @@ const rankText = (r: Rank): string => `${r.tied ? '=' : ''}${ord(r.rank)}`;
 
 /** The brand mark in the top bar. A constant, not JSX text: it is a name. */
 const BRAND = 'ORBITAL';
-
-const AWARD_GLYPH: Record<EndingAwardId, string> = {
-  warmonger: 'M5 19L17 7M14 7h3v3M19 19L7 7M10 7H7v3',
-  ace: 'M12 4a8 8 0 100 16 8 8 0 000-16zM12 7v10M7 12h10',
-  heavy_hitter: 'M12 3l2 6 6 1-5 4 2 6-5-3-5 3 2-6-5-4 6-1z',
-  iron_wall: 'M12 3l7 3v5c0 5-3 8-7 10-4-2-7-5-7-10V6z',
-  last_stand: 'M6 21V4M6 5h11l-3 4 3 4H6',
-  instigator: 'M12 3c1 4 5 5 5 10a5 5 0 01-10 0c0-2 1-3 2-4 0 2 1 3 2 3 0-3-1-5 1-9z',
-  landlord: 'M12 5a7 7 0 100 14 7 7 0 000-14zM3 12c0-2 4-3 9-3s9 1 9 3-4 3-9 3-9-1-9-3z',
-  treasurer: 'M12 4a8 8 0 100 16 8 8 0 000-16zM12 7v10M9 10h5a1.5 1.5 0 010 3h-4a1.5 1.5 0 000 3h5',
-  scholar: 'M4 6c3-1 6-1 8 1 2-2 5-2 8-1v12c-3-1-6-1-8 1-2-2-5-2-8-1zM12 7v12',
-  shipwright: 'M12 3l6 14-6-3-6 3zM12 14v7',
-  merchant: 'M5 8h13M15 5l3 3-3 3M19 16H6M9 13l-3 3 3 3',
-  statesman: 'M3 20h18M5 20V10M9 20V10M15 20V10M19 20V10M3 10l9-6 9 6z',
-};
-
-/** The catalog keys behind each award: the words live in the catalog, the
- *  table only names them (so nothing here freezes a language). */
-const AWARD_KEYS: Record<EndingAwardId, { title: Key; blurb: Key; unit: PluralKey }> = {
-  warmonger: { title: 'ending.award.warmonger.title', blurb: 'ending.award.warmonger.blurb', unit: 'ending.award.warmonger.unit' },
-  ace: { title: 'ending.award.ace.title', blurb: 'ending.award.ace.blurb', unit: 'ending.award.ace.unit' },
-  heavy_hitter: { title: 'ending.award.heavy_hitter.title', blurb: 'ending.award.heavy_hitter.blurb', unit: 'ending.award.heavy_hitter.unit' },
-  iron_wall: { title: 'ending.award.iron_wall.title', blurb: 'ending.award.iron_wall.blurb', unit: 'ending.award.iron_wall.unit' },
-  last_stand: { title: 'ending.award.last_stand.title', blurb: 'ending.award.last_stand.blurb', unit: 'ending.award.last_stand.unit' },
-  instigator: { title: 'ending.award.instigator.title', blurb: 'ending.award.instigator.blurb', unit: 'ending.award.instigator.unit' },
-  landlord: { title: 'ending.award.landlord.title', blurb: 'ending.award.landlord.blurb', unit: 'ending.award.landlord.unit' },
-  treasurer: { title: 'ending.award.treasurer.title', blurb: 'ending.award.treasurer.blurb', unit: 'ending.award.treasurer.unit' },
-  scholar: { title: 'ending.award.scholar.title', blurb: 'ending.award.scholar.blurb', unit: 'ending.award.scholar.unit' },
-  shipwright: { title: 'ending.award.shipwright.title', blurb: 'ending.award.shipwright.blurb', unit: 'ending.award.shipwright.unit' },
-  merchant: { title: 'ending.award.merchant.title', blurb: 'ending.award.merchant.blurb', unit: 'ending.award.merchant.unit' },
-  statesman: { title: 'ending.award.statesman.title', blurb: 'ending.award.statesman.blurb', unit: 'ending.award.statesman.unit' },
-};
 
 const DUR_KEY: Record<'days' | 'hours' | 'minutes', PluralKey> = {
   days: 'ending.dur.days', hours: 'ending.dur.hours', minutes: 'ending.dur.minutes',
@@ -557,20 +527,12 @@ function Standings({ data }: { data: EndingPayload }) {
 
 function AwardCard({ c }: { c: AwardCardModel }) {
   const k = AWARD_KEYS[c.id];
-  const cls = c.ship?.shipClass;
-  const shipText = c.ship
-    ? (() => {
-      const className = cls ? tk(`data.ship.${cls}.name`, cls) : t('ending.award.shipUnknown');
-      return c.ship.captainName
-        ? t('ending.award.shipCapt', { name: c.ship.name, class: className, captain: c.ship.captainName })
-        : t('ending.award.ship', { name: c.ship.name, class: className });
-    })()
-    : null;
+  const shipText = c.ship ? shipLabel(c.ship) : null;
   return (
     <article className="ep-panel ep-aw">
       <div className="ep-aw__stripe" style={{ background: c.winner.color }} />
       <div className="ep-aw__gl" aria-hidden>
-        <svg viewBox="0 0 24 24"><path d={AWARD_GLYPH[c.id]} /></svg>
+        <AwardGlyph id={c.id} />
       </div>
       <h4 className="ep-aw__ttl">{t(k.title)}</h4>
       <div className="ep-aw__bl">{t(k.blurb)}</div>
