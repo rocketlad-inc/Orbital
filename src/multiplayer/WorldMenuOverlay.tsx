@@ -642,7 +642,7 @@ export const WorldMenuOverlay: React.FC = () => {
   // the station art and in its card: as tags of their own they took the
   // same patch of sky as the surface tags (Lorne, 2026-10-20: "we got
   // overlapping here") ----
-  const staW = mobile ? 84 : 130, staH = staW;
+  const staW = mobile ? 84 : shortDesk ? 100 : 130, staH = staW;
   const staX = mobile ? 8 : Math.min(vw - dockW - staW - 30, (ctlLeft ?? vw) - staW - 10);
   const staY = mobile ? TOPBAR + 10 + chromeH.panel + 10 : TOPBAR + 10 + 40 + 14;
   const STA_CHIP_H = 30;
@@ -655,14 +655,12 @@ export const WorldMenuOverlay: React.FC = () => {
   // A SHORT window has no sky for a column of them: two abreast, name and
   // level only (the rest is in the card), or they land on the surface tags.
   const MOD_COLS = shortDesk ? 2 : 1;
-  const MOD_W = shortDesk ? 2 * 112 + 4 : 168, MOD_H = shortDesk ? 26 : 36, MOD_GAP = 4;
-  // ...and BESIDE the station, level with its foot: under it they took
-  // the sky the surface tags arc through (1000x690 measured).
-  const modLeft = shortDesk ? staX - 8 - MOD_W : staX + staW - MOD_W;
+  const MOD_W = shortDesk ? 2 * 100 + 4 : 168, MOD_H = shortDesk ? 24 : 36, MOD_GAP = 4;
+  const modLeft = staX + staW - MOD_W;
   const modRows = Math.ceil(orbitKinds.length / MOD_COLS);
   const modsH = modRows ? modRows * MOD_H + (modRows - 1) * MOD_GAP : 0;
   const rigLeft = mobile || !orbitKinds.length ? staX : Math.min(staX, modLeft);
-  const modTop = shortDesk ? staY + staH - modsH : staY + staH + 6;
+  const modTop = staY + staH + 6;
   const rigBottom = mobile ? staY + (myStation ? STA_CHIP_H : 70) : Math.max(staY + staH, modTop + modsH);
 
   // ---- orb cluster placement: ONE shift, two constraints ----
