@@ -231,6 +231,8 @@ export const WorldMenuOverlay: React.FC = () => {
     return base - Math.max(0, horizon - (peekTop - 40));
   };
   const grabRef = useRef<{ y: number; moved?: boolean } | null>(null);
+  // The section tab last scrolled into view (only a change scrolls it).
+  const tabsOnRef = useRef<string | null>(null);
   // The structure whose card is open: one at a time, cleared per world.
   const [picked, setPicked] = useState<{ kind: BuildingKind; column: 'surface' | 'orbit' } | null>(null);
   const pickedKind = picked?.kind ?? null;
@@ -1517,7 +1519,7 @@ export const WorldMenuOverlay: React.FC = () => {
       return n + (host ? kindsOf(side).filter(k => statusOf(k, host, side).lockObj).length : 0);
     }, 0);
     const stationMods = myStation ? Object.values(myStation.buildings ?? {}).filter(v => Number(v) > 0).length : 0;
-    type Card = { id: string; label: string; sub: string; tone?: string; meter?: number; badgeN?: number; go: () => void };
+    type Card = { id: string; label: string; short?: string; sub: string; tone?: string; meter?: number; badgeN?: number; go: () => void };
     const cards: Card[] = [];
     if (rawHere && tfTab) {
       cards.push({ id: 'terraform', label: t('worldmenu.bar.terraform'), sub: tfTab.sub, tone: 'is-tf',
@@ -1532,7 +1534,7 @@ export const WorldMenuOverlay: React.FC = () => {
         go: () => { setPside('surface'); setPview('structures'); } });
     }
     if (siloOk && myCity?.missileSilo) {
-      cards.push({ id: 'silo', label: t('worldmenu.bar.silo'), tone: 'is-silo', badgeN: raid?.groups,
+      cards.push({ id: 'silo', label: t('worldmenu.bar.silo'), short: t('worldmenu.silo.m.silo'), tone: 'is-silo', badgeN: raid?.groups,
         sub: t('worldmenu.tag.magazine', { n: myCity.missileSilo.stock, cap: siloCap }), go: () => setPview('silo') });
     }
     if (myCity || myStation) {
@@ -1609,19 +1611,16 @@ export const WorldMenuOverlay: React.FC = () => {
     const sideHost = hostOf(side);
     const structuresView = (
       <>
-        <div className="wmp-title">
-          <h2>{t('worldmenu.bar.structures')}</h2>
-          {sideAvail.surface && sideAvail.orbit && (
-            <div className="wmp-seg" role="group" aria-label={t('worldmenu.p.where')}>
-              {(['surface', 'orbit'] as const).map(x => (
-                <button key={x} type="button" aria-pressed={side === x} className={side === x ? 'is-on' : ''}
-                  data-testid={`wmp-side-${x}`} onClick={() => setPside(x)}>
-                  {x === 'surface' ? t('worldmenu.col.surface') : t('worldmenu.col.orbit')}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        {/* Surface or orbit is the STRUCTURES / STATION tab above; the
+            station's own name and hull lead its list. */}
+        {side === 'orbit' && myStation && (
+          <div className="wmp-idrow">
+            <span className="wmp-place">{myStation.name}</span>
+            <span className="wmp-pop" style={{ color: hpColor(myStation.hp / Math.max(1, myStation.maxHp)) }}>
+              ◈ <b>{Math.round(myStation.hp)}/{myStation.maxHp}</b>
+            </span>
+          </div>
+        )}
         <div className="wmp-list" data-testid="wm-structures">
           {sideHost ? sortedOf(side).map(k => row(k, side, sideHost)) : (side === 'surface' ? surfaceEls : orbitEls)}
         </div>
@@ -1719,7 +1718,6 @@ export const WorldMenuOverlay: React.FC = () => {
     // ---- OVERVIEW: everything the desktop header says ----
     const overviewView = (
       <>
-        <div className="wmp-title"><h2>{t('worldmenu.p.overview')}</h2></div>
         <div className="wmp-ov">
           {metricsEl}
           {settlementsEl}
@@ -1776,6 +1774,34 @@ export const WorldMenuOverlay: React.FC = () => {
     // The grabber: a tap or a drag down drops the sheet to the world; on
     // the world, a tap or a drag up opens the OVERVIEW.
     const grabTap = () => { if (view === 'home') setPview('overview'); else goHome(); };
+    // THE SECTIONS STAY ON THE SHEET (Lorne, 2026-10-20: "From this page,
+    // how would I open the ship build menu?"). At a peek they are the
+    // cards; past it, the same sections as a tab strip over every view, so
+    // the yard is one tap from the structure list and the silo one tap
+    // from the yard, never a trip back down to the world.
+    const structSide = view === 'structure' ? pickedColumn : side;
+    const activeId = view === 'structures' || view === 'structure'
+      ? (structSide === 'orbit' && cards.some(c => c.id === 'station') ? 'station' : 'structures')
+      : view;
+    const tabsStrip = view !== 'home' && cards.length > 1 ? (
+      <nav className="wmp-tabs" aria-label={t('worldmenu.bar.aria')} data-testid="wmp-tabs"
+        ref={el => {
+          if (!el || tabsOnRef.current === activeId) return;
+          tabsOnRef.current = activeId;
+          const on = el.querySelector('.is-on') as HTMLElement | null;
+          if (on) el.scrollTo({ left: Math.max(0, on.offsetLeft - (el.clientWidth - on.offsetWidth) / 2) });
+        }}>
+        {cards.map(c => (
+          <button key={c.id} type="button" className={`wmp-tab ${c.tone ?? ''}${c.id === activeId ? ' is-on' : ''}`}
+            aria-current={c.id === activeId ? 'page' : undefined} data-testid={`wmp-tab-${c.id}`}
+            onClick={() => { if (c.id !== activeId || view === 'structure') { setPicked(null); c.go(); } }}>
+            {c.short ?? c.label}
+            {c.badgeN ? <b className="wmp-card-badge">{c.badgeN}</b> : null}
+          </button>
+        ))}
+      </nav>
+    ) : null;
+    if (view === 'home') tabsOnRef.current = null;
     const sheet = (
       <section className={`wmp-sheet is-${level}`} data-testid="wmp-sheet" aria-label={t('worldmenu.p.sheet')}>
         <button type="button" className="wmp-grab"
@@ -1800,6 +1826,7 @@ export const WorldMenuOverlay: React.FC = () => {
           }}>
           <i aria-hidden="true" />
         </button>
+        {tabsStrip}
         <div className={`wmp-body${hosted ? ' is-host' : ''}`}>{content}</div>
         {foot && <div className="wmp-foot">{foot}</div>}
       </section>

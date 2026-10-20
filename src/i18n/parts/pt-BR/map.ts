@@ -310,7 +310,6 @@ export const map: Catalog = {
   'worldmenu.p.modules_one': '{n} módulo',
   'worldmenu.p.modules_other': '{n} módulos',
   'worldmenu.p.overview': 'VISÃO GERAL',
-  'worldmenu.p.where': 'Superfície ou órbita',
   'worldmenu.p.of': '{i} de {n}',
   'worldmenu.p.holds': 'CAPACIDADE',
   'worldmenu.p.lines': 'LINHAS',
