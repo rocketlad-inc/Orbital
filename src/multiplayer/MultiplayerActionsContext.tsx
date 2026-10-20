@@ -372,7 +372,10 @@ export interface MultiplayerActions {
   /** A salvo at a hull in flight: it meets the hull's group on the way. */
   launchMissilesAtShip: (settlementId: string, targetShipId: string, count: number) => Promise<MpActionResult & { meetTick?: number }>;
   /** For each lead hull: ticks until a salvo leaving now would meet it, or null. */
-  missileIntercepts: (fromBodyId: string, shipIds: string[]) => Promise<Record<string, number | null>>;
+  /** Per hull: ticks until a salvo leaving now meets it, and how many of
+   *  your own hulls that burst would catch (and at which world), or null
+   *  when it cannot be caught. */
+  missileIntercepts: (fromBodyId: string, shipIds: string[]) => Promise<Record<string, { ticks: number; ownHits: { n: number; world: string | null } } | null>>;
   /** Answer a found ship's offer (worker/discoveryOffers.js): claim it
    *  into the fleet, or refuse it and leave it for another empire. */
   claimDiscovery: (bodyId: string) => Promise<MpActionResult>;
@@ -1195,13 +1198,15 @@ export function MultiplayerActionsProvider({
     },
     async missileIntercepts(fromBodyId, shipIds) {
       if (shipIds.length === 0) return {};
-      const res = await rawApiFetch<{ meet: Record<string, { ticks: number } | null> }>(
+      const res = await rawApiFetch<{ meet: Record<string, { ticks: number; own_hits?: { n: number; world: string | null } } | null> }>(
         `/api/games/${gameId}/missiles/intercepts?from=${encodeURIComponent(qualify(fromBodyId))}&ships=${shipIds.map(id => encodeURIComponent(qualify(id))).join(',')}`);
       if (!res.ok) return {};
       // Ship ids keep their game prefix on the client (shipToClient), so
       // the answer is keyed exactly as asked.
-      const out: Record<string, number | null> = {};
-      for (const [k, v] of Object.entries(res.data.meet ?? {})) out[k] = v ? v.ticks : null;
+      const out: Record<string, { ticks: number; ownHits: { n: number; world: string | null } } | null> = {};
+      for (const [k, v] of Object.entries(res.data.meet ?? {})) {
+        out[k] = v ? { ticks: v.ticks, ownHits: { n: Number(v.own_hits?.n ?? 0), world: v.own_hits?.world ?? null } } : null;
+      }
       return out;
     },
     async missileEta(fromBodyId, toBodyIds) {
