@@ -105,7 +105,7 @@
    while the list above it scrolls. */
 .wm-silo-fire {
   position: sticky; bottom: 0; z-index: 1; display: flex; flex-direction: column; gap: 8px;
-  margin: 0 -2px; padding: 8px 2px 4px; background: rgba(10, 15, 22, 0.97); border-top: 1px solid #1c2836;
+  margin: 0 -2px; padding: 8px 2px 4px; background: #0a0f16; border-top: 1px solid #1c2836;
 }
 .wm-silo-irow {
   display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 2px 10px; align-items: center;
@@ -193,3 +193,8 @@
   .wm-silo-col:nth-child(2) { grid-column: 2; grid-row: 1; overflow: visible; }
   .wm-silo-col:nth-child(3) { grid-column: 2; grid-row: 2; border-top: 1px solid #1c2836; padding-top: 8px; }
 }
+/* Target rows are one line: not 40px tap targets on a desktop. */
+.wm-silo .wm-silo-list .wm-silo-opt { min-height: 0; }
+/* A phone gives the silo more of the screen than the yard: the list and
+   the pinned LAUNCH both need room. */
+.wm-mobile .wm-fleet.wm-silo { max-height: 64vh; overflow: hidden; }
