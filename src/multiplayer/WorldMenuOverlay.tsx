@@ -1129,18 +1129,25 @@ export const WorldMenuOverlay: React.FC = () => {
             </button>
           </>
         )}
+        {/* THE BUILD BUTTON IS ALWAYS ON THE CARD (Lorne, 2026-10-20: "I
+            also want a build button on the building cards when you open
+            them"). Locked or busy, it is there and greyed, with the reason
+            beside it, so the card always answers "can I build this?". */}
         {st.state === 'ready' && (
-          lockObj ? (
-            <div className="wm-card-row is-locked"><span>🔒 {lockObj.label} — {lockObj.text}</span></div>
-          ) : (
-            <>
-              <div className="wm-card-row"><span>{t('worldmenu.card.cost')}</span><b className="is-cost">{costText(kind, level)}</b></div>
-              <button type="button" className="wm-card-go" data-testid="wm-card-go"
-                onClick={() => { void queueBuild(kind, pickedHost); }}>
-                {level > 0 ? t('worldmenu.card.upgrade', { lv: level + 1 }) : t('worldmenu.card.build')}
-              </button>
-            </>
-          )
+          <>
+            <div className="wm-card-row"><span>{t('worldmenu.card.cost')}</span><b className="is-cost">{costText(kind, level)}</b></div>
+            {lockObj && <div className="wm-card-row is-locked"><span>🔒 {lockObj.label} — {lockObj.text}</span></div>}
+            <button type="button" className="wm-card-go" data-testid="wm-card-go" disabled={!!lockObj}
+              title={lockObj ? `${lockObj.label} — ${lockObj.text}` : undefined}
+              onClick={() => { if (!lockObj) void queueBuild(kind, pickedHost); }}>
+              {level > 0 ? t('worldmenu.card.upgrade', { lv: level + 1 }) : t('worldmenu.card.build')}
+            </button>
+          </>
+        )}
+        {st.state === 'queued' && (
+          <button type="button" className="wm-card-go" data-testid="wm-card-go" disabled>
+            {t('worldmenu.card.buildingBtn', { n: st.ticksLeft })}
+          </button>
         )}
       </section>
     );

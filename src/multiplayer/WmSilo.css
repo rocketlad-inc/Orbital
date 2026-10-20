@@ -115,6 +115,14 @@
 .wm-silo-more b { margin-left: 6px; font-family: 'Chivo Mono', monospace; font-weight: 400; letter-spacing: 0; color: #b8c8d6; }
 .wm-silo-more span { margin-left: 4px; }
 .wm-silo-more .wm-silo-fly { margin-left: 6px; font-family: 'Chivo Mono', monospace; font-style: normal; letter-spacing: 0; color: #4ecdc4; }
+.wm-silo-search {
+  box-sizing: border-box; width: 100%; padding: 7px 10px; border-radius: 4px;
+  border: 1px solid #2a3d50; background: #0a1019; color: #e6edf3;
+  font-family: 'Chivo Mono', monospace; font-size: 11px;
+}
+.wm-silo-search::placeholder { color: #6b8195; }
+.wm-silo-search:focus { outline: none; border-color: #4ecdc4; }
+.wm-silo.is-mobile .wm-silo-search { min-height: 44px; font-size: 16px; }
 .wm-silo-folds { display: flex; gap: 18px; flex-wrap: wrap; padding-top: 4px; border-top: 1px solid #1c2836; }
 .wm-silo-more:focus-visible { outline: 2px solid #4ecdc4; outline-offset: 2px; }
 .wm-silo-seg button { line-height: 1.25; }

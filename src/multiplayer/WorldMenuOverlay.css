@@ -994,7 +994,8 @@
   color: #ffd27a; font-family: inherit; font-size: 10px; font-weight: 700; letter-spacing: 0.14em;
   padding: 9px 12px; cursor: pointer;
 }
-.wm-card-go:hover { background: rgba(255, 184, 77, 0.2); }
+.wm-card-go:hover:not(:disabled) { background: rgba(255, 184, 77, 0.2); }
+.wm-card-go:disabled { cursor: default; opacity: 0.45; border-color: #2a3d50; background: none; color: #8fa6ba; }
 .wm-card-go.is-quiet { background: none; border-color: #2a3d50; color: #b8c8d6; }
 .wm-card-go.is-quiet:hover { border-color: #4ecdc4; color: #4ecdc4; }
 .wm-card-go:focus-visible, .wm-card-x:focus-visible { outline: 2px solid #4ecdc4; outline-offset: 2px; }
