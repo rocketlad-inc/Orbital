@@ -198,6 +198,9 @@ export const WorldMenuOverlay: React.FC = () => {
     setDrawer(d);
     try { if (d) localStorage.setItem(DRAWER_KEY, d); else localStorage.removeItem(DRAWER_KEY); } catch { /* private window */ }
   }, []);
+  // A phone opening the silo folds the world's header away: the silo is
+  // a console that wants the screen (Lorne, 2026-10-20, the mobile pass).
+  useEffect(() => { if (mobile && drawer === 'silo') setCollapsed(true); }, [mobile, drawer]);
   // The structure whose card is open: one at a time, cleared per world.
   const [picked, setPicked] = useState<{ kind: BuildingKind; column: 'surface' | 'orbit' } | null>(null);
   const pickedKind = picked?.kind ?? null;
