@@ -932,8 +932,10 @@ export const WorldMenuOverlay: React.FC = () => {
             const px = cx + Math.sin(th) * R, py = cy - Math.cos(th) * R;
             const rect = { l: px - TAG_W / 2, t: py - TAG_H, r: px + TAG_W / 2, b: py };
             for (const o of obstacles) score += overlap(rect, o);
+            // A tag grazing a roof is the lesser evil: the header, the
+            // station and the orbs win (weighted like the area it covers).
             const clearance = (R - cr) - (roofOf(surfKinds[i]) + 14);
-            if (clearance < 0) score += -clearance * TAG_W * 3;
+            if (clearance < 0) score += -clearance * TAG_W * 0.5;
             score += 4 * TAG_H * (Math.max(0, railW + 8 - rect.l) + Math.max(0, rect.r - (vw - dockW - 8))
               + Math.max(0, TOPBAR + 8 - rect.t));
           }
@@ -958,15 +960,18 @@ export const WorldMenuOverlay: React.FC = () => {
     const th = thetaAt(i), rr = cr + roofOf(surfKinds[i]);
     return { x: cx + Math.sin(th) * rr, y: cy - Math.cos(th) * rr };
   };
-  // Phone rows: the lower row (odd) sits just over its tallest roof, the
-  // upper row a tag's height above that — and never on the station chip.
-  const rowB = Math.min(...surfKinds.map((_k, i) => (i % 2 === 1 ? roofPoint(i).y - 12 : Infinity)), apexY - 30);
+  // Phone rows: the LOWER row takes the even tags (three of five: both
+  // ends and the middle) just over their tallest roof; the UPPER row the
+  // two between, a tag's height higher. Upper-row tags never reach the
+  // screen's right edge, where the map's side buttons are.
+  const upper = (i: number) => i % 2 === 1;
+  const rowB = Math.min(...surfKinds.map((_k, i) => (!upper(i) ? roofPoint(i).y - 12 : Infinity)), apexY - 30);
   const rowA = Math.max(rigBottom + 8 + TAG_H,
-    Math.min(rowB - TAG_H - 8, ...surfKinds.map((_k, i) => (i % 2 === 0 ? roofPoint(i).y - 12 : Infinity))));
+    Math.min(rowB - TAG_H - 8, ...surfKinds.map((_k, i) => (upper(i) ? roofPoint(i).y - 12 : Infinity))));
   const surfTags = surfKinds.map((kind, i) => {
     let px: number, py: number;
     if (mobile) {
-      py = i % 2 === 0 ? rowA : Math.max(rowB, rowA + TAG_H + 8);
+      py = upper(i) ? rowA : Math.max(rowB, rowA + TAG_H + 8);
       // The map's own side buttons (box-select, previous / next) run down
       // the phone's right edge to about y 290; a tag that high stays
       // left of them.
