@@ -218,7 +218,18 @@ export const WorldMenuOverlay: React.FC = () => {
   const [pside, setPside] = useState<'surface' | 'orbit'>('surface');
   const [pBack, setPBack] = useState<PhoneView>('home');
   const pLevel = phoneLevel(pview);
-  const phoneShift = (h: number) => -(MOBILE_LIFT_FRAC + (pLevel === 'peek' ? 0 : PHONE_HALF_LIFT)) * h;
+  // Where the peek sheet's top edge lands (window px), measured: a short
+  // phone's peek reached over the horizon and hid the buildings (360x640).
+  const [peekTop, setPeekTop] = useState<number | null>(null);
+  const phoneShift = (h: number) => {
+    if (pLevel !== 'peek') return -(MOBILE_LIFT_FRAC + PHONE_HALF_LIFT) * h;
+    const base = -MOBILE_LIFT_FRAC * h;
+    if (peekTop === null) return base;
+    // Lift only as far as it takes to keep a strip of ground between the
+    // horizon and the sheet; a tall phone needs none.
+    const horizon = (S1Y_FRAC - Z1_FRAC) * h + base + mapTop;
+    return base - Math.max(0, horizon - (peekTop - 40));
+  };
   const grabRef = useRef<{ y: number; moved?: boolean } | null>(null);
   // The structure whose card is open: one at a time, cleared per world.
   const [picked, setPicked] = useState<{ kind: BuildingKind; column: 'surface' | 'orbit' } | null>(null);
@@ -346,7 +357,7 @@ export const WorldMenuOverlay: React.FC = () => {
       updateCamera({ scale: s1, x: off.x, y: off.y });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [uiState.selectedBodyId, vw, vh, pLevel]);
+  }, [uiState.selectedBodyId, vw, vh, pLevel, peekTop, mapTop]);
 
   const close = useCallback((restoreCamera: boolean) => {
     setOpenId(null);
@@ -399,6 +410,20 @@ export const WorldMenuOverlay: React.FC = () => {
   // .wm-top/.wm-fleet didn't exist and observed nothing — every mobile
   // row then positioned itself off the stale fallback heights.
   const chromeMounted = !!openId && op > 0.01;
+  // The phone's peek: track its top edge (a raid alert appearing grows it).
+  useEffect(() => {
+    if (!mobile || !chromeMounted || pLevel !== 'peek') return;
+    const el = document.querySelector('.wmp-sheet.is-peek') as HTMLElement | null;
+    if (!el) return;
+    const m = () => {
+      const top = Math.round(el.getBoundingClientRect().top);
+      setPeekTop(p => (p !== null && Math.abs(p - top) < 4 ? p : top));
+    };
+    m();
+    const ro = new ResizeObserver(m);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [mobile, chromeMounted, pLevel, openId]);
   useEffect(() => {
     if (!chromeMounted) return;
     const panelEl = document.querySelector('.wm-top') as HTMLElement | null;
@@ -2928,7 +2953,7 @@ const WmFleet: React.FC<{
                 return (
                   <div key={cls} className="wmp-hull is-locked" title={h.lock ?? undefined} data-testid={`wm-hull-${cls}`}>
                     <span className="wmp-hull-nm">{h.def.displayName.toUpperCase()}</span>
-                    <span className="wmp-hull-meta">{h.lockObj?.label ?? ''}</span>
+                    <span className="wmp-hull-meta">{(h.lockObj?.text ?? '').replace(/^unlocks at\s*/i, '')}</span>
                     <span className="wmp-hull-meta">{h.costOre}m · {h.costCredits}c · {h.def.buildTime} T</span>
                   </div>
                 );
