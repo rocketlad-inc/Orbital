@@ -863,7 +863,7 @@ export const WorldMenuOverlay: React.FC = () => {
   const TAG_FRAC: Record<string, number> = { ...PART_FRACS, shields: 0 };
   const surfKinds = myCity ? [...cols.surface].sort((a, b) => (TAG_FRAC[a] ?? 0) - (TAG_FRAC[b] ?? 0)) : [];
   const TAG_W = mobile ? Math.min(112, Math.floor((2 * (vw - 24)) / Math.max(1, surfKinds.length)) - 8)
-    : vw < 1280 ? 126 : 144;
+    : vw < 1100 ? 112 : vw < 1280 ? 126 : 144;
   const TAG_H = mobile ? 50 : 54;
   const apexY = cy - cr;
   // THE ARC IS PLACED, NOT ASSUMED. The header, the ✕ MAP button, the
@@ -896,7 +896,7 @@ export const WorldMenuOverlay: React.FC = () => {
     // Lower radii last: closer to the horizon when the sky above is full
     // (a short window: header, orbs and station all up there).
     for (const dR of [128, 104, 152, 84, 176, 64, 48]) {
-      for (const sh of [0, -5, 5, -10, 10, -15, 15]) {
+      for (const sh of [0, -5, 5, -10, 10, -15, 15, -20, 20]) {
         for (const sc of [1, 0.92]) {
           const R = cr + dR;
           const step = Math.max((TAG_W + 6) / R, (sc * (TAG_W + 18)) / R);
