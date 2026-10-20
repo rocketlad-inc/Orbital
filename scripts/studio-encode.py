@@ -24,14 +24,16 @@ p.add_argument('--gif-fps', type=float, default=15)
 p.add_argument('--webp-fps', type=float, default=30)
 p.add_argument('--out', default=None)
 p.add_argument('--no-gif', action='store_true')
+# Time-lapse: 2 plays the take twice as fast by sampling every other moment.
+p.add_argument('--speed', type=float, default=1.0)
 a = p.parse_args()
 
 src = a.dir
 name = a.name or os.path.basename(os.path.normpath(src))
 out_dir = a.out or os.path.dirname(os.path.normpath(src)) or '.'
 frames = json.load(open(os.path.join(src, 'frames.json')))
-times = [f['t'] - frames[0]['t'] for f in frames]
-end = times[-1] + (times[1] - times[0] if len(times) > 1 else 1 / 30)
+times = [(f['t'] - frames[0]['t']) / max(0.1, a.speed) for f in frames]
+end = times[-1] + (times[1] - times[0] if len(times) > 1 else 1 / 30 / max(0.1, a.speed))
 
 def pick(fps):
     n = int(round(end * fps))
