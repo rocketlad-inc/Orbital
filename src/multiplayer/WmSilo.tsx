@@ -15,7 +15,8 @@
 //   AUTO-DEFENCE — off / shoot down incoming missiles / also intercept
 //              hostile ships flying here (a salvo per group), and a
 //              reserve it never spends
-//   BUILD    — order missiles (40m + 40c, 12 ticks, one at a time), the
+//   BUILD    — order missiles (40m + 40c, 12 ticks, one per silo level at
+//              once: Lorne, 2026-10-20), the
 //              queue with its countdown, cancel for a full refund
 // ============================================================
 
@@ -476,12 +477,12 @@ export const WmSilo: React.FC<{
                   <span className="wm-silo-qt">{left != null ? `T-${left}` : t('worldmenu.silo.waiting')}</span>
                   <button type="button" className="wm-silo-x" aria-label={t('worldmenu.silo.cancelAria')} disabled={busy !== null}
                     onClick={() => cancel(o.id)}>✕</button>
-                  {i === 0 && <i className="wm-silo-bar" style={{ width: `${Math.round(pct * 100)}%` }} />}
+                  {o.startTick != null && <i className="wm-silo-bar" style={{ width: `${Math.round(pct * 100)}%` }} />}
                 </div>
               );
             })}
           </div>
-          <span className="wm-silo-note">{t('worldmenu.silo.buildNote')}</span>
+          <span className="wm-silo-note">{tn('worldmenu.silo.buildNote', Math.max(1, level))}</span>
         </div>
       </div>
     </section>
