@@ -1089,7 +1089,7 @@
 /* ---- a desktop station's modules, always listed under it ---- */
 .wm-mods { position: absolute; z-index: 2; display: flex; flex-direction: column; }
 .wm-mod {
-  position: relative; box-sizing: border-box; overflow: hidden;
+  position: relative; box-sizing: border-box; overflow: hidden; min-height: 0;
   display: grid; grid-template-columns: minmax(0, 1fr) auto; align-content: center; gap: 2px 8px;
   padding: 0 10px; text-align: left;
   background: rgba(10, 15, 22, 0.92); border: 1px solid #2a3d50; border-radius: 5px;
