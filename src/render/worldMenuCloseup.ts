@@ -619,7 +619,9 @@ export function drawWorldMenuCloseup(
     drawSilo(rc.ctx, c, city, p1, alpha);
     drawSite(rc.ctx, c, city, extras.tick ?? 0, alpha);
     drawShieldDome(rc.ctx, c, city, rc.t, alpha);
-    drawHpTag(rc.ctx, c, city.name, city.hp, city.maxHp, alpha);
+    // A rival's city wears its name and hit points on the world; yours are
+    // in the menu's header, and here they sat under your structure tags.
+    if (city.ownedBy !== viewerFactionId) drawHpTag(rc.ctx, c, city.name, city.hp, city.maxHp, alpha);
     drawFire(rc.ctx, c, city.hp / Math.max(1, city.maxHp), rc.t, alpha);
   }
 }

@@ -4480,6 +4480,10 @@ export function drawBody(
   // Sol; otherwise only at zoomed-in scales. Black holes ride the same
   // always-on rule as stars so "CYGNUS X" stays readable when the
   // player is pulled all the way out hunting for the far systems.
+  // The world whose menu is open says its name in the menu's header; its
+  // map label ("EARTH 2M 6C 3S") sat at the apex of the horizon, under the
+  // structure tags.
+  if (getWorldMenuOpenBodyId() === body.id) labelSuppressed = true;
   const alwaysShowLabel = bodyLabelAlwaysOn(body) && !labelSuppressed;
   // Rows stagger up OR down from the body's own two anchors (never
   // sideways, never onto a neighbour's territory) — see
