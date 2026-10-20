@@ -75,6 +75,12 @@ export function legProgress(f, leg) {
   const T = Number(leg.arriveTick) - Number(leg.startTick);
   const t1 = Number(leg.flipTick) - Number(leg.startTick);
   if (!(a0 > 0) || !(brake > 0) || !(T > 0) || !(t1 > 0)) return burnProgress(f);
+  // A leg that never flips (a missile: it bursts on contact) pushes to
+  // the end; its whole distance is the push's.
+  if (t1 >= T - 1e-9) {
+    const all = boostState(T, a0, ramp, max, etau).x;
+    return all > 0 ? Math.min(1, boostState(f * T, a0, ramp, max, etau).x / all) : f;
+  }
   const s1 = boostState(t1, a0, ramp, max, etau);
   const total = s1.x + (s1.v * s1.v) / (2 * brake);
   if (!(total > 0)) return f;
