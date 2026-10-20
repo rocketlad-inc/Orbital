@@ -20,7 +20,8 @@
 // key is read as a level.
 //
 // A LAUNCHED SALVO is one game_ships row of class 'missile' carrying
-// missile_count, flying one server-planned leg at MISSILE_ACCEL_G. Being a
+// missile_count, flying one server-planned leg (missileTicks: half a
+// two-engine hull's trip, pushing the whole way, no brake). Being a
 // ship row, it gets flight, the map's arcs, fog of war and the inbound
 // warnings for free; it is kept out of combat, captains, sensors and the
 // gate autopilot, and it is never "destroyed" (no ship_destroyed noise):
@@ -44,10 +45,12 @@
 // MISSILE_BLAST_RADIUS (40) of the meeting, friend or foe, 10 per missile;
 // auto-intercept sends the silo's own salvo size (missile_salvo, 0179) at
 // each hostile group bound for ITS world, as soon as a meeting exists.
-//   - The salvo flies a RENDEZVOUS arc (src/physics/rendezvous.js, the
-//     burn / coast / burn a ship's intercept order flies) planned against
-//     the target group's lead hull: the rv_* columns of its node, which
-//     the client already draws. Its node's arrival is the target's.
+//   - The salvo flies ONE straight push at the first whole tick the
+//     target group's lead hull is somewhere it can reach in time, and
+//     bursts there: no second burn to match speed (Lorne, 2026-10-20:
+//     "explode on contact NOT follow or orbit"). Stored in the rv_*
+//     columns of its node with B = 0, which the client already draws.
+//     Its node's arrival is the target's.
 //   - 0. DETONATE: on the tick its meeting comes up, the salvo bursts
 //     where its arc puts it. The target may have turned away since; the
 //     missiles do not chase, they burst where it was going to be.
@@ -57,21 +60,34 @@
 // ============================================================
 
 import { makeRouteMath } from './routeMath.js';
-import { legTicks, shapeForArrival, fromG } from './burn.js';
+import { legTicks, noBrakeForArrival, fromG, SHIP_ENGINE_ACCEL } from './burn.js';
 import { parkOrbitRadius } from './factions.js';
 import { hostilePairs, pairKey } from './wars.js';
 import { resolveCaptainOnDeath } from './captains.js';
 import { loadFlights, groupFlights } from './flightState.js';
-import { solveRendezvous, rendezvousStateAt } from '../src/physics/rendezvous.js';
+import { rendezvousStateAt } from '../src/physics/rendezvous.js';
 
 export const MISSILE_DAMAGE = 10;
 export const MISSILE_COST = { metal: 40, gold: 40 };
 export const MISSILE_BUILD_TICKS = 12;
 export const MISSILES_PER_LEVEL = 5;
-/** A missile's push: 15x a ship's launch push, so Earth to Mars is about
- *  6 ticks against a ship's 18. */
-export const MISSILE_ACCEL_G = 0.3;
-export const MISSILE_ACCEL = fromG(MISSILE_ACCEL_G);
+/** HOW FAST A MISSILE FLIES (Lorne, 2026-10-20, "2x the speed of a ship
+ *  with two engines. They also should not need to brake, since their
+ *  point is to explode on contact NOT follow or orbit"; his pick from the
+ *  table: half the trip time). A salvo takes HALF the ticks a two-engine
+ *  hull (no Propulsion research) would on the same trip, and pushes the
+ *  whole way: no flip, no brake. Earth-Mars 7 T, Pluto-Makemake 17.
+ *  Tied to the ship burn, so retuning ships moves missiles with them. */
+export const MISSILE_REF_ENGINES = 2;
+export const MISSILE_SPEED_MUL = 2;
+/** The reference hull's launch push: each engine cuts travel time 15%
+ *  (shipParts.ts engineTravelMultiplier), and push goes as 1/time^2. */
+export const MISSILE_REF_ACCEL = SHIP_ENGINE_ACCEL / Math.pow(0.85, 2 * MISSILE_REF_ENGINES);
+/** Ticks (unrounded) a salvo needs to cover `d`. */
+export const missileTicks = (d) => legTicks(d, MISSILE_REF_ACCEL) / MISSILE_SPEED_MUL;
+/** Legs launched before 2026-10-20 flew a flat 0.3g; a fallback for a
+ *  row whose push is missing. */
+export const MISSILE_ACCEL = fromG(0.3);
 export const AUTO_MODES = ['off', 'missiles', 'fleets'];
 /** A salvo bursting in open space hits every hull this close to it. */
 export const MISSILE_BLAST_RADIUS = 40;
@@ -236,21 +252,24 @@ export async function missileLeg(DB, gameId, fromId, toId, tick) {
   const { bodyPosAt } = makeRouteMath(DB, gameId);
   const from = await bodyPosAt(fromId, tick);
   let to = await bodyPosAt(toId, tick);
-  let T = Math.max(1, Math.ceil(legTicks(Math.hypot(to.x - from.x, to.y - from.y), MISSILE_ACCEL)));
+  let T = Math.max(1, Math.ceil(missileTicks(Math.hypot(to.x - from.x, to.y - from.y))));
   to = await bodyPosAt(toId, tick + T);
   const d = Math.hypot(to.x - from.x, to.y - from.y);
-  T = Math.max(1, Math.ceil(legTicks(d, MISSILE_ACCEL)));
+  T = Math.max(1, Math.ceil(missileTicks(d)));
   to = await bodyPosAt(toId, tick + T);
   const dFinal = Math.hypot(to.x - from.x, to.y - from.y);
   const fromNext = await bodyPosAt(fromId, tick + 0.01);
-  const shape = dFinal > 0 ? shapeForArrival(dFinal, T, MISSILE_ACCEL) : null;
+  // Pushes the whole way: the flip is the arrival, so it never brakes.
+  const shape = dFinal > 0 ? noBrakeForArrival(dFinal, T, MISSILE_REF_ACCEL) : null;
   return {
     ticks: T,
     arrive: tick + T,
     plan: shape ? {
       lx: from.x, ly: from.y,
       lvx: (fromNext.x - from.x) / 0.01, lvy: (fromNext.y - from.y) / 0.01,
-      acc: shape.accel, flip: tick + shape.t1, brk: shape.brake,
+      // brake_accel must be positive to be read as a leg's own; it is
+      // never reached. The top push stands in.
+      acc: shape.accel, flip: tick + T, brk: shape.max,
       rmp: shape.ramp > 0 ? shape.ramp : null, amax: shape.max, atau: shape.tau > 0 ? shape.tau : null,
     } : null,
   };
@@ -270,20 +289,35 @@ export function planIntercept(F, fromBodyId, tick, targetId) {
   if (!(latest > tick)) return null;
   const p0 = F.sky.bodyPos(fromBodyId, tick);
   const v0 = F.sky.bodyVel(fromBodyId, tick);
-  let sol = null;
-  try {
-    sol = solveRendezvous(p0, v0, MISSILE_ACCEL, (t) => F.stateAt(targetId, t), tick, latest);
-  } catch (e) { console.error('missile intercept solve failed', targetId, e); }
-  if (!sol || !(sol.meetTick > tick) || sol.meetTick > latest) return null;
+  // The first whole tick the target is somewhere a salvo can reach in
+  // time (missileTicks: half a two-engine hull's trip to that spot).
+  let meet = null, at = null;
+  for (let t = tick + 1; t <= latest; t++) {
+    const s = F.stateAt(targetId, t);
+    if (!s) break;
+    if (missileTicks(Math.hypot(s.pos.x - p0.x, s.pos.y - p0.y)) <= t - tick) { meet = t; at = s.pos; break; }
+  }
+  if (meet == null) return null;
+  // ONE straight push, the whole way, that puts the salvo on that spot at
+  // that tick with the launch world's motion folded in: no second burn to
+  // match the target's speed, it bursts there (the rendezvous columns
+  // with B = 0; rendezvousStateAt flies it as arc 1 for the whole trip).
+  const T = meet - tick;
+  const A = {
+    x: (2 * (at.x - p0.x - v0.x * T)) / T,
+    y: (2 * (at.y - p0.y - v0.y * T)) / T,
+  };
+  const acc = Math.hypot(A.x, A.y) / T;
+  if (!(acc > 0)) return null;
   return {
-    meetTick: sol.meetTick,
-    detonateTick: Math.ceil(sol.meetTick),
+    meetTick: meet,
+    detonateTick: meet,
     arrive: Math.round(f.plan.arriveTick),
     dest: f.plan.targetBodyId,
     plan: {
-      lx: p0.x, ly: p0.y, lvx: v0.x, lvy: v0.y, acc: MISSILE_ACCEL,
-      flip: tick + (sol.meetTick - tick) / 2,
-      A: sol.A, B: sol.B,
+      lx: p0.x, ly: p0.y, lvx: v0.x, lvy: v0.y, acc,
+      flip: meet,
+      A, B: { x: 0, y: 0 },
     },
   };
 }
