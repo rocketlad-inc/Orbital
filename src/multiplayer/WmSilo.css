@@ -169,11 +169,27 @@
 .wm-silo-watch i { width: 7px; height: 7px; border-radius: 50%; background: #6ee7b7; }
 
 /* Phone: one column, thumb-sized controls. */
-.wm-silo.is-mobile .wm-silo-cols { grid-template-columns: minmax(0, 1fr); overflow-y: auto; }
-.wm-silo.is-mobile .wm-silo-col { overflow: visible; }
+.wm-silo.is-mobile .wm-silo-cols { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-auto-rows: max-content; overflow-y: auto; }
+.wm-silo.is-mobile .wm-silo-col { overflow: visible; min-height: auto; grid-row: auto; grid-column: auto; }
 .wm-silo.is-mobile .wm-silo-col { padding: 8px 0; }
 .wm-silo.is-mobile .wm-silo-col + .wm-silo-col { border-left: 0; border-top: 1px solid #1c2836; }
 .wm-silo.is-mobile .wm-silo-step { width: 44px; height: 44px; }
 .wm-silo.is-mobile .wm-silo-btn, .wm-silo.is-mobile .wm-silo-target { min-height: 44px; }
 .wm-silo.is-mobile .wm-silo-seg button { min-height: 40px; }
 @media (prefers-reduced-motion: reduce) { .wm-silo * { transition: none !important; } }
+
+/* The silo needs more height than the yard: a taller box on desktop. */
+.wm-fleet.wm-silo:not(.is-mobile) { max-height: min(520px, 64vh); }
+/* The list headings are text buttons, not 40px tap targets (the mobile
+   shell's button floor reaches desktops under 1024 wide). */
+.wm-silo .wm-silo-folds .wm-silo-more { min-height: 0; }
+/* A NARROW DRAWER (a desktop under ~1100 wide, outliner and dock taking
+   their share): INCOMING down the left; auto-defence over build on the
+   right. Three columns there cut the mode buttons and BUILD off. */
+.wm-silo:not(.is-mobile) { container-type: inline-size; }
+@container (max-width: 760px) {
+  .wm-silo-cols { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); grid-template-rows: max-content minmax(0, 1fr); }
+  .wm-silo-col:nth-child(1) { grid-row: 1 / span 2; }
+  .wm-silo-col:nth-child(2) { grid-column: 2; grid-row: 1; overflow: visible; }
+  .wm-silo-col:nth-child(3) { grid-column: 2; grid-row: 2; border-top: 1px solid #1c2836; padding-top: 8px; }
+}
