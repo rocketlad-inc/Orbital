@@ -1098,7 +1098,7 @@
 .wm-modrow.is-work .wm-modrow-st { color: #ffb84d; }
 .wm-modrow.is-booked .wm-modrow-st { color: #4ecdc4; }
 .wm-mobile .wm-modrow { min-height: 48px; }
-.wm-mobile .wm-sta-chip { font-size: 8.5px; }
+.wm-mobile .wm-sta-chip { font-size: 8.5px; white-space: nowrap; padding: 0 12px; }
 
 /* A short desktop window starts with the header collapsed (name, owner,
    output) so the sky keeps room for the structure tags; MORE opens it
