@@ -285,6 +285,8 @@ export const map = {
   'worldmenu.card.cost': 'COST',
   'worldmenu.card.upgrade': 'UPGRADE TO LV {lv}',
   'worldmenu.card.build': 'BUILD',
+  'worldmenu.station.modules': 'MODULES',
+  'worldmenu.station.aria': 'Station modules',
   'worldmenu.silo.title': 'MISSILE SILO',
   'worldmenu.silo.level': '{name} · LV {n}',
   'worldmenu.silo.magazine': 'MAGAZINE',

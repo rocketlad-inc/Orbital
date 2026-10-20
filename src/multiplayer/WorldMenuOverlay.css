@@ -887,8 +887,10 @@
 .wm-root { --wm-bar-h: 72px; }
 .wm-root.wm-mobile { --wm-bar-h: 66px; }
 
-/* Drawers (yard, silo, list, terraform) sit ON the bar, never under it. */
-.wm-root .wm-fleet { bottom: calc(12px + var(--wm-bar-h)); }
+/* Drawers (yard, silo, list, terraform) sit ON the bar, never under it,
+   and above the tags: a phone once showed the STRUCTURES list and the tags
+   it lists in one heap. */
+.wm-root .wm-fleet { bottom: calc(12px + var(--wm-bar-h)); z-index: 3; }
 .wm-mobile .wm-fleet { bottom: calc(var(--mobile-rail-height, 72px) + var(--wm-bar-h)); }
 
 /* The header lives top-left of the content area now, not centred over
@@ -1058,3 +1060,42 @@
 @media (prefers-reduced-motion: reduce) {
   .wm-tag, .wm-tag-bar i { transition: none; }
 }
+
+/* ---- the station: tap it (or its MODULES chip) for its card ---- */
+.wm-sta-hit {
+  position: absolute; z-index: 2;
+  background: none; border: 1px solid transparent; border-radius: 8px; cursor: pointer;
+}
+.wm-sta-hit:hover { border-color: rgba(78, 205, 196, 0.35); }
+.wm-sta-hit:focus-visible { outline: 2px solid #4ecdc4; outline-offset: 2px; }
+.wm-sta-chip {
+  position: absolute; z-index: 2; box-sizing: border-box;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  background: rgba(10, 15, 22, 0.92); border: 1px solid #2a3d50; border-radius: 5px;
+  color: #4ecdc4; font-family: inherit; font-size: 9px; font-weight: 700; letter-spacing: 0.14em;
+  cursor: pointer;
+}
+.wm-sta-chip b { font-family: var(--font-data); font-weight: 600; letter-spacing: 0; color: #d6e2ec; }
+.wm-sta-chip span { color: #6b8195; }
+.wm-sta-chip:hover, .wm-sta-chip.is-on { border-color: #4ecdc4; background: rgba(78, 205, 196, 0.1); }
+.wm-sta-chip:focus-visible { outline: 2px solid #4ecdc4; outline-offset: 2px; }
+.wm-modlist { display: flex; flex-direction: column; gap: 6px; }
+.wm-modrow {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; align-items: baseline;
+  padding: 8px 10px; text-align: left;
+  background: rgba(10, 15, 22, 0.6); border: 1px solid #2a3d50; border-radius: 5px;
+  color: #d6e2ec; font-family: inherit; cursor: pointer;
+}
+.wm-modrow:hover { border-color: #ffb84d; }
+.wm-modrow:focus-visible { outline: 2px solid #4ecdc4; outline-offset: 2px; }
+.wm-modrow-nm { font-size: 10px; font-weight: 700; letter-spacing: 0.08em; }
+.wm-modrow b { font-family: var(--font-data); font-size: 10px; font-weight: 600; color: #4ecdc4; }
+.wm-modrow-st { grid-column: 1 / -1; font-family: var(--font-data); font-size: 9px; color: #ffb84d; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wm-modrow.is-open { border-style: dashed; border-color: #3a5068; }
+.wm-modrow.is-open .wm-modrow-st { color: #8aa4bd; }
+.wm-modrow.is-locked { opacity: 0.6; }
+.wm-modrow.is-locked .wm-modrow-st { color: #c9a86a; }
+.wm-modrow.is-work .wm-modrow-st { color: #ffb84d; }
+.wm-modrow.is-booked .wm-modrow-st { color: #4ecdc4; }
+.wm-mobile .wm-modrow { min-height: 48px; }
+.wm-mobile .wm-sta-chip { font-size: 8.5px; }

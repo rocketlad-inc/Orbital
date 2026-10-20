@@ -287,6 +287,8 @@ export const map: Catalog = {
   'worldmenu.card.cost': 'CUSTO',
   'worldmenu.card.upgrade': 'MELHORAR PARA NV {lv}',
   'worldmenu.card.build': 'CONSTRUIR',
+  'worldmenu.station.modules': 'MÓDULOS',
+  'worldmenu.station.aria': 'Módulos da estação',
   'worldmenu.silo.title': 'SILO DE MÍSSEIS',
   'worldmenu.silo.level': '{name} · NV {n}',
   'worldmenu.silo.magazine': 'PAIOL',
