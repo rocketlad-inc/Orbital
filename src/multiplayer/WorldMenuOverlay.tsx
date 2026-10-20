@@ -598,14 +598,17 @@ export const WorldMenuOverlay: React.FC = () => {
   const staW = mobile ? 84 : 130, staH = staW;
   const staX = mobile ? 8 : vw - dockW - staW - 30;
   const staY = mobile ? TOPBAR + 10 + chromeH.panel + 10 : TOPBAR + 10 + 40 + 14;
-  const ORBIT_TAG_W = mobile ? Math.floor((vw - staW - 8 - 64 - 18) / 2) : 156;
+  // Two columns of module tags in both layouts: beside the station on a
+  // phone, under it on a desktop (one column ran down into the surface
+  // tags' arc on its right-hand end).
+  const ORBIT_TAG_W = mobile ? Math.floor((vw - staW - 8 - 64 - 18) / 2) : 124;
   const ORBIT_TAG_H = 46;
   const orbitKinds = myStation ? cols.orbit : [];
   const orbitTagPos = (i: number) => (mobile
     ? { x: staX + staW + 10 + (i % 2) * (ORBIT_TAG_W + 6), y: staY + Math.floor(i / 2) * (ORBIT_TAG_H + 6) }
-    : { x: staX + staW / 2 - ORBIT_TAG_W / 2, y: staY + staH + 6 + i * (ORBIT_TAG_H + 6) });
+    : { x: staX + staW - 2 * ORBIT_TAG_W - 6 + (i % 2) * (ORBIT_TAG_W + 6), y: staY + staH + 6 + Math.floor(i / 2) * (ORBIT_TAG_H + 6) });
   const rigBottom = mobile ? staY + staH
-    : staY + staH + 6 + orbitKinds.length * (ORBIT_TAG_H + 6);
+    : staY + staH + 6 + Math.ceil(orbitKinds.length / 2) * (ORBIT_TAG_H + 6);
 
   // ---- orb cluster placement: ONE shift, two constraints ----
   // The orb slots are fixed constants; the station rig (now with its module
@@ -840,15 +843,19 @@ export const WorldMenuOverlay: React.FC = () => {
   // staggered rows over the horizon (phone), stems to their buildings ----
   const TAG_FRAC: Record<string, number> = { ...PART_FRACS, shields: 0 };
   const surfKinds = myCity ? [...cols.surface].sort((a, b) => (TAG_FRAC[a] ?? 0) - (TAG_FRAC[b] ?? 0)) : [];
-  const TAG_W = mobile ? Math.min(112, Math.floor((2 * (vw - 24)) / Math.max(1, surfKinds.length)) - 8) : 150;
+  const TAG_W = mobile ? Math.min(112, Math.floor((2 * (vw - 24)) / Math.max(1, surfKinds.length)) - 8) : 144;
   const TAG_H = mobile ? 50 : 54;
   const apexY = cy - cr;
-  const tagR = cr + 92;
+  // High enough that the outer tags clear the city's own name tag, which
+  // the canvas paints just above the limb, left of the apex.
+  const tagR = cr + 128;
   const stepDeg = ((TAG_W + 18) / tagR) * 180 / Math.PI;
   const surfTags = surfKinds.map((kind, i) => {
     let px: number, py: number;
     if (mobile) {
-      px = 12 + (vw - 24) * ((i + 0.5) / surfKinds.length);
+      // Evenly across the width, kept wholly on screen.
+      const raw = 12 + (vw - 24) * ((i + 0.5) / surfKinds.length);
+      px = Math.max(8 + TAG_W / 2, Math.min(vw - 8 - TAG_W / 2, raw));
       py = apexY - (i % 2 === 0 ? 86 : 30);
     } else {
       const th = (i - (surfKinds.length - 1) / 2) * stepDeg * Math.PI / 180;
