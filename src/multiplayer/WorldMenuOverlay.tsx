@@ -141,8 +141,18 @@ export const WorldMenuOverlay: React.FC = () => {
 
   const [vw, setVw] = useState(window.innerWidth);
   const [vh, setVh] = useState(window.innerHeight);
+  // Where the map canvas starts below the window's top. The camera frames
+  // the planet in CANVAS px and this overlay is laid out in window px; on
+  // staging the banner pushes the canvas down 23px, and every stem ended
+  // that far above its building.
+  const [mapTop, setMapTop] = useState(0);
   useEffect(() => {
-    const onR = () => { setVw(window.innerWidth); setVh(window.innerHeight); };
+    const onR = () => {
+      setVw(window.innerWidth); setVh(window.innerHeight);
+      const cv = document.querySelector('canvas[data-map-canvas]');
+      setMapTop(cv ? Math.round(cv.getBoundingClientRect().top + window.scrollY) : 0);
+    };
+    onR();
     window.addEventListener('resize', onR);
     return () => window.removeEventListener('resize', onR);
   }, []);
@@ -187,6 +197,10 @@ export const WorldMenuOverlay: React.FC = () => {
   // The structure under the pointer: its tag and its building light together.
   const [hoverKind, setHoverKind] = useState<string | null>(null);
   useEffect(() => { setPicked(null); setStationOpen(false); setHoverKind(null); }, [openId]);
+  useEffect(() => {
+    const cv = document.querySelector('canvas[data-map-canvas]');
+    if (cv) setMapTop(Math.round(cv.getBoundingClientRect().top + window.scrollY));
+  }, [openId]);
   // The lore waits behind ABOUT: it was taking the best spot on the screen.
   const [aboutOpen, setAboutOpen] = useState(false);
   // While a menu is open: tag <body> so the left rail steps aside
@@ -607,7 +621,7 @@ export const WorldMenuOverlay: React.FC = () => {
   // tag (setWorldMenuStructures), so a tag's stem always ends on its roof.
   const rShift = !mobile ? (296 - 60) / 2 : 0;
   const uShift = mobile ? -MOBILE_LIFT_FRAC * vh : 0;
-  const cx = S1X_FRAC * vw + rShift, cy = S1Y_FRAC * vh + uShift, cr = Z1_FRAC * vh;
+  const cx = S1X_FRAC * vw + rShift, cy = S1Y_FRAC * vh + uShift + mapTop, cr = Z1_FRAC * vh;
   const railW = mobile ? 0 : 296, dockW = mobile ? 0 : 60;
   const TOPBAR = 52;
   // A SHORT desktop window (1000x690 was the report) has no room for the
@@ -625,13 +639,17 @@ export const WorldMenuOverlay: React.FC = () => {
   const staY = mobile ? TOPBAR + 10 + chromeH.panel + 10 : TOPBAR + 10 + 40 + 14;
   const STA_CHIP_H = 30;
   const orbitKinds = myStation ? cols.orbit : [];
-  // The MODULES chip hangs under the station on a desktop. A phone shows the
-  // chip alone (STATION · MODULES): the station art took the band of sky
-  // the structure tags need now that each stands over a real building.
-  const chipPos = mobile
-    ? { left: 8, top: staY }
-    : { left: staX, top: staY + staH + 6, width: staW };
-  const rigBottom = mobile ? staY + (myStation ? STA_CHIP_H : 70) : staY + staH + 6 + STA_CHIP_H;
+  // A desktop lists every module under the station, always: what is built,
+  // its level, what it costs next (Lorne, 2026-10-20: a collapsed MODULES
+  // chip hid what the station had). A phone keeps one chip, but it names
+  // the modules built rather than a count; the station art took the band
+  // of sky the structure tags need there.
+  const MOD_W = 168, MOD_H = 36, MOD_GAP = 4;
+  const modLeft = staX + staW - MOD_W;
+  const modTop = staY + staH + 6;
+  const modsH = orbitKinds.length ? orbitKinds.length * MOD_H + (orbitKinds.length - 1) * MOD_GAP : 0;
+  const rigLeft = mobile ? staX : Math.min(staX, modLeft);
+  const rigBottom = mobile ? staY + (myStation ? STA_CHIP_H : 70) : modTop + modsH;
 
   // ---- orb cluster placement: ONE shift, two constraints ----
   // The orb slots are fixed constants; the station rig (now with its module
@@ -898,7 +916,7 @@ export const WorldMenuOverlay: React.FC = () => {
     obstacles.push({ l: railW + 10, t: TOPBAR + 4, r: railW + 26 + chromeH.panelW, b: TOPBAR + 18 + chromeH.panel });
     obstacles.push({ l: vw - dockW - 130, t: TOPBAR + 4, r: vw - dockW, b: TOPBAR + 50 });
     if (readout.station || (!myStation && canHostStation(body) && !anyStation)) {
-      obstacles.push({ l: staX - 10, t: staY - 10, r: staX + staW + 10, b: rigBottom + 10 });
+      obstacles.push({ l: rigLeft - 10, t: staY - 10, r: staX + staW + 10, b: rigBottom + 10 });
     }
     neighbors.forEach((nb, i) => {
       const sl = ORB_SLOTS[orbSlotIndex(i, neighbors, body.parent)];
@@ -1001,13 +1019,15 @@ export const WorldMenuOverlay: React.FC = () => {
   const pickedHost = pickedColumn === 'orbit' ? myStation : myCity;
   const pickedTag = pickedKind
     ? (pickedColumn === 'orbit'
-      ? (orbitKinds.includes(pickedKind) ? { px: staX + staW / 2, py: rigBottom, side: 'left' as const } : null)
+      ? (orbitKinds.includes(pickedKind) ? { px: rigLeft, py: staY, side: 'left' as const } : null)
       : (() => { const s = surfTags.find(x => x.kind === pickedKind); return s ? { px: s.px, py: s.py - TAG_H / 2, side: (s.px < cx ? 'right' : 'left') as 'left' | 'right' } : null; })())
     : null;
   const CARD_W = 300;
+  // A module's card opens beside the module list, level with the station:
+  // under it, a 690-high window ran the card into the bar.
   const stationCardStyle = (): React.CSSProperties => ({
-    left: Math.max(railW + 12, Math.min(vw - dockW - CARD_W - 12, staX + staW - CARD_W)),
-    top: rigBottom + 8,
+    left: Math.max(railW + 12, rigLeft - CARD_W - 12),
+    top: staY,
     width: CARD_W,
   });
   const stationCard = () => {
@@ -1360,22 +1380,45 @@ export const WorldMenuOverlay: React.FC = () => {
            Pick one for its card. The STRUCTURES list on the bar holds the
            same buttons as rows. */}
       {orbitKinds.length > 0 && myStation && !(mobile && openTab) && (
-        <>
-          {!mobile && (
-            <button type="button" className="wm-sta-hit" aria-label={t('worldmenu.station.aria')}
-              aria-expanded={stationOpen}
-              style={{ left: staX, top: staY, width: staW, height: staH }}
-              onClick={() => { setPicked(null); setStationOpen(o => !o); }} />
-          )}
-          <button type="button" className={`wm-sta-chip${stationOpen ? ' is-on' : ''}`}
-            data-testid="wm-col-orbit" data-tutorial-id="wm-columns-orbit" aria-expanded={stationOpen}
-            style={{ ...chipPos, height: STA_CHIP_H }}
-            onClick={() => { setPicked(null); setStationOpen(o => !o); }}>
-            {mobile ? t('worldmenu.station.chipPhone') : t('worldmenu.station.modules')}
-            <b>{orbitKinds.filter(k => Number(myStation.buildings?.[k] ?? 0) > 0).length}/{orbitKinds.length}</b>
-            <span aria-hidden="true">{stationOpen ? '▴' : '▾'}</span>
-          </button>
-        </>
+        mobile ? (() => {
+          const built = orbitKinds.filter(k => Number(myStation.buildings?.[k] ?? 0) > 0);
+          return (
+            <button type="button" className={`wm-sta-chip${stationOpen ? ' is-on' : ''}`}
+              data-testid="wm-col-orbit" data-tutorial-id="wm-columns-orbit" aria-expanded={stationOpen}
+              style={{ left: 8, top: staY, maxWidth: vw - 16, height: STA_CHIP_H }}
+              onClick={() => { setPicked(null); setStationOpen(o => !o); }}>
+              {t('worldmenu.station.chip')}
+              <span className="wm-sta-chip-mods">
+                {built.length
+                  ? built.map(k => (
+                    <em key={k}>{tk(`worldmenu.building.${k}`, k.toUpperCase())} <b>{Number(myStation.buildings?.[k] ?? 0)}</b></em>
+                  ))
+                  : <em>{t('worldmenu.station.none')}</em>}
+              </span>
+              <span aria-hidden="true">{stationOpen ? '▴' : '▾'}</span>
+            </button>
+          );
+        })() : (
+          <div className="wm-mods" data-testid="wm-col-orbit" data-tutorial-id="wm-columns-orbit"
+            role="group" aria-label={t('worldmenu.station.aria')}
+            style={{ left: modLeft, top: modTop, width: MOD_W, gap: MOD_GAP }}>
+            {orbitKinds.map(k => {
+              const { level, line, tone, progress } = tagLine(k, myStation, 'orbit');
+              const picked = pickedKind === k && pickedColumn === 'orbit';
+              return (
+                <button key={k} type="button" data-testid={`wm-build-${k}`}
+                  className={`wm-mod ${tone}${picked ? ' is-picked' : ''}`} style={{ height: MOD_H }}
+                  aria-expanded={picked} title={BUILDING_DEFS[k].description}
+                  onClick={() => clickStructure(k, myStation, 'orbit')}>
+                  <span className="wm-mod-nm">{tk(`worldmenu.building.${k}`, k.toUpperCase())}</span>
+                  <b>{level > 0 ? level : ''}</b>
+                  <span className="wm-mod-st">{line}</span>
+                  {progress !== null && <span className="wm-tag-bar"><i style={{ width: `${(progress * 100).toFixed(1)}%` }} /></span>}
+                </button>
+              );
+            })}
+          </div>
+        )
       )}
       {!myStation && body && canHostStation(body) && !anyStation && (
         <div className="wm-plot" style={{
