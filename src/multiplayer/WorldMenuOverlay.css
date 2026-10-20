@@ -874,3 +874,187 @@
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .wm-dsheet__build:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* ================================================================
+   THE DIEGETIC PASS (2026-10-19): the world is the menu.
+   Structures are tags standing on the world, a bar at the bottom opens
+   the yard / silo / terraform / list drawers on demand, and a picked
+   structure opens a card beside its tag (a sheet on a phone). Same
+   language as the build buttons above: Audiowide labels, Chivo Mono
+   numbers, amber = work under way, teal = booked / action, dashed =
+   an open plot.
+   ================================================================ */
+.wm-root { --wm-bar-h: 72px; }
+.wm-root.wm-mobile { --wm-bar-h: 66px; }
+
+/* Drawers (yard, silo, list, terraform) sit ON the bar, never under it. */
+.wm-root .wm-fleet { bottom: calc(12px + var(--wm-bar-h)); }
+.wm-mobile .wm-fleet { bottom: calc(var(--mobile-rail-height, 72px) + var(--wm-bar-h)); }
+
+/* The header lives top-left of the content area now, not centred over
+   the planet: the planet's sky belongs to the station and the tags. */
+.wm-about {
+  margin-left: auto;
+  background: none; border: 0; padding: 2px 0;
+  color: #4ecdc4; font-family: inherit; font-size: 9px; font-weight: 700;
+  letter-spacing: 0.16em; cursor: pointer;
+}
+.wm-about:hover { color: #8ff0e9; }
+.wm-about:focus-visible { outline: 2px solid #4ecdc4; outline-offset: 2px; }
+
+/* ---- structure tags ---- */
+.wm-tags { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
+.wm-tag {
+  position: absolute; pointer-events: auto; box-sizing: border-box;
+  display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: 3px;
+  padding: 5px 8px; text-align: left;
+  background: rgba(10, 15, 22, 0.92);
+  border: 1px solid #2a3d50; border-radius: 5px;
+  color: #d6e2ec; font-family: inherit; cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.wm-tag:hover { border-color: #ffb84d; }
+.wm-tag:focus-visible { outline: 2px solid #4ecdc4; outline-offset: 2px; }
+.wm-tag-nm {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 6px;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.08em; white-space: nowrap;
+}
+.wm-tag-nm b { color: #4ecdc4; font-family: var(--font-data); font-weight: 600; font-size: 10px; letter-spacing: 0; }
+.wm-tag-pips { display: flex; gap: 2px; }
+.wm-tag-pips i { flex: 0 0 9px; height: 3px; border-radius: 1px; background: #1c2836; }
+.wm-tag-pips i.on { background: #4ecdc4; }
+.wm-tag-st {
+  font-family: var(--font-data); font-size: 9px; color: #ffb84d;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.wm-tag-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; border-radius: 0 0 4px 4px; background: rgba(255, 184, 77, 0.14); overflow: hidden; }
+.wm-tag-bar i { display: block; height: 100%; background: #ffb84d; transition: width 0.4s linear; }
+.wm-tag.is-work { border-color: #6a5a2a; }
+.wm-tag.is-booked { border-color: #2f6f6a; }
+.wm-tag.is-booked .wm-tag-st { color: #4ecdc4; }
+.wm-tag.is-open { border-style: dashed; border-color: #3a5068; background: rgba(10, 15, 22, 0.78); }
+.wm-tag.is-open .wm-tag-nm { color: #9fb4c6; }
+.wm-tag.is-open .wm-tag-st { color: #8aa4bd; }
+.wm-tag.is-locked { opacity: 0.6; }
+.wm-tag.is-locked .wm-tag-st { color: #c9a86a; }
+.wm-tag.is-warn .wm-tag-st { color: #ef9a9a; }
+.wm-tag.is-picked { border-color: #ffb84d; box-shadow: 0 0 0 1px #ffb84d, 0 0 14px rgba(255, 184, 77, 0.25); }
+
+/* Stems from a tag down to its building on the limb. */
+.wm-stem { stroke: #3a5068; stroke-width: 1; opacity: 0.85; }
+.wm-stem.is-picked { stroke: #ffb84d; opacity: 1; }
+.wm-stem-foot { fill: #4ecdc4; }
+
+/* A FOUND plot: the city or station that is not there yet. */
+.wm-plot { position: absolute; transform: translate(-50%, -100%); z-index: 2; }
+.wm-plot .wm-bbtn { height: auto; min-height: 50px; }
+.wm-bbtn.wm-found.wm-found--locked { border-style: dashed; border-color: #3a5068; opacity: 1; cursor: pointer; }
+.wm-bbtn.wm-found.wm-found--locked .wm-bbtn-nm { color: #9fb4c6; }
+.wm-bbtn.wm-found.wm-found--locked .wm-bbtn-st { color: #ffd27a; }
+.wm-bbtn.wm-found.wm-found--locked:hover { border-color: #6ee7b7; }
+
+/* ---- the structure card ---- */
+.wm-card {
+  position: absolute; z-index: 4; box-sizing: border-box;
+  display: flex; flex-direction: column; gap: 9px;
+  padding: 12px 14px 14px;
+  background: rgba(10, 15, 22, 0.96);
+  border: 1px solid #3a5068; border-radius: 8px;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+.wm-card-head { display: flex; align-items: center; gap: 10px; }
+.wm-card-head h2 { flex: 1; margin: 0; font-size: 14px; font-weight: 800; letter-spacing: 0.16em; }
+.wm-card-lv { font-family: var(--font-data); font-size: 11px; color: #4ecdc4; }
+.wm-card-x {
+  width: 28px; height: 28px; flex: none;
+  background: none; border: 1px solid #2a3d50; border-radius: 4px;
+  color: #6b8195; font-family: inherit; font-size: 11px; cursor: pointer;
+}
+.wm-card-x:hover { color: #d6e2ec; border-color: #3a5068; }
+.wm-card-desc { margin: 0; color: #8fa3b8; font-size: 10.5px; line-height: 1.45; }
+.wm-card-fx { color: #55708a; font-size: 9.5px; font-style: italic; }
+.wm-card-row {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 9px; letter-spacing: 0.16em; color: #6b8195; text-transform: uppercase;
+}
+.wm-card-row b { font-family: var(--font-data); font-weight: 600; letter-spacing: 0; font-size: 11px; color: #d6e2ec; text-transform: none; margin-left: auto; }
+.wm-card-row b.is-cost { color: #ffb84d; }
+.wm-card-row.is-work { color: #ffb84d; }
+.wm-card-row.is-work b { color: #ffd27a; }
+.wm-card-row.is-booked { color: #4ecdc4; text-transform: none; letter-spacing: 0.04em; font-size: 10px; line-height: 1.4; }
+.wm-card-row.is-locked { color: #c9a86a; text-transform: none; letter-spacing: 0.02em; font-size: 10px; line-height: 1.4; }
+.wm-card-meter { flex: 1; height: 5px; border-radius: 3px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }
+.wm-card-meter i { display: block; height: 100%; background: #ffb84d; }
+.wm-card-row:not(.is-work) .wm-card-meter i { background: linear-gradient(90deg, #4ecdc4, #7fd6ff); }
+.wm-card-go {
+  background: rgba(255, 184, 77, 0.1); border: 1px solid #ffb84d; border-radius: 5px;
+  color: #ffd27a; font-family: inherit; font-size: 10px; font-weight: 700; letter-spacing: 0.14em;
+  padding: 9px 12px; cursor: pointer;
+}
+.wm-card-go:hover { background: rgba(255, 184, 77, 0.2); }
+.wm-card-go.is-quiet { background: none; border-color: #2a3d50; color: #b8c8d6; }
+.wm-card-go.is-quiet:hover { border-color: #4ecdc4; color: #4ecdc4; }
+.wm-card-go:focus-visible, .wm-card-x:focus-visible { outline: 2px solid #4ecdc4; outline-offset: 2px; }
+
+/* ---- the bar ---- */
+.wm-bar {
+  position: absolute; bottom: 12px; transform: translateX(-50%); z-index: 3;
+  display: flex;
+  background: rgba(10, 15, 22, 0.94);
+  border: 1px solid #2a3d50; border-radius: 8px; overflow: hidden;
+  backdrop-filter: blur(8px);
+}
+.wm-bar-tab {
+  display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 4px;
+  min-width: 158px; min-height: 52px; padding: 8px 16px;
+  background: none; border: 0; border-right: 1px solid #2a3d50;
+  color: #d6e2ec; font-family: inherit; text-align: left; cursor: pointer;
+}
+.wm-bar-tab:last-child { border-right: 0; }
+.wm-bar-tab:hover { background: rgba(78, 205, 196, 0.06); }
+.wm-bar-tab:focus-visible { outline: 2px solid #4ecdc4; outline-offset: -2px; }
+.wm-bar-nm { font-size: 10px; font-weight: 700; letter-spacing: 0.14em; }
+.wm-bar-sub { font-family: var(--font-data); font-size: 9.5px; color: #6b8195; }
+.wm-bar-meter { align-self: stretch; height: 3px; border-radius: 2px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }
+.wm-bar-meter i { display: block; height: 100%; background: linear-gradient(90deg, #4ecdc4, #6ee7b7); }
+.wm-bar-tab.is-on { background: rgba(78, 205, 196, 0.12); color: #4ecdc4; }
+.wm-bar-tab.is-on .wm-bar-sub { color: #b8c8d6; }
+.wm-bar-tab.is-silo .wm-bar-sub { color: #ff8a5c; }
+.wm-bar-tab.is-silo.is-on { background: rgba(255, 138, 92, 0.12); color: #ff8a5c; }
+.wm-bar-tab.is-tf .wm-bar-sub { color: #6ee7b7; }
+.wm-bar-tab.is-tf.is-on { background: rgba(110, 231, 183, 0.1); color: #6ee7b7; }
+
+/* ---- the list and terraform drawers ---- */
+.wm-drawer { overflow-y: auto; }
+.wm-drawer-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 8px; }
+.wm-drawer-tf .wm-terraform { align-self: stretch; min-width: 0; font-size: 11px; padding: 10px 12px; gap: 6px; }
+.wm-drawer-tf .wm-terraform-bar { height: 6px; }
+
+/* ---- phone ---- */
+.wm-mobile .wm-bar {
+  left: 8px; right: 8px; transform: none;
+  bottom: calc(var(--mobile-rail-height, 72px) + 6px);
+}
+.wm-mobile .wm-bar-tab { flex: 1 1 0; min-width: 0; padding: 7px 10px; }
+.wm-mobile .wm-bar-nm { font-size: 9.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.wm-mobile .wm-bar-sub { font-size: 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.wm-mobile .wm-tag { min-height: 44px; padding: 4px 7px; }
+.wm-mobile .wm-tag-nm { font-size: 9px; }
+.wm-mobile .wm-tag-st { font-size: 8.5px; }
+.wm-mobile .wm-tag-pips i { flex-basis: 6px; }
+.wm-mobile .wm-drawer-grid { grid-template-columns: 1fr 1fr; }
+.wm-mobile .wm-top:not(.collapsed) { z-index: 6; }
+.wm-card.is-sheet {
+  left: 0; right: 0; top: auto;
+  bottom: var(--mobile-rail-height, 72px);
+  max-height: 58vh; overflow-y: auto;
+  border-radius: 14px 14px 0 0; border-bottom: 0;
+  padding: 14px 16px 18px; gap: 12px;
+}
+.wm-card.is-sheet .wm-card-x { width: 44px; height: 44px; font-size: 14px; }
+.wm-card.is-sheet .wm-card-go { min-height: 48px; font-size: 11px; }
+.wm-card.is-sheet .wm-card-desc { font-size: 11px; }
+@media (prefers-reduced-motion: reduce) {
+  .wm-tag, .wm-tag-bar i { transition: none; }
+}

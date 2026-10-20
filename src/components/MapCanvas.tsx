@@ -2291,7 +2291,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     const wmOpen = isWorldMenuActive() && !!camera.focusedBodyId
       && getWorldMenuOpenBodyId() === camera.focusedBodyId;
     if (wmOpen) {
-      drawWorldMenuCloseup(renderContext, gameState.settlements, 'player');
+      drawWorldMenuCloseup(renderContext, gameState.settlements, 'player', {
+        terraformConfig: gameState.terraformConfig, tick: gameState.currentTick,
+      });
     }
 
     // Build a co-orbit formation map: ships sharing the same parent body

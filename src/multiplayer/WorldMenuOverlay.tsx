@@ -53,10 +53,10 @@ import { bodyPosition } from '../physics/orbitalMechanics';
 import { isRevealedWarpGate } from '../render/mapRenderer';
 import {
   menuScaleFor, menuCameraOffset, menuOpacity, zOf,
-  S1X_FRAC, S1Y_FRAC, Z1_FRAC,
+  S1X_FRAC, S1Y_FRAC, Z1_FRAC, MOBILE_LIFT_FRAC, arcSpreadDeg,
 } from '../game/worldMenu/camera';
 import { setWorldMenuActive, setWorldMenuOpenBodyId } from '../game/worldMenu/store';
-import { columnsFor, buildStatus, noHostText, nextBuildingLevel } from '../game/worldMenu/buildRules';
+import { columnsFor, buildStatus, noHostText, nextBuildingLevel, costText } from '../game/worldMenu/buildRules';
 import { hpColor } from '../game/worldMenu/combatDisplay';
 import { readoutFor, neighborsOf, orbSlotIndex } from '../game/worldMenu/bodyStats';
 import { worldControl, settlementLivery } from '../game/worldMenu/settlementControl';
@@ -70,6 +70,11 @@ import { buildChoices } from '../game/designChoice';
 import { RamControlsSection } from '../components/BodyInspector';
 import { t, tn, tk } from '../i18n/core';
 import { useI18n } from '../i18n/react';
+/** The bar's drawers, and where the last choice is remembered. */
+const DRAWER_IDS = ['structures', 'yard', 'silo', 'terraform'] as const;
+type DrawerId = typeof DRAWER_IDS[number];
+const DRAWER_KEY = 'orbital.wm_drawer';
+
 /** Picker target meaning "the panel default", not a specific queued row.
  *  A build order id can never collide with it — they are body-prefixed. */
 const NEXT_SHIP = '__next_ship__';
@@ -158,6 +163,27 @@ export const WorldMenuOverlay: React.FC = () => {
     return () => setWorldMenuOpenBodyId(null);
   }, [openId]);
   const [collapsed, setCollapsed] = useState(true);
+  // THE BAR (diegetic pass, 2026-10-19): STRUCTURES / YARD / MISSILE SILO /
+  // TERRAFORM. Nothing is open until asked, so the world keeps the screen;
+  // the last choice is remembered, so a player who lives in the yard finds
+  // it open on every world.
+  const [drawer, setDrawer] = useState<DrawerId | null>(() => {
+    try {
+      const v = localStorage.getItem(DRAWER_KEY);
+      return (DRAWER_IDS as readonly string[]).includes(v ?? '') ? (v as DrawerId) : null;
+    } catch { return null; }
+  });
+  const openDrawer = useCallback((d: DrawerId | null) => {
+    setDrawer(d);
+    try { if (d) localStorage.setItem(DRAWER_KEY, d); else localStorage.removeItem(DRAWER_KEY); } catch { /* private window */ }
+  }, []);
+  // The structure whose card is open: one at a time, cleared per world.
+  const [picked, setPicked] = useState<{ kind: BuildingKind; column: 'surface' | 'orbit' } | null>(null);
+  const pickedKind = picked?.kind ?? null;
+  const pickedColumn = picked?.column ?? 'surface';
+  useEffect(() => { setPicked(null); }, [openId]);
+  // The lore waits behind ABOUT: it was taking the best spot on the screen.
+  const [aboutOpen, setAboutOpen] = useState(false);
   // While a menu is open: tag <body> so the left rail steps aside
   // (CSS in WorldMenuOverlay.css — MP-only by construction), and
   // measure the real TopBar so the panel tucks exactly under it.
@@ -235,10 +261,10 @@ export const WorldMenuOverlay: React.FC = () => {
       // half the outliner width so it centers in the remaining space
       // (outliner ~296px on the left, dock ~60px on the right).
       const rShift = vw > 720 ? (296 - 60) / 2 : 0;
-      // Mobile: lift the planet so it sits close to the station, well
-      // above the surface build row. Default horizon is 60% (S1Y=1.02 -
-      // Z1=0.42); shifting up by 0.25·vh moves it to 35% of the viewport.
-      const uShift = vw > 720 ? 0 : -0.25 * vh;
+      // Mobile: lift the planet so the horizon lands ~45% down — the
+      // station and the structure tags in the sky above, the bar and its
+      // sheets below (MOBILE_LIFT_FRAC; the render below uses the same).
+      const uShift = vw > 720 ? 0 : -MOBILE_LIFT_FRAC * vh;
       const off = menuCameraOffset(vw, vh, s1, rShift, uShift);
       focusBody(sel); // sets focusedBodyId (body-relative camera)
       updateCamera({ scale: s1, x: off.x, y: off.y });
@@ -305,7 +331,7 @@ export const WorldMenuOverlay: React.FC = () => {
     const fleetEl = document.querySelector('.wm-fleet') as HTMLElement | null;
     const measure = () => {
       const panelH = panelEl?.offsetHeight ?? 92;
-      const fleetH = fleetEl?.offsetHeight ?? 200;
+      const fleetH = fleetEl?.offsetHeight ?? 0;
       document.body.style.setProperty('--wm-panel-h', `${panelH}px`);
       document.body.style.setProperty('--wm-fleet-h', `${fleetH}px`);
       setChromeH(prev => (prev.fleet === fleetH && prev.panel === panelH ? prev : { fleet: fleetH, panel: panelH }));
@@ -333,7 +359,8 @@ export const WorldMenuOverlay: React.FC = () => {
         // Only the bottom chrome competes for space.
         const avail = window.innerHeight
           - (topbarH + 10)          // panel's own top offset
-          - (fleetH + railH + 6)    // build box + dock rail
+          - (fleetH + railH + 6)    // open drawer + dock rail
+          - 66                      // the bar
           - 8;                      // breathing room
         // Floor so a very short viewport still shows a usable panel; it
         // scrolls, so a floor costs reachability nothing.
@@ -349,7 +376,7 @@ export const WorldMenuOverlay: React.FC = () => {
     if (fleetEl) ro.observe(fleetEl);
     window.addEventListener('resize', measure);
     return () => { ro.disconnect(); window.removeEventListener('resize', measure); };
-  }, [chromeMounted, collapsed, openId, mobile]);
+  }, [chromeMounted, collapsed, openId, mobile, drawer]);
 
   // Wheel/pinch-out past the threshold dismisses (leave the camera
   // wherever the player pulled it — that WAS the dismissal gesture).
@@ -405,11 +432,13 @@ export const WorldMenuOverlay: React.FC = () => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-      if (e.key === 'Escape' && openId) close(true);
+      if (e.key === 'Escape' && openId) {
+        if (picked) setPicked(null); else close(true);
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [openId, close]);
+  }, [openId, close, picked]);
 
   // ---- data ----
   const readout = useMemo(
@@ -426,20 +455,7 @@ export const WorldMenuOverlay: React.FC = () => {
   // Per SETTLEMENT, not per world: a world can be a rival's while one of
   // its settlements is yours (settlementControl.ts).
   const { myCity, myStation, canCommand } = worldControl(here);
-  // THE MISSILE SILO (WmSilo): a city with one gets a second tab on the
-  // bottom box, beside the yard.
-  const [bottomTab, setBottomTab] = useState<'yard' | 'silo'>('yard');
   const siloLevel = Number(myCity?.buildings?.missile_silo ?? 0);
-  const siloTabs = siloLevel > 0 && myCity?.missileSilo ? (
-    <div className="wm-btabs" role="tablist" aria-label={t('worldmenu.silo.aria')}>
-      <button type="button" role="tab" aria-selected={bottomTab !== 'silo'} className={bottomTab !== 'silo' ? 'is-on' : ''}
-        onClick={() => setBottomTab('yard')}>{t('worldmenu.silo.tabYard')}</button>
-      <button type="button" role="tab" aria-selected={bottomTab === 'silo'} className={bottomTab === 'silo' ? 'is-on' : ''}
-        onClick={() => setBottomTab('silo')}>
-        {t('worldmenu.silo.tabSilo', { n: myCity.missileSilo.stock, cap: MISSILES_PER_LEVEL * siloLevel })}
-      </button>
-    </div>
-  ) : null;
   // SLOT TAKEN, BY ANYONE. The server's rule is one city and one station
   // PER BODY with no owner filter (actions.js: "this body already has a
   // <type> — only one <type> per body"), so a rival's city occupies the
@@ -561,64 +577,41 @@ export const WorldMenuOverlay: React.FC = () => {
   const immovable = bodyImmovableNote(body);
   const integrity = myCity ?? myStation ?? here[0] ?? null;
 
-  // Settled framing is deterministic: centre at S1 (+ desktop outliner
-  // shift), radius Z1_FRAC·H — same math the canvas pass uses. Every DOM
-  // anchor below hangs off `cx` so it stays coincident with the canvas
-  // planet after the shift.
+  // ---- THE FRAMING: the same circle the canvas paints ----
+  // Settled framing is deterministic: centre at S1 (+ the desktop outliner
+  // shift, + the phone lift), radius Z1_FRAC·H. Every tag below hangs off
+  // it, and the arc spread is the canvas's own (arcSpreadDeg), so a tag's
+  // stem always ends on the building it names.
   const rShift = !mobile ? (296 - 60) / 2 : 0;
-  const uShift = mobile ? -0.25 * vh : 0; // mobile: horizon at 35% of vh (close to station)
+  const uShift = mobile ? -MOBILE_LIFT_FRAC * vh : 0;
   const cx = S1X_FRAC * vw + rShift, cy = S1Y_FRAC * vh + uShift, cr = Z1_FRAC * vh;
-  const partPos = (frac: number) => {
-    const a = (-90 + frac * 46) * Math.PI / 180;
-    return { x: cx + Math.cos(a) * cr, y: cy + Math.sin(a) * cr };
+  const spread = arcSpreadDeg(vw, vh);
+  const limbAt = (frac: number, lift = 0) => {
+    const a = (-90 + frac * spread) * Math.PI / 180;
+    return { x: cx + Math.cos(a) * (cr + lift), y: cy + Math.sin(a) * (cr + lift) };
   };
-  // Chrome geometry — build columns hover just off the limb; the
-  // station rig floats above the orbit column.
   const railW = mobile ? 0 : 296, dockW = mobile ? 0 : 60;
-  // BTN_H MUST equal .wm-bbtn height in WorldMenuOverlay.css (54px). The
-  // leader-line anchors below derive from it; if they drift the lines
-  // point at empty space between buttons.
-  const COL_W = 168, BTN_H = 54;
-  const leftColX = Math.max(railW + 10, cx - cr - COL_W - 26);
-  // Column stack height: label (18) + up to 4 buttons (40 + 9 gap).
-  // Five buttons since the Missile Silo (2026-10-19).
-  const COL_MAX_H = 18 + 5 * (BTN_H + 9);
-  // Fleet panel lives with `bottom: 12px`; its measured height (state
-  // above) bounds where the surface column can end.
-  const colBottomLimit = vh - chromeH.fleet - 20;   // last y a col button can occupy
-  const colTopY = Math.max(80, Math.min(cy - cr + 4, colBottomLimit - COL_MAX_H));
-  // Orbit column pinned far right.
-  const rightColX = vw - dockW - COL_W - 10;
-  // Station indicator: a small DOM silhouette that echoes the canvas
-  // station's ring+hub (isoStructures.drawStationStructure). Not the
-  // cartoon tall-mast — a stylized icon that sits above the orbit
-  // column so the station reads as a distinct place in the sky.
-  const staW = 130, staH = 130;
-  const staX = rightColX + (COL_W - staW) / 2;
-  const staY = Math.max(66, colTopY - staH - 10);
+  const TOPBAR = 52;
+
+  // ---- the station and its modules: top right on a desktop, under the
+  // header on a phone (the map's own side buttons own the phone's right) ----
+  const staW = mobile ? 84 : 130, staH = staW;
+  const staX = mobile ? 8 : vw - dockW - staW - 30;
+  const staY = mobile ? TOPBAR + 10 + chromeH.panel + 10 : TOPBAR + 10 + 40 + 14;
+  const ORBIT_TAG_W = mobile ? Math.floor((vw - staW - 8 - 64 - 18) / 2) : 156;
+  const ORBIT_TAG_H = 46;
+  const orbitKinds = myStation ? cols.orbit : [];
+  const orbitTagPos = (i: number) => (mobile
+    ? { x: staX + staW + 10 + (i % 2) * (ORBIT_TAG_W + 6), y: staY + Math.floor(i / 2) * (ORBIT_TAG_H + 6) }
+    : { x: staX + staW / 2 - ORBIT_TAG_W / 2, y: staY + staH + 6 + i * (ORBIT_TAG_H + 6) });
+  const rigBottom = mobile ? staY + staH
+    : staY + staH + 6 + orbitKinds.length * (ORBIT_TAG_H + 6);
+
   // ---- orb cluster placement: ONE shift, two constraints ----
-  // The orb slots are fixed constants, so anything that moves relative to
-  // them collides with them. Two things do:
-  //
-  //  1. THE STATION RIG. It is pinned to the viewport's right edge, and its
-  //     top comes off colBottomLimit above -- which is driven by the FLEET
-  //     PANEL's height. A tall fleet panel walks the rig UP into the orb
-  //     band, and the moon gets drawn straight through the station. This is
-  //     not specific to any one body: the slots and the rig are both fixed,
-  //     so the same geometry applies at every world that has a station.
-  //     Measured: at 1440x900 the rig eats one orb once the panel passes
-  //     ~200px tall and two by ~280px; 1920x1080 stays clear.
-  //  2. THE RIGHT GUTTER. The old code clamped each orb INDEPENDENTLY into
-  //     the gutter, which at <=1366px wide drove two slots onto the same
-  //     spot -- the moons then overlapped EACH OTHER, station or no
-  //     station.
-  //
-  // Both fall out of one rule: move the cluster as a BLOCK. Take the worst
-  // encroachment across every orb and shift them all by that single delta.
-  // Per-orb clamping is what caused (2) in the first place, because it lets
-  // orbs travel different distances and close the gaps the slots were tuned
-  // to hold. The orbs yield rather than the rig: the rig is anchored to the
-  // orbit column it belongs to, the cluster is free-floating navigation.
+  // The orb slots are fixed constants; the station rig (now with its module
+  // tags under it) and the right gutter both move relative to them. Move
+  // the cluster as a BLOCK by the worst encroachment, never orb by orb:
+  // per-orb clamping is what once stacked two moons on one spot.
   const ORB_GUTTER = 12, ORB_STA_CLEAR = 16;
   const orbShift = mobile ? 0 : (() => {
     const rigLive = !!readout.station;
@@ -628,19 +621,13 @@ export const WorldMenuOverlay: React.FC = () => {
       const right = cx + sl.dx + sl.r;
       over = Math.max(over, right - (vw - dockW - ORB_GUTTER));
       // Only orbs level with the rig can actually hit it.
-      if (rigLive && sl.y + sl.r > staY && sl.y - sl.r < staY + staH) {
+      if (rigLive && sl.y + sl.r > staY && sl.y - sl.r < rigBottom) {
         over = Math.max(over, right - (staX - ORB_STA_CLEAR));
       }
     }
-    // Capped: uncapped, a narrow viewport marches the cluster left across
-    // the planet and onto the info panel. A tight cluster beats one sitting
-    // on the readout.
     return Math.max(0, Math.min(over, Math.max(0, cx + 200 - (railW + 10))));
   })();
 
-  // Leader-line anchor for the i-th button in a column.
-  const btnAnchor = (colX: number, i: number, edge: 'right' | 'left') =>
-    ({ x: edge === 'right' ? colX + COL_W : colX, y: colTopY + i * (BTN_H + 9) + BTN_H / 2 });
   // Owner faction colour for a body's settlement (null = unsettled).
   const bodyOwnerColor = (bid: string): string | null => {
     const s = gameState.settlements.find(x => x.bodyId === bid);
@@ -648,41 +635,39 @@ export const WorldMenuOverlay: React.FC = () => {
     return gameState.factions.find(f => f.id === s.ownedBy)?.color ?? '#8d99a5';
   };
 
-  const buildBtn = (kind: BuildingKind, host: Settlement | null, column: 'surface' | 'orbit') => {
+  // ---- one structure's status, shared by its tag, its card and the list ----
+  const statusOf = (kind: BuildingKind, host: Settlement | null, column: 'surface' | 'orbit') => {
     const st = buildStatus(kind, host, {
       currentTick: gameState.currentTick,
       noHostText: noHostText(column, body),
     });
     const lockObj = st.state === 'ready' && st.level === 0 && BUILDING_FEATURE[kind]
       ? gate.lockReason(BUILDING_FEATURE[kind]) : null;
-    // Compact lock chip: just the lock + tier (strip "Unlocks at" and the
-    // building name — the button already says which building it is).
-    const lockShort = lockObj ? `🔒 ${lockObj.text.replace(/^unlocks at\s*/i, '')}` : null;
-    // 'backlogged' stays clickable — that click is how you remove it.
-    // YOUR settlement, not your world: host is myCity / myStation.
-    const disabled = !host || !!lockObj
-      || (st.state !== 'ready' && st.state !== 'backlogged');
-    // Progress bar: fraction of the queued upgrade complete. buildStatus
-    // gives us ticksLeft + targetLevel; span is (targetLevel - level)
-    // multiplied by that building's base build ticks, but we don't need
-    // the def here — the queue row on `settlement.buildingQueue` carries
-    // startTick / completeTick, so fraction = 1 - ticksLeft / totalSpan
-    // where totalSpan is completeTick - startTick.
     let progress: number | null = null;
     if (st.state === 'queued' && host?.buildingQueue) {
       const q = host.buildingQueue;
       const span = Math.max(1, q.completeTick - q.startTick);
       progress = Math.max(0, Math.min(1, 1 - st.ticksLeft / span));
     }
+    return { st, lockObj, progress };
+  };
+
+  // The STRUCTURES list (bottom bar): every building as a row, the
+  // keyboard-and-scan fallback for the tags on the world.
+  const buildBtn = (kind: BuildingKind, host: Settlement | null, column: 'surface' | 'orbit') => {
+    const { st, lockObj, progress } = statusOf(kind, host, column);
+    // Compact lock chip: just the lock + tier (strip "Unlocks at" and the
+    // building name — the button already says which building it is).
+    const lockShort = lockObj ? `🔒 ${lockObj.text.replace(/^unlocks at\s*/i, '')}` : null;
+    // 'backlogged' stays clickable — that click is how you remove it.
+    const disabled = !host || !!lockObj
+      || (st.state !== 'ready' && st.state !== 'backlogged');
     return (
       <button
         key={kind}
         className={`wm-bbtn ${st.state === 'ready' && st.level > 0 ? 'built' : ''} ${st.state === 'queued' ? 'queued' : ''} ${st.state === 'backlogged' ? 'backlogged' : ''}`}
-        data-testid={`wm-build-${kind}`}
+        data-testid={`wm-list-${kind}`}
         disabled={disabled}
-        // Full prose on hover; the short effect line below is always
-        // visible, because hover does not exist on touch and the effect
-        // is the thing you need in order to choose.
         title={lockObj
           ? `${lockObj.label} — ${lockObj.text}\n\n${BUILDING_DEFS[kind].description}`
           : st.state === 'backlogged'
@@ -706,36 +691,66 @@ export const WorldMenuOverlay: React.FC = () => {
     );
   };
 
+  // ---- a structure's TAG, standing on the world ----
+  const tagFor = (kind: BuildingKind, host: Settlement, column: 'surface' | 'orbit',
+    style: React.CSSProperties) => {
+    const { st, lockObj, progress } = statusOf(kind, host, column);
+    const level = 'level' in st ? st.level : 0;
+    const isSilo = kind === 'missile_silo';
+    let line: string;
+    let tone = '';
+    if (lockObj) { line = `🔒 ${lockObj.text.replace(/^unlocks at\s*/i, '')}`; tone = 'is-locked'; }
+    else if (st.state === 'queued') { line = t('worldmenu.tag.building', { n: st.ticksLeft }); tone = 'is-work'; }
+    else if (st.state === 'backlogged') { line = t('worldmenu.tag.inLine', { pos: st.position }); tone = 'is-booked'; }
+    else if (level === 0) { line = `+ ${costText(kind, 0)}`; tone = 'is-open'; }
+    else if (kind === 'shields' && (host.shieldHpMax ?? 0) > 0) {
+      const cur = Math.round(host.shieldHp ?? 0), max = Math.round(host.shieldHpMax ?? 0);
+      line = t('worldmenu.tag.dome', { cur, max });
+      if (cur < max * 0.25) tone = 'is-warn';
+    } else if (isSilo && host.missileSilo) {
+      line = t('worldmenu.tag.magazine', { n: host.missileSilo.stock, cap: MISSILES_PER_LEVEL * level });
+    } else line = `↑ ${costText(kind, level)}`;
+    const pipsN = Math.min(10, Math.max(level, st.state === 'queued' || st.state === 'backlogged' ? st.targetLevel : level + 1));
+    const picked = pickedKind === kind && pickedColumn === column;
+    return (
+      <button
+        key={`${column}-${kind}`}
+        type="button"
+        className={`wm-tag ${tone}${picked ? ' is-picked' : ''}`}
+        style={style}
+        data-testid={`wm-build-${kind}`}
+        aria-expanded={picked}
+        title={BUILDING_DEFS[kind].description}
+        onClick={() => {
+          if (isSilo && level > 0 && host.missileSilo) { setPicked(null); openDrawer('silo'); return; }
+          setPicked(picked ? null : { kind, column });
+        }}
+      >
+        <span className="wm-tag-nm">
+          {tk(`worldmenu.building.${kind}`, kind.toUpperCase())}
+          {level > 0 && <b>{st.state === 'queued' ? `${level}→${st.targetLevel}` : level}</b>}
+        </span>
+        {level > 0 && (
+          <span className="wm-tag-pips" aria-hidden="true">
+            {Array.from({ length: pipsN }, (_, i) => <i key={i} className={i < level ? 'on' : ''} />)}
+          </span>
+        )}
+        <span className="wm-tag-st">{line}</span>
+        {progress !== null && <span className="wm-tag-bar"><i style={{ width: `${(progress * 100).toFixed(1)}%` }} /></span>}
+      </button>
+    );
+  };
+
   const foundBtn = (type: SettlementType) => {
     const isCity = type === 'city';
     const own = !!(myCity || myStation);
     // THE HARD GATE (DESIGN-terraforming): raw worlds host stations
-    // only. The city button stays VISIBLE but disabled with the reason —
-    // hiding it would leave players guessing why this world won't take
-    // a city while the next one will.
+    // only. The city button stays VISIBLE but disabled with the reason.
     const raw = isCity && !!body && isRawWorld(body);
     // NOT gated by isMine: founding is the WAY you take ownership of an
-    // unclaimed body. The old check kept the button disabled on every
-    // unowned body (ownerFactionId === null → isMine === false), which
-    // was the "have a colony ship in orbit but Build Station is dead"
-    // bug. The colony ship / stationLock / cost checks below are the
-    // real gates — mirrors BodyInspector's showCityDeploy/showStationDeploy.
-    // The research lock now sits on the CITY side: stations are the
-    // turn-one claim move and carry no tech requirement.
-    // Same two paths for both types now (see handleFoundSettlement): a
-    // settlement you already own here buys the build for resources,
-    // otherwise a Colony Ship in orbit is consumed. A city that demanded a
-    // fresh colony ship on a world you had already terraformed AND
-    // stationed read as the game not noticing you lived there.
-    // THE SERVER'S ORDER, NOT OURS. handleFoundSettlement takes path (a)
-    // whenever you already hold a settlement here — it charges the cost
-    // and KEEPS the colony ship — and only falls to path (b), consuming a
-    // colony ship, on ground you don't hold. This panel checked the ship
-    // first, so every station built at home was labelled "consumes colony
-    // ship" while the server billed resources and the ship flew on (QA
-    // battle test: all four factions, all four colony ships survived).
-    // The button's enabled state follows the same order: holding ground
-    // here means the cost is what matters, a colony ship can't stand in.
+    // unclaimed body. The colony ship / lock / cost checks are the gates.
+    // THE SERVER'S ORDER, NOT OURS: holding ground here means the cost is
+    // what matters, a colony ship can't stand in (handleFoundSettlement).
     const consumesShip = !own && !!colonyShipHere;
     const enabled = !raw && !(isCity ? !!cityLock : false)
       && (own ? canAffordSettlement : !!colonyShipHere);
@@ -761,49 +776,169 @@ export const WorldMenuOverlay: React.FC = () => {
             ? `${t('worldmenu.found.stationHeld', { cost: costLabel })}${colonistTag}`
             : t('worldmenu.found.stationNeed', { cost: costLabel }))
         : t('worldmenu.found.requires'));
-    // MOBILE: a CITY button that's disabled purely because the world is
-    // raw is not an action — it's a rule. As a full-height tile it took a
-    // third of the build row and, on a cramped phone, sat directly on the
-    // terraform controls that are the only way to lift the restriction.
-    // Collapse it to a single full-width line: the rule stays visible
-    // (it's the only place that states it outside a tooltip) at ~a third
-    // of the height. Desktop keeps the tile — `mobile` gates this.
-    const rawCityNote = mobile && isCity && raw;
     return (
       <button
         key={type}
-        className={`wm-bbtn wm-found${rawCityNote ? ' wm-found--rule' : ''}`}
-        disabled={!enabled}
+        className={`wm-bbtn wm-found${raw ? ' wm-found--locked' : ''}`}
+        disabled={!enabled && !raw}
         title={title}
-        onClick={() => foundSettlement(type)}
+        onClick={() => {
+          // A raw world's city plot opens the way to living: the terraform
+          // drawer, rather than a dead button.
+          if (raw) { setPicked(null); openDrawer('terraform'); return; }
+          foundSettlement(type);
+        }}
         data-testid={`wm-found-${type}`}
       >
-        {rawCityNote ? (
-          <span className="wm-bbtn-st">{t('worldmenu.found.rawCityNote')}</span>
-        ) : (
-          <>
-            <span className="wm-bbtn-nm">{isCity ? t('worldmenu.found.btnCity') : t('worldmenu.found.btnStation')}</span>
-            <span className="wm-bbtn-st">{cityLock && isCity && !raw ? `🔒 ${sub}` : sub}</span>
-          </>
-        )}
+        <span className="wm-bbtn-nm">{isCity ? t('worldmenu.found.btnCity') : t('worldmenu.found.btnStation')}</span>
+        <span className="wm-bbtn-st">{cityLock && isCity && !raw ? `🔒 ${sub}` : sub}</span>
       </button>
     );
   };
 
-  // Column element lists — reused by desktop columns AND the mobile grid.
-  // No city/station → offer the FOUND button (if the body can host one);
-  // otherwise the upgrade buttons for that settlement.
-  // The `any*` guards only bite in the else branch — the branch that means
-  // "I have none here". If the slot is filled and it is not mine, the
-  // button is a control the server would refuse with 409 'occupied', so it
-  // is not drawn at all. Reported from Europa, where a rival held BOTH
-  // slots and the panel still offered to found a city and a station.
+  // The rows for the STRUCTURES list, orbit then surface — the order a
+  // phone always used.
   const surfaceEls = myCity
     ? cols.surface.map(k => buildBtn(k, myCity, 'surface'))
     : (body && canHostCity(body) && !anyCity ? [foundBtn('city')] : []);
   const orbitEls = myStation
     ? cols.orbit.map(k => buildBtn(k, myStation, 'orbit'))
     : (body && canHostStation(body) && !anyStation ? [foundBtn('station')] : []);
+
+  // ---- THE BOTTOM BAR: what you can open here, each with its state ----
+  const cfgTf = gameState.terraformConfig ?? { costMetal: 124, costCredits: 124, durationTicks: 24 };
+  const rawHere = canHostCity(body) && isRawWorld(body);
+  const tfAcc = body.terraformAcc ?? { metal: 0, credits: 0 };
+  const tfPct = Math.round(100 * (Math.min(tfAcc.metal, cfgTf.costMetal) + Math.min(tfAcc.credits, cfgTf.costCredits))
+    / Math.max(1, cfgTf.costMetal + cfgTf.costCredits));
+  const builtCount = [myCity, myStation].reduce((n, s) => n
+    + (s ? Object.values(s.buildings ?? {}).filter(v => Number(v) > 0).length : 0), 0);
+  const yardSlots = shipyardSlotsAtBody(body.id, 'player', gameState.settlements);
+  const yardBusy = (gameState.buildOrders ?? []).filter(o => o.bodyId === body.id && o.ownedBy === 'player'
+    && (o.status ?? 'building') === 'building').length;
+  const siloCap = MISSILES_PER_LEVEL * siloLevel;
+  type Tab = { id: DrawerId; label: string; sub: string; tone?: string };
+  const tabs: Tab[] = [];
+  if (surfaceEls.length + orbitEls.length > 0) {
+    tabs.push({ id: 'structures', label: t('worldmenu.bar.structures'), sub: tn('worldmenu.bar.built', builtCount) });
+  }
+  if (myCity || myStation) {
+    tabs.push({ id: 'yard', label: t('worldmenu.bar.yard'), sub: t('worldmenu.bar.slipways', { busy: yardBusy, slots: yardSlots }) });
+  }
+  if (siloLevel > 0 && myCity?.missileSilo) {
+    tabs.push({ id: 'silo', label: t('worldmenu.bar.silo'), sub: t('worldmenu.tag.magazine', { n: myCity.missileSilo.stock, cap: siloCap }), tone: 'is-silo' });
+  }
+  if (rawHere) {
+    const left = body.terraformCompletesAtTick != null ? Math.max(0, body.terraformCompletesAtTick - gameState.currentTick) : null;
+    tabs.push({ id: 'terraform', label: t('worldmenu.bar.terraform'),
+      sub: left != null ? t('worldmenu.bar.tfWindow', { n: left }) : t('worldmenu.bar.tfPct', { n: tfPct }), tone: 'is-tf' });
+  }
+  const openTab = tabs.some(x => x.id === drawer) ? drawer : null;
+  const tfTab = tabs.find(x => x.id === 'terraform');
+
+  // ---- surface tags: fanned on an arc above the limb (desktop) or two
+  // staggered rows over the horizon (phone), stems to their buildings ----
+  const TAG_FRAC: Record<string, number> = { ...PART_FRACS, shields: 0 };
+  const surfKinds = myCity ? [...cols.surface].sort((a, b) => (TAG_FRAC[a] ?? 0) - (TAG_FRAC[b] ?? 0)) : [];
+  const TAG_W = mobile ? Math.min(112, Math.floor((2 * (vw - 24)) / Math.max(1, surfKinds.length)) - 8) : 150;
+  const TAG_H = mobile ? 50 : 54;
+  const apexY = cy - cr;
+  const tagR = cr + 92;
+  const stepDeg = ((TAG_W + 18) / tagR) * 180 / Math.PI;
+  const surfTags = surfKinds.map((kind, i) => {
+    let px: number, py: number;
+    if (mobile) {
+      px = 12 + (vw - 24) * ((i + 0.5) / surfKinds.length);
+      py = apexY - (i % 2 === 0 ? 86 : 30);
+    } else {
+      const th = (i - (surfKinds.length - 1) / 2) * stepDeg * Math.PI / 180;
+      px = cx + Math.sin(th) * tagR;
+      py = cy - Math.cos(th) * tagR;
+    }
+    // Shields point at the top of the dome over the city; buildings at
+    // their own spot on the limb.
+    const level = Number(myCity?.buildings?.[kind] ?? 0);
+    const end = kind === 'shields'
+      ? limbAt(0, cr * (0.11 + Math.min(3, Math.max(1, level)) * 0.035))
+      : limbAt(TAG_FRAC[kind] ?? 0);
+    return { kind, px, py, end };
+  });
+
+  // The card a picked structure opens: beside its tag on a desktop, a
+  // sheet over the bar on a phone.
+  const pickedHost = pickedColumn === 'orbit' ? myStation : myCity;
+  const pickedTag = pickedKind
+    ? (pickedColumn === 'orbit'
+      ? (() => { const i = orbitKinds.indexOf(pickedKind); const p = orbitTagPos(i); return i < 0 ? null : { px: p.x, py: p.y + ORBIT_TAG_H / 2, side: 'left' as const }; })()
+      : (() => { const s = surfTags.find(x => x.kind === pickedKind); return s ? { px: s.px, py: s.py - TAG_H / 2, side: (s.px < cx ? 'right' : 'left') as 'left' | 'right' } : null; })())
+    : null;
+  const CARD_W = 300;
+  const structureCard = () => {
+    if (!pickedKind || !pickedHost || !pickedTag) return null;
+    const kind = pickedKind;
+    const { st, lockObj, progress } = statusOf(kind, pickedHost, pickedColumn);
+    const level = 'level' in st ? st.level : 0;
+    const name = tk(`worldmenu.building.${kind}`, kind.toUpperCase());
+    const style: React.CSSProperties | undefined = mobile ? undefined : (() => {
+      const left = pickedTag.side === 'right'
+        ? Math.min(vw - dockW - CARD_W - 12, pickedTag.px + TAG_W / 2 + 14)
+        : Math.max(railW + 12, pickedTag.px - (pickedColumn === 'orbit' ? ORBIT_TAG_W / 2 : TAG_W / 2) - 14 - CARD_W);
+      const top = Math.max(TOPBAR + 10, Math.min(vh - 96 - 260, pickedTag.py - 60));
+      return { left, top, width: CARD_W };
+    })();
+    return (
+      <section className={`wm-card${mobile ? ' is-sheet' : ''}`} style={style}
+        aria-label={name} data-testid="wm-card">
+        <div className="wm-card-head">
+          <h2>{name}</h2>
+          <span className="wm-card-lv">
+            {st.state === 'queued' || st.state === 'backlogged'
+              ? t('worldmenu.card.lvTo', { from: level, to: st.targetLevel })
+              : level > 0 ? t('worldmenu.card.lv', { lv: level }) : t('worldmenu.card.notBuilt')}
+          </span>
+          <button type="button" className="wm-card-x" aria-label={t('worldmenu.card.close')}
+            onClick={() => setPicked(null)}>✕</button>
+        </div>
+        <p className="wm-card-desc">{BUILDING_DEFS[kind].description}</p>
+        <div className="wm-card-fx">{BUILDING_DEFS[kind].effectShort}</div>
+        {kind === 'shields' && (pickedHost.shieldHpMax ?? 0) > 0 && (
+          <div className="wm-card-row">
+            <span>{t('worldmenu.card.dome')}</span>
+            <span className="wm-card-meter"><i style={{ width: `${Math.round(100 * (pickedHost.shieldHp ?? 0) / Math.max(1, pickedHost.shieldHpMax ?? 1))}%` }} /></span>
+            <b>{Math.round(pickedHost.shieldHp ?? 0)}/{Math.round(pickedHost.shieldHpMax ?? 0)}</b>
+          </div>
+        )}
+        {st.state === 'queued' && (
+          <div className="wm-card-row is-work">
+            <span>{t('worldmenu.card.building', { lv: st.targetLevel })}</span>
+            <span className="wm-card-meter"><i style={{ width: `${((progress ?? 0) * 100).toFixed(1)}%` }} /></span>
+            <b>{t('worldmenu.tag.building', { n: st.ticksLeft })}</b>
+          </div>
+        )}
+        {st.state === 'backlogged' && (
+          <>
+            <div className="wm-card-row is-booked"><span>{t('worldmenu.card.inLine', { pos: st.position, lv: st.targetLevel })}</span></div>
+            <button type="button" className="wm-card-go is-quiet" onClick={() => queueBuild(kind, pickedHost)}>
+              {t('worldmenu.card.takeOut')}
+            </button>
+          </>
+        )}
+        {st.state === 'ready' && (
+          lockObj ? (
+            <div className="wm-card-row is-locked"><span>🔒 {lockObj.label} — {lockObj.text}</span></div>
+          ) : (
+            <>
+              <div className="wm-card-row"><span>{t('worldmenu.card.cost')}</span><b className="is-cost">{costText(kind, level)}</b></div>
+              <button type="button" className="wm-card-go" data-testid="wm-card-go"
+                onClick={() => { void queueBuild(kind, pickedHost); }}>
+                {level > 0 ? t('worldmenu.card.upgrade', { lv: level + 1 }) : t('worldmenu.card.build')}
+              </button>
+            </>
+          )
+        )}
+      </section>
+    );
+  };
 
   // No F chip: fuel is dead (DESIGN-identity-economy.md §1.1). The DB
   // column still exists, but a permanent 0 on every world is noise.
@@ -816,22 +951,18 @@ export const WorldMenuOverlay: React.FC = () => {
 
   return (
     <div
-      className={`wm-root ${mobile ? 'wm-mobile' : ''}`}
+      className={`wm-root ${mobile ? 'wm-mobile' : ''}${openTab ? ' has-drawer' : ''}`}
       style={{ opacity: op, pointerEvents: op > 0.9 ? undefined : 'none' }}
       data-testid="world-menu"
     >
-      {/* ===== top readout panel — a BOX above the planet, not a strip.
-           The world's NAME leads the hierarchy: biggest thing in the box,
-           never covered. Mobile spans full width (collapsed default). ===== */}
+      {/* ===== the header: the world's name leads; the lore waits behind
+           ABOUT so the panel stops taking the best spot on the screen ===== */}
       <section
         data-tutorial-id="world-menu"
         className={`wm-top ${mobile && collapsed ? 'collapsed' : ''}`}
         style={mobile ? undefined : {
-          // Centered ABOVE the planet, capped so it never overlaps the
-          // outliner or the dock. Uses `cx` (post-shift planet centre).
-          left: '50%',
-          transform: `translateX(calc(-50% + ${(cx - vw / 2).toFixed(0)}px))`,
-          maxWidth: Math.min(560, vw - railW - dockW - 24),
+          left: railW + 16,
+          maxWidth: Math.min(520, Math.max(320, cx - cr * 0.15 - railW - 32)),
           width: 'max-content',
         }}
         data-testid="wm-top"
@@ -853,12 +984,18 @@ export const WorldMenuOverlay: React.FC = () => {
                 {isMine ? t('worldmenu.you') : (ownerFaction?.name ?? readout.ownerFactionId).toUpperCase()}
               </span>
             )}
+            {(flavor || body.look?.lore) && !mobile && (
+              <button type="button" className="wm-about" aria-expanded={aboutOpen}
+                onClick={() => setAboutOpen(o => !o)}>
+                {t('worldmenu.about')} {aboutOpen ? '▴' : '▾'}
+              </button>
+            )}
           </div>
         </div>
-        {flavor && !mobile && <div className="wm-desc">{flavor}</div>}
+        {flavor && !mobile && aboutOpen && <div className="wm-desc">{flavor}</div>}
         {/* A custom map's world lore and a revealed hand-placed find, in
             the map maker's own words: plain text, never translated. */}
-        {body.look?.lore && <div className="wm-lore">{body.look.lore}</div>}
+        {body.look?.lore && (mobile || aboutOpen) && <div className="wm-lore">{body.look.lore}</div>}
         {body.secret?.revealed && (body.secret.customName || body.secret.customText) && (
           <div className="wm-find">
             <span className="wm-find-glyph">✦</span>
@@ -867,9 +1004,8 @@ export const WorldMenuOverlay: React.FC = () => {
           </div>
         )}
         {/* The immovable note is a RULE, so unlike flavour it is NOT
-            hidden on mobile: it answers "why is there no thrusters
-            button on this rock", and that question is just as reachable
-            on a phone. One short line, so it costs little room. */}
+            hidden: it answers "why is there no thrusters button on this
+            rock". One short line, so it costs little room. */}
         {immovable && <div className="wm-immovable">{immovable}</div>}
         <div className="wm-metrics">
           <div className="wm-metric"><span>{t('worldmenu.metric.pop')}</span><b>{readout.pop}</b></div>
@@ -912,20 +1048,16 @@ export const WorldMenuOverlay: React.FC = () => {
           <span className="wm-label">{t('worldmenu.output')}</span>
           <div className="wm-yields">
             {yieldChips.map(([k, v]) => (
-              // Chip tinted with the canonical resource color so F/M/C/S
-              // reads the same here as on the top bar.
               <span
                 className="wm-yield" key={k}
                 style={{ color: RESOURCE_LETTER_COLORS[k as 'F' | 'M' | 'C' | 'S'] }}
-              >{/* letter inherits the tint (CSS dims it grey otherwise) */}
+              >
                 <i style={{ color: 'inherit', opacity: 0.75 }}>{k}</i>
                 {Math.round(v * 10) / 10}</span>
             ))}
           </div>
           <div className="wm-stock">
             <span className="wm-label">{t('worldmenu.stockpile')}</span>{' '}
-            {/* Round, not floor: floor turns fp residue like 0.9999 into
-                0 when the true stock is 1. Whole numbers everywhere. */}
             {([
               ['M', readout.stockpile.ore],
               ['C', readout.stockpile.credits], ['S', readout.stockpile.science],
@@ -937,48 +1069,17 @@ export const WorldMenuOverlay: React.FC = () => {
             ))}
           </div>
         </div>
-        {/* Terraform state — replaces the collector button (collectors
-            are dead; terraformed status is the loading dock now). */}
-        <WmTerraformCard body={body} isMine={isMine} />
-        {/* Dyson Sphere (Sol only) — the engineering-victory megaproject
-            had NO surface in the default world-menu UI; the initiate/
-            progress panel lived only in the legacy BodyInspector. */}
+        {/* A living world says so in one green line. A raw one's terraform
+            controls live in the TERRAFORM drawer on the bar, and its
+            progress is the ring on the world. */}
+        {!rawHere && <WmTerraformCard body={body} isMine={isMine} />}
+        {/* Dyson Sphere (Sol only) — the engineering-victory megaproject. */}
         {body.id === 'sol' && <WmDysonCard />}
-        {/* The asteroid weapon. Same gap the Dyson card above had: the
-            aim-and-fire controls lived only in the legacy BodyInspector,
-            and in multiplayer the World Menu REPLACES that inspector. So
-            a player could spend a Construction-7 unlock and 800M/1200G
-            on Trajectory Control Thrusters and then find "no option to
-            do anything with it" (Noah, Styx). One component, mounted in
-            both, so the two surfaces cannot drift. */}
+        {/* The asteroid weapon: one component, mounted here and in the
+            legacy BodyInspector, so the two surfaces cannot drift. */}
         {body.type === 'asteroid' && (
           <div className="wm-ram" data-testid="wm-ram">
             <RamControlsSection body={body} />
-          </div>
-        )}
-
-        {/* ===== MOBILE BUILD ROWS — INSIDE the sheet, in normal flow.
-             They used to float over the map at computed offsets: the
-             orbit row hung off the panel's bottom edge and the surface
-             row rode the top of the build box. Three independent absolute
-             layers converging on the same strip of a phone screen, and
-             they kept landing on each other and on the terraform
-             controls — twice patched by tuning offsets, twice still
-             overlapping (BUILD STATION was the last one standing).
-             In flow they cannot overlap by construction: the sheet is
-             already capped and scrollable, so the rows just take their
-             place in it. The diegetic sky/horizon placement stays on
-             DESKTOP, which has the room for it. ===== */}
-        {mobile && !collapsed && orbitEls.length > 0 && (
-          <div className="wm-msec" data-testid="wm-col-orbit">
-            <div className="wm-msec-label">{t('worldmenu.col.orbit')} — <b>{t('worldmenu.col.station')}</b></div>
-            <div className="wm-mrow wm-mrow-flow">{orbitEls}</div>
-          </div>
-        )}
-        {mobile && !collapsed && surfaceEls.length > 0 && (
-          <div className="wm-msec" data-testid="wm-col-surface">
-            <div className="wm-msec-label">{t('worldmenu.col.surface')} — <b>{t('worldmenu.col.city')}</b></div>
-            <div className="wm-mrow wm-mrow-flow">{surfaceEls}</div>
           </div>
         )}
 
@@ -994,28 +1095,16 @@ export const WorldMenuOverlay: React.FC = () => {
       {errMsg && <div className="wm-err">{errMsg}</div>}
       {!errMsg && noteMsg && <div className="wm-note" role="status">{noteMsg}</div>}
 
-      {/* ===== neighbor orbs (desktop only — they don't fit alongside
-           the dense mobile panels; mobile navigates via the outliner) ===== */}
+      {/* ===== neighbor orbs (desktop only) ===== */}
       {!mobile && (
       <svg className="wm-orbs" width={vw} height={vh} aria-hidden="true">
         {neighbors.map((nb, i) => {
           const isParent = nb.id === body.parent;
-          // orbSlotIndex: the parent (when listed, always first) takes slot
-          // 0 and the rest fill 1..3 in order; a planet's moons start at 1.
           const slot = ORB_SLOTS[orbSlotIndex(i, neighbors, body.parent)];
-          // dx is absolute px offset from `cx` (post-shift), so the
-          // cluster rides with the planet and is safely right of the
-          // centred info panel. y is absolute px from the top.
-          // Gutter + rig clearance come from orbShift above, applied
-          // uniformly so the cluster keeps its tuned spacing.
           const ox = cx + slot.dx - orbShift;
           const oy = slot.y, or = slot.r;
           const ownColor = bodyOwnerColor(nb.id);
-          // Visual overhaul (staging): the neighbour's real globe (its
-          // terraformed twin once it has one) instead of a flat disc.
           const gk = globeKeyOf(nb, !isRawWorld(nb));
-          // A megastructure neighbour shows its own silhouette, or its
-          // scaffold at the build stage it has reached, not a disc.
           const site = nb.type === 'megastructure' ? gameState.megastructures?.[nb.id] : undefined;
           const siteFac = site ? gameState.factions.find(f => f.id === nb.ownedBy) : undefined;
           const siteCol = siteFac?.color ?? '#9fb4c4';
@@ -1042,13 +1131,6 @@ export const WorldMenuOverlay: React.FC = () => {
               ) : gk
                 ? <image href={artUrl(`/globes/${gk}.webp`)} x={-or} y={-or} width={or * 2} height={or * 2} />
                 : <circle r={or} fill={nb.color} />}
-              {/* TERRAFORMED: the same living green the surface art and the
-                  TERRAFORMED pill use, so a glance at the cluster answers
-                  "which of these can take a city" without opening each one.
-                  A veil rather than another ring — owner and selection
-                  already own the ring language out here. Bodies that can
-                  never be terraformed (gas giants, asteroids) simply never
-                  match, so no type test is needed. */}
               {!isRawWorld(nb) && (
                 <>
                   {!gk && <circle r={or} fill="#4ade80" opacity="0.26" />}
@@ -1057,9 +1139,6 @@ export const WorldMenuOverlay: React.FC = () => {
                 </>
               )}
               {!site && <circle r={or} cx={or * 0.32} cy={or * 0.18} fill="#05080e" opacity="0.3" />}
-              {/* settlement indicator: an owner-coloured ring + star badge
-                  when this body is claimed (spec: "indicate who with the
-                  colors"). Absent when unsettled. */}
               {ownColor && (
                 <>
                   <circle className="wm-orb-owned" r={or + 3} fill="none" stroke={ownColor} strokeWidth={2} />
@@ -1077,28 +1156,14 @@ export const WorldMenuOverlay: React.FC = () => {
       </svg>
       )}
 
-      {/* ===== station indicator — a stylized ring+hub silhouette that
-           echoes the canvas station (isoStructures.drawStationStructure).
-           Not the tall-mast cartoon; a compact icon above the orbit
-           column that reads as "the station" at a glance. Modules
-           appear in faction color when built. ===== */}
+      {/* ===== the station: the map's own art in its owner's livery, its
+           modules as tags right under it ===== */}
       {readout.station && (
         <svg
           className="wm-station" data-testid="wm-station"
           viewBox="0 0 130 130"
-          style={mobile
-            // Mobile: park just below the station-build row, RIGHT
-            // ABOVE the horizon so the planet reads as one contiguous
-            // scene with the station. Centered.
-            ? { left: '50%',
-                // below: panel offset (10) + orbit row (40 @ +22) + 12 gap
-                top: 'calc(var(--wm-topbar-h, 52px) + var(--wm-panel-h, 44px) + var(--wm-orbit-h, 40px) + 34px)',
-                width: 100, height: 100, transform: 'translateX(-50%)' }
-            : { left: staX, top: staY, width: staW, height: staH }}
+          style={{ left: staX, top: staY, width: staW, height: staH }}
         >
-          {/* Visual overhaul (staging): the SAME station the map draws
-              (settlementArt), in the owner's two tones, its modules at
-              their built levels, rather than a hand-drawn ring and hub. */}
           <g
             data-livery={sp1}
             transform="translate(65 80) scale(1.05)"
@@ -1116,7 +1181,6 @@ export const WorldMenuOverlay: React.FC = () => {
           </text>
           <rect x="18" y="20" width="94" height="5" rx="2" fill="#0c1219" stroke="#2a3d50" strokeWidth="1" />
           <rect x="18" y="20" width={94 * staHpRatio} height="5" rx="2" fill={hpColor(staHpRatio)} />
-          {/* current / max integrity, spelled out under the bar */}
           <text x="65" y="33" textAnchor="middle"
             style={{ font: '700 8px "Audiowide", monospace', letterSpacing: '0.06em', fill: hpColor(staHpRatio) }}>
             {Math.round(readout.station.hp)}/{readout.station.maxHp}
@@ -1124,73 +1188,99 @@ export const WorldMenuOverlay: React.FC = () => {
         </svg>
       )}
 
-      {/* ===== build controls =====
-           Desktop: two columns hovering off the limb, leader lines from
-           each surface button to its limb building.
-           MOBILE: rendered INSIDE the info sheet above (see the wm-msec
-           blocks) so they sit in normal flow and cannot collide. They
-           were floating here at computed offsets and kept overlapping
-           each other and the terraform card. */}
-      {!mobile && (
+      {/* ===== THE STRUCTURES, ON THE WORLD =====
+           Each building is a tag standing over its spot on the limb, a
+           stem down to it; the station's modules hang under the station.
+           Pick one for its card. The STRUCTURES list on the bar holds the
+           same buttons as rows. */}
+      {orbitKinds.length > 0 && myStation && (
+        <div className="wm-tags wm-tags-orbit" data-testid="wm-col-orbit" data-tutorial-id="wm-columns-orbit">
+          {orbitKinds.map((k, i) => {
+            const p = orbitTagPos(i);
+            return tagFor(k, myStation, 'orbit', { left: p.x, top: p.y, width: ORBIT_TAG_W, height: ORBIT_TAG_H });
+          })}
+        </div>
+      )}
+      {!myStation && body && canHostStation(body) && !anyStation && (
+        <div className="wm-plot" style={{ left: staX + staW / 2, top: staY + staH / 2, width: mobile ? 150 : 168 }}>
+          {foundBtn('station')}
+        </div>
+      )}
+      {surfTags.length > 0 && myCity && (
         <>
-          {surfaceEls.length > 0 && (
-            <aside
-              className="wm-col" data-testid="wm-col-surface"
-              data-tutorial-id="wm-columns"
-              style={{ left: leftColX, top: colTopY, width: COL_W }}
-            >
-              <div className="wm-col-label">{t('worldmenu.col.surface')} — <b>{t('worldmenu.col.city')}</b></div>
-              {surfaceEls}
-            </aside>
-          )}
-          {orbitEls.length > 0 && (
-            <aside
-              className="wm-col" data-testid="wm-col-orbit"
-              data-tutorial-id="wm-columns-orbit"
-              style={{ left: rightColX, top: colTopY, width: COL_W }}
-            >
-              <div className="wm-col-label">{t('worldmenu.col.orbit')} — <b>{t('worldmenu.col.station')}</b></div>
-              {orbitEls}
-            </aside>
-          )}
-
-          {/* leader lines: surface button edge → its limb building. The
-              station is the canvas graphic (drawStation) on the orbital
-              ring, so orbit buttons don't draw lines. */}
-          {settled && myCity && (
+          {settled && (
             <svg className="wm-lines" width={vw} height={vh} aria-hidden="true">
-              {cols.surface.map((k, i) => {
-                const from = btnAnchor(leftColX, i + 1, 'right'); // +1: label row
-                // Shields has no limb structure to point at — it's the
-                // dome over the whole settlement, drawn by the closeup
-                // pass. Without this it would fall back to frac 0 and
-                // aim into the gap between MINT and LAB.
-                if (k === 'shields' || k === 'missile_silo') return null;
-                const to = partPos(PART_FRACS[k] ?? 0);
-                if (to.y > vh - 40) return null;
-                const mx = (from.x + to.x) / 2;
-                return <path key={k} data-wm-line={k} className="wm-line" fill="none"
-                  d={`M${from.x},${from.y} C${mx},${from.y} ${mx},${to.y} ${to.x - 8},${to.y}`} />;
-              })}
+              {surfTags.map(s => (
+                <g key={s.kind}>
+                  <path className={`wm-stem${pickedKind === s.kind && pickedColumn === 'surface' ? ' is-picked' : ''}`}
+                    data-wm-line={s.kind} fill="none" d={`M${s.px},${s.py} L${s.end.x},${s.end.y}`} />
+                  <rect className="wm-stem-foot" x={s.end.x - 3} y={s.end.y - 3} width={6} height={6}
+                    transform={`rotate(45 ${s.end.x} ${s.end.y})`} />
+                </g>
+              ))}
             </svg>
           )}
+          <div className="wm-tags wm-tags-surface" data-testid="wm-col-surface" data-tutorial-id="wm-columns">
+            {surfTags.map(s => tagFor(s.kind, myCity, 'surface', {
+              left: s.px, top: s.py, width: TAG_W, minHeight: TAG_H, transform: 'translate(-50%, -100%)',
+            }))}
+          </div>
         </>
       )}
+      {!myCity && body && canHostCity(body) && !anyCity && (
+        <div className="wm-plot" data-tutorial-id="wm-columns"
+          style={{ left: cx, top: apexY - (mobile ? 40 : 70), width: mobile ? 170 : 190 }}>
+          {foundBtn('city')}
+        </div>
+      )}
 
-      {/* ===== fleet box — compact, per the sketch: slots + queue on the
-           left, ship grid + DESIGN on the right. Not full-width.
+      {structureCard()}
 
-           ONLY where the player has a settlement (per Lorne). On a body
-           you haven't settled — a rival capital, an empty rock — the box
-           rendered a full grid of hull cards, all dead, over "no station
-           yet": a build menu for a yard that doesn't exist. Reported
-           from a rival's Dyson site at Sol, where it read as noise over
-           the thing being scouted. The FOUND CITY / BUILD STATION
-           affordances live in the columns and are untouched — settling
-           is still how you earn this box. */}
-      {(myCity || myStation) && (siloTabs && bottomTab === 'silo' && myCity ? (
-        <WmSilo city={myCity} body={body} mobile={mobile} tabs={siloTabs} onErr={setErrMsg} />
-      ) : (
+      {/* ===== THE BAR: what you can open on this world ===== */}
+      {tabs.length > 0 && !(mobile && pickedKind) && (
+        <nav className="wm-bar" aria-label={t('worldmenu.bar.aria')} data-testid="wm-bar"
+          style={mobile ? undefined : { left: `calc(var(--wm-rail) + (100vw - var(--wm-rail) - var(--wm-dock)) / 2)` }}>
+          {tabs.map(x => (
+            <button key={x.id} type="button" className={`wm-bar-tab ${x.tone ?? ''}${openTab === x.id ? ' is-on' : ''}`}
+              aria-pressed={openTab === x.id} data-testid={`wm-bar-${x.id}`}
+              onClick={() => { setPicked(null); openDrawer(openTab === x.id ? null : x.id); }}>
+              <span className="wm-bar-nm">{x.label}</span>
+              {x.id === 'terraform' && body.terraformCompletesAtTick == null ? (
+                <span className="wm-bar-meter"><i style={{ width: `${tfPct}%` }} /></span>
+              ) : null}
+              <span className="wm-bar-sub">{x.sub}</span>
+            </button>
+          ))}
+        </nav>
+      )}
+
+      {openTab === 'structures' && (
+        <section className="wm-fleet wm-drawer" data-testid="wm-structures"
+          style={mobile ? undefined : { left: 'calc(var(--wm-rail) + (100vw - var(--wm-rail) - var(--wm-dock)) / 2)', transform: 'translateX(-50%)' }}>
+          {orbitEls.length > 0 && (
+            <div className="wm-msec">
+              <div className="wm-msec-label">{t('worldmenu.col.orbit')} — <b>{t('worldmenu.col.station')}</b></div>
+              <div className="wm-drawer-grid">{orbitEls}</div>
+            </div>
+          )}
+          {surfaceEls.length > 0 && (
+            <div className="wm-msec">
+              <div className="wm-msec-label">{t('worldmenu.col.surface')} — <b>{t('worldmenu.col.city')}</b></div>
+              <div className="wm-drawer-grid">{surfaceEls}</div>
+            </div>
+          )}
+        </section>
+      )}
+      {openTab === 'terraform' && tfTab && (
+        <section className="wm-fleet wm-drawer wm-drawer-tf" data-testid="wm-terraform-drawer"
+          style={mobile ? undefined : { left: 'calc(var(--wm-rail) + (100vw - var(--wm-rail) - var(--wm-dock)) / 2)', transform: 'translateX(-50%)' }}>
+          <WmTerraformCard body={body} isMine={isMine} />
+        </section>
+      )}
+      {openTab === 'silo' && myCity && (
+        <WmSilo city={myCity} body={body} mobile={mobile} tabs={null} onErr={setErrMsg} />
+      )}
+      {openTab === 'yard' && (myCity || myStation) && (
         <WmFleet
           bodyId={body.id}
           mobile={mobile}
@@ -1199,9 +1289,9 @@ export const WorldMenuOverlay: React.FC = () => {
           railW={railW}
           onErr={setErrMsg}
           onNote={setNoteMsg}
-          tabs={siloTabs}
+          tabs={null}
         />
-      ))}
+      )}
     </div>
   );
 };

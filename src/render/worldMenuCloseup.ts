@@ -21,7 +21,7 @@ import { RenderContext, worldToCanvas, drawCloudDeck } from './mapRenderer';
 import { getTerraformedTexture, globeKeyOf } from './planetTexture';
 import { isLightweight } from './lightweightMode';
 import { bodyPosition } from '../physics/orbitalMechanics';
-import { zOf, clamp01 } from '../game/worldMenu/camera';
+import { zOf, clamp01, arcSpreadDeg } from '../game/worldMenu/camera';
 import { hpColor, flameCount } from '../game/worldMenu/combatDisplay';
 import { buildingLevel } from '../game/settlements';
 import { deriveSecondary } from '../game/colorUtils';
@@ -32,13 +32,17 @@ import { drawHullFire } from './fxArt';
  *  the framed span (matches the mockup's PART_FRACS; the overlay's
  *  leader lines aim at the same fractions). */
 export const PART_FRACS: Record<string, number> = {
-  forge: -0.62, mint: -0.15, lab: 0.35, collector: 0.72,
+  forge: -0.62, mint: -0.15, lab: 0.35, missile_silo: 0.62, collector: 0.78,
 };
 const FIRE_FRACS = [-0.62, -0.15, 0.35, 0.55, -0.4];
 
+/** Degrees per unit of arc fraction for THIS frame (arcSpreadDeg): 46 on a
+ *  desktop, narrower on a phone. Set at the top of each close-up draw. */
+let spreadDeg = 46;
+
 /** Angle (radians) of an arc fraction on the framed upper limb. */
 function arcAngle(frac: number): number {
-  return (-90 + frac * 46) * Math.PI / 180;
+  return (-90 + frac * spreadDeg) * Math.PI / 180;
 }
 
 /** Deterministic per-body pseudo-random in [0,1) — stable art, no flicker. */
@@ -353,10 +357,167 @@ function drawShieldDome(
   g.restore();
 }
 
+/**
+ * THE MISSILE SILO on the limb: a launch block with one hatch per magazine
+ * slot (5 per level). Lit = a missile ready, dashed = the one building now,
+ * dark = empty. Only the owner's client knows the stock (state.js blanks it
+ * for everyone else), so a rival sees the block and its size, not what is in
+ * it. Sizes are fractions of the screen radius, like everything here.
+ */
+function drawSilo(
+  g: CanvasRenderingContext2D,
+  c: { x: number; y: number; r: number },
+  city: Settlement,
+  p1: string,
+  alpha: number,
+): void {
+  const level = Number(city.buildings?.missile_silo ?? 0);
+  if (level <= 0) return;
+  const cap = 5 * level;
+  const known = city.missileSilo;
+  const stock = known ? known.stock : 0;
+  const building = known ? Math.min(cap - stock, known.orders.length > 0 ? 1 : 0) : 0;
+  const a = arcAngle(PART_FRACS.missile_silo);
+  const w = c.r * 0.12, h = c.r * 0.03;
+  g.save();
+  g.globalAlpha = alpha;
+  g.translate(c.x + Math.cos(a) * c.r, c.y + Math.sin(a) * c.r);
+  g.rotate(a + Math.PI / 2);
+  g.fillStyle = dimHex(p1, 0.45);
+  g.strokeStyle = '#ff8a5c';
+  g.lineWidth = Math.max(1, c.r * 0.003);
+  g.beginPath(); g.rect(-w / 2, -h, w, h); g.fill(); g.stroke();
+  const slotW = (w * 0.9) / cap;
+  for (let i = 0; i < cap; i++) {
+    const x = -w * 0.45 + i * slotW + slotW * 0.18;
+    const sw = slotW * 0.64, sh = h * 0.7;
+    if (known && i < stock) {
+      g.fillStyle = '#ff8a5c';
+      g.fillRect(x, -h * 0.85, sw, sh);
+    } else if (known && i < stock + building) {
+      g.setLineDash([2, 1.5]);
+      g.strokeRect(x, -h * 0.85, sw, sh);
+      g.setLineDash([]);
+      // The missile rising out of its tube as it builds.
+      g.fillStyle = 'rgba(255, 138, 92, 0.55)';
+      g.fillRect(x + sw * 0.3, -h * 0.85 - h * 0.6, sw * 0.4, h * 0.6);
+    } else {
+      g.strokeStyle = 'rgba(58, 75, 92, 0.9)';
+      g.strokeRect(x, -h * 0.85, sw, sh);
+      g.strokeStyle = '#ff8a5c';
+    }
+  }
+  g.restore();
+}
+
+/**
+ * A BUILDING SITE: whatever this city is upgrading right now gets a
+ * scaffold and a crane over its spot, and a ring that fills toward its
+ * completion tick. The world shows the work, not just the button.
+ */
+function drawSite(
+  g: CanvasRenderingContext2D,
+  c: { x: number; y: number; r: number },
+  city: Settlement,
+  tick: number,
+  alpha: number,
+): void {
+  const q = city.buildingQueue;
+  if (!q) return;
+  const frac = PART_FRACS[q.kind];
+  if (frac == null) return;
+  const span = Math.max(1, q.completeTick - q.startTick);
+  const done = clamp01((tick - q.startTick) / span);
+  const a = arcAngle(frac);
+  const s = c.r * 0.07;
+  g.save();
+  g.globalAlpha = alpha;
+  g.translate(c.x + Math.cos(a) * c.r, c.y + Math.sin(a) * c.r);
+  g.rotate(a + Math.PI / 2);
+  g.strokeStyle = '#ffb84d';
+  g.lineWidth = Math.max(1, c.r * 0.0028);
+  g.setLineDash([3, 3]);
+  g.strokeRect(-s * 0.5, -s * 1.25, s, s * 1.25);
+  g.setLineDash([]);
+  g.globalAlpha = alpha * 0.6;
+  g.beginPath();
+  g.moveTo(-s * 0.5, -s * 1.25); g.lineTo(s * 0.5, 0);
+  g.moveTo(s * 0.5, -s * 1.25); g.lineTo(-s * 0.5, 0);
+  g.moveTo(-s * 0.5, -s * 0.62); g.lineTo(s * 0.5, -s * 0.62);
+  g.stroke();
+  g.globalAlpha = alpha;
+  g.lineWidth = Math.max(1.5, c.r * 0.004);
+  g.beginPath();
+  g.moveTo(s * 0.75, 0); g.lineTo(s * 0.75, -s * 1.9); g.lineTo(-s * 0.35, -s * 1.9);
+  g.moveTo(-s * 0.2, -s * 1.9); g.lineTo(-s * 0.2, -s * 1.5);
+  g.stroke();
+  const rr = s * 0.42;
+  g.translate(s * 1.5, -s * 0.9);
+  g.lineWidth = Math.max(2, c.r * 0.006);
+  g.strokeStyle = 'rgba(28, 40, 54, 0.95)';
+  g.beginPath(); g.arc(0, 0, rr, 0, Math.PI * 2); g.stroke();
+  g.strokeStyle = '#ffb84d';
+  g.beginPath(); g.arc(0, 0, rr, -Math.PI / 2, -Math.PI / 2 + done * Math.PI * 2); g.stroke();
+  g.restore();
+}
+
+/**
+ * THE TERRAFORM RING: on a raw world, a band above the horizon that fills
+ * as the payload lands — metal from the left, credits from the right — so
+ * the world itself says how close it is. Once both are in, the whole band
+ * glows green for the change window.
+ */
+function drawTerraformRing(
+  g: CanvasRenderingContext2D,
+  body: Body,
+  c: { x: number; y: number; r: number },
+  cost: { costMetal: number; costCredits: number },
+  tick: number,
+  t: number,
+  alpha: number,
+): void {
+  const acc = body.terraformAcc ?? { metal: 0, credits: 0 };
+  const windowOpen = body.terraformCompletesAtTick != null;
+  const mF = clamp01(acc.metal / Math.max(1, cost.costMetal));
+  const cF = clamp01(acc.credits / Math.max(1, cost.costCredits));
+  if (!windowOpen && mF <= 0 && cF <= 0) return;
+  const rr = c.r * 1.045;
+  const lw = Math.max(3, c.r * 0.012);
+  const left0 = arcAngle(-0.95), mid = arcAngle(0), right1 = arcAngle(0.95);
+  const gap = 0.012;
+  g.save();
+  g.globalAlpha = alpha;
+  g.lineCap = 'round';
+  g.lineWidth = lw;
+  const band = (from: number, to: number, color: string) => {
+    if (to <= from) return;
+    g.strokeStyle = color;
+    g.beginPath(); g.arc(c.x, c.y, rr, from, to); g.stroke();
+  };
+  if (windowOpen) {
+    // Both payloads in: the whole band breathes green until the change.
+    const pulse = prefersReducedMotion() ? 1 : 0.75 + 0.25 * Math.sin(t * 0.003);
+    g.globalAlpha = alpha * pulse;
+    band(left0, right1, '#6ee7b7');
+  } else {
+    band(left0, mid - gap, 'rgba(201, 212, 222, 0.16)');
+    band(mid + gap, right1, 'rgba(255, 209, 102, 0.16)');
+    band(mid - gap - (mid - gap - left0) * mF, mid - gap, '#c9d4de');
+    band(mid + gap, mid + gap + (right1 - mid - gap) * cF, '#ffd166');
+  }
+  g.restore();
+}
+
+export interface CloseupExtras {
+  terraformConfig?: { costMetal: number; costCredits: number; durationTicks?: number };
+  tick?: number;
+}
+
 export function drawWorldMenuCloseup(
   rc: RenderContext,
   settlements: Settlement[],
   viewerFactionId: string,
+  extras: CloseupExtras = {},
 ): void {
   const focusId = rc.camera.focusedBodyId;
   if (!focusId) return;
@@ -367,8 +528,14 @@ export function drawWorldMenuCloseup(
   // detail resolves in over the first half of the dive
   const alpha = clamp01(z / 0.5);
   const c = focusedScreenCircle(body, rc);
+  spreadDeg = arcSpreadDeg(rc.canvas.width, rc.canvas.height);
 
   surfaceDetail(rc, body, c, alpha);
+
+  if (body.terraformedAtTick == null) {
+    drawTerraformRing(rc.ctx, body, c,
+      extras.terraformConfig ?? { costMetal: 124, costCredits: 124 }, extras.tick ?? 0, rc.t, alpha);
+  }
 
   const here = settlements.filter(s => s.bodyId === focusId);
   const city = here.find(s => s.type === 'city');
@@ -449,6 +616,8 @@ export function drawWorldMenuCloseup(
       drawBuilding(rc.ctx, kind, buildingLevel(city, kind), c, PART_FRACS[kind], p1, p2, alpha);
     }
     if (city.hasCollector) drawBuilding(rc.ctx, 'collector', 1, c, PART_FRACS.collector, p1, p2, alpha);
+    drawSilo(rc.ctx, c, city, p1, alpha);
+    drawSite(rc.ctx, c, city, extras.tick ?? 0, alpha);
     drawShieldDome(rc.ctx, c, city, rc.t, alpha);
     drawHpTag(rc.ctx, c, city.name, city.hp, city.maxHp, alpha);
     drawFire(rc.ctx, c, city.hp / Math.max(1, city.maxHp), rc.t, alpha);
