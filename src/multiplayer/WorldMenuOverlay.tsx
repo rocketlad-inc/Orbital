@@ -71,10 +71,24 @@ import { buildChoices } from '../game/designChoice';
 import { RamControlsSection } from '../components/BodyInspector';
 import { t, tn, tk } from '../i18n/core';
 import { useI18n } from '../i18n/react';
+import { makePeaceCheck } from '../game/peace';
+import { groupFlights } from '../game/interceptPicker';
+import './WmPhone.css';
 /** The bar's drawers, and where the last choice is remembered. */
 const DRAWER_IDS = ['structures', 'yard', 'silo', 'terraform'] as const;
 type DrawerId = typeof DRAWER_IDS[number];
 const DRAWER_KEY = 'orbital.wm_drawer';
+
+/** THE PHONE'S ONE SHEET (Lorne, 2026-10-20: "I want the whole world menu
+ *  designed for a mobile first approach"). What it shows, and how tall that
+ *  is: the world at a peek, a list over the lifted world at half, a console
+ *  that wants the screen at full. */
+type PhoneView = 'home' | 'structures' | 'structure' | 'silo' | 'yard' | 'overview' | 'terraform';
+const phoneLevel = (v: PhoneView): 'peek' | 'half' | 'full' =>
+  v === 'home' ? 'peek' : v === 'silo' || v === 'yard' || v === 'overview' ? 'full' : 'half';
+/** How much higher the world sits (fraction of the screen) once the sheet
+ *  is past a peek, so its horizon and pins stay above the sheet's top. */
+const PHONE_HALF_LIFT = 0.17;
 
 /** Picker target meaning "the panel default", not a specific queued row.
  *  A build order id can never collide with it — they are body-prefixed. */
@@ -198,9 +212,14 @@ export const WorldMenuOverlay: React.FC = () => {
     setDrawer(d);
     try { if (d) localStorage.setItem(DRAWER_KEY, d); else localStorage.removeItem(DRAWER_KEY); } catch { /* private window */ }
   }, []);
-  // A phone opening the silo folds the world's header away: the silo is
-  // a console that wants the screen (Lorne, 2026-10-20, the mobile pass).
-  useEffect(() => { if (mobile && drawer === 'silo') setCollapsed(true); }, [mobile, drawer]);
+  // The phone's sheet: what it shows, which side of the structure list is
+  // up, and where a structure's back arrow returns to (its pin or the list).
+  const [pview, setPview] = useState<PhoneView>('home');
+  const [pside, setPside] = useState<'surface' | 'orbit'>('surface');
+  const [pBack, setPBack] = useState<PhoneView>('home');
+  const pLevel = phoneLevel(pview);
+  const phoneShift = (h: number) => -(MOBILE_LIFT_FRAC + (pLevel === 'peek' ? 0 : PHONE_HALF_LIFT)) * h;
+  const grabRef = useRef<{ y: number; moved?: boolean } | null>(null);
   // The structure whose card is open: one at a time, cleared per world.
   const [picked, setPicked] = useState<{ kind: BuildingKind; column: 'surface' | 'orbit' } | null>(null);
   const pickedKind = picked?.kind ?? null;
@@ -209,7 +228,21 @@ export const WorldMenuOverlay: React.FC = () => {
   const [stationOpen, setStationOpen] = useState(false);
   // The structure under the pointer: its tag and its building light together.
   const [hoverKind, setHoverKind] = useState<string | null>(null);
-  useEffect(() => { setPicked(null); setStationOpen(false); setHoverKind(null); }, [openId]);
+  useEffect(() => {
+    setPicked(null); setStationOpen(false); setHoverKind(null);
+    // A raw world has one job, so its sheet opens on it.
+    const b = openId ? gameState.bodies.find(x => x.id === openId) : undefined;
+    setPview(b && canHostCity(b) && isRawWorld(b) ? 'terraform' : 'home');
+    setPside('surface');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openId]);
+  // Past a peek, the sheet owns the bottom of the screen: the dock steps
+  // aside (WmPhone.css) and comes back when the sheet drops.
+  useEffect(() => {
+    const up = mobile && !!openId && pLevel !== 'peek';
+    document.body.classList.toggle('wmp-sheet-up', up);
+    return () => { document.body.classList.remove('wmp-sheet-up'); };
+  }, [mobile, openId, pLevel]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { measureChrome(); }, [openId]);
   // The lore waits behind ABOUT: it was taking the best spot on the screen.
@@ -294,7 +327,7 @@ export const WorldMenuOverlay: React.FC = () => {
       // Mobile: lift the planet so the horizon lands ~45% down — the
       // station and the structure tags in the sky above, the bar and its
       // sheets below (MOBILE_LIFT_FRAC; the render below uses the same).
-      const uShift = vw > 720 ? 0 : -MOBILE_LIFT_FRAC * vh;
+      const uShift = vw > 720 ? 0 : phoneShift(vh);
       const off = menuCameraOffset(vw, vh, s1, rShift, uShift);
       focusBody(sel); // sets focusedBodyId (body-relative camera)
       updateCamera({ scale: s1, x: off.x, y: off.y });
@@ -304,15 +337,16 @@ export const WorldMenuOverlay: React.FC = () => {
       // SAME WORLD, NEW VIEWPORT (a window resized, a phone turned): frame
       // it again. The tags are placed from the viewport, the planet from
       // the camera; left alone the two parted company, and the tags hung
-      // off a planet framed for the old size.
+      // off a planet framed for the old size. A phone's sheet rising past
+      // a peek lifts the world the same way, so its pins stay in view.
       const s1 = menuScaleFor(b, vh);
       const rShift = vw > 720 ? (296 - 60) / 2 : 0;
-      const uShift = vw > 720 ? 0 : -MOBILE_LIFT_FRAC * vh;
+      const uShift = vw > 720 ? 0 : phoneShift(vh);
       const off = menuCameraOffset(vw, vh, s1, rShift, uShift);
       updateCamera({ scale: s1, x: off.x, y: off.y });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [uiState.selectedBodyId, vw, vh]);
+  }, [uiState.selectedBodyId, vw, vh, pLevel]);
 
   const close = useCallback((restoreCamera: boolean) => {
     setOpenId(null);
@@ -475,14 +509,24 @@ export const WorldMenuOverlay: React.FC = () => {
       const t = e.target as HTMLElement;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
       if (e.key === 'Escape' && openId) {
-        if (picked) setPicked(null);
+        if (mobile && pview !== 'home') phoneBackRef.current();
+        else if (picked) setPicked(null);
         else if (stationOpen) setStationOpen(false);
         else close(true);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [openId, close, picked, stationOpen]);
+  }, [openId, close, picked, stationOpen, mobile, pview]);
+  // The phone's back arrow: a structure goes back to where it was opened
+  // from, any other view to the world, and the world to the map.
+  const phoneBack = () => {
+    if (pview === 'structure') { setPicked(null); setPview(pBack); }
+    else if (pview !== 'home') { setPicked(null); setPview('home'); }
+    else close(true);
+  };
+  const phoneBackRef = useRef(phoneBack);
+  phoneBackRef.current = phoneBack;
 
   // ---- data ----
   const readout = useMemo(
@@ -500,6 +544,22 @@ export const WorldMenuOverlay: React.FC = () => {
   // its settlements is yours (settlementControl.ts).
   const { myCity, myStation, canCommand } = worldControl(here);
   const siloLevel = Number(myCity?.buildings?.missile_silo ?? 0);
+  // A raid bound for a world of yours: hulls of an empire you are at war
+  // with, in flight here (the silo's INCOMING, counted). The phone's peek
+  // leads with it.
+  const raid = useMemo(() => {
+    if (!openId || !here.some(s => s.ownedBy === 'player')) return null;
+    const peace = makePeaceCheck(gameState.warPairs);
+    const flying = gameState.ships.filter(s => s.class !== 'missile' && s.ownedBy !== 'player'
+      && s.transit?.currentTransfer?.targetBodyId === openId && !peace('player', s.ownedBy));
+    if (!flying.length) return null;
+    const soonest = Math.min(...flying.map(s => s.transit!.currentTransfer!.arriveTick));
+    return {
+      ships: flying.length,
+      groups: groupFlights(flying, gameState.fleets ?? []).length,
+      lands: Math.max(0, Math.ceil(soonest - gameState.currentTick)),
+    };
+  }, [openId, here, gameState.ships, gameState.fleets, gameState.warPairs, gameState.currentTick]);
   // SLOT TAKEN, BY ANYONE. The server's rule is one city and one station
   // PER BODY with no owner filter (actions.js: "this body already has a
   // <type> — only one <type> per body"), so a rival's city occupies the
@@ -631,7 +691,7 @@ export const WorldMenuOverlay: React.FC = () => {
   // it, and the canvas draws each structure at the angle published for its
   // tag (setWorldMenuStructures), so a tag's stem always ends on its roof.
   const rShift = !mobile ? (296 - 60) / 2 : 0;
-  const uShift = mobile ? -MOBILE_LIFT_FRAC * vh : 0;
+  const uShift = mobile ? phoneShift(vh) : 0;
   const cx = S1X_FRAC * vw + rShift, cy = S1Y_FRAC * vh + uShift + mapTop, cr = Z1_FRAC * vh;
   const railW = mobile ? 0 : 296, dockW = mobile ? 0 : 60;
   const TOPBAR = 52;
@@ -1165,6 +1225,578 @@ export const WorldMenuOverlay: React.FC = () => {
 
   const staHpRatio = readout.station ? readout.station.hp / Math.max(1, readout.station.maxHp) : 1;
 
+  // ---- the world's readout, shared by the desktop header and the phone's
+  // OVERVIEW sheet ----
+  const metricsEl = (
+    <div className="wm-metrics">
+      <div className="wm-metric"><span>{t('worldmenu.metric.pop')}</span><b>{readout.pop}</b></div>
+      <div className="wm-metric"><span>{t('worldmenu.metric.defense')}</span><b>{readout.defense}</b></div>
+      <div className="wm-metric"><span>{t('worldmenu.metric.ships')}</span><b>◆ {readout.shipCount}</b></div>
+      <div className="wm-metric"><span>{t('worldmenu.metric.integrity')}</span>
+        <b>{integrity ? `${Math.round(integrity.hp)}/${integrity.maxHp}` : '—'}</b>
+      </div>
+    </div>
+  );
+  const settlementsEl = (myCity || myStation) ? (
+    <div className="wm-settlements">
+      {myCity && (
+        <span className="wm-settlement" title={t('worldmenu.renameCity')}>
+          <span className="wm-settlement-glyph">■</span>
+          <EditableName value={myCity.name} maxLength={32} ariaLabel={t('worldmenu.renameCity')}
+            onSave={(next) => renameOwned(myCity.id, next)} />
+          <span className="wm-settlement-hp"
+            style={{ color: hpColor(myCity.hp / Math.max(1, myCity.maxHp)) }}
+            title={t('worldmenu.integrityTitle')}>
+            ◈ {Math.round(myCity.hp)}/{myCity.maxHp}
+          </span>
+        </span>
+      )}
+      {myStation && (
+        <span className="wm-settlement" title={t('worldmenu.renameStation')}>
+          <span className="wm-settlement-glyph">◆</span>
+          <EditableName value={myStation.name} maxLength={32} ariaLabel={t('worldmenu.renameStation')}
+            onSave={(next) => renameOwned(myStation.id, next)} />
+          <span className="wm-settlement-hp"
+            style={{ color: hpColor(myStation.hp / Math.max(1, myStation.maxHp)) }}
+            title={t('worldmenu.integrityTitle')}>
+            ◈ {Math.round(myStation.hp)}/{myStation.maxHp}
+          </span>
+        </span>
+      )}
+    </div>
+  ) : null;
+  const yieldsEl = (
+    <div className="wm-yields">
+      {yieldChips.map(([k, v]) => (
+        <span
+          className="wm-yield" key={k}
+          style={{ color: RESOURCE_LETTER_COLORS[k as 'F' | 'M' | 'C' | 'S'] }}
+        >
+          <i style={{ color: 'inherit', opacity: 0.75 }}>{k}</i>
+          {Math.round(v * 10) / 10}</span>
+      ))}
+    </div>
+  );
+  const stockEl = (
+    <div className="wm-stock">
+      <span className="wm-label">{t('worldmenu.stockpile')}</span>{' '}
+      {([
+        ['M', readout.stockpile.ore],
+        ['C', readout.stockpile.credits], ['S', readout.stockpile.science],
+      ] as Array<['M' | 'C' | 'S', number]>).map(([k, v], i) => (
+        <React.Fragment key={k}>
+          {i > 0 && ' · '}
+          <span style={{ color: RESOURCE_LETTER_COLORS[k] }}>{k}{Math.round(v)}</span>
+        </React.Fragment>
+      ))}
+    </div>
+  );
+  const outEl = (
+    <div className="wm-out">
+      <span className="wm-label">{t('worldmenu.output')}</span>
+      {yieldsEl}
+      {stockEl}
+    </div>
+  );
+  const worldExtrasEl = (
+    <>
+      {/* A living world says so in one green line. A raw one's terraform
+          controls live in the TERRAFORM drawer on the bar, and its
+          progress is the ring on the world. */}
+      {!rawHere && <WmTerraformCard body={body} isMine={isMine} />}
+      {/* Dyson Sphere (Sol only) — the engineering-victory megaproject. */}
+      {body.id === 'sol' && <WmDysonCard />}
+      {/* The asteroid weapon: one component, mounted here and in the
+          legacy BodyInspector, so the two surfaces cannot drift. */}
+      {body.type === 'asteroid' && (
+        <div className="wm-ram" data-testid="wm-ram">
+          <RamControlsSection body={body} />
+        </div>
+      )}
+    </>
+  );
+
+  // ===== THE PHONE (Lorne, 2026-10-20: "it's just a cramped rework of the
+  // new desktop. I want the whole world menu designed for a mobile first
+  // approach"). The MF-* boards on the design canvas are the spec: the
+  // world fills the screen, its structures are pins on the horizon, and
+  // ONE sheet from the bottom does the work, at three heights. Every rule
+  // and every order here is the desktop's own (statusOf, tagLine,
+  // queueBuild, foundBtn, WmSilo, WmFleet, WmTerraformCard); only the
+  // layout is the phone's. =====
+  const phoneLayout = () => {
+    type Side = 'surface' | 'orbit';
+    const nameOf = (k: BuildingKind) => tk(`worldmenu.building.${k}`, k.toUpperCase());
+    const hostOf = (side: Side) => (side === 'orbit' ? myStation : myCity);
+    const kindsOf = (side: Side): BuildingKind[] => (side === 'orbit'
+      ? (myStation ? cols.orbit : []) : (myCity ? cols.surface : []));
+    // Built (or building) first, then what can be built, then the locked.
+    const rankOf = (k: BuildingKind, side: Side) => {
+      const host = hostOf(side);
+      if (!host) return 3;
+      const { st, lockObj } = statusOf(k, host, side);
+      if (lockObj) return 2;
+      return ('level' in st && st.level > 0) || st.state === 'queued' || st.state === 'backlogged' ? 0 : 1;
+    };
+    const sortedOf = (side: Side) => [...kindsOf(side)].sort((a, b) => rankOf(a, side) - rankOf(b, side));
+    const openStructure = (kind: BuildingKind, side: Side, from: PhoneView) => {
+      setStationOpen(false);
+      setPicked({ kind, column: side });
+      setPside(side);
+      setPBack(from === 'structure' ? 'home' : from);
+      setPview('structure');
+    };
+    const goHome = () => { setPicked(null); setPview('home'); };
+    const lockGlyph = (
+      <svg className="wmp-lockg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden="true">
+        <rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11 V8 a4 4 0 0 1 8 0 V11" />
+      </svg>
+    );
+    /** What a pin or a row wears: its level, a lock, a queue mark, or +. */
+    const badge = (k: BuildingKind, host: Settlement, side: Side): React.ReactNode => {
+      const { st, level, tone } = tagLine(k, host, side);
+      if (tone === 'is-locked') return lockGlyph;
+      if (st.state === 'queued') return '↑';
+      if (st.state === 'backlogged') return `#${st.position}`;
+      return level > 0 ? String(level) : '+';
+    };
+
+    const siloOk = siloLevel > 0 && !!myCity?.missileSilo;
+    const canFoundStation = !myStation && canHostStation(body) && !anyStation;
+    const sideAvail: Record<Side, boolean> = { surface: surfaceEls.length > 0, orbit: orbitEls.length > 0 };
+    // The view actually shown: one whose content has gone (the silo lost,
+    // the world terraformed under you) falls back to the world.
+    const view: PhoneView = (() => {
+      switch (pview) {
+        case 'silo': return siloOk ? 'silo' : 'home';
+        case 'yard': return myCity || myStation ? 'yard' : 'home';
+        case 'terraform': return rawHere ? 'terraform' : 'home';
+        case 'structures': return sideAvail.surface || sideAvail.orbit ? 'structures' : 'home';
+        case 'structure': return pickedKind && hostOf(pickedColumn) ? 'structure' : 'home';
+        default: return pview;
+      }
+    })();
+    if (view !== pview) window.setTimeout(() => setPview(view), 0);
+    const level = phoneLevel(view);
+
+    // ---- the header: back, the world's name, whose it is, its integrity ----
+    const ringR = 15, ringC = 2 * Math.PI * ringR;
+    const hpFrac = integrity ? Math.max(0, Math.min(1, integrity.hp / Math.max(1, integrity.maxHp))) : 0;
+    const status = canHostCity(body) ? (isRawWorld(body) ? t('worldmenu.p.raw') : t('worldmenu.p.living')) : null;
+    const header = (
+      <header className="wmp-head" data-testid="wm-top" data-tutorial-id="world-menu">
+        <button type="button" className="wmp-back" onClick={phoneBack} data-testid="wm-tomap"
+          aria-label={view === 'home' ? t('worldmenu.p.toMap') : t('worldmenu.p.back')}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"
+            strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 5 L8 12 L15 19" /></svg>
+        </button>
+        <div className="wmp-id">
+          <div className="wmp-nmrow">
+            <h1 className="wmp-nm">{body.name.toUpperCase()}</h1>
+            {readout.ownerFactionId && (
+              <span className={`wmp-owner${isMine ? '' : ' is-other'}`} style={isMine ? { borderColor: p1, color: p1 } : undefined}>
+                {isMine ? t('worldmenu.you') : (ownerFaction?.name ?? readout.ownerFactionId).toUpperCase()}
+              </span>
+            )}
+          </div>
+          <div className="wmp-sub">
+            {tk(`body.type.${body.type}`, body.type.replace('_', ' ')).toUpperCase()}{status ? ` · ${status}` : ''}
+          </div>
+        </div>
+        {integrity && (
+          <span className="wmp-ring" role="img"
+            aria-label={t('worldmenu.p.ringAria', { hp: Math.round(integrity.hp), max: integrity.maxHp })}>
+            <svg width="40" height="40" viewBox="0 0 40 40" aria-hidden="true">
+              <circle cx="20" cy="20" r={ringR} fill="none" stroke="#1c2a37" strokeWidth="3" />
+              <circle cx="20" cy="20" r={ringR} fill="none" stroke={hpColor(hpFrac)} strokeWidth="3" strokeLinecap="round"
+                strokeDasharray={`${hpFrac * ringC} ${ringC}`} transform="rotate(-90 20 20)" />
+            </svg>
+            <b>{Math.round(integrity.hp)}</b>
+          </span>
+        )}
+      </header>
+    );
+
+    // ---- the neighbours: one tap to the next world ----
+    const nbrs = (view === 'home' || view === 'terraform') && neighbors.length > 0 ? (
+      <nav className="wmp-nbrs" aria-label={t('worldmenu.p.nearby')}>
+        {neighbors.map(nb => {
+          const isParent = nb.id === body.parent;
+          const own = bodyOwnerColor(nb.id);
+          return (
+            <button key={nb.id} type="button" className="wmp-nbr" data-testid={`wmp-nbr-${nb.id}`}
+              onClick={() => selectBody(nb.id)}>
+              {isParent && <span aria-hidden="true">‹</span>}
+              {own && <i style={{ background: own }} aria-hidden="true" />}
+              {nb.name.toUpperCase()}
+              {!isParent && <span aria-hidden="true">›</span>}
+            </button>
+          );
+        })}
+      </nav>
+    ) : null;
+
+    // ---- the pins: each structure marked over its own roof, a short stem
+    // down to it. Tap one for its sheet. ----
+    const PIN_TOP = TOPBAR + 64 + 24;
+    const pinY = (s: { end: { y: number } }) => Math.max(PIN_TOP, s.end.y - 34);
+    const pins = myCity && level !== 'full' && surfTags.length > 0 ? (
+      <>
+        {settled && (
+          <svg className="wm-lines" width={vw} height={vh} aria-hidden="true">
+            {surfTags.map(s => (
+              <path key={s.kind}
+                className={`wm-stem${view === 'structure' && pickedKind === s.kind && pickedColumn === 'surface' ? ' is-picked' : ''}`}
+                data-wm-line={s.kind} fill="none" d={`M${s.end.x},${pinY(s) + 18} L${s.end.x},${s.end.y}`} />
+            ))}
+          </svg>
+        )}
+        <div className="wmp-pins" data-testid="wm-col-surface" data-tutorial-id="wm-columns">
+          {surfTags.map(s => {
+            const k = s.kind as BuildingKind;
+            const { line, tone, progress } = tagLine(k, myCity, 'surface');
+            const on = view === 'structure' && pickedKind === k && pickedColumn === 'surface';
+            const pinLabel = t('worldmenu.p.pinAria', { name: nameOf(k), line });
+            return (
+              <button key={k} type="button" className={`wmp-pin ${tone}${on ? ' is-on' : ''}`}
+                style={{ left: s.end.x, top: pinY(s) }} data-testid={`wm-build-${k}`}
+                aria-label={pinLabel} title={pinLabel}
+                onClick={() => openStructure(k, 'surface', view)}>
+                <span className="wmp-pin-dot">{badge(k, myCity, 'surface')}</span>
+                {progress !== null && (
+                  <svg className="wmp-pin-ring" width="44" height="44" viewBox="0 0 44 44" aria-hidden="true">
+                    <circle cx="22" cy="22" r="20" fill="none" strokeWidth="2"
+                      strokeDasharray={`${progress * 125.7} 125.7`} transform="rotate(-90 22 22)" />
+                  </svg>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </>
+    ) : null;
+    // No city yet: the plot where one goes. On a raw world it opens the
+    // terraform sheet, the way to a city there.
+    const plot = !myCity && canHostCity(body) && !anyCity && level !== 'full' ? (
+      <button type="button" className={`wmp-plot${rawHere ? ' is-raw' : ''}`} data-testid="wmp-plot"
+        style={{ left: cx, top: Math.max(PIN_TOP, apexY - 30) }}
+        onClick={() => { if (rawHere) setPview('terraform'); else { setPside('surface'); setPview('structures'); } }}>
+        {rawHere ? <>{lockGlyph}{t('worldmenu.p.cityPlot')}</> : t('worldmenu.found.btnCity')}
+      </button>
+    ) : null;
+
+    // ---- HOME: the peek. Who lives here, what it makes, any raid, and a
+    // card for each thing you can open ----
+    const lockedN = (['surface', 'orbit'] as const).reduce((n, side) => {
+      const host = hostOf(side);
+      return n + (host ? kindsOf(side).filter(k => statusOf(k, host, side).lockObj).length : 0);
+    }, 0);
+    const stationMods = myStation ? Object.values(myStation.buildings ?? {}).filter(v => Number(v) > 0).length : 0;
+    type Card = { id: string; label: string; sub: string; tone?: string; meter?: number; badgeN?: number; go: () => void };
+    const cards: Card[] = [];
+    if (rawHere && tfTab) {
+      cards.push({ id: 'terraform', label: t('worldmenu.bar.terraform'), sub: tfTab.sub, tone: 'is-tf',
+        meter: body.terraformCompletesAtTick == null ? tfPct : undefined, go: () => setPview('terraform') });
+    }
+    if (myCity) {
+      cards.push({ id: 'structures', label: t('worldmenu.bar.structures'),
+        sub: lockedN ? `${tn('worldmenu.bar.built', builtCount)} · ${t('worldmenu.p.locked', { n: lockedN })}` : tn('worldmenu.bar.built', builtCount),
+        go: () => { setPside('surface'); setPview('structures'); } });
+    } else if (sideAvail.surface && !rawHere) {
+      cards.push({ id: 'structures', label: t('worldmenu.col.city'), sub: t('worldmenu.found.btnCity'),
+        go: () => { setPside('surface'); setPview('structures'); } });
+    }
+    if (siloOk && myCity?.missileSilo) {
+      cards.push({ id: 'silo', label: t('worldmenu.bar.silo'), tone: 'is-silo', badgeN: raid?.groups,
+        sub: t('worldmenu.tag.magazine', { n: myCity.missileSilo.stock, cap: siloCap }), go: () => setPview('silo') });
+    }
+    if (myCity || myStation) {
+      cards.push({ id: 'yard', label: t('worldmenu.bar.yard'),
+        sub: t('worldmenu.bar.slipways', { busy: yardBusy, slots: yardSlots }), go: () => setPview('yard') });
+    }
+    if (myStation) {
+      cards.push({ id: 'station', label: t('worldmenu.station.chip'), sub: tn('worldmenu.p.modules', stationMods),
+        go: () => { setPside('orbit'); setPview('structures'); } });
+    } else if (canFoundStation) {
+      cards.push({ id: 'station', label: t('worldmenu.station.chip'),
+        sub: (myCity || myStation) ? `+ ${costLabel}` : colonyShipHere ? t('worldmenu.found.consumesShip') : t('worldmenu.found.needsShip'),
+        go: () => { setPside('orbit'); setPview('structures'); } });
+    }
+    cards.push({ id: 'overview', label: t('worldmenu.p.overview'),
+      sub: integrity ? `${Math.round(integrity.hp)} / ${integrity.maxHp}` : `${t('worldmenu.metric.pop')} ${readout.pop}`,
+      go: () => setPview('overview') });
+    const placeName = myCity?.name ?? myStation?.name
+      ?? (readout.ownerFactionId ? (isMine ? t('worldmenu.you') : (ownerFaction?.name ?? '')) : t('worldmenu.p.unclaimed'));
+    const raidLine = raid ? tn('worldmenu.p.raid', raid.ships, { t: raid.lands }) : null;
+    const homeView = (
+      <>
+        <div className="wmp-idrow">
+          <span className="wmp-place">{placeName}</span>
+          {readout.pop > 0 && <span className="wmp-pop">{t('worldmenu.metric.pop')} <b>{readout.pop}</b></span>}
+        </div>
+        <div className="wmp-yields">
+          {yieldChips.map(([k, v]) => (
+            <span key={k} className="wmp-yield">
+              <i style={{ color: RESOURCE_LETTER_COLORS[k as 'M' | 'C' | 'S'] }}>{k}</i>{Math.round(v * 10) / 10}<em>/t</em>
+            </span>
+          ))}
+        </div>
+        {raidLine && (siloOk ? (
+          <button type="button" className="wmp-alert" data-testid="wmp-raid" onClick={() => setPview('silo')}>
+            <span className="wmp-alert-dot" aria-hidden="true" />{raidLine}<span aria-hidden="true">›</span>
+          </button>
+        ) : (
+          <div className="wmp-alert" data-testid="wmp-raid"><span className="wmp-alert-dot" aria-hidden="true" />{raidLine}</div>
+        ))}
+        <div className="wmp-cards" data-testid="wm-bar">
+          {cards.map(c => (
+            <button key={c.id} type="button" className={`wmp-card ${c.tone ?? ''}`} data-testid={`wm-bar-${c.id}`} onClick={c.go}>
+              <span className="wmp-card-nm">{c.label}{c.badgeN ? <b className="wmp-card-badge">{c.badgeN}</b> : null}</span>
+              {c.meter !== undefined && <span className="wmp-card-meter"><i style={{ width: `${c.meter}%` }} /></span>}
+              <span className="wmp-card-sub">{c.sub}</span>
+            </button>
+          ))}
+        </div>
+      </>
+    );
+
+    // ---- STRUCTURES: one list, surface or orbit, a row per building ----
+    const side: Side = sideAvail[pside] ? pside : (sideAvail.surface ? 'surface' : 'orbit');
+    const row = (k: BuildingKind, s: Side, host: Settlement) => {
+      const { st, level: lv, line, tone, progress } = tagLine(k, host, s);
+      const sub = tone === 'is-locked' || (lv === 0 && st.state === 'ready')
+        ? `${line} · ${BUILDING_DEFS[k].effectShort}`
+        : k === 'missile_silo' && st.state === 'ready' && lv > 0 && host.missileSilo
+          ? `${line} · ↑ ${costText(k, lv)}` : line;
+      return (
+        <button key={k} type="button" className={`wmp-row ${tone}`} data-testid={`wm-list-${k}`}
+          onClick={() => openStructure(k, s, 'structures')}>
+          <span className="wmp-badge">{badge(k, host, s)}</span>
+          <span className="wmp-row-main">
+            <span className="wmp-row-nm">{nameOf(k)}</span>
+            <span className="wmp-row-st">{sub}</span>
+          </span>
+          <span className="wmp-chev" aria-hidden="true">›</span>
+          {progress !== null && <span className="wmp-row-bar"><i style={{ width: `${(progress * 100).toFixed(1)}%` }} /></span>}
+        </button>
+      );
+    };
+    const sideHost = hostOf(side);
+    const structuresView = (
+      <>
+        <div className="wmp-title">
+          <h2>{t('worldmenu.bar.structures')}</h2>
+          {sideAvail.surface && sideAvail.orbit && (
+            <div className="wmp-seg" role="group" aria-label={t('worldmenu.p.where')}>
+              {(['surface', 'orbit'] as const).map(x => (
+                <button key={x} type="button" aria-pressed={side === x} className={side === x ? 'is-on' : ''}
+                  data-testid={`wmp-side-${x}`} onClick={() => setPside(x)}>
+                  {x === 'surface' ? t('worldmenu.col.surface') : t('worldmenu.col.orbit')}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="wmp-list" data-testid="wm-structures">
+          {sideHost ? sortedOf(side).map(k => row(k, side, sideHost)) : (side === 'surface' ? surfaceEls : orbitEls)}
+        </div>
+      </>
+    );
+
+    // ---- ONE STRUCTURE: what it does, what the next level brings, and
+    // its one button at the sheet's foot ----
+    let structureBody: React.ReactNode = null;
+    let structureFoot: React.ReactNode = null;
+    const sHost = pickedKind ? hostOf(pickedColumn) : null;
+    if (view === 'structure' && pickedKind && sHost) {
+      const kind = pickedKind;
+      const { st, lockObj, progress } = statusOf(kind, sHost, pickedColumn);
+      const lv = 'level' in st ? st.level : 0;
+      const next = st.state === 'queued' || st.state === 'backlogged' ? st.targetLevel : lv + 1;
+      const list = sortedOf(pickedColumn);
+      const i = Math.max(0, list.indexOf(kind));
+      const at = (d: number) => list[(i + d + list.length) % list.length];
+      const isSilo = kind === 'missile_silo';
+      const lvText = st.state === 'ready' && lv === 0 ? t('worldmenu.card.notBuilt') : `LV ${lv} → ${next}`;
+      structureBody = (
+        <>
+          {list.length > 1 && (
+            <nav className="wmp-step" aria-label={t('worldmenu.bar.structures')}>
+              <button type="button" onClick={() => setPicked({ kind: at(-1), column: pickedColumn })}>
+                <span aria-hidden="true">‹</span>{nameOf(at(-1))}
+              </button>
+              <span>{t('worldmenu.p.of', { i: i + 1, n: list.length })}</span>
+              <button type="button" onClick={() => setPicked({ kind: at(1), column: pickedColumn })}>
+                {nameOf(at(1))}<span aria-hidden="true">›</span>
+              </button>
+            </nav>
+          )}
+          <div className="wmp-shead">
+            <h2>{nameOf(kind)}</h2>
+            <span className="wmp-lv">{lvText}</span>
+          </div>
+          {isSilo ? (
+            <dl className="wmp-facts">
+              <div><dt>{t('worldmenu.p.holds')}</dt><dd>{MISSILES_PER_LEVEL * lv} <em>→ {MISSILES_PER_LEVEL * next}</em></dd></div>
+              <div><dt>{t('worldmenu.p.lines')}</dt><dd>{lv} <em>→ {next}</em></dd></div>
+              <div><dt>{t('worldmenu.p.ready')}</dt><dd>{sHost.missileSilo?.stock ?? 0} / {MISSILES_PER_LEVEL * lv}</dd></div>
+            </dl>
+          ) : (
+            <div className="wmp-fx">{BUILDING_DEFS[kind].effectShort}</div>
+          )}
+          <p className="wmp-desc">{BUILDING_DEFS[kind].description}</p>
+          {kind === 'shields' && (sHost.shieldHpMax ?? 0) > 0 && (
+            <div className="wm-card-row">
+              <span>{t('worldmenu.card.dome')}</span>
+              <span className="wm-card-meter"><i style={{ width: `${Math.round(100 * (sHost.shieldHp ?? 0) / Math.max(1, sHost.shieldHpMax ?? 1))}%` }} /></span>
+              <b>{Math.round(sHost.shieldHp ?? 0)}/{Math.round(sHost.shieldHpMax ?? 0)}</b>
+            </div>
+          )}
+          {st.state === 'queued' && (
+            <div className="wm-card-row is-work">
+              <span>{t('worldmenu.card.building', { lv: st.targetLevel })}</span>
+              <span className="wm-card-meter"><i style={{ width: `${((progress ?? 0) * 100).toFixed(1)}%` }} /></span>
+              <b>{t('worldmenu.tag.building', { n: st.ticksLeft })}</b>
+            </div>
+          )}
+          {st.state === 'backlogged' && (
+            <div className="wm-card-row is-booked"><span>{t('worldmenu.card.inLine', { pos: st.position, lv: st.targetLevel })}</span></div>
+          )}
+          {isSilo && siloOk && (
+            <button type="button" className="wmp-link" data-testid="wmp-open-silo" onClick={() => setPview('silo')}>
+              <span>{t('worldmenu.p.openSilo')}</span>
+              {raid && <em>{tn('worldmenu.p.raids', raid.groups)}</em>}
+              <span aria-hidden="true">›</span>
+            </button>
+          )}
+        </>
+      );
+      structureFoot = st.state === 'ready' ? (
+        <>
+          <div className="wmp-cost"><span>{t('worldmenu.card.cost')}</span><b>{costText(kind, lv)}</b></div>
+          {lockObj && <div className="wmp-lock">{lockGlyph}<span>{lockObj.label} — {lockObj.text}</span></div>}
+          <button type="button" className="wmp-go" data-testid="wm-card-go" disabled={!!lockObj}
+            onClick={() => { if (!lockObj) void queueBuild(kind, sHost); }}>
+            {lv > 0 ? t('worldmenu.card.upgrade', { lv: lv + 1 }) : t('worldmenu.card.build')}
+          </button>
+        </>
+      ) : st.state === 'queued' ? (
+        <button type="button" className="wmp-go" data-testid="wm-card-go" disabled>
+          {t('worldmenu.card.buildingBtn', { n: st.ticksLeft })}
+        </button>
+      ) : st.state === 'backlogged' ? (
+        <button type="button" className="wmp-go is-quiet" onClick={() => queueBuild(kind, sHost)}>
+          {t('worldmenu.card.takeOut')}
+        </button>
+      ) : null;
+    }
+
+    // ---- OVERVIEW: everything the desktop header says ----
+    const overviewView = (
+      <>
+        <div className="wmp-title"><h2>{t('worldmenu.p.overview')}</h2></div>
+        <div className="wmp-ov">
+          {metricsEl}
+          {settlementsEl}
+          {canFoundStation && orbitEls}
+          <RuinsCard bodyId={body.id} />
+          <div className="wmp-ov-row"><span className="wm-label">{t('worldmenu.output')}</span>{yieldsEl}</div>
+          <div className="wmp-ov-row">{stockEl}</div>
+          {worldExtrasEl}
+          {body.secret?.revealed && (body.secret.customName || body.secret.customText) && (
+            <div className="wm-find">
+              <span className="wm-find-glyph">✦</span>
+              {body.secret.customName && <b>{body.secret.customName}</b>}
+              {body.secret.customText && <span className="wm-find-text">{body.secret.customText}</span>}
+            </div>
+          )}
+          {immovable && <div className="wm-immovable">{immovable}</div>}
+          {(flavor || body.look?.lore) && (
+            <details className="wmp-about">
+              <summary>{t('worldmenu.p.about', { name: body.name.toUpperCase() })}</summary>
+              {flavor && <div className="wm-desc">{flavor}</div>}
+              {body.look?.lore && <div className="wm-lore">{body.look.lore}</div>}
+            </details>
+          )}
+        </div>
+      </>
+    );
+
+    // ---- which view fills the sheet ----
+    let content: React.ReactNode = homeView;
+    let foot: React.ReactNode = null;
+    let hosted = false;
+    if (view === 'structures') content = structuresView;
+    else if (view === 'structure') { content = structureBody; foot = structureFoot; }
+    else if (view === 'overview') content = overviewView;
+    else if (view === 'terraform') {
+      content = (
+        <>
+          <div className="wmp-title"><h2>{t('worldmenu.bar.terraform')}</h2>{tfTab && <span className="wmp-title-sub">{tfTab.sub}</span>}</div>
+          <div className="wmp-tf" data-testid="wm-terraform-drawer"><WmTerraformCard body={body} isMine={isMine} /></div>
+          {canFoundStation && <div className="wmp-list">{orbitEls}</div>}
+        </>
+      );
+    } else if (view === 'silo' && myCity) {
+      hosted = true;
+      content = <WmSilo city={myCity} body={body} mobile tabs={null} onErr={setErrMsg} />;
+    } else if (view === 'yard') {
+      hosted = true;
+      content = (
+        <WmFleet bodyId={body.id} mobile isMine={canCommand} hasStation={!!myStation} railW={0}
+          onErr={setErrMsg} onNote={setNoteMsg} tabs={null} />
+      );
+    }
+
+    // The grabber: a tap or a drag down drops the sheet to the world; on
+    // the world, a tap or a drag up opens the OVERVIEW.
+    const grabTap = () => { if (view === 'home') setPview('overview'); else goHome(); };
+    const sheet = (
+      <section className={`wmp-sheet is-${level}`} data-testid="wmp-sheet" aria-label={t('worldmenu.p.sheet')}>
+        <button type="button" className="wmp-grab"
+          aria-label={view === 'home' ? t('worldmenu.p.expand') : t('worldmenu.p.collapse')}
+          onPointerDown={e => {
+            grabRef.current = { y: e.clientY };
+            try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* old WebView */ }
+          }}
+          onPointerUp={e => {
+            const g = grabRef.current;
+            if (!g) return;
+            const dy = e.clientY - g.y;
+            if (Math.abs(dy) < 40) { grabRef.current = null; return; }
+            grabRef.current = { y: 0, moved: true };
+            if (dy > 0 && view !== 'home') goHome();
+            if (dy < 0 && view === 'home') setPview('overview');
+          }}
+          onPointerCancel={() => { grabRef.current = null; }}
+          onClick={() => {
+            if (grabRef.current?.moved) { grabRef.current = null; return; }
+            grabTap();
+          }}>
+          <i aria-hidden="true" />
+        </button>
+        <div className={`wmp-body${hosted ? ' is-host' : ''}`}>{content}</div>
+        {foot && <div className="wmp-foot">{foot}</div>}
+      </section>
+    );
+
+    return (
+      <div className={`wm-root wm-mobile wmp is-${level}`}
+        style={{ opacity: op, pointerEvents: op > 0.9 ? undefined : 'none' }}
+        data-testid="world-menu">
+        {header}
+        {nbrs}
+        {plot}
+        {pins}
+        {errMsg && <div className="wm-err">{errMsg}</div>}
+        {!errMsg && noteMsg && <div className="wm-note" role="status">{noteMsg}</div>}
+        {sheet}
+      </div>
+    );
+  };
+
+  if (mobile) return phoneLayout();
+
   return (
     <div
       className={`wm-root ${mobile ? 'wm-mobile' : ''}${openTab ? ' has-drawer' : ''}`}
@@ -1223,81 +1855,11 @@ export const WorldMenuOverlay: React.FC = () => {
             hidden: it answers "why is there no thrusters button on this
             rock". One short line, so it costs little room. */}
         {immovable && <div className="wm-immovable">{immovable}</div>}
-        <div className="wm-metrics">
-          <div className="wm-metric"><span>{t('worldmenu.metric.pop')}</span><b>{readout.pop}</b></div>
-          <div className="wm-metric"><span>{t('worldmenu.metric.defense')}</span><b>{readout.defense}</b></div>
-          <div className="wm-metric"><span>{t('worldmenu.metric.ships')}</span><b>◆ {readout.shipCount}</b></div>
-          <div className="wm-metric"><span>{t('worldmenu.metric.integrity')}</span>
-            <b>{integrity ? `${Math.round(integrity.hp)}/${integrity.maxHp}` : '—'}</b>
-          </div>
-        </div>
-        {(myCity || myStation) && (
-          <div className="wm-settlements">
-            {myCity && (
-              <span className="wm-settlement" title={t('worldmenu.renameCity')}>
-                <span className="wm-settlement-glyph">■</span>
-                <EditableName value={myCity.name} maxLength={32} ariaLabel={t('worldmenu.renameCity')}
-                  onSave={(next) => renameOwned(myCity.id, next)} />
-                <span className="wm-settlement-hp"
-                  style={{ color: hpColor(myCity.hp / Math.max(1, myCity.maxHp)) }}
-                  title={t('worldmenu.integrityTitle')}>
-                  ◈ {Math.round(myCity.hp)}/{myCity.maxHp}
-                </span>
-              </span>
-            )}
-            {myStation && (
-              <span className="wm-settlement" title={t('worldmenu.renameStation')}>
-                <span className="wm-settlement-glyph">◆</span>
-                <EditableName value={myStation.name} maxLength={32} ariaLabel={t('worldmenu.renameStation')}
-                  onSave={(next) => renameOwned(myStation.id, next)} />
-                <span className="wm-settlement-hp"
-                  style={{ color: hpColor(myStation.hp / Math.max(1, myStation.maxHp)) }}
-                  title={t('worldmenu.integrityTitle')}>
-                  ◈ {Math.round(myStation.hp)}/{myStation.maxHp}
-                </span>
-              </span>
-            )}
-          </div>
-        )}
+        {metricsEl}
+        {settlementsEl}
         <RuinsCard bodyId={body.id} />
-        <div className="wm-out">
-          <span className="wm-label">{t('worldmenu.output')}</span>
-          <div className="wm-yields">
-            {yieldChips.map(([k, v]) => (
-              <span
-                className="wm-yield" key={k}
-                style={{ color: RESOURCE_LETTER_COLORS[k as 'F' | 'M' | 'C' | 'S'] }}
-              >
-                <i style={{ color: 'inherit', opacity: 0.75 }}>{k}</i>
-                {Math.round(v * 10) / 10}</span>
-            ))}
-          </div>
-          <div className="wm-stock">
-            <span className="wm-label">{t('worldmenu.stockpile')}</span>{' '}
-            {([
-              ['M', readout.stockpile.ore],
-              ['C', readout.stockpile.credits], ['S', readout.stockpile.science],
-            ] as Array<['M' | 'C' | 'S', number]>).map(([k, v], i) => (
-              <React.Fragment key={k}>
-                {i > 0 && ' · '}
-                <span style={{ color: RESOURCE_LETTER_COLORS[k] }}>{k}{Math.round(v)}</span>
-              </React.Fragment>
-            ))}
-          </div>
-        </div>
-        {/* A living world says so in one green line. A raw one's terraform
-            controls live in the TERRAFORM drawer on the bar, and its
-            progress is the ring on the world. */}
-        {!rawHere && <WmTerraformCard body={body} isMine={isMine} />}
-        {/* Dyson Sphere (Sol only) — the engineering-victory megaproject. */}
-        {body.id === 'sol' && <WmDysonCard />}
-        {/* The asteroid weapon: one component, mounted here and in the
-            legacy BodyInspector, so the two surfaces cannot drift. */}
-        {body.type === 'asteroid' && (
-          <div className="wm-ram" data-testid="wm-ram">
-            <RamControlsSection body={body} />
-          </div>
-        )}
+        {outEl}
+        {worldExtrasEl}
 
         {(mobile || shortDesk) && (
           <button className="wm-more" onClick={() => setCollapsed(c => !c)}>
@@ -2317,51 +2879,63 @@ const WmFleet: React.FC<{
         )}
       </div>
       {mobile ? (
-      <div className="wm-fleet-grid">
-        {BUILDABLE_CLASSES.map(cls => {
+      /* THE PHONE: a row per hull you can build, its design one tap from
+         the row and BUILD its own button at the thumb's side; the locked
+         hulls folded under them (the MF-Yard board). */
+      <div className="wm-fleet-grid wmp-hulls" data-testid="wm-hulls">
+        {BUILDABLE_CLASSES.filter(cls => !hullInfo(cls).lock).map(cls => {
           const h = hullInfo(cls);
+          const main = (
+            <>
+              <ShipIcon shipClass={cls} variant={activeVariant(cls)} size={32} color={p1} color2={p2} />
+              <span className="wmp-hull-txt">
+                <span className="wmp-hull-nm">
+                  {h.def.displayName.toUpperCase()}
+                  {h.templates.length > 0 && <i>{h.picked?.name ?? h.templates[0].name} ▾</i>}
+                </span>
+                <span className="wmp-hull-meta">{h.costOre}m · {h.costCredits}c · {h.def.buildTime} T</span>
+              </span>
+            </>
+          );
           return (
-            <div key={cls} className="wm-shipslot">
-            <button
-              className="wm-shipcell"
-              disabled={h.disabled}
-              title={h.lock ?? (h.noYard ? t('worldmenu.buildYardFirst') : h.priceWhy)}
-              onClick={() => buildShip(cls)}
-              data-testid={`wm-ship-${cls}`}
-            >
-              {/* single row: icon+name left, all meta stacked in the
-                  right-side blank space — nothing wraps or spills. */}
-              <span className="wm-shipmain">
-                <ShipIcon shipClass={cls} variant={activeVariant(cls)} size={30} color={p1} color2={p2} />
-                <span className="wm-shipnm">{h.lock ? '🔒 ' : ''}{h.def.displayName.toUpperCase()}</span>
-              </span>
-              <span className="wm-shipmeta">
-                {h.costOre}m · {h.costCredits}c · {h.def.buildTime}t
-              </span>
-            </button>
-            {h.templates.length > 0 && !h.lock && (
+            <div key={cls} className="wmp-hull" data-testid={`wm-hull-${cls}`}>
+              {h.templates.length > 0 ? (
+                <button type="button" className="wmp-hull-main" onClick={() => setPickFor(cls)}
+                  aria-label={t('worldmenu.pick.change')} data-testid={`wm-shipdesign-${cls}`}>{main}</button>
+              ) : (
+                <span className="wmp-hull-main">{main}</span>
+              )}
               <button
                 type="button"
-                className="wm-shipdesign"
-                onClick={() => setPickFor(cls)}
-                aria-label={t('worldmenu.pick.change')}
-                data-testid={`wm-shipdesign-${cls}`}
-              >
-                <span className="wm-shipdesign__nm">{h.picked?.name ?? h.templates[0].name}</span>
-                <span className="wm-shipdesign__look">{lookNameOf(cls)}</span>
-                <span className="wm-shipdesign__caret" aria-hidden>▾</span>
-              </button>
-            )}
+                className="wmp-hull-go"
+                disabled={h.disabled}
+                title={h.noYard ? t('worldmenu.buildYardFirst') : h.priceWhy}
+                onClick={() => buildShip(cls)}
+                data-testid={`wm-ship-${cls}`}
+              >{t('worldmenu.build')}</button>
             </div>
           );
         })}
-        <button
-          className="wm-shipcell design"
-          onClick={() => openDesigner()}
-        >
-          <span className="wm-shipmain"><span className="wm-shipnm">{t('worldmenu.design')}</span></span>
-          <span className="wm-shipmeta">{t('worldmenu.customHull')}</span>
+        <button type="button" className="wmp-hull-design" onClick={() => openDesigner()}>
+          <span>{t('worldmenu.p.designHull')}</span><span aria-hidden="true">›</span>
         </button>
+        {BUILDABLE_CLASSES.some(cls => !!hullInfo(cls).lock) && (
+          <>
+            <div className="wmp-sub">{t('worldmenu.p.lockedHulls')}</div>
+            <div className="wmp-hulls-locked">
+              {BUILDABLE_CLASSES.filter(cls => !!hullInfo(cls).lock).map(cls => {
+                const h = hullInfo(cls);
+                return (
+                  <div key={cls} className="wmp-hull is-locked" title={h.lock ?? undefined} data-testid={`wm-hull-${cls}`}>
+                    <span className="wmp-hull-nm">{h.def.displayName.toUpperCase()}</span>
+                    <span className="wmp-hull-meta">{h.lockObj?.label ?? ''}</span>
+                    <span className="wmp-hull-meta">{h.costOre}m · {h.costCredits}c · {h.def.buildTime} T</span>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
       </div>
       ) : (
       /* OPTION A: the build list. One row per hull, a template on EVERY
