@@ -893,7 +893,9 @@ export const WorldMenuOverlay: React.FC = () => {
     const n = surfKinds.length;
     if (mobile || n === 0) return { R: cr + 128, step: 0, shift: 0 };
     let best = { R: cr + 128, step: (TAG_W + 18) / (cr + 128), shift: 0, score: Infinity };
-    for (const dR of [128, 104, 152, 84, 176]) {
+    // Lower radii last: closer to the horizon when the sky above is full
+    // (a short window: header, orbs and station all up there).
+    for (const dR of [128, 104, 152, 84, 176, 64, 48]) {
       for (const sh of [0, -5, 5, -10, 10, -15, 15]) {
         for (const sc of [1, 0.92]) {
           const R = cr + dR;
