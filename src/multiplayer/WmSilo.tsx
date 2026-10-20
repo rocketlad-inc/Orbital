@@ -490,39 +490,43 @@ export const WmSilo: React.FC<{
                   );
                 })}
               </div>
-              {incoming.length === 0 && (
-                <div className="wm-silo-salvo">
-                  <span className="wm-silo-h2">{t('worldmenu.silo.salvo')}</span>
-                  <button type="button" className="wm-silo-step" aria-label={t('worldmenu.silo.fewer')} disabled={n <= 1} onClick={() => { setSalvo(Math.max(1, n - 1)); setConfirm(false); }}>−</button>
-                  <span className="wm-silo-num">{stock > 0 ? n : 0}</span>
-                  <button type="button" className="wm-silo-step" aria-label={t('worldmenu.silo.more')} disabled={n >= stock} onClick={() => { setSalvo(Math.min(stock, n + 1)); setConfirm(false); }}>+</button>
-                  <span className="wm-silo-note">{t('worldmenu.silo.ofReady', { n: stock })}</span>
+              {/* The salvo, what it would do, and LAUNCH stay in view at the
+                  foot of the column while the list above scrolls with it. */}
+              <div className="wm-silo-fire">
+                {incoming.length === 0 && (
+                  <div className="wm-silo-salvo">
+                    <span className="wm-silo-h2">{t('worldmenu.silo.salvo')}</span>
+                    <button type="button" className="wm-silo-step" aria-label={t('worldmenu.silo.fewer')} disabled={n <= 1} onClick={() => { setSalvo(Math.max(1, n - 1)); setConfirm(false); }}>−</button>
+                    <span className="wm-silo-num">{stock > 0 ? n : 0}</span>
+                    <button type="button" className="wm-silo-step" aria-label={t('worldmenu.silo.more')} disabled={n >= stock} onClick={() => { setSalvo(Math.min(stock, n + 1)); setConfirm(false); }}>+</button>
+                    <span className="wm-silo-note">{t('worldmenu.silo.ofReady', { n: stock })}</span>
+                  </div>
+                )}
+                {chosenGroup && stock > 0 && (
+                  <div className="wm-silo-preview is-warn">
+                    {groupMeet === null ? <span className="is-strong">{t('worldmenu.silo.previewCantCatch')}</span> : (
+                      <>
+                        <span className="is-strong">{t('worldmenu.silo.previewIntercept', { dmg: damage, r: MISSILE_BLAST_RADIUS, n: groupMeet ?? '…' })}</span>
+                        <span>{t('worldmenu.silo.previewGroupKills', { n: groupKills, total: chosenGroup.members.length })}</span>
+                        <span className="is-mine">{t('worldmenu.silo.previewNear')}</span>
+                      </>
+                    )}
+                  </div>
+                )}
+                {chosen && stock > 0 && (
+                  <div className={`wm-silo-preview${chosen.mine > 0 ? ' is-warn' : ''}`}>
+                    <span className="is-strong">{t('worldmenu.silo.previewDamage', { dmg: damage, world: chosen.body.name })}</span>
+                    <span>{t('worldmenu.silo.previewKills', { n: kills.length, total: chosen.total })}</span>
+                    {chosen.mine > 0 && <span className="is-mine">{t('worldmenu.silo.previewMine', { n: chosen.mine, k: myKills })}</span>}
+                  </div>
+                )}
+                <div className="wm-silo-launchrow">
+                  <button type="button" className={`wm-silo-btn is-fire${confirm ? ' is-confirm' : ''}`}
+                    disabled={busy === 'launch' || (!chosen && !chosenGroup) || stock === 0 || (!!chosenGroup && groupMeet == null)} onClick={launch}>
+                    {busy === 'launch' ? '…' : confirm ? t('worldmenu.silo.confirmFire', { n }) : t('worldmenu.silo.fire', { n: stock > 0 ? n : 0 })}
+                  </button>
+                  {confirm && <button type="button" className="wm-silo-btn" onClick={() => setConfirm(false)}>{t('worldmenu.silo.back')}</button>}
                 </div>
-              )}
-              {chosenGroup && stock > 0 && (
-                <div className="wm-silo-preview is-warn">
-                  {groupMeet === null ? <span className="is-strong">{t('worldmenu.silo.previewCantCatch')}</span> : (
-                    <>
-                      <span className="is-strong">{t('worldmenu.silo.previewIntercept', { dmg: damage, r: MISSILE_BLAST_RADIUS, n: groupMeet ?? '…' })}</span>
-                      <span>{t('worldmenu.silo.previewGroupKills', { n: groupKills, total: chosenGroup.members.length })}</span>
-                      <span className="is-mine">{t('worldmenu.silo.previewNear')}</span>
-                    </>
-                  )}
-                </div>
-              )}
-              {chosen && stock > 0 && (
-                <div className={`wm-silo-preview${chosen.mine > 0 ? ' is-warn' : ''}`}>
-                  <span className="is-strong">{t('worldmenu.silo.previewDamage', { dmg: damage, world: chosen.body.name })}</span>
-                  <span>{t('worldmenu.silo.previewKills', { n: kills.length, total: chosen.total })}</span>
-                  {chosen.mine > 0 && <span className="is-mine">{t('worldmenu.silo.previewMine', { n: chosen.mine, k: myKills })}</span>}
-                </div>
-              )}
-              <div className="wm-silo-launchrow">
-                <button type="button" className={`wm-silo-btn is-fire${confirm ? ' is-confirm' : ''}`}
-                  disabled={busy === 'launch' || (!chosen && !chosenGroup) || stock === 0 || (!!chosenGroup && groupMeet == null)} onClick={launch}>
-                  {busy === 'launch' ? '…' : confirm ? t('worldmenu.silo.confirmFire', { n }) : t('worldmenu.silo.fire', { n: stock > 0 ? n : 0 })}
-                </button>
-                {confirm && <button type="button" className="wm-silo-btn" onClick={() => setConfirm(false)}>{t('worldmenu.silo.back')}</button>}
               </div>
             </>
           )}

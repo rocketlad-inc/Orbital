@@ -28,8 +28,12 @@
 .wm-silo-count span { color: #8fa6ba; }
 
 /* INCOMING | AUTO-DEFENCE | BUILD: the raids lead and get the room. */
-.wm-silo-cols { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(0, 0.95fr) minmax(0, 0.8fr); min-height: 0; overflow-y: auto; }
-.wm-silo-col { display: flex; flex-direction: column; gap: 8px; padding: 4px 14px; min-width: 0; }
+/* ONE SCROLL PER COLUMN, never a list scrolling inside a scrolling
+   drawer (Lorne, 2026-10-20: "surely we can do better than a scroll box
+   within a scroll box"). The columns sit side by side and each scrolls
+   on its own; the lists inside them are plain lists. */
+.wm-silo-cols { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(0, 0.95fr) minmax(0, 0.8fr); flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.wm-silo-col { display: flex; flex-direction: column; gap: 8px; padding: 4px 14px; min-width: 0; min-height: 0; overflow-y: auto; }
 .wm-silo-col + .wm-silo-col { border-left: 1px solid #1c2836; }
 .wm-silo-col:first-child { padding-left: 0; }
 .wm-silo-h { font-family: 'Audiowide', sans-serif; font-size: 10px; letter-spacing: 0.18em; color: #8fa6ba; }
@@ -76,15 +80,18 @@
 .wm-silo-tname.is-dim { color: #8fa6ba; }
 .wm-silo-tmeta { font-family: 'Chivo Mono', monospace; font-size: 10px; color: #b8c8d6; }
 .wm-silo-list {
-  display: flex; flex-direction: column; gap: 4px; max-height: 168px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 2px; flex: 0 0 auto;
   padding: 4px; border: 1px solid #2a3d50; border-radius: 4px; background: #0a1019;
 }
+/* One line a target: name, what is there, how long. */
 .wm-silo-opt {
-  display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; align-items: center; text-align: left;
-  padding: 6px 8px; border: 1px solid transparent; border-radius: 4px; background: none; color: #e6edf3; cursor: pointer;
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 0 10px; align-items: baseline; text-align: left;
+  padding: 5px 8px; border: 1px solid transparent; border-radius: 4px; background: none; color: #e6edf3; cursor: pointer;
 }
+.wm-silo-opt > .wm-silo-tname { grid-column: 1; grid-row: 1; }
+.wm-silo-opt > .wm-silo-tmeta:not(.is-wide) { grid-column: 3; grid-row: 1; white-space: nowrap; }
 .wm-silo-opt:hover, .wm-silo-opt.is-on { border-color: #ff8a5c; background: rgba(255, 138, 92, 0.08); }
-.wm-silo-opt .is-wide { grid-column: 1 / -1; }
+.wm-silo-opt .is-wide { grid-column: 2; grid-row: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .wm-silo-opt b { font-weight: 400; }
 .wm-silo-opt b.is-hostile { color: #ff9d9d; }
 .wm-silo-opt b.is-mine { color: #6ee7b7; }
@@ -93,7 +100,13 @@
 
 /* ---- INCOMING: one row per hostile group flying here ---- */
 .wm-silo-hn { font-family: 'Chivo Mono', monospace; font-weight: 400; letter-spacing: 0; color: #ff9d9d; margin-left: 4px; }
-.wm-silo-inc { display: flex; flex-direction: column; gap: 6px; max-height: 196px; overflow-y: auto; }
+.wm-silo-inc { display: flex; flex-direction: column; gap: 6px; flex: 0 0 auto; }
+/* The salvo, its preview and LAUNCH: pinned to the foot of the column
+   while the list above it scrolls. */
+.wm-silo-fire {
+  position: sticky; bottom: 0; z-index: 1; display: flex; flex-direction: column; gap: 8px;
+  margin: 0 -2px; padding: 8px 2px 4px; background: rgba(10, 15, 22, 0.97); border-top: 1px solid #1c2836;
+}
 .wm-silo-irow {
   display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 2px 10px; align-items: center;
   padding: 7px 8px 7px 10px; border-radius: 4px;
@@ -156,7 +169,8 @@
 .wm-silo-watch i { width: 7px; height: 7px; border-radius: 50%; background: #6ee7b7; }
 
 /* Phone: one column, thumb-sized controls. */
-.wm-silo.is-mobile .wm-silo-cols { grid-template-columns: minmax(0, 1fr); }
+.wm-silo.is-mobile .wm-silo-cols { grid-template-columns: minmax(0, 1fr); overflow-y: auto; }
+.wm-silo.is-mobile .wm-silo-col { overflow: visible; }
 .wm-silo.is-mobile .wm-silo-col { padding: 8px 0; }
 .wm-silo.is-mobile .wm-silo-col + .wm-silo-col { border-left: 0; border-top: 1px solid #1c2836; }
 .wm-silo.is-mobile .wm-silo-step { width: 44px; height: 44px; }
