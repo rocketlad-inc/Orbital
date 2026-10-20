@@ -922,8 +922,12 @@ export const WorldMenuOverlay: React.FC = () => {
     if (mobile) {
       // Evenly across the width, kept wholly on screen.
       const raw = 12 + (vw - 24) * ((i + 0.5) / surfKinds.length);
-      px = Math.max(8 + TAG_W / 2, Math.min(vw - 8 - TAG_W / 2, raw));
       py = apexY - (i % 2 === 0 ? 86 : 30);
+      // The map's own side buttons (box-select, previous / next) run down
+      // the phone's right edge to about y 290; a tag that high stays
+      // left of them.
+      const rightLimit = py - TAG_H < 292 ? vw - 60 : vw - 8;
+      px = Math.max(8 + TAG_W / 2, Math.min(rightLimit - TAG_W / 2, raw));
     } else {
       const th = (i - (surfKinds.length - 1) / 2) * fan.step + fan.shift;
       px = cx + Math.sin(th) * fan.R;
