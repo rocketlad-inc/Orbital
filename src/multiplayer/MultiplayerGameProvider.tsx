@@ -38,6 +38,7 @@ import {
   TorchTransfer,
 } from '../physics/torchTransfer';
 import { orbitWorldPos, orbitWorldVelocity, bodyWorldVelocity, bodyPosition, parentMuForParking } from '../physics/orbitalMechanics';
+import { rendezvousStateAt } from '../physics/rendezvous.js';
 import { engineGModifier } from '../game/techs';
 import { deriveSecondary } from '../game/colorUtils';
 import { resolveEmblem } from '../game/emblems';
@@ -1708,7 +1709,11 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         launchVel = orbitWorldVelocity(ship.orbit, n.scheduled_t, bodies);
       }
 
-      const plan = planTorchTransfer(
+      // A recorded MEETING (rv_*): a missile salvo, or a ship's
+      // match order. Its course is the rendezvous, not this leg.
+      const hasRv = !!srvPlan && n.rv_ax != null && n.rv_ay != null && n.rv_bx != null
+        && n.rv_by != null && n.rv_meet_tick != null && !!n.rv_follow_ship_id;
+      let plan = planTorchTransfer(
         { pos: launchPos, vel: launchVel },
         targetLocalId,
         srvPlan?.accel ?? engineAccel,
@@ -1718,6 +1723,33 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         // a recorded one keeps its own build (set just below).
         undefined, srvPlan ? undefined : mpRampFor(engineAccel),
       );
+      // A salvo fired at a raid bound for its OWN world records that
+      // world as its leg's target: launch and target are one place, the
+      // planner has no trip to solve and returns null, and the salvo sat
+      // parked on screen while the server flew it (Lorne, 2026-10-20: "I
+      // launched missiles and they aren't going anywhere"). The meeting
+      // below is its real course; a stand-in leg carries it there.
+      let standIn = false;
+      if (!plan && hasRv && srvPlan) {
+        standIn = true;
+        const tb = bodies.find(b => b.id === targetLocalId);
+        const arrive = n.arrival_at_tick != null && n.arrival_at_tick > n.scheduled_t
+          ? n.arrival_at_tick : Number(n.rv_meet_tick);
+        plan = {
+          targetBodyId: targetLocalId,
+          acceleration: srvPlan.accel,
+          brakeAcceleration: srvPlan.brakeAccel,
+          startTick: n.scheduled_t,
+          flipTick: srvPlan.flipTick,
+          arriveTick: arrive,
+          thrustDir: { x: 0, y: 0 },
+          interceptPos: tb ? bodyPosition(tb, arrive, bodies) : { ...launchPos },
+          startPos: { ...launchPos },
+          startVel: { ...launchVel },
+          totalDv: 0,
+          peakVelocity: 0,
+        };
+      }
       if (!plan) continue;
       if (srvPlan?.ramp) {
         if (srvPlan.ramp.tau != null) plan.accelTau = srvPlan.ramp.tau;
@@ -1775,6 +1807,16 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         };
         const dt = Math.max(0, currentTick - n.scheduled_t);
         if (dt > 0) stepTorchShip(state, plan, n.scheduled_t, dt, bodies);
+        // A stand-in leg goes nowhere; the salvo is on its meeting course.
+        if (standIn && srvPlan && dt > 0) {
+          const at = rendezvousStateAt({
+            p0: srvPlan.pos, v0: srvPlan.vel, accel: srvPlan.accel,
+            A: { x: Number(n.rv_ax), y: Number(n.rv_ay) }, B: { x: Number(n.rv_bx), y: Number(n.rv_by) },
+            startTick: n.scheduled_t, meetTick: Number(n.rv_meet_tick),
+          }, currentTick, null);
+          state.pos = { ...at.pos };
+          state.vel = { ...at.vel };
+        }
         plan.nodeId = n.id;
         ship.transit = { pos: state.pos, vel: state.vel, currentTransfer: plan };
 

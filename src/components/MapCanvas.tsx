@@ -2910,7 +2910,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           rvFollowedSamples && rvFollowedSamples.length >= 2
             ? (t: number) => torchPositionFromSamples(rvFollowedSamples, t)
             : null,
-          rvLeaderLeg?.arriveTick ?? null,
+          // A missile bursts at the meeting: no joined leg after it.
+          ship.class === 'missile' ? null : rvLeaderLeg?.arriveTick ?? null,
         ) : drawTorchTrajectory(
           plan, gameState.bodies, renderContext, arcColor,
           // Dashed when this leg belongs to a trade route — the
@@ -3798,7 +3799,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       drawRendezvousPreview(
         rv, theirPath, renderContext,
         (isMine && followed) ? t('map.meet', { name: followed.name, tick: Math.round(rv.meetTick) }) : undefined,
-        leaderLeg?.arriveTick ?? null,
+        ship.class === 'missile' ? null : leaderLeg?.arriveTick ?? null,
         renderTick(),
       );
     }
