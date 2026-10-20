@@ -275,6 +275,16 @@ export const WorldMenuOverlay: React.FC = () => {
       updateCamera({ scale: s1, x: off.x, y: off.y });
       setOpenId(sel);
       setErrMsg(null);
+    } else {
+      // SAME WORLD, NEW VIEWPORT (a window resized, a phone turned): frame
+      // it again. The tags are placed from the viewport, the planet from
+      // the camera; left alone the two parted company, and the tags hung
+      // off a planet framed for the old size.
+      const s1 = menuScaleFor(b, vh);
+      const rShift = vw > 720 ? (296 - 60) / 2 : 0;
+      const uShift = vw > 720 ? 0 : -MOBILE_LIFT_FRAC * vh;
+      const off = menuCameraOffset(vw, vh, s1, rShift, uShift);
+      updateCamera({ scale: s1, x: off.x, y: off.y });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uiState.selectedBodyId, vw, vh]);
