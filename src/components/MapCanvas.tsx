@@ -5195,6 +5195,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     )}
     <canvas
       ref={canvasRef}
+      data-map-canvas=""
       width={width}
       height={height}
       onMouseMove={(e) => { handleMouseMove(e); handleMouseHover(e); }}
