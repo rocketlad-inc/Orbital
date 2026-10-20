@@ -9673,6 +9673,31 @@ export function rendezvousTrajectorySamples(
   return out;
 }
 
+/**
+ * A MISSILE SALVO, AS DRAWN. Every course on this map is drawn as a
+ * straight chord (STRAIGHT_LINE_TRAJECTORIES), but a salvo aims at where
+ * its target REALLY is, on its curved course; the meeting landed off the
+ * target's drawn line, and the two lines missed each other on screen
+ * (Lorne, 2026-10-20: "why don't these lines match up?"). This is the same
+ * salvo re-aimed, for drawing only, at where the target's DRAWN path puts
+ * it at the meeting: one straight push from rest (v0 = 0, A along the
+ * chord), so the salvo creeps off and gathers speed like the real one.
+ * The tick still bursts at the true spot; the chord is how every hull is
+ * shown. Unchanged when the target's path is unknown.
+ */
+export function missileDrawnRendezvous(
+  plan: NonNullable<Ship['plannedRendezvous']>,
+  targetPathAt: ((t: number) => { x: number; y: number } | null) | null,
+): NonNullable<Ship['plannedRendezvous']> {
+  const at = targetPathAt ? targetPathAt(plan.meetTick) : null;
+  const T = plan.meetTick - plan.startTick;
+  if (!at || !(T > 0)) return plan;
+  const A = { x: (2 * (at.x - plan.p0.x)) / T, y: (2 * (at.y - plan.p0.y)) / T };
+  const accel = Math.hypot(A.x, A.y) / T;
+  if (!(accel > 0)) return plan;
+  return { ...plan, v0: { x: 0, y: 0 }, A, B: { x: 0, y: 0 }, accel };
+}
+
 export function drawRendezvousPreview(
   plan: NonNullable<Ship['plannedRendezvous']>,
   targetPathAt: ((t: number) => { x: number; y: number } | null) | null,
