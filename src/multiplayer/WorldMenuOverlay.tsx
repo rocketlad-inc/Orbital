@@ -613,7 +613,12 @@ export const WorldMenuOverlay: React.FC = () => {
   const staY = mobile ? TOPBAR + 10 + chromeH.panel + 10 : TOPBAR + 10 + 40 + 14;
   const STA_CHIP_H = 30;
   const orbitKinds = myStation ? cols.orbit : [];
-  const rigBottom = staY + staH + 6 + STA_CHIP_H;
+  // The MODULES chip hangs under the station on a desktop; on a phone it
+  // sits beside it, where the sky is free (under it was the Forge's tag).
+  const chipPos = mobile
+    ? { left: staX + staW + 8, top: staY + staH / 2 - STA_CHIP_H / 2, width: 118 }
+    : { left: staX, top: staY + staH + 6, width: staW };
+  const rigBottom = mobile ? staY + staH : staY + staH + 6 + STA_CHIP_H;
 
   // ---- orb cluster placement: ONE shift, two constraints ----
   // The orb slots are fixed constants; the station rig (now with its module
@@ -621,13 +626,16 @@ export const WorldMenuOverlay: React.FC = () => {
   // the cluster as a BLOCK by the worst encroachment, never orb by orb:
   // per-orb clamping is what once stacked two moons on one spot.
   const ORB_GUTTER = 12, ORB_STA_CLEAR = 16;
+  /** Half the width an orb takes: its disc, or its name under it (9px
+   *  Audiowide, tracked out), whichever is wider. */
+  const orbHalfW = (name: string, r: number) => Math.max(r + 12, (name.length + 2) * 4.3);
   const orbShift = mobile ? 0 : (() => {
     // The station, or the plot where one can be built: either sits there.
     const rigLive = !!readout.station || (!myStation && canHostStation(body) && !anyStation);
     let over = 0;
     for (let i = 0; i < neighbors.length; i++) {
       const sl = ORB_SLOTS[orbSlotIndex(i, neighbors, body.parent)];
-      const right = cx + sl.dx + sl.r;
+      const right = cx + sl.dx + orbHalfW(neighbors[i].name, sl.r);
       over = Math.max(over, right - (vw - dockW - ORB_GUTTER));
       // Only orbs level with the rig can actually hit it.
       if (rigLive && sl.y + sl.r > staY && sl.y - sl.r < rigBottom) {
@@ -872,10 +880,11 @@ export const WorldMenuOverlay: React.FC = () => {
     if (readout.station || (!myStation && canHostStation(body) && !anyStation)) {
       obstacles.push({ l: staX - 10, t: staY - 10, r: staX + staW + 10, b: rigBottom + 10 });
     }
-    neighbors.forEach((_nb, i) => {
+    neighbors.forEach((nb, i) => {
       const sl = ORB_SLOTS[orbSlotIndex(i, neighbors, body.parent)];
       const ox = cx + sl.dx - orbShift;
-      obstacles.push({ l: ox - sl.r - 12, t: sl.y - sl.r - 12, r: ox + sl.r + 12, b: sl.y + sl.r + 24 });
+      const hw = orbHalfW(nb.name, sl.r);
+      obstacles.push({ l: ox - hw, t: sl.y - sl.r - 12, r: ox + hw, b: sl.y + sl.r + 24 });
     });
   }
   const overlap = (a: Rect, b: Rect) =>
@@ -1290,7 +1299,7 @@ export const WorldMenuOverlay: React.FC = () => {
            stem down to it; the station's modules hang under the station.
            Pick one for its card. The STRUCTURES list on the bar holds the
            same buttons as rows. */}
-      {orbitKinds.length > 0 && myStation && (
+      {orbitKinds.length > 0 && myStation && !(mobile && openTab) && (
         <>
           <button type="button" className="wm-sta-hit" aria-label={t('worldmenu.station.aria')}
             aria-expanded={stationOpen}
@@ -1298,7 +1307,7 @@ export const WorldMenuOverlay: React.FC = () => {
             onClick={() => { setPicked(null); setStationOpen(o => !o); }} />
           <button type="button" className={`wm-sta-chip${stationOpen ? ' is-on' : ''}`}
             data-testid="wm-col-orbit" data-tutorial-id="wm-columns-orbit" aria-expanded={stationOpen}
-            style={{ left: staX, top: staY + staH + 6, width: staW, height: STA_CHIP_H }}
+            style={{ ...chipPos, height: STA_CHIP_H }}
             onClick={() => { setPicked(null); setStationOpen(o => !o); }}>
             {t('worldmenu.station.modules')}
             <b>{orbitKinds.filter(k => Number(myStation.buildings?.[k] ?? 0) > 0).length}/{orbitKinds.length}</b>
