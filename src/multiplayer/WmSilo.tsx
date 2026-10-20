@@ -490,9 +490,9 @@ export const WmSilo: React.FC<{
                   );
                 })}
               </div>
-              {/* The salvo, what it would do, and LAUNCH stay in view at the
-                  foot of the column while the list above scrolls with it. */}
-              <div className="wm-silo-fire">
+              {/* Once a target is picked: the salvo, what it would do, and
+                  LAUNCH, held in view at the foot of the column. */}
+              {(chosen || chosenGroup) && <div className="wm-silo-fire">
                 {incoming.length === 0 && (
                   <div className="wm-silo-salvo">
                     <span className="wm-silo-h2">{t('worldmenu.silo.salvo')}</span>
@@ -527,7 +527,7 @@ export const WmSilo: React.FC<{
                   </button>
                   {confirm && <button type="button" className="wm-silo-btn" onClick={() => setConfirm(false)}>{t('worldmenu.silo.back')}</button>}
                 </div>
-              </div>
+              </div>}
             </>
           )}
         </div>
