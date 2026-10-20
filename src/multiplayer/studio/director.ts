@@ -135,19 +135,26 @@ export class Director {
     return this.host.state().bodies.find(b => b.id === id);
   }
 
+  /** Ships and fleets carry the game id in front ('<game>:st_fr_0');
+   *  shots name them without it, the way the CLI prints them. */
+  private ship(id: string): Ship | undefined {
+    return this.host.state().ships.find(x => x.id === id || x.id.endsWith(`:${id}`));
+  }
+  private fleetMembers(id: string): Ship[] {
+    return this.host.state().ships.filter(x => x.fleetId != null && (x.fleetId === id || x.fleetId.endsWith(`:${id}`)));
+  }
+
   /** Where a target is on the map this frame, in world units. */
   position(target: Target): { x: number; y: number } | null {
     const s = this.host.state();
     const tick = this.tick();
     if (target.startsWith('ship:')) {
-      const id = target.slice(5);
-      const ship = s.ships.find(x => x.id === id);
+      const ship = this.ship(target.slice(5));
       if (!ship) return null;
       return this.shipPos(ship, tick);
     }
     if (target.startsWith('fleet:')) {
-      const id = target.slice(6);
-      const members = s.ships.filter(x => x.fleetId === id);
+      const members = this.fleetMembers(target.slice(6));
       const lead = members.find(x => x.transit) ?? members[0];
       return lead ? this.shipPos(lead, tick) : null;
     }
@@ -174,10 +181,9 @@ export class Director {
   /** The world the target sits at, for sizing: a ship's parent when parked. */
   private bodyFor(target: Target): Body | undefined {
     if (target.startsWith('ship:') || target.startsWith('fleet:')) {
-      const s = this.host.state();
       const ship = target.startsWith('ship:')
-        ? s.ships.find(x => x.id === target.slice(5))
-        : s.ships.find(x => x.fleetId === target.slice(6));
+        ? this.ship(target.slice(5))
+        : this.fleetMembers(target.slice(6))[0];
       const pid = ship?.orbit?.parentBodyId;
       return pid ? this.body(pid) : undefined;
     }
