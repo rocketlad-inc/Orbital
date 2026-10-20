@@ -661,7 +661,8 @@ export const WorldMenuOverlay: React.FC = () => {
   const modsH = modRows ? modRows * MOD_H + (modRows - 1) * MOD_GAP : 0;
   // The rig's left edge: the module column, or the BUILD STATION button
   // (168 wide, centred on the station's spot) where there is no station.
-  const rigLeft = mobile ? staX : Math.min(staX, orbitKinds.length ? modLeft : staX + staW / 2 - 84);
+  const plotCx = Math.min(Math.min(vw - dockW, ctlLeft ?? vw) - 8 - 84, staX + staW / 2);
+  const rigLeft = mobile ? staX : Math.min(staX, orbitKinds.length ? modLeft : plotCx - 84);
   const modTop = staY + staH + 6;
   const rigBottom = mobile ? staY + (myStation ? STA_CHIP_H : 70) : Math.max(staY + staH, modTop + modsH);
 
@@ -1441,7 +1442,7 @@ export const WorldMenuOverlay: React.FC = () => {
       )}
       {!myStation && body && canHostStation(body) && !anyStation && (
         <div className="wm-plot" style={{
-          left: Math.max(8 + (mobile ? 75 : 84), Math.min(vw - dockW - 8 - (mobile ? 75 : 84), staX + staW / 2)),
+          left: Math.max(8 + (mobile ? 75 : 84), Math.min((mobile ? vw : Math.min(vw - dockW, ctlLeft ?? vw)) - 8 - (mobile ? 75 : 84), staX + staW / 2)),
           top: staY + staH / 2, width: mobile ? 150 : 168,
         }}>
           {foundBtn('station')}
