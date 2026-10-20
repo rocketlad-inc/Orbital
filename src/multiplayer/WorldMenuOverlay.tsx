@@ -1514,32 +1514,25 @@ export const WorldMenuOverlay: React.FC = () => {
 
     // ---- HOME: the peek. Who lives here, what it makes, any raid, and a
     // card for each thing you can open ----
-    const lockedN = (['surface', 'orbit'] as const).reduce((n, side) => {
-      const host = hostOf(side);
-      return n + (host ? kindsOf(side).filter(k => statusOf(k, host, side).lockObj).length : 0);
-    }, 0);
+    // The city's own buildings: what is up, and what is still locked.
+    const cityBuilt = myCity ? Object.values(myCity.buildings ?? {}).filter(v => Number(v) > 0).length : 0;
+    const cityLocked = myCity ? kindsOf('surface').filter(k => statusOf(k, myCity, 'surface').lockObj).length : 0;
     const stationMods = myStation ? Object.values(myStation.buildings ?? {}).filter(v => Number(v) > 0).length : 0;
     type Card = { id: string; label: string; short?: string; sub: string; tone?: string; meter?: number; badgeN?: number; go: () => void };
+    // THE ORDER IS LORNE'S (2026-10-20): CITY, STATION, YARD, SILO,
+    // OVERVIEW. A raw world's terraform leads: it is the way to a city.
     const cards: Card[] = [];
     if (rawHere && tfTab) {
       cards.push({ id: 'terraform', label: t('worldmenu.bar.terraform'), sub: tfTab.sub, tone: 'is-tf',
         meter: body.terraformCompletesAtTick == null ? tfPct : undefined, go: () => setPview('terraform') });
     }
     if (myCity) {
-      cards.push({ id: 'structures', label: t('worldmenu.bar.structures'),
-        sub: lockedN ? `${tn('worldmenu.bar.built', builtCount)} · ${t('worldmenu.p.locked', { n: lockedN })}` : tn('worldmenu.bar.built', builtCount),
+      cards.push({ id: 'structures', label: t('worldmenu.col.city'),
+        sub: cityLocked ? `${tn('worldmenu.bar.built', cityBuilt)} · ${t('worldmenu.p.locked', { n: cityLocked })}` : tn('worldmenu.bar.built', cityBuilt),
         go: () => { setPside('surface'); setPview('structures'); } });
     } else if (sideAvail.surface && !rawHere) {
       cards.push({ id: 'structures', label: t('worldmenu.col.city'), sub: t('worldmenu.found.btnCity'),
         go: () => { setPside('surface'); setPview('structures'); } });
-    }
-    if (siloOk && myCity?.missileSilo) {
-      cards.push({ id: 'silo', label: t('worldmenu.bar.silo'), short: t('worldmenu.silo.m.silo'), tone: 'is-silo', badgeN: raid?.groups,
-        sub: t('worldmenu.tag.magazine', { n: myCity.missileSilo.stock, cap: siloCap }), go: () => setPview('silo') });
-    }
-    if (myCity || myStation) {
-      cards.push({ id: 'yard', label: t('worldmenu.bar.yard'),
-        sub: t('worldmenu.bar.slipways', { busy: yardBusy, slots: yardSlots }), go: () => setPview('yard') });
     }
     if (myStation) {
       cards.push({ id: 'station', label: t('worldmenu.station.chip'), sub: tn('worldmenu.p.modules', stationMods),
@@ -1548,6 +1541,14 @@ export const WorldMenuOverlay: React.FC = () => {
       cards.push({ id: 'station', label: t('worldmenu.station.chip'),
         sub: (myCity || myStation) ? `+ ${costLabel}` : colonyShipHere ? t('worldmenu.found.consumesShip') : t('worldmenu.found.needsShip'),
         go: () => { setPside('orbit'); setPview('structures'); } });
+    }
+    if (myCity || myStation) {
+      cards.push({ id: 'yard', label: t('worldmenu.bar.yard'),
+        sub: t('worldmenu.bar.slipways', { busy: yardBusy, slots: yardSlots }), go: () => setPview('yard') });
+    }
+    if (siloOk && myCity?.missileSilo) {
+      cards.push({ id: 'silo', label: t('worldmenu.bar.silo'), short: t('worldmenu.silo.m.silo'), tone: 'is-silo', badgeN: raid?.groups,
+        sub: t('worldmenu.tag.magazine', { n: myCity.missileSilo.stock, cap: siloCap }), go: () => setPview('silo') });
     }
     cards.push({ id: 'overview', label: t('worldmenu.p.overview'),
       sub: integrity ? `${Math.round(integrity.hp)} / ${integrity.maxHp}` : `${t('worldmenu.metric.pop')} ${readout.pop}`,
@@ -1611,13 +1612,13 @@ export const WorldMenuOverlay: React.FC = () => {
     const sideHost = hostOf(side);
     const structuresView = (
       <>
-        {/* Surface or orbit is the STRUCTURES / STATION tab above; the
-            station's own name and hull lead its list. */}
-        {side === 'orbit' && myStation && (
+        {/* Surface or orbit is the CITY / STATION tab above; the
+            settlement's own name and integrity lead its list. */}
+        {sideHost && (
           <div className="wmp-idrow">
-            <span className="wmp-place">{myStation.name}</span>
-            <span className="wmp-pop" style={{ color: hpColor(myStation.hp / Math.max(1, myStation.maxHp)) }}>
-              ◈ <b>{Math.round(myStation.hp)}/{myStation.maxHp}</b>
+            <span className="wmp-place">{sideHost.name}</span>
+            <span className="wmp-pop" style={{ color: hpColor(sideHost.hp / Math.max(1, sideHost.maxHp)) }}>
+              ◈ <b>{Math.round(sideHost.hp)}/{sideHost.maxHp}</b>
             </span>
           </div>
         )}
