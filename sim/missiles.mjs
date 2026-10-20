@@ -22,6 +22,8 @@
 
 import { SimD1 } from './d1.mjs';
 import { MIGRATIONS } from '../worker/_migrations_bundle.js';
+import { missileTicks, MISSILE_REF_ACCEL } from '../worker/missiles.js';
+import { legTicks } from '../worker/burn.js';
 
 let bad = 0;
 function check(label, ok, detail = '') {
@@ -141,6 +143,15 @@ check('a salvo of 4 is in the air: one missile row, its node planned at missile 
   && node.accel > 0 && L1.body.ticks >= 1 && L1.body.ticks <= 12,
   JSON.stringify({ L1: L1.body, cls: salvo?.ship_class, n: salvo?.missile_count, accel: node?.accel }));
 check('...and the magazine is down to 4', Number((await cityOf(EARTH)).missile_stock) === 4);
+// Lorne, 2026-10-20: half a two-engine hull's trip, no brake.
+check('a salvo pushes the whole way: it never flips, so it never brakes',
+  Number(node.flip_tick) === Number(node.arrival_at_tick), JSON.stringify({ flip: node.flip_tick, arr: node.arrival_at_tick }));
+const routeTicks = [625, 2709, 4835, 19235, 28530].map(d => Math.ceil(missileTicks(d)));
+check('missile trip times (Io-Callisto, Earth-Mars, Earth-Jupiter, Neptune-Pluto, Pluto-Makemake): 4 / 7 / 9 / 15 / 17 T',
+  JSON.stringify(routeTicks) === JSON.stringify([4, 7, 9, 15, 17]), JSON.stringify(routeTicks));
+const twoEngine = [625, 2709, 4835, 19235, 28530].map(d => Math.ceil(legTicks(d, MISSILE_REF_ACCEL)));
+check('...half of a two-engine ship\'s 8 / 14 / 18 / 30 / 34 T',
+  JSON.stringify(twoEngine) === JSON.stringify([8, 14, 18, 30, 34]), JSON.stringify(twoEngine));
 
 // ---- 4. impact ------------------------------------------------------------
 while (tick < L1.body.arrive_tick - 1) await runTick();
@@ -228,6 +239,10 @@ const n3 = await DB.prepare('SELECT * FROM game_ship_nodes WHERE ship_id = ?').b
 check('a salvo of 4 is launched at the group: a rendezvous arc on the frigate, arriving when they do',
   L3.status === 200 && n3?.rv_follow_ship_id === grp[2] && n3.rv_meet_tick > tick && n3.arrival_at_tick === land
   && Number((await cityOf(EARTH)).missile_stock) === 4, JSON.stringify({ L3: L3.body, node: n3 && { rv: n3.rv_follow_ship_id, meet: n3.rv_meet_tick, arr: n3.arrival_at_tick } }));
+check('...ONE straight push to a whole-tick meeting: no second burn to match speed',
+  Number(n3.rv_bx) === 0 && Number(n3.rv_by) === 0 && Number.isInteger(Number(n3.rv_meet_tick))
+  && Number(n3.flip_tick) === Number(n3.rv_meet_tick),
+  JSON.stringify({ B: [n3.rv_bx, n3.rv_by], meet: n3.rv_meet_tick, flip: n3.flip_tick }));
 while (tick < L3.body.meet_tick - 1) await runTick();
 check('nothing is hit before the meeting', (await hpOf(grp[0])).hp === 40 && (await hpOf(grp[2])).hp === 270);
 await runTick();
