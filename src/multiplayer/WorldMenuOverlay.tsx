@@ -249,13 +249,6 @@ export const WorldMenuOverlay: React.FC = () => {
     setPside('surface');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openId]);
-  // Past a peek, the sheet owns the bottom of the screen: the dock steps
-  // aside (WmPhone.css) and comes back when the sheet drops.
-  useEffect(() => {
-    const up = mobile && !!openId && pLevel !== 'peek';
-    document.body.classList.toggle('wmp-sheet-up', up);
-    return () => { document.body.classList.remove('wmp-sheet-up'); };
-  }, [mobile, openId, pLevel]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { measureChrome(); }, [openId]);
   // The lore waits behind ABOUT: it was taking the best spot on the screen.
