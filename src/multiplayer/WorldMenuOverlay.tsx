@@ -146,15 +146,25 @@ export const WorldMenuOverlay: React.FC = () => {
   // staging the banner pushes the canvas down 23px, and every stem ended
   // that far above its building.
   const [mapTop, setMapTop] = useState(0);
+  // The map's own side buttons (box-select, previous / next) show on a
+  // narrow desktop too; the station keeps left of them.
+  const [ctlLeft, setCtlLeft] = useState<number | null>(null);
+  const measureChrome = () => {
+    const cv = document.querySelector('canvas[data-map-canvas]');
+    setMapTop(cv ? Math.round(cv.getBoundingClientRect().top + window.scrollY) : 0);
+    const btns = [...document.querySelectorAll('.map-controls__btn')]
+      .map(b => b.getBoundingClientRect()).filter(r => r.width > 0 && r.top < 320);
+    setCtlLeft(btns.length ? Math.round(Math.min(...btns.map(r => r.left))) : null);
+  };
   useEffect(() => {
     const onR = () => {
       setVw(window.innerWidth); setVh(window.innerHeight);
-      const cv = document.querySelector('canvas[data-map-canvas]');
-      setMapTop(cv ? Math.round(cv.getBoundingClientRect().top + window.scrollY) : 0);
+      measureChrome();
     };
     onR();
     window.addEventListener('resize', onR);
     return () => window.removeEventListener('resize', onR);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const mobile = vw <= 720;
 
@@ -197,10 +207,8 @@ export const WorldMenuOverlay: React.FC = () => {
   // The structure under the pointer: its tag and its building light together.
   const [hoverKind, setHoverKind] = useState<string | null>(null);
   useEffect(() => { setPicked(null); setStationOpen(false); setHoverKind(null); }, [openId]);
-  useEffect(() => {
-    const cv = document.querySelector('canvas[data-map-canvas]');
-    if (cv) setMapTop(Math.round(cv.getBoundingClientRect().top + window.scrollY));
-  }, [openId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { measureChrome(); }, [openId]);
   // The lore waits behind ABOUT: it was taking the best spot on the screen.
   const [aboutOpen, setAboutOpen] = useState(false);
   // While a menu is open: tag <body> so the left rail steps aside
@@ -635,7 +643,7 @@ export const WorldMenuOverlay: React.FC = () => {
   // same patch of sky as the surface tags (Lorne, 2026-10-20: "we got
   // overlapping here") ----
   const staW = mobile ? 84 : 130, staH = staW;
-  const staX = mobile ? 8 : vw - dockW - staW - 30;
+  const staX = mobile ? 8 : Math.min(vw - dockW - staW - 30, (ctlLeft ?? vw) - staW - 10);
   const staY = mobile ? TOPBAR + 10 + chromeH.panel + 10 : TOPBAR + 10 + 40 + 14;
   const STA_CHIP_H = 30;
   const orbitKinds = myStation ? cols.orbit : [];
@@ -648,12 +656,14 @@ export const WorldMenuOverlay: React.FC = () => {
   // level only (the rest is in the card), or they land on the surface tags.
   const MOD_COLS = shortDesk ? 2 : 1;
   const MOD_W = shortDesk ? 2 * 112 + 4 : 168, MOD_H = shortDesk ? 26 : 36, MOD_GAP = 4;
-  const modLeft = staX + staW - MOD_W;
-  const modTop = staY + staH + 6;
+  // ...and BESIDE the station, level with its foot: under it they took
+  // the sky the surface tags arc through (1000x690 measured).
+  const modLeft = shortDesk ? staX - 8 - MOD_W : staX + staW - MOD_W;
   const modRows = Math.ceil(orbitKinds.length / MOD_COLS);
   const modsH = modRows ? modRows * MOD_H + (modRows - 1) * MOD_GAP : 0;
-  const rigLeft = mobile ? staX : Math.min(staX, modLeft);
-  const rigBottom = mobile ? staY + (myStation ? STA_CHIP_H : 70) : modTop + modsH;
+  const rigLeft = mobile || !orbitKinds.length ? staX : Math.min(staX, modLeft);
+  const modTop = shortDesk ? staY + staH - modsH : staY + staH + 6;
+  const rigBottom = mobile ? staY + (myStation ? STA_CHIP_H : 70) : Math.max(staY + staH, modTop + modsH);
 
   // ---- orb cluster placement: ONE shift, two constraints ----
   // The orb slots are fixed constants; the station rig (now with its module
@@ -674,7 +684,7 @@ export const WorldMenuOverlay: React.FC = () => {
       over = Math.max(over, right - (vw - dockW - ORB_GUTTER));
       // Only orbs level with the rig can actually hit it.
       if (rigLive && sl.y + sl.r > staY && sl.y - sl.r < rigBottom) {
-        over = Math.max(over, right - (staX - ORB_STA_CLEAR));
+        over = Math.max(over, right - (rigLeft - ORB_STA_CLEAR));
       }
     }
     return Math.max(0, Math.min(over, Math.max(0, cx + 200 - (railW + 10))));
@@ -1027,9 +1037,14 @@ export const WorldMenuOverlay: React.FC = () => {
       : (() => { const s = surfTags.find(x => x.kind === pickedKind); return s ? { px: s.px, py: s.py - TAG_H / 2, side: (s.px < cx ? 'right' : 'left') as 'left' | 'right' } : null; })())
     : null;
   const CARD_W = 300;
-  // A module's card opens beside the module list, level with the station:
-  // under it, a 690-high window ran the card into the bar.
-  const stationCardStyle = (): React.CSSProperties => ({
+  // A module's card opens beside the module column, level with the
+  // station: under it, a 690-high window ran the card into the bar. Where
+  // the modules already sit beside the station (a short window), under.
+  const stationCardStyle = (): React.CSSProperties => (shortDesk ? {
+    left: Math.max(railW + 12, staX + staW - CARD_W),
+    top: rigBottom + 8,
+    width: CARD_W,
+  } : {
     left: Math.max(railW + 12, rigLeft - CARD_W - 12),
     top: staY,
     width: CARD_W,
