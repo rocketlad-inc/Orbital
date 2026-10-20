@@ -598,6 +598,10 @@ export const WorldMenuOverlay: React.FC = () => {
   };
   const railW = mobile ? 0 : 296, dockW = mobile ? 0 : 60;
   const TOPBAR = 52;
+  // A SHORT desktop window (1000x690 was the report) has no room for the
+  // full header AND the arc of tags in the sky between it and the horizon:
+  // the header starts collapsed there, like a phone's, with MORE to open it.
+  const shortDesk = !mobile && vh < 820;
 
   // ---- the station: top right on a desktop, under the header on a phone
   // (the map's own side buttons own the phone's right). Its MODULES are on
@@ -618,7 +622,8 @@ export const WorldMenuOverlay: React.FC = () => {
   // per-orb clamping is what once stacked two moons on one spot.
   const ORB_GUTTER = 12, ORB_STA_CLEAR = 16;
   const orbShift = mobile ? 0 : (() => {
-    const rigLive = !!readout.station;
+    // The station, or the plot where one can be built: either sits there.
+    const rigLive = !!readout.station || (!myStation && canHostStation(body) && !anyStation);
     let over = 0;
     for (let i = 0; i < neighbors.length; i++) {
       const sl = ORB_SLOTS[orbSlotIndex(i, neighbors, body.parent)];
@@ -1051,7 +1056,7 @@ export const WorldMenuOverlay: React.FC = () => {
            ABOUT so the panel stops taking the best spot on the screen ===== */}
       <section
         data-tutorial-id="world-menu"
-        className={`wm-top ${mobile && collapsed ? 'collapsed' : ''}`}
+        className={`wm-top ${(mobile || shortDesk) && collapsed ? 'collapsed' : ''}${shortDesk ? ' is-short' : ''}`}
         style={mobile ? undefined : {
           left: railW + 16,
           maxWidth: Math.min(520, Math.max(320, cx - cr * 0.15 - railW - 32)),
@@ -1175,7 +1180,7 @@ export const WorldMenuOverlay: React.FC = () => {
           </div>
         )}
 
-        {mobile && (
+        {(mobile || shortDesk) && (
           <button className="wm-more" onClick={() => setCollapsed(c => !c)}>
             {collapsed ? t('worldmenu.more') : t('worldmenu.less')}
           </button>
@@ -1302,7 +1307,10 @@ export const WorldMenuOverlay: React.FC = () => {
         </>
       )}
       {!myStation && body && canHostStation(body) && !anyStation && (
-        <div className="wm-plot" style={{ left: staX + staW / 2, top: staY + staH / 2, width: mobile ? 150 : 168 }}>
+        <div className="wm-plot" style={{
+          left: Math.max(8 + (mobile ? 75 : 84), Math.min(vw - dockW - 8 - (mobile ? 75 : 84), staX + staW / 2)),
+          top: staY + staH / 2, width: mobile ? 150 : 168,
+        }}>
           {foundBtn('station')}
         </div>
       )}

@@ -529,7 +529,7 @@
    overlaps. Kept narrow so it doesn't crowd the station and its build
    row below. */
 .wm-mobile .wm-top {
-  left: 8px; right: 68px; max-width: none;
+  left: 8px; right: 92px; max-width: none;
   /* BOUNDED, SCROLLABLE SHEET (mobile only).
      The panel used to grow unbounded downward while .wm-mrow-surface was
      pushed UP by a tall build box — two absolutely-positioned layers
@@ -1099,3 +1099,20 @@
 .wm-modrow.is-booked .wm-modrow-st { color: #4ecdc4; }
 .wm-mobile .wm-modrow { min-height: 48px; }
 .wm-mobile .wm-sta-chip { font-size: 8.5px; }
+
+/* A short desktop window starts with the header collapsed (name, owner,
+   output) so the sky keeps room for the structure tags; MORE opens it
+   over them. Mirrors the phone's collapsed rules. */
+.wm-top.is-short { padding-right: 70px; }
+.wm-top.is-short:not(.collapsed) { z-index: 6; }
+.wm-top.is-short .wm-more { position: absolute; top: 10px; right: 10px; margin: 0; }
+.wm-top.is-short.collapsed .wm-desc,
+.wm-top.is-short.collapsed .wm-lore,
+.wm-top.is-short.collapsed .wm-find,
+.wm-top.is-short.collapsed .wm-metrics,
+.wm-top.is-short.collapsed .wm-settlements,
+.wm-top.is-short.collapsed .wm-stock,
+.wm-top.is-short.collapsed .wm-terraform,
+.wm-top.is-short.collapsed .wm-about,
+.wm-top.is-short.collapsed .wm-out .wm-label { display: none; }
+.wm-top.is-short.collapsed { gap: 4px; padding-top: 9px; padding-bottom: 9px; }
