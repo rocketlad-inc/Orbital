@@ -38,9 +38,15 @@
   --wmp-work: #ffd166;
   --wmp-hostile: #ff6b6b;
   --wmp-head-h: 64px;
-  font-family: 'Chivo Mono', var(--font-data, monospace);
+  font-family: var(--font-data);
   color: var(--wmp-ink);
 }
+/* A button does not inherit the page's font: left alone, every line of
+   text inside one (a row's status, a card's count, a hull's cost) fell
+   back to the browser's Arial. Only the game's two faces belong here. */
+.wm-root.wmp button,
+.wm-root.wmp input,
+.wm-root.wmp select { font-family: inherit; }
 
 /* ---- the header ---- */
 .wm-root.wmp .wmp-head {
