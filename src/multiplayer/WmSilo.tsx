@@ -73,6 +73,9 @@ export const WmSilo: React.FC<{
   // Which of the two other-target lists is open: ships bound elsewhere,
   // or worlds to strike. Never both.
   const [fold, setFold] = useState<null | 'ships' | 'worlds'>(null);
+  // Narrows the open list (Lorne, 2026-10-20: "we need a search bar for
+  // targets"). Cleared whenever the other list is opened.
+  const [query, setQuery] = useState('');
   const [salvo, setSalvo] = useState(1);
   const [confirm, setConfirm] = useState(false);
   const [eta, setEta] = useState<Record<string, number>>({});
@@ -162,6 +165,15 @@ export const WmSilo: React.FC<{
   const myKills = kills.filter(s => s.ownedBy === ME).length;
   const groupKills = chosenGroup ? chosenGroup.members.filter(s => (s.hp ?? s.hpMax ?? 1) <= damage).length : 0;
   const inFlight = gameState.ships.filter(s => s.class === 'missile' && s.ownedBy === ME && s.transit);
+  // The open list, narrowed by the search: a world by its name; ships by
+  // their empire, their fleet's name or the world they are bound for.
+  const needle = query.trim().toLowerCase();
+  const hit = (...xs: Array<string | undefined | null>) => !needle || xs.some(x => !!x && x.toLowerCase().includes(needle));
+  const shownWorlds = worlds.filter(w => hit(w.body.name));
+  const shownOthers = others.filter(g => hit(
+    ownerName(g.lead.ownedBy), g.fleet?.name,
+    byId.get(g.lead.transit?.currentTransfer?.targetBodyId ?? '')?.name,
+  ));
   // Salvos in the air, counted where they were aimed: at an incoming raid
   // (shown on its row), at ships bound elsewhere, or at a world. One
   // count on each fold, never a sentence listing them.
@@ -277,7 +289,7 @@ export const WmSilo: React.FC<{
           <div className="wm-silo-folds" role="group">
             {(['ships', 'worlds'] as const).map(f => (
               <button key={f} type="button" className={`wm-silo-more${fold === f ? ' is-on' : ''}`} aria-expanded={fold === f}
-                onClick={() => { setFold(o => (o === f ? null : f)); setTarget(null); setConfirm(false); }}>
+                onClick={() => { setFold(o => (o === f ? null : f)); setTarget(null); setConfirm(false); setQuery(''); }}>
                 {t(f === 'ships' ? 'worldmenu.silo.foldShips' : 'worldmenu.silo.foldWorlds')}
                 <b>{f === 'ships' ? others.length : worlds.length}</b>
                 {(f === 'ships' ? flyingElsewhere : flyingAtWorlds) > 0 && (
@@ -289,11 +301,18 @@ export const WmSilo: React.FC<{
           </div>
           {fold && (
             <>
+              <input type="search" className="wm-silo-search" value={query}
+                placeholder={t(fold === 'ships' ? 'worldmenu.silo.searchShips' : 'worldmenu.silo.searchWorlds')}
+                aria-label={t(fold === 'ships' ? 'worldmenu.silo.searchShips' : 'worldmenu.silo.searchWorlds')}
+                onChange={e => setQuery(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Escape' && query) { e.stopPropagation(); setQuery(''); } }} />
               <div className="wm-silo-list" role="listbox"
                 aria-label={t(fold === 'ships' ? 'worldmenu.silo.foldShips' : 'worldmenu.silo.foldWorlds')}>
                 {fold === 'worlds' && worlds.length === 0 && <span className="wm-silo-note">{t('worldmenu.silo.noWorlds')}</span>}
+                {fold === 'worlds' && worlds.length > 0 && shownWorlds.length === 0 && <span className="wm-silo-note">{t('worldmenu.silo.noMatch', { q: query.trim() })}</span>}
                 {fold === 'ships' && others.length === 0 && <span className="wm-silo-note">{t('worldmenu.silo.noShipsElsewhere')}</span>}
-                {fold === 'worlds' && worlds.map(w => (
+                {fold === 'ships' && others.length > 0 && shownOthers.length === 0 && <span className="wm-silo-note">{t('worldmenu.silo.noMatch', { q: query.trim() })}</span>}
+                {fold === 'worlds' && shownWorlds.map(w => (
                   <button key={w.body.id} type="button" role="option" aria-selected={w.body.id === target}
                     className={`wm-silo-opt${w.body.id === target ? ' is-on' : ''}`}
                     onClick={() => { setTarget(w.body.id); setConfirm(false); }}>
@@ -306,7 +325,7 @@ export const WmSilo: React.FC<{
                     </span>
                   </button>
                 ))}
-                {fold === 'ships' && others.map(g => {
+                {fold === 'ships' && shownOthers.map(g => {
                   const key = `${GROUP}${g.lead.id}`;
                   const tr = g.lead.transit?.currentTransfer;
                   const hostile = !atPeace(ME, g.lead.ownedBy);
