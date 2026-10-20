@@ -153,6 +153,21 @@ check('a salvo of 4 is in the air: one missile row, its node planned at missile 
   && node.accel > 0 && L1.body.ticks >= 1 && L1.body.ticks <= 12,
   JSON.stringify({ L1: L1.body, cls: salvo?.ship_class, n: salvo?.missile_count, accel: node?.accel }));
 check('...and the magazine is down to 4', Number((await cityOf(EARTH)).missile_stock) === 4);
+{
+  // It leaves from orbit on the side facing its target, on one steady push
+  // (a salvo starting at the world's centre sat on the planet, reading as parked).
+  const { loadSky } = await import('../worker/flightState.js');
+  const { parkOrbitRadius } = await import('../worker/factions.js');
+  const { legProgress } = await import('../worker/orbitPos.js');
+  const sky = await loadSky(DB, G);
+  const c = sky.bodyPos(EARTH, Number(node.scheduled_t));
+  const rp = parkOrbitRadius(Number(sky.byId.get(EARTH).radius));
+  const off = Math.hypot(Number(node.launch_x) - c.x, Number(node.launch_y) - c.y);
+  check('a salvo leaves from the parking orbit (not the world\'s centre), on one steady push',
+    Math.abs(off - rp) < 1e-6 && node.accel_tau == null && node.accel_max == null && Number(node.brake_accel) === Number(node.accel)
+    && Math.abs(legProgress(0.5, { accel: node.accel, brake: node.brake_accel, startTick: node.scheduled_t, flipTick: node.flip_tick, arriveTick: node.arrival_at_tick }) - 0.25) < 1e-9,
+    JSON.stringify({ off, rp, tau: node.accel_tau, max: node.accel_max }));
+}
 // Lorne, 2026-10-20: half a two-engine hull's trip, no brake.
 check('a salvo pushes the whole way: it never flips, so it never brakes',
   Number(node.flip_tick) === Number(node.arrival_at_tick), JSON.stringify({ flip: node.flip_tick, arr: node.arrival_at_tick }));
