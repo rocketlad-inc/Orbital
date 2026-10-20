@@ -198,3 +198,156 @@
 /* A phone gives the silo more of the screen than the yard: the list and
    the pinned LAUNCH both need room. */
 .wm-mobile .wm-fleet.wm-silo { max-height: 64vh; overflow: hidden; }
+
+/* ===================================================================
+   THE PHONE SILO (WmSilo mobile branch). A pocket console: header and
+   tabs on top, one scrolling body, the salvo bar fixed at the foot.
+   Audiowide for names and actions, Chivo Mono for numbers; fire is
+   coral, defence teal, hostile pink, as on the desktop drawer.
+   =================================================================== */
+.wm-mobile .wm-fleet.wm-ms { gap: 0; padding: 10px 12px 0; max-height: 70vh; overflow: hidden; }
+.wm-ms .wm-btabs { margin-bottom: 6px; }
+.wm-ms-head { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; padding-bottom: 8px; }
+.wm-ms-title { flex: 1; min-width: 0; font-family: 'Audiowide', sans-serif; font-size: 13px; letter-spacing: 0.08em; color: #e6edf3; white-space: nowrap; }
+.wm-ms-title em { font-style: normal; margin-left: 8px; font-family: 'Chivo Mono', monospace; font-size: 11px; letter-spacing: 0; color: #8fa6ba; }
+.wm-ms-mag { display: flex; align-items: center; gap: 6px; font-family: 'Chivo Mono', monospace; }
+.wm-ms-mag b { font-size: 17px; font-weight: 500; color: #fff; }
+.wm-ms-mag > span:last-child { font-size: 12px; color: #8fa6ba; }
+.wm-ms-pips { display: flex; gap: 2px; }
+.wm-ms-pips i { width: 4px; height: 14px; border-radius: 1px; box-sizing: border-box; border: 1px solid #2a3d50; }
+.wm-ms-pips i.is-full { background: #ff8a5c; border-color: #ff8a5c; }
+.wm-ms-pips i.is-queued { border: 1px dashed #ff8a5c; }
+
+.wm-ms-tabs { display: flex; flex: 0 0 auto; border: 1px solid #2a3d50; border-radius: 6px; overflow: hidden; }
+.wm-fleet.wm-ms .wm-ms-tab {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 44px; border: 0; background: #0d141d; color: #8fa6ba; cursor: pointer;
+  font-family: 'Audiowide', sans-serif; font-size: 11.5px; letter-spacing: 0.12em;
+}
+.wm-ms-tab + .wm-ms-tab { border-left: 1px solid #2a3d50; }
+.wm-fleet.wm-ms .wm-ms-tab.is-on { background: rgba(78, 205, 196, 0.14); color: #4ecdc4; box-shadow: inset 0 -2px 0 #4ecdc4; }
+.wm-ms-badge { min-width: 18px; padding: 1px 5px; border-radius: 9px; background: #ff5e5e; color: #fff; font-family: 'Chivo Mono', monospace; font-size: 11px; font-weight: 500; letter-spacing: 0; }
+.wm-ms-badge.is-teal { background: rgba(78, 205, 196, 0.25); color: #4ecdc4; }
+
+.wm-ms-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 12px 0; overscroll-behavior: contain; }
+.wm-ms-k { font-family: 'Chivo Mono', monospace; font-size: 11px; letter-spacing: 0.14em; color: #8fa6ba; }
+.wm-ms-h { font-family: 'Audiowide', sans-serif; font-size: 11px; letter-spacing: 0.18em; color: #8fa6ba; margin-top: 4px; }
+.wm-ms-note { font-family: 'Chivo Mono', monospace; font-size: 11.5px; line-height: 1.5; color: #8fa6ba; }
+
+/* DEFEND */
+.wm-fleet.wm-ms .wm-ms-auto {
+  display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 12px; text-align: left;
+  border: 1px solid #2a3d50; border-radius: 6px; background: #0d141d; color: #e6edf3; cursor: pointer;
+}
+.wm-ms-auto b { flex: 1; font-family: 'Audiowide', sans-serif; font-size: 12px; font-weight: 400; letter-spacing: 0.06em; }
+.wm-ms-auto.is-off b { color: #8fa6ba; }
+.wm-ms-auto.is-missiles b, .wm-ms-auto.is-fleets b { color: #6ee7b7; }
+.wm-ms-chev { font-size: 20px; color: #6b8195; }
+.wm-ms-empty { display: flex; flex-direction: column; gap: 6px; padding: 20px 4px; text-align: center; font-family: 'Chivo Mono', monospace; font-size: 12px; line-height: 1.5; color: #8fa6ba; }
+.wm-ms-empty-t { font-family: 'Audiowide', sans-serif; font-size: 15px; letter-spacing: 0.06em; color: #6ee7b7; }
+.wm-ms-raid {
+  display: flex; flex-direction: column; gap: 6px; padding: 12px; flex: 0 0 auto;
+  border: 1px solid rgba(255, 94, 94, 0.5); border-left-width: 4px; border-radius: 6px; background: rgba(255, 94, 94, 0.07);
+}
+.wm-ms-raid.is-out { border-color: #2a3d50; background: #0d141d; }
+.wm-ms-raid-top { display: flex; align-items: baseline; gap: 10px; }
+.wm-ms-raid-name { flex: 1; min-width: 0; font-family: 'Audiowide', sans-serif; font-size: 14px; color: #e6edf3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wm-ms-raid-n { font-family: 'Chivo Mono', monospace; font-size: 12px; font-weight: 500; color: #ff9d9d; }
+.wm-ms-raid-times { display: flex; gap: 18px; font-family: 'Chivo Mono', monospace; font-size: 14px; color: #fff; }
+.wm-ms-raid-times em { font-style: normal; margin-right: 6px; font-size: 10.5px; letter-spacing: 0.14em; color: #8fa6ba; }
+.wm-ms-raid-sent { font-family: 'Chivo Mono', monospace; font-size: 12px; color: #4ecdc4; }
+.wm-ms-raid-kill { font-family: 'Chivo Mono', monospace; font-size: 12px; color: #ffd2bf; }
+.wm-ms-raid-own { font-family: 'Chivo Mono', monospace; font-size: 12px; color: #ffb84d; }
+.wm-fleet.wm-ms .wm-ms-fire {
+  min-height: 48px; padding: 0 16px; border-radius: 6px; cursor: pointer;
+  border: 1px solid #ff8a5c; background: rgba(255, 138, 92, 0.2); color: #ffd2bf;
+  font-family: 'Audiowide', sans-serif; font-size: 13px; letter-spacing: 0.06em;
+}
+.wm-fleet.wm-ms .wm-ms-fire.is-wide { flex: 1; }
+.wm-fleet.wm-ms .wm-ms-fire.is-confirm { background: rgba(255, 94, 94, 0.32); border-color: #ff5e5e; color: #fff; }
+.wm-fleet.wm-ms .wm-ms-fire:disabled { opacity: 0.45; cursor: default; }
+
+/* STRIKE */
+.wm-ms-seg { display: flex; border: 1px solid #2a3d50; border-radius: 6px; overflow: hidden; flex: 0 0 auto; }
+.wm-fleet.wm-ms .wm-ms-seg button {
+  flex: 1; min-height: 44px; border: 0; background: #0d141d; color: #8fa6ba; cursor: pointer;
+  font-family: 'Audiowide', sans-serif; font-size: 11.5px; letter-spacing: 0.1em;
+}
+.wm-fleet.wm-ms .wm-ms-seg button + button { border-left: 1px solid #2a3d50; }
+.wm-fleet.wm-ms .wm-ms-seg button.is-on { background: rgba(255, 138, 92, 0.14); color: #ffd2bf; }
+.wm-ms-seg b { margin-left: 6px; font-family: 'Chivo Mono', monospace; font-weight: 400; letter-spacing: 0; }
+.wm-ms-seg em { display: block; font-style: normal; font-family: 'Chivo Mono', monospace; font-size: 10px; letter-spacing: 0; color: #4ecdc4; }
+.wm-ms-search {
+  box-sizing: border-box; width: 100%; min-height: 44px; padding: 0 12px; flex: 0 0 auto;
+  border: 1px solid #2a3d50; border-radius: 6px; background: #0a1019; color: #e6edf3;
+  font-family: 'Chivo Mono', monospace; font-size: 16px;
+}
+.wm-ms-search::placeholder { color: #6b8195; }
+.wm-ms-search:focus { outline: none; border-color: #4ecdc4; }
+.wm-ms-list { display: flex; flex-direction: column; gap: 4px; flex: 0 0 auto; }
+.wm-fleet.wm-ms .wm-ms-row {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center;
+  min-height: 48px; padding: 0 12px; text-align: left; cursor: pointer;
+  border: 1px solid #1c2836; border-radius: 6px; background: #0d141d; color: #e6edf3;
+}
+.wm-fleet.wm-ms .wm-ms-row.is-on { border-color: #ff8a5c; background: rgba(255, 138, 92, 0.1); box-shadow: inset 3px 0 0 #ff8a5c; }
+.wm-fleet.wm-ms .wm-ms-row.is-out { opacity: 0.55; }
+.wm-ms-row-name { font-family: 'Audiowide', sans-serif; font-size: 13px; white-space: nowrap; }
+.wm-ms-row-meta { font-family: 'Chivo Mono', monospace; font-size: 11.5px; color: #b8c8d6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wm-ms-row-meta b { font-weight: 400; }
+.wm-ms-row-meta .is-hostile { color: #ff9d9d; }
+.wm-ms-row-meta .is-mine { color: #6ee7b7; }
+.wm-ms-row-t { font-family: 'Chivo Mono', monospace; font-size: 12px; color: #fff; white-space: nowrap; }
+
+/* SILO */
+.wm-ms-modes { display: flex; flex-direction: column; gap: 6px; flex: 0 0 auto; }
+.wm-fleet.wm-ms .wm-ms-mode {
+  display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 2px 10px; align-items: center; text-align: left;
+  min-height: 56px; padding: 10px 12px; cursor: pointer;
+  border: 1px solid #2a3d50; border-radius: 6px; background: #0d141d; color: #e6edf3;
+}
+.wm-ms-mode i { grid-row: 1 / span 2; width: 14px; height: 14px; border-radius: 50%; border: 2px solid #4a6178; box-sizing: border-box; }
+.wm-ms-mode b { font-family: 'Audiowide', sans-serif; font-size: 12.5px; font-weight: 400; letter-spacing: 0.06em; }
+.wm-ms-mode span { font-family: 'Chivo Mono', monospace; font-size: 11px; line-height: 1.45; color: #8fa6ba; }
+.wm-fleet.wm-ms .wm-ms-mode.is-on { border-color: #4ecdc4; background: rgba(78, 205, 196, 0.1); }
+.wm-ms-mode.is-on i { border-color: #4ecdc4; background: radial-gradient(circle, #4ecdc4 45%, transparent 50%); }
+.wm-ms-setrow { display: flex; align-items: center; gap: 10px; min-height: 48px; flex: 0 0 auto; }
+.wm-ms-setrow .wm-ms-k { flex: 1; }
+.wm-fleet.wm-ms .wm-ms-step {
+  width: 44px; height: 44px; border-radius: 6px; cursor: pointer;
+  border: 1px solid #2a3d50; background: #0d141d; color: #e6edf3; font-size: 18px;
+}
+.wm-fleet.wm-ms .wm-ms-step:disabled { opacity: 0.35; cursor: default; }
+.wm-ms-num { min-width: 26px; text-align: center; font-family: 'Chivo Mono', monospace; font-size: 18px; font-weight: 500; color: #fff; }
+.wm-ms-build {
+  display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 0 6px 0 12px; flex: 0 0 auto;
+  border: 1px solid #2a3d50; border-radius: 6px; background: #0d141d;
+}
+.wm-ms-build-name { font-family: 'Audiowide', sans-serif; font-size: 13px; color: #e6edf3; }
+.wm-ms-build-cost { flex: 1; font-family: 'Chivo Mono', monospace; font-size: 12px; color: #b8c8d6; }
+.wm-ms-build-cost b { font-weight: 400; color: #ffd166; }
+.wm-fleet.wm-ms .wm-ms-buildbtn {
+  min-height: 44px; padding: 0 16px; border-radius: 6px; cursor: pointer;
+  border: 1px solid #4ecdc4; background: rgba(78, 205, 196, 0.14); color: #4ecdc4;
+  font-family: 'Audiowide', sans-serif; font-size: 12px; letter-spacing: 0.06em;
+}
+.wm-fleet.wm-ms .wm-ms-buildbtn:disabled { opacity: 0.45; cursor: default; }
+.wm-ms-qrow { position: relative; display: flex; align-items: center; gap: 10px; min-height: 44px; padding-bottom: 4px; flex: 0 0 auto; font-family: 'Chivo Mono', monospace; font-size: 12.5px; color: #d8e4ee; }
+.wm-ms-qn { color: #8fa6ba; }
+.wm-ms-qname { flex: 1; }
+.wm-ms-qt { color: #4ecdc4; }
+.wm-fleet.wm-ms .wm-ms-x { width: 44px; height: 40px; border: 0; background: none; color: #8fa6ba; font-size: 14px; cursor: pointer; }
+.wm-ms-qbar { position: absolute; left: 0; bottom: 0; height: 3px; border-radius: 2px; background: #4ecdc4; }
+
+/* The salvo bar: outside the scroll, always under the thumb. */
+.wm-ms-foot {
+  flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px;
+  margin: 0 -12px; padding: 10px 12px; border-top: 1px solid #2a3d50; background: #0a0f16;
+}
+.wm-ms-foot-row { display: flex; align-items: center; gap: 10px; }
+.wm-ms-salvo { display: flex; align-items: center; gap: 8px; }
+.wm-ms-of { font-family: 'Chivo Mono', monospace; font-size: 11px; color: #8fa6ba; white-space: nowrap; }
+.wm-ms-preview { font-family: 'Chivo Mono', monospace; font-size: 11.5px; line-height: 1.45; color: #ffd2bf; }
+.wm-ms-preview em { display: block; font-style: normal; color: #ffb38f; }
+.wm-ms-preview.is-warn { color: #ffb38f; }
+.wm-ms button:focus-visible, .wm-ms input:focus-visible { outline: 2px solid #4ecdc4; outline-offset: 2px; }
