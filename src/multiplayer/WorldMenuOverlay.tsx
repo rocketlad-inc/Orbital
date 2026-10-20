@@ -644,10 +644,14 @@ export const WorldMenuOverlay: React.FC = () => {
   // chip hid what the station had). A phone keeps one chip, but it names
   // the modules built rather than a count; the station art took the band
   // of sky the structure tags need there.
-  const MOD_W = 168, MOD_H = 36, MOD_GAP = 4;
+  // A SHORT window has no sky for a column of them: two abreast, name and
+  // level only (the rest is in the card), or they land on the surface tags.
+  const MOD_COLS = shortDesk ? 2 : 1;
+  const MOD_W = shortDesk ? 2 * 112 + 4 : 168, MOD_H = shortDesk ? 26 : 36, MOD_GAP = 4;
   const modLeft = staX + staW - MOD_W;
   const modTop = staY + staH + 6;
-  const modsH = orbitKinds.length ? orbitKinds.length * MOD_H + (orbitKinds.length - 1) * MOD_GAP : 0;
+  const modRows = Math.ceil(orbitKinds.length / MOD_COLS);
+  const modsH = modRows ? modRows * MOD_H + (modRows - 1) * MOD_GAP : 0;
   const rigLeft = mobile ? staX : Math.min(staX, modLeft);
   const rigBottom = mobile ? staY + (myStation ? STA_CHIP_H : 70) : modTop + modsH;
 
@@ -1399,7 +1403,7 @@ export const WorldMenuOverlay: React.FC = () => {
             </button>
           );
         })() : (
-          <div className="wm-mods" data-testid="wm-col-orbit" data-tutorial-id="wm-columns-orbit"
+          <div className={`wm-mods${MOD_COLS > 1 ? ' is-grid' : ''}`} data-testid="wm-col-orbit" data-tutorial-id="wm-columns-orbit"
             role="group" aria-label={t('worldmenu.station.aria')}
             style={{ left: modLeft, top: modTop, width: MOD_W, gap: MOD_GAP }}>
             {orbitKinds.map(k => {
@@ -1408,7 +1412,7 @@ export const WorldMenuOverlay: React.FC = () => {
               return (
                 <button key={k} type="button" data-testid={`wm-build-${k}`}
                   className={`wm-mod ${tone}${picked ? ' is-picked' : ''}`} style={{ height: MOD_H }}
-                  aria-expanded={picked} title={BUILDING_DEFS[k].description}
+                  aria-expanded={picked} title={MOD_COLS > 1 ? `${line} — ${BUILDING_DEFS[k].description}` : BUILDING_DEFS[k].description}
                   onClick={() => clickStructure(k, myStation, 'orbit')}>
                   <span className="wm-mod-nm">{tk(`worldmenu.building.${k}`, k.toUpperCase())}</span>
                   <b>{level > 0 ? level : ''}</b>
