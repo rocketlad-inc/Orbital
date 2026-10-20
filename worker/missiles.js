@@ -104,6 +104,20 @@ export function parseOrders(json) {
   } catch { return []; }
 }
 
+/** BUILD LINES (Lorne, 2026-10-20: "one line per silo level"). A silo
+ *  builds as many missiles at once as its level, MISSILE_BUILD_TICKS each:
+ *  waiting orders start, in the order they were placed, until every line
+ *  is busy. Pure: the orders with the ones that start now stamped. */
+export function fillLines(orders, lines, tick) {
+  let busy = orders.filter(o => o.start_tick != null).length;
+  return orders.map(o => {
+    if (o.start_tick != null || busy >= lines) return o;
+    busy += 1;
+    return { ...o, start_tick: tick, complete_tick: tick + Number(o.ticks || MISSILE_BUILD_TICKS) };
+  });
+}
+export const siloLines = (level) => Math.max(1, Math.floor(Number(level) || 0));
+
 export function siloLevelOf(row) {
   try { return Math.max(0, Number(JSON.parse(row?.buildings_json ?? '{}')?.missile_silo) || 0); } catch { return 0; }
 }
@@ -174,17 +188,15 @@ async function handleOrder(req, env, ctx) {
     .prepare('UPDATE game_factions SET metal = metal - ?, gold = gold - ? WHERE id = ? AND metal >= ? AND gold >= ?')
     .bind(metal, gold, L.me.id, metal, gold).run();
   if (!paid.meta?.changes) return err(409, 'insufficient_resources', 'not enough metal and credits');
-  const next = [...orders];
+  const placed = [...orders];
   for (let i = 0; i < count; i++) {
-    const building = next.length === 0;
-    next.push({
+    placed.push({
       id: `m${L.tick}_${Math.random().toString(36).slice(2, 8)}`,
-      ticks: MISSILE_BUILD_TICKS,
-      start_tick: building ? L.tick : null,
-      complete_tick: building ? L.tick + MISSILE_BUILD_TICKS : null,
+      ticks: MISSILE_BUILD_TICKS, start_tick: null, complete_tick: null,
       cost: { ...MISSILE_COST },
     });
   }
+  const next = fillLines(placed, siloLines(L.level), L.tick);
   // Guarded on the queue we read: a double tap loses the race and is
   // refunded, never queued twice.
   const wrote = await env.DB
@@ -215,16 +227,15 @@ async function handleCancel(req, env, ctx) {
   const i = orders.findIndex(o => o.id === id);
   if (i < 0) return err(404, 'not_found', 'no such order');
   const [gone] = orders.splice(i, 1);
-  if (i === 0 && orders[0]) {
-    orders[0] = { ...orders[0], start_tick: L.tick, complete_tick: L.tick + Number(orders[0].ticks || MISSILE_BUILD_TICKS) };
-  }
+  // A freed line takes the next order waiting.
+  const next = fillLines(orders, siloLines(L.level), L.tick);
   const wrote = await env.DB
     .prepare(`UPDATE game_settlements SET missile_orders_json = ? WHERE id = ? AND COALESCE(missile_orders_json, '[]') = ?`)
-    .bind(JSON.stringify(orders), L.s.id, L.s.missile_orders_json ?? '[]').run();
+    .bind(JSON.stringify(next), L.s.id, L.s.missile_orders_json ?? '[]').run();
   if (!wrote.meta?.changes) return err(409, 'busy', 'the silo changed; try again');
   await env.DB.prepare('UPDATE game_factions SET metal = metal + ?, gold = gold + ? WHERE id = ?')
     .bind(Number(gone.cost?.metal ?? MISSILE_COST.metal), Number(gone.cost?.gold ?? MISSILE_COST.gold), L.me.id).run();
-  return json({ ok: true, orders });
+  return json({ ok: true, orders: next });
 }
 
 // PATCH /api/games/:gameId/settlements/:settlementId/missiles   { auto?, reserve?, salvo? }
@@ -598,22 +609,21 @@ export async function advanceMissileBuilds(env, gameId, tick) {
     .bind(gameId).all()).results ?? [];
   const stmts = [];
   for (const r of rows) {
-    const orders = parseOrders(r.missile_orders_json);
+    const level = siloLevelOf(r);
+    let orders = parseOrders(r.missile_orders_json);
     let stock = Number(r.missile_stock || 0);
-    const cap = siloCapacity(siloLevelOf(r));
-    let changed = false;
-    while (orders[0] && orders[0].complete_tick != null && Number(orders[0].complete_tick) <= tick) {
-      orders.shift();
-      if (stock < cap) stock += 1;
-      changed = true;
-      if (orders[0]) {
-        orders[0] = { ...orders[0], start_tick: tick, complete_tick: tick + Number(orders[0].ticks || MISSILE_BUILD_TICKS) };
-      }
+    const cap = siloCapacity(level);
+    // Every line that finished lands its missile; freed lines take the
+    // next orders waiting, in the order they were placed.
+    const done = orders.filter(o => o.complete_tick != null && Number(o.complete_tick) <= tick).length;
+    let changed = done > 0;
+    if (done) {
+      orders = orders.filter(o => !(o.complete_tick != null && Number(o.complete_tick) <= tick));
+      stock = Math.min(cap, stock + done);
     }
-    if (orders[0] && orders[0].start_tick == null) {
-      orders[0] = { ...orders[0], start_tick: tick, complete_tick: tick + Number(orders[0].ticks || MISSILE_BUILD_TICKS) };
-      changed = true;
-    }
+    const filled = fillLines(orders, siloLines(level), tick);
+    if (filled.some((o, i) => o !== orders[i])) changed = true;
+    orders = filled;
     if (changed) {
       stmts.push(env.DB.prepare('UPDATE game_settlements SET missile_stock = ?, missile_orders_json = ? WHERE id = ?')
         .bind(stock, JSON.stringify(orders), r.id));

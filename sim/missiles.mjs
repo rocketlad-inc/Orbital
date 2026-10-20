@@ -78,8 +78,18 @@ const o1 = await call(A.user_id, 'POST', silo(cityA), { count: 3 });
 const after = await pool(A);
 check('ordering 3 missiles charges 120 metal + 120 credits at once', o1.status === 200
   && before.metal - after.metal === 120 && before.gold - after.gold === 120, JSON.stringify({ o1, before, after }));
-check('...one builds now (12 ticks), two wait', o1.body.orders?.length === 3 && o1.body.orders[0].complete_tick === 112
-  && o1.body.orders[1].start_tick === null, JSON.stringify(o1.body.orders?.slice(0, 2)));
+check('...a level-2 silo builds two at once (12 ticks), the third waits', o1.body.orders?.length === 3
+  && o1.body.orders[0].complete_tick === 112 && o1.body.orders[1].complete_tick === 112
+  && o1.body.orders[2].start_tick === null, JSON.stringify(o1.body.orders));
+{
+  // A freed line takes the next order waiting, in the order placed.
+  const q3 = [{ id: 'a', ticks: 12, start_tick: 100, complete_tick: 112 }, { id: 'b', ticks: 12, start_tick: null }, { id: 'c', ticks: 12, start_tick: null }];
+  const after = M.fillLines(q3.slice(1), 2, 112);
+  check('build lines: one per silo level; a freed line starts the next order waiting',
+    M.siloLines(3) === 3 && M.siloLines(0) === 1
+    && after[0].start_tick === 112 && after[0].complete_tick === 124 && after[1].start_tick === 112
+    && M.fillLines(q3, 1, 105)[1].start_tick == null, JSON.stringify(after));
+}
 check('the magazine caps orders: a level-2 silo (10) refuses 8 more', (await call(A.user_id, 'POST', silo(cityA), { count: 8 })).status === 409);
 check('a rival cannot order at your silo', (await call(B.user_id, 'POST', silo(cityA), { count: 1 })).status === 403);
 const waitingId = o1.body.orders[2].id;
@@ -112,8 +122,8 @@ check('nothing is ready before its 12 ticks', Number((await cityOf(EARTH)).missi
 await runTick(); // 112
 cityA = await cityOf(EARTH);
 const q = JSON.parse(cityA.missile_orders_json);
-check('at tick 112 the first missile is in the magazine and the next one started',
-  Number(cityA.missile_stock) === 1 && q.length === 1 && q[0].start_tick === 112 && q[0].complete_tick === 124,
+check('at tick 112 both missiles land in the magazine together',
+  Number(cityA.missile_stock) === 2 && q.length === 0,
   JSON.stringify({ stock: cityA.missile_stock, q }));
 
 // ---- 3. launching ---------------------------------------------------------
