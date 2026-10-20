@@ -1404,7 +1404,7 @@ export const WorldMenuOverlay: React.FC = () => {
           return (
             <button type="button" className={`wm-sta-chip${stationOpen ? ' is-on' : ''}`}
               data-testid="wm-col-orbit" data-tutorial-id="wm-columns-orbit" aria-expanded={stationOpen}
-              style={{ left: 8, top: staY, maxWidth: vw - 16, height: STA_CHIP_H }}
+              style={{ left: 8, top: staY, maxWidth: (ctlLeft ?? vw) - 16, height: STA_CHIP_H }}
               onClick={() => { setPicked(null); setStationOpen(o => !o); }}>
               {t('worldmenu.station.chip')}
               <span className="wm-sta-chip-mods">

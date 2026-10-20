@@ -1082,8 +1082,10 @@
 .wm-modlist { display: flex; flex-direction: column; gap: 6px; }
 /* A phone's chip names what the station has built (WEAPONS 3  LAB 2). */
 .wm-sta-chip { justify-content: flex-start; padding: 0 10px; }
-.wm-sta-chip-mods { display: flex; gap: 10px; min-width: 0; overflow: hidden; white-space: nowrap; }
-.wm-sta-chip-mods em { font-style: normal; color: #9fb4c6; letter-spacing: 0.08em; }
+.wm-sta-chip-mods { display: flex; gap: 8px; min-width: 0; overflow: hidden; white-space: nowrap;
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent); }
+.wm-sta-chip-mods em { font-style: normal; color: #9fb4c6; letter-spacing: 0.06em; }
+.wm-sta-chip-mods em + em { border-left: 1px solid #2a3d50; padding-left: 8px; }
 .wm-sta-chip-mods em b { color: #4ecdc4; }
 
 /* ---- a desktop station's modules, always listed under it ---- */
