@@ -629,7 +629,7 @@ export const WorldMenuOverlay: React.FC = () => {
   // chip alone (STATION · MODULES): the station art took the band of sky
   // the structure tags need now that each stands over a real building.
   const chipPos = mobile
-    ? { left: 8, top: staY, width: 196 }
+    ? { left: 8, top: staY }
     : { left: staX, top: staY + staH + 6, width: staW };
   const rigBottom = mobile ? staY + (myStation ? STA_CHIP_H : 70) : staY + staH + 6 + STA_CHIP_H;
 
