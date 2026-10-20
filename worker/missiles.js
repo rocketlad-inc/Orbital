@@ -708,7 +708,27 @@ export async function resolveMissiles(env, gameId, tick, { peace = new Set() } =
   events += await landedMissiles(env, gameId, tick, peace);
   events += await autoShootDown(env, gameId, tick, peace);
   events += await autoIntercept(env, gameId, tick, peace);
+  await sweepStranded(env, gameId, tick);
   return events;
+}
+
+/**
+ * A SALVO WITH NOWHERE LEFT TO GO. Every salvo bursts at its meeting or
+ * lands somewhere else; one whose leg ended back at its own world without
+ * bursting (an intercept fired before the meeting step existed, on
+ * staging 2026-10-19) sat in orbit for good, looking like a parked ship
+ * (Lorne, 2026-10-20: "it's parked in orbit"). It is spent, quietly: it
+ * never hit anything. One statement; nothing to do in a game without one.
+ */
+async function sweepStranded(env, gameId, tick) {
+  const r = await env.DB.prepare(
+    `UPDATE game_ships SET status = 'expended', destroyed_at_tick = ?
+      WHERE game_id = ? AND ship_class = 'missile' AND status = 'active'
+        AND parent_body_id = home_body_id AND built_at_tick < ?
+        AND NOT EXISTS (SELECT 1 FROM game_ship_nodes n
+                         WHERE n.ship_id = game_ships.id AND n.status IN ('in_transit', 'committed'))`,
+  ).bind(tick, gameId, tick).run();
+  return r.meta?.changes ?? 0;
 }
 
 /**
