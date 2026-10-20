@@ -27,7 +27,8 @@
 .wm-silo-count { font-family: 'Chivo Mono', monospace; font-size: 15px; color: #fff; }
 .wm-silo-count span { color: #8fa6ba; }
 
-.wm-silo-cols { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.25fr) minmax(0, 0.95fr); min-height: 0; overflow-y: auto; }
+/* INCOMING | AUTO-DEFENCE | BUILD: the raids lead and get the room. */
+.wm-silo-cols { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(0, 0.95fr) minmax(0, 0.8fr); min-height: 0; overflow-y: auto; }
 .wm-silo-col { display: flex; flex-direction: column; gap: 8px; padding: 4px 14px; min-width: 0; }
 .wm-silo-col + .wm-silo-col { border-left: 1px solid #1c2836; }
 .wm-silo-col:first-child { padding-left: 0; }
@@ -89,6 +90,30 @@
 .wm-silo-opt b.is-mine { color: #6ee7b7; }
 .wm-silo-opt.is-out .wm-silo-tname, .wm-silo-opt.is-out .wm-silo-tmeta { color: #6b7f92; }
 .wm-silo-list .wm-silo-h2 { padding: 4px 8px 0; }
+
+/* ---- INCOMING: one row per hostile group flying here ---- */
+.wm-silo-hn { font-family: 'Chivo Mono', monospace; font-weight: 400; letter-spacing: 0; color: #ff9d9d; margin-left: 4px; }
+.wm-silo-inc { display: flex; flex-direction: column; gap: 6px; max-height: 196px; overflow-y: auto; }
+.wm-silo-irow {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 2px 10px; align-items: center;
+  padding: 7px 8px 7px 10px; border-radius: 4px;
+  border: 1px solid rgba(255, 94, 94, 0.45); border-left-width: 3px; background: rgba(255, 94, 94, 0.06);
+}
+.wm-silo-irow > .wm-silo-btn { grid-column: 3; grid-row: 1 / span 4; align-self: center; }
+.wm-silo-irow .is-wide { grid-column: 1 / 3; }
+.wm-silo-irow .wm-silo-tname { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wm-silo-ihulls { font-family: 'Chivo Mono', monospace; font-size: 10px; font-weight: 400; color: #ff9d9d; }
+.wm-silo-isent { font-family: 'Chivo Mono', monospace; font-size: 10px; color: #4ecdc4; }
+.wm-silo-ikill { font-family: 'Chivo Mono', monospace; font-size: 10px; color: #ffd2bf; }
+.wm-silo-irow.is-out { border-color: #2a3d50; background: none; }
+.wm-silo-irow.is-out .wm-silo-tname, .wm-silo-irow.is-out .wm-silo-tmeta { color: #6b7f92; }
+.wm-silo-more {
+  align-self: flex-start; padding: 4px 0; border: 0; background: none; cursor: pointer;
+  font-family: 'Audiowide', sans-serif; font-size: 9.5px; letter-spacing: 0.14em; color: #8fa6ba;
+}
+.wm-silo-more:hover { color: #e6edf3; }
+.wm-silo-more:focus-visible { outline: 2px solid #4ecdc4; outline-offset: 2px; }
+.wm-silo-seg button { line-height: 1.25; }
 
 .wm-silo-salvo { display: flex; align-items: center; gap: 8px; }
 .wm-silo-step {

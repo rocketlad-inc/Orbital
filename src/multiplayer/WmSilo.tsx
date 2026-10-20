@@ -3,17 +3,20 @@
 //
 // Lorne, 2026-10-19: a city building that builds, stores and fires
 // single-use missiles. The panel takes the yard box's place when its tab
-// is picked (WorldMenuOverlay), and holds three things:
-//   BUILD    — order missiles (40m + 40c, 12 ticks, one at a time), the
-//              queue with its countdown, cancel for a full refund
-//   LAUNCH   — a world in this star system, a salvo size, what it would do
-//              (10 damage per missile to EVERY ship in that orbit, yours
-//              too), and a confirm when it would hit your own ships; or a
-//              group of ships IN FLIGHT here, met on the way (10 per
-//              missile to every hull within 40 units of the meeting)
+// is picked (WorldMenuOverlay), and holds, in this order:
+//   INCOMING — every hostile group flying at THIS world: when it lands,
+//              when a salvo leaving now would meet it, what that salvo
+//              would do, and a launch on each row. Intercepting raids is
+//              the silo's main job (Lorne, 2026-10-20: "the PRIMARY use
+//              is to intercept incoming ships"), so it leads. Under it,
+//              folded, OTHER TARGETS: a world's orbit (10 per missile to
+//              EVERY ship there, a confirm when yours are among them) or
+//              ships bound elsewhere
 //   AUTO-DEFENCE — off / shoot down incoming missiles / also intercept
 //              hostile ships flying here (a salvo per group), and a
 //              reserve it never spends
+//   BUILD    — order missiles (40m + 40c, 12 ticks, one at a time), the
+//              queue with its countdown, cancel for a full refund
 // ============================================================
 
 import React, { useEffect, useMemo, useState } from 'react';
@@ -68,6 +71,7 @@ export const WmSilo: React.FC<{
   const [busy, setBusy] = useState<string | null>(null);
   const [target, setTarget] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
+  const [showOther, setShowOther] = useState(false);
   const [salvo, setSalvo] = useState(1);
   const [confirm, setConfirm] = useState(false);
   const [eta, setEta] = useState<Record<string, number>>({});
@@ -111,19 +115,26 @@ export const WmSilo: React.FC<{
       return (ha - hb) || ((a.lead.transit?.currentTransfer?.arriveTick ?? 0) - (b.lead.transit?.currentTransfer?.arriveTick ?? 0));
     });
   }, [gameState.ships, gameState.fleets, byId, home, atPeace]);
+  // INCOMING: hostile groups bound for THIS world. Intercepting them is
+  // what a silo is for (Lorne, 2026-10-20: "the PRIMARY use is to
+  // intercept incoming ships"), so they lead the panel, soonest first.
+  const incoming = groups.filter(g => g.lead.transit?.currentTransfer?.targetBodyId === body.id && !atPeace(ME, g.lead.ownedBy));
+  const others = groups.filter(g => !incoming.includes(g));
+  const incomingKeys = incoming.map(g => g.lead.id).join(',');
   const groupKeys = groups.map(g => g.lead.id).join(',');
   const ownerName = (fid: string) => gameState.factions.find(f => f.id === fid)?.name ?? t('worldmenu.silo.unknownEmpire');
 
   // When a salvo leaving now would meet each group: the server's answer
-  // (missiles.js planIntercept), asked fresh each time the list opens.
+  // (missiles.js planIntercept). The incoming groups always, every tick
+  // (the answer moves as they close); the rest when the picker opens.
   useEffect(() => {
-    if (!picking || !actions) return;
-    const ids = groupKeys ? groupKeys.split(',').slice(0, 30) : [];
+    if (!actions) return;
+    const ids = (picking ? groupKeys : incomingKeys).split(',').filter(Boolean).slice(0, 30);
     if (ids.length === 0) return;
     let live = true;
-    void actions.missileIntercepts(body.id, ids).then(r => { if (live) setMeets(r); });
+    void actions.missileIntercepts(body.id, ids).then(r => { if (live) setMeets(m => ({ ...m, ...r })); });
     return () => { live = false; };
-  }, [picking, actions, groupKeys, body.id]);
+  }, [picking, actions, groupKeys, incomingKeys, body.id, tick]);
 
   // ETAs for the list, asked once per opening.
   useEffect(() => {
@@ -195,6 +206,206 @@ export const WmSilo: React.FC<{
       </header>
 
       <div className="wm-silo-cols">
+        {/* INCOMING first: every hostile group flying at this world, when a
+            salvo would meet it, and a launch on each row. */}
+        <div className="wm-silo-col is-incoming">
+          <span className="wm-silo-h">{t('worldmenu.silo.incoming')} <b className="wm-silo-hn">{incoming.length}</b></span>
+          {incoming.length === 0 ? (
+            <span className="wm-silo-note is-body">
+              {silo.auto === 'fleets'
+                ? t('worldmenu.silo.incomingNoneWatching', { world: body.name })
+                : t('worldmenu.silo.incomingNone', { world: body.name })}
+            </span>
+          ) : (
+            <>
+              <div className="wm-silo-salvo">
+                <span className="wm-silo-h2">{t('worldmenu.silo.salvo')}</span>
+                <button type="button" className="wm-silo-step" aria-label={t('worldmenu.silo.fewer')} disabled={n <= 1} onClick={() => { setSalvo(Math.max(1, n - 1)); setConfirm(false); }}>−</button>
+                <span className="wm-silo-num">{stock > 0 ? n : 0}</span>
+                <button type="button" className="wm-silo-step" aria-label={t('worldmenu.silo.more')} disabled={n >= stock} onClick={() => { setSalvo(Math.min(stock, n + 1)); setConfirm(false); }}>+</button>
+                <span className="wm-silo-note">{t('worldmenu.silo.ofReady', { n: stock })}</span>
+              </div>
+              <div className="wm-silo-inc">
+                {incoming.map(g => {
+                  const tr = g.lead.transit?.currentTransfer;
+                  const lands = tr ? Math.max(0, Math.ceil(tr.arriveTick - tick)) : null;
+                  const m = meets[g.lead.id];
+                  const ids = new Set(g.members.map(s => s.id));
+                  const sent = inFlight.filter(s => s.plannedRendezvous && ids.has(s.plannedRendezvous.followShipId));
+                  const sentN = sent.reduce((k, s) => k + (s.missileCount ?? 1), 0);
+                  const sentMeet = sent.length ? Math.max(0, Math.ceil(Math.min(...sent.map(s => s.plannedRendezvous!.meetTick)) - tick)) : null;
+                  const dies = g.members.filter(s => (s.hp ?? s.hpMax ?? 1) <= damage).length;
+                  const key = `i${g.lead.id}`;
+                  return (
+                    <div key={g.lead.id} className={`wm-silo-irow${m === null ? ' is-out' : ''}`}>
+                      <span className="wm-silo-tname">{g.fleet?.name ?? ownerName(g.lead.ownedBy)}</span>
+                      <b className="wm-silo-ihulls">{tn('worldmenu.silo.shipsThere', g.members.length)}</b>
+                      <span className="wm-silo-tmeta is-wide">
+                        {lands != null && <>{t('worldmenu.silo.landsIn', { n: lands })} · </>}
+                        {m != null ? t('worldmenu.silo.meetIn', { n: m }) : m === null ? t('worldmenu.silo.cantCatch') : '…'}
+                      </span>
+                      {sentN > 0 && (
+                        <span className="wm-silo-isent is-wide">{t('worldmenu.silo.sent', { n: sentN, t: sentMeet ?? 0 })}</span>
+                      )}
+                      {m != null && stock > 0 && (
+                        <span className="wm-silo-ikill is-wide">{t('worldmenu.silo.rowKills', { dmg: damage, k: dies, total: g.members.length })}</span>
+                      )}
+                      <button type="button" className="wm-silo-btn is-fire"
+                        disabled={busy !== null || stock === 0 || m == null}
+                        onClick={() => { if (actions) void run(key, () => actions.launchMissilesAtShip(city.id, g.lead.id, n)); }}>
+                        {busy === key ? '…' : t('worldmenu.silo.fire', { n: stock > 0 ? n : 0 })}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+              <span className="wm-silo-note">{t('worldmenu.silo.previewNear')}</span>
+            </>
+          )}
+
+          {/* Everything else a salvo can reach: a world's orbit, or ships
+              bound somewhere other than here. */}
+          <button type="button" className="wm-silo-more" aria-expanded={showOther}
+            onClick={() => { setShowOther(o => !o); setPicking(false); }}>
+            {t('worldmenu.silo.otherTargets')} <span aria-hidden>{showOther ? '▴' : '▾'}</span>
+          </button>
+          {showOther && (
+            <>
+              <button type="button" className="wm-silo-target" aria-expanded={picking} onClick={() => setPicking(p => !p)}>
+                {chosenGroup ? (
+                  <>
+                    <span className="wm-silo-tname">{chosenGroup.fleet?.name ?? ownerName(chosenGroup.lead.ownedBy)}</span>
+                    <span className="wm-silo-tmeta">{tn('worldmenu.silo.shipsThere', chosenGroup.members.length)}</span>
+                    <span className="wm-silo-tmeta">{groupMeet != null ? t('worldmenu.silo.meetIn', { n: groupMeet }) : groupMeet === null ? t('worldmenu.silo.cantCatch') : ''}</span>
+                  </>
+                ) : chosen ? (
+                  <>
+                    <span className="wm-silo-tname">{chosen.body.name}</span>
+                    <span className="wm-silo-tmeta">{tn('worldmenu.silo.shipsThere', chosen.total)}{chosen.hostile ? ` · ${tn('worldmenu.silo.hostile', chosen.hostile)}` : ''}</span>
+                    <span className="wm-silo-tmeta">{eta[chosen.body.id] != null ? t('worldmenu.silo.eta', { n: eta[chosen.body.id] }) : ''}</span>
+                  </>
+                ) : <span className="wm-silo-tname is-dim">{t('worldmenu.silo.pickTarget')}</span>}
+                <span aria-hidden>▾</span>
+              </button>
+              {picking && (
+                <div className="wm-silo-list" role="listbox" aria-label={t('worldmenu.silo.pickTarget')}>
+                  {worlds.length === 0 && others.length === 0 && <span className="wm-silo-note">{t('worldmenu.silo.noTargets')}</span>}
+                  {worlds.length > 0 && others.length > 0 && <span className="wm-silo-h2">{t('worldmenu.silo.secWorlds')}</span>}
+                  {worlds.map(w => (
+                    <button key={w.body.id} type="button" role="option" aria-selected={w.body.id === target}
+                      className={`wm-silo-opt${w.body.id === target ? ' is-on' : ''}`}
+                      onClick={() => { setTarget(w.body.id); setPicking(false); setConfirm(false); }}>
+                      <span className="wm-silo-tname">{w.body.name}</span>
+                      <span className="wm-silo-tmeta">{eta[w.body.id] != null ? t('worldmenu.silo.eta', { n: eta[w.body.id] }) : '…'}</span>
+                      <span className="wm-silo-tmeta is-wide">
+                        {tn('worldmenu.silo.shipsThere', w.total)}
+                        {w.hostile ? <b className="is-hostile"> · {tn('worldmenu.silo.hostile', w.hostile)}</b> : null}
+                        {w.mine ? <b className="is-mine"> · {tn('worldmenu.silo.yours', w.mine)}</b> : null}
+                      </span>
+                    </button>
+                  ))}
+                  {others.length > 0 && <span className="wm-silo-h2">{t('worldmenu.silo.secFlight')}</span>}
+                  {others.map(g => {
+                    const key = `${GROUP}${g.lead.id}`;
+                    const tr = g.lead.transit?.currentTransfer;
+                    const hostile = !atPeace(ME, g.lead.ownedBy);
+                    const m = meets[g.lead.id];
+                    return (
+                      <button key={key} type="button" role="option" aria-selected={key === target}
+                        className={`wm-silo-opt${key === target ? ' is-on' : ''}${m === null ? ' is-out' : ''}`}
+                        onClick={() => { setTarget(key); setPicking(false); setConfirm(false); }}>
+                        <span className="wm-silo-tname">{g.fleet?.name ?? ownerName(g.lead.ownedBy)}</span>
+                        <span className="wm-silo-tmeta">{m != null ? t('worldmenu.silo.meetIn', { n: m }) : m === null ? t('worldmenu.silo.cantCatch') : '…'}</span>
+                        <span className="wm-silo-tmeta is-wide">
+                          {hostile ? <b className="is-hostile">{tn('worldmenu.silo.shipsThere', g.members.length)}</b> : tn('worldmenu.silo.shipsThere', g.members.length)}
+                          {tr ? ` ${t('worldmenu.silo.bound', { world: byId.get(tr.targetBodyId)?.name ?? '?', n: Math.max(0, Math.ceil(tr.arriveTick - tick)) })}` : ''}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              {incoming.length === 0 && (
+                <div className="wm-silo-salvo">
+                  <span className="wm-silo-h2">{t('worldmenu.silo.salvo')}</span>
+                  <button type="button" className="wm-silo-step" aria-label={t('worldmenu.silo.fewer')} disabled={n <= 1} onClick={() => { setSalvo(Math.max(1, n - 1)); setConfirm(false); }}>−</button>
+                  <span className="wm-silo-num">{stock > 0 ? n : 0}</span>
+                  <button type="button" className="wm-silo-step" aria-label={t('worldmenu.silo.more')} disabled={n >= stock} onClick={() => { setSalvo(Math.min(stock, n + 1)); setConfirm(false); }}>+</button>
+                  <span className="wm-silo-note">{t('worldmenu.silo.ofReady', { n: stock })}</span>
+                </div>
+              )}
+              {chosenGroup && stock > 0 && (
+                <div className="wm-silo-preview is-warn">
+                  {groupMeet === null ? <span className="is-strong">{t('worldmenu.silo.previewCantCatch')}</span> : (
+                    <>
+                      <span className="is-strong">{t('worldmenu.silo.previewIntercept', { dmg: damage, r: MISSILE_BLAST_RADIUS, n: groupMeet ?? '…' })}</span>
+                      <span>{t('worldmenu.silo.previewGroupKills', { n: groupKills, total: chosenGroup.members.length })}</span>
+                      <span className="is-mine">{t('worldmenu.silo.previewNear')}</span>
+                    </>
+                  )}
+                </div>
+              )}
+              {chosen && stock > 0 && (
+                <div className={`wm-silo-preview${chosen.mine > 0 ? ' is-warn' : ''}`}>
+                  <span className="is-strong">{t('worldmenu.silo.previewDamage', { dmg: damage, world: chosen.body.name })}</span>
+                  <span>{t('worldmenu.silo.previewKills', { n: kills.length, total: chosen.total })}</span>
+                  {chosen.mine > 0 && <span className="is-mine">{t('worldmenu.silo.previewMine', { n: chosen.mine, k: myKills })}</span>}
+                </div>
+              )}
+              <div className="wm-silo-launchrow">
+                <button type="button" className={`wm-silo-btn is-fire${confirm ? ' is-confirm' : ''}`}
+                  disabled={busy !== null || (!chosen && !chosenGroup) || stock === 0 || (!!chosenGroup && groupMeet == null)} onClick={launch}>
+                  {busy === 'launch' ? '…' : confirm ? t('worldmenu.silo.confirmFire', { n }) : t('worldmenu.silo.fire', { n: stock > 0 ? n : 0 })}
+                </button>
+                {confirm && <button type="button" className="wm-silo-btn" onClick={() => setConfirm(false)}>{t('worldmenu.silo.back')}</button>}
+              </div>
+            </>
+          )}
+          {inFlight.length > 0 && (
+            <span className="wm-silo-note">
+              {t('worldmenu.silo.inFlight')}{' '}
+              {inFlight.map(s => {
+                const rv = s.plannedRendezvous;
+                if (rv) {
+                  const prey = gameState.ships.find(x => x.id === rv.followShipId);
+                  return `${s.missileCount ?? 1} → ${t('worldmenu.silo.chasing', { owner: prey ? ownerName(prey.ownedBy) : '?' })} T-${Math.max(0, Math.ceil(rv.meetTick - tick))}`;
+                }
+                const tr = s.transit!.currentTransfer;
+                const to = byId.get(tr.targetBodyId)?.name ?? '?';
+                return `${s.missileCount ?? 1} → ${to} T-${Math.max(0, Math.ceil(tr.arriveTick - tick))}`;
+              }).join(' · ')}
+            </span>
+          )}
+        </div>
+
+        <div className="wm-silo-col">
+          <span className="wm-silo-h">{t('worldmenu.silo.auto')}</span>
+          <div className="wm-silo-seg" role="group" aria-label={t('worldmenu.silo.auto')}>
+            {(['off', 'missiles', 'fleets'] as const).map(m => (
+              <button key={m} type="button" aria-pressed={silo.auto === m} className={silo.auto === m ? 'is-on' : ''}
+                disabled={busy !== null} onClick={() => setAuto(m)}>{t(`worldmenu.silo.mode.${m}` as Key)}</button>
+            ))}
+          </div>
+          <span className="wm-silo-note is-body">{t(`worldmenu.silo.modeNote.${silo.auto}` as Key)}</span>
+          {silo.auto === 'fleets' && (
+            <div className="wm-silo-salvo">
+              <span className="wm-silo-h2">{t('worldmenu.silo.autoSalvo')}</span>
+              <button type="button" className="wm-silo-step" aria-label={t('worldmenu.silo.fewer')} disabled={busy !== null || silo.salvo <= 1} onClick={() => setAutoSalvo(silo.salvo - 1)}>−</button>
+              <span className="wm-silo-num">{silo.salvo}</span>
+              <button type="button" className="wm-silo-step" aria-label={t('worldmenu.silo.more')} disabled={busy !== null || silo.salvo >= cap} onClick={() => setAutoSalvo(silo.salvo + 1)}>+</button>
+            </div>
+          )}
+          <div className="wm-silo-salvo">
+            <span className="wm-silo-h2">{t('worldmenu.silo.reserve')}</span>
+            <button type="button" className="wm-silo-step" aria-label={t('worldmenu.silo.fewer')} disabled={busy !== null || silo.reserve <= 0} onClick={() => setReserve(silo.reserve - 1)}>−</button>
+            <span className="wm-silo-num">{silo.reserve}</span>
+            <button type="button" className="wm-silo-step" aria-label={t('worldmenu.silo.more')} disabled={busy !== null || silo.reserve >= cap} onClick={() => setReserve(silo.reserve + 1)}>+</button>
+          </div>
+          {silo.auto !== 'off' && (
+            <span className="wm-silo-watch"><i />{t('worldmenu.silo.watching', { world: body.name, n: Math.max(0, stock - silo.reserve) })}</span>
+          )}
+        </div>
+
         <div className="wm-silo-col">
           <span className="wm-silo-h">{t('worldmenu.silo.build')}</span>
           <div className="wm-silo-buildrow">
@@ -224,139 +435,6 @@ export const WmSilo: React.FC<{
             })}
           </div>
           <span className="wm-silo-note">{t('worldmenu.silo.buildNote')}</span>
-        </div>
-
-        <div className="wm-silo-col">
-          <span className="wm-silo-h">{t('worldmenu.silo.launch')}</span>
-          <button type="button" className="wm-silo-target" aria-expanded={picking} onClick={() => setPicking(p => !p)}>
-            {chosenGroup ? (
-              <>
-                <span className="wm-silo-tname">{chosenGroup.fleet?.name ?? ownerName(chosenGroup.lead.ownedBy)}</span>
-                <span className="wm-silo-tmeta">{tn('worldmenu.silo.shipsThere', chosenGroup.members.length)}</span>
-                <span className="wm-silo-tmeta">{groupMeet != null ? t('worldmenu.silo.meetIn', { n: groupMeet }) : groupMeet === null ? t('worldmenu.silo.cantCatch') : ''}</span>
-              </>
-            ) : chosen ? (
-              <>
-                <span className="wm-silo-tname">{chosen.body.name}</span>
-                <span className="wm-silo-tmeta">{tn('worldmenu.silo.shipsThere', chosen.total)}{chosen.hostile ? ` · ${tn('worldmenu.silo.hostile', chosen.hostile)}` : ''}</span>
-                <span className="wm-silo-tmeta">{eta[chosen.body.id] != null ? t('worldmenu.silo.eta', { n: eta[chosen.body.id] }) : ''}</span>
-              </>
-            ) : <span className="wm-silo-tname is-dim">{t('worldmenu.silo.pickTarget')}</span>}
-            <span aria-hidden>▾</span>
-          </button>
-          {picking && (
-            <div className="wm-silo-list" role="listbox" aria-label={t('worldmenu.silo.pickTarget')}>
-              {worlds.length === 0 && groups.length === 0 && <span className="wm-silo-note">{t('worldmenu.silo.noTargets')}</span>}
-              {worlds.length > 0 && groups.length > 0 && <span className="wm-silo-h2">{t('worldmenu.silo.secWorlds')}</span>}
-              {worlds.map(w => (
-                <button key={w.body.id} type="button" role="option" aria-selected={w.body.id === target}
-                  className={`wm-silo-opt${w.body.id === target ? ' is-on' : ''}`}
-                  onClick={() => { setTarget(w.body.id); setPicking(false); setConfirm(false); }}>
-                  <span className="wm-silo-tname">{w.body.name}</span>
-                  <span className="wm-silo-tmeta">{eta[w.body.id] != null ? t('worldmenu.silo.eta', { n: eta[w.body.id] }) : '…'}</span>
-                  <span className="wm-silo-tmeta is-wide">
-                    {tn('worldmenu.silo.shipsThere', w.total)}
-                    {w.hostile ? <b className="is-hostile"> · {tn('worldmenu.silo.hostile', w.hostile)}</b> : null}
-                    {w.mine ? <b className="is-mine"> · {tn('worldmenu.silo.yours', w.mine)}</b> : null}
-                  </span>
-                </button>
-              ))}
-              {groups.length > 0 && <span className="wm-silo-h2">{t('worldmenu.silo.secFlight')}</span>}
-              {groups.map(g => {
-                const key = `${GROUP}${g.lead.id}`;
-                const tr = g.lead.transit?.currentTransfer;
-                const hostile = !atPeace(ME, g.lead.ownedBy);
-                const m = meets[g.lead.id];
-                return (
-                  <button key={key} type="button" role="option" aria-selected={key === target}
-                    className={`wm-silo-opt${key === target ? ' is-on' : ''}${m === null ? ' is-out' : ''}`}
-                    onClick={() => { setTarget(key); setPicking(false); setConfirm(false); }}>
-                    <span className="wm-silo-tname">{g.fleet?.name ?? ownerName(g.lead.ownedBy)}</span>
-                    <span className="wm-silo-tmeta">{m != null ? t('worldmenu.silo.meetIn', { n: m }) : m === null ? t('worldmenu.silo.cantCatch') : '…'}</span>
-                    <span className="wm-silo-tmeta is-wide">
-                      {hostile ? <b className="is-hostile">{tn('worldmenu.silo.shipsThere', g.members.length)}</b> : tn('worldmenu.silo.shipsThere', g.members.length)}
-                      {tr ? ` ${t('worldmenu.silo.bound', { world: byId.get(tr.targetBodyId)?.name ?? '?', n: Math.max(0, Math.ceil(tr.arriveTick - tick)) })}` : ''}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-          <div className="wm-silo-salvo">
-            <span className="wm-silo-h2">{t('worldmenu.silo.salvo')}</span>
-            <button type="button" className="wm-silo-step" aria-label={t('worldmenu.silo.fewer')} disabled={n <= 1} onClick={() => { setSalvo(Math.max(1, n - 1)); setConfirm(false); }}>−</button>
-            <span className="wm-silo-num">{stock > 0 ? n : 0}</span>
-            <button type="button" className="wm-silo-step" aria-label={t('worldmenu.silo.more')} disabled={n >= stock} onClick={() => { setSalvo(Math.min(stock, n + 1)); setConfirm(false); }}>+</button>
-            <span className="wm-silo-note">{t('worldmenu.silo.ofReady', { n: stock })}</span>
-          </div>
-          {chosenGroup && stock > 0 && (
-            <div className="wm-silo-preview is-warn">
-              {groupMeet === null ? <span className="is-strong">{t('worldmenu.silo.previewCantCatch')}</span> : (
-                <>
-                  <span className="is-strong">{t('worldmenu.silo.previewIntercept', { dmg: damage, r: MISSILE_BLAST_RADIUS, n: groupMeet ?? '…' })}</span>
-                  <span>{t('worldmenu.silo.previewGroupKills', { n: groupKills, total: chosenGroup.members.length })}</span>
-                  <span className="is-mine">{t('worldmenu.silo.previewNear')}</span>
-                </>
-              )}
-            </div>
-          )}
-          {chosen && stock > 0 && (
-            <div className={`wm-silo-preview${chosen.mine > 0 ? ' is-warn' : ''}`}>
-              <span className="is-strong">{t('worldmenu.silo.previewDamage', { dmg: damage, world: chosen.body.name })}</span>
-              <span>{t('worldmenu.silo.previewKills', { n: kills.length, total: chosen.total })}</span>
-              {chosen.mine > 0 && <span className="is-mine">{t('worldmenu.silo.previewMine', { n: chosen.mine, k: myKills })}</span>}
-            </div>
-          )}
-          <div className="wm-silo-launchrow">
-            <button type="button" className={`wm-silo-btn is-fire${confirm ? ' is-confirm' : ''}`}
-              disabled={busy !== null || (!chosen && !chosenGroup) || stock === 0 || (!!chosenGroup && groupMeet == null)} onClick={launch}>
-              {busy === 'launch' ? '…' : confirm ? t('worldmenu.silo.confirmFire', { n }) : t('worldmenu.silo.fire', { n: stock > 0 ? n : 0 })}
-            </button>
-            {confirm && <button type="button" className="wm-silo-btn" onClick={() => setConfirm(false)}>{t('worldmenu.silo.back')}</button>}
-          </div>
-          {inFlight.length > 0 && (
-            <span className="wm-silo-note">
-              {t('worldmenu.silo.inFlight')}{' '}
-              {inFlight.map(s => {
-                const rv = s.plannedRendezvous;
-                if (rv) {
-                  const prey = gameState.ships.find(x => x.id === rv.followShipId);
-                  return `${s.missileCount ?? 1} → ${t('worldmenu.silo.chasing', { owner: prey ? ownerName(prey.ownedBy) : '?' })} T-${Math.max(0, Math.ceil(rv.meetTick - tick))}`;
-                }
-                const tr = s.transit!.currentTransfer;
-                const to = byId.get(tr.targetBodyId)?.name ?? '?';
-                return `${s.missileCount ?? 1} → ${to} T-${Math.max(0, Math.ceil(tr.arriveTick - tick))}`;
-              }).join(' · ')}
-            </span>
-          )}
-        </div>
-
-        <div className="wm-silo-col">
-          <span className="wm-silo-h">{t('worldmenu.silo.auto')}</span>
-          <div className="wm-silo-seg" role="group" aria-label={t('worldmenu.silo.auto')}>
-            {(['off', 'missiles', 'fleets'] as const).map(m => (
-              <button key={m} type="button" aria-pressed={silo.auto === m} className={silo.auto === m ? 'is-on' : ''}
-                disabled={busy !== null} onClick={() => setAuto(m)}>{t(`worldmenu.silo.mode.${m}` as Key)}</button>
-            ))}
-          </div>
-          <span className="wm-silo-note is-body">{t(`worldmenu.silo.modeNote.${silo.auto}` as Key)}</span>
-          <div className="wm-silo-salvo">
-            <span className="wm-silo-h2">{t('worldmenu.silo.reserve')}</span>
-            <button type="button" className="wm-silo-step" aria-label={t('worldmenu.silo.fewer')} disabled={busy !== null || silo.reserve <= 0} onClick={() => setReserve(silo.reserve - 1)}>−</button>
-            <span className="wm-silo-num">{silo.reserve}</span>
-            <button type="button" className="wm-silo-step" aria-label={t('worldmenu.silo.more')} disabled={busy !== null || silo.reserve >= cap} onClick={() => setReserve(silo.reserve + 1)}>+</button>
-          </div>
-          {silo.auto === 'fleets' && (
-            <div className="wm-silo-salvo">
-              <span className="wm-silo-h2">{t('worldmenu.silo.autoSalvo')}</span>
-              <button type="button" className="wm-silo-step" aria-label={t('worldmenu.silo.fewer')} disabled={busy !== null || silo.salvo <= 1} onClick={() => setAutoSalvo(silo.salvo - 1)}>−</button>
-              <span className="wm-silo-num">{silo.salvo}</span>
-              <button type="button" className="wm-silo-step" aria-label={t('worldmenu.silo.more')} disabled={busy !== null || silo.salvo >= cap} onClick={() => setAutoSalvo(silo.salvo + 1)}>+</button>
-            </div>
-          )}
-          {silo.auto !== 'off' && (
-            <span className="wm-silo-watch"><i />{t('worldmenu.silo.watching', { world: body.name, n: Math.max(0, stock - silo.reserve) })}</span>
-          )}
         </div>
       </div>
     </section>
