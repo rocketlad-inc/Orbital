@@ -33,6 +33,10 @@ node scripts/studio.mjs film <gameId> shot.json --out frames-dir --name earth-to
 #   -> frames-dir/00000.png … + frames.json, then earth-to-europa.webp (30 fps) and .gif (15 fps) beside it
 ```
 
+**Pace (Lorne, 2026-10-19: the 30 s cuts were "way too slow for marketing").** Showcase clips are 12–15 s at `"tempo": "fast"`: one tick per second of clip (the clock holds while the server ticks, so ticks cost no clip time), camera moves of 1.2–1.5 s, a panel held about 3.5 s, and the first tick inside the first half-second. `--speed 2` on `film` (or on `studio-encode.py`) time-lapses a take that is already filmed, every other moment, without re-shooting.
+
+**Takes cannot hang any more.** A tick request gets 30 s, a frame 150 s, a screenshot three 30 s tries; past that the take ends and encodes what it has. The manifest (`frames.json`) is written every 30 frames, so even a killed take encodes.
+
 Use a `16:9` shot with no `hook` or captions and `"endCard": false`. Default size 1920×1080 (`--size`), encoded at 960 px wide (`--width`). `--encode 0` keeps just the frames; `python scripts/studio-encode.py frames-dir --name NAME` encodes later. Budget about 10 minutes for a 30 s clip: half filming, half encoding.
 
 ## Quick start (person)
@@ -130,6 +134,7 @@ What `apply` returns, and what you need from it:
   "endCard": true,                 // ORBITAL · Play free · orbital-empire.com
   "zoomBoost": 1,                  // extra zoom when cropping the map into the frame
   "ui": true,                      // keep the game's interface in the shot (film: default true; record: default false)
+  "tempo": "fast",                 // the marketing cut: ticks glide over 900 ms, camera moves default to 1300 ms
   "steps": [
     { "at": 0,    "do": "focus",   "target": "earth", "px": 520 },        // cut: Earth 520 px across
     { "at": 0,    "do": "caption", "text": "Earth. Three fleets in orbit." },
