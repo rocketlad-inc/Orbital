@@ -20,10 +20,6 @@
      inside a world; the neighbour chips are how you step to the next. */
   body.wm-open .map-controls { display: none; }
 }
-@media (max-width: 768px) {
-  /* Past a peek the sheet owns the bottom of the screen. */
-  body.wmp-sheet-up .dock-rail { display: none; }
-}
 
 .wm-root.wmp {
   --wmp-ink: #e6edf3;
@@ -151,9 +147,12 @@
   box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.35);
   z-index: 6;
 }
-.wm-root.wmp .wmp-sheet.is-peek { bottom: var(--mobile-rail-height, 72px); max-height: 46vh; }
-.wm-root.wmp .wmp-sheet.is-half { top: 45vh; bottom: 0; }
-.wm-root.wmp .wmp-sheet.is-full { top: calc(var(--wm-topbar-h, 52px) + var(--wmp-head-h)); bottom: 0; }
+/* Every height stands on the dock rail; the rail never leaves (Lorne,
+   2026-10-20: "Bottom rail aint there bud"). */
+.wm-root.wmp .wmp-sheet { bottom: var(--mobile-rail-height, 72px); }
+.wm-root.wmp .wmp-sheet.is-peek { max-height: 46vh; }
+.wm-root.wmp .wmp-sheet.is-half { top: 45vh; }
+.wm-root.wmp .wmp-sheet.is-full { top: calc(var(--wm-topbar-h, 52px) + var(--wmp-head-h)); }
 .wm-root.wmp .wmp-grab {
   flex: 0 0 auto; align-self: stretch;
   height: 30px; min-height: 30px; padding: 0; margin: 0;
@@ -167,10 +166,9 @@
   display: flex; flex-direction: column; gap: 10px;
   padding: 0 14px 14px;
 }
-.wm-root.wmp .wmp-sheet:not(.is-peek) .wmp-body:last-child { padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px)); }
 .wm-root.wmp .wmp-foot {
   flex: 0 0 auto; display: flex; flex-direction: column; gap: 8px;
-  padding: 10px 14px calc(12px + env(safe-area-inset-bottom, 0px));
+  padding: 10px 14px 12px;
   border-top: 1px solid var(--wmp-line-soft);
 }
 
@@ -358,7 +356,7 @@
   border: 0; border-radius: 0; background: none; backdrop-filter: none; box-shadow: none;
   padding: 0 12px;
 }
-.wm-root.wmp .wmp-body.is-host > .wm-fleet:not(.wm-ms) { overflow-y: auto; padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px)); }
+.wm-root.wmp .wmp-body.is-host > .wm-fleet:not(.wm-ms) { overflow-y: auto; padding-bottom: 14px; }
 
 /* ---- the yard's hull rows ---- */
 .wm-root.wmp .wmp-hulls { display: flex; flex-direction: column; gap: 8px; overflow: visible; }
