@@ -308,7 +308,6 @@ export const map = {
   'worldmenu.p.modules_one': '{n} module',
   'worldmenu.p.modules_other': '{n} modules',
   'worldmenu.p.overview': 'OVERVIEW',
-  'worldmenu.p.where': 'Surface or orbit',
   'worldmenu.p.of': '{i} of {n}',
   'worldmenu.p.holds': 'HOLDS',
   'worldmenu.p.lines': 'BUILD LINES',
