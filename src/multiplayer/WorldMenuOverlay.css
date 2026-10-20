@@ -1116,3 +1116,11 @@
 .wm-top.is-short.collapsed .wm-about,
 .wm-top.is-short.collapsed .wm-out .wm-label { display: none; }
 .wm-top.is-short.collapsed { gap: 4px; padding-top: 9px; padding-bottom: 9px; }
+
+/* ---- the buildings as buttons (each does what its tag does) ---- */
+.wm-bhits { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
+.wm-bhit {
+  position: absolute; pointer-events: auto; transform-origin: 50% 100%;
+  background: none; border: 0; padding: 0; cursor: pointer;
+}
+.wm-tag.is-hover { border-color: #ffb84d; box-shadow: 0 0 0 1px rgba(255, 184, 77, 0.6); }

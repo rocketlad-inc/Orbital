@@ -289,6 +289,7 @@ export const map: Catalog = {
   'worldmenu.card.build': 'CONSTRUIR',
   'worldmenu.station.modules': 'MÓDULOS',
   'worldmenu.station.aria': 'Módulos da estação',
+  'worldmenu.station.chipPhone': 'ESTAÇÃO · MÓDULOS',
   'worldmenu.silo.title': 'SILO DE MÍSSEIS',
   'worldmenu.silo.level': '{name} · NV {n}',
   'worldmenu.silo.magazine': 'PAIOL',

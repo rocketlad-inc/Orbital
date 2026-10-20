@@ -287,6 +287,7 @@ export const map = {
   'worldmenu.card.build': 'BUILD',
   'worldmenu.station.modules': 'MODULES',
   'worldmenu.station.aria': 'Station modules',
+  'worldmenu.station.chipPhone': 'STATION · MODULES',
   'worldmenu.silo.title': 'MISSILE SILO',
   'worldmenu.silo.level': '{name} · LV {n}',
   'worldmenu.silo.magazine': 'MAGAZINE',

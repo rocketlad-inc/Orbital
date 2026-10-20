@@ -53,9 +53,10 @@ import { bodyPosition } from '../physics/orbitalMechanics';
 import { isRevealedWarpGate } from '../render/mapRenderer';
 import {
   menuScaleFor, menuCameraOffset, menuOpacity, zOf,
-  S1X_FRAC, S1Y_FRAC, Z1_FRAC, MOBILE_LIFT_FRAC, arcSpreadDeg,
+  S1X_FRAC, S1Y_FRAC, Z1_FRAC, MOBILE_LIFT_FRAC,
 } from '../game/worldMenu/camera';
-import { setWorldMenuActive, setWorldMenuOpenBodyId } from '../game/worldMenu/store';
+import { setWorldMenuActive, setWorldMenuOpenBodyId, setWorldMenuStructures, setWorldMenuStructureFocus } from '../game/worldMenu/store';
+import { structureUnit, structureTop, structureHalfWidth } from '../game/worldMenu/structures';
 import { columnsFor, buildStatus, noHostText, nextBuildingLevel, costText } from '../game/worldMenu/buildRules';
 import { hpColor } from '../game/worldMenu/combatDisplay';
 import { readoutFor, neighborsOf, orbSlotIndex } from '../game/worldMenu/bodyStats';
@@ -183,7 +184,9 @@ export const WorldMenuOverlay: React.FC = () => {
   const pickedColumn = picked?.column ?? 'surface';
   // The station's own card: its modules, listed, one tap from their cards.
   const [stationOpen, setStationOpen] = useState(false);
-  useEffect(() => { setPicked(null); setStationOpen(false); }, [openId]);
+  // The structure under the pointer: its tag and its building light together.
+  const [hoverKind, setHoverKind] = useState<string | null>(null);
+  useEffect(() => { setPicked(null); setStationOpen(false); setHoverKind(null); }, [openId]);
   // The lore waits behind ABOUT: it was taking the best spot on the screen.
   const [aboutOpen, setAboutOpen] = useState(false);
   // While a menu is open: tag <body> so the left rail steps aside
@@ -571,7 +574,11 @@ export const WorldMenuOverlay: React.FC = () => {
   const canAffordSettlement = !!mpRes
     && mpRes.ore >= settleCost.ore && mpRes.credits >= settleCost.credits;
 
-  if (!body || !readout || op <= 0.01) return null;
+  if (!body || !readout || op <= 0.01) {
+    setWorldMenuStructures(null);
+    setWorldMenuStructureFocus(null);
+    return null;
+  }
 
   const settled = z > 0.98;
   const isMine = readout.ownerFactionId === 'player';
@@ -586,16 +593,11 @@ export const WorldMenuOverlay: React.FC = () => {
   // ---- THE FRAMING: the same circle the canvas paints ----
   // Settled framing is deterministic: centre at S1 (+ the desktop outliner
   // shift, + the phone lift), radius Z1_FRAC·H. Every tag below hangs off
-  // it, and the arc spread is the canvas's own (arcSpreadDeg), so a tag's
-  // stem always ends on the building it names.
+  // it, and the canvas draws each structure at the angle published for its
+  // tag (setWorldMenuStructures), so a tag's stem always ends on its roof.
   const rShift = !mobile ? (296 - 60) / 2 : 0;
   const uShift = mobile ? -MOBILE_LIFT_FRAC * vh : 0;
   const cx = S1X_FRAC * vw + rShift, cy = S1Y_FRAC * vh + uShift, cr = Z1_FRAC * vh;
-  const spread = arcSpreadDeg(vw, vh);
-  const limbAt = (frac: number, lift = 0) => {
-    const a = (-90 + frac * spread) * Math.PI / 180;
-    return { x: cx + Math.cos(a) * (cr + lift), y: cy + Math.sin(a) * (cr + lift) };
-  };
   const railW = mobile ? 0 : 296, dockW = mobile ? 0 : 60;
   const TOPBAR = 52;
   // A SHORT desktop window (1000x690 was the report) has no room for the
@@ -613,12 +615,13 @@ export const WorldMenuOverlay: React.FC = () => {
   const staY = mobile ? TOPBAR + 10 + chromeH.panel + 10 : TOPBAR + 10 + 40 + 14;
   const STA_CHIP_H = 30;
   const orbitKinds = myStation ? cols.orbit : [];
-  // The MODULES chip hangs under the station on a desktop; on a phone it
-  // sits beside it, where the sky is free (under it was the Forge's tag).
+  // The MODULES chip hangs under the station on a desktop. A phone shows the
+  // chip alone (STATION · MODULES): the station art took the band of sky
+  // the structure tags need now that each stands over a real building.
   const chipPos = mobile
-    ? { left: staX + staW + 8, top: staY + staH / 2 - STA_CHIP_H / 2, width: 118 }
+    ? { left: 8, top: staY, width: 196 }
     : { left: staX, top: staY + staH + 6, width: staW };
-  const rigBottom = mobile ? staY + staH : staY + staH + 6 + STA_CHIP_H;
+  const rigBottom = mobile ? staY + (myStation ? STA_CHIP_H : 70) : staY + staH + 6 + STA_CHIP_H;
 
   // ---- orb cluster placement: ONE shift, two constraints ----
   // The orb slots are fixed constants; the station rig (now with its module
@@ -728,25 +731,32 @@ export const WorldMenuOverlay: React.FC = () => {
     } else line = `↑ ${costText(kind, level)}`;
     return { st, progress, level, line, tone };
   };
+  const clickStructure = (kind: BuildingKind, host: Settlement, column: 'surface' | 'orbit') => {
+    const level = Number(host.buildings?.[kind] ?? 0);
+    if (kind === 'missile_silo' && level > 0 && host.missileSilo) { setPicked(null); openDrawer('silo'); return; }
+    const isPicked = pickedKind === kind && pickedColumn === column;
+    setStationOpen(false);
+    setPicked(isPicked ? null : { kind, column });
+  };
   const tagFor = (kind: BuildingKind, host: Settlement, column: 'surface' | 'orbit',
     style: React.CSSProperties) => {
     const { st, progress, level, line, tone } = tagLine(kind, host, column);
-    const isSilo = kind === 'missile_silo';
     const pipsN = Math.min(10, Math.max(level, st.state === 'queued' || st.state === 'backlogged' ? st.targetLevel : level + 1));
     const picked = pickedKind === kind && pickedColumn === column;
     return (
       <button
         key={`${column}-${kind}`}
         type="button"
-        className={`wm-tag ${tone}${picked ? ' is-picked' : ''}`}
+        className={`wm-tag ${tone}${picked ? ' is-picked' : ''}${hoverKind === kind && column === 'surface' ? ' is-hover' : ''}`}
         style={style}
         data-testid={`wm-build-${kind}`}
         aria-expanded={picked}
         title={BUILDING_DEFS[kind].description}
-        onClick={() => {
-          if (isSilo && level > 0 && host.missileSilo) { setPicked(null); openDrawer('silo'); return; }
-          setPicked(picked ? null : { kind, column });
-        }}
+        onMouseEnter={() => column === 'surface' && setHoverKind(kind)}
+        onMouseLeave={() => column === 'surface' && setHoverKind(null)}
+        onFocus={() => column === 'surface' && setHoverKind(kind)}
+        onBlur={() => column === 'surface' && setHoverKind(null)}
+        onClick={() => clickStructure(kind, host, column)}
       >
         <span className="wm-tag-nm">
           {tk(`worldmenu.building.${kind}`, kind.toUpperCase())}
@@ -889,6 +899,11 @@ export const WorldMenuOverlay: React.FC = () => {
   }
   const overlap = (a: Rect, b: Rect) =>
     Math.max(0, Math.min(a.r, b.r) - Math.max(a.l, b.l)) * Math.max(0, Math.min(a.b, b.b) - Math.max(a.t, b.t));
+  // How tall each structure stands, in px: the arc keeps every tag clear
+  // of its roof, and every stem ends on it.
+  const sUnit = structureUnit(cr);
+  const levelHere = (k: string) => Number(myCity?.buildings?.[k as BuildingKind] ?? 0);
+  const roofOf = (k: string) => structureTop(k, levelHere(k), myCity?.buildingQueue?.kind === k) * sUnit;
   const fan = (() => {
     const n = surfKinds.length;
     if (mobile || n === 0) return { R: cr + 128, step: 0, shift: 0 };
@@ -907,6 +922,8 @@ export const WorldMenuOverlay: React.FC = () => {
             const px = cx + Math.sin(th) * R, py = cy - Math.cos(th) * R;
             const rect = { l: px - TAG_W / 2, t: py - TAG_H, r: px + TAG_W / 2, b: py };
             for (const o of obstacles) score += overlap(rect, o);
+            const clearance = (R - cr) - (roofOf(surfKinds[i]) + 14);
+            if (clearance < 0) score += -clearance * TAG_W * 3;
             score += 4 * TAG_H * (Math.max(0, railW + 8 - rect.l) + Math.max(0, rect.r - (vw - dockW - 8))
               + Math.max(0, TOPBAR + 8 - rect.t));
           }
@@ -917,30 +934,52 @@ export const WorldMenuOverlay: React.FC = () => {
     }
     return best;
   })();
+  // Each structure stands at its tag's angle (desktop: the arc's; phone:
+  // straight under the tag), so stems run down the radius to its roof.
+  // The canvas reads the same angles (setWorldMenuStructures below).
+  const phoneXs = surfKinds.map((_k, i) => {
+    const raw = 12 + (vw - 24) * ((i + 0.5) / surfKinds.length);
+    return Math.max(8 + TAG_W / 2, Math.min(vw - 8 - TAG_W / 2, raw));
+  });
+  const thetaAt = (i: number) => (mobile
+    ? Math.asin(Math.max(-0.95, Math.min(0.95, (phoneXs[i] - cx) / cr)))
+    : (i - (surfKinds.length - 1) / 2) * fan.step + fan.shift);
+  const roofPoint = (i: number) => {
+    const th = thetaAt(i), rr = cr + roofOf(surfKinds[i]);
+    return { x: cx + Math.sin(th) * rr, y: cy - Math.cos(th) * rr };
+  };
+  // Phone rows: the lower row (odd) sits just over its tallest roof, the
+  // upper row a tag's height above that — and never on the station chip.
+  const rowB = Math.min(...surfKinds.map((_k, i) => (i % 2 === 1 ? roofPoint(i).y - 12 : Infinity)), apexY - 30);
+  const rowA = Math.max(rigBottom + 8 + TAG_H,
+    Math.min(rowB - TAG_H - 8, ...surfKinds.map((_k, i) => (i % 2 === 0 ? roofPoint(i).y - 12 : Infinity))));
   const surfTags = surfKinds.map((kind, i) => {
     let px: number, py: number;
     if (mobile) {
-      // Evenly across the width, kept wholly on screen.
-      const raw = 12 + (vw - 24) * ((i + 0.5) / surfKinds.length);
-      py = apexY - (i % 2 === 0 ? 86 : 30);
+      py = i % 2 === 0 ? rowA : Math.max(rowB, rowA + TAG_H + 8);
       // The map's own side buttons (box-select, previous / next) run down
       // the phone's right edge to about y 290; a tag that high stays
       // left of them.
       const rightLimit = py - TAG_H < 292 ? vw - 60 : vw - 8;
-      px = Math.max(8 + TAG_W / 2, Math.min(rightLimit - TAG_W / 2, raw));
+      px = Math.min(rightLimit - TAG_W / 2, phoneXs[i]);
     } else {
-      const th = (i - (surfKinds.length - 1) / 2) * fan.step + fan.shift;
+      const th = thetaAt(i);
       px = cx + Math.sin(th) * fan.R;
       py = cy - Math.cos(th) * fan.R;
     }
-    // Shields point at the top of the dome over the city; buildings at
-    // their own spot on the limb.
-    const level = Number(myCity?.buildings?.[kind] ?? 0);
-    const end = kind === 'shields'
-      ? limbAt(0, cr * (0.11 + Math.min(3, Math.max(1, level)) * 0.035))
-      : limbAt(TAG_FRAC[kind] ?? 0);
-    return { kind, px, py, end };
+    const theta = thetaAt(i);
+    const end = roofPoint(i);
+    const base = { x: cx + Math.sin(theta) * cr, y: cy - Math.cos(theta) * cr };
+    const hitW = structureHalfWidth(kind, levelHere(kind)) * 2 * sUnit;
+    return { kind, px, py, end, theta, base, hitW, hitH: roofOf(kind) + 8 };
   });
+  // Publish where the structures stand, which are locked, and which is lit,
+  // for the canvas (a module store: read every frame, written every render).
+  setWorldMenuStructures(myCity ? surfTags.map(s => ({
+    kind: s.kind, theta: s.theta,
+    locked: !!statusOf(s.kind as BuildingKind, myCity, 'surface').lockObj,
+  })) : null);
+  setWorldMenuStructureFocus(hoverKind ?? (pickedColumn === 'surface' ? pickedKind : null));
 
   // The card a picked structure opens: beside its tag on a desktop, a
   // sheet over the bar on a phone.
@@ -1270,7 +1309,7 @@ export const WorldMenuOverlay: React.FC = () => {
 
       {/* ===== the station: the map's own art in its owner's livery, its
            modules as tags right under it ===== */}
-      {readout.station && (
+      {readout.station && !mobile && (
         <svg
           className="wm-station" data-testid="wm-station"
           viewBox="0 0 130 130"
@@ -1307,15 +1346,17 @@ export const WorldMenuOverlay: React.FC = () => {
            same buttons as rows. */}
       {orbitKinds.length > 0 && myStation && !(mobile && openTab) && (
         <>
-          <button type="button" className="wm-sta-hit" aria-label={t('worldmenu.station.aria')}
-            aria-expanded={stationOpen}
-            style={{ left: staX, top: staY, width: staW, height: staH }}
-            onClick={() => { setPicked(null); setStationOpen(o => !o); }} />
+          {!mobile && (
+            <button type="button" className="wm-sta-hit" aria-label={t('worldmenu.station.aria')}
+              aria-expanded={stationOpen}
+              style={{ left: staX, top: staY, width: staW, height: staH }}
+              onClick={() => { setPicked(null); setStationOpen(o => !o); }} />
+          )}
           <button type="button" className={`wm-sta-chip${stationOpen ? ' is-on' : ''}`}
             data-testid="wm-col-orbit" data-tutorial-id="wm-columns-orbit" aria-expanded={stationOpen}
             style={{ ...chipPos, height: STA_CHIP_H }}
             onClick={() => { setPicked(null); setStationOpen(o => !o); }}>
-            {t('worldmenu.station.modules')}
+            {mobile ? t('worldmenu.station.chipPhone') : t('worldmenu.station.modules')}
             <b>{orbitKinds.filter(k => Number(myStation.buildings?.[k] ?? 0) > 0).length}/{orbitKinds.length}</b>
             <span aria-hidden="true">{stationOpen ? '▴' : '▾'}</span>
           </button>
@@ -1334,15 +1375,27 @@ export const WorldMenuOverlay: React.FC = () => {
           {settled && (
             <svg className="wm-lines" width={vw} height={vh} aria-hidden="true">
               {surfTags.map(s => (
-                <g key={s.kind}>
-                  <path className={`wm-stem${pickedKind === s.kind && pickedColumn === 'surface' ? ' is-picked' : ''}`}
-                    data-wm-line={s.kind} fill="none" d={`M${s.px},${s.py} L${s.end.x},${s.end.y}`} />
-                  <rect className="wm-stem-foot" x={s.end.x - 3} y={s.end.y - 3} width={6} height={6}
-                    transform={`rotate(45 ${s.end.x} ${s.end.y})`} />
-                </g>
+                <path key={s.kind}
+                  className={`wm-stem${(pickedKind === s.kind && pickedColumn === 'surface') || hoverKind === s.kind ? ' is-picked' : ''}`}
+                  data-wm-line={s.kind} fill="none" d={`M${s.px},${s.py} L${s.end.x},${s.end.y}`} />
               ))}
             </svg>
           )}
+          {/* The buildings themselves are buttons too (the tag stays the
+              keyboard's way in, so these skip the tab order). */}
+          <div className="wm-bhits" aria-hidden="true">
+            {surfTags.map(s => (
+              <button key={s.kind} type="button" tabIndex={-1} className="wm-bhit"
+                data-testid={`wm-bhit-${s.kind}`}
+                style={{
+                  left: s.base.x, top: s.base.y, width: Math.max(28, s.hitW), height: Math.max(24, s.hitH),
+                  transform: `translate(-50%, -100%) rotate(${s.theta}rad)`,
+                }}
+                onMouseEnter={() => setHoverKind(s.kind)}
+                onMouseLeave={() => setHoverKind(null)}
+                onClick={() => clickStructure(s.kind as BuildingKind, myCity, 'surface')} />
+            ))}
+          </div>
           <div className="wm-tags wm-tags-surface" data-testid="wm-col-surface" data-tutorial-id="wm-columns">
             {surfTags.map(s => tagFor(s.kind, myCity, 'surface', {
               left: s.px, top: s.py, width: TAG_W, minHeight: TAG_H, transform: 'translate(-50%, -100%)',
