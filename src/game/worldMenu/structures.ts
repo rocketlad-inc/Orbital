@@ -21,7 +21,7 @@ export type SurfaceStructure = typeof SURFACE_STRUCTURES[number];
 
 /** Screen px per structure unit for a planet of screen radius `r`. */
 export function structureUnit(r: number): number {
-  return r * 0.0026;
+  return r * 0.003;
 }
 
 /** Three silhouettes per structure (Lorne's pick): levels 1-2 draw the
