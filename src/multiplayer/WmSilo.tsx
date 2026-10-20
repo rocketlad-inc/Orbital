@@ -70,8 +70,9 @@ export const WmSilo: React.FC<{
   const tick = gameState.currentTick ?? 0;
   const [busy, setBusy] = useState<string | null>(null);
   const [target, setTarget] = useState<string | null>(null);
-  const [picking, setPicking] = useState(false);
-  const [showOther, setShowOther] = useState(false);
+  // Which of the two other-target lists is open: ships bound elsewhere,
+  // or worlds to strike. Never both.
+  const [fold, setFold] = useState<null | 'ships' | 'worlds'>(null);
   const [salvo, setSalvo] = useState(1);
   const [confirm, setConfirm] = useState(false);
   const [eta, setEta] = useState<Record<string, number>>({});
@@ -129,22 +130,22 @@ export const WmSilo: React.FC<{
   // (the answer moves as they close); the rest when the picker opens.
   useEffect(() => {
     if (!actions) return;
-    const ids = (picking ? groupKeys : incomingKeys).split(',').filter(Boolean).slice(0, 30);
+    const ids = (fold === 'ships' ? groupKeys : incomingKeys).split(',').filter(Boolean).slice(0, 30);
     if (ids.length === 0) return;
     let live = true;
     void actions.missileIntercepts(body.id, ids).then(r => { if (live) setMeets(m => ({ ...m, ...r })); });
     return () => { live = false; };
-  }, [picking, actions, groupKeys, incomingKeys, body.id, tick]);
+  }, [fold, actions, groupKeys, incomingKeys, body.id, tick]);
 
   // ETAs for the list, asked once per opening.
   useEffect(() => {
-    if (!picking || !actions) return;
+    if (fold !== 'worlds' || !actions) return;
     const ids = worlds.map(w => w.body.id).filter(id => eta[id] == null).slice(0, 30);
     if (ids.length === 0) return;
     let live = true;
     void actions.missileEta(body.id, ids).then(r => { if (live) setEta(e => ({ ...e, ...r })); });
     return () => { live = false; };
-  }, [picking, actions, worlds, body.id, eta]);
+  }, [fold, actions, worlds, body.id, eta]);
 
   if (!silo) return null;
   const stock = silo.stock;
@@ -263,68 +264,58 @@ export const WmSilo: React.FC<{
             </>
           )}
 
-          {/* Everything else a salvo can reach: a world's orbit, or ships
-              bound somewhere other than here. */}
-          <button type="button" className="wm-silo-more" aria-expanded={showOther}
-            onClick={() => { setShowOther(o => !o); setPicking(false); }}>
-            {t('worldmenu.silo.otherTargets')} <span aria-hidden>{showOther ? '▴' : '▾'}</span>
-          </button>
-          {showOther && (
-            <>
-              <button type="button" className="wm-silo-target" aria-expanded={picking} onClick={() => setPicking(p => !p)}>
-                {chosenGroup ? (
-                  <>
-                    <span className="wm-silo-tname">{chosenGroup.fleet?.name ?? ownerName(chosenGroup.lead.ownedBy)}</span>
-                    <span className="wm-silo-tmeta">{tn('worldmenu.silo.shipsThere', chosenGroup.members.length)}</span>
-                    <span className="wm-silo-tmeta">{groupMeet != null ? t('worldmenu.silo.meetIn', { n: groupMeet }) : groupMeet === null ? t('worldmenu.silo.cantCatch') : ''}</span>
-                  </>
-                ) : chosen ? (
-                  <>
-                    <span className="wm-silo-tname">{chosen.body.name}</span>
-                    <span className="wm-silo-tmeta">{tn('worldmenu.silo.shipsThere', chosen.total)}{chosen.hostile ? ` · ${tn('worldmenu.silo.hostile', chosen.hostile)}` : ''}</span>
-                    <span className="wm-silo-tmeta">{eta[chosen.body.id] != null ? t('worldmenu.silo.eta', { n: eta[chosen.body.id] }) : ''}</span>
-                  </>
-                ) : <span className="wm-silo-tname is-dim">{t('worldmenu.silo.pickTarget')}</span>}
-                <span aria-hidden>▾</span>
+          {/* Everything else a salvo can reach, as TWO short lists, never
+              one long one (Lorne, 2026-10-20: combining ship intercepts
+              and worlds "is going to be a long ass list"). One open at a
+              time; a row is the pick. */}
+          <div className="wm-silo-folds" role="group">
+            {(['ships', 'worlds'] as const).map(f => (
+              <button key={f} type="button" className={`wm-silo-more${fold === f ? ' is-on' : ''}`} aria-expanded={fold === f}
+                onClick={() => { setFold(o => (o === f ? null : f)); setTarget(null); setConfirm(false); }}>
+                {t(f === 'ships' ? 'worldmenu.silo.foldShips' : 'worldmenu.silo.foldWorlds')}
+                <b>{f === 'ships' ? others.length : worlds.length}</b>
+                <span aria-hidden>{fold === f ? '▴' : '▾'}</span>
               </button>
-              {picking && (
-                <div className="wm-silo-list" role="listbox" aria-label={t('worldmenu.silo.pickTarget')}>
-                  {worlds.length === 0 && others.length === 0 && <span className="wm-silo-note">{t('worldmenu.silo.noTargets')}</span>}
-                  {worlds.length > 0 && others.length > 0 && <span className="wm-silo-h2">{t('worldmenu.silo.secWorlds')}</span>}
-                  {worlds.map(w => (
-                    <button key={w.body.id} type="button" role="option" aria-selected={w.body.id === target}
-                      className={`wm-silo-opt${w.body.id === target ? ' is-on' : ''}`}
-                      onClick={() => { setTarget(w.body.id); setPicking(false); setConfirm(false); }}>
-                      <span className="wm-silo-tname">{w.body.name}</span>
-                      <span className="wm-silo-tmeta">{eta[w.body.id] != null ? t('worldmenu.silo.eta', { n: eta[w.body.id] }) : '…'}</span>
+            ))}
+          </div>
+          {fold && (
+            <>
+              <div className="wm-silo-list" role="listbox"
+                aria-label={t(fold === 'ships' ? 'worldmenu.silo.foldShips' : 'worldmenu.silo.foldWorlds')}>
+                {fold === 'worlds' && worlds.length === 0 && <span className="wm-silo-note">{t('worldmenu.silo.noWorlds')}</span>}
+                {fold === 'ships' && others.length === 0 && <span className="wm-silo-note">{t('worldmenu.silo.noShipsElsewhere')}</span>}
+                {fold === 'worlds' && worlds.map(w => (
+                  <button key={w.body.id} type="button" role="option" aria-selected={w.body.id === target}
+                    className={`wm-silo-opt${w.body.id === target ? ' is-on' : ''}`}
+                    onClick={() => { setTarget(w.body.id); setConfirm(false); }}>
+                    <span className="wm-silo-tname">{w.body.name}</span>
+                    <span className="wm-silo-tmeta">{eta[w.body.id] != null ? t('worldmenu.silo.eta', { n: eta[w.body.id] }) : '…'}</span>
+                    <span className="wm-silo-tmeta is-wide">
+                      {tn('worldmenu.silo.shipsThere', w.total)}
+                      {w.hostile ? <b className="is-hostile"> · {tn('worldmenu.silo.hostile', w.hostile)}</b> : null}
+                      {w.mine ? <b className="is-mine"> · {tn('worldmenu.silo.yours', w.mine)}</b> : null}
+                    </span>
+                  </button>
+                ))}
+                {fold === 'ships' && others.map(g => {
+                  const key = `${GROUP}${g.lead.id}`;
+                  const tr = g.lead.transit?.currentTransfer;
+                  const hostile = !atPeace(ME, g.lead.ownedBy);
+                  const m = meets[g.lead.id];
+                  return (
+                    <button key={key} type="button" role="option" aria-selected={key === target}
+                      className={`wm-silo-opt${key === target ? ' is-on' : ''}${m === null ? ' is-out' : ''}`}
+                      onClick={() => { setTarget(key); setConfirm(false); }}>
+                      <span className="wm-silo-tname">{g.fleet?.name ?? ownerName(g.lead.ownedBy)}</span>
+                      <span className="wm-silo-tmeta">{m != null ? t('worldmenu.silo.meetIn', { n: m }) : m === null ? t('worldmenu.silo.cantCatch') : '…'}</span>
                       <span className="wm-silo-tmeta is-wide">
-                        {tn('worldmenu.silo.shipsThere', w.total)}
-                        {w.hostile ? <b className="is-hostile"> · {tn('worldmenu.silo.hostile', w.hostile)}</b> : null}
-                        {w.mine ? <b className="is-mine"> · {tn('worldmenu.silo.yours', w.mine)}</b> : null}
+                        {hostile ? <b className="is-hostile">{tn('worldmenu.silo.shipsThere', g.members.length)}</b> : tn('worldmenu.silo.shipsThere', g.members.length)}
+                        {tr ? ` ${t('worldmenu.silo.bound', { world: byId.get(tr.targetBodyId)?.name ?? '?', n: Math.max(0, Math.ceil(tr.arriveTick - tick)) })}` : ''}
                       </span>
                     </button>
-                  ))}
-                  {others.length > 0 && <span className="wm-silo-h2">{t('worldmenu.silo.secFlight')}</span>}
-                  {others.map(g => {
-                    const key = `${GROUP}${g.lead.id}`;
-                    const tr = g.lead.transit?.currentTransfer;
-                    const hostile = !atPeace(ME, g.lead.ownedBy);
-                    const m = meets[g.lead.id];
-                    return (
-                      <button key={key} type="button" role="option" aria-selected={key === target}
-                        className={`wm-silo-opt${key === target ? ' is-on' : ''}${m === null ? ' is-out' : ''}`}
-                        onClick={() => { setTarget(key); setPicking(false); setConfirm(false); }}>
-                        <span className="wm-silo-tname">{g.fleet?.name ?? ownerName(g.lead.ownedBy)}</span>
-                        <span className="wm-silo-tmeta">{m != null ? t('worldmenu.silo.meetIn', { n: m }) : m === null ? t('worldmenu.silo.cantCatch') : '…'}</span>
-                        <span className="wm-silo-tmeta is-wide">
-                          {hostile ? <b className="is-hostile">{tn('worldmenu.silo.shipsThere', g.members.length)}</b> : tn('worldmenu.silo.shipsThere', g.members.length)}
-                          {tr ? ` ${t('worldmenu.silo.bound', { world: byId.get(tr.targetBodyId)?.name ?? '?', n: Math.max(0, Math.ceil(tr.arriveTick - tick)) })}` : ''}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
+                  );
+                })}
+              </div>
               {incoming.length === 0 && (
                 <div className="wm-silo-salvo">
                   <span className="wm-silo-h2">{t('worldmenu.silo.salvo')}</span>
