@@ -24,6 +24,8 @@ import { bodyPosition } from '../physics/orbitalMechanics';
 import { zOf, clamp01, arcSpreadDeg } from '../game/worldMenu/camera';
 import { hpColor, flameCount } from '../game/worldMenu/combatDisplay';
 import { buildingLevel } from '../game/settlements';
+import { deriveSecondary } from '../game/colorUtils';
+import { drawSkylineStructure, dimHex } from './settlementArt';
 import { drawHullFire } from './fxArt';
 import {
   drawStructure, drawPlot, drawSite, drawPad, drawQueueBadge, drawFocusGlow, edgeLivery, STRUCTURE_BODY,
@@ -84,7 +86,24 @@ function shade(hex: string, k: number): string {
  *  (white, grey, bone) is a fine TRIM but a poor body: dimmed to a
  *  tower's weight it lands as a hueless dark slab, which is the exact
  *  look the livery was meant to get rid of. */
+function chroma(hex: string): number {
+  const n = parseInt(hex.replace('#', ''), 16);
+  if (Number.isNaN(n)) return 0;
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  return Math.max(r, g, b) - Math.min(r, g, b);
+}
 
+/** Silhouette pools for the city skyline, widening as the settlement
+ *  grows. A young colony is silos, domes and low blocks — the things you
+ *  put up first. Gantries and stepped terraces arrive with a working
+ *  population, and the showpieces (arcology, cooling stack, ring
+ *  habitat) only once there are people to fill them, so a city visibly
+ *  matures rather than just multiplying the same five shapes.
+ *
+ *  Held at module scope so widening the pool costs no allocation. */
+const SKYLINE_SMALL = [0, 1, 3, 9, 11];
+const SKYLINE_MID   = [0, 1, 3, 9, 11, 2, 4, 5];
+const SKYLINE_LARGE = [0, 1, 3, 9, 11, 2, 4, 5, 6, 7, 8, 10];
 
 function surfaceDetail(rc: RenderContext, body: Body, c: { x: number; y: number; r: number }, alpha: number) {
   // Visual overhaul (staging): a real-map world is already on this disc,
@@ -367,10 +386,11 @@ export function drawWorldMenuCloseup(
   const city = here.find(s => s.type === 'city');
   const faction = rc.factions?.find(f => f.id === (city?.ownedBy ?? viewerFactionId));
   const p1 = faction?.color ?? '#8b6fd0';
+  const p2 = (faction as { color2?: string } | undefined)?.color2 || deriveSecondary(p1);
 
   if (city) {
     const slots = structureSlotsFor(city, viewerFactionId);
-    drawCityBand(rc.ctx, body, c, city, p1, slots, alpha);
+    drawSkyline(rc.ctx, body, c, city, p1, p2, slots, alpha);
     drawShieldDome(rc.ctx, c, city, rc.t, alpha);
     drawStructures(rc.ctx, c, city, viewerFactionId, p1, slots, extras.tick ?? 0, rc.t, alpha);
     // A rival's city wears its name and hit points on the world; yours are
@@ -392,50 +412,52 @@ function structureSlotsFor(city: Settlement, viewerFactionId: string): Structure
 }
 
 /**
- * THE CITY BAND: the city's own blocks, low and dark behind the
- * structures, growing with population, with a clear gap around every
- * structure so those read as the things you act on (Lorne kept the band
- * when the structures were redrawn, 2026-10-20).
+ * THE SKYLINE: the city's own towers behind the structures, exactly as
+ * they were before the structures were redrawn (Lorne, 2026-10-20: the
+ * cityscape art stays). It GROWS with population: more towers, taller
+ * spires, lit windows as pop climbs, the shape pool widening as it
+ * matures. A tower that would stand on a structure's footprint is
+ * skipped, so every structure keeps its clearing.
+ *
+ * TWO-TONE in the owner's livery: each tower has a body and a crown in
+ * opposite tones, and roughly half run the pairing the other way round,
+ * so the horizon carries both colours at tower scale. A faction whose
+ * secondary is near-neutral keeps every tower body in the primary.
+ * Dimmed so the structures in front still lead the eye.
  */
-function drawCityBand(
+function drawSkyline(
   g: CanvasRenderingContext2D, body: Body, c: { x: number; y: number; r: number },
-  city: Settlement, p1: string, slots: StructureSlot[], alpha: number,
+  city: Settlement, p1: string, p2: string, slots: StructureSlot[], alpha: number,
 ): void {
+  const twoWay = chroma(p2) >= 34;
   const pop = Math.max(1, city.population ?? 1);
-  const growth = clamp01(pop / 10);
-  const count = Math.min(34, 8 + Math.floor(pop * 1.6));
-  const span = (0.98 * spreadDeg) * Math.PI / 180;
+  const count = Math.min(28, 7 + Math.floor(pop * 2.5));
+  const growth = clamp01(pop / 8);
   const u = structureUnit(c.r);
   const clear = slots.map(sl => ({
     th: sl.theta,
-    half: (structureHalfWidth(sl.kind, buildingLevel(city, sl.kind as BuildingKind)) * u + c.r * 0.02) / c.r,
+    half: (structureHalfWidth(sl.kind, buildingLevel(city, sl.kind as BuildingKind)) * u + c.r * 0.012) / c.r,
   }));
-  const edge = edgeLivery(p1);
-  g.save();
-  g.globalAlpha = alpha;
   for (let i = 0; i < count; i++) {
-    const th = -span + (2 * span) * (i / Math.max(1, count - 1)) + (hash01(body.id, i + 61) - 0.5) * 0.01;
+    const fr = -0.9 + (i / Math.max(1, count - 1)) * 1.8 + (hash01(body.id, i + 61) - 0.5) * 0.045;
+    const th = (fr * spreadDeg) * Math.PI / 180;
     if (clear.some(k => Math.abs(k.th - th) < k.half)) continue;
-    const h = c.r * (0.012 + hash01(body.id, i + 31) * (0.012 + 0.03 * growth));
-    const w = c.r * (0.009 + hash01(body.id, i + 43) * 0.008);
-    g.save();
-    g.translate(c.x + Math.sin(th) * c.r, c.y - Math.cos(th) * c.r);
-    g.rotate(th);
-    g.fillStyle = '#0b131c';
-    g.fillRect(-w / 2, -h, w, h);
-    g.globalAlpha = alpha * 0.22;
-    g.strokeStyle = edge;
-    g.lineWidth = Math.max(0.6, c.r * 0.0016);
-    g.strokeRect(-w / 2, -h, w, h);
-    // A lit window or two once the city has people to light them.
-    if (growth > 0.35 && hash01(body.id, i + 151) > 0.6) {
-      g.globalAlpha = alpha * 0.55;
-      g.fillStyle = edge;
-      g.fillRect(-w * 0.15, -h * 0.7, w * 0.3, Math.max(1, h * 0.08));
-    }
+    const a = arcAngle(fr);
+    const px = c.x + Math.cos(a) * c.r, py = c.y + Math.sin(a) * c.r;
+    const pool = growth > 0.55 ? SKYLINE_LARGE : growth > 0.3 ? SKYLINE_MID : SKYLINE_SMALL;
+    const kind = pool[Math.min(pool.length - 1, Math.floor(hash01(body.id, i + 97) * pool.length))];
+    const h = c.r * (0.03 + hash01(body.id, i + 31) * (0.045 + 0.085 * growth));
+    const w = c.r * (0.007 + hash01(body.id, i + 43) * 0.018);
+    g.save(); g.globalAlpha = alpha; g.translate(px, py); g.rotate(a + Math.PI / 2);
+    // Seeded off the body id like every other choice here, so a skyline
+    // is identical on every client and from one frame to the next.
+    const flip = twoWay && hash01(body.id, i + 211) > 0.5;
+    const k = h > c.r * 0.075 ? 0.8 : 0.66;
+    const [pa, pb] = flip ? [p2, p1] : [p1, p2];
+    const windowsOn = growth > 0.4 && kind <= 1 && hash01(body.id, i + 151) > 0.55;
+    drawSkylineStructure(g, kind, w, h, dimHex(pa, k), dimHex(pb, k), windowsOn);
     g.restore();
   }
-  g.restore();
 }
 
 /**
