@@ -20,7 +20,7 @@
 //              queue with its countdown, cancel for a full refund
 // ============================================================
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { useMultiplayerActions } from './MultiplayerActionsContext';
 import { humanizeMpError } from './errorMessages';
@@ -86,6 +86,43 @@ export const WmSilo: React.FC<{
   const [ownHits, setOwnHits] = useState<Record<string, { n: number; world: string | null }>>({});
   // A raid already enough missiles are flying at: LAUNCH asks once more.
   const [overConfirm, setOverConfirm] = useState<string | null>(null);
+
+  // A CLICK SHOWS AT ONCE (Lorne, 2026-10-20: "a substantial delay between
+  // clicking an element on the missile screen and the action resolving").
+  // The action answers in ~0.3s but the game state it refreshes takes 1-2s
+  // more, and the drawer waited for it. What a click changes is overlaid
+  // here the moment it is made, and each piece drops away when the state
+  // that arrives agrees (or after 10s, whatever the state says).
+  type SiloOv = {
+    auto?: 'off' | 'missiles' | 'fleets'; reserve?: number; salvo?: number;
+    spent?: { n: number; stockWas: number; sent: Record<string, number> };
+    ordered?: { n: number; totalWas: number };
+    cancelled?: string[];
+    at: number;
+  };
+  const [ov, setOv] = useState<SiloOv>({ at: 0 });
+  useEffect(() => {
+    if (!silo) return;
+    setOv(o => {
+      if (o.at && Date.now() - o.at > 10_000) return { at: 0 };
+      const n: SiloOv = { ...o };
+      if (n.auto === silo.auto) delete n.auto;
+      if (n.reserve === silo.reserve) delete n.reserve;
+      if (n.salvo === silo.salvo) delete n.salvo;
+      if (n.spent && silo.stock <= n.spent.stockWas - n.spent.n) delete n.spent;
+      if (n.ordered && silo.orders.length + silo.stock >= n.ordered.totalWas + n.ordered.n) delete n.ordered;
+      if (n.cancelled) {
+        const left = n.cancelled.filter(id => silo.orders.some(x => x.id === id));
+        if (left.length) n.cancelled = left; else delete n.cancelled;
+      }
+      return n;
+    });
+  }, [silo]);
+  // +/- on the reserve or the auto salvo: the number moves on every click,
+  // and ONE request goes when the clicking stops.
+  const pendingPatch = useRef<{ reserve?: number; salvo?: number }>({});
+  const patchTimer = useRef<number | null>(null);
+  useEffect(() => () => { if (patchTimer.current) window.clearTimeout(patchTimer.current); }, []);
 
   const byId = useMemo(() => new Map(gameState.bodies.map(b => [b.id, b])), [gameState.bodies]);
   const atPeace = useMemo(() => makePeaceCheck(gameState.warPairs), [gameState.warPairs]);
@@ -164,8 +201,19 @@ export const WmSilo: React.FC<{
   }, [fold, actions, worlds, body.id, eta]);
 
   if (!silo) return null;
-  const stock = silo.stock;
-  const queued = silo.orders.length;
+  // The silo as the player just left it: the state, with their clicks over it.
+  const view = {
+    auto: ov.auto ?? silo.auto,
+    reserve: ov.reserve ?? silo.reserve,
+    salvo: ov.salvo ?? silo.salvo,
+    stock: Math.max(0, silo.stock - (ov.spent?.n ?? 0)),
+    orders: [
+      ...silo.orders.filter(o => !ov.cancelled?.includes(o.id)),
+      ...Array.from({ length: ov.ordered?.n ?? 0 }, (_, i) => ({ id: `pending-${i}`, startTick: null, completeTick: null })),
+    ],
+  };
+  const stock = view.stock;
+  const queued = view.orders.length;
   const room = Math.max(0, cap - stock - queued);
   const pool = gameState.resources?.[ME];
   const canAfford = !pool || ((pool.ore ?? 0) >= MISSILE_COST.ore && (pool.credits ?? 0) >= MISSILE_COST.credits);
@@ -194,28 +242,80 @@ export const WmSilo: React.FC<{
   const flyingElsewhere = inFlight.filter(s => s.plannedRendezvous && !incomingHulls.has(s.plannedRendezvous.followShipId)).length;
   const flyingAtWorlds = inFlight.filter(s => !s.plannedRendezvous).length;
 
-  const run = async (key: string, fn: () => Promise<{ ok: boolean; error?: string; code?: string }>) => {
+  const run = async (key: string, fn: () => Promise<{ ok: boolean; error?: string; code?: string }>, undo?: () => void) => {
     setBusy(key); onErr(null);
     const res = await fn();
-    setBusy(null);
-    if (!res.ok) onErr(humanizeMpError(res.code, res.error ?? t('worldmenu.silo.err.failed'), 'build'));
+    setBusy(b => (b === key ? null : b));
+    if (!res.ok) {
+      undo?.();
+      onErr(humanizeMpError(res.code, res.error ?? t('worldmenu.silo.err.failed'), 'build'));
+    }
     return res.ok;
   };
-  const order = () => actions && run('order', () => actions.orderMissiles(city.id, 1));
-  const cancel = (id: string) => actions && run(`c${id}`, () => actions.cancelMissile(city.id, id));
-  const setAuto = (auto: 'off' | 'missiles' | 'fleets') => actions && run('auto', () => actions.setMissileDefence(city.id, { auto }));
-  const setReserve = (reserve: number) => actions && run('auto', () => actions.setMissileDefence(city.id, { reserve: Math.max(0, Math.min(cap, reserve)) }));
-  const setAutoSalvo = (s: number) => actions && run('auto', () => actions.setMissileDefence(city.id, { salvo: Math.max(1, Math.min(Math.max(1, cap), s)) }));
+  const stamp = (patch: Partial<SiloOv>) => setOv(o => ({ ...o, ...patch, at: Date.now() }));
+  const order = () => {
+    if (!actions) return;
+    stamp({ ordered: { n: (ov.ordered?.n ?? 0) + 1, totalWas: ov.ordered?.totalWas ?? (silo.orders.length + silo.stock) } });
+    void run('order', () => actions.orderMissiles(city.id, 1), () => setOv(o => ({ ...o, ordered: undefined })));
+  };
+  const cancel = (id: string) => {
+    if (!actions) return;
+    stamp({ cancelled: [...(ov.cancelled ?? []), id] });
+    void run(`c${id}`, () => actions.cancelMissile(city.id, id),
+      () => setOv(o => ({ ...o, cancelled: (o.cancelled ?? []).filter(x => x !== id) })));
+  };
+  const setAuto = (auto: 'off' | 'missiles' | 'fleets') => {
+    if (!actions) return;
+    const was = view.auto;
+    stamp({ auto });
+    void run('auto', () => actions.setMissileDefence(city.id, { auto }), () => setOv(o => ({ ...o, auto: was === silo.auto ? undefined : was })));
+  };
+  const pushPatch = (patch: { reserve?: number; salvo?: number }) => {
+    stamp(patch);
+    pendingPatch.current = { ...pendingPatch.current, ...patch };
+    if (patchTimer.current) window.clearTimeout(patchTimer.current);
+    patchTimer.current = window.setTimeout(() => {
+      const send = pendingPatch.current;
+      pendingPatch.current = {};
+      patchTimer.current = null;
+      if (actions) {
+        void run('settings', () => actions.setMissileDefence(city.id, send),
+          () => setOv(o => ({ ...o, reserve: undefined, salvo: undefined })));
+      }
+    }, 350);
+  };
+  const setReserve = (reserve: number) => pushPatch({ reserve: Math.max(0, Math.min(cap, reserve)) });
+  const setAutoSalvo = (s: number) => pushPatch({ salvo: Math.max(1, Math.min(Math.max(1, cap), s)) });
+  // A launch shows at once: the magazine drops and the raid's row counts
+  // the salvo as on its way.
+  const spend = (k: number, lead: string | null) => stamp({
+    spent: {
+      n: (ov.spent?.n ?? 0) + k,
+      stockWas: ov.spent?.stockWas ?? silo.stock,
+      sent: lead ? { ...(ov.spent?.sent ?? {}), [lead]: (ov.spent?.sent?.[lead] ?? 0) + k } : (ov.spent?.sent ?? {}),
+    },
+  });
+  const unspend = (k: number, lead: string | null) => setOv(o => {
+    if (!o.spent) return o;
+    const sent = { ...o.spent.sent };
+    if (lead) sent[lead] = Math.max(0, (sent[lead] ?? 0) - k);
+    const left = o.spent.n - k;
+    return { ...o, spent: left > 0 ? { ...o.spent, n: left, sent } : undefined };
+  });
   const launch = async () => {
     if (!actions) return;
     if (chosenGroup) {
-      const ok = await run('launch', () => actions.launchMissilesAtShip(city.id, chosenGroup.lead.id, n));
+      const lead = chosenGroup.lead.id, k = n;
+      spend(k, lead);
+      const ok = await run('launch', () => actions.launchMissilesAtShip(city.id, lead, k), () => unspend(k, lead));
       if (ok) { setSalvo(1); setTarget(null); }
       return;
     }
     if (!chosen) return;
     if (chosen.mine > 0 && !confirm) { setConfirm(true); return; }
-    const ok = await run('launch', () => actions.launchMissiles(city.id, chosen.body.id, n));
+    const k = n;
+    spend(k, null);
+    const ok = await run('launch', () => actions.launchMissiles(city.id, chosen.body.id, k), () => unspend(k, null));
     if (ok) { setConfirm(false); setSalvo(1); }
   };
 
@@ -244,7 +344,7 @@ export const WmSilo: React.FC<{
           <span className="wm-silo-h">{t('worldmenu.silo.incoming')} <b className="wm-silo-hn">{incoming.length}</b></span>
           {incoming.length === 0 ? (
             <span className="wm-silo-note is-body">
-              {silo.auto === 'fleets'
+              {view.auto === 'fleets'
                 ? t('worldmenu.silo.incomingNoneWatching', { world: body.name })
                 : t('worldmenu.silo.incomingNone', { world: body.name })}
             </span>
@@ -264,7 +364,7 @@ export const WmSilo: React.FC<{
                   const m = meets[g.lead.id];
                   const ids = new Set(g.members.map(s => s.id));
                   const sent = inFlight.filter(s => s.plannedRendezvous && ids.has(s.plannedRendezvous.followShipId));
-                  const sentN = sent.reduce((k, s) => k + (s.missileCount ?? 1), 0);
+                  const sentN = sent.reduce((k, s) => k + (s.missileCount ?? 1), 0) + (ov.spent?.sent?.[g.lead.id] ?? 0);
                   const sentMeet = sent.length ? Math.max(0, Math.ceil(Math.min(...sent.map(s => s.plannedRendezvous!.meetTick)) - tick)) : null;
                   // OVER-FIRING (Lorne's list, 2026-10-20): what is already on
                   // its way counts. Every missile hits every hull of the group,
@@ -281,7 +381,9 @@ export const WmSilo: React.FC<{
                     if (!actions) return;
                     if ((enoughSent || hitsOwn) && !asking) { setOverConfirm(key); return; }
                     setOverConfirm(null);
-                    void run(key, () => actions.launchMissilesAtShip(city.id, g.lead.id, n));
+                    const k = n;
+                    spend(k, g.lead.id);
+                    void run(key, () => actions.launchMissilesAtShip(city.id, g.lead.id, k), () => unspend(k, g.lead.id));
                   };
                   return (
                     <div key={g.lead.id} className={`wm-silo-irow${m === null ? ' is-out' : ''}`}>
@@ -311,7 +413,7 @@ export const WmSilo: React.FC<{
                         </span>
                       )}
                       <button type="button" className={`wm-silo-btn is-fire${asking ? ' is-confirm' : ''}`}
-                        disabled={busy !== null || stock === 0 || m == null}
+                        disabled={busy === key || stock === 0 || m == null}
                         onBlur={() => { if (asking) setOverConfirm(null); }}
                         onClick={fire}>
                         {busy === key ? '…'
@@ -417,7 +519,7 @@ export const WmSilo: React.FC<{
               )}
               <div className="wm-silo-launchrow">
                 <button type="button" className={`wm-silo-btn is-fire${confirm ? ' is-confirm' : ''}`}
-                  disabled={busy !== null || (!chosen && !chosenGroup) || stock === 0 || (!!chosenGroup && groupMeet == null)} onClick={launch}>
+                  disabled={busy === 'launch' || (!chosen && !chosenGroup) || stock === 0 || (!!chosenGroup && groupMeet == null)} onClick={launch}>
                   {busy === 'launch' ? '…' : confirm ? t('worldmenu.silo.confirmFire', { n }) : t('worldmenu.silo.fire', { n: stock > 0 ? n : 0 })}
                 </button>
                 {confirm && <button type="button" className="wm-silo-btn" onClick={() => setConfirm(false)}>{t('worldmenu.silo.back')}</button>}
@@ -430,27 +532,27 @@ export const WmSilo: React.FC<{
           <span className="wm-silo-h">{t('worldmenu.silo.auto')}</span>
           <div className="wm-silo-seg" role="group" aria-label={t('worldmenu.silo.auto')}>
             {(['off', 'missiles', 'fleets'] as const).map(m => (
-              <button key={m} type="button" aria-pressed={silo.auto === m} className={silo.auto === m ? 'is-on' : ''}
-                disabled={busy !== null} onClick={() => setAuto(m)}>{t(`worldmenu.silo.mode.${m}` as Key)}</button>
+              <button key={m} type="button" aria-pressed={view.auto === m} className={view.auto === m ? 'is-on' : ''}
+                onClick={() => setAuto(m)}>{t(`worldmenu.silo.mode.${m}` as Key)}</button>
             ))}
           </div>
-          <span className="wm-silo-note is-body">{t(`worldmenu.silo.modeNote.${silo.auto}` as Key)}</span>
-          {silo.auto === 'fleets' && (
+          <span className="wm-silo-note is-body">{t(`worldmenu.silo.modeNote.${view.auto}` as Key)}</span>
+          {view.auto === 'fleets' && (
             <div className="wm-silo-salvo">
               <span className="wm-silo-h2">{t('worldmenu.silo.autoSalvo')}</span>
-              <button type="button" className="wm-silo-step" aria-label={t('worldmenu.silo.fewer')} disabled={busy !== null || silo.salvo <= 1} onClick={() => setAutoSalvo(silo.salvo - 1)}>−</button>
-              <span className="wm-silo-num">{silo.salvo}</span>
-              <button type="button" className="wm-silo-step" aria-label={t('worldmenu.silo.more')} disabled={busy !== null || silo.salvo >= cap} onClick={() => setAutoSalvo(silo.salvo + 1)}>+</button>
+              <button type="button" className="wm-silo-step" aria-label={t('worldmenu.silo.fewer')} disabled={view.salvo <= 1} onClick={() => setAutoSalvo(view.salvo - 1)}>−</button>
+              <span className="wm-silo-num">{view.salvo}</span>
+              <button type="button" className="wm-silo-step" aria-label={t('worldmenu.silo.more')} disabled={view.salvo >= cap} onClick={() => setAutoSalvo(view.salvo + 1)}>+</button>
             </div>
           )}
           <div className="wm-silo-salvo">
             <span className="wm-silo-h2">{t('worldmenu.silo.reserve')}</span>
-            <button type="button" className="wm-silo-step" aria-label={t('worldmenu.silo.fewer')} disabled={busy !== null || silo.reserve <= 0} onClick={() => setReserve(silo.reserve - 1)}>−</button>
-            <span className="wm-silo-num">{silo.reserve}</span>
-            <button type="button" className="wm-silo-step" aria-label={t('worldmenu.silo.more')} disabled={busy !== null || silo.reserve >= cap} onClick={() => setReserve(silo.reserve + 1)}>+</button>
+            <button type="button" className="wm-silo-step" aria-label={t('worldmenu.silo.fewer')} disabled={view.reserve <= 0} onClick={() => setReserve(view.reserve - 1)}>−</button>
+            <span className="wm-silo-num">{view.reserve}</span>
+            <button type="button" className="wm-silo-step" aria-label={t('worldmenu.silo.more')} disabled={view.reserve >= cap} onClick={() => setReserve(view.reserve + 1)}>+</button>
           </div>
-          {silo.auto !== 'off' && (
-            <span className="wm-silo-watch"><i />{t('worldmenu.silo.watching', { world: body.name, n: Math.max(0, stock - silo.reserve) })}</span>
+          {view.auto !== 'off' && (
+            <span className="wm-silo-watch"><i />{t('worldmenu.silo.watching', { world: body.name, n: Math.max(0, stock - view.reserve) })}</span>
           )}
         </div>
 
@@ -459,14 +561,14 @@ export const WmSilo: React.FC<{
           <div className="wm-silo-buildrow">
             <span className="wm-silo-bname">{t('worldmenu.silo.missile')}</span>
             <span className="wm-silo-cost">{MISSILE_COST.ore}m · <b>{MISSILE_COST.credits}c</b> · {MISSILE_BUILD_TICKS}t</span>
-            <button type="button" className="wm-silo-btn is-teal" disabled={busy !== null || room === 0 || !canAfford}
+            <button type="button" className="wm-silo-btn is-teal" disabled={busy === 'order' || room === 0 || !canAfford}
               title={room === 0 ? t('worldmenu.silo.full') : !canAfford ? t('worldmenu.silo.cantAfford') : undefined} onClick={order}>
               {busy === 'order' ? '…' : t('worldmenu.silo.buildBtn')}
             </button>
           </div>
           <div className="wm-silo-queue">
-            {silo.orders.length === 0 && <span className="wm-silo-note">{room === 0 ? t('worldmenu.silo.fullNote') : t('worldmenu.silo.idle')}</span>}
-            {silo.orders.map((o, i) => {
+            {view.orders.length === 0 && <span className="wm-silo-note">{room === 0 ? t('worldmenu.silo.fullNote') : t('worldmenu.silo.idle')}</span>}
+            {view.orders.map((o, i) => {
               const left = o.completeTick != null ? Math.max(0, o.completeTick - tick) : null;
               const pct = o.startTick != null && o.completeTick != null && o.completeTick > o.startTick
                 ? Math.min(1, Math.max(0, (tick - o.startTick) / (o.completeTick - o.startTick))) : 0;
@@ -475,7 +577,7 @@ export const WmSilo: React.FC<{
                   <span className="wm-silo-qn">{i + 1}</span>
                   <span className="wm-silo-qname">{t('worldmenu.silo.missile')}</span>
                   <span className="wm-silo-qt">{left != null ? `T-${left}` : t('worldmenu.silo.waiting')}</span>
-                  <button type="button" className="wm-silo-x" aria-label={t('worldmenu.silo.cancelAria')} disabled={busy !== null}
+                  <button type="button" className="wm-silo-x" aria-label={t('worldmenu.silo.cancelAria')} disabled={busy === `c${o.id}` || o.id.startsWith('pending-')}
                     onClick={() => cancel(o.id)}>✕</button>
                   {o.startTick != null && <i className="wm-silo-bar" style={{ width: `${Math.round(pct * 100)}%` }} />}
                 </div>

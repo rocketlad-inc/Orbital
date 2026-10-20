@@ -23,6 +23,13 @@ const BODY_COLS = `id, name, parent_body_id, orbit_radius, orbit_period, angle0,
   ram_start_vel_x, ram_start_vel_y, ram_intercept_pos_x, ram_intercept_pos_y`;
 
 /** Synchronous body position and velocity from game_bodies rows. */
+/** Every world of one game, positioned in memory: one query, then any
+ *  number of positions (the missile ETA list asks for many at once). */
+export async function loadSky(DB, gameId) {
+  const rows = (await DB.prepare(`SELECT ${BODY_COLS} FROM game_bodies WHERE game_id = ?`).bind(gameId).all()).results ?? [];
+  return makeSky(rows);
+}
+
 export function makeSky(bodyRows) {
   const byId = new Map(bodyRows.map(b => [b.id, b]));
   const memo = new Map();

@@ -2932,9 +2932,33 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // This hull's place in its formation. Everything below (range
         // ring, sprite, click hit-test) reads `placed`, so they move
         // together; the line above stays on the true course.
-        const placed = samples && samples.length > 0
+        let placed = samples && samples.length > 0
           ? placeInFormation(ship.id, samples, renderContext, transitShipScale(camera.scale))
           : samples;
+        // A MISSILE CLEARS ITS WORLD AT ONCE (Lorne, 2026-10-20: "it visibly
+        // enters orbit"). A world is drawn larger than its true size at map
+        // zoom, and a salvo pushing from rest spends the start of its first
+        // tick inside that disc, where it read as a hull in orbit. While its
+        // true point is under the drawn disc it is drawn on the disc's edge,
+        // on its course side, burning; it leaves the edge as it outruns it.
+        if (ship.class === 'missile' && placed && placed.length > 1) {
+          const home = ship.orbit?.parentBodyId ? bodyById2.get(ship.orbit.parentBodyId) : undefined;
+          if (home) {
+            const sc = renderContext.camera.scale;
+            const R = (drawnRadiusOf(renderContext.presentation, home, sc) + 6) / Math.max(1e-9, sc);
+            const first = placed[0], last = placed[placed.length - 1];
+            const cl = Math.hypot(last.x - first.x, last.y - first.y) || 1;
+            const course = { x: (last.x - first.x) / cl, y: (last.y - first.y) / cl };
+            placed = placed.map(p => {
+              const c = bodyPosition(home, p.t, gameState.bodies);
+              const dx = p.x - c.x, dy = p.y - c.y;
+              const d = Math.hypot(dx, dy);
+              if (d >= R) return p;
+              const u = d > R * 0.05 ? { x: dx / d, y: dy / d } : course;
+              return { t: p.t, x: c.x + u.x * R, y: c.y + u.y * R };
+            });
+          }
+        }
         // Weapons-range ring for the hull you just clicked. BEFORE the ship
         // so the icon sits on top of its own bubble rather than inside a
         // line drawn over it.
