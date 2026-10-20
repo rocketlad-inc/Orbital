@@ -920,7 +920,7 @@ export const ShipPanel: React.FC = () => {
   // same arc MOVE TO TARGET draws).
   const pickIntercept = (key: string) => {
     const o = interceptOptions.find(x => x.key === key && x.ok);
-    if (!o) return;
+    if (!o?.myPlan) return;
     setRendezvousId(key);
     setTransferError(null);
     setTransferNote(null);
@@ -951,7 +951,7 @@ export const ShipPanel: React.FC = () => {
   // fleet's mixed result is reported.
   const commitIntercept = async () => {
     const chosen = rvSelected;
-    if (!chosen || !mpActions || rendezvousBusy) return;
+    if (!chosen?.myPlan || !mpActions || rendezvousBusy) return;
     const chosenName = rvGroupName(chosen);
     // Guard the double-click: both posts carry replace:true, so the
     // second would cancel the leg the first just created.

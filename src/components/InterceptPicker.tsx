@@ -43,6 +43,10 @@ export interface PickerEntry {
    *  they land. */
   tripPct: number | null;
   fightTicks: number;
+  /** Why it can't be caught (game/interceptOptions InterceptWhy); null when it can. */
+  why: 'late' | 'noCourse' | 'landing' | null;
+  /** Flying to the world you are parked at. */
+  toYou: boolean;
   /** Bearing of the meeting from you, radians, screen axes. */
   angle: number;
   icon: { cls: ShipIconClass; variant?: ShipIconVariant; parts?: string[]; color?: string; color2?: string };
@@ -76,6 +80,13 @@ export interface InterceptPickerProps {
 }
 
 const VIEW_KEY = 'orbital.intercept.view';
+/** The "can't reach" list is open unless the player closed it: not being
+ *  able to target a ship you can SEE, with no word why, was the complaint
+ *  this answers. */
+const OUT_KEY = 'orbital.intercept.showOut';
+const readShowOut = (): boolean => {
+  try { return localStorage.getItem(OUT_KEY) !== '0'; } catch { return true; }
+};
 type View = 'list' | 'radar';
 const readView = (): View => {
   try { return localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'radar'; } catch { return 'radar'; }
@@ -95,8 +106,9 @@ export const InterceptPicker: React.FC<InterceptPickerProps> = (p) => {
   useI18n();
   const [view, setView] = useState<View>(readView);
   const [query, setQuery] = useState('');
-  const [showOut, setShowOut] = useState(false);
+  const [showOut, setShowOut] = useState(readShowOut);
   useEffect(() => { try { localStorage.setItem(VIEW_KEY, view); } catch { /* private mode */ } }, [view]);
+  useEffect(() => { try { localStorage.setItem(OUT_KEY, showOut ? '1' : '0'); } catch { /* private mode */ } }, [showOut]);
 
   const needle = query.trim().toLowerCase();
   const hit = (e: PickerEntry) => !needle || e.search.includes(needle);
@@ -149,6 +161,10 @@ export const InterceptPicker: React.FC<InterceptPickerProps> = (p) => {
         ? <PickerList entries={shownIn} out={shownOut} selectedKey={selected?.key ?? null} onSelect={p.onSelect} sheet={p.variant === 'sheet'} />
         : <PickerRadar entries={inReach} out={showOut ? outReach : []} dimmed={needle ? new Set(inReach.filter(e => !hit(e)).map(e => e.key)) : null}
             selectedKey={selected?.key ?? null} onSelect={p.onSelect} meIcon={p.meIcon} size={p.variant === 'sheet' ? 330 : 360} />}
+      {/* The radar can only hint at a miss with a ghost dot (a tooltip, which
+          a phone cannot hover), so the reasons are listed under it too. */}
+      {view === 'radar' && shownOut.length > 0 && <div className="ip-list"><OutList out={shownOut} /></div>}
+      <div className="ip-sensors">{t('ship.rv.sensorsNote')}</div>
     </>
   );
 
@@ -271,23 +287,45 @@ const PickerList: React.FC<{
           → {e.dest} · {e.match ? t('ship.panel.matchIn', { n: e.meetIn }) : t('ship.panel.meetIn', { n: e.meetIn })}
           {e.match
             ? <span className="ip-tag ip-tag--match"> ⇌ {t('ship.panel.flyTogether')}</span>
-            : <span className="ip-tag"> {e.meetIn - e.myEta > 0 ? t('ship.rv.spare', { n: e.meetIn - e.myEta }) : t('ship.rv.justInTime')}</span>}
+            : e.toYou
+              ? <span className="ip-tag ip-tag--you"> {t('ship.rv.toYou')}</span>
+              : <span className="ip-tag"> {e.meetIn - e.myEta > 0 ? t('ship.rv.spare', { n: e.meetIn - e.myEta }) : t('ship.rv.justInTime')}</span>}
         </span>
         {e.match && e.tripPct != null && <MatchLine e={e} />}
       </button>
     ))}
-    {out.length > 0 && <div className="ip-head ip-head--out">{t('ship.rv.outHead')}</div>}
-    {out.map(e => (
-      <div key={e.key} className="ip-out">
-        <ShipIcon size={20} shipClass={e.icon.cls} variant={e.icon.variant} parts={e.icon.parts} color={e.icon.color} color2={e.icon.color2} />
-        <span className="ip-out__names">
-          <span className="ip-out__name">{e.name}</span>
-          <span className="ip-out__sub">{e.ownerName} · {tn('ship.rv.ships', e.ships)}</span>
-        </span>
-        <span className="ip-out__why">{t('ship.rv.why', { dest: e.dest, their: e.theirEta, mine: e.myEta })}</span>
-      </div>
-    ))}
+    <OutList out={out} />
   </div>
+);
+
+/** WHY each one can't be caught, in words, with what would change it. */
+export function outReason(e: PickerEntry): { why: string; fix: string | null } {
+  const v = { dest: e.dest, their: e.theirEta, mine: e.myEta };
+  switch (e.why) {
+    case 'landing': return { why: t('ship.rv.whyLanding', v), fix: t('ship.rv.fixLanding', v) };
+    case 'noCourse': return { why: t('ship.rv.whyNoCourse', v), fix: null };
+    default: return { why: t('ship.rv.whyLate', v), fix: t('ship.rv.fixLate', v) };
+  }
+}
+
+const OutList: React.FC<{ out: PickerEntry[] }> = ({ out }) => (
+  <>
+    {out.length > 0 && <div className="ip-head ip-head--out">{t('ship.rv.outHead')}</div>}
+    {out.map(e => {
+      const r = outReason(e);
+      return (
+        <div key={e.key} className="ip-out">
+          <ShipIcon size={20} shipClass={e.icon.cls} variant={e.icon.variant} parts={e.icon.parts} color={e.icon.color} color2={e.icon.color2} />
+          <span className="ip-out__names">
+            <span className="ip-out__name">{e.name}</span>
+            <span className="ip-out__sub">{e.ownerName} · {tn('ship.rv.ships', e.ships)}</span>
+            <span className="ip-out__why">{r.why}</span>
+            {r.fix && <span className="ip-out__fix">{r.fix}</span>}
+          </span>
+        </div>
+      );
+    })}
+  </>
 );
 
 // ---- RADAR ---------------------------------------------------------------
@@ -346,7 +384,7 @@ const PickerRadar: React.FC<{
       {out.map(e => {
         const r = scopeRadius(e.meetIn, R, tMax);
         return (
-          <span key={e.key} className="ip-ghost" title={t('ship.rv.whyLong', { name: e.name, dest: e.dest, their: e.theirEta, mine: e.myEta })}
+          <span key={e.key} className="ip-ghost" title={t('ship.rv.ghostTip', { name: e.name, why: outReason(e).why })}
             style={{ left: C + Math.cos(e.angle) * r - 3.5, top: C + Math.sin(e.angle) * r - 3.5 }} />
         );
       })}

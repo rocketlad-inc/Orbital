@@ -142,7 +142,10 @@
 .ip-out__names { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
 .ip-out__name { font-size: 10px; color: #b8c8d6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ip-out__sub { font-size: 8px; color: #7a8a9a; }
-.ip-out__why { font-size: 9px; color: #7a8a9a; white-space: nowrap; }
+.ip-out__why { font-size: 9px; color: #c9a86a; }
+.ip-out__fix { font-size: 8px; color: #7a8a9a; }
+.ip-tag--you { color: #4fc3f7; }
+.ip-sensors { font-size: 8px; color: #6a7a8a; padding: 2px 2px 0; }
 
 /* ---- RADAR ---- */
 .ip-radar { position: relative; flex: none; align-self: center; }
