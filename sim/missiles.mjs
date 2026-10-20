@@ -282,5 +282,91 @@ check('...the raid is destroyed in flight, before it lands', (await hpOf(raid[0]
 const okSalvo = await call(A.user_id, 'PATCH', silo(cityA), { salvo: 7 });
 check('the auto salvo size is the owner\'s to set', okSalvo.status === 200 && okSalvo.body.salvo === 7);
 
+// ---- 8. the list of 2026-10-20 ----------------------------------------------
+// The in-flight strike above names the hull it was aimed at and where it burst,
+// so the map plays the blast on that hull's drawn course, not at the world.
+const s3row = await DB.prepare(`SELECT ship_id, payload FROM chronicle_entries WHERE game_id = ? AND kind = 'missile_strike' AND json_extract(payload, '$.in_flight') = 1 ORDER BY tick_number LIMIT 1`).bind(G).first();
+const s3p = s3row ? JSON.parse(s3row.payload) : {};
+check('an in-flight strike names its target hull and carries the meeting point',
+  s3row?.ship_id === grp[2] && Number.isFinite(s3p.x) && Number.isFinite(s3p.y), JSON.stringify({ ship: s3row?.ship_id, x: s3p.x, y: s3p.y }));
+// The raider is told.
+const warnRow = await DB.prepare(`SELECT ship_id, visibility, payload FROM chronicle_entries WHERE game_id = ? AND kind = 'missile_inbound' AND ship_id = ?`).bind(G, grp[2]).first();
+check('the raid\'s owner is told missiles will meet its ships, and nobody else is',
+  !!warnRow && JSON.parse(warnRow.visibility)[0] === B.id && JSON.parse(warnRow.visibility).length === 1
+  && Number(JSON.parse(warnRow.payload).meet_tick) === L3.body.meet_tick, JSON.stringify(warnRow));
+// Earth -> Venus is a short hop: too quick for an interceptor that starts
+// from rest to meet, so Venus shot it down as it landed. Over a long trip
+// auto-defence meets the salvo in flight: Venus's silo city, moved to
+// Neptune for this, against a salvo of 3 from Earth.
+const intc2 = intc ? JSON.parse(intc.payload) : {};
+check('a short hop is still shot down as it lands', intc2.in_flight !== true && intc2.count === 4, JSON.stringify(intc2));
+{
+  const FAR = `${G}:neptune`;
+  await DB.prepare(`UPDATE game_settlements SET body_id = ?, missile_stock = 5, missile_auto = 'missiles', missile_reserve = 0 WHERE id = ?`).bind(FAR, cityB.id).run();
+  await DB.prepare(`UPDATE game_settlements SET missile_stock = 3 WHERE id = ?`).bind(cityA.id).run();
+  const L5 = await call(A.user_id, 'POST', `${silo(cityA)}/launch`, { target_body_id: FAR, count: 3 });
+  let caught = null;
+  while (tick < L5.body.arrive_tick && !caught) {
+    await runTick();
+    caught = await DB.prepare(`SELECT payload FROM chronicle_entries WHERE game_id = ? AND kind = 'missile_intercepted' AND json_extract(payload, '$.in_flight') = 1`).bind(G).first();
+  }
+  const cp = caught ? JSON.parse(caught.payload) : {};
+  check('over a long trip, auto-defence (MISSILES) meets the incoming salvo IN FLIGHT, one for one',
+    cp.count === 3 && cp.got_through === 0 && Number((await cityOf(FAR)).missile_stock) === 2
+    && (await hpOf(L5.body.ship_id)).status === 'expended' && tick < L5.body.arrive_tick,
+    JSON.stringify({
+      cp, stock: (await cityOf(FAR))?.missile_stock, salvo: await hpOf(L5.body.ship_id), tick, arrive: L5.body.arrive_tick,
+      log: (await DB.prepare(`SELECT tick_number, kind, payload FROM chronicle_entries WHERE game_id = ? AND kind LIKE 'missile%' AND tick_number >= ? ORDER BY tick_number`).bind(G, L5.body.arrive_tick - 12).all()).results,
+      interceptors: (await DB.prepare(`SELECT s.id, s.status, s.missile_count, n.status AS ns, n.scheduled_t, n.rv_meet_tick, n.arrival_at_tick FROM game_ships s JOIN game_ship_nodes n ON n.ship_id = s.id WHERE n.rv_follow_ship_id = ?`).bind(L5.body.ship_id).all()).results,
+    }));
+  await DB.prepare(`UPDATE game_settlements SET body_id = ?, missile_auto = 'off' WHERE id = ?`).bind(VENUS, cityB.id).run();
+}
+// The blast check that keeps auto-defence off your own fleet.
+{
+  const { loadFlights } = await import('../worker/flightState.js');
+  const F = await loadFlights(DB, G);
+  const parkedNow = await M.loadParked(DB, G);
+  const homeShip = await park(A.id, EARTH, 'frigate', 270);
+  const parked2 = [...parkedNow, { id: homeShip, owner_faction_id: A.id, hp: 270, parent_body_id: EARTH, name: 'x', ship_class: 'frigate' }];
+  const e = F.sky.bodyPos(EARTH, tick);
+  const atEarth = M.blastVictims(F, parked2, e, tick).some(v => v.id === homeShip);
+  const offEarth = M.blastVictims(F, parked2, { x: e.x + 60, y: e.y }, tick).some(v => v.id === homeShip);
+  check('a burst within 40 of a world catches the fleet parked there; 60 out it does not', atEarth && !offEarth,
+    JSON.stringify({ atEarth, offEarth }));
+  await DB.prepare(`UPDATE game_ships SET status = 'destroyed' WHERE id = ?`).bind(homeShip).run();
+}
+// A Gravity Sink re-times a raid after a salvo is aimed at it: the salvo is
+// re-aimed and still meets it.
+await DB.prepare(`UPDATE game_settlements SET missile_stock = 6, missile_auto = 'off', missile_reserve = 0 WHERE id = ?`).bind(cityA.id).run();
+const held = [await park(B.id, MARS, 'corvette', 40)];
+const heldLand = await fly(held, B.id, MARS, EARTH);
+await runTick();
+const L4 = await call(A.user_id, 'POST', `${silo(cityA)}/launch`, { target_ship_id: held[0], count: 4 });
+const n4a = await DB.prepare('SELECT rv_meet_tick, launch_x FROM game_ship_nodes WHERE ship_id = ?').bind(L4.body.ship_id).first();
+await DB.prepare(`UPDATE game_ship_nodes SET arrival_at_tick = arrival_at_tick + 25, sink_held_until_tick = ? WHERE ship_id = ? AND status = 'in_transit'`)
+  .bind(tick + 25, held[0]).run();
+await runTick();
+const n4b = await DB.prepare('SELECT rv_meet_tick, launch_x FROM game_ship_nodes WHERE ship_id = ?').bind(L4.body.ship_id).first();
+{
+  // Re-aimed exactly when the hold moved the raid off the salvo's aim.
+  const { loadFlights } = await import('../worker/flightState.js');
+  const F = await loadFlights(DB, G);
+  const n = await DB.prepare('SELECT * FROM game_ship_nodes WHERE ship_id = ?').bind(L4.body.ship_id).first();
+  const { rendezvousStateAt } = await import('../src/physics/rendezvous.js');
+  const aim = rendezvousStateAt({
+    p0: { x: n.launch_x, y: n.launch_y }, v0: { x: n.launch_vx, y: n.launch_vy }, accel: n.accel,
+    A: { x: n.rv_ax, y: n.rv_ay }, B: { x: n.rv_bx, y: n.rv_by }, startTick: n.scheduled_t, meetTick: n.rv_meet_tick,
+  }, n.rv_meet_tick, null).pos;
+  const there = F.stateAt(held[0], n.rv_meet_tick)?.pos;
+  const off = there ? Math.hypot(there.x - aim.x, there.y - aim.y) : Infinity;
+  check('after a Gravity Sink re-times the raid, the salvo\'s aim is still on it (re-aimed if it had to be)',
+    L4.status === 200 && off <= M.MISSILE_BLAST_RADIUS / 2,
+    JSON.stringify({ off, reaimed: Number(n4b.launch_x) !== Number(n4a.launch_x), n4a, n4b }));
+}
+while (tick < Number(n4b.rv_meet_tick) && (await hpOf(held[0])).status === 'active') await runTick();
+check('...and still meets it', (await hpOf(held[0])).status === 'destroyed', JSON.stringify({ held: await hpOf(held[0]), tick, heldLand }));
+// (LAUNCH on the inbound alert, notifyActions 'intercept', calls the launch route
+// tested above as the signed-in player; that module needs the worker bundle.)
+
 console.log(bad === 0 ? '\nALL MISSILE CHECKS PASS' : `\n${bad} FAILED`);
 process.exit(bad === 0 ? 0 : 1);

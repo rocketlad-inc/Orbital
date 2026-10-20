@@ -44,6 +44,7 @@ import * as messages from './messages.js';
 import * as analytics from './analytics.js';
 import * as state from './state.js';
 import * as factionsMod from './factions.js';
+import * as missilesMod from './missiles.js';
 import { authorizeWear, authorizeWearOrders, factionIdFor } from './wear.js';
 import { widgetSnapshot } from './widget.js';
 import { makeRouteMath } from './routeMath.js';
@@ -62,7 +63,9 @@ export const WEAR_COMMAND_RE = /^\/wear\/([A-Za-z0-9_-]{8,64})\/command\.json$/;
 // factions is here for READS only (the roster the Territory screen
 // draws): its own handler applies the Sensors gating, so the watch can
 // never show a rival's fleet or stockpile the game would hide.
-const GAME_MODULES = [actions, fleets, trades, wars, messages, state, factionsMod];
+// missiles: a notification's LAUNCH (notifyActions 'intercept') fires a
+// silo through its own launch route.
+const GAME_MODULES = [actions, fleets, trades, wars, messages, state, factionsMod, missilesMod];
 
 /** Target priority, as the watch offers it: a handful of presets rather
  *  than the six-way ranking editor. Each is a full permutation of
