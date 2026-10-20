@@ -1108,6 +1108,8 @@
 .wm-mod.is-locked { opacity: 0.6; }
 .wm-mod.is-locked .wm-mod-st { color: #c9a86a; }
 .wm-mod.is-picked { border-color: #ffb84d; box-shadow: 0 0 0 1px #ffb84d, 0 0 14px rgba(255, 184, 77, 0.25); }
+.wm-mods.is-grid { display: grid; grid-template-columns: 1fr 1fr; }
+.wm-mods.is-grid .wm-mod-st { display: none; }
 .wm-modrow {
   display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; align-items: baseline;
   padding: 8px 10px; text-align: left;
