@@ -282,9 +282,10 @@ export async function missileLeg(DB, gameId, fromId, toId, tick) {
  * the arrivals step, which runs before the missile pass). Null when no
  * such meeting exists. `F` is loadFlights().
  */
-export function planIntercept(F, fromBodyId, tick, targetId) {
+export function planIntercept(F, fromBodyId, tick, targetId, { missiles = false } = {}) {
   const f = F.flights.get(targetId);
-  if (!f || f.cls === MISSILE_CLASS) return null;
+  // A hostile SALVO is a target only for auto-defence shooting it down.
+  if (!f || (f.cls === MISSILE_CLASS && !missiles)) return null;
   const latest = Math.floor(f.plan.arriveTick) - 1;
   if (!(latest > tick)) return null;
   const p0 = F.sky.bodyPos(fromBodyId, tick);
@@ -322,10 +323,54 @@ export function planIntercept(F, fromBodyId, tick, targetId) {
   };
 }
 
+/** Where an intercept's burst happens: its single push, at the meeting. */
+export function meetPoint(plan, startTick, meetTick) {
+  return rendezvousStateAt({
+    p0: { x: plan.lx, y: plan.ly }, v0: { x: plan.lvx, y: plan.lvy }, accel: plan.acc,
+    A: plan.A, B: plan.B, startTick, meetTick,
+  }, meetTick, null).pos;
+}
+
+/** Hulls sitting in orbit (not mid-leg, not missiles): a burst within the
+ *  blast radius of their world's centre catches them (a park orbit is
+ *  6-10 units; the radius is 40). */
+export async function loadParked(DB, gameId) {
+  return (await DB
+    .prepare(
+      `SELECT s.id, s.name, s.ship_class, s.owner_faction_id, s.hp, s.parent_body_id
+         FROM game_ships s
+        WHERE s.game_id = ? AND s.status = 'active' AND s.ship_class <> 'missile'
+          AND NOT EXISTS (SELECT 1 FROM game_ship_nodes n WHERE n.ship_id = s.id AND n.status = 'in_transit')`,
+    )
+    .bind(gameId).all()).results ?? [];
+}
+
+/** Every hull a burst at `at` on tick `meet` catches: flying ones where
+ *  their plans put them, parked ones at their world. `hit` carries hit
+ *  points already spent this tick (ship id -> hp left). */
+export function blastVictims(F, parked, at, meet, hit = new Map()) {
+  const R2 = MISSILE_BLAST_RADIUS * MISSILE_BLAST_RADIUS;
+  const near = (p) => p && ((p.x - at.x) ** 2 + (p.y - at.y) ** 2) <= R2;
+  const victims = [];
+  for (const [id, f] of F.flights) {
+    if (f.cls === MISSILE_CLASS || (hit.get(id) ?? 1) <= 0) continue;
+    if (near(F.stateAt(id, meet)?.pos)) {
+      victims.push({ id, name: f.name, ship_class: f.cls, owner_faction_id: f.owner, hp: hit.get(id) ?? f.hp, parked_at: null });
+    }
+  }
+  for (const s of parked) {
+    if ((hit.get(s.id) ?? 1) <= 0) continue;
+    if (near(F.sky.bodyPos(s.parent_body_id, meet))) victims.push({ ...s, hp: hit.get(s.id) ?? s.hp, parked_at: s.parent_body_id });
+  }
+  return victims;
+}
+
 /** The rows of one salvo leaving `silo`: the missile hull, its leg, the
  *  launcher's private log line. `leg` is a missileLeg (at a world) or a
- *  planIntercept (at a hull, with its rendezvous). */
-function salvoStatements(env, { gameId, tick, ownerId, silo, homeRadius, count, targetBodyId, arrive, plan, rv, payload }) {
+ *  planIntercept (at a hull, with its rendezvous). `warn`, for a salvo at
+ *  ships in flight: the line their owner gets (Lorne, 2026-10-20: the
+ *  raider is told missiles will meet them). */
+function salvoStatements(env, { gameId, tick, ownerId, silo, homeRadius, count, targetBodyId, arrive, plan, rv, payload, warn }) {
   const shipId = `${gameId}:msl_${tick}_${Math.random().toString(36).slice(2, 8)}`;
   const rp = parkOrbitRadius(Number(homeRadius) || 0);
   const p = plan ?? {};
@@ -360,6 +405,12 @@ function salvoStatements(env, { gameId, tick, ownerId, silo, homeRadius, count, 
          VALUES (?, ?, ?, 'missile_launch', ?, ?, ?, ?, ?, ?)`,
       ).bind(`mlaunch_${Math.random().toString(36).slice(2, 10)}`, gameId, tick, ownerId, targetBodyId, shipId,
         JSON.stringify({ count, ...payload }), JSON.stringify([ownerId]), Date.now()),
+      ...(warn ? [env.DB.prepare(
+        `INSERT INTO chronicle_entries
+           (id, game_id, tick_number, kind, actor_faction_id, body_id, ship_id, payload, visibility, created_at_ms)
+         VALUES (?, ?, ?, 'missile_inbound', ?, ?, ?, ?, ?, ?)`,
+      ).bind(`minbd_${Math.random().toString(36).slice(2, 10)}`, gameId, tick, ownerId, targetBodyId, warn.shipId,
+        JSON.stringify({ count, ...warn.payload }), JSON.stringify([warn.ownerId]), Date.now())] : []),
     ],
   };
 }
@@ -448,9 +499,31 @@ async function launchAtShip(env, L, body) {
       from_name: home?.name ?? '', body_name: byId.get(icp.dest)?.name ?? '', in_flight: true,
       meet_tick: icp.detonateTick, ...groupLabel(F, factionNames, targetId),
     },
+    warn: {
+      ownerId: f.owner, shipId: targetId,
+      payload: {
+        launcher_name: factionNames.get(L.me.id) ?? null, from_name: home?.name ?? '',
+        body_name: byId.get(icp.dest)?.name ?? '', meet_tick: icp.detonateTick,
+        target_hulls: groupLabel(F, factionNames, targetId).target_hulls ?? 1,
+      },
+    },
   });
   await env.DB.batch(stmts);
   return json({ ok: true, ship_id: shipId, meet_tick: icp.detonateTick, ticks: icp.detonateTick - L.tick });
+}
+
+/** Of a burst at an intercept's meeting, the hulls `me` would rather it
+ *  spared: its own, other than the group it is aimed at. What the launch
+ *  picker warns about before a late launch catches your own fleet parked
+ *  at the world the raid is closing on. */
+function ownHullsInBlast(F, parked, icp, tick, targetId, me) {
+  const group = groupFlights(F.flights, { exclude: (_id, f) => f.cls === MISSILE_CLASS })
+    .find(g => g.members.includes(targetId));
+  const skip = new Set(group?.members ?? [targetId]);
+  const at = meetPoint(icp.plan, tick, icp.meetTick);
+  const mine = blastVictims(F, parked, at, icp.meetTick).filter(v => v.owner_faction_id === me && !skip.has(v.id));
+  const world = mine.find(v => v.parked_at)?.parked_at ?? null;
+  return { n: mine.length, world: world ? F.sky.byId.get(world)?.name ?? null : null };
 }
 
 // GET /api/games/:gameId/missiles/eta?from=&to=  — the launch picker's ETA.
@@ -489,10 +562,15 @@ async function handleIntercepts(req, env, ctx) {
   const game = await env.DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
   const tick = Number(game?.current_tick ?? 0);
   const F = await loadFlights(env.DB, gameId);
+  const parked = await loadParked(env.DB, gameId);
   const out = {};
   for (const id of ships) {
     const icp = planIntercept(F, from, tick, id);
-    out[id] = icp ? { meet_tick: icp.detonateTick, ticks: icp.detonateTick - tick } : null;
+    // own_hits: your own hulls the burst would catch (a late meeting
+    // close to a world your fleet is parked at), for the picker to warn.
+    out[id] = icp
+      ? { meet_tick: icp.detonateTick, ticks: icp.detonateTick - tick, own_hits: ownHullsInBlast(F, parked, icp, tick, id, me.id) }
+      : null;
   }
   return json({ meet: out });
 }
@@ -593,9 +671,154 @@ async function damageShips(env, gameId, tick, victims, damage, factionNames) {
  * pact set (pairKey form): a silo never shoots down a partner's salvo.
  */
 export async function resolveMissiles(env, gameId, tick, { peace = new Set() } = {}) {
+  await retargetSalvos(env, gameId, tick);
   let events = await detonateInFlight(env, gameId, tick);
   events += await landedMissiles(env, gameId, tick, peace);
+  events += await autoShootDown(env, gameId, tick, peace);
   events += await autoIntercept(env, gameId, tick, peace);
+  return events;
+}
+
+/**
+ * RE-AIM A SALVO WHOSE TARGET WAS RE-TIMED. A ship in flight takes no
+ * orders, so a meeting is certain, with one exception: a Gravity Sink
+ * holding a hull pushes its arrival back, which moves the end of its
+ * course. A salvo still aimed at the old course would burst on nothing.
+ * Each tick, before anything bursts: a salvo whose target is no longer
+ * where it was going to be at the meeting is re-aimed, from where it is
+ * now, at the first whole tick it can reach the target's new course.
+ * Found nothing to reach: it flies on to the old spot.
+ */
+async function retargetSalvos(env, gameId, tick) {
+  const rows = (await env.DB
+    .prepare(
+      `SELECT n.id, n.scheduled_t, n.launch_x, n.launch_y, n.launch_vx, n.launch_vy, n.accel,
+              n.rv_ax, n.rv_ay, n.rv_bx, n.rv_by, n.rv_meet_tick, n.rv_follow_ship_id
+         FROM game_ship_nodes n JOIN game_ships s ON s.id = n.ship_id
+        WHERE n.game_id = ? AND s.ship_class = 'missile' AND s.status = 'active'
+          AND n.status IN ('in_transit', 'committed') AND n.rv_meet_tick IS NOT NULL AND n.rv_meet_tick > ?`,
+    )
+    .bind(gameId, tick).all()).results ?? [];
+  if (rows.length === 0) return 0;
+  const F = await loadFlights(env.DB, gameId);
+  let moved = 0;
+  for (const n of rows) {
+    const target = F.flights.get(n.rv_follow_ship_id);
+    if (!target) continue;
+    const plan = {
+      p0: { x: Number(n.launch_x), y: Number(n.launch_y) }, v0: { x: Number(n.launch_vx), y: Number(n.launch_vy) },
+      accel: Number(n.accel) || MISSILE_ACCEL,
+      A: { x: Number(n.rv_ax), y: Number(n.rv_ay) }, B: { x: Number(n.rv_bx), y: Number(n.rv_by) },
+      startTick: Number(n.scheduled_t), meetTick: Number(n.rv_meet_tick),
+    };
+    const aim = rendezvousStateAt(plan, plan.meetTick, null).pos;
+    const there = F.stateAt(n.rv_follow_ship_id, plan.meetTick)?.pos;
+    if (!there || Math.hypot(there.x - aim.x, there.y - aim.y) <= MISSILE_BLAST_RADIUS / 2) continue;
+    const now = rendezvousStateAt(plan, tick, null);
+    const latest = Math.floor(target.plan.arriveTick) - 1;
+    for (let t = tick + 1; t <= latest; t++) {
+      const s = F.stateAt(n.rv_follow_ship_id, t);
+      if (!s) break;
+      if (missileTicks(Math.hypot(s.pos.x - now.pos.x, s.pos.y - now.pos.y)) > t - tick) continue;
+      const T = t - tick;
+      const A = {
+        x: (2 * (s.pos.x - now.pos.x - now.vel.x * T)) / T,
+        y: (2 * (s.pos.y - now.pos.y - now.vel.y * T)) / T,
+      };
+      const acc = Math.hypot(A.x, A.y) / T;
+      if (!(acc > 0)) break;
+      await env.DB.prepare(
+        `UPDATE game_ship_nodes
+            SET scheduled_t = ?, launch_x = ?, launch_y = ?, launch_vx = ?, launch_vy = ?, accel = ?, flip_tick = ?,
+                rv_ax = ?, rv_ay = ?, rv_bx = 0, rv_by = 0, rv_meet_tick = ?
+          WHERE id = ?`,
+      ).bind(tick, now.pos.x, now.pos.y, now.vel.x, now.vel.y, acc, t, A.x, A.y, t, n.id).run();
+      moved += 1;
+      break;
+    }
+  }
+  return moved;
+}
+
+/**
+ * SHOOTING SALVOS DOWN IN FLIGHT (Lorne, 2026-10-20). Now that missiles
+ * are fast and burst on contact, a silo on MISSILES or + FLEETS meets a
+ * hostile salvo on its way in, not only as it lands: one interceptor per
+ * incoming missile, above the reserve, at each salvo bound for its world
+ * it can catch. The landing shoot-down (landedMissiles) stays for the
+ * ones it cannot, such as a short hop from a moon.
+ */
+async function autoShootDown(env, gameId, tick, peace) {
+  const silos = (await env.DB
+    .prepare(
+      `SELECT id, body_id, owner_faction_id, missile_stock, missile_reserve
+         FROM game_settlements
+        WHERE game_id = ? AND type = 'city' AND destroyed_at_tick IS NULL
+          AND missile_auto IN ('missiles', 'fleets') AND missile_stock > missile_reserve`,
+    )
+    .bind(gameId).all()).results ?? [];
+  if (silos.length === 0) return 0;
+  const F = await loadFlights(env.DB, gameId);
+  const salvos = [...F.flights].filter(([, f]) => f.cls === MISSILE_CLASS && !f.plan.rv);
+  if (salvos.length === 0) return 0;
+  const friendly = (a, b) => a === b || peace.has(pairKey(a, b));
+  const rows = (await env.DB
+    .prepare(`SELECT id, owner_faction_id, missile_count FROM game_ships WHERE game_id = ? AND ship_class = 'missile' AND status = 'active'`)
+    .bind(gameId).all()).results ?? [];
+  const countOf = new Map(rows.map(r => [r.id, Number(r.missile_count || 0)]));
+  // Interceptors each empire already has on each salvo (in the air, or
+  // launched this tick and not yet flying).
+  const sent = new Map();
+  const note = (owner, id, k) => {
+    if (!sent.has(owner)) sent.set(owner, new Map());
+    sent.get(owner).set(id, (sent.get(owner).get(id) ?? 0) + k);
+  };
+  const aimed = (await env.DB
+    .prepare(
+      `SELECT s.owner_faction_id, s.missile_count, n.rv_follow_ship_id FROM game_ship_nodes n JOIN game_ships s ON s.id = n.ship_id
+        WHERE n.game_id = ? AND s.ship_class = 'missile' AND s.status = 'active'
+          AND n.status IN ('in_transit', 'committed') AND n.rv_follow_ship_id IS NOT NULL`,
+    )
+    .bind(gameId).all()).results ?? [];
+  for (const a of aimed) note(a.owner_faction_id, a.rv_follow_ship_id, Number(a.missile_count || 0));
+  const worlds = [...new Set(silos.map(s => s.body_id))];
+  const bodyRows = new Map(((await env.DB
+    .prepare(`SELECT id, name, radius FROM game_bodies WHERE game_id = ? AND id IN (${worlds.map(() => '?').join(',')})`)
+    .bind(gameId, ...worlds).all()).results ?? []).map(b => [b.id, b]));
+  const factionNames = new Map(((await env.DB
+    .prepare('SELECT id, name FROM game_factions WHERE game_id = ?').bind(gameId).all()).results ?? [])
+    .map(f => [f.id, f.name]));
+  let events = 0;
+  for (const silo of silos) {
+    for (const [id, f] of salvos) {
+      const free = Number(silo.missile_stock) - Number(silo.missile_reserve || 0);
+      if (free <= 0) break;
+      if (f.plan.targetBodyId !== silo.body_id || friendly(silo.owner_faction_id, f.owner)) continue;
+      const need = (countOf.get(id) ?? 0) - (sent.get(silo.owner_faction_id)?.get(id) ?? 0);
+      if (need <= 0) continue;
+      const icp = planIntercept(F, silo.body_id, tick, id, { missiles: true });
+      if (!icp) continue;   // not catchable: the landing shoot-down has it
+      const k = Math.min(need, free);
+      const took = await env.DB
+        .prepare('UPDATE game_settlements SET missile_stock = missile_stock - ? WHERE id = ? AND missile_stock >= ?')
+        .bind(k, silo.id, k).run();
+      if (!took.meta?.changes) break;
+      silo.missile_stock = Number(silo.missile_stock) - k;
+      const home = bodyRows.get(silo.body_id);
+      const { stmts } = salvoStatements(env, {
+        gameId, tick, ownerId: silo.owner_faction_id, silo, homeRadius: home?.radius, count: k,
+        targetBodyId: icp.dest, arrive: icp.arrive, plan: icp.plan,
+        rv: { A: icp.plan.A, B: icp.plan.B, meetTick: icp.meetTick, follow: id },
+        payload: {
+          from_name: home?.name ?? '', body_name: home?.name ?? '', in_flight: true, auto: true, at_missiles: true,
+          meet_tick: icp.detonateTick, target_owner_name: factionNames.get(f.owner) ?? null, target_missiles: countOf.get(id) ?? 0,
+        },
+      });
+      await env.DB.batch(stmts);
+      note(silo.owner_faction_id, id, k);
+      events += 1;
+    }
+  }
   return events;
 }
 
@@ -618,17 +841,7 @@ async function detonateInFlight(env, gameId, tick) {
   const factionNames = new Map(((await env.DB
     .prepare('SELECT id, name FROM game_factions WHERE game_id = ?').bind(gameId).all()).results ?? [])
     .map(f => [f.id, f.name]));
-  // Parked hulls: where their world is (a park orbit is 6-10 units; the
-  // radius is 40, so the world's centre stands in for the ring).
-  const parked = (await env.DB
-    .prepare(
-      `SELECT s.id, s.name, s.ship_class, s.owner_faction_id, s.hp, s.parent_body_id
-         FROM game_ships s
-        WHERE s.game_id = ? AND s.status = 'active' AND s.ship_class <> 'missile'
-          AND NOT EXISTS (SELECT 1 FROM game_ship_nodes n WHERE n.ship_id = s.id AND n.status = 'in_transit')`,
-    )
-    .bind(gameId).all()).results ?? [];
-  const R2 = MISSILE_BLAST_RADIUS * MISSILE_BLAST_RADIUS;
+  const parked = await loadParked(env.DB, gameId);
   let events = 0;
   const hit = new Map();   // ship id -> hp left, across bursts this tick
   for (const m of due) {
@@ -639,18 +852,7 @@ async function detonateInFlight(env, gameId, tick) {
       A: { x: Number(m.rv_ax), y: Number(m.rv_ay) }, B: { x: Number(m.rv_bx), y: Number(m.rv_by) },
       startTick: Number(m.scheduled_t), meetTick: meet,
     }, meet, null).pos;
-    const near = (p) => p && ((p.x - at.x) ** 2 + (p.y - at.y) ** 2) <= R2;
-    const victims = [];
-    for (const [id, f] of F.flights) {
-      if (f.cls === MISSILE_CLASS || (hit.get(id) ?? 1) <= 0) continue;
-      if (near(F.stateAt(id, meet)?.pos)) {
-        victims.push({ id, name: f.name, ship_class: f.cls, owner_faction_id: f.owner, hp: hit.get(id) ?? f.hp });
-      }
-    }
-    for (const s of parked) {
-      if ((hit.get(s.id) ?? 1) <= 0) continue;
-      if (near(F.sky.bodyPos(s.parent_body_id, meet))) victims.push({ ...s, hp: hit.get(s.id) ?? s.hp });
-    }
+    const victims = blastVictims(F, parked, at, meet, hit);
     const count = Number(m.missile_count || 0);
     const damage = MISSILE_DAMAGE * count;
     await env.DB.batch([
@@ -660,14 +862,49 @@ async function detonateInFlight(env, gameId, tick) {
     const out = victims.length ? await damageShips(env, gameId, tick, victims, damage, factionNames) : [];
     for (const v of victims) hit.set(v.id, Number(v.hp) - damage);
     const dest = F.sky.byId.get(m.target_body_id);
-    const targetOwner = F.flights.get(m.rv_follow_ship_id)?.owner ?? out.find(v => v.ship_id === m.rv_follow_ship_id)?.owner_faction_id;
     events += 1;
+
+    // AN INTERCEPTOR: aimed at an enemy SALVO (auto-defence, MISSILES or
+    // + FLEETS), it shoots that salvo's missiles down one for one. What is
+    // left flies on and lands as it would have.
+    const prey = F.flights.get(m.rv_follow_ship_id);
+    if (prey?.cls === MISSILE_CLASS) {
+      const row = await env.DB.prepare(`SELECT missile_count, status FROM game_ships WHERE id = ?`).bind(m.rv_follow_ship_id).first();
+      const had = Number(row?.missile_count ?? 0);
+      const killed = row?.status === 'active' ? Math.min(had, count) : 0;
+      if (killed > 0) {
+        const left = had - killed;
+        await env.DB.batch(left > 0
+          ? [env.DB.prepare('UPDATE game_ships SET missile_count = ?, name = ? WHERE id = ?').bind(left, `Missiles x${left}`, m.rv_follow_ship_id)]
+          : [
+            env.DB.prepare(`UPDATE game_ships SET missile_count = 0, status = 'expended', destroyed_at_tick = ? WHERE id = ?`).bind(tick, m.rv_follow_ship_id),
+            env.DB.prepare(`UPDATE game_ship_nodes SET status = 'executed', executed_at_tick = ? WHERE ship_id = ? AND status IN ('in_transit', 'committed')`).bind(tick, m.rv_follow_ship_id),
+          ]);
+        await env.DB.prepare(
+          `INSERT INTO chronicle_entries (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
+           VALUES (?, ?, ?, 'missile_intercepted', ?, ?, ?, 'public', ?)`,
+        ).bind(`mintc_${Math.random().toString(36).slice(2, 10)}`, gameId, tick, m.owner_faction_id, prey.plan.targetBodyId,
+          JSON.stringify({
+            body_name: F.sky.byId.get(prey.plan.targetBodyId)?.name ?? '', count: killed, in_flight: true,
+            by_name: factionNames.get(m.owner_faction_id) ?? null,
+            from_names: [factionNames.get(prey.owner)].filter(Boolean),
+            got_through: left, x: at.x, y: at.y,
+          }), Date.now()).run();
+      }
+      if (!out.length) continue;   // nothing else in the blast: no strike line
+    }
+
+    const targetOwner = F.flights.get(m.rv_follow_ship_id)?.owner ?? out.find(v => v.ship_id === m.rv_follow_ship_id)?.owner_faction_id;
+    // ship_id names the hull it was aimed at, so the map plays the blast
+    // where that hull is DRAWN (on its course line); x, y is the true
+    // meeting, for a hull the client never saw.
     await env.DB.prepare(
-      `INSERT INTO chronicle_entries (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
-       VALUES (?, ?, ?, 'missile_strike', ?, ?, ?, 'public', ?)`,
+      `INSERT INTO chronicle_entries (id, game_id, tick_number, kind, actor_faction_id, body_id, ship_id, payload, visibility, created_at_ms)
+       VALUES (?, ?, ?, 'missile_strike', ?, ?, ?, ?, 'public', ?)`,
     ).bind(`mstrk_${Math.random().toString(36).slice(2, 10)}`, gameId, tick, m.owner_faction_id, m.target_body_id,
+      prey?.cls === MISSILE_CLASS ? null : m.rv_follow_ship_id,
       JSON.stringify({
-        body_name: dest?.name ?? '', missiles: count, damage, in_flight: true,
+        body_name: dest?.name ?? '', missiles: count, damage, in_flight: true, x: at.x, y: at.y,
         target_owner_name: targetOwner ? factionNames.get(targetOwner) ?? null : null,
         launcher_names: [factionNames.get(m.owner_faction_id)].filter(Boolean),
         victims: out, destroyed_count: out.filter(v => v.destroyed).length,
@@ -693,6 +930,8 @@ async function autoIntercept(env, gameId, tick, peace) {
   const groups = groupFlights(F.flights, { exclude: (_id, f) => f.cls === MISSILE_CLASS })
     .filter(g => worlds.has(g.dest));
   if (groups.length === 0) return 0;
+  const parked = await loadParked(env.DB, gameId);
+  const friendly = (a, b) => a === b || peace.has(pairKey(a, b));
   // Hulls each empire already has a salvo chasing.
   const chased = new Map();
   for (const f of F.flights.values()) {
@@ -728,6 +967,14 @@ async function autoIntercept(env, gameId, tick, peace) {
       if (g.members.some(id => mine.has(id))) continue;
       const icp = planIntercept(F, silo.body_id, tick, g.lead);
       if (!icp) continue;   // not catchable yet; asked again next tick
+      // NEVER INTO YOUR OWN, the rule the + FLEETS orbit strike keeps: a
+      // meeting whose blast would catch the silo owner's or a pact
+      // partner's hulls (a raid met close to a world their fleet is
+      // parked at) is not fired.
+      const inGroup = new Set(g.members);
+      const at = meetPoint(icp.plan, tick, icp.meetTick);
+      if (blastVictims(F, parked, at, icp.meetTick)
+        .some(v => !inGroup.has(v.id) && friendly(silo.owner_faction_id, v.owner_faction_id))) continue;
       const count = Math.max(1, Math.min(Number(silo.missile_salvo ?? DEFAULT_AUTO_SALVO), free));
       const took = await env.DB
         .prepare('UPDATE game_settlements SET missile_stock = missile_stock - ? WHERE id = ? AND missile_stock >= ?')
@@ -742,6 +989,13 @@ async function autoIntercept(env, gameId, tick, peace) {
         payload: {
           from_name: home?.name ?? '', body_name: home?.name ?? '', in_flight: true, auto: true,
           meet_tick: icp.detonateTick, target_owner_name: factionNames.get(g.owner) ?? null, target_hulls: g.members.length,
+        },
+        warn: {
+          ownerId: g.owner, shipId: g.lead,
+          payload: {
+            launcher_name: factionNames.get(silo.owner_faction_id) ?? null, from_name: home?.name ?? '',
+            body_name: home?.name ?? '', meet_tick: icp.detonateTick, target_hulls: g.members.length,
+          },
         },
       });
       await env.DB.batch(stmts);
