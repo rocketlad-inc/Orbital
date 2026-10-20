@@ -390,6 +390,14 @@ const n4b = await DB.prepare('SELECT rv_meet_tick, launch_x FROM game_ship_nodes
 }
 while (tick < Number(n4b.rv_meet_tick) && (await hpOf(held[0])).status === 'active') await runTick();
 check('...and still meets it', (await hpOf(held[0])).status === 'destroyed', JSON.stringify({ held: await hpOf(held[0]), tick, heldLand }));
+// A salvo stranded at its own world with no leg left (staging, 10-19) is
+// spent on the next tick instead of sitting in orbit for good.
+{
+  const stray = await park(A.id, EARTH, 'missile', 1);
+  await DB.prepare('UPDATE game_ships SET missile_count = 2, built_at_tick = ? WHERE id = ?').bind(tick - 5, stray).run();
+  await runTick();
+  check('a salvo stranded at its own world with no leg left is spent', (await hpOf(stray)).status === 'expended', JSON.stringify(await hpOf(stray)));
+}
 // (LAUNCH on the inbound alert, notifyActions 'intercept', calls the launch route
 // tested above as the signed-in player; that module needs the worker bundle.)
 
