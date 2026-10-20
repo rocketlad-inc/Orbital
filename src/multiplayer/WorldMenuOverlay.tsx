@@ -659,7 +659,9 @@ export const WorldMenuOverlay: React.FC = () => {
   const modLeft = staX + staW - MOD_W;
   const modRows = Math.ceil(orbitKinds.length / MOD_COLS);
   const modsH = modRows ? modRows * MOD_H + (modRows - 1) * MOD_GAP : 0;
-  const rigLeft = mobile || !orbitKinds.length ? staX : Math.min(staX, modLeft);
+  // The rig's left edge: the module column, or the BUILD STATION button
+  // (168 wide, centred on the station's spot) where there is no station.
+  const rigLeft = mobile ? staX : Math.min(staX, orbitKinds.length ? modLeft : staX + staW / 2 - 84);
   const modTop = staY + staH + 6;
   const rigBottom = mobile ? staY + (myStation ? STA_CHIP_H : 70) : Math.max(staY + staH, modTop + modsH);
 

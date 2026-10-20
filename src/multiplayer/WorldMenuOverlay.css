@@ -1111,6 +1111,10 @@
 .wm-mods.is-grid { display: grid; grid-template-columns: 1fr 1fr; }
 .wm-mods.is-grid .wm-mod-st { display: none; }
 .wm-mods.is-grid .wm-mod { padding: 0 8px; }
+/* The mobile shell (a desktop under 1024 wide has it too) floors every
+   button at 40px with :root[data-mobile-shell] button, (0,2,1); the rows
+   set their own height. */
+.wm-mods > .wm-mod.wm-mod { min-height: 0; }
 .wm-mods.is-grid .wm-mod-nm { font-size: 9px; }
 .wm-modrow {
   display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; align-items: baseline;
