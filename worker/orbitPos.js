@@ -68,6 +68,11 @@ export function legProgress(f, leg) {
   const ramp = Number(leg.ramp) > 0 ? Number(leg.ramp) : 0;
   // The exponential build (accel_tau, migration 0159) or the linear one.
   const etau = Number(leg.tau) > 0 ? Number(leg.tau) : 0;
+  // A flat push that never flips (a missile: it bursts on contact) covers
+  // its distance as f squared, with no brake to fold in.
+  if (!(ramp > 0) && !(etau > 0) && Number(leg.flipTick) >= Number(leg.arriveTick) - 1e-9) {
+    return Math.max(0, Math.min(1, f * f));
+  }
   if (!(ramp > 0) && !(etau > 0)) return burnProgress(f, brakeRatioOf(leg.accel, leg.brake));
   if (f <= 0) return 0;
   if (f >= 1) return 1;

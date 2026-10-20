@@ -60,11 +60,11 @@
 // ============================================================
 
 import { makeRouteMath } from './routeMath.js';
-import { legTicks, noBrakeForArrival, fromG, SHIP_ENGINE_ACCEL } from './burn.js';
+import { legTicks, fromG, SHIP_ENGINE_ACCEL } from './burn.js';
 import { parkOrbitRadius } from './factions.js';
 import { hostilePairs, pairKey } from './wars.js';
 import { resolveCaptainOnDeath } from './captains.js';
-import { loadFlights, groupFlights } from './flightState.js';
+import { loadFlights, groupFlights, loadSky } from './flightState.js';
 import { rendezvousStateAt } from '../src/physics/rendezvous.js';
 
 export const MISSILE_DAMAGE = 10;
@@ -259,29 +259,39 @@ async function handleSettings(req, env, ctx) {
 /** How long a salvo from `fromId` takes to reach `toId` launched at
  *  `tick`, and the burn that lands it then. Two passes: the target moves
  *  while the missile flies. */
-export async function missileLeg(DB, gameId, fromId, toId, tick) {
-  const { bodyPosAt } = makeRouteMath(DB, gameId);
-  const from = await bodyPosAt(fromId, tick);
-  let to = await bodyPosAt(toId, tick);
-  let T = Math.max(1, Math.ceil(missileTicks(Math.hypot(to.x - from.x, to.y - from.y))));
-  to = await bodyPosAt(toId, tick + T);
-  const d = Math.hypot(to.x - from.x, to.y - from.y);
+export async function missileLeg(DB, gameId, fromId, toId, tick, { posAt = null, homeRadius = 0 } = {}) {
+  // Positions: an in-memory sky when the caller has one (the ETA list asks
+  // for many worlds at once), else the route math's own queries.
+  const at = posAt ?? (await (async () => { const { bodyPosAt } = makeRouteMath(DB, gameId); return bodyPosAt; })());
+  const pos = async (id, t) => at(id, t);
+  const centre = await pos(fromId, tick);
+  let to = await pos(toId, tick);
+  let T = Math.max(1, Math.ceil(missileTicks(Math.hypot(to.x - centre.x, to.y - centre.y))));
+  to = await pos(toId, tick + T);
+  const d = Math.hypot(to.x - centre.x, to.y - centre.y);
   T = Math.max(1, Math.ceil(missileTicks(d)));
-  to = await bodyPosAt(toId, tick + T);
+  to = await pos(toId, tick + T);
+  // IT LEAVES FROM ORBIT, ON THE SIDE FACING ITS TARGET (Lorne, 2026-10-20:
+  // a salvo that started at the world's centre sat on the planet, reading
+  // as a ship in orbit, until its push carried it clear).
+  const away = Math.hypot(to.x - centre.x, to.y - centre.y) || 1;
+  const rp = parkOrbitRadius(Number(homeRadius) || 0);
+  const from = { x: centre.x + ((to.x - centre.x) / away) * rp, y: centre.y + ((to.y - centre.y) / away) * rp };
   const dFinal = Math.hypot(to.x - from.x, to.y - from.y);
-  const fromNext = await bodyPosAt(fromId, tick + 0.01);
-  // Pushes the whole way: the flip is the arrival, so it never brakes.
-  const shape = dFinal > 0 ? noBrakeForArrival(dFinal, T, MISSILE_REF_ACCEL) : null;
+  const centreNext = await pos(fromId, tick + 0.01);
+  // ONE STEADY PUSH, THE WHOLE WAY, like an intercept: covers dFinal in
+  // exactly T from its launch, the flip at the arrival so it never brakes.
+  // (A ship's slowly building push left a salvo hanging at its world for
+  // most of its first tick.) brake_accel must be positive to read as the
+  // leg's own; it is never reached.
+  const acc = dFinal > 0 ? (2 * dFinal) / (T * T) : 0;
   return {
     ticks: T,
     arrive: tick + T,
-    plan: shape ? {
+    plan: acc > 0 ? {
       lx: from.x, ly: from.y,
-      lvx: (fromNext.x - from.x) / 0.01, lvy: (fromNext.y - from.y) / 0.01,
-      // brake_accel must be positive to be read as a leg's own; it is
-      // never reached. The top push stands in.
-      acc: shape.accel, flip: tick + T, brk: shape.max,
-      rmp: shape.ramp > 0 ? shape.ramp : null, amax: shape.max, atau: shape.tau > 0 ? shape.tau : null,
+      lvx: (centreNext.x - centre.x) / 0.01, lvy: (centreNext.y - centre.y) / 0.01,
+      acc, flip: tick + T, brk: acc, rmp: null, amax: null, atau: null,
     } : null,
   };
 }
@@ -299,7 +309,7 @@ export function planIntercept(F, fromBodyId, tick, targetId, { missiles = false 
   if (!f || (f.cls === MISSILE_CLASS && !missiles)) return null;
   const latest = Math.floor(f.plan.arriveTick) - 1;
   if (!(latest > tick)) return null;
-  const p0 = F.sky.bodyPos(fromBodyId, tick);
+  let p0 = F.sky.bodyPos(fromBodyId, tick);
   const v0 = F.sky.bodyVel(fromBodyId, tick);
   // The first whole tick the target is somewhere a salvo can reach in
   // time (missileTicks: half a two-engine hull's trip to that spot).
@@ -310,6 +320,13 @@ export function planIntercept(F, fromBodyId, tick, targetId, { missiles = false 
     if (missileTicks(Math.hypot(s.pos.x - p0.x, s.pos.y - p0.y)) <= t - tick) { meet = t; at = s.pos; break; }
   }
   if (meet == null) return null;
+  // It leaves from orbit, on the side facing the meeting, not the world's
+  // centre (where a salvo sat on the planet reading as parked).
+  {
+    const rp = parkOrbitRadius(Number(F.sky.byId.get(fromBodyId)?.radius) || 0);
+    const away = Math.hypot(at.x - p0.x, at.y - p0.y) || 1;
+    p0 = { x: p0.x + ((at.x - p0.x) / away) * rp, y: p0.y + ((at.y - p0.y) / away) * rp };
+  }
   // ONE straight push, the whole way, that puts the salvo on that spot at
   // that tick with the launch world's motion folded in: no second burn to
   // match the target's speed, it bursts there (the rendezvous columns
@@ -459,7 +476,8 @@ async function handleLaunch(req, env, ctx) {
   if (starSystemOf(targetId, byId) !== starSystemOf(L.s.body_id, byId)) {
     return err(409, 'out_of_range', 'missiles only reach worlds in their own star system');
   }
-  const leg = await missileLeg(env.DB, L.gameId, L.s.body_id, targetId, L.tick);
+  const sky = await loadSky(env.DB, L.gameId);
+  const leg = await missileLeg(env.DB, L.gameId, L.s.body_id, targetId, L.tick, { posAt: sky.bodyPos, homeRadius: home?.radius });
   // Take the missiles first (guarded): two taps cannot fire one magazine twice.
   const took = await env.DB
     .prepare('UPDATE game_settlements SET missile_stock = missile_stock - ? WHERE id = ? AND missile_stock >= ?')
@@ -550,9 +568,13 @@ async function handleEta(req, env, ctx) {
   if (!from.startsWith(`${gameId}:`) || to.some(t => !t.startsWith(`${gameId}:`))) return err(400, 'bad_request', 'invalid world');
   const game = await env.DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
   const tick = Number(game?.current_tick ?? 0);
+  // One positions load for the whole list (it was a few queries a world:
+  // ~0.9s for eight).
+  const sky = await loadSky(env.DB, gameId);
   const out = {};
   for (const t of to) {
-    try { out[t] = (await missileLeg(env.DB, gameId, from, t, tick)).ticks; } catch { /* unknown world */ }
+    if (!sky.byId.has(t)) continue;
+    try { out[t] = (await missileLeg(env.DB, gameId, from, t, tick, { posAt: sky.bodyPos })).ticks; } catch { /* unknown world */ }
   }
   return json({ eta: out });
 }
