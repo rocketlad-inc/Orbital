@@ -111,7 +111,10 @@
   align-self: flex-start; padding: 4px 0; border: 0; background: none; cursor: pointer;
   font-family: 'Audiowide', sans-serif; font-size: 9.5px; letter-spacing: 0.14em; color: #8fa6ba;
 }
-.wm-silo-more:hover { color: #e6edf3; }
+.wm-silo-more:hover, .wm-silo-more.is-on { color: #e6edf3; }
+.wm-silo-more b { margin-left: 6px; font-family: 'Chivo Mono', monospace; font-weight: 400; letter-spacing: 0; color: #b8c8d6; }
+.wm-silo-more span { margin-left: 4px; }
+.wm-silo-folds { display: flex; gap: 18px; flex-wrap: wrap; padding-top: 4px; border-top: 1px solid #1c2836; }
 .wm-silo-more:focus-visible { outline: 2px solid #4ecdc4; outline-offset: 2px; }
 .wm-silo-seg button { line-height: 1.25; }
 
