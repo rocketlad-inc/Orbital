@@ -38,6 +38,11 @@ export interface PickerEntry {
   myEta: number;
   theirEta: number;
   match: boolean;
+  /** A match only: how far along their trip you meet (percent of the
+   *  distance), and the ticks you then fly beside them, in range, before
+   *  they land. */
+  tripPct: number | null;
+  fightTicks: number;
   /** Bearing of the meeting from you, radians, screen axes. */
   angle: number;
   icon: { cls: ShipIconClass; variant?: ShipIconVariant; parts?: string[]; color?: string; color2?: string };
@@ -171,6 +176,7 @@ export const InterceptPicker: React.FC<InterceptPickerProps> = (p) => {
           <>
             <span><span>{t('ship.rv.meetFlight')}</span><b>{t('ship.rv.ticksAt', { n: selected.meetIn, tick: p.now + selected.meetIn })}</b></span>
             <span><span>{t('ship.rv.thenFly')}</span><b>{selected.dest}</b></span>
+            {selected.tripPct != null && <MatchLine e={selected} />}
           </>
         ) : (
           <>
@@ -221,6 +227,19 @@ export const InterceptPicker: React.FC<InterceptPickerProps> = (p) => {
 
 // ---- LIST ----------------------------------------------------------------
 
+/** WHERE a match lands on their trip, and what it buys. Players expected
+ *  an intercept of a group flying at them to meet it halfway; a match
+ *  has to fly beside them, which is only possible once they slow to
+ *  land, so it comes late. Saying the number (and the fighting it buys)
+ *  is the explanation; the tooltip says why. */
+const MatchLine: React.FC<{ e: PickerEntry }> = ({ e }) => (
+  <span className="ip-trip" title={t('ship.rv.tripWhy')}>
+    {t('ship.rv.tripAt', { pct: e.tripPct ?? 0 })}
+    {' · '}
+    {e.fightTicks > 0 ? tn('ship.rv.fightTicks', e.fightTicks) : t('ship.rv.fightOnArrival')}
+  </span>
+);
+
 const PickerList: React.FC<{
   entries: PickerEntry[];
   out: PickerEntry[];
@@ -254,6 +273,7 @@ const PickerList: React.FC<{
             ? <span className="ip-tag ip-tag--match"> ⇌ {t('ship.panel.flyTogether')}</span>
             : <span className="ip-tag"> {e.meetIn - e.myEta > 0 ? t('ship.rv.spare', { n: e.meetIn - e.myEta }) : t('ship.rv.justInTime')}</span>}
         </span>
+        {e.match && e.tripPct != null && <MatchLine e={e} />}
       </button>
     ))}
     {out.length > 0 && <div className="ip-head ip-head--out">{t('ship.rv.outHead')}</div>}

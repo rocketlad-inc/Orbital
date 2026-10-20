@@ -40,6 +40,8 @@ export function interceptPickerEntries(
       myEta: Math.round(o.myEta),
       theirEta: Math.round(o.theirEta - now),
       match: !!o.rv,
+      tripPct: o.tripFrac == null ? null : Math.round(o.tripFrac * 100),
+      fightTicks: Math.max(0, Math.round(o.theirEta - now - o.meetIn)),
       angle: meetBearing(o, myPos),
       icon: {
         cls: iconClassFor(o.lead.class),

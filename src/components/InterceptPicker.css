@@ -120,6 +120,8 @@
 .ip-card__route { font-size: 9px; color: #7a8a9a; }
 .ip-tag { color: #4ecdc4; }
 .ip-tag--match { color: #6ee7b7; }
+.ip-trip { display: block; font-size: 9px; color: #8aa0b4; cursor: help; }
+.ip-timing > .ip-trip { display: block; font-size: 9px; }
 
 /* The game's standing chips (StandingPanel). */
 .ip-chip { margin-left: auto; flex: none; font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; }

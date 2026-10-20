@@ -38,6 +38,24 @@ export interface InterceptOption extends FlightGroup {
   /** Where the lead is now, and where you would meet. */
   nowPos: Vec;
   meetPos: Vec;
+  /** How far along THEIR whole trip a matched meeting falls, 0..1 by
+   *  distance flown; null without a match. A group flying straight at
+   *  you is matched late (it has to slow down before you can fly beside
+   *  it), and saying so is the answer to "why not halfway?". */
+  tripFrac: number | null;
+}
+
+/** Fraction of a sampled path's length flown by `tick`, 0..1. */
+export function pathFraction(samples: ReadonlyArray<{ t: number; x: number; y: number }>, tick: number): number {
+  let total = 0, done = 0;
+  for (let i = 1; i < samples.length; i++) {
+    const a = samples[i - 1], b = samples[i];
+    const seg = Math.hypot(b.x - a.x, b.y - a.y);
+    total += seg;
+    if (tick >= b.t) done += seg;
+    else if (tick > a.t && b.t > a.t) done += seg * (tick - a.t) / (b.t - a.t);
+  }
+  return total > 0 ? Math.min(1, Math.max(0, done / total)) : 0;
 }
 
 /**
@@ -97,6 +115,7 @@ export function solveIntercepts(
       standing: standingOf(g.lead.ownedBy, gs.alliedFactionIds, gs.warPairs),
       nowPos: { x: nowP.x, y: nowP.y },
       meetPos: { x: meetP.x, y: meetP.y },
+      tripFrac: rv ? pathFraction(samples, rv.meetTick) : null,
     });
   }
   return out.sort((a, b) =>
