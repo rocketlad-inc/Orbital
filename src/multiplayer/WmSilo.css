@@ -105,6 +105,7 @@
 .wm-silo-ihulls { font-family: 'Chivo Mono', monospace; font-size: 10px; font-weight: 400; color: #ff9d9d; }
 .wm-silo-isent { font-family: 'Chivo Mono', monospace; font-size: 10px; color: #4ecdc4; }
 .wm-silo-ikill { font-family: 'Chivo Mono', monospace; font-size: 10px; color: #ffd2bf; }
+.wm-silo-iown { font-family: 'Chivo Mono', monospace; font-size: 10px; color: #ffb84d; }
 .wm-silo-irow.is-out { border-color: #2a3d50; background: none; }
 .wm-silo-irow.is-out .wm-silo-tname, .wm-silo-irow.is-out .wm-silo-tmeta { color: #6b7f92; }
 .wm-silo-more {

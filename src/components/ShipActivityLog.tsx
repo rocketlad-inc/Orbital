@@ -113,6 +113,14 @@ function describe(r: ShipLogRow): { text: string; tone: 'good' | 'bad' | 'plain'
               }),
               tone: 'plain',
             };
+        case 'missile_inbound':
+          return {
+            text: t('eventlog.ev.missile.inbound' as Key, {
+              who: p.launcher_name ?? '?', n: Number(p.count ?? 0), k: Number(p.target_hulls ?? 1),
+              body: p.body_name ?? '?', tick: Number(p.meet_tick ?? 0),
+            }),
+            tone: 'bad',
+          };
         case 'missile_strike':
           return {
             text: t((p.in_flight ? 'eventlog.ev.missile.strikeInFlight' : 'eventlog.ev.missile.strike') as Key, {

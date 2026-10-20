@@ -2067,14 +2067,32 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         if (ev.kind === 'terraform_destroyed' || ev.kind === 'world_obliterated') {
           try { cause = JSON.parse(ev.payload || '{}')?.cause ?? undefined; } catch { cause = undefined; }
         }
+        // A missile burst IN FLIGHT plays where it met its target, never at
+        // the destination world the row is filed under (Lorne, 2026-10-20).
+        // A strike names the hull (drawn on its course line); x/y is the
+        // true point, for a hull this client never drew. A shoot-down in
+        // flight has only the point. Landing strikes keep their world.
+        let at: { x: number; y: number } | undefined;
+        let inFlight = false;
+        if (ev.kind === 'missile_strike' || ev.kind === 'missile_intercepted') {
+          try {
+            const p = JSON.parse(ev.payload || '{}');
+            inFlight = p?.in_flight === true;
+            if (inFlight && Number.isFinite(p.x) && Number.isFinite(p.y)) at = { x: Number(p.x), y: Number(p.y) };
+          } catch { inFlight = false; }
+          // Only an in-flight shoot-down is drawn (a landing one is the
+          // strike's own blast).
+          if (ev.kind === 'missile_intercepted' && !inFlight) return null;
+        }
         return {
           id: ev.id,
           kind: ev.kind,
-          bodyId: stripGameId(ev.body_id) ?? undefined,
+          bodyId: inFlight ? undefined : stripGameId(ev.body_id) ?? undefined,
           shipId: stripGameId(ev.ship_id) ?? undefined,
           cause,
+          at,
         };
-      }),
+      }).filter((x): x is NonNullable<typeof x> => x != null),
     );
   } catch { /* cosmetics must never break state deserialization */ }
 

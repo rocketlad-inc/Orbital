@@ -80,6 +80,11 @@ export const WmSilo: React.FC<{
   const [confirm, setConfirm] = useState(false);
   const [eta, setEta] = useState<Record<string, number>>({});
   const [meets, setMeets] = useState<Record<string, number | null>>({});
+  // Your own hulls a burst at that meeting would catch (Lorne's list,
+  // 2026-10-20: warn before a late launch hits your parked fleet).
+  const [ownHits, setOwnHits] = useState<Record<string, { n: number; world: string | null }>>({});
+  // A raid already enough missiles are flying at: LAUNCH asks once more.
+  const [overConfirm, setOverConfirm] = useState<string | null>(null);
 
   const byId = useMemo(() => new Map(gameState.bodies.map(b => [b.id, b])), [gameState.bodies]);
   const atPeace = useMemo(() => makePeaceCheck(gameState.warPairs), [gameState.warPairs]);
@@ -136,7 +141,14 @@ export const WmSilo: React.FC<{
     const ids = (fold === 'ships' ? groupKeys : incomingKeys).split(',').filter(Boolean).slice(0, 30);
     if (ids.length === 0) return;
     let live = true;
-    void actions.missileIntercepts(body.id, ids).then(r => { if (live) setMeets(m => ({ ...m, ...r })); });
+    void actions.missileIntercepts(body.id, ids).then(r => {
+      if (!live) return;
+      const m: Record<string, number | null> = {};
+      const h: Record<string, { n: number; world: string | null }> = {};
+      for (const [k, v] of Object.entries(r)) { m[k] = v ? v.ticks : null; if (v) h[k] = v.ownHits; }
+      setMeets(x => ({ ...x, ...m }));
+      setOwnHits(x => ({ ...x, ...h }));
+    });
     return () => { live = false; };
   }, [fold, actions, groupKeys, incomingKeys, body.id, tick]);
 
@@ -253,8 +265,23 @@ export const WmSilo: React.FC<{
                   const sent = inFlight.filter(s => s.plannedRendezvous && ids.has(s.plannedRendezvous.followShipId));
                   const sentN = sent.reduce((k, s) => k + (s.missileCount ?? 1), 0);
                   const sentMeet = sent.length ? Math.max(0, Math.ceil(Math.min(...sent.map(s => s.plannedRendezvous!.meetTick)) - tick)) : null;
-                  const dies = g.members.filter(s => (s.hp ?? s.hpMax ?? 1) <= damage).length;
+                  // OVER-FIRING (Lorne's list, 2026-10-20): what is already on
+                  // its way counts. Every missile hits every hull of the group,
+                  // so a hull dies once the damage on it reaches its hp.
+                  const hpOf = (sh: Ship) => sh.hp ?? sh.hpMax ?? 1;
+                  const sentKills = g.members.filter(sh => hpOf(sh) <= MISSILE_DAMAGE * sentN).length;
+                  const dies = g.members.filter(sh => hpOf(sh) <= MISSILE_DAMAGE * sentN + damage).length;
+                  const enoughSent = sentN > 0 && sentKills === g.members.length;
+                  const own = ownHits[g.lead.id];
+                  const hitsOwn = !!own && own.n > 0;
                   const key = `i${g.lead.id}`;
+                  const asking = overConfirm === key;
+                  const fire = () => {
+                    if (!actions) return;
+                    if ((enoughSent || hitsOwn) && !asking) { setOverConfirm(key); return; }
+                    setOverConfirm(null);
+                    void run(key, () => actions.launchMissilesAtShip(city.id, g.lead.id, n));
+                  };
                   return (
                     <div key={g.lead.id} className={`wm-silo-irow${m === null ? ' is-out' : ''}`}>
                       <span className="wm-silo-tname">{g.fleet?.name ?? ownerName(g.lead.ownedBy)}</span>
@@ -264,15 +291,31 @@ export const WmSilo: React.FC<{
                         {m != null ? t('worldmenu.silo.meetIn', { n: m }) : m === null ? t('worldmenu.silo.cantCatch') : '…'}
                       </span>
                       {sentN > 0 && (
-                        <span className="wm-silo-isent is-wide">{t('worldmenu.silo.sent', { n: sentN, t: sentMeet ?? 0 })}</span>
+                        <span className="wm-silo-isent is-wide">
+                          {t('worldmenu.silo.sentKills', { n: sentN, t: sentMeet ?? 0, k: sentKills, total: g.members.length })}
+                        </span>
                       )}
-                      {m != null && stock > 0 && (
-                        <span className="wm-silo-ikill is-wide">{t('worldmenu.silo.rowKills', { dmg: damage, k: dies, total: g.members.length })}</span>
+                      {m != null && stock > 0 && !enoughSent && (
+                        <span className="wm-silo-ikill is-wide">
+                          {sentN > 0
+                            ? t('worldmenu.silo.rowKillsMore', { n, k: dies, total: g.members.length })
+                            : t('worldmenu.silo.rowKills', { dmg: damage, k: dies, total: g.members.length })}
+                        </span>
                       )}
-                      <button type="button" className="wm-silo-btn is-fire"
+                      {m != null && hitsOwn && (
+                        <span className="wm-silo-iown is-wide">
+                          {own!.world
+                            ? tn('worldmenu.silo.hitsOwnAt', own!.n, { world: own!.world })
+                            : tn('worldmenu.silo.hitsOwn', own!.n)}
+                        </span>
+                      )}
+                      <button type="button" className={`wm-silo-btn is-fire${asking ? ' is-confirm' : ''}`}
                         disabled={busy !== null || stock === 0 || m == null}
-                        onClick={() => { if (actions) void run(key, () => actions.launchMissilesAtShip(city.id, g.lead.id, n)); }}>
-                        {busy === key ? '…' : t('worldmenu.silo.fire', { n: stock > 0 ? n : 0 })}
+                        onBlur={() => { if (asking) setOverConfirm(null); }}
+                        onClick={fire}>
+                        {busy === key ? '…'
+                          : asking ? t(hitsOwn ? 'worldmenu.silo.confirmOwn' : 'worldmenu.silo.confirmEnough', { n })
+                            : t('worldmenu.silo.fire', { n: stock > 0 ? n : 0 })}
                       </button>
                     </div>
                   );

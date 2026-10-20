@@ -3576,6 +3576,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             else if (sh) world = shipWorldPosition(sh, nowTick, gameState.bodies);
           }
         }
+        // A missile burst in flight whose target this client never drew
+        // (or that already died): where it really met it.
+        if (!world && fx.at) world = fx.at;
         if (!world && shipEvent && fx.kind === 'damage') {
           // A HIT on a hull this client has never rendered (a fogged
           // rival brawl — chronicle rows are public). A boom with no
