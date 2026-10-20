@@ -23,6 +23,7 @@ import {
   drawTorchTrajectory,
   drawRendezvousPreview,
   rendezvousTrajectorySamples,
+  missileDrawnRendezvous,
   drawTransitShip,
   drawGhostPlanet,
   drawTargetHighlight,
@@ -2905,11 +2906,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const rvFollowedSamples = rvLeaderLeg
           ? torchTrajectorySamples(rvLeaderLeg, gameState.bodies)
           : null;
+        const rvPathAt = rvFollowedSamples && rvFollowedSamples.length >= 2
+          ? (t: number) => torchPositionFromSamples(rvFollowedSamples, t)
+          : null;
         const samples = rvPlan ? rendezvousTrajectorySamples(
-          rvPlan,
-          rvFollowedSamples && rvFollowedSamples.length >= 2
-            ? (t: number) => torchPositionFromSamples(rvFollowedSamples, t)
-            : null,
+          // A missile meets its target on the target's DRAWN line.
+          ship.class === 'missile' ? missileDrawnRendezvous(rvPlan, rvPathAt) : rvPlan,
+          rvPathAt,
           // A missile bursts at the meeting: no joined leg after it.
           ship.class === 'missile' ? null : rvLeaderLeg?.arriveTick ?? null,
         ) : drawTorchTrajectory(
@@ -3797,7 +3800,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         ? (t: number) => torchPositionFromSamples(followedSamples, t)
         : null;
       drawRendezvousPreview(
-        rv, theirPath, renderContext,
+        ship.class === 'missile' ? missileDrawnRendezvous(rv, theirPath) : rv, theirPath, renderContext,
         (isMine && followed) ? t('map.meet', { name: followed.name, tick: Math.round(rv.meetTick) }) : undefined,
         ship.class === 'missile' ? null : leaderLeg?.arriveTick ?? null,
         renderTick(),

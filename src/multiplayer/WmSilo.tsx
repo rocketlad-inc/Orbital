@@ -162,6 +162,12 @@ export const WmSilo: React.FC<{
   const myKills = kills.filter(s => s.ownedBy === ME).length;
   const groupKills = chosenGroup ? chosenGroup.members.filter(s => (s.hp ?? s.hpMax ?? 1) <= damage).length : 0;
   const inFlight = gameState.ships.filter(s => s.class === 'missile' && s.ownedBy === ME && s.transit);
+  // Salvos in the air, counted where they were aimed: at an incoming raid
+  // (shown on its row), at ships bound elsewhere, or at a world. One
+  // count on each fold, never a sentence listing them.
+  const incomingHulls = new Set(incoming.flatMap(g => g.members.map(m => m.id)));
+  const flyingElsewhere = inFlight.filter(s => s.plannedRendezvous && !incomingHulls.has(s.plannedRendezvous.followShipId)).length;
+  const flyingAtWorlds = inFlight.filter(s => !s.plannedRendezvous).length;
 
   const run = async (key: string, fn: () => Promise<{ ok: boolean; error?: string; code?: string }>) => {
     setBusy(key); onErr(null);
@@ -274,6 +280,9 @@ export const WmSilo: React.FC<{
                 onClick={() => { setFold(o => (o === f ? null : f)); setTarget(null); setConfirm(false); }}>
                 {t(f === 'ships' ? 'worldmenu.silo.foldShips' : 'worldmenu.silo.foldWorlds')}
                 <b>{f === 'ships' ? others.length : worlds.length}</b>
+                {(f === 'ships' ? flyingElsewhere : flyingAtWorlds) > 0 && (
+                  <em className="wm-silo-fly">{t('worldmenu.silo.nInFlight', { n: f === 'ships' ? flyingElsewhere : flyingAtWorlds })}</em>
+                )}
                 <span aria-hidden>{fold === f ? '▴' : '▾'}</span>
               </button>
             ))}
@@ -351,21 +360,6 @@ export const WmSilo: React.FC<{
                 {confirm && <button type="button" className="wm-silo-btn" onClick={() => setConfirm(false)}>{t('worldmenu.silo.back')}</button>}
               </div>
             </>
-          )}
-          {inFlight.length > 0 && (
-            <span className="wm-silo-note">
-              {t('worldmenu.silo.inFlight')}{' '}
-              {inFlight.map(s => {
-                const rv = s.plannedRendezvous;
-                if (rv) {
-                  const prey = gameState.ships.find(x => x.id === rv.followShipId);
-                  return `${s.missileCount ?? 1} → ${t('worldmenu.silo.chasing', { owner: prey ? ownerName(prey.ownedBy) : '?' })} T-${Math.max(0, Math.ceil(rv.meetTick - tick))}`;
-                }
-                const tr = s.transit!.currentTransfer;
-                const to = byId.get(tr.targetBodyId)?.name ?? '?';
-                return `${s.missileCount ?? 1} → ${to} T-${Math.max(0, Math.ceil(tr.arriveTick - tick))}`;
-              }).join(' · ')}
-            </span>
           )}
         </div>
 
