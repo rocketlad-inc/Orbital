@@ -57,10 +57,12 @@ export const MAP_MAX_SCALE = 50;
 
 export const clamp01 = (v: number): number => Math.max(0, Math.min(1, v));
 
-/** Phones lift the planet by this fraction of the viewport height, so the
- *  horizon lands about 45% of the way down: the station and the structure
- *  tags in the sky above it, the bottom bar and its sheets below. */
-export const MOBILE_LIFT_FRAC = 0.07;
+/** Phones lift the planet by this fraction of the viewport height. 0 since
+ *  the diegetic pass: at Z1 0.5 the horizon already lands about halfway
+ *  down, which leaves the sky above it the room the header, the station's
+ *  module tags and two staggered rows of surface tags need (measured at
+ *  390x844: a lift of 0.07 put the surface tags on the module tags). */
+export const MOBILE_LIFT_FRAC = 0;
 
 /** How far apart the surface structures sit on the framed limb, in
  *  degrees per unit of arc fraction (PART_FRACS run -0.9..0.9).
