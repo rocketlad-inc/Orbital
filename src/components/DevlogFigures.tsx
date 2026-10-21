@@ -1044,8 +1044,8 @@ const WorldMenuDesktop: React.FC = () => (
 const WorldMenuPhone: React.FC = () => (
   <Figure
     title="The world menu on a phone"
-    sub="Mars at a peek, Earth's city, Earth's yard"
-    note={<>The world fills the screen and one sheet does the work. Tabs ride along on every sheet, so the yard is one tap from the city.</>}
+    sub="Mars at a peek, Earth's city, Earth's shipyard"
+    note={<>The world fills the screen and one sheet does the work. Tabs ride along on every sheet, so the shipyard is one tap from the city.</>}
   >
     <div className="dfg-phones">
       <img className="dfg-phone" src="/devlog/world-menu-phone-peek.webp" width={480} height={1039} loading="lazy" decoding="async"
@@ -1053,7 +1053,7 @@ const WorldMenuPhone: React.FC = () => (
       <img className="dfg-phone" src="/devlog/world-menu-phone-city.webp" width={480} height={1039} loading="lazy" decoding="async"
         alt="Earth's CITY tab on a phone: one row per building with its level and its next upgrade" />
       <img className="dfg-phone" src="/devlog/world-menu-phone-yard.webp" width={480} height={1039} loading="lazy" decoding="async"
-        alt="Earth's YARD tab on a phone: a row per hull with its cost, build time and its own BUILD button" />
+        alt="Earth's SHIPYARD tab on a phone: a row per hull with its cost, build time and its own BUILD button" />
     </div>
   </Figure>
 );
