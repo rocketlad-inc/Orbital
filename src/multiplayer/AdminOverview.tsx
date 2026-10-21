@@ -24,6 +24,7 @@ import { ago, labelForKind, playTime } from './adminFormat';
 import { FrictionRows } from './GameStory';
 import { span } from './storyVerdict';
 import { GameActivity } from './AdminGameActivity';
+import { CommissionSales } from './AdminCommissionSales';
 import './AdminOverview.css';
 
 // ---------- payload types (worker/adminDashboard.js) ----------
@@ -61,8 +62,22 @@ type SourceRow = {
   source: string; signups: number; signups_30d: number; joined: number;
   came_back: number; latest_ms: number | null; referrers: string | null;
 };
+/** One row of the visit funnel (0180, worker/visits.js). */
+type Funnel = {
+  visitors: number; players: number; engaged: number; pressed_play: number; started: number; errors: number;
+  signed_up: number; seated: number; came_back: number;
+};
+type TrafficData = {
+  campaigns: (Funnel & { source: string; campaign: string; phones: number; clicks: number; latest_ms: number })[];
+  ads: (Funnel & { source: string; campaign: string; content: string; term: string })[];
+  devices: (Funnel & { device: string; in_app: string })[];
+  countries: { country: string; visitors: number; signed_up: number }[];
+  daily: { day_ms: number; source: string; visitors: number; signed_up: number }[];
+};
 type Overview = {
   now: number;
+  /** Link and ad traffic, signed up or not, last 30 days (0180). */
+  traffic?: TrafficData;
   rollup: { through_ms: number; behind_ms: number | null };
   kpis: Kpis;
   daily: DailyRow[];
@@ -90,9 +105,60 @@ type PlayerRow = {
   days_14: number[]; minutes_14d: number; minutes_7d: number; minutes_prior7: number;
   active_days_14d: number; actions_14d: number; rejected_14d?: number; judged_14d?: number;
   games: Array<{ id: string; name: string; faction: string; color: string }>;
+  /** Where they came from: the signup tag, the referring site, and the
+   *  inviter (0175: named on the link, or their room's host as a guess). */
+  signup_source?: string | null; signup_referrer?: string | null;
+  referred_by_name?: string | null; referred_how?: 'link' | 'host' | null;
+  /** Players this account has brought in. */
+  invited_count?: number;
+  /** Invited before Oct 19: the host of their first room, a guess. */
+  likely_inviter?: string | null;
 };
 
 const DAY = 86_400_000;
+
+/** Readable names for the commonest signup tags; anything else shows as is. */
+const SOURCE_LABEL: Record<string, string> = {
+  invite: 'Invite', direct: 'Typed or bookmarked', reddit: 'Reddit', google: 'Google search',
+  'android-app': 'Android app', 'google-play': 'Google Play', discord: 'Discord', 'discord-feed': 'Discord game feed',
+  recap: 'Shared battle recap', winback: 'Win-back email',
+};
+
+/** The "Came from" cell: the inviter when there is one, else the signup
+ *  tag; and how many players this person has brought in themselves. */
+function CameFrom({ p, onFind }: { p: PlayerRow; onFind: (name: string) => void }) {
+  const brought = p.invited_count ?? 0;
+  const src = p.signup_source;
+  return (
+    <>
+      {p.referred_by_name ? (
+        <span className="ao-name" style={{ fontWeight: 500 }}>
+          Invited by{' '}
+          <button className="ao-link" onClick={() => onFind(p.referred_by_name!)} title="Show this player">
+            {p.referred_by_name}
+          </button>
+        </span>
+      ) : src === 'invite' && p.likely_inviter ? (
+        <span title="Invited before inviters were recorded (Oct 19): the host of the first room they joined">
+          Invite · likely{' '}
+          <button className="ao-link" onClick={() => onFind(p.likely_inviter!)} title="Show this player">
+            {p.likely_inviter}
+          </button>
+        </span>
+      ) : src ? (
+        <span title={p.signup_referrer && p.signup_referrer !== src ? `via ${p.signup_referrer}` : undefined}>
+          {SOURCE_LABEL[src] ?? src}
+        </span>
+      ) : (
+        <span className="ao-dim" title="Signed up before sources were recorded (Sep 29)">not recorded</span>
+      )}
+      {p.referred_by_name && p.referred_how === 'host' && (
+        <span className="ao-sub">their room's host, a best guess</span>
+      )}
+      {brought > 0 && <span className="ao-sub" style={{ color: 'var(--ao-teal)' }}>brought {n(brought)} player{brought === 1 ? '' : 's'}</span>}
+    </>
+  );
+}
 const PAGE = 25;
 /** Auto-refresh cadence for the headline numbers. The rollups behind
  *  them move once a minute, so polling faster would only re-read the
@@ -236,7 +302,7 @@ export function AdminOverview({ onOpenGame }: { onOpenGame: (id: string) => void
       {tab === 'growth' && <Growth data={data} />}
       {tab === 'friction' && <FrictionTab data={data} />}
       {tab === 'features' && <Features rows={data.usage} />}
-      {tab === 'commission' && <Commission kpis={k} />}
+      {tab === 'commission' && <Commission />}
     </div>
   );
 }
@@ -837,6 +903,7 @@ function PlayersPanel({ refreshKey, onOpenGame }: { refreshKey: number; onOpenGa
               <th className="num" title="Actions the game refused, last 14 days">Refused</th>
               <th>Last played</th>
               <th>Joined</th>
+              <th>Came from</th>
             </tr>
           </thead>
           <tbody>
@@ -865,6 +932,7 @@ function PlayersPanel({ refreshKey, onOpenGame }: { refreshKey: number; onOpenGa
                 </td>
                 <td>{p.last_played_ms ? ago(now, p.last_played_ms) : <span className="ao-dim">never played</span>}</td>
                 <td className="ao-dim">{ago(now, p.created_at)}</td>
+                <td><CameFrom p={p} onFind={name => { setScope('all'); setQ(name); }} /></td>
               </tr>
             ))}
           </tbody>
@@ -1175,6 +1243,7 @@ function Growth({ data }: { data: Overview }) {
         </div>
         <CohortTable rows={cohorts} />
       </section>
+      {data.traffic && <TrafficPanel tr={data.traffic} now={data.now} />}
       <section className="ao-panel">
         <PanelHead
           title="Where players came from"
@@ -1183,6 +1252,167 @@ function Growth({ data }: { data: Overview }) {
         <SourcesTable rows={data.sources} now={data.now} />
       </section>
     </div>
+  );
+}
+
+const IN_APP_LABEL: Record<string, string> = {
+  '': 'Normal browser', reddit: 'Reddit app', facebook: 'Facebook app', instagram: 'Instagram app',
+  tiktok: 'TikTok app', discord: 'Discord app', x: 'X app', linkedin: 'LinkedIn app',
+  snapchat: 'Snapchat app', line: 'LINE app', gmail: 'Gmail app', google: 'Google app',
+  'android-webview': 'An Android app',
+};
+
+/** The funnel cells shared by every traffic table: each step as a count
+ *  with its share of visitors, so a leak shows where it happens. */
+function FunnelCells({ f }: { f: Funnel }) {
+  const cell = (a: number, title: string) => (
+    <td className="num" title={title}>
+      {n(a)}{f.visitors > 0 && a > 0 && <span className="ao-dim"> {pctOf(a, f.visitors)}%</span>}
+    </td>
+  );
+  return (
+    <>
+      <td className="num">{n(f.visitors)}</td>
+      {cell(f.engaged, 'Stayed 10 seconds or touched the page')}
+      {cell(f.pressed_play, 'Pressed Play free or Sign in, reaching the sign-in screen')}
+      {cell(f.started, 'Opened Sign up, or submitted email / Google')}
+      <td className="num" title="Sign-up or sign-in refused, or the Google button failed">
+        {f.errors ? <span style={{ color: 'var(--ao-bad, #e5484d)' }}>{n(f.errors)}</span> : <span className="ao-dim">0</span>}
+      </td>
+      {cell(f.signed_up, 'Made an account')}
+      {cell(f.seated, 'Took a seat in a game')}
+      {cell(f.came_back, 'Played again a day or more after signing up')}
+    </>
+  );
+}
+const FUNNEL_HEAD = (
+  <>
+    <th className="num">Visitors</th><th className="num">Engaged</th><th className="num">Pressed Play</th><th className="num">Started sign-up</th>
+    <th className="num">Errors</th><th className="num">Signed up</th><th className="num">Took a seat</th>
+    <th className="num">Came back</th>
+  </>
+);
+
+function TrafficPanel({ tr, now }: { tr: TrafficData; now: number }) {
+  // Daily totals over 14 days, with the busiest source of each day.
+  const days = new Map<number, { visitors: number; signed_up: number; top: string; topN: number }>();
+  for (const r of tr.daily) {
+    const d = days.get(r.day_ms) ?? { visitors: 0, signed_up: 0, top: '', topN: 0 };
+    d.visitors += r.visitors;
+    d.signed_up += r.signed_up;
+    if (r.visitors > d.topN) { d.top = r.source; d.topN = r.visitors; }
+    days.set(r.day_ms, d);
+  }
+  const dayRows = [...days.entries()].sort((a, b) => b[0] - a[0]);
+  const maxDay = Math.max(1, ...dayRows.map(([, d]) => d.visitors));
+  return (
+    <section className="ao-panel">
+      <PanelHead
+        title="Link and ad traffic"
+        hint="Last 30 days. Every visit that arrived through a tagged link (?from=, utm_…), an ad click, or another site, whether or not it signed up. One row per browser, counted on its first arrival. Engaged = stayed 10 seconds or touched the page; Pressed Play = reached the sign-in screen; Started sign-up = opened the Sign up tab or submitted the form or Google; Errors = sign-up refused or the Google button failed. Percentages are of visitors. Recorded from the Oct 20 update on."
+      />
+      {tr.campaigns.length === 0 ? <div className="ao-none">No tagged or referred visits yet.</div> : (
+        <div className="ao-scroll">
+          <table className="ao-table">
+            <thead><tr><th>Source</th><th>Campaign</th>{FUNNEL_HEAD}<th className="num">On a phone</th><th className="num">Ad clicks</th><th>Latest</th></tr></thead>
+            <tbody>
+              {tr.campaigns.map(r => (
+                <tr key={`${r.source}|${r.campaign}`}>
+                  <td>{r.source}</td>
+                  <td>{r.campaign || <span className="ao-dim">—</span>}</td>
+                  <FunnelCells f={r} />
+                  <td className="num">{pctOf(r.phones, r.visitors) ?? 0}%</td>
+                  <td className="num" title="Visits that carried an ad network's click id (rdt_cid, gclid, …)">{n(r.clicks)}</td>
+                  <td>{ago(now, r.latest_ms)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {tr.campaigns.some(r => r.players > 0) && (
+            <p className="ao-note">
+              Already players (signed in when they arrived):{' '}
+              {tr.campaigns.filter(r => r.players > 0).map(r => `${r.source}${r.campaign ? `/${r.campaign}` : ''} ${r.players}`).join(', ')}.
+            </p>
+          )}
+        </div>
+      )}
+      {tr.ads.length > 0 && (
+        <>
+          <h4 className="ao-subhead" style={{ margin: '16px 0 6px', fontSize: 13 }}>By ad and keyword (utm_content / utm_term)</h4>
+          <div className="ao-scroll">
+            <table className="ao-table">
+              <thead><tr><th>Source / campaign</th><th>Ad</th><th>Keyword</th>{FUNNEL_HEAD}</tr></thead>
+              <tbody>
+                {tr.ads.map(r => (
+                  <tr key={`${r.source}|${r.campaign}|${r.content}|${r.term}`}>
+                    <td>{r.source}{r.campaign ? <span className="ao-dim"> / {r.campaign}</span> : null}</td>
+                    <td>{r.content || <span className="ao-dim">—</span>}</td>
+                    <td>{r.term || <span className="ao-dim">—</span>}</td>
+                    <FunnelCells f={r} />
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 18, marginTop: 16 }}>
+        <div>
+          <h4 className="ao-subhead" style={{ margin: '0 0 6px', fontSize: 13 }}>Device and in-app browser</h4>
+          {tr.devices.length === 0 ? <div className="ao-none">Nothing yet.</div> : (
+            <div className="ao-scroll">
+              <table className="ao-table">
+                <thead><tr><th>Opened in</th>{FUNNEL_HEAD}</tr></thead>
+                <tbody>
+                  {tr.devices.map(r => (
+                    <tr key={`${r.device}|${r.in_app}`}>
+                      <td>{r.device}<span className="ao-sub">{IN_APP_LABEL[r.in_app] ?? r.in_app}</span></td>
+                      <FunnelCells f={r} />
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+        <div>
+          <h4 className="ao-subhead" style={{ margin: '0 0 6px', fontSize: 13 }}>Last 14 days</h4>
+          {dayRows.length === 0 ? <div className="ao-none">Nothing yet.</div> : (
+            <table className="ao-table">
+              <thead><tr><th>Day (UTC)</th><th>Visitors</th><th className="num">Signed up</th><th>Most from</th></tr></thead>
+              <tbody>
+                {dayRows.map(([day, d]) => (
+                  <tr key={day}>
+                    <td>{dayLabel(day)}</td>
+                    <td>
+                      <span className="ao-rate">
+                        <span className="ao-rate__bar"><i style={{ width: `${Math.round((d.visitors / maxDay) * 100)}%` }} /></span>
+                        <span className="ao-rate__n">{n(d.visitors)}</span>
+                      </span>
+                    </td>
+                    <td className="num">{n(d.signed_up)}</td>
+                    <td className="ao-dim">{d.top}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {tr.countries.length > 0 && (
+            <>
+              <h4 className="ao-subhead" style={{ margin: '14px 0 6px', fontSize: 13 }}>Countries</h4>
+              <table className="ao-table">
+                <thead><tr><th>Country</th><th className="num">Visitors</th><th className="num">Signed up</th></tr></thead>
+                <tbody>
+                  {tr.countries.map(r => (
+                    <tr key={r.country}><td>{r.country === '??' ? <span className="ao-dim">Unknown</span> : r.country}</td><td className="num">{n(r.visitors)}</td><td className="num">{n(r.signed_up)}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -1354,13 +1584,10 @@ function Features({ rows }: { rows: UsageRow[] }) {
 // Commission
 // ============================================================
 
-function Commission({ kpis }: { kpis: Kpis }) {
+function Commission() {
   return (
     <div className="ao-stack">
-      <div className="ao-kpis ao-kpis--two">
-        <Kpi label="Commissions sold" value={n(kpis.commissions_total)} gold foot="paid through Stripe, all time" />
-        <Kpi label="Sold this week" value={n(kpis.commissions_week)} gold foot="last 7 days" />
-      </div>
+      <CommissionSales surfaceLabel={SURFACE_LABEL} />
       <CommissionFunnel />
       <section className="ao-panel">
         <PanelHead

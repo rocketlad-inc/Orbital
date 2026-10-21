@@ -55,8 +55,12 @@ export interface Shot {
   seconds: number;
   /** Shown from frame one in the white box, like TikTok's own text. */
   hook?: string;
-  /** Page milliseconds one tick glides over; 2500 reads well for battles. */
+  /** Page milliseconds one tick glides over. Default 2500, or 900 at the
+   *  fast tempo. */
   speed?: number;
+  /** 'fast' is the marketing cut: ticks glide over 900 ms and camera moves
+   *  default to 1300 ms. Explicit `speed` and per-step `ms` still win. */
+  tempo?: 'fast' | 'normal';
   /** The closing card with the URL; on by default. */
   endCard?: boolean;
   /** Extra zoom applied when the map is cropped into the video frame. */
@@ -94,6 +98,8 @@ function pickMime(): string | null {
 }
 
 export class Director {
+  /** Default camera move length for this shot (the tempo), or null. */
+  private moveMs: number | null = null;
   private host: DirectorHost;
   private cam: Cam = { x: 0, y: 0, scale: 0.5 };
   private hold: Target | null = null;        // what the centre tracks when no pan is running
@@ -135,19 +141,26 @@ export class Director {
     return this.host.state().bodies.find(b => b.id === id);
   }
 
+  /** Ships and fleets carry the game id in front ('<game>:st_fr_0');
+   *  shots name them without it, the way the CLI prints them. */
+  private ship(id: string): Ship | undefined {
+    return this.host.state().ships.find(x => x.id === id || x.id.endsWith(`:${id}`));
+  }
+  private fleetMembers(id: string): Ship[] {
+    return this.host.state().ships.filter(x => x.fleetId != null && (x.fleetId === id || x.fleetId.endsWith(`:${id}`)));
+  }
+
   /** Where a target is on the map this frame, in world units. */
   position(target: Target): { x: number; y: number } | null {
     const s = this.host.state();
     const tick = this.tick();
     if (target.startsWith('ship:')) {
-      const id = target.slice(5);
-      const ship = s.ships.find(x => x.id === id);
+      const ship = this.ship(target.slice(5));
       if (!ship) return null;
       return this.shipPos(ship, tick);
     }
     if (target.startsWith('fleet:')) {
-      const id = target.slice(6);
-      const members = s.ships.filter(x => x.fleetId === id);
+      const members = this.fleetMembers(target.slice(6));
       const lead = members.find(x => x.transit) ?? members[0];
       return lead ? this.shipPos(lead, tick) : null;
     }
@@ -174,10 +187,9 @@ export class Director {
   /** The world the target sits at, for sizing: a ship's parent when parked. */
   private bodyFor(target: Target): Body | undefined {
     if (target.startsWith('ship:') || target.startsWith('fleet:')) {
-      const s = this.host.state();
       const ship = target.startsWith('ship:')
-        ? s.ships.find(x => x.id === target.slice(5))
-        : s.ships.find(x => x.fleetId === target.slice(6));
+        ? this.ship(target.slice(5))
+        : this.fleetMembers(target.slice(6))[0];
       const pid = ship?.orbit?.parentBodyId;
       return pid ? this.body(pid) : undefined;
     }
@@ -209,7 +221,7 @@ export class Director {
   pan(target: Target, o: { ms?: number; px?: number; scale?: number } = {}): void {
     if (!this.position(target)) { this.note(`pan: no such target ${target}`); return; }
     const toScale = o.scale ?? (o.px ? this.scaleFor(target, o.px) : this.cam.scale);
-    this.tween = { fromX: this.cam.x, fromY: this.cam.y, fromScale: this.cam.scale, toScale, t0: this.clock, ms: o.ms ?? 2000, target };
+    this.tween = { fromX: this.cam.x, fromY: this.cam.y, fromScale: this.cam.scale, toScale, t0: this.clock, ms: o.ms ?? this.moveMs ?? 2000, target };
     this.hold = target;
   }
 
@@ -217,7 +229,7 @@ export class Director {
   zoom(o: { px?: number; scale?: number; factor?: number; ms?: number; target?: Target }): void {
     const target = o.target ?? this.hold;
     const toScale = o.scale ?? (o.px ? this.scaleFor(target ?? undefined, o.px) : this.cam.scale * (o.factor ?? 1));
-    this.tween = { fromX: this.cam.x, fromY: this.cam.y, fromScale: this.cam.scale, toScale, t0: this.clock, ms: o.ms ?? 1500, target: target ?? null };
+    this.tween = { fromX: this.cam.x, fromY: this.cam.y, fromScale: this.cam.scale, toScale, t0: this.clock, ms: o.ms ?? this.moveMs ?? 1500, target: target ?? null };
   }
 
   /** Keep the centre on a moving target from now on. */
@@ -291,11 +303,17 @@ export class Director {
   /** Run `n` server ticks and wait until the map has them. */
   async ticks(n = 1): Promise<number> {
     const before = this.host.state().currentTick;
-    const res = await apiFetch<{ current_tick: number }>(`/api/admin/studio/games/${this.host.gameId}/tick`, {
-      method: 'POST', body: JSON.stringify({ n }),
-    });
-    if (!res.ok) throw new Error(`tick: ${res.error?.message ?? res.status}`);
-    const want = res.data.current_tick ?? before + n;
+    // Bounded: a tick request that never answers froze two takes for an
+    // hour. After 30 s, assume the server ticked and wait on the map.
+    const res = await Promise.race([
+      apiFetch<{ current_tick: number }>(`/api/admin/studio/games/${this.host.gameId}/tick`, {
+        method: 'POST', body: JSON.stringify({ n }),
+      }),
+      realSleep(30_000).then(() => null),
+    ]);
+    if (res && !res.ok) throw new Error(`tick: ${res.error?.message ?? res.status}`);
+    if (!res) this.note(`tick: no answer in 30 s at tick ${before}; waiting on the map`);
+    const want = res?.data?.current_tick ?? before + n;
     const t0 = Date.now();
     while (this.host.state().currentTick < want && Date.now() - t0 < 90_000) await realSleep(250);
     return this.host.state().currentTick;
@@ -383,10 +401,13 @@ export class Director {
     setStudioFullVisuals(true);
     document.body.classList.add('studio-filming');   // no debug HUD, no staging banner
     if (shot.ui) this.host.deselect(); else this.ui(false);
-    this.speed(shot.speed ?? 2500);
+    const fast = shot.tempo === 'fast';
+    this.moveMs = fast ? 1300 : null;
+    this.speed(shot.speed ?? (fast ? 900 : 2500));
   }
   private end(): void {
     this.running = false;
+    this.moveMs = null;
     this.speed(null);
     this.ui(true);
     document.body.classList.remove('studio-filming');

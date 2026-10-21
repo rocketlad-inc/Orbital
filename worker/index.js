@@ -1429,6 +1429,7 @@ import * as customMaps from './customMaps.js';
 import * as skins from './skins.js';
 import * as commissionAsk_ from './commissionAsk.js';
 import * as invites from './invites.js';
+import * as visits from './visits.js';
 import * as economy from './economy.js';
 import * as heraldStrip from './heraldStrip.js';
 import * as battleCard from './battleCard.js';
@@ -1454,7 +1455,7 @@ import * as discoveryOffers from './discoveryOffers.js';
 import * as missiles from './missiles.js';
 import { carryNamePools } from './namePoolHistory.js';
 
-const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, studio, analytics, configAdmin, emailAdmin, emailLogin, store, skins, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed, customMaps, ending, discoveryOffers, invites, profileAwards, missiles];
+const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, studio, analytics, configAdmin, emailAdmin, emailLogin, store, skins, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed, customMaps, ending, discoveryOffers, invites, visits, profileAwards, missiles];
 
 function matchPattern(pattern, pathname) {
   if (typeof pattern === 'string') {
@@ -2177,6 +2178,12 @@ export default {
       // An invite link opened (worker/invites.js): counted whether or not
       // the visitor is signed in yet, which is the point of counting it.
       if (req.method === 'POST' && url.pathname === '/api/invite/open') {
+        return dispatchFeatureRoute(req, env, url, await currentSession(req, env).catch(() => null));
+      }
+
+      // A link or ad visit and its way through the sign-in screen
+      // (worker/visits.js, 0180): counted before there is any account.
+      if (req.method === 'POST' && url.pathname === '/api/visit') {
         return dispatchFeatureRoute(req, env, url, await currentSession(req, env).catch(() => null));
       }
 

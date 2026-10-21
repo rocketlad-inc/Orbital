@@ -183,6 +183,13 @@ export const WorldMenuOverlay: React.FC = () => {
   const [errMsg, setErrMsg] = useState<string | null>(null);
   /** A neutral line, e.g. where a cancelled order's refund went. */
   const [noteMsg, setNoteMsg] = useState<string | null>(null);
+  // A note is news, not a state: it goes by itself after a few seconds,
+  // or at a tap. The refund line stayed up forever (Snep, 2026-10-19).
+  useEffect(() => {
+    if (!noteMsg) return;
+    const id = window.setTimeout(() => setNoteMsg(null), 5000);
+    return () => window.clearTimeout(id);
+  }, [noteMsg]);
   const camSnapshotRef = useRef<{ x: number; y: number; scale: number; focusedBodyId?: string } | null>(null);
 
   const body: Body | undefined = useMemo(
@@ -992,7 +999,7 @@ export const WorldMenuOverlay: React.FC = () => {
       {/* ===== dismissal + error ===== */}
       <button className="wm-tomap" onClick={() => close(true)} data-testid="wm-tomap">{t('worldmenu.toMap')}</button>
       {errMsg && <div className="wm-err">{errMsg}</div>}
-      {!errMsg && noteMsg && <div className="wm-note" role="status">{noteMsg}</div>}
+      {!errMsg && noteMsg && <div className="wm-note" role="status" onClick={() => setNoteMsg(null)}>{noteMsg}</div>}
 
       {/* ===== neighbor orbs (desktop only — they don't fit alongside
            the dense mobile panels; mobile navigates via the outliner) ===== */}

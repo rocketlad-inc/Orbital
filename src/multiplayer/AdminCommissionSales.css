@@ -1,0 +1,52 @@
+/* AdminCommissionSales (AdminCommissionSales.tsx). Inside .ao, on the
+   dashboard's tokens. Gold is money on this dashboard, so the sales line
+   and the top bucket take it; everything else stays quiet. */
+
+.cs-stats {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.cs-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 12px 14px;
+  border-radius: var(--ao-radius-s);
+  background: var(--ao-surface-2);
+  border: 1px solid var(--ao-line);
+}
+.cs-stat__label { font-size: 12px; font-weight: 600; color: var(--ao-ink-2); }
+.cs-stat__value { font-family: var(--ao-data); font-size: 24px; line-height: 1.1; color: var(--ao-gold-2); font-variant-numeric: tabular-nums; }
+.cs-stat__foot { font-size: 12px; color: var(--ao-ink-3); }
+
+.cs-h { margin: 18px 0 6px; font-size: 14px; font-weight: 700; color: var(--ao-ink); }
+.cs-note { margin: 0 0 8px; font-size: 12.5px; color: var(--ao-ink-3); }
+
+.cs-plot { width: 100%; min-width: 0; }
+.cs-svg { display: block; width: 100%; height: auto; }
+.cs-grid { stroke: var(--ao-line); stroke-width: 1; }
+.cs-axis { stroke: var(--ao-line-2); stroke-width: 1; }
+.cs-tick { font-family: var(--ao-data); font-size: 11px; fill: var(--ao-ink-3); }
+.cs-line { fill: none; stroke: var(--ao-gold); stroke-width: 2; stroke-linejoin: round; }
+.cs-dot { fill: var(--ao-gold); stroke: var(--ao-surface); stroke-width: 2; }
+.cs-dot--gift { fill: var(--ao-surface); stroke: var(--ao-gold); }
+.cs-end { font-family: var(--ao-data); font-size: 13px; fill: var(--ao-gold-2); }
+
+.cs-two { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 0 24px; }
+
+.cs-bars { display: flex; flex-direction: column; gap: 6px; }
+.cs-bar { display: grid; grid-template-columns: 96px minmax(0, 1fr) 96px; align-items: center; gap: 10px; font-size: 12.5px; }
+.cs-bar__label { color: var(--ao-ink-2); }
+.cs-bar__track { position: relative; height: 12px; border-radius: 3px; background: rgba(255, 255, 255, 0.03); }
+.cs-bar__fill { position: absolute; inset: 0 auto 0 0; border-radius: 3px; background: rgba(255, 184, 77, 0.35); }
+.cs-bar__fill.is-top { background: var(--ao-gold); }
+.cs-bar__value { font-family: var(--ao-data); color: var(--ao-ink); white-space: nowrap; }
+
+@media (max-width: 1080px) { .cs-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 640px) {
+  .cs-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cs-bar { grid-template-columns: 80px minmax(0, 1fr) 84px; }
+}
