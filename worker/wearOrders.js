@@ -131,6 +131,14 @@ export async function callGame(env, ctx, userId, method, path, body) {
         headers: { 'content-type': 'application/json' },
         body: body == null || method === 'GET' ? undefined : JSON.stringify(body),
       });
+      // The same "a salvo takes no orders" guard index.js puts in front of
+      // every write route.
+      if (method !== 'GET' && params.gameId) {
+        const refused = await missilesMod.refuseMissileOrders(req, params);
+        if (refused) {
+          return { status: refused.status, body: await refused.json().catch(() => null) };
+        }
+      }
       const res = await r.handle(req, env, { url, session: { user_id: userId }, params });
       const text = res.status === 204 ? '' : await res.text();
       let parsed = null;

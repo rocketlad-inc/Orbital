@@ -151,12 +151,19 @@ async function launchChrome(port, width, height) {
       send('Page.handleJavaScriptDialog', { accept: true }).catch(() => {});
     }
   };
-  const send = (method, params = {}) => new Promise((resolve, reject) => {
+  // Every call can carry a deadline. A screenshot or a frame that never
+  // answers used to stall a take for an hour with nothing in the log.
+  const send = (method, params = {}, timeoutMs = 0) => new Promise((resolve, reject) => {
     const mid = ++id; pending.set(mid, { resolve, reject });
     ws.send(JSON.stringify({ id: mid, method, params }));
+    if (timeoutMs > 0) {
+      setTimeout(() => {
+        if (pending.has(mid)) { pending.delete(mid); reject(new Error(`${method}: no answer in ${timeoutMs / 1000} s`)); }
+      }, timeoutMs);
+    }
   });
-  const evaluate = async (expression) => {
-    const r = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
+  const evaluate = async (expression, timeoutMs = 0) => {
+    const r = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }, timeoutMs);
     if (r.exceptionDetails) throw new Error('page: ' + (r.exceptionDetails.exception?.description ?? r.exceptionDetails.text));
     return r.result.value;
   };
@@ -268,26 +275,46 @@ async function film() {
     const frames = [];
     const t0 = Date.now();
     for (let k = 0; k < total; k++) {
-      const r = await b.evaluate(`window.__studio.filmFrame().then(r => JSON.stringify(r))`);
-      const { done } = JSON.parse(r);
-      const shotPng = await b.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+      // A frame waits on at most one server tick (bounded in the page at
+      // 30 s + 90 s); past 150 s the page is wedged and the take ends here
+      // with what it has. A screenshot gets three tries.
+      let done = false;
+      try {
+        const r = await b.evaluate(`window.__studio.filmFrame().then(r => JSON.stringify(r))`, 150_000);
+        done = JSON.parse(r).done;
+      } catch (e) {
+        console.error(`\nframe ${k}: ${e.message}; ending the take with ${frames.length} frames`);
+        break;
+      }
+      let shotPng = null;
+      for (let attempt = 0; attempt < 3 && !shotPng; attempt++) {
+        shotPng = await b.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }, 30_000)
+          .catch((e) => { console.error(`\nframe ${k}: screenshot try ${attempt + 1}: ${e.message}`); return null; });
+      }
+      if (!shotPng) { console.error(`\nframe ${k}: no screenshot; ending the take with ${frames.length} frames`); break; }
       const f = `${String(k).padStart(5, '0')}.png`;
       fs.writeFileSync(path.join(dir, f), Buffer.from(shotPng.data, 'base64'));
       frames.push({ f, t: k / (shot.fps ?? 30) });
-      if (k % 30 === 0) process.stderr.write(`\r  ${k}/${total}  ${((Date.now() - t0) / 1000).toFixed(0)}s   `);
+      if (k % 30 === 0) {
+        process.stderr.write(`\r  ${k}/${total}  ${((Date.now() - t0) / 1000).toFixed(0)}s   `);
+        // The manifest as it stands, so a killed take still encodes.
+        fs.writeFileSync(path.join(dir, 'frames.json'), JSON.stringify(frames));
+      }
       if (done) break;
     }
     process.stderr.write('\n');
     fs.writeFileSync(path.join(dir, 'frames.json'), JSON.stringify(frames));
-    const stats = await b.evaluate('JSON.stringify(window.__studio.stats)').catch(() => '{}');
-    await b.evaluate('window.__studio.closeFilm()').catch(() => {});
+    const stats = await b.evaluate('JSON.stringify(window.__studio.stats)', 10_000).catch(() => '{}');
+    await b.evaluate('window.__studio.closeFilm()', 10_000).catch(() => {});
     console.log(JSON.stringify({ dir, frames: frames.length, seconds: shot.seconds, stats: JSON.parse(stats) }));
     if (flag('encode') !== '0') {
       const width = flag('width') || '960';
       const enc = path.join(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), 'studio-encode.py');
       const name = flag('name') || path.basename(dir);
       console.error(`encoding ${name} at ${width}px…`);
-      const r = spawn('python', [enc, dir, '--name', name, '--width', width], { stdio: 'inherit' });
+      const encArgs = [enc, dir, '--name', name, '--width', width];
+      if (flag('speed')) encArgs.push('--speed', flag('speed'));
+      const r = spawn('python', encArgs, { stdio: 'inherit' });
       await new Promise(res => r.on('exit', res));
     }
   } finally {

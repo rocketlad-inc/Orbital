@@ -163,6 +163,10 @@ async function resetStudioRows(env, gameId) {
     env.DB.prepare('DELETE FROM game_trade_route_ships WHERE game_id = ? AND ship_id LIKE ?').bind(gameId, like),
     env.DB.prepare("DELETE FROM game_trade_route_stops WHERE game_id = ? AND route_id IN (SELECT id FROM game_trade_routes WHERE game_id = ? AND ship_id LIKE ?)").bind(gameId, gameId, like),
     env.DB.prepare('DELETE FROM game_trade_routes WHERE game_id = ? AND ship_id LIKE ?').bind(gameId, like),
+    // Captains sit on BOTH tables (captain.ship_id and ship.captain_id). The
+    // hull goes; its captain returns to the bank, or the next apply finds
+    // every captain still 'assigned' to a dead hull and seats no fleet.
+    env.DB.prepare('UPDATE game_captains SET ship_id = NULL WHERE game_id = ? AND ship_id LIKE ?').bind(gameId, like),
     env.DB.prepare('DELETE FROM game_ships WHERE game_id = ? AND id LIKE ?').bind(gameId, like),
     env.DB.prepare('DELETE FROM game_settlements WHERE game_id = ? AND id LIKE ?').bind(gameId, like),
     env.DB.prepare('DELETE FROM game_fleets WHERE game_id = ? AND id LIKE ?').bind(gameId, like),
