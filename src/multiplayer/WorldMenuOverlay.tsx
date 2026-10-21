@@ -40,7 +40,7 @@ import { ShipIcon, ICON_VARIANT_NAMES, DEFAULT_SHIP_ICONS } from '../components/
 import { randomShipName } from '../game/shipNames';
 import { pickFromPool } from '../game/namePools';
 import { deriveSecondary } from '../game/colorUtils';
-import { stationInnerSvg } from '../render/settlementArt';
+import { stationInnerSvg, stationArtBounds } from '../render/settlementArt';
 import { globeKeyOf } from '../render/planetTexture';
 import { artUrl } from '../render/artVersion';
 import { StructureIcon, StructureScaffold } from '../components/StructureIcons';
@@ -725,7 +725,7 @@ export const WorldMenuOverlay: React.FC = () => {
   // the station art and in its card: as tags of their own they took the
   // same patch of sky as the surface tags (Lorne, 2026-10-20: "we got
   // overlapping here") ----
-  const staW = mobile ? 84 : shortDesk ? 100 : 130, staH = staW;
+  const staW = mobile ? 84 : shortDesk ? 130 : 180, staH = staW;
   const staX = mobile ? 8 : Math.min(vw - dockW - staW - 30, (ctlLeft ?? vw) - staW - 10);
   const staY = mobile ? TOPBAR + 10 + chromeH.panel + 10 : TOPBAR + 10 + 40 + 14;
   const STA_CHIP_H = 30;
@@ -1244,6 +1244,27 @@ export const WorldMenuOverlay: React.FC = () => {
   ];
 
   const staHpRatio = readout.station ? readout.station.hp / Math.max(1, readout.station.maxHp) : 1;
+  // THE STATION AS THE MAP DRAWS IT, framed on the modules it HAS rather
+  // than on room for every module it could have: drawn in the full frame,
+  // a hub and one gun came out a third of their box (Lorne, 2026-10-20:
+  // "Why is the station so damn tiny?"). Desktop and phone both use it.
+  const staLevels = (() => {
+    const b = (here.find(x => x.id === readout.station?.settlementId)?.buildings ?? {}) as Record<string, number>;
+    return {
+      weaponsLevel: b.weapons ?? 0, labLevel: b.lab ?? 0,
+      shipyardLevel: b.shipyard ?? 0, thrustersLevel: b.trajectory_thrusters ?? 0,
+    };
+  })();
+  const stationArt = (x: number, y: number, w: number, h: number) => {
+    const bb = stationArtBounds(staLevels);
+    const s = Math.min(w / (bb.x1 - bb.x0), h / (bb.y1 - bb.y0));
+    const tx = x + w / 2 - s * (bb.x0 + bb.x1) / 2;
+    const ty = y + h / 2 - s * (bb.y0 + bb.y1) / 2;
+    return (
+      <g data-livery={sp1} transform={`translate(${tx.toFixed(1)} ${ty.toFixed(1)}) scale(${s.toFixed(3)})`}
+        dangerouslySetInnerHTML={{ __html: stationInnerSvg(staLevels, sp1, sp2, staSkin) }} />
+    );
+  };
 
   // ---- the world's readout, shared by the desktop header and the phone's
   // OVERVIEW sheet ----
@@ -1439,7 +1460,8 @@ export const WorldMenuOverlay: React.FC = () => {
 
     // ---- the neighbours: one tap to the next world ----
     const nbrs = (view === 'home' || view === 'terraform') && neighbors.length > 0 ? (
-      <nav className="wmp-nbrs" aria-label={t('worldmenu.p.nearby')}>
+      <nav className="wmp-nbrs" aria-label={t('worldmenu.p.nearby')}
+        style={readout.station ? { right: 12 + 120 + 8 } : undefined}>
         {neighbors.map(nb => {
           const isParent = nb.id === body.parent;
           const own = bodyOwnerColor(nb.id);
@@ -1504,6 +1526,30 @@ export const WorldMenuOverlay: React.FC = () => {
         {rawHere ? <>{lockGlyph}{t('worldmenu.p.cityPlot')}</> : t('worldmenu.found.btnCity')}
       </button>
     ) : null;
+
+    // ---- THE STATION, in the sky over its world (Lorne, 2026-10-20: it
+    // was "missing entirely on mobile"). As big as the sky between the
+    // header and the highest pin allows; yours opens the STATION tab. ----
+    const staTop = TOPBAR + 64 + 6;
+    const skyBottom = myCity && surfTags.length ? Math.min(...surfTags.map(s => pinY(s) - 22)) : apexY - 50;
+    const staSize = Math.min(120, Math.round(skyBottom - staTop - 10));
+    const showStation = !!readout.station && level !== 'full' && staSize >= 56;
+    const stationEl = showStation ? (() => {
+      const art = (
+        <svg width={staSize} height={staSize} viewBox={`0 0 ${staSize} ${staSize}`} aria-hidden="true">
+          {stationArt(2, 2, staSize - 4, staSize - 4)}
+        </svg>
+      );
+      const style = { left: vw - 12 - staSize, top: staTop, width: staSize, height: staSize };
+      const on = view === 'structures' && pside === 'orbit';
+      return myStation ? (
+        <button type="button" className={`wmp-station${on ? ' is-on' : ''}`} style={style} data-testid="wm-station"
+          aria-label={myStation.name} title={myStation.name}
+          onClick={() => { setPicked(null); setPside('orbit'); setPview('structures'); }}>{art}</button>
+      ) : (
+        <span className="wmp-station is-other" style={style} data-testid="wm-station" title={readout.station!.name}>{art}</span>
+      );
+    })() : null;
 
     // ---- HOME: the peek. Who lives here, what it makes, any raid, and a
     // card for each thing you can open ----
@@ -1832,6 +1878,7 @@ export const WorldMenuOverlay: React.FC = () => {
         data-testid="world-menu">
         {header}
         {nbrs}
+        {stationEl}
         {plot}
         {pins}
         {errMsg && <div className="wm-err">{errMsg}</div>}
@@ -1985,27 +2032,18 @@ export const WorldMenuOverlay: React.FC = () => {
       {readout.station && !mobile && (
         <svg
           className="wm-station" data-testid="wm-station"
-          viewBox="0 0 130 130"
+          viewBox={`0 0 ${staW} ${staH}`}
           style={{ left: staX, top: staY, width: staW, height: staH }}
         >
-          <g
-            data-livery={sp1}
-            transform="translate(65 80) scale(1.05)"
-            dangerouslySetInnerHTML={{ __html: stationInnerSvg({
-              weaponsLevel: myStation?.buildings?.weapons ?? 0,
-              labLevel: myStation?.buildings?.lab ?? 0,
-              shipyardLevel: myStation?.buildings?.shipyard ?? 0,
-              thrustersLevel: (myStation?.buildings as Record<string, number> | undefined)?.trajectory_thrusters ?? 0,
-            }, sp1, sp2, staSkin) }}
-          />
+          {stationArt(4, 40, staW - 8, staH - 42)}
           {/* Name + HP header — always readable */}
-          <text x="65" y="14" textAnchor="middle"
+          <text x={staW / 2} y="14" textAnchor="middle"
             style={{ font: '700 10px "Audiowide", monospace', letterSpacing: '0.08em', fill: '#d6e2ec' }}>
             {readout.station.name.toUpperCase()}
           </text>
-          <rect x="18" y="20" width="94" height="5" rx="2" fill="#0c1219" stroke="#2a3d50" strokeWidth="1" />
-          <rect x="18" y="20" width={94 * staHpRatio} height="5" rx="2" fill={hpColor(staHpRatio)} />
-          <text x="65" y="33" textAnchor="middle"
+          <rect x={staW / 2 - 47} y="20" width="94" height="5" rx="2" fill="#0c1219" stroke="#2a3d50" strokeWidth="1" />
+          <rect x={staW / 2 - 47} y="20" width={94 * staHpRatio} height="5" rx="2" fill={hpColor(staHpRatio)} />
+          <text x={staW / 2} y="33" textAnchor="middle"
             style={{ font: '700 8px "Audiowide", monospace', letterSpacing: '0.06em', fill: hpColor(staHpRatio) }}>
             {Math.round(readout.station.hp)}/{readout.station.maxHp}
           </text>

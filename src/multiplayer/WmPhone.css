@@ -98,6 +98,20 @@
 .wm-root.wmp .wmp-nbr i { width: 7px; height: 7px; border-radius: 50%; }
 .wm-root.wmp .wmp-nbr span { color: var(--wmp-teal); font-size: 14px; }
 
+/* ---- the station, in the sky over its world ---- */
+.wm-root.wmp .wmp-station {
+  position: absolute; min-height: 0; padding: 0; margin: 0;
+  background: none; border: 0; border-radius: 12px;
+  filter: drop-shadow(0 0 10px rgba(0, 0, 0, 0.6));
+  transition: top 0.25s ease-out, width 0.25s ease-out, height 0.25s ease-out;
+  z-index: 5;
+}
+.wm-root.wmp button.wmp-station { cursor: pointer; }
+.wm-root.wmp .wmp-station svg { display: block; overflow: visible; }
+.wm-root.wmp .wmp-station.is-on { filter: drop-shadow(0 0 12px rgba(78, 205, 196, 0.55)); }
+.wm-root.wmp .wmp-station:focus-visible { outline: 2px solid var(--wmp-teal); outline-offset: 2px; }
+.wm-root.wmp span.wmp-station { pointer-events: none; }
+
 /* ---- the pins on the horizon ---- */
 .wm-root.wmp .wmp-pins { position: absolute; inset: 0; pointer-events: none; }
 .wm-root.wmp .wmp-pin {

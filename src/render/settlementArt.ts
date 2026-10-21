@@ -119,6 +119,27 @@ export function stationInnerSvg(o: StationLevels, primary: string, secondary?: s
   return stationMarkup(o, pal(primary, secondary), stationSkinOf(skin));
 }
 
+/** The box (station units) the drawing actually fills for these levels:
+ *  the hub plus each BUILT module at its mount, every part a 64-unit tile
+ *  at its scale. The full +/-STATION_VIEW frame leaves room for modules
+ *  not yet built, so a hub-and-one-gun station drawn in it came out a
+ *  third of its box (Lorne, 2026-10-20: "Why is the station so damn
+ *  tiny?"); the world menu frames this box instead. */
+export function stationArtBounds(o: StationLevels): { x0: number; y0: number; x1: number; y1: number } {
+  const M = STATION_MOUNTS;
+  let x0 = M.hub.x - 32 * CORE_SCALE, x1 = M.hub.x + 32 * CORE_SCALE;
+  let y0 = M.hub.y - 32 * CORE_SCALE, y1 = M.hub.y + 32 * CORE_SCALE;
+  const take = (x: number, y: number, half: number, below = half) => {
+    x0 = Math.min(x0, x - half); x1 = Math.max(x1, x + half);
+    y0 = Math.min(y0, y - half); y1 = Math.max(y1, y + below);
+  };
+  if (o.weaponsLevel > 0) { const sc = modScale(o.weaponsLevel) * 1.3; take(M.weapons.x, M.weapons.y, 32 * sc, 12 * sc + 2); }
+  if (o.labLevel > 0) { const sc = modScale(o.labLevel) * 1.2; take(M.lab.x, M.lab.y, 32 * sc, 14 * sc + 2); }
+  if (o.shipyardLevel > 0) { const sc = modScale(o.shipyardLevel) * 1.25; take(M.shipyard.x, M.shipyard.y, 32 * sc, 18 * sc + 2); }
+  if (o.thrustersLevel > 0) take(M.thrusters.x, M.thrusters.y + 1, 11, 6);
+  return { x0, y0, x1, y1 };
+}
+
 function stationMarkup(o: StationLevels, C: Pal, skin: StationSkin = 'hub'): string {
   const M = STATION_MOUNTS;
   let s = '';
