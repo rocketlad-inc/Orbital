@@ -59,12 +59,26 @@ export function tickPhase(
  * against server-authoritative tick numbers must keep using the integer
  * `currentTick`: a ship is at tick 41, it is not at tick 41.6.
  */
+/**
+ * THE STUDIO'S CLOCK. While a clip is filmed the page runs on a virtual
+ * clock, but the server tick it waits on lands on the real one, so the
+ * phase computed from next_tick_at was garbage (stuck at 0) and the map
+ * jumped a whole tick at every boundary. The director installs this
+ * while filming: it returns the tick to draw at, gliding from one tick
+ * to the next on the film's own clock. Null everywhere else.
+ */
+let studioDisplayTick: ((currentTick: number) => number) | null = null;
+export function setStudioDisplayTick(fn: ((currentTick: number) => number) | null): void {
+  studioDisplayTick = fn;
+}
+
 export function smoothedTick(
   currentTick: number,
   nextTickAt: number | null | undefined,
   tickIntervalMs: number | null | undefined,
   nowMs: number,
 ): number {
+  if (studioDisplayTick) return studioDisplayTick(currentTick);
   // Single-player: currentTick is already continuous. Leave it alone.
   if (tickIntervalMs == null) return currentTick;
   return currentTick + tickPhase(nextTickAt, tickIntervalMs, nowMs);
