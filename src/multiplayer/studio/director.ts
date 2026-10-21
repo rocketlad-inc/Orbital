@@ -43,7 +43,8 @@ export type ShotStep =
   | { at: number; do: 'panel'; id: PanelId | null }
   | { at: number; do: 'click'; selector: string }
   | { at: number; do: 'intercept'; ships: Target; target: Target }
-  | { at: number; do: 'strike'; ship: string; ticks?: number };
+  | { at: number; do: 'strike'; ship: string; ticks?: number }
+  | { at: number; do: 'hull'; ship: string; hp: number };
 
 /** The game's panels, by the name the dock and the shell know them by. */
 export type PanelId = 'senate' | 'faction' | 'comms' | 'trades' | 'situation' | 'eventlog' | 'multiplayer'
@@ -334,6 +335,15 @@ export class Director {
     return !!res.ok;
   }
 
+  /** Set a hull's HP now, so the next tick's combat can finish it on cue. */
+  async hull(ship: string, hp: number): Promise<boolean> {
+    const res = await apiFetch<{ hp: number }>(`/api/admin/studio/games/${this.host.gameId}/hull`, {
+      method: 'POST', body: JSON.stringify({ ship: ship.replace(/^ship:/, ''), hp }),
+    });
+    this.note(res.ok ? `hull: ${ship} at ${hp}` : `hull: ${res.error?.message ?? res.status}`);
+    return !!res.ok;
+  }
+
   /** Click the first element a CSS selector finds: a disclosure's
    *  summary, a tab, a button. Returns false (and notes it) when nothing
    *  matches, so a shot keeps playing. */
@@ -484,6 +494,7 @@ export class Director {
         case 'click': this.click(st.selector); break;
         case 'intercept': await this.intercept(st.ships, st.target); break;
         case 'strike': await this.strike(st.ship, st.ticks); break;
+        case 'hull': await this.hull(st.ship, st.hp); break;
         case 'hook': this.hook = st.text; break;
         case 'caption': this.caption = { text: st.text, since: this.clock, color: st.color }; break;
         case 'tick': await this.ticks(st.n ?? 1); break;

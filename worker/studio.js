@@ -695,6 +695,31 @@ async function handleStrike(req, env, { session, params }) {
   return json({ ok: true, ship: ship.id, world: target.name, mode, fires_at_tick: ready });
 }
 
+/**
+ * POST /api/admin/studio/games/:gameId/hull  { ship: 'st_mega_0', hp: 250 }
+ *
+ * Set a hull's HP mid-shot, so a death lands on cue: the kill itself
+ * still comes from the next tick's real combat. Fire distribution varies
+ * from take to take, so a scripted ending ("then it is destroyed") needs
+ * this rather than tuned HP. Test games only; never above hp_max.
+ */
+async function handleHull(req, env, { session, params }) {
+  const { gameId } = params;
+  if (!(await allowedInGame(req, env, session, gameId))) return err(404, 'not_found', 'no such route');
+  const g = await env.DB.prepare('SELECT id, is_test_game FROM games WHERE id = ?').bind(gameId).first();
+  if (!g || (g.is_test_game ?? 0) !== 1) return err(404, 'not_found', 'no such test game');
+  const body = await readJson(req);
+  const raw = String(body?.ship ?? '');
+  const shipId = raw.startsWith(`${gameId}:`) ? raw : `${gameId}:${raw}`;
+  const hp = Number(body?.hp);
+  if (!Number.isFinite(hp) || hp <= 0) return err(400, 'bad_request', 'hp must be a positive number');
+  const r = await env.DB
+    .prepare(`UPDATE game_ships SET hp = MIN(?, hp_max) WHERE id = ? AND game_id = ? AND status = 'active'`)
+    .bind(hp, shipId, gameId).run();
+  if (!r.meta?.changes) return err(404, 'not_found', `no active ship ${raw}`);
+  return json({ ok: true, ship: shipId, hp });
+}
+
 async function handleReset(req, env, { session, params }) {
   if (!(await allowed(req, env, session))) return err(404, 'not_found', 'no such route');
   const { gameId } = params;
@@ -734,6 +759,7 @@ export const routes = [
   { method: 'POST', pattern: '/api/admin/studio/games', auth: 'required', handle: handleApply },
   { method: 'POST', pattern: /^\/api\/admin\/studio\/games\/(?<gameId>[A-Za-z0-9_-]{6,32})\/tick$/, auth: 'required', handle: handleTick },
   { method: 'POST', pattern: /^\/api\/admin\/studio\/games\/(?<gameId>[A-Za-z0-9_-]{6,32})\/strike$/, auth: 'required', handle: handleStrike },
+  { method: 'POST', pattern: /^\/api\/admin\/studio\/games\/(?<gameId>[A-Za-z0-9_-]{6,32})\/hull$/, auth: 'required', handle: handleHull },
   { method: 'POST', pattern: /^\/api\/admin\/studio\/games\/(?<gameId>[A-Za-z0-9_-]{6,32})\/reset$/, auth: 'required', handle: handleReset },
   { method: 'POST', pattern: /^\/api\/admin\/studio\/games\/(?<gameId>[A-Za-z0-9_-]{6,32})\/close$/, auth: 'required', handle: handleClose },
 ];
