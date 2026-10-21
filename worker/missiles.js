@@ -16,7 +16,7 @@
 //
 // THE SILO is a city building ('missile_silo' in BUILDING_DEFS, levelled
 // like any other). Its stock and its own build queue live in their own
-// columns on the settlement (0177) — never in buildings_json, whose every
+// columns on the settlement (0178) — never in buildings_json, whose every
 // key is read as a level.
 //
 // A LAUNCHED SALVO is one game_ships row of class 'missile' carrying
@@ -144,6 +144,35 @@ const json = (data, init = {}) => new Response(JSON.stringify(data), {
 });
 const err = (status, code, message) => json({ error: { code, message } }, { status });
 async function readJson(req) { try { return await req.json(); } catch { return null; } }
+/** 409 when a write names a missile salvo: in the path (/ships/:id) or as
+ *  a ship id anywhere the ship endpoints take one in a body. Null to go on.
+ *  A body that is not JSON names nothing. A salvo is a ship row (so it can
+ *  fly and be seen), which makes it look orderable to every ship endpoint;
+ *  index.js's feature dispatch and wearOrders.callGame both ask this. */
+export async function refuseMissileOrders(req, params) {
+  const ids = new Set();
+  if (params.shipId) ids.add(params.shipId);
+  const type = req.headers.get('content-type') ?? '';
+  if (req.body && (type.includes('json') || type === '')) {
+    try {
+      const body = await req.clone().json();
+      const take = (v) => { if (typeof v === 'string' && v.includes(':')) ids.add(v); };
+      const walk = (o) => {
+        if (!o || typeof o !== 'object') return;
+        take(o.ship_id); take(o.shipId); take(o.flagship_id);
+        for (const k of ['ship_ids', 'shipIds', 'ships']) if (Array.isArray(o[k])) o[k].forEach(x => (typeof x === 'string' ? take(x) : walk(x)));
+        if (Array.isArray(o.orders)) o.orders.forEach(walk);
+        if (o.kind === 'ship') take(o.asset_id);
+      };
+      walk(body);
+    } catch { /* not JSON */ }
+  }
+  // Every salvo's id is `<game>:msl_...` (salvoStatements), so the id
+  // alone says it: no read on the hot path of every ship order.
+  return [...ids].some(id => id.includes(':msl_')) ? err(409, 'missile', 'a missile salvo takes no orders') : null;
+}
+/** A malformed %-sequence in the URL is a bad id (no match), not a 500. */
+function safeDecode(s) { try { return decodeURIComponent(s); } catch { return ''; } }
 
 /** The caller's live faction, the game's tick, and their silo city. */
 async function loadSilo(env, ctx) {
@@ -162,7 +191,7 @@ async function loadSilo(env, ctx) {
               missile_stock, missile_orders_json, missile_auto, missile_reserve, missile_salvo
          FROM game_settlements WHERE id = ? AND game_id = ?`,
     )
-    .bind(decodeURIComponent(settlementId), gameId).first();
+    .bind(safeDecode(settlementId), gameId).first();
   if (!s || s.destroyed_at_tick != null) return { error: err(404, 'not_found', 'no such city') };
   if (s.owner_faction_id !== me.id) return { error: err(403, 'not_owner', 'not your city') };
   const level = siloLevelOf(s);
@@ -193,7 +222,9 @@ async function handleOrder(req, env, ctx) {
     placed.push({
       id: `m${L.tick}_${Math.random().toString(36).slice(2, 8)}`,
       ticks: MISSILE_BUILD_TICKS, start_tick: null, complete_tick: null,
-      cost: { ...MISSILE_COST },
+      // Who paid: a cancel refunds THEM, even after the city changed hands
+      // (a sold city's queue goes with it; its price does not).
+      cost: { ...MISSILE_COST }, paid_by: L.me.id,
     });
   }
   const next = fillLines(placed, siloLines(L.level), L.tick);
@@ -234,7 +265,7 @@ async function handleCancel(req, env, ctx) {
     .bind(JSON.stringify(next), L.s.id, L.s.missile_orders_json ?? '[]').run();
   if (!wrote.meta?.changes) return err(409, 'busy', 'the silo changed; try again');
   await env.DB.prepare('UPDATE game_factions SET metal = metal + ?, gold = gold + ? WHERE id = ?')
-    .bind(Number(gone.cost?.metal ?? MISSILE_COST.metal), Number(gone.cost?.gold ?? MISSILE_COST.gold), L.me.id).run();
+    .bind(Number(gone.cost?.metal ?? MISSILE_COST.metal), Number(gone.cost?.gold ?? MISSILE_COST.gold), gone.paid_by ?? L.me.id).run();
   return json({ ok: true, orders: next });
 }
 
@@ -476,6 +507,19 @@ async function handleLaunch(req, env, ctx) {
   if (starSystemOf(targetId, byId) !== starSystemOf(L.s.body_id, byId)) {
     return err(409, 'out_of_range', 'missiles only reach worlds in their own star system');
   }
+  // WAR TO FIRE (Lorne, 2026-10-20): a strike needs someone you are at war
+  // with in that orbit. What lands still hits everything there.
+  const war = await hostilePairs(env, L.gameId);
+  const inOrbit = (await env.DB
+    .prepare(
+      `SELECT DISTINCT s.owner_faction_id FROM game_ships s
+        WHERE s.game_id = ? AND s.parent_body_id = ? AND s.status = 'active' AND s.ship_class <> 'missile'
+          AND NOT EXISTS (SELECT 1 FROM game_ship_nodes n WHERE n.ship_id = s.id AND n.status = 'in_transit')`,
+    )
+    .bind(L.gameId, targetId).all()).results ?? [];
+  if (!inOrbit.some(r => r.owner_faction_id !== L.me.id && war.has(pairKey(L.me.id, r.owner_faction_id)))) {
+    return err(409, 'not_at_war', 'nobody you are at war with is in that orbit');
+  }
   const sky = await loadSky(env.DB, L.gameId);
   const leg = await missileLeg(env.DB, L.gameId, L.s.body_id, targetId, L.tick, { posAt: sky.bodyPos, homeRadius: home?.radius });
   // Take the missiles first (guarded): two taps cannot fire one magazine twice.
@@ -503,6 +547,9 @@ async function launchAtShip(env, L, body) {
   const f = F.flights.get(targetId);
   if (!f || f.cls === MISSILE_CLASS) return err(404, 'not_in_flight', 'that ship is not in flight');
   if (f.owner === L.me.id) return err(400, 'own_ship', 'that is one of your own ships');
+  // WAR TO FIRE (Lorne, 2026-10-20): only at an empire you are at war with.
+  const war = await hostilePairs(env, L.gameId);
+  if (!war.has(pairKey(L.me.id, f.owner))) return err(409, 'not_at_war', 'you are not at war with that empire');
   const rows = (await env.DB
     .prepare('SELECT id, name, template_id, parent_body_id, radius, type, destroyed_at_tick FROM game_bodies WHERE game_id = ?')
     .bind(L.gameId).all()).results ?? [];
@@ -633,22 +680,25 @@ export async function advanceMissileBuilds(env, gameId, tick) {
   for (const r of rows) {
     const level = siloLevelOf(r);
     let orders = parseOrders(r.missile_orders_json);
-    let stock = Number(r.missile_stock || 0);
     const cap = siloCapacity(level);
-    // Every line that finished lands its missile; freed lines take the
-    // next orders waiting, in the order they were placed.
+    // Every line that finished lands its missile (the magazine capped at
+    // the silo's capacity, in the write below); freed lines take the next
+    // orders waiting, in the order they were placed.
     const done = orders.filter(o => o.complete_tick != null && Number(o.complete_tick) <= tick).length;
     let changed = done > 0;
-    if (done) {
-      orders = orders.filter(o => !(o.complete_tick != null && Number(o.complete_tick) <= tick));
-      stock = Math.min(cap, stock + done);
-    }
+    if (done) orders = orders.filter(o => !(o.complete_tick != null && Number(o.complete_tick) <= tick));
     const filled = fillLines(orders, siloLines(level), tick);
     if (filled.some((o, i) => o !== orders[i])) changed = true;
     orders = filled;
+    // Written RELATIVE to the stock and GUARDED on the orders read: a
+    // launch, order or cancel landing between the read and this write
+    // would otherwise be overwritten (missiles back after firing, a paid
+    // order lost, a refunded one still built). Lost the race: next tick.
     if (changed) {
-      stmts.push(env.DB.prepare('UPDATE game_settlements SET missile_stock = ?, missile_orders_json = ? WHERE id = ?')
-        .bind(stock, JSON.stringify(orders), r.id));
+      stmts.push(env.DB.prepare(
+        `UPDATE game_settlements SET missile_stock = MIN(?, missile_stock + ?), missile_orders_json = ?
+          WHERE id = ? AND missile_orders_json = ?`,
+      ).bind(cap, done, JSON.stringify(orders), r.id, r.missile_orders_json));
     }
   }
   for (let i = 0; i < stmts.length; i += 50) await env.DB.batch(stmts.slice(i, i + 50));
@@ -703,11 +753,26 @@ async function damageShips(env, gameId, tick, victims, damage, factionNames) {
  * pact set (pairKey form): a silo never shoots down a partner's salvo.
  */
 export async function resolveMissiles(env, gameId, tick, { peace = new Set() } = {}) {
+  // NOTHING TO DO IN MOST GAMES: no salvo in the air and no silo on
+  // auto-defence with missiles to spend. One read, and a game without
+  // silos pays nothing more per tick (pre-prod review, 2026-10-20).
+  const live = await env.DB.prepare(
+    `SELECT EXISTS (SELECT 1 FROM game_ships WHERE game_id = ? AND ship_class = 'missile' AND status = 'active') AS salvos,
+            EXISTS (SELECT 1 FROM game_settlements WHERE game_id = ? AND type = 'city' AND destroyed_at_tick IS NULL
+                      AND missile_auto IN ('missiles', 'fleets') AND missile_stock > 0) AS guards`,
+  ).bind(gameId, gameId).first();
+  if (!Number(live?.salvos) && !Number(live?.guards)) return 0;
+  // WAR TO FIRE (Lorne, 2026-10-20): the automatic modes act only against
+  // empires their owner is at war with, and anyone else (you, a partner,
+  // a neutral) is someone a burst must not catch. The blast itself still
+  // spares nobody; this decides only when a silo pulls the trigger.
+  const war = await hostilePairs(env, gameId);
+  const atWar = (a, b) => a !== b && war.has(pairKey(a, b)) && !peace.has(pairKey(a, b));
   await retargetSalvos(env, gameId, tick);
   let events = await detonateInFlight(env, gameId, tick);
-  events += await landedMissiles(env, gameId, tick, peace);
-  events += await autoShootDown(env, gameId, tick, peace);
-  events += await autoIntercept(env, gameId, tick, peace);
+  events += await landedMissiles(env, gameId, tick, atWar);
+  events += await autoShootDown(env, gameId, tick, atWar);
+  events += await autoIntercept(env, gameId, tick, atWar);
   await sweepStranded(env, gameId, tick);
   return events;
 }
@@ -779,12 +844,16 @@ async function retargetSalvos(env, gameId, tick) {
       };
       const acc = Math.hypot(A.x, A.y) / T;
       if (!(acc > 0)) break;
+      // The leg's end moves with the meeting: left at the old arrival, a
+      // meeting re-timed past it ended the leg first and the salvo struck
+      // the target's destination instead (pre-prod review, 2026-10-20).
       await env.DB.prepare(
         `UPDATE game_ship_nodes
             SET scheduled_t = ?, launch_x = ?, launch_y = ?, launch_vx = ?, launch_vy = ?, accel = ?, flip_tick = ?,
-                rv_ax = ?, rv_ay = ?, rv_bx = 0, rv_by = 0, rv_meet_tick = ?
+                rv_ax = ?, rv_ay = ?, rv_bx = 0, rv_by = 0, rv_meet_tick = ?,
+                arrival_at_tick = MAX(arrival_at_tick, ?)
           WHERE id = ?`,
-      ).bind(tick, now.pos.x, now.pos.y, now.vel.x, now.vel.y, acc, t, A.x, A.y, t, n.id).run();
+      ).bind(tick, now.pos.x, now.pos.y, now.vel.x, now.vel.y, acc, t, A.x, A.y, t, t + 1, n.id).run();
       moved += 1;
       break;
     }
@@ -800,7 +869,7 @@ async function retargetSalvos(env, gameId, tick) {
  * it can catch. The landing shoot-down (landedMissiles) stays for the
  * ones it cannot, such as a short hop from a moon.
  */
-async function autoShootDown(env, gameId, tick, peace) {
+async function autoShootDown(env, gameId, tick, atWar) {
   const silos = (await env.DB
     .prepare(
       `SELECT id, body_id, owner_faction_id, missile_stock, missile_reserve
@@ -813,7 +882,7 @@ async function autoShootDown(env, gameId, tick, peace) {
   const F = await loadFlights(env.DB, gameId);
   const salvos = [...F.flights].filter(([, f]) => f.cls === MISSILE_CLASS && !f.plan.rv);
   if (salvos.length === 0) return 0;
-  const friendly = (a, b) => a === b || peace.has(pairKey(a, b));
+  const parked = await loadParked(env.DB, gameId);
   const rows = (await env.DB
     .prepare(`SELECT id, owner_faction_id, missile_count FROM game_ships WHERE game_id = ? AND ship_class = 'missile' AND status = 'active'`)
     .bind(gameId).all()).results ?? [];
@@ -833,10 +902,11 @@ async function autoShootDown(env, gameId, tick, peace) {
     )
     .bind(gameId).all()).results ?? [];
   for (const a of aimed) note(a.owner_faction_id, a.rv_follow_ship_id, Number(a.missile_count || 0));
-  const worlds = [...new Set(silos.map(s => s.body_id))];
+  // The whole game's bodies (a handful of hundred rows): an IN-list of
+  // silo worlds could pass D1's 100-parameter limit.
   const bodyRows = new Map(((await env.DB
-    .prepare(`SELECT id, name, radius FROM game_bodies WHERE game_id = ? AND id IN (${worlds.map(() => '?').join(',')})`)
-    .bind(gameId, ...worlds).all()).results ?? []).map(b => [b.id, b]));
+    .prepare('SELECT id, name, radius FROM game_bodies WHERE game_id = ?')
+    .bind(gameId).all()).results ?? []).map(b => [b.id, b]));
   const factionNames = new Map(((await env.DB
     .prepare('SELECT id, name FROM game_factions WHERE game_id = ?').bind(gameId).all()).results ?? [])
     .map(f => [f.id, f.name]));
@@ -845,11 +915,17 @@ async function autoShootDown(env, gameId, tick, peace) {
     for (const [id, f] of salvos) {
       const free = Number(silo.missile_stock) - Number(silo.missile_reserve || 0);
       if (free <= 0) break;
-      if (f.plan.targetBodyId !== silo.body_id || friendly(silo.owner_faction_id, f.owner)) continue;
+      if (f.plan.targetBodyId !== silo.body_id || !atWar(silo.owner_faction_id, f.owner)) continue;
       const need = (countOf.get(id) ?? 0) - (sent.get(silo.owner_faction_id)?.get(id) ?? 0);
       if (need <= 0) continue;
       const icp = planIntercept(F, silo.body_id, tick, id, { missiles: true });
       if (!icp) continue;   // not catchable: the landing shoot-down has it
+      // The interceptors burst too: never where it would catch a hull of
+      // anyone the silo's owner is not at war with (its own included).
+      // The landing shoot-down still has that salvo.
+      const at = meetPoint(icp.plan, tick, icp.meetTick);
+      if (blastVictims(F, parked, at, icp.meetTick)
+        .some(v => !atWar(silo.owner_faction_id, v.owner_faction_id))) continue;
       const k = Math.min(need, free);
       const took = await env.DB
         .prepare('UPDATE game_settlements SET missile_stock = missile_stock - ? WHERE id = ? AND missile_stock >= ?')
@@ -966,7 +1042,7 @@ async function detonateInFlight(env, gameId, tick) {
 }
 
 /** 4. Silos on + FLEETS launch at hostile groups bound for their world. */
-async function autoIntercept(env, gameId, tick, peace) {
+async function autoIntercept(env, gameId, tick, atWar) {
   const silos = (await env.DB
     .prepare(
       `SELECT id, body_id, owner_faction_id, missile_stock, missile_reserve, missile_salvo
@@ -976,34 +1052,31 @@ async function autoIntercept(env, gameId, tick, peace) {
     )
     .bind(gameId).all()).results ?? [];
   if (silos.length === 0) return 0;
-  const war = await hostilePairs(env, gameId);
   const worlds = new Set(silos.map(s => s.body_id));
   const F = await loadFlights(env.DB, gameId);
   const groups = groupFlights(F.flights, { exclude: (_id, f) => f.cls === MISSILE_CLASS })
     .filter(g => worlds.has(g.dest));
   if (groups.length === 0) return 0;
   const parked = await loadParked(env.DB, gameId);
-  const friendly = (a, b) => a === b || peace.has(pairKey(a, b));
-  // Hulls each empire already has a salvo chasing.
+  // Hulls each empire has EVER sent a salvo after, flying, waiting to
+  // leave or already burst: auto-intercept is one salvo per raid (Lorne's
+  // pick), not a fresh one every tick at whatever survived the first.
   const chased = new Map();
-  for (const f of F.flights.values()) {
-    if (f.cls !== MISSILE_CLASS || !f.plan.rv) continue;
-    if (!chased.has(f.owner)) chased.set(f.owner, new Set());
-    chased.get(f.owner).add(f.plan.rv.follow);
-  }
-  const committed = (await env.DB
+  const aimedAt = (await env.DB
     .prepare(
       `SELECT s.owner_faction_id, n.rv_follow_ship_id FROM game_ship_nodes n JOIN game_ships s ON s.id = n.ship_id
-        WHERE n.game_id = ? AND s.ship_class = 'missile' AND n.status = 'committed' AND n.rv_follow_ship_id IS NOT NULL`,
+        WHERE n.game_id = ? AND s.ship_class = 'missile' AND n.rv_follow_ship_id IS NOT NULL`,
     )
     .bind(gameId).all()).results ?? [];
-  for (const r of committed) {
+  for (const r of aimedAt) {
     if (!chased.has(r.owner_faction_id)) chased.set(r.owner_faction_id, new Set());
     chased.get(r.owner_faction_id).add(r.rv_follow_ship_id);
   }
+  // The whole game's bodies: an IN-list of silo worlds could pass D1's
+  // 100-parameter limit.
   const bodyRows = new Map(((await env.DB
-    .prepare(`SELECT id, name, radius FROM game_bodies WHERE game_id = ? AND id IN (${[...worlds].map(() => '?').join(',')})`)
-    .bind(gameId, ...worlds).all()).results ?? []).map(b => [b.id, b]));
+    .prepare('SELECT id, name, radius FROM game_bodies WHERE game_id = ?')
+    .bind(gameId).all()).results ?? []).map(b => [b.id, b]));
   const factionNames = new Map(((await env.DB
     .prepare('SELECT id, name FROM game_factions WHERE game_id = ?').bind(gameId).all()).results ?? [])
     .map(f => [f.id, f.name]));
@@ -1014,19 +1087,17 @@ async function autoIntercept(env, gameId, tick, peace) {
     for (const g of groups) {
       const free = Number(silo.missile_stock) - Number(silo.missile_reserve || 0);
       if (free <= 0) break;
-      if (g.dest !== silo.body_id || g.owner === silo.owner_faction_id) continue;
-      if (!war.has(pairKey(silo.owner_faction_id, g.owner)) || peace.has(pairKey(silo.owner_faction_id, g.owner))) continue;
+      if (g.dest !== silo.body_id || !atWar(silo.owner_faction_id, g.owner)) continue;
       if (g.members.some(id => mine.has(id))) continue;
       const icp = planIntercept(F, silo.body_id, tick, g.lead);
       if (!icp) continue;   // not catchable yet; asked again next tick
-      // NEVER INTO YOUR OWN, the rule the + FLEETS orbit strike keeps: a
-      // meeting whose blast would catch the silo owner's or a pact
-      // partner's hulls (a raid met close to a world their fleet is
-      // parked at) is not fired.
-      const inGroup = new Set(g.members);
+      // NEVER INTO ANYONE YOU ARE NOT AT WAR WITH, the rule the + FLEETS
+      // orbit strike keeps: a meeting whose blast would catch your own,
+      // a partner's or a neutral's hulls (a raid met close to a world a
+      // fleet is parked at) is not fired.
       const at = meetPoint(icp.plan, tick, icp.meetTick);
       if (blastVictims(F, parked, at, icp.meetTick)
-        .some(v => !inGroup.has(v.id) && friendly(silo.owner_faction_id, v.owner_faction_id))) continue;
+        .some(v => !atWar(silo.owner_faction_id, v.owner_faction_id))) continue;
       const count = Math.max(1, Math.min(Number(silo.missile_salvo ?? DEFAULT_AUTO_SALVO), free));
       const took = await env.DB
         .prepare('UPDATE game_settlements SET missile_stock = missile_stock - ? WHERE id = ? AND missile_stock >= ?')
@@ -1059,27 +1130,45 @@ async function autoIntercept(env, gameId, tick, peace) {
 }
 
 /** 1-3: salvos landing on worlds, and + FLEETS at hulls landing uncaught. */
-async function landedMissiles(env, gameId, tick, peace) {
+async function landedMissiles(env, gameId, tick, atWar) {
   // Salvos that have landed: a missile row away from its launch world,
   // not mid-leg. (One waiting to leave sits on its launch world.)
-  const landed = (await env.DB
+  const arrived = (await env.DB
     .prepare(
-      `SELECT s.id, s.owner_faction_id, s.parent_body_id, s.missile_count
+      `SELECT s.id, s.owner_faction_id, s.parent_body_id, s.missile_count,
+              EXISTS (SELECT 1 FROM game_ship_nodes r WHERE r.ship_id = s.id AND r.rv_follow_ship_id IS NOT NULL) AS aimed
          FROM game_ships s
         WHERE s.game_id = ? AND s.ship_class = 'missile' AND s.status = 'active'
           AND s.parent_body_id <> s.home_body_id
           AND NOT EXISTS (SELECT 1 FROM game_ship_nodes n WHERE n.ship_id = s.id AND n.status IN ('in_transit', 'committed'))`,
     )
     .bind(gameId).all()).results ?? [];
-  // Hostile ships that landed this tick (for + FLEETS).
+  // A salvo aimed at SHIPS that reached its leg's end without bursting (its
+  // target re-timed past it) is spent where it is: it was never fired at
+  // that world, so it must not strike it.
+  const strays = arrived.filter(m => Number(m.aimed));
+  if (strays.length) {
+    await env.DB.batch(strays.map(m => env.DB
+      .prepare(`UPDATE game_ships SET status = 'expended', destroyed_at_tick = ? WHERE id = ? AND status = 'active'`)
+      .bind(tick, m.id)));
+  }
+  const landed = arrived.filter(m => !Number(m.aimed));
+  // Ships that landed this tick at a world with a + FLEETS silo. Read
+  // from the hulls in those orbits, not from every leg the game has ever
+  // finished.
   const arrivedHere = (await env.DB
     .prepare(
       `SELECT s.parent_body_id AS body_id, s.owner_faction_id
-         FROM game_ship_nodes n JOIN game_ships s ON s.id = n.ship_id
-        WHERE n.game_id = ? AND n.status = 'executed' AND n.arrival_at_tick = ?
-          AND s.status = 'active' AND s.ship_class <> 'missile' AND s.parent_body_id = n.target_body_id`,
+         FROM game_ships s
+        WHERE s.game_id = ? AND s.status = 'active' AND s.ship_class <> 'missile'
+          AND s.parent_body_id IN (SELECT body_id FROM game_settlements
+                                    WHERE game_id = ? AND type = 'city' AND destroyed_at_tick IS NULL
+                                      AND missile_auto = 'fleets' AND missile_stock > 0)
+          AND EXISTS (SELECT 1 FROM game_ship_nodes n
+                       WHERE n.ship_id = s.id AND n.status = 'executed' AND n.arrival_at_tick = ?
+                         AND n.target_body_id = s.parent_body_id)`,
     )
-    .bind(gameId, tick).all()).results ?? [];
+    .bind(gameId, gameId, tick).all()).results ?? [];
   const bodies = new Set([...landed.map(m => m.parent_body_id), ...arrivedHere.map(a => a.body_id)]);
   if (bodies.size === 0) return 0;
 
@@ -1094,11 +1183,11 @@ async function landedMissiles(env, gameId, tick, peace) {
   const factionNames = new Map(((await env.DB
     .prepare('SELECT id, name FROM game_factions WHERE game_id = ?').bind(gameId).all()).results ?? [])
     .map(f => [f.id, f.name]));
+  // The whole game's bodies: an IN-list of every world that saw an
+  // arrival could pass D1's 100-parameter limit.
   const bodyNames = new Map(((await env.DB
-    .prepare(`SELECT id, name FROM game_bodies WHERE game_id = ? AND id IN (${[...bodies].map(() => '?').join(',')})`)
-    .bind(gameId, ...bodies).all()).results ?? []).map(b => [b.id, b.name]));
-  const war = await hostilePairs(env, gameId);
-  const friendly = (a, b) => a === b || peace.has(pairKey(a, b));
+    .prepare('SELECT id, name FROM game_bodies WHERE game_id = ?')
+    .bind(gameId).all()).results ?? []).map(b => [b.id, b.name]));
 
   let events = 0;
   for (const bodyId of bodies) {
@@ -1107,20 +1196,29 @@ async function landedMissiles(env, gameId, tick, peace) {
     const writes = [];
     const intercepted = [];
 
-    // 1. AUTO-DEFENCE: one missile for one, above the reserve.
+    // 1. AUTO-DEFENCE: one missile for one, above the reserve, at salvos
+    // of empires at war with the silo's owner. The stock is taken first,
+    // guarded, so a launch made since the read cannot be spent twice.
     for (const silo of defenders) {
-      let free = Math.max(0, Number(silo.missile_stock) - Number(silo.missile_reserve || 0));
-      let used = 0;
+      const free = Math.max(0, Number(silo.missile_stock) - Number(silo.missile_reserve || 0));
+      const plan = [];
+      let want = 0;
       for (const m of here) {
-        if (free <= 0) break;
-        if (m.left <= 0 || friendly(silo.owner_faction_id, m.owner_faction_id)) continue;
-        const k = Math.min(free, m.left);
-        m.left -= k; free -= k; used += k;
-        intercepted.push({ by: silo.owner_faction_id, from: m.owner_faction_id, count: k });
+        if (want >= free) break;
+        if (m.left <= 0 || !atWar(silo.owner_faction_id, m.owner_faction_id)) continue;
+        const k = Math.min(free - want, m.left);
+        plan.push({ m, k });
+        want += k;
       }
-      if (used > 0) {
-        silo.missile_stock = Number(silo.missile_stock) - used;
-        writes.push(env.DB.prepare('UPDATE game_settlements SET missile_stock = MAX(0, missile_stock - ?) WHERE id = ?').bind(used, silo.id));
+      if (want <= 0) continue;
+      const took = await env.DB
+        .prepare('UPDATE game_settlements SET missile_stock = missile_stock - ? WHERE id = ? AND missile_stock - ? >= COALESCE(missile_reserve, 0)')
+        .bind(want, silo.id, want).run();
+      if (!took.meta?.changes) continue;
+      silo.missile_stock = Number(silo.missile_stock) - want;
+      for (const { m, k } of plan) {
+        m.left -= k;
+        intercepted.push({ by: silo.owner_faction_id, from: m.owner_faction_id, count: k });
       }
     }
     for (const m of here) {
@@ -1161,10 +1259,11 @@ async function landedMissiles(env, gameId, tick, peace) {
         }), Date.now()).run();
     }
 
-    // 3. + FLEETS: hostile ships just arrived, and none of ours are here.
+    // 3. + FLEETS: hostile ships just arrived, and nobody the silo's owner
+    // is not at war with is here (its own, a partner's, a neutral's).
     for (const silo of defenders) {
       if (silo.missile_auto !== 'fleets') continue;
-      const hostileArrived = arrivedHere.some(a => a.body_id === bodyId && war.has(pairKey(silo.owner_faction_id, a.owner_faction_id)));
+      const hostileArrived = arrivedHere.some(a => a.body_id === bodyId && atWar(silo.owner_faction_id, a.owner_faction_id));
       if (!hostileArrived) continue;
       const free = Math.min(Number(silo.missile_salvo ?? DEFAULT_AUTO_SALVO),
         Math.max(0, Number(silo.missile_stock) - Number(silo.missile_reserve || 0)));
@@ -1174,7 +1273,7 @@ async function landedMissiles(env, gameId, tick, peace) {
           WHERE s.game_id = ? AND s.parent_body_id = ? AND s.status = 'active' AND s.ship_class <> 'missile'
             AND NOT EXISTS (SELECT 1 FROM game_ship_nodes n WHERE n.ship_id = s.id AND n.status = 'in_transit')`,
       ).bind(gameId, bodyId).all();
-      if ((ours.results ?? []).some(r => friendly(silo.owner_faction_id, r.owner_faction_id))) continue;
+      if ((ours.results ?? []).some(r => !atWar(silo.owner_faction_id, r.owner_faction_id))) continue;
       const took = await env.DB.prepare('UPDATE game_settlements SET missile_stock = missile_stock - ? WHERE id = ? AND missile_stock >= ?')
         .bind(free, silo.id, free).run();
       if (!took.meta?.changes) continue;

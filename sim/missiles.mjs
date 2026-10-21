@@ -329,6 +329,8 @@ check('a short hop is still shot down as it lands', intc2.in_flight !== true && 
   const FAR = `${G}:neptune`;
   await DB.prepare(`UPDATE game_settlements SET body_id = ?, missile_stock = 5, missile_auto = 'missiles', missile_reserve = 0 WHERE id = ?`).bind(FAR, cityB.id).run();
   await DB.prepare(`UPDATE game_settlements SET missile_stock = 3 WHERE id = ?`).bind(cityA.id).run();
+  // War to fire: a strike needs someone the launcher is at war with there.
+  await park(B.id, FAR, 'corvette', 100);
   const L5 = await call(A.user_id, 'POST', `${silo(cityA)}/launch`, { target_body_id: FAR, count: 3 });
   let caught = null;
   while (tick < L5.body.arrive_tick && !caught) {
@@ -400,6 +402,68 @@ check('...and still meets it', (await hpOf(held[0])).status === 'destroyed', JSO
 }
 // (LAUNCH on the inbound alert, notifyActions 'intercept', calls the launch route
 // tested above as the signed-in player; that module needs the worker bundle.)
+
+// ---- 9. the pre-prod review (2026-10-20) ------------------------------------
+// WAR TO FIRE (Lorne's pick): no launch at an empire you are not at war with,
+// at its ships or at a world where only they (or nobody) sit.
+{
+  const warRow = await DB.prepare('SELECT * FROM game_wars WHERE game_id = ?').bind(G).first();
+  await DB.prepare('DELETE FROM game_wars WHERE game_id = ?').bind(G).run();
+  await DB.prepare(`UPDATE game_settlements SET missile_stock = 4 WHERE id = ?`).bind(cityA.id).run();
+  const parkedB = await park(B.id, MARS, 'corvette', 100);
+  const atWorld = await call(A.user_id, 'POST', `${silo(cityA)}/launch`, { target_body_id: MARS, count: 1 });
+  check('at peace, a strike on a world with only their ships in orbit is refused',
+    atWorld.status === 409 && atWorld.body?.error?.code === 'not_at_war', JSON.stringify(atWorld));
+  const empty = await call(A.user_id, 'POST', `${silo(cityA)}/launch`, { target_body_id: `${G}:jupiter`, count: 1 });
+  check('...and so is one on an orbit with nobody in it', empty.status === 409 && empty.body?.error?.code === 'not_at_war', JSON.stringify(empty));
+  const flying = (await DB.prepare(
+    `SELECT s.id FROM game_ships s JOIN game_ship_nodes n ON n.ship_id = s.id
+      WHERE s.game_id = ? AND s.owner_faction_id = ? AND s.status = 'active' AND s.ship_class <> 'missile' AND n.status = 'in_transit' LIMIT 1`,
+  ).bind(G, B.id).first())?.id;
+  if (flying) {
+    const atShip = await call(A.user_id, 'POST', `${silo(cityA)}/launch`, { target_ship_id: flying, count: 1 });
+    check('...and a salvo at their ships in flight', atShip.status === 409 && atShip.body?.error?.code === 'not_at_war', JSON.stringify(atShip));
+  }
+  check('...nothing was spent on the refusals', Number((await cityOf(EARTH)).missile_stock) === 4);
+  await DB.prepare('UPDATE game_ships SET status = ? WHERE id = ?').bind('destroyed', parkedB).run();
+  if (warRow) {
+    await DB.prepare(`INSERT INTO game_wars (id, game_id, faction_a, faction_b, declared_by, declared_at_tick) VALUES (?, ?, ?, ?, ?, ?)`)
+      .bind(warRow.id, G, warRow.faction_a, warRow.faction_b, warRow.declared_by, warRow.declared_at_tick).run();
+  }
+}
+// A cancel refunds whoever PAID, even after the city changed hands.
+{
+  await DB.prepare(`UPDATE game_settlements SET missile_stock = 0, missile_orders_json = NULL WHERE id = ?`).bind(cityA.id).run();
+  const order = await call(A.user_id, 'POST', silo(cityA), { count: 1 });
+  const placed = JSON.parse((await cityOf(EARTH)).missile_orders_json ?? '[]');
+  check('an order records who paid for it', order.status === 200 && placed[0]?.paid_by === A.id, JSON.stringify(placed));
+  const aBefore = await DB.prepare('SELECT metal, gold FROM game_factions WHERE id = ?').bind(A.id).first();
+  const bBefore = await DB.prepare('SELECT metal, gold FROM game_factions WHERE id = ?').bind(B.id).first();
+  await DB.prepare('UPDATE game_settlements SET owner_faction_id = ? WHERE id = ?').bind(B.id, cityA.id).run();
+  const cancel = await call(B.user_id, 'DELETE', `${silo(cityA)}?order_id=${encodeURIComponent(placed[0].id)}`);
+  const aAfter = await DB.prepare('SELECT metal, gold FROM game_factions WHERE id = ?').bind(A.id).first();
+  const bAfter = await DB.prepare('SELECT metal, gold FROM game_factions WHERE id = ?').bind(B.id).first();
+  check('...and a buyer cancelling it refunds the seller, not themselves',
+    cancel.status === 200 && Number(aAfter.metal) === Number(aBefore.metal) + 40 && Number(bAfter.metal) === Number(bBefore.metal),
+    JSON.stringify({ cancel, aBefore, aAfter, bBefore, bAfter }));
+  await DB.prepare('UPDATE game_settlements SET owner_faction_id = ? WHERE id = ?').bind(A.id, cityA.id).run();
+}
+// A salvo aimed at SHIPS whose leg ended without bursting (its target
+// re-timed past it) is spent quietly; it never strikes the world it ends at.
+{
+  const enemy = await park(B.id, MARS, 'corvette', 100);
+  const stray = await park(A.id, MARS, 'missile', 1);
+  await DB.prepare('UPDATE game_ships SET missile_count = 3, home_body_id = ? WHERE id = ?').bind(EARTH, stray).run();
+  await DB.prepare(
+    `INSERT INTO game_ship_nodes (id, game_id, ship_id, sequence, anchor_kind, target_body_id, scheduled_t, arrival_at_tick,
+       dv_prograde, dv_normal, dv_radial, fuel_cost, rv_meet_tick, rv_follow_ship_id, status, committed_at_tick)
+     VALUES (?, ?, ?, 0, 'absolute', ?, ?, ?, 0, 0, 0, 0, ?, ?, 'executed', ?)`,
+  ).bind(`${G}:nstray`, G, stray, MARS, tick - 3, tick - 1, tick + 5, enemy, tick - 3).run().catch(e => console.log('stray node:', e.message));
+  await runTick();
+  check('a salvo aimed at ships that ended its leg unburst is spent, and strikes nothing',
+    (await hpOf(stray)).status === 'expended' && Number((await hpOf(enemy)).hp) === 100,
+    JSON.stringify({ stray: await hpOf(stray), enemy: await hpOf(enemy) }));
+}
 
 console.log(bad === 0 ? '\nALL MISSILE CHECKS PASS' : `\n${bad} FAILED`);
 process.exit(bad === 0 ? 0 : 1);
