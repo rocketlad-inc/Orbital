@@ -2047,7 +2047,9 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
   const chronicleFocus: (ChronicleFocus | null)[] = orderedEvents.map(ev => {
     const bodyId = ev.body_id ? (stripGameId(ev.body_id) ?? ev.body_id) : undefined;
     if (ev.ship_id) {
-      return { kind: 'ship', shipId: stripGameId(ev.ship_id) ?? ev.ship_id, bodyId };
+      // The full id: map hulls keep the game prefix (a stripped id found
+      // no ship, so "take me there" always fell back to the world).
+      return { kind: 'ship', shipId: ev.ship_id, bodyId };
     }
     if (bodyId) return { kind: 'body', bodyId };
     return null;
@@ -2088,7 +2090,15 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
           id: ev.id,
           kind: ev.kind,
           bodyId: inFlight ? undefined : stripGameId(ev.body_id) ?? undefined,
-          shipId: stripGameId(ev.ship_id) ?? undefined,
+          // The FULL ship id, the one the map keys every hull by (/state
+          // ships carry the game prefix; only bodies are stripped). The
+          // stripped id matched nothing on the map, so every replayed kill
+          // missed the hull it named (Lorne, 2026-10-21: "exploding ... not
+          // where the ship is last seen, but closer to the planet"): it
+          // could not see the kill had already played at the hull, so it
+          // boomed AGAIN at a hashed spot on the parking ring and left a
+          // second wreck there.
+          shipId: ev.ship_id ?? undefined,
           cause,
           at,
         };
