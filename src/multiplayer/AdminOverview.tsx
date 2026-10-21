@@ -24,6 +24,7 @@ import { ago, labelForKind, playTime } from './adminFormat';
 import { FrictionRows } from './GameStory';
 import { span } from './storyVerdict';
 import { GameActivity } from './AdminGameActivity';
+import { CommissionSales } from './AdminCommissionSales';
 import './AdminOverview.css';
 
 // ---------- payload types (worker/adminDashboard.js) ----------
@@ -236,7 +237,7 @@ export function AdminOverview({ onOpenGame }: { onOpenGame: (id: string) => void
       {tab === 'growth' && <Growth data={data} />}
       {tab === 'friction' && <FrictionTab data={data} />}
       {tab === 'features' && <Features rows={data.usage} />}
-      {tab === 'commission' && <Commission kpis={k} />}
+      {tab === 'commission' && <Commission />}
     </div>
   );
 }
@@ -1354,13 +1355,10 @@ function Features({ rows }: { rows: UsageRow[] }) {
 // Commission
 // ============================================================
 
-function Commission({ kpis }: { kpis: Kpis }) {
+function Commission() {
   return (
     <div className="ao-stack">
-      <div className="ao-kpis ao-kpis--two">
-        <Kpi label="Commissions sold" value={n(kpis.commissions_total)} gold foot="paid through Stripe, all time" />
-        <Kpi label="Sold this week" value={n(kpis.commissions_week)} gold foot="last 7 days" />
-      </div>
+      <CommissionSales surfaceLabel={SURFACE_LABEL} />
       <CommissionFunnel />
       <section className="ao-panel">
         <PanelHead

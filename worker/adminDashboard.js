@@ -22,6 +22,7 @@
 
 import { isAdminEmail } from './admins.js';
 import { QA_DOMAINS } from './analytics.js';
+import { PREMIUM_EMBLEM_IDS } from './emblems.js';
 
 function json(data, init = {}) {
   return new Response(JSON.stringify(data), {
@@ -1082,10 +1083,99 @@ async function handleGameActivity(req, env, { session, url }) {
   });
 }
 
+/**
+ * GET /api/admin/commission/sales — the Commission as a business.
+ *
+ * Every paid sale (Stripe, the buyer's own and gift codes bought), who
+ * bought it and when in their life with the game, whether they still
+ * play and use what they bought; how sales accumulate; how many
+ * checkouts end in a sale; and, by hours played, what share of players
+ * hold it. Admin comps are left out of sales and of conversion.
+ *
+ * Hours before buying are summed from whole days (analytics_user_day),
+ * so a purchase counts its own day's play: close enough at this scale.
+ */
+async function handleCommissionSales(req, env, { session }) {
+  const gate = requireAdmin(session);
+  if (gate) return gate;
+  const now = Date.now();
+  const q = (sql, ...args) => env.DB.prepare(sql).bind(...args).all().then(r => r.results ?? []);
+  const one = (sql, ...args) => env.DB.prepare(sql).bind(...args).first();
+  const premiumEmblems = PREMIUM_EMBLEM_IDS.map(e => `'${e}'`).join(', ');
+  const d30 = now - 30 * DAY_MS;
+  const d60 = now - 60 * DAY_MS;
+
+  const [sales, gifts, checkouts, refunds, bands] = await Promise.all([
+    q(`SELECT e.granted_at AS at, e.source, COALESCE(e.surface, 'before tracking') AS surface,
+              u.display_name AS name, u.created_at AS joined,
+              COALESCE(u.signup_source, 'before tracking') AS signup_source,
+              COALESCE((SELECT SUM(a.minutes) FROM analytics_user_day a
+                         WHERE a.user_id = e.user_id AND a.qa = 0 AND a.day_ms <= e.granted_at), 0) AS minutes_before,
+              (SELECT COUNT(*) FROM game_factions f WHERE f.user_id = e.user_id AND f.joined_at <= e.granted_at) AS games_before,
+              COALESCE(s.last_beat_ms, 0) AS last_seen,
+              (EXISTS (SELECT 1 FROM game_ships sh JOIN game_factions f ON f.id = sh.owner_faction_id
+                        WHERE f.user_id = e.user_id AND sh.icon_variant BETWEEN 'J' AND 'Z' AND length(sh.icon_variant) = 1)
+               OR EXISTS (SELECT 1 FROM game_factions f WHERE f.user_id = e.user_id AND f.emblem IN (${premiumEmblems}))
+               OR u.city_skin IS NOT NULL OR u.station_skin IS NOT NULL) AS uses_goods
+         FROM user_entitlements e
+         JOIN users u ON u.id = e.user_id
+         LEFT JOIN analytics_user_seen s ON s.user_id = e.user_id
+        WHERE e.source = 'stripe' AND ${notQa('u.email')}
+        ORDER BY e.granted_at`),
+    q(`SELECT g.created_at AS at, g.redeemed_at IS NOT NULL AS redeemed, g.voided_at IS NOT NULL AS voided
+         FROM commission_gifts g JOIN users u ON u.id = g.buyer_user_id
+        WHERE ${notQa('u.email')}
+        ORDER BY g.created_at`),
+    one(`SELECT COALESCE(SUM(e.created_at_ms >= ?1), 0) AS started_30,
+                COALESCE(SUM(e.created_at_ms >= ?2 AND e.created_at_ms < ?1), 0) AS started_prev_30
+           FROM analytics_events e JOIN users u ON u.id = e.user_id
+          WHERE e.kind = 'commission/checkout' AND json_extract(e.payload, '$.result') = 'started'
+            AND e.created_at_ms >= ?2 AND ${notQa('u.email')}`, d30, d60),
+    q(`SELECT e.created_at_ms AS at, json_extract(e.payload, '$.kind') AS kind
+         FROM analytics_events e WHERE e.kind = 'commission/refund' ORDER BY e.created_at_ms`),
+    // Of everyone who has played, by lifetime hours: how many hold a PAID
+    // Commission (bought, or redeemed from a bought gift). Comps excluded.
+    q(`SELECT CASE WHEN s.minutes < 180 THEN 'a' WHEN s.minutes < 600 THEN 'b' WHEN s.minutes < 1200 THEN 'c'
+                   WHEN s.minutes < 3000 THEN 'd' ELSE 'e' END AS band,
+              COUNT(*) AS players,
+              SUM(EXISTS (SELECT 1 FROM user_entitlements e WHERE e.user_id = s.user_id AND e.source IN ('stripe', 'gift'))) AS holders
+         FROM analytics_user_seen s JOIN users u ON u.id = s.user_id
+        WHERE s.minutes > 0 AND ${notQa('u.email')}
+          AND NOT EXISTS (SELECT 1 FROM user_entitlements e WHERE e.user_id = s.user_id AND e.source = 'admin')
+        GROUP BY 1 ORDER BY 1`),
+  ]);
+
+  const paid30 = sales.filter(s => s.at >= d30).length + gifts.filter(g => g.at >= d30).length;
+  const paidPrev30 = sales.filter(s => s.at >= d60 && s.at < d30).length + gifts.filter(g => g.at >= d60 && g.at < d30).length;
+  return json({
+    now,
+    price_usd: 10,
+    sales: sales.map(s => ({
+      at: s.at,
+      surface: s.surface,
+      name: s.name,
+      age_ms: Math.max(0, s.at - s.joined),
+      minutes_before: s.minutes_before,
+      games_before: s.games_before,
+      signup_source: s.signup_source,
+      active_7d: s.last_seen >= now - 7 * DAY_MS,
+      uses_goods: !!s.uses_goods,
+    })),
+    gifts: gifts.map(g => ({ at: g.at, redeemed: !!g.redeemed, voided: !!g.voided })),
+    paid_30: paid30,
+    paid_prev_30: paidPrev30,
+    checkouts_30: checkouts?.started_30 ?? 0,
+    checkouts_prev_30: checkouts?.started_prev_30 ?? 0,
+    refunds,
+    bands,
+  });
+}
+
 export const routes = [
   { method: 'GET', pattern: '/api/admin/overview', auth: 'required', handle: handleOverview },
   { method: 'GET', pattern: '/api/admin/games/activity', auth: 'required', handle: handleGameActivity },
   { method: 'GET', pattern: '/api/admin/commission', auth: 'required', handle: handleCommissionFunnel },
+  { method: 'GET', pattern: '/api/admin/commission/sales', auth: 'required', handle: handleCommissionSales },
   { method: 'GET', pattern: '/api/admin/games', auth: 'required', handle: handleAdminGames },
   { method: 'GET', pattern: '/api/admin/players', auth: 'required', handle: handleAdminPlayers },
   { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/story$/, auth: 'required', handle: handleGameStory },
