@@ -69,28 +69,29 @@ await DB.prepare(`UPDATE games SET status = 'active', gating_enabled = 0, curren
 const fac = async (u) => DB.prepare('SELECT id, capital_body_id FROM game_factions WHERE game_id = ? AND user_id = ?').bind(G, u.id).first();
 const fa = await fac(A), fb = await fac(B);
 
-// Three destroyers and a frigate of A's, a destroyer of B's, all flying B.
+// Three destroyers and a frigate of A's, a destroyer of B's, all flying A.
 const seed = (await DB.prepare(`SELECT id FROM game_ships WHERE game_id = ? LIMIT 1`).bind(G).first()).id;
 const put = (id, owner, cls) => cloneRow('game_ships', seed, {
   id: `${G}:${id}`, name: id, owner_faction_id: owner, ship_class: cls, status: 'active',
-  icon_variant: 'B', captain_id: null, fleet_id: null,
+  icon_variant: 'A', captain_id: null, fleet_id: null,
 });
 for (const id of ['d1', 'd2', 'd3']) await put(id, fa.id, 'destroyer');
 await put('f1', fa.id, 'frigate');
 await put('rd', fb.id, 'destroyer');
 const look = async (id) => (await DB.prepare('SELECT icon_variant v FROM game_ships WHERE id = ?').bind(`${G}:${id}`).first())?.v;
 
-// A design with a free look (C, Trident).
-const mk = await call('POST', `/api/games/${G}/designs`, { cookie: A.cookie, body: { ship_class: 'destroyer', name: 'Trident Mk I', parts: [], icon_variant: 'C' } });
+// A design with a free look. Only A and B are free since 524ce068
+// (2026-10-15); C, which this sim first used, joined the Commission.
+const mk = await call('POST', `/api/games/${G}/designs`, { cookie: A.cookie, body: { ship_class: 'destroyer', name: 'Trident Mk I', parts: [], icon_variant: 'B' } });
 check('a design with a free look saves', mk.status === 200 || mk.status === 201, [mk.status, mk.data]);
 const designId = mk.data?.design?.id;
 
 let r = await call('POST', `/api/games/${G}/designs/${designId}/restyle`, { cookie: A.cookie });
 check('restyle answers ok and counts the hulls it changed', r.status === 200 && r.data?.restyled === 3, [r.status, r.data]);
 check('every live destroyer of yours takes the look',
-  (await look('d1')) === 'C' && (await look('d2')) === 'C' && (await look('d3')) === 'C');
-check('another class is untouched', (await look('f1')) === 'B');
-check("a rival's destroyer is untouched", (await look('rd')) === 'B');
+  (await look('d1')) === 'B' && (await look('d2')) === 'B' && (await look('d3')) === 'B');
+check('another class is untouched', (await look('f1')) === 'A');
+check("a rival's destroyer is untouched", (await look('rd')) === 'A');
 r = await call('POST', `/api/games/${G}/designs/${designId}/restyle`, { cookie: A.cookie });
 check('a second restyle changes nothing', r.status === 200 && r.data?.restyled === 0, r.data);
 
@@ -101,7 +102,7 @@ check("you cannot restyle with someone else's design", r.status === 403, [r.stat
 await DB.prepare(`UPDATE game_ship_designs SET icon_variant = 'Q' WHERE id = ?`).bind(designId).run();
 r = await call('POST', `/api/games/${G}/designs/${designId}/restyle`, { cookie: A.cookie });
 check('a Commission look without the Commission is refused', r.status === 403 && r.data?.error?.code === 'premium_required', [r.status, r.data]);
-check('...and nothing changed', (await look('d1')) === 'C');
+check('...and nothing changed', (await look('d1')) === 'B');
 await DB.prepare(`INSERT INTO user_entitlements (user_id, sku, source, granted_at) VALUES (?, 'cosmetics_v1', 'admin', 0)`).bind(A.id).run();
 r = await call('POST', `/api/games/${G}/designs/${designId}/restyle`, { cookie: A.cookie });
 check('with the Commission the fleet flies it', r.status === 200 && (await look('d1')) === 'Q' && (await look('d3')) === 'Q', [r.status, r.data]);
