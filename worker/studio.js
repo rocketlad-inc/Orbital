@@ -636,6 +636,56 @@ async function handleTick(req, env, { session, params }) {
   return json({ ok: true, ticks: n, from: g.current_tick, current_tick: after?.current_tick ?? null, last });
 }
 
+/**
+ * POST /api/admin/studio/games/:gameId/strike  { ship: 'st_md_0', ticks: 3 }
+ *
+ * Arm a Mega Destroyer over the world it is parked at, firing `ticks`
+ * ticks from now. A shot calls this the moment the hull has arrived: the
+ * tick clears any strike armed while a hull is flying or away from its
+ * target, so a scene cannot arm one before the burn. Writes what the
+ * player's own order writes (actions.js handleMegaStrike), charge
+ * chronicle included, with a short charge instead of the 24-tick one.
+ */
+async function handleStrike(req, env, { session, params }) {
+  const { gameId } = params;
+  if (!(await allowedInGame(req, env, session, gameId))) return err(404, 'not_found', 'no such route');
+  const g = await env.DB.prepare('SELECT id, is_test_game, current_tick FROM games WHERE id = ?').bind(gameId).first();
+  if (!g || (g.is_test_game ?? 0) !== 1) return err(404, 'not_found', 'no such test game');
+  const body = await readJson(req);
+  const raw = String(body?.ship ?? '');
+  const shipId = raw.startsWith(`${gameId}:`) ? raw : `${gameId}:${raw}`;
+  const ticks = Math.max(1, Math.min(48, Math.floor(Number(body?.ticks) || MEGA_STRIKE_CHARGE_TICKS)));
+  const ship = await env.DB
+    .prepare(`SELECT id, name, owner_faction_id, parent_body_id, ship_class, status FROM game_ships WHERE id = ? AND game_id = ?`)
+    .bind(shipId, gameId).first();
+  if (!ship) return err(404, 'not_found', `no ship ${raw}`);
+  if (ship.ship_class !== 'mega_destroyer') return err(409, 'not_a_mega', `${ship.name} is not a Mega Destroyer`);
+  if (ship.status !== 'active') return err(409, 'gone', `${ship.name} is gone`);
+  const flying = await env.DB
+    .prepare(`SELECT 1 AS x FROM game_ship_nodes WHERE ship_id = ? AND status = 'in_transit' LIMIT 1`)
+    .bind(ship.id).first();
+  if (flying || !ship.parent_body_id) return err(409, 'in_flight', `${ship.name} has not arrived yet`);
+  const target = await env.DB
+    .prepare(`SELECT id, name, terraformed_at_tick, owner_faction_id FROM game_bodies WHERE id = ? AND game_id = ?`)
+    .bind(ship.parent_body_id, gameId).first();
+  if (!target) return err(409, 'nowhere', 'it is not over a world');
+  const mode = target.terraformed_at_tick != null ? 'sterilise' : 'obliterate';
+  const tick = Number(g.current_tick) || 0;
+  const ready = tick + ticks;
+  await env.DB.batch([
+    env.DB.prepare('UPDATE game_ships SET strike_target_body_id = ?, strike_ready_tick = ?, strike_mode = ? WHERE id = ?')
+      .bind(target.id, ready, mode, ship.id),
+    env.DB.prepare(
+      `INSERT INTO chronicle_entries
+        (id, game_id, tick_number, kind, actor_faction_id, body_id, target_faction_id, payload, visibility, created_at_ms)
+       VALUES (?, ?, ?, 'mega_strike_charging', ?, ?, ?, ?, 'public', ?)`,
+    ).bind(`mdcharge_${crypto.randomUUID().slice(0, 10)}`, gameId, tick, ship.owner_faction_id, target.id,
+      target.owner_faction_id ?? null,
+      JSON.stringify({ world: target.name, ship: ship.name, fires_at_tick: ready, mode }), Date.now()),
+  ]);
+  return json({ ok: true, ship: ship.id, world: target.name, mode, fires_at_tick: ready });
+}
+
 async function handleReset(req, env, { session, params }) {
   if (!(await allowed(req, env, session))) return err(404, 'not_found', 'no such route');
   const { gameId } = params;
@@ -674,6 +724,7 @@ export const routes = [
   { method: 'POST', pattern: '/api/admin/studio/validate', auth: 'required', handle: handleValidate },
   { method: 'POST', pattern: '/api/admin/studio/games', auth: 'required', handle: handleApply },
   { method: 'POST', pattern: /^\/api\/admin\/studio\/games\/(?<gameId>[A-Za-z0-9_-]{6,32})\/tick$/, auth: 'required', handle: handleTick },
+  { method: 'POST', pattern: /^\/api\/admin\/studio\/games\/(?<gameId>[A-Za-z0-9_-]{6,32})\/strike$/, auth: 'required', handle: handleStrike },
   { method: 'POST', pattern: /^\/api\/admin\/studio\/games\/(?<gameId>[A-Za-z0-9_-]{6,32})\/reset$/, auth: 'required', handle: handleReset },
   { method: 'POST', pattern: /^\/api\/admin\/studio\/games\/(?<gameId>[A-Za-z0-9_-]{6,32})\/close$/, auth: 'required', handle: handleClose },
 ];
