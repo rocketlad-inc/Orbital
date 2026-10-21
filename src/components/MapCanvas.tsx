@@ -107,9 +107,6 @@ import { torchPositionFromSamples } from '../physics/torchTransfer';
 import type { InterceptMarker } from '../render/mapRenderer';
 import type { DestructionFlash } from '../render/mapRenderer';
 import { orbitSense } from '../render/fxAnchor';
-
-/** One hull as the last frame saw it: where, what class, and the ship. */
-type ShipSnap = { x: number; y: number; cls: string; ship: Ship };
 import { shipIconSize, rendererCanvasMb, drawStructureReach, parkedOrbitMap } from '../render/mapRenderer';
 import {
   liveBattleFor, escortBlockSpacing, type BattleUnit, type LiveBattle,
@@ -148,6 +145,9 @@ import { exploredStorageKey, loadExplored, saveExplored } from '../game/explored
 import './MapCanvas.css';
 import { getPlacement, cancelPlacement } from '../game/megastructurePlacement';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
+
+/** One hull as the last frame saw it: where, what class, and the ship. */
+type ShipSnap = { x: number; y: number; cls: string; ship: Ship };
 
 /** Extra hit-radius padding for a FINGER. Apple/Material guidelines
  *  recommend ~44px tap targets; we widen the hit radius rather than
