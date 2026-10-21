@@ -27,12 +27,13 @@ import { shipWorldPosition } from '../../game/combat';
 import { smoothedTick, setStudioDisplayTick } from '../../render/tickPhase';
 import { setStudioFullVisuals } from '../../render/lightweightMode';
 import { apiFetch } from '../api';
+import { arcApexScale, arcNeeded, panCamera, strikeTimingWarnings } from './shotPlan';
 
 export type Target = string; // 'earth' | 'ship:<id>' | 'fleet:<id>' | 'missile:<n>'
 
 export type ShotStep =
   | { at: number; do: 'focus'; target: Target; px?: number; scale?: number }
-  | { at: number; do: 'pan'; target: Target; ms?: number; px?: number; scale?: number }
+  | { at: number; do: 'pan'; target: Target; ms?: number; px?: number; scale?: number; arc?: boolean }
   | { at: number; do: 'zoom'; px?: number; scale?: number; factor?: number; ms?: number; target?: Target }
   | { at: number; do: 'follow'; target: Target }
   | { at: number; do: 'tick'; n?: number }
@@ -93,11 +94,14 @@ export interface DirectorHost {
 }
 
 interface Cam { x: number; y: number; scale: number }
-interface Tween { fromScale: number; toScale: number; fromX: number; fromY: number; t0: number; ms: number; target: Target | null }
+interface Tween {
+  fromScale: number; toScale: number; fromX: number; fromY: number; t0: number; ms: number; target: Target | null;
+  /** A long pan's pull-back (shotPlan.panCamera): the zoom at its top. */
+  arc?: { apex: number } | null;
+}
 
 const FORMATS = { '9:16': [1080, 1920], '16:9': [1920, 1080], '1:1': [1080, 1080] } as const;
 const FONT = '"Segoe UI", system-ui, sans-serif';
-const easeInOut = (u: number) => (1 - Math.cos(Math.PI * Math.min(1, Math.max(0, u)))) / 2;
 
 function pickMime(): string | null {
   if (typeof MediaRecorder === 'undefined') return null;
@@ -252,11 +256,25 @@ export class Director {
     this.push();
   }
 
-  /** Glide to a target over `ms`, then hold on it. */
-  pan(target: Target, o: { ms?: number; px?: number; scale?: number } = {}): void {
-    if (!this.position(target)) { this.note(`pan: no such target ${target}`); return; }
+  /** The map canvas's size, the frame a pan has to keep things inside. */
+  private view(): { w: number; h: number } {
+    const c = this.host.mapCanvas();
+    return c && c.width > 0 && c.height > 0 ? { w: c.width, h: c.height } : { w: 1920, h: 1080 };
+  }
+
+  /** Glide to a target over `ms`, then hold on it. When the target starts
+   *  off the frame, the glide pulls back until both ends fit, moves, and
+   *  pushes in again, so the camera never sails through empty space
+   *  (`arc: false` keeps the straight glide). */
+  pan(target: Target, o: { ms?: number; px?: number; scale?: number; arc?: boolean } = {}): void {
+    const p = this.position(target);
+    if (!p) { this.note(`pan: no such target ${target}`); return; }
     const toScale = o.scale ?? (o.px ? this.scaleFor(target, o.px) : this.cam.scale);
-    this.tween = { fromX: this.cam.x, fromY: this.cam.y, fromScale: this.cam.scale, toScale, t0: this.clock, ms: o.ms ?? this.moveMs ?? 2000, target };
+    const view = this.view();
+    const arc = o.arc !== false && arcNeeded(this.cam, p.x, p.y, toScale, view)
+      ? { apex: arcApexScale(this.cam, p.x, p.y, toScale, view) }
+      : null;
+    this.tween = { fromX: this.cam.x, fromY: this.cam.y, fromScale: this.cam.scale, toScale, t0: this.clock, ms: o.ms ?? this.moveMs ?? 2000, target, arc };
     this.hold = target;
   }
 
@@ -409,12 +427,11 @@ export class Director {
     this.clock += dt;
     const tw = this.tween;
     if (tw) {
-      const u = easeInOut((this.clock - tw.t0) * 1000 / Math.max(1, tw.ms));
+      const u = (this.clock - tw.t0) * 1000 / Math.max(1, tw.ms);
       const dest = tw.target ? this.position(tw.target) : null;
       const tx = dest ? dest.x : tw.fromX, ty = dest ? dest.y : tw.fromY;
-      this.cam.x = tw.fromX + (tx - tw.fromX) * u;
-      this.cam.y = tw.fromY + (ty - tw.fromY) * u;
-      this.cam.scale = Math.exp(Math.log(tw.fromScale) + (Math.log(tw.toScale) - Math.log(tw.fromScale)) * u);
+      const c = panCamera(u, { x: tw.fromX, y: tw.fromY, scale: tw.fromScale }, tx, ty, tw.toScale, tw.arc ?? null);
+      this.cam.x = c.x; this.cam.y = c.y; this.cam.scale = c.scale;
       if (u >= 1) this.tween = null;
     } else if (this.hold) {
       const p = this.position(this.hold);
@@ -525,7 +542,25 @@ export class Director {
 
   cancel(): void { this.cancelFlag = true; }
 
+  /**
+   * What this shot will get wrong in THIS game, before a frame is filmed:
+   * today, a strike step that fires while its Mega Destroyer is still in
+   * flight (the server refuses it, and the clip ends on a world where
+   * nothing happens). Uses the live arrival ticks and the shot's own tick
+   * steps. The CLI prints these before `film` and `record`; a run notes
+   * them in the log.
+   */
+  check(shot: Shot): string[] {
+    const s = this.host.state();
+    return strikeTimingWarnings(shot.steps, s.currentTick, (name) => {
+      const ship = this.ship(name.replace(/^ship:/, ''));
+      if (!ship) return undefined;
+      return ship.transit?.currentTransfer?.arriveTick ?? null;
+    });
+  }
+
   private begin(shot: Shot): void {
+    for (const w of this.check(shot)) this.note(`check: ${w}`);
     this.clock = 0; this.tween = null; this.hold = null; this.caption = null;
     this.hook = shot.hook ?? null; this.progress = 0; this.result = null;
     // Every effect, every frame: lightweight mode (a phone's or the
@@ -796,13 +831,21 @@ export class Director {
       if (!(Number(st.at) >= 0)) out.push(`steps[${i}].at must be >= 0 seconds`);
       const needsTarget = st.do === 'focus' || st.do === 'pan' || st.do === 'follow';
       if (needsTarget && typeof (st as { target?: unknown }).target !== 'string') out.push(`steps[${i}] needs a target`);
-      if (!['focus', 'pan', 'zoom', 'follow', 'tick', 'speed', 'caption', 'hook', 'ui'].includes(st.do)) out.push(`steps[${i}].do '${st.do}' is not a verb`);
+      if (!VERBS.includes(st.do)) out.push(`steps[${i}].do '${st.do}' is not a verb`);
+      if (st.do === 'pan' && st.arc !== undefined && typeof st.arc !== 'boolean') out.push(`steps[${i}].arc must be true or false`);
+      if ((st.do === 'strike' || st.do === 'hull') && typeof (st as { ship?: unknown }).ship !== 'string') out.push(`steps[${i}] needs a ship`);
+      if (st.do === 'intercept' && (typeof st.ships !== 'string' || typeof st.target !== 'string')) out.push(`steps[${i}] needs ships and a target`);
     });
     return out;
   }
 }
 
 // ---------- helpers ----------
+
+/** Every verb a shot step can use (ShotStep). The Studio bar refuses a
+ *  shot lint flags, so a verb missing here is a verb nobody can use. */
+const VERBS: readonly string[] = ['focus', 'pan', 'zoom', 'follow', 'tick', 'speed', 'caption', 'hook', 'ui',
+  'panel', 'click', 'intercept', 'strike', 'hull'];
 
 const realSetTimeout = window.setTimeout.bind(window);
 const realSleep = (ms: number) => new Promise<void>(r => realSetTimeout(r, ms));

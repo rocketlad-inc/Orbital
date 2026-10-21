@@ -97,7 +97,8 @@ async function apply() {
   const fleets = Object.fromEntries(Object.entries(out.fleets).map(([k, id]) => [k, strip(id)]));
   console.log(JSON.stringify({ game_id: out.game_id, created: out.created, tick: out.tick, viewer: out.viewer,
     factions: out.factions.map(f => ({ key: f.key, handle: f.handle, id: strip(f.id) })),
-    ships, fleets, wars: out.wars, orders: out.orders }, null, 2));
+    ships, fleets, wars: out.wars, orders: out.orders, warnings: out.warnings ?? [] }, null, 2));
+  for (const w of out.warnings ?? []) console.error(`WARNING: ${w}`);
   if (out.created) console.error(`\nScene applied to NEW game ${out.game_id}. Record with:\n  node scripts/studio.mjs record ${out.game_id} shot.json --out clip.mp4 --as ${out.factions.find(f => f.key === out.viewer)?.handle ?? out.factions[0].handle}${ENV !== 'staging' ? ` --env ${ENV}` : ''}`);
 }
 
@@ -215,6 +216,15 @@ async function openGame(gameId, handle, w, h) {
   } catch (e) { await b.close(); throw e; }
 }
 
+/** What the shot will get wrong in this game, before a frame is spent on
+ *  it (Director.check: a strike step that fires while its Mega Destroyer
+ *  is still in flight does nothing). Warns; --strict stops the take. */
+async function warnShot(b, shot) {
+  const found = JSON.parse(await b.evaluate(`JSON.stringify(window.__studio.check ? window.__studio.check(${JSON.stringify(shot)}) : [])`).catch(() => '[]'));
+  for (const w of found) console.error(`WARNING: ${w}`);
+  if (found.length && process.argv.includes('--strict')) die('the shot has problems (--strict)');
+}
+
 async function record() {
   const [gameId, shotFile] = rest;
   if (!gameId || !shotFile) die('record needs <gameId> shot.json --out clip.mp4');
@@ -224,6 +234,7 @@ async function record() {
   const handle = flag('as') || 'studio-terra';
   const b = await openGame(gameId, handle, w, h);
   try {
+    await warnShot(b, shot);
     console.error(`recording ${shot.seconds}s at ${w}x${h} as ${handle}…`);
     await b.evaluate(`(() => { window.__studioDone = null; window.__studio.record(${JSON.stringify(shot)}, { download: false })
       .then(() => { window.__studioDone = window.__studio.result; }, e => { window.__studioDone = { ok: false, error: String(e && e.message || e) }; }); return true; })()`);
@@ -270,6 +281,7 @@ async function film() {
   fs.mkdirSync(dir, { recursive: true });
   const b = await openGame(gameId, handle, w, h);
   try {
+    await warnShot(b, shot);
     const total = await b.evaluate(`window.__studio.openFilm(${JSON.stringify(shot)})`);
     console.error(`filming ${total} frames at ${w}x${h} as ${handle}…`);
     const frames = [];

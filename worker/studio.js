@@ -41,7 +41,7 @@ import { openWarBetween } from './wars.js';
 import { SLIDER_CATALOG, describeSlider } from './senate.js';
 import { ensureCaptainFloor, ensureCaptains } from './captains.js';
 import { EMBLEM_IDS } from './emblems.js';
-import { STUDIO_MARK, SHIP_CLASSES, LOADOUT_PRESETS, FUEL_MAX, TAG, whenTick, expandScenario, EXAMPLES } from './studioScene.js';
+import { STUDIO_MARK, SHIP_CLASSES, LOADOUT_PRESETS, FUEL_MAX, TAG, whenTick, expandScenario, EXAMPLES, solveMoveTiming } from './studioScene.js';
 import { routes as actionRoutes, MEGA_STRIKE_CHARGE_TICKS } from './actions.js';
 
 function json(data, init = {}) {
@@ -515,33 +515,47 @@ export async function applyScenario(env, spec, { session = null } = {}) {
 
   // ---- orders ----
   const done = [];
+  /** Things the scene asked for that the game could not do as asked. */
+  const warnings = [];
   let room = null;
   for (const o of spec.orders) {
     if (o.type === 'move') {
       if (!room) { const { Room } = await import('./room.js'); room = new Room(null, env); }
       const to = bodyOf(o.to, 'orders.move');
       const ids = shipsOf(o.ships);
-      const depart = Math.max(tick, whenTick(o.depart, tick));
-      let arrive = o.arrive ? whenTick(o.arrive, tick) : null;
-      // A group flies together: plan once to learn the slowest leg, then
-      // hold every hull to that arrival, as guards are paced to freighters.
-      if (arrive == null && ids.length > 1) {
-        let longest = 0;
+      // The natural trip of the GROUP from a given departure: its slowest
+      // hull's, on that hull's own engine. Probed with the real planner and
+      // the probe's nodes removed again.
+      const tripAt = async (d) => {
+        let longest = d;
         for (const id of ids) {
           const r = shipRows.get(id);
-          const probe = await room.planLegForShip(gameId, depart, id, fid(r.owner), r.at.id, to.id, null);
-          longest = Math.max(longest, Number(probe) || 0);
+          const probe = await room.planLegForShip(gameId, d, id, fid(r.owner), r.at.id, to.id, null);
+          longest = Math.max(longest, Number(probe) || d);
         }
         await env.DB.prepare('DELETE FROM game_ship_nodes WHERE game_id = ? AND status = ? AND ship_id IN (' + ids.map(() => '?').join(',') + ')')
           .bind(gameId, 'committed', ...ids).run();
-        arrive = longest;
+        return longest - d;
+      };
+      // `arrive` is honoured by LEAVING LATER, never by flying slower
+      // (solveMoveTiming): a hull always burns at its real engine.
+      const want = o.arrive ? whenTick(o.arrive, tick) : null;
+      const plan = await solveMoveTiming({ earliest: Math.max(tick, whenTick(o.depart, tick)), want, tripAt });
+      const depart = plan.depart;
+      if (plan.late) {
+        warnings.push(`orders.move ${o.ships} -> ${o.to}: asked to arrive at tick ${want}, but the trip takes `
+          + `${plan.arrive - depart} ticks; it arrives at tick ${plan.arrive}, as soon as it can`);
       }
+      // A group flies together: every hull held to the slowest one's
+      // arrival, as guards are paced to freighters. A lone hull flies its
+      // own natural leg.
+      const arrive = ids.length > 1 ? plan.arrive : null;
       const arrivals = [];
       for (const id of ids) {
         const r = shipRows.get(id);
         arrivals.push(await room.planLegForShip(gameId, depart, id, fid(r.owner), r.at.id, to.id, arrive));
       }
-      done.push({ type: 'move', ships: ids.length, to: o.to, depart, arrive: Math.max(...arrivals) });
+      done.push({ type: 'move', ships: ids.length, to: o.to, depart, arrive: Math.max(...arrivals), ...(want != null ? { asked: want } : {}) });
     } else if (o.type === 'strike') {
       const [id] = shipsOf(o.ship);
       const r = shipRows.get(id);
@@ -574,7 +588,7 @@ export async function applyScenario(env, spec, { session = null } = {}) {
     ok: true, game_id: gameId, created, tick,
     factions: spec.factions.map(f => ({ key: f.key, id: factions.get(f.key).id, name: f.name, handle: f.handle,
       seat_me: spec.seatMe && f.key === spec.viewer })),
-    viewer: spec.viewer, ships: shipIds, fleets: fleetIds, wars: warIds.length, orders: done, laws: lawIds, silos: siloOut,
+    viewer: spec.viewer, ships: shipIds, fleets: fleetIds, wars: warIds.length, orders: done, laws: lawIds, silos: siloOut, warnings,
   };
 }
 
