@@ -17,6 +17,12 @@
 // server builds from the same treaty query room.js uses to decide
 // whether to fire at all.
 //
+// Since d090f990 ("Combat: war is declared, not assumed") the pairwise
+// check is built from gameState.warPairs instead: peace is the default
+// and only an open war makes a pair shoot. makePeaceCheck() now takes
+// the WAR list, and no data means total peace. The symmetry and
+// third-party properties below are unchanged; only the input flipped.
+//
 // These assertions are all about SYMMETRY and third parties, because
 // those are the properties the old shape could not have.
 //
@@ -47,17 +53,21 @@ const pair = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 
 // The screenshot: Ceres holds the reporter's corvette ("Hobby", owned by
 // the viewer, so its id is rewritten to the 'player' token) and Rule of
-// Rocketlad's corvette ("Friend Maker"). NAP between the two.
+// Rocketlad's corvette ("Friend Maker"). No war between the two (the
+// reporter had a NAP; under declared war, any non-warring pair is the
+// same case). The viewer IS at war with somebody else, so the peace
+// check is a real pairwise test and not the no-data ALWAYS_PEACE.
 const CERES = 'ceres';
 const ROCKETLAD = 'f_rocketlad';
+const ELSEWHERE = 'f_elsewhere';
 const ships = [
   ship('hobby', 'player', CERES),
   ship('friend_maker', ROCKETLAD, CERES),
 ];
-const nap = [pair('player', ROCKETLAD)];
+const otherWar = [pair('player', ELSEWHERE)];
 
 {
-  const atPeace = makePeaceCheck(nap);
+  const atPeace = makePeaceCheck(otherWar);
   const hostiles = makeHostilesAtBody(ships, [], atPeace);
   const armed = makeArmedHostilesAtBody(ships, atPeace);
 
@@ -79,62 +89,67 @@ const nap = [pair('player', ROCKETLAD)];
 }
 
 {
-  // No pact: the same two ships ARE fighting, and both must say so.
-  const atPeace = makePeaceCheck([]);
+  // At war: the same two ships ARE fighting, and both must say so.
+  const atPeace = makePeaceCheck([pair('player', ROCKETLAD)]);
   const hostiles = makeHostilesAtBody(ships, [], atPeace);
-  check('without a pact, both ships read in combat',
+  check('at war, both ships read in combat',
     hostiles(CERES, ROCKETLAD) === true && hostiles(CERES, 'player') === true,
     `${hostiles(CERES, ROCKETLAD)} / ${hostiles(CERES, 'player')}`);
 }
 
 {
-  // THIRD-PARTY pact — the half of the bug nobody had reported yet.
-  // Two rivals share an orbit, at peace with each other and neither with
-  // the viewer. Their ships must not read as fighting each other just
-  // because the VIEWER has no treaty with them.
+  // THIRD PARTIES — the half of the bug nobody had reported yet.
+  // Two rivals share an orbit, not at war with each other, while the
+  // viewer is at war with BOTH. Their ships must not read as fighting
+  // each other just because the VIEWER is fighting them.
   const A = 'f_a', B = 'f_b';
   const theirs = [ship('a1', A, 'mars'), ship('b1', B, 'mars')];
-  const hostiles = makeHostilesAtBody(theirs, [], makePeaceCheck([pair(A, B)]));
-  check('two rivals with a pact between them are not fighting',
+  const hostiles = makeHostilesAtBody(theirs, [],
+    makePeaceCheck([pair('player', A), pair('player', B)]));
+  check('two rivals not at war with each other are not fighting',
     hostiles('mars', A) === false && hostiles('mars', B) === false,
     `${hostiles('mars', A)} / ${hostiles('mars', B)}`);
 }
 
 {
-  // A pact must not make everything peaceful. A real enemy in the same
-  // orbit as a pact partner still means a fight.
+  // Peace with one neighbour must not make everything peaceful. A real
+  // enemy in the same orbit still means a fight for the side at war with
+  // it — and ONLY that side: a war is a pair, not a property of a body.
   const enemy = 'f_enemy';
   const crowd = [...ships, ship('raider', enemy, CERES)];
-  const hostiles = makeHostilesAtBody(crowd, [], makePeaceCheck(nap));
+  const hostiles = makeHostilesAtBody(crowd, [], makePeaceCheck([pair('player', enemy)]));
   check('a real enemy in the crowd still reads in combat',
-    hostiles(CERES, 'player') === true && hostiles(CERES, ROCKETLAD) === true,
-    `${hostiles(CERES, 'player')} / ${hostiles(CERES, ROCKETLAD)}`);
+    hostiles(CERES, 'player') === true, `${hostiles(CERES, 'player')}`);
   check('and the enemy sees a fight too',
     hostiles(CERES, enemy) === true, 'enemy reads peaceful');
+  check('a bystander not at war with the enemy is not in combat',
+    hostiles(CERES, ROCKETLAD) === false, 'bystander reads hostile');
 }
 
 {
   // Settlements count as hostile presence for the armed test's sibling.
-  // A lone ship over a rival's city is in combat; over a pact partner's
-  // city it is not.
+  // A lone ship over a city it is at war with is in combat; over a
+  // city it is not at war with, it is not.
   const lone = [ship('solo', 'player', 'luna')];
   const rivalCity = [{ bodyId: 'luna', ownedBy: 'f_rival' }];
-  const pactCity = [{ bodyId: 'luna', ownedBy: ROCKETLAD }];
-  check('over a rival city: in combat',
-    makeHostilesAtBody(lone, rivalCity, makePeaceCheck(nap))('luna', 'player') === true);
-  check('over a NAP partner\'s city: not in combat',
-    makeHostilesAtBody(lone, pactCity, makePeaceCheck(nap))('luna', 'player') === false);
+  const quietCity = [{ bodyId: 'luna', ownedBy: ROCKETLAD }];
+  const war = makePeaceCheck([pair('player', 'f_rival')]);
+  check('over a city you are at war with: in combat',
+    makeHostilesAtBody(lone, rivalCity, war)('luna', 'player') === true);
+  check('over a city you are not at war with: not in combat',
+    makeHostilesAtBody(lone, quietCity, war)('luna', 'player') === false);
 }
 
 {
-  // Single-player and any pre-treaty game: no pact data at all. Must not
-  // throw, and must fall back to "any foreign faction is hostile".
+  // A game with no war data at all (fresh game, /state not loaded). Must
+  // not throw, and — since war is declared — must read as quiet, not as
+  // every neighbour fighting (see ALWAYS_PEACE in src/game/peace.ts).
   const hostiles = makeHostilesAtBody(ships, [], makePeaceCheck(undefined));
-  check('no pact data: foreign faction still reads hostile',
-    hostiles(CERES, 'player') === true, 'went quiet with no treaty data');
+  check('no war data: a foreign faction is not hostile',
+    hostiles(CERES, 'player') === false, 'reads hostile with no war data');
   const bare = makeHostilesAtBody(ships, []);
-  check('omitting the argument entirely still works',
-    bare(CERES, 'player') === true, 'default arg broke');
+  check('omitting the argument entirely defaults to peace',
+    bare(CERES, 'player') === false, 'default arg reads hostile');
 }
 
 {
@@ -143,7 +158,7 @@ const nap = [pair('player', ROCKETLAD)];
     ship('hobby', 'player', CERES),
     { ...ship('raider', 'f_enemy', CERES), transit: { currentTransfer: {} } },
   ];
-  const hostiles = makeHostilesAtBody(leaving, [], makePeaceCheck([]));
+  const hostiles = makeHostilesAtBody(leaving, [], makePeaceCheck([pair('player', 'f_enemy')]));
   check('a ship in transit is not a hostile presence',
     hostiles(CERES, 'player') === false, 'transiting ship still counted');
 }
