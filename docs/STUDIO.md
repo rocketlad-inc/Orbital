@@ -35,6 +35,8 @@ node scripts/studio.mjs film <gameId> shot.json --out frames-dir --name earth-to
 
 **Pace (Lorne, 2026-10-19: the 30 s cuts were "way too slow for marketing").** Showcase clips are 12–15 s at `"tempo": "fast"`: one tick per second of clip (the clock holds while the server ticks, so ticks cost no clip time), camera moves of 1.2–1.5 s, a panel held about 3.5 s, and the first tick inside the first half-second. `--speed 2` on `film` (or on `studio-encode.py`) time-lapses a take that is already filmed, every other moment, without re-shooting.
 
+**Motion through ticks is smooth.** While filming, the director owns the tick the map draws at: each tick glides to the next over exactly the time until the next `tick` step, on the film's clock, so ships and worlds move at an even pace through every boundary (before 2026-10-21 the map stood still and jumped a tick at each one). Space `tick` steps evenly for even motion; a long gap between two ticks just means slower motion across it. Anything that still changes on a tick frame is the game resolving it: volleys, kills, the outliner.
+
 **Takes cannot hang any more.** A tick request gets 30 s, a frame 150 s, a screenshot three 30 s tries; past that the take ends and encodes what it has. The manifest (`frames.json`) is written every 30 frames, so even a killed take encodes.
 
 Use a `16:9` shot with no `hook` or captions and `"endCard": false`. Default size 1920×1080 (`--size`), encoded at 960 px wide (`--width`). `--encode 0` keeps just the frames; `python scripts/studio-encode.py frames-dir --name NAME` encodes later. Budget about 10 minutes for a 30 s clip: half filming, half encoding.
