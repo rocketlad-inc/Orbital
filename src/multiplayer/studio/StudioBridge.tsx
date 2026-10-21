@@ -56,6 +56,14 @@ export function StudioBridge() {
         const bad = results.find(r => !r.ok) as { error?: string } | undefined;
         return { sent, failed: shipIds.length - sent, error: bad?.error };
       },
+      planIntercept: (shipIds, targetShipId) => {
+        const c = planRef.current.ctx;
+        return shipIds.map(id => {
+          const leg = c.enqueueIntercept(id, targetShipId, 0, { fromNow: true });
+          if (!leg) return { ship: id, none: true as const };
+          return { ship: id, depart: leg.startTick, meet: leg.rv ? leg.rv.meetTick : null, arrive: leg.arriveTick, accel: leg.acceleration };
+        });
+      },
     });
   }, [isAdmin, gameId]);
 
