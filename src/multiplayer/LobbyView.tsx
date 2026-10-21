@@ -2,11 +2,12 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch, RoomSnapshot, RoomSummary } from './api';
 import { useAuth } from './AuthContext';
 import { DEFAULT_TICK_INTERVAL_MS } from './LobbyCards';
-import { RESOURCE_LETTER_COLORS } from '../game/resourceColors';
 import type { PastNameBank } from './NamePoolEditor';
 import { NamePools, EMPTY_POOLS, parseNamePools } from '../game/namePools';
 import { connectRoomSocket } from './roomSocket';
-import { RoomLobbyScreen, RoomPageShell } from './RoomLobbyScreen';
+import { RoomLobbyScreen } from './RoomLobbyScreen';
+import { RoomLateJoin } from './RoomLateJoin';
+import type { LateJoinBody } from './RoomLateJoin';
 import type { FlagField } from './RoomEmpireEditor';
 import type { ChatLine } from './roomLobbyModel';
 import { t } from '../i18n/core';
@@ -187,7 +188,6 @@ function RoomDetail({
   //   null      = not a latecomer (or undetermined yet)
   //   'needed'  = show the picker
   //   'submitting' = late-join POST in flight
-  type LateJoinBody = { id: string; name: string; type: string; yield: { metal: number; fuel: number; gold: number; science: number } };
   const [lateJoin, setLateJoin] = useState<null | 'needed' | 'submitting'>(null);
   const [joinableBodies, setJoinableBodies] = useState<LateJoinBody[]>([]);
   const [lateChoice, setLateChoice] = useState<string | null>(null);
@@ -384,82 +384,19 @@ function RoomDetail({
   // Same fields and flow as ever; only the page around it is the lobby's.
   if (lateJoin) {
     return (
-      <RoomPageShell
-        title={snap.settings.name}
-        sub={t('roomlobby.late.title')}
+      <RoomLateJoin
+        roomName={snap.settings.name}
+        bodies={joinableBodies}
+        empireName={empireName}
+        onEmpireName={setEmpireName}
+        choice={lateChoice}
+        onChoice={setLateChoice}
+        submitting={lateJoin === 'submitting'}
+        onSubmit={submitLateJoin}
         onBack={onLeave}
-        menu={[]}
         error={error}
         onDismissError={() => setError(null)}
-      >
-        <div className="rl-layout rl-layout--one">
-          <section className="rl-panel rl-sec rl-late">
-            <h2 className="rl-h2">{t('roomlobby.late.title')}</h2>
-            <p className="rl-hint">{t('roomlobby.late.desc')}</p>
-
-            <div className="rl-fld">
-              <label htmlFor="rl-late-empire">{t('roomlobby.late.empireName')}</label>
-              <input
-                id="rl-late-empire"
-                className="rl-input"
-                type="text"
-                maxLength={40}
-                value={empireName}
-                onChange={(e) => setEmpireName(e.target.value)}
-                placeholder={t('roomlobby.empirePlaceholder')}
-              />
-            </div>
-
-            {joinableBodies.length === 0 ? (
-              <div className="rl-empty">{t('roomlobby.late.none')}</div>
-            ) : (
-              <>
-                <h3 className="rl-ed__h">{t('roomlobby.late.worlds')}</h3>
-                <div className="lobby-body-grid">
-                  {joinableBodies.map((b) => {
-                    const isMine = lateChoice === b.id;
-                    return (
-                      <button
-                        key={b.id}
-                        type="button"
-                        className={`lobby-body-card ${isMine ? 'is-mine' : ''}`}
-                        aria-pressed={isMine}
-                        onClick={() => setLateChoice(isMine ? null : b.id)}
-                        title={isMine ? t('roomlobby.late.unpick') : t('roomlobby.claim')}
-                      >
-                        <div className="lobby-body-card__name">{b.name}</div>
-                        <div className="lobby-body-card__sub">{b.type}</div>
-                        <div className="lobby-body-card__yields">
-                          {b.yield.metal > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.M }}>M{b.yield.metal}</span>}
-                          {/* no F — fuel is dead (DESIGN-identity-economy.md §1.1) */}
-                          {/* C = credits (server field is still 'gold') */}
-                          {b.yield.gold > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.C }}>C{b.yield.gold}</span>}
-                          {b.yield.science > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.S }}>S{b.yield.science}</span>}
-                        </div>
-                        {isMine && <div className="lobby-body-card__tag">{t('roomlobby.late.chosen')}</div>}
-                      </button>
-                    );
-                  })}
-                </div>
-              </>
-            )}
-
-            <div className="rl-row">
-              <button
-                type="button"
-                className="rl-btn rl-btn--gold"
-                disabled={!lateChoice || lateJoin === 'submitting'}
-                onClick={submitLateJoin}
-              >
-                {lateJoin === 'submitting' ? t('roomlobby.late.joining') : t('roomlobby.late.found')}
-              </button>
-              <button type="button" className="rl-btn rl-btn--quiet" onClick={onLeave}>
-                {t('roomlobby.back')}
-              </button>
-            </div>
-          </section>
-        </div>
-      </RoomPageShell>
+      />
     );
   }
 

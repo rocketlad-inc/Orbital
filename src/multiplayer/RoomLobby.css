@@ -428,7 +428,7 @@
 /* ---- wide: the stage ---- */
 .rl-dock {
   position: absolute; top: 16px; right: 16px; bottom: 16px; width: clamp(400px, 38vw, 520px);
-  display: flex; flex-direction: column; overflow: hidden;
+  display: flex; flex-direction: column; overflow: hidden; overflow: clip; /* clip: a focus() must never scroll the header away */
   background: rgba(13, 20, 29, 0.94); border: 1px solid var(--rl-line-2); border-radius: 16px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
 }
@@ -514,9 +514,8 @@
   .rl-fold__btn { padding-left: 16px; padding-right: 16px; }
   .rl-foldbody { padding-left: 16px; padding-right: 16px; }
   .rl-prow { gap: 12px; }
-  .rl-you__row { flex-wrap: wrap; }
-  .rl-you__who { flex-basis: calc(100% - 70px); }
-  .rl-you__row > .rl-btn { margin-left: 60px; }
+  .rl-you__row { gap: 12px; }
+  .rl-you__row > .rl-btn { flex: none; padding: 0 12px; }
   .rl-kv { grid-template-columns: minmax(0, 1fr); }
 }
 
