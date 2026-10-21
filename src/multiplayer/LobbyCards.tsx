@@ -202,6 +202,8 @@ export function GameCard({ g, now, variant, busy, onPrimary, menu, pinned, myUse
   if (variant === 'mine') {
     cta = g.phase === 'live' ? { label: t('card.cta.resume'), kind: 'primary' }
       : g.phase === 'finished' ? { label: t('card.cta.view'), kind: 'secondary' }
+      // This OPENS the room (onPrimary = enter it); START is inside, so the
+      // label says so instead of promising a one-click start it never did.
       : iHost && g.phase === 'full' ? { label: t('card.cta.startGame'), kind: 'primary' }
       : { label: t('card.cta.openLobby'), kind: 'secondary' };
   } else if (g.is_member) {
