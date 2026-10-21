@@ -95,6 +95,13 @@ For a vertical (9:16) recording, the map is cropped to the centre of your window
     { "type": "trade",  "ship": "fr.0", "from": "mars", "to": "ceres" }         // freighter supply line
   ],
 
+  "silos": [
+    // A Missile Silo in the owner's city on a world (staging: the silo is not on production).
+    { "world": "earth", "level": 3, "stock": 15, "auto": "fleets", "salvo": 3 }
+    // auto: off | missiles (shoot down incoming salvos) | fleets (also fire at hostile groups
+    // bound for this world, as soon as a salvo can catch them). Needs a war with the raider.
+  ],
+
   "laws": [
     // Bills that already passed, in force from the tick the scene lands. The Senate tab
     // shows the settled vote and the law; combat and the economy obey it on the next tick.

@@ -255,6 +255,35 @@ export async function applyScenario(env, spec, { session = null } = {}) {
   if (worldStmts.length) await env.DB.batch(worldStmts);
   for (const w of spec.worlds) if (w.owner) await recomputeBodyOwnership(env.DB, gameId, bodyOf(w.body, 'worlds').id);
 
+  // ---- silos (servers with the Missile Silo only: migrations 0178/0179) ----
+  // The silo is a city building, so it goes in the owner's city on that
+  // world: the capital on a home world, a studio city on a seeded one.
+  const siloOut = [];
+  for (const [i, s] of spec.silos.entries()) {
+    const b = bodyOf(s.world, `silos[${i}]`);
+    const owner = s.owner ? fid(s.owner) : (b.owner_faction_id ?? null);
+    const city = await env.DB
+      .prepare(`SELECT id, buildings_json FROM game_settlements
+                 WHERE game_id = ? AND body_id = ? AND type = 'city' AND destroyed_at_tick IS NULL
+                   ${owner ? 'AND owner_faction_id = ?' : ''}
+                 ORDER BY created_at_tick ASC LIMIT 1`)
+      .bind(...(owner ? [gameId, b.id, owner] : [gameId, b.id])).first();
+    if (!city) throw new Error(`silos[${i}]: no city on ${s.world}${s.owner ? ` owned by ${s.owner}` : ''}; seed one in worlds[]`);
+    let bj = {};
+    try { bj = JSON.parse(city.buildings_json || '{}') || {}; } catch { bj = {}; }
+    bj.missile_silo = s.level;
+    try {
+      await env.DB.prepare(
+        `UPDATE game_settlements SET buildings_json = ?, missile_stock = ?, missile_auto = ?, missile_salvo = ?,
+                missile_reserve = ?, missile_orders_json = NULL WHERE id = ?`,
+      ).bind(JSON.stringify(bj), s.stock, s.auto, s.salvo, s.reserve, city.id).run();
+    } catch (e) {
+      if (/no such column/i.test(String(e?.message))) throw new Error('this server has no Missile Silo (missile columns are missing)');
+      throw e;
+    }
+    siloOut.push(`${s.world}: level ${s.level}, ${s.stock} missiles, auto ${s.auto}, salvo ${s.salvo}`);
+  }
+
   // ---- ships ----
   const shipIds = {};          // group key -> [ids]
   const shipRows = new Map();  // id -> { owner, at }
@@ -519,7 +548,7 @@ export async function applyScenario(env, spec, { session = null } = {}) {
     ok: true, game_id: gameId, created, tick,
     factions: spec.factions.map(f => ({ key: f.key, id: factions.get(f.key).id, name: f.name, handle: f.handle,
       seat_me: spec.seatMe && f.key === spec.viewer })),
-    viewer: spec.viewer, ships: shipIds, fleets: fleetIds, wars: warIds.length, orders: done, laws: lawIds,
+    viewer: spec.viewer, ships: shipIds, fleets: fleetIds, wars: warIds.length, orders: done, laws: lawIds, silos: siloOut,
   };
 }
 

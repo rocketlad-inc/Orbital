@@ -73,6 +73,14 @@ describe('expandScenario', () => {
     expect(() => expandScenario({ ...base(), laws: [{ kind: 'war_authorization', target: 'venus' }] })).toThrow(/unknown faction/);
   });
 
+  it('reads silos: full stock by default, auto fleets, bounded numbers', () => {
+    const spec = expandScenario({ ...base(), silos: [{ world: 'earth', level: 3, salvo: 4 }, { world: 'mars', owner: 'mars', stock: 99, auto: 'missiles' }] });
+    expect(spec.silos[0]).toMatchObject({ world: 'earth', owner: null, level: 3, stock: 15, auto: 'fleets', salvo: 4, reserve: 0 });
+    expect(spec.silos[1]).toMatchObject({ world: 'mars', owner: 'mars', level: 1, stock: 5, auto: 'missiles' });
+    expect(() => expandScenario({ ...base(), silos: [{ world: 'earth', auto: 'always' }] })).toThrow(/auto/);
+    expect(() => expandScenario({ ...base(), silos: [{ world: 'earth', owner: 'venus' }] })).toThrow(/unknown faction/);
+  });
+
   it('parses relative and absolute times', () => {
     const spec = expandScenario({
       ...base(),
