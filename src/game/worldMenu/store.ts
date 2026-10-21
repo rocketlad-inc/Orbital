@@ -44,6 +44,22 @@ export function getWorldMenuOpenBodyId(): string | null {
   return openBodyId;
 }
 
+// --- the structures' places on the world ------------------------------
+// The overlay decides where each surface structure's tag goes (the arc it
+// fits around the header, station and orbs), and the canvas draws each
+// structure straight under its tag — so the overlay publishes, per
+// structure, its angle from straight up (radians, clockwise positive),
+// whether research locks it, and which one is hovered or picked. Null
+// when no menu is showing tags; the canvas then falls back to fixed spots.
+export interface StructureSlot { kind: string; theta: number; locked: boolean }
+let structureSlots: StructureSlot[] | null = null;
+let structureFocus: string | null = null;
+export function setWorldMenuStructures(slots: StructureSlot[] | null): void { structureSlots = slots; }
+export function getWorldMenuStructures(): StructureSlot[] | null { return structureSlots; }
+/** The structure under the pointer (or whose card is open): its building lights with its tag. */
+export function setWorldMenuStructureFocus(kind: string | null): void { structureFocus = kind; }
+export function getWorldMenuStructureFocus(): string | null { return structureFocus; }
+
 // --- interactive zoom cap -------------------------------------------
 // The map's wheel/pinch clamp is 50. Diving into a body's menu needs
 // more (menuScaleFor), so MapCanvas publishes the currently-allowed cap

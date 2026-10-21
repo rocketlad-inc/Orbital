@@ -38,6 +38,7 @@ import {
   TorchTransfer,
 } from '../physics/torchTransfer';
 import { orbitWorldPos, orbitWorldVelocity, bodyWorldVelocity, bodyPosition, parentMuForParking } from '../physics/orbitalMechanics';
+import { rendezvousStateAt } from '../physics/rendezvous.js';
 import { engineGModifier } from '../game/techs';
 import { deriveSecondary } from '../game/colorUtils';
 import { resolveEmblem } from '../game/emblems';
@@ -376,6 +377,8 @@ interface ServerState {
     captain_traits?: string | null;
     /** Mega Destroyer charge — public, so anyone can see it wind up. */
     strike_target_body_id?: string | null;
+    /** A missile salvo's size (class 'missile'). */
+    missile_count?: number | null;
     strike_ready_tick?: number | null;
     strike_mode?: string | null;
   }>;
@@ -467,6 +470,12 @@ interface ServerState {
     building_order_json?: string | null;
     /** JSON array of upgrades waiting behind building_order_json. */
     building_backlog_json?: string | null;
+    /** The missile silo (0177); null for anyone but the owner. */
+    missile_stock?: number | null;
+    missile_orders_json?: string | null;
+    missile_auto?: string | null;
+    missile_reserve?: number | null;
+    missile_salvo?: number | null;
     /** The standing order this yard gives every hull it builds
      *  (migration 0120). Null on cities and on yards with no opinion. */
     default_build_order?: string | null;
@@ -1069,6 +1078,7 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     // ship panel and the rock card while its hold visibly filled.
     miningBodyId: stripGameId((s as { mining_body_id?: string | null }).mining_body_id) ?? null,
     strikeTargetBodyId,
+    missileCount: s.missile_count ?? null,
     strikeReadyTick,
     strikeMode,
   };
@@ -1099,6 +1109,7 @@ function translateShipClass(serverClass: string): Ship['class'] {
     case 'mega_destroyer':
     case 'mobile_foundry':
     case 'kaiju':
+    case 'missile':
       return serverClass;
     case 'cargo':
     case 'hauler':
@@ -1195,6 +1206,23 @@ function settlementToClient(
         };
       } catch { return undefined; }
     })(),
+    // THE MISSILE SILO (0177): sent only to its owner (null otherwise).
+    missileSilo: s.missile_stock == null ? undefined : {
+      stock: Number(s.missile_stock) || 0,
+      orders: (() => {
+        try {
+          const arr = JSON.parse(s.missile_orders_json ?? '[]');
+          return Array.isArray(arr)
+            ? arr.map((o: { id: string; start_tick?: number | null; complete_tick?: number | null }) => ({
+              id: o.id, startTick: o.start_tick ?? null, completeTick: o.complete_tick ?? null,
+            }))
+            : [];
+        } catch { return []; }
+      })(),
+      auto: s.missile_auto === 'missiles' || s.missile_auto === 'fleets' ? s.missile_auto : 'off',
+      reserve: Number(s.missile_reserve) || 0,
+      salvo: Number(s.missile_salvo) || 2,
+    },
     // What this yard tells every hull it builds. Ids stripped like all
     // the others so the pickers can match them against gameState.
     defaultBuildOrder: (s.default_build_order ?? null) as Settlement['defaultBuildOrder'],
@@ -1681,7 +1709,11 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         launchVel = orbitWorldVelocity(ship.orbit, n.scheduled_t, bodies);
       }
 
-      const plan = planTorchTransfer(
+      // A recorded MEETING (rv_*): a missile salvo, or a ship's
+      // match order. Its course is the rendezvous, not this leg.
+      const hasRv = !!srvPlan && n.rv_ax != null && n.rv_ay != null && n.rv_bx != null
+        && n.rv_by != null && n.rv_meet_tick != null && !!n.rv_follow_ship_id;
+      let plan = planTorchTransfer(
         { pos: launchPos, vel: launchVel },
         targetLocalId,
         srvPlan?.accel ?? engineAccel,
@@ -1691,6 +1723,33 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         // a recorded one keeps its own build (set just below).
         undefined, srvPlan ? undefined : mpRampFor(engineAccel),
       );
+      // A salvo fired at a raid bound for its OWN world records that
+      // world as its leg's target: launch and target are one place, the
+      // planner has no trip to solve and returns null, and the salvo sat
+      // parked on screen while the server flew it (Lorne, 2026-10-20: "I
+      // launched missiles and they aren't going anywhere"). The meeting
+      // below is its real course; a stand-in leg carries it there.
+      let standIn = false;
+      if (!plan && hasRv && srvPlan) {
+        standIn = true;
+        const tb = bodies.find(b => b.id === targetLocalId);
+        const arrive = n.arrival_at_tick != null && n.arrival_at_tick > n.scheduled_t
+          ? n.arrival_at_tick : Number(n.rv_meet_tick);
+        plan = {
+          targetBodyId: targetLocalId,
+          acceleration: srvPlan.accel,
+          brakeAcceleration: srvPlan.brakeAccel,
+          startTick: n.scheduled_t,
+          flipTick: srvPlan.flipTick,
+          arriveTick: arrive,
+          thrustDir: { x: 0, y: 0 },
+          interceptPos: tb ? bodyPosition(tb, arrive, bodies) : { ...launchPos },
+          startPos: { ...launchPos },
+          startVel: { ...launchVel },
+          totalDv: 0,
+          peakVelocity: 0,
+        };
+      }
       if (!plan) continue;
       if (srvPlan?.ramp) {
         if (srvPlan.ramp.tau != null) plan.accelTau = srvPlan.ramp.tau;
@@ -1748,6 +1807,16 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         };
         const dt = Math.max(0, currentTick - n.scheduled_t);
         if (dt > 0) stepTorchShip(state, plan, n.scheduled_t, dt, bodies);
+        // A stand-in leg goes nowhere; the salvo is on its meeting course.
+        if (standIn && srvPlan && dt > 0) {
+          const at = rendezvousStateAt({
+            p0: srvPlan.pos, v0: srvPlan.vel, accel: srvPlan.accel,
+            A: { x: Number(n.rv_ax), y: Number(n.rv_ay) }, B: { x: Number(n.rv_bx), y: Number(n.rv_by) },
+            startTick: n.scheduled_t, meetTick: Number(n.rv_meet_tick),
+          }, currentTick, null);
+          state.pos = { ...at.pos };
+          state.vel = { ...at.vel };
+        }
         plan.nodeId = n.id;
         ship.transit = { pos: state.pos, vel: state.vel, currentTransfer: plan };
 
@@ -1998,14 +2067,32 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         if (ev.kind === 'terraform_destroyed' || ev.kind === 'world_obliterated') {
           try { cause = JSON.parse(ev.payload || '{}')?.cause ?? undefined; } catch { cause = undefined; }
         }
+        // A missile burst IN FLIGHT plays where it met its target, never at
+        // the destination world the row is filed under (Lorne, 2026-10-20).
+        // A strike names the hull (drawn on its course line); x/y is the
+        // true point, for a hull this client never drew. A shoot-down in
+        // flight has only the point. Landing strikes keep their world.
+        let at: { x: number; y: number } | undefined;
+        let inFlight = false;
+        if (ev.kind === 'missile_strike' || ev.kind === 'missile_intercepted') {
+          try {
+            const p = JSON.parse(ev.payload || '{}');
+            inFlight = p?.in_flight === true;
+            if (inFlight && Number.isFinite(p.x) && Number.isFinite(p.y)) at = { x: Number(p.x), y: Number(p.y) };
+          } catch { inFlight = false; }
+          // Only an in-flight shoot-down is drawn (a landing one is the
+          // strike's own blast).
+          if (ev.kind === 'missile_intercepted' && !inFlight) return null;
+        }
         return {
           id: ev.id,
           kind: ev.kind,
-          bodyId: stripGameId(ev.body_id) ?? undefined,
+          bodyId: inFlight ? undefined : stripGameId(ev.body_id) ?? undefined,
           shipId: stripGameId(ev.ship_id) ?? undefined,
           cause,
+          at,
         };
-      }),
+      }).filter((x): x is NonNullable<typeof x> => x != null),
     );
   } catch { /* cosmetics must never break state deserialization */ }
 

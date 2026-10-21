@@ -629,6 +629,55 @@ export function formatChronicleEvent(
     return out('◎ ', T('sungate.opened', { gate, system }));
   }
 
+  if (ev.kind === 'missile_launch') {
+    if (parsed.at_missiles) {
+      return out('🚀 ', T('missile.launchShootDown', {
+        n: Number(parsed.count ?? 0), who: String(parsed.target_owner_name ?? T('fb.aBody')),
+        body: String(parsed.from_name ?? T('fb.aBody')), tick: Number(parsed.meet_tick ?? 0),
+      }));
+    }
+    if (parsed.in_flight) {
+      return out('🚀 ', T(parsed.auto ? 'missile.launchInterceptAuto' : 'missile.launchIntercept', {
+        n: Number(parsed.count ?? 0), who: String(parsed.target_owner_name ?? T('fb.aBody')),
+        k: Number(parsed.target_hulls ?? 0), body: String(parsed.body_name ?? T('fb.aBody')), tick: Number(parsed.meet_tick ?? 0),
+      }));
+    }
+    return out('🚀 ', T('missile.launch', {
+      n: Number(parsed.count ?? 0), body: String(parsed.body_name ?? T('fb.aBody')), tick: Number(parsed.arrive_tick ?? 0),
+    }));
+  }
+  if (ev.kind === 'missile_strike') {
+    const who = (Array.isArray(parsed.launcher_names) && parsed.launcher_names.length)
+      ? (parsed.launcher_names as string[]).join(', ') : nameOfFaction(ev.actor_faction_id);
+    const vars = {
+      who, n: Number(parsed.missiles ?? 0), body: String(parsed.body_name ?? T('fb.aBody')),
+      dmg: Number(parsed.damage ?? 0), k: Number(parsed.destroyed_count ?? 0),
+    };
+    if (parsed.in_flight) {
+      return out('🚀 ', T('missile.strikeInFlight', { ...vars, owner: String(parsed.target_owner_name ?? '?') }));
+    }
+    return out('🚀 ', parsed.auto ? T('missile.strikeAuto', vars) : T('missile.strike', vars));
+  }
+  if (ev.kind === 'missile_inbound') {
+    return out('🎯 ', T('missile.inbound', {
+      who: String(parsed.launcher_name ?? nameOfFaction(ev.actor_faction_id)), n: Number(parsed.count ?? 0),
+      k: Number(parsed.target_hulls ?? 1), body: String(parsed.body_name ?? T('fb.aBody')), tick: Number(parsed.meet_tick ?? 0),
+    }));
+  }
+  if (ev.kind === 'missile_intercepted' && parsed.in_flight) {
+    return out('🛡 ', T('missile.interceptedInFlight', {
+      who: String(parsed.by_name ?? nameOfFaction(ev.actor_faction_id)), n: Number(parsed.count ?? 0),
+      from: (Array.isArray(parsed.from_names) && parsed.from_names.length) ? (parsed.from_names as string[]).join(', ') : '?',
+      body: String(parsed.body_name ?? T('fb.aBody')), left: Number(parsed.got_through ?? 0),
+    }));
+  }
+  if (ev.kind === 'missile_intercepted') {
+    return out('🛡 ', T('missile.intercepted', {
+      who: String(parsed.by_name ?? nameOfFaction(ev.actor_faction_id)),
+      n: Number(parsed.count ?? 0), body: String(parsed.body_name ?? T('fb.aBody')),
+    }));
+  }
+
   if (ev.kind === 'discovery_offer' || ev.kind === 'discovery_refused') {
     const shipKey = parsed.kind === 'ancient_capital'
       ? (parsed.capital_kind === 'mobile_foundry' ? 'mobile_foundry' : 'mega_destroyer')

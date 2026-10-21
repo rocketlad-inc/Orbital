@@ -174,6 +174,19 @@ export function shapeForArrival(d, T, a0 = SHIP_ENGINE_ACCEL) {
   };
 }
 
+/**
+ * A leg that PUSHES THE WHOLE WAY and covers `d` in exactly `T`: no flip,
+ * no brake. For a missile, which bursts on contact and has no reason to
+ * stop. The hull's own build (rampFor(a0)), scaled to fit d like
+ * shapeForArrival. The flip is the arrival (t1 = T), which every
+ * integrator reads as "never brakes".
+ */
+export function noBrakeForArrival(d, T, a0 = SHIP_ENGINE_ACCEL) {
+  const { ramp, max, tau } = rampFor(a0);
+  const scale = d / boostState(T, a0, ramp, max, tau).x;
+  return { t1: T, accel: a0 * scale, ramp: ramp * scale, max: max * scale, tau };
+}
+
 /** Trip time over `d` at a CONSTANT push `a`, braking at k x it:
  *  T = sqrt(2d(1+k) / (a*k)). k = 1 gives the old 2*sqrt(d/a). */
 export function burnTicks(d, a, k = BRAKE_MUL) {

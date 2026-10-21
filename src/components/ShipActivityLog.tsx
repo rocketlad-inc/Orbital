@@ -15,7 +15,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { apiFetch } from '../multiplayer/api';
-import { t } from '../i18n/core';
+import { t, type Key } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 
 export interface ShipLogRow {
@@ -93,6 +93,41 @@ function describe(r: ShipLogRow): { text: string; tone: 'good' | 'bad' | 'plain'
         case 'ship_refitted':
           return {
             text: t('ship.log.refitted', { design: p.design_name ?? t('ship.log.newDesign'), body: p.body_name ?? t('ship.log.friendlyWorld') }),
+            tone: 'good',
+          };
+        // A missile salvo's own log: the event log's lines, which say what
+        // it was fired at and when it meets it. The bare kind ("missile
+        // launch") was all a salvo's panel said (Lorne, 2026-10-20).
+        case 'missile_launch':
+          return p.in_flight
+            ? {
+              text: t((p.auto ? 'eventlog.ev.missile.launchInterceptAuto' : 'eventlog.ev.missile.launchIntercept') as Key, {
+                n: Number(p.count ?? 0), who: p.target_owner_name ?? '?', k: Number(p.target_hulls ?? 0),
+                body: p.from_name ?? '?', tick: Number(p.meet_tick ?? 0),
+              }),
+              tone: 'plain',
+            }
+            : {
+              text: t('eventlog.ev.missile.launch' as Key, {
+                n: Number(p.count ?? 0), body: p.body_name ?? '?', tick: Number(p.arrive_tick ?? 0),
+              }),
+              tone: 'plain',
+            };
+        case 'missile_inbound':
+          return {
+            text: t('eventlog.ev.missile.inbound' as Key, {
+              who: p.launcher_name ?? '?', n: Number(p.count ?? 0), k: Number(p.target_hulls ?? 1),
+              body: p.body_name ?? '?', tick: Number(p.meet_tick ?? 0),
+            }),
+            tone: 'bad',
+          };
+        case 'missile_strike':
+          return {
+            text: t((p.in_flight ? 'eventlog.ev.missile.strikeInFlight' : 'eventlog.ev.missile.strike') as Key, {
+              who: Array.isArray(p.launcher_names) ? (p.launcher_names as unknown as string[]).join(', ') : t('ship.log.contact'),
+              n: Number(p.missiles ?? 0), body: p.body_name ?? '?', dmg: Number(p.damage ?? 0),
+              k: Number(p.destroyed_count ?? 0), owner: p.target_owner_name ?? '?',
+            }),
             tone: 'good',
           };
         default:

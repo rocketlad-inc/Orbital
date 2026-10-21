@@ -21,24 +21,34 @@ import { RenderContext, worldToCanvas, drawCloudDeck } from './mapRenderer';
 import { getTerraformedTexture, globeKeyOf } from './planetTexture';
 import { isLightweight } from './lightweightMode';
 import { bodyPosition } from '../physics/orbitalMechanics';
-import { zOf, clamp01 } from '../game/worldMenu/camera';
+import { zOf, clamp01, arcSpreadDeg } from '../game/worldMenu/camera';
 import { hpColor, flameCount } from '../game/worldMenu/combatDisplay';
 import { buildingLevel } from '../game/settlements';
 import { deriveSecondary } from '../game/colorUtils';
-import { drawIsoBuilding, drawSkylineStructure, dimHex } from './settlementArt';
+import { drawSkylineStructure, dimHex } from './settlementArt';
 import { drawHullFire } from './fxArt';
+import {
+  drawStructure, drawPlot, drawSite, drawPad, drawQueueBadge, drawFocusGlow, edgeLivery, STRUCTURE_BODY,
+} from './structureArt';
+import {
+  SURFACE_STRUCTURES, structureUnit, structureTop, structureHalfWidth,
+} from '../game/worldMenu/structures';
+import { getWorldMenuStructures, getWorldMenuStructureFocus, type StructureSlot } from '../game/worldMenu/store';
 
 /** Where the surface structures sit on the upper arc, as fractions of
  *  the framed span (matches the mockup's PART_FRACS; the overlay's
  *  leader lines aim at the same fractions). */
 export const PART_FRACS: Record<string, number> = {
-  forge: -0.62, mint: -0.15, lab: 0.35, collector: 0.72,
+  forge: -0.62, mint: -0.15, lab: 0.35, missile_silo: 0.62, collector: 0.78,
 };
-const FIRE_FRACS = [-0.62, -0.15, 0.35, 0.55, -0.4];
+
+/** Degrees per unit of arc fraction for THIS frame (arcSpreadDeg): 46 on a
+ *  desktop, narrower on a phone. Set at the top of each close-up draw. */
+let spreadDeg = 46;
 
 /** Angle (radians) of an arc fraction on the framed upper limb. */
 function arcAngle(frac: number): number {
-  return (-90 + frac * 46) * Math.PI / 180;
+  return (-90 + frac * spreadDeg) * Math.PI / 180;
 }
 
 /** Deterministic per-body pseudo-random in [0,1) — stable art, no flicker. */
@@ -71,27 +81,18 @@ function shade(hex: string, k: number): string {
   return `rgb(${ch(n >> 16)},${ch((n >> 8) & 255)},${ch(n & 255)})`;
 }
 
-/** A faction colour dimmed to a target luminance, hue intact.
- *
- *  Scaling all three channels preserves the hue exactly, which a fixed
- *  shade() factor does not: the same factor leaves a yellow faction's
- *  skyline twice as bright as a violet one's, and turns a near-white
- *  secondary into a doorway light enough to stop reading as an opening.
- *  Capping instead of scaling means a colour already darker than the cap
- *  is left alone. */
-function livery(hex: string, cap: number): string {
-  const n = parseInt(hex.replace('#', ''), 16);
-  if (Number.isNaN(n)) return hex;
-  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
-  const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-  const k = lum > cap ? cap / lum : 1;
-  return `rgb(${Math.round(r * k)},${Math.round(g * k)},${Math.round(b * k)})`;
-}
 
 /** How much hue a colour actually has, 0..255. A near-neutral secondary
  *  (white, grey, bone) is a fine TRIM but a poor body: dimmed to a
  *  tower's weight it lands as a hueless dark slab, which is the exact
  *  look the livery was meant to get rid of. */
+function chroma(hex: string): number {
+  const n = parseInt(hex.replace('#', ''), 16);
+  if (Number.isNaN(n)) return 0;
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  return Math.max(r, g, b) - Math.min(r, g, b);
+}
+
 /** Silhouette pools for the city skyline, widening as the settlement
  *  grows. A young colony is silos, domes and low blocks — the things you
  *  put up first. Gantries and stepped terraces arrive with a working
@@ -103,13 +104,6 @@ function livery(hex: string, cap: number): string {
 const SKYLINE_SMALL = [0, 1, 3, 9, 11];
 const SKYLINE_MID   = [0, 1, 3, 9, 11, 2, 4, 5];
 const SKYLINE_LARGE = [0, 1, 3, 9, 11, 2, 4, 5, 6, 7, 8, 10];
-
-function chroma(hex: string): number {
-  const n = parseInt(hex.replace('#', ''), 16);
-  if (Number.isNaN(n)) return 0;
-  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
-  return Math.max(r, g, b) - Math.min(r, g, b);
-}
 
 function surfaceDetail(rc: RenderContext, body: Body, c: { x: number; y: number; r: number }, alpha: number) {
   // Visual overhaul (staging): a real-map world is already on this disc,
@@ -190,30 +184,6 @@ function band(g: CanvasRenderingContext2D, x: number, y: number, r: number, off:
   g.quadraticCurveTo(x, y + r * (off - 0.2), x + r, y + r * off); g.stroke();
 }
 
-/** Draw one building glyph at an arc fraction. `unit` = 1 glyph-unit in
- *  px, derived from the 0.19·r spec height over the 64-unit glyph. */
-function drawBuilding(
-  g: CanvasRenderingContext2D, kind: BuildingKind | 'collector', level: number,
-  c: { x: number; y: number; r: number }, frac: number, p1: string, p2: string, alpha: number,
-) {
-  if (level <= 0) return;
-  const a = arcAngle(frac);
-  const px = c.x + Math.cos(a) * c.r, py = c.y + Math.sin(a) * c.r;
-  const unit = (0.19 * c.r) / 64;
-  g.save();
-  g.globalAlpha = alpha;
-  g.translate(px, py);
-  g.rotate(a + Math.PI / 2);
-  // Visual overhaul (staging): the SAME iso building the map's city draws
-  // (settlementArt), so a world's skyline matches from orbit to close-up.
-  // `unit` is kept for the old glyph scale; a level-5 forge stands about
-  // as tall as the old one did.
-  void unit;
-  const s = (0.14 * c.r) / 12;
-  g.scale(s, s);
-  drawIsoBuilding(g, kind === 'collector' ? 'collector' : kind as 'forge' | 'mint' | 'lab', level, p1, p2);
-  g.restore();
-}
 
 let reducedMotion: boolean | null = null;
 function prefersReducedMotion(): boolean {
@@ -224,25 +194,6 @@ function prefersReducedMotion(): boolean {
   return reducedMotion;
 }
 
-function drawFire(
-  g: CanvasRenderingContext2D, c: { x: number; y: number; r: number },
-  ratio: number, t: number, alpha: number,
-) {
-  const n = flameCount(ratio, FIRE_FRACS.length);
-  if (n === 0) return;
-  // The hulls' fire (fxArt.drawHullFire): flames on the surface with
-  // smoke streaming off, so a burning world reads the same in the menu
-  // as a burning ship does on the map. Still under reduced motion.
-  const nowMs = prefersReducedMotion() ? 0 : t * 1000;
-  const sev = Math.min(1, 0.45 + (1 - ratio) * 0.7);
-  const prev = g.globalAlpha;
-  g.globalAlpha = prev * alpha;
-  for (let i = 0; i < n; i++) {
-    const a = arcAngle(FIRE_FRACS[i]);
-    drawHullFire(g, c.x + Math.cos(a) * c.r, c.y + Math.sin(a) * c.r, c.r * 0.1, sev, nowMs, 0x6f1e + i * 977);
-  }
-  g.globalAlpha = prev;
-}
 
 function drawHpTag(
   g: CanvasRenderingContext2D, c: { x: number; y: number; r: number },
@@ -353,10 +304,65 @@ function drawShieldDome(
   g.restore();
 }
 
+
+
+/**
+ * THE TERRAFORM RING: on a raw world, a band above the horizon that fills
+ * as the payload lands — metal from the left, credits from the right — so
+ * the world itself says how close it is. Once both are in, the whole band
+ * glows green for the change window.
+ */
+function drawTerraformRing(
+  g: CanvasRenderingContext2D,
+  body: Body,
+  c: { x: number; y: number; r: number },
+  cost: { costMetal: number; costCredits: number },
+  tick: number,
+  t: number,
+  alpha: number,
+): void {
+  const acc = body.terraformAcc ?? { metal: 0, credits: 0 };
+  const windowOpen = body.terraformCompletesAtTick != null;
+  const mF = clamp01(acc.metal / Math.max(1, cost.costMetal));
+  const cF = clamp01(acc.credits / Math.max(1, cost.costCredits));
+  if (!windowOpen && mF <= 0 && cF <= 0) return;
+  const rr = c.r * 1.045;
+  const lw = Math.max(3, c.r * 0.012);
+  const left0 = arcAngle(-0.95), mid = arcAngle(0), right1 = arcAngle(0.95);
+  const gap = 0.012;
+  g.save();
+  g.globalAlpha = alpha;
+  g.lineCap = 'round';
+  g.lineWidth = lw;
+  const band = (from: number, to: number, color: string) => {
+    if (to <= from) return;
+    g.strokeStyle = color;
+    g.beginPath(); g.arc(c.x, c.y, rr, from, to); g.stroke();
+  };
+  if (windowOpen) {
+    // Both payloads in: the whole band breathes green until the change.
+    const pulse = prefersReducedMotion() ? 1 : 0.75 + 0.25 * Math.sin(t * 0.003);
+    g.globalAlpha = alpha * pulse;
+    band(left0, right1, '#6ee7b7');
+  } else {
+    band(left0, mid - gap, 'rgba(201, 212, 222, 0.16)');
+    band(mid + gap, right1, 'rgba(255, 209, 102, 0.16)');
+    band(mid - gap - (mid - gap - left0) * mF, mid - gap, '#c9d4de');
+    band(mid + gap, mid + gap + (right1 - mid - gap) * cF, '#ffd166');
+  }
+  g.restore();
+}
+
+export interface CloseupExtras {
+  terraformConfig?: { costMetal: number; costCredits: number; durationTicks?: number };
+  tick?: number;
+}
+
 export function drawWorldMenuCloseup(
   rc: RenderContext,
   settlements: Settlement[],
   viewerFactionId: string,
+  extras: CloseupExtras = {},
 ): void {
   const focusId = rc.camera.focusedBodyId;
   if (!focusId) return;
@@ -367,8 +373,14 @@ export function drawWorldMenuCloseup(
   // detail resolves in over the first half of the dive
   const alpha = clamp01(z / 0.5);
   const c = focusedScreenCircle(body, rc);
+  spreadDeg = arcSpreadDeg(rc.canvas.width, rc.canvas.height);
 
   surfaceDetail(rc, body, c, alpha);
+
+  if (body.terraformedAtTick == null) {
+    drawTerraformRing(rc.ctx, body, c,
+      extras.terraformConfig ?? { costMetal: 124, costCredits: 124 }, extras.tick ?? 0, rc.t, alpha);
+  }
 
   const here = settlements.filter(s => s.bodyId === focusId);
   const city = here.find(s => s.type === 'city');
@@ -377,80 +389,144 @@ export function drawWorldMenuCloseup(
   const p2 = (faction as { color2?: string } | undefined)?.color2 || deriveSecondary(p1);
 
   if (city) {
-    // Sci-fi skyline that GROWS with population: more towers, taller
-    // spires, lit windows as pop climbs. Slots near the faction-building
-    // fracs are skipped so those keep their clearing.
-    //
-    // The towers were one hardcoded navy — deliberately neutral, so the
-    // faction buildings would pop against them. Against a bright
-    // terraformed disc that silhouettes as flat black, and a settled
-    // world stops reading as ANYBODY'S from orbit. They wear the
-    // owner's livery now, dark enough that the full-strength faction
-    // buildings still lead the eye.
-    //
-    // TWO-TONE. Painting every tower in the primary alone made the
-    // skyline one flat colour: the secondary only ever appeared on an
-    // occasional window strip, which is not enough to read as a livery.
-    // Each tower now has a BODY and a CROWN in opposite tones, and
-    // roughly half of them run the pairing the other way round, so the
-    // horizon carries both colours at tower scale instead of at
-    // window scale.
-    //
-    // Capped rather than shaded by a factor: a yellow faction and a
-    // violet one have to sit at the same weight behind the buildings.
-    const bodyOf  = [livery(p1, 46), livery(p1, 62)];   // [short, tall]
-    const bodyAlt = [livery(p2, 46), livery(p2, 62)];
-    // The crown sits above the mass it caps, so it carries more light.
-    const crownOf  = livery(p2, 78);
-    const crownAlt = livery(p1, 78);
-    // Lit edges brighter still — this is the only thing on a tower that
-    // is meant to look switched on.
-    const litOf  = livery(p2, 116);
-    const litAlt = livery(p1, 116);
-    const twoWay = chroma(p2) >= 34;
-    const g = rc.ctx;
-    const pop = Math.max(1, city.population ?? 1);
-    const count = Math.min(28, 7 + Math.floor(pop * 2.5));
-    const growth = clamp01(pop / 8);
-    for (let i = 0; i < count; i++) {
-      const fr = -0.9 + (i / Math.max(1, count - 1)) * 1.8 + (hash01(body.id, i + 61) - 0.5) * 0.045;
-      if (Object.values(PART_FRACS).some(pf => Math.abs(pf - fr) < 0.07)) continue;
-      const a = arcAngle(fr);
-      const px = c.x + Math.cos(a) * c.r, py = c.y + Math.sin(a) * c.r;
-      const pool = growth > 0.55 ? SKYLINE_LARGE : growth > 0.3 ? SKYLINE_MID : SKYLINE_SMALL;
-      const kind = pool[Math.min(pool.length - 1, Math.floor(hash01(body.id, i + 97) * pool.length))];
-      const h = c.r * (0.03 + hash01(body.id, i + 31) * (0.045 + 0.085 * growth));
-      const w = c.r * (0.007 + hash01(body.id, i + 43) * 0.018);
-      g.save(); g.globalAlpha = alpha; g.translate(px, py); g.rotate(a + Math.PI / 2);
-      // Which way round this tower runs. Seeded off the body id like
-      // every other choice here, so a skyline is identical on every
-      // client and from one frame to the next.
-      // A faction whose secondary is near-neutral (Moose Authority runs
-      // brown on white) keeps every tower body in the primary: white
-      // dimmed to a body's weight is a grey slab, and grey slabs are
-      // what this whole change was getting rid of. Its white still shows
-      // up, on the crowns and lit edges, where a pale trim belongs.
-      const flip = twoWay && hash01(body.id, i + 211) > 0.5;
-      const tall = h > c.r * 0.075 ? 1 : 0;
-      const mass  = flip ? bodyAlt[tall] : bodyOf[tall];
-      const crown = flip ? crownAlt : crownOf;
-      const lit   = flip ? litAlt : litOf;
-      // Visual overhaul (staging): the same twelve shapes, built from the
-      // city's shaded iso blocks in the owner's two tones (dimmed so the
-      // faction buildings still lead the eye), not flat silhouettes.
-      void mass; void crown; void lit;
-      const k = tall ? 0.8 : 0.66;
-      const [pa, pb] = flip ? [p2, p1] : [p1, p2];
-      const windowsOn = growth > 0.4 && kind <= 1 && hash01(body.id, i + 151) > 0.55;
-      drawSkylineStructure(g, kind, w, h, dimHex(pa, k), dimHex(pb, k), windowsOn);
-      g.restore();
-    }
-    for (const kind of ['forge', 'mint', 'lab'] as BuildingKind[]) {
-      drawBuilding(rc.ctx, kind, buildingLevel(city, kind), c, PART_FRACS[kind], p1, p2, alpha);
-    }
-    if (city.hasCollector) drawBuilding(rc.ctx, 'collector', 1, c, PART_FRACS.collector, p1, p2, alpha);
+    const slots = structureSlotsFor(city, viewerFactionId);
+    drawSkyline(rc.ctx, body, c, city, p1, p2, slots, alpha);
     drawShieldDome(rc.ctx, c, city, rc.t, alpha);
-    drawHpTag(rc.ctx, c, city.name, city.hp, city.maxHp, alpha);
-    drawFire(rc.ctx, c, city.hp / Math.max(1, city.maxHp), rc.t, alpha);
+    drawStructures(rc.ctx, c, city, viewerFactionId, p1, slots, extras.tick ?? 0, rc.t, alpha);
+    // A rival's city wears its name and hit points on the world; yours are
+    // in the menu's header, and here they sat under your structure tags.
+    if (city.ownedBy !== viewerFactionId) drawHpTag(rc.ctx, c, city.name, city.hp, city.maxHp, alpha);
+  }
+}
+
+/** Where each surface structure stands. Your own city: exactly under its
+ *  tag (the overlay publishes the angles it placed the tags at). A rival's,
+ *  or yours before the tags exist: spread evenly over the framed limb. */
+const FALLBACK_FRACS: Record<string, number> = { forge: -0.7, mint: -0.35, shields: 0, lab: 0.35, missile_silo: 0.7 };
+function structureSlotsFor(city: Settlement, viewerFactionId: string): StructureSlot[] {
+  const published = city.ownedBy === viewerFactionId ? getWorldMenuStructures() : null;
+  if (published && published.length) return published;
+  return SURFACE_STRUCTURES.map(kind => ({
+    kind, theta: (FALLBACK_FRACS[kind] * spreadDeg) * Math.PI / 180, locked: false,
+  }));
+}
+
+/**
+ * THE SKYLINE: the city's own towers behind the structures, exactly as
+ * they were before the structures were redrawn (Lorne, 2026-10-20: the
+ * cityscape art stays). It GROWS with population: more towers, taller
+ * spires, lit windows as pop climbs, the shape pool widening as it
+ * matures. A tower that would stand on a structure's footprint is
+ * skipped, so every structure keeps its clearing.
+ *
+ * TWO-TONE in the owner's livery: each tower has a body and a crown in
+ * opposite tones, and roughly half run the pairing the other way round,
+ * so the horizon carries both colours at tower scale. A faction whose
+ * secondary is near-neutral keeps every tower body in the primary.
+ * Dimmed so the structures in front still lead the eye.
+ */
+function drawSkyline(
+  g: CanvasRenderingContext2D, body: Body, c: { x: number; y: number; r: number },
+  city: Settlement, p1: string, p2: string, slots: StructureSlot[], alpha: number,
+): void {
+  const twoWay = chroma(p2) >= 34;
+  const pop = Math.max(1, city.population ?? 1);
+  const count = Math.min(28, 7 + Math.floor(pop * 2.5));
+  const growth = clamp01(pop / 8);
+  const u = structureUnit(c.r);
+  const clear = slots.map(sl => ({
+    th: sl.theta,
+    half: (structureHalfWidth(sl.kind, buildingLevel(city, sl.kind as BuildingKind)) * u + c.r * 0.012) / c.r,
+  }));
+  for (let i = 0; i < count; i++) {
+    const fr = -0.9 + (i / Math.max(1, count - 1)) * 1.8 + (hash01(body.id, i + 61) - 0.5) * 0.045;
+    const th = (fr * spreadDeg) * Math.PI / 180;
+    if (clear.some(k => Math.abs(k.th - th) < k.half)) continue;
+    const a = arcAngle(fr);
+    const px = c.x + Math.cos(a) * c.r, py = c.y + Math.sin(a) * c.r;
+    const pool = growth > 0.55 ? SKYLINE_LARGE : growth > 0.3 ? SKYLINE_MID : SKYLINE_SMALL;
+    const kind = pool[Math.min(pool.length - 1, Math.floor(hash01(body.id, i + 97) * pool.length))];
+    const h = c.r * (0.03 + hash01(body.id, i + 31) * (0.045 + 0.085 * growth));
+    const w = c.r * (0.007 + hash01(body.id, i + 43) * 0.018);
+    g.save(); g.globalAlpha = alpha; g.translate(px, py); g.rotate(a + Math.PI / 2);
+    // Seeded off the body id like every other choice here, so a skyline
+    // is identical on every client and from one frame to the next.
+    const flip = twoWay && hash01(body.id, i + 211) > 0.5;
+    const k = h > c.r * 0.075 ? 0.8 : 0.66;
+    const [pa, pb] = flip ? [p2, p1] : [p1, p2];
+    const windowsOn = growth > 0.4 && kind <= 1 && hash01(body.id, i + 151) > 0.55;
+    drawSkylineStructure(g, kind, w, h, dimHex(pa, k), dimHex(pb, k), windowsOn);
+    g.restore();
+  }
+}
+
+/**
+ * THE STRUCTURES: one under every tag, always (structureArt.ts draws
+ * them). Built: its silhouette at its level, edges in the owner's livery.
+ * Not built: a plot, padlocked when research gates it. Building: the
+ * scaffold and crane with its ring. Next in the queue: a teal ghost of
+ * the level coming, with its place in line. Hovered or picked (the tag's
+ * twin): lit amber. A rival's city shows only what is built.
+ */
+function drawStructures(
+  g: CanvasRenderingContext2D, c: { x: number; y: number; r: number }, city: Settlement,
+  viewerFactionId: string, p1: string, slots: StructureSlot[], tick: number, t: number, alpha: number,
+): void {
+  const mine = city.ownedBy === viewerFactionId;
+  const u = structureUnit(c.r);
+  const edge = edgeLivery(p1);
+  const focus = mine ? getWorldMenuStructureFocus() : null;
+  const q = city.buildingQueue;
+  const backlog = city.buildingBacklog ?? [];
+  // Damage: fires on the built structures, as many as the city's hull
+  // ratio calls for (combatDisplay.flameCount, the hulls' own rule).
+  const ratio = city.hp / Math.max(1, city.maxHp);
+  const builtKinds = slots.filter(sl => buildingLevel(city, sl.kind as BuildingKind) > 0).map(sl => sl.kind);
+  const burning = new Set(builtKinds.slice(0, flameCount(ratio, builtKinds.length)));
+  const nowMs = prefersReducedMotion() ? 0 : t * 1000;
+  for (const sl of slots) {
+    const kind = sl.kind;
+    const level = buildingLevel(city, kind as BuildingKind);
+    const building = q?.kind === kind;
+    if (!mine && level === 0) continue;
+    const queuedAt = backlog.findIndex(o => o.kind === kind);
+    const hl = focus === kind;
+    const hw = structureHalfWidth(kind, level);
+    g.save();
+    g.globalAlpha = alpha;
+    g.translate(c.x + Math.sin(sl.theta) * c.r, c.y - Math.cos(sl.theta) * c.r);
+    g.rotate(sl.theta);
+    g.scale(u, u);
+    if (hl) drawFocusGlow(g, hw);
+    if (level === 0 && !building) {
+      drawPlot(g, sl.locked, hl);
+    } else {
+      drawPad(g, hw - 2);
+      if (level > 0) {
+        const siloState = kind === 'missile_silo'
+          ? { stock: mine && city.missileSilo ? city.missileSilo.stock : null,
+              building: mine && city.missileSilo && city.missileSilo.orders.length > 0 ? 1 : 0 }
+          : undefined;
+        drawStructure(g, kind, level, { edge: hl ? '#ffd27a' : edge, body: STRUCTURE_BODY, glow: hl ? 1 : 0.95 }, siloState);
+      } else {
+        drawPlot(g, false, hl);
+      }
+    }
+    if (building && q) {
+      const span = Math.max(1, q.completeTick - q.startTick);
+      drawSite(g, clamp01((tick - q.startTick) / span));
+    } else if (mine && queuedAt >= 0) {
+      g.save();
+      g.globalAlpha *= 0.4;
+      drawStructure(g, kind, Math.max(level + 1, backlog[queuedAt].targetLevel ?? level + 1),
+        { edge: '#4ecdc4', body: null, glow: 0, dash: [3, 2] });
+      g.restore();
+      drawQueueBadge(g, queuedAt + 1, hw, -structureTop(kind, level + 1, false) - 6);
+    }
+    if (burning.has(kind)) {
+      const sev = Math.min(1, 0.45 + (1 - ratio) * 0.7);
+      drawHullFire(g, 0, -structureTop(kind, level, false) * 0.55, 26, sev, nowMs, 0x6f1e + kind.length * 977);
+    }
+    g.restore();
   }
 }

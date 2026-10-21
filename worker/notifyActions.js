@@ -165,6 +165,20 @@ async function runAct(env, ctx, userId, act, replyText) {
         });
         return say(r, 'Sent');
       }
+      case 'intercept': {
+        // LAUNCH AT THE RAID, FROM THE INBOUND ALERT (Lorne, 2026-10-20).
+        // The silo, the lead hull and the salvo size ride the payload; the
+        // launch route re-checks every one as the signed-in player: their
+        // silo, missiles ready, the group still in flight and catchable.
+        const sid = String(act.settlement_id ?? '');
+        const target = String(act.ship_id ?? '');
+        const count = Math.max(1, Math.floor(Number(act.count) || 1));
+        if (!sid || !target) return json({ ok: false, message: 'No silo or target named' });
+        const r = await callGame(env, ctx, userId, 'POST',
+          at(`/settlements/${encodeURIComponent(sid)}/missiles/launch`), { target_ship_id: target, count });
+        const meet = r?.body?.meet_tick;
+        return say(r, meet != null ? `${count} ${count === 1 ? 'missile' : 'missiles'} away: they meet at tick ${meet}` : 'Launched');
+      }
       case 'trade_accept':
       case 'trade_decline': {
         const id = String(act.trade_id ?? '');

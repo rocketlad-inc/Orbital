@@ -1452,9 +1452,10 @@ import * as gameFeed from './gameFeed.js';
 import * as ending from './ending.js';
 import * as profileAwards from './profileAwards.js';
 import * as discoveryOffers from './discoveryOffers.js';
+import * as missiles from './missiles.js';
 import { carryNamePools } from './namePoolHistory.js';
 
-const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, studio, analytics, configAdmin, emailAdmin, emailLogin, store, skins, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed, customMaps, ending, discoveryOffers, invites, visits, profileAwards];
+const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, studio, analytics, configAdmin, emailAdmin, emailLogin, store, skins, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed, customMaps, ending, discoveryOffers, invites, visits, profileAwards, missiles];
 
 function matchPattern(pattern, pathname) {
   if (typeof pattern === 'string') {
@@ -1480,6 +1481,11 @@ function matchPattern(pattern, pathname) {
   return groups;
 }
 
+// The guard lives in missiles.js now: the watch's and the alert actions'
+// orders (wearOrders.callGame) dispatch routes without this file, and
+// must refuse salvos the same way.
+const refuseMissileOrders = missiles.refuseMissileOrders;
+
 async function dispatchFeatureRoute(req, env, url, session) {
   for (const mod of FEATURE_MODULES) {
     if (!mod || !Array.isArray(mod.routes)) continue;
@@ -1489,6 +1495,14 @@ async function dispatchFeatureRoute(req, env, url, session) {
       if (params === null) continue;
       if (r.auth === 'required' && !session) {
         return err(401, 'unauthenticated', 'sign in required');
+      }
+      // A MISSILE SALVO TAKES NO ORDERS (missiles.js). It is a ship row so
+      // it can fly and be seen, which also makes it look orderable to every
+      // ship endpoint: a move, a stance, a fleet, a sale, a refit. One
+      // guard here instead of one in each of them.
+      if (req.method !== 'GET' && params.gameId) {
+        const refused = await refuseMissileOrders(req, params);
+        if (refused) return refused;
       }
       return r.handle(req, env, { url, session, params });
     }

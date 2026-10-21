@@ -23,6 +23,7 @@ import {
   drawTorchTrajectory,
   drawRendezvousPreview,
   rendezvousTrajectorySamples,
+  missileDrawnRendezvous,
   drawTransitShip,
   drawGhostPlanet,
   drawTargetHighlight,
@@ -2291,7 +2292,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     const wmOpen = isWorldMenuActive() && !!camera.focusedBodyId
       && getWorldMenuOpenBodyId() === camera.focusedBodyId;
     if (wmOpen) {
-      drawWorldMenuCloseup(renderContext, gameState.settlements, 'player');
+      drawWorldMenuCloseup(renderContext, gameState.settlements, 'player', {
+        terraformConfig: gameState.terraformConfig, tick: gameState.currentTick,
+      });
     }
 
     // Build a co-orbit formation map: ships sharing the same parent body
@@ -2903,12 +2906,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const rvFollowedSamples = rvLeaderLeg
           ? torchTrajectorySamples(rvLeaderLeg, gameState.bodies)
           : null;
+        const rvPathAt = rvFollowedSamples && rvFollowedSamples.length >= 2
+          ? (t: number) => torchPositionFromSamples(rvFollowedSamples, t)
+          : null;
         const samples = rvPlan ? rendezvousTrajectorySamples(
-          rvPlan,
-          rvFollowedSamples && rvFollowedSamples.length >= 2
-            ? (t: number) => torchPositionFromSamples(rvFollowedSamples, t)
-            : null,
-          rvLeaderLeg?.arriveTick ?? null,
+          // A missile meets its target on the target's DRAWN line.
+          ship.class === 'missile' ? missileDrawnRendezvous(rvPlan, rvPathAt) : rvPlan,
+          rvPathAt,
+          // A missile bursts at the meeting: no joined leg after it.
+          ship.class === 'missile' ? null : rvLeaderLeg?.arriveTick ?? null,
         ) : drawTorchTrajectory(
           plan, gameState.bodies, renderContext, arcColor,
           // Dashed when this leg belongs to a trade route — the
@@ -2926,9 +2932,33 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // This hull's place in its formation. Everything below (range
         // ring, sprite, click hit-test) reads `placed`, so they move
         // together; the line above stays on the true course.
-        const placed = samples && samples.length > 0
+        let placed = samples && samples.length > 0
           ? placeInFormation(ship.id, samples, renderContext, transitShipScale(camera.scale))
           : samples;
+        // A MISSILE CLEARS ITS WORLD AT ONCE (Lorne, 2026-10-20: "it visibly
+        // enters orbit"). A world is drawn larger than its true size at map
+        // zoom, and a salvo pushing from rest spends the start of its first
+        // tick inside that disc, where it read as a hull in orbit. While its
+        // true point is under the drawn disc it is drawn on the disc's edge,
+        // on its course side, burning; it leaves the edge as it outruns it.
+        if (ship.class === 'missile' && placed && placed.length > 1) {
+          const home = ship.orbit?.parentBodyId ? bodyById2.get(ship.orbit.parentBodyId) : undefined;
+          if (home) {
+            const sc = renderContext.camera.scale;
+            const R = (drawnRadiusOf(renderContext.presentation, home, sc) + 6) / Math.max(1e-9, sc);
+            const first = placed[0], last = placed[placed.length - 1];
+            const cl = Math.hypot(last.x - first.x, last.y - first.y) || 1;
+            const course = { x: (last.x - first.x) / cl, y: (last.y - first.y) / cl };
+            placed = placed.map(p => {
+              const c = bodyPosition(home, p.t, gameState.bodies);
+              const dx = p.x - c.x, dy = p.y - c.y;
+              const d = Math.hypot(dx, dy);
+              if (d >= R) return p;
+              const u = d > R * 0.05 ? { x: dx / d, y: dy / d } : course;
+              return { t: p.t, x: c.x + u.x * R, y: c.y + u.y * R };
+            });
+          }
+        }
         // Weapons-range ring for the hull you just clicked. BEFORE the ship
         // so the icon sits on top of its own bubble rather than inside a
         // line drawn over it.
@@ -3570,6 +3600,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             else if (sh) world = shipWorldPosition(sh, nowTick, gameState.bodies);
           }
         }
+        // A missile burst in flight whose target this client never drew
+        // (or that already died): where it really met it.
+        if (!world && fx.at) world = fx.at;
         if (!world && shipEvent && fx.kind === 'damage') {
           // A HIT on a hull this client has never rendered (a fogged
           // rival brawl — chronicle rows are public). A boom with no
@@ -3794,9 +3827,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         ? (t: number) => torchPositionFromSamples(followedSamples, t)
         : null;
       drawRendezvousPreview(
-        rv, theirPath, renderContext,
+        ship.class === 'missile' ? missileDrawnRendezvous(rv, theirPath) : rv, theirPath, renderContext,
         (isMine && followed) ? t('map.meet', { name: followed.name, tick: Math.round(rv.meetTick) }) : undefined,
-        leaderLeg?.arriveTick ?? null,
+        ship.class === 'missile' ? null : leaderLeg?.arriveTick ?? null,
         renderTick(),
       );
     }
@@ -5193,6 +5226,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     )}
     <canvas
       ref={canvasRef}
+      data-map-canvas=""
       width={width}
       height={height}
       onMouseMove={(e) => { handleMouseMove(e); handleMouseHover(e); }}
