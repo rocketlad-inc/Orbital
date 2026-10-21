@@ -82,7 +82,8 @@ For a vertical (9:16) recording, the map is cropped to the centre of your window
       "loadout": "mixed",          // default | kinetic | energy | mixed | ["kinetic","energy","shield","engine"]
       "hp": 1.5,                   // multiplier; 1.5 makes a fight last ~10 ticks, 4 makes it last an hour
       "prefix": "TDS",             // ship names: TDS DD-01, TDS FF-02 …
-      "variant": "A" }             // hull look A–Z
+      "variant": "A",              // hull look A–Z
+      "priority": "big" }          // the fleet's target order: big (capitals first), small, civilian, or a list
   ],
 
   "fleets": [

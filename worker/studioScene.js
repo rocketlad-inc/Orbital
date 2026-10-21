@@ -125,8 +125,22 @@ export function expandScenario(raw) {
     }
     const hp = Number.isFinite(Number(g.hp)) ? Math.max(0.1, Math.min(20, Number(g.hp))) : 1;
     const variant = typeof g.variant === 'string' && /^[A-Z]$/.test(g.variant) ? g.variant : 'A';
+    // The fleet's target order, as the game's orders give it: 'big'
+    // (capitals first, so a fleet goes for the Mega Destroyer), 'small',
+    // 'civilian', or a list of categories. Absent = the game's own ladder.
+    const PRIORITY = {
+      big: ['capital', 'destroyer', 'frigate', 'corvette', 'civilian', 'settlement'],
+      small: ['corvette', 'frigate', 'destroyer', 'capital', 'civilian', 'settlement'],
+      civilian: ['civilian', 'corvette', 'frigate', 'destroyer', 'capital', 'settlement'],
+    };
+    let priority = null;
+    if (g.priority != null) {
+      if (typeof g.priority === 'string' && PRIORITY[g.priority]) priority = PRIORITY[g.priority];
+      else if (Array.isArray(g.priority) && g.priority.length && g.priority.every(c => typeof c === 'string' && /^[a-z_]{3,20}$/.test(c))) priority = g.priority;
+      else throw new Error(`ships[${i}].priority must be big, small, civilian or a list of categories`);
+    }
     return {
-      key: g.key, owner: g.owner, at: g.at, hulls, loadout, hp, variant,
+      key: g.key, owner: g.owner, at: g.at, hulls, loadout, hp, variant, priority,
       prefix: typeof g.prefix === 'string' ? g.prefix.slice(0, 8) : g.owner.slice(0, 3).toUpperCase() + 'S',
     };
   });
