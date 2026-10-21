@@ -41,7 +41,9 @@ export type ShotStep =
   | { at: number; do: 'hook'; text: string }
   | { at: number; do: 'ui'; show: boolean }
   | { at: number; do: 'panel'; id: PanelId | null }
-  | { at: number; do: 'click'; selector: string };
+  | { at: number; do: 'click'; selector: string }
+  | { at: number; do: 'intercept'; ships: Target; target: Target }
+  | { at: number; do: 'strike'; ship: string; ticks?: number };
 
 /** The game's panels, by the name the dock and the shell know them by. */
 export type PanelId = 'senate' | 'faction' | 'comms' | 'trades' | 'situation' | 'eventlog' | 'multiplayer'
@@ -80,6 +82,10 @@ export interface DirectorHost {
   state(): GameState;
   mapCanvas(): HTMLCanvasElement | null;
   deselect(): void;
+  /** Send the viewer's own parked hulls to intercept a ship in flight,
+   *  with the game's planner, the way the intercept picker does. Returns
+   *  how many hulls were sent. */
+  intercept?(shipIds: string[], targetShipId: string): Promise<{ sent: number; failed: number; error?: string }>;
 }
 
 interface Cam { x: number; y: number; scale: number }
@@ -286,6 +292,37 @@ export class Director {
     ev('orbital:open-panel', { panel: id });
   }
 
+  /** The full ids a target names: a ship, every hull of a fleet. */
+  private idsOf(target: Target): string[] {
+    if (target.startsWith('ship:')) { const s = this.ship(target.slice(5)); return s ? [s.id] : []; }
+    if (target.startsWith('fleet:')) return this.fleetMembers(target.slice(6)).map(s => s.id);
+    if (target.startsWith('missile:')) { const m = this.missile(Number(target.slice(8)) || 1); return m ? [m.id] : []; }
+    return [];
+  }
+
+  /** The viewer's parked hulls intercept a ship (or a fleet's lead) in
+   *  flight. They meet it, then fly its plan to its world. The launch is
+   *  on the next tick. */
+  async intercept(ships: Target, target: Target): Promise<number> {
+    const ids = this.idsOf(ships);
+    const [targetId] = this.idsOf(target);
+    if (!ids.length || !targetId) { this.note(`intercept: nothing for ${ships} -> ${target}`); return 0; }
+    if (!this.host.intercept) { this.note('intercept: this build has no intercept'); return 0; }
+    const r = await this.host.intercept(ids, targetId);
+    this.note(`intercept: ${r.sent} sent, ${r.failed} could not${r.error ? ` (${r.error})` : ''}`);
+    return r.sent;
+  }
+
+  /** Arm a Mega Destroyer over the world it has arrived at, firing in
+   *  `ticks` ticks (the studio route; the player's order charges 24). */
+  async strike(ship: string, ticks = 3): Promise<boolean> {
+    const res = await apiFetch<{ fires_at_tick: number }>(`/api/admin/studio/games/${this.host.gameId}/strike`, {
+      method: 'POST', body: JSON.stringify({ ship: ship.replace(/^ship:/, ''), ticks }),
+    });
+    this.note(res.ok ? `strike: fires at tick ${res.data.fires_at_tick}` : `strike: ${res.error?.message ?? res.status}`);
+    return !!res.ok;
+  }
+
   /** Click the first element a CSS selector finds: a disclosure's
    *  summary, a tab, a button. Returns false (and notes it) when nothing
    *  matches, so a shot keeps playing. */
@@ -434,6 +471,8 @@ export class Director {
         case 'ui': this.ui(st.show); break;
         case 'panel': this.panel(st.id); break;
         case 'click': this.click(st.selector); break;
+        case 'intercept': await this.intercept(st.ships, st.target); break;
+        case 'strike': await this.strike(st.ship, st.ticks); break;
         case 'hook': this.hook = st.text; break;
         case 'caption': this.caption = { text: st.text, since: this.clock, color: st.color }; break;
         case 'tick': await this.ticks(st.n ?? 1); break;
