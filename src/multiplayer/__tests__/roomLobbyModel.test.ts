@@ -13,7 +13,6 @@ import type { ChatLine, LobbyPlayer } from '../roomLobbyModel';
 import { fixtureSnapshot, FIXTURE_SEATS } from '../__fixtures__/roomLobby';
 import { getLang, setLang } from '../../i18n/core';
 
-const seat = (i: number, over: Partial<(typeof FIXTURE_SEATS)[number]> = {}) => ({ ...FIXTURE_SEATS[i], ...over });
 /** The first n seats, all ready unless told otherwise, as the viewer `viewerId` sees them. */
 const players = (n: number, viewerId: string, over: Record<string, Partial<(typeof FIXTURE_SEATS)[number]>> = {}) => {
   const seats = FIXTURE_SEATS.slice(0, n).map((s) => ({ ...s, ready: true, ...(over[s.userId] ?? {}) }));

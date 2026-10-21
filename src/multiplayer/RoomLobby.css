@@ -87,7 +87,7 @@
 }
 
 /* ---- the sticky bar ---- */
-.rl-top { position: sticky; top: 0; z-index: 40; flex: none; }
+.rl-top { position: sticky; top: 0; z-index: 40; flex: none; background: #060a10; }
 .rl-bar {
   display: flex; align-items: center; gap: 12px;
   padding: 10px 16px; padding-top: max(10px, env(safe-area-inset-top, 0px));
@@ -113,7 +113,7 @@
 }
 .rl-ibtn:hover { background: rgba(255, 255, 255, 0.05); }
 .rl-ibtn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.rl-ibtn--sm { width: 36px; height: 36px; border-color: transparent; }
+.rl-ibtn--sm { border-color: transparent; }
 .rl-alert {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   padding: 8px 8px 8px 16px;
@@ -138,7 +138,7 @@
 }
 .rl-menu__item:hover, .rl-menu__item:focus-visible { background: rgba(255, 255, 255, 0.07); }
 .rl-menu__item.is-danger { color: var(--rl-red); }
-.rl-menu--row .rl-ibtn { width: 40px; height: 40px; border-color: transparent; color: var(--rl-ink-2); }
+.rl-menu--row .rl-ibtn { border-color: transparent; color: var(--rl-ink-2); }
 
 /* ---- layout ---- */
 .rl-layout {
@@ -522,3 +522,33 @@
 @media (prefers-reduced-motion: reduce) {
   .rl-fold__chev { transition: none; }
 }
+
+/* ---- beat the phone shell's global control rules ----
+   styles/mobile.css and shellJs.css set `button { min-height: 40px; font-size:
+   12px }` and `input { min-height: 40px; font-size: 14px }` for the whole
+   phone shell, at a specificity (0,2,1) that outranks a single class. The
+   lobby's controls state their own sizes (44-48px targets, a 16px field so iOS
+   does not zoom on focus), so they are restated one notch above. */
+:root:root .rl-root button.rl-btn { min-height: 48px; font-size: 13px; }
+:root:root .rl-root button.rl-btn--sm { min-height: 44px; font-size: 12px; }
+:root:root .rl-root button.rl-tab { min-height: 44px; font-size: 12px; }
+:root:root .rl-root button.rl-ibtn { min-height: 0; font-size: inherit; }
+:root:root .rl-root button.rl-menu__item { min-height: 44px; font-size: 15px; }
+:root:root .rl-root button.rl-fold__btn { min-height: 60px; font-size: 16px; }
+:root:root .rl-root button.rl-teaser { min-height: 56px; font-size: 14.5px; }
+:root:root .rl-root button.rl-chatpill { min-height: 48px; font-size: 12px; }
+:root:root .rl-root button.rl-showpanel { min-height: 44px; font-size: 14px; }
+:root:root .rl-root button.rl-clamp { min-height: 0; font-size: 13.5px; }
+:root:root .rl-root button.rl-swatch, :root:root .rl-root button.rl-emblem { min-height: 44px; font-size: inherit; }
+:root:root .rl-root input.rl-input, :root:root .rl-root select.rl-input { min-height: 48px; font-size: 16px; }
+:root:root .rl-root textarea.rl-input { min-height: 88px; font-size: 16px; }
+
+/* The custom-names editor keeps its own look (NamePoolEditor.css, also used
+   in the profile); inside the lobby card its controls get 44px targets. */
+:root:root .rl-editor .npe__tab,
+:root:root .rl-editor .npe__btn,
+:root:root .rl-editor .npe__save,
+:root:root .rl-editor .npe__x { min-height: 44px; min-width: 44px; }
+:root:root .rl-editor .npe__input, :root:root .rl-editor .npe__pasts { min-height: 44px; font-size: 16px; }
+:root:root .rl-editor .npe__tab { font-size: 12px; }
+:root:root .rl-editor .npe__area { font-size: 16px; }
