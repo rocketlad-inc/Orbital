@@ -61,7 +61,11 @@ for (const [SYS, WANT] of CASES) {
   const M = `sys${SYS}/moon${WANT}`;
   const cat = scaled(WANT, SYS);
   const byId = new Map(cat.map(b => [b.id, b]));
-  const moons = cat.filter(b => b.parent && b.parent !== 'sol');
+  // Far-system worlds orbit a star or barycenter, not a planet: they are a
+  // designed set piece that moon_scale never touches (scaledGeometry's
+  // isFarLocal, moonReachByParent's skip). Their containment is
+  // sim:far's to hold, at the live body_scale.
+  const moons = cat.filter(b => b.parent && b.parent !== 'sol' && !b.far_system);
 
   // ---- every moon stays inside its parent's sphere of influence ----
   const escaped = moons.filter((m) => {
@@ -76,7 +80,8 @@ for (const [SYS, WANT] of CASES) {
   // Rogue asteroids are excluded here for the same reason the clamp
   // excludes them: they cross orbits by design.
   const solid = cat
-    .filter(b => b.parent === 'sol' && Number(b.orbit_radius) > 0 && b.type !== 'asteroid')
+    .filter(b => b.parent === 'sol' && Number(b.orbit_radius) > 0 && b.type !== 'asteroid'
+      && !b.far_system)
     .sort((a, b) => a.orbit_radius - b.orbit_radius);
   const overlaps = [];
   for (const p of solid) {
@@ -129,8 +134,10 @@ for (const [SYS, WANT] of CASES) {
 }
 
 // ---- scale 1 changes nothing ----
+// In Sol. The far systems are opened by FAR_LOCAL_SCALE whatever the
+// host's dials say, so they never equal their catalogue shape.
 {
-  const one = scaled(1);
+  const one = scaled(1).filter(b => !b.far_system);
   const same = one.every((b) => {
     const src = BODY_CATALOG.find(x => x.id === b.id);
     return b.orbit_radius === src.orbit_radius

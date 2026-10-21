@@ -17,6 +17,7 @@
 import { SimD1 } from './d1.mjs';
 import { MIGRATIONS } from '../worker/_migrations_bundle.js';
 import { sanitizeHtml, routes } from '../worker/devlog.js';
+import { SEED_POSTS } from '../src/content/devlogPosts.js';
 
 let bad = 0;
 function check(label, cond, detail = '') {
@@ -112,10 +113,16 @@ check('...and is told 404, not 403 — the surface does not announce itself',
 // ------------------------------------------------------------------
 // 3. SEEDING + THE PUBLIC READ
 // ------------------------------------------------------------------
+// Counted from the authored file, not hard-coded: every new devlog post
+// lands in SEED_POSTS, and a literal here went stale the day the
+// megastructures post did.
+const SEEDED = SEED_POSTS.length;
+const seededSlugs = SEED_POSTS.map(p => p.slug);
 const pub0 = await call('GET', '/api/devlog', null);
 check('the public read seeds an empty table with the authored posts',
-  (pub0.body.posts ?? []).length === 2, JSON.stringify((pub0.body.posts ?? []).map(p => p.slug)));
-check('...newest first', pub0.body.posts?.[0]?.slug === 'rendezvous-and-routes',
+  (pub0.body.posts ?? []).length === SEEDED, JSON.stringify((pub0.body.posts ?? []).map(p => p.slug)));
+check('...newest first, in the order they are authored',
+  JSON.stringify((pub0.body.posts ?? []).map(p => p.slug)) === JSON.stringify(seededSlugs),
   JSON.stringify((pub0.body.posts ?? []).map(p => p.slug)));
 check('...and the Game 3 post keeps its charts flag',
   pub0.body.posts?.find(p => p.slug === 'game-3')?.charts === true);
@@ -124,7 +131,7 @@ check('...and the Game 3 post keeps its charts flag',
 await call('GET', '/api/devlog', null);
 await call('GET', '/api/devlog', null);
 const pub1 = await call('GET', '/api/devlog', null);
-check('re-reading does not duplicate the seed', (pub1.body.posts ?? []).length === 2,
+check('re-reading does not duplicate the seed', (pub1.body.posts ?? []).length === SEEDED,
   JSON.stringify((pub1.body.posts ?? []).map(p => p.slug)));
 
 // ------------------------------------------------------------------
@@ -174,7 +181,7 @@ const gone = await call('DELETE', `/api/admin/devlog/${id}`, ADMIN);
 check('an admin can delete a post', gone.status === 200);
 const after = await call('GET', '/api/devlog', null);
 check('...and it leaves the public page', !(after.body.posts ?? []).some(p => p.slug === 'new-post'));
-check('...without taking the seeded posts with it', (after.body.posts ?? []).length === 2);
+check('...without taking the seeded posts with it', (after.body.posts ?? []).length === SEEDED);
 
 console.log(bad === 0 ? '\nALL PASS' : `\n${bad} FAILURE(S)`);
 process.exit(bad === 0 ? 0 : 1);
