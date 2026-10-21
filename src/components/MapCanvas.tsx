@@ -60,6 +60,8 @@ import {
   torchTrajectorySamples,
   computeTransitFormations,
   placeInFormation,
+  computeTransitCompany,
+  placeInCompany,
   drawTransitRangeRing,
   drawInterceptMarkersLayer,
   clipSegmentToRect,
@@ -2023,11 +2025,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // hulls this frame DRAWS: a folded fleet member already rides astern of
     // its flagship, and a rival hull fog hides must not leave a hole in its
     // formation. Before every trajectory layer, which all read it.
-    const transitFormations = computeTransitFormations(gameState.ships.filter(s =>
+    const drawnInFlight = gameState.ships.filter(s =>
       s.transit
       && (s.ownedBy === 'player' || visibleShipIds.has(s.id))
-      && fleetGrouping.draws.has(s.id) && !foldedShipIds.has(s.id)));
+      && fleetGrouping.draws.has(s.id) && !foldedShipIds.has(s.id));
+    const transitFormations = computeTransitFormations(drawnInFlight);
     renderContext.transitFormations = transitFormations;
+    // A matched intercept flies ABREAST of the group it joined, not on
+    // top of it (computeTransitCompany).
+    renderContext.transitCompany = computeTransitCompany(drawnInFlight, transitFormations, gameState.bodies);
 
     // ONE LINE PER FLEET, BY THE SAME RULES AS A SHIP. The flagship is
     // drawn and draws every line a lone ship would — its course, queued
@@ -2946,7 +2952,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // ring, sprite, click hit-test) reads `placed`, so they move
         // together; the line above stays on the true course.
         let placed = samples && samples.length > 0
-          ? placeInFormation(ship.id, samples, renderContext, transitShipScale(camera.scale))
+          ? placeInCompany(ship.id,
+            placeInFormation(ship.id, samples, renderContext, transitShipScale(camera.scale)),
+            renderContext, transitShipScale(camera.scale))
           : samples;
         // A MISSILE CLEARS ITS WORLD AT ONCE (Lorne, 2026-10-20: "it visibly
         // enters orbit"). A world is drawn larger than its true size at map

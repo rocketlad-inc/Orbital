@@ -187,6 +187,9 @@ export interface RenderContext {
    *  member's sprite holds its place in the arrowhead (placeInFormation).
    *  Absent or missing entry = a lone hull on its own line. */
   transitFormations?: Map<string, TransitSlot>;
+  /** Hulls on a matched intercept, flown abreast of the group they
+   *  joined instead of on top of it (computeTransitCompany). */
+  transitCompany?: Map<string, CompanySlot>;
 }
 
 /**
@@ -6374,7 +6377,7 @@ function formationRows(count: number): number {
  * The formation's spacing for this frame, in screen pixels.
  * `sizeScale` is the same zoom multiplier the hull is drawn at.
  */
-export function formationSpacingPx(f: TransitSlot, sizeScale: number): { depth: number; abreast: number } {
+export function formationSpacingPx(f: Pick<TransitSlot, 'iconRest' | 'count'>, sizeScale: number): { depth: number; abreast: number } {
   const hull = f.iconRest * sizeScale;
   let depth = hull * FORMATION_ROW_DEPTH;
   let abreast = hull * FORMATION_ABREAST;
@@ -6415,6 +6418,144 @@ export function placeInFormation(
   const dx = tan.x * along + tan.y * across;
   const dy = tan.y * along - tan.x * across;
   return base.map(p => ({ t: p.t, x: p.x + dx, y: p.y + dy }));
+}
+
+// ---- flying in company ----------------------------------------------
+//
+// Lorne, 2026-10-21: "ships in transit are overlapping which hurts the
+// look of the in transit battle". An intercept MATCHES its target: from
+// the meeting on, the follower flies the target's own course
+// (rendezvousStateAt), so its hulls were drawn exactly on top of the
+// target's, a blue destroyer over the red Mega Destroyer. They are
+// flying in company, so they are drawn that way: the followers' group
+// holds its own arrowhead ABREAST of the target's, clear of it, on the
+// side it came in from (so the two never cross on the way in), easing
+// over as they close. The target keeps the true line; the follower's
+// own course line is drawn as before. Sprite and hitbox move together,
+// as with formations.
+
+export interface CompanySlot {
+  /** The course of the group being flown beside (its lead's). */
+  targetPlan: TorchTransferPlan;
+  /** The target group's size, for how wide it stands. */
+  targetCount: number;
+  targetIconRest: number;
+  /** This hull's place in ITS group's arrowhead: 0 is the group's lead. */
+  slot: number;
+  count: number;
+  iconRest: number;
+  /** +1 left of the target's travel, -1 right. */
+  side: number;
+}
+
+/** Clear space between the two groups, in hull lengths of the bigger. */
+export const COMPANY_GAP = 0.5;
+
+/**
+ * Who flies in company with whom: every hull on a matched intercept,
+ * grouped by the group it follows. Built from the same hulls the
+ * formations are (the ones this frame draws). Missiles are not company:
+ * they burst at the meeting.
+ */
+export function computeTransitCompany(
+  ships: readonly Ship[],
+  formations: ReadonlyMap<string, TransitSlot>,
+  bodies: Body[],
+): Map<string, CompanySlot> {
+  const byId = new Map(ships.map(s => [s.id, s] as const));
+  const groups = new Map<string, { plan: TorchTransferPlan; count: number; iconRest: number; members: Ship[] }>();
+  for (const s of ships) {
+    const rv = s.plannedRendezvous;
+    if (!s.transit || !rv || s.class === 'missile') continue;
+    const tf = formations.get(rv.followShipId);
+    const target = byId.get(rv.followShipId);
+    const plan = tf?.leadPlan ?? target?.transit?.currentTransfer ?? rv.followTransfer;
+    if (!plan) continue;
+    const key = tf ? tf.key : rv.followShipId;
+    let g = groups.get(key);
+    if (!g) {
+      g = {
+        plan,
+        count: tf?.count ?? 1,
+        iconRest: tf?.iconRest ?? (target ? shipIconSize(target.class, false) : shipIconSize('frigate', false)),
+        members: [],
+      };
+      groups.set(key, g);
+    }
+    g.members.push(s);
+  }
+  const out = new Map<string, CompanySlot>();
+  for (const g of groups.values()) {
+    const size = new Map(g.members.map(s => [s.id, shipIconSize(s.class, false)]));
+    g.members.sort((a, b) => (size.get(b.id)! - size.get(a.id)!) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    const lead = g.members[0];
+    // The side the group came in from: where its lead started, against
+    // the target's course at that moment.
+    let side = 1;
+    const rv = lead.plannedRendezvous!;
+    const base = torchTrajectorySamples(g.plan, bodies);
+    if (base.length >= 2) {
+      const at = torchPositionFromSamples(base, rv.startTick);
+      const tan = trajectoryTangentAt(base, rv.startTick);
+      if (tan) {
+        // Left of travel is (ty, -tx) in canvas axes (placeInFormation).
+        const dx = rv.p0.x - at.x, dy = rv.p0.y - at.y;
+        side = dx * tan.y - dy * tan.x >= 0 ? 1 : -1;
+      }
+    }
+    const iconRest = size.get(lead.id)!;
+    g.members.forEach((s, slot) => out.set(s.id, {
+      targetPlan: g.plan, targetCount: g.count, targetIconRest: g.iconRest,
+      slot, count: g.members.length, iconRest, side,
+    }));
+  }
+  return out;
+}
+
+/** Half a formation's width across the line, in screen px. */
+function formationHalfWidthPx(count: number, iconRest: number, sizeScale: number): number {
+  const sp = formationSpacingPx({ count, iconRest }, sizeScale);
+  return ((formationRows(count) - 1) * sp.abreast) / 2 + (iconRest * sizeScale) / 2;
+}
+
+/**
+ * This hull's samples, moved beside the group it is matched to. Returns
+ * the input untouched for any hull not in company. Never mutates.
+ */
+export function placeInCompany(
+  shipId: string,
+  samples: Array<{ t: number; x: number; y: number }>,
+  ctx: RenderContext,
+  sizeScale: number,
+): Array<{ t: number; x: number; y: number }> {
+  const c = ctx.transitCompany?.get(shipId);
+  if (!c || samples.length < 2 || !(ctx.camera.scale > 0) || !ctx.bodies) return samples;
+  const base = torchTrajectorySamples(c.targetPlan, ctx.bodies);
+  if (base.length < 2) return samples;
+  const tan = trajectoryTangentAt(base, ctx.t);
+  if (!tan) return samples;
+  const theirHalf = formationHalfWidthPx(c.targetCount, c.targetIconRest, sizeScale);
+  const ourHalf = formationHalfWidthPx(c.count, c.iconRest, sizeScale);
+  const gap = COMPANY_GAP * Math.max(c.iconRest, c.targetIconRest) * sizeScale;
+  const abreastPx = theirHalf + gap + ourHalf;
+  // Ease over as they close: nothing while the follower is still well
+  // off, the whole offset once it is within reach of its place.
+  const me = torchPositionFromSamples(samples, ctx.t);
+  const them = torchPositionFromSamples(base, ctx.t);
+  const dPx = Math.hypot(me.x - them.x, me.y - them.y) * ctx.camera.scale;
+  const raw = Math.max(0, Math.min(1, (3 * abreastPx - dPx) / (2.5 * abreastPx)));
+  const w = raw * raw * (3 - 2 * raw);
+  if (w <= 0) return samples;
+  // The group's own arrowhead, around its lead.
+  const { back, side } = formationSlot(c.slot);
+  const sp = formationSpacingPx(c, sizeScale);
+  const acrossPx = c.side * abreastPx + (side * sp.abreast) / 2;
+  const alongPx = -back * sp.depth;
+  const along = (alongPx * w) / ctx.camera.scale;
+  const across = (acrossPx * w) / ctx.camera.scale;
+  const dx = tan.x * along + tan.y * across;
+  const dy = tan.y * along - tan.x * across;
+  return samples.map(p => ({ t: p.t, x: p.x + dx, y: p.y + dy }));
 }
 
 /** True when this hull's course is drawn by another hull (its lead). */
