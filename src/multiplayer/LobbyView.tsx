@@ -1,91 +1,17 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch, RoomSnapshot, RoomSummary } from './api';
-import { CaptainRosterPicker } from './CaptainRosterPicker';
 import { useAuth } from './AuthContext';
-import { LobbyMapPreview } from './LobbyMapPreview';
-import { deriveSecondary, emblemInk } from '../game/colorUtils';
-import { EMBLEM_IDS, PREMIUM_EMBLEM_IDS, EARNED_EMBLEM_IDS, EMBLEM_NAMES } from '../game/emblems';
-import { startCommissionCheckout } from './api';
-import { isAndroidApp } from '../platform/appShell';
-import {
-  COMMISSION_LINES, COMMISSION_PRICE, HOLDER_MARK, logCommission, openCommissionInBrowser,
-  COMMISSION_DISCORD, COMMISSION_NO_GAMEPLAY,
-} from './commission';
-import { FactionEmblem, FlagChip } from '../components/FactionEmblem';
 import { DEFAULT_TICK_INTERVAL_MS } from './LobbyCards';
-import { GameFeedSettings } from './GameFeedSettings';
 import { RESOURCE_LETTER_COLORS } from '../game/resourceColors';
-import { NamePoolEditor } from './NamePoolEditor';
 import type { PastNameBank } from './NamePoolEditor';
 import { NamePools, EMPTY_POOLS, parseNamePools } from '../game/namePools';
 import { connectRoomSocket } from './roomSocket';
-import { SkinPicker } from './SkinPicker';
-import { t, tk } from '../i18n/core';
+import { RoomLobbyScreen, RoomPageShell } from './RoomLobbyScreen';
+import type { FlagField } from './RoomEmpireEditor';
+import type { ChatLine } from './roomLobbyModel';
+import { t } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import { apiErrorText } from '../i18n/apiErrors';
-import { InviteCard, LonelyLobbyCard, LONELY_LOBBY_MS } from './InviteCard';
-
-/** A pre-game lobby chat line, as broadcast by the room WebSocket
- *  (`{ type: 'chat', from, text, at }`). `key` is assigned client-side
- *  for a stable React key on the append-only log. */
-interface ChatMsg {
-  key: number;
-  from: { userId: string; displayName: string };
-  text: string;
-  at: number;
-}
-
-// The two-tone chip helper that used to live here is now FlagChip in
-// components/FactionEmblem — it carries the emblem too, and one shared
-// component is the only way the lobby and the match can be guaranteed to
-// draw a player's flag identically.
-
-// Two-tone factions (§5): curated swatch grid — a modest 16 colors, not
-// a full wheel. PRIMARY carries all meaning on the map; the server
-// rejects only an EXACT duplicate of another member's primary (the old
-// 90-unit perceptual-distance rule was dropped — it emptied the grid).
-// SECONDARY is decoration only and free-pick from the same grid.
-const FACTION_COLOR_CHOICES: string[] = [
-  '#ff7043', // ember
-  '#42a5f5', // azure
-  '#66bb6a', // verdant
-  '#ab47bc', // violet
-  '#ffca28', // amber
-  '#26c6da', // cyan
-  '#ec407a', // rose
-  '#8d6e63', // ferrous
-  '#ef5350', // signal red
-  '#5c6bc0', // indigo
-  '#9ccc65', // lime
-  '#ff8a65', // coral
-  '#78909c', // steel
-  '#d4e157', // chartreuse
-  '#7e57c2', // amethyst
-  '#f5f5f5', // white
-];
-
-// Real-world time between automatic ticks. Must match the worker's
-// ALLOWED_TICK_INTERVALS — keep these two lists in sync.
-//
-// The default is one hour a tick (DEFAULT_TICK_INTERVAL_MS, shared with
-// the Browse cards in LobbyCards.tsx).
-const TICK_INTERVAL_OPTIONS: Array<{ label: string; value: number }> = [
-  // Sim/agent cadence. Best-effort only — see the ALLOWED_TICK_INTERVALS
-  // note in worker/lobby.js; for deterministic full-speed runs drive
-  // force-tick in a loop rather than relying on this auto-cadence.
-  { label: '1s (sim · best-effort)', value: 1_000 },
-  { label: '30s (rapid demo)',     value: 30_000 },
-  { label: '60s (demo)',           value: 60_000 },
-  { label: '5min (quick play)',    value: 300_000 },
-  { label: '7.5min',               value: 450_000 },
-  { label: '30min (lunch break)',  value: 1_800_000 },
-  { label: '1h (async · DEFAULT)', value: 3_600_000 },
-  { label: '2h (12×/day)',         value: 7_200_000 },
-  { label: '6h (4×/day)',          value: 21_600_000 },
-  { label: '12h (2×/day)',         value: 43_200_000 },
-  { label: '24h (1×/day)',         value: 86_400_000 },
-];
-
 
 interface Props {
   onEnterGame: (roomId: string, gameId: string) => void;
@@ -94,14 +20,6 @@ interface Props {
    *  Supplied by MultiplayerShell. When present, the room's Back button
    *  uses it instead of the in-component RoomList fallback. */
   onExitRoom?: () => void;
-}
-
-/** Logs that the flag picker's Commission line was shown (once per page
- *  load, see commission.ts). A component so the effect runs only while
- *  the line is actually on screen. */
-function CommissionFlagView() {
-  useEffect(() => { logCommission('lobby-flag', 'view'); }, []);
-  return null;
 }
 
 export function LobbyView({ onEnterGame, initialRoomId, onExitRoom }: Props) {
@@ -222,10 +140,9 @@ function RoomDetail({
   // refresh wiped the conversation and anyone joining late saw an empty
   // box — indistinguishable, from the player's side, from messages never
   // sending at all.
-  const [chatLog, setChatLog] = useState<ChatMsg[]>([]);
+  const [chatLog, setChatLog] = useState<ChatLine[]>([]);
   const [chatDraft, setChatDraft] = useState('');
   const chatKeyRef = useRef(0);
-  const chatScrollRef = useRef<HTMLDivElement>(null);
   // Optimistic local ready flag — the WS roundtrip can take 100-300ms
   // and the playtester read that delay as "Ready Up does nothing".
   // We flip this immediately on click; useEffect below clears it once
@@ -254,7 +171,8 @@ function RoomDetail({
   // Empire identity form state (controlled; pre-fill from snap on first load).
   const [empireName, setEmpireName] = useState('');
   const [bio, setBio] = useState('');
-  const [savedFlash, setSavedFlash] = useState<string | null>(null);
+  // Which Save just succeeded, so its button can say "Saved" for a moment.
+  const [flash, setFlash] = useState<'empire' | 'settings' | null>(null);
   const identityInitedRef = useRef(false);
 
   // Host settings
@@ -455,13 +373,7 @@ function RoomDetail({
     settingsInitedRef.current = true;
   }, [snap]);
 
-  // Keep the chat pinned to the newest line as messages arrive.
-  useEffect(() => {
-    const el = chatScrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [chatLog]);
-
-  if (!snap) return <div className="mp-empty">{t('roomlobby.loading')}</div>;
+  if (!snap) return <div className="mp-empty" role={error ? 'alert' : undefined}>{error ?? t('roomlobby.loading')}</div>;
 
   const isHost = snap.settings.host_id === user?.id;
   const started = !!snap.game_id;
@@ -469,78 +381,85 @@ function RoomDetail({
 
   // Late-join world picker. Shown when the game is already running and
   // this user has no faction yet (joined via invite link after start).
+  // Same fields and flow as ever; only the page around it is the lobby's.
   if (lateJoin) {
     return (
-      <div className="mp-room-detail">
-        <div className="mp-section-title" style={{ marginTop: 4 }}>{t('roomlobby.late.title')}</div>
-        <div className="mp-empty" style={{ fontSize: 11, marginBottom: 8, padding: '0 2px' }}>
-          {t('roomlobby.late.desc')}
-        </div>
+      <RoomPageShell
+        title={snap.settings.name}
+        sub={t('roomlobby.late.title')}
+        onBack={onLeave}
+        menu={[]}
+        error={error}
+        onDismissError={() => setError(null)}
+      >
+        <div className="rl-layout rl-layout--one">
+          <section className="rl-panel rl-sec rl-late">
+            <h2 className="rl-h2">{t('roomlobby.late.title')}</h2>
+            <p className="rl-hint">{t('roomlobby.late.desc')}</p>
 
-        <label className="mp-label">{t('roomlobby.late.empireName')}</label>
-        <input
-          className="mp-input"
-          type="text"
-          maxLength={40}
-          value={empireName}
-          onChange={(e) => setEmpireName(e.target.value)}
-          placeholder={t('roomlobby.empirePlaceholder')}
-        />
-
-        {joinableBodies.length === 0 ? (
-          <div className="mp-empty" style={{ marginTop: 12 }}>
-            {t('roomlobby.late.none')}
-          </div>
-        ) : (
-          <>
-            <div className="mp-section-title" style={{ marginTop: 12 }}>{t('roomlobby.late.worlds')}</div>
-            <div className="lobby-body-grid">
-              {joinableBodies.map((b) => {
-                const isMine = lateChoice === b.id;
-                return (
-                  <button
-                    key={b.id}
-                    className={`lobby-body-card ${isMine ? 'is-mine' : ''}`}
-                    onClick={() => setLateChoice(isMine ? null : b.id)}
-                    title={isMine ? t('roomlobby.late.unpick') : t('roomlobby.claim')}
-                  >
-                    <div className="lobby-body-card__name">{b.name}</div>
-                    <div className="lobby-body-card__sub">{b.type}</div>
-                    <div className="lobby-body-card__yields">
-                      {b.yield.metal > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.M }}>M{b.yield.metal}</span>}
-                      {/* no F — fuel is dead (DESIGN-identity-economy.md §1.1) */}
-                      {/* C = credits (server field is still 'gold') */}
-                      {b.yield.gold > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.C }}>C{b.yield.gold}</span>}
-                      {b.yield.science > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.S }}>S{b.yield.science}</span>}
-                    </div>
-                    {isMine && <div className="lobby-body-card__tag">{t('roomlobby.late.chosen')}</div>}
-                  </button>
-                );
-              })}
+            <div className="rl-fld">
+              <label htmlFor="rl-late-empire">{t('roomlobby.late.empireName')}</label>
+              <input
+                id="rl-late-empire"
+                className="rl-input"
+                type="text"
+                maxLength={40}
+                value={empireName}
+                onChange={(e) => setEmpireName(e.target.value)}
+                placeholder={t('roomlobby.empirePlaceholder')}
+              />
             </div>
-          </>
-        )}
 
-        {error && <div className="mp-error">{error}</div>}
+            {joinableBodies.length === 0 ? (
+              <div className="rl-empty">{t('roomlobby.late.none')}</div>
+            ) : (
+              <>
+                <h3 className="rl-ed__h">{t('roomlobby.late.worlds')}</h3>
+                <div className="lobby-body-grid">
+                  {joinableBodies.map((b) => {
+                    const isMine = lateChoice === b.id;
+                    return (
+                      <button
+                        key={b.id}
+                        type="button"
+                        className={`lobby-body-card ${isMine ? 'is-mine' : ''}`}
+                        aria-pressed={isMine}
+                        onClick={() => setLateChoice(isMine ? null : b.id)}
+                        title={isMine ? t('roomlobby.late.unpick') : t('roomlobby.claim')}
+                      >
+                        <div className="lobby-body-card__name">{b.name}</div>
+                        <div className="lobby-body-card__sub">{b.type}</div>
+                        <div className="lobby-body-card__yields">
+                          {b.yield.metal > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.M }}>M{b.yield.metal}</span>}
+                          {/* no F — fuel is dead (DESIGN-identity-economy.md §1.1) */}
+                          {/* C = credits (server field is still 'gold') */}
+                          {b.yield.gold > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.C }}>C{b.yield.gold}</span>}
+                          {b.yield.science > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.S }}>S{b.yield.science}</span>}
+                        </div>
+                        {isMine && <div className="lobby-body-card__tag">{t('roomlobby.late.chosen')}</div>}
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
 
-        <div className="mp-row" style={{ marginTop: 12, gap: 6 }}>
-          <button
-            className="mp-submit"
-            style={{ width: 'auto', margin: 0, padding: '8px 16px' }}
-            disabled={!lateChoice || lateJoin === 'submitting'}
-            onClick={submitLateJoin}
-          >
-            {lateJoin === 'submitting' ? t('roomlobby.late.joining') : t('roomlobby.late.found')}
-          </button>
-          <button
-            className="mp-submit"
-            style={{ width: 'auto', margin: 0, padding: '8px 16px', background: 'transparent', border: '1px solid var(--mp-border)', color: 'var(--mp-fg-dim)' }}
-            onClick={onLeave}
-          >
-            {t('roomlobby.back')}
-          </button>
+            <div className="rl-row">
+              <button
+                type="button"
+                className="rl-btn rl-btn--gold"
+                disabled={!lateChoice || lateJoin === 'submitting'}
+                onClick={submitLateJoin}
+              >
+                {lateJoin === 'submitting' ? t('roomlobby.late.joining') : t('roomlobby.late.found')}
+              </button>
+              <button type="button" className="rl-btn rl-btn--quiet" onClick={onLeave}>
+                {t('roomlobby.back')}
+              </button>
+            </div>
+          </section>
         </div>
-      </div>
+      </RoomPageShell>
     );
   }
 
@@ -568,7 +487,7 @@ function RoomDetail({
 
   async function saveEmpire() {
     setError(null);
-    setSavedFlash(null);
+    setFlash(null);
     const res = await apiFetch(`/api/lobby/rooms/${roomId}/me`, {
       method: 'PATCH',
       body: JSON.stringify({
@@ -577,8 +496,8 @@ function RoomDetail({
       }),
     });
     if (!res.ok) { setError(apiErrorText(res.error, 'roomlobby.err.save')); return; }
-    setSavedFlash('saved');
-    setTimeout(() => setSavedFlash(null), 1800);
+    setFlash('empire');
+    setTimeout(() => setFlash(null), 1800);
     refresh();
   }
 
@@ -593,6 +512,8 @@ function RoomDetail({
       }),
     });
     if (!res.ok) { setError(apiErrorText(res.error, 'roomlobby.err.saveFailed')); return; }
+    setFlash('settings');
+    setTimeout(() => setFlash(null), 1800);
     refresh();
   }
 
@@ -668,8 +589,19 @@ function RoomDetail({
       const res = await apiFetch(`/api/lobby/rooms/${roomId}/leave`, { method: 'POST' });
       if (!res.ok) { window.alert(apiErrorText(res.error, 'roomlobby.err.leave')); return; }
     }
-    // A pinned lobby you are no longer in would be a dead pin.
-    try { if (localStorage.getItem('orbital.priority_room') === roomId) localStorage.removeItem('orbital.priority_room'); } catch { /* storage off */ }
+    forgetPinnedRoom(roomId);
+    onLeave();
+  }
+
+  // The host removes the room for everyone (the same route and the same
+  // confirmation as My Games' delete). Leaving as the only member also ends
+  // in a delete; this one is for a room that still has people in it.
+  async function deleteRoom() {
+    if (!snap) return;
+    if (!window.confirm(t('lobby.my.confirmDelete', { name: snap.settings.name }))) return;
+    const res = await apiFetch(`/api/rooms/${roomId}`, { method: 'DELETE' });
+    if (!res.ok) { setError(apiErrorText(res.error, 'roomlobby.err.delete')); return; }
+    forgetPinnedRoom(roomId);
     onLeave();
   }
 
@@ -680,16 +612,6 @@ function RoomDetail({
       body: JSON.stringify({ user_id: uid }),
     });
     refresh();
-  }
-
-  const inviteCode = snap.settings.invite_code;
-  const formattedInvite = inviteCode ? inviteCode.match(/.{1,4}/g)?.join('-') : null;
-
-  function copyInvite() {
-    if (!inviteCode) return;
-    navigator.clipboard.writeText(inviteCode).catch(() => { /* ignore */ });
-    setSavedFlash('copied');
-    setTimeout(() => setSavedFlash(null), 1500);
   }
 
   // The local player's claimed capital — drives the backdrop map's
@@ -747,631 +669,45 @@ function RoomDetail({
   };
 
   return (
-    <div className="lobby-room">
-      {/* Pre-game map preview — fills the blank viewport BEHIND the panel
-          so players can see where the starting worlds sit. Only while
-          the game hasn't started (a running game draws its own map).
-          Purely visual; the card picker in the panel is the claim
-          control. Picking does NOT move the camera — the map keeps the
-          whole-system view (and whatever the player zoomed/panned to)
-          so candidate worlds stay comparable; the claim shows as a ring. */}
-      {!started && (
-        <LobbyMapPreview snap={snap} myUserId={user?.id} focusBodyId={myChoice} />
-      )}
-
-      {/* All lobby controls live in a full-height panel over the map
-          backdrop: a fixed header (room name + Back) so the top never
-          scrolls out of view, and a scrollable body for everything
-          else. */}
-      <div className="lobby-panel">
-      <div className="lobby-panel__header">
-        <span className="lobby-panel__title">{snap.settings.name}</span>
-        <div className="lobby-panel__actions">
-          {!started && (
-            <button className="mp-kick lobby-leave" onClick={leaveLobby}
-              title={t('roomlobby.leaveLobby.tip')}>
-              {t('roomlobby.leaveLobby')}
-            </button>
-          )}
-          <button className="mp-kick" onClick={onLeave}
-            title={started ? undefined : t('roomlobby.back.tip')}>
-            {t('roomlobby.back')}
-          </button>
-        </div>
-      </div>
-      <div className="lobby-panel__body">
-
-      {isHost && !started && snap.settings.has_password && snap.members.length === 1
-        && snap.settings.created_at != null && Date.now() - snap.settings.created_at >= LONELY_LOBBY_MS && (
-        <LonelyLobbyCard roomId={roomId} onOpened={refresh} />
-      )}
-      {inviteCode && !started && snap.members.length < snap.settings.max_players && (
-        <InviteCard code={inviteCode} roomName={snap.settings.name} taken={snap.members.length}
-                    max={snap.settings.max_players} where="lobby" />
-      )}
-      {inviteCode && !started && snap.members.length >= snap.settings.max_players && (
-        <div className="mp-invite-strip" onClick={copyInvite} title={t('roomlobby.invite.tip')}>
-          <span className="mp-invite-strip__label">{t('roomlobby.invite')}</span>
-          <span className="mp-invite-strip__code">{formattedInvite}</span>
-          {snap.settings.has_password && (
-            <span className="mp-invite-strip__lock" title={t('roomlobby.invite.locked')}>🔒</span>
-          )}
-          {savedFlash === 'copied' && <span className="mp-invite-strip__flash">{t('roomlobby.invite.copied')}</span>}
-        </div>
-      )}
-
-      {snap.custom_map && (
-        <div className="lobby-custom-map">
-          <div className="mp-section-title">{t('roomlobby.customMap')}</div>
-          {/* The map's name and pitch are player-written: plain text. */}
-          <div className="lobby-custom-map__name">{snap.custom_map.name}</div>
-          {snap.custom_map.blurb && (
-            <div className="lobby-custom-map__blurb">{snap.custom_map.blurb}</div>
-          )}
-        </div>
-      )}
-
-      <div className="mp-section-title">{t('roomlobby.status')}</div>
-      <div className="mp-row" style={{ justifyContent: 'space-between' }}>
-        <span style={{ fontSize: 11 }}>
-          {started
-            ? t('roomlobby.status.running', { n: snap.settings.current_tick ?? 0 })
-            : t('roomlobby.status.lobby', { count: snap.members.length, max: snap.settings.max_players, ready: Object.values(snap.ready).filter(Boolean).length })}
-        </span>
-        {!started && (
-          <button
-            className={`mp-ready-btn ${myReady ? 'is-ready' : ''}`}
-            onClick={toggleReady}
-          >
-            {myReady ? t('roomlobby.ready') : t('roomlobby.readyUp')}
-          </button>
-        )}
-      </div>
-
-      {!started && (
-        <>
-          <div className="mp-section-title">{t('roomlobby.empire')}</div>
-          <label className="mp-label">{t('roomlobby.empireName')}</label>
-          <input
-            className="mp-input"
-            type="text"
-            maxLength={40}
-            value={empireName}
-            onChange={(e) => setEmpireName(e.target.value)}
-            placeholder={t('roomlobby.empirePlaceholder')}
-          />
-          <label className="mp-label">{t('roomlobby.bio')}</label>
-          <textarea
-            className="mp-textarea"
-            maxLength={1000}
-            value={bio}
-            onChange={(e) => setBio(e.target.value)}
-            placeholder={t('roomlobby.bioPlaceholder')}
-          />
-          <div className="mp-row" style={{ marginTop: 8 }}>
-            <button className="mp-submit" style={{ width: 'auto', margin: 0, padding: '6px 12px' }} onClick={saveEmpire}>
-              {t('roomlobby.saveEmpire')}
-            </button>
-            <span className="mp-saved" style={{ marginLeft: 8 }}>{savedFlash || ''}</span>
-          </div>
-
-          <FactionFlagPicker
-            snap={snap}
-            myUserId={user?.id}
-            onPick={pickFlag}
-          />
-
-          <StartingBodyPicker
-            snap={snap}
-            myUserId={user?.id}
-            myChoice={myChoice}
-            onPick={handlePick}
-          />
-
-          {/* Last, and collapsed by default. It is the longest step and the
-              only optional one -- a player who ignores it still gets ten
-              named, portrait'd, trait'd officers on the first tick. */}
-          <CaptainRosterPicker roomId={roomId} />
-        </>
-      )}
-
-      {isHost && !started && (
-        <>
-          <div className="mp-section-title" style={{ marginTop: 12 }}>{t('roomlobby.host.title')}</div>
-          <label className="mp-label">{t('roomlobby.roomName')}</label>
-          <input
-            className="mp-input"
-            type="text"
-            maxLength={60}
-            value={hostName}
-            onChange={(e) => setHostName(e.target.value)}
-          />
-          <div className="mp-row" style={{ gap: 6, marginTop: 6 }}>
-            <div style={{ flex: 1 }}>
-              <label className="mp-label">{t('roomlobby.host.max')}</label>
-              <input
-                className="mp-input"
-                type="number"
-                inputMode="numeric"
-                min={2}
-                max={10}
-                value={hostMax}
-                onChange={(e) => setHostMax(parseInt(e.target.value, 10) || 2)}
-              />
-            </div>
-          </div>
-          <label className="mp-label">{t('roomlobby.host.interval')}</label>
-          <select
-            className="mp-select"
-            value={String(hostInterval)}
-            onChange={(e) => setHostInterval(parseInt(e.target.value, 10))}
-          >
-            {TICK_INTERVAL_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{tk(`roomlobby.tick.${o.value}`, o.label)}</option>
-            ))}
-          </select>
-          <div className="mp-row" style={{ marginTop: 8, gap: 6 }}>
-            <button className="mp-submit" style={{ width: 'auto', margin: 0, padding: '6px 12px' }} onClick={saveSettings}>
-              {t('roomlobby.save')}
-            </button>
-            <button
-              className="mp-submit"
-              style={{ width: 'auto', margin: 0, padding: '6px 12px' }}
-              disabled={snap.members.length < 2}
-              title={snap.members.length < 2 ? t('roomlobby.host.needTwo') : ''}
-              onClick={startMatch}
-            >
-              {t('roomlobby.host.start')}
-            </button>
-          </div>
-        </>
-      )}
-
-      {/* THE GAME'S DISCORD FEED. Off until the host turns it on; set
-          here so a game can start with its feed already running. */}
-      {!started && (
-        <div style={{ marginTop: 12 }}>
-          <GameFeedSettings gameId={roomId} />
-        </div>
-      )}
-
-      <div className="mp-section-title" style={{ marginTop: 12 }}>{t('roomlobby.members')}</div>
-      {snap.members.map((m) => {
-        const online = snap.connected.includes(m.userId);
-        const ready = !!snap.ready[m.userId];
-        const isThisHost = m.userId === snap.settings.host_id;
-        return (
-          <div key={m.userId} className="mp-presence-row" style={{ flexWrap: 'wrap' }}>
-            <span className={`mp-presence-dot ${online ? 'online' : ''}`} />
-            {/* Two-tone (§5) swatch — same primary/secondary split chip
-                the in-game FactionPanel uses, so a player's picked
-                color reads identically in the lobby and in the match.
-                No swatch at all until they've picked (color is null
-                pre-pick) rather than a placeholder grey, since "hasn't
-                chosen yet" is itself useful information here. */}
-            {m.color && (
-              <FlagChip className="mp-swatch" color={m.color} color2={m.color2}
-                        emblem={m.emblem} fallbackKey={m.userId} />
-            )}
-            <span>{m.displayName}{ready && !started ? ' ✓' : ''}</span>
-            {m.commissioned && (
-              <span className="mp-holder-mark" title={t('faction.holderTitle', { name: t('hangar.commissionName') })} aria-label={t('faction.holderTitle', { name: t('hangar.commissionName') })}>{HOLDER_MARK}</span>
-            )}
-            {isThisHost && <span className="mp-host-tag">{t('roomlobby.hostTag')}</span>}
-            {isHost && !isThisHost && !started && (
-              <button className="mp-kick" onClick={() => kick(m.userId, m.displayName)}>{t('roomlobby.kick')}</button>
-            )}
-            {m.empire_name && <span className="empire">⚑ {m.empire_name}</span>}
-            {m.bio && <span className="bio">{m.bio}</span>}
-          </div>
-        );
-      })}
-
-      {/* CUSTOM NAMES. Pre-game because that is when you are deciding
-          what your empire is — and because these lists feed generators
-          that start running the moment the match does. Editable later
-          too: the profile endpoint syncs pools into a running game. */}
-      <div className="mp-section-title" style={{ marginTop: 12 }}>
-        {t('roomlobby.names.title')} <span style={{ opacity: 0.6, fontWeight: 400 }}>{t('roomlobby.names.optional')}</span>
-      </div>
-      <div style={{ fontSize: 10, color: '#6b8195', marginBottom: 6, lineHeight: 1.5 }}>
-        {t('roomlobby.names.desc')}
-      </div>
-      <NamePoolEditor value={namePools} onSave={saveNamePools} disabled={started}
-                      pastBanks={pastBanks} />
-
-      <div className="mp-section-title" style={{ marginTop: 12 }}>{t('roomlobby.chat')}</div>
-      <div className="lobby-chat">
-        <div className="lobby-chat__log" ref={chatScrollRef}>
-          {chatLog.length === 0 ? (
-            <div className="mp-empty" style={{ fontSize: 10, padding: '4px 2px' }}>
-              {t('roomlobby.chat.empty')}
-            </div>
-          ) : (
-            chatLog.map((m) => {
-              const mine = !!user && m.from.userId === user.id;
-              return (
-                <div key={m.key} className={`lobby-chat__line ${mine ? 'is-mine' : ''}`}>
-                  <span className="lobby-chat__who">{mine ? t('roomlobby.chat.you') : m.from.displayName}</span>
-                  <span className="lobby-chat__text">{m.text}</span>
-                </div>
-              );
-            })
-          )}
-        </div>
-        <form className="lobby-chat__composer" onSubmit={sendChat}>
-          <input
-            className="mp-input"
-            type="text"
-            maxLength={500}
-            placeholder={t('roomlobby.chat.placeholder')}
-            value={chatDraft}
-            onChange={(e) => setChatDraft(e.target.value)}
-            style={{ flex: 1 }}
-          />
-          <button
-            className="mp-submit"
-            type="submit"
-            disabled={!chatDraft.trim()}
-            style={{ width: 'auto', margin: 0, padding: '8px 12px' }}
-          >
-            {t('roomlobby.chat.send')}
-          </button>
-        </form>
-      </div>
-
-      <div className="mp-error">{error || ''}</div>
-      </div>{/* .lobby-panel__body */}
-      </div>{/* .lobby-panel */}
-    </div>
+    <RoomLobbyScreen
+      roomId={roomId}
+      snap={snap}
+      viewerId={user?.id}
+      isHost={isHost}
+      started={started}
+      myReady={myReady}
+      error={error}
+      onDismissError={() => setError(null)}
+      onBack={onLeave}
+      onLeaveLobby={leaveLobby}
+      onDeleteRoom={deleteRoom}
+      onStart={startMatch}
+      onToggleReady={toggleReady}
+      onKick={kick}
+      onSeatsOpened={refresh}
+      empire={{
+        myChoice,
+        empireName, onEmpireName: setEmpireName,
+        bio, onBio: setBio,
+        onSaveEmpire: saveEmpire,
+        saved: flash === 'empire',
+        onPickFlag: pickFlag,
+        onPickBody: handlePick,
+        namePools, onSaveNamePools: saveNamePools,
+        pastBanks,
+      }}
+      rules={{
+        draft: { name: hostName, max: hostMax, interval: hostInterval },
+        onDraft: (d) => { setHostName(d.name); setHostMax(d.max); setHostInterval(d.interval); },
+        onSave: saveSettings,
+        saved: flash === 'settings',
+      }}
+      chat={{ log: chatLog, draft: chatDraft, onDraft: setChatDraft, onSend: sendChat }}
+    />
   );
 }
 
-// ---------- Faction color picker (two-tone, §5) ----------
-
-/** Shared swatch-button style. */
-/** Grey used to mark a swatch as unavailable. */
-const TAKEN_INK = 'rgba(150, 168, 184, 0.85)';
-
-function swatchStyle(c: string, opts: { selected: boolean; taken: boolean }): React.CSSProperties {
-  // A taken swatch has to stop reading as a COLOUR CHOICE, not merely as
-  // a dimmer one. Fading to 0.25 opacity on a dark panel turned a
-  // disabled orange into what looked like dark orange — reported as
-  // "I just thought they were darker shades". So three cues stack:
-  //   • grayscale, so the hue itself drains away
-  //   • an explicit grey border instead of the usual faint one
-  //   • a diagonal bar, the universal "not available"
-  // A trace of colour survives (grayscale is 0.85, not 1) so you can
-  // still tell WHICH swatch is gone; the tooltip names who holds it.
-  if (opts.taken) {
-    return {
-      width: 24,
-      height: 24,
-      padding: 0,
-      background:
-        `linear-gradient(135deg, transparent 43%, ${TAKEN_INK} 43%, ${TAKEN_INK} 57%, transparent 57%), ${c}`,
-      border: `2px solid ${TAKEN_INK}`,
-      borderRadius: 3,
-      cursor: 'not-allowed',
-      filter: 'grayscale(0.85)',
-      opacity: 0.5,
-      position: 'relative',
-    };
-  }
-  return {
-    width: 24,
-    height: 24,
-    padding: 0,
-    background: c,
-    border: opts.selected ? '2px solid #fff' : '1px solid var(--mp-border)',
-    borderRadius: 3,
-    cursor: 'pointer',
-    opacity: 1,
-    position: 'relative',
-  };
-}
-
-type FlagField = 'color' | 'color2' | 'emblem' | 'city_skin' | 'station_skin';
-
-function FactionFlagPicker({
-  snap, myUserId, onPick,
-}: {
-  snap: RoomSnapshot;
-  myUserId?: string;
-  onPick: (field: FlagField, value: string | null) => void;
-}) {
-  useI18n();
-  // Commission state gates the premium emblem wing below. UI-only — the
-  // lobby endpoint re-checks the entitlement on save.
-  const { user } = useAuth();
-  const isPremium = !!user?.is_premium;
-  const me = myUserId ? snap.members.find(m => m.userId === myUserId) : undefined;
-  const myColor = me?.color ?? null;
-  const myColor2 = me?.color2 ?? null;
-  const myEmblem = me?.emblem ?? null;
-
-  // Other members' primaries — used to gray out swatches that are too
-  // close (mirrors the server's 409 'color_taken' check so the player
-  // rarely hits the error path).
-  const otherPrimaries = snap.members
-    .filter(m => m.userId !== myUserId && m.color)
-    .map(m => ({ color: m.color as string, name: m.empire_name || m.displayName }));
-
-  // Emblems taken by OTHER members. Exact match — a shape is either
-  // yours or theirs, there is no "close enough" the way colour has.
-  const takenEmblems = new Map<string, string>();
-  for (const m of snap.members) {
-    if (m.userId !== myUserId && m.emblem) {
-      takenEmblems.set(m.emblem, m.empire_name || m.displayName);
-    }
-  }
-
-  const rowStyle: React.CSSProperties = { display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 };
-
-  return (
-    <>
-      <div className="mp-section-title" style={{ marginTop: 12 }}>{t('roomlobby.flag.title')}</div>
-      <div className="mp-empty" style={{ fontSize: 10, marginBottom: 6, padding: '0 2px' }}>
-        {t('roomlobby.flag.desc')}
-      </div>
-      <label className="mp-label">{t('roomlobby.flag.primary')}</label>
-      <div style={rowStyle}>
-        {FACTION_COLOR_CHOICES.map(c => {
-          // Exact match only. This used to grey out anything within 90
-          // sRGB units of a rival's pick, which meant a few seated
-          // players wiped out most of the grid — the rule ran the lobby
-          // out of colours long before the palette did.
-          const clash = otherPrimaries.find(o => o.color.toLowerCase() === c.toLowerCase());
-          const selected = myColor === c;
-          // Own pick is never "taken" by yourself.
-          const taken = !!clash && !selected;
-          return (
-            <button
-              key={c}
-              type="button"
-              disabled={taken}
-              style={swatchStyle(c, { selected, taken })}
-              title={taken ? t('roomlobby.flag.colorTaken', { name: clash!.name }) : selected ? t('roomlobby.flag.clear') : c}
-              onClick={() => onPick('color', selected ? null : c)}
-            />
-          );
-        })}
-      </div>
-      <label className="mp-label">{t('roomlobby.flag.secondary')}</label>
-      <div style={rowStyle}>
-        {FACTION_COLOR_CHOICES.map(c => {
-          const selected = myColor2 === c;
-          // Secondary is decoration only — meaning must stay in the
-          // primary — so it's a free pick: no taken states here.
-          return (
-            <button
-              key={c}
-              type="button"
-              style={swatchStyle(c, { selected, taken: false })}
-              title={selected ? t('roomlobby.flag.clearTrim') : c}
-              onClick={() => onPick('color2', selected ? null : c)}
-            />
-          );
-        })}
-      </div>
-      <label className="mp-label">{t('roomlobby.flag.emblem')}</label>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
-        {[...EMBLEM_IDS, ...PREMIUM_EMBLEM_IDS, ...EARNED_EMBLEM_IDS].map(id => {
-          const selected = myEmblem === id;
-          const takenBy = takenEmblems.get(id);
-          // Premium emblems render in the grid for everyone — locked, not
-          // hidden. A closet nobody can see sells nothing; a lock you can
-          // hover is the storefront. EARNED emblems (0176) show the same
-          // way, but money never opens them: only doing the thing does.
-          const earnedLocked = (EARNED_EMBLEM_IDS as string[]).includes(id) && !(user?.emblem_grants ?? []).includes(id);
-          const locked = earnedLocked || (!isPremium && (PREMIUM_EMBLEM_IDS as string[]).includes(id));
-          const taken = !!takenBy && !selected;
-          return (
-            <button
-              key={id}
-              type="button"
-              disabled={taken || locked}
-              style={{
-                width: 26, height: 26, padding: 3,
-                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                // The emblem draws in the player's own primary so the grid
-                // previews the finished flag rather than a generic icon
-                // sheet — you are choosing a shape for YOUR colours.
-                // A TAKEN emblem gets the same treatment as a taken
-                // swatch: drained to grey with an explicit grey border,
-                // so it reads as unavailable rather than as a dimmer
-                // shade of your own colour. LOCKED (premium) is
-                // deliberately left tinted and only softened — it's a
-                // storefront, not a refusal, and greying it out would
-                // sell it less.
-                color: selected ? '#fff'
-                  : taken ? TAKEN_INK
-                  : (myColor || 'var(--mp-text, #cfd8e3)'),
-                background: selected ? (myColor || '#4ecdc4') : 'transparent',
-                border: selected ? '2px solid #fff'
-                  : taken ? `1px solid ${TAKEN_INK}`
-                  : '1px solid var(--mp-border)',
-                borderRadius: 3,
-                cursor: (taken || locked) ? 'not-allowed' : 'pointer',
-                opacity: taken ? 0.55 : locked ? 0.45 : 1,
-              }}
-              title={earnedLocked ? t('roomlobby.flag.earnedEmblem', { name: EMBLEM_NAMES[id] })
-                : locked ? t('roomlobby.flag.premiumEmblem', { name: EMBLEM_NAMES[id] })
-                : taken ? t('roomlobby.flag.emblemTaken', { who: takenBy ?? '', name: EMBLEM_NAMES[id] })
-                : selected ? t('roomlobby.flag.clear') : EMBLEM_NAMES[id]}
-              onClick={() => onPick('emblem', selected ? null : id)}
-            >
-              <FactionEmblem emblem={id} fallbackKey={id} size={18} />
-            </button>
-          );
-        })}
-      </div>
-      {!isPremium && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
-          <CommissionFlagView />
-          <span style={{ fontSize: 10, color: 'var(--mp-fg-dim, #8aa0b4)' }}>
-            {t('roomlobby.flag.upsell', {
-              lines: COMMISSION_LINES, name: t('hangar.commissionName'),
-              discord: tk('roomlobby.flag.discord', COMMISSION_DISCORD),
-              rule: tk('roomlobby.flag.rule', COMMISSION_NO_GAMEPLAY),
-            })}
-          </span>
-          {/* The app does not sell it: its button opens the website in the
-              phone's browser (openCommissionInBrowser). */}
-          {isAndroidApp() ? (
-            <button
-              type="button"
-              className="mp-btn"
-              style={{ fontSize: 10, padding: '3px 8px' }}
-              onClick={() => openCommissionInBrowser('lobby-flag')}
-            >
-              {t('mp.commission.inBrowser', { price: tk('mp.commission.price', COMMISSION_PRICE) })}
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="mp-btn"
-              style={{ fontSize: 10, padding: '3px 8px' }}
-              onClick={() => {
-                logCommission('lobby-flag', 'click');
-                void startCommissionCheckout('lobby-flag').then(url => {
-                  if (url) window.location.assign(url);
-                });
-              }}
-            >
-              {t('feed.buy', { price: tk('mp.commission.price', COMMISSION_PRICE) })}
-            </button>
-          )}
-        </div>
-      )}
-      {myColor && (
-        <div className="mp-empty" style={{ fontSize: 10, padding: '0 2px', display: 'flex', alignItems: 'center', gap: 6 }}>
-          {t('roomlobby.flag.preview')}
-          <span style={{
-            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-            width: 22, height: 22, borderRadius: 3,
-            border: '1px solid var(--mp-border)',
-            background: `linear-gradient(135deg, ${myColor} 0%, ${myColor} 68%, ${myColor2 || deriveSecondary(myColor)} 68%)`,
-          }}>
-            {/* Emblem sits ON the flag, in ink chosen for contrast against
-                the primary — the same call the in-game chips make, so what
-                you see here is what the scoreboard shows. */}
-            {myEmblem && (
-              <FactionEmblem emblem={myEmblem} fallbackKey={myUserId ?? 'me'} size={14}
-                             color={emblemInk(myColor)} />
-            )}
-          </span>
-          {!myColor2 && <span>{t('roomlobby.flag.autoTrim')}</span>}
-          {!myEmblem && <span>{t('roomlobby.flag.noEmblem')}</span>}
-        </div>
-      )}
-      {/* Colony / station style for THIS game (0154). Null = the account
-          default from the Hangar, which is what the tiles show lit. */}
-      <label className="mp-label" style={{ marginTop: 8 }}>{t('hangar.skins.title')}</label>
-      <SkinPicker
-        city={me?.city_skin ?? null}
-        station={me?.station_skin ?? null}
-        fallbackCity={user?.city_skin ?? null}
-        fallbackStation={user?.station_skin ?? null}
-        primary={myColor}
-        secondary={myColor2}
-        holder={isPremium}
-        surface="skins"
-        onPick={onPick}
-      />
-      {(me?.city_skin || me?.station_skin) && (
-        <button type="button" className="skp-reset" style={{ marginTop: 4 }}
-                onClick={() => { onPick('city_skin', null); onPick('station_skin', null); }}>
-          {t('roomlobby.flag.useDefault')}
-        </button>
-      )}
-    </>
-  );
-}
-
-// ---------- Starting body picker ----------
-
-function StartingBodyPicker({
-  snap, myUserId, myChoice, onPick,
-}: {
-  snap: RoomSnapshot;
-  myUserId?: string;
-  /** Effective choice (optimistic-aware) from the parent. */
-  myChoice: string | null;
-  /** Pick / un-pick handler (optimistic + PATCH) owned by the parent. */
-  onPick: (bodyId: string | null) => void;
-}) {
-  useI18n();
-  const options = snap.starting_body_options ?? [];
-  if (!options.length) return null;
-
-  // Map of body id -> userId who claimed it (so we can show "taken").
-  // Built from the server snapshot for OTHER players, then patched with
-  // the local player's optimistic choice so the highlight is instant and
-  // never shows a stale double-claim while the PATCH is in flight.
-  const claimedBy = new Map<string, string>();
-  for (const m of snap.members) {
-    if (m.chosen_starting_body) claimedBy.set(m.chosen_starting_body, m.userId);
-  }
-  if (myUserId) {
-    for (const [bid, uid] of Array.from(claimedBy)) {
-      if (uid === myUserId) claimedBy.delete(bid);
-    }
-    if (myChoice) claimedBy.set(myChoice, myUserId);
-  }
-
-  const pick = onPick;
-
-  return (
-    <>
-      <div className="mp-section-title" style={{ marginTop: 12 }}>
-        {t('roomlobby.capital.title')}
-      </div>
-      <div className="mp-empty" style={{ fontSize: 10, marginBottom: 6, padding: '0 2px' }}>
-        {t('roomlobby.capital.desc')}
-      </div>
-      <div className="lobby-body-grid">
-        {options.map(opt => {
-          const taken = claimedBy.get(opt.id);
-          const isMine = taken === myUserId;
-          const isTaken = !!taken && !isMine;
-          const ownerName = taken
-            ? (snap.members.find(m => m.userId === taken)?.displayName ?? t('roomlobby.capital.someone'))
-            : null;
-          return (
-            <button
-              key={opt.id}
-              className={`lobby-body-card ${isMine ? 'is-mine' : ''} ${isTaken ? 'is-taken' : ''}`}
-              disabled={isTaken}
-              onClick={() => pick(isMine ? null : opt.id)}
-              title={
-                isMine ? t('roomlobby.capital.unclaim')
-                : isTaken ? t('roomlobby.capital.claimedBy', { name: ownerName ?? '' })
-                : t('roomlobby.claim')
-              }
-            >
-              <div className="lobby-body-card__name">{opt.name}</div>
-              <div className="lobby-body-card__sub">
-                {opt.type}{opt.parent && opt.parent !== 'sol' ? ` · ${opt.parent_name ?? opt.parent}` : ''}
-              </div>
-              <div className="lobby-body-card__yields">
-                {opt.yield.metal > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.M }}>M{opt.yield.metal}</span>}
-                {/* no F — fuel is dead (DESIGN-identity-economy.md §1.1) */}
-                {/* C = credits (server field is still 'gold') */}
-                {opt.yield.gold > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.C }}>C{opt.yield.gold}</span>}
-                {opt.yield.science > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.S }}>S{opt.yield.science}</span>}
-              </div>
-              {isMine && <div className="lobby-body-card__tag">{t('roomlobby.capital.yours')}</div>}
-              {isTaken && <div className="lobby-body-card__tag is-taken">{ownerName}</div>}
-            </button>
-          );
-        })}
-      </div>
-      {!myChoice && (
-        <div className="mp-empty" style={{ fontSize: 10, marginTop: 4, padding: '0 2px', fontStyle: 'italic' }}>
-          {t('roomlobby.capital.auto')}
-        </div>
-      )}
-    </>
-  );
+/** A pinned lobby you are no longer in would be a dead pin. */
+function forgetPinnedRoom(roomId: string): void {
+  try { if (localStorage.getItem('orbital.priority_room') === roomId) localStorage.removeItem('orbital.priority_room'); } catch { /* storage off */ }
 }
