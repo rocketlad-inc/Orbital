@@ -4881,7 +4881,7 @@ export interface ShipFormation {
  *  destruction flashes) read this so a kill scars the map where the
  *  ship visibly WAS, not at its textbook orbital point on the far side
  *  of the planet (QA finding). Bounded like the other per-ship caches. */
-const lastDrawnShipWorldPos = new Map<string, { x: number; y: number; ms?: number }>();
+const lastDrawnShipWorldPos = new Map<string, { x: number; y: number; ms?: number; standIn?: boolean }>();
 export function drawnShipWorldPos(shipId: string): { x: number; y: number } | undefined {
   return lastDrawnShipWorldPos.get(shipId);
 }
@@ -5057,7 +5057,7 @@ function recordDrawnShipWorldPos(shipId: string, x: number, y: number): void {
   if (lastDrawnShipWorldPos.size > 2000) lastDrawnShipWorldPos.clear();
   const ms = performance.now();
   const e = lastDrawnShipWorldPos.get(shipId);
-  if (e) { e.x = x; e.y = y; e.ms = ms; }
+  if (e) { e.x = x; e.y = y; e.ms = ms; e.standIn = false; }
   else lastDrawnShipWorldPos.set(shipId, { x, y, ms });
 }
 
@@ -5066,7 +5066,8 @@ function recordDrawnShipWorldPos(shipId: string, x: number, y: number): void {
 export function drawnShipsSince(sinceMs: number): Array<[string, number, number]> {
   const out: Array<[string, number, number]> = [];
   for (const [id, e] of lastDrawnShipWorldPos) {
-    if (e.ms != null && e.ms >= sinceMs) out.push([id, Math.round(e.x * 100) / 100, Math.round(e.y * 100) / 100]);
+    // A stand-in (a folded hull given its flagship's spot) is not drawn.
+    if (e.ms != null && e.ms >= sinceMs && !e.standIn) out.push([id, Math.round(e.x * 100) / 100, Math.round(e.y * 100) / 100]);
   }
   return out;
 }
@@ -5121,7 +5122,11 @@ export function glideLayout(
  *  flagship last was, which is where its death belongs too. */
 export function recordShipWorldPosAs(shipId: string, asShipId: string): void {
   const at = lastDrawnShipWorldPos.get(asShipId);
-  if (at) recordDrawnShipWorldPos(shipId, at.x, at.y);
+  if (at) {
+    recordDrawnShipWorldPos(shipId, at.x, at.y);
+    const e = lastDrawnShipWorldPos.get(shipId);
+    if (e) e.standIn = true;
+  }
 }
 
 /**
@@ -5315,6 +5320,15 @@ export function drawEscortHull(
   thrust = 0,
 ): void {
   if (farOffCanvas(ctx, x, y, baseSizePx * 2)) return;
+  // Through the continuity guard like every other drawn hull: a hull that
+  // moves between its own course and its fleet's block (the fleet
+  // groups or ungroups with the zoom) slides there, and keeps one history.
+  {
+    const w0 = canvasToWorld(x, y, ctx);
+    const kept = continuousDrawnPos(ship.id, w0.x, w0.y, ctx.camera.scale, ctx.nowMs ?? performance.now());
+    const c = worldToCanvas(kept.x, kept.y, ctx);
+    x = c.x; y = c.y;
+  }
   const g = ctx.ctx;
   const color = shipColor(ship, ctx.factions);
   // Capped at 1: `baseSizePx` is the slot a destroyer fills, and a
