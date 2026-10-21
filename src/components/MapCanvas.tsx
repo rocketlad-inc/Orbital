@@ -151,6 +151,20 @@ import './MapCanvas.css';
 import { getPlacement, cancelPlacement } from '../game/megastructurePlacement';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 
+/** How long a hull that just arrived takes to fold into its world's badge. */
+export const ARRIVAL_FOLD_MS = 1100;
+/** 1 for a hull that has just arrived, easing to 0 over ARRIVAL_FOLD_MS
+ *  (held for the first third, so the landing reads before it folds). */
+export function arrivalGrace(arrivedAt: Map<string, number>, shipId: string, nowMs: number): number {
+  const at = arrivedAt.get(shipId);
+  if (at === undefined) return 0;
+  const k = (nowMs - at) / ARRIVAL_FOLD_MS;
+  if (k >= 1 || k < 0) { arrivedAt.delete(shipId); return 0; }
+  if (k < 1 / 3) return 1;
+  const u = (k - 1 / 3) / (2 / 3);
+  return 1 - u * u * (3 - 2 * u);
+}
+
 /** One hull as the last frame saw it: where, what class, and the ship. */
 type ShipSnap = { x: number; y: number; cls: string; ship: Ship };
 
@@ -565,6 +579,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   const tweenRafRef = useRef<number | null>(null);
   const renderRef = useRef<() => void>(() => {});
   const prevShipIdsRef = useRef<Map<string, ShipSnap>>(new Map());
+  // When each hull last arrived at a world (wall ms): the arrival grace
+  // that fades it into the world's badge instead of dropping it (below).
+  const arrivedAtRef = useRef<Map<string, number>>(new Map());
   // Ids of ships that were in torch transit last frame. Diffed against
   // this frame the same way hp deltas are — a ship present both frames
   // that dropped its .transit just ARRIVED, which triggers the soft
@@ -1296,6 +1313,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       for (const id of prevTransitIdsRef.current) {
         if (!curTransitIds.has(id) && curShipIds.has(id)) {
           spawnArrivalFlash(id, nowMs);
+          if (arrivedAtRef.current.size > 2000) arrivedAtRef.current.clear();
+          arrivedAtRef.current.set(id, nowMs);
         }
       }
     }
@@ -2792,8 +2811,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // keep drawing — their trajectory arcs spread them out — and the
       // selected ship stays visible so the player can find what they
       // picked.
+      // ARRIVAL GRACE. In flight a hull is drawn at every zoom; parked at
+      // a world too small to show hulls, it is a count on the badge. So a
+      // fleet landing at map zoom vanished in one frame and came back
+      // when the zoom crossed the reveal (the Mega Destroyer re-shoot,
+      // 10.8 s). A hull that has just arrived holds, then fades into the
+      // badge over ARRIVAL_FOLD_MS instead.
       const sprBlend = (!ship.transit && !isSelected)
-        ? spriteBlendFor(ship.orbit?.parentBodyId)
+        ? Math.max(spriteBlendFor(ship.orbit?.parentBodyId), arrivalGrace(arrivedAtRef.current, ship.id, nowMs))
         : 1;
       if (sprBlend < 1 && !ship.transit && !isSelected) {
         const bodyId = ship.orbit?.parentBodyId;
