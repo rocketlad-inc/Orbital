@@ -31,6 +31,7 @@
     "sim:colors": "node sim/colorClash.mjs",
     "sim:emblems": "node sim/emblemClash.mjs",
     "sim:chain": "node sim/chainedLegs.mjs",
+    "sim:studio-arrive": "node sim/studioArrive.mjs",
     "sim:foundry": "node sim/foundryBuild.mjs",
     "sim:buildtap": "node sim/buildingDoubleTap.mjs",
     "sim:trade": "node sim/tradeRoutes.mjs",

@@ -3,7 +3,7 @@
  */
 // The studio's scene language (worker/studioScene.js): what a director
 // writes becomes a checked plan, and every mistake names its field.
-import { expandScenario, EXAMPLES, LOADOUT_PRESETS, whenTick } from '../../../worker/studioScene.js';
+import { expandScenario, EXAMPLES, LOADOUT_PRESETS, whenTick, solveMoveTiming } from '../../../worker/studioScene.js';
 
 const base = () => ({
   name: 'Test',
@@ -115,5 +115,39 @@ describe('expandScenario', () => {
     [{ ...base(), ships: [{ key: 'a', owner: 'terra', at: 'earth', class: 'corvette', count: 1 }], orders: [{ type: 'move', ships: 'a', to: 'luna', depart: 'soon' }] }, /\+N/],
   ])('rejects a bad scene with the field named', (scene, msg) => {
     expect(() => expandScenario(scene)).toThrow(msg);
+  });
+});
+
+// A scene's `arrive` used to be handed to the leg planner as the arrival,
+// which shapes the burn to land on it: a 16-tick hop asked to take 40 flew
+// on a twentieth of its engine and crawled through the shot (Lorne,
+// 2026-10-21). Now a later arrival is a later DEPARTURE on the real engine.
+describe('solveMoveTiming', () => {
+  const trip16 = async () => 16;
+
+  it('with no arrival asked, leaves at the earliest and lands when it lands', async () => {
+    expect(await solveMoveTiming({ earliest: 11, want: null, tripAt: trip16 })).toEqual({ depart: 11, arrive: 27, late: false });
+  });
+
+  it('a later arrival is a later departure, not a slower burn', async () => {
+    // Asked to land at 50 on a 16-tick trip: leave at 34, on its own engine.
+    expect(await solveMoveTiming({ earliest: 11, want: 50, tripAt: trip16 })).toEqual({ depart: 34, arrive: 50, late: false });
+  });
+
+  it('follows a trip that changes with the departure (the worlds move)', async () => {
+    const tripAt = async (d: number) => 10 + Math.floor((d - 10) / 5);   // longer the later it leaves
+    const r = await solveMoveTiming({ earliest: 10, want: 60, tripAt });
+    expect(r.late).toBe(false);
+    expect(r.arrive).toBe(r.depart + (await tripAt(r.depart)));
+    expect(r.arrive).toBeLessThanOrEqual(60);
+    expect(r.arrive).toBeGreaterThan(58);
+  });
+
+  it('too soon to make it: leaves now, arrives as soon as it can, and says so', async () => {
+    expect(await solveMoveTiming({ earliest: 11, want: 20, tripAt: trip16 })).toEqual({ depart: 11, arrive: 27, late: true });
+  });
+
+  it('never leaves before the depart it was given', async () => {
+    expect(await solveMoveTiming({ earliest: 40, want: 50, tripAt: trip16 })).toEqual({ depart: 40, arrive: 56, late: true });
   });
 });

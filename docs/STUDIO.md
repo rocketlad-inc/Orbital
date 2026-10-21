@@ -94,6 +94,7 @@ For a vertical (9:16) recording, the map is cropped to the centre of your window
 
   "orders": [
     { "type": "move",   "ships": "terra_moon", "to": "luna", "depart": "+1" },   // a group, or "group.3" for one hull
+    // "arrive": "+40" lands it then by LEAVING LATER, on its real engine (see below)
     { "type": "strike", "ship": "md.0", "ready": "+2" },                        // Mega Destroyer over its world
     { "type": "trade",  "ship": "fr.0", "from": "mars", "to": "ceres" }         // freighter supply line
   ],
@@ -126,7 +127,10 @@ What `apply` returns, and what you need from it:
 - `factions[].handle`: the agent player to record `--as`.
 - `ships.<group>`: the ids of every hull, in order. In shots they are `ship:<id>` with the game prefix stripped (the CLI prints them stripped already): `ship:st_terra_moon_0`.
 - `fleets.<key>`: `fleet:<id>` targets, likewise.
-- `orders[]`: for a move, the departure tick and arrival tick, so you know how many ticks the flight takes.
+- `orders[]`: for a move, the departure tick and arrival tick, so you know how many ticks the flight takes (and `asked`, the arrival you asked for, when you gave one).
+- `warnings[]`: what the scene asked for that the game could not do as asked. Today: a move asked to `arrive` sooner than its trip allows, which leaves at once and lands as soon as it can. The CLI prints each one as `WARNING:`.
+
+**`arrive` never slows a ship.** A hull always flies a move on the engine a player's order would give it. `arrive` is met by holding the departure back (it leaves at `arrive` minus its natural trip, never before `depart`); if even leaving at once cannot make it, it leaves at once and the warning says when it really lands. A group still flies together at its slowest hull's pace, the way guards are paced to freighters. (It used to stretch the burn to land on `arrive`, so a 16-tick hop asked to take 40 flew on a twentieth of its engine and crawled through the shot while everything else flew.)
 
 `GET /api/admin/studio/catalog` (or `node scripts/studio.mjs catalog`) lists classes, loadouts, emblems and every world id.
 
@@ -167,15 +171,17 @@ What `apply` returns, and what you need from it:
 
 **Seeing everything.** The viewer sees every hull (Sensors 10), but a world's owner, cities and skyline are presence-fogged. The studio parks a quiet observer corvette for the viewer wherever a scene world would otherwise be fogged: at the planet for a moon (Jupiter for Europa), at an empty moon for a planet, never in the fight. `"camera": false` turns that off.
 
-**Verbs:** `focus` (cut), `pan` (glide, then hold), `zoom`, `follow`, `tick`, `speed`, `caption`, `hook`, `ui`, `panel`, `click`. Captions are the outlined white words; one at a time, each replaces the last.
+**Verbs:** `focus` (cut), `pan` (glide, then hold), `zoom`, `follow`, `tick`, `speed`, `caption`, `hook`, `ui`, `panel`, `click`, and the story steps `intercept`, `strike`, `hull`.
 
-**Story steps.** `{ "do": "intercept", "ships": "fleet:<id>", "target": "ship:<id>" }` sends the viewer's parked hulls to intercept a ship in flight with the game's own planner; they match it and fly its plan to its world, fighting it the whole way (transit combat). `__studio.interceptPlan(ships, target)` shows each hull's meeting tick without sending: a target on a fast cruise is only catchable as it brakes, so give it a slow cruise (`arrive` far out) if the fight should last. `{ "do": "strike", "ship": "st_mega_0", "ticks": 3 }` arms a Mega Destroyer over the world it has just reached (a strike armed in flight is cleared by the tick). `{ "do": "hull", "ship": "st_mega_0", "hp": 250 }` sets a hull's HP so the next tick's real combat finishes it on cue; fire distribution changes from take to take, so a scripted death needs it. A scene world marked `living` is restored on reset (sterilise scar cleared, settlements revived).
+**Long pans arc.** A `pan` whose target starts off the frame (at the zoom of either end) pulls back until both ends fit, travels while pulled back, and pushes in again, all inside its `ms`; a pan across the system at close zoom used to sail through seconds of empty starfield and arrive after the thing it was going to see had left. `"arc": false` keeps the straight glide. The arithmetic is `src/multiplayer/studio/shotPlan.ts` (tested in `shotPlan.test.ts`). Captions are the outlined white words; one at a time, each replaces the last.
+
+**Story steps.** `{ "do": "intercept", "ships": "fleet:<id>", "target": "ship:<id>" }` sends the viewer's parked hulls to intercept a ship in flight with the game's own planner; they match it and fly its plan to its world, fighting it the whole way (transit combat). `__studio.interceptPlan(ships, target)` shows each hull's meeting tick without sending: a target on a fast cruise is only catchable as it brakes, so for a fight that lasts, intercept a ship on a long trip, from hulls whose engines are not much stronger than its own (an interceptor with three engine parts and high Propulsion research reaches a raid in a tick and makes no fight worth filming), or catch it as it brakes. `arrive` no longer slows a cruise. `{ "do": "strike", "ship": "st_mega_0", "ticks": 3 }` arms a Mega Destroyer over the world it has just reached (a strike armed in flight is cleared by the tick). `{ "do": "hull", "ship": "st_mega_0", "hp": 250 }` sets a hull's HP so the next tick's real combat finishes it on cue; fire distribution changes from take to take, so a scripted death needs it. A scene world marked `living` is restored on reset (sterilise scar cleared, settlements revived).
 
 **Showing the interface.** `{ "do": "panel", "id": "senate" }` opens a panel the way a tap on the dock would: `senate`, `faction`, `comms` (tabs of the multiplayer dock, 360 px on the right), `trades`, `situation`, `eventlog`, `multiplayer`, `settlements`, `fleet`, `research`; `"id": null` closes whatever is open. `{ "do": "click", "selector": ".sp-disc.is-quiet > summary" }` clicks the first element a CSS selector finds, which is how a shot unfolds a disclosure (the Senate's resolved-bills list, then `.sp-roll > summary` for its ballots). Give a panel a second or so of clip time to load before clicking inside it. Keep the subject on the left two-thirds of the frame while a dock panel is open.
 
 **Ticks during a shot.** `tick` asks the server for N ticks and waits for the map to receive them; the video clock stops meanwhile, so nothing is lost. Arrivals, kills and strikes happen on ticks, so place a `tick` where the action should land. The `speed` setting decides how long each tick's motion plays: with 2500, a ship that arrives on the next tick glides in over 2.5 s.
 
-`Director.lint(shot)` (and the Studio bar) checks a shot's shape before it runs.
+`Director.lint(shot)` (and the Studio bar) checks a shot's shape before it runs. `__studio.check(shot)` checks it against THIS game: a `strike` step scheduled before its Mega Destroyer has landed (the server refuses a strike in flight, so the clip ends on a world where nothing happens) is named with the tick step after which it could go. The CLI runs it before every `film` and `record` and prints `WARNING:` lines; `--strict` stops the take instead. A running shot notes the same lines in `__studio.log`.
 
 ---
 

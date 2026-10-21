@@ -258,6 +258,37 @@ function parseWhen(v, where) {
 }
 export const whenTick = (w, now) => (w.abs != null ? w.abs : now + w.rel);
 
+/**
+ * WHEN A MOVE LEAVES, so it lands at `want` on its OWN engine.
+ *
+ * `arrive` used to be handed to the leg planner as the arrival, and the
+ * planner shapes the burn to land on it: a 16-tick hop asked to take 40
+ * flew on a twentieth of its engine (a Mega Destroyer at 0.44 units/tick²
+ * against a normal 8-16), crawling through the shot while everything else
+ * in it flew (Lorne, 2026-10-21: "an incoherent mess"). Now the hull flies
+ * the leg a player's order would give it, and a later arrival is a later
+ * departure.
+ *
+ * `tripAt(depart)` is the natural trip in ticks for a departure at that
+ * tick (worlds move, so it is re-asked as the departure moves). Returns
+ * the departure, the arrival, and `late` when even leaving at `earliest`
+ * cannot make `want`, in which case it arrives as soon as it can.
+ * With no `want` it leaves at `earliest` and lands when it lands.
+ */
+export async function solveMoveTiming({ earliest, want, tripAt, maxIter = 4 }) {
+  let depart = earliest;
+  let trip = await tripAt(depart);
+  if (want == null) return { depart, arrive: depart + trip, late: false };
+  for (let i = 0; i < maxIter; i++) {
+    const next = Math.max(earliest, Math.floor(want - trip));
+    if (next === depart) break;
+    depart = next;
+    trip = await tripAt(depart);
+  }
+  const arrive = depart + trip;
+  return { depart, arrive, late: arrive > want + 1e-9 };
+}
+
 /** Scenes the editor offers as starting points. The first is the shot
  *  that started this module: a three-way fight at Earth with a wing
  *  breaking off for the Moon, and a second war out at Titan. */
