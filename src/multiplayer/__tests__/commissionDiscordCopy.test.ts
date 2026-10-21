@@ -25,7 +25,7 @@ test.each([
   ['profile Hangar (buyers and holders)', 'multiplayer/Hangar.tsx', /data-testid="hangar-discord"[\s\S]*data-testid="hangar-discord"/],
   ['end-of-game card', 'multiplayer/CommissionMoments.tsx', /COMMISSION_DISCORD/],
   ['20-hour thank-you card', 'multiplayer/CommissionMoments.tsx', /COMMISSION_FACTS/],
-  ['lobby flag picker', 'multiplayer/LobbyView.tsx', /COMMISSION_DISCORD/],
+  ['lobby flag picker', 'multiplayer/RoomEmpireEditor.tsx', /COMMISSION_DISCORD/],
   ['designer preview', 'components/ShipDesigner.tsx', /COMMISSION_DISCORD/],
   ['colony & station style picker', 'multiplayer/SkinPicker.tsx', /COMMISSION_DISCORD/],
   ['after payment', 'multiplayer/CommissionThanks.tsx', /Connect your server/],
@@ -37,7 +37,7 @@ test.each([
 
 test('no selling surface still says "Cosmetic only"', () => {
   for (const rel of [
-    'multiplayer/Hangar.tsx', 'multiplayer/CommissionMoments.tsx', 'multiplayer/LobbyView.tsx',
+    'multiplayer/Hangar.tsx', 'multiplayer/CommissionMoments.tsx', 'multiplayer/LobbyView.tsx', 'multiplayer/RoomEmpireEditor.tsx',
     'components/ShipDesigner.tsx', 'multiplayer/SkinPicker.tsx', 'multiplayer/CommissionThanks.tsx',
   ]) {
     expect(src(rel)).not.toMatch(/Cosmetic only/i);

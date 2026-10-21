@@ -65,7 +65,20 @@ const box: React.CSSProperties = {
 };
 const dim: React.CSSProperties = { color: '#8a9fb3', fontSize: 11, lineHeight: 1.45 };
 
-export const GameFeedSettings: React.FC<{ gameId: string; title?: string }> = ({ gameId, title }) => {
+// Inside the room lobby's Discord fold the controls sit on a card of their
+// own: no second border, a 44px select, and a label instead of the card title.
+const bareBox: React.CSSProperties = { ...box, padding: 0, border: 'none', background: 'transparent', fontSize: 14, gap: 12 };
+const bareSelect: React.CSSProperties = { minHeight: 44, fontSize: 15, padding: '0 10px', borderRadius: 8 };
+
+export const GameFeedSettings: React.FC<{
+  gameId: string;
+  title?: string;
+  /** Draw without its own card (it is inside a fold that is the card). */
+  bare?: boolean;
+  /** Told whenever the feed's state loads or changes, so a folded row can
+   *  summarise it without a second fetch. Keep it stable (setState). */
+  onView?: (v: FeedView) => void;
+}> = ({ gameId, title, bare, onView }) => {
   useI18n();
   const [view, setView] = useState<FeedView | null>(null);
   const [busy, setBusy] = useState(false);
@@ -76,6 +89,7 @@ export const GameFeedSettings: React.FC<{ gameId: string; title?: string }> = ({
     if (res.ok) setView(res.data);
   }, [gameId]);
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => { if (view && onView) onView(view); }, [view, onView]);
 
   if (!view) return null;
 
@@ -109,9 +123,9 @@ export const GameFeedSettings: React.FC<{ gameId: string; title?: string }> = ({
   // invite and "forum not set up" warning are about somewhere else.
   const inOwnServer = !!view.server?.active;
   return (
-    <div style={box} data-testid="game-feed-settings">
+    <div style={bare ? bareBox : box} data-testid="game-feed-settings">
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-        <span style={{ fontWeight: 700, letterSpacing: '.04em' }}>{title ?? t('mp.feed.title')}</span>
+        <span style={{ fontWeight: 700, letterSpacing: '.04em' }}>{bare ? t('roomlobby.feed.posts') : (title ?? t('mp.feed.title'))}</span>
         {view.is_host ? (
           <select
             aria-label={t('mp.feed.ariaLabel')}
@@ -123,6 +137,7 @@ export const GameFeedSettings: React.FC<{ gameId: string; title?: string }> = ({
               background: '#070c12', color: on ? '#4ecdc4' : '#d6e2ec',
               border: `1px solid ${on ? '#2f6f6b' : '#2a3d50'}`, borderRadius: 4,
               fontFamily: 'inherit', fontSize: 12, padding: '4px 6px',
+              ...(bare ? bareSelect : {}),
             }}
           >
             {(['off', 'headlines', 'all'] as FeedLevel[]).map(l => (
@@ -149,6 +164,7 @@ export const GameFeedSettings: React.FC<{ gameId: string; title?: string }> = ({
             style={{
               background: '#070c12', color: '#d6e2ec', border: '1px solid #2a3d50', borderRadius: 4,
               fontFamily: 'inherit', fontSize: 12, padding: '4px 6px',
+              ...(bare ? bareSelect : {}),
             }}
           >
             <option value="">{t('mp.feed.lang.host')}</option>
@@ -165,7 +181,7 @@ export const GameFeedSettings: React.FC<{ gameId: string; title?: string }> = ({
       {on && !inOwnServer && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           {view.discord_linked ? (
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', ...(bare ? { minHeight: 44 } : {}) }}>
               <input
                 type="checkbox"
                 data-testid="game-feed-follow"

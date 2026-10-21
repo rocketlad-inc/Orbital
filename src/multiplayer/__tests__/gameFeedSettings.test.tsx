@@ -101,7 +101,8 @@ describe('the game-feed control', () => {
 describe('where it lives', () => {
   const read = (p: string) => fs.readFileSync(path.resolve(__dirname, p), 'utf8').replace(/\r\n/g, '\n');
   it('in the lobby, before the game starts', () => {
-    expect(read('../LobbyView.tsx')).toMatch(/!started && \(\s*<div style=\{\{ marginTop: 12 \}\}>\s*<GameFeedSettings gameId=\{roomId\} \/>/);
+    // The Discord fold of the room lobby screen, only while the match has not started.
+    expect(read('../RoomLobbyScreen.tsx')).toMatch(/!started && \(\s*<RoomFold[\s\S]*?<GameFeedSettings gameId=\{roomId\}/);
   });
   it('in the in-game Notifications window', () => {
     expect(read('../NotificationSettings.tsx')).toMatch(/<GameFeedSettings gameId=\{mpActions\.gameId\}/);
