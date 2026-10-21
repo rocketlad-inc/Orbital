@@ -379,8 +379,8 @@ export async function ensureCaptains(db, gameId, tick) {
                  -- flagship keeps its captain and never matches (captain
                  -- NOT NULL); leaderless fleets re-officer via PROMOTE.
                  AND fleet_id IS NULL
-                 -- The Leviathan (kaiju.js) has no crew.
-                 AND ship_class <> 'kaiju'
+                 -- The Leviathan (kaiju.js) has no crew, nor a missile salvo.
+                 AND ship_class NOT IN ('kaiju', 'missile')
                ORDER BY CASE WHEN ship_class IN ('corvette','frigate','destroyer')
                              THEN 0 ELSE 1 END, RANDOM()
                LIMIT 40`)

@@ -72,7 +72,7 @@ describe('Construction', () => {
     //
     // Early is defensible because the module is only the shovel. WHICH
     // megastructure you may lay is gated separately and far deeper
-    // (Weapons 6/7, Defense 7/8, Propulsion 6/7/8), so a cheap module
+    // (Weapons 7/8, Defense 7/8, Propulsion 6/7/8), so a cheap module
     // opens no structure on its own.
     expect(trackOf('part.construction')).toBe('construction');
     expect(levelOf('part.construction')).toBeLessThan(levelOf('building.telescope'));
@@ -86,6 +86,16 @@ describe('Weapons', () => {
     // Handing it out as the second weapons unlock made ramming the
     // opening move of the game instead of a late trick.
     expect(levelOf('part.detonator')).toBeGreaterThan(levelOf('veteranYards'));
+  });
+
+  it('the Missile Silo has a level of its own, before the detonator', () => {
+    // Lorne, 2026-10-20: "Put silo into its own slot in the tech tree
+    // before the detonator". Nothing else on the Weapons track shares it.
+    const weapons = RESEARCH_UNLOCKS.filter(u => u.track === 'weapons');
+    expect(levelOf('building.missile_silo')).toBeLessThan(levelOf('part.detonator'));
+    expect(weapons.filter(u => u.level === levelOf('building.missile_silo'))).toHaveLength(1);
+    // ...and every Weapons unlock keeps a level to itself.
+    expect(new Set(weapons.map(u => u.level)).size).toBe(weapons.length);
   });
 
   it('kinetic is still the first gun anyone fits', () => {

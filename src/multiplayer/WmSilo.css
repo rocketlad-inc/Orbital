@@ -1,0 +1,353 @@
+/* The Missile Silo panel (WmSilo.tsx). It takes the yard box's place
+   (.wm-fleet supplies position, size and ground) when its tab is on. */
+
+/* YARD / MISSILE SILO tabs, on whichever box is showing. */
+.wm-btabs { display: flex; gap: 6px; margin-bottom: 2px; }
+.wm-btabs button {
+  font-family: 'Audiowide', sans-serif; font-size: 10px; letter-spacing: 0.08em;
+  padding: 5px 10px; border-radius: 4px; cursor: pointer;
+  border: 1px solid #2a3d50; background: #0d141d; color: #8fa6ba;
+}
+.wm-btabs button.is-on { border-color: #4ecdc4; background: rgba(78, 205, 196, 0.14); color: #4ecdc4; }
+.wm-btabs button:focus-visible { outline: 2px solid #4ecdc4; outline-offset: 2px; }
+
+.wm-silo { gap: 8px; }
+.wm-silo-head {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding-bottom: 8px; border-bottom: 1px solid #1c2836;
+}
+.wm-silo-title { font-family: 'Audiowide', sans-serif; font-size: 12px; letter-spacing: 0.08em; color: #e6edf3; }
+.wm-silo-sub, .wm-silo-mag-l { font-family: 'Chivo Mono', monospace; font-size: 10.5px; color: #8fa6ba; }
+.wm-silo-mag-l { letter-spacing: 0.16em; font-size: 10px; }
+.wm-silo-fill { flex: 1; }
+.wm-silo-pips { display: flex; gap: 3px; flex-wrap: wrap; max-width: 260px; }
+.wm-silo-pips i { width: 8px; height: 16px; border-radius: 2px; box-sizing: border-box; border: 1px solid #2a3d50; }
+.wm-silo-pips i.is-full { background: #ff8a5c; border-color: #ff8a5c; }
+.wm-silo-pips i.is-queued { border: 1px dashed #ff8a5c; }
+.wm-silo-count { font-family: 'Chivo Mono', monospace; font-size: 15px; color: #fff; }
+.wm-silo-count span { color: #8fa6ba; }
+
+/* INCOMING | AUTO-DEFENCE | BUILD: the raids lead and get the room. */
+/* ONE SCROLL PER COLUMN, never a list scrolling inside a scrolling
+   drawer (Lorne, 2026-10-20: "surely we can do better than a scroll box
+   within a scroll box"). The columns sit side by side and each scrolls
+   on its own; the lists inside them are plain lists. */
+.wm-silo-cols { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(0, 0.95fr) minmax(0, 0.8fr); flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.wm-silo-col { display: flex; flex-direction: column; gap: 8px; padding: 4px 14px; min-width: 0; min-height: 0; overflow-y: auto; }
+.wm-silo-col + .wm-silo-col { border-left: 1px solid #1c2836; }
+.wm-silo-col:first-child { padding-left: 0; }
+.wm-silo-h { font-family: 'Audiowide', sans-serif; font-size: 10px; letter-spacing: 0.18em; color: #8fa6ba; }
+.wm-silo-h2 { font-family: 'Chivo Mono', monospace; font-size: 10px; letter-spacing: 0.14em; color: #8fa6ba; }
+.wm-silo-note { font-family: 'Chivo Mono', monospace; font-size: 10px; line-height: 1.5; color: #8fa6ba; }
+.wm-silo-note.is-body { font-size: 10.5px; color: #b8c8d6; }
+
+.wm-silo-buildrow {
+  display: flex; align-items: center; gap: 8px; padding: 7px 8px;
+  border: 1px solid #2a3d50; border-radius: 4px; background: #0d141d;
+}
+.wm-silo-bname { font-family: 'Audiowide', sans-serif; font-size: 11.5px; color: #e6edf3; }
+.wm-silo-cost { flex: 1; font-family: 'Chivo Mono', monospace; font-size: 10.5px; color: #b8c8d6; }
+.wm-silo-cost b { font-weight: 400; color: #ffd166; }
+.wm-silo-queue { display: flex; flex-direction: column; gap: 4px; }
+.wm-silo-qrow {
+  position: relative; display: flex; align-items: center; gap: 8px; padding-bottom: 4px;
+  font-family: 'Chivo Mono', monospace; font-size: 10.5px; color: #d8e4ee;
+}
+.wm-silo-qn { color: #8fa6ba; }
+.wm-silo-qname { flex: 1; }
+.wm-silo-qt { color: #4ecdc4; }
+.wm-silo-bar { position: absolute; left: 0; bottom: 0; height: 3px; border-radius: 2px; background: #4ecdc4; }
+.wm-silo-x { background: none; border: 0; color: #8fa6ba; cursor: pointer; font-size: 11px; padding: 2px 4px; }
+.wm-silo-x:hover:not(:disabled) { color: #ff8a8a; }
+
+.wm-silo-btn {
+  font-family: 'Audiowide', sans-serif; font-size: 10.5px; letter-spacing: 0.04em;
+  padding: 6px 12px; border-radius: 4px; cursor: pointer;
+  border: 1px solid #2a3d50; background: #0d141d; color: #b8c8d6;
+}
+.wm-silo-btn:disabled { opacity: 0.45; cursor: default; }
+.wm-silo-btn.is-teal { border-color: #4ecdc4; background: rgba(78, 205, 196, 0.12); color: #4ecdc4; }
+.wm-silo-btn.is-fire { border-color: #ff8a5c; background: rgba(255, 138, 92, 0.18); color: #ffd2bf; font-size: 11.5px; padding: 8px 14px; }
+.wm-silo-btn.is-fire.is-confirm { background: rgba(255, 92, 92, 0.3); border-color: #ff5e5e; color: #fff; }
+.wm-silo-btn:focus-visible, .wm-silo-step:focus-visible, .wm-silo-target:focus-visible, .wm-silo-opt:focus-visible,
+.wm-silo-seg button:focus-visible { outline: 2px solid #4ecdc4; outline-offset: 2px; }
+
+.wm-silo-target {
+  display: flex; align-items: center; gap: 8px; padding: 7px 10px; text-align: left;
+  border: 1px solid #2a3d50; border-radius: 4px; background: #0d141d; color: #e6edf3; cursor: pointer;
+}
+.wm-silo-tname { flex: 1; font-family: 'Audiowide', sans-serif; font-size: 11.5px; }
+.wm-silo-tname.is-dim { color: #8fa6ba; }
+.wm-silo-tmeta { font-family: 'Chivo Mono', monospace; font-size: 10px; color: #b8c8d6; }
+.wm-silo-list {
+  display: flex; flex-direction: column; gap: 2px; flex: 0 0 auto;
+  padding: 4px; border: 1px solid #2a3d50; border-radius: 4px; background: #0a1019;
+}
+/* One line a target: name, what is there, how long. */
+.wm-silo-opt {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 0 10px; align-items: baseline; text-align: left;
+  padding: 5px 8px; border: 1px solid transparent; border-radius: 4px; background: none; color: #e6edf3; cursor: pointer;
+}
+.wm-silo-opt > .wm-silo-tname { grid-column: 1; grid-row: 1; }
+.wm-silo-opt > .wm-silo-tmeta:not(.is-wide) { grid-column: 3; grid-row: 1; white-space: nowrap; }
+.wm-silo-opt:hover, .wm-silo-opt.is-on { border-color: #ff8a5c; background: rgba(255, 138, 92, 0.08); }
+.wm-silo-opt .is-wide { grid-column: 2; grid-row: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wm-silo-opt b { font-weight: 400; }
+.wm-silo-opt b.is-hostile { color: #ff9d9d; }
+.wm-silo-opt b.is-mine { color: #6ee7b7; }
+.wm-silo-opt.is-out .wm-silo-tname, .wm-silo-opt.is-out .wm-silo-tmeta { color: #6b7f92; }
+.wm-silo-list .wm-silo-h2 { padding: 4px 8px 0; }
+
+/* ---- INCOMING: one row per hostile group flying here ---- */
+.wm-silo-hn { font-family: 'Chivo Mono', monospace; font-weight: 400; letter-spacing: 0; color: #ff9d9d; margin-left: 4px; }
+.wm-silo-inc { display: flex; flex-direction: column; gap: 6px; flex: 0 0 auto; }
+/* The salvo, its preview and LAUNCH: pinned to the foot of the column
+   while the list above it scrolls. */
+.wm-silo-fire {
+  position: sticky; bottom: 0; z-index: 1; display: flex; flex-direction: column; gap: 8px;
+  margin: 0 -2px; padding: 8px 2px 4px; background: #0a0f16; border-top: 1px solid #1c2836;
+}
+.wm-silo-irow {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 2px 10px; align-items: center;
+  padding: 7px 8px 7px 10px; border-radius: 4px;
+  border: 1px solid rgba(255, 94, 94, 0.45); border-left-width: 3px; background: rgba(255, 94, 94, 0.06);
+}
+.wm-silo-irow > .wm-silo-btn { grid-column: 3; grid-row: 1 / span 4; align-self: center; }
+.wm-silo-irow .is-wide { grid-column: 1 / 3; }
+.wm-silo-irow .wm-silo-tname { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wm-silo-ihulls { font-family: 'Chivo Mono', monospace; font-size: 10px; font-weight: 400; color: #ff9d9d; }
+.wm-silo-isent { font-family: 'Chivo Mono', monospace; font-size: 10px; color: #4ecdc4; }
+.wm-silo-ikill { font-family: 'Chivo Mono', monospace; font-size: 10px; color: #ffd2bf; }
+.wm-silo-iown { font-family: 'Chivo Mono', monospace; font-size: 10px; color: #ffb84d; }
+.wm-silo-irow.is-out { border-color: #2a3d50; background: none; }
+.wm-silo-irow.is-out .wm-silo-tname, .wm-silo-irow.is-out .wm-silo-tmeta { color: #6b7f92; }
+.wm-silo-more {
+  align-self: flex-start; padding: 4px 0; border: 0; background: none; cursor: pointer;
+  font-family: 'Audiowide', sans-serif; font-size: 9.5px; letter-spacing: 0.14em; color: #8fa6ba;
+}
+.wm-silo-more:hover, .wm-silo-more.is-on { color: #e6edf3; }
+.wm-silo-more b { margin-left: 6px; font-family: 'Chivo Mono', monospace; font-weight: 400; letter-spacing: 0; color: #b8c8d6; }
+.wm-silo-more span { margin-left: 4px; }
+.wm-silo-more .wm-silo-fly { margin-left: 6px; font-family: 'Chivo Mono', monospace; font-style: normal; letter-spacing: 0; color: #4ecdc4; }
+.wm-silo-search {
+  box-sizing: border-box; width: 100%; padding: 7px 10px; border-radius: 4px;
+  border: 1px solid #2a3d50; background: #0a1019; color: #e6edf3;
+  font-family: 'Chivo Mono', monospace; font-size: 11px;
+}
+.wm-silo-search::placeholder { color: #6b8195; }
+.wm-silo-search:focus { outline: none; border-color: #4ecdc4; }
+.wm-silo.is-mobile .wm-silo-search { min-height: 44px; font-size: 16px; }
+.wm-silo-folds { display: flex; gap: 18px; flex-wrap: wrap; padding-top: 4px; border-top: 1px solid #1c2836; }
+.wm-silo-more:focus-visible { outline: 2px solid #4ecdc4; outline-offset: 2px; }
+.wm-silo-seg button { line-height: 1.25; }
+
+.wm-silo-salvo { display: flex; align-items: center; gap: 8px; }
+.wm-silo-step {
+  width: 28px; height: 28px; border-radius: 4px; cursor: pointer;
+  border: 1px solid #2a3d50; background: #0d141d; color: #e6edf3; font-size: 14px;
+}
+.wm-silo-step:disabled { opacity: 0.4; cursor: default; }
+.wm-silo-num { min-width: 22px; text-align: center; font-family: 'Chivo Mono', monospace; font-size: 16px; color: #fff; }
+.wm-silo-preview {
+  display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-radius: 4px;
+  border: 1px solid rgba(255, 138, 92, 0.35); background: rgba(255, 138, 92, 0.08);
+  font-family: 'Chivo Mono', monospace; font-size: 10.5px; line-height: 1.45; color: #d8e4ee;
+}
+.wm-silo-preview .is-strong { color: #fff; }
+.wm-silo-preview .is-mine { color: #ffb38f; }
+.wm-silo-preview.is-warn { border-color: rgba(255, 94, 94, 0.55); }
+.wm-silo-launchrow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+.wm-silo-seg { display: flex; border: 1px solid #2a3d50; border-radius: 4px; overflow: hidden; }
+.wm-silo-seg button {
+  flex: 1; padding: 7px 4px; border: 0; background: #0d141d; color: #8fa6ba; cursor: pointer;
+  font-family: 'Audiowide', sans-serif; font-size: 9.5px;
+}
+.wm-silo-seg button + button { border-left: 1px solid #2a3d50; }
+.wm-silo-seg button.is-on { background: rgba(78, 205, 196, 0.18); color: #4ecdc4; }
+.wm-silo-watch { display: flex; align-items: center; gap: 6px; font-family: 'Chivo Mono', monospace; font-size: 10.5px; color: #6ee7b7; }
+.wm-silo-watch i { width: 7px; height: 7px; border-radius: 50%; background: #6ee7b7; }
+
+/* Phone: one column, thumb-sized controls. */
+.wm-silo.is-mobile .wm-silo-cols { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-auto-rows: max-content; overflow-y: auto; }
+.wm-silo.is-mobile .wm-silo-col { overflow: visible; min-height: auto; grid-row: auto; grid-column: auto; }
+.wm-silo.is-mobile .wm-silo-col { padding: 8px 0; }
+.wm-silo.is-mobile .wm-silo-col + .wm-silo-col { border-left: 0; border-top: 1px solid #1c2836; }
+.wm-silo.is-mobile .wm-silo-step { width: 44px; height: 44px; }
+.wm-silo.is-mobile .wm-silo-btn, .wm-silo.is-mobile .wm-silo-target { min-height: 44px; }
+.wm-silo.is-mobile .wm-silo-seg button { min-height: 40px; }
+@media (prefers-reduced-motion: reduce) { .wm-silo * { transition: none !important; } }
+
+/* The silo needs more height than the yard: a taller box on desktop. */
+.wm-fleet.wm-silo:not(.is-mobile) { max-height: min(520px, 64vh); }
+/* The list headings are text buttons, not 40px tap targets (the mobile
+   shell's button floor reaches desktops under 1024 wide). */
+.wm-silo .wm-silo-folds .wm-silo-more { min-height: 0; }
+/* A NARROW DRAWER (a desktop under ~1100 wide, outliner and dock taking
+   their share): INCOMING down the left; auto-defence over build on the
+   right. Three columns there cut the mode buttons and BUILD off. */
+.wm-silo:not(.is-mobile) { container-type: inline-size; }
+@container (max-width: 760px) {
+  .wm-silo-cols { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); grid-template-rows: max-content minmax(0, 1fr); }
+  .wm-silo-col:nth-child(1) { grid-row: 1 / span 2; }
+  .wm-silo-col:nth-child(2) { grid-column: 2; grid-row: 1; overflow: visible; }
+  .wm-silo-col:nth-child(3) { grid-column: 2; grid-row: 2; border-top: 1px solid #1c2836; padding-top: 8px; }
+}
+/* Target rows are one line: not 40px tap targets on a desktop. */
+.wm-silo .wm-silo-list .wm-silo-opt { min-height: 0; }
+/* A phone gives the silo more of the screen than the yard: the list and
+   the pinned LAUNCH both need room. */
+.wm-mobile .wm-fleet.wm-silo { max-height: 64vh; overflow: hidden; }
+
+/* ===================================================================
+   THE PHONE SILO (WmSilo mobile branch). A pocket console: header and
+   tabs on top, one scrolling body, the salvo bar fixed at the foot.
+   Audiowide for names and actions, Chivo Mono for numbers; fire is
+   coral, defence teal, hostile pink, as on the desktop drawer.
+   =================================================================== */
+.wm-mobile .wm-fleet.wm-ms { gap: 0; padding: 10px 12px 0; max-height: 70vh; overflow: hidden; }
+.wm-ms .wm-btabs { margin-bottom: 6px; }
+.wm-ms-head { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; padding-bottom: 8px; }
+.wm-ms-title { flex: 1; min-width: 0; font-family: 'Audiowide', sans-serif; font-size: 13px; letter-spacing: 0.08em; color: #e6edf3; white-space: nowrap; }
+.wm-ms-title em { font-style: normal; margin-left: 8px; font-family: 'Chivo Mono', monospace; font-size: 11px; letter-spacing: 0; color: #8fa6ba; }
+.wm-ms-mag { display: flex; align-items: center; gap: 6px; font-family: 'Chivo Mono', monospace; }
+.wm-ms-mag b { font-size: 17px; font-weight: 500; color: #fff; }
+.wm-ms-mag > span:last-child { font-size: 12px; color: #8fa6ba; }
+.wm-ms-pips { display: flex; gap: 2px; }
+.wm-ms-pips i { width: 4px; height: 14px; border-radius: 1px; box-sizing: border-box; border: 1px solid #2a3d50; }
+.wm-ms-pips i.is-full { background: #ff8a5c; border-color: #ff8a5c; }
+.wm-ms-pips i.is-queued { border: 1px dashed #ff8a5c; }
+
+.wm-ms-tabs { display: flex; flex: 0 0 auto; border: 1px solid #2a3d50; border-radius: 6px; overflow: hidden; }
+.wm-fleet.wm-ms .wm-ms-tab {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 44px; border: 0; background: #0d141d; color: #8fa6ba; cursor: pointer;
+  font-family: 'Audiowide', sans-serif; font-size: 11.5px; letter-spacing: 0.12em;
+}
+.wm-ms-tab + .wm-ms-tab { border-left: 1px solid #2a3d50; }
+.wm-fleet.wm-ms .wm-ms-tab.is-on { background: rgba(78, 205, 196, 0.14); color: #4ecdc4; box-shadow: inset 0 -2px 0 #4ecdc4; }
+.wm-ms-badge { min-width: 18px; padding: 1px 5px; border-radius: 9px; background: #ff5e5e; color: #fff; font-family: 'Chivo Mono', monospace; font-size: 11px; font-weight: 500; letter-spacing: 0; }
+.wm-ms-badge.is-teal { background: rgba(78, 205, 196, 0.25); color: #4ecdc4; }
+
+.wm-ms-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 12px 0; overscroll-behavior: contain; }
+.wm-ms-k { font-family: 'Chivo Mono', monospace; font-size: 11px; letter-spacing: 0.14em; color: #8fa6ba; }
+.wm-ms-h { font-family: 'Audiowide', sans-serif; font-size: 11px; letter-spacing: 0.18em; color: #8fa6ba; margin-top: 4px; }
+.wm-ms-note { font-family: 'Chivo Mono', monospace; font-size: 11.5px; line-height: 1.5; color: #8fa6ba; }
+
+/* DEFEND */
+.wm-fleet.wm-ms .wm-ms-auto {
+  display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 12px; text-align: left;
+  border: 1px solid #2a3d50; border-radius: 6px; background: #0d141d; color: #e6edf3; cursor: pointer;
+}
+.wm-ms-auto b { flex: 1; font-family: 'Audiowide', sans-serif; font-size: 12px; font-weight: 400; letter-spacing: 0.06em; }
+.wm-ms-auto.is-off b { color: #8fa6ba; }
+.wm-ms-auto.is-missiles b, .wm-ms-auto.is-fleets b { color: #6ee7b7; }
+.wm-ms-chev { font-size: 20px; color: #6b8195; }
+.wm-ms-empty { display: flex; flex-direction: column; gap: 6px; padding: 20px 4px; text-align: center; font-family: 'Chivo Mono', monospace; font-size: 12px; line-height: 1.5; color: #8fa6ba; }
+.wm-ms-empty-t { font-family: 'Audiowide', sans-serif; font-size: 15px; letter-spacing: 0.06em; color: #6ee7b7; }
+.wm-ms-raid {
+  display: flex; flex-direction: column; gap: 6px; padding: 12px; flex: 0 0 auto;
+  border: 1px solid rgba(255, 94, 94, 0.5); border-left-width: 4px; border-radius: 6px; background: rgba(255, 94, 94, 0.07);
+}
+.wm-ms-raid.is-out { border-color: #2a3d50; background: #0d141d; }
+.wm-ms-raid-top { display: flex; align-items: baseline; gap: 10px; }
+.wm-ms-raid-name { flex: 1; min-width: 0; font-family: 'Audiowide', sans-serif; font-size: 14px; color: #e6edf3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wm-ms-raid-n { font-family: 'Chivo Mono', monospace; font-size: 12px; font-weight: 500; color: #ff9d9d; }
+.wm-ms-raid-times { display: flex; gap: 18px; font-family: 'Chivo Mono', monospace; font-size: 14px; color: #fff; }
+.wm-ms-raid-times em { font-style: normal; margin-right: 6px; font-size: 10.5px; letter-spacing: 0.14em; color: #8fa6ba; }
+.wm-ms-raid-sent { font-family: 'Chivo Mono', monospace; font-size: 12px; color: #4ecdc4; }
+.wm-ms-raid-kill { font-family: 'Chivo Mono', monospace; font-size: 12px; color: #ffd2bf; }
+.wm-ms-raid-own { font-family: 'Chivo Mono', monospace; font-size: 12px; color: #ffb84d; }
+.wm-fleet.wm-ms .wm-ms-fire {
+  min-height: 48px; padding: 0 16px; border-radius: 6px; cursor: pointer;
+  border: 1px solid #ff8a5c; background: rgba(255, 138, 92, 0.2); color: #ffd2bf;
+  font-family: 'Audiowide', sans-serif; font-size: 13px; letter-spacing: 0.06em;
+}
+.wm-fleet.wm-ms .wm-ms-fire.is-wide { flex: 1; }
+.wm-fleet.wm-ms .wm-ms-fire.is-confirm { background: rgba(255, 94, 94, 0.32); border-color: #ff5e5e; color: #fff; }
+.wm-fleet.wm-ms .wm-ms-fire:disabled { opacity: 0.45; cursor: default; }
+
+/* STRIKE */
+.wm-ms-seg { display: flex; border: 1px solid #2a3d50; border-radius: 6px; overflow: hidden; flex: 0 0 auto; }
+.wm-fleet.wm-ms .wm-ms-seg button {
+  flex: 1; min-height: 44px; border: 0; background: #0d141d; color: #8fa6ba; cursor: pointer;
+  font-family: 'Audiowide', sans-serif; font-size: 11.5px; letter-spacing: 0.1em;
+}
+.wm-fleet.wm-ms .wm-ms-seg button + button { border-left: 1px solid #2a3d50; }
+.wm-fleet.wm-ms .wm-ms-seg button.is-on { background: rgba(255, 138, 92, 0.14); color: #ffd2bf; }
+.wm-ms-seg b { margin-left: 6px; font-family: 'Chivo Mono', monospace; font-weight: 400; letter-spacing: 0; }
+.wm-ms-seg em { display: block; font-style: normal; font-family: 'Chivo Mono', monospace; font-size: 10px; letter-spacing: 0; color: #4ecdc4; }
+.wm-ms-search {
+  box-sizing: border-box; width: 100%; min-height: 44px; padding: 0 12px; flex: 0 0 auto;
+  border: 1px solid #2a3d50; border-radius: 6px; background: #0a1019; color: #e6edf3;
+  font-family: 'Chivo Mono', monospace; font-size: 16px;
+}
+.wm-ms-search::placeholder { color: #6b8195; }
+.wm-ms-search:focus { outline: none; border-color: #4ecdc4; }
+.wm-ms-list { display: flex; flex-direction: column; gap: 4px; flex: 0 0 auto; }
+.wm-fleet.wm-ms .wm-ms-row {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center;
+  min-height: 48px; padding: 0 12px; text-align: left; cursor: pointer;
+  border: 1px solid #1c2836; border-radius: 6px; background: #0d141d; color: #e6edf3;
+}
+.wm-fleet.wm-ms .wm-ms-row.is-on { border-color: #ff8a5c; background: rgba(255, 138, 92, 0.1); box-shadow: inset 3px 0 0 #ff8a5c; }
+.wm-fleet.wm-ms .wm-ms-row.is-out { opacity: 0.55; }
+.wm-ms-row-name { font-family: 'Audiowide', sans-serif; font-size: 13px; white-space: nowrap; }
+.wm-ms-row-meta { font-family: 'Chivo Mono', monospace; font-size: 11.5px; color: #b8c8d6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wm-ms-row-meta b { font-weight: 400; }
+.wm-ms-row-meta .is-hostile { color: #ff9d9d; }
+.wm-ms-row-meta .is-mine { color: #6ee7b7; }
+.wm-ms-row-t { font-family: 'Chivo Mono', monospace; font-size: 12px; color: #fff; white-space: nowrap; }
+
+/* SILO */
+.wm-ms-modes { display: flex; flex-direction: column; gap: 6px; flex: 0 0 auto; }
+.wm-fleet.wm-ms .wm-ms-mode {
+  display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 2px 10px; align-items: center; text-align: left;
+  min-height: 56px; padding: 10px 12px; cursor: pointer;
+  border: 1px solid #2a3d50; border-radius: 6px; background: #0d141d; color: #e6edf3;
+}
+.wm-ms-mode i { grid-row: 1 / span 2; width: 14px; height: 14px; border-radius: 50%; border: 2px solid #4a6178; box-sizing: border-box; }
+.wm-ms-mode b { font-family: 'Audiowide', sans-serif; font-size: 12.5px; font-weight: 400; letter-spacing: 0.06em; }
+.wm-ms-mode span { font-family: 'Chivo Mono', monospace; font-size: 11px; line-height: 1.45; color: #8fa6ba; }
+.wm-fleet.wm-ms .wm-ms-mode.is-on { border-color: #4ecdc4; background: rgba(78, 205, 196, 0.1); }
+.wm-ms-mode.is-on i { border-color: #4ecdc4; background: radial-gradient(circle, #4ecdc4 45%, transparent 50%); }
+.wm-ms-setrow { display: flex; align-items: center; gap: 10px; min-height: 48px; flex: 0 0 auto; }
+.wm-ms-setrow .wm-ms-k { flex: 1; }
+.wm-fleet.wm-ms .wm-ms-step {
+  width: 44px; height: 44px; border-radius: 6px; cursor: pointer;
+  border: 1px solid #2a3d50; background: #0d141d; color: #e6edf3; font-size: 18px;
+}
+.wm-fleet.wm-ms .wm-ms-step:disabled { opacity: 0.35; cursor: default; }
+.wm-ms-num { min-width: 26px; text-align: center; font-family: 'Chivo Mono', monospace; font-size: 18px; font-weight: 500; color: #fff; }
+.wm-ms-build {
+  display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 0 6px 0 12px; flex: 0 0 auto;
+  border: 1px solid #2a3d50; border-radius: 6px; background: #0d141d;
+}
+.wm-ms-build-name { font-family: 'Audiowide', sans-serif; font-size: 13px; color: #e6edf3; }
+.wm-ms-build-cost { flex: 1; font-family: 'Chivo Mono', monospace; font-size: 12px; color: #b8c8d6; }
+.wm-ms-build-cost b { font-weight: 400; color: #ffd166; }
+.wm-fleet.wm-ms .wm-ms-buildbtn {
+  min-height: 44px; padding: 0 16px; border-radius: 6px; cursor: pointer;
+  border: 1px solid #4ecdc4; background: rgba(78, 205, 196, 0.14); color: #4ecdc4;
+  font-family: 'Audiowide', sans-serif; font-size: 12px; letter-spacing: 0.06em;
+}
+.wm-fleet.wm-ms .wm-ms-buildbtn:disabled { opacity: 0.45; cursor: default; }
+.wm-ms-qrow { position: relative; display: flex; align-items: center; gap: 10px; min-height: 44px; padding-bottom: 4px; flex: 0 0 auto; font-family: 'Chivo Mono', monospace; font-size: 12.5px; color: #d8e4ee; }
+.wm-ms-qn { color: #8fa6ba; }
+.wm-ms-qname { flex: 1; }
+.wm-ms-qt { color: #4ecdc4; }
+.wm-fleet.wm-ms .wm-ms-x { width: 44px; height: 40px; border: 0; background: none; color: #8fa6ba; font-size: 14px; cursor: pointer; }
+.wm-ms-qbar { position: absolute; left: 0; bottom: 0; height: 3px; border-radius: 2px; background: #4ecdc4; }
+
+/* The salvo bar: outside the scroll, always under the thumb. */
+.wm-ms-foot {
+  flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px;
+  margin: 0 -12px; padding: 10px 12px; border-top: 1px solid #2a3d50; background: #0a0f16;
+}
+.wm-ms-foot-row { display: flex; align-items: center; gap: 10px; }
+.wm-ms-salvo { display: flex; align-items: center; gap: 8px; }
+.wm-ms-of { font-family: 'Chivo Mono', monospace; font-size: 11px; color: #8fa6ba; white-space: nowrap; }
+.wm-ms-preview { font-family: 'Chivo Mono', monospace; font-size: 11.5px; line-height: 1.45; color: #ffd2bf; }
+.wm-ms-preview em { display: block; font-style: normal; color: #ffb38f; }
+.wm-ms-preview.is-warn { color: #ffb38f; }
+.wm-ms button:focus-visible, .wm-ms input:focus-visible { outline: 2px solid #4ecdc4; outline-offset: 2px; }

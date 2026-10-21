@@ -83,6 +83,12 @@ const ALLOWED_CLASSES = new Set([
   'fig-folded-lane',
   'fig-rock-zoom',
   'fig-rock-bands',
+  // The Missile Silo + phone world menu post (October 2026): pictures of
+  // the game, files in public/devlog and public/clips.
+  'fig-silo-intercept',
+  'fig-silo-phone',
+  'fig-wm-desktop',
+  'fig-wm-phone',
 ]);
 
 export function sanitizeHtml(input) {

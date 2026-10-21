@@ -148,6 +148,18 @@ export const BUILDING_DEFS: Record<BuildingKind, BuildingDef> = {
       + 'Structure never comes back — this does.'); },
     get effectShort() { return tk('data.building.shields.short', '+120 shield pool / level'); },
   },
+  // THE MISSILE SILO (Lorne, 2026-10-19). Mirrors worker/actions.js.
+  // Its magazine and missile queue live on the settlement row, not here.
+  missile_silo: {
+    get displayName() { return tk('data.building.missile_silo.name', 'Missile Silo'); },
+    hostType: 'city',
+    baseCost: { fuel: 0, ore: 120, credits: 80 },
+    costScaling: 1.6,
+    baseBuildTicks: 30,
+    buildTimeScaling: 1.3,
+    get description() { return tk('data.building.missile_silo.desc', 'Builds and stores single-use missiles, 5 per level. A missile deals 10 damage to every ship in the orbit it lands in, friend or foe, and missiles stack. Fire them at a world in this star system, or let the silo shoot down incoming missiles.'); },
+    get effectShort() { return tk('data.building.missile_silo.short', '+5 missile capacity / level'); },
+  },
   forge: {
     get displayName() { return tk('data.building.forge.name', 'Forge'); },
     hostType: 'city',

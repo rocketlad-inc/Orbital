@@ -9,7 +9,10 @@
 export const REQUIREMENTS = {
   // Weapons
   'part.kinetic':          { track: 'weapons', level: 1, label: 'Kinetic Mount' },
-  'part.detonator':        { track: 'weapons', level: 5, label: 'Fusion Detonator' },
+  // The silo has Weapons 5 to itself, ahead of the detonator (Lorne,
+  // 2026-10-20); the detonator and both weapons megastructures moved up one.
+  'building.missile_silo': { track: 'weapons', level: 5, label: 'Missile Silo' },
+  'part.detonator':        { track: 'weapons', level: 6, label: 'Fusion Detonator' },
   'part.energy':           { track: 'weapons', level: 2, label: 'Energy Mount' },
   'building.weapons':      { track: 'weapons', level: 3, label: 'Station Weapons' },
   'veteranYards':          { track: 'weapons', level: 4, label: 'Veteran Yards' },
@@ -24,7 +27,7 @@ export const REQUIREMENTS = {
   'part.repair':           { track: 'armor', level: 4, label: 'Repair Bay' },
   // FLAK on the DEFENCE track, not Weapons. It is point defence: it
   // fires no killing shot, it makes a swarm survivable. The free
-  // Weapons levels are 7 and 8, which would put the answer to corvette
+  // Weapons levels were 7 and 8 (now 9 and 10), which would put the answer to corvette
   // spam long after the phase of the game where corvette spam happens.
   'part.flak':             { track: 'armor', level: 6, label: 'Flak Battery' },
   // MISSING ENTIRELY until a QA pass drove the API as a zero-research
@@ -86,8 +89,8 @@ export const REQUIREMENTS = {
   'mega.warpGate':         { track: 'propulsion', level: 6, label: 'Warp Gate' },
   'mega.gravitySink':      { track: 'propulsion', level: 7, label: 'Gravity Sink' },
   'mega.mobileFoundry':    { track: 'propulsion', level: 8, label: 'Mobile Foundry' },
-  'mega.weaponsStation':   { track: 'weapons', level: 6, label: 'Weapons Station' },
-  'mega.megaDestroyer':    { track: 'weapons', level: 7, label: 'Mega Destroyer' },
+  'mega.weaponsStation':   { track: 'weapons', level: 7, label: 'Weapons Station' },
+  'mega.megaDestroyer':    { track: 'weapons', level: 8, label: 'Mega Destroyer' },
   'mega.nullField':        { track: 'armor', level: 7, label: 'Null Field' },
   'mega.deepArray':        { track: 'armor', level: 8, label: 'Deep Space Array' },
   // Sensors — intel ladder
@@ -124,6 +127,7 @@ export const BUILDING_FEATURE = {
   telescope: 'building.telescope',
   armor: 'building.armor',
   trajectory_thrusters: 'building.thrusters',
+  missile_silo: 'building.missile_silo',
 };
 
 /** Ship part id -> feature id. */

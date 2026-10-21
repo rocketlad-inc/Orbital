@@ -2796,6 +2796,16 @@ const BUILDING_DEFS = {
     baseTicks: 18,
     timeScaling: 1.25,
   },
+  // THE MISSILE SILO (Lorne, 2026-10-19; worker/missiles.js). A city
+  // building: it stores 5 missiles per level and builds them in its own
+  // queue (never this one), so a silo never blocks a Forge or a Mint.
+  missile_silo: {
+    hostType: 'city',
+    base: { fuel: 0, metal: 120, gold: 80 },
+    costScaling: 1.6,
+    baseTicks: 30,
+    timeScaling: 1.3,
+  },
   trajectory_thrusters: {
     hostType: 'station',
     hostBodyType: 'asteroid',

@@ -67,7 +67,15 @@ describe('the desktop yard', () => {
   });
 
   it('the phone keeps its own layout', () => {
-    expect(fleet).toMatch(/\{mobile \? \(\s*<div className="wm-fleet-grid">/);
+    expect(fleet).toMatch(/\{mobile \? \([\s\S]{0,300}<div className="wm-fleet-grid wmp-hulls"/);
     expect(fleet).toMatch(/building\.map\(o => qRow\(o, true\)\)/);
+  });
+
+  it('a phone hull row builds from its own BUILD button, its design one tap away', () => {
+    const phone = fleet.slice(fleet.indexOf('className="wm-fleet-grid wmp-hulls"'), fleet.indexOf('className="wm-hulls"'));
+    expect(phone).toMatch(/className="wmp-hull-go"[\s\S]{0,300}onClick=\{\(\) => buildShip\(cls\)\}/);
+    expect(phone).toMatch(/className="wmp-hull-main" onClick=\{\(\) => setPickFor\(cls\)\}/);
+    // the locked hulls fold under the ones you can build
+    expect(phone).toMatch(/filter\(cls => !hullInfo\(cls\)\.lock\)[\s\S]*filter\(cls => !!hullInfo\(cls\)\.lock\)/);
   });
 });

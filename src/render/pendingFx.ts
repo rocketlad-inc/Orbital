@@ -39,6 +39,10 @@ const KIND_MAP: Record<string, PendingFxKind> = {
   builds_destroyed: 'destruction',
   ship_detonated: 'detonation',
   asteroid_impact: 'impact',
+  // A missile salvo landing (missiles.js): the same blast at the body.
+  missile_strike: 'impact',
+  // A salvo shot down in flight (in_flight rows carry where): a burst.
+  missile_intercepted: 'damage',
   // A discovery blooms at the body the moment you look at it — the whole
   // reason this queue exists is that these were going unnoticed.
   secret_discovered: 'discovery',
@@ -79,6 +83,9 @@ export interface PendingFx {
   /** Anchor, already stripped to client-side id space. */
   bodyId?: string;
   shipId?: string;
+  /** A point in space (world units): a missile burst in flight, where
+   *  it met its target. Used when the hull it names is not drawn. */
+  at?: { x: number; y: number };
   /** When this entered the queue (wall clock). */
   queuedMs: number;
 }
@@ -137,6 +144,8 @@ export interface ChronicleFxSource {
   shipId?: string;
   /** payload.cause, where the row has one ('kaiju', 'mega_destroyer'). */
   cause?: string;
+  /** payload x/y: where an in-flight missile burst. */
+  at?: { x: number; y: number };
 }
 
 /**
@@ -157,10 +166,10 @@ export function ingestChronicleFx(gameId: string, entries: ChronicleFxSource[]):
     if (e.kind === 'ship_destroyed' && e.shipId && /(^|:)leviathan$/.test(e.shipId)) continue;
     const kind = (e.cause === 'kaiju' ? KAIJU_KIND_MAP[e.kind] : undefined) ?? KIND_MAP[e.kind];
     if (!kind) continue;
-    if (!e.bodyId && !e.shipId) continue; // nowhere to draw it
+    if (!e.bodyId && !e.shipId && !e.at) continue; // nowhere to draw it
     if (played.has(e.id)) continue;
     if (pending.some(p => p.id === e.id)) continue;
-    pending.push({ id: e.id, kind, bodyId: e.bodyId, shipId: e.shipId, queuedMs: nowMs });
+    pending.push({ id: e.id, kind, bodyId: e.bodyId, shipId: e.shipId, at: e.at, queuedMs: nowMs });
   }
   // Age out the unwatched, then cap to the most recent.
   for (let i = pending.length - 1; i >= 0; i--) {

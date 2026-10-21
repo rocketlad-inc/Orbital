@@ -45,7 +45,7 @@
 // landing surface.
 // ============================================================
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 // The rock figure calls the MAP's own draw routine, so the picture in
 // the post cannot drift from the thing it describes.
 import { drawMeteoroidBody } from '../render/mapRenderer';
@@ -974,7 +974,95 @@ const RockBands: React.FC = () => (
   </Figure>
 );
 
+// ------------------------------------------------------------------
+// The Missile Silo + phone world menu post (October 2026)
+// ------------------------------------------------------------------
+// PICTURES, NOT DRAWINGS. These four show the game itself: screenshots
+// taken on staging and a clip filmed in the Studio (docs/STUDIO.md).
+// The files live in public/devlog and public/clips and ship with the
+// build; a post body cannot carry an <img> (the sanitiser strips every
+// URL), so they ride in on placeholders like every other figure here.
+
+/** A looping clip in the landing page's manner: the still poster paints
+ *  first (and is all a reader who asked for reduced motion sees); the
+ *  animated loop swaps in once it scrolls near, so a 5 MB file never
+ *  competes with the page. */
+const LoopClip: React.FC<{ name: string; w: number; h: number; alt: string }> = ({ name, w, h, alt }) => {
+  const ref = useRef<HTMLImageElement>(null);
+  const [live, setLive] = useState(false);
+  useEffect(() => {
+    let reduce = false;
+    try { reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { /* old browser */ }
+    const el = ref.current;
+    if (reduce || !el) return;
+    if (typeof IntersectionObserver === 'undefined') { setLive(true); return; }
+    const io = new IntersectionObserver(es => {
+      if (es.some(e => e.isIntersecting)) { setLive(true); io.disconnect(); }
+    }, { rootMargin: '200px' });
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+  return (
+    <img ref={ref} className="dfg-shot" src={live ? `/clips/${name}.webp` : `/clips/${name}-poster.webp`}
+      width={w} height={h} alt={alt} loading="lazy" decoding="async" />
+  );
+};
+
+const SiloIntercept: React.FC = () => (
+  <Figure
+    title="Earth's silo meets three raids in flight"
+    sub="Filmed in the game: three waves of four corvettes leave Mars a tick apart; Earth's silo is on SHIPS + MISSILES"
+    note={<>Each salvo leaves the tick its raid does and meets it seven ticks later, just off Mars, long before it nears Earth. Four missiles is 40 damage to every hull in the blast: the whole wave.</>}
+  >
+    <LoopClip name="missile-silo-intercept" w={960} h={540}
+      alt="Three teal missile salvos fly from Earth down the system and burst on three red raid fleets just after they leave Mars" />
+  </Figure>
+);
+
+const SiloPhone: React.FC = () => (
+  <Figure
+    title="The silo on a phone"
+    sub="DEFEND, STRIKE and SILO: one job at a time, the salvo and LAUNCH always at your thumb"
+  >
+    <div className="dfg-phone-one">
+      <img className="dfg-phone" src="/devlog/world-menu-phone-silo.webp" width={480} height={1039} loading="lazy" decoding="async"
+        alt="Mars's missile silo on a phone: the magazine, the DEFEND, STRIKE and SILO tabs, auto-defence, and the salvo control" />
+    </div>
+  </Figure>
+);
+
+const WorldMenuDesktop: React.FC = () => (
+  <Figure
+    title="The world menu on a desktop"
+    sub="Earth: its city's buildings standing on the horizon, its station and every module beside it"
+  >
+    <img className="dfg-shot" src="/devlog/world-menu-desktop.webp" width={1600} height={1000} loading="lazy" decoding="async"
+      alt="Earth's world menu on a desktop: tags over each building on the horizon, the station drawn at size with its modules listed beneath" />
+  </Figure>
+);
+
+const WorldMenuPhone: React.FC = () => (
+  <Figure
+    title="The world menu on a phone"
+    sub="Mars at a peek, Earth's city, Earth's shipyard"
+    note={<>The world fills the screen and one sheet does the work. Tabs ride along on every sheet, so the shipyard is one tap from the city.</>}
+  >
+    <div className="dfg-phones">
+      <img className="dfg-phone" src="/devlog/world-menu-phone-peek.webp" width={480} height={1039} loading="lazy" decoding="async"
+        alt="Mars on a phone: pins over each building on the horizon and a sheet with the city's output and cards for its sections" />
+      <img className="dfg-phone" src="/devlog/world-menu-phone-city.webp" width={480} height={1039} loading="lazy" decoding="async"
+        alt="Earth's CITY tab on a phone: one row per building with its level and its next upgrade" />
+      <img className="dfg-phone" src="/devlog/world-menu-phone-yard.webp" width={480} height={1039} loading="lazy" decoding="async"
+        alt="Earth's SHIPYARD tab on a phone: a row per hull with its cost, build time and its own BUILD button" />
+    </div>
+  </Figure>
+);
+
 export const DEVLOG_FIGURES: Record<string, React.FC> = {
+  'fig-silo-intercept': SiloIntercept,
+  'fig-silo-phone': SiloPhone,
+  'fig-wm-desktop': WorldMenuDesktop,
+  'fig-wm-phone': WorldMenuPhone,
   'fig-hit-odds': HitOdds,
   'fig-crossing-vs-matched': CrossingVsMatched,
   'fig-aim-exposure': AimExposure,

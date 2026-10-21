@@ -24,6 +24,8 @@
 
 import { atWarSql } from './wars.js';
 import { tr, trn } from './i18n.js';
+import { loadFlights } from './flightState.js';
+import { planIntercept } from './missiles.js';
 
 /** Warn about a vote this many ticks before it closes. */
 const VOTE_WARN_TICKS = 2;
@@ -62,6 +64,7 @@ export async function runTickAlerts(env, gameId, tick) {
   await voteClosingAlerts(env, notify, gameId, gameName, tick);
   await combatAlerts(env, notify, gameId, gameName, tick);
   await inboundAlerts(env, notify, gameId, gameName, tick);
+  await missileInboundAlerts(env, notify, gameId, gameName, tick);
   // The tick report is NOT sent from here: this runs mid-tick, before
   // combat, the freighter runs and the yield pass, so a report sent now
   // counted none of that tick's dead and none of its income. resolveTick
@@ -187,6 +190,43 @@ async function combatAlerts(env, notify, gameId, gameName, tick) {
  */
 const INBOUND_WINDOW_TICKS = 3;
 
+/**
+ * MISSILES WILL MEET YOUR SHIPS (Lorne, 2026-10-20: the raider is told).
+ * One per salvo, off the 'missile_inbound' row a launch at ships in
+ * flight writes (missiles.js), sent to the hulls' owner. Ships in flight
+ * take no orders, so this is a heads-up, not a call to act.
+ */
+async function missileInboundAlerts(env, notify, gameId, gameName, tick) {
+  const rows = (await env.DB
+    .prepare(
+      `SELECT c.id, c.payload, f.user_id
+         FROM chronicle_entries c
+         JOIN game_factions f ON f.game_id = c.game_id
+                             AND f.id = json_extract(c.visibility, '$[0]')
+                             AND f.status = 'active' AND f.user_id IS NOT NULL
+        WHERE c.game_id = ? AND c.kind = 'missile_inbound' AND c.tick_number >= ?`,
+    )
+    .bind(gameId, tick - INBOUND_WINDOW_TICKS).all().catch(() => ({ results: [] }))).results ?? [];
+  for (const r of rows) {
+    let p = {};
+    try { p = JSON.parse(r.payload || '{}'); } catch { p = {}; }
+    await notify.sendDm(env, {
+      userId: r.user_id,
+      gameId,
+      category: 'inbound',
+      dedupeKey: `missile_inbound:${r.id}`,
+      url: '/',
+      embed: (L) => ({
+        title: tr(L, 'alert.missileInbound.title'),
+        description: trn(L, 'alert.missileInbound.body', Number(p.target_hulls ?? 1), {
+          k: Number(p.target_hulls ?? 1), n: Number(p.count ?? 0), launcher: p.launcher_name ?? '?', body: p.body_name ?? '?', tick: p.meet_tick ?? '?',
+        }),
+        footer: { text: gameName },
+      }),
+    });
+  }
+}
+
 async function inboundAlerts(env, notify, gameId, gameName, tick) {
   // Same shape as the situation report's inbound section, narrowed to
   // waves that have only just departed. Only factions you are AT WAR with
@@ -196,7 +236,7 @@ async function inboundAlerts(env, notify, gameId, gameName, tick) {
     .prepare(
       `SELECT b.id AS body_id, b.name AS body, sh.owner_faction_id AS attacker_id,
               ef.name AS attacker, tgt.user_id AS defender_user, tgt.id AS defender_id,
-              n2.committed_at_tick AS at_tick, COUNT(*) AS n
+              n2.committed_at_tick AS at_tick, COUNT(*) AS n, MIN(sh.id) AS lead_id
          FROM game_ship_nodes n2
          JOIN game_ships sh ON sh.id = n2.ship_id
          JOIN game_factions ef ON ef.id = sh.owner_faction_id
@@ -219,7 +259,23 @@ async function inboundAlerts(env, notify, gameId, gameName, tick) {
     )
     .bind(gameId, tick - INBOUND_WINDOW_TICKS).all()).results ?? [];
 
+  let F = null;
   for (const w of waves) {
+    // ONE-TAP INTERCEPT (Lorne, 2026-10-20): your city there has missiles
+    // ready and a salvo can meet the wave before it lands, so the alert
+    // carries the launch. The salvo is the silo's own auto salvo size.
+    const silo = await env.DB.prepare(
+      `SELECT id, missile_stock, missile_salvo FROM game_settlements
+        WHERE game_id = ? AND body_id = ? AND owner_faction_id = ? AND type = 'city'
+          AND destroyed_at_tick IS NULL AND missile_stock > 0
+        ORDER BY missile_stock DESC LIMIT 1`,
+    ).bind(gameId, w.body_id, w.defender_id).first().catch(() => null);
+    let icp = null;
+    if (silo && w.lead_id) {
+      F ??= await loadFlights(env.DB, gameId);
+      icp = planIntercept(F, w.body_id, tick, w.lead_id);
+    }
+    const salvo = silo ? Math.max(1, Math.min(Number(silo.missile_salvo ?? 2), Number(silo.missile_stock))) : 0;
     await notify.sendDm(env, {
       userId: w.defender_user,
       gameId,
@@ -228,9 +284,16 @@ async function inboundAlerts(env, notify, gameId, gameName, tick) {
       url: '/',
       // The world they are coming for, in the Porthole.
       watch: { screen: 'porthole', ref: w.body_id },
+      ...(icp ? {
+        actions: (L) => [{
+          id: 'intercept', label: tr(L, 'alert.inbound.launch', { n: salvo }),
+          verb: { verb: 'intercept', game_id: gameId, settlement_id: silo.id, ship_id: w.lead_id, count: salvo },
+        }],
+      } : {}),
       embed: (L) => ({
         title: tr(L, 'alert.inbound.title', { body: w.body }),
-        description: trn(L, 'alert.inbound.body', w.n, { attacker: w.attacker, body: w.body }),
+        description: trn(L, 'alert.inbound.body', w.n, { attacker: w.attacker, body: w.body })
+          + (icp ? `\n${tr(L, 'alert.inbound.silo', { body: w.body, t: icp.detonateTick - tick })}` : ''),
         footer: { text: gameName },
       }),
     });

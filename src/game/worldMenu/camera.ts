@@ -24,7 +24,10 @@ import { Body } from '../../types';
 
 /** Focused body's screen radius at z=1, as a fraction of viewport height.
  *  Spec A5 bounds the acceptable band to [0.42, 0.55]·H. */
-export const Z1_FRAC = 0.42; // "a bit smaller" — low edge of the A5 band
+// 0.50 since the diegetic pass (2026-10-19): the world IS the menu, so it
+// gets the room — the horizon sits near mid-screen instead of in the
+// bottom third under the yard box.
+export const Z1_FRAC = 0.5;
 
 /** Where the body's centre sits on screen at z=1 (fractions of W/H).
  *  y > 1 parks the centre below the frame → only the upper limb shows. */
@@ -53,6 +56,28 @@ export const FOCUS_BASE_SCALE = 2;
 export const MAP_MAX_SCALE = 50;
 
 export const clamp01 = (v: number): number => Math.max(0, Math.min(1, v));
+
+/** Phones lift the planet by this fraction of the viewport height. 0 since
+ *  the diegetic pass: at Z1 0.5 the horizon already lands about halfway
+ *  down, which leaves the sky above it the room the header, the station's
+ *  module tags and two staggered rows of surface tags need (measured at
+ *  390x844: a lift of 0.07 put the surface tags on the module tags). */
+export const MOBILE_LIFT_FRAC = 0;
+
+/** How far apart the surface structures sit on the framed limb, in
+ *  degrees per unit of arc fraction (PART_FRACS run -0.9..0.9).
+ *
+ *  46 on a desktop, where the whole upper limb is on screen. A phone frames
+ *  a planet wider than the screen, so at 46 the outer buildings (Forge at
+ *  -0.62, the silo at 0.62) were drawn off its edges; the spread narrows
+ *  until fraction 0.9 lands just inside the frame. ONE function, read by
+ *  the canvas close-up AND the DOM tags, so a tag's stem always ends on
+ *  its building. Pure in the viewport's aspect (dpr cancels). */
+export function arcSpreadDeg(viewportW: number, viewportH: number): number {
+  const halfOverR = (viewportW / 2) / Math.max(1, Z1_FRAC * viewportH);
+  const fit = Math.asin(Math.min(1, 0.92 * halfOverR)) * 180 / Math.PI / 0.9;
+  return Math.min(46, fit);
+}
 
 /** Camera scale at which `body` reaches menu framing for viewport height H. */
 export function menuScaleFor(body: Pick<Body, 'radius'>, viewportH: number): number {

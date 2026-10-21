@@ -2178,6 +2178,40 @@ const ASTEROID_IMPACT = [
   c => `Orbital tracking stations logged the rock's path straight into ${c.bodyLoc}${c.attacker ? `, launched by ${b(c.attacker)}` : ', launched by persons unknown'}.`,
 ];
 
+// MISSILES (missiles.js). c.who: the launching empire(s); c.n: missiles
+// that landed; c.k: hulls destroyed; c.dmg: damage to each hull in orbit.
+const MISSILE_STRIKE = [
+  c => `${b(c.who)} missiles came down on ${c.bodyLoc}: ${c.n} warheads, ${c.dmg} damage to each hull in orbit, ${c.k} destroyed.`,
+  c => `A salvo of ${c.n} from ${b(c.who)} struck ${c.bodyLoc} today. ${c.k ? `${c.k} hulls did not survive it.` : 'The ships there took the hits and held.'}`,
+  c => `${c.bodyLoc} was hit by ${c.n} missiles fired by ${b(c.who)}${c.k ? `, and ${c.k} ships were lost in the blast` : ', with no hull lost'}.`,
+  c => `Missile fire over ${c.bodyLoc}: ${b(c.who)} spent ${c.n} warheads there${c.k ? ` and claimed ${c.k} hulls` : ''}.`,
+];
+const MISSILE_STRIKE_HEADLINE = [
+  c => `MISSILES HIT ${c.body.toUpperCase()}`,
+  c => `${c.who.toUpperCase()} FIRES ON ${c.body.toUpperCase()}`,
+  c => `SALVO STRIKES ${c.body.toUpperCase()}${c.k ? `: ${c.k} LOST` : ''}`,
+];
+// The same, met in open space (missiles.js detonateInFlight). c.owner:
+// whose ships were caught; c.bodyLoc: where they were going.
+const MISSILE_STRIKE_FLIGHT = [
+  c => `${b(c.who)} missiles caught ${c.owner} ships on their way to ${c.bodyLoc}: ${c.dmg} damage to every hull nearby, ${c.k} destroyed.`,
+  c => `A salvo from ${b(c.who)} met a ${c.owner} formation in flight to ${c.bodyLoc}. ${c.k ? `${c.k} hulls never arrived.` : 'Every hull flew on, scorched.'}`,
+  c => `${c.owner} ships bound for ${c.bodyLoc} flew into ${c.n} missiles fired by ${b(c.who)}${c.k ? `; ${c.k} were lost` : ''}.`,
+];
+const MISSILE_STRIKE_FLIGHT_HEADLINE = [
+  c => `MISSILES INTERCEPT ${c.owner.toUpperCase()} FLEET`,
+  c => `SALVO MEETS SHIPS BOUND FOR ${c.body.toUpperCase()}${c.k ? `: ${c.k} LOST` : ''}`,
+];
+const MISSILE_INTERCEPT = [
+  c => `${b(c.who)} shot down ${c.n} incoming missiles over ${c.bodyLoc}${c.through ? `; ${c.through} got through` : ' before they could land'}.`,
+  c => `Silos on ${c.bodyLoc} answered a missile attack today: ${c.n} warheads destroyed in the air by ${b(c.who)}.`,
+  c => `${c.n} missiles aimed at ${c.bodyLoc} never arrived: ${b(c.who)} intercepted them${c.through ? `, though ${c.through} slipped past` : ''}.`,
+];
+const MISSILE_INTERCEPT_HEADLINE = [
+  c => `${c.body.toUpperCase()} SHOOTS DOWN ${c.n} MISSILES`,
+  c => `SILOS ON ${c.body.toUpperCase()} HOLD`,
+];
+
 const ASTEROID_IMPACT_HEADLINE = [
   c => `ACT OF WAR: ${c.body.toUpperCase()} STRUCK BY ASTEROID`,
   c => `${(c.attacker ?? 'UNKNOWN FORCES').toUpperCase()} LAUNCHES ROCK AT ${c.body.toUpperCase()}`,
@@ -5149,6 +5183,26 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
     const locBody = locate(locator, row.body_id, p.target_name ?? 'a nearby world');
     const ctx = { attacker, body: locBody.name, bodyLoc: locBody.full };
     stories.push(mkStory(700, used, 'asteroid_impact', ASTEROID_IMPACT, 'asteroid_impact_hl', ASTEROID_IMPACT_HEADLINE, ctx));
+  }
+
+  // --- missiles (missiles.js): a strike, or a salvo shot down ---
+  for (const row of rows) {
+    if (row.kind !== 'missile_strike' && row.kind !== 'missile_intercepted') continue;
+    const p = safeJson(row.payload);
+    const locBody = locate(locator, row.body_id, p.body_name ?? 'a nearby world');
+    if (row.kind === 'missile_strike') {
+      const who = (Array.isArray(p.launcher_names) && p.launcher_names.length) ? p.launcher_names.join(' and ') : 'An unknown silo';
+      const ctx = { who, body: locBody.name, bodyLoc: locBody.full, n: Number(p.missiles ?? 0), dmg: Number(p.damage ?? 0), k: Number(p.destroyed_count ?? 0) };
+      if (p.in_flight) {
+        ctx.owner = p.target_owner_name ?? 'enemy';
+        stories.push(mkStory(560 + 20 * ctx.k, used, 'missile_strike_flight', MISSILE_STRIKE_FLIGHT, 'missile_strike_flight_hl', MISSILE_STRIKE_FLIGHT_HEADLINE, ctx));
+      } else {
+        stories.push(mkStory(560 + 20 * ctx.k, used, 'missile_strike', MISSILE_STRIKE, 'missile_strike_hl', MISSILE_STRIKE_HEADLINE, ctx));
+      }
+    } else {
+      const ctx = { who: p.by_name ?? 'A defender', body: locBody.name, bodyLoc: locBody.full, n: Number(p.count ?? 0), through: Number(p.got_through ?? 0) };
+      stories.push(mkStory(480, used, 'missile_intercept', MISSILE_INTERCEPT, 'missile_intercept_hl', MISSILE_INTERCEPT_HEADLINE, ctx));
+    }
   }
 
   // --- ship detonations: a deliberate self-destruct, always dramatic ---
@@ -9327,6 +9381,7 @@ export const HERALD_HANDLED_KINDS = new Set([
   // battles and losses
   'ship_destroyed', 'ship_damaged', 'ship_detonated', 'ship_retreated',
   'captain_lost', 'captain_rescued', 'builds_destroyed', 'asteroid_impact',
+  'missile_strike', 'missile_intercepted',
   // industry
   'ship_built', 'building_completed', 'ship_rush_botched', 'tech_advanced',
   // colonies and worlds

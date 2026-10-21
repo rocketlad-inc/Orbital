@@ -23,6 +23,7 @@ import {
   drawTorchTrajectory,
   drawRendezvousPreview,
   rendezvousTrajectorySamples,
+  missileDrawnRendezvous,
   drawTransitShip,
   drawGhostPlanet,
   drawTargetHighlight,
@@ -104,6 +105,8 @@ import { drainVisibleFx } from '../render/pendingFx';
 import { bodyPosition, bodyById } from '../physics/orbitalMechanics';
 import { torchPositionFromSamples } from '../physics/torchTransfer';
 import type { InterceptMarker } from '../render/mapRenderer';
+import type { DestructionFlash } from '../render/mapRenderer';
+import { orbitSense } from '../render/fxAnchor';
 import { shipIconSize, rendererCanvasMb, drawStructureReach, parkedOrbitMap } from '../render/mapRenderer';
 import {
   liveBattleFor, escortBlockSpacing, type BattleUnit, type LiveBattle,
@@ -142,6 +145,9 @@ import { exploredStorageKey, loadExplored, saveExplored } from '../game/explored
 import './MapCanvas.css';
 import { getPlacement, cancelPlacement } from '../game/megastructurePlacement';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
+
+/** One hull as the last frame saw it: where, what class, and the ship. */
+type ShipSnap = { x: number; y: number; cls: string; ship: Ship };
 
 /** Extra hit-radius padding for a FINGER. Apple/Material guidelines
  *  recommend ~44px tap targets; we widen the hit radius rather than
@@ -553,7 +559,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   const directCamInputRef = useRef(false);
   const tweenRafRef = useRef<number | null>(null);
   const renderRef = useRef<() => void>(() => {});
-  const prevShipIdsRef = useRef<Map<string, { x: number; y: number; cls: string }>>(new Map());
+  const prevShipIdsRef = useRef<Map<string, ShipSnap>>(new Map());
   // Ids of ships that were in torch transit last frame. Diffed against
   // this frame the same way hp deltas are — a ship present both frames
   // that dropped its .transit just ARRIVED, which triggers the soft
@@ -561,7 +567,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // the diff so a mid-flight page load doesn't fire a phantom flash.
   const prevTransitIdsRef = useRef<Set<string> | null>(null);
   const prevSettlementIdsRef = useRef<Map<string, { x: number; y: number; bodyId: string }>>(new Map());
-  const destructionFlashesRef = useRef<Map<string, { pos: { x: number; y: number }; startMs: number; baseRadius?: number; id?: string }>>(new Map());
+  const destructionFlashesRef = useRef<Map<string, DestructionFlash>>(new Map());
   /** Ship ids whose death already flashed at the hull via the list-diff
    *  path — consulted by the queued chronicle FX so the same kill never
    *  booms twice (once at the ship, later again from the queue). */
@@ -1133,7 +1139,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // cls rides along so a wreck can be sized off the hull that died —
     // the ship is gone from /state by the time we notice, so its class
     // has to be remembered from the frame it was last alive.
-    const curShipIds = new Map<string, { x: number; y: number; cls: string }>();
+    // The ship itself rides along too (a pointer, no copy), so a kill at
+    // a world can be pinned to that world (fxAnchor).
+    const curShipIds = new Map<string, ShipSnap>();
     // Reset the transit-ship canvas-position cache — it gets repopulated
     // per-frame by the per-ship overlay below. A ship that arrived and
     // dropped out of transit shouldn't keep its old hitbox.
@@ -1205,7 +1213,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // has gone missing — skip those rather than crash.
       const pos: { x: number; y: number } | null =
         shipWorldPosition(ship, nowTick, gameState.bodies);
-      if (pos) curShipIds.set(ship.id, { x: pos.x, y: pos.y, cls: ship.class });
+      if (pos) curShipIds.set(ship.id, { x: pos.x, y: pos.y, cls: ship.class, ship });
 
       // Damage detection. MUST be hp-based: `lastDamagedTick` is only
       // ever populated by the single-player engine — the MP /state
@@ -1370,8 +1378,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // last frame — battle-line arcs and lane offsets place ships
           // far from their textbook orbital point, and a wreck on the
           // wrong side of the planet reads as a bug (QA finding).
-          const drawnPos = drawnShipWorldPos(id) ?? pos;
-          destructionFlashesRef.current.set(id, { pos: drawnPos, startMs: nowMs, baseRadius: 12, id });
+          const drawnPos = drawnShipWorldPos(id) ?? { x: pos.x, y: pos.y };
+          // Died parked at a world: the blast and its wreck stay with
+          // that world (Lorne: "explode in place, and then its debris
+          // orbit the world"). Died in flight: where it was, in space.
+          const at = !pos.ship.transit && pos.ship.orbit?.parentBodyId
+            ? { bodyId: pos.ship.orbit.parentBodyId, dir: orbitSense(pos.ship, nowTick) }
+            : undefined;
+          destructionFlashesRef.current.set(id, { pos: drawnPos, startMs: nowMs, baseRadius: 12, id, at });
           // Remember we played this kill AT THE HULL, so the queued
           // chronicle twin of the same death doesn't boom again later.
           listDiffFlashedShipsRef.current.add(id);
@@ -1380,7 +1394,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // for a few minutes instead of vanishing with the flash.
           // Sized off the DEAD HULL's own icon, not a flat 12: a destroyer
           // (icon 44) now leaves visibly more than a corvette (28).
-          spawnWreck(id, drawnPos, shipIconSize(pos.cls, false), nowMs, nowTick);
+          spawnWreck(id, drawnPos, shipIconSize(pos.cls, false), nowMs, nowTick, at);
         }
       }
     }
@@ -2291,7 +2305,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     const wmOpen = isWorldMenuActive() && !!camera.focusedBodyId
       && getWorldMenuOpenBodyId() === camera.focusedBodyId;
     if (wmOpen) {
-      drawWorldMenuCloseup(renderContext, gameState.settlements, 'player');
+      drawWorldMenuCloseup(renderContext, gameState.settlements, 'player', {
+        terraformConfig: gameState.terraformConfig, tick: gameState.currentTick,
+      });
     }
 
     // Build a co-orbit formation map: ships sharing the same parent body
@@ -2903,12 +2919,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const rvFollowedSamples = rvLeaderLeg
           ? torchTrajectorySamples(rvLeaderLeg, gameState.bodies)
           : null;
+        const rvPathAt = rvFollowedSamples && rvFollowedSamples.length >= 2
+          ? (t: number) => torchPositionFromSamples(rvFollowedSamples, t)
+          : null;
         const samples = rvPlan ? rendezvousTrajectorySamples(
-          rvPlan,
-          rvFollowedSamples && rvFollowedSamples.length >= 2
-            ? (t: number) => torchPositionFromSamples(rvFollowedSamples, t)
-            : null,
-          rvLeaderLeg?.arriveTick ?? null,
+          // A missile meets its target on the target's DRAWN line.
+          ship.class === 'missile' ? missileDrawnRendezvous(rvPlan, rvPathAt) : rvPlan,
+          rvPathAt,
+          // A missile bursts at the meeting: no joined leg after it.
+          ship.class === 'missile' ? null : rvLeaderLeg?.arriveTick ?? null,
         ) : drawTorchTrajectory(
           plan, gameState.bodies, renderContext, arcColor,
           // Dashed when this leg belongs to a trade route — the
@@ -2926,9 +2945,33 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // This hull's place in its formation. Everything below (range
         // ring, sprite, click hit-test) reads `placed`, so they move
         // together; the line above stays on the true course.
-        const placed = samples && samples.length > 0
+        let placed = samples && samples.length > 0
           ? placeInFormation(ship.id, samples, renderContext, transitShipScale(camera.scale))
           : samples;
+        // A MISSILE CLEARS ITS WORLD AT ONCE (Lorne, 2026-10-20: "it visibly
+        // enters orbit"). A world is drawn larger than its true size at map
+        // zoom, and a salvo pushing from rest spends the start of its first
+        // tick inside that disc, where it read as a hull in orbit. While its
+        // true point is under the drawn disc it is drawn on the disc's edge,
+        // on its course side, burning; it leaves the edge as it outruns it.
+        if (ship.class === 'missile' && placed && placed.length > 1) {
+          const home = ship.orbit?.parentBodyId ? bodyById2.get(ship.orbit.parentBodyId) : undefined;
+          if (home) {
+            const sc = renderContext.camera.scale;
+            const R = (drawnRadiusOf(renderContext.presentation, home, sc) + 6) / Math.max(1e-9, sc);
+            const first = placed[0], last = placed[placed.length - 1];
+            const cl = Math.hypot(last.x - first.x, last.y - first.y) || 1;
+            const course = { x: (last.x - first.x) / cl, y: (last.y - first.y) / cl };
+            placed = placed.map(p => {
+              const c = bodyPosition(home, p.t, gameState.bodies);
+              const dx = p.x - c.x, dy = p.y - c.y;
+              const d = Math.hypot(dx, dy);
+              if (d >= R) return p;
+              const u = d > R * 0.05 ? { x: dx / d, y: dy / d } : course;
+              return { t: p.t, x: c.x + u.x * R, y: c.y + u.y * R };
+            });
+          }
+        }
         // Weapons-range ring for the hull you just clicked. BEFORE the ship
         // so the icon sits on top of its own bubble rather than inside a
         // line drawn over it.
@@ -3570,6 +3613,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             else if (sh) world = shipWorldPosition(sh, nowTick, gameState.bodies);
           }
         }
+        // A missile burst in flight whose target this client never drew
+        // (or that already died): where it really met it.
+        if (!world && fx.at) world = fx.at;
         if (!world && shipEvent && fx.kind === 'damage') {
           // A HIT on a hull this client has never rendered (a fogged
           // rival brawl — chronicle rows are public). A boom with no
@@ -3673,6 +3719,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           const w = canvasToWorld(pos.x, pos.y, renderContext);
           destructionFlashesRef.current.set(fx.id, {
             pos: w, startMs: nowMs, baseRadius: 6, id: fx.id,
+            at: fx.bodyId ? { bodyId: fx.bodyId, dir: 1 } : undefined,
           });
           return;
         }
@@ -3683,11 +3730,16 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // that double-tap was half the "random explosions" report.
         if (fx.shipId && listDiffFlashedShipsRef.current.has(fx.shipId)) return;
         const world = canvasToWorld(pos.x, pos.y, renderContext);
+        // Pinned to its world, so the world cannot slide into its own
+        // explosion (fxAnchor); one too far out to belong to it (a kill
+        // in flight) stays where it was.
+        const at = fx.bodyId ? { bodyId: fx.bodyId, dir: 1 } : undefined;
         destructionFlashesRef.current.set(fx.id, {
           pos: world,
           startMs: nowMs,
           baseRadius: fx.kind === 'impact' ? 22 : 12,
           id: fx.id,
+          at,
         });
         // AND LEAVE A WRECK. This is why the map never had any.
         //
@@ -3705,7 +3757,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // the range when even that has aged out.
         if (fx.kind === 'destruction' && fx.shipId) {
           const deadCls = prevShipIdsRef.current.get(fx.shipId)?.cls ?? 'frigate';
-          spawnWreck(fx.shipId, world, shipIconSize(deadCls, false), nowMs, nowTick);
+          spawnWreck(fx.shipId, world, shipIconSize(deadCls, false), nowMs, nowTick, at);
         }
       },
     );
@@ -3794,9 +3846,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         ? (t: number) => torchPositionFromSamples(followedSamples, t)
         : null;
       drawRendezvousPreview(
-        rv, theirPath, renderContext,
+        ship.class === 'missile' ? missileDrawnRendezvous(rv, theirPath) : rv, theirPath, renderContext,
         (isMine && followed) ? t('map.meet', { name: followed.name, tick: Math.round(rv.meetTick) }) : undefined,
-        leaderLeg?.arriveTick ?? null,
+        ship.class === 'missile' ? null : leaderLeg?.arriveTick ?? null,
         renderTick(),
       );
     }
@@ -5193,6 +5245,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     )}
     <canvas
       ref={canvasRef}
+      data-map-canvas=""
       width={width}
       height={height}
       onMouseMove={(e) => { handleMouseMove(e); handleMouseHover(e); }}
