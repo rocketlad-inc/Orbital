@@ -10,6 +10,8 @@
 //        once per browser, on its first tagged or referred arrival
 //   POST /api/visit { anon, step }   the sign-in screen's progress:
 //        engaged      stayed 10 s with the page visible, or touched it
+//        read_more    opened a page past the front one (how to play, ...)
+//        play_click   pressed Play free / Sign in on the site
 //        signup_tab   opened the Sign up tab
 //        email_try    submitted the email sign-up form
 //        login_try    submitted the sign-in form (an existing player)
@@ -26,7 +28,7 @@
 import { cleanTag, readAttribution } from './attribution.js';
 
 const ANON_RE = /^[A-Za-z0-9_-]{8,40}$/;
-const STEPS = new Set(['engaged', 'signup_tab', 'email_try', 'login_try', 'google_try', 'auth_error', 'google_error']);
+const STEPS = new Set(['engaged', 'read_more', 'play_click', 'signup_tab', 'email_try', 'login_try', 'google_try', 'auth_error', 'google_error']);
 
 // Crawlers, link unfurlers and ad reviewers. They do not run the beacon
 // as a rule, but the ones that do should not count as visitors.

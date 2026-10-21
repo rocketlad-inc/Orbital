@@ -83,11 +83,11 @@ v = await visit('anonCCCCCCCC3');
 check('an unknown click network keeps no click id', v && v.click_kind === null && v.click_id === null, v);
 
 // ---- steps ------------------------------------------------------------
-for (const s of ['engaged', 'signup_tab', 'email_try', 'engaged', 'bogus']) {
+for (const s of ['engaged', 'play_click', 'signup_tab', 'email_try', 'engaged', 'bogus']) {
   await call('POST', '/api/visit', { body: { anon: 'anonAAAAAAAA1', step: s } });
 }
 check('steps count once each, and unknown steps are ignored',
-  JSON.stringify(await steps('anonAAAAAAAA1')) === JSON.stringify(['email_try', 'engaged', 'signup_tab']), await steps('anonAAAAAAAA1'));
+  JSON.stringify(await steps('anonAAAAAAAA1')) === JSON.stringify(['email_try', 'engaged', 'play_click', 'signup_tab']), await steps('anonAAAAAAAA1'));
 await call('POST', '/api/visit', { body: { anon: 'anonNEVERLANDED', step: 'engaged' } });
 check('a browser that never landed through a link has no funnel', (await steps('anonNEVERLANDED')).length === 0);
 
@@ -123,7 +123,7 @@ const tr = ov.traffic;
 check('the overview has a traffic block', !!tr && Array.isArray(tr.campaigns), Object.keys(ov));
 const row = tr?.campaigns.find(x => x.source === 'reddit-ads' && x.campaign === 'kw-4x');
 check('reddit-ads / kw-4x: 3 visitors, 1 engaged, 1 started, 1 signed up, 1 already a player, 1 on a phone, 2 ad clicks',
-  row && row.visitors === 3 && row.engaged === 1 && row.started === 1 && row.signed_up === 1 && row.players === 1 && row.phones === 1 && row.clicks === 2, row);
+  row && row.visitors === 3 && row.engaged === 1 && row.pressed_play === 1 && row.started === 1 && row.signed_up === 1 && row.players === 1 && row.phones === 1 && row.clicks === 2, row);
 const adRow = tr?.ads.find(x => x.content === 'battle-orbit' && x.term === 'space-4x');
 check('the ad and keyword get their own row', adRow && adRow.visitors === 3 && adRow.signed_up === 1, adRow);
 const pbbg = tr?.campaigns.find(x => x.source === 'r-pbbg');

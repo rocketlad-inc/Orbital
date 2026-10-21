@@ -64,7 +64,7 @@ type SourceRow = {
 };
 /** One row of the visit funnel (0180, worker/visits.js). */
 type Funnel = {
-  visitors: number; players: number; engaged: number; started: number; errors: number;
+  visitors: number; players: number; engaged: number; pressed_play: number; started: number; errors: number;
   signed_up: number; seated: number; came_back: number;
 };
 type TrafficData = {
@@ -1221,6 +1221,7 @@ function FunnelCells({ f }: { f: Funnel }) {
     <>
       <td className="num">{n(f.visitors)}</td>
       {cell(f.engaged, 'Stayed 10 seconds or touched the page')}
+      {cell(f.pressed_play, 'Pressed Play free or Sign in, reaching the sign-in screen')}
       {cell(f.started, 'Opened Sign up, or submitted email / Google')}
       <td className="num" title="Sign-up or sign-in refused, or the Google button failed">
         {f.errors ? <span style={{ color: 'var(--ao-bad, #e5484d)' }}>{n(f.errors)}</span> : <span className="ao-dim">0</span>}
@@ -1233,7 +1234,7 @@ function FunnelCells({ f }: { f: Funnel }) {
 }
 const FUNNEL_HEAD = (
   <>
-    <th className="num">Visitors</th><th className="num">Engaged</th><th className="num">Started sign-up</th>
+    <th className="num">Visitors</th><th className="num">Engaged</th><th className="num">Pressed Play</th><th className="num">Started sign-up</th>
     <th className="num">Errors</th><th className="num">Signed up</th><th className="num">Took a seat</th>
     <th className="num">Came back</th>
   </>
@@ -1255,7 +1256,7 @@ function TrafficPanel({ tr, now }: { tr: TrafficData; now: number }) {
     <section className="ao-panel">
       <PanelHead
         title="Link and ad traffic"
-        hint="Last 30 days. Every visit that arrived through a tagged link (?from=, utm_…), an ad click, or another site, whether or not it signed up. One row per browser, counted on its first arrival. Engaged = stayed 10 seconds or touched the page; Started sign-up = opened the Sign up tab or submitted the form or Google; Errors = sign-up refused or the Google button failed. Percentages are of visitors. Recorded from the Oct 20 update on."
+        hint="Last 30 days. Every visit that arrived through a tagged link (?from=, utm_…), an ad click, or another site, whether or not it signed up. One row per browser, counted on its first arrival. Engaged = stayed 10 seconds or touched the page; Pressed Play = reached the sign-in screen; Started sign-up = opened the Sign up tab or submitted the form or Google; Errors = sign-up refused or the Google button failed. Percentages are of visitors. Recorded from the Oct 20 update on."
       />
       {tr.campaigns.length === 0 ? <div className="ao-none">No tagged or referred visits yet.</div> : (
         <div className="ao-scroll">

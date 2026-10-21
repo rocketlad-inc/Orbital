@@ -436,6 +436,7 @@ async function handleOverview(req, env, { session }) {
     COUNT(*) AS visitors,
     SUM(v.viewer_user_id IS NOT NULL) AS players,
     SUM(${step(['engaged'])}) AS engaged,
+    SUM(${step(['play_click', 'signup_tab', 'email_try', 'google_try', 'login_try'])}) AS pressed_play,
     SUM(${step(['signup_tab', 'email_try', 'google_try'])}) AS started,
     SUM(${step(['auth_error', 'google_error'])}) AS errors,
     SUM(v.signup_user_id IS NOT NULL) AS signed_up,

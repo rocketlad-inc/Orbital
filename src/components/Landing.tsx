@@ -10,6 +10,7 @@ import { Changelog } from './Changelog';
 import { PressKit } from './PressKit';
 import { Credits } from './Credits';
 import { LandingHome } from './LandingHome';
+import { trackVisitStep } from '../multiplayer/attribution';
 import { t, tk, type Key } from '../i18n/core';
 import { useI18n, LanguageSwitch } from '../i18n/react';
 
@@ -97,6 +98,11 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, authed = false, onEx
   const scrollRef = useRef<HTMLDivElement>(null);
   const [tab, setTab] = useState<LandingTab>(tabFromPath);
   const { lang } = useI18n();
+  // Every Play / Sign in button on the site, counted for link and ad
+  // traffic before it goes to the sign-in screen (0180).
+  const play = () => { trackVisitStep('play_click'); onSignIn(); };
+  // Reading past the front page (how to play, changelog, press...).
+  useEffect(() => { if (tab !== 'about') trackVisitStep('read_more'); }, [tab]);
 
   // Keep the address bar in step with the tab, so the link a player
   // copies is the page they are looking at. pushState (not replaceState)
@@ -242,14 +248,14 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, authed = false, onEx
             <button className="landing-cta-btn" onClick={onExit}>{t('site.back')}</button>
           ) : (
             <>
-              <button className="landing-login-btn" onClick={onSignIn}>{t('site.signIn')}</button>
-              <button className="landing-cta-btn" onClick={onSignIn}>{t('site.playFree')}</button>
+              <button className="landing-login-btn" onClick={play}>{t('site.signIn')}</button>
+              <button className="landing-cta-btn" onClick={play}>{t('site.playFree')}</button>
             </>
           )}
         </div>
       </header>
 
-      {tab === 'howto' && <HowToPlay onSignIn={onSignIn} />}
+      {tab === 'howto' && <HowToPlay onSignIn={play} />}
 
       {tab === 'privacy' && <PrivacyPolicy />}
 
@@ -260,11 +266,11 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, authed = false, onEx
       {tab === 'changelog' && (
         <Changelog
           ctaLabel={authed ? t('site.changelogBack') : t('site.changelogPlay')}
-          onCta={authed ? (onExit ?? onSignIn) : onSignIn}
+          onCta={authed ? (onExit ?? play) : play}
         />
       )}
 
-      {tab === 'about' && <LandingHome onSignIn={onSignIn} />}
+      {tab === 'about' && <LandingHome onSignIn={play} />}
 
       <footer className="landing-footer">
         <div className="landing-footer__inner">

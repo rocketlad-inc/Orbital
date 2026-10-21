@@ -206,7 +206,7 @@ const TRACKED_KEY = 'orbital.visit';
 const sent = new Set<string>();
 
 export type VisitStep =
-  | 'engaged' | 'signup_tab' | 'email_try' | 'login_try' | 'google_try' | 'auth_error' | 'google_error';
+  | 'engaged' | 'read_more' | 'play_click' | 'signup_tab' | 'email_try' | 'login_try' | 'google_try' | 'auth_error' | 'google_error';
 
 function trackedHere(): boolean {
   try { return window.localStorage.getItem(TRACKED_KEY) === '1'; } catch { return false; }
