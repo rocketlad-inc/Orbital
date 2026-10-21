@@ -86,6 +86,9 @@ export interface DirectorHost {
    *  with the game's planner, the way the intercept picker does. Returns
    *  how many hulls were sent. */
   intercept?(shipIds: string[], targetShipId: string): Promise<{ sent: number; failed: number; error?: string }>;
+  /** The same plan without sending it: per hull, when it would depart,
+   *  meet the target, and arrive. For choosing a scene's numbers. */
+  planIntercept?(shipIds: string[], targetShipId: string): Array<{ ship: string; depart: number; meet: number | null; arrive: number; accel: number } | { ship: string; none: true }>;
 }
 
 interface Cam { x: number; y: number; scale: number }
@@ -311,6 +314,14 @@ export class Director {
     const r = await this.host.intercept(ids, targetId);
     this.note(`intercept: ${r.sent} sent, ${r.failed} could not${r.error ? ` (${r.error})` : ''}`);
     return r.sent;
+  }
+
+  /** Dry run of intercept(): what each hull would do, nothing sent. */
+  interceptPlan(ships: Target, target: Target): unknown {
+    const ids = this.idsOf(ships);
+    const [targetId] = this.idsOf(target);
+    if (!ids.length || !targetId || !this.host.planIntercept) return [];
+    return this.host.planIntercept(ids, targetId);
   }
 
   /** Arm a Mega Destroyer over the world it has arrived at, firing in
