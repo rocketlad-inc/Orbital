@@ -245,6 +245,15 @@ export async function applyScenario(env, spec, { session = null } = {}) {
     } else if (w.living) {
       worldStmts.push(env.DB.prepare('UPDATE game_bodies SET terraformed_at_tick = COALESCE(terraformed_at_tick, ?) WHERE id = ?').bind(tick, b.id));
     }
+    if (w.living) {
+      // A take that ended in a Mega Destroyer strike leaves the world
+      // scarred (sterilised_at_tick) and its settlements dead; a re-shot
+      // scene starts with the world it describes. Test games only.
+      worldStmts.push(env.DB.prepare('UPDATE game_bodies SET sterilised_at_tick = NULL WHERE id = ?').bind(b.id));
+      worldStmts.push(env.DB.prepare(
+        'UPDATE game_settlements SET destroyed_at_tick = NULL, hp = hp_max WHERE game_id = ? AND body_id = ? AND destroyed_at_tick IS NOT NULL',
+      ).bind(gameId, b.id));
+    }
     w.cities.forEach((name, i) => {
       worldStmts.push(env.DB.prepare(
         `INSERT OR REPLACE INTO game_settlements (id, game_id, body_id, owner_faction_id, type, name, hp, hp_max, population,
