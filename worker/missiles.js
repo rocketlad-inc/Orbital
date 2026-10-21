@@ -1058,17 +1058,24 @@ async function autoIntercept(env, gameId, tick, atWar) {
     .filter(g => worlds.has(g.dest));
   if (groups.length === 0) return 0;
   const parked = await loadParked(env.DB, gameId);
-  // Hulls each empire has EVER sent a salvo after, flying, waiting to
-  // leave or already burst: auto-intercept is one salvo per raid (Lorne's
-  // pick), not a fresh one every tick at whatever survived the first.
+  // Hulls each empire has sent a salvo after ON THIS FLIGHT, flying,
+  // waiting to leave or already burst: auto-intercept is one salvo per
+  // raid (Lorne's pick), not a fresh one every tick at whatever survived
+  // the first. Only salvos launched since the hull's current leg began
+  // count, so a survivor that lands and raids again next week is a new
+  // raid. Read through the game's missile rows (a few dozen), not every
+  // leg the game has ever flown.
   const chased = new Map();
   const aimedAt = (await env.DB
     .prepare(
-      `SELECT s.owner_faction_id, n.rv_follow_ship_id FROM game_ship_nodes n JOIN game_ships s ON s.id = n.ship_id
-        WHERE n.game_id = ? AND s.ship_class = 'missile' AND n.rv_follow_ship_id IS NOT NULL`,
+      `SELECT s.owner_faction_id, n.rv_follow_ship_id, n.committed_at_tick
+         FROM game_ships s JOIN game_ship_nodes n ON n.ship_id = s.id
+        WHERE s.game_id = ? AND s.ship_class = 'missile' AND n.rv_follow_ship_id IS NOT NULL`,
     )
     .bind(gameId).all()).results ?? [];
   for (const r of aimedAt) {
+    const leg = F.flights.get(r.rv_follow_ship_id);
+    if (!leg || Number(r.committed_at_tick ?? 0) < Number(leg.plan.startTick)) continue;
     if (!chased.has(r.owner_faction_id)) chased.set(r.owner_faction_id, new Set());
     chased.get(r.owner_faction_id).add(r.rv_follow_ship_id);
   }
