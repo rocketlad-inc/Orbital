@@ -6429,10 +6429,16 @@ export function placeInFormation(
 // target's, a blue destroyer over the red Mega Destroyer. They are
 // flying in company, so they are drawn that way: the followers' group
 // holds its own arrowhead ABREAST of the target's, clear of it, on the
-// side it came in from (so the two never cross on the way in), easing
-// over as they close. The target keeps the true line; the follower's
-// own course line is drawn as before. Sprite and hitbox move together,
-// as with formations.
+// side it came in from (so the two never cross on the way in). The
+// target keeps the true line; the follower's own course line is drawn as
+// before. Sprite and hitbox move together, as with formations.
+//
+// ONLY ONCE THEY MEET. Until the tick before the meeting the follower
+// flies its own drawn course, untouched; it falls in beside the target
+// over that last tick. Easing in by DISTANCE instead (the first cut) slid
+// an approaching fleet off its own line ticks early, because at system
+// zoom two fleets are a few pixels apart long before they meet (Lorne:
+// "the blue fleet looks like it's off somewhere completely unrelated").
 
 export interface CompanySlot {
   /** The course of the group being flown beside (its lead's). */
@@ -6446,10 +6452,14 @@ export interface CompanySlot {
   iconRest: number;
   /** +1 left of the target's travel, -1 right. */
   side: number;
+  /** When this hull meets the target (its rendezvous meetTick). */
+  meetTick: number;
 }
 
 /** Clear space between the two groups, in hull lengths of the bigger. */
-export const COMPANY_GAP = 0.5;
+export const COMPANY_GAP = 0.25;
+/** Ticks before the meeting over which a follower falls in alongside. */
+export const COMPANY_EASE_TICKS = 1;
 
 /**
  * Who flies in company with whom: every hull on a matched intercept,
@@ -6507,6 +6517,7 @@ export function computeTransitCompany(
     g.members.forEach((s, slot) => out.set(s.id, {
       targetPlan: g.plan, targetCount: g.count, targetIconRest: g.iconRest,
       slot, count: g.members.length, iconRest, side,
+      meetTick: s.plannedRendezvous!.meetTick,
     }));
   }
   return out;
@@ -6530,6 +6541,10 @@ export function placeInCompany(
 ): Array<{ t: number; x: number; y: number }> {
   const c = ctx.transitCompany?.get(shipId);
   if (!c || samples.length < 2 || !(ctx.camera.scale > 0) || !ctx.bodies) return samples;
+  // On its own course until the last tick before the meeting.
+  const raw = Math.max(0, Math.min(1, (ctx.t - (c.meetTick - COMPANY_EASE_TICKS)) / COMPANY_EASE_TICKS));
+  if (raw <= 0) return samples;
+  const w = raw * raw * (3 - 2 * raw);
   const base = torchTrajectorySamples(c.targetPlan, ctx.bodies);
   if (base.length < 2) return samples;
   const tan = trajectoryTangentAt(base, ctx.t);
@@ -6538,14 +6553,6 @@ export function placeInCompany(
   const ourHalf = formationHalfWidthPx(c.count, c.iconRest, sizeScale);
   const gap = COMPANY_GAP * Math.max(c.iconRest, c.targetIconRest) * sizeScale;
   const abreastPx = theirHalf + gap + ourHalf;
-  // Ease over as they close: nothing while the follower is still well
-  // off, the whole offset once it is within reach of its place.
-  const me = torchPositionFromSamples(samples, ctx.t);
-  const them = torchPositionFromSamples(base, ctx.t);
-  const dPx = Math.hypot(me.x - them.x, me.y - them.y) * ctx.camera.scale;
-  const raw = Math.max(0, Math.min(1, (3 * abreastPx - dPx) / (2.5 * abreastPx)));
-  const w = raw * raw * (3 - 2 * raw);
-  if (w <= 0) return samples;
   // The group's own arrowhead, around its lead.
   const { back, side } = formationSlot(c.slot);
   const sp = formationSpacingPx(c, sizeScale);

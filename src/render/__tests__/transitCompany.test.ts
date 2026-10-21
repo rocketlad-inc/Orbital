@@ -55,6 +55,7 @@ const at = (s: Array<{ t: number; x: number; y: number }>, t: number) => {
 
 describe('flying in company', () => {
   test('every matched hull is in company with the group it joined; the target is not', () => {
+    expect(company.get('g2')?.meetTick).toBe(14);
     expect(company.has('mega')).toBe(false);
     expect(company.has('e1')).toBe(false);
     expect(company.get('g1')).toMatchObject({ slot: 0, count: 3, targetCount: 3 });
@@ -87,9 +88,19 @@ describe('flying in company', () => {
     expect(Math.hypot(wing.x - lead.x, wing.y - lead.y)).toBeGreaterThan(shipIconSize('frigate', false) / 2);
   });
 
-  test('it eases over as it closes: untouched while still far off', () => {
-    const farOff = [{ t: 10, x: 0, y: 2000 }, { t: 20, x: 1000, y: 2000 }];
-    expect(placeInCompany('g1', farOff, ctxAt(16), 1)).toBe(farOff);
+  test('before the meeting it flies its own course, however close it is', () => {
+    // Meets at T14. At T12.9 it is still on its own line, even right on
+    // top of the raid: at system zoom two fleets are a few px apart long
+    // before they meet, and sliding it early drew it off its course.
+    expect(placeInCompany('g1', onTheLine, ctxAt(12.9), 1)).toBe(onTheLine);
+  });
+
+  test('it falls in over the last tick: part way at T13.5, all the way at the meeting', () => {
+    const half = Math.abs(at(placeInCompany('g1', onTheLine, ctxAt(13.5), 1), 13.5).y);
+    const full = Math.abs(at(placeInCompany('g1', onTheLine, ctxAt(14), 1), 14).y);
+    expect(half).toBeGreaterThan(0);
+    expect(half).toBeLessThan(full);
+    expect(Math.abs(at(placeInCompany('g1', onTheLine, ctxAt(16), 1), 16).y)).toBeCloseTo(full, 5);
   });
 
   test('a hull not on an intercept is never moved', () => {
