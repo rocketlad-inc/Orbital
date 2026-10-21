@@ -81,6 +81,14 @@ describe('expandScenario', () => {
     expect(() => expandScenario({ ...base(), silos: [{ world: 'earth', owner: 'venus' }] })).toThrow(/unknown faction/);
   });
 
+  it('reads a group target order: a preset name or a list', () => {
+    const big = expandScenario({ ...base(), ships: [{ key: 'g', owner: 'terra', at: 'earth', class: 'frigate', count: 2, priority: 'big' }] });
+    expect(big.ships[0].priority[0]).toBe('capital');
+    const list = expandScenario({ ...base(), ships: [{ key: 'g', owner: 'terra', at: 'earth', class: 'frigate', count: 2, priority: ['destroyer', 'capital'] }] });
+    expect(list.ships[0].priority).toEqual(['destroyer', 'capital']);
+    expect(() => expandScenario({ ...base(), ships: [{ key: 'g', owner: 'terra', at: 'earth', class: 'frigate', count: 2, priority: 'everything' }] })).toThrow(/priority/);
+  });
+
   it('parses relative and absolute times', () => {
     const spec = expandScenario({
       ...base(),

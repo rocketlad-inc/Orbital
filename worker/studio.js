@@ -398,6 +398,14 @@ export async function applyScenario(env, spec, { session = null } = {}) {
     return idx != null ? ids.slice(Number(idx), Number(idx) + 1) : ids;
   };
 
+  // ---- target orders ----
+  for (const g of spec.ships) {
+    if (!g.priority || !shipIds[g.key]?.length) continue;
+    const ids = shipIds[g.key];
+    await env.DB.prepare(`UPDATE game_ships SET target_priority = ? WHERE game_id = ? AND id IN (${ids.map(() => '?').join(',')})`)
+      .bind(JSON.stringify(g.priority), gameId, ...ids).run();
+  }
+
   // ---- wars ----
   const warIds = [];
   for (const [a, b] of spec.wars) {
