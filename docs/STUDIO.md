@@ -158,7 +158,7 @@ What `apply` returns, and what you need from it:
 }
 ```
 
-**Targets** are a world id (`earth`, `luna`, `titan`, `sol`), `ship:<id>` or `fleet:<id>`. A target is tracked while the camera holds it, so a moving fleet stays centred.
+**Targets** are a world id (`earth`, `luna`, `titan`, `sol`), `ship:<id>`, `fleet:<id>`, or `missile:<n>`: the nth missile salvo to appear during the shot (salvo ids carry their launch tick, so a shot cannot name one ahead). Once a salvo bursts it is gone and the camera holds where it was. A target is tracked while the camera holds it, so a moving fleet stays centred.
 
 **Sizing.** `px` is how wide the target's world should be on the map canvas (a 1080×1920 canvas: 520 fills half the width; 160 shows the fight with room; 40 is a dot). `scale` is pixels per world unit when you want a raw number (measured on a 1920-wide frame): 0.5 is the default view (a planet and its moons); **0.15 shows the inner system out to Jupiter and Saturn, the right pull-back for a pan between planets**; 0.035 and below show every outer orbit and the Kuiper worlds, which is busy and makes the planets dots. Zooms ease in log space, so they feel even. When in doubt use `px` on a target and let the director work out the scale.
 

@@ -175,6 +175,15 @@ async function resetStudioRows(env, gameId) {
     env.DB.prepare('DELETE FROM senate_proposals WHERE game_id = ? AND id LIKE ?').bind(gameId, like),
     env.DB.prepare('DELETE FROM senate_terms WHERE game_id = ? AND id LIKE ?').bind(gameId, like),
   ]);
+  // Salvos a previous take launched (missiles.js ids '<game>:msl_<tick>_…').
+  // Not studio-marked, but only ever in a test game here; a re-take starts
+  // with none in the sky. Servers without missiles have no such rows.
+  const msl = `${gameId}:msl_%`;
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM chronicle_entries WHERE game_id = ? AND ship_id LIKE ?').bind(gameId, msl),
+    env.DB.prepare('DELETE FROM game_ship_nodes WHERE game_id = ? AND ship_id LIKE ?').bind(gameId, msl),
+    env.DB.prepare('DELETE FROM game_ships WHERE game_id = ? AND id LIKE ?').bind(gameId, msl),
+  ]);
 }
 
 /**

@@ -28,7 +28,7 @@ import { smoothedTick } from '../../render/tickPhase';
 import { setStudioFullVisuals } from '../../render/lightweightMode';
 import { apiFetch } from '../api';
 
-export type Target = string; // 'earth' | 'ship:<id>' | 'fleet:<id>'
+export type Target = string; // 'earth' | 'ship:<id>' | 'fleet:<id>' | 'missile:<n>'
 
 export type ShotStep =
   | { at: number; do: 'focus'; target: Target; px?: number; scale?: number }
@@ -146,6 +146,21 @@ export class Director {
   private ship(id: string): Ship | undefined {
     return this.host.state().ships.find(x => x.id === id || x.id.endsWith(`:${id}`));
   }
+  /** Salvos in the order they first appeared during this shot. A salvo's
+   *  id carries its launch tick ('<game>:msl_<tick>_<rand>'), which a shot
+   *  cannot know ahead, so shots name them 'missile:1', 'missile:2'. */
+  private seenMissiles: string[] = [];
+  private missile(n: number): Ship | undefined {
+    const live = this.host.state().ships
+      .filter(x => /:msl_\d+_/.test(x.id))
+      .sort((a, b) => {
+        const ta = Number(/:msl_(\d+)_/.exec(a.id)?.[1] ?? 0), tb = Number(/:msl_(\d+)_/.exec(b.id)?.[1] ?? 0);
+        return ta - tb || a.id.localeCompare(b.id);
+      });
+    for (const x of live) if (!this.seenMissiles.includes(x.id)) this.seenMissiles.push(x.id);
+    const id = this.seenMissiles[n - 1];
+    return id ? live.find(x => x.id === id) : undefined;
+  }
   private fleetMembers(id: string): Ship[] {
     return this.host.state().ships.filter(x => x.fleetId != null && (x.fleetId === id || x.fleetId.endsWith(`:${id}`)));
   }
@@ -158,6 +173,10 @@ export class Director {
       const ship = this.ship(target.slice(5));
       if (!ship) return null;
       return this.shipPos(ship, tick);
+    }
+    if (target.startsWith('missile:')) {
+      const m = this.missile(Math.max(1, Number(target.slice(8)) || 1));
+      return m ? this.shipPos(m, tick) : null;
     }
     if (target.startsWith('fleet:')) {
       const members = this.fleetMembers(target.slice(6));
@@ -408,6 +427,7 @@ export class Director {
   private end(): void {
     this.running = false;
     this.moveMs = null;
+    this.seenMissiles = [];
     this.speed(null);
     this.ui(true);
     document.body.classList.remove('studio-filming');
