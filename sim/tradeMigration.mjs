@@ -51,17 +51,65 @@ const env = {
 };
 const G = 'gtrmig01';
 
-await DB.prepare(`INSERT INTO users (id,email,display_name,password_hash,created_at)
+// seedGameWorld is today's code and reads today's columns (name_pools,
+// mineral_kind, ...), so it cannot run on the pre-0089 schema. Seed on a
+// current-schema twin instead, copy the world across in the columns the
+// old schema has, and put the rest back once the migrations have run.
+const SEED = new SimD1(':memory:');
+SEED.applyMigrations(MIGRATIONS);
+const seedEnv = { ...env, DB: SEED };
+
+await SEED.prepare(`INSERT INTO users (id,email,display_name,password_hash,created_at)
                   VALUES ('uA','a@t','A','x',0), ('uB','b@t','B','x',0)`).run();
-await DB.prepare(`INSERT INTO rooms (id,name,host_id,created_at,updated_at)
+await SEED.prepare(`INSERT INTO rooms (id,name,host_id,created_at,updated_at)
                   VALUES (?, 'Migration Test','uA',0,0)`).bind(G).run();
-await DB.prepare(`INSERT INTO games (id,status,map_seed,current_tick,tick_interval_ms,created_at,started_at)
+await SEED.prepare(`INSERT INTO games (id,status,map_seed,current_tick,tick_interval_ms,created_at,started_at)
                   VALUES (?, 'setup','mig-seed',0,3600000,0,0)`).bind(G).run();
-await DB.prepare(`INSERT INTO room_members (room_id,user_id,joined_at,chosen_starting_body)
+await SEED.prepare(`INSERT INTO room_members (room_id,user_id,joined_at,chosen_starting_body)
                   VALUES (?,?,0,'earth'), (?,?,1,'luna')`).bind(G, 'uA', G, 'uB').run();
 
 const factions = await import('../worker/factions.js');
-await factions.seedGameWorld(env, G);
+await factions.seedGameWorld(seedEnv, G);
+
+const colsOf = (d, t) => d.db.prepare(`PRAGMA table_info(${t})`).all();
+const tablesOf = (d) => new Set(d.db.prepare(
+  "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all().map(r => r.name));
+const seeded = [...tablesOf(SEED)].filter(t => SEED.db.prepare(`SELECT 1 FROM ${t} LIMIT 1`).get());
+const oldShape = new Map([...tablesOf(DB)].map(t => [t, new Set(colsOf(DB, t).map(c => c.name))]));
+
+for (const t of seeded) {
+  if (!oldShape.has(t)) continue; // a table born after 0089: filled in after the cutover
+  const cols = colsOf(SEED, t).map(c => c.name).filter(c => oldShape.get(t).has(c));
+  const ins = DB.db.prepare(
+    `INSERT OR REPLACE INTO ${t} (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`);
+  for (const row of SEED.db.prepare(`SELECT ${cols.join(',')} FROM ${t}`).all()) {
+    ins.run(...cols.map(c => row[c]));
+  }
+}
+
+// After the cutover: the seed's values for columns (and tables) newer than
+// 0089, as if those later migrations had shipped with the world already
+// in them. Only rows the test left alive are touched.
+const restoreSeedColumns = () => {
+  for (const t of seeded) {
+    const all = colsOf(SEED, t);
+    if (!oldShape.has(t)) {
+      const names = all.map(c => c.name);
+      const ins = DB.db.prepare(
+        `INSERT OR IGNORE INTO ${t} (${names.join(',')}) VALUES (${names.map(() => '?').join(',')})`);
+      for (const row of SEED.db.prepare(`SELECT * FROM ${t}`).all()) ins.run(...names.map(c => row[c]));
+      continue;
+    }
+    const pk = all.filter(c => c.pk > 0).map(c => c.name);
+    const added = all.map(c => c.name).filter(c => !oldShape.get(t).has(c));
+    if (!pk.length || !added.length) continue;
+    const upd = DB.db.prepare(`UPDATE ${t} SET ${added.map(c => `${c} = ?`).join(', ')}
+                                WHERE ${pk.map(c => `${c} = ?`).join(' AND ')}`);
+    for (const row of SEED.db.prepare(`SELECT * FROM ${t}`).all()) {
+      upd.run(...added.map(c => row[c]), ...pk.map(c => row[c]));
+    }
+  }
+};
 await DB.prepare("UPDATE games SET status='active', current_tick = 40 WHERE id = ?").bind(G).run();
 const [A, B] = (await DB.prepare(
   `SELECT id, capital_body_id FROM game_factions WHERE game_id = ? ORDER BY slot`).bind(G).all()).results;
@@ -156,6 +204,7 @@ const before = {
 
 // ============ THE MIGRATION ============
 DB.applyMigrations(AFTER);
+restoreSeedColumns();
 
 const stopsOf = async (id) => (await DB.prepare(
   'SELECT sequence, body_id, action FROM game_trade_route_stops WHERE route_id = ? ORDER BY sequence')
