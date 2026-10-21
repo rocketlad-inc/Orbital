@@ -76,7 +76,7 @@
     "sim:namepoolcarry": "node sim/namePoolCarry.mjs",
     "sim:starterorbit": "node sim/starterOrbit.mjs",
     "sim:heraldlag": "node sim/heraldLag.mjs",
-    "sim:heraldreplay": "node sim/heraldReplay.mjs",
+    "herald:replay": "node sim/heraldReplay.mjs",
     "sim:wear": "node sim/wearState.mjs",
     "sim:tenplayers": "node sim/tenPlayers.mjs",
     "sim:discordloc": "esbuild sim/discordLocale.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/discordLocale.mjs && node node_modules/.cache/discordLocale.mjs",

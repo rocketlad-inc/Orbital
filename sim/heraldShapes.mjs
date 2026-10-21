@@ -27,6 +27,11 @@ import { SimD1 } from './d1.mjs';
 import { MIGRATIONS } from '../worker/_migrations_bundle.js';
 
 const F = { A: 'Alpha Concord', B: 'Beta Syndicate', C: 'Gamma Imperium' };
+// The Herald prints ONE name per faction, its short form, everywhere
+// (bf1fbc86 short names, c05e56f4 one name in the prose too) — so the
+// prose checks look for these. Each is a substring of its full name, so
+// a check still passes if a full name ever comes back.
+const S = { A: 'Alpha', B: 'Beta', C: 'Gamma' };
 const RUNS = 12;   // > the largest bank, so every template gets a turn
 
 /** Build a one-body battle from `kills` = [[ownerKey, killerKey|null, n]]. */
@@ -94,9 +99,9 @@ const readsAsMystery = (t) => MYSTERY.some(m => t.includes(m));
 
 await shape('2v1 wipe names BOTH attackers, is not a mystery',
   [['C', 'A', 4], ['C', 'B', 3]], {
-    'names attacker A': has(F.A),
-    'names attacker B': has(F.B),
-    'names the victim': has(F.C),
+    'names attacker A': has(S.A),
+    'names attacker B': has(S.B),
+    'names the victim': has(S.C),
     'does NOT read as unsolved': (t) => !readsAsMystery(t),
   });
 
@@ -105,7 +110,7 @@ await shape('3 participants are counted as THREE, not two',
     'never claims two factions fought': lacks('two factions'),
     'never says two-way / two-sided': (t) => !/two-(way|sided)/i.test(t),
     'no two-sided battle royale': (t) => !/TWO-SIDED BATTLE ROYALE/i.test(t),
-    'names the faction that took no losses': has(F.B),
+    'names the faction that took no losses': has(S.B),
   });
 
 // --- lopsided multi-way reads as a rout, not "confusion" ---------------
@@ -113,7 +118,7 @@ await shape('3 participants are counted as THREE, not two',
 await shape('lopsided melee is a rout, not total confusion',
   [['C', 'A', 15], ['A', 'C', 1], ['B', 'C', 1]], {
     'never calls a 15-1-1 slaughter confusion': lacks('Total confusion'),
-    'names the gutted faction': has(F.C),
+    'names the gutted faction': has(S.C),
   });
 
 
@@ -219,7 +224,7 @@ await shapeRows('a seated chairman is named with the term deadline',
     faction_name: F.A, term_index: 3, bag_cycle: 0,
     start_tick: 72, end_tick: 96,
   }]], {
-    'names a chairman': (t) => t.includes(F.B) || t.includes(F.A),
+    'names a chairman': (t) => t.includes(S.B) || t.includes(S.A),
     // The deadline is the only actionable fact in a term announcement —
     // "who presides" without "until when" gives a reader nothing to do.
     'carries a deadline or a span': (t) => /\b(72|96|24|twenty-four)\b/.test(t),
@@ -234,20 +239,20 @@ await shape('CONTROL a genuinely unknown attacker credits nobody',
     // ("Static and silence...") states the mystery without any of the
     // obvious markers. What must hold for EVERY template is that no
     // other faction gets blamed.
-    'does not name a killer': (t) => !t.includes(F.A) && !t.includes(F.B),
-    'names the victim': has(F.C),
+    'does not name a killer': (t) => !t.includes(S.A) && !t.includes(S.B),
+    'names the victim': has(S.C),
   });
 
 await shape('CONTROL 1v1 with one killer still names the winner',
   [['C', 'A', 3]], {
-    'names the winner': has(F.A),
+    'names the winner': has(S.A),
     'not a mystery': (t) => !readsAsMystery(t),
   });
 
 await shape('CONTROL reciprocal 2-way stays a two-faction story',
   [['A', 'C', 3], ['C', 'A', 3]], {
-    'names both': (t) => t.includes(F.A) && t.includes(F.C),
-    'does not drag in a third party': lacks(F.B),
+    'names both': (t) => t.includes(S.A) && t.includes(S.C),
+    'does not drag in a third party': lacks(S.B),
   });
 
 console.log('');
