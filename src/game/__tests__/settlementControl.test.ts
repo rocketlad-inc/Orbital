@@ -58,9 +58,13 @@ describe('the World Menu uses it', () => {
     expect(menu).toMatch(/isMine=\{canCommand\}/);
   });
   it('the station rig paints in the station owner\'s livery', () => {
-    const a = menu.indexOf('data-testid="wm-station"');
-    const rig = menu.slice(a, menu.indexOf('{/* Name + HP header', a));
-    expect(rig).toMatch(/\{sp1\}/);
-    expect(rig).not.toMatch(/\{p1\}|\{p2\}/);
+    // One drawing serves the desktop rig and the phone's sky station
+    // (stationArt), so the livery is checked there...
+    const a = menu.indexOf('const stationArt = ');
+    const art = menu.slice(a, menu.indexOf('};', a));
+    expect(art).toMatch(/stationInnerSvg\(staLevels, sp1, sp2, staSkin\)/);
+    expect(art).not.toMatch(/\{p1\}|\{p2\}|, p1, p2/);
+    // ...and both stations are drawn through it.
+    expect(menu.match(/\{stationArt\(/g)?.length).toBe(2);
   });
 });

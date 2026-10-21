@@ -396,6 +396,28 @@ export async function handleStripeWebhook(req, env) {
     // have no intent and are unaffected by definition.
     const intent = obj.payment_intent;
     if (intent && obj.refunded === true) {
+      // The grant row is deleted below, so log the refund first: the sales
+      // dashboard counts refunds from these events (the sale itself is gone).
+      const sold = await env.DB
+        .prepare('SELECT user_id, surface, granted_at FROM user_entitlements WHERE stripe_payment_intent = ?')
+        .bind(intent)
+        .first();
+      const giftSold = sold ? null : await env.DB
+        .prepare('SELECT buyer_user_id AS user_id, created_at AS granted_at FROM commission_gifts WHERE stripe_payment_intent = ?')
+        .bind(intent)
+        .first();
+      const refunded = sold ?? giftSold;
+      if (refunded) {
+        try {
+          const { logEvent } = await import('./analytics.js');
+          await logEvent(env, {
+            userId: refunded.user_id,
+            kind: 'commission/refund',
+            payload: { from: sold?.surface ?? 'other', kind: sold ? 'self' : 'gift', bought_at: refunded.granted_at },
+            status: 200,
+          });
+        } catch (e) { console.error('refund log failed', e); }
+      }
       await env.DB
         .prepare('DELETE FROM user_entitlements WHERE stripe_payment_intent = ?')
         .bind(intent)

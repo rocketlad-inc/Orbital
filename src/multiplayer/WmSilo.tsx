@@ -156,7 +156,9 @@ export const WmSilo: React.FC<{
         const hostile = ships.filter(s => s.ownedBy !== ME && !atPeace(ME, s.ownedBy)).length;
         return { body: b, ships, mine, hostile, total: ships.length };
       })
-      .filter(w => w.total > 0 || w.body.id === target)
+      // WAR TO FIRE (Lorne, 2026-10-20): the server refuses a strike where
+      // nobody you are at war with sits, so only those worlds are offered.
+      .filter(w => w.hostile > 0 || w.body.id === target)
       .sort((a, b) => (b.hostile - a.hostile) || (b.total - a.total));
   }, [gameState.ships, gameState.bodies, body.id, byId, home, atPeace, target]);
 
@@ -177,7 +179,8 @@ export const WmSilo: React.FC<{
   // what a silo is for (Lorne, 2026-10-20: "the PRIMARY use is to
   // intercept incoming ships"), so they lead the panel, soonest first.
   const incoming = groups.filter(g => g.lead.transit?.currentTransfer?.targetBodyId === body.id && !atPeace(ME, g.lead.ownedBy));
-  const others = groups.filter(g => !incoming.includes(g));
+  // ...and only ships of empires you are at war with: the server refuses the rest.
+  const others = groups.filter(g => !incoming.includes(g) && !atPeace(ME, g.lead.ownedBy));
   const incomingKeys = incoming.map(g => g.lead.id).join(',');
   const groupKeys = groups.map(g => g.lead.id).join(',');
   const ownerName = (fid: string) => gameState.factions.find(f => f.id === fid)?.name ?? t('worldmenu.silo.unknownEmpire');

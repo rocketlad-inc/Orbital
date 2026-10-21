@@ -212,5 +212,20 @@ check('funnel: dismissals of the one-time card are counted', funnel.surfaces.fin
 check('funnel: gifts sold, redeemed, voided', funnel.gifts.sold === 3 && funnel.gifts.redeemed === 1 && funnel.gifts.voided === 2, JSON.stringify(funnel.gifts));
 check('the funnel is admin-only', (await call(dashRoutes, 'GET', '/api/admin/commission', 'friend')).status === 404);
 
+// ---- the sales dashboard (GET /api/admin/commission/sales) ---------------
+const salesRes = await call(dashRoutes, 'GET', '/api/admin/commission/sales', 'admin');
+const sales = salesRes.body;
+const paidRows = await rows(`SELECT COUNT(*) AS n FROM user_entitlements e JOIN users u ON u.id = e.user_id
+  WHERE e.source = 'stripe' AND u.email NOT LIKE '%@agents.orbital.local' AND u.email NOT LIKE '%@example.com'`);
+check('sales: one row per paid Stripe sale, comps left out', salesRes.status === 200 && sales.sales.length === paidRows[0].n,
+  `${sales.sales?.length} vs ${paidRows[0].n}`);
+check('sales: each row carries where it started, the buyer and their age at purchase',
+  sales.sales.every(s => typeof s.surface === 'string' && typeof s.name === 'string' && s.age_ms >= 0 && typeof s.uses_goods === 'boolean'));
+check('sales: gift codes bought are listed, refunded ones marked', Array.isArray(sales.gifts) && sales.gifts.some(g => g.voided),
+  JSON.stringify(sales.gifts));
+check('sales: conversion bands cover the players who played', Array.isArray(sales.bands));
+check('sales: admin-only', (await call(dashRoutes, 'GET', '/api/admin/commission/sales', 'friend')).status === 404);
+check('sales: a refund leaves a trace after its grant row is deleted', sales.refunds.length >= 1, JSON.stringify(sales.refunds));
+
 console.log(bad === 0 ? '\nALL COMMISSION REACH CHECKS PASS' : `\n${bad} FAILED`);
 process.exit(bad === 0 ? 0 : 1);

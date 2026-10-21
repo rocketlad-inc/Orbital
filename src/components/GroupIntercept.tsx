@@ -162,7 +162,7 @@ export const GroupIntercept: React.FC<GroupInterceptProps> = ({ ships, onClose, 
   // as in the ship panel.
   const pick = (key: string) => {
     const o = options.find(x => x.key === key && x.ok);
-    if (!o || !lead) return;
+    if (!o?.myPlan || !lead) return;
     setSelectedKey(key);
     setError(null);
     if (isMobile) setPeek(true);

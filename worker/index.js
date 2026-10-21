@@ -1429,6 +1429,7 @@ import * as customMaps from './customMaps.js';
 import * as skins from './skins.js';
 import * as commissionAsk_ from './commissionAsk.js';
 import * as invites from './invites.js';
+import * as visits from './visits.js';
 import * as economy from './economy.js';
 import * as heraldStrip from './heraldStrip.js';
 import * as battleCard from './battleCard.js';
@@ -1454,7 +1455,7 @@ import * as discoveryOffers from './discoveryOffers.js';
 import * as missiles from './missiles.js';
 import { carryNamePools } from './namePoolHistory.js';
 
-const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, studio, analytics, configAdmin, emailAdmin, emailLogin, store, skins, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed, customMaps, ending, discoveryOffers, invites, profileAwards, missiles];
+const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, studio, analytics, configAdmin, emailAdmin, emailLogin, store, skins, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed, customMaps, ending, discoveryOffers, invites, visits, profileAwards, missiles];
 
 function matchPattern(pattern, pathname) {
   if (typeof pattern === 'string') {
@@ -1480,31 +1481,10 @@ function matchPattern(pattern, pathname) {
   return groups;
 }
 
-/** 409 when a write names a missile salvo: in the path (/ships/:id) or as
- *  a ship id anywhere the ship endpoints take one in a body. Null to go on.
- *  A body that is not JSON names nothing. */
-async function refuseMissileOrders(req, params) {
-  const ids = new Set();
-  if (params.shipId) ids.add(params.shipId);
-  const type = req.headers.get('content-type') ?? '';
-  if (req.body && (type.includes('json') || type === '')) {
-    try {
-      const body = await req.clone().json();
-      const take = (v) => { if (typeof v === 'string' && v.includes(':')) ids.add(v); };
-      const walk = (o) => {
-        if (!o || typeof o !== 'object') return;
-        take(o.ship_id); take(o.shipId); take(o.flagship_id);
-        for (const k of ['ship_ids', 'shipIds', 'ships']) if (Array.isArray(o[k])) o[k].forEach(x => (typeof x === 'string' ? take(x) : walk(x)));
-        if (Array.isArray(o.orders)) o.orders.forEach(walk);
-        if (o.kind === 'ship') take(o.asset_id);
-      };
-      walk(body);
-    } catch { /* not JSON */ }
-  }
-  // Every salvo's id is `<game>:msl_...` (missiles.js handleLaunch), so the
-  // id alone says it: no read on the hot path of every ship order.
-  return [...ids].some(id => id.includes(':msl_')) ? err(409, 'missile', 'a missile salvo takes no orders') : null;
-}
+// The guard lives in missiles.js now: the watch's and the alert actions'
+// orders (wearOrders.callGame) dispatch routes without this file, and
+// must refuse salvos the same way.
+const refuseMissileOrders = missiles.refuseMissileOrders;
 
 async function dispatchFeatureRoute(req, env, url, session) {
   for (const mod of FEATURE_MODULES) {
@@ -2198,6 +2178,12 @@ export default {
       // An invite link opened (worker/invites.js): counted whether or not
       // the visitor is signed in yet, which is the point of counting it.
       if (req.method === 'POST' && url.pathname === '/api/invite/open') {
+        return dispatchFeatureRoute(req, env, url, await currentSession(req, env).catch(() => null));
+      }
+
+      // A link or ad visit and its way through the sign-in screen
+      // (worker/visits.js, 0180): counted before there is any account.
+      if (req.method === 'POST' && url.pathname === '/api/visit') {
         return dispatchFeatureRoute(req, env, url, await currentSession(req, env).catch(() => null));
       }
 
