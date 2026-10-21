@@ -611,6 +611,15 @@ guards: {
 
   await h.DB.prepare("UPDATE game_ships SET stance = 'defensive' WHERE id = 'ship_cbG'").run();
   await h.DB.prepare("UPDATE game_ships SET stance = 'attack' WHERE id = 'ship_cbR'").run();
+  // Combat needs a declared war since peace became the default
+  // (d090f990), and a guard only fires on empires its OWNER is at war
+  // with. So the raider is at war with both: with B, whose hull it is
+  // raiding, and with A, whose corvette stands in the way.
+  for (const [id, other] of [['w_cbB', h.B], ['w_cbA', h.A]]) {
+    const [fa, fb] = [C.id, other.id].sort();
+    await h.DB.prepare(`INSERT INTO game_wars (id, game_id, faction_a, faction_b, declared_by, declared_at_tick)
+                        VALUES (?, ?, ?, ?, ?, 0)`).bind(id, h.G, fa, fb, C.id).run();
+  }
 
   const hpOf = async (id) => Number((await h.DB
     .prepare('SELECT hp FROM game_ships WHERE id = ?').bind(id).first())?.hp ?? 0);
@@ -912,11 +921,13 @@ guards: {
     "SELECT parent_body_id FROM game_ships WHERE id = 'ship_glG'").first()).parent_body_id;
   check('...and actually arrives somewhere new', moved, `${before} -> ${after}`);
 
-  // It should end up WITH its ward, not wandering on its own.
+  // It should end up WITH its ward, not wandering on its own. A route
+  // hull lands and is relaunched in the same tick, so the pair is never
+  // seen without a COMMITTED next leg — "landed" means nothing in transit.
   const together = await until(h, async () => {
     const g = (await h.DB.prepare("SELECT parent_body_id FROM game_ships WHERE id = 'ship_glG'").first()).parent_body_id;
     const w = (await h.DB.prepare("SELECT parent_body_id FROM game_ships WHERE id = 'ship_glA'").first()).parent_body_id;
-    const gFly = await h.DB.prepare("SELECT 1 x FROM game_ship_nodes WHERE ship_id='ship_glG' AND status IN ('committed','in_transit') LIMIT 1").first();
+    const gFly = await h.DB.prepare("SELECT 1 x FROM game_ship_nodes WHERE ship_id='ship_glG' AND status = 'in_transit' LIMIT 1").first();
     return !gFly && g === w;
   }, 40);
   check('...and ends up where its ward is', together);
@@ -989,7 +1000,12 @@ guards: {
   // ETA. Once the lane is running, a carrier in flight must carry both a
   // destination and the tick it lands, or the card can only say "in
   // transit" and leave the player counting ticks by hand.
-  await h.tick(6);
+  // Sample while a carrier is actually in flight. A fixed tick count can
+  // land on a turnaround tick, where both hulls have just arrived and
+  // hold only a COMMITTED next leg — not under way, so no ETA to report.
+  await until(h, async () => !!(await h.DB.prepare(
+    `SELECT 1 x FROM game_ship_nodes WHERE ship_id IN ('ship_nmA','ship_nmB')
+        AND status = 'in_transit' LIMIT 1`).first()), 12);
   const st2 = await callRoute(h.env, stateRoutes, 'GET', `/api/games/${h.G}/state`, 'uA', null);
   const lane2 = (st2.trade_routes ?? []).find(r => r.id === fold.route_id);
   const flying = (lane2?.ships ?? []).filter(c => c.ship_dest_body_id != null);

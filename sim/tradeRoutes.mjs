@@ -271,10 +271,16 @@ const pools = async (DB, G) => (await DB.prepare(
   const agId = await strikeDeal(h);
   await h.tick(2);
 
-  // Stage a battle: one warship from each side at the same body. No
-  // pact exists between the pair, so co-located hostiles open fire —
-  // this exercises the REAL §3.41 wiring (damage maps → pairs →
-  // endAgreementsForCombat), not a unit-called shortcut.
+  // Stage a battle: one warship from each side at the same body, with a
+  // declared war between them (peace is the default since d090f990, so
+  // co-located rivals no longer open fire on their own). This exercises
+  // the REAL §3.41 wiring (damage maps → pairs → endAgreementsForCombat),
+  // not a unit-called shortcut.
+  {
+    const [fa, fb] = [h.A.id, h.B.id].sort();
+    await h.DB.prepare(`INSERT INTO game_wars (id, game_id, faction_a, faction_b, declared_by, declared_at_tick)
+                        VALUES ('w_trade', ?, ?, ?, ?, ?)`).bind(h.G, fa, fb, h.A.id, h.tickOf()).run();
+  }
   for (const [id, f] of [['warA', h.A], ['warB', h.B]]) {
     await h.DB.prepare(
       `INSERT INTO game_ships
