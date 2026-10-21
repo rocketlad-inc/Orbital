@@ -25,6 +25,16 @@ export interface Attribution {
   utm_source?: string;
   utm_medium?: string;
   utm_campaign?: string;
+  /** An ad and a keyword, when the link names them (0180). */
+  utm_content?: string;
+  utm_term?: string;
+  /** The ad network's click id (rdt_cid, gclid, ...) and whose it is. */
+  click_kind?: string;
+  click_id?: string;
+  /** The app whose browser this opened in, from its android-app:// referrer. */
+  in_app?: string;
+  /** This browser's anonymous id, so signup can join its visit funnel. */
+  anon?: string;
   invite?: boolean;
   /** The room code and the sender named on an invite link (0175). */
   invite_code?: string;
@@ -36,7 +46,32 @@ export interface Attribution {
 
 /** Link tags we read and then tidy out of the address bar, so a player
  *  who copies the URL to a friend doesn't pass our tag along with it. */
-export const TAG_PARAMS = ['from', 'ref', 'by', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'];
+export const TAG_PARAMS = ['from', 'ref', 'by', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term',
+  'rdt_cid', 'gclid', 'gbraid', 'wbraid', 'fbclid', 'ttclid', 'msclkid', 'twclid'];
+
+/** Ad networks' click ids, in the order we look for them (worker/visits.js). */
+const CLICK_IDS: ReadonlyArray<readonly [string, string]> = [
+  ['rdt_cid', 'reddit'],
+  ['gclid', 'google'], ['gbraid', 'google'], ['wbraid', 'google'],
+  ['fbclid', 'meta'],
+  ['ttclid', 'tiktok'],
+  ['msclkid', 'microsoft'],
+  ['twclid', 'x'],
+];
+
+/** Apps whose Android browser sends an android-app:// referrer naming
+ *  them. Anything else stays "android-app" (Orbital's own app among them). */
+const ANDROID_APPS: Record<string, string> = {
+  'com.reddit.frontpage': 'reddit',
+  'com.facebook.katana': 'facebook',
+  'com.instagram.android': 'instagram',
+  'com.discord': 'discord',
+  'com.twitter.android': 'x',
+  'com.zhiliaoapp.musically': 'tiktok',
+  'com.ss.android.ugc.trill': 'tiktok',
+  'com.google.android.googlequicksearchbox': 'google',
+  'com.google.android.gm': 'gmail',
+};
 
 const ANON_KEY = 'orbital.anon';
 
@@ -99,9 +134,13 @@ export function captureAttribution(): void {
   const now: Attribution = { first_seen_ms: Date.now(), landing: url.pathname.slice(0, 100) };
   const from = p.get('from') || p.get('ref');
   if (from) now.from = from.slice(0, 60);
-  for (const k of ['utm_source', 'utm_medium', 'utm_campaign'] as const) {
+  for (const k of ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'] as const) {
     const v = p.get(k);
-    if (v) now[k] = v.slice(0, 60);
+    if (v) now[k] = v.slice(0, 80);
+  }
+  for (const [param, kind] of CLICK_IDS) {
+    const v = p.get(param);
+    if (v) { now.click_kind = kind; now.click_id = v.slice(0, 200); break; }
   }
   const invite = (p.get('invite') ?? '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
   if (invite) {
@@ -113,8 +152,14 @@ export function captureAttribution(): void {
   }
   const ref = typeof document !== 'undefined' ? document.referrer : '';
   if (ref) {
-    if (ref.startsWith('android-app://')) now.referrer = 'android-app';
-    else {
+    if (ref.startsWith('android-app://')) {
+      // An Android app's built-in browser names the app: the Reddit app's
+      // is a Reddit visit, not one from Orbital's own app.
+      const pkg = ref.slice('android-app://'.length).split('/')[0];
+      const app = ANDROID_APPS[pkg];
+      now.referrer = app ? `${app}.com` : 'android-app';
+      if (app) now.in_app = app;
+    } else {
       try {
         const host = new URL(ref).hostname;
         if (host && host !== url.hostname) now.referrer = host.slice(0, 100);
@@ -131,6 +176,11 @@ export function captureAttribution(): void {
     write({ ...stored, invite: true, invite_code: now.invite_code, by: now.by });
   }
 
+  // A visit that came from somewhere: count it before anyone signs up
+  // (worker/visits.js), and watch how far it gets.
+  if (informative(now)) beaconLanding(now);
+  else if (trackedHere()) watchEngagement();
+
   if (TAG_PARAMS.some(k => p.has(k))) {
     for (const k of TAG_PARAMS) p.delete(k);
     const clean = url.pathname + (p.toString() ? `?${p}` : '') + url.hash;
@@ -138,8 +188,81 @@ export function captureAttribution(): void {
   }
 }
 
-/** What signup sends: the first informative visit, else this one. */
+/** What signup sends: the first informative visit, else this one, with
+ *  the browser's anonymous id so the server can join its visit funnel. */
 export function attributionForSignup(): Attribution | null {
   if (typeof window === 'undefined') return null;
-  return read() ?? thisVisit;
+  const a = read() ?? thisVisit;
+  if (!a) return null;
+  const anon = anonId();
+  return anon ? { ...a, anon } : a;
+}
+
+// ---- the visit funnel (0180, worker/visits.js) ------------------------
+// One anonymous row per browser that arrived through a link, ad or other
+// site, then one row per step on the sign-in screen. Fire and forget.
+
+const TRACKED_KEY = 'orbital.visit';
+const sent = new Set<string>();
+
+export type VisitStep =
+  | 'engaged' | 'signup_tab' | 'email_try' | 'login_try' | 'google_try' | 'auth_error' | 'google_error';
+
+function trackedHere(): boolean {
+  try { return window.localStorage.getItem(TRACKED_KEY) === '1'; } catch { return false; }
+}
+
+function postVisit(body: Record<string, unknown>): void {
+  try {
+    void fetch('/api/visit', {
+      method: 'POST',
+      credentials: 'include',
+      keepalive: true,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }).catch(() => { /* best-effort */ });
+  } catch { /* no fetch: nothing to count */ }
+}
+
+function beaconLanding(a: Attribution): void {
+  const anon = anonId();
+  if (!anon) return;
+  postVisit({ anon, step: 'land', a });
+  try { window.localStorage.setItem(TRACKED_KEY, '1'); } catch { /* this visit only */ }
+  watchEngagement();
+}
+
+/** Record a step on the way to signing up, once per page load, and only
+ *  for a browser whose arrival was counted. */
+export function trackVisitStep(step: VisitStep): void {
+  if (typeof window === 'undefined' || sent.has(step) || !trackedHere()) return;
+  const anon = anonId();
+  if (!anon) return;
+  sent.add(step);
+  postVisit({ anon, step });
+}
+
+/** "Engaged" = 10 s with the page visible, or any touch, key or scroll:
+ *  tells a real look from a bounce or a stray tap on an ad. */
+function watchEngagement(): void {
+  if (typeof document === 'undefined' || sent.has('engaged')) return;
+  let visibleMs = 0;
+  let since = document.visibilityState === 'visible' ? Date.now() : 0;
+  const stop = () => {
+    clearInterval(timer);
+    for (const ev of ['pointerdown', 'keydown', 'scroll', 'wheel'] as const) window.removeEventListener(ev, onTouch, true);
+    document.removeEventListener('visibilitychange', onVis);
+  };
+  const hit = () => { stop(); trackVisitStep('engaged'); };
+  const onTouch = () => hit();
+  const onVis = () => {
+    if (document.visibilityState === 'visible') since = Date.now();
+    else if (since) { visibleMs += Date.now() - since; since = 0; }
+  };
+  const timer = window.setInterval(() => {
+    const total = visibleMs + (since ? Date.now() - since : 0);
+    if (total >= 10_000) hit();
+  }, 1000);
+  for (const ev of ['pointerdown', 'keydown', 'scroll', 'wheel'] as const) window.addEventListener(ev, onTouch, { capture: true, passive: true });
+  document.addEventListener('visibilitychange', onVis);
 }

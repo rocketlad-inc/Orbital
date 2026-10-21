@@ -2,6 +2,7 @@ import React, { useCallback, useState } from 'react';
 import { useAuth } from './AuthContext';
 import { apiFetch } from './api';
 import { GoogleSignInButton } from './GoogleSignInButton';
+import { trackVisitStep } from './attribution';
 import { t, getLang } from '../i18n/core';
 import { useI18n, LanguageSwitch } from '../i18n/react';
 import './multiplayer.css';
@@ -30,19 +31,21 @@ export function AuthOverlay({ onGuest }: { onGuest?: () => void }) {
       else setError(t('auth.err.sendFailed'));
       return;
     }
+    trackVisitStep(mode === 'signup' ? 'email_try' : 'login_try');
     const err = mode === 'signup'
       ? await signUp(email, password, displayName)
       : await signIn(email, password);
     setBusy(false);
-    if (err) setError(err);
+    if (err) { setError(err); trackVisitStep('auth_error'); }
   }
 
   const onGoogleCredential = useCallback(async (idToken: string) => {
     setError(null);
     setBusy(true);
+    trackVisitStep('google_try');
     const err = await signInWithGoogle(idToken);
     setBusy(false);
-    if (err) setError(err);
+    if (err) { setError(err); trackVisitStep('auth_error'); }
   }, [signInWithGoogle]);
 
   return (
@@ -101,7 +104,7 @@ export function AuthOverlay({ onGuest }: { onGuest?: () => void }) {
           <button
             type="button"
             className={`mp-tab ${mode === 'signup' ? 'active' : ''}`}
-            onClick={() => { setMode('signup'); setError(null); }}
+            onClick={() => { setMode('signup'); setError(null); trackVisitStep('signup_tab'); }}
           >{t('auth.tab.signup')}</button>
         </div>
 
@@ -110,7 +113,7 @@ export function AuthOverlay({ onGuest }: { onGuest?: () => void }) {
             <GoogleSignInButton
               clientId={googleClientId}
               onCredential={onGoogleCredential}
-              onError={(msg) => setError(msg)}
+              onError={(msg) => { setError(msg); trackVisitStep('google_error'); }}
               disabled={busy}
             />
             <div style={{ textAlign: 'center', fontSize: 10, color: '#6b8195', letterSpacing: '0.12em' }}>

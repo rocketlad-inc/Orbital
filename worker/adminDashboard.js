@@ -425,6 +425,48 @@ async function handleOverview(req, env, { session }) {
         GROUP BY 1 ORDER BY n DESC`, inv0),
   ]);
 
+  // Link and ad traffic, last 30 days (0180, worker/visits.js): every
+  // visit that arrived through a tag or another site, signed up or not,
+  // and how far it got. Visitors are anonymous, so robots can only be
+  // filtered by user agent (done at the beacon) and by "engaged".
+  const tr0 = now - 30 * DAY_MS;
+  const step = (names) =>
+    `EXISTS (SELECT 1 FROM campaign_steps cs WHERE cs.anon_id = v.anon_id AND cs.step IN (${names.map(s => `'${s}'`).join(', ')}))`;
+  const funnelCols = `
+    COUNT(*) AS visitors,
+    SUM(v.viewer_user_id IS NOT NULL) AS players,
+    SUM(${step(['engaged'])}) AS engaged,
+    SUM(${step(['signup_tab', 'email_try', 'google_try'])}) AS started,
+    SUM(${step(['auth_error', 'google_error'])}) AS errors,
+    SUM(v.signup_user_id IS NOT NULL) AS signed_up,
+    SUM(v.signup_user_id IS NOT NULL AND EXISTS (SELECT 1 FROM game_factions f WHERE f.user_id = v.signup_user_id)) AS seated,
+    SUM(COALESCE(s.last_beat_ms >= u.created_at + ${DAY_MS}, 0)) AS came_back`;
+  const visitFrom = `
+    FROM campaign_visits v
+    LEFT JOIN users u ON u.id = v.signup_user_id
+    LEFT JOIN analytics_user_seen s ON s.user_id = v.signup_user_id
+   WHERE v.first_ms >= ?1 AND (u.id IS NULL OR (${notQa('u.email')}))`;
+  const [trCampaigns, trAds, trDevices, trCountries, trDaily] = await Promise.all([
+    q(`SELECT v.source, COALESCE(v.campaign, '') AS campaign, ${funnelCols},
+              SUM(v.device = 'phone') AS phones, SUM(v.click_id IS NOT NULL) AS clicks, MAX(v.first_ms) AS latest_ms
+         ${visitFrom}
+        GROUP BY 1, 2 ORDER BY visitors DESC LIMIT 40`, tr0),
+    q(`SELECT v.source, COALESCE(v.campaign, '') AS campaign,
+              COALESCE(v.content, '') AS content, COALESCE(v.term, '') AS term, ${funnelCols}
+         ${visitFrom} AND (v.content IS NOT NULL OR v.term IS NOT NULL)
+        GROUP BY 1, 2, 3, 4 ORDER BY visitors DESC LIMIT 40`, tr0),
+    q(`SELECT COALESCE(v.device, 'unknown') AS device, COALESCE(v.in_app, '') AS in_app, ${funnelCols}
+         ${visitFrom}
+        GROUP BY 1, 2 ORDER BY visitors DESC LIMIT 20`, tr0),
+    q(`SELECT COALESCE(v.country, '??') AS country, COUNT(*) AS visitors, SUM(v.signup_user_id IS NOT NULL) AS signed_up
+         ${visitFrom}
+        GROUP BY 1 ORDER BY visitors DESC LIMIT 15`, tr0),
+    q(`SELECT CAST(v.first_ms / ${DAY_MS} AS INTEGER) * ${DAY_MS} AS day_ms, v.source,
+              COUNT(*) AS visitors, SUM(v.signup_user_id IS NOT NULL) AS signed_up
+         ${visitFrom} AND v.first_ms >= ?2
+        GROUP BY 1, 2 ORDER BY 1`, tr0, now - 14 * DAY_MS),
+  ]);
+
   // 7x24 UTC grid; the client shifts it to the viewer's clock.
   const heatGrid = Array.from({ length: 7 }, () => new Array(24).fill(0));
   for (const r of heat) {
@@ -507,6 +549,13 @@ async function handleOverview(req, env, { session }) {
       shares: invShares,
       top: invTop,
       seats: invSeats,
+    },
+    traffic: {
+      campaigns: trCampaigns,
+      ads: trAds,
+      devices: trDevices,
+      countries: trCountries,
+      daily: trDaily,
     },
     journey: {
       signed_up: journey?.signed_up ?? 0,

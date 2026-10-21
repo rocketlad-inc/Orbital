@@ -16,6 +16,7 @@
 // ============================================================
 
 import { cleanInviteCode, stampReferral } from './invites.js';
+import { linkVisitToUser } from './visits.js';
 
 /** Lowercase token: letters, digits, dot, dash, underscore. */
 export function cleanTag(v, max = 40) {
@@ -99,4 +100,6 @@ export async function stampSignupSource(db, userId, raw) {
     console.error('stampSignupSource failed', e);
   }
   if (a.invite_code) await stampReferral(db, userId, { inviteCode: a.invite_code, by: a.by });
+  // The browser's pre-signup funnel (0180) now has an account to belong to.
+  await linkVisitToUser(db, userId, raw?.anon);
 }
