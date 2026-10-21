@@ -75,7 +75,8 @@ describe('the Commission storefronts', () => {
   });
 
   it('the lobby flag picker does the same', () => {
-    const lv = read('multiplayer/LobbyView.tsx');
+    // The flag picker moved out of LobbyView.tsx with the room lobby redesign.
+    const lv = read('multiplayer/RoomEmpireEditor.tsx');
     expect(lv).toMatch(/isAndroidApp\(\) \? \(/);
     expect(lv).toMatch(/openCommissionInBrowser\('lobby-flag'\)/);
   });
@@ -84,7 +85,7 @@ describe('the Commission storefronts', () => {
     // Every call site must be behind the gate. If another appears, this
     // fails until it is listed here, which means checking it is gated.
     const gated: Record<string, RegExp> = {
-      'multiplayer/LobbyView.tsx': /isAndroidApp\(\) \? \(/,
+      'multiplayer/RoomEmpireEditor.tsx': /isAndroidApp\(\) \? \(/,
       'multiplayer/Hangar.tsx': /canBuyHere\(\)/,
       // The thank-you card refuses to render at all where nothing can be sold.
       'multiplayer/CommissionMoments.tsx': /&& canBuyHere\(\);/,
@@ -132,7 +133,7 @@ describe('the Commission storefronts', () => {
     // instead links the customer to the browser". Not words, a button.
     const linkOut: Record<string, RegExp> = {
       'multiplayer/Hangar.tsx': /openCommissionInBrowser\('profile'\)/,
-      'multiplayer/LobbyView.tsx': /openCommissionInBrowser\('lobby-flag'\)/,
+      'multiplayer/RoomEmpireEditor.tsx': /openCommissionInBrowser\('lobby-flag'\)/,
       'multiplayer/SkinPicker.tsx': /openCommissionInBrowser\(surface\)/,
       'multiplayer/DiscordServerFeed.tsx': /openCommissionInBrowser\('discord-feed'/,
       'mapmaker/MapMaker.tsx': /openCommissionInBrowser\('map-maker'\)/,

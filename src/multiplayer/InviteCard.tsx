@@ -24,6 +24,38 @@ import { t, tk } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import './InviteCard.css';
 
+/**
+ * The gift line: "Bring a friend in style: give them the Commission", with
+ * its button. One component so the new-room card and the room lobby's start
+ * card sell it the same way (and log the same view/click for the funnel).
+ */
+export function InviteGift({ className }: { className?: string }) {
+  useI18n();
+  const [opening, setOpening] = useState(false);
+  // A holder can still gift (that is the point), so there is no holder
+  // check; in the app the button links out to the browser instead.
+  const sellable = canBuyHere();
+  useEffect(() => { logCommission('invite', 'view'); }, []);
+
+  const gift = async () => {
+    if (!sellable) { openCommissionInBrowser('invite', { gift: true }); return; }
+    setOpening(true);
+    logCommission('invite', 'click');
+    const url = await startCommissionCheckout('invite', { gift: true });
+    if (url) { window.location.assign(url); return; }
+    setOpening(false);
+  };
+
+  return (
+    <div className={`ic-gift ${className ?? ''}`}>
+      <span>{t('invite.card.gift', { name: tk('mp.commission.name', COMMISSION_NAME) })}</span>
+      <button type="button" className="ic-btn ic-btn--gift" disabled={opening} onClick={() => void gift()}>
+        {opening ? t('invite.card.opening') : t('invite.card.giftBtn', { price: tk('mp.commission.price', COMMISSION_PRICE) })}
+      </button>
+    </div>
+  );
+}
+
 export function InviteCard({ code, roomName, taken, max, where }: {
   code: string;
   roomName?: string | null;
@@ -36,11 +68,6 @@ export function InviteCard({ code, roomName, taken, max, where }: {
   const { user } = useAuth();
   const isMobile = useIsMobile();
   const [state, setState] = useState<'idle' | 'shared' | 'copied' | 'failed'>('idle');
-  const [opening, setOpening] = useState(false);
-  // A holder can still gift (that is the point), so there is no holder
-  // check; in the app the button links out to the browser instead.
-  const sellable = canBuyHere();
-  useEffect(() => { logCommission('invite', 'view'); }, []);
 
   const share = async () => {
     const r = await shareInvite({
@@ -53,15 +80,6 @@ export function InviteCard({ code, roomName, taken, max, where }: {
     });
     setState(r);
     if (r !== 'failed') setTimeout(() => setState('idle'), 2200);
-  };
-
-  const gift = async () => {
-    if (!sellable) { openCommissionInBrowser('invite', { gift: true }); return; }
-    setOpening(true);
-    logCommission('invite', 'click');
-    const url = await startCommissionCheckout('invite', { gift: true });
-    if (url) { window.location.assign(url); return; }
-    setOpening(false);
   };
 
   const free = taken != null && max != null ? Math.max(0, max - taken) : null;
@@ -87,12 +105,7 @@ export function InviteCard({ code, roomName, taken, max, where }: {
           {t('invite.card.code')} <b>{pretty}</b>
         </span>
       </div>
-      <div className="ic-gift">
-        <span>{t('invite.card.gift', { name: tk('mp.commission.name', COMMISSION_NAME) })}</span>
-        <button type="button" className="ic-btn ic-btn--gift" disabled={opening} onClick={() => void gift()}>
-          {opening ? t('invite.card.opening') : t('invite.card.giftBtn', { price: tk('mp.commission.price', COMMISSION_PRICE) })}
-        </button>
-      </div>
+      <InviteGift />
     </section>
   );
 }
