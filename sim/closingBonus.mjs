@@ -14,13 +14,34 @@
 // reproduce EXACTLY at zero relative velocity — which is every fight
 // that happens at a body, i.e. almost every fight in the game. A bonus
 // that leaked into that would silently re-balance the whole game. The
-// ramp starts at 50 u/t so it cannot, and the first test below asserts
-// it rather than trusting the arithmetic.
+// ramp starts above the parting shot (DV_BONUS_START, 21 u/t on today's
+// burn) so it cannot, and the first tests below assert it rather than
+// trusting the arithmetic.
 // ============================================================
 
 import {
   engagement, closingBonus, DV_BONUS_MAX, DV_BONUS_START, DV_BONUS_FULL,
 } from '../worker/transitCombat.js';
+import {
+  fromG, LEGACY_ENGINE_G, SHIP_ENGINE_ACCEL, BRAKE_MUL, rampFor, burnShape,
+  DEPARTURE_SPEED_SCALE,
+} from '../worker/burn.js';
+
+// The sample speeds below were measured on the legacy flat 0.05g even
+// burn (2b0c7160). The burn has since become an exponential build with
+// a 9x brake (77e00789, 0ee0774f) and the ramp moved with it. Carry each
+// sample to today's burn the same way burn.js carries the thresholds:
+// a departure by DEPARTURE_SPEED_SCALE, a cruise pass by re-flying the
+// same route (d = v^2 / a on the even burn) and taking today's peak.
+const LEGACY_ACCEL = fromG(LEGACY_ENGINE_G);
+const cruiseNow = (legacyV) => {
+  const { ramp, max, tau } = rampFor(SHIP_ENGINE_ACCEL);
+  return burnShape(legacyV * legacyV / LEGACY_ACCEL, SHIP_ENGINE_ACCEL,
+    ramp, max, BRAKE_MUL, tau).vPeak;
+};
+const PARTING_SHOT = 26.5 * DEPARTURE_SPEED_SCALE;  // ~11.0 u/t
+const FAST_CROSSING = cruiseNow(211.5);              // ~275 u/t
+const MOON_HOP = cruiseNow(42.2);                    // ~39 u/t
 
 let bad = 0;
 const check = (label, cond, detail = '') => {
@@ -37,8 +58,8 @@ const near = (a, b, eps = 1e-9) => Math.abs(a - b) < eps;
 // ---------------------------------------------------------------
 check('no bonus at rest', closingBonus(0) === 0);
 check('no bonus below the ramp', closingBonus(DV_BONUS_START - 0.001) === 0);
-check('no bonus at the parting shot (26.5 u/t)', closingBonus(26.5) === 0,
-  String(closingBonus(26.5)));
+check(`no bonus at the parting shot (${PARTING_SHOT.toFixed(1)} u/t)`,
+  closingBonus(PARTING_SHOT) === 0, String(closingBonus(PARTING_SHOT)));
 check('half bonus at the ramp midpoint',
   near(closingBonus((DV_BONUS_START + DV_BONUS_FULL) / 2), DV_BONUS_MAX / 2),
   String(closingBonus((DV_BONUS_START + DV_BONUS_FULL) / 2)));
@@ -88,30 +109,45 @@ const pass = (dvPerTick, dMin, opts = {}) => engagement(
   opts,
 );
 
-const fastOff = pass(211.5, 4, { dvBonusMax: 0 });
-const fastOn = pass(211.5, 4);
+const fastOff = pass(FAST_CROSSING, 4, { dvBonusMax: 0 });
+const fastOn = pass(FAST_CROSSING, 4);
 // One tick in which the whole pass happens, so this is a single roll
 // rather than the multi-tick total in transitExposure.mjs — the number
 // is smaller there because the pass is spread across ticks. Both are
 // honest; do not compare them directly.
-check('a fast crossing is a poor shot on its own', fastOff.p < 0.10,
-  `p=${fastOff.p.toFixed(4)}`);
+//
+// Pinned to the corvette reach the bonus was designed at (12). Reach
+// was doubled to 24 on purpose (95319bfc), which lifts this roll to
+// ~0.11 — a design change, not this file's business. The claim here is
+// about the shape of the maths, the same way transitCombat.test.ts pins
+// its design-doc table to DESIGN_REACH.
+const DESIGN_REACH = 12;
+const fastDesign = pass(FAST_CROSSING, 4, { dvBonusMax: 0, range: DESIGN_REACH });
+check('a fast crossing is a poor shot on its own (design reach)', fastDesign.p < 0.10,
+  `p=${fastDesign.p.toFixed(4)}`);
 // The precise claim, not a vague "it got better": the improvement is
 // EXACTLY the ramp value at this speed. Anything else means the bonus
 // is being scaled by something it should not touch (exposure, most
 // likely), which is the bug this whole design was built to avoid.
 check('...and the bonus adds exactly the ramp value, unscaled',
-  near(fastOn.p - fastOff.p, closingBonus(211.5), 1e-9),
-  `delta=${(fastOn.p - fastOff.p).toFixed(6)} ramp=${closingBonus(211.5).toFixed(6)}`);
+  near(fastOn.p - fastOff.p, closingBonus(FAST_CROSSING), 1e-9),
+  `delta=${(fastOn.p - fastOff.p).toFixed(6)} ramp=${closingBonus(FAST_CROSSING).toFixed(6)}`);
 check('...without ever exceeding the configured max',
   fastOn.p - fastOff.p <= DV_BONUS_MAX + 1e-9,
   `delta=${(fastOn.p - fastOff.p).toFixed(4)}`);
 
-// A moon-hop is mid-ramp: it should get a little, not a lot.
-const moonOff = pass(42.2, 4, { dvBonusMax: 0 });
-const moonOn = pass(42.2, 4);
-check('a moon-hop pass is below the ramp and unchanged',
-  near(moonOff.p, moonOn.p), `${moonOff.p.toFixed(4)} -> ${moonOn.p.toFixed(4)}`);
+// A moon-hop. On the legacy burn it sat below the ramp (50 u/t) and got
+// nothing; since the ramp moved down to the departure speed (21 u/t,
+// 77e00789) it sits just inside it and gets a sliver (~+0.4%). It
+// should get a little, not a lot, and exactly the ramp value.
+const moonOff = pass(MOON_HOP, 4, { dvBonusMax: 0 });
+const moonOn = pass(MOON_HOP, 4);
+check('a moon-hop pass gets at most a sliver of the bonus',
+  moonOn.p - moonOff.p < DV_BONUS_MAX / 10,
+  `${moonOff.p.toFixed(4)} -> ${moonOn.p.toFixed(4)}`);
+check('...and that sliver is exactly the ramp value',
+  near(moonOn.p - moonOff.p, closingBonus(MOON_HOP), 1e-9),
+  `delta=${(moonOn.p - moonOff.p).toFixed(6)} ramp=${closingBonus(MOON_HOP).toFixed(6)}`);
 
 // ---------------------------------------------------------------
 // 4. IT CANNOT PRODUCE NONSENSE
@@ -125,7 +161,7 @@ check('a blind shooter still gets nothing',
 // ---------------------------------------------------------------
 // 5. HOST CONTROL
 // ---------------------------------------------------------------
-const custom = pass(211.5, 4, { dvBonusMax: 0.3, dvBonusStart: 100, dvBonusFull: 200 });
+const custom = pass(FAST_CROSSING, 4, { dvBonusMax: 0.3, dvBonusStart: 100, dvBonusFull: 200 });
 check('a host can raise it', custom.bonus > DV_BONUS_MAX, String(custom.bonus));
 check('a host can move the ramp', pass(120, 4, { dvBonusStart: 200 }).bonus === 0);
 
