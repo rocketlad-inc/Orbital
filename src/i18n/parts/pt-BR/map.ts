@@ -302,6 +302,7 @@ export const map: Catalog = {
   'worldmenu.p.ringAria': 'Integridade {hp} de {max}',
   'worldmenu.p.cityPlot': 'LOTE DA CIDADE',
   'worldmenu.p.pinAria': '{name} — {line}',
+  'worldmenu.p.stationHp': '{name} · {hp}/{max}',
   'worldmenu.p.raid_one': 'Ataque a caminho · {n} nave · chega em T-{t}',
   'worldmenu.p.raid_other': 'Ataque a caminho · {n} naves · chega em T-{t}',
   'worldmenu.p.raids_one': '{n} ataque a caminho',

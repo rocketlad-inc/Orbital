@@ -300,6 +300,7 @@ export const map = {
   'worldmenu.p.ringAria': 'Integrity {hp} of {max}',
   'worldmenu.p.cityPlot': 'CITY PLOT',
   'worldmenu.p.pinAria': '{name} — {line}',
+  'worldmenu.p.stationHp': '{name} · {hp}/{max}',
   'worldmenu.p.raid_one': 'Raid inbound · {n} ship · lands T-{t}',
   'worldmenu.p.raid_other': 'Raid inbound · {n} ships · lands T-{t}',
   'worldmenu.p.raids_one': '{n} raid inbound',

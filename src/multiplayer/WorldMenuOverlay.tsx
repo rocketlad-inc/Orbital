@@ -345,6 +345,11 @@ export const WorldMenuOverlay: React.FC = () => {
       // the camera; left alone the two parted company, and the tags hung
       // off a planet framed for the old size. A phone's sheet rising past
       // a peek lifts the world the same way, so its pins stay in view.
+      // NOT FOR A PHONE'S KEYBOARD: typing a ship's or a city's name
+      // shrinks the window, and re-framing then snapped the camera under
+      // the player's fingers. The keyboard is up while a field has focus.
+      const typing = vw <= 720 && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName ?? '');
+      if (typing) return;
       const s1 = menuScaleFor(b, vh);
       const rShift = vw > 720 ? (296 - 60) / 2 : 0;
       const uShift = vw > 720 ? 0 : phoneShift(vh);
@@ -1419,7 +1424,8 @@ export const WorldMenuOverlay: React.FC = () => {
         default: return pview;
       }
     })();
-    if (view !== pview) window.setTimeout(() => setPview(view), 0);
+    // Only if the player has not picked another view in the meantime.
+    if (view !== pview) window.setTimeout(() => setPview(p => (p === pview ? view : p)), 0);
     const level = phoneLevel(view);
 
     // ---- the header: back, the world's name, whose it is, its integrity ----
@@ -1552,7 +1558,8 @@ export const WorldMenuOverlay: React.FC = () => {
           aria-label={myStation.name} title={myStation.name}
           onClick={() => { setPicked(null); setPside('orbit'); setPview('structures'); }}>{art}</button>
       ) : (
-        <span className="wmp-station is-other" style={style} data-testid="wm-station" title={readout.station!.name}>{art}</span>
+        <span className="wmp-station is-other" style={style} data-testid="wm-station"
+          title={t('worldmenu.p.stationHp', { name: readout.station!.name, hp: Math.round(readout.station!.hp), max: readout.station!.maxHp })}>{art}</span>
       );
     })() : null;
 
@@ -1600,6 +1607,12 @@ export const WorldMenuOverlay: React.FC = () => {
     const placeName = myCity?.name ?? myStation?.name
       ?? (readout.ownerFactionId ? (isMine ? t('worldmenu.you') : (ownerFaction?.name ?? '')) : t('worldmenu.p.unclaimed'));
     const raidLine = raid ? tn('worldmenu.p.raid', raid.ships, { t: raid.lands }) : null;
+    // THE TUTORIAL'S ANCHORS (tutorialSteps.ts): its steps point at the
+    // yard, the terraform panel and the Dyson card, which on a phone sit
+    // behind their cards, so the cards wear those anchors at a peek.
+    const cardTutorial = (id: string): string | undefined => (id === 'yard' ? 'wm-build'
+      : id === 'terraform' ? 'terraform-section'
+      : id === 'overview' && body.id === 'sol' ? 'dyson-sphere-section' : undefined);
     const homeView = (
       <>
         <div className="wmp-idrow">
@@ -1622,7 +1635,8 @@ export const WorldMenuOverlay: React.FC = () => {
         ))}
         <div className="wmp-cards" data-testid="wm-bar">
           {cards.map(c => (
-            <button key={c.id} type="button" className={`wmp-card ${c.tone ?? ''}`} data-testid={`wm-bar-${c.id}`} onClick={c.go}>
+            <button key={c.id} type="button" className={`wmp-card ${c.tone ?? ''}`} data-testid={`wm-bar-${c.id}`} onClick={c.go}
+              data-tutorial-id={cardTutorial(c.id)}>
               <span className="wmp-card-nm">{c.label}{c.badgeN ? <b className="wmp-card-badge">{c.badgeN}</b> : null}</span>
               {c.meter !== undefined && <span className="wmp-card-meter"><i style={{ width: `${c.meter}%` }} /></span>}
               <span className="wmp-card-sub">{c.sub}</span>
@@ -2159,6 +2173,9 @@ export const WorldMenuOverlay: React.FC = () => {
           {tabs.map(x => (
             <button key={x.id} type="button" className={`wm-bar-tab ${x.tone ?? ''}${openTab === x.id ? ' is-on' : ''}`}
               aria-pressed={openTab === x.id} data-testid={`wm-bar-${x.id}`}
+              // The tutorial's "build a ship" step points at the yard; with
+              // its drawer shut, the tab that opens it stands in.
+              data-tutorial-id={x.id === 'yard' && openTab !== 'yard' ? 'wm-build' : undefined}
               onClick={() => { setPicked(null); setStationOpen(false); openDrawer(openTab === x.id ? null : x.id); }}>
               <span className="wm-bar-nm">{x.label}</span>
               {x.id === 'terraform' && body.terraformCompletesAtTick == null ? (
@@ -2918,7 +2935,10 @@ const WmFleet: React.FC<{
           >{t('worldmenu.cancel')}</button>
         </div>
       )}
-      {orderPickerFor && (
+      {/* A full-screen modal, so it renders at the page's top level: inside
+          the phone's sheet the world menu's header drew over its scrim and
+          its back arrow stayed live under it. */}
+      {orderPickerFor && createPortal(
         <TransferTargetPicker
           bodies={gameState.bodies}
           tick={gameState.currentTick}
@@ -2933,7 +2953,8 @@ const WmFleet: React.FC<{
             setOrderPickerFor(null);
           }}
           onClose={() => setOrderPickerFor(null)}
-        />
+        />,
+        document.body,
       )}
 
       <div className={`wm-fleet-body${mobile ? '' : ' wm-fleet-body--list'}`}>
