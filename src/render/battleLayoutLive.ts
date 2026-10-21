@@ -247,13 +247,22 @@ interface Glide { r: number; t: number; ms: number }
 const glides = new Map<string, Glide>();
 let lastSweep = 0;
 
+/** A glide not advanced for this long is history, not a glide: the hull
+ *  was elsewhere (in flight, folded, an escort in a block) since. Kept for
+ *  up to ten seconds, a hull parked at a world before it launched landed
+ *  back on its pre-launch entry and covered half the gap from THERE in one
+ *  frame (Lorne: ships "jumping around a lot in space"). */
+export const BATTLE_GLIDE_STALE_MS = 400;
+const fresh = (g: { ms: number } | undefined, nowMs: number) =>
+  !!g && nowMs >= g.ms && nowMs - g.ms <= BATTLE_GLIDE_STALE_MS;
+
 /** Start a unit's glide from where it was last drawn (reference polar,
  *  wheel removed), so a hull arriving or re-slotted eases in. */
 export function seedBattleGlide(id: string, r: number, t: number, nowMs: number): void {
-  if (!glides.has(id)) glides.set(id, { r, t, ms: nowMs });
+  if (!fresh(glides.get(id), nowMs)) glides.set(id, { r, t, ms: nowMs });
 }
-export function hasBattleGlide(id: string): boolean {
-  return glides.has(id);
+export function hasBattleGlide(id: string, nowMs?: number): boolean {
+  return nowMs == null ? glides.has(id) : fresh(glides.get(id), nowMs);
 }
 
 /** The wheel's angle at `nowMs`. */
@@ -275,7 +284,7 @@ export function battlePlacement(
     ?? (battle.layout.station && battle.layout.station.id === id ? battle.layout.station : undefined);
   if (!p) return null;
   let g = glides.get(id);
-  if (!g) { g = { r: p.r, t: p.theta, ms: nowMs }; glides.set(id, g); }
+  if (!g || !fresh(g, nowMs)) { g = { r: p.r, t: p.theta, ms: nowMs }; glides.set(id, g); }
   const dt = Math.max(0, Math.min(200, nowMs - g.ms));
   g.ms = nowMs;
   const k = 1 - Math.exp(-dt / GLIDE_MS);

@@ -4674,7 +4674,14 @@ const SHIP_ICON_REST_SIZE: Record<string, number> = {
   // Venus on purpose. Drawn px: corvette 30, frigate 48, freighter and
   // colony 45, destroyer 84, Mega Destroyer 116, Mobile Foundry 104
   // (was 42 / 51 / 48 / 66 / 76 / 68).
-  mega_destroyer: 58,
+  // TWICE A DESTROYER IN FLIGHT (Lorne, 2026-10-21: "Why does the mega
+  // destroyer seem so small? It's supposed to be the biggest ship, it's
+  // the same size as the destroyer?"). At 58 it drew 116 px to a
+  // destroyer's 84, and its round, open hull fills far less of its square
+  // than a destroyer's solid wedge, so the two read as equals. 74 draws
+  // 148 px, 1.76x a destroyer, still under a Venus (150): the biggest
+  // ship, not a moon.
+  mega_destroyer: 74,
   mobile_foundry: 52,
   // THE LEVIATHAN (worker/kaiju.js): "visibly huge" (Lorne). Half again a
   // Mega Destroyer, the biggest thing anyone builds, on the same zoom
@@ -5249,6 +5256,9 @@ export function drawEscortHull(
   y: number,
   baseSizePx: number,
   heading: number,
+  /** 0..1: how hard the flagship this hull rides with is burning (its
+   *  thrust hint). Escorts burn with their flagship. */
+  thrust = 0,
 ): void {
   if (farOffCanvas(ctx, x, y, baseSizePx * 2)) return;
   const g = ctx.ctx;
@@ -5277,6 +5287,11 @@ export function drawEscortHull(
   const at = canvasToWorld(x, y, ctx);
   recordDrawnShipWorldPos(ship.id, at.x, at.y);
   if (img) recordDrawnLook(ship.id, img, size, heading);
+  if (thrust > 0) {
+    const cH = Math.cos(heading), sH = Math.sin(heading);
+    drawThrustHint(g, x - cH * size * 0.42, y - sH * size * 0.42, cH, sH, size,
+      THRUST_HINT_ALPHA * thrust * (1 - thrustVisibility(ctx.camera.scale)));
+  }
 
   g.save();
   g.translate(x, y);
@@ -5365,9 +5380,11 @@ export function drawShip(
   if (liveBattle) {
     const k = battleScale(liveBattle, drawnRadiusOf(ctx.presentation, parentBody, ctx.camera.scale));
     const nowM = ctx.nowMs ?? performance.now();
-    if (k > 0 && !hasBattleGlide(ship.id)) {
-      // Arriving (or newly in a fight): ease in from where it was drawn.
-      const was = drawnShipWorldPos(ship.id);
+    if (k > 0 && !hasBattleGlide(ship.id, nowM)) {
+      // Arriving (or newly in a fight): ease in from where it was drawn
+      // JUST NOW (in flight, or as an escort in its block). An older spot
+      // is somewhere it no longer is.
+      const was = recentDrawnShipWorldPos(ship.id, 600);
       if (was) {
         const px = (was.x - parentPos.x) * ctx.camera.scale / k;
         const py = (was.y - parentPos.y) * ctx.camera.scale / k;
@@ -7208,6 +7225,55 @@ function thrustVisibility(scale: number): number {
   return Math.max(0, Math.min(1, (scale - THRUST_FADE_LO) / (THRUST_FADE_HI - THRUST_FADE_LO)));
 }
 
+// THE THRUST HINT (Lorne, 2026-10-21: "some amount of engine plume should
+// be on ships at the level of zoom out we're showing here ... Not the full
+// effect, but a light something showing the direction of thrust"). Below
+// the plume's zoom band a burning hull trails a short tapered tail off its
+// engine: two flat triangles, no gradients, cheap at any count. It hands
+// over to the full plume as the plume fades in, so nothing doubles.
+export const THRUST_HINT_ALPHA = 0.55;
+export const THRUST_HINT_LEN = 0.75;    // x icon size, behind the engine
+
+/** Where a hull's engine was burning this frame, for its escorts. */
+const lastThrust = new Map<string, number>();
+export function drawnThrust(shipId: string): number {
+  return lastThrust.get(shipId) ?? 0;
+}
+
+/** The hint itself, from the engine (ex, ey) along -dir. `k` 0..1 is its
+ *  strength: the hint's alpha times however much it is needed. */
+export function drawThrustHint(
+  g: CanvasRenderingContext2D, ex: number, ey: number, dx: number, dy: number,
+  iconSize: number, k: number,
+): void {
+  if (k <= 0.01 || isLightweight()) return;
+  const len = iconSize * THRUST_HINT_LEN;
+  const w = Math.max(1.2, iconSize * 0.11);
+  const nx = -dy, ny = dx;
+  const prevA = g.globalAlpha, prevOp = g.globalCompositeOperation;
+  g.globalCompositeOperation = 'lighter';
+  // Outer: warm, the whole length.
+  g.globalAlpha = prevA * k * 0.55;
+  g.fillStyle = '#ff9d4d';
+  g.beginPath();
+  g.moveTo(ex + nx * w, ey + ny * w);
+  g.lineTo(ex - nx * w, ey - ny * w);
+  g.lineTo(ex - dx * len, ey - dy * len);
+  g.closePath();
+  g.fill();
+  // Core: hot, half the length and width.
+  g.globalAlpha = prevA * k;
+  g.fillStyle = '#fff1d6';
+  g.beginPath();
+  g.moveTo(ex + nx * w * 0.5, ey + ny * w * 0.5);
+  g.lineTo(ex - nx * w * 0.5, ey - ny * w * 0.5);
+  g.lineTo(ex - dx * len * 0.5, ey - dy * len * 0.5);
+  g.closePath();
+  g.fill();
+  g.globalAlpha = prevA;
+  g.globalCompositeOperation = prevOp;
+}
+
 // Per-class plume shaping (endgame juice pass): a corvette's torch is a
 // needle, a destroyer's is a broad triple-bell wash, a freighter pushes
 // a short wide cargo-tug flare. Same geometry code — just class-scaled.
@@ -7484,6 +7550,15 @@ function drawTorchTransitShip(
   const turnFade = shaped ? Math.abs(Math.cos(Math.PI * flipTurn)) : 1;
   const plumeLen = !shaped ? 1 : (isBrake ? 1.4 : ramped ? 0.7 + 0.7 * share : 1) * turnFade;
   const shapedPlume = !shaped ? 1 : (ramped && !isBrake ? 0.8 + 0.2 * share : 1) * turnFade;
+  // Below the plume's zoom band: the light hint, handing over as it fades in.
+  const hintK = thrusting && ship.class !== 'kaiju' && ship.class !== 'missile'
+    ? THRUST_HINT_ALPHA * (1 - thrustVis) * Math.max(0.35, shapedPlume) : 0;
+  if (lastThrust.size > 2000) lastThrust.clear();
+  lastThrust.set(ship.id, thrusting ? Math.max(0.35, shapedPlume) : 0);
+  if (hintK > 0.01) {
+    const cH = Math.cos(heading), sH = Math.sin(heading);
+    drawThrustHint(ctx.ctx, canvasPos.x - cH * iconSize * 0.42, canvasPos.y - sH * iconSize * 0.42, cH, sH, iconSize, hintK);
+  }
   if (thrusting && thrustVis > 0 && shapedPlume > 0.02 && ship.class !== 'kaiju') {
     const cosH = Math.cos(heading);
     const sinH = Math.sin(heading);

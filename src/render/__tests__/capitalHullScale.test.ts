@@ -182,14 +182,17 @@ describe('capital hulls are ships, not planets', () => {
     // a Venus (~77px) at 76; he chose "more dramatic size differences" on
     // the battle test page, so a Mega Destroyer is now 116 and outgrows a
     // small world on purpose. Pinned so the ladder does not drift.
+    // 2026-10-21 (Lorne: "it's the same size as the destroyer?"): 148,
+    // 1.76x a destroyer (its round open hull reads smaller than its
+    // square), held under a Venus by the test below.
     const md = shipIconSize('mega_destroyer', false);
     const mf = shipIconSize('mobile_foundry', false);
     const dd = shipIconSize('destroyer', false);
     const cv = shipIconSize('corvette', false);
-    expect(md).toBe(116);
+    expect(md).toBe(148);
     expect(dd).toBe(84);
     expect(cv).toBe(30);
-    expect(md / dd).toBeGreaterThan(1.3);      // a capital looms over a destroyer
+    expect(md / dd).toBeGreaterThan(1.7);      // a capital looms over a destroyer
     expect(dd / cv).toBeGreaterThan(2.5);      // and a destroyer over a corvette
     expect(mf).toBeLessThan(md);               // the gun outsizes the yard
   });

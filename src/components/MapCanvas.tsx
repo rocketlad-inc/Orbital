@@ -44,6 +44,7 @@ import {
   glideLayout,
   recentDrawnShipWorldPos,
   drawnShipsSince,
+  drawnThrust,
   generateStarfield,
   drawStarfield,
   StarfieldCache,
@@ -3017,6 +3018,38 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // tick inside that disc, where it read as a hull in orbit. While its
         // true point is under the drawn disc it is drawn on the disc's edge,
         // on its course side, burning; it leaves the edge as it outruns it.
+        // NEVER THROUGH A WORLD'S DRAWN DISC. A course runs from the true
+        // parking orbit to the destination's true CENTRE, and at map zoom a
+        // world is drawn many times its true size: a fleet flew in over the
+        // disc toward the middle, then the parked layout put it on the
+        // ring in one frame (the Mega Destroyer re-shoot, 12.2 s). Inside a
+        // disc it rides the disc's edge on its course side, which is where
+        // the parked layout picks it up (and, leaving, where it left it).
+        if (ship.class !== 'missile' && placed && placed.length > 1 && pres) {
+          const sc = renderContext.camera.scale;
+          const ends = [ship.transit?.currentTransfer?.targetBodyId, ship.orbit?.parentBodyId]
+            .filter((id, i, a): id is string => !!id && a.indexOf(id) === i)
+            .map(id => bodyById2.get(id))
+            .filter((b): b is GameBody => !!b);
+          for (const b of ends) {
+            const R = (drawnRadiusOf(pres, b, sc) + 10) / Math.max(1e-9, sc);
+            const first = placed[0], last = placed[placed.length - 1];
+            const cl = Math.hypot(last.x - first.x, last.y - first.y) || 1;
+            const isDest = b.id === ship.transit?.currentTransfer?.targetBodyId;
+            // The course side: behind the arrival, ahead of the departure.
+            const side = isDest
+              ? { x: (first.x - last.x) / cl, y: (first.y - last.y) / cl }
+              : { x: (last.x - first.x) / cl, y: (last.y - first.y) / cl };
+            placed = placed.map(p => {
+              const c = bodyPosition(b, p.t, gameState.bodies);
+              const dx = p.x - c.x, dy = p.y - c.y;
+              const d = Math.hypot(dx, dy);
+              if (d >= R) return p;
+              const u = d > R * 0.05 ? { x: dx / d, y: dy / d } : side;
+              return { t: p.t, x: c.x + u.x * R, y: c.y + u.y * R };
+            });
+          }
+        }
         if (ship.class === 'missile' && placed && placed.length > 1) {
           const home = ship.orbit?.parentBodyId ? bodyById2.get(ship.orbit.parentBodyId) : undefined;
           if (home) {
@@ -3478,15 +3511,17 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // In flight, each escort's place in the block glides (a death
           // re-spaces the block; a new flagship re-centres it), starting
           // from where the hull was just drawn if it had another role.
+          // Parked too: a flag change re-centres a block at a world.
           let rel = { x: offs[i].dx, y: offs[i].dy };
-          if (lead.transit) {
+          {
             const was = recentDrawnShipWorldPos(esc.id);
             const wc = was ? worldToCanvas(was.x, was.y, renderContext) : null;
             rel = glideLayout(`esc:${esc.id}`, rel, nowMs, wc ? { x: wc.x - hb.x, y: wc.y - hb.y } : undefined);
           }
           const ex = hb.x + rel.x;
           const ey = hb.y + rel.y;
-          drawEscortHull(renderContext, esc, ex, ey, escortGlyphFor(spacing0 * bks), heading);
+          drawEscortHull(renderContext, esc, ex, ey, escortGlyphFor(spacing0 * bks), heading,
+            lead.transit ? drawnThrust(leadId) : 0);
           // Where this hull IS, for everything that asks: its bolts leave
           // from here, hits on it land here, a click here is the fleet.
           fleetSlots.set(esc.id, { x: ex, y: ey });
