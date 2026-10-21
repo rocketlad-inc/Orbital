@@ -755,7 +755,20 @@ async function handleAdminPlayers(req, env, { session, url }) {
   const [page, count] = await Promise.all([
     env.DB.prepare(
       `SELECT u.id, u.display_name, u.email, u.created_at,
-              s.last_beat_ms AS last_played_ms, s.first_beat_ms, s.minutes AS minutes_all
+              s.last_beat_ms AS last_played_ms, s.first_beat_ms, s.minutes AS minutes_all,
+              -- Where they came from (signup_source) and who invited them
+              -- (0175), plus how many players they have brought in.
+              u.signup_source, u.signup_referrer, u.referred_how,
+              (SELECT r.display_name FROM users r WHERE r.id = u.referred_by) AS referred_by_name,
+              (SELECT COUNT(*) FROM users f WHERE f.referred_by = u.id) AS invited_count,
+              -- Invited before inviters were recorded (Oct 19): the host of
+              -- the first room they sat in that someone else made. Read-only
+              -- display; never written back, so it earns no Recruiter emblem.
+              CASE WHEN u.referred_by IS NULL AND u.signup_source = 'invite' THEN
+                (SELECT h.display_name FROM room_members m
+                   JOIN rooms r ON r.id = m.room_id JOIN users h ON h.id = r.host_id
+                  WHERE m.user_id = u.id AND r.host_id != u.id
+                  ORDER BY m.joined_at LIMIT 1) END AS likely_inviter
          ${from} ORDER BY ${PLAYER_SORTS[sortKey]} LIMIT ?4 OFFSET ?5`,
     ).bind(d14, raw, like, limit, offset).all(),
     env.DB.prepare(`SELECT COUNT(*) AS n ${from}`).bind(d14, raw, like).first(),

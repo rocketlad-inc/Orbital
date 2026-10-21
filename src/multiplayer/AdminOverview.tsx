@@ -105,9 +105,60 @@ type PlayerRow = {
   days_14: number[]; minutes_14d: number; minutes_7d: number; minutes_prior7: number;
   active_days_14d: number; actions_14d: number; rejected_14d?: number; judged_14d?: number;
   games: Array<{ id: string; name: string; faction: string; color: string }>;
+  /** Where they came from: the signup tag, the referring site, and the
+   *  inviter (0175: named on the link, or their room's host as a guess). */
+  signup_source?: string | null; signup_referrer?: string | null;
+  referred_by_name?: string | null; referred_how?: 'link' | 'host' | null;
+  /** Players this account has brought in. */
+  invited_count?: number;
+  /** Invited before Oct 19: the host of their first room, a guess. */
+  likely_inviter?: string | null;
 };
 
 const DAY = 86_400_000;
+
+/** Readable names for the commonest signup tags; anything else shows as is. */
+const SOURCE_LABEL: Record<string, string> = {
+  invite: 'Invite', direct: 'Typed or bookmarked', reddit: 'Reddit', google: 'Google search',
+  'android-app': 'Android app', 'google-play': 'Google Play', discord: 'Discord', 'discord-feed': 'Discord game feed',
+  recap: 'Shared battle recap', winback: 'Win-back email',
+};
+
+/** The "Came from" cell: the inviter when there is one, else the signup
+ *  tag; and how many players this person has brought in themselves. */
+function CameFrom({ p, onFind }: { p: PlayerRow; onFind: (name: string) => void }) {
+  const brought = p.invited_count ?? 0;
+  const src = p.signup_source;
+  return (
+    <>
+      {p.referred_by_name ? (
+        <span className="ao-name" style={{ fontWeight: 500 }}>
+          Invited by{' '}
+          <button className="ao-link" onClick={() => onFind(p.referred_by_name!)} title="Show this player">
+            {p.referred_by_name}
+          </button>
+        </span>
+      ) : src === 'invite' && p.likely_inviter ? (
+        <span title="Invited before inviters were recorded (Oct 19): the host of the first room they joined">
+          Invite · likely{' '}
+          <button className="ao-link" onClick={() => onFind(p.likely_inviter!)} title="Show this player">
+            {p.likely_inviter}
+          </button>
+        </span>
+      ) : src ? (
+        <span title={p.signup_referrer && p.signup_referrer !== src ? `via ${p.signup_referrer}` : undefined}>
+          {SOURCE_LABEL[src] ?? src}
+        </span>
+      ) : (
+        <span className="ao-dim" title="Signed up before sources were recorded (Sep 29)">not recorded</span>
+      )}
+      {p.referred_by_name && p.referred_how === 'host' && (
+        <span className="ao-sub">their room's host, a best guess</span>
+      )}
+      {brought > 0 && <span className="ao-sub" style={{ color: 'var(--ao-teal)' }}>brought {n(brought)} player{brought === 1 ? '' : 's'}</span>}
+    </>
+  );
+}
 const PAGE = 25;
 /** Auto-refresh cadence for the headline numbers. The rollups behind
  *  them move once a minute, so polling faster would only re-read the
@@ -852,6 +903,7 @@ function PlayersPanel({ refreshKey, onOpenGame }: { refreshKey: number; onOpenGa
               <th className="num" title="Actions the game refused, last 14 days">Refused</th>
               <th>Last played</th>
               <th>Joined</th>
+              <th>Came from</th>
             </tr>
           </thead>
           <tbody>
@@ -880,6 +932,7 @@ function PlayersPanel({ refreshKey, onOpenGame }: { refreshKey: number; onOpenGa
                 </td>
                 <td>{p.last_played_ms ? ago(now, p.last_played_ms) : <span className="ao-dim">never played</span>}</td>
                 <td className="ao-dim">{ago(now, p.created_at)}</td>
+                <td><CameFrom p={p} onFind={name => { setScope('all'); setQ(name); }} /></td>
               </tr>
             ))}
           </tbody>
