@@ -77,7 +77,7 @@
     "sim:starterorbit": "node sim/starterOrbit.mjs",
     "sim:heraldlag": "node sim/heraldLag.mjs",
     "herald:replay": "node sim/heraldReplay.mjs",
-    "sim:wear": "node sim/wearState.mjs",
+    "sim:wear": "esbuild sim/wearState.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/wearState.mjs && node node_modules/.cache/wearState.mjs",
     "sim:tenplayers": "node sim/tenPlayers.mjs",
     "sim:discordloc": "esbuild sim/discordLocale.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/discordLocale.mjs && node node_modules/.cache/discordLocale.mjs",
     "sim:email": "esbuild sim/emailQuickJoin.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/emailQuickJoin.mjs && node node_modules/.cache/emailQuickJoin.mjs",
