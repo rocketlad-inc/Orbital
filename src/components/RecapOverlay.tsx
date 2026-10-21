@@ -325,7 +325,7 @@ export const RecapOverlay: React.FC = () => {
   if (!playing) {
     // The offer — one small card, two exits, zero blocking of the map.
     return (
-      <div style={{ position: 'fixed', top: 64, left: '50%', transform: 'translateX(-50%)', zIndex: 300,
+      <div className="recap-offer" style={{ position: 'fixed', top: 64, left: '50%', transform: 'translateX(-50%)', zIndex: 300,
                     background: 'rgba(10,16,24,0.96)', border: '1px solid #4ecdc4', borderRadius: 8,
                     padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 14,
                     boxShadow: '0 8px 30px rgba(0,0,0,0.5)' }}>

@@ -24,11 +24,11 @@ import { bodyPosition } from '../../physics/orbitalMechanics';
 import { torchPositionFromSamples } from '../../physics/torchTransfer';
 import { drawnShipWorldPos, torchTrajectorySamples } from '../../render/mapRenderer';
 import { shipWorldPosition } from '../../game/combat';
-import { smoothedTick } from '../../render/tickPhase';
+import { smoothedTick, setStudioDisplayTick } from '../../render/tickPhase';
 import { setStudioFullVisuals } from '../../render/lightweightMode';
 import { apiFetch } from '../api';
 
-export type Target = string; // 'earth' | 'ship:<id>' | 'fleet:<id>'
+export type Target = string; // 'earth' | 'ship:<id>' | 'fleet:<id>' | 'missile:<n>'
 
 export type ShotStep =
   | { at: number; do: 'focus'; target: Target; px?: number; scale?: number }
@@ -111,6 +111,12 @@ export class Director {
   private cancelFlag = false;
   private tickSpeedMs: number | null = null;
   private tickWall = new Map<number, number>();
+  /** The glide the map draws while filming: from tick `from` (landed at
+   *  film time `at`) to from+1 over `ms`. See smoothTicks(). */
+  private glide: { from: number; at: number; ms: number } | null = null;
+  /** How long the NEXT tick to land should glide: the gap to the tick
+   *  step after it, so one tick hands over to the next with no stop. */
+  private nextGlideMs: number | null = null;
   private realFetch: typeof fetch | null = null;
   /** The last recording, for the Studio bar's download and the CLI's pull. */
   lastBlob: Blob | null = null;
@@ -146,6 +152,21 @@ export class Director {
   private ship(id: string): Ship | undefined {
     return this.host.state().ships.find(x => x.id === id || x.id.endsWith(`:${id}`));
   }
+  /** Salvos in the order they first appeared during this shot. A salvo's
+   *  id carries its launch tick ('<game>:msl_<tick>_<rand>'), which a shot
+   *  cannot know ahead, so shots name them 'missile:1', 'missile:2'. */
+  private seenMissiles: string[] = [];
+  private missile(n: number): Ship | undefined {
+    const live = this.host.state().ships
+      .filter(x => /:msl_\d+_/.test(x.id))
+      .sort((a, b) => {
+        const ta = Number(/:msl_(\d+)_/.exec(a.id)?.[1] ?? 0), tb = Number(/:msl_(\d+)_/.exec(b.id)?.[1] ?? 0);
+        return ta - tb || a.id.localeCompare(b.id);
+      });
+    for (const x of live) if (!this.seenMissiles.includes(x.id)) this.seenMissiles.push(x.id);
+    const id = this.seenMissiles[n - 1];
+    return id ? live.find(x => x.id === id) : undefined;
+  }
   private fleetMembers(id: string): Ship[] {
     return this.host.state().ships.filter(x => x.fleetId != null && (x.fleetId === id || x.fleetId.endsWith(`:${id}`)));
   }
@@ -158,6 +179,10 @@ export class Director {
       const ship = this.ship(target.slice(5));
       if (!ship) return null;
       return this.shipPos(ship, tick);
+    }
+    if (target.startsWith('missile:')) {
+      const m = this.missile(Math.max(1, Number(target.slice(8)) || 1));
+      return m ? this.shipPos(m, tick) : null;
     }
     if (target.startsWith('fleet:')) {
       const members = this.fleetMembers(target.slice(6));
@@ -348,12 +373,58 @@ export class Director {
 
   private note(s: string): void { this.log.push(s); if (this.log.length > 200) this.log.shift(); }
 
+  /** Seconds from a tick step to the next tick step, or null. */
+  private static gapAfter(steps: ShotStep[], at: number): number | null {
+    let next: number | null = null;
+    for (const s of steps) if (s.do === 'tick' && s.at > at + 1e-9 && (next == null || s.at < next)) next = s.at;
+    return next == null ? null : next - at;
+  }
+
+  /**
+   * Smooth motion through ticks while filming. The map draws at a tick the
+   * director computes on the film's clock: each landed tick glides to the
+   * next over exactly the time until the next tick step, so ships and
+   * worlds keep moving at an even pace through every boundary instead of
+   * stopping and jumping. Before the first tick the glide is already
+   * under way at the same pace and lands as that tick fires. After the
+   * last tick it glides one more tick at the shot's speed and holds.
+   */
+  private smoothTicks(shot: Shot, now: () => number): void {
+    const ticks = shot.steps.filter(s => s.do === 'tick').map(s => s.at).sort((a, b) => a - b);
+    const pace = (ticks.length > 1 ? (ticks[1] - ticks[0]) * 1000 : null) ?? this.tickSpeedMs ?? 2500;
+    const startTick = this.host.state().currentTick;
+    if (ticks.length) {
+      const firstMs = Math.max(0, ticks[0] * 1000);
+      // Phase at the opening frame, so tick 1 lands as the glide ends.
+      this.glide = { from: startTick, at: now() - Math.max(0, pace - firstMs), ms: Math.max(firstMs, pace) };
+    } else {
+      this.glide = { from: startTick, at: now(), ms: this.tickSpeedMs ?? 2500 };
+    }
+    setStudioDisplayTick((ct: number) => {
+      const t = now();
+      if (!this.glide || ct !== this.glide.from) {
+        this.glide = { from: ct, at: t, ms: this.nextGlideMs ?? this.tickSpeedMs ?? 2500 };
+      }
+      const u = (t - this.glide.at) / Math.max(1, this.glide.ms);
+      return ct + (u < 0 ? 0 : u > 1 ? 1 : u);
+    });
+  }
+  private unsmoothTicks(): void {
+    setStudioDisplayTick(null);
+    this.glide = null;
+    this.nextGlideMs = null;
+  }
+
   /** Fire every step whose time has come. Ticks are awaited: the clock
    *  does not move while the server works. */
   private async fire(steps: ShotStep[], fired: Set<ShotStep>): Promise<void> {
     for (const st of steps) {
       if (fired.has(st) || st.at > this.clock + 1e-9) continue;
       fired.add(st);
+      if (st.do === 'tick') {
+        const gap = Director.gapAfter(steps, st.at);
+        this.nextGlideMs = gap != null && gap <= 6 ? gap * 1000 : null;
+      }
       switch (st.do) {
         case 'focus': this.focus(st.target, st); break;
         case 'pan': this.pan(st.target, st); break;
@@ -407,7 +478,9 @@ export class Director {
   }
   private end(): void {
     this.running = false;
+    this.unsmoothTicks();
     this.moveMs = null;
+    this.seenMissiles = [];
     this.speed(null);
     this.ui(true);
     document.body.classList.remove('studio-filming');
@@ -445,6 +518,7 @@ export class Director {
 
     const vclock = installVirtualClock();
     this.begin(shot);
+    this.smoothTicks(shot, vclock.virtualNow);
     const fired = new Set<ShotStep>();
     let recorded = 0;
     this.stats = { frames: 0, draws: 0, unchanged: 0, rafRuns: 0 };
@@ -529,6 +603,7 @@ export class Director {
     const total = Math.round(shot.seconds * fps);
     const vclock = installVirtualClock();
     this.begin({ ui: true, ...shot });
+    this.smoothTicks(shot, vclock.virtualNow);
     this.stats = { frames: 0, draws: 0, unchanged: 0, rafRuns: 0 };
     this.film = { vclock, shot, fired: new Set(), k: 0, total, draw: (window as unknown as { __benchDraw?: (n?: number) => number }).__benchDraw };
     return total;
@@ -722,6 +797,8 @@ function installVirtualClock() {
       try { return await fn(); } finally { inReal--; }
     },
     realNow: () => P(),
+    /** The film's clock, even inside real(): what a frame is drawn at. */
+    virtualNow: () => vNow(),
     uninstall() {
       Date.now = D; performance.now = P;
       window.requestAnimationFrame = RAF; window.cancelAnimationFrame = CAF;

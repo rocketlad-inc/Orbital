@@ -208,8 +208,25 @@ export function expandScenario(raw) {
     return { kind, slider, value, target, proposer, yea: ballots(l?.yea, 'yea'), nay: ballots(l?.nay, 'nay'), ticks, title, summary };
   });
 
+  // ---- silos: a Missile Silo in the owner's city on a world ----
+  // level 1-5 (5 missiles a level), stock (defaults to full), auto 'off' |
+  // 'missiles' (shoot down incoming salvos) | 'fleets' (also fire at hostile
+  // groups bound for the world), salvo = missiles per auto launch.
+  const silos = (Array.isArray(raw.silos) ? raw.silos : []).map((s, i) => {
+    const where = `silos[${i}]`;
+    if (!isBody(s?.world)) throw new Error(`${where}.world is required`);
+    if (s.owner != null) need(String(s.owner), where);
+    const level = Math.max(1, Math.min(5, Math.floor(Number(s.level) || 1)));
+    const stock = s.stock == null ? level * 5 : Math.max(0, Math.min(level * 5, Math.floor(Number(s.stock) || 0)));
+    const auto = s.auto ?? 'fleets';
+    if (!['off', 'missiles', 'fleets'].includes(auto)) throw new Error(`${where}.auto must be off, missiles or fleets`);
+    const salvo = Math.max(1, Math.min(25, Math.floor(Number(s.salvo) || 2)));
+    const reserve = Math.max(0, Math.min(stock, Math.floor(Number(s.reserve) || 0)));
+    return { world: s.world, owner: s.owner != null ? String(s.owner) : null, level, stock, auto, salvo, reserve };
+  });
+
   return {
-    name, gameId, factions: fx, wars, worlds, ships, fleets, research, orders, laws,
+    name, gameId, factions: fx, wars, worlds, ships, fleets, research, orders, laws, silos,
     viewer: typeof raw.viewer === 'string' ? raw.viewer : (fx[0]?.key ?? null),
     camera: raw.camera !== false,   // observer hulls so the viewer sees every scene world
     seatMe: raw.seat_me === true,

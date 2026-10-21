@@ -35,6 +35,8 @@ node scripts/studio.mjs film <gameId> shot.json --out frames-dir --name earth-to
 
 **Pace (Lorne, 2026-10-19: the 30 s cuts were "way too slow for marketing").** Showcase clips are 12–15 s at `"tempo": "fast"`: one tick per second of clip (the clock holds while the server ticks, so ticks cost no clip time), camera moves of 1.2–1.5 s, a panel held about 3.5 s, and the first tick inside the first half-second. `--speed 2` on `film` (or on `studio-encode.py`) time-lapses a take that is already filmed, every other moment, without re-shooting.
 
+**Motion through ticks is smooth.** While filming, the director owns the tick the map draws at: each tick glides to the next over exactly the time until the next `tick` step, on the film's clock, so ships and worlds move at an even pace through every boundary (before 2026-10-21 the map stood still and jumped a tick at each one). Space `tick` steps evenly for even motion; a long gap between two ticks just means slower motion across it. Anything that still changes on a tick frame is the game resolving it: volleys, kills, the outliner.
+
 **Takes cannot hang any more.** A tick request gets 30 s, a frame 150 s, a screenshot three 30 s tries; past that the take ends and encodes what it has. The manifest (`frames.json`) is written every 30 frames, so even a killed take encodes.
 
 Use a `16:9` shot with no `hook` or captions and `"endCard": false`. Default size 1920×1080 (`--size`), encoded at 960 px wide (`--width`). `--encode 0` keeps just the frames; `python scripts/studio-encode.py frames-dir --name NAME` encodes later. Budget about 10 minutes for a 30 s clip: half filming, half encoding.
@@ -95,6 +97,13 @@ For a vertical (9:16) recording, the map is cropped to the centre of your window
     { "type": "trade",  "ship": "fr.0", "from": "mars", "to": "ceres" }         // freighter supply line
   ],
 
+  "silos": [
+    // A Missile Silo in the owner's city on a world (staging: the silo is not on production).
+    { "world": "earth", "level": 3, "stock": 15, "auto": "fleets", "salvo": 3 }
+    // auto: off | missiles (shoot down incoming salvos) | fleets (also fire at hostile groups
+    // bound for this world, as soon as a salvo can catch them). Needs a war with the raider.
+  ],
+
   "laws": [
     // Bills that already passed, in force from the tick the scene lands. The Senate tab
     // shows the settled vote and the law; combat and the economy obey it on the next tick.
@@ -151,7 +160,7 @@ What `apply` returns, and what you need from it:
 }
 ```
 
-**Targets** are a world id (`earth`, `luna`, `titan`, `sol`), `ship:<id>` or `fleet:<id>`. A target is tracked while the camera holds it, so a moving fleet stays centred.
+**Targets** are a world id (`earth`, `luna`, `titan`, `sol`), `ship:<id>`, `fleet:<id>`, or `missile:<n>`: the nth missile salvo to appear during the shot (salvo ids carry their launch tick, so a shot cannot name one ahead). Once a salvo bursts it is gone and the camera holds where it was. A target is tracked while the camera holds it, so a moving fleet stays centred.
 
 **Sizing.** `px` is how wide the target's world should be on the map canvas (a 1080×1920 canvas: 520 fills half the width; 160 shows the fight with room; 40 is a dot). `scale` is pixels per world unit when you want a raw number (measured on a 1920-wide frame): 0.5 is the default view (a planet and its moons); **0.15 shows the inner system out to Jupiter and Saturn, the right pull-back for a pan between planets**; 0.035 and below show every outer orbit and the Kuiper worlds, which is busy and makes the planets dots. Zooms ease in log space, so they feel even. When in doubt use `px` on a target and let the director work out the scale.
 

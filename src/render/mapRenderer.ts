@@ -45,6 +45,7 @@ import { getShipClass } from '../game/shipClasses';
 // its own copies only because its branch predated planetTexture; the
 // duplicates are removed there and it re-exports nothing seeded.
 import { drawDeathDebris, sterilisationProgress } from './combatFx';
+import { anchorToBody, anchoredWorldPos, type BodyAnchor } from './fxAnchor';
 import { noteKaijuDrawn, kaijuHoldsWorldWhole, drawKaijuCarcass } from './kaijuFx';
 import { kaijuRevealed } from '../game/kaijuReveal';
 import { getStructureIconImage, getScaffoldImage } from './structureIconCache';
@@ -8330,6 +8331,11 @@ export interface DestructionFlash {
    *  (combatFx.drawDeathDebris). Optional for back-compat; no id = no
    *  sparks, just the classic flash. */
   id?: string;
+  /** The world it happened at: the blast holds its place AROUND that
+   *  world as it moves (fxAnchor), instead of the world sliding into it.
+   *  Resolved on first draw, which has the zoom. */
+  at?: { bodyId: string; dir: number };
+  anchor?: BodyAnchor | null;
 }
 
 export function drawDestructionFlashes(
@@ -8348,7 +8354,11 @@ export function drawDestructionFlashes(
   const sizeFactor = Math.min(1.2, Math.max(0.3, Math.sqrt(ctx.camera.scale)));
   const nowMs = ctx.nowMs ?? performance.now();
   for (const f of flashes) {
-    const cp = worldToCanvas(f.pos.x, f.pos.y, ctx);
+    if (f.at && f.anchor === undefined) {
+      f.anchor = anchorToBody(f.pos, ctx.bodies.find(b => b.id === f.at!.bodyId), ctx, f.at.dir);
+    }
+    const held = f.anchor ? anchoredWorldPos(f.anchor, ctx, false) : null;
+    const cp = worldToCanvas(held ? held.x : f.pos.x, held ? held.y : f.pos.y, ctx);
     // A ship's kill is sized by the hull that died, as it was last drawn.
     const hull = f.id ? drawnShipLook(f.id)?.size : undefined;
     drawDamageFlash(
