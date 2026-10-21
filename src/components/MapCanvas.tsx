@@ -1383,14 +1383,21 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // last frame — battle-line arcs and lane offsets place ships
           // far from their textbook orbital point, and a wreck on the
           // wrong side of the planet reads as a bug (QA finding).
-          const drawnPos = drawnShipWorldPos(id) ?? { x: pos.x, y: pos.y };
+          // ONLY IF IT WAS DRAWN JUST NOW. A hull folded into its world's
+          // badge (zoomed out) was last drawn somewhere else entirely, in
+          // flight before it parked, and its death played there: a full-
+          // size destroyer appearing out of empty space beside Earth to
+          // blow up (the Mega Destroyer re-shoot). Not drawn lately = it
+          // dies where it truly is, without its hull flying apart.
+          const fresh = recentDrawnShipWorldPos(id, 1000);
+          const drawnPos = fresh ?? { x: pos.x, y: pos.y };
           // Died parked at a world: the blast and its wreck stay with
           // that world (Lorne: "explode in place, and then its debris
           // orbit the world"). Died in flight: where it was, in space.
           const at = !pos.ship.transit && pos.ship.orbit?.parentBodyId
             ? { bodyId: pos.ship.orbit.parentBodyId, dir: orbitSense(pos.ship, nowTick) }
             : undefined;
-          destructionFlashesRef.current.set(id, { pos: drawnPos, startMs: nowMs, baseRadius: 12, id, at });
+          destructionFlashesRef.current.set(id, { pos: drawnPos, startMs: nowMs, baseRadius: 12, id, at, noLook: !fresh });
           // Remember we played this kill AT THE HULL, so the queued
           // chronicle twin of the same death doesn't boom again later.
           listDiffFlashedShipsRef.current.add(id);
@@ -1399,7 +1406,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // for a few minutes instead of vanishing with the flash.
           // Sized off the DEAD HULL's own icon, not a flat 12: a destroyer
           // (icon 44) now leaves visibly more than a corvette (28).
-          spawnWreck(id, drawnPos, shipIconSize(pos.cls, false), nowMs, nowTick, at);
+          spawnWreck(id, drawnPos, shipIconSize(pos.cls, false), nowMs, nowTick, at, !!fresh);
         }
       }
     }

@@ -4955,9 +4955,9 @@ export const CAPITAL_SEEN_MAX_TICKS = 3;
  *  that killed a world comes from the ship that fired it. */
 export function nearestDrawnCapital(
   cls: string, wx: number, wy: number, maxAgeMs = 4000, nowTick?: number,
-): { x: number; y: number; heading: number; size: number } | undefined {
+): { x: number; y: number; heading: number; size: number; ageMs: number } | undefined {
   const now = performance.now();
-  let best: { x: number; y: number; heading: number; size: number } | undefined;
+  let best: { x: number; y: number; heading: number; size: number; ageMs: number } | undefined;
   let bestD = Infinity;
   for (const [id, seen] of capitalSeen) {
     if (seen.cls !== cls) continue;
@@ -4967,7 +4967,7 @@ export function nearestDrawnCapital(
     const p = lastDrawnShipWorldPos.get(id);
     if (!p) continue;
     const d = Math.hypot(p.x - wx, p.y - wy);
-    if (d < bestD) { bestD = d; best = { x: p.x, y: p.y, heading: seen.heading, size: seen.size }; }
+    if (d < bestD) { bestD = d; best = { x: p.x, y: p.y, heading: seen.heading, size: seen.size, ageMs: now - seen.ms }; }
   }
   return best;
 }
@@ -8621,6 +8621,9 @@ export interface DestructionFlash {
    *  Resolved on first draw, which has the zoom. */
   at?: { bodyId: string; dir: number };
   anchor?: BodyAnchor | null;
+  /** The hull was not on screen as itself (folded into a badge): size the
+   *  blast by baseRadius, not by the picture it was last drawn as. */
+  noLook?: boolean;
 }
 
 export function drawDestructionFlashes(
@@ -8645,7 +8648,7 @@ export function drawDestructionFlashes(
     const held = f.anchor ? anchoredWorldPos(f.anchor, ctx, false) : null;
     const cp = worldToCanvas(held ? held.x : f.pos.x, held ? held.y : f.pos.y, ctx);
     // A ship's kill is sized by the hull that died, as it was last drawn.
-    const hull = f.id ? drawnShipLook(f.id)?.size : undefined;
+    const hull = f.id && !f.noLook ? drawnShipLook(f.id)?.size : undefined;
     drawDamageFlash(
       cp,
       hull ? hull * 0.36 : (f.baseRadius ?? 10) * sizeFactor,

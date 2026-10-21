@@ -1451,6 +1451,9 @@ export function spawnWreck(
   nowMs: number,
   nowTick: number,
   at?: { bodyId: string; dir: number },
+  /** False for a hull that was not on screen as itself when it died
+   *  (folded into a badge): charred plates, not its picture breaking up. */
+  withLook = true,
 ): void {
   const w: Wreck = {
     id: shipId,
@@ -1472,7 +1475,7 @@ export function spawnWreck(
     startMs: nowMs,
     startTick: nowTick,
   };
-  const seen = drawnShipLook(shipId);
+  const seen = withLook ? drawnShipLook(shipId) : undefined;
   // A copy at the class's own size: the recorded size carries the zoom
   // it was drawn at, the wreck is drawn at whatever zoom comes next.
   if (seen) w.look = { img: seen.img, size: Math.max(12, baseRadius), heading: seen.heading };
@@ -1789,6 +1792,11 @@ interface Sterilisation {
   startMs: number;
   /** False for the Leviathan (kaijuFx.ts draws its arms instead). */
   beam: boolean;
+  /** Where the gun was, relative to the world (in drawn radii), the last
+   *  time the ship that fired was on screen. Once that ship is gone the
+   *  beam holds THIS, so it stays pointed the same way at the world as
+   *  the world moves on, instead of from a point left behind in space. */
+  gunRel?: { x: number; y: number };
 }
 
 const sterilisations: Sterilisation[] = [];
@@ -1850,13 +1858,17 @@ export function drawSterilisations(rc: RenderContext, nowMs: number): void {
     const pk = nearestDrawnCapital('mega_destroyer', wp.x, wp.y, 4000, rc.t);
     let gun: { x: number; y: number };
     const pc = pk ? worldToCanvas(pk.x, pk.y, rc) : null;
-    if (pk && pc) {
+    const live = pk && pc && pk.ageMs < 500;
+    if (pk && pc && (live || !x.gunRel)) {
       const muzzle = { x: pc.x + Math.cos(pk.heading) * pk.size * 0.42, y: pc.y + Math.sin(pk.heading) * pk.size * 0.42 };
       const d = Math.hypot(muzzle.x - cp.x, muzzle.y - cp.y);
       const minD = R * 1.25;
       gun = d >= minD ? muzzle
         : d > 1e-6 ? { x: cp.x + ((muzzle.x - cp.x) / d) * minD, y: cp.y + ((muzzle.y - cp.y) / d) * minD }
           : { x: cp.x, y: cp.y - minD };
+      if (R > 0) x.gunRel = { x: (gun.x - cp.x) / R, y: (gun.y - cp.y) / R };
+    } else if (x.gunRel) {
+      gun = { x: cp.x + x.gunRel.x * R, y: cp.y + x.gunRel.y * R };
     } else {
       gun = { x: cp.x, y: cp.y - R * 6 };
     }
