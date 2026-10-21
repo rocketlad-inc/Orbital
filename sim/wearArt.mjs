@@ -15,11 +15,17 @@
 
 import { readFileSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 
 const require = createRequire(import.meta.url);
 const WASM_BYTES = readFileSync(require.resolve('@resvg/resvg-wasm/index_bg.wasm'));
 const ROOT = process.cwd();
+
+// The PNG globes are a git-ignored build output (npm run build makes them),
+// so a clean checkout has none. Make them here -- the script only redoes
+// what changed -- rather than fail on a build step nobody ran.
+execFileSync(process.execPath, [path.join(ROOT, 'scripts', 'globe-pngs.mjs')], { stdio: 'inherit' });
 
 let bad = 0;
 function check(label, ok, detail = '') {
