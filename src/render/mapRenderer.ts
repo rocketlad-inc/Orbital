@@ -4874,7 +4874,7 @@ export interface ShipFormation {
  *  destruction flashes) read this so a kill scars the map where the
  *  ship visibly WAS, not at its textbook orbital point on the far side
  *  of the planet (QA finding). Bounded like the other per-ship caches. */
-const lastDrawnShipWorldPos = new Map<string, { x: number; y: number }>();
+const lastDrawnShipWorldPos = new Map<string, { x: number; y: number; ms?: number }>();
 export function drawnShipWorldPos(shipId: string): { x: number; y: number } | undefined {
   return lastDrawnShipWorldPos.get(shipId);
 }
@@ -4938,22 +4938,36 @@ export function drawnShipLook(shipId: string): HullLook | undefined {
 /** Capital hulls drawn recently, by id. A Planet Killer's strike is a
  *  chronicle row about a WORLD; this is how the beam finds the ship that
  *  fired it instead of coming from nowhere. */
-const capitalSeen = new Map<string, { cls: string; ms: number }>();
-/** The capital hull of class `cls` drawn within `maxAgeMs` nearest the
- *  world point (wx, wy): where it was and how it was facing. */
+const capitalSeen = new Map<string, { cls: string; ms: number; t: number; heading: number; size: number }>();
+function noteCapital(ship: Ship, ctx: RenderContext, heading: number, size: number): void {
+  if (capitalSeen.size > 256) capitalSeen.clear();
+  capitalSeen.set(ship.id, { cls: ship.class, ms: performance.now(), t: ctx.t, heading, size });
+}
+/** Recent enough on EITHER clock: wall time, or game time. Wall time
+ *  alone failed twice over (Lorne, 2026-10-21: "the mega destroyer fires
+ *  from offscreen"). A world's death replays when you LOOK at it, which
+ *  can be after its killer has died; and while the Studio films, a frame
+ *  takes up to a second of real time, so 4 s was a handful of frames. */
+export const CAPITAL_SEEN_MAX_TICKS = 3;
+/** The capital hull of class `cls` drawn recently nearest the world
+ *  point (wx, wy): where it was and how it was facing. A hull that has
+ *  since died still answers from where it was last drawn, so the beam
+ *  that killed a world comes from the ship that fired it. */
 export function nearestDrawnCapital(
-  cls: string, wx: number, wy: number, maxAgeMs = 4000,
+  cls: string, wx: number, wy: number, maxAgeMs = 4000, nowTick?: number,
 ): { x: number; y: number; heading: number; size: number } | undefined {
   const now = performance.now();
   let best: { x: number; y: number; heading: number; size: number } | undefined;
   let bestD = Infinity;
   for (const [id, seen] of capitalSeen) {
-    if (seen.cls !== cls || now - seen.ms > maxAgeMs) continue;
+    if (seen.cls !== cls) continue;
+    const fresh = now - seen.ms <= maxAgeMs
+      || (nowTick != null && Math.abs(nowTick - seen.t) <= CAPITAL_SEEN_MAX_TICKS);
+    if (!fresh) continue;
     const p = lastDrawnShipWorldPos.get(id);
-    const look = lastDrawnLook.get(id);
-    if (!p || !look) continue;
+    if (!p) continue;
     const d = Math.hypot(p.x - wx, p.y - wy);
-    if (d < bestD) { bestD = d; best = { x: p.x, y: p.y, heading: look.heading, size: look.size }; }
+    if (d < bestD) { bestD = d; best = { x: p.x, y: p.y, heading: seen.heading, size: seen.size }; }
   }
   return best;
 }
@@ -4980,9 +4994,55 @@ function hullFlashHere(
 
 function recordDrawnShipWorldPos(shipId: string, x: number, y: number): void {
   if (lastDrawnShipWorldPos.size > 2000) lastDrawnShipWorldPos.clear();
+  const ms = performance.now();
   const e = lastDrawnShipWorldPos.get(shipId);
-  if (e) { e.x = x; e.y = y; }
-  else lastDrawnShipWorldPos.set(shipId, { x, y });
+  if (e) { e.x = x; e.y = y; e.ms = ms; }
+  else lastDrawnShipWorldPos.set(shipId, { x, y, ms });
+}
+
+/** Where a hull was drawn, only if it was drawn just now (any role: on
+ *  its own line, or as an escort in its fleet's block). */
+export function recentDrawnShipWorldPos(shipId: string, maxAgeMs = 500): { x: number; y: number } | undefined {
+  const e = lastDrawnShipWorldPos.get(shipId);
+  return e && e.ms != null && performance.now() - e.ms <= maxAgeMs ? e : undefined;
+}
+
+// ---- layout glide ------------------------------------------------------
+//
+// Lorne, 2026-10-21: the ships "pop around". Every in-flight layout
+// (formation arrowheads, fleets in company, a fleet's escort block) was
+// solved from scratch every frame, so anything that changed the solution
+// moved hulls in ONE frame: a death re-slots the arrowhead behind it, a
+// flagship's death hands the fleet to another hull, a match pulls a fleet
+// abreast. A hull's LAYOUT OFFSET (where it is drawn, minus where it truly
+// is, in screen px so zooming never lags) now eases to the new answer
+// instead. The true position is never touched: only the offset glides.
+const layoutGlides = new Map<string, { x: number; y: number; ms: number }>();
+/** Time constant of the glide: ~95% of the way in three of these. */
+export const LAYOUT_GLIDE_TAU_MS = 160;
+
+/** Ease `key`'s offset toward `target` (px). `seed` starts a glide that
+ *  has no history yet from somewhere other than the target (a hull that
+ *  was just drawn in another role). */
+export function glideLayout(
+  key: string, target: { x: number; y: number }, nowMs: number, seed?: { x: number; y: number },
+): { x: number; y: number } {
+  let g = layoutGlides.get(key);
+  if (!g || nowMs < g.ms || nowMs - g.ms > 1500) {
+    if (layoutGlides.size > 4000) {
+      for (const [k, v] of layoutGlides) if (nowMs - v.ms > 5000) layoutGlides.delete(k);
+    }
+    const s0 = seed ?? target;
+    g = { x: s0.x, y: s0.y, ms: nowMs };
+    layoutGlides.set(key, g);
+    return { x: g.x, y: g.y };
+  }
+  const dt = Math.min(250, nowMs - g.ms);
+  const k = 1 - Math.exp(-dt / LAYOUT_GLIDE_TAU_MS);
+  g.x += (target.x - g.x) * k;
+  g.y += (target.y - g.y) * k;
+  g.ms = nowMs;
+  return { x: g.x, y: g.y };
 }
 
 /** For a hull that rides with another this frame without being drawn on
@@ -5580,10 +5640,12 @@ export function drawShip(
       cg.drawImage(capImg, -iconSize / 2, -iconSize / 2, iconSize, iconSize);
       hullFlashHere(cg, capImg, iconSize, ctx.damageFlashStart?.get(ship.id), ctx.nowMs ?? performance.now());
       recordDrawnLook(ship.id, capImg, iconSize, heading + shipBank(ship.id, heading));
-      capitalSeen.set(ship.id, { cls: ship.class, ms: performance.now() });
     } else {
       drawCapitalHull(cg, ship.class, iconSize, shipColorValue, ctx.nowMs ?? 0);
     }
+    // Both art paths: a hull drawn from the fallback art fires its beam
+    // from itself too, not from the top of the screen.
+    noteCapital(ship, ctx, heading + shipBank(ship.id, heading), iconSize);
     cg.restore();
     // Drawn OUTSIDE the hull's rotation so the ring stays upright
     // while the ship turns — a spinning countdown reads as decoration.
@@ -7203,6 +7265,74 @@ export function drawTransitRangeRing(
   c.restore();
 }
 
+// ---- an intercepting hull's attitude ------------------------------------
+//
+// Lorne, 2026-10-21, over the Mega Destroyer clip: "blue flies entirely
+// backwards toward the enemy from the beginning". A matched intercept is
+// burn, coast, burn (rendezvous.js), then flying with its leader. It was
+// drawn as if it were the plain leg underneath it: nose along the straight
+// line from its first sample to its last (an intercept's path goes OUT to
+// the meeting and back, so that line points nowhere in particular), and
+// flipped to "braking" at that leg's flip tick, half a tick after launch,
+// for the rest of the flight. Now the nose follows the manoeuvre itself.
+
+const ATTITUDE_TURN_TICKS = 0.25;
+
+function lerpAngle(a: number, b: number, k: number): number {
+  let d = (b - a) % (Math.PI * 2);
+  if (d > Math.PI) d -= Math.PI * 2;
+  if (d < -Math.PI) d += Math.PI * 2;
+  return a + d * k;
+}
+const smooth01 = (u: number) => { const k = Math.max(0, Math.min(1, u)); return k * k * (3 - 2 * k); };
+
+/**
+ * Where an intercepting hull points, and whether its engine is lit, at
+ * `t`. `samples` is the line the hull is drawn along (the match, then the
+ * joined leg). Null for anything that is not a matched intercept.
+ */
+export function rendezvousAttitude(
+  rv: NonNullable<Ship['plannedRendezvous']>,
+  t: number,
+  samples: Array<{ t: number; x: number; y: number }> | undefined,
+): { heading: number; thrusting: boolean; braking: boolean } | null {
+  if (!(rv.accel > 0)) return null;
+  const aLen = Math.hypot(rv.A.x, rv.A.y), bLen = Math.hypot(rv.B.x, rv.B.y);
+  const aEnd = rv.startTick + aLen / rv.accel;
+  const bStart = rv.meetTick - bLen / rv.accel;
+  const angA = aLen > 1e-9 ? Math.atan2(rv.A.y, rv.A.x) : null;
+  const angB = bLen > 1e-9 ? Math.atan2(rv.B.y, rv.B.x) : null;
+  const tan = samples && samples.length >= 2 ? trajectoryTangentAt(samples, t) : null;
+  const angV = tan ? Math.atan2(tan.y, tan.x) : (angA ?? angB ?? 0);
+  const coast = Math.max(0, bStart - aEnd);
+  const turn = Math.min(ATTITUDE_TURN_TICKS, coast / 3);
+
+  if (t < aEnd) return { heading: angA ?? angV, thrusting: t >= rv.startTick && angA != null, braking: false };
+  if (t < bStart) {
+    // Out of the first burn onto the line of travel, then round to the
+    // second burn just before it lights (a flip, when it is a brake).
+    let h = angA != null && turn > 0 ? lerpAngle(angA, angV, smooth01((t - aEnd) / turn)) : angV;
+    if (angB != null && turn > 0) h = lerpAngle(h, angB, smooth01((t - (bStart - turn)) / turn));
+    return { heading: h, thrusting: false, braking: false };
+  }
+  if (t < rv.meetTick) {
+    // Braking when the push is against the way it is moving.
+    const braking = angB != null && tan != null && (rv.B.x * tan.x + rv.B.y * tan.y) < 0;
+    return { heading: angB ?? angV, thrusting: angB != null, braking };
+  }
+  // Joined: flying with the leader, so pointed and burning the way it is.
+  const lead = rv.followTransfer;
+  let leaderBraking = false, leaderThrust = false;
+  if (lead) {
+    const stop = isShapedBurn(lead) ? burnStopTick(lead) : lead.arriveTick;
+    leaderBraking = t >= lead.flipTick && t < stop;
+    leaderThrust = t >= lead.startTick && t < stop;
+  }
+  const joined = angV + (leaderBraking ? Math.PI : 0);
+  const h = angB != null ? lerpAngle(angB, joined, smooth01((t - rv.meetTick) / ATTITUDE_TURN_TICKS)) : joined;
+  return { heading: h, thrusting: leaderThrust, braking: leaderBraking };
+}
+
 function drawTorchTransitShip(
   ship: Ship,
   ctx: RenderContext,
@@ -7232,14 +7362,19 @@ function drawTorchTransitShip(
   // Phase detection: BOOST (engine fires prograde toward intercept) vs
   // BRAKE (engine fires retrograde to kill velocity relative to target).
   // Outside [startTick, arriveTick] the ship is coasting.
+  // A matched intercept is flown by its own manoeuvre, not by the plain
+  // leg underneath it (rendezvousAttitude). Missiles keep the plain rule.
+  const rvAtt = ship.plannedRendezvous && ship.class !== 'missile'
+    ? rendezvousAttitude(ship.plannedRendezvous, ctx.t, trajectorySamples)
+    : null;
   const isBoost = ctx.t >= currentTransfer.startTick && ctx.t < currentTransfer.flipTick;
   // A shaped (multiplayer) burn brakes to rest at burnStopTick, which a
   // ceiled arrival can leave short of arriveTick: the hull then sits on
   // the intercept with its engine cold rather than firing at nothing.
-  const shaped = isShapedBurn(currentTransfer);
+  const shaped = isShapedBurn(currentTransfer) && !rvAtt;
   const brakeEnd = shaped ? burnStopTick(currentTransfer) : currentTransfer.arriveTick;
-  const isBrake = ctx.t >= currentTransfer.flipTick && ctx.t < brakeEnd;
-  const thrusting = isBoost || isBrake;
+  const isBrake = rvAtt ? rvAtt.braking : (ctx.t >= currentTransfer.flipTick && ctx.t < brakeEnd);
+  const thrusting = rvAtt ? rvAtt.thrusting : (isBoost || isBrake);
   // THE FLIP, drawn (shaped burns only). A torch ship brakes by turning
   // round and firing its engine at where it is going; the hull used to
   // face its line of travel the whole way, so the plume trailed behind it
@@ -7308,7 +7443,7 @@ function drawTorchTransitShip(
   // false "canvas y axis inverts" comment — mirrored every transit
   // ship across the horizontal axis. That was the "points anywhere
   // but forward" bug.
-  const heading = Math.atan2(facingY, facingX) + Math.PI * flipTurn;
+  const heading = rvAtt ? rvAtt.heading : Math.atan2(facingY, facingX) + Math.PI * flipTurn;
 
   // Everything downstream (exhaust plume, wake, selection brackets, rank
   // chevron, label offset) is derived from iconSize, so scaling here
@@ -7418,10 +7553,12 @@ function drawTorchTransitShip(
       cg.drawImage(capImg, -iconSize / 2, -iconSize / 2, iconSize, iconSize);
       hullFlashHere(cg, capImg, iconSize, ctx.damageFlashStart?.get(ship.id), ctx.nowMs ?? performance.now());
       recordDrawnLook(ship.id, capImg, iconSize, heading + shipBank(ship.id, heading));
-      capitalSeen.set(ship.id, { cls: ship.class, ms: performance.now() });
     } else {
       drawCapitalHull(cg, ship.class, iconSize, shipColorValue, ctx.nowMs ?? 0);
     }
+    // Both art paths: a hull drawn from the fallback art fires its beam
+    // from itself too, not from the top of the screen.
+    noteCapital(ship, ctx, heading + shipBank(ship.id, heading), iconSize);
     cg.restore();
     // Drawn OUTSIDE the hull's rotation so the ring stays upright
     // while the ship turns — a spinning countdown reads as decoration.
@@ -9068,6 +9205,16 @@ function washOnsetSpans(spans: number, scale: number, bodies: Body[]): number {
 }
 
 /** Wash fade, onset-aware — see washOnsetSpans. */
+/** The territory wash while the Studio films: still there, but under
+ *  the fight rather than over it (the Mega Destroyer clip spent five
+ *  seconds of a battle in flight on two saturated bands). Players see
+ *  the full wash: held territory should look held. */
+export const FILM_WASH_SCALE = 0.45;
+function filmWashScale(): number {
+  return typeof document !== 'undefined' && document.body?.classList.contains('studio-filming')
+    ? FILM_WASH_SCALE : 1;
+}
+
 export function systemRegionOpacityFor(spans: number, scale: number, bodies: Body[]): number {
   const hide = washOnsetSpans(spans, scale, bodies);
   if (spans >= hide) return 0;
@@ -9307,7 +9454,8 @@ export function drawSystemRegions(
     * lodAlpha(scale, LOD.POLITICAL_WASH)
     // The galaxy rings carry ownership out there; the wash would only be
     // a rainbow smudge under the ring.
-    * (1 - (ctx.galaxyAlpha ?? 0));
+    * (1 - (ctx.galaxyAlpha ?? 0))
+    * filmWashScale();
   if (fade <= 0) return;
 
   // Ownership signature: any claim change redraws the layer.
@@ -9856,6 +10004,9 @@ export function missileDrawnRendezvous(
   return { ...plan, v0: { x: 0, y: 0 }, A, B: { x: 0, y: 0 }, accel };
 }
 
+/** Ticks a meeting marker takes to fade once the meeting has passed. */
+export const RENDEZVOUS_MARK_FADE_TICKS = 0.5;
+
 export function drawRendezvousPreview(
   plan: NonNullable<Ship['plannedRendezvous']>,
   targetPathAt: ((t: number) => { x: number; y: number } | null) | null,
@@ -9989,6 +10140,14 @@ export function drawRendezvousPreview(
   // A soft breathing ring rather than a hard reticle: it marks a moment
   // in the future, and the pulse is the only thing on the line that says
   // "this is when", not "this is where".
+  //
+  // ONCE IT HAS HAPPENED it fades out over half a tick. It stayed up for
+  // the rest of the flight, a "MEET ... T+252" pinned to empty space five
+  // ticks after the fleets met and flew on (the Mega Destroyer clip).
+  const sinceMeet = flying ? cur - plan.meetTick : -1;
+  const markAlpha = sinceMeet <= 0 ? 1 : Math.max(0, 1 - sinceMeet / RENDEZVOUS_MARK_FADE_TICKS);
+  if (markAlpha <= 0) { c.restore(); return; }
+  c.globalAlpha *= markAlpha;
   const pulse = 0.5 + 0.5 * Math.sin(nowMs * 0.0035);
   c.strokeStyle = withOpacity(TRAJECTORY_COLORS.mine, 0.25 + 0.35 * pulse);
   c.lineWidth = 1.5;
@@ -10064,6 +10223,8 @@ export interface InterceptMarker {
  *  Sized to the LABEL, not the glyph: at 46px the rings stopped touching
  *  but "2.9t · 89%" is ~75px wide, so neighbouring markers drew clean
  *  shapes under overlapping text. */
+/** Firing windows shorter than this many ticks get no marker. */
+export const INTERCEPT_MIN_WINDOW_TICKS = 0.05;
 const INTERCEPT_CLUSTER_PX = 92;
 
 /**
@@ -10090,6 +10251,10 @@ export function liveInterceptMarkers(
   const out: InterceptMarker[] = [];
   for (const m of markers) {
     if (m.closesAt <= tick) continue;          // already over
+    // A window that opens and shuts at once is no fight to plan for: it
+    // drew a full FIRING / chance / clear stack reading "0.0t" over the
+    // world it touched, on top of the world's own labels.
+    if (m.duration < INTERCEPT_MIN_WINDOW_TICKS) continue;
     out.push(m.open === tick >= m.opensAt ? m : { ...m, open: tick >= m.opensAt });
   }
   return out;

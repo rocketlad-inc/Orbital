@@ -1835,19 +1835,28 @@ export function drawSterilisations(rc: RenderContext, nowMs: number): void {
     if (!body) continue;
     const wp = bodyPosition(body, rc.t, rc.bodies);
     const cp = worldToCanvas(wp.x, wp.y, rc);
-    const R = Math.max(6, (body.radius ?? 1) * rc.camera.scale);
+    // The DRAWN radius (bodyPresentation): at map zoom a world is drawn
+    // larger than its true size, and a beam aimed at the true surface
+    // stopped well inside the disc.
+    const R = Math.max(6, drawnRadiusOf(rc.presentation, body, rc.camera.scale));
     const k = age / STERILISE_LIFE_MS;
 
     // ---- ACT ONE: the beam ----------------------------------------
-    // From the Planet Killer itself, wherever it is on screen. Straight
-    // down from above only when it was not drawn here, or when it sits
-    // over the world's disc (a beam starting behind its target reads as
-    // a bug, which is why this used to always come from above).
-    const pk = nearestDrawnCapital('mega_destroyer', wp.x, wp.y);
+    // From the Planet Killer itself, wherever it is (or was: a world's
+    // death replays when you look at it, which can be after its killer
+    // died). If it sits over the world's disc, the beam is pushed out to
+    // the disc's edge on the ship's side, never behind its target. Only
+    // a strike no client ever drew the ship for still comes from above.
+    const pk = nearestDrawnCapital('mega_destroyer', wp.x, wp.y, 4000, rc.t);
     let gun: { x: number; y: number };
     const pc = pk ? worldToCanvas(pk.x, pk.y, rc) : null;
-    if (pk && pc && Math.hypot(pc.x - cp.x, pc.y - cp.y) > R * 1.2) {
-      gun = { x: pc.x + Math.cos(pk.heading) * pk.size * 0.42, y: pc.y + Math.sin(pk.heading) * pk.size * 0.42 };
+    if (pk && pc) {
+      const muzzle = { x: pc.x + Math.cos(pk.heading) * pk.size * 0.42, y: pc.y + Math.sin(pk.heading) * pk.size * 0.42 };
+      const d = Math.hypot(muzzle.x - cp.x, muzzle.y - cp.y);
+      const minD = R * 1.25;
+      gun = d >= minD ? muzzle
+        : d > 1e-6 ? { x: cp.x + ((muzzle.x - cp.x) / d) * minD, y: cp.y + ((muzzle.y - cp.y) / d) * minD }
+          : { x: cp.x, y: cp.y - minD };
     } else {
       gun = { x: cp.x, y: cp.y - R * 6 };
     }

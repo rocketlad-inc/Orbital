@@ -387,6 +387,14 @@ export function drawScorch(
 
 // ---- explosions -----------------------------------------------------
 
+/** How far an explosion reaches, in multiples of `R` (about the hull's
+ *  radius). Pulled in 2026-10-21 (Lorne, the Mega Destroyer clip: the
+ *  effects should be "smoother and more coherent"): one destroyer's
+ *  death bloomed over the whole fight for a second, shockwave out to 5.7R
+ *  (about 2.7 hull lengths), sparks to 4.2R, the opening flash to 2.6R.
+ *  The fireball itself is unchanged; it is the reach that shrank. */
+export const EXPLOSION_REACH = { shock: 3.9, flash: 1.9, sparks: 3.0 };
+
 /** A hull exploding, sized by `R` (about the hull's radius). `k` 0..1
  *  is the whole event: a white flash, rolling fire that cools from
  *  white to deep red, a soft shockwave (no outline), sparks, then smoke
@@ -412,8 +420,8 @@ export function drawExplosion(
   c.globalCompositeOperation = 'lighter';
   // Shockwave: a soft band of light, no line.
   // It starts outside the fireball and stays a band, never a disc.
-  const sr = R * (1.3 + 4.4 * e);
-  const th = R * 1.0;
+  const sr = R * (1.3 + (EXPLOSION_REACH.shock - 1.3) * e);
+  const th = R * 0.8;
   const sa = 0.18 * (1 - k) * (1 - k) * Math.min(1, k / 0.06);
   if (sa > 0.01) {
     const g = c.createRadialGradient(x, y, Math.max(0, sr - th), x, y, sr + th * 0.25);
@@ -432,8 +440,8 @@ export function drawExplosion(
     glowAt(c, x + Math.cos(a) * d, y + Math.sin(a) * d, R * (0.55 + 0.45 * rng()) * (0.6 + 0.8 * e),
       core, glow, fireA);
   }
-  if (k < 0.12) glowAt(c, x, y, R * 2.6, '#ffffff', '#fff0c8', 1 - k / 0.12);
-  drawSparks(c, x, y, 0, Math.PI * 2, 12, R * 4.2, Math.min(1, k * 1.6), seed ^ 0x9e3779b9, KINETIC_FX,
+  if (k < 0.12) glowAt(c, x, y, R * EXPLOSION_REACH.flash, '#ffffff', '#fff0c8', 1 - k / 0.12);
+  drawSparks(c, x, y, 0, Math.PI * 2, 12, R * EXPLOSION_REACH.sparks, Math.min(1, k * 1.6), seed ^ 0x9e3779b9, KINETIC_FX,
     Math.max(0.9, R * 0.07));
   c.restore();
 }

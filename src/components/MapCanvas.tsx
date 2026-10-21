@@ -40,6 +40,9 @@ import {
   systemOpenness,
   drawFogOfWarOverlay,
   drawDestructionFlashes,
+  drawnShipLook,
+  glideLayout,
+  recentDrawnShipWorldPos,
   generateStarfield,
   drawStarfield,
   StarfieldCache,
@@ -2956,6 +2959,25 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             placeInFormation(ship.id, samples, renderContext, transitShipScale(camera.scale)),
             renderContext, transitShipScale(camera.scale))
           : samples;
+        // GLIDE, don't pop (glideLayout): the layout offset eases to a new
+        // answer when a death re-slots the arrowhead, a fleet changes
+        // flagship or a match pulls it abreast. Seeded from wherever this
+        // hull was drawn a moment ago, so an escort promoted to flagship
+        // slides out of its slot instead of jumping. Missiles excepted.
+        if (placed && samples && samples.length > 1 && ship.class !== 'missile' && camera.scale > 0) {
+          const sc = camera.scale;
+          const tNow = renderTick();
+          const raw = torchPositionFromSamples(samples, tNow);
+          const lay = torchPositionFromSamples(placed, tNow);
+          const target = { x: (lay.x - raw.x) * sc, y: (lay.y - raw.y) * sc };
+          const was = recentDrawnShipWorldPos(ship.id);
+          const eased = glideLayout(`tr:${ship.id}`, target, nowMs,
+            was ? { x: (was.x - raw.x) * sc, y: (was.y - raw.y) * sc } : undefined);
+          const ddx = (eased.x - target.x) / sc, ddy = (eased.y - target.y) / sc;
+          if (Math.abs(ddx) * sc > 0.05 || Math.abs(ddy) * sc > 0.05) {
+            placed = placed.map(p => ({ t: p.t, x: p.x + ddx, y: p.y + ddy }));
+          }
+        }
         // A MISSILE CLEARS ITS WORLD AT ONCE (Lorne, 2026-10-20: "it visibly
         // enters orbit"). A world is drawn larger than its true size at map
         // zoom, and a salvo pushing from rest spends the start of its first
@@ -3335,6 +3357,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const bLook = renderContext.battleLooks?.get(leadId);
         if (bLook) {
           heading = bLook.heading;
+        } else if (lead.transit?.currentTransfer && drawnShipLook(leadId)) {
+          // In flight the block holds astern of the flagship AS DRAWN: the
+          // way its nose points this frame. Aiming at the destination world
+          // put an intercepting fleet's escorts AHEAD of their flagship,
+          // pointing home, for the whole run out to the enemy (Lorne: "blue
+          // flies entirely backwards toward the enemy").
+          heading = drawnShipLook(leadId)!.heading;
         } else if (lead.transit?.currentTransfer) {
           const dest = bodyById2.get(lead.transit.currentTransfer.targetBodyId);
           if (dest) {
@@ -3413,8 +3442,17 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             fleetSlots.set(esc.id, { x: hb.x, y: hb.y });
             continue;
           }
-          const ex = hb.x + offs[i].dx;
-          const ey = hb.y + offs[i].dy;
+          // In flight, each escort's place in the block glides (a death
+          // re-spaces the block; a new flagship re-centres it), starting
+          // from where the hull was just drawn if it had another role.
+          let rel = { x: offs[i].dx, y: offs[i].dy };
+          if (lead.transit) {
+            const was = recentDrawnShipWorldPos(esc.id);
+            const wc = was ? worldToCanvas(was.x, was.y, renderContext) : null;
+            rel = glideLayout(`esc:${esc.id}`, rel, nowMs, wc ? { x: wc.x - hb.x, y: wc.y - hb.y } : undefined);
+          }
+          const ex = hb.x + rel.x;
+          const ey = hb.y + rel.y;
           drawEscortHull(renderContext, esc, ex, ey, escortGlyphFor(spacing0 * bks), heading);
           // Where this hull IS, for everything that asks: its bolts leave
           // from here, hits on it land here, a click here is the fleet.
