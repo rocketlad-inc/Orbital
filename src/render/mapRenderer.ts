@@ -4999,6 +4999,60 @@ function hullFlashHere(
   g.globalAlpha = prevA;
 }
 
+// ---- continuity guard ----------------------------------------------------
+//
+// Lorne, 2026-10-21: ships "jumping around a lot in space, I'd like that to
+// happen 0% of the time". Measured (film --trace, scripts/jump-check.py),
+// the jumps had many sources, every one a hull's position being re-derived
+// from data that changed under it: the server's plan replacing the local
+// one, a match switching to its joined leg, a hull landing and being laid
+// out, a fleet changing flagship. Fixing each source still leaves the next
+// one. So this is the last word on where a hull is DRAWN: compared with
+// where its own motion was taking it, a new position far off that line (8
+// px, and more than its own normal step) is absorbed into an offset that
+// fades over CONTINUITY_TAU_MS. Smooth motion and hard burns pass through
+// untouched; a teleport becomes a short slide. Keyed by ship, so it holds
+// across the switch between the in-flight and parked draw paths.
+const continuity = new Map<string, { x: number; y: number; vx: number; vy: number; ox: number; oy: number; ms: number }>();
+export const CONTINUITY_TAU_MS = 180;
+/** A hull not drawn for this long starts fresh (it was off screen). */
+const CONTINUITY_GAP_MS = 250;
+
+/** `x, y` is where the hull truly is this frame; the answer is where to
+ *  draw it. Jumps are found in the TRUE positions (the drawn ones move by
+ *  the fading offset too, and reading that as motion re-absorbed it every
+ *  frame, so the offset never cleared). */
+export function continuousDrawnPos(
+  shipId: string, x: number, y: number, scale: number, nowMs: number,
+): { x: number; y: number } {
+  const c = continuity.get(shipId);
+  if (!c || nowMs <= c.ms || nowMs - c.ms > CONTINUITY_GAP_MS || !(scale > 0)) {
+    if (continuity.size > 3000) continuity.clear();
+    continuity.set(shipId, { x, y, vx: 0, vy: 0, ox: 0, oy: 0, ms: nowMs });
+    return { x, y };
+  }
+  const dt = nowMs - c.ms;
+  const fade = Math.exp(-dt / CONTINUITY_TAU_MS);
+  let ox = c.ox * fade, oy = c.oy * fade;
+  // Where its own (true) motion was taking it.
+  const px = c.x + c.vx * dt, py = c.y + c.vy * dt;
+  const ex = x - px, ey = y - py;
+  const errPx = Math.hypot(ex, ey) * scale;
+  const stepPx = Math.hypot(c.vx, c.vy) * dt * scale;
+  const jumped = errPx > Math.max(8, 0.6 * stepPx);
+  if (jumped) {
+    // Absorb it: drawn stays on the line it was on, then fades across.
+    ox -= ex; oy -= ey;
+  } else {
+    c.vx = (x - c.x) / dt;
+    c.vy = (y - c.y) / dt;
+  }
+  // A jump keeps the motion it had; the true position moves on regardless.
+  c.x = x; c.y = y;
+  c.ox = ox; c.oy = oy; c.ms = nowMs;
+  return { x: x + ox, y: y + oy };
+}
+
 function recordDrawnShipWorldPos(shipId: string, x: number, y: number): void {
   if (lastDrawnShipWorldPos.size > 2000) lastDrawnShipWorldPos.clear();
   const ms = performance.now();
@@ -5559,8 +5613,11 @@ export function drawShip(
     formation?.lane ?? 0,
   );
   if (orbitMap) { const m = mapRadial(orbitMap, lx, ly, ctx.camera.scale); lx = m.x; ly = m.y; }
-  const worldX = parentPos.x + lx;
-  const worldY = parentPos.y + ly;
+  // The continuity guard has the last word on where a hull is drawn.
+  const kept = continuousDrawnPos(ship.id, parentPos.x + lx, parentPos.y + ly, ctx.camera.scale,
+    ctx.nowMs ?? performance.now());
+  const worldX = kept.x;
+  const worldY = kept.y;
   const canvasPos = worldToCanvas(worldX, worldY, ctx);
   // Death FX (wrecks, destruction flash) spawn where the hull was DRAWN.
   recordDrawnShipWorldPos(ship.id, worldX, worldY);
@@ -7428,7 +7485,10 @@ function drawTorchTransitShip(
     ? torchPositionFromSamples(trajectorySamples, ctx.t)
     : { x: ship.transit.pos.x, y: ship.transit.pos.y };
   // Leave orbit, don't cut to the arc — see departureBlend.
-  const lerpedPos = departureBlend(ship.id, truePos, ctx.nowMs ?? performance.now());
+  const blended = departureBlend(ship.id, truePos, ctx.nowMs ?? performance.now());
+  // The continuity guard has the last word on where a hull is drawn.
+  const lerpedPos = continuousDrawnPos(ship.id, blended.x, blended.y, ctx.camera.scale,
+    ctx.nowMs ?? performance.now());
   const canvasPos = worldToCanvas(lerpedPos.x, lerpedPos.y, ctx);
   recordDrawnShipWorldPos(ship.id, lerpedPos.x, lerpedPos.y);
   // Hull, plume and glow, all within a few hull lengths (farOffCanvas).

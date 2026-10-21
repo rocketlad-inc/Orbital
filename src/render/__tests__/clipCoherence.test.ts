@@ -10,6 +10,7 @@
  */
 import {
   rendezvousAttitude, glideLayout, LAYOUT_GLIDE_TAU_MS, INTERCEPT_MIN_WINDOW_TICKS,
+  continuousDrawnPos, CONTINUITY_TAU_MS,
 } from '../mapRenderer';
 import { EXPLOSION_REACH } from '../fxArt';
 import type { Ship } from '../../types';
@@ -104,5 +105,40 @@ describe('effects stay with what made them', () => {
     const hullsOf = (k: number) => k * 0.47;
     expect(hullsOf(EXPLOSION_REACH.shock)).toBeLessThan(2);
     expect(hullsOf(EXPLOSION_REACH.sparks)).toBeLessThan(1.5);
+  });
+});
+
+describe('a hull never jumps on screen (the continuity guard)', () => {
+  const run = (id: string, path: (i: number) => { x: number; y: number }, n: number) => {
+    const out = [];
+    for (let i = 0; i < n; i++) { const p = path(i); out.push(continuousDrawnPos(id, p.x, p.y, 1, 1000 + i * 33)); }
+    return out;
+  };
+
+  test('steady motion passes through untouched', () => {
+    const out = run('steady', i => ({ x: i * 5, y: 0 }), 20);
+    out.forEach((p, i) => expect(p.x).toBeCloseTo(i * 5, 6));
+  });
+
+  test('a hard burn (steady acceleration) passes through untouched', () => {
+    const out = run('burn', i => ({ x: 0.4 * i * i, y: 0 }), 40);
+    out.forEach((p, i) => expect(p.x).toBeCloseTo(0.4 * i * i, 6));
+  });
+
+  test('a teleport becomes a short slide that ends where the hull really is', () => {
+    // Moving 3 px a frame, then its position is re-derived 300 px away.
+    const out = run('tp', i => ({ x: i * 3 + (i >= 10 ? 300 : 0), y: 0 }), 10 + Math.ceil((CONTINUITY_TAU_MS * 5) / 33));
+    // The frame of the jump stays on its line.
+    expect(out[10].x - out[9].x).toBeLessThan(10);
+    // No later frame steps more than a sliver of the gap at once.
+    for (let i = 11; i < out.length; i++) expect(out[i].x - out[i - 1].x).toBeLessThan(80);
+    // And it gets there.
+    const last = out.length - 1;
+    expect(out[last].x).toBeCloseTo(last * 3 + 300, -1);
+  });
+
+  test('a hull not drawn for a while starts where it is', () => {
+    continuousDrawnPos('gap', 0, 0, 1, 5000);
+    expect(continuousDrawnPos('gap', 900, 0, 1, 6000)).toEqual({ x: 900, y: 0 });
   });
 });
