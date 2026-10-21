@@ -43,6 +43,7 @@ import {
   drawnShipLook,
   glideLayout,
   recentDrawnShipWorldPos,
+  drawnShipsSince,
   generateStarfield,
   drawStarfield,
   StarfieldCache,
@@ -4140,6 +4141,16 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     }
 
     perf.phase('fog_paint');
+    // JUMP TRACE (studio.mjs film --trace): every hull drawn this frame,
+    // in world units, with the zoom, so a script can find any hull that
+    // moved abruptly on screen. Off unless the array exists.
+    {
+      const trace = (window as unknown as { __shipTrace?: unknown[] }).__shipTrace;
+      if (Array.isArray(trace)) {
+        trace.push({ t: renderTick(), scale: camera.scale, ships: drawnShipsSince(nowMs) });
+        if (trace.length > 120) trace.splice(0, trace.length - 120);
+      }
+    }
     perf.phaseCommit();
     // Camera tween in flight → self-drive one more frame. The normal
     // render cadence is state-change-driven; a paused sim would freeze

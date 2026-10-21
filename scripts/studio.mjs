@@ -283,6 +283,11 @@ async function film() {
   try {
     await warnShot(b, shot);
     const total = await b.evaluate(`window.__studio.openFilm(${JSON.stringify(shot)})`);
+    // --trace: every hull's drawn position each frame, to trace.jsonl, for
+    // scripts/jump-check.py (a hull should never jump).
+    const tracing = argv.includes('--trace');
+    const traceOut = tracing ? fs.openSync(path.join(dir, 'trace.jsonl'), 'w') : null;
+    if (tracing) await b.evaluate('(window.__shipTrace = [], true)');
     console.error(`filming ${total} frames at ${w}x${h} as ${handle}…`);
     const frames = [];
     const t0 = Date.now();
@@ -306,6 +311,11 @@ async function film() {
       if (!shotPng) { console.error(`\nframe ${k}: no screenshot; ending the take with ${frames.length} frames`); break; }
       const f = `${String(k).padStart(5, '0')}.png`;
       fs.writeFileSync(path.join(dir, f), Buffer.from(shotPng.data, 'base64'));
+      if (traceOut != null) {
+        // The last frame the page drew for this film frame.
+        const tr = await b.evaluate('JSON.stringify((window.__shipTrace || []).splice(0).pop() || null)', 10_000).catch(() => 'null');
+        fs.writeSync(traceOut, JSON.stringify({ k, ...(JSON.parse(tr) || {}) }) + '\n');
+      }
       frames.push({ f, t: k / (shot.fps ?? 30) });
       if (k % 30 === 0) {
         process.stderr.write(`\r  ${k}/${total}  ${((Date.now() - t0) / 1000).toFixed(0)}s   `);
@@ -315,6 +325,7 @@ async function film() {
       if (done) break;
     }
     process.stderr.write('\n');
+    if (traceOut != null) fs.closeSync(traceOut);
     fs.writeFileSync(path.join(dir, 'frames.json'), JSON.stringify(frames));
     const stats = await b.evaluate('JSON.stringify(window.__studio.stats)', 10_000).catch(() => '{}');
     await b.evaluate('window.__studio.closeFilm()', 10_000).catch(() => {});

@@ -5000,6 +5000,16 @@ function recordDrawnShipWorldPos(shipId: string, x: number, y: number): void {
   else lastDrawnShipWorldPos.set(shipId, { x, y, ms });
 }
 
+/** Every hull drawn since `sinceMs`, where (world). The Studio's jump
+ *  trace (studio.mjs film --trace) reads this once a frame. */
+export function drawnShipsSince(sinceMs: number): Array<[string, number, number]> {
+  const out: Array<[string, number, number]> = [];
+  for (const [id, e] of lastDrawnShipWorldPos) {
+    if (e.ms != null && e.ms >= sinceMs) out.push([id, Math.round(e.x * 100) / 100, Math.round(e.y * 100) / 100]);
+  }
+  return out;
+}
+
 /** Where a hull was drawn, only if it was drawn just now (any role: on
  *  its own line, or as an escort in its fleet's block). */
 export function recentDrawnShipWorldPos(shipId: string, maxAgeMs = 500): { x: number; y: number } | undefined {
