@@ -73,10 +73,15 @@ export interface UnlockRow {
  * same rung and the triangle closes: shields stop kinetic only, armor
  * stops energy only, and neither is a universal answer again.
  *
- * FUSION DETONATOR SITS AT W5, not W2. A warhead is priced off the
+ * FUSION DETONATOR SITS AT W6, not W2. A warhead is priced off the
  * carrier's hull HP rather than its guns, so it is the sharpest thing a
  * cheap corvette can carry — handing it out as the SECOND weapons unlock
  * made ramming the opening move of the game rather than a late trick.
+ *
+ * THE MISSILE SILO HAS W5 TO ITSELF, ahead of the detonator (Lorne,
+ * 2026-10-20: "Put silo into its own slot in the tech tree before the
+ * detonator"); the detonator and both weapons megastructures moved up one
+ * level each to make room, so every Weapons unlock keeps its own level.
  */
 export const RESEARCH_UNLOCKS: UnlockRow[] = [
   // ── ⚔ WEAPONS ───────────────────────────────────────────────
@@ -91,13 +96,13 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
     // — hull-carried veterancy, which migration 0068 abolished and 0118
     // dropped the columns for. The perk now lands where veterancy lives.
     label: 'Veteran Yards', blurb: 'Your new captains start at rank 1 — already blooded.' },
-  { track: 'weapons', level: 5, feature: 'part.detonator',
-    label: 'Fusion Detonator', blurb: 'Turns a cheap hull into a threat. Hits friend and foe.' },
   { track: 'weapons', level: 5, feature: 'building.missile_silo',
     label: 'Missile Silo', blurb: 'A city building that builds and fires missiles: 10 damage to everything in the target orbit, and they stack.' },
-  { track: 'weapons', level: 6, feature: 'mega.weaponsStation',
+  { track: 'weapons', level: 6, feature: 'part.detonator',
+    label: 'Fusion Detonator', blurb: 'Turns a cheap hull into a threat. Hits friend and foe.' },
+  { track: 'weapons', level: 7, feature: 'mega.weaponsStation',
     label: 'Weapons Station', blurb: 'A gun platform that reaches into transit lanes. Too big to ignore and too tough to pass with one fleet.' },
-  { track: 'weapons', level: 7, feature: 'mega.megaDestroyer',
+  { track: 'weapons', level: 8, feature: 'mega.megaDestroyer',
     label: 'Mega Destroyer', blurb: 'Strips the terraforming off a world. Barely moves, cannot use gates, and everyone sees it coming.' },
 
   // ── 🛡 DEFENSE ──────────────────────────────────────────────
@@ -120,7 +125,7 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
     label: 'Damage Control', blurb: 'Ships repair a trickle between volleys, mid-fight.' },
   // FLAK on the DEFENCE track, not Weapons. It is point defence: it
   // fires no killing shot, it makes a swarm survivable. The free Weapons
-  // levels are 7 and 8, which would put the answer to corvette spam long
+  // levels were 7 and 8 (now 9 and 10), which would put the answer to corvette spam long
   // after the phase of the game where corvette spam happens.
   { track: 'armor', level: 6, feature: 'part.flak',
     label: 'Flak Battery', blurb: 'No damage — it slows every enemy hull in the fight, which makes them easier for your whole fleet to hit. The answer to a corvette swarm.' },
@@ -178,7 +183,7 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
   //
   // Early is also where it belongs. The module only lets a colony ship
   // lay a foundation; WHAT you may lay is gated separately and deeply
-  // (Weapons 6/7, Defense 7/8, Propulsion 6/7/8). Gating the shovel as
+  // (Weapons 7/8, Defense 7/8, Propulsion 6/7/8). Gating the shovel as
   // hard as the cathedral meant paying twice for the same permission.
   { track: 'construction', level: 4, feature: 'part.construction',
     label: 'Construction Module',
