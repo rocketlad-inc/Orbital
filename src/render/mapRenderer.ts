@@ -5116,6 +5116,25 @@ export function glideLayout(
   return { x: g.x, y: g.y };
 }
 
+/**
+ * An escort's drawn spot, through the continuity guard like every other
+ * hull. Escorts are placed by their fleet's block, and the block is
+ * re-solved when the fleet changes: its flagship dies and the block
+ * re-centres on a new one (measured on the Mega Destroyer take, 2026-10-21:
+ * every Earth Guard hull jumped 2,300 px in one frame at 37 px a unit when
+ * guard_dd_0 died). Without this the escorts snapped, and the hull that
+ * became the new flagship reached drawShip with no history in the guard,
+ * so its first frame there snapped too. One guard entry per hull, whichever
+ * path draws it, keeps the motion continuous across the switch.
+ */
+export function guardedEscortCanvasPos(
+  ctx: RenderContext, shipId: string, x: number, y: number,
+): { x: number; y: number } {
+  const raw = canvasToWorld(x, y, ctx);
+  const kept = continuousDrawnPos(shipId, raw.x, raw.y, ctx.camera.scale, ctx.nowMs ?? performance.now());
+  return kept.x === raw.x && kept.y === raw.y ? { x, y } : worldToCanvas(kept.x, kept.y, ctx);
+}
+
 /** For a hull that rides with another this frame without being drawn on
  *  its own (an escort whose flagship is off-screen): it is where its
  *  flagship last was, which is where its death belongs too. */
@@ -5314,6 +5333,9 @@ export function drawEscortHull(
    *  thrust hint). Escorts burn with their flagship. */
   thrust = 0,
 ): void {
+  // The continuity guard has the last word here too (see
+  // guardedEscortCanvasPos): a re-solved fleet block slides, never jumps.
+  ({ x, y } = guardedEscortCanvasPos(ctx, ship.id, x, y));
   if (farOffCanvas(ctx, x, y, baseSizePx * 2)) return;
   const g = ctx.ctx;
   const color = shipColor(ship, ctx.factions);

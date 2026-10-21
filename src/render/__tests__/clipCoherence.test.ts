@@ -10,7 +10,7 @@
  */
 import {
   rendezvousAttitude, glideLayout, LAYOUT_GLIDE_TAU_MS, INTERCEPT_MIN_WINDOW_TICKS,
-  continuousDrawnPos, CONTINUITY_TAU_MS,
+  continuousDrawnPos, CONTINUITY_TAU_MS, guardedEscortCanvasPos,
 } from '../mapRenderer';
 import { EXPLOSION_REACH } from '../fxArt';
 import type { Ship } from '../../types';
@@ -135,6 +135,39 @@ describe('a hull never jumps on screen (the continuity guard)', () => {
     // And it gets there.
     const last = out.length - 1;
     expect(out[last].x).toBeCloseTo(last * 3 + 300, -1);
+  });
+
+  test('an escort that becomes the flagship slides, it does not snap', () => {
+    // The Mega Destroyer take: the Earth Guard's flagship died, the block
+    // re-centred, and the hull promoted to flagship moved from the escort
+    // draw path to drawShip's on that frame, 300 px from where it was.
+    const ctx = { canvas: { width: 1000, height: 800 }, camera: { x: 0, y: 0, scale: 1 }, nowMs: 0 } as never as Parameters<typeof guardedEscortCanvasPos>[0];
+    const c = ctx as unknown as { nowMs: number };
+    const drawn: number[] = [];
+    for (let i = 0; i < 10; i++) {
+      c.nowMs = 2000 + i * 33;
+      const at = guardedEscortCanvasPos(ctx, 'promoted', 500 + i * 3, 400);   // escort path, canvas px
+      drawn.push(at.x - 500);
+    }
+    // Now drawShip draws it (world units; camera at 0, scale 1, so world x = canvas x - 500).
+    for (let i = 10; i < 10 + Math.ceil((CONTINUITY_TAU_MS * 5) / 33); i++) {
+      drawn.push(continuousDrawnPos('promoted', i * 3 + 300, 0, 1, 2000 + i * 33).x);
+    }
+    expect(drawn[10] - drawn[9]).toBeLessThan(10);
+    for (let i = 11; i < drawn.length; i++) expect(drawn[i] - drawn[i - 1]).toBeLessThan(80);
+    expect(drawn[drawn.length - 1]).toBeCloseTo((drawn.length - 1) * 3 + 300, -1);
+  });
+
+  test('a re-centred escort block slides', () => {
+    const ctx = { canvas: { width: 1000, height: 800 }, camera: { x: 0, y: 0, scale: 1 }, nowMs: 0 } as never as Parameters<typeof guardedEscortCanvasPos>[0];
+    const c = ctx as unknown as { nowMs: number };
+    const xs: number[] = [];
+    for (let i = 0; i < 30; i++) {
+      c.nowMs = 9000 + i * 33;
+      xs.push(guardedEscortCanvasPos(ctx, 'escort-block', 500 + (i >= 10 ? 250 : 0), 400).x);
+    }
+    expect(xs[10] - xs[9]).toBeLessThan(10);
+    for (let i = 11; i < xs.length; i++) expect(xs[i] - xs[i - 1]).toBeLessThan(80);
   });
 
   test('a hull not drawn for a while starts where it is', () => {
