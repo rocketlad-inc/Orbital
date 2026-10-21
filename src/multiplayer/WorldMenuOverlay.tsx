@@ -725,7 +725,9 @@ export const WorldMenuOverlay: React.FC = () => {
   // the station art and in its card: as tags of their own they took the
   // same patch of sky as the surface tags (Lorne, 2026-10-20: "we got
   // overlapping here") ----
-  const staW = mobile ? 84 : shortDesk ? 130 : 180, staH = staW;
+  // A short window keeps the box wider than tall: the module grid under it
+  // shares the sky with the city's tag arc.
+  const staW = mobile ? 84 : shortDesk ? 130 : 180, staH = shortDesk ? 110 : staW;
   const staX = mobile ? 8 : Math.min(vw - dockW - staW - 30, (ctlLeft ?? vw) - staW - 10);
   const staY = mobile ? TOPBAR + 10 + chromeH.panel + 10 : TOPBAR + 10 + 40 + 14;
   const STA_CHIP_H = 30;
@@ -1482,6 +1484,9 @@ export const WorldMenuOverlay: React.FC = () => {
     // down to it. Tap one for its sheet. ----
     const PIN_TOP = TOPBAR + 64 + 24;
     const pinY = (s: { end: { y: number } }) => Math.max(PIN_TOP, s.end.y - 34);
+    // An end building can stand nearer the edge than half a pin: the pin
+    // stays whole on screen and its stem leans down to the roof.
+    const pinX = (s: { end: { x: number } }) => Math.max(26, Math.min(vw - 26, s.end.x));
     const pins = myCity && level !== 'full' && surfTags.length > 0 ? (
       <>
         {settled && (
@@ -1489,7 +1494,7 @@ export const WorldMenuOverlay: React.FC = () => {
             {surfTags.map(s => (
               <path key={s.kind}
                 className={`wm-stem${view === 'structure' && pickedKind === s.kind && pickedColumn === 'surface' ? ' is-picked' : ''}`}
-                data-wm-line={s.kind} fill="none" d={`M${s.end.x},${pinY(s) + 18} L${s.end.x},${s.end.y}`} />
+                data-wm-line={s.kind} fill="none" d={`M${pinX(s)},${pinY(s) + 18} L${s.end.x},${s.end.y}`} />
             ))}
           </svg>
         )}
@@ -1501,7 +1506,7 @@ export const WorldMenuOverlay: React.FC = () => {
             const pinLabel = t('worldmenu.p.pinAria', { name: nameOf(k), line });
             return (
               <button key={k} type="button" className={`wmp-pin ${tone}${on ? ' is-on' : ''}`}
-                style={{ left: s.end.x, top: pinY(s) }} data-testid={`wm-build-${k}`}
+                style={{ left: pinX(s), top: pinY(s) }} data-testid={`wm-build-${k}`}
                 aria-label={pinLabel} title={pinLabel}
                 onClick={() => openStructure(k, 'surface', view)}>
                 <span className="wmp-pin-dot">{badge(k, myCity, 'surface')}</span>
