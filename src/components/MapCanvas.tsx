@@ -105,6 +105,11 @@ import { drainVisibleFx } from '../render/pendingFx';
 import { bodyPosition, bodyById } from '../physics/orbitalMechanics';
 import { torchPositionFromSamples } from '../physics/torchTransfer';
 import type { InterceptMarker } from '../render/mapRenderer';
+import type { DestructionFlash } from '../render/mapRenderer';
+import { orbitSense } from '../render/fxAnchor';
+
+/** One hull as the last frame saw it: where, what class, and the ship. */
+type ShipSnap = { x: number; y: number; cls: string; ship: Ship };
 import { shipIconSize, rendererCanvasMb, drawStructureReach, parkedOrbitMap } from '../render/mapRenderer';
 import {
   liveBattleFor, escortBlockSpacing, type BattleUnit, type LiveBattle,
@@ -554,7 +559,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   const directCamInputRef = useRef(false);
   const tweenRafRef = useRef<number | null>(null);
   const renderRef = useRef<() => void>(() => {});
-  const prevShipIdsRef = useRef<Map<string, { x: number; y: number; cls: string }>>(new Map());
+  const prevShipIdsRef = useRef<Map<string, ShipSnap>>(new Map());
   // Ids of ships that were in torch transit last frame. Diffed against
   // this frame the same way hp deltas are — a ship present both frames
   // that dropped its .transit just ARRIVED, which triggers the soft
@@ -562,7 +567,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // the diff so a mid-flight page load doesn't fire a phantom flash.
   const prevTransitIdsRef = useRef<Set<string> | null>(null);
   const prevSettlementIdsRef = useRef<Map<string, { x: number; y: number; bodyId: string }>>(new Map());
-  const destructionFlashesRef = useRef<Map<string, { pos: { x: number; y: number }; startMs: number; baseRadius?: number; id?: string }>>(new Map());
+  const destructionFlashesRef = useRef<Map<string, DestructionFlash>>(new Map());
   /** Ship ids whose death already flashed at the hull via the list-diff
    *  path — consulted by the queued chronicle FX so the same kill never
    *  booms twice (once at the ship, later again from the queue). */
@@ -1134,7 +1139,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // cls rides along so a wreck can be sized off the hull that died —
     // the ship is gone from /state by the time we notice, so its class
     // has to be remembered from the frame it was last alive.
-    const curShipIds = new Map<string, { x: number; y: number; cls: string }>();
+    // The ship itself rides along too (a pointer, no copy), so a kill at
+    // a world can be pinned to that world (fxAnchor).
+    const curShipIds = new Map<string, ShipSnap>();
     // Reset the transit-ship canvas-position cache — it gets repopulated
     // per-frame by the per-ship overlay below. A ship that arrived and
     // dropped out of transit shouldn't keep its old hitbox.
@@ -1206,7 +1213,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // has gone missing — skip those rather than crash.
       const pos: { x: number; y: number } | null =
         shipWorldPosition(ship, nowTick, gameState.bodies);
-      if (pos) curShipIds.set(ship.id, { x: pos.x, y: pos.y, cls: ship.class });
+      if (pos) curShipIds.set(ship.id, { x: pos.x, y: pos.y, cls: ship.class, ship });
 
       // Damage detection. MUST be hp-based: `lastDamagedTick` is only
       // ever populated by the single-player engine — the MP /state
@@ -1371,8 +1378,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // last frame — battle-line arcs and lane offsets place ships
           // far from their textbook orbital point, and a wreck on the
           // wrong side of the planet reads as a bug (QA finding).
-          const drawnPos = drawnShipWorldPos(id) ?? pos;
-          destructionFlashesRef.current.set(id, { pos: drawnPos, startMs: nowMs, baseRadius: 12, id });
+          const drawnPos = drawnShipWorldPos(id) ?? { x: pos.x, y: pos.y };
+          // Died parked at a world: the blast and its wreck stay with
+          // that world (Lorne: "explode in place, and then its debris
+          // orbit the world"). Died in flight: where it was, in space.
+          const at = !pos.ship.transit && pos.ship.orbit?.parentBodyId
+            ? { bodyId: pos.ship.orbit.parentBodyId, dir: orbitSense(pos.ship, nowTick) }
+            : undefined;
+          destructionFlashesRef.current.set(id, { pos: drawnPos, startMs: nowMs, baseRadius: 12, id, at });
           // Remember we played this kill AT THE HULL, so the queued
           // chronicle twin of the same death doesn't boom again later.
           listDiffFlashedShipsRef.current.add(id);
@@ -1381,7 +1394,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // for a few minutes instead of vanishing with the flash.
           // Sized off the DEAD HULL's own icon, not a flat 12: a destroyer
           // (icon 44) now leaves visibly more than a corvette (28).
-          spawnWreck(id, drawnPos, shipIconSize(pos.cls, false), nowMs, nowTick);
+          spawnWreck(id, drawnPos, shipIconSize(pos.cls, false), nowMs, nowTick, at);
         }
       }
     }
@@ -3706,6 +3719,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           const w = canvasToWorld(pos.x, pos.y, renderContext);
           destructionFlashesRef.current.set(fx.id, {
             pos: w, startMs: nowMs, baseRadius: 6, id: fx.id,
+            at: fx.bodyId ? { bodyId: fx.bodyId, dir: 1 } : undefined,
           });
           return;
         }
@@ -3716,11 +3730,16 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // that double-tap was half the "random explosions" report.
         if (fx.shipId && listDiffFlashedShipsRef.current.has(fx.shipId)) return;
         const world = canvasToWorld(pos.x, pos.y, renderContext);
+        // Pinned to its world, so the world cannot slide into its own
+        // explosion (fxAnchor); one too far out to belong to it (a kill
+        // in flight) stays where it was.
+        const at = fx.bodyId ? { bodyId: fx.bodyId, dir: 1 } : undefined;
         destructionFlashesRef.current.set(fx.id, {
           pos: world,
           startMs: nowMs,
           baseRadius: fx.kind === 'impact' ? 22 : 12,
           id: fx.id,
+          at,
         });
         // AND LEAVE A WRECK. This is why the map never had any.
         //
@@ -3738,7 +3757,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // the range when even that has aged out.
         if (fx.kind === 'destruction' && fx.shipId) {
           const deadCls = prevShipIdsRef.current.get(fx.shipId)?.cls ?? 'frigate';
-          spawnWreck(fx.shipId, world, shipIconSize(deadCls, false), nowMs, nowTick);
+          spawnWreck(fx.shipId, world, shipIconSize(deadCls, false), nowMs, nowTick, at);
         }
       },
     );

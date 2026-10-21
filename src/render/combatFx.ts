@@ -28,6 +28,7 @@ import { RenderContext, worldToCanvas, drawnShipLook, drawnShipWorldPos, nearest
 import { hashStr, mulberry32 } from './planetTexture';
 import { isLightweight } from './lightweightMode';
 import { drawnRadiusOf } from './bodyPresentation';
+import { anchorToBody, anchoredWorldPos, type BodyAnchor } from './fxAnchor';
 import { battleScale, battleShipOffsetPx } from './battleLayoutLive';
 import { getWorldMenuOpenBodyId } from '../game/worldMenu/store';
 import {
@@ -1430,6 +1431,11 @@ interface Wreck {
    *  wreck comes apart as this ship. Absent for a hull never drawn on
    *  this client; those leave charred plates. */
   look?: HullLook;
+  /** The world it died at (fxAnchor): the wreck rides with it and laps
+   *  it like the fleet did, instead of being left behind in space as the
+   *  world moves on. Resolved on first draw, which has the zoom. */
+  at?: { bodyId: string; dir: number };
+  anchor?: BodyAnchor | null;
 }
 
 const wrecks: Wreck[] = [];
@@ -1444,9 +1450,11 @@ export function spawnWreck(
   baseRadius: number,
   nowMs: number,
   nowTick: number,
+  at?: { bodyId: string; dir: number },
 ): void {
   const w: Wreck = {
     id: shipId,
+    at,
     x: worldPos.x,
     y: worldPos.y,
     driftAng: ((idHash(shipId) % 1000) / 1000) * Math.PI * 2,
@@ -1490,11 +1498,15 @@ export function drawWrecks(rc: RenderContext, nowMs: number): void {
     if (tickAge < 0 || tickAge >= WRECK_LIFE_TICKS) continue;
     const k = Math.max(0, Math.min(1, tickAge / WRECK_LIFE_TICKS));
     const age = nowMs - w.startMs;
-    // Slow world-space drift away from the kill point — capped so a
-    // two-hour-old wreck hasn't wandered out of the battlefield.
+    if (w.at && w.anchor === undefined) {
+      w.anchor = anchorToBody({ x: w.x, y: w.y }, rc.bodies.find(b => b.id === w.at!.bodyId), rc, w.at.dir);
+    }
+    const held = w.anchor ? anchoredWorldPos(w.anchor, rc, true) : null;
+    // Killed in flight: a slow world-space drift away from the kill
+    // point, capped so a two-hour-old wreck hasn't wandered off.
     const drift = Math.min(6, (age / 1000) * 0.05);
-    const wx = w.x + Math.cos(w.driftAng) * drift;
-    const wy = w.y + Math.sin(w.driftAng) * drift;
+    const wx = held ? held.x : w.x + Math.cos(w.driftAng) * drift;
+    const wy = held ? held.y : w.y + Math.sin(w.driftAng) * drift;
     const cp = worldToCanvas(wx, wy, rc);
     // Fade the last third; hold readable before that.
     if (w.look) {
