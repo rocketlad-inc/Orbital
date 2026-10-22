@@ -263,7 +263,7 @@ export function createMatchMap(
    * is six ticks, expiring on the GAME clock so it survives the film's
    * variable pacing.
    */
-  const deathAt = new Map<number, Array<{ id: string; body: string; fid: string | null }>>();
+  const deathAt = new Map<number, Array<{ id: string; body: string; fid: string | null; cls: string }>>();
   const transitAt = new Map<number, Array<{ id: string; from: string; to: string;
     fid: string | null; cls: string; iv: ShipIconVariant }>>();
   const rebuildTransits = () => {
@@ -281,10 +281,10 @@ export function createMatchMap(
         moves.push({ id, from: was.parent, to: sh.parent,
           fid: sh.fid, cls: sh.cls, iv: sh.iv });
       }
-      const gone: Array<{ id: string; body: string; fid: string | null }> = [];
+      const gone: Array<{ id: string; body: string; fid: string | null; cls: string }> = [];
       for (const [id, was] of prev.ships) {
         if (now.ships.has(id) || !was.parent) continue;
-        gone.push({ id, body: was.parent, fid: was.fid ?? null });
+        gone.push({ id, body: was.parent, fid: was.fid ?? null, cls: was.cls });
       }
       if (gone.length) deathAt.set(t, gone);
       if (moves.length) transitAt.set(t - 1, moves);
@@ -803,7 +803,7 @@ export function createMatchMap(
    * blast has to go off where it WAS -- in its battle line, not at some
    * spot on a ring the film made up.
    */
-  const lastSeen = new Map<string, { body: string; dx: number; dy: number }>();
+  const lastSeen = new Map<string, { body: string; ang: number; rFrac: number }>();
   /**
    * THE DYSON SPHERE, rebuilt from the log: begun, its 25/50/75%
    * milestones, the last damage report, complete at an engineering win.
@@ -831,6 +831,11 @@ export function createMatchMap(
     const p = next ? p0 + (next[1] - p0) * Math.max(0, Math.min(1, (t - t0) / Math.max(1, next[0] - t0))) : p0;
     return { progress: p, complete: false };
   };
+  /** The last frame's presentation, for work done before this frame's. */
+  let lastPres: ReturnType<typeof computePresentation> | null = null;
+  /** A world's drawn radius in map units at the current zoom. */
+  const drawnWorldR = (b: GameBody) =>
+    drawnRadiusOf(lastPres, b, cam.scale) / Math.max(1e-6, cam.scale);
   /** Harness probe: what the planner was given. */
   let lastFacts: unknown = null;
   /** Harness probe: what the last frame drew at the scene's subject. */
@@ -895,21 +900,39 @@ export function createMatchMap(
           return b ? bodyPosition(b, t, gameBodies) : null;
         },
         summary.parts);
-    } else {
-      // Same roster, new instant: the only thing that reads `t` within a
-      // tick is how far along its crossing a hull in flight has got.
-      for (const sh of adaptedShips) {
-        const leg = adaptedLegs.get(sh.id);
-        if (!leg || !sh.transit) continue;
-        const a = byGame.get(leg.from), b = byGame.get(leg.to);
-        if (!a || !b) continue;
-        const pa = bodyPosition(a, t, gameBodies);
-        const pb = bodyPosition(b, t, gameBodies);
-        const span = Math.max(1, leg.arrive - leg.depart);
-        const u = Math.max(0, Math.min(1, (t - leg.depart) / span));
-        const e = u * u * (3 - 2 * u);
-        sh.transit.pos.x = pa.x + (pb.x - pa.x) * e;
-        sh.transit.pos.y = pa.y + (pb.y - pa.y) * e;
+    }
+    // WHERE A CROSSING RUNS, every frame. The record knows only which
+    // world a hull left and which it reached, and the crossing used to
+    // run centre to centre: every departing hull rose out of the middle
+    // of its planet's disc and drifted slowly outward (at a close-up's
+    // pace, a fleet leaving read as fleas falling off the world), and
+    // every arrival sank into the next one's core. A crossing now leaves
+    // from where the hull was parked, riding its world, and ends on the
+    // destination's parking band, facing the way it came in.
+    for (const sh of adaptedShips) {
+      const leg = adaptedLegs.get(sh.id);
+      if (!leg || !sh.transit) continue;
+      const a = byGame.get(leg.from), b = byGame.get(leg.to);
+      if (!a || !b) continue;
+      const pa = bodyPosition(a, t, gameBodies);
+      const pb = bodyPosition(b, t, gameBodies);
+      const ra = drawnWorldR(a), rb = drawnWorldR(b);
+      const seen = lastSeen.get(sh.id);
+      const from = seen && seen.body === a.id
+        ? { x: pa.x + Math.cos(seen.ang) * seen.rFrac * ra, y: pa.y + Math.sin(seen.ang) * seen.rFrac * ra }
+        : (() => { const d = Math.hypot(pb.x - pa.x, pb.y - pa.y) || 1;
+          return { x: pa.x + (pb.x - pa.x) / d * ra * 2.1, y: pa.y + (pb.y - pa.y) / d * ra * 2.1 }; })();
+      const d2 = Math.hypot(from.x - pb.x, from.y - pb.y) || 1;
+      const to = { x: pb.x + (from.x - pb.x) / d2 * rb * 2.1, y: pb.y + (from.y - pb.y) / d2 * rb * 2.1 };
+      const span = Math.max(1, leg.arrive - leg.depart);
+      const u = Math.max(0, Math.min(1, (t - leg.depart) / span));
+      const e = u * u * (3 - 2 * u);
+      sh.transit.pos.x = from.x + (to.x - from.x) * e;
+      sh.transit.pos.y = from.y + (to.y - from.y) * e;
+      const plan = sh.transit.currentTransfer;
+      if (plan) {
+        plan.startPos = { x: from.x, y: from.y };
+        plan.interceptPos = { x: to.x, y: to.y };
       }
     }
     const gameSettlements = adaptedStls;
@@ -977,6 +1000,7 @@ export function createMatchMap(
       return cp;
     }, curFocus, { w: W, h: H }, null, curTick);
     const pres = rc.presentation;
+    lastPres = pres;
     const hostOf = (id: string) => pres.host.get(id) ?? id;
 
     // VIEWPORT CULL.
@@ -1158,16 +1182,21 @@ export function createMatchMap(
             formation: !!formationOf.get(at[0].id)?.battle };
         })() };
     }
-    // Remember where each hull was drawn, against its world.
+    // Remember where each hull was drawn, against its world, in units of
+    // the world's DRAWN radius (as fxAnchor does). Far out a world is drawn
+    // several times its true size and its battle layout with it, so an
+    // offset kept in map units from a wide shot put a close-up's blasts
+    // out in empty space, radii away from the fight.
     for (const sh of gameShips) {
       if (sh.transit) continue;
       const hb = rc.shipHitboxes?.get(sh.id);
       const host = byGame.get(sh.orbit.parentBodyId);
       if (!hb || !host) continue;
-      const bp = bodyPosition(host, t, gameBodies);
+      const c0 = toPx(bodyPosition(host, t, gameBodies));
+      const r0 = drawnRadiusOf(pres, host, cam.scale);
+      if (!(r0 > 0)) continue;
       lastSeen.set(sh.id, { body: host.id,
-        dx: (hb.x - W / 2) / cam.scale + cam.x - bp.x,
-        dy: (hb.y - H / 2) / cam.scale + cam.y - bp.y });
+        ang: Math.atan2(hb.y - c0.y, hb.x - c0.x), rFrac: Math.hypot(hb.x - c0.x, hb.y - c0.y) / r0 });
     }
 
     // SHIPS THAT DIED IN THE LAST SIX TICKS ARE STILL ON SCREEN.
@@ -1186,20 +1215,32 @@ export function createMatchMap(
       const host = byGame.get(bodyId);
       if (!host) return null;
       const bp = bodyPosition(host, atTick, gameBodies);
+      // The world's drawn radius, in map units, at this zoom.
+      const rw = drawnRadiusOf(pres, host, cam.scale) / cam.scale;
       // Where it was last drawn, when the film saw it.
       const seen = lastSeen.get(shipId);
-      if (seen && seen.body === bodyId) return { x: bp.x + seen.dx, y: bp.y + seen.dy };
-      const ring = Math.max(host.radius * 2.1, host.radius + 9);
+      if (seen && seen.body === bodyId) {
+        return { x: bp.x + Math.cos(seen.ang) * seen.rFrac * rw, y: bp.y + Math.sin(seen.ang) * seen.rFrac * rw };
+      }
+      const ring = rw * 2.1;
       const ang = ((hashStr(shipId) % 1000) / 1000) * Math.PI * 2;
       return { x: bp.x + Math.cos(ang) * ring, y: bp.y + Math.sin(ang) * ring };
     };
     for (let dt = Math.max(0, curTick - 6); dt <= curTick; dt++) {
       for (const d of deathAt.get(dt) ?? []) {
-        const wp = deathPos(d.id, d.body, dt);
+        // Where the hull is NOW relative to its world, at the world's
+        // position NOW: computed at the death tick, the blast stayed where
+        // the world had been while the world moved on along its orbit.
+        const wp = deathPos(d.id, d.body, t);
         if (!wp) continue;
         if (!spawnedWrecks.has(d.id)) {
           spawnedWrecks.add(d.id);
-          spawnWreck(d.id, wp, 10, performance.now(), dt);
+          // ANCHORED TO THE WORLD (fxAnchor), at the hull's own size: a
+          // wreck is the dead hull's picture breaking up, and stored as a
+          // point in space it hung there while the world sailed on --
+          // ship-shaped debris peeling off a moving planet like fleas.
+          spawnWreck(d.id, wp, shipIconSize(d.cls, false) * hullSize(byGame.get(d.body), cam.scale),
+            performance.now(), dt, { bodyId: d.body, dir: 1 });
         }
         // The blast, on the GAME clock like the wreckage it belongs to.
         // A wall-clock flash would be a different length of film at
