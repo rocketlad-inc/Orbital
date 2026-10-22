@@ -26,6 +26,7 @@ import { drawnShipWorldPos, torchTrajectorySamples } from '../../render/mapRende
 import { shipWorldPosition } from '../../game/combat';
 import { smoothedTick, setStudioDisplayTick } from '../../render/tickPhase';
 import { setStudioFullVisuals } from '../../render/lightweightMode';
+import { setStudioHullScale } from '../../render/cameraLimits';
 import { apiFetch } from '../api';
 import { arcApexScale, arcNeeded, panCamera, strikeTimingWarnings } from './shotPlan';
 
@@ -49,7 +50,11 @@ export type ShotStep =
   /** A time cut (film only): the map lives `ms` more on its own clock
    *  with no frames kept, then the shot carries on. Pair it with a focus
    *  for a cut that lands after an arrival has settled into orbit. */
-  | { at: number; do: 'skip'; ms: number };
+  | { at: number; do: 'skip'; ms: number }
+  /** Hulls in flight drawn `scale` times their size (eased over `ms`):
+   *  the close-up a camera zoom cannot give, since they draw a fixed size
+   *  at every zoom. Back to 1 with another step, and at the shot's end. */
+  | { at: number; do: 'hulls'; scale: number; ms?: number };
 
 /** The game's panels, by the name the dock and the shell know them by. */
 export type PanelId = 'senate' | 'faction' | 'comms' | 'trades' | 'situation' | 'eventlog' | 'multiplayer'
@@ -448,6 +453,7 @@ export class Director {
       const p = this.position(this.hold);
       if (p) { this.cam.x = p.x; this.cam.y = p.y; }
     }
+    if (this.hullSize) setStudioHullScale(this.hullSizeNow());
     this.push();
   }
 
@@ -526,6 +532,9 @@ export class Director {
         case 'hook': this.hook = st.text; break;
         case 'caption': this.caption = { text: st.text, since: this.clock, color: st.color }; break;
         case 'tick': await this.ticks(st.n ?? 1); break;
+        case 'hulls':
+          this.hullSize = { from: this.hullSizeNow(), to: Number(st.scale) > 0 ? Number(st.scale) : 1, t0: this.clock, ms: st.ms ?? 800 };
+          break;
         case 'skip':
           if (this.film) this.skipMs += Math.max(0, Number(st.ms) || 0);
           else this.note('skip: film only');
@@ -577,6 +586,7 @@ export class Director {
   private begin(shot: Shot): void {
     for (const w of this.check(shot)) this.note(`check: ${w}`);
     this.clock = 0; this.tween = null; this.hold = null; this.caption = null;
+    this.hullSize = null; setStudioHullScale(1);
     this.hook = shot.hook ?? null; this.progress = 0; this.result = null;
     // Every effect, every frame: lightweight mode (a phone's or the
     // server's choice) freezes animation and caps the map at 15fps.
@@ -590,6 +600,7 @@ export class Director {
   private end(): void {
     this.running = false;
     this.unsmoothTicks();
+    this.hullSize = null; setStudioHullScale(1);
     this.moveMs = null;
     this.seenMissiles = [];
     this.speed(null);
@@ -707,6 +718,15 @@ export class Director {
   private film: { vclock: ReturnType<typeof installVirtualClock>; shot: Shot; fired: Set<ShotStep>; k: number; total: number; draw?: (n?: number) => number } | null = null;
   /** Map time still to run off camera (a 'skip' step). */
   private skipMs = 0;
+  /** The 'hulls' close-up: in-flight hull size, eased from -> to. */
+  private hullSize: { from: number; to: number; t0: number; ms: number } | null = null;
+  private hullSizeNow(): number {
+    const h = this.hullSize;
+    if (!h) return 1;
+    const u = Math.max(0, Math.min(1, (this.clock - h.t0) * 1000 / Math.max(1, h.ms)));
+    const e = u * u * (3 - 2 * u);
+    return h.from + (h.to - h.from) * e;
+  }
 
   /** Start a stepped shot. Returns the frame count. */
   openFilm(shot: Shot): number {
@@ -861,6 +881,7 @@ export class Director {
       if (st.do === 'pan' && st.arc !== undefined && typeof st.arc !== 'boolean') out.push(`steps[${i}].arc must be true or false`);
       if ((st.do === 'strike' || st.do === 'hull') && typeof (st as { ship?: unknown }).ship !== 'string') out.push(`steps[${i}] needs a ship`);
       if (st.do === 'intercept' && (typeof st.ships !== 'string' || typeof st.target !== 'string')) out.push(`steps[${i}] needs ships and a target`);
+      if (st.do === 'hulls' && !(Number(st.scale) > 0)) out.push(`steps[${i}].scale must be > 0`);
     });
     return out;
   }
@@ -871,7 +892,7 @@ export class Director {
 /** Every verb a shot step can use (ShotStep). The Studio bar refuses a
  *  shot lint flags, so a verb missing here is a verb nobody can use. */
 const VERBS: readonly string[] = ['focus', 'pan', 'zoom', 'follow', 'tick', 'speed', 'caption', 'hook', 'ui',
-  'panel', 'click', 'intercept', 'strike', 'hull', 'skip'];
+  'panel', 'click', 'intercept', 'strike', 'hull', 'skip', 'hulls'];
 
 const realSetTimeout = window.setTimeout.bind(window);
 const realSleep = (ms: number) => new Promise<void>(r => realSetTimeout(r, ms));

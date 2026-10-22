@@ -748,6 +748,27 @@ function shieldBubbleOf(rc: RenderContext, stl: Settlement): { x: number; y: num
   return { x: cp.x, y: cp.y, r: bodyR * 1.32 + 3, frac: max > 0 ? Math.max(0, Math.min(1, (stl.shieldHp ?? 0) / max)) : 0.5 };
 }
 
+/**
+ * Whether a hull in flight can have shot its stamped target: the target
+ * is inside its weapon's reach, measured where both TRULY are (the
+ * server's test), never where they are drawn. Hulls in flight are drawn
+ * in screen-px formation and company slots, so two loose groups fighting
+ * side by side sit hundreds of px apart on screen; measured there, only
+ * the pair drawn closest passed and a whole battle fired from its two
+ * leads (the Mega Destroyer take, 2026-10-22). The bolt itself still
+ * runs between the drawn sprites.
+ */
+export function transitShotInReach(s: Ship, tgt: Ship, rc: RenderContext): boolean {
+  const reach = SHIP_TRANSIT_RANGE[s.class] ?? 0;
+  if (reach <= 0) return false;
+  const a = shipWorldPosition(s, rc.t, rc.bodies);
+  const b = shipWorldPosition(tgt, rc.t, rc.bodies);
+  if (!a || !b) return false;
+  // A little slack: the two positions are each hull's own snapshot, and
+  // the server stamped the shot from inside the tick.
+  return Math.hypot(a.x - b.x, a.y - b.y) <= reach * 1.25;
+}
+
 export function drawEngagementFire(
   rc: RenderContext,
   ships: Ship[],
@@ -841,14 +862,7 @@ export function drawEngagementFire(
       // feature flag, which only hid it until the flag went on. The
       // actual rule is the one the server engages by: a shot needs the
       // target inside the weapon's reach.
-      const reach = SHIP_TRANSIT_RANGE[s.class] ?? 0;
-      if (reach <= 0) continue;
-      const a = shipCanvasPos(s, rc, transitCanvasPos);
-      const b = shipCanvasPos(tgt, rc, transitCanvasPos);
-      if (!a || !b) continue;
-      // Range is a WORLD quantity; the positions here are canvas pixels,
-      // so compare in the same space the camera is drawing at.
-      if (Math.hypot(a.x - b.x, a.y - b.y) > reach * rc.camera.scale) continue;
+      if (!transitShotInReach(s, tgt, rc)) continue;
       takeEngaged(s.id, s.orbit.parentBodyId, s.ownedBy, s, null);
       continue;
     }
