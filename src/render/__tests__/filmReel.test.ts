@@ -13,9 +13,9 @@ const beat = (tick: number, kind: string, weight: number, body: string | null = 
 
 describe('filmReel', () => {
   it('budgets a share-length film, growing gently with the match', () => {
-    expect(reelBudget(20)).toBe(45);
-    expect(reelBudget(500)).toBe(90);
-    expect(reelBudget(5000)).toBe(100);
+    expect(reelBudget(20)).toBe(42);
+    expect(reelBudget(500)).toBe(63);
+    expect(reelBudget(5000)).toBe(72);
   });
 
   it('finds the deadliest stretch of a long fight', () => {

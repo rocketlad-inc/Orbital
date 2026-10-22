@@ -52,7 +52,7 @@ const WEIGHT: Record<string, number | ((p: P, r: ChronicleRow) => number)> = {
   // The payoff outranks every setup: the kill is the shareable moment.
   kaiju_dead: 200,
   sun_gate_omen: 45, sun_gate_emerged: 90, sun_gate_opened: 100,
-  megastructure_complete: 60, megastructure_claimed: 50,
+  megastructure_complete: 30, megastructure_claimed: 25,
   megastructure_captured: 95, megastructure_destroyed: 95,
   dyson_initiated: 90, dyson_milestone: 55, dyson_collapsed: 120,
   // The last-ditch strike on a nearly finished Sphere is its climax.
@@ -202,7 +202,10 @@ function mergeBeats(beats: ReelBeat[], summary: MatchSummary, lang: Lang): ReelB
       && !x.data?.targets && x.tick >= e.tick && x.tick - e.tick <= 12);
     if (!pile.length) continue;
     e.data = { ...e.data, pile: pile.length + 1 };
-    e.weight = Math.max(e.weight, ...pile.map(x => x.weight)) + 10;
+    // A dogpile is the story turning; on the eventual winner, it is the
+    // set-up for the ending.
+    e.weight = Math.max(e.weight, ...pile.map(x => x.weight)) + 20 * pile.length
+      + (e.target === summary.game.winner_faction_id ? 70 : 0);
     e.text = T('title.targeted', { b: names.get(e.target) ?? '', n: pile.length + 1 });
     for (const x of pile) x.weight = 0;
   }
@@ -240,6 +243,15 @@ function mergeBeats(beats: ReelBeat[], summary: MatchSummary, lang: Lang): ReelB
     last.data = { ...last.data, campaign: worlds, line: worlds.join(' · ') };
     for (const r of run.slice(0, -1)) r.weight = 0;
   }
+  // THE LEVIATHAN'S ARC IN ITS PAYOFFS: a world it scorched and then broke
+  // apart, or scorched and then died at, is told by the ending only.
+  for (const e of out) {
+    if (e.kind !== 'terraform_destroyed' || e.data?.cause !== 'kaiju' || e.weight <= 0) continue;
+    const pay = out.find(x => x !== e && x.tick > e.tick && x.tick - e.tick <= 40
+      && ((x.kind === 'world_obliterated' && (x.body === e.body || x.data?.body_name === e.data?.body_name))
+        || (x.kind === 'kaiju_dead' && x.tick - e.tick <= 12)));
+    if (pay) { pay.weight = Math.max(pay.weight, e.weight + 10); e.weight = 0; }
+  }
   // A comeback that knocks someone else out is one moment, told whole:
   // the rise is the headline, the fall its line underneath.
   for (const e of out) {
@@ -260,15 +272,21 @@ function mergeBeats(beats: ReelBeat[], summary: MatchSummary, lang: Lang): ReelB
  */
 export function broadcastCopy(line: string): string {
   let s = line.replace(/\s*[[(][^\])]*[\])]/g, '');
+  // An ALL-CAPS opening shout ("THE LEVIATHAN IS DEAD — ...") repeats the
+  // title: drop it first, before the clauses are split apart.
+  const m = /^([^a-z]{6,}?)\s+[—–-]\s+(.+)$/u.exec(s);
+  if (m && m[1] === m[1].toUpperCase()) s = m[2].charAt(0).toUpperCase() + m[2].slice(1);
   // Rules text for the player ("park on it to launch...", "Kill it
   // first", "strikes at T+438") is not news: drop those clauses.
   s = s.split(/(?<=[.;!])\s+|\s+[—–]\s+/)
     .filter(part => !/T\+\d+|\b(park on it|kill it first|launch to)\b/i.test(part))
-    .map(part => part.replace(/[;,]\s*$/, ''))
-    .join(' — ');
+    .map(part => part.replace(/[;,.]\s*$/, ''))
+    .filter(Boolean)
+    .map((part, i) => (i === 0 ? part : part.charAt(0).toUpperCase() + part.slice(1)))
+    .join('. ');
+  // No shouting: "Space Moose's CAPITAL" is a log's emphasis, not copy.
+  s = s.replace(/\b([A-Z])([A-Z]{3,})\b/g, (_, a: string, b: string) => a + b.toLowerCase());
   s = s.replace(/ has fallen by /g, ' has fallen to ').replace(/s's\b/g, "s'");
-  const m = /^([^a-z]{6,}?)\s+[—–-]\s+(.+)$/u.exec(s);
-  if (m && m[1] === m[1].toUpperCase()) s = m[2].charAt(0).toUpperCase() + m[2].slice(1);
   return s.replace(/\s{2,}/g, ' ').trim();
 }
 

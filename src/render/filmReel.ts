@@ -47,6 +47,8 @@ export interface ReelBattle {
   window: [number, number];
   /** How many empires had ships there at the height of it. */
   present?: number;
+  /** The most hulls in the fight at one time (all sides). */
+  atOnce?: number;
 }
 
 export interface ReelBeat {
@@ -99,7 +101,7 @@ export const INTRO_SECONDS = 3.4;
 export const FINALE_SECONDS = 6;
 export const BEAT_SECONDS = 2.4;
 /** A beat's shortest and longest hold, by weight. */
-export const BEAT_MIN_SECONDS = 1.6;
+export const BEAT_MIN_SECONDS = 2.2;
 export const BEAT_MAX_SECONDS = 3.2;
 /** A battle gets this much for mattering, plus up to SPREAD for size. */
 export const BATTLE_BASE_SECONDS = 2.2;
@@ -111,7 +113,7 @@ export const MONTAGE_MIN_RATE = 0.0125;
 /** ...or slower than this, however much budget is left over. */
 export const MONTAGE_MAX_RATE = 0.35;
 /** A montage short of this is a flicker; it borrows from the budget. */
-export const MONTAGE_MIN_SECONDS = 1.1;
+export const MONTAGE_MIN_SECONDS = 0.7;
 /** A battle's weight against the headlines': the smallest fight that
  *  makes the cut, and what the deadliest one adds over it. */
 export const BATTLE_WEIGHT_FLOOR = 80;
@@ -123,7 +125,8 @@ const MIN_GAP_TICKS = 3;
 
 /** The film's length for a match of this many ticks. */
 export function reelBudget(span: number): number {
-  return Math.max(45, Math.min(100, Math.round(30 + Math.max(0, span) * 0.12)));
+  // Share length: a feed clip, not a documentary.
+  return Math.max(42, Math.min(72, Math.round(28 + Math.max(0, span) * 0.07)));
 }
 
 /** Seconds a battle earns: base plus a share that grows with its weight. */
@@ -176,7 +179,9 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
     const w = battleWeight(b);
     // A skirmish of two hulls is a ticker line, not a scene; nor is a
     // standoff where nobody died.
-    if (b.peak < 12 || b.lost < 3) continue;
+    // Too small or too brief to be a battle on screen: a single tick of
+    // record held for four seconds is a freeze frame.
+    if (b.peak < 12 || b.lost < 3 || (b.atOnce ?? 99) < 16 || b.window[1] - b.window[0] < 3) continue;
     const from = Math.max(introTo, b.window[0]);
     const to = Math.min(finaleFrom, b.window[1]);
     if (to <= from) continue;
@@ -197,7 +202,7 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
     if (to <= from) continue;
     // Weight buys time: a declaration is a quick read, a capital falling
     // or the Leviathan dying holds longer. A flat 2.4 s was a metronome.
-    cands.push({ kind: 'beat', from, to, weight: e.weight, place: e.body ?? `${e.kind}`, pair: null,
+    cands.push({ kind: 'beat', from, to, weight: e.weight, place: e.body ?? `${e.kind}:${e.target ?? e.fid ?? ""}`, pair: null,
       seconds: Math.max(BEAT_MIN_SECONDS, Math.min(BEAT_MAX_SECONDS, BEAT_MIN_SECONDS + (e.weight - 60) / 80)), framing: e.body ? 'world' : 'system',
       bodyId: e.body, beat: e });
   }
@@ -264,6 +269,9 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
     for (let i = 0; i < pool.length; i++) {
       const c = fitted(pool[i]);
       if (!c) continue;
+      // Two headlines at one world back to back are one shot jump-cut.
+      if (c.kind === 'beat' && chosen.some(x => x.kind === 'beat' && x.place === c.place
+        && Math.abs(x.from - c.from) <= 20)) continue;
       if (used + c.seconds + montageFloor([...chosen, c]) > target) continue;
       const w = worth(c, chosen);
       if (w > bestW + 1e-9) { best = i; bestW = w; bestC = c; }

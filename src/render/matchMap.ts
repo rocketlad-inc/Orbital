@@ -467,7 +467,8 @@ export function createMatchMap(
         const sides = fought.slice(0, 2);
         const present = fought.length;
         const peak = seen.size;
-        battles.push({ body, from: s0, to: e0 + 1, peak, lost, sides, window,
+        const atOnce = [...most.values()].reduce((a, b) => a + b, 0);
+        battles.push({ body, from: s0, to: e0 + 1, peak, lost, sides, window, atOnce,
           present: Math.max(present, sides.length) });
       }
     }
@@ -475,7 +476,8 @@ export function createMatchMap(
     // --- the event log, weighed and placed ------------------------------
     let beats: ReelBeat[] = buildBeats(summary, {
       lang: getLang(),
-      drawable: (id, t) => byId.has(id) && drawableAt(byId.get(id)!, t),
+      // On the tick BEFORE: a world destroyed by the event is gone by its tick.
+      drawable: (id, t) => byId.has(id) && drawableAt(byId.get(id)!, t - 1),
     });
     if (!summary.chronicle) {
       // An older server sends no log: worlds changing hands are still in
@@ -517,7 +519,8 @@ export function createMatchMap(
       if (at && byId.has(at) && drawableAt(byId.get(at)!, e.tick)) e.body = at;
     }
 
-    lastFacts = { battles, beats: beats.length };
+    lastFacts = { battles, beats: [...beats].filter(b => b.weight > 0).sort((a, b) => b.weight - a.weight).slice(0, 40)
+      .map(b => ({ tick: b.tick, kind: b.kind, w: Math.round(b.weight), body: b.body, text: b.text.slice(0, 60) })) };
     const dysonBody = (summary.chronicle ?? []).find(r => r.kind === 'dyson_initiated')?.body_id ?? null;
     scenes = planReel({ lo, hi, battles, beats }, {
       finaleBody: summary.game.victory_type === 'engineering' && dysonBody && byId.has(dysonBody)
@@ -723,7 +726,10 @@ export function createMatchMap(
     s && heldBy.has(s) ? subjectOf(heldBy.get(s), t)
     : s && s.kind === 'intro' && teaser ? subjectOf(teaser, t)
     : s && s.bodyId && s.framing !== 'system' && byId.has(s.bodyId)
-      && drawableAt(byId.get(s.bodyId)!, Math.floor(t)) ? s.bodyId : null;
+      && (drawableAt(byId.get(s.bodyId)!, Math.floor(t))
+        // The shot stays on a world for a moment after it is destroyed:
+        // the break-up is the picture.
+        || (goneAt.get(s.bodyId) ?? -Infinity) > t - 3) ? s.bodyId : null;
 
   /** Where in a world's orbit a scene's action is: the centroid of the
    *  hulls there when the scene was first framed (drawn-radius units). */
@@ -864,10 +870,11 @@ export function createMatchMap(
       let cut = false;
       let anchor: { x: number; y: number } | null = null;
       if (subj && !prevSubj) {
-        const p = pos(subj, t);
-        const q = onScreen(from, p);
-        cut = q.x < 0 || q.x > W || q.y < 0 || q.y > H;
-        anchor = p;
+        // In to a world is a CUT too. A half-second dive from the whole
+        // system down to one world swept the territory rings across the
+        // frame: a brightness strobe on every scene. The movement now
+        // lives INSIDE the shot (the director), not between shots.
+        cut = true;
       } else if (prevSubj && !subj) {
         // Out to the wide shot is a CUT: a zoom back out after every
         // close-up was the breathing the whole film did.
@@ -1392,11 +1399,12 @@ export function createMatchMap(
     drawWrecks(rc, performance.now());
     // THE DYSON SPHERE, built where everyone can see it.
     if (dysonBodyId && visibleIds.has(dysonBodyId)) {
-      const dy0 = dysonAt(t);
+      const fin = finaleDyson();
+      const dy0 = fin ?? dysonAt(t);
       const gb = byGame.get(dysonBodyId);
       if (dy0 && gb) {
         const cp = toPx(pos(dysonBodyId, t));
-        const flare = dysonDone != null ? Math.max(0, 1 - Math.abs(t - dysonDone) / 1.2) : 0;
+        const flare = fin ? fin.flare : 0;
         drawDysonShell(ctx, cp.x, cp.y, drawnRadiusOf(pres, gb, cam.scale), dy0.progress, dy0.complete,
           dysonOwner ? colorOf(dysonOwner) : null, flare, performance.now());
       }
@@ -1706,7 +1714,28 @@ export function createMatchMap(
   /** The least a log row must weigh to headline a time-lapse. */
   const MONTAGE_HEADLINE_WEIGHT = 40;
   /** The finale holds its image this long before the table comes up. */
-  const FINALE_CARD_AT = 2.6;
+  const FINALE_CARD_AT = 2.4;
+  /** Film seconds into the finale, or -1 outside it. */
+  const finaleEl = () => {
+    const sc = scenes[scenes.length - 1];
+    if (!sc || sc.kind !== 'finale' || clockT < sc.from) return -1;
+    return filmSecondsAt(scenes, clockT) - filmSecondsAt(scenes, sc.from);
+  };
+  /**
+   * THE SPHERE COMPLETES ON SCREEN. The win lands on the match's last
+   * tick, which the finale only reaches as the film ends, so the shell sat
+   * at 99% under "The Dyson Sphere is complete". In the finale it ticks to
+   * 100%, the segments lock, and it flares.
+   */
+  const finaleDyson = (): { progress: number; complete: boolean; flare: number } | null => {
+    if (summary.game.victory_type !== 'engineering' || !dysonOwner) return null;
+    const el = finaleEl();
+    if (el < 0) return null;
+    const p0 = dysonKeys.length ? dysonKeys[dysonKeys.length - 1][1] : 0.99;
+    const lock = 0.8;
+    const flare = el < lock ? 0 : Math.max(0, Math.sin(Math.min(1, (el - lock) / 1.4) * Math.PI));
+    return { progress: el < lock ? p0 + (1 - p0) * (el / lock) : 1, complete: el >= lock, flare };
+  };
   /** The cold open runs this long as pure action before the title. */
   const HOOK_SECONDS = 1.4;
   /** Who is building the Dyson Sphere, if anyone, and round which star. */
@@ -1752,24 +1781,34 @@ export function createMatchMap(
       // WHO HOLDS THE FIELD, as the fight closes.
       const prog = el / Math.max(0.01, s.seconds);
       if (prog > 0.7 && sides.length) {
-        const top = [...sides].sort((a, b) => b.ships - a.ships)[0];
+        // Whoever HOLDS the world at the end, if they fought; else the side
+        // still standing strongest. A banner that flipped with a retreat
+        // read as the scoreboard changing its mind.
+        let owner: string | null = null;
+        for (const st of world.stls.values()) if (st.body === s.battle.body && st.fid) { owner = st.fid; break; }
+        const top = sides.find(x => x.faction.id === owner) ?? [...sides].sort((a, b) => b.ships - a.ships)[0];
         const where = byId.get(s.battle.body)?.name ?? '';
         drawBattleVerdict(ctx, W, H, T('verdict', { a: shortName(top.faction.name), world: where }).toUpperCase(),
           top.faction.color, ((prog - 0.7) / 0.12) * (1 - overview) * hud);
       }
     }
     // A victory being BUILT, on screen while it is built.
-    const dy = dysonAt(curTick + curFrac);
-    if (dy && !dy.complete && dysonOwner) {
-      const flash = Math.max(0, ...dysonFlashAt().map(at => (fs >= at ? 1 - (fs - at) / 1.2 : 0)));
-      drawProgressMeter(ctx, W, H, T('meter.dyson'), dy.progress, colorOf(dysonOwner), hud, flash,
+    const fin = finaleDyson();
+    const dy = fin ?? dysonAt(curTick + curFrac);
+    if (dy && dysonOwner && (!dy.complete || fin)) {
+      const flash = fin ? (fin.complete ? 1 - Math.min(1, (el - 0.8) / 1.2) : 0)
+        : Math.max(0, ...dysonFlashAt().map(at => (fs >= at ? 1 - (fs - at) / 1.2 : 0)));
+      // In the finale the meter stays up until the table, to hit 100%.
+      const alpha = fin ? (el < FINALE_CARD_AT ? 1 : 0) : hud;
+      drawProgressMeter(ctx, W, H, T('meter.dyson'), dy.progress, colorOf(dysonOwner), alpha, flash,
         T('meter.dysonNote', { a: shortName(filmFaction(dysonOwner)?.name ?? '') }));
     }
 
     // The clock, and how fast the film is running when it is fast.
     const perTick = s.seconds / Math.max(1, s.to - s.from);
     const x = Math.round(1 / Math.max(0.001, perTick));
-    drawClock(ctx, W, H, curTick + curFrac, s.kind === 'montage' && x >= 4 ? `${T('ff')} \u25B8\u25B8` : null, hud);
+    drawClock(ctx, W, H, curTick + curFrac, s.kind === 'montage' && x >= 4 ? `${T('ff')} \u25B8\u25B8` : null, hud,
+      T('dayLabel'));
 
     // The lower third: what this scene is. Drawn before the ticker, which
     // keeps clear of how far it reaches.
@@ -1778,23 +1817,22 @@ export function createMatchMap(
     if (cap && cap.title && !(s.kind === 'montage' && s.seconds < 1.1)) {
       const c = cap;
       // A montage line is a quick read: in and out briskly.
-      const fade = s.kind === 'montage' ? Math.min(0.3, s.seconds * 0.22) : 0.4;
+      // SNAP IN, HOLD, SNAP OUT: a 1.3 s fade left a two-second beat
+      // fully legible for under one.
       ltRight = drawLowerThird(ctx, W, H, { kicker: c.kicker, title: c.title, sub: c.sub,
         color: c.fid ? colorOf(c.fid) : null },
-      (el - landAt(s)) / (fade + 0.1), (el - (s.seconds - fade)) / fade);
+      el / 0.2, (el - (s.seconds - 0.18)) / 0.18);
     }
 
     // The ticker: one line, about what is in shot.
-    if (hud > 0.5 && W - 56 * unitOf(H) - Math.max(W * 0.6, ltRight + 48 * unitOf(H)) > 320 * unitOf(H)) {
-      // During a battle the ticker is about the battle; elsewhere it never
-      // repeats the headline that is already up.
-      const b = s.kind === 'battle' ? s.battle : undefined;
+    if (hud > 0.5 && s.kind === 'montage' && W - 56 * unitOf(H) - Math.max(W * 0.6, ltRight + 48 * unitOf(H)) > 320 * unitOf(H)) {
+      // A time-lapse device only: it never repeats the headline already
+      // up, and on a held shot it stays on the world in shot.
       const top = montageTop.get(s);
       const subj = curFocus;
       const live = ticker.filter(x2 => fs >= x2.start && fs < x2.start + TICKER_LIFE_SECONDS
         && x2.beat !== top
-        && (!b || x2.beat.body === b.body || b.sides.includes(x2.beat.fid ?? ''))
-        && (!subj || b || x2.beat.body === subj)).slice(-1);
+        && (!subj || x2.beat.body === subj)).slice(-1);
       drawTicker(ctx, W, H, live.map(x2 => ({ text: broadcastCopy(x2.beat.text),
         faction: filmFaction(x2.beat.fid), life: (fs - x2.start) / TICKER_LIFE_SECONDS })),
       Math.max(W * 0.6, ltRight + 48 * unitOf(H)));
@@ -1831,9 +1869,16 @@ export function createMatchMap(
         : c.title;
       drawLowerThird(ctx, W, H, { kicker: c.kicker, title: why,
         sub: summary.game.victory_type === 'engineering' ? T('sub.engineering') : '',
-        color: c.fid ? colorOf(c.fid) : null }, (el - 0.5) / 0.5, (el - (FINALE_CARD_AT - 0.4)) / 0.4);
+        color: c.fid ? colorOf(c.fid) : null }, (el - 0.9) / 0.2, (el - (FINALE_CARD_AT - 0.15)) / 0.15);
+      // The flare whites the frame at its peak...
+      const fd = finaleDyson();
+      if (fd && fd.flare > 0.01) {
+        ctx.fillStyle = `rgba(255,244,222,${0.42 * fd.flare})`;
+        ctx.fillRect(0, 0, W, H);
+      }
+      // ...and the table comes in on a cut, not a slow dissolve.
       drawResultCard(ctx, W, H, { ...c, color: c.fid ? colorOf(c.fid) : null },
-        table, (el - FINALE_CARD_AT) / 0.8,
+        table, (el - FINALE_CARD_AT) / 0.15,
         { worlds: T('worlds', { n: '' }).trim(), ships: T('ships', { n: '' }).trim(), url: T('url'),
           out: T('out') },
         !!winner);

@@ -240,17 +240,17 @@ export function drawLowerThird(ctx: CanvasRenderingContext2D, W: number, H: numb
 
 /** Top-right: the match clock, and the playback speed when it is fast. */
 export function drawClock(ctx: CanvasRenderingContext2D, W: number, H: number,
-  tick: number, speedLabel: string | null, alpha = 1) {
+  tick: number, speedLabel: string | null, alpha = 1, dayLabel = 'T+') {
   const u = unitOf(H);
   ctx.save();
   ctx.globalAlpha = alpha;
   ctx.textAlign = 'right';
   ctx.textBaseline = 'top';
-  const x = W - 56 * u, y = 44 * u;
+  const x = W * 0.945, y = H * 0.05;
   ctx.shadowColor = 'rgba(0,0,0,0.7)'; ctx.shadowBlur = 8 * u;
   ctx.font = `600 ${Math.round(34 * u)}px ${FONT_MONO}`;
   ctx.fillStyle = INK;
-  ctx.fillText(`T+${Math.max(0, Math.floor(tick))}`, x, y);
+  ctx.fillText(`${dayLabel}${Math.max(0, Math.floor(tick))}`, x, y);
   if (speedLabel) {
     ctx.shadowBlur = 0;
     ctx.font = `700 ${Math.round(20 * u)}px ${FONT_BODY}`;
@@ -332,12 +332,12 @@ export function drawBattleTally(ctx: CanvasRenderingContext2D, W: number, H: num
   ctx.save();
   ctx.globalAlpha = alpha;
   const cy = 66 * u;
-  const nameSize = Math.round(24 * u), numSize = Math.round(48 * u);
+  const nameSize = Math.round(30 * u), numSize = Math.round(56 * u);
   // FIXED SLOTS. Every element sits at a set distance from the centre and
   // the count is set in a monospaced face inside a three-digit box, so as
   // ships die only the digits change: a proportional count reflowed the
   // whole bug every time it ticked.
-  const EMB = 80 * u, NUM = 134 * u, NAME = 232 * u, NAME_W = 300 * u;
+  const EMB = 84 * u, NUM = 142 * u, NAME = 250 * u, NAME_W = 330 * u;
   const band = NAME + NAME_W + 40 * u;
   const g = ctx.createLinearGradient(W / 2 - band, 0, W / 2 + band, 0);
   g.addColorStop(0, 'rgba(3,6,12,0)');
@@ -360,7 +360,7 @@ export function drawBattleTally(ctx: CanvasRenderingContext2D, W: number, H: num
     ctx.fillStyle = liftColor(sd.faction.color);
     ctx.fillText(ellipsize(ctx, shortName(sd.faction.name).toUpperCase(), NAME_W), W / 2 + dir * NAME, cy - 12 * u);
     spacing(ctx, 0);
-    ctx.font = `600 ${Math.round(21 * u)}px ${FONT_MONO}`;
+    ctx.font = `600 ${Math.round(26 * u)}px ${FONT_MONO}`;
     ctx.fillStyle = sd.lost > 0 ? '#ff9d7a' : 'rgba(200,216,232,0.45)';
     ctx.fillText(sd.lost > 0 ? `−${sd.lost}` : '−0', W / 2 + dir * NAME, cy + 16 * u);
     ctx.shadowBlur = 0;
@@ -421,8 +421,8 @@ export function drawProgressMeter(ctx: CanvasRenderingContext2D, W: number, H: n
   const u = unitOf(H);
   ctx.save();
   ctx.globalAlpha = alpha;
-  const w = 440 * u, h = 96 * u;
-  const x = W - 56 * u - w, y = 128 * u;
+  const w = 520 * u, h = 116 * u;
+  const x = W * 0.945 - w, y = H * 0.05 + 96 * u;
   const accent = color ? liftColor(color) : '#ffd38a';
   ctx.fillStyle = 'rgba(3,6,12,0.82)';
   ctx.beginPath(); ctx.roundRect(x, y, w, h, 8 * u); ctx.fill();
@@ -437,22 +437,22 @@ export function drawProgressMeter(ctx: CanvasRenderingContext2D, W: number, H: n
   }
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'left';
-  ctx.font = `700 ${Math.round(21 * u)}px ${FONT_BODY}`;
+  ctx.font = `700 ${Math.round(26 * u)}px ${FONT_BODY}`;
   spacing(ctx, 2.5 * u);
   ctx.fillStyle = accent;
-  ctx.fillText(label.toUpperCase(), x + 18 * u, y + 22 * u);
+  ctx.fillText(label.toUpperCase(), x + 18 * u, y + 26 * u);
   spacing(ctx, 0);
   ctx.textAlign = 'right';
-  ctx.font = `600 ${Math.round(34 * u)}px ${FONT_MONO}`;
+  ctx.font = `600 ${Math.round(42 * u)}px ${FONT_MONO}`;
   ctx.fillStyle = INK;
-  ctx.fillText(`${Math.round(pct * 100)}%`, x + w - 18 * u, y + 26 * u);
+  ctx.fillText(`${Math.round(pct * 100)}%`, x + w - 18 * u, y + 30 * u);
   if (note) {
     ctx.textAlign = 'left';
-    ctx.font = `500 ${Math.round(18 * u)}px ${FONT_BODY}`;
-    ctx.fillStyle = DIM;
-    ctx.fillText(ellipsize(ctx, note, w - 36 * u), x + 18 * u, y + 76 * u);
+    ctx.font = `600 ${Math.round(24 * u)}px ${FONT_BODY}`;
+    ctx.fillStyle = INK;
+    ctx.fillText(ellipsize(ctx, note, w - 36 * u), x + 18 * u, y + 92 * u);
   }
-  const bx = x + 18 * u, bw = w - 36 * u, by = y + 48 * u, bh = 12 * u;
+  const bx = x + 18 * u, bw = w - 36 * u, by = y + 56 * u, bh = 14 * u;
   ctx.fillStyle = 'rgba(255,255,255,0.12)';
   ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 5 * u); ctx.fill();
   ctx.fillStyle = accent;
@@ -474,7 +474,7 @@ export function drawStandings(ctx: CanvasRenderingContext2D, W: number, H: numbe
   const u = unitOf(H);
   ctx.save();
   ctx.globalAlpha = alpha;
-  const x = 52 * u;
+  const x = W * 0.055;
   let y = 44 * u;
   ctx.textBaseline = 'top'; ctx.textAlign = 'left';
   ctx.shadowColor = 'rgba(0,0,0,0.7)'; ctx.shadowBlur = 6 * u;
@@ -538,6 +538,15 @@ export function drawTitleCard(ctx: CanvasRenderingContext2D, W: number, H: numbe
   if (a <= 0.01) return;
   ctx.save();
   dimFrame(ctx, W, H, a * dim);
+  {
+    const band = ctx.createLinearGradient(0, H * 0.26, 0, H * 0.7);
+    band.addColorStop(0, 'rgba(2,4,9,0)');
+    band.addColorStop(0.25, `rgba(2,4,9,${0.62 * a})`);
+    band.addColorStop(0.75, `rgba(2,4,9,${0.62 * a})`);
+    band.addColorStop(1, 'rgba(2,4,9,0)');
+    ctx.fillStyle = band;
+    ctx.fillRect(0, H * 0.26, W, H * 0.44);
+  }
   ctx.globalAlpha = a;
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.shadowColor = 'rgba(0,0,0,0.8)'; ctx.shadowBlur = 16 * u;
@@ -625,7 +634,7 @@ export function drawResultCard(ctx: CanvasRenderingContext2D, W: number, H: numb
     ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     ctx.font = `600 ${Math.round(28 * u)}px ${FONT_MONO}`;
     ctx.fillStyle = DIM;
-    ctx.fillText(String(i + 1), tx + 20 * u, cy + 1);
+    if (crowned) ctx.fillText(String(i + 1), tx + 20 * u, cy + 1);
     drawEmblem(ctx, r.faction, tx + 84 * u, cy, 21 * u);
     ctx.font = `600 ${Math.round(32 * u)}px ${FONT_BODY}`;
     ctx.fillStyle = INK;
