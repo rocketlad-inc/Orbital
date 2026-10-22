@@ -188,6 +188,7 @@ export const review: Catalog = {
   'replay.film.meter.dysonNote': '{a} vence o jogo em 100%',
   'replay.film.sub.dysonStakes': 'Se {a} a terminar, vence o jogo',
   'replay.film.dayLabel': 'DIA ',
+  'replay.film.worldsHeld': 'Mundos',
   'replay.film.title.dysonHit': 'Um último ataque à Esfera em {pct}%',
   'replay.film.title.targeted': '{b} é alvo de {n} impérios',
   'replay.film.title.battleAgain': 'A Última Batalha por {world}',

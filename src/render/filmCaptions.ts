@@ -56,7 +56,7 @@ const WEIGHT: Record<string, number | ((p: P, r: ChronicleRow) => number)> = {
   megastructure_captured: 95, megastructure_destroyed: 95,
   dyson_initiated: 90, dyson_milestone: 55, dyson_collapsed: 120,
   // The last-ditch strike on a nearly finished Sphere is its climax.
-  dyson_damaged: (p) => (Number(p.pct) >= 90 ? 110 : 0),
+  dyson_damaged: (p) => (Number(p.pct) >= 90 ? 170 : 0),
   terraform_complete: 30,
   terraform_destroyed: (p) => (p.cause === 'kaiju' || p.cause === 'mega_destroyer' ? 150 : 90),
   world_obliterated: (p) => (p.cause === 'kaiju' ? 175 : 160),
@@ -64,7 +64,7 @@ const WEIGHT: Record<string, number | ((p: P, r: ChronicleRow) => number)> = {
   secret_discovered: 20,
   // The vote that names a Chancellor can end the match: it is the
   // Senate's whole story in one scene.
-  senate_vote: (p) => (p.outcome !== 'passed' ? 0 : p.bill_kind === 'chancellor_vote' ? 165 : 25),
+  senate_vote: (p) => (p.outcome === 'passed' && p.bill_kind === 'chancellor_vote' ? 165 : 0),
 };
 
 /**
@@ -138,6 +138,9 @@ export function buildBeats(summary: MatchSummary, o: BeatOptions): ReelBeat[] {
     if (r.kind === 'war_declared') { if (firstWar) weight += 35; firstWar = false; }
     const how = VICTORY_KINDS[summary.game.victory_type ?? ''];
     if (weight > 0 && how?.test(r.kind)) weight += VICTORY_BONUS;
+    // The start of the thing that won the match is the film's spine: the
+    // meter otherwise appears from nowhere.
+    if (how && r.kind === 'dyson_initiated') weight += 90;
     const winner = summary.game.winner_faction_id;
     if (weight > 0 && winner && r.actor_faction_id === winner) weight += WINNER_BONUS;
     let body: string | null = null;

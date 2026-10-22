@@ -98,11 +98,11 @@ export interface ReelOptions {
 }
 
 export const INTRO_SECONDS = 3.4;
-export const FINALE_SECONDS = 6;
+export const FINALE_SECONDS = 5.2;
 export const BEAT_SECONDS = 2.4;
 /** A beat's shortest and longest hold, by weight. */
-export const BEAT_MIN_SECONDS = 2.2;
-export const BEAT_MAX_SECONDS = 3.2;
+export const BEAT_MIN_SECONDS = 2.0;
+export const BEAT_MAX_SECONDS = 2.8;
 /** A battle gets this much for mattering, plus up to SPREAD for size. */
 export const BATTLE_BASE_SECONDS = 2.2;
 export const BATTLE_SPREAD_SECONDS = 5.2;
@@ -171,6 +171,8 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
     place: string | null;
     /** The two sides of a battle, for the same rule: one rivalry once. */
     pair?: string | null;
+    /** A chosen battle this beat cuts short to fit (see fitted). */
+    trims?: { battle: Cand; to: number };
     seconds: number; framing: Framing; bodyId: string | null;
     battle?: ReelBattle; beat?: ReelBeat };
   const cands: Cand[] = [];
@@ -181,7 +183,7 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
     // standoff where nobody died.
     // Too small or too brief to be a battle on screen: a single tick of
     // record held for four seconds is a freeze frame.
-    if (b.peak < 12 || b.lost < 3 || (b.atOnce ?? 99) < 16 || b.window[1] - b.window[0] < 3) continue;
+    if (b.peak < 12 || b.lost < 3 || (b.atOnce ?? 99) < 24 || b.window[1] - b.window[0] < 3) continue;
     const from = Math.max(introTo, b.window[0]);
     const to = Math.min(finaleFrom, b.window[1]);
     if (to <= from) continue;
@@ -197,8 +199,10 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
   }
   for (const e of f.beats) {
     if (e.weight <= 0) continue;
+    // Three ticks with the event on the second: it lands a third of the
+    // way in, inside the caption's hold, not as it fades.
     const from = Math.max(introTo, Math.min(finaleFrom - 1, e.tick - 1));
-    const to = Math.min(finaleFrom, from + 2);
+    const to = Math.min(finaleFrom, from + 3);
     if (to <= from) continue;
     // Weight buys time: a declaration is a quick read, a capital falling
     // or the Leviathan dying holds longer. A flat 2.4 s was a metronome.
@@ -248,7 +252,24 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
    */
   const fitted = (c: Cand): Cand | null => {
     if (!chosen.some(x => overlaps(x, c))) return c;
-    if (c.kind !== 'battle') return null;
+    if (c.kind !== 'battle') {
+      // A beat can give up its third tick (event first, a tick after) when
+      // that is what fits beside a fight.
+      const short = { ...c, to: Math.min(c.to, c.from + 2) };
+      if (short.to - short.from >= 1 && !chosen.some(x => overlaps(x, short))) return short;
+      // ...and a headline can take the end of a chosen FIGHT, if the fight
+      // keeps three ticks: the last strike on a 99% Sphere landed inside
+      // the final battle's window and lost its scene to it.
+      const hit = chosen.filter(x => overlaps(x, short));
+      if (hit.length === 1 && hit[0].kind === 'battle') {
+        const bt = hit[0];
+        const keepTo = short.from - 1;
+        if (keepTo - bt.from >= 3 && bt.from < short.from) {
+          return { ...short, trims: { battle: bt, to: keepTo } };
+        }
+      }
+      return null;
+    }
     let best: [number, number] | null = null;
     for (let a = c.from; a < c.to; a++) {
       for (let b = c.to; b > a; b--) {
@@ -279,6 +300,15 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
     if (best < 0 || !bestC) break;
     pool.splice(best, 1);
     const c = bestC;
+    if (c.trims) {
+      const bt = c.trims.battle;
+      const was = bt.to - bt.from;
+      bt.to = c.trims.to;
+      const cut = bt.seconds * (1 - Math.max(0.6, (bt.to - bt.from) / Math.max(1, was)));
+      bt.seconds -= cut;
+      used -= cut;
+      delete c.trims;
+    }
     chosen.push(c);
     used += c.seconds;
   }

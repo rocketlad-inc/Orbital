@@ -186,6 +186,7 @@ export const review = {
   'replay.film.meter.dysonNote': '{a} win the game at 100%',
   'replay.film.sub.dysonStakes': 'If {a} finishes it, it wins the game',
   'replay.film.dayLabel': 'DAY ',
+  'replay.film.worldsHeld': 'Worlds held',
   'replay.film.title.dysonHit': 'A last strike on the Sphere at {pct}%',
   'replay.film.title.targeted': '{b} is targeted by {n} empires',
   'replay.film.title.battleAgain': 'The Last Stand at {world}',
