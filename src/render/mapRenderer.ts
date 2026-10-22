@@ -5026,8 +5026,13 @@ function hullFlashHere(
 // fades over CONTINUITY_TAU_MS. Smooth motion and hard burns pass through
 // untouched; a teleport becomes a short slide. Keyed by ship, so it holds
 // across the switch between the in-flight and parked draw paths.
-const continuity = new Map<string, { x: number; y: number; vx: number; vy: number; ox: number; oy: number; ms: number }>();
+const continuity = new Map<string, { x: number; y: number; vx: number; vy: number; ox: number; oy: number; ovx?: number; ovy?: number; ms: number }>();
 export const CONTINUITY_TAU_MS = 180;
+/** The absorbed offset closes as a critically damped spring, not an
+ *  exponential: an exponential is fastest on its first frame, so a big
+ *  absorbed jump still left as a lurch (jump-check flagged the start of
+ *  the slide). From rest, rad/s; most of the way in about 0.5 s. */
+export const CONTINUITY_OMEGA = 9;
 /** A hull not drawn for this long starts fresh (it was off screen). */
 const CONTINUITY_GAP_MS = 250;
 
@@ -5045,8 +5050,20 @@ export function continuousDrawnPos(
     return { x, y };
   }
   const dt = nowMs - c.ms;
-  const fade = Math.exp(-dt / CONTINUITY_TAU_MS);
-  let ox = c.ox * fade, oy = c.oy * fade;
+  // Close the offset as a spring (from rest at the moment of the jump).
+  let ox = c.ox, oy = c.oy, ovx = c.ovx ?? 0, ovy = c.ovy ?? 0;
+  {
+    const W = CONTINUITY_OMEGA;
+    const sec = Math.min(0.25, dt / 1000);
+    const n = Math.max(1, Math.ceil(sec / 0.016));
+    const h = sec / n;
+    for (let i = 0; i < n; i++) {
+      ovx += (-W * W * ox - 2 * W * ovx) * h;
+      ovy += (-W * W * oy - 2 * W * ovy) * h;
+      ox += ovx * h;
+      oy += ovy * h;
+    }
+  }
   // Where its own (true) motion was taking it.
   const px = c.x + c.vx * dt, py = c.y + c.vy * dt;
   const ex = x - px, ey = y - py;
@@ -5054,15 +5071,16 @@ export function continuousDrawnPos(
   const stepPx = Math.hypot(c.vx, c.vy) * dt * scale;
   const jumped = errPx > Math.max(8, 0.6 * stepPx);
   if (jumped) {
-    // Absorb it: drawn stays on the line it was on, then fades across.
+    // Absorb it: drawn stays on the line it was on, then eases across.
     ox -= ex; oy -= ey;
+    ovx = 0; ovy = 0;
   } else {
     c.vx = (x - c.x) / dt;
     c.vy = (y - c.y) / dt;
   }
   // A jump keeps the motion it had; the true position moves on regardless.
   c.x = x; c.y = y;
-  c.ox = ox; c.oy = oy; c.ms = nowMs;
+  c.ox = ox; c.oy = oy; c.ovx = ovx; c.ovy = ovy; c.ms = nowMs;
   return { x: x + ox, y: y + oy };
 }
 

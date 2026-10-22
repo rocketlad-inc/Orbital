@@ -328,11 +328,35 @@ export function battlePlacement(
  * the layout no longer uses: a fire or a bolt drawn there floated in
  * empty space (Lorne: "rogue damage effects floating by").
  */
+/** Where a unit is in its world's layout right now, without advancing or
+ *  creating its glide: the glide's current place if it has one, else its
+ *  target. For readers (effects), never for the hull's own draw. */
+export function peekBattlePlacement(
+  battle: LiveBattle, id: string, nowMs: number,
+): { x: number; y: number; theta: number; r: number; heading: number } | null {
+  const p = battle.layout.placements.get(id)
+    ?? (battle.layout.station && battle.layout.station.id === id ? battle.layout.station : undefined);
+  if (!p) return null;
+  const g = glides.get(id);
+  const r = g && fresh(g, nowMs) ? g.r : p.r;
+  const t = g && fresh(g, nowMs) ? g.t : p.theta;
+  const theta = t + battleDrift(battle, nowMs);
+  const jitter = p.heading - (Math.atan2(p.y, p.x) + Math.PI / 2);
+  const heading = theta + (Math.PI / 2) * battle.dir + jitter;
+  return { x: Math.cos(theta) * r, y: Math.sin(theta) * r, theta, r, heading };
+}
+
 export function battleShipOffsetPx(
   battle: LiveBattle, shipId: string, nowMs: number, k: number,
 ): { x: number; y: number } | null {
   const unit = battle.leadOf.get(shipId) ?? shipId;
-  const pl = battlePlacement(battle, unit, nowMs);
+  // READ ONLY. This asked battlePlacement, which CREATES a unit's glide at
+  // its target when it has none; called by the weapon FX before the hull
+  // drew itself, it planted the glide at the destination, the hull's own
+  // draw then found one and never seeded it from where the hull was, and
+  // an arriving hull went straight to its place (the Mega Destroyer
+  // take, 24.5 s).
+  const pl = peekBattlePlacement(battle, unit, nowMs);
   if (!pl) return null;
   let x = pl.x * k, y = pl.y * k;
   const blk = unit === shipId ? battle.blocks.get(unit) : undefined;
