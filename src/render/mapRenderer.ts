@@ -6556,6 +6556,10 @@ export interface TransitSlot {
   count: number;
   /** Largest resting icon size in the formation (shipIconSize, unselected). */
   iconRest: number;
+  /** Hulls on one INTERCEPT: placed off their own shared course (the
+   *  rendezvous, which the lead's plain plan is not), and handing over to
+   *  their company arrowhead as they meet the target. */
+  rv?: boolean;
 }
 
 /** Row depth and in-row spacing, in HULL LENGTHS of the biggest member. */
@@ -6624,6 +6628,46 @@ export function computeTransitFormations(ships: readonly Ship[]): Map<string, Tr
       group.forEach((s, slot) => out.set(s.id, { key, leadPlan, slot, count: group.length, iconRest }));
     }
   }
+  // HULLS ON ONE INTERCEPT FLY IN FORMATION TOO (Lorne, 2026-10-22: "we
+  // need the ships to have a bubble, they are being obscured"). Hulls sent
+  // together to meet the same target fly the same rendezvous, so until
+  // the meeting (when placeInCompany lays them abreast of it) all six of
+  // a squadron drew on exactly the same points: one sprite. Same target,
+  // same launch, same meeting, from the same place = one formation.
+  const rvBuckets = new Map<string, Ship[]>();
+  for (const s of ships) {
+    const rv = s.plannedRendezvous;
+    if (!s.transit?.currentTransfer || !rv || !rv.followShipId || !rv.p0 || s.class === 'missile') continue;
+    const key = `rv|${rv.followShipId}|${Math.round(rv.startTick)}|${Math.round(rv.meetTick * 4)}`;
+    let arr = rvBuckets.get(key);
+    if (!arr) { arr = []; rvBuckets.set(key, arr); }
+    arr.push(s);
+  }
+  for (const [bucketKey, arr] of rvBuckets) {
+    if (arr.length < 2) continue;
+    arr.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    const groups: Ship[][] = [];
+    for (const s of arr) {
+      const p = s.transit!.currentTransfer;
+      const trip = Math.hypot(p.interceptPos.x - p.startPos.x, p.interceptPos.y - p.startPos.y);
+      const tol = Math.max(1e-6, trip * FORMATION_SAME_COURSE);
+      const home = groups.find(g => {
+        const q = g[0].plannedRendezvous!.p0, r = s.plannedRendezvous!.p0;
+        return Math.hypot(q.x - r.x, q.y - r.y) <= tol;
+      });
+      if (home) home.push(s); else groups.push([s]);
+    }
+    for (const group of groups) {
+      if (group.length < 2) continue;
+      const size = new Map(group.map(s => [s.id, shipIconSize(s.class, false)]));
+      group.sort((a, b) => (size.get(b.id)! - size.get(a.id)!) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+      const lead = group[0];
+      const key = `${bucketKey}|${lead.id}`;
+      const iconRest = size.get(lead.id)!;
+      const leadPlan = lead.transit!.currentTransfer;
+      group.forEach((s, slot) => out.set(s.id, { key, leadPlan, slot, count: group.length, iconRest, rv: true }));
+    }
+  }
   return out;
 }
 
@@ -6681,15 +6725,29 @@ export function placeInFormation(
 ): Array<{ t: number; x: number; y: number }> {
   const f = ctx.transitFormations?.get(shipId);
   if (!f || f.slot === 0 || samples.length < 2 || !(ctx.camera.scale > 0)) return samples;
-  // Off the LEAD's course, not this hull's own near-copy of it.
-  const base = ctx.bodies ? torchTrajectorySamples(f.leadPlan, ctx.bodies) : samples;
+  // An intercept squadron hands over to its company arrowhead (the same
+  // slots, beside the target) over the tick before the meeting, so the
+  // two layouts never stack.
+  let keep = 1;
+  if (f.rv) {
+    const c = ctx.transitCompany?.get(shipId);
+    if (c) {
+      const raw = Math.max(0, Math.min(1, (ctx.t - (c.meetTick - COMPANY_EASE_TICKS)) / COMPANY_EASE_TICKS));
+      keep = 1 - raw * raw * (3 - 2 * raw);
+    }
+    if (keep <= 0) return samples;
+  }
+  // Off the LEAD's course, not this hull's own near-copy of it. On an
+  // intercept the lead's plain plan is not the course flown; the hulls
+  // share their rendezvous, so this hull's own drawn course is the one.
+  const base = f.rv ? samples : ctx.bodies ? torchTrajectorySamples(f.leadPlan, ctx.bodies) : samples;
   if (base.length < 2) return samples;
   const tan = trajectoryTangentAt(base, ctx.t);
   if (!tan) return samples;
   const { back, side } = formationSlot(f.slot);
   const sp = formationSpacingPx(f, sizeScale);
-  const along = -back * sp.depth / ctx.camera.scale;          // behind the lead
-  const across = (side * sp.abreast) / 2 / ctx.camera.scale;   // half-spacings
+  const along = -back * sp.depth / ctx.camera.scale * keep;          // behind the lead
+  const across = (side * sp.abreast) / 2 / ctx.camera.scale * keep;   // half-spacings
   // Left of travel = (ty, -tx) in canvas (y down) coordinates.
   const dx = tan.x * along + tan.y * across;
   const dy = tan.y * along - tan.x * across;

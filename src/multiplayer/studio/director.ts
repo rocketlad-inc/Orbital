@@ -431,12 +431,22 @@ export class Director {
     const before = this.host.state().currentTick;
     // Bounded: a tick request that never answers froze two takes for an
     // hour. After 30 s, assume the server ticked and wait on the map.
-    const res = await Promise.race([
+    const ask = () => Promise.race([
       apiFetch<{ current_tick: number }>(`/api/admin/studio/games/${this.host.gameId}/tick`, {
         method: 'POST', body: JSON.stringify({ n }),
       }),
       realSleep(30_000).then(() => null),
     ]);
+    let res = await ask();
+    // A passing storage fault ("Durable Object storage caused object to be
+    // reset") ended a take at its cut (2026-10-22). Ask again, twice, but
+    // never re-tick a game that did move.
+    for (let i = 0; res && !res.ok && i < 2; i++) {
+      this.note(`tick: ${res.error?.message ?? res.status}; asking again`);
+      await realSleep(3000);
+      if (this.host.state().currentTick > before) { res = null; break; }
+      res = await ask();
+    }
     if (res && !res.ok) throw new Error(`tick: ${res.error?.message ?? res.status}`);
     if (!res) this.note(`tick: no answer in 30 s at tick ${before}; waiting on the map`);
     const want = res?.data?.current_tick ?? before + n;
