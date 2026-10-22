@@ -180,6 +180,26 @@ describe('a hull never jumps on screen (the continuity guard)', () => {
     expect(drawn[drawn.length - 1]).toBeCloseTo((drawn.length - 1) * 3 + 300, -1);
   });
 
+  test('a hull guarded twice in one frame keeps one history and still slides', () => {
+    // Two draw paths guarding the same escort each frame used to reset the
+    // guard on the second call, so a teleport went straight through.
+    const out: number[] = [];
+    for (let i = 0; i < 10 + Math.ceil((CONTINUITY_TAU_MS * 5) / 33); i++) {
+      const ms = 40000 + i * 33;
+      const tx = i * 3 + (i >= 10 ? 300 : 0);
+      const a = continuousDrawnPos('twice', tx, 0, 1, ms);
+      const b = continuousDrawnPos('twice', a.x, a.y, 1, ms);   // the second path, same frame
+      expect(b.x).toBeCloseTo(a.x, 6);
+      out.push(b.x);
+    }
+    expect(out[10] - out[9]).toBeLessThan(10);
+    for (let i = 11; i < out.length; i++) expect(out[i] - out[i - 1]).toBeLessThan(80);
+    // And it gets there: with the guard reset by the second call, the hull
+    // stayed caught on its old line, then popped across when released.
+    const last = out.length - 1;
+    expect(out[last]).toBeCloseTo(last * 3 + 300, -1);
+  });
+
   test('a re-centred escort block slides', () => {
     const ctx = { canvas: { width: 1000, height: 800 }, camera: { x: 0, y: 0, scale: 1 }, nowMs: 0 } as never as Parameters<typeof guardedEscortCanvasPos>[0];
     const c = ctx as unknown as { nowMs: number };

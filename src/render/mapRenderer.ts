@@ -5041,6 +5041,8 @@ const continuity = new Map<string, {
   o0x: number; o0y: number; startMs: number; dur: number;
   /** The frame the hull moves in (its world), and where it was. */
   oid: string | null; ax: number; ay: number;
+  /** This frame's answer, for a second call in the same frame. */
+  lx?: number; ly?: number;
 }>();
 /** How long a caught jump takes to close, by size (screen px). The close
  *  is a quintic ease (smootherstep: zero speed and acceleration at both
@@ -5067,11 +5069,17 @@ export function continuousDrawnPos(
   origin?: { x: number; y: number; id: string },
 ): { x: number; y: number } {
   const c = continuity.get(shipId);
+  // ONE ANSWER PER FRAME. Two draw paths once both guarded escorts
+  // (2026-10-22): the second call saw no time pass, reset, and every escort
+  // lost its history each frame, so in the Mega Destroyer take loose
+  // escorts in orbit jumped ~400 px in one frame. A repeat in the same
+  // frame now gets that frame's answer.
+  if (c && nowMs === c.ms && c.lx != null && c.ly != null) return { x: c.lx, y: c.ly };
   const oid = origin?.id ?? null, axNow = origin?.x ?? 0, ayNow = origin?.y ?? 0;
-  if (!c || nowMs <= c.ms || nowMs - c.ms > CONTINUITY_GAP_MS || !(scale > 0)) {
+  if (!c || nowMs < c.ms || nowMs - c.ms > CONTINUITY_GAP_MS || !(scale > 0)) {
     if (continuity.size > 3000) continuity.clear();
     continuity.set(shipId, { x, y, vx: 0, vy: 0, ms: nowMs, o0x: 0, o0y: 0, startMs: nowMs, dur: 0,
-      oid, ax: axNow, ay: ayNow });
+      oid, ax: axNow, ay: ayNow, lx: x, ly: y });
     return { x, y };
   }
   // A new frame of reference (landing, a new world): rebase, so the
@@ -5108,7 +5116,8 @@ export function continuousDrawnPos(
   // A jump keeps the motion it had; the true position moves on regardless.
   c.x = x; c.y = y; c.ax = axNow; c.ay = ayNow;
   c.ms = nowMs;
-  return { x: x + ox, y: y + oy };
+  c.lx = x + ox; c.ly = y + oy;
+  return { x: c.lx, y: c.ly };
 }
 
 function recordDrawnShipWorldPos(shipId: string, x: number, y: number): void {
@@ -5396,19 +5405,12 @@ export function drawEscortHull(
    *  thrust hint). Escorts burn with their flagship. */
   thrust = 0,
 ): void {
-  // The continuity guard has the last word here too (see
-  // guardedEscortCanvasPos): a re-solved fleet block slides, never jumps.
+  // Through the continuity guard like every other drawn hull, ONCE (see
+  // guardedEscortCanvasPos): a re-solved fleet block slides, never jumps,
+  // and a hull that moves between its own course and its fleet's block
+  // (the fleet groups or ungroups with the zoom) keeps one history.
   ({ x, y } = guardedEscortCanvasPos(ctx, ship.id, x, y));
   if (farOffCanvas(ctx, x, y, baseSizePx * 2)) return;
-  // Through the continuity guard like every other drawn hull: a hull that
-  // moves between its own course and its fleet's block (the fleet
-  // groups or ungroups with the zoom) slides there, and keeps one history.
-  {
-    const w0 = canvasToWorld(x, y, ctx);
-    const kept = continuousDrawnPos(ship.id, w0.x, w0.y, ctx.camera.scale, ctx.nowMs ?? performance.now());
-    const c = worldToCanvas(kept.x, kept.y, ctx);
-    x = c.x; y = c.y;
-  }
   const g = ctx.ctx;
   const color = shipColor(ship, ctx.factions);
   // Capped at 1: `baseSizePx` is the slot a destroyer fills, and a
