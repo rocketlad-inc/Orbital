@@ -655,6 +655,7 @@ export const ship: Catalog = {
   'ship.panel.perHitFull': 'O alvo não tem nada que contrarie este tipo de arma.',
   'ship.panel.pickDest': '— escolha o destino —',
   'ship.panel.pickOrigin': '— escolha a origem —',
+  'ship.panel.originHere': '{name} (aqui)',
   'ship.panel.pickingUp': 'recolhendo',
   'ship.panel.planned': 'PLANEJADO',
   'ship.panel.postCaptain': 'DESIGNAR UM CAPITÃO…',
