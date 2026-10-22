@@ -615,6 +615,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // integration this map exists to route around — so a transiting hull's
   // fog circle sat ahead of the hull itself.
   const transitShipWorldPosRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  // Each drawn hull in flight's point on its OWN course this frame (world),
+  // before formation and company slots move it: where it truly is. Weapon
+  // reach is tested here (transitShotInReach); ship.transit.pos is not the
+  // course an intercepting hull flies.
+  const transitCourseWorldPosRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   /** Memoised torch polylines, keyed by ship, valid while the plan and
    *  the body array keep their identity (i.e. until the next /state). */
   const torchSampleCacheRef = useRef<Map<string, {
@@ -1195,6 +1200,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // integration runs once per leg per poll (~1.5s) rather than 60
     // times a second, and per-frame cost drops to one lerp per hull.
     transitShipWorldPosRef.current.clear();
+    transitCourseWorldPosRef.current.clear();
     for (const s of gameState.ships) {
       const plan = s.transit?.currentTransfer;
       if (!plan) continue;
@@ -2988,6 +2994,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // This hull's place in its formation. Everything below (range
         // ring, sprite, click hit-test) reads `placed`, so they move
         // together; the line above stays on the true course.
+        if (samples && samples.length > 0) {
+          const onCourse = torchPositionFromSamples(samples, renderTick());
+          transitCourseWorldPosRef.current.set(ship.id, { x: onCourse.x, y: onCourse.y });
+        }
         let placed = samples && samples.length > 0
           ? placeInCompany(ship.id,
             placeInFormation(ship.id, samples, renderContext, transitShipScale(camera.scale)),
@@ -3921,6 +3931,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         transitShipCanvasPosRef.current, gameState.warPairs,
         gameState.transitCombatEnabled, gameState.megastructures,
         mpActions ? settlementHasGuns : undefined,
+        transitCourseWorldPosRef.current,
       );
     }
     // RENDEZVOUS PREVIEW. Drawn after the fleet so the arc and its
