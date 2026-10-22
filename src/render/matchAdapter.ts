@@ -180,7 +180,8 @@ export function adaptShips(
     const leg = legs.get(id);
     const base: Ship = {
       id,
-      name: id,
+      // The game labels the Leviathan with its name: an id is not one.
+      name: (sh.cls ?? '').toLowerCase() === 'kaiju' ? 'The Leviathan' : id,
       class: shipClassOf(sh.cls),
       ownedBy: sh.fid ?? '',
       fuel: 100,

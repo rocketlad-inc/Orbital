@@ -172,7 +172,11 @@ export function drawLowerThird(ctx: CanvasRenderingContext2D, W: number, H: numb
   const accent = c.color ? liftColor(c.color) : '#9fc4e8';
 
   ctx.save();
-  const titleSize = fit(ctx, c.title, FONT_DISPLAY, '400', Math.round(70 * u), Math.round(40 * u), maxW);
+  // ONE title size, film-wide: a long title wraps to a second line rather
+  // than shrinking (cap height varied by 40% from beat to beat).
+  const titleSize = Math.round(64 * u);
+  ctx.font = `400 ${titleSize}px ${FONT_DISPLAY}`;
+  const titleLines = wrapLines(ctx, c.title, maxW, 2);
   const subSize = Math.round(34 * u);
   ctx.font = `500 ${subSize}px ${FONT_BODY}`;
   // The sub is the fact that explains the moment: two lines before it is
@@ -182,13 +186,13 @@ export function drawLowerThird(ctx: CanvasRenderingContext2D, W: number, H: numb
   const kickSize = Math.round(28 * u);
   const gap = 10 * u;
   const subH = subLines.length ? gap + subSize * (1 + (subLines.length - 1) * 1.15) : 0;
-  const blockH = kickSize + gap + titleSize * 1.05 + subH;
+  const blockH = kickSize + gap + titleSize * 1.05 * titleLines.length + subH;
   const yBottom = H - 70 * u;
   const yTop = yBottom - blockH;
 
   // Measure for the plate.
   ctx.font = `400 ${titleSize}px ${FONT_DISPLAY}`;
-  let wide = ctx.measureText(c.title).width;
+  let wide = Math.max(0, ...titleLines.map(l => ctx.measureText(l).width));
   ctx.font = `500 ${subSize}px ${FONT_BODY}`;
   for (const l of subLines) wide = Math.max(wide, ctx.measureText(l).width);
 
@@ -226,8 +230,8 @@ export function drawLowerThird(ctx: CanvasRenderingContext2D, W: number, H: numb
   y += kickSize + gap;
   ctx.font = `400 ${titleSize}px ${FONT_DISPLAY}`;
   ctx.fillStyle = INK;
-  ctx.fillText(c.title, x0 - slide, y);
-  y += titleSize * 1.05 + gap;
+  titleLines.forEach((l, i) => ctx.fillText(l, x0 - slide, y + i * titleSize * 1.05));
+  y += titleSize * 1.05 * titleLines.length + gap;
   if (sub) {
     ctx.font = `500 ${subSize}px ${FONT_BODY}`;
     ctx.fillStyle = DIM;
@@ -362,7 +366,7 @@ export function drawBattleTally(ctx: CanvasRenderingContext2D, W: number, H: num
     spacing(ctx, 0);
     ctx.font = `600 ${Math.round(26 * u)}px ${FONT_MONO}`;
     ctx.fillStyle = sd.lost > 0 ? '#ff9d7a' : 'rgba(200,216,232,0.45)';
-    ctx.fillText(sd.lost > 0 ? `−${sd.lost}` : '−0', W / 2 + dir * NAME, cy + 16 * u);
+    if (sd.lost > 0) ctx.fillText(`−${sd.lost}`, W / 2 + dir * NAME, cy + 16 * u);
     ctx.shadowBlur = 0;
   };
   draw(sides[0], -1);

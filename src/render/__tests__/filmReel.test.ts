@@ -72,6 +72,18 @@ describe('filmReel', () => {
     expect(scenes.some(s => s.kind === 'beat')).toBe(true);
   });
 
+  it('lets a headline take the end of a fight already chosen', () => {
+    // The fight outweighs the headline and is chosen first; the headline
+    // still gets its scene by cutting the fight short.
+    const scenes = planReel({ lo: 1, hi: 120,
+      battles: [battle('earth', 100, 108, 300, 90)],
+      beats: [beat(106, 'dyson_damaged', 150, 'sol')] });
+    const fight = scenes.find(s => s.kind === 'battle');
+    const strike = scenes.find(s => s.kind === 'beat');
+    expect(strike?.beat?.kind).toBe('dyson_damaged');
+    expect(fight && strike && fight.to <= strike.from).toBe(true);
+  });
+
   it('leaves standoffs where nobody died out of the cut', () => {
     const scenes = planReel({ lo: 1, hi: 100,
       battles: [battle('mars', 20, 28, 90, 0)], beats: [] });

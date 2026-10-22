@@ -560,8 +560,11 @@ export function createMatchMap(
         const prev = scenes[i - 1];
         const src = prev ? (heldBy.get(prev) ?? prev) : undefined;
         const prevClose = !!src && src.kind !== 'intro' && src.framing !== 'system' && !!src.bodyId;
-        if (sc.kind === 'montage' && sc.seconds < HOLD_MONTAGE_SECONDS && prevClose
-          && acc - lastWide < WIDE_EVERY_SECONDS) {
+        // A time-lapse too short to read the map in never cuts out to it:
+        // a 0.7 s insert of the wide shot is a brightness strobe, not
+        // context. Longer ones hold too unless the film is due a wide.
+        if (sc.kind === 'montage' && prevClose && (sc.seconds < 1.5
+          || (sc.seconds < HOLD_MONTAGE_SECONDS && acc - lastWide < WIDE_EVERY_SECONDS))) {
           heldBy.set(sc, src!);
         } else if (sc.framing === 'system') {
           lastWide = acc + sc.seconds;
@@ -802,8 +805,8 @@ export function createMatchMap(
       k = (again ? 1.12 : 0.86) + (again ? 0.22 : 0.36) * push;
       offFrac = 0.5 * push * (again ? -1 : 1);
     } else {
-      k = 1 + 0.07 * prog;
-      lateral = (prog - 0.5) * 0.09 * (foc.side);
+      k = 1 + 0.16 * prog;
+      lateral = (prog - 0.5) * 0.14 * (foc.side);
     }
     const rw = drawnWorldR(byGame.get(subj)!) * foc.r;
     const cx = Math.cos(foc.ang) * rw * offFrac, cy = Math.sin(foc.ang) * rw * offFrac;
@@ -1772,7 +1775,7 @@ export function createMatchMap(
 
     // The race while the shot is wide; the fight while it is close.
     drawStandings(ctx, W, H, standingsAt(curTick).slice(0, 5),
-      hud * overview, { worlds: T('worlds', { n: '' }).trim(), brand: T('intro.untitled') });
+      hud * overview, { worlds: T('worlds', { n: '' }).trim(), brand: T('worldsHeld') });
     if (s.kind === 'battle' && s.battle) {
       const sides = tallyOf(s.battle, curTick);
       const more = Math.max(0, (s.battle.present ?? 2) - 2);
@@ -1873,12 +1876,16 @@ export function createMatchMap(
       // The flare whites the frame at its peak...
       const fd = finaleDyson();
       if (fd && fd.flare > 0.01) {
-        ctx.fillStyle = `rgba(255,244,222,${0.42 * fd.flare})`;
+        // A short white peak (a few frames), then the frame falls back to
+        // dark so the finished shell glows against black: a long wash read
+        // as overexposure.
+        const pk = Math.max(0, 1 - Math.abs(el - 0.86) / 0.1);
+        ctx.fillStyle = `rgba(255,250,240,${0.85 * pk})`;
         ctx.fillRect(0, 0, W, H);
       }
       // ...and the table comes in on a cut, not a slow dissolve.
       drawResultCard(ctx, W, H, { ...c, color: c.fid ? colorOf(c.fid) : null },
-        table, (el - FINALE_CARD_AT) / 0.15,
+        table, (el - FINALE_CARD_AT) / 0.6,
         { worlds: T('worlds', { n: '' }).trim(), ships: T('ships', { n: '' }).trim(), url: T('url'),
           out: T('out') },
         !!winner);
