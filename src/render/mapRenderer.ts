@@ -5037,8 +5037,10 @@ function hullFlashHere(
 // CONTINUITY_MAX_SLIDE_PX it is dropped and the hull is drawn where it is.
 const continuity = new Map<string, {
   x: number; y: number; vx: number; vy: number; ms: number;
-  /** The offset being closed: o0 at startMs, gone at startMs + dur. */
+  /** The offset being closed (screen px): o0 at startMs, gone at startMs + dur. */
   o0x: number; o0y: number; startMs: number; dur: number;
+  /** Last frame was caught as a jump. */
+  caught?: boolean;
   /** The frame the hull moves in (its world), and where it was. */
   oid: string | null; ax: number; ay: number;
   /** This frame's answer, for a second call in the same frame. */
@@ -5086,37 +5088,51 @@ export function continuousDrawnPos(
   // switch itself is not motion.
   if (c.oid !== oid) { c.oid = oid; c.ax = axNow; c.ay = ayNow; }
   const dt = nowMs - c.ms;
-  // The offset still left to close, on its ease.
+  // The offset still left to close, on its ease. Held in SCREEN px: a slide
+  // is something seen, and held in world units a zoom-in magnified it
+  // (a 100 px catch at map zoom was 500 px by the close-up, then dropped).
   const left = c.dur > 0 ? 1 - smootherStep((nowMs - c.startMs) / c.dur) : 0;
-  let ox = c.o0x * left, oy = c.o0y * left;
+  let oxPx = c.o0x * left, oyPx = c.o0y * left;
   // Where its own (true) motion was taking it, riding its frame.
   const carryX = axNow - c.ax, carryY = ayNow - c.ay;
   const px = c.x + carryX + c.vx * dt, py = c.y + carryY + c.vy * dt;
   const ex = x - px, ey = y - py;
   const errPx = Math.hypot(ex, ey) * scale;
   const stepPx = Math.hypot(c.vx, c.vy) * dt * scale;
-  const jumped = errPx > Math.max(8, 0.6 * stepPx);
+  const off = errPx > Math.max(8, 0.6 * stepPx);
+  // A JUMP IS ONE FRAME. A teleport moves the hull once and its motion
+  // carries on as before; off the prediction two frames running, the
+  // motion itself changed (a hull rounding its world in orbit, a formation
+  // slot held in screen px through a zoom), so take the new motion. Caught
+  // every frame instead, the velocity froze at the first catch, every
+  // later frame was "a jump", the offset stacked to the cap and dropped:
+  // loose escorts in the Mega Destroyer take popped ~390 px every few
+  // frames in Earth orbit and through every zoom (2026-10-22).
+  const jumped = off && !c.caught;
+  c.caught = jumped;
   if (jumped) {
     // Absorb it: drawn stays on the line it was on, then eases across,
     // longer for a bigger catch. Whatever was still closing joins it.
-    ox -= ex; oy -= ey;
-    const px2 = Math.hypot(ox, oy) * scale;
-    c.o0x = ox; c.o0y = oy; c.startMs = nowMs;
-    c.dur = Math.min(CONTINUITY_MAX_MS, CONTINUITY_MIN_MS + px2 * 0.6);
+    oxPx -= ex * scale; oyPx -= ey * scale;
+    // Catches never STACK: one jump of any size slides, but an offset grown
+    // past the biggest single catch (and past CONTINUITY_MAX_SLIDE_PX) is a
+    // hull drawn somewhere it is not, so keep only this frame's catch.
+    if (Math.hypot(oxPx, oyPx) > Math.max(CONTINUITY_MAX_SLIDE_PX, errPx)) { oxPx = -ex * scale; oyPx = -ey * scale; }
+    // Nor further off than the hull truly moved this frame (a catch
+    // measured against a motion just taken from a wild step is not a slide).
+    const movedPx = Math.hypot(x - c.x - carryX, y - c.y - carryY) * scale;
+    const capPx = Math.max(CONTINUITY_MAX_SLIDE_PX, movedPx), oPx = Math.hypot(oxPx, oyPx);
+    if (oPx > capPx) { oxPx *= capPx / oPx; oyPx *= capPx / oPx; }
+    c.o0x = oxPx; c.o0y = oyPx; c.startMs = nowMs;
+    c.dur = Math.min(CONTINUITY_MAX_MS, CONTINUITY_MIN_MS + Math.hypot(oxPx, oyPx) * 0.6);
   } else {
     c.vx = (x - c.x - carryX) / dt;
     c.vy = (y - c.y - carryY) / dt;
   }
-  // Catches never STACK: one jump of any size slides, but an offset grown
-  // past the biggest single catch (and past CONTINUITY_MAX_SLIDE_PX) is a
-  // hull drawn somewhere it is not, so keep only this frame's catch.
-  if (jumped && Math.hypot(ox, oy) * scale > Math.max(CONTINUITY_MAX_SLIDE_PX, errPx)) {
-    ox = -ex; oy = -ey; c.o0x = ox; c.o0y = oy;
-  }
   // A jump keeps the motion it had; the true position moves on regardless.
   c.x = x; c.y = y; c.ax = axNow; c.ay = ayNow;
   c.ms = nowMs;
-  c.lx = x + ox; c.ly = y + oy;
+  c.lx = x + oxPx / scale; c.ly = y + oyPx / scale;
   return { x: c.lx, y: c.ly };
 }
 

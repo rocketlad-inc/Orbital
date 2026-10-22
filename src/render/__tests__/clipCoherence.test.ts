@@ -159,6 +159,45 @@ describe('a hull never jumps on screen (the continuity guard)', () => {
     }
   });
 
+  test('after a catch, a hull whose motion changes does not pop (loose escorts in orbit)', () => {
+    // The Mega Destroyer take, 2026-10-22: one catch froze the velocity, the
+    // hull kept rounding its world, every later frame read as a jump, and
+    // the stacked offset dropped at the cap: ~390 px pops every few frames.
+    // 3 px a frame one way, then 25 px a frame another (scale 16).
+    const at = (i: number) => (i < 10
+      ? { x: (i * 3) / 16, y: 0 }
+      : { x: 30 / 16, y: ((i - 9) * 25) / 16 });
+    const steps: number[] = [];
+    let prev: { x: number; y: number } | null = null;
+    for (let i = 0; i < 120; i++) {
+      const p = at(i);
+      const d = continuousDrawnPos('rounding', p.x, p.y, 16, 50000 + i * 33, { x: 0, y: 0, id: 'earth' });
+      if (prev) steps.push(Math.hypot(d.x - prev.x, d.y - prev.y) * 16);
+      prev = d;
+    }
+    // A true step is 25 px; nothing ever lands as a pop.
+    for (const s of steps) expect(s).toBeLessThan(60);
+    const end = at(119), last = prev!;
+    expect(Math.hypot(last.x - end.x, last.y - end.y) * 16).toBeLessThan(1);
+  });
+
+  test('a hull holding a screen-px slot through a zoom does not pop', () => {
+    // Formation slots are screen px, so through a zoom the hull's WORLD spot
+    // moves by slot/scale every frame: changing motion, never a jump.
+    // Off where it truly is (screen px), frame by frame: never far, and
+    // never changing by much in one frame (a pop is a big change).
+    let prevOff: number | null = null;
+    for (let i = 0; i < 60; i++) {
+      const scale = 0.18 * Math.pow(1.09, i);
+      const x = i * 0.5 + 120 / scale, y = 60 / scale;
+      const d = continuousDrawnPos('slotzoom', x, y, scale, 70000 + i * 33);
+      const off = Math.hypot(d.x - x, d.y - y) * scale;
+      expect(off).toBeLessThan(60);
+      if (prevOff != null) expect(Math.abs(off - prevOff)).toBeLessThan(30);
+      prevOff = off;
+    }
+  });
+
   test('an escort that becomes the flagship slides, it does not snap', () => {
     // The Mega Destroyer take: the Earth Guard's flagship died, the block
     // re-centred, and the hull promoted to flagship moved from the escort
