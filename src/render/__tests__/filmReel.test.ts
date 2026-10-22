@@ -3,7 +3,8 @@ import {
   battleWindow, filmSecondsAt, planReel, reelBudget, reelRate, reelSeconds,
   type ReelBattle, type ReelBeat,
 } from '../filmReel';
-import { bareLine, buildBeats } from '../filmCaptions';
+import { bareLine, beatCaption, buildBeats } from '../filmCaptions';
+import { tIn, type Key } from '../../i18n/core';
 import type { MatchSummary } from '../matchWorld';
 
 const battle = (body: string, from: number, to: number, peak: number, lost: number): ReelBattle =>
@@ -90,6 +91,20 @@ describe('filmReel', () => {
     expect(scenes.some(s => s.kind === 'battle')).toBe(false);
   });
 
+  it('opens a headline two days early, so the moment lands mid-scene', () => {
+    const scenes = planReel({ lo: 1, hi: 100, battles: [], beats: [beat(50, 'faction_eliminated', 150, 'mars')] });
+    const s = scenes.find(x => x.kind === 'beat')!;
+    expect(s.from).toBe(48);
+    expect(s.to).toBe(51);
+  });
+
+  it('leaves a fight a quarter the size of the biggest out of the cut', () => {
+    const scenes = planReel({ lo: 1, hi: 300,
+      battles: [battle('earth', 200, 210, 280, 120), battle('europa', 100, 108, 42, 10)], beats: [] });
+    const places = scenes.filter(s => s.kind === 'battle').map(s => s.bodyId);
+    expect(places).toEqual(['earth']);
+  });
+
   it('runs the minor headlines in the scene they fall in', () => {
     const scenes = planReel({ lo: 1, hi: 100, battles: [],
       beats: [beat(50, 'settlement_built', 0)] });
@@ -172,6 +187,38 @@ describe('filmCaptions', () => {
     expect(beats).toHaveLength(2);
     expect(beats[0].data?.campaign).toEqual(['mars', 'io', 'ceres']);
     expect(beats[1].tick).toBe(90);
+  });
+
+  it('names a dogpile once it is true, and who is in it', () => {
+    const war = (t: number, a: string) => ({ tick_number: t, kind: 'war_declared', payload: '{}',
+      actor_faction_id: a, target_faction_id: 'g:f0', body_id: null });
+    const s = { ...summary, factions: [...summary.factions,
+      { id: 'g:f2', name: 'The Most Serene Republic of Gold', color: '#ff0', color2: null }],
+      chronicle: [war(5, 'g:f1'), war(9, 'g:f2')] } as unknown as MatchSummary;
+    const [pile] = buildBeats(s, { lang: 'en', drawable: () => true }).filter(b => b.weight > 0);
+    expect(pile.tick).toBe(9);
+    expect(beatCaption(pile, (k, v) => tIn('en', `replay.film.${k}` as Key, v), () => 'Red', () => '').title)
+      .toBe('Blue and Most Serene turn on Red');
+  });
+
+  it('keeps a world retaken out of a conquest count, and names who ended an empire', () => {
+    const s = { ...summary, chronicle: [
+      { tick_number: 10, kind: 'settlement_seized', payload: '{"body_name":"Mars","former_owner_faction_id":"g:f0"}',
+        actor_faction_id: 'g:f0', target_faction_id: 'g:f0', body_id: 'g:mars' },
+      { tick_number: 12, kind: 'settlement_seized', payload: '{"body_name":"Mars"}',
+        actor_faction_id: 'g:f0', target_faction_id: 'g:f1', body_id: 'g:mars' },
+      { tick_number: 30, kind: 'settlement_destroyed', payload: '{"body_name":"Mars","killer_faction_name":"Red"}',
+        actor_faction_id: 'g:f1', target_faction_id: null, body_id: 'g:mars' },
+      { tick_number: 31, kind: 'faction_eliminated', payload: '{"faction_name":"Blue"}',
+        actor_faction_id: 'g:f1', target_faction_id: null, body_id: null },
+    ] } as unknown as MatchSummary;
+    const beats = buildBeats(s, { lang: 'en', drawable: () => true });
+    expect(beats.some(b => Array.isArray(b.data?.campaign))).toBe(false);
+    const T = (k: string, v?: Record<string, string | number>) => tIn('en', `replay.film.${k}` as Key, v);
+    const name = (id: string | null | undefined) => (id === 'g:f0' ? 'Red' : 'Blue');
+    expect(beatCaption(beats[0], T, name, () => 'Mars').title).toBe('Red retakes Mars');
+    const out = beats.find(b => b.kind === 'faction_eliminated')!;
+    expect(beatCaption(out, T, name, () => '').title).toBe('Red wipes out Blue');
   });
 
   it('puts the moments that won the match ahead of their equals', () => {

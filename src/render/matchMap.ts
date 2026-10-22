@@ -232,6 +232,8 @@ export function createMatchMap(
   const HOLD_MONTAGE_SECONDS = 1.9;
   /** ...unless the film has not been wide for this long. */
   const WIDE_EVERY_SECONDS = 12;
+  /** How far a held time-lapse pulls back over its length. */
+  const HELD_PULLBACK = 2.6;
   let filmTotal = 0;
   /** Smaller headlines, with the film second each one comes up. */
   let ticker: Array<{ beat: ReelBeat; start: number }> = [];
@@ -465,6 +467,16 @@ export function createMatchMap(
         const fought = [...new Set([...most.keys(), ...lostBy.keys()])]
           .filter(f => score(f) > 0).sort((x, y) => score(y) - score(x));
         const sides = fought.slice(0, 2);
+        // THE DEFENDER IS NAMED. A world's owner that fought for it is one
+        // of the two sides even when two attackers out-fought it: "Battle
+        // for Mars: Tritalowda vs Ministry, +4 more" hid the empire whose
+        // capital it was.
+        let holder: string | null = null, holderPop = -1;
+        for (const st of timeline.worldAt(window[0]).stls.values()) {
+          if (st.body !== body || !st.fid || st.pop <= holderPop) continue;
+          holder = st.fid; holderPop = st.pop;
+        }
+        if (holder && fought.includes(holder) && !sides.includes(holder) && sides.length === 2) sides[1] = holder;
         const present = fought.length;
         const peak = seen.size;
         const atOnce = [...most.values()].reduce((a, b) => a + b, 0);
@@ -765,9 +777,23 @@ export function createMatchMap(
 
   /** A scene's own frame at an instant, with its slow drift. */
   const frameOf = (s0: ReelScene | undefined, t: number, prog: number): Frame => {
-    // A held time-lapse is the shot before it, still drifting on.
+    // A held time-lapse is the shot before it, PULLING BACK: the world's
+    // news done, the camera eases out to show what is round it. Held
+    // still under FAST-FORWARD it read as dead air ("an idle planet").
     const src = s0 ? heldBy.get(s0) : undefined;
-    if (s0 && src) return frameOf(src, t, 1 + prog * s0.seconds / Math.max(0.1, src.seconds));
+    if (s0 && src) {
+      const f0 = frameOf(src, t, 1);
+      const q = Math.max(0, Math.min(1, prog));
+      const ease = q * q * (3 - 2 * q);
+      const k = Math.exp(-Math.log(HELD_PULLBACK) * ease);
+      // About the subject's screen spot, so the world stays put as the
+      // frame opens round it.
+      const sub = subjectOf(src, t);
+      const p = sub ? pos(sub, t) : { x: f0.x, y: f0.y };
+      const sp = onScreen(f0, p);
+      const scale = f0.scale * k;
+      return { x: p.x - (sp.x - W / 2) / scale, y: p.y - (sp.y - H / 2) / scale, scale };
+    }
     // The cold open is framed as the battle it shows.
     const s = s0 && s0.kind === 'intro' && teaser ? teaser : s0;
     const subj = viewMode === 'wide' ? null : subjectOf(s, t);
@@ -943,6 +969,14 @@ export function createMatchMap(
     try { p = JSON.parse(r.payload || '{}') ?? {}; } catch { /* ignore */ }
     if (r.kind === 'dyson_initiated') dysonKeys.push([r.tick_number, 0]);
     else if (/^dyson_(milestone|damaged)$/.test(r.kind) && typeof p.pct === 'number') {
+      // A strike's row says where the Sphere fell TO; it stood higher
+      // the tick before, which is what the meter must read going in (it
+      // read 97% under "A last strike on the Sphere at 99%").
+      const max = Number(p.max_hp), before = Number(p.hp) + Number(p.progress_lost);
+      const prevT = dysonKeys.length ? dysonKeys[dysonKeys.length - 1][0] : -Infinity;
+      if (r.kind === 'dyson_damaged' && max > 0 && before > 0 && r.tick_number - 1 > prevT) {
+        dysonKeys.push([r.tick_number - 1, Math.min(1, before / max)]);
+      }
       dysonKeys.push([r.tick_number, p.pct / 100]);
     } else if (r.kind === 'dyson_collapsed') dysonKeys.push([r.tick_number, 0]);
     else if (r.kind === 'victory' && p.victoryType === 'engineering') dysonDone = r.tick_number;
@@ -1400,6 +1434,39 @@ export function createMatchMap(
       }
     }
     drawWrecks(rc, performance.now());
+    // THE MOMENT A WORLD CHANGES HANDS, on the world. The ownership ring
+    // flipping colour was the whole event, and a viewer never saw it: a
+    // conquest is a shockwave in the taker's colour, a fall is a burst of
+    // fire, landing on the tick the log stamps.
+    {
+      const b = curScene?.kind === 'beat' ? curScene.beat : undefined;
+      const fx = b && b.body && /^(settlement_(seized|destroyed|razed)|faction_(eliminated|comeback|revived))$/.test(b.kind)
+        ? b : undefined;
+      const gb = fx?.body ? byGame.get(fx.body) : undefined;
+      const k = fx ? (t - fx.tick + 0.15) / 1.2 : -1;
+      if (fx && gb && visibleIds.has(gb.id) && k >= 0 && k < 1) {
+        const cp = toPx(pos(gb.id, t));
+        const rr = drawnRadiusOf(pres, gb, cam.scale);
+        const takes = /seized|comeback|revived/.test(fx.kind);
+        const col = takes && fx.fid ? colorOf(fx.fid) : '#ff9a4d';
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        const g = ctx.createRadialGradient(cp.x, cp.y, rr * 0.2, cp.x, cp.y, rr * 1.5);
+        g.addColorStop(0, hexA(col, 0.55 * (1 - k)));
+        g.addColorStop(1, hexA(col, 0));
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(cp.x, cp.y, rr * 1.5, 0, Math.PI * 2); ctx.fill();
+        for (const lag of [0, 0.18]) {
+          const q = Math.max(0, Math.min(1, (k - lag) / (1 - lag)));
+          if (q <= 0 || q >= 1) continue;
+          const e = 1 - Math.pow(1 - q, 3);
+          ctx.strokeStyle = hexA(col, 0.9 * (1 - q));
+          ctx.lineWidth = Math.max(2, rr * 0.07 * (1 - q));
+          ctx.beginPath(); ctx.arc(cp.x, cp.y, rr * (1.05 + 2.4 * e), 0, Math.PI * 2); ctx.stroke();
+        }
+        ctx.restore();
+      }
+    }
     // THE DYSON SPHERE, built where everyone can see it.
     if (dysonBodyId && visibleIds.has(dysonBodyId)) {
       const fin = finaleDyson();
@@ -1408,8 +1475,38 @@ export function createMatchMap(
       if (dy0 && gb) {
         const cp = toPx(pos(dysonBodyId, t));
         const flare = fin ? fin.flare : 0;
-        drawDysonShell(ctx, cp.x, cp.y, drawnRadiusOf(pres, gb, cam.scale), dy0.progress, dy0.complete,
-          dysonOwner ? colorOf(dysonOwner) : null, flare, performance.now());
+        const rr = drawnRadiusOf(pres, gb, cam.scale);
+        drawDysonShell(ctx, cp.x, cp.y, rr, dy0.progress, dy0.complete,
+          dysonOwner ? colorOf(dysonOwner) : null, flare, performance.now(), fin ? fin.seal : undefined);
+        // THE CLIMAX IS LIGHT FROM THE STAR, not a wash over the frame: a
+        // bloom off the sealed shell and one shockwave rolling out across
+        // the fleets. The frame's edges stay dark and the graphics, drawn
+        // after this, stay crisp. (A full-frame white fill read as an
+        // exposure glitch to every judge.)
+        const fe = finaleEl();
+        const a = fe - DYSON_SEALED_AT;
+        if (fin && a >= 0 && a < 1.6) {
+          const reach = Math.hypot(W, H);
+          const pulse = a < 0.1 ? a / 0.1 : Math.exp(-(a - 0.1) * 2.6);
+          ctx.save();
+          ctx.globalCompositeOperation = 'lighter';
+          const R0 = rr * 1.6;
+          const bloomR = R0 + (reach * 0.55 - R0) * Math.min(1, a / 0.35);
+          const g = ctx.createRadialGradient(cp.x, cp.y, R0 * 0.3, cp.x, cp.y, bloomR);
+          g.addColorStop(0, `rgba(255,246,226,${0.75 * pulse})`);
+          g.addColorStop(0.35, `rgba(255,214,150,${0.32 * pulse})`);
+          g.addColorStop(1, 'rgba(255,190,120,0)');
+          ctx.fillStyle = g;
+          ctx.beginPath(); ctx.arc(cp.x, cp.y, bloomR, 0, Math.PI * 2); ctx.fill();
+          const k = Math.min(1, a / 1.1);
+          if (k < 1) {
+            const ease = 1 - Math.pow(1 - k, 3);
+            ctx.strokeStyle = `rgba(255,232,190,${0.85 * (1 - k)})`;
+            ctx.lineWidth = Math.max(2, unitOf(H) * 14 * (1 - k));
+            ctx.beginPath(); ctx.arc(cp.x, cp.y, R0 + (reach - R0) * ease, 0, Math.PI * 2); ctx.stroke();
+          }
+          ctx.restore();
+        }
       }
     }
     for (const [bid, gt] of goneAt) {
@@ -1717,7 +1814,7 @@ export function createMatchMap(
   /** The least a log row must weigh to headline a time-lapse. */
   const MONTAGE_HEADLINE_WEIGHT = 40;
   /** The finale holds its image this long before the table comes up. */
-  const FINALE_CARD_AT = 2.4;
+  const FINALE_CARD_AT = 2.8;
   /** Film seconds into the finale, or -1 outside it. */
   const finaleEl = () => {
     const sc = scenes[scenes.length - 1];
@@ -1730,15 +1827,21 @@ export function createMatchMap(
    * at 99% under "The Dyson Sphere is complete". In the finale it ticks to
    * 100%, the segments lock, and it flares.
    */
-  const finaleDyson = (): { progress: number; complete: boolean; flare: number } | null => {
+  const finaleDyson = (): { progress: number; complete: boolean; flare: number; seal: number } | null => {
     if (summary.game.victory_type !== 'engineering' || !dysonOwner) return null;
     const el = finaleEl();
     if (el < 0) return null;
-    const p0 = dysonKeys.length ? dysonKeys[dysonKeys.length - 1][1] : 0.99;
-    const lock = 0.8;
-    const flare = el < lock ? 0 : Math.max(0, Math.sin(Math.min(1, (el - lock) / 1.4) * Math.PI));
-    return { progress: el < lock ? p0 + (1 - p0) * (el / lock) : 1, complete: el >= lock, flare };
+    const p0 = Math.min(0.99, dysonKeys.length ? dysonKeys[dysonKeys.length - 1][1] : 0.99);
+    // The last segment lights, then the shell SEALS round the star, one
+    // gap after another; the meter reads 100% on the frame it closes.
+    const lit = DYSON_LIT_AT, sealed = DYSON_SEALED_AT;
+    const seal = Math.max(0, Math.min(1, (el - lit) / (sealed - lit)));
+    const flare = el < sealed ? 0 : Math.max(0, Math.sin(Math.min(1, (el - sealed) / 1.2) * Math.PI));
+    return { progress: el < lit ? p0 + (1 - p0) * (el / lit) : 1, complete: el >= sealed, flare, seal };
   };
+  /** Finale seconds: the last segment lit, and the shell sealed. */
+  const DYSON_LIT_AT = 0.7;
+  const DYSON_SEALED_AT = 1.3;
   /** The cold open runs this long as pure action before the title. */
   const HOOK_SECONDS = 1.4;
   /** Who is building the Dyson Sphere, if anyone, and round which star. */
@@ -1783,23 +1886,32 @@ export function createMatchMap(
         'VS', more, more ? T('more', { n: more }) : '');
       // WHO HOLDS THE FIELD, as the fight closes.
       const prog = el / Math.max(0.01, s.seconds);
-      if (prog > 0.7 && sides.length) {
-        // Whoever HOLDS the world at the end, if they fought; else the side
-        // still standing strongest. A banner that flipped with a retreat
-        // read as the scoreboard changing its mind.
-        let owner: string | null = null;
-        for (const st of world.stls.values()) if (st.body === s.battle.body && st.fid) { owner = st.fid; break; }
-        const top = sides.find(x => x.faction.id === owner) ?? [...sides].sort((a, b) => b.ships - a.ships)[0];
-        const where = byId.get(s.battle.body)?.name ?? '';
-        drawBattleVerdict(ctx, W, H, T('verdict', { a: shortName(top.faction.name), world: where }).toUpperCase(),
-          top.faction.color, ((prog - 0.7) / 0.12) * (1 - overview) * hud);
+      // THE VERDICT IS THE SCOREBOARD'S. Whoever has the most ships left in
+      // the fight wins it, and only once the fight is nearly over: a stamp
+      // naming the world's owner read "Tritalowda holds Europa" over 0 vs
+      // 26, and "Ministry holds Earth" while it was still behind.
+      if (prog > 0.8 && sides.length) {
+        const top = [...sides].sort((a, b) => b.ships - a.ships)[0];
+        const second = [...sides].sort((a, b) => b.ships - a.ships)[1];
+        if (top.ships > 0 && (!second || top.ships > second.ships)) {
+          // "Holds" only when every settlement on the world is theirs.
+          let mine = 0, theirs = 0;
+          for (const st of world.stls.values()) {
+            if (st.body !== s.battle.body || !st.fid) continue;
+            if (st.fid === top.faction.id) mine++; else theirs++;
+          }
+          const where = byId.get(s.battle.body)?.name ?? '';
+          const key = mine > 0 && theirs === 0 ? 'verdict' : 'verdictWin';
+          drawBattleVerdict(ctx, W, H, T(key, { a: shortName(top.faction.name), world: where }).toUpperCase(),
+            top.faction.color, ((prog - 0.8) / 0.08) * (1 - overview) * hud);
+        }
       }
     }
     // A victory being BUILT, on screen while it is built.
     const fin = finaleDyson();
     const dy = fin ?? dysonAt(curTick + curFrac);
     if (dy && dysonOwner && (!dy.complete || fin)) {
-      const flash = fin ? (fin.complete ? 1 - Math.min(1, (el - 0.8) / 1.2) : 0)
+      const flash = fin ? (fin.complete ? 1 - Math.min(1, (el - DYSON_SEALED_AT) / 1.2) : 0)
         : Math.max(0, ...dysonFlashAt().map(at => (fs >= at ? 1 - (fs - at) / 1.2 : 0)));
       // In the finale the meter stays up until the table, to hit 100%.
       const alpha = fin ? (el < FINALE_CARD_AT ? 1 : 0) : hud;
@@ -1828,7 +1940,9 @@ export function createMatchMap(
     }
 
     // The ticker: one line, about what is in shot.
-    if (hud > 0.5 && s.kind === 'montage' && W - 56 * unitOf(H) - Math.max(W * 0.6, ltRight + 48 * unitOf(H)) > 320 * unitOf(H)) {
+    // Never beside a caption: two lines of news at once read as one
+    // ghosting behind the other.
+    if (hud > 0.5 && s.kind === 'montage' && !ltRight && W - 56 * unitOf(H) - Math.max(W * 0.6, ltRight + 48 * unitOf(H)) > 320 * unitOf(H)) {
       // A time-lapse device only: it never repeats the headline already
       // up, and on a held shot it stays on the world in shot.
       const top = montageTop.get(s);
@@ -1872,18 +1986,9 @@ export function createMatchMap(
         : c.title;
       drawLowerThird(ctx, W, H, { kicker: c.kicker, title: why,
         sub: summary.game.victory_type === 'engineering' ? T('sub.engineering') : '',
-        color: c.fid ? colorOf(c.fid) : null }, (el - 0.9) / 0.2, (el - (FINALE_CARD_AT - 0.15)) / 0.15);
-      // The flare whites the frame at its peak...
-      const fd = finaleDyson();
-      if (fd && fd.flare > 0.01) {
-        // A short white peak (a few frames), then the frame falls back to
-        // dark so the finished shell glows against black: a long wash read
-        // as overexposure.
-        const pk = Math.max(0, 1 - Math.abs(el - 0.86) / 0.1);
-        ctx.fillStyle = `rgba(255,250,240,${0.85 * pk})`;
-        ctx.fillRect(0, 0, W, H);
-      }
-      // ...and the table comes in on a cut, not a slow dissolve.
+        color: c.fid ? colorOf(c.fid) : null }, (el - (finaleDyson() ? DYSON_SEALED_AT + 0.1 : 0.9)) / 0.2,
+        (el - (FINALE_CARD_AT - 0.15)) / 0.15);
+      // The table comes in once the light has rolled out.
       drawResultCard(ctx, W, H, { ...c, color: c.fid ? colorOf(c.fid) : null },
         table, (el - FINALE_CARD_AT) / 0.6,
         { worlds: T('worlds', { n: '' }).trim(), ships: T('ships', { n: '' }).trim(), url: T('url'),
