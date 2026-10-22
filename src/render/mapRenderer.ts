@@ -5026,13 +5026,20 @@ function hullFlashHere(
 // fades over CONTINUITY_TAU_MS. Smooth motion and hard burns pass through
 // untouched; a teleport becomes a short slide. Keyed by ship, so it holds
 // across the switch between the in-flight and parked draw paths.
-const continuity = new Map<string, { x: number; y: number; vx: number; vy: number; ox: number; oy: number; ovx?: number; ovy?: number; ms: number }>();
-export const CONTINUITY_TAU_MS = 180;
-/** The absorbed offset closes as a critically damped spring, not an
- *  exponential: an exponential is fastest on its first frame, so a big
- *  absorbed jump still left as a lurch (jump-check flagged the start of
- *  the slide). From rest, rad/s; most of the way in about 0.5 s. */
-export const CONTINUITY_OMEGA = 9;
+const continuity = new Map<string, {
+  x: number; y: number; vx: number; vy: number; ms: number;
+  /** The offset being closed: o0 at startMs, gone at startMs + dur. */
+  o0x: number; o0y: number; startMs: number; dur: number;
+}>();
+/** How long a caught jump takes to close, by size (screen px). The close
+ *  is a quintic ease (smootherstep: zero speed and acceleration at both
+ *  ends). An exponential and then a spring both kicked on the first
+ *  frame in proportion to the jump, so a big catch still left as a lurch. */
+export const CONTINUITY_MIN_MS = 300;
+export const CONTINUITY_MAX_MS = 900;
+/** Kept for callers sizing a test run: the slowest close is over by then. */
+export const CONTINUITY_TAU_MS = CONTINUITY_MAX_MS / 5;
+const smootherStep = (u: number) => { const k = Math.max(0, Math.min(1, u)); return k * k * k * (k * (k * 6 - 15) + 10); };
 /** A hull not drawn for this long starts fresh (it was off screen). */
 const CONTINUITY_GAP_MS = 250;
 
@@ -5046,24 +5053,13 @@ export function continuousDrawnPos(
   const c = continuity.get(shipId);
   if (!c || nowMs <= c.ms || nowMs - c.ms > CONTINUITY_GAP_MS || !(scale > 0)) {
     if (continuity.size > 3000) continuity.clear();
-    continuity.set(shipId, { x, y, vx: 0, vy: 0, ox: 0, oy: 0, ms: nowMs });
+    continuity.set(shipId, { x, y, vx: 0, vy: 0, ms: nowMs, o0x: 0, o0y: 0, startMs: nowMs, dur: 0 });
     return { x, y };
   }
   const dt = nowMs - c.ms;
-  // Close the offset as a spring (from rest at the moment of the jump).
-  let ox = c.ox, oy = c.oy, ovx = c.ovx ?? 0, ovy = c.ovy ?? 0;
-  {
-    const W = CONTINUITY_OMEGA;
-    const sec = Math.min(0.25, dt / 1000);
-    const n = Math.max(1, Math.ceil(sec / 0.016));
-    const h = sec / n;
-    for (let i = 0; i < n; i++) {
-      ovx += (-W * W * ox - 2 * W * ovx) * h;
-      ovy += (-W * W * oy - 2 * W * ovy) * h;
-      ox += ovx * h;
-      oy += ovy * h;
-    }
-  }
+  // The offset still left to close, on its ease.
+  const left = c.dur > 0 ? 1 - smootherStep((nowMs - c.startMs) / c.dur) : 0;
+  let ox = c.o0x * left, oy = c.o0y * left;
   // Where its own (true) motion was taking it.
   const px = c.x + c.vx * dt, py = c.y + c.vy * dt;
   const ex = x - px, ey = y - py;
@@ -5071,16 +5067,19 @@ export function continuousDrawnPos(
   const stepPx = Math.hypot(c.vx, c.vy) * dt * scale;
   const jumped = errPx > Math.max(8, 0.6 * stepPx);
   if (jumped) {
-    // Absorb it: drawn stays on the line it was on, then eases across.
+    // Absorb it: drawn stays on the line it was on, then eases across,
+    // longer for a bigger catch. Whatever was still closing joins it.
     ox -= ex; oy -= ey;
-    ovx = 0; ovy = 0;
+    const px2 = Math.hypot(ox, oy) * scale;
+    c.o0x = ox; c.o0y = oy; c.startMs = nowMs;
+    c.dur = Math.min(CONTINUITY_MAX_MS, CONTINUITY_MIN_MS + px2 * 0.6);
   } else {
     c.vx = (x - c.x) / dt;
     c.vy = (y - c.y) / dt;
   }
   // A jump keeps the motion it had; the true position moves on regardless.
   c.x = x; c.y = y;
-  c.ox = ox; c.oy = oy; c.ovx = ovx; c.ovy = ovy; c.ms = nowMs;
+  c.ms = nowMs;
   return { x: x + ox, y: y + oy };
 }
 

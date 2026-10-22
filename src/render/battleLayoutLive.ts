@@ -241,14 +241,23 @@ export function battleScale(battle: LiveBattle, drawnRadiusPx: number): number {
 
 // ---------------------------------------------------------------- glide
 
-interface Glide { r: number; t: number; ms: number; vr?: number; vt?: number }
-/** THE GLIDE IS A SPRING (critically damped), not an exponential. An
- *  exponential moves fastest on its first frame, so a hull re-slotted
- *  across the orbit (an arriving fleet given the far share) lurched off at
- *  full speed: one of the last jumps in the Mega Destroyer clip. A spring
- *  starts from rest, gathers, and settles without overshoot; this one is
- *  most of the way in about 0.7 s. */
-export const BATTLE_GLIDE_OMEGA = 7;
+/** Where a unit is drawn (r, t: reference polar, wheel removed) and the
+ *  move it is making: from (r0, t0) to (r1, t1) over [t0ms, t0ms + dur]. */
+interface Glide {
+  r: number; t: number; ms: number;
+  r0?: number; a0?: number; r1?: number; a1?: number; startMs?: number; dur?: number;
+}
+/** A RE-SLOT IS A TIMED EASE, not a chase. Both chases this replaced
+ *  kicked on their first frame, in proportion to the distance: an
+ *  exponential is fastest at once, and a spring's first push scales with
+ *  the gap, so a fleet re-slotted across the orbit lurched off (the last
+ *  jumps in the Mega Destroyer clip, film --trace). Now every move is a
+ *  quintic ease (smootherstep: zero speed AND zero acceleration at both
+ *  ends) lasting with the distance, BATTLE_GLIDE_MIN_MS to _MAX_MS. */
+export const BATTLE_GLIDE_MIN_MS = 450;
+export const BATTLE_GLIDE_MAX_MS = 1200;
+const smoother = (u: number) => { const k = Math.max(0, Math.min(1, u)); return k * k * k * (k * (k * 6 - 15) + 10); };
+const wrapPi = (a: number) => { let d = a % (Math.PI * 2); if (d > Math.PI) d -= Math.PI * 2; if (d < -Math.PI) d += Math.PI * 2; return d; };
 const glides = new Map<string, Glide>();
 let lastSweep = 0;
 
@@ -290,23 +299,18 @@ export function battlePlacement(
   if (!p) return null;
   let g = glides.get(id);
   if (!g || !fresh(g, nowMs)) { g = { r: p.r, t: p.theta, ms: nowMs }; glides.set(id, g); }
-  const dt = Math.max(0, Math.min(200, nowMs - g.ms)) / 1000;
   g.ms = nowMs;
-  const W = BATTLE_GLIDE_OMEGA;
-  let vt = g.vt ?? 0, vr = g.vr ?? 0;
-  // Substeps keep the spring stable however long a frame was.
-  const n = Math.max(1, Math.ceil(dt / 0.016));
-  const h = dt / n;
-  for (let i = 0; i < n; i++) {
-    let dth = (p.theta - g.t) % (Math.PI * 2);
-    if (dth > Math.PI) dth -= Math.PI * 2;
-    if (dth < -Math.PI) dth += Math.PI * 2;
-    vt += (W * W * dth - 2 * W * vt) * h;
-    vr += (W * W * (p.r - g.r) - 2 * W * vr) * h;
-    g.t += vt * h;
-    g.r += vr * h;
+  // A new target: start a move from wherever it is drawn now.
+  if (g.r1 === undefined || Math.abs(g.r1 - p.r) > 1e-6 || Math.abs(wrapPi((g.a1 ?? 0) - p.theta)) > 1e-6) {
+    const dAng = Math.abs(wrapPi(p.theta - g.t));
+    const dist = Math.hypot(p.r - g.r, ((g.r + p.r) / 2) * dAng);
+    const dur = dist < 1e-6 ? 0
+      : Math.min(BATTLE_GLIDE_MAX_MS, BATTLE_GLIDE_MIN_MS + (dist / Math.max(1, p.r)) * 500);
+    g.r0 = g.r; g.a0 = g.t; g.r1 = p.r; g.a1 = p.theta; g.startMs = nowMs; g.dur = dur;
   }
-  g.vt = vt; g.vr = vr;
+  const u = g.dur ? smoother((nowMs - (g.startMs ?? nowMs)) / g.dur) : 1;
+  g.r = (g.r0 ?? p.r) + (p.r - (g.r0 ?? p.r)) * u;
+  g.t = (g.a0 ?? p.theta) + wrapPi(p.theta - (g.a0 ?? p.theta)) * u;
   if (nowMs - lastSweep > 10000) {
     lastSweep = nowMs;
     for (const [gid, gl] of glides) if (nowMs - gl.ms > 10000) glides.delete(gid);

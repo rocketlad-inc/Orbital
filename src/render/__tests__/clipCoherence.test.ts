@@ -170,6 +170,16 @@ describe('a hull never jumps on screen (the continuity guard)', () => {
     for (let i = 11; i < xs.length; i++) expect(xs[i] - xs[i - 1]).toBeLessThan(80);
   });
 
+  test('a caught jump starts from rest: no kick on the first frame of the slide', () => {
+    // 3 px a frame, then re-derived 1,000 px away (an arriving fleet re-slotted).
+    const out = run('kick', i => ({ x: i * 3 + (i >= 10 ? 1000 : 0), y: 0 }), 60);
+    const step = (i: number) => out[i].x - out[i - 1].x;
+    // The first frames of the slide barely move beyond its own 3 px...
+    expect(step(11)).toBeLessThan(12);
+    // ...and the speed builds frame on frame rather than arriving at once.
+    for (let i = 12; i < 16; i++) expect(Math.abs(step(i) - step(i - 1))).toBeLessThan(25);
+  });
+
   test('a hull not drawn for a while starts where it is', () => {
     continuousDrawnPos('gap', 0, 0, 1, 5000);
     expect(continuousDrawnPos('gap', 900, 0, 1, 6000)).toEqual({ x: 900, y: 0 });
