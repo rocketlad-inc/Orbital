@@ -98,6 +98,8 @@ interface Tween {
   fromScale: number; toScale: number; fromX: number; fromY: number; t0: number; ms: number; target: Target | null;
   /** A long pan's pull-back (shotPlan.panCamera): the zoom at its top. */
   arc?: { apex: number } | null;
+  /** A zoom on what the camera already holds: the centre stays on it. */
+  lock?: boolean;
 }
 
 const FORMATS = { '9:16': [1080, 1920], '16:9': [1920, 1080], '1:1': [1080, 1080] } as const;
@@ -282,7 +284,12 @@ export class Director {
   zoom(o: { px?: number; scale?: number; factor?: number; ms?: number; target?: Target }): void {
     const target = o.target ?? this.hold;
     const toScale = o.scale ?? (o.px ? this.scaleFor(target ?? undefined, o.px) : this.cam.scale * (o.factor ?? 1));
-    this.tween = { fromX: this.cam.x, fromY: this.cam.y, fromScale: this.cam.scale, toScale, t0: this.clock, ms: o.ms ?? this.moveMs ?? 1500, target: target ?? null };
+    // Zooming on the ship being followed keeps it centred. Eased from where
+    // the camera was to where the ship is NOW, a fast hull ran ahead of the
+    // ease and out of frame: the Mega Destroyer take's launching guard left
+    // 1.2 s of empty space (2026-10-22).
+    const lock = target != null && target === this.hold;
+    this.tween = { fromX: this.cam.x, fromY: this.cam.y, fromScale: this.cam.scale, toScale, t0: this.clock, ms: o.ms ?? this.moveMs ?? 1500, target: target ?? null, lock };
   }
 
   /** Keep the centre on a moving target from now on. */
@@ -431,7 +438,7 @@ export class Director {
       const dest = tw.target ? this.position(tw.target) : null;
       const tx = dest ? dest.x : tw.fromX, ty = dest ? dest.y : tw.fromY;
       const c = panCamera(u, { x: tw.fromX, y: tw.fromY, scale: tw.fromScale }, tx, ty, tw.toScale, tw.arc ?? null);
-      this.cam.x = c.x; this.cam.y = c.y; this.cam.scale = c.scale;
+      this.cam.x = tw.lock && dest ? dest.x : c.x; this.cam.y = tw.lock && dest ? dest.y : c.y; this.cam.scale = c.scale;
       if (u >= 1) this.tween = null;
     } else if (this.hold) {
       const p = this.position(this.hold);
