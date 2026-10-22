@@ -45,7 +45,11 @@ export type ShotStep =
   | { at: number; do: 'click'; selector: string }
   | { at: number; do: 'intercept'; ships: Target; target: Target }
   | { at: number; do: 'strike'; ship: string; ticks?: number }
-  | { at: number; do: 'hull'; ship: string; hp: number };
+  | { at: number; do: 'hull'; ship: string; hp: number }
+  /** A time cut (film only): the map lives `ms` more on its own clock
+   *  with no frames kept, then the shot carries on. Pair it with a focus
+   *  for a cut that lands after an arrival has settled into orbit. */
+  | { at: number; do: 'skip'; ms: number };
 
 /** The game's panels, by the name the dock and the shell know them by. */
 export type PanelId = 'senate' | 'faction' | 'comms' | 'trades' | 'situation' | 'eventlog' | 'multiplayer'
@@ -98,6 +102,8 @@ interface Tween {
   fromScale: number; toScale: number; fromX: number; fromY: number; t0: number; ms: number; target: Target | null;
   /** A long pan's pull-back (shotPlan.panCamera): the zoom at its top. */
   arc?: { apex: number } | null;
+  /** A zoom on what the camera already holds: the centre stays on it. */
+  lock?: boolean;
 }
 
 const FORMATS = { '9:16': [1080, 1920], '16:9': [1920, 1080], '1:1': [1080, 1080] } as const;
@@ -282,7 +288,12 @@ export class Director {
   zoom(o: { px?: number; scale?: number; factor?: number; ms?: number; target?: Target }): void {
     const target = o.target ?? this.hold;
     const toScale = o.scale ?? (o.px ? this.scaleFor(target ?? undefined, o.px) : this.cam.scale * (o.factor ?? 1));
-    this.tween = { fromX: this.cam.x, fromY: this.cam.y, fromScale: this.cam.scale, toScale, t0: this.clock, ms: o.ms ?? this.moveMs ?? 1500, target: target ?? null };
+    // Zooming on the ship being followed keeps it centred. Eased from where
+    // the camera was to where the ship is NOW, a fast hull ran ahead of the
+    // ease and out of frame: the Mega Destroyer take's launching guard left
+    // 1.2 s of empty space (2026-10-22).
+    const lock = target != null && target === this.hold;
+    this.tween = { fromX: this.cam.x, fromY: this.cam.y, fromScale: this.cam.scale, toScale, t0: this.clock, ms: o.ms ?? this.moveMs ?? 1500, target: target ?? null, lock };
   }
 
   /** Keep the centre on a moving target from now on. */
@@ -431,7 +442,7 @@ export class Director {
       const dest = tw.target ? this.position(tw.target) : null;
       const tx = dest ? dest.x : tw.fromX, ty = dest ? dest.y : tw.fromY;
       const c = panCamera(u, { x: tw.fromX, y: tw.fromY, scale: tw.fromScale }, tx, ty, tw.toScale, tw.arc ?? null);
-      this.cam.x = c.x; this.cam.y = c.y; this.cam.scale = c.scale;
+      this.cam.x = tw.lock && dest ? dest.x : c.x; this.cam.y = tw.lock && dest ? dest.y : c.y; this.cam.scale = c.scale;
       if (u >= 1) this.tween = null;
     } else if (this.hold) {
       const p = this.position(this.hold);
@@ -515,6 +526,10 @@ export class Director {
         case 'hook': this.hook = st.text; break;
         case 'caption': this.caption = { text: st.text, since: this.clock, color: st.color }; break;
         case 'tick': await this.ticks(st.n ?? 1); break;
+        case 'skip':
+          if (this.film) this.skipMs += Math.max(0, Number(st.ms) || 0);
+          else this.note('skip: film only');
+          break;
       }
     }
   }
@@ -690,6 +705,8 @@ export class Director {
   // (cinema mode hides the interface), with no overlays of any kind.
 
   private film: { vclock: ReturnType<typeof installVirtualClock>; shot: Shot; fired: Set<ShotStep>; k: number; total: number; draw?: (n?: number) => number } | null = null;
+  /** Map time still to run off camera (a 'skip' step). */
+  private skipMs = 0;
 
   /** Start a stepped shot. Returns the frame count. */
   openFilm(shot: Shot): number {
@@ -712,6 +729,15 @@ export class Director {
     if (!f) throw new Error('openFilm first');
     const fps = f.shot.fps ?? 30;
     await f.vclock.real(() => this.fire(f.shot.steps, f.fired));
+    // A time cut: the map draws on through the skipped time (so dwells,
+    // glides and fades run their course) with nothing kept. The shot's own
+    // clock does not move, so the steps after it keep their times.
+    for (let left = this.skipMs; left > 0; left -= 1000 / fps) {
+      this.step(0);
+      this.stats.rafRuns += f.vclock.advance(1000 / fps, !f.draw);
+      if (f.draw) f.draw(1);
+    }
+    this.skipMs = 0;
     this.step(1 / fps);
     await f.vclock.real(() => realSleep(0));
     this.stats.rafRuns += f.vclock.advance(1000 / fps, !f.draw);
@@ -845,7 +871,7 @@ export class Director {
 /** Every verb a shot step can use (ShotStep). The Studio bar refuses a
  *  shot lint flags, so a verb missing here is a verb nobody can use. */
 const VERBS: readonly string[] = ['focus', 'pan', 'zoom', 'follow', 'tick', 'speed', 'caption', 'hook', 'ui',
-  'panel', 'click', 'intercept', 'strike', 'hull'];
+  'panel', 'click', 'intercept', 'strike', 'hull', 'skip'];
 
 const realSetTimeout = window.setTimeout.bind(window);
 const realSleep = (ms: number) => new Promise<void>(r => realSetTimeout(r, ms));
