@@ -39,7 +39,7 @@ type P = Record<string, unknown>;
 const WEIGHT: Record<string, number | ((p: P, r: ChronicleRow) => number)> = {
   war_declared: 85, war_ended: 40, treaty_signed: 18, treaty_broken: 70,
   settlement_seized: (p) => (p.settlement_type === 'city' ? 120 : 75),
-  settlement_destroyed: (p) => (p.is_capital ? 120 : p.settlement_type === 'city' ? 60 : 30),
+  settlement_destroyed: (p) => (p.is_capital ? 120 : p.settlement_type === 'city' ? 45 : 20),
   settlement_razed: 60,
   settlement_built: 0,
   faction_eliminated: 150, faction_revived: 60, faction_joined: 30, faction_comeback: 130,
@@ -55,6 +55,8 @@ const WEIGHT: Record<string, number | ((p: P, r: ChronicleRow) => number)> = {
   megastructure_complete: 60, megastructure_claimed: 50,
   megastructure_captured: 95, megastructure_destroyed: 95,
   dyson_initiated: 90, dyson_milestone: 55, dyson_collapsed: 120,
+  // The last-ditch strike on a nearly finished Sphere is its climax.
+  dyson_damaged: (p) => (Number(p.pct) >= 90 ? 110 : 0),
   terraform_complete: 30,
   terraform_destroyed: (p) => (p.cause === 'kaiju' || p.cause === 'mega_destroyer' ? 150 : 90),
   world_obliterated: (p) => (p.cause === 'kaiju' ? 175 : 160),
@@ -191,6 +193,19 @@ function mergeBeats(beats: ReelBeat[], summary: MatchSummary, lang: Lang): ReelB
     }
     out.push(e);
   }
+  // Several empires declaring on ONE within a few ticks is a dogpile:
+  // one card ("Lorne is targeted by three empires"), not three.
+  for (let i = 0; i < out.length; i++) {
+    const e = out[i];
+    if (e.kind !== 'war_declared' || e.weight <= 0 || !e.target || e.data?.targets) continue;
+    const pile = out.filter(x => x !== e && x.kind === 'war_declared' && x.weight > 0 && x.target === e.target
+      && !x.data?.targets && x.tick >= e.tick && x.tick - e.tick <= 12);
+    if (!pile.length) continue;
+    e.data = { ...e.data, pile: pile.length + 1 };
+    e.weight = Math.max(e.weight, ...pile.map(x => x.weight)) + 10;
+    e.text = T('title.targeted', { b: names.get(e.target) ?? '', n: pile.length + 1 });
+    for (const x of pile) x.weight = 0;
+  }
   for (const e of out) {
     if (e.kind !== 'settlement_destroyed' || !e.data?.is_capital || !e.body) continue;
     const taken = out.find(x => x.kind === 'settlement_seized' && x.body === e.body
@@ -245,6 +260,13 @@ function mergeBeats(beats: ReelBeat[], summary: MatchSummary, lang: Lang): ReelB
  */
 export function broadcastCopy(line: string): string {
   let s = line.replace(/\s*[[(][^\])]*[\])]/g, '');
+  // Rules text for the player ("park on it to launch...", "Kill it
+  // first", "strikes at T+438") is not news: drop those clauses.
+  s = s.split(/(?<=[.;!])\s+|\s+[—–]\s+/)
+    .filter(part => !/T\+\d+|\b(park on it|kill it first|launch to)\b/i.test(part))
+    .map(part => part.replace(/[;,]\s*$/, ''))
+    .join(' — ');
+  s = s.replace(/ has fallen by /g, ' has fallen to ').replace(/s's\b/g, "s'");
   const m = /^([^a-z]{6,}?)\s+[—–-]\s+(.+)$/u.exec(s);
   if (m && m[1] === m[1].toUpperCase()) s = m[2].charAt(0).toUpperCase() + m[2].slice(1);
   return s.replace(/\s{2,}/g, ' ').trim();
@@ -270,7 +292,7 @@ const KICK: Record<string, string> = {
   sun_gate_omen: 'gate', sun_gate_emerged: 'gate', sun_gate_opened: 'gate',
   megastructure_complete: 'mega', megastructure_claimed: 'mega',
   megastructure_captured: 'mega', megastructure_destroyed: 'mega',
-  dyson_initiated: 'dyson', dyson_milestone: 'dyson', dyson_collapsed: 'dyson',
+  dyson_initiated: 'dyson', dyson_milestone: 'dyson', dyson_collapsed: 'dyson', dyson_damaged: 'dyson',
   terraform_complete: 'world', terraform_destroyed: 'strike', world_obliterated: 'strike',
   mega_strike_charging: 'strike', asteroid_launched: 'impact', asteroid_impact: 'impact',
   missile_strike: 'missiles', secret_discovered: 'discovery', senate_vote: 'senate',
@@ -367,7 +389,8 @@ export function beatCaption(e: ReelBeat,
   let title = '';
   switch (e.kind) {
     case 'war_declared':
-      title = Number(p.targets) > 1 ? T('title.warMany', { a, n: Number(p.targets) })
+      title = Number(p.pile) > 1 ? T('title.targeted', { b, n: Number(p.pile) })
+        : Number(p.targets) > 1 ? T('title.warMany', { a, n: Number(p.targets) })
         : T('title.war', { a, b });
       break;
     case 'war_ended': title = T('title.peace', { a, b }); break;
@@ -401,6 +424,7 @@ export function beatCaption(e: ReelBeat,
     case 'dyson_initiated': title = T('title.dysonBegun', { a: String(p.faction_name ?? a) }); break;
     case 'dyson_milestone': title = T('title.dysonRises'); break;
     case 'dyson_collapsed': title = T('title.dysonFalls'); break;
+    case 'dyson_damaged': title = T('title.dysonHit', { pct: Number(p.pct) || 0 }); break;
     case 'mega_strike_charging': title = T('title.strikeAimed', { world }); break;
     case 'terraform_destroyed':
       title = p.cause === 'kaiju' ? T('title.scorched', { world }) : T('title.sterilised', { world }); break;

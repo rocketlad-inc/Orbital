@@ -161,11 +161,11 @@ export interface LowerThird {
  * `outK` 0..1 as it leaves.
  */
 export function drawLowerThird(ctx: CanvasRenderingContext2D, W: number, H: number,
-  c: LowerThird, inK: number, outK: number) {
-  if (!c.title && !c.kicker) return;
+  c: LowerThird, inK: number, outK: number): number {
+  if (!c.title && !c.kicker) return 0;
   const u = unitOf(H);
   const a = ease(inK) * (1 - ease(outK));
-  if (a <= 0.01) return;
+  if (a <= 0.01) return 0;
   // Inside title-safe (5% of the width), with the accent bar outside it.
   const x0 = Math.max(96 * u, W * 0.05 + 22 * u);
   const maxW = Math.min(W * 0.54, W - 2 * x0);
@@ -235,6 +235,7 @@ export function drawLowerThird(ctx: CanvasRenderingContext2D, W: number, H: numb
     subLines.forEach((l, i) => ctx.fillText(l, x0 - slide * 1.3, y + i * subSize * 1.15));
   }
   ctx.restore();
+  return x0 + wide;
 }
 
 /** Top-right: the match clock, and the playback speed when it is fast. */
@@ -282,8 +283,8 @@ export function drawTicker(ctx: CanvasRenderingContext2D, W: number, H: number,
   items: TickerItem[], avoidLeft: number) {
   if (!items.length) return;
   const u = unitOf(H);
-  const size = Math.round(28 * u);
-  const lineH = 50 * u;
+  const size = Math.round(32 * u);
+  const lineH = 56 * u;
   const right = W - 56 * u;
   const maxW = Math.max(200 * u, Math.min(W * 0.36, right - avoidLeft - 40 * u));
   ctx.save();
@@ -293,7 +294,9 @@ export function drawTicker(ctx: CanvasRenderingContext2D, W: number, H: number,
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i];
     const a = Math.min(ease(it.life / 0.12), 1 - ease((it.life - 0.82) / 0.18));
-    if (a <= 0.01) { y -= lineH * 0.3; continue; }
+    // Every live item keeps its whole slot while it fades: a half-height
+    // slot drew the next line over the one leaving.
+    if (a <= 0.01) { y -= lineH; continue; }
     ctx.font = `500 ${size}px ${FONT_BODY}`;
     // Two lines before a cut: the cut always landed on the part that
     // mattered ("destroyed by…", "reached…").
@@ -323,7 +326,7 @@ export interface TallySide {
 
 /** Top-centre during a battle: who is fighting, how many are left. */
 export function drawBattleTally(ctx: CanvasRenderingContext2D, W: number, H: number,
-  sides: TallySide[], alpha: number, vsLabel = 'VS', more = 0) {
+  sides: TallySide[], alpha: number, vsLabel = 'VS', more = 0, moreLabel = '') {
   if (sides.length < 1 || alpha <= 0.01) return;
   const u = unitOf(H);
   ctx.save();
@@ -373,7 +376,7 @@ export function drawBattleTally(ctx: CanvasRenderingContext2D, W: number, H: num
   // Every other empire in the fight, as one chip under the VS.
   if (more > 0) {
     ctx.font = `700 ${Math.round(16 * u)}px ${FONT_BODY}`;
-    const label = `+${more}`;
+    const label = moreLabel || `+${more}`;
     const w = ctx.measureText(label).width + 18 * u;
     ctx.fillStyle = 'rgba(255,190,120,0.16)';
     ctx.strokeStyle = 'rgba(255,190,120,0.6)';
@@ -413,28 +416,43 @@ export function drawBattleVerdict(ctx: CanvasRenderingContext2D, W: number, H: n
  * clock, so a win that is built rather than fought is visible all along.
  */
 export function drawProgressMeter(ctx: CanvasRenderingContext2D, W: number, H: number,
-  label: string, pct: number, color: string | null, alpha: number) {
+  label: string, pct: number, color: string | null, alpha: number, flash = 0, note = '') {
   if (alpha <= 0.01) return;
   const u = unitOf(H);
   ctx.save();
   ctx.globalAlpha = alpha;
-  const w = 330 * u, h = 64 * u;
-  const x = W - 56 * u - w, y = 136 * u;
-  ctx.fillStyle = 'rgba(3,6,12,0.78)';
-  ctx.beginPath(); ctx.roundRect(x, y, w, h, 7 * u); ctx.fill();
+  const w = 440 * u, h = 96 * u;
+  const x = W - 56 * u - w, y = 128 * u;
   const accent = color ? liftColor(color) : '#ffd38a';
+  ctx.fillStyle = 'rgba(3,6,12,0.82)';
+  ctx.beginPath(); ctx.roundRect(x, y, w, h, 8 * u); ctx.fill();
+  if (flash > 0.01) {
+    // A milestone: the panel lights up and settles.
+    ctx.save();
+    ctx.globalAlpha = alpha * flash;
+    ctx.shadowColor = accent; ctx.shadowBlur = 30 * u;
+    ctx.strokeStyle = accent; ctx.lineWidth = 3 * u;
+    ctx.beginPath(); ctx.roundRect(x, y, w, h, 8 * u); ctx.stroke();
+    ctx.restore();
+  }
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'left';
-  ctx.font = `700 ${Math.round(17 * u)}px ${FONT_BODY}`;
-  spacing(ctx, 2 * u);
+  ctx.font = `700 ${Math.round(21 * u)}px ${FONT_BODY}`;
+  spacing(ctx, 2.5 * u);
   ctx.fillStyle = accent;
-  ctx.fillText(ellipsize(ctx, label.toUpperCase(), w - 110 * u), x + 16 * u, y + 20 * u);
+  ctx.fillText(label.toUpperCase(), x + 18 * u, y + 22 * u);
   spacing(ctx, 0);
   ctx.textAlign = 'right';
-  ctx.font = `600 ${Math.round(24 * u)}px ${FONT_MONO}`;
+  ctx.font = `600 ${Math.round(34 * u)}px ${FONT_MONO}`;
   ctx.fillStyle = INK;
-  ctx.fillText(`${Math.round(pct * 100)}%`, x + w - 16 * u, y + 21 * u);
-  const bx = x + 16 * u, bw = w - 32 * u, by = y + 40 * u, bh = 10 * u;
+  ctx.fillText(`${Math.round(pct * 100)}%`, x + w - 18 * u, y + 26 * u);
+  if (note) {
+    ctx.textAlign = 'left';
+    ctx.font = `500 ${Math.round(18 * u)}px ${FONT_BODY}`;
+    ctx.fillStyle = DIM;
+    ctx.fillText(ellipsize(ctx, note, w - 36 * u), x + 18 * u, y + 76 * u);
+  }
+  const bx = x + 18 * u, bw = w - 36 * u, by = y + 48 * u, bh = 12 * u;
   ctx.fillStyle = 'rgba(255,255,255,0.12)';
   ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 5 * u); ctx.fill();
   ctx.fillStyle = accent;
@@ -584,7 +602,7 @@ export function drawResultCard(ctx: CanvasRenderingContext2D, W: number, H: numb
   ctx.fillText(c.title, W / 2, top + 30 * u + size * 0.6);
   ctx.font = `500 ${Math.round(28 * u)}px ${FONT_BODY}`;
   ctx.fillStyle = DIM;
-  ctx.fillText(ellipsize(ctx, c.sub, W * 0.8), W / 2, top + 30 * u + size * 1.25);
+  ctx.fillText(ellipsize(ctx, c.sub, W * 0.8), W / 2, top + 30 * u + size * 1.42);
   ctx.shadowBlur = 0;
 
   // The table.
@@ -596,7 +614,7 @@ export function drawResultCard(ctx: CanvasRenderingContext2D, W: number, H: numb
   const rowH = 64 * u;
   const tw = Math.min(W * 0.7, 940 * u);
   const tx = W / 2 - tw / 2;
-  let ty = top + 30 * u + size * 1.25 + 56 * u;
+  let ty = top + 30 * u + size * 1.42 + 56 * u;
   shown.forEach((r, i) => {
     const ki = ease((k - 0.2 - i * 0.07) * 3);
     if (ki <= 0.01) return;
@@ -645,6 +663,68 @@ export function drawResultCard(ctx: CanvasRenderingContext2D, W: number, H: numb
   ctx.fillStyle = '#9fc4e8';
   ctx.fillText(labels.url.toUpperCase(), W / 2 + 2 * u, Math.min(H - 60 * u, ty + 70 * u));
   spacing(ctx, 0);
+  ctx.restore();
+}
+
+/** The cold open's one line, slammed over the action. */
+export function drawHookLine(ctx: CanvasRenderingContext2D, W: number, H: number,
+  text: string, k: number, out: number) {
+  const a = Math.min(1, k * 6) * (1 - ease(out));
+  if (a <= 0.01 || !text) return;
+  const u = unitOf(H);
+  const slam = 1 + 0.22 * (1 - ease(k * 5));
+  ctx.save();
+  ctx.globalAlpha = a;
+  ctx.translate(W / 2, H * 0.8);
+  ctx.scale(slam, slam);
+  const size = fit(ctx, text, FONT_DISPLAY, '400', Math.round(88 * u), Math.round(44 * u), W * 0.86);
+  ctx.font = `400 ${size}px ${FONT_DISPLAY}`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.shadowColor = 'rgba(0,0,0,0.9)'; ctx.shadowBlur = 24 * u;
+  ctx.fillStyle = INK;
+  ctx.fillText(text, 0, 0);
+  ctx.restore();
+}
+
+/**
+ * The Dyson Sphere as the film shows it: a shell of segments round the
+ * star that fill as it is built, in its builder's colour, closing into a
+ * whole ring that flares at completion. Drawn over the game's own lattice,
+ * which at film scale read as a thin line round the sun.
+ */
+export function drawDysonShell(ctx: CanvasRenderingContext2D, x: number, y: number, r: number,
+  progress: number, complete: boolean, color: string | null, flare: number, nowMs: number) {
+  if (r < 6) return;
+  const c = color ? liftColor(color, 150) : '#ffb84d';
+  const R = r * 1.6;
+  const SEG = 24;
+  const lit = complete ? SEG : Math.floor(Math.max(0, Math.min(1, progress)) * SEG);
+  const spin = (nowMs / 90000) * Math.PI * 2;
+  const seg = (Math.PI * 2) / SEG, gap = seg * 0.16;
+  ctx.save();
+  ctx.lineCap = 'round';
+  // The scaffold still to come.
+  ctx.strokeStyle = 'rgba(255,200,120,0.16)';
+  ctx.lineWidth = Math.max(1, r * 0.03);
+  for (let i = lit; i < SEG; i++) {
+    ctx.beginPath(); ctx.arc(x, y, R, spin + i * seg + gap, spin + (i + 1) * seg - gap); ctx.stroke();
+  }
+  // What is built, glowing.
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.shadowColor = c; ctx.shadowBlur = r * 0.25;
+  ctx.strokeStyle = c;
+  ctx.lineWidth = Math.max(2, r * (complete ? 0.12 : 0.08));
+  for (let i = 0; i < lit; i++) {
+    ctx.beginPath(); ctx.arc(x, y, R, spin + i * seg + (complete ? 0 : gap), spin + (i + 1) * seg - (complete ? 0 : gap)); ctx.stroke();
+  }
+  if (flare > 0.01) {
+    const g = ctx.createRadialGradient(x, y, R * 0.6, x, y, R * (1.4 + flare));
+    g.addColorStop(0, `rgba(255,236,190,${0.55 * flare})`);
+    g.addColorStop(1, 'rgba(255,200,120,0)');
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(x, y, R * (1.4 + flare), 0, Math.PI * 2); ctx.fill();
+  }
   ctx.restore();
 }
 

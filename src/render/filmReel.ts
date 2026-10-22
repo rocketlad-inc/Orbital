@@ -95,9 +95,12 @@ export interface ReelOptions {
   finaleBody?: string | null;
 }
 
-export const INTRO_SECONDS = 3.0;
-export const FINALE_SECONDS = 7;
+export const INTRO_SECONDS = 3.4;
+export const FINALE_SECONDS = 6;
 export const BEAT_SECONDS = 2.4;
+/** A beat's shortest and longest hold, by weight. */
+export const BEAT_MIN_SECONDS = 1.6;
+export const BEAT_MAX_SECONDS = 3.2;
 /** A battle gets this much for mattering, plus up to SPREAD for size. */
 export const BATTLE_BASE_SECONDS = 2.2;
 export const BATTLE_SPREAD_SECONDS = 5.2;
@@ -192,8 +195,10 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
     const from = Math.max(introTo, Math.min(finaleFrom - 1, e.tick - 1));
     const to = Math.min(finaleFrom, from + 2);
     if (to <= from) continue;
+    // Weight buys time: a declaration is a quick read, a capital falling
+    // or the Leviathan dying holds longer. A flat 2.4 s was a metronome.
     cands.push({ kind: 'beat', from, to, weight: e.weight, place: e.body ?? `${e.kind}`, pair: null,
-      seconds: BEAT_SECONDS, framing: e.body ? 'world' : 'system',
+      seconds: Math.max(BEAT_MIN_SECONDS, Math.min(BEAT_MAX_SECONDS, BEAT_MIN_SECONDS + (e.weight - 60) / 80)), framing: e.body ? 'world' : 'system',
       bodyId: e.body, beat: e });
   }
   // Heaviest first; ties to the earlier moment so the plan is stable.

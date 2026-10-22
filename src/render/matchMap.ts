@@ -52,12 +52,12 @@ import {
   battleWindow, filmSecondsAt, planReel, reelRate, reelSeconds,
   type ReelBattle, type ReelBeat, type ReelScene,
 } from './filmReel';
-import { beatCaption, buildBeats, captionFor, type Caption } from './filmCaptions';
+import { beatCaption, broadcastCopy, buildBeats, captionFor, type Caption } from './filmCaptions';
 import {
   drawBattleTally, drawClock, drawCountChips, drawLowerThird, drawProgress,
   drawResultCard, drawStandings, drawTicker, drawTitleCard, drawVignette,
   liftColor, unitOf, type FilmFaction, type StandingRow, type TallySide,
-  drawBattleVerdict, drawProgressMeter, shortName,
+  drawBattleVerdict, drawProgressMeter, shortName, drawHookLine, drawDysonShell,
 } from './filmOverlay';
 
 const NEUTRAL = '#8a9fb3';
@@ -540,6 +540,7 @@ export function createMatchMap(
       if (w > teaserW) { teaserW = w; teaser = s; }
     }
     sceneExtent.clear();
+    sceneFocus.clear();
 
     // NO BREATHING ZOOM. A short time-lapse between two close shots used
     // to pull all the way out to the system and dive back in: sixteen
@@ -724,6 +725,35 @@ export function createMatchMap(
     : s && s.bodyId && s.framing !== 'system' && byId.has(s.bodyId)
       && drawableAt(byId.get(s.bodyId)!, Math.floor(t)) ? s.bodyId : null;
 
+  /** Where in a world's orbit a scene's action is: the centroid of the
+   *  hulls there when the scene was first framed (drawn-radius units). */
+  const sceneFocus = new Map<ReelScene, { ang: number; r: number; side: number }>();
+  const focusOf = (s: ReelScene, subj: string) => {
+    const hit = sceneFocus.get(s);
+    if (hit) return hit;
+    let sx = 0, sy = 0, n = 0;
+    for (const [, v] of lastSeen) {
+      if (v.body !== subj) continue;
+      sx += Math.cos(v.ang) * v.rFrac; sy += Math.sin(v.ang) * v.rFrac; n++;
+    }
+    const seed = (hashStr(`${s.from}:${subj}`) % 1000) / 1000;
+    const f = n >= 3 && Math.hypot(sx, sy) / n > 0.2
+      ? { ang: Math.atan2(sy, sx), r: Math.min(2.5, Math.hypot(sx, sy) / n), side: seed < 0.5 ? -1 : 1 }
+      : { ang: seed * Math.PI * 2, r: 1.6, side: seed < 0.5 ? -1 : 1 };
+    // Only settle once hulls have been seen there, or the first frame
+    // would pin a guess for the whole scene.
+    if (n >= 3) sceneFocus.set(s, f);
+    return f;
+  };
+  /** A battle at a world the film has already fought over. */
+  const repeatVisit = (s: ReelScene) => {
+    for (const x of scenes) {
+      if (x === s) return false;
+      if (x.kind === 'battle' && x.bodyId === s.bodyId) return true;
+    }
+    return false;
+  };
+
   /** A scene's own frame at an instant, with its slow drift. */
   const frameOf = (s0: ReelScene | undefined, t: number, prog: number): Frame => {
     // A held time-lapse is the shot before it, still drifting on.
@@ -750,12 +780,31 @@ export function createMatchMap(
     // shot framed on the world had the beast off the edge of it.
     const k0 = s.beat?.kind ?? '';
     if (/^kaiju_/.test(k0) || s.beat?.data?.cause === 'kaiju') share = Math.min(share, 0.05);
+    if (/^kaiju_/.test(k0) || s.beat?.data?.cause === 'kaiju') share = Math.max(share, 0.07);
     const f = bodyFrame(subj, t, share);
-    // A slow push: a held shot is never a still. A battle opens a touch
-    // wide and closes in on the fight.
-    const k = s.framing === 'battle' ? 0.92 + 0.14 * prog : 1 + 0.045 * prog;
-    return { x: f.x, y: f.y - (H / 2 - H * FOCUS_Y) / f.scale + (H / 2 - H * FOCUS_Y) / (f.scale * k),
-      scale: f.scale * k };
+    // THE DIRECTOR INSIDE THE SHOT. A locked-off frame for seven seconds
+    // read as a still, however much was dying in it. A battle opens wide,
+    // pushes in toward where the fleets are thickest, and eases back as
+    // the verdict lands; a second fight at the same world is shot from the
+    // other side, tighter. A world's news drifts across the frame.
+    const sm = (a: number, b: number, v: number) => { const q = Math.max(0, Math.min(1, (v - a) / (b - a))); return q * q * (3 - 2 * q); };
+    let k: number, offFrac = 0, lateral = 0;
+    const foc = focusOf(s, subj);
+    if (s.framing === 'battle') {
+      const again = repeatVisit(s);
+      const push = sm(0, 0.62, prog) - 0.55 * sm(0.72, 1, prog);
+      k = (again ? 1.12 : 0.86) + (again ? 0.22 : 0.36) * push;
+      offFrac = 0.5 * push * (again ? -1 : 1);
+    } else {
+      k = 1 + 0.07 * prog;
+      lateral = (prog - 0.5) * 0.09 * (foc.side);
+    }
+    const rw = drawnWorldR(byGame.get(subj)!) * foc.r;
+    const cx = Math.cos(foc.ang) * rw * offFrac, cy = Math.sin(foc.ang) * rw * offFrac;
+    const sc = f.scale * k;
+    return { x: f.x + cx + (lateral * W) / sc,
+      y: f.y - (H / 2 - H * FOCUS_Y) / f.scale + (H / 2 - H * FOCUS_Y) / sc + cy,
+      scale: sc };
   };
 
   /** Where a world point lands on screen under a frame. */
@@ -820,9 +869,9 @@ export function createMatchMap(
         cut = q.x < 0 || q.x > W || q.y < 0 || q.y > H;
         anchor = p;
       } else if (prevSubj && !subj) {
-        anchor = pos(prevSubj, t);
-        const q = onScreen(f, anchor);
-        cut = q.x < 0 || q.x > W || q.y < 0 || q.y > H;
+        // Out to the wide shot is a CUT: a zoom back out after every
+        // close-up was the breathing the whole film did.
+        cut = true;
       } else if (subj && prevSubj) {
         cut = true;   // world to world: a straight cut
       }
@@ -1103,7 +1152,9 @@ export function createMatchMap(
     ctx.save();
     // Mid-move (part way between a close shot and the system) the bands
     // sweep the whole frame: keep them low then, so a move is never a flash.
-    ctx.globalAlpha = 0.38 * (overview > 0.05 && overview < 0.95 ? 0.55 : 1);
+    // ...and continuous: a switch at 5% and 95% of the move popped the
+    // bands on and off between two frames.
+    ctx.globalAlpha = 0.32 * (1 - 0.5 * Math.sin(Math.PI * Math.max(0, Math.min(1, overview))));
     drawSystemRegions(
       computeSystemRegions(gameBodies, gameFactions, gameSettlements), rc);
     ctx.restore();
@@ -1333,12 +1384,23 @@ export function createMatchMap(
         const k = (t - tb) / BLAST_TICKS;
         if (k >= 0 && k < 1) {
           const cp = toPx(wp);
-          drawBlast(ctx, cp.x, cp.y, k, d.id);
+          drawBlast(ctx, cp.x, cp.y, k, d.id, d.cls === 'kaiju' ? 6 : 1);
           drawDebris(ctx, cp.x, cp.y, 10, k, d.id);
         }
       }
     }
     drawWrecks(rc, performance.now());
+    // THE DYSON SPHERE, built where everyone can see it.
+    if (dysonBodyId && visibleIds.has(dysonBodyId)) {
+      const dy0 = dysonAt(t);
+      const gb = byGame.get(dysonBodyId);
+      if (dy0 && gb) {
+        const cp = toPx(pos(dysonBodyId, t));
+        const flare = dysonDone != null ? Math.max(0, 1 - Math.abs(t - dysonDone) / 1.2) : 0;
+        drawDysonShell(ctx, cp.x, cp.y, drawnRadiusOf(pres, gb, cam.scale), dy0.progress, dy0.complete,
+          dysonOwner ? colorOf(dysonOwner) : null, flare, performance.now());
+      }
+    }
     for (const [bid, gt] of goneAt) {
       const k = (t - gt) / 2.2;
       if (k < 0 || k >= 1) continue;
@@ -1557,7 +1619,8 @@ export function createMatchMap(
     if (s.from <= (summary.ticks.lo ?? 0) + 1) {
       return { kicker: T('kicker.start'), title: T('title.begin', { n: empires.length }), sub: '', fid: null };
     }
-    const kicker = T('kicker.fastForward');
+    // Time-lapses too short to read a line in carry none.
+    if (s.seconds < MONTAGE_CAPTION_SECONDS) return null;
     const name = (id: string | null | undefined) => filmFaction(id)?.name ?? '';
     const world = (id: string | null | undefined) => (id && byId.get(id)?.name) || '';
     // Only news worth a headline: a slider law or a found relic is ticker.
@@ -1568,7 +1631,8 @@ export function createMatchMap(
       const cap = beatCaption(top, T, name, world);
       if (!cap.title || usedTitles.has(cap.title)) continue;
       montageTop.set(s, top);
-      return { kicker, title: cap.title, sub: '', fid: top.fid };
+      // Its own kind's kicker (WAR, ELIMINATED...), not a generic one.
+      return { kicker: cap.kicker || T('kicker.fastForward'), title: cap.title, sub: '', fid: top.fid };
     }
     const i = scenes.indexOf(s);
     const leadOf = (x: ReelScene) => standingsAt(Math.floor((x.from + x.to) / 2))[0];
@@ -1599,6 +1663,15 @@ export function createMatchMap(
         kaijuGlossed = true;
         c = { ...c, sub: T('sub.kaijuGloss') };
       }
+      // THE STAKES, the moment the Sphere is begun: an engineering win is
+      // a race, and a newcomer has to know it is one.
+      if (s.kind === 'beat' && s.beat?.kind === 'dyson_initiated') {
+        c = { ...c, sub: T('sub.dysonStakes', { a: shortName(filmFaction(s.beat.fid)?.name ?? '') }) };
+      }
+      // A second fight at the same world is the next chapter, not a repeat.
+      if (s.kind === 'battle' && repeatVisit(s)) {
+        c = { ...c, title: T('title.battleAgain', { world: byId.get(s.bodyId ?? '')?.name ?? '' }) };
+      }
       captionCache.set(s, c);
     }
     if (c.title) usedTitles.add(c.title);
@@ -1607,7 +1680,8 @@ export function createMatchMap(
   let kaijuGlossed = false;
 
   /** A battle's two sides, as they stand at this tick. */
-  const tallyOf = (b: ReelBattle, tick: number): TallySide[] => b.sides.map(fid => {
+  const seat = (fid: string) => summary.factions.findIndex(f => f.id === fid);
+  const tallyOf = (b: ReelBattle, tick: number): TallySide[] => [...b.sides].sort((x, y) => seat(x) - seat(y)).map(fid => {
     // The hulls ON SCREEN at the world: a fleet still flying in is not
     // in the fight yet, and counting it put numbers over an empty orbit.
     // ...less any whose blast has already gone off this tick.
@@ -1627,12 +1701,21 @@ export function createMatchMap(
     return { faction: filmFaction(fid)!, ships, lost };
   }).filter(x => x.faction);
 
+  /** A time-lapse shorter than this carries no caption. */
+  const MONTAGE_CAPTION_SECONDS = 1.6;
   /** The least a log row must weigh to headline a time-lapse. */
   const MONTAGE_HEADLINE_WEIGHT = 40;
   /** The finale holds its image this long before the table comes up. */
-  const FINALE_CARD_AT = 3.0;
-  /** Who is building the Dyson Sphere, if anyone. */
+  const FINALE_CARD_AT = 2.6;
+  /** The cold open runs this long as pure action before the title. */
+  const HOOK_SECONDS = 1.4;
+  /** Who is building the Dyson Sphere, if anyone, and round which star. */
   const dysonOwner = (summary.chronicle ?? []).find(r => r.kind === 'dyson_initiated')?.actor_faction_id ?? null;
+  const dysonBodyId = (summary.chronicle ?? []).find(r => r.kind === 'dyson_initiated')?.body_id ?? null;
+  /** Film seconds at which each Dyson milestone lands (for the meter's flash). */
+  const dysonFlashAt = () => (summary.chronicle ?? [])
+    .filter(r => r.kind === 'dyson_milestone' || r.kind === 'dyson_damaged')
+    .map(r => filmSecondsAt(scenes, r.tick_number));
 
   /** When a scene's caption may come up: once a push in has arrived. */
   const landAt = (s: ReelScene) => {
@@ -1663,8 +1746,9 @@ export function createMatchMap(
       hud * overview, { worlds: T('worlds', { n: '' }).trim(), brand: T('intro.untitled') });
     if (s.kind === 'battle' && s.battle) {
       const sides = tallyOf(s.battle, curTick);
-      drawBattleTally(ctx, W, H, sides, hud * (1 - overview), 'VS',
-        Math.max(0, (s.battle.present ?? 2) - 2));
+      const more = Math.max(0, (s.battle.present ?? 2) - 2);
+      drawBattleTally(ctx, W, H, sides, hud * (1 - overview) * Math.min(1, Math.max(0, (el - landAt(s)) / 0.3)),
+        'VS', more, more ? T('more', { n: more }) : '');
       // WHO HOLDS THE FIELD, as the fight closes.
       const prog = el / Math.max(0.01, s.seconds);
       if (prog > 0.7 && sides.length) {
@@ -1677,8 +1761,9 @@ export function createMatchMap(
     // A victory being BUILT, on screen while it is built.
     const dy = dysonAt(curTick + curFrac);
     if (dy && !dy.complete && dysonOwner) {
-      drawProgressMeter(ctx, W, H, T('meter.dyson', { a: shortName(filmFaction(dysonOwner)?.name ?? '') }),
-        dy.progress, colorOf(dysonOwner), hud);
+      const flash = Math.max(0, ...dysonFlashAt().map(at => (fs >= at ? 1 - (fs - at) / 1.2 : 0)));
+      drawProgressMeter(ctx, W, H, T('meter.dyson'), dy.progress, colorOf(dysonOwner), hud, flash,
+        T('meter.dysonNote', { a: shortName(filmFaction(dysonOwner)?.name ?? '') }));
     }
 
     // The clock, and how fast the film is running when it is fast.
@@ -1686,35 +1771,50 @@ export function createMatchMap(
     const x = Math.round(1 / Math.max(0.001, perTick));
     drawClock(ctx, W, H, curTick + curFrac, s.kind === 'montage' && x >= 4 ? `${T('ff')} \u25B8\u25B8` : null, hud);
 
-    // The ticker: smaller headlines, as they happen.
-    if (hud > 0.5) {
-      // During a battle the ticker is about the battle; elsewhere it never
-      // repeats the headline that is already up.
-      const b = s.kind === 'battle' ? s.battle : undefined;
-      const top = montageTop.get(s);
-      const live = ticker.filter(x2 => fs >= x2.start && fs < x2.start + TICKER_LIFE_SECONDS
-        && x2.beat !== top
-        && (!b || x2.beat.body === b.body || b.sides.includes(x2.beat.fid ?? ''))).slice(-2);
-      drawTicker(ctx, W, H, live.map(x2 => ({ text: x2.beat.text,
-        faction: filmFaction(x2.beat.fid), life: (fs - x2.start) / TICKER_LIFE_SECONDS })),
-      W * 0.6);
-    }
-
-    // The lower third: what this scene is.
+    // The lower third: what this scene is. Drawn before the ticker, which
+    // keeps clear of how far it reaches.
     const cap = !intro && !finale ? captionOf(s) : null;
+    let ltRight = 0;
     if (cap && cap.title && !(s.kind === 'montage' && s.seconds < 1.1)) {
       const c = cap;
       // A montage line is a quick read: in and out briskly.
       const fade = s.kind === 'montage' ? Math.min(0.3, s.seconds * 0.22) : 0.4;
-      drawLowerThird(ctx, W, H, { kicker: c.kicker, title: c.title, sub: c.sub,
+      ltRight = drawLowerThird(ctx, W, H, { kicker: c.kicker, title: c.title, sub: c.sub,
         color: c.fid ? colorOf(c.fid) : null },
       (el - landAt(s)) / (fade + 0.1), (el - (s.seconds - fade)) / fade);
     }
 
+    // The ticker: one line, about what is in shot.
+    if (hud > 0.5 && W - 56 * unitOf(H) - Math.max(W * 0.6, ltRight + 48 * unitOf(H)) > 320 * unitOf(H)) {
+      // During a battle the ticker is about the battle; elsewhere it never
+      // repeats the headline that is already up.
+      const b = s.kind === 'battle' ? s.battle : undefined;
+      const top = montageTop.get(s);
+      const subj = curFocus;
+      const live = ticker.filter(x2 => fs >= x2.start && fs < x2.start + TICKER_LIFE_SECONDS
+        && x2.beat !== top
+        && (!b || x2.beat.body === b.body || b.sides.includes(x2.beat.fid ?? ''))
+        && (!subj || b || x2.beat.body === subj)).slice(-1);
+      drawTicker(ctx, W, H, live.map(x2 => ({ text: broadcastCopy(x2.beat.text),
+        faction: filmFaction(x2.beat.fid), life: (fs - x2.start) / TICKER_LIFE_SECONDS })),
+      Math.max(W * 0.6, ltRight + 48 * unitOf(H)));
+    }
+
     if (intro) {
       const c = captionOf(s);
+      if (teaser?.battle) {
+        drawHookLine(ctx, W, H, T('hook', { n: teaser.battle.peak }), el / 1.0, (el - (HOOK_SECONDS - 0.15)) / 0.15);
+      }
+      const at = teaser ? HOOK_SECONDS : 0;
       drawTitleCard(ctx, W, H, c, empires.map(f => filmFaction(f.id)!).filter(Boolean),
-        el / 0.5, (el - (s.seconds - 0.6)) / 0.6, teaser ? 0.55 : 1);
+        (el - at) / 0.35, (el - (s.seconds - 0.4)) / 0.4, teaser ? 0.8 : 1);
+    }
+    // Out of the cold open, a dip through black: the clock jumps back
+    // five hundred days and the frame should say so.
+    const prevScene = scenes[idx - 1];
+    if (prevScene?.kind === 'intro' && teaser && el < 0.35) {
+      ctx.fillStyle = `rgba(0,0,0,${0.9 * (1 - el / 0.35)})`;
+      ctx.fillRect(0, 0, W, H);
     }
     if (finale) {
       const c = captionOf(s);
