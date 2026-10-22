@@ -34,8 +34,6 @@ import {
 export const BATTLE_TURN_MS = 240000;
 /** A station's drawn width at full size (88-unit art x STATION_STRUCTURE_SCALE). */
 export const BATTLE_STATION_PX = 200;
-/** How fast a unit glides to a new place, ms (time constant). */
-const GLIDE_MS = 260;
 /** Sprites grow with the world up to this many times full size, then
  *  hold. Places keep scaling (so the fight stays clear of the disc);
  *  only the hulls stop growing, which can only open space, never close
@@ -243,7 +241,23 @@ export function battleScale(battle: LiveBattle, drawnRadiusPx: number): number {
 
 // ---------------------------------------------------------------- glide
 
-interface Glide { r: number; t: number; ms: number }
+/** Where a unit is drawn (r, t: reference polar, wheel removed) and the
+ *  move it is making: from (r0, t0) to (r1, t1) over [t0ms, t0ms + dur]. */
+interface Glide {
+  r: number; t: number; ms: number;
+  r0?: number; a0?: number; r1?: number; a1?: number; startMs?: number; dur?: number;
+}
+/** A RE-SLOT IS A TIMED EASE, not a chase. Both chases this replaced
+ *  kicked on their first frame, in proportion to the distance: an
+ *  exponential is fastest at once, and a spring's first push scales with
+ *  the gap, so a fleet re-slotted across the orbit lurched off (the last
+ *  jumps in the Mega Destroyer clip, film --trace). Now every move is a
+ *  quintic ease (smootherstep: zero speed AND zero acceleration at both
+ *  ends) lasting with the distance, BATTLE_GLIDE_MIN_MS to _MAX_MS. */
+export const BATTLE_GLIDE_MIN_MS = 450;
+export const BATTLE_GLIDE_MAX_MS = 1200;
+const smoother = (u: number) => { const k = Math.max(0, Math.min(1, u)); return k * k * k * (k * (k * 6 - 15) + 10); };
+const wrapPi = (a: number) => { let d = a % (Math.PI * 2); if (d > Math.PI) d -= Math.PI * 2; if (d < -Math.PI) d += Math.PI * 2; return d; };
 const glides = new Map<string, Glide>();
 let lastSweep = 0;
 
@@ -285,14 +299,18 @@ export function battlePlacement(
   if (!p) return null;
   let g = glides.get(id);
   if (!g || !fresh(g, nowMs)) { g = { r: p.r, t: p.theta, ms: nowMs }; glides.set(id, g); }
-  const dt = Math.max(0, Math.min(200, nowMs - g.ms));
   g.ms = nowMs;
-  const k = 1 - Math.exp(-dt / GLIDE_MS);
-  let dth = (p.theta - g.t) % (Math.PI * 2);
-  if (dth > Math.PI) dth -= Math.PI * 2;
-  if (dth < -Math.PI) dth += Math.PI * 2;
-  g.t += dth * k;
-  g.r += (p.r - g.r) * k;
+  // A new target: start a move from wherever it is drawn now.
+  if (g.r1 === undefined || Math.abs(g.r1 - p.r) > 1e-6 || Math.abs(wrapPi((g.a1 ?? 0) - p.theta)) > 1e-6) {
+    const dAng = Math.abs(wrapPi(p.theta - g.t));
+    const dist = Math.hypot(p.r - g.r, ((g.r + p.r) / 2) * dAng);
+    const dur = dist < 1e-6 ? 0
+      : Math.min(BATTLE_GLIDE_MAX_MS, BATTLE_GLIDE_MIN_MS + (dist / Math.max(1, p.r)) * 500);
+    g.r0 = g.r; g.a0 = g.t; g.r1 = p.r; g.a1 = p.theta; g.startMs = nowMs; g.dur = dur;
+  }
+  const u = g.dur ? smoother((nowMs - (g.startMs ?? nowMs)) / g.dur) : 1;
+  g.r = (g.r0 ?? p.r) + (p.r - (g.r0 ?? p.r)) * u;
+  g.t = (g.a0 ?? p.theta) + wrapPi(p.theta - (g.a0 ?? p.theta)) * u;
   if (nowMs - lastSweep > 10000) {
     lastSweep = nowMs;
     for (const [gid, gl] of glides) if (nowMs - gl.ms > 10000) glides.delete(gid);
@@ -314,11 +332,35 @@ export function battlePlacement(
  * the layout no longer uses: a fire or a bolt drawn there floated in
  * empty space (Lorne: "rogue damage effects floating by").
  */
+/** Where a unit is in its world's layout right now, without advancing or
+ *  creating its glide: the glide's current place if it has one, else its
+ *  target. For readers (effects), never for the hull's own draw. */
+export function peekBattlePlacement(
+  battle: LiveBattle, id: string, nowMs: number,
+): { x: number; y: number; theta: number; r: number; heading: number } | null {
+  const p = battle.layout.placements.get(id)
+    ?? (battle.layout.station && battle.layout.station.id === id ? battle.layout.station : undefined);
+  if (!p) return null;
+  const g = glides.get(id);
+  const r = g && fresh(g, nowMs) ? g.r : p.r;
+  const t = g && fresh(g, nowMs) ? g.t : p.theta;
+  const theta = t + battleDrift(battle, nowMs);
+  const jitter = p.heading - (Math.atan2(p.y, p.x) + Math.PI / 2);
+  const heading = theta + (Math.PI / 2) * battle.dir + jitter;
+  return { x: Math.cos(theta) * r, y: Math.sin(theta) * r, theta, r, heading };
+}
+
 export function battleShipOffsetPx(
   battle: LiveBattle, shipId: string, nowMs: number, k: number,
 ): { x: number; y: number } | null {
   const unit = battle.leadOf.get(shipId) ?? shipId;
-  const pl = battlePlacement(battle, unit, nowMs);
+  // READ ONLY. This asked battlePlacement, which CREATES a unit's glide at
+  // its target when it has none; called by the weapon FX before the hull
+  // drew itself, it planted the glide at the destination, the hull's own
+  // draw then found one and never seeded it from where the hull was, and
+  // an arriving hull went straight to its place (the Mega Destroyer
+  // take, 24.5 s).
+  const pl = peekBattlePlacement(battle, unit, nowMs);
   if (!pl) return null;
   let x = pl.x * k, y = pl.y * k;
   const blk = unit === shipId ? battle.blocks.get(unit) : undefined;

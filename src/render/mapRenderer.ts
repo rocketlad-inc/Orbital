@@ -4881,7 +4881,7 @@ export interface ShipFormation {
  *  destruction flashes) read this so a kill scars the map where the
  *  ship visibly WAS, not at its textbook orbital point on the far side
  *  of the planet (QA finding). Bounded like the other per-ship caches. */
-const lastDrawnShipWorldPos = new Map<string, { x: number; y: number; ms?: number }>();
+const lastDrawnShipWorldPos = new Map<string, { x: number; y: number; ms?: number; standIn?: boolean }>();
 export function drawnShipWorldPos(shipId: string): { x: number; y: number } | undefined {
   return lastDrawnShipWorldPos.get(shipId);
 }
@@ -4979,6 +4979,19 @@ export function nearestDrawnCapital(
   return best;
 }
 
+const battleHolds = new Map<string, { lx: number; ly: number; heading: number; ms: number }>();
+function heldInBattle(shipId: string, parentPos: { x: number; y: number }, nowMs: number):
+  { lx: number; ly: number; heading: number } | null {
+  const h = battleHolds.get(shipId);
+  if (h && nowMs >= h.ms && nowMs - h.ms <= 400) { h.ms = nowMs; return h; }
+  const was = recentDrawnShipWorldPos(shipId, 600);
+  if (!was) { battleHolds.delete(shipId); return null; }
+  if (battleHolds.size > 2000) battleHolds.clear();
+  const seed = { lx: was.x - parentPos.x, ly: was.y - parentPos.y, heading: drawnShipLook(shipId)?.heading ?? 0, ms: nowMs };
+  battleHolds.set(shipId, seed);
+  return seed;
+}
+
 /** HULL_FLASH_MS after a hit the struck hull flashes white: the sprite
  *  drawn again additively, in the transform it was just drawn in. The
  *  hit has a place (fxArt sparks at the face) and the ship visibly
@@ -5022,12 +5035,25 @@ function hullFlashHere(
 // whole fleet slid off the screen away from the moon it was fighting at.
 // And however it arises, an offset is a short slide: past
 // CONTINUITY_MAX_SLIDE_PX it is dropped and the hull is drawn where it is.
-const continuity = new Map<string, { x: number; y: number; vx: number; vy: number; ox: number; oy: number; ms: number;
-  oid: string | null; ax: number; ay: number }>();
-export const CONTINUITY_TAU_MS = 180;
+const continuity = new Map<string, {
+  x: number; y: number; vx: number; vy: number; ms: number;
+  /** The offset being closed: o0 at startMs, gone at startMs + dur. */
+  o0x: number; o0y: number; startMs: number; dur: number;
+  /** The frame the hull moves in (its world), and where it was. */
+  oid: string | null; ax: number; ay: number;
+}>();
+/** How long a caught jump takes to close, by size (screen px). The close
+ *  is a quintic ease (smootherstep: zero speed and acceleration at both
+ *  ends). An exponential and then a spring both kicked on the first
+ *  frame in proportion to the jump, so a big catch still left as a lurch. */
+export const CONTINUITY_MIN_MS = 300;
+export const CONTINUITY_MAX_MS = 900;
+/** Kept for callers sizing a test run: the slowest close is over by then. */
+export const CONTINUITY_TAU_MS = CONTINUITY_MAX_MS / 5;
+const smootherStep = (u: number) => { const k = Math.max(0, Math.min(1, u)); return k * k * k * (k * (k * 6 - 15) + 10); };
 /** A hull not drawn for this long starts fresh (it was off screen). */
 const CONTINUITY_GAP_MS = 250;
-/** The longest slide the guard will draw instead of a jump. */
+/** How far caught jumps may stack up before the older ones are dropped. */
 export const CONTINUITY_MAX_SLIDE_PX = 400;
 
 /** `x, y` is where the hull truly is this frame; the answer is where to
@@ -5044,15 +5070,17 @@ export function continuousDrawnPos(
   const oid = origin?.id ?? null, axNow = origin?.x ?? 0, ayNow = origin?.y ?? 0;
   if (!c || nowMs <= c.ms || nowMs - c.ms > CONTINUITY_GAP_MS || !(scale > 0)) {
     if (continuity.size > 3000) continuity.clear();
-    continuity.set(shipId, { x, y, vx: 0, vy: 0, ox: 0, oy: 0, ms: nowMs, oid, ax: axNow, ay: ayNow });
+    continuity.set(shipId, { x, y, vx: 0, vy: 0, ms: nowMs, o0x: 0, o0y: 0, startMs: nowMs, dur: 0,
+      oid, ax: axNow, ay: ayNow });
     return { x, y };
   }
   // A new frame of reference (landing, a new world): rebase, so the
   // switch itself is not motion.
   if (c.oid !== oid) { c.oid = oid; c.ax = axNow; c.ay = ayNow; }
   const dt = nowMs - c.ms;
-  const fade = Math.exp(-dt / CONTINUITY_TAU_MS);
-  let ox = c.ox * fade, oy = c.oy * fade;
+  // The offset still left to close, on its ease.
+  const left = c.dur > 0 ? 1 - smootherStep((nowMs - c.startMs) / c.dur) : 0;
+  let ox = c.o0x * left, oy = c.o0y * left;
   // Where its own (true) motion was taking it, riding its frame.
   const carryX = axNow - c.ax, carryY = ayNow - c.ay;
   const px = c.x + carryX + c.vx * dt, py = c.y + carryY + c.vy * dt;
@@ -5061,18 +5089,25 @@ export function continuousDrawnPos(
   const stepPx = Math.hypot(c.vx, c.vy) * dt * scale;
   const jumped = errPx > Math.max(8, 0.6 * stepPx);
   if (jumped) {
-    // Absorb it: drawn stays on the line it was on, then fades across.
+    // Absorb it: drawn stays on the line it was on, then eases across,
+    // longer for a bigger catch. Whatever was still closing joins it.
     ox -= ex; oy -= ey;
+    const px2 = Math.hypot(ox, oy) * scale;
+    c.o0x = ox; c.o0y = oy; c.startMs = nowMs;
+    c.dur = Math.min(CONTINUITY_MAX_MS, CONTINUITY_MIN_MS + px2 * 0.6);
   } else {
     c.vx = (x - c.x - carryX) / dt;
     c.vy = (y - c.y - carryY) / dt;
   }
-  // A slide longer than this is not continuity, it is a hull drawn
-  // somewhere it is not: draw it where it is.
-  if (Math.hypot(ox, oy) * scale > CONTINUITY_MAX_SLIDE_PX) { ox = 0; oy = 0; }
+  // Catches never STACK: one jump of any size slides, but an offset grown
+  // past the biggest single catch (and past CONTINUITY_MAX_SLIDE_PX) is a
+  // hull drawn somewhere it is not, so keep only this frame's catch.
+  if (jumped && Math.hypot(ox, oy) * scale > Math.max(CONTINUITY_MAX_SLIDE_PX, errPx)) {
+    ox = -ex; oy = -ey; c.o0x = ox; c.o0y = oy;
+  }
   // A jump keeps the motion it had; the true position moves on regardless.
   c.x = x; c.y = y; c.ax = axNow; c.ay = ayNow;
-  c.ox = ox; c.oy = oy; c.ms = nowMs;
+  c.ms = nowMs;
   return { x: x + ox, y: y + oy };
 }
 
@@ -5080,7 +5115,7 @@ function recordDrawnShipWorldPos(shipId: string, x: number, y: number): void {
   if (lastDrawnShipWorldPos.size > 2000) lastDrawnShipWorldPos.clear();
   const ms = performance.now();
   const e = lastDrawnShipWorldPos.get(shipId);
-  if (e) { e.x = x; e.y = y; e.ms = ms; }
+  if (e) { e.x = x; e.y = y; e.ms = ms; e.standIn = false; }
   else lastDrawnShipWorldPos.set(shipId, { x, y, ms });
 }
 
@@ -5089,7 +5124,8 @@ function recordDrawnShipWorldPos(shipId: string, x: number, y: number): void {
 export function drawnShipsSince(sinceMs: number): Array<[string, number, number]> {
   const out: Array<[string, number, number]> = [];
   for (const [id, e] of lastDrawnShipWorldPos) {
-    if (e.ms != null && e.ms >= sinceMs) out.push([id, Math.round(e.x * 100) / 100, Math.round(e.y * 100) / 100]);
+    // A stand-in (a folded hull given its flagship's spot) is not drawn.
+    if (e.ms != null && e.ms >= sinceMs && !e.standIn) out.push([id, Math.round(e.x * 100) / 100, Math.round(e.y * 100) / 100]);
   }
   return out;
 }
@@ -5139,12 +5175,35 @@ export function glideLayout(
   return { x: g.x, y: g.y };
 }
 
+/**
+ * An escort's drawn spot, through the continuity guard like every other
+ * hull. Escorts are placed by their fleet's block, and the block is
+ * re-solved when the fleet changes: its flagship dies and the block
+ * re-centres on a new one (measured on the Mega Destroyer take, 2026-10-21:
+ * every Earth Guard hull jumped 2,300 px in one frame at 37 px a unit when
+ * guard_dd_0 died). Without this the escorts snapped, and the hull that
+ * became the new flagship reached drawShip with no history in the guard,
+ * so its first frame there snapped too. One guard entry per hull, whichever
+ * path draws it, keeps the motion continuous across the switch.
+ */
+export function guardedEscortCanvasPos(
+  ctx: RenderContext, shipId: string, x: number, y: number,
+): { x: number; y: number } {
+  const raw = canvasToWorld(x, y, ctx);
+  const kept = continuousDrawnPos(shipId, raw.x, raw.y, ctx.camera.scale, ctx.nowMs ?? performance.now());
+  return kept.x === raw.x && kept.y === raw.y ? { x, y } : worldToCanvas(kept.x, kept.y, ctx);
+}
+
 /** For a hull that rides with another this frame without being drawn on
  *  its own (an escort whose flagship is off-screen): it is where its
  *  flagship last was, which is where its death belongs too. */
 export function recordShipWorldPosAs(shipId: string, asShipId: string): void {
   const at = lastDrawnShipWorldPos.get(asShipId);
-  if (at) recordDrawnShipWorldPos(shipId, at.x, at.y);
+  if (at) {
+    recordDrawnShipWorldPos(shipId, at.x, at.y);
+    const e = lastDrawnShipWorldPos.get(shipId);
+    if (e) e.standIn = true;
+  }
 }
 
 /**
@@ -5337,7 +5396,19 @@ export function drawEscortHull(
    *  thrust hint). Escorts burn with their flagship. */
   thrust = 0,
 ): void {
+  // The continuity guard has the last word here too (see
+  // guardedEscortCanvasPos): a re-solved fleet block slides, never jumps.
+  ({ x, y } = guardedEscortCanvasPos(ctx, ship.id, x, y));
   if (farOffCanvas(ctx, x, y, baseSizePx * 2)) return;
+  // Through the continuity guard like every other drawn hull: a hull that
+  // moves between its own course and its fleet's block (the fleet
+  // groups or ungroups with the zoom) slides there, and keeps one history.
+  {
+    const w0 = canvasToWorld(x, y, ctx);
+    const kept = continuousDrawnPos(ship.id, w0.x, w0.y, ctx.camera.scale, ctx.nowMs ?? performance.now());
+    const c = worldToCanvas(kept.x, kept.y, ctx);
+    x = c.x; y = c.y;
+  }
   const g = ctx.ctx;
   const color = shipColor(ship, ctx.factions);
   // Capped at 1: `baseSizePx` is the slot a destroyer fills, and a
@@ -5470,6 +5541,18 @@ export function drawShip(
       }
     }
     const pl = k > 0 ? battlePlacement(liveBattle, ship.id, nowM) : null;
+    // WAITING FOR A PLACE. A hull that just arrived is outside the cached
+    // layout until the roster dwell lets the world re-solve; it used to be
+    // drawn on its raw parking orbit meanwhile, a third spot between where
+    // it arrived and where it would go. It holds where it was drawn, fixed
+    // to the world, until its place exists, then glides from there.
+    const held = !pl && k > 0 ? heldInBattle(ship.id, parentPos, nowM) : null;
+    if (held) {
+      battleK = k;
+      heading = held.heading;
+      lx = held.lx;
+      ly = held.ly;
+    }
     if (pl) {
       battleK = k;
       heading = pl.heading;

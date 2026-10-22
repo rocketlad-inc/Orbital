@@ -10,7 +10,7 @@
  */
 import {
   rendezvousAttitude, glideLayout, LAYOUT_GLIDE_TAU_MS, INTERCEPT_MIN_WINDOW_TICKS,
-  continuousDrawnPos, CONTINUITY_TAU_MS,
+  continuousDrawnPos, CONTINUITY_TAU_MS, guardedEscortCanvasPos,
 } from '../mapRenderer';
 import { EXPLOSION_REACH } from '../fxArt';
 import type { Ship } from '../../types';
@@ -150,12 +150,56 @@ describe('a hull never jumps on screen (the continuity guard)', () => {
     }
   });
 
-  test('a slide never carries a hull far from where it is', () => {
-    // Even if every frame looks like a jump, the drawn hull stays near.
+  test('caught jumps never stack into a runaway slide', () => {
+    // Even if every frame looks like a jump, the drawn hull is never
+    // further off than the one catch it is closing.
     for (let i = 0; i < 60; i++) {
       const p = continuousDrawnPos('wild', i % 2 ? 500 : -500, 0, 1, 1000 + i * 33);
-      expect(Math.abs(p.x - (i % 2 ? 500 : -500))).toBeLessThanOrEqual(400);
+      expect(Math.abs(p.x - (i % 2 ? 500 : -500))).toBeLessThanOrEqual(1001);
     }
+  });
+
+  test('an escort that becomes the flagship slides, it does not snap', () => {
+    // The Mega Destroyer take: the Earth Guard's flagship died, the block
+    // re-centred, and the hull promoted to flagship moved from the escort
+    // draw path to drawShip's on that frame, 300 px from where it was.
+    const ctx = { canvas: { width: 1000, height: 800 }, camera: { x: 0, y: 0, scale: 1 }, nowMs: 0 } as never as Parameters<typeof guardedEscortCanvasPos>[0];
+    const c = ctx as unknown as { nowMs: number };
+    const drawn: number[] = [];
+    for (let i = 0; i < 10; i++) {
+      c.nowMs = 2000 + i * 33;
+      const at = guardedEscortCanvasPos(ctx, 'promoted', 500 + i * 3, 400);   // escort path, canvas px
+      drawn.push(at.x - 500);
+    }
+    // Now drawShip draws it (world units; camera at 0, scale 1, so world x = canvas x - 500).
+    for (let i = 10; i < 10 + Math.ceil((CONTINUITY_TAU_MS * 5) / 33); i++) {
+      drawn.push(continuousDrawnPos('promoted', i * 3 + 300, 0, 1, 2000 + i * 33).x);
+    }
+    expect(drawn[10] - drawn[9]).toBeLessThan(10);
+    for (let i = 11; i < drawn.length; i++) expect(drawn[i] - drawn[i - 1]).toBeLessThan(80);
+    expect(drawn[drawn.length - 1]).toBeCloseTo((drawn.length - 1) * 3 + 300, -1);
+  });
+
+  test('a re-centred escort block slides', () => {
+    const ctx = { canvas: { width: 1000, height: 800 }, camera: { x: 0, y: 0, scale: 1 }, nowMs: 0 } as never as Parameters<typeof guardedEscortCanvasPos>[0];
+    const c = ctx as unknown as { nowMs: number };
+    const xs: number[] = [];
+    for (let i = 0; i < 30; i++) {
+      c.nowMs = 9000 + i * 33;
+      xs.push(guardedEscortCanvasPos(ctx, 'escort-block', 500 + (i >= 10 ? 250 : 0), 400).x);
+    }
+    expect(xs[10] - xs[9]).toBeLessThan(10);
+    for (let i = 11; i < xs.length; i++) expect(xs[i] - xs[i - 1]).toBeLessThan(80);
+  });
+
+  test('a caught jump starts from rest: no kick on the first frame of the slide', () => {
+    // 3 px a frame, then re-derived 1,000 px away (an arriving fleet re-slotted).
+    const out = run('kick', i => ({ x: i * 3 + (i >= 10 ? 1000 : 0), y: 0 }), 60);
+    const step = (i: number) => out[i].x - out[i - 1].x;
+    // The first frames of the slide barely move beyond its own 3 px...
+    expect(step(11)).toBeLessThan(12);
+    // ...and the speed builds frame on frame rather than arriving at once.
+    for (let i = 12; i < 16; i++) expect(Math.abs(step(i) - step(i - 1))).toBeLessThan(25);
   });
 
   test('a hull not drawn for a while starts where it is', () => {
