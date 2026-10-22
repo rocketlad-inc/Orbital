@@ -44,7 +44,10 @@ const WEIGHT: Record<string, number | ((p: P, r: ChronicleRow) => number)> = {
   settlement_built: 0,
   faction_eliminated: 150, faction_revived: 60, faction_joined: 30, faction_comeback: 130,
   captain_lost: 0,
-  kaiju_omen: 70, kaiju_launched: 120, kaiju_revealed: 110, kaiju_hunting: 100,
+  // The beast is on screen from its arrival: the launch is a speck far
+  // out past a sun gate, the arrival and the reveal are the monster.
+  kaiju_omen: 50, kaiju_launched: 60, kaiju_revealed: 125,
+  kaiju_hunting: (p) => (p.first ? 135 : 95),
   kaiju_charging: 140, kaiju_leaving: 60, kaiju_gone: 60,
   // The payoff outranks every setup: the kill is the shareable moment.
   kaiju_dead: 200,
@@ -78,6 +81,9 @@ const VICTORY_KINDS: Record<string, RegExp> = {
 const VICTORY_BONUS = 60;
 /** The winner's own moments, a little ahead of everyone else's. */
 const WINNER_BONUS = 15;
+
+/** Conquests by one empire this close together are one campaign. */
+const CAMPAIGN_GAP_TICKS = 25;
 
 /** Kinds that are about the whole system, never one world. */
 const SYSTEM_WIDE = new Set([
@@ -139,7 +145,7 @@ export function buildBeats(summary: MatchSummary, o: BeatOptions): ReelBeat[] {
     // A world-bound moment with no world to show is a ticker line.
     if (!body && !SYSTEM_WIDE.has(r.kind) && weight > 0) weight = Math.min(weight, 0);
     const text = bareLine(formatChronicleEvent(
-      { tick_number: r.tick_number, kind: r.kind, payload: r.payload,
+      { tick_number: r.tick_number, kind: r0.kind, payload: r.payload,
         actor_faction_id: r.actor_faction_id, target_faction_id: r.target_faction_id },
       { factionNameById: names }, o.lang, { names: true }));
     const beat: ReelBeat = { tick: r.tick_number, kind: r.kind, body, weight,
@@ -194,6 +200,31 @@ function mergeBeats(beats: ReelBeat[], summary: MatchSummary, lang: Lang): ReelB
     taken.data = { ...taken.data, capital: true, from_name: names.get(e.fid ?? '') ?? '' };
     e.weight = 0;
   }
+  // A CAMPAIGN, not five slides: one empire taking world after world in
+  // quick succession is one beat that names them all. Five conquest beats
+  // in a row with the same sentence played like a slideshow loop.
+  const inCampaign = new Set<ReelBeat>();
+  for (let i = 0; i < out.length; i++) {
+    const e = out[i];
+    if (e.kind !== 'settlement_seized' || e.weight <= 0 || !e.fid || inCampaign.has(e)) continue;
+    const run = [e];
+    for (let j = i + 1; j < out.length; j++) {
+      const x = out[j];
+      if (x.tick - run[run.length - 1].tick > CAMPAIGN_GAP_TICKS) break;
+      if (x.kind !== 'settlement_seized' || x.fid !== e.fid || x.weight <= 0) continue;
+      // Each conquest belongs to one campaign; a second settlement taken
+      // on a world already in it adds nothing to the count.
+      inCampaign.add(x);
+      if (!run.some(r => r.body === x.body)) run.push(x); else x.weight = 0;
+    }
+    inCampaign.add(e);
+    if (run.length < 2) continue;
+    const last = run[run.length - 1];
+    const worlds = run.map(r => String(r.data?.body_name ?? '')).filter(Boolean);
+    last.weight = Math.max(...run.map(r => r.weight)) + 15 * (run.length - 1);
+    last.data = { ...last.data, campaign: worlds, line: worlds.join(' · ') };
+    for (const r of run.slice(0, -1)) r.weight = 0;
+  }
   // A comeback that knocks someone else out is one moment, told whole:
   // the rise is the headline, the fall its line underneath.
   for (const e of out) {
@@ -202,7 +233,6 @@ function mergeBeats(beats: ReelBeat[], summary: MatchSummary, lang: Lang): ReelB
       && Math.abs(x.tick - e.tick) <= 2 && x.weight > 0);
     if (!fell) continue;
     e.weight = Math.max(e.weight, fell.weight + 10);
-    e.data = { ...e.data, line: fell.text };
     fell.weight = 0;
   }
   return out;
@@ -332,7 +362,9 @@ export function beatCaption(e: ReelBeat,
     case 'treaty_signed': title = T('title.treaty', { a, b }); break;
     case 'treaty_broken': title = T('title.treatyBroken', { a, b }); break;
     case 'settlement_seized':
-      title = p.capital ? T('title.seizedCapital', { world, a }) : T('title.seized', { world, a });
+      title = Array.isArray(p.campaign) && p.campaign.length > 1
+        ? T('title.campaign', { a, n: p.campaign.length })
+        : p.capital ? T('title.seizedCapital', { world, a }) : T('title.seized', { world, a });
       break;
     case 'settlement_destroyed':
       title = p.is_capital ? T('title.capitalFalls', { a, world }) : T('title.destroyed', { world });
@@ -359,7 +391,7 @@ export function beatCaption(e: ReelBeat,
     case 'dyson_collapsed': title = T('title.dysonFalls'); break;
     case 'mega_strike_charging': title = T('title.strikeAimed', { world }); break;
     case 'terraform_destroyed':
-      title = p.cause === 'kaiju' ? T('title.devoured', { world }) : T('title.sterilised', { world }); break;
+      title = p.cause === 'kaiju' ? T('title.scorched', { world }) : T('title.sterilised', { world }); break;
     case 'world_obliterated':
       title = p.cause === 'kaiju' ? T('title.devoured', { world }) : T('title.obliterated', { world }); break;
     case 'asteroid_launched': case 'asteroid_impact': title = T('title.impact', { world }); break;
@@ -377,6 +409,7 @@ export function beatCaption(e: ReelBeat,
     default: title = e.text; break;
   }
   const line = typeof p.line === 'string' ? p.line : e.text;
-  const sub = title === line ? '' : line.replace(/\s*\[[^\]]*\]/g, '');
+  // The log's bill tags read as code ("[slider law]"): say them as words.
+  const sub = title === line ? '' : line.replace(/\s*\[([^\]]*)\]/g, ' ($1)');
   return { kicker, title, sub, fid: e.fid };
 }

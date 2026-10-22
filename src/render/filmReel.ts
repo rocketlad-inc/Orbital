@@ -91,6 +91,8 @@ export interface ReelScene {
 export interface ReelOptions {
   /** Override the runtime budget, seconds. */
   targetSeconds?: number;
+  /** The world the result is about (the star of a Dyson Sphere win). */
+  finaleBody?: string | null;
 }
 
 export const INTRO_SECONDS = 3.6;
@@ -228,19 +230,42 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
     gap(cur, finaleFrom);
     return cost;
   };
+  /**
+   * A BATTLE BENDS AROUND A HEADLINE. A one-tick beat on the last tick of
+   * a fight threw the whole fight out: the deadliest battle of a match
+   * (126 ships, 31 lost) lost its scene to the Senate vote on its final
+   * tick. Trim the battle to the longest stretch clear of what is chosen.
+   */
+  const fitted = (c: Cand): Cand | null => {
+    if (!chosen.some(x => overlaps(x, c))) return c;
+    if (c.kind !== 'battle') return null;
+    let best: [number, number] | null = null;
+    for (let a = c.from; a < c.to; a++) {
+      for (let b = c.to; b > a; b--) {
+        const t = { from: a, to: b };
+        if (chosen.some(x => overlaps(x, t))) continue;
+        if (!best || b - a > best[1] - best[0]) best = [a, b];
+        break;
+      }
+    }
+    if (!best || best[1] - best[0] < 3) return null;
+    return { ...c, from: best[0], to: best[1],
+      seconds: c.seconds * Math.max(0.6, (best[1] - best[0]) / Math.max(1, c.to - c.from)) };
+  };
   let used = INTRO_SECONDS + FINALE_SECONDS;
   const pool = [...cands];
   for (;;) {
-    let best = -1, bestW = 0;
+    let best = -1, bestW = 0, bestC: Cand | null = null;
     for (let i = 0; i < pool.length; i++) {
-      const c = pool[i];
-      if (chosen.some(x => overlaps(x, c))) continue;
+      const c = fitted(pool[i]);
+      if (!c) continue;
       if (used + c.seconds + montageFloor([...chosen, c]) > target) continue;
       const w = worth(c, chosen);
-      if (w > bestW + 1e-9) { best = i; bestW = w; }
+      if (w > bestW + 1e-9) { best = i; bestW = w; bestC = c; }
     }
-    if (best < 0) break;
-    const c = pool.splice(best, 1)[0];
+    if (best < 0 || !bestC) break;
+    pool.splice(best, 1);
+    const c = bestC;
     chosen.push(c);
     used += c.seconds;
   }
@@ -273,7 +298,7 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
   }
   pushMontage(cur, finaleFrom);
   scenes.push({ kind: 'finale', from: finaleFrom, to: hi, seconds: FINALE_SECONDS,
-    framing: 'system', bodyId: null, extras: [] });
+    framing: opts.finaleBody ? 'world' : 'system', bodyId: opts.finaleBody ?? null, extras: [] });
 
   // ---- montage pace: spend what is left -------------------------------
   const fixed = scenes.filter(s => s.kind !== 'montage').reduce((a, s) => a + s.seconds, 0);

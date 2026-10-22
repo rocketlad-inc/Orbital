@@ -63,6 +63,15 @@ describe('filmReel', () => {
     expect(places).toContain('mars');
   });
 
+  it('bends a battle around a headline on its last tick instead of dropping it', () => {
+    const scenes = planReel({ lo: 1, hi: 120,
+      battles: [battle('earth', 100, 108, 120, 30)],
+      beats: [beat(107, 'senate_vote', 240)] });
+    const fight = scenes.find(s => s.kind === 'battle');
+    expect(fight?.bodyId).toBe('earth');
+    expect(scenes.some(s => s.kind === 'beat')).toBe(true);
+  });
+
   it('leaves standoffs where nobody died out of the cut', () => {
     const scenes = planReel({ lo: 1, hi: 100,
       battles: [battle('mars', 20, 28, 90, 0)], beats: [] });
@@ -139,6 +148,18 @@ describe('filmCaptions', () => {
     expect(ruin.weight).toBe(0);
     expect(take.weight).toBeGreaterThan(120);
     expect(take.data?.capital).toBe(true);
+  });
+
+  it('makes one campaign of world after world taken by one empire', () => {
+    const seized = (t: number, w: string) => ({ tick_number: t, kind: 'settlement_seized',
+      payload: JSON.stringify({ body_name: w }), actor_faction_id: 'g:f0', target_faction_id: null, body_id: `g:${w}` });
+    const s = { ...summary, bodies: [{ id: 'g:mars', name: 'Mars' }, { id: 'g:io', name: 'Io' }, { id: 'g:ceres', name: 'Ceres' }],
+      chronicle: [seized(10, 'mars'), seized(20, 'io'), seized(24, 'mars'), seized(30, 'ceres'), seized(90, 'io')] } as unknown as MatchSummary;
+    const beats = buildBeats(s, { lang: 'en', drawable: () => true }).filter(b => b.weight > 0);
+    // Ten to thirty is one campaign over three worlds; ninety stands alone.
+    expect(beats).toHaveLength(2);
+    expect(beats[0].data?.campaign).toEqual(['mars', 'io', 'ceres']);
+    expect(beats[1].tick).toBe(90);
   });
 
   it('puts the moments that won the match ahead of their equals', () => {

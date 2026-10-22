@@ -276,15 +276,21 @@ export function drawTicker(ctx: CanvasRenderingContext2D, W: number, H: number,
     const a = Math.min(ease(it.life / 0.12), 1 - ease((it.life - 0.82) / 0.18));
     if (a <= 0.01) { y -= lineH * 0.3; continue; }
     ctx.font = `500 ${size}px ${FONT_BODY}`;
-    const text = ellipsize(ctx, it.text, maxW - 44 * u);
-    const w = ctx.measureText(text).width + 58 * u;
+    // Two lines before a cut: the cut always landed on the part that
+    // mattered ("destroyed by…", "reached…").
+    const lines = wrapLines(ctx, it.text, maxW - 44 * u, 2);
+    const text = lines[0] ?? '';
+    const w = Math.max(...lines.map(l => ctx.measureText(l).width)) + 58 * u;
+    const extra = (lines.length - 1) * size * 1.1;
+    y -= extra;
     const x = right - w + (1 - ease(it.life / 0.12)) * 30 * u;
     ctx.globalAlpha = a;
     ctx.fillStyle = PLATE;
-    ctx.beginPath(); ctx.roundRect(x, y - lineH / 2 + 3 * u, w, lineH - 6 * u, 5 * u); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(x, y - lineH / 2 + 3 * u, w, lineH - 6 * u + extra, 5 * u); ctx.fill();
     if (it.faction) drawEmblem(ctx, it.faction, x + 22 * u, y, 14 * u);
     ctx.fillStyle = INK;
-    ctx.fillText(text, x + 44 * u, y + 1);
+    lines.forEach((l, i) => ctx.fillText(l, x + 44 * u, y + 1 + i * size * 1.1));
+    void text;
     y -= lineH;
   }
   ctx.restore();
@@ -515,7 +521,11 @@ export function drawResultCard(ctx: CanvasRenderingContext2D, W: number, H: numb
     ctx.font = `600 ${Math.round(21 * u)}px ${FONT_MONO}`;
     if (r.out) {
       ctx.fillStyle = 'rgba(255,140,120,0.9)';
-      ctx.fillText('✕', tx + tw - 20 * u, cy + 1);
+      ctx.fillText('✕', tx + tw - 150 * u, cy + 1);
+      if (r.ships > 0) {
+        ctx.fillStyle = DIM;
+        ctx.fillText(`${r.ships} ${labels.ships}`, tx + tw - 20 * u, cy + 1);
+      }
     } else {
       ctx.fillStyle = liftColor(r.faction.color);
       ctx.fillText(`${r.worlds} ${labels.worlds}`, tx + tw - 150 * u, cy + 1);

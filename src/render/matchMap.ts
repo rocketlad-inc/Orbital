@@ -86,7 +86,8 @@ export function createMatchMap(
 ): ReplayStage & { _shots: () => unknown[];
   _audit: (tick: number, frac?: number) => unknown[];
   _deaths: (tick: number) => unknown[];
-  _probe: () => unknown } {
+  _probe: () => unknown;
+  _facts: () => unknown } {
   const ctx = canvas.getContext('2d')!;
   let W = canvas.width || 1280, H = canvas.height || 720, DPR = 1;
 
@@ -367,6 +368,7 @@ export function createMatchMap(
     scenes = [];
     // A page of rows just landed: who is where may have changed.
     occupiedCache.clear();
+    home = undefined;
     const lo = summary.ticks.lo ?? 0, hi = summary.ticks.hi ?? lo;
     if (hi < lo) return;
 
@@ -415,34 +417,38 @@ export function createMatchMap(
           t => deathsAtBody(body, t) + 6 * fallsAtBody(body, t));
         // How big was it, really? Hulls present at the height of the
         // window, and who was there in force.
-        let peak = 0;
-        let sides: string[] = [];
-        let present = 0;
-        // THE DEFENDER is whoever holds the world when the window opens,
-        // fleet or no fleet: a siege captioned as two attackers is wrong.
-        let defender: string | null = null;
-        for (const st of timeline.worldAt(window[0]).stls.values()) {
-          if (st.body === body && st.fid) { defender = st.fid; break; }
-        }
+        // ENGAGED is every hull that was there across the window (a peak
+        // count let "21 engaged, 26 lost" through), and the SIDES are the
+        // two empires that fought hardest: most hulls there plus twice
+        // the hulls they lost. The world's owner heads it only if it was
+        // in the fight at all.
+        const seen = new Set<string>();
+        const most = new Map<string, number>();
+        const lostBy = new Map<string, number>();
         for (let t = window[0]; t < window[1]; t++) {
-          let n = 0;
           const per = new Map<string, number>();
-          for (const sh of timeline.worldAt(t).ships.values()) {
+          for (const [id, sh] of timeline.worldAt(t).ships) {
             if (sh.parent !== body) continue;
-            n++;
+            seen.add(id);
             if (sh.fid) per.set(sh.fid, (per.get(sh.fid) ?? 0) + 1);
           }
-          if (n > peak) {
-            peak = n;
-            present = per.size;
-            const ranked = [...per.entries()].sort((x, y) => y[1] - x[1]).map(e => e[0]);
-            const attacker = ranked.find(f => f !== defender) ?? null;
-            sides = defender && attacker ? [attacker, defender]
-              : ranked.slice(0, 2);
-          }
+          for (const [f, n] of per) most.set(f, Math.max(most.get(f) ?? 0, n));
         }
         let lost = 0;
-        for (let t = window[0]; t < window[1] + 1; t++) lost += deathsAtBody(body, t);
+        for (let t = window[0]; t < window[1] + 1; t++) {
+          for (const d of deathAt.get(t) ?? []) {
+            if (d.body !== body) continue;
+            lost++;
+            seen.add(d.id);
+            if (d.fid) lostBy.set(d.fid, (lostBy.get(d.fid) ?? 0) + 1);
+          }
+        }
+        const score = (f: string) => (most.get(f) ?? 0) + 2 * (lostBy.get(f) ?? 0);
+        const fought = [...new Set([...most.keys(), ...lostBy.keys()])]
+          .filter(f => score(f) > 0).sort((x, y) => score(y) - score(x));
+        const sides = fought.slice(0, 2);
+        const present = fought.length;
+        const peak = seen.size;
         battles.push({ body, from: s0, to: e0 + 1, peak, lost, sides, window,
           present: Math.max(present, sides.length) });
       }
@@ -479,7 +485,12 @@ export function createMatchMap(
       }
     }
 
-    scenes = planReel({ lo, hi, battles, beats });
+    lastFacts = { battles, beats: beats.length };
+    const dysonBody = (summary.chronicle ?? []).find(r => r.kind === 'dyson_initiated')?.body_id ?? null;
+    scenes = planReel({ lo, hi, battles, beats }, {
+      finaleBody: summary.game.victory_type === 'engineering' && dysonBody && byId.has(dysonBody)
+        ? dysonBody : null,
+    });
     filmTotal = reelSeconds(scenes);
     // THE COLD OPEN: the title plays over the deadliest fight of the
     // match, then the film cuts back to how it began. A feed gives a clip
@@ -559,6 +570,21 @@ export function createMatchMap(
    * map out to the last rock in the belt.
    */
   const occupiedCache = new Map<string, string[]>();
+  let home: string | null | undefined;
+  const homeSystem = (): string | null => {
+    if (home !== undefined) return home;
+    const lo = summary.ticks.lo ?? 0, hi = summary.ticks.hi ?? lo;
+    const perSys = new Map<string, number>();
+    for (let t = lo; t <= hi; t += Math.max(1, Math.floor((hi - lo) / 24))) {
+      for (const st of timeline.worldAt(t).stls.values()) {
+        if (!byId.has(st.body)) continue;
+        const s = systemOf(st.body);
+        perSys.set(s, (perSys.get(s) ?? 0) + 1);
+      }
+    }
+    home = [...perSys.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+    return home;
+  };
   const occupiedOver = (from: number, to: number): string[] => {
     const key = `${from}:${to}`;
     const hit = occupiedCache.get(key);
@@ -570,15 +596,10 @@ export function createMatchMap(
       for (const st of w.stls.values()) weight.set(st.body, (weight.get(st.body) ?? 0) + 3);
       for (const sh of w.ships.values()) if (sh.parent) weight.set(sh.parent, (weight.get(sh.parent) ?? 0) + 1);
     }
-    // One system at a time: the one most of the match is happening in.
-    const perSys = new Map<string, number>();
-    for (const [id, n] of weight) {
-      const b = byId.get(id);
-      if (!b || !drawableAt(b, from)) continue;
-      const s = systemOf(id);
-      perSys.set(s, (perSys.get(s) ?? 0) + n);
-    }
-    const sys = [...perSys.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+    // ONE SYSTEM for every wide shot: the one the match was fought in.
+    // Chosen per scene, a late flurry out past a sun gate swung the last
+    // wide shot to another star and left the frame black.
+    const sys = homeSystem();
     let ids = [...weight.keys()].filter(id => byId.has(id)
       && drawableAt(byId.get(id)!, from) && systemOf(id) === sys);
     // An outpost far out past everyone else should not shrink the war to
@@ -712,7 +733,12 @@ export function createMatchMap(
     const prevSubj = viewMode === 'wide' ? null : subjectOf(prev, t);
     let wideNow = subj ? 0 : 1;
 
-    const move = Math.min(MOVE_SECONDS, (s?.seconds ?? 1) * 0.42);
+    // A push in is a fixed beat; a pull back out to the system takes the
+    // time-lapse it opens (a 0.4 s whip from a close-up to the whole map
+    // read as a snap, with the territory bands flaring through it).
+    const pullOut = !!prevSubj && !subj;
+    const move = pullOut ? Math.min(1.6, (s?.seconds ?? 1) * 0.85)
+      : Math.min(MOVE_SECONDS, (s?.seconds ?? 1) * 0.42);
     // Out of the cold open is a cut: the clock has jumped back.
     const fromTeaser = prev?.kind === 'intro' && !!teaser;
     if (prev && !fromTeaser && el < move && !(subj && prevSubj === subj)) {
@@ -778,6 +804,35 @@ export function createMatchMap(
    * spot on a ring the film made up.
    */
   const lastSeen = new Map<string, { body: string; dx: number; dy: number }>();
+  /**
+   * THE DYSON SPHERE, rebuilt from the log: begun, its 25/50/75%
+   * milestones, the last damage report, complete at an engineering win.
+   * The game draws the lattice from this (drawDysonLattice); the film
+   * never passed it, so the victory the match was won by was never seen.
+   */
+  const dysonKeys: Array<[number, number]> = [];
+  let dysonDone: number | null = null;
+  for (const r of summary.chronicle ?? []) {
+    let p: Record<string, unknown> = {};
+    try { p = JSON.parse(r.payload || '{}') ?? {}; } catch { /* ignore */ }
+    if (r.kind === 'dyson_initiated') dysonKeys.push([r.tick_number, 0]);
+    else if (/^dyson_(milestone|damaged)$/.test(r.kind) && typeof p.pct === 'number') {
+      dysonKeys.push([r.tick_number, p.pct / 100]);
+    } else if (r.kind === 'dyson_collapsed') dysonKeys.push([r.tick_number, 0]);
+    else if (r.kind === 'victory' && p.victoryType === 'engineering') dysonDone = r.tick_number;
+  }
+  const dysonAt = (t: number): { progress: number; complete: boolean } | undefined => {
+    if (!dysonKeys.length || t < dysonKeys[0][0]) return undefined;
+    if (dysonDone != null && t >= dysonDone) return { progress: 1, complete: true };
+    let i = dysonKeys.length - 1;
+    while (i > 0 && dysonKeys[i][0] > t) i--;
+    const [t0, p0] = dysonKeys[i];
+    const next = dysonKeys[i + 1] ?? (dysonDone != null ? [dysonDone, 1] as [number, number] : null);
+    const p = next ? p0 + (next[1] - p0) * Math.max(0, Math.min(1, (t - t0) / Math.max(1, next[0] - t0))) : p0;
+    return { progress: p, complete: false };
+  };
+  /** Harness probe: what the planner was given. */
+  let lastFacts: unknown = null;
   /** Harness probe: what the last frame drew at the scene's subject. */
   let probing = false;
   let lastProbe: unknown = null;
@@ -891,6 +946,7 @@ export function createMatchMap(
       bodies: gameBodies,
       factions: gameFactions,
       settlements: gameSettlements,
+      dysonSphere: dysonAt(t),
       nowMs: performance.now(),
       // WHERE THE HULLS ACTUALLY LANDED. drawShip writes each sprite's
       // true centre here after every offset it applies -- orbit phase,
@@ -1261,6 +1317,13 @@ export function createMatchMap(
       const p = toPx(pos(e.bodyId, t));
       const r0 = drawnRadiusOf(pres, gb, cam.scale);
       const k = Math.min(1, curFrac);
+      // These rings are the FAR read. Close in, a filled disc washed the
+      // whole world orange once a tick -- a strobe over every battle --
+      // and the blasts and wreckage already say it there.
+      const farK = 1 - Math.max(0, Math.min(1, (r0 - 18) / 30));
+      if (farK <= 0.01) continue;
+      ctx.save();
+      ctx.globalAlpha = farK;
       if (e.kind === 'loss') {
         ctx.fillStyle = `rgba(255,150,70,${(1 - k) * 0.5})`;
         ctx.beginPath(); ctx.arc(p.x, p.y, r0 + 10 + k * 26, 0, Math.PI * 2); ctx.fill();
@@ -1270,6 +1333,7 @@ export function createMatchMap(
         ctx.lineWidth = 2;
         ctx.beginPath(); ctx.arc(p.x, p.y, r0 + 4 + k * 30, 0, Math.PI * 2); ctx.stroke();
       }
+      ctx.restore();
     }
 
     // Count chips where hulls are too small to read.
@@ -1393,6 +1457,15 @@ export function createMatchMap(
     return { faction: filmFaction(fid)!, ships, lost };
   }).filter(x => x.faction);
 
+  /** When a scene's caption may come up: once a push in has arrived. */
+  const landAt = (s: ReelScene) => {
+    const i = scenes.indexOf(s);
+    const prev = i > 0 ? scenes[i - 1] : undefined;
+    const pushIn = s.framing !== 'system' && !!s.bodyId && (!prev || prev.framing === 'system')
+      && prev?.kind !== 'intro';
+    return pushIn ? Math.min(MOVE_SECONDS * 0.7, s.seconds * 0.3) : 0;
+  };
+
   function drawFilm() {
     // The CLOCK's time: the cold open shows a later moment than this.
     const t = clockT;
@@ -1406,7 +1479,7 @@ export function createMatchMap(
     const intro = s.kind === 'intro';
     const finale = s.kind === 'finale';
     const card = intro ? 1 - Math.max(0, Math.min(1, (el - (s.seconds - 0.8)) / 0.8)) : finale ? 1 : 0;
-    const hud = 1 - card;
+    const hud = intro ? 0 : 1 - card;
 
     // The race while the shot is wide; the fight while it is close.
     drawStandings(ctx, W, H, standingsAt(curTick).slice(0, 5),
@@ -1436,7 +1509,7 @@ export function createMatchMap(
       const fade = s.kind === 'montage' ? Math.min(0.3, s.seconds * 0.22) : 0.45;
       drawLowerThird(ctx, W, H, { kicker: c.kicker, title: c.title, sub: c.sub,
         color: c.fid ? colorOf(c.fid) : null },
-      el / (fade + 0.1), (el - (s.seconds - fade)) / fade);
+      (el - landAt(s)) / (fade + 0.1), (el - (s.seconds - fade)) / fade);
     }
 
     if (intro) {
@@ -1488,6 +1561,7 @@ export function createMatchMap(
     worldAt: (tick: number) => timeline.worldAt(tick),
     setView: (mode: 'auto' | 'wide') => { viewMode = mode; },
     rateAt,
+    _facts: () => lastFacts,
     _probe: () => {
       probing = true;
       const lp = lastProbe as { hits?: Array<[number, number] | null> } | null;
