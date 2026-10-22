@@ -732,7 +732,10 @@ export class Director {
   private hullSizeNow(): number {
     const h = this.hullSize;
     if (!h) return 1;
-    const u = Math.max(0, Math.min(1, (this.clock - h.t0) * 1000 / Math.max(1, h.ms)));
+    // Instant (ms <= 1) means now, even inside a skip, where the shot's
+    // clock stands still and an ease would only start after the cut.
+    if (h.ms <= 1) return h.to;
+    const u =Math.max(0, Math.min(1, (this.clock - h.t0) * 1000 / Math.max(1, h.ms)));
     const e = u * u * (3 - 2 * u);
     return h.from + (h.to - h.from) * e;
   }
@@ -761,10 +764,15 @@ export class Director {
     // A time cut: the map draws on through the skipped time (so dwells,
     // glides and fades run their course) with nothing kept. The shot's own
     // clock does not move, so the steps after it keep their times.
+    // The tick glide stands still through it: a cut lands on the moment it
+    // cut to, and the next tick step still glides there in its own time
+    // (run on, the glide finished inside the skip and motion froze after
+    // the cut until the next tick).
     for (let left = this.skipMs; left > 0; left -= 1000 / fps) {
       this.step(0);
       this.stats.rafRuns += f.vclock.advance(1000 / fps, !f.draw);
       if (f.draw) f.draw(1);
+      if (this.glide) this.glide.at += 1000 / fps;
     }
     this.skipMs = 0;
     this.step(1 / fps);

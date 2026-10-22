@@ -4681,12 +4681,18 @@ const SHIP_ICON_REST_SIZE: Record<string, number> = {
   // than a destroyer's solid wedge, so the two read as equals. 74 draws
   // 148 px, 1.76x a destroyer, still under a Venus (150): the biggest
   // ship, not a moon.
-  mega_destroyer: 74,
+  // OVER THE VENUS CAP (Lorne, 2026-10-22, again: "the megadestroyer is
+  // the same size as the destroyers"). 1.76x still read as equals on
+  // film, beside destroyers in flight and in orbit. 100 draws 200 px,
+  // 2.4x a destroyer and bigger than Venus: he chose the size over the
+  // cap. The Leviathan grows with it, below, to stay the biggest thing.
+  mega_destroyer: 100,
   mobile_foundry: 52,
   // THE LEVIATHAN (worker/kaiju.js): "visibly huge" (Lorne). Half again a
   // Mega Destroyer, the biggest thing anyone builds, on the same zoom
   // curves every hull uses, so it still shrinks when you pull out.
-  kaiju: 88,
+  // Kept half again (1.36x) a Mega Destroyer when the Mega grew to 100.
+  kaiju: 136,
   corvette: 10,
   frigate: 16,
   freighter: 15,
