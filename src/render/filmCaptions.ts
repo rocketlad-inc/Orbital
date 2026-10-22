@@ -59,10 +59,10 @@ const WEIGHT: Record<string, number | ((p: P, r: ChronicleRow) => number)> = {
   terraform_destroyed: (p) => (p.cause === 'kaiju' || p.cause === 'mega_destroyer' ? 150 : 90),
   world_obliterated: (p) => (p.cause === 'kaiju' ? 175 : 160),
   mega_strike_charging: 120, asteroid_launched: 60, asteroid_impact: 130, missile_strike: 70,
-  secret_discovered: 35,
+  secret_discovered: 20,
   // The vote that names a Chancellor can end the match: it is the
   // Senate's whole story in one scene.
-  senate_vote: (p) => (p.outcome !== 'passed' ? 25 : p.bill_kind === 'chancellor_vote' ? 165 : 55),
+  senate_vote: (p) => (p.outcome !== 'passed' ? 0 : p.bill_kind === 'chancellor_vote' ? 165 : 25),
 };
 
 /**
@@ -238,6 +238,18 @@ function mergeBeats(beats: ReelBeat[], summary: MatchSummary, lang: Lang): ReelB
   return out;
 }
 
+/**
+ * The log's line as broadcast copy: no bracketed or parenthesised tags
+ * ("[slider law]", "(station)"), and no ALL-CAPS opening shout ("MK 2 IS
+ * GONE — the Leviathan...") -- the title already says it.
+ */
+export function broadcastCopy(line: string): string {
+  let s = line.replace(/\s*[[(][^\])]*[\])]/g, '');
+  const m = /^([^a-z]{6,}?)\s+[—–-]\s+(.+)$/u.exec(s);
+  if (m && m[1] === m[1].toUpperCase()) s = m[2].charAt(0).toUpperCase() + m[2].slice(1);
+  return s.replace(/\s{2,}/g, ' ').trim();
+}
+
 export interface CaptionCtx {
   lang: Lang;
   summary: MatchSummary;
@@ -409,7 +421,6 @@ export function beatCaption(e: ReelBeat,
     default: title = e.text; break;
   }
   const line = typeof p.line === 'string' ? p.line : e.text;
-  // The log's bill tags read as code ("[slider law]"): say them as words.
-  const sub = title === line ? '' : line.replace(/\s*\[([^\]]*)\]/g, ' ($1)');
+  const sub = title === line ? '' : broadcastCopy(line);
   return { kicker, title, sub, fid: e.fid };
 }

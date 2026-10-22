@@ -32,6 +32,7 @@ import type {
   Body, Faction, OrbitElements, Settlement, Ship, TorchTransferPlan,
 } from '../types';
 import type { MatchSummary, MatchWorld } from './matchWorld';
+import { SHIP_CLASSES } from '../game/shipClasses';
 
 /** Stable 32-bit hash, so synthesized angles never flicker between frames. */
 function hash(s: string): number {
@@ -43,12 +44,13 @@ function hash(s: string): number {
   return (h >>> 0) / 4294967296;
 }
 
-const SHIP_CLASSES: Array<Ship['class']> =
-  ['corvette', 'frigate', 'destroyer', 'freighter', 'colony'];
-
+/** EVERY class the game draws, from the game's own registry. The list
+ *  here used to stop at the five buildable hulls, so the Leviathan, Mega
+ *  Destroyers and Mobile Foundries all came out of the film as corvettes:
+ *  a world-eating squid captioned five times and drawn as a speck. */
 function shipClassOf(cls: string | null | undefined): Ship['class'] {
   const c = (cls ?? '').toLowerCase();
-  return (SHIP_CLASSES as string[]).includes(c) ? c as Ship['class'] : 'corvette';
+  return (c in SHIP_CLASSES ? c : 'corvette') as Ship['class'];
 }
 
 /** The worlds, as the game models them. */

@@ -95,12 +95,12 @@ export interface ReelOptions {
   finaleBody?: string | null;
 }
 
-export const INTRO_SECONDS = 3.6;
-export const FINALE_SECONDS = 6;
-export const BEAT_SECONDS = 2.6;
+export const INTRO_SECONDS = 3.0;
+export const FINALE_SECONDS = 7;
+export const BEAT_SECONDS = 2.4;
 /** A battle gets this much for mattering, plus up to SPREAD for size. */
-export const BATTLE_BASE_SECONDS = 2.8;
-export const BATTLE_SPREAD_SECONDS = 3.6;
+export const BATTLE_BASE_SECONDS = 2.2;
+export const BATTLE_SPREAD_SECONDS = 5.2;
 /** The longest stretch of a fight the film will show, in ticks. */
 export const BATTLE_WINDOW_TICKS = 8;
 /** A montage never runs faster than this many seconds per tick (80 t/s)... */
@@ -173,7 +173,7 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
     const w = battleWeight(b);
     // A skirmish of two hulls is a ticker line, not a scene; nor is a
     // standoff where nobody died.
-    if (b.peak < 8 || b.lost < 3) continue;
+    if (b.peak < 12 || b.lost < 3) continue;
     const from = Math.max(introTo, b.window[0]);
     const to = Math.min(finaleFrom, b.window[1]);
     if (to <= from) continue;

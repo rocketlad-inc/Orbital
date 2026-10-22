@@ -57,8 +57,8 @@ describe('filmReel', () => {
 
   it('prefers a new place to a third visit to the same one', () => {
     const battles = [10, 60, 110, 160].map(t => battle('earth', t, t + 8, 100, 30))
-      .concat([battle('mars', 210, 218, 60, 12)]);
-    const scenes = planReel({ lo: 1, hi: 260, battles, beats: [] }, { targetSeconds: 40 });
+      .concat([{ ...battle('mars', 210, 218, 60, 12), sides: ['c', 'd'] }]);
+    const scenes = planReel({ lo: 1, hi: 260, battles, beats: [] }, { targetSeconds: 50 });
     const places = scenes.filter(s => s.kind === 'battle').map(s => s.bodyId);
     expect(places).toContain('mars');
   });

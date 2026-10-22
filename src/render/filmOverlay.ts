@@ -108,6 +108,24 @@ function ellipsize(ctx: CanvasRenderingContext2D, text: string, maxW: number): s
   return at.replace(/[\s,;:·—-]+$/u, '') + '…';
 }
 
+/**
+ * An empire's name, short enough for a scorebug or a name tag: drop a
+ * leading "The" / "Empire of" / "Republic of", then cut at a word.
+ * "THE MINISTRY OF SILLY..." in every battle read as a broken graphic.
+ */
+export function shortName(name: string, max = 16): string {
+  let n = name.trim().replace(/^(the|empire of|republic of|kingdom of|federation of)\s+/i, '');
+  if (n.length <= max) return n;
+  const words = n.split(/\s+/);
+  let out = '';
+  for (const w of words) {
+    if ((out ? out.length + 1 : 0) + w.length > max) break;
+    out = out ? `${out} ${w}` : w;
+  }
+  n = out || words[0].slice(0, max);
+  return n.replace(/\s+(of|the|and|da|de|do|dos|das)$/i, '');
+}
+
 /** The faction's emblem in a ring of its colour; a plain disc while the
  *  emblem raster loads. */
 export function drawEmblem(ctx: CanvasRenderingContext2D, f: FilmFaction | undefined,
@@ -148,19 +166,20 @@ export function drawLowerThird(ctx: CanvasRenderingContext2D, W: number, H: numb
   const u = unitOf(H);
   const a = ease(inK) * (1 - ease(outK));
   if (a <= 0.01) return;
-  const x0 = 64 * u;
+  // Inside title-safe (5% of the width), with the accent bar outside it.
+  const x0 = Math.max(96 * u, W * 0.05 + 22 * u);
   const maxW = Math.min(W * 0.54, W - 2 * x0);
   const accent = c.color ? liftColor(c.color) : '#9fc4e8';
 
   ctx.save();
-  const titleSize = fit(ctx, c.title, FONT_DISPLAY, '400', Math.round(64 * u), Math.round(36 * u), maxW);
-  const subSize = Math.round(29 * u);
+  const titleSize = fit(ctx, c.title, FONT_DISPLAY, '400', Math.round(70 * u), Math.round(40 * u), maxW);
+  const subSize = Math.round(34 * u);
   ctx.font = `500 ${subSize}px ${FONT_BODY}`;
   // The sub is the fact that explains the moment: two lines before it is
   // ever cut ("62 ships…" lost the losses; "PASSED…" lost the vote).
   const subLines = c.sub ? wrapLines(ctx, c.sub, maxW, 2) : [];
   const sub = subLines.join(' ');
-  const kickSize = Math.round(25 * u);
+  const kickSize = Math.round(28 * u);
   const gap = 10 * u;
   const subH = subLines.length ? gap + subSize * (1 + (subLines.length - 1) * 1.15) : 0;
   const blockH = kickSize + gap + titleSize * 1.05 + subH;
@@ -263,8 +282,8 @@ export function drawTicker(ctx: CanvasRenderingContext2D, W: number, H: number,
   items: TickerItem[], avoidLeft: number) {
   if (!items.length) return;
   const u = unitOf(H);
-  const size = Math.round(25 * u);
-  const lineH = 46 * u;
+  const size = Math.round(28 * u);
+  const lineH = 50 * u;
   const right = W - 56 * u;
   const maxW = Math.max(200 * u, Math.min(W * 0.36, right - avoidLeft - 40 * u));
   ctx.save();
@@ -304,57 +323,122 @@ export interface TallySide {
 
 /** Top-centre during a battle: who is fighting, how many are left. */
 export function drawBattleTally(ctx: CanvasRenderingContext2D, W: number, H: number,
-  sides: TallySide[], alpha: number, vsLabel = 'VS') {
+  sides: TallySide[], alpha: number, vsLabel = 'VS', more = 0) {
   if (sides.length < 1 || alpha <= 0.01) return;
   const u = unitOf(H);
   ctx.save();
   ctx.globalAlpha = alpha;
-  const cy = 64 * u;
-  const nameSize = Math.round(23 * u), numSize = Math.round(46 * u);
-  const sideW = Math.min(W * 0.34, 520 * u);
-  const draw = (s: TallySide, dir: -1 | 1) => {
-    const cx = W / 2 + dir * 52 * u;
-    const align = dir < 0 ? 'right' : 'left';
-    ctx.textAlign = align;
-    ctx.textBaseline = 'middle';
-    const ex = cx + dir * 22 * u;
-    drawEmblem(ctx, s.faction, ex, cy, 24 * u);
-    ctx.shadowColor = 'rgba(0,0,0,0.8)'; ctx.shadowBlur = 8 * u;
-    ctx.font = `400 ${numSize}px ${FONT_DISPLAY}`;
-    ctx.fillStyle = INK;
-    const nx = ex + dir * 38 * u;
-    ctx.fillText(String(s.ships), nx, cy + 2 * u);
-    const nw = ctx.measureText(String(s.ships)).width;
-    ctx.font = `700 ${nameSize}px ${FONT_BODY}`;
-    spacing(ctx, 1.5 * u);
-    ctx.fillStyle = liftColor(s.faction.color);
-    const name = ellipsize(ctx, s.faction.name.toUpperCase(), sideW - nw - 120 * u);
-    const tx = nx + dir * (nw + 14 * u);
-    ctx.fillText(name, tx, cy - 11 * u);
-    spacing(ctx, 0);
-    if (s.lost > 0) {
-      ctx.font = `600 ${Math.round(20 * u)}px ${FONT_MONO}`;
-      ctx.fillStyle = '#ff9d7a';
-      ctx.fillText(`−${s.lost}`, tx, cy + 16 * u);
-    }
-    ctx.shadowBlur = 0;
-  };
-  // A band behind the whole tally.
-  const g = ctx.createLinearGradient(W / 2 - sideW - 60 * u, 0, W / 2 + sideW + 60 * u, 0);
+  const cy = 66 * u;
+  const nameSize = Math.round(24 * u), numSize = Math.round(48 * u);
+  // FIXED SLOTS. Every element sits at a set distance from the centre and
+  // the count is set in a monospaced face inside a three-digit box, so as
+  // ships die only the digits change: a proportional count reflowed the
+  // whole bug every time it ticked.
+  const EMB = 80 * u, NUM = 134 * u, NAME = 232 * u, NAME_W = 300 * u;
+  const band = NAME + NAME_W + 40 * u;
+  const g = ctx.createLinearGradient(W / 2 - band, 0, W / 2 + band, 0);
   g.addColorStop(0, 'rgba(3,6,12,0)');
-  g.addColorStop(0.25, 'rgba(3,6,12,0.7)');
-  g.addColorStop(0.75, 'rgba(3,6,12,0.7)');
+  g.addColorStop(0.18, 'rgba(3,6,12,0.74)');
+  g.addColorStop(0.82, 'rgba(3,6,12,0.74)');
   g.addColorStop(1, 'rgba(3,6,12,0)');
   ctx.fillStyle = g;
-  ctx.fillRect(W / 2 - sideW - 60 * u, cy - 34 * u, (sideW + 60 * u) * 2, 68 * u);
+  ctx.fillRect(W / 2 - band, cy - 38 * u, band * 2, 76 * u);
+  const draw = (sd: TallySide, dir: -1 | 1) => {
+    ctx.textBaseline = 'middle';
+    drawEmblem(ctx, sd.faction, W / 2 + dir * EMB, cy, 26 * u);
+    ctx.shadowColor = 'rgba(0,0,0,0.8)'; ctx.shadowBlur = 8 * u;
+    ctx.font = `600 ${numSize}px ${FONT_MONO}`;
+    ctx.fillStyle = INK;
+    ctx.textAlign = 'center';
+    ctx.fillText(String(Math.min(999, sd.ships)), W / 2 + dir * NUM + dir * 26 * u, cy + 2 * u);
+    ctx.textAlign = dir < 0 ? 'right' : 'left';
+    ctx.font = `700 ${nameSize}px ${FONT_BODY}`;
+    spacing(ctx, 1.5 * u);
+    ctx.fillStyle = liftColor(sd.faction.color);
+    ctx.fillText(ellipsize(ctx, shortName(sd.faction.name).toUpperCase(), NAME_W), W / 2 + dir * NAME, cy - 12 * u);
+    spacing(ctx, 0);
+    ctx.font = `600 ${Math.round(21 * u)}px ${FONT_MONO}`;
+    ctx.fillStyle = sd.lost > 0 ? '#ff9d7a' : 'rgba(200,216,232,0.45)';
+    ctx.fillText(sd.lost > 0 ? `−${sd.lost}` : '−0', W / 2 + dir * NAME, cy + 16 * u);
+    ctx.shadowBlur = 0;
+  };
   draw(sides[0], -1);
   if (sides[1]) draw(sides[1], 1);
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.font = `700 ${Math.round(18 * u)}px ${FONT_BODY}`;
+  ctx.font = `700 ${Math.round(19 * u)}px ${FONT_BODY}`;
   spacing(ctx, 3 * u);
   ctx.fillStyle = 'rgba(255,190,120,0.95)';
   ctx.fillText(vsLabel, W / 2 + 1.5 * u, cy);
   spacing(ctx, 0);
+  // Every other empire in the fight, as one chip under the VS.
+  if (more > 0) {
+    ctx.font = `700 ${Math.round(16 * u)}px ${FONT_BODY}`;
+    const label = `+${more}`;
+    const w = ctx.measureText(label).width + 18 * u;
+    ctx.fillStyle = 'rgba(255,190,120,0.16)';
+    ctx.strokeStyle = 'rgba(255,190,120,0.6)';
+    ctx.lineWidth = 1.2 * u;
+    ctx.beginPath(); ctx.roundRect(W / 2 - w / 2, cy + 20 * u, w, 22 * u, 11 * u); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#ffd38a';
+    ctx.fillText(label, W / 2, cy + 31 * u + 1);
+  }
+  ctx.restore();
+}
+
+/** Under the scorebug at the end of a fight: who holds the field. */
+export function drawBattleVerdict(ctx: CanvasRenderingContext2D, W: number, H: number,
+  text: string, color: string | null, k: number) {
+  const a = ease(k);
+  if (a <= 0.01 || !text) return;
+  const u = unitOf(H);
+  ctx.save();
+  ctx.globalAlpha = a;
+  ctx.font = `700 ${Math.round(24 * u)}px ${FONT_BODY}`;
+  spacing(ctx, 3 * u);
+  const w = ctx.measureText(text).width + 44 * u, h = 44 * u;
+  const y = 118 * u + (1 - a) * 10 * u;
+  ctx.fillStyle = 'rgba(3,6,12,0.86)';
+  ctx.strokeStyle = color ? liftColor(color) : '#9fc4e8';
+  ctx.lineWidth = 2 * u;
+  ctx.beginPath(); ctx.roundRect(W / 2 - w / 2, y, w, h, 6 * u); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = color ? liftColor(color) : INK;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(text, W / 2 + 1.5 * u, y + h / 2 + 1);
+  spacing(ctx, 0);
+  ctx.restore();
+}
+
+/**
+ * A victory in progress (the Dyson Sphere): a labelled bar under the
+ * clock, so a win that is built rather than fought is visible all along.
+ */
+export function drawProgressMeter(ctx: CanvasRenderingContext2D, W: number, H: number,
+  label: string, pct: number, color: string | null, alpha: number) {
+  if (alpha <= 0.01) return;
+  const u = unitOf(H);
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  const w = 330 * u, h = 64 * u;
+  const x = W - 56 * u - w, y = 136 * u;
+  ctx.fillStyle = 'rgba(3,6,12,0.78)';
+  ctx.beginPath(); ctx.roundRect(x, y, w, h, 7 * u); ctx.fill();
+  const accent = color ? liftColor(color) : '#ffd38a';
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'left';
+  ctx.font = `700 ${Math.round(17 * u)}px ${FONT_BODY}`;
+  spacing(ctx, 2 * u);
+  ctx.fillStyle = accent;
+  ctx.fillText(ellipsize(ctx, label.toUpperCase(), w - 110 * u), x + 16 * u, y + 20 * u);
+  spacing(ctx, 0);
+  ctx.textAlign = 'right';
+  ctx.font = `600 ${Math.round(24 * u)}px ${FONT_MONO}`;
+  ctx.fillStyle = INK;
+  ctx.fillText(`${Math.round(pct * 100)}%`, x + w - 16 * u, y + 21 * u);
+  const bx = x + 16 * u, bw = w - 32 * u, by = y + 40 * u, bh = 10 * u;
+  ctx.fillStyle = 'rgba(255,255,255,0.12)';
+  ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 5 * u); ctx.fill();
+  ctx.fillStyle = accent;
+  ctx.beginPath(); ctx.roundRect(bx, by, Math.max(bh, bw * Math.max(0, Math.min(1, pct))), bh, 5 * u); ctx.fill();
   ctx.restore();
 }
 
@@ -384,8 +468,8 @@ export function drawStandings(ctx: CanvasRenderingContext2D, W: number, H: numbe
   ctx.shadowBlur = 0;
   y += 40 * u;
   if (alpha > 0.01 && rows.length) {
-    const rowH = 42 * u;
-    const nameW = 250 * u;
+    const rowH = 46 * u;
+    const nameW = 260 * u;
     const w = nameW + 120 * u;
     ctx.fillStyle = 'rgba(3,6,12,0.62)';
     ctx.beginPath(); ctx.roundRect(x - 12 * u, y - 8 * u, w, rows.length * rowH + 16 * u, 8 * u); ctx.fill();
@@ -397,10 +481,10 @@ export function drawStandings(ctx: CanvasRenderingContext2D, W: number, H: numbe
       ctx.fillStyle = rgba(r.faction.color, 0.26);
       ctx.fillRect(x + 30 * u, cy - rowH / 2 + 5 * u, (nameW + 10 * u) * (r.worlds / maxWorlds), rowH - 10 * u);
       drawEmblem(ctx, r.faction, x + 13 * u, cy, 14 * u);
-      ctx.font = `600 ${Math.round(23 * u)}px ${FONT_BODY}`;
+      ctx.font = `600 ${Math.round(26 * u)}px ${FONT_BODY}`;
       ctx.fillStyle = INK;
       ctx.textBaseline = 'middle';
-      ctx.fillText(ellipsize(ctx, r.faction.name, nameW - 14 * u), x + 38 * u, cy + 1);
+      ctx.fillText(ellipsize(ctx, shortName(r.faction.name, 18), nameW - 14 * u), x + 38 * u, cy + 1);
       ctx.font = `600 ${Math.round(22 * u)}px ${FONT_MONO}`;
       ctx.textAlign = 'right';
       ctx.fillStyle = r.out ? 'rgba(255,140,120,0.9)' : liftColor(r.faction.color);
@@ -455,12 +539,20 @@ export function drawTitleCard(ctx: CanvasRenderingContext2D, W: number, H: numbe
   ctx.shadowBlur = 0;
   // The empires, in seat order: who is in this.
   const n = Math.min(12, factions.length);
-  const r = 24 * u, step = Math.min(70 * u, (W * 0.8) / Math.max(1, n));
+  const r = 26 * u, step = Math.min(150 * u, (W * 0.86) / Math.max(1, n));
   const x0 = W / 2 - step * (n - 1) / 2;
   const y = H * 0.44 + size * 0.75 + 92 * u;
   factions.slice(0, n).forEach((f, i) => {
     const ki = ease((k - 0.25 - i * 0.04) * 3);
     drawEmblem(ctx, f, x0 + i * step, y + (1 - ki) * 10 * u, r, ki);
+    // Who they are: the cast, named once at the start.
+    ctx.save();
+    ctx.globalAlpha *= ki;
+    ctx.font = `600 ${Math.round(15 * u)}px ${FONT_BODY}`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    ctx.fillStyle = liftColor(f.color);
+    ctx.fillText(ellipsize(ctx, shortName(f.name, 12), step - 8 * u), x0 + i * step, y + r + 10 * u);
+    ctx.restore();
   });
   ctx.restore();
 }
@@ -468,7 +560,7 @@ export function drawTitleCard(ctx: CanvasRenderingContext2D, W: number, H: numbe
 /** The result card: who won, how, and the final table. */
 export function drawResultCard(ctx: CanvasRenderingContext2D, W: number, H: number,
   c: { kicker: string; title: string; sub: string; color: string | null },
-  rows: StandingRow[], k: number, labels: { worlds: string; ships: string; url: string },
+  rows: StandingRow[], k: number, labels: { worlds: string; ships: string; url: string; out: string },
   /** Row one is a winner to crown, not just whoever is listed first. */
   crowned = true) {
   const u = unitOf(H);
@@ -496,10 +588,13 @@ export function drawResultCard(ctx: CanvasRenderingContext2D, W: number, H: numb
   ctx.shadowBlur = 0;
 
   // The table.
-  // Every empire: a table that leaves players out is not the result.
-  const shown = rows.slice(0, 12);
-  const rowH = (shown.length > 6 ? 40 : 52) * u;
-  const tw = Math.min(W * 0.62, 760 * u);
+  // The top of the table at a size a phone can read; everyone knocked
+  // out is one line under it.
+  const alive = rows.filter(r => !r.out);
+  const shown = rows.slice(0, Math.max(1, Math.min(5, alive.length || 1)));
+  const fallen = rows.filter(r => r.out && !shown.includes(r));
+  const rowH = 64 * u;
+  const tw = Math.min(W * 0.7, 940 * u);
   const tx = W / 2 - tw / 2;
   let ty = top + 30 * u + size * 1.25 + 56 * u;
   shown.forEach((r, i) => {
@@ -510,30 +605,39 @@ export function drawResultCard(ctx: CanvasRenderingContext2D, W: number, H: numb
     ctx.fillStyle = i === 0 && crowned ? rgba(r.faction.color, 0.3) : 'rgba(6,10,18,0.82)';
     ctx.beginPath(); ctx.roundRect(tx, cy - rowH / 2 + 4 * u, tw, rowH - 8 * u, 6 * u); ctx.fill();
     ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-    ctx.font = `600 ${Math.round(22 * u)}px ${FONT_MONO}`;
+    ctx.font = `600 ${Math.round(28 * u)}px ${FONT_MONO}`;
     ctx.fillStyle = DIM;
     ctx.fillText(String(i + 1), tx + 20 * u, cy + 1);
-    drawEmblem(ctx, r.faction, tx + 74 * u, cy, 16 * u);
-    ctx.font = `600 ${Math.round(24 * u)}px ${FONT_BODY}`;
+    drawEmblem(ctx, r.faction, tx + 84 * u, cy, 21 * u);
+    ctx.font = `600 ${Math.round(32 * u)}px ${FONT_BODY}`;
     ctx.fillStyle = INK;
-    ctx.fillText(ellipsize(ctx, r.faction.name, tw * 0.5), tx + 104 * u, cy + 1);
+    ctx.fillText(ellipsize(ctx, r.faction.name, tw * 0.46), tx + 122 * u, cy + 1);
     ctx.textAlign = 'right';
-    ctx.font = `600 ${Math.round(21 * u)}px ${FONT_MONO}`;
+    ctx.font = `600 ${Math.round(26 * u)}px ${FONT_MONO}`;
     if (r.out) {
       ctx.fillStyle = 'rgba(255,140,120,0.9)';
-      ctx.fillText('✕', tx + tw - 150 * u, cy + 1);
+      ctx.fillText('✕', tx + tw - 190 * u, cy + 1);
       if (r.ships > 0) {
         ctx.fillStyle = DIM;
         ctx.fillText(`${r.ships} ${labels.ships}`, tx + tw - 20 * u, cy + 1);
       }
     } else {
       ctx.fillStyle = liftColor(r.faction.color);
-      ctx.fillText(`${r.worlds} ${labels.worlds}`, tx + tw - 150 * u, cy + 1);
+      ctx.fillText(`${r.worlds} ${labels.worlds}`, tx + tw - 190 * u, cy + 1);
       ctx.fillStyle = DIM;
       ctx.fillText(`${r.ships} ${labels.ships}`, tx + tw - 20 * u, cy + 1);
     }
   });
   ty += shown.length * rowH;
+  if (fallen.length) {
+    ctx.globalAlpha = a * ease((k - 0.5) * 3);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = `500 ${Math.round(24 * u)}px ${FONT_BODY}`;
+    ctx.fillStyle = 'rgba(255,160,140,0.85)';
+    ctx.fillText(ellipsize(ctx, `${labels.out} ${fallen.map(r => shortName(r.faction.name, 18)).join(' · ')}`, tw),
+      W / 2, ty + 30 * u);
+    ty += 50 * u;
+  }
   ctx.globalAlpha = a * ease((k - 0.6) * 3);
   ctx.textAlign = 'center';
   ctx.font = `400 ${Math.round(26 * u)}px ${FONT_DISPLAY}`;
