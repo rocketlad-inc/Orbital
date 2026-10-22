@@ -308,7 +308,7 @@ export function drawTicker(ctx: CanvasRenderingContext2D, W: number, H: number,
     ctx.beginPath(); ctx.roundRect(x, y - lineH / 2 + 3 * u, w, lineH - 6 * u + extra, 5 * u); ctx.fill();
     if (it.faction) drawEmblem(ctx, it.faction, x + 22 * u, y, 14 * u);
     ctx.fillStyle = INK;
-    lines.forEach((l, i) => ctx.fillText(l, x + 44 * u, y + 1 + i * size * 1.1));
+    for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], x + 44 * u, y + 1 + i * size * 1.1);
     void text;
     y -= lineH;
   }
