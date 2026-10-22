@@ -94,6 +94,56 @@ describe('who flies together', () => {
   });
 });
 
+describe('hulls on one intercept', () => {
+  // Lorne, 2026-10-22: "we need the ships to have a bubble, they are being
+  // obscured". Six destroyers sent from Ceres to meet the Mega Destroyer
+  // flew one rendezvous and drew as one sprite until the meeting.
+  const rv = (over: Record<string, unknown> = {}) => ({
+    plannedRendezvous: {
+      p0: { x: 0, y: 0 }, v0: { x: 0, y: 0 }, accel: 10, A: { x: 1, y: 0 }, B: { x: 1, y: 0 },
+      startTick: 10, meetTick: 18, followShipId: 'mega', ...over,
+    },
+  } as Partial<Ship>);
+
+  test('fly as one formation of their own, off their shared course', () => {
+    const f = computeTransitFormations([
+      ship('a', 'destroyer', course(), rv()), ship('b', 'destroyer', course(), rv()), ship('c', 'destroyer', course(), rv()),
+    ]);
+    expect(f.size).toBe(3);
+    expect(f.get('a')?.rv).toBe(true);
+    const ctx = ctxFor(f);
+    const spots = ['a', 'b', 'c'].map(id => at(placeInFormation(id, samples, ctx, 1)));
+    for (let i = 0; i < spots.length; i++) {
+      for (let j = i + 1; j < spots.length; j++) {
+        expect(Math.hypot(spots[i].x - spots[j].x, spots[i].y - spots[j].y)).toBeGreaterThan(20);
+      }
+    }
+  });
+
+  test('hulls from different places, or after different targets, are not one formation', () => {
+    const f = computeTransitFormations([
+      ship('a', 'destroyer', course(), rv()),
+      ship('b', 'destroyer', course(), rv({ p0: { x: 400, y: 0 } })),
+      ship('c', 'destroyer', course(), rv({ followShipId: 'other' })),
+    ]);
+    expect(f.size).toBe(0);
+  });
+
+  test('hand over to their company arrowhead at the meeting, never both', () => {
+    const f = computeTransitFormations([ship('a', 'destroyer', course(), rv()), ship('b', 'destroyer', course(), rv())]);
+    const company = new Map([['b', { meetTick: 15 }]]);
+    const before = { ...ctxFor(f), t: 13, transitCompany: company } as unknown as RenderContext;
+    const met = { ...ctxFor(f), t: 15, transitCompany: company } as unknown as RenderContext;
+    const lerp = (s: Array<{ t: number; x: number; y: number }>, t: number) => {
+      const a = s[0], b = s[s.length - 1], u = (t - a.t) / (b.t - a.t);
+      return { x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u };
+    };
+    const own13 = lerp(samples, 13), placed13 = lerp(placeInFormation('b', samples, before, 1), 13);
+    expect(Math.hypot(placed13.x - own13.x, placed13.y - own13.y)).toBeGreaterThan(20);
+    expect(placeInFormation('b', samples, met, 1)).toBe(samples);
+  });
+});
+
 describe('the arrowhead', () => {
   test('every slot is its own place, the lead on the line', () => {
     expect(formationSlot(0)).toEqual({ back: 0, side: 0 });
