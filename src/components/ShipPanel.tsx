@@ -5375,6 +5375,14 @@ const DetonatorSection: React.FC<{
   );
 };
 
+/** Worlds A-Z by name (accents and case ignored), with `firstId` (the
+ *  world a freighter is at) pulled to the top when it is in the list. */
+export function sortWorldsAZ<T extends { id: string; name: string }>(worlds: readonly T[], firstId?: string): T[] {
+  return [...worlds].sort((a, b) =>
+    (a.id === firstId ? -1 : b.id === firstId ? 1 : 0)
+    || a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+}
+
 const TradeRouteSection: React.FC<{
   ship: Ship;
   tradeRoutes: TradeRoute[];
@@ -5598,27 +5606,34 @@ const TradeRouteSection: React.FC<{
     () => new Set(settlements.filter(s => s.ownedBy === 'player').map(s => s.bodyId)),
     [settlements],
   );
+  // A-Z, with the world this freighter is parked at first (Sam, 2026-10-22:
+  // "Make this list alphabetical, alongside always having the current
+  // location at the top"). They came out in catalogue order: Earth, Luna,
+  // Juno, Midas...
+  const hereId = ship.transit ? undefined : ship.orbit?.parentBodyId;
   const originBodies = useMemo(
-    () => bodies.filter(b => settledIds.has(b.id)),
-    [bodies, settledIds],
+    () => sortWorldsAZ(bodies.filter(b => settledIds.has(b.id)), hereId),
+    [bodies, settledIds, hereId],
   );
   const terraformedOrigins = useMemo(
-    () => bodies.filter(b => settledIds.has(b.id) && !isRawWorld(b)),
-    [bodies, settledIds],
+    () => sortWorldsAZ(bodies.filter(b => settledIds.has(b.id) && !isRawWorld(b)), hereId),
+    [bodies, settledIds, hereId],
   );
   // Raw worlds I control that can still take supply (window not open).
+  // Destinations A-Z within each group. The world it is at is not pinned
+  // here: a route cannot run from a world to itself.
   const rawDests = useMemo(
-    () => bodies.filter(b =>
+    () => sortWorldsAZ(bodies.filter(b =>
       b.ownedBy === 'player'
       && isRawWorld(b)
       && b.terraformCompletesAtTick == null
       && (b.type === 'terrestrial' || b.type === 'moon' || b.type === 'dwarf'),
-    ),
+    )),
     [bodies],
   );
   // Terraformed worlds where I live — classic stockpile hauling.
   const logisticsDests = useMemo(
-    () => bodies.filter(b => settledIds.has(b.id) && !isRawWorld(b)),
+    () => sortWorldsAZ(bodies.filter(b => settledIds.has(b.id) && !isRawWorld(b))),
     [bodies, settledIds],
   );
   const destKind = destId === 'sol' ? 'dyson'
@@ -5822,7 +5837,9 @@ const TradeRouteSection: React.FC<{
           >
             <option value="">{t('ship.panel.pickOrigin')}</option>
             {(destKind === 'logistics' ? originBodies : terraformedOrigins).map(b => (
-              <option key={b.id} value={b.id}>{b.name}</option>
+              <option key={b.id} value={b.id}>
+                {b.id === hereId ? t('ship.panel.originHere', { name: b.name }) : b.name}
+              </option>
             ))}
           </select>
           <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>

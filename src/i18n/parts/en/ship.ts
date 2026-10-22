@@ -653,6 +653,7 @@ export const ship = {
   'ship.panel.perHitFull': 'The target carries nothing that counters this weapon type.',
   'ship.panel.pickDest': '— pick destination —',
   'ship.panel.pickOrigin': '— pick origin —',
+  'ship.panel.originHere': '{name} (here)',
   'ship.panel.pickingUp': 'picking up',
   'ship.panel.planned': 'PLANNED',
   'ship.panel.postCaptain': 'POST A CAPTAIN…',
