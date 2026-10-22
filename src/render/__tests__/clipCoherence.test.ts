@@ -137,6 +137,27 @@ describe('a hull never jumps on screen (the continuity guard)', () => {
     expect(out[last].x).toBeCloseTo(last * 3 + 300, -1);
   });
 
+  test('a parked hull rides its world, however fast and curved the world moves', () => {
+    // A moon swinging round its planet fast on screen (a close-up in a
+    // time-lapse replay); the hull sits at a fixed spot beside it. Predicted
+    // as a straight line in WORLD space every frame read as a jump, and
+    // the absorbed offsets carried a whole fleet off the screen.
+    const moon = (i: number) => ({ x: 600 * Math.cos(i * 0.35), y: 600 * Math.sin(i * 0.35) });
+    for (let i = 0; i < 90; i++) {
+      const m = moon(i);
+      const p = continuousDrawnPos('rider', m.x + 40, m.y - 25, 3, 1000 + i * 33, { ...m, id: 'moon' });
+      expect(Math.hypot(p.x - (m.x + 40), p.y - (m.y - 25)) * 3).toBeLessThan(1);
+    }
+  });
+
+  test('a slide never carries a hull far from where it is', () => {
+    // Even if every frame looks like a jump, the drawn hull stays near.
+    for (let i = 0; i < 60; i++) {
+      const p = continuousDrawnPos('wild', i % 2 ? 500 : -500, 0, 1, 1000 + i * 33);
+      expect(Math.abs(p.x - (i % 2 ? 500 : -500))).toBeLessThanOrEqual(400);
+    }
+  });
+
   test('a hull not drawn for a while starts where it is', () => {
     continuousDrawnPos('gap', 0, 0, 1, 5000);
     expect(continuousDrawnPos('gap', 900, 0, 1, 6000)).toEqual({ x: 900, y: 0 });

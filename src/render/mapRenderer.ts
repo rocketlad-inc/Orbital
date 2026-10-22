@@ -5013,10 +5013,22 @@ function hullFlashHere(
 // fades over CONTINUITY_TAU_MS. Smooth motion and hard burns pass through
 // untouched; a teleport becomes a short slide. Keyed by ship, so it holds
 // across the switch between the in-flight and parked draw paths.
-const continuity = new Map<string, { x: number; y: number; vx: number; vy: number; ox: number; oy: number; ms: number }>();
+//
+// A PARKED hull rides its world, so its motion is predicted in the world's
+// frame (`origin`, the parent's position): the orbit it is carried round
+// is curved, and predicted as a straight line it read as a "jump" every
+// frame once the world moved fast on screen (a close-up in a time-lapse
+// replay). Each one was absorbed, the offset grew without bound, and a
+// whole fleet slid off the screen away from the moon it was fighting at.
+// And however it arises, an offset is a short slide: past
+// CONTINUITY_MAX_SLIDE_PX it is dropped and the hull is drawn where it is.
+const continuity = new Map<string, { x: number; y: number; vx: number; vy: number; ox: number; oy: number; ms: number;
+  oid: string | null; ax: number; ay: number }>();
 export const CONTINUITY_TAU_MS = 180;
 /** A hull not drawn for this long starts fresh (it was off screen). */
 const CONTINUITY_GAP_MS = 250;
+/** The longest slide the guard will draw instead of a jump. */
+export const CONTINUITY_MAX_SLIDE_PX = 400;
 
 /** `x, y` is where the hull truly is this frame; the answer is where to
  *  draw it. Jumps are found in the TRUE positions (the drawn ones move by
@@ -5024,18 +5036,26 @@ const CONTINUITY_GAP_MS = 250;
  *  frame, so the offset never cleared). */
 export function continuousDrawnPos(
   shipId: string, x: number, y: number, scale: number, nowMs: number,
+  /** The frame the hull moves in: its world's position for a parked hull
+   *  (and that world's id); omitted for a hull in flight. */
+  origin?: { x: number; y: number; id: string },
 ): { x: number; y: number } {
   const c = continuity.get(shipId);
+  const oid = origin?.id ?? null, axNow = origin?.x ?? 0, ayNow = origin?.y ?? 0;
   if (!c || nowMs <= c.ms || nowMs - c.ms > CONTINUITY_GAP_MS || !(scale > 0)) {
     if (continuity.size > 3000) continuity.clear();
-    continuity.set(shipId, { x, y, vx: 0, vy: 0, ox: 0, oy: 0, ms: nowMs });
+    continuity.set(shipId, { x, y, vx: 0, vy: 0, ox: 0, oy: 0, ms: nowMs, oid, ax: axNow, ay: ayNow });
     return { x, y };
   }
+  // A new frame of reference (landing, a new world): rebase, so the
+  // switch itself is not motion.
+  if (c.oid !== oid) { c.oid = oid; c.ax = axNow; c.ay = ayNow; }
   const dt = nowMs - c.ms;
   const fade = Math.exp(-dt / CONTINUITY_TAU_MS);
   let ox = c.ox * fade, oy = c.oy * fade;
-  // Where its own (true) motion was taking it.
-  const px = c.x + c.vx * dt, py = c.y + c.vy * dt;
+  // Where its own (true) motion was taking it, riding its frame.
+  const carryX = axNow - c.ax, carryY = ayNow - c.ay;
+  const px = c.x + carryX + c.vx * dt, py = c.y + carryY + c.vy * dt;
   const ex = x - px, ey = y - py;
   const errPx = Math.hypot(ex, ey) * scale;
   const stepPx = Math.hypot(c.vx, c.vy) * dt * scale;
@@ -5044,11 +5064,14 @@ export function continuousDrawnPos(
     // Absorb it: drawn stays on the line it was on, then fades across.
     ox -= ex; oy -= ey;
   } else {
-    c.vx = (x - c.x) / dt;
-    c.vy = (y - c.y) / dt;
+    c.vx = (x - c.x - carryX) / dt;
+    c.vy = (y - c.y - carryY) / dt;
   }
+  // A slide longer than this is not continuity, it is a hull drawn
+  // somewhere it is not: draw it where it is.
+  if (Math.hypot(ox, oy) * scale > CONTINUITY_MAX_SLIDE_PX) { ox = 0; oy = 0; }
   // A jump keeps the motion it had; the true position moves on regardless.
-  c.x = x; c.y = y;
+  c.x = x; c.y = y; c.ax = axNow; c.ay = ayNow;
   c.ox = ox; c.oy = oy; c.ms = nowMs;
   return { x: x + ox, y: y + oy };
 }
@@ -5615,7 +5638,7 @@ export function drawShip(
   if (orbitMap) { const m = mapRadial(orbitMap, lx, ly, ctx.camera.scale); lx = m.x; ly = m.y; }
   // The continuity guard has the last word on where a hull is drawn.
   const kept = continuousDrawnPos(ship.id, parentPos.x + lx, parentPos.y + ly, ctx.camera.scale,
-    ctx.nowMs ?? performance.now());
+    ctx.nowMs ?? performance.now(), { x: parentPos.x, y: parentPos.y, id: parentBody.id });
   const worldX = kept.x;
   const worldY = kept.y;
   const canvasPos = worldToCanvas(worldX, worldY, ctx);

@@ -14,11 +14,13 @@ import type { ShipIconVariant } from '../components/ShipIcons';
 
 export interface MatchSummary {
   game: { id: string; name: string | null; status: string;
+    /** How it was won (engineering, chancellor, annihilation...). */
+    victory_type?: string | null;
     winner_faction_id: string | null };
   ticks: { lo: number | null; hi: number | null; rows: number };
   firstLiveTick: number | null;
   factions: Array<{ id: string; name: string; color: string | null;
-    color2: string | null }>;
+    color2: string | null; emblem?: string | null }>;
   bodies: Array<{ id: string; name: string | null; type: string;
     color: string | null; radius: number; orbit_radius: number | null;
     orbit_period: number | null; angle0: number | null;
@@ -30,6 +32,13 @@ export interface MatchSummary {
    *  rather than in every snapshot row. Drives weapon type (kinetic slug
    *  vs energy lance) and whether a hit flares a shield. */
   parts?: Record<string, string[]>;
+  /** Public event-log headlines (worker FILM_CHRONICLE_KINDS), in tick
+   *  order: what the film captions with. Absent from older servers. */
+  chronicle?: Array<{
+    tick_number: number; kind: string; payload: string | null;
+    actor_faction_id: string | null; target_faction_id: string | null;
+    body_id: string | null;
+  }>;
   /** The senate's whole history: bills, their windows, and how they fell. */
   senate?: Array<{
     id: string; kind: string; title: string | null; status: string;
