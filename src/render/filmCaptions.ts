@@ -470,6 +470,7 @@ export function beatCaption(e: ReelBeat,
     ? p.killer_faction_name : '';
   const who = Array.isArray(p.who) ? (p.who as string[]).filter(Boolean) : [];
   let title = '';
+  let subOverride: string | null = null;
   switch (e.kind) {
     case 'war_declared':
       title = Number(p.pile) > 1 && who.length >= 2 && who.length <= 3
@@ -513,7 +514,11 @@ export function beatCaption(e: ReelBeat,
     case 'dyson_initiated': title = T('title.dysonBegun', { a: String(p.faction_name ?? a) }); break;
     case 'dyson_milestone': title = T('title.dysonRises'); break;
     case 'dyson_collapsed': title = T('title.dysonFalls'); break;
-    case 'dyson_damaged': title = T('title.dysonHit', { pct: Number(p.pct) || 0 }); break;
+    case 'dyson_damaged':
+      title = T('title.dysonHit', { pct: Number(p.pct) || 0 });
+      // The log's line runs three clauses; one plain line says it.
+      if (Number(p.damage) > 0) subOverride = T('sub.dysonHit', { n: Number(p.damage) });
+      break;
     case 'mega_strike_charging': title = T('title.strikeAimed', { world }); break;
     case 'terraform_destroyed':
       title = p.cause === 'kaiju' ? T('title.scorched', { world }) : T('title.sterilised', { world }); break;
@@ -534,6 +539,6 @@ export function beatCaption(e: ReelBeat,
     default: title = e.text; break;
   }
   const line = typeof p.line === 'string' ? p.line : e.text;
-  const sub = title === line ? '' : broadcastCopy(line);
+  const sub = subOverride ?? (title === line ? '' : broadcastCopy(line));
   return { kicker, title, sub, fid: e.fid };
 }

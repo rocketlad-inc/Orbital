@@ -1915,7 +1915,14 @@ export function createMatchMap(
         : Math.max(0, ...dysonFlashAt().map(at => (fs >= at ? 1 - (fs - at) / 1.2 : 0)));
       // In the finale the meter stays up until the table, to hit 100%.
       const alpha = fin ? (el < FINALE_CARD_AT ? 1 : 0) : hud;
-      drawProgressMeter(ctx, W, H, T('meter.dyson'), dy.progress, colorOf(dysonOwner), alpha, flash,
+      // The meter says what the caption says: a Sphere headline's own
+      // number while it is up (97% under "at 99%" was a contradiction),
+      // and 100% only on the frame the shell seals.
+      const said = s.kind === 'beat' && /^dyson_(damaged|milestone)$/.test(s.beat?.kind ?? '')
+        ? Number(s.beat?.data?.pct) / 100 : NaN;
+      const shown = fin ? (fin.complete ? 1 : Math.min(0.999, fin.progress))
+        : Number.isFinite(said) ? said : dy.progress;
+      drawProgressMeter(ctx, W, H, T('meter.dyson'), shown, colorOf(dysonOwner), alpha, flash,
         T('meter.dysonNote', { a: shortName(filmFaction(dysonOwner)?.name ?? '') }));
     }
 
