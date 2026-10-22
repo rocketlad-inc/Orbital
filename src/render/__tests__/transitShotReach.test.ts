@@ -26,6 +26,14 @@ describe('transit fire reach', () => {
     expect(transitShotInReach(flying('a', 0, 0), flying('b', reach * 3, 0), rc)).toBe(false);
   });
 
+  it("the hull's point on its own course wins over ship.transit.pos", () => {
+    // transit.pos integrates a plain transfer, not an intercept's course.
+    const a = flying('a', 0, 0), b = flying('b', 5000, 0);
+    const course = new Map([['a', { x: 100, y: 0 }], ['b', { x: 100 + reach * 0.5, y: 0 }]]);
+    expect(transitShotInReach(a, b, rc)).toBe(false);
+    expect(transitShotInReach(a, b, rc, course)).toBe(true);
+  });
+
   it('an unarmed class never fires', () => {
     expect(transitShotInReach(flying('a', 0, 0, 'freighter'), flying('b', 1, 0), rc)).toBe(false);
   });

@@ -30,7 +30,7 @@ import { setStudioHullScale } from '../../render/cameraLimits';
 import { apiFetch } from '../api';
 import { arcApexScale, arcNeeded, panCamera, strikeTimingWarnings } from './shotPlan';
 
-export type Target = string; // 'earth' | 'ship:<id>' | 'fleet:<id>' | 'missile:<n>'
+export type Target = string; // 'earth' | 'ship:<id>' | 'fleet:<id>' | 'missile:<n>' | 'mid:<target>|<target>'
 
 export type ShotStep =
   | { at: number; do: 'focus'; target: Target; px?: number; scale?: number }
@@ -200,6 +200,15 @@ export class Director {
   position(target: Target): { x: number; y: number } | null {
     const s = this.host.state();
     const tick = this.tick();
+    // 'mid:ship:a|ship:b' -- the middle of several targets (a fight between
+    // two groups side by side, framed on neither). Those it cannot find
+    // drop out; null only when none are left.
+    if (target.startsWith('mid:')) {
+      const ps = target.slice(4).split('|').map(t => this.position(t.trim()))
+        .filter((p): p is { x: number; y: number } => !!p);
+      if (!ps.length) return null;
+      return { x: ps.reduce((a, p) => a + p.x, 0) / ps.length, y: ps.reduce((a, p) => a + p.y, 0) / ps.length };
+    }
     if (target.startsWith('ship:')) {
       const ship = this.ship(target.slice(5));
       if (!ship) return null;

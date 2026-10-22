@@ -758,11 +758,18 @@ function shieldBubbleOf(rc: RenderContext, stl: Settlement): { x: number; y: num
  * leads (the Mega Destroyer take, 2026-10-22). The bolt itself still
  * runs between the drawn sprites.
  */
-export function transitShotInReach(s: Ship, tgt: Ship, rc: RenderContext): boolean {
+export function transitShotInReach(
+  s: Ship, tgt: Ship, rc: RenderContext,
+  /** Each hull in flight's point on its own course this frame (MapCanvas
+   *  transitCourseWorldPosRef). ship.transit.pos is the fallback, and it
+   *  is NOT the course an intercepting hull flies (it integrates a plain
+   *  transfer), so a matched fight measured there never fired at all. */
+  courseWorldPos?: ReadonlyMap<string, { x: number; y: number }>,
+): boolean {
   const reach = SHIP_TRANSIT_RANGE[s.class] ?? 0;
   if (reach <= 0) return false;
-  const a = shipWorldPosition(s, rc.t, rc.bodies);
-  const b = shipWorldPosition(tgt, rc.t, rc.bodies);
+  const a = courseWorldPos?.get(s.id) ?? shipWorldPosition(s, rc.t, rc.bodies);
+  const b = courseWorldPos?.get(tgt.id) ?? shipWorldPosition(tgt, rc.t, rc.bodies);
   if (!a || !b) return false;
   // A little slack: the two positions are each hull's own snapshot, and
   // the server stamped the shot from inside the tick.
@@ -785,6 +792,8 @@ export function drawEngagementFire(
    *  never a shooter, whatever its lastCombatTick says (see
    *  settlementHasGuns). Omitted = the legacy behaviour, unchanged. */
   settlementMayFire?: (stl: Settlement) => boolean,
+  /** Hulls in flight on their own courses, world (transitShotInReach). */
+  transitCourseWorldPos?: ReadonlyMap<string, { x: number; y: number }>,
 ): void {
   // The server never fires between at-peace factions (room.js builds the
   // same nap/defense-pact set) - so neither may the animation. Without
@@ -862,7 +871,7 @@ export function drawEngagementFire(
       // feature flag, which only hid it until the flag went on. The
       // actual rule is the one the server engages by: a shot needs the
       // target inside the weapon's reach.
-      if (!transitShotInReach(s, tgt, rc)) continue;
+      if (!transitShotInReach(s, tgt, rc, transitCourseWorldPos)) continue;
       takeEngaged(s.id, s.orbit.parentBodyId, s.ownedBy, s, null);
       continue;
     }
