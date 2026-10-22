@@ -34,8 +34,6 @@ import {
 export const BATTLE_TURN_MS = 240000;
 /** A station's drawn width at full size (88-unit art x STATION_STRUCTURE_SCALE). */
 export const BATTLE_STATION_PX = 200;
-/** How fast a unit glides to a new place, ms (time constant). */
-const GLIDE_MS = 260;
 /** Sprites grow with the world up to this many times full size, then
  *  hold. Places keep scaling (so the fight stays clear of the disc);
  *  only the hulls stop growing, which can only open space, never close
@@ -243,7 +241,14 @@ export function battleScale(battle: LiveBattle, drawnRadiusPx: number): number {
 
 // ---------------------------------------------------------------- glide
 
-interface Glide { r: number; t: number; ms: number }
+interface Glide { r: number; t: number; ms: number; vr?: number; vt?: number }
+/** THE GLIDE IS A SPRING (critically damped), not an exponential. An
+ *  exponential moves fastest on its first frame, so a hull re-slotted
+ *  across the orbit (an arriving fleet given the far share) lurched off at
+ *  full speed: one of the last jumps in the Mega Destroyer clip. A spring
+ *  starts from rest, gathers, and settles without overshoot; this one is
+ *  most of the way in about 0.7 s. */
+export const BATTLE_GLIDE_OMEGA = 7;
 const glides = new Map<string, Glide>();
 let lastSweep = 0;
 
@@ -285,14 +290,23 @@ export function battlePlacement(
   if (!p) return null;
   let g = glides.get(id);
   if (!g || !fresh(g, nowMs)) { g = { r: p.r, t: p.theta, ms: nowMs }; glides.set(id, g); }
-  const dt = Math.max(0, Math.min(200, nowMs - g.ms));
+  const dt = Math.max(0, Math.min(200, nowMs - g.ms)) / 1000;
   g.ms = nowMs;
-  const k = 1 - Math.exp(-dt / GLIDE_MS);
-  let dth = (p.theta - g.t) % (Math.PI * 2);
-  if (dth > Math.PI) dth -= Math.PI * 2;
-  if (dth < -Math.PI) dth += Math.PI * 2;
-  g.t += dth * k;
-  g.r += (p.r - g.r) * k;
+  const W = BATTLE_GLIDE_OMEGA;
+  let vt = g.vt ?? 0, vr = g.vr ?? 0;
+  // Substeps keep the spring stable however long a frame was.
+  const n = Math.max(1, Math.ceil(dt / 0.016));
+  const h = dt / n;
+  for (let i = 0; i < n; i++) {
+    let dth = (p.theta - g.t) % (Math.PI * 2);
+    if (dth > Math.PI) dth -= Math.PI * 2;
+    if (dth < -Math.PI) dth += Math.PI * 2;
+    vt += (W * W * dth - 2 * W * vt) * h;
+    vr += (W * W * (p.r - g.r) - 2 * W * vr) * h;
+    g.t += vt * h;
+    g.r += vr * h;
+  }
+  g.vt = vt; g.vr = vr;
   if (nowMs - lastSweep > 10000) {
     lastSweep = nowMs;
     for (const [gid, gl] of glides) if (nowMs - gl.ms > 10000) glides.delete(gid);

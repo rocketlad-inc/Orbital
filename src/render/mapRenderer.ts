@@ -4979,6 +4979,19 @@ export function nearestDrawnCapital(
   return best;
 }
 
+const battleHolds = new Map<string, { lx: number; ly: number; heading: number; ms: number }>();
+function heldInBattle(shipId: string, parentPos: { x: number; y: number }, nowMs: number):
+  { lx: number; ly: number; heading: number } | null {
+  const h = battleHolds.get(shipId);
+  if (h && nowMs >= h.ms && nowMs - h.ms <= 400) { h.ms = nowMs; return h; }
+  const was = recentDrawnShipWorldPos(shipId, 600);
+  if (!was) { battleHolds.delete(shipId); return null; }
+  if (battleHolds.size > 2000) battleHolds.clear();
+  const seed = { lx: was.x - parentPos.x, ly: was.y - parentPos.y, heading: drawnShipLook(shipId)?.heading ?? 0, ms: nowMs };
+  battleHolds.set(shipId, seed);
+  return seed;
+}
+
 /** HULL_FLASH_MS after a hit the struck hull flashes white: the sprite
  *  drawn again additively, in the transform it was just drawn in. The
  *  hit has a place (fxArt sparks at the face) and the ship visibly
@@ -5483,6 +5496,18 @@ export function drawShip(
       }
     }
     const pl = k > 0 ? battlePlacement(liveBattle, ship.id, nowM) : null;
+    // WAITING FOR A PLACE. A hull that just arrived is outside the cached
+    // layout until the roster dwell lets the world re-solve; it used to be
+    // drawn on its raw parking orbit meanwhile, a third spot between where
+    // it arrived and where it would go. It holds where it was drawn, fixed
+    // to the world, until its place exists, then glides from there.
+    const held = !pl && k > 0 ? heldInBattle(ship.id, parentPos, nowM) : null;
+    if (held) {
+      battleK = k;
+      heading = held.heading;
+      lx = held.lx;
+      ly = held.ly;
+    }
     if (pl) {
       battleK = k;
       heading = pl.heading;

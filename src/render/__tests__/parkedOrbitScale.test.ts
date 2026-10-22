@@ -90,7 +90,7 @@ describe('the hull, its ring and its markers use the same map', () => {
 
   it('drawShip places the parked hull by parkedOrbitMap', () => {
     const i = renderer.indexOf('export function drawShip(');
-    expect(renderer.slice(i, i + 12000)).toMatch(/parkedOrbitMap\(\s*ship, parentBody, ctx/);
+    expect(renderer.slice(i, i + 16000)).toMatch(/parkedOrbitMap\(\s*ship, parentBody, ctx/);
   });
   it('drawApsisMarkers places Ap/Pe by it', () => {
     const i = renderer.indexOf('export function drawApsisMarkers(');
