@@ -19,7 +19,7 @@ import {
   BODY_LABEL_ROW_HEIGHT, bodyLabelAlwaysOn, computeTransitFormations, placeInFormation,
   drawAsteroidBeltDust, drawBody, drawOrbit, drawOwnershipLayer,
   drawSettlement, drawShip, drawStarfield, drawSystemRegions,
-  drawTorchTrajectory, drawTransitShip, generateStarfield, planBodyLabels,
+  drawTorchTrajectory, drawTransitShip, forgetDrawnShips, generateStarfield, planBodyLabels,
 } from './mapRenderer';
 import type { ShipFormation } from './mapRenderer';
 import {
@@ -43,7 +43,7 @@ import {
 } from './matchWorld';
 import type { ShipIconClass, ShipIconVariant } from '../components/ShipIcons';
 import { computePresentation, drawnRadiusOf, hullReveal, hullSize } from './bodyPresentation';
-import { battlePlacement, battleScale, liveBattleFor, type BattleUnit, type LiveBattle } from './battleLayoutLive';
+import { battlePlacement, battleScale, forgetBattleGlides, liveBattleFor, type BattleUnit, type LiveBattle } from './battleLayoutLive';
 import { shipIconSize } from './mapRenderer';
 import { getShipClass } from '../game/shipClasses';
 import { getEmblemImage } from './emblemCache';
@@ -88,7 +88,7 @@ export function createMatchMap(
   _audit: (tick: number, frac?: number) => unknown[];
   _deaths: (tick: number) => unknown[];
   _probe: () => unknown;
-  _facts: () => unknown } {
+  _facts: () => unknown; _trace: () => unknown } {
   const ctx = canvas.getContext('2d')!;
   let W = canvas.width || 1280, H = canvas.height || 720, DPR = 1;
 
@@ -226,14 +226,6 @@ export function createMatchMap(
   const killPhase = (id: string) => 0.12 + 0.76 * ((hashStr(`${id}:k`) % 1000) / 1000);
   /** The scene playing now (set by the camera). */
   let curScene: ReelScene | undefined;
-  /** Time-lapses that hold on the shot before them (no zoom out). */
-  const heldBy = new Map<ReelScene, ReelScene>();
-  /** A time-lapse shorter than this holds on the last shot... */
-  const HOLD_MONTAGE_SECONDS = 1.9;
-  /** ...unless the film has not been wide for this long. */
-  const WIDE_EVERY_SECONDS = 12;
-  /** How far a held time-lapse pulls back over its length. */
-  const HELD_PULLBACK = 2.6;
   let filmTotal = 0;
   /** Smaller headlines, with the film second each one comes up. */
   let ticker: Array<{ beat: ReelBeat; start: number }> = [];
@@ -527,6 +519,17 @@ export function createMatchMap(
     for (const e of beats) {
       const isKaiju = /^kaiju_/.test(e.kind) || e.data?.cause === 'kaiju';
       if (!isKaiju || e.kind === 'kaiju_omen') continue;
+      // THE KILL ON SCREEN. The beast's hull is gone a tick before the
+      // log's row: anchor the scene on the tick it actually dies in, so
+      // the death lands mid-scene, not in its first second.
+      if (e.kind === 'kaiju_dead') {
+        let t = e.tick;
+        while (t > e.tick - 4 && !kaijuAt(t - 1)) t--;
+        if (kaijuAt(t - 1)) e.tick = t;
+      }
+      // Its arrival is a hull APPEARING at the end of its tick: one tick
+      // of lead, so it is on screen for two thirds of the scene.
+      if (e.kind === 'kaiju_hunting' && e.data?.carried) e.lead = 1;
       const at = kaijuAt(e.tick) ?? kaijuAt(e.tick - 1);
       if (at && byId.has(at) && drawableAt(byId.get(at)!, e.tick)) e.body = at;
     }
@@ -557,33 +560,11 @@ export function createMatchMap(
     sceneExtent.clear();
     sceneFocus.clear();
 
-    // NO BREATHING ZOOM. A short time-lapse between two close shots used
-    // to pull all the way out to the system and dive back in: sixteen
-    // identical out-and-back crash zooms, the territory bands flashing
-    // the whole frame twice each time. A short one now HOLDS on the shot
-    // before it and the next scene cuts in; the wide "state of the war"
-    // shot comes round only every WIDE_EVERY_SECONDS.
-    heldBy.clear();
-    {
-      let lastWide = -Infinity;
-      let acc = 0;
-      for (let i = 0; i < scenes.length; i++) {
-        const sc = scenes[i];
-        const prev = scenes[i - 1];
-        const src = prev ? (heldBy.get(prev) ?? prev) : undefined;
-        const prevClose = !!src && src.kind !== 'intro' && src.framing !== 'system' && !!src.bodyId;
-        // A time-lapse too short to read the map in never cuts out to it:
-        // a 0.7 s insert of the wide shot is a brightness strobe, not
-        // context. Longer ones hold too unless the film is due a wide.
-        if (sc.kind === 'montage' && prevClose && (sc.seconds < 1.5
-          || (sc.seconds < HOLD_MONTAGE_SECONDS && acc - lastWide < WIDE_EVERY_SECONDS))) {
-          heldBy.set(sc, src!);
-        } else if (sc.framing === 'system') {
-          lastWide = acc + sc.seconds;
-        }
-        acc += sc.seconds;
-      }
-    }
+    // NO BREATHING ZOOM and NO HELD WHIZZ. A time-lapse too short to read
+    // is a time cut (filmReel skips it); one long enough to play is the
+    // wide shot. Held close, a short one ran a day and a half a frame and
+    // hulls crossed the screen between two frames.
+    systemFrames.clear();
 
     // --- the ticker: smaller headlines, spaced so each can be read ------
     ticker = [];
@@ -707,15 +688,26 @@ export function createMatchMap(
     return { top: 120 * u, bottom: 210 * u, side: 60 * u };
   };
 
+  /** Each wide shot's one frame (see systemFrame). */
+  const systemFrames = new Map<ReelScene | undefined, Frame>();
   const systemFrame = (s: ReelScene | undefined, t: number): Frame => {
+    // ONE FRAME FOR THE WHOLE SHOT. Re-centred on the occupied worlds at
+    // every instant, the wide shot swam 30-66 px a frame as the system
+    // turned under a time-lapse: framed once, over the worlds' places
+    // across the scene, it holds still and they turn inside it.
+    const hit = systemFrames.get(s);
+    if (hit) return hit;
     const lo = summary.ticks.lo ?? 0;
     const ids = s ? occupiedOver(s.from, s.to) : occupiedOver(lo, lo + 1);
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    const at = s ? [0, 0.25, 0.5, 0.75, 1].map(k => s.from + (s.to - s.from) * k) : [t];
     for (const id of ids) {
-      const p = pos(id, t);
-      const r = (bodyR.get(id) ?? 4) + 10;
-      x0 = Math.min(x0, p.x - r); x1 = Math.max(x1, p.x + r);
-      y0 = Math.min(y0, p.y - r); y1 = Math.max(y1, p.y + r);
+      for (const ti of at) {
+        const p = pos(id, ti);
+        const r = (bodyR.get(id) ?? 4) + 10;
+        x0 = Math.min(x0, p.x - r); x1 = Math.max(x1, p.x + r);
+        y0 = Math.min(y0, p.y - r); y1 = Math.max(y1, p.y + r);
+      }
     }
     if (!isFinite(x0)) return { x: 0, y: 0, scale: 1 };
     const m = safe();
@@ -725,7 +717,9 @@ export function createMatchMap(
     const cy = (y0 + y1) / 2;
     // Centre the box in the space between the graphics.
     const midY = (m.top + (H - m.bottom)) / 2;
-    return { x: (x0 + x1) / 2, y: cy + (H / 2 - midY) / scale, scale };
+    const f = { x: (x0 + x1) / 2, y: cy + (H / 2 - midY) / scale, scale };
+    if (s) systemFrames.set(s, f);
+    return f;
   };
 
   const bodyFrame = (id: string, t: number, share: number): Frame => {
@@ -738,8 +732,7 @@ export function createMatchMap(
   };
 
   const subjectOf = (s: ReelScene | undefined, t: number): string | null =>
-    s && heldBy.has(s) ? subjectOf(heldBy.get(s), t)
-    : s && s.kind === 'intro' && teaser ? subjectOf(teaser, t)
+    s && s.kind === 'intro' && teaser ? subjectOf(teaser, t)
     : s && s.bodyId && s.framing !== 'system' && byId.has(s.bodyId)
       && (drawableAt(byId.get(s.bodyId)!, Math.floor(t))
         // The shot stays on a world for a moment after it is destroyed:
@@ -777,23 +770,6 @@ export function createMatchMap(
 
   /** A scene's own frame at an instant, with its slow drift. */
   const frameOf = (s0: ReelScene | undefined, t: number, prog: number): Frame => {
-    // A held time-lapse is the shot before it, PULLING BACK: the world's
-    // news done, the camera eases out to show what is round it. Held
-    // still under FAST-FORWARD it read as dead air ("an idle planet").
-    const src = s0 ? heldBy.get(s0) : undefined;
-    if (s0 && src) {
-      const f0 = frameOf(src, t, 1);
-      const q = Math.max(0, Math.min(1, prog));
-      const ease = q * q * (3 - 2 * q);
-      const k = Math.exp(-Math.log(HELD_PULLBACK) * ease);
-      // About the subject's screen spot, so the world stays put as the
-      // frame opens round it.
-      const sub = subjectOf(src, t);
-      const p = sub ? pos(sub, t) : { x: f0.x, y: f0.y };
-      const sp = onScreen(f0, p);
-      const scale = f0.scale * k;
-      return { x: p.x - (sp.x - W / 2) / scale, y: p.y - (sp.y - H / 2) / scale, scale };
-    }
     // The cold open is framed as the battle it shows.
     const s = s0 && s0.kind === 'intro' && teaser ? teaser : s0;
     const subj = viewMode === 'wide' ? null : subjectOf(s, t);
@@ -1025,7 +1001,35 @@ export function createMatchMap(
   }
 
   // ---- render ----------------------------------------------------------
+  /** The scene the last frame was framed for. */
+  let primedFor: ReelScene | undefined | null = null;
+  /**
+   * FRAMED RIGHT ON THE FIRST FRAME. A shot's framing reads the fleet
+   * layout at its world (battleReach), which only a drawn frame measures:
+   * the first frame after every cut was framed without it and the second
+   * re-framed, a 26% zoom pop after each cut. On a new scene, a frame is
+   * laid out unseen first, and the camera aimed again from it.
+   */
   function render() {
+    if (curScene !== primedFor) {
+      primedFor = curScene;
+      // Every scene change is a cut: nothing carries over from the shot
+      // before (see forgetDrawnShips).
+      forgetDrawnShips();
+      forgetBattleGlides();
+      if (curFocus) {
+        battleReach.delete(curFocus);
+        if (curScene) sceneExtent.delete(curScene);
+        const was = tracing;
+        tracing = false;
+        renderOnce();
+        tracing = was;
+        aim(clockT);
+      }
+    }
+    renderOnce();
+  }
+  function renderOnce() {
     const t = curTick + curFrac;
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     ctx.fillStyle = '#03060d';
@@ -1428,7 +1432,22 @@ export function createMatchMap(
         const k = (t - tb) / BLAST_TICKS;
         if (k >= 0 && k < 1) {
           const cp = toPx(wp);
-          drawBlast(ctx, cp.x, cp.y, k, d.id, d.cls === 'kaiju' ? 6 : 1);
+          if (d.cls === 'kaiju') {
+            // THE LEVIATHAN GOES UP AT ITS OWN SIZE: a 60 px fireball under
+            // a 400 px monster read as it blinking out. One blast the size
+            // of the body it was drawn at, and the body bursting along its
+            // length after it.
+            const R = Math.max(60, lastBeastR.get(d.id) ?? 0);
+            drawBlast(ctx, cp.x, cp.y, k, d.id, (R * 1.1) / 10);
+            for (let j = 1; j <= 3; j++) {
+              const kj = (t - tb - j * 0.12) / BLAST_TICKS;
+              if (kj <= 0 || kj >= 1) continue;
+              const a = (hashStr(`${d.id}:${j}`) % 628) / 100;
+              drawBlast(ctx, cp.x + Math.cos(a) * R * 0.6, cp.y + Math.sin(a) * R * 0.6, kj, `${d.id}:${j}`, (R * 0.55) / 10);
+            }
+          } else {
+            drawBlast(ctx, cp.x, cp.y, k, d.id, 1);
+          }
           drawDebris(ctx, cp.x, cp.y, 10, k, d.id);
         }
       }
@@ -1656,9 +1675,45 @@ export function createMatchMap(
       drawCountChips(ctx, H, p.x, p.y + r0 + 16 * unitOf(H), list, c.alpha);
     }
 
+    // How big the Leviathan was last drawn, for its death (see the blast).
+    for (const sh of adaptedShips) {
+      if (sh.class !== 'kaiju') continue;
+      const h = rc.shipHitboxes?.get(sh.id);
+      // Its hitbox is the head; the drawn body runs about 2.6 times that.
+      if (h) lastBeastR.set(sh.id, h.r * 2.6);
+    }
+
+    if (tracing) {
+      // WHERE EVERYTHING WAS DRAWN, this frame: the frame-to-frame audit
+      // (a hull that jumps, pops or flickers between two frames) reads
+      // this, not a sampled still.
+      const meta = new Map(adaptedShips.map(sh => [sh.id, sh]));
+      lastTrace = {
+        t, scene: curScene ? scenes.indexOf(curScene) : -1,
+        cam: { x: cam.x, y: cam.y, scale: cam.scale },
+        // Hulls dying this tick (they vanish under their blast: not a pop).
+        dying: [...vanishAt.keys()],
+        ships: [...(rc.shipHitboxes ?? new Map()).entries()].map(([id, h]) => {
+          const sh = meta.get(id);
+          return [id, Math.round(h.x * 10) / 10, Math.round(h.y * 10) / 10, Math.round(h.r * 10) / 10,
+            sh?.transit ? 1 : 0, sh?.orbit?.parentBodyId ?? null];
+        }),
+        bodies: visible.map(b => {
+          const p = toPx(bodyPosition(b, t, gameBodies));
+          return [b.id, Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10,
+            Math.round(drawnRadiusOf(pres, b, cam.scale) * 10) / 10];
+        }),
+      };
+    }
+
     ctx.restore();
     drawFilm();
   }
+  /** The Leviathan's drawn radius (screen px), last frame it was drawn. */
+  const lastBeastR = new Map<string, number>();
+  /** The frame-to-frame audit's record of the last frame (see render). */
+  let tracing = false;
+  let lastTrace: unknown = null;
 
   // ---- the film's graphics (filmOverlay) -------------------------------
   //
@@ -1720,9 +1775,6 @@ export function createMatchMap(
    * change of leader; failing that, nothing.
    */
   const montageCaption = (s: ReelScene): Caption | null => {
-    // A time-lapse held on the last shot says nothing: its news is not in
-    // the picture, and a caption over the wrong world is worse than none.
-    if (heldBy.has(s)) return null;
     // The first one is the start of the story: who, and where.
     if (s.from <= (summary.ticks.lo ?? 0) + 1) {
       return { kicker: T('kicker.start'), title: T('title.begin', { n: empires.length }), sub: '', fid: null };
@@ -1893,7 +1945,9 @@ export function createMatchMap(
       if (prog > 0.8 && sides.length) {
         const top = [...sides].sort((a, b) => b.ships - a.ships)[0];
         const second = [...sides].sort((a, b) => b.ships - a.ships)[1];
-        if (top.ships > 0 && (!second || top.ships > second.ships)) {
+        // A clear margin, or no call: 77 vs 70 named the side that then
+        // lost the field.
+        if (top.ships > 0 && (!second || top.ships >= 1.5 * second.ships)) {
           // "Holds" only when every settlement on the world is theirs.
           let mine = 0, theirs = 0;
           for (const st of world.stls.values()) {
@@ -2014,6 +2068,7 @@ export function createMatchMap(
     // worldToCanvas and this file's toPx the same function.
     DPR = 1;
     W = w; H = h;
+    systemFrames.clear();
     canvas.width = Math.round(w); canvas.height = Math.round(h);
     canvas.style.width = `${w}px`; canvas.style.height = `${h}px`;
     starfield = generateStarfield(canvas.width, canvas.height);
@@ -2033,6 +2088,7 @@ export function createMatchMap(
     setView: (mode: 'auto' | 'wide') => { viewMode = mode; },
     rateAt,
     _facts: () => lastFacts,
+    _trace: () => { tracing = true; return lastTrace; },
     _probe: () => {
       probing = true;
       const lp = lastProbe as { hits?: Array<[number, number] | null> } | null;

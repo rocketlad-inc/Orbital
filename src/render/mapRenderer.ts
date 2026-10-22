@@ -5039,8 +5039,8 @@ const continuity = new Map<string, {
   x: number; y: number; vx: number; vy: number; ms: number;
   /** The offset being closed (screen px): o0 at startMs, gone at startMs + dur. */
   o0x: number; o0y: number; startMs: number; dur: number;
-  /** Last frame was caught as a jump. */
-  caught?: boolean;
+  /** Frames running caught as a jump (0 = the last frame was not). */
+  caught?: number;
   /** The frame the hull moves in (its world), and where it was. */
   oid: string | null; ax: number; ay: number;
   /** This frame's answer, for a second call in the same frame. */
@@ -5059,6 +5059,8 @@ const smootherStep = (u: number) => { const k = Math.max(0, Math.min(1, u)); ret
 const CONTINUITY_GAP_MS = 250;
 /** How far caught jumps may stack up before the older ones are dropped. */
 export const CONTINUITY_MAX_SLIDE_PX = 400;
+/** A second jump on the very next frame is caught only past this. */
+export const CONTINUITY_BIG_PX = 60;
 
 /** `x, y` is where the hull truly is this frame; the answer is where to
  *  draw it. Jumps are found in the TRUE positions (the drawn ones move by
@@ -5086,7 +5088,10 @@ export function continuousDrawnPos(
   }
   // A new frame of reference (landing, a new world): rebase, so the
   // switch itself is not motion.
-  if (c.oid !== oid) { c.oid = oid; c.ax = axNow; c.ay = ayNow; }
+  // Its velocity belonged to the old frame too: a hull landing kept its
+  // flight speed, predicted itself sailing on past its world, and its
+  // next step (being laid out in orbit) went through as motion.
+  if (c.oid !== oid) { c.oid = oid; c.ax = axNow; c.ay = ayNow; c.vx = 0; c.vy = 0; }
   const dt = nowMs - c.ms;
   // The offset still left to close, on its ease. Held in SCREEN px: a slide
   // is something seen, and held in world units a zoom-in magnified it
@@ -5108,8 +5113,14 @@ export function continuousDrawnPos(
   // later frame was "a jump", the offset stacked to the cap and dropped:
   // loose escorts in the Mega Destroyer take popped ~390 px every few
   // frames in Earth orbit and through every zoom (2026-10-22).
-  const jumped = off && !c.caught;
-  c.caught = jumped;
+  // ...unless the second is a jump too: far off (CONTINUITY_BIG_PX) and
+  // far off its own step. A hull landing and then being re-slotted in the
+  // orbit layout teleported twice on consecutive frames, and the second
+  // went through whole (~1,000 px at a close-up, measured frame to frame).
+  // Never more than two running: a third is the motion itself.
+  const n = c.caught ?? 0;
+  const jumped = off && (n === 0 || (n < 2 && errPx > CONTINUITY_BIG_PX && errPx > 3 * stepPx));
+  c.caught = jumped ? n + 1 : 0;
   if (jumped) {
     // Absorb it: drawn stays on the line it was on, then eases across,
     // longer for a bigger catch. Whatever was still closing joins it.
@@ -5157,6 +5168,17 @@ export function drawnShipsSince(sinceMs: number): Array<[string, number, number]
 
 /** Where a hull was drawn, only if it was drawn just now (any role: on
  *  its own line, or as an escort in its fleet's block). */
+/**
+ * A CUT (the match film). Where each hull was drawn in the shot before is
+ * no guide to where it is in this one: a hull landing at the new world was
+ * seeded from its speck in a wide time-lapse thousands of units away, and
+ * swept across the close-up in a 1,300 px-a-frame arc. Forget it all.
+ */
+export function forgetDrawnShips(): void {
+  continuity.clear();
+  lastDrawnShipWorldPos.clear();
+}
+
 export function recentDrawnShipWorldPos(shipId: string, maxAgeMs = 500): { x: number; y: number } | undefined {
   const e = lastDrawnShipWorldPos.get(shipId);
   return e && e.ms != null && performance.now() - e.ms <= maxAgeMs ? e : undefined;

@@ -85,6 +85,18 @@ describe('filmReel', () => {
     expect(fight && strike && fight.to <= strike.from).toBe(true);
   });
 
+  it('cuts across a time-lapse too short to read instead of racing through it', () => {
+    const scenes = planReel({ lo: 1, hi: 300,
+      battles: [battle('mars', 100, 108, 90, 30), battle('earth', 112, 120, 120, 40)],
+      beats: [beat(60, 'faction_eliminated', 150, 'titan')] });
+    for (const m of scenes.filter(s => s.kind === 'montage')) {
+      // Either played at a readable length, or not played at all.
+      expect(m.seconds >= 1.5 || m.seconds < 0.001).toBe(true);
+    }
+    const total = scenes.reduce((a, s) => a + s.seconds, 0);
+    expect(total).toBeGreaterThan(30);
+  });
+
   it('leaves standoffs where nobody died out of the cut', () => {
     const scenes = planReel({ lo: 1, hi: 100,
       battles: [battle('mars', 20, 28, 90, 0)], beats: [] });

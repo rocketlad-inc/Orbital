@@ -372,6 +372,12 @@ export function battleShipOffsetPx(
   return { x, y };
 }
 
+/** A CUT (the match film): no hull glides on from a place it held in the
+ *  shot before. The layouts themselves are kept. */
+export function forgetBattleGlides(): void {
+  glides.clear();
+}
+
 /** Test hook: clear every cached battle and glide. */
 export function resetLiveBattles(): void {
   cache.clear();
