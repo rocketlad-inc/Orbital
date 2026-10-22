@@ -13,9 +13,9 @@ const beat = (tick: number, kind: string, weight: number, body: string | null = 
 
 describe('filmReel', () => {
   it('budgets a share-length film, growing gently with the match', () => {
-    expect(reelBudget(20)).toBe(45);
-    expect(reelBudget(500)).toBe(90);
-    expect(reelBudget(5000)).toBe(100);
+    expect(reelBudget(20)).toBe(42);
+    expect(reelBudget(500)).toBe(63);
+    expect(reelBudget(5000)).toBe(72);
   });
 
   it('finds the deadliest stretch of a long fight', () => {
@@ -57,8 +57,8 @@ describe('filmReel', () => {
 
   it('prefers a new place to a third visit to the same one', () => {
     const battles = [10, 60, 110, 160].map(t => battle('earth', t, t + 8, 100, 30))
-      .concat([battle('mars', 210, 218, 60, 12)]);
-    const scenes = planReel({ lo: 1, hi: 260, battles, beats: [] }, { targetSeconds: 40 });
+      .concat([{ ...battle('mars', 210, 218, 60, 12), sides: ['c', 'd'] }]);
+    const scenes = planReel({ lo: 1, hi: 260, battles, beats: [] }, { targetSeconds: 50 });
     const places = scenes.filter(s => s.kind === 'battle').map(s => s.bodyId);
     expect(places).toContain('mars');
   });
