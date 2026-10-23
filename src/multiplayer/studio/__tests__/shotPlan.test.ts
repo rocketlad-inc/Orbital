@@ -61,9 +61,27 @@ describe('arc pans', () => {
   });
 
   it('without an arc it is the plain ease (log-space zoom)', () => {
-    const m = panCamera(0.5, from, 100, 0, 4, null);
+    const m = panCamera(0.5, from, 100, 0, 1, null);
     expect(m.x).toBeCloseTo(50);
-    expect(m.scale).toBeCloseTo(2);   // geometric middle of 1 and 4
+    expect(panCamera(0.5, from, 100, 0, 4, null).scale).toBeCloseTo(2);   // geometric middle of 1 and 4
+  });
+
+  it('a straight pan that zooms keeps its subject in frame', () => {
+    // Judges, 2026-10-23: a fit pan off a close-up of Ganymede moved the
+    // centre at the zoom's pace, left the moon before the view widened, and
+    // filmed a second of empty starfield. Zooming out, the start stays as
+    // close to centre as the end frame puts it; zooming in, so does the target.
+    const out = { x: 0, y: 0, scale: 2 };
+    const end = 0.05;                             // the fit: both ends in a 1920 frame
+    const D = 1920 / 2 / end * 0.8;               // the target sits 80% out at the end
+    for (let u = 0; u <= 1.0001; u += 0.05) {
+      const c = panCamera(u, out, D, 0, end, null);
+      expect(Math.abs(c.x) * c.scale).toBeLessThanOrEqual(D * end + 1e-6);
+    }
+    for (let u = 0; u <= 1.0001; u += 0.05) {
+      const c = panCamera(u, { x: D, y: 0, scale: end }, 0, 0, 2, null);
+      expect(Math.abs(c.x) * c.scale).toBeLessThanOrEqual(D * end + 1e-6);
+    }
   });
 });
 

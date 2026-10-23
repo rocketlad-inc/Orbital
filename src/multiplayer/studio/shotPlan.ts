@@ -56,7 +56,16 @@ export function panCamera(u: number, from: Cam, tx: number, ty: number, toScale:
   const lf = Math.log(from.scale), lt = Math.log(toScale);
   if (!arc) {
     const e = easeInOut(k);
-    return { x: from.x + (tx - from.x) * e, y: from.y + (ty - from.y) * e, scale: Math.exp(lf + (lt - lf) * e) };
+    const scale = Math.exp(lf + (lt - lf) * e);
+    // Travel at the zoom's pace on screen, not in the world: zooming out,
+    // the start stays no further from centre than the end frame puts it;
+    // zooming in, the target does. Moving the centre at the plain ease left
+    // a close-up's subject before the view had widened (judges 2026-10-23:
+    // a second of empty starfield off Ganymede). A pan at one zoom is plain.
+    let g = e;
+    if (lt < lf - 0.1) g = (from.scale / scale - 1) / (from.scale / toScale - 1);
+    else if (lt > lf + 0.1) g = 1 - (toScale / scale - 1) / (toScale / from.scale - 1);
+    return { x: from.x + (tx - from.x) * g, y: from.y + (ty - from.y) * g, scale };
   }
   const e = easeInOut(k);
   const plain = lf + (lt - lf) * e;
