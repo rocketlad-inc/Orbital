@@ -475,11 +475,14 @@ export class Director {
     const before = this.host.state().currentTick;
     // Bounded: a tick request that never answers froze two takes for an
     // hour. After 30 s, assume the server ticked and wait on the map.
-    const ask = () => Promise.race([
+    // A RETRY says the tick it advances FROM (`expect`), so a first try
+    // that did go through is a no-op on the server, never a second tick.
+    // The first try does not: the map's tick can lag the server's for a
+    // moment, and a stale `expect` refused a real tick and left a take a
+    // tick behind its script (the strike found the Mega "not arrived").
+    const ask = (expect?: number) => Promise.race([
       apiFetch<{ current_tick: number }>(`/api/admin/studio/games/${this.host.gameId}/tick`, {
-        // The tick we advance FROM: a retry after a first try that did go
-        // through is then a no-op on the server, never a second tick.
-        method: 'POST', body: JSON.stringify({ n, expect: before }),
+        method: 'POST', body: JSON.stringify(expect == null ? { n } : { n, expect }),
       }),
       realSleep(30_000).then(() => null),
     ]);
@@ -492,7 +495,7 @@ export class Director {
       this.note(`tick: ${res.error?.message ?? res.status}; asking again`);
       await realSleep(3000);
       if (this.host.state().currentTick > before) { res = null; break; }
-      res = await ask();
+      res = await ask(before);
     }
     if (res && !res.ok) throw new Error(`tick: ${res.error?.message ?? res.status}`);
     if (!res) this.note(`tick: no answer in 30 s at tick ${before}; waiting on the map`);
