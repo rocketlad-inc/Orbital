@@ -97,7 +97,11 @@ async function apply() {
   const fleets = Object.fromEntries(Object.entries(out.fleets).map(([k, id]) => [k, strip(id)]));
   console.log(JSON.stringify({ game_id: out.game_id, created: out.created, tick: out.tick, viewer: out.viewer,
     factions: out.factions.map(f => ({ key: f.key, handle: f.handle, id: strip(f.id) })),
-    ships, fleets, wars: out.wars, orders: out.orders, warnings: out.warnings ?? [] }, null, 2));
+    ships, fleets, wars: out.wars, orders: out.orders,
+    ...(out.megastructures?.length ? { megastructures: out.megastructures } : {}),
+    ...(out.kaiju ? { kaiju: out.kaiju } : {}),
+    ...(out.gate_birth ? { gate_birth: out.gate_birth } : {}),
+    warnings: out.warnings ?? [] }, null, 2));
   for (const w of out.warnings ?? []) console.error(`WARNING: ${w}`);
   if (out.created) console.error(`\nScene applied to NEW game ${out.game_id}. Record with:\n  node scripts/studio.mjs record ${out.game_id} shot.json --out clip.mp4 --as ${out.factions.find(f => f.key === out.viewer)?.handle ?? out.factions[0].handle}${ENV !== 'staging' ? ` --env ${ENV}` : ''}`);
 }
