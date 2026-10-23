@@ -37,6 +37,7 @@ import {
   periodForRadius, MEGASTRUCTURES, MEGA_MU, bodyPositionAt, foundrySlotsAt, buildSlotsAt, hasSettlementAt,
   MEGA_MAX_HP, MEGA_REGEN_PER_TICK, MEGA_BREACH_HP, stationDamage,
   maySupplySite, excludedFundersOf, constructionPartners, gateTransitTicks,
+  renameFinishedSiteStmt,
 } from './megastructures.js';
 import { NON_WORLD_TYPES, stationTypeMul } from './systems.js';
 import { advanceSunGates, mainSystemSql, tellEveryone, recordGateTransit } from './sunGates.js';
@@ -1448,7 +1449,7 @@ export class Room {
         }
         const siteHere = solDrop ? null : await DB
           .prepare(
-            `SELECT m.status, m.acc_metal, m.acc_credits, m.cost_metal, m.cost_credits,
+            `SELECT m.kind, m.status, m.acc_metal, m.acc_credits, m.cost_metal, m.cost_credits,
                     m.settings_json, b.owner_faction_id, b.name
                FROM game_megastructures m
                JOIN game_bodies b ON b.id = m.body_id
@@ -1498,6 +1499,9 @@ export class Room {
                 WHERE body_id = ?`,
             ).bind(accM, accG, full ? 'complete' : 'building',
                    full ? tick : null, stop.body_id).run();
+            // Finished: the body drops its "Site" (renameFinishedSiteStmt).
+            const renamed = full ? renameFinishedSiteStmt(DB, gameId, stop.body_id, siteHere.kind) : null;
+            if (renamed) await renamed.run();
             await DB.prepare('UPDATE game_ships SET trades_completed = trades_completed + 1 WHERE id = ?')
               .bind(c.ship_id).run();
           }
@@ -2326,7 +2330,7 @@ export class Room {
         if (r.kind === 'megastructure') {
           const site = await this.env.DB
             .prepare(
-              `SELECT m.status, m.acc_metal, m.acc_credits, m.cost_metal, m.cost_credits,
+              `SELECT m.kind, m.status, m.acc_metal, m.acc_credits, m.cost_metal, m.cost_credits,
                       b.name, b.destroyed_at_tick
                  FROM game_megastructures m
                  JOIN game_bodies b ON b.id = m.body_id
@@ -2421,6 +2425,8 @@ export class Room {
                 )
                 .bind(accM, accG, full ? 'complete' : 'building',
                       full ? tick : null, r.dest_body_id),
+              // Finished: the body drops its "Site" (renameFinishedSiteStmt).
+              ...(full ? [renameFinishedSiteStmt(this.env.DB, gameId, r.dest_body_id, site.kind)].filter(Boolean) : []),
               // Anything the site would not take goes home with the hull
               // rather than evaporating on the dock.
               this.env.DB

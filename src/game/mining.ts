@@ -148,3 +148,70 @@ export function planMiningRun(
     },
   };
 }
+
+// ============================================================
+// WHAT THE CARGO CARD'S MINING BOX SAYS.
+//
+// There are TWO ways a rigged freighter digs, and the card only knew one:
+//   - by hand: the player pressed BEGIN MINING, the server stored
+//     game_ships.mining_body_id, and meteoroidTick fills the hull's own
+//     hold until full / dry / stopped;
+//   - by route: a mining run's 'mine' stop (room.js walkRouteStops). The
+//     walker holds the hull on the rock by NOT advancing its cursor and
+//     fills the CREW ROW's cargo. It never sets mining_body_id, and the
+//     server refuses a manual order on a routed hull (409 on_a_route).
+// Reading only mining_body_id, a route digging away read as "BEGIN
+// MINING ... cannot leave until you stop it", and kept offering it after
+// the rock was worked out. This decides which box to show from both.
+// ============================================================
+
+export type MiningCard =
+  | { mode: 'hidden' }
+  /** Manual: parked on a rock, not digging — offer BEGIN MINING. */
+  | { mode: 'idle' }
+  /** Filling now. byRoute: the route runs it (no stop button). */
+  | { mode: 'working'; byRoute: boolean }
+  /** Route only: done at this rock (dry or full); the walker advances the
+   *  cursor and departs for nextBodyId on the next tick. */
+  | { mode: 'leaving'; reason: 'dry' | 'full'; nextBodyId: string | null };
+
+export interface MiningCardInput {
+  hasRig: boolean;
+  /** The meteoroid the hull is parked on, if any. */
+  rockId: string | null;
+  rockLeft: number;
+  holdRoom: number;
+  inTransit: boolean;
+  /** A manual start/stop order can be sent (absent in SP). */
+  canOrder: boolean;
+  /** The server's manual order (ship.miningBodyId). */
+  miningBodyId?: string | null;
+  /** Optimistic manual order, until the server agrees. */
+  pending?: boolean | null;
+  /** The route this hull crews, with ITS cursor (crew.nextStopSeq). */
+  route?: { stops: { bodyId: string; action: string }[]; nextStopSeq: number } | null;
+}
+
+export function miningCardState(i: MiningCardInput): MiningCard {
+  if (!i.hasRig || !i.rockId || i.inTransit) return { mode: 'hidden' };
+
+  if (i.route) {
+    // A routed hull cannot take a manual order, so the box is about the
+    // route's dig or it is nothing. The walker indexes stops by the
+    // cursor, so does this; while it digs the cursor stays ON the mine
+    // stop (that is how "still mining" is expressed server-side).
+    const stops = i.route.stops ?? [];
+    if (stops.length === 0) return { mode: 'hidden' };
+    const at = Math.min(Math.max(0, Number(i.route.nextStopSeq ?? 0)), stops.length - 1);
+    const stop = stops[at];
+    if (stop.action !== 'mine' || stop.bodyId !== i.rockId) return { mode: 'hidden' };
+    const nextBodyId = stops[(at + 1) % stops.length]?.bodyId ?? null;
+    if (!(i.rockLeft > 0)) return { mode: 'leaving', reason: 'dry', nextBodyId };
+    if (!(i.holdRoom > 0)) return { mode: 'leaving', reason: 'full', nextBodyId };
+    return { mode: 'working', byRoute: true };
+  }
+
+  if (!i.canOrder) return { mode: 'hidden' };
+  const mining = i.pending ?? (i.miningBodyId === i.rockId);
+  return mining ? { mode: 'working', byRoute: false } : { mode: 'idle' };
+}

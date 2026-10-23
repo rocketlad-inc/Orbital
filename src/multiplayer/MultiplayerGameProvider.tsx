@@ -102,7 +102,7 @@ interface ServerState {
     /** The sun-gate omen tick (worker/sunGates.js); null until rolled. */
     sun_gate_tick?: number | null;
     /** The next gate within its warning window (sunGates.js / state.js). */
-    sun_gate_next?: { emerge_tick: number; index: number; kaiju?: boolean; system?: string } | null;
+    sun_gate_next?: { emerge_tick: number; index: number; angle?: number; kaiju?: boolean; system?: string } | null;
     /** THE LEVIATHAN (worker/kaiju.js), public. Null in a game without one. */
     kaiju?: {
       ship_id: string; faction_id: string; system_key: string;
@@ -2434,6 +2434,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       ? {
         emergeTick: srv.game.sun_gate_next.emerge_tick, index: srv.game.sun_gate_next.index,
         kaiju: !!srv.game.sun_gate_next.kaiju, system: srv.game.sun_gate_next.system,
+        angle: Number.isFinite(srv.game.sun_gate_next.angle) ? srv.game.sun_gate_next.angle : null,
       }
       : null,
     kaiju: (setKaijuRevealed(!srv.game.kaiju || srv.game.kaiju.revealed_at_tick != null), srv.game.kaiju) ? {

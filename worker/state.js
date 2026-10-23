@@ -5,7 +5,7 @@ import { getActiveSliders, activeSanctions, activeLawsFor } from './senate.js';
 import { buildCostFactors } from './buildCost.js';
 import { SETTLEMENT_COST, COLONIST_FOUND_MULT } from './actions.js';
 import { carrierCapFor } from './tradeRoutesV2.js';
-import { MEGASTRUCTURES, MEGA_BREACH_HP } from './megastructures.js';
+import { MEGASTRUCTURES, MEGA_BREACH_HP, megaBodyName } from './megastructures.js';
 import { upkeepSplit, parsePartsJson, shipBaseStatsFromCfg } from './shipDesigns.js';
 import { voteWeights } from './systems.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
@@ -1202,7 +1202,14 @@ const shipsP = env.DB
   // shows ships only in sensor range and must use THIS answer, not a copy
   // of the rules that produce it (worker/wearWorlds.js).
   const visibleBodyIds = bodiesRaw.filter(b => b.visible_to_me).map(b => b.id);
-  const bodies = bodiesRaw.map(b => {
+  // A FINISHED STRUCTURE IS NOT A SITE. Completion renames the body now
+  // (renameFinishedSiteStmt), but structures finished before that still
+  // store "<Label> Site"; read them as the structure rather than migrate
+  // every running game. Only the founding name is touched.
+  const megaByBody = new Map(megastructures.map(m => [m.body_id, m]));
+  const bodies = bodiesRaw.map(raw => {
+    const mega = raw.type === 'megastructure' ? megaByBody.get(raw.id) : undefined;
+    const b = mega ? { ...raw, name: megaBodyName(raw.name, mega.kind, mega.status) } : raw;
     const isRevealed = b.secret_revealed === 1;
     // Strip unrevealed secret_kind so clients can't sniff what's buried
     // on bodies they haven't visited. After reveal it's broadcast.
@@ -2240,15 +2247,35 @@ const tradeRoutesP = env.DB
   let sunGateFirsts = [];
   if (game.sun_gate_tick != null) {
     try {
-      const { sunGatePlan, SUN_GATE_WARNING_TICKS } = await import('./sunGates.js');
+      const { sunGatePlan, SUN_GATE_WARNING_TICKS, sunGateOmenAngle, solGateId } = await import('./sunGates.js');
       const gconf = await loadGameConfig(env, gameId);
       const cur = Number(game.current_tick) || 0;
-      const step = sunGatePlan(gameId, Number(game.sun_gate_tick), gconf).find(s => s.emergeTick > cur);
+      const plan = sunGatePlan(gameId, Number(game.sun_gate_tick), gconf);
+      const step = plan.find(s => s.emergeTick > cur);
       if (step && cur >= step.emergeTick - SUN_GATE_WARNING_TICKS) {
         // kaiju: this one arrives on the Leviathan (kaiju.js), so the
         // countdown is to a launch from `system`, not a shape in the Sun.
         const kaiju = step.index === 1 && Number(gconf?.kaiju) === 1;
+        // WHERE THE OMEN RISES: the bearing the gate will really leave
+        // on (sunGateOmenAngle), so the shape on the Sun and the gate
+        // that then comes out of it are on the same limb. The gate before
+        // it is part of the answer (the new one keeps clear of it), so it
+        // goes in exactly as advanceSunGates passes it. Decoration: a
+        // failure leaves the omen where it used to be, never the payload.
+        let angle = null;
+        try {
+          const prev = step.index > 0 ? plan[step.index - 1] : null;
+          const prior = prev
+            ? await env.DB.prepare(
+              'SELECT id, name, orbit_radius, orbit_period, angle0, emerge_until_tick FROM game_bodies WHERE id = ?',
+            ).bind(solGateId(gameId, prev.sys)).first()
+            : null;
+          angle = await sunGateOmenAngle(env.DB, gameId, step, gconf, prior ?? null, { kaiju });
+        } catch (e) {
+          console.error('sun gate omen bearing failed', e);
+        }
         sunGateNext = { emerge_tick: step.emergeTick, index: step.index,
+          ...(Number.isFinite(angle) ? { angle } : {}),
           ...(kaiju ? { kaiju: true, system: step.sys.label } : {}) };
       }
       const rows = (await env.DB.prepare(

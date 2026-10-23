@@ -82,6 +82,10 @@ export interface RenderContext {
    *  system's own heart when the Leviathan is bringing it (it launches
    *  from there, not from the Sun). Local id; 'sol' when absent. */
   sunGateOmenBodyId?: string | null;
+  /** World-space bearing the coming gate leaves its source on (state.js
+   *  sunGateOmenAngle), so the omen rises where the gate will come out.
+   *  Null from an older server: the omen falls back to a seeded spot. */
+  sunGateOmenAngle?: number | null;
   /** Megastructure build state, keyed on LOCAL body id. A site is a
    *  body; this is the part a body cannot express. */
   megastructures?: Record<string, MegastructureState>;
@@ -1568,11 +1572,42 @@ function getBlackHoleDisk(diskR: number): HTMLCanvasElement | null {
  *  source shows something rising through it. The Sun for a gate; the far
  *  system's heart for the Leviathan, which launches from there. */
 function drawGateOmen(body: Body, canvasPos: { x: number; y: number }, radius: number, ctx: RenderContext) {
-  const emerge = ctx.sunGateEmergeTick;
-  if (emerge == null || ctx.t >= emerge || ctx.t < emerge - SUN_GATE_OMEN_TICKS) return;
   if (body.id !== (ctx.sunGateOmenBodyId ?? 'sol')) return;
-  drawSunOmen(ctx.ctx, canvasPos.x, canvasPos.y, radius * 0.85,
-    1 - (emerge - ctx.t) / SUN_GATE_OMEN_TICKS, (emerge * 2.39996) % (Math.PI * 2), ctx.nowMs ?? 0);
+  const omen = gateOmenPose(ctx.sunGateEmergeTick, ctx.t, ctx.sunGateOmenAngle);
+  if (!omen) return;
+  drawSunOmen(ctx.ctx, canvasPos.x, canvasPos.y, radius * 0.85, omen.k, omen.angle, ctx.nowMs ?? 0);
+}
+
+/** How long past its emerge tick the omen holds, fully risen, while the
+ *  state that carries the gate itself is still on its way. */
+export const GATE_OMEN_HOLD_TICKS = 1;
+
+/**
+ * Where and how far risen the omen is at render tick `t`, or null when
+ * none shows.
+ *
+ * WHERE: the bearing the gate really leaves on (`angle`, from the
+ * server), so it rises through the limb the gate then comes out of. It
+ * sat at a bearing hashed from the tick (kept only as the fallback for a
+ * server that does not send one), and in the Studio clip it rose through
+ * the Sun's lower left while the gate came out of the right.
+ *
+ * WHEN: the warning's six ticks, AND on past the emerge tick until the
+ * state that carries the gate lands (that state also clears sun_gate_next,
+ * which ends this). The render clock reaches the tick before the poll
+ * does, and the gap was a frame of empty Sun between omen and gate.
+ * Bounded, so a lost poll cannot leave it standing.
+ *
+ * World angles draw as they are: worldToCanvas only scales and shifts.
+ */
+export function gateOmenPose(
+  emerge: number | null | undefined, t: number, angle: number | null | undefined,
+): { k: number; angle: number } | null {
+  if (emerge == null) return null;
+  if (t < emerge - SUN_GATE_OMEN_TICKS || t >= emerge + GATE_OMEN_HOLD_TICKS) return null;
+  const k = Math.min(1, 1 - (emerge - t) / SUN_GATE_OMEN_TICKS);
+  const a = angle != null && Number.isFinite(angle) ? angle : (emerge * 2.39996) % (Math.PI * 2);
+  return { k, angle: a };
 }
 
 function drawBlackHoleBody(
@@ -2902,6 +2937,32 @@ function sunGateArtRadius(body: Body, radius: number, t: number, scale: number):
     return sunSquidUnit(scale) * 1.3;
   }
   return sunGateRingR(scale) * 1.15;
+}
+
+/**
+ * Should a landing site's label give way to its gate? Yes once the gate
+ * has landed (the site is retired a moment later), and while it flies
+ * once it is close enough that the two names would pile up: within
+ * three of their art radii together, and never under 100 px, about the
+ * width of the two labels side by side at 10 px Audiowide.
+ */
+export function siteLabelYields(gapPx: number, gateArtPx: number, siteArtPx: number, landed: boolean): boolean {
+  if (landed) return true;
+  return gapPx < Math.max(100, 3 * (gateArtPx + siteArtPx));
+}
+
+function landingSiteLabelYields(
+  site: Body, sitePos: { x: number; y: number }, siteRadius: number, ctx: RenderContext,
+): boolean {
+  const gate = bodyById(ctx.bodies, site.id.replace(/_site$/, ''));
+  if (!gate || gate.id === site.id) return false;
+  const gw = bodyPosition(gate, ctx.t, ctx.bodies);
+  const gp = worldToCanvas(gw.x, gw.y, ctx);
+  const scale = ctx.camera.scale;
+  const gateArt = sunGateArtRadius(gate, Math.max(3, gate.radius * scale), ctx.t, scale) ?? 0;
+  const siteArt = sunGateArtRadius(site, siteRadius, ctx.t, scale) ?? siteRadius;
+  const landed = !gate.emerge || ctx.t >= gate.emerge.untilTick;
+  return siteLabelYields(Math.hypot(gp.x - sitePos.x, gp.y - sitePos.y), gateArt, siteArt, landed);
 }
 
 /** A sun gate at rest, either end: the squid fully unfurled. */
@@ -4526,6 +4587,10 @@ export function drawBody(
   // map label ("EARTH 2M 6C 3S") sat at the apex of the horizon, under the
   // structure tags.
   if (getWorldMenuOpenBodyId() === body.id) labelSuppressed = true;
+  // A landing site's name gives way to its gate as the gate comes in:
+  // "CENTAURI GATE LANDING SITE" stacked under "CENTAURI GATE" over the
+  // same art (Studio clip a-sun-gate-is-born, f356). The reticle stays.
+  if (isSunGateSite(body) && landingSiteLabelYields(body, canvasPos, radius, ctx)) labelSuppressed = true;
   const alwaysShowLabel = bodyLabelAlwaysOn(body) && !labelSuppressed;
   // Rows stagger up OR down from the body's own two anchors (never
   // sideways, never onto a neighbour's territory) — see

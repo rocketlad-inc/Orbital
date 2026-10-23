@@ -29,6 +29,7 @@ import {
   isBreached, isAbandoned, MEGA_MAX_HP, MEGA_BREACH_HP, GATE_TRANSIT_FRACTION,
   gateTransitTicks,
   maySupplySite, excludedFundersOf, constructionPartners,
+  siteNameFor, renameFinishedSiteStmt,
 } from './megastructures.js';
 import { makeRouteMath } from './routeMath.js';
 import { getActiveSliders } from './senate.js';
@@ -3759,7 +3760,8 @@ async function handlePlaceFramework(req, env, ctx) {
   const megaCostCredits = Math.max(0, Math.ceil(spec.cost.credits * megaCostMul));
 
   const siteId = `${gameId}:mega_${crypto.randomUUID().slice(0, 8)}`;
-  const name = `${spec.label} Site`;
+  // Renamed to the bare label on completion (renameFinishedSiteStmt).
+  const name = siteNameFor(kind);
 
   await env.DB.batch([
     // The site IS a body. Everything downstream — position, rendering,
@@ -3919,6 +3921,8 @@ async function handleDeliverToSite(req, env, ctx) {
           SET cargo_metal = cargo_metal - ?, cargo_gold = cargo_gold - ?
         WHERE id = ?`,
     ).bind(giveMetal, giveCredits, shipId),
+    // Finished: "Weapons Station Site" becomes "Weapons Station".
+    ...(done ? [renameFinishedSiteStmt(env.DB, gameId, siteId, site.kind)].filter(Boolean) : []),
   ]);
 
   // THE LAST LOAD LAUNCHES THE HULL, THEN AND THERE. A finished mobile

@@ -264,11 +264,86 @@ export const SUN_GATE_SITE_TEMPLATE = 'sun_gate_site';
  * this board (far_systems was off when it was seeded).
  */
 export async function spawnSunGatePair(env, gameId, sys, emergeTick, conf, otherGate = null, opts = {}) {
+  const DB = env.DB;
+  const plan = await planSunGatePair(DB, gameId, sys, emergeTick, conf, otherGate, opts);
+  if (!plan) return null;
+  const {
+    sol, bary, r, period, arrival, gateFrom, landedNear, farR, farPeriod, farBearing, gateAngle0,
+  } = plan;
+
+  const bodyScale = Number(conf?.body_scale) > 0 ? Number(conf.body_scale) : 1;
+  const gateR = (MEGASTRUCTURES.warp_gate?.radius ?? 1.9) * bodyScale * SUN_GATE_SIZE_MUL;
+  const a = solGateId(gameId, sys), b = farGateId(gameId, sys);
+
+  const insBody = (id, tpl, name, parentId, orbitR, orbitP, ang0, color, from, until) => DB.prepare(
+    `INSERT OR IGNORE INTO game_bodies
+       (id, game_id, template_id, name, type, parent_body_id, radius, soi, mu,
+        orbit_radius, orbit_period, angle0, color, owner_faction_id,
+        emerge_from_tick, emerge_until_tick)
+     VALUES (?, ?, ?, ?, 'megastructure', ?, ?, 0, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+  ).bind(id, gameId, tpl, name, parentId, gateR, MEGA_MU, orbitR, orbitP, ang0, color, from, until);
+
+  // hp explicit and full, for the reason spawnDiscoveredGatePair gives:
+  // the column default is a fraction of MEGA_MAX_HP. Nothing ever damages
+  // an ownerless, non-ancient structure, so this is where it stays.
+  // completed_at_tick is the ARRIVAL: the gate is not open while it flies.
+  const insMega = (id, partner) => DB.prepare(
+    `INSERT OR IGNORE INTO game_megastructures
+       (body_id, game_id, kind, status, acc_metal, acc_credits,
+        cost_metal, cost_credits, founded_by_faction_id,
+        founded_at_tick, completed_at_tick, hp, partner_body_id, transit_fraction)
+     VALUES (?, ?, 'warp_gate', 'complete', 0, 0, 0, 0, NULL, ?, ?, ?, ?, ?)`,
+  ).bind(id, gameId, emergeTick, arrival, MEGA_MAX_HP, partner, SUN_GATE_TRANSIT_FRACTION);
+
+  const site = siteId(gameId, sys);
+  await DB.batch([
+    insBody(a, SUN_GATE_TEMPLATE, sys.solGate, sol.id, r, period,
+      gateAngle0, '#ffc86b', gateFrom, arrival),
+    // The landing site: the gate's final orbit, from now until it lands.
+    // No emerge_until_tick: it does not fly, it is simply there.
+    DB.prepare(
+      `INSERT OR IGNORE INTO game_bodies
+         (id, game_id, template_id, name, type, parent_body_id, radius, soi, mu,
+          orbit_radius, orbit_period, angle0, color, owner_faction_id,
+          emerge_from_tick, emerge_until_tick)
+       VALUES (?, ?, ?, ?, 'lagrange', ?, ?, 0, ?, ?, ?, ?, '#ffc86b', NULL, ?, NULL)`,
+    ).bind(site, gameId, SUN_GATE_SITE_TEMPLATE, `${sys.solGate} landing site`, sol.id,
+      gateR, MEGA_MU, r, period, gateAngle0, emergeTick),
+    // The far end appears when its partner lands: nobody is out there to
+    // watch it arrive, and a door with no other side is no door.
+    insBody(b, FAR_GATE_TEMPLATE, sys.farGate, bary.id, farR, farPeriod,
+      farBearing, '#ffc86b', arrival, arrival),
+    insMega(a, b),
+    insMega(b, a),
+  ]);
+
+  // Everyone sees it, the rule ancient gates set: a structure that belongs
+  // to nobody is a public landmark, not a sensor contact.
+  const factions = (await DB.prepare('SELECT id FROM game_factions WHERE game_id = ?')
+    .bind(gameId).all()).results ?? [];
+  if (factions.length > 0) {
+    await DB.batch(factions.flatMap(f => [a, b, site].map(gid => DB.prepare(
+      `INSERT OR IGNORE INTO game_body_discoveries (game_id, faction_id, body_id, discovered_at_tick)
+       VALUES (?, ?, ?, ?)`,
+    ).bind(gameId, f.id, gid, emergeTick))));
+  }
+
+  return { arrival, landedNear, fromBodyId: bary.id };
+}
+
+/**
+ * WHERE A GATE WILL GO, decided without writing anything. spawnSunGatePair
+ * stands the pair up from exactly this, and the omen reads it too
+ * (sunGateOmenAngle), so the shape rising through the Sun rises where the
+ * gate then leaves it. Pure but for reading the board, and seeded from
+ * the game and system, so asking twice gives the same answer.
+ * Null when the far system is not on this board.
+ */
+export async function planSunGatePair(DB, gameId, sys, emergeTick, conf, otherGate = null, opts = {}) {
   // opts.kaiju: THE LEVIATHAN CARRIES THIS ONE (kaiju.js). Nothing leaves
   // the Sun: the gate is dropped where the beast stops, so it appears
   // whole at the arrival, and the flight is timed from the far system's
   // barycenter (where the beast launches) instead of from the Sun.
-  const DB = env.DB;
   const bodies = (await DB
     .prepare(`SELECT ${BODY_COLS} FROM game_bodies WHERE game_id = ? AND destroyed_at_tick IS NULL`)
     .bind(gameId).all()).results ?? [];
@@ -344,65 +419,44 @@ export async function spawnSunGatePair(env, gameId, sys, emergeTick, conf, other
   // of ticks, so it stays on that side for the life of a game.
   const farBearing = angle0For(farGateBearing(rand, farR, solAt, baryAt), farPeriod, arrival);
 
-  const bodyScale = Number(conf?.body_scale) > 0 ? Number(conf.body_scale) : 1;
-  const gateR = (MEGASTRUCTURES.warp_gate?.radius ?? 1.9) * bodyScale * SUN_GATE_SIZE_MUL;
-  const a = solGateId(gameId, sys), b = farGateId(gameId, sys);
-
-  const insBody = (id, tpl, name, parentId, orbitR, orbitP, ang0, color, from, until) => DB.prepare(
-    `INSERT OR IGNORE INTO game_bodies
-       (id, game_id, template_id, name, type, parent_body_id, radius, soi, mu,
-        orbit_radius, orbit_period, angle0, color, owner_faction_id,
-        emerge_from_tick, emerge_until_tick)
-     VALUES (?, ?, ?, ?, 'megastructure', ?, ?, 0, ?, ?, ?, ?, ?, NULL, ?, ?)`,
-  ).bind(id, gameId, tpl, name, parentId, gateR, MEGA_MU, orbitR, orbitP, ang0, color, from, until);
-
-  // hp explicit and full, for the reason spawnDiscoveredGatePair gives:
-  // the column default is a fraction of MEGA_MAX_HP. Nothing ever damages
-  // an ownerless, non-ancient structure, so this is where it stays.
-  // completed_at_tick is the ARRIVAL: the gate is not open while it flies.
-  const insMega = (id, partner) => DB.prepare(
-    `INSERT OR IGNORE INTO game_megastructures
-       (body_id, game_id, kind, status, acc_metal, acc_credits,
-        cost_metal, cost_credits, founded_by_faction_id,
-        founded_at_tick, completed_at_tick, hp, partner_body_id, transit_fraction)
-     VALUES (?, ?, 'warp_gate', 'complete', 0, 0, 0, 0, NULL, ?, ?, ?, ?, ?)`,
-  ).bind(id, gameId, emergeTick, arrival, MEGA_MAX_HP, partner, SUN_GATE_TRANSIT_FRACTION);
-
-  const site = siteId(gameId, sys);
   const gateAngle0 = angle0For(bearing, period, arrival);
-  await DB.batch([
-    insBody(a, SUN_GATE_TEMPLATE, sys.solGate, sol.id, r, period,
-      gateAngle0, '#ffc86b', gateFrom, arrival),
-    // The landing site: the gate's final orbit, from now until it lands.
-    // No emerge_until_tick: it does not fly, it is simply there.
-    DB.prepare(
-      `INSERT OR IGNORE INTO game_bodies
-         (id, game_id, template_id, name, type, parent_body_id, radius, soi, mu,
-          orbit_radius, orbit_period, angle0, color, owner_faction_id,
-          emerge_from_tick, emerge_until_tick)
-       VALUES (?, ?, ?, ?, 'lagrange', ?, ?, 0, ?, ?, ?, ?, '#ffc86b', NULL, ?, NULL)`,
-    ).bind(site, gameId, SUN_GATE_SITE_TEMPLATE, `${sys.solGate} landing site`, sol.id,
-      gateR, MEGA_MU, r, period, gateAngle0, emergeTick),
-    // The far end appears when its partner lands: nobody is out there to
-    // watch it arrive, and a door with no other side is no door.
-    insBody(b, FAR_GATE_TEMPLATE, sys.farGate, bary.id, farR, farPeriod,
-      farBearing, '#ffc86b', arrival, arrival),
-    insMega(a, b),
-    insMega(b, a),
-  ]);
 
-  // Everyone sees it, the rule ancient gates set: a structure that belongs
-  // to nobody is a public landmark, not a sensor contact.
-  const factions = (await DB.prepare('SELECT id FROM game_factions WHERE game_id = ?')
-    .bind(gameId).all()).results ?? [];
-  if (factions.length > 0) {
-    await DB.batch(factions.flatMap(f => [a, b, site].map(gid => DB.prepare(
-      `INSERT OR IGNORE INTO game_body_discoveries (game_id, faction_id, body_id, discovered_at_tick)
-       VALUES (?, ?, ?, ?)`,
-    ).bind(gameId, f.id, gid, emergeTick))));
+  return {
+    sol, bary, r, period, bearing, arrival, gateFrom, landedNear, kaiju,
+    farR, farPeriod, farBearing, gateAngle0, landed, baryAtLaunch,
+  };
+}
+
+/**
+ * THE OMEN POINTS WHERE THE GATE WILL GO. The shape on the Sun used to
+ * sit at a bearing hashed from the tick, so it rose through one limb and
+ * the gate then came out of another (Studio clip a-sun-gate-is-born,
+ * f151-f153). This is the bearing the gate really leaves on, in world
+ * space (the map draws world angles as they are):
+ *   - from the Sun: its orbit angle at the emerge tick, which is the
+ *     angle bodyPosition flies it out along on that tick;
+ *   - carried by the Leviathan: the line from the far system's heart,
+ *     where the beast launches, to where it drops the gate.
+ * Null when the far system is not on this board.
+ *
+ * It tells the board where the gate goes six ticks early. Where it LEADS
+ * (which system) stays unsaid, as before.
+ */
+const omenAngleCache = new Map();
+export async function sunGateOmenAngle(DB, gameId, step, conf, otherGate = null, opts = {}) {
+  const key = `${gameId}|${step.sys.key}|${step.emergeTick}|${opts.kaiju ? 1 : 0}`;
+  if (omenAngleCache.has(key)) return omenAngleCache.get(key);
+  const plan = await planSunGatePair(DB, gameId, step.sys, step.emergeTick, conf, otherGate, opts);
+  let angle = null;
+  if (plan) {
+    angle = plan.kaiju
+      ? Math.atan2(plan.landed.y - plan.baryAtLaunch.y, plan.landed.x - plan.baryAtLaunch.x)
+      : orbitAngle(plan.gateAngle0, plan.period, step.emergeTick);
+    angle = ((angle % TWO_PI) + TWO_PI) % TWO_PI;
   }
-
-  return { arrival, landedNear, fromBodyId: bary.id };
+  if (omenAngleCache.size > 200) omenAngleCache.clear();
+  omenAngleCache.set(key, angle);
+  return angle;
 }
 
 /**
