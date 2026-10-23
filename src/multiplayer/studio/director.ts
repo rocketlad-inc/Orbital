@@ -433,14 +433,17 @@ export class Director {
     // hour. After 30 s, assume the server ticked and wait on the map.
     const ask = () => Promise.race([
       apiFetch<{ current_tick: number }>(`/api/admin/studio/games/${this.host.gameId}/tick`, {
-        method: 'POST', body: JSON.stringify({ n }),
+        // The tick we advance FROM: a retry after a first try that did go
+        // through is then a no-op on the server, never a second tick.
+        method: 'POST', body: JSON.stringify({ n, expect: before }),
       }),
       realSleep(30_000).then(() => null),
     ]);
     let res = await ask();
     // A passing storage fault ("Durable Object storage caused object to be
-    // reset") ended a take at its cut (2026-10-22). Ask again, twice, but
-    // never re-tick a game that did move.
+    // reset") ended a take at its cut (2026-10-22). Ask again, twice; the
+    // server ticks only from `before` (expect), so a try that did commit is
+    // never ticked again (the map lags the server, so its tick cannot say).
     for (let i = 0; res && !res.ok && i < 2; i++) {
       this.note(`tick: ${res.error?.message ?? res.status}; asking again`);
       await realSleep(3000);
