@@ -30,6 +30,7 @@ import { setStudioHullScale } from '../../render/cameraLimits';
 import { setStudioWashScale } from '../../render/mapRenderer';
 import { apiFetch } from '../api';
 import { arcApexScale, arcNeeded, panCamera, strikeTimingWarnings } from './shotPlan';
+import { installVirtualClock } from './virtualClock';
 
 export type Target = string; // 'earth' | 'ship:<id>' | 'fleet:<id>' | 'missile:<n>' | 'mid:<target>|<target>'
 
@@ -794,7 +795,7 @@ export class Director {
           this.step(1 / fps);
           await vclock.real(() => realSleep(0));   // let React commit the camera
         }
-        this.stats.rafRuns += vclock.advance(frameMs, !draw);   // time moves; the loop draws only without the hook
+        this.stats.rafRuns += vclock.advance(frameMs, !!draw);   // time moves; the map loop draws only without the hook
         if (draw) { draw(1); this.stats.draws++; }
         const map = this.host.mapCanvas();
         if (map) {
@@ -1076,14 +1077,14 @@ export class Director {
     // the cut until the next tick).
     for (let left = this.skipMs; left > 0; left -= 1000 / fps) {
       this.step(0);
-      this.stats.rafRuns += f.vclock.advance(1000 / fps, !f.draw);
+      this.stats.rafRuns += f.vclock.advance(1000 / fps, !!f.draw);
       if (f.draw) f.draw(1);
       if (this.glide) this.glide.at += 1000 / fps;
     }
     this.skipMs = 0;
     this.step(1 / fps);
     await f.vclock.real(() => realSleep(0));
-    this.stats.rafRuns += f.vclock.advance(1000 / fps, !f.draw);
+    this.stats.rafRuns += f.vclock.advance(1000 / fps, !!f.draw);
     if (f.draw) { f.draw(1); this.stats.draws++; }
     this.stats.frames++;
     f.k++;
@@ -1235,50 +1236,3 @@ function roundRect(g: CanvasRenderingContext2D, x: number, y: number, w: number,
   g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath();
 }
 
-/**
- * A clock only the caller advances. Date.now, performance.now and
- * requestAnimationFrame are swapped for the recording; `advance(ms)` moves
- * time and runs the frame callbacks that were waiting, which is how the
- * map draws exactly one frame per call. `real(fn)` runs fn against the
- * wall clock (server waits, the recorder's own hold timers).
- */
-function installVirtualClock() {
-  const D = Date.now, P = performance.now.bind(performance);
-  const RAF = window.requestAnimationFrame, CAF = window.cancelAnimationFrame;
-  const baseD = D(), baseP = P();
-  let v = 0;
-  let queue: Array<{ id: number; cb: FrameRequestCallback }> = [];
-  let nextId = 1;
-  let inReal = 0;
-  const vNow = () => baseD + v;
-  Date.now = () => (inReal ? D() : vNow());
-  performance.now = () => (inReal ? P() : baseP + v);
-  window.requestAnimationFrame = (cb: FrameRequestCallback) => { const id = nextId++; queue.push({ id, cb }); return id; };
-  window.cancelAnimationFrame = (id: number) => { queue = queue.filter(q => q.id !== id); };
-  return {
-    /** Move time by `ms`. With `runCallbacks` the waiting frame callbacks
-     *  run (the map's loop draws); without it they stay queued for the
-     *  next call, or for uninstall. Returns how many ran. */
-    advance(ms: number, runCallbacks = true): number {
-      v += ms;
-      if (!runCallbacks) return 0;
-      const cbs = queue; queue = [];
-      for (const q of cbs) { try { q.cb(baseP + v); } catch (e) { console.error(e); } }
-      return cbs.length;
-    },
-    async real<T>(fn: () => Promise<T> | T): Promise<T> {
-      inReal++;
-      try { return await fn(); } finally { inReal--; }
-    },
-    realNow: () => P(),
-    /** The film's clock, even inside real(): what a frame is drawn at. */
-    virtualNow: () => vNow(),
-    uninstall() {
-      Date.now = D; performance.now = P;
-      window.requestAnimationFrame = RAF; window.cancelAnimationFrame = CAF;
-      // Hand the map's loop back to the real clock.
-      const cbs = queue; queue = [];
-      for (const q of cbs) RAF(q.cb);
-    },
-  };
-}

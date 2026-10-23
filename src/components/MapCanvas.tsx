@@ -7,6 +7,7 @@ import {
   takeRouteFit, fitToPoints, offerPickCluster,
 } from '../game/routePick/store';
 import { perf } from '../multiplayer/PerfHud';
+import { studioHeldFrame } from '../multiplayer/studio/heldFrames';
 import { requestLabel, flushLabels, reserveBox, reserveRect, resetReservations, setKeepOutDiscs } from '../render/labelLayer';
 import { smoothedTick, shipDisplayTick } from '../render/tickPhase';
 import { useGameContext } from '../state/gameContext';
@@ -4248,10 +4249,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // the easing mid-flight without this. renderRef always points at
     // the latest render closure; the id guard stops frame stacking.
     if ((camTweenRef.current || wheelFollowRef.current) && tweenRafRef.current == null) {
-      tweenRafRef.current = requestAnimationFrame(() => {
+      tweenRafRef.current = requestAnimationFrame(studioHeldFrame(() => {
         tweenRafRef.current = null;
         renderRef.current();
-      });
+      }));
     }
     // enabledLayers (Set) is the actual signal for "redraw when a layer
     // toggles" — listing layerOn is redundant (it closes over the same
@@ -5389,6 +5390,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
       raf = requestAnimationFrame(loop);
     };
+    // The studio's film clock draws the map itself and holds this loop
+    // (and only this loop: see multiplayer/studio/heldFrames.ts).
+    studioHeldFrame(loop);
     raf = requestAnimationFrame(loop);
     return () => { if (raf != null) cancelAnimationFrame(raf); };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- the persistent rAF loop must NOT be torn down on every zoom; adding camera.scale would recreate it per scale change

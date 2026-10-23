@@ -365,7 +365,9 @@ async function film() {
 async function evalInGame() {
   const [gameId, code] = rest;
   if (!gameId || !code) die('eval needs <gameId> "<javascript>"');
-  const b = await openGame(gameId, flag('as') || 'studio-terra', 1080, 1920);
+  // --size 1920x1080 checks the DOM at a film's size (the layout depends on it).
+  const [w, h] = (flag('size') || '1080x1920').split('x').map(Number);
+  const b = await openGame(gameId, flag('as') || 'studio-terra', w, h);
   try {
     const wrapped = `(async () => { return (${code}); })()`;
     const out = await b.evaluate(`(async () => { const r = (0, eval)(${JSON.stringify(wrapped)}); return JSON.stringify({ value: await r, log: window.__studio.log }); })()`);
