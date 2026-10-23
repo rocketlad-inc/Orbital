@@ -44,8 +44,11 @@ const KIND_MAP: Record<string, PendingFxKind> = {
   asteroid_impact: 'impact',
   // A missile salvo landing (missiles.js): the same blast at the body.
   missile_strike: 'impact',
-  // A salvo shot down in flight (in_flight rows carry where): a burst.
-  missile_intercepted: 'damage',
+  // A salvo shot down in flight (in_flight rows carry where, and name the
+  // interceptor so it plays where the two were drawn meeting): a burst the
+  // size of the salvo strike's. It was 'damage', the 6 px "took fire"
+  // spark, so the salvo intercept clip showed no burst at all.
+  missile_intercepted: 'impact',
   // A discovery blooms at the body the moment you look at it — the whole
   // reason this queue exists is that these were going unnoticed.
   secret_discovered: 'discovery',

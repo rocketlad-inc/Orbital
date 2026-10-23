@@ -5420,7 +5420,17 @@ export function continuousDrawnPos(
   // went through whole (~1,000 px at a close-up, measured frame to frame).
   // Never more than two running: a third is the motion itself.
   const n = c.caught ?? 0;
-  const jumped = off && (n === 0 || (n < 2 && errPx > CONTINUITY_BIG_PX && errPx > 3 * stepPx));
+  // A STOP IS NOT A JUMP. A hull that comes to rest (a missile at its
+  // meeting, anything held on its next-tick spot while the server is late)
+  // is off its prediction by its whole step, so it was "caught": drawn a
+  // frame on past where it stopped and then slid back over half a second
+  // (salvo intercept clip, f156-f172: both missiles flew through each
+  // other, 383 px, and backed up onto the meeting). A teleport moves the
+  // hull further than its motion explains; one that barely moved has not
+  // jumped anywhere.
+  const truePx = Math.hypot(x - c.x - carryX, y - c.y - carryY) * scale;
+  const stopped = stepPx > 0 && truePx <= 0.25 * stepPx;
+  const jumped = off && !stopped && (n === 0 || (n < 2 && errPx > CONTINUITY_BIG_PX && errPx > 3 * stepPx));
   c.caught = jumped ? n + 1 : 0;
   if (jumped) {
     // Absorb it: drawn stays on the line it was on, then eases across,
@@ -7045,6 +7055,36 @@ function shapedLineSamples(plan: TorchTransferPlan): Array<{ t: number; x: numbe
   return out;
 }
 
+/** A leg that pushes the whole way and never brakes: a missile salvo
+ *  (worker/missiles.js missileLeg, its flip at its arrival). */
+export function isPushOnly(plan: Pick<TorchTransferPlan, 'startTick' | 'flipTick' | 'arriveTick'>): boolean {
+  return plan.arriveTick > plan.startTick && plan.flipTick >= plan.arriveTick - 1e-9;
+}
+
+const PUSH_LINE_SAMPLES = 24;
+const pushSampleCache = new WeakMap<TorchTransferPlan, Array<{ t: number; x: number; y: number }>>();
+/**
+ * A salvo's line, timed by its push: from rest, gathering speed all the
+ * way (x ~ t^2), like the interceptor drawn against it
+ * (missileDrawnRendezvous). Lerped as a plain two-point chord it left at
+ * full speed: still on one frame, ~270 px a frame the next at a close-up
+ * (salvo intercept clip, f14).
+ */
+function pushLineSamples(plan: TorchTransferPlan): Array<{ t: number; x: number; y: number }> {
+  const hit = pushSampleCache.get(plan);
+  if (hit) return hit;
+  const s = plan.startTick, T = plan.arriveTick - plan.startTick;
+  const sx = plan.startPos.x, sy = plan.startPos.y;
+  const dx = plan.interceptPos.x - sx, dy = plan.interceptPos.y - sy;
+  const out: Array<{ t: number; x: number; y: number }> = [];
+  for (let i = 0; i <= PUSH_LINE_SAMPLES; i++) {
+    const u = i / PUSH_LINE_SAMPLES;
+    out.push({ t: s + T * u, x: sx + dx * u * u, y: sy + dy * u * u });
+  }
+  pushSampleCache.set(plan, out);
+  return out;
+}
+
 export function torchTrajectorySamples(
   plan: TorchTransferPlan,
   bodies: Body[],
@@ -7056,6 +7096,7 @@ export function torchTrajectorySamples(
     // one straight line, but timed along it: the hull is lerped through
     // these, so it creeps off at launch, gathers speed and brakes hard.
     if (isShapedBurn(plan)) return shapedLineSamples(plan);
+    if (isPushOnly(plan)) return pushLineSamples(plan);
     return [
       { t: plan.startTick,  x: plan.startPos.x,     y: plan.startPos.y },
       { t: plan.arriveTick, x: plan.interceptPos.x, y: plan.interceptPos.y },
