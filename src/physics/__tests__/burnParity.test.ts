@@ -40,10 +40,12 @@ describe('the burn', () => {
 
   it('client and server agree on every hull weapon reach', () => {
     // The panel and the range ring promise shots from this table and the
-    // tick fires from the worker's. Doubled 2026-10-06 (12/16/20 -> 24/32/40).
+    // tick fires from the worker's. Doubled 2026-10-06 (12/16/20 -> 24/32/40);
+    // 360/480/600 on 2026-10-23, the Mega Destroyer 600.
     expect({ ...SHIP_RANGE }).toEqual({ ...W_SHIP_RANGE });
-    expect(reachOf('destroyer', false)).toBe(40);
-    expect(reachOf('destroyer', true)).toBe(20);   // the in-system cut still halves it
+    expect(reachOf('destroyer', false)).toBe(600);
+    expect(reachOf('destroyer', true)).toBe(300);   // the in-system cut still halves it
+    expect(reachOf('mega_destroyer', false)).toBe(600);
     expect(reachOf('freighter', false)).toBe(0);
   });
 
