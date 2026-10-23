@@ -106,6 +106,15 @@ const seen = new Set<string>();
 let deathPlayed = false;
 /** The death, kept after it has played: the carcass settles from it. */
 let lastDeath: Fx | null = null;
+/** Worlds whose break has begun playing here (kaijuBreakStarted). */
+const brokenPlayed = new Set<string>();
+
+/** Has the beast's break of this world begun playing here? Until it has,
+ *  a world it broke in the last few ticks is still drawn whole
+ *  (mapRenderer obliteration hold), as a sterilised one is. */
+export function kaijuBreakStarted(bodyId: string): boolean {
+  return brokenPlayed.has(bodyId);
+}
 
 const LIFE: Record<Kind, number> = { scorch: KAIJU_SCORCH_MS, break: KAIJU_BREAK_MS, death: KAIJU_DEATH_MS };
 
@@ -113,6 +122,7 @@ const LIFE: Record<Kind, number> = { scorch: KAIJU_SCORCH_MS, break: KAIJU_BREAK
 export function spawnKaijuStrike(entryId: string, bodyId: string, mode: 'scorch' | 'break'): void {
   if (seen.has(entryId)) return;
   seen.add(entryId);
+  if (mode === 'break') brokenPlayed.add(bodyId);
   if (live.length >= 4) live.shift();
   live.push({ id: entryId, kind: mode, bodyId, startMs: performance.now(), seed: hashStr(entryId) });
 }
@@ -775,6 +785,7 @@ export function drawKaijuFx(rc: RenderContext, nowMs: number): void {
 /** Test hook: forget everything played. */
 export function resetKaijuFx(): void {
   live.length = 0; seen.clear(); deathPlayed = false; lastDrawn = null; lastDrawnShip = null;
+  brokenPlayed.clear();
   lastParked = null; lastDeath = null; heldDrawnMs = -Infinity;
 }
 

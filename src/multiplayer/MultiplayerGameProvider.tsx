@@ -2097,7 +2097,17 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
           // strike's own blast).
           if (ev.kind === 'missile_intercepted' && !inFlight) return null;
         }
+        // A settlement falling plays where THAT settlement stood (its
+        // city marker on the globe), so the row says which one.
+        let settlementId: string | undefined;
+        if (ev.kind === 'settlement_destroyed') {
+          try {
+            const p = JSON.parse(ev.payload || '{}');
+            if (typeof p?.settlement_id === 'string') settlementId = p.settlement_id;
+          } catch { settlementId = undefined; }
+        }
         return {
+          settlementId,
           id: ev.id,
           kind: ev.kind,
           bodyId: inFlight ? undefined : stripGameId(ev.body_id) ?? undefined,

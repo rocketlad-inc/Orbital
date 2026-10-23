@@ -34,7 +34,8 @@ import { getWorldMenuOpenBodyId } from '../game/worldMenu/store';
 import { kaijuHeldAt } from './kaijuFx';
 import {
   drawRound, drawMuzzle, drawBeam, drawCharge, drawSparks, drawHullHit, drawShieldHit, drawScorch,
-  glowAt, ENERGY_FX, drawExplosion, drawHullBreakup, HullLook, drawFlakBurst, drawFlakDrag,
+  glowAt, ENERGY_FX, KINETIC_FX, drawExplosion, drawHullBreakup, HullLook, drawFlakBurst, drawFlakDrag,
+  type FxPalette,
 } from './fxArt';
 // The pixels themselves live in fxPrimitives so the battle recap can draw
 // the identical bolt, blast, spark and wreck on a canvas that has no map.
@@ -45,6 +46,11 @@ import {
 
 /** The Planet Killer's fire: white-hot core, red-orange body. */
 const STRIKE_FX = { core: '#fff4ea', glow: '#ff6a3a', haze: '#c2281f' };
+
+/** A Weapons Station's battery: lime, a colour no hull's gun uses (kinetic
+ *  is amber, energy cyan, shields teal, the Planet Killer orange-red, the
+ *  Leviathan violet), so its fire reads as the station's at a glance. */
+export const STATION_FX: FxPalette = { core: '#f6ffe0', glow: '#a8ff3e', haze: '#4fc21c' };
 
 /** The parts a ship's fire and hits are drawn from: its loadout, or for
  *  a rival this player cannot Deep Scan, the parts a fight shows anyway
@@ -590,6 +596,60 @@ function occludedByBody(
   return d2 < r * r;
 }
 
+/**
+ * A SHOT WITH AN END IN FLIGHT STILL MAY NOT CROSS A WORLD AS DRAWN.
+ *
+ * Tests on hulls in flight were skipped altogether, trusting the
+ * server's line of sight. But the server checks where the hulls TRULY
+ * are, and the beam runs between where they are DRAWN: a hull arriving
+ * at a world is drawn at its dwell spot beside it, so its fire at the
+ * defenders on the far side ran straight through the world's centre
+ * (select-and-strike clip, 2026-10-23). The drawn chord is tested against
+ * every world the fight could be about (each end's orbit, and a flying
+ * end's destination), at its DRAWN radius. A world nowhere near the
+ * chord cannot block it, so naming one too many is harmless.
+ */
+function chordCrossesWorld(
+  fp: { x: number; y: number }, tp: { x: number; y: number },
+  bodyIds: ReadonlyArray<string | null | undefined>, rc: RenderContext,
+): boolean {
+  const dx = tp.x - fp.x, dy = tp.y - fp.y;
+  const len2 = dx * dx + dy * dy;
+  if (len2 < 1e-6) return false;
+  for (let i = 0; i < bodyIds.length; i++) {
+    const id = bodyIds[i];
+    if (!id || bodyIds.indexOf(id) < i) continue;
+    const body = bodyOf(rc, id);
+    if (!body) continue;
+    const bp = bodyPosition(body, rc.t, rc.bodies);
+    const c = worldToCanvas(bp.x, bp.y, rc);
+    const drawn = Math.max(body.radius * rc.camera.scale, drawnRadiusOf(rc.presentation, body, rc.camera.scale));
+    const r = Math.max(3, drawn) * (body.type === 'star' ? OCCLUSION_CORE_STAR : OCCLUSION_CORE);
+    let t = ((c.x - fp.x) * dx + (c.y - fp.y) * dy) / len2;
+    t = Math.max(0, Math.min(1, t));
+    const px = fp.x + dx * t, py = fp.y + dy * t;
+    if ((c.x - px) * (c.x - px) + (c.y - py) * (c.y - py) < r * r) return true;
+  }
+  return false;
+}
+
+/** The worlds a combatant's fire could cross: where it is parked, or for
+ *  a hull in flight where it left and where it is going. A Weapons
+ *  Station is itself a body; it shoots from its own centre, so its own
+ *  disc never blocks it, the world it orbits can. */
+function shotWorldsOf(
+  rc: RenderContext, ship: Ship | null, stl: Settlement | null, megaBodyId?: string | null,
+): Array<string | null | undefined> {
+  if (ship) {
+    return ship.transit
+      ? [ship.transit.currentTransfer?.targetBodyId, ship.orbit?.parentBodyId]
+      : [ship.orbit?.parentBodyId];
+  }
+  if (stl) return [stl.bodyId];
+  if (megaBodyId) return [bodyOf(rc, megaBodyId)?.parent];
+  return [];
+}
+
 interface Tracer {
   /** Ship OR settlement id — stations return fire too. */
   fromId: string;
@@ -678,18 +738,18 @@ export function drawTracers(
     const tp = { x: tpNow.x + lead.dx, y: tpNow.y + lead.dy };
     // Never draw fire THROUGH the planet the fight is around.
     //
-    // Only meaningful for a fight AT a body: `parent_body_id` on a hull
-    // in flight names the body it departed, which is nowhere near the
-    // line being drawn, so testing against it would occlude bolts at
-    // random. The server's own line-of-sight check (R4) has already
-    // refused any transit engagement that a body genuinely blocks, so
-    // skipping here draws exactly the shots that were allowed to happen.
+    // A fight AT a body tests that body. With an end in flight the
+    // server's line of sight (R4) says the shot happened, but the chord
+    // drawn between the SPRITES can still cross a world: tested against
+    // the worlds as drawn (chordCrossesWorld).
     const eitherFlying = !!to.ship?.transit || !!from.ship?.transit;
     if (!eitherFlying) {
       const occluderId = to.ship?.orbit.parentBodyId
         ?? from.ship?.orbit.parentBodyId;
       if (occludedByBody(fp, tp, occluderId, rc)) continue;
-    }
+    } else if (chordCrossesWorld(fp, tp, [
+      ...shotWorldsOf(rc, from.ship, from.stl), ...shotWorldsOf(rc, to.ship, to.stl),
+    ], rc)) continue;
 
     if (!opened) {
       c.save();
@@ -1116,7 +1176,25 @@ export function drawEngagementFire(
     // Re-targeting is also the more honest picture: a gunner with a star
     // between it and its assigned target shoots at something it can
     // actually see.
-    if ((tShip && undrawnParked(tShip, rc, ix))
+    //
+    // A STAMP-ONLY SHOOTER (a hull in flight, a Weapons Station) or a
+    // target in flight: the parked-fight test below measured against
+    // `shooter.bodyId`, which for a hull in flight is the world it LEFT
+    // and for a Weapons Station is the station's own body, whose centre
+    // the shot starts from, so every station shot counted as blocked and
+    // was dropped (weapons-station clip, 2026-10-23: "the station never
+    // visibly fires"); and a hull arriving at a world shot through it at
+    // the defenders behind (select-and-strike clip). These test the drawn
+    // chord against the worlds the fight is about, and with only the
+    // server's stamp to go on there is nothing to re-aim at.
+    const stampOnly = !!shooter.ship?.transit || !!shooter.megaBodyId;
+    if (stampOnly || !!tShip?.transit) {
+      if (tShip && undrawnParked(tShip, rc, ix)) continue;
+      if (chordCrossesWorld(fp, tpNow, [
+        ...shotWorldsOf(rc, shooter.ship, shooter.stl, shooter.megaBodyId),
+        ...shotWorldsOf(rc, tShip, tStl),
+      ], rc)) continue;
+    } else if ((tShip && undrawnParked(tShip, rc, ix))
         || occludedByBody(fp, tpNow, shooter.bodyId, rc)) {
       let alt: Ship | null = null;
       let altPos: { x: number; y: number } | null = null;
@@ -1164,7 +1242,16 @@ export function drawEngagementFire(
     // How big the two hulls are on screen, so the shots fit the art:
     // rounds leave the bow side of the shooter and land on the face of
     // the target, not hull centre to hull centre.
-    const sR = shooter.ship ? (rc.shipHitboxes?.get(shooter.ship.id)?.r ?? 14) : 16;
+    // A WEAPONS STATION fires its own battery, not a hull's gun: its own
+    // colour (STATION_FX), heavier rounds, and a flash on the station
+    // itself, so its fire never reads as the home fleet's (weapons-
+    // station clip, 2026-10-23). Sized off the station as drawn.
+    const station = !!shooter.megaBodyId;
+    const stationBody = station ? ix.bodyById.get(shooter.megaBodyId!) : undefined;
+    const pal = station ? STATION_FX : KINETIC_FX;
+    const sR = shooter.ship ? (rc.shipHitboxes?.get(shooter.ship.id)?.r ?? 14)
+      : stationBody ? Math.max(16, drawnRadiusOf(rc.presentation, stationBody, rc.camera.scale))
+        : 16;
     const tR = tShip
       ? (heldBeast?.ship === tShip ? heldBeast.r : (rc.shipHitboxes?.get(tShip.id)?.r ?? 14)) : 18;
     const seedBase = (idHash(shooter.id) ^ Math.imul(volleyIdx, 0x9e3779b1)) >>> 0;
@@ -1207,17 +1294,30 @@ export function drawEngagementFire(
       const ang0 = Math.atan2(tpNow.y - fp.y, tpNow.x - fp.x);
       const mx = fp.x + Math.cos(ang0) * sR * 0.45;
       const my = fp.y + Math.sin(ang0) * sR * 0.45;
-      const rw = Math.max(1.1, Math.min(2.4, sR * 0.075));
+      const rw = station ? Math.max(2, Math.min(3.6, sR * 0.1)) : Math.max(1.1, Math.min(2.4, sR * 0.075));
       const { first, slots, flight } = burstSlots(kineticRoundsOf(shooter.ship?.class));
       for (let r = first; r < slots; r++) {
         const w2 = within - r * ROUND_GAP_MS;
         if (w2 < 0) continue;
         const k = w2 / flight;
-        if (w2 < MUZZLE_MS) drawMuzzle(c, mx, my, ang0, sR * 0.6, 1 - w2 / MUZZLE_MS);
+        if (w2 < MUZZLE_MS) {
+          const mk = 1 - w2 / MUZZLE_MS;
+          drawMuzzle(c, mx, my, ang0, sR * (station ? 0.9 : 0.6), mk, pal);
+          if (station) {
+            // The battery lighting up: a bloom on the station and a ring
+            // thrown off it, on every round.
+            glowAt(c, fp.x, fp.y, sR * (0.8 + 0.5 * (1 - mk)), pal.core, pal.glow, 0.8 * mk);
+            c.strokeStyle = withOpacity(pal.glow, 0.75 * mk);
+            c.lineWidth = Math.max(1.2, sR * 0.07);
+            c.beginPath();
+            c.arc(fp.x, fp.y, sR * (0.7 + 0.9 * (1 - mk)), 0, Math.PI * 2);
+            c.stroke();
+          }
+        }
         if (k >= 1) {
           // Landed: a small hit before the volley's big one.
           const lk = (k - 1) / 0.35;
-          if (lk < 1 && !bubble) drawHullHit(c, faceX, faceY, hitAng, tR * 0.28, lk, seedBase + r);
+          if (lk < 1 && !bubble) drawHullHit(c, faceX, faceY, hitAng, tR * 0.28, lk, seedBase + r, pal);
           continue;
         }
         // (The held beast is drawn still on its world, not on its course.)
@@ -1229,7 +1329,7 @@ export function drawEngagementFire(
         const dist = Math.hypot(tx - mx, ty - my);
         const len = Math.min(dist * k, Math.max(10, Math.min(30, dist * 0.14)) * Math.max(0.7, rw / 1.6));
         const ux = (tx - mx) / (dist || 1), uy = (ty - my) / (dist || 1);
-        drawRound(c, hx - ux * len, hy - uy * len, hx, hy, rw, 1);
+        drawRound(c, hx - ux * len, hy - uy * len, hx, hy, rw, 1, pal);
       }
     } else if (bubble) {
       const ik = (within - BOLT_MS) / IMPACT_MS;
@@ -1256,7 +1356,7 @@ export function drawEngagementFire(
       if (shields > 0) {
         drawShieldHit(c, tpNow.x, tpNow.y, Math.max(8, tR + 3), hitAng, ik, Math.min(1, shields / 3), seedBase);
       } else {
-        drawHullHit(c, faceX, faceY, hitAng, tR * 0.5, ik, seedBase);
+        drawHullHit(c, faceX, faceY, hitAng, tR * 0.5, ik, seedBase, pal);
       }
     }
   }
@@ -1832,9 +1932,25 @@ const STERILISE_BEAM_END = 0.30;
 const STERILISE_FIRE_END = 0.68;
 const STERILISE_CAP = 4;
 
+/**
+ * OBLITERATION — the Mega Destroyer's second strike (0141), the world
+ * blown apart. It had no picture: the queue played the ship-death flash,
+ * a pinpoint at the centre, and the world went from whole to rubble in a
+ * frame (Callisto clip, 2026-10-23). Same gun, same beam as a
+ * sterilisation, then the world BURSTS at OBLITERATE_BURST: a white-out,
+ * a shockwave several world-widths out, and the crust thrown off in
+ * shards. The body renderer holds the world whole until the burst
+ * (obliterationHoldsWorldWhole); the debris field is what is left.
+ */
+export const OBLITERATE_LIFE_MS = 4800;
+/** Where in its life the world bursts (fraction). */
+export const OBLITERATE_BURST = 0.3;
+
 interface Sterilisation {
   entryId: string;
   bodyId: string;
+  /** 'obliterate': the world bursts instead of burning (see above). */
+  mode: 'sterilise' | 'obliterate';
   startMs: number;
   /** False for the Leviathan (kaijuFx.ts draws its arms instead) and a
    *  rammed asteroid (there is no gun). */
@@ -1858,6 +1974,10 @@ const sterilisations: Sterilisation[] = [];
 const seenSteriliseIds = new Set<string>();
 /** Worlds whose death has started playing at least once. */
 const sterilisedBodiesPlayed = new Set<string>();
+/** Worlds whose obliteration has started playing at least once. */
+const obliteratedBodiesPlayed = new Set<string>();
+
+const lifeOf = (x: Sterilisation) => x.mode === 'obliterate' ? OBLITERATE_LIFE_MS : STERILISE_LIFE_MS;
 
 /** Queue the death of a world. Idempotent on the chronicle entry id. */
 export function spawnSterilisation(
@@ -1869,7 +1989,34 @@ export function spawnSterilisation(
   seenSteriliseIds.add(entryId);
   sterilisedBodiesPlayed.add(bodyId);
   if (sterilisations.length >= STERILISE_CAP) sterilisations.shift();
-  sterilisations.push({ entryId, bodyId, startMs: performance.now(), beam: opts.beam !== false, from: opts.from ?? null });
+  sterilisations.push({ entryId, bodyId, mode: 'sterilise', startMs: performance.now(), beam: opts.beam !== false, from: opts.from ?? null });
+}
+
+/** Queue a world being blown apart by a Mega Destroyer. Idempotent on the
+ *  chronicle entry id. */
+export function spawnObliteration(entryId: string, bodyId: string): void {
+  if (seenSteriliseIds.has(entryId)) return;
+  if (seenSteriliseIds.size > 2000) seenSteriliseIds.clear();
+  seenSteriliseIds.add(entryId);
+  obliteratedBodiesPlayed.add(bodyId);
+  if (sterilisations.length >= STERILISE_CAP) sterilisations.shift();
+  sterilisations.push({ entryId, bodyId, mode: 'obliterate', startMs: performance.now(), beam: true, from: null });
+}
+
+/** Whether this world's obliteration has begun playing here. */
+export function obliterationStarted(bodyId: string): boolean {
+  return obliteratedBodiesPlayed.has(bodyId);
+}
+
+/** The body renderer asks this before drawing a destroyed world as a
+ *  debris field: while the beam is still on it, it is still a world. */
+export function obliterationHoldsWorldWhole(bodyId: string, nowMs: number): boolean {
+  for (const x of sterilisations) {
+    if (x.mode !== 'obliterate' || x.bodyId !== bodyId) continue;
+    const k = (nowMs - x.startMs) / OBLITERATE_LIFE_MS;
+    if (k >= 0 && k < OBLITERATE_BURST) return true;
+  }
+  return false;
 }
 
 /** Where a sterilisation's blow lands on the world, canvas px: toward the
@@ -1892,7 +2039,7 @@ export function sterilisationStarted(bodyId: string): boolean {
 
 /** Keeps the render loop alive while a world is dying. */
 export function hasActiveSterilisations(nowMs: number): boolean {
-  return sterilisations.some(x => nowMs - x.startMs < STERILISE_LIFE_MS);
+  return sterilisations.some(x => nowMs - x.startMs < lifeOf(x));
 }
 
 /**
@@ -1904,7 +2051,7 @@ export function hasActiveSterilisations(nowMs: number): boolean {
  */
 export function sterilisationProgress(bodyId: string, nowMs: number): number | null {
   for (const x of sterilisations) {
-    if (x.bodyId !== bodyId) continue;
+    if (x.bodyId !== bodyId || x.mode !== 'sterilise') continue;
     const k = (nowMs - x.startMs) / STERILISE_LIFE_MS;
     if (k >= 0 && k < 1) return k;
   }
@@ -1917,7 +2064,7 @@ export function drawSterilisations(rc: RenderContext, nowMs: number): void {
 
   for (const x of sterilisations) {
     const age = nowMs - x.startMs;
-    if (age < 0 || age >= STERILISE_LIFE_MS) continue;
+    if (age < 0 || age >= lifeOf(x)) continue;
     const body = bodyOf(rc, x.bodyId);
     if (!body) continue;
     const wp = bodyPosition(body, rc.t, rc.bodies);
@@ -1926,6 +2073,10 @@ export function drawSterilisations(rc: RenderContext, nowMs: number): void {
     // larger than its true size, and a beam aimed at the true surface
     // stopped well inside the disc.
     const R = Math.max(6, drawnRadiusOf(rc.presentation, body, rc.camera.scale));
+    if (x.mode === 'obliterate') {
+      drawObliteration(c, rc, x, wp, cp, R, age / OBLITERATE_LIFE_MS, nowMs);
+      continue;
+    }
     const k = age / STERILISE_LIFE_MS;
 
     // ---- ACT ONE: the beam ----------------------------------------
@@ -1936,31 +2087,7 @@ export function drawSterilisations(rc: RenderContext, nowMs: number): void {
     // a strike no client ever drew the ship for still comes from above.
     // A blow with no gun (x.from) looks for none: a Mega Destroyer that
     // happened to be near would otherwise "fire" it.
-    const pk = x.from ? null : nearestDrawnCapital('mega_destroyer', wp.x, wp.y, 4000, rc.t);
-    let gun: { x: number; y: number };
-    const pc = pk ? worldToCanvas(pk.x, pk.y, rc) : null;
-    const live = pk && pc && pk.ageMs < 500;
-    if (live) { x.sawGun = true; x.lostMs = undefined; }
-    else if (x.sawGun && x.lostMs == null) x.lostMs = nowMs;
-    if (pk && pc && (live || !x.gunRel)) {
-      // The muzzle faces the WORLD it fires on. Off the hull's nose it was
-      // wherever the orbit pointed it: at close zoom the beam left from an
-      // escort beside the Mega (judges, 2026-10-22).
-      const tw = Math.hypot(cp.x - pc.x, cp.y - pc.y);
-      const ux = tw > 1e-6 ? (cp.x - pc.x) / tw : Math.cos(pk.heading);
-      const uy = tw > 1e-6 ? (cp.y - pc.y) / tw : Math.sin(pk.heading);
-      const muzzle = { x: pc.x + ux * pk.size * 0.22, y: pc.y + uy * pk.size * 0.22 };
-      const d = Math.hypot(muzzle.x - cp.x, muzzle.y - cp.y);
-      const minD = R * 1.25;
-      gun = d >= minD ? muzzle
-        : d > 1e-6 ? { x: cp.x + ((muzzle.x - cp.x) / d) * minD, y: cp.y + ((muzzle.y - cp.y) / d) * minD }
-          : { x: cp.x, y: cp.y - minD };
-      if (R > 0) x.gunRel = { x: (gun.x - cp.x) / R, y: (gun.y - cp.y) / R };
-    } else if (x.gunRel) {
-      gun = { x: cp.x + x.gunRel.x * R, y: cp.y + x.gunRel.y * R };
-    } else {
-      gun = { x: cp.x, y: cp.y - R * 6 };
-    }
+    const gun = strikeGun(rc, x, wp, cp, R, nowMs);
     // worldToCanvas has no y-flip, so the world vector is a canvas one.
     const hit = sterilisationHitPoint(cp, R, gun, x.from);
     const toGun = hit.toward;
@@ -1974,7 +2101,12 @@ export function drawSterilisations(rc: RenderContext, nowMs: number): void {
     const gunGone = x.lostMs != null ? Math.max(0, 1 - (nowMs - x.lostMs) / 250) : 1;
     if (k < STERILISE_FIRE_END && x.beam && gunGone > 0) {
       const bk = Math.min(1, k / STERILISE_BEAM_END);
-      const hold = (k < STERILISE_BEAM_END ? Math.min(1, k / 0.03)
+      // FULL ON FROM THE FIRST FRAME. It faded in over 156 ms (k / 0.03),
+      // so on the frame the strike began (the frame the cities and the
+      // charge ring leave the map) the beam drew at alpha 0 and only its
+      // sparks showed: the kill a frame before the shot (Venus clip,
+      // 2026-10-23). A gun does not fade in; it fires.
+      const hold = (k < STERILISE_BEAM_END ? 1
         : 1 - (k - STERILISE_BEAM_END) / (STERILISE_FIRE_END - STERILISE_BEAM_END)) * gunGone;
       drawBeam(c, gun.x, gun.y, hitX, hitY, Math.max(2, R * (0.06 + 0.1 * bk)), hold, nowMs, seed, STRIKE_FX);
       // Plasma splashing off the surface where it lands.
@@ -2033,6 +2165,283 @@ export function drawSterilisations(rc: RenderContext, nowMs: number): void {
       c.restore();
     }
   }
+}
+
+/**
+ * Where a world strike's beam leaves from, canvas px: the Planet Killer
+ * itself, wherever it is drawn (or was: a strike replays when you look,
+ * which can be after the ship died). If it sits over the world's disc
+ * the muzzle is pushed out to the disc's edge on its side, never behind
+ * its target. Only a strike no client ever drew the ship for still comes
+ * from above. Shared by the sterilisation and the obliteration.
+ */
+function strikeGun(
+  rc: RenderContext, x: Sterilisation,
+  wp: { x: number; y: number }, cp: { x: number; y: number }, R: number, nowMs: number,
+): { x: number; y: number } {
+  const pk = x.from ? null : nearestDrawnCapital('mega_destroyer', wp.x, wp.y, 4000, rc.t);
+  const pc = pk ? worldToCanvas(pk.x, pk.y, rc) : null;
+  const live = pk && pc && pk.ageMs < 500;
+  if (live) { x.sawGun = true; x.lostMs = undefined; }
+  else if (x.sawGun && x.lostMs == null) x.lostMs = nowMs;
+  if (pk && pc && (live || !x.gunRel)) {
+    // The muzzle faces the WORLD it fires on. Off the hull's nose it was
+    // wherever the orbit pointed it: at close zoom the beam left from an
+    // escort beside the Mega (judges, 2026-10-22).
+    const tw = Math.hypot(cp.x - pc.x, cp.y - pc.y);
+    const ux = tw > 1e-6 ? (cp.x - pc.x) / tw : Math.cos(pk.heading);
+    const uy = tw > 1e-6 ? (cp.y - pc.y) / tw : Math.sin(pk.heading);
+    const muzzle = { x: pc.x + ux * pk.size * 0.22, y: pc.y + uy * pk.size * 0.22 };
+    const d = Math.hypot(muzzle.x - cp.x, muzzle.y - cp.y);
+    const minD = R * 1.25;
+    const gun = d >= minD ? muzzle
+      : d > 1e-6 ? { x: cp.x + ((muzzle.x - cp.x) / d) * minD, y: cp.y + ((muzzle.y - cp.y) / d) * minD }
+        : { x: cp.x, y: cp.y - minD };
+    if (R > 0) x.gunRel = { x: (gun.x - cp.x) / R, y: (gun.y - cp.y) / R };
+    return gun;
+  }
+  if (x.gunRel) return { x: cp.x + x.gunRel.x * R, y: cp.y + x.gunRel.y * R };
+  return { x: cp.x, y: cp.y - R * 6 };
+}
+
+// ============================================================
+// A SETTLEMENT FALLING.
+//
+// A city's fall played as the ship-death flash, 12-14 px, at the CENTRE
+// of its world: at a close-up on a 230 px Ganymede it was a speck in the
+// middle of the globe six frames after the city had already gone from
+// the outliner (siege clip, 2026-10-23). It plays where the settlement
+// stood now, a city on its marker on the globe's limb and a station at
+// its orbit, sized by how big the world is DRAWN: a blast, the owner's
+// colour washing out across the ground round it, and smoke.
+// ============================================================
+
+export const SETTLEMENT_FALL_MS = 2600;
+const SETTLEMENT_FALL_CAP = 8;
+
+interface SettlementFall {
+  key: string;
+  bodyId: string;
+  /** The settlement as last seen (it has left /state). */
+  stl: Settlement | null;
+  startMs: number;
+  seed: number;
+}
+const settlementFalls: SettlementFall[] = [];
+const seenFallKeys = new Set<string>();
+
+/**
+ * A settlement fell. `key` is its id where known, so the live list-diff
+ * and its chronicle row play it once between them; `entryId` (the row)
+ * is remembered too, so a row replayed without its settlement id does
+ * not play a second time either.
+ */
+export function spawnSettlementFall(
+  key: string, bodyId: string, stl: Settlement | null, entryId: string | null,
+): void {
+  if (seenFallKeys.has(key) || (entryId && seenFallKeys.has(entryId))) return;
+  if (seenFallKeys.size > 2000) seenFallKeys.clear();
+  seenFallKeys.add(key);
+  if (entryId) seenFallKeys.add(entryId);
+  if (settlementFalls.length >= SETTLEMENT_FALL_CAP) settlementFalls.shift();
+  settlementFalls.push({ key, bodyId, stl, startMs: performance.now(), seed: idHash(key) });
+}
+
+/** Where a fall plays this frame, canvas px, and the size of its world. */
+export function settlementFallPlace(
+  rc: RenderContext, f: { key: string; bodyId: string; stl: Settlement | null },
+): { x: number; y: number; R: number; cx: number; cy: number; onGlobe: boolean } | null {
+  const body = bodyOf(rc, f.bodyId);
+  if (!body) return null;
+  const wp = bodyPosition(body, rc.t, rc.bodies);
+  const cp = worldToCanvas(wp.x, wp.y, rc);
+  const R = Math.max(3, drawnRadiusOf(rc.presentation, body, rc.camera.scale));
+  if (f.stl?.type === 'station') {
+    const sp = settlementWorldPosition(f.stl, rc.t, rc.bodies);
+    if (sp) {
+      const p = worldToCanvas(sp.x, sp.y, rc);
+      return { x: p.x, y: p.y, R, cx: cp.x, cy: cp.y, onGlobe: false };
+    }
+  }
+  // A city stands on the DRAWN surface at its surfaceAngle (drawCity).
+  const a = f.stl?.surfaceAngle ?? ((idHash(f.key) % 628) / 100);
+  return { x: cp.x + Math.cos(a) * R, y: cp.y + Math.sin(a) * R, R, cx: cp.x, cy: cp.y, onGlobe: true };
+}
+
+export function hasActiveSettlementFalls(nowMs: number): boolean {
+  return settlementFalls.some(f => nowMs - f.startMs < SETTLEMENT_FALL_MS);
+}
+
+export function drawSettlementFalls(rc: RenderContext, nowMs: number): void {
+  if (settlementFalls.length === 0) return;
+  const c = rc.ctx;
+  for (const f of settlementFalls) {
+    const age = nowMs - f.startMs;
+    if (age < 0 || age >= SETTLEMENT_FALL_MS) continue;
+    const at = settlementFallPlace(rc, f);
+    if (!at || offScreen(at, rc)) continue;
+    const k = age / SETTLEMENT_FALL_MS;
+    // In proportion to the world as drawn: a quarter of its radius at a
+    // close-up, never smaller than a hull's blast, never a planet's.
+    const blast = Math.max(10, Math.min(90, at.R * (at.onGlobe ? 0.26 : 0.2)));
+    // The owner's colour washing out across the ground round the city:
+    // the territory going dark. On the globe, clipped to it.
+    const owner = f.stl ? factionPrimary(rc, f.stl.ownedBy) : '#ffffff';
+    if (at.onGlobe && k < 0.75) {
+      const wk = k / 0.75;
+      c.save();
+      c.beginPath();
+      c.arc(at.cx, at.cy, at.R, 0, Math.PI * 2);
+      c.clip();
+      c.strokeStyle = withOpacity(owner, 0.7 * (1 - wk));
+      c.lineWidth = Math.max(1.5, blast * 0.18 * (1 - wk * 0.6));
+      c.beginPath();
+      c.arc(at.x, at.y, blast * (0.6 + 3.2 * (1 - (1 - wk) * (1 - wk))), 0, Math.PI * 2);
+      c.stroke();
+      c.restore();
+    }
+    // The blast itself, over the first two thirds.
+    drawExplosion(c, at.x, at.y, blast, Math.min(1, k / 0.66), f.seed);
+    // Smoke rising off the ruins after, outward from the world.
+    if (k > 0.3) {
+      const sk = (k - 0.3) / 0.7;
+      const ux = at.onGlobe ? (at.x - at.cx) / Math.max(1e-6, at.R) : 0;
+      const uy = at.onGlobe ? (at.y - at.cy) / Math.max(1e-6, at.R) : -1;
+      c.save();
+      for (let i = 0; i < 4; i++) {
+        const d = blast * (0.4 + 1.6 * sk) * (0.6 + i * 0.25);
+        glowAt(c, at.x + ux * d, at.y + uy * d, blast * (0.5 + 0.5 * sk) * (1 - i * 0.12),
+          '#2b2724', '#1b1816', 0.45 * (1 - sk));
+      }
+      c.restore();
+    }
+  }
+}
+
+/** Rock tones for the burst's shards: the debris field's own palette
+ *  (mapRenderer drawDebrisField), never the world's map-dot colour (the
+ *  Leviathan's flat yellow shards read as UI markers, QA 2026-10-23). */
+const OBLITERATE_SHARDS = ['#8a8178', '#6f6860', '#5a544d', '#4a4540'];
+
+/**
+ * A world blown apart (see OBLITERATE_LIFE_MS). Two acts:
+ *   BEAM   the Mega fires, full on from the first frame, and the crust
+ *          heats white where it lands and cracks across the disc, while
+ *          the body renderer still draws the world whole.
+ *   BURST  at OBLITERATE_BURST the world is gone: a white-out the size
+ *          of the world, a fireball, a shockwave out to several world
+ *          radii and the crust thrown off as tumbling shards, over the
+ *          debris field the body renderer now draws.
+ */
+function drawObliteration(
+  c: CanvasRenderingContext2D, rc: RenderContext, x: Sterilisation,
+  wp: { x: number; y: number }, cp: { x: number; y: number }, R: number, k: number, nowMs: number,
+): void {
+  const gun = strikeGun(rc, x, wp, cp, R, nowMs);
+  const hit = sterilisationHitPoint(cp, R, gun, null);
+  const seed = idHash(x.entryId);
+  const B = OBLITERATE_BURST;
+  const gunGone = x.lostMs != null ? Math.max(0, 1 - (nowMs - x.lostMs) / 250) : 1;
+
+  c.save();
+  c.globalCompositeOperation = 'lighter';
+  // ---- ACT ONE: the beam ------------------------------------------
+  // Full from frame one; it holds through the burst and dies just after.
+  const beamA = (k < B ? 1 : Math.max(0, 1 - (k - B) / 0.1)) * gunGone;
+  if (beamA > 0) {
+    const bk = Math.min(1, k / B);
+    drawBeam(c, gun.x, gun.y, hit.x, hit.y, Math.max(2.5, R * (0.08 + 0.12 * bk)), beamA, nowMs, seed, STRIKE_FX);
+    glowAt(c, hit.x, hit.y, R * (0.5 + 0.8 * bk), '#ffffff', STRIKE_FX.glow, beamA);
+    drawSparks(c, hit.x, hit.y, hit.toward, 2.6, 12, R * 1.5, (nowMs % 380) / 380, seed + Math.floor(nowMs / 380),
+      STRIKE_FX, Math.max(1, R * 0.03));
+  }
+  if (k < B) {
+    // The crust giving way: heat spreading from the hit and light
+    // cracking across the disc, clipped to the globe.
+    const hk = k / B;
+    c.save();
+    c.beginPath();
+    c.arc(cp.x, cp.y, R, 0, Math.PI * 2);
+    c.clip();
+    glowAt(c, hit.x, hit.y, R * (0.4 + 1.4 * hk), '#fff2cc', '#ff6a1f', 0.35 + 0.55 * hk);
+    const cr = mulberry32(seed + 7);
+    c.lineCap = 'round';
+    for (let i = 0; i < 12; i++) {
+      let a = hit.toward + Math.PI + (cr() - 0.5) * 2.4;
+      let px = hit.x, py = hit.y;
+      const len = R * (0.6 + 1.0 * cr()) * hk;
+      c.beginPath();
+      c.moveTo(px, py);
+      for (let s = 0; s < 6; s++) {
+        a += (cr() - 0.5) * 0.9;
+        px += Math.cos(a) * len / 6; py += Math.sin(a) * len / 6;
+        c.lineTo(px, py);
+      }
+      c.strokeStyle = `rgba(255, 214, 160, ${(0.25 + 0.6 * hk).toFixed(3)})`;
+      c.lineWidth = Math.max(1, R * 0.025 * (0.5 + hk));
+      c.stroke();
+    }
+    c.restore();
+  } else {
+    // ---- ACT TWO: the burst ---------------------------------------
+    const bk = Math.min(1, (k - B) / (1 - B));
+    const e = 1 - (1 - bk) * (1 - bk) * (1 - bk);
+    // White-out, gone fast: the world is light for a moment.
+    glowAt(c, cp.x, cp.y, R * (1.6 + 1.8 * e), '#ffffff', '#ffe2a0', Math.max(0, 1 - bk * 4));
+    // Fireball cooling from white to deep red.
+    const [core, glow] = bk < 0.15 ? ['#ffffff', '#ffd27a'] : bk < 0.45 ? ['#ffe6a8', '#ff7a1f'] : ['#ff9a4a', '#a8240e'];
+    const fr = mulberry32(seed + 3);
+    for (let i = 0; i < 9; i++) {
+      const a = fr() * Math.PI * 2, d = R * (0.2 + 0.9 * e) * fr();
+      glowAt(c, cp.x + Math.cos(a) * d, cp.y + Math.sin(a) * d, R * (0.6 + 0.6 * fr()) * (0.7 + 0.8 * e),
+        core, glow, 0.85 * Math.pow(1 - bk, 1.4));
+    }
+    // The shockwave, racing out to several world radii: a soft band.
+    const ring = R * (1.1 + 4.4 * e);
+    const band = R * 0.45;
+    const sa = 0.4 * (1 - bk) * (1 - bk);
+    if (sa > 0.01) {
+      const g = c.createRadialGradient(cp.x, cp.y, Math.max(0, ring - band), cp.x, cp.y, ring + band * 0.25);
+      g.addColorStop(0, 'rgba(255, 200, 150, 0)');
+      g.addColorStop(0.75, `rgba(255, 200, 150, ${sa.toFixed(3)})`);
+      g.addColorStop(1, 'rgba(255, 200, 150, 0)');
+      c.fillStyle = g;
+      c.beginPath();
+      c.arc(cp.x, cp.y, ring + band * 0.25, 0, Math.PI * 2);
+      c.fill();
+    }
+    drawSparks(c, cp.x, cp.y, 0, Math.PI * 2, 18, R * 3.4, Math.min(1, bk * 1.4), seed ^ 0x9e3779b9, STRIKE_FX,
+      Math.max(1, R * 0.04));
+    c.restore();
+    // The crust thrown off: matter, normal blend, rock-toned, tumbling
+    // out and fading over the debris field.
+    c.save();
+    const sr = mulberry32(seed + 13);
+    const shards = 26;
+    for (let i = 0; i < shards; i++) {
+      const a = sr() * Math.PI * 2, v = 0.8 + 2.4 * sr(), spin = (sr() - 0.5) * 8;
+      const d = R * (0.35 + v * e * 1.5);
+      const s = R * (0.06 + 0.14 * sr()) * (1 - 0.5 * bk);
+      const col = OBLITERATE_SHARDS[i % OBLITERATE_SHARDS.length];
+      const alpha = 1 - Math.max(0, (bk - 0.5) / 0.5);
+      if (alpha <= 0.01) continue;
+      c.save();
+      c.globalAlpha = alpha;
+      c.translate(cp.x + Math.cos(a) * d, cp.y + Math.sin(a) * d);
+      c.rotate(spin * bk + a);
+      c.fillStyle = col;
+      c.beginPath(); c.moveTo(s, 0); c.lineTo(-s * 0.6, s * 0.7); c.lineTo(-s * 0.4, -s * 0.8); c.closePath(); c.fill();
+      // A hot edge while it is still glowing.
+      if (bk < 0.5) {
+        c.fillStyle = `rgba(255, 150, 70, ${(0.7 * (1 - bk * 2)).toFixed(3)})`;
+        c.fillRect(-s * 0.2, -s * 0.2, s * 0.4, s * 0.4);
+      }
+      c.restore();
+    }
+    c.restore();
+    return;
+  }
+  c.restore();
 }
 
 // ============================================================

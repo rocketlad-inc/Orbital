@@ -44,10 +44,14 @@ import { getShipClass } from '../game/shipClasses';
 // hashStr/mulberry32 come from planetTexture (above) — combatFx defined
 // its own copies only because its branch predated planetTexture; the
 // duplicates are removed there and it re-exports nothing seeded.
-import { drawDeathDebris, sterilisationProgress, sterilisationStarted } from './combatFx';
+import {
+  drawDeathDebris, sterilisationProgress, sterilisationStarted,
+  obliterationStarted, obliterationHoldsWorldWhole,
+} from './combatFx';
 import { anchorToBody, anchoredWorldPos, type BodyAnchor } from './fxAnchor';
 import {
   noteKaijuDrawn, kaijuHoldsWorldWhole, drawKaijuCarcass, kaijuFlightPose, kaijuCarcassPose, kaijuStrikeHolds,
+  kaijuBreakStarted,
   carcassHeading, type KaijuAnchor,
 } from './kaijuFx';
 import { kaijuRevealed } from '../game/kaijuReveal';
@@ -3511,6 +3515,48 @@ function paintImpactScars(g: CanvasRenderingContext2D, bodyId: string, R: number
  * that lightweight mode draws it too, since the whole point of the
  * picture is information -- this is no longer a world.
  */
+/** Worlds this client has drawn whole (not yet a debris field). */
+const drawnWhole = new Set<string>();
+
+/** The rock atlases the debris field's chunks are drawn from. */
+export function preloadRubbleArt(): void {
+  for (let look = 0; look < ROCK_LOOKS; look++) getRockAtlas('metal', look);
+}
+
+/**
+ * A WORLD IS BLOWN APART WHEN IT IS SHOT, NOT BEFORE (Callisto clip,
+ * 2026-10-23: whole, then one frame of flat placeholder discs, then
+ * rubble, with no beam). Mirrors the sterilisation's strikePending: the
+ * tick that obliterates a world lands before its strike starts playing
+ * (that waits for the frame to draw it, or until the world is framed),
+ * so a world this client has drawn whole stays whole until then, and
+ * while the strike's beam is on it (combatFx obliterationHoldsWorldWhole,
+ * or the Leviathan's crush, kaijuHoldsWorldWhole). The rubble's art is
+ * fetched while it is held, so the debris field the burst reveals is
+ * drawn from its rocks, never their flat stand-ins.
+ */
+export function drawsAsDebris(body: Body, ctx: RenderContext): boolean {
+  if (body.obliteratedAtTick == null) {
+    drawnWhole.add(body.id);
+    return false;
+  }
+  const nowMs = ctx.nowMs ?? 0;
+  if (kaijuHoldsWorldWhole(body.id, nowMs)) { preloadRubbleArt(); return false; }
+  if (!drawnWhole.has(body.id)) return true;
+  const started = obliterationStarted(body.id) || kaijuBreakStarted(body.id);
+  const held = started
+    ? obliterationHoldsWorldWhole(body.id, nowMs)
+    : ctx.t - body.obliteratedAtTick < STRIKE_PENDING_TICKS;
+  if (held) preloadRubbleArt();
+  return !held;
+}
+
+/** Test hook: have the debris field's rock atlases been asked for? */
+export function rubbleArtRequested(): boolean {
+  for (let look = 0; look < ROCK_LOOKS; look++) if (!rockAtlases.has(`metal-${look}`)) return false;
+  return true;
+}
+
 function drawDebrisField(
   body: Body,
   canvasPos: { x: number; y: number },
@@ -4464,11 +4510,12 @@ export function drawBody(
   // city/eligibility hints — is information, not decoration, and a
   // performance mode that silently hid who owns what would be a bug
   // dressed as a setting. Only the art swaps out.
+  const debris = drawsAsDebris(body, ctx);
   if (isSunGateSite(body)) {
     // A landing site is a marker, in every mode (drawLandingSite).
     drawLandingSite(canvasPos, radius, ctx);
-  } else if (body.obliteratedAtTick != null && !kaijuHoldsWorldWhole(body.id, ctx.nowMs ?? 0)) {
-    // (Still whole while the Leviathan is crushing it: kaijuFx.ts.)
+  } else if (debris) {
+    // (Still whole while its strike plays: drawsAsDebris.)
     // Destroyed outright (0141). First in the chain, ahead of lightweight
     // mode: "this is no longer a world" is information, not decoration.
     drawDebrisField(body, canvasPos, radius, ctx);
