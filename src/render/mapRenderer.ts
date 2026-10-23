@@ -61,7 +61,7 @@ import { glowAt, drawExplosion, drawCharge, HullLook, fxSpriteBytes, drawShieldR
 import { drawnRadiusOf, inflationOf, parkedRadiusMap } from './bodyPresentation';
 import {
   battlePlacement, battleScale, battleDrift, hasBattleGlide, seedBattleGlide, battleSpriteScale,
-  type LiveBattle,
+  fleetBlockGeometry, type LiveBattle,
 } from './battleLayoutLive';
 import { FX_TUNING } from './fxTuning';
 import {
@@ -5474,6 +5474,92 @@ export function keepOffDrawnDiscs(
 }
 
 /**
+ * WHERE AN ARRIVAL STOPS SHORT OF ITS WORLD, px from the world's centre:
+ * the radius keepOffDrawnDiscs holds a hull's DESTINATION disc at. Outside
+ * the disc (with the old 10 px of air) AND outside the fight already in
+ * orbit there (`battle`, its outermost hull's edge), plus the hull's own
+ * reach toward the world (`ownReachPx`, flightReachPx).
+ *
+ * A braking hull flies nose-out with its engine and its escort block
+ * toward the world. Held at the disc's edge plus 10 px, a fleet arriving
+ * at the Sun had its block laid over the disc and its plume across it
+ * (Dyson Sphere clip, f392-f399, f540, f630: "ships flying out of the
+ * Sun"), was held there through the roster dwell, and sat over the hulls
+ * already in orbit. It now brakes to a stop outside the ring, then glides
+ * into its slot round the outside (battlePlacement eases radius and angle
+ * together, never a straight line across the world).
+ */
+export function arrivalStandoffPx(
+  drawnRadiusPx: number, battle: LiveBattle | undefined, ownReachPx: number,
+): number {
+  const fight = battle ? battle.outerR * battleScale(battle, drawnRadiusPx) : 0;
+  return Math.max(drawnRadiusPx + 10, fight) + Math.max(0, ownReachPx);
+}
+
+/** How far a hull in flight reaches from its own centre, px: half its
+ *  sprite, or for a fleet's flagship its whole escort block (drawn astern
+ *  of it, which is toward the world while it brakes). `escortRel` as for
+ *  fleetBlockGeometry, which measures the block the map draws. */
+export function flightReachPx(sizePx: number, escortRel?: readonly number[]): number {
+  if (!escortRel || escortRel.length === 0) return sizePx / 2 + 2;
+  const b = fleetBlockGeometry(sizePx, [...escortRel]);
+  // clearR is CLEAR_FRAC of the sprites; their art reaches a little past.
+  return Math.max(sizePx / 2, Math.hypot(b.flagX, b.flagY) + b.clearR * 1.2) + 2;
+}
+
+/**
+ * NO ENGINE PAINTED OVER A WORLD'S DISC. A hull braking into a world, or
+ * pushing off one, points its engine at it, and the plume was laid across
+ * the drawn disc (the Dyson Sphere clip: "ships flying out of the Sun").
+ * `discs` are the drawn discs (canvas px) of the worlds the hull is
+ * leaving or reaching (plumeDiscsOf); the plume's `reach` from (x, y)
+ * picks the ones it could touch, and `draw` runs clipped to outside them,
+ * so the flame stops at the limb as if the world stood in front of it.
+ */
+export function drawOffDiscs(
+  g: CanvasRenderingContext2D,
+  discs: ReadonlyArray<{ x: number; y: number; r: number }>,
+  x: number, y: number, reach: number,
+  draw: () => void,
+): void {
+  const near = discs.filter(d => d.r > 0 && Math.hypot(d.x - x, d.y - y) < d.r + reach);
+  if (near.length === 0) { draw(); return; }
+  g.save();
+  const m = reach * 1.25 + 4;
+  for (const d of near) {
+    g.beginPath();
+    g.rect(x - m, y - m, m * 2, m * 2);
+    g.arc(d.x, d.y, d.r, 0, Math.PI * 2);
+    g.clip('evenodd');
+  }
+  draw();
+  g.restore();
+}
+
+/** A plume reaches about this many hull sizes from the hull's centre
+ *  (fxPrimitives drawThrustExhaust: 1.35 x class length up to 1.5, x 1.4
+ *  on the hard brake, x 1.3 hot, from the stern). */
+export const PLUME_REACH_SIZES = 5;
+
+/** The drawn discs (canvas px) of the worlds a hull is leaving and
+ *  reaching: its transfer's target and the world it is parked at or left. */
+export function plumeDiscsOf(ship: Ship, ctx: RenderContext): Array<{ x: number; y: number; r: number }> {
+  const ids = [ship.transit?.currentTransfer?.targetBodyId, ship.orbit?.parentBodyId];
+  const out: Array<{ x: number; y: number; r: number }> = [];
+  const byId = bodyByIdOf(ctx.bodies);
+  for (let i = 0; i < ids.length; i++) {
+    const id = ids[i];
+    if (!id || ids.indexOf(id) !== i) continue;
+    const b = byId.get(id);
+    if (!b) continue;
+    const w = bodyPosition(b, ctx.t, ctx.bodies);
+    const at = worldToCanvas(w.x, w.y, ctx);
+    out.push({ x: at.x, y: at.y, r: drawnRadiusOf(ctx.presentation, b, ctx.camera.scale) });
+  }
+  return out;
+}
+
+/**
  * Where a hull in flight is DRAWN this frame (world): on its placed
  * samples at `t` (already handed off from where it was parked, see
  * departFromDrawn), through the continuity guard. The answer is recorded
@@ -5797,10 +5883,11 @@ export function drawEscortHull(
     noteParkedLook(ship.id, size, heading, ctx.nowMs ?? performance.now());
     clearDepartureGlide(ship.id);
   }
-  if (thrust > 0) {
+  const hintA = thrust > 0 ? THRUST_HINT_ALPHA * thrust * (1 - thrustVisibility(ctx.camera.scale)) : 0;
+  if (hintA > 0.01) {
     const cH = Math.cos(heading), sH = Math.sin(heading);
-    drawThrustHint(g, x - cH * size * 0.42, y - sH * size * 0.42, cH, sH, size,
-      THRUST_HINT_ALPHA * thrust * (1 - thrustVisibility(ctx.camera.scale)));
+    drawOffDiscs(g, plumeDiscsOf(ship, ctx), x, y, size * PLUME_REACH_SIZES, () =>
+      drawThrustHint(g, x - cH * size * 0.42, y - sH * size * 0.42, cH, sH, size, hintA));
   }
 
   g.save();
@@ -6159,12 +6246,12 @@ export function drawShip(
   // A hull that has just landed brings its engine in with it, dying away.
   if (landing.plume > 0.02) {
     const cosH = Math.cos(heading), sinH = Math.sin(heading);
-    drawThrustExhaust(
+    drawOffDiscs(ctx.ctx, plumeDiscsOf(ship, ctx), canvasPos.x, canvasPos.y, hullSize * PLUME_REACH_SIZES, () => drawThrustExhaust(
       ctx.ctx,
       { x: canvasPos.x - cosH * hullSize / 2, y: canvasPos.y - sinH * hullSize / 2 },
       { x: cosH, y: sinH }, hullSize, landing.plume, ship.class, undefined,
       driveBellsFor(ship.class, ship.iconVariant), landing.len,
-    );
+    ));
   }
 
   const trimColor = shipTrimColor(ship, ctx.factions);
@@ -8157,14 +8244,17 @@ function drawTorchTransitShip(
   lastThrust.set(ship.id, thrusting ? Math.max(0.35, shapedPlume) : 0);
   noteFlightLook(ship.id, iconSize, heading, ctx.nowMs ?? performance.now(),
     thrusting && ship.class !== 'kaiju' ? (isSelected ? 1.0 : 0.85) * thrustVis * shapedPlume : 0, plumeLen);
+  // Engines stop at the limb of the world it is braking into or leaving.
+  const plumeDiscs = hintK > 0.01 || thrusting ? plumeDiscsOf(ship, ctx) : [];
   if (hintK > 0.01) {
     const cH = Math.cos(heading), sH = Math.sin(heading);
-    drawThrustHint(ctx.ctx, canvasPos.x - cH * iconSize * 0.42, canvasPos.y - sH * iconSize * 0.42, cH, sH, iconSize, hintK);
+    drawOffDiscs(ctx.ctx, plumeDiscs, canvasPos.x, canvasPos.y, iconSize * PLUME_REACH_SIZES, () =>
+      drawThrustHint(ctx.ctx, canvasPos.x - cH * iconSize * 0.42, canvasPos.y - sH * iconSize * 0.42, cH, sH, iconSize, hintK));
   }
   if (thrusting && thrustVis > 0 && shapedPlume > 0.02 && ship.class !== 'kaiju') {
     const cosH = Math.cos(heading);
     const sinH = Math.sin(heading);
-    drawThrustExhaust(
+    drawOffDiscs(ctx.ctx, plumeDiscs, canvasPos.x, canvasPos.y, iconSize * PLUME_REACH_SIZES, () => drawThrustExhaust(
       ctx.ctx,
       { x: canvasPos.x - cosH * iconSize / 2, y: canvasPos.y - sinH * iconSize / 2 },
       { x: cosH, y: sinH },
@@ -8176,7 +8266,7 @@ function drawTorchTransitShip(
       // From the engines the hull's art actually has.
       driveBellsFor(ship.class, ship.iconVariant),
       plumeLen,
-    );
+    ));
     // Speed streaks on a retreating burn: brief parallel motion lines
     // shedding off the hull, flickering — unmistakably "getting out".
     if (shipIsRetreating(ship)) {

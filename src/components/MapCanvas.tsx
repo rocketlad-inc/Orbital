@@ -47,6 +47,8 @@ import {
   recentDrawnShipWorldPos,
   settleTransitLayout,
   keepOffDrawnDiscs,
+  arrivalStandoffPx,
+  flightReachPx,
   transitHitWorldPos,
   noteEmergence,
   drawnShipsSince,
@@ -3096,14 +3098,29 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // the parked layout picks it up (and, leaving, where it left it).
         if (ship.class !== 'missile' && placed && placed.length > 1 && pres) {
           const sc = renderContext.camera.scale;
-          const ends = [ship.transit?.currentTransfer?.targetBodyId, ship.orbit?.parentBodyId]
+          const destId = ship.transit?.currentTransfer?.targetBodyId;
+          const ends = [destId, ship.orbit?.parentBodyId]
             .filter((id, i, a): id is string => !!id && a.indexOf(id) === i)
             .map(id => bodyById2.get(id))
             .filter((b): b is GameBody => !!b);
+          // ARRIVING, it stops short of the fight already in orbit there and
+          // of the world, by its own reach toward it (its escort block, for a
+          // flagship): a braking fleet points its engine and its block at the
+          // world, and both were laid over the Sun (arrivalStandoffPx).
+          const destPx = shipIconSize('destroyer', false);
+          const marker = fleetGrouping.markerByLeadShip.get(ship.id);
+          const reach = flightReachPx(
+            shipIconSize(ship.class, isSelected) * (isSelected ? 1 : transitShipScale(camera.scale)),
+            marker?.escortIds.map(id => {
+              const e = shipById2.get(id);
+              return e ? Math.min(1, shipIconSize(e.class, false) / destPx) : 1;
+            }));
           placed = keepOffDrawnDiscs(placed, ends.map(b => ({
             at: (t: number) => bodyPosition(b, t, gameState.bodies),
-            R: (drawnRadiusOf(pres, b, sc) + 10) / Math.max(1e-9, sc),
-            isDest: b.id === ship.transit?.currentTransfer?.targetBodyId,
+            R: (b.id === destId
+              ? arrivalStandoffPx(drawnRadiusOf(pres, b, sc), renderContext.liveBattles?.get(b.id), reach)
+              : drawnRadiusOf(pres, b, sc) + 10) / Math.max(1e-9, sc),
+            isDest: b.id === destId,
           })));
         }
         if (ship.class === 'missile' && placed && placed.length > 1) {

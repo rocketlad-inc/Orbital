@@ -95,6 +95,11 @@ const ITERATIONS = 90;
  *  diameters of arc at mid-band. Lorne: "put a little distance between
  *  the borders of the portions". Every border gets one, full lap too. */
 const SHARE_GAP_DIAMS = 1.6;
+/** An edit (`prev`): how readily a hull that was already here gives way
+ *  to a newcomer it touches, against the newcomer's 1. */
+const HOLD_GIVE = 0.15;
+/** An edit: how hard a holder is pulled back to its old place, per pass. */
+const HOLD_PULL = 0.2;
 
 // ---------------------------------------------------------------- rng
 
@@ -138,6 +143,15 @@ export function layoutOrbitBattle(
      *  battle takes the whole lap, in the middle of the share farthest
      *  from every front, where the hulls part around it. */
     station?: { id: string; clearR: number };
+    /** THE LAYOUT THIS ONE REPLACES (the live map's roster change). Given,
+     *  the solve is an EDIT of it, not a fresh deal: every hull that was
+     *  already here starts where it was and holds there, giving ground
+     *  only where a newcomer needs the room; the shares turn to sit where
+     *  they sat; newcomers are relaxed in around the holders; the station
+     *  stays put. Without it every arrival or death re-dealt the whole
+     *  ring, and when a block joined the Dyson Sphere fight every fleet
+     *  around the Sun slid to a new slot (judges, 2026-10-23, 13.4 s). */
+    prev?: OBLayout;
   } = {},
 ): OBLayout {
   const placements = new Map<string, OBPlacement>();
@@ -223,6 +237,27 @@ export function layoutOrbitBattle(
     sectors.push({ faction: f, start: cursor, end: cursor + w });
     cursor += w + gap;
   }
+  // AN EDIT KEEPS ITS BEARINGS. Fresh shares are dealt from angle 0 (the
+  // first faction's middle on a full lap), so one more faction, or one
+  // share growing, turned every other share round the world. Turned back
+  // by the (size-weighted) mean of how far each faction's share moved,
+  // the shares sit where they sat, give or take their change in size.
+  let turn = 0;
+  if (opts.prev && opts.prev.sectors.length > 0) {
+    const was = new Map(opts.prev.sectors.map(s => [s.faction, (s.start + s.end) / 2]));
+    let sx = 0, sy = 0;
+    for (const s of sectors) {
+      const m0 = was.get(s.faction);
+      if (m0 === undefined) continue;
+      const d = angDiff(m0, (s.start + s.end) / 2);
+      const w = Math.max(1e-6, s.end - s.start);
+      sx += Math.cos(d) * w; sy += Math.sin(d) * w;
+    }
+    if (sx !== 0 || sy !== 0) {
+      turn = Math.atan2(sy, sx);
+      for (const s of sectors) { s.start += turn; s.end += turn; }
+    }
+  }
   const sectorOf = new Map(sectors.map(s => [s.faction, s]));
   // THE FRONTS: the middle of every gap between one faction's share and
   // another's. On a full lap the last share meets the first, so two
@@ -289,12 +324,39 @@ export function layoutOrbitBattle(
     ax: number; ay: number; pull: number; press: number;
     /** Pinned (the station): hulls are pushed off it, it never moves. */
     pin?: boolean;
+    /** HOLDING (an edit, `opts.prev`): it was here before. It starts where
+     *  it was, is held there (its anchor), neither presses to the front
+     *  nor is herded into its share, and in a crush gives ground to a
+     *  newcomer only HOLD_GIVE as readily as the newcomer does. */
+    hold?: boolean;
   };
+  // A newcomer to a fleet that is already here joins it where it IS.
+  const prevAt = opts.prev?.placements;
+  if (prevAt) {
+    const sum = new Map<string, { x: number; y: number; n: number }>();
+    for (const s of ships) {
+      const p = prevAt.get(s.id);
+      if (!p || s.fleet == null) continue;
+      const e = sum.get(fleetKey(s)) ?? { x: 0, y: 0, n: 0 };
+      e.x += p.x; e.y += p.y; e.n++;
+      sum.set(fleetKey(s), e);
+    }
+    for (const [fk, e] of sum) {
+      anchorOf.set(fk, { x: e.x / e.n, y: e.y / e.n, spread: Math.sqrt((fleetArea.get(fk) ?? 0) / Math.PI) });
+    }
+  }
   const bodies: Body[] = ships.map(s => {
     const R = rng(hash(s.id) ^ seed);
     const loose = s.fleet == null;
     const fk = fleetKey(s);
     const key = loose ? `${fk}|${s.id}` : fk;
+    const was = prevAt?.get(s.id);
+    if (was) {
+      return {
+        s, x: was.x, y: was.y, c: clear(s) * squeeze, stray: 0,
+        ax: was.x, ay: was.y, pull: HOLD_PULL, press: 0, hold: true,
+      };
+    }
     let anc = anchorOf.get(key);
     if (!anc) {
       const fs = loose ? sectorOf.get(s.faction)! : fleetSector.get(fk)!;
@@ -331,8 +393,20 @@ export function layoutOrbitBattle(
   // centred on angle 0, so the far side is pi. A full lap has no far side,
   // so it takes the middle of the share farthest from every front.
   let stationBody: Body | null = null;
-  if (opts.station) {
-    let at = Math.PI;
+  const prevStation = opts.prev?.station && opts.station && opts.prev.station.id === opts.station.id
+    ? opts.prev.station : undefined;
+  if (opts.station && prevStation) {
+    // An edit: the station stays where it stood.
+    const c = opts.station.clearR;
+    stationBody = {
+      s: { id: opts.station.id, faction: '', fleet: null, size: c / CLEAR_FRAC, armed: true, clearR: c },
+      x: prevStation.x, y: prevStation.y, c, stray: 0, ax: prevStation.x, ay: prevStation.y,
+      pull: 0, press: 0, pin: true,
+    };
+    bodies.push(stationBody);
+  } else if (opts.station) {
+    // (An edit's shares were turned; so is the far side.)
+    let at = Math.PI + turn;
     if (full && sectors.length > 0) {
       const allFronts = [...fronts.values()].flat();
       let best = -1;
@@ -358,6 +432,12 @@ export function layoutOrbitBattle(
   // share (ragged). There is deliberately NO pull toward a preferred
   // altitude: that is what drew the rows.
   const n = bodies.length;
+  const mob = (b: Body) => (b.pin ? 0 : b.hold ? HOLD_GIVE : 1);
+  /** How a push is shared between two touching bodies (summing to 2). */
+  const shares = (a: Body, b: Body): [number, number] => {
+    const ma = mob(a), mb = mob(b);
+    return ma + mb > 0 ? [2 * ma / (ma + mb), 2 * mb / (ma + mb)] : [0, 0];
+  };
   for (let it = 0; it < ITERATIONS; it++) {
     const late = it > ITERATIONS * 0.7;
     for (let i = 0; i < n; i++) {
@@ -374,7 +454,8 @@ export function layoutOrbitBattle(
         const ux = d2 > 0 ? dx / d : Math.cos(i + j);
         const uy = d2 > 0 ? dy / d : Math.sin(i + j);
         // A pinned body (the station) stays put; the hull takes all of it.
-        const pa = a.pin ? 0 : b.pin ? 2 : 1, pb = b.pin ? 0 : a.pin ? 2 : 1;
+        // A holder gives ground to a newcomer only grudgingly.
+        const [pa, pb] = shares(a, b);
         a.x -= ux * push * pa; a.y -= uy * push * pa;
         b.x += ux * push * pb; b.y += uy * push * pb;
       }
@@ -382,7 +463,8 @@ export function layoutOrbitBattle(
     for (const b of bodies) {
       if (b.pin) continue;
       // Hold the blob together (eased off at the end so separation wins).
-      const k = late ? b.pull * 0.25 : b.pull;
+      // A holder is held to its old place throughout.
+      const k = late && !b.hold ? b.pull * 0.25 : b.pull;
       b.x += (b.ax - b.x) * k;
       b.y += (b.ay - b.y) * k;
       let r = Math.hypot(b.x, b.y) || 1;
@@ -396,7 +478,7 @@ export function layoutOrbitBattle(
       // the hull (and its fleet's anchor) along the orbit; separation,
       // which works across factions too, stops the two sides at contact.
       // That is what makes the fronts: ragged, touching, firing.
-      const myFronts = fronts.get(b.s.faction);
+      const myFronts = b.hold ? undefined : fronts.get(b.s.faction);
       if (myFronts && myFronts.length > 0) {
         let near = myFronts[0];
         let nd = Math.abs(angDiff(near, t));
@@ -414,7 +496,7 @@ export function layoutOrbitBattle(
       }
       // Faction share, ragged.
       const sec = sectorOf.get(b.s.faction)!;
-      if (!full || F > 1) {
+      if (!b.hold && (!full || F > 1)) {
         const mid = (sec.start + sec.end) / 2;
         const half = (sec.end - sec.start) / 2;
         const off = angDiff(t, mid);
@@ -442,7 +524,7 @@ export function layoutOrbitBattle(
         if (d2 >= need * need) continue;
         const d = Math.sqrt(d2) || 0.01;
         const push = (need - d) / 2;
-        const pa = a.pin ? 0 : b.pin ? 2 : 1, pb = b.pin ? 0 : a.pin ? 2 : 1;
+        const [pa, pb] = shares(a, b);
         a.x -= (dx / d) * push * pa; a.y -= (dy / d) * push * pa;
         b.x += (dx / d) * push * pb; b.y += (dy / d) * push * pb;
       }
@@ -455,7 +537,7 @@ export function layoutOrbitBattle(
       if (r < rMin) r = rMin;
       // Keep the no man's land open while separating, except on the
       // last few passes, where touching sprites matter more.
-      if (gap > 0 && it < 22) {
+      if (gap > 0 && it < 22 && !b.hold) {
         const sec = sectorOf.get(b.s.faction)!;
         const off = angDiff(t, (sec.start + sec.end) / 2);
         const half = (sec.end - sec.start) / 2;
