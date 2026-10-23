@@ -47,9 +47,9 @@ export function arcApexScale(from: Cam, tx: number, ty: number, toScale: number,
 /**
  * The camera at progress u (0..1) of a pan. Without an arc: position and
  * zoom both ease from start to end (zoom in log space, so it feels even).
- * With an arc: the zoom follows the plain ease with a dip that bottoms at
- * the apex halfway through, and the position moves mostly while pulled
- * back, so neither end ever leaves the frame for long.
+ * With an arc: the zoom eases out to the apex by halfway and back in after
+ * it, and the position is held to the zoom, so one end is always in frame:
+ * the start until the apex, the target from it.
  */
 export function panCamera(u: number, from: Cam, tx: number, ty: number, toScale: number, arc: { apex: number } | null): Cam {
   const k = Math.min(1, Math.max(0, u));
@@ -67,17 +67,57 @@ export function panCamera(u: number, from: Cam, tx: number, ty: number, toScale:
     else if (lt > lf + 0.1) g = 1 - (toScale / scale - 1) / (toScale / from.scale - 1);
     return { x: from.x + (tx - from.x) * g, y: from.y + (ty - from.y) * g, scale };
   }
-  const e = easeInOut(k);
-  const plain = lf + (lt - lf) * e;
-  // The dip that takes the plain curve down to the apex at the middle.
-  const depth = Math.max(0, (lf + lt) / 2 - Math.log(arc.apex));
-  // Along the eased clock, so the pull-back starts (and lands) at rest:
-  // on the raw clock the dip began at full rate, and a pan off a close-up
-  // shrank the world a quarter in its first frame.
-  const scale = Math.exp(plain - depth * Math.sin(Math.PI * e));
+  // Out to the apex in the first half, in from it in the second, each on
+  // its own ease: the pull-back starts at rest (on the raw clock a pan off a
+  // close-up shrank the world a quarter in its first frame), and the zoom
+  // never overshoots the apex and comes back.
+  const la = Math.min(Math.log(arc.apex), lf, lt);
+  const scale = k <= 0.5
+    ? Math.exp(lf + (la - lf) * easeInOut(k * 2))
+    : Math.exp(la + (lt - la) * easeInOut(k * 2 - 1));
   // Move while pulled back: the middle 70% of the time carries the travel.
+  // HELD TO THE ZOOM (judges 2026-10-23, the three-way battle: Earth left
+  // the frame a third of a second before the pull-back showed Titan's
+  // system, and Titan raced in from the edge on the way down). Until the
+  // apex the start is no further from the centre, on screen, than the apex
+  // puts it; from the apex on, nor is the target. The apex fits both ends
+  // inside the frame, so one of them is always in it.
+  const apex = Math.exp(la);
   const ep = easeInOut((k - 0.15) / 0.7);
-  return { x: from.x + (tx - from.x) * ep, y: from.y + (ty - from.y) * ep, scale };
+  const g = k <= 0.5 ? Math.min(ep, apex / (2 * scale)) : Math.max(ep, 1 - apex / (2 * scale));
+  return { x: from.x + (tx - from.x) * g, y: from.y + (ty - from.y) * g, scale };
+}
+
+/**
+ * How far (0..1) a tick's glide has carried the map `elapsedMs` into a
+ * glide of `ms`. Between ticks it runs at an even pace. The LAST glide of a
+ * shot (`ease`, over twice the pace) leaves at the same speed and slows to
+ * rest on its tick: run at the pace and clamped, the world stopped dead on
+ * one frame, and the camera with it (judges 2026-10-23, seven clips).
+ */
+export function glideProgress(elapsedMs: number, ms: number, ease: boolean): number {
+  const x = elapsedMs <= 0 ? 0 : elapsedMs >= ms ? 1 : elapsedMs / Math.max(1, ms);
+  return ease ? 1 - (1 - x) * (1 - x) : x;
+}
+
+/** The pace (ms per tick) the last glide leaves at: the gap between the
+ *  last two tick steps when they hand over (6 s or less), else `speedMs`. */
+function lastPaceMs(ticks: number[], speedMs: number): number {
+  const n = ticks.length;
+  if (n < 2) return speedMs;
+  const gap = ticks[n - 1] - ticks[n - 2];
+  return gap > 0 && gap <= 6 ? gap * 1000 : speedMs;
+}
+
+/**
+ * The shot time (s) the world comes to rest: the last tick step plus its
+ * glide to rest (twice the pace). With no tick steps, the opening glide.
+ * A shot that runs on past it holds a still frame.
+ */
+export function worldStopsAt(steps: readonly StepLike[], speedMs: number): number {
+  const ticks = steps.filter(s => s.do === 'tick').map(s => s.at).sort((a, b) => a - b);
+  const pace = lastPaceMs(ticks, speedMs);
+  return (ticks.length ? ticks[ticks.length - 1] : 0) + (2 * pace) / 1000;
 }
 
 export interface StepLike { at: number; do: string; n?: number; ship?: string }
