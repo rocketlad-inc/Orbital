@@ -20,7 +20,7 @@ import { sampleTorchTrajectory, torchPositionFromSamples, trajectoryTangentAt, i
 import { rendezvousStateAt } from '../physics/rendezvous.js';
 import { STRAIGHT_LINE_TRAJECTORIES } from '../game/featureFlags';
 import { COLORS, withOpacity, lighten, darken } from './colors';
-import { drawSunSquid, drawSunOmen, sunGateHeading, sunGateMorph, LEVIATHAN_PALETTE } from './sunSquid';
+import { drawSunSquid, drawSunOmen, sunGateHeading, sunGateArrivalMorph, LEVIATHAN_PALETTE } from './sunSquid';
 import { isSunGateSite } from '../game/farSystems';
 import { transitHullScale } from './cameraLimits';
 import { requestLabel, clearOfKeepOuts, reserveRect } from './labelLayer';
@@ -2867,11 +2867,14 @@ function drawEmergingGate(
   // The thing itself (sunSquid.ts): mantle first on the way out, turned
   // round to brake on its jet past the flip, unfurling into the gate's
   // ring over the last fifth of the trip so it lands as the gate.
+  // Whole as it reaches its site, not as the clock runs out
+  // (sunGateArrivalMorph).
+  const ringR = sunGateRingR(scale);
   drawSunSquid(g, canvasPos.x, canvasPos.y, {
     u: sunSquidUnit(scale),
-    ringR: sunGateRingR(scale),
+    ringR,
     heading: sunGateHeading(Math.atan2(uy, ux), f),
-    morph: sunGateMorph(f),
+    morph: sunGateArrivalMorph(f, Math.hypot(land.x - canvasPos.x, land.y - canvasPos.y), ringR),
     thrust: 0.25 + 0.75 * speed,
     now,
   });
@@ -2971,6 +2974,27 @@ function landingSiteLabelYields(
   const siteArt = sunGateArtRadius(site, siteRadius, ctx.t, scale) ?? siteRadius;
   const landed = !gate.emerge || ctx.t >= gate.emerge.untilTick;
   return siteLabelYields(Math.hypot(gp.x - sitePos.x, gp.y - sitePos.y), gateArt, siteArt, landed);
+}
+
+/**
+ * Is a landing site's gate on it? Within the gate's own art radius (or
+ * landed), the reticle and its name are under the gate: drawn on top of
+ * the open ring they read as a target still to be reached, and the gold
+ * reticle sat over the gate's eye (Studio clip a-sun-gate-is-born, f242).
+ */
+export function siteCoveredByGate(gapPx: number, gateArtPx: number, landed: boolean): boolean {
+  return landed || gapPx <= gateArtPx;
+}
+
+function landingSiteCovered(site: Body, sitePos: { x: number; y: number }, ctx: RenderContext): boolean {
+  const gate = bodyById(ctx.bodies, site.id.replace(/_site$/, ''));
+  if (!gate || gate.id === site.id) return false;
+  const gw = bodyPosition(gate, ctx.t, ctx.bodies);
+  const gp = worldToCanvas(gw.x, gw.y, ctx);
+  const scale = ctx.camera.scale;
+  const gateArt = sunGateArtRadius(gate, Math.max(3, gate.radius * scale), ctx.t, scale) ?? 0;
+  const landed = !gate.emerge || ctx.t >= gate.emerge.untilTick;
+  return siteCoveredByGate(Math.hypot(gp.x - sitePos.x, gp.y - sitePos.y), gateArt, landed);
 }
 
 /** A sun gate at rest, either end: the squid fully unfurled. */
@@ -4512,8 +4536,9 @@ export function drawBody(
   // dressed as a setting. Only the art swaps out.
   const debris = drawsAsDebris(body, ctx);
   if (isSunGateSite(body)) {
-    // A landing site is a marker, in every mode (drawLandingSite).
-    drawLandingSite(canvasPos, radius, ctx);
+    // A landing site is a marker, in every mode (drawLandingSite), until
+    // its gate is on it (landingSiteCovered).
+    if (!landingSiteCovered(body, canvasPos, ctx)) drawLandingSite(canvasPos, radius, ctx);
   } else if (debris) {
     // (Still whole while its strike plays: drawsAsDebris.)
     // Destroyed outright (0141). First in the chain, ahead of lightweight
@@ -5467,7 +5492,17 @@ export function continuousDrawnPos(
   // went through whole (~1,000 px at a close-up, measured frame to frame).
   // Never more than two running: a third is the motion itself.
   const n = c.caught ?? 0;
-  const jumped = off && (n === 0 || (n < 2 && errPx > CONTINUITY_BIG_PX && errPx > 3 * stepPx));
+  // A STOP IS NOT A JUMP. A hull that comes to rest (a missile at its
+  // meeting, anything held on its next-tick spot while the server is late)
+  // is off its prediction by its whole step, so it was "caught": drawn a
+  // frame on past where it stopped and then slid back over half a second
+  // (salvo intercept clip, f156-f172: both missiles flew through each
+  // other, 383 px, and backed up onto the meeting). A teleport moves the
+  // hull further than its motion explains; one that barely moved has not
+  // jumped anywhere.
+  const truePx = Math.hypot(x - c.x - carryX, y - c.y - carryY) * scale;
+  const stopped = stepPx > 0 && truePx <= 0.25 * stepPx;
+  const jumped = off && !stopped && (n === 0 || (n < 2 && errPx > CONTINUITY_BIG_PX && errPx > 3 * stepPx));
   c.caught = jumped ? n + 1 : 0;
   if (jumped) {
     // Absorb it: drawn stays on the line it was on, then eases across,
@@ -7154,6 +7189,36 @@ function shapedLineSamples(plan: TorchTransferPlan): Array<{ t: number; x: numbe
   return out;
 }
 
+/** A leg that pushes the whole way and never brakes: a missile salvo
+ *  (worker/missiles.js missileLeg, its flip at its arrival). */
+export function isPushOnly(plan: Pick<TorchTransferPlan, 'startTick' | 'flipTick' | 'arriveTick'>): boolean {
+  return plan.arriveTick > plan.startTick && plan.flipTick >= plan.arriveTick - 1e-9;
+}
+
+const PUSH_LINE_SAMPLES = 24;
+const pushSampleCache = new WeakMap<TorchTransferPlan, Array<{ t: number; x: number; y: number }>>();
+/**
+ * A salvo's line, timed by its push: from rest, gathering speed all the
+ * way (x ~ t^2), like the interceptor drawn against it
+ * (missileDrawnRendezvous). Lerped as a plain two-point chord it left at
+ * full speed: still on one frame, ~270 px a frame the next at a close-up
+ * (salvo intercept clip, f14).
+ */
+function pushLineSamples(plan: TorchTransferPlan): Array<{ t: number; x: number; y: number }> {
+  const hit = pushSampleCache.get(plan);
+  if (hit) return hit;
+  const s = plan.startTick, T = plan.arriveTick - plan.startTick;
+  const sx = plan.startPos.x, sy = plan.startPos.y;
+  const dx = plan.interceptPos.x - sx, dy = plan.interceptPos.y - sy;
+  const out: Array<{ t: number; x: number; y: number }> = [];
+  for (let i = 0; i <= PUSH_LINE_SAMPLES; i++) {
+    const u = i / PUSH_LINE_SAMPLES;
+    out.push({ t: s + T * u, x: sx + dx * u * u, y: sy + dy * u * u });
+  }
+  pushSampleCache.set(plan, out);
+  return out;
+}
+
 export function torchTrajectorySamples(
   plan: TorchTransferPlan,
   bodies: Body[],
@@ -7165,6 +7230,7 @@ export function torchTrajectorySamples(
     // one straight line, but timed along it: the hull is lerped through
     // these, so it creeps off at launch, gathers speed and brakes hard.
     if (isShapedBurn(plan)) return shapedLineSamples(plan);
+    if (isPushOnly(plan)) return pushLineSamples(plan);
     return [
       { t: plan.startTick,  x: plan.startPos.x,     y: plan.startPos.y },
       { t: plan.arriveTick, x: plan.interceptPos.x, y: plan.interceptPos.y },
@@ -8019,8 +8085,12 @@ export function drawRammingBody(
   const tgt = bodyById(ctx.bodies, plan.targetBodyId);
   if (tgt) {
     const tp = bodyPosition(tgt, t, ctx.bodies);
-    // The side of the world it is coming in on, for the impact (asteroidRam).
-    noteRamApproach(tgt.id, here.x - tp.x, here.y - tp.y);
+    // The side of the world it is coming in on, for the impact
+    // (asteroidRam): where it crosses the limb, not the noise of its last
+    // fraction of a unit inside the globe.
+    if (Math.hypot(here.x - tp.x, here.y - tp.y) > (tgt.radius ?? 0)) {
+      noteRamApproach(tgt.id, here.x - tp.x, here.y - tp.y);
+    }
   }
   const push = ramThrustDir(plan, t,
     (tt) => bodyPosition(body, tt, ctx.bodies),

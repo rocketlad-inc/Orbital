@@ -350,6 +350,54 @@ export function ramPlanOf(b) {
   };
 }
 
+/** How much of a ram's miss is folded in at tick `t`: a smoothstep over
+ *  the flight, so the correction adds no speed at launch or at arrival.
+ *  MIRROR of ramMissWeight in src/physics/orbitalMechanics.ts. */
+export function ramMissWeight(plan, t) {
+  const span = plan.arriveTick - plan.startTick;
+  if (!(span > 0)) return 1;
+  const u = Math.min(1, Math.max(0, (t - plan.startTick) / span));
+  return u * u * (3 - 2 * u);
+}
+
+const ramMisses = new Map();
+
+/**
+ * Where a rammed rock is at tick `t`: the torch burn (torchStateAt) with
+ * its miss spread over the flight.
+ *
+ * The burn's timing is planned for a rock starting at rest
+ * (planTorchTransfer, studio fireRam); the velocity it inherits from its
+ * orbit is never planned for, so the bare burn stopped short of the
+ * meeting point (~520 units off Mars in the Studio's ram, 2026-10-23)
+ * and the arrival snap teleported it there. The miss is folded in on a
+ * smoothstep, so the rock lands on the meeting point.
+ * MIRROR of ramBodyPosition in src/physics/orbitalMechanics.ts — the
+ * map draws the rock, and every hull parked on it, from that one.
+ */
+export function ramStateAt(plan, bodyVelAt, t) {
+  const st = torchStateAt(plan, bodyVelAt, t);
+  if (!(t > plan.startTick) || t >= plan.arriveTick - 1e-9) return st;
+  const key = `${plan.targetBodyId}|${plan.startTick}|${plan.flipTick}|${plan.arriveTick}|${plan.accel}|`
+    + `${plan.launchX},${plan.launchY}|${plan.launchVx},${plan.launchVy}|${plan.interceptX},${plan.interceptY}`;
+  let miss = ramMisses.get(key);
+  if (!miss) {
+    const end = torchStateAt(plan, bodyVelAt, plan.arriveTick, { snap: false }).pos;
+    const mx = plan.interceptX - end.x, my = plan.interceptY - end.y;
+    miss = { x: Number.isFinite(mx) ? mx : 0, y: Number.isFinite(my) ? my : 0 };
+    if (ramMisses.size > 64) ramMisses.clear();
+    ramMisses.set(key, miss);
+  }
+  const w = ramMissWeight(plan, t);
+  const span = plan.arriveTick - plan.startTick;
+  const u = (t - plan.startTick) / span;
+  const dw = (6 * u * (1 - u)) / span;
+  return {
+    pos: { x: st.pos.x + miss.x * w, y: st.pos.y + miss.y * w },
+    vel: { x: st.vel.x + miss.x * dw, y: st.vel.y + miss.y * dw },
+  };
+}
+
 // ============================================================
 // Where a ship in flight actually is.
 //
@@ -389,7 +437,7 @@ const BURN_SUBSTEPS = 100;
  * @param bodyVelAt (bodyId, t) -> {x, y}, for the brake phase
  * @param t target tick
  */
-export function torchStateAt(plan, bodyVelAt, t) {
+export function torchStateAt(plan, bodyVelAt, t, { snap = true } = {}) {
   const pos = { x: plan.launchX, y: plan.launchY };
   const vel = { x: plan.launchVx, y: plan.launchVy };
   const end = Math.min(t, plan.arriveTick);
@@ -458,7 +506,7 @@ export function torchStateAt(plan, bodyVelAt, t) {
   // Arrival snap — pinned to the intercept carrying the target's own
   // velocity, exactly as the client does, so the handoff to a parked
   // orbit doesn't jump.
-  if (end >= plan.arriveTick - 1e-9) {
+  if (snap && end >= plan.arriveTick - 1e-9) {
     const tv = bodyVelAt(plan.targetBodyId, plan.arriveTick);
     return { pos: { x: plan.interceptX, y: plan.interceptY }, vel: { x: tv.x, y: tv.y } };
   }

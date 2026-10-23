@@ -61,6 +61,26 @@ export function battleReferenceRadius(bodyRadius: number): number {
   return Math.max(60, Math.min(320, 95 * Math.sqrt(Math.max(0.05, bodyRadius || 0))));
 }
 
+/** A megastructure is drawn as art capped at this radius, px
+ *  (bodyPresentation ownGlyphRadius, drawMegastructureBody). */
+export const STRUCTURE_DRAWN_MAX_PX = 46;
+
+/**
+ * The reference radius for the world a battle is at. A STRUCTURE IS NOT
+ * A WORLD: its art never draws past STRUCTURE_DRAWN_MAX_PX, so on the
+ * world curve (a 1.6-radius site: 120 px) k never passed 0.38 and every
+ * hull parked at a site was drawn at a third of its size, tucked against
+ * the art (Studio clip "A megastructure completes", 2026-10-23: the
+ * outliner listed TFS FR-01 at the Weapons Station and nothing could be
+ * seen there). Laid out at the art's own full size, hulls at a site are
+ * full size when the site is.
+ */
+export function battleReferenceRadiusOf(body: number | { type?: string; radius: number }): number {
+  if (typeof body === 'number') return battleReferenceRadius(body);
+  if (body.type === 'megastructure') return STRUCTURE_DRAWN_MAX_PX;
+  return battleReferenceRadius(body.radius);
+}
+
 /**
  * A fleet marker's block at full size, measured with the SAME calls and
  * constants MapCanvas's marker pass uses (spacing from the flagship's hit
@@ -187,7 +207,8 @@ export function battleSolves(bodyId: string): number {
 
 export function liveBattleFor(
   bodyId: string,
-  bodyRadius: number,
+  /** The world (its type and true radius), or a bare radius. */
+  bodyRadius: number | { type?: string; radius: number },
   dir: number,
   units: readonly BattleUnit[],
   order: readonly string[],
@@ -202,7 +223,7 @@ export function liveBattleFor(
    *  (drawn on its orbit meanwhile) before gliding into its place. */
   dwell?: { nowMs: number; ms?: number },
 ): LiveBattle {
-  const refR = battleReferenceRadius(bodyRadius);
+  const refR = battleReferenceRadiusOf(bodyRadius);
   const key = battleKey(refR, dir, units, order, stationId);
   const hit = cache.get(bodyId);
   if (hit && hit.key === key) { pending.delete(bodyId); return hit; }

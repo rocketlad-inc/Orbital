@@ -1830,7 +1830,9 @@ const FIREWORK_COLOR = '#ffd27a';
  */
 export type DiscoveryVariant =
   | 'discovery' | 'firework'
-  | 'cache' | 'databank' | 'warship' | 'city' | 'stargate';
+  | 'cache' | 'databank' | 'warship' | 'city' | 'stargate'
+  // A megastructure finishing (pendingFx 'built'): sized to the structure.
+  | 'completion';
 
 interface VariantSpec {
   color: string;
@@ -1852,7 +1854,75 @@ const VARIANTS: Record<DiscoveryVariant, VariantSpec> = {
   city:      { color: '#ffd9a0', glyph: '⌂', flourish: 'windows' },
   // The ring powering up, contracting inward to ignition.
   stargate:  { color: '#7fe3ff', glyph: '◎', flourish: 'spinup' },
+  completion: { color: FIREWORK_COLOR, glyph: '✧' },
 };
+
+/**
+ * A STRUCTURE FINISHING, AT ITS OWN SIZE (Studio clip "A megastructure
+ * completes", 2026-10-23: "the completion barely registers"). It played
+ * the firework, whose rings and sparks are fixed at ~70 px: drawn over a
+ * structure 92 px across, all of it stayed inside the art and read as a
+ * faint ring behind a 30 px icon swap. This flashes the whole structure,
+ * then throws a shockwave and sparks out to three times its drawn radius
+ * `R` (px), so the beat lands at any zoom. `k` is 0..1 through the life.
+ * Pure drawing, exported for its test.
+ */
+export function drawCompletionBurst(
+  c: CanvasRenderingContext2D, cp: { x: number; y: number }, R: number, k: number, color: string,
+): void {
+  const r = Math.max(10, R);
+  const easeOut = 1 - (1 - k) * (1 - k);
+  const fade = 1 - k;
+  // The flash: the structure lights up whole, white at the heart.
+  const fk = Math.max(0, 1 - k / 0.22);
+  if (fk > 0) {
+    const fr = r * (1.05 + 0.35 * (1 - fk));
+    const flash = c.createRadialGradient(cp.x, cp.y, 0, cp.x, cp.y, fr);
+    flash.addColorStop(0, `rgba(255, 255, 255, ${0.95 * fk})`);
+    flash.addColorStop(0.55, withOpacity(color, 0.7 * fk));
+    flash.addColorStop(1, withOpacity(color, 0));
+    c.fillStyle = flash;
+    c.beginPath();
+    c.arc(cp.x, cp.y, fr, 0, Math.PI * 2);
+    c.fill();
+  }
+  // The afterglow, swelling past the hull.
+  const haloR = r * (1.1 + 1.2 * easeOut);
+  const halo = c.createRadialGradient(cp.x, cp.y, r * 0.4, cp.x, cp.y, haloR);
+  halo.addColorStop(0, withOpacity(color, 0.32 * fade));
+  halo.addColorStop(1, withOpacity(color, 0));
+  c.fillStyle = halo;
+  c.beginPath();
+  c.arc(cp.x, cp.y, haloR, 0, Math.PI * 2);
+  c.fill();
+  // Two shockwaves from the hull's edge to three times its radius.
+  for (let i = 0; i < 2; i++) {
+    const rk = Math.max(0, Math.min(1, k * 1.2 - i * 0.2));
+    if (rk <= 0 || rk >= 1) continue;
+    const re = 1 - (1 - rk) * (1 - rk);
+    c.strokeStyle = withOpacity(color, 0.85 * (1 - rk));
+    c.lineWidth = Math.max(2, r * 0.07) * (1 - 0.6 * rk);
+    c.beginPath();
+    c.arc(cp.x, cp.y, r * (1 + 2 * re), 0, Math.PI * 2);
+    c.stroke();
+  }
+  // Sparks thrown clear of the structure (fixed angles: a replay matches).
+  const SPARKS = 14;
+  c.lineCap = 'round';
+  for (let s = 0; s < SPARKS; s++) {
+    const a = (s / SPARKS) * Math.PI * 2 + 0.31;
+    const reach = (s % 2 === 0 ? 1 : 0.7) * r * 2.1;
+    const inner = r * 1.05 + reach * easeOut * 0.5;
+    const outer = r * 1.05 + reach * easeOut;
+    c.strokeStyle = withOpacity(color, 0.95 * fade * fade);
+    c.lineWidth = Math.max(2, r * 0.05);
+    c.beginPath();
+    c.moveTo(cp.x + Math.cos(a) * inner, cp.y + Math.sin(a) * inner);
+    c.lineTo(cp.x + Math.cos(a) * outer, cp.y + Math.sin(a) * outer);
+    c.stroke();
+  }
+  c.lineCap = 'butt';
+}
 
 /** Map a revealed secret kind to its bloom variant. Unknown kinds fall
  *  back to the original generic purple find. */
@@ -2564,6 +2634,11 @@ export function drawDiscoveryBlooms(rc: RenderContext, nowMs: number): void {
     const spec = VARIANTS[bloom.variant] ?? VARIANTS.discovery;
     const color = spec.color;
     const isFirework = spec.flourish === 'sparks';
+
+    if (bloom.variant === 'completion') {
+      drawCompletionBurst(c, cp, drawnRadiusOf(rc.presentation, body, rc.camera.scale), k, color);
+      continue;
+    }
 
     const haloR = 14 + 26 * easeOut;
     const halo = c.createRadialGradient(cp.x, cp.y, 0, cp.x, cp.y, haloR);
