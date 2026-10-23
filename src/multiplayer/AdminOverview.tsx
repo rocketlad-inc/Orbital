@@ -299,7 +299,11 @@ export function AdminOverview({ onOpenGame }: { onOpenGame: (id: string) => void
         </div>
       )}
       {tab === 'players' && <PlayersPanel refreshKey={listKey} onOpenGame={onOpenGame} />}
-      {tab === 'growth' && <Growth data={data} />}
+      {tab === 'growth' && (
+        <RefreshContext.Provider value={{ refresh: () => { void load(); }, loading, loadedAt }}>
+          <Growth data={data} />
+        </RefreshContext.Provider>
+      )}
       {tab === 'friction' && <FrictionTab data={data} />}
       {tab === 'features' && <Features rows={data.usage} />}
       {tab === 'commission' && <Commission />}
@@ -406,6 +410,24 @@ function Pulse({ data, onGo }: { data: Overview; onGo: (t: Tab) => void }) {
         <HeatGrid grid={data.heat_grid} />
       </section>
     </div>
+  );
+}
+
+/** The overview's refresh, for panels that want their own button. */
+const RefreshContext = React.createContext<{ refresh: () => void; loading: boolean; loadedAt: number | null } | null>(null);
+
+/** "Refresh · updated 40s ago", for a single panel. It re-reads the same
+ *  overview the header button does, so every table on the tab moves with it. */
+function RefreshTool() {
+  const ctx = React.useContext(RefreshContext);
+  if (!ctx) return null;
+  return (
+    <>
+      {ctx.loadedAt && <span className="ao-dim" style={{ fontSize: 12 }}>updated {ago(Date.now(), ctx.loadedAt)}</span>}
+      <button className="ao-btn" disabled={ctx.loading} onClick={ctx.refresh}>
+        {ctx.loading ? 'Refreshing…' : 'Refresh'}
+      </button>
+    </>
   );
 }
 
@@ -1149,7 +1171,7 @@ function InvitesPanel({ inv }: { inv: InvitesData }) {
       <PanelHead
         title="Who brings players in"
         hint="Last 30 days. An invite is a link to a room that names who sent it; a code typed by hand counts too, credited to the room's host. Recorded from the Oct 19 update on."
-      />
+      ><RefreshTool /></PanelHead>
       <div className="ao-headline">
         <div className="ao-headline__item"><span className="ao-headline__value">{n(inv.opens)}</span><span className="ao-headline__label">invite links opened</span></div>
         <div className="ao-headline__item"><span className="ao-headline__value">{n(inv.signed_up)}</span><span className="ao-headline__label">friends signed up</span></div>
@@ -1248,7 +1270,7 @@ function Growth({ data }: { data: Overview }) {
         <PanelHead
           title="Where players came from"
           hint="Every account by where it first arrived from: your link tag (?from=…), a friend’s invite, the site that sent them, or “direct”. Took a seat = joined a game. Came back = played again a day or more after signing up."
-        />
+        ><RefreshTool /></PanelHead>
         <SourcesTable rows={data.sources} now={data.now} />
       </section>
     </div>
@@ -1351,7 +1373,7 @@ function TrafficPanel({ tr, now }: { tr: TrafficData; now: number }) {
       <PanelHead
         title="Link and ad traffic"
         hint="Every visit in the last 30 days that arrived through a tagged link, an ad click or another site, whether or not it signed up (recorded from Oct 20). Read a row left to right: each column is a step further in, and the small percentage beside a number is its share of that row's visitors."
-      />
+      ><RefreshTool /></PanelHead>
       <TrafficGlossary />
       {tr.campaigns.length === 0 ? <div className="ao-none">No tagged or referred visits yet.</div> : (
         <div className="ao-scroll">
