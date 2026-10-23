@@ -177,7 +177,8 @@ export function drawLowerThird(ctx: CanvasRenderingContext2D, W: number, H: numb
   const titleSize = Math.round(64 * u);
   ctx.font = `400 ${titleSize}px ${FONT_DISPLAY}`;
   const titleLines = wrapLines(ctx, c.title, maxW, 2);
-  const subSize = Math.round(34 * u);
+  // Read on a phone: at 400 px wide, 34 units was six pixels tall.
+  const subSize = Math.round(40 * u);
   ctx.font = `500 ${subSize}px ${FONT_BODY}`;
   // The sub is the fact that explains the moment: two lines before it is
   // ever cut ("62 ships…" lost the losses; "PASSED…" lost the vote).
@@ -449,7 +450,9 @@ export function drawProgressMeter(ctx: CanvasRenderingContext2D, W: number, H: n
   ctx.textAlign = 'right';
   ctx.font = `600 ${Math.round(42 * u)}px ${FONT_MONO}`;
   ctx.fillStyle = INK;
-  ctx.fillText(`${Math.round(pct * 100)}%`, x + w - 18 * u, y + 30 * u);
+  // 100% is the WIN: it reads only when the shell is whole, never as
+  // 99.6% rounds up while the ring is still open.
+  ctx.fillText(`${pct >= 1 ? 100 : Math.min(99, Math.round(pct * 100))}%`, x + w - 18 * u, y + 30 * u);
   if (note) {
     ctx.textAlign = 'left';
     ctx.font = `600 ${Math.round(24 * u)}px ${FONT_BODY}`;
@@ -706,12 +709,17 @@ export function drawHookLine(ctx: CanvasRenderingContext2D, W: number, H: number
  * which at film scale read as a thin line round the sun.
  */
 export function drawDysonShell(ctx: CanvasRenderingContext2D, x: number, y: number, r: number,
-  progress: number, complete: boolean, color: string | null, flare: number, nowMs: number) {
+  progress: number, complete: boolean, color: string | null, flare: number, nowMs: number,
+  seal = complete ? 1 : 0) {
   if (r < 6) return;
   const c = color ? liftColor(color, 150) : '#ffb84d';
   const R = r * 1.6;
   const SEG = 24;
-  const lit = complete ? SEG : Math.floor(Math.max(0, Math.min(1, progress)) * SEG);
+  // The last segment lights only at 100%: at 99% one is still dark.
+  const lit = complete || progress >= 1 ? SEG : Math.min(SEG - 1, Math.floor(Math.max(0, progress) * SEG));
+  // THE SHELL CLOSES segment by segment, round the star: the gaps shut in
+  // order as `seal` runs 0..1.
+  const sealed = Math.floor(Math.max(0, Math.min(1, seal)) * SEG + 1e-6);
   const spin = (nowMs / 90000) * Math.PI * 2;
   const seg = (Math.PI * 2) / SEG, gap = seg * 0.16;
   ctx.save();
@@ -726,9 +734,10 @@ export function drawDysonShell(ctx: CanvasRenderingContext2D, x: number, y: numb
   ctx.globalCompositeOperation = 'lighter';
   ctx.shadowColor = c; ctx.shadowBlur = r * 0.25;
   ctx.strokeStyle = c;
-  ctx.lineWidth = Math.max(2, r * (complete ? 0.12 : 0.08));
   for (let i = 0; i < lit; i++) {
-    ctx.beginPath(); ctx.arc(x, y, R, spin + i * seg + (complete ? 0 : gap), spin + (i + 1) * seg - (complete ? 0 : gap)); ctx.stroke();
+    const shut = i < sealed;
+    ctx.lineWidth = Math.max(2, r * (shut ? 0.12 : 0.08));
+    ctx.beginPath(); ctx.arc(x, y, R, spin + i * seg + (shut ? 0 : gap), spin + (i + 1) * seg - (shut ? 0 : gap)); ctx.stroke();
   }
   if (flare > 0.01) {
     const g = ctx.createRadialGradient(x, y, R * 0.6, x, y, R * (1.4 + flare));

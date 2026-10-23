@@ -65,6 +65,9 @@ export interface ReelBeat {
   text: string;
   /** The log row's payload, for the caption's own wording. */
   data?: Record<string, unknown>;
+  /** Ticks the scene opens before `tick` (default 2). Something that
+   *  APPEARS on its tick (the Leviathan surfacing) opens one before. */
+  lead?: number;
 }
 
 export interface ReelFacts {
@@ -114,6 +117,10 @@ export const MONTAGE_MIN_RATE = 0.0125;
 export const MONTAGE_MAX_RATE = 0.35;
 /** A montage short of this is a flicker; it borrows from the budget. */
 export const MONTAGE_MIN_SECONDS = 0.7;
+/** A time-lapse shorter than this is not played: the film cuts across it. */
+export const MONTAGE_SKIP_SECONDS = 1.5;
+/** What a skipped time-lapse costs: less than any frame, so none lands in it. */
+export const SKIPPED_SECONDS = 1e-6;
 /** A battle's weight against the headlines': the smallest fight that
  *  makes the cut, and what the deadliest one adds over it. */
 export const BATTLE_WEIGHT_FLOOR = 80;
@@ -177,13 +184,18 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
     battle?: ReelBattle; beat?: ReelBeat };
   const cands: Cand[] = [];
   const peakW = Math.max(1, ...f.battles.map(battleWeight));
+  /** A fight a quarter the size of the match's biggest reads as a lull
+   *  between them: 42 ships between 178 and 277 broke the escalation. */
+  const tooSmall = (b: ReelBattle) =>
+    b.peak < 12 || b.lost < 3 || (b.atOnce ?? 99) < 24 || b.window[1] - b.window[0] < 3;
+  const biggest = Math.max(0, ...f.battles.filter(b => !tooSmall(b)).map(b => b.peak));
   for (const b of f.battles) {
     const w = battleWeight(b);
     // A skirmish of two hulls is a ticker line, not a scene; nor is a
     // standoff where nobody died.
     // Too small or too brief to be a battle on screen: a single tick of
     // record held for four seconds is a freeze frame.
-    if (b.peak < 12 || b.lost < 3 || (b.atOnce ?? 99) < 24 || b.window[1] - b.window[0] < 3) continue;
+    if (tooSmall(b) || b.peak < biggest * 0.25) continue;
     const from = Math.max(introTo, b.window[0]);
     const to = Math.min(finaleFrom, b.window[1]);
     if (to <= from) continue;
@@ -199,14 +211,20 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
   }
   for (const e of f.beats) {
     if (e.weight <= 0) continue;
-    // Three ticks with the event on the second: it lands a third of the
-    // way in, inside the caption's hold, not as it fades.
-    const from = Math.max(introTo, Math.min(finaleFrom - 1, e.tick - 1));
+    // Three ticks with the event in the MIDDLE one: a row stamped tick t
+    // happened on the way from t-1 to t, so a scene opening at t-1 showed
+    // the aftermath (a carcass, a world already taken). Opening at t-2
+    // shows the attacker arrive, the moment, then the result.
+    const from = Math.max(introTo, Math.min(finaleFrom - 1, e.tick - (e.lead ?? 2)));
     const to = Math.min(finaleFrom, from + 3);
     if (to <= from) continue;
     // Weight buys time: a declaration is a quick read, a capital falling
     // or the Leviathan dying holds longer. A flat 2.4 s was a metronome.
-    cands.push({ kind: 'beat', from, to, weight: e.weight, place: e.body ?? `${e.kind}:${e.target ?? e.fid ?? ""}`, pair: null,
+    // An ARC told at one place -- the Leviathan surfacing then breaking a
+    // world, a Sphere begun then struck at 99% -- is different pictures,
+    // not repeats: the climax took the repeat discount and lost its scene.
+    const place = /^(kaiju|dyson)_/.test(e.kind) ? `arc:${e.kind}` : e.body ?? `${e.kind}:${e.target ?? e.fid ?? ""}`;
+    cands.push({ kind: 'beat', from, to, weight: e.weight, place, pair: null,
       seconds: Math.max(BEAT_MIN_SECONDS, Math.min(BEAT_MAX_SECONDS, BEAT_MIN_SECONDS + (e.weight - 60) / 80)), framing: e.body ? 'world' : 'system',
       bodyId: e.body, beat: e });
   }
@@ -357,6 +375,22 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
     m.seconds = Math.min(n * MONTAGE_MAX_RATE,
       Math.max(MONTAGE_MIN_SECONDS, n * MONTAGE_MIN_RATE, want));
   });
+  // A TIME CUT, NOT A WHIZZ. A time-lapse too short to read the map in
+  // ran a day and a half per frame: held close, hulls crossed the screen
+  // between two frames (400-1,600 px, measured frame to frame). The film
+  // now cuts straight to the next scene and the day counter jumps, as an
+  // edit does; what it frees goes to the time-lapses long enough to play.
+  const skip = montages.filter((m, i) => m.seconds < MONTAGE_SKIP_SECONDS && !(i === 0 && m.from === introTo));
+  if (skip.length) {
+    const kept = montages.filter(m => !skip.includes(m));
+    const spare = skip.reduce((a, m) => a + m.seconds, 0);
+    for (const m of skip) m.seconds = SKIPPED_SECONDS;
+    const keptShare = kept.map(m => Math.sqrt(m.to - m.from));
+    const kTotal = keptShare.reduce((a, b) => a + b, 0) || 1;
+    kept.forEach((m, i) => {
+      m.seconds = Math.min((m.to - m.from) * MONTAGE_MAX_RATE, m.seconds + spare * keptShare[i] / kTotal);
+    });
+  }
 
   // ---- every remaining headline rides in the scene it falls in --------
   const headline = new Set(scenes.map(s => s.beat).filter(Boolean));
@@ -414,7 +448,9 @@ export function advanceClock(rateAt: (tick: number) => number, pos: number,
   let p = pos, left = seconds;
   for (let guard = 0; left > 1e-9 && p < hi && guard < 10000; guard++) {
     const tick = Math.floor(p);
-    const r = Math.max(1e-4, rateAt(tick));
+    // A skipped time-lapse runs at ~zero seconds a tick: the floor must
+    // stay below it, or a frame lands inside the cut.
+    const r = Math.max(1e-9, rateAt(tick));
     const need = (tick + 1 - p) * r;
     if (left < need) { p += left / r; left = 0; break; }
     left -= need;
