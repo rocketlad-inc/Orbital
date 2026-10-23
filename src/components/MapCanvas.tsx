@@ -2528,7 +2528,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             }
             const station = gameState.settlements.find(
               st => st.bodyId === bodyId && st.type === 'station' && st.hp > 0);
-            const lb = liveBattleFor(bodyId, body.radius, atBody[0].orbit.direction ?? 1,
+            const lb = liveBattleFor(bodyId, body, atBody[0].orbit.direction ?? 1,
               units, owners, station?.id, { nowMs: performance.now() });
             liveBattles.set(bodyId, lb);
             for (const u of units) formationMap.set(u.id, { index: 0, total: 1, battle: lb });
@@ -3862,9 +3862,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           return;
         }
         if (fx.kind === 'built') {
-          // A firework, because finishing one of these is the longest
-          // single undertaking in the game.
-          if (fx.bodyId) spawnDiscoveryBloom(fx.id, fx.bodyId, 'firework');
+          // A flash and a shockwave at the structure's own drawn size,
+          // because finishing one of these is the longest single
+          // undertaking in the game (the fixed-size firework stayed inside
+          // the structure's art: drawCompletionBurst).
+          if (fx.bodyId) spawnDiscoveryBloom(fx.id, fx.bodyId, 'completion');
           return;
         }
         if (fx.kind === 'gateflash') {

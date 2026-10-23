@@ -1514,7 +1514,7 @@ export function createMatchMap(
       }));
       const owners = [...new Set(atBody.map(x => x.ownedBy))].sort();
       const station = gameSettlements.find(st => st.bodyId === bid && st.type === 'station');
-      const lb = liveBattleFor(bid, body.radius, atBody[0].orbit.direction ?? 1,
+      const lb = liveBattleFor(bid, body, atBody[0].orbit.direction ?? 1,
         units, owners, station?.id);
       liveBattles.set(bid, lb);
       for (const u of units) formationOf.set(u.id, { index: 0, total: 1, battle: lb });
