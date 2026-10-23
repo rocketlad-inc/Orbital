@@ -3,7 +3,8 @@ import { DRAWN_SKIN_SQL } from './skins.js';
 import { parseNamePools } from '../src/game/namePools.js';
 import { getActiveSliders, activeSanctions, activeLawsFor } from './senate.js';
 import { buildCostFactors } from './buildCost.js';
-import { SETTLEMENT_COST, COLONIST_FOUND_MULT } from './actions.js';
+import { SETTLEMENT_COST, COLONIST_FOUND_MULT, MEGA_STRIKE_CHARGE_TICKS } from './actions.js';
+import { kaijuDials } from './kaiju.js';
 import { carrierCapFor } from './tradeRoutesV2.js';
 import { MEGASTRUCTURES, MEGA_BREACH_HP } from './megastructures.js';
 import { upkeepSplit, parsePartsJson, shipBaseStatsFromCfg } from './shipDesigns.js';
@@ -1254,6 +1255,18 @@ const shipsP = env.DB
   // moons-of-presence + planet-of-moon-presence). Caller's own ships are
   // always visible regardless.
   const ships = (await shipsP).results ?? [];
+  // THE WHOLE WIND-UP of each charging strike, so the ring fills against
+  // it. The client divided by the Mega Destroyer's 24 for every hull, and
+  // a Leviathan winding up for the game's kaiju_charge_ticks dial (4 in
+  // the Studio) opened its ring 83% full. Public, like the charge itself.
+  if (ships.some(s => s.strike_ready_tick != null)) {
+    let kaijuCharge = MEGA_STRIKE_CHARGE_TICKS;
+    try { kaijuCharge = kaijuDials(await loadGameConfig(env, gameId)).chargeTicks; } catch { /* the default */ }
+    for (const s of ships) {
+      if (s.strike_ready_tick == null) continue;
+      s.strike_charge_ticks = s.ship_class === 'kaiju' ? kaijuCharge : MEGA_STRIKE_CHARGE_TICKS;
+    }
+  }
 
   // Exactly the ships this observer is receiving. Any of them that's
   // in-transit needs its node sent too, or the client can't place it on

@@ -64,6 +64,7 @@ import { SHIP_COMBAT_STATS, parkPhaseFor, categorizeBodyForSecret, BODY_CATALOG 
 import { launchCompletedMobileSites } from './megaLaunch.js';
 import { OFFER_KINDS, offerStatements, settleExpiredOffers } from './discoveryOffers.js';
 import { advanceMissileBuilds, resolveMissiles } from './missiles.js';
+import { ramImpactFrom } from './ramImpact.js';
 // The salvaged destroyer is minted when a find is CLAIMED now
 // (discoveryOffers.js); re-exported for callers that import it from here.
 export { salvagedDestroyer } from './discoveryOffers.js';
@@ -10181,7 +10182,8 @@ export class Room {
     const now = Date.now();
     const arrivals = (await this.env.DB
       .prepare(
-        `SELECT id, name, ram_target_body_id, ram_owned_by_faction_id, ram_arrive_tick
+        `SELECT id, name, ram_target_body_id, ram_owned_by_faction_id, ram_arrive_tick,
+                ram_start_pos_x, ram_start_pos_y, ram_intercept_pos_x, ram_intercept_pos_y
            FROM game_bodies
           WHERE game_id = ?
             AND ram_target_body_id IS NOT NULL
@@ -10195,6 +10197,11 @@ export class Room {
     for (const a of arrivals) {
       const targetId = a.ram_target_body_id;
       const targetIsSol = targetId === `${gameId}:sol` || targetId === 'sol';
+      // WHICH SIDE IT HIT (ramImpactFrom): the client lands the flash and
+      // the fire there, not at the world's centre under a Planet Killer's
+      // beam (Studio clip, 2026-10-23). `cause` tells its rows from a Mega
+      // Destroyer's and the Leviathan's.
+      const impactFrom = ramImpactFrom(a);
 
       // Always: consume the asteroid AND any settlements on it (the
       // rock is being driven into a planet — anyone who built a city
@@ -10414,6 +10421,9 @@ export class Room {
                 JSON.stringify({
                   body_name: targetName,
                   asteroid_name: a.name,
+                  cause: 'asteroid',
+                  asteroid_id: a.id,
+                  ...impactFrom,
                 }),
                 now,
               ),
@@ -10440,6 +10450,9 @@ export class Room {
               target_body_id: targetId,
               settlements_destroyed: destroyedCount,
               sol_special: targetIsSol,
+              cause: 'asteroid',
+              asteroid_id: a.id,
+              ...impactFrom,
             }),
             now,
           ),

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useCallback, useState, useMemo } from 'react';
 import { spawnKaijuStrike, spawnKaijuDeath, drawKaijuFx, isKaijuShipId } from '../render/kaijuFx';
+import { ramApproachDir, impactPoint } from '../render/asteroidRam';
 import { refitStatus } from '../game/refitStatus';
 import { routeForShip } from '../game/routeSelectors';
 import {
@@ -3808,6 +3809,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
               const ang = (h >>> 0) % 628 / 100;
               const ringR = (b.radius ?? 4) + 2;
               world = { x: bp.x + Math.cos(ang) * ringR, y: bp.y + Math.sin(ang) * ringR };
+            } else if (fx.from || fx.kind === 'impact_scorch') {
+              // A RAMMED ROCK lands on the side of the world it came in
+              // on (asteroidRam.ts), not dead centre: the side this client
+              // watched it come from, else the side the server says.
+              const dir = ramApproachDir(b.id) ?? fx.from ?? null;
+              const R = drawnRadiusOf(renderContext.presentation, b, renderContext.camera.scale)
+                / Math.max(1e-9, renderContext.camera.scale);
+              world = impactPoint(bp, dir, R);
             } else {
               // Settlement/impact/discovery events genuinely belong to
               // the body itself.
@@ -3856,6 +3865,17 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         }
         if (fx.kind === 'kaiju_death') {
           if (fx.bodyId) spawnKaijuDeath(fx.id, fx.bodyId);
+          return;
+        }
+        if (fx.kind === 'impact_scorch') {
+          // A rammed asteroid killed the biosphere: the fire and ash, from
+          // where it hit. No gun beam (it played as a Planet Killer strike
+          // from the top of the screen, Studio 2026-10-23).
+          if (fx.bodyId) {
+            spawnSterilisation(fx.id, fx.bodyId, {
+              beam: false, from: ramApproachDir(fx.bodyId) ?? fx.from ?? null,
+            });
+          }
           return;
         }
         if (fx.kind === 'sterilise') {

@@ -1813,8 +1813,13 @@ interface Sterilisation {
   entryId: string;
   bodyId: string;
   startMs: number;
-  /** False for the Leviathan (kaijuFx.ts draws its arms instead). */
+  /** False for the Leviathan (kaijuFx.ts draws its arms instead) and a
+   *  rammed asteroid (there is no gun). */
   beam: boolean;
+  /** No gun at all: the unit vector (world axes) from the world toward
+   *  where the blow came from (a rammed asteroid's approach). The fire
+   *  starts on that side. Unset: the gun is looked for, as before. */
+  from?: { x: number; y: number } | null;
   /** Where the gun was, relative to the world (in drawn radii), the last
    *  time the ship that fired was on screen. Once that ship is gone the
    *  beam holds THIS, so it stays pointed the same way at the world as
@@ -1832,13 +1837,28 @@ const seenSteriliseIds = new Set<string>();
 const sterilisedBodiesPlayed = new Set<string>();
 
 /** Queue the death of a world. Idempotent on the chronicle entry id. */
-export function spawnSterilisation(entryId: string, bodyId: string, opts: { beam?: boolean } = {}): void {
+export function spawnSterilisation(
+  entryId: string, bodyId: string,
+  opts: { beam?: boolean; from?: { x: number; y: number } | null } = {},
+): void {
   if (seenSteriliseIds.has(entryId)) return;
   if (seenSteriliseIds.size > 2000) seenSteriliseIds.clear();
   seenSteriliseIds.add(entryId);
   sterilisedBodiesPlayed.add(bodyId);
   if (sterilisations.length >= STERILISE_CAP) sterilisations.shift();
-  sterilisations.push({ entryId, bodyId, startMs: performance.now(), beam: opts.beam !== false });
+  sterilisations.push({ entryId, bodyId, startMs: performance.now(), beam: opts.beam !== false, from: opts.from ?? null });
+}
+
+/** Where a sterilisation's blow lands on the world, canvas px: toward the
+ *  gun (`gun`), or toward `from` when the blow had no gun. */
+export function sterilisationHitPoint(
+  cp: { x: number; y: number }, R: number,
+  gun: { x: number; y: number } | null, from: { x: number; y: number } | null | undefined,
+): { x: number; y: number; toward: number } {
+  const toward = from && Math.hypot(from.x, from.y) > 1e-9
+    ? Math.atan2(from.y, from.x)
+    : gun ? Math.atan2(gun.y - cp.y, gun.x - cp.x) : -Math.PI / 2;
+  return { x: cp.x + Math.cos(toward) * R * 0.55, y: cp.y + Math.sin(toward) * R * 0.55, toward };
 }
 
 /** Whether this world's death has begun playing here (it waits until
@@ -1891,7 +1911,9 @@ export function drawSterilisations(rc: RenderContext, nowMs: number): void {
     // died). If it sits over the world's disc, the beam is pushed out to
     // the disc's edge on the ship's side, never behind its target. Only
     // a strike no client ever drew the ship for still comes from above.
-    const pk = nearestDrawnCapital('mega_destroyer', wp.x, wp.y, 4000, rc.t);
+    // A blow with no gun (x.from) looks for none: a Mega Destroyer that
+    // happened to be near would otherwise "fire" it.
+    const pk = x.from ? null : nearestDrawnCapital('mega_destroyer', wp.x, wp.y, 4000, rc.t);
     let gun: { x: number; y: number };
     const pc = pk ? worldToCanvas(pk.x, pk.y, rc) : null;
     const live = pk && pc && pk.ageMs < 500;
@@ -1916,8 +1938,10 @@ export function drawSterilisations(rc: RenderContext, nowMs: number): void {
     } else {
       gun = { x: cp.x, y: cp.y - R * 6 };
     }
-    const toGun = Math.atan2(gun.y - cp.y, gun.x - cp.x);
-    const hitX = cp.x + Math.cos(toGun) * R * 0.55, hitY = cp.y + Math.sin(toGun) * R * 0.55;
+    // worldToCanvas has no y-flip, so the world vector is a canvas one.
+    const hit = sterilisationHitPoint(cp, R, gun, x.from);
+    const toGun = hit.toward;
+    const hitX = hit.x, hitY = hit.y;
     const seed = idHash(x.entryId);
 
     c.save();

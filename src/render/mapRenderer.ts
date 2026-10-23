@@ -46,7 +46,10 @@ import { getShipClass } from '../game/shipClasses';
 // duplicates are removed there and it re-exports nothing seeded.
 import { drawDeathDebris, sterilisationProgress, sterilisationStarted } from './combatFx';
 import { anchorToBody, anchoredWorldPos, type BodyAnchor } from './fxAnchor';
-import { noteKaijuDrawn, kaijuHoldsWorldWhole, drawKaijuCarcass } from './kaijuFx';
+import {
+  noteKaijuDrawn, kaijuHoldsWorldWhole, drawKaijuCarcass, kaijuFlightPose, kaijuCarcassPose, kaijuStrikeHolds,
+  carcassHeading, type KaijuAnchor,
+} from './kaijuFx';
 import { kaijuRevealed } from '../game/kaijuReveal';
 import { getStructureIconImage, getScaffoldImage, artScaleOf } from './structureIconCache';
 import type { StructureVariant } from '../components/StructureIcons';
@@ -59,6 +62,7 @@ import { reachWorldRadius, reachLabel, isReachPinned } from '../game/structureRe
 import type { BodyPresentation } from './bodyPresentation';
 import { glowAt, drawExplosion, drawCharge, HullLook, fxSpriteBytes, drawShieldRipple, drawHullFire, drawHullBreakup } from './fxArt';
 import { drawnRadiusOf, inflationOf, parkedRadiusMap } from './bodyPresentation';
+import { noteRamApproach, ramThrustDir, ramRockRadiusPx } from './asteroidRam';
 import {
   battlePlacement, battleScale, battleDrift, hasBattleGlide, seedBattleGlide, battleSpriteScale,
   type LiveBattle,
@@ -4410,10 +4414,24 @@ export function drawBody(
   } else if (templateIdOf(body.id) === 'leviathan_carcass') {
     // The Leviathan's carcass (kaijuFx.ts): the animal, dead, sized like
     // the hull it was. In every mode: it is the salvage everyone is after.
+    // IT LIES WHERE IT DIED (kaijuCarcassPose): the dying animal's lights go
+    // out where it was drawn and at that size, and the carcass settles from
+    // there onto its own orbit, instead of popping up at a second spot at a
+    // second size while the death still plays.
     const left = (body.mineralInitial ?? 0) > 0 ? (body.mineralRemaining ?? 0) / (body.mineralInitial as number) : 1;
-    drawKaijuCarcass(ctx.ctx, canvasPos.x, canvasPos.y,
-      shipIconSize('kaiju', false) * transitHullScale(ctx.camera.scale) * 0.9,
-      ctx.nowMs ?? 0, left, hashStr(body.id));
+    const seed = hashStr(body.id);
+    const nowA = ctx.nowMs ?? 0;
+    const look = kaijuCarcassPose(ctx, {
+      x: canvasPos.x, y: canvasPos.y,
+      size: shipIconSize('kaiju', false) * transitHullScale(ctx.camera.scale) * 0.9,
+      heading: carcassHeading(seed, nowA),
+    }, performance.now());
+    if (look.alpha > 0.01) {
+      ctx.ctx.save();
+      ctx.ctx.globalAlpha *= look.alpha;
+      drawKaijuCarcass(ctx.ctx, look.x, look.y, look.size, nowA, left, seed, look.heading);
+      ctx.ctx.restore();
+    }
   } else if (body.type === 'megastructure' && body.emerge && ctx.t < body.emerge.untilTick) {
     // A sun gate in flight, in every mode like the ships it moves like:
     // where the thing everyone is racing for IS is information.
@@ -4791,8 +4809,12 @@ function drawStrikeCharge(
   iconSize: number,
   frac: number,
   nowMs: number,
+  /** The ring's radius (strikeRingRadius); the Mega's by default. */
+  ringR: number = iconSize * 0.78,
 ) {
-  const r = iconSize * 0.78;
+  const r = ringR;
+  // Strokes follow the ring, not the hull: a capped ring keeps its weight.
+  const w = Math.min(iconSize, r / 0.78);
   const f = Math.max(0, Math.min(1, frac));
   g.save();
   // The track it fills against, so an early charge is still legible as
@@ -4800,13 +4822,13 @@ function drawStrikeCharge(
   g.beginPath();
   g.arc(x, y, r, 0, Math.PI * 2);
   g.strokeStyle = 'rgba(255, 94, 94, 0.20)';
-  g.lineWidth = Math.max(1.5, iconSize * 0.07);
+  g.lineWidth = Math.max(1.5, w * 0.07);
   g.stroke();
   // The charge itself, from the top, clockwise.
   g.beginPath();
   g.arc(x, y, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * f);
   g.strokeStyle = '#ff5e5e';
-  g.lineWidth = Math.max(1.5, iconSize * 0.07);
+  g.lineWidth = Math.max(1.5, w * 0.07);
   g.lineCap = 'butt';
   g.stroke();
   // It quickens as it closes. At 90% the pulse is twice the rate it was
@@ -4817,7 +4839,7 @@ function drawStrikeCharge(
   g.beginPath();
   g.arc(x, y, r * (1.12 + 0.04 * f), 0, Math.PI * 2);
   g.strokeStyle = `rgba(255, 94, 94, ${Math.max(0, pulse).toFixed(3)})`;
-  g.lineWidth = Math.max(1, iconSize * 0.035);
+  g.lineWidth = Math.max(1, w * 0.035);
   g.stroke();
   g.restore();
 }
@@ -4826,6 +4848,42 @@ export function shipIconSize(shipClass: string, isSelected: boolean): number {
   const scale = (isCapitalHull(shipClass) || shipClass === 'kaiju')
     ? SHIP_ICON_SCALE : SHIP_ICON_SCALE * REGULAR_SHIP_BOOST;
   return ((SHIP_ICON_REST_SIZE[shipClass] ?? 18) + (isSelected ? 4 : 0)) * scale;
+}
+
+/** How big a parked hull is drawn, given its ordinary rest size and its
+ *  world's drawn radius: the Leviathan wraps the world it sits on (at
+ *  least 4.4 drawn radii across), everything else is its rest size. */
+export const KAIJU_WORLD_SPAN = 4.4;
+export function kaijuParkedSize(shipClass: string, restSize: number, worldDrawnR: number): number {
+  return shipClass === 'kaiju' ? Math.max(restSize, worldDrawnR * KAIJU_WORLD_SPAN) : restSize;
+}
+
+/** A strike's wind-up, 0..1: how much of ITS charge has run. The ring
+ *  divided by the Mega Destroyer's 24 ticks, so a Leviathan winding up
+ *  for the game's kaiju_charge_ticks (4 in the Studio) opened 83% full.
+ *  The server says how long each hull's charge is (state.js
+ *  strike_charge_ticks); the Mega's 24 when an older server does not. */
+export function strikeChargeFrac(
+  ship: { strikeReadyTick?: number | null; strikeChargeTicks?: number | null },
+  t: number,
+): number {
+  if (ship.strikeReadyTick == null) return 0;
+  const total = ship.strikeChargeTicks != null && ship.strikeChargeTicks > 0
+    ? ship.strikeChargeTicks : MEGA_STRIKE_CHARGE_TICKS;
+  const left = Math.max(0, ship.strikeReadyTick - t);
+  return Math.max(0, Math.min(1, 1 - left / total));
+}
+
+/** The charge ring's radius around a hull. A Mega's ring sits just
+ *  outside its hull. The Leviathan over a world is drawn 4.4 world radii
+ *  across, and the ring at 0.78 of that ran far past the frame at a
+ *  close-up (Studio, 2026-10-23); it rings the animal's body instead
+ *  (mantle and arms, about half its drawn size), and never more than a
+ *  little under half the view. */
+export function strikeRingRadius(shipClass: string, iconSize: number, viewMin: number): number {
+  if (shipClass !== 'kaiju') return iconSize * 0.78;
+  const body = iconSize * 0.5;
+  return viewMin > 0 ? Math.min(body, Math.max(24, viewMin * 0.42)) : body;
 }
 
 /** Floor for a parked ship's click/hover radius. At far zoom the sprite
@@ -5827,17 +5885,29 @@ export function drawEscortHull(
 function drawKaijuHull(
   ship: Ship, ctx: RenderContext, pos: { x: number; y: number },
   heading: number, iconSize: number, thrust: number,
+  /** The world it is drawn over: parked there (drawShip), or held there
+   *  by a strike still crushing it (kaijuFx kaijuFlightPose). Its strike
+   *  and death set pieces are anchored to that world, so they ride it. */
+  over: { body: Body; parked: boolean } | null = null,
 ) {
   const now = ctx.nowMs ?? performance.now();
   // Where it is, for its strike and death set pieces (kaijuFx.ts).
   const w = canvasToWorld(pos.x, pos.y, ctx);
-  noteKaijuDrawn(ship.id, w.x, w.y, heading, iconSize);
+  let anchor: KaijuAnchor | null = null;
+  if (over) {
+    const bp = bodyPosition(over.body, ctx.t, ctx.bodies);
+    anchor = {
+      bodyId: over.body.id, parked: over.parked, bx: bp.x, by: bp.y,
+      R: Math.max(1e-6, drawnRadiusOf(ctx.presentation, over.body, ctx.camera.scale)), scale: ctx.camera.scale,
+    };
+  }
+  noteKaijuDrawn(ship.id, w.x, w.y, heading, iconSize, anchor);
   drawSunSquid(ctx.ctx, pos.x, pos.y, {
     u: iconSize / 6, ringR: 0, heading, morph: 0, thrust, now, palette: LEVIATHAN_PALETTE,
   });
   if (ship.strikeReadyTick != null) {
-    const left = Math.max(0, ship.strikeReadyTick - ctx.t);
-    drawStrikeCharge(ctx.ctx, pos.x, pos.y, iconSize, 1 - left / MEGA_STRIKE_CHARGE_TICKS, now);
+    drawStrikeCharge(ctx.ctx, pos.x, pos.y, iconSize, strikeChargeFrac(ship, ctx.t), now,
+      strikeRingRadius('kaiju', iconSize, Math.min(ctx.canvas.width, ctx.canvas.height)));
   }
 }
 
@@ -6123,21 +6193,27 @@ export function drawShip(
   // Faction-colored: cyan for player, red for enemy.
   const shipColorValue = shipColor(ship, ctx.factions);
 
-  const restSize = shipIconSize(ship.class, isSelected)
+  const hullRest = shipIconSize(ship.class, isSelected)
     * (battleK >= 0 ? battleSpriteScale(battleK) : (ship.transit || isSelected) ? 1 : sizeScale);
-  const landing = landingLook(ship.id, restSize, heading, ctx.nowMs ?? performance.now());
-  const hullSize = landing.size;
-  heading = landing.heading;
-  noteParkedLook(ship.id, hullSize, heading, ctx.nowMs ?? performance.now());
   // THE LEVIATHAN IS HUGE (Lorne, 2026-10-08: "make it huge"). Parked
   // hulls are drawn to the scale of their world, which shrank it smaller
   // than the moon it was eating. Over a world it is at least twice that
   // world's drawn width, so it reads as wrapped round it; never smaller
   // than its own hull size. It still shrinks with the zoom, because the
   // world does.
-  const iconSize = ship.class === 'kaiju'
-    ? Math.max(hullSize, drawnRadiusOf(ctx.presentation, parentBody, ctx.camera.scale) * 4.4)
-    : hullSize;
+  // THAT SIZE IS ITS REST SIZE, so the landing and departure eases run to
+  // and from what is drawn. It used to be applied after both: the noted
+  // parked look was the bare hull size, so the frame it left orbit it
+  // halved (Studio clip "The Leviathan", 2026-10-23, f294), and the frame
+  // it landed it doubled.
+  const restSize = kaijuParkedSize(ship.class, hullRest,
+    drawnRadiusOf(ctx.presentation, parentBody, ctx.camera.scale));
+  const landing = landingLook(ship.id, restSize, heading, ctx.nowMs ?? performance.now());
+  const iconSize = landing.size;
+  // The Leviathan keeps a hull-sized hit target (below), never its drawn one.
+  const hullSize = ship.class === 'kaiju' ? Math.min(iconSize, hullRest) : iconSize;
+  heading = landing.heading;
+  noteParkedLook(ship.id, iconSize, heading, ctx.nowMs ?? performance.now());
 
   // Record the true drawn box for hit-testing: canvasPos already carries
   // the orbit spin, tick interpolation AND the formation spread, so a
@@ -6183,7 +6259,7 @@ export function drawShip(
   // pixel. They are drawn from the same hardware kit as the structure
   // that built them, which is also where they came from.
   const kaiju = ship.class === 'kaiju';
-  if (kaiju) drawKaijuHull(ship, ctx, canvasPos, heading, iconSize, 0.12);
+  if (kaiju) drawKaijuHull(ship, ctx, canvasPos, heading, iconSize, 0.12, { body: parentBody, parked: true });
   const icon = (kaiju || isLightweight() || isCapitalHull(ship.class)) ? null : getShipIconImage(
     ship.class as ShipIconClass, shipColorValue, ship.iconVariant,
     trimColor,
@@ -6219,11 +6295,10 @@ export function drawShip(
     // Drawn OUTSIDE the hull's rotation so the ring stays upright
     // while the ship turns — a spinning countdown reads as decoration.
     if (ship.strikeReadyTick != null) {
-      const left = Math.max(0, ship.strikeReadyTick - ctx.t);
-      drawStrikeCharge(ctx.ctx, canvasPos.x, canvasPos.y, iconSize,
-        1 - left / MEGA_STRIKE_CHARGE_TICKS, ctx.nowMs ?? 0);
+      const charged = strikeChargeFrac(ship, ctx.t);
+      drawStrikeCharge(ctx.ctx, canvasPos.x, canvasPos.y, iconSize, charged, ctx.nowMs ?? 0);
       drawBowCharge(ctx.ctx, canvasPos.x, canvasPos.y, heading, iconSize,
-        1 - left / MEGA_STRIKE_CHARGE_TICKS, ctx.nowMs ?? 0, hashStr(ship.id));
+        charged, ctx.nowMs ?? 0, hashStr(ship.id));
     }
     cg.save();
     cg.restore();
@@ -7673,30 +7748,31 @@ export function drawRammingBody(
   ctx.ctx.setLineDash([]);
   ctx.ctx.restore();
 
-  // Engine flame at the asteroid's current position, pointing along
-  // its current motion direction. Body has been moving along the
-  // trajectory; tangent at current tick = derivative via finite diff.
+  // ITS THRUSTERS, from the rock as it is drawn (its presentation radius;
+  // the true radius drew a flame from inside a rock inflated at map zoom).
+  // They push at the meeting point on the boost and against its speed
+  // relative to the target on the brake (orbitalMechanics ramStep), so the
+  // plume trails it in, then swings round and burns ahead of it as it
+  // brakes into the world. It used to trail behind the motion throughout.
   const here = bodyPosition(body, t, ctx.bodies);
-  const ahead = bodyPosition(body, t + 0.05, ctx.bodies);
-  const dx = ahead.x - here.x;
-  const dy = ahead.y - here.y;
-  const d = Math.hypot(dx, dy);
-  if (d > 1e-6) {
-    const dirX = dx / d;
-    const dirY = dy / d;
+  const tgt = bodyById(ctx.bodies, plan.targetBodyId);
+  if (tgt) {
+    const tp = bodyPosition(tgt, t, ctx.bodies);
+    // The side of the world it is coming in on, for the impact (asteroidRam).
+    noteRamApproach(tgt.id, here.x - tp.x, here.y - tp.y);
+  }
+  const push = ramThrustDir(plan, t,
+    (tt) => bodyPosition(body, tt, ctx.bodies),
+    (tt) => (tgt ? bodyPosition(tgt, tt, ctx.bodies) : { x: 0, y: 0 }));
+  if (push) {
     const canvasHere = worldToCanvas(here.x, here.y, ctx);
-    // Engine is on the "back" of the rock — opposite the direction of
-    // motion. The finite-difference tangent is a world vector, and
-    // worldToCanvas has NO y-flip, so it's used as-is: the old
-    // `(dirX, -dirY)` — citing the same false "canvas y inverts"
-    // premise the transit-ship heading had — mirrored the flame across
-    // the horizontal axis.
+    const rockR = ramRockRadiusPx(drawnRadiusOf(ctx.presentation, body, ctx.camera.scale));
+    // worldToCanvas has NO y-flip, so a world vector is used as-is.
     drawThrustExhaust(
       ctx.ctx,
-      { x: canvasHere.x - dirX * body.radius * ctx.camera.scale,
-        y: canvasHere.y - dirY * body.radius * ctx.camera.scale },
-      { x: dirX, y: dirY },
-      Math.max(10, body.radius * ctx.camera.scale * 1.5),
+      { x: canvasHere.x - push.x * rockR, y: canvasHere.y - push.y * rockR },
+      push,
+      Math.max(12, rockR * 1.5),
       1,
     );
 
@@ -7708,7 +7784,6 @@ export function drawRammingBody(
     const shimmerRng = mulberry32(hashStr(body.id) ^ Math.floor((ctx.nowMs ?? performance.now()) / 45));
     const jx = shimmerRng() - 0.5;
     const jy = shimmerRng() - 0.5;
-    const rockR = Math.max(1.5, body.radius * ctx.camera.scale);
     ctx.ctx.save();
     ctx.ctx.globalAlpha = 0.3;
     ctx.ctx.fillStyle = body.color;
@@ -8026,9 +8101,15 @@ function drawTorchTransitShip(
   // old caller hasn't been threaded yet).
   const lerpedPos = transitDrawnPos(ship.id, trajectorySamples,
     { x: ship.transit.pos.x, y: ship.transit.pos.y }, ctx.t, ctx.camera.scale, ctx.nowMs ?? performance.now());
-  const canvasPos = worldToCanvas(lerpedPos.x, lerpedPos.y, ctx);
+  let canvasPos = worldToCanvas(lerpedPos.x, lerpedPos.y, ctx);
+  // THE LEVIATHAN STAYS WITH THE WORLD IT IS CRUSHING (kaijuFlightPose). It
+  // leaves for its next meal the tick it breaks one, so its flight began
+  // while its arms were still round the world, and it was drawn far off
+  // screen with the arms reaching out of nowhere (Studio, 2026-10-23).
+  const kaijuWallMs = performance.now();
+  const kaijuHeld = ship.class === 'kaiju' && kaijuStrikeHolds(kaijuWallMs);
   // Hull, plume and glow, all within a few hull lengths (farOffCanvas).
-  if (farOffCanvas(ctx, canvasPos.x, canvasPos.y, 200)) return;
+  if (!kaijuHeld && farOffCanvas(ctx, canvasPos.x, canvasPos.y, 200)) return;
   const shipColorValue = shipColor(ship, ctx.factions);
 
   // Phase detection: BOOST (engine fires prograde toward intercept) vs
@@ -8123,8 +8204,19 @@ function drawTorchTransitShip(
   // leaving a full-size flame on a half-size ship.
   const leaving = departureLook(ship.id, shipIconSize(ship.class, isSelected) * (isSelected ? 1 : sizeScale),
     flightHeading, ctx.nowMs ?? performance.now());
-  const iconSize = leaving.size;
-  const heading = leaving.heading;
+  let iconSize = leaving.size;
+  let heading = leaving.heading;
+  // Held over the world it is still crushing, then easing into its flight.
+  let kaijuOver: Body | null = null;
+  if (kaijuHeld) {
+    const pose = kaijuFlightPose(ctx, { x: canvasPos.x, y: canvasPos.y, heading, size: iconSize }, kaijuWallMs);
+    if (pose) {
+      canvasPos = { x: pose.x, y: pose.y };
+      iconSize = pose.size;
+      heading = pose.heading;
+      kaijuOver = pose.bodyId ? bodyById(ctx.bodies, pose.bodyId) ?? null : null;
+    }
+  }
   // (Its look is noted below, once the plume it is flying on is known.)
 
   const flashStartT = ctx.damageFlashStart?.get(ship.id);
@@ -8215,7 +8307,8 @@ function drawTorchTransitShip(
     // Its own jet, not a hull's exhaust (skipped above): hard on the push
     // and the brake, cold across the flip.
     drawKaijuHull(ship, ctx, canvasPos, heading, iconSize,
-      thrusting ? Math.max(0.3, shapedPlume) : 0.1);
+      thrusting && !kaijuOver ? Math.max(0.3, shapedPlume) : 0.1,
+      kaijuOver ? { body: kaijuOver, parked: false } : null);
   }
   if (capital) {
     if (dressed && shipIsRetreating(ship)) {
@@ -8252,11 +8345,10 @@ function drawTorchTransitShip(
     // Drawn OUTSIDE the hull's rotation so the ring stays upright
     // while the ship turns — a spinning countdown reads as decoration.
     if (ship.strikeReadyTick != null) {
-      const left = Math.max(0, ship.strikeReadyTick - ctx.t);
-      drawStrikeCharge(ctx.ctx, canvasPos.x, canvasPos.y, iconSize,
-        1 - left / MEGA_STRIKE_CHARGE_TICKS, ctx.nowMs ?? 0);
+      const charged = strikeChargeFrac(ship, ctx.t);
+      drawStrikeCharge(ctx.ctx, canvasPos.x, canvasPos.y, iconSize, charged, ctx.nowMs ?? 0);
       drawBowCharge(ctx.ctx, canvasPos.x, canvasPos.y, heading, iconSize,
-        1 - left / MEGA_STRIKE_CHARGE_TICKS, ctx.nowMs ?? 0, hashStr(ship.id));
+        charged, ctx.nowMs ?? 0, hashStr(ship.id));
     }
     cg.save();
     cg.restore();

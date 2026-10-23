@@ -698,7 +698,11 @@ describe('a charging strike is visible to the target', () => {
     // direction to the structure hull ring, so one viewer never sees
     // two rings meaning opposite things by the same shape.
     expect(renderer).toMatch(/function drawStrikeCharge/);
-    expect(renderer).toMatch(/1 - left \/ MEGA_STRIKE_CHARGE_TICKS/);
+    // Against the hull's own wind-up (strikeChargeFrac: the server's
+    // strike_charge_ticks, the Mega's 24 by default), not always 24.
+    expect(renderer).toMatch(/1 - left \/ total/);
+    expect(renderer).toMatch(/: MEGA_STRIKE_CHARGE_TICKS;/);
+    expect(renderer).toMatch(/drawStrikeCharge\([^;]*strikeChargeFrac\(ship, ctx\.t\)/);
     // Drawn for any visible hull, not only your own.
     expect(renderer).toMatch(/ship\.strikeReadyTick != null\) \{/);
   });
