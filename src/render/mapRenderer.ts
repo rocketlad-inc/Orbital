@@ -4919,50 +4919,106 @@ export interface ShipFormation {
  *  destruction flashes) read this so a kill scars the map where the
  *  ship visibly WAS, not at its textbook orbital point on the far side
  *  of the planet (QA finding). Bounded like the other per-ship caches. */
-const lastDrawnShipWorldPos = new Map<string, { x: number; y: number; ms?: number; standIn?: boolean }>();
+const lastDrawnShipWorldPos = new Map<string, { x: number; y: number; ms?: number; standIn?: boolean; flight?: boolean }>();
 export function drawnShipWorldPos(shipId: string): { x: number; y: number } | undefined {
   return lastDrawnShipWorldPos.get(shipId);
 }
-// ---- departure glide -------------------------------------------------
+// ---- departure hand-off ----------------------------------------------
 //
 // A ship used to SNAP onto its interplanetary arc the instant the burn
 // went live: one frame parked on its orbit ring, the next frame already
-// out on the trajectory. Render-only fix — for the first moment of a
-// transit the drawn position eases from wherever the ship was last
-// drawn (its orbit) onto the true trajectory position, so it reads as
-// leaving orbit rather than cutting to it. The authoritative position
-// is untouched; this only moves pixels.
-const DEPARTURE_GLIDE_MS = 1300;
-const departureGlide = new Map<string, { ms: number; x: number; y: number }>();
+// out on the trajectory. Render-only — the authoritative position is
+// untouched; this only moves pixels.
+//
+// HANDED OFF BY DISTANCE FLOWN, NOT BY TIME (Studio clip "three-way battle
+// of Earth", 2026-10-23). The course starts at the hull's TRUE parking
+// point, which at a close-up is inside the world's drawn disc, often on
+// the far side from where the battle layout or the orbit ring drew it. A
+// 1.3 s time blend (plus the layout glide, seeded at the old slot) dragged
+// the hull in a straight line from its slot to that point: across the
+// disc, which the "never through a disc" clamp then turned into a ~300 px
+// sweep round the rim; then the course carried it back out through the
+// battle it had just left. Now the gap between where it was drawn and its
+// course is an OFFSET that rides the course and closes as the course
+// carries the hull away from its world: the hull leaves its slot in the
+// direction of travel and merges onto its line over DEPARTURE_SPAN times
+// the gap. Closing that slowly can never turn it round (the offset's pull
+// is at most 1.5 / DEPARTURE_SPAN of its forward speed), and a hull whose
+// course has not started moving stays where it was drawn.
+export const DEPARTURE_SPAN = 2;
+/** Small gaps still close over at least this much flight (screen px). */
+export const DEPARTURE_MIN_SPAN_PX = 24;
+/** Only a hull drawn parked this recently leaves from where it was drawn. */
+const DEPARTURE_SEEN_MS = 600;
+/** A departure the client first sees this far into the flight is not
+ *  handed off: the hull is out there, not at its world. */
+const DEPARTURE_LATE_TICKS = 0.5;
+const departureHandoffs = new Map<string, {
+  key: string; ox: number; oy: number;
+  /** The course's place relative to its world when the hand-off began. */
+  rx0: number; ry0: number; u: number;
+}>();
 
-/** Ease the drawn position out of orbit for the first DEPARTURE_GLIDE_MS
- *  of a transit. Seeds from lastDrawnShipWorldPos, which on the first
- *  in-transit frame still holds the ship's ORBITAL position. */
-function departureBlend(
-  shipId: string,
-  target: { x: number; y: number },
-  nowMs: number,
-): { x: number; y: number } {
-  let g = departureGlide.get(shipId);
-  if (!g) {
-    const from = lastDrawnShipWorldPos.get(shipId);
-    // No prior draw (ship scrolled into view already flying) = no glide.
-    if (!from) { departureGlide.set(shipId, { ms: 0, x: target.x, y: target.y }); return target; }
-    g = { ms: nowMs, x: from.x, y: from.y };
-    departureGlide.set(shipId, g);
+/**
+ * The offset (world units) a hull that has just left its world is drawn
+ * at, off its placed course. `pos` is its placed point this frame, `raw`
+ * its true course point, `origin` the world it left (where it is now).
+ */
+function departureOffset(
+  shipId: string, key: string, pos: { x: number; y: number }, raw: { x: number; y: number },
+  origin: { x: number; y: number } | undefined, late: boolean, scale: number,
+): { x: number; y: number } | null {
+  let h = departureHandoffs.get(shipId);
+  if (h && h.key !== key) h = undefined;
+  const o = origin ?? { x: 0, y: 0 };
+  if (!h) {
+    // Its first frame in flight. Drawn parked a moment ago (its battle
+    // slot, its ring, its block): it leaves from there.
+    const was = late ? undefined : recentDrawnShipWorldPos(shipId, DEPARTURE_SEEN_MS, 'parked');
+    if (departureHandoffs.size > 2000) departureHandoffs.clear();
+    h = {
+      key, ox: was ? (was.x - pos.x) * scale : 0, oy: was ? (was.y - pos.y) * scale : 0,
+      rx0: raw.x - o.x, ry0: raw.y - o.y, u: 0,
+    };
+    departureHandoffs.set(shipId, h);
   }
-  if (g.ms === 0) return target;
-  const k = (nowMs - g.ms) / DEPARTURE_GLIDE_MS;
-  if (k >= 1) return target;
-  const e = 1 - Math.pow(1 - Math.max(0, k), 3);   // ease-out cubic
-  return { x: g.x + (target.x - g.x) * e, y: g.y + (target.y - g.y) * e };
+  if (h.ox === 0 && h.oy === 0) return null;
+  const gap = Math.hypot(h.ox, h.oy);
+  if (gap < 0.5) { h.ox = 0; h.oy = 0; return null; }
+  // How far the course has carried it from its world (screen px).
+  const flown = Math.hypot(raw.x - o.x - h.rx0, raw.y - o.y - h.ry0) * scale;
+  h.u = Math.max(h.u, flown / Math.max(DEPARTURE_MIN_SPAN_PX, DEPARTURE_SPAN * gap));
+  if (h.u >= 1) { h.ox = 0; h.oy = 0; return null; }
+  const w = 1 - h.u * h.u * (3 - 2 * h.u);
+  return { x: (h.ox * w) / scale, y: (h.oy * w) / scale };
 }
 
-/** Forget a ship's glide so a LATER departure animates again. Called
- *  from the parked-ship draw path. */
+/**
+ * A hull in flight that has just left its world, placed so it leaves from
+ * where it was drawn (see the hand-off notes above). Every caller that
+ * draws a hull in flight passes its placed samples through this (or
+ * settleTransitLayout, which does): the sprite, its hit-test and its
+ * selection ring then share the answer.
+ */
+export function departFromDrawn(
+  shipId: string, samples: Sample[], placed: Sample[], t: number, scale: number,
+  origin?: { x: number; y: number },
+): Sample[] {
+  if (!(scale > 0) || placed.length === 0 || samples.length === 0) return placed;
+  // One hand-off per leg, keyed by its start (a rendezvous's far end can
+  // move frame to frame with its leader's course; its start does not).
+  const key = String(samples[0].t);
+  const late = t - samples[0].t > DEPARTURE_LATE_TICKS;
+  const off = departureOffset(shipId, key, torchPositionFromSamples(placed, t),
+    torchPositionFromSamples(samples, t), origin, late, scale);
+  if (!off) return placed;
+  return placed.map(p => ({ t: p.t, x: p.x + off.x, y: p.y + off.y }));
+}
+
+/** Forget a ship's hand-off so a LATER departure is handed off too.
+ *  Called from the parked-ship draw path. */
 function clearDepartureGlide(shipId: string): void {
-  if (departureGlide.size > 2000) departureGlide.clear();
-  else departureGlide.delete(shipId);
+  departureHandoffs.delete(shipId);
 }
 
 /** What each hull looked like when it was last drawn: its sprite, drawn
@@ -4998,11 +5054,24 @@ export function noteFlightLook(shipId: string, size: number, heading: number, no
 /** And the other way: a hull that has just LEFT orbit eases out of its
  *  parked look into its flight look (judges, round 2: the Mega group went
  *  from specks to giants, bigger than Jupiter, in the frame it lit off). */
-const lastParkedLook = new Map<string, { size: number; heading: number; ms: number }>();
+const lastParkedLook = new Map<string, { size: number; heading: number; ms: number; emerge?: boolean }>();
 const departureMorphs = new Map<string, { size: number; heading: number; startMs: number }>();
 export function noteParkedLook(shipId: string, size: number, heading: number, nowMs: number): void {
   if (lastParkedLook.size > 2000) lastParkedLook.clear();
   lastParkedLook.set(shipId, { size, heading, ms: nowMs });
+}
+/** A hull leaving a world that was drawn as a badge (no hull of its own on
+ *  screen) grows out of it from this share of its flight size. */
+export const EMERGE_SIZE = 0.2;
+/** And the other way round from a landing that folds into the badge: a
+ *  hull that leaves a world drawn too small to show its hulls had no
+ *  sprite last frame, so it grows out of the world instead of popping in
+ *  at full size (Studio clip "select and strike", 2026-10-23: eleven hulls
+ *  burst out of Ganymede in one frame). MapCanvas notes it on the frame it
+ *  sees the departure. */
+export function noteEmergence(shipId: string, nowMs: number): void {
+  if (lastParkedLook.size > 2000) lastParkedLook.clear();
+  lastParkedLook.set(shipId, { size: 0, heading: 0, ms: nowMs, emerge: true });
 }
 export function departureLook(shipId: string, size: number, heading: number, nowMs: number): { size: number; heading: number } {
   const pl = lastParkedLook.get(shipId);
@@ -5010,7 +5079,9 @@ export function departureLook(shipId: string, size: number, heading: number, now
     lastParkedLook.delete(shipId);
     if (nowMs >= pl.ms && nowMs - pl.ms < 500) {
       if (departureMorphs.size > 500) departureMorphs.clear();
-      departureMorphs.set(shipId, { size: pl.size, heading: pl.heading, startMs: nowMs });
+      departureMorphs.set(shipId, pl.emerge
+        ? { size: size * EMERGE_SIZE, heading, startMs: nowMs }
+        : { size: pl.size, heading: pl.heading, startMs: nowMs });
     }
   }
   const m = departureMorphs.get(shipId);
@@ -5248,12 +5319,15 @@ export function continuousDrawnPos(
   return { x: c.lx, y: c.ly };
 }
 
-function recordDrawnShipWorldPos(shipId: string, x: number, y: number): void {
+/** `role`: drawn parked (on its ring, in a battle, in a block at a world)
+ *  or in flight. A departure is handed off only from a parked draw. */
+export function recordDrawnShipWorldPos(shipId: string, x: number, y: number, role: 'parked' | 'flight' = 'parked'): void {
   if (lastDrawnShipWorldPos.size > 2000) lastDrawnShipWorldPos.clear();
   const ms = performance.now();
+  const flight = role === 'flight';
   const e = lastDrawnShipWorldPos.get(shipId);
-  if (e) { e.x = x; e.y = y; e.ms = ms; e.standIn = false; }
-  else lastDrawnShipWorldPos.set(shipId, { x, y, ms });
+  if (e) { e.x = x; e.y = y; e.ms = ms; e.standIn = false; e.flight = flight; }
+  else lastDrawnShipWorldPos.set(shipId, { x, y, ms, flight });
 }
 
 /** Every hull drawn since `sinceMs`, where (world). The Studio's jump
@@ -5278,11 +5352,17 @@ export function drawnShipsSince(sinceMs: number): Array<[string, number, number]
 export function forgetDrawnShips(): void {
   continuity.clear();
   lastDrawnShipWorldPos.clear();
+  departureHandoffs.clear();
 }
 
-export function recentDrawnShipWorldPos(shipId: string, maxAgeMs = 500): { x: number; y: number } | undefined {
+export function recentDrawnShipWorldPos(
+  shipId: string, maxAgeMs = 500, role?: 'parked' | 'flight',
+): { x: number; y: number } | undefined {
   const e = lastDrawnShipWorldPos.get(shipId);
-  return e && e.ms != null && performance.now() - e.ms <= maxAgeMs ? e : undefined;
+  if (!e || e.ms == null || performance.now() - e.ms > maxAgeMs) return undefined;
+  // A role asked for: a real draw in that role (a stand-in was not drawn).
+  if (role && (e.standIn || (role === 'flight') !== !!e.flight)) return undefined;
+  return e;
 }
 
 // ---- layout glide ------------------------------------------------------
@@ -5323,6 +5403,98 @@ export function glideLayout(
   return { x: g.x, y: g.y };
 }
 
+type Sample = { t: number; x: number; y: number };
+
+/**
+ * A hull in flight: its formation/company place (`placed`, off its true
+ * course `samples`), with the layout offset gliding (glideLayout) rather
+ * than popping when the layout changes, then handed off from where it was
+ * drawn if it has just left its world (departFromDrawn).
+ *
+ * The glide is seeded from where this hull was drawn a moment ago IN
+ * FLIGHT, so an escort promoted to flagship slides out of its slot
+ * instead of jumping. Not from where it was drawn PARKED: that is the
+ * departure hand-off's to close, by distance flown. Seeded from a parked
+ * slot, the glide closed it in half a second in a straight line, across
+ * the world (the Lunar Wing). `emergeFrom`: the world it is leaving, when
+ * that world was drawn as a badge, so the formation opens out of it.
+ */
+export function settleTransitLayout(
+  shipId: string, samples: Sample[], placed: Sample[], t: number, scale: number, nowMs: number,
+  emergeFrom?: { x: number; y: number }, origin?: { x: number; y: number },
+): Sample[] {
+  const raw = torchPositionFromSamples(samples, t);
+  const lay = torchPositionFromSamples(placed, t);
+  const target = { x: (lay.x - raw.x) * scale, y: (lay.y - raw.y) * scale };
+  const was = recentDrawnShipWorldPos(shipId, 500, 'flight') ?? emergeFrom;
+  const eased = glideLayout(`tr:${shipId}`, target, nowMs,
+    was ? { x: (was.x - raw.x) * scale, y: (was.y - raw.y) * scale } : undefined);
+  const ddx = (eased.x - target.x) / scale, ddy = (eased.y - target.y) / scale;
+  const glided = Math.abs(ddx) * scale > 0.05 || Math.abs(ddy) * scale > 0.05
+    ? placed.map(p => ({ t: p.t, x: p.x + ddx, y: p.y + ddy }))
+    : placed;
+  return departFromDrawn(shipId, samples, glided, t, scale, origin ?? emergeFrom);
+}
+
+/**
+ * NEVER THROUGH A WORLD'S DRAWN DISC. A course runs from the true parking
+ * orbit to the destination's true CENTRE, and at map zoom a world is drawn
+ * many times its true size. Inside a disc (radius R, world units) a point
+ * rides the disc's edge on its course side: behind the arrival, ahead of
+ * the departure.
+ */
+export function keepOffDrawnDiscs(
+  placed: Sample[],
+  discs: Array<{ at: (t: number) => { x: number; y: number }; R: number; isDest: boolean }>,
+): Sample[] {
+  let out = placed;
+  for (const disc of discs) {
+    const R = disc.R;
+    const first = out[0], last = out[out.length - 1];
+    const cl = Math.hypot(last.x - first.x, last.y - first.y) || 1;
+    const side = disc.isDest
+      ? { x: (first.x - last.x) / cl, y: (first.y - last.y) / cl }
+      : { x: (last.x - first.x) / cl, y: (last.y - first.y) / cl };
+    out = out.map(p => {
+      const c = disc.at(p.t);
+      const dx = p.x - c.x, dy = p.y - c.y;
+      const d = Math.hypot(dx, dy);
+      if (d >= R) return p;
+      const u = d > R * 0.05 ? { x: dx / d, y: dy / d } : side;
+      return { t: p.t, x: c.x + u.x * R, y: c.y + u.y * R };
+    });
+  }
+  return out;
+}
+
+/**
+ * Where a hull in flight is DRAWN this frame (world): on its placed
+ * samples at `t` (already handed off from where it was parked, see
+ * departFromDrawn), through the continuity guard. The answer is recorded
+ * as the hull's drawn spot.
+ */
+export function transitDrawnPos(
+  shipId: string, samples: Sample[] | undefined, fallback: { x: number; y: number },
+  t: number, scale: number, nowMs: number,
+): { x: number; y: number } {
+  const truePos = samples && samples.length > 0 ? torchPositionFromSamples(samples, t) : fallback;
+  // The continuity guard has the last word on where a hull is drawn.
+  const kept = continuousDrawnPos(shipId, truePos.x, truePos.y, scale, nowMs);
+  recordDrawnShipWorldPos(shipId, kept.x, kept.y, 'flight');
+  return kept;
+}
+
+/** Where a hull in flight is for a click, a selection ring, its fleet's
+ *  block and its bolts: where it was DRAWN this frame. Its placed point is
+ *  only the fallback (not drawn yet): the sprite can be off it, through
+ *  the continuity guard, and the rings stood at the empty formation slots
+ *  while the hulls slid out of Ganymede (Studio clip "select and strike"). */
+export function transitHitWorldPos(shipId: string, placed: Sample[], t: number): { x: number; y: number } {
+  const e = lastDrawnShipWorldPos.get(shipId);
+  if (e && e.flight && !e.standIn && e.ms != null && performance.now() - e.ms <= 250) return { x: e.x, y: e.y };
+  return torchPositionFromSamples(placed, t);
+}
+
 /**
  * An escort's drawn spot, through the continuity guard like every other
  * hull. Escorts are placed by their fleet's block, and the block is
@@ -5348,7 +5520,7 @@ export function guardedEscortCanvasPos(
 export function recordShipWorldPosAs(shipId: string, asShipId: string): void {
   const at = lastDrawnShipWorldPos.get(asShipId);
   if (at) {
-    recordDrawnShipWorldPos(shipId, at.x, at.y);
+    recordDrawnShipWorldPos(shipId, at.x, at.y, at.flight ? 'flight' : 'parked');
     const e = lastDrawnShipWorldPos.get(shipId);
     if (e) e.standIn = true;
   }
@@ -5574,8 +5746,13 @@ export function drawEscortHull(
   // does not use, so they went off elsewhere on the ring (Lorne: "the
   // explosion effects are happening at some other point in the orbit").
   const at = canvasToWorld(x, y, ctx);
-  recordDrawnShipWorldPos(ship.id, at.x, at.y);
+  recordDrawnShipWorldPos(ship.id, at.x, at.y, ship.transit ? 'flight' : 'parked');
   if (img) recordDrawnLook(ship.id, img, size, heading);
+  // Parked in its fleet's block: if it leaves next, it leaves at this size.
+  if (!ship.transit) {
+    noteParkedLook(ship.id, size, heading, ctx.nowMs ?? performance.now());
+    clearDepartureGlide(ship.id);
+  }
   if (thrust > 0) {
     const cH = Math.cos(heading), sH = Math.sin(heading);
     drawThrustHint(g, x - cH * size * 0.42, y - sH * size * 0.42, cH, sH, size,
@@ -5867,10 +6044,10 @@ export function drawShip(
   const worldY = kept.y;
   const canvasPos = worldToCanvas(worldX, worldY, ctx);
   // Death FX (wrecks, destruction flash) spawn where the hull was DRAWN.
-  recordDrawnShipWorldPos(ship.id, worldX, worldY);
-  // Parked again (arrived, or a burn was cancelled) — forget the glide so
-  // the NEXT departure eases out of orbit too instead of snapping.
-  clearDepartureGlide(ship.id);
+  recordDrawnShipWorldPos(ship.id, worldX, worldY, ship.transit ? 'flight' : 'parked');
+  // Parked again (arrived, or a burn was cancelled) — forget the hand-off
+  // so the NEXT departure leaves from where it is drawn too.
+  if (!ship.transit) clearDepartureGlide(ship.id);
 
   // Off-screen cull. A 229-ship game draws every parked hull every
   // frame even when the camera is zoomed onto one moon; a hull 100px+
@@ -7803,16 +7980,9 @@ function drawTorchTransitShip(
   // sample times, leaving the ship visibly off the polyline mid-segment.
   // Falls back to the stored pos when no samples were provided (e.g. an
   // old caller hasn't been threaded yet).
-  const truePos = trajectorySamples && trajectorySamples.length > 0
-    ? torchPositionFromSamples(trajectorySamples, ctx.t)
-    : { x: ship.transit.pos.x, y: ship.transit.pos.y };
-  // Leave orbit, don't cut to the arc — see departureBlend.
-  const blended = departureBlend(ship.id, truePos, ctx.nowMs ?? performance.now());
-  // The continuity guard has the last word on where a hull is drawn.
-  const lerpedPos = continuousDrawnPos(ship.id, blended.x, blended.y, ctx.camera.scale,
-    ctx.nowMs ?? performance.now());
+  const lerpedPos = transitDrawnPos(ship.id, trajectorySamples,
+    { x: ship.transit.pos.x, y: ship.transit.pos.y }, ctx.t, ctx.camera.scale, ctx.nowMs ?? performance.now());
   const canvasPos = worldToCanvas(lerpedPos.x, lerpedPos.y, ctx);
-  recordDrawnShipWorldPos(ship.id, lerpedPos.x, lerpedPos.y);
   // Hull, plume and glow, all within a few hull lengths (farOffCanvas).
   if (farOffCanvas(ctx, canvasPos.x, canvasPos.y, 200)) return;
   const shipColorValue = shipColor(ship, ctx.factions);
