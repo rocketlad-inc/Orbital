@@ -149,6 +149,10 @@ What `apply` returns, and what you need from it:
     { "key": "ws", "kind": "weapons_station", "at": "luna", "owner": "terra", "progress": 0.9 }
     // kinds: warp_gate, weapons_station, gravity_sink, deep_array, null_field, mega_destroyer, mobile_foundry.
     // progress 0..1 of the catalogue cost (Senate price laws ignored), or "complete": true. "name" optional.
+    // "orbit": 20, "angle": 200 -- where it orbits: map units from the world's centre (inside its sphere of
+    // influence, clear of its surface, as a player may place one) and degrees round it on the tick the scene
+    // lands. Without them it hangs on the gate ring (35% of the SOI: 61 units for Mars, off any frame that
+    // shows Mars at a size worth seeing). Angles: 0 is +x, the way Deimos at 223 sits from Mars on tick 0.
     // The key names it like a world: ships "at": "ws", a move "to": "ws", a mid-take deliver.
     // A complete mega_destroyer / mobile_foundry launches as a hull on the next tick, as in play.
   ],
@@ -173,6 +177,10 @@ What `apply` returns, and what you need from it:
   // with it (it leaves through its gate when full). Result: kaiju { winds_up_at_tick, fires_at_tick }.
 }
 ```
+
+**Nothing buried where the take happens.** Worlds roll hidden secrets when a game is made, and a parked hull finds one on the next tick. The obliterate clip (2026-10-23) parked its hulls on a Callisto that had rolled `pre_terraformed`: on tick 1 the raw moon turned into a living ocean world, and the strike armed to obliterate it stood down in silence at tick 7 (a Mega Destroyer fires the strike it was ordered, or none; a living world is sterilised, only a raw one is obliterated). Apply now empties the secrets of every world the scene lists, parks hulls at, watches from or sends a move to. `"secrets": true` at the top of a scene keeps them, for a clip about a find. A world marked `"living": false` is raw on every apply: a previous take's terraform, scar or debris field is cleared, as `living: true` already restored a living one.
+
+**What the guns can do.** A city has no gun; shields absorb first (level × 120, regenerating 6 a tick), then 300 structure. Sixteen hulls do ~1,500 a tick and take a level-5 shield and its city in ONE tick (the shield-siege clip: the bubble was gone after frame one). Eight light hulls (4 frigates, 4 corvettes) do ~110: the shield holds five ticks, breaks on the sixth, and the city falls on the ninth. A Weapons Station fires three shots a tick, closest hulls first, 22.5 × (1 + 1.2 × (1 + 0.1 × Weapons)) each at the settlement's speed (50% on a destroyer, 26% on a frigate, 11% on a corvette): it shreds light hulls, scratches destroyers, and every hull it fires on shoots back at it. A capital in a tick-0 game has no defence: give the viewer's world a home fleet, or a raid takes it in a tick (cities are targeted only once no armed hull of the defender is left in orbit).
 
 **Re-shooting a set piece.** `reset` takes away the last take's sites, its Leviathan (hull, row, once-only log lines; its faction stays and goes back to "Unknown") and its carcass, so the next take is announced again. Sites and the carcass are **retired** (`destroyed_at_tick`), never deleted: a deleted body takes every hull parked at it with it. Anything parked at a retired site drops to the world it orbited. A world marked `living` (and the Leviathan's world) is whole again: sterilised and obliterated scars cleared. A ram's target keeps its halved yields; use a fresh game if that shows.
 

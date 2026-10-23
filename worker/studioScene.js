@@ -384,7 +384,22 @@ export function expandScenario(raw) {
     if (!Number.isFinite(p) || p < 0 || p > 1) throw new Error(`${where}.progress must be from 0 to 1`);
     const complete = m.complete === true || p >= 1;
     const name = typeof m.name === 'string' && m.name.trim() ? m.name.trim().slice(0, 40) : null;
-    return { key: m.key, kind: m.kind, at: m.at, owner: m.owner, progress: complete ? 1 : p, complete, name };
+    // Where it orbits (2026-10-23), as a player may place a site anywhere
+    // in the world's sphere of influence: `orbit` units from its centre,
+    // standing at `angle` degrees on the tick the scene lands. Checked
+    // against the world itself when the scene is applied.
+    const place = {};
+    if (m.orbit != null) {
+      const o = Number(m.orbit);
+      if (!Number.isFinite(o) || o <= 0) throw new Error(`${where}.orbit must be a distance in map units from the world's centre`);
+      place.orbit = o;
+    }
+    if (m.angle != null) {
+      const a = Number(m.angle);
+      if (!Number.isFinite(a)) throw new Error(`${where}.angle must be in degrees`);
+      place.angle = ((a % 360) + 360) % 360;
+    }
+    return { key: m.key, kind: m.kind, at: m.at, owner: m.owner, progress: complete ? 1 : p, complete, name, ...place };
   });
 
   // ---- the Dyson Sphere: one per match, at the Sun ----
@@ -418,6 +433,7 @@ export function expandScenario(raw) {
     farSystems, gates, dyson, meteoroids, megastructures, kaiju,
     viewer: typeof raw.viewer === 'string' ? raw.viewer : (fx[0]?.key ?? null),
     camera: raw.camera !== false,   // observer hulls so the viewer sees every scene world
+    secrets: raw.secrets === true,  // keep the secrets buried at scene worlds (default: emptied)
     seatMe: raw.seat_me === true,
     reset: raw.reset !== false,
     tickIntervalMs: Number.isFinite(Number(raw.tick_interval_ms)) ? Number(raw.tick_interval_ms) : 3600000,

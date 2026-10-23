@@ -33,6 +33,8 @@
     "sim:chain": "node sim/chainedLegs.mjs",
     "sim:studio-arrive": "node sim/studioArrive.mjs",
     "sim:studio-gates": "node sim/studioGates.mjs",
+    "sim:studio-quiet": "node sim/studioQuietWorlds.mjs",
+    "sim:studio-site-orbit": "node sim/studioSiteOrbit.mjs",
     "sim:foundry": "node sim/foundryBuild.mjs",
     "sim:buildtap": "node sim/buildingDoubleTap.mjs",
     "sim:trade": "node sim/tradeRoutes.mjs",
