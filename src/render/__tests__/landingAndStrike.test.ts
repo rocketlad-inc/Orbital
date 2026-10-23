@@ -8,7 +8,7 @@
 // before its death animation starts, and un-terraforms it, so a living
 // Earth drew as bare dead rock with no shot fired.
 import {
-  noteFlightLook, landingLook, LANDING_MORPH_MS,
+  noteFlightLook, noteParkedLook, landingLook, departureLook, LANDING_MORPH_MS,
   drawnTerraformFraction, sterilisedBlend,
 } from '../mapRenderer';
 import type { RenderContext } from '../mapRenderer';
@@ -25,16 +25,35 @@ describe('a landing is one motion', () => {
     expect(mid.size).toBeGreaterThan(70);
     expect(mid.size).toBeLessThan(110);
     const done = landingLook('lander', 120, Math.PI / 2, 1033 + LANDING_MORPH_MS + 1);
-    expect(done).toEqual({ size: 120, heading: Math.PI / 2 });
+    expect(done).toMatchObject({ size: 120, heading: Math.PI / 2, plume: 0 });
+  });
+
+  test('the engine it came in on dies away, not in a frame', () => {
+    noteFlightLook('burner', 60, 0, 2000, 0.85, 1.4);
+    const first = landingLook('burner', 120, 0, 2033);
+    expect(first.plume).toBeCloseTo(0.85, 1);
+    expect(first.len).toBe(1.4);
+    expect(landingLook('burner', 120, 0, 2033 + LANDING_MORPH_MS * 0.25).plume).toBeGreaterThan(0.1);
+    expect(landingLook('burner', 120, 0, 2033 + LANDING_MORPH_MS * 0.6).plume).toBe(0);
   });
 
   test('a hull parked all along is drawn as it is', () => {
-    expect(landingLook('resident', 84, 1, 5000)).toEqual({ size: 84, heading: 1 });
+    expect(landingLook('resident', 84, 1, 5000)).toMatchObject({ size: 84, heading: 1 });
   });
 
   test('a flight look long gone is not a landing', () => {
     noteFlightLook('old', 60, 0, 1000);
-    expect(landingLook('old', 120, 2, 9000)).toEqual({ size: 120, heading: 2 });
+    expect(landingLook('old', 120, 2, 9000)).toMatchObject({ size: 120, heading: 2 });
+  });
+
+  test('and leaving orbit eases the other way, out of the parked look', () => {
+    // Judges, round 2: the Mega group went from specks to giants in the
+    // frame it lit off. Parked look first (drawShip notes it), then flight.
+    noteParkedLook('leaver', 20, 1, 3000);         // drawn parked at 20 px
+    const first = departureLook('leaver', 150, 0, 3033);
+    expect(first.size).toBeCloseTo(20, 0);
+    const done = departureLook('leaver', 150, 0, 3033 + LANDING_MORPH_MS + 1);
+    expect(done).toEqual({ size: 150, heading: 0 });
   });
 });
 

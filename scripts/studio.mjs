@@ -289,15 +289,23 @@ async function film() {
     const traceOut = tracing ? fs.openSync(path.join(dir, 'trace.jsonl'), 'w') : null;
     if (tracing) await b.evaluate('(window.__shipTrace = [], true)');
     console.error(`filming ${total} frames at ${w}x${h} as ${handle}…`);
+    // The page renders at full size (layout and UI as players see them);
+    // each frame is CAPTURED at half size as JPEG, since every clip ships
+    // 960 wide: a quarter of the pixels to encode and pass over CDP, about
+    // twice as fast a take. --full keeps lossless full-size PNGs.
+    const fullCapture = argv.includes('--full');
+    const capture = fullCapture
+      ? { format: 'png', captureBeyondViewport: false }
+      : { format: 'jpeg', quality: 92, captureBeyondViewport: false, clip: { x: 0, y: 0, width: w, height: h, scale: 0.5 } };
     const frames = [];
     const t0 = Date.now();
     for (let k = 0; k < total; k++) {
       // A frame waits on at most one server tick (bounded in the page at
-      // 30 s + 90 s); past 150 s the page is wedged and the take ends here
+      // 30 s + 90 s); past 600 s (a time cut can hold many ticks) the page is wedged and the take ends here
       // with what it has. A screenshot gets three tries.
       let done = false;
       try {
-        const r = await b.evaluate(`window.__studio.filmFrame().then(r => JSON.stringify(r))`, 150_000);
+        const r = await b.evaluate(`window.__studio.filmFrame().then(r => JSON.stringify(r))`, 600_000);
         done = JSON.parse(r).done;
       } catch (e) {
         console.error(`\nframe ${k}: ${e.message}; ending the take with ${frames.length} frames`);
@@ -305,11 +313,11 @@ async function film() {
       }
       let shotPng = null;
       for (let attempt = 0; attempt < 3 && !shotPng; attempt++) {
-        shotPng = await b.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }, 30_000)
+        shotPng = await b.send('Page.captureScreenshot', capture, 30_000)
           .catch((e) => { console.error(`\nframe ${k}: screenshot try ${attempt + 1}: ${e.message}`); return null; });
       }
       if (!shotPng) { console.error(`\nframe ${k}: no screenshot; ending the take with ${frames.length} frames`); break; }
-      const f = `${String(k).padStart(5, '0')}.png`;
+      const f = `${String(k).padStart(5, '0')}.${fullCapture ? 'png' : 'jpg'}`;
       fs.writeFileSync(path.join(dir, f), Buffer.from(shotPng.data, 'base64'));
       if (traceOut != null) {
         // The last frame the page drew for this film frame.
@@ -339,6 +347,8 @@ async function film() {
       console.error(`encoding ${name} at ${width}px…`);
       const encArgs = [enc, dir, '--name', name, '--width', width];
       if (flag('speed')) encArgs.push('--speed', flag('speed'));
+      // An end card on the encode (studio-encode.py --end-title / --end-line).
+      if (flag('end-title')) encArgs.push('--end-title', flag('end-title'), '--end-line', flag('end-line') || '');
       const r = spawn('python', encArgs, { stdio: 'inherit' });
       await new Promise(res => r.on('exit', res));
     }

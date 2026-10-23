@@ -48,7 +48,7 @@ import { drawDeathDebris, sterilisationProgress, sterilisationStarted } from './
 import { anchorToBody, anchoredWorldPos, type BodyAnchor } from './fxAnchor';
 import { noteKaijuDrawn, kaijuHoldsWorldWhole, drawKaijuCarcass } from './kaijuFx';
 import { kaijuRevealed } from '../game/kaijuReveal';
-import { getStructureIconImage, getScaffoldImage } from './structureIconCache';
+import { getStructureIconImage, getScaffoldImage, artScaleOf } from './structureIconCache';
 import type { StructureVariant } from '../components/StructureIcons';
 import {
   MEGASTRUCTURES, progressOf as progressOfSite, MEGA_MAX_HP, MEGA_SEIZE_HP_FRAC,
@@ -3228,7 +3228,10 @@ export function drawnTerraformFraction(body: Body, ctx: RenderContext): number {
   if (body.sterilisedAtTick == null || !drawnLiving.has(body.id)) return tf;
   if (strikePending(body, ctx)) return 1;
   const k = sterilisationProgress(body.id, ctx.nowMs ?? 0);
-  return k != null && k < 0.5 ? 1 : tf;
+  if (k == null) return tf;
+  // Dissolved across the fire, not swapped in a frame (judges, round 2).
+  const u = Math.max(0, Math.min(1, (k - 0.42) / 0.22));
+  return Math.max(tf, 1 - u * u * (3 - 2 * u));
 }
 
 function drawSterilised(
@@ -4985,30 +4988,59 @@ export function drawnShipLook(shipId: string): HullLook | undefined {
  * twice that at close zoom) and heading. It now eases from the one to the
  * other over LANDING_MORPH_MS.
  */
-const lastFlightLook = new Map<string, { size: number; heading: number; ms: number }>();
-const landingMorphs = new Map<string, { size: number; heading: number; startMs: number }>();
+const lastFlightLook = new Map<string, { size: number; heading: number; ms: number; plume: number; len: number }>();
+const landingMorphs = new Map<string, { size: number; heading: number; startMs: number; plume: number; len: number }>();
 export const LANDING_MORPH_MS = 1200;
-export function noteFlightLook(shipId: string, size: number, heading: number, nowMs: number): void {
+export function noteFlightLook(shipId: string, size: number, heading: number, nowMs: number, plume = 0, len = 1): void {
   if (lastFlightLook.size > 2000) lastFlightLook.clear();
-  lastFlightLook.set(shipId, { size, heading, ms: nowMs });
+  lastFlightLook.set(shipId, { size, heading, ms: nowMs, plume, len });
 }
+/** And the other way: a hull that has just LEFT orbit eases out of its
+ *  parked look into its flight look (judges, round 2: the Mega group went
+ *  from specks to giants, bigger than Jupiter, in the frame it lit off). */
+const lastParkedLook = new Map<string, { size: number; heading: number; ms: number }>();
+const departureMorphs = new Map<string, { size: number; heading: number; startMs: number }>();
+export function noteParkedLook(shipId: string, size: number, heading: number, nowMs: number): void {
+  if (lastParkedLook.size > 2000) lastParkedLook.clear();
+  lastParkedLook.set(shipId, { size, heading, ms: nowMs });
+}
+export function departureLook(shipId: string, size: number, heading: number, nowMs: number): { size: number; heading: number } {
+  const pl = lastParkedLook.get(shipId);
+  if (pl) {
+    lastParkedLook.delete(shipId);
+    if (nowMs >= pl.ms && nowMs - pl.ms < 500) {
+      if (departureMorphs.size > 500) departureMorphs.clear();
+      departureMorphs.set(shipId, { size: pl.size, heading: pl.heading, startMs: nowMs });
+    }
+  }
+  const m = departureMorphs.get(shipId);
+  if (!m) return { size, heading };
+  const u = (nowMs - m.startMs) / LANDING_MORPH_MS;
+  if (!(u >= 0 && u < 1)) { departureMorphs.delete(shipId); return { size, heading }; }
+  const e = smootherStep(u);
+  return { size: m.size + (size - m.size) * e, heading: lerpAngle(m.heading, heading, e) };
+}
+
 /** The size and heading to draw a PARKED hull at, easing out of its
  *  flight look if it has just landed. */
-export function landingLook(shipId: string, size: number, heading: number, nowMs: number): { size: number; heading: number } {
+export function landingLook(shipId: string, size: number, heading: number, nowMs: number): { size: number; heading: number; plume: number; len: number } {
   const fl = lastFlightLook.get(shipId);
   if (fl) {
     lastFlightLook.delete(shipId);
     if (nowMs >= fl.ms && nowMs - fl.ms < 500) {
       if (landingMorphs.size > 500) landingMorphs.clear();
-      landingMorphs.set(shipId, { size: fl.size, heading: fl.heading, startMs: nowMs });
+      landingMorphs.set(shipId, { size: fl.size, heading: fl.heading, startMs: nowMs, plume: fl.plume, len: fl.len });
     }
   }
   const m = landingMorphs.get(shipId);
-  if (!m) return { size, heading };
+  if (!m) return { size, heading, plume: 0, len: 1 };
   const u = (nowMs - m.startMs) / LANDING_MORPH_MS;
-  if (!(u >= 0 && u < 1)) { landingMorphs.delete(shipId); return { size, heading }; }
+  if (!(u >= 0 && u < 1)) { landingMorphs.delete(shipId); return { size, heading, plume: 0, len: 1 }; }
   const e = smootherStep(u);
-  return { size: m.size + (size - m.size) * e, heading: lerpAngle(m.heading, heading, e) };
+  // The engine it came in on dies away over the first half of the ease
+  // (judges, round 2: every plume cut out in the frame of the landing).
+  const burn = Math.max(0, 1 - u * 2);
+  return { size: m.size + (size - m.size) * e, heading: lerpAngle(m.heading, heading, e), plume: m.plume * burn * burn, len: m.len };
 }
 
 /** Capital hulls drawn recently, by id. A Planet Killer's strike is a
@@ -5875,6 +5907,7 @@ export function drawShip(
   const landing = landingLook(ship.id, restSize, heading, ctx.nowMs ?? performance.now());
   const hullSize = landing.size;
   heading = landing.heading;
+  noteParkedLook(ship.id, hullSize, heading, ctx.nowMs ?? performance.now());
   // THE LEVIATHAN IS HUGE (Lorne, 2026-10-08: "make it huge"). Parked
   // hulls are drawn to the scale of their world, which shrank it smaller
   // than the moon it was eating. Over a world it is at least twice that
@@ -5901,6 +5934,17 @@ export function drawShip(
   // Damage flash sits beneath the icon so the icon stays at full opacity.
   const flashStart = ctx.damageFlashStart?.get(ship.id);
   drawDamageFlash(canvasPos, iconSize / 2, flashStart, ctx.nowMs ?? performance.now(), ctx, 'damage');
+
+  // A hull that has just landed brings its engine in with it, dying away.
+  if (landing.plume > 0.02) {
+    const cosH = Math.cos(heading), sinH = Math.sin(heading);
+    drawThrustExhaust(
+      ctx.ctx,
+      { x: canvasPos.x - cosH * hullSize / 2, y: canvasPos.y - sinH * hullSize / 2 },
+      { x: cosH, y: sinH }, hullSize, landing.plume, ship.class, undefined,
+      driveBellsFor(ship.class, ship.iconVariant), landing.len,
+    );
+  }
 
   const trimColor = shipTrimColor(ship, ctx.factions);
   const dressed = ctx.camera.scale >= SHIP_DRESSING_MIN_SCALE;
@@ -5939,7 +5983,9 @@ export function drawShip(
       (ship.iconVariant as StructureVariant | undefined) ?? null, trimColor,
     );
     if (capImg) {
-      cg.drawImage(capImg, -iconSize / 2, -iconSize / 2, iconSize, iconSize);
+      // The Mega's art fills its box (artScaleOf): its round hull sat small in its square.
+      const art = ship.class === 'mega_destroyer' ? iconSize * artScaleOf(capImg) : iconSize;
+      cg.drawImage(capImg, -art / 2, -art / 2, art, art);
       hullFlashHere(cg, capImg, iconSize, ctx.damageFlashStart?.get(ship.id), ctx.nowMs ?? performance.now());
       recordDrawnLook(ship.id, capImg, iconSize, heading + shipBank(ship.id, heading));
     } else {
@@ -7855,14 +7901,17 @@ function drawTorchTransitShip(
   // false "canvas y axis inverts" comment — mirrored every transit
   // ship across the horizontal axis. That was the "points anywhere
   // but forward" bug.
-  const heading = rvAtt ? rvAtt.heading : Math.atan2(facingY, facingX) + Math.PI * flipTurn;
+  const flightHeading = rvAtt ? rvAtt.heading : Math.atan2(facingY, facingX) + Math.PI * flipTurn;
 
   // Everything downstream (exhaust plume, wake, selection brackets, rank
   // chevron, label offset) is derived from iconSize, so scaling here
   // shrinks the whole hull-and-dressing group together rather than
   // leaving a full-size flame on a half-size ship.
-  const iconSize = shipIconSize(ship.class, isSelected) * (isSelected ? 1 : sizeScale);
-  noteFlightLook(ship.id, iconSize, heading, ctx.nowMs ?? performance.now());
+  const leaving = departureLook(ship.id, shipIconSize(ship.class, isSelected) * (isSelected ? 1 : sizeScale),
+    flightHeading, ctx.nowMs ?? performance.now());
+  const iconSize = leaving.size;
+  const heading = leaving.heading;
+  // (Its look is noted below, once the plume it is flying on is known.)
 
   const flashStartT = ctx.damageFlashStart?.get(ship.id);
   drawDamageFlash(canvasPos, iconSize / 2, flashStartT, ctx.nowMs ?? performance.now(), ctx, 'damage');
@@ -7892,6 +7941,8 @@ function drawTorchTransitShip(
     ? THRUST_HINT_ALPHA * (1 - thrustVis) * Math.max(0.35, shapedPlume) : 0;
   if (lastThrust.size > 2000) lastThrust.clear();
   lastThrust.set(ship.id, thrusting ? Math.max(0.35, shapedPlume) : 0);
+  noteFlightLook(ship.id, iconSize, heading, ctx.nowMs ?? performance.now(),
+    thrusting && ship.class !== 'kaiju' ? (isSelected ? 1.0 : 0.85) * thrustVis * shapedPlume : 0, plumeLen);
   if (hintK > 0.01) {
     const cH = Math.cos(heading), sH = Math.sin(heading);
     drawThrustHint(ctx.ctx, canvasPos.x - cH * iconSize * 0.42, canvasPos.y - sH * iconSize * 0.42, cH, sH, iconSize, hintK);
@@ -7972,7 +8023,9 @@ function drawTorchTransitShip(
       (ship.iconVariant as StructureVariant | undefined) ?? null, trimColor,
     );
     if (capImg) {
-      cg.drawImage(capImg, -iconSize / 2, -iconSize / 2, iconSize, iconSize);
+      // The Mega's art fills its box (artScaleOf): its round hull sat small in its square.
+      const art = ship.class === 'mega_destroyer' ? iconSize * artScaleOf(capImg) : iconSize;
+      cg.drawImage(capImg, -art / 2, -art / 2, art, art);
       hullFlashHere(cg, capImg, iconSize, ctx.damageFlashStart?.get(ship.id), ctx.nowMs ?? performance.now());
       recordDrawnLook(ship.id, capImg, iconSize, heading + shipBank(ship.id, heading));
     } else {
@@ -9145,7 +9198,11 @@ export function drawFogOfWarOverlay(
    *  coverage is dimmed again except where a `pierce` sensor reaches. */
   edge?: { wash: number; cuts?: Array<{ pos: { x: number; y: number }; range: number; pierce: Array<{ pos: { x: number; y: number }; range: number }> }> },
 ) {
-  if (strength <= 0) return;
+  // A Studio shot's 'territory' step takes the coverage outline with the
+  // wash: in a wide shot its merged circles read as territory bubbles
+  // (judges, round 2: "the territory overlay won't stay hidden").
+  if (studioWash != null) strength *= studioWash;
+  if (strength <= 0.01) return;
   const w = ctx.canvas.width;
   const h = ctx.canvas.height;
   if (!fogOffscreen || fogOffscreen.width !== w || fogOffscreen.height !== h) {

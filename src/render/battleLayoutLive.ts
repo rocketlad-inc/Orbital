@@ -201,8 +201,16 @@ export function liveBattleFor(
   const hit = cache.get(bodyId);
   if (hit && hit.key === key) { pending.delete(bodyId); return hit; }
   if (hit && dwell) {
+    // The wait runs from the FIRST change, and the re-solve takes whatever
+    // the roster is by then. Restarted on every change, a battle losing a
+    // hull every tick (ticks under the dwell apart) never re-solved, and
+    // every arrival stayed held where it flew in, nose out at the edge of
+    // the Sun (Lorne, Dyson Sphere clip, 2026-10-23). A hull flickering in
+    // and out of fog still never gets through: each flick back to the
+    // cached roster clears the pending change above.
     const p = pending.get(bodyId);
-    if (!p || p.key !== key) { pending.set(bodyId, { key, since: dwell.nowMs }); return hit; }
+    if (!p) { pending.set(bodyId, { key, since: dwell.nowMs }); return hit; }
+    p.key = key;
     if (dwell.nowMs - p.since < (dwell.ms ?? ROSTER_DWELL_MS)) return hit;
   }
   pending.delete(bodyId);

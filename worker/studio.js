@@ -43,6 +43,10 @@ import { ensureCaptainFloor, ensureCaptains } from './captains.js';
 import { EMBLEM_IDS } from './emblems.js';
 import { STUDIO_MARK, SHIP_CLASSES, LOADOUT_PRESETS, FUEL_MAX, TAG, whenTick, expandScenario, EXAMPLES, solveMoveTiming } from './studioScene.js';
 import { routes as actionRoutes, MEGA_STRIKE_CHARGE_TICKS } from './actions.js';
+import { routes as tradeRoutesV2 } from './tradeRoutesV2.js';
+import { backfillMissingBodies } from './factions.js';
+import { cfg as gameCfg, invalidate as invalidateCfg } from './gameConfig.js';
+import { spawnSunGatePair, SUN_GATE_SYSTEMS } from './sunGates.js';
 
 function json(data, init = {}) {
   const headers = new Headers(init.headers);
@@ -174,6 +178,12 @@ async function resetStudioRows(env, gameId) {
     env.DB.prepare('DELETE FROM senate_effects WHERE game_id = ? AND id LIKE ?').bind(gameId, like),
     env.DB.prepare('DELETE FROM senate_proposals WHERE game_id = ? AND id LIKE ?').bind(gameId, like),
     env.DB.prepare('DELETE FROM senate_terms WHERE game_id = ? AND id LIKE ?').bind(gameId, like),
+    // A sphere founded on a studio station goes with it (the station is
+    // deleted above, and a sphere without its foundation collapses).
+    env.DB.prepare(`UPDATE games SET dyson_controller_faction_id = NULL, dyson_foundation_settlement_id = NULL,
+        dyson_started_at_tick = NULL, dyson_hp = NULL, dyson_station_last_hp = NULL,
+        dyson_acc_fuel = 0, dyson_acc_ore = 0, dyson_acc_credits = 0, dyson_acc_science = 0
+       WHERE id = ? AND dyson_foundation_settlement_id LIKE ?`).bind(gameId, like),
   ]);
   // Salvos a previous take launched (missiles.js ids '<game>:msl_<tick>_…').
   // Not studio-marked, but only ever in a test game here; a re-take starts
@@ -204,6 +214,7 @@ export async function applyScenario(env, spec, { session = null } = {}) {
   }
   const game = await env.DB.prepare('SELECT current_tick, gating_enabled FROM games WHERE id = ?').bind(gameId).first();
   const tick = Number(game.current_tick) || 0;
+  if (spec.farSystems) await enableFarSystems(env, gameId, tick, spec.gates);
   const factions = await resolveFactions(env, gameId, spec);
   const fid = (key) => factions.get(key).id;
 
@@ -272,6 +283,46 @@ export async function applyScenario(env, spec, { session = null } = {}) {
   }
   if (worldStmts.length) await env.DB.batch(worldStmts);
   for (const w of spec.worlds) if (w.owner) await recomputeBodyOwnership(env.DB, gameId, bodyOf(w.body, 'worlds').id);
+
+  // ---- the Dyson Sphere (sim/dysonRoutes.mjs is the same seed) ----
+  if (spec.dyson) {
+    const sol = bodyOf('sol', 'dyson');
+    const owner = fid(spec.dyson.owner);
+    const stId = `${gameId}:${STUDIO_MARK}dyson_found`;
+    const r = Number(sol.radius) + Math.max(3, 0.22 * Number(sol.radius));
+    const T = { ore: 15000, credits: 15000, science: 10000 };
+    const p = spec.dyson.progress;
+    const acc = { ore: Math.round(T.ore * p), credits: Math.round(T.credits * p), science: Math.round(T.science * p) };
+    const hp = acc.ore + acc.credits + acc.science;
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT OR REPLACE INTO game_settlements (id, game_id, body_id, owner_faction_id, type, name, hp, hp_max, population,
+            orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, created_at_tick, last_growth_tick, last_harvest_tick, has_collector)
+         VALUES (?, ?, ?, ?, 'station', 'Dyson Foundation', ?, ?, 1, ?, ?, 0, 0, ?, ?, ?, ?, 1)`)
+        .bind(stId, gameId, sol.id, owner, spec.dyson.stationHp, spec.dyson.stationHp, r, r, tick, tick, tick, tick),
+      env.DB.prepare(
+        `UPDATE games SET dyson_controller_faction_id = ?, dyson_foundation_settlement_id = ?, dyson_started_at_tick = ?,
+            dyson_target_fuel = 0, dyson_target_ore = ?, dyson_target_credits = ?, dyson_target_science = ?, dyson_max_hp = ?,
+            dyson_acc_fuel = 0, dyson_acc_ore = ?, dyson_acc_credits = ?, dyson_acc_science = ?, dyson_hp = ?,
+            dyson_station_last_hp = NULL
+          WHERE id = ?`)
+        .bind(owner, stId, tick, T.ore, T.credits, T.science, T.ore + T.credits + T.science,
+          acc.ore, acc.credits, acc.science, hp, gameId),
+    ]);
+  }
+
+  // ---- meteoroids: seen by who should see them, and full again ----
+  for (const m of spec.meteoroids) {
+    const b = bodyOf(m.body, 'meteoroids');
+    const who = m.discoveredBy === 'all' ? [...factions.values()] : [factions.get(m.discoveredBy)];
+    await env.DB.batch([
+      ...who.map(f => env.DB.prepare(
+        'INSERT OR IGNORE INTO game_body_discoveries (game_id, faction_id, body_id, discovered_at_tick) VALUES (?, ?, ?, ?)',
+      ).bind(gameId, f.id, b.id, tick)),
+      env.DB.prepare('UPDATE game_bodies SET mineral_remaining = COALESCE(?, mineral_initial), exhausted_at_tick = NULL WHERE id = ?')
+        .bind(m.tons, b.id),
+    ]);
+  }
 
   // ---- silos (servers with the Missile Silo only: migrations 0178/0179) ----
   // The silo is a city building, so it goes in the owner's city on that
@@ -555,7 +606,11 @@ export async function applyScenario(env, spec, { session = null } = {}) {
         const r = shipRows.get(id);
         arrivals.push(await room.planLegForShip(gameId, depart, id, fid(r.owner), r.at.id, to.id, arrive));
       }
-      done.push({ type: 'move', ships: ids.length, to: o.to, depart, arrive: Math.max(...arrivals), ...(want != null ? { asked: want } : {}) });
+      if (o.settle === 'station') {
+        await env.DB.prepare(`UPDATE game_ships SET deploy_on_arrival = 'station' WHERE id IN (${ids.map(() => '?').join(',')})`).bind(...ids).run();
+      }
+      done.push({ type: 'move', ships: ids.length, to: o.to, depart, arrive: Math.max(...arrivals), ...(want != null ? { asked: want } : {}),
+        ...(o.settle ? { settle: o.settle } : {}) });
     } else if (o.type === 'strike') {
       const [id] = shipsOf(o.ship);
       const r = shipRows.get(id);
@@ -581,6 +636,25 @@ export async function applyScenario(env, spec, { session = null } = {}) {
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(`orders.trade: ${body?.error?.message ?? res.status}`);
       done.push({ type: 'trade', ship: id, from: o.from, to: o.to, route_id: body?.route?.id ?? null });
+    } else if (o.type === 'mine') {
+      const [id] = shipsOf(o.ship);
+      const r = shipRows.get(id);
+      const route = tradeRoutesV2.find(x => x.method === 'POST' && x.pattern instanceof RegExp && x.pattern.source.includes('trade-routes\\/full$'));
+      if (!route) throw new Error('mining route handler not found');
+      const ownerUser = factions.get(r.owner).user_id;
+      const url = new URL(`https://studio/api/games/${gameId}/trade-routes/full`);
+      const req = new Request(url, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Mining run',
+          stops: [{ body_id: bodyOf(o.rock, 'orders.mine').id, action: 'mine' }, { body_id: bodyOf(o.to, 'orders.mine').id, action: 'dropoff' }],
+          carrier_ship_ids: [id], loop_mode: 'count', loop_count: o.loops,
+        }),
+      });
+      const res = await route.handle(req, env, { url, session: { user_id: ownerUser }, params: { gameId } });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(`orders.mine: ${body?.error?.message ?? res.status}`);
+      done.push({ type: 'mine', ship: id, rock: o.rock, to: o.to, loops: o.loops, route_id: body?.route?.id ?? null });
     }
   }
 
@@ -590,6 +664,103 @@ export async function applyScenario(env, spec, { session = null } = {}) {
       seat_me: spec.seatMe && f.key === spec.viewer })),
     viewer: spec.viewer, ships: shipIds, fleets: fleetIds, wars: warIds.length, orders: done, laws: lawIds, silos: siloOut, warnings,
   };
+}
+
+/**
+ * The far systems on a studio board: the game's own far_systems dial on a
+ * config of its own (the published one is left alone), the far bodies
+ * added the way a running game gets them (backfillMissingBodies), and with
+ * `gates` the Centauri sun gate pair spawned already open. The game's own
+ * gate sequence is marked long finished, so no second gate (or Leviathan)
+ * arrives mid-take.
+ */
+async function enableFarSystems(env, gameId, tick, gates) {
+  const g = await env.DB
+    .prepare('SELECT g.config_id, c.overrides FROM games g LEFT JOIN game_configs c ON c.id = g.config_id WHERE g.id = ?')
+    .bind(gameId).first();
+  let ov = {};
+  try { ov = JSON.parse(g?.overrides || '{}') || {}; } catch { ov = {}; }
+  if (Number(ov.far_systems) !== 1) {
+    const id = `cfg_studio_${gameId}`.slice(0, 64);
+    const now = Date.now();
+    await env.DB.batch([
+      env.DB.prepare(`INSERT OR REPLACE INTO game_configs (id, name, status, overrides, created_ms, updated_ms)
+                      VALUES (?, 'studio: far systems', 'archived', ?, ?, ?)`)
+        .bind(id, JSON.stringify({ ...ov, far_systems: 1 }), now, now),
+      env.DB.prepare('UPDATE games SET config_id = ? WHERE id = ?').bind(id, gameId),
+    ]);
+    invalidateCfg(gameId);
+  }
+  await backfillMissingBodies(env, gameId, { farOnly: true });
+  if (gates) {
+    await env.DB.prepare('UPDATE games SET sun_gate_tick = ? WHERE id = ?').bind(tick - 1000, gameId).run();
+    await spawnSunGatePair(env, gameId, SUN_GATE_SYSTEMS[0], tick - 40, await gameCfg(env, gameId));
+  }
+}
+
+/**
+ * POST /api/admin/studio/games/:gameId/order  (mid-take, from a shot's 'order' step)
+ *
+ *   { type: 'move', ships: ['st_col_0'], to: 'verdant', settle?: 'station' }
+ *     a leg from wherever each hull is parked now, with the real planner.
+ *   { type: 'gate', ship: 'st_col_0', then?: { to: 'verdant', settle?: 'station' } }
+ *     through the sun gate the hull is parked on: the player's own
+ *     crossing (so the gate flashes), and then the leg on from the far end,
+ *     departing as it lands.
+ */
+async function handleOrder(req, env, { session, params }) {
+  const { gameId } = params;
+  if (!(await allowedInGame(req, env, session, gameId))) return err(404, 'not_found', 'no such route');
+  const g = await env.DB.prepare('SELECT id, is_test_game, current_tick FROM games WHERE id = ?').bind(gameId).first();
+  if (!g || (g.is_test_game ?? 0) !== 1) return err(404, 'not_found', 'no such test game');
+  const tick = Number(g.current_tick) || 0;
+  const o = await readJson(req);
+  const full = (s) => { const raw = String(s ?? ''); return raw.startsWith(`${gameId}:`) ? raw : `${gameId}:${raw}`; };
+  const bodyId = async (tpl) => {
+    const b = await env.DB.prepare('SELECT id FROM game_bodies WHERE game_id = ? AND template_id = ? AND destroyed_at_tick IS NULL LIMIT 1')
+      .bind(gameId, String(tpl ?? '')).first();
+    return b?.id ?? null;
+  };
+  const shipRow = (id) => env.DB
+    .prepare('SELECT s.id, s.name, s.owner_faction_id, s.parent_body_id, s.status, f.user_id FROM game_ships s JOIN game_factions f ON f.id = s.owner_faction_id WHERE s.id = ? AND s.game_id = ?')
+    .bind(id, gameId).first();
+  const { Room } = await import('./room.js');
+  const room = new Room(null, env);
+  const leg = async (ship, depart, fromId, toTpl, settle) => {
+    const to = await bodyId(toTpl);
+    if (!to) throw new Error(`no world '${toTpl}'`);
+    const arrive = await room.planLegForShip(gameId, depart, ship.id, ship.owner_faction_id, fromId, to, null);
+    if (settle === 'station') await env.DB.prepare(`UPDATE game_ships SET deploy_on_arrival = 'station' WHERE id = ?`).bind(ship.id).run();
+    return arrive;
+  };
+  try {
+    if (o?.type === 'move') {
+      const out = [];
+      for (const s of (Array.isArray(o.ships) ? o.ships : [o.ships])) {
+        const ship = await shipRow(full(s));
+        if (!ship || ship.status !== 'active' || !ship.parent_body_id) throw new Error(`${s} is not parked`);
+        out.push({ ship: ship.id, arrive: await leg(ship, tick, ship.parent_body_id, o.to, o.settle) });
+      }
+      return json({ ok: true, type: 'move', legs: out });
+    }
+    if (o?.type === 'gate') {
+      const ship = await shipRow(full(o.ship));
+      if (!ship) return err(404, 'not_found', `no ship ${o.ship}`);
+      const route = actionRoutes.find(x => x.method === 'POST' && x.pattern instanceof RegExp && x.pattern.source.endsWith('\\/gate$'));
+      if (!route) throw new Error('gate handler not found');
+      const url = new URL(`https://studio/api/games/${gameId}/ships/${ship.id}/gate`);
+      const res = await route.handle(new Request(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),
+        env, { url, session: { user_id: ship.user_id }, params: { gameId, shipId: ship.id } });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) return err(409, 'gate', body?.error?.message ?? `gate refused (${res.status})`);
+      let then = null;
+      if (o.then?.to) then = { to: o.then.to, arrive: await leg(ship, Number(body.arrive_at_tick), body.to.id, o.then.to, o.then.settle) };
+      return json({ ok: true, type: 'gate', through: body.from?.name, lands: body.arrive_at_tick, then });
+    }
+    return err(400, 'bad_request', "type must be 'move' or 'gate'");
+  } catch (e) {
+    return err(400, 'bad_order', String(e?.message ?? e));
+  }
 }
 
 // ---------- handlers ----------
@@ -789,6 +960,7 @@ export const routes = [
   { method: 'POST', pattern: /^\/api\/admin\/studio\/games\/(?<gameId>[A-Za-z0-9_-]{6,32})\/tick$/, auth: 'required', handle: handleTick },
   { method: 'POST', pattern: /^\/api\/admin\/studio\/games\/(?<gameId>[A-Za-z0-9_-]{6,32})\/strike$/, auth: 'required', handle: handleStrike },
   { method: 'POST', pattern: /^\/api\/admin\/studio\/games\/(?<gameId>[A-Za-z0-9_-]{6,32})\/hull$/, auth: 'required', handle: handleHull },
+  { method: 'POST', pattern: /^\/api\/admin\/studio\/games\/(?<gameId>[A-Za-z0-9_-]{6,32})\/order$/, auth: 'required', handle: handleOrder },
   { method: 'POST', pattern: /^\/api\/admin\/studio\/games\/(?<gameId>[A-Za-z0-9_-]{6,32})\/reset$/, auth: 'required', handle: handleReset },
   { method: 'POST', pattern: /^\/api\/admin\/studio\/games\/(?<gameId>[A-Za-z0-9_-]{6,32})\/close$/, auth: 'required', handle: handleClose },
 ];
