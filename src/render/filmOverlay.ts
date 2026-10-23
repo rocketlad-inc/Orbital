@@ -885,3 +885,172 @@ export function drawSenateCard(ctx: CanvasRenderingContext2D, W: number, H: numb
   }
   ctx.restore();
 }
+
+export interface FilmToast {
+  kind: 'war' | 'peace' | 'pact' | 'broken';
+  a: FilmFaction | undefined;
+  b: FilmFaction | undefined;
+  text: string;
+  /** 0..1 through its life. */
+  life: number;
+}
+
+const TOAST_COLOR: Record<FilmToast['kind'], string> = {
+  war: '#e5534b', broken: '#e5534b', peace: '#6fb6ff', pact: '#5fd0b4',
+};
+
+/**
+ * EVERY WAR DECLARED, on screen whatever the scene: a banner per
+ * declaration (and per peace, pact and broken pact), stacked up from the
+ * bottom right, the two empires' emblems either side of the mark.
+ */
+export function drawToasts(ctx: CanvasRenderingContext2D, W: number, H: number, toasts: FilmToast[]) {
+  if (!toasts.length) return;
+  const u = unitOf(H);
+  const h = 64 * u, gap = 10 * u, em = 26 * u;
+  let y = H - 88 * u - h;
+  ctx.save();
+  for (const t of toasts) {
+    const inK = Math.min(1, t.life / 0.08), outK = Math.max(0, (t.life - 0.88) / 0.12);
+    const a = Math.max(0, Math.min(1, inK) * (1 - outK));
+    if (a <= 0.01) { y -= h + gap; continue; }
+    ctx.globalAlpha = a;
+    ctx.font = `600 ${Math.round(28 * u)}px ${FONT_BODY}`;
+    const tw = ctx.measureText(t.text).width;
+    const w = tw + em * 3 + 28 * u * 2 + 20 * u;
+    const x = W * 0.955 - w + (1 - Math.min(1, inK)) * 30 * u;
+    const col = TOAST_COLOR[t.kind];
+    ctx.fillStyle = 'rgba(3,6,12,0.88)';
+    ctx.beginPath(); ctx.roundRect(x, y, w, h, 8 * u); ctx.fill();
+    ctx.fillStyle = col;
+    ctx.fillRect(x, y, 5 * u, h);
+    const cy = y + h / 2;
+    let cx = x + 22 * u + em / 2;
+    drawEmblem(ctx, t.a, cx, cy, em / 1.3, a);
+    cx += em * 0.75 + 6 * u;
+    // The mark between them: crossed blades for war, a bar for peace.
+    ctx.strokeStyle = col; ctx.lineWidth = 3.5 * u; ctx.lineCap = 'round';
+    const m = 9 * u, mx = cx + m;
+    ctx.beginPath();
+    if (t.kind === 'war' || t.kind === 'broken') {
+      ctx.moveTo(mx - m, cy - m); ctx.lineTo(mx + m, cy + m);
+      ctx.moveTo(mx + m, cy - m); ctx.lineTo(mx - m, cy + m);
+    } else {
+      ctx.moveTo(mx - m, cy - 4 * u); ctx.lineTo(mx + m, cy - 4 * u);
+      ctx.moveTo(mx - m, cy + 4 * u); ctx.lineTo(mx + m, cy + 4 * u);
+    }
+    ctx.stroke();
+    cx = mx + m + 6 * u + em * 0.75;
+    drawEmblem(ctx, t.b, cx, cy, em / 1.3, a);
+    cx += em * 0.75 + 16 * u;
+    ctx.fillStyle = INK; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText(t.text, cx, cy + 1 * u);
+    y -= h + gap;
+  }
+  ctx.restore();
+}
+
+export interface OutCard {
+  faction: FilmFaction;
+  stamp: string;
+  lines: string[];
+}
+
+/**
+ * AN EMPIRE'S END, made public: its emblem large, shattering, an
+ * ELIMINATED stamp across it, its name struck through and the toll
+ * underneath. `k` runs from the moment it falls (0) to the scene's end.
+ */
+export function drawOutCards(ctx: CanvasRenderingContext2D, W: number, H: number, cards: OutCard[], k: number,
+  outK: number) {
+  if (!cards.length || k <= 0) return;
+  const u = unitOf(H);
+  const a = Math.min(1, k / 0.06) * (1 - Math.max(0, Math.min(1, outK)));
+  if (a <= 0.01) return;
+  const w = 470 * u, cardH = 330 * u, gap = 24 * u;
+  const total = cards.length * cardH + (cards.length - 1) * gap;
+  let y = Math.max(H * 0.05 + 96 * u, H * 0.47 - total / 2);
+  const x = W * 0.945 - w;
+  ctx.save();
+  for (const [i, c] of cards.entries()) {
+    const kk = Math.max(0, k - i * 0.12);
+    ctx.globalAlpha = a * Math.min(1, kk / 0.06);
+    ctx.fillStyle = 'rgba(8,3,4,0.88)';
+    ctx.beginPath(); ctx.roundRect(x, y, w, cardH, 10 * u); ctx.fill();
+    ctx.fillStyle = '#c62f2f';
+    ctx.fillRect(x, y, w, 5 * u);
+    // The emblem, breaking: four shards drift apart and dim.
+    const ex = x + w / 2, ey = y + 112 * u, R = 70 * u;
+    const br = Math.min(1, Math.max(0, (kk - 0.12) / 0.5));
+    const img = getEmblemImage(c.faction.emblem ?? null, liftColor(c.faction.color, 150));
+    for (let q = 0; q < 4; q++) {
+      const ang = q * Math.PI / 2 + Math.PI / 4;
+      ctx.save();
+      ctx.globalAlpha *= 1 - 0.55 * br;
+      ctx.translate(ex + Math.cos(ang) * br * 18 * u, ey + Math.sin(ang) * br * 18 * u);
+      ctx.rotate((q % 2 ? 1 : -1) * br * 0.12);
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.arc(0, 0, R * 1.2, ang - Math.PI / 4, ang + Math.PI / 4);
+      ctx.closePath();
+      ctx.clip();
+      if (img) ctx.drawImage(img, -R, -R, R * 2, R * 2);
+      else { ctx.fillStyle = c.faction.color; ctx.beginPath(); ctx.arc(0, 0, R * 0.7, 0, Math.PI * 2); ctx.fill(); }
+      ctx.restore();
+    }
+    // The stamp, slammed on.
+    const sk = Math.min(1, Math.max(0, (kk - 0.05) / 0.12));
+    if (sk > 0) {
+      ctx.save();
+      ctx.translate(ex, ey);
+      ctx.rotate(-0.16);
+      const sc = 1 + (1 - sk) * 0.6;
+      ctx.scale(sc, sc);
+      ctx.globalAlpha *= sk;
+      ctx.font = `400 ${Math.round(46 * u)}px ${FONT_DISPLAY}`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      const sw = ctx.measureText(c.stamp).width + 30 * u;
+      ctx.strokeStyle = '#ff4d4d'; ctx.lineWidth = 4 * u;
+      ctx.strokeRect(-sw / 2, -32 * u, sw, 64 * u);
+      ctx.fillStyle = '#ff4d4d';
+      ctx.fillText(c.stamp, 0, 2 * u);
+      ctx.restore();
+    }
+    // The name, struck through, and the toll.
+    let ty = y + 214 * u;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = `400 ${Math.round(34 * u)}px ${FONT_DISPLAY}`;
+    ctx.fillStyle = liftColor(c.faction.color);
+    const nm = ellipsize(ctx, c.faction.name, w - 40 * u);
+    ctx.fillText(nm, ex, ty);
+    const nw = ctx.measureText(nm).width;
+    ctx.strokeStyle = 'rgba(255,77,77,0.9)'; ctx.lineWidth = 3 * u;
+    ctx.beginPath(); ctx.moveTo(ex - nw / 2 - 6 * u, ty); ctx.lineTo(ex - nw / 2 - 6 * u + (nw + 12 * u) * sk, ty); ctx.stroke();
+    ty += 44 * u;
+    ctx.font = `500 ${Math.round(26 * u)}px ${FONT_BODY}`;
+    ctx.fillStyle = 'rgba(238,244,251,0.85)';
+    for (const l of c.lines.slice(0, 2)) { ctx.fillText(ellipsize(ctx, l, w - 40 * u), ex, ty); ty += 32 * u; }
+    y += cardH + gap;
+  }
+  ctx.restore();
+}
+
+/** An empire's name tag pinned over its home world (the roll call). */
+export function drawHomePin(ctx: CanvasRenderingContext2D, H: number, f: FilmFaction, x: number, y: number, k: number) {
+  if (k <= 0.01) return;
+  const u = unitOf(H);
+  const a = Math.min(1, k);
+  const em = 34 * u;
+  const lift = (1 - Math.min(1, k)) * 14 * u;
+  ctx.save();
+  ctx.globalAlpha = a;
+  ctx.strokeStyle = liftColor(f.color); ctx.lineWidth = 2 * u;
+  ctx.beginPath(); ctx.moveTo(x, y - 8 * u); ctx.lineTo(x, y - 30 * u - lift); ctx.stroke();
+  drawEmblem(ctx, f, x, y - 30 * u - lift - em / 2, em / 1.3, a);
+  ctx.font = `600 ${Math.round(22 * u)}px ${FONT_BODY}`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+  ctx.fillStyle = liftColor(f.color);
+  ctx.shadowColor = 'rgba(0,0,0,0.85)'; ctx.shadowBlur = 5 * u;
+  ctx.fillText(shortName(f.name), x, y - 30 * u - lift - em - 4 * u);
+  ctx.restore();
+}

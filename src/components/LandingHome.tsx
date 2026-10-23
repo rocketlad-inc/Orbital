@@ -11,8 +11,8 @@
 // made by scratchpad landing_images.py) and public/clips/ (looping clips).
 // ============================================================
 
-import React, { useEffect, useState } from 'react';
-import { t, tk } from '../i18n/core';
+import React, { useEffect, useRef, useState } from 'react';
+import { t, tk, type Key } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import './LandingHome.css';
 
@@ -36,20 +36,39 @@ const Shot: React.FC<{ name: string; w: number; h: number; alt: string; eager?: 
 
 /** A looping clip. The still poster paints first (and is all a visitor who
  *  asked for reduced motion ever sees); the animated file swaps in once the
- *  page has loaded, so a 5 MB loop never competes with the first paint. */
+ *  page has loaded, so a 4 MB loop never competes with the first paint.
+ *  Clips further down wait until they are about to scroll into view, so a
+ *  visitor who never scrolls never downloads them. */
 const Clip: React.FC<{ name: string; w: number; h: number; alt: string; eager?: boolean }> = ({ name, w, h, alt, eager }) => {
   const [live, setLive] = useState(false);
+  const ref = useRef<HTMLImageElement>(null);
   useEffect(() => {
     let reduce = false;
     try { reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { /* old browser */ }
     if (reduce) return;
-    const go = () => setLive(true);
-    if (document.readyState === 'complete') { const timer = window.setTimeout(go, eager ? 300 : 1200); return () => window.clearTimeout(timer); }
-    window.addEventListener('load', go, { once: true });
-    return () => window.removeEventListener('load', go);
+    let cancelled = false;
+    let obs: IntersectionObserver | null = null;
+    const go = () => {
+      if (cancelled) return;
+      if (eager || typeof IntersectionObserver === 'undefined' || !ref.current) { setLive(true); return; }
+      obs = new IntersectionObserver((entries) => {
+        if (entries.some(e => e.isIntersecting)) { setLive(true); obs?.disconnect(); }
+      }, { rootMargin: '300px 0px' });
+      obs.observe(ref.current);
+    };
+    let timer = 0;
+    if (document.readyState === 'complete') timer = window.setTimeout(go, eager ? 300 : 1200);
+    else window.addEventListener('load', go, { once: true });
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      window.removeEventListener('load', go);
+      obs?.disconnect();
+    };
   }, [eager]);
   return (
     <img
+      ref={ref}
       src={live ? `/clips/${name}.webp` : `/clips/${name}-poster.webp`}
       width={w}
       height={h}
@@ -121,7 +140,7 @@ export const LandingHome: React.FC<Props> = ({ onSignIn }) => {
       <div className="lh-hero__visual">
         <div className="lh-orbits" aria-hidden />
         <Frame caption={t('landing.hero.caption')}>
-          <Clip name="flight-mars-to-europa" w={960} h={540} eager
+          <Clip name="mega-destroyer-jupiter-to-earth" w={960} h={540} eager
             alt={t('landing.hero.clipAlt')} />
         </Frame>
       </div>
@@ -280,18 +299,20 @@ export const LandingHome: React.FC<Props> = ({ onSignIn }) => {
         <h2 id="lh-scenes" className="lh-h2">{t('landing.scenes.title')}</h2>
       </header>
       <div className="lh-scenes">
-        <Frame caption={t('landing.scenes.zoomCaption')}>
-          <Clip name="zoom-system-to-mars" w={640} h={360} alt={t('landing.scenes.zoomAlt')} />
-        </Frame>
-        <Frame caption={t('landing.scenes.megaCaption')}>
-          <Clip name="mega-destroyer-over-luna" w={640} h={360} alt={t('landing.scenes.megaAlt')} />
-        </Frame>
-        <Frame caption={t('landing.scenes.tritonCaption')}>
-          <Shot name="battle-triton" w={520} h={519} alt={t('landing.scenes.tritonAlt')} />
-        </Frame>
-        <Frame caption={t('landing.scenes.charonCaption')}>
-          <Shot name="battle-charon" w={520} h={505} alt={t('landing.scenes.charonAlt')} />
-        </Frame>
+        {/* Studio clips (marketing/sol-wars-screenshots/gifs 18-26),
+            re-encoded at 640 px / 15 fps for the page. */}
+        {([
+          ['battle-of-the-dyson-sphere', 'dyson'],
+          ['mega-destroyer-sterilises-venus', 'venus'],
+          ['three-way-battle-of-earth', 'earth'],
+          ['senate-double-damage', 'senate'],
+          ['select-and-strike', 'strike'],
+          ['earth-to-europa', 'europa'],
+        ] as const).map(([name, key]) => (
+          <Frame key={name} caption={t(`landing.scenes.${key}Caption` as Key)}>
+            <Clip name={name} w={640} h={360} alt={t(`landing.scenes.${key}Alt` as Key)} />
+          </Frame>
+        ))}
       </div>
     </section>
 

@@ -49,7 +49,7 @@ import { getShipClass } from '../game/shipClasses';
 import { getEmblemImage } from './emblemCache';
 import { getLang, tIn, type Key } from '../i18n/core';
 import {
-  battleWindow, filmSecondsAt, planReel, reelRate, reelSeconds,
+  battleWindow, filmSecondsAt, planReel, reelRate, reelSeconds, sceneAt,
   type ReelBattle, type ReelBeat, type ReelScene,
 } from './filmReel';
 import { beatCaption, billName, broadcastCopy, buildBeats, captionFor, type Caption } from './filmCaptions';
@@ -58,6 +58,7 @@ import {
   drawResultCard, drawStandings, drawTicker, drawTitleCard, drawVignette,
   liftColor, unitOf, type FilmFaction, type StandingRow, type TallySide,
   drawBattleVerdict, drawProgressMeter, shortName, drawHookLine, drawDysonShell, drawSenateCard,
+  drawToasts, drawOutCards, drawHomePin,
 } from './filmOverlay';
 
 const NEUTRAL = '#8a9fb3';
@@ -73,6 +74,9 @@ const TICKER_KINDS = new Set([
 ]);
 /** Film seconds between two ticker lines coming up, and each one's life. */
 const TICKER_GAP_SECONDS = 0.7;
+/** War, peace and pact banners: the least gap between two, and their life. */
+const TOAST_GAP_SECONDS = 0.5;
+const TOAST_LIFE_SECONDS = 3.0;
 const TICKER_LIFE_SECONDS = 2.6;
 const CLASSES = ['corvette', 'frigate', 'destroyer', 'freighter', 'colony'];
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- iconClassOf — icon refactor in flight
@@ -227,6 +231,15 @@ export function createMatchMap(
   /** The scene playing now (set by the camera). */
   let curScene: ReelScene | undefined;
   let filmTotal = 0;
+  /** Each empire's first world, for the roll call. */
+  const homes: Array<{ fid: string; body: string }> = [];
+  /** Every colony founded in the opening act, with the film second it lands. */
+  let built: Array<{ at: number; body: string; fid: string }> = [];
+  /** The roll call: when the first pin lands, the gap between pins, and
+   *  when they lift off for the land grab (film seconds into the act). */
+  const ROLL_CALL_AT = 0.5, ROLL_CALL_STEP = 0.32, ROLL_CALL_END = 5.2;
+  /** War, peace and pact banners, with the film second each comes up. */
+  let toasts: Array<{ at: number; kind: 'war' | 'peace' | 'pact' | 'broken'; a: string; b: string }> = [];
   /** Smaller headlines, with the film second each one comes up. */
   let ticker: Array<{ beat: ReelBeat; start: number }> = [];
 
@@ -509,6 +522,32 @@ export function createMatchMap(
       }
     }
 
+    // THE END OF AN EMPIRE IS A SCENE OF ITS OWN: opened a day earlier on
+    // the siege of its last world, held longer, and its toll counted.
+    {
+      const fidByName = new Map(summary.factions.map(f => [f.name, f.id]));
+      for (const e of beats) {
+        if (e.kind !== 'faction_eliminated' || e.weight <= 0) continue;
+        e.lead = 3;
+        e.hold = 7.2;
+        const names = [...(Array.isArray(e.data?.together) ? e.data!.together as string[] : []),
+          String(e.data?.faction_name ?? '')];
+        const toll = names.map(n => {
+          const fid = fidByName.get(n) ?? (n === e.data?.faction_name ? e.fid : null);
+          if (!fid) return null;
+          let peak = 0, lost = 0;
+          const step = Math.max(1, Math.floor((e.tick - lo) / 60));
+          for (let t = lo; t <= e.tick; t += step) {
+            const row = standingsAt(t).find(r => r.faction.id === fid);
+            if (row) peak = Math.max(peak, row.worlds);
+          }
+          for (const [t, list] of deathAt) if (t <= e.tick) for (const d of list) if (d.fid === fid) lost++;
+          return { fid, peak, lost };
+        }).filter(Boolean);
+        e.data = { ...e.data, toll };
+      }
+    }
+
     // THE LEVIATHAN'S SCENES GO WHERE THE LEVIATHAN IS. Its log rows name
     // the world it is after; the beast itself is parked at a sun gate, or
     // at the moon it is eating, and that is the shot.
@@ -571,9 +610,16 @@ export function createMatchMap(
     lastFacts = { battles, beats: [...beats].filter(b => b.weight > 0).sort((a, b) => b.weight - a.weight).slice(0, 40)
       .map(b => ({ tick: b.tick, kind: b.kind, w: Math.round(b.weight), body: b.body, text: b.text.slice(0, 60) })) };
     const dysonBody = (summary.chronicle ?? []).find(r => r.kind === 'dyson_initiated')?.body_id ?? null;
+    // THE OPENING ACT runs to just before the first war: the roll call and
+    // the land grab, never a nine-second time-lapse.
+    const firstWar = (summary.chronicle ?? []).find(r => r.kind === 'war_declared')?.tick_number;
+    const span = hi - lo;
+    const openingTo = Math.round(Math.max(lo + span * 0.12, Math.min(lo + span * 0.35,
+      firstWar != null ? firstWar - 3 : lo + span * 0.25)));
     scenes = planReel({ lo, hi, battles, beats }, {
       finaleBody: summary.game.victory_type === 'engineering' && dysonBody && byId.has(dysonBody)
         ? dysonBody : null,
+      openingTo,
     });
     filmTotal = reelSeconds(scenes);
     captionCache.clear();
@@ -601,6 +647,24 @@ export function createMatchMap(
     systemFrames.clear();
     travelSeconds.clear();
 
+    buildToasts();
+    homes.length = 0;
+    built = [];
+    {
+      const opening = scenes.find(x => x.act === 'opening');
+      const firstOf = new Set<string>();
+      for (const r of summary.chronicle ?? []) {
+        if (r.kind !== 'settlement_built' || !r.actor_faction_id || !r.body_id || !byGame.has(r.body_id)) continue;
+        if (!firstOf.has(r.actor_faction_id) && r.tick_number <= lo + 3 && !/:leviathan_f$/.test(r.actor_faction_id)) {
+          firstOf.add(r.actor_faction_id);
+          homes.push({ fid: r.actor_faction_id, body: r.body_id });
+        }
+        if (opening && r.tick_number >= opening.from && r.tick_number < opening.to) {
+          built.push({ at: filmSecondsAt(scenes, r.tick_number), body: r.body_id, fid: r.actor_faction_id });
+        }
+      }
+    }
+
     // --- the ticker: smaller headlines, spaced so each can be read ------
     ticker = [];
     let lastStart = -Infinity;
@@ -616,6 +680,39 @@ export function createMatchMap(
         ticker.push({ beat: e, start });
         lastStart = start;
       }
+    }
+  };
+
+  /**
+   * EVERY DECLARATION OF WAR, and every peace, pact and broken pact, as a
+   * banner at the moment it happens, in whatever scene that is. One that
+   * falls in a stretch the film cuts across comes up as the next scene
+   * opens; they stack (three at most) rather than queue out of their time.
+   */
+  const buildToasts = () => {
+    toasts = [];
+    const seen = new Set<string>();
+    const rows = (summary.chronicle ?? []).filter(r => /^(war_declared|war_ended|treaty_signed|treaty_broken)$/.test(r.kind));
+    let lastAt = -Infinity;
+    for (const r of rows) {
+      const a = r.actor_faction_id ?? null, b = r.target_faction_id ?? null;
+      if (!a || !b) continue;
+      const pair = [a, b].sort().join('|');
+      const kind = r.kind === 'war_declared' ? 'war' : r.kind === 'war_ended' ? 'peace'
+        : r.kind === 'treaty_broken' ? 'broken' : 'pact';
+      // A pact is signed as three treaties at once: one banner.
+      const key = `${kind}:${pair}:${r.tick_number}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      // Not over the cold open or the result.
+      const sc = sceneAt(scenes, r.tick_number);
+      if (!sc || sc.kind === 'intro' || sc.kind === 'finale') continue;
+      // The scene that IS this war says it already.
+      if (sc.kind === 'beat' && sc.beat?.kind === 'war_declared'
+        && (sc.beat.target === b || sc.beat.fid === a) && Math.abs(sc.beat.tick - r.tick_number) <= 12) continue;
+      const at = Math.max(filmSecondsAt(scenes, r.tick_number), lastAt + TOAST_GAP_SECONDS);
+      toasts.push({ at, kind, a, b });
+      lastAt = at;
     }
   };
 
@@ -1599,6 +1696,76 @@ export function createMatchMap(
         ctx.restore();
       }
     }
+    // THE OPENING ACT on the map: each empire pinned to its home world in
+    // turn (the roll call), then every colony lighting up in its founder's
+    // colour as it is settled (the land grab).
+    if (curScene?.act === 'opening') {
+      const fsNow = filmSecondsAt(scenes, clockT);
+      const el0 = fsNow - filmSecondsAt(scenes, curScene.from);
+      const u = unitOf(H);
+      homes.forEach((h, i) => {
+        const gb = byGame.get(h.body);
+        const f = filmFaction(h.fid);
+        if (!gb || !f || !shown(gb)) return;
+        const k = Math.min((el0 - ROLL_CALL_AT - i * ROLL_CALL_STEP) / 0.3, (ROLL_CALL_END - el0) / 0.5);
+        if (k <= 0) return;
+        const cp = toPx(pos(gb.id, t));
+        drawHomePin(ctx, H, f, cp.x, cp.y - drawnRadiusOf(pres, gb, cam.scale), k);
+      });
+      ctx.save();
+      for (const b of built) {
+        const k = (fsNow - b.at) / 1.1;
+        if (k < 0 || k >= 1) continue;
+        const gb = byGame.get(b.body);
+        if (!gb || !shown(gb)) continue;
+        const cp = toPx(pos(gb.id, t));
+        const col = colorOf(b.fid);
+        ctx.globalAlpha = 1 - k;
+        ctx.strokeStyle = liftColor(col, 150);
+        ctx.lineWidth = Math.max(1.5, 3 * u * (1 - k));
+        ctx.beginPath(); ctx.arc(cp.x, cp.y, (8 + 34 * Math.sqrt(k)) * u, 0, Math.PI * 2); ctx.stroke();
+        ctx.fillStyle = liftColor(col, 150);
+        ctx.beginPath(); ctx.arc(cp.x, cp.y, 4 * u, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.restore();
+    }
+    // A WAR DECLARED on the map: while its banner is up, a red line from
+    // the aggressor's capital to its target's.
+    if (overview > 0.35) {
+      const fsNow = filmSecondsAt(scenes, clockT);
+      const capital = (fid: string) => {
+        let best: string | null = null, pop = -1;
+        for (const st of world.stls.values()) if (st.fid === fid && st.pop > pop && byGame.has(st.body)) { best = st.body; pop = st.pop; }
+        return best;
+      };
+      ctx.save();
+      for (const ts of toasts) {
+        if (ts.kind !== 'war') continue;
+        const k = (fsNow - ts.at) / TOAST_LIFE_SECONDS;
+        if (k < 0 || k >= 1) continue;
+        const ca = capital(ts.a), cb = capital(ts.b);
+        if (!ca || !cb || ca === cb) continue;
+        const pa = toPx(pos(ca, t)), pb = toPx(pos(cb, t));
+        const grow = Math.min(1, k / 0.25);
+        const mx = (pa.x + pb.x) / 2, my = (pa.y + pb.y) / 2;
+        const nx = -(pb.y - pa.y) * 0.18, ny = (pb.x - pa.x) * 0.18;
+        ctx.globalAlpha = overview * Math.min(1, (1 - k) / 0.2) * 0.9;
+        ctx.strokeStyle = '#ff5a4e';
+        ctx.lineWidth = Math.max(2, 3 * unitOf(H));
+        ctx.setLineDash([10 * unitOf(H), 7 * unitOf(H)]);
+        ctx.beginPath();
+        // Drawn out from the aggressor as it is declared.
+        const steps = 24;
+        for (let i = 0; i <= steps * grow; i++) {
+          const q = i / steps;
+          const x = (1 - q) * (1 - q) * pa.x + 2 * (1 - q) * q * (mx + nx) + q * q * pb.x;
+          const y = (1 - q) * (1 - q) * pa.y + 2 * (1 - q) * q * (my + ny) + q * q * pb.y;
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
     // WHERE THE CAMERA IS GOING, marked on the map as it travels: a
     // reticle round the next world and its name, so the zoom out reads as
     // "here is where this is", not as a swoop.
@@ -2146,7 +2313,23 @@ export function createMatchMap(
     // keeps clear of how far it reaches.
     const cap = !intro && !finale ? captionOf(s) : null;
     let ltRight = 0;
-    if (cap && cap.title && !(s.kind === 'montage' && s.seconds < 1.1)) {
+    if (s.act === 'opening') {
+      // Two captions: who is here (with the roll call), then the land grab.
+      const n = built.length;
+      const most = new Map<string, number>();
+      for (const b of built) most.set(b.fid, (most.get(b.fid) ?? 0) + 1);
+      const lead = [...most.entries()].sort((a, b) => b[1] - a[1])[0];
+      if (el < ROLL_CALL_END) {
+        ltRight = drawLowerThird(ctx, W, H, { kicker: T('kicker.start'), title: T('title.begin', { n: empires.length }),
+          sub: '', color: null }, el / 0.2, (el - (ROLL_CALL_END - 0.2)) / 0.2);
+      } else if (n > 0) {
+        ltRight = drawLowerThird(ctx, W, H, { kicker: T('land.kicker'),
+          title: T('land.title', { n, d: Math.max(1, s.to - s.from) }),
+          sub: lead ? T('land.sub', { a: shortName(filmFaction(lead[0])?.name ?? ''), k: lead[1] }) : '',
+          color: lead ? colorOf(lead[0]) : null },
+        (el - ROLL_CALL_END - 0.15) / 0.2, (el - (s.seconds - 0.2)) / 0.2);
+      }
+    } else if (cap && cap.title && !(s.kind === 'montage' && s.seconds < 1.1)) {
       const c = cap;
       // A montage line is a quick read: in and out briskly.
       // SNAP IN, HOLD, SNAP OUT: a 1.3 s fade left a two-second beat
@@ -2156,10 +2339,36 @@ export function createMatchMap(
       el / 0.2, (el - (s.seconds - 0.18)) / 0.18);
     }
 
-    // The ticker: one line, about what is in shot.
+    // EVERY WAR, PEACE AND PACT, as it happens (see buildToasts).
+    const liveToasts = intro || finale ? [] : toasts.filter(x => fs >= x.at && fs < x.at + TOAST_LIFE_SECONDS).slice(-3);
+    if (liveToasts.length) {
+      drawToasts(ctx, W, H, liveToasts.reverse().map(x => {
+        const a = filmFaction(x.a), b = filmFaction(x.b);
+        const na = shortName(a?.name ?? ''), nb = shortName(b?.name ?? '');
+        return { kind: x.kind, a, b, life: (fs - x.at) / TOAST_LIFE_SECONDS,
+          text: T(`toast.${x.kind}`, { a: na, b: nb }) };
+      }));
+    }
+    // AN EMPIRE'S END: its card, slammed on as it falls.
+    if (s.kind === 'beat' && s.beat?.kind === 'faction_eliminated' && Array.isArray(s.beat.data?.toll)) {
+      const fell = filmSecondsAt(scenes, s.beat.tick - 0.4);
+      const killer = typeof s.beat.data?.killer_faction_name === 'string' ? shortName(s.beat.data.killer_faction_name) : '';
+      const toll = s.beat.data!.toll as Array<{ fid: string; peak: number; lost: number }>;
+      const day = s.beat.tick;
+      const cards = toll.map(x => {
+        const f = filmFaction(x.fid);
+        return f ? { faction: f, stamp: T('out.stamp'), lines: [
+          `${T('out.lasted', { d: day })} · ${T('out.peak', { n: x.peak })}`,
+          `${T('out.lost', { n: x.lost })}${killer && toll.length === 1 ? ` · ${T('out.by', { k: killer })}` : ''}`,
+        ] } : null;
+      }).filter((x): x is NonNullable<typeof x> => !!x);
+      drawOutCards(ctx, W, H, cards, fs - fell, (el - (s.seconds - 0.25)) / 0.25);
+    }
+
+    // The ticker: one line, about what is in shot (never under a banner).
     // Never beside a caption: two lines of news at once read as one
     // ghosting behind the other.
-    if (hud > 0.5 && s.kind === 'montage' && !ltRight && W - 56 * unitOf(H) - Math.max(W * 0.6, ltRight + 48 * unitOf(H)) > 320 * unitOf(H)) {
+    if (hud > 0.5 && s.kind === 'montage' && !ltRight && !liveToasts.length && W - 56 * unitOf(H) - Math.max(W * 0.6, ltRight + 48 * unitOf(H)) > 320 * unitOf(H)) {
       // A time-lapse device only: it never repeats the headline already
       // up, and on a held shot it stays on the world in shot.
       const top = montageTop.get(s);

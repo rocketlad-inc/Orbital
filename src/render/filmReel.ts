@@ -65,6 +65,8 @@ export interface ReelBeat {
   text: string;
   /** The log row's payload, for the caption's own wording. */
   data?: Record<string, unknown>;
+  /** Seconds the scene holds, overriding the weight's (an elimination). */
+  hold?: number;
   /** Ticks the scene opens before `tick` (default 2). Something that
    *  APPEARS on its tick (the Leviathan surfacing) opens one before. */
   lead?: number;
@@ -91,6 +93,8 @@ export interface ReelScene {
   beat?: ReelBeat;
   /** Other log lines that fall inside the scene, for its ticker. */
   extras: ReelBeat[];
+  /** The opening act: the roll call and the land grab (see ReelOptions). */
+  act?: 'opening';
 }
 
 export interface ReelOptions {
@@ -98,7 +102,13 @@ export interface ReelOptions {
   targetSeconds?: number;
   /** The world the result is about (the star of a Dyson Sphere win). */
   finaleBody?: string | null;
+  /** THE OPENING ACT runs to this tick (the first war, say): one scene of
+   *  its own, the roll call and the land grab, never cut across. */
+  openingTo?: number;
 }
+
+/** How long the opening act runs: the roll call, then the land grab. */
+export const OPENING_SECONDS = 13;
 
 export const INTRO_SECONDS = 3.4;
 export const FINALE_SECONDS = 5.2;
@@ -177,6 +187,8 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
   // The bookends. A one-tick match is all bookend.
   const introTo = Math.min(lo + 1, hi);
   const finaleFrom = Math.max(introTo, hi - 1);
+  const openTo = opts.openingTo != null && opts.openingTo - introTo >= 6 && opts.openingTo < finaleFrom - 6
+    ? opts.openingTo : null;
 
   type Cand = { kind: 'battle' | 'beat'; from: number; to: number; weight: number;
     /** Where it happened, for the variety rule. */
@@ -201,7 +213,7 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
     // Too small or too brief to be a battle on screen: a single tick of
     // record held for four seconds is a freeze frame.
     if (tooSmall(b) || b.peak < biggest * 0.25) continue;
-    const from = Math.max(introTo, b.window[0]);
+    const from = Math.max(openTo ?? introTo, b.window[0]);
     const to = Math.min(finaleFrom, b.window[1]);
     if (to <= from) continue;
     // ON THE HEADLINES' SCALE. Raw battle weight is hull arithmetic and
@@ -222,8 +234,16 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
     // happened on the way from t-1 to t, so a scene opening at t-1 showed
     // the aftermath (a carcass, a world already taken). Opening at t-2
     // shows the attacker arrive, the moment, then the result.
-    const from = Math.max(introTo, Math.min(finaleFrom - 1, e.tick - (e.lead ?? 2)));
-    const to = Math.min(finaleFrom, from + 3);
+    // The opening act tells its own story (the land grab): its headlines
+    // ride in it.
+    if (openTo != null && e.tick < openTo) continue;
+    const from = Math.max(openTo ?? introTo, Math.min(finaleFrom - 1, e.tick - (e.lead ?? 2)));
+    // A longer lead is a longer scene (an empire's last stand), never a
+    // shorter after.
+    // An empire's last stand (lead 3) also keeps two days AFTER its fall:
+    // the card that marks it needs time on screen, not the scene's last
+    // second.
+    const to = Math.min(finaleFrom, from + ((e.lead ?? 2) >= 3 ? (e.lead ?? 2) + 2 : 3));
     if (to <= from) continue;
     // Weight buys time: a declaration is a quick read, a capital falling
     // or the Leviathan dying holds longer. A flat 2.4 s was a metronome.
@@ -232,7 +252,7 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
     // not repeats: the climax took the repeat discount and lost its scene.
     const place = /^(kaiju|dyson)_/.test(e.kind) ? `arc:${e.kind}` : e.body ?? `${e.kind}:${e.target ?? e.fid ?? ""}`;
     cands.push({ kind: 'beat', from, to, weight: e.weight, place, pair: null,
-      seconds: Math.max(BEAT_MIN_SECONDS, Math.min(BEAT_MAX_SECONDS, BEAT_MIN_SECONDS + (e.weight - 60) / 60)), framing: e.body ? 'world' : 'system',
+      seconds: e.hold ?? Math.max(BEAT_MIN_SECONDS, Math.min(BEAT_MAX_SECONDS, BEAT_MIN_SECONDS + (e.weight - 60) / 60)), framing: e.body ? 'world' : 'system',
       bodyId: e.body, beat: e });
   }
   // Heaviest first; ties to the earlier moment so the plan is stable.
@@ -260,7 +280,7 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
   /** The least the montages can cost, given the scenes chosen so far. */
   const montageFloor = (scenes: Cand[]) => {
     const sorted = [...scenes].sort((a, b) => a.from - b.from);
-    let cost = 0, cur = introTo;
+    let cost = 0, cur = openTo ?? introTo;
     const gap = (a: number, b: number) => {
       const n = b - a;
       if (n >= MIN_GAP_TICKS) cost += Math.max(MONTAGE_MIN_SECONDS, n * MONTAGE_MIN_RATE);
@@ -308,7 +328,7 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
     return { ...c, from: best[0], to: best[1],
       seconds: c.seconds * Math.max(0.6, (best[1] - best[0]) / Math.max(1, c.to - c.from)) };
   };
-  let used = INTRO_SECONDS + FINALE_SECONDS;
+  let used = INTRO_SECONDS + FINALE_SECONDS + (openTo != null ? OPENING_SECONDS : 0);
   const pool = [...cands];
   for (;;) {
     let best = -1, bestW = 0, bestC: Cand | null = null;
@@ -344,6 +364,11 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
   scenes.push({ kind: 'intro', from: lo, to: introTo, seconds: INTRO_SECONDS,
     framing: 'system', bodyId: null, extras: [] });
   let cur = introTo;
+  if (openTo != null) {
+    scenes.push({ kind: 'montage', from: introTo, to: openTo, seconds: OPENING_SECONDS,
+      framing: 'system', bodyId: null, extras: [], act: 'opening' });
+    cur = openTo;
+  }
   const pushMontage = (a: number, b: number) => {
     if (b <= a) return;
     if (b - a < MIN_GAP_TICKS && scenes.length) {
@@ -369,8 +394,8 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
     framing: opts.finaleBody ? 'world' : 'system', bodyId: opts.finaleBody ?? null, extras: [] });
 
   // ---- montage pace: spend what is left -------------------------------
-  const fixed = scenes.filter(s => s.kind !== 'montage').reduce((a, s) => a + s.seconds, 0);
-  const montages = scenes.filter(s => s.kind === 'montage');
+  const fixed = scenes.filter(s => s.kind !== 'montage' || s.act).reduce((a, s) => a + s.seconds, 0);
+  const montages = scenes.filter(s => s.kind === 'montage' && !s.act);
   const left = Math.max(0, target - fixed);
   // Share by the square root of length: a long quiet stretch earns more
   // film than a short one, but not proportionally more -- it is quiet.
