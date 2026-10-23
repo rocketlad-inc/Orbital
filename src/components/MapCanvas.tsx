@@ -43,6 +43,10 @@ import {
   drawnShipLook,
   glideLayout,
   recentDrawnShipWorldPos,
+  settleTransitLayout,
+  keepOffDrawnDiscs,
+  transitHitWorldPos,
+  noteEmergence,
   drawnShipsSince,
   drawnThrust,
   generateStarfield,
@@ -584,6 +588,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // When each hull last arrived at a world (wall ms): the arrival grace
   // that fades it into the world's badge instead of dropping it (below).
   const arrivedAtRef = useRef<Map<string, number>>(new Map());
+  /** Hulls this client saw leave a world, by when (the departure hand-off). */
+  const departedAtRef = useRef<Map<string, number>>(new Map());
   // Ids of ships that were in torch transit last frame. Diffed against
   // this frame the same way hp deltas are — a ship present both frames
   // that dropped its .transit just ARRIVED, which triggers the soft
@@ -1323,6 +1329,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           spawnArrivalFlash(id, nowMs);
           if (arrivedAtRef.current.size > 2000) arrivedAtRef.current.clear();
           arrivedAtRef.current.set(id, nowMs);
+        }
+      }
+      // And the other way: parked last frame, in flight now. A hull that
+      // leaves a world drawn as a badge grows out of it (noteEmergence).
+      for (const id of curTransitIds) {
+        if (!prevTransitIdsRef.current.has(id) && prevShipIdsRef.current.has(id)) {
+          if (departedAtRef.current.size > 2000) departedAtRef.current.clear();
+          departedAtRef.current.set(id, nowMs);
         }
       }
     }
@@ -3023,21 +3037,30 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // GLIDE, don't pop (glideLayout): the layout offset eases to a new
         // answer when a death re-slots the arrowhead, a fleet changes
         // flagship or a match pulls it abreast. Seeded from wherever this
-        // hull was drawn a moment ago, so an escort promoted to flagship
-        // slides out of its slot instead of jumping. Missiles excepted.
+        // hull was drawn a moment ago in flight, so an escort promoted to
+        // flagship slides out of its slot instead of jumping. Missiles
+        // excepted.
+        // LEAVING A WORLD (departFromDrawn, inside): a hull drawn parked a
+        // moment ago leaves from that spot, its battle slot or its ring,
+        // and merges onto its course as the course carries it away; one
+        // whose world was a badge (no sprite of its own) opens out of the
+        // world, growing as it goes. Never a straight line back across the
+        // world to its course's true starting point (the Lunar Wing clip).
         if (placed && samples && samples.length > 1 && ship.class !== 'missile' && camera.scale > 0) {
-          const sc = camera.scale;
-          const tNow = renderTick();
-          const raw = torchPositionFromSamples(samples, tNow);
-          const lay = torchPositionFromSamples(placed, tNow);
-          const target = { x: (lay.x - raw.x) * sc, y: (lay.y - raw.y) * sc };
-          const was = recentDrawnShipWorldPos(ship.id);
-          const eased = glideLayout(`tr:${ship.id}`, target, nowMs,
-            was ? { x: (was.x - raw.x) * sc, y: (was.y - raw.y) * sc } : undefined);
-          const ddx = (eased.x - target.x) / sc, ddy = (eased.y - target.y) / sc;
-          if (Math.abs(ddx) * sc > 0.05 || Math.abs(ddy) * sc > 0.05) {
-            placed = placed.map(p => ({ t: p.t, x: p.x + ddx, y: p.y + ddy }));
+          const originBody = ship.orbit?.parentBodyId ? bodyById2.get(ship.orbit.parentBodyId) : undefined;
+          const origin = originBody ? bodyPosition(originBody, renderTick(), gameState.bodies) : undefined;
+          const departedAt = departedAtRef.current.get(ship.id);
+          let emergeFrom: { x: number; y: number } | undefined;
+          if (departedAt !== undefined) {
+            // Its first frame in flight since this client saw it leave.
+            departedAtRef.current.delete(ship.id);
+            if (nowMs - departedAt <= 1000 && origin && !recentDrawnShipWorldPos(ship.id, 600)) {
+              emergeFrom = origin;
+              noteEmergence(ship.id, nowMs);
+            }
           }
+          placed = settleTransitLayout(ship.id, samples, placed, renderTick(), camera.scale, nowMs,
+            emergeFrom, origin);
         }
         // A MISSILE CLEARS ITS WORLD AT ONCE (Lorne, 2026-10-20: "it visibly
         // enters orbit"). A world is drawn larger than its true size at map
@@ -3058,24 +3081,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             .filter((id, i, a): id is string => !!id && a.indexOf(id) === i)
             .map(id => bodyById2.get(id))
             .filter((b): b is GameBody => !!b);
-          for (const b of ends) {
-            const R = (drawnRadiusOf(pres, b, sc) + 10) / Math.max(1e-9, sc);
-            const first = placed[0], last = placed[placed.length - 1];
-            const cl = Math.hypot(last.x - first.x, last.y - first.y) || 1;
-            const isDest = b.id === ship.transit?.currentTransfer?.targetBodyId;
-            // The course side: behind the arrival, ahead of the departure.
-            const side = isDest
-              ? { x: (first.x - last.x) / cl, y: (first.y - last.y) / cl }
-              : { x: (last.x - first.x) / cl, y: (last.y - first.y) / cl };
-            placed = placed.map(p => {
-              const c = bodyPosition(b, p.t, gameState.bodies);
-              const dx = p.x - c.x, dy = p.y - c.y;
-              const d = Math.hypot(dx, dy);
-              if (d >= R) return p;
-              const u = d > R * 0.05 ? { x: dx / d, y: dy / d } : side;
-              return { t: p.t, x: c.x + u.x * R, y: c.y + u.y * R };
-            });
-          }
+          placed = keepOffDrawnDiscs(placed, ends.map(b => ({
+            at: (t: number) => bodyPosition(b, t, gameState.bodies),
+            R: (drawnRadiusOf(pres, b, sc) + 10) / Math.max(1e-9, sc),
+            isDest: b.id === ship.transit?.currentTransfer?.targetBodyId,
+          })));
         }
         if (ship.class === 'missile' && placed && placed.length > 1) {
           const home = ship.orbit?.parentBodyId ? bodyById2.get(ship.orbit.parentBodyId) : undefined;
@@ -3133,7 +3143,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // diverging ship.transit.pos integration). Matches the lerp
         // drawTorchTransitShip does internally. See transitShipCanvasPosRef.
         if (placed && placed.length > 0) {
-          const lerped = torchPositionFromSamples(placed, renderTick());
+          const lerped = transitHitWorldPos(ship.id, placed, renderTick());
           const cp = worldToCanvas(lerped.x, lerped.y, renderContext);
           transitShipCanvasPosRef.current.set(ship.id, cp);
           // The WORLD-space twin of this point is NOT written here. It
