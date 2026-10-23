@@ -417,19 +417,23 @@ export function deriveSiteOrbit(point, bodies, tick) {
   const dy = point.y - centre.y;
   const orbitRadius = Math.hypot(dx, dy);
   const orbitPeriod = periodForRadius(parent, orbitRadius, bodies);
-  const thetaNow = Math.atan2(dy, dx);
-  const advance = orbitPeriod > 0
-    ? (TWO_PI * tick * ORBITAL_SPEED_SCALE) / orbitPeriod
-    : 0;
-  // Normalised into [0, 2pi) so the stored value is comparable and does
-  // not grow without bound in a long game.
-  const angle0 = ((thetaNow - advance) % TWO_PI + TWO_PI) % TWO_PI;
   return {
     parent_body_id: parent.id,
     orbit_radius: orbitRadius,
     orbit_period: orbitPeriod,
-    angle0,
+    angle0: angle0For(Math.atan2(dy, dx), orbitPeriod, tick),
   };
+}
+
+/** The angle0 that puts a body on an orbit of `orbitPeriod` at angle
+ *  `thetaNow` (radians round its parent) on `tick`. Normalised into
+ *  [0, 2pi) so the stored value is comparable and does not grow without
+ *  bound in a long game. */
+export function angle0For(thetaNow, orbitPeriod, tick) {
+  const advance = orbitPeriod > 0
+    ? (TWO_PI * tick * ORBITAL_SPEED_SCALE) / orbitPeriod
+    : 0;
+  return ((thetaNow - advance) % TWO_PI + TWO_PI) % TWO_PI;
 }
 
 /** 0..1, how far along a site is. Both resources must be satisfied, so

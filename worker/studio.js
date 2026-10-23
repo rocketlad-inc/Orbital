@@ -53,7 +53,7 @@ import { backfillMissingBodies } from './factions.js';
 import { cfg as gameCfg, invalidate as invalidateCfg } from './gameConfig.js';
 import { BY_ID as CONFIG_DIALS } from './configSchema.js';
 import { spawnSunGatePair, SUN_GATE_SYSTEMS, SUN_GATE_WARNING_TICKS, gateOrder, handOffLandingSite, solGateId } from './sunGates.js';
-import { MEGASTRUCTURES, MEGASTRUCTURE_KINDS, MEGA_MU, MEGA_MAX_HP, MEGA_BODY_TYPE, periodForRadius } from './megastructures.js';
+import { MEGASTRUCTURES, MEGASTRUCTURE_KINDS, MEGA_MU, MEGA_MAX_HP, MEGA_BODY_TYPE, periodForRadius, angle0For } from './megastructures.js';
 import { makeRouteMath } from './routeMath.js';
 import { launchKaiju, kaijuShipId, kaijuFactionId, kaijuCarcassId, KAIJU_UNKNOWN_FACTION } from './kaiju.js';
 
@@ -358,6 +358,18 @@ export async function applyScenario(env, spec, { session = null } = {}) {
     } else if (w.living) {
       worldStmts.push(env.DB.prepare('UPDATE game_bodies SET terraformed_at_tick = COALESCE(terraformed_at_tick, ?) WHERE id = ?').bind(tick, b.id));
     }
+    if (w.living) b.terraformed_at_tick = b.terraformed_at_tick ?? tick;
+    else {
+      // A RAW world is raw (living: false), whatever the last take left on
+      // it: a found 'pre_terraformed' secret, a terraform, a strike's scar
+      // or a debris field (2026-10-23, the obliterate clip). Re-shooting an
+      // obliteration used to start on the last take's rubble.
+      worldStmts.push(env.DB.prepare(
+        `UPDATE game_bodies SET terraformed_at_tick = NULL, terraform_acc_metal = 0, terraform_acc_gold = 0,
+                terraform_completes_at_tick = NULL, sterilised_at_tick = NULL, obliterated_at_tick = NULL
+          WHERE id = ?`).bind(b.id));
+      b.terraformed_at_tick = null;
+    }
     if (w.living) {
       // A take that ended in a Mega Destroyer strike leaves the world
       // scarred (sterilised_at_tick) and its settlements dead; a re-shot
@@ -498,10 +510,22 @@ export async function applyScenario(env, spec, { session = null } = {}) {
       // ring a third of a turn on, so the two never sit on each other.
       const soi = Number(host.soi) || 0;
       const rad = Number(host.radius) || 1;
-      const r = soi > 0 ? Math.min(Math.max(rad * 2.5, soi * 0.35), soi * 0.8) : rad * 4;
+      let r = soi > 0 ? Math.min(Math.max(rad * 2.5, soi * 0.35), soi * 0.8) : rad * 4;
       const nth = perHost.get(host.id) ?? 0;
       perHost.set(host.id, nth + 1);
-      const angle = (Math.PI / 2 + nth * 2.1) % (2 * Math.PI);
+      let angle = (Math.PI / 2 + nth * 2.1) % (2 * Math.PI);
+      // Or where the scene puts it (2026-10-23): anywhere a player could
+      // found a site, inside the world's sphere of influence and clear of
+      // its surface (actions.js, deriveSiteOrbit). The ring hung the
+      // weapons-station clip's station twelve Mars radii out, off every
+      // frame that held Mars at a size worth seeing.
+      if (m.orbit != null) {
+        if (m.orbit < rad * 1.5) throw new Error(`${where}.orbit ${m.orbit} is inside ${host.name} or on its surface (radius ${rad}); give at least ${Math.ceil(rad * 1.5 * 10) / 10}`);
+        if (soi > 0 && m.orbit > soi) throw new Error(`${where}.orbit ${m.orbit} is outside ${host.name}'s sphere of influence (${Math.round(soi * 10) / 10})`);
+        r = m.orbit;
+      }
+      const period = periodForRadius(host, r, live);
+      if (m.angle != null) angle = angle0For((m.angle * Math.PI) / 180, period, tick);
       const id = `${gameId}:${STUDIO_MARK}mega_${m.key}`;
       const name = m.name ?? (m.complete ? kind.label : `${kind.label} Site`);
       const owner = fid(m.owner);
@@ -524,7 +548,7 @@ export async function applyScenario(env, spec, { session = null } = {}) {
              orbit_radius = excluded.orbit_radius, orbit_period = excluded.orbit_period, angle0 = excluded.angle0,
              color = excluded.color, owner_faction_id = excluded.owner_faction_id, destroyed_at_tick = NULL`,
         ).bind(id, gameId, `mega_${m.kind}`, name, MEGA_BODY_TYPE, host.id, radius, MEGA_MU,
-          r, periodForRadius(host, r, live), angle, kind.color ?? '#c9a26b', owner),
+          r, period, angle, kind.color ?? '#c9a26b', owner),
         // hp explicit and full: the column default (200) is under the
         // breach line, so a site born with it is boardable at once.
         env.DB.prepare(
@@ -639,6 +663,29 @@ export async function applyScenario(env, spec, { session = null } = {}) {
     }
   }
   if (camStmts.length) await env.DB.batch(camStmts);
+
+  // NOTHING BURIED WHERE THE TAKE HAPPENS (2026-10-23). Worlds roll hidden
+  // secrets when a game is made, and a parked hull finds one on the next
+  // tick (room.js resolveSecretReveal): a 'pre_terraformed' find turned the
+  // obliterate clip's raw Callisto into a living ocean world on tick 1, and
+  // its strike, armed to obliterate, stood down in silence at tick 7 (a
+  // strike fires what was ordered or nothing). An ancient battery, a gate
+  // or a derelict's offer would wreck a take the same way. So every world
+  // the scene puts hulls at, lists, watches from or flies to is emptied of
+  // what is still buried there. `secrets: true` keeps them, for a clip
+  // that is about a find.
+  if (!spec.secrets) {
+    const quiet = new Set([...shipRows.values()].map(r => r.at.id));
+    for (const w of spec.worlds) quiet.add(bodyOf(w.body, 'worlds').id);
+    for (const o of spec.orders) if (o.type === 'move' && bodies.has(o.to)) quiet.add(bodies.get(o.to).id);
+    if (spec.kaiju && bodies.has(spec.kaiju.at)) quiet.add(bodies.get(spec.kaiju.at).id);
+    const ids = [...quiet];
+    for (let i = 0; i < ids.length; i += 80) {
+      const part = ids.slice(i, i + 80);
+      await env.DB.prepare(`UPDATE game_bodies SET secret_kind = NULL WHERE game_id = ? AND secret_revealed = 0 AND id IN (${part.map(() => '?').join(',')})`)
+        .bind(gameId, ...part).run();
+    }
+  }
 
   const shipsOf = (ref) => {
     const [key, idx] = String(ref).split('.');

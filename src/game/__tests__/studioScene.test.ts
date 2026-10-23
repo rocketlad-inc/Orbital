@@ -184,6 +184,19 @@ describe('expandScenario: set pieces', () => {
     expect(expandScenario({ ...base(), ships: [{ key: 'a', owner: 'terra', at: 'earth', class: 'corvette', count: 1 }] }).ships[0].cargo).toBeNull();
   });
 
+  it('reads where a megastructure orbits: orbit in map units, angle in degrees', () => {
+    const spec = expandScenario({
+      ...base(),
+      megastructures: [{ key: 'ws', kind: 'weapons_station', at: 'mars', owner: 'mars', complete: true, orbit: 20, angle: -140 }],
+    });
+    expect(spec.megastructures[0]).toMatchObject({ orbit: 20, angle: 220 });
+  });
+
+  it('keeps the worlds of a scene quiet unless it asks for secrets', () => {
+    expect(expandScenario(base()).secrets).toBe(false);
+    expect(expandScenario({ ...base(), secrets: true }).secrets).toBe(true);
+  });
+
   it("reads gates: 'birth', and keeps gates: true", () => {
     const birth = expandScenario({ ...base(), gates: 'birth' });
     expect(birth.gates).toBe('birth');
@@ -219,6 +232,8 @@ describe('expandScenario: set pieces', () => {
     [{ ...base(), megastructures: [{ key: 'ws', kind: 'warp_gate', at: 'earth', owner: 'venus' }] }, /unknown faction 'venus'/],
     [{ ...base(), megastructures: [{ key: 'ws', kind: 'warp_gate', owner: 'terra' }] }, /megastructures\[0\]\.at/],
     [{ ...base(), megastructures: [{ key: 'ws', kind: 'warp_gate', at: 'earth', owner: 'terra', progress: 1.5 }] }, /progress must be from 0 to 1/],
+    [{ ...base(), megastructures: [{ key: 'ws', kind: 'warp_gate', at: 'earth', owner: 'terra', orbit: -3 }] }, /orbit must be a distance/],
+    [{ ...base(), megastructures: [{ key: 'ws', kind: 'warp_gate', at: 'earth', owner: 'terra', angle: 'north' }] }, /angle must be in degrees/],
     [{ ...base(), megastructures: [{ key: 'ws', kind: 'warp_gate', at: 'earth', owner: 'terra' }, { key: 'ws', kind: 'null_field', at: 'mars', owner: 'mars' }] }, /duplicate megastructure key 'ws'/],
     [{ ...base(), ships: [{ key: 'a', owner: 'terra', at: 'earth', class: 'freighter', count: 1, cargo: { metal: -5 } }] }, /ships\[0\]\.cargo\.metal/],
     [{ ...base(), ships: [{ key: 'a', owner: 'terra', at: 'earth', class: 'freighter', count: 1, cargo: [400] }] }, /ships\[0\]\.cargo must be/],

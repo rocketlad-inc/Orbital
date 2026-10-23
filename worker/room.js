@@ -7108,7 +7108,10 @@ export class Room {
           // that could not miss, which is not what 7,000 metal was
           // supposed to buy. It rolls on SETTLEMENT_SPEED for the same
           // reason a station does: it is a gun that cannot move.
-          if (rollFor(stn.body_id, tick) >= hitChance(speedOfSettlement(), speedOfShip(target))) {
+          // ONE ROLL PER SHOT, keyed on the target as well: keyed on the
+          // station alone, its three shots shared a roll, so every tick it
+          // hit all three hulls or none (sim/stationReach.mjs).
+          if (rollFor(`${stn.body_id}:${target.id}`, tick) >= hitChance(speedOfSettlement(), speedOfShip(target))) {
             tallyShot('weapons_station', target.ship_class, false, 0, target.id, 0, stn, target);
             megaFired.set(stn.body_id, target.id);
             continue;
