@@ -99,8 +99,18 @@ def load(f):
 wf = [load(f) for f in pick(a.webp_fps)]
 wf += end_card(wf[-1], a.webp_fps)
 webp = os.path.join(out_dir, name + '.webp')
-wf[0].save(webp, save_all=True, append_images=wf[1:], duration=round(1000 / a.webp_fps), loop=0, quality=82, method=4)
-print(f"{webp}: {len(wf)} frames @ {a.webp_fps:g}fps, {wf[0].size[0]}x{wf[0].size[1]}, {os.path.getsize(webp) // 1024}KB")
+# A long, busy take can overrun the encoder at full quality (libwebp
+# "WebPEncodingError: 1" on a 30 s battle, 2026-10-23, though each half
+# encoded fine): step the quality down rather than lose the take.
+for q in (82, 74, 66, 58):
+    try:
+        wf[0].save(webp, save_all=True, append_images=wf[1:], duration=round(1000 / a.webp_fps), loop=0, quality=q, method=4)
+        break
+    except RuntimeError as e:
+        print(f"webp at quality {q}: {e}; trying lower")
+else:
+    raise SystemExit('webp: could not encode at any quality')
+print(f"{webp}: {len(wf)} frames @ {a.webp_fps:g}fps, {wf[0].size[0]}x{wf[0].size[1]}, q{q}, {os.path.getsize(webp) // 1024}KB")
 
 if a.no_gif:
     raise SystemExit(0)
