@@ -17,7 +17,7 @@ import {
 } from './routeMath.js';
 import {
   torchStateAt, engagement, hasLineOfSight, SHIP_RANGE, V_REF as TRANSIT_V_REF,
-  isEccentric, isRamming, ramPlanOf, eccentricLocalPosition,
+  isEccentric, isRamming, ramPlanOf, ramStateAt, eccentricLocalPosition,
   shipOrbitLocalPosition, muOfRow,
   DV_BONUS_MAX, DV_BONUS_START, DV_BONUS_FULL,
 } from './transitCombat.js';
@@ -25,7 +25,7 @@ import {
 // imports from outside src/. The worker's bundler has no such rule, so
 // the shared physics sits where both can reach it — one copy, not two.
 import { rendezvousStateAt } from '../src/physics/rendezvous.js';
-import { cfg as loadGameConfig } from './gameConfig.js';
+import { cfg as loadGameConfig, invalidate as invalidateGameConfig } from './gameConfig.js';
 import { selectInChunks } from './sqlChunk.js';
 import { refundBuildLedger } from './buildRefund.js';
 import { hostilePairs } from './wars.js';
@@ -37,6 +37,7 @@ import {
   periodForRadius, MEGASTRUCTURES, MEGA_MU, bodyPositionAt, foundrySlotsAt, buildSlotsAt, hasSettlementAt,
   MEGA_MAX_HP, MEGA_REGEN_PER_TICK, MEGA_BREACH_HP, stationDamage,
   maySupplySite, excludedFundersOf, constructionPartners, gateTransitTicks,
+  renameFinishedSiteStmt,
 } from './megastructures.js';
 import { NON_WORLD_TYPES, stationTypeMul } from './systems.js';
 import { advanceSunGates, mainSystemSql, tellEveryone, recordGateTransit } from './sunGates.js';
@@ -64,6 +65,7 @@ import { SHIP_COMBAT_STATS, parkPhaseFor, categorizeBodyForSecret, BODY_CATALOG 
 import { launchCompletedMobileSites } from './megaLaunch.js';
 import { OFFER_KINDS, offerStatements, settleExpiredOffers } from './discoveryOffers.js';
 import { advanceMissileBuilds, resolveMissiles } from './missiles.js';
+import { ramImpactFrom } from './ramImpact.js';
 // The salvaged destroyer is minted when a find is CLAIMED now
 // (discoveryOffers.js); re-exported for callers that import it from here.
 export { salvagedDestroyer } from './discoveryOffers.js';
@@ -480,6 +482,11 @@ export class Room {
       const body = await req.json().catch(() => ({}));
       const force = !!body?.force;
       const hintedGameId = typeof body?.gameId === 'string' ? body.gameId : null;
+      // freshConfig: the Studio's ticks (studio.js handleTick). A scene
+      // changes its game's dials (far systems, the Leviathan, its wind-up)
+      // from the Worker, and this isolate's config memo would run the next
+      // ticks on the old ones for up to 30 s (2026-10-23). Only the studio sends it.
+      if (body?.freshConfig && hintedGameId) invalidateGameConfig(hintedGameId);
       let started = await this.state.storage.get('gameStarted');
 
       // Self-heal: when the DO was recycled or the room predates the
@@ -1443,7 +1450,7 @@ export class Room {
         }
         const siteHere = solDrop ? null : await DB
           .prepare(
-            `SELECT m.status, m.acc_metal, m.acc_credits, m.cost_metal, m.cost_credits,
+            `SELECT m.kind, m.status, m.acc_metal, m.acc_credits, m.cost_metal, m.cost_credits,
                     m.settings_json, b.owner_faction_id, b.name
                FROM game_megastructures m
                JOIN game_bodies b ON b.id = m.body_id
@@ -1493,6 +1500,9 @@ export class Room {
                 WHERE body_id = ?`,
             ).bind(accM, accG, full ? 'complete' : 'building',
                    full ? tick : null, stop.body_id).run();
+            // Finished: the body drops its "Site" (renameFinishedSiteStmt).
+            const renamed = full ? renameFinishedSiteStmt(DB, gameId, stop.body_id, siteHere.kind) : null;
+            if (renamed) await renamed.run();
             await DB.prepare('UPDATE game_ships SET trades_completed = trades_completed + 1 WHERE id = ?')
               .bind(c.ship_id).run();
           }
@@ -2321,7 +2331,7 @@ export class Room {
         if (r.kind === 'megastructure') {
           const site = await this.env.DB
             .prepare(
-              `SELECT m.status, m.acc_metal, m.acc_credits, m.cost_metal, m.cost_credits,
+              `SELECT m.kind, m.status, m.acc_metal, m.acc_credits, m.cost_metal, m.cost_credits,
                       b.name, b.destroyed_at_tick
                  FROM game_megastructures m
                  JOIN game_bodies b ON b.id = m.body_id
@@ -2416,6 +2426,8 @@ export class Room {
                 )
                 .bind(accM, accG, full ? 'complete' : 'building',
                       full ? tick : null, r.dest_body_id),
+              // Finished: the body drops its "Site" (renameFinishedSiteStmt).
+              ...(full ? [renameFinishedSiteStmt(this.env.DB, gameId, r.dest_body_id, site.kind)].filter(Boolean) : []),
               // Anything the site would not take goes home with the hull
               // rather than evaporating on the dock.
               this.env.DB
@@ -6537,7 +6549,7 @@ export class Room {
       if (!b || b.parent_body_id == null) return { x: 0, y: 0 };
       let out;
       if (isRamming(b, t)) {
-        out = torchStateAt(ramPlanOf(b), bodyVelSync, t).pos;
+        out = ramStateAt(ramPlanOf(b), bodyVelSync, t).pos;
       } else {
         const parent = bodyPosSync(b.parent_body_id, t);
         if (isEccentric(b)) {
@@ -7103,7 +7115,10 @@ export class Room {
           // that could not miss, which is not what 7,000 metal was
           // supposed to buy. It rolls on SETTLEMENT_SPEED for the same
           // reason a station does: it is a gun that cannot move.
-          if (rollFor(stn.body_id, tick) >= hitChance(speedOfSettlement(), speedOfShip(target))) {
+          // ONE ROLL PER SHOT, keyed on the target as well: keyed on the
+          // station alone, its three shots shared a roll, so every tick it
+          // hit all three hulls or none (sim/stationReach.mjs).
+          if (rollFor(`${stn.body_id}:${target.id}`, tick) >= hitChance(speedOfSettlement(), speedOfShip(target))) {
             tallyShot('weapons_station', target.ship_class, false, 0, target.id, 0, stn, target);
             megaFired.set(stn.body_id, target.id);
             continue;
@@ -10176,7 +10191,8 @@ export class Room {
     const now = Date.now();
     const arrivals = (await this.env.DB
       .prepare(
-        `SELECT id, name, ram_target_body_id, ram_owned_by_faction_id, ram_arrive_tick
+        `SELECT id, name, ram_target_body_id, ram_owned_by_faction_id, ram_arrive_tick,
+                ram_start_pos_x, ram_start_pos_y, ram_intercept_pos_x, ram_intercept_pos_y
            FROM game_bodies
           WHERE game_id = ?
             AND ram_target_body_id IS NOT NULL
@@ -10190,6 +10206,11 @@ export class Room {
     for (const a of arrivals) {
       const targetId = a.ram_target_body_id;
       const targetIsSol = targetId === `${gameId}:sol` || targetId === 'sol';
+      // WHICH SIDE IT HIT (ramImpactFrom): the client lands the flash and
+      // the fire there, not at the world's centre under a Planet Killer's
+      // beam (Studio clip, 2026-10-23). `cause` tells its rows from a Mega
+      // Destroyer's and the Leviathan's.
+      const impactFrom = ramImpactFrom(a);
 
       // Always: consume the asteroid AND any settlements on it (the
       // rock is being driven into a planet — anyone who built a city
@@ -10409,6 +10430,9 @@ export class Room {
                 JSON.stringify({
                   body_name: targetName,
                   asteroid_name: a.name,
+                  cause: 'asteroid',
+                  asteroid_id: a.id,
+                  ...impactFrom,
                 }),
                 now,
               ),
@@ -10435,6 +10459,9 @@ export class Room {
               target_body_id: targetId,
               settlements_destroyed: destroyedCount,
               sol_special: targetIsSol,
+              cause: 'asteroid',
+              asteroid_id: a.id,
+              ...impactFrom,
             }),
             now,
           ),

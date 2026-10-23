@@ -140,7 +140,7 @@ export const LandingHome: React.FC<Props> = ({ onSignIn }) => {
       <div className="lh-hero__visual">
         <div className="lh-orbits" aria-hidden />
         <Frame caption={t('landing.hero.caption')}>
-          <Clip name="mega-destroyer-battle-of-earth" w={960} h={540} eager
+          <Clip name="mega-destroyer-jupiter-to-earth" w={960} h={540} eager
             alt={t('landing.hero.clipAlt')} />
         </Frame>
       </div>

@@ -398,6 +398,19 @@ check('a short hop is still shot down as it lands', intc2.in_flight !== true && 
       log: (await DB.prepare(`SELECT tick_number, kind, payload FROM chronicle_entries WHERE game_id = ? AND kind LIKE 'missile%' AND tick_number >= ? ORDER BY tick_number`).bind(G, L5.body.arrive_tick - 12).all()).results,
       interceptors: (await DB.prepare(`SELECT s.id, s.status, s.missile_count, n.status AS ns, n.scheduled_t, n.rv_meet_tick, n.arrival_at_tick FROM game_ships s JOIN game_ship_nodes n ON n.ship_id = s.id WHERE n.rv_follow_ship_id = ?`).bind(L5.body.ship_id).all()).results,
     }));
+  // The burst plays where the map drew the two meeting: the row names the
+  // interceptor (spent at the meeting, on the tick it meets), so the client
+  // anchors to its last drawn spot (salvo intercept clip, 2026-10-23).
+  const named = await DB.prepare(
+    `SELECT c.ship_id, c.tick_number, s.ship_class, s.status, s.destroyed_at_tick, n.rv_meet_tick
+       FROM chronicle_entries c JOIN game_ships s ON s.id = c.ship_id
+       JOIN game_ship_nodes n ON n.ship_id = s.id
+      WHERE c.game_id = ? AND c.kind = 'missile_intercepted' AND json_extract(c.payload, '$.in_flight') = 1`,
+  ).bind(G).first();
+  check('the in-flight shoot-down names its interceptor, spent on the meeting tick',
+    named && named.ship_class === 'missile' && named.status === 'expended'
+    && Number(named.tick_number) === Number(named.rv_meet_tick) && Number(named.destroyed_at_tick) === Number(named.rv_meet_tick),
+    JSON.stringify(named));
   await DB.prepare(`UPDATE game_settlements SET body_id = ?, missile_auto = 'off' WHERE id = ?`).bind(VENUS, cityB.id).run();
 }
 // The blast check that keeps auto-defence off your own fleet.

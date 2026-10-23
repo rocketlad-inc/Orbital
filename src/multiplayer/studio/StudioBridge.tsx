@@ -57,6 +57,8 @@ export function StudioBridge() {
         return { sent, failed: shipIds.length - sent, error: bad?.error };
       },
       setSelection: (shipIds) => { planRef.current.ctx.setShipSelection(shipIds); },
+      selectShip: (shipId) => { planRef.current.ctx.selectShip(shipId); },
+      selectBody: (bodyId) => { planRef.current.ctx.selectBody(bodyId); },
       planIntercept: (shipIds, targetShipId) => {
         const c = planRef.current.ctx;
         return shipIds.map(id => {

@@ -1061,10 +1061,14 @@ async function detonateInFlight(env, gameId, tick) {
             env.DB.prepare(`UPDATE game_ships SET missile_count = 0, status = 'expended', destroyed_at_tick = ? WHERE id = ?`).bind(tick, m.rv_follow_ship_id),
             env.DB.prepare(`UPDATE game_ship_nodes SET status = 'executed', executed_at_tick = ? WHERE ship_id = ? AND status IN ('in_transit', 'committed')`).bind(tick, m.rv_follow_ship_id),
           ]);
+        // ship_id names the INTERCEPTOR (spent here, always): the map plays
+        // the burst where it last drew it, which is where it drew the two
+        // meeting (on the salvo's drawn line); x, y is the true point, for
+        // a client that never drew it.
         await env.DB.prepare(
-          `INSERT INTO chronicle_entries (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
-           VALUES (?, ?, ?, 'missile_intercepted', ?, ?, ?, 'public', ?)`,
-        ).bind(`mintc_${Math.random().toString(36).slice(2, 10)}`, gameId, tick, m.owner_faction_id, prey.plan.targetBodyId,
+          `INSERT INTO chronicle_entries (id, game_id, tick_number, kind, actor_faction_id, body_id, ship_id, payload, visibility, created_at_ms)
+           VALUES (?, ?, ?, 'missile_intercepted', ?, ?, ?, ?, 'public', ?)`,
+        ).bind(`mintc_${Math.random().toString(36).slice(2, 10)}`, gameId, tick, m.owner_faction_id, prey.plan.targetBodyId, m.id,
           JSON.stringify({
             body_name: F.sky.byId.get(prey.plan.targetBodyId)?.name ?? '', count: killed, in_flight: true,
             by_name: factionNames.get(m.owner_faction_id) ?? null,

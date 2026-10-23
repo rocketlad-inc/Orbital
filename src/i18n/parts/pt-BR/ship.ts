@@ -811,6 +811,8 @@ export const ship: Catalog = {
   'ship.panel.whyHome': 'o estaleiro de origem',
   'ship.panel.whyNearest': 'o estaleiro aliado mais próximo',
   'ship.panel.workedOut': '{name} está esgotada.',
+  'ship.panel.holdFullShort': 'Porão cheio.',
+  'ship.panel.routeDigNote': 'A rota de mineração trabalha esta rocha e parte para a entrega quando o porão enche ou a rocha seca. Cancele a rota para parar.',
   'ship.panel.workedOutShort': 'esgotada',
   'ship.panel.workingRock': 'Trabalhando em {name} — {rate}/tick',
   'ship.panel.workingRockDot': 'Trabalhando em {name} · {rate}/tick',

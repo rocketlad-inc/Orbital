@@ -386,7 +386,10 @@ export const TutorialOverlay: React.FC = () => {
       style={{
         position: 'fixed',
         inset: 0,
-        zIndex: 3000,
+        // Over the dock rail (3200) and the ship designer, which is a
+        // desktop modal above the rail (3250, ShipDesigner.css): a step
+        // walks the player through the designer.
+        zIndex: 3300,
         pointerEvents: 'none', // backdrop is purely visual; controls handle clicks themselves
         fontFamily: 'var(--font-body)',
       }}

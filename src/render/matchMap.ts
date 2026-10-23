@@ -20,6 +20,7 @@ import {
   drawAsteroidBeltDust, drawBody, drawOrbit, drawOwnershipLayer,
   drawSettlement, drawShip, drawStarfield, drawSystemRegions,
   drawTorchTrajectory, drawTransitShip, forgetDrawnShips, generateStarfield, planBodyLabels,
+  departFromDrawn,
 } from './mapRenderer';
 import type { ShipFormation } from './mapRenderer';
 import {
@@ -1515,7 +1516,7 @@ export function createMatchMap(
       }));
       const owners = [...new Set(atBody.map(x => x.ownedBy))].sort();
       const station = gameSettlements.find(st => st.bodyId === bid && st.type === 'station');
-      const lb = liveBattleFor(bid, body.radius, atBody[0].orbit.direction ?? 1,
+      const lb = liveBattleFor(bid, body, atBody[0].orbit.direction ?? 1,
         units, owners, station?.id);
       liveBattles.set(bid, lb);
       for (const u of units) formationOf.set(u.id, { index: 0, total: 1, battle: lb });
@@ -1917,7 +1918,11 @@ export function createMatchMap(
       const samples = drawTorchTrajectory(
         sh.transit.currentTransfer, gameBodies, rc, undefined, true,
         false, curTick, sh.id);
-      drawTransitShip(sh, rc, false, placeInFormation(sh.id, samples, rc, transitScale), transitScale);
+      // Leaving a world: from where it was drawn parked (departFromDrawn).
+      const from = sh.orbit?.parentBodyId ? pos(sh.orbit.parentBodyId, rc.t) : undefined;
+      drawTransitShip(sh, rc, false,
+        departFromDrawn(sh.id, samples, placeInFormation(sh.id, samples, rc, transitScale), rc.t, rc.camera.scale, from),
+        transitScale);
     }
 
     // Events at this tick: battles pulse, losses flash, foundings ring.

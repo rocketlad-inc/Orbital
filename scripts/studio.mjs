@@ -97,7 +97,11 @@ async function apply() {
   const fleets = Object.fromEntries(Object.entries(out.fleets).map(([k, id]) => [k, strip(id)]));
   console.log(JSON.stringify({ game_id: out.game_id, created: out.created, tick: out.tick, viewer: out.viewer,
     factions: out.factions.map(f => ({ key: f.key, handle: f.handle, id: strip(f.id) })),
-    ships, fleets, wars: out.wars, orders: out.orders, warnings: out.warnings ?? [] }, null, 2));
+    ships, fleets, wars: out.wars, orders: out.orders,
+    ...(out.megastructures?.length ? { megastructures: out.megastructures } : {}),
+    ...(out.kaiju ? { kaiju: out.kaiju } : {}),
+    ...(out.gate_birth ? { gate_birth: out.gate_birth } : {}),
+    warnings: out.warnings ?? [] }, null, 2));
   for (const w of out.warnings ?? []) console.error(`WARNING: ${w}`);
   if (out.created) console.error(`\nScene applied to NEW game ${out.game_id}. Record with:\n  node scripts/studio.mjs record ${out.game_id} shot.json --out clip.mp4 --as ${out.factions.find(f => f.key === out.viewer)?.handle ?? out.factions[0].handle}${ENV !== 'staging' ? ` --env ${ENV}` : ''}`);
 }
@@ -290,13 +294,15 @@ async function film() {
     if (tracing) await b.evaluate('(window.__shipTrace = [], true)');
     console.error(`filming ${total} frames at ${w}x${h} as ${handle}…`);
     // The page renders at full size (layout and UI as players see them);
-    // each frame is CAPTURED at half size as JPEG, since every clip ships
-    // 960 wide: a quarter of the pixels to encode and pass over CDP, about
-    // twice as fast a take. --full keeps lossless full-size PNGs.
+    // each frame is CAPTURED 960 wide as JPEG, since every clip ships 960
+    // wide: at 1920 a quarter of the pixels to encode and pass over CDP,
+    // about twice as fast a take. A UI clip renders the page smaller
+    // (--size 1280x720) so its text is bigger in the 960 cut.
+    // --full keeps lossless full-size PNGs.
     const fullCapture = argv.includes('--full');
     const capture = fullCapture
       ? { format: 'png', captureBeyondViewport: false }
-      : { format: 'jpeg', quality: 92, captureBeyondViewport: false, clip: { x: 0, y: 0, width: w, height: h, scale: 0.5 } };
+      : { format: 'jpeg', quality: 92, captureBeyondViewport: false, clip: { x: 0, y: 0, width: w, height: h, scale: Math.min(1, 960 / w) } };
     const frames = [];
     const t0 = Date.now();
     for (let k = 0; k < total; k++) {
@@ -361,7 +367,9 @@ async function film() {
 async function evalInGame() {
   const [gameId, code] = rest;
   if (!gameId || !code) die('eval needs <gameId> "<javascript>"');
-  const b = await openGame(gameId, flag('as') || 'studio-terra', 1080, 1920);
+  // --size 1920x1080 checks the DOM at a film's size (the layout depends on it).
+  const [w, h] = (flag('size') || '1080x1920').split('x').map(Number);
+  const b = await openGame(gameId, flag('as') || 'studio-terra', w, h);
   try {
     const wrapped = `(async () => { return (${code}); })()`;
     const out = await b.evaluate(`(async () => { const r = (0, eval)(${JSON.stringify(wrapped)}); return JSON.stringify({ value: await r, log: window.__studio.log }); })()`);

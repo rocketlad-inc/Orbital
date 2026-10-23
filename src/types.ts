@@ -366,6 +366,10 @@ export interface Ship {
   /** A missile salvo's size (class 'missile', worker/missiles.js). */
   missileCount?: number | null;
   strikeReadyTick?: number | null;
+  /** How many ticks the charging strike winds up for in all (the Mega's
+   *  24, or the game's kaiju_charge_ticks for the Leviathan), so the ring
+   *  fills against the real wind-up. Null from an older server. */
+  strikeChargeTicks?: number | null;
   /** What the charging strike will do, fixed when it was ordered: strip
    *  a living world's biosphere, or destroy a raw world outright. */
   strikeMode?: 'sterilise' | 'obliterate' | null;
@@ -1241,7 +1245,12 @@ export interface GameState {
   /** A sun gate due out of the Sun within the warning window: the tick it
    *  comes out and its place in the order (0 = the first). Not where it
    *  leads; that stays secret until it is out. Null otherwise. */
-  sunGateNext?: { emergeTick: number; index: number; kaiju?: boolean; system?: string } | null;
+  sunGateNext?: {
+    emergeTick: number; index: number; kaiju?: boolean; system?: string;
+    /** World-space bearing the gate will leave its source on (state.js
+     *  sunGateOmenAngle): where the omen rises. Null from an older server. */
+    angle?: number | null;
+  } | null;
   /** THE LEVIATHAN (worker/kaiju.js). Null in a game that never had one. */
   kaiju?: KaijuState | null;
   /** The first hull through each sun gate (local gate id, either end). */

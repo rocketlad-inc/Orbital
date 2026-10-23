@@ -92,7 +92,16 @@ def load(f):
 wf = [load(f) for f in pick(a.webp_fps)]
 wf += end_card(wf[-1], a.webp_fps)
 webp = os.path.join(out_dir, name + '.webp')
-wf[0].save(webp, save_all=True, append_images=wf[1:], duration=round(1000 / a.webp_fps), loop=0, quality=82, method=4)
+# libwebp's animation encoder now and then fails a long take with
+# "WebPEncodingError: 1" and then takes the same frames on a retry.
+for attempt in range(4):
+    try:
+        wf[0].save(webp, save_all=True, append_images=wf[1:], duration=round(1000 / a.webp_fps), loop=0, quality=82, method=4)
+        break
+    except RuntimeError as e:
+        if attempt == 3:
+            raise
+        print(f"webp encode failed ({e}); trying again")
 print(f"{webp}: {len(wf)} frames @ {a.webp_fps:g}fps, {wf[0].size[0]}x{wf[0].size[1]}, {os.path.getsize(webp) // 1024}KB")
 
 if a.no_gif:

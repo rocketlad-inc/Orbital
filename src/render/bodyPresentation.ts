@@ -32,6 +32,7 @@
 //   80px, Lorne 2026-09-23), since hulls park far out around it.
 // ============================================================
 
+import { ramRockRadiusPx } from './asteroidRam';
 import type { Body } from '../types';
 
 /** A floor for each class, in canvas px. Order matters for the reading:
@@ -105,6 +106,9 @@ export function isBarycenter(b: Pick<Body, 'id'> | undefined | null): boolean {
   return FAR_BARYCENTERS.has(i >= 0 ? b.id.slice(i + 1) : b.id);
 }
 
+/** A sun gate's landing site (worker/sunGates.js siteId). */
+const isGateSite = (b: { id: string }) => /(^|:)sungate_[a-z]+_site$/.test(b.id);
+
 const isStar = (b: (Pick<Body, 'type'> & { id?: string }) | undefined | null) =>
   !!b && (b.type === 'star' || b.type === 'black_hole'
     || (b.id != null && isBarycenter(b as Pick<Body, 'id'>)));
@@ -166,6 +170,8 @@ export interface PresentBody {
   orbitRadius?: number;
   /** A sun gate still in flight out of the Sun (worker/sunGates.js). */
   emerge?: { untilTick: number } | null;
+  /** A rock on a ram course at a world (worker/actions.js ram). */
+  ramPlan?: { arriveTick: number } | null;
 }
 
 /** A sun gate on its burn out of the Sun. It moves like a ship, so it is
@@ -175,7 +181,13 @@ export interface PresentBody {
  *  out." Zoomed out it was folding into the Sun on the way out, then into
  *  every outer world it crossed (a structure ranks below all of them). */
 export function isInFlight(b: PresentBody, tick: number | null | undefined): boolean {
-  return tick != null && !!b.emerge && tick < b.emerge.untilTick;
+  if (tick == null) return false;
+  if (b.emerge && tick < b.emerge.untilTick) return true;
+  // A RAMMED ROCK is in flight too. Closing on its target it sat on that
+  // world's disc and folded into it as the lesser sibling, so it was never
+  // drawn on its way in: the Studio's ram on Mars showed only the reticle
+  // (2026-10-23). The rock is the whole point of the moment.
+  return !!b.ramPlan && tick < b.ramPlan.arriveTick;
 }
 
 /**
@@ -219,8 +231,10 @@ export function computePresentation(
     const parent = b.parent ? byId.get(b.parent) : null;
     const cls = floorClass(b, parent);
     const truePx = (b.radius ?? 0) * scale;
-    radius.set(b.id, isBarycenter(b) ? 0
-      : cls ? blendRadius(truePx, DISPLAY_FLOOR_PX[cls] * growth) : ownGlyphRadius(b, truePx));
+    const r = isBarycenter(b) ? 0
+      : cls ? blendRadius(truePx, DISPLAY_FLOOR_PX[cls] * growth) : ownGlyphRadius(b, truePx);
+    // A rock on its way in is never drawn smaller than a readable rock.
+    radius.set(b.id, isInFlight(b, tick) && b.ramPlan ? ramRockRadiusPx(r) : r);
   }
 
   // Parents before children, so a moon can see whether its planet has
@@ -315,7 +329,16 @@ export function computePresentation(
           // and a folded barycenter drags them down with it in the
           // parent pass below.
           if (isBarycenter(o)) continue;
-          if (rank(o) >= rank(b)) continue;
+          // A SUN GATE'S LANDING SITE NEVER HIDES A STRUCTURE (2026-10-23).
+          // The site is empty space classed as a planet, so a landed gate
+          // standing on it (until the server retires the site, and for a
+          // whole Studio take before that was fixed) folded into the
+          // reticle: the map said "LANDING SITE" over an open gate. The
+          // site goes under the gate instead; worlds rank as before.
+          const siteOverGate = isGateSite(b) && o.type === 'megastructure';
+          const gateOverSite = isGateSite(o) && b.type === 'megastructure';
+          if (siteOverGate) continue;
+          if (!gateOverSite && rank(o) >= rank(b)) continue;
           const q = at.get(o.id)!;
           const sep = Math.hypot(p.x - q.x, p.y - q.y);
           const need = rb + (radius.get(o.id) ?? 0) + FOLD_GAP_PX;

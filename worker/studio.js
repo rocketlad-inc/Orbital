@@ -41,12 +41,21 @@ import { openWarBetween } from './wars.js';
 import { SLIDER_CATALOG, describeSlider } from './senate.js';
 import { ensureCaptainFloor, ensureCaptains } from './captains.js';
 import { EMBLEM_IDS } from './emblems.js';
-import { STUDIO_MARK, SHIP_CLASSES, LOADOUT_PRESETS, FUEL_MAX, TAG, whenTick, expandScenario, EXAMPLES, solveMoveTiming } from './studioScene.js';
-import { routes as actionRoutes, MEGA_STRIKE_CHARGE_TICKS } from './actions.js';
+import {
+  STUDIO_MARK, SHIP_CLASSES, LOADOUT_PRESETS, FUEL_MAX, TAG, whenTick, expandScenario, EXAMPLES, solveMoveTiming, ROGUE_ASTEROIDS,
+} from './studioScene.js';
+import {
+  routes as actionRoutes, MEGA_STRIKE_CHARGE_TICKS, RAM_ASTEROID_G, RAM_G_ANCHOR, RAM_METAL_PER_DV,
+} from './actions.js';
 import { routes as tradeRoutesV2 } from './tradeRoutesV2.js';
+import { routes as missileRoutes } from './missiles.js';
 import { backfillMissingBodies } from './factions.js';
 import { cfg as gameCfg, invalidate as invalidateCfg } from './gameConfig.js';
-import { spawnSunGatePair, SUN_GATE_SYSTEMS } from './sunGates.js';
+import { BY_ID as CONFIG_DIALS } from './configSchema.js';
+import { spawnSunGatePair, SUN_GATE_SYSTEMS, SUN_GATE_WARNING_TICKS, gateOrder, handOffLandingSite, solGateId } from './sunGates.js';
+import { MEGASTRUCTURES, MEGASTRUCTURE_KINDS, MEGA_MU, MEGA_MAX_HP, MEGA_BODY_TYPE, periodForRadius, angle0For } from './megastructures.js';
+import { makeRouteMath } from './routeMath.js';
+import { launchKaiju, kaijuShipId, kaijuFactionId, kaijuCarcassId, KAIJU_UNKNOWN_FACTION } from './kaiju.js';
 
 function json(data, init = {}) {
   const headers = new Headers(init.headers);
@@ -194,6 +203,80 @@ async function resetStudioRows(env, gameId) {
     env.DB.prepare('DELETE FROM game_ship_nodes WHERE game_id = ? AND ship_id LIKE ?').bind(gameId, msl),
     env.DB.prepare('DELETE FROM game_ships WHERE game_id = ? AND id LIKE ?').bind(gameId, msl),
   ]);
+  await retireStudioSites(env, gameId);
+  await resetKaiju(env, gameId);
+}
+
+/**
+ * A previous take's megastructures (ids `<game>:st_mega_<key>`), RETIRED,
+ * never deleted (2026-10-23). game_ships.parent_body_id is ON DELETE
+ * CASCADE, so deleting a site silently deletes every hull parked at it,
+ * and flight plans and chronicle lines that name it have no ON DELETE at
+ * all, so D1 refuses the DELETE (megaLaunch.js learnt both the hard way).
+ * The same moves megaLaunch makes when a slipway launches: whatever is
+ * parked there drops to the world the site orbits, legs still flying to it
+ * land there, the structure row goes and the body is marked destroyed.
+ * The next apply brings a site back on the same id (upsertSite).
+ */
+async function retireStudioSites(env, gameId) {
+  const sites = `${gameId}:${STUDIO_MARK}mega_%`;
+  const parentOf = '(SELECT b.parent_body_id FROM game_bodies b WHERE b.id = game_ships.parent_body_id)';
+  await env.DB.batch([
+    env.DB.prepare(`UPDATE game_ships SET parent_body_id = ${parentOf} WHERE game_id = ? AND parent_body_id LIKE ?`).bind(gameId, sites),
+    env.DB.prepare(
+      `UPDATE game_ship_nodes SET target_body_id = (SELECT b.parent_body_id FROM game_bodies b WHERE b.id = game_ship_nodes.target_body_id)
+        WHERE game_id = ? AND target_body_id LIKE ? AND status IN ('planned', 'committed', 'in_transit')`,
+    ).bind(gameId, sites),
+    // The log a take wrote about its sites (the launch of a finished
+    // slipway is keyed '<site>_launched', and INSERT OR IGNORE would
+    // keep the next take's from being written).
+    env.DB.prepare('DELETE FROM chronicle_entries WHERE game_id = ? AND (body_id LIKE ? OR id LIKE ?)').bind(gameId, sites, sites),
+    env.DB.prepare('DELETE FROM game_megastructures WHERE game_id = ? AND body_id LIKE ?').bind(gameId, sites),
+    env.DB.prepare(
+      `UPDATE game_bodies SET destroyed_at_tick = (SELECT current_tick FROM games WHERE id = ?)
+        WHERE game_id = ? AND id LIKE ? AND destroyed_at_tick IS NULL`,
+    ).bind(gameId, gameId, sites),
+  ]);
+}
+
+/**
+ * A previous take's Leviathan (kaiju.js ids, fixed per game). Exactly
+ * these rows and nothing else:
+ *   - its hull: the event log keys kills to it with no ON DELETE, so its
+ *     lines go first; its flight plans cascade;
+ *   - the game_kaiju row, so a launch is possible again;
+ *   - the once-only log lines ('<game>:kaiju:launched', ':revealed', ...),
+ *     or chronicleOnce would refuse to announce the next take's reveal;
+ *   - its carcass, RETIRED like a site (freighters may be parked on it),
+ *     which kaiju.js die() brings back if the next take kills it too.
+ * Its faction row stays (the log names it as actor and target, with no
+ * ON DELETE); it goes back to 'Unknown' until the next take's reveal.
+ */
+async function resetKaiju(env, gameId) {
+  const k = await env.DB.prepare('SELECT ship_id, faction_id FROM game_kaiju WHERE game_id = ?').bind(gameId).first();
+  const sid = k?.ship_id ?? kaijuShipId(gameId);
+  const fid = k?.faction_id ?? kaijuFactionId(gameId);
+  const cid = kaijuCarcassId(gameId);
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM chronicle_entries WHERE game_id = ? AND ship_id = ?').bind(gameId, sid),
+    env.DB.prepare('DELETE FROM chronicle_entries WHERE game_id = ? AND id LIKE ?').bind(gameId, `${gameId}:kaiju:%`),
+    env.DB.prepare('DELETE FROM game_ship_nodes WHERE game_id = ? AND ship_id = ?').bind(gameId, sid),
+    env.DB.prepare('DELETE FROM game_ships WHERE game_id = ? AND id = ?').bind(gameId, sid),
+    env.DB.prepare('DELETE FROM game_kaiju WHERE game_id = ?').bind(gameId),
+    env.DB.prepare('UPDATE game_factions SET name = ? WHERE id = ? AND game_id = ?').bind(KAIJU_UNKNOWN_FACTION, fid, gameId),
+    env.DB.prepare(
+      `UPDATE game_ships SET parent_body_id = (SELECT b.parent_body_id FROM game_bodies b WHERE b.id = ?)
+        WHERE game_id = ? AND parent_body_id = ?`,
+    ).bind(cid, gameId, cid),
+    env.DB.prepare(
+      `UPDATE game_ship_nodes SET target_body_id = (SELECT b.parent_body_id FROM game_bodies b WHERE b.id = ?)
+        WHERE game_id = ? AND target_body_id = ? AND status IN ('planned', 'committed', 'in_transit')`,
+    ).bind(cid, gameId, cid),
+    env.DB.prepare(
+      `UPDATE game_bodies SET destroyed_at_tick = (SELECT current_tick FROM games WHERE id = ?)
+        WHERE game_id = ? AND id = ? AND destroyed_at_tick IS NULL`,
+    ).bind(gameId, gameId, cid),
+  ]);
 }
 
 /**
@@ -214,20 +297,22 @@ export async function applyScenario(env, spec, { session = null } = {}) {
   }
   const game = await env.DB.prepare('SELECT current_tick, gating_enabled FROM games WHERE id = ?').bind(gameId).first();
   const tick = Number(game.current_tick) || 0;
-  if (spec.farSystems) await enableFarSystems(env, gameId, tick, spec.gates);
+  // Reset BEFORE the far systems (2026-10-23): a previous take's sites and
+  // Leviathan are cleared before the dials and the gate step look at the
+  // board. It touches only studio-marked rows and the kaiju's fixed ids.
+  if (spec.reset) await resetStudioRows(env, gameId);
+  const gateBirth = spec.farSystems ? await enableFarSystems(env, gameId, tick, spec) : null;
   const factions = await resolveFactions(env, gameId, spec);
   const fid = (key) => factions.get(key).id;
 
   const bodies = new Map(((await env.DB
-    .prepare('SELECT id, template_id, name, radius, terraformed_at_tick, parent_body_id, owner_faction_id, destroyed_at_tick FROM game_bodies WHERE game_id = ?')
+    .prepare('SELECT id, template_id, name, type, radius, terraformed_at_tick, parent_body_id, owner_faction_id, destroyed_at_tick FROM game_bodies WHERE game_id = ?')
     .bind(gameId).all()).results ?? []).map(b => [b.template_id, b]));
   const bodyOf = (tpl, where) => {
     const b = bodies.get(tpl);
     if (!b) throw new Error(`${where}: no world '${tpl}' in this game`);
     return b;
   };
-
-  if (spec.reset) await resetStudioRows(env, gameId);
 
   // Every faction sees everything: the game's own Total Awareness rule
   // (Sensors 10), plus whatever the scene asks for.
@@ -242,11 +327,32 @@ export async function applyScenario(env, spec, { session = null } = {}) {
     }
   }
   if (techStmts.length) await env.DB.batch(techStmts);
+  const stockStmts = spec.factions.filter(f => f.metal != null || f.gold != null).map(f => env.DB
+    .prepare('UPDATE game_factions SET metal = COALESCE(?, metal), gold = COALESCE(?, gold) WHERE id = ? AND game_id = ?')
+    .bind(f.metal, f.gold, fid(f.key), gameId));
+  if (stockStmts.length) await env.DB.batch(stockStmts);
 
   // ---- worlds ----
   const worldStmts = [];
+  // Shield HP per level, the game's own dial (resolveShields derives the
+  // cap the same way, so the next tick changes nothing).
+  const shieldPer = spec.worlds.some(w => w.shields)
+    ? Number((await gameCfg(env, gameId)).shield_hp_per_level ?? 120) : 0;
   for (const w of spec.worlds) {
     const b = bodyOf(w.body, 'worlds');
+    if (w.thrusters) {
+      if (b.type !== 'asteroid') throw new Error(`worlds: ${w.body} is not a rogue asteroid (${ROGUE_ASTEROIDS.join(', ')})`);
+      // A take that ended in the ram consumed the rock (destroyed_at_tick)
+      // or left one in flight: the re-shot scene starts with the rock on
+      // its own orbit and no plan, every ram_* column cleared.
+      worldStmts.push(env.DB.prepare(
+        `UPDATE game_bodies SET destroyed_at_tick = NULL, ram_target_body_id = NULL, ram_start_tick = NULL,
+                ram_flip_tick = NULL, ram_arrive_tick = NULL, ram_acceleration = NULL,
+                ram_start_pos_x = NULL, ram_start_pos_y = NULL, ram_start_vel_x = NULL, ram_start_vel_y = NULL,
+                ram_intercept_pos_x = NULL, ram_intercept_pos_y = NULL, ram_total_dv = NULL, ram_owned_by_faction_id = NULL
+          WHERE id = ?`).bind(b.id));
+      b.destroyed_at_tick = null;
+    }
     if (w.owner) {
       worldStmts.push(env.DB.prepare(
         `UPDATE game_bodies SET owner_faction_id = ?, development_level = CASE WHEN development_level < 2 THEN 2 ELSE development_level END,
@@ -256,11 +362,25 @@ export async function applyScenario(env, spec, { session = null } = {}) {
     } else if (w.living) {
       worldStmts.push(env.DB.prepare('UPDATE game_bodies SET terraformed_at_tick = COALESCE(terraformed_at_tick, ?) WHERE id = ?').bind(tick, b.id));
     }
+    if (w.living) b.terraformed_at_tick = b.terraformed_at_tick ?? tick;
+    else {
+      // A RAW world is raw (living: false), whatever the last take left on
+      // it: a found 'pre_terraformed' secret, a terraform, a strike's scar
+      // or a debris field (2026-10-23, the obliterate clip). Re-shooting an
+      // obliteration used to start on the last take's rubble.
+      worldStmts.push(env.DB.prepare(
+        `UPDATE game_bodies SET terraformed_at_tick = NULL, terraform_acc_metal = 0, terraform_acc_gold = 0,
+                terraform_completes_at_tick = NULL, sterilised_at_tick = NULL, obliterated_at_tick = NULL
+          WHERE id = ?`).bind(b.id));
+      b.terraformed_at_tick = null;
+    }
     if (w.living) {
       // A take that ended in a Mega Destroyer strike leaves the world
       // scarred (sterilised_at_tick) and its settlements dead; a re-shot
-      // scene starts with the world it describes. Test games only.
-      worldStmts.push(env.DB.prepare('UPDATE game_bodies SET sterilised_at_tick = NULL WHERE id = ?').bind(b.id));
+      // scene starts with the world it describes. Test games only. The
+      // second strike (a Mega Destroyer's, or the Leviathan's) leaves it a
+      // debris field (obliterated_at_tick), cleared the same way.
+      worldStmts.push(env.DB.prepare('UPDATE game_bodies SET sterilised_at_tick = NULL, obliterated_at_tick = NULL WHERE id = ?').bind(b.id));
       worldStmts.push(env.DB.prepare(
         'UPDATE game_settlements SET destroyed_at_tick = NULL, hp = hp_max WHERE game_id = ? AND body_id = ? AND destroyed_at_tick IS NOT NULL',
       ).bind(gameId, b.id));
@@ -271,14 +391,27 @@ export async function applyScenario(env, spec, { session = null } = {}) {
             surface_angle, created_at_tick, last_growth_tick, last_harvest_tick, has_collector)
          VALUES (?, ?, ?, ?, 'city', ?, 300, 300, 2, ?, ?, ?, ?, 1)`)
         .bind(`${gameId}:${STUDIO_MARK}c_${w.body}_${i}`, gameId, b.id, fid(w.owner ?? spec.viewer), name, (i * 2.1 + 0.4) % 6.28, tick, tick, tick));
+      // Orbital Shields, full, as a finished building leaves them (2026-10-23,
+      // for a clip of a siege breaking a shield): the level in the city's
+      // buildings and the pool at its cap, so the bubble is up on frame one.
+      if (w.shields) {
+        worldStmts.push(env.DB.prepare(
+          `UPDATE game_settlements SET buildings_json = json_set(COALESCE(buildings_json, '{}'), '$.shields', ?),
+                  shield_hp = ?, shield_hp_max = ?, shield_down_tick = NULL
+            WHERE id = ?`)
+          .bind(w.shields, w.shields * shieldPer, w.shields * shieldPer, `${gameId}:${STUDIO_MARK}c_${w.body}_${i}`));
+      }
     });
     for (let i = 0; i < w.stations; i++) {
       const r = Number(b.radius) + Math.max(3, 0.22 * Number(b.radius));
+      // The first station on a thrusters world carries the Trajectory
+      // Control Thrusters, the building the ram handler looks for.
+      const built = w.thrusters && i === 0 ? JSON.stringify({ trajectory_thrusters: 1 }) : null;
       worldStmts.push(env.DB.prepare(
         `INSERT OR REPLACE INTO game_settlements (id, game_id, body_id, owner_faction_id, type, name, hp, hp_max, population,
-            orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, created_at_tick, last_growth_tick, last_harvest_tick, has_collector)
-         VALUES (?, ?, ?, ?, 'station', ?, 400, 400, 1, ?, ?, 0, ?, ?, ?, ?, ?, 1)`)
-        .bind(`${gameId}:${STUDIO_MARK}s_${w.body}_${i}`, gameId, b.id, fid(w.owner ?? spec.viewer), `${b.name} Station ${i + 1}`, r, r, i * 2.5, tick, tick, tick, tick));
+            orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, created_at_tick, last_growth_tick, last_harvest_tick, has_collector, buildings_json)
+         VALUES (?, ?, ?, ?, 'station', ?, 400, 400, 1, ?, ?, 0, ?, ?, ?, ?, ?, 1, ?)`)
+        .bind(`${gameId}:${STUDIO_MARK}s_${w.body}_${i}`, gameId, b.id, fid(w.owner ?? spec.viewer), `${b.name} Station ${i + 1}`, r, r, i * 2.5, tick, tick, tick, tick, built));
     }
   }
   if (worldStmts.length) await env.DB.batch(worldStmts);
@@ -353,6 +486,93 @@ export async function applyScenario(env, spec, { session = null } = {}) {
     siloOut.push(`${s.world}: level ${s.level}, ${s.stock} missiles, auto ${s.auto}, salvo ${s.salvo}`);
   }
 
+  // ---- megastructures (2026-10-23: a freighter delivering the last load
+  // to a Weapons Station site needed one standing on the board) ----
+  // The rows room.js spawnAncientStructure writes: a body of type
+  // 'megastructure' on the gate rule's orbit around the `at` world, and
+  // its game_megastructures row, here with an owner and the scene's
+  // progress. Seen by every faction. The scene's key names it from here
+  // on (ships.at, orders.move.to), as a world id would.
+  const megaOut = [];
+  if (spec.megastructures.length) {
+    const live = (await env.DB
+      .prepare(`SELECT id, name, type, parent_body_id, mu, soi, radius, orbit_radius, orbit_period
+                  FROM game_bodies WHERE game_id = ? AND destroyed_at_tick IS NULL`)
+      .bind(gameId).all()).results ?? [];
+    const conf = await gameCfg(env, gameId);
+    const bodyScale = Number(conf?.body_scale) > 0 ? Number(conf.body_scale) : 1;
+    const everyone = ((await env.DB.prepare('SELECT id FROM game_factions WHERE game_id = ?').bind(gameId).all()).results ?? []).map(r => r.id);
+    const perHost = new Map();
+    for (const [i, m] of spec.megastructures.entries()) {
+      const where = `megastructures[${i}]`;
+      const at = bodyOf(m.at, where);
+      const host = live.find(b => b.id === at.id);
+      if (!host) throw new Error(`${where}: ${m.at} is gone from this board`);
+      const kind = MEGASTRUCTURES[m.kind];
+      // The gate rule (spawnAncientStructure): clear of the surface,
+      // inside the SOI. A second site at the same world rides the same
+      // ring a third of a turn on, so the two never sit on each other.
+      const soi = Number(host.soi) || 0;
+      const rad = Number(host.radius) || 1;
+      let r = soi > 0 ? Math.min(Math.max(rad * 2.5, soi * 0.35), soi * 0.8) : rad * 4;
+      const nth = perHost.get(host.id) ?? 0;
+      perHost.set(host.id, nth + 1);
+      let angle = (Math.PI / 2 + nth * 2.1) % (2 * Math.PI);
+      // Or where the scene puts it (2026-10-23): anywhere a player could
+      // found a site, inside the world's sphere of influence and clear of
+      // its surface (actions.js, deriveSiteOrbit). The ring hung the
+      // weapons-station clip's station twelve Mars radii out, off every
+      // frame that held Mars at a size worth seeing.
+      if (m.orbit != null) {
+        if (m.orbit < rad * 1.5) throw new Error(`${where}.orbit ${m.orbit} is inside ${host.name} or on its surface (radius ${rad}); give at least ${Math.ceil(rad * 1.5 * 10) / 10}`);
+        if (soi > 0 && m.orbit > soi) throw new Error(`${where}.orbit ${m.orbit} is outside ${host.name}'s sphere of influence (${Math.round(soi * 10) / 10})`);
+        r = m.orbit;
+      }
+      const period = periodForRadius(host, r, live);
+      if (m.angle != null) angle = angle0For((m.angle * Math.PI) / 180, period, tick);
+      const id = `${gameId}:${STUDIO_MARK}mega_${m.key}`;
+      const name = m.name ?? (m.complete ? kind.label : `${kind.label} Site`);
+      const owner = fid(m.owner);
+      const radius = (kind.radius ?? 1.9) * bodyScale;
+      const acc = m.complete
+        ? { metal: kind.cost.metal, credits: kind.cost.credits }
+        : { metal: Math.round(kind.cost.metal * m.progress), credits: Math.round(kind.cost.credits * m.progress) };
+      await env.DB.batch([
+        // An UPSERT, never INSERT OR REPLACE: REPLACE deletes the old row
+        // first, and a body is never deleted (retireStudioSites). This is
+        // also what brings back a site the last reset retired.
+        env.DB.prepare(
+          `INSERT INTO game_bodies
+             (id, game_id, template_id, name, type, parent_body_id, radius, soi, mu,
+              orbit_radius, orbit_period, angle0, color, owner_faction_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             template_id = excluded.template_id, name = excluded.name, type = excluded.type,
+             parent_body_id = excluded.parent_body_id, radius = excluded.radius, soi = 0, mu = excluded.mu,
+             orbit_radius = excluded.orbit_radius, orbit_period = excluded.orbit_period, angle0 = excluded.angle0,
+             color = excluded.color, owner_faction_id = excluded.owner_faction_id, destroyed_at_tick = NULL`,
+        ).bind(id, gameId, `mega_${m.kind}`, name, MEGA_BODY_TYPE, host.id, radius, MEGA_MU,
+          r, period, angle, kind.color ?? '#c9a26b', owner),
+        // hp explicit and full: the column default (200) is under the
+        // breach line, so a site born with it is boardable at once.
+        env.DB.prepare(
+          `INSERT OR REPLACE INTO game_megastructures
+             (body_id, game_id, kind, status, acc_metal, acc_credits, cost_metal, cost_credits,
+              founded_by_faction_id, founded_at_tick, completed_at_tick, hp, ancient)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+        ).bind(id, gameId, m.kind, m.complete ? 'complete' : 'building', acc.metal, acc.credits,
+          kind.cost.metal, kind.cost.credits, owner, Math.max(0, tick - 10), m.complete ? Math.max(0, tick - 5) : null, MEGA_MAX_HP),
+        ...everyone.map(f => env.DB.prepare(
+          'INSERT OR IGNORE INTO game_body_discoveries (game_id, faction_id, body_id, discovered_at_tick) VALUES (?, ?, ?, ?)',
+        ).bind(gameId, f, id, tick)),
+      ]);
+      bodies.set(m.key, { id, template_id: m.key, name, type: MEGA_BODY_TYPE, radius, terraformed_at_tick: null,
+        parent_body_id: host.id, owner_faction_id: owner, destroyed_at_tick: null });
+      megaOut.push({ key: m.key, id, kind: m.kind, at: m.at, status: m.complete ? 'complete' : 'building',
+        progress: m.progress, cost: kind.cost });
+    }
+  }
+
   // ---- ships ----
   const shipIds = {};          // group key -> [ids]
   const shipRows = new Map();  // id -> { owner, at }
@@ -378,10 +598,12 @@ export async function applyScenario(env, spec, { session = null } = {}) {
       shipStmts.push(env.DB.prepare(
         `INSERT OR REPLACE INTO game_ships
            (id, game_id, owner_faction_id, name, ship_class, parent_body_id, orbit_rp, orbit_ra, orbit_omega, orbit_m0,
-            orbit_epoch, orbit_direction, fuel, fuel_max, status, built_at_tick, hp, hp_max, damage_per_tick, icon_variant, parts_json, home_body_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 1, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)`)
+            orbit_epoch, orbit_direction, fuel, fuel_max, status, built_at_tick, hp, hp_max, damage_per_tick, icon_variant, parts_json, home_body_id,
+            cargo_metal, cargo_gold)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 1, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .bind(id, gameId, fid(g.owner), name, cls, b.id, rp, rp, parkPhaseFor(id), tick, fuel, fuel, Math.max(0, tick - 1),
-          hpMax, hpMax, st.damage_per_tick, g.variant, parts.length ? JSON.stringify(parts) : null, b.id));
+          hpMax, hpMax, st.damage_per_tick, g.variant, parts.length ? JSON.stringify(parts) : null, b.id,
+          g.cargo?.metal ?? 0, g.cargo?.gold ?? 0));
       shipIds[g.key].push(id);
       shipRows.set(id, { owner: g.owner, at: b, cls });
     });
@@ -402,7 +624,10 @@ export async function applyScenario(env, spec, { session = null } = {}) {
     const presence = new Set();
     for (const b of bodies.values()) if (b.owner_faction_id === viewerId) presence.add(b.id);
     for (const [, r] of shipRows) if (r.owner === spec.viewer) presence.add(r.at.id);
-    const isStar = (b) => b.parent_body_id == null;
+    // A sun by its type too: a far system's suns orbit its barycenter, and
+    // "no parent" alone took Centauri A for a planet, so a far world was
+    // watched from its sun, well out of sensor range (2026-10-23).
+    const isStar = (b) => b.parent_body_id == null || b.type === 'star' || b.type === 'black_hole';
     const lit = (id) => {
       if (presence.has(id)) return true;
       const b = byId.get(id);
@@ -442,6 +667,29 @@ export async function applyScenario(env, spec, { session = null } = {}) {
     }
   }
   if (camStmts.length) await env.DB.batch(camStmts);
+
+  // NOTHING BURIED WHERE THE TAKE HAPPENS (2026-10-23). Worlds roll hidden
+  // secrets when a game is made, and a parked hull finds one on the next
+  // tick (room.js resolveSecretReveal): a 'pre_terraformed' find turned the
+  // obliterate clip's raw Callisto into a living ocean world on tick 1, and
+  // its strike, armed to obliterate, stood down in silence at tick 7 (a
+  // strike fires what was ordered or nothing). An ancient battery, a gate
+  // or a derelict's offer would wreck a take the same way. So every world
+  // the scene puts hulls at, lists, watches from or flies to is emptied of
+  // what is still buried there. `secrets: true` keeps them, for a clip
+  // that is about a find.
+  if (!spec.secrets) {
+    const quiet = new Set([...shipRows.values()].map(r => r.at.id));
+    for (const w of spec.worlds) quiet.add(bodyOf(w.body, 'worlds').id);
+    for (const o of spec.orders) if (o.type === 'move' && bodies.has(o.to)) quiet.add(bodies.get(o.to).id);
+    if (spec.kaiju && bodies.has(spec.kaiju.at)) quiet.add(bodies.get(spec.kaiju.at).id);
+    const ids = [...quiet];
+    for (let i = 0; i < ids.length; i += 80) {
+      const part = ids.slice(i, i + 80);
+      await env.DB.prepare(`UPDATE game_bodies SET secret_kind = NULL WHERE game_id = ? AND secret_revealed = 0 AND id IN (${part.map(() => '?').join(',')})`)
+        .bind(gameId, ...part).run();
+    }
+  }
 
   const shipsOf = (ref) => {
     const [key, idx] = String(ref).split('.');
@@ -564,6 +812,47 @@ export async function applyScenario(env, spec, { session = null } = {}) {
     }
   }
 
+  // ---- the Leviathan, parked at a world, about to wind up (2026-10-23) ----
+  // Born the game's own way (kaiju.js launchKaiju: its faction, its hull,
+  // its HP rolled from the fleets just seeded, the game_kaiju row), but
+  // with nowhere to fly: its "launch" is from the world itself, so the leg
+  // planner is not asked. Then it is put where its hunt would leave it,
+  // over its prey: phase 'hunting', the world its target. The next tick's
+  // advanceKaiju winds it up (kaiju_charge_ticks) and reveals it, and the
+  // strike after that is the game's own.
+  let kaijuOut = null;
+  if (spec.kaiju) {
+    const at = bodyOf(spec.kaiju.at, 'kaiju');
+    if (!['terrestrial', 'dwarf', 'moon'].includes(at.type)) throw new Error(`kaiju.at: ${at.name} is a ${at.type}; it eats terrestrial worlds, dwarfs and moons`);
+    const capital = await env.DB
+      .prepare(`SELECT 1 AS x FROM game_factions WHERE game_id = ? AND capital_body_id = ? AND status <> 'monster' LIMIT 1`)
+      .bind(gameId, at.id).first();
+    if (capital) throw new Error(`kaiju.at: ${at.name} is a capital, and the Leviathan never attacks one`);
+    // A take it finished left the world a debris field; it starts whole.
+    await env.DB.prepare('UPDATE game_bodies SET obliterated_at_tick = NULL WHERE id = ?').bind(at.id).run();
+    // The system its gate leads to: the gate it leaves through when full.
+    const sys = spec.gates === 'birth' ? gateOrder(gameId)[0] : SUN_GATE_SYSTEMS[0];
+    const made = await launchKaiju(env, gameId, tick,
+      { sys, arrival: tick, fromBodyId: at.id, landedNear: null, targetId: at.id },
+      await gameCfg(env, gameId), { planLeg: async () => null });
+    if (!made) throw new Error('kaiju: this game already has a Leviathan; re-apply with reset on');
+    const sid = kaijuShipId(gameId);
+    const hp = spec.kaiju.hp ?? made.hp;
+    const rp = parkOrbitRadius(Number(at.radius));
+    await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE game_ships SET orbit_rp = ?, orbit_ra = ?, orbit_omega = 0, orbit_m0 = ?, orbit_epoch = ?,
+                hp = ?, hp_max = ? WHERE id = ? AND game_id = ?`,
+      ).bind(rp, rp, parkPhaseFor(sid), tick, hp, hp, sid, gameId),
+      env.DB.prepare(
+        `UPDATE game_kaiju SET phase = 'hunting', target_body_id = ?, launched_at_tick = ?, hp_max = ?
+          WHERE game_id = ?`,
+      ).bind(at.id, tick - 1, hp, gameId),
+    ]);
+    kaijuOut = { ship: sid, at: spec.kaiju.at, hp, charge_ticks: spec.kaiju.chargeTicks,
+      winds_up_at_tick: tick + 1, fires_at_tick: tick + 1 + spec.kaiju.chargeTicks };
+  }
+
   // ---- orders ----
   const done = [];
   /** Things the scene asked for that the game could not do as asked. */
@@ -655,6 +944,15 @@ export async function applyScenario(env, spec, { session = null } = {}) {
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(`orders.mine: ${body?.error?.message ?? res.status}`);
       done.push({ type: 'mine', ship: id, rock: o.rock, to: o.to, loops: o.loops, route_id: body?.route?.id ?? null });
+    } else if (o.type === 'ram') {
+      const rock = bodyOf(o.asteroid, 'orders.ram');
+      const target = bodyOf(o.target, 'orders.ram');
+      const owner = factions.get(o.owner ?? spec.viewer);
+      const r = await fireRam(env, gameId, {
+        rockId: rock.id, targetId: target.id, factionId: owner.id, userId: owner.user_id,
+        depart: Math.max(tick, whenTick(o.depart, tick)),
+      });
+      done.push({ type: 'ram', asteroid: o.asteroid, target: o.target, ...r });
     }
   }
 
@@ -663,39 +961,169 @@ export async function applyScenario(env, spec, { session = null } = {}) {
     factions: spec.factions.map(f => ({ key: f.key, id: factions.get(f.key).id, name: f.name, handle: f.handle,
       seat_me: spec.seatMe && f.key === spec.viewer })),
     viewer: spec.viewer, ships: shipIds, fleets: fleetIds, wars: warIds.length, orders: done, laws: lawIds, silos: siloOut, warnings,
+    megastructures: megaOut, kaiju: kaijuOut, ...(gateBirth ? { gate_birth: gateBirth } : {}),
   };
 }
 
 /**
- * The far systems on a studio board: the game's own far_systems dial on a
- * config of its own (the published one is left alone), the far bodies
- * added the way a running game gets them (backfillMissingBodies), and with
- * `gates` the Centauri sun gate pair spawned already open. The game's own
- * gate sequence is marked long finished, so no second gate (or Leviathan)
- * arrives mid-take.
+ * FIRE A RAM the way a player does (2026-10-23): the plan the inspector
+ * computes, posted to the real handler (actions.js handleRamAsteroid) as
+ * the rock's owner, so the server's own checks pass judgement on it.
+ *
+ * The inspector's plan (BodyInspector.tsx): the rock's position at the
+ * departure, its velocity by finite difference, and the brachistochrone
+ * time T = 2 sqrt(gap / a) iterated against the target's motion, at the
+ * thrusters' push (RAM_ASTEROID_G x G_ANCHOR, within the handler's own
+ * ceiling; see below). Two departures from it, both for
+ * the film: the arrival is a WHOLE tick (impact is resolved on a tick,
+ * and a fractional arrival leaves the rock pinned at the intercept until
+ * the next one), and the push is eased to land exactly on that tick
+ * (a = 4 gap / T^2, never above the ceiling). At the full push over the
+ * rounded-up time the map's integrator, which brakes from the flip at
+ * plan.acceleration, would stop short and jump the last stretch.
+ *
+ * Metal: the owner is topped up by exactly the cost first, so the take
+ * spends nothing; a refused ram takes the top-up back. A refusal throws
+ * with the handler's own message.
  */
-async function enableFarSystems(env, gameId, tick, gates) {
+async function fireRam(env, gameId, { rockId, targetId, factionId, userId, depart }) {
+  const route = actionRoutes.find(x => x.method === 'POST' && x.pattern instanceof RegExp
+    && x.pattern.source.includes('bodies') && x.pattern.source.endsWith('\\/ram$'));
+  if (!route) throw new Error('ram handler not found');
+  const rm = makeRouteMath(env.DB, gameId);
+  // The push a player's ram gets. The handler's ceiling is
+  // max(faction engine_g, RAM_ASTEROID_G), but the inspector plans at
+  // fromG(faction.engineG ?? RAM_ASTEROID_G) and multiplayer factions
+  // carry no engineG, so every ram in play flies at RAM_ASTEROID_G; at
+  // engine_g (0.05) a studio rock crossed to Mars in 7 ticks, ten times
+  // the push anyone has seen.
+  const aMax = RAM_ASTEROID_G * RAM_G_ANCHOR;
+  const s = depart;
+  const p0 = await rm.bodyPosAt(rockId, s);
+  const pa = await rm.bodyPosAt(rockId, s - 0.01);
+  const pb = await rm.bodyPosAt(rockId, s + 0.01);
+  const v0 = { x: (pb.x - pa.x) / 0.02, y: (pb.y - pa.y) / 0.02 };
+  const gapAt = async (T) => {
+    const q = await rm.bodyPosAt(targetId, s + T);
+    return { q, d: Math.hypot(q.x - p0.x, q.y - p0.y) };
+  };
+  let T = 0;
+  for (let i = 0; i < 20; i++) {
+    const next = 2 * Math.sqrt((await gapAt(T)).d / aMax) * 1.01;
+    const settled = Math.abs(next - T) < 1e-4;
+    T = next;
+    if (settled) break;
+  }
+  let n = Math.max(1, Math.ceil(T));
+  let at = await gapAt(n);
+  for (let guard = 0; (aMax * n * n) / 4 < at.d && guard < 1000; guard++) at = await gapAt(++n);
+  if ((aMax * n * n) / 4 < at.d) throw new Error('orders.ram: the thrusters cannot reach that world');
+  const a = Math.min(aMax, (4 * at.d) / (n * n));
+  const dv = a * n;
+  const metal = Math.ceil(dv * RAM_METAL_PER_DV);
+  await env.DB.prepare('UPDATE game_factions SET metal = metal + ? WHERE id = ?').bind(metal, factionId).run();
+  const url = new URL(`https://studio/api/games/${gameId}/bodies/${rockId}/ram`);
+  const res = await route.handle(new Request(url, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      target_body_id: targetId, start_tick: s, flip_tick: s + n / 2, arrive_tick: s + n, acceleration: a,
+      start_pos_x: p0.x, start_pos_y: p0.y, start_vel_x: v0.x, start_vel_y: v0.y,
+      intercept_pos_x: at.q.x, intercept_pos_y: at.q.y, total_dv: dv, metal_cost: metal,
+    }),
+  }), env, { url, session: { user_id: userId }, params: { gameId, bodyId: rockId } });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    await env.DB.prepare('UPDATE game_factions SET metal = MAX(0, metal - ?) WHERE id = ?').bind(metal, factionId).run();
+    throw new Error(`orders.ram refused: ${body?.error?.message ?? `HTTP ${res.status}`}`);
+  }
+  return { depart: s, flip: s + n / 2, arrive: s + n, ticks: n, metal_cost: metal, accel_g: a / RAM_G_ANCHOR };
+}
+
+/**
+ * Dials a scene needs, on a config of the game's own (`cfg_studio_<id>`;
+ * the published one is left alone). Written only when something differs,
+ * so a re-take on the same dials changes nothing.
+ */
+async function patchStudioConfig(env, gameId, patch) {
   const g = await env.DB
     .prepare('SELECT g.config_id, c.overrides FROM games g LEFT JOIN game_configs c ON c.id = g.config_id WHERE g.id = ?')
     .bind(gameId).first();
   let ov = {};
   try { ov = JSON.parse(g?.overrides || '{}') || {}; } catch { ov = {}; }
-  if (Number(ov.far_systems) !== 1) {
-    const id = `cfg_studio_${gameId}`.slice(0, 64);
-    const now = Date.now();
-    await env.DB.batch([
-      env.DB.prepare(`INSERT OR REPLACE INTO game_configs (id, name, status, overrides, created_ms, updated_ms)
-                      VALUES (?, 'studio: far systems', 'archived', ?, ?, ?)`)
-        .bind(id, JSON.stringify({ ...ov, far_systems: 1 }), now, now),
-      env.DB.prepare('UPDATE games SET config_id = ? WHERE id = ?').bind(id, gameId),
-    ]);
-    invalidateCfg(gameId);
-  }
+  if (Object.entries(patch).every(([k, v]) => Number(ov[k]) === Number(v))) return;
+  const id = `cfg_studio_${gameId}`.slice(0, 64);
+  const now = Date.now();
+  await env.DB.batch([
+    env.DB.prepare(`INSERT OR REPLACE INTO game_configs (id, name, status, overrides, created_ms, updated_ms)
+                    VALUES (?, 'studio: far systems', 'archived', ?, ?, ?)`)
+      .bind(id, JSON.stringify({ ...ov, ...patch }), now, now),
+    env.DB.prepare('UPDATE games SET config_id = ? WHERE id = ?').bind(id, gameId),
+  ]);
+  invalidateCfg(gameId);
+}
+
+/**
+ * The far systems on a studio board: the game's own far_systems dial, the
+ * far bodies added the way a running game gets them (backfillMissingBodies),
+ * and then the gate:
+ *
+ *   gates: true    the Centauri sun gate pair spawned already open, and the
+ *                  game's own gate sequence marked long finished, so no
+ *                  second gate (or Leviathan) arrives mid-take.
+ *   gates: 'birth' (2026-10-23, the clip of a gate leaving the Sun) nothing
+ *                  spawned: the omen is set for this tick, so the next tick
+ *                  starts the ripples and the game's own tick sends the
+ *                  first gate out SUN_GATE_WARNING_TICKS later. The gap to
+ *                  the second gate is the dial's maximum, so it (and a
+ *                  Leviathan) cannot come mid-take. Returns what to expect.
+ *
+ * A scene with the Leviathan also turns the kaiju dial on, with its
+ * wind-up (kaiju_charge_ticks).
+ */
+async function enableFarSystems(env, gameId, tick, spec) {
+  const patch = { far_systems: 1 };
+  if (spec.gates === 'birth') patch.sun_gate_interval = CONFIG_DIALS.sun_gate_interval.max;
+  if (spec.kaiju) { patch.kaiju = 1; patch.kaiju_charge_ticks = spec.kaiju.chargeTicks; }
+  await patchStudioConfig(env, gameId, patch);
   await backfillMissingBodies(env, gameId, { farOnly: true });
-  if (gates) {
-    await env.DB.prepare('UPDATE games SET sun_gate_tick = ? WHERE id = ?').bind(tick - 1000, gameId).run();
-    await spawnSunGatePair(env, gameId, SUN_GATE_SYSTEMS[0], tick - 40, await gameCfg(env, gameId));
+  if (spec.gates === 'birth') {
+    // The gate rows are fixed per game and INSERT OR IGNORE, and a body is
+    // never deleted, so a board whose gate is already out cannot film the
+    // birth again: it would "spawn" into the rows that are already there.
+    const out = await env.DB
+      .prepare(`SELECT 1 AS x FROM game_bodies WHERE game_id = ? AND id LIKE ? LIMIT 1`)
+      .bind(gameId, `${gameId}:sungate_%`).first();
+    if (out) throw new Error("gates: 'birth' needs a board whose sun gates have not come out yet; apply the scene without game_id for a fresh game");
+    await env.DB.prepare('UPDATE games SET sun_gate_tick = ? WHERE id = ?').bind(tick, gameId).run();
+    const sys = gateOrder(gameId)[0];
+    return { omen_tick: tick, gate_leaves_sun_at_tick: tick + SUN_GATE_WARNING_TICKS, system: sys.label, gate: sys.solGate };
   }
+  if (spec.gates) {
+    // Past the whole sequence: the last gate leaves the Sun at
+    // omen + warning + interval, and the event stops looking 200 ticks
+    // after that. The interval is read, not assumed: a 'birth' take on
+    // this board left it at the dial's maximum.
+    const conf = await gameCfg(env, gameId);
+    const interval = Number(conf.sun_gate_interval) || 40;
+    await env.DB.prepare('UPDATE games SET sun_gate_tick = ? WHERE id = ?')
+      .bind(tick - (SUN_GATE_WARNING_TICKS + interval + 400), gameId).run();
+    const sys = SUN_GATE_SYSTEMS[0];
+    await spawnSunGatePair(env, gameId, sys, tick - 40, conf);
+    // LANDED MEANS THE SITE IS GONE (2026-10-23). The game's own sun gate
+    // step hands a landing site to its gate and retires it on the landing
+    // tick, but the omen above is set so far back that the step never
+    // looks again, so the site stood for the whole take on the gate's
+    // exact orbit and the map drew the gate as "CENTAURI GATE LANDING
+    // SITE" (the colony clip). Done here, the step's own write, once the
+    // stored gate has landed (an older board keeps its first landing).
+    const g = await env.DB
+      .prepare('SELECT emerge_until_tick FROM game_bodies WHERE id = ? AND destroyed_at_tick IS NULL')
+      .bind(solGateId(gameId, sys)).first();
+    if (g && (g.emerge_until_tick == null || Number(g.emerge_until_tick) <= tick)) {
+      await handOffLandingSite(env.DB, gameId, sys, tick);
+    }
+  }
+  return null;
 }
 
 /**
@@ -707,6 +1135,16 @@ async function enableFarSystems(env, gameId, tick, gates) {
  *     through the sun gate the hull is parked on: the player's own
  *     crossing (so the gate flashes), and then the leg on from the far end,
  *     departing as it lands.
+ *   { type: 'deliver', ship: 'st_fr_0', site: 'ws' }
+ *     the parked hull hands its hold to the construction site it sits at
+ *     (a scene megastructure's key, a site body's template or full id):
+ *     the player's own delivery (actions.js handleDeliverToSite).
+ *   { type: 'launch', world: 'earth', owner?: 'terra', target: 'mars', count: 4 }
+ *     a salvo from the Missile Silo in that world's city (the owner's, or
+ *     the first silo city there), the player's own launch (missiles.js).
+ *   { type: 'ram', asteroid: 'midas', target: 'mars' }
+ *     the rock's thrusters owner rams it now (fireRam).
+ * Each answers with the game handler's own reply, or its refusal.
  */
 async function handleOrder(req, env, { session, params }) {
   const { gameId } = params;
@@ -757,7 +1195,80 @@ async function handleOrder(req, env, { session, params }) {
       if (o.then?.to) then = { to: o.then.to, arrive: await leg(ship, Number(body.arrive_at_tick), body.to.id, o.then.to, o.then.settle) };
       return json({ ok: true, type: 'gate', through: body.from?.name, lands: body.arrive_at_tick, then });
     }
-    return err(400, 'bad_request', "type must be 'move' or 'gate'");
+    if (o?.type === 'deliver') {
+      const ship = await shipRow(full(o.ship));
+      if (!ship) return err(404, 'not_found', `no ship ${o.ship}`);
+      const key = String(o.site ?? '');
+      const site = (await env.DB
+        .prepare('SELECT id FROM game_bodies WHERE game_id = ? AND id IN (?, ?) AND destroyed_at_tick IS NULL LIMIT 1')
+        .bind(gameId, `${gameId}:${STUDIO_MARK}mega_${key}`, full(key)).first())?.id ?? await bodyId(key);
+      if (!site) throw new Error(`no construction site '${key}'`);
+      const route = actionRoutes.find(x => x.method === 'POST' && x.pattern instanceof RegExp
+        && x.pattern.source.includes('megastructures') && x.pattern.source.endsWith('\\/deliver$'));
+      if (!route) throw new Error('deliver handler not found');
+      const url = new URL(`https://studio/api/games/${gameId}/megastructures/${site}/deliver`);
+      const res = await route.handle(new Request(url, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ship_id: ship.id }),
+      }), env, { url, session: { user_id: ship.user_id }, params: { gameId, siteId: site } });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) return err(409, 'deliver', body?.error?.message ?? `delivery refused (${res.status})`);
+      return json({ ok: true, type: 'deliver', ...body });
+    }
+    if (o?.type === 'launch') {
+      const world = await bodyId(o.world);
+      if (!world) throw new Error(`no world '${o.world}'`);
+      const target = await bodyId(o.target);
+      if (!target) throw new Error(`no world '${o.target}'`);
+      const count = Math.max(1, Math.min(25, Math.floor(Number(o.count) || 1)));
+      let owner = null;
+      if (o.owner != null) {
+        // A scene faction key (its seat is the agent studio-<key>), an
+        // agent handle, an empire name, or a faction id.
+        const k = String(o.owner);
+        const f = await env.DB
+          .prepare(`SELECT f.id FROM game_factions f LEFT JOIN users u ON u.id = f.user_id
+                     WHERE f.game_id = ? AND (f.id = ? OR f.name = ? OR u.email IN (?, ?)) LIMIT 1`)
+          .bind(gameId, full(k), k, `agent+studio-${k}@agents.orbital.local`, `agent+${k}@agents.orbital.local`).first();
+        if (!f) throw new Error(`no faction '${k}' in this game`);
+        owner = f.id;
+      }
+      const cities = (await env.DB
+        .prepare(`SELECT s.id, s.buildings_json, f.user_id FROM game_settlements s
+                    JOIN game_factions f ON f.id = s.owner_faction_id
+                   WHERE s.game_id = ? AND s.body_id = ? AND s.type = 'city' AND s.destroyed_at_tick IS NULL
+                     ${owner ? 'AND s.owner_faction_id = ?' : ''}
+                   ORDER BY (s.id LIKE ?) DESC, s.created_at_tick ASC`)
+        .bind(...(owner ? [gameId, world, owner] : [gameId, world]), `${gameId}:${STUDIO_MARK}%`).all()).results ?? [];
+      const city = cities.find(c => {
+        try { return Number(JSON.parse(c.buildings_json || '{}')?.missile_silo) >= 1; } catch { return false; }
+      });
+      if (!city) throw new Error(`no city with a Missile Silo on ${o.world}${o.owner ? ` owned by ${o.owner}` : ''}; seed one with silos[]`);
+      const route = missileRoutes.find(x => x.method === 'POST' && x.pattern.source.endsWith('missiles\\/launch$'));
+      if (!route) throw new Error('missile launch handler not found');
+      const url = new URL(`https://studio/api/games/${gameId}/settlements/${encodeURIComponent(city.id)}/missiles/launch`);
+      const res = await route.handle(new Request(url, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ target_body_id: target, count }),
+      }), env, { url, session: { user_id: city.user_id }, params: { gameId, settlementId: encodeURIComponent(city.id) } });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) return err(409, 'launch', body?.error?.message ?? `launch refused (${res.status})`);
+      return json({ ok: true, type: 'launch', city: city.id, ...body });
+    }
+    if (o?.type === 'ram') {
+      const rock = await bodyId(o.asteroid);
+      if (!rock) throw new Error(`no asteroid '${o.asteroid}'`);
+      const target = await bodyId(o.target);
+      if (!target) throw new Error(`no world '${o.target}'`);
+      const owner = await env.DB
+        .prepare(`SELECT s.owner_faction_id AS fid, f.user_id FROM game_settlements s
+                    JOIN game_factions f ON f.id = s.owner_faction_id
+                   WHERE s.game_id = ? AND s.body_id = ? AND s.destroyed_at_tick IS NULL
+                     AND s.buildings_json LIKE '%trajectory_thrusters%' LIMIT 1`)
+        .bind(gameId, rock).first();
+      if (!owner) throw new Error(`${o.asteroid} has no station with thrusters; seed it with worlds[].thrusters`);
+      const r = await fireRam(env, gameId, { rockId: rock, targetId: target, factionId: owner.fid, userId: owner.user_id, depart: tick });
+      return json({ ok: true, type: 'ram', asteroid: o.asteroid, target: o.target, ...r });
+    }
+    return err(400, 'bad_request', "type must be 'move', 'gate', 'deliver', 'launch' or 'ram'");
   } catch (e) {
     return err(400, 'bad_order', String(e?.message ?? e));
   }
@@ -779,6 +1290,10 @@ async function handleCatalog(req, env, { session }) {
     // Senate sliders a scene's `laws` may set: id, label, range, default.
     sliders: SLIDER_CATALOG.map(s => ({ id: s.id, label: s.label, min: s.min, max: s.max, default: s.default, per_faction: s.perFaction !== false })),
     sanctions: ['war_authorization', 'trade_embargo', 'production_sanction'],
+    // A scene's `megastructures[].kind`, with what each costs to finish.
+    megastructures: MEGASTRUCTURE_KINDS.map(k => ({ kind: k, label: MEGASTRUCTURES[k].label, cost: MEGASTRUCTURES[k].cost })),
+    // Worlds a station's thrusters can ram (`worlds[].thrusters`).
+    rogue_asteroids: ROGUE_ASTEROIDS,
     examples: EXAMPLES,
   });
 }
@@ -837,7 +1352,10 @@ async function handleTick(req, env, { session, params }) {
   for (let i = 0; i < n; i++) {
     const res = await roomStub(env, gameId).fetch('https://room/tick-now', {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ force: true, gameId }),
+      // freshConfig: the room re-reads this game's dials before the tick
+      // (room.js /tick-now), so the dials a scene just set (far systems,
+      // the Leviathan's wind-up) are the ones its first tick runs on.
+      body: JSON.stringify({ force: true, gameId, freshConfig: true }),
     });
     last = await res.json().catch(() => null);
   }
@@ -949,6 +1467,9 @@ function summarize(spec) {
     ships: spec.ships.map(g => `${g.key}: ${g.hulls.length} at ${g.at} (${g.owner})`),
     fleets: spec.fleets.map(f => f.key), orders: spec.orders.map(o => o.type),
     laws: spec.laws.map(l => l.kind === 'law' ? `${l.slider}=${l.value}${l.target ? ' on ' + l.target : ''}` : `${l.kind} on ${l.target}`),
+    gates: spec.gates || false,
+    megastructures: spec.megastructures.map(m => `${m.key}: ${m.kind} at ${m.at} (${m.owner}, ${m.complete ? 'complete' : `${Math.round(m.progress * 100)}%`})`),
+    kaiju: spec.kaiju ? `Leviathan at ${spec.kaiju.at}, ${spec.kaiju.chargeTicks}-tick wind-up` : null,
   };
 }
 
