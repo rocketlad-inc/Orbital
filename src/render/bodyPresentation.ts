@@ -105,6 +105,9 @@ export function isBarycenter(b: Pick<Body, 'id'> | undefined | null): boolean {
   return FAR_BARYCENTERS.has(i >= 0 ? b.id.slice(i + 1) : b.id);
 }
 
+/** A sun gate's landing site (worker/sunGates.js siteId). */
+const isGateSite = (b: { id: string }) => /(^|:)sungate_[a-z]+_site$/.test(b.id);
+
 const isStar = (b: (Pick<Body, 'type'> & { id?: string }) | undefined | null) =>
   !!b && (b.type === 'star' || b.type === 'black_hole'
     || (b.id != null && isBarycenter(b as Pick<Body, 'id'>)));
@@ -315,7 +318,16 @@ export function computePresentation(
           // and a folded barycenter drags them down with it in the
           // parent pass below.
           if (isBarycenter(o)) continue;
-          if (rank(o) >= rank(b)) continue;
+          // A SUN GATE'S LANDING SITE NEVER HIDES A STRUCTURE (2026-10-23).
+          // The site is empty space classed as a planet, so a landed gate
+          // standing on it (until the server retires the site, and for a
+          // whole Studio take before that was fixed) folded into the
+          // reticle: the map said "LANDING SITE" over an open gate. The
+          // site goes under the gate instead; worlds rank as before.
+          const siteOverGate = isGateSite(b) && o.type === 'megastructure';
+          const gateOverSite = isGateSite(o) && b.type === 'megastructure';
+          if (siteOverGate) continue;
+          if (!gateOverSite && rank(o) >= rank(b)) continue;
           const q = at.get(o.id)!;
           const sep = Math.hypot(p.x - q.x, p.y - q.y);
           const need = rb + (radius.get(o.id) ?? 0) + FOLD_GAP_PX;
