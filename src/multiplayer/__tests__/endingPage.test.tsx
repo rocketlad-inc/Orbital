@@ -94,6 +94,49 @@ beforeEach(() => {
 });
 afterEach(() => { act(() => root.unmount()); host.remove(); });
 
+describe('EndingScreen: the match film', () => {
+  it('puts Watch and Share right under the verdict, above the report', async () => {
+    const d = withViewer(MEGA, 'Tritalowda');
+    await mount(metaFor(d), async () => ({ ok: true, status: 200, data: d }));
+    const watch = button(/Watch the match film/)!;
+    const share = button(/Share the film/)!;
+    expect(watch).toBeDefined();
+    expect(share).toBeDefined();
+    const standings = Array.from(host.querySelectorAll('*')).find(el => el.textContent === 'Final standings')!;
+    // eslint-disable-next-line no-bitwise
+    expect(watch.compareDocumentPosition(standings) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('Share makes the link and shows the share bar with it', async () => {
+    const d = withViewer(MEGA, 'Tritalowda');
+    await mount(metaFor(d), async () => ({ ok: true, status: 200, data: d }));
+    (apiFetch as jest.Mock).mockImplementation(async (p: string, init?: RequestInit) => (
+      p.includes('/match/share') && init?.method === 'POST'
+        ? { ok: true, status: 200, data: { token: 'tok123456789', path: '/film/tok123456789' } }
+        : { ok: true, status: 200, data: {} }));
+    await act(async () => { button(/Share the film/)!.click(); });
+    for (let i = 0; i < 20 && !host.querySelector('.recap-share'); i++) {
+      await act(async () => { await new Promise(r => setTimeout(r, 10)); });
+    }
+    expect(host.querySelector('.recap-share')).not.toBeNull();
+    const x = host.querySelector('.recap-share a[href*="x.com"]') as HTMLAnchorElement;
+    expect(decodeURIComponent(x.href)).toContain('https://orbital-empire.com/film/tok123456789');
+  });
+
+  it('a match with no recorded film says so instead of sharing a dead link', async () => {
+    const d = withViewer(MEGA, 'Tritalowda');
+    await mount(metaFor(d), async () => ({ ok: true, status: 200, data: d }));
+    (apiFetch as jest.Mock).mockImplementation(async (p: string) => (
+      p.includes('/match/share') ? { ok: false, status: 409, error: { code: 'not_ready', message: '' } } : { ok: true, status: 200, data: {} }));
+    await act(async () => { button(/Share the film/)!.click(); });
+    for (let i = 0; i < 20 && !/No film recorded/.test(text()); i++) {
+      await act(async () => { await new Promise(r => setTimeout(r, 10)); });
+    }
+    expect(text()).toContain('No film recorded for this match yet');
+    expect(host.querySelector('.recap-share')).toBeNull();
+  });
+});
+
 describe('EndingScreen: the report arrives', () => {
   it('renders the verdict, your empire, standings, superlatives, the shape of the game and the actions', async () => {
     const d = withViewer(MEGA, 'Tritalowda');

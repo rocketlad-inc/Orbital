@@ -1230,8 +1230,8 @@ export function createMatchMap(
    * re-framed, a 26% zoom pop after each cut. On a new scene, a frame is
    * laid out unseen first, and the camera aimed again from it.
    */
-  function render() {
-    stepFilmClock();
+  function render(dtMs?: number) {
+    stepFilmClock(dtMs);
     if (curScene !== primedFor) {
       primedFor = curScene;
       // Every scene change is a cut: nothing carries over from the shot
@@ -2117,9 +2117,10 @@ export function createMatchMap(
    */
   let filmMs = 0;
   let lastWallMs = -1;
-  const stepFilmClock = () => {
+  const stepFilmClock = (dtMs?: number) => {
     const w = performance.now();
-    if (lastWallMs >= 0) filmMs += Math.min(FILM_STEP_MAX_MS, Math.max(0, w - lastWallMs));
+    if (dtMs != null) filmMs += Math.max(0, dtMs);
+    else if (lastWallMs >= 0) filmMs += Math.min(FILM_STEP_MAX_MS, Math.max(0, w - lastWallMs));
     lastWallMs = w;
   };
   /** The frame-to-frame audit's record of the last frame (see render). */

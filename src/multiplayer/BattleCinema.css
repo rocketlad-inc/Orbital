@@ -24,6 +24,7 @@
 }
 
 .cinema-transport {
+  flex-wrap: wrap;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -41,6 +42,10 @@
   padding: 5px 11px;
 }
 .cinema-transport button:hover { background: #1e3450; }
+/* The match film's video export: a labelled button, not an icon. */
+.cinema-transport button.cinema-video { font-size: 11px; letter-spacing: 0.04em; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.cinema-transport button.cinema-video:disabled { opacity: 0.5; cursor: default; }
+.cinema-video-msg { font-size: 11px; color: #ffb3a8; padding: 2px; }
 .cinema-transport input[type='range'] {
   flex: 1 1 auto;
   accent-color: #6fb4ee;

@@ -1434,6 +1434,7 @@ import * as economy from './economy.js';
 import * as heraldStrip from './heraldStrip.js';
 import * as battleCard from './battleCard.js';
 import * as recapShare from './recapShare.js';
+import * as filmShare from './filmShare.js';
 import * as widget from './widget.js';
 import * as wear from './wear.js';
 import * as wearWorlds from './wearWorlds.js';
@@ -1573,6 +1574,28 @@ export default {
         } catch (e) {
           console.error('recap card failed', e);
           return new Response('card unavailable', { status: 500 });
+        }
+      }
+      // The whole-match film's link: its card and its page, the same way
+      // (worker/filmShare.js; /film/* is in run_worker_first).
+      const fcm = url.pathname.match(filmShare.FILM_CARD_RE);
+      if (fcm && req.method === 'GET') {
+        try {
+          await ensureMigrated(env);
+          return await filmShare.handleFilmCard(req, env, fcm[1]);
+        } catch (e) {
+          console.error('film card failed', e);
+          return new Response('card unavailable', { status: 500 });
+        }
+      }
+      const fpm = url.pathname.match(filmShare.FILM_PAGE_RE);
+      if (fpm && req.method === 'GET') {
+        try {
+          await ensureMigrated(env);
+          return await filmShare.handleFilmPage(req, env, fpm[1]);
+        } catch (e) {
+          console.error('film page failed', e);
+          return env.ASSETS.fetch(req);
         }
       }
       const rpm = url.pathname.match(recapShare.RECAP_PAGE_RE);
