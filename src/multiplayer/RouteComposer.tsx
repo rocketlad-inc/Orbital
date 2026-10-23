@@ -21,7 +21,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { Body, GameState, Ship } from '../types';
+import type { Body, GameState } from '../types';
 import type { RouteProjection, RouteStopInput } from './MultiplayerActionsContext';
 import { useMultiplayerActions } from './MultiplayerActionsContext';
 import { useIsMobile } from '../hooks/useIsMobile';
@@ -33,6 +33,7 @@ import { routeProblem, eligibleBodies } from '../game/tradeRouteRules';
 import { makeSystemRootOf, systemLabel } from '../game/systemGrouping';
 import { BASE_HOLD } from '../game/mining';
 import './RouteComposer.css';
+import { RouteShipPicker } from './RouteShipPicker';
 import { requirementLabel } from '../game/researchUnlocks';
 import { MEGASTRUCTURES, progressOf, loadsRemaining } from '../game/megastructures';
 import { t, tn } from '../i18n/core';
@@ -681,15 +682,20 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
               )}
             </div>
 
-            <div className="rc-section-label">{t('route.composer.ships')}</div>
-            <ShipRow
-              label={t('route.tab.runsIt')}
+            <RouteShipPicker
+              gameState={gameState}
+              firstStopId={stops[0]?.bodyId}
+              freighters={myFreighters}
+              warships={myWarships}
+              carriers={carriers}
+              guards={guards}
+              carrierCap={carrierCap}
               // Names the NEXT tech, for the same reason the route card's
               // tooltip does: "at your research" states the limit without
               // ever saying how to lift it, and Convoy Logistics was
               // missing from the research card entirely, so there was
               // nothing to stumble across either.
-              hint={carriers.length >= carrierCap
+              carrierHint={carriers.length >= carrierCap
                 ? tn('route.composer.holds', carrierCap)
                   + (carrierCap < 2
                     ? ` ${t('route.composer.raisesTo2', { tech: requirementLabel('trade.convoy2') ?? '' })}`
@@ -699,21 +705,12 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
                 : busyFreighters > 0
                   ? tn('route.composer.busyFreighters', busyFreighters)
                   : undefined}
-              options={myFreighters}
-              chosen={carriers}
-              max={carrierCap}
-              onToggle={id => setCarriers(prev =>
+              guardHint={`${t('route.composer.guardsHint')}${
+                busyWarships > 0 ? ` ${t('route.composer.busyWarships', { n: busyWarships })}` : ''}`}
+              onToggleCarrier={id => setCarriers(prev =>
                 prev.includes(id) ? prev.filter(x => x !== id)
                   : prev.length < carrierCap ? [...prev, id] : prev)}
-            />
-            <ShipRow
-              label={t('route.tab.guards')}
-              hint={`${t('route.composer.guardsHint')}${
-                busyWarships > 0 ? ` ${t('route.composer.busyWarships', { n: busyWarships })}` : ''}`}
-              options={myWarships}
-              chosen={guards}
-              onToggle={id => setGuards(prev =>
-                prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])}
+              onSetGuards={setGuards}
             />
           </>
         )}
@@ -721,6 +718,18 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
         {err && <div className="rc-err">{err}</div>}
 
         <div className="rc-foot">
+          {!routeId && (
+            <div className="rc-summary">
+              <span className="rc-summary-k">{t('route.ships.summary')}</span>
+              <span className="rc-summary-v">
+                {carriers.length > 0
+                  ? carriers.map(id => gameState.ships.find(x => x.id === id)?.name ?? id).join(', ')
+                  : t('route.ships.noFreighter')}
+                {' · '}
+                {guards.length > 0 ? tn('route.ships.guardsN', guards.length) : t('route.ships.unguarded')}
+              </span>
+            </div>
+          )}
           {projection && (
             <div className="rc-readout">
               <span>{t('route.composer.loop')} <b>{t('route.composer.loopTicks', { n: projection.loop_ticks })}</b></span>
@@ -803,42 +812,6 @@ const HoldGauge: React.FC<{
         </div>
       )}
     </div>
-  );
-};
-
-const ShipRow: React.FC<{
-  label: string;
-  hint?: string;
-  options: Ship[];
-  chosen: string[];
-  max?: number;
-  onToggle: (id: string) => void;
-}> = ({ label, hint, options, chosen, max, onToggle }) => {
-  useI18n();
-  return (
-  <div className="rc-shiprow">
-    <div className="rc-shiprow-label">{label}</div>
-    <div className="rc-shiprow-list">
-      {options.length === 0 && <span className="rc-empty">{t('route.composer.noneAvailable')}</span>}
-      {options.map(s => {
-        const on = chosen.includes(s.id);
-        const blocked = !on && max != null && chosen.length >= max;
-        return (
-          <button
-            key={s.id}
-            type="button"
-            className={`rc-ship${on ? ' on' : ''}`}
-            disabled={blocked}
-            title={blocked ? hint : undefined}
-            onClick={() => onToggle(s.id)}
-          >
-            {s.name}
-          </button>
-        );
-      })}
-    </div>
-    {hint && <div className="rc-hint">{hint}</div>}
-  </div>
   );
 };
 

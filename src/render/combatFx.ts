@@ -1824,14 +1824,23 @@ interface Sterilisation {
 
 const sterilisations: Sterilisation[] = [];
 const seenSteriliseIds = new Set<string>();
+/** Worlds whose death has started playing at least once. */
+const sterilisedBodiesPlayed = new Set<string>();
 
 /** Queue the death of a world. Idempotent on the chronicle entry id. */
 export function spawnSterilisation(entryId: string, bodyId: string, opts: { beam?: boolean } = {}): void {
   if (seenSteriliseIds.has(entryId)) return;
   if (seenSteriliseIds.size > 2000) seenSteriliseIds.clear();
   seenSteriliseIds.add(entryId);
+  sterilisedBodiesPlayed.add(bodyId);
   if (sterilisations.length >= STERILISE_CAP) sterilisations.shift();
   sterilisations.push({ entryId, bodyId, startMs: performance.now(), beam: opts.beam !== false });
+}
+
+/** Whether this world's death has begun playing here (it waits until
+ *  the world is framed, see MapCanvas's watched-FX queue). */
+export function sterilisationStarted(bodyId: string): boolean {
+  return sterilisedBodiesPlayed.has(bodyId);
 }
 
 /** Keeps the render loop alive while a world is dying. */

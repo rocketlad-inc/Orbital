@@ -655,6 +655,13 @@ async function handleTick(req, env, { session, params }) {
   if (!g || (g.is_test_game ?? 0) !== 1) return err(404, 'not_found', 'no such test game');
   const body = await readJson(req);
   const n = Math.max(1, Math.min(12, Number(body?.n) || 1));
+  // `expect`: the tick the caller is advancing FROM. A retried request
+  // whose first try went through (an error reply, the tick committed)
+  // finds the game already past it and does nothing, so a retry can never
+  // tick twice (it did: a Studio take ran a tick ahead, 2026-10-22).
+  if (body?.expect != null && Number(body.expect) !== Number(g.current_tick)) {
+    return json({ ok: true, ticks: 0, from: g.current_tick, current_tick: g.current_tick, already: true });
+  }
   let last = null;
   for (let i = 0; i < n; i++) {
     const res = await roomStub(env, gameId).fetch('https://room/tick-now', {

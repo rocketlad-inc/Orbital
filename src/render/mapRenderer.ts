@@ -44,7 +44,7 @@ import { getShipClass } from '../game/shipClasses';
 // hashStr/mulberry32 come from planetTexture (above) — combatFx defined
 // its own copies only because its branch predated planetTexture; the
 // duplicates are removed there and it re-exports nothing seeded.
-import { drawDeathDebris, sterilisationProgress } from './combatFx';
+import { drawDeathDebris, sterilisationProgress, sterilisationStarted } from './combatFx';
 import { anchorToBody, anchoredWorldPos, type BodyAnchor } from './fxAnchor';
 import { noteKaijuDrawn, kaijuHoldsWorldWhole, drawKaijuCarcass } from './kaijuFx';
 import { kaijuRevealed } from '../game/kaijuReveal';
@@ -3195,11 +3195,40 @@ function drawWarpGateBody(
  * tick resolves — the two are drawn by different systems and this is
  * what keeps them in step.
  */
-function sterilisedBlend(body: Body, ctx: RenderContext): number {
+export function sterilisedBlend(body: Body, ctx: RenderContext): number {
   if (body.sterilisedAtTick == null) return 0;
   const k = sterilisationProgress(body.id, ctx.nowMs ?? 0);
-  if (k == null) return 1;                    // no animation: just dead
+  if (k == null) return strikePending(body, ctx) ? 0 : 1;   // no animation: dead, unless it is still to play
   return Math.max(0, Math.min(1, (k - 0.5) / 0.42));
+}
+
+/**
+ * THE WORLD DIES WHEN IT IS SHOT, NOT BEFORE (judges, Mega Destroyer
+ * clip, 2026-10-22: "Earth dies before the beam hits"). The tick that
+ * sterilises a world lands before its death animation starts (that waits
+ * a frame, or until the world is framed), and it also un-terraforms it,
+ * so for that moment a living Earth drew as bare dead rock with no shot
+ * fired, then turned to ash a second time when the beam came. A world
+ * struck in the last few ticks whose death has not begun here keeps its
+ * look until it does; the living surface then gives way under the fire's
+ * white-out (k 0.5), where the ash takes over.
+ */
+const STRIKE_PENDING_TICKS = 3;
+/** Worlds this client has drawn living (fully terraformed). */
+const drawnLiving = new Set<string>();
+function strikePending(body: Body, ctx: RenderContext): boolean {
+  return body.sterilisedAtTick != null && !sterilisationStarted(body.id)
+    && ctx.t - body.sterilisedAtTick < STRIKE_PENDING_TICKS;
+}
+/** The terraform fraction to DRAW: a struck living world stays living
+ *  until its death reaches the fire. */
+export function drawnTerraformFraction(body: Body, ctx: RenderContext): number {
+  const tf = terraformFraction(body, ctx.t);
+  if (tf >= 1) { drawnLiving.add(body.id); return tf; }
+  if (body.sterilisedAtTick == null || !drawnLiving.has(body.id)) return tf;
+  if (strikePending(body, ctx)) return 1;
+  const k = sterilisationProgress(body.id, ctx.nowMs ?? 0);
+  return k != null && k < 0.5 ? 1 : tf;
 }
 
 function drawSterilised(
@@ -3484,7 +3513,7 @@ function drawPlanetBody(
   const color = body.color || COLORS.planetDefault;
   // Terraforming crossfade fraction — 0 for raw (and everything in SP),
   // partial while the transformation window runs, 1 once flipped.
-  const tfF = terraformFraction(body, ctx.t);
+  const tfF = drawnTerraformFraction(body, ctx);
 
   // Atmosphere glow for terrestrial / ice giant — and for any world
   // growing an atmosphere by terraforming (a moon mid-transformation
@@ -4948,6 +4977,40 @@ export function drawnShipLook(shipId: string): HullLook | undefined {
   return lastDrawnLook.get(shipId);
 }
 
+/**
+ * A LANDING IS ONE MOTION (judges, Mega Destroyer clip, 2026-10-22: hulls
+ * "rotate ~90 degrees in one frame" and "halve in size" as they arrive).
+ * A hull in flight is drawn at its flight size, nose along its burn; the
+ * frame it parks it is drawn at its orbit's size (a battle's, which can be
+ * twice that at close zoom) and heading. It now eases from the one to the
+ * other over LANDING_MORPH_MS.
+ */
+const lastFlightLook = new Map<string, { size: number; heading: number; ms: number }>();
+const landingMorphs = new Map<string, { size: number; heading: number; startMs: number }>();
+export const LANDING_MORPH_MS = 1200;
+export function noteFlightLook(shipId: string, size: number, heading: number, nowMs: number): void {
+  if (lastFlightLook.size > 2000) lastFlightLook.clear();
+  lastFlightLook.set(shipId, { size, heading, ms: nowMs });
+}
+/** The size and heading to draw a PARKED hull at, easing out of its
+ *  flight look if it has just landed. */
+export function landingLook(shipId: string, size: number, heading: number, nowMs: number): { size: number; heading: number } {
+  const fl = lastFlightLook.get(shipId);
+  if (fl) {
+    lastFlightLook.delete(shipId);
+    if (nowMs >= fl.ms && nowMs - fl.ms < 500) {
+      if (landingMorphs.size > 500) landingMorphs.clear();
+      landingMorphs.set(shipId, { size: fl.size, heading: fl.heading, startMs: nowMs });
+    }
+  }
+  const m = landingMorphs.get(shipId);
+  if (!m) return { size, heading };
+  const u = (nowMs - m.startMs) / LANDING_MORPH_MS;
+  if (!(u >= 0 && u < 1)) { landingMorphs.delete(shipId); return { size, heading }; }
+  const e = smootherStep(u);
+  return { size: m.size + (size - m.size) * e, heading: lerpAngle(m.heading, heading, e) };
+}
+
 /** Capital hulls drawn recently, by id. A Planet Killer's strike is a
  *  chronicle row about a WORLD; this is how the beam finds the ship that
  *  fired it instead of coming from nowhere. */
@@ -5807,8 +5870,11 @@ export function drawShip(
   // Faction-colored: cyan for player, red for enemy.
   const shipColorValue = shipColor(ship, ctx.factions);
 
-  const hullSize = shipIconSize(ship.class, isSelected)
+  const restSize = shipIconSize(ship.class, isSelected)
     * (battleK >= 0 ? battleSpriteScale(battleK) : (ship.transit || isSelected) ? 1 : sizeScale);
+  const landing = landingLook(ship.id, restSize, heading, ctx.nowMs ?? performance.now());
+  const hullSize = landing.size;
+  heading = landing.heading;
   // THE LEVIATHAN IS HUGE (Lorne, 2026-10-08: "make it huge"). Parked
   // hulls are drawn to the scale of their world, which shrank it smaller
   // than the moon it was eating. Over a world it is at least twice that
@@ -7796,6 +7862,7 @@ function drawTorchTransitShip(
   // shrinks the whole hull-and-dressing group together rather than
   // leaving a full-size flame on a half-size ship.
   const iconSize = shipIconSize(ship.class, isSelected) * (isSelected ? 1 : sizeScale);
+  noteFlightLook(ship.id, iconSize, heading, ctx.nowMs ?? performance.now());
 
   const flashStartT = ctx.damageFlashStart?.get(ship.id);
   drawDamageFlash(canvasPos, iconSize / 2, flashStartT, ctx.nowMs ?? performance.now(), ctx, 'damage');
@@ -9568,9 +9635,16 @@ function washOnsetSpans(spans: number, scale: number, bodies: Body[]): number {
  *  seconds of a battle in flight on two saturated bands). Players see
  *  the full wash: held territory should look held. */
 export const FILM_WASH_SCALE = 0.45;
+/** A shot's own say over the wash (its 'territory' step), 0..1, or null.
+ *  At system zoom the bands and their outlines fill the frame, and a
+ *  wide shot of two fleets read as a map of territory (judges, 2026-10-22). */
+let studioWash: number | null = null;
+export function setStudioWashScale(k: number | null): void {
+  studioWash = k == null || !Number.isFinite(k) ? null : Math.max(0, Math.min(1, k));
+}
 function filmWashScale(): number {
-  return typeof document !== 'undefined' && document.body?.classList.contains('studio-filming')
-    ? FILM_WASH_SCALE : 1;
+  const filming = typeof document !== 'undefined' && document.body?.classList.contains('studio-filming');
+  return (filming ? FILM_WASH_SCALE : 1) * (studioWash ?? 1);
 }
 
 export function systemRegionOpacityFor(spans: number, scale: number, bodies: Body[]): number {

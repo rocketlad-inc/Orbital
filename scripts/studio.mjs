@@ -328,8 +328,10 @@ async function film() {
     if (traceOut != null) fs.closeSync(traceOut);
     fs.writeFileSync(path.join(dir, 'frames.json'), JSON.stringify(frames));
     const stats = await b.evaluate('JSON.stringify(window.__studio.stats)', 10_000).catch(() => '{}');
+    // The director's notes (picks, tick retries, missing targets), kept with the take.
+    const log = await b.evaluate('JSON.stringify(window.__studio.log)', 10_000).catch(() => '[]');
     await b.evaluate('window.__studio.closeFilm()', 10_000).catch(() => {});
-    console.log(JSON.stringify({ dir, frames: frames.length, seconds: shot.seconds, stats: JSON.parse(stats) }));
+    console.log(JSON.stringify({ dir, frames: frames.length, seconds: shot.seconds, stats: JSON.parse(stats), log: JSON.parse(log) }));
     if (flag('encode') !== '0') {
       const width = flag('width') || '960';
       const enc = path.join(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), 'studio-encode.py');

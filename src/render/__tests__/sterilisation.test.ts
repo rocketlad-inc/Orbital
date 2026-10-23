@@ -87,8 +87,10 @@ describe('the mark it leaves', () => {
     const i = renderer.indexOf('function sterilisedBlend(');
     const body = renderer.slice(i, renderer.indexOf('\n}', i));
     expect(body).toMatch(/sterilisationProgress\(body\.id/);
-    // ...and a world with no animation running is simply dead.
-    expect(body).toMatch(/if \(k == null\) return 1/);
+    // ...and a world with no animation running is simply dead, unless its
+    // death is still to play (struck this tick, not yet framed): then it
+    // keeps its look until the beam comes (landingAndStrike.test.ts).
+    expect(body).toMatch(/if \(k == null\) return strikePending\(body, ctx\) \? 0 : 1/);
   });
 
   it('applies on EVERY body draw path', () => {

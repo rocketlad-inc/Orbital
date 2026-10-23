@@ -27,6 +27,7 @@ import { shipWorldPosition } from '../../game/combat';
 import { smoothedTick, setStudioDisplayTick } from '../../render/tickPhase';
 import { setStudioFullVisuals } from '../../render/lightweightMode';
 import { setStudioHullScale } from '../../render/cameraLimits';
+import { setStudioWashScale } from '../../render/mapRenderer';
 import { apiFetch } from '../api';
 import { arcApexScale, arcNeeded, panCamera, strikeTimingWarnings } from './shotPlan';
 
@@ -54,7 +55,16 @@ export type ShotStep =
   /** Hulls in flight drawn `scale` times their size (eased over `ms`):
    *  the close-up a camera zoom cannot give, since they draw a fixed size
    *  at every zoom. Back to 1 with another step, and at the shot's end. */
-  | { at: number; do: 'hulls'; scale: number; ms?: number };
+  | { at: number; do: 'hulls'; scale: number; ms?: number }
+  /** The territory wash: 0 hides it, 1 shows it as filmed (eased over
+   *  `ms`). Hide it for wide shots, where it fills the frame. */
+  | { at: number; do: 'territory'; show: number; ms?: number }
+  /** Choose, at this moment, which of several squadrons to send: dry-run
+   *  each one's intercept of `target` (its hull `squad` with {b} replaced,
+   *  then _0), take `prefer` when it meets the target at least `within`
+   *  ticks before the target lands, else the earliest meeting. Later
+   *  steps say '@b' for the choice (a body id, and in squad names). */
+  | { at: number; do: 'pick'; from: string[]; squad: string; target: Target; prefer?: string; within?: number };
 
 /** The game's panels, by the name the dock and the shell know them by. */
 export type PanelId = 'senate' | 'faction' | 'comms' | 'trades' | 'situation' | 'eventlog' | 'multiplayer'
@@ -210,9 +220,14 @@ export class Director {
       return { x: ps.reduce((a, p) => a + p.x, 0) / ps.length, y: ps.reduce((a, p) => a + p.y, 0) / ps.length };
     }
     if (target.startsWith('ship:')) {
+      // A ship that is gone (destroyed) holds where it was last seen, so a
+      // camera on it, or on a 'mid:' that counts it, does not jump the
+      // frame it dies (judges, Mega Destroyer clip: the whole scene dropped
+      // ~110 px as the Mega was destroyed).
       const ship = this.ship(target.slice(5));
-      if (!ship) return null;
-      return this.shipPos(ship, tick);
+      const p = ship ? this.shipPos(ship, tick) : null;
+      if (p) { this.lastSeen.set(target, p); return p; }
+      return this.lastSeen.get(target) ?? null;
     }
     if (target.startsWith('missile:')) {
       const m = this.missile(Math.max(1, Number(target.slice(8)) || 1));
@@ -433,14 +448,17 @@ export class Director {
     // hour. After 30 s, assume the server ticked and wait on the map.
     const ask = () => Promise.race([
       apiFetch<{ current_tick: number }>(`/api/admin/studio/games/${this.host.gameId}/tick`, {
-        method: 'POST', body: JSON.stringify({ n }),
+        // The tick we advance FROM: a retry after a first try that did go
+        // through is then a no-op on the server, never a second tick.
+        method: 'POST', body: JSON.stringify({ n, expect: before }),
       }),
       realSleep(30_000).then(() => null),
     ]);
     let res = await ask();
     // A passing storage fault ("Durable Object storage caused object to be
-    // reset") ended a take at its cut (2026-10-22). Ask again, twice, but
-    // never re-tick a game that did move.
+    // reset") ended a take at its cut (2026-10-22). Ask again, twice; the
+    // server ticks only from `before` (expect), so a try that did commit is
+    // never ticked again (the map lags the server, so its tick cannot say).
     for (let i = 0; res && !res.ok && i < 2; i++) {
       this.note(`tick: ${res.error?.message ?? res.status}; asking again`);
       await realSleep(3000);
@@ -473,6 +491,7 @@ export class Director {
       if (p) { this.cam.x = p.x; this.cam.y = p.y; }
     }
     if (this.hullSize) setStudioHullScale(this.hullSizeNow());
+    if (this.wash) setStudioWashScale(this.washNow());
     this.push();
   }
 
@@ -529,9 +548,12 @@ export class Director {
   /** Fire every step whose time has come. Ticks are awaited: the clock
    *  does not move while the server works. */
   private async fire(steps: ShotStep[], fired: Set<ShotStep>): Promise<void> {
-    for (const st of steps) {
-      if (fired.has(st) || st.at > this.clock + 1e-9) continue;
-      fired.add(st);
+    for (const raw of steps) {
+      if (fired.has(raw) || raw.at > this.clock + 1e-9) continue;
+      fired.add(raw);
+      const st = this.picked && JSON.stringify(raw).includes('@b')
+        ? JSON.parse(JSON.stringify(raw).split('@b').join(this.picked)) as ShotStep
+        : raw;
       if (st.do === 'tick') {
         const gap = Director.gapAfter(steps, st.at);
         this.nextGlideMs = gap != null && gap <= 6 ? gap * 1000 : null;
@@ -551,9 +573,13 @@ export class Director {
         case 'hook': this.hook = st.text; break;
         case 'caption': this.caption = { text: st.text, since: this.clock, color: st.color }; break;
         case 'tick': await this.ticks(st.n ?? 1); break;
+        case 'territory':
+          this.wash = { from: this.washNow(), to: Math.max(0, Math.min(1, Number(st.show))), t0: this.clock, ms: st.ms ?? 800 };
+          break;
         case 'hulls':
           this.hullSize = { from: this.hullSizeNow(), to: Number(st.scale) > 0 ? Number(st.scale) : 1, t0: this.clock, ms: st.ms ?? 800 };
           break;
+        case 'pick': this.pick(st); break;
         case 'skip':
           if (this.film) this.skipMs += Math.max(0, Number(st.ms) || 0);
           else this.note('skip: film only');
@@ -606,6 +632,9 @@ export class Director {
     for (const w of this.check(shot)) this.note(`check: ${w}`);
     this.clock = 0; this.tween = null; this.hold = null; this.caption = null;
     this.hullSize = null; setStudioHullScale(1);
+    this.wash = null; setStudioWashScale(null);
+    this.lastSeen.clear();
+    this.picked = null;
     this.hook = shot.hook ?? null; this.progress = 0; this.result = null;
     // Every effect, every frame: lightweight mode (a phone's or the
     // server's choice) freezes animation and caps the map at 15fps.
@@ -620,6 +649,8 @@ export class Director {
     this.running = false;
     this.unsmoothTicks();
     this.hullSize = null; setStudioHullScale(1);
+    this.wash = null; setStudioWashScale(null);
+    this.lastSeen.clear();
     this.moveMs = null;
     this.seenMissiles = [];
     this.speed(null);
@@ -735,6 +766,33 @@ export class Director {
   // (cinema mode hides the interface), with no overlays of any kind.
 
   private film: { vclock: ReturnType<typeof installVirtualClock>; shot: Shot; fired: Set<ShotStep>; k: number; total: number; draw?: (n?: number) => number } | null = null;
+  /** The 'territory' step: the wash's strength, eased from -> to. */
+  private wash: { from: number; to: number; t0: number; ms: number } | null = null;
+  private washNow(): number {
+    const w = this.wash;
+    if (!w) return 1;
+    if (w.ms <= 1) return w.to;
+    const u = Math.max(0, Math.min(1, (this.clock - w.t0) * 1000 / Math.max(1, w.ms)));
+    return w.from + (w.to - w.from) * u * u * (3 - 2 * u);
+  }
+  /** The 'pick' step's choice, substituted for '@b' in later steps. */
+  private picked: string | null = null;
+  private pick(st: Extract<ShotStep, { do: 'pick' }>): void {
+    const [targetId] = this.idsOf(st.target);
+    const target = targetId ? this.host.state().ships.find(s => s.id === targetId) : undefined;
+    const lands = target?.transit?.currentTransfer?.arriveTick ?? Infinity;
+    const meets: Record<string, number> = {};
+    for (const b of st.from) {
+      const p = this.interceptPlan(`ship:${st.squad.split('{b}').join(b)}_0`, st.target) as Array<{ meet?: number | null }>;
+      meets[b] = p?.[0]?.meet ?? lands;
+    }
+    let best = st.prefer && st.prefer in meets && meets[st.prefer] <= lands - (st.within ?? 0) ? st.prefer : null;
+    if (!best) for (const b of st.from) if (best == null || meets[b] < meets[best]) best = b;
+    this.picked = best ?? st.from[0] ?? null;
+    this.note(`pick: ${this.picked} (meets ${Object.entries(meets).map(([b, m]) => `${b} ${m.toFixed(2)}`).join(', ')}; lands ${lands})`);
+  }
+  /** Where each 'ship:' target was last seen, for when it is gone. */
+  private lastSeen = new Map<string, { x: number; y: number }>();
   /** Map time still to run off camera (a 'skip' step). */
   private skipMs = 0;
   /** The 'hulls' close-up: in-flight hull size, eased from -> to. */
@@ -919,7 +977,7 @@ export class Director {
 /** Every verb a shot step can use (ShotStep). The Studio bar refuses a
  *  shot lint flags, so a verb missing here is a verb nobody can use. */
 const VERBS: readonly string[] = ['focus', 'pan', 'zoom', 'follow', 'tick', 'speed', 'caption', 'hook', 'ui',
-  'panel', 'click', 'intercept', 'strike', 'hull', 'skip', 'hulls'];
+  'panel', 'click', 'intercept', 'strike', 'hull', 'skip', 'hulls', 'territory', 'pick'];
 
 const realSetTimeout = window.setTimeout.bind(window);
 const realSleep = (ms: number) => new Promise<void>(r => realSetTimeout(r, ms));

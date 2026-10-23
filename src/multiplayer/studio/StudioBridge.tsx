@@ -60,6 +60,10 @@ export function StudioBridge() {
         const c = planRef.current.ctx;
         return shipIds.map(id => {
           const leg = c.enqueueIntercept(id, targetShipId, 0, { fromNow: true });
+          // A dry run: enqueueIntercept STAGES its leg as the hull's plan,
+          // which drew a course and an Outliner row for a squadron that
+          // never went anywhere (judges, 2026-10-22). Take it back.
+          c.cancelTorchPreview(id);
           if (!leg) return { ship: id, none: true as const };
           return { ship: id, depart: leg.startTick, meet: leg.rv ? leg.rv.meetTick : null, arrive: leg.arriveTick, accel: leg.acceleration };
         });

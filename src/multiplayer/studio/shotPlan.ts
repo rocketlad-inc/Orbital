@@ -62,7 +62,10 @@ export function panCamera(u: number, from: Cam, tx: number, ty: number, toScale:
   const plain = lf + (lt - lf) * e;
   // The dip that takes the plain curve down to the apex at the middle.
   const depth = Math.max(0, (lf + lt) / 2 - Math.log(arc.apex));
-  const scale = Math.exp(plain - depth * Math.sin(Math.PI * k));
+  // Along the eased clock, so the pull-back starts (and lands) at rest:
+  // on the raw clock the dip began at full rate, and a pan off a close-up
+  // shrank the world a quarter in its first frame.
+  const scale = Math.exp(plain - depth * Math.sin(Math.PI * e));
   // Move while pulled back: the middle 70% of the time carries the travel.
   const ep = easeInOut((k - 0.15) / 0.7);
   return { x: from.x + (tx - from.x) * ep, y: from.y + (ty - from.y) * ep, scale };
