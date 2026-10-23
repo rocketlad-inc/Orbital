@@ -13,8 +13,41 @@
 # frame, so a still frame compresses to almost nothing. Needs Pillow and
 # numpy.
 import argparse, json, os
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 import numpy as np
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+def font(path, size):
+    for f in (path, 'C:/Windows/Fonts/bahnschrift.ttf', 'C:/Windows/Fonts/segoeui.ttf'):
+        try:
+            return ImageFont.truetype(f, size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+def end_card(last, fps):
+    """Frames that take the clip's last frame to its end card."""
+    if not a.end_title:
+        return []
+    w, h = last.size
+    title = font(os.path.join(HERE, 'assets', 'Audiowide-Regular.ttf'), max(12, round(w * 0.085)))
+    line = font('C:/Windows/Fonts/bahnschrift.ttf', max(10, round(w * 0.03)))
+    n, fade = max(1, round(a.end_seconds * fps)), max(1, round(0.6 * fps))
+    out = []
+    for i in range(n):
+        u = min(1.0, i / fade)
+        e = u * u * (3 - 2 * u)
+        im = ImageEnhance.Brightness(last).enhance(1 - 0.7 * e).convert('RGBA')
+        txt = Image.new('RGBA', im.size, (0, 0, 0, 0))
+        d = ImageDraw.Draw(txt)
+        tw = d.textlength(a.end_title, font=title)
+        d.text(((w - tw) / 2, h * 0.36), a.end_title, font=title, fill=(235, 244, 255, round(255 * e)))
+        if a.end_line:
+            lw = d.textlength(a.end_line, font=line)
+            d.text(((w - lw) / 2, h * 0.36 + w * 0.115), a.end_line, font=line, fill=(150, 200, 235, round(255 * e)))
+        out.append(Image.alpha_composite(im, txt).convert('RGB'))
+    return out
 
 p = argparse.ArgumentParser()
 p.add_argument('dir')
@@ -26,6 +59,11 @@ p.add_argument('--out', default=None)
 p.add_argument('--no-gif', action='store_true')
 # Time-lapse: 2 plays the take twice as fast by sampling every other moment.
 p.add_argument('--speed', type=float, default=1.0)
+# An end card: the last frame dims and the title and line fade in over it.
+# A feed clip with no name on it is an ad for nothing (judges, 2026-10-22).
+p.add_argument('--end-title', default=None)
+p.add_argument('--end-line', default='')
+p.add_argument('--end-seconds', type=float, default=2.5)
 a = p.parse_args()
 
 src = a.dir
@@ -52,6 +90,7 @@ def load(f):
 
 # WebP, full rate.
 wf = [load(f) for f in pick(a.webp_fps)]
+wf += end_card(wf[-1], a.webp_fps)
 webp = os.path.join(out_dir, name + '.webp')
 wf[0].save(webp, save_all=True, append_images=wf[1:], duration=round(1000 / a.webp_fps), loop=0, quality=82, method=4)
 print(f"{webp}: {len(wf)} frames @ {a.webp_fps:g}fps, {wf[0].size[0]}x{wf[0].size[1]}, {os.path.getsize(webp) // 1024}KB")
@@ -61,6 +100,7 @@ if a.no_gif:
 
 # GIF: shared palette, transparent repeats.
 gf = [load(f) for f in pick(a.gif_fps)]
+gf += end_card(gf[-1], a.gif_fps)
 sample = gf[:: max(1, len(gf) // 12)][:12]
 sw, sh = sample[0].size
 tile = Image.new('RGB', (sw, sh * len(sample)))

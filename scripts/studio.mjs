@@ -347,6 +347,8 @@ async function film() {
       console.error(`encoding ${name} at ${width}px…`);
       const encArgs = [enc, dir, '--name', name, '--width', width];
       if (flag('speed')) encArgs.push('--speed', flag('speed'));
+      // An end card on the encode (studio-encode.py --end-title / --end-line).
+      if (flag('end-title')) encArgs.push('--end-title', flag('end-title'), '--end-line', flag('end-line') || '');
       const r = spawn('python', encArgs, { stdio: 'inherit' });
       await new Promise(res => r.on('exit', res));
     }

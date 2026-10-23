@@ -2454,6 +2454,16 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           if (body) {
             const destroyerPx = shipIconSize('destroyer', false);
             const units: BattleUnit[] = [];
+            // Factions here whose loose hulls come from more than one yard:
+            // those hulls clump by yard (below), so a squadron in from Ceres
+            // and the home guard read as two groups, not one blue blob.
+            const yardsOf = new Map<string, Set<string>>();
+            for (const s of atBody) {
+              if (s.fleetId) continue;
+              let ys = yardsOf.get(s.ownedBy);
+              if (!ys) { ys = new Set(); yardsOf.set(s.ownedBy, ys); }
+              ys.add(s.homeBodyId ?? bodyId);
+            }
             for (const s of atBody) {
               // Escorts ride in their marker's block; the lead stands for them.
               if (fleetGrouping.collapsed.has(s.id)) continue;
@@ -2465,12 +2475,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
               units.push({
                 id: s.id,
                 owner: s.ownedBy,
-                // Loose hulls from ANOTHER world's yard hold together as
-                // their own group: a squadron that came in from Ceres stays
-                // a squadron beside Earth's own defenders instead of melting
-                // into them (judges, Mega Destroyer clip, 2026-10-22: "three
-                // groups read as two"). Hulls at home stay loose.
-                group: s.fleetId ?? (s.homeBodyId && s.homeBodyId !== bodyId ? `yard:${s.homeBodyId}` : null),
+                // Loose hulls hold together BY YARD when their faction has
+                // hulls here from more than one: a squadron in from Ceres
+                // stays a squadron beside Earth's own defenders, which hold
+                // together too (judges, Mega Destroyer clip, 2026-10-22:
+                // "three groups read as two"; with only the incomers
+                // grouped, the scattered locals still covered them). One
+                // yard: loose, as ever.
+                group: s.fleetId ?? ((yardsOf.get(s.ownedBy)?.size ?? 0) > 1 ? `yard:${s.homeBodyId ?? bodyId}` : null),
                 sizePx: shipIconSize(s.class, false),
                 armed: (s.damagePerTick ?? getShipClass(s.class).damagePerTick) > 0,
                 escortRel: escortRel && escortRel.length > 0 ? escortRel : undefined,
