@@ -20,7 +20,7 @@ import { sampleTorchTrajectory, torchPositionFromSamples, trajectoryTangentAt, i
 import { rendezvousStateAt } from '../physics/rendezvous.js';
 import { STRAIGHT_LINE_TRAJECTORIES } from '../game/featureFlags';
 import { COLORS, withOpacity, lighten, darken } from './colors';
-import { drawSunSquid, drawSunOmen, sunGateHeading, sunGateMorph, LEVIATHAN_PALETTE } from './sunSquid';
+import { drawSunSquid, drawSunOmen, sunGateHeading, sunGateArrivalMorph, LEVIATHAN_PALETTE } from './sunSquid';
 import { isSunGateSite } from '../game/farSystems';
 import { transitHullScale } from './cameraLimits';
 import { requestLabel, clearOfKeepOuts, reserveRect } from './labelLayer';
@@ -2863,11 +2863,14 @@ function drawEmergingGate(
   // The thing itself (sunSquid.ts): mantle first on the way out, turned
   // round to brake on its jet past the flip, unfurling into the gate's
   // ring over the last fifth of the trip so it lands as the gate.
+  // Whole as it reaches its site, not as the clock runs out
+  // (sunGateArrivalMorph).
+  const ringR = sunGateRingR(scale);
   drawSunSquid(g, canvasPos.x, canvasPos.y, {
     u: sunSquidUnit(scale),
-    ringR: sunGateRingR(scale),
+    ringR,
     heading: sunGateHeading(Math.atan2(uy, ux), f),
-    morph: sunGateMorph(f),
+    morph: sunGateArrivalMorph(f, Math.hypot(land.x - canvasPos.x, land.y - canvasPos.y), ringR),
     thrust: 0.25 + 0.75 * speed,
     now,
   });
@@ -2967,6 +2970,27 @@ function landingSiteLabelYields(
   const siteArt = sunGateArtRadius(site, siteRadius, ctx.t, scale) ?? siteRadius;
   const landed = !gate.emerge || ctx.t >= gate.emerge.untilTick;
   return siteLabelYields(Math.hypot(gp.x - sitePos.x, gp.y - sitePos.y), gateArt, siteArt, landed);
+}
+
+/**
+ * Is a landing site's gate on it? Within the gate's own art radius (or
+ * landed), the reticle and its name are under the gate: drawn on top of
+ * the open ring they read as a target still to be reached, and the gold
+ * reticle sat over the gate's eye (Studio clip a-sun-gate-is-born, f242).
+ */
+export function siteCoveredByGate(gapPx: number, gateArtPx: number, landed: boolean): boolean {
+  return landed || gapPx <= gateArtPx;
+}
+
+function landingSiteCovered(site: Body, sitePos: { x: number; y: number }, ctx: RenderContext): boolean {
+  const gate = bodyById(ctx.bodies, site.id.replace(/_site$/, ''));
+  if (!gate || gate.id === site.id) return false;
+  const gw = bodyPosition(gate, ctx.t, ctx.bodies);
+  const gp = worldToCanvas(gw.x, gw.y, ctx);
+  const scale = ctx.camera.scale;
+  const gateArt = sunGateArtRadius(gate, Math.max(3, gate.radius * scale), ctx.t, scale) ?? 0;
+  const landed = !gate.emerge || ctx.t >= gate.emerge.untilTick;
+  return siteCoveredByGate(Math.hypot(gp.x - sitePos.x, gp.y - sitePos.y), gateArt, landed);
 }
 
 /** A sun gate at rest, either end: the squid fully unfurled. */
@@ -4465,8 +4489,9 @@ export function drawBody(
   // performance mode that silently hid who owns what would be a bug
   // dressed as a setting. Only the art swaps out.
   if (isSunGateSite(body)) {
-    // A landing site is a marker, in every mode (drawLandingSite).
-    drawLandingSite(canvasPos, radius, ctx);
+    // A landing site is a marker, in every mode (drawLandingSite), until
+    // its gate is on it (landingSiteCovered).
+    if (!landingSiteCovered(body, canvasPos, ctx)) drawLandingSite(canvasPos, radius, ctx);
   } else if (body.obliteratedAtTick != null && !kaijuHoldsWorldWhole(body.id, ctx.nowMs ?? 0)) {
     // (Still whole while the Leviathan is crushing it: kaijuFx.ts.)
     // Destroyed outright (0141). First in the chain, ahead of lightweight

@@ -103,6 +103,26 @@ export function sunGateMorph(flightFraction: number): number {
   return smooth((flightFraction - 0.8) / 0.2);
 }
 
+/** Ring radii out from its landing site at which the unfurling begins. */
+export const SUN_GATE_UNFURL_RINGS = 3;
+
+/**
+ * THE UNFURLING ENDS ON THE SITE, NOT ON THE CLOCK. A sun gate brakes
+ * into an orbit thousands of units out, so the last fifth of its flight
+ * TIME is still hundreds of px of flight on screen: it finished becoming
+ * the gate 100-220 px short of its gold reticle, which then slid into the
+ * open gate (Studio clip a-sun-gate-is-born, f232-f242). It now also waits
+ * on the distance left (`remainingPx`, the drawn gap to where it lands):
+ * it starts unfurling SUN_GATE_UNFURL_RINGS of its ring radii out and is
+ * whole as it arrives. The time rule still holds it back on a short hop.
+ */
+export function sunGateArrivalMorph(flightFraction: number, remainingPx: number, ringR: number): number {
+  const byClock = sunGateMorph(flightFraction);
+  if (!(ringR > 0) || !Number.isFinite(remainingPx)) return byClock;
+  const byGap = smooth(1 - Math.max(0, remainingPx) / (SUN_GATE_UNFURL_RINGS * ringR));
+  return Math.min(byClock, flightFraction >= 1 ? 1 : byGap);
+}
+
 /** Heading through the flight: outward while it pushes, swinging round
  *  across the flip to point back at the Sun while it brakes. */
 export function sunGateHeading(outward: number, flightFraction: number): number {
