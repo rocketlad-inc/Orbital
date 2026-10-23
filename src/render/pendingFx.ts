@@ -31,7 +31,10 @@ export type PendingFxKind =
   | 'destruction' | 'detonation' | 'impact' | 'discovery' | 'damage'
   | 'sterilise' | 'built' | 'gateflash'
   // The Leviathan (kaijuFx.ts): its two strikes and its death.
-  | 'kaiju_scorch' | 'kaiju_break' | 'kaiju_death';
+  | 'kaiju_scorch' | 'kaiju_break' | 'kaiju_death'
+  // A rammed asteroid burning a living world off (asteroidRam.ts): the
+  // sterilisation's fire and ash, no gun beam, landing on its side.
+  | 'impact_scorch';
 
 const KIND_MAP: Record<string, PendingFxKind> = {
   ship_destroyed: 'destruction',
@@ -76,6 +79,20 @@ const KAIJU_KIND_MAP: Record<string, PendingFxKind> = {
   world_obliterated: 'kaiju_break',
 };
 
+/** ...and when a rammed asteroid did it (payload cause 'asteroid'). It
+ *  played as a Mega Destroyer strike, beam down from the top of the
+ *  screen (Studio, 2026-10-23). */
+const ASTEROID_KIND_MAP: Record<string, PendingFxKind> = {
+  terraform_destroyed: 'impact_scorch',
+};
+
+/** The chronicle kind -> the effect it plays, given its payload cause. */
+export function fxKindFor(kind: string, cause?: string): PendingFxKind | undefined {
+  if (cause === 'kaiju' && KAIJU_KIND_MAP[kind]) return KAIJU_KIND_MAP[kind];
+  if (cause === 'asteroid' && ASTEROID_KIND_MAP[kind]) return ASTEROID_KIND_MAP[kind];
+  return KIND_MAP[kind];
+}
+
 export interface PendingFx {
   /** Chronicle entry id — the dedupe + played-set key. */
   id: string;
@@ -86,6 +103,9 @@ export interface PendingFx {
   /** A point in space (world units): a missile burst in flight, where
    *  it met its target. Used when the hull it names is not drawn. */
   at?: { x: number; y: number };
+  /** An impact: the unit vector (world axes) from the world toward where
+   *  the rock came in, from the row's payload. */
+  from?: { x: number; y: number };
   /** When this entered the queue (wall clock). */
   queuedMs: number;
 }
@@ -146,6 +166,8 @@ export interface ChronicleFxSource {
   cause?: string;
   /** payload x/y: where an in-flight missile burst. */
   at?: { x: number; y: number };
+  /** payload from_dx/from_dy: the side an asteroid came in on. */
+  from?: { x: number; y: number };
 }
 
 /**
@@ -164,12 +186,12 @@ export function ingestChronicleFx(gameId: string, entries: ChronicleFxSource[]):
     // The Leviathan's death is its own set piece (kaiju_dead), never a
     // generic boom and wreck on top of it.
     if (e.kind === 'ship_destroyed' && e.shipId && /(^|:)leviathan$/.test(e.shipId)) continue;
-    const kind = (e.cause === 'kaiju' ? KAIJU_KIND_MAP[e.kind] : undefined) ?? KIND_MAP[e.kind];
+    const kind = fxKindFor(e.kind, e.cause);
     if (!kind) continue;
     if (!e.bodyId && !e.shipId && !e.at) continue; // nowhere to draw it
     if (played.has(e.id)) continue;
     if (pending.some(p => p.id === e.id)) continue;
-    pending.push({ id: e.id, kind, bodyId: e.bodyId, shipId: e.shipId, at: e.at, queuedMs: nowMs });
+    pending.push({ id: e.id, kind, bodyId: e.bodyId, shipId: e.shipId, at: e.at, from: e.from, queuedMs: nowMs });
   }
   // Age out the unwatched, then cap to the most recent.
   for (let i = pending.length - 1; i >= 0; i--) {

@@ -366,6 +366,10 @@ export interface Ship {
   /** A missile salvo's size (class 'missile', worker/missiles.js). */
   missileCount?: number | null;
   strikeReadyTick?: number | null;
+  /** How many ticks the charging strike winds up for in all (the Mega's
+   *  24, or the game's kaiju_charge_ticks for the Leviathan), so the ring
+   *  fills against the real wind-up. Null from an older server. */
+  strikeChargeTicks?: number | null;
   /** What the charging strike will do, fixed when it was ordered: strip
    *  a living world's biosphere, or destroy a raw world outright. */
   strikeMode?: 'sterilise' | 'obliterate' | null;
