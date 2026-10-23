@@ -1068,6 +1068,7 @@ export class Director {
     if (!f) throw new Error('openFilm first');
     const fps = f.shot.fps ?? 30;
     await f.vclock.real(() => this.fire(f.shot.steps, f.fired));
+    const opening = f.k === 0 || this.skipMs > 0;
     // A time cut: the map draws on through the skipped time (so dwells,
     // glides and fades run their course) with nothing kept. The shot's own
     // clock does not move, so the steps after it keep their times.
@@ -1082,6 +1083,15 @@ export class Director {
       if (this.glide) this.glide.at += 1000 / fps;
     }
     this.skipMs = 0;
+    // The first frame, and the first after a cut, show a subject the map
+    // has only just asked art for: sprites and globes load in REAL time,
+    // and the film's clock stands still, so frame 0 showed a stand-in hull
+    // where the Mega Destroyer should be (judges 2026-10-23). Let the
+    // loads land, then draw the same moment again.
+    if (opening) {
+      await f.vclock.real(() => realSleep(1500));
+      if (f.draw) f.draw(1);
+    }
     this.step(1 / fps);
     await f.vclock.real(() => realSleep(0));
     this.stats.rafRuns += f.vclock.advance(1000 / fps, !!f.draw);
