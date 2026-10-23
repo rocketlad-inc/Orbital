@@ -172,7 +172,18 @@ export function expandScenario(raw) {
       case 'move': {
         needGroup(o.ships, where);
         if (!isBody(o.to)) throw new Error(`${where}.to is required`);
-        return { type: 'move', ships: String(o.ships), to: o.to, depart, arrive: o.arrive != null ? parseWhen(o.arrive, where) : null };
+        if (o.settle != null && o.settle !== 'station') throw new Error(`${where}.settle must be 'station'`);
+        return { type: 'move', ships: String(o.ships), to: o.to, depart, arrive: o.arrive != null ? parseWhen(o.arrive, where) : null,
+          settle: o.settle === 'station' ? 'station' : null };
+      }
+      // A freighter with a mining rig flies out to a meteoroid, fills its
+      // hold, and brings the haul home: the player's own mining route
+      // (trade-routes/full, a mine stop and a drop-off), run `loops` times.
+      case 'mine': {
+        needGroup(o.ship, where);
+        if (!isBody(o.rock) || !isBody(o.to)) throw new Error(`${where}: rock and to are required`);
+        const loops = Math.max(1, Math.min(20, Math.floor(Number(o.loops) || 1)));
+        return { type: 'mine', ship: String(o.ship), rock: o.rock, to: o.to, loops };
       }
       case 'strike': {
         needGroup(o.ship, where);
@@ -183,7 +194,7 @@ export function expandScenario(raw) {
         if (!isBody(o.from) || !isBody(o.to)) throw new Error(`${where}: from and to are required`);
         return { type: 'trade', ship: String(o.ship), from: o.from, to: o.to };
       }
-      default: throw new Error(`${where}.type must be move, strike or trade`);
+      default: throw new Error(`${where}.type must be move, strike, trade or mine`);
     }
   });
 
@@ -239,8 +250,41 @@ export function expandScenario(raw) {
     return { world: s.world, owner: s.owner != null ? String(s.owner) : null, level, stock, auto, salvo, reserve };
   });
 
+  // ---- the far systems and their gate ----
+  // far_systems: Alpha Centauri and Cygnus X-1 on this board (the game's own
+  // far_systems dial). gates: the Centauri sun gate pair, already open.
+  const gates = raw.gates === true;
+  const farSystems = gates || raw.far_systems === true;
+
+  // ---- the Dyson Sphere: one per match, at the Sun ----
+  // progress 0..0.99 of the way built (never complete: that ends the game),
+  // on a foundation station of station_hp at Sol. Its fall comes from that
+  // station's damage, as in play.
+  let dyson = null;
+  if (raw.dyson != null) {
+    const d = raw.dyson;
+    need(String(d?.owner), 'dyson');
+    const p = Number(d?.progress ?? 0.95);
+    dyson = {
+      owner: String(d.owner),
+      progress: Math.max(0, Math.min(0.99, Number.isFinite(p) ? p : 0.95)),
+      stationHp: Math.max(100, Math.min(100000, Math.floor(Number(d?.station_hp) || 4000))),
+    };
+  }
+
+  // ---- meteoroids: discovered (so they are seen and minable) and full ----
+  const meteoroids = (Array.isArray(raw.meteoroids) ? raw.meteoroids : []).map((m, i) => {
+    const where = `meteoroids[${i}]`;
+    if (!isBody(m?.body)) throw new Error(`${where}.body is required (e.g. mtr_belt_0)`);
+    const by = m.discovered_by == null ? 'all' : String(m.discovered_by);
+    if (by !== 'all') need(by, where);
+    const tons = m.tons == null ? null : Math.max(1, Math.min(5000, Math.floor(Number(m.tons) || 0)));
+    return { body: m.body, tons, discoveredBy: by };
+  });
+
   return {
     name, gameId, factions: fx, wars, worlds, ships, fleets, research, orders, laws, silos,
+    farSystems, gates, dyson, meteoroids,
     viewer: typeof raw.viewer === 'string' ? raw.viewer : (fx[0]?.key ?? null),
     camera: raw.camera !== false,   // observer hulls so the viewer sees every scene world
     seatMe: raw.seat_me === true,

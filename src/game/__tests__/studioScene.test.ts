@@ -111,10 +111,37 @@ describe('expandScenario', () => {
     [{ ...base(), ships: [{ key: 'a', owner: 'terra', at: 'earth', class: 'battleship', count: 1 }] }, /unknown class/],
     [{ ...base(), ships: [{ key: 'a', owner: 'terra', at: 'earth', class: 'corvette', count: 1, loadout: 'laser' }] }, /loadout/],
     [{ ...base(), orders: [{ type: 'move', ships: 'ghost', to: 'luna' }] }, /unknown ship group 'ghost'/],
-    [{ ...base(), orders: [{ type: 'warp' }] }, /must be move, strike or trade/],
+    [{ ...base(), orders: [{ type: 'warp' }] }, /must be move, strike, trade or mine/],
+    [{ ...base(), ships: [{ key: 'a', owner: 'terra', at: 'earth', class: 'freighter', count: 1 }], orders: [{ type: 'mine', ship: 'a', to: 'earth' }] }, /rock and to/],
+    [{ ...base(), ships: [{ key: 'a', owner: 'terra', at: 'uranus', class: 'colony', count: 1 }], orders: [{ type: 'move', ships: 'a', to: 'verdant', settle: 'city' }] }, /settle must be 'station'/],
+    [{ ...base(), dyson: { owner: 'venus' } }, /unknown faction 'venus'/],
+    [{ ...base(), meteoroids: [{ tons: 50 }] }, /meteoroids\[0\]\.body/],
     [{ ...base(), ships: [{ key: 'a', owner: 'terra', at: 'earth', class: 'corvette', count: 1 }], orders: [{ type: 'move', ships: 'a', to: 'luna', depart: 'soon' }] }, /\+N/],
   ])('rejects a bad scene with the field named', (scene, msg) => {
     expect(() => expandScenario(scene)).toThrow(msg);
+  });
+
+  it('reads the far systems, the Dyson Sphere, meteoroids, mining and settling', () => {
+    const spec = expandScenario({
+      ...base(),
+      gates: true,
+      dyson: { owner: 'terra', progress: 1.5, station_hp: 9000 },
+      meteoroids: [{ body: 'mtr_belt_0', tons: 120 }],
+      ships: [
+        { key: 'fr', owner: 'terra', at: 'mars', class: 'freighter', count: 1, loadout: ['mining'] },
+        { key: 'col', owner: 'terra', at: 'uranus', class: 'colony', count: 1 },
+      ],
+      orders: [
+        { type: 'mine', ship: 'fr', rock: 'mtr_belt_0', to: 'earth' },
+        { type: 'move', ships: 'col', to: 'sun_gate', settle: 'station' },
+      ],
+    });
+    expect(spec.gates).toBe(true);
+    expect(spec.farSystems).toBe(true);                       // gates bring the far systems with them
+    expect(spec.dyson).toEqual({ owner: 'terra', progress: 0.99, stationHp: 9000 });   // never complete: that ends the game
+    expect(spec.meteoroids).toEqual([{ body: 'mtr_belt_0', tons: 120, discoveredBy: 'all' }]);
+    expect(spec.orders[0]).toMatchObject({ type: 'mine', ship: 'fr', rock: 'mtr_belt_0', to: 'earth', loops: 1 });
+    expect(spec.orders[1]).toMatchObject({ type: 'move', to: 'sun_gate', settle: 'station' });
   });
 });
 

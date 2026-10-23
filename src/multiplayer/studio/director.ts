@@ -64,7 +64,22 @@ export type ShotStep =
    *  then _0), take `prefer` when it meets the target at least `within`
    *  ticks before the target lands, else the earliest meeting. Later
    *  steps say '@b' for the choice (a body id, and in squad names). */
-  | { at: number; do: 'pick'; from: string[]; squad: string; target: Target; prefer?: string; within?: number };
+  | { at: number; do: 'pick'; from: string[]; squad: string; target: Target; prefer?: string; within?: number }
+  /** THE PLAYER'S HAND, on tape. An arrow glides over `ms` to a ship or
+   *  world (a Target) or to an element ('css:<selector>'), and on arrival
+   *  with `click`: an element is pressed (its real button), and a world
+   *  is shift-clicked, which sends the selected group there (the map's
+   *  own group-move). The arrow is a DOM overlay, so the film captures it. */
+  | { at: number; do: 'cursor'; to: Target; ms?: number; click?: boolean }
+  /** Drag the orange selection box across these ships' screen bounds over
+   *  `ms` (the arrow drags its corner), then select them as the group. */
+  | { at: number; do: 'box'; ships: Target[]; ms?: number }
+  /** Select these ships as the group, at once. */
+  | { at: number; do: 'select'; ships: Target[] }
+  /** A server order mid-take (worker/studio.js handleOrder): 'move' a
+   *  parked hull on, or 'gate' it through the sun gate it is parked on
+   *  (the real crossing, with its flash) and `then` on from the far end. */
+  | { at: number; do: 'order'; order: Record<string, unknown> };
 
 /** The game's panels, by the name the dock and the shell know them by. */
 export type PanelId = 'senate' | 'faction' | 'comms' | 'trades' | 'situation' | 'eventlog' | 'multiplayer'
@@ -110,6 +125,8 @@ export interface DirectorHost {
   /** The same plan without sending it: per hull, when it would depart,
    *  meet the target, and arrive. For choosing a scene's numbers. */
   planIntercept?(shipIds: string[], targetShipId: string): Array<{ ship: string; depart: number; meet: number | null; arrive: number; accel: number } | { ship: string; none: true }>;
+  /** Make these the player's group selection (the box-select's result). */
+  setSelection?(shipIds: string[]): void;
 }
 
 interface Cam { x: number; y: number; scale: number }
@@ -493,6 +510,7 @@ export class Director {
     if (this.hullSize) setStudioHullScale(this.hullSizeNow());
     if (this.wash) setStudioWashScale(this.washNow());
     this.push();
+    this.drawHand();
   }
 
   private push(): void {
@@ -580,6 +598,10 @@ export class Director {
           this.hullSize = { from: this.hullSizeNow(), to: Number(st.scale) > 0 ? Number(st.scale) : 1, t0: this.clock, ms: st.ms ?? 800 };
           break;
         case 'pick': this.pick(st); break;
+        case 'cursor': this.hand = { from: this.handAt(), to: st.to, t0: this.clock, ms: st.ms ?? 700, click: !!st.click, done: false }; break;
+        case 'box': this.boxDrag = { ships: st.ships, t0: this.clock, ms: st.ms ?? 900, done: false }; break;
+        case 'select': this.selectShips(st.ships); break;
+        case 'order': await this.order(st.order); break;
         case 'skip':
           if (this.film) this.skipMs += Math.max(0, Number(st.ms) || 0);
           else this.note('skip: film only');
@@ -635,6 +657,7 @@ export class Director {
     this.wash = null; setStudioWashScale(null);
     this.lastSeen.clear();
     this.picked = null;
+    this.dropHand();
     this.hook = shot.hook ?? null; this.progress = 0; this.result = null;
     // Every effect, every frame: lightweight mode (a phone's or the
     // server's choice) freezes animation and caps the map at 15fps.
@@ -651,6 +674,7 @@ export class Director {
     this.hullSize = null; setStudioHullScale(1);
     this.wash = null; setStudioWashScale(null);
     this.lastSeen.clear();
+    this.dropHand();
     this.moveMs = null;
     this.seenMissiles = [];
     this.speed(null);
@@ -775,6 +799,132 @@ export class Director {
     const u = Math.max(0, Math.min(1, (this.clock - w.t0) * 1000 / Math.max(1, w.ms)));
     return w.from + (w.to - w.from) * u * u * (3 - 2 * u);
   }
+  // ---------- the player's hand (cursor, box, select) ----------
+
+  private hand: { from: { x: number; y: number }; to: Target; t0: number; ms: number; click: boolean; done: boolean } | null = null;
+  private handPos: { x: number; y: number } | null = null;
+  private clickAt: { x: number; y: number; t: number } | null = null;
+  private boxDrag: { ships: Target[]; t0: number; ms: number; done: boolean } | null = null;
+  private handEls: { arrow: HTMLDivElement; ripple: HTMLDivElement; box: HTMLDivElement } | null = null;
+
+  /** A world point on the page (CSS px), as the map draws it this frame. */
+  private toPage(p: { x: number; y: number }): { x: number; y: number } | null {
+    const c = this.host.mapCanvas();
+    if (!c || !(c.width > 0)) return null;
+    const r = c.getBoundingClientRect();
+    const cx = c.width / 2 + (p.x - this.cam.x) * this.cam.scale;
+    const cy = c.height / 2 + (p.y - this.cam.y) * this.cam.scale;
+    return { x: r.left + cx * (r.width / c.width), y: r.top + cy * (r.height / c.height) };
+  }
+  /** Where a cursor target is on the page now. */
+  private pagePoint(to: Target): { x: number; y: number } | null {
+    if (to.startsWith('css:')) {
+      const el = document.querySelector<HTMLElement>(to.slice(4));
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    }
+    const p = this.position(to);
+    return p ? this.toPage(p) : null;
+  }
+  private handAt(): { x: number; y: number } {
+    if (this.handPos) return this.handPos;
+    const v = this.view();
+    return { x: v.w * 0.62, y: v.h * 0.78 };
+  }
+  private selectShips(ships: Target[]): void {
+    const ids = ships.flatMap(t => this.idsOf(t));
+    if (!this.host.setSelection) { this.note('select: host has no selection'); return; }
+    this.host.setSelection(ids);
+  }
+  /** The overlay elements, made once per shot. */
+  private els(): { arrow: HTMLDivElement; ripple: HTMLDivElement; box: HTMLDivElement } {
+    if (this.handEls) return this.handEls;
+    const mk = (css: string) => { const d = document.createElement('div'); d.style.cssText = css; document.body.appendChild(d); return d; };
+    const arrow = mk('position:fixed;left:0;top:0;width:26px;height:26px;pointer-events:none;z-index:100000;display:none;');
+    arrow.innerHTML = '<svg width="26" height="26" viewBox="0 0 26 26"><path d="M3 2 L3 21 L8.2 16.4 L11.6 24 L15 22.5 L11.7 15 L18.6 15 Z" fill="#fff" stroke="#0b1018" stroke-width="1.6" stroke-linejoin="round"/></svg>';
+    const ripple = mk('position:fixed;left:0;top:0;width:0;height:0;border:2px solid #ffb84d;border-radius:50%;pointer-events:none;z-index:99999;display:none;');
+    const box = mk('position:fixed;left:0;top:0;width:0;height:0;border:1px solid #ffb84d;background:rgba(255,184,77,0.10);pointer-events:none;z-index:99998;display:none;');
+    this.handEls = { arrow, ripple, box };
+    return this.handEls;
+  }
+  private dropHand(): void {
+    if (this.handEls) for (const e of Object.values(this.handEls)) e.remove();
+    this.handEls = null; this.hand = null; this.handPos = null; this.clickAt = null; this.boxDrag = null;
+  }
+  /** Move the arrow, drag the box, land the clicks: once a frame. */
+  private drawHand(): void {
+    if (!this.hand && !this.boxDrag && !this.handPos) return;
+    const e = this.els();
+    const ease = (u: number) => { const k = Math.max(0, Math.min(1, u)); return k * k * (3 - 2 * k); };
+    // The box: corner to corner across the ships' screen bounds, the arrow on its moving corner.
+    const bd = this.boxDrag;
+    if (bd) {
+      const pts = bd.ships.flatMap(t => this.idsOf(t)).map(id => this.position(`ship:${id}`))
+        .filter((p): p is { x: number; y: number } => !!p)
+        .map(p => this.toPage(p)).filter((p): p is { x: number; y: number } => !!p);
+      if (pts.length) {
+        const pad = 34;
+        const x0 = Math.min(...pts.map(p => p.x)) - pad, y0 = Math.min(...pts.map(p => p.y)) - pad;
+        const x1 = Math.max(...pts.map(p => p.x)) + pad, y1 = Math.max(...pts.map(p => p.y)) + pad;
+        const u = ease((this.clock - bd.t0) * 1000 / Math.max(1, bd.ms));
+        const cx = x0 + (x1 - x0) * u, cy = y0 + (y1 - y0) * u;
+        if (!bd.done) {
+          e.box.style.display = 'block';
+          e.box.style.left = `${x0}px`; e.box.style.top = `${y0}px`;
+          e.box.style.width = `${cx - x0}px`; e.box.style.height = `${cy - y0}px`;
+          this.handPos = { x: cx, y: cy };
+        }
+        if (u >= 1 && !bd.done) { bd.done = true; this.selectShips(bd.ships); }
+      }
+      if (bd.done && (this.clock - bd.t0) * 1000 > bd.ms + 160) { e.box.style.display = 'none'; this.boxDrag = null; }
+    }
+    // The arrow: glide to its target (which may be moving), click on arrival.
+    const h = this.hand;
+    if (h) {
+      const dest = this.pagePoint(h.to) ?? h.from;
+      const u = ease((this.clock - h.t0) * 1000 / Math.max(1, h.ms));
+      this.handPos = { x: h.from.x + (dest.x - h.from.x) * u, y: h.from.y + (dest.y - h.from.y) * u };
+      if (u >= 1 && !h.done) {
+        h.done = true;
+        if (h.click) {
+          this.clickAt = { ...this.handPos, t: this.clock };
+          if (h.to.startsWith('css:')) {
+            const el = document.querySelector<HTMLElement>(h.to.slice(4));
+            if (el) el.click(); else this.note(`cursor: nothing at ${h.to}`);
+          } else {
+            const b = this.body(h.to);
+            if (b) window.dispatchEvent(new CustomEvent('orbital:group-move', { detail: { bodyId: b.id } }));
+            else this.note(`cursor: ${h.to} is not a world to send the group to`);
+          }
+        }
+      }
+      if (h.done) this.hand = null;
+    }
+    const at = this.handPos;
+    if (at) { e.arrow.style.display = 'block'; e.arrow.style.transform = `translate(${at.x - 3}px, ${at.y - 2}px)`; }
+    // The click: a ring that opens and fades.
+    const ck = this.clickAt;
+    if (ck) {
+      const k = (this.clock - ck.t) / 0.45;
+      if (k >= 1) { e.ripple.style.display = 'none'; this.clickAt = null; }
+      else {
+        const r = 8 + 26 * k;
+        e.ripple.style.display = 'block';
+        e.ripple.style.opacity = String(1 - k);
+        e.ripple.style.left = `${ck.x - r}px`; e.ripple.style.top = `${ck.y - r}px`;
+        e.ripple.style.width = `${2 * r}px`; e.ripple.style.height = `${2 * r}px`;
+      }
+    }
+  }
+
+  private async order(o: Record<string, unknown>): Promise<void> {
+    const res = await apiFetch<Record<string, unknown>>(`/api/admin/studio/games/${this.host.gameId}/order`, {
+      method: 'POST', body: JSON.stringify(o),
+    });
+    this.note(res.ok ? `order: ${JSON.stringify(res.data)}` : `order ${String(o.type)}: ${res.error?.message ?? res.status}`);
+  }
+
   /** The 'pick' step's choice, substituted for '@b' in later steps. */
   private picked: string | null = null;
   private pick(st: Extract<ShotStep, { do: 'pick' }>): void {
@@ -977,7 +1127,7 @@ export class Director {
 /** Every verb a shot step can use (ShotStep). The Studio bar refuses a
  *  shot lint flags, so a verb missing here is a verb nobody can use. */
 const VERBS: readonly string[] = ['focus', 'pan', 'zoom', 'follow', 'tick', 'speed', 'caption', 'hook', 'ui',
-  'panel', 'click', 'intercept', 'strike', 'hull', 'skip', 'hulls', 'territory', 'pick'];
+  'panel', 'click', 'intercept', 'strike', 'hull', 'skip', 'hulls', 'territory', 'pick', 'cursor', 'box', 'select', 'order'];
 
 const realSetTimeout = window.setTimeout.bind(window);
 const realSleep = (ms: number) => new Promise<void>(r => realSetTimeout(r, ms));
