@@ -106,8 +106,8 @@ export const BEAT_SECONDS = 2.4;
 /** A beat's shortest and longest hold, by weight. */
 // Room for the camera to travel there (a zoom out over the map and in on
 // the world, about a second) before the moment lands.
-export const BEAT_MIN_SECONDS = 2.9;
-export const BEAT_MAX_SECONDS = 3.9;
+export const BEAT_MIN_SECONDS = 4.1;
+export const BEAT_MAX_SECONDS = 4.9;
 /** A battle gets this much for mattering, plus up to SPREAD for size. */
 // Big battles get time to shine (Lorne, 2026-10-22): the deadliest fight
 // of a match runs about fourteen seconds, at about a second a day.
@@ -137,8 +137,8 @@ const MIN_GAP_TICKS = 3;
 /** The film's length for a match of this many ticks. */
 export function reelBudget(span: number): number {
   // About two minutes for a big match (Lorne, 2026-10-22: "it can be
-  // longer, and cover more incidents"): 75 s for 160 days, 120 s for 525.
-  return Math.max(60, Math.min(130, Math.round(55 + Math.max(0, span) * 0.123)));
+  // longer, and cover more incidents"): ~80 s for 160 days, ~130 s for 525.
+  return Math.max(65, Math.min(140, Math.round(60 + Math.max(0, span) * 0.135)));
 }
 
 /** Seconds a battle earns: base plus a share that grows with its weight. */

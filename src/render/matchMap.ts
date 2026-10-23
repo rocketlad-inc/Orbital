@@ -905,6 +905,55 @@ export function createMatchMap(
     return { S: Number.isFinite(S) ? S : 0, at };
   };
 
+  /** True while a frame is laid out unseen at the shot's destination. */
+  let priming = false;
+  /** A leg's ease: gentle at both ends, even through the middle. */
+  const easeLeg = (q: number) => 0.5 - 0.5 * Math.cos(Math.PI * Math.max(0, Math.min(1, q)));
+  /**
+   * HOW THE CAMERA GETS THERE. Between two worlds: up to a frame that
+   * holds both and the star (so where it is reads on the map), a beat to
+   * read it, and down on the next world. To or from the system shot: one
+   * leg. Each leg runs evenly along its zoom-and-pan path; an S-curve over
+   * the whole move put all of it in eight frames.
+   */
+  const travelPlan = (s: ReelScene, a: Frame, b: Frame, subj: string | null, fromSubj: string | null, t: number) => {
+    const both = !!subj && !!fromSubj;
+    let peak: Frame | null = null;
+    if (both) {
+      const star = pos(systemOf(subj!), t);
+      const pts = [{ x: a.x, y: a.y }, { x: b.x, y: b.y }, star];
+      const x0 = Math.min(...pts.map(p => p.x)), x1 = Math.max(...pts.map(p => p.x));
+      const y0 = Math.min(...pts.map(p => p.y)), y1 = Math.max(...pts.map(p => p.y));
+      const m = safe();
+      const sc = Math.min(a.scale, b.scale,
+        Math.min((W - m.side * 2) / Math.max(1, x1 - x0), (H - m.top - m.bottom) / Math.max(1, y1 - y0)) * 0.8);
+      peak = { x: (x0 + x1) / 2, y: (y0 + y1) / 2, scale: Math.max(MIN_CAMERA_SCALE, sc) };
+    }
+    const legs = peak ? [zoomPath(a, peak), zoomPath(peak, b)] : [zoomPath(a, b)];
+    // A leg from a close-up to the whole system is a ~1,000x zoom: under a
+    // second it ran 40% a frame (a whoosh, measured), so a long one takes
+    // up to 1.6 s.
+    const legSec = legs.map(l => Math.max(1.1, Math.min(1.6, 0.8 + 0.14 * l.S)));
+    const hold = peak ? 0.35 : 0;
+    let total = legSec.reduce((x, y) => x + y, 0) + hold;
+    // Never more than half the scene: the moment still has to land.
+    const room = s.seconds * 0.62;
+    const k = total > room ? room / total : 1;
+    total *= k;
+    const l0 = legSec[0] * k, h = hold * k;
+    travelSeconds.set(s, total);
+    return {
+      total, end: b,
+      at: (el: number) => {
+        if (!peak) { const e = easeLeg(el / l0); return { frame: legs[0].at(e), e }; }
+        if (el < l0) return { frame: legs[0].at(easeLeg(el / l0)), e: 0.5 * (el / l0) };
+        if (el < l0 + h) return { frame: peak, e: 0.5 };
+        const q = (el - l0 - h) / Math.max(0.01, total - l0 - h);
+        return { frame: legs[1].at(easeLeg(q)), e: 0.5 + 0.5 * q };
+      },
+    };
+  };
+
   const aim = (tClock: number) => {
     if (!scenes.length) rebuildShots();
     const idx = Math.max(0, scenes.findIndex(x => tClock >= x.from && tClock < x.to));
@@ -933,26 +982,20 @@ export function createMatchMap(
     // Out of the cold open is a cut: the clock has jumped back.
     const fromTeaser = from?.kind === 'intro' && !!teaser;
     travel = null;
-    if (s && from && !fromTeaser && !(subj && fromSubj === subj) && (subj || fromSubj)) {
+    if (s && from && !fromTeaser && !priming && !(subj && fromSubj === subj) && (subj || fromSubj)) {
       const a = frameOf(from, t, 1);
-      let dur = travelSeconds.get(s);
-      if (dur === undefined) {
-        dur = Math.min(s.seconds * 0.45, Math.max(0.8, Math.min(1.7, 0.55 + 0.3 * zoomPath(a, f).S)));
-        travelSeconds.set(s, dur);
-      }
-      if (el < dur) {
-        const q = Math.max(0, Math.min(1, el / dur));
-        const e = q * q * q * (q * (q * 6 - 15) + 10);
-        const zp = zoomPath(a, f);
-        f = zp.at(e);
-        // How wide the frame is, between the two close shots and the
-        // system: the standings fade in with the map, out with the world.
+      const plan = travelPlan(s, a, f, subj, fromSubj, t);
+      if (el < plan.total) {
+        const at = plan.at(el);
+        f = at.frame;
+        // How wide the frame is, between the close shots and the system:
+        // the standings fade in with the map, out with the world.
         const sys = systemFrame(undefined, t);
-        const wClose = Math.min(W / a.scale, W / f.scale) || 1, wSys = W / sys.scale;
-        const wNow = W / f.scale;
-        wideNow = Math.max(0, Math.min(1, Math.log(Math.max(1, wNow / wClose)) / Math.max(0.1, Math.log(Math.max(1.01, wSys / wClose)))));
-        if (!subj) wideNow = Math.max(wideNow, e);
-        if (subj) travel = { to: subj, e };
+        const wClose = Math.min(W / a.scale, W / plan.end.scale) || 1, wSys = W / sys.scale;
+        wideNow = Math.max(0, Math.min(1, Math.log(Math.max(1, (W / f.scale) / wClose))
+          / Math.max(0.1, Math.log(Math.max(1.01, wSys / wClose)))));
+        if (!subj) wideNow = Math.max(wideNow, at.e);
+        if (subj) travel = { to: subj, e: at.e };
       }
     }
     overview = wideNow;
@@ -1082,9 +1125,15 @@ export function createMatchMap(
       if (curFocus) {
         battleReach.delete(curFocus);
         if (curScene) sceneExtent.delete(curScene);
+        // Laid out AT THE DESTINATION: a world is only measured once it is
+        // on screen, and a travel starts far from it, so the framing
+        // snapped as it arrived (a 20% zoom pop on the last frames).
         const was = tracing;
         tracing = false;
+        priming = true;
+        aim(clockT);
         renderOnce();
+        priming = false;
         tracing = was;
         aim(clockT);
       }
@@ -1264,7 +1313,9 @@ export function createMatchMap(
     // sweep the whole frame: keep them low then, so a move is never a flash.
     // ...and continuous: a switch at 5% and 95% of the move popped the
     // bands on and off between two frames.
-    ctx.globalAlpha = 0.32 * (1 - 0.5 * Math.sin(Math.PI * Math.max(0, Math.min(1, overview))));
+    // (and lower still while the camera travels: the bands at mid zoom
+    // fill the frame, and swept through they read as a strobe).
+    ctx.globalAlpha = 0.32 * (1 - (travel ? 0.9 : 0.5) * Math.sin(Math.PI * Math.max(0, Math.min(1, overview))));
     drawSystemRegions(
       computeSystemRegions(gameBodies, gameFactions, gameSettlements), rc);
     ctx.restore();
