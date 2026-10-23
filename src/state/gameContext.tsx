@@ -2624,7 +2624,9 @@ export function GameContextProvider({
   const recallLaunch = useCallback((shipId: string) => {
     setGameStateInternal(prev => ({
       ...prev,
-      ships: prev.ships.map(s =>
+      // A recalled missile salvo goes back into its silo (the server
+      // retires the row), so it leaves the map rather than parking.
+      ships: prev.ships.filter(s => !(s.id === shipId && s.class === 'missile')).map(s =>
         s.id === shipId
           ? {
               ...s,
