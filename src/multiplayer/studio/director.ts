@@ -431,12 +431,22 @@ export class Director {
     const before = this.host.state().currentTick;
     // Bounded: a tick request that never answers froze two takes for an
     // hour. After 30 s, assume the server ticked and wait on the map.
-    const res = await Promise.race([
+    const ask = () => Promise.race([
       apiFetch<{ current_tick: number }>(`/api/admin/studio/games/${this.host.gameId}/tick`, {
         method: 'POST', body: JSON.stringify({ n }),
       }),
       realSleep(30_000).then(() => null),
     ]);
+    let res = await ask();
+    // A passing storage fault ("Durable Object storage caused object to be
+    // reset") ended a take at its cut (2026-10-22). Ask again, twice, but
+    // never re-tick a game that did move.
+    for (let i = 0; res && !res.ok && i < 2; i++) {
+      this.note(`tick: ${res.error?.message ?? res.status}; asking again`);
+      await realSleep(3000);
+      if (this.host.state().currentTick > before) { res = null; break; }
+      res = await ask();
+    }
     if (res && !res.ok) throw new Error(`tick: ${res.error?.message ?? res.status}`);
     if (!res) this.note(`tick: no answer in 30 s at tick ${before}; waiting on the map`);
     const want = res?.data?.current_tick ?? before + n;
@@ -732,7 +742,10 @@ export class Director {
   private hullSizeNow(): number {
     const h = this.hullSize;
     if (!h) return 1;
-    const u = Math.max(0, Math.min(1, (this.clock - h.t0) * 1000 / Math.max(1, h.ms)));
+    // Instant (ms <= 1) means now, even inside a skip, where the shot's
+    // clock stands still and an ease would only start after the cut.
+    if (h.ms <= 1) return h.to;
+    const u =Math.max(0, Math.min(1, (this.clock - h.t0) * 1000 / Math.max(1, h.ms)));
     const e = u * u * (3 - 2 * u);
     return h.from + (h.to - h.from) * e;
   }
@@ -761,10 +774,15 @@ export class Director {
     // A time cut: the map draws on through the skipped time (so dwells,
     // glides and fades run their course) with nothing kept. The shot's own
     // clock does not move, so the steps after it keep their times.
+    // The tick glide stands still through it: a cut lands on the moment it
+    // cut to, and the next tick step still glides there in its own time
+    // (run on, the glide finished inside the skip and motion froze after
+    // the cut until the next tick).
     for (let left = this.skipMs; left > 0; left -= 1000 / fps) {
       this.step(0);
       this.stats.rafRuns += f.vclock.advance(1000 / fps, !f.draw);
       if (f.draw) f.draw(1);
+      if (this.glide) this.glide.at += 1000 / fps;
     }
     this.skipMs = 0;
     this.step(1 / fps);

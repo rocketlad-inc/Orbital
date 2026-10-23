@@ -599,66 +599,115 @@ function easternHour(ms) {
 }
 
 const HERALD_EMAIL_HOUR_EASTERN = 12;
+/** Hours after noon (Eastern) a day's run may still pick up where it left
+ *  off: noon, 1 pm and 2 pm. */
+const HERALD_CATCHUP_HOURS = 3;
+/** Wall time one invocation spends before handing on to the next minute. */
+const HERALD_RUN_BUDGET_MS = 20_000;
+/** One invocation at a time: a run holds the day's lease for this long. */
+const HERALD_LEASE_MS = 3 * 60_000;
 
 /**
  * Once a day, one email per player: that day's Herald for every active
- * game they are in that had news. Called from the every-minute cron; the
- * hour gate plus a per-day run marker make every other minute a no-op,
- * and the per-user dedupe key makes a partial re-run safe.
+ * game they are in that had news. Called from the every-minute cron.
+ *
+ * RESUMABLE (2026-10-22: the day's Herald went to nobody). It used to
+ * claim ONE marker for the day before doing any work, compose every
+ * game's edition, and only then send: a run cut short or thrown anywhere
+ * after the marker (any reader's send, the cron's limits) sent nothing and
+ * blocked every retry until tomorrow, silently. Now each cron minute from
+ * noon until HERALD_CATCHUP_HOURS later may run: a short lease keeps runs
+ * from overlapping, readers already sent today (their dedupe key) are
+ * skipped, editions are composed only when a reader needs one, each send
+ * stands alone (one failure is logged and passed), a run stops at its
+ * time budget for the next minute to continue, and a done marker ends
+ * the day once everyone has theirs. Studio test games are left out.
  */
-export async function maybeSendDailyHeraldEmails(env, nowMs = Date.now()) {
-  if (!emailConfigured(env) || !env.EMAIL_LINK_SECRET) return;
-  if (easternHour(nowMs) !== HERALD_EMAIL_HOUR_EASTERN) return;
+export async function maybeSendDailyHeraldEmails(env, nowMs = Date.now(), opts = {}) {
+  if (!emailConfigured(env) || !env.EMAIL_LINK_SECRET) return { ran: false, reason: 'not_configured' };
+  const hour = easternHour(nowMs);
+  if (!opts.force && (hour < HERALD_EMAIL_HOUR_EASTERN || hour >= HERALD_EMAIL_HOUR_EASTERN + HERALD_CATCHUP_HOURS)) {
+    return { ran: false, reason: 'hour' };
+  }
   const day = easternDay(nowMs);
-  // One run per day across every cron minute in the hour.
+  const doneKey = `herald_done:${day}`;
+  const done = await env.DB.prepare('SELECT 1 AS x FROM email_log WHERE dedupe_key = ?').bind(doneKey).first();
+  if (done) return { ran: false, reason: 'done' };
+  // The lease: one run per HERALD_LEASE_MS slot of the day.
   try {
     await env.DB
       .prepare('INSERT INTO email_log (user_id, kind, dedupe_key, ok, created_ms) VALUES (NULL, ?, ?, 1, ?)')
-      .bind('herald_run', `herald_run:${day}`, nowMs).run();
+      .bind('herald_run', `herald_run:${day}:${Math.floor(nowMs / HERALD_LEASE_MS)}`, nowMs).run();
   } catch {
-    return;
+    return { ran: false, reason: 'leased' };
   }
+  const t0 = Date.now();
 
   const since = nowMs - 24 * 3600000;
   const games = (await env.DB
     .prepare(`SELECT g.id, g.current_tick, r.name
                 FROM games g JOIN rooms r ON r.id = g.id
                WHERE g.status = 'active'
+                 AND COALESCE(g.is_test_game, 0) = 0
                  AND EXISTS (SELECT 1 FROM chronicle_entries c
                               WHERE c.game_id = g.id AND c.visibility = 'public'
                                 AND c.created_at_ms > ?)`)
     .bind(since).all()).results ?? [];
-  if (games.length === 0) return;
-
-  const { composeHeraldForGame } = await import('./digest.js');
-  const editions = new Map();
-  for (const game of games) {
+  const markDone = async () => {
     try {
-      editions.set(game.id, { game, ed: await composeHeraldForGame(env, game) });
-    } catch (e) {
-      console.error(`herald email compose failed for ${game.id}`, e);
-    }
-  }
+      await env.DB
+        .prepare('INSERT INTO email_log (user_id, kind, dedupe_key, ok, created_ms) VALUES (NULL, ?, ?, 1, ?)')
+        .bind('herald_done', doneKey, Date.now()).run();
+    } catch { /* already marked */ }
+  };
+  if (games.length === 0) { await markDone(); return { ran: true, sent: 0, left: 0 }; }
+  const gameById = new Map(games.map(g => [g.id, g]));
+
+  // Who already has today's (any earlier run): skipped without composing.
+  const sentRows = (await env.DB
+    .prepare(`SELECT user_id FROM email_log WHERE kind = 'herald' AND dedupe_key LIKE ?`)
+    .bind(`herald:%:${day}`).all()).results ?? [];
+  const alreadySent = new Set(sentRows.map(r => r.user_id));
 
   // Everyone who plays in one of those games, once each.
   const readers = new Map();
-  for (const gameId of editions.keys()) {
+  for (const gameId of gameById.keys()) {
     const rows = (await env.DB
       .prepare(`SELECT u.id, u.email, u.display_name, u.email_herald, u.locale
                   FROM game_factions gf JOIN users u ON u.id = gf.user_id
                  WHERE gf.game_id = ?`)
       .bind(gameId).all()).results ?? [];
     for (const u of rows) {
-      if (!u.email || UNDELIVERABLE.test(u.email) || u.email_herald === 0) continue;
+      if (!u.email || UNDELIVERABLE.test(u.email) || u.email_herald === 0 || alreadySent.has(u.id)) continue;
       const r = readers.get(u.id) ?? { user: u, games: [] };
       if (!r.games.includes(gameId)) r.games.push(gameId);
       readers.set(u.id, r);
     }
   }
 
-  for (const { user, games: ids } of readers.values()) {
-    const eds = ids.map(id => editions.get(id)).filter(Boolean);
-    if (eds.length === 0) continue;
+  // Editions on demand, each composed once per run.
+  const { composeHeraldForGame } = await import('./digest.js');
+  const editions = new Map();
+  const editionFor = async (gameId) => {
+    if (editions.has(gameId)) return editions.get(gameId);
+    let e = null;
+    try {
+      const game = gameById.get(gameId);
+      e = { game, ed: await composeHeraldForGame(env, game) };
+    } catch (err) {
+      console.error(`herald email compose failed for ${gameId}`, err);
+    }
+    editions.set(gameId, e);
+    return e;
+  };
+
+  const sendOne = async (user, ids) => {
+    const eds = [];
+    for (const id of ids) {
+      const e = await editionFor(id);
+      if (e) eds.push(e);
+    }
+    if (eds.length === 0) return 'empty';
     const lead = eds[0].ed;
     // The frame (headings, buttons, footer) speaks the reader's language.
     // The news inside is composed by digest.js and is English until its
@@ -681,7 +730,7 @@ export async function maybeSendDailyHeraldEmails(env, nowMs = Date.now()) {
       '', tr(L, 'email.herald.openText', { url: roomUrl(game.id) }), '', '----', '',
     ]);
     const subjectLead = heraldMarkdownToText(lead.title).replace(/\s+/g, ' ').trim().slice(0, 90);
-    await sendEmail(env, {
+    const res = await sendEmail(env, {
       userId: user.id, to: user.email, kind: 'herald', category: 'herald',
       dedupeKey: `herald:${user.id}:${day}`,
       subject: tr(L, 'email.herald.subject', { lead: subjectLead }),
@@ -697,5 +746,23 @@ export async function maybeSendDailyHeraldEmails(env, nowMs = Date.now()) {
       }),
       text: textLayout({ locale: L, heading: tr(L, 'email.herald.heading'), lines: textLines, unsubUrl }),
     });
+    return res.sent ? 'sent' : (res.reason ?? 'failed');
+  };
+
+  let sent = 0;
+  let left = readers.size;
+  for (const { user, games: ids } of readers.values()) {
+    if (Date.now() - t0 > (opts.budgetMs ?? HERALD_RUN_BUDGET_MS)) {
+      console.log(`herald email: budget reached, ${left} readers left for the next run`);
+      return { ran: true, sent, left };
+    }
+    try {
+      if ((await sendOne(user, ids)) === 'sent') sent++;
+    } catch (e) {
+      console.error(`herald email failed for ${user.id}`, e);
+    }
+    left--;
   }
+  await markDone();
+  return { ran: true, sent, left: 0 };
 }

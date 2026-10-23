@@ -32,7 +32,12 @@ function check(label, ok, detail) {
 // ---- fakes -----------------------------------------------------------------
 
 const sent = [];
-const EMAIL = { async send(msg) { sent.push(msg); return { messageId: `m${sent.length}` }; } };
+// failTo: an address whose next send throws (a provider error for one reader).
+let failTo = null;
+const EMAIL = { async send(msg) {
+  if (failTo && msg.to === failTo) { failTo = null; throw new Error('provider refused'); }
+  sent.push(msg); return { messageId: `m${sent.length}` };
+} };
 
 const doCalls = [];
 const ROOM = {
@@ -356,6 +361,65 @@ check('a reader in two games gets ONE Herald covering both', dotMail.length === 
   && dotMail[0].html.includes(`?room=${roomA}`) && dotMail[0].html.includes(`?room=${roomI}`));
 check('Herald carries a one-click unsubscribe', /api\/email\/unsubscribe/.test(heralds[0]?.headers?.['List-Unsubscribe'] ?? ''));
 check('Herald has a plain-text part naming each game', /(TURN|TICK) \d+/.test(heralds[0]?.text ?? ''), heralds[0]?.text?.slice(0, 200));
+
+// ---- the Herald run survives being cut short (2026-10-22) -------------------
+//
+// Prod's run claimed one marker for the day, composed every edition, then
+// sent; cut short or thrown after the marker, the day's Herald went to
+// nobody and nothing retried. It must now resume, never double-send, and
+// keep going past one reader's failure.
+{
+  const day2 = noon + 24 * 3600000;
+  for (const gid of [roomA, roomI]) {
+    const f = await DB.prepare('SELECT id FROM game_factions WHERE game_id = ? LIMIT 1').bind(gid).first();
+    await DB.prepare(`INSERT INTO chronicle_entries (id, game_id, tick_number, kind, actor_faction_id, payload, visibility, created_at_ms)
+                      VALUES (?, ?, 2, 'settlement_founded', ?, '{}', 'public', ?)`)
+      .bind(`chr2_${gid}`, gid, f.id, day2 - 3600000).run();
+  }
+  sent.length = 0;
+  // Cut short before the first send (no budget at all).
+  const cut = await mail.maybeSendDailyHeraldEmails(env, day2, { budgetMs: -1 });
+  check('a run cut short sends what it got to and says how many are left',
+    cut.ran === true && sent.length === 0 && cut.left > 0, cut);
+  // The same minute again: the lease holds, nothing runs twice at once.
+  const again = await mail.maybeSendDailyHeraldEmails(env, day2 + 1000);
+  check('a second run inside the lease does nothing', again.ran === false && again.reason === 'leased', again);
+  // The next slot picks it up, past one reader whose send fails.
+  failTo = I.email;
+  const resumed = await mail.maybeSendDailyHeraldEmails(env, day2 + 3 * 60000);
+  const got = new Set(sent.map(m => m.to));
+  check('the next run resumes and reaches everyone else, past a failing send',
+    resumed.ran === true && resumed.left === 0 && got.size > 0 && got.size === resumed.sent && !got.has(I.email), { resumed, got: [...got] });
+  const failed = await DB.prepare(`SELECT ok, error FROM email_log WHERE kind = 'herald' AND user_id = ? ORDER BY id DESC LIMIT 1`).bind(I.id).first();
+  check('the failed send is on record as failed', failed && failed.ok === 0, failed);
+  // Done: later minutes do nothing, and no one got two.
+  const after = await mail.maybeSendDailyHeraldEmails(env, day2 + 6 * 60000);
+  check('once everyone has theirs the day is done', after.ran === false && after.reason === 'done', after);
+  check('no reader got two the same day', sent.length === new Set(sent.map(m => m.to)).size, sent.map(m => m.to));
+
+  // Day 3: the run first fires at 2 pm (catch-up), not at all at 3 pm.
+  const day3 = noon + 48 * 3600000;
+  await DB.prepare(`INSERT INTO chronicle_entries (id, game_id, tick_number, kind, actor_faction_id, payload, visibility, created_at_ms)
+                    VALUES ('chr3_a', ?, 3, 'settlement_founded', NULL, '{}', 'public', ?)`).bind(roomA, day3 - 3600000).run();
+  sent.length = 0;
+  const late = await mail.maybeSendDailyHeraldEmails(env, day3 + 3 * 3600000);
+  check('nothing goes out after the catch-up window (3 pm)', late.ran === false && late.reason === 'hour' && sent.length === 0, late);
+  const catchUp = await mail.maybeSendDailyHeraldEmails(env, day3 + 2 * 3600000);
+  check('a day that missed noon still goes out in the catch-up window (2 pm)', catchUp.ran === true && sent.length > 0, catchUp);
+
+  // Day 4: a Studio test game is not in anyone's Herald.
+  const day4 = noon + 72 * 3600000;
+  await DB.prepare('UPDATE games SET is_test_game = 1 WHERE id = ?').bind(roomI).run();
+  for (const gid of [roomA, roomI]) {
+    await DB.prepare(`INSERT INTO chronicle_entries (id, game_id, tick_number, kind, actor_faction_id, payload, visibility, created_at_ms)
+                      VALUES (?, ?, 4, 'settlement_founded', NULL, '{}', 'public', ?)`).bind(`chr4_${gid}`, gid, day4 - 3600000).run();
+  }
+  sent.length = 0;
+  await mail.maybeSendDailyHeraldEmails(env, day4);
+  check('a Studio test game is left out of the Herald',
+    sent.length > 0 && sent.every(m => !m.html.includes(`?room=${roomI}`)), sent.map(m => m.to));
+  await DB.prepare('UPDATE games SET is_test_game = 0 WHERE id = ?').bind(roomI).run();
+}
 
 // ---- lobby browse / mine summaries -----------------------------------------
 
