@@ -31,7 +31,14 @@ def end_card(last, fps):
     if not a.end_title:
         return []
     w, h = last.size
-    title = font(os.path.join(HERE, 'assets', 'Audiowide-Regular.ttf'), max(12, round(w * 0.085)))
+    tpath = os.path.join(HERE, 'assets', 'Audiowide-Regular.ttf')
+    size = max(12, round(w * 0.085))
+    title = font(tpath, size)
+    # A longer name shrinks to fit: never wider than 80% of the frame.
+    probe = ImageDraw.Draw(Image.new('RGB', (1, 1)))
+    while size > 12 and probe.textlength(a.end_title, font=title) > w * 0.8:
+        size -= 2
+        title = font(tpath, size)
     line = font('C:/Windows/Fonts/bahnschrift.ttf', max(10, round(w * 0.03)))
     n, fade = max(1, round(a.end_seconds * fps)), max(1, round(0.6 * fps))
     out = []
