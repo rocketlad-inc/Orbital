@@ -16,6 +16,11 @@ import { MEGASTRUCTURES, MEGASTRUCTURE_KINDS } from './megastructures.js';
 const isValidAgentHandle = (h) => typeof h === 'string' && /^[a-z0-9][a-z0-9_-]{0,30}$/.test(h);
 import { DEFAULT_LOADOUTS } from './shipDesigns.js';
 import { normalizeEmblem, EMBLEM_IDS } from './emblems.js';
+import { REQUIREMENTS } from './researchUnlocks.js';
+
+/** The research tracks a scene can seed: every track a feature unlocks on,
+ *  plus Sensors. */
+const RESEARCH_TRACKS = new Set([...Object.values(REQUIREMENTS).map(r => r.track), 'sensors']);
 
 /** The studio mark. Every row the studio writes has it in the id, which is
  *  what makes `reset` safe: nothing without it is ever deleted. */
@@ -82,9 +87,18 @@ export function expandScenario(raw) {
     if (!isValidAgentHandle(handle)) throw new Error(`factions[${i}].handle '${handle}' is not a valid agent handle`);
     const color = typeof f.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(f.color) ? f.color : null;
     const color2 = typeof f.color2 === 'string' && /^#[0-9a-fA-F]{6}$/.test(f.color2) ? f.color2 : null;
+    // Starting stock: a long battle's upkeep emptied an empire mid-take and
+    // its top bar went red with "-25% DMG" (judges 2026-10-23).
+    const stock = (k) => {
+      if (f[k] == null) return null;
+      const n = Number(f[k]);
+      if (!Number.isFinite(n) || n < 0 || n > 10_000_000) throw new Error(`factions[${i}].${k} must be a number from 0 to 10000000`);
+      return Math.round(n);
+    };
     return {
       key: f.key, name: typeof f.name === 'string' && f.name.trim() ? f.name.trim().slice(0, 40) : f.key,
       home, handle, color, color2, emblem: normalizeEmblem(f.emblem ?? EMBLEM_IDS[i % EMBLEM_IDS.length]),
+      metal: stock('metal'), gold: stock('gold'),
     };
   });
   const need = (k, where) => { if (!keys.has(k)) throw new Error(`${where}: unknown faction '${k}'`); };
@@ -207,6 +221,9 @@ export function expandScenario(raw) {
   const research = (Array.isArray(raw.research) ? raw.research : []).map((r, i) => {
     if (r?.faction !== 'all') need(r?.faction, `research[${i}]`);
     if (!/^[a-z_]{3,24}$/.test(String(r.track))) throw new Error(`research[${i}].track`);
+    // Unknown tracks were accepted and unlocked nothing: 'defense' left the
+    // designer's shield locked on camera (2026-10-23). Defense is 'armor'.
+    if (!RESEARCH_TRACKS.has(r.track)) throw new Error(`research[${i}].track '${r.track}' is not a research track (${[...RESEARCH_TRACKS].join(', ')})`);
     return { faction: r.faction, track: r.track, level: Math.max(0, Math.min(12, Number(r.level) || 0)) };
   });
 

@@ -327,6 +327,10 @@ export async function applyScenario(env, spec, { session = null } = {}) {
     }
   }
   if (techStmts.length) await env.DB.batch(techStmts);
+  const stockStmts = spec.factions.filter(f => f.metal != null || f.gold != null).map(f => env.DB
+    .prepare('UPDATE game_factions SET metal = COALESCE(?, metal), gold = COALESCE(?, gold) WHERE id = ? AND game_id = ?')
+    .bind(f.metal, f.gold, fid(f.key), gameId));
+  if (stockStmts.length) await env.DB.batch(stockStmts);
 
   // ---- worlds ----
   const worldStmts = [];

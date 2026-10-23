@@ -81,6 +81,19 @@ describe('expandScenario', () => {
     expect(() => expandScenario({ ...base(), silos: [{ world: 'earth', owner: 'venus' }] })).toThrow(/unknown faction/);
   });
 
+  it('refuses a research track the game does not have (Defense is armor)', () => {
+    expect(() => expandScenario({ ...base(), research: [{ faction: 'terra', track: 'defense', level: 4 }] })).toThrow(/not a research track/);
+    expect(expandScenario({ ...base(), research: [{ faction: 'terra', track: 'armor', level: 4 }] }).research[0].track).toBe('armor');
+  });
+
+  it('reads a faction\'s starting metal and gold', () => {
+    const fx = base().factions.map((f, i) => (i === 0 ? { ...f, metal: 50000, gold: 20000 } : f));
+    const spec = expandScenario({ ...base(), factions: fx });
+    expect(spec.factions[0]).toMatchObject({ metal: 50000, gold: 20000 });
+    expect(spec.factions[1]).toMatchObject({ metal: null, gold: null });
+    expect(() => expandScenario({ ...base(), factions: base().factions.map(f => ({ ...f, metal: -1 })) })).toThrow(/metal/);
+  });
+
   it('reads a group target order: a preset name or a list', () => {
     const big = expandScenario({ ...base(), ships: [{ key: 'g', owner: 'terra', at: 'earth', class: 'frigate', count: 2, priority: 'big' }] });
     expect(big.ships[0].priority[0]).toBe('capital');
