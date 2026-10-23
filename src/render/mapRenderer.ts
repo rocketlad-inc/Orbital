@@ -5501,6 +5501,44 @@ export function transitHitWorldPos(shipId: string, placed: Sample[], t: number):
   return torchPositionFromSamples(placed, t);
 }
 
+// ---- settle glide --------------------------------------------------------
+//
+// A COLONY SHIP BECOMES ITS STATION IN ONE MOTION (2026-10-23, the colony
+// clip). Settling on arrival parks the hull and founds the station in the
+// same server tick (room.js settleOnArrival), so the next /state has no
+// ship and a new station: the hull vanished where it was last drawn, still
+// on its way in, and the station appeared in its own orbit slot (~300 px
+// away at a close-up). The deploy button does the same from orbit. The
+// arrival glide every other ship gets never runs, because there is no ship
+// left to glide. So the NEW station starts where the hull was drawn and
+// eases into its slot, riding its world while it does.
+export const SETTLE_GLIDE_MS = 1200;
+const settleGlides = new Map<string, { dx: number; dy: number; startMs: number }>();
+
+/** Start a station's glide from the hull it was founded by. `from` is
+ *  where the hull was drawn (world), `bodyAt` its world's position now. */
+export function seedSettleGlide(
+  stationId: string, from: { x: number; y: number }, bodyAt: { x: number; y: number }, nowMs: number,
+): void {
+  if (settleGlides.size > 200) settleGlides.clear();
+  settleGlides.set(stationId, { dx: from.x - bodyAt.x, dy: from.y - bodyAt.y, startMs: nowMs });
+}
+
+/** Where to draw a station this frame: `target` (its slot, canvas px)
+ *  unless it is still gliding in from the hull that founded it. */
+export function settleGlideCanvasPos(
+  stationId: string, bodyPos: { x: number; y: number }, target: { x: number; y: number },
+  ctx: RenderContext, nowMs: number,
+): { x: number; y: number } {
+  const g = settleGlides.get(stationId);
+  if (!g) return target;
+  const u = (nowMs - g.startMs) / SETTLE_GLIDE_MS;
+  if (!(u >= 0 && u < 1)) { settleGlides.delete(stationId); return target; }
+  const from = worldToCanvas(bodyPos.x + g.dx, bodyPos.y + g.dy, ctx);
+  const e = smootherStep(u);
+  return { x: from.x + (target.x - from.x) * e, y: from.y + (target.y - from.y) * e };
+}
+
 /**
  * An escort's drawn spot, through the continuity guard like every other
  * hull. Escorts are placed by their fleet's block, and the block is
@@ -8685,6 +8723,8 @@ export function drawStation(
       structScale = STATION_STRUCTURE_SCALE * battleSpriteScale(k);
     }
   }
+  // Just founded by a colony hull: in from where the hull was (seedSettleGlide).
+  canvasPos = settleGlideCanvasPos(settlement.id, bodyPos, canvasPos, ctx, ctx.nowMs ?? performance.now());
   ctx.stationCanvasPos?.set(settlement.id, canvasPos);
   if (farOffCanvas(ctx, canvasPos.x, canvasPos.y, 200)) return;
 

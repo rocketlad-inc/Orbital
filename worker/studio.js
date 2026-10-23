@@ -52,7 +52,7 @@ import { routes as missileRoutes } from './missiles.js';
 import { backfillMissingBodies } from './factions.js';
 import { cfg as gameCfg, invalidate as invalidateCfg } from './gameConfig.js';
 import { BY_ID as CONFIG_DIALS } from './configSchema.js';
-import { spawnSunGatePair, SUN_GATE_SYSTEMS, SUN_GATE_WARNING_TICKS, gateOrder } from './sunGates.js';
+import { spawnSunGatePair, SUN_GATE_SYSTEMS, SUN_GATE_WARNING_TICKS, gateOrder, handOffLandingSite, solGateId } from './sunGates.js';
 import { MEGASTRUCTURES, MEGASTRUCTURE_KINDS, MEGA_MU, MEGA_MAX_HP, MEGA_BODY_TYPE, periodForRadius } from './megastructures.js';
 import { makeRouteMath } from './routeMath.js';
 import { launchKaiju, kaijuShipId, kaijuFactionId, kaijuCarcassId, KAIJU_UNKNOWN_FACTION } from './kaiju.js';
@@ -596,7 +596,10 @@ export async function applyScenario(env, spec, { session = null } = {}) {
     const presence = new Set();
     for (const b of bodies.values()) if (b.owner_faction_id === viewerId) presence.add(b.id);
     for (const [, r] of shipRows) if (r.owner === spec.viewer) presence.add(r.at.id);
-    const isStar = (b) => b.parent_body_id == null;
+    // A sun by its type too: a far system's suns orbit its barycenter, and
+    // "no parent" alone took Centauri A for a planet, so a far world was
+    // watched from its sun, well out of sensor range (2026-10-23).
+    const isStar = (b) => b.parent_body_id == null || b.type === 'star' || b.type === 'black_hole';
     const lit = (id) => {
       if (presence.has(id)) return true;
       const b = byId.get(id);
@@ -1053,7 +1056,21 @@ async function enableFarSystems(env, gameId, tick, spec) {
     const interval = Number(conf.sun_gate_interval) || 40;
     await env.DB.prepare('UPDATE games SET sun_gate_tick = ? WHERE id = ?')
       .bind(tick - (SUN_GATE_WARNING_TICKS + interval + 400), gameId).run();
-    await spawnSunGatePair(env, gameId, SUN_GATE_SYSTEMS[0], tick - 40, conf);
+    const sys = SUN_GATE_SYSTEMS[0];
+    await spawnSunGatePair(env, gameId, sys, tick - 40, conf);
+    // LANDED MEANS THE SITE IS GONE (2026-10-23). The game's own sun gate
+    // step hands a landing site to its gate and retires it on the landing
+    // tick, but the omen above is set so far back that the step never
+    // looks again, so the site stood for the whole take on the gate's
+    // exact orbit and the map drew the gate as "CENTAURI GATE LANDING
+    // SITE" (the colony clip). Done here, the step's own write, once the
+    // stored gate has landed (an older board keeps its first landing).
+    const g = await env.DB
+      .prepare('SELECT emerge_until_tick FROM game_bodies WHERE id = ? AND destroyed_at_tick IS NULL')
+      .bind(solGateId(gameId, sys)).first();
+    if (g && (g.emerge_until_tick == null || Number(g.emerge_until_tick) <= tick)) {
+      await handOffLandingSite(env.DB, gameId, sys, tick);
+    }
   }
   return null;
 }

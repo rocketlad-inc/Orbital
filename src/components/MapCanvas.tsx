@@ -42,6 +42,7 @@ import {
   drawDestructionFlashes,
   drawnShipLook,
   glideLayout,
+  seedSettleGlide,
   recentDrawnShipWorldPos,
   settleTransitLayout,
   keepOffDrawnDiscs,
@@ -1409,6 +1410,23 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     if (prevShipIdsRef.current.size > 0) {
       for (const [id, pos] of prevShipIdsRef.current) {
         if (!curShipIds.has(id) && !destructionFlashesRef.current.has(id)) {
+          // SETTLED, NOT GONE: a colony hull that founded a station this
+          // update (settle on arrival, or the deploy button) hands its spot
+          // to that station, which glides from where the hull was drawn
+          // into its own slot (seedSettleGlide). A new station of its
+          // owner at the world it was flying to or parked at.
+          if (pos.cls === 'colony') {
+            const at = pos.ship.transit?.currentTransfer?.targetBodyId ?? pos.ship.orbit?.parentBodyId;
+            const founded = at ? gameState.settlements.find(st => st.type === 'station'
+              && st.bodyId === at && st.ownedBy === pos.ship.ownedBy
+              && !prevSettlementIdsRef.current.has(st.id)) : undefined;
+            const world = founded ? bodyById2.get(founded.bodyId) : undefined;
+            if (founded && world) {
+              const from = recentDrawnShipWorldPos(id, 1000) ?? { x: pos.x, y: pos.y };
+              seedSettleGlide(founded.id, from, bodyPosition(world, nowTick, gameState.bodies), nowMs);
+              continue;
+            }
+          }
           // Only flash a REAL kill. A ship dropping out of /state usually
           // just left the player's (moving) sensor coverage — a fog-out,
           // not a death. The server chronicles actual kills; require one.
