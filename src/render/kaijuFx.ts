@@ -49,6 +49,8 @@ export const KAIJU_BREAK_MS = 6400;
 export const KAIJU_DEATH_MS = 7600;
 /** Where in the break the world bursts (fraction). */
 const BREAK_BURST = 0.6;
+/** The shards a broken world throws off (mapRenderer drawDebrisField's palette). */
+const BREAK_SHARD_TONES = ['#8a8178', '#6f6860', '#5a544d', '#4a4540'];
 
 // ---- where the beast was drawn -----------------------------------------
 
@@ -106,6 +108,15 @@ const seen = new Set<string>();
 let deathPlayed = false;
 /** The death, kept after it has played: the carcass settles from it. */
 let lastDeath: Fx | null = null;
+/** Worlds whose break has begun playing here (kaijuBreakStarted). */
+const brokenPlayed = new Set<string>();
+
+/** Has the beast's break of this world begun playing here? Until it has,
+ *  a world it broke in the last few ticks is still drawn whole
+ *  (mapRenderer obliteration hold), as a sterilised one is. */
+export function kaijuBreakStarted(bodyId: string): boolean {
+  return brokenPlayed.has(bodyId);
+}
 
 const LIFE: Record<Kind, number> = { scorch: KAIJU_SCORCH_MS, break: KAIJU_BREAK_MS, death: KAIJU_DEATH_MS };
 
@@ -113,6 +124,7 @@ const LIFE: Record<Kind, number> = { scorch: KAIJU_SCORCH_MS, break: KAIJU_BREAK
 export function spawnKaijuStrike(entryId: string, bodyId: string, mode: 'scorch' | 'break'): void {
   if (seen.has(entryId)) return;
   seen.add(entryId);
+  if (mode === 'break') brokenPlayed.add(bodyId);
   if (live.length >= 4) live.shift();
   live.push({ id: entryId, kind: mode, bodyId, startMs: performance.now(), seed: hashStr(entryId) });
 }
@@ -485,7 +497,10 @@ function drawStrike(rc: RenderContext, f: Fx, k: number, nowMs: number) {
         g.save();
         g.translate(x, y); g.rotate(spin * bk + a);
         g.globalAlpha = 1 - smooth((bk - 0.55) / 0.45);
-        g.fillStyle = body.color || '#8a7a6a';
+        // Rock, the debris field's own tones: in the world's map-dot
+        // colour they were flat saturated yellow triangles over Io that
+        // read as UI markers (QA, 2026-10-23).
+        g.fillStyle = BREAK_SHARD_TONES[i % BREAK_SHARD_TONES.length];
         g.beginPath(); g.moveTo(s, 0); g.lineTo(-s * 0.6, s * 0.7); g.lineTo(-s * 0.4, -s * 0.8); g.closePath(); g.fill();
         g.fillStyle = `rgba(${LEVIATHAN_PALETTE.hot}, ${(0.5 * (1 - bk)).toFixed(3)})`;
         g.fillRect(-s * 0.15, -s * 0.15, s * 0.3, s * 0.3);
@@ -682,6 +697,7 @@ export function drawKaijuFx(rc: RenderContext, nowMs: number): void {
 /** Test hook: forget everything played. */
 export function resetKaijuFx(): void {
   live.length = 0; seen.clear(); deathPlayed = false; lastDrawn = null; lastDrawnShip = null;
+  brokenPlayed.clear();
   lastParked = null; lastDeath = null; heldDrawnMs = -Infinity;
 }
 

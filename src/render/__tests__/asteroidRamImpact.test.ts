@@ -41,9 +41,11 @@ describe('its chronicle rows', () => {
       { id: 'md', kind: 'terraform_destroyed', bodyId: 'earth', cause: 'mega_destroyer' },
     ]);
     const fired = drainAll();
-    expect(fired.map(f => f.kind)).toEqual(['impact_scorch', 'impact', 'sterilise']);
-    expect(fired[0].from).toEqual({ x: -0.6, y: -0.8 });
-    expect(fired[1].from).toEqual({ x: -0.6, y: -0.8 });
+    // World strikes play the moment they can be seen, ahead of the
+    // stagger (strikeLandsFirst.test.ts), so the two strikes come first.
+    expect(fired.map(f => f.kind)).toEqual(['impact_scorch', 'sterilise', 'impact']);
+    expect(fired.find(f => f.id === 'tf')!.from).toEqual({ x: -0.6, y: -0.8 });
+    expect(fired.find(f => f.id === 'im')!.from).toEqual({ x: -0.6, y: -0.8 });
   });
 
   it('the server says which side it came in on', () => {

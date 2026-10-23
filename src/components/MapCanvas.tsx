@@ -95,7 +95,7 @@ import { BUILDING_DEFS, buildingLevel } from '../game/settlements';
 import { boxSingleTarget, cyclePick, orderPickHits } from '../render/mapPick';
 import type { PickHit } from '../render/mapPick';
 import { releaseFocusPosition } from '../game/cameraFocus';
-import { Body as GameBody, BuildingKind, CameraState, Ship } from '../types';
+import { Body as GameBody, BuildingKind, CameraState, Ship, Settlement } from '../types';
 import {
   spawnTracer,
   drawTracers,
@@ -110,7 +110,10 @@ import {
   enqueueDetonation,
   spawnDiscoveryBloom,
   spawnSterilisation,
+  spawnObliteration,
+  spawnSettlementFall,
   drawSterilisations,
+  drawSettlementFalls,
   drawSinkTethers,
   discoveryVariantForSecret,
   drawDiscoveryBlooms,
@@ -602,6 +605,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // the diff so a mid-flight page load doesn't fire a phantom flash.
   const prevTransitIdsRef = useRef<Set<string> | null>(null);
   const prevSettlementIdsRef = useRef<Map<string, { x: number; y: number; bodyId: string }>>(new Map());
+  /** Every settlement as last seen in /state, kept after it leaves: a
+   *  fall plays where it stood (spawnSettlementFall), and by the time its
+   *  chronicle row plays it is gone from the list. */
+  const lastSeenSettlementsRef = useRef<Map<string, Settlement>>(new Map());
   const destructionFlashesRef = useRef<Map<string, DestructionFlash>>(new Map());
   /** Ship ids whose death already flashed at the hull via the list-diff
    *  path — consulted by the queued chronicle FX so the same kill never
@@ -1479,7 +1486,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // body world-position (cities + stations both render adjacent to
     // their body). Reusing bodyPosition keeps the math tight.
     const curSettlementIds = new Map<string, { x: number; y: number; bodyId: string }>();
+    if (lastSeenSettlementsRef.current.size > 4000) lastSeenSettlementsRef.current.clear();
     for (const settlement of gameState.settlements) {
+      lastSeenSettlementsRef.current.set(settlement.id, settlement);
       const body = bodyById2.get(settlement.bodyId);
       if (body) {
         const bp = bodyPosition(body, nowTick, gameState.bodies);
@@ -1548,12 +1557,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // server-chronicled kill (settlement_destroyed carries body_id,
           // not a settlement id — match on the host body).
           if (!diedByChronicle(`body:${snap.bodyId}`, nowMs)) continue;
-          destructionFlashesRef.current.set(id, {
-            pos: { x: snap.x, y: snap.y },
-            startMs: nowMs,
-            baseRadius: 14,
-            id,
-          });
+          // It falls WHERE IT STOOD: its city marker on the globe (or its
+          // station), sized by the globe. This was a 14 px flash at the
+          // world's centre, which at a close-up was a speck in the middle
+          // of a planet (siege clip, 2026-10-23). Keyed on the settlement,
+          // so the chronicle row for the same fall does not play twice.
+          spawnSettlementFall(id, snap.bodyId, lastSeenSettlementsRef.current.get(id) ?? null, null);
         }
       }
     }
@@ -3909,6 +3918,21 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           if (fx.bodyId) spawnSterilisation(fx.id, fx.bodyId);
           return;
         }
+        if (fx.kind === 'obliterate') {
+          // The Mega's beam, then the world bursts (combatFx). The world
+          // is drawn whole until the burst (mapRenderer drawsAsDebris).
+          if (fx.bodyId) spawnObliteration(fx.id, fx.bodyId);
+          return;
+        }
+        if (fx.kind === 'settlement_fall') {
+          // Where that city or station stood, as this client last saw it
+          // (it has left /state by now), sized by the globe.
+          if (fx.bodyId) {
+            const seen = fx.settlementId ? lastSeenSettlementsRef.current.get(fx.settlementId) : undefined;
+            spawnSettlementFall(fx.settlementId ?? fx.id, fx.bodyId, seen ?? null, fx.id);
+          }
+          return;
+        }
         if (fx.kind === 'discovery') {
           // Blooms at the body; re-located each frame so it rides the
           // body's orbit rather than a fixed canvas point. The VARIANT
@@ -3975,6 +3999,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         }
       },
     );
+    // A settlement falling, where it stood. In every mode, like the
+    // destruction flashes above: a city lost is information, not
+    // decoration, so lightweight mode keeps it.
+    drawSettlementFalls(renderContext, nowMs);
 
     // REFIT ORDERED: a small ⟳ up-right of each of your hulls waiting on
     // a refit, amber when something is in its way (refitStatus, the same

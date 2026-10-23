@@ -30,6 +30,10 @@
 export type PendingFxKind =
   | 'destruction' | 'detonation' | 'impact' | 'discovery' | 'damage'
   | 'sterilise' | 'built' | 'gateflash'
+  // A Mega Destroyer's second strike: its beam, then the world bursts.
+  | 'obliterate'
+  // A city or station falling, played where it stood (combatFx).
+  | 'settlement_fall'
   // The Leviathan (kaijuFx.ts): its two strikes and its death.
   | 'kaiju_scorch' | 'kaiju_break' | 'kaiju_death'
   // A rammed asteroid burning a living world off (asteroidRam.ts): the
@@ -38,7 +42,11 @@ export type PendingFxKind =
 
 const KIND_MAP: Record<string, PendingFxKind> = {
   ship_destroyed: 'destruction',
-  settlement_destroyed: 'destruction',
+  // A city falling played as a 12 px ship-death flash at the WORLD'S
+  // CENTRE (siege clip, 2026-10-23: "the city falls only in the
+  // outliner"). It plays at the city's marker on the globe now, sized by
+  // the globe (combatFx spawnSettlementFall).
+  settlement_destroyed: 'settlement_fall',
   builds_destroyed: 'destruction',
   ship_detonated: 'detonation',
   asteroid_impact: 'impact',
@@ -58,8 +66,12 @@ const KIND_MAP: Record<string, PendingFxKind> = {
   // while you were elsewhere plays when you next look at the planet.
   terraform_destroyed: 'sterilise',
   // A world destroyed outright. The blast, not the slow burn: there is
-  // no surface left to burn down to ash, only a debris field.
-  world_obliterated: 'destruction',
+  // no surface left to burn down to ash, only a debris field. It was the
+  // ship-death flash, a pinpoint at the centre, with no beam: Callisto
+  // went from whole to rubble between two frames (Studio, 2026-10-23).
+  // Now the Mega's beam lands first and the world bursts under it
+  // (combatFx spawnObliteration); the world is held whole until then.
+  world_obliterated: 'obliterate',
   // A structure razed. It already wrote a chronicle row and drew
   // nothing, so a thing somebody spent the whole game building
   // vanished between two frames.
@@ -100,6 +112,9 @@ export interface PendingFx {
   /** Anchor, already stripped to client-side id space. */
   bodyId?: string;
   shipId?: string;
+  /** A settlement's fall: which one (payload settlement_id), so it plays
+   *  where that city or station stood. */
+  settlementId?: string;
   /** A point in space (world units): a missile burst in flight, where
    *  it met its target. Used when the hull it names is not drawn. */
   at?: { x: number; y: number };
@@ -109,6 +124,12 @@ export interface PendingFx {
   /** When this entered the queue (wall clock). */
   queuedMs: number;
 }
+
+/** A world being killed: these fire the moment they can be seen, ahead
+ *  of the stagger (drainVisibleFx). */
+const WORLD_STRIKES: ReadonlySet<PendingFxKind> = new Set<PendingFxKind>([
+  'sterilise', 'obliterate', 'impact_scorch', 'kaiju_scorch', 'kaiju_break',
+]);
 
 /** Don't sit on an unwatched effect forever — if the player never looks,
  *  it ages out rather than ambushing them an hour later. */
@@ -164,6 +185,8 @@ export interface ChronicleFxSource {
   shipId?: string;
   /** payload.cause, where the row has one ('kaiju', 'mega_destroyer'). */
   cause?: string;
+  /** payload.settlement_id: the settlement a settlement_destroyed names. */
+  settlementId?: string;
   /** payload x/y: where an in-flight missile burst. */
   at?: { x: number; y: number };
   /** payload from_dx/from_dy: the side an asteroid came in on. */
@@ -191,7 +214,10 @@ export function ingestChronicleFx(gameId: string, entries: ChronicleFxSource[]):
     if (!e.bodyId && !e.shipId && !e.at) continue; // nowhere to draw it
     if (played.has(e.id)) continue;
     if (pending.some(p => p.id === e.id)) continue;
-    pending.push({ id: e.id, kind, bodyId: e.bodyId, shipId: e.shipId, at: e.at, from: e.from, queuedMs: nowMs });
+    pending.push({
+      id: e.id, kind, bodyId: e.bodyId, shipId: e.shipId, at: e.at, from: e.from, queuedMs: nowMs,
+      ...(e.settlementId ? { settlementId: e.settlementId } : {}),
+    });
   }
   // Age out the unwatched, then cap to the most recent.
   for (let i = pending.length - 1; i >= 0; i--) {
@@ -218,6 +244,33 @@ export function drainVisibleFx(
   fire: (fx: PendingFx, pos: { x: number; y: number }) => void,
 ): void {
   if (pending.length === 0) return;
+
+  // A WORLD STRIKE PLAYS THE FRAME IT IS WATCHABLE. The tick that strikes
+  // a world also takes its cities and the gun's charge ring off the map,
+  // and the world itself is held whole only until its strike begins; so
+  // a strike that waited its turn behind the stagger (or behind the
+  // cities' own rows) let the kill show before the shot (Venus clip,
+  // 2026-10-23). It neither waits for nor holds up the stagger.
+  for (let i = 0; i < pending.length; i++) {
+    const fx = pending[i];
+    if (!WORLD_STRIKES.has(fx.kind)) continue;
+    if (nowMs - fx.queuedMs > PENDING_TTL_MS) continue;   // the pass below ages it out
+    const pos = locate(fx);
+    if (pos === 'skip') {
+      pending.splice(i, 1);
+      played.add(fx.id);
+      persistPlayed();
+      i--;
+      continue;
+    }
+    if (!pos) continue;
+    pending.splice(i, 1);
+    played.add(fx.id);
+    persistPlayed();
+    fire(fx, pos);
+    i--;
+  }
+
   if (nowMs - lastFiredMs < STAGGER_MS) return;
 
   for (let i = 0; i < pending.length; i++) {
