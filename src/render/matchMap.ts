@@ -529,7 +529,7 @@ export function createMatchMap(
       for (const e of beats) {
         if (e.kind !== 'faction_eliminated' || e.weight <= 0) continue;
         e.lead = 3;
-        e.hold = 5.8;
+        e.hold = 7.2;
         const names = [...(Array.isArray(e.data?.together) ? e.data!.together as string[] : []),
           String(e.data?.faction_name ?? '')];
         const toll = names.map(n => {

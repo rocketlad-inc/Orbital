@@ -240,7 +240,10 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
     const from = Math.max(openTo ?? introTo, Math.min(finaleFrom - 1, e.tick - (e.lead ?? 2)));
     // A longer lead is a longer scene (an empire's last stand), never a
     // shorter after.
-    const to = Math.min(finaleFrom, from + Math.max(3, (e.lead ?? 2) + 1));
+    // An empire's last stand (lead 3) also keeps two days AFTER its fall:
+    // the card that marks it needs time on screen, not the scene's last
+    // second.
+    const to = Math.min(finaleFrom, from + ((e.lead ?? 2) >= 3 ? (e.lead ?? 2) + 2 : 3));
     if (to <= from) continue;
     // Weight buys time: a declaration is a quick read, a capital falling
     // or the Leviathan dying holds longer. A flat 2.4 s was a metronome.
