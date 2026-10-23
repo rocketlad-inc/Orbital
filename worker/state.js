@@ -9,6 +9,9 @@ import { MEGASTRUCTURES, MEGA_BREACH_HP, megaBodyName } from './megastructures.j
 import { upkeepSplit, parsePartsJson, shipBaseStatsFromCfg } from './shipDesigns.js';
 import { voteWeights } from './systems.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
+
+/** Send the sun gate omen's true exit bearing (see sun_gate_next below). */
+const SHOW_OMEN_BEARING = false;
 import { offerShipClass } from './discoveryOffers.js';
 import { visualsSwitches } from './botSettings.js';
 import { orbitAngle, legProgress } from './orbitPos.js';
@@ -2262,8 +2265,13 @@ const tradeRoutesP = env.DB
         // it is part of the answer (the new one keeps clear of it), so it
         // goes in exactly as advanceSunGates passes it. Decoration: a
         // failure leaves the omen where it used to be, never the payload.
+        // OFF until Lorne decides (2026-10-23): the bearing tells a sharp
+        // player six ticks early which limb the gate leaves on, and so
+        // roughly which system it leads to. The gate's exit was a secret
+        // until it came out, on purpose. Off, the omen rises where it
+        // always did (a bearing hashed from the tick).
         let angle = null;
-        try {
+        if (SHOW_OMEN_BEARING) try {
           const prev = step.index > 0 ? plan[step.index - 1] : null;
           const prior = prev
             ? await env.DB.prepare(
