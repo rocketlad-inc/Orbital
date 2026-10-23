@@ -74,6 +74,8 @@ const TICKER_KINDS = new Set([
 ]);
 /** Film seconds between two ticker lines coming up, and each one's life. */
 const TICKER_GAP_SECONDS = 0.7;
+/** See fireReference: hulls per fight before reloads stretch, in the film. */
+const FILM_FIRE_REFERENCE = 18;
 /** War, peace and pact banners: the least gap between two, and their life. */
 const TOAST_GAP_SECONDS = 0.5;
 const TOAST_LIFE_SECONDS = 3.0;
@@ -92,7 +94,7 @@ export function createMatchMap(
   _audit: (tick: number, frac?: number) => unknown[];
   _deaths: (tick: number) => unknown[];
   _probe: () => unknown;
-  _facts: () => unknown; _trace: () => unknown } {
+  _facts: () => unknown; _trace: () => unknown; _fire: (ref: number) => number } {
   const ctx = canvas.getContext('2d')!;
   let W = canvas.width || 1280, H = canvas.height || 720, DPR = 1;
 
@@ -1874,7 +1876,8 @@ export function createMatchMap(
     // rate a battle read as two fleets parked side by side.
     const fireClock = curScene?.kind === 'battle' || curScene?.kind === 'intro' ? 1.8 : 1;
     drawEngagementFire(rc, gameShips, gameSettlements,
-      performance.now() * fireClock, curTick);
+      performance.now() * fireClock, curTick, undefined, warsAt(curTick, fightingNow), undefined, undefined, undefined, undefined,
+      { fireReference: fireReference, maxFiring: 400 });
 
     // A FLEET ARRIVING IS A BEAT. The film is largely about hulls moving
     // between worlds and every crossing simply stopped when it got there.
@@ -2025,6 +2028,50 @@ export function createMatchMap(
     ctx.restore();
     drawFilm();
   }
+  /** Hulls a fight holds before each one fires less often (combatFx).
+   *  The live map's 18 keeps a 140-hull battle to a handful of shots in
+   *  the air; the film shows its battles hotter. */
+  let fireReference = FILM_FIRE_REFERENCE;
+  /**
+   * THE OPEN WARS on a tick, for the game's fire code. Since war is
+   * declared rather than assumed (2026-09-18), drawEngagementFire reads a
+   * missing list as everyone at peace -- and the film never passed one,
+   * so for a month no ship in any match film fired a shot. The log says
+   * who was at war when: declared and not yet ended, with the Leviathan
+   * everyone's enemy. A log with no war rows at all (an older server)
+   * falls back to the empires the battle record has fighting together.
+   */
+  let warsTick = -1;
+  let warsList: string[] = [];
+  const warRows = (summary.chronicle ?? []).filter(r => r.kind === 'war_declared' || r.kind === 'war_ended')
+    .sort((a, b) => a.tick_number - b.tick_number);
+  const pairOf = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+  const warsAt = (tick: number, fighting: Set<string>): string[] => {
+    if (tick === warsTick) return warsList;
+    warsTick = tick;
+    const open = new Set<string>();
+    for (const r of warRows) {
+      if (r.tick_number > tick) break;
+      if (!r.actor_faction_id || !r.target_faction_id) continue;
+      const k = pairOf(r.actor_faction_id, r.target_faction_id);
+      if (r.kind === 'war_declared') open.add(k); else open.delete(k);
+    }
+    const beast = summary.factions.find(f => /:leviathan_f$/.test(f.id))?.id;
+    if (beast) for (const f of summary.factions) if (f.id !== beast) open.add(pairOf(f.id, beast));
+    if (!warRows.length) {
+      const at = new Map<string, Set<string>>();
+      for (const sh of world.ships.values()) {
+        if (!sh.parent || !sh.fid || !fighting.has(sh.parent)) continue;
+        if (!at.has(sh.parent)) at.set(sh.parent, new Set());
+        at.get(sh.parent)!.add(sh.fid);
+      }
+      for (const fs of at.values()) for (const a of fs) for (const b of fs) if (a < b) open.add(pairOf(a, b));
+    }
+    // A fresh array only when the tick changes: the fire code caches the
+    // set by array identity.
+    warsList = [...open];
+    return warsList;
+  };
   /** The Leviathan's drawn radius (screen px), last frame it was drawn. */
   const lastBeastR = new Map<string, number>();
   /** The frame-to-frame audit's record of the last frame (see render). */
@@ -2453,6 +2500,8 @@ export function createMatchMap(
     setView: (mode: 'auto' | 'wide') => { viewMode = mode; },
     rateAt,
     _facts: () => lastFacts,
+    /** Harness: try a fire density (see fireReference). */
+    _fire: (ref: number) => { fireReference = ref; return ref; },
     _trace: () => { tracing = true; return lastTrace; },
     _probe: () => {
       probing = true;
