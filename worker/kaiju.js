@@ -83,6 +83,10 @@ export function kaijuDials(conf) {
     damage: Math.max(0, num(conf?.kaiju_damage, SHIP_COMBAT_STATS.kaiju.damage_per_tick)),
     // Top push between worlds, in g (huntTicks).
     huntG: Math.min(5, Math.max(0.05, num(conf?.kaiju_hunt_g, 0.5))),
+    // Wind-up before each strike. Was the Mega Destroyer's 24, hard-wired;
+    // a dial since the Studio's Leviathan clip (2026-10-23) needed the
+    // strike inside a 15-second cut. Default unchanged.
+    chargeTicks: Math.min(240, Math.max(1, Math.round(num(conf?.kaiju_charge_ticks, MEGA_STRIKE_CHARGE_TICKS)))),
   };
 }
 
@@ -434,7 +438,7 @@ export async function advanceKaiju(env, gameId, tick, conf, hooks) {
         .prepare(`SELECT 1 AS x FROM game_factions WHERE game_id = ? AND capital_body_id = ?
                     AND status <> 'monster' LIMIT 1`)
         .bind(gameId, here).first();
-      if (!capital) return arm(env, gameId, tick, k, ship, t);
+      if (!capital) return arm(env, gameId, tick, k, ship, t, dials.chargeTicks);
       // It became someone's capital while the beast flew: let it be.
       await DB.prepare('UPDATE game_kaiju SET target_body_id = NULL WHERE game_id = ?').bind(gameId).run();
       k.target_body_id = null;
@@ -455,7 +459,7 @@ export async function advanceKaiju(env, gameId, tick, conf, hooks) {
   if (prey.id === here) {
     await DB.prepare('UPDATE game_kaiju SET target_body_id = ? WHERE game_id = ?').bind(prey.id, gameId).run();
     k.target_body_id = prey.id;
-    return arm(env, gameId, tick, k, ship, prey);
+    return arm(env, gameId, tick, k, ship, prey, dials.chargeTicks);
   }
   const T = await flightTo(rm, here, prey.id, tick, dials.huntG);
   await hooks.planLeg(ship.id, k.faction_id, here, prey.id, tick + T);
@@ -501,8 +505,9 @@ function parseEaten(k) {
   try { const a = JSON.parse(k.eaten_json || '[]'); return Array.isArray(a) ? a : []; } catch { return []; }
 }
 
-/** Wind up over the world it is sitting on (resolveMegaStrikes fires it). */
-async function arm(env, gameId, tick, k, ship, world) {
+/** Wind up over the world it is sitting on (resolveMegaStrikes fires it),
+ *  for `chargeTicks` (the kaiju_charge_ticks dial). */
+async function arm(env, gameId, tick, k, ship, world, chargeTicks = MEGA_STRIKE_CHARGE_TICKS) {
   const DB = env.DB;
   // TWO STRIKES, EVERY WORLD (Lorne, 2026-10-08: "The first fire should
   // wipe out terraforming, the second fire should destroy it ... two days
@@ -515,7 +520,7 @@ async function arm(env, gameId, tick, k, ship, world) {
     && Number(now.sterilised_at_tick) >= Number(k.launched_at_tick);
   const mode = scorched ? 'obliterate' : 'sterilise';
   const raw = now?.terraformed_at_tick == null;
-  const fires = tick + MEGA_STRIKE_CHARGE_TICKS;
+  const fires = tick + chargeTicks;
   await DB.prepare(`UPDATE game_ships SET strike_target_body_id = ?, strike_ready_tick = ?, strike_mode = ?
                      WHERE id = ?`)
     .bind(world.id, fires, mode, ship.id).run();
@@ -626,8 +631,14 @@ async function die(env, gameId, tick, k, ship) {
   const cid = kaijuCarcassId(gameId);
 
   await DB.batch([
+    // A live carcass is left alone (a retried tick changes nothing, as
+    // INSERT OR IGNORE did). A RETIRED one comes back where this beast
+    // fell: the Studio retires the carcass when it re-shoots a Leviathan
+    // scene (studio.js resetKaiju, 2026-10-23; bodies are never deleted,
+    // CASCADE would eat ships parked on it), and with IGNORE the second
+    // take's kill left no carcass at all.
     DB.prepare(
-      `INSERT OR IGNORE INTO game_bodies
+      `INSERT INTO game_bodies
          (id, game_id, template_id, name, type, parent_body_id,
           radius, soi, mu, orbit_radius, orbit_period, angle0, color,
           yield_metal, yield_fuel, yield_gold, yield_science,
@@ -637,7 +648,13 @@ async function die(env, gameId, tick, k, ship) {
                0.6, 0, 0, ?, ?, ?, '#7a4a8c',
                0, 0, 0, 0,
                NULL, 0, 0, 0,
-               'metal', ?, ?)`,
+               'metal', ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         parent_body_id = excluded.parent_body_id, orbit_radius = excluded.orbit_radius,
+         orbit_period = excluded.orbit_period, angle0 = excluded.angle0,
+         mineral_initial = excluded.mineral_initial, mineral_remaining = excluded.mineral_remaining,
+         exhausted_at_tick = NULL, destroyed_at_tick = NULL
+       WHERE game_bodies.destroyed_at_tick IS NOT NULL`,
     ).bind(cid, gameId, 'Leviathan Carcass', parentId, orbitR, period, angle0, tons, tons),
     DB.prepare(`UPDATE game_kaiju SET phase = 'dead', died_at_tick = ?, died_at_body_id = ?,
                        carcass_body_id = ?, target_body_id = NULL WHERE game_id = ?`)

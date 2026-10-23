@@ -6229,7 +6229,7 @@ export const RAM_METAL_PER_DV = 50;
  *  fromG(faction.engineG ?? RAM_ASTEROID_G); MP factions don't carry
  *  engineG today so that's RAM_ASTEROID_G, but either operand is legit. */
 export const RAM_ASTEROID_G = 0.005;
-const RAM_G_ANCHOR = 4 * 132.6;            // mirror G_ANCHOR, physics/torchTransfer.ts
+export const RAM_G_ANCHOR = 4 * 132.6;     // mirror G_ANCHOR, physics/torchTransfer.ts (studio.js plans rams with it)
 // Float slack only — an honest plan matches to ~1e-12. The distance
 // slack is looser because the client planner stops iterating once T
 // moves < 1e-4 ticks.

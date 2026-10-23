@@ -57,7 +57,8 @@ export type ShotStep =
    *  at every zoom. Back to 1 with another step, and at the shot's end. */
   | { at: number; do: 'hulls'; scale: number; ms?: number }
   /** The territory wash: 0 hides it, 1 shows it as filmed (eased over
-   *  `ms`). Hide it for wide shots, where it fills the frame. */
+   *  `ms`). Never hide it in a marketing clip: the wash is the game's
+   *  politics, and Lorne wants it on screen (2026-10-22). */
   | { at: number; do: 'territory'; show: number; ms?: number }
   /** Choose, at this moment, which of several squadrons to send: dry-run
    *  each one's intercept of `target` (its hull `squad` with {b} replaced,
@@ -84,7 +85,16 @@ export type ShotStep =
    *  lead 0 and parked, until it has landed), at most `max` ticks. The
    *  trip length a shot cannot know in advance (it changes with where the
    *  worlds are); pair it with a focus and a skip for a clean time cut. */
-  | { at: number; do: 'advance'; ship: Target; lead?: number; max?: number };
+  | { at: number; do: 'advance'; ship: Target; lead?: number; max?: number }
+  /** Open one ship's panel (a click on the hull), on `tab` if given
+   *  ('cargo' shows a freighter's hold and its mining run). */
+  | { at: number; do: 'focusShip'; ship: Target; tab?: string }
+  /** Open a world's menu (a click on the world). The menu flies the camera
+   *  itself: hold camera steps while it is open. */
+  | { at: number; do: 'world'; body: Target }
+  /** Fire a window event the game's own UI listens for, e.g.
+   *  'orbital:open-ship-designer' { shipClass: 'destroyer' }. */
+  | { at: number; do: 'event'; name: string; detail?: Record<string, unknown> };
 
 /** The game's panels, by the name the dock and the shell know them by. */
 export type PanelId = 'senate' | 'faction' | 'comms' | 'trades' | 'situation' | 'eventlog' | 'multiplayer'
@@ -132,6 +142,10 @@ export interface DirectorHost {
   planIntercept?(shipIds: string[], targetShipId: string): Array<{ ship: string; depart: number; meet: number | null; arrive: number; accel: number } | { ship: string; none: true }>;
   /** Make these the player's group selection (the box-select's result). */
   setSelection?(shipIds: string[]): void;
+  /** Open one ship's own panel, as a click on the hull does. */
+  selectShip?(shipId: string): void;
+  /** Open a world's menu, as a click on the world does. */
+  selectBody?(bodyId: string): void;
 }
 
 interface Cam { x: number; y: number; scale: number }
@@ -524,7 +538,9 @@ export class Director {
     }
     if (this.hullSize) setStudioHullScale(this.hullSizeNow());
     if (this.wash) setStudioWashScale(this.washNow());
-    this.push();
+    // An open world menu flies the camera itself; pushing ours every frame
+    // would pin it where it was. The next camera step takes it back.
+    if (!this.camFree) this.push();
     this.drawHand();
   }
 
@@ -591,6 +607,7 @@ export class Director {
         const gap = Director.gapAfter(steps, st.at);
         this.nextGlideMs = gap != null && gap <= 6 ? gap * 1000 : null;
       }
+      if (st.do === 'focus' || st.do === 'pan' || st.do === 'zoom' || st.do === 'follow') this.camFree = false;
       switch (st.do) {
         case 'focus': this.focus(st.target, st); break;
         case 'pan': this.pan(st.target, st); break;
@@ -618,6 +635,25 @@ export class Director {
         case 'select': this.selectShips(st.ships); break;
         case 'order': await this.order(st.order); break;
         case 'advance': await this.advance(st.ship, st.lead ?? 2, st.max ?? 80); break;
+        case 'focusShip': {
+          const [id] = this.idsOf(st.ship);
+          if (!id || !this.host.selectShip) { this.note(`focusShip: no ${st.ship}`); break; }
+          this.host.selectShip(id);
+          if (st.tab) {
+            const tab = st.tab;
+            // The panel mounts on the next render; its tab listener with it.
+            realSetTimeout(() => window.dispatchEvent(new CustomEvent('orbital:ship-panel-tab', { detail: { tab } })), 120);
+          }
+          break;
+        }
+        case 'world': {
+          const b = this.body(st.body);
+          if (!b || !this.host.selectBody) { this.note(`world: no ${st.body}`); break; }
+          this.host.selectBody(b.id);
+          this.camFree = true;
+          break;
+        }
+        case 'event': window.dispatchEvent(new CustomEvent(st.name, { detail: st.detail ?? {} })); break;
         case 'skip':
           if (this.film) this.skipMs += Math.max(0, Number(st.ms) || 0);
           else this.note('skip: film only');
@@ -673,6 +709,7 @@ export class Director {
     this.wash = null; setStudioWashScale(null);
     this.lastSeen.clear();
     this.picked = null;
+    this.camFree = false;
     this.dropHand();
     this.hook = shot.hook ?? null; this.progress = 0; this.result = null;
     // Every effect, every frame: lightweight mode (a phone's or the
@@ -990,6 +1027,8 @@ export class Director {
     this.picked = best ?? st.from[0] ?? null;
     this.note(`pick: ${this.picked} (meets ${Object.entries(meets).map(([b, m]) => `${b} ${m.toFixed(2)}`).join(', ')}; lands ${lands})`);
   }
+  /** The camera is the game's own (an open world menu drives it). */
+  private camFree = false;
   /** Where each 'ship:' target was last seen, for when it is gone. */
   private lastSeen = new Map<string, { x: number; y: number }>();
   /** Map time still to run off camera (a 'skip' step). */
@@ -1176,7 +1215,7 @@ export class Director {
 /** Every verb a shot step can use (ShotStep). The Studio bar refuses a
  *  shot lint flags, so a verb missing here is a verb nobody can use. */
 const VERBS: readonly string[] = ['focus', 'pan', 'zoom', 'follow', 'tick', 'speed', 'caption', 'hook', 'ui',
-  'panel', 'click', 'intercept', 'strike', 'hull', 'skip', 'hulls', 'territory', 'pick', 'cursor', 'box', 'select', 'order', 'advance'];
+  'panel', 'click', 'intercept', 'strike', 'hull', 'skip', 'hulls', 'territory', 'pick', 'cursor', 'box', 'select', 'order', 'advance', 'focusShip', 'world', 'event'];
 
 const realSetTimeout = window.setTimeout.bind(window);
 const realSleep = (ms: number) => new Promise<void>(r => realSetTimeout(r, ms));

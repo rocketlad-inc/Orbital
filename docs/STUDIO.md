@@ -132,7 +132,57 @@ What `apply` returns, and what you need from it:
 
 **`arrive` never slows a ship.** A hull always flies a move on the engine a player's order would give it. `arrive` is met by holding the departure back (it leaves at `arrive` minus its natural trip, never before `depart`); if even leaving at once cannot make it, it leaves at once and the warning says when it really lands. A group still flies together at its slowest hull's pace, the way guards are paced to freighters. (It used to stretch the burn to land on `arrive`, so a 16-tick hop asked to take 40 flew on a twentieth of its engine and crawled through the shot while everything else flew.)
 
-`GET /api/admin/studio/catalog` (or `node scripts/studio.mjs catalog`) lists classes, loadouts, emblems and every world id.
+`GET /api/admin/studio/catalog` (or `node scripts/studio.mjs catalog`) lists classes, loadouts, emblems and every world id, plus `megastructures` (kinds and costs) and `rogue_asteroids`.
+
+### Set pieces (2026-10-23)
+
+```jsonc
+{
+  "worlds": [
+    { "body": "luna", "owner": "terra", "cities": ["Tycho"], "shields": 3 },
+    // shields 1-10: Orbital Shields on every studio city here, pool full (level x shield_hp_per_level, 120 by default)
+    { "body": "midas", "owner": "mars", "stations": 1, "thrusters": true }
+    // thrusters: Trajectory Control Thrusters on the station; rogue asteroids only (midas, styx_rock,
+    // iron_anna, black_sky, vagrant, augustin). Each apply puts the rock back on its orbit, ram cleared.
+  ],
+  "megastructures": [
+    { "key": "ws", "kind": "weapons_station", "at": "luna", "owner": "terra", "progress": 0.9 }
+    // kinds: warp_gate, weapons_station, gravity_sink, deep_array, null_field, mega_destroyer, mobile_foundry.
+    // progress 0..1 of the catalogue cost (Senate price laws ignored), or "complete": true. "name" optional.
+    // The key names it like a world: ships "at": "ws", a move "to": "ws", a mid-take deliver.
+    // A complete mega_destroyer / mobile_foundry launches as a hull on the next tick, as in play.
+  ],
+  "ships": [
+    { "key": "fr", "owner": "terra", "at": "ws", "class": "freighter", "count": 1, "cargo": { "metal": 400, "gold": 300 } }
+    // cargo: every hull of the group starts with this hold ("credits" works for gold). A freighter's real hold is 400.
+  ],
+  "orders": [
+    { "type": "ram", "asteroid": "midas", "target": "mars", "depart": "+1" }
+    // needs the thrusters world above; fired by its owner through the real handler. The result gives
+    // depart, flip, arrive (impact tick) and metal_cost (topped up first, so the take spends nothing).
+  ],
+  "gates": "birth",
+  // true: the Centauri gate already open. "birth": nothing pre-spawned; the omen starts on the next tick and the
+  // game sends the first gate out of the Sun 6 ticks later (result: gate_birth). The second gate is pushed to the
+  // dial's maximum (1000 ticks) so nothing else arrives mid-take. A fresh game only: once a gate is out, apply
+  // without game_id to film the birth again.
+  "kaiju": { "at": "europa", "charge_ticks": 4, "hp": 6000 }
+  // The Leviathan parked at a terrestrial world, dwarf or moon (never a homeworld or capital), hunting it.
+  // The next tick it winds up (and is revealed), charge_ticks later it strikes (default 24, the
+  // kaiju_charge_ticks dial); hp overrides the roll from the game's fleets. Brings far systems and gates: true
+  // with it (it leaves through its gate when full). Result: kaiju { winds_up_at_tick, fires_at_tick }.
+}
+```
+
+**Re-shooting a set piece.** `reset` takes away the last take's sites, its Leviathan (hull, row, once-only log lines; its faction stays and goes back to "Unknown") and its carcass, so the next take is announced again. Sites and the carcass are **retired** (`destroyed_at_tick`), never deleted: a deleted body takes every hull parked at it with it. Anything parked at a retired site drops to the world it orbited. A world marked `living` (and the Leviathan's world) is whole again: sterilised and obliterated scars cleared. A ram's target keeps its halved yields; use a fresh game if that shows.
+
+**Mid-take orders** (`POST /api/admin/studio/games/:gameId/order`, a shot's `order` step), each answered with the game handler's own reply or refusal:
+
+- `{ "type": "deliver", "ship": "st_fr_0", "site": "ws" }` hands the parked hull's hold to the site it sits at (a scene key, a site's template or its id). The last load finishes the structure.
+- `{ "type": "launch", "world": "earth", "owner": "terra", "target": "mars", "count": 4 }` fires a salvo from that world's Missile Silo city (the owner's, or the first silo city there; seed it with `silos`). War to fire, as in play: someone you are at war with must be in that orbit.
+- `{ "type": "ram", "asteroid": "midas", "target": "mars" }` rams now, from the rock's thrusters owner.
+
+The studio's tick calls make the room re-read the game's dials first, so the dials a scene sets (far systems, the Leviathan and its wind-up) are the ones its first tick runs on.
 
 ---
 
@@ -254,10 +304,11 @@ Worth making, and what each needs:
 - **An embargo, then a sanction**: `laws` with `trade_embargo` and `production_sanction`, Senate tab open, then the Faction tab showing the yields drop. Scene-only; the shot uses `panel`.
 - **Research and the shipyard**: `panel research` and the Shipwright. The designer opens with the `orbital:open-ship-designer` event; a `click` on the dock's shipyard button does it today.
 - **Terraforming a world**: eight stages. The scene sets `living` only; a stage-by-stage shot needs a `worlds[].terraform` level in the scene language (small server change) and one apply per stage, filmed as a cut sequence.
-- **The Leviathan**: the world-eating squid on the second sun gate. It spawns from the game's `kaiju` flag and the gate sequence, not from a scene; needs a studio switch that places the gate and the kaiju at a chosen world (kaiju.js has the pieces).
+- **The Leviathan**: the world-eating squid on the second sun gate. Scene key `kaiju` (above) parks it at a world with a short `charge_ticks`.
+- **A sun gate's birth**: `gates: "birth"` on a fresh game; the omen, then the gate out of the Sun.
+- **A shield breaking, a ram, a site finished**: `worlds[].shields`, `worlds[].thrusters` + a `ram` order, `megastructures` + `cargo` + a mid-take `deliver`.
 - **Through a sun gate to Centauri**: far systems and the galaxy view. Needs the scene to enable far systems on its game (scripts/enable-far-systems.mjs does it for running games) and a `zoom` past galaxy scale; the drawers are safe at that distance.
 - **Missile silo**: silo on a world, salvo on the map. New feature on `dev`; needs a `worlds[].silo` seed and a `launch` order in the scene language.
-- **A ram**: one hull ordered to ram another at 0.005g, validated server-side. Needs a `ram` order in the scene language.
 - **Discovery: a derelict found**: an observer hull lights a world and finds a ship. It already happens (the card is hidden while filming); a shot that keeps the card needs `ui` to allow it, so add a `cards: true` shot flag before filming this one.
 - **Captain debut and the trophy case**: the captain card on first kill, and the ending page's awards. Both UI; `click` reaches the first, the ending page needs the game to end (close the studio game with a winner: a server verb to add).
 

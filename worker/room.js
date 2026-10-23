@@ -25,7 +25,7 @@ import {
 // imports from outside src/. The worker's bundler has no such rule, so
 // the shared physics sits where both can reach it — one copy, not two.
 import { rendezvousStateAt } from '../src/physics/rendezvous.js';
-import { cfg as loadGameConfig } from './gameConfig.js';
+import { cfg as loadGameConfig, invalidate as invalidateGameConfig } from './gameConfig.js';
 import { selectInChunks } from './sqlChunk.js';
 import { refundBuildLedger } from './buildRefund.js';
 import { hostilePairs } from './wars.js';
@@ -480,6 +480,11 @@ export class Room {
       const body = await req.json().catch(() => ({}));
       const force = !!body?.force;
       const hintedGameId = typeof body?.gameId === 'string' ? body.gameId : null;
+      // freshConfig: the Studio's ticks (studio.js handleTick). A scene
+      // changes its game's dials (far systems, the Leviathan, its wind-up)
+      // from the Worker, and this isolate's config memo would run the next
+      // ticks on the old ones for up to 30 s (2026-10-23). Only the studio sends it.
+      if (body?.freshConfig && hintedGameId) invalidateGameConfig(hintedGameId);
       let started = await this.state.storage.get('gameStarted');
 
       // Self-heal: when the DO was recycled or the room predates the
