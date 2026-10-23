@@ -6,6 +6,7 @@ import { readSchedule, nextTickAt } from './tickSchedule.js';
 import { selectInChunks, runInChunks } from './sqlChunk.js';
 import { holdCapFor } from './routeMath.js';
 import { routeRoleForClass } from './tradeRoutesV2.js';
+import { recallSalvo } from './missiles.js';
 import { planStationBlast, finalizeStationBlast } from './detonationBlast.js';
 import { validateIconVariant, validateStructureVariant } from './store.js';
 import { logSpend } from './analytics.js';
@@ -1198,7 +1199,7 @@ async function handleCancelNode(req, env, ctx) {
   // Ownership: a node belongs to a ship belongs to a faction.
   const row = await env.DB
     .prepare(
-      `SELECT n.id, n.status, n.ship_id, s.owner_faction_id AS fid
+      `SELECT n.id, n.status, n.ship_id, s.owner_faction_id AS fid, s.ship_class
          FROM game_ship_nodes n
          JOIN game_ships s ON s.id = n.ship_id
         WHERE n.id = ? AND n.game_id = ?`,
@@ -1210,6 +1211,8 @@ async function handleCancelNode(req, env, ctx) {
   if (row.status === 'executed' || row.status === 'cancelled') {
     return err(409, 'already_resolved', `node is already ${row.status}`);
   }
+  // A salvo's recall puts its missiles back in the silo (missiles.js).
+  if (row.ship_class === 'missile') return recallSalvo(env, gameId, nodeId);
 
   await env.DB
     .prepare("UPDATE game_ship_nodes SET status = 'cancelled' WHERE id = ?")
