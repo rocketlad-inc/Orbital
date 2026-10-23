@@ -50,7 +50,7 @@ import { getShipClass } from '../game/shipClasses';
 import { getEmblemImage } from './emblemCache';
 import { getLang, tIn, type Key } from '../i18n/core';
 import {
-  battleWindow, filmSecondsAt, planReel, reelRate, reelSeconds, sceneAt,
+  battleWindow, filmSecondsAt, FILM_STEP_MAX_MS, planReel, reelRate, reelSeconds, sceneAt,
   type ReelBattle, type ReelBeat, type ReelScene,
 } from './filmReel';
 import { beatCaption, billName, broadcastCopy, buildBeats, captionFor, type Caption } from './filmCaptions';
@@ -75,6 +75,9 @@ const TICKER_KINDS = new Set([
 ]);
 /** Film seconds between two ticker lines coming up, and each one's life. */
 const TICKER_GAP_SECONDS = 0.7;
+/** How much slower than the live map a hull glides to a new battle slot:
+ *  measured, re-slots swept hulls 56 degrees round Mars in nine frames. */
+const FILM_GLIDE_PACE = 3;
 /** See fireReference: hulls per fight before reloads stretch, in the film. */
 const FILM_FIRE_REFERENCE = 18;
 /** War, peace and pact banners: the least gap between two, and their life. */
@@ -256,7 +259,9 @@ export function createMatchMap(
   type DebugRect = { kind: string; x: number; y: number;
     w: number; h: number; text: string };
   let debugRects: DebugRect[] | null = null;
-  const TRANSIT_SHIP_MIN_SIZE = 0.5;
+  // A big fleet in flight on the wide shot took up the whole system
+  // (Lorne, 2026-10-23): far out, hulls draw at a fraction of full size.
+  const TRANSIT_SHIP_MIN_SIZE = 0.3;
   const TRANSIT_FULL_CAM_SCALE = 0.5;
   const TRANSIT_MIN_CAM_SCALE = MIN_CAMERA_SCALE;
   /** How long a hull's death flash runs, in ticks. */
@@ -784,12 +789,22 @@ export function createMatchMap(
     const key = `${from}:${to}`;
     const hit = occupiedCache.get(key);
     if (hit) return hit;
+    // WHERE THE ACTION IS, not where anyone ever settled (Lorne,
+    // 2026-10-23: "very little in the outer system, most of the action
+    // takes place in the center"): fleets, losses and battles weigh; a
+    // quiet outpost barely does.
     const weight = new Map<string, number>();
+    const add = (id: string, n: number) => weight.set(id, (weight.get(id) ?? 0) + n);
     const step = Math.max(1, Math.floor((to - from) / 6));
     for (let t = from; t <= Math.max(from, to - 1); t += step) {
       const w = timeline.worldAt(t);
-      for (const st of w.stls.values()) weight.set(st.body, (weight.get(st.body) ?? 0) + 3);
-      for (const sh of w.ships.values()) if (sh.parent) weight.set(sh.parent, (weight.get(sh.parent) ?? 0) + 1);
+      for (const st of w.stls.values()) add(st.body, 1);
+      for (const sh of w.ships.values()) if (sh.parent) add(sh.parent, 1);
+    }
+    for (let t = from; t < to; t++) for (const d of deathAt.get(t) ?? []) if (d.body) add(d.body, 3);
+    for (const b of summary.battles) {
+      if (!b.body_id || b.started_tick >= to || (b.ended_tick ?? b.started_tick) < from) continue;
+      add(b.body_id, 25);
     }
     // ONE SYSTEM for every wide shot: the one the match was fought in.
     // Chosen per scene, a late flurry out past a sun gate swung the last
@@ -806,8 +821,8 @@ export function createMatchMap(
         .sort((a, b) => a.d - b.d);
       const total = d.reduce((s2, x) => s2 + x.w, 0);
       let acc = 0, cutD = d[d.length - 1].d;
-      for (const x of d) { acc += x.w; if (acc >= total * 0.88) { cutD = x.d; break; } }
-      ids = d.filter(x => x.d <= cutD * 1.2).map(x => x.id);
+      for (const x of d) { acc += x.w; if (acc >= total * 0.7) { cutD = x.d; break; } }
+      ids = d.filter(x => x.d <= cutD * 1.05).map(x => x.id);
     }
     if (sys) ids.push(sys);
     occupiedCache.set(key, ids);
@@ -1056,7 +1071,7 @@ export function createMatchMap(
 
   const aim = (tClock: number) => {
     if (!scenes.length) rebuildShots();
-    const idx = Math.max(0, scenes.findIndex(x => tClock >= x.from && tClock < x.to));
+    const idx = sceneIndexAt(tClock);
     const s = scenes[idx] ?? scenes[scenes.length - 1];
     const prev = idx > 0 ? scenes[idx - 1] : undefined;
     const t0 = filmSecondsAt(scenes, s?.from ?? tClock);
@@ -1216,6 +1231,7 @@ export function createMatchMap(
    * laid out unseen first, and the camera aimed again from it.
    */
   function render() {
+    stepFilmClock();
     if (curScene !== primedFor) {
       primedFor = curScene;
       // Every scene change is a cut: nothing carries over from the shot
@@ -1345,13 +1361,14 @@ export function createMatchMap(
       factions: gameFactions,
       settlements: gameSettlements,
       dysonSphere: dysonAt(t),
-      nowMs: performance.now(),
+      nowMs: filmMs,
       // WHERE THE HULLS ACTUALLY LANDED. drawShip writes each sprite's
       // true centre here after every offset it applies -- orbit phase,
       // tick interpolation, formation spread. The tracer code below used
       // to re-derive those positions and drift off the visible ship;
       // now it fires from where the ship was really drawn.
       shipHitboxes: new Map<string, { x: number; y: number; r: number }>(),
+      transitDrawn: tracing ? new Map<string, { x: number; y: number }>() : undefined,
     };
 
     const shown = (b: GameBody) =>
@@ -1518,6 +1535,8 @@ export function createMatchMap(
       const station = gameSettlements.find(st => st.bodyId === bid && st.type === 'station');
       const lb = liveBattleFor(bid, body, atBody[0].orbit.direction ?? 1,
         units, owners, station?.id);
+      // Re-slots as maneuvers, not snaps (see LiveBattle.glidePace).
+      lb.glidePace = FILM_GLIDE_PACE;
       liveBattles.set(bid, lb);
       for (const u of units) formationOf.set(u.id, { index: 0, total: 1, battle: lb });
     }
@@ -1567,7 +1586,7 @@ export function createMatchMap(
         lb: (() => {
           const lb = bid ? liveBattles.get(bid) : undefined;
           if (!lb || !at.length) return null;
-          const pl = battlePlacement(lb, at[0].id, performance.now());
+          const pl = battlePlacement(lb, at[0].id, filmMs);
           return { refR: lb.refR, placed: lb.layout.placements.size, band: lb.layout.band,
             k: battleScale(lb, drawnRadiusOf(pres, byGame.get(bid!)!, cam.scale)),
             pl: pl ? [Math.round(pl.x), Math.round(pl.y)] : null,
@@ -1636,7 +1655,7 @@ export function createMatchMap(
           // point in space it hung there while the world sailed on --
           // ship-shaped debris peeling off a moving planet like fleas.
           spawnWreck(d.id, wp, shipIconSize(d.cls, false) * hullSize(byGame.get(d.body), cam.scale),
-            performance.now(), tb, { bodyId: d.body, dir: 1 });
+            filmMs, tb, { bodyId: d.body, dir: 1 });
         }
         // The blast, on the GAME clock like the wreckage it belongs to.
         // A wall-clock flash would be a different length of film at
@@ -1665,7 +1684,7 @@ export function createMatchMap(
         }
       }
     }
-    drawWrecks(rc, performance.now());
+    drawWrecks(rc, filmMs);
     // THE MOMENT A WORLD CHANGES HANDS, on the world. The ownership ring
     // flipping colour was the whole event, and a viewer never saw it: a
     // conquest is a shockwave in the taker's colour, a fall is a burst of
@@ -1815,7 +1834,7 @@ export function createMatchMap(
         const flare = fin ? fin.flare : 0;
         const rr = drawnRadiusOf(pres, gb, cam.scale);
         drawDysonShell(ctx, cp.x, cp.y, rr, dy0.progress, dy0.complete,
-          dysonOwner ? colorOf(dysonOwner) : null, flare, performance.now(), fin ? fin.seal : undefined);
+          dysonOwner ? colorOf(dysonOwner) : null, flare, filmMs, fin ? fin.seal : undefined);
         // THE CLIMAX IS LIGHT FROM THE STAR, not a wash over the frame: a
         // bloom off the sealed shell and one shockwave rolling out across
         // the fleets. The frame's edges stay dark and the graphics, drawn
@@ -1877,7 +1896,7 @@ export function createMatchMap(
     // rate a battle read as two fleets parked side by side.
     const fireClock = curScene?.kind === 'battle' || curScene?.kind === 'intro' ? 1.8 : 1;
     drawEngagementFire(rc, gameShips, gameSettlements,
-      performance.now() * fireClock, curTick, undefined, warsAt(curTick, fightingNow), undefined, undefined, undefined, undefined,
+      filmMs * fireClock, curTick, undefined, warsAt(curTick, fightingNow), undefined, undefined, undefined, undefined,
       { fireReference: fireReference, maxFiring: 400 });
 
     // A FLEET ARRIVING IS A BEAT. The film is largely about hulls moving
@@ -1893,9 +1912,9 @@ export function createMatchMap(
       const key = `${leg.id}@${leg.arrive}`;
       if (arrivedSeen.has(key)) continue;
       arrivedSeen.add(key);
-      spawnArrivalFlash(leg.id, performance.now());
+      spawnArrivalFlash(leg.id, filmMs);
     }
-    drawArrivalFlashes(rc, gameShips, performance.now());
+    drawArrivalFlashes(rc, gameShips, filmMs);
 
     // Names, painted now that every world and hull has staked its claim.
     flushLabels(ctx, cam.scale, canvas.width, canvas.height);
@@ -1909,7 +1928,7 @@ export function createMatchMap(
           / Math.log(TRANSIT_FULL_CAM_SCALE / TRANSIT_MIN_CAM_SCALE)));
       // Smaller still in a wide shot, where a full-size hull dwarfs the
       // worlds it is flying between.
-      return (TRANSIT_SHIP_MIN_SIZE + (1 - TRANSIT_SHIP_MIN_SIZE) * u) * (1 - 0.35 * overview);
+      return (TRANSIT_SHIP_MIN_SIZE + (1 - TRANSIT_SHIP_MIN_SIZE) * u) * (1 - 0.5 * overview);
     })();
     const transiting = new Set<string>();
     for (const sh of gameShips) {
@@ -2021,7 +2040,9 @@ export function createMatchMap(
           const sh = meta.get(id);
           return [id, Math.round(h.x * 10) / 10, Math.round(h.y * 10) / 10, Math.round(h.r * 10) / 10,
             sh?.transit ? 1 : 0, sh?.orbit?.parentBodyId ?? null];
-        }),
+        }).concat([...(rc.transitDrawn ?? new Map()).entries()]
+          .filter(([id]) => !rc.shipHitboxes?.has(id))
+          .map(([id, p]) => [id, Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10, 0, 1, null])),
         bodies: visible.map(b => {
           const p = toPx(bodyPosition(b, t, gameBodies));
           return [b.id, Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10,
@@ -2079,6 +2100,28 @@ export function createMatchMap(
   };
   /** The Leviathan's drawn radius (screen px), last frame it was drawn. */
   const lastBeastR = new Map<string, number>();
+  /** The scene playing at a clock time. The player parks on the match's
+   *  last tick when the film ends, which is past the finale's last tick:
+   *  that fell back to the cold open and froze the first shot, bare. */
+  const sceneIndexAt = (t: number) => {
+    const i = scenes.findIndex(x => t >= x.from && t < x.to);
+    if (i >= 0) return i;
+    return scenes.length && t >= scenes[scenes.length - 1].to ? scenes.length - 1 : 0;
+  };
+  /**
+   * THE FILM'S OWN CLOCK for everything animated in ms (glides, fire,
+   * wrecks, flashes, the continuity guard). On the wall clock they ran on
+   * while positions ran on the film's: a hitch moved one and not the
+   * other. It advances with the wall clock, never more than
+   * FILM_STEP_MAX_MS a frame, as the player's film clock does.
+   */
+  let filmMs = 0;
+  let lastWallMs = -1;
+  const stepFilmClock = () => {
+    const w = performance.now();
+    if (lastWallMs >= 0) filmMs += Math.min(FILM_STEP_MAX_MS, Math.max(0, w - lastWallMs));
+    lastWallMs = w;
+  };
   /** The frame-to-frame audit's record of the last frame (see render). */
   let tracing = false;
   let lastTrace: unknown = null;
@@ -2284,7 +2327,7 @@ export function createMatchMap(
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     drawVignette(ctx, W, H);
     if (!scenes.length) return;
-    const idx = Math.max(0, scenes.findIndex(x => t >= x.from && t < x.to));
+    const idx = sceneIndexAt(t);
     const s = scenes[idx] ?? scenes[scenes.length - 1];
     const fs = filmSecondsAt(scenes, t);
     const el = fs - filmSecondsAt(scenes, s.from);

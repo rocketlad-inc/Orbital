@@ -144,6 +144,15 @@ export const REPEAT_DISCOUNT = 0.55;
 /** Gaps narrower than this are absorbed by the scene before them. */
 const MIN_GAP_TICKS = 3;
 
+/**
+ * THE MOST FILM TIME ONE FRAME MAY TAKE, in ms. A hitch in the player (a
+ * 200 ms frame) used to advance the whole film six frames' worth at once:
+ * every hull lurched, and the effects running on the wall clock fell out
+ * of step with the positions running on the film's. Past this a slow frame
+ * slows the film for a moment instead of skipping it.
+ */
+export const FILM_STEP_MAX_MS = 50;
+
 /** The film's length for a match of this many ticks. */
 export function reelBudget(span: number): number {
   // About two minutes for a big match (Lorne, 2026-10-22: "it can be

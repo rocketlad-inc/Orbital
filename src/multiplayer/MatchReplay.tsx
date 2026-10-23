@@ -16,7 +16,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 // not carry any of that. The 3D stage still exists for battles; this
 // player never imports it, so its chunk has no three.js in it.
 import { createMatchMap } from '../render/matchMap';
-import { advanceClock } from '../render/filmReel';
+import { advanceClock, FILM_STEP_MAX_MS } from '../render/filmReel';
 import {
   type ReplayStage as MatchStage, type MatchSummary, type SnapshotRow,
   mineEvents, type MatchEvent,
@@ -152,7 +152,8 @@ export function MatchReplay(
     let raf = 0; let last = performance.now();
     const loop = (now: number) => {
       raf = requestAnimationFrame(loop);
-      const dt = Math.min(200, Math.max(0, now - last));
+      // A slow frame slows the film; it never skips it (FILM_STEP_MAX_MS).
+      const dt = Math.min(FILM_STEP_MAX_MS, Math.max(0, now - last));
       last = now;
       if (playRef.current) {
         // The film's own pace (filmReel): a battle runs about a tick a
