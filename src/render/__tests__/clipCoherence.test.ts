@@ -159,6 +159,26 @@ describe('a hull never jumps on screen (the continuity guard)', () => {
     }
   });
 
+  test('a landing followed by a re-slot next frame is two slides, not a teleport', () => {
+    // The match film, Triton: a hull in flight lands (new frame of
+    // reference), then its orbit place is solved one frame later. The
+    // second jump went through whole, ~1,000 px at the close-up.
+    const scale = 50;
+    const step = (i: number) => (i < 10 ? { x: i * 2, y: 0 } : i === 10 ? { x: 40, y: 0 } : { x: -10, y: 0 });
+    let prev: { x: number; y: number } | null = null;
+    const moves: number[] = [];
+    for (let i = 0; i < 14; i++) {
+      const p = step(i);
+      const d = continuousDrawnPos('lander', p.x, p.y, scale, 70000 + i * 33,
+        i < 10 ? undefined : { x: 0, y: 0, id: 'triton' });
+      if (prev) moves.push(Math.hypot(d.x - prev.x, d.y - prev.y) * scale);
+      prev = d;
+    }
+    // In flight it moved 100 px a frame; neither jump (1,000 then 2,500 px)
+    // shows up as a frame-to-frame leap.
+    for (const m of moves.slice(10)) expect(m).toBeLessThan(400);
+  });
+
   test('after a catch, a hull whose motion changes does not pop (loose escorts in orbit)', () => {
     // The Mega Destroyer take, 2026-10-22: one catch froze the velocity, the
     // hull kept rounding its world, every later frame read as a jump, and

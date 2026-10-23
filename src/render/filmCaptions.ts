@@ -22,6 +22,7 @@ import type { MatchSummary } from './matchWorld';
 import type { ReelBeat, ReelScene, ReelBattle } from './filmReel';
 import { formatChronicleEvent } from '../multiplayer/eventText';
 import { tIn, type Key, type Lang } from '../i18n/core';
+import { shortName } from './filmOverlay';
 
 export type ChronicleRow = NonNullable<MatchSummary['chronicle']>[number];
 
@@ -101,6 +102,11 @@ function parse(r: ChronicleRow): P {
 }
 
 /** The log line without its "T+12  ⚔️ " head: a caption has its own clock. */
+/** A name as a title can carry it: whole when it is short enough,
+ *  else its short form ("United Federation of 67" stays, "The Ministry of
+ *  Silly Wonks" is "Ministry"). */
+const fitName = (n: string) => (n.length <= 24 ? n : shortName(n));
+
 export function bareLine(line: string): string {
   return line.replace(/^T\+\d+\s+/, '').replace(/^[^\p{L}\p{N}"'«(]+/u, '').trim();
 }
@@ -153,7 +159,18 @@ export function buildBeats(summary: MatchSummary, o: BeatOptions): ReelBeat[] {
       { tick_number: r.tick_number, kind: r0.kind, payload: r.payload,
         actor_faction_id: r.actor_faction_id, target_faction_id: r.target_faction_id },
       { factionNameById: names }, o.lang, { names: true }));
-    const beat: ReelBeat = { tick: r.tick_number, kind: r.kind, body, weight,
+    let tick = r.tick_number;
+    // THE HUNT STARTS WHERE IT CAN BE SEEN. The first hunt is logged as the
+    // beast sets off inside the gate, carried and invisible for twenty
+    // days: its scene was an empty gate. It plays when it surfaces.
+    const arrive = Number(p.arrive_tick);
+    if (r.kind === 'kaiju_hunting' && p.carried && arrive > tick && arrive <= (summary.ticks.hi ?? arrive)) {
+      tick = arrive;
+    }
+    // Taking back your own ruins is a RETAKE, not a conquest of someone's.
+    if (r.kind === 'settlement_seized' && r.actor_faction_id
+      && p.former_owner_faction_id === r.actor_faction_id) p.retake = true;
+    const beat: ReelBeat = { tick, kind: r.kind, body, weight,
       fid: r.actor_faction_id ?? null, target: r.target_faction_id ?? null, text, data: p };
     // The log has no sentence of its own for some kinds (wars: the story
     // view words those itself, and so does the film).
@@ -204,11 +221,18 @@ function mergeBeats(beats: ReelBeat[], summary: MatchSummary, lang: Lang): ReelB
     const pile = out.filter(x => x !== e && x.kind === 'war_declared' && x.weight > 0 && x.target === e.target
       && !x.data?.targets && x.tick >= e.tick && x.tick - e.tick <= 12);
     if (!pile.length) continue;
-    e.data = { ...e.data, pile: pile.length + 1 };
+    // Named, short, in the order they declared: "Myanus, Lobos Espaciales
+    // and Lorne turn on Ministry" says who; "targeted by 3" did not.
+    const who = [e, ...pile].map(x => x.fid).filter((x): x is string => !!x)
+      .filter((x, i, a) => a.indexOf(x) === i).map(x => fitName(names.get(x) ?? ''));
+    e.data = { ...e.data, pile: pile.length + 1, who };
     // A dogpile is the story turning; on the eventual winner, it is the
     // set-up for the ending.
     e.weight = Math.max(e.weight, ...pile.map(x => x.weight)) + 20 * pile.length
       + (e.target === summary.game.winner_faction_id ? 70 : 0);
+    // It is on screen once it is TRUE: at the last declaration, not the
+    // first ("targeted by 3" with one war declared).
+    e.tick = Math.max(e.tick, ...pile.map(x => x.tick));
     e.text = T('title.targeted', { b: names.get(e.target) ?? '', n: pile.length + 1 });
     for (const x of pile) x.weight = 0;
   }
@@ -227,12 +251,12 @@ function mergeBeats(beats: ReelBeat[], summary: MatchSummary, lang: Lang): ReelB
   const inCampaign = new Set<ReelBeat>();
   for (let i = 0; i < out.length; i++) {
     const e = out[i];
-    if (e.kind !== 'settlement_seized' || e.weight <= 0 || !e.fid || inCampaign.has(e)) continue;
+    if (e.kind !== 'settlement_seized' || e.weight <= 0 || !e.fid || inCampaign.has(e) || e.data?.retake) continue;
     const run = [e];
     for (let j = i + 1; j < out.length; j++) {
       const x = out[j];
       if (x.tick - run[run.length - 1].tick > CAMPAIGN_GAP_TICKS) break;
-      if (x.kind !== 'settlement_seized' || x.fid !== e.fid || x.weight <= 0) continue;
+      if (x.kind !== 'settlement_seized' || x.fid !== e.fid || x.weight <= 0 || x.data?.retake) continue;
       // Each conquest belongs to one campaign; a second settlement taken
       // on a world already in it adds nothing to the count.
       inCampaign.add(x);
@@ -254,6 +278,36 @@ function mergeBeats(beats: ReelBeat[], summary: MatchSummary, lang: Lang): ReelB
       && ((x.kind === 'world_obliterated' && (x.body === e.body || x.data?.body_name === e.data?.body_name))
         || (x.kind === 'kaiju_dead' && x.tick - e.tick <= 12)));
     if (pay) { pay.weight = Math.max(pay.weight, e.weight + 10); e.weight = 0; }
+  }
+  // The Leviathan surfacing is ONE scene: the hunt (moved to its
+  // arrival), the reveal and the charge all land on the same world.
+  for (const e of out) {
+    if (e.kind !== 'kaiju_hunting' || e.weight <= 0) continue;
+    for (const x of out) {
+      if ((x.kind === 'kaiju_revealed' || x.kind === 'kaiju_charging') && x.weight > 0
+        && Math.abs(x.tick - e.tick) <= 2 && x.data?.body_name === e.data?.body_name) {
+        e.weight = Math.max(e.weight, x.weight);
+        x.weight = 0;
+      }
+    }
+  }
+  // WHO DID IT. An empire's end and its last world's fall name the
+  // killer: "Amalgam is wiped out" left the viewer guessing by whom.
+  for (const e of out) {
+    if (e.kind !== 'faction_eliminated' || !e.fid) continue;
+    const last = out.filter(x => x.kind === 'settlement_destroyed' && x.fid === e.fid
+      && x.tick <= e.tick && e.tick - x.tick <= 15 && typeof x.data?.killer_faction_name === 'string')
+      .sort((a, b) => b.tick - a.tick)[0];
+    if (last) e.data = { ...e.data, killer_faction_name: last.data?.killer_faction_name };
+  }
+  // A CHARGE-UP IS TOLD BY ITS STRIKE: the Leviathan winding up over a
+  // world it then breaks, or dies at, is the same story twice.
+  for (const e of out) {
+    if (e.kind !== 'kaiju_charging' || e.weight <= 0) continue;
+    const pay = out.some(x => x.tick > e.tick && x.tick - e.tick <= 30 && x.weight > 0
+      && (x.kind === 'world_obliterated' || x.kind === 'kaiju_dead' || x.kind === 'terraform_destroyed')
+      && (x.data?.body_name ?? x.data?.world) === (e.data?.body_name ?? e.data?.world));
+    if (pay) e.weight = 0;
   }
   // A comeback that knocks someone else out is one moment, told whole:
   // the rise is the headline, the fall its line underneath.
@@ -283,6 +337,10 @@ export function broadcastCopy(line: string): string {
   // first", "strikes at T+438") is not news: drop those clauses.
   s = s.split(/(?<=[.;!])\s+|\s+[—–]\s+/)
     .filter(part => !/T\+\d+|\b(park on it|kill it first|launch to)\b/i.test(part))
+    // Game bookkeeping a viewer has no use for: building levels, tonnage
+    // left for mining rigs.
+    .filter(part => !/\blevel down\b|\bmining rig\b|\d\s?t of metal\b/i.test(part))
+    .map(part => part.replace(/\b(\d[\d,]*) construction destroyed\b/i, '$1 construction points lost'))
     .map(part => part.replace(/[;,.]\s*$/, ''))
     .filter(Boolean)
     .map((part, i) => (i === 0 ? part : part.charAt(0).toUpperCase() + part.slice(1)))
@@ -407,10 +465,18 @@ export function beatCaption(e: ReelBeat,
     : (e.kind === 'terraform_destroyed' || e.kind === 'world_obliterated') && p.cause === 'kaiju' ? 'leviathan'
     : KICK[e.kind];
   const kicker = kick ? T(`kicker.${kick}`) : '';
+  /** Who did it, from the log row's own words. */
+  const killer = typeof p.killer_faction_name === 'string' && !/leviathan/i.test(p.killer_faction_name)
+    ? p.killer_faction_name : '';
+  const who = Array.isArray(p.who) ? (p.who as string[]).filter(Boolean) : [];
   let title = '';
+  let subOverride: string | null = null;
   switch (e.kind) {
     case 'war_declared':
-      title = Number(p.pile) > 1 ? T('title.targeted', { b, n: Number(p.pile) })
+      title = Number(p.pile) > 1 && who.length >= 2 && who.length <= 3
+        ? T('title.targetedBy', { list: `${who.slice(0, -1).join(', ')} ${T('and')} ${who[who.length - 1]}`,
+          b: fitName(b) })
+        : Number(p.pile) > 1 ? T('title.targeted', { b, n: Number(p.pile) })
         : Number(p.targets) > 1 ? T('title.warMany', { a, n: Number(p.targets) })
         : T('title.war', { a, b });
       break;
@@ -420,21 +486,24 @@ export function beatCaption(e: ReelBeat,
     case 'settlement_seized':
       title = Array.isArray(p.campaign) && p.campaign.length > 1
         ? T('title.campaign', { a, n: p.campaign.length })
+        : p.retake ? T('title.retaken', { world, a })
         : p.capital ? T('title.seizedCapital', { world, a }) : T('title.seized', { world, a });
       break;
     case 'settlement_destroyed':
-      title = p.is_capital ? T('title.capitalFalls', { a, world }) : T('title.destroyed', { world });
+      title = p.is_capital && killer ? T('title.capitalBy', { k: killer, a, world })
+        : p.is_capital ? T('title.capitalFalls', { a, world }) : T('title.destroyed', { world });
       break;
     case 'settlement_razed': title = T('title.destroyed', { world }); break;
     case 'faction_eliminated':
-      title = T('title.eliminated', { a: String(p.faction_name ?? a) }); break;
+      title = killer ? T('title.eliminatedBy', { k: killer, a: String(p.faction_name ?? a) })
+        : T('title.eliminated', { a: String(p.faction_name ?? a) }); break;
     case 'faction_comeback': case 'faction_revived':
       title = T('title.comeback', { a, world }); break;
     case 'kaiju_omen': title = T('title.kaijuOmen'); break;
     case 'kaiju_launched': title = T('title.kaijuComes'); break;
     case 'kaiju_hunting': title = T('title.kaijuHunts', { world }); break;
     case 'kaiju_revealed': case 'kaiju_charging': title = T('title.kaijuFeeds', { world }); break;
-    case 'kaiju_dead': title = T('title.kaijuDead'); break;
+    case 'kaiju_dead': title = killer ? T('title.kaijuSlain', { k: killer }) : T('title.kaijuDead'); break;
     case 'kaiju_leaving': case 'kaiju_gone': title = T('title.kaijuGone'); break;
     case 'sun_gate_omen': case 'sun_gate_emerged': title = T('title.gateRises'); break;
     case 'sun_gate_opened': title = T('title.gateOpens', { gate: String(p.gate ?? '') }); break;
@@ -445,7 +514,11 @@ export function beatCaption(e: ReelBeat,
     case 'dyson_initiated': title = T('title.dysonBegun', { a: String(p.faction_name ?? a) }); break;
     case 'dyson_milestone': title = T('title.dysonRises'); break;
     case 'dyson_collapsed': title = T('title.dysonFalls'); break;
-    case 'dyson_damaged': title = T('title.dysonHit', { pct: Number(p.pct) || 0 }); break;
+    case 'dyson_damaged':
+      title = T('title.dysonHit', { pct: Number(p.pct) || 0 });
+      // The log's line runs three clauses; one plain line says it.
+      if (Number(p.damage) > 0) subOverride = T('sub.dysonHit', { n: Number(p.damage) });
+      break;
     case 'mega_strike_charging': title = T('title.strikeAimed', { world }); break;
     case 'terraform_destroyed':
       title = p.cause === 'kaiju' ? T('title.scorched', { world }) : T('title.sterilised', { world }); break;
@@ -466,6 +539,6 @@ export function beatCaption(e: ReelBeat,
     default: title = e.text; break;
   }
   const line = typeof p.line === 'string' ? p.line : e.text;
-  const sub = title === line ? '' : broadcastCopy(line);
+  const sub = subOverride ?? (title === line ? '' : broadcastCopy(line));
   return { kicker, title, sub, fid: e.fid };
 }
