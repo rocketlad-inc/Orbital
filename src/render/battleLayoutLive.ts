@@ -19,7 +19,10 @@
 //
 // STICKY. A layout is cached per world on a roster signature, so it is
 // re-solved only when hulls arrive, leave or change fleets; and each
-// unit GLIDES to a new place rather than jumping when that happens.
+// unit GLIDES to a new place rather than jumping when that happens. That
+// re-solve is an EDIT of the layout it replaces (orbitBattleLayout's
+// `prev`): whoever was already here holds their place, and only the
+// newcomers are fitted in.
 //
 // Pure and free of the renderer (sizes come in from the caller), so the
 // map, the tests and the test page share it without an import cycle.
@@ -144,6 +147,9 @@ export interface LiveBattle {
   stationId?: string;
   /** Escort hull -> the fleet lead whose block it rides in. */
   leadOf: Map<string, string>;
+  /** Reference px from the world's centre to the outside of the fight:
+   *  the farthest hull's (or block's, or station's) edge. */
+  outerR: number;
 }
 
 const cache = new Map<string, LiveBattle>();
@@ -231,8 +237,22 @@ export function liveBattleFor(
     seed: seedOf(bodyId) + 1,
     factionOrder: [...order],
     station: stationId ? { id: stationId, clearR: BATTLE_STATION_PX * CLEAR_FRAC } : undefined,
+    // A ROSTER CHANGE IS AN EDIT, NOT A RE-DEAL. Every block already at
+    // the world holds its place (giving ground only where a newcomer needs
+    // it) and newcomers are fitted in around them. Re-solved from scratch,
+    // one block joining the Dyson Sphere fight sent every fleet round the
+    // Sun to a new slot (judges, 2026-10-23, 13.4 s): the shares are dealt
+    // from angle 0 in proportion to who is there, so any change turned
+    // them all.
+    prev: hit && hit.refR === refR ? hit.layout : undefined,
   });
-  const lb: LiveBattle = { bodyId, key, refR, dir, layout, blocks, stationId, leadOf };
+  let outerR = refR;
+  for (const s of ships) {
+    const p = layout.placements.get(s.id);
+    if (p) outerR = Math.max(outerR, p.r + (s.clearR ?? s.size * CLEAR_FRAC));
+  }
+  if (layout.station) outerR = Math.max(outerR, layout.station.r + BATTLE_STATION_PX * CLEAR_FRAC);
+  const lb: LiveBattle = { bodyId, key, refR, dir, layout, blocks, stationId, leadOf, outerR };
   cache.set(bodyId, lb);
   return lb;
 }
