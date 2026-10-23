@@ -387,8 +387,8 @@ export function drawSunSquid(g: G, cx: number, cy: number, pose: SunSquidPose) {
  * (`k`, 0 at the warning, 1 as it breaks free), with a gold rim where the
  * photosphere boils off it; slow ripples run across the disc; and in the
  * last third two lamp eyes open in the dark, the squid's own. Where on the
- * disc is `angle` (the caller seeds it: where the gate will actually fly
- * stays secret until it does).
+ * disc is `angle`: the bearing the gate will leave on (mapRenderer
+ * gateOmenPose), so it rises through the limb the gate comes out of.
  */
 export function drawSunOmen(
   g: G, cx: number, cy: number, coreR: number, k: number, angle: number, now: number,

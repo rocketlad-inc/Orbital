@@ -1639,6 +1639,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       megastructures: gameState.megastructures,
       // The omen on the Sun while a gate's warning runs (sunSquid.ts).
       sunGateEmergeTick: gameState.sunGateNext?.emergeTick ?? null,
+      sunGateOmenAngle: gameState.sunGateNext?.angle ?? null,
       sunGateOmenBodyId: gameState.sunGateNext?.kaiju
         ? (KAIJU_OMEN_BODY[gameState.sunGateNext.system ?? ''] ?? 'sol')
         : 'sol',
@@ -2724,7 +2725,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     if (placingNow && placingNow.anchorSoi > 0) {
       const anchor = gameState.bodies.find(b => b.id === placingNow.anchorBodyId);
       if (anchor) {
-        const ap = bodyPosition(anchor, gameState.currentTick, gameState.bodies);
+        // Render tick, like the anchor it rings (see the gate link below).
+        const ap = bodyPosition(anchor, renderContext.t, gameState.bodies);
         // Resolved camera, not raw — same bug as the gate link below:
         // raw camera.x/y are a focus-relative offset, so this ring sat
         // on the focused body instead of the anchor whenever a site was
@@ -2770,8 +2772,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const a = gameState.bodies.find(b => b.id === m.bodyId);
         const bb = gameState.bodies.find(b => b.id === m.partnerBodyId);
         if (!a || !bb) continue;
-        const pa = bodyPosition(a, gameState.currentTick, gameState.bodies);
-        const pb = bodyPosition(bb, gameState.currentTick, gameState.bodies);
+        // AT THE RENDER TICK, as the gates themselves are drawn (drawBody
+        // projects every body at renderContext.t, the smoothed clock). On
+        // the integer tick the line's end sat where the gate WAS at the
+        // last tick and slid off it as the clock ran on: about 40 px up
+        // its orbit in the Studio clip a-sun-gate-is-born, f480-f494.
+        const pa = bodyPosition(a, renderContext.t, gameState.bodies);
+        const pb = bodyPosition(bb, renderContext.t, gameState.bodies);
         const g = renderContext.ctx;
         // THROUGH THE RESOLVED CAMERA, like everything else on the map.
         // This projected with the RAW camera.x/y, which in focus mode

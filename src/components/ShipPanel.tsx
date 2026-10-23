@@ -19,7 +19,7 @@ import {
   hitChanceOf, damageProfile, defenseMitigation, MITIGATION_FLOOR, refitFee,
 } from '../game/shipParts';
 import { TransferIntent, MpActionResult, useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
-import { MINE_RATE_PER_TICK, BASE_HOLD } from '../game/mining';
+import { MINE_RATE_PER_TICK, BASE_HOLD, miningCardState } from '../game/mining';
 import { RouteComposer } from '../multiplayer/RouteComposer';
 import { apiFetch } from '../multiplayer/api';
 import { ShipActivityLog } from './ShipActivityLog';
@@ -5488,13 +5488,54 @@ const TradeRouteSection: React.FC<{
   useEffect(() => {
     if (miningPending !== null && miningPending === serverMining) setMiningPending(null);
   }, [miningPending, serverMining]);
-  const isMining = miningPending ?? serverMining;
   const holdRoom = Math.max(0, BASE_HOLD - holdTotal);
   // What is actually going to happen: whichever runs out first.
   const ticksToStop = Math.ceil(Math.min(holdRoom, rockLeft) / MINE_RATE_PER_TICK);
   const fillPct = Math.max(0, Math.min(1, holdTotal / BASE_HOLD));
+  // A MINING RUN digs too, and never sets miningBodyId — reading only the
+  // manual order made a route working its rock offer "BEGIN MINING"
+  // (which the server would refuse: on_a_route). See miningCardState.
+  const mineCard = miningCardState({
+    hasRig, rockId: rockHere?.id ?? null, rockLeft, holdRoom,
+    inTransit: !!ship.transit, canOrder: !!onSetMining,
+    miningBodyId: ship.miningBodyId ?? null, pending: miningPending,
+    route: route ? { stops: route.stops ?? [], nextStopSeq: myCrew?.nextStopSeq ?? 0 } : null,
+  });
+  const isMining = mineCard.mode === 'working';
+  const mineLeaveName = mineCard.mode === 'leaving'
+    ? (bodies.find(b => b.id === mineCard.nextBodyId)?.name ?? t('ship.panel.nextStop'))
+    : '';
 
-  const miningBox = (!hasRig || !rockHere || ship.transit || !onSetMining) ? null : (
+  const miningBox = (mineCard.mode === 'hidden' || !rockHere) ? null : mineCard.mode === 'leaving' || (mineCard.mode === 'working' && mineCard.byRoute) ? (
+    // THE ROUTE'S DIG: no start/stop button (the route runs it; cancel
+    // the route to stop), and an honest account of where it stands.
+    <div className="maneuver-section">
+      <div className="section-title">{t('ship.panel.mining')}</div>
+      <div className="order-item" style={{ flexDirection: 'column', gap: 6, alignItems: 'stretch' }}>
+        <div className="order-details" style={{ color: '#e8f4ff' }}>
+          {mineCard.mode === 'leaving'
+            ? (mineCard.reason === 'dry'
+                ? t('ship.panel.workedOut', { name: rockHere.name })
+                : t('ship.panel.holdFullShort'))
+            : t('ship.panel.workingRock', { name: rockHere.name, rate: MINE_RATE_PER_TICK })}
+        </div>
+        <div className="mine-bar" aria-hidden="true">
+          <div className="mine-bar__fill" style={{ width: `${Math.round(fillPct * 100)}%` }} />
+        </div>
+        <div className="order-details">
+          {t('ship.panel.aboard', { n: Math.round(holdTotal), total: BASE_HOLD })} ·{' '}
+          {mineCard.mode === 'leaving'
+            ? t('ship.panel.departingFor', { name: mineLeaveName })
+            : `${t('ship.panel.nLeft', { n: Math.round(rockLeft) })} · ${holdRoom <= rockLeft ? tn('ship.panel.ticksUntilFull', ticksToStop) : tn('ship.panel.ticksUntilDry', ticksToStop)}`}
+        </div>
+        {mineCard.mode === 'working' && (
+          <div className="order-details" style={{ color: '#8fa3b5' }}>
+            {t('ship.panel.routeDigNote')}
+          </div>
+        )}
+      </div>
+    </div>
+  ) : (
     <div className="maneuver-section">
       <div className="section-title">{t('ship.panel.mining')}</div>
       {isMining ? (
@@ -5521,7 +5562,7 @@ const TradeRouteSection: React.FC<{
           </div>
           <button
             className="maneuver-btn"
-            onClick={() => { setMiningPending(false); onSetMining(false); }}
+            onClick={() => { setMiningPending(false); onSetMining?.(false); }}
           >
             ■ {t('ship.panel.stopMining')}
           </button>
@@ -5537,7 +5578,7 @@ const TradeRouteSection: React.FC<{
             className="maneuver-btn"
             disabled={rockLeft <= 0 || holdRoom <= 0}
             title={holdRoom <= 0 ? t('ship.panel.holdFullTip') : undefined}
-            onClick={() => { setMiningPending(true); onSetMining(true); }}
+            onClick={() => { setMiningPending(true); onSetMining?.(true); }}
           >
             ⛏ {t('ship.panel.beginMining')}
           </button>
@@ -5691,8 +5732,12 @@ const TradeRouteSection: React.FC<{
       // How much is left is the fact that decides whether to keep this
       // rock on the itinerary, so it belongs on the line that says the
       // hull is working it.
-      nextAction = t('ship.panel.workingRockDot', { name: rock?.name ?? t('ship.panel.theRock'), rate: MINE_RATE_PER_TICK })
-        + (rockLeftHere > 0 ? ` · ${t('ship.panel.nLeft', { n: Math.round(rockLeftHere) })}` : ` · ${t('ship.panel.workedOutShort')}`);
+      // A dry rock (or a full hold) is not being worked: the walker
+      // leaves on the next tick, and "Working X · worked out" said both.
+      nextAction = mineCard.mode === 'leaving'
+        ? `${rockLeftHere > 0 ? t('ship.panel.holdFullShort') : t('ship.panel.workedOut', { name: rock?.name ?? t('ship.panel.theRock') })} ${t('ship.panel.departingFor', { name: mineLeaveName })}`
+        : t('ship.panel.workingRockDot', { name: rock?.name ?? t('ship.panel.theRock'), rate: MINE_RATE_PER_TICK })
+          + (rockLeftHere > 0 ? ` · ${t('ship.panel.nLeft', { n: Math.round(rockLeftHere) })}` : ` · ${t('ship.panel.workedOutShort')}`);
     } else if (here === route.originBodyId && cargoTotal < 1) {
       nextAction = isMiningRun
         ? t('ship.panel.startingDig', { name: origin?.name ?? t('ship.panel.theRock') })
