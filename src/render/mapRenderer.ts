@@ -3553,6 +3553,12 @@ function drawPlanetBody(
   // the procedural texture. Worth it from a few pixels up: a real map
   // reads better than a flat disc even at 6px.
   if (radius > 2.5) {
+    // A struck world still drawn living dissolves to its RAW globe across
+    // the fire (drawnTerraformFraction), so ask for that one now. Asked
+    // for first on the dissolve's opening frame it was still loading, and
+    // the world fell through to the procedural texture, another-looking
+    // planet, until it came (Mega Destroyer over Venus, 2026-10-23).
+    if (tfF >= 1 && body.sterilisedAtTick != null) getGlobe(body, false);
     const globe = getGlobe(body, tfF >= 1);
     if (globe) {
       const ringed = bodyHasRings(body) && radius > 8;
