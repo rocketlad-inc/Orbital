@@ -19,17 +19,18 @@
 // applies 1:1 (no tween), so a glide is the same in preview and on tape.
 // ============================================================================
 
+import { flushSync } from 'react-dom';
 import type { Body, GameState, Ship } from '../../types';
 import { bodyPosition } from '../../physics/orbitalMechanics';
 import { torchPositionFromSamples } from '../../physics/torchTransfer';
-import { drawnShipWorldPos, torchTrajectorySamples } from '../../render/mapRenderer';
+import { drawnShipWorldPos, forgetDrawnShips, recentDrawnShipWorldPos, torchTrajectorySamples } from '../../render/mapRenderer';
 import { shipWorldPosition } from '../../game/combat';
 import { smoothedTick, setStudioDisplayTick } from '../../render/tickPhase';
 import { setStudioFullVisuals } from '../../render/lightweightMode';
 import { setStudioHullScale } from '../../render/cameraLimits';
 import { setStudioWashScale } from '../../render/mapRenderer';
 import { apiFetch } from '../api';
-import { arcApexScale, arcNeeded, panCamera, strikeTimingWarnings } from './shotPlan';
+import { arcApexScale, arcNeeded, glideProgress, panCamera, strikeTimingWarnings, worldStopsAt } from './shotPlan';
 import { installVirtualClock } from './virtualClock';
 
 export type Target = string; // 'earth' | 'ship:<id>' | 'fleet:<id>' | 'missile:<n>' | 'mid:<target>|<target>'
@@ -159,6 +160,14 @@ interface Tween {
 }
 
 const FORMATS = { '9:16': [1080, 1920], '16:9': [1920, 1080], '1:1': [1080, 1080] } as const;
+/** A camera move this short is a cut, not a glide. */
+const CUT_MS = 40;
+/** At the first frame and every hard cut, the map draws this long (on the
+ *  film's clock, the world held still) before a frame is kept: layout
+ *  glides, presentation fades and the roster's first solve all run on
+ *  that clock, and a frame drawn at once showed parked hulls as dots and
+ *  stations as the blue stand-in sprite (judges 2026-10-23, R1). */
+const CUT_SETTLE_MS = 300;
 const FONT = '"Segoe UI", system-ui, sans-serif';
 
 function pickMime(): string | null {
@@ -184,11 +193,23 @@ export class Director {
   private tickSpeedMs: number | null = null;
   private tickWall = new Map<number, number>();
   /** The glide the map draws while filming: from tick `from` (landed at
-   *  film time `at`) to from+1 over `ms`. See smoothTicks(). */
-  private glide: { from: number; at: number; ms: number } | null = null;
+   *  film time `at`) to from+1 over `ms`, easing to rest when `ease` (the
+   *  last tick). See smoothTicks(). */
+  private glide: { from: number; at: number; ms: number; ease?: boolean } | null = null;
   /** How long the NEXT tick to land should glide: the gap to the tick
    *  step after it, so one tick hands over to the next with no stop. */
   private nextGlideMs: number | null = null;
+  /** The next tick to land is the shot's last: its glide comes to rest. */
+  private finalGlide = false;
+  /** The display tick of the map's last draw while filming (the drawn
+   *  hull positions belong to it), or null. */
+  private drawnTick: number | null = null;
+  /** A focus (or an instant pan) since the last kept frame: the next
+   *  frame is a cut, and settles before it is kept. */
+  private cutPending = false;
+  /** Real ms a cut waits for the art it asked for (sprites and globes
+   *  load on the wall clock). */
+  artWaitMs = 1500;
   private realFetch: typeof fetch | null = null;
   /** The last recording, for the Studio bar's download and the CLI's pull. */
   lastBlob: Blob | null = null;
@@ -283,7 +304,25 @@ export class Director {
 
   private shipPos(ship: Ship, tick: number): { x: number; y: number } | null {
     const drawn = drawnShipWorldPos(ship.id);
-    if (drawn) return drawn;
+    if (drawn) {
+      // WHERE IT WILL BE DRAWN, not where it was. The camera is placed just
+      // before the map draws at `tick`, and the drawn spot is the last
+      // draw's, a frame behind: the camera trailed its hull by a frame of
+      // motion all shot, and when the world came to rest the frame jumped
+      // that frame's width at once (judges 2026-10-23, seven clips). Carry
+      // the drawn spot (layout and all) by the hull's own motion since.
+      const t0 = this.drawnTick;
+      if (t0 != null && t0 !== tick && recentDrawnShipWorldPos(ship.id, 250)) {
+        const a = this.modelPos(ship, t0), b = this.modelPos(ship, tick);
+        if (a && b) return { x: drawn.x + b.x - a.x, y: drawn.y + b.y - a.y };
+      }
+      return drawn;
+    }
+    return this.modelPos(ship, tick);
+  }
+
+  /** Where a hull is at `tick` by its course or its orbit, before layout. */
+  private modelPos(ship: Ship, tick: number): { x: number; y: number } | null {
     if (ship.transit?.currentTransfer) {
       try {
         const samples = torchTrajectorySamples(ship.transit.currentTransfer, this.host.state().bodies);
@@ -325,6 +364,7 @@ export class Director {
     this.cam.x = p.x; this.cam.y = p.y;
     if (o.scale) this.cam.scale = o.scale;
     else if (o.px) this.cam.scale = this.scaleFor(target, o.px);
+    this.cutPending = true;
     this.push();
   }
 
@@ -342,11 +382,16 @@ export class Director {
     const p = this.position(target);
     if (!p) { this.note(`pan: no such target ${target}`); return; }
     const toScale = o.scale ?? (o.fit ? this.fitScale(o.fit) : o.px ? this.scaleFor(target, o.px) : this.cam.scale);
+    const ms = o.ms ?? this.moveMs ?? 2000;
+    // A pan over a frame or so ('ms': 1) is a cut, and is made as one, so
+    // the frames that settle it see where it lands (eased, its first step
+    // stood at the old view, and the cut settled there).
+    if (ms <= CUT_MS) { this.focus(target, { scale: toScale }); return; }
     const view = this.view();
     const arc = o.arc !== false && arcNeeded(this.cam, p.x, p.y, toScale, view)
       ? { apex: arcApexScale(this.cam, p.x, p.y, toScale, view) }
       : null;
-    this.tween = { fromX: this.cam.x, fromY: this.cam.y, fromScale: this.cam.scale, toScale, t0: this.clock, ms: o.ms ?? this.moveMs ?? 2000, target, arc };
+    this.tween = { fromX: this.cam.x, fromY: this.cam.y, fromScale: this.cam.scale, toScale, t0: this.clock, ms, target, arc };
     this.hold = target;
   }
 
@@ -359,7 +404,15 @@ export class Director {
     // ease and out of frame: the Mega Destroyer take's launching guard left
     // 1.2 s of empty space (2026-10-22).
     const lock = target != null && target === this.hold;
-    this.tween = { fromX: this.cam.x, fromY: this.cam.y, fromScale: this.cam.scale, toScale, t0: this.clock, ms: o.ms ?? this.moveMs ?? 1500, target: target ?? null, lock };
+    const ms = o.ms ?? this.moveMs ?? 1500;
+    if (ms <= CUT_MS) {
+      this.tween = null;
+      this.cam.scale = toScale;
+      this.cutPending = true;
+      this.push();
+      return;
+    }
+    this.tween = { fromX: this.cam.x, fromY: this.cam.y, fromScale: this.cam.scale, toScale, t0: this.clock, ms, target: target ?? null, lock };
   }
 
   /** Keep the centre on a moving target from now on, gliding onto it
@@ -515,8 +568,9 @@ export class Director {
     if (res && !res.ok) throw new Error(`tick: ${res.error?.message ?? res.status}`);
     if (!res) this.note(`tick: no answer in 30 s at tick ${before}; waiting on the map`);
     const want = res?.data?.current_tick ?? before + n;
-    const t0 = Date.now();
-    while (this.host.state().currentTick < want && Date.now() - t0 < 90_000) await realSleep(250);
+    // The wall clock: while filming, Date.now is the film's and stands still.
+    const t0 = realNow();
+    while (this.host.state().currentTick < want && realNow() - t0 < 90_000) await realSleep(250);
     return this.host.state().currentTick;
   }
 
@@ -545,10 +599,16 @@ export class Director {
     this.drawHand();
   }
 
+  /** Hand the camera to the map, applied before this returns. The map's
+   *  camera is React state: set the plain way it landed on a later task,
+   *  so the map drew a frame (and a whole time cut, which draws in one
+   *  synchronous loop) at the camera before. flushSync commits it now,
+   *  effects and all, so the next draw has it. */
   private push(): void {
-    window.dispatchEvent(new CustomEvent('orbital:studio-camera', {
+    const ev = new CustomEvent('orbital:studio-camera', {
       detail: { x: this.cam.x, y: this.cam.y, scale: this.cam.scale, focusedBodyId: undefined },
-    }));
+    });
+    flushSync(() => { window.dispatchEvent(ev); });
   }
 
   private note(s: string): void { this.log.push(s); if (this.log.length > 200) this.log.shift(); }
@@ -567,32 +627,44 @@ export class Director {
    * worlds keep moving at an even pace through every boundary instead of
    * stopping and jumping. Before the first tick the glide is already
    * under way at the same pace and lands as that tick fires. After the
-   * last tick it glides one more tick at the shot's speed and holds.
+   * last tick it glides one more tick, leaving at the same pace and
+   * slowing to rest on it, and holds: nothing past that tick is known.
    */
   private smoothTicks(shot: Shot, now: () => number): void {
     const ticks = shot.steps.filter(s => s.do === 'tick').map(s => s.at).sort((a, b) => a - b);
     const pace = (ticks.length > 1 ? (ticks[1] - ticks[0]) * 1000 : null) ?? this.tickSpeedMs ?? 2500;
     const startTick = this.host.state().currentTick;
+    this.finalGlide = false;
     if (ticks.length) {
       const firstMs = Math.max(0, ticks[0] * 1000);
       // Phase at the opening frame, so tick 1 lands as the glide ends.
       this.glide = { from: startTick, at: now() - Math.max(0, pace - firstMs), ms: Math.max(firstMs, pace) };
     } else {
-      this.glide = { from: startTick, at: now(), ms: this.tickSpeedMs ?? 2500 };
+      // No ticks at all: the one glide there is comes to rest.
+      this.glide = { from: startTick, at: now(), ms: 2 * (this.tickSpeedMs ?? 2500), ease: true };
     }
     setStudioDisplayTick((ct: number) => {
       const t = now();
       if (!this.glide || ct !== this.glide.from) {
-        this.glide = { from: ct, at: t, ms: this.nextGlideMs ?? this.tickSpeedMs ?? 2500 };
+        if (this.finalGlide) {
+          // The last tick leaves at the pace the glides before it ran at,
+          // and slows to rest on its tick over twice that (shotPlan
+          // glideProgress): clamped at the pace, the world stopped dead.
+          const pace = this.glide && !this.glide.ease ? this.glide.ms : (this.tickSpeedMs ?? 2500);
+          this.glide = { from: ct, at: t, ms: 2 * pace, ease: true };
+        } else {
+          this.glide = { from: ct, at: t, ms: this.nextGlideMs ?? this.tickSpeedMs ?? 2500 };
+        }
       }
-      const u = (t - this.glide.at) / Math.max(1, this.glide.ms);
-      return ct + (u < 0 ? 0 : u > 1 ? 1 : u);
+      return ct + glideProgress(t - this.glide.at, this.glide.ms, !!this.glide.ease);
     });
   }
   private unsmoothTicks(): void {
     setStudioDisplayTick(null);
     this.glide = null;
     this.nextGlideMs = null;
+    this.finalGlide = false;
+    this.drawnTick = null;
   }
 
   /** Fire every step whose time has come. Ticks are awaited: the clock
@@ -607,6 +679,7 @@ export class Director {
       if (st.do === 'tick') {
         const gap = Director.gapAfter(steps, st.at);
         this.nextGlideMs = gap != null && gap <= 6 ? gap * 1000 : null;
+        this.finalGlide = gap == null;
       }
       if (st.do === 'focus' || st.do === 'pan' || st.do === 'zoom' || st.do === 'follow') this.camFree = false;
       switch (st.do) {
@@ -696,11 +769,21 @@ export class Director {
    */
   check(shot: Shot): string[] {
     const s = this.host.state();
-    return strikeTimingWarnings(shot.steps, s.currentTick, (name) => {
+    const out = strikeTimingWarnings(shot.steps, s.currentTick, (name) => {
       const ship = this.ship(name.replace(/^ship:/, ''));
       if (!ship) return undefined;
       return ship.transit?.currentTransfer?.arriveTick ?? null;
     });
+    // A still tail: after its last tick the world glides to rest, and a
+    // shot that runs on holds a frozen frame (judges 2026-10-23: the
+    // static endings of seven clips). Only for shots that tick at all.
+    if (shot.steps.some(st => st.do === 'tick')) {
+      const stop = worldStopsAt(shot.steps, shot.speed ?? (shot.tempo === 'fast' ? 900 : 2500));
+      if (shot.seconds - stop > 0.5) {
+        out.push(`the world comes to rest at ${stop.toFixed(1)}s (the last tick's glide) and the shot holds still to ${shot.seconds}s: end it there, or tick again`);
+      }
+    }
+    return out;
   }
 
   private begin(shot: Shot): void {
@@ -711,6 +794,8 @@ export class Director {
     this.lastSeen.clear();
     this.picked = null;
     this.camFree = false;
+    this.cutPending = false;
+    this.drawnTick = null;
     this.dropHand();
     this.hook = shot.hook ?? null; this.progress = 0; this.result = null;
     // Every effect, every frame: lightweight mode (a phone's or the
@@ -790,13 +875,14 @@ export class Director {
         if (this.cancelFlag) break;
         const inShot = k < total - endFrames;
         if (inShot) {
-          // Ticks wait on the server in real time; the virtual clock holds.
-          await vclock.real(() => this.fire(shot.steps, fired));
-          this.step(1 / fps);
-          await vclock.real(() => realSleep(0));   // let React commit the camera
+          // Ticks wait on the server in real time; the film's clock holds.
+          await this.fire(shot.steps, fired);
+          this.cutPending = false;   // record keeps every frame as it comes
+          await this.frame(vclock, frameMs, draw, 1 / fps);
+        } else {
+          this.stats.rafRuns += vclock.advance(frameMs, !!draw);
+          if (draw) { draw(1); this.stats.draws++; }
         }
-        this.stats.rafRuns += vclock.advance(frameMs, !!draw);   // time moves; the map loop draws only without the hook
-        if (draw) { draw(1); this.stats.draws++; }
         const map = this.host.mapCanvas();
         if (map) {
           pg.drawImage(map, 0, 0, 48, 48);
@@ -812,14 +898,14 @@ export class Director {
         const on = vclock.realNow();
         track.requestFrame?.();
         const hold = Math.max(4, (k + 1) * frameMs - recorded);
-        await vclock.real(() => realSleep(hold));
+        await realSleep(hold);
         rec.pause();
         recorded += vclock.realNow() - on;
         this.progress = (k + 1) / total;
       }
       rec.resume();
       rec.stop();
-      await vclock.real(() => stopped);
+      await stopped;
     } finally {
       vclock.uninstall();
       track.stop();
@@ -1047,6 +1133,75 @@ export class Director {
     return h.from + (h.to - h.from) * e;
   }
 
+  /**
+   * One frame on the film's clock. Time moves first (the interface's own
+   * frame callbacks run), THEN the camera is placed, at the moment the map
+   * is about to be drawn at: placed before the clock moved, it was a frame
+   * behind the world all shot, and jumped that frame's width when the
+   * world came to rest (judges 2026-10-23, seven clips). Without the
+   * map's draw hook the map draws inside advance(), so the camera goes
+   * first there.
+   */
+  private async frame(vclock: ReturnType<typeof installVirtualClock>, frameMs: number, draw: ((n?: number) => number) | undefined, dt: number): Promise<void> {
+    if (!draw) {
+      this.step(dt);
+      await realSleep(0);
+      this.stats.rafRuns += vclock.advance(frameMs, false);
+      return;
+    }
+    this.stats.rafRuns += vclock.advance(frameMs, true);
+    this.step(dt);
+    await realSleep(0);   // the interface catches up (the camera is already applied)
+    draw(1);
+    this.drew();
+    this.stats.draws++;
+  }
+
+  /** After a draw: the tick it drew at, which the drawn hulls belong to. */
+  private drew(): void {
+    this.drawnTick = this.tick();
+  }
+
+  /**
+   * A CUT: the first frame, a time cut (`skip`), or a hard cut (a focus,
+   * a pan or zoom with no time to it). The map draws on through the
+   * skipped time, or CUT_SETTLE_MS at least for a hard cut, with nothing
+   * kept, so dwells, glides and fades run their course at the new view.
+   * The shot's own clock does not move, so the steps after it keep their
+   * times, and the tick glide stands still: a cut lands on the moment it
+   * cut to (run on, the glide finished inside the skip and motion froze
+   * after the cut until the next tick).
+   *
+   * What each hull was drawn at before the cut is forgotten first. The
+   * map's continuity guard otherwise read an `advance` (ten ticks in one
+   * request) as a teleport and slid the hull back across 22,000 px through
+   * the skip; the slide was still running on the kept frame, and the
+   * followed freighter was off screen for a frame or two (judges
+   * 2026-10-23, the mining run at 2.60 s and 9.00 s).
+   *
+   * Then it waits for the art: sprites and globes load on the wall clock,
+   * and are asked for on the first draw at the new view, so frame 0 showed
+   * stand-ins (a dot for a hull, the blue sprite for a station). That wait
+   * used to come before any draw at the new view: the camera had not been
+   * applied yet (see push), so the art was asked for after it.
+   */
+  private async cut(vclock: ReturnType<typeof installVirtualClock>, frameMs: number, draw: ((n?: number) => number) | undefined, hard: boolean): Promise<void> {
+    const settle = Math.max(this.skipMs, hard ? CUT_SETTLE_MS : 0);
+    this.skipMs = 0;
+    this.cutPending = false;
+    forgetDrawnShips();
+    this.drawnTick = null;
+    for (let left = settle; left > 0; left -= frameMs) {
+      this.stats.rafRuns += vclock.advance(frameMs, !!draw);
+      if (this.glide) this.glide.at += frameMs;
+      this.step(0);
+      await realSleep(0);
+      if (draw) { draw(1); this.drew(); }
+    }
+    await realSleep(this.artWaitMs);
+    if (draw) { draw(1); this.drew(); }
+  }
+
   /** Start a stepped shot. Returns the frame count. */
   openFilm(shot: Shot): number {
     if (this.running) throw new Error('already running');
@@ -1067,35 +1222,18 @@ export class Director {
     const f = this.film;
     if (!f) throw new Error('openFilm first');
     const fps = f.shot.fps ?? 30;
-    await f.vclock.real(() => this.fire(f.shot.steps, f.fired));
-    const opening = f.k === 0 || this.skipMs > 0;
-    // A time cut: the map draws on through the skipped time (so dwells,
-    // glides and fades run their course) with nothing kept. The shot's own
-    // clock does not move, so the steps after it keep their times.
-    // The tick glide stands still through it: a cut lands on the moment it
-    // cut to, and the next tick step still glides there in its own time
-    // (run on, the glide finished inside the skip and motion froze after
-    // the cut until the next tick).
-    for (let left = this.skipMs; left > 0; left -= 1000 / fps) {
-      this.step(0);
-      this.stats.rafRuns += f.vclock.advance(1000 / fps, !!f.draw);
-      if (f.draw) f.draw(1);
-      if (this.glide) this.glide.at += 1000 / fps;
+    const frameMs = 1000 / fps;
+    // NOT inside vclock.real(): that turns the PAGE's clock to the wall
+    // clock too, and React's renders and effects run while the director
+    // waits. The world menu's fade-in stamped its start on the wall clock,
+    // seconds ahead of the film's, and stayed hidden until the film caught
+    // up: 2.2 s late in "building on a world" (judges 2026-10-23). The
+    // director's own waits read the wall clock themselves (realNow).
+    await this.fire(f.shot.steps, f.fired);
+    if (f.k === 0 || this.skipMs > 0 || this.cutPending) {
+      await this.cut(f.vclock, frameMs, f.draw, f.k === 0 || this.cutPending);
     }
-    this.skipMs = 0;
-    // The first frame, and the first after a cut, show a subject the map
-    // has only just asked art for: sprites and globes load in REAL time,
-    // and the film's clock stands still, so frame 0 showed a stand-in hull
-    // where the Mega Destroyer should be (judges 2026-10-23). Let the
-    // loads land, then draw the same moment again.
-    if (opening) {
-      await f.vclock.real(() => realSleep(1500));
-      if (f.draw) f.draw(1);
-    }
-    this.step(1 / fps);
-    await f.vclock.real(() => realSleep(0));
-    this.stats.rafRuns += f.vclock.advance(1000 / fps, !!f.draw);
-    if (f.draw) { f.draw(1); this.stats.draws++; }
+    await this.frame(f.vclock, frameMs, f.draw, 1 / fps);
     this.stats.frames++;
     f.k++;
     this.progress = f.k / f.total;
@@ -1230,6 +1368,8 @@ const VERBS: readonly string[] = ['focus', 'pan', 'zoom', 'follow', 'tick', 'spe
 
 const realSetTimeout = window.setTimeout.bind(window);
 const realSleep = (ms: number) => new Promise<void>(r => realSetTimeout(r, ms));
+/** The wall clock, captured before any film clock replaces performance.now. */
+const realNow = performance.now.bind(performance);
 
 function wrap(g: CanvasRenderingContext2D, text: string, maxW: number): string[] {
   const lines: string[] = []; let line = '';

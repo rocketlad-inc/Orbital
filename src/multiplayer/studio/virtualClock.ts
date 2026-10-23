@@ -41,6 +41,12 @@ export function installVirtualClock() {
       }
       return ran;
     },
+    /** Run fn with Date.now and performance.now on the wall clock. The
+     *  switch is page-wide: anything else that runs while fn awaits (React's
+     *  renders and effects, the interface's fades) sees the wall clock too,
+     *  and stamped seconds ahead of the film it fell out of step (the world
+     *  menu came up 2.2 s late, 2026-10-23). So never wrap a wait the page
+     *  runs through; read realNow() instead. */
     async real<T>(fn: () => Promise<T> | T): Promise<T> {
       inReal++;
       try { return await fn(); } finally { inReal--; }

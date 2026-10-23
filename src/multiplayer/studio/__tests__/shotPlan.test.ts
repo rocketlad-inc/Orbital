@@ -2,7 +2,7 @@
 // Mega Destroyer clip: the camera "pans through empty space", and the
 // Mega Destroyer's strike fired while it was still in flight, so nothing
 // happened at the end.
-import { arcApexScale, arcNeeded, panCamera, strikeTimingWarnings, tickAtStep } from '../shotPlan';
+import { arcApexScale, arcNeeded, glideProgress, panCamera, strikeTimingWarnings, tickAtStep, worldStopsAt } from '../shotPlan';
 
 const view = { w: 1920, h: 1080 };
 
@@ -60,6 +60,38 @@ describe('arc pans', () => {
     }
   });
 
+  it('keeps one end in frame the whole way: the start until the apex, the target from it', () => {
+    // Judges, 2026-10-23, three-way battle (5.67-5.83 s and 6.53-6.70 s):
+    // the arc moved the camera before it had zoomed out and arrived before
+    // it zoomed in, so Earth left the frame before Titan's system was in it.
+    // A close-up both ends: Earth at px 460, Titan at px 330, 9 AU apart
+    // (the take's own numbers: scale 38 to 41, the apex 0.146).
+    const cases = [
+      { from: { x: 0, y: 0, scale: 38.3 }, tx: 5900, ty: -600, to: 41.25 },
+      { from: { x: 0, y: 0, scale: 2 }, tx: 20000, ty: 3000, to: 1.5 },
+      { from: { x: 0, y: 0, scale: 0.6 }, tx: -9000, ty: 0, to: 4 },
+      { from: { x: 0, y: 0, scale: 5 }, tx: 0, ty: 4000, to: 0.4 },
+    ];
+    // No further from the centre than the apex puts it (both ends inside
+    // 80% of the frame there), so never at the edge either.
+    const half = 0.4 * view.h + 1e-6;
+    for (const c of cases) {
+      const apex = arcApexScale(c.from, c.tx, c.ty, c.to, view);
+      let lastG = -1;
+      for (let u = 0; u <= 1.0001; u += 0.01) {
+        const cam = panCamera(u, c.from, c.tx, c.ty, c.to, { apex });
+        const fromStart = Math.hypot(cam.x - c.from.x, cam.y - c.from.y) * cam.scale;
+        const fromEnd = Math.hypot(c.tx - cam.x, c.ty - cam.y) * cam.scale;
+        if (u <= 0.5) expect(fromStart).toBeLessThanOrEqual(half);
+        if (u >= 0.5) expect(fromEnd).toBeLessThanOrEqual(half);
+        // It never goes back the way it came.
+        const g = Math.hypot(cam.x - c.from.x, cam.y - c.from.y);
+        expect(g).toBeGreaterThanOrEqual(lastG - 1e-6);
+        lastG = g;
+      }
+    }
+  });
+
   it('without an arc it is the plain ease (log-space zoom)', () => {
     const m = panCamera(0.5, from, 100, 0, 1, null);
     expect(m.x).toBeCloseTo(50);
@@ -82,6 +114,33 @@ describe('arc pans', () => {
       const c = panCamera(u, { x: D, y: 0, scale: end }, 0, 0, 2, null);
       expect(Math.abs(c.x) * c.scale).toBeLessThanOrEqual(D * end + 1e-6);
     }
+  });
+});
+
+describe('the tick glide', () => {
+  it('runs at an even pace between ticks', () => {
+    expect(glideProgress(450, 900, false)).toBeCloseTo(0.5);
+    expect(glideProgress(-10, 900, false)).toBe(0);
+    expect(glideProgress(2000, 900, false)).toBe(1);
+  });
+
+  it('comes to rest after the last tick instead of stopping dead', () => {
+    // Judges, 2026-10-23: seven clips froze on the frame the last glide
+    // ended. The last glide covers its tick over twice the pace, starting
+    // at the pace's speed and slowing to a stop.
+    const pace = 900, ms = 2 * pace;
+    const v0 = glideProgress(1, ms, true) / 1;         // ticks per ms at the start
+    expect(v0 * pace).toBeCloseTo(1, 2);               // the same speed as the glides before it
+    expect(glideProgress(ms, ms, true)).toBe(1);
+    const vEnd = (glideProgress(ms, ms, true) - glideProgress(ms - 1, ms, true));
+    expect(vEnd * pace).toBeLessThan(0.01);            // at rest by the end
+  });
+
+  it('says when the world stops moving, so a shot can end there', () => {
+    const steps = [{ at: 1, do: 'tick' }, { at: 1.9, do: 'tick' }, { at: 2.8, do: 'tick' }];
+    expect(worldStopsAt(steps, 900)).toBeCloseTo(2.8 + 1.8);
+    expect(worldStopsAt([], 900)).toBeCloseTo(1.8);
+    expect(worldStopsAt([{ at: 1, do: 'tick' }, { at: 9, do: 'tick' }], 900)).toBeCloseTo(9 + 1.8);
   });
 });
 
