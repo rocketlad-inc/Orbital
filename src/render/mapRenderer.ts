@@ -5575,6 +5575,11 @@ export function settleTransitLayout(
 export function keepOffDrawnDiscs(
   placed: Sample[],
   discs: Array<{ at: (t: number) => { x: number; y: number }; R: number; isDest: boolean }>,
+  /** The hull's own true course (unplaced samples). With it, an ARRIVAL
+   *  keeps its place in its formation: the course is held off the
+   *  destination disc and the hull's offset from it (its slot, its glide)
+   *  is carried on. Without it, every point is pushed out on its own ray. */
+  course?: Sample[],
 ): Sample[] {
   let out = placed;
   for (const disc of discs) {
@@ -5584,13 +5589,36 @@ export function keepOffDrawnDiscs(
     const side = disc.isDest
       ? { x: (first.x - last.x) / cl, y: (first.y - last.y) / cl }
       : { x: (last.x - first.x) / cl, y: (last.y - first.y) / cl };
+    const onEdge = (c: { x: number; y: number }, x: number, y: number) => {
+      const dx = x - c.x, dy = y - c.y;
+      const d = Math.hypot(dx, dy);
+      const u = d > R * 0.05 ? { x: dx / d, y: dy / d } : side;
+      return { x: c.x + u.x * R, y: c.y + u.y * R };
+    };
+    // A FORMATION ARRIVES AS A FORMATION (judges, "Select and strike",
+    // 2026-10-23: 11 hulls in at Europa drawn as ~4, three to a spot). A
+    // formation is the lead's course plus a fixed offset per slot, and the
+    // course runs into the world's centre: pushed out on its own ray, each
+    // slot ended where its OFFSET pointed, so slots straight astern of one
+    // another (and the arrowhead's parallel diagonals) landed on one point,
+    // were held there through the roster dwell, and glided off together.
+    const carry = disc.isDest && course && course.length >= 2 ? course : null;
     out = out.map(p => {
       const c = disc.at(p.t);
-      const dx = p.x - c.x, dy = p.y - c.y;
-      const d = Math.hypot(dx, dy);
-      if (d >= R) return p;
-      const u = d > R * 0.05 ? { x: dx / d, y: dy / d } : side;
-      return { t: p.t, x: c.x + u.x * R, y: c.y + u.y * R };
+      if (carry) {
+        const q = torchPositionFromSamples(carry, p.t);
+        const qIn = Math.hypot(q.x - c.x, q.y - c.y) < R;
+        if (qIn) {
+          const e = onEdge(c, q.x, q.y);
+          const x = e.x + (p.x - q.x), y = e.y + (p.y - q.y);
+          if (Math.hypot(x - c.x, y - c.y) >= R) return { t: p.t, x, y };
+          const f = onEdge(c, x, y);
+          return { t: p.t, x: f.x, y: f.y };
+        }
+      }
+      if (Math.hypot(p.x - c.x, p.y - c.y) >= R) return p;
+      const e = onEdge(c, p.x, p.y);
+      return { t: p.t, x: e.x, y: e.y };
     });
   }
   return out;
@@ -6061,6 +6089,36 @@ function drawKaijuHull(
     drawStrikeCharge(ctx.ctx, pos.x, pos.y, iconSize, strikeChargeFrac(ship, ctx.t), now,
       strikeRingRadius('kaiju', iconSize, Math.min(ctx.canvas.width, ctx.canvas.height)));
   }
+}
+
+/** The desktop dock rail's reach over the map's right edge, px
+ *  (DockRail.css --dock-rail-right: 8 gap + 40 rail + 8 clearance). On a
+ *  phone the dock runs along the bottom instead. */
+const DOCK_RAIL_INSET_PX = 56;
+const DOCK_RAIL_MIN_VIEW_W = 769;
+
+/**
+ * WHERE THE LEVIATHAN'S NAME GOES: beside its HEAD, inside the frame. The
+ * ship rule put a name half the sprite's width to the right of its
+ * centre; the beast is drawn 4.4 world radii across, so its name floated
+ * ~185 px right of the head and ran under the dock rail ("Unkn…", judges,
+ * the Leviathan clip, 2026-10-23). The head is where its eyes are
+ * (drawSunSquid: -0.24u along its heading, u = size / 6); the name sits
+ * just clear of it, on the right unless that would run under the rail or
+ * off the frame, then on the left. `x` is the block's left edge.
+ */
+export function kaijuLabelAt(
+  pos: { x: number; y: number }, heading: number, size: number, blockW: number, canvasW: number,
+): { x: number; y: number; left: boolean; head: { x: number; y: number } } {
+  const u = size / 6;
+  const head = { x: pos.x - Math.cos(heading) * 0.24 * u, y: pos.y - Math.sin(heading) * 0.24 * u };
+  const gap = Math.min(0.75 * u, 40) + 4;
+  const rightEdge = canvasW - (canvasW >= DOCK_RAIL_MIN_VIEW_W ? DOCK_RAIL_INSET_PX : 0) - 4;
+  let x = head.x + gap;
+  let left = false;
+  if (x + blockW > rightEdge) { x = head.x - gap - blockW; left = true; }
+  x = Math.max(4, Math.min(rightEdge - blockW, x));
+  return { x, y: head.y, left, head };
 }
 
 export function drawShip(
@@ -6543,15 +6601,19 @@ export function drawShip(
       ? canvasPos.x - iconSize / 2 - 4 - blockW
       : canvasPos.x + iconSize / 2 + 4);
     const sides = ctx.presentation ? [awayLeft, !awayLeft] : [false];
-    const leftSide = sides.find(l => clearOfKeepOuts(xFor(l), canvasPos.y - 12, blockW, blockH));
+    // The Leviathan's name rides its head, in frame (kaijuLabelAt): it is
+    // drawn over its world, so the world's keep-out would only drop it.
+    const kl = kaiju ? kaijuLabelAt(canvasPos, heading, iconSize, blockW, ctx.canvas.width) : null;
+    const leftSide = kl ? kl.left : sides.find(l => clearOfKeepOuts(xFor(l), canvasPos.y - 12, blockW, blockH));
     if (leftSide !== undefined) {
-      const labelX = xFor(leftSide);
-      ctx.ctx.fillText(nm, leftSide ? labelX + blockW - textW : labelX, canvasPos.y - 6);
+      const labelX = kl ? kl.x : xFor(leftSide);
+      const ly = kl ? kl.y : canvasPos.y;
+      ctx.ctx.fillText(nm, leftSide ? labelX + blockW - textW : labelX, ly - 6);
       // The Leviathan shows no HP until it has shown itself (kaijuReveal.ts).
-      if (!kaiju || kaijuRevealed()) drawShipHpBar(ship, leftSide ? labelX + blockW - 36 : labelX, canvasPos.y + 3, ctx);
-      if (tag) drawCommissionTag(ctx, tag, leftSide ? labelX + blockW - tagW : labelX, canvasPos.y + 13);
+      if (!kaiju || kaijuRevealed()) drawShipHpBar(ship, leftSide ? labelX + blockW - 36 : labelX, ly + 3, ctx);
+      if (tag) drawCommissionTag(ctx, tag, leftSide ? labelX + blockW - tagW : labelX, ly + 13);
       // Name + HP bar (+ line tag), claimed so a body label steps around them.
-      reserveRect(`shipname:${ship.id}`, labelX, canvasPos.y - 12, Math.max(30, blockW), blockH, nm);
+      reserveRect(`shipname:${ship.id}`, labelX, ly - 12, Math.max(30, blockW), blockH, nm);
     }
   }
 }
@@ -8557,19 +8619,22 @@ function drawTorchTransitShip(
   // ETA drops 8px rather than colliding with it.
   const named = isSelected || ctx.hoveredShipId === ship.id || kaiju;
   if (named) {
-    const labelX = canvasPos.x + iconSize / 2 + 4;
     ctx.ctx.fillStyle = isSelected ? '#ffb84d' : shipColorValue;
     ctx.ctx.font = '9px "Audiowide", monospace';
     ctx.ctx.textAlign = 'left';
     ctx.ctx.textBaseline = 'middle';
     const nm = shipLabelName(ship.name);
-    ctx.ctx.fillText(nm, labelX, canvasPos.y - 6);
     const nameW = ctx.ctx.measureText(nm).width;
-    if (!kaiju || kaijuRevealed()) drawShipHpBar(ship, labelX, canvasPos.y + 3, ctx);
+    // The Leviathan's name rides its head, in frame (kaijuLabelAt).
+    const kl = kaiju ? kaijuLabelAt(canvasPos, heading, iconSize, Math.max(36, nameW), ctx.canvas.width) : null;
+    const labelX = kl ? kl.x : canvasPos.x + iconSize / 2 + 4;
+    const ly = kl ? kl.y : canvasPos.y;
+    ctx.ctx.fillText(nm, labelX, ly - 6);
+    if (!kaiju || kaijuRevealed()) drawShipHpBar(ship, labelX, ly + 3, ctx);
     // Never while selected, so it cannot collide with the ETA line below.
     const tag = commissionTag(ship, isSelected, ctx.hoveredShipId === ship.id);
-    const tagW = tag ? drawCommissionTag(ctx, tag, labelX, canvasPos.y + 13) : 0;
-    reserveRect(`shipname:${ship.id}`, labelX, canvasPos.y - 12,
+    const tagW = tag ? drawCommissionTag(ctx, tag, labelX, ly + 13) : 0;
+    reserveRect(`shipname:${ship.id}`, labelX, ly - 12,
       Math.max(30, nameW, tagW), tag ? 29 : 19, nm);
   }
 

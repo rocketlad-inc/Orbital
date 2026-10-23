@@ -31,6 +31,7 @@ import { drawnRadiusOf } from './bodyPresentation';
 import { anchorToBody, anchoredWorldPos, type BodyAnchor } from './fxAnchor';
 import { battleScale, battleShipOffsetPx } from './battleLayoutLive';
 import { getWorldMenuOpenBodyId } from '../game/worldMenu/store';
+import { kaijuHeldAt } from './kaijuFx';
 import {
   drawRound, drawMuzzle, drawBeam, drawCharge, drawSparks, drawHullHit, drawShieldHit, drawScorch,
   glowAt, ENERGY_FX, drawExplosion, drawHullBreakup, HullLook, drawFlakBurst, drawFlakDrag,
@@ -816,6 +817,21 @@ export function drawEngagementFire(
     if (stl.hp <= 0) continue;
     addFactionAt(bodyStlFactions, stl.bodyId, stl.ownedBy);
   }
+  // THE LEVIATHAN STILL ON ITS PREY (kaijuHeldAt). It is in flight from
+  // the tick it breaks a world, but drawn wrapped round that world until
+  // its arms let go: the guards it fought that tick keep firing at it
+  // where it is drawn, instead of standing down beside a beast still
+  // crushing their world. Only while held; it is never a target in flight.
+  let heldBeast: { ship: Ship; bodyId: string; pos: { x: number; y: number }; r: number } | null = null;
+  const held = kaijuHeldAt(nowMs);
+  if (held) {
+    const beast = ships.find(s => s.class === 'kaiju' && !!s.transit && (s.hp ?? 0) > 0
+      && (held.shipId == null || s.id === held.shipId));
+    if (beast) {
+      addFactionAt(bodyShipFactions, held.bodyId, beast.ownedBy);
+      heldBeast = { ship: beast, bodyId: held.bodyId, pos: worldToCanvas(held.x, held.y, rc), r: held.size * 0.25 };
+    }
+  }
 
   // Collect engaged shooters into the reusable scratch list. Engaged =
   // the server says it fired recently (tick window) AND an enemy is
@@ -996,7 +1012,8 @@ export function drawEngagementFire(
       const s = ix.shipById.get(stampedId);
       const sHit = s
         && (s.hp ?? 0) > 0
-        && (shooterFlying || (!s.transit && s.orbit.parentBodyId === shooter.bodyId))
+        && (shooterFlying || (!s.transit && s.orbit.parentBodyId === shooter.bodyId)
+          || (heldBeast?.ship === s && heldBeast.bodyId === shooter.bodyId))
         && s.ownedBy !== shooter.ownedBy
         && !atPeace(peace, s.ownedBy, shooter.ownedBy);
       if (sHit) tShip = s;
@@ -1038,6 +1055,10 @@ export function drawEngagementFire(
         const score = (sHash ^ idHash(s.id)) >>> 0;
         if (score > bestScore) { tShip = s; tStl = null; bestScore = score; }
       }
+      // The beast held on this world (above), when nothing parked is left.
+      if (!tShip && heldBeast && heldBeast.bodyId === shooter.bodyId
+        && heldBeast.ship.ownedBy !== shooter.ownedBy
+        && !atPeace(peace, heldBeast.ship.ownedBy, shooter.ownedBy)) tShip = heldBeast.ship;
       // Settlements only when NO hostile ship is left — the server never
       // bombards past a live orbit (target priority), so neither does
       // the visual.
@@ -1061,7 +1082,7 @@ export function drawEngagementFire(
     // `let`: the occlusion pass below may re-aim at a target that is
     // actually in line of sight.
     let tpNow = tShip
-      ? shipCanvasPos(tShip, rc, transitCanvasPos)
+      ? (heldBeast?.ship === tShip ? heldBeast.pos : shipCanvasPos(tShip, rc, transitCanvasPos))
       : settlementCanvasPos(tStl!, rc);
     if (!fp || !tpNow) continue;
     // The SHOOTER must be on screen. drawShip culls any hull more than
@@ -1144,7 +1165,8 @@ export function drawEngagementFire(
     // rounds leave the bow side of the shooter and land on the face of
     // the target, not hull centre to hull centre.
     const sR = shooter.ship ? (rc.shipHitboxes?.get(shooter.ship.id)?.r ?? 14) : 16;
-    const tR = tShip ? (rc.shipHitboxes?.get(tShip.id)?.r ?? 14) : 18;
+    const tR = tShip
+      ? (heldBeast?.ship === tShip ? heldBeast.r : (rc.shipHitboxes?.get(tShip.id)?.r ?? 14)) : 18;
     const seedBase = (idHash(shooter.id) ^ Math.imul(volleyIdx, 0x9e3779b1)) >>> 0;
     const hitAng = Math.atan2(fp.y - tpNow.y, fp.x - tpNow.x);
     let faceX = tpNow.x + Math.cos(hitAng) * tR * 0.3;
@@ -1198,7 +1220,8 @@ export function drawEngagementFire(
           if (lk < 1 && !bubble) drawHullHit(c, faceX, faceY, hitAng, tR * 0.28, lk, seedBase + r);
           continue;
         }
-        const lead = tShip
+        // (The held beast is drawn still on its world, not on its course.)
+        const lead = tShip && heldBeast?.ship !== tShip
           ? shipLeadCanvas(tShip, rc, flight * (1 - k))
           : { dx: 0, dy: 0 };
         const tx = faceX + lead.dx, ty = faceY + lead.dy;

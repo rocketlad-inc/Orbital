@@ -18,11 +18,21 @@
   inset: 0;
   background: rgba(2, 6, 12, 0.78);
   backdrop-filter: blur(3px);
-  z-index: 1200;            /* under the tutorial (3000) and the phone dock */
+  z-index: 1200;            /* phone: under the bottom dock (it ends on top of it) */
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 12px;
+}
+/* DESKTOP: A MODAL ABOVE THE DOCK RAIL. The rail (DockRail.css, 3200) and
+   its side panels (3000-3100) sat over the designer, so its badged icons
+   covered the Kinetic and Energy Mount "+" buttons and a click there hit
+   the rail (judges, "Designing a destroyer", 2026-10-23, f200). Above them
+   now, and under the tutorial (TutorialOverlay, 3300), which walks a new
+   player through this very screen. The phone keeps its bottom dock. */
+@media (min-width: 769px) {
+  .ship-designer-overlay { z-index: 3250; }
+  .cfp-scrim { z-index: 3260; }   /* opened from inside the designer */
 }
 
 .sd {

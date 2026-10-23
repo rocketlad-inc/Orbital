@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useCallback, useState, useMemo } from 'react';
-import { spawnKaijuStrike, spawnKaijuDeath, drawKaijuFx, isKaijuShipId } from '../render/kaijuFx';
+import { spawnKaijuStrike, spawnKaijuDeath, drawKaijuFx, drawKaijuShards, isKaijuShipId } from '../render/kaijuFx';
 import { ramApproachDir, impactPoint } from '../render/asteroidRam';
 import { refitStatus } from '../game/refitStatus';
 import { routeForShip } from '../game/routeSelectors';
@@ -2835,8 +2835,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
     }
 
-    // Wrecks first — kill-site debris sits UNDER live hulls.
-    if (!isLightweight()) drawWrecks(renderContext, nowMs);
+    // Wrecks first — kill-site debris sits UNDER live hulls. So do the
+    // shards of a world the Leviathan breaks: rock flying into the debris
+    // field, never painted over the fleet guarding it.
+    if (!isLightweight()) {
+      drawWrecks(renderContext, nowMs);
+      drawKaijuShards(renderContext, nowMs);
+    }
 
     // Draw ships.
     //
@@ -3129,7 +3134,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
               ? arrivalStandoffPx(drawnRadiusOf(pres, b, sc), renderContext.liveBattles?.get(b.id), reach)
               : drawnRadiusOf(pres, b, sc) + 10) / Math.max(1e-9, sc),
             isDest: b.id === destId,
-          })));
+          })),
+          // Its own course: an arriving formation keeps its shape at the
+          // stop, not every slot on its own ray (keepOffDrawnDiscs).
+          samples ?? undefined);
         }
         if (ship.class === 'missile' && placed && placed.length > 1) {
           const home = ship.orbit?.parentBodyId ? bodyById2.get(ship.orbit.parentBodyId) : undefined;

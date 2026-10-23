@@ -29,7 +29,7 @@
 
 import { Body } from '../types';
 import { bodyPosition } from '../physics/orbitalMechanics';
-import { RenderContext, worldToCanvas } from './mapRenderer';
+import { RenderContext, worldToCanvas, sterilisedBlend } from './mapRenderer';
 import { drawnRadiusOf } from './bodyPresentation';
 import { drawSunSquid, LEVIATHAN_PALETTE, SquidPalette } from './sunSquid';
 import { glowAt } from './fxArt';
@@ -228,6 +228,32 @@ export function kaijuStrikeHolds(nowMs: number): boolean {
     const w = holdWindow(f);
     return !!w && nowMs >= f.startMs && nowMs < w.end + w.release;
   });
+}
+
+/**
+ * THE BEAST STILL ON ITS PREY, for the guns (combatFx drawEngagementFire).
+ * It leaves for its next meal on the tick it breaks a world, so the
+ * server's fight at that world ends with that tick: the outliner says
+ * ORBITING, and the guards' fire stopped while the beast was still drawn
+ * wrapped round the world, crushing it (judges, the Leviathan clip,
+ * 2026-10-23, 10.0-11.6 s: "the fleet giving up"). The strike it is
+ * drawn finishing is the tick the guards fought it, so they keep firing at
+ * it where it is drawn until its arms let go; from then on it is visibly
+ * leaving, and they stop. Null unless a strike holds it over a world and
+ * it was drawn there this frame (`maxAgeMs`). `x, y` world units (where it
+ * was drawn), `size` px.
+ */
+export function kaijuHeldAt(
+  nowMs: number, maxAgeMs = 250,
+): { shipId: string | null; bodyId: string; x: number; y: number; size: number } | null {
+  if (!lastDrawn || Math.abs(nowMs - lastDrawn.ms) > maxAgeMs) return null;
+  for (const f of live) {
+    const w = holdWindow(f);
+    if (!w || nowMs < f.startMs || nowMs >= w.end) continue;
+    if (lastDrawn.rel?.bodyId !== f.bodyId) continue;
+    return { shipId: lastDrawnShip, bodyId: f.bodyId, x: lastDrawn.x, y: lastDrawn.y, size: lastDrawn.size };
+  }
+  return null;
 }
 
 const smoother = (v: number) => { const x = clamp01(v); return x * x * x * (x * (x * 6 - 15) + 10); };
@@ -473,25 +499,7 @@ function drawStrike(rc: RenderContext, f: Fx, k: number, nowMs: number) {
       g.lineWidth = Math.max(1.5, R * 0.12 * (1 - bk));
       g.beginPath(); g.arc(cp.x, cp.y, ring, 0, TWO_PI); g.stroke();
       g.restore();
-      // Shards of the world, tumbling out, in its own colour.
-      const sr = mulberry32(f.seed + 13);
-      const shards = 28;
-      g.save();
-      for (let i = 0; i < shards; i++) {
-        const a = sr() * TWO_PI, v = 0.8 + 2.6 * sr(), spin = (sr() - 0.5) * 8;
-        const d = R * (0.3 + v * smooth(bk) * 1.6);
-        const x = cp.x + Math.cos(a) * d, y = cp.y + Math.sin(a) * d;
-        const s = R * (0.08 + 0.18 * sr()) * (1 - 0.5 * bk);
-        g.save();
-        g.translate(x, y); g.rotate(spin * bk + a);
-        g.globalAlpha = 1 - smooth((bk - 0.55) / 0.45);
-        g.fillStyle = body.color || '#8a7a6a';
-        g.beginPath(); g.moveTo(s, 0); g.lineTo(-s * 0.6, s * 0.7); g.lineTo(-s * 0.4, -s * 0.8); g.closePath(); g.fill();
-        g.fillStyle = `rgba(${LEVIATHAN_PALETTE.hot}, ${(0.5 * (1 - bk)).toFixed(3)})`;
-        g.fillRect(-s * 0.15, -s * 0.15, s * 0.3, s * 0.3);
-        g.restore();
-      }
-      g.restore();
+      // The shards themselves are drawn UNDER the hulls (drawKaijuShards).
     }
   } else if (k > 0.2 && k < 0.7) {
     // A violet pressure wave where the light goes in, ahead of the fire
@@ -502,6 +510,91 @@ function drawStrike(rc: RenderContext, f: Fx, k: number, nowMs: number) {
     g.strokeStyle = `rgba(${LEVIATHAN_PALETTE.glow}, ${(0.45 * (1 - wk)).toFixed(3)})`;
     g.lineWidth = Math.max(1.5, R * 0.08);
     g.beginPath(); g.arc(cp.x, cp.y, R * (1.05 + 1.8 * wk), 0, TWO_PI); g.stroke();
+    g.restore();
+  }
+}
+
+// ---- the shards of a broken world ---------------------------------------
+
+/** The rubble the debris field draws (mapRenderer drawDebrisField): what
+ *  the shards fly out to become. */
+const RUBBLE = { r: 0x6f, g: 0x68, b: 0x60 };
+
+function rgbOf(hex: string | undefined): { r: number; g: number; b: number } | null {
+  const m = /^#?([0-9a-f]{6})$/i.exec((hex ?? '').trim());
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
+
+/**
+ * WHAT A BROKEN WORLD'S SHARDS ARE MADE OF: its crust as drawn, not its
+ * map dot. They were filled with `body.color`, Io's flat label yellow, so
+ * the break burst into 28 saturated yellow triangles over grey rubble and
+ * over the fleet ("UI confetti", judges, the Leviathan clip, 2026-10-23).
+ * Rock: the debris field's own grey, keeping only a trace of the world's
+ * hue, and none of it once the world is ash (`ash` 0..1, sterilisedBlend).
+ * `lit` faces the Sun, `dark` turns away; a tumbling shard swings between.
+ */
+export function kaijuShardTones(color: string | undefined, ash: number): { lit: string; dark: string } {
+  const c = rgbOf(color) ?? RUBBLE;
+  const keep = 0.22 * (1 - Math.max(0, Math.min(1, ash)));
+  const mix = (a: number, b: number) => a + (b - a) * keep;
+  const base = { r: mix(RUBBLE.r, c.r), g: mix(RUBBLE.g, c.g), b: mix(RUBBLE.b, c.b) };
+  const tone = (k: number) => `rgb(${[base.r, base.g, base.b].map(v => Math.round(Math.min(255, v * k))).join(', ')})`;
+  return { lit: tone(1.35), dark: tone(0.48) };
+}
+
+/**
+ * THE BREAK'S SHARDS, drawn with the wrecks UNDER the hulls (MapCanvas):
+ * a burst of rock tumbling out of the world and settling into the debris
+ * field, never painted over the fleet guarding it. Rock-coloured
+ * (kaijuShardTones) and lit from the Sun as they tumble.
+ */
+export function drawKaijuShards(rc: RenderContext, nowMs: number): void {
+  for (const f of live) {
+    if (f.kind !== 'break') continue;
+    const k = (nowMs - f.startMs) / KAIJU_BREAK_MS;
+    if (k < BREAK_BURST || k >= 1) continue;
+    const body = bodyOf(rc, f.bodyId);
+    if (!body) continue;
+    const g = rc.ctx;
+    const wp = bodyPosition(body, rc.t, rc.bodies);
+    const cp = worldToCanvas(wp.x, wp.y, rc);
+    const R = Math.max(6, drawnRadiusOf(rc.presentation, body, rc.camera.scale));
+    const bk = clamp01((k - BREAK_BURST) / (1 - BREAK_BURST));
+    const tones = kaijuShardTones(body.color, sterilisedBlend(body, rc));
+    const sun = worldToCanvas(0, 0, rc);
+    const sunA = Math.atan2(sun.y - cp.y, sun.x - cp.x);
+    const sr = mulberry32(f.seed + 13);
+    const shards = 28;
+    g.save();
+    for (let i = 0; i < shards; i++) {
+      const a = sr() * TWO_PI, v = 0.8 + 2.6 * sr(), spin = (sr() - 0.5) * 8;
+      const d = R * (0.3 + v * smooth(bk) * 1.6);
+      const x = cp.x + Math.cos(a) * d, y = cp.y + Math.sin(a) * d;
+      const s = R * (0.08 + 0.18 * sr()) * (1 - 0.5 * bk);
+      const rot = spin * bk + a;
+      g.save();
+      g.translate(x, y); g.rotate(rot);
+      g.globalAlpha = 1 - smooth((bk - 0.55) / 0.45);
+      // The whole shard in shadow, then its sunward facet lit: which facet
+      // that is turns as it tumbles, so the burst reads as solid rock.
+      g.fillStyle = tones.dark;
+      g.beginPath(); g.moveTo(s, 0); g.lineTo(-s * 0.6, s * 0.7); g.lineTo(-s * 0.4, -s * 0.8); g.closePath(); g.fill();
+      const facing = Math.cos(sunA - rot);
+      g.fillStyle = tones.lit;
+      g.beginPath();
+      if (facing >= 0) { g.moveTo(s, 0); g.lineTo(-s * 0.4, -s * 0.8); g.lineTo(-s * 0.1, 0); }
+      else { g.moveTo(s, 0); g.lineTo(-s * 0.6, s * 0.7); g.lineTo(-s * 0.1, 0); }
+      g.closePath(); g.fill();
+      // Still hot inside for the first moments of the burst.
+      if (bk < 0.5) {
+        g.fillStyle = `rgba(${LEVIATHAN_PALETTE.hot}, ${(0.35 * (1 - bk * 2)).toFixed(3)})`;
+        g.fillRect(-s * 0.12, -s * 0.12, s * 0.24, s * 0.24);
+      }
+      g.restore();
+    }
     g.restore();
   }
 }
