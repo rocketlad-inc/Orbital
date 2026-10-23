@@ -301,11 +301,11 @@ async function film() {
     const t0 = Date.now();
     for (let k = 0; k < total; k++) {
       // A frame waits on at most one server tick (bounded in the page at
-      // 30 s + 90 s); past 150 s the page is wedged and the take ends here
+      // 30 s + 90 s); past 600 s (a time cut can hold many ticks) the page is wedged and the take ends here
       // with what it has. A screenshot gets three tries.
       let done = false;
       try {
-        const r = await b.evaluate(`window.__studio.filmFrame().then(r => JSON.stringify(r))`, 150_000);
+        const r = await b.evaluate(`window.__studio.filmFrame().then(r => JSON.stringify(r))`, 600_000);
         done = JSON.parse(r).done;
       } catch (e) {
         console.error(`\nframe ${k}: ${e.message}; ending the take with ${frames.length} frames`);

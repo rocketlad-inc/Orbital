@@ -948,7 +948,11 @@ export class Director {
       // In flight: stop `lead` ticks out. Parked: stop at once for lead 0
       // (it has landed); otherwise it has yet to leave, so keep going.
       if (tr ? tr.arriveTick - now <= lead : lead <= 0) break;
-      await this.ticks(1);
+      // As many ticks as are surely needed in one request (the server runs
+      // up to 12): one at a time, a 35-tick cut outlived the film's frame.
+      const k = tr ? Math.max(1, Math.min(12, tr.arriveTick - now - lead, max - n)) : 1;
+      await this.ticks(k);
+      n += k - 1;
     }
     this.note(`advance: ${n} ticks, now tick ${this.host.state().currentTick}`);
   }
