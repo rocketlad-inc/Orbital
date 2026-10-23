@@ -2465,7 +2465,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
               units.push({
                 id: s.id,
                 owner: s.ownedBy,
-                group: s.fleetId ?? null,
+                // Loose hulls from ANOTHER world's yard hold together as
+                // their own group: a squadron that came in from Ceres stays
+                // a squadron beside Earth's own defenders instead of melting
+                // into them (judges, Mega Destroyer clip, 2026-10-22: "three
+                // groups read as two"). Hulls at home stay loose.
+                group: s.fleetId ?? (s.homeBodyId && s.homeBodyId !== bodyId ? `yard:${s.homeBodyId}` : null),
                 sizePx: shipIconSize(s.class, false),
                 armed: (s.damagePerTick ?? getShipClass(s.class).damagePerTick) > 0,
                 escortRel: escortRel && escortRel.length > 0 ? escortRel : undefined,

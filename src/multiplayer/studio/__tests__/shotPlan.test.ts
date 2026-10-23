@@ -34,6 +34,14 @@ describe('arc pans', () => {
     expect(m.x).toBeCloseTo(2500);
   });
 
+  it('starts its pull-back at rest, not at full rate', () => {
+    // Judges, 2026-10-22: a pan off a close-up shrank the world a quarter
+    // in its first frame (the dip ran on the raw clock).
+    const apex = arcApexScale(from, 5000, 0, 1, view);
+    const firstFrame = panCamera(1 / 90, from, 5000, 0, 1, { apex });   // 1 frame of a 3 s pan
+    expect(firstFrame.scale).toBeGreaterThan(0.99);
+  });
+
   it('pulls back BEFORE it travels, and travels before it pushes in', () => {
     const apex = arcApexScale(from, 5000, 0, 1, view);
     const early = panCamera(0.15, from, 5000, 0, 1, { apex });
