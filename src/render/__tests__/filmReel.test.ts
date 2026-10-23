@@ -13,10 +13,11 @@ const beat = (tick: number, kind: string, weight: number, body: string | null = 
   ({ tick, kind, body, weight, fid: 'a', target: 'b', text: `${kind} at ${tick}` });
 
 describe('filmReel', () => {
-  it('budgets a share-length film, growing gently with the match', () => {
-    expect(reelBudget(20)).toBe(42);
-    expect(reelBudget(500)).toBe(63);
-    expect(reelBudget(5000)).toBe(72);
+  it('budgets about two minutes for a big match, less for a short one', () => {
+    expect(reelBudget(20)).toBe(60);
+    expect(reelBudget(160)).toBe(75);
+    expect(reelBudget(525)).toBe(120);
+    expect(reelBudget(5000)).toBe(130);
   });
 
   it('finds the deadliest stretch of a long fight', () => {
@@ -240,7 +241,7 @@ describe('filmCaptions', () => {
         { tick_number: 31, kind: 'senate_vote', payload: '{"outcome":"passed"}', actor_faction_id: 'g:f1', target_faction_id: null, body_id: null },
       ] } as unknown as MatchSummary;
     const [dyson, senate] = buildBeats(s, { lang: 'en', drawable: () => true });
-    expect(dyson.weight).toBeGreaterThan(senate.weight + 60);
+    expect(dyson.weight).toBeGreaterThan(senate.weight + 50);
   });
 
   it('demotes a world-bound headline it cannot show to the ticker', () => {

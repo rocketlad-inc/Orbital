@@ -52,12 +52,12 @@ import {
   battleWindow, filmSecondsAt, planReel, reelRate, reelSeconds,
   type ReelBattle, type ReelBeat, type ReelScene,
 } from './filmReel';
-import { beatCaption, broadcastCopy, buildBeats, captionFor, type Caption } from './filmCaptions';
+import { beatCaption, billName, broadcastCopy, buildBeats, captionFor, type Caption } from './filmCaptions';
 import {
   drawBattleTally, drawClock, drawCountChips, drawLowerThird, drawProgress,
   drawResultCard, drawStandings, drawTicker, drawTitleCard, drawVignette,
   liftColor, unitOf, type FilmFaction, type StandingRow, type TallySide,
-  drawBattleVerdict, drawProgressMeter, shortName, drawHookLine, drawDysonShell,
+  drawBattleVerdict, drawProgressMeter, shortName, drawHookLine, drawDysonShell, drawSenateCard,
 } from './filmOverlay';
 
 const NEUTRAL = '#8a9fb3';
@@ -534,6 +534,40 @@ export function createMatchMap(
       if (at && byId.has(at) && drawableAt(byId.get(at)!, e.tick)) e.body = at;
     }
 
+    // WHAT EACH LAW DID, measured from the record: ships built while ship
+    // costs were halved, fleets grown while upkeep was cut, the losses of
+    // an empire the Senate authorised war on, the reparations paid out.
+    for (const e of beats) {
+      if (e.kind !== 'senate_vote' || e.weight <= 0) continue;
+      const p = (e.data ?? {}) as Record<string, unknown>;
+      const inner = (p.payload ?? {}) as Record<string, unknown>;
+      const until = Math.min(hi, Number(p.effect_until_tick) || e.tick + 24);
+      const days = Math.max(0, until - e.tick);
+      const slider = String(inner.slider_id ?? '');
+      const name = (id: unknown) => shortName(filmFaction(String(id ?? ''))?.name ?? '');
+      let impact = '';
+      if (p.bill_kind === 'reparations' && Number(p.transferred) > 0) {
+        impact = T('senate.paid', { n: Number(p.transferred).toLocaleString('en-US'), k: Number(p.recipients) || 0 });
+      } else if (p.bill_kind === 'war_authorization') {
+        const target = String(p.target_faction_id ?? inner.target_faction_id ?? '');
+        let n = 0;
+        for (let t = e.tick + 1; t <= until; t++) for (const d of deathAt.get(t) ?? []) if (d.fid === target) n++;
+        if (n > 0) impact = T('senate.lost', { b: name(target), n, d: days });
+      } else if (/ship_build|rush/.test(slider)) {
+        const seen = new Set(timeline.worldAt(e.tick).ships.keys());
+        let n = 0;
+        for (let t = e.tick + 1; t <= until; t++) {
+          for (const id of timeline.worldAt(t).ships.keys()) if (!seen.has(id)) { seen.add(id); n++; }
+        }
+        if (n > 0) impact = T('senate.built', { n });
+      } else if (/upkeep/.test(slider)) {
+        const a = timeline.worldAt(e.tick).ships.size, b = timeline.worldAt(until).ships.size;
+        if (b !== a) impact = T('senate.fleets', { a, b });
+      }
+      e.data = { ...p, impact,
+        term: p.effect_until_tick == null && p.bill_kind !== 'war_authorization' ? T('senate.forever') : T('senate.for', { d: days }) };
+    }
+
     lastFacts = { battles, beats: [...beats].filter(b => b.weight > 0).sort((a, b) => b.weight - a.weight).slice(0, 40)
       .map(b => ({ tick: b.tick, kind: b.kind, w: Math.round(b.weight), body: b.body, text: b.text.slice(0, 60) })) };
     const dysonBody = (summary.chronicle ?? []).find(r => r.kind === 'dyson_initiated')?.body_id ?? null;
@@ -565,6 +599,7 @@ export function createMatchMap(
     // wide shot. Held close, a short one ran a day and a half a frame and
     // hulls crossed the screen between two frames.
     systemFrames.clear();
+    travelSeconds.clear();
 
     // --- the ticker: smaller headlines, spaced so each can be read ------
     ticker = [];
@@ -609,8 +644,6 @@ export function createMatchMap(
   /** Where in the frame the subject sits: a little above centre, clear
    *  of the lower third. */
   const FOCUS_Y = 0.44;
-  /** Seconds a push in or a pull out takes. */
-  const MOVE_SECONDS = 1.15;
   /** A drawn subject's radius as a share of the frame height. */
   const BATTLE_SUBJECT = 0.1;
   const WORLD_SUBJECT = 0.12;
@@ -801,7 +834,16 @@ export function createMatchMap(
     const sm = (a: number, b: number, v: number) => { const q = Math.max(0, Math.min(1, (v - a) / (b - a))); return q * q * (3 - 2 * q); };
     let k: number, offFrac = 0, lateral = 0;
     const foc = focusOf(s, subj);
-    if (s.framing === 'battle') {
+    let sweep = 0;
+    if (s.framing === 'battle' && s.seconds > 7) {
+      // A BIG BATTLE IS THREE SETUPS in one continuous move: the whole
+      // fight established wide, a push in that sweeps round the orbit
+      // through the thick of it, and a pull back out for the verdict.
+      const inn = sm(0.06, 0.42, prog), out = sm(0.64, 0.96, prog);
+      k = 0.8 + 0.52 * inn - 0.6 * out;
+      offFrac = 0.55 * inn * (1 - out);
+      sweep = (sm(0.2, 0.7, prog) - 0.5) * 1.1 * foc.side;
+    } else if (s.framing === 'battle') {
       const again = repeatVisit(s);
       const push = sm(0, 0.62, prog) - 0.55 * sm(0.72, 1, prog);
       k = (again ? 1.12 : 0.86) + (again ? 0.22 : 0.36) * push;
@@ -811,7 +853,8 @@ export function createMatchMap(
       lateral = (prog - 0.5) * 0.14 * (foc.side);
     }
     const rw = drawnWorldR(byGame.get(subj)!) * foc.r;
-    const cx = Math.cos(foc.ang) * rw * offFrac, cy = Math.sin(foc.ang) * rw * offFrac;
+    const ang = foc.ang + sweep;
+    const cx = Math.cos(ang) * rw * offFrac, cy = Math.sin(ang) * rw * offFrac;
     const sc = f.scale * k;
     return { x: f.x + cx + (lateral * W) / sc,
       y: f.y - (H / 2 - H * FOCUS_Y) / f.scale + (H / 2 - H * FOCUS_Y) / sc + cy,
@@ -822,26 +865,45 @@ export function createMatchMap(
   const onScreen = (f: Frame, p: { x: number; y: number }) =>
     ({ x: W / 2 + (p.x - f.x) * f.scale, y: H / 2 + (p.y - f.y) * f.scale });
 
-  /**
-   * Blend two frames so a chosen world point travels smoothly across the
-   * screen while the zoom changes geometrically: a push in reads as
-   * diving toward the subject, not as a pan that happens to zoom.
-   */
-  const blendFrames = (a: Frame, b: Frame, e: number, anchor: { x: number; y: number } | null): Frame => {
-    const scale = Math.exp(Math.log(a.scale) + (Math.log(b.scale) - Math.log(a.scale)) * e);
-    if (!anchor) {
-      return { x: a.x + (b.x - a.x) * e, y: a.y + (b.y - a.y) * e, scale };
-    }
-    const sa = onScreen(a, anchor), sb = onScreen(b, anchor);
-    const sx = sa.x + (sb.x - sa.x) * e, sy = sa.y + (sb.y - sa.y) * e;
-    return { x: anchor.x - (sx - W / 2) / scale, y: anchor.y - (sy - H / 2) / scale, scale };
-  };
-
   const toPx = (p: { x: number; y: number }) => onScreen(cam, p);
 
   /** How "wide" the shot is right now: 1 = the system, 0 = a world. The
    *  overlay uses it to swap the standings for the battle tally. */
   let overview = 1;
+
+  /** Each scene's travel in, seconds (fixed per scene: captions wait on it). */
+  const travelSeconds = new Map<ReelScene, number>();
+  /** The move playing now: the world it is travelling to, and how far. */
+  let travel: { to: string; e: number } | null = null;
+  /**
+   * The smooth zoom-and-pan path from one frame to another (van Wijk and
+   * Nuij, 2003): out as far as the distance needs, across, and in. `S` is
+   * its length; `at(e)` the frame at a share of it.
+   */
+  const zoomPath = (a: Frame, b: Frame) => {
+    const rho = 1.42;
+    const w0 = W / a.scale, w1 = W / b.scale;
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const u1 = Math.hypot(dx, dy);
+    if (u1 < 1e-6 * Math.max(w0, w1)) {
+      const S = Math.abs(Math.log(w1 / w0)) / rho;
+      return { S, at: (e: number) => ({ x: a.x + dx * e, y: a.y + dy * e, scale: W / (w0 * Math.pow(w1 / w0, e)) }) };
+    }
+    const bI = (i: 0 | 1) => {
+      const wi = i ? w1 : w0;
+      return (w1 * w1 - w0 * w0 + (i ? -1 : 1) * rho ** 4 * u1 * u1) / (2 * wi * rho * rho * u1);
+    };
+    const rI = (i: 0 | 1) => { const bb = bI(i); return Math.log(-bb + Math.sqrt(bb * bb + 1)); };
+    const r0 = rI(0), r1 = rI(1);
+    const S = (r1 - r0) / rho;
+    const at = (e: number) => {
+      const sv = S * e;
+      const u = (w0 / (rho * rho)) * (Math.cosh(r0) * Math.tanh(rho * sv + r0) - Math.sinh(r0));
+      const w = (w0 * Math.cosh(r0)) / Math.cosh(rho * sv + r0);
+      return { x: a.x + (dx * u) / u1, y: a.y + (dy * u) / u1, scale: W / w };
+    };
+    return { S: Number.isFinite(S) ? S : 0, at };
+  };
 
   const aim = (tClock: number) => {
     if (!scenes.length) rebuildShots();
@@ -856,41 +918,41 @@ export function createMatchMap(
     const t = dispT;
     let f = frameOf(s, t, prog);
     const subj = viewMode === 'wide' ? null : subjectOf(s, t);
-    const prevSubj = viewMode === 'wide' ? null : subjectOf(prev, t);
     let wideNow = subj ? 0 : 1;
 
-    // A push in is a fixed beat; a pull back out to the system takes the
-    // time-lapse it opens (a 0.4 s whip from a close-up to the whole map
-    // read as a snap, with the territory bands flaring through it).
-    const pullOut = !!prevSubj && !subj;
-    const move = pullOut ? Math.min(1.6, (s?.seconds ?? 1) * 0.85)
-      : Math.min(MOVE_SECONDS, (s?.seconds ?? 1) * 0.42);
+    // THE CAMERA TRAVELS BETWEEN WORLDS (Lorne, 2026-10-22: "zoom out and
+    // in on planets, so players keep a spatial understanding of where
+    // everything is"). Every change of subject is one continuous move on
+    // the van Wijk-Nuij path: out over the map as far as the distance
+    // needs, across, and in on the next world, which is marked on the way.
+    // A scene skipped as a time cut is not a shot: travel from the last
+    // one actually seen.
+    let from: ReelScene | undefined = prev;
+    for (let j = idx - 1; j >= 0 && from && from.seconds < 0.01; j--) from = scenes[j - 1];
+    const fromSubj = viewMode === 'wide' ? null : subjectOf(from, t);
     // Out of the cold open is a cut: the clock has jumped back.
-    const fromTeaser = prev?.kind === 'intro' && !!teaser;
-    if (prev && !fromTeaser && el < move && !(subj && prevSubj === subj)) {
-      const from = frameOf(prev, t, 1);
-      const e = (() => { const u = el / move; return u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2; })();
-      // Pushing in: the new subject must already be in the last shot,
-      // or the move is a whip across empty space -- cut instead.
-      let cut = false;
-      let anchor: { x: number; y: number } | null = null;
-      if (subj && !prevSubj) {
-        // In to a world is a CUT too. A half-second dive from the whole
-        // system down to one world swept the territory rings across the
-        // frame: a brightness strobe on every scene. The movement now
-        // lives INSIDE the shot (the director), not between shots.
-        cut = true;
-      } else if (prevSubj && !subj) {
-        // Out to the wide shot is a CUT: a zoom back out after every
-        // close-up was the breathing the whole film did.
-        cut = true;
-      } else if (subj && prevSubj) {
-        cut = true;   // world to world: a straight cut
+    const fromTeaser = from?.kind === 'intro' && !!teaser;
+    travel = null;
+    if (s && from && !fromTeaser && !(subj && fromSubj === subj) && (subj || fromSubj)) {
+      const a = frameOf(from, t, 1);
+      let dur = travelSeconds.get(s);
+      if (dur === undefined) {
+        dur = Math.min(s.seconds * 0.45, Math.max(0.8, Math.min(1.7, 0.55 + 0.3 * zoomPath(a, f).S)));
+        travelSeconds.set(s, dur);
       }
-      if (!cut) {
-        f = blendFrames(from, f, e, anchor);
-        const wFrom = prevSubj ? 0 : 1;
-        wideNow = wFrom + (wideNow - wFrom) * e;
+      if (el < dur) {
+        const q = Math.max(0, Math.min(1, el / dur));
+        const e = q * q * q * (q * (q * 6 - 15) + 10);
+        const zp = zoomPath(a, f);
+        f = zp.at(e);
+        // How wide the frame is, between the two close shots and the
+        // system: the standings fade in with the map, out with the world.
+        const sys = systemFrame(undefined, t);
+        const wClose = Math.min(W / a.scale, W / f.scale) || 1, wSys = W / sys.scale;
+        const wNow = W / f.scale;
+        wideNow = Math.max(0, Math.min(1, Math.log(Math.max(1, wNow / wClose)) / Math.max(0.1, Math.log(Math.max(1.01, wSys / wClose)))));
+        if (!subj) wideNow = Math.max(wideNow, e);
+        if (subj) travel = { to: subj, e };
       }
     }
     overview = wideNow;
@@ -1486,6 +1548,42 @@ export function createMatchMap(
         ctx.restore();
       }
     }
+    // WHERE THE CAMERA IS GOING, marked on the map as it travels: a
+    // reticle round the next world and its name, so the zoom out reads as
+    // "here is where this is", not as a swoop.
+    if (travel) {
+      const gb = byGame.get(travel.to);
+      if (gb && shown(gb)) {
+        const cp = toPx(pos(gb.id, t));
+        const u = unitOf(H);
+        const rr = Math.max(drawnRadiusOf(pres, gb, cam.scale) * 1.45, 26 * u);
+        const a = Math.min(1, travel.e / 0.15) * (1 - Math.max(0, (travel.e - 0.75) / 0.25));
+        if (a > 0.01) {
+          ctx.save();
+          ctx.globalAlpha = a;
+          ctx.strokeStyle = 'rgba(246,241,227,0.95)';
+          ctx.lineWidth = Math.max(1.5, 2.5 * u);
+          ctx.beginPath(); ctx.arc(cp.x, cp.y, rr, 0, Math.PI * 2); ctx.stroke();
+          for (let q = 0; q < 4; q++) {
+            const ang = q * Math.PI / 2 + Math.PI / 4;
+            ctx.beginPath();
+            ctx.moveTo(cp.x + Math.cos(ang) * rr * 1.08, cp.y + Math.sin(ang) * rr * 1.08);
+            ctx.lineTo(cp.x + Math.cos(ang) * (rr * 1.08 + 12 * u), cp.y + Math.sin(ang) * (rr * 1.08 + 12 * u));
+            ctx.stroke();
+          }
+          const nm = byId.get(gb.id)?.name ?? '';
+          if (nm) {
+            ctx.font = `400 ${Math.round(26 * u)}px "Audiowide", sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            ctx.fillStyle = 'rgba(246,241,227,0.95)';
+            ctx.shadowColor = 'rgba(0,0,0,0.8)'; ctx.shadowBlur = 6 * u;
+            ctx.fillText(nm.toUpperCase(), cp.x, cp.y - rr - 18 * u);
+          }
+          ctx.restore();
+        }
+      }
+    }
     // THE DYSON SPHERE, built where everyone can see it.
     if (dysonBodyId && visibleIds.has(dysonBodyId)) {
       const fin = finaleDyson();
@@ -1906,11 +2004,8 @@ export function createMatchMap(
 
   /** When a scene's caption may come up: once a push in has arrived. */
   const landAt = (s: ReelScene) => {
-    const i = scenes.indexOf(s);
-    const prev = i > 0 ? scenes[i - 1] : undefined;
-    const pushIn = s.framing !== 'system' && !!s.bodyId && (!prev || prev.framing === 'system')
-      && prev?.kind !== 'intro';
-    return pushIn ? Math.min(MOVE_SECONDS * 0.7, s.seconds * 0.3) : 0;
+    // A caption comes up as the camera arrives, not while it travels.
+    return Math.max(0, (travelSeconds.get(s) ?? 0) - 0.15);
   };
 
   function drawFilm() {
@@ -1960,6 +2055,16 @@ export function createMatchMap(
             top.faction.color, ((prog - 0.8) / 0.08) * (1 - overview) * hud);
         }
       }
+    }
+    // THE SENATE AT WORK: the law, the vote, what came of it.
+    if (s.kind === 'beat' && s.beat?.kind === 'senate_vote' && s.beat.data?.bill_kind !== 'chancellor_vote') {
+      const p = s.beat.data ?? {};
+      drawSenateCard(ctx, W, H, {
+        label: T('senate.label'), bill: billName(String(p.title ?? '')),
+        yea: Number(p.yea_weight) || 0, nay: Number(p.nay_weight) || 0,
+        term: String(p.term ?? ''), impact: String(p.impact ?? ''),
+        more: Number(p.also) > 0 ? T('senate.more', { n: Number(p.also) }) : '',
+      }, (el - 0.35) / 0.3, (el - (s.seconds - 0.25)) / 0.25);
     }
     // A victory being BUILT, on screen while it is built.
     const fin = finaleDyson();

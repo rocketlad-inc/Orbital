@@ -800,3 +800,88 @@ export function drawCountChips(ctx: CanvasRenderingContext2D, H: number,
   });
   ctx.restore();
 }
+
+export interface SenateCard {
+  label: string;
+  /** The bill's own name. */
+  bill: string;
+  yea: number;
+  nay: number;
+  /** How long it held ("In force for 24 days"). */
+  term: string;
+  /** What came of it, measured from the record ("212 ships built while it held"). */
+  impact: string;
+  /** "+1 more law passed the same day", or ''. */
+  more: string;
+}
+
+/**
+ * THE SENATE AT WORK: a law that passed, how the vote went, how long it
+ * held and what came of it. Right of frame, clear of the lower third,
+ * under the Sphere meter's slot.
+ */
+export function drawSenateCard(ctx: CanvasRenderingContext2D, W: number, H: number,
+  c: SenateCard, inK: number, outK: number) {
+  const a = Math.max(0, Math.min(1, inK)) * (1 - Math.max(0, Math.min(1, outK)));
+  if (a <= 0.01) return;
+  const u = unitOf(H);
+  const accent = '#f0c66e';
+  const w = 600 * u, pad = 22 * u;
+  ctx.save();
+  ctx.globalAlpha = a;
+  ctx.font = `600 ${Math.round(34 * u)}px ${FONT_BODY}`;
+  const billLines = wrapLines(ctx, `\u201c${c.bill}\u201d`, w - pad * 2, 2);
+  const impactSize = Math.round(32 * u);
+  ctx.font = `700 ${impactSize}px ${FONT_BODY}`;
+  const impactLines = c.impact ? wrapLines(ctx, c.impact, w - pad * 2, 2) : [];
+  const h = pad + 26 * u + 14 * u + billLines.length * 40 * u + 16 * u + 18 * u + 22 * u
+    + 30 * u + impactLines.length * impactSize * 1.15 + (c.more ? 32 * u : 0) + pad;
+  const slide = (1 - Math.max(0, Math.min(1, inK))) * 24 * u;
+  const x = W * 0.945 - w + slide, y = H * 0.05 + 96 * u + 116 * u + 24 * u;
+  ctx.fillStyle = 'rgba(3,6,12,0.86)';
+  ctx.beginPath(); ctx.roundRect(x, y, w, h, 8 * u); ctx.fill();
+  ctx.fillStyle = accent;
+  ctx.fillRect(x, y, 5 * u, h);
+  let cy = y + pad;
+  ctx.textBaseline = 'top';
+  ctx.textAlign = 'left';
+  ctx.font = `700 ${Math.round(24 * u)}px ${FONT_BODY}`;
+  spacing(ctx, 2.5 * u);
+  ctx.fillStyle = accent;
+  ctx.fillText(c.label.toUpperCase(), x + pad, cy);
+  spacing(ctx, 0);
+  cy += 26 * u + 14 * u;
+  ctx.font = `600 ${Math.round(34 * u)}px ${FONT_BODY}`;
+  ctx.fillStyle = INK;
+  for (const l of billLines) { ctx.fillText(l, x + pad, cy); cy += 40 * u; }
+  cy += 16 * u;
+  // The vote: yea against nay, one bar.
+  const bw = w - pad * 2, bh = 18 * u, tot = Math.max(1, c.yea + c.nay);
+  ctx.fillStyle = 'rgba(224,103,92,0.85)';
+  ctx.beginPath(); ctx.roundRect(x + pad, cy, bw, bh, 5 * u); ctx.fill();
+  ctx.fillStyle = 'rgba(127,211,138,0.95)';
+  ctx.beginPath(); ctx.roundRect(x + pad, cy, Math.max(bh, bw * (c.yea / tot)), bh, 5 * u); ctx.fill();
+  cy += bh + 6 * u;
+  ctx.font = `600 ${Math.round(22 * u)}px ${FONT_MONO}`;
+  ctx.fillStyle = 'rgba(127,211,138,1)';
+  ctx.fillText(`YEA ${c.yea}`, x + pad, cy);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = 'rgba(234,130,120,1)';
+  ctx.fillText(`NAY ${c.nay}`, x + w - pad, cy);
+  ctx.textAlign = 'left';
+  cy += 22 * u + 10 * u;
+  ctx.font = `500 ${Math.round(24 * u)}px ${FONT_BODY}`;
+  ctx.fillStyle = 'rgba(238,244,251,0.72)';
+  ctx.fillText(c.term, x + pad, cy);
+  cy += 30 * u;
+  ctx.font = `700 ${impactSize}px ${FONT_BODY}`;
+  ctx.fillStyle = INK;
+  for (const l of impactLines) { ctx.fillText(l, x + pad, cy); cy += impactSize * 1.15; }
+  if (c.more) {
+    cy += 6 * u;
+    ctx.font = `500 ${Math.round(22 * u)}px ${FONT_BODY}`;
+    ctx.fillStyle = 'rgba(238,244,251,0.6)';
+    ctx.fillText(c.more, x + pad, cy);
+  }
+  ctx.restore();
+}

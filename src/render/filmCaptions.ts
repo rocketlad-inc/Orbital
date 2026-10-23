@@ -52,7 +52,7 @@ const WEIGHT: Record<string, number | ((p: P, r: ChronicleRow) => number)> = {
   kaiju_charging: 140, kaiju_leaving: 60, kaiju_gone: 60,
   // The payoff outranks every setup: the kill is the shareable moment.
   kaiju_dead: 200,
-  sun_gate_omen: 45, sun_gate_emerged: 90, sun_gate_opened: 100,
+  sun_gate_omen: 45, sun_gate_emerged: 90, sun_gate_opened: 75,
   megastructure_complete: 30, megastructure_claimed: 25,
   megastructure_captured: 95, megastructure_destroyed: 95,
   dyson_initiated: 90, dyson_milestone: 55, dyson_collapsed: 120,
@@ -65,7 +65,14 @@ const WEIGHT: Record<string, number | ((p: P, r: ChronicleRow) => number)> = {
   secret_discovered: 20,
   // The vote that names a Chancellor can end the match: it is the
   // Senate's whole story in one scene.
-  senate_vote: (p) => (p.outcome === 'passed' && p.bill_kind === 'chancellor_vote' ? 165 : 0),
+  // THE SENATE'S STORY is its laws that passed (Lorne, 2026-10-22): a
+  // Chancellor can end the match; a war authorised or reparations ordered
+  // turn it; a law that halves ship costs arms everyone.
+  senate_vote: (p) => (p.outcome !== 'passed' ? 0
+    : p.bill_kind === 'chancellor_vote' ? 165
+    : p.bill_kind === 'war_authorization' ? 100
+    : p.bill_kind === 'reparations' ? 95
+    : /ship_build|rush|upkeep/.test(String((p.payload as P | undefined)?.slider_id ?? '')) ? 95 : 55),
 };
 
 /**
@@ -270,6 +277,16 @@ function mergeBeats(beats: ReelBeat[], summary: MatchSummary, lang: Lang): ReelB
     last.data = { ...last.data, campaign: worlds, line: worlds.join(' · ') };
     for (const r of run.slice(0, -1)) r.weight = 0;
   }
+  // Laws passed the same day are one sitting of the Senate: the weightier
+  // law is the scene, the card counts the rest.
+  for (const e of out) {
+    if (e.kind !== 'senate_vote' || e.weight <= 0) continue;
+    const same = out.filter(x => x !== e && x.kind === 'senate_vote' && x.weight > 0 && x.tick === e.tick
+      && x.weight <= e.weight);
+    if (!same.length) continue;
+    for (const x of same) x.weight = 0;
+    e.data = { ...e.data, also: same.length };
+  }
   // THE LEVIATHAN'S ARC IN ITS PAYOFFS: a world it scorched and then broke
   // apart, or scorched and then died at, is told by the ending only.
   for (const e of out) {
@@ -452,6 +469,26 @@ function battleCaption(b: ReelBattle,
     sub, fid: a ?? null };
 }
 
+/** A bill's own name, as broadcast copy: no shouting, and short. */
+export function billName(t: string): string {
+  let s = t.trim();
+  if (s.length > 6 && s === s.toUpperCase()) s = s.charAt(0) + s.slice(1).toLowerCase();
+  return s.length > 44 ? `${s.slice(0, 42).replace(/\s+\S*$/, '')}…` : s;
+}
+
+/** Slider laws in plain words ("The Senate halves ship costs"). */
+const LAW_THINGS = ['science_yield_multiplier', 'metal_yield_multiplier', 'ship_build_cost_multiplier',
+  'rush_cost_multiplier', 'fleet_upkeep_multiplier'];
+export function lawTitle(slider: string, v: number,
+  T: (k: string, v?: Record<string, string | number>) => string): string | null {
+  if (!LAW_THINGS.includes(slider) || !(v > 0) || v === 1) return null;
+  const thing = T(`law.thing.${slider}`);
+  if (Math.abs(v - 0.5) < 1e-6) return T('law.halve', { thing });
+  if (Math.abs(v - 2) < 1e-6) return T('law.double', { thing });
+  const pct = Math.round(Math.abs(v - 1) * 100);
+  return v < 1 ? T('law.cut', { thing, pct }) : T('law.raise', { thing, pct });
+}
+
 /** A beat's kicker, title and sub. The sub is always the log line. */
 export function beatCaption(e: ReelBeat,
   T: (k: string, v?: Record<string, string | number>) => string,
@@ -531,9 +568,19 @@ export function beatCaption(e: ReelBeat,
     case 'captain_lost': title = T('title.captain', { name: String(p.captain_name ?? '') }); break;
     case 'senate_vote': {
       const inner = (p.payload ?? {}) as P;
-      title = p.bill_kind === 'chancellor_vote'
-        ? T('title.chancellor', { a: fname(String(inner.candidate_faction_id ?? '')) || a })
-        : T('title.senate', { title: String(p.title ?? '') });
+      if (p.bill_kind === 'chancellor_vote') {
+        title = T('title.chancellor', { a: fname(String(inner.candidate_faction_id ?? '')) || a });
+        break;
+      }
+      // What the law DOES is the headline; its name and the vote are the
+      // line under it, and the Senate card carries what came of it.
+      const tb = fitName(fname(String(p.target_faction_id ?? inner.target_faction_id ?? '')) || b);
+      title = p.bill_kind === 'war_authorization' ? T('law.war', { b: tb })
+        : p.bill_kind === 'reparations' ? T('law.reparations', { b: tb })
+        : lawTitle(String(inner.slider_id ?? ''), Number(inner.target_value), T)
+          ?? T('title.senate', { title: billName(String(p.title ?? '')) });
+      subOverride = T('sub.bill', { title: billName(String(p.title ?? '')), a,
+        y: Number(p.yea_weight) || 0, n: Number(p.nay_weight) || 0 });
       break;
     }
     default: title = e.text; break;

@@ -104,13 +104,17 @@ export const INTRO_SECONDS = 3.4;
 export const FINALE_SECONDS = 5.2;
 export const BEAT_SECONDS = 2.4;
 /** A beat's shortest and longest hold, by weight. */
-export const BEAT_MIN_SECONDS = 2.0;
-export const BEAT_MAX_SECONDS = 2.8;
+// Room for the camera to travel there (a zoom out over the map and in on
+// the world, about a second) before the moment lands.
+export const BEAT_MIN_SECONDS = 2.9;
+export const BEAT_MAX_SECONDS = 3.9;
 /** A battle gets this much for mattering, plus up to SPREAD for size. */
-export const BATTLE_BASE_SECONDS = 2.2;
-export const BATTLE_SPREAD_SECONDS = 5.2;
+// Big battles get time to shine (Lorne, 2026-10-22): the deadliest fight
+// of a match runs about fourteen seconds, at about a second a day.
+export const BATTLE_BASE_SECONDS = 4.5;
+export const BATTLE_SPREAD_SECONDS = 9.5;
 /** The longest stretch of a fight the film will show, in ticks. */
-export const BATTLE_WINDOW_TICKS = 8;
+export const BATTLE_WINDOW_TICKS = 14;
 /** A montage never runs faster than this many seconds per tick (80 t/s)... */
 export const MONTAGE_MIN_RATE = 0.0125;
 /** ...or slower than this, however much budget is left over. */
@@ -132,8 +136,9 @@ const MIN_GAP_TICKS = 3;
 
 /** The film's length for a match of this many ticks. */
 export function reelBudget(span: number): number {
-  // Share length: a feed clip, not a documentary.
-  return Math.max(42, Math.min(72, Math.round(28 + Math.max(0, span) * 0.07)));
+  // About two minutes for a big match (Lorne, 2026-10-22: "it can be
+  // longer, and cover more incidents"): 75 s for 160 days, 120 s for 525.
+  return Math.max(60, Math.min(130, Math.round(55 + Math.max(0, span) * 0.123)));
 }
 
 /** Seconds a battle earns: base plus a share that grows with its weight. */
@@ -206,7 +211,9 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
     const rel = Math.sqrt(w / peakW);
     cands.push({ kind: 'battle', from, to, weight: BATTLE_WEIGHT_FLOOR + BATTLE_WEIGHT_SPREAD * rel,
       place: b.body, pair: b.sides.length >= 2 ? [...b.sides].sort().join('|') : null,
-      seconds: BATTLE_BASE_SECONDS + BATTLE_SPREAD_SECONDS * rel,
+      // ...but never slower than about a second and a quarter a day: a
+      // four-day fight held fourteen seconds is slow motion.
+      seconds: Math.min(BATTLE_BASE_SECONDS + BATTLE_SPREAD_SECONDS * rel, Math.max(BATTLE_BASE_SECONDS, (to - from) * 1.25)),
       framing: 'battle', bodyId: b.body, battle: b });
   }
   for (const e of f.beats) {
@@ -225,7 +232,7 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
     // not repeats: the climax took the repeat discount and lost its scene.
     const place = /^(kaiju|dyson)_/.test(e.kind) ? `arc:${e.kind}` : e.body ?? `${e.kind}:${e.target ?? e.fid ?? ""}`;
     cands.push({ kind: 'beat', from, to, weight: e.weight, place, pair: null,
-      seconds: Math.max(BEAT_MIN_SECONDS, Math.min(BEAT_MAX_SECONDS, BEAT_MIN_SECONDS + (e.weight - 60) / 80)), framing: e.body ? 'world' : 'system',
+      seconds: Math.max(BEAT_MIN_SECONDS, Math.min(BEAT_MAX_SECONDS, BEAT_MIN_SECONDS + (e.weight - 60) / 60)), framing: e.body ? 'world' : 'system',
       bodyId: e.body, beat: e });
   }
   // Heaviest first; ties to the earlier moment so the plan is stable.
