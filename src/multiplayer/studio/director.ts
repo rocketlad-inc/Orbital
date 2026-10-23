@@ -35,7 +35,7 @@ export type Target = string; // 'earth' | 'ship:<id>' | 'fleet:<id>' | 'missile:
 
 export type ShotStep =
   | { at: number; do: 'focus'; target: Target; px?: number; scale?: number }
-  | { at: number; do: 'pan'; target: Target; ms?: number; px?: number; scale?: number; arc?: boolean }
+  | { at: number; do: 'pan'; target: Target; ms?: number; px?: number; scale?: number; arc?: boolean; fit?: Target[] }
   | { at: number; do: 'zoom'; px?: number; scale?: number; factor?: number; ms?: number; target?: Target }
   | { at: number; do: 'follow'; target: Target; ms?: number }
   | { at: number; do: 'tick'; n?: number }
@@ -79,7 +79,12 @@ export type ShotStep =
   /** A server order mid-take (worker/studio.js handleOrder): 'move' a
    *  parked hull on, or 'gate' it through the sun gate it is parked on
    *  (the real crossing, with its flash) and `then` on from the far end. */
-  | { at: number; do: 'order'; order: Record<string, unknown> };
+  | { at: number; do: 'order'; order: Record<string, unknown> }
+  /** Off camera, tick until `ship` is `lead` ticks from landing (or, with
+   *  lead 0 and parked, until it has landed), at most `max` ticks. The
+   *  trip length a shot cannot know in advance (it changes with where the
+   *  worlds are); pair it with a focus and a skip for a clean time cut. */
+  | { at: number; do: 'advance'; ship: Target; lead?: number; max?: number };
 
 /** The game's panels, by the name the dock and the shell know them by. */
 export type PanelId = 'senate' | 'faction' | 'comms' | 'trades' | 'situation' | 'eventlog' | 'multiplayer'
@@ -318,10 +323,10 @@ export class Director {
    *  off the frame, the glide pulls back until both ends fit, moves, and
    *  pushes in again, so the camera never sails through empty space
    *  (`arc: false` keeps the straight glide). */
-  pan(target: Target, o: { ms?: number; px?: number; scale?: number; arc?: boolean } = {}): void {
+  pan(target: Target, o: { ms?: number; px?: number; scale?: number; arc?: boolean; fit?: Target[] } = {}): void {
     const p = this.position(target);
     if (!p) { this.note(`pan: no such target ${target}`); return; }
-    const toScale = o.scale ?? (o.px ? this.scaleFor(target, o.px) : this.cam.scale);
+    const toScale = o.scale ?? (o.fit ? this.fitScale(o.fit) : o.px ? this.scaleFor(target, o.px) : this.cam.scale);
     const view = this.view();
     const arc = o.arc !== false && arcNeeded(this.cam, p.x, p.y, toScale, view)
       ? { apex: arcApexScale(this.cam, p.x, p.y, toScale, view) }
@@ -609,6 +614,7 @@ export class Director {
         case 'box': this.boxDrag = { ships: st.ships, t0: this.clock, ms: st.ms ?? 900, done: false }; break;
         case 'select': this.selectShips(st.ships); break;
         case 'order': await this.order(st.order); break;
+        case 'advance': await this.advance(st.ship, st.lead ?? 2, st.max ?? 80); break;
         case 'skip':
           if (this.film) this.skipMs += Math.max(0, Number(st.ms) || 0);
           else this.note('skip: film only');
@@ -824,7 +830,20 @@ export class Director {
     return { x: r.left + cx * (r.width / c.width), y: r.top + cy * (r.height / c.height) };
   }
   /** Where a cursor target is on the page now. */
+  /** The zoom at which these targets, as they stand now, fill about half
+   *  the frame: two moons a shot moves between, wherever they are. */
+  private fitScale(targets: Target[]): number {
+    const ps = targets.map(t => this.position(t)).filter((p): p is { x: number; y: number } => !!p);
+    if (ps.length < 2) return this.cam.scale;
+    const dx = Math.max(...ps.map(p => p.x)) - Math.min(...ps.map(p => p.x));
+    const dy = Math.max(...ps.map(p => p.y)) - Math.min(...ps.map(p => p.y));
+    const v = this.view();
+    const s = Math.min((v.w * 0.5) / Math.max(dx, 1e-6), (v.h * 0.5) / Math.max(dy, 1e-6));
+    return Math.max(0.0006, Math.min(60, s));
+  }
   private pagePoint(to: Target): { x: number; y: number } | null {
+    // Out of frame, bottom right: where the hand goes when it is done.
+    if (to === 'off') return { x: window.innerWidth + 60, y: window.innerHeight + 60 };
     if (to.startsWith('css:')) {
       const el = document.querySelector<HTMLElement>(to.slice(4));
       if (!el) return null;
@@ -923,6 +942,22 @@ export class Director {
         e.ripple.style.width = `${2 * r}px`; e.ripple.style.height = `${2 * r}px`;
       }
     }
+  }
+
+  private async advance(target: Target, lead: number, max: number): Promise<void> {
+    let n = 0;
+    for (; n < max; n++) {
+      const [id] = this.idsOf(target);
+      const ship = id ? this.host.state().ships.find(s => s.id === id) : undefined;
+      if (!ship) break;
+      const tr = ship.transit?.currentTransfer;
+      const now = this.host.state().currentTick;
+      // In flight: stop `lead` ticks out. Parked: stop at once for lead 0
+      // (it has landed); otherwise it has yet to leave, so keep going.
+      if (tr ? tr.arriveTick - now <= lead : lead <= 0) break;
+      await this.ticks(1);
+    }
+    this.note(`advance: ${n} ticks, now tick ${this.host.state().currentTick}`);
   }
 
   private async order(o: Record<string, unknown>): Promise<void> {
@@ -1134,7 +1169,7 @@ export class Director {
 /** Every verb a shot step can use (ShotStep). The Studio bar refuses a
  *  shot lint flags, so a verb missing here is a verb nobody can use. */
 const VERBS: readonly string[] = ['focus', 'pan', 'zoom', 'follow', 'tick', 'speed', 'caption', 'hook', 'ui',
-  'panel', 'click', 'intercept', 'strike', 'hull', 'skip', 'hulls', 'territory', 'pick', 'cursor', 'box', 'select', 'order'];
+  'panel', 'click', 'intercept', 'strike', 'hull', 'skip', 'hulls', 'territory', 'pick', 'cursor', 'box', 'select', 'order', 'advance'];
 
 const realSetTimeout = window.setTimeout.bind(window);
 const realSleep = (ms: number) => new Promise<void>(r => realSetTimeout(r, ms));
