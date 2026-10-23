@@ -98,7 +98,7 @@ for attempt in range(4):
     try:
         wf[0].save(webp, save_all=True, append_images=wf[1:], duration=round(1000 / a.webp_fps), loop=0, quality=82, method=4)
         break
-    except RuntimeError as e:
+    except (RuntimeError, MemoryError) as e:
         if attempt == 3:
             raise
         print(f"webp encode failed ({e}); trying again")
