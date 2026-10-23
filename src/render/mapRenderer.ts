@@ -10687,7 +10687,7 @@ export function liveInterceptMarkers(
     // drew a full FIRING / chance / clear stack reading "0.0t" over the
     // world it touched, on top of the world's own labels.
     if (m.duration < INTERCEPT_MIN_WINDOW_TICKS) continue;
-    out.push(m.open === tick >= m.opensAt ? m : { ...m, open: tick >= m.opensAt });
+    out.push(m.open === (tick >= m.opensAt) ? m : { ...m, open: tick >= m.opensAt });
   }
   return out;
 }
