@@ -250,19 +250,7 @@
   border-radius: 3px; padding: 5px 7px; color: #cfe0ee; font: inherit;
 }
 
-.rc-shiprow { margin-bottom: 10px; }
-.rc-shiprow-label {
-  font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
-  color: #7a8a9a; margin-bottom: 5px;
-}
-.rc-shiprow-list { display: flex; flex-wrap: wrap; gap: 6px; }
-.rc-ship {
-  font-size: 11px; padding: 5px 10px; border-radius: 3px;
-  background: #131d29; border: 1px solid #2a3d50; color: #9fb3c4; cursor: pointer;
-}
-.rc-ship.on { border-color: #4ecdc4; color: #4ecdc4; font-weight: 600; }
-.rc-ship:disabled { opacity: 0.35; cursor: not-allowed; }
-.rc-hint { font-size: 11px; color: #5a7080; padding-top: 5px; line-height: 1.45; }
+.rc-hint { font-size: 11px; color: #8798a8; padding-top: 5px; line-height: 1.45; }
 
 /* ---- footer ---- */
 .rc-err {
@@ -345,3 +333,138 @@
    lays a route to a rock that will be gone in twenty ticks. */
 .rc-group.is-rocks { color: #9a8fb0; }
 .rc-rockglyph { color: #9a8fb0; font-size: 13px; width: 18px; text-align: center; }
+
+/* ---- Ship picker: the Dispatch design (RouteShipPicker.tsx) ----------
+   Freighters hang off a flight path of worlds, nearest the first stop
+   first; guards are fleet cards drawn in formation. Teal = picked, the
+   same "this is on the route" colour as a collect stop. */
+
+.rsp { display: flex; flex-direction: column; gap: 18px; margin-top: 4px; }
+.rsp-section { display: flex; flex-direction: column; gap: 10px; }
+.rsp-section + .rsp-section { border-top: 1px solid #1c2a38; padding-top: 16px; }
+.rsp-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.rsp-title { font-size: 15px; font-weight: 700; color: #e6f0f7; }
+.rsp-sub { font-size: 11px; color: #8798a8; }
+.rsp-k {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em;
+  color: #8798a8; font-weight: 600;
+}
+
+/* The flight path: one row per world, a line through the globes. */
+.rsp-path { position: relative; display: flex; flex-direction: column; gap: 14px; }
+.rsp-path::before {
+  content: ''; position: absolute; left: 21px; top: 18px; bottom: 14px; width: 2px;
+  background: linear-gradient(#4ecdc4, #2a3d50 40%, #1c2a38);
+}
+.rsp-world { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 12px; position: relative; }
+.rsp-world.is-small { align-items: center; }
+.rsp-node { display: flex; justify-content: center; position: relative; z-index: 1; }
+.rsp-node .rsp-globe { border-radius: 50%; box-shadow: 0 0 0 3px #0f1620; background: #0f1620; }
+.rsp-world-main { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.rsp-world-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.rsp-world-head { display: flex; align-items: baseline; gap: 8px; }
+.rsp-world-row .rsp-world-head { min-width: 128px; }
+.rsp-wname { font-size: 13px; font-weight: 700; color: #e6f0f7; }
+.rsp-wname.is-small { font-size: 12px; }
+.rsp-eta { font-size: 11px; font-weight: 600; color: #8798a8; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rsp-eta.is-here { color: #4ecdc4; }
+.rsp-further { padding-left: 56px; }
+
+.rsp-cards { display: flex; flex-wrap: wrap; gap: 10px; padding-top: 6px; }
+.rsp-card {
+  position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  width: 104px; padding: 6px 6px 7px;
+  background: linear-gradient(#131d29, #101822); border: 1px solid #24364a; border-radius: 8px;
+  color: #cfe0ee; font: 600 11.5px system-ui, -apple-system, 'Segoe UI', sans-serif;
+  cursor: pointer; transition: border-color .15s, box-shadow .15s, transform .15s;
+}
+.rsp-card svg { margin: -6px 0 -8px; }
+.rsp-card:hover:not(:disabled) { border-color: #3d5873; transform: translateY(-1px); }
+.rsp-card.on {
+  border-color: #4ecdc4; background: linear-gradient(#123033, #0f2226);
+  box-shadow: 0 0 0 1px #4ecdc4, 0 0 18px rgba(78, 205, 196, .35);
+}
+.rsp-ship-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rsp-badge {
+  position: absolute; top: -8px; left: 50%; transform: translateX(-50%);
+  background: #4ecdc4; color: #07161a; font: 800 8.5px system-ui, sans-serif;
+  letter-spacing: .12em; text-transform: uppercase; padding: 2px 6px; border-radius: 3px; white-space: nowrap;
+}
+.rsp-tag {
+  font: 600 9px system-ui, sans-serif; letter-spacing: .06em; text-transform: uppercase;
+  color: #8798a8;
+}
+
+.rsp-toks { display: flex; flex-wrap: wrap; gap: 6px; }
+.rsp-tok {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: #121b26; border: 1px solid #24364a; border-radius: 6px; padding: 1px 8px 1px 2px;
+  color: #cfe0ee; font: 600 11px system-ui, -apple-system, 'Segoe UI', sans-serif; cursor: pointer;
+}
+.rsp-tok:hover:not(:disabled) { border-color: #3d5873; }
+.rsp-tok.on { border-color: #4ecdc4; color: #4ecdc4; box-shadow: 0 0 12px rgba(78, 205, 196, .3); }
+.rsp-tok .rsp-tag { margin-left: 2px; }
+.rsp-suffix { color: #8798a8; font-weight: 500; }
+.rsp-card:disabled, .rsp-tok:disabled { opacity: .38; cursor: not-allowed; }
+.rsp-card:focus-visible, .rsp-tok:focus-visible, .rsp-fleet:focus-visible,
+.rsp-more-btn:focus-visible, .rsp-pickall:focus-visible { outline: 2px solid #ffca28; outline-offset: 2px; }
+
+/* Hulls in another star system: through the sun gate, no straight-line time. */
+.rsp-gate {
+  display: flex; align-items: center; gap: 12px; padding: 10px 12px;
+  border: 1px solid #3a2f5c; border-radius: 8px; background: linear-gradient(90deg, #17132a, #0f1620);
+}
+.rsp-gate-glyph { color: #a78bfa; flex: none; }
+.rsp-gate-main { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+
+/* Guards: fleets in formation. */
+.rsp-fleets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.rsp-fleet {
+  position: relative; display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 8px; align-items: center;
+  text-align: left; background: linear-gradient(#131d29, #101822); border: 1px solid #24364a; border-radius: 8px;
+  padding: 8px 10px 8px 4px; color: #cfe0ee; font: 12px system-ui, -apple-system, 'Segoe UI', sans-serif;
+  cursor: pointer; transition: border-color .15s, box-shadow .15s;
+}
+.rsp-fleet:hover { border-color: #3d5873; }
+.rsp-fleet.on {
+  border-color: #4ecdc4; background: linear-gradient(#123033, #0f2226);
+  box-shadow: 0 0 0 1px #4ecdc4, 0 0 18px rgba(78, 205, 196, .3);
+}
+.rsp-badge--fleet { left: 48px; }
+.rsp-formation { position: relative; width: 96px; height: 52px; display: block; }
+.rsp-flag { position: absolute; right: 0; top: -2px; }
+.rsp-escort { position: absolute; opacity: .85; }
+.rsp-escort--0 { left: 22px; top: 26px; }
+.rsp-escort--1 { left: 6px; top: 4px; }
+.rsp-escort--2 { left: 0; top: 30px; opacity: .7; }
+.rsp-fleet-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.rsp-fleet-name { font-size: 13px; font-weight: 700; color: #e6f0f7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rsp-fleet-where { display: flex; align-items: center; gap: 5px; font-size: 11px; color: #8798a8; min-width: 0; }
+.rsp-fleet-where .rsp-globe { flex: none; }
+.rsp-mix { display: flex; gap: 8px; font: 600 11px system-ui, sans-serif; color: #b8c8d6; font-variant-numeric: tabular-nums; }
+.rsp-mix > span { display: inline-flex; align-items: center; gap: 1px; }
+
+.rsp-more { display: flex; gap: 8px; flex-wrap: wrap; }
+.rsp-more-btn, .rsp-pickall {
+  background: #131d29; border: 1px solid #2a3d50; color: #cfe0ee; border-radius: 6px;
+  font: 600 12px system-ui, -apple-system, 'Segoe UI', sans-serif; padding: 6px 12px; cursor: pointer;
+}
+.rsp-more-btn:hover, .rsp-pickall:hover { border-color: #3d5873; }
+.rsp-pickall { margin-left: auto; padding: 3px 10px; font-size: 11px; color: #4ecdc4; }
+.rsp-loose { display: flex; flex-direction: column; gap: 10px; }
+.rsp-loose-world { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid #1a2836; }
+.rsp-loose-head { display: flex; align-items: center; gap: 8px; }
+
+@media (max-width: 560px) {
+  .rsp-fleets { grid-template-columns: minmax(0, 1fr); }
+  .rsp-world-row .rsp-world-head { min-width: 0; width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rsp-card, .rsp-fleet { transition: none; }
+  .rsp-card:hover:not(:disabled) { transform: none; }
+}
+
+/* The foot's one-line answer to "what will this fly with". */
+.rc-summary { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; min-width: 0; }
+.rc-summary-k { font-size: 10px; text-transform: uppercase; letter-spacing: .12em; color: #8798a8; font-weight: 600; }
+.rc-summary-v { font-size: 13px; font-weight: 600; color: #e6f0f7; overflow-wrap: anywhere; }
