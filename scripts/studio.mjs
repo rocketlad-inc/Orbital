@@ -294,13 +294,15 @@ async function film() {
     if (tracing) await b.evaluate('(window.__shipTrace = [], true)');
     console.error(`filming ${total} frames at ${w}x${h} as ${handle}…`);
     // The page renders at full size (layout and UI as players see them);
-    // each frame is CAPTURED at half size as JPEG, since every clip ships
-    // 960 wide: a quarter of the pixels to encode and pass over CDP, about
-    // twice as fast a take. --full keeps lossless full-size PNGs.
+    // each frame is CAPTURED 960 wide as JPEG, since every clip ships 960
+    // wide: at 1920 a quarter of the pixels to encode and pass over CDP,
+    // about twice as fast a take. A UI clip renders the page smaller
+    // (--size 1280x720) so its text is bigger in the 960 cut.
+    // --full keeps lossless full-size PNGs.
     const fullCapture = argv.includes('--full');
     const capture = fullCapture
       ? { format: 'png', captureBeyondViewport: false }
-      : { format: 'jpeg', quality: 92, captureBeyondViewport: false, clip: { x: 0, y: 0, width: w, height: h, scale: 0.5 } };
+      : { format: 'jpeg', quality: 92, captureBeyondViewport: false, clip: { x: 0, y: 0, width: w, height: h, scale: Math.min(1, 960 / w) } };
     const frames = [];
     const t0 = Date.now();
     for (let k = 0; k < total; k++) {
