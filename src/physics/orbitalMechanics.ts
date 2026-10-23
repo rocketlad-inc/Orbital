@@ -464,6 +464,53 @@ function ramBodyPosition(
   // Post-arrival: pinned at intercept point until destruction passes.
   if (t >= plan.arriveTick) return { x: plan.interceptPos.x, y: plan.interceptPos.y };
 
+  // ON COURSE TO THE MEETING POINT. The burn below re-aims at the
+  // intercept and brakes against the target's motion, but its timing is
+  // planned for a rock starting at rest (planTorchTransfer, studio
+  // fireRam): the velocity it inherits from its orbit is never planned
+  // for, so it stopped short. Studio clip "An asteroid rammed into Mars"
+  // (2026-10-23): the rock came to rest ~520 units off Mars, matched its
+  // motion there, and jumped onto the intercept at arrival; at Mars's
+  // zoom it was 18,000 px off screen, the hull parked on it with it, and
+  // the impact flashed on the side it had stopped on. The miss is spread
+  // over the flight on a smoothstep (zero extra speed at launch and at
+  // arrival), so the rock lands on the meeting point it was always going
+  // to be teleported to. MIRROR of ramStateAt in worker/transitCombat.js.
+  const raw = ramRawPosition(plan, t, bodies);
+  const miss = ramMiss(plan, bodies);
+  const w = ramMissWeight(plan, t);
+  return { x: raw.x + miss.x * w, y: raw.y + miss.y * w };
+}
+
+/** How much of the ram's miss is folded in at tick `t`: a smoothstep over
+ *  the flight. MIRROR of worker/transitCombat.js ramMissWeight. */
+export function ramMissWeight(plan: Pick<import('../types').RamPlan, 'startTick' | 'arriveTick'>, t: number): number {
+  const span = plan.arriveTick - plan.startTick;
+  if (!(span > 0)) return 1;
+  const u = Math.min(1, Math.max(0, (t - plan.startTick) / span));
+  return u * u * (3 - 2 * u);
+}
+
+/** Where the bare burn ends relative to the meeting point (meeting point
+ *  minus the integrator's position at arrival), once per plan. */
+function ramMiss(plan: import('../types').RamPlan, bodies: Body[]): WorldPosition {
+  const cache = ramStepCache(plan);
+  if (!cache.miss) {
+    const end = ramRawPosition(plan, plan.arriveTick, bodies);
+    const mx = plan.interceptPos.x - end.x, my = plan.interceptPos.y - end.y;
+    cache.miss = { x: Number.isFinite(mx) ? mx : 0, y: Number.isFinite(my) ? my : 0 };
+  }
+  return cache.miss;
+}
+
+/** The bare torch burn from launch, with no arrival snap and no miss
+ *  correction (see ramBodyPosition). */
+function ramRawPosition(
+  plan: import('../types').RamPlan,
+  t: number,
+  bodies: Body[],
+): WorldPosition {
+  if (t <= plan.startTick) return { x: plan.startPos.x, y: plan.startPos.y };
   // Integrate. Small fixed substep for stability with re-aim each step.
   //
   // FROM A CACHE, NOT FROM LAUNCH. This integrated from startTick on
@@ -495,7 +542,10 @@ function ramBodyPosition(
 /** State after each whole step of a ram plan, [px, py, vx, vy]; index k
  *  is the state at startTick + k. Keyed by the plan's contents (the plan
  *  object is rebuilt on every /state poll) and capped. */
-const ramCaches = new Map<string, { states: Array<[number, number, number, number]> }>();
+const ramCaches = new Map<string, {
+  states: Array<[number, number, number, number]>;
+  miss?: WorldPosition;
+}>();
 function ramStepCache(plan: import('../types').RamPlan) {
   const key = `${plan.targetBodyId}|${plan.startTick}|${plan.flipTick}|${plan.arriveTick}|${plan.acceleration}|`
     + `${plan.startPos.x},${plan.startPos.y}|${plan.startVel.x},${plan.startVel.y}|${plan.interceptPos.x},${plan.interceptPos.y}`;

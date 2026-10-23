@@ -17,7 +17,7 @@ import {
 } from './routeMath.js';
 import {
   torchStateAt, engagement, hasLineOfSight, SHIP_RANGE, V_REF as TRANSIT_V_REF,
-  isEccentric, isRamming, ramPlanOf, eccentricLocalPosition,
+  isEccentric, isRamming, ramPlanOf, ramStateAt, eccentricLocalPosition,
   shipOrbitLocalPosition, muOfRow,
   DV_BONUS_MAX, DV_BONUS_START, DV_BONUS_FULL,
 } from './transitCombat.js';
@@ -6549,7 +6549,7 @@ export class Room {
       if (!b || b.parent_body_id == null) return { x: 0, y: 0 };
       let out;
       if (isRamming(b, t)) {
-        out = torchStateAt(ramPlanOf(b), bodyVelSync, t).pos;
+        out = ramStateAt(ramPlanOf(b), bodyVelSync, t).pos;
       } else {
         const parent = bodyPosSync(b.parent_body_id, t);
         if (isEccentric(b)) {

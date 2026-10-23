@@ -7910,8 +7910,12 @@ export function drawRammingBody(
   const tgt = bodyById(ctx.bodies, plan.targetBodyId);
   if (tgt) {
     const tp = bodyPosition(tgt, t, ctx.bodies);
-    // The side of the world it is coming in on, for the impact (asteroidRam).
-    noteRamApproach(tgt.id, here.x - tp.x, here.y - tp.y);
+    // The side of the world it is coming in on, for the impact
+    // (asteroidRam): where it crosses the limb, not the noise of its last
+    // fraction of a unit inside the globe.
+    if (Math.hypot(here.x - tp.x, here.y - tp.y) > (tgt.radius ?? 0)) {
+      noteRamApproach(tgt.id, here.x - tp.x, here.y - tp.y);
+    }
   }
   const push = ramThrustDir(plan, t,
     (tt) => bodyPosition(body, tt, ctx.bodies),
