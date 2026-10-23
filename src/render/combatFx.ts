@@ -1820,6 +1820,10 @@ interface Sterilisation {
    *  beam holds THIS, so it stays pointed the same way at the world as
    *  the world moves on, instead of from a point left behind in space. */
   gunRel?: { x: number; y: number };
+  /** The killer was drawn while this played, and when it was last seen:
+   *  a beam from a ship that has since died fades out instead of holding. */
+  sawGun?: boolean;
+  lostMs?: number;
 }
 
 const sterilisations: Sterilisation[] = [];
@@ -1891,8 +1895,16 @@ export function drawSterilisations(rc: RenderContext, nowMs: number): void {
     let gun: { x: number; y: number };
     const pc = pk ? worldToCanvas(pk.x, pk.y, rc) : null;
     const live = pk && pc && pk.ageMs < 500;
+    if (live) { x.sawGun = true; x.lostMs = undefined; }
+    else if (x.sawGun && x.lostMs == null) x.lostMs = nowMs;
     if (pk && pc && (live || !x.gunRel)) {
-      const muzzle = { x: pc.x + Math.cos(pk.heading) * pk.size * 0.42, y: pc.y + Math.sin(pk.heading) * pk.size * 0.42 };
+      // The muzzle faces the WORLD it fires on. Off the hull's nose it was
+      // wherever the orbit pointed it: at close zoom the beam left from an
+      // escort beside the Mega (judges, 2026-10-22).
+      const tw = Math.hypot(cp.x - pc.x, cp.y - pc.y);
+      const ux = tw > 1e-6 ? (cp.x - pc.x) / tw : Math.cos(pk.heading);
+      const uy = tw > 1e-6 ? (cp.y - pc.y) / tw : Math.sin(pk.heading);
+      const muzzle = { x: pc.x + ux * pk.size * 0.22, y: pc.y + uy * pk.size * 0.22 };
       const d = Math.hypot(muzzle.x - cp.x, muzzle.y - cp.y);
       const minD = R * 1.25;
       gun = d >= minD ? muzzle
@@ -1911,10 +1923,12 @@ export function drawSterilisations(rc: RenderContext, nowMs: number): void {
     c.save();
     c.globalCompositeOperation = 'lighter';
 
-    if (k < STERILISE_FIRE_END && x.beam) {
+    // A killer seen firing and then destroyed takes its beam with it.
+    const gunGone = x.lostMs != null ? Math.max(0, 1 - (nowMs - x.lostMs) / 250) : 1;
+    if (k < STERILISE_FIRE_END && x.beam && gunGone > 0) {
       const bk = Math.min(1, k / STERILISE_BEAM_END);
-      const hold = k < STERILISE_BEAM_END ? Math.min(1, k / 0.03)
-        : 1 - (k - STERILISE_BEAM_END) / (STERILISE_FIRE_END - STERILISE_BEAM_END);
+      const hold = (k < STERILISE_BEAM_END ? Math.min(1, k / 0.03)
+        : 1 - (k - STERILISE_BEAM_END) / (STERILISE_FIRE_END - STERILISE_BEAM_END)) * gunGone;
       drawBeam(c, gun.x, gun.y, hitX, hitY, Math.max(2, R * (0.06 + 0.1 * bk)), hold, nowMs, seed, STRIKE_FX);
       // Plasma splashing off the surface where it lands.
       glowAt(c, hitX, hitY, R * (0.5 + 0.7 * bk), '#ffffff', STRIKE_FX.glow, hold);
