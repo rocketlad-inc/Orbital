@@ -91,6 +91,15 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
   const liveMine = useMemo(() => mine?.games.filter(g => !g.archived_at_ms) ?? null, [mine]);
   const pastMine = useMemo(() => mine?.games.filter(g => !!g.archived_at_ms) ?? null, [mine]);
 
+  // A Play for Free account whose trial is gone (lost, or ended) has
+  // nothing to keep and nowhere to go: the lobby is closed to it. Back to
+  // the home page to start over (Lorne, 2026-10-24: "soft locked").
+  useEffect(() => {
+    if (!shadow || liveMine === null || liveMine.some(g => g.phase === 'live')) return;
+    try { sessionStorage.removeItem('orbital.tab_room'); } catch { /* private mode */ }
+    void signOut();
+  }, [shadow, liveMine, signOut]);
+
   // A player with nothing live lands on Browse rather than an empty list.
   useEffect(() => {
     if (liveMine !== null && liveMine.length === 0 && tab === 'my' && !shadow) setTab('browse');
