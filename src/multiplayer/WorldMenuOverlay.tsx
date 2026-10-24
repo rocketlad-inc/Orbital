@@ -350,11 +350,16 @@ export const WorldMenuOverlay: React.FC = () => {
       // Desktop keeps the outliner visible; shift the planet right by
       // half the outliner width so it centers in the remaining space
       // (outliner ~296px on the left, dock ~60px on the right).
-      const rShift = vw > 720 ? (296 - 60) / 2 : 0;
+      // The SAME tier the chrome is laid out in (`mobile`, WM_PHONE_MAX).
+      // These said 720 after the phone tier moved to 768, so at 721-768
+      // the camera framed the planet for a desktop (shifted right, not
+      // lifted) under chrome laid out for a phone: the globe off to one
+      // side, the pins over nothing (tablet playtest, 2026-10-24).
+      const rShift = !mobile ? (296 - 60) / 2 : 0;
       // Mobile: lift the planet so the horizon lands ~45% down — the
       // station and the structure tags in the sky above, the bar and its
       // sheets below (MOBILE_LIFT_FRAC; the render below uses the same).
-      const uShift = vw > 720 ? 0 : phoneShift(vh);
+      const uShift = !mobile ? 0 : phoneShift(vh);
       const off = menuCameraOffset(vw, vh, s1, rShift, uShift);
       focusBody(sel); // sets focusedBodyId (body-relative camera)
       updateCamera({ scale: s1, x: off.x, y: off.y });
@@ -372,8 +377,8 @@ export const WorldMenuOverlay: React.FC = () => {
       const typing = vw <= WM_PHONE_MAX && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName ?? '');
       if (typing) return;
       const s1 = menuScaleFor(b, vh);
-      const rShift = vw > 720 ? (296 - 60) / 2 : 0;
-      const uShift = vw > 720 ? 0 : phoneShift(vh);
+      const rShift = !mobile ? (296 - 60) / 2 : 0;
+      const uShift = !mobile ? 0 : phoneShift(vh);
       const off = menuCameraOffset(vw, vh, s1, rShift, uShift);
       updateCamera({ scale: s1, x: off.x, y: off.y });
     }
@@ -381,6 +386,10 @@ export const WorldMenuOverlay: React.FC = () => {
   }, [uiState.selectedBodyId, vw, vh, pLevel, peekTop, mapTop]);
 
   const close = useCallback((restoreCamera: boolean) => {
+    // Said at once, not on the next render: a pinch zooming this menu
+    // (useCanvasTouchInput) holds the camera as an offset from this world
+    // and must stop before the conversion below lands.
+    setWorldMenuOpenBodyId(null);
     setOpenId(null);
     deselectBody();
     if (restoreCamera) {
@@ -527,6 +536,21 @@ export const WorldMenuOverlay: React.FC = () => {
     if (zTarget >= 0.85) dismissArmed.current = true;
     if (dismissArmed.current && zTarget < 0.3) close(false);
   }, [zTarget, openId, close, uiState.selectedBodyId]);
+
+  // THE MENU LIVES ON ITS WORLD. Its pins, tags and columns are laid out
+  // for that world framed by the camera; once the camera lets go of it (a
+  // finger dragged the map, the keys panned it, something focused another
+  // body) the planet slides away and the chrome stays put: the globe
+  // shoved to the screen edge, the pins floating over nothing (Maya,
+  // 2026-10-24). Leaving the world leaves its menu, as zooming out does.
+  // The camera has already gone where it was sent, so it is left alone.
+  useEffect(() => {
+    if (!openId || camera.focusedBodyId === openId) return;
+    setWorldMenuOpenBodyId(null);
+    setOpenId(null);
+    deselectBody();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openId, camera.focusedBodyId]);
 
   // Another menu opening (DockRail panels, settlements/fleet/research —
   // anything that dispatches 'orbital:close-world-menu') dismisses us.

@@ -357,6 +357,18 @@ export function rollCaptain(gameId, factionId, tick, existingNames, seedIdx, nam
 }
 
 /**
+ * How much a captain raises their hull's max HP: +1% per rank, x1.10 for
+ * Bulwark. The same two factors /state's hp_max_effective applies
+ * (worker/state.js); the fleet aura is not the captain's own.
+ */
+export function captainHpMul(cap) {
+  let traits = [];
+  try { traits = JSON.parse(cap?.traits_json || '[]'); } catch { /* bad blob = no trait */ }
+  const rank = Math.max(0, Number(cap?.rank) || 0);
+  return (1 + 0.01 * rank) * (Array.isArray(traits) && traits.includes('bulwark') ? 1.10 : 1);
+}
+
+/**
  * Lazy backfill + attach-on-build (spec §2.2, §5.4). Any active ship with
  * no captain gets the LONGEST-WAITING unassigned bank captain of its
  * faction, if the faction has one. If the bank is empty the hull sails
@@ -393,7 +405,7 @@ export async function ensureCaptains(db, gameId, tick) {
   // within one tick, since a faction short on captains always has an
   // orphan hull for this pass to soak one up with.
   const bank = (await db
-    .prepare(`SELECT id, faction_id FROM game_captains
+    .prepare(`SELECT id, faction_id, rank, traits_json FROM game_captains
                WHERE game_id = ? AND status = 'active' AND ship_id IS NULL
                  AND benched_at_tick IS NULL
                ORDER BY created_at_tick ASC`)
@@ -401,16 +413,26 @@ export async function ensureCaptains(db, gameId, tick) {
   const bankByFaction = new Map();
   for (const c of bank) {
     if (!bankByFaction.has(c.faction_id)) bankByFaction.set(c.faction_id, []);
-    bankByFaction.get(c.faction_id).push(c.id);
+    bankByFaction.get(c.faction_id).push(c);
   }
 
   for (const ship of orphans) {
     const queue = bankByFaction.get(ship.owner_faction_id);
     if (queue && queue.length > 0) {
-      const capId = queue.shift();
+      const cap = queue.shift();
+      // THE OFFICER BRINGS THEIR CEILING, AND THE HULL RISES WITH IT. A
+      // captain's rank (+1% each) and a Bulwark trait (+10%) raise the
+      // hull's effective max HP (worker/state.js hp_max_effective), but HP
+      // is stored absolute: a hull fresh off the slipway read below its
+      // own ceiling and showed REPAIRING for ~10 ticks with no damage and
+      // no fight (Dale, Priya, 2026-10-24). Scaled like the armor-research
+      // bump, so the damage FRACTION is kept: a full hull stays full.
+      const hpMul = captainHpMul(cap);
       await db.batch([
-        db.prepare('UPDATE game_captains SET ship_id = ? WHERE id = ?').bind(ship.id, capId),
-        db.prepare('UPDATE game_ships SET captain_id = ? WHERE id = ?').bind(capId, ship.id),
+        db.prepare('UPDATE game_captains SET ship_id = ? WHERE id = ?').bind(ship.id, cap.id),
+        hpMul > 1
+          ? db.prepare('UPDATE game_ships SET captain_id = ?, hp = hp * ? WHERE id = ?').bind(cap.id, hpMul, ship.id)
+          : db.prepare('UPDATE game_ships SET captain_id = ? WHERE id = ?').bind(cap.id, ship.id),
       ]);
       continue;
     }

@@ -133,6 +133,15 @@ export const DockRail: React.FC<{ isMultiplayer?: boolean; lobbyOnly?: boolean }
     };
   }, []);
 
+  // ...and the other way round: opening the designer on a phone closes
+  // the rail's sheet, which would otherwise cover it.
+  useEffect(() => {
+    if (!isMobile) return undefined;
+    const onDesigner = () => setActive(null);
+    window.addEventListener('orbital:open-ship-designer', onDesigner);
+    return () => window.removeEventListener('orbital:open-ship-designer', onDesigner);
+  }, [isMobile]);
+
   /** On phones every surface is a full-screen overlay, so opening a new
    *  one on top of an old one is just clutter. When a rail button OPENS
    *  a panel, first close every other menu: the on-map world popover
@@ -142,6 +151,12 @@ export const DockRail: React.FC<{ isMultiplayer?: boolean; lobbyOnly?: boolean }
   function closeOtherMenus(closing: 'internal' | 'external') {
     if (!isMobile) return;
     try { window.dispatchEvent(new CustomEvent('orbital:close-world-menu')); } catch { /* noop */ }
+    // The ship designer is one of these surfaces too. On a phone it sits
+    // UNDER the rail's sheets (it ends on top of the rail), so a rail
+    // button opened Trade or the Report over it and the designer showed
+    // through; Research opened under it and the two drew over each other
+    // (Maya, Rafaela, 2026-10-24).
+    try { window.dispatchEvent(new CustomEvent('orbital:close-ship-designer')); } catch { /* noop */ }
     if (closing === 'internal') {
       // Opening a situation/eventlog/multiplayer panel → close any
       // settlements/fleet/research panel.

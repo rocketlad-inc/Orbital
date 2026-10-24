@@ -13,7 +13,13 @@ import React, { act, useRef } from 'react';
 import { createRoot, Root } from 'react-dom/client';
 import { useCanvasTouchInput, LONG_PRESS_MS, TouchBoxHandlers } from '../useCanvasTouchInput';
 
-jest.mock('../../game/worldMenu/store', () => ({ getWorldMenuMaxScale: () => 50 }));
+// The world menu's state, set per test: mounted (MP) and which world is open.
+const mockMenu: { active: boolean; open: string | null } = { active: false, open: null };
+jest.mock('../../game/worldMenu/store', () => ({
+  getWorldMenuMaxScale: () => 50,
+  isWorldMenuActive: () => mockMenu.active,
+  getWorldMenuOpenBodyId: () => mockMenu.open,
+}));
 
 // React 18 wants to be told this is a test environment for act().
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -23,6 +29,7 @@ type Cam = { x: number; y: number; scale: number };
 interface Setup {
   selectMode?: boolean;
   longPressUsed?: boolean;
+  focusedBodyId?: string;
 }
 
 function mount(opts: Setup = {}) {
@@ -39,7 +46,7 @@ function mount(opts: Setup = {}) {
     const ref = useRef<HTMLCanvasElement>(null);
     useCanvasTouchInput({
       canvasRef: ref,
-      camera: { x: 0, y: 0, scale: 1 },
+      camera: { x: 0, y: 0, scale: 1, ...(opts.focusedBodyId ? { focusedBodyId: opts.focusedBodyId } : {}) } as Cam,
       updateCamera: (p) => { updates.push(p); },
       onTap, onDoubleTap, onLongPress,
       isSelectMode: () => !!opts.selectMode,
@@ -83,6 +90,15 @@ function mount(opts: Setup = {}) {
     move: (id: number, x: number, y: number) => fire('pointermove', id, x, y),
     up: (id: number, x: number, y: number) => fire('pointerup', id, x, y),
     hold: () => act(() => { jest.advanceTimersByTime(LONG_PRESS_MS + 10); }),
+    canvas: () => canvas!,
+    /** A TouchEvent carrying every finger now down: [target, x, y]. */
+    touch: (type: string, target: EventTarget, fingers: Array<[EventTarget, number, number]>) => {
+      const e = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(e, 'touches', {
+        value: fingers.map(([tg, x, y]) => ({ target: tg, clientX: x, clientY: y })),
+      });
+      act(() => { target.dispatchEvent(e); });
+    },
     unmount: () => act(() => { root.unmount(); host.remove(); }),
   };
 }
@@ -220,6 +236,73 @@ describe('two fingers', () => {
     t.move(1, 200, 300);
     t.move(2, 600, 300);
     expect(t.updates[t.updates.length - 1]?.scale).toBeCloseTo(2);
+    t.unmount();
+  });
+});
+
+describe('two fingers and the world menu', () => {
+  afterEach(() => { mockMenu.active = false; mockMenu.open = null; });
+
+  function menuChrome() {
+    const root = document.createElement('div');
+    root.className = 'wm-root';
+    const sheet = document.createElement('section');
+    root.appendChild(sheet);
+    document.body.appendChild(root);
+    return { sheet, done: () => root.remove() };
+  }
+
+  it('a pinch with a finger on the menu still zooms the map (Maya: "only ever saw Europa")', () => {
+    mockMenu.active = true; mockMenu.open = 'europa';
+    const t = mount({ focusedBodyId: 'europa' });
+    const chrome = menuChrome();
+    const cv = t.canvas();
+    // One finger on the map, one on the menu's sheet; the canvas only
+    // ever sees its own.
+    t.down(1, 300, 300);
+    t.touch('touchstart', chrome.sheet, [[cv, 300, 300], [chrome.sheet, 500, 300]]);
+    // Pinch IN, fingers closing to half their spread: zoom out by 2.
+    t.move(1, 350, 300);
+    t.touch('touchmove', chrome.sheet, [[cv, 350, 300], [chrome.sheet, 450, 300]]);
+    const last = t.updates[t.updates.length - 1];
+    expect(last.scale).toBeCloseTo(0.5);
+    // The map finger was half a pinch: it neither panned nor tapped.
+    t.up(1, 350, 300);
+    expect(t.onTap).not.toHaveBeenCalled();
+    chrome.done();
+    t.unmount();
+  });
+
+  it('a pinch on the open menu keeps its world in focus', () => {
+    mockMenu.active = true; mockMenu.open = 'europa';
+    const t = mount({ focusedBodyId: 'europa' });
+    t.down(1, 300, 300);
+    t.down(2, 500, 300);
+    t.move(2, 600, 300);
+    // No write released the focus: the menu fades by zoom, as with the wheel.
+    expect(t.updates.some(u => 'focusedBodyId' in u)).toBe(false);
+    t.unmount();
+  });
+
+  it('stops the moment the menu it was zooming is dismissed', () => {
+    mockMenu.active = true; mockMenu.open = 'europa';
+    const t = mount({ focusedBodyId: 'europa' });
+    t.down(1, 300, 300);
+    t.down(2, 500, 300);
+    t.move(2, 450, 300);
+    const n = t.updates.length;
+    mockMenu.open = null;            // zoomed out past the threshold
+    t.move(2, 400, 300);
+    expect(t.updates.length).toBe(n);
+    t.unmount();
+  });
+
+  it('with no menu open a pinch frees the camera, as before', () => {
+    mockMenu.active = true; mockMenu.open = null;
+    const t = mount({ focusedBodyId: 'mars' });
+    t.down(1, 300, 300);
+    t.down(2, 500, 300);
+    expect(t.updates.some(u => 'focusedBodyId' in u)).toBe(true);
     t.unmount();
   });
 });

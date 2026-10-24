@@ -24,7 +24,7 @@
 
 import { useEffect, useRef } from 'react';
 import { MIN_CAMERA_SCALE } from '../render/cameraLimits';
-import { getWorldMenuMaxScale } from '../game/worldMenu/store';
+import { getWorldMenuMaxScale, getWorldMenuOpenBodyId, isWorldMenuActive } from '../game/worldMenu/store';
 
 interface CameraLike {
   x: number;
@@ -138,6 +138,12 @@ export function useCanvasTouchInput({
     let lastMid: { x: number; y: number } | null = null;
     let lastTap: { time: number; x: number; y: number } | null = null;
     let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+    /** A pinch with a finger on the WORLD MENU's chrome (see onDocTouch).
+     *  While it runs, the canvas's own finger neither pans nor taps. */
+    let menuPinch: { startDist: number; startScale: number; lastMid: { x: number; y: number } } | null = null;
+    /** The world whose menu a pinch is zooming in (it kept that menu's
+     *  focus), or null for a free-camera pinch. */
+    let pinchMenuWorld: string | null = null;
 
     const clearLongPress = () => {
       if (longPressTimer) {
@@ -163,6 +169,55 @@ export function useCanvasTouchInput({
           p.gesture = 'pan';
         }
       }
+    };
+
+    /** A PINCH KEEPS THE WORLD MENU'S FOCUS. While a menu is open the
+     *  camera is body-relative (x/y are an offset from the world), the same
+     *  space the desktop wheel zooms in. Releasing focus at the second
+     *  finger left the menu open around a planet that then slid away under
+     *  the pinch: the globe shoved to the screen edge, the pins floating
+     *  (Maya, 2026-10-24). Kept, the pinch zooms the world, and the menu
+     *  fades and dismisses at its zoom-out threshold, as with the wheel. */
+    const pinchKeepsFocus = () => {
+      const open = isWorldMenuActive() ? getWorldMenuOpenBodyId() : null;
+      return !!open && (cameraRef.current as CameraLike & { focusedBodyId?: string }).focusedBodyId === open;
+    };
+    /** Start a pinch: keep the open menu's focus, or free the camera. */
+    const beginPinchFocus = () => {
+      if (pinchKeepsFocus()) { pinchMenuWorld = getWorldMenuOpenBodyId(); return; }
+      pinchMenuWorld = null;
+      releaseFocus();
+    };
+    /** The menu this pinch was zooming has just been dismissed (zoomed out
+     *  past its threshold). The camera is being converted from an offset
+     *  to a world position this very moment, and our copy is the offset:
+     *  one more write would throw the view at the Sun. The gesture ends;
+     *  the next pinch starts on a free map. */
+    const pinchLostItsMenu = () => pinchMenuWorld !== null && getWorldMenuOpenBodyId() !== pinchMenuWorld;
+
+    /** Zoom and pan for one two-finger frame: `dist` and `mid` now, against
+     *  the gesture's start distance and scale and the previous midpoint. */
+    const applyPinch = (
+      dist: number, mid: { x: number; y: number },
+      startDist: number, startScale: number, prevMid: { x: number; y: number },
+    ) => {
+      // MIN_CAMERA_SCALE (cameraLimits.ts): both far systems on screen
+      // at full zoom-out, the same floor as the wheel. Max comes from
+      // the world-menu store: raised in MP menu dives.
+      const targetScale = Math.max(MIN_CAMERA_SCALE, Math.min(getWorldMenuMaxScale(),
+        startScale * (dist / startDist)));
+      // ZOOM AND PAN IN ONE STEP. The world point that was under the
+      // fingers' midpoint last frame is put under the midpoint where
+      // it is now, at the new scale. Zooming "around the midpoint"
+      // alone never moved the view, so two fingers could not pan —
+      // and in selection mode two fingers are the only way to pan.
+      const cam = cameraRef.current;
+      const worldX = cam.x + (prevMid.x - canvas.width / 2) / cam.scale;
+      const worldY = cam.y + (prevMid.y - canvas.height / 2) / cam.scale;
+      const newCamX = worldX - (mid.x - canvas.width / 2) / targetScale;
+      const newCamY = worldY - (mid.y - canvas.height / 2) / targetScale;
+      cameraRef.current = { ...cam, x: newCamX, y: newCamY, scale: targetScale };
+      updateCameraRef.current({ x: newCamX, y: newCamY, scale: targetScale });
     };
 
     /** Release a sticky body focus, seeding x/y from where the camera
@@ -236,7 +291,7 @@ export function useCanvasTouchInput({
         pinchStartScale = cameraRef.current.scale;
         const ma = canvasLocal(a.x, a.y), mb = canvasLocal(b.x, b.y);
         lastMid = { x: (ma.x + mb.x) / 2, y: (ma.y + mb.y) / 2 };
-        releaseFocus();
+        beginPinchFocus();
       } else if (pointers.size === 1 && callbacksRef.current.onLongPress) {
         clearLongPress();
         longPressTimer = setTimeout(() => {
@@ -261,6 +316,8 @@ export function useCanvasTouchInput({
       const dy = e.clientY - p.y;
       p.x = e.clientX;
       p.y = e.clientY;
+      // The other finger is on the world menu: this one is half a pinch.
+      if (menuPinch) return;
 
       if (pointers.size === 2) {
         const [a, b] = Array.from(pointers.values());
@@ -268,23 +325,8 @@ export function useCanvasTouchInput({
         const ma = canvasLocal(a.x, a.y), mb = canvasLocal(b.x, b.y);
         const mid = { x: (ma.x + mb.x) / 2, y: (ma.y + mb.y) / 2 };
         if (pinchStartDist > 0 && lastMid) {
-          // MIN_CAMERA_SCALE (cameraLimits.ts): both far systems on screen
-          // at full zoom-out, the same floor as the wheel. Max comes from
-          // the world-menu store: raised in MP menu dives.
-          const targetScale = Math.max(MIN_CAMERA_SCALE, Math.min(getWorldMenuMaxScale(),
-            pinchStartScale * (dist / pinchStartDist)));
-          // ZOOM AND PAN IN ONE STEP. The world point that was under the
-          // fingers' midpoint last frame is put under the midpoint where
-          // it is now, at the new scale. Zooming "around the midpoint"
-          // alone never moved the view, so two fingers could not pan —
-          // and in selection mode two fingers are the only way to pan.
-          const cam = cameraRef.current;
-          const worldX = cam.x + (lastMid.x - canvas.width / 2) / cam.scale;
-          const worldY = cam.y + (lastMid.y - canvas.height / 2) / cam.scale;
-          const newCamX = worldX - (mid.x - canvas.width / 2) / targetScale;
-          const newCamY = worldY - (mid.y - canvas.height / 2) / targetScale;
-          cameraRef.current = { ...cam, x: newCamX, y: newCamY, scale: targetScale };
-          updateCameraRef.current({ x: newCamX, y: newCamY, scale: targetScale });
+          if (pinchLostItsMenu()) { pinchStartDist = 0; return; }
+          applyPinch(dist, mid, pinchStartDist, pinchStartScale, lastMid);
         }
         lastMid = mid;
         return;
@@ -416,6 +458,55 @@ export function useCanvasTouchInput({
     // — which would drop the box the long press is about to start.
     const blockContextMenu = (e: Event) => { e.preventDefault(); };
 
+    // A PINCH THAT LANDS ON THE WORLD MENU STILL ZOOMS THE MAP. On a phone
+    // the open menu's header, chips, pins and sheet cover most of the
+    // screen: at 375x812 the map shows through a strip about 220px tall.
+    // The canvas only ever saw the fingers that landed on it, so a pinch
+    // with a finger on the menu was a one-finger drag, and a player at
+    // their capital could not zoom out of it (Maya, 2026-10-24: "only ever
+    // saw Europa"). Two fingers, at least one on the menu and the other on
+    // the map or the menu, are a map pinch. TouchEvents, not pointers: the
+    // menu's own controls keep their pointers.
+    const onMenuChrome = (tc: Touch) => {
+      const el = tc.target as Element | null;
+      return !!el && el !== canvas && typeof el.closest === 'function' && !!el.closest('.wm-root');
+    };
+    const endMenuPinch = () => {
+      if (!menuPinch) return;
+      menuPinch = null;
+      // A finger left on the canvas was half a pinch, not a tap.
+      for (const rest of pointers.values()) rest.gesture = 'pan';
+    };
+    const onDocTouch = (e: TouchEvent) => {
+      const all = Array.from(e.touches);
+      if (all.length !== 2) { endMenuPinch(); return; }
+      if (!isWorldMenuActive()) return;
+      // Both on the canvas: the pointer path above already has it.
+      if (!all.some(onMenuChrome)) return;
+      if (!all.every(tc => tc.target === canvas || onMenuChrome(tc))) return;
+      const [a, b] = all.map(tc => canvasLocal(tc.clientX, tc.clientY));
+      const dist = Math.hypot(a.x - b.x, a.y - b.y);
+      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      if (e.type === 'touchmove' && e.cancelable) e.preventDefault();
+      if (!menuPinch) {
+        if (dist <= 0) return;
+        clearLongPress();
+        cancelBoxes();
+        for (const p of pointers.values()) p.gesture = 'pan';
+        beginPinchFocus();
+        menuPinch = { startDist: dist, startScale: cameraRef.current.scale, lastMid: mid };
+        return;
+      }
+      if (e.type !== 'touchmove') return;
+      if (pinchLostItsMenu()) return;
+      applyPinch(dist, mid, menuPinch.startDist, menuPinch.startScale, menuPinch.lastMid);
+      menuPinch.lastMid = mid;
+    };
+    document.addEventListener('touchstart', onDocTouch, { passive: false, capture: true });
+    document.addEventListener('touchmove', onDocTouch, { passive: false, capture: true });
+    document.addEventListener('touchend', onDocTouch, { capture: true });
+    document.addEventListener('touchcancel', onDocTouch, { capture: true });
+
     canvas.addEventListener('pointerdown', onPointerDown);
     canvas.addEventListener('pointermove', onPointerMove);
     canvas.addEventListener('pointerup', onPointerUp);
@@ -428,6 +519,10 @@ export function useCanvasTouchInput({
     canvas.addEventListener('gestureend', blockGesture as EventListener, { passive: false });
 
     return () => {
+      document.removeEventListener('touchstart', onDocTouch, { capture: true });
+      document.removeEventListener('touchmove', onDocTouch, { capture: true });
+      document.removeEventListener('touchend', onDocTouch, { capture: true });
+      document.removeEventListener('touchcancel', onDocTouch, { capture: true });
       canvas.removeEventListener('pointerdown', onPointerDown);
       canvas.removeEventListener('pointermove', onPointerMove);
       canvas.removeEventListener('pointerup', onPointerUp);

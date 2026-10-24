@@ -13,6 +13,8 @@
   left: 0;
   right: 0;
   height: var(--topbar-h);
+  /* Contents below the staging banner (App.css --topbar-h); 0 in prod. */
+  padding-top: var(--stg-h, 0px);
   z-index: 1000;
   display: flex;
   align-items: center;

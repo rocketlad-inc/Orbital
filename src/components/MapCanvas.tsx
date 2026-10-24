@@ -92,8 +92,8 @@ import {
 } from '../render/galaxyLayer';
 import { getEmblemImage } from '../render/emblemCache';
 import { BUILDING_DEFS, buildingLevel } from '../game/settlements';
-import { boxSingleTarget, cyclePick, orderPickHits } from '../render/mapPick';
-import type { PickHit } from '../render/mapPick';
+import { badgeShipsAt, bodyBeatsShip, boxSingleTarget, cyclePick, orderPickHits, pickPostsLeg } from '../render/mapPick';
+import type { BadgeHit, PickHit } from '../render/mapPick';
 import { releaseFocusPosition } from '../game/cameraFocus';
 import { Body as GameBody, BuildingKind, CameraState, Ship, Settlement } from '../types';
 import {
@@ -652,6 +652,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // hit-test reads these so the box is always ON the visible hull, spin,
   // interpolation and formation spread included.
   const shipHitboxesRef = useRef<Map<string, { x: number; y: number; r: number }>>(new Map());
+  /** Where this frame painted each world's or system's COUNT BADGE (the
+   *  emblem + N pills under a world), with the worlds it counts. A tap on
+   *  one selects your ships parked there (mapPick.badgeShipsAt). Rebuilt
+   *  every frame, like the ship hitboxes. */
+  const badgeHitsRef = useRef<BadgeHit[]>([]);
   // Formation map memo — see the build site below for what it keys on.
   const formationCacheRef = useRef<{
     state: unknown; vis: unknown; map: Map<string, ShipFormation>;
@@ -1254,6 +1259,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // Parked-ship hit boxes are rebuilt every frame by drawShip. Clear
     // here so a ship that left orbit doesn't keep a stale box.
     shipHitboxesRef.current.clear();
+    badgeHitsRef.current = [];
     const curTransitIds = new Set<string>();
     for (const ship of gameState.ships) {
       if (ship.transit) curTransitIds.add(ship.id);
@@ -3317,6 +3323,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
        *  skipped then (an unreadable pile says less than absence); a
        *  fleet's count is drawn anyway, up-right of its flagship. */
       fallback?: { x: number; y: number },
+      /** The worlds whose parked ships this badge counts: a tap on it
+       *  selects yours among them. Omitted: the badge is not a target. */
+      bodyIds?: readonly string[],
     ) => {
       if (alpha <= 0.01 || counts.size === 0) return;
       // Viewport cull. Text was already culled inside the solver, but
@@ -3368,6 +3377,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         entries.map(e => `▸${e.label}`).join(' '))
         ?? (fallback ? { x: fallback.x, y: fallback.y - layout.h } : null);
       if (!slot) { c2d.restore(); return; }
+      if (bodyIds && bodyIds.length > 0) {
+        badgeHitsRef.current.push({ x: slot.x, y: slot.y, w: layout.w, h: layout.h, bodyIds });
+      }
       const paintAlpha = c2d.globalAlpha;
       c2d.restore();
       const paint = () => {
@@ -3718,7 +3730,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const cp = worldToCanvas(bp.x, bp.y, renderContext);
         if (foldIntoGalaxyRing(cp.x, cp.y, counts)) continue;
         const radius = pres ? drawnRadiusOf(pres, body, lodScale) : Math.max(3, (body.radius ?? 4) * camera.scale);
-        drawBadge(`badge:${bodyId}`, cp.x, cp.y, radius + 4, counts, false, alpha);
+        drawBadge(`badge:${bodyId}`, cp.x, cp.y, radius + 4, counts, false, alpha, undefined, [bodyId]);
       }
       // System badges: visible even when the wash is full — that IS the read.
       for (const [anchorId, counts] of sysAgg) {
@@ -3728,7 +3740,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const cp = worldToCanvas(bp.x, bp.y, renderContext);
         if (foldIntoGalaxyRing(cp.x, cp.y, counts)) continue;
         const radius = pres ? drawnRadiusOf(pres, body, lodScale) : Math.max(4, (body.radius ?? 5) * camera.scale);
-        drawBadge(`sysbadge:${anchorId}`, cp.x, cp.y, radius + 5, counts, true, 1);
+        // The worlds this badge stands for: those folded into it (MP), or
+        // its moon system (SP's fold, anchorOf), and the anchor itself.
+        const covered = [anchorId, ...Array.from(bodyClusters.keys()).filter(id => id !== anchorId
+          && (pres ? hostOfBody(id) === anchorId : (anchorOf(id) ?? id) === anchorId))];
+        drawBadge(`sysbadge:${anchorId}`, cp.x, cp.y, radius + 5, counts, true, 1, undefined, covered);
       }
       // One badge per galaxy ring, round the ring: below it first, the name
       // having already claimed the space above.
@@ -4693,8 +4709,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // stays the single-pick answer for hover and the touch gestures. Used
   // by a click so overlapping hulls can be cycled (mapPick.cyclePick).
   // Click-time only: nothing here runs per frame.
-  const pickShipsAt = useCallback(
-    (canvasX: number, canvasY: number, padTouch: boolean): string[] => {
+  const pickShipHitsAt = useCallback(
+    (canvasX: number, canvasY: number, padTouch: boolean): PickHit[] => {
       const pad = padTouch ? TOUCH_HIT_PADDING : 0;
       const hits: PickHit[] = [];
       const slots = fleetSlotsRef.current;
@@ -4717,9 +4733,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const d = Math.hypot(canvasX - x, canvasY - y);
         if (d <= r) hits.push({ id: ship.id, d });
       }
-      return orderPickHits(hits);
+      return hits;
     },
     [gameState.ships, gameState.bodies, hitCam, renderTick],
+  );
+  const pickShipsAt = useCallback(
+    (canvasX: number, canvasY: number, padTouch: boolean): string[] =>
+      orderPickHits(pickShipHitsAt(canvasX, canvasY, padTouch)),
+    [pickShipHitsAt],
   );
   /** The order the last click cycled through (mapPick.cyclePick). */
   const pickCycleRef = useRef<string[] | null>(null);
@@ -4831,10 +4852,54 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // one (playtest: "when intercepting ships get overlapped it's
       // difficult to select one or the other"). A lone hull, and every
       // shift-click, resolve exactly as before.
-      let hitShip: string | null;
+      // A WORLD'S COUNT BADGE IS A BUTTON. The emblem + N pills drawn under
+      // a world stand in for the hulls parked there once they are too small
+      // to draw, so on a phone they are the only thing to tap: tapping one
+      // did nothing (playtest, 2026-10-24). It selects your ships there:
+      // one opens its card, several become the group, as a long press does.
       if (mpActions && !additive) {
+        // Half the finger padding: the badge sits beside its world, and a
+        // tap on the world must still open the world.
+        const ids = badgeShipsAt(badgeHitsRef.current, canvasX, canvasY, pad / 2, gameState.ships);
+        if (ids.length === 1) {
+          clearShipSelection();
+          selectShip(ids[0]);
+          return;
+        }
+        if (ids.length > 1) {
+          setShipSelection(ids);
+          deselectShip();
+          deselectBody();
+          if (touch) setSelectMode(true);
+          return;
+        }
+      }
+      //
+      // MULTIPLAYER: A WORLD NEARER THAN EVERY SHIP TAKES THE CLICK
+      // (mapPick.bodyBeatsShip). Ships used to win outright, so zoomed out
+      // a parked hull's marker swallowed every click on its world's dot.
+      // The world is the nearest one drawn, as the hover highlight picks.
+      let nearBody: { id: string; d: number } | null = null;
+      if (mpActions && !additive) {
+        const hc0 = hitCam();
+        for (const body of gameState.bodies) {
+          if (foldedForHit(body.id)) continue;
+          const p = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, hc0, renderTick());
+          const r = Math.max(8, Math.max(gateAwareRadius(body, hc0.scale), hitR(body, hc0.scale)) + 5) + pad;
+          const d = Math.hypot(canvasX - p.x, canvasY - p.y);
+          if (d < r && (!nearBody || d < nearBody.d)) nearBody = { id: body.id, d };
+        }
+      }
+      let hitShip: string | null;
+      const shipHits = mpActions && !additive ? pickShipHitsAt(canvasX, canvasY, touch) : [];
+      const shipD = shipHits.length > 0 ? Math.min(...shipHits.map(h => h.d)) : null;
+      if (mpActions && !additive && bodyBeatsShip(nearBody?.d ?? null, shipD)) {
+        hitShip = null;
+        pickCycleRef.current = null;
+      } else if (mpActions && !additive) {
+        nearBody = null;
         const cyc = cyclePick(
-          pickShipsAt(canvasX, canvasY, touch),
+          orderPickHits(shipHits),
           uiState.selectedShipId, pickCycleRef.current,
         );
         pickCycleRef.current = cyc && cyc.order.length > 1 ? cyc.order : null;
@@ -4871,12 +4936,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
       const hcBody = hitCam();
       for (const body of gameState.bodies) {
+        // The world that beat the ships above is the one this click means.
+        if (nearBody && body.id !== nearBody.id) continue;
         const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, hcBody, renderTick());
         // A revealed gate draws far bigger than the rock it replaced, so
         // the hit target follows the RING — otherwise you'd be aiming at a
         // 3px moon inside a 40px sprite. Mirrors drawWarpGateBody's R.
         const clickRadius = Math.max(8, gateAwareRadius(body, hcBody.scale) + 5) + pad;
-        if (Math.hypot(canvasX - bodyPos.x, canvasY - bodyPos.y) < clickRadius) {
+        if (nearBody || Math.hypot(canvasX - bodyPos.x, canvasY - bodyPos.y) < clickRadius) {
           // PICKING A ROUTE STOP takes the click before anything else.
           // Falling through to selectBody would dive the camera into
           // that world's menu on the way to adding a stop, which is the
@@ -4922,7 +4989,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       clearShipSelection();
     },
     [gameState, hitCam, uiState.targetSelectionMode, uiState.selectedShipIds, selectShip, selectBody, deselectShip, deselectBody, renderTick, pickShipAt, toggleShipSelection, clearShipSelection,
-     mpActions, pickShipsAt, uiState.selectedShipId]
+     mpActions, pickShipHitsAt, uiState.selectedShipId, setShipSelection, setSelectMode]
   );
 
   /**
@@ -5028,9 +5095,17 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           hoveredBodyId = body.id;
         }
       }
+      // The click gives a world nearer than every ship the world
+      // (mapPick.bodyBeatsShip); the ship's name label must not say
+      // otherwise.
+      if (mpActions && !aiming && hoveredShipIdRef.current && hoveredBodyId) {
+        const shipHits = pickShipHitsAt(canvasX, canvasY, false);
+        const shipD = shipHits.length > 0 ? Math.min(...shipHits.map(h => h.d)) : null;
+        if (bodyBeatsShip(bestDist, shipD)) hoveredShipIdRef.current = null;
+      }
       hoverBody(hoveredBodyId);
     },
-    [gameState, hitCam, uiState.targetSelectionMode, hoverBody, renderTick, pickShipAt]
+    [gameState, hitCam, uiState.targetSelectionMode, hoverBody, renderTick, pickShipAt, pickShipHitsAt, mpActions]
   );
 
   // Shared focus-on-tap logic — called by both onDoubleClick and the
@@ -5142,9 +5217,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // highlight and the dashed line (the hover preview, driven the same
       // way) and a second tap on the same world commits. A parked ship's
       // pick is itself only a preview until COMMIT, so it keeps one tap.
-      const sel = gameState.ships.find(sh => sh.id === uiState.selectedShipId);
-      const commits = !!sel && (!!sel.transit || !!sel.plannedTransit
-        || (sel.queuedTransits?.length ?? 0) > 0);
+      // "Commits" means the pick POSTS: a leg chained onto a hull already
+      // flying (ShipPanel's transfer handler posts only for crew with a
+      // live transit). A ship with a STAGED plan only stages another leg,
+      // so it took two taps for nothing (Maya, 2026-10-24: "the first tap
+      // only highlighted").
+      const commits = pickPostsLeg(uiState.selectedShipId, gameState.ships);
       if (commits) {
         const bodyId = pickBodyAt(x, y, true);
         if (!bodyId) return;

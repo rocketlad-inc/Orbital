@@ -42,6 +42,78 @@ export function orderPickHits(hits: readonly PickHit[]): string[] {
     .map(([id]) => id);
 }
 
+/**
+ * A click that lands on a world AND on a ship parked by it: which one?
+ *
+ * Ships used to win every such click, and zoomed out a parked hull's
+ * marker (min 12px, more under a finger) sits on top of its world's
+ * 3px dot, so the world could not be clicked at all: "clicking Luna
+ * opens the ship parked in front of it" (Dale, Maya, 2026-10-24). Now
+ * the NEARER centre wins, the rule the map already uses between two
+ * worlds and between two ships. A tie goes to the world, because the
+ * world's menu lists the ships parked there and the ship's card does
+ * not lead back to the world.
+ *
+ * `bodyD` / `shipD`: pointer distance to the nearest hit of each kind,
+ * canvas px, or null for no hit.
+ */
+export function bodyBeatsShip(bodyD: number | null, shipD: number | null): boolean {
+  if (bodyD == null) return false;
+  if (shipD == null) return true;
+  return bodyD <= shipD;
+}
+
+/** A count badge as the map painted it this frame: its box in canvas px
+ *  and the worlds whose parked ships it counts. */
+export interface BadgeHit {
+  x: number; y: number; w: number; h: number;
+  bodyIds: readonly string[];
+}
+
+/**
+ * The viewer's ships a tap on a count badge means: every own hull PARKED
+ * at a world the badge counts (a badge counts parked hulls only; see
+ * fleetBadge.ts). `pad` grows each box for a finger. Empty when the tap
+ * misses every badge, or hits one with none of yours under it.
+ */
+export function badgeShipsAt(
+  badges: readonly BadgeHit[],
+  x: number, y: number, pad: number,
+  ships: readonly Pick<Ship, 'id' | 'ownedBy' | 'transit' | 'orbit'>[],
+): string[] {
+  const hit = badges.find(b => x >= b.x - pad && x <= b.x + b.w + pad
+    && y >= b.y - pad && y <= b.y + b.h + pad);
+  if (!hit) return [];
+  const here = new Set(hit.bodyIds);
+  return ships
+    .filter(s => s.ownedBy === 'player' && !s.transit && here.has(s.orbit?.parentBodyId))
+    .map(s => s.id);
+}
+
+/**
+ * Does picking a destination for this ship POST a leg to the server?
+ * Only then does a phone tap preview first and commit on the second tap.
+ *
+ * Mirrors ShipPanel's transfer handler: a ship that is flying, or has a
+ * staged or queued leg, CHAINS the new leg; of its crew (the fleet, or the
+ * ship alone when detached) only hulls with a live transit are posted.
+ * A parked ship with a staged plan just stages another leg, so its pick
+ * needs no second tap (Maya, 2026-10-24: "the first tap only highlighted").
+ */
+export function pickPostsLeg(
+  selectedShipId: string | null | undefined,
+  ships: readonly Pick<Ship, 'id' | 'fleetId' | 'fleetDetached' | 'transit' | 'plannedTransit' | 'queuedTransits'>[],
+): boolean {
+  const sel = ships.find(s => s.id === selectedShipId);
+  if (!sel) return false;
+  const chains = !!sel.transit || !!sel.plannedTransit || (sel.queuedTransits?.length ?? 0) > 0;
+  if (!chains) return false;
+  const crew = sel.fleetId && !sel.fleetDetached
+    ? ships.filter(s => s.fleetId === sel.fleetId && !s.fleetDetached)
+    : [sel];
+  return crew.some(s => !!s.transit);
+}
+
 export interface CycleResult {
   /** The hull this click selects. */
   id: string;
