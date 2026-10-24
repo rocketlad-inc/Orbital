@@ -89,13 +89,16 @@ function logEntryIcon(entry: string): { icon: string; color: string; label: stri
   if (s.includes('discovery') || s.includes('databank') || s.includes('warp gate') || s.includes('stargate')) {
     return { icon: '✦', color: '#e879f9', label: t('eventlog.cat.discovery') };
   }
+  // War and peace (eventText war_declared / war_ended / ceasefire_*).
+  if (s.includes('declared war')) return { icon: '⚔', color: '#ff5e5e', label: t('eventlog.cat.war') };
+  if (s.includes('made peace') || s.includes('ceasefire')) return { icon: '☮︎', color: '#6ee7b7', label: t('eventlog.cat.peace') };
   // Diplomacy buckets — order matters: 'broke ... pact' must match
   // before the generic 'pact' word in 'signed Defense Pact'.
   if (s.includes('broke') && s.includes('pact'))   return { icon: '⚔', color: '#ff5e5e', label: t('eventlog.cat.pactBroken') };
   // Text-presentation peace symbol (☮ + VS15) so it honours the cyan color
   // and stays monochrome like the other glyphs — the dove emoji rendered
   // colour-locked and inconsistent across OSes.
-  if (s.includes('signed') && s.includes('pact'))  return { icon: '☮︎', color: '#a78bfa', label: t('eventlog.cat.pactSigned') };
+  if ((s.includes('signed') || s.includes('accepted')) && s.includes('pact'))  return { icon: '☮︎', color: '#a78bfa', label: t('eventlog.cat.pactSigned') };
   if (s.includes('senate')) return { icon: '§', color: '#ffd700', label: t('eventlog.cat.senate') };
   if (s.includes('traded') && s.includes(' → '))   return { icon: '⚖', color: '#ffb84d', label: t('eventlog.cat.trade') };
   if (s.includes('captured')) return { icon: '⚑', color: '#ffd700', label: t('eventlog.cat.capture') };

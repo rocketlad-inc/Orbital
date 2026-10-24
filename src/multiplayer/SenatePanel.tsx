@@ -666,6 +666,8 @@ export function SenatePanel({
         body: JSON.stringify({ vote }),
       });
       if (!res.ok) setError(apiErrorText(res.error, 'senate.err.vote'));
+      // The tab badge and the Situation Report drop the bill now.
+      else { try { window.dispatchEvent(new Event('mp:senate-voted')); } catch { /* noop */ } }
       refresh();
     } finally {
       setVoting(null);

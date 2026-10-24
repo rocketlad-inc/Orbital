@@ -25,7 +25,7 @@ import {
 } from './api';
 import { logUiEvent } from './telemetry';
 import { TradeComposer, pactLabel, resWord } from './TradeComposer';
-import { t, tn, type Key } from '../i18n/core';
+import { t, tn, tk, type Key } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import { apiErrorText } from '../i18n/apiErrors';
 import { focusTradeCard, useTradeFocus } from './tradeFocus';
@@ -678,6 +678,13 @@ function TradeCard({
       {trade.parent_offer_id && (
         <div style={{ marginTop: 4, fontSize: 9, color: '#b8c8d6' }}>
           ↳ {t('trade.counterOffer')}
+        </div>
+      )}
+
+      {/* Why they said no, when they said (a computer empire always does). */}
+      {trade.status === 'declined' && trade.decline_reason && (
+        <div className="tp-row__ended">
+          {tk(`trade.declineReason.${trade.decline_reason}`, trade.decline_reason)}
         </div>
       )}
 

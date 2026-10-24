@@ -78,7 +78,18 @@ export function StandingPanel({ gameId }: Props) {
     }
   }, [gameId]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+    // Read once, it went stale: a pact signed in PRIVATE left its empire
+    // "at peace" here until the tab was reopened. The room's pushes say
+    // when a pact or a war changed.
+    const onWs = (e: Event) => {
+      const d = (e as CustomEvent).detail;
+      if (d?.kind === 'trade' || d?.kind === 'treaty' || d?.type === 'wars_changed') void load();
+    };
+    window.addEventListener('orbital:ws', onWs as EventListener);
+    return () => window.removeEventListener('orbital:ws', onWs as EventListener);
+  }, [load]);
 
   const openWarWith = (fid: string) =>
     wars.find(w => w.open && w.factions.includes(fid) && (meId ? w.factions.includes(meId) : false));
