@@ -65,6 +65,9 @@ export interface ReelBattle {
   /** What the film calls it: "The First Battle of Mars" when a world saw
    *  more than one, else "The Battle of Mars" (matchMap names them). */
   name?: string;
+  /** Its theatre: the worlds where hulls died (a planet's moons fight
+   *  as part of the planet's battle). */
+  theatre?: string[];
   /** The fleet that flew in to start it, when the record shows one. */
   approach?: FleetMove;
   /** The story's say (the Saga Engine): over 1 a fight the story is about,
