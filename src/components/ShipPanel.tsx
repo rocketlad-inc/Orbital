@@ -97,6 +97,9 @@ const partsKey = (parts: string[] | undefined): string =>
  *
  *  Shared by BOTH the posted and the empty-slot branch so the section does
  *  not change height the moment a captain is assigned. */
+/** localStorage: is the ship panel's ADVANCED orders block open? */
+export const ADVANCED_KEY = 'orbital.shipPanel.advanced';
+
 const CAPTAIN_PORTRAIT_PX = 72;
 // Header chip portrait. The 122 captain portraits are detailed ink-and-wash
 // busts -- at 14px a face was a smudge, which defeats the point of letting
@@ -233,6 +236,14 @@ export const ShipPanel: React.FC = () => {
   // 147-row list is the exact shape that made a megafleet crawl.
   const [fleetListAll, setFleetListAll] = useState(false);
   const [programOpen, setProgramOpen] = useState(false);
+  // ADVANCED ORDERS: open or shut, remembered for this browser.
+  const [advancedOpen, setAdvancedOpen] = useState<boolean>(() => {
+    try { return window.localStorage.getItem(ADVANCED_KEY) === '1'; } catch { return false; }
+  });
+  const toggleAdvanced = () => setAdvancedOpen(o => {
+    try { window.localStorage.setItem(ADVANCED_KEY, o ? '0' : '1'); } catch { /* private window */ }
+    return !o;
+  });
   const [chainInterceptOpen, setChainInterceptOpen] = useState(false);
   const [demoOpen, setDemoOpen] = useState(false);
   const [refitBusy, setRefitBusy] = useState(false);
@@ -1799,6 +1810,215 @@ export const ShipPanel: React.FC = () => {
     );
   };
 
+  // MANEUVER NODES: every leg with its delta-v. Its own variable because
+  // multiplayer shows it under ADVANCED and single-player where it was.
+  const maneuverNodesJsx = (
+    <>
+    {ship.orders.length === 0 && !ship.transit && !ship.plannedTransit && queuedTransits.length === 0 ? (
+      <div className="no-orders">{t('ship.panel.noManeuvers')}</div>
+    ) : (
+      <>
+        <div className="orders-list">
+          {ship.transit && (() => {
+            const plan = ship.transit.currentTransfer;
+            const targetBody = gameState.bodies.find(b => b.id === plan.targetBodyId);
+            // A MATCH IS NOT A DESTINATION. This card read
+            // "→ Ganymede" for a manoeuvre whose whole point was
+            // to join another hull — so the node contradicted the
+            // arc drawn on the map ("looks like we're both going
+            // to Ganymede, and not?"). Lead with the meeting; the
+            // body is where the pair ends up afterwards, which is
+            // the second fact, not the first.
+            const rv = ship.plannedRendezvous;
+            const mate = rv
+              ? gameState.ships.find(x => x.id === rv.followShipId)
+              : undefined;
+            const meetIn = rv
+              ? Math.max(0, rv.meetTick - gameState.currentTick)
+              : 0;
+            return (
+              <div className="order-item status-committed">
+                <div className="order-info">
+                  {rv ? (
+                    <>
+                      <div className="order-type" style={{ color: '#4ecdc4' }}>
+                        ⇌ {t('ship.panel.matchName', { name: (mate?.name ?? t('ship.panel.contactCaps')).toUpperCase() })}
+                      </div>
+                      <div className="order-details">
+                        {t('ship.panel.meetThenTogether', { n: meetIn.toFixed(0), name: targetBody?.name ?? plan.targetBodyId })}
+                      </div>
+                      <div className="order-details" style={{ color: '#6ee7b7' }}>
+                        {t('ship.panel.etaDv', { eta: Math.max(0, plan.arriveTick - gameState.currentTick).toFixed(0), dv: plan.totalDv.toFixed(2) })}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="order-type">→ {targetBody?.name ?? plan.targetBodyId}</div>
+                      <div className="order-details">
+                        {t('ship.panel.etaDv', { eta: Math.max(0, plan.arriveTick - gameState.currentTick).toFixed(0), dv: plan.totalDv.toFixed(2) })}
+                      </div>
+                      {pendingNode && gateNote(ship.orbit.parentBodyId, plan.targetBodyId, plan.arriveTick - plan.startTick)}
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+          {ship.plannedTransit && !ship.transit && (() => {
+            const plan = ship.plannedTransit;
+            const targetBody = gameState.bodies.find(b => b.id === plan.targetBodyId);
+            const tripTime = plan.arriveTick - plan.startTick;
+            return (
+              <div className="order-item status-planned">
+                <div className="order-info">
+                  {/* Same rule as the committed card: if a match
+                      is staged, the meeting is the plan and the
+                      body is where it ends. */}
+                  {ship.plannedRendezvous ? (
+                    <>
+                      <div className="order-type" style={{ color: '#4ecdc4' }}>
+                        ⇌ {t('ship.panel.matchNamePlanned', { name: (gameState.ships.find(x => x.id === ship.plannedRendezvous!.followShipId)?.name
+                          ?? t('ship.panel.contactCaps')).toUpperCase() })}
+                      </div>
+                      <div className="order-details">
+                        {t('ship.panel.meetThenTogether', { n: Math.max(0, ship.plannedRendezvous.meetTick - gameState.currentTick).toFixed(0), name: targetBody?.name ?? plan.targetBodyId })}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="order-type">→ {targetBody?.name ?? plan.targetBodyId} ({t('ship.panel.planned')})</div>
+                      <div className="order-details">
+                        {t('ship.panel.dvTrip', { dv: plan.totalDv.toFixed(2), n: tripTime.toFixed(0) })}
+                      </div>
+                      {gateNote(ship.orbit.parentBodyId, plan.targetBodyId, tripTime)}
+                    </>
+                  )}
+                </div>
+                <div className="order-actions">
+                  <button
+                    className="delete-btn"
+                    onClick={() => cancelTorchPreview(ship.id)}
+                    title={t('ship.panel.cancelTransfer')}
+                  >✕</button>
+                </div>
+              </div>
+            );
+          })()}
+          {ship.orders.filter(o => o.type !== 'transfer').map((order) => (
+            <div key={order.id} className={`order-item status-${order.status}`}>
+              <div className="order-info">
+                <div className="order-type">{order.label || order.type.toUpperCase()}</div>
+                <div className="order-details">
+                  Δv: {Math.abs(order.deltav).toFixed(2)} km/s | T+{order.burnTime.toFixed(0)}
+                </div>
+              </div>
+              <div className="order-actions">
+                <button
+                  className="delete-btn"
+                  onClick={() => {
+                    // Optimistic local remove + MP server-side
+                    // status='cancelled' POST. Without the DELETE
+                    // the next /state poll re-derived this node
+                    // from the server-side game_ship_nodes row,
+                    // so the X button looked broken to the user.
+                    deleteManeuverNode(order.id);
+                    if (mpActions) {
+                      mpActions.cancelNode(order.id).then(res => {
+                        if (!res.ok) {
+                          // eslint-disable-next-line no-console
+                          console.warn('cancelNode rejected by server:', res.error);
+                        }
+                      });
+                    }
+                  }}
+                  title={t('ship.panel.cancelManeuver')}
+                >✕</button>
+              </div>
+            </div>
+          ))}
+          {queuedTransits.map((qt, i) => {
+            const targetBody = gameState.bodies.find(b => b.id === qt.targetBodyId);
+            // A chained leg leaves from wherever the one before it lands.
+            const legFrom = i > 0 ? queuedTransits[i - 1].targetBodyId
+              : (ship.plannedTransit?.targetBodyId ?? ship.transit?.currentTransfer.targetBodyId
+                ?? ship.orbit.parentBodyId);
+            return (
+              <div key={`${qt.targetBodyId}-${qt.startTick}-${i}`} className="order-item status-queued">
+                <div className="order-info">
+                  <div className="order-type">→ {targetBody?.name ?? qt.targetBodyId}</div>
+                  <div className="order-details">
+                    {t('ship.panel.queuedLine', { dv: qt.totalDv.toFixed(2), n: Math.max(0, Math.ceil(qt.arriveTick - gameState.currentTick)) })}
+                  </div>
+                  {gateNote(legFrom, qt.targetBodyId, qt.arriveTick - qt.startTick)}
+                </div>
+                <div className="order-actions">
+                  <button className="delete-btn" onClick={() => handleRemoveQueuedTransfer(i)}>✕</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </>
+    )}
+    </>
+  );
+
+  // THE TRIP, in plain words: where this ship is going and when it gets
+  // there, with the cancel beside a staged plan. What a new player needs
+  // from the old node list; the list itself is under ADVANCED.
+  const tripSummaryJsx = (() => {
+    const nameOf = (id: string) => gameState.bodies.find(b => b.id === id)?.name ?? id;
+    const inTicks = (arrive: number) => tn('ship.panel.tripArrives', Math.max(0, Math.ceil(arrive - gameState.currentTick)));
+    const then = queuedTransits.length > 0 ? (
+      <div className="order-details">
+        {t('ship.panel.tripThen', { names: queuedTransits.map(q => nameOf(q.targetBodyId)).join(', ') })}
+      </div>
+    ) : null;
+    const mateName = ship.plannedRendezvous
+      ? (gameState.ships.find(x => x.id === ship.plannedRendezvous!.followShipId)?.name ?? t('ship.panel.contactCaps'))
+      : null;
+    if (ship.transit) {
+      const plan = ship.transit.currentTransfer;
+      return (
+        <div className="orders-list">
+          <div className="order-item status-committed">
+            <div className="order-info">
+              <div className="order-type">
+                {mateName ? `⇌ ${t('ship.panel.matchName', { name: mateName.toUpperCase() })}` : `→ ${nameOf(plan.targetBodyId)}`}
+              </div>
+              <div className="order-details">{inTicks(plan.arriveTick)}</div>
+              {then}
+            </div>
+          </div>
+        </div>
+      );
+    }
+    if (ship.plannedTransit) {
+      const plan = ship.plannedTransit;
+      return (
+        <div className="orders-list">
+          <div className="order-item status-planned">
+            <div className="order-info">
+              <div className="order-type">
+                {mateName ? `⇌ ${t('ship.panel.matchNamePlanned', { name: mateName.toUpperCase() })}` : `→ ${nameOf(plan.targetBodyId)} (${t('ship.panel.planned')})`}
+              </div>
+              <div className="order-details">{inTicks(plan.arriveTick)}</div>
+              {then}
+            </div>
+            <div className="order-actions">
+              <button
+                className="delete-btn"
+                onClick={() => cancelTorchPreview(ship.id)}
+                title={t('ship.panel.cancelTransfer')}
+              >✕</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return <div className="no-orders">{t('ship.panel.tripNone')}</div>;
+  })();
+
   return (
     <>
       {/* Floating cancel banner during mobile target selection. The map
@@ -2799,153 +3019,11 @@ export const ShipPanel: React.FC = () => {
               scroll meant staging a move and losing sight of the button
               that actually launches it. */}
           <div className="maneuver-section" data-tutorial-id="ship-maneuver-section">
-            <div className="section-title">{t('ship.panel.maneuverNodes')}</div>
-            {ship.orders.length === 0 && !ship.transit && !ship.plannedTransit && queuedTransits.length === 0 ? (
-              <div className="no-orders">{t('ship.panel.noManeuvers')}</div>
-            ) : (
-              <>
-                <div className="orders-list">
-                  {ship.transit && (() => {
-                    const plan = ship.transit.currentTransfer;
-                    const targetBody = gameState.bodies.find(b => b.id === plan.targetBodyId);
-                    // A MATCH IS NOT A DESTINATION. This card read
-                    // "→ Ganymede" for a manoeuvre whose whole point was
-                    // to join another hull — so the node contradicted the
-                    // arc drawn on the map ("looks like we're both going
-                    // to Ganymede, and not?"). Lead with the meeting; the
-                    // body is where the pair ends up afterwards, which is
-                    // the second fact, not the first.
-                    const rv = ship.plannedRendezvous;
-                    const mate = rv
-                      ? gameState.ships.find(x => x.id === rv.followShipId)
-                      : undefined;
-                    const meetIn = rv
-                      ? Math.max(0, rv.meetTick - gameState.currentTick)
-                      : 0;
-                    return (
-                      <div className="order-item status-committed">
-                        <div className="order-info">
-                          {rv ? (
-                            <>
-                              <div className="order-type" style={{ color: '#4ecdc4' }}>
-                                ⇌ {t('ship.panel.matchName', { name: (mate?.name ?? t('ship.panel.contactCaps')).toUpperCase() })}
-                              </div>
-                              <div className="order-details">
-                                {t('ship.panel.meetThenTogether', { n: meetIn.toFixed(0), name: targetBody?.name ?? plan.targetBodyId })}
-                              </div>
-                              <div className="order-details" style={{ color: '#6ee7b7' }}>
-                                {t('ship.panel.etaDv', { eta: Math.max(0, plan.arriveTick - gameState.currentTick).toFixed(0), dv: plan.totalDv.toFixed(2) })}
-                              </div>
-                            </>
-                          ) : (
-                            <>
-                              <div className="order-type">→ {targetBody?.name ?? plan.targetBodyId}</div>
-                              <div className="order-details">
-                                {t('ship.panel.etaDv', { eta: Math.max(0, plan.arriveTick - gameState.currentTick).toFixed(0), dv: plan.totalDv.toFixed(2) })}
-                              </div>
-                              {pendingNode && gateNote(ship.orbit.parentBodyId, plan.targetBodyId, plan.arriveTick - plan.startTick)}
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })()}
-                  {ship.plannedTransit && !ship.transit && (() => {
-                    const plan = ship.plannedTransit;
-                    const targetBody = gameState.bodies.find(b => b.id === plan.targetBodyId);
-                    const tripTime = plan.arriveTick - plan.startTick;
-                    return (
-                      <div className="order-item status-planned">
-                        <div className="order-info">
-                          {/* Same rule as the committed card: if a match
-                              is staged, the meeting is the plan and the
-                              body is where it ends. */}
-                          {ship.plannedRendezvous ? (
-                            <>
-                              <div className="order-type" style={{ color: '#4ecdc4' }}>
-                                ⇌ {t('ship.panel.matchNamePlanned', { name: (gameState.ships.find(x => x.id === ship.plannedRendezvous!.followShipId)?.name
-                                  ?? t('ship.panel.contactCaps')).toUpperCase() })}
-                              </div>
-                              <div className="order-details">
-                                {t('ship.panel.meetThenTogether', { n: Math.max(0, ship.plannedRendezvous.meetTick - gameState.currentTick).toFixed(0), name: targetBody?.name ?? plan.targetBodyId })}
-                              </div>
-                            </>
-                          ) : (
-                            <>
-                              <div className="order-type">→ {targetBody?.name ?? plan.targetBodyId} ({t('ship.panel.planned')})</div>
-                              <div className="order-details">
-                                {t('ship.panel.dvTrip', { dv: plan.totalDv.toFixed(2), n: tripTime.toFixed(0) })}
-                              </div>
-                              {gateNote(ship.orbit.parentBodyId, plan.targetBodyId, tripTime)}
-                            </>
-                          )}
-                        </div>
-                        <div className="order-actions">
-                          <button
-                            className="delete-btn"
-                            onClick={() => cancelTorchPreview(ship.id)}
-                            title={t('ship.panel.cancelTransfer')}
-                          >✕</button>
-                        </div>
-                      </div>
-                    );
-                  })()}
-                  {ship.orders.filter(o => o.type !== 'transfer').map((order) => (
-                    <div key={order.id} className={`order-item status-${order.status}`}>
-                      <div className="order-info">
-                        <div className="order-type">{order.label || order.type.toUpperCase()}</div>
-                        <div className="order-details">
-                          Δv: {Math.abs(order.deltav).toFixed(2)} km/s | T+{order.burnTime.toFixed(0)}
-                        </div>
-                      </div>
-                      <div className="order-actions">
-                        <button
-                          className="delete-btn"
-                          onClick={() => {
-                            // Optimistic local remove + MP server-side
-                            // status='cancelled' POST. Without the DELETE
-                            // the next /state poll re-derived this node
-                            // from the server-side game_ship_nodes row,
-                            // so the X button looked broken to the user.
-                            deleteManeuverNode(order.id);
-                            if (mpActions) {
-                              mpActions.cancelNode(order.id).then(res => {
-                                if (!res.ok) {
-                                  // eslint-disable-next-line no-console
-                                  console.warn('cancelNode rejected by server:', res.error);
-                                }
-                              });
-                            }
-                          }}
-                          title={t('ship.panel.cancelManeuver')}
-                        >✕</button>
-                      </div>
-                    </div>
-                  ))}
-                  {queuedTransits.map((qt, i) => {
-                    const targetBody = gameState.bodies.find(b => b.id === qt.targetBodyId);
-                    // A chained leg leaves from wherever the one before it lands.
-                    const legFrom = i > 0 ? queuedTransits[i - 1].targetBodyId
-                      : (ship.plannedTransit?.targetBodyId ?? ship.transit?.currentTransfer.targetBodyId
-                        ?? ship.orbit.parentBodyId);
-                    return (
-                      <div key={`${qt.targetBodyId}-${qt.startTick}-${i}`} className="order-item status-queued">
-                        <div className="order-info">
-                          <div className="order-type">→ {targetBody?.name ?? qt.targetBodyId}</div>
-                          <div className="order-details">
-                            {t('ship.panel.queuedLine', { dv: qt.totalDv.toFixed(2), tick: qt.arriveTick.toFixed(0) })}
-                          </div>
-                          {gateNote(legFrom, qt.targetBodyId, qt.arriveTick - qt.startTick)}
-                        </div>
-                        <div className="order-actions">
-                          <button className="delete-btn" onClick={() => handleRemoveQueuedTransfer(i)}>✕</button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </>
-            )}
+            <div className="section-title">{mpActions ? t('ship.panel.trip') : t('ship.panel.maneuverNodes')}</div>
+            {/* MULTIPLAYER: the plan in plain words -- where, and when it
+                gets there. The full node list (delta-v, queued legs) lives
+                under ADVANCED below; single-player keeps its list here. */}
+            {mpActions ? tripSummaryJsx : maneuverNodesJsx}
             {/* COMMIT sits outside the empty-state branch so it always
                 holds its place under the node list. It used to render
                 only once a plan existed, which meant the panel reflowed
@@ -3029,7 +3107,81 @@ export const ShipPanel: React.FC = () => {
                   just set it to ATTACK and watched nothing happen. Same
                   component, so the two tabs cannot disagree. */}
               <CurrentTargetRow ship={ship} />
+              {/* One-shot repair dispatch — the manual sibling of the
+                  RETREAT AT threshold. Only offered when it would DO
+                  something: hull is damaged, parked, and not already
+                  sitting at a friendly station (station repair covers
+                  that case; the status badge says "Repairing"). */}
+              {isDamagedShip(ship) && !ship.transit && (() => {
+                const atStation = gameState.settlements.some(st =>
+                  st.type === 'station' && st.hp > 0
+                  && st.ownedBy === ship.ownedBy
+                  && st.bodyId === ship.orbit.parentBodyId);
+                if (atStation) return null;
+                // Same port the auto-retreat would pick, restricted to
+                // yards because this is a repair run (preferredYardBodyId).
+                const dest = preferredYardBodyId(
+                  ship, gameState.settlements, gameState.bodies, gameState.currentTick,
+                );
+                const destBody = dest ? gameState.bodies.find(b => b.id === dest) : null;
+                const why = dest && dest === ship.retreatBodyId ? t('ship.panel.whyChosen')
+                  : dest && dest === ship.homeBodyId ? t('ship.panel.whyHome')
+                  : t('ship.panel.whyNearest');
+                return (
+                  <div className="orders-config-row">
+                    <span className="orders-config-label">{t('ship.panel.repair')}</span>
+                    <button
+                      className="orders-stance-btn"
+                      disabled={!dest}
+                      title={dest
+                        ? t('ship.panel.repairTip', { name: destBody?.name ?? dest, why })
+                        : t('ship.panel.noYardAnywhere')}
+                      onClick={() => {
+                        if (!dest) return;
+                        const plan = launchTorchTransfer(ship.id, dest);
+                        // "check fuel" named a resource that no longer
+                        // exists — a dead end for anyone who read it.
+                        if (!plan) { setTransferError(t('ship.panel.transferFailed')); return; }
+                        setTransferError(null);
+                        mpActions?.transfer({
+                          shipId: ship.id,
+                          targetBodyId: plan.targetBodyId,
+                          scheduledT: plan.startTick,
+                          arrivalT: plan.arriveTick,
+                          launch: launchFromPlan(plan),
+                          dvPrograde: plan.totalDv,
+                          fuelCost: Math.round(plan.totalDv * 10),
+                          replace: true,
+                        }).then(res => {
+                          if (!res.ok) setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
+                        });
+                      }}
+                    >
+                      ⛨ {t('ship.panel.sendYard')}{destBody ? ` (${destBody.name.toUpperCase()})` : ''}
+                    </button>
+                  </div>
+                );
+              })()}
 
+              {/* ADVANCED: one disclosure for the orders a new player does not
+                  need yet (playtest, Dale, 2026-10-24: hide the retreat, target
+                  priority, delta-v and maneuver nodes). Everything stays reachable
+                  here, and the choice is remembered. */}
+              <button
+                type="button"
+                className="section-title ship-adv-toggle"
+                onClick={toggleAdvanced}
+                aria-expanded={advancedOpen}
+                title={advancedOpen ? t('ship.panel.advancedHide') : t('ship.panel.advancedShow')}
+              >
+                <span aria-hidden style={{ transform: advancedOpen ? 'rotate(90deg)' : 'none', transition: 'transform .12s', display: 'inline-block' }}>&#9656;</span>
+                {t('ship.panel.advanced')}
+              </button>
+              {advancedOpen && (<>
+              <div className="maneuver-section">
+                <div className="section-title">{t('ship.panel.maneuverNodes')}</div>
+                {maneuverNodesJsx}
+              </div>
               <div className="orders-config-row">
                 <span className="orders-config-label">{t('ship.panel.retreatAt')}</span>
                 <select
@@ -3111,61 +3263,6 @@ export const ShipPanel: React.FC = () => {
                 </strong>
               </div>
 
-              {/* One-shot repair dispatch — the manual sibling of the
-                  RETREAT AT threshold. Only offered when it would DO
-                  something: hull is damaged, parked, and not already
-                  sitting at a friendly station (station repair covers
-                  that case; the status badge says "Repairing"). */}
-              {isDamagedShip(ship) && !ship.transit && (() => {
-                const atStation = gameState.settlements.some(st =>
-                  st.type === 'station' && st.hp > 0
-                  && st.ownedBy === ship.ownedBy
-                  && st.bodyId === ship.orbit.parentBodyId);
-                if (atStation) return null;
-                // Same port the auto-retreat would pick, restricted to
-                // yards because this is a repair run (preferredYardBodyId).
-                const dest = preferredYardBodyId(
-                  ship, gameState.settlements, gameState.bodies, gameState.currentTick,
-                );
-                const destBody = dest ? gameState.bodies.find(b => b.id === dest) : null;
-                const why = dest && dest === ship.retreatBodyId ? t('ship.panel.whyChosen')
-                  : dest && dest === ship.homeBodyId ? t('ship.panel.whyHome')
-                  : t('ship.panel.whyNearest');
-                return (
-                  <div className="orders-config-row">
-                    <span className="orders-config-label">{t('ship.panel.repair')}</span>
-                    <button
-                      className="orders-stance-btn"
-                      disabled={!dest}
-                      title={dest
-                        ? t('ship.panel.repairTip', { name: destBody?.name ?? dest, why })
-                        : t('ship.panel.noYardAnywhere')}
-                      onClick={() => {
-                        if (!dest) return;
-                        const plan = launchTorchTransfer(ship.id, dest);
-                        // "check fuel" named a resource that no longer
-                        // exists — a dead end for anyone who read it.
-                        if (!plan) { setTransferError(t('ship.panel.transferFailed')); return; }
-                        setTransferError(null);
-                        mpActions?.transfer({
-                          shipId: ship.id,
-                          targetBodyId: plan.targetBodyId,
-                          scheduledT: plan.startTick,
-                          arrivalT: plan.arriveTick,
-                          launch: launchFromPlan(plan),
-                          dvPrograde: plan.totalDv,
-                          fuelCost: Math.round(plan.totalDv * 10),
-                          replace: true,
-                        }).then(res => {
-                          if (!res.ok) setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
-                        });
-                      }}
-                    >
-                      ⛨ {t('ship.panel.sendYard')}{destBody ? ` (${destBody.name.toUpperCase()})` : ''}
-                    </button>
-                  </div>
-                );
-              })()}
 
               {/* Detonator-only. The row used to render on every hull with
                   a "no effect without a detonator part" disclaimer — a live
@@ -3705,6 +3802,7 @@ export const ShipPanel: React.FC = () => {
                   </div>
                 </div>
               )}
+              </>)}
 
               {ordersError && (
                 <button
