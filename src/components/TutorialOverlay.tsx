@@ -215,6 +215,9 @@ export const TutorialOverlay: React.FC = () => {
       case 'open-panel-empires':
         window.dispatchEvent(new CustomEvent('dockrail:set', { detail: { active: 'multiplayer' } }));
         break;
+      case 'close-dock':
+        window.dispatchEvent(new CustomEvent('dockrail:set', { detail: { active: null } }));
+        break;
       case 'ship-tab-orders':
       case 'ship-tab-ship':
       case 'ship-tab-cargo':

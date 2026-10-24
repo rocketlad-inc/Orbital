@@ -168,7 +168,8 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
               <span className="lx-user__avatar" aria-hidden>{initials(displayName).slice(0, 1)}</span>
               <span className="lx-user__name">{displayName}</span>
             </button>
-            <button className="lx-user__out" onClick={signOut}>{t('lobby.signOut')}</button>
+            {/* An unsaved trial has no way back in: no sign out. */}
+            {!shadow && <button className="lx-user__out" onClick={signOut}>{t('lobby.signOut')}</button>}
           </div>
         </div>
       </header>

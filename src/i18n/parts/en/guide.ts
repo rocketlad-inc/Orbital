@@ -276,7 +276,7 @@ export const guide = {
   'site.footer.credits': 'Credits',
   'landing.hero.kicker': 'Free multiplayer space strategy · Plays in your browser',
   'landing.hero.lede': 'Orbital is a persistent real-time strategy game for two to ten players, set across the real Sol system. Send fleets between moving worlds, build and terraform colonies, bend the Senate to your will, and come back to find out what your rivals did overnight.',
-  'landing.hero.play': 'Play free',
+  'landing.hero.play': 'Play for Free',
   'landing.hero.see': 'See how it plays',
   'landing.hero.glance': 'At a glance',
   'landing.hero.caption': "Recorded in the game: a Mega Destroyer crosses from Jupiter, fights through Earth’s fleet and sets Earth burning.",

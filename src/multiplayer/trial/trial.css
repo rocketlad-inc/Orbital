@@ -2,10 +2,12 @@
    The game's own palette (TutorialPromptModal, TopBar): deep navy
    cards, amber for the action, teal for focus. */
 
+/* Above the tutorial's backdrop and card (TutorialOverlay, 3300): the
+   sheet is opened from a tutorial step and from the menu over it. */
 .save-empire, .trial-war {
   position: fixed;
   inset: 0;
-  z-index: 3000;
+  z-index: 3400;
   display: flex;
   align-items: center;
   justify-content: center;

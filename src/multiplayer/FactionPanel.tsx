@@ -345,7 +345,7 @@ export function FactionPanel({
                   <span className="fp-name" title={f.name}>{f.name}</span>
                   {!!f.computer && (
                     <span className="fp-cpu" title={t('faction.computerTitle')}>
-                      {f.personality ? `${t('faction.computer')} · ${t(`faction.persona.${f.personality}` as const)}` : t('faction.computer')}
+                      {f.personality ? t(`faction.persona.${f.personality}` as const) : t('faction.computer')}
                     </span>
                   )}
                   {!!f.commissioned && (
