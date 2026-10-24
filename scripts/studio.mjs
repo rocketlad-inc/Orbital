@@ -187,12 +187,12 @@ async function launchChrome(port, width, height) {
 }
 
 /** Headless Chrome with the game open as an agent player and window.__studio attached. */
-async function openGame(gameId, handle, w, h) {
+async function openGame(gameId, handle, w, h, dpr = Number(flag('dpr')) || 1) {
   const token = await session(handle);
   const port = 9400 + Math.floor(Math.random() * 400);
   const b = await launchChrome(port, w, h);
   try {
-    await b.send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false });
+    await b.send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: dpr, mobile: false });
     await b.send('Emulation.setEmulatedMedia', { features: [
       { name: 'pointer', value: 'fine' }, { name: 'any-pointer', value: 'fine' }, { name: 'hover', value: 'hover' }, { name: 'any-hover', value: 'hover' }] });
     const host = new URL(BASE).hostname;
@@ -273,6 +273,9 @@ async function record() {
  * Film: one PNG per frame on a stepped clock, the way the Reddit clips were
  * made, then GIF (15 fps) + WebP (30 fps) via scripts/studio-encode.py.
  *   node scripts/studio.mjs film <gameId> shot.json --out <dir> [--as handle] [--size 1920x1080] [--width 960]
+ *     [--dpr 1.5 --full]   stills: the page at 1.5x pixel density, every frame a
+ *                          lossless PNG (2880x1620 from 1920x1080). Pair with a low
+ *                          shot "fps" (4) to sample a take for press stills.
  */
 async function film() {
   const [gameId, shotFile] = rest;
