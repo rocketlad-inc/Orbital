@@ -8266,10 +8266,17 @@ export function drawRammingBody(
   ctx.ctx.lineWidth = 1.5;
   ctx.ctx.setLineDash([4, 3]);
   ctx.ctx.beginPath();
+  // CLIPPED TO THE SCREEN (Sam, 2026-10-22: "Zooming into an asteroid
+  // that has planetary thrusters active absolutely shreds the FPS").
+  // Zoomed in on the rock, this course runs millions of px off screen,
+  // and the canvas rasterises the dash pattern along all of it: 109 ms a
+  // frame at scale 1000 in headless Chrome, 93 ms of it these dashes.
+  // safePolyline keeps every stroke within a screen of the view.
+  const course = safePolyline(ctx.ctx, ctx.canvas.width, ctx.canvas.height);
   for (let i = 0; i < points.length; i++) {
     const cp = worldToCanvas(points[i].x, points[i].y, ctx);
-    if (i === 0) ctx.ctx.moveTo(cp.x, cp.y);
-    else ctx.ctx.lineTo(cp.x, cp.y);
+    if (i === 0) course.move(cp.x, cp.y);
+    else course.line(cp.x, cp.y);
   }
   ctx.ctx.stroke();
   ctx.ctx.setLineDash([]);
@@ -8295,9 +8302,9 @@ export function drawRammingBody(
   const push = ramThrustDir(plan, t,
     (tt) => bodyPosition(body, tt, ctx.bodies),
     (tt) => (tgt ? bodyPosition(tgt, tt, ctx.bodies) : { x: 0, y: 0 }));
-  if (push) {
-    const canvasHere = worldToCanvas(here.x, here.y, ctx);
-    const rockR = ramRockRadiusPx(drawnRadiusOf(ctx.presentation, body, ctx.camera.scale));
+  const canvasHere = worldToCanvas(here.x, here.y, ctx);
+  const rockR = ramRockRadiusPx(drawnRadiusOf(ctx.presentation, body, ctx.camera.scale));
+  if (push && !farOffCanvas(ctx, canvasHere.x, canvasHere.y, rockR * 4)) {
     // worldToCanvas has NO y-flip, so a world vector is used as-is.
     drawThrustExhaust(
       ctx.ctx,
@@ -8351,10 +8358,12 @@ export function drawRammingBody(
     ctx.ctx.setLineDash([1.5, 4]);
     ctx.ctx.beginPath();
     const arcN = 24;
+    // Clipped like the course above: the same dashes, the same trap.
+    const path = safePolyline(ctx.ctx, ctx.canvas.width, ctx.canvas.height);
     for (let i = 0; i <= arcN; i++) {
       const wp = bodyPosition(targetBody, t + (eta * i) / arcN, ctx.bodies);
       const cp = worldToCanvas(wp.x, wp.y, ctx);
-      if (i === 0) ctx.ctx.moveTo(cp.x, cp.y); else ctx.ctx.lineTo(cp.x, cp.y);
+      if (i === 0) path.move(cp.x, cp.y); else path.line(cp.x, cp.y);
     }
     ctx.ctx.stroke();
     ctx.ctx.setLineDash([]);
@@ -8362,6 +8371,7 @@ export function drawRammingBody(
     // A small, quiet reticle at the meeting point. No text of its own:
     // the words live on the world.
     const mr = Math.max(4, r * 0.7);
+    if (!farOffCanvas(ctx, meetCanvas.x, meetCanvas.y, mr + 3)) {
     ctx.ctx.strokeStyle = 'rgba(255, 90, 60, 0.8)';
     ctx.ctx.lineWidth = 1.25;
     ctx.ctx.beginPath();
@@ -8371,6 +8381,7 @@ export function drawRammingBody(
     ctx.ctx.moveTo(meetCanvas.x, meetCanvas.y - mr - 3); ctx.ctx.lineTo(meetCanvas.x, meetCanvas.y - mr + 2);
     ctx.ctx.moveTo(meetCanvas.x, meetCanvas.y + mr - 2); ctx.ctx.lineTo(meetCanvas.x, meetCanvas.y + mr + 3);
     ctx.ctx.stroke();
+    }
     ctx.ctx.restore();
 
     requestLabel({
