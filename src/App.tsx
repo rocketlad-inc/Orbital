@@ -985,7 +985,6 @@ function AppShell() {
             adminGameId={roomGameId as string}
             isHost={!!user && roomHostId === user.id}
           />
-          {user?.shadow && <SaveEmpireHost />}
         </MultiplayerGameProvider>
       ) : (
         // Pre-game backdrop + the dock rail's Multiplayer icon. The rail
