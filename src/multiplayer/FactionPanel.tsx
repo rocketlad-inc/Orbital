@@ -343,6 +343,9 @@ export function FactionPanel({
                   <FlagChip className="mp-swatch" color={f.color} color2={f.color2}
                     emblem={f.emblem} fallbackKey={f.id} size={16} />
                   <span className="fp-name" title={f.name}>{f.name}</span>
+                  {!!f.computer && (
+                    <span className="fp-cpu" title={t('faction.computerTitle')}>{t('faction.computer')}</span>
+                  )}
                   {!!f.commissioned && (
                     <span className="fp-holder" title={t('faction.holderTitle', { name: t('hangar.commissionName') })} aria-label={t('faction.holderTitle', { name: t('hangar.commissionName') })}>{HOLDER_MARK}</span>
                   )}

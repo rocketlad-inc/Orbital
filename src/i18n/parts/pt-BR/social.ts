@@ -315,6 +315,8 @@ export const social: Catalog = {
   'faction.online': 'online',
   'faction.offline': 'offline',
   'faction.holderTitle': 'Possui a {name} — apoia o Orbital',
+  'faction.computer': 'CPU',
+  'faction.computerTitle': 'Um império do computador',
   'faction.state.out': 'FORA',
   'faction.state.dormant': 'INATIVO',
   'faction.state.you': 'VOCÊ',

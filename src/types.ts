@@ -1329,6 +1329,9 @@ export interface GameState {
   tickIntervalMs?: number;
   /** Tick speed by time of day (worker/tickSchedule.js); null = flat. */
   tickSchedule?: import('./game/tickSchedule').TickSchedule | null;
+  /** A solo game (worker/solo.js): one person against computer empires,
+   *  with a clock the person may pause. Null in every other game. */
+  solo?: { paused: boolean; difficulty: string | null } | null;
   /** Active trade routes (freighter ↔ collector). Empty when no
    *  freighter has been assigned. Persisted with the save. Currently
    *  data-only — the execution loop lands next turn. */

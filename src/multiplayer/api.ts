@@ -316,6 +316,8 @@ export type Faction = {
   capital_body_id: string | null;
   /** Holds the Commander's Commission (0153); 0/1 from SQLite. */
   commissioned?: number | boolean;
+  /** A computer empire in a solo game (worker/aiEmpire.js); 0/1. */
+  computer?: number | boolean;
   senate_weight: number;
   reputation: number;
   /** Scoreboard extras from the factions endpoint — GATED by the caller's

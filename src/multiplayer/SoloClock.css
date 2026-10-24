@@ -1,0 +1,87 @@
+/* SoloClock (solo games): pause / next turn / speed, beside the tick.
+   The top bar's own palette (TopBar.css .sim-btn): amber for what is on. */
+
+.solo-clock {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.solo-clock__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 9px;
+  background: transparent;
+  border: 1px solid #2a3d50;
+  border-radius: 3px;
+  color: #d8e4ee;
+  font-family: inherit;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+  white-space: nowrap;
+}
+.solo-clock__btn:hover:not(:disabled) {
+  border-color: #ffb84d;
+  color: #ffb84d;
+  background: rgba(255, 184, 77, 0.08);
+}
+.solo-clock__btn:disabled { opacity: 0.5; cursor: default; }
+.solo-clock__btn:focus-visible,
+.solo-clock__opt:focus-visible { outline: 2px solid #4ecdc4; outline-offset: 1px; }
+
+/* Paused, the main button is the way back in: lit. */
+.solo-clock__main.is-go {
+  border-color: #ffb84d;
+  color: #ffb84d;
+  background: rgba(255, 184, 77, 0.15);
+}
+
+.solo-clock__seg {
+  display: inline-flex;
+  height: 26px;
+  border: 1px solid #2a3d50;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.solo-clock__opt {
+  padding: 0 8px;
+  background: transparent;
+  border: 0;
+  border-left: 1px solid #2a3d50;
+  color: #7a8b9a;
+  font-family: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.solo-clock__opt:first-child { border-left: 0; }
+.solo-clock__opt:hover:not(:disabled) { color: #d8e4ee; }
+.solo-clock__opt.is-on { color: #ffb84d; background: rgba(255, 184, 77, 0.15); }
+.solo-clock__opt:disabled { cursor: default; }
+
+.solo-clock__speed { font-variant-numeric: tabular-nums; min-width: 40px; justify-content: center; }
+
+.solo-clock__err {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  color: #ff8a7a;
+}
+
+/* The countdown's place while paused. */
+.time-display__countdown.solo-paused { color: #ffb84d; letter-spacing: 0.12em; }
+
+/* Phones: icons only on the main buttons; the bar has no room for words. */
+@media (max-width: 720px) {
+  .solo-clock__txt { display: none; }
+  .solo-clock__btn { padding: 0 8px; }
+}
+:root[data-mobile-shell] .solo-clock__txt { display: none; }
+:root[data-mobile-shell] .solo-clock__btn { padding: 0 8px; }

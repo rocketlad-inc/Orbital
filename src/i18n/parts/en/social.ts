@@ -313,6 +313,8 @@ export const social = {
   'faction.online': 'online',
   'faction.offline': 'offline',
   'faction.holderTitle': 'Holds the {name} — supports Orbital',
+  'faction.computer': 'CPU',
+  'faction.computerTitle': 'A computer empire',
   'faction.state.out': 'OUT',
   'faction.state.dormant': 'DORMANT',
   'faction.state.you': 'YOU',
