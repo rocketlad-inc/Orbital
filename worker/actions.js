@@ -7229,7 +7229,7 @@ async function handleRefitFleet(req, env, ctx) {
   if (!me) return err(403, 'not_member', 'not in this game');
 
   const design = await env.DB
-    .prepare('SELECT id, faction_id, ship_class, parts_json FROM game_ship_designs WHERE id = ? AND game_id = ?')
+    .prepare('SELECT id, faction_id, ship_class, parts_json, icon_variant FROM game_ship_designs WHERE id = ? AND game_id = ?')
     .bind(designId, gameId)
     .first();
   if (!design) return err(404, 'not_found', 'design not found');
@@ -7238,10 +7238,18 @@ async function handleRefitFleet(req, env, ctx) {
   // Research gate: refitting INTO locked parts is building them.
   const gate = await requireParts(env, gameId, me.id, newParts);
   if (gate) return gate;
+  // THE LOOK COMES WITH THE REFIT (SaltedPork, 2026-10-22: "Salvage
+  // destroyer isn't changing its look when I refit it"). Only the tick's
+  // deferred refit copied the design's look; this immediate path fitted
+  // the parts and left the old sprite, and a hull whose parts already
+  // matched was skipped outright, so refitting again could never fix it.
+  // Same rule as the deferred path: a design with no look keeps the
+  // hull's own. The look was validated when the design was saved.
+  const look = design.icon_variant && /^[A-Z]$/.test(design.icon_variant) ? design.icon_variant : null;
 
   const ships = (await env.DB
     .prepare(
-      `SELECT id, parent_body_id, hp, hp_max, parts_json, refit_pending_design_id
+      `SELECT id, parent_body_id, hp, hp_max, parts_json, refit_pending_design_id, icon_variant
          FROM game_ships
         WHERE game_id = ? AND owner_faction_id = ? AND ship_class = ? AND status = 'active'
         ORDER BY id ASC`,
@@ -7300,15 +7308,18 @@ async function handleRefitFleet(req, env, ctx) {
   let chargedMetal = 0, chargedGold = 0;
   const refitted = [];
   const pending = [];
+  const restyled = [];
   const stmts = [];
   for (const s of ships) {
     const curParts = parsePartsJson(design.ship_class, s.parts_json);
     if (normalize(curParts) === targetKey) {
-      // Already matches — clear a stale pending marker if one exists.
-      if (s.refit_pending_design_id) {
+      // Already matches — clear a stale pending marker if one exists,
+      // and take the design's look (free: no parts change).
+      if (s.refit_pending_design_id || (look && s.icon_variant !== look)) {
         stmts.push(env.DB
-          .prepare('UPDATE game_ships SET refit_pending_design_id = NULL WHERE id = ?')
-          .bind(s.id));
+          .prepare('UPDATE game_ships SET refit_pending_design_id = NULL, icon_variant = COALESCE(?, icon_variant) WHERE id = ?')
+          .bind(look, s.id));
+        if (look && s.icon_variant !== look) restyled.push(s.id);
       }
       continue;
     }
@@ -7328,10 +7339,11 @@ async function handleRefitFleet(req, env, ctx) {
         .prepare(
           `UPDATE game_ships
               SET parts_json = ?, hp_max = ?, hp = MIN(hp * ?, ?),
-                  damage_per_tick = ?, refit_pending_design_id = NULL
+                  damage_per_tick = ?, refit_pending_design_id = NULL,
+                  icon_variant = COALESCE(?, icon_variant)
             WHERE id = ?`,
         )
-        .bind(newPartsJson, stats.hp, hpScale, stats.hp, stats.damage_per_tick, s.id));
+        .bind(newPartsJson, stats.hp, hpScale, stats.hp, stats.damage_per_tick, look, s.id));
       refitted.push(s.id);
     } else {
       stmts.push(env.DB
@@ -7365,6 +7377,7 @@ async function handleRefitFleet(req, env, ctx) {
     ok: true,
     refitted,
     pending,
+    restyled,
     charged: { metal: chargedMetal, gold: chargedGold },
   });
 }
