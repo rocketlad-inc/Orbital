@@ -173,6 +173,48 @@ check('the trial Ally offers a pact', allyOffer.n >= 1);
   check('and the Warlord\'s warships still reach the player by tick 60', res.arrivedAt != null && res.arrivedAt <= 60, `arrived at ${res.arrivedAt}`);
 }
 
+// ---- 4b. a counter-offer gets a real answer --------------------------------
+// Playtest B4: a counter asking the Ally for credits was declined in
+// silence, and the same pact offer came straight back.
+{
+  const rc = await trial.handleStart(req(null, '6.6.6.6'), env, null);
+  const GC = (await rc.json()).game_id;
+  await DB.prepare('UPDATE games SET paused = 0 WHERE id = ?').bind(GC).run();
+  const fs = (await DB.prepare('SELECT id, user_id, ai_personality FROM game_factions WHERE game_id = ?').bind(GC).all()).results;
+  const hp = fs.find(f => !f.ai_personality);
+  const ap = fs.find(f => f.ai_personality === 'ally').id;
+  const rmC = new Room(makeState(), env);
+  rmC.broadcast = () => {};
+  const step = async (t) => {
+    await rmC.resolveTick(GC, t);
+    await DB.prepare('UPDATE games SET current_tick = ? WHERE id = ?').bind(t, GC).run();
+    await ai.runSoloGame(env, GC);
+  };
+  await step(1);
+  const first = await DB.prepare(`SELECT id FROM trade_offers WHERE game_id = ? AND proposer_faction_id = ? AND responder_faction_id = ? AND status = 'open'`)
+    .bind(GC, ap, hp.id).first();
+  const ctr = await ai.callAs(env, hp.user_id, 'POST', `/api/games/${GC}/trades/${first.id}/counter`,
+    { offer: {}, request: { gold: 100 }, offer_pacts: ['nap'], request_pacts: [] });
+  check('the player counters the Ally\'s pact, asking for credits', ctr.ok, JSON.stringify(ctr.data));
+  await step(2);
+  const answered = await DB.prepare('SELECT status, decline_reason FROM trade_offers WHERE id = ?').bind(ctr.data?.trade?.id).first();
+  check('the Ally answers it: declined, with a reason', answered?.status === 'declined' && answered?.decline_reason === 'no_cargo', JSON.stringify(answered));
+  for (let t = 3; t <= 26; t++) await step(t);
+  const again = await DB.prepare(`SELECT created_at_tick FROM trade_offers WHERE game_id = ? AND proposer_faction_id = ? AND responder_faction_id = ?
+                                   AND id != ? ORDER BY created_at_tick LIMIT 1`).bind(GC, ap, hp.id, first.id).first();
+  check('and does not send the same offer straight back (not within 24 ticks)', !again || again.created_at_tick >= 2 + 24, JSON.stringify(again));
+  // A counter it can take (the pact, sweetened with a gift) is accepted.
+  for (let t = 27; t <= 60 && !(await DB.prepare(`SELECT 1 AS x FROM trade_offers WHERE game_id = ? AND proposer_faction_id = ? AND responder_faction_id = ? AND status = 'open'`).bind(GC, ap, hp.id).first()); t++) await step(t);
+  const second = await DB.prepare(`SELECT id FROM trade_offers WHERE game_id = ? AND proposer_faction_id = ? AND responder_faction_id = ? AND status = 'open'`)
+    .bind(GC, ap, hp.id).first();
+  const ctr2 = second ? await ai.callAs(env, hp.user_id, 'POST', `/api/games/${GC}/trades/${second.id}/counter`,
+    { offer: { metal: 10 }, request: {}, offer_pacts: ['nap'], request_pacts: [] }) : null;
+  const cur = Number((await DB.prepare('SELECT current_tick AS t FROM games WHERE id = ?').bind(GC).first()).t);
+  await step(cur + 1);
+  const took = ctr2?.data?.trade?.id ? await DB.prepare('SELECT status FROM trade_offers WHERE id = ?').bind(ctr2.data.trade.id).first() : null;
+  check('a counter it can take (the pact plus a gift) is accepted', took?.status === 'accepted', JSON.stringify({ second: !!second, took }));
+}
+
 // ---- 5. saving -------------------------------------------------------------
 const realId = 'realUser1';
 await DB.prepare(`INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES (?, 'hana@t', 'Hana', 'x', 0)`).bind(realId).run();

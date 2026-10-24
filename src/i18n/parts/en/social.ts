@@ -392,6 +392,7 @@ export const social = {
   'shell.toast.tradeOffer': 'New trade offer from {name}',
   'shell.toast.tradeAccepted': 'Trade accepted',
   'shell.toast.tradeDeclined': 'Trade declined',
+  'shell.toast.tradeDeclinedWhy': '{name} declined. {reason}',
   'shell.toast.tradeCountered': 'Counter-offer received',
   'shell.treaty.defense': 'Defense Pact',
   'shell.treaty.nap': 'Non-Aggression Pact',

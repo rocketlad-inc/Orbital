@@ -9,7 +9,7 @@ import { SenatePanel } from './SenatePanel';
 import { tradesApi, warsApi, apiFetch, RoomSnapshot } from './api';
 import { openScreen, logAction } from './telemetry';
 import { connectRoomSocket } from './roomSocket';
-import { t, tn } from '../i18n/core';
+import { t, tn, tk } from '../i18n/core';
 import { shareInvite } from './invite';
 import { tradeToastFor } from './tradeToast';
 import { publishSituation, clearSituation } from './situationFeed';
@@ -559,7 +559,12 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
           } else if (toast === 'accepted') {
             pushToast('trade', t('shell.toast.tradeAccepted'));
           } else if (toast === 'declined') {
-            pushToast('trade', t('shell.toast.tradeDeclined'));
+            // With the reason when they gave one (a computer empire does).
+            const who = typeof m.responder_faction_name === 'string' && m.responder_faction_name ? m.responder_faction_name : null;
+            const why = typeof m.reason === 'string' && m.reason ? tk(`trade.declineReason.${m.reason}`, '') : '';
+            pushToast('trade', who && why
+              ? t('shell.toast.tradeDeclinedWhy', { name: who, reason: why })
+              : t('shell.toast.tradeDeclined'));
           } else if (toast === 'countered') {
             pushToast('trade', t('shell.toast.tradeCountered'));
           }

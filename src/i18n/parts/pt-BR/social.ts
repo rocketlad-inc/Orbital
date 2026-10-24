@@ -394,6 +394,7 @@ export const social: Catalog = {
   'shell.toast.tradeOffer': 'Nova oferta de comércio de {name}',
   'shell.toast.tradeAccepted': 'Comércio aceito',
   'shell.toast.tradeDeclined': 'Comércio recusado',
+  'shell.toast.tradeDeclinedWhy': '{name} recusou. {reason}',
   'shell.toast.tradeCountered': 'Contraproposta recebida',
   'shell.treaty.defense': 'Pacto de Defesa',
   'shell.treaty.nap': 'Pacto de Não Agressão',
