@@ -51,8 +51,8 @@ import { getEmblemImage } from './emblemCache';
 import { getLang, tIn, type Key } from '../i18n/core';
 import {
   battleWindow, filmSecondsAt, FILM_STEP_MAX_MS, planReel, reelRate, reelSeconds, sceneAt,
-  INTRO_SECONDS, OPENING_SECONDS, FINALE_SECONDS,
-  type ReelBattle, type ReelBeat, type ReelScene,
+  INTRO_SECONDS, OPENING_SECONDS, FINALE_SECONDS, FLEET_FLIGHT_TICKS,
+  type FleetMove, type ReelBattle, type ReelBeat, type ReelScene,
 } from './filmReel';
 import { beatCaption, billName, broadcastCopy, buildBeats, captionFor, type Caption } from './filmCaptions';
 import { sagaPair, portraitUrl, type SagaBeat, type SagaScript } from './sagaScript';
@@ -548,6 +548,45 @@ export function createMatchMap(
       }
     }
 
+    // THE FIRST BATTLE OF MARS (Lorne, 2026-10-24): a world that saw more
+    // than one real fight numbers them, the way a time traveller would say
+    // "the First World War" to a man in the trenches. One fight is simply
+    // "the Battle of Mars".
+    {
+      const real = battles.filter(b => b.peak >= 12 && b.lost >= 3).sort((a, b) => a.from - b.from);
+      const byWorld = new Map<string, ReelBattle[]>();
+      for (const b of real) { const l = byWorld.get(b.body) ?? []; l.push(b); byWorld.set(b.body, l); }
+      for (const [body, list] of byWorld) {
+        const world = byId.get(body)?.name ?? '';
+        list.forEach((b, i) => {
+          b.name = list.length > 1 && i < 10
+            ? T('battle.nth', { ord: T(`ord.${i + 1}`), world })
+            : T('battle.one', { world });
+        });
+      }
+    }
+
+    // FLEETS IN FLIGHT: one empire's warships leaving one world for another
+    // on the same day, counted. The biggest get tracking shots; the one that
+    // flew in to start a big battle opens its arc.
+    const fleets: FleetMove[] = [];
+    for (const [k, moves] of transitAt) {
+      const groups = new Map<string, FleetMove>();
+      for (const m of moves) {
+        if (m.cls === 'freighter' || m.cls === 'colony' || m.cls === 'kaiju') continue;
+        const key = `${m.from}|${m.to}|${m.fid ?? ''}`;
+        const g = groups.get(key) ?? { from: m.from, to: m.to, fid: m.fid, n: 0, arrive: k + 1 };
+        g.n++;
+        groups.set(key, g);
+      }
+      for (const g of groups.values()) if (g.n >= 8 && byGame.has(g.from) && byGame.has(g.to)) fleets.push(g);
+    }
+    fleets.sort((a, b) => b.n - a.n || a.arrive - b.arrive);
+    for (const b of battles) {
+      b.approach = fleets.filter(g => g.to === b.body && g.arrive >= b.from - 3 && g.arrive <= b.from + 2)
+        .sort((x, y) => Number(b.sides.includes(y.fid ?? '')) - Number(b.sides.includes(x.fid ?? '')) || y.n - x.n)[0];
+    }
+
     // --- the event log, weighed and placed ------------------------------
     let beats: ReelBeat[] = buildBeats(summary, {
       lang: getLang(),
@@ -718,7 +757,15 @@ export function createMatchMap(
     const span = hi - lo;
     const openingTo = Math.round(Math.max(lo + span * 0.12, Math.min(lo + span * 0.35,
       firstWar != null ? firstWar - 3 : lo + span * 0.25)));
-    const plan = (target?: number) => planReel({ lo, hi, battles, beats }, {
+    // The armadas worth a tracking shot of their own: the biggest dozen,
+    // never two at one world within a few days.
+    const armadas: FleetMove[] = [];
+    for (const g of fleets) {
+      if (armadas.length >= 12) break;
+      if (armadas.some(x => x.to === g.to && Math.abs(x.arrive - g.arrive) <= 6)) continue;
+      armadas.push(g);
+    }
+    const plan = (target?: number) => planReel({ lo, hi, battles, beats, fleets: armadas }, {
       finaleBody: summary.game.victory_type === 'engineering' && dysonBody && byId.has(dysonBody)
         ? dysonBody : null,
       openingTo,
@@ -879,6 +926,10 @@ export function createMatchMap(
   /** Where in the frame the subject sits: a little above centre, clear
    *  of the lower third. */
   const FOCUS_Y = 0.44;
+  /** A time-lapse this short, with this many hulls lost at one world, is
+   *  shot from a middle distance on that world (montageAction). */
+  const ACTION_MONTAGE_TICKS = 40;
+  const ACTION_MIN_LOSSES = 10;
   /** A drawn subject's radius as a share of the frame height. */
   const BATTLE_SUBJECT = 0.1;
   const WORLD_SUBJECT = 0.12;
@@ -1011,7 +1062,7 @@ export function createMatchMap(
 
   const subjectOf = (s: ReelScene | undefined, t: number): string | null =>
     s && s.kind === 'intro' && teaser ? subjectOf(teaser, t)
-    : s && s.bodyId && s.framing !== 'system' && byId.has(s.bodyId)
+    : s && s.bodyId && s.framing !== 'system' && s.framing !== 'track' && byId.has(s.bodyId)
       && (drawableAt(byId.get(s.bodyId)!, Math.floor(t))
         // The shot stays on a world for a moment after it is destroyed:
         // the break-up is the picture.
@@ -1046,12 +1097,62 @@ export function createMatchMap(
     return false;
   };
 
+  /**
+   * THE TRACKING SHOT (Lorne, 2026-10-24: "we def need fleet following
+   * cameras"): the camera rides with a fleet in flight, the world it left
+   * falling behind and the one it is making for ahead in frame, and pushes
+   * in as it arrives. Framed on the trip, so the fleet reads at its size.
+   */
+  const trackFrame = (s: ReelScene, t: number): Frame => {
+    const fm = s.track!;
+    const depart = fm.arrive - FLEET_FLIGHT_TICKS;
+    const q = Math.max(0, Math.min(1, (t - depart) / FLEET_FLIGHT_TICKS));
+    const pa = pos(fm.from, t), pb = pos(fm.to, t);
+    const e = easeLeg(q);
+    const fleet = { x: pa.x + (pb.x - pa.x) * e, y: pa.y + (pb.y - pa.y) * e };
+    const d = Math.hypot(pb.x - pa.x, pb.y - pa.y);
+    const m = safe();
+    const span = Math.max(d * 0.8, (bodyR.get(fm.to) ?? 6) * 8);
+    let scale = Math.min((W - m.side * 2) / span, (H - m.top - m.bottom) / span) * (1 + 1.6 * e * e);
+    scale = Math.max(MIN_CAMERA_SCALE, systemFrame(s, t).scale, scale);
+    // Lead the fleet: aim a little ahead of it, toward where it is going.
+    const c = { x: fleet.x + (pb.x - fleet.x) * 0.35, y: fleet.y + (pb.y - fleet.y) * 0.35 };
+    const midY = (m.top + (H - m.bottom)) / 2;
+    return { x: c.x, y: c.y + (H / 2 - midY) / scale, scale };
+  };
+  /**
+   * WHERE THE FIGHTING IS in a short time-lapse (Lorne: "we were covering
+   * some of the largest battles in the game, and were too far out to see
+   * it"): a stretch with heavy losses at one world is shot from a middle
+   * distance on that world, not from across the system. Long time-lapses
+   * stay wide: they are the system at work.
+   */
+  const actionOf = new Map<ReelScene, string | null>();
+  const montageAction = (s: ReelScene): string | null => {
+    if (actionOf.has(s)) return actionOf.get(s)!;
+    let best: string | null = null;
+    if (s.kind === 'montage' && !s.act && s.to - s.from <= ACTION_MONTAGE_TICKS && s.seconds >= 1) {
+      const dead = new Map<string, number>();
+      for (let k = s.from; k < s.to; k++) for (const x of deathAt.get(k) ?? []) dead.set(x.body, (dead.get(x.body) ?? 0) + 1);
+      const top = [...dead.entries()].filter(([b]) => byGame.has(b)).sort((a, b) => b[1] - a[1])[0];
+      if (top && top[1] >= ACTION_MIN_LOSSES) best = top[0];
+    }
+    actionOf.set(s, best);
+    return best;
+  };
+
   /** A scene's own frame at an instant, with its slow drift. */
   const frameOf = (s0: ReelScene | undefined, t: number, prog: number): Frame => {
     // The cold open is framed as the battle it shows.
     const s = s0 && s0.kind === 'intro' && teaser ? teaser : s0;
+    if (s?.framing === 'track' && s.track && viewMode !== 'wide') return trackFrame(s, t);
     const subj = viewMode === 'wide' ? null : subjectOf(s, t);
     if (!s || !subj) {
+      const act = s && viewMode !== 'wide' ? montageAction(s) : null;
+      if (act) {
+        const f = bodyFrame(act, t, WORLD_SUBJECT * 0.3);
+        return { ...f, scale: Math.max(systemFrame(s, t).scale, f.scale * (1 + 0.06 * prog)) };
+      }
       const f = systemFrame(s, t);
       return { ...f, scale: f.scale * (1 + 0.025 * prog) };
     }
@@ -2397,6 +2498,13 @@ export function createMatchMap(
     }
     // The script's words for a scene it asked for: its headline, and the
     // line that says what caused it.
+    // A fleet on the move: who, how many, where to.
+    if (!c && s.kind === 'beat' && s.beat?.kind === 'fleet_moving' && s.track) {
+      const fm = s.track;
+      c = { kicker: T('fleet.kicker'), title: T('fleet.title', { a: shortName(filmFaction(fm.fid)?.name ?? ''), n: fm.n,
+        world: byId.get(fm.to)?.name ?? '' }), sub: T('fleet.sub', { from: byId.get(fm.from)?.name ?? '' }), fid: fm.fid };
+      captionCache.set(s, c);
+    }
     const sb = s.beat?.data?.saga as SagaBeat | undefined;
     if (!c && sb && s.kind === 'beat') {
       c = { kicker: sb.kicker, title: sb.title, sub: sb.because, fid: sb.fid };
@@ -2422,9 +2530,28 @@ export function createMatchMap(
       if (s.kind === 'beat' && s.beat?.kind === 'dyson_initiated') {
         c = { ...c, sub: T('sub.dysonStakes', { a: shortName(filmFaction(s.beat.fid)?.name ?? '') }) };
       }
-      // A second fight at the same world is the next chapter, not a repeat.
-      if (s.kind === 'battle' && repeatVisit(s)) {
-        c = { ...c, title: T('title.battleAgain', { world: byId.get(s.bodyId ?? '')?.name ?? '' }) };
+      // A BATTLE BY ITS NAME ("The First Battle of Mars"), and by where in
+      // its arc this scene is: the first shots, the thick of it, the end.
+      if (s.kind === 'battle' && s.battle) {
+        const b = s.battle;
+        const name = b.name ?? c.title;
+        const nm = (fid: string | null | undefined) => shortName(filmFaction(fid)?.name ?? '');
+        if (s.phase === 'open') {
+          // Inside a sentence the name is lower case: "The first shots of the Second Battle of Mars".
+          c = { ...c, title: T('battle.firstShots', { name: name.replace(/^The\b/, 'the') }),
+            sub: s.track ? T('battle.flyIn', { a: nm(s.track.fid), n: s.track.n })
+              : T('battle.closeIn', { d: b.from, a: nm(b.sides[0]), b: nm(b.sides[1]) }) };
+        } else if (s.phase === 'close') {
+          c = { ...c, title: T('battle.ends', { name }), sub: T('battle.endsSub', { d: Math.max(1, b.to - b.from), lost: b.lost }) };
+        } else if (s.phase === 'peak' && (() => {
+          // "day 56" only when the film went somewhere else in between.
+          const open = scenes.find(x => x.battle === b && x.phase === 'open');
+          return !!open && scenes.some(x => x.from >= open.to && x.to <= s.from && x.kind !== 'montage' && x.seconds > 0.5);
+        })()) {
+          c = { ...c, title: T('battle.dayN', { name, n: Math.max(1, s.from - b.from + 1) }) };
+        } else {
+          c = { ...c, title: name };
+        }
       }
       captionCache.set(s, c);
     }
@@ -2533,7 +2660,10 @@ export function createMatchMap(
       // the fight wins it, and only once the fight is nearly over: a stamp
       // naming the world's owner read "Tritalowda holds Europa" over 0 vs
       // 26, and "Ministry holds Earth" while it was still behind.
-      if (prog > 0.8 && sides.length) {
+      // ...and only on the last scene of its fight: an arc does not call
+      // the battle at its first shots, nor before it comes back to it.
+      const lastOfIt = s.phase !== 'open' && !scenes.some(x => x !== s && x.battle === s.battle && x.from > s.from);
+      if (prog > 0.8 && sides.length && lastOfIt) {
         const top = [...sides].sort((a, b) => b.ships - a.ships)[0];
         const second = [...sides].sort((a, b) => b.ships - a.ships)[1];
         // A clear margin, or no call: 77 vs 70 named the side that then
