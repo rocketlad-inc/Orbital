@@ -163,6 +163,7 @@ import { GIT_SHA } from '../_version';
 import { t, tk, getLang, subscribeLang } from '../i18n/core';
 import { exploredStorageKey, loadExplored, saveExplored } from '../game/exploredBodies';
 import './MapCanvas.css';
+import { presenceBubblePx } from '../render/sensorEdge';
 import { getPlacement, cancelPlacement } from '../game/megastructurePlacement';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 
@@ -383,9 +384,6 @@ let thrValue: ReturnType<typeof computeIncomingThreats> = [];
 // slow orbital map is invisible, while the work drops by the same
 // factor.
 const FOG_MAX_AGE_MS = 140;
-/** The sensor edge's bubble round a world you can see by presence: past
- *  its drawn disc, room for the hulls parked round it, in px. */
-const PRESENCE_BUBBLE_PX = 36;
 /** Where the Leviathan's omen shows, by the system it launches from
  *  (state.js sun_gate_next.system, the SUN_GATE_SYSTEMS label): the far
  *  system's heart, never the Sun it does not come out of. */
@@ -4269,8 +4267,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           const vb = bodyById2.get(id);
           if (!vb || vb.destroyedAtTick != null) continue;
           const vp = bodyPosition(vb, renderTick(), gameState.bodies);
-          // The drawn disc plus room for the hulls parked round it, in px.
-          const px = drawnRadiusOf(renderContext.presentation, vb, sc) + PRESENCE_BUBBLE_PX;
+          // The drawn disc, plus room for the hulls parked round it only
+          // where they are drawn one by one (sensorEdge.presenceBubblePx).
+          const px = presenceBubblePx(drawnRadiusOf(renderContext.presentation, vb, sc), hullReveal(vb, sc));
           seen.push({ pos: vp, range: px / Math.max(1e-9, sc) });
         }
         const cuts = nullFieldCuts(
