@@ -81,6 +81,19 @@ describe('expandScenario', () => {
     expect(() => expandScenario({ ...base(), silos: [{ world: 'earth', owner: 'venus' }] })).toThrow(/unknown faction/);
   });
 
+  it('refuses a research track the game does not have (Defense is armor)', () => {
+    expect(() => expandScenario({ ...base(), research: [{ faction: 'terra', track: 'defense', level: 4 }] })).toThrow(/not a research track/);
+    expect(expandScenario({ ...base(), research: [{ faction: 'terra', track: 'armor', level: 4 }] }).research[0].track).toBe('armor');
+  });
+
+  it('reads a faction\'s starting metal and gold', () => {
+    const fx = base().factions.map((f, i) => (i === 0 ? { ...f, metal: 50000, gold: 20000 } : f));
+    const spec = expandScenario({ ...base(), factions: fx });
+    expect(spec.factions[0]).toMatchObject({ metal: 50000, gold: 20000 });
+    expect(spec.factions[1]).toMatchObject({ metal: null, gold: null });
+    expect(() => expandScenario({ ...base(), factions: base().factions.map(f => ({ ...f, metal: -1 })) })).toThrow(/metal/);
+  });
+
   it('reads a group target order: a preset name or a list', () => {
     const big = expandScenario({ ...base(), ships: [{ key: 'g', owner: 'terra', at: 'earth', class: 'frigate', count: 2, priority: 'big' }] });
     expect(big.ships[0].priority[0]).toBe('capital');
@@ -111,7 +124,7 @@ describe('expandScenario', () => {
     [{ ...base(), ships: [{ key: 'a', owner: 'terra', at: 'earth', class: 'battleship', count: 1 }] }, /unknown class/],
     [{ ...base(), ships: [{ key: 'a', owner: 'terra', at: 'earth', class: 'corvette', count: 1, loadout: 'laser' }] }, /loadout/],
     [{ ...base(), orders: [{ type: 'move', ships: 'ghost', to: 'luna' }] }, /unknown ship group 'ghost'/],
-    [{ ...base(), orders: [{ type: 'warp' }] }, /must be move, strike, trade or mine/],
+    [{ ...base(), orders: [{ type: 'warp' }] }, /must be move, strike, trade, mine or ram/],
     [{ ...base(), ships: [{ key: 'a', owner: 'terra', at: 'earth', class: 'freighter', count: 1 }], orders: [{ type: 'mine', ship: 'a', to: 'earth' }] }, /rock and to/],
     [{ ...base(), ships: [{ key: 'a', owner: 'terra', at: 'uranus', class: 'colony', count: 1 }], orders: [{ type: 'move', ships: 'a', to: 'verdant', settle: 'city' }] }, /settle must be 'station'/],
     [{ ...base(), dyson: { owner: 'venus' } }, /unknown faction 'venus'/],
@@ -142,6 +155,110 @@ describe('expandScenario', () => {
     expect(spec.meteoroids).toEqual([{ body: 'mtr_belt_0', tons: 120, discoveredBy: 'all' }]);
     expect(spec.orders[0]).toMatchObject({ type: 'mine', ship: 'fr', rock: 'mtr_belt_0', to: 'earth', loops: 1 });
     expect(spec.orders[1]).toMatchObject({ type: 'move', to: 'sun_gate', settle: 'station' });
+  });
+});
+
+// 2026-10-23: shields, a ram, megastructures, a loaded hold, the gate's
+// birth and the Leviathan. Each key, and each mistake naming its field.
+describe('expandScenario: set pieces', () => {
+  it('reads shields on a world with cities', () => {
+    const spec = expandScenario({ ...base(), worlds: [{ body: 'luna', owner: 'terra', cities: ['Tycho'], shields: 3 }] });
+    expect(spec.worlds[0]).toMatchObject({ body: 'luna', shields: 3, thrusters: false, living: true });
+    expect(expandScenario({ ...base(), worlds: [{ body: 'luna', cities: ['Tycho'] }] }).worlds[0].shields).toBeNull();
+  });
+
+  it('reads thrusters on a rogue asteroid station, and a ram from it', () => {
+    const spec = expandScenario({
+      ...base(),
+      worlds: [{ body: 'midas', owner: 'mars', stations: 1, thrusters: true }],
+      orders: [{ type: 'ram', asteroid: 'midas', target: 'earth', depart: '+2' }],
+    });
+    // An asteroid is never terraformed, so `living` is off by default here.
+    expect(spec.worlds[0]).toMatchObject({ body: 'midas', thrusters: true, stations: 1, living: false });
+    expect(spec.orders[0]).toMatchObject({ type: 'ram', asteroid: 'midas', target: 'earth', owner: 'mars' });
+    expect(whenTick(spec.orders[0].depart, 10)).toBe(12);
+  });
+
+  it('reads megastructures: a site at a progress, or finished', () => {
+    const spec = expandScenario({
+      ...base(),
+      megastructures: [
+        { key: 'ws', kind: 'weapons_station', at: 'luna', owner: 'terra', progress: 0.9 },
+        { key: 'gate_a', kind: 'warp_gate', at: 'mars', owner: 'mars', complete: true, name: 'Red Door' },
+        { key: 'sink', kind: 'gravity_sink', at: 'earth', owner: 'terra' },
+      ],
+      ships: [{ key: 'fr', owner: 'terra', at: 'ws', class: 'freighter', count: 1, cargo: { metal: 400, credits: 250 } }],
+    });
+    expect(spec.megastructures[0]).toEqual({ key: 'ws', kind: 'weapons_station', at: 'luna', owner: 'terra', progress: 0.9, complete: false, name: null });
+    expect(spec.megastructures[1]).toMatchObject({ complete: true, progress: 1, name: 'Red Door' });
+    expect(spec.megastructures[2]).toMatchObject({ progress: 0, complete: false });
+    // A ship group can stand at a site by its key; the hold rides along.
+    expect(spec.ships[0]).toMatchObject({ at: 'ws', cargo: { metal: 400, gold: 250 } });
+    expect(expandScenario({ ...base(), ships: [{ key: 'a', owner: 'terra', at: 'earth', class: 'corvette', count: 1 }] }).ships[0].cargo).toBeNull();
+  });
+
+  it('reads where a megastructure orbits: orbit in map units, angle in degrees', () => {
+    const spec = expandScenario({
+      ...base(),
+      megastructures: [{ key: 'ws', kind: 'weapons_station', at: 'mars', owner: 'mars', complete: true, orbit: 20, angle: -140 }],
+    });
+    expect(spec.megastructures[0]).toMatchObject({ orbit: 20, angle: 220 });
+  });
+
+  it('keeps the worlds of a scene quiet unless it asks for secrets', () => {
+    expect(expandScenario(base()).secrets).toBe(false);
+    expect(expandScenario({ ...base(), secrets: true }).secrets).toBe(true);
+  });
+
+  it("reads gates: 'birth', and keeps gates: true", () => {
+    const birth = expandScenario({ ...base(), gates: 'birth' });
+    expect(birth.gates).toBe('birth');
+    expect(birth.farSystems).toBe(true);
+    expect(expandScenario({ ...base(), gates: true }).gates).toBe(true);
+    expect(expandScenario(base()).gates).toBe(false);
+  });
+
+  it('reads the Leviathan: far systems and a gate come with it', () => {
+    const spec = expandScenario({ ...base(), kaiju: { at: 'europa', charge_ticks: 4, hp: 6000 } });
+    expect(spec.kaiju).toEqual({ at: 'europa', chargeTicks: 4, hp: 6000 });
+    expect(spec.gates).toBe(true);
+    expect(spec.farSystems).toBe(true);
+    // The game's own wind-up when the scene does not say; a birth stays a birth.
+    const plain = expandScenario({ ...base(), gates: 'birth', kaiju: { at: 'callisto' } });
+    expect(plain.kaiju).toEqual({ at: 'callisto', chargeTicks: 24, hp: null });
+    expect(plain.gates).toBe('birth');
+  });
+
+  it.each([
+    [{ ...base(), worlds: [{ body: 'luna', cities: ['Tycho'], shields: 11 }] }, /worlds\[0\]\.shields must be a level from 1 to 10/],
+    [{ ...base(), worlds: [{ body: 'luna', cities: ['Tycho'], shields: 2.5 }] }, /worlds\[0\]\.shields/],
+    [{ ...base(), worlds: [{ body: 'luna', shields: 2 }] }, /shields stand on cities/],
+    [{ ...base(), worlds: [{ body: 'midas', thrusters: true }] }, /thrusters are a station building/],
+    [{ ...base(), worlds: [{ body: 'luna', stations: 1, thrusters: true }] }, /luna is not a rogue asteroid/],
+    [{ ...base(), worlds: [{ body: 'midas', stations: 1, thrusters: 'yes' }] }, /thrusters must be true or false/],
+    [{ ...base(), worlds: [{ body: 'midas', stations: 1, thrusters: true, living: true }] }, /cannot be terraformed/],
+    [{ ...base(), orders: [{ type: 'ram', asteroid: 'midas', target: 'earth' }] }, /needs a worlds\[\] entry with stations: 1 and thrusters: true/],
+    [{ ...base(), orders: [{ type: 'ram', asteroid: 'midas' }] }, /asteroid and target are required/],
+    [{ ...base(), worlds: [{ body: 'midas', stations: 1, thrusters: true }], orders: [{ type: 'ram', asteroid: 'midas', target: 'midas' }] }, /cannot ram itself/],
+    [{ ...base(), megastructures: [{ key: 'ws', kind: 'death_star', at: 'luna', owner: 'terra' }] }, /megastructures\[0\]\.kind must be one of/],
+    [{ ...base(), megastructures: [{ key: 'luna', kind: 'warp_gate', at: 'earth', owner: 'terra' }] }, /is a world id/],
+    [{ ...base(), megastructures: [{ key: 'ws', kind: 'warp_gate', at: 'earth', owner: 'venus' }] }, /unknown faction 'venus'/],
+    [{ ...base(), megastructures: [{ key: 'ws', kind: 'warp_gate', owner: 'terra' }] }, /megastructures\[0\]\.at/],
+    [{ ...base(), megastructures: [{ key: 'ws', kind: 'warp_gate', at: 'earth', owner: 'terra', progress: 1.5 }] }, /progress must be from 0 to 1/],
+    [{ ...base(), megastructures: [{ key: 'ws', kind: 'warp_gate', at: 'earth', owner: 'terra', orbit: -3 }] }, /orbit must be a distance/],
+    [{ ...base(), megastructures: [{ key: 'ws', kind: 'warp_gate', at: 'earth', owner: 'terra', angle: 'north' }] }, /angle must be in degrees/],
+    [{ ...base(), megastructures: [{ key: 'ws', kind: 'warp_gate', at: 'earth', owner: 'terra' }, { key: 'ws', kind: 'null_field', at: 'mars', owner: 'mars' }] }, /duplicate megastructure key 'ws'/],
+    [{ ...base(), ships: [{ key: 'a', owner: 'terra', at: 'earth', class: 'freighter', count: 1, cargo: { metal: -5 } }] }, /ships\[0\]\.cargo\.metal/],
+    [{ ...base(), ships: [{ key: 'a', owner: 'terra', at: 'earth', class: 'freighter', count: 1, cargo: [400] }] }, /ships\[0\]\.cargo must be/],
+    [{ ...base(), gates: 'open' }, /gates must be true .* or 'birth'/],
+    [{ ...base(), kaiju: { charge_ticks: 4 } }, /kaiju\.at/],
+    [{ ...base(), kaiju: { at: 'earth' } }, /earth is a homeworld/],
+    [{ ...base(), kaiju: { at: 'jupiter' } }, /it eats terrestrial worlds, dwarfs and moons; jupiter is a gas-giant/],
+    [{ ...base(), kaiju: { at: 'europa', charge_ticks: 0 } }, /kaiju\.charge_ticks/],
+    [{ ...base(), kaiju: { at: 'europa', hp: 5 } }, /kaiju\.hp/],
+    [{ ...base(), kaiju: 'europa' }, /kaiju must be/],
+  ])('rejects a bad set piece with the field named (%#)', (scene, msg) => {
+    expect(() => expandScenario(scene)).toThrow(msg);
   });
 });
 

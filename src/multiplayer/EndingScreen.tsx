@@ -26,6 +26,7 @@ import { EndingMeta, EndingPage, EndingPlug } from './EndingPage';
 import { survivedTheGame, verdictKind, viewerOf } from './endingModel';
 import type { EndingPayload } from './endingTypes';
 import { lazyChunk } from '../util/lazyChunk';
+import { filmUrl } from './RecapShare';
 import { t } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 
@@ -102,9 +103,18 @@ export function EndingScreen({ gameId, meta, onReturn }: EndingScreenProps) {
     </React.Suspense>
   ), []);
 
+  // The film's public link, made (or handed back) on first ask.
+  const shareFilm = useCallback(async () => {
+    const r = await apiFetch<{ token: string; path: string }>(
+      `/api/admin/games/${encodeURIComponent(gameId)}/match/share`, { method: 'POST' });
+    if (r.ok) return { url: filmUrl(r.data.token) };
+    return { error: r.status === 409 ? 'not_ready' as const : 'failed' as const };
+  }, [gameId]);
+
   return (
     <EndingPage
       gameId={gameId}
+      shareFilm={shareFilm}
       meta={meta}
       status={status}
       data={data}

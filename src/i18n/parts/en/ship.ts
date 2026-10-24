@@ -809,6 +809,8 @@ export const ship = {
   'ship.panel.whyHome': 'its home yard',
   'ship.panel.whyNearest': 'nearest friendly shipyard',
   'ship.panel.workedOut': '{name} is worked out.',
+  'ship.panel.holdFullShort': 'Hold full.',
+  'ship.panel.routeDigNote': 'The mining run works this rock and sets off for the drop-off once the hold is full or the rock is dry. Cancel the route to stop it.',
   'ship.panel.workedOutShort': 'worked out',
   'ship.panel.workingRock': 'Working {name} — {rate}/tick',
   'ship.panel.workingRockDot': 'Working {name} · {rate}/tick',

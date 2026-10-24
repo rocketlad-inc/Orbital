@@ -43,7 +43,9 @@ const WEIGHT: Record<string, number | ((p: P, r: ChronicleRow) => number)> = {
   settlement_destroyed: (p) => (p.is_capital ? 120 : p.settlement_type === 'city' ? 45 : 20),
   settlement_razed: 60,
   settlement_built: 0,
-  faction_eliminated: 150, faction_revived: 60, faction_joined: 30, faction_comeback: 130,
+  // An empire wiped out is a public execution: every one is shown
+  // (Lorne, 2026-10-22: "usually a very public and bloody matter").
+  faction_eliminated: 230, faction_revived: 60, faction_joined: 30, faction_comeback: 130,
   captain_lost: 0,
   // The beast is on screen from its arrival: the launch is a speck far
   // out past a sun gate, the arrival and the reveal are the monster.
@@ -308,6 +310,18 @@ function mergeBeats(beats: ReelBeat[], summary: MatchSummary, lang: Lang): ReelB
       }
     }
   }
+  // Empires that fall within days of each other fall in ONE scene: two
+  // back-to-back last stands overlapped and one of them was dropped.
+  for (const e of out) {
+    if (e.kind !== 'faction_eliminated' || e.weight <= 0) continue;
+    const near = out.filter(x => x !== e && x.kind === 'faction_eliminated' && x.weight > 0
+      && x.tick >= e.tick && x.tick - e.tick <= 4);
+    if (!near.length) continue;
+    const last = near[near.length - 1];
+    last.data = { ...last.data, together: [e, ...near.slice(0, -1)].map(x => String(x.data?.faction_name ?? '')) };
+    e.weight = 0;
+    for (const x of near.slice(0, -1)) x.weight = 0;
+  }
   // WHO DID IT. An empire's end and its last world's fall name the
   // killer: "Amalgam is wiped out" left the viewer guessing by whom.
   for (const e of out) {
@@ -510,8 +524,10 @@ export function beatCaption(e: ReelBeat,
   let subOverride: string | null = null;
   switch (e.kind) {
     case 'war_declared':
+      // Three names in full ran past two title lines: short forms then.
+      const ws = who.length > 2 ? who.map(x => shortName(x)) : who;
       title = Number(p.pile) > 1 && who.length >= 2 && who.length <= 3
-        ? T('title.targetedBy', { list: `${who.slice(0, -1).join(', ')} ${T('and')} ${who[who.length - 1]}`,
+        ? T('title.targetedBy', { list: `${ws.slice(0, -1).join(', ')} ${T('and')} ${ws[ws.length - 1]}`,
           b: fitName(b) })
         : Number(p.pile) > 1 ? T('title.targeted', { b, n: Number(p.pile) })
         : Number(p.targets) > 1 ? T('title.warMany', { a, n: Number(p.targets) })
@@ -531,9 +547,15 @@ export function beatCaption(e: ReelBeat,
         : p.is_capital ? T('title.capitalFalls', { a, world }) : T('title.destroyed', { world });
       break;
     case 'settlement_razed': title = T('title.destroyed', { world }); break;
-    case 'faction_eliminated':
-      title = killer ? T('title.eliminatedBy', { k: killer, a: String(p.faction_name ?? a) })
-        : T('title.eliminated', { a: String(p.faction_name ?? a) }); break;
+    case 'faction_eliminated': {
+      const all = [...(Array.isArray(p.together) ? p.together as string[] : []), String(p.faction_name ?? a)]
+        .filter(Boolean).map(fitName);
+      title = all.length > 1
+        ? T('title.eliminatedMany', { list: `${all.slice(0, -1).join(', ')} ${T('and')} ${all[all.length - 1]}` })
+        : killer ? T('title.eliminatedBy', { k: killer, a: String(p.faction_name ?? a) })
+        : T('title.eliminated', { a: String(p.faction_name ?? a) });
+      break;
+    }
     case 'faction_comeback': case 'faction_revived':
       title = T('title.comeback', { a, world }); break;
     case 'kaiju_omen': title = T('title.kaijuOmen'); break;

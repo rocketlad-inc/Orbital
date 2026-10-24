@@ -462,6 +462,16 @@ export const SCHEMA = [
     label: 'Leviathan: damage per tick', def: 50, min: 0, max: 5000, step: 1,
   },
   {
+    // The Studio's Leviathan clip (2026-10-23) needed the strike inside a
+    // 15-second cut; 24 ticks of wind-up is a day of game time. Default is
+    // the Mega Destroyer's charge (actions.js MEGA_STRIKE_CHARGE_TICKS),
+    // which is what every game has played with so far.
+    id: 'kaiju_charge_ticks', group: 'map', type: 'int',
+    label: 'Leviathan: wind-up before each strike (ticks)', def: 24, min: 1, max: 240, step: 1,
+    help: 'Ticks it sits over a world charging before each of its two strikes. '
+      + 'Fleets have this long to drive it off or kill it.',
+  },
+  {
     id: 'system_scale', group: 'map', type: 'number',
     label: 'System scale (orbit spread)', def: 1, min: 0.1, max: 10, step: 0.05,
     danger: true,

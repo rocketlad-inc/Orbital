@@ -19,7 +19,10 @@
 //
 // STICKY. A layout is cached per world on a roster signature, so it is
 // re-solved only when hulls arrive, leave or change fleets; and each
-// unit GLIDES to a new place rather than jumping when that happens.
+// unit GLIDES to a new place rather than jumping when that happens. That
+// re-solve is an EDIT of the layout it replaces (orbitBattleLayout's
+// `prev`): whoever was already here holds their place, and only the
+// newcomers are fitted in.
 //
 // Pure and free of the renderer (sizes come in from the caller), so the
 // map, the tests and the test page share it without an import cycle.
@@ -56,6 +59,26 @@ const MIN_HIT_R = 12;
  */
 export function battleReferenceRadius(bodyRadius: number): number {
   return Math.max(60, Math.min(320, 95 * Math.sqrt(Math.max(0.05, bodyRadius || 0))));
+}
+
+/** A megastructure is drawn as art capped at this radius, px
+ *  (bodyPresentation ownGlyphRadius, drawMegastructureBody). */
+export const STRUCTURE_DRAWN_MAX_PX = 46;
+
+/**
+ * The reference radius for the world a battle is at. A STRUCTURE IS NOT
+ * A WORLD: its art never draws past STRUCTURE_DRAWN_MAX_PX, so on the
+ * world curve (a 1.6-radius site: 120 px) k never passed 0.38 and every
+ * hull parked at a site was drawn at a third of its size, tucked against
+ * the art (Studio clip "A megastructure completes", 2026-10-23: the
+ * outliner listed TFS FR-01 at the Weapons Station and nothing could be
+ * seen there). Laid out at the art's own full size, hulls at a site are
+ * full size when the site is.
+ */
+export function battleReferenceRadiusOf(body: number | { type?: string; radius: number }): number {
+  if (typeof body === 'number') return battleReferenceRadius(body);
+  if (body.type === 'megastructure') return STRUCTURE_DRAWN_MAX_PX;
+  return battleReferenceRadius(body.radius);
 }
 
 /**
@@ -144,6 +167,14 @@ export interface LiveBattle {
   stationId?: string;
   /** Escort hull -> the fleet lead whose block it rides in. */
   leadOf: Map<string, string>;
+  /** Reference px from the world's centre to the outside of the fight:
+   *  the farthest hull's (or block's, or station's) edge. */
+  outerR: number;
+  /** Glides take this many times as long (the match film runs a day a
+   *  second, so its re-slots come far oftener than the live map's and at
+   *  the live pace read as hulls snapping sideways round the world).
+   *  Unset = 1, the live map. */
+  glidePace?: number;
 }
 
 const cache = new Map<string, LiveBattle>();
@@ -181,7 +212,8 @@ export function battleSolves(bodyId: string): number {
 
 export function liveBattleFor(
   bodyId: string,
-  bodyRadius: number,
+  /** The world (its type and true radius), or a bare radius. */
+  bodyRadius: number | { type?: string; radius: number },
   dir: number,
   units: readonly BattleUnit[],
   order: readonly string[],
@@ -196,13 +228,21 @@ export function liveBattleFor(
    *  (drawn on its orbit meanwhile) before gliding into its place. */
   dwell?: { nowMs: number; ms?: number },
 ): LiveBattle {
-  const refR = battleReferenceRadius(bodyRadius);
+  const refR = battleReferenceRadiusOf(bodyRadius);
   const key = battleKey(refR, dir, units, order, stationId);
   const hit = cache.get(bodyId);
   if (hit && hit.key === key) { pending.delete(bodyId); return hit; }
   if (hit && dwell) {
+    // The wait runs from the FIRST change, and the re-solve takes whatever
+    // the roster is by then. Restarted on every change, a battle losing a
+    // hull every tick (ticks under the dwell apart) never re-solved, and
+    // every arrival stayed held where it flew in, nose out at the edge of
+    // the Sun (Lorne, Dyson Sphere clip, 2026-10-23). A hull flickering in
+    // and out of fog still never gets through: each flick back to the
+    // cached roster clears the pending change above.
     const p = pending.get(bodyId);
-    if (!p || p.key !== key) { pending.set(bodyId, { key, since: dwell.nowMs }); return hit; }
+    if (!p) { pending.set(bodyId, { key, since: dwell.nowMs }); return hit; }
+    p.key = key;
     if (dwell.nowMs - p.since < (dwell.ms ?? ROSTER_DWELL_MS)) return hit;
   }
   pending.delete(bodyId);
@@ -223,8 +263,22 @@ export function liveBattleFor(
     seed: seedOf(bodyId) + 1,
     factionOrder: [...order],
     station: stationId ? { id: stationId, clearR: BATTLE_STATION_PX * CLEAR_FRAC } : undefined,
+    // A ROSTER CHANGE IS AN EDIT, NOT A RE-DEAL. Every block already at
+    // the world holds its place (giving ground only where a newcomer needs
+    // it) and newcomers are fitted in around them. Re-solved from scratch,
+    // one block joining the Dyson Sphere fight sent every fleet round the
+    // Sun to a new slot (judges, 2026-10-23, 13.4 s): the shares are dealt
+    // from angle 0 in proportion to who is there, so any change turned
+    // them all.
+    prev: hit && hit.refR === refR ? hit.layout : undefined,
   });
-  const lb: LiveBattle = { bodyId, key, refR, dir, layout, blocks, stationId, leadOf };
+  let outerR = refR;
+  for (const s of ships) {
+    const p = layout.placements.get(s.id);
+    if (p) outerR = Math.max(outerR, p.r + (s.clearR ?? s.size * CLEAR_FRAC));
+  }
+  if (layout.station) outerR = Math.max(outerR, layout.station.r + BATTLE_STATION_PX * CLEAR_FRAC);
+  const lb: LiveBattle = { bodyId, key, refR, dir, layout, blocks, stationId, leadOf, outerR };
   cache.set(bodyId, lb);
   return lb;
 }
@@ -304,8 +358,8 @@ export function battlePlacement(
   if (g.r1 === undefined || Math.abs(g.r1 - p.r) > 1e-6 || Math.abs(wrapPi((g.a1 ?? 0) - p.theta)) > 1e-6) {
     const dAng = Math.abs(wrapPi(p.theta - g.t));
     const dist = Math.hypot(p.r - g.r, ((g.r + p.r) / 2) * dAng);
-    const dur = dist < 1e-6 ? 0
-      : Math.min(BATTLE_GLIDE_MAX_MS, BATTLE_GLIDE_MIN_MS + (dist / Math.max(1, p.r)) * 500);
+    const dur = (dist < 1e-6 ? 0
+      : Math.min(BATTLE_GLIDE_MAX_MS, BATTLE_GLIDE_MIN_MS + (dist / Math.max(1, p.r)) * 500)) * (battle.glidePace ?? 1);
     g.r0 = g.r; g.a0 = g.t; g.r1 = p.r; g.a1 = p.theta; g.startMs = nowMs; g.dur = dur;
   }
   const u = g.dur ? smoother((nowMs - (g.startMs ?? nowMs)) / g.dur) : 1;

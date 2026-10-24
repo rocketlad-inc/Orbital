@@ -44,11 +44,13 @@ import { getShipClass } from './shipClasses';
 // a disagreement means the panel promises a shot the tick will not fire.
 
 /** Per-class weapon reach. Freighter and colony are 0: they NEVER shoot.
- *  Doubled 2026-10-06 (was 12 / 16 / 20). Held to worker/transitCombat.js
- *  SHIP_RANGE by burnParity.test.ts; the shot renderer (combatFx) reads
- *  this one rather than keeping a third copy. */
+ *  Doubled 2026-10-06 (was 12 / 16 / 20); 360 / 480 / 600 since
+ *  2026-10-23 (Lorne: top reach 600 in open space, staggered down), and
+ *  the Mega Destroyer fires in flight at 600. Held to
+ *  worker/transitCombat.js SHIP_RANGE by burnParity.test.ts; the shot
+ *  renderer (combatFx) reads this one rather than keeping a third copy. */
 export const SHIP_RANGE: Readonly<Record<string, number>> = {
-  corvette: 24, frigate: 32, destroyer: 40, freighter: 0, colony: 0,
+  corvette: 360, frigate: 480, destroyer: 600, mega_destroyer: 600, freighter: 0, colony: 0,
 };
 /** Reference crossing speed for the aim penalty. 45 for the old flat
  *  even burn, scaled with cruise speed (worker/burn.js CRUISE_SPEED_SCALE:

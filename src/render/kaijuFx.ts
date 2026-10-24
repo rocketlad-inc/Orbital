@@ -29,7 +29,7 @@
 
 import { Body } from '../types';
 import { bodyPosition } from '../physics/orbitalMechanics';
-import { RenderContext, worldToCanvas } from './mapRenderer';
+import { RenderContext, worldToCanvas, sterilisedBlend } from './mapRenderer';
 import { drawnRadiusOf } from './bodyPresentation';
 import { drawSunSquid, LEVIATHAN_PALETTE, SquidPalette } from './sunSquid';
 import { glowAt } from './fxArt';
@@ -52,14 +52,47 @@ const BREAK_BURST = 0.6;
 
 // ---- where the beast was drawn -----------------------------------------
 
-interface Drawn { x: number; y: number; heading: number; size: number; ms: number }
+/** The world the beast was drawn over when mapRenderer drew it: parked
+ *  there, or held there by a strike (kaijuFlightPose). `bx, by` is that
+ *  world's position (world units), `R` its drawn radius (px). */
+export interface KaijuAnchor { bodyId: string; parked: boolean; bx: number; by: number; R: number; scale: number }
+/** A pose relative to a world: offset in its DRAWN radii, size as a
+ *  multiple of its drawn radius. Rebuilt every frame from where the world
+ *  is now and how big it is drawn, so whatever is anchored this way rides
+ *  the world's orbit and the zoom (a world-coordinate point stayed behind
+ *  as Europa moved on, 40+ px a frame at a close-up). */
+interface Rel { bodyId: string; rx: number; ry: number; heading: number; sizeR: number }
+interface Drawn {
+  x: number; y: number; heading: number; size: number; ms: number;
+  /** Drawn PARKED over this world (drawShip), this frame. */
+  parkedAt?: string | null;
+  rel?: Rel | null;
+}
+/** A pose in canvas px. */
+export interface KaijuPose { x: number; y: number; heading: number; size: number }
+
 let lastDrawn: Drawn | null = null;
 let lastDrawnShip: string | null = null;
+/** The last time it was drawn parked over a world, relative to it. */
+let lastParked: (Rel & { ms: number }) | null = null;
+/** When a strike hold last drew the hull (kaijuFlightPose), wall ms. */
+let heldDrawnMs = -Infinity;
 
-/** mapRenderer calls this every frame it draws the beast (world coords). */
-export function noteKaijuDrawn(shipId: string, x: number, y: number, heading: number, size: number): void {
+function relOf(x: number, y: number, heading: number, size: number, a: KaijuAnchor): Rel {
+  const Rw = Math.max(1e-9, a.R / Math.max(1e-9, a.scale));
+  return { bodyId: a.bodyId, rx: (x - a.bx) / Rw, ry: (y - a.by) / Rw, heading, sizeR: size / Math.max(1e-9, a.R) };
+}
+
+/** mapRenderer calls this every frame it draws the beast (world coords),
+ *  with the world it is drawn over, if any. */
+export function noteKaijuDrawn(
+  shipId: string, x: number, y: number, heading: number, size: number, anchor: KaijuAnchor | null = null,
+): void {
   lastDrawnShip = shipId;
-  lastDrawn = { x, y, heading, size, ms: performance.now() };
+  const ms = performance.now();
+  const rel = anchor ? relOf(x, y, heading, size, anchor) : null;
+  lastDrawn = { x, y, heading, size, ms, parkedAt: anchor?.parked ? anchor.bodyId : null, rel };
+  if (anchor?.parked && rel) lastParked = { ...rel, ms };
 }
 
 // ---- the queue ----------------------------------------------------------
@@ -71,6 +104,17 @@ interface Fx { id: string; kind: Kind; bodyId: string; startMs: number; seed: nu
 const live: Fx[] = [];
 const seen = new Set<string>();
 let deathPlayed = false;
+/** The death, kept after it has played: the carcass settles from it. */
+let lastDeath: Fx | null = null;
+/** Worlds whose break has begun playing here (kaijuBreakStarted). */
+const brokenPlayed = new Set<string>();
+
+/** Has the beast's break of this world begun playing here? Until it has,
+ *  a world it broke in the last few ticks is still drawn whole
+ *  (mapRenderer obliteration hold), as a sterilised one is. */
+export function kaijuBreakStarted(bodyId: string): boolean {
+  return brokenPlayed.has(bodyId);
+}
 
 const LIFE: Record<Kind, number> = { scorch: KAIJU_SCORCH_MS, break: KAIJU_BREAK_MS, death: KAIJU_DEATH_MS };
 
@@ -78,6 +122,7 @@ const LIFE: Record<Kind, number> = { scorch: KAIJU_SCORCH_MS, break: KAIJU_BREAK
 export function spawnKaijuStrike(entryId: string, bodyId: string, mode: 'scorch' | 'break'): void {
   if (seen.has(entryId)) return;
   seen.add(entryId);
+  if (mode === 'break') brokenPlayed.add(bodyId);
   if (live.length >= 4) live.shift();
   live.push({ id: entryId, kind: mode, bodyId, startMs: performance.now(), seed: hashStr(entryId) });
 }
@@ -90,7 +135,9 @@ export function spawnKaijuDeath(entryId: string, bodyId: string): void {
   seen.add(entryId);
   deathPlayed = true;
   const fresh = lastDrawn && performance.now() - lastDrawn.ms < 120_000 ? { ...lastDrawn } : null;
-  live.push({ id: entryId, kind: 'death', bodyId, startMs: performance.now(), seed: hashStr(entryId), beast: fresh });
+  const f: Fx = { id: entryId, kind: 'death', bodyId, startMs: performance.now(), seed: hashStr(entryId), beast: fresh };
+  live.push(f);
+  lastDeath = f;
 }
 
 /** Is a hull id the beast? (Its id is fixed per game: `<game>:leviathan`.) */
@@ -120,6 +167,141 @@ export function kaijuHoldsWorldWhole(bodyId: string, nowMs: number): boolean {
 
 function bodyOf(rc: RenderContext, id: string): Body | undefined {
   return rc.bodies.find(b => b.id === id);
+}
+
+/** A world's place and drawn radius this frame. */
+function frameOf(rc: RenderContext, bodyId: string): { wp: P; cp: P; R: number } | null {
+  const body = bodyOf(rc, bodyId);
+  if (!body) return null;
+  const wp = bodyPosition(body, rc.t, rc.bodies);
+  return { wp, cp: worldToCanvas(wp.x, wp.y, rc), R: Math.max(1e-6, drawnRadiusOf(rc.presentation, body, rc.camera.scale)) };
+}
+
+/** A relative pose, put back on its world as it is drawn now. */
+function relPose(rc: RenderContext, rel: Rel): KaijuPose | null {
+  const fr = frameOf(rc, rel.bodyId);
+  if (!fr) return null;
+  const Rw = fr.R / Math.max(1e-9, rc.camera.scale);
+  const c = worldToCanvas(fr.wp.x + rel.rx * Rw, fr.wp.y + rel.ry * Rw, rc);
+  return { x: c.x, y: c.y, heading: rel.heading, size: rel.sizeR * fr.R };
+}
+
+/** How wide the beast is drawn over a world (mapRenderer kaijuParkedSize). */
+const WORLD_SPAN = 4.4;
+
+/**
+ * Where a strike's beast is: where it was last drawn PARKED over this
+ * world, kept on the world as it moves. Never seen there by this client:
+ * out on its parking ring on the side away from the Sun, the size it is
+ * drawn over a world.
+ */
+function heldPose(rc: RenderContext, bodyId: string): KaijuPose | null {
+  if (lastParked && lastParked.bodyId === bodyId) {
+    const p = relPose(rc, lastParked);
+    if (p) return p;
+  }
+  const fr = frameOf(rc, bodyId);
+  if (!fr) return null;
+  const awayA = Math.atan2(fr.wp.y, fr.wp.x);
+  return {
+    x: fr.cp.x + Math.cos(awayA) * fr.R * 2.4, y: fr.cp.y + Math.sin(awayA) * fr.R * 2.4,
+    heading: awayA + Math.PI, size: fr.R * WORLD_SPAN,
+  };
+}
+
+/** The strike's beast this frame, and whether it is the live parked hull. */
+function strikeBeast(rc: RenderContext, f: Fx, nowMs: number): { pose: KaijuPose; live: boolean } | null {
+  if (lastDrawn && nowMs - lastDrawn.ms < 4000 && lastDrawn.parkedAt === f.bodyId) {
+    const c = worldToCanvas(lastDrawn.x, lastDrawn.y, rc);
+    return { pose: { x: c.x, y: c.y, heading: lastDrawn.heading, size: lastDrawn.size }, live: true };
+  }
+  const p = heldPose(rc, f.bodyId);
+  return p ? { pose: p, live: false } : null;
+}
+
+/** Where in each strike the arms have let go (fraction of its life). */
+const ARMS_END: Record<'scorch' | 'break', number> = { scorch: 0.85, break: BREAK_BURST + 0.04 };
+/** How long the beast takes to ease from the world into its flight. */
+export const KAIJU_RELEASE_MS = 1200;
+
+function holdWindow(f: Fx): { end: number; release: number } | null {
+  if (f.kind === 'death') return null;
+  const life = LIFE[f.kind];
+  const end = f.startMs + ARMS_END[f.kind] * life;
+  // Within the set piece's own life, which is when it leaves the queue.
+  return { end, release: Math.max(1, Math.min(KAIJU_RELEASE_MS, f.startMs + life - end)) };
+}
+
+/** Is a strike holding the beast at its world (or easing it out) now? */
+export function kaijuStrikeHolds(nowMs: number): boolean {
+  return live.some(f => {
+    const w = holdWindow(f);
+    return !!w && nowMs >= f.startMs && nowMs < w.end + w.release;
+  });
+}
+
+/**
+ * THE BEAST STILL ON ITS PREY, for the guns (combatFx drawEngagementFire).
+ * It leaves for its next meal on the tick it breaks a world, so the
+ * server's fight at that world ends with that tick: the outliner says
+ * ORBITING, and the guards' fire stopped while the beast was still drawn
+ * wrapped round the world, crushing it (judges, the Leviathan clip,
+ * 2026-10-23, 10.0-11.6 s: "the fleet giving up"). The strike it is
+ * drawn finishing is the tick the guards fought it, so they keep firing at
+ * it where it is drawn until its arms let go; from then on it is visibly
+ * leaving, and they stop. Null unless a strike holds it over a world and
+ * it was drawn there this frame (`maxAgeMs`). `x, y` world units (where it
+ * was drawn), `size` px.
+ */
+export function kaijuHeldAt(
+  nowMs: number, maxAgeMs = 250,
+): { shipId: string | null; bodyId: string; x: number; y: number; size: number } | null {
+  if (!lastDrawn || Math.abs(nowMs - lastDrawn.ms) > maxAgeMs) return null;
+  for (const f of live) {
+    const w = holdWindow(f);
+    if (!w || nowMs < f.startMs || nowMs >= w.end) continue;
+    if (lastDrawn.rel?.bodyId !== f.bodyId) continue;
+    return { shipId: lastDrawnShip, bodyId: f.bodyId, x: lastDrawn.x, y: lastDrawn.y, size: lastDrawn.size };
+  }
+  return null;
+}
+
+const smoother = (v: number) => { const x = clamp01(v); return x * x * x * (x * (x * 6 - 15) + 10); };
+const lerpAngle = (a: number, b: number, t: number) => {
+  let d = (b - a) % TWO_PI;
+  if (d > Math.PI) d -= TWO_PI;
+  if (d < -Math.PI) d += TWO_PI;
+  return a + d * t;
+};
+
+/**
+ * THE BEAST IN FLIGHT, while one of its strikes still plays. It leaves
+ * for its next meal on the tick it breaks a world, so its flight began
+ * with its arms still round that world: it halved, slid off the bottom of
+ * the frame, and the arms crushed the world from off screen (Studio clip
+ * "The Leviathan", 2026-10-23). Now it stays where it held the world
+ * until its arms let go, then eases into its flight over
+ * KAIJU_RELEASE_MS. `flight` is where its flight would draw it. Null when
+ * no strike holds it. `bodyId` is set while it is still over the world.
+ */
+export function kaijuFlightPose(
+  rc: RenderContext, flight: KaijuPose, nowMs: number,
+): (KaijuPose & { bodyId: string | null }) | null {
+  for (const f of live) {
+    const w = holdWindow(f);
+    if (!w || nowMs < f.startMs || nowMs >= w.end + w.release) continue;
+    const held = heldPose(rc, f.bodyId);
+    if (!held) continue;
+    heldDrawnMs = nowMs;
+    if (nowMs < w.end) return { ...held, bodyId: f.bodyId };
+    const e = smoother((nowMs - w.end) / w.release);
+    return {
+      x: lerp(held.x, flight.x, e), y: lerp(held.y, flight.y, e),
+      heading: lerpAngle(held.heading, flight.heading, e), size: lerp(held.size, flight.size, e),
+      bodyId: null,
+    };
+  }
+  return null;
 }
 
 /** A tapered ribbon along a polyline. */
@@ -205,7 +387,7 @@ function drawArms(g: G, arms: P[][], width: number, pulse: number, light: number
 }
 
 /** Where the arms leave the beast (its head, the collar of the mantle). */
-function armRoots(beast: Drawn, count: number): P[] {
+function armRoots(beast: KaijuPose, count: number): P[] {
   const u = beast.size / 6;
   const out: P[] = [];
   for (let i = 0; i < count; i++) {
@@ -226,14 +408,11 @@ function drawStrike(rc: RenderContext, f: Fx, k: number, nowMs: number) {
   const wp = bodyPosition(body, rc.t, rc.bodies);
   const cp = worldToCanvas(wp.x, wp.y, rc);
   const R = Math.max(6, drawnRadiusOf(rc.presentation, body, rc.camera.scale));
-  // The beast where the game drew it; failing that, out on its parking
-  // ring on the side away from the Sun.
-  const fresh = lastDrawn && nowMs - lastDrawn.ms < 4000 ? lastDrawn : null;
-  const bc = fresh ? worldToCanvas(fresh.x, fresh.y, rc) : null;
-  const awayA = Math.atan2(wp.y, wp.x);
-  const beast: Drawn = bc
-    ? { x: bc.x, y: bc.y, heading: fresh!.heading, size: fresh!.size, ms: fresh!.ms }
-    : { x: cp.x + Math.cos(awayA) * R * 2.4, y: cp.y + Math.sin(awayA) * R * 2.4, heading: awayA + Math.PI, size: R * 2.2, ms: nowMs };
+  // The beast: the hull on screen while it is parked over this world, and
+  // otherwise where it held it (strikeBeast). Never a hull flying away.
+  const at = strikeBeast(rc, f, nowMs);
+  if (!at) return;
+  const beast = at.pose;
   const toBeast = Math.atan2(beast.y - cp.y, beast.x - cp.x);
   const rng = mulberry32(f.seed);
   const breakIt = f.kind === 'break';
@@ -254,6 +433,14 @@ function drawStrike(rc: RenderContext, f: Fx, k: number, nowMs: number) {
   const centre = { x: cp.x + sx, y: cp.y + sy };
 
   const showArms = breakIt ? k < BREAK_BURST + 0.04 : release < 1;
+  // Arms need an animal. When no hull was drawn there this frame (fogged
+  // out, or not in this client's state at all), it is drawn here.
+  if (showArms && !at.live && heldDrawnMs < nowMs) {
+    drawSunSquid(g, beast.x, beast.y, {
+      u: beast.size / 6, ringR: 0, heading: beast.heading, morph: 0, thrust: 0.1, now: nowMs,
+      palette: LEVIATHAN_PALETTE,
+    });
+  }
   if (showArms) {
     const arms = roots.map((root, i) => {
       // Contact points: the near face for a scorch, spread right round
@@ -322,25 +509,7 @@ function drawStrike(rc: RenderContext, f: Fx, k: number, nowMs: number) {
       g.lineWidth = Math.max(1.5, R * 0.12 * (1 - bk));
       g.beginPath(); g.arc(cp.x, cp.y, ring, 0, TWO_PI); g.stroke();
       g.restore();
-      // Shards of the world, tumbling out, in its own colour.
-      const sr = mulberry32(f.seed + 13);
-      const shards = 28;
-      g.save();
-      for (let i = 0; i < shards; i++) {
-        const a = sr() * TWO_PI, v = 0.8 + 2.6 * sr(), spin = (sr() - 0.5) * 8;
-        const d = R * (0.3 + v * smooth(bk) * 1.6);
-        const x = cp.x + Math.cos(a) * d, y = cp.y + Math.sin(a) * d;
-        const s = R * (0.08 + 0.18 * sr()) * (1 - 0.5 * bk);
-        g.save();
-        g.translate(x, y); g.rotate(spin * bk + a);
-        g.globalAlpha = 1 - smooth((bk - 0.55) / 0.45);
-        g.fillStyle = body.color || '#8a7a6a';
-        g.beginPath(); g.moveTo(s, 0); g.lineTo(-s * 0.6, s * 0.7); g.lineTo(-s * 0.4, -s * 0.8); g.closePath(); g.fill();
-        g.fillStyle = `rgba(${LEVIATHAN_PALETTE.hot}, ${(0.5 * (1 - bk)).toFixed(3)})`;
-        g.fillRect(-s * 0.15, -s * 0.15, s * 0.3, s * 0.3);
-        g.restore();
-      }
-      g.restore();
+      // The shards themselves are drawn UNDER the hulls (drawKaijuShards).
     }
   } else if (k > 0.2 && k < 0.7) {
     // A violet pressure wave where the light goes in, ahead of the fire
@@ -351,6 +520,91 @@ function drawStrike(rc: RenderContext, f: Fx, k: number, nowMs: number) {
     g.strokeStyle = `rgba(${LEVIATHAN_PALETTE.glow}, ${(0.45 * (1 - wk)).toFixed(3)})`;
     g.lineWidth = Math.max(1.5, R * 0.08);
     g.beginPath(); g.arc(cp.x, cp.y, R * (1.05 + 1.8 * wk), 0, TWO_PI); g.stroke();
+    g.restore();
+  }
+}
+
+// ---- the shards of a broken world ---------------------------------------
+
+/** The rubble the debris field draws (mapRenderer drawDebrisField): what
+ *  the shards fly out to become. */
+const RUBBLE = { r: 0x6f, g: 0x68, b: 0x60 };
+
+function rgbOf(hex: string | undefined): { r: number; g: number; b: number } | null {
+  const m = /^#?([0-9a-f]{6})$/i.exec((hex ?? '').trim());
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
+
+/**
+ * WHAT A BROKEN WORLD'S SHARDS ARE MADE OF: its crust as drawn, not its
+ * map dot. They were filled with `body.color`, Io's flat label yellow, so
+ * the break burst into 28 saturated yellow triangles over grey rubble and
+ * over the fleet ("UI confetti", judges, the Leviathan clip, 2026-10-23).
+ * Rock: the debris field's own grey, keeping only a trace of the world's
+ * hue, and none of it once the world is ash (`ash` 0..1, sterilisedBlend).
+ * `lit` faces the Sun, `dark` turns away; a tumbling shard swings between.
+ */
+export function kaijuShardTones(color: string | undefined, ash: number): { lit: string; dark: string } {
+  const c = rgbOf(color) ?? RUBBLE;
+  const keep = 0.22 * (1 - Math.max(0, Math.min(1, ash)));
+  const mix = (a: number, b: number) => a + (b - a) * keep;
+  const base = { r: mix(RUBBLE.r, c.r), g: mix(RUBBLE.g, c.g), b: mix(RUBBLE.b, c.b) };
+  const tone = (k: number) => `rgb(${[base.r, base.g, base.b].map(v => Math.round(Math.min(255, v * k))).join(', ')})`;
+  return { lit: tone(1.35), dark: tone(0.48) };
+}
+
+/**
+ * THE BREAK'S SHARDS, drawn with the wrecks UNDER the hulls (MapCanvas):
+ * a burst of rock tumbling out of the world and settling into the debris
+ * field, never painted over the fleet guarding it. Rock-coloured
+ * (kaijuShardTones) and lit from the Sun as they tumble.
+ */
+export function drawKaijuShards(rc: RenderContext, nowMs: number): void {
+  for (const f of live) {
+    if (f.kind !== 'break') continue;
+    const k = (nowMs - f.startMs) / KAIJU_BREAK_MS;
+    if (k < BREAK_BURST || k >= 1) continue;
+    const body = bodyOf(rc, f.bodyId);
+    if (!body) continue;
+    const g = rc.ctx;
+    const wp = bodyPosition(body, rc.t, rc.bodies);
+    const cp = worldToCanvas(wp.x, wp.y, rc);
+    const R = Math.max(6, drawnRadiusOf(rc.presentation, body, rc.camera.scale));
+    const bk = clamp01((k - BREAK_BURST) / (1 - BREAK_BURST));
+    const tones = kaijuShardTones(body.color, sterilisedBlend(body, rc));
+    const sun = worldToCanvas(0, 0, rc);
+    const sunA = Math.atan2(sun.y - cp.y, sun.x - cp.x);
+    const sr = mulberry32(f.seed + 13);
+    const shards = 28;
+    g.save();
+    for (let i = 0; i < shards; i++) {
+      const a = sr() * TWO_PI, v = 0.8 + 2.6 * sr(), spin = (sr() - 0.5) * 8;
+      const d = R * (0.3 + v * smooth(bk) * 1.6);
+      const x = cp.x + Math.cos(a) * d, y = cp.y + Math.sin(a) * d;
+      const s = R * (0.08 + 0.18 * sr()) * (1 - 0.5 * bk);
+      const rot = spin * bk + a;
+      g.save();
+      g.translate(x, y); g.rotate(rot);
+      g.globalAlpha = 1 - smooth((bk - 0.55) / 0.45);
+      // The whole shard in shadow, then its sunward facet lit: which facet
+      // that is turns as it tumbles, so the burst reads as solid rock.
+      g.fillStyle = tones.dark;
+      g.beginPath(); g.moveTo(s, 0); g.lineTo(-s * 0.6, s * 0.7); g.lineTo(-s * 0.4, -s * 0.8); g.closePath(); g.fill();
+      const facing = Math.cos(sunA - rot);
+      g.fillStyle = tones.lit;
+      g.beginPath();
+      if (facing >= 0) { g.moveTo(s, 0); g.lineTo(-s * 0.4, -s * 0.8); g.lineTo(-s * 0.1, 0); }
+      else { g.moveTo(s, 0); g.lineTo(-s * 0.6, s * 0.7); g.lineTo(-s * 0.1, 0); }
+      g.closePath(); g.fill();
+      // Still hot inside for the first moments of the burst.
+      if (bk < 0.5) {
+        g.fillStyle = `rgba(${LEVIATHAN_PALETTE.hot}, ${(0.35 * (1 - bk * 2)).toFixed(3)})`;
+        g.fillRect(-s * 0.12, -s * 0.12, s * 0.24, s * 0.24);
+      }
+      g.restore();
+    }
     g.restore();
   }
 }
@@ -371,32 +625,81 @@ function dimmed(k: number): SquidPalette {
   };
 }
 
+/**
+ * Where the dying beast is, k through its death: where it was last DRAWN,
+ * at the size it was drawn (riding the world it was over, if any), and
+ * then floating on a little. The thrash is left out (drawDeath adds it).
+ */
+function deathPose(rc: RenderContext, f: Fx, k: number): KaijuPose | null {
+  let base: KaijuPose | null = null;
+  if (f.beast?.rel) base = relPose(rc, f.beast.rel);
+  if (!base && f.beast) {
+    const c = worldToCanvas(f.beast.x, f.beast.y, rc);
+    base = { x: c.x, y: c.y, heading: f.beast.heading, size: f.beast.size };
+  }
+  if (!base) {
+    // Loaded after it died: where it fell, beside that world.
+    const fr = f.bodyId ? frameOf(rc, f.bodyId) : null;
+    if (!fr) return null;
+    const R = Math.max(6, fr.R);
+    const a = (f.seed % 628) / 100;
+    base = {
+      x: fr.cp.x + Math.cos(a) * R * 2.4, y: fr.cp.y + Math.sin(a) * R * 2.4,
+      heading: a + Math.PI / 2, size: Math.max(60, R * 2.4),
+    };
+  }
+  // Drift: it stops swimming and floats on; it rolls a little as it goes.
+  const drift = smooth(k) * base.size * 0.25;
+  const dark = smooth((k - 0.25) / 0.4);
+  return {
+    x: base.x + Math.cos(base.heading) * drift, y: base.y + Math.sin(base.heading) * drift,
+    heading: base.heading + dark * 0.35 * smooth(k), size: base.size,
+  };
+}
+
+/** When in the death the carcass shows through the fading animal. */
+const CARCASS_FROM = 0.72;
+/** How long the carcass then takes to settle onto its own orbit. */
+export const KAIJU_CARCASS_SETTLE_MS = 2400;
+
+/**
+ * WHERE TO DRAW THE CARCASS (mapRenderer, the leviathan_carcass body).
+ * The salvage body is a separate thing on its own orbit, at its own size,
+ * and it arrives in the same /state the beast leaves: it popped up beside
+ * the world while the beast was still dying somewhere else. It now shows
+ * through as the animal's lights go out, where the animal is and at its
+ * size, then settles onto its own orbit. `own` is where it would be drawn.
+ */
+export function kaijuCarcassPose(
+  rc: RenderContext, own: KaijuPose, nowMs: number,
+): KaijuPose & { alpha: number } {
+  const f = lastDeath;
+  if (!f) return { ...own, alpha: 1 };
+  const k = (nowMs - f.startMs) / KAIJU_DEATH_MS;
+  if (k < 0) return { ...own, alpha: 1 };
+  const at = deathPose(rc, f, Math.min(1, k));
+  if (!at) return { ...own, alpha: 1 };
+  if (k < 1) return { ...at, alpha: smooth((k - CARCASS_FROM) / 0.2) };
+  const s = (nowMs - f.startMs - KAIJU_DEATH_MS) / KAIJU_CARCASS_SETTLE_MS;
+  if (s >= 1) return { ...own, alpha: 1 };
+  const e = smoother(s);
+  return {
+    x: lerp(at.x, own.x, e), y: lerp(at.y, own.y, e), size: lerp(at.size, own.size, e),
+    heading: lerpAngle(at.heading, own.heading, e), alpha: 1,
+  };
+}
+
 function drawDeath(rc: RenderContext, f: Fx, k: number, nowMs: number) {
   const g = rc.ctx;
-  let x: number, y: number, heading: number, size: number;
-  if (f.beast) {
-    const c = worldToCanvas(f.beast.x, f.beast.y, rc);
-    x = c.x; y = c.y; heading = f.beast.heading; size = f.beast.size;
-  } else {
-    // Loaded after it died: where it fell, beside that world.
-    const body = bodyOf(rc, f.bodyId);
-    if (!body) return;
-    const wp = bodyPosition(body, rc.t, rc.bodies);
-    const cp = worldToCanvas(wp.x, wp.y, rc);
-    const R = Math.max(6, drawnRadiusOf(rc.presentation, body, rc.camera.scale));
-    const a = (f.seed % 628) / 100;
-    x = cp.x + Math.cos(a) * R * 2.4; y = cp.y + Math.sin(a) * R * 2.4;
-    heading = a + Math.PI / 2; size = Math.max(60, R * 2.4);
-  }
+  const pose = deathPose(rc, f, k);
+  if (!pose) return;
+  const { x, y, size } = pose;
   const rng = mulberry32(f.seed + Math.floor(nowMs / 70));
-  // Drift: it stops swimming and floats on.
-  const drift = smooth(k) * size * 0.25;
-  x += Math.cos(heading) * drift; y += Math.sin(heading) * drift;
 
   const thrash = 1 - smooth((k - 0.05) / 0.3);
   const dark = smooth((k - 0.25) / 0.4);
-  const gone = smooth((k - 0.72) / 0.2);
-  const h = heading + thrash * 0.45 * Math.sin(nowMs / 55) + dark * 0.35 * smooth(k);
+  const gone = smooth((k - CARCASS_FROM) / 0.2);
+  const h = pose.heading + thrash * 0.45 * Math.sin(nowMs / 55);
 
   // Ichor: violet droplets bleeding out and drifting off.
   g.save();
@@ -482,6 +785,8 @@ export function drawKaijuFx(rc: RenderContext, nowMs: number): void {
 /** Test hook: forget everything played. */
 export function resetKaijuFx(): void {
   live.length = 0; seen.clear(); deathPlayed = false; lastDrawn = null; lastDrawnShip = null;
+  brokenPlayed.clear();
+  lastParked = null; lastDeath = null; heldDrawnMs = -Infinity;
 }
 
 /** Test hook: what was last noted. */
@@ -507,12 +812,17 @@ export const CARCASS_PALETTE: SquidPalette = {
  * mining rigs strip it (`left`, 1 -> 0) it shrinks and darkens, and a
  * few loose chunks of hide drift around it.
  */
+/** The carcass's own slow tumble. */
+export function carcassHeading(seed: number, nowMs: number): number {
+  return ((seed % 628) / 100) + nowMs / 52000;
+}
+
 export function drawKaijuCarcass(
   g: G, x: number, y: number, size: number, nowMs: number, left: number, seed: number,
+  heading: number = carcassHeading(seed, nowMs),
 ): void {
   const f = clamp01(left);
   const s = size * (0.62 + 0.38 * f);
-  const heading = ((seed % 628) / 100) + nowMs / 52000;
   g.save();
   g.globalAlpha *= 0.55 + 0.45 * f;
   drawSunSquid(g, x, y, {

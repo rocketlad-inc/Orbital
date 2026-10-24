@@ -64,11 +64,16 @@ export function settlementSensorRangeFor(type: string): number {
   return (SETTLEMENT_SENSOR_RANGE[type] ?? 40) * runtimeSensorScale;
 }
 
-/** Sensor range per ship class. Solar system spans ~920 units (post-scale). */
+/** Sensor range per ship class. Solar system spans ~920 units (post-scale).
+ *  A warship sees at least as far as it shoots in flight (Lorne,
+ *  2026-10-23: transit reach went to 360 / 480 / 600, and a hull must not
+ *  fire at what its own sensors cannot see): was 300 / 400 / 350, and the
+ *  Mega Destroyer had no entry (25). Mirrors worker/state.js. */
 export const SHIP_SENSOR_RANGE: Record<string, number> = {
-  corvette: 150 * SENSOR_SCALE,   // light scout
-  frigate: 200 * SENSOR_SCALE,    // balanced warship
-  destroyer: 175 * SENSOR_SCALE,  // heavy weapons, less sensor budget
+  corvette: 180 * SENSOR_SCALE,   // 360 = its transit reach
+  frigate: 240 * SENSOR_SCALE,    // 480 = its transit reach
+  destroyer: 300 * SENSOR_SCALE,  // 600 = its transit reach
+  mega_destroyer: 300 * SENSOR_SCALE,
   freighter: 100 * SENSOR_SCALE,  // civilian
   colony: 75 * SENSOR_SCALE,      // settler transport — minimal nav sensors
 };

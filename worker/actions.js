@@ -29,6 +29,7 @@ import {
   isBreached, isAbandoned, MEGA_MAX_HP, MEGA_BREACH_HP, GATE_TRANSIT_FRACTION,
   gateTransitTicks,
   maySupplySite, excludedFundersOf, constructionPartners,
+  siteNameFor, renameFinishedSiteStmt,
 } from './megastructures.js';
 import { makeRouteMath } from './routeMath.js';
 import { getActiveSliders } from './senate.js';
@@ -3759,7 +3760,8 @@ async function handlePlaceFramework(req, env, ctx) {
   const megaCostCredits = Math.max(0, Math.ceil(spec.cost.credits * megaCostMul));
 
   const siteId = `${gameId}:mega_${crypto.randomUUID().slice(0, 8)}`;
-  const name = `${spec.label} Site`;
+  // Renamed to the bare label on completion (renameFinishedSiteStmt).
+  const name = siteNameFor(kind);
 
   await env.DB.batch([
     // The site IS a body. Everything downstream — position, rendering,
@@ -3919,6 +3921,8 @@ async function handleDeliverToSite(req, env, ctx) {
           SET cargo_metal = cargo_metal - ?, cargo_gold = cargo_gold - ?
         WHERE id = ?`,
     ).bind(giveMetal, giveCredits, shipId),
+    // Finished: "Weapons Station Site" becomes "Weapons Station".
+    ...(done ? [renameFinishedSiteStmt(env.DB, gameId, siteId, site.kind)].filter(Boolean) : []),
   ]);
 
   // THE LAST LOAD LAUNCHES THE HULL, THEN AND THERE. A finished mobile
@@ -6229,7 +6233,7 @@ export const RAM_METAL_PER_DV = 50;
  *  fromG(faction.engineG ?? RAM_ASTEROID_G); MP factions don't carry
  *  engineG today so that's RAM_ASTEROID_G, but either operand is legit. */
 export const RAM_ASTEROID_G = 0.005;
-const RAM_G_ANCHOR = 4 * 132.6;            // mirror G_ANCHOR, physics/torchTransfer.ts
+export const RAM_G_ANCHOR = 4 * 132.6;     // mirror G_ANCHOR, physics/torchTransfer.ts (studio.js plans rams with it)
 // Float slack only — an honest plan matches to ~1e-12. The distance
 // slack is looser because the client planner stops iterating once T
 // moves < 1e-4 ticks.

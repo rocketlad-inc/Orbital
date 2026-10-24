@@ -102,7 +102,7 @@ interface ServerState {
     /** The sun-gate omen tick (worker/sunGates.js); null until rolled. */
     sun_gate_tick?: number | null;
     /** The next gate within its warning window (sunGates.js / state.js). */
-    sun_gate_next?: { emerge_tick: number; index: number; kaiju?: boolean; system?: string } | null;
+    sun_gate_next?: { emerge_tick: number; index: number; angle?: number; kaiju?: boolean; system?: string } | null;
     /** THE LEVIATHAN (worker/kaiju.js), public. Null in a game without one. */
     kaiju?: {
       ship_id: string; faction_id: string; system_key: string;
@@ -380,6 +380,8 @@ interface ServerState {
     /** A missile salvo's size (class 'missile'). */
     missile_count?: number | null;
     strike_ready_tick?: number | null;
+    /** The whole wind-up of that charge, in ticks (state.js). */
+    strike_charge_ticks?: number | null;
     strike_mode?: string | null;
   }>;
   /** The caller's captain roster (bank + assigned + memorial). */
@@ -958,6 +960,8 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     ? (stripGameId(s.strike_target_body_id) ?? s.strike_target_body_id)
     : null;
   const strikeReadyTick = s.strike_ready_tick ?? null;
+  const strikeChargeTicks = strikeReadyTick != null && Number(s.strike_charge_ticks) > 0
+    ? Number(s.strike_charge_ticks) : null;
   // A hull armed before strike_mode existed could only sterilise.
   const strikeMode: 'sterilise' | 'obliterate' | null = strikeReadyTick == null ? null
     : s.strike_mode === 'obliterate' ? 'obliterate' : 'sterilise';
@@ -1080,6 +1084,7 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     strikeTargetBodyId,
     missileCount: s.missile_count ?? null,
     strikeReadyTick,
+    strikeChargeTicks,
     strikeMode,
   };
 }
@@ -2066,8 +2071,14 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       srv.game.id,
       orderedEvents.map(ev => {
         let cause: string | undefined;
-        if (ev.kind === 'terraform_destroyed' || ev.kind === 'world_obliterated') {
-          try { cause = JSON.parse(ev.payload || '{}')?.cause ?? undefined; } catch { cause = undefined; }
+        // An asteroid ram's rows say which side of the world it came in on.
+        let from: { x: number; y: number } | undefined;
+        if (ev.kind === 'terraform_destroyed' || ev.kind === 'world_obliterated' || ev.kind === 'asteroid_impact') {
+          try {
+            const p = JSON.parse(ev.payload || '{}');
+            cause = p?.cause ?? undefined;
+            if (Number.isFinite(p?.from_dx) && Number.isFinite(p?.from_dy)) from = { x: Number(p.from_dx), y: Number(p.from_dy) };
+          } catch { cause = undefined; }
         }
         // A missile burst IN FLIGHT plays where it met its target, never at
         // the destination world the row is filed under (Lorne, 2026-10-20).
@@ -2086,7 +2097,17 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
           // strike's own blast).
           if (ev.kind === 'missile_intercepted' && !inFlight) return null;
         }
+        // A settlement falling plays where THAT settlement stood (its
+        // city marker on the globe), so the row says which one.
+        let settlementId: string | undefined;
+        if (ev.kind === 'settlement_destroyed') {
+          try {
+            const p = JSON.parse(ev.payload || '{}');
+            if (typeof p?.settlement_id === 'string') settlementId = p.settlement_id;
+          } catch { settlementId = undefined; }
+        }
         return {
+          settlementId,
           id: ev.id,
           kind: ev.kind,
           bodyId: inFlight ? undefined : stripGameId(ev.body_id) ?? undefined,
@@ -2101,6 +2122,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
           shipId: ev.ship_id ?? undefined,
           cause,
           at,
+          from,
         };
       }).filter((x): x is NonNullable<typeof x> => x != null),
     );
@@ -2434,6 +2456,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       ? {
         emergeTick: srv.game.sun_gate_next.emerge_tick, index: srv.game.sun_gate_next.index,
         kaiju: !!srv.game.sun_gate_next.kaiju, system: srv.game.sun_gate_next.system,
+        angle: Number.isFinite(srv.game.sun_gate_next.angle) ? srv.game.sun_gate_next.angle : null,
       }
       : null,
     kaiju: (setKaijuRevealed(!srv.game.kaiju || srv.game.kaiju.revealed_at_tick != null), srv.game.kaiju) ? {

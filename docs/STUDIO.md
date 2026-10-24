@@ -35,7 +35,7 @@ node scripts/studio.mjs film <gameId> shot.json --out frames-dir --name earth-to
 
 **Pace (Lorne, 2026-10-19: the 30 s cuts were "way too slow for marketing").** Showcase clips are 12–15 s at `"tempo": "fast"`: one tick per second of clip (the clock holds while the server ticks, so ticks cost no clip time), camera moves of 1.2–1.5 s, a panel held about 3.5 s, and the first tick inside the first half-second. `--speed 2` on `film` (or on `studio-encode.py`) time-lapses a take that is already filmed, every other moment, without re-shooting.
 
-**Motion through ticks is smooth.** While filming, the director owns the tick the map draws at: each tick glides to the next over exactly the time until the next `tick` step, on the film's clock, so ships and worlds move at an even pace through every boundary (before 2026-10-21 the map stood still and jumped a tick at each one). Space `tick` steps evenly for even motion; a long gap between two ticks just means slower motion across it. Anything that still changes on a tick frame is the game resolving it: volleys, kills, the outliner.
+**Motion through ticks is smooth.** While filming, the director owns the tick the map draws at: each tick glides to the next over exactly the time until the next `tick` step, on the film's clock, so ships and worlds move at an even pace through every boundary (before 2026-10-21 the map stood still and jumped a tick at each one). Space `tick` steps evenly for even motion; a long gap between two ticks just means slower motion across it. Anything that still changes on a tick frame is the game resolving it: volleys, kills, the outliner. After the LAST `tick` step the world does not stop dead: that tick leaves at the same pace and slows to rest on its tick over twice the pace (so about 1.8 s after the last tick at the fast tempo). It does not keep gliding past it: the next tick has not been played, and nothing beyond it is known. A shot that runs on past the rest holds a still frame; `check` warns about it (`the world comes to rest at …`), so end the shot there or tick again. The camera is placed at the moment the map is drawn, so a followed ship stays put on screen as the world comes to rest (before 2026-10-23 the camera ran a frame behind, and the frame jumped once at the end of seven clips).
 
 **Takes cannot hang any more.** A tick request gets 30 s, a frame 150 s, a screenshot three 30 s tries; past that the take ends and encodes what it has. The manifest (`frames.json`) is written every 30 frames, so even a killed take encodes.
 
@@ -132,7 +132,65 @@ What `apply` returns, and what you need from it:
 
 **`arrive` never slows a ship.** A hull always flies a move on the engine a player's order would give it. `arrive` is met by holding the departure back (it leaves at `arrive` minus its natural trip, never before `depart`); if even leaving at once cannot make it, it leaves at once and the warning says when it really lands. A group still flies together at its slowest hull's pace, the way guards are paced to freighters. (It used to stretch the burn to land on `arrive`, so a 16-tick hop asked to take 40 flew on a twentieth of its engine and crawled through the shot while everything else flew.)
 
-`GET /api/admin/studio/catalog` (or `node scripts/studio.mjs catalog`) lists classes, loadouts, emblems and every world id.
+`GET /api/admin/studio/catalog` (or `node scripts/studio.mjs catalog`) lists classes, loadouts, emblems and every world id, plus `megastructures` (kinds and costs) and `rogue_asteroids`.
+
+### Set pieces (2026-10-23)
+
+```jsonc
+{
+  "worlds": [
+    { "body": "luna", "owner": "terra", "cities": ["Tycho"], "shields": 3 },
+    // shields 1-10: Orbital Shields on every studio city here, pool full (level x shield_hp_per_level, 120 by default)
+    { "body": "midas", "owner": "mars", "stations": 1, "thrusters": true }
+    // thrusters: Trajectory Control Thrusters on the station; rogue asteroids only (midas, styx_rock,
+    // iron_anna, black_sky, vagrant, augustin). Each apply puts the rock back on its orbit, ram cleared.
+  ],
+  "megastructures": [
+    { "key": "ws", "kind": "weapons_station", "at": "luna", "owner": "terra", "progress": 0.9 }
+    // kinds: warp_gate, weapons_station, gravity_sink, deep_array, null_field, mega_destroyer, mobile_foundry.
+    // progress 0..1 of the catalogue cost (Senate price laws ignored), or "complete": true. "name" optional.
+    // "orbit": 20, "angle": 200 -- where it orbits: map units from the world's centre (inside its sphere of
+    // influence, clear of its surface, as a player may place one) and degrees round it on the tick the scene
+    // lands. Without them it hangs on the gate ring (35% of the SOI: 61 units for Mars, off any frame that
+    // shows Mars at a size worth seeing). Angles: 0 is +x, the way Deimos at 223 sits from Mars on tick 0.
+    // The key names it like a world: ships "at": "ws", a move "to": "ws", a mid-take deliver.
+    // A complete mega_destroyer / mobile_foundry launches as a hull on the next tick, as in play.
+  ],
+  "ships": [
+    { "key": "fr", "owner": "terra", "at": "ws", "class": "freighter", "count": 1, "cargo": { "metal": 400, "gold": 300 } }
+    // cargo: every hull of the group starts with this hold ("credits" works for gold). A freighter's real hold is 400.
+  ],
+  "orders": [
+    { "type": "ram", "asteroid": "midas", "target": "mars", "depart": "+1" }
+    // needs the thrusters world above; fired by its owner through the real handler. The result gives
+    // depart, flip, arrive (impact tick) and metal_cost (topped up first, so the take spends nothing).
+  ],
+  "gates": "birth",
+  // true: the Centauri gate already open. "birth": nothing pre-spawned; the omen starts on the next tick and the
+  // game sends the first gate out of the Sun 6 ticks later (result: gate_birth). The second gate is pushed to the
+  // dial's maximum (1000 ticks) so nothing else arrives mid-take. A fresh game only: once a gate is out, apply
+  // without game_id to film the birth again.
+  "kaiju": { "at": "europa", "charge_ticks": 4, "hp": 6000 }
+  // The Leviathan parked at a terrestrial world, dwarf or moon (never a homeworld or capital), hunting it.
+  // The next tick it winds up (and is revealed), charge_ticks later it strikes (default 24, the
+  // kaiju_charge_ticks dial); hp overrides the roll from the game's fleets. Brings far systems and gates: true
+  // with it (it leaves through its gate when full). Result: kaiju { winds_up_at_tick, fires_at_tick }.
+}
+```
+
+**Nothing buried where the take happens.** Worlds roll hidden secrets when a game is made, and a parked hull finds one on the next tick. The obliterate clip (2026-10-23) parked its hulls on a Callisto that had rolled `pre_terraformed`: on tick 1 the raw moon turned into a living ocean world, and the strike armed to obliterate it stood down in silence at tick 7 (a Mega Destroyer fires the strike it was ordered, or none; a living world is sterilised, only a raw one is obliterated). Apply now empties the secrets of every world the scene lists, parks hulls at, watches from or sends a move to. `"secrets": true` at the top of a scene keeps them, for a clip about a find. A world marked `"living": false` is raw on every apply: a previous take's terraform, scar or debris field is cleared, as `living: true` already restored a living one.
+
+**What the guns can do.** A city has no gun; shields absorb first (level × 120, regenerating 6 a tick), then 300 structure. Sixteen hulls do ~1,500 a tick and take a level-5 shield and its city in ONE tick (the shield-siege clip: the bubble was gone after frame one). Eight light hulls (4 frigates, 4 corvettes) do ~110: the shield holds five ticks, breaks on the sixth, and the city falls on the ninth. A Weapons Station fires three shots a tick, closest hulls first, 22.5 × (1 + 1.2 × (1 + 0.1 × Weapons)) each at the settlement's speed (50% on a destroyer, 26% on a frigate, 11% on a corvette): it shreds light hulls, scratches destroyers, and every hull it fires on shoots back at it. A capital in a tick-0 game has no defence: give the viewer's world a home fleet, or a raid takes it in a tick (cities are targeted only once no armed hull of the defender is left in orbit).
+
+**Re-shooting a set piece.** `reset` takes away the last take's sites, its Leviathan (hull, row, once-only log lines; its faction stays and goes back to "Unknown") and its carcass, so the next take is announced again. Sites and the carcass are **retired** (`destroyed_at_tick`), never deleted: a deleted body takes every hull parked at it with it. Anything parked at a retired site drops to the world it orbited. A world marked `living` (and the Leviathan's world) is whole again: sterilised and obliterated scars cleared. A ram's target keeps its halved yields; use a fresh game if that shows.
+
+**Mid-take orders** (`POST /api/admin/studio/games/:gameId/order`, a shot's `order` step), each answered with the game handler's own reply or refusal:
+
+- `{ "type": "deliver", "ship": "st_fr_0", "site": "ws" }` hands the parked hull's hold to the site it sits at (a scene key, a site's template or its id). The last load finishes the structure.
+- `{ "type": "launch", "world": "earth", "owner": "terra", "target": "mars", "count": 4 }` fires a salvo from that world's Missile Silo city (the owner's, or the first silo city there; seed it with `silos`). War to fire, as in play: someone you are at war with must be in that orbit.
+- `{ "type": "ram", "asteroid": "midas", "target": "mars" }` rams now, from the rock's thrusters owner.
+
+The studio's tick calls make the room re-read the game's dials first, so the dials a scene sets (far systems, the Leviathan and its wind-up) are the ones its first tick runs on.
 
 ---
 
@@ -169,19 +227,23 @@ What `apply` returns, and what you need from it:
 
 **Sizing.** `px` is how wide the target's world should be on the map canvas (a 1080×1920 canvas: 520 fills half the width; 160 shows the fight with room; 40 is a dot). `scale` is pixels per world unit when you want a raw number (measured on a 1920-wide frame): 0.5 is the default view (a planet and its moons); **0.15 shows the inner system out to Jupiter and Saturn, the right pull-back for a pan between planets**; 0.035 and below show every outer orbit and the Kuiper worlds, which is busy and makes the planets dots. Zooms ease in log space, so they feel even. When in doubt use `px` on a target and let the director work out the scale.
 
-**Seeing everything.** The viewer sees every hull (Sensors 10), but a world's owner, cities and skyline are presence-fogged. The studio parks a quiet observer corvette for the viewer wherever a scene world would otherwise be fogged: at the planet for a moon (Jupiter for Europa), at an empty moon for a planet, never in the fight. `"camera": false` turns that off.
+**Seeing everything.** The viewer sees every hull (Sensors 10), but a world's owner, cities and skyline are presence-fogged. The studio parks a quiet observer corvette for the viewer wherever a scene world would otherwise be fogged: at the planet for a moon (Jupiter for Europa), at an empty moon for a planet, never in the fight. `"camera": false` turns that off. A world the take only reaches by a mid-take order (a `gate` order's `then.to`) is not a scene world: list it under `worlds` with nothing else (`{ "body": "verdant" }`), or a cut to it lands in the fog of war, the whole frame dimmed until the hull's own sensors arrive and their edge sweeps across the shot (the colony clip, 2026-10-23). Far worlds are watched from a quiet moon too, never from their sun.
+
+**Sun gates.** `gates: true` starts the take with the Centauri pair landed and open, its landing site retired, so the near end draws as the gate (not "LANDING SITE"). A `gate` order is the player's own crossing, and its flash plays on the gate when the next poll brings the crossing in, about when the hull leaves: hold the camera on the gate for a second after the order and `follow` the hull after that, or the flash plays off screen.
 
 **Verbs:** `focus` (cut), `pan` (glide, then hold), `zoom`, `follow`, `tick`, `speed`, `caption`, `hook`, `ui`, `panel`, `click`, the story steps `intercept`, `strike`, `hull`, `skip`, and the close-up `hulls`.
 
-**Long pans arc.** A `pan` whose target starts off the frame (at the zoom of either end) pulls back until both ends fit, travels while pulled back, and pushes in again, all inside its `ms`; a pan across the system at close zoom used to sail through seconds of empty starfield and arrive after the thing it was going to see had left. `"arc": false` keeps the straight glide. The arithmetic is `src/multiplayer/studio/shotPlan.ts` (tested in `shotPlan.test.ts`). Captions are the outlined white words; one at a time, each replaces the last.
+**Long pans arc.** A `pan` whose target starts off the frame (at the zoom of either end) pulls back until both ends fit, travels while pulled back, and pushes in again, all inside its `ms`; a pan across the system at close zoom used to sail through seconds of empty starfield and arrive after the thing it was going to see had left. The travel is held to the zoom: until the top of the arc the start stays in frame (no further from the centre than the top puts it), and from the top on so does the target, so one end is always on screen (the three-way battle's pan to Titan left a third of a second of empty stars at each end before 2026-10-23). `"arc": false` keeps the straight glide. The arithmetic is `src/multiplayer/studio/shotPlan.ts` (tested in `shotPlan.test.ts`). Captions are the outlined white words; one at a time, each replaces the last.
 
 **Story steps.** `{ "do": "intercept", "ships": "fleet:<id>", "target": "ship:<id>" }` sends the viewer's parked hulls to intercept a ship in flight with the game's own planner; they match it and fly its plan to its world, fighting it the whole way (transit combat). `__studio.interceptPlan(ships, target)` shows each hull's meeting tick without sending: a target on a fast cruise is only catchable as it brakes, so for a fight that lasts, intercept a ship on a long trip, from hulls whose engines are not much stronger than its own (an interceptor with three engine parts and high Propulsion research reaches a raid in a tick and makes no fight worth filming), or catch it as it brakes. `arrive` no longer slows a cruise. `{ "do": "strike", "ship": "st_mega_0", "ticks": 3 }` arms a Mega Destroyer over the world it has just reached (a strike armed in flight is cleared by the tick). `{ "do": "hull", "ship": "st_mega_0", "hp": 250 }` sets a hull's HP so the next tick's real combat finishes it on cue; fire distribution changes from take to take, so a scripted death needs it. A scene world marked `living` is restored on reset (sterilise scar cleared, settlements revived).
 
 **Close-ups of a fight in flight.** A hull in flight draws a fixed size at every zoom (so does its formation spacing), and the clip is encoded 960 wide, so a camera zoom never makes a battle in flight bigger. `{ "do": "hulls", "scale": 2.2, "ms": 900 }` draws hulls in flight (and their spacing) that many times their size, eased; send `scale: 1` to ease back before the fleets land (parked hulls are not scaled). It resets at the shot's end. Hulls fighting side by side spread apart with it, so frame the fight on `mid:ship:<a>|ship:<b>` (the middle of both groups) rather than on one ship.
 
-**Time cuts.** `{ "do": "skip", "ms": 2700 }` (film only) lets the map run that long with no frames kept, then carries on; steps after it keep their shot times. Arrivals are where the map is least continuous: a hull that lands holds where it last flew for 1.5 s (the roster dwell), then glides about 1.2 s into its place in orbit, and an in-flight hull draws much larger than a parked one, so an arrival filmed close up reads as a pop and ships hanging in space. Cut away just before the arrival tick, skip ~2700 ms, and land the cut on the world with the fight already in orbit. And never change the zoom during that settle: the held spot is fixed in the world while the layout scales with the zoom, so a zoom through it throws arrivals out into space and flies them in again. A `zoom` on the ship being followed keeps it centred (it used to ease from the old centre and lose a fast hull).
+**Time cuts.** `{ "do": "skip", "ms": 2700 }` (film only) lets the map run that long with no frames kept, then carries on; steps after it keep their shot times. The first frame of a take and every hard cut (a `focus`, or a `pan`/`zoom` with `ms` of 40 or less, which is made as a cut) settle the same way for at least 300 ms, so no shot needs a tiny `skip` at 0 to look right on frame 0. Every cut forgets where each hull was drawn before it (an `advance` jumps a hull thousands of px, and the map used to slide it back across the jump through the skip, off the frame), then waits 1.5 s of real time for the art the new view asked for before the frame is kept. Arrivals are where the map is least continuous: a hull that lands holds where it last flew for 1.5 s (the roster dwell), then glides about 1.2 s into its place in orbit, and an in-flight hull draws much larger than a parked one, so an arrival filmed close up reads as a pop and ships hanging in space. Cut away just before the arrival tick, skip ~2700 ms, and land the cut on the world with the fight already in orbit. And never change the zoom during that settle: the held spot is fixed in the world while the layout scales with the zoom, so a zoom through it throws arrivals out into space and flies them in again. A `zoom` on the ship being followed keeps it centred (it used to ease from the old centre and lose a fast hull).
 
 **Showing the interface.** `{ "do": "panel", "id": "senate" }` opens a panel the way a tap on the dock would: `senate`, `faction`, `comms` (tabs of the multiplayer dock, 360 px on the right), `trades`, `situation`, `eventlog`, `multiplayer`, `settlements`, `fleet`, `research`; `"id": null` closes whatever is open. `{ "do": "click", "selector": ".sp-disc.is-quiet > summary" }` clicks the first element a CSS selector finds, which is how a shot unfolds a disclosure (the Senate's resolved-bills list, then `.sp-roll > summary` for its ballots). Give a panel a second or so of clip time to load before clicking inside it. Keep the subject on the left two-thirds of the frame while a dock panel is open.
+
+**Building on a world.** `{ "do": "world", "body": "earth" }` opens the world menu as a click on the planet would; it is up within a few frames. (Before 2026-10-23 it came up seconds late: the director's server waits put the whole page on the wall clock, and the menu's fade stamped its start seconds ahead of the film. Only the director's own waits read the wall clock now.) Then `{ "do": "cursor", "to": "css:[data-testid=\"wm-bhit-forge\"]", "click": true }` clicks the building on the limb (its card opens beside its tag) and `css:[data-testid="wm-card-go"]` clicks the card's BUILD, a real order. Buildings are research-gated exactly as in play, and a locked card's BUILD is disabled, so the click lands and nothing is ordered: seed the research in the scene (Forge needs Society, `"track": "industry"`, level 2; Lab 1, Mint 3). Before 2026-10-23 the world menu never appeared in a film at all: the film clock held every animation frame, the menu's fade-in among them (now only the map's own loop is held: `heldFrames.ts`). Check a selector with `node scripts/studio.mjs eval <game> "<js>" --size 1920x1080` before filming.
 
 **Ticks during a shot.** `tick` asks the server for N ticks and waits for the map to receive them; the video clock stops meanwhile, so nothing is lost. Arrivals, kills and strikes happen on ticks, so place a `tick` where the action should land. The `speed` setting decides how long each tick's motion plays: with 2500, a ship that arrives on the next tick glides in over 2.5 s.
 
@@ -254,10 +316,11 @@ Worth making, and what each needs:
 - **An embargo, then a sanction**: `laws` with `trade_embargo` and `production_sanction`, Senate tab open, then the Faction tab showing the yields drop. Scene-only; the shot uses `panel`.
 - **Research and the shipyard**: `panel research` and the Shipwright. The designer opens with the `orbital:open-ship-designer` event; a `click` on the dock's shipyard button does it today.
 - **Terraforming a world**: eight stages. The scene sets `living` only; a stage-by-stage shot needs a `worlds[].terraform` level in the scene language (small server change) and one apply per stage, filmed as a cut sequence.
-- **The Leviathan**: the world-eating squid on the second sun gate. It spawns from the game's `kaiju` flag and the gate sequence, not from a scene; needs a studio switch that places the gate and the kaiju at a chosen world (kaiju.js has the pieces).
+- **The Leviathan**: the world-eating squid on the second sun gate. Scene key `kaiju` (above) parks it at a world with a short `charge_ticks`.
+- **A sun gate's birth**: `gates: "birth"` on a fresh game; the omen, then the gate out of the Sun.
+- **A shield breaking, a ram, a site finished**: `worlds[].shields`, `worlds[].thrusters` + a `ram` order, `megastructures` + `cargo` + a mid-take `deliver`.
 - **Through a sun gate to Centauri**: far systems and the galaxy view. Needs the scene to enable far systems on its game (scripts/enable-far-systems.mjs does it for running games) and a `zoom` past galaxy scale; the drawers are safe at that distance.
 - **Missile silo**: silo on a world, salvo on the map. New feature on `dev`; needs a `worlds[].silo` seed and a `launch` order in the scene language.
-- **A ram**: one hull ordered to ram another at 0.005g, validated server-side. Needs a `ram` order in the scene language.
 - **Discovery: a derelict found**: an observer hull lights a world and finds a ship. It already happens (the card is hidden while filming); a shot that keeps the card needs `ui` to allow it, so add a `cards: true` shot flag before filming this one.
 - **Captain debut and the trophy case**: the captain card on first kill, and the ending page's awards. Both UI; `click` reaches the first, the ending page needs the game to end (close the studio game with a winner: a server verb to add).
 

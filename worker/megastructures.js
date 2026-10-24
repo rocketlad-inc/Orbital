@@ -308,6 +308,46 @@ export const MEGASTRUCTURES = {
 
 export const MEGASTRUCTURE_KINDS = Object.keys(MEGASTRUCTURES);
 
+// ------------------------------------------------------------------
+// A FINISHED STRUCTURE IS NOT A SITE.
+//
+// Founding names the body `${label} Site` (actions.js handlePlaceFramework)
+// and the name is STORED on game_bodies, so every reader — map label,
+// outliner, inspector, Herald — shows whatever is there. Nothing renamed
+// it on completion, so a finished Weapons Station read "WEAPONS STATION
+// SITE" for the rest of the game (Studio clip a-megastructure-completes).
+//
+// Only the name founding generated is touched: a Studio scene or a
+// relic with a name of its own keeps it.
+// ------------------------------------------------------------------
+
+/** The site name founding gives a kind, or null for an unknown kind. */
+export function siteNameFor(kind) {
+  const label = MEGASTRUCTURES[kind]?.label;
+  return label ? `${label} Site` : null;
+}
+
+/** What a body should be called given its structure's state. A complete
+ *  structure still wearing its founding name reads as the structure;
+ *  anything else is returned as it is. Used to rename at completion and,
+ *  for structures finished before that rename existed, at read time. */
+export function megaBodyName(name, kind, status) {
+  if (status !== 'complete') return name;
+  const site = siteNameFor(kind);
+  return site && name === site ? MEGASTRUCTURES[kind].label : name;
+}
+
+/** The statement that renames a just-finished site's body, guarded on
+ *  the founding name so it never overwrites a name of its own. Returns
+ *  null for an unknown kind. Run it (or batch it) wherever a site flips
+ *  to 'complete'. */
+export function renameFinishedSiteStmt(DB, gameId, bodyId, kind) {
+  const site = siteNameFor(kind);
+  if (!site) return null;
+  return DB.prepare('UPDATE game_bodies SET name = ? WHERE id = ? AND game_id = ? AND name = ?')
+    .bind(MEGASTRUCTURES[kind].label, bodyId, gameId, site);
+}
+
 /** Must match worker/orbitPos.js — an orbit derived with a different
  *  constant would drift away from where the player clicked. */
 const TWO_PI = Math.PI * 2;
@@ -417,19 +457,23 @@ export function deriveSiteOrbit(point, bodies, tick) {
   const dy = point.y - centre.y;
   const orbitRadius = Math.hypot(dx, dy);
   const orbitPeriod = periodForRadius(parent, orbitRadius, bodies);
-  const thetaNow = Math.atan2(dy, dx);
-  const advance = orbitPeriod > 0
-    ? (TWO_PI * tick * ORBITAL_SPEED_SCALE) / orbitPeriod
-    : 0;
-  // Normalised into [0, 2pi) so the stored value is comparable and does
-  // not grow without bound in a long game.
-  const angle0 = ((thetaNow - advance) % TWO_PI + TWO_PI) % TWO_PI;
   return {
     parent_body_id: parent.id,
     orbit_radius: orbitRadius,
     orbit_period: orbitPeriod,
-    angle0,
+    angle0: angle0For(Math.atan2(dy, dx), orbitPeriod, tick),
   };
+}
+
+/** The angle0 that puts a body on an orbit of `orbitPeriod` at angle
+ *  `thetaNow` (radians round its parent) on `tick`. Normalised into
+ *  [0, 2pi) so the stored value is comparable and does not grow without
+ *  bound in a long game. */
+export function angle0For(thetaNow, orbitPeriod, tick) {
+  const advance = orbitPeriod > 0
+    ? (TWO_PI * tick * ORBITAL_SPEED_SCALE) / orbitPeriod
+    : 0;
+  return ((thetaNow - advance) % TWO_PI + TWO_PI) % TWO_PI;
 }
 
 /** 0..1, how far along a site is. Both resources must be satisfied, so

@@ -24,7 +24,12 @@ export function recapUrl(token: string): string {
   return `${SITE}/recap/${encodeURIComponent(token)}`;
 }
 
-async function copyText(text: string): Promise<boolean> {
+/** A whole-match film's public link (worker/filmShare.js unfurls it). */
+export function filmUrl(token: string): string {
+  return `${SITE}/film/${encodeURIComponent(token)}`;
+}
+
+export async function copyText(text: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text);
     return true;
@@ -46,10 +51,11 @@ async function copyText(text: string): Promise<boolean> {
   }
 }
 
-export function RecapShareBar({ token, text }: { token: string; text: string }) {
+export function RecapShareBar({ token, text, url: given }: { token: string; text: string; url?: string }) {
   useI18n();
   const [copied, setCopied] = useState(false);
-  const url = recapUrl(token);
+  // A battle's link unless the caller hands its own (the match film's).
+  const url = given ?? recapUrl(token);
   const canNative = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
 
   const copy = async () => {
@@ -83,7 +89,7 @@ export function RecapShareBar({ token, text }: { token: string; text: string }) 
   );
 }
 
-export function RecapJoinCta() {
+export function RecapJoinCta({ from = 'recap' }: { from?: string } = {}) {
   useI18n();
   return (
     <div className="recap-cta">
@@ -91,7 +97,7 @@ export function RecapJoinCta() {
         <div className="recap-cta__title">{t('review.shared.cta.title')}</div>
         <div className="recap-cta__body">{t('review.shared.cta.body')}</div>
       </div>
-      <a className="recap-cta__btn" href="/?from=recap">{t('review.shared.cta.play')}</a>
+      <a className="recap-cta__btn" href={`/?from=${encodeURIComponent(from)}`}>{t('review.shared.cta.play')}</a>
     </div>
   );
 }

@@ -59,7 +59,9 @@ export interface SnapshotRow {
 /** The stage contract both renderers satisfy. */
 export interface ReplayStage {
   setTick(tick: number, frac: number): void;
-  render(): void;
+  /** Draw a frame. `dtMs`: the film time since the last frame, when the
+   *  caller steps it (a video export); omitted, the wall clock's. */
+  render(dtMs?: number): void;
   resize(w: number, h: number): void;
   applyRows(rows: SnapshotRow[]): void;
   dispose(): void;
