@@ -333,7 +333,7 @@ const SOLO_SPEEDS: Array<[number, 'lobby.solo.speed.fast' | 'lobby.solo.speed.st
 
 /**
  * Play solo: one person and 1-5 computer empires in a game of their own
- * (worker/solo.js). Lorne's picks: 3 rivals, normal, 2 min a turn by
+ * (worker/solo.js). Lorne's picks: 3 rivals, normal, 2 min a tick by
  * default. Collapsed it is one button; open, the three choices and Start.
  */
 function SoloCard({ onStarted }: { onStarted: (roomId: string) => void }) {

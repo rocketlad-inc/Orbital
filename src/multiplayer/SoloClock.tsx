@@ -1,7 +1,7 @@
 // ============================================================
 // SoloClock — the top bar's clock controls in a solo game
-// (worker/solo.js): pause, one turn at a time while paused, and the
-// three speeds Lorne picked (30 s / 2 min / 10 min a turn).
+// (worker/solo.js): pause, one tick at a time while paused, and the
+// three speeds Lorne picked (30 s / 2 min / 10 min a tick).
 //
 // The server owns the clock: each button is one request, and the next
 // /state (refreshed at once) is what the bar then shows. Paused, the
