@@ -261,11 +261,11 @@ const ROWS: Row[] = [
   ["trade_accepted plain", "trade_accepted", "f1", "f2", 12, {"offer": {}, "request": null},
     "T+12  ⚖ Cerean Union traded nothing → Zed Corp for nothing"],
   ["meteoroid_found tons", "meteoroid_found", "f1", null, 12, {"name": "Rock 9", "tons": 400, "kind": "gold"},
-    "T+12  ◈ Survey found Rock 9 — 400 credits"],
+    "T+12  ◈ Found meteoroid Rock 9: 400 credits to mine with a freighter"],
   ["meteoroid_found metal", "meteoroid_found", "f1", null, 12, {"name": "Rock 9", "tons": 400},
-    "T+12  ◈ Survey found Rock 9 — 400 metal"],
+    "T+12  ◈ Found meteoroid Rock 9: 400 metal to mine with a freighter"],
   ["meteoroid_found bare", "meteoroid_found", "f1", null, 12, {},
-    "T+12  ◈ Survey found a meteoroid"],
+    "T+12  ◈ Found a meteoroid to mine"],
   ["meteoroid_exhausted", "meteoroid_exhausted", "f1", null, 12, {"name": "Rock 9"},
     "T+12  ◇ Rock 9 is worked out"],
   ["meteoroid_exhausted bare", "meteoroid_exhausted", "f1", null, 12, {},
@@ -430,7 +430,7 @@ describe('Portuguese headlines', () => {
     expect(f('senate_vote passed tally')).toBe('T+12  ⚖ Senado: “Embargo Zed” [embargo comercial] APROVADO — 5 sim / 2 não / 1 abstenção');
     expect(f('trade_accepted pacts')).toBe('T+12  ⚖ Cerean Union negociou 100 de metal, 20 de créditos → Zed Corp em troca de 3 de combustível, 5 de ciência + Pacto de Não Agressão, Pacto de Compartilhamento de Inteligência');
     expect(f('trade_route_run tariff')).toBe('T+12  ⟳ Rota comercial: Cerean Union → Zed Corp entregou 100M 20C (tarifa de −10%) — viagem nº 7');
-    expect(f('meteoroid_found tons')).toBe('T+12  ◈ O levantamento encontrou Rock 9 — 400 de créditos');
+    expect(f('meteoroid_found tons')).toBe('T+12  ◈ Meteoroide Rock 9 encontrado: 400 de créditos para minerar com um cargueiro');
   });
 
   it('uses the singular for 0 and 1 (Portuguese counts 0 as one) and the plural above', () => {

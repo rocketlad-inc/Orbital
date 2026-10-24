@@ -1318,6 +1318,17 @@ export interface GameState {
     bodyId: string | null;
     bodyName: string | null;
   }>;
+  /** Meteoroids YOUR sensors found recently (the owner-only
+   *  'meteoroid_found' chronicle rows). The ore is NOT banked by the find;
+   *  it sits in the rock until a freighter mines it, so the situation
+   *  report shows it as something to go and collect. Multiplayer only. */
+  recentMeteoroidFinds?: Array<{
+    bodyId: string;
+    tick: number;
+    name: string | null;
+    kind: 'metal' | 'gold' | null;
+    tons: number;
+  }>;
   /** Machine-readable chronicle kind per entry, parallel-indexed with
    *  combatLog. Drives the pending-FX queue (src/render/pendingFx.ts). */
   lastHarvestTick: number;             // tick when resources were last collected

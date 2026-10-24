@@ -251,6 +251,7 @@ export type SituationCategory =
   | 'sanction_window' // a sanction on a RIVAL you can exploit before it lapses
   | 'intercept'       // a hostile is closing on one of your ships in flight
   | 'rock_running_dry' // a meteoroid one of your routes works is nearly out
+  | 'meteoroid_found'  // your sensors found a rock; its ore still has to be mined
   | 'structure_siege' // a megastructure of yours is being broken open
   | 'strike_incoming' // a Mega Destroyer is charging on a world of yours
   | 'strike_mine'     // YOUR Mega Destroyer is charging
@@ -358,6 +359,8 @@ const TIER_OF: Record<SituationCategory, SituationTier> = {
   // the run rather than discover it after the freighter arrives at a
   // dead rock.
   rock_running_dry: 'decision',
+  // Nothing is at risk and nothing expires: ore to collect when you can.
+  meteoroid_found: 'opportunity',
   // NOT 'now': nothing is broken yet. This is the tick-by-tick drain
   // that ENDS in fleet_arrears, and it is fixed by changing designs —
   // a decision, with time to make it.
@@ -765,6 +768,45 @@ export function useSituationItems(
         }
       }
     }
+
+    // A ROCK YOUR SENSORS JUST FOUND. The find banks nothing: the ore
+    // sits in the rock until a freighter mines it. The event-log line
+    // used to read like a payout ("Survey found MTR-16 — 825 credits")
+    // and players waited for credits that never came (playtest,
+    // 2026-10-24). Here it is a job to do, until a hull or a route of
+    // yours is working it.
+    try {
+      const worked = new Set<string>();
+      for (const r of gameState.tradeRoutes ?? []) {
+        if (r.ownedBy !== 'player') continue;
+        for (const st of r.stops ?? []) if (st.action === 'mine') worked.add(st.bodyId);
+      }
+      for (const s of gameState.ships) {
+        if (s.ownedBy === factionId && s.miningBodyId) worked.add(s.miningBodyId);
+      }
+      const seenRock = new Set<string>();
+      for (const f of gameState.recentMeteoroidFinds ?? []) {
+        if (seenRock.has(f.bodyId) || worked.has(f.bodyId)) continue;
+        if (tick - f.tick > DISCOVERY_TTL_TICKS) continue;
+        const rock = gameState.bodies.find(b => b.id === f.bodyId);
+        if (!rock || !((rock.mineralRemaining ?? 0) > 0)) continue;
+        seenRock.add(f.bodyId);
+        const kind = (rock.mineralKind ?? f.kind) === 'gold' ? 'gold' : 'metal';
+        push({
+          id: `meteoroid_found:${f.bodyId}`,
+          category: 'meteoroid_found',
+          entity: `body:${f.bodyId}`,
+          title: tr('helper.sit.meteoroidFound.title', { name: rock.name ?? f.name ?? '' }),
+          subtitle: tr('helper.sit.meteoroidFound.sub', {
+            amount: Math.round(rock.mineralRemaining ?? f.tons),
+            kind: tr(kind === 'gold' ? 'helper.sit.kind.credits' : 'helper.sit.kind.metal'),
+          }),
+          severity: 'normal',
+          sortKey: -f.tick,
+          focus: { kind: 'body', bodyId: f.bodyId },
+        });
+      }
+    } catch { /* defensive */ }
 
     const arr = gameState.fleetArrears;
     if (arr && (arr.credits > 0 || arr.ore > 0)) {
