@@ -52,10 +52,12 @@ export function TrialLayer() {
 
   // The trial tutorial: by itself, once the map has had a moment to land.
   const startedRef = useRef(false);
+  // Marked started only when it actually starts: a re-render (or React's
+  // dev double-mount) inside the delay cancels the timer, and marking it
+  // first meant the tour never began.
   useEffect(() => {
     if (startedRef.current || trialDone || active) return;
-    startedRef.current = true;
-    const timer = setTimeout(() => startTrial(), 1200);
+    const timer = setTimeout(() => { startedRef.current = true; startTrial(); }, 1200);
     return () => clearTimeout(timer);
   }, [trialDone, active, startTrial]);
 

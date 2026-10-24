@@ -927,9 +927,9 @@ function AppShell() {
       );
     }
     if (!showAuth) {
-      return <Landing onSignIn={() => setShowAuth(true)} onPlay={() => beginTrial()} />;
+      return <Landing onSignIn={() => setShowAuth(true)} />;
     }
-    return <AuthOverlay />;
+    return <AuthOverlay onBack={() => setShowAuth(false)} onTrial={() => beginTrial()} />;
   }
 
   if (guestMode) {

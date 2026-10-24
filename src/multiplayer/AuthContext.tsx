@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { apiFetch, User } from './api';
 import { attributionForSignup } from './attribution';
-import { getLang, setLang, isLang } from '../i18n/core';
+import { getLang, setLang, isLang, t } from '../i18n/core';
 import { apiErrorText } from '../i18n/apiErrors';
 
 interface AuthContextValue {
@@ -100,12 +100,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       method: 'POST',
       body: JSON.stringify({ attribution: attributionForSignup() }),
     });
-    if (!res.ok) return apiErrorText(res.error, 'trial.err.failed');
+    // A server fault reads as "try again", never as the raw error.
+    const friendly = (r: { status: number; error: unknown }) =>
+      r.status >= 500 ? t('trial.err.failed') : apiErrorText(r.error as never, 'trial.err.failed');
+    if (!res.ok) return friendly(res);
     // Straight into the trial: the launch routing opens this tab's room.
     try { sessionStorage.setItem('orbital.tab_room', res.data.game_id); } catch { /* private mode */ }
-    const me = await apiFetch<{ user: User }>('/api/auth/me');
-    if (me.ok) setUser(me.data.user);
-    return me.ok ? null : apiErrorText(me.error, 'trial.err.failed');
+    // The session is made; who it is can fail on a transient database
+    // fault (staging, 2026-10-24: D1_RESET_DO), so ask again before giving up.
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const me = await apiFetch<{ user: User }>('/api/auth/me');
+      if (me.ok) { setUser(me.data.user); return null; }
+      if (attempt === 3) return friendly(me);
+      await new Promise(r => setTimeout(r, 700 * (attempt + 1)));
+    }
+    return t('trial.err.failed');
   }, []);
 
   const signOut = useCallback(async () => {

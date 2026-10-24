@@ -356,6 +356,20 @@ const base = {
 
   // ---- sign in / create account ----
   'auth.subtitle.signin': 'SIGN IN TO COMMAND',
+  // The sign-in page redesign (AuthOverlay.tsx, 2026-10-24).
+  'auth.back': '← Back',
+  'auth.headline': 'Your empire is waiting.',
+  'auth.clipCaption': 'Live footage: a Mega Destroyer crosses from Jupiter to Earth.',
+  'auth.orEmailShort': 'or email',
+  'auth.showPw': 'Show',
+  'auth.hidePw': 'Hide',
+  'auth.optional': '(optional)',
+  'auth.working': 'One moment…',
+  'auth.go.signup': 'Create my account',
+  'auth.go.signin': 'Sign in',
+  'auth.orNoAccount': 'or no account',
+  'auth.solo.title': 'Try out a Solo Game',
+  'auth.solo.sub': 'Play right now against two computer empires.',
   'auth.subtitle.forgot': 'RESET YOUR PASSWORD',
   'auth.tab.signin': 'Sign in',
   'auth.tab.signup': 'Create account',

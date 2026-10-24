@@ -28,7 +28,7 @@
 import { cleanTag, readAttribution } from './attribution.js';
 
 const ANON_RE = /^[A-Za-z0-9_-]{8,40}$/;
-const STEPS = new Set(['engaged', 'read_more', 'play_click', 'signup_tab', 'email_try', 'login_try', 'google_try', 'auth_error', 'google_error']);
+const STEPS = new Set(['engaged', 'read_more', 'play_click', 'signup_tab', 'email_try', 'login_try', 'google_try', 'auth_error', 'google_error', 'trial_click']);
 
 // Crawlers, link unfurlers and ad reviewers. They do not run the beacon
 // as a rule, but the ones that do should not count as visitors.
