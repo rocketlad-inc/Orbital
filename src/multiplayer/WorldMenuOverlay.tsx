@@ -2725,16 +2725,16 @@ const WmFleet: React.FC<{
       <div className={`wm-qline ${isBuilding ? 'building' : 'waiting'}`} key={o.id} data-testid="wm-qline">
         <div className="wm-qline__row">
           <ShipIcon shipClass={o.shipClass} variant={o.iconVariant} size={16} color={p1} color2={p2} />
-          <span className="wm-qnm">
-            {!isBuilding && <i className="wm-qpos">{pos}</i>}
-            {o.shipName ?? o.shipClass}
-          </span>
+          {/* The place in line sits with the status, not before the
+              name: a bare "2" read as part of it ("2 Kestrel", playtest
+              2026-10-24), so names looked inconsistent down the list. */}
+          <span className="wm-qnm">{o.shipName ?? o.shipClass}</span>
           {isMine ? orderSelect(o) : <span />}
           <span className="wm-qline__end">
             {o.botched && (
               <span title={t('worldmenu.q.botched')} style={{ color: '#ff8a5c' }}>⚠</span>
             )}
-            <span className="wm-qeta">{isBuilding ? `T-${eta}` : t('worldmenu.q.queued')}</span>
+            <span className="wm-qeta">{isBuilding ? `T-${eta}` : t('worldmenu.q.inLine', { n: pos })}</span>
             {isMine && isBuilding && eta > 1 && (
               <RushControl
                 order={o}

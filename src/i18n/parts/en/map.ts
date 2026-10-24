@@ -466,6 +466,7 @@ export const map = {
   'worldmenu.order.joinRouteEllipsis': 'Join trade route…',
   'worldmenu.order.noRoutes': 'Join a trade route — none laid yet',
   'worldmenu.q.queued': 'queued',
+  'worldmenu.q.inLine': '#{n} in line',
   'worldmenu.q.botched': 'A rush went badly — this hull will be delivered at HALF health.',
   'worldmenu.q.cancelBuilding': 'Cancel construction (refunds cost)',
   'worldmenu.q.cancelQueued': 'Remove from queue (refunds cost)',
