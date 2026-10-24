@@ -75,6 +75,9 @@ import { makePeaceCheck } from '../game/peace';
 import { groupFlights } from '../game/interceptPicker';
 import './WmPhone.css';
 /** The bar's drawers, and where the last choice is remembered. */
+/** Widest viewport that gets the phone world menu; the CSS media blocks
+ *  marked WM_PHONE_MAX (WorldMenuOverlay.css, WmPhone.css) must match. */
+const WM_PHONE_MAX = 768;
 const DRAWER_IDS = ['structures', 'yard', 'silo', 'terraform'] as const;
 type DrawerId = typeof DRAWER_IDS[number];
 const DRAWER_KEY = 'orbital.wm_drawer';
@@ -180,7 +183,10 @@ export const WorldMenuOverlay: React.FC = () => {
     return () => window.removeEventListener('resize', onR);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const mobile = vw <= 720;
+  // The phone tier ends where the dock rail moves to the bottom
+  // (DockRail.css, 768): at 721-768 the desktop layout put the SHIPYARD
+  // pad under the rail (tablet playtest, 2026-10-24).
+  const mobile = vw <= WM_PHONE_MAX;
 
   // Activate the MP-only canvas close-up while mounted.
   useEffect(() => {
@@ -355,7 +361,7 @@ export const WorldMenuOverlay: React.FC = () => {
       // NOT FOR A PHONE'S KEYBOARD: typing a ship's or a city's name
       // shrinks the window, and re-framing then snapped the camera under
       // the player's fingers. The keyboard is up while a field has focus.
-      const typing = vw <= 720 && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName ?? '');
+      const typing = vw <= WM_PHONE_MAX && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName ?? '');
       if (typing) return;
       const s1 = menuScaleFor(b, vh);
       const rShift = vw > 720 ? (296 - 60) / 2 : 0;

@@ -1579,3 +1579,11 @@
 .ship-panel.ship-panel--away,
 .bottom-sheet__body .ship-panel.ship-panel--away,
 :root[data-mobile-shell] .bottom-sheet__body .ship-panel.ship-panel--away { display: none !important; }
+
+/* The mobile Move-to-target cancel banner (ShipPanel.tsx). Where the dock
+   rail sits at the bottom (DockRail.css, 768) it stands on the rail: at
+   bottom 12px a tablet's rail covered it (tablet playtest, 2026-10-24). */
+.ship-target-banner { bottom: calc(env(safe-area-inset-bottom, 0px) + 12px); }
+@media (max-width: 768px) {
+  .ship-target-banner { bottom: calc(var(--mobile-rail-height, 72px) + 12px); }
+}
