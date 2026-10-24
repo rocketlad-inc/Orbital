@@ -506,7 +506,7 @@ export const review: Catalog = {
   'eventlog.ev.settlement.retook': '{who} retomou as próprias ruínas de {what} em {where} — todos os edifícios um nível abaixo',
   'eventlog.ev.settlement.seized': '{who} tomou as ruínas de {what} em {where} — todos os edifícios um nível abaixo',
   'eventlog.ev.settlement.razed': '{who} arrasou as ruínas em {where}',
-  'eventlog.ev.settlement.built': '{owner} fundou {type} em {where}',
+  'eventlog.ev.settlement.built': '{owner} fundou uma {type} em {where}',
   'eventlog.ev.settlement.builtNamed': '{owner} fundou {name} ({type}) em {where}',
   'eventlog.ev.building.completed': '{who} em {where} concluiu {kind} Nv {lvl}',
   // asteroids, Dyson Sphere, terraforming

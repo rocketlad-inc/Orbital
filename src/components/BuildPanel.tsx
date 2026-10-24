@@ -33,6 +33,7 @@ import { COMMISSION_LINES } from '../multiplayer/commission';
 import { MEGASTRUCTURES } from '../game/megastructures';
 import { t, tn } from '../i18n/core';
 import { useI18n } from '../i18n/react';
+import { designName } from '../i18n/names';
 
 /** Optional explicit body. Omitted, the panel follows the map selection
  *  (the body inspector's use); supplied, it builds at that body instead
@@ -997,7 +998,7 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
                         style={pickerRowStyle}
                       >
                         <ShipIcon shipClass={cls} variant={d.iconVariant} size={16} />
-                        <span style={{ fontSize: 11 }}>{d.name}</span>
+                        <span style={{ fontSize: 11 }}>{designName(d.name)}</span>
                         <span style={{ fontSize: 9, color: '#8aa0b4', marginLeft: 6 }}>
                           {loadoutSummary(d.parts) || t('build.bareHull')}
                         </span>

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch, Faction, MyFaction, Pact, PACT_LABELS, PactKind, tradesApi, warsApi, WarRow } from './api';
 import { FlagChip } from '../components/FactionEmblem';
 import { HOLDER_MARK } from './commission';
-import { t, tk } from '../i18n/core';
+import { t, tk, tn } from '../i18n/core';
 import type { Key } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import { apiErrorText } from '../i18n/apiErrors';
@@ -247,7 +247,7 @@ export function FactionPanel({
                   style={{ width: `${(100 * unclaimed) / bodiesTotal}%` }}
                   title={t('faction.terr.unclaimedTip', { n: unclaimed })}
                 >
-                  {unclaimed / bodiesTotal >= 0.14 && <span>{t('faction.terr.free', { n: unclaimed })}</span>}
+                  {unclaimed / bodiesTotal >= 0.14 && <span>{tn('faction.terr.free', unclaimed)}</span>}
                 </div>
               )}
             </div>
@@ -262,7 +262,7 @@ export function FactionPanel({
           <div className="fp-terrfoot">
             <span>{t('faction.terr.claimed', { n: claimed, total: bodiesTotal })}</span>
             <span className="fp-terrfoot__mid">{t('faction.terr.wins', { n: dominationTarget })}</span>
-            <span>{t('faction.terr.unclaimed', { n: unclaimed })}</span>
+            <span>{tn('faction.terr.unclaimed', unclaimed)}</span>
           </div>
         </section>
       )}

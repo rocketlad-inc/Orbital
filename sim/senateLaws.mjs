@@ -153,6 +153,22 @@ async function main() {
     law.proposal_title === "Let's get to work!", law.proposal_title);
   check('law counts down', law.ticks_left > 0, law.ticks_left);
   check('general law has no target', law.target_faction_id === null, law.target_faction_id);
+  // In Portuguese too, in the same payload: the client shows whichever
+  // language is on screen ("LEI EM VIGOR: More Metal" was the bug).
+  const pt = law.i18n?.['pt-BR'] ?? {};
+  check('law carries its Portuguese name and sentence',
+    pt.law_name === 'Naves Mais Baratas' && pt.effect_text === 'Construir naves custa 50% menos.'
+      && pt.label === 'Custo para construir naves',
+    JSON.stringify(pt));
+  check('describeSlider words a law in Portuguese',
+    describeSlider('metal_yield_multiplier', 1.25, 'pt-BR')?.name === 'Mais Metal'
+      && describeSlider('metal_yield_multiplier', 1.25, 'pt-BR')?.effect === 'Cada assentamento extrai 25% mais metal.'
+      && describeSlider('metal_yield_multiplier', 2, 'pt-BR')?.effect === 'Cada assentamento extrai duas vezes mais metal.',
+    JSON.stringify(describeSlider('metal_yield_multiplier', 1.25, 'pt-BR')));
+  check('and leaves the English exactly as it was',
+    describeSlider('metal_yield_multiplier', 1.25)?.effect === 'Every settlement mines 25% more metal.'
+      && describeSlider('metal_yield_multiplier', 2)?.effect === 'Every settlement mines twice as much metal.',
+    describeSlider('metal_yield_multiplier', 2)?.effect);
 
   // --- 3. what a hull actually costs ---
   const sliders = await getActiveSliders(env, gameId, 5, factionIds[0]);

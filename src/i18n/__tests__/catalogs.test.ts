@@ -100,9 +100,9 @@ describe('lookup', () => {
     expect(t('lobby.hero.welcome', { name: 'Ana' })).toBe('Welcome back, Ana');
   });
 
-  it('plurals follow the language (Portuguese counts 0 as singular)', () => {
+  it('plurals follow the language, and zero is plural ("0 mundos", as Brazilians write it)', () => {
     setLang('pt-BR', false);
-    expect(tn('card.worlds', 0)).toBe('0 mundo');
+    expect(tn('card.worlds', 0)).toBe('0 mundos');
     expect(tn('card.worlds', 1)).toBe('1 mundo');
     expect(tn('card.worlds', 2)).toBe('2 mundos');
     setLang('en', false);

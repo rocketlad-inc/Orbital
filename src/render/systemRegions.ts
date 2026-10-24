@@ -36,6 +36,11 @@ import {
   Sector, isCustomMapBodies,
 } from '../game/systemGrouping';
 import { deriveSecondary } from '../game/colorUtils';
+import { getLang, t } from '../i18n/core';
+import { ofPlace } from '../i18n/names';
+
+/** "Jupiter System" / "Sistema de Júpiter". */
+const systemOf = (name: string): string => t('helper.sys.system', { name: ofPlace(getLang(), name) });
 
 // BELT_RATIO / BELT_MIN_MEMBERS / isBeltable used to live here. They moved
 // to systemGrouping so the map, the panels, the outliner and the senate
@@ -406,7 +411,7 @@ export function computeSystemRegions(
       const half = Math.max(laneHalfWidth(b), outermost * SYSTEM_DISC_PAD);
       regions.push({
         id: `sys:${b.id}`,
-        label: `${b.name} System`,
+        label: systemOf(b.name),
         shape: {
           kind: 'band',
           starBodyId: star.id,
@@ -478,7 +483,7 @@ export function computeSystemRegions(
       const isPlanet = b.type === 'terrestrial' || b.type === 'gas_giant' || b.type === 'ice_giant';
       regions.push({
         id: `solo:${b.id}`,
-        label: isPlanet ? `${b.name} System` : '',
+        label: isPlanet ? systemOf(b.name) : '',
         shape: {
           kind: 'band',
           starBodyId: star.id,

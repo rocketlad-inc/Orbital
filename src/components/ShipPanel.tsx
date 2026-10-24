@@ -67,6 +67,7 @@ import { fleetPath } from '../multiplayer/fleetWire';
 import { gateRouteFor } from '../game/gateRoute';
 import { t, tn } from '../i18n/core';
 import { useI18n } from '../i18n/react';
+import { designName } from '../i18n/names';
 import { createPortal } from 'react-dom';
 import { InterceptPicker, STANDING_RING, type PickerEntry } from './InterceptPicker';
 import { solveIntercepts, courseBox, type InterceptOption } from '../game/interceptOptions';
@@ -2414,7 +2415,7 @@ export const ShipPanel: React.FC = () => {
                       if (d.fitted) {
                         return (
                           <option key={d.id} value={d.id} disabled>
-                            {d.name}{d.isActive ? ` (${t('ship.sd.activeLower')})` : ''} · {t('ship.panel.fittedNow')}
+                            {designName(d.name)}{d.isActive ? ` (${t('ship.sd.activeLower')})` : ''} · {t('ship.panel.fittedNow')}
                           </option>
                         );
                       }
@@ -2425,7 +2426,7 @@ export const ShipPanel: React.FC = () => {
                       ].filter(Boolean).join(' ') || t('ship.sd.free');
                       return (
                         <option key={d.id} value={d.id}>
-                          {d.name}{d.isActive ? ` (${t('ship.sd.activeLower')})` : ''}{ship.refitPendingDesignId === d.id ? ` · ${t('ship.panel.ordered')}` : ''} · {cost}
+                          {designName(d.name)}{d.isActive ? ` (${t('ship.sd.activeLower')})` : ''}{ship.refitPendingDesignId === d.id ? ` · ${t('ship.panel.ordered')}` : ''} · {cost}
                         </option>
                       );
                     })}

@@ -56,6 +56,7 @@ import { setServerStillWorlds } from '../render/globeSpin';
 import { connectRoomSocket } from './roomSocket';
 import { binaryClosenessFrom, setBinaryCloseness } from '../game/farSystems';
 import { getLang, t } from '../i18n/core';
+import { bodyName, settlementName, shipName } from '../i18n/names';
 import { apiErrorText } from '../i18n/apiErrors';
 import { useI18n } from '../i18n/react';
 import { formatChronicleEvent } from './eventText';
@@ -623,6 +624,8 @@ interface ServerState {
     topic: string;
     name: string;
     effect: string;
+    /** The same three lines in the other languages (worker lawI18n). */
+    i18n?: Record<string, { topic?: string; name?: string; effect?: string }>;
     value: number;
     until_tick: number;
   }>;
@@ -768,9 +771,14 @@ function bodyToClient(b: ServerState['bodies'][number]): Body {
     totalDv: b.ram_total_dv,
     ownedBy: b.ram_owned_by_faction_id,
   } : undefined;
+  // Shown in the player's language ("Earth" -> "Terra"); the stored name
+  // rides along for anything that matches server-built text. The provider
+  // re-maps /state when the language flips, so this follows a switch.
+  const shown = bodyName(b.name);
   return {
     id: localId,
-    name: b.name,
+    name: shown,
+    ...(shown !== b.name ? { storedName: b.name } : {}),
     type: mapBodyType(b.type),
     mu: b.mu || undefined,
     parent: stripGameId(b.parent_body_id),
@@ -1007,7 +1015,8 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
   const targetPriority: Ship['targetPriority'] = parseTargetPriority(s.target_priority);
   return {
     id: s.id,
-    name: s.name,
+    // "Vanguard of Earth" -> "Vanguard da Terra"; a typed name is untouched.
+    name: shipName(s.name),
     targetPriority,
     class: translateShipClass(s.ship_class),
     ownedBy: s.owner_faction_id,
@@ -1162,7 +1171,8 @@ function settlementToClient(
   return {
     id: s.id,
     type: s.type,
-    name: s.name,
+    // Server default names are templates ("Station", "<Faction> Capital").
+    name: settlementName(s.name),
     bodyId: localBodyId,
     ownedBy: s.owner_faction_id,
     hp: s.hp,
@@ -2545,6 +2555,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       topic: l.topic,
       name: l.name,
       effect: l.effect,
+      i18n: l.i18n ?? undefined,
       value: l.value,
       untilTick: l.until_tick,
     })),

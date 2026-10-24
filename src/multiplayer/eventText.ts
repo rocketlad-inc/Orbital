@@ -36,6 +36,7 @@ import {
   tIn, tnIn, tkIn, fmtNumberIn,
   type Key, type Lang, type PluralKey,
 } from '../i18n/core';
+import { bodyNameIn, designNameIn, settlementNameIn, shipNameIn } from '../i18n/names';
 
 type StripEv<K> = K extends `eventlog.ev.${infer S}` ? S : never;
 type EvKey = StripEv<Key>;
@@ -58,13 +59,40 @@ export interface EventTextCtx {
 
 type Payload = Record<string, unknown>;
 
+/** World / settlement / ship / design names in a payload, shown in `lang`
+ *  (src/i18n/names.ts). The payload carries the stored English names;
+ *  English lines keep them verbatim, so the machine-truth copy and the
+ *  classifiers that read it never change. */
+function namesIn(lang: Lang, p: Payload): Payload {
+  if (lang === 'en') return p;
+  const out: Payload = { ...p };
+  const str = (v: unknown): v is string => typeof v === 'string';
+  for (const [k, v] of Object.entries(p)) {
+    if (k === 'from_names' && Array.isArray(v)) {
+      out[k] = v.map(x => (str(x) ? bodyNameIn(lang, x) : x));
+    } else if (!str(v)) {
+      continue;
+    } else if (k.endsWith('body_name') || k === 'capital_name' || k === 'target_name' || k === 'from_name') {
+      out[k] = bodyNameIn(lang, v);
+    } else if (k === 'settlement_name') {
+      out[k] = settlementNameIn(lang, v);
+    } else if (k.endsWith('ship_name')) {
+      out[k] = shipNameIn(lang, v);
+    } else if (k === 'design_name') {
+      out[k] = designNameIn(lang, v);
+    }
+  }
+  return out;
+}
+
 /**
  * Rebuild a "DISCOVERY" sentence from the structured payload in `lang`
  * (worker/room.js composes the English one). Returns null when the payload
  * lacks what the sentence needs, so the caller falls back to the server text.
  * Exported for the test that pins the English rebuild to the server's text.
  */
-export function secretMessage(lang: Lang, p: Payload): string | null {
+export function secretMessage(lang: Lang, raw: Payload): string | null {
+  const p = namesIn(lang, raw);
   const kind = p.kind as string | undefined;
   const body = p.body_name as string | undefined;
   if (!kind || !body) return null;
@@ -106,7 +134,8 @@ export function secretMessage(lang: Lang, p: Payload): string | null {
  *  kind's own sentence (in this language) follows it; with only a
  *  message, the usual DISCOVERY heading leads it. Null when the find
  *  carries no custom words. */
-export function customSecretMessage(lang: Lang, p: Payload): string | null {
+export function customSecretMessage(lang: Lang, raw: Payload): string | null {
+  const p = namesIn(lang, raw);
   const name = typeof p.custom_name === 'string' && p.custom_name ? p.custom_name : null;
   const text = typeof p.custom_text === 'string' && p.custom_text ? p.custom_text : null;
   if (!name && !text) return null;
@@ -134,11 +163,14 @@ export function formatChronicleEvent(
    *  always use names. */
   opts: { names?: boolean } = {},
 ): string {
-  let parsed: Payload = {};
+  let raw: Payload = {};
   try {
     const j = JSON.parse(ev.payload || '{}');
-    if (j !== null && typeof j === 'object') parsed = j as Payload;
+    if (j !== null && typeof j === 'object') raw = j as Payload;
   } catch { /* ignore */ }
+  // Names shown in `lang`; `raw` keeps the stored ones for the rules that
+  // need them (a default settlement name below).
+  const parsed = namesIn(lang, raw);
   const tp = `T+${ev.tick_number}`;
   const en = lang === 'en';
 
@@ -168,7 +200,8 @@ export function formatChronicleEvent(
    * possessive rendered "Cerean Union's Cerean Union Capital on Oberon ...".
    */
   const possessive = (owner: string, thing: string): string => {
-    if (owner && thing.toLowerCase().startsWith(owner.toLowerCase())) return thing;
+    // "Capital de Cerean Union" names its owner too, just not first.
+    if (owner && thing.toLowerCase().includes(owner.toLowerCase())) return thing;
     return own(owner, thing);
   };
 
@@ -370,7 +403,12 @@ export function formatChronicleEvent(
 
   if (ev.kind === 'settlement_built') {
     const sType = settlementText(parsed.settlement_type as string | undefined);
-    const sName = (parsed.settlement_name as string) ?? null;
+    // A server default name ("Station", "New City") says nothing the type
+    // does not: "fundou Station (estação)" read as a bug (Leo, 2026-10-24).
+    // English keeps its line as is (the machine-truth contract).
+    const rawName = (parsed.settlement_name as string) ?? null;
+    const sName = rawName && (en || !/^(station|new city|city)$/i.test(String(raw.settlement_name ?? '')))
+      ? rawName : null;
     const where = (parsed.body_name as string) ?? T('fb.aBody');
     const owner = nameOfFaction(ev.actor_faction_id, parsed.owner_faction_name as string | undefined);
     return out('', sName

@@ -52,6 +52,7 @@ import { PART_FEATURE } from '../game/researchUnlocks';
 import { useFeatureGate } from '../hooks/useFeatureGate';
 import { t, tn, tk } from '../i18n/core';
 import { useI18n } from '../i18n/react';
+import { designName } from '../i18n/names';
 import { deriveSecondary } from '../game/colorUtils';
 import { DesignLibrary } from './DesignLibrary';
 import { CommissionFleetPreview } from './CommissionFleetPreview';
@@ -821,7 +822,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
       <ShipIcon shipClass={d.shipClass} variant={d.iconVariant} size={44} color={p1} color2={p2} />
       <span className="sd-dz__text">
         <span className="sd-dz__name">
-          {d.name}
+          {designName(d.name)}
           {d.isActive && <span className="sd-badge" title={t('ship.sd.activeBadgeTip')}>{t('ship.sd.active')}</span>}
         </span>
         <span className="sd-dz__look">{ICON_VARIANT_NAMES[d.shipClass][d.iconVariant ?? DEFAULT_SHIP_ICONS[d.shipClass]]}</span>
@@ -950,7 +951,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
               <input
                 className="sd-name-input"
                 aria-label={t('ship.sd.namePlaceholder')}
-                placeholder={selected ? selected.name : t('ship.sd.namePlaceholder')}
+                placeholder={selected ? designName(selected.name) : t('ship.sd.namePlaceholder')}
                 value={draftName}
                 maxLength={32}
                 onChange={e => setDraftName(e.target.value)}
@@ -1209,7 +1210,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
             <span>{upkeepLabel}</span>
           </button>
           <span className="sd-foot__status">
-            {selected ? t('ship.sd.editing', { name: selected.name }) : t('ship.sd.newTitle')}
+            {selected ? t('ship.sd.editing', { name: designName(selected.name) }) : t('ship.sd.newTitle')}
             {selected && !draftMatchesSelected && <b> · {t('ship.sd.unsaved')}</b>}
           </span>
           {refitBar}

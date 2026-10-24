@@ -97,6 +97,15 @@ const sixth = last.status;
 const seventh = await trial.handleStart(req(null, '9.9.9.9'), env, null);
 check('six trials an hour from one address, then 429', sixth === 201 && seventh.status === 429, `${sixth} then ${seventh.status}`);
 
+// The stand-in name is in the language the app is showing.
+const rPt = await trial.handleStart(req(null, '5.5.5.5', { lang: 'pt-BR' }), env, null);
+const bPt = await rPt.json();
+const uPt = await DB.prepare('SELECT display_name, locale FROM users WHERE id = ?').bind(bPt.user?.id).first();
+check('a Portuguese trial player is "Comandante", and keeps the language',
+  rPt.status === 201 && bPt.user?.display_name === 'Comandante' && uPt?.display_name === 'Comandante' && uPt?.locale === 'pt-BR',
+  JSON.stringify({ user: bPt.user, uPt }));
+check('an English one is "Commander"', u.display_name === 'Commander', JSON.stringify(u));
+
 // ---- 4. the Warlord comes at tick 20 -------------------------------------
 const room = new Room(makeState(), env);
 room.broadcast = () => {};

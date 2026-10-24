@@ -71,6 +71,7 @@ import { buildChoices } from '../game/designChoice';
 import { RamControlsSection } from '../components/BodyInspector';
 import { t, tn, tk } from '../i18n/core';
 import { useI18n } from '../i18n/react';
+import { designName } from '../i18n/names';
 import { makePeaceCheck } from '../game/peace';
 import { groupFlights } from '../game/interceptPicker';
 import './WmPhone.css';
@@ -2818,7 +2819,7 @@ const WmFleet: React.FC<{
       title={t('worldmenu.template.title', { name: h.def.displayName })}
     >
       {h.templates.map(d => (
-        <option key={d.id} value={d.id}>{d.name}{d.isActive ? ' ★' : ''}</option>
+        <option key={d.id} value={d.id}>{designName(d.name)}{d.isActive ? ' ★' : ''}</option>
       ))}
     </select>
   );
@@ -3014,7 +3015,7 @@ const WmFleet: React.FC<{
               <span className="wmp-hull-txt">
                 <span className="wmp-hull-nm">
                   {h.def.displayName.toUpperCase()}
-                  {h.templates.length > 0 && <i>{h.picked?.name ?? h.templates[0].name} ▾</i>}
+                  {h.templates.length > 0 && <i>{designName(h.picked?.name ?? h.templates[0].name)} ▾</i>}
                 </span>
                 <span className="wmp-hull-meta">{h.costOre}m · {h.costCredits}c · {h.def.buildTime} T</span>
               </span>
@@ -3159,7 +3160,7 @@ const WmFleet: React.FC<{
                       <ShipIcon shipClass={cls} variant={d.iconVariant} size={52} color={p1} color2={p2} />
                       <span className="wm-dsheet__txt">
                         <span className="wm-dsheet__nm">
-                          {d.name}
+                          {designName(d.name)}
                           {d.isActive && <span className="wm-dsheet__active">{t('ship.sd.active')}</span>}
                         </span>
                         <span className="wm-dsheet__look">{ICON_VARIANT_NAMES[cls]?.[d.iconVariant ?? DEFAULT_SHIP_ICONS[cls]]}</span>
@@ -3185,7 +3186,7 @@ const WmFleet: React.FC<{
                   title={h.lock ?? (h.noYard ? t('worldmenu.buildYardFirst') : h.priceWhy)}
                   onClick={() => { setPickFor(null); void buildShip(cls); }}
                 >
-                  {t('worldmenu.pick.build', { name: picked?.name ?? def.displayName })}
+                  {t('worldmenu.pick.build', { name: picked ? designName(picked.name) : def.displayName })}
                 </button>
               </div>
             </section>
