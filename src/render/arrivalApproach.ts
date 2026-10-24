@@ -73,7 +73,13 @@ export function isImminentArrival(
 ): boolean {
   const leg = s.transit?.currentTransfer;
   if (!leg || !leg.targetBodyId) return false;
-  if (s.class === 'missile' || s.plannedRendezvous) return false;
+  if (s.class === 'missile') return false;
+  // A hull meeting another in flight joins its leader's course; once it
+  // HAS met it, it flies that course to the leader's world and lands with
+  // it, so it comes in the same way. Left out, a squadron that rode the
+  // Mega Destroyer in landed, sat out the roster dwell, then darted to its
+  // slots at ~50 px a frame (the Battle of Earth take, 2026-10-24).
+  if (s.plannedRendezvous && !(currentTick >= s.plannedRendezvous.meetTick)) return false;
   if (s.queuedTransits && s.queuedTransits.length > 0) return false;
   if (onRoute?.(s)) return false;
   return leg.arriveTick - currentTick <= ARRIVAL_ADMIT_TICKS;
