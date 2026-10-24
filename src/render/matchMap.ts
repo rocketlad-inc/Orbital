@@ -66,16 +66,19 @@ import {
   drawToasts, drawOutCards, drawHomePin,
 } from './filmOverlay';
 
+// The overlays' reading times were set for the eye of whoever cut the
+// film; players could not keep up (Lorne, 2026-10-24). Each now stays up
+// about a third longer, and the scenes under them a fifth (FILM_PACE).
 /** Seconds each empire's card holds in the opening act. */
-const CAST_CARD_SECONDS = 2.1;
+const CAST_CARD_SECONDS = 2.7;
 /** Seconds a transmission from the public channel stays up. */
-const TRANSMISSION_SECONDS = 5.5;
+const TRANSMISSION_SECONDS = 7.2;
 /** The share of a scripted film kept for wide shots of the living system. */
 const ESTABLISHING_SHARE = 0.18;
 /** How many days of freighter traffic a trade lane shows. */
 const LANE_WINDOW_TICKS = 30;
 /** The roll call's time in the finale, for this many empires. */
-const ROLL_CALL_FINALE_SECONDS = (n: number) => 3.2 + 0.55 * n;
+const ROLL_CALL_FINALE_SECONDS = (n: number) => 4 + 0.7 * n;
 
 const NEUTRAL = '#8a9fb3';
 /** Log lines that ride the ticker: the news, not the bookkeeping. */
@@ -89,16 +92,16 @@ const TICKER_KINDS = new Set([
   'mega_strike_charging', 'asteroid_impact', 'missile_strike',
 ]);
 /** Film seconds between two ticker lines coming up, and each one's life. */
-const TICKER_GAP_SECONDS = 0.7;
+const TICKER_GAP_SECONDS = 1.0;
 /** How much slower than the live map a hull glides to a new battle slot:
  *  measured, re-slots swept hulls 56 degrees round Mars in nine frames. */
 const FILM_GLIDE_PACE = 3;
 /** See fireReference: hulls per fight before reloads stretch, in the film. */
 const FILM_FIRE_REFERENCE = 18;
 /** War, peace and pact banners: the least gap between two, and their life. */
-const TOAST_GAP_SECONDS = 0.5;
-const TOAST_LIFE_SECONDS = 3.0;
-const TICKER_LIFE_SECONDS = 2.6;
+const TOAST_GAP_SECONDS = 0.7;
+const TOAST_LIFE_SECONDS = 4.0;
+const TICKER_LIFE_SECONDS = 3.5;
 const CLASSES = ['corvette', 'frigate', 'destroyer', 'freighter', 'colony'];
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- iconClassOf — icon refactor in flight
 const iconClassOf = (c: string | null): ShipIconClass =>
@@ -2663,7 +2666,8 @@ export function createMatchMap(
   }).filter(x => x.faction);
 
   /** A time-lapse shorter than this carries no caption. */
-  const MONTAGE_CAPTION_SECONDS = 1.6;
+  // Under this a headline flashed past before it could be read.
+  const MONTAGE_CAPTION_SECONDS = 2.2;
   /** The least a log row must weigh to headline a time-lapse. */
   const MONTAGE_HEADLINE_WEIGHT = 40;
   /** The finale holds its image this long before the table comes up. */

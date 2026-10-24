@@ -27,12 +27,13 @@ import {
 
 /** Bump when the engine's output changes shape or meaning: stored films
  *  older than this are rebuilt the next time they are opened. */
-export const SAGA_ENGINE_VERSION = 1;
+export const SAGA_ENGINE_VERSION = 2;
 
 /** The film's length for a match of `span` days (Lorne, 2026-10-23: "Film
- *  can be as long as 3 minutes"). */
+ *  can be as long as 3 minutes"; 10-24: slowed so players can read it, up
+ *  to 3:30). */
 export function sagaRuntime(span) {
-  return Math.max(90, Math.min(180, Math.round(90 + Math.max(0, span) * 0.16)));
+  return Math.max(105, Math.min(210, Math.round(105 + Math.max(0, span) * 0.19)));
 }
 
 const pairKey = (a, b) => [a, b].sort().join('|');
@@ -703,7 +704,8 @@ function crawlOf(F, S, plots, roles, walker) {
   }
   const lines = [p1.filter(Boolean).join(' '), hints.join(' '), p3.filter(Boolean).join(' ')].filter(Boolean);
   const words = lines.join(' ').split(/\s+/).length;
-  return { lines, words, seconds: Math.max(10, Math.min(16, Math.round((words / 3.8 + 2) * 10) / 10)) };
+  // Read at three words a second, not 3.8: players could not keep up.
+  return { lines, words, seconds: Math.max(12, Math.min(20, Math.round((words / 3 + 2.5) * 10) / 10)) };
 }
 
 // ===========================================================================
