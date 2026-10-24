@@ -162,6 +162,13 @@ let g2 = await DB.prepare('SELECT paused, next_tick_at FROM games WHERE id = ?')
 check('pause stops the clock', p.status === 200 && g2.paused === 1 && g2.next_tick_at == null, JSON.stringify(g2));
 const due = await DB.prepare(`SELECT COUNT(*) AS c FROM games WHERE status = 'active' AND COALESCE(paused, 0) = 0 AND (next_tick_at IS NULL OR next_tick_at <= ?)`).bind(Date.now()).first();
 check('the cron does not tick a paused game', due.c === 0);
+// Cloudflare calls alarm() with an alarmInfo OBJECT, not a boolean: a
+// natural alarm must not read as a forced tick (staging, 2026-10-23).
+await r.state.storage.put('gameStarted', { gameId: G });
+const tBefore = (await DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(G).first()).current_tick;
+await r.alarm({ retryCount: 0, isRetry: false });
+const tAfter = (await DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(G).first()).current_tick;
+check('a natural alarm does not tick a paused game', tAfter === tBefore, `${tBefore} -> ${tAfter}`);
 doCalls.length = 0;
 const st = await call(solo, 'POST', `/api/games/${G}/solo/step`, 'uH');
 check('step asks the room for one forced tick', st.status === 200 && doCalls.some(u => u.endsWith('/tick-now')), JSON.stringify({ st, doCalls }));
