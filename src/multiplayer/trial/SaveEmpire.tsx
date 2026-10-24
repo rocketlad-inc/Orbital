@@ -100,6 +100,16 @@ function SaveEmpireSheet({ reason, onClose }: { reason: SaveReason; onClose: () 
         <h2 id="save-empire-title" className="save-empire__title">{t('trial.save.title')}</h2>
         <p className="save-empire__lead">{t(LEAD[reason])}</p>
 
+        {/* Google first: one tap, and it works the same for a new account
+            or one they already have, so it sits above the email tabs. */}
+        {googleClientId && (
+          <div className="save-empire__google">
+            <GoogleSignInButton clientId={googleClientId} onCredential={onGoogle}
+              onError={(msg) => setError(msg)} disabled={busy} />
+            <div className="save-empire__or">{t('auth.orEmail')}</div>
+          </div>
+        )}
+
         <div className="save-empire__tabs" role="tablist">
           <button type="button" role="tab" aria-selected={mode === 'new'}
             className={mode === 'new' ? 'is-on' : ''} onClick={() => { setMode('new'); setError(null); }}>
@@ -110,14 +120,6 @@ function SaveEmpireSheet({ reason, onClose }: { reason: SaveReason; onClose: () 
             {t('trial.save.tab.have')}
           </button>
         </div>
-
-        {googleClientId && (
-          <div className="save-empire__google">
-            <GoogleSignInButton clientId={googleClientId} onCredential={onGoogle}
-              onError={(msg) => setError(msg)} disabled={busy} />
-            <div className="save-empire__or">{t('auth.orEmail')}</div>
-          </div>
-        )}
 
         {mode === 'new' && (
           <>
