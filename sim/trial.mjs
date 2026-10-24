@@ -7,7 +7,8 @@
 //      auto-load set so they land in it
 //   2. asking again with that session gives the same game back
 //   3. six trials an hour per address, then 429
-//   4. the trial's Warlord declares on the player from tick 20
+//   4. the trial's Warlord declares on the player from tick 20, takes a
+//      world, and its warships reach an idle player within 60 ticks
 //   5. saving: a new account made from the shadow session gets the game
 //      (members, faction, host), the shadow is retired, its sessions end
 //   6. a trial nobody plays pauses after 15 minutes; it wakes on return
@@ -98,20 +99,68 @@ const seventh = await trial.handleStart(req(null, '9.9.9.9'), env, null);
 check('six trials an hour from one address, then 429', sixth === 201 && seventh.status === 429, `${sixth} then ${seventh.status}`);
 
 // ---- 4. the Warlord comes at tick 20 -------------------------------------
-const room = new Room(makeState(), env);
-room.broadcast = () => {};
 const human = seats[0];
 const war = (await DB.prepare('SELECT id FROM game_factions WHERE game_id = ? AND ai_personality = ?').bind(G, 'warlord').first()).id;
 const humanF = (await DB.prepare('SELECT id FROM game_factions WHERE game_id = ? AND user_id = ?').bind(G, human.user_id).first()).id;
-for (let t = 1; t <= 40; t++) {
-  await room.resolveTick(G, t);
-  await DB.prepare('UPDATE games SET current_tick = ? WHERE id = ?').bind(t, G).run();
-  await ai.runSoloGame(env, G);
+/**
+ * Play a trial for `ticks` ticks with a player who does nothing (or, with
+ * `pact`, only signs whatever pact is offered), and watch the Warlord.
+ * Playtest 2026-10-24: it never took a world, offered a ceasefire before
+ * its corvettes had landed, and testers saw no attack in half an hour.
+ */
+async function watchWarlord(gameId, warId, humanId, humanUser, { ticks = 60, pact = false } = {}) {
+  const rm = new Room(makeState(), env);
+  rm.broadcast = () => {};
+  const out = { arrivedAt: null, earlyCeasefire: null, worldsAt: {} };
+  for (let t = 1; t <= ticks; t++) {
+    await rm.resolveTick(gameId, t);
+    await DB.prepare('UPDATE games SET current_tick = ? WHERE id = ?').bind(t, gameId).run();
+    if (pact) {
+      const open = (await DB.prepare(`SELECT id FROM trade_offers WHERE game_id = ? AND responder_faction_id = ? AND status = 'open'`)
+        .bind(gameId, humanId).all()).results ?? [];
+      for (const o of open) await ai.callAs(env, humanUser, 'POST', `/api/games/${gameId}/trades/${o.id}/accept`, {});
+    }
+    await ai.runSoloGame(env, gameId);
+    // Its warships parked (no leg left) at one of the player's worlds.
+    const there = await DB.prepare(
+      `SELECT COUNT(*) AS n FROM game_ships s JOIN game_bodies b ON b.id = s.parent_body_id
+        WHERE s.owner_faction_id = ? AND s.hp > 0 AND s.ship_class IN ('corvette','frigate','destroyer','capital')
+          AND b.owner_faction_id = ?
+          AND NOT EXISTS (SELECT 1 FROM game_ship_nodes n WHERE n.ship_id = s.id AND n.status IN ('committed','in_transit'))`,
+    ).bind(warId, humanId).first();
+    if (out.arrivedAt == null && there.n > 0) out.arrivedAt = t;
+    const cf = await DB.prepare('SELECT ceasefire_at_tick FROM game_wars WHERE game_id = ? AND ceasefire_by = ?').bind(gameId, warId).first();
+    if (out.earlyCeasefire == null && cf && out.arrivedAt == null) out.earlyCeasefire = cf.ceasefire_at_tick;
+    out.worldsAt[t] = (await DB.prepare('SELECT COUNT(DISTINCT body_id) AS n FROM game_settlements WHERE game_id = ? AND owner_faction_id = ? AND destroyed_at_tick IS NULL')
+      .bind(gameId, warId).first()).n;
+  }
+  return out;
 }
+
+const idle = await watchWarlord(G, war, humanF, human.user_id);
 const w = await DB.prepare(`SELECT declared_by, declared_at_tick FROM game_wars WHERE game_id = ? AND declared_by = ?`).bind(G, war).first();
 check('the trial Warlord declares on the player from tick 20', w && w.declared_at_tick >= 20 && w.declared_at_tick <= 40, JSON.stringify(w));
+check('the trial Warlord takes a second world by tick 30 (it visibly expands)', idle.worldsAt[30] >= 2, JSON.stringify(idle.worldsAt[30]));
+check('its warships reach the idle player\'s worlds within 30 minutes (tick 60)', idle.arrivedAt != null && idle.arrivedAt <= 60, `arrived at ${idle.arrivedAt}`);
+check('it does not offer a ceasefire before its strike has landed', idle.earlyCeasefire == null, `offered at ${idle.earlyCeasefire}`);
 const allyOffer = await DB.prepare(`SELECT COUNT(*) AS n FROM trade_offers WHERE game_id = ? AND responder_faction_id = ? AND offer_pacts LIKE '%nap%'`).bind(G, humanF).first();
 check('the trial Ally offers a pact', allyOffer.n >= 1);
+
+// A player who signs the Ally's pact: the Ally joins the war (the second
+// "war declared" testers saw), and the Warlord still comes for the player.
+{
+  const rp = await trial.handleStart(req(null, '7.7.7.7'), env, null);
+  const GP = (await rp.json()).game_id;
+  await DB.prepare('UPDATE games SET paused = 0 WHERE id = ?').bind(GP).run();
+  const fs = (await DB.prepare('SELECT id, user_id, ai_personality FROM game_factions WHERE game_id = ?').bind(GP).all()).results;
+  const hp = fs.find(f => !f.ai_personality);
+  const wp = fs.find(f => f.ai_personality === 'warlord').id;
+  const ap = fs.find(f => f.ai_personality === 'ally').id;
+  const res = await watchWarlord(GP, wp, hp.id, hp.user_id, { pact: true });
+  const allyWar = await DB.prepare('SELECT declared_at_tick FROM game_wars WHERE game_id = ? AND declared_by = ?').bind(GP, ap).first();
+  check('with the Ally\'s pact signed, the Ally joins the war', !!allyWar, JSON.stringify(allyWar));
+  check('and the Warlord\'s warships still reach the player by tick 60', res.arrivedAt != null && res.arrivedAt <= 60, `arrived at ${res.arrivedAt}`);
+}
 
 // ---- 5. saving -------------------------------------------------------------
 const realId = 'realUser1';

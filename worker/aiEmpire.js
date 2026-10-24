@@ -52,7 +52,9 @@ export const DOCTRINES = {
     research: ['weapons', 'construction', 'armor', 'industry'],
     build: ['corvette', 'corvette', 'frigate'],
     buildings: ['forge', 'mint'],
-    colonise: false,
+    // It settles with the colony ship every empire starts with (it builds
+    // none): a Warlord that never took a world looked asleep (playtest).
+    colonise: true,
     buildEvery: 6,
     attack: { every: 8, minFleet: 3 },
     warlike: true,
@@ -236,12 +238,14 @@ export async function takeTurn(env, g, fac, difficulty, { trial = false } = {}) 
   // --- who it is: diplomacy, by personality ------------------------------
   let foes = new Set();
   let force = false;
+  let prey = null;
   if (view) {
     const r = await conduct(env, {
       view, rm: g.rm, call, note, personality, difficulty, last, wars: g.wars, gameId, mem, trial,
     });
     foes = r.foes;
     force = r.force;
+    prey = r.prey ?? null;
   }
 
   // --- research: never idle ---------------------------------------------
@@ -313,7 +317,7 @@ export async function takeTurn(env, g, fac, difficulty, { trial = false } = {}) 
     // A war past SIEGE_AFTER ticks: the empire settles for an even fight.
     const longWar = g.wars.some(w => (w.faction_a === me || w.faction_b === me)
       && tick - Number(w.declared_at_tick ?? tick) >= SIEGE_AFTER);
-    for (const [label, r] of await wageWar(view, g.rm, call, foes, sharp, { force, longWar })) note(label, r);
+    for (const [label, r] of await wageWar(view, g.rm, call, foes, sharp, { force, longWar, prey })) note(label, r);
   }
 
   // --- expansion: claim, terraform, settle ------------------------------

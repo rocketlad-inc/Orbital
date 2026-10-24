@@ -30,7 +30,7 @@
 // last made peace with whom, the Snake's phase and victim.
 // ============================================================
 
-import { due, power, visibleFleet, myArmed, pickTarget, scout, SHARPNESS } from './aiTactics.js';
+import { due, power, visibleFleet, myArmed, pickTarget, scout, SHARPNESS, ARMED } from './aiTactics.js';
 
 export const PERSONALITIES = ['ally', 'warlord', 'snake'];
 
@@ -137,9 +137,10 @@ function spread(id) {
 }
 
 /**
- * One turn of diplomacy. Returns { foes, force, mem }: who to fight this
- * turn (every empire it is at war with), whether a strike was just
- * launched (fight now whatever the odds), and its updated memory.
+ * One turn of diplomacy. Returns { foes, force, mem, prey }: who to fight
+ * this turn (every empire it is at war with), whether a strike was just
+ * launched (fight now whatever the odds), its updated memory, and the
+ * victim its strike goes for first (null: any foe).
  */
 export async function conduct(env, ctx) {
   const { view, rm, call, note, personality, difficulty, last, wars, gameId } = ctx;
@@ -198,6 +199,9 @@ export async function conduct(env, ctx) {
     return (theirs > 0 && mineP < LOSING * theirs) || myWorlds < (mem.worldsAt[f] ?? myWorlds);
   };
   const tookSomething = (f) => myWorlds > (mem.worldsAt[f] ?? myWorlds);
+  /** My warships in flight to one of f's worlds. */
+  const striking = (f) => [...view.inbound].some(([bodyId, list]) => view.owner.get(bodyId) === f
+    && list.some(s => s.owner_faction_id === me && ARMED.has(s.ship_class)));
   const ageOf = (f) => tick - Number(warWith.get(f)?.declared_at_tick ?? tick);
   const theyOffered = (f) => !!warWith.get(f)?.ceasefire_by && warWith.get(f).ceasefire_by === f;
 
@@ -291,8 +295,13 @@ export async function conduct(env, ctx) {
     for (const [f] of warWith) {
       if (view.factions.get(f)?.status === 'monster' || stalled(f)) continue;
       handled.add(f);
-      if (theyOffered(f) && losing(f)) await endWar(f, 'ceasefire_accept');
-      else if (!warWith.get(f).ceasefire_by && losing(f)) await endWar(f, 'ceasefire_offer');
+      // Not beaten before it has fought: a war it just declared, or one
+      // whose strike is still in flight, is not judged by fleet counts
+      // (playtest 2026-10-24: outnumbered by a trial's head start, it
+      // offered peace before its corvettes had even arrived).
+      const beaten = losing(f) && ageOf(f) >= PEACE_AFTER && !striking(f);
+      if (theyOffered(f) && beaten) await endWar(f, 'ceasefire_accept');
+      else if (!warWith.get(f).ceasefire_by && beaten) await endWar(f, 'ceasefire_offer');
     }
   }
 
@@ -370,7 +379,12 @@ export async function conduct(env, ctx) {
   // The view was read before this turn's declarations: add them.
   const foes = new Set(view.enemiesOf(me).filter(standing));
   for (const [f, w] of warWith) if (w.declared_by === me && w.declared_at_tick === tick) foes.add(f);
-  return { foes, force, mem };
+  // The one it came for: a Warlord's or a Snake's strike goes at its
+  // victim, not at whoever else joined the war (an Ally answering for its
+  // partner turned the trial's Warlord away from the player).
+  const prey = (personality === 'warlord' || (personality === 'snake' && mem.snake === 'war'))
+    && mem.victim && foes.has(mem.victim) ? mem.victim : null;
+  return { foes, force, mem, prey };
 }
 
 /** How it votes: for itself, for its friends, against its enemies. */
