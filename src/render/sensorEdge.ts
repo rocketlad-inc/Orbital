@@ -10,6 +10,28 @@
 
 import type { FogHole } from './fogHoles';
 
+/** Room past a world's drawn disc for the hulls parked round it, px, when
+ *  those hulls are drawn one by one. */
+export const PRESENCE_BUBBLE_PX = 36;
+
+/**
+ * The bubble the sensor edge puts round a world the server lists as
+ * visible (presence, or inside a sensor circle), in px: its drawn disc,
+ * plus room for its parked hulls only as far as they are drawn
+ * (`hullReveal`, 0 = a count badge, 1 = every hull).
+ *
+ * The room was a flat 36px at every zoom (speedmaster, 2026-10-23:
+ * "vision range indicator is not accurate when zoomed out"). The list
+ * holds every world inside your coverage, and at full zoom-out a
+ * destroyer's 600-unit circle is ~10px, so the outline was made of
+ * 45px bubbles: about four times the ground you can actually see. Out
+ * there a world's hulls are a count badge painted over the fog, so the
+ * room is not needed.
+ */
+export function presenceBubblePx(drawnPx: number, hullReveal: number): number {
+  return drawnPx + PRESENCE_BUBBLE_PX * Math.max(0, Math.min(1, hullReveal));
+}
+
 export interface EdgeArc {
   x: number;
   y: number;

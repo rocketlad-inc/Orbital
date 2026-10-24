@@ -135,7 +135,10 @@
       "vars": {
         // Read by the client banner so nobody mistakes staging for the
         // real game — see ENVIRONMENT_BANNER in the app shell.
-        "ORBITAL_ENV": "staging"
+        "ORBITAL_ENV": "staging",
+        // Play for Free's per-address limit (worker/trial.js): staging's
+        // playtesters all share one address.
+        "TRIALS_PER_HOUR": "200"
       }
     }
   }

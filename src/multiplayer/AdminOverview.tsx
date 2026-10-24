@@ -24,6 +24,7 @@ import { ago, labelForKind, playTime } from './adminFormat';
 import { FrictionRows } from './GameStory';
 import { span } from './storyVerdict';
 import { GameActivity } from './AdminGameActivity';
+import { TrafficTrends, TrafficDay } from './AdminTrafficTrends';
 import { CommissionSales } from './AdminCommissionSales';
 import './AdminOverview.css';
 
@@ -72,7 +73,8 @@ type TrafficData = {
   ads: (Funnel & { source: string; campaign: string; content: string; term: string })[];
   devices: (Funnel & { device: string; in_app: string })[];
   countries: { country: string; visitors: number; signed_up: number }[];
-  daily: { day_ms: number; source: string; visitors: number; signed_up: number }[];
+  /** Per source per UTC day, last 30 days, every funnel step. */
+  daily: (Funnel & TrafficDay)[];
 };
 type Overview = {
   now: number;
@@ -1359,7 +1361,9 @@ function TrafficGlossary() {
 function TrafficPanel({ tr, now }: { tr: TrafficData; now: number }) {
   // Daily totals over 14 days, with the busiest source of each day.
   const days = new Map<number, { visitors: number; signed_up: number; top: string; topN: number }>();
+  const since14 = Math.floor(now / 86_400_000) * 86_400_000 - 13 * 86_400_000;
   for (const r of tr.daily) {
+    if (r.day_ms < since14) continue;
     const d = days.get(r.day_ms) ?? { visitors: 0, signed_up: 0, top: '', topN: 0 };
     d.visitors += r.visitors;
     d.signed_up += r.signed_up;
@@ -1374,6 +1378,7 @@ function TrafficPanel({ tr, now }: { tr: TrafficData; now: number }) {
         title="Link and ad traffic"
         hint="Every visit in the last 30 days that arrived through a tagged link, an ad click or another site, whether or not it signed up (recorded from Oct 20). Read a row left to right: each column is a step further in, and the small percentage beside a number is its share of that row's visitors."
       ><RefreshTool /></PanelHead>
+      <TrafficTrends rows={tr.daily} now={now} />
       <TrafficGlossary />
       {tr.campaigns.length === 0 ? <div className="ao-none">No tagged or referred visits yet.</div> : (
         <div className="ao-scroll">

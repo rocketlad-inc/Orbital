@@ -1,0 +1,134 @@
+/* AdminTrafficTrends: link and ad traffic per source per day
+   (AdminTrafficTrends.tsx). Mounted inside .ao, so it uses the
+   dashboard's tokens. Six line hues, one per slot; a source keeps its
+   slot while picked. Checked on the dark surface: every pair stays
+   OKLab dE >= 8 under deutan, protan and tritan simulation, and each
+   is at least 4.8:1 against the panel. Text never wears these colours;
+   a swatch beside the name carries them. */
+
+.tt {
+  --tt-1: #4ecdc4;
+  --tt-2: #f6c453;
+  --tt-3: #5a78ff;
+  --tt-4: #ff6b8b;
+  --tt-5: #e8f0f7;
+  --tt-6: #e08bff;
+  --tt-total: var(--ao-ink-3);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 4px 0 18px;
+}
+
+.tt-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; }
+.tt-title { margin: 0; font-size: 14px; font-weight: 600; color: var(--ao-ink); }
+.tt-best { font-size: 12.5px; color: var(--ao-ink-2); }
+.tt-best b { color: var(--ao-ink); font-weight: 600; }
+
+.tt-controls { display: flex; flex-wrap: wrap; gap: 8px 12px; }
+.tt-seg {
+  display: inline-flex;
+  flex-wrap: wrap;
+  border: 1px solid var(--ao-line-2);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.tt-seg button {
+  appearance: none;
+  border: 0;
+  border-right: 1px solid var(--ao-line);
+  background: transparent;
+  color: var(--ao-ink-2);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+.tt-seg button:last-child { border-right: 0; }
+.tt-seg button:hover:not(:disabled) { color: var(--ao-ink); background: var(--ao-surface-3); }
+.tt-seg button.is-on { color: var(--ao-ink); background: rgba(var(--ao-teal-rgb), 0.16); font-weight: 600; }
+.tt-seg button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.tt-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.tt-chip {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--ao-line-2);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ao-ink-3);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 4px 11px 4px 8px;
+  cursor: pointer;
+}
+.tt-chip:hover { color: var(--ao-ink); border-color: var(--ao-ink-3); }
+.tt-chip.is-on { color: var(--ao-ink); background: var(--ao-surface-3); border-color: var(--ao-line-2); }
+.tt-chip__n { font-family: var(--ao-data); font-size: 11.5px; color: var(--ao-ink-3); font-variant-numeric: tabular-nums; }
+.tt-sw {
+  display: inline-block;
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid var(--ao-ink-3);
+  background: transparent;
+}
+.tt-sw--total { border-radius: 2px; height: 0; width: 14px; border-width: 0; border-top: 2px dashed var(--tt-total); }
+.tt-chip--total.is-on .tt-sw--total { border-top-color: var(--ao-ink-2); }
+.tt-quick { display: inline-flex; gap: 10px; margin-left: 6px; }
+.tt-link {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--ao-teal);
+  cursor: pointer;
+}
+.tt-link:hover { text-decoration: underline; }
+.tt-note { margin: 0; font-size: 12.5px; color: var(--ao-amber); }
+
+.tt-plot { position: relative; width: 100%; min-width: 0; border-radius: 8px; outline: none; }
+.tt-plot:focus-visible { box-shadow: 0 0 0 2px rgba(var(--ao-teal-rgb), 0.5); }
+.tt-svg { display: block; overflow: visible; }
+.tt-grid line { stroke: var(--ao-line); stroke-width: 1; }
+.tt-grid text, .tt-xaxis text { fill: var(--ao-ink-3); font-size: 11.5px; font-family: var(--ao-data); font-variant-numeric: tabular-nums; }
+.tt-cross { stroke: var(--ao-line-2); stroke-width: 1; }
+.tt-line path { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.tt-dot { stroke: var(--ao-surface); stroke-width: 2; }
+.tt-total path { fill: none; stroke: var(--tt-total); stroke-width: 1.5; stroke-dasharray: 2 4; }
+.tt-end text { fill: var(--ao-ink-2); font-size: 12px; }
+.tt-end circle { stroke: var(--ao-surface); stroke-width: 2; }
+.tt-hit { fill: transparent; cursor: crosshair; }
+
+.tt-card {
+  position: absolute;
+  top: 6px;
+  width: 230px;
+  pointer-events: none;
+  padding: 9px 11px;
+  border-radius: var(--ao-radius-s);
+  background: var(--ao-surface-3);
+  border: 1px solid var(--ao-line-2);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  font-size: 12.5px;
+  color: var(--ao-ink-2);
+  z-index: 2;
+}
+.tt-card__day { color: var(--ao-ink); font-weight: 600; }
+.tt-card__what { font-size: 11.5px; color: var(--ao-ink-3); margin-bottom: 6px; }
+.tt-card__row { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; align-items: center; gap: 7px; padding: 2px 0; }
+.tt-card__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tt-card__v { font-family: var(--ao-data); font-variant-numeric: tabular-nums; color: var(--ao-ink); }
+.tt-card__none { color: var(--ao-ink-3); }
+
+.tt-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 16px; font-size: 12px; color: var(--ao-ink-3); }
+.tt-table td, .tt-table th { white-space: nowrap; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .tt-dot { transition: r 120ms ease; }
+}
