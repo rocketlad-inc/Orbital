@@ -59,7 +59,8 @@ export type TutorialEffect =
   // trade dock (where a pact offer waits) and the empires panel.
   | 'open-panel-trades'    // window 'orbital:open-panel' {panel:'trades'}
   | 'open-panel-empires'   // window 'dockrail:set' {active:'multiplayer'}
-  | 'close-dock';          // window 'dockrail:set' {active:null}: the right-hand docks
+  | 'close-dock'           // window 'dockrail:set' {active:null}: the right-hand docks
+  | 'close-world-menu';    // window 'orbital:close-world-menu': the map back
 
 /** Game-state condition a task step waits on. Evaluated by the overlay
  *  a few times a second; baselines are snapshotted at step entry so a
@@ -103,6 +104,10 @@ export interface TutorialStep {
   task?: { check: TutorialCheckId; label: string };
   /** Illustration for steps with no menu on screen. */
   visual?: TutorialVisualId;
+  /** 'light': barely dim the screen, for steps played ON THE MAP (the
+   *  player has to see the worlds to click one; Lorne, 2026-10-24: "screen
+   *  is blacked out"). */
+  dim?: 'light';
 }
 
 export const TUTORIAL_STEPS: TutorialStep[] = [
@@ -110,7 +115,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'welcome',
     title: 'Welcome to Orbital',
-    body: 'Build an interplanetary empire across the Sol system — in real time, one tick an hour, running whether you’re watching or not. This tour has you make your real opening moves; nothing is wasted.',
+    body: 'Build an empire across the Solar System, in real time, one tick an hour.',
     target: null,
     placement: 'center',
     visual: 'map-controls',
@@ -118,7 +123,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'victory',
     title: 'Three ways to win',
-    body: 'CHANCELLOR — get the senate to elect you. DOMINATION — own more than 60% of the worlds on the map. ENGINEERING — finish the Dyson Sphere around the sun. Everything you do should serve one of these.',
+    body: 'Win by Senate vote, by owning 60% of the worlds, or by finishing the Dyson Sphere.',
     target: null,
     placement: 'center',
     visual: 'victory',
@@ -128,15 +133,16 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'open-world',
     title: 'Open your homeworld',
-    body: 'The map is the menu: click a world to run it. Your capital is marked ★ in the Outliner on the right — click it there, or click the planet itself.',
+    body: 'Click your capital (★ in the Outliner, or the planet) to open its menu.',
     target: 'outliner',
     placement: 'left',
     task: { check: 'world-menu-open-owned', label: 'Open the menu on a world you own' },
+    dim: 'light',
   },
   {
     id: 'world-readout',
     title: 'This is your base',
-    body: 'Name, integrity, population, defense — and OUTPUT/t, what this world produces every tick. The stockpile line is what’s banked locally, waiting to reach your treasury.',
+    body: 'OUTPUT/t is what this world earns every tick.',
     target: 'world-menu',
     placement: 'below',
     onEnter: 'open-capital-menu',
@@ -144,7 +150,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'terraform-status',
     title: 'Terraformed worlds pay; raw worlds hoard',
-    body: 'Your capital is TERRAFORMED — 100% of its harvest reaches your treasury. Raw worlds bank 90% on-site, host stations only, and won’t take a city until you terraform them.',
+    body: 'Terraformed worlds send all their output home; raw worlds keep most of it.',
     target: 'terraform-section',
     placement: 'right',
     onEnter: 'open-capital-menu',
@@ -152,7 +158,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'terraform-how',
     title: 'Terraforming is a delivery',
-    body: 'Claim a raw world with a station, then give a freighter a TRADE ROUTE to it — it hauls metal + credits into the world’s meter. Full payload → the world transforms, permanently.',
+    body: 'Claim a raw world with a station, then run a freighter route to it to terraform it.',
     target: null,
     placement: 'center',
     visual: 'terraform',
@@ -160,7 +166,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'queue-building',
     title: 'Upgrade something',
-    body: 'The SURFACE column upgrades your city: FORGE makes metal, MINT makes credits, LAB makes science — and yields compound per level. Click one now (a FORGE is a great first pick).',
+    body: 'Upgrade a building: FORGE makes metal, MINT credits, LAB science.',
     target: 'wm-columns',
     extraTargets: ['wm-columns-orbit'],
     placement: 'right',
@@ -170,7 +176,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'build-ship',
     title: 'Build a ship',
-    body: 'The strip at the bottom is your shipyard. Name it if you like, then hit BUILD on a CORVETTE — cheap, fast, and it can shoot. The ⚡ button on a queued ship rushes it for the ship’s price again (25% risk of a half-hull delivery).',
+    body: 'Open SHIPYARD, then BUILD a CORVETTE: cheap, fast, and armed.',
     target: 'wm-build',
     placement: 'above',
     onEnter: 'open-capital-menu',
@@ -181,16 +187,18 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'select-ship',
     title: 'This is a ship',
-    body: 'You already command a small fleet. Click any of your ships — in the Outliner or out on the map — to take the conn.',
+    body: 'Click one of your ships, in the Outliner or on the map.',
     target: 'outliner',
     extraTargets: ['ship-panel'],
     placement: 'left',
+    onEnter: 'close-world-menu',
+    dim: 'light',
     task: { check: 'ship-selected', label: 'Select one of your ships' },
   },
   {
     id: 'ship-stats',
     title: 'Hull and status',
-    body: 'Class, HP, loadout, and what it’s doing right now. Parked at a friendly station it quietly repairs each tick — damaged ships even have a one-tap “send to shipyard” order. You can rename it with the pencil.',
+    body: 'Its hull, loadout and orders; it repairs while parked at a friendly station.',
     target: 'ship-stats',
     placement: 'right',
     onEnter: ['select-first-ship', 'ship-tab-ship'],
@@ -198,25 +206,26 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'ship-veterancy',
     title: 'Captains and rank',
-    body: 'Kills raise rank — more damage, more hull. Captains carry the rank and their own traits, and may survive a lost ship to be rescued. Veterans are worth pulling back to heal.',
+    body: 'Kills earn rank, and the captain keeps it.',
     target: 'ship-combat-record',
     placement: 'right',
     onEnter: ['select-first-ship', 'ship-tab-log'],
   },
   {
     id: 'send-ship',
-    title: 'Move ship to Y',
-    body: 'Hit MOVE TO TARGET, click any world, and COMMIT. Transfers are free — the cost is time, and the game keeps flying it while you’re gone.',
+    title: 'Send it somewhere',
+    body: 'CHOOSE FROM LIST, pick a world, then COMMIT.',
     target: 'ship-transfer-button',
     extraTargets: ['ship-commit-button'],
-    placement: 'above',
-    onEnter: ['select-first-ship', 'ship-tab-orders'],
+    placement: 'right',
+    onEnter: ['close-world-menu', 'select-first-ship', 'ship-tab-orders'],
+    dim: 'light',
     task: { check: 'transfer-committed', label: 'Send a ship somewhere' },
   },
   {
     id: 'orders-queue',
     title: 'Orders queue',
-    body: 'There’s your burn — ETA and a cancel button until it fires. Chain more legs and the ship flies them back to back. That’s the whole movement system.',
+    body: 'Your trip and its arrival; chain more legs to fly them in a row.',
     target: 'ship-maneuver-section',
     placement: 'right',
     onEnter: 'ship-tab-orders',
@@ -224,7 +233,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'fleets',
     title: 'Fleets move as one',
-    body: 'Group ships into a fleet and a transfer ordered for any member sweeps the whole group along — one captain flies the flag and shares their trait. Form one here when you have hulls to spare.',
+    body: 'Ships in a fleet move together.',
     target: 'ship-fleet-section',
     placement: 'right',
     onEnter: ['select-first-ship', 'ship-tab-ship'],
@@ -232,7 +241,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'expand',
     title: 'Claim more worlds',
-    body: 'Build a COLONY SHIP, fly it to any world, and found a city (or a station — even gas giants and the sun take those). Every world you claim paints the map your color and counts toward the 60% Domination win.',
+    body: 'Fly a COLONY SHIP to a world and found a city or station to claim it.',
     target: null,
     placement: 'center',
     visual: 'expand',
@@ -240,7 +249,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'freighters',
     title: 'Freighters do the hauling',
-    body: 'That freighter in your starter fleet earns its keep: set a TRADE ROUTE to haul a raw world’s stockpile home, feed a terraform meter or the Dyson Sphere, or deliver trade deals with other players.',
+    body: 'Freighters haul resources home, terraform worlds and deliver trades.',
     target: null,
     placement: 'center',
     visual: 'economy',
@@ -250,7 +259,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'designer',
     title: 'Design your own hulls',
-    body: 'Drag parts onto the sockets: shields only stop kinetic, armor only stops energy, engines make it faster — and the ship visibly grows the hardware. Duplicates of a part cost more each time.',
+    body: 'Drag parts onto your ship: shields stop kinetic, armor stops energy, engines add speed.',
     target: 'designer-canvas',
     extraTargets: ['designer-stats'],
     placement: 'right',
@@ -259,7 +268,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'designer-stats',
     title: 'The bill, before you pay it',
-    body: 'The sidebar shows before→after stats, the total price, and the per-tick UPKEEP this design bills you forever. SAVE & SET ACTIVE makes every shipyard build this design; saved designs can also REFIT ships already flying, for a fee.',
+    body: 'The price and the upkeep this design costs every tick.',
     target: 'designer-stats',
     placement: 'left',
   },
@@ -268,7 +277,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'research',
     title: 'Research decides what you fight with',
-    body: 'Six tracks, ten levels. Hulls, weapons, buildings, senate powers, and — through Sensors — how much of your rivals you can even see. Start a project now; science flows into it automatically.',
+    body: 'Start a research project; science fills it automatically.',
     target: 'nav-research',
     placement: 'below',
     onEnter: 'open-panel-research',
@@ -277,7 +286,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'upkeep',
     title: 'Fleets cost rent',
-    body: 'Every hull bills upkeep each tick — the top bar’s +X/t is NET of it. Run the treasury dry and the fleet goes into ARREARS: −25% damage until you’re solvent. Big navies need big economies.',
+    body: 'Every ship costs upkeep each tick; an empty treasury cuts damage by 25%.',
     target: 'topbar-resources',
     placement: 'below',
     onEnter: 'close-panels',
@@ -288,7 +297,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'senate',
     title: 'The Senate · Chancellor Victory',
-    body: 'Bills bend the rules for everyone — build costs, upkeep, combat damage — with votes weighted by worlds held. The Chancellor bill IS a win condition, and each faction gets exactly ONE attempt at it. Ever.',
+    body: 'Senate bills change the rules for everyone, and electing a Chancellor wins the game.',
     target: null,
     placement: 'center',
     visual: 'senate',
@@ -296,7 +305,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'dyson',
     title: 'The Dyson Sphere · Engineering Victory',
-    body: 'Yes — even the sun has a menu. Deep Construction research unlocks the foundation at a Sol-orbit station; freighters parked at Sol pump your treasury into the sphere every tick, and rivals can shoot the progress right back off it.',
+    body: 'Even the Sun has a menu: build the Dyson Sphere here.',
     target: 'dyson-sphere-section',
     placement: 'below',
     onEnter: 'open-sol-menu',
@@ -305,7 +314,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'situation-report',
     title: 'Your inbox for the war',
-    body: 'The Situation Report ranks everything: what’s in combat NOW, what needs a decision, what’s sitting idle. Every row is a link straight to the problem. Check it first when you log in — and read the HERALD tab on the Event Log for the war’s front page.',
+    body: 'The Situation Report lists what needs you now.',
     target: null,
     placement: 'center',
     visual: 'herald',
@@ -313,7 +322,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'done',
     title: 'You’ve already started',
-    body: 'A building rising, a hull in the yard, a ship under way, a lab running — those were your real opening moves. Win the senate, own the map, or cage the sun. The game is running either way.',
+    body: 'Your first moves are under way; the game keeps running.',
     target: null,
     placement: 'center',
     visual: 'victory',
@@ -347,7 +356,7 @@ export const TRIAL_TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'trial-welcome',
     title: 'Welcome, Commander',
-    body: 'This is your corner of the Solar System: one world and a few ships. Two other empires share it with you. Time runs on its own here: the game moves one tick every 30 seconds, whether you act or not.',
+    body: 'Your world, a few ships, and two neighbours; a tick every 30 seconds.',
     target: null,
     placement: 'center',
     visual: 'map-controls',
@@ -362,15 +371,15 @@ export const TRIAL_TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'trial-neighbours',
     title: 'Meet your neighbours',
-    body: 'Two computer empires. The ALLY wants peace and will stand with you. The WARLORD wants your worlds: it is building warships and will declare war in about ten minutes.',
+    body: 'The ALLY wants peace; the WARLORD attacks in about ten minutes.',
     target: 'mp-dock',
     placement: 'left',
-    onEnter: 'open-panel-empires',
+    onEnter: ['close-panels', 'open-panel-empires'],
   },
   {
     id: 'trial-pact',
     title: 'Take the Ally’s hand',
-    body: 'The Ally has offered you a non-aggression pact: neither of you can attack the other, and it will join your wars. Accept it.',
+    body: 'Accept the Ally’s non-aggression pact.',
     target: 'trade-dock',
     placement: 'left',
     onEnter: 'open-panel-trades',
@@ -379,24 +388,24 @@ export const TRIAL_TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'trial-defend',
     title: 'Get ready for the Warlord',
-    body: 'Ships parked at a world fight for it on their own when an enemy arrives. Keep a few warships at home and build more: by the time the Warlord comes, you want a fleet waiting.',
+    body: 'Ships parked at home defend it: build more before the Warlord comes.',
     target: 'wm-build',
     placement: 'left',
-    onEnter: ['close-dock', 'open-capital-menu'],
+    onEnter: ['close-dock', 'close-panels', 'open-capital-menu'],
     task: { check: 'ship-queued', label: 'Queue another warship' },
   },
   {
     id: 'trial-save',
     title: 'Keep your empire',
-    body: 'You are playing without an account, so this empire lives only in this browser. Save it from the menu here, top left, to keep it, play it on any device, and take on other commanders.',
+    body: 'Save your empire here to keep it.',
     target: 'menu-button',
     placement: 'below',
-    onEnter: 'close-dock',
+    onEnter: ['close-dock', 'close-panels', 'close-world-menu'],
   },
   {
     id: 'trial-done',
     title: 'Your empire is running',
-    body: 'Your moves are under way and the clock is ticking. The full tour (ship design, upkeep, the Senate, megastructures) is in the menu whenever you want it.',
+    body: 'You’re set; the full tour is in the menu.',
     target: null,
     placement: 'center',
     visual: 'victory',

@@ -126,6 +126,14 @@ interface TaskBaseline {
   buildingQueues: number;
   /** Peace partners at step entry (the trial's pact task). */
   peace: number;
+  /** Research levels held at step entry: UNLOCK NOW finishes a level at
+   *  once and never leaves a project running (playtest, 2026-10-24). */
+  techLevels: number;
+}
+
+function techLevelSum(gs: GameState): number {
+  const levels = gs.factionTech?.player?.levels ?? {};
+  return Object.values(levels).reduce((a: number, n) => a + (Number(n) || 0), 0);
 }
 
 function playerBuildOrderCount(gs: GameState): number {
@@ -215,6 +223,9 @@ export const TutorialOverlay: React.FC = () => {
       case 'open-panel-empires':
         window.dispatchEvent(new CustomEvent('dockrail:set', { detail: { active: 'multiplayer' } }));
         break;
+      case 'close-world-menu':
+        window.dispatchEvent(new CustomEvent('orbital:close-world-menu'));
+        break;
       case 'close-dock':
         window.dispatchEvent(new CustomEvent('dockrail:set', { detail: { active: null } }));
         break;
@@ -240,6 +251,27 @@ export const TutorialOverlay: React.FC = () => {
         runEffect(fx);
       }
     }
+    // A target inside a scrolled panel (the ship panel's MOVE TO TARGET sat
+    // below the fold) gets scrolled into view once its panel has opened.
+    const targetId = step?.target;
+    const scrollTimer = targetId
+      ? setTimeout(() => {
+          const el = document.querySelector(`[data-tutorial-id="${targetId}"]`) as HTMLElement | null;
+          // Vertically only, in the nearest scrolling panel: scrollIntoView
+          // also scrolled the ship panel sideways and cut its buttons off.
+          for (let p = el?.parentElement ?? null; el && p; p = p.parentElement) {
+            const oy = getComputedStyle(p).overflowY;
+            if ((oy === 'auto' || oy === 'scroll') && p.scrollHeight > p.clientHeight) {
+              const er = el.getBoundingClientRect();
+              const pr = p.getBoundingClientRect();
+              if (er.top < pr.top) p.scrollTop -= pr.top - er.top + 12;
+              else if (er.bottom > pr.bottom) p.scrollTop += er.bottom - pr.bottom + 12;
+              break;
+            }
+          }
+        }, 450)
+      : null;
+    return () => { if (scrollTimer) clearTimeout(scrollTimer); };
     // gameState intentionally NOT in deps — effects fire on step change
     // only, not whenever the world ticks.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -260,6 +292,7 @@ export const TutorialOverlay: React.FC = () => {
       orders: playerOrderCount(gameState),
       buildingQueues: playerBuildingQueueCount(gameState),
       peace: gameState.peaceFactionIds?.length ?? 0,
+      techLevels: techLevelSum(gameState),
     };
     const iv = setInterval(() => forceTick(n => n + 1), 400);
     return () => clearInterval(iv);
@@ -287,7 +320,8 @@ export const TutorialOverlay: React.FC = () => {
       case 'transfer-committed':
         return playerOrderCount(gameState) > (base?.orders ?? 0);
       case 'research-started':
-        return gameState.factionTech?.player?.researching != null;
+        return gameState.factionTech?.player?.researching != null
+          || techLevelSum(gameState) > (base?.techLevels ?? Infinity);
       case 'pact-signed':
         return (gameState.peaceFactionIds?.length ?? 0) > (base?.peace ?? 0);
     }
@@ -444,7 +478,7 @@ export const TutorialOverlay: React.FC = () => {
         <rect
           x={0} y={0}
           width={viewport.width} height={viewport.height}
-          fill="rgba(5, 8, 14, 0.66)"
+          fill={step?.dim === 'light' ? 'rgba(5, 8, 14, 0.22)' : 'rgba(5, 8, 14, 0.66)'}
           mask="url(#tutorial-cutout)"
         />
         {/* Outline ring around the primary target — bright amber so it
