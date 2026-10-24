@@ -750,6 +750,8 @@ async function handleListRooms(_req, env) {
               (SELECT COUNT(*) FROM room_members m WHERE m.room_id = r.id) AS member_count
        FROM rooms r JOIN users u ON u.id = r.host_id
        WHERE r.status != 'closed'
+         -- Solo games (worker/solo.js) are nobody else's to see or join.
+         AND NOT EXISTS (SELECT 1 FROM games g WHERE g.id = r.id AND g.solo = 1)
        ORDER BY r.updated_at DESC
        LIMIT 50`,
     )
@@ -1454,9 +1456,11 @@ import * as ending from './ending.js';
 import * as profileAwards from './profileAwards.js';
 import * as discoveryOffers from './discoveryOffers.js';
 import * as missiles from './missiles.js';
+import * as solo from './solo.js';
+import * as aiEmpire from './aiEmpire.js';
 import { carryNamePools } from './namePoolHistory.js';
 
-const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, studio, analytics, configAdmin, emailAdmin, emailLogin, store, skins, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed, customMaps, ending, discoveryOffers, invites, visits, profileAwards, missiles];
+const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, studio, analytics, configAdmin, emailAdmin, emailLogin, store, skins, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed, customMaps, ending, discoveryOffers, invites, visits, profileAwards, missiles, solo];
 
 function matchPattern(pattern, pathname) {
   if (typeof pattern === 'string') {
@@ -1948,6 +1952,7 @@ export default {
             `SELECT id FROM games
               WHERE status = 'active'
                 AND (turn_based_enabled IS NULL OR turn_based_enabled = 0)
+                AND COALESCE(paused, 0) = 0
                 AND (next_tick_at IS NULL OR next_tick_at <= ?)`,
           )
           .bind(now)
@@ -1979,6 +1984,12 @@ export default {
       } catch (e) {
         console.error('scheduled tick advancer failed', e);
       }
+
+      // Computer empires in solo games (aiEmpire.js) take this tick's
+      // turn, after the pokes so they see the tick that just ran. Its own
+      // catch: a bad turn never stops the cron's other work.
+      try { await aiEmpire.runSoloTurns(env); }
+      catch (e) { console.error('solo turns failed', e); }
 
       // Daily Discord digest — self-gating (fires only at
       // DIGEST_HOUR_UTC, max once per game per ~day). Runs after the

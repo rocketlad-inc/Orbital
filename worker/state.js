@@ -467,7 +467,8 @@ async function handleGetState(req, env, ctx) {
               dyson_started_at_tick,
               dyson_acc_fuel, dyson_acc_ore, dyson_acc_credits, dyson_acc_science,
               dyson_target_fuel, dyson_target_ore, dyson_target_credits, dyson_target_science,
-              dyson_hp, dyson_max_hp, sun_gate_tick
+              dyson_hp, dyson_max_hp, sun_gate_tick,
+              solo, paused, solo_difficulty
          FROM games WHERE id = ?`,
     )
     .bind(gameId)
@@ -487,7 +488,8 @@ async function handleGetState(req, env, ctx) {
   //       state.js self-heal was bypassing this since the previous
   //       guard required next_tick_at != null.
   // Fire-and-forget — we don't await it so /state stays snappy.
-  const isActive = game.status === 'active';
+  // A paused solo game is stopped on purpose, not orphaned.
+  const isActive = game.status === 'active' && Number(game.paused) !== 1;
   const isOverdue = game.next_tick_at != null && Date.now() > game.next_tick_at + 1000;
   const isOrphaned = game.next_tick_at == null;
   if (isActive && (isOverdue || isOrphaned)) {
@@ -568,6 +570,8 @@ const factionsP = env.DB
     .prepare(
       `SELECT gf.id, gf.slot, gf.name, gf.color, gf.color2, gf.emblem, gf.status, gf.capital_body_id,
               gf.senate_weight, gf.reputation,
+              -- A computer empire in a solo game (worker/aiEmpire.js).
+              CASE WHEN gf.ai_doctrine IS NOT NULL THEN 1 ELSE 0 END AS ai,
               -- Colony and station skins (0154): the lobby override, else
               -- the account default, only while the Commission is held.
               ${DRAWN_SKIN_SQL('city_skin')} AS city_skin,
@@ -2392,6 +2396,11 @@ const tradeRoutesP = env.DB
       map_seed: game.map_seed,
       winner_faction_id: game.winner_faction_id,
       victory_type: game.victory_type,
+      // Solo games (worker/solo.js): one player against computer empires,
+      // which the player may pause.
+      solo: Number(game.solo) === 1,
+      paused: Number(game.paused) === 1,
+      solo_difficulty: game.solo_difficulty ?? null,
       // Research gating. 0 for games that predate migration 0040 — they
       // grandfather every feature unlocked, so the client must not grey
       // anything out for them. The client mirrors the same flag through

@@ -515,12 +515,15 @@ export class Room {
       }
 
       const game = await this.env.DB
-        .prepare('SELECT next_tick_at, status, tick_interval_ms, turn_based_enabled FROM games WHERE id = ?')
+        .prepare('SELECT next_tick_at, status, tick_interval_ms, turn_based_enabled, paused FROM games WHERE id = ?')
         .bind(started.gameId).first();
       if (!game) return new Response(null, { status: 204 });
       if (game.status === 'completed' || game.status === 'abandoned') {
         return new Response(null, { status: 204 });
       }
+      // A paused solo game's NULL next_tick_at is deliberate, not an
+      // orphan: only the player's STEP (force) may advance it.
+      if (Number(game.paused) === 1 && !force) return new Response(null, { status: 204 });
 
       const now = Date.now();
       // Orphan recovery: active wall-clock game with NULL next_tick_at
@@ -951,13 +954,18 @@ export class Room {
     const gameId = started.gameId;
 
     const game = await this.env.DB
-      .prepare('SELECT status, current_tick, tick_interval_ms, turn_based_enabled, next_tick_at, tick_schedule FROM games WHERE id = ?')
+      .prepare('SELECT status, current_tick, tick_interval_ms, turn_based_enabled, next_tick_at, tick_schedule, paused FROM games WHERE id = ?')
       .bind(gameId)
       .first();
     if (!game) return;
     // Tick speed by time of day (tickSchedule.js), when the host set one.
     const schedule = readSchedule(game.tick_schedule);
     if (game.status === 'completed' || game.status === 'abandoned') return;
+
+    // A PAUSED solo game (worker/solo.js): time stands still. No tick and
+    // no re-arm; resuming arms the alarm again. A forced tick (the solo
+    // player's STEP) still advances exactly one, then stays paused.
+    if (Number(game.paused) === 1 && !force) return;
 
     // Turn-Based Mode short-circuit: the alarm doesn't auto-advance time
     // in TBM games. The tick batch is driven from POST /turn/commit
@@ -1050,6 +1058,10 @@ export class Room {
       speedNow = intervalAt(schedule, now);
     }
 
+    // Stepped while paused: the clock stays stopped (no next tick, no alarm).
+    const stillPaused = Number(game.paused) === 1;
+    if (stillPaused) nextAt = null;
+
     await this.env.DB.batch([
       this.env.DB
         .prepare('UPDATE games SET current_tick = ?, next_tick_at = ?, tick_interval_ms = ? WHERE id = ?')
@@ -1059,8 +1071,10 @@ export class Room {
         .bind(gameId, endTick, now, now, now),
     ]);
 
-    try { await this.state.storage.setAlarm(nextAt); } catch (e) {
-      console.error('setAlarm (reschedule) failed', e);
+    if (!stillPaused) {
+      try { await this.state.storage.setAlarm(nextAt); } catch (e) {
+        console.error('setAlarm (reschedule) failed', e);
+      }
     }
 
     this.broadcast({ type: 'tick', tick: endTick, next_tick_at: nextAt });
