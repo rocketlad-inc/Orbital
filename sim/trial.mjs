@@ -6,7 +6,7 @@
 //      a trial game (30 s, an Ally and a Warlord on the roster), and
 //      auto-load set so they land in it
 //   2. asking again with that session gives the same game back
-//   3. six trials an hour per address, then 429
+//   3. thirty trials an hour per address, then 429
 //   4. the trial's Warlord declares on the player from tick 20
 //   5. saving: a new account made from the shadow session gets the game
 //      (members, faction, host), the shadow is retired, its sessions end
@@ -92,10 +92,10 @@ check('asking again gives the same game back', r2.status === 200 && b2.game_id =
 
 // ---- 3. rate limit --------------------------------------------------------
 let last = null;
-for (let i = 0; i < 6; i++) last = await trial.handleStart(req(null, '9.9.9.9'), env, null);
-const sixth = last.status;
-const seventh = await trial.handleStart(req(null, '9.9.9.9'), env, null);
-check('six trials an hour from one address, then 429', sixth === 201 && seventh.status === 429, `${sixth} then ${seventh.status}`);
+for (let i = 0; i < 30; i++) last = await trial.handleStart(req(null, '9.9.9.9'), env, null);
+const thirtieth = last.status;
+const next = await trial.handleStart(req(null, '9.9.9.9'), env, null);
+check('thirty trials an hour from one address, then 429', thirtieth === 201 && next.status === 429, `${thirtieth} then ${next.status}`);
 
 // ---- 4. the Warlord comes at tick 20 -------------------------------------
 const room = new Room(makeState(), env);
