@@ -210,7 +210,7 @@ async function arrivalFor(g, factionId, from, to) {
  * One computer empire's decisions for one turn. Returns a tally of what
  * it tried, for logs and the sim.
  */
-export async function takeTurn(env, g, fac, difficulty) {
+export async function takeTurn(env, g, fac, difficulty, { trial = false } = {}) {
   const DB = env.DB;
   const { gameId, tick } = g;
   const doctrine = DOCTRINES[fac.ai_doctrine] ?? DOCTRINES.expander;
@@ -238,7 +238,7 @@ export async function takeTurn(env, g, fac, difficulty) {
   let force = false;
   if (view) {
     const r = await conduct(env, {
-      view, rm: g.rm, call, note, personality, difficulty, last, wars: g.wars, gameId, mem,
+      view, rm: g.rm, call, note, personality, difficulty, last, wars: g.wars, gameId, mem, trial,
     });
     foes = r.foes;
     force = r.force;
@@ -468,7 +468,8 @@ async function expand(env, g, me, call, note, tick, view) {
  *  ai_turn_log: what it tried, what was refused, and any error. */
 export async function runSoloGame(env, gameId, sink = null, { lagOnly = false } = {}) {
   const row = await env.DB.prepare(
-    `SELECT id, current_tick, solo_difficulty, status, tick_interval_ms, COALESCE(ai_log, 0) AS ai_log FROM games WHERE id = ? AND solo = 1`,
+    `SELECT id, current_tick, solo_difficulty, status, tick_interval_ms, COALESCE(ai_log, 0) AS ai_log,
+            COALESCE(trial, 0) AS trial FROM games WHERE id = ? AND solo = 1`,
   ).bind(gameId).first();
   if (!row || row.status !== 'active') return 0;
   const tick = Number(row.current_tick ?? 0);
@@ -494,7 +495,7 @@ export async function runSoloGame(env, gameId, sink = null, { lagOnly = false } 
     let tally = null;
     let error = null;
     try {
-      tally = await takeTurn(env, g, fac, row.solo_difficulty ?? 'normal');
+      tally = await takeTurn(env, g, fac, row.solo_difficulty ?? 'normal', { trial: Number(row.trial) === 1 });
       if (sink) for (const [k, v] of Object.entries(tally)) sink[`${fac.ai_doctrine}:${k}`] = (sink[`${fac.ai_doctrine}:${k}`] ?? 0) + v;
     } catch (e) {
       error = String(e?.stack ?? e).slice(0, 1500);

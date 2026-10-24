@@ -201,7 +201,7 @@ export function TradeDock() {
   if (!gameId || !railMounted) return null;
 
   return (
-    <div className={`dock-panel mp-dock trade-dock${railOpen ? ' is-open' : ''}`}>
+    <div className={`dock-panel mp-dock trade-dock${railOpen ? ' is-open' : ''}`} data-tutorial-id="trade-dock">
       <div className="mp-dock-head">
         <span className="mp-dock-head__title">
           <TradeGlyph />

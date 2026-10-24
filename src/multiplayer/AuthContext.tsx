@@ -20,6 +20,10 @@ interface AuthContextValue {
    *  lobby header and every row showing the display name update without
    *  a reload — otherwise two different names sit on screen at once. */
   refresh: () => Promise<void>;
+  /** Play for Free (worker/trial.js): a shadow account and a trial game,
+   *  no form. Returns null on success (the app then opens the game), or
+   *  the error to show. */
+  startTrial: () => Promise<string | null>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -91,13 +95,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (res.ok) setUser(res.data.user);
   }, []);
 
+  const startTrial = useCallback(async () => {
+    const res = await apiFetch<{ ok: true; game_id: string }>('/api/trial', {
+      method: 'POST',
+      body: JSON.stringify({ attribution: attributionForSignup() }),
+    });
+    if (!res.ok) return apiErrorText(res.error, 'trial.err.failed');
+    // Straight into the trial: the launch routing opens this tab's room.
+    try { sessionStorage.setItem('orbital.tab_room', res.data.game_id); } catch { /* private mode */ }
+    const me = await apiFetch<{ user: User }>('/api/auth/me');
+    if (me.ok) setUser(me.data.user);
+    return me.ok ? null : apiErrorText(me.error, 'trial.err.failed');
+  }, []);
+
   const signOut = useCallback(async () => {
     await apiFetch('/api/auth/logout', { method: 'POST' });
     setUser(null);
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, googleClientId, signIn, signUp, signInWithGoogle, signOut, refresh }}>
+    <AuthContext.Provider value={{ user, loading, googleClientId, signIn, signUp, signInWithGoogle, signOut, refresh, startTrial }}>
       {children}
     </AuthContext.Provider>
   );

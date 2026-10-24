@@ -255,6 +255,8 @@ async function handleSignup(req, env) {
   }
 
   const { token, expiresAt } = await createSession(env.DB, id, req.headers.get('user-agent'));
+  // Signed up from a Play for Free trial: the trial game moves in.
+  await trial.claimShadow(env, req, id);
   // Never throws; a mail outage must not fail a signup.
   await mail.sendWelcome(env, { id, email, display_name: displayName, locale });
   return json(
@@ -415,6 +417,8 @@ async function handleLogin(req, env) {
 
   await env.DB.prepare('UPDATE users SET last_login_at = ? WHERE id = ?').bind(Date.now(), row.id).run();
   const { token, expiresAt } = await createSession(env.DB, row.id, req.headers.get('user-agent'));
+  // Signed in from a Play for Free trial: the trial game moves in.
+  await trial.claimShadow(env, req, row.id);
   return json(
     { user: { id: row.id, email: row.email, display_name: row.display_name, ...(await noteVisit(env, row.id)) } },
     { headers: { 'set-cookie': sessionCookie(token, expiresAt) } },
@@ -582,6 +586,8 @@ async function handleGoogleAuth(req, env) {
   }
 
   const { token, expiresAt } = await createSession(env.DB, userId, req.headers.get('user-agent'));
+  // Signed in with Google from a Play for Free trial: the trial moves in.
+  await trial.claimShadow(env, req, userId);
   return json(
     { user: { id: userId, email: userEmail, display_name: userDisplayName, ...(await noteVisit(env, userId)) } },
     { headers: { 'set-cookie': sessionCookie(token, expiresAt) } },
@@ -696,8 +702,12 @@ async function handleDiscordInviteAnswer(req, env, session) {
 async function handleMe(req, env) {
   const session = await currentSession(req, env);
   if (!session) return err(401, 'unauthenticated', 'not signed in');
+  const shadow = Number(session.shadow) === 1;
   return json({ user: {
-    id: session.user_id, email: session.email, display_name: session.display_name,
+    id: session.user_id, email: shadow ? null : session.email, display_name: session.display_name,
+    // An unsaved Play for Free account (trial.js): the client offers the
+    // save sheet and keeps it out of the lobby.
+    shadow,
     // Admin flag drives ONLY whether the client renders the Analytics
     // tab. Every /api/admin route re-checks the email server-side, so a
     // spoofed flag shows an empty tab, not data.
@@ -715,9 +725,21 @@ async function handleMe(req, env) {
     // Account-default colony and station skins (0154); null = the free look.
     ...(await env.DB.prepare('SELECT city_skin, station_skin FROM users WHERE id = ?')
       .bind(session.user_id).first().catch(() => null) ?? {}),
-    ...(await noteVisit(env, session.user_id)),
+    // Visits (and the visit-2 Discord invite) start when it is saved.
+    ...(shadow ? {} : await noteVisit(env, session.user_id)),
   } });
 }
+
+/** What an unsaved trial account may not do (POSTs). */
+const SHADOW_BLOCKED = [
+  /^\/api\/rooms$/,                       // host a game
+  /^\/api\/rooms\/quick-join$/,
+  /^\/api\/rooms\/join-by-code$/,
+  /^\/api\/rooms\/[^/]+\/join$/,
+  /^\/api\/solo$/,                        // another solo game
+  /^\/api\/maps\/[^/]+\/host$/,
+  /^\/api\/checkout\//,                  // buying onto an account that may be lost
+];
 
 async function currentSession(req, env) {
   // A session token normally rides in the orbital_session cookie. A
@@ -1458,6 +1480,7 @@ import * as discoveryOffers from './discoveryOffers.js';
 import * as missiles from './missiles.js';
 import * as solo from './solo.js';
 import * as aiEmpire from './aiEmpire.js';
+import * as trial from './trial.js';
 import { carryNamePools } from './namePoolHistory.js';
 
 const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, studio, analytics, configAdmin, emailAdmin, emailLogin, store, skins, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed, customMaps, ending, discoveryOffers, invites, visits, profileAwards, missiles, solo];
@@ -1990,6 +2013,9 @@ export default {
       // catch: a bad turn never stops the cron's other work.
       try { await aiEmpire.runSoloTurns(env); }
       catch (e) { console.error('solo turns failed', e); }
+      // Trials nobody is playing pause (trial.js); they wake on return.
+      try { await trial.sweepIdleTrials(env); }
+      catch (e) { console.error('trial idle sweep failed', e); }
 
       // Daily Discord digest — self-gating (fires only at
       // DIGEST_HOUR_UTC, max once per game per ~day). Runs after the
@@ -2221,9 +2247,21 @@ export default {
         return dispatchFeatureRoute(req, env, url, await currentSession(req, env).catch(() => null));
       }
 
+      // Play for Free (worker/trial.js): no account yet, by definition.
+      if (req.method === 'POST' && url.pathname === '/api/trial') {
+        return trial.handleStart(req, env, await currentSession(req, env).catch(() => null));
+      }
+
       // everything below requires a session
       const session = await currentSession(req, env);
       if (!session) return err(401, 'unauthenticated', 'sign in required');
+
+      // An unsaved trial account plays its trial and nothing else
+      // (trial.js): the client answers account_required with the save sheet.
+      if (Number(session.shadow) === 1 && req.method !== 'GET'
+          && SHADOW_BLOCKED.some(re => re.test(url.pathname))) {
+        return err(403, 'account_required', 'save your empire to do this');
+      }
 
       // --- analytics telemetry (fire-and-forget semantics) -----------
       // Feature usage: one row per mutating game action. Logged at this
@@ -2290,6 +2328,8 @@ export default {
                 userId: session.user_id,
                 kind: 'heartbeat',
               });
+              // A trial player is here: keep their game awake (trial.js).
+              if (Number(session.shadow) === 1 && gm) await trial.touchTrial(env, decodeURIComponent(gm[1]), now);
             })();
             if (execCtx?.waitUntil) execCtx.waitUntil(touch); else await touch;
           } catch (e) { console.error('last_seen touch failed', e); }

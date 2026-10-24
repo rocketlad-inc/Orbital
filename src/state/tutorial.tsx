@@ -28,6 +28,20 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 
 const TUTORIAL_STORAGE_KEY = 'orbital.tutorial.v1';
+/** The Play for Free trial's own short track (tutorialSteps.ts
+ *  TRIAL_TUTORIAL_STEPS): done or skipped, per browser. Kept apart from
+ *  the full tour's flag so finishing one never hides the other. */
+const TRIAL_TUTORIAL_KEY = 'orbital.tutorial.trial.v1';
+
+/** Which list of steps the tour is walking. */
+export type TutorialTrack = 'full' | 'trial';
+
+function loadTrialDone(): boolean {
+  try { return !!localStorage.getItem(TRIAL_TUTORIAL_KEY); } catch { return false; }
+}
+function persistTrialDone() {
+  try { localStorage.setItem(TRIAL_TUTORIAL_KEY, '1'); } catch { /* private mode */ }
+}
 
 interface PersistedTutorial {
   completed: boolean;
@@ -60,6 +74,12 @@ function persist(state: PersistedTutorial) {
 interface TutorialContextValue {
   /** True while the coachmark overlay is rendering. */
   active: boolean;
+  /** The list being walked: the full tour, or the trial's short one. */
+  track: TutorialTrack;
+  /** The trial track has been finished or skipped in this browser. */
+  trialDone: boolean;
+  /** Begin the trial track from its first step. */
+  startTrial: () => void;
   /** Index into the tutorialSteps[] array. -1 when not active. */
   index: number;
   /** True if the player has already finished or skipped the tour. */
@@ -91,15 +111,20 @@ interface ProviderProps {
    *  length in from whoever mounts the provider. Default 0 keeps
    *  the provider mountable in unit tests without a step list. */
   stepCount?: number;
+  /** The trial track's length, the same way. */
+  trialStepCount?: number;
   children: React.ReactNode;
 }
 
-export function TutorialProvider({ stepCount = 0, children }: ProviderProps) {
+export function TutorialProvider({ stepCount: fullCount = 0, trialStepCount = 0, children }: ProviderProps) {
   const initial = loadPersisted();
   const [completed, setCompleted] = useState(initial.completed);
   const [skipped, setSkipped] = useState(initial.skipped);
   const [active, setActive] = useState(false);
   const [index, setIndex] = useState(-1);
+  const [track, setTrack] = useState<TutorialTrack>('full');
+  const [trialDone, setTrialDone] = useState(loadTrialDone);
+  const stepCount = track === 'trial' ? trialStepCount : fullCount;
 
   // Cross-tab sync: if the player resets the tour in another tab
   // (e.g. via Tunables or a future settings page), pick that up.
@@ -115,25 +140,36 @@ export function TutorialProvider({ stepCount = 0, children }: ProviderProps) {
   }, []);
 
   const start = useCallback(() => {
+    setTrack('full');
     setActive(true);
     setIndex(0);
   }, []);
 
+  const startTrial = useCallback(() => {
+    setTrack('trial');
+    setActive(true);
+    setIndex(0);
+  }, []);
+
+  // Finishing or skipping the TRIAL track marks only the trial done; the
+  // full tour stays on offer in the menu.
   const finish = useCallback(() => {
     setActive(false);
     setIndex(-1);
+    if (track === 'trial') { setTrialDone(true); persistTrialDone(); return; }
     setCompleted(true);
     setSkipped(false);
     persist({ completed: true, skipped: false });
-  }, []);
+  }, [track]);
 
   const skip = useCallback(() => {
     setActive(false);
     setIndex(-1);
+    if (track === 'trial') { setTrialDone(true); persistTrialDone(); return; }
     setCompleted(true);
     setSkipped(true);
     persist({ completed: true, skipped: true });
-  }, []);
+  }, [track]);
 
   const advance = useCallback(() => {
     setIndex(prev => {
@@ -174,8 +210,8 @@ export function TutorialProvider({ stepCount = 0, children }: ProviderProps) {
   }, []);
 
   const value: TutorialContextValue = {
-    active, index, completed, skipped,
-    start, advance, back, skip, finish, reset, jumpTo,
+    active, index, completed, skipped, track, trialDone,
+    start, startTrial, advance, back, skip, finish, reset, jumpTo,
   };
 
   return (
@@ -192,8 +228,9 @@ export function useTutorial(): TutorialContextValue {
   const ctx = useContext(TutorialContext);
   if (ctx) return ctx;
   return {
-    active: false, index: -1, completed: true, skipped: false,
+    active: false, index: -1, completed: true, skipped: false, track: 'full', trialDone: true,
     start: () => undefined,
+    startTrial: () => undefined,
     advance: () => undefined,
     back: () => undefined,
     skip: () => undefined,

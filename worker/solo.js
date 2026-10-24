@@ -74,8 +74,18 @@ async function aiUsers(env, n) {
 
 // POST /api/solo
 async function handleCreate(req, env, ctx) {
-  const userId = ctx.session.user_id;
-  const body = (await readJson(req)) ?? {};
+  const made = await createSoloGame(env, ctx.session.user_id, (await readJson(req)) ?? {});
+  if (made.error) return made.error;
+  return json({ ok: true, game_id: made.id, rivals: made.rivals, difficulty: made.difficulty, speed_ms: made.speed });
+}
+
+/**
+ * Seat `userId` and 1-5 computer empires in a new solo game and start it.
+ * `body` is POST /api/solo's ({ rivals, difficulty, speed_ms,
+ * personalities }); `trial` (worker/trial.js) flags a Play for Free game.
+ * Returns { id, rivals, difficulty, speed } or { error: Response }.
+ */
+export async function createSoloGame(env, userId, body, { trial = false } = {}) {
   const rivals = Math.max(1, Math.min(SOLO_MAX_RIVALS, Math.floor(Number(body.rivals ?? SOLO_DEFAULT_RIVALS)) || SOLO_DEFAULT_RIVALS));
   const difficulty = SOLO_DIFFICULTIES.includes(body.difficulty) ? body.difficulty : 'normal';
   const speed = SOLO_SPEEDS.includes(Number(body.speed_ms)) ? Number(body.speed_ms) : SOLO_DEFAULT_SPEED;
@@ -90,7 +100,7 @@ async function handleCreate(req, env, ctx) {
   });
 
   const me = await env.DB.prepare('SELECT id, display_name FROM users WHERE id = ?').bind(userId).first();
-  if (!me) return err(401, 'unauthenticated', 'sign in required');
+  if (!me) return { error: err(401, 'unauthenticated', 'sign in required') };
   const bots = await aiUsers(env, rivals);
 
   const id = newRoomId();
@@ -117,14 +127,17 @@ async function handleCreate(req, env, ctx) {
     }),
   });
   const started = await startGame(env, id, { solo: { difficulty, tickIntervalMs: speed } });
-  if (started.error) return started.error;
+  if (started.error) return { error: started.error };
 
   // Seat the personalities, seat by seat after the player's.
   await env.DB.batch(bots.map((u, i) => env.DB
     .prepare(`UPDATE game_factions SET ai_doctrine = ?, ai_personality = ?, ai_personality_shown = ?
                WHERE game_id = ? AND user_id = ?`)
     .bind(seatsAi[i].doctrine, seatsAi[i].personality, seatsAi[i].shown, id, u.id)));
-  return json({ ok: true, game_id: id, rivals, difficulty, speed_ms: speed });
+  if (trial) {
+    await env.DB.prepare('UPDATE games SET trial = 1, host_seen_ms = ? WHERE id = ?').bind(Date.now(), id).run();
+  }
+  return { id, rivals, difficulty, speed };
 }
 
 /** The caller's solo game, or an error. Only its one person may drive the

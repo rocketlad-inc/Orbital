@@ -468,7 +468,7 @@ async function handleGetState(req, env, ctx) {
               dyson_acc_fuel, dyson_acc_ore, dyson_acc_credits, dyson_acc_science,
               dyson_target_fuel, dyson_target_ore, dyson_target_credits, dyson_target_science,
               dyson_hp, dyson_max_hp, sun_gate_tick,
-              solo, paused, solo_difficulty
+              solo, paused, solo_difficulty, trial
          FROM games WHERE id = ?`,
     )
     .bind(gameId)
@@ -2401,6 +2401,9 @@ const tradeRoutesP = env.DB
       solo: Number(game.solo) === 1,
       paused: Number(game.paused) === 1,
       solo_difficulty: game.solo_difficulty ?? null,
+      // A Play for Free trial (trial.js): the trial tutorial and the save
+      // prompts.
+      trial: Number(game.trial) === 1,
       // Research gating. 0 for games that predate migration 0040 — they
       // grandfather every feature unlocked, so the client must not grey
       // anything out for them. The client mirrors the same flag through

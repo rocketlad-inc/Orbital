@@ -32,7 +32,8 @@ const REPLY_TO = 'support@orbital-empire.com';
 const LOGO_URL = `${SITE}/press/logo/orbital-wordmark-gold.png`;
 
 /** Agent accounts live on a domain that can never receive mail. */
-const UNDELIVERABLE = /@agents\.orbital\.local$/i;
+// Agent players, and unsaved Play for Free accounts (trial.js).
+const UNDELIVERABLE = /@(agents|shadow)\.orbital\.local$/i;
 
 /** The switches a player can flip, and what the page calls them. */
 export const EMAIL_CATEGORIES = {

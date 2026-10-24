@@ -83,6 +83,8 @@ interface ServerState {
     solo?: boolean;
     paused?: boolean;
     solo_difficulty?: string | null;
+    /** A Play for Free trial (worker/trial.js). */
+    trial?: boolean;
     winner_faction_id?: string | null;
     victory_type?: string | null;
     /** Research gating: 1 for games seeded after migration 0040, 0 for
@@ -2375,7 +2377,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     nextTickAt: srv.game.next_tick_at,
     tickIntervalMs: srv.game.tick_interval_ms,
     tickSchedule: srv.game.tick_schedule ?? null,
-    solo: srv.game.solo ? { paused: !!srv.game.paused, difficulty: srv.game.solo_difficulty ?? null } : null,
+    solo: srv.game.solo ? { paused: !!srv.game.paused, difficulty: srv.game.solo_difficulty ?? null, trial: !!srv.game.trial } : null,
     bodies,
     ships,
     fleets: mapServerFleets(srv, ships, callerFactionId),

@@ -61,6 +61,8 @@ export const TIMING = {
   normal: { warlordFrom: 36, snakeFrom: 60, snakePatience: 60, cooldown: 48, wars: 1 },
   ruthless: { warlordFrom: 18, snakeFrom: 40, snakePatience: 72, cooldown: 24, wars: 2 },
 };
+/** A trial's Warlord declares from this tick. */
+export const TRIAL_WARLORD_FROM = 20;
 /** Ticks between two of its offers to the same empire. */
 const OFFER_EVERY = 24;
 /** A grudge lasts this long after the wrong. */
@@ -145,7 +147,10 @@ export async function conduct(env, ctx) {
   const tick = view.tick;
   const me = view.me;
   const H = view.human;
-  const T = TIMING[difficulty] ?? TIMING.normal;
+  // A Play for Free trial (trial.js): the Warlord comes at tick 20,
+  // about ten minutes in at 30 s ticks (Lorne's pick).
+  const T = ctx.trial ? { ...(TIMING[difficulty] ?? TIMING.normal), warlordFrom: TRIAL_WARLORD_FROM }
+                      : (TIMING[difficulty] ?? TIMING.normal);
   const sharp = SHARPNESS[difficulty] ?? SHARPNESS.normal;
   const enemyOf = (w) => (w.faction_a === me ? w.faction_b : w.faction_a);
   // A war with an empire that is gone never formally ends: ignore it (the
