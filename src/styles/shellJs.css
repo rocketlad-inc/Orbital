@@ -113,7 +113,7 @@
   border-top: none;
   border-bottom: none;
   z-index: 5520;
-  padding-top: env(safe-area-inset-top, 0);
+  padding-top: calc(env(safe-area-inset-top, 0px) + var(--stg-h, 0px));
   padding-bottom: env(safe-area-inset-bottom, 0);
   animation: outliner-slide-in 0.22s cubic-bezier(0.2, 0.7, 0.2, 1);
 }
@@ -153,6 +153,11 @@
   font-size: 13px;
 }
 
+:root[data-mobile-shell] .outliner.outliner--mobile .outliner__ship-name {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 :root[data-mobile-shell] .outliner__scrim {
   display: block;
   position: fixed;
@@ -174,6 +179,18 @@
   border-left: 0;
   border-right: 0;
   border-radius: 0;
+}
+
+/* ---- mirrored from mapmaker/mapmaker.css ---- */
+/* @media (max-width: 1023px), (hover: none) and (pointer: coarse) and (max-width: 1399px) */
+:root[data-mobile-shell] .mm-input,
+:root[data-mobile-shell] .mm-input.is-small,
+:root[data-mobile-shell] .mm-input.is-code,
+:root[data-mobile-shell] .mm-step__v,
+:root[data-mobile-shell] .mm-num,
+:root[data-mobile-shell] .mm-top__mname,
+:root[data-mobile-shell] .mm-top__name input {
+  font-size: 16px;
 }
 
 /* ---- mirrored from styles/mobile.css ---- */

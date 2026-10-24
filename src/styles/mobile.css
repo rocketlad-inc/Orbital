@@ -290,7 +290,7 @@
   .top-bar {
     padding-left: max(16px, env(safe-area-inset-left));
     padding-right: max(16px, env(safe-area-inset-right));
-    padding-top: env(safe-area-inset-top);
+    padding-top: calc(env(safe-area-inset-top) + var(--stg-h, 0px));
     height: calc(var(--topbar-h) + env(safe-area-inset-top));
   }
 }
