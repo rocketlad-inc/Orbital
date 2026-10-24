@@ -724,8 +724,13 @@
   color: #b8c8d6;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  flex-shrink: 0;
-  white-space: nowrap;
+  /* The hint wraps and never takes more than half the row, so the label
+     it explains is never the one cut short (Portuguese "Painel …"). */
+  flex: 0 1 auto;
+  max-width: 50%;
+  white-space: normal;
+  text-align: right;
+  line-height: 1.25;
 }
 
 .side-menu__foot {

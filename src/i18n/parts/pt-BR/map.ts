@@ -732,7 +732,7 @@ export const map: Catalog = {
   'topbar.account.notifications': 'Notificações',
   'topbar.account.notificationsHint': 'Celular, Discord e widget',
   'topbar.account.popout': 'Painel destacado',
-  'topbar.account.popoutHint': 'Uma janela para deixar aberta',
+  'topbar.account.popoutHint': 'Para deixar aberta',
   'topbar.account.signOut': 'Sair',
   'topbar.account.signOutHint': 'Encerrar sua sessão',
   'topbar.budget.orders_one': '{n} ordem',

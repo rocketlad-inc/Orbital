@@ -460,7 +460,10 @@
 .wm-hullcost { color: #b8c8d6; }
 .wm-hulltime { color: #8aa0b4; }
 .wm-hullbuild {
-  height: 24px; font-family: inherit; font-size: 9.5px; font-weight: 700; letter-spacing: 0.14em;
+  /* The column fits CONSTRUIR as well as BUILD (it was 64px, and the
+     Portuguese label was cut off at the tablet width). */
+  min-width: 0; padding: 0 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  height: 24px; font-family: inherit; font-size: 9.5px; font-weight: 700; letter-spacing: 0.08em;
   color: #4ecdc4; background: rgba(78, 205, 196, 0.1);
   border: 1px solid #2f6f6b; border-radius: 4px; cursor: pointer;
 }
@@ -814,7 +817,7 @@
 .wm-routepick__r:focus-visible, .wm-routepick__x:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }
 
 /* ---- Designs on the build list (2026-10-08): the hull is the design ---- */
-.wm-hullrow { grid-template-columns: 150px minmax(0, 1fr) 104px 32px 64px; }
+.wm-hullrow { grid-template-columns: 150px minmax(0, 1fr) 104px 32px 84px; }
 .wm-hullnm__txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .wm-hullnm__look { font-style: normal; font-size: 8.5px; font-weight: 400; letter-spacing: 0.04em; color: #6b8195; }
 .wm-hullpick { display: flex; align-items: center; gap: 4px; min-width: 0; }

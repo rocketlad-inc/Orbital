@@ -563,7 +563,7 @@ export const guide: Catalog = {
   'mp.discord.expires': 'Expira em 10 minutos.',
   'mp.discord.newCode': 'Gerar outro',
   'mp.freighters.none': 'Nenhum ainda. As mercadorias viajam de cargueiro — construa um num estaleiro para negociar.',
-  'mp.freighters.putToWork': 'Colocar para trabalhar',
+  'mp.freighters.putToWork': 'Pôr para trabalhar',
   'mp.freighters.routesTitle': 'Abra ROTAS para dar uma rota a eles',
   'mp.feed.ariaLabel': 'Feed do jogo no Discord',
   'mp.feed.onlyHost': ' Só o anfitrião pode ativá-lo.',
