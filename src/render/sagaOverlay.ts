@@ -48,9 +48,9 @@ export function drawCrawl(ctx: CanvasRenderingContext2D, W: number, H: number,
   const total = block.reduce((a, l) => a + l.size + l.gapAfter, 0);
 
   // Scroll: the first line starts at the bottom; by the end the last line
-  // is most of the way to the horizon.
-  const bottomY = H * 0.97, horizonY = H * 0.12;
-  const scroll = (total + H * 0.85) * Math.max(0, Math.min(1, k));
+  // is a little past the middle of the plane, still readable.
+  const bottomY = H * 0.97, horizonY = H * 0.04;
+  const scroll = (total + H * 0.62) * Math.max(0, Math.min(1, k));
   let pageY = 0;
   ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
   for (const l of block) {
@@ -59,10 +59,10 @@ export function drawCrawl(ctx: CanvasRenderingContext2D, W: number, H: number,
     pageY += l.gapAfter;
     if (flat < -l.size) continue;
     const d = Math.max(0, flat) / H;
-    const z = 1 + d * 2.6;
+    const z = 1 + d * 1.5;
     const s = 1 / z;
     const y = horizonY + (bottomY - horizonY) / z;
-    const fade = Math.max(0, Math.min(1, (s - 0.28) / 0.22)) * Math.min(1, (flat + l.size) / l.size);
+    const fade = Math.max(0, Math.min(1, (s - 0.42) / 0.16)) * Math.min(1, (flat + l.size) / l.size);
     if (fade <= 0.01) continue;
     ctx.save();
     ctx.globalAlpha = alpha * fade;
@@ -143,7 +143,8 @@ export function drawCaptainCard(ctx: CanvasRenderingContext2D, W: number, H: num
   const u = unitOf(H);
   const a = ease(k) * (1 - ease(out));
   if (a <= 0.01) return;
-  const x = Math.max(80 * u, W * 0.05), y = Math.max(80 * u, H * 0.07);
+  // Below the battle's scorebug (top centre) and the day (top right).
+  const x = Math.max(80 * u, W * 0.05), y = Math.max(120 * u, H * 0.16);
   const w = Math.min(W * 0.5, 760 * u), h = 250 * u;
   ctx.save();
   ctx.globalAlpha = a * (1 - 0.65 * ease(burn));
@@ -238,13 +239,14 @@ export function drawTransmission(ctx: CanvasRenderingContext2D, W: number, H: nu
   const u = unitOf(H);
   const a = Math.min(1, life / 0.06) * Math.min(1, (1 - life) / 0.1);
   if (a <= 0.01) return;
-  const w = Math.min(W * 0.62, 980 * u);
-  const x = (W - w) / 2, y = Math.max(70 * u, H * 0.06);
+  // Top centre, clear of the standings (top left) and a meter (top right).
+  const w = Math.min(W * 0.36, 720 * u);
+  const x = (W - w) / 2, y = Math.max(56 * u, H * 0.05);
   ctx.save();
   ctx.globalAlpha = a;
-  ctx.font = `500 ${Math.round(30 * u)}px ${FONT_MONO}`;
-  const lines = wrapLines(ctx, c.text, w - 56 * u, 3);
-  const h = 108 * u + lines.length * 40 * u;
+  ctx.font = `500 ${Math.round(26 * u)}px ${FONT_MONO}`;
+  const lines = wrapLines(ctx, c.text, w - 56 * u, 4);
+  const h = 108 * u + lines.length * 36 * u;
   ctx.fillStyle = 'rgba(3,14,20,0.86)';
   ctx.beginPath(); ctx.roundRect(x, y, w, h, 10 * u); ctx.fill();
   // Scan lines: a signal, not a caption.
@@ -265,16 +267,16 @@ export function drawTransmission(ctx: CanvasRenderingContext2D, W: number, H: nu
   ctx.font = `400 ${Math.round(30 * u)}px ${FONT_DISPLAY}`;
   ctx.fillStyle = liftColor(c.faction.color, 190);
   ctx.fillText(ellipsize(ctx, c.faction.name, w - 60 * u), x + 28 * u, y + 52 * u);
-  ctx.font = `500 ${Math.round(30 * u)}px ${FONT_MONO}`;
+  ctx.font = `500 ${Math.round(26 * u)}px ${FONT_MONO}`;
   ctx.fillStyle = '#dff4fb';
   let ty = y + 98 * u;
-  const typed = Math.min(1, life / 0.35);
+  const typed = Math.min(1, life / 0.3);
   let budget = Math.ceil(lines.join(' ').length * typed);
   for (const l of lines) {
     const shown = l.slice(0, Math.max(0, budget));
     budget -= l.length + 1;
     ctx.fillText(shown, x + 28 * u, ty);
-    ty += 40 * u;
+    ty += 36 * u;
   }
   ctx.restore();
 }
@@ -305,7 +307,7 @@ export function drawRollCall(ctx: CanvasRenderingContext2D, W: number, H: number
   spacing(ctx, 0);
   const nameW = w * 0.3, roleW = w * 0.25;
   rows.forEach((r, i) => {
-    const ki = ease((k - 0.08 - i * (0.6 / Math.max(1, n))) * 6);
+    const ki = ease((k - 0.05 - i * (0.5 / Math.max(1, n))) * 8);
     if (ki <= 0.01) { y += rowH; return; }
     ctx.save();
     ctx.globalAlpha = a * ki;

@@ -550,7 +550,7 @@ function beatsOf(F, S, plots, roles, walker) {
 
   // Veterans.
   for (const v of F.veterans) {
-    add({ tick: v.tick, kind: 'captain_lost', fid: v.fid, target: null, plot: plotOf(v.fid) ?? 'B', weight: 205,
+    add({ tick: v.tick, kind: 'captain_lost', fid: v.fid, target: null, plot: plotOf(v.fid) ?? 'B', weight: 235,
       kicker: KICKER.veteran,
       title: v.ship ? say('head', 'veteran', { name: v.name, ship: v.ship, a: N(v.fid) }) : `${N(v.fid)} loses Captain ${v.name}`,
       because: say('because', 'veteranRecord', { days: v.days, rank: v.rank, kills: v.kills, Kills: cap(numWord(v.kills)), killsWord: v.kills === 1 ? 'kill' : 'kills' }),
@@ -562,7 +562,7 @@ function beatsOf(F, S, plots, roles, walker) {
   const toWinner = F.gifts.filter(g => g.to === W && g.total >= 2000).sort((a, b) => b.total - a.total)[0];
   if (toWinner) {
     const sphere = F.dysonStart?.a === W && toWinner.t >= F.dysonStart.t ? F.dysonStart : null;
-    add({ tick: toWinner.t, kind: 'trade_accepted', fid: toWinner.from, target: W, plot: 'A', weight: 130,
+    add({ tick: toWinner.t, kind: 'trade_accepted', fid: toWinner.from, target: W, plot: 'A', weight: 175,
       kicker: KICKER.gift, title: say('head', 'gift', { a: N(toWinner.from), b: N(W), amount: amountWords(toWinner.res) }),
       because: sphere ? say('because', 'giftBefore', { d: Math.max(1, toWinner.t - sphere.t), b: N(W) }) : '' });
   }

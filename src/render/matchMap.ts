@@ -671,14 +671,17 @@ export function createMatchMap(
     if (saga) {
       const used = new Set<ReelBeat>();
       for (const sb of saga.beats) {
+        // A veteran is matched by name: two captains can die on one day.
         const hit = beats.find(e => !used.has(e) && e.kind === sb.kind && Math.abs(e.tick - sb.tick) <= 1
-          && (!sb.fid || !e.fid || e.fid === sb.fid || e.target === sb.fid));
+          && (!sb.fid || !e.fid || e.fid === sb.fid || e.target === sb.fid)
+          && (!sb.veteran || e.data?.captain_name === sb.veteran));
         if (hit) {
           used.add(hit);
           hit.weight = Math.max(hit.weight, sb.weight);
           hit.data = { ...(hit.data ?? {}), saga: sb };
           if (sb.veteran) {
             hit.hold = Math.max(hit.hold ?? 0, 6.4); hit.lead = Math.max(hit.lead ?? 2, 3);
+            hit.place = `veteran:${sb.veteran}`;
             hit.body = hit.body ?? bodyNamed(saga.veterans.find(v => v.name === sb.veteran)?.world);
           }
         } else {
@@ -689,7 +692,7 @@ export function createMatchMap(
             : sb.fid ? (homeOf(sb.fid) ?? null) : null;
           const e: ReelBeat = { tick: sb.tick, kind: sb.kind, body: sb.kind === 'trade_accepted' ? null : body,
             weight: sb.weight, fid: sb.fid, target: sb.target, text: sb.title, data: { saga: sb } };
-          if (sb.veteran) { e.hold = 6.4; e.lead = 3; }
+          if (sb.veteran) { e.hold = 6.4; e.lead = 3; e.place = `veteran:${sb.veteran}`; }
           beats.push(e);
           used.add(e);
         }
@@ -715,18 +718,25 @@ export function createMatchMap(
     const span = hi - lo;
     const openingTo = Math.round(Math.max(lo + span * 0.12, Math.min(lo + span * 0.35,
       firstWar != null ? firstWar - 3 : lo + span * 0.25)));
-    scenes = planReel({ lo, hi, battles, beats }, {
+    const plan = (target?: number) => planReel({ lo, hi, battles, beats }, {
       finaleBody: summary.game.victory_type === 'engineering' && dysonBody && byId.has(dysonBody)
         ? dysonBody : null,
       openingTo,
       ...(saga ? {
-        targetSeconds: saga.runtime,
+        targetSeconds: target ?? saga.runtime,
         introSeconds: INTRO_SECONDS + saga.crawl.seconds,
         openingSeconds: Math.max(OPENING_SECONDS, ROLL_CALL_END + 6.5),
         finaleSeconds: FINALE_SECONDS + ROLL_CALL_FINALE_SECONDS(sagaCast.length),
         establishing: ESTABLISHING_SHARE,
       } : {}),
     });
+    scenes = plan();
+    // The script's runtime is a ceiling (three minutes at most): the
+    // time-lapses' floors can carry a plan past it, so plan again shorter.
+    if (saga) {
+      const over = reelSeconds(scenes) - saga.runtime;
+      if (over > 0.5) scenes = plan(saga.runtime - over - 1);
+    }
     filmTotal = reelSeconds(scenes);
     captionCache.clear();
     usedTitles.clear();
@@ -2682,12 +2692,19 @@ export function createMatchMap(
     }
     // A VETERAN FALLS: the captain's card over the fight, the ship going up
     // in a flash that fills the frame, and the card burning out after it.
-    if (s.kind === 'beat' && (s.beat?.data?.saga as SagaBeat | undefined)?.veteran) {
-      const sb = s.beat!.data!.saga as SagaBeat;
-      const v = saga?.veterans.find(x => x.name === sb.veteran);
-      const f = filmFaction(v?.fid ?? sb.fid);
-      if (v && f) {
-        const lostAt = filmSecondsAt(scenes, s.beat!.tick - 0.35) - filmSecondsAt(scenes, s.from);
+    // A veteran who dies in the middle of a fight the film already shows
+    // gets the card in that fight's scene.
+    const vetBeat = (s.beat?.data?.saga as SagaBeat | undefined)?.veteran
+      ? s.beat!.data!.saga as SagaBeat : undefined;
+    const vet = vetBeat ? saga?.veterans.find(x => x.name === vetBeat.veteran)
+      : s.kind === 'battle' ? saga?.veterans.find(x => bodyNamed(x.world) === s.bodyId && x.tick >= s.from - 1 && x.tick <= s.to + 1)
+        : undefined;
+    if (vet) {
+      const v = vet;
+      const sb = vetBeat ?? saga!.beats.find(b => b.veteran === v.name);
+      const f = filmFaction(v.fid);
+      if (f && sb) {
+        const lostAt = filmSecondsAt(scenes, Math.max(s.from, Math.min(s.to, v.tick) - 0.35)) - filmSecondsAt(scenes, s.from);
         const burn = Math.max(0, Math.min(1, (el - lostAt) / 0.9));
         drawCaptainCard(ctx, W, H, {
           name: v.name, rank: v.rank, faction: f, ship: v.ship ?? '', bio: v.bio, kicker: sb.kicker,
@@ -2742,7 +2759,7 @@ export function createMatchMap(
             fallen: elimAt.has(fid), winner: fid === winner } : null;
         }).filter((r): r is NonNullable<typeof r> => !!r);
         drawRollCall(ctx, W, H, `${summary.game.name ?? ''} · the roll call`, rows,
-          (el - FINALE_CARD_AT) / Math.max(1, s.seconds - FINALE_CARD_AT - 0.5), T('url'));
+          (el - FINALE_CARD_AT) / Math.max(1, s.seconds - FINALE_CARD_AT - 1.2), T('url'));
       } else {
         drawResultCard(ctx, W, H, { ...c, color: c.fid ? colorOf(c.fid) : null },
           table, (el - FINALE_CARD_AT) / 0.6,

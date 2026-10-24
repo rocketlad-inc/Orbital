@@ -73,6 +73,9 @@ export interface ReelBeat {
   /** Ticks the scene opens before `tick` (default 2). Something that
    *  APPEARS on its tick (the Leviathan surfacing) opens one before. */
   lead?: number;
+  /** Its own place for the variety rule: a scene that is a different story
+   *  from the fight at the same world (a veteran's death) is no repeat. */
+  place?: string;
 }
 
 export interface ReelFacts {
@@ -275,7 +278,7 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
     // An ARC told at one place -- the Leviathan surfacing then breaking a
     // world, a Sphere begun then struck at 99% -- is different pictures,
     // not repeats: the climax took the repeat discount and lost its scene.
-    const place = /^(kaiju|dyson)_/.test(e.kind) ? `arc:${e.kind}` : e.body ?? `${e.kind}:${e.target ?? e.fid ?? ""}`;
+    const place = e.place ?? (/^(kaiju|dyson)_/.test(e.kind) ? `arc:${e.kind}` : e.body ?? `${e.kind}:${e.target ?? e.fid ?? ""}`);
     cands.push({ kind: 'beat', from, to, weight: e.weight, place, pair: null,
       seconds: e.hold ?? Math.max(BEAT_MIN_SECONDS, Math.min(BEAT_MAX_SECONDS, BEAT_MIN_SECONDS + (e.weight - 60) / 60)), framing: e.body ? 'world' : 'system',
       bodyId: e.body, beat: e });
