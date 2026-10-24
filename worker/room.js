@@ -965,7 +965,12 @@ export class Room {
     // A PAUSED solo game (worker/solo.js): time stands still. No tick and
     // no re-arm; resuming arms the alarm again. A forced tick (the solo
     // player's STEP) still advances exactly one, then stays paused.
-    if (Number(game.paused) === 1 && !force) return;
+    //
+    // `force === true`, never truthiness: Cloudflare calls alarm() with an
+    // alarmInfo object ({ retryCount, isRetry }), so on a natural alarm
+    // `force` is that object and a bare `!force` let the paused game tick
+    // (staging, 2026-10-23: paused at T6, ticked to T7 on schedule).
+    if (Number(game.paused) === 1 && force !== true) return;
 
     // Turn-Based Mode short-circuit: the alarm doesn't auto-advance time
     // in TBM games. The tick batch is driven from POST /turn/commit
