@@ -97,7 +97,12 @@ async function apply() {
   const fleets = Object.fromEntries(Object.entries(out.fleets).map(([k, id]) => [k, strip(id)]));
   console.log(JSON.stringify({ game_id: out.game_id, created: out.created, tick: out.tick, viewer: out.viewer,
     factions: out.factions.map(f => ({ key: f.key, handle: f.handle, id: strip(f.id) })),
-    ships, fleets, wars: out.wars, orders: out.orders }, null, 2));
+    ships, fleets, wars: out.wars, orders: out.orders,
+    ...(out.megastructures?.length ? { megastructures: out.megastructures } : {}),
+    ...(out.kaiju ? { kaiju: out.kaiju } : {}),
+    ...(out.gate_birth ? { gate_birth: out.gate_birth } : {}),
+    warnings: out.warnings ?? [] }, null, 2));
+  for (const w of out.warnings ?? []) console.error(`WARNING: ${w}`);
   if (out.created) console.error(`\nScene applied to NEW game ${out.game_id}. Record with:\n  node scripts/studio.mjs record ${out.game_id} shot.json --out clip.mp4 --as ${out.factions.find(f => f.key === out.viewer)?.handle ?? out.factions[0].handle}${ENV !== 'staging' ? ` --env ${ENV}` : ''}`);
 }
 
@@ -182,12 +187,12 @@ async function launchChrome(port, width, height) {
 }
 
 /** Headless Chrome with the game open as an agent player and window.__studio attached. */
-async function openGame(gameId, handle, w, h) {
+async function openGame(gameId, handle, w, h, dpr = Number(flag('dpr')) || 1) {
   const token = await session(handle);
   const port = 9400 + Math.floor(Math.random() * 400);
   const b = await launchChrome(port, w, h);
   try {
-    await b.send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false });
+    await b.send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: dpr, mobile: false });
     await b.send('Emulation.setEmulatedMedia', { features: [
       { name: 'pointer', value: 'fine' }, { name: 'any-pointer', value: 'fine' }, { name: 'hover', value: 'hover' }, { name: 'any-hover', value: 'hover' }] });
     const host = new URL(BASE).hostname;
@@ -215,6 +220,15 @@ async function openGame(gameId, handle, w, h) {
   } catch (e) { await b.close(); throw e; }
 }
 
+/** What the shot will get wrong in this game, before a frame is spent on
+ *  it (Director.check: a strike step that fires while its Mega Destroyer
+ *  is still in flight does nothing). Warns; --strict stops the take. */
+async function warnShot(b, shot) {
+  const found = JSON.parse(await b.evaluate(`JSON.stringify(window.__studio.check ? window.__studio.check(${JSON.stringify(shot)}) : [])`).catch(() => '[]'));
+  for (const w of found) console.error(`WARNING: ${w}`);
+  if (found.length && process.argv.includes('--strict')) die('the shot has problems (--strict)');
+}
+
 async function record() {
   const [gameId, shotFile] = rest;
   if (!gameId || !shotFile) die('record needs <gameId> shot.json --out clip.mp4');
@@ -224,6 +238,7 @@ async function record() {
   const handle = flag('as') || 'studio-terra';
   const b = await openGame(gameId, handle, w, h);
   try {
+    await warnShot(b, shot);
     console.error(`recording ${shot.seconds}s at ${w}x${h} as ${handle}…`);
     await b.evaluate(`(() => { window.__studioDone = null; window.__studio.record(${JSON.stringify(shot)}, { download: false })
       .then(() => { window.__studioDone = window.__studio.result; }, e => { window.__studioDone = { ok: false, error: String(e && e.message || e) }; }); return true; })()`);
@@ -258,6 +273,9 @@ async function record() {
  * Film: one PNG per frame on a stepped clock, the way the Reddit clips were
  * made, then GIF (15 fps) + WebP (30 fps) via scripts/studio-encode.py.
  *   node scripts/studio.mjs film <gameId> shot.json --out <dir> [--as handle] [--size 1920x1080] [--width 960]
+ *     [--dpr 1.5 --full]   stills: the page at 1.5x pixel density, every frame a
+ *                          lossless PNG (2880x1620 from 1920x1080). Pair with a low
+ *                          shot "fps" (4) to sample a take for press stills.
  */
 async function film() {
   const [gameId, shotFile] = rest;
@@ -270,17 +288,33 @@ async function film() {
   fs.mkdirSync(dir, { recursive: true });
   const b = await openGame(gameId, handle, w, h);
   try {
+    await warnShot(b, shot);
     const total = await b.evaluate(`window.__studio.openFilm(${JSON.stringify(shot)})`);
+    // --trace: every hull's drawn position each frame, to trace.jsonl, for
+    // scripts/jump-check.py (a hull should never jump).
+    const tracing = argv.includes('--trace');
+    const traceOut = tracing ? fs.openSync(path.join(dir, 'trace.jsonl'), 'w') : null;
+    if (tracing) await b.evaluate('(window.__shipTrace = [], true)');
     console.error(`filming ${total} frames at ${w}x${h} as ${handle}…`);
+    // The page renders at full size (layout and UI as players see them);
+    // each frame is CAPTURED 960 wide as JPEG, since every clip ships 960
+    // wide: at 1920 a quarter of the pixels to encode and pass over CDP,
+    // about twice as fast a take. A UI clip renders the page smaller
+    // (--size 1280x720) so its text is bigger in the 960 cut.
+    // --full keeps lossless full-size PNGs.
+    const fullCapture = argv.includes('--full');
+    const capture = fullCapture
+      ? { format: 'png', captureBeyondViewport: false }
+      : { format: 'jpeg', quality: 92, captureBeyondViewport: false, clip: { x: 0, y: 0, width: w, height: h, scale: Math.min(1, 960 / w) } };
     const frames = [];
     const t0 = Date.now();
     for (let k = 0; k < total; k++) {
       // A frame waits on at most one server tick (bounded in the page at
-      // 30 s + 90 s); past 150 s the page is wedged and the take ends here
+      // 30 s + 90 s); past 600 s (a time cut can hold many ticks) the page is wedged and the take ends here
       // with what it has. A screenshot gets three tries.
       let done = false;
       try {
-        const r = await b.evaluate(`window.__studio.filmFrame().then(r => JSON.stringify(r))`, 150_000);
+        const r = await b.evaluate(`window.__studio.filmFrame().then(r => JSON.stringify(r))`, 600_000);
         done = JSON.parse(r).done;
       } catch (e) {
         console.error(`\nframe ${k}: ${e.message}; ending the take with ${frames.length} frames`);
@@ -288,12 +322,17 @@ async function film() {
       }
       let shotPng = null;
       for (let attempt = 0; attempt < 3 && !shotPng; attempt++) {
-        shotPng = await b.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }, 30_000)
+        shotPng = await b.send('Page.captureScreenshot', capture, 30_000)
           .catch((e) => { console.error(`\nframe ${k}: screenshot try ${attempt + 1}: ${e.message}`); return null; });
       }
       if (!shotPng) { console.error(`\nframe ${k}: no screenshot; ending the take with ${frames.length} frames`); break; }
-      const f = `${String(k).padStart(5, '0')}.png`;
+      const f = `${String(k).padStart(5, '0')}.${fullCapture ? 'png' : 'jpg'}`;
       fs.writeFileSync(path.join(dir, f), Buffer.from(shotPng.data, 'base64'));
+      if (traceOut != null) {
+        // The last frame the page drew for this film frame.
+        const tr = await b.evaluate('JSON.stringify((window.__shipTrace || []).splice(0).pop() || null)', 10_000).catch(() => 'null');
+        fs.writeSync(traceOut, JSON.stringify({ k, ...(JSON.parse(tr) || {}) }) + '\n');
+      }
       frames.push({ f, t: k / (shot.fps ?? 30) });
       if (k % 30 === 0) {
         process.stderr.write(`\r  ${k}/${total}  ${((Date.now() - t0) / 1000).toFixed(0)}s   `);
@@ -303,10 +342,13 @@ async function film() {
       if (done) break;
     }
     process.stderr.write('\n');
+    if (traceOut != null) fs.closeSync(traceOut);
     fs.writeFileSync(path.join(dir, 'frames.json'), JSON.stringify(frames));
     const stats = await b.evaluate('JSON.stringify(window.__studio.stats)', 10_000).catch(() => '{}');
+    // The director's notes (picks, tick retries, missing targets), kept with the take.
+    const log = await b.evaluate('JSON.stringify(window.__studio.log)', 10_000).catch(() => '[]');
     await b.evaluate('window.__studio.closeFilm()', 10_000).catch(() => {});
-    console.log(JSON.stringify({ dir, frames: frames.length, seconds: shot.seconds, stats: JSON.parse(stats) }));
+    console.log(JSON.stringify({ dir, frames: frames.length, seconds: shot.seconds, stats: JSON.parse(stats), log: JSON.parse(log) }));
     if (flag('encode') !== '0') {
       const width = flag('width') || '960';
       const enc = path.join(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), 'studio-encode.py');
@@ -314,6 +356,8 @@ async function film() {
       console.error(`encoding ${name} at ${width}px…`);
       const encArgs = [enc, dir, '--name', name, '--width', width];
       if (flag('speed')) encArgs.push('--speed', flag('speed'));
+      // An end card on the encode (studio-encode.py --end-title / --end-line).
+      if (flag('end-title')) encArgs.push('--end-title', flag('end-title'), '--end-line', flag('end-line') || '');
       const r = spawn('python', encArgs, { stdio: 'inherit' });
       await new Promise(res => r.on('exit', res));
     }
@@ -326,7 +370,9 @@ async function film() {
 async function evalInGame() {
   const [gameId, code] = rest;
   if (!gameId || !code) die('eval needs <gameId> "<javascript>"');
-  const b = await openGame(gameId, flag('as') || 'studio-terra', 1080, 1920);
+  // --size 1920x1080 checks the DOM at a film's size (the layout depends on it).
+  const [w, h] = (flag('size') || '1080x1920').split('x').map(Number);
+  const b = await openGame(gameId, flag('as') || 'studio-terra', w, h);
   try {
     const wrapped = `(async () => { return (${code}); })()`;
     const out = await b.evaluate(`(async () => { const r = (0, eval)(${JSON.stringify(wrapped)}); return JSON.stringify({ value: await r, log: window.__studio.log }); })()`);

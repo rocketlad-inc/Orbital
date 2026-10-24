@@ -20,7 +20,7 @@ import { sampleTorchTrajectory, torchPositionFromSamples, trajectoryTangentAt, i
 import { rendezvousStateAt } from '../physics/rendezvous.js';
 import { STRAIGHT_LINE_TRAJECTORIES } from '../game/featureFlags';
 import { COLORS, withOpacity, lighten, darken } from './colors';
-import { drawSunSquid, drawSunOmen, sunGateHeading, sunGateMorph, LEVIATHAN_PALETTE } from './sunSquid';
+import { drawSunSquid, drawSunOmen, sunGateHeading, sunGateArrivalMorph, LEVIATHAN_PALETTE } from './sunSquid';
 import { isSunGateSite } from '../game/farSystems';
 import { transitHullScale } from './cameraLimits';
 import { requestLabel, clearOfKeepOuts, reserveRect } from './labelLayer';
@@ -44,11 +44,18 @@ import { getShipClass } from '../game/shipClasses';
 // hashStr/mulberry32 come from planetTexture (above) — combatFx defined
 // its own copies only because its branch predated planetTexture; the
 // duplicates are removed there and it re-exports nothing seeded.
-import { drawDeathDebris, sterilisationProgress } from './combatFx';
+import {
+  drawDeathDebris, sterilisationProgress, sterilisationStarted,
+  obliterationStarted, obliterationHoldsWorldWhole,
+} from './combatFx';
 import { anchorToBody, anchoredWorldPos, type BodyAnchor } from './fxAnchor';
-import { noteKaijuDrawn, kaijuHoldsWorldWhole, drawKaijuCarcass } from './kaijuFx';
+import {
+  noteKaijuDrawn, kaijuHoldsWorldWhole, drawKaijuCarcass, kaijuFlightPose, kaijuCarcassPose, kaijuStrikeHolds,
+  kaijuBreakStarted,
+  carcassHeading, type KaijuAnchor,
+} from './kaijuFx';
 import { kaijuRevealed } from '../game/kaijuReveal';
-import { getStructureIconImage, getScaffoldImage } from './structureIconCache';
+import { getStructureIconImage, getScaffoldImage, artScaleOf } from './structureIconCache';
 import type { StructureVariant } from '../components/StructureIcons';
 import {
   MEGASTRUCTURES, progressOf as progressOfSite, MEGA_MAX_HP, MEGA_SEIZE_HP_FRAC,
@@ -59,10 +66,12 @@ import { reachWorldRadius, reachLabel, isReachPinned } from '../game/structureRe
 import type { BodyPresentation } from './bodyPresentation';
 import { glowAt, drawExplosion, drawCharge, HullLook, fxSpriteBytes, drawShieldRipple, drawHullFire, drawHullBreakup } from './fxArt';
 import { drawnRadiusOf, inflationOf, parkedRadiusMap } from './bodyPresentation';
+import { noteRamApproach, ramThrustDir, ramRockRadiusPx } from './asteroidRam';
 import {
   battlePlacement, battleScale, battleDrift, hasBattleGlide, seedBattleGlide, battleSpriteScale,
-  type LiveBattle,
+  fleetBlockGeometry, battleSlotPx, holdBattleGlide, type LiveBattle, type BattleUnit,
 } from './battleLayoutLive';
+import { planCapture, captureAt, captureSamples, noteCapture, activeCapture } from './arrivalApproach';
 import { FX_TUNING } from './fxTuning';
 import {
   drawConstructionSite, drawCompletedStructure, drawCapitalHull, isCapitalHull, withAlpha,
@@ -82,6 +91,10 @@ export interface RenderContext {
    *  system's own heart when the Leviathan is bringing it (it launches
    *  from there, not from the Sun). Local id; 'sol' when absent. */
   sunGateOmenBodyId?: string | null;
+  /** World-space bearing the coming gate leaves its source on (state.js
+   *  sunGateOmenAngle), so the omen rises where the gate will come out.
+   *  Null from an older server: the omen falls back to a seeded spot. */
+  sunGateOmenAngle?: number | null;
   /** Megastructure build state, keyed on LOCAL body id. A site is a
    *  body; this is the part a body cannot express. */
   megastructures?: Record<string, MegastructureState>;
@@ -164,6 +177,10 @@ export interface RenderContext {
    *  read the true drawn box instead of re-deriving it and drifting off
    *  the visible hull. Cleared each frame by MapCanvas. */
   shipHitboxes?: Map<string, { x: number; y: number; r: number }>;
+  /** Where each hull in FLIGHT was drawn this frame (canvas px), when the
+   *  caller asks: the match film's frame-to-frame audit. Unset on the
+   *  live map. */
+  transitDrawn?: Map<string, { x: number; y: number }>;
   /** Where every FLEET hull sits in its fleet's formation this frame —
    *  the flagship at its own sprite, each escort at its slot behind it.
    *  Filled by MapCanvas's marker pass. Combat FX resolve a hull here
@@ -187,6 +204,9 @@ export interface RenderContext {
    *  member's sprite holds its place in the arrowhead (placeInFormation).
    *  Absent or missing entry = a lone hull on its own line. */
   transitFormations?: Map<string, TransitSlot>;
+  /** Hulls on a matched intercept, flown abreast of the group they
+   *  joined instead of on top of it (computeTransitCompany). */
+  transitCompany?: Map<string, CompanySlot>;
 }
 
 /**
@@ -1565,11 +1585,42 @@ function getBlackHoleDisk(diskR: number): HTMLCanvasElement | null {
  *  source shows something rising through it. The Sun for a gate; the far
  *  system's heart for the Leviathan, which launches from there. */
 function drawGateOmen(body: Body, canvasPos: { x: number; y: number }, radius: number, ctx: RenderContext) {
-  const emerge = ctx.sunGateEmergeTick;
-  if (emerge == null || ctx.t >= emerge || ctx.t < emerge - SUN_GATE_OMEN_TICKS) return;
   if (body.id !== (ctx.sunGateOmenBodyId ?? 'sol')) return;
-  drawSunOmen(ctx.ctx, canvasPos.x, canvasPos.y, radius * 0.85,
-    1 - (emerge - ctx.t) / SUN_GATE_OMEN_TICKS, (emerge * 2.39996) % (Math.PI * 2), ctx.nowMs ?? 0);
+  const omen = gateOmenPose(ctx.sunGateEmergeTick, ctx.t, ctx.sunGateOmenAngle);
+  if (!omen) return;
+  drawSunOmen(ctx.ctx, canvasPos.x, canvasPos.y, radius * 0.85, omen.k, omen.angle, ctx.nowMs ?? 0);
+}
+
+/** How long past its emerge tick the omen holds, fully risen, while the
+ *  state that carries the gate itself is still on its way. */
+export const GATE_OMEN_HOLD_TICKS = 1;
+
+/**
+ * Where and how far risen the omen is at render tick `t`, or null when
+ * none shows.
+ *
+ * WHERE: the bearing the gate really leaves on (`angle`, from the
+ * server), so it rises through the limb the gate then comes out of. It
+ * sat at a bearing hashed from the tick (kept only as the fallback for a
+ * server that does not send one), and in the Studio clip it rose through
+ * the Sun's lower left while the gate came out of the right.
+ *
+ * WHEN: the warning's six ticks, AND on past the emerge tick until the
+ * state that carries the gate lands (that state also clears sun_gate_next,
+ * which ends this). The render clock reaches the tick before the poll
+ * does, and the gap was a frame of empty Sun between omen and gate.
+ * Bounded, so a lost poll cannot leave it standing.
+ *
+ * World angles draw as they are: worldToCanvas only scales and shifts.
+ */
+export function gateOmenPose(
+  emerge: number | null | undefined, t: number, angle: number | null | undefined,
+): { k: number; angle: number } | null {
+  if (emerge == null) return null;
+  if (t < emerge - SUN_GATE_OMEN_TICKS || t >= emerge + GATE_OMEN_HOLD_TICKS) return null;
+  const k = Math.min(1, 1 - (emerge - t) / SUN_GATE_OMEN_TICKS);
+  const a = angle != null && Number.isFinite(angle) ? angle : (emerge * 2.39996) % (Math.PI * 2);
+  return { k, angle: a };
 }
 
 function drawBlackHoleBody(
@@ -2821,11 +2872,14 @@ function drawEmergingGate(
   // The thing itself (sunSquid.ts): mantle first on the way out, turned
   // round to brake on its jet past the flip, unfurling into the gate's
   // ring over the last fifth of the trip so it lands as the gate.
+  // Whole as it reaches its site, not as the clock runs out
+  // (sunGateArrivalMorph).
+  const ringR = sunGateRingR(scale);
   drawSunSquid(g, canvasPos.x, canvasPos.y, {
     u: sunSquidUnit(scale),
-    ringR: sunGateRingR(scale),
+    ringR,
     heading: sunGateHeading(Math.atan2(uy, ux), f),
-    morph: sunGateMorph(f),
+    morph: sunGateArrivalMorph(f, Math.hypot(land.x - canvasPos.x, land.y - canvasPos.y), ringR),
     thrust: 0.25 + 0.75 * speed,
     now,
   });
@@ -2899,6 +2953,53 @@ function sunGateArtRadius(body: Body, radius: number, t: number, scale: number):
     return sunSquidUnit(scale) * 1.3;
   }
   return sunGateRingR(scale) * 1.15;
+}
+
+/**
+ * Should a landing site's label give way to its gate? Yes once the gate
+ * has landed (the site is retired a moment later), and while it flies
+ * once it is close enough that the two names would pile up: within
+ * three of their art radii together, and never under 100 px, about the
+ * width of the two labels side by side at 10 px Audiowide.
+ */
+export function siteLabelYields(gapPx: number, gateArtPx: number, siteArtPx: number, landed: boolean): boolean {
+  if (landed) return true;
+  return gapPx < Math.max(100, 3 * (gateArtPx + siteArtPx));
+}
+
+function landingSiteLabelYields(
+  site: Body, sitePos: { x: number; y: number }, siteRadius: number, ctx: RenderContext,
+): boolean {
+  const gate = bodyById(ctx.bodies, site.id.replace(/_site$/, ''));
+  if (!gate || gate.id === site.id) return false;
+  const gw = bodyPosition(gate, ctx.t, ctx.bodies);
+  const gp = worldToCanvas(gw.x, gw.y, ctx);
+  const scale = ctx.camera.scale;
+  const gateArt = sunGateArtRadius(gate, Math.max(3, gate.radius * scale), ctx.t, scale) ?? 0;
+  const siteArt = sunGateArtRadius(site, siteRadius, ctx.t, scale) ?? siteRadius;
+  const landed = !gate.emerge || ctx.t >= gate.emerge.untilTick;
+  return siteLabelYields(Math.hypot(gp.x - sitePos.x, gp.y - sitePos.y), gateArt, siteArt, landed);
+}
+
+/**
+ * Is a landing site's gate on it? Within the gate's own art radius (or
+ * landed), the reticle and its name are under the gate: drawn on top of
+ * the open ring they read as a target still to be reached, and the gold
+ * reticle sat over the gate's eye (Studio clip a-sun-gate-is-born, f242).
+ */
+export function siteCoveredByGate(gapPx: number, gateArtPx: number, landed: boolean): boolean {
+  return landed || gapPx <= gateArtPx;
+}
+
+function landingSiteCovered(site: Body, sitePos: { x: number; y: number }, ctx: RenderContext): boolean {
+  const gate = bodyById(ctx.bodies, site.id.replace(/_site$/, ''));
+  if (!gate || gate.id === site.id) return false;
+  const gw = bodyPosition(gate, ctx.t, ctx.bodies);
+  const gp = worldToCanvas(gw.x, gw.y, ctx);
+  const scale = ctx.camera.scale;
+  const gateArt = sunGateArtRadius(gate, Math.max(3, gate.radius * scale), ctx.t, scale) ?? 0;
+  const landed = !gate.emerge || ctx.t >= gate.emerge.untilTick;
+  return siteCoveredByGate(Math.hypot(gp.x - sitePos.x, gp.y - sitePos.y), gateArt, landed);
 }
 
 /** A sun gate at rest, either end: the squid fully unfurled. */
@@ -3192,11 +3293,43 @@ function drawWarpGateBody(
  * tick resolves — the two are drawn by different systems and this is
  * what keeps them in step.
  */
-function sterilisedBlend(body: Body, ctx: RenderContext): number {
+export function sterilisedBlend(body: Body, ctx: RenderContext): number {
   if (body.sterilisedAtTick == null) return 0;
   const k = sterilisationProgress(body.id, ctx.nowMs ?? 0);
-  if (k == null) return 1;                    // no animation: just dead
+  if (k == null) return strikePending(body, ctx) ? 0 : 1;   // no animation: dead, unless it is still to play
   return Math.max(0, Math.min(1, (k - 0.5) / 0.42));
+}
+
+/**
+ * THE WORLD DIES WHEN IT IS SHOT, NOT BEFORE (judges, Mega Destroyer
+ * clip, 2026-10-22: "Earth dies before the beam hits"). The tick that
+ * sterilises a world lands before its death animation starts (that waits
+ * a frame, or until the world is framed), and it also un-terraforms it,
+ * so for that moment a living Earth drew as bare dead rock with no shot
+ * fired, then turned to ash a second time when the beam came. A world
+ * struck in the last few ticks whose death has not begun here keeps its
+ * look until it does; the living surface then gives way under the fire's
+ * white-out (k 0.5), where the ash takes over.
+ */
+const STRIKE_PENDING_TICKS = 3;
+/** Worlds this client has drawn living (fully terraformed). */
+const drawnLiving = new Set<string>();
+function strikePending(body: Body, ctx: RenderContext): boolean {
+  return body.sterilisedAtTick != null && !sterilisationStarted(body.id)
+    && ctx.t - body.sterilisedAtTick < STRIKE_PENDING_TICKS;
+}
+/** The terraform fraction to DRAW: a struck living world stays living
+ *  until its death reaches the fire. */
+export function drawnTerraformFraction(body: Body, ctx: RenderContext): number {
+  const tf = terraformFraction(body, ctx.t);
+  if (tf >= 1) { drawnLiving.add(body.id); return tf; }
+  if (body.sterilisedAtTick == null || !drawnLiving.has(body.id)) return tf;
+  if (strikePending(body, ctx)) return 1;
+  const k = sterilisationProgress(body.id, ctx.nowMs ?? 0);
+  if (k == null) return tf;
+  // Dissolved across the fire, not swapped in a frame (judges, round 2).
+  const u = Math.max(0, Math.min(1, (k - 0.42) / 0.22));
+  return Math.max(tf, 1 - u * u * (3 - 2 * u));
 }
 
 function drawSterilised(
@@ -3411,6 +3544,48 @@ function paintImpactScars(g: CanvasRenderingContext2D, bodyId: string, R: number
  * that lightweight mode draws it too, since the whole point of the
  * picture is information -- this is no longer a world.
  */
+/** Worlds this client has drawn whole (not yet a debris field). */
+const drawnWhole = new Set<string>();
+
+/** The rock atlases the debris field's chunks are drawn from. */
+export function preloadRubbleArt(): void {
+  for (let look = 0; look < ROCK_LOOKS; look++) getRockAtlas('metal', look);
+}
+
+/**
+ * A WORLD IS BLOWN APART WHEN IT IS SHOT, NOT BEFORE (Callisto clip,
+ * 2026-10-23: whole, then one frame of flat placeholder discs, then
+ * rubble, with no beam). Mirrors the sterilisation's strikePending: the
+ * tick that obliterates a world lands before its strike starts playing
+ * (that waits for the frame to draw it, or until the world is framed),
+ * so a world this client has drawn whole stays whole until then, and
+ * while the strike's beam is on it (combatFx obliterationHoldsWorldWhole,
+ * or the Leviathan's crush, kaijuHoldsWorldWhole). The rubble's art is
+ * fetched while it is held, so the debris field the burst reveals is
+ * drawn from its rocks, never their flat stand-ins.
+ */
+export function drawsAsDebris(body: Body, ctx: RenderContext): boolean {
+  if (body.obliteratedAtTick == null) {
+    drawnWhole.add(body.id);
+    return false;
+  }
+  const nowMs = ctx.nowMs ?? 0;
+  if (kaijuHoldsWorldWhole(body.id, nowMs)) { preloadRubbleArt(); return false; }
+  if (!drawnWhole.has(body.id)) return true;
+  const started = obliterationStarted(body.id) || kaijuBreakStarted(body.id);
+  const held = started
+    ? obliterationHoldsWorldWhole(body.id, nowMs)
+    : ctx.t - body.obliteratedAtTick < STRIKE_PENDING_TICKS;
+  if (held) preloadRubbleArt();
+  return !held;
+}
+
+/** Test hook: have the debris field's rock atlases been asked for? */
+export function rubbleArtRequested(): boolean {
+  for (let look = 0; look < ROCK_LOOKS; look++) if (!rockAtlases.has(`metal-${look}`)) return false;
+  return true;
+}
+
 function drawDebrisField(
   body: Body,
   canvasPos: { x: number; y: number },
@@ -3481,7 +3656,7 @@ function drawPlanetBody(
   const color = body.color || COLORS.planetDefault;
   // Terraforming crossfade fraction — 0 for raw (and everything in SP),
   // partial while the transformation window runs, 1 once flipped.
-  const tfF = terraformFraction(body, ctx.t);
+  const tfF = drawnTerraformFraction(body, ctx);
 
   // Atmosphere glow for terrestrial / ice giant — and for any world
   // growing an atmosphere by terraforming (a moon mid-transformation
@@ -3518,6 +3693,12 @@ function drawPlanetBody(
   // the procedural texture. Worth it from a few pixels up: a real map
   // reads better than a flat disc even at 6px.
   if (radius > 2.5) {
+    // A struck world still drawn living dissolves to its RAW globe across
+    // the fire (drawnTerraformFraction), so ask for that one now. Asked
+    // for first on the dissolve's opening frame it was still loading, and
+    // the world fell through to the procedural texture, another-looking
+    // planet, until it came (Mega Destroyer over Venus, 2026-10-23).
+    if (tfF >= 1 && body.sterilisedAtTick != null) getGlobe(body, false);
     const globe = getGlobe(body, tfF >= 1);
     if (globe) {
       const ringed = bodyHasRings(body) && radius > 8;
@@ -4358,21 +4539,37 @@ export function drawBody(
   // city/eligibility hints — is information, not decoration, and a
   // performance mode that silently hid who owns what would be a bug
   // dressed as a setting. Only the art swaps out.
+  const debris = drawsAsDebris(body, ctx);
   if (isSunGateSite(body)) {
-    // A landing site is a marker, in every mode (drawLandingSite).
-    drawLandingSite(canvasPos, radius, ctx);
-  } else if (body.obliteratedAtTick != null && !kaijuHoldsWorldWhole(body.id, ctx.nowMs ?? 0)) {
-    // (Still whole while the Leviathan is crushing it: kaijuFx.ts.)
+    // A landing site is a marker, in every mode (drawLandingSite), until
+    // its gate is on it (landingSiteCovered).
+    if (!landingSiteCovered(body, canvasPos, ctx)) drawLandingSite(canvasPos, radius, ctx);
+  } else if (debris) {
+    // (Still whole while its strike plays: drawsAsDebris.)
     // Destroyed outright (0141). First in the chain, ahead of lightweight
     // mode: "this is no longer a world" is information, not decoration.
     drawDebrisField(body, canvasPos, radius, ctx);
   } else if (templateIdOf(body.id) === 'leviathan_carcass') {
     // The Leviathan's carcass (kaijuFx.ts): the animal, dead, sized like
     // the hull it was. In every mode: it is the salvage everyone is after.
+    // IT LIES WHERE IT DIED (kaijuCarcassPose): the dying animal's lights go
+    // out where it was drawn and at that size, and the carcass settles from
+    // there onto its own orbit, instead of popping up at a second spot at a
+    // second size while the death still plays.
     const left = (body.mineralInitial ?? 0) > 0 ? (body.mineralRemaining ?? 0) / (body.mineralInitial as number) : 1;
-    drawKaijuCarcass(ctx.ctx, canvasPos.x, canvasPos.y,
-      shipIconSize('kaiju', false) * transitHullScale(ctx.camera.scale) * 0.9,
-      ctx.nowMs ?? 0, left, hashStr(body.id));
+    const seed = hashStr(body.id);
+    const nowA = ctx.nowMs ?? 0;
+    const look = kaijuCarcassPose(ctx, {
+      x: canvasPos.x, y: canvasPos.y,
+      size: shipIconSize('kaiju', false) * transitHullScale(ctx.camera.scale) * 0.9,
+      heading: carcassHeading(seed, nowA),
+    }, performance.now());
+    if (look.alpha > 0.01) {
+      ctx.ctx.save();
+      ctx.ctx.globalAlpha *= look.alpha;
+      drawKaijuCarcass(ctx.ctx, look.x, look.y, look.size, nowA, left, seed, look.heading);
+      ctx.ctx.restore();
+    }
   } else if (body.type === 'megastructure' && body.emerge && ctx.t < body.emerge.untilTick) {
     // A sun gate in flight, in every mode like the ships it moves like:
     // where the thing everyone is racing for IS is information.
@@ -4485,6 +4682,10 @@ export function drawBody(
   // map label ("EARTH 2M 6C 3S") sat at the apex of the horizon, under the
   // structure tags.
   if (getWorldMenuOpenBodyId() === body.id) labelSuppressed = true;
+  // A landing site's name gives way to its gate as the gate comes in:
+  // "CENTAURI GATE LANDING SITE" stacked under "CENTAURI GATE" over the
+  // same art (Studio clip a-sun-gate-is-born, f356). The reticle stays.
+  if (isSunGateSite(body) && landingSiteLabelYields(body, canvasPos, radius, ctx)) labelSuppressed = true;
   const alwaysShowLabel = bodyLabelAlwaysOn(body) && !labelSuppressed;
   // Rows stagger up OR down from the body's own two anchors (never
   // sideways, never onto a neighbour's territory) — see
@@ -4671,12 +4872,25 @@ const SHIP_ICON_REST_SIZE: Record<string, number> = {
   // Venus on purpose. Drawn px: corvette 30, frigate 48, freighter and
   // colony 45, destroyer 84, Mega Destroyer 116, Mobile Foundry 104
   // (was 42 / 51 / 48 / 66 / 76 / 68).
-  mega_destroyer: 58,
+  // TWICE A DESTROYER IN FLIGHT (Lorne, 2026-10-21: "Why does the mega
+  // destroyer seem so small? It's supposed to be the biggest ship, it's
+  // the same size as the destroyer?"). At 58 it drew 116 px to a
+  // destroyer's 84, and its round, open hull fills far less of its square
+  // than a destroyer's solid wedge, so the two read as equals. 74 draws
+  // 148 px, 1.76x a destroyer, still under a Venus (150): the biggest
+  // ship, not a moon.
+  // OVER THE VENUS CAP (Lorne, 2026-10-22, again: "the megadestroyer is
+  // the same size as the destroyers"). 1.76x still read as equals on
+  // film, beside destroyers in flight and in orbit. 100 draws 200 px,
+  // 2.4x a destroyer and bigger than Venus: he chose the size over the
+  // cap. The Leviathan grows with it, below, to stay the biggest thing.
+  mega_destroyer: 100,
   mobile_foundry: 52,
   // THE LEVIATHAN (worker/kaiju.js): "visibly huge" (Lorne). Half again a
   // Mega Destroyer, the biggest thing anyone builds, on the same zoom
   // curves every hull uses, so it still shrinks when you pull out.
-  kaiju: 88,
+  // Kept half again (1.36x) a Mega Destroyer when the Mega grew to 100.
+  kaiju: 136,
   corvette: 10,
   frigate: 16,
   freighter: 15,
@@ -4737,8 +4951,12 @@ function drawStrikeCharge(
   iconSize: number,
   frac: number,
   nowMs: number,
+  /** The ring's radius (strikeRingRadius); the Mega's by default. */
+  ringR: number = iconSize * 0.78,
 ) {
-  const r = iconSize * 0.78;
+  const r = ringR;
+  // Strokes follow the ring, not the hull: a capped ring keeps its weight.
+  const w = Math.min(iconSize, r / 0.78);
   const f = Math.max(0, Math.min(1, frac));
   g.save();
   // The track it fills against, so an early charge is still legible as
@@ -4746,13 +4964,13 @@ function drawStrikeCharge(
   g.beginPath();
   g.arc(x, y, r, 0, Math.PI * 2);
   g.strokeStyle = 'rgba(255, 94, 94, 0.20)';
-  g.lineWidth = Math.max(1.5, iconSize * 0.07);
+  g.lineWidth = Math.max(1.5, w * 0.07);
   g.stroke();
   // The charge itself, from the top, clockwise.
   g.beginPath();
   g.arc(x, y, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * f);
   g.strokeStyle = '#ff5e5e';
-  g.lineWidth = Math.max(1.5, iconSize * 0.07);
+  g.lineWidth = Math.max(1.5, w * 0.07);
   g.lineCap = 'butt';
   g.stroke();
   // It quickens as it closes. At 90% the pulse is twice the rate it was
@@ -4763,7 +4981,7 @@ function drawStrikeCharge(
   g.beginPath();
   g.arc(x, y, r * (1.12 + 0.04 * f), 0, Math.PI * 2);
   g.strokeStyle = `rgba(255, 94, 94, ${Math.max(0, pulse).toFixed(3)})`;
-  g.lineWidth = Math.max(1, iconSize * 0.035);
+  g.lineWidth = Math.max(1, w * 0.035);
   g.stroke();
   g.restore();
 }
@@ -4772,6 +4990,42 @@ export function shipIconSize(shipClass: string, isSelected: boolean): number {
   const scale = (isCapitalHull(shipClass) || shipClass === 'kaiju')
     ? SHIP_ICON_SCALE : SHIP_ICON_SCALE * REGULAR_SHIP_BOOST;
   return ((SHIP_ICON_REST_SIZE[shipClass] ?? 18) + (isSelected ? 4 : 0)) * scale;
+}
+
+/** How big a parked hull is drawn, given its ordinary rest size and its
+ *  world's drawn radius: the Leviathan wraps the world it sits on (at
+ *  least 4.4 drawn radii across), everything else is its rest size. */
+export const KAIJU_WORLD_SPAN = 4.4;
+export function kaijuParkedSize(shipClass: string, restSize: number, worldDrawnR: number): number {
+  return shipClass === 'kaiju' ? Math.max(restSize, worldDrawnR * KAIJU_WORLD_SPAN) : restSize;
+}
+
+/** A strike's wind-up, 0..1: how much of ITS charge has run. The ring
+ *  divided by the Mega Destroyer's 24 ticks, so a Leviathan winding up
+ *  for the game's kaiju_charge_ticks (4 in the Studio) opened 83% full.
+ *  The server says how long each hull's charge is (state.js
+ *  strike_charge_ticks); the Mega's 24 when an older server does not. */
+export function strikeChargeFrac(
+  ship: { strikeReadyTick?: number | null; strikeChargeTicks?: number | null },
+  t: number,
+): number {
+  if (ship.strikeReadyTick == null) return 0;
+  const total = ship.strikeChargeTicks != null && ship.strikeChargeTicks > 0
+    ? ship.strikeChargeTicks : MEGA_STRIKE_CHARGE_TICKS;
+  const left = Math.max(0, ship.strikeReadyTick - t);
+  return Math.max(0, Math.min(1, 1 - left / total));
+}
+
+/** The charge ring's radius around a hull. A Mega's ring sits just
+ *  outside its hull. The Leviathan over a world is drawn 4.4 world radii
+ *  across, and the ring at 0.78 of that ran far past the frame at a
+ *  close-up (Studio, 2026-10-23); it rings the animal's body instead
+ *  (mantle and arms, about half its drawn size), and never more than a
+ *  little under half the view. */
+export function strikeRingRadius(shipClass: string, iconSize: number, viewMin: number): number {
+  if (shipClass !== 'kaiju') return iconSize * 0.78;
+  const body = iconSize * 0.5;
+  return viewMin > 0 ? Math.min(body, Math.max(24, viewMin * 0.42)) : body;
 }
 
 /** Floor for a parked ship's click/hover radius. At far zoom the sprite
@@ -4871,50 +5125,106 @@ export interface ShipFormation {
  *  destruction flashes) read this so a kill scars the map where the
  *  ship visibly WAS, not at its textbook orbital point on the far side
  *  of the planet (QA finding). Bounded like the other per-ship caches. */
-const lastDrawnShipWorldPos = new Map<string, { x: number; y: number }>();
+const lastDrawnShipWorldPos = new Map<string, { x: number; y: number; ms?: number; standIn?: boolean; flight?: boolean }>();
 export function drawnShipWorldPos(shipId: string): { x: number; y: number } | undefined {
   return lastDrawnShipWorldPos.get(shipId);
 }
-// ---- departure glide -------------------------------------------------
+// ---- departure hand-off ----------------------------------------------
 //
 // A ship used to SNAP onto its interplanetary arc the instant the burn
 // went live: one frame parked on its orbit ring, the next frame already
-// out on the trajectory. Render-only fix — for the first moment of a
-// transit the drawn position eases from wherever the ship was last
-// drawn (its orbit) onto the true trajectory position, so it reads as
-// leaving orbit rather than cutting to it. The authoritative position
-// is untouched; this only moves pixels.
-const DEPARTURE_GLIDE_MS = 1300;
-const departureGlide = new Map<string, { ms: number; x: number; y: number }>();
+// out on the trajectory. Render-only — the authoritative position is
+// untouched; this only moves pixels.
+//
+// HANDED OFF BY DISTANCE FLOWN, NOT BY TIME (Studio clip "three-way battle
+// of Earth", 2026-10-23). The course starts at the hull's TRUE parking
+// point, which at a close-up is inside the world's drawn disc, often on
+// the far side from where the battle layout or the orbit ring drew it. A
+// 1.3 s time blend (plus the layout glide, seeded at the old slot) dragged
+// the hull in a straight line from its slot to that point: across the
+// disc, which the "never through a disc" clamp then turned into a ~300 px
+// sweep round the rim; then the course carried it back out through the
+// battle it had just left. Now the gap between where it was drawn and its
+// course is an OFFSET that rides the course and closes as the course
+// carries the hull away from its world: the hull leaves its slot in the
+// direction of travel and merges onto its line over DEPARTURE_SPAN times
+// the gap. Closing that slowly can never turn it round (the offset's pull
+// is at most 1.5 / DEPARTURE_SPAN of its forward speed), and a hull whose
+// course has not started moving stays where it was drawn.
+export const DEPARTURE_SPAN = 2;
+/** Small gaps still close over at least this much flight (screen px). */
+export const DEPARTURE_MIN_SPAN_PX = 24;
+/** Only a hull drawn parked this recently leaves from where it was drawn. */
+const DEPARTURE_SEEN_MS = 600;
+/** A departure the client first sees this far into the flight is not
+ *  handed off: the hull is out there, not at its world. */
+const DEPARTURE_LATE_TICKS = 0.5;
+const departureHandoffs = new Map<string, {
+  key: string; ox: number; oy: number;
+  /** The course's place relative to its world when the hand-off began. */
+  rx0: number; ry0: number; u: number;
+}>();
 
-/** Ease the drawn position out of orbit for the first DEPARTURE_GLIDE_MS
- *  of a transit. Seeds from lastDrawnShipWorldPos, which on the first
- *  in-transit frame still holds the ship's ORBITAL position. */
-function departureBlend(
-  shipId: string,
-  target: { x: number; y: number },
-  nowMs: number,
-): { x: number; y: number } {
-  let g = departureGlide.get(shipId);
-  if (!g) {
-    const from = lastDrawnShipWorldPos.get(shipId);
-    // No prior draw (ship scrolled into view already flying) = no glide.
-    if (!from) { departureGlide.set(shipId, { ms: 0, x: target.x, y: target.y }); return target; }
-    g = { ms: nowMs, x: from.x, y: from.y };
-    departureGlide.set(shipId, g);
+/**
+ * The offset (world units) a hull that has just left its world is drawn
+ * at, off its placed course. `pos` is its placed point this frame, `raw`
+ * its true course point, `origin` the world it left (where it is now).
+ */
+function departureOffset(
+  shipId: string, key: string, pos: { x: number; y: number }, raw: { x: number; y: number },
+  origin: { x: number; y: number } | undefined, late: boolean, scale: number,
+): { x: number; y: number } | null {
+  let h = departureHandoffs.get(shipId);
+  if (h && h.key !== key) h = undefined;
+  const o = origin ?? { x: 0, y: 0 };
+  if (!h) {
+    // Its first frame in flight. Drawn parked a moment ago (its battle
+    // slot, its ring, its block): it leaves from there.
+    const was = late ? undefined : recentDrawnShipWorldPos(shipId, DEPARTURE_SEEN_MS, 'parked');
+    if (departureHandoffs.size > 2000) departureHandoffs.clear();
+    h = {
+      key, ox: was ? (was.x - pos.x) * scale : 0, oy: was ? (was.y - pos.y) * scale : 0,
+      rx0: raw.x - o.x, ry0: raw.y - o.y, u: 0,
+    };
+    departureHandoffs.set(shipId, h);
   }
-  if (g.ms === 0) return target;
-  const k = (nowMs - g.ms) / DEPARTURE_GLIDE_MS;
-  if (k >= 1) return target;
-  const e = 1 - Math.pow(1 - Math.max(0, k), 3);   // ease-out cubic
-  return { x: g.x + (target.x - g.x) * e, y: g.y + (target.y - g.y) * e };
+  if (h.ox === 0 && h.oy === 0) return null;
+  const gap = Math.hypot(h.ox, h.oy);
+  if (gap < 0.5) { h.ox = 0; h.oy = 0; return null; }
+  // How far the course has carried it from its world (screen px).
+  const flown = Math.hypot(raw.x - o.x - h.rx0, raw.y - o.y - h.ry0) * scale;
+  h.u = Math.max(h.u, flown / Math.max(DEPARTURE_MIN_SPAN_PX, DEPARTURE_SPAN * gap));
+  if (h.u >= 1) { h.ox = 0; h.oy = 0; return null; }
+  const w = 1 - h.u * h.u * (3 - 2 * h.u);
+  return { x: (h.ox * w) / scale, y: (h.oy * w) / scale };
 }
 
-/** Forget a ship's glide so a LATER departure animates again. Called
- *  from the parked-ship draw path. */
+/**
+ * A hull in flight that has just left its world, placed so it leaves from
+ * where it was drawn (see the hand-off notes above). Every caller that
+ * draws a hull in flight passes its placed samples through this (or
+ * settleTransitLayout, which does): the sprite, its hit-test and its
+ * selection ring then share the answer.
+ */
+export function departFromDrawn(
+  shipId: string, samples: Sample[], placed: Sample[], t: number, scale: number,
+  origin?: { x: number; y: number },
+): Sample[] {
+  if (!(scale > 0) || placed.length === 0 || samples.length === 0) return placed;
+  // One hand-off per leg, keyed by its start (a rendezvous's far end can
+  // move frame to frame with its leader's course; its start does not).
+  const key = String(samples[0].t);
+  const late = t - samples[0].t > DEPARTURE_LATE_TICKS;
+  const off = departureOffset(shipId, key, torchPositionFromSamples(placed, t),
+    torchPositionFromSamples(samples, t), origin, late, scale);
+  if (!off) return placed;
+  return placed.map(p => ({ t: p.t, x: p.x + off.x, y: p.y + off.y }));
+}
+
+/** Forget a ship's hand-off so a LATER departure is handed off too.
+ *  Called from the parked-ship draw path. */
 function clearDepartureGlide(shipId: string): void {
-  if (departureGlide.size > 2000) departureGlide.clear();
-  else departureGlide.delete(shipId);
+  departureHandoffs.delete(shipId);
 }
 
 /** What each hull looked like when it was last drawn: its sprite, drawn
@@ -4932,27 +5242,250 @@ export function drawnShipLook(shipId: string): HullLook | undefined {
   return lastDrawnLook.get(shipId);
 }
 
+/**
+ * A LANDING IS ONE MOTION (judges, Mega Destroyer clip, 2026-10-22: hulls
+ * "rotate ~90 degrees in one frame" and "halve in size" as they arrive).
+ * A hull in flight is drawn at its flight size, nose along its burn; the
+ * frame it parks it is drawn at its orbit's size (a battle's, which can be
+ * twice that at close zoom) and heading. It now eases from the one to the
+ * other over LANDING_MORPH_MS.
+ */
+const lastFlightLook = new Map<string, { size: number; heading: number; ms: number; plume: number; len: number }>();
+const landingMorphs = new Map<string, { size: number; heading: number; startMs: number; plume: number; len: number }>();
+export const LANDING_MORPH_MS = 1200;
+export function noteFlightLook(shipId: string, size: number, heading: number, nowMs: number, plume = 0, len = 1): void {
+  if (lastFlightLook.size > 2000) lastFlightLook.clear();
+  lastFlightLook.set(shipId, { size, heading, ms: nowMs, plume, len });
+}
+/** And the other way: a hull that has just LEFT orbit eases out of its
+ *  parked look into its flight look (judges, round 2: the Mega group went
+ *  from specks to giants, bigger than Jupiter, in the frame it lit off). */
+const lastParkedLook = new Map<string, { size: number; heading: number; ms: number; emerge?: boolean }>();
+const departureMorphs = new Map<string, { size: number; heading: number; startMs: number }>();
+export function noteParkedLook(shipId: string, size: number, heading: number, nowMs: number): void {
+  if (lastParkedLook.size > 2000) lastParkedLook.clear();
+  lastParkedLook.set(shipId, { size, heading, ms: nowMs });
+}
+/** A hull leaving a world that was drawn as a badge (no hull of its own on
+ *  screen) grows out of it from this share of its flight size. */
+export const EMERGE_SIZE = 0.2;
+/** And the other way round from a landing that folds into the badge: a
+ *  hull that leaves a world drawn too small to show its hulls had no
+ *  sprite last frame, so it grows out of the world instead of popping in
+ *  at full size (Studio clip "select and strike", 2026-10-23: eleven hulls
+ *  burst out of Ganymede in one frame). MapCanvas notes it on the frame it
+ *  sees the departure. */
+export function noteEmergence(shipId: string, nowMs: number): void {
+  if (lastParkedLook.size > 2000) lastParkedLook.clear();
+  lastParkedLook.set(shipId, { size: 0, heading: 0, ms: nowMs, emerge: true });
+}
+export function departureLook(shipId: string, size: number, heading: number, nowMs: number): { size: number; heading: number } {
+  const pl = lastParkedLook.get(shipId);
+  if (pl) {
+    lastParkedLook.delete(shipId);
+    if (nowMs >= pl.ms && nowMs - pl.ms < 500) {
+      if (departureMorphs.size > 500) departureMorphs.clear();
+      departureMorphs.set(shipId, pl.emerge
+        ? { size: size * EMERGE_SIZE, heading, startMs: nowMs }
+        : { size: pl.size, heading: pl.heading, startMs: nowMs });
+    }
+  }
+  const m = departureMorphs.get(shipId);
+  if (!m) return { size, heading };
+  const u = (nowMs - m.startMs) / LANDING_MORPH_MS;
+  if (!(u >= 0 && u < 1)) { departureMorphs.delete(shipId); return { size, heading }; }
+  const e = smootherStep(u);
+  return { size: m.size + (size - m.size) * e, heading: lerpAngle(m.heading, heading, e) };
+}
+
+/** The size and heading to draw a PARKED hull at, easing out of its
+ *  flight look if it has just landed. */
+export function landingLook(shipId: string, size: number, heading: number, nowMs: number): { size: number; heading: number; plume: number; len: number } {
+  const fl = lastFlightLook.get(shipId);
+  if (fl) {
+    lastFlightLook.delete(shipId);
+    if (nowMs >= fl.ms && nowMs - fl.ms < 500) {
+      if (landingMorphs.size > 500) landingMorphs.clear();
+      landingMorphs.set(shipId, { size: fl.size, heading: fl.heading, startMs: nowMs, plume: fl.plume, len: fl.len });
+    }
+  }
+  const m = landingMorphs.get(shipId);
+  if (!m) return { size, heading, plume: 0, len: 1 };
+  const u = (nowMs - m.startMs) / LANDING_MORPH_MS;
+  if (!(u >= 0 && u < 1)) { landingMorphs.delete(shipId); return { size, heading, plume: 0, len: 1 }; }
+  const e = smootherStep(u);
+  // The engine it came in on dies away over the first half of the ease
+  // (judges, round 2: every plume cut out in the frame of the landing).
+  const burn = Math.max(0, 1 - u * 2);
+  return { size: m.size + (size - m.size) * e, heading: lerpAngle(m.heading, heading, e), plume: m.plume * burn * burn, len: m.len };
+}
+
 /** Capital hulls drawn recently, by id. A Planet Killer's strike is a
  *  chronicle row about a WORLD; this is how the beam finds the ship that
  *  fired it instead of coming from nowhere. */
-const capitalSeen = new Map<string, { cls: string; ms: number }>();
-/** The capital hull of class `cls` drawn within `maxAgeMs` nearest the
- *  world point (wx, wy): where it was and how it was facing. */
+const capitalSeen = new Map<string, { cls: string; ms: number; t: number; heading: number; size: number }>();
+function noteCapital(ship: Ship, ctx: RenderContext, heading: number, size: number): void {
+  if (capitalSeen.size > 256) capitalSeen.clear();
+  capitalSeen.set(ship.id, { cls: ship.class, ms: performance.now(), t: ctx.t, heading, size });
+}
+/** Recent enough on EITHER clock: wall time, or game time. Wall time
+ *  alone failed twice over (Lorne, 2026-10-21: "the mega destroyer fires
+ *  from offscreen"). A world's death replays when you LOOK at it, which
+ *  can be after its killer has died; and while the Studio films, a frame
+ *  takes up to a second of real time, so 4 s was a handful of frames. */
+export const CAPITAL_SEEN_MAX_TICKS = 3;
+/** The capital hull of class `cls` drawn recently nearest the world
+ *  point (wx, wy): where it was and how it was facing. A hull that has
+ *  since died still answers from where it was last drawn, so the beam
+ *  that killed a world comes from the ship that fired it. */
 export function nearestDrawnCapital(
-  cls: string, wx: number, wy: number, maxAgeMs = 4000,
-): { x: number; y: number; heading: number; size: number } | undefined {
+  cls: string, wx: number, wy: number, maxAgeMs = 4000, nowTick?: number,
+): { x: number; y: number; heading: number; size: number; ageMs: number } | undefined {
   const now = performance.now();
-  let best: { x: number; y: number; heading: number; size: number } | undefined;
+  let best: { x: number; y: number; heading: number; size: number; ageMs: number } | undefined;
   let bestD = Infinity;
   for (const [id, seen] of capitalSeen) {
-    if (seen.cls !== cls || now - seen.ms > maxAgeMs) continue;
+    if (seen.cls !== cls) continue;
+    const fresh = now - seen.ms <= maxAgeMs
+      || (nowTick != null && Math.abs(nowTick - seen.t) <= CAPITAL_SEEN_MAX_TICKS);
+    if (!fresh) continue;
     const p = lastDrawnShipWorldPos.get(id);
-    const look = lastDrawnLook.get(id);
-    if (!p || !look) continue;
+    if (!p) continue;
     const d = Math.hypot(p.x - wx, p.y - wy);
-    if (d < bestD) { bestD = d; best = { x: p.x, y: p.y, heading: look.heading, size: look.size }; }
+    if (d < bestD) { bestD = d; best = { x: p.x, y: p.y, heading: seen.heading, size: seen.size, ageMs: now - seen.ms }; }
   }
   return best;
+}
+
+const battleHolds = new Map<string, { lx: number; ly: number; heading: number; ms: number }>();
+function heldInBattle(shipId: string, parentPos: { x: number; y: number }, nowMs: number):
+  { lx: number; ly: number; heading: number } | null {
+  const h = battleHolds.get(shipId);
+  if (h && nowMs >= h.ms && nowMs - h.ms <= 400) { h.ms = nowMs; return h; }
+  const was = recentDrawnShipWorldPos(shipId, 600);
+  if (!was) { battleHolds.delete(shipId); return null; }
+  if (battleHolds.size > 2000) battleHolds.clear();
+  const seed = { lx: was.x - parentPos.x, ly: was.y - parentPos.y, heading: drawnShipLook(shipId)?.heading ?? 0, ms: nowMs };
+  battleHolds.set(shipId, seed);
+  return seed;
+}
+
+/**
+ * Where a PARKED hull at a laid-out world is drawn (drawShip): world units
+ * from the world's centre, and its nose. `k` is the battle's scale (the
+ * world's drawn radius over the reference). `placed` is false while it is
+ * held waiting for a place. Null when the battle has nothing for it.
+ */
+export function battleLocalPos(
+  shipId: string, liveBattle: LiveBattle, k: number, parentPos: { x: number; y: number },
+  scale: number, nowM: number,
+  /** The render tick: a hull that has just landed may still be flying
+   *  the last of its way in (arrivalApproach). */
+  t?: number,
+): { lx: number; ly: number; heading: number; placed: boolean } | null {
+  if (!(k > 0)) return null;
+  // STILL COMING IN. It flew into its place in flight and is not there
+  // yet: it carries straight on along the same path, so the landing is
+  // not a stop. Its glide is held on it, and the layout takes over from
+  // exactly where the path ends (in its slot).
+  const cap = t != null && scale > 0 ? activeCapture(shipId, liveBattle.bodyId, t) : null;
+  const slot = cap ? battleSlotPx(liveBattle, shipId, nowM, k) : null;
+  if (cap && slot) {
+    const rel = captureAt(cap, t!, { x: slot.x / scale, y: slot.y / scale });
+    const cx = rel.x * scale - slot.fx, cy = rel.y * scale - slot.fy;
+    holdBattleGlide(shipId, Math.hypot(cx, cy) / k, Math.atan2(cy, cx) - battleDrift(liveBattle, nowM), nowM);
+    return { lx: rel.x, ly: rel.y, heading: slot.heading, placed: true };
+  }
+  if (!hasBattleGlide(shipId, nowM)) {
+    // Arriving (or newly in a fight): ease in from where it was drawn
+    // JUST NOW (in flight, or as an escort in its block). An older spot
+    // is somewhere it no longer is.
+    const was = recentDrawnShipWorldPos(shipId, 600);
+    if (was) {
+      const px = (was.x - parentPos.x) * scale / k;
+      const py = (was.y - parentPos.y) * scale / k;
+      seedBattleGlide(shipId, Math.hypot(px, py),
+        Math.atan2(py, px) - battleDrift(liveBattle, nowM), nowM);
+    }
+  }
+  const pl = battlePlacement(liveBattle, shipId, nowM);
+  if (!pl) {
+    // WAITING FOR A PLACE. A hull that just arrived is outside the cached
+    // layout until the roster dwell lets the world re-solve; it used to be
+    // drawn on its raw parking orbit meanwhile, a third spot between where
+    // it arrived and where it would go. It holds where it was drawn, fixed
+    // to the world, until its place exists, then glides from there.
+    const held = heldInBattle(shipId, parentPos, nowM);
+    return held ? { lx: held.lx, ly: held.ly, heading: held.heading, placed: false } : null;
+  }
+  const heading = pl.heading;
+  let px = pl.x * k, py = pl.y * k;
+  // A fleet's lead sits ahead of its block's centre (the layout
+  // places the centre, so the escorts astern have their room).
+  const blk = liveBattle.blocks.get(shipId);
+  if (blk) {
+    const c = Math.cos(heading), s = Math.sin(heading);
+    px += (blk.flagX * c - blk.flagY * s) * k;
+    py += (blk.flagX * s + blk.flagY * c) * k;
+  }
+  return { lx: px / scale, ly: py / scale, heading, placed: true };
+}
+
+/**
+ * The units a world's layout places (battleLayoutLive): every hull at the
+ * world that is drawn on its own, a fleet as its lead with the escorts in
+ * its block. MapCanvas's formation pass builds each world's roster with
+ * this. `arriving` names the hulls still in flight to it (see
+ * arrivalApproach.worldRosters).
+ */
+export function battleUnitsFor(
+  atBody: readonly Ship[], bodyId: string,
+  grouping: {
+    collapsed: ReadonlySet<string>;
+    markerByLeadShip: ReadonlyMap<string, { escortIds: readonly string[] }>;
+  },
+  shipById: ReadonlyMap<string, Ship>,
+  arriving?: ReadonlySet<string>,
+): BattleUnit[] {
+  const destroyerPx = shipIconSize('destroyer', false);
+  const units: BattleUnit[] = [];
+  // Factions here whose loose hulls come from more than one yard:
+  // those hulls clump by yard (below), so a squadron in from Ceres
+  // and the home guard read as two groups, not one blue blob.
+  const yardsOf = new Map<string, Set<string>>();
+  for (const s of atBody) {
+    if (s.fleetId) continue;
+    let ys = yardsOf.get(s.ownedBy);
+    if (!ys) { ys = new Set(); yardsOf.set(s.ownedBy, ys); }
+    ys.add(s.homeBodyId ?? bodyId);
+  }
+  for (const s of atBody) {
+    // Escorts ride in their marker's block; the lead stands for them.
+    if (grouping.collapsed.has(s.id)) continue;
+    const marker = grouping.markerByLeadShip.get(s.id);
+    const escortRel = marker?.escortIds.map(id => {
+      const e = shipById.get(id);
+      return e ? Math.min(1, shipIconSize(e.class, false) / destroyerPx) : 1;
+    });
+    units.push({
+      id: s.id,
+      owner: s.ownedBy,
+      // Loose hulls hold together BY YARD when their faction has
+      // hulls here from more than one: a squadron in from Ceres
+      // stays a squadron beside Earth's own defenders, which hold
+      // together too (judges, Mega Destroyer clip, 2026-10-22:
+      // "three groups read as two"; with only the incomers
+      // grouped, the scattered locals still covered them). One
+      // yard: loose, as ever.
+      group: s.fleetId ?? ((yardsOf.get(s.ownedBy)?.size ?? 0) > 1 ? `yard:${s.homeBodyId ?? bodyId}` : null),
+      sizePx: shipIconSize(s.class, false),
+      armed: (s.damagePerTick ?? getShipClass(s.class).damagePerTick) > 0,
+      escortRel: escortRel && escortRel.length > 0 ? escortRel : undefined,
+      escortIds: marker && marker.escortIds.length > 0 ? [...marker.escortIds] : undefined,
+      ...(arriving?.has(s.id) ? { arriving: true } : {}),
+    });
+  }
+  return units;
 }
 
 /** HULL_FLASH_MS after a hit the struck hull flashes white: the sprite
@@ -4975,11 +5508,604 @@ function hullFlashHere(
   g.globalAlpha = prevA;
 }
 
-function recordDrawnShipWorldPos(shipId: string, x: number, y: number): void {
+// ---- continuity guard ----------------------------------------------------
+//
+// Lorne, 2026-10-21: ships "jumping around a lot in space, I'd like that to
+// happen 0% of the time". Measured (film --trace, scripts/jump-check.py),
+// the jumps had many sources, every one a hull's position being re-derived
+// from data that changed under it: the server's plan replacing the local
+// one, a match switching to its joined leg, a hull landing and being laid
+// out, a fleet changing flagship. Fixing each source still leaves the next
+// one. So this is the last word on where a hull is DRAWN: compared with
+// where its own motion was taking it, a new position far off that line (8
+// px, and more than its own normal step) is absorbed into an offset that
+// fades over CONTINUITY_TAU_MS. Smooth motion and hard burns pass through
+// untouched; a teleport becomes a short slide. Keyed by ship, so it holds
+// across the switch between the in-flight and parked draw paths.
+//
+// A PARKED hull rides its world, so its motion is predicted in the world's
+// frame (`origin`, the parent's position): the orbit it is carried round
+// is curved, and predicted as a straight line it read as a "jump" every
+// frame once the world moved fast on screen (a close-up in a time-lapse
+// replay). Each one was absorbed, the offset grew without bound, and a
+// whole fleet slid off the screen away from the moon it was fighting at.
+// And however it arises, an offset is a short slide: past
+// CONTINUITY_MAX_SLIDE_PX it is dropped and the hull is drawn where it is.
+const continuity = new Map<string, {
+  x: number; y: number; vx: number; vy: number; ms: number;
+  /** The offset being closed (screen px): o0 at startMs, gone at startMs + dur. */
+  o0x: number; o0y: number; startMs: number; dur: number;
+  /** Frames running caught as a jump (0 = the last frame was not). */
+  caught?: number;
+  /** The frame the hull moves in (its world), and where it was. */
+  oid: string | null; ax: number; ay: number;
+  /** That frame's own velocity (world units per ms), last measured. */
+  fvx?: number; fvy?: number;
+  /** vx/vy are still in world terms (the frame it landed). */
+  worldV?: boolean;
+  /** Last frame's change of motion, screen px per ms^2 (a jump's test). */
+  accPx?: number;
+  /** This frame's answer, for a second call in the same frame. */
+  lx?: number; ly?: number;
+}>();
+/** How long a caught jump takes to close, by size (screen px). The close
+ *  is a quintic ease (smootherstep: zero speed and acceleration at both
+ *  ends). An exponential and then a spring both kicked on the first
+ *  frame in proportion to the jump, so a big catch still left as a lurch. */
+export const CONTINUITY_MIN_MS = 300;
+export const CONTINUITY_MAX_MS = 900;
+/** Kept for callers sizing a test run: the slowest close is over by then. */
+export const CONTINUITY_TAU_MS = CONTINUITY_MAX_MS / 5;
+const smootherStep = (u: number) => { const k = Math.max(0, Math.min(1, u)); return k * k * k * (k * (k * 6 - 15) + 10); };
+/** A hull not drawn for this long starts fresh (it was off screen). */
+const CONTINUITY_GAP_MS = 250;
+/** How far caught jumps may stack up before the older ones are dropped. */
+export const CONTINUITY_MAX_SLIDE_PX = 400;
+/** A second jump on the very next frame is caught only past this. */
+export const CONTINUITY_BIG_PX = 60;
+
+/** `x, y` is where the hull truly is this frame; the answer is where to
+ *  draw it. Jumps are found in the TRUE positions (the drawn ones move by
+ *  the fading offset too, and reading that as motion re-absorbed it every
+ *  frame, so the offset never cleared). */
+export function continuousDrawnPos(
+  shipId: string, x: number, y: number, scale: number, nowMs: number,
+  /** The frame the hull moves in: its world's position for a parked hull
+   *  (and that world's id); omitted for a hull in flight. */
+  origin?: { x: number; y: number; id: string },
+): { x: number; y: number } {
+  const c = continuity.get(shipId);
+  // ONE ANSWER PER FRAME. Two draw paths once both guarded escorts
+  // (2026-10-22): the second call saw no time pass, reset, and every escort
+  // lost its history each frame, so in the Mega Destroyer take loose
+  // escorts in orbit jumped ~400 px in one frame. A repeat in the same
+  // frame now gets that frame's answer.
+  if (c && nowMs === c.ms && c.lx != null && c.ly != null) return { x: c.lx, y: c.ly };
+  const oid = origin?.id ?? null, axNow = origin?.x ?? 0, ayNow = origin?.y ?? 0;
+  if (!c || nowMs < c.ms || nowMs - c.ms > CONTINUITY_GAP_MS || !(scale > 0)) {
+    if (continuity.size > 3000) continuity.clear();
+    continuity.set(shipId, { x, y, vx: 0, vy: 0, ms: nowMs, o0x: 0, o0y: 0, startMs: nowMs, dur: 0,
+      oid, ax: axNow, ay: ayNow, lx: x, ly: y });
+    return { x, y };
+  }
+  const dt = nowMs - c.ms;
+  // A new frame of reference (landing, a new world): rebase, so the
+  // switch itself is not motion.
+  // Its velocity belonged to the old frame too: a hull landing kept its
+  // flight speed, predicted itself sailing on past its world, and its
+  // next step (being laid out in orbit) went through as motion. So the
+  // switch's own frame is predicted in WORLD terms (its velocity in the
+  // old frame plus that frame's own), and from the next frame on it is
+  // at rest in the new one. Zeroed outright, a hull landing on a moon
+  // that moves 60 px a frame (strike4 take, a close-up of Europa) was
+  // predicted to stop dead in space, the moon carrying its new place on
+  // was caught as a 60 px jump, and every arrival lagged a frame and
+  // slid back.
+  const rebased = c.oid !== oid;
+  if (rebased) {
+    if (c.oid != null) { c.vx += c.fvx ?? 0; c.vy += c.fvy ?? 0; }
+    c.oid = oid; c.ax = axNow; c.ay = ayNow; c.fvx = 0; c.fvy = 0;
+  } else if (oid != null && dt > 0) {
+    c.fvx = (axNow - c.ax) / dt; c.fvy = (ayNow - c.ay) / dt;
+    // The frame after a landing: its velocity was kept in world terms;
+    // now the world's own is known, it becomes its velocity on the world.
+    if (c.worldV) { c.vx -= c.fvx; c.vy -= c.fvy; c.worldV = false; }
+  }
+  // The offset still left to close, on its ease. Held in SCREEN px: a slide
+  // is something seen, and held in world units a zoom-in magnified it
+  // (a 100 px catch at map zoom was 500 px by the close-up, then dropped).
+  const left = c.dur > 0 ? 1 - smootherStep((nowMs - c.startMs) / c.dur) : 0;
+  let oxPx = c.o0x * left, oyPx = c.o0y * left;
+  // Where its own (true) motion was taking it, riding its frame.
+  const carryX = axNow - c.ax, carryY = ayNow - c.ay;
+  const px = c.x + carryX + c.vx * dt, py = c.y + carryY + c.vy * dt;
+  const ex = x - px, ey = y - py;
+  const errPx = Math.hypot(ex, ey) * scale;
+  const stepPx = Math.hypot(c.vx, c.vy) * dt * scale;
+  // A JUMP IS OUT OF LINE WITH THE FRAMES AROUND IT (jump-check.py's own
+  // test), not merely a big change on a slow hull. A hull braking in and
+  // turning for its slot changes its velocity by more than 0.6 of a slow
+  // step every frame, smoothly; caught for it, the head-on arrival into a
+  // moon was held on its old line, ran 30 px inside its floor toward the
+  // moon, and slid back. So a change no bigger than twice the one the frame
+  // before is its motion, not a jump. (In SCREEN px per ms^2, so a zoom or
+  // an uneven frame does not read as one.)
+  const accPx = dt > 0 ? errPx / (dt * dt) : 0;
+  const steady = c.accPx != null && accPx <= 2 * c.accPx;
+  const off = errPx > Math.max(8, 0.6 * stepPx) && !steady;
+  // A JUMP IS ONE FRAME. A teleport moves the hull once and its motion
+  // carries on as before; off the prediction two frames running, the
+  // motion itself changed (a hull rounding its world in orbit, a formation
+  // slot held in screen px through a zoom), so take the new motion. Caught
+  // every frame instead, the velocity froze at the first catch, every
+  // later frame was "a jump", the offset stacked to the cap and dropped:
+  // loose escorts in the Mega Destroyer take popped ~390 px every few
+  // frames in Earth orbit and through every zoom (2026-10-22).
+  // ...unless the second is a jump too: far off (CONTINUITY_BIG_PX) and
+  // far off its own step. A hull landing and then being re-slotted in the
+  // orbit layout teleported twice on consecutive frames, and the second
+  // went through whole (~1,000 px at a close-up, measured frame to frame).
+  // Never more than two running: a third is the motion itself.
+  const n = c.caught ?? 0;
+  // A STOP IS NOT A JUMP. A hull that comes to rest (a missile at its
+  // meeting, anything held on its next-tick spot while the server is late)
+  // is off its prediction by its whole step, so it was "caught": drawn a
+  // frame on past where it stopped and then slid back over half a second
+  // (salvo intercept clip, f156-f172: both missiles flew through each
+  // other, 383 px, and backed up onto the meeting). A teleport moves the
+  // hull further than its motion explains; one that barely moved has not
+  // jumped anywhere.
+  const truePx = Math.hypot(x - c.x - carryX, y - c.y - carryY) * scale;
+  const stopped = stepPx > 0 && truePx <= 0.25 * stepPx;
+  const jumped = off && !stopped && (n === 0 || (n < 2 && errPx > CONTINUITY_BIG_PX && errPx > 3 * stepPx));
+  c.caught = jumped ? n + 1 : 0;
+  if (jumped) {
+    // Absorb it: drawn stays on the line it was on, then eases across,
+    // longer for a bigger catch. Whatever was still closing joins it.
+    oxPx -= ex * scale; oyPx -= ey * scale;
+    // Catches never STACK: one jump of any size slides, but an offset grown
+    // past the biggest single catch (and past CONTINUITY_MAX_SLIDE_PX) is a
+    // hull drawn somewhere it is not, so keep only this frame's catch.
+    if (Math.hypot(oxPx, oyPx) > Math.max(CONTINUITY_MAX_SLIDE_PX, errPx)) { oxPx = -ex * scale; oyPx = -ey * scale; }
+    // Nor further off than the hull truly moved this frame (a catch
+    // measured against a motion just taken from a wild step is not a slide).
+    const movedPx = Math.hypot(x - c.x - carryX, y - c.y - carryY) * scale;
+    const capPx = Math.max(CONTINUITY_MAX_SLIDE_PX, movedPx), oPx = Math.hypot(oxPx, oyPx);
+    if (oPx > capPx) { oxPx *= capPx / oPx; oyPx *= capPx / oPx; }
+    c.o0x = oxPx; c.o0y = oyPx; c.startMs = nowMs;
+    c.dur = Math.min(CONTINUITY_MAX_MS, CONTINUITY_MIN_MS + Math.hypot(oxPx, oyPx) * 0.6);
+  } else {
+    c.vx = (x - c.x - carryX) / dt;
+    c.vy = (y - c.y - carryY) / dt;
+  }
+  // Its own acceleration this frame, for the next frame's test (a caught
+  // jump is not its motion; nor is the frame it switched worlds).
+  c.accPx = jumped || rebased ? c.accPx : accPx;
+  // Just landed in a world's frame: its motion there is not known until
+  // the world's is (next frame), so it is held in world terms till then.
+  // Taken to be at rest on the world, a hull still flying into its slot
+  // after landing (arrivalApproach) was caught as a jump and stopped
+  // dead for a frame.
+  if (rebased && oid != null) {
+    if (jumped) { c.vx = 0; c.vy = 0; } else c.worldV = true;
+  }
+  // A jump keeps the motion it had; the true position moves on regardless.
+  c.x = x; c.y = y; c.ax = axNow; c.ay = ayNow;
+  c.ms = nowMs;
+  c.lx = x + oxPx / scale; c.ly = y + oyPx / scale;
+  return { x: c.lx, y: c.ly };
+}
+
+/** `role`: drawn parked (on its ring, in a battle, in a block at a world)
+ *  or in flight. A departure is handed off only from a parked draw. */
+export function recordDrawnShipWorldPos(shipId: string, x: number, y: number, role: 'parked' | 'flight' = 'parked'): void {
   if (lastDrawnShipWorldPos.size > 2000) lastDrawnShipWorldPos.clear();
+  const ms = performance.now();
+  const flight = role === 'flight';
   const e = lastDrawnShipWorldPos.get(shipId);
-  if (e) { e.x = x; e.y = y; }
-  else lastDrawnShipWorldPos.set(shipId, { x, y });
+  if (e) { e.x = x; e.y = y; e.ms = ms; e.standIn = false; e.flight = flight; }
+  else lastDrawnShipWorldPos.set(shipId, { x, y, ms, flight });
+}
+
+/** Every hull drawn since `sinceMs`, where (world). The Studio's jump
+ *  trace (studio.mjs film --trace) reads this once a frame. */
+export function drawnShipsSince(sinceMs: number): Array<[string, number, number]> {
+  const out: Array<[string, number, number]> = [];
+  for (const [id, e] of lastDrawnShipWorldPos) {
+    // A stand-in (a folded hull given its flagship's spot) is not drawn.
+    if (e.ms != null && e.ms >= sinceMs && !e.standIn) out.push([id, Math.round(e.x * 100) / 100, Math.round(e.y * 100) / 100]);
+  }
+  return out;
+}
+
+/** Where a hull was drawn, only if it was drawn just now (any role: on
+ *  its own line, or as an escort in its fleet's block). */
+/**
+ * A CUT (the match film). Where each hull was drawn in the shot before is
+ * no guide to where it is in this one: a hull landing at the new world was
+ * seeded from its speck in a wide time-lapse thousands of units away, and
+ * swept across the close-up in a 1,300 px-a-frame arc. Forget it all.
+ */
+export function forgetDrawnShips(): void {
+  continuity.clear();
+  lastDrawnShipWorldPos.clear();
+  departureHandoffs.clear();
+}
+
+export function recentDrawnShipWorldPos(
+  shipId: string, maxAgeMs = 500, role?: 'parked' | 'flight',
+): { x: number; y: number } | undefined {
+  const e = lastDrawnShipWorldPos.get(shipId);
+  if (!e || e.ms == null || performance.now() - e.ms > maxAgeMs) return undefined;
+  // A role asked for: a real draw in that role (a stand-in was not drawn).
+  if (role && (e.standIn || (role === 'flight') !== !!e.flight)) return undefined;
+  return e;
+}
+
+// ---- layout glide ------------------------------------------------------
+//
+// Lorne, 2026-10-21: the ships "pop around". Every in-flight layout
+// (formation arrowheads, fleets in company, a fleet's escort block) was
+// solved from scratch every frame, so anything that changed the solution
+// moved hulls in ONE frame: a death re-slots the arrowhead behind it, a
+// flagship's death hands the fleet to another hull, a match pulls a fleet
+// abreast. A hull's LAYOUT OFFSET (where it is drawn, minus where it truly
+// is, in screen px so zooming never lags) now eases to the new answer
+// instead. The true position is never touched: only the offset glides.
+const layoutGlides = new Map<string, { x: number; y: number; ms: number }>();
+/** Time constant of the glide: ~95% of the way in three of these. */
+export const LAYOUT_GLIDE_TAU_MS = 160;
+
+/** Ease `key`'s offset toward `target` (px). `seed` starts a glide that
+ *  has no history yet from somewhere other than the target (a hull that
+ *  was just drawn in another role). */
+export function glideLayout(
+  key: string, target: { x: number; y: number }, nowMs: number, seed?: { x: number; y: number },
+): { x: number; y: number } {
+  let g = layoutGlides.get(key);
+  if (!g || nowMs < g.ms || nowMs - g.ms > 1500) {
+    if (layoutGlides.size > 4000) {
+      for (const [k, v] of layoutGlides) if (nowMs - v.ms > 5000) layoutGlides.delete(k);
+    }
+    const s0 = seed ?? target;
+    g = { x: s0.x, y: s0.y, ms: nowMs };
+    layoutGlides.set(key, g);
+    return { x: g.x, y: g.y };
+  }
+  const dt = Math.min(250, nowMs - g.ms);
+  const k = 1 - Math.exp(-dt / LAYOUT_GLIDE_TAU_MS);
+  g.x += (target.x - g.x) * k;
+  g.y += (target.y - g.y) * k;
+  g.ms = nowMs;
+  return { x: g.x, y: g.y };
+}
+
+type Sample = { t: number; x: number; y: number };
+
+/**
+ * A hull in flight: its formation/company place (`placed`, off its true
+ * course `samples`), with the layout offset gliding (glideLayout) rather
+ * than popping when the layout changes, then handed off from where it was
+ * drawn if it has just left its world (departFromDrawn).
+ *
+ * The glide is seeded from where this hull was drawn a moment ago IN
+ * FLIGHT, so an escort promoted to flagship slides out of its slot
+ * instead of jumping. Not from where it was drawn PARKED: that is the
+ * departure hand-off's to close, by distance flown. Seeded from a parked
+ * slot, the glide closed it in half a second in a straight line, across
+ * the world (the Lunar Wing). `emergeFrom`: the world it is leaving, when
+ * that world was drawn as a badge, so the formation opens out of it.
+ */
+export function settleTransitLayout(
+  shipId: string, samples: Sample[], placed: Sample[], t: number, scale: number, nowMs: number,
+  emergeFrom?: { x: number; y: number }, origin?: { x: number; y: number },
+): Sample[] {
+  const raw = torchPositionFromSamples(samples, t);
+  const lay = torchPositionFromSamples(placed, t);
+  const target = { x: (lay.x - raw.x) * scale, y: (lay.y - raw.y) * scale };
+  const was = recentDrawnShipWorldPos(shipId, 500, 'flight') ?? emergeFrom;
+  const eased = glideLayout(`tr:${shipId}`, target, nowMs,
+    was ? { x: (was.x - raw.x) * scale, y: (was.y - raw.y) * scale } : undefined);
+  const ddx = (eased.x - target.x) / scale, ddy = (eased.y - target.y) / scale;
+  const glided = Math.abs(ddx) * scale > 0.05 || Math.abs(ddy) * scale > 0.05
+    ? placed.map(p => ({ t: p.t, x: p.x + ddx, y: p.y + ddy }))
+    : placed;
+  return departFromDrawn(shipId, samples, glided, t, scale, origin ?? emergeFrom);
+}
+
+/**
+ * NEVER THROUGH A WORLD'S DRAWN DISC. A course runs from the true parking
+ * orbit to the destination's true CENTRE, and at map zoom a world is drawn
+ * many times its true size. Inside a disc (radius R, world units) a point
+ * rides the disc's edge on its course side: behind the arrival, ahead of
+ * the departure.
+ */
+export function keepOffDrawnDiscs(
+  placed: Sample[],
+  discs: Array<{ at: (t: number) => { x: number; y: number }; R: number; isDest: boolean }>,
+  /** The hull's own true course (unplaced samples). With it, an ARRIVAL
+   *  keeps its place in its formation: the course is held off the
+   *  destination disc and the hull's offset from it (its slot, its glide)
+   *  is carried on. Without it, every point is pushed out on its own ray. */
+  course?: Sample[],
+): Sample[] {
+  let out = placed;
+  for (const disc of discs) {
+    const R = disc.R;
+    const first = out[0], last = out[out.length - 1];
+    const cl = Math.hypot(last.x - first.x, last.y - first.y) || 1;
+    const side = disc.isDest
+      ? { x: (first.x - last.x) / cl, y: (first.y - last.y) / cl }
+      : { x: (last.x - first.x) / cl, y: (last.y - first.y) / cl };
+    // AT THE CENTRE, THE BEARING IT LAST HAD. A course ends on its world's
+    // centre (at the arrival tick the world reaches the intercept), where
+    // there is no bearing; this used to fall back to the approach side, so
+    // the hull riding the edge on the far side (where a moon running on
+    // under it had carried it) snapped across, and was lerped there in a
+    // chord through the disc (strike4 take, f366-f372: ~90 px jumps, then
+    // the fleet slid across Europa). Samples are in time order.
+    let lastU: { x: number; y: number } | null = null;
+    const onEdge = (c: { x: number; y: number }, x: number, y: number, track = false) => {
+      const dx = x - c.x, dy = y - c.y;
+      const d = Math.hypot(dx, dy);
+      let u: { x: number; y: number };
+      if (d > R * 0.05) {
+        u = { x: dx / d, y: dy / d };
+        if (track) lastU = u;
+      } else {
+        u = (track && lastU) || side;
+      }
+      return { x: c.x + u.x * R, y: c.y + u.y * R };
+    };
+    // A FORMATION ARRIVES AS A FORMATION (judges, "Select and strike",
+    // 2026-10-23: 11 hulls in at Europa drawn as ~4, three to a spot). A
+    // formation is the lead's course plus a fixed offset per slot, and the
+    // course runs into the world's centre: pushed out on its own ray, each
+    // slot ended where its OFFSET pointed, so slots straight astern of one
+    // another (and the arrowhead's parallel diagonals) landed on one point,
+    // were held there through the roster dwell, and glided off together.
+    const carry = disc.isDest && course && course.length >= 2 ? course : null;
+    out = out.map(p => {
+      const c = disc.at(p.t);
+      if (carry) {
+        const q = torchPositionFromSamples(carry, p.t);
+        const qIn = Math.hypot(q.x - c.x, q.y - c.y) < R;
+        if (qIn) {
+          const e = onEdge(c, q.x, q.y, true);
+          const x = e.x + (p.x - q.x), y = e.y + (p.y - q.y);
+          if (Math.hypot(x - c.x, y - c.y) >= R) return { t: p.t, x, y };
+          const f = onEdge(c, x, y);
+          return { t: p.t, x: f.x, y: f.y };
+        }
+      }
+      if (Math.hypot(p.x - c.x, p.y - c.y) >= R) return p;
+      const e = onEdge(c, p.x, p.y, disc.isDest && !carry);
+      return { t: p.t, x: e.x, y: e.y };
+    });
+  }
+  return out;
+}
+
+/**
+ * WHERE AN ARRIVAL STOPS SHORT OF ITS WORLD, px from the world's centre:
+ * the radius keepOffDrawnDiscs holds a hull's DESTINATION disc at. Outside
+ * the disc (with the old 10 px of air) AND outside the fight already in
+ * orbit there (`battle`, its outermost hull's edge), plus the hull's own
+ * reach toward the world (`ownReachPx`, flightReachPx).
+ *
+ * A braking hull flies nose-out with its engine and its escort block
+ * toward the world. Held at the disc's edge plus 10 px, a fleet arriving
+ * at the Sun had its block laid over the disc and its plume across it
+ * (Dyson Sphere clip, f392-f399, f540, f630: "ships flying out of the
+ * Sun"), was held there through the roster dwell, and sat over the hulls
+ * already in orbit. It now brakes to a stop outside the ring, then glides
+ * into its slot round the outside (battlePlacement eases radius and angle
+ * together, never a straight line across the world).
+ */
+export function arrivalStandoffPx(
+  drawnRadiusPx: number, battle: LiveBattle | undefined, ownReachPx: number,
+): number {
+  const fight = battle ? battle.outerR * battleScale(battle, drawnRadiusPx) : 0;
+  return Math.max(drawnRadiusPx + 10, fight) + Math.max(0, ownReachPx);
+}
+
+/** A world at either end of a hull's leg, as the in-flight draw sees it. */
+export interface ApproachEnd {
+  id: string;
+  /** Its centre at tick t (world). */
+  at: (t: number) => { x: number; y: number };
+  /** Its drawn radius, px. */
+  drawnR: number;
+  /** The world the leg goes to (else the one it left). */
+  isDest: boolean;
+  /** The layout at that world, when it has one. */
+  battle?: LiveBattle;
+}
+
+/**
+ * A hull in flight, held off the worlds at the ends of its leg: the call
+ * MapCanvas makes for every hull in flight once its formation place is
+ * settled (settleTransitLayout). `placed` is that place, `course` its own
+ * true course, `reachPx` how far it reaches toward a world it brakes into
+ * (flightReachPx).
+ */
+export function approachWorlds(
+  shipId: string, placed: Sample[], course: Sample[] | undefined, ends: ApproachEnd[],
+  plan: { startTick: number; arriveTick: number }, scale: number, reachPx: number,
+  /** The clock the parked draw turns the battle wheel by (ctx.nowMs). */
+  nowMs: number,
+): Sample[] {
+  // ITS PLACE IS READY: fly into it (arrivalApproach). The world's layout
+  // took this hull in while it was still in flight (worldRosters), so the
+  // place it will be drawn at once it lands is known now.
+  const dest = ends.find(e => e.isDest);
+  const k = dest?.battle ? battleScale(dest.battle, dest.drawnR) : 0;
+  const slot = dest?.battle && k > 0 && scale > 0 ? battleSlotPx(dest.battle, shipId, nowMs, k) : null;
+  if (dest && slot && course && course.length >= 2 && plan.arriveTick > plan.startTick) {
+    const others = ends.filter(e => e !== dest);
+    const off = others.length ? keepOffDrawnDiscs(placed, others.map(e => ({
+      at: e.at, R: (e.drawnR + 10) / scale, isDest: false,
+    }))) : placed;
+    const cap = planCapture(dest.id, off, course, dest.at,
+      arrivalStandoffPx(dest.drawnR, undefined, reachPx) / scale, plan.startTick, plan.arriveTick);
+    noteCapture(shipId, cap);
+    if (cap) return captureSamples(cap, dest.at, { x: slot.x / scale, y: slot.y / scale });
+  } else {
+    noteCapture(shipId, null);
+  }
+  return keepOffDrawnDiscs(placed, ends.map(e => ({
+    at: e.at,
+    R: (e.isDest ? arrivalStandoffPx(e.drawnR, e.battle, reachPx) : e.drawnR + 10) / Math.max(1e-9, scale),
+    isDest: e.isDest,
+  })), course);
+}
+
+/** How far a hull in flight reaches from its own centre, px: half its
+ *  sprite, or for a fleet's flagship its whole escort block (drawn astern
+ *  of it, which is toward the world while it brakes). `escortRel` as for
+ *  fleetBlockGeometry, which measures the block the map draws. */
+export function flightReachPx(sizePx: number, escortRel?: readonly number[]): number {
+  if (!escortRel || escortRel.length === 0) return sizePx / 2 + 2;
+  const b = fleetBlockGeometry(sizePx, [...escortRel]);
+  // clearR is CLEAR_FRAC of the sprites; their art reaches a little past.
+  return Math.max(sizePx / 2, Math.hypot(b.flagX, b.flagY) + b.clearR * 1.2) + 2;
+}
+
+/**
+ * NO ENGINE PAINTED OVER A WORLD'S DISC. A hull braking into a world, or
+ * pushing off one, points its engine at it, and the plume was laid across
+ * the drawn disc (the Dyson Sphere clip: "ships flying out of the Sun").
+ * `discs` are the drawn discs (canvas px) of the worlds the hull is
+ * leaving or reaching (plumeDiscsOf); the plume's `reach` from (x, y)
+ * picks the ones it could touch, and `draw` runs clipped to outside them,
+ * so the flame stops at the limb as if the world stood in front of it.
+ */
+export function drawOffDiscs(
+  g: CanvasRenderingContext2D,
+  discs: ReadonlyArray<{ x: number; y: number; r: number }>,
+  x: number, y: number, reach: number,
+  draw: () => void,
+): void {
+  const near = discs.filter(d => d.r > 0 && Math.hypot(d.x - x, d.y - y) < d.r + reach);
+  if (near.length === 0) { draw(); return; }
+  g.save();
+  const m = reach * 1.25 + 4;
+  for (const d of near) {
+    g.beginPath();
+    g.rect(x - m, y - m, m * 2, m * 2);
+    g.arc(d.x, d.y, d.r, 0, Math.PI * 2);
+    g.clip('evenodd');
+  }
+  draw();
+  g.restore();
+}
+
+/** A plume reaches about this many hull sizes from the hull's centre
+ *  (fxPrimitives drawThrustExhaust: 1.35 x class length up to 1.5, x 1.4
+ *  on the hard brake, x 1.3 hot, from the stern). */
+export const PLUME_REACH_SIZES = 5;
+
+/** The drawn discs (canvas px) of the worlds a hull is leaving and
+ *  reaching: its transfer's target and the world it is parked at or left. */
+export function plumeDiscsOf(ship: Ship, ctx: RenderContext): Array<{ x: number; y: number; r: number }> {
+  const ids = [ship.transit?.currentTransfer?.targetBodyId, ship.orbit?.parentBodyId];
+  const out: Array<{ x: number; y: number; r: number }> = [];
+  const byId = bodyByIdOf(ctx.bodies);
+  for (let i = 0; i < ids.length; i++) {
+    const id = ids[i];
+    if (!id || ids.indexOf(id) !== i) continue;
+    const b = byId.get(id);
+    if (!b) continue;
+    const w = bodyPosition(b, ctx.t, ctx.bodies);
+    const at = worldToCanvas(w.x, w.y, ctx);
+    out.push({ x: at.x, y: at.y, r: drawnRadiusOf(ctx.presentation, b, ctx.camera.scale) });
+  }
+  return out;
+}
+
+/**
+ * Where a hull in flight is DRAWN this frame (world): on its placed
+ * samples at `t` (already handed off from where it was parked, see
+ * departFromDrawn), through the continuity guard. The answer is recorded
+ * as the hull's drawn spot.
+ */
+export function transitDrawnPos(
+  shipId: string, samples: Sample[] | undefined, fallback: { x: number; y: number },
+  t: number, scale: number, nowMs: number,
+): { x: number; y: number } {
+  const truePos = samples && samples.length > 0 ? torchPositionFromSamples(samples, t) : fallback;
+  // The continuity guard has the last word on where a hull is drawn.
+  const kept = continuousDrawnPos(shipId, truePos.x, truePos.y, scale, nowMs);
+  recordDrawnShipWorldPos(shipId, kept.x, kept.y, 'flight');
+  return kept;
+}
+
+/** Where a hull in flight is for a click, a selection ring, its fleet's
+ *  block and its bolts: where it was DRAWN this frame. Its placed point is
+ *  only the fallback (not drawn yet): the sprite can be off it, through
+ *  the continuity guard, and the rings stood at the empty formation slots
+ *  while the hulls slid out of Ganymede (Studio clip "select and strike"). */
+export function transitHitWorldPos(shipId: string, placed: Sample[], t: number): { x: number; y: number } {
+  const e = lastDrawnShipWorldPos.get(shipId);
+  if (e && e.flight && !e.standIn && e.ms != null && performance.now() - e.ms <= 250) return { x: e.x, y: e.y };
+  return torchPositionFromSamples(placed, t);
+}
+
+// ---- settle glide --------------------------------------------------------
+//
+// A COLONY SHIP BECOMES ITS STATION IN ONE MOTION (2026-10-23, the colony
+// clip). Settling on arrival parks the hull and founds the station in the
+// same server tick (room.js settleOnArrival), so the next /state has no
+// ship and a new station: the hull vanished where it was last drawn, still
+// on its way in, and the station appeared in its own orbit slot (~300 px
+// away at a close-up). The deploy button does the same from orbit. The
+// arrival glide every other ship gets never runs, because there is no ship
+// left to glide. So the NEW station starts where the hull was drawn and
+// eases into its slot, riding its world while it does.
+export const SETTLE_GLIDE_MS = 1200;
+const settleGlides = new Map<string, { dx: number; dy: number; startMs: number }>();
+
+/** Start a station's glide from the hull it was founded by. `from` is
+ *  where the hull was drawn (world), `bodyAt` its world's position now. */
+export function seedSettleGlide(
+  stationId: string, from: { x: number; y: number }, bodyAt: { x: number; y: number }, nowMs: number,
+): void {
+  if (settleGlides.size > 200) settleGlides.clear();
+  settleGlides.set(stationId, { dx: from.x - bodyAt.x, dy: from.y - bodyAt.y, startMs: nowMs });
+}
+
+/** Where to draw a station this frame: `target` (its slot, canvas px)
+ *  unless it is still gliding in from the hull that founded it. */
+export function settleGlideCanvasPos(
+  stationId: string, bodyPos: { x: number; y: number }, target: { x: number; y: number },
+  ctx: RenderContext, nowMs: number,
+): { x: number; y: number } {
+  const g = settleGlides.get(stationId);
+  if (!g) return target;
+  const u = (nowMs - g.startMs) / SETTLE_GLIDE_MS;
+  if (!(u >= 0 && u < 1)) { settleGlides.delete(stationId); return target; }
+  const from = worldToCanvas(bodyPos.x + g.dx, bodyPos.y + g.dy, ctx);
+  const e = smootherStep(u);
+  return { x: from.x + (target.x - from.x) * e, y: from.y + (target.y - from.y) * e };
+}
+
+/**
+ * An escort's drawn spot, through the continuity guard like every other
+ * hull. Escorts are placed by their fleet's block, and the block is
+ * re-solved when the fleet changes: its flagship dies and the block
+ * re-centres on a new one (measured on the Mega Destroyer take, 2026-10-21:
+ * every Earth Guard hull jumped 2,300 px in one frame at 37 px a unit when
+ * guard_dd_0 died). Without this the escorts snapped, and the hull that
+ * became the new flagship reached drawShip with no history in the guard,
+ * so its first frame there snapped too. One guard entry per hull, whichever
+ * path draws it, keeps the motion continuous across the switch.
+ */
+export function guardedEscortCanvasPos(
+  ctx: RenderContext, shipId: string, x: number, y: number,
+): { x: number; y: number } {
+  const raw = canvasToWorld(x, y, ctx);
+  const kept = continuousDrawnPos(shipId, raw.x, raw.y, ctx.camera.scale, ctx.nowMs ?? performance.now());
+  return kept.x === raw.x && kept.y === raw.y ? { x, y } : worldToCanvas(kept.x, kept.y, ctx);
 }
 
 /** For a hull that rides with another this frame without being drawn on
@@ -4987,7 +6113,11 @@ function recordDrawnShipWorldPos(shipId: string, x: number, y: number): void {
  *  flagship last was, which is where its death belongs too. */
 export function recordShipWorldPosAs(shipId: string, asShipId: string): void {
   const at = lastDrawnShipWorldPos.get(asShipId);
-  if (at) recordDrawnShipWorldPos(shipId, at.x, at.y);
+  if (at) {
+    recordDrawnShipWorldPos(shipId, at.x, at.y, at.flight ? 'flight' : 'parked');
+    const e = lastDrawnShipWorldPos.get(shipId);
+    if (e) e.standIn = true;
+  }
 }
 
 /**
@@ -5176,7 +6306,15 @@ export function drawEscortHull(
   y: number,
   baseSizePx: number,
   heading: number,
+  /** 0..1: how hard the flagship this hull rides with is burning (its
+   *  thrust hint). Escorts burn with their flagship. */
+  thrust = 0,
 ): void {
+  // Through the continuity guard like every other drawn hull, ONCE (see
+  // guardedEscortCanvasPos): a re-solved fleet block slides, never jumps,
+  // and a hull that moves between its own course and its fleet's block
+  // (the fleet groups or ungroups with the zoom) keeps one history.
+  ({ x, y } = guardedEscortCanvasPos(ctx, ship.id, x, y));
   if (farOffCanvas(ctx, x, y, baseSizePx * 2)) return;
   const g = ctx.ctx;
   const color = shipColor(ship, ctx.factions);
@@ -5202,8 +6340,19 @@ export function drawEscortHull(
   // does not use, so they went off elsewhere on the ring (Lorne: "the
   // explosion effects are happening at some other point in the orbit").
   const at = canvasToWorld(x, y, ctx);
-  recordDrawnShipWorldPos(ship.id, at.x, at.y);
+  recordDrawnShipWorldPos(ship.id, at.x, at.y, ship.transit ? 'flight' : 'parked');
   if (img) recordDrawnLook(ship.id, img, size, heading);
+  // Parked in its fleet's block: if it leaves next, it leaves at this size.
+  if (!ship.transit) {
+    noteParkedLook(ship.id, size, heading, ctx.nowMs ?? performance.now());
+    clearDepartureGlide(ship.id);
+  }
+  const hintA = thrust > 0 ? THRUST_HINT_ALPHA * thrust * (1 - thrustVisibility(ctx.camera.scale)) : 0;
+  if (hintA > 0.01) {
+    const cH = Math.cos(heading), sH = Math.sin(heading);
+    drawOffDiscs(g, plumeDiscsOf(ship, ctx), x, y, size * PLUME_REACH_SIZES, () =>
+      drawThrustHint(g, x - cH * size * 0.42, y - sH * size * 0.42, cH, sH, size, hintA));
+  }
 
   g.save();
   g.translate(x, y);
@@ -5229,18 +6378,60 @@ export function drawEscortHull(
 function drawKaijuHull(
   ship: Ship, ctx: RenderContext, pos: { x: number; y: number },
   heading: number, iconSize: number, thrust: number,
+  /** The world it is drawn over: parked there (drawShip), or held there
+   *  by a strike still crushing it (kaijuFx kaijuFlightPose). Its strike
+   *  and death set pieces are anchored to that world, so they ride it. */
+  over: { body: Body; parked: boolean } | null = null,
 ) {
   const now = ctx.nowMs ?? performance.now();
   // Where it is, for its strike and death set pieces (kaijuFx.ts).
   const w = canvasToWorld(pos.x, pos.y, ctx);
-  noteKaijuDrawn(ship.id, w.x, w.y, heading, iconSize);
+  let anchor: KaijuAnchor | null = null;
+  if (over) {
+    const bp = bodyPosition(over.body, ctx.t, ctx.bodies);
+    anchor = {
+      bodyId: over.body.id, parked: over.parked, bx: bp.x, by: bp.y,
+      R: Math.max(1e-6, drawnRadiusOf(ctx.presentation, over.body, ctx.camera.scale)), scale: ctx.camera.scale,
+    };
+  }
+  noteKaijuDrawn(ship.id, w.x, w.y, heading, iconSize, anchor);
   drawSunSquid(ctx.ctx, pos.x, pos.y, {
     u: iconSize / 6, ringR: 0, heading, morph: 0, thrust, now, palette: LEVIATHAN_PALETTE,
   });
   if (ship.strikeReadyTick != null) {
-    const left = Math.max(0, ship.strikeReadyTick - ctx.t);
-    drawStrikeCharge(ctx.ctx, pos.x, pos.y, iconSize, 1 - left / MEGA_STRIKE_CHARGE_TICKS, now);
+    drawStrikeCharge(ctx.ctx, pos.x, pos.y, iconSize, strikeChargeFrac(ship, ctx.t), now,
+      strikeRingRadius('kaiju', iconSize, Math.min(ctx.canvas.width, ctx.canvas.height)));
   }
+}
+
+/** The desktop dock rail's reach over the map's right edge, px
+ *  (DockRail.css --dock-rail-right: 8 gap + 40 rail + 8 clearance). On a
+ *  phone the dock runs along the bottom instead. */
+const DOCK_RAIL_INSET_PX = 56;
+const DOCK_RAIL_MIN_VIEW_W = 769;
+
+/**
+ * WHERE THE LEVIATHAN'S NAME GOES: beside its HEAD, inside the frame. The
+ * ship rule put a name half the sprite's width to the right of its
+ * centre; the beast is drawn 4.4 world radii across, so its name floated
+ * ~185 px right of the head and ran under the dock rail ("Unkn…", judges,
+ * the Leviathan clip, 2026-10-23). The head is where its eyes are
+ * (drawSunSquid: -0.24u along its heading, u = size / 6); the name sits
+ * just clear of it, on the right unless that would run under the rail or
+ * off the frame, then on the left. `x` is the block's left edge.
+ */
+export function kaijuLabelAt(
+  pos: { x: number; y: number }, heading: number, size: number, blockW: number, canvasW: number,
+): { x: number; y: number; left: boolean; head: { x: number; y: number } } {
+  const u = size / 6;
+  const head = { x: pos.x - Math.cos(heading) * 0.24 * u, y: pos.y - Math.sin(heading) * 0.24 * u };
+  const gap = Math.min(0.75 * u, 40) + 4;
+  const rightEdge = canvasW - (canvasW >= DOCK_RAIL_MIN_VIEW_W ? DOCK_RAIL_INSET_PX : 0) - 4;
+  let x = head.x + gap;
+  let left = false;
+  if (x + blockW > rightEdge) { x = head.x - gap - blockW; left = true; }
+  x = Math.max(4, Math.min(rightEdge - blockW, x));
+  return { x, y: head.y, left, head };
 }
 
 export function drawShip(
@@ -5291,33 +6482,13 @@ export function drawShip(
   let battleK = -1;
   if (liveBattle) {
     const k = battleScale(liveBattle, drawnRadiusOf(ctx.presentation, parentBody, ctx.camera.scale));
-    const nowM = ctx.nowMs ?? performance.now();
-    if (k > 0 && !hasBattleGlide(ship.id)) {
-      // Arriving (or newly in a fight): ease in from where it was drawn.
-      const was = drawnShipWorldPos(ship.id);
-      if (was) {
-        const px = (was.x - parentPos.x) * ctx.camera.scale / k;
-        const py = (was.y - parentPos.y) * ctx.camera.scale / k;
-        seedBattleGlide(ship.id, Math.hypot(px, py),
-          Math.atan2(py, px) - battleDrift(liveBattle, nowM), nowM);
-      }
-    }
-    const pl = k > 0 ? battlePlacement(liveBattle, ship.id, nowM) : null;
-    if (pl) {
+    const at = battleLocalPos(ship.id, liveBattle, k, parentPos, ctx.camera.scale, ctx.nowMs ?? performance.now(), ctx.t);
+    if (at) {
       battleK = k;
-      heading = pl.heading;
-      let px = pl.x * k, py = pl.y * k;
-      // A fleet's lead sits ahead of its block's centre (the layout
-      // places the centre, so the escorts astern have their room).
-      const blk = liveBattle.blocks.get(ship.id);
-      if (blk) {
-        const c = Math.cos(heading), s = Math.sin(heading);
-        px += (blk.flagX * c - blk.flagY * s) * k;
-        py += (blk.flagX * s + blk.flagY * c) * k;
-      }
-      lx = px / ctx.camera.scale;
-      ly = py / ctx.camera.scale;
-      ctx.battleLooks?.set(ship.id, { heading, k, ks: battleSpriteScale(k) });
+      heading = at.heading;
+      lx = at.lx;
+      ly = at.ly;
+      if (at.placed) ctx.battleLooks?.set(ship.id, { heading, k, ks: battleSpriteScale(k) });
     }
   }
 
@@ -5469,14 +6640,17 @@ export function drawShip(
     formation?.lane ?? 0,
   );
   if (orbitMap) { const m = mapRadial(orbitMap, lx, ly, ctx.camera.scale); lx = m.x; ly = m.y; }
-  const worldX = parentPos.x + lx;
-  const worldY = parentPos.y + ly;
+  // The continuity guard has the last word on where a hull is drawn.
+  const kept = continuousDrawnPos(ship.id, parentPos.x + lx, parentPos.y + ly, ctx.camera.scale,
+    ctx.nowMs ?? performance.now(), { x: parentPos.x, y: parentPos.y, id: parentBody.id });
+  const worldX = kept.x;
+  const worldY = kept.y;
   const canvasPos = worldToCanvas(worldX, worldY, ctx);
   // Death FX (wrecks, destruction flash) spawn where the hull was DRAWN.
-  recordDrawnShipWorldPos(ship.id, worldX, worldY);
-  // Parked again (arrived, or a burn was cancelled) — forget the glide so
-  // the NEXT departure eases out of orbit too instead of snapping.
-  clearDepartureGlide(ship.id);
+  recordDrawnShipWorldPos(ship.id, worldX, worldY, ship.transit ? 'flight' : 'parked');
+  // Parked again (arrived, or a burn was cancelled) — forget the hand-off
+  // so the NEXT departure leaves from where it is drawn too.
+  if (!ship.transit) clearDepartureGlide(ship.id);
 
   // Off-screen cull. A 229-ship game draws every parked hull every
   // frame even when the camera is zoomed onto one moon; a hull 100px+
@@ -5508,7 +6682,7 @@ export function drawShip(
   // Faction-colored: cyan for player, red for enemy.
   const shipColorValue = shipColor(ship, ctx.factions);
 
-  const hullSize = shipIconSize(ship.class, isSelected)
+  const hullRest = shipIconSize(ship.class, isSelected)
     * (battleK >= 0 ? battleSpriteScale(battleK) : (ship.transit || isSelected) ? 1 : sizeScale);
   // THE LEVIATHAN IS HUGE (Lorne, 2026-10-08: "make it huge"). Parked
   // hulls are drawn to the scale of their world, which shrank it smaller
@@ -5516,9 +6690,19 @@ export function drawShip(
   // world's drawn width, so it reads as wrapped round it; never smaller
   // than its own hull size. It still shrinks with the zoom, because the
   // world does.
-  const iconSize = ship.class === 'kaiju'
-    ? Math.max(hullSize, drawnRadiusOf(ctx.presentation, parentBody, ctx.camera.scale) * 4.4)
-    : hullSize;
+  // THAT SIZE IS ITS REST SIZE, so the landing and departure eases run to
+  // and from what is drawn. It used to be applied after both: the noted
+  // parked look was the bare hull size, so the frame it left orbit it
+  // halved (Studio clip "The Leviathan", 2026-10-23, f294), and the frame
+  // it landed it doubled.
+  const restSize = kaijuParkedSize(ship.class, hullRest,
+    drawnRadiusOf(ctx.presentation, parentBody, ctx.camera.scale));
+  const landing = landingLook(ship.id, restSize, heading, ctx.nowMs ?? performance.now());
+  const iconSize = landing.size;
+  // The Leviathan keeps a hull-sized hit target (below), never its drawn one.
+  const hullSize = ship.class === 'kaiju' ? Math.min(iconSize, hullRest) : iconSize;
+  heading = landing.heading;
+  noteParkedLook(ship.id, iconSize, heading, ctx.nowMs ?? performance.now());
 
   // Record the true drawn box for hit-testing: canvasPos already carries
   // the orbit spin, tick interpolation AND the formation spread, so a
@@ -5537,6 +6721,17 @@ export function drawShip(
   const flashStart = ctx.damageFlashStart?.get(ship.id);
   drawDamageFlash(canvasPos, iconSize / 2, flashStart, ctx.nowMs ?? performance.now(), ctx, 'damage');
 
+  // A hull that has just landed brings its engine in with it, dying away.
+  if (landing.plume > 0.02) {
+    const cosH = Math.cos(heading), sinH = Math.sin(heading);
+    drawOffDiscs(ctx.ctx, plumeDiscsOf(ship, ctx), canvasPos.x, canvasPos.y, hullSize * PLUME_REACH_SIZES, () => drawThrustExhaust(
+      ctx.ctx,
+      { x: canvasPos.x - cosH * hullSize / 2, y: canvasPos.y - sinH * hullSize / 2 },
+      { x: cosH, y: sinH }, hullSize, landing.plume, ship.class, undefined,
+      driveBellsFor(ship.class, ship.iconVariant), landing.len,
+    ));
+  }
+
   const trimColor = shipTrimColor(ship, ctx.factions);
   const dressed = ctx.camera.scale >= SHIP_DRESSING_MIN_SCALE;
 
@@ -5553,7 +6748,7 @@ export function drawShip(
   // pixel. They are drawn from the same hardware kit as the structure
   // that built them, which is also where they came from.
   const kaiju = ship.class === 'kaiju';
-  if (kaiju) drawKaijuHull(ship, ctx, canvasPos, heading, iconSize, 0.12);
+  if (kaiju) drawKaijuHull(ship, ctx, canvasPos, heading, iconSize, 0.12, { body: parentBody, parked: true });
   const icon = (kaiju || isLightweight() || isCapitalHull(ship.class)) ? null : getShipIconImage(
     ship.class as ShipIconClass, shipColorValue, ship.iconVariant,
     trimColor,
@@ -5574,22 +6769,25 @@ export function drawShip(
       (ship.iconVariant as StructureVariant | undefined) ?? null, trimColor,
     );
     if (capImg) {
-      cg.drawImage(capImg, -iconSize / 2, -iconSize / 2, iconSize, iconSize);
+      // The Mega's art fills its box (artScaleOf): its round hull sat small in its square.
+      const art = ship.class === 'mega_destroyer' ? iconSize * artScaleOf(capImg) : iconSize;
+      cg.drawImage(capImg, -art / 2, -art / 2, art, art);
       hullFlashHere(cg, capImg, iconSize, ctx.damageFlashStart?.get(ship.id), ctx.nowMs ?? performance.now());
       recordDrawnLook(ship.id, capImg, iconSize, heading + shipBank(ship.id, heading));
-      capitalSeen.set(ship.id, { cls: ship.class, ms: performance.now() });
     } else {
       drawCapitalHull(cg, ship.class, iconSize, shipColorValue, ctx.nowMs ?? 0);
     }
+    // Both art paths: a hull drawn from the fallback art fires its beam
+    // from itself too, not from the top of the screen.
+    noteCapital(ship, ctx, heading + shipBank(ship.id, heading), iconSize);
     cg.restore();
     // Drawn OUTSIDE the hull's rotation so the ring stays upright
     // while the ship turns — a spinning countdown reads as decoration.
     if (ship.strikeReadyTick != null) {
-      const left = Math.max(0, ship.strikeReadyTick - ctx.t);
-      drawStrikeCharge(ctx.ctx, canvasPos.x, canvasPos.y, iconSize,
-        1 - left / MEGA_STRIKE_CHARGE_TICKS, ctx.nowMs ?? 0);
+      const charged = strikeChargeFrac(ship, ctx.t);
+      drawStrikeCharge(ctx.ctx, canvasPos.x, canvasPos.y, iconSize, charged, ctx.nowMs ?? 0);
       drawBowCharge(ctx.ctx, canvasPos.x, canvasPos.y, heading, iconSize,
-        1 - left / MEGA_STRIKE_CHARGE_TICKS, ctx.nowMs ?? 0, hashStr(ship.id));
+        charged, ctx.nowMs ?? 0, hashStr(ship.id));
     }
     cg.save();
     cg.restore();
@@ -5682,15 +6880,19 @@ export function drawShip(
       ? canvasPos.x - iconSize / 2 - 4 - blockW
       : canvasPos.x + iconSize / 2 + 4);
     const sides = ctx.presentation ? [awayLeft, !awayLeft] : [false];
-    const leftSide = sides.find(l => clearOfKeepOuts(xFor(l), canvasPos.y - 12, blockW, blockH));
+    // The Leviathan's name rides its head, in frame (kaijuLabelAt): it is
+    // drawn over its world, so the world's keep-out would only drop it.
+    const kl = kaiju ? kaijuLabelAt(canvasPos, heading, iconSize, blockW, ctx.canvas.width) : null;
+    const leftSide = kl ? kl.left : sides.find(l => clearOfKeepOuts(xFor(l), canvasPos.y - 12, blockW, blockH));
     if (leftSide !== undefined) {
-      const labelX = xFor(leftSide);
-      ctx.ctx.fillText(nm, leftSide ? labelX + blockW - textW : labelX, canvasPos.y - 6);
+      const labelX = kl ? kl.x : xFor(leftSide);
+      const ly = kl ? kl.y : canvasPos.y;
+      ctx.ctx.fillText(nm, leftSide ? labelX + blockW - textW : labelX, ly - 6);
       // The Leviathan shows no HP until it has shown itself (kaijuReveal.ts).
-      if (!kaiju || kaijuRevealed()) drawShipHpBar(ship, leftSide ? labelX + blockW - 36 : labelX, canvasPos.y + 3, ctx);
-      if (tag) drawCommissionTag(ctx, tag, leftSide ? labelX + blockW - tagW : labelX, canvasPos.y + 13);
+      if (!kaiju || kaijuRevealed()) drawShipHpBar(ship, leftSide ? labelX + blockW - 36 : labelX, ly + 3, ctx);
+      if (tag) drawCommissionTag(ctx, tag, leftSide ? labelX + blockW - tagW : labelX, ly + 13);
       // Name + HP bar (+ line tag), claimed so a body label steps around them.
-      reserveRect(`shipname:${ship.id}`, labelX, canvasPos.y - 12, Math.max(30, blockW), blockH, nm);
+      reserveRect(`shipname:${ship.id}`, labelX, ly - 12, Math.max(30, blockW), blockH, nm);
     }
   }
 }
@@ -6147,9 +7349,12 @@ const torchSampleCache = new Map<string, Array<{ t: number; x: number; y: number
 const TORCH_SAMPLE_CACHE_MAX = 256;
 
 /** Samples per straight-line leg: the boost and the (much shorter) brake
- *  each get enough points that the hull's speed changes smoothly. */
+ *  each get enough points that the hull's speed changes smoothly. The
+ *  brake had 8: lerped between them a hard brake is a staircase of
+ *  speeds, and an arrival filmed at a close-up shuddered by 15-50 px a
+ *  frame per frame in turn as it braked in (strike4 take, f350-f359). */
 const SHAPED_BOOST_SAMPLES = 24;
-const SHAPED_BRAKE_SAMPLES = 8;
+const SHAPED_BRAKE_SAMPLES = 24;
 /** One array per plan object. Plans are rebuilt on each /state poll, so
  *  this re-times a hull every ~1.5s rather than every frame, and a
  *  WeakMap lets retired plans go with no cap to thrash. */
@@ -6184,6 +7389,36 @@ function shapedLineSamples(plan: TorchTransferPlan): Array<{ t: number; x: numbe
   return out;
 }
 
+/** A leg that pushes the whole way and never brakes: a missile salvo
+ *  (worker/missiles.js missileLeg, its flip at its arrival). */
+export function isPushOnly(plan: Pick<TorchTransferPlan, 'startTick' | 'flipTick' | 'arriveTick'>): boolean {
+  return plan.arriveTick > plan.startTick && plan.flipTick >= plan.arriveTick - 1e-9;
+}
+
+const PUSH_LINE_SAMPLES = 24;
+const pushSampleCache = new WeakMap<TorchTransferPlan, Array<{ t: number; x: number; y: number }>>();
+/**
+ * A salvo's line, timed by its push: from rest, gathering speed all the
+ * way (x ~ t^2), like the interceptor drawn against it
+ * (missileDrawnRendezvous). Lerped as a plain two-point chord it left at
+ * full speed: still on one frame, ~270 px a frame the next at a close-up
+ * (salvo intercept clip, f14).
+ */
+function pushLineSamples(plan: TorchTransferPlan): Array<{ t: number; x: number; y: number }> {
+  const hit = pushSampleCache.get(plan);
+  if (hit) return hit;
+  const s = plan.startTick, T = plan.arriveTick - plan.startTick;
+  const sx = plan.startPos.x, sy = plan.startPos.y;
+  const dx = plan.interceptPos.x - sx, dy = plan.interceptPos.y - sy;
+  const out: Array<{ t: number; x: number; y: number }> = [];
+  for (let i = 0; i <= PUSH_LINE_SAMPLES; i++) {
+    const u = i / PUSH_LINE_SAMPLES;
+    out.push({ t: s + T * u, x: sx + dx * u * u, y: sy + dy * u * u });
+  }
+  pushSampleCache.set(plan, out);
+  return out;
+}
+
 export function torchTrajectorySamples(
   plan: TorchTransferPlan,
   bodies: Body[],
@@ -6195,6 +7430,7 @@ export function torchTrajectorySamples(
     // one straight line, but timed along it: the hull is lerped through
     // these, so it creeps off at launch, gathers speed and brakes hard.
     if (isShapedBurn(plan)) return shapedLineSamples(plan);
+    if (isPushOnly(plan)) return pushLineSamples(plan);
     return [
       { t: plan.startTick,  x: plan.startPos.x,     y: plan.startPos.y },
       { t: plan.arriveTick, x: plan.interceptPos.x, y: plan.interceptPos.y },
@@ -6277,6 +7513,10 @@ export interface TransitSlot {
   count: number;
   /** Largest resting icon size in the formation (shipIconSize, unselected). */
   iconRest: number;
+  /** Hulls on one INTERCEPT: placed off their own shared course (the
+   *  rendezvous, which the lead's plain plan is not), and handing over to
+   *  their company arrowhead as they meet the target. */
+  rv?: boolean;
 }
 
 /** Row depth and in-row spacing, in HULL LENGTHS of the biggest member. */
@@ -6345,6 +7585,46 @@ export function computeTransitFormations(ships: readonly Ship[]): Map<string, Tr
       group.forEach((s, slot) => out.set(s.id, { key, leadPlan, slot, count: group.length, iconRest }));
     }
   }
+  // HULLS ON ONE INTERCEPT FLY IN FORMATION TOO (Lorne, 2026-10-22: "we
+  // need the ships to have a bubble, they are being obscured"). Hulls sent
+  // together to meet the same target fly the same rendezvous, so until
+  // the meeting (when placeInCompany lays them abreast of it) all six of
+  // a squadron drew on exactly the same points: one sprite. Same target,
+  // same launch, same meeting, from the same place = one formation.
+  const rvBuckets = new Map<string, Ship[]>();
+  for (const s of ships) {
+    const rv = s.plannedRendezvous;
+    if (!s.transit?.currentTransfer || !rv || !rv.followShipId || !rv.p0 || s.class === 'missile') continue;
+    const key = `rv|${rv.followShipId}|${Math.round(rv.startTick)}|${Math.round(rv.meetTick * 4)}`;
+    let arr = rvBuckets.get(key);
+    if (!arr) { arr = []; rvBuckets.set(key, arr); }
+    arr.push(s);
+  }
+  for (const [bucketKey, arr] of rvBuckets) {
+    if (arr.length < 2) continue;
+    arr.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    const groups: Ship[][] = [];
+    for (const s of arr) {
+      const p = s.transit!.currentTransfer;
+      const trip = Math.hypot(p.interceptPos.x - p.startPos.x, p.interceptPos.y - p.startPos.y);
+      const tol = Math.max(1e-6, trip * FORMATION_SAME_COURSE);
+      const home = groups.find(g => {
+        const q = g[0].plannedRendezvous!.p0, r = s.plannedRendezvous!.p0;
+        return Math.hypot(q.x - r.x, q.y - r.y) <= tol;
+      });
+      if (home) home.push(s); else groups.push([s]);
+    }
+    for (const group of groups) {
+      if (group.length < 2) continue;
+      const size = new Map(group.map(s => [s.id, shipIconSize(s.class, false)]));
+      group.sort((a, b) => (size.get(b.id)! - size.get(a.id)!) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+      const lead = group[0];
+      const key = `${bucketKey}|${lead.id}`;
+      const iconRest = size.get(lead.id)!;
+      const leadPlan = lead.transit!.currentTransfer;
+      group.forEach((s, slot) => out.set(s.id, { key, leadPlan, slot, count: group.length, iconRest, rv: true }));
+    }
+  }
   return out;
 }
 
@@ -6374,7 +7654,7 @@ function formationRows(count: number): number {
  * The formation's spacing for this frame, in screen pixels.
  * `sizeScale` is the same zoom multiplier the hull is drawn at.
  */
-export function formationSpacingPx(f: TransitSlot, sizeScale: number): { depth: number; abreast: number } {
+export function formationSpacingPx(f: Pick<TransitSlot, 'iconRest' | 'count'>, sizeScale: number): { depth: number; abreast: number } {
   const hull = f.iconRest * sizeScale;
   let depth = hull * FORMATION_ROW_DEPTH;
   let abreast = hull * FORMATION_ABREAST;
@@ -6402,19 +7682,178 @@ export function placeInFormation(
 ): Array<{ t: number; x: number; y: number }> {
   const f = ctx.transitFormations?.get(shipId);
   if (!f || f.slot === 0 || samples.length < 2 || !(ctx.camera.scale > 0)) return samples;
-  // Off the LEAD's course, not this hull's own near-copy of it.
-  const base = ctx.bodies ? torchTrajectorySamples(f.leadPlan, ctx.bodies) : samples;
+  // An intercept squadron hands over to its company arrowhead (the same
+  // slots, beside the target) over the tick before the meeting, so the
+  // two layouts never stack.
+  let keep = 1;
+  if (f.rv) {
+    const c = ctx.transitCompany?.get(shipId);
+    if (c) {
+      const raw = Math.max(0, Math.min(1, (ctx.t - (c.meetTick - COMPANY_EASE_TICKS)) / COMPANY_EASE_TICKS));
+      keep = 1 - raw * raw * (3 - 2 * raw);
+    }
+    if (keep <= 0) return samples;
+  }
+  // Off the LEAD's course, not this hull's own near-copy of it. On an
+  // intercept the lead's plain plan is not the course flown; the hulls
+  // share their rendezvous, so this hull's own drawn course is the one.
+  const base = f.rv ? samples : ctx.bodies ? torchTrajectorySamples(f.leadPlan, ctx.bodies) : samples;
   if (base.length < 2) return samples;
   const tan = trajectoryTangentAt(base, ctx.t);
   if (!tan) return samples;
   const { back, side } = formationSlot(f.slot);
   const sp = formationSpacingPx(f, sizeScale);
-  const along = -back * sp.depth / ctx.camera.scale;          // behind the lead
-  const across = (side * sp.abreast) / 2 / ctx.camera.scale;   // half-spacings
+  const along = -back * sp.depth / ctx.camera.scale * keep;          // behind the lead
+  const across = (side * sp.abreast) / 2 / ctx.camera.scale * keep;   // half-spacings
   // Left of travel = (ty, -tx) in canvas (y down) coordinates.
   const dx = tan.x * along + tan.y * across;
   const dy = tan.y * along - tan.x * across;
   return base.map(p => ({ t: p.t, x: p.x + dx, y: p.y + dy }));
+}
+
+// ---- flying in company ----------------------------------------------
+//
+// Lorne, 2026-10-21: "ships in transit are overlapping which hurts the
+// look of the in transit battle". An intercept MATCHES its target: from
+// the meeting on, the follower flies the target's own course
+// (rendezvousStateAt), so its hulls were drawn exactly on top of the
+// target's, a blue destroyer over the red Mega Destroyer. They are
+// flying in company, so they are drawn that way: the followers' group
+// holds its own arrowhead ABREAST of the target's, clear of it, on the
+// side it came in from (so the two never cross on the way in). The
+// target keeps the true line; the follower's own course line is drawn as
+// before. Sprite and hitbox move together, as with formations.
+//
+// ONLY ONCE THEY MEET. Until the tick before the meeting the follower
+// flies its own drawn course, untouched; it falls in beside the target
+// over that last tick. Easing in by DISTANCE instead (the first cut) slid
+// an approaching fleet off its own line ticks early, because at system
+// zoom two fleets are a few pixels apart long before they meet (Lorne:
+// "the blue fleet looks like it's off somewhere completely unrelated").
+
+export interface CompanySlot {
+  /** The course of the group being flown beside (its lead's). */
+  targetPlan: TorchTransferPlan;
+  /** The target group's size, for how wide it stands. */
+  targetCount: number;
+  targetIconRest: number;
+  /** This hull's place in ITS group's arrowhead: 0 is the group's lead. */
+  slot: number;
+  count: number;
+  iconRest: number;
+  /** +1 left of the target's travel, -1 right. */
+  side: number;
+  /** When this hull meets the target (its rendezvous meetTick). */
+  meetTick: number;
+}
+
+/** Clear space between the two groups, in hull lengths of the bigger. */
+export const COMPANY_GAP = 0.25;
+/** Ticks before the meeting over which a follower falls in alongside. */
+export const COMPANY_EASE_TICKS = 1;
+
+/**
+ * Who flies in company with whom: every hull on a matched intercept,
+ * grouped by the group it follows. Built from the same hulls the
+ * formations are (the ones this frame draws). Missiles are not company:
+ * they burst at the meeting.
+ */
+export function computeTransitCompany(
+  ships: readonly Ship[],
+  formations: ReadonlyMap<string, TransitSlot>,
+  bodies: Body[],
+): Map<string, CompanySlot> {
+  const byId = new Map(ships.map(s => [s.id, s] as const));
+  const groups = new Map<string, { plan: TorchTransferPlan; count: number; iconRest: number; members: Ship[] }>();
+  for (const s of ships) {
+    const rv = s.plannedRendezvous;
+    if (!s.transit || !rv || s.class === 'missile') continue;
+    const tf = formations.get(rv.followShipId);
+    const target = byId.get(rv.followShipId);
+    const plan = tf?.leadPlan ?? target?.transit?.currentTransfer ?? rv.followTransfer;
+    if (!plan) continue;
+    const key = tf ? tf.key : rv.followShipId;
+    let g = groups.get(key);
+    if (!g) {
+      g = {
+        plan,
+        count: tf?.count ?? 1,
+        iconRest: tf?.iconRest ?? (target ? shipIconSize(target.class, false) : shipIconSize('frigate', false)),
+        members: [],
+      };
+      groups.set(key, g);
+    }
+    g.members.push(s);
+  }
+  const out = new Map<string, CompanySlot>();
+  for (const g of groups.values()) {
+    const size = new Map(g.members.map(s => [s.id, shipIconSize(s.class, false)]));
+    g.members.sort((a, b) => (size.get(b.id)! - size.get(a.id)!) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    const lead = g.members[0];
+    // The side the group came in from: where its lead started, against
+    // the target's course at that moment.
+    let side = 1;
+    const rv = lead.plannedRendezvous!;
+    const base = torchTrajectorySamples(g.plan, bodies);
+    if (base.length >= 2) {
+      const at = torchPositionFromSamples(base, rv.startTick);
+      const tan = trajectoryTangentAt(base, rv.startTick);
+      if (tan) {
+        // Left of travel is (ty, -tx) in canvas axes (placeInFormation).
+        const dx = rv.p0.x - at.x, dy = rv.p0.y - at.y;
+        side = dx * tan.y - dy * tan.x >= 0 ? 1 : -1;
+      }
+    }
+    const iconRest = size.get(lead.id)!;
+    g.members.forEach((s, slot) => out.set(s.id, {
+      targetPlan: g.plan, targetCount: g.count, targetIconRest: g.iconRest,
+      slot, count: g.members.length, iconRest, side,
+      meetTick: s.plannedRendezvous!.meetTick,
+    }));
+  }
+  return out;
+}
+
+/** Half a formation's width across the line, in screen px. */
+function formationHalfWidthPx(count: number, iconRest: number, sizeScale: number): number {
+  const sp = formationSpacingPx({ count, iconRest }, sizeScale);
+  return ((formationRows(count) - 1) * sp.abreast) / 2 + (iconRest * sizeScale) / 2;
+}
+
+/**
+ * This hull's samples, moved beside the group it is matched to. Returns
+ * the input untouched for any hull not in company. Never mutates.
+ */
+export function placeInCompany(
+  shipId: string,
+  samples: Array<{ t: number; x: number; y: number }>,
+  ctx: RenderContext,
+  sizeScale: number,
+): Array<{ t: number; x: number; y: number }> {
+  const c = ctx.transitCompany?.get(shipId);
+  if (!c || samples.length < 2 || !(ctx.camera.scale > 0) || !ctx.bodies) return samples;
+  // On its own course until the last tick before the meeting.
+  const raw = Math.max(0, Math.min(1, (ctx.t - (c.meetTick - COMPANY_EASE_TICKS)) / COMPANY_EASE_TICKS));
+  if (raw <= 0) return samples;
+  const w = raw * raw * (3 - 2 * raw);
+  const base = torchTrajectorySamples(c.targetPlan, ctx.bodies);
+  if (base.length < 2) return samples;
+  const tan = trajectoryTangentAt(base, ctx.t);
+  if (!tan) return samples;
+  const theirHalf = formationHalfWidthPx(c.targetCount, c.targetIconRest, sizeScale);
+  const ourHalf = formationHalfWidthPx(c.count, c.iconRest, sizeScale);
+  const gap = COMPANY_GAP * Math.max(c.iconRest, c.targetIconRest) * sizeScale;
+  const abreastPx = theirHalf + gap + ourHalf;
+  // The group's own arrowhead, around its lead.
+  const { back, side } = formationSlot(c.slot);
+  const sp = formationSpacingPx(c, sizeScale);
+  const acrossPx = c.side * abreastPx + (side * sp.abreast) / 2;
+  const alongPx = -back * sp.depth;
+  const along = (alongPx * w) / ctx.camera.scale;
+  const across = (acrossPx * w) / ctx.camera.scale;
+  const dx = tan.x * along + tan.y * across;
+  const dy = tan.y * along - tan.x * across;
+  return samples.map(p => ({ t: p.t, x: p.x + dx, y: p.y + dy }));
 }
 
 /** True when this hull's course is drawn by another hull (its lead). */
@@ -6836,30 +8275,35 @@ export function drawRammingBody(
   ctx.ctx.setLineDash([]);
   ctx.ctx.restore();
 
-  // Engine flame at the asteroid's current position, pointing along
-  // its current motion direction. Body has been moving along the
-  // trajectory; tangent at current tick = derivative via finite diff.
+  // ITS THRUSTERS, from the rock as it is drawn (its presentation radius;
+  // the true radius drew a flame from inside a rock inflated at map zoom).
+  // They push at the meeting point on the boost and against its speed
+  // relative to the target on the brake (orbitalMechanics ramStep), so the
+  // plume trails it in, then swings round and burns ahead of it as it
+  // brakes into the world. It used to trail behind the motion throughout.
   const here = bodyPosition(body, t, ctx.bodies);
-  const ahead = bodyPosition(body, t + 0.05, ctx.bodies);
-  const dx = ahead.x - here.x;
-  const dy = ahead.y - here.y;
-  const d = Math.hypot(dx, dy);
-  if (d > 1e-6) {
-    const dirX = dx / d;
-    const dirY = dy / d;
+  const tgt = bodyById(ctx.bodies, plan.targetBodyId);
+  if (tgt) {
+    const tp = bodyPosition(tgt, t, ctx.bodies);
+    // The side of the world it is coming in on, for the impact
+    // (asteroidRam): where it crosses the limb, not the noise of its last
+    // fraction of a unit inside the globe.
+    if (Math.hypot(here.x - tp.x, here.y - tp.y) > (tgt.radius ?? 0)) {
+      noteRamApproach(tgt.id, here.x - tp.x, here.y - tp.y);
+    }
+  }
+  const push = ramThrustDir(plan, t,
+    (tt) => bodyPosition(body, tt, ctx.bodies),
+    (tt) => (tgt ? bodyPosition(tgt, tt, ctx.bodies) : { x: 0, y: 0 }));
+  if (push) {
     const canvasHere = worldToCanvas(here.x, here.y, ctx);
-    // Engine is on the "back" of the rock — opposite the direction of
-    // motion. The finite-difference tangent is a world vector, and
-    // worldToCanvas has NO y-flip, so it's used as-is: the old
-    // `(dirX, -dirY)` — citing the same false "canvas y inverts"
-    // premise the transit-ship heading had — mirrored the flame across
-    // the horizontal axis.
+    const rockR = ramRockRadiusPx(drawnRadiusOf(ctx.presentation, body, ctx.camera.scale));
+    // worldToCanvas has NO y-flip, so a world vector is used as-is.
     drawThrustExhaust(
       ctx.ctx,
-      { x: canvasHere.x - dirX * body.radius * ctx.camera.scale,
-        y: canvasHere.y - dirY * body.radius * ctx.camera.scale },
-      { x: dirX, y: dirY },
-      Math.max(10, body.radius * ctx.camera.scale * 1.5),
+      { x: canvasHere.x - push.x * rockR, y: canvasHere.y - push.y * rockR },
+      push,
+      Math.max(12, rockR * 1.5),
       1,
     );
 
@@ -6871,7 +8315,6 @@ export function drawRammingBody(
     const shimmerRng = mulberry32(hashStr(body.id) ^ Math.floor((ctx.nowMs ?? performance.now()) / 45));
     const jx = shimmerRng() - 0.5;
     const jy = shimmerRng() - 0.5;
-    const rockR = Math.max(1.5, body.radius * ctx.camera.scale);
     ctx.ctx.save();
     ctx.ctx.globalAlpha = 0.3;
     ctx.ctx.fillStyle = body.color;
@@ -6988,6 +8431,55 @@ function thrustVisibility(scale: number): number {
   return Math.max(0, Math.min(1, (scale - THRUST_FADE_LO) / (THRUST_FADE_HI - THRUST_FADE_LO)));
 }
 
+// THE THRUST HINT (Lorne, 2026-10-21: "some amount of engine plume should
+// be on ships at the level of zoom out we're showing here ... Not the full
+// effect, but a light something showing the direction of thrust"). Below
+// the plume's zoom band a burning hull trails a short tapered tail off its
+// engine: two flat triangles, no gradients, cheap at any count. It hands
+// over to the full plume as the plume fades in, so nothing doubles.
+export const THRUST_HINT_ALPHA = 0.55;
+export const THRUST_HINT_LEN = 0.75;    // x icon size, behind the engine
+
+/** Where a hull's engine was burning this frame, for its escorts. */
+const lastThrust = new Map<string, number>();
+export function drawnThrust(shipId: string): number {
+  return lastThrust.get(shipId) ?? 0;
+}
+
+/** The hint itself, from the engine (ex, ey) along -dir. `k` 0..1 is its
+ *  strength: the hint's alpha times however much it is needed. */
+export function drawThrustHint(
+  g: CanvasRenderingContext2D, ex: number, ey: number, dx: number, dy: number,
+  iconSize: number, k: number,
+): void {
+  if (k <= 0.01 || isLightweight()) return;
+  const len = iconSize * THRUST_HINT_LEN;
+  const w = Math.max(1.2, iconSize * 0.11);
+  const nx = -dy, ny = dx;
+  const prevA = g.globalAlpha, prevOp = g.globalCompositeOperation;
+  g.globalCompositeOperation = 'lighter';
+  // Outer: warm, the whole length.
+  g.globalAlpha = prevA * k * 0.55;
+  g.fillStyle = '#ff9d4d';
+  g.beginPath();
+  g.moveTo(ex + nx * w, ey + ny * w);
+  g.lineTo(ex - nx * w, ey - ny * w);
+  g.lineTo(ex - dx * len, ey - dy * len);
+  g.closePath();
+  g.fill();
+  // Core: hot, half the length and width.
+  g.globalAlpha = prevA * k;
+  g.fillStyle = '#fff1d6';
+  g.beginPath();
+  g.moveTo(ex + nx * w * 0.5, ey + ny * w * 0.5);
+  g.lineTo(ex - nx * w * 0.5, ey - ny * w * 0.5);
+  g.lineTo(ex - dx * len * 0.5, ey - dy * len * 0.5);
+  g.closePath();
+  g.fill();
+  g.globalAlpha = prevA;
+  g.globalCompositeOperation = prevOp;
+}
+
 // Per-class plume shaping (endgame juice pass): a corvette's torch is a
 // needle, a destroyer's is a broad triple-bell wash, a freighter pushes
 // a short wide cargo-tug flare. Same geometry code — just class-scaled.
@@ -7055,6 +8547,74 @@ export function drawTransitRangeRing(
   c.restore();
 }
 
+// ---- an intercepting hull's attitude ------------------------------------
+//
+// Lorne, 2026-10-21, over the Mega Destroyer clip: "blue flies entirely
+// backwards toward the enemy from the beginning". A matched intercept is
+// burn, coast, burn (rendezvous.js), then flying with its leader. It was
+// drawn as if it were the plain leg underneath it: nose along the straight
+// line from its first sample to its last (an intercept's path goes OUT to
+// the meeting and back, so that line points nowhere in particular), and
+// flipped to "braking" at that leg's flip tick, half a tick after launch,
+// for the rest of the flight. Now the nose follows the manoeuvre itself.
+
+const ATTITUDE_TURN_TICKS = 0.25;
+
+function lerpAngle(a: number, b: number, k: number): number {
+  let d = (b - a) % (Math.PI * 2);
+  if (d > Math.PI) d -= Math.PI * 2;
+  if (d < -Math.PI) d += Math.PI * 2;
+  return a + d * k;
+}
+const smooth01 = (u: number) => { const k = Math.max(0, Math.min(1, u)); return k * k * (3 - 2 * k); };
+
+/**
+ * Where an intercepting hull points, and whether its engine is lit, at
+ * `t`. `samples` is the line the hull is drawn along (the match, then the
+ * joined leg). Null for anything that is not a matched intercept.
+ */
+export function rendezvousAttitude(
+  rv: NonNullable<Ship['plannedRendezvous']>,
+  t: number,
+  samples: Array<{ t: number; x: number; y: number }> | undefined,
+): { heading: number; thrusting: boolean; braking: boolean } | null {
+  if (!(rv.accel > 0)) return null;
+  const aLen = Math.hypot(rv.A.x, rv.A.y), bLen = Math.hypot(rv.B.x, rv.B.y);
+  const aEnd = rv.startTick + aLen / rv.accel;
+  const bStart = rv.meetTick - bLen / rv.accel;
+  const angA = aLen > 1e-9 ? Math.atan2(rv.A.y, rv.A.x) : null;
+  const angB = bLen > 1e-9 ? Math.atan2(rv.B.y, rv.B.x) : null;
+  const tan = samples && samples.length >= 2 ? trajectoryTangentAt(samples, t) : null;
+  const angV = tan ? Math.atan2(tan.y, tan.x) : (angA ?? angB ?? 0);
+  const coast = Math.max(0, bStart - aEnd);
+  const turn = Math.min(ATTITUDE_TURN_TICKS, coast / 3);
+
+  if (t < aEnd) return { heading: angA ?? angV, thrusting: t >= rv.startTick && angA != null, braking: false };
+  if (t < bStart) {
+    // Out of the first burn onto the line of travel, then round to the
+    // second burn just before it lights (a flip, when it is a brake).
+    let h = angA != null && turn > 0 ? lerpAngle(angA, angV, smooth01((t - aEnd) / turn)) : angV;
+    if (angB != null && turn > 0) h = lerpAngle(h, angB, smooth01((t - (bStart - turn)) / turn));
+    return { heading: h, thrusting: false, braking: false };
+  }
+  if (t < rv.meetTick) {
+    // Braking when the push is against the way it is moving.
+    const braking = angB != null && tan != null && (rv.B.x * tan.x + rv.B.y * tan.y) < 0;
+    return { heading: angB ?? angV, thrusting: angB != null, braking };
+  }
+  // Joined: flying with the leader, so pointed and burning the way it is.
+  const lead = rv.followTransfer;
+  let leaderBraking = false, leaderThrust = false;
+  if (lead) {
+    const stop = isShapedBurn(lead) ? burnStopTick(lead) : lead.arriveTick;
+    leaderBraking = t >= lead.flipTick && t < stop;
+    leaderThrust = t >= lead.startTick && t < stop;
+  }
+  const joined = angV + (leaderBraking ? Math.PI : 0);
+  const h = angB != null ? lerpAngle(angB, joined, smooth01((t - rv.meetTick) / ATTITUDE_TURN_TICKS)) : joined;
+  return { heading: h, thrusting: leaderThrust, braking: leaderBraking };
+}
+
 function drawTorchTransitShip(
   ship: Ship,
   ctx: RenderContext,
@@ -7070,28 +8630,36 @@ function drawTorchTransitShip(
   // sample times, leaving the ship visibly off the polyline mid-segment.
   // Falls back to the stored pos when no samples were provided (e.g. an
   // old caller hasn't been threaded yet).
-  const truePos = trajectorySamples && trajectorySamples.length > 0
-    ? torchPositionFromSamples(trajectorySamples, ctx.t)
-    : { x: ship.transit.pos.x, y: ship.transit.pos.y };
-  // Leave orbit, don't cut to the arc — see departureBlend.
-  const lerpedPos = departureBlend(ship.id, truePos, ctx.nowMs ?? performance.now());
-  const canvasPos = worldToCanvas(lerpedPos.x, lerpedPos.y, ctx);
-  recordDrawnShipWorldPos(ship.id, lerpedPos.x, lerpedPos.y);
+  const lerpedPos = transitDrawnPos(ship.id, trajectorySamples,
+    { x: ship.transit.pos.x, y: ship.transit.pos.y }, ctx.t, ctx.camera.scale, ctx.nowMs ?? performance.now());
+  let canvasPos = worldToCanvas(lerpedPos.x, lerpedPos.y, ctx);
+  ctx.transitDrawn?.set(ship.id, canvasPos);
+  // THE LEVIATHAN STAYS WITH THE WORLD IT IS CRUSHING (kaijuFlightPose). It
+  // leaves for its next meal the tick it breaks one, so its flight began
+  // while its arms were still round the world, and it was drawn far off
+  // screen with the arms reaching out of nowhere (Studio, 2026-10-23).
+  const kaijuWallMs = performance.now();
+  const kaijuHeld = ship.class === 'kaiju' && kaijuStrikeHolds(kaijuWallMs);
   // Hull, plume and glow, all within a few hull lengths (farOffCanvas).
-  if (farOffCanvas(ctx, canvasPos.x, canvasPos.y, 200)) return;
+  if (!kaijuHeld && farOffCanvas(ctx, canvasPos.x, canvasPos.y, 200)) return;
   const shipColorValue = shipColor(ship, ctx.factions);
 
   // Phase detection: BOOST (engine fires prograde toward intercept) vs
   // BRAKE (engine fires retrograde to kill velocity relative to target).
   // Outside [startTick, arriveTick] the ship is coasting.
+  // A matched intercept is flown by its own manoeuvre, not by the plain
+  // leg underneath it (rendezvousAttitude). Missiles keep the plain rule.
+  const rvAtt = ship.plannedRendezvous && ship.class !== 'missile'
+    ? rendezvousAttitude(ship.plannedRendezvous, ctx.t, trajectorySamples)
+    : null;
   const isBoost = ctx.t >= currentTransfer.startTick && ctx.t < currentTransfer.flipTick;
   // A shaped (multiplayer) burn brakes to rest at burnStopTick, which a
   // ceiled arrival can leave short of arriveTick: the hull then sits on
   // the intercept with its engine cold rather than firing at nothing.
-  const shaped = isShapedBurn(currentTransfer);
+  const shaped = isShapedBurn(currentTransfer) && !rvAtt;
   const brakeEnd = shaped ? burnStopTick(currentTransfer) : currentTransfer.arriveTick;
-  const isBrake = ctx.t >= currentTransfer.flipTick && ctx.t < brakeEnd;
-  const thrusting = isBoost || isBrake;
+  const isBrake = rvAtt ? rvAtt.braking : (ctx.t >= currentTransfer.flipTick && ctx.t < brakeEnd);
+  const thrusting = rvAtt ? rvAtt.thrusting : (isBoost || isBrake);
   // THE FLIP, drawn (shaped burns only). A torch ship brakes by turning
   // round and firing its engine at where it is going; the hull used to
   // face its line of travel the whole way, so the plume trailed behind it
@@ -7127,9 +8695,13 @@ function drawTorchTransitShip(
   // direction: probing for motion fails once the brake has stopped the
   // hull on the intercept (a ceiled arrival can leave it there a while),
   // and the fallback would swing the nose at the moving target body.
+  // The LINE is the plan's (start to intercept), which is what is drawn.
+  // Its ends in the placed samples are not: a hull flying into its place
+  // at its world (arrivalApproach) ends its samples in that place, and
+  // read from them the nose swung the frame the place was assigned.
   const lineDir = shaped && trajectorySamples && trajectorySamples.length >= 2 ? (() => {
-    const a = trajectorySamples[0];
-    const b = trajectorySamples[trajectorySamples.length - 1];
+    const a = currentTransfer.startPos ?? trajectorySamples[0];
+    const b = currentTransfer.interceptPos ?? trajectorySamples[trajectorySamples.length - 1];
     const d = Math.hypot(b.x - a.x, b.y - a.y);
     return d > 1e-9 ? { x: (b.x - a.x) / d, y: (b.y - a.y) / d } : null;
   })() : null;
@@ -7160,13 +8732,29 @@ function drawTorchTransitShip(
   // false "canvas y axis inverts" comment — mirrored every transit
   // ship across the horizontal axis. That was the "points anywhere
   // but forward" bug.
-  const heading = Math.atan2(facingY, facingX) + Math.PI * flipTurn;
+  const flightHeading = rvAtt ? rvAtt.heading : Math.atan2(facingY, facingX) + Math.PI * flipTurn;
 
   // Everything downstream (exhaust plume, wake, selection brackets, rank
   // chevron, label offset) is derived from iconSize, so scaling here
   // shrinks the whole hull-and-dressing group together rather than
   // leaving a full-size flame on a half-size ship.
-  const iconSize = shipIconSize(ship.class, isSelected) * (isSelected ? 1 : sizeScale);
+  const leaving = departureLook(ship.id, shipIconSize(ship.class, isSelected) * (isSelected ? 1 : sizeScale),
+    flightHeading, ctx.nowMs ?? performance.now());
+  let iconSize = leaving.size;
+  let heading = leaving.heading;
+  // Held over the world it is still crushing, then easing into its flight.
+  let kaijuOver: Body | null = null;
+  if (kaijuHeld) {
+    const pose = kaijuFlightPose(ctx, { x: canvasPos.x, y: canvasPos.y, heading, size: iconSize }, kaijuWallMs);
+    if (pose) {
+      canvasPos = { x: pose.x, y: pose.y };
+      iconSize = pose.size;
+      heading = pose.heading;
+      kaijuOver = pose.bodyId ? bodyById(ctx.bodies, pose.bodyId) ?? null : null;
+      ctx.transitDrawn?.set(ship.id, canvasPos);
+    }
+  }
+  // (Its look is noted below, once the plume it is flying on is known.)
 
   const flashStartT = ctx.damageFlashStart?.get(ship.id);
   drawDamageFlash(canvasPos, iconSize / 2, flashStartT, ctx.nowMs ?? performance.now(), ctx, 'damage');
@@ -7191,10 +8779,24 @@ function drawTorchTransitShip(
   const turnFade = shaped ? Math.abs(Math.cos(Math.PI * flipTurn)) : 1;
   const plumeLen = !shaped ? 1 : (isBrake ? 1.4 : ramped ? 0.7 + 0.7 * share : 1) * turnFade;
   const shapedPlume = !shaped ? 1 : (ramped && !isBrake ? 0.8 + 0.2 * share : 1) * turnFade;
+  // Below the plume's zoom band: the light hint, handing over as it fades in.
+  const hintK = thrusting && ship.class !== 'kaiju' && ship.class !== 'missile'
+    ? THRUST_HINT_ALPHA * (1 - thrustVis) * Math.max(0.35, shapedPlume) : 0;
+  if (lastThrust.size > 2000) lastThrust.clear();
+  lastThrust.set(ship.id, thrusting ? Math.max(0.35, shapedPlume) : 0);
+  noteFlightLook(ship.id, iconSize, heading, ctx.nowMs ?? performance.now(),
+    thrusting && ship.class !== 'kaiju' ? (isSelected ? 1.0 : 0.85) * thrustVis * shapedPlume : 0, plumeLen);
+  // Engines stop at the limb of the world it is braking into or leaving.
+  const plumeDiscs = hintK > 0.01 || thrusting ? plumeDiscsOf(ship, ctx) : [];
+  if (hintK > 0.01) {
+    const cH = Math.cos(heading), sH = Math.sin(heading);
+    drawOffDiscs(ctx.ctx, plumeDiscs, canvasPos.x, canvasPos.y, iconSize * PLUME_REACH_SIZES, () =>
+      drawThrustHint(ctx.ctx, canvasPos.x - cH * iconSize * 0.42, canvasPos.y - sH * iconSize * 0.42, cH, sH, iconSize, hintK));
+  }
   if (thrusting && thrustVis > 0 && shapedPlume > 0.02 && ship.class !== 'kaiju') {
     const cosH = Math.cos(heading);
     const sinH = Math.sin(heading);
-    drawThrustExhaust(
+    drawOffDiscs(ctx.ctx, plumeDiscs, canvasPos.x, canvasPos.y, iconSize * PLUME_REACH_SIZES, () => drawThrustExhaust(
       ctx.ctx,
       { x: canvasPos.x - cosH * iconSize / 2, y: canvasPos.y - sinH * iconSize / 2 },
       { x: cosH, y: sinH },
@@ -7206,7 +8808,7 @@ function drawTorchTransitShip(
       // From the engines the hull's art actually has.
       driveBellsFor(ship.class, ship.iconVariant),
       plumeLen,
-    );
+    ));
     // Speed streaks on a retreating burn: brief parallel motion lines
     // shedding off the hull, flickering — unmistakably "getting out".
     if (shipIsRetreating(ship)) {
@@ -7245,7 +8847,8 @@ function drawTorchTransitShip(
     // Its own jet, not a hull's exhaust (skipped above): hard on the push
     // and the brake, cold across the flip.
     drawKaijuHull(ship, ctx, canvasPos, heading, iconSize,
-      thrusting ? Math.max(0.3, shapedPlume) : 0.1);
+      thrusting && !kaijuOver ? Math.max(0.3, shapedPlume) : 0.1,
+      kaijuOver ? { body: kaijuOver, parked: false } : null);
   }
   if (capital) {
     if (dressed && shipIsRetreating(ship)) {
@@ -7267,22 +8870,25 @@ function drawTorchTransitShip(
       (ship.iconVariant as StructureVariant | undefined) ?? null, trimColor,
     );
     if (capImg) {
-      cg.drawImage(capImg, -iconSize / 2, -iconSize / 2, iconSize, iconSize);
+      // The Mega's art fills its box (artScaleOf): its round hull sat small in its square.
+      const art = ship.class === 'mega_destroyer' ? iconSize * artScaleOf(capImg) : iconSize;
+      cg.drawImage(capImg, -art / 2, -art / 2, art, art);
       hullFlashHere(cg, capImg, iconSize, ctx.damageFlashStart?.get(ship.id), ctx.nowMs ?? performance.now());
       recordDrawnLook(ship.id, capImg, iconSize, heading + shipBank(ship.id, heading));
-      capitalSeen.set(ship.id, { cls: ship.class, ms: performance.now() });
     } else {
       drawCapitalHull(cg, ship.class, iconSize, shipColorValue, ctx.nowMs ?? 0);
     }
+    // Both art paths: a hull drawn from the fallback art fires its beam
+    // from itself too, not from the top of the screen.
+    noteCapital(ship, ctx, heading + shipBank(ship.id, heading), iconSize);
     cg.restore();
     // Drawn OUTSIDE the hull's rotation so the ring stays upright
     // while the ship turns — a spinning countdown reads as decoration.
     if (ship.strikeReadyTick != null) {
-      const left = Math.max(0, ship.strikeReadyTick - ctx.t);
-      drawStrikeCharge(ctx.ctx, canvasPos.x, canvasPos.y, iconSize,
-        1 - left / MEGA_STRIKE_CHARGE_TICKS, ctx.nowMs ?? 0);
+      const charged = strikeChargeFrac(ship, ctx.t);
+      drawStrikeCharge(ctx.ctx, canvasPos.x, canvasPos.y, iconSize, charged, ctx.nowMs ?? 0);
       drawBowCharge(ctx.ctx, canvasPos.x, canvasPos.y, heading, iconSize,
-        1 - left / MEGA_STRIKE_CHARGE_TICKS, ctx.nowMs ?? 0, hashStr(ship.id));
+        charged, ctx.nowMs ?? 0, hashStr(ship.id));
     }
     cg.save();
     cg.restore();
@@ -7336,19 +8942,22 @@ function drawTorchTransitShip(
   // ETA drops 8px rather than colliding with it.
   const named = isSelected || ctx.hoveredShipId === ship.id || kaiju;
   if (named) {
-    const labelX = canvasPos.x + iconSize / 2 + 4;
     ctx.ctx.fillStyle = isSelected ? '#ffb84d' : shipColorValue;
     ctx.ctx.font = '9px "Audiowide", monospace';
     ctx.ctx.textAlign = 'left';
     ctx.ctx.textBaseline = 'middle';
     const nm = shipLabelName(ship.name);
-    ctx.ctx.fillText(nm, labelX, canvasPos.y - 6);
     const nameW = ctx.ctx.measureText(nm).width;
-    if (!kaiju || kaijuRevealed()) drawShipHpBar(ship, labelX, canvasPos.y + 3, ctx);
+    // The Leviathan's name rides its head, in frame (kaijuLabelAt).
+    const kl = kaiju ? kaijuLabelAt(canvasPos, heading, iconSize, Math.max(36, nameW), ctx.canvas.width) : null;
+    const labelX = kl ? kl.x : canvasPos.x + iconSize / 2 + 4;
+    const ly = kl ? kl.y : canvasPos.y;
+    ctx.ctx.fillText(nm, labelX, ly - 6);
+    if (!kaiju || kaijuRevealed()) drawShipHpBar(ship, labelX, ly + 3, ctx);
     // Never while selected, so it cannot collide with the ETA line below.
     const tag = commissionTag(ship, isSelected, ctx.hoveredShipId === ship.id);
-    const tagW = tag ? drawCommissionTag(ctx, tag, labelX, canvasPos.y + 13) : 0;
-    reserveRect(`shipname:${ship.id}`, labelX, canvasPos.y - 12,
+    const tagW = tag ? drawCommissionTag(ctx, tag, labelX, ly + 13) : 0;
+    reserveRect(`shipname:${ship.id}`, labelX, ly - 12,
       Math.max(30, nameW, tagW), tag ? 29 : 19, nm);
   }
 
@@ -7749,6 +9358,8 @@ export function drawStation(
       structScale = STATION_STRUCTURE_SCALE * battleSpriteScale(k);
     }
   }
+  // Just founded by a colony hull: in from where the hull was (seedSettleGlide).
+  canvasPos = settleGlideCanvasPos(settlement.id, bodyPos, canvasPos, ctx, ctx.nowMs ?? performance.now());
   ctx.stationCanvasPos?.set(settlement.id, canvasPos);
   if (farOffCanvas(ctx, canvasPos.x, canvasPos.y, 200)) return;
 
@@ -8336,6 +9947,9 @@ export interface DestructionFlash {
    *  Resolved on first draw, which has the zoom. */
   at?: { bodyId: string; dir: number };
   anchor?: BodyAnchor | null;
+  /** The hull was not on screen as itself (folded into a badge): size the
+   *  blast by baseRadius, not by the picture it was last drawn as. */
+  noLook?: boolean;
 }
 
 export function drawDestructionFlashes(
@@ -8360,7 +9974,7 @@ export function drawDestructionFlashes(
     const held = f.anchor ? anchoredWorldPos(f.anchor, ctx, false) : null;
     const cp = worldToCanvas(held ? held.x : f.pos.x, held ? held.y : f.pos.y, ctx);
     // A ship's kill is sized by the hull that died, as it was last drawn.
-    const hull = f.id ? drawnShipLook(f.id)?.size : undefined;
+    const hull = f.id && !f.noLook ? drawnShipLook(f.id)?.size : undefined;
     drawDamageFlash(
       cp,
       hull ? hull * 0.36 : (f.baseRadius ?? 10) * sizeFactor,
@@ -8435,7 +10049,11 @@ export function drawFogOfWarOverlay(
    *  coverage is dimmed again except where a `pierce` sensor reaches. */
   edge?: { wash: number; cuts?: Array<{ pos: { x: number; y: number }; range: number; pierce: Array<{ pos: { x: number; y: number }; range: number }> }> },
 ) {
-  if (strength <= 0) return;
+  // A Studio shot's 'territory' step takes the coverage outline with the
+  // wash: in a wide shot its merged circles read as territory bubbles
+  // (judges, round 2: "the territory overlay won't stay hidden").
+  if (studioWash != null) strength *= studioWash;
+  if (strength <= 0.01) return;
   const w = ctx.canvas.width;
   const h = ctx.canvas.height;
   if (!fogOffscreen || fogOffscreen.width !== w || fogOffscreen.height !== h) {
@@ -8920,6 +10538,23 @@ function washOnsetSpans(spans: number, scale: number, bodies: Body[]): number {
 }
 
 /** Wash fade, onset-aware — see washOnsetSpans. */
+/** The territory wash while the Studio films: still there, but under
+ *  the fight rather than over it (the Mega Destroyer clip spent five
+ *  seconds of a battle in flight on two saturated bands). Players see
+ *  the full wash: held territory should look held. */
+export const FILM_WASH_SCALE = 0.45;
+/** A shot's own say over the wash (its 'territory' step), 0..1, or null.
+ *  At system zoom the bands and their outlines fill the frame, and a
+ *  wide shot of two fleets read as a map of territory (judges, 2026-10-22). */
+let studioWash: number | null = null;
+export function setStudioWashScale(k: number | null): void {
+  studioWash = k == null || !Number.isFinite(k) ? null : Math.max(0, Math.min(1, k));
+}
+function filmWashScale(): number {
+  const filming = typeof document !== 'undefined' && document.body?.classList.contains('studio-filming');
+  return (filming ? FILM_WASH_SCALE : 1) * (studioWash ?? 1);
+}
+
 export function systemRegionOpacityFor(spans: number, scale: number, bodies: Body[]): number {
   const hide = washOnsetSpans(spans, scale, bodies);
   if (spans >= hide) return 0;
@@ -9159,7 +10794,8 @@ export function drawSystemRegions(
     * lodAlpha(scale, LOD.POLITICAL_WASH)
     // The galaxy rings carry ownership out there; the wash would only be
     // a rainbow smudge under the ring.
-    * (1 - (ctx.galaxyAlpha ?? 0));
+    * (1 - (ctx.galaxyAlpha ?? 0))
+    * filmWashScale();
   if (fade <= 0) return;
 
   // Ownership signature: any claim change redraws the layer.
@@ -9708,6 +11344,9 @@ export function missileDrawnRendezvous(
   return { ...plan, v0: { x: 0, y: 0 }, A, B: { x: 0, y: 0 }, accel };
 }
 
+/** Ticks a meeting marker takes to fade once the meeting has passed. */
+export const RENDEZVOUS_MARK_FADE_TICKS = 0.5;
+
 export function drawRendezvousPreview(
   plan: NonNullable<Ship['plannedRendezvous']>,
   targetPathAt: ((t: number) => { x: number; y: number } | null) | null,
@@ -9841,6 +11480,14 @@ export function drawRendezvousPreview(
   // A soft breathing ring rather than a hard reticle: it marks a moment
   // in the future, and the pulse is the only thing on the line that says
   // "this is when", not "this is where".
+  //
+  // ONCE IT HAS HAPPENED it fades out over half a tick. It stayed up for
+  // the rest of the flight, a "MEET ... T+252" pinned to empty space five
+  // ticks after the fleets met and flew on (the Mega Destroyer clip).
+  const sinceMeet = flying ? cur - plan.meetTick : -1;
+  const markAlpha = sinceMeet <= 0 ? 1 : Math.max(0, 1 - sinceMeet / RENDEZVOUS_MARK_FADE_TICKS);
+  if (markAlpha <= 0) { c.restore(); return; }
+  c.globalAlpha *= markAlpha;
   const pulse = 0.5 + 0.5 * Math.sin(nowMs * 0.0035);
   c.strokeStyle = withOpacity(TRAJECTORY_COLORS.mine, 0.25 + 0.35 * pulse);
   c.lineWidth = 1.5;
@@ -9916,6 +11563,8 @@ export interface InterceptMarker {
  *  Sized to the LABEL, not the glyph: at 46px the rings stopped touching
  *  but "2.9t · 89%" is ~75px wide, so neighbouring markers drew clean
  *  shapes under overlapping text. */
+/** Firing windows shorter than this many ticks get no marker. */
+export const INTERCEPT_MIN_WINDOW_TICKS = 0.05;
 const INTERCEPT_CLUSTER_PX = 92;
 
 /**
@@ -9942,7 +11591,11 @@ export function liveInterceptMarkers(
   const out: InterceptMarker[] = [];
   for (const m of markers) {
     if (m.closesAt <= tick) continue;          // already over
-    out.push(m.open === tick >= m.opensAt ? m : { ...m, open: tick >= m.opensAt });
+    // A window that opens and shuts at once is no fight to plan for: it
+    // drew a full FIRING / chance / clear stack reading "0.0t" over the
+    // world it touched, on top of the world's own labels.
+    if (m.duration < INTERCEPT_MIN_WINDOW_TICKS) continue;
+    out.push(m.open === (tick >= m.opensAt) ? m : { ...m, open: tick >= m.opensAt });
   }
   return out;
 }

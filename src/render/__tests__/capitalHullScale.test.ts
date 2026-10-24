@@ -158,7 +158,9 @@ describe('capital hulls are ships, not planets', () => {
   // which is exactly what shipped.
   const VENUS_DIAMETER_UNITS = 12;
 
-  it.each(CAPITALS)('%s is smaller on screen than Venus', (cls) => {
+  // The Mega Destroyer is exempt since 2026-10-22: Lorne chose the size
+  // over the cap (it read as a destroyer's equal at 148 px).
+  it.each(CAPITALS.filter(c => c !== 'mega_destroyer'))('%s is smaller on screen than Venus', (cls) => {
     // shipIconSize already folds in SHIP_ICON_SCALE, so this is the
     // number the renderer really passes in at rest.
     const size = shipIconSize(cls, false);
@@ -182,14 +184,19 @@ describe('capital hulls are ships, not planets', () => {
     // a Venus (~77px) at 76; he chose "more dramatic size differences" on
     // the battle test page, so a Mega Destroyer is now 116 and outgrows a
     // small world on purpose. Pinned so the ladder does not drift.
+    // 2026-10-21 (Lorne: "it's the same size as the destroyer?"): 148,
+    // 1.76x a destroyer (its round open hull reads smaller than its
+    // square), held under a Venus by the test above.
+    // 2026-10-22 (Lorne, again: "the same size as the destroyers"): 200,
+    // 2.4x a destroyer, over the Venus cap by his choice.
     const md = shipIconSize('mega_destroyer', false);
     const mf = shipIconSize('mobile_foundry', false);
     const dd = shipIconSize('destroyer', false);
     const cv = shipIconSize('corvette', false);
-    expect(md).toBe(116);
+    expect(md).toBe(200);
     expect(dd).toBe(84);
     expect(cv).toBe(30);
-    expect(md / dd).toBeGreaterThan(1.3);      // a capital looms over a destroyer
+    expect(md / dd).toBeGreaterThan(2.3);      // a capital looms over a destroyer
     expect(dd / cv).toBeGreaterThan(2.5);      // and a destroyer over a corvette
     expect(mf).toBeLessThan(md);               // the gun outsizes the yard
   });

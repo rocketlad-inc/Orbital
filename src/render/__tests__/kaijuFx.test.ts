@@ -32,12 +32,12 @@ describe('Leviathan effects', () => {
     expect(drainAll().map(f => f.kind)).toEqual(['kaiju_scorch', 'kaiju_break', 'kaiju_death']);
   });
 
-  it('leaves a Mega Destroyer strike as it was', () => {
+  it('plays a Mega Destroyer strike as its own: the beam, then the fire or the burst', () => {
     ingestChronicleFx('g2', [
       { id: 'a', kind: 'terraform_destroyed', bodyId: 'mars', cause: 'mega_destroyer' },
       { id: 'b', kind: 'world_obliterated', bodyId: 'mars' },
     ]);
-    expect(drainAll().map(f => f.kind)).toEqual(['sterilise', 'destruction']);
+    expect(drainAll().map(f => f.kind)).toEqual(['sterilise', 'obliterate']);
   });
 
   it('never plays a generic boom for the beast itself', () => {

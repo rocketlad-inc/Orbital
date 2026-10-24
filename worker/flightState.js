@@ -12,7 +12,7 @@
 
 import { orbitAngle, ORBITAL_SPEED_SCALE } from './orbitPos.js';
 import {
-  torchStateAt, isRamming, ramPlanOf, isEccentric, eccentricLocalPosition,
+  torchStateAt, ramStateAt, isRamming, ramPlanOf, isEccentric, eccentricLocalPosition,
 } from './transitCombat.js';
 import { rendezvousStateAt } from '../src/physics/rendezvous.js';
 
@@ -46,7 +46,7 @@ export function makeSky(bodyRows) {
     if (!b || b.parent_body_id == null) return { x: 0, y: 0 };
     let out;
     if (isRamming(b, t)) {
-      out = torchStateAt(ramPlanOf(b), bodyVel, t).pos;
+      out = ramStateAt(ramPlanOf(b), bodyVel, t).pos;
     } else {
       const parent = bodyPos(b.parent_body_id, t);
       if (isEccentric(b)) {

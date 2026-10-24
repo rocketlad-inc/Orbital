@@ -16,15 +16,21 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 // not carry any of that. The 3D stage still exists for battles; this
 // player never imports it, so its chunk has no three.js in it.
 import { createMatchMap } from '../render/matchMap';
+import { advanceClock, FILM_STEP_MAX_MS } from '../render/filmReel';
 import {
   type ReplayStage as MatchStage, type MatchSummary, type SnapshotRow,
   mineEvents, type MatchEvent,
 } from '../render/matchWorld';
 import { t as tr, type Key } from '../i18n/core';
 import { useI18n } from '../i18n/react';
+import { useIsMobile } from '../hooks/useIsMobile';
+import { canRecordVideo } from './recapVideo';
+import { recordFilmVideo, shareOrSaveVideo } from './filmVideo';
 import './BattleCinema.css';
 
 const TICK_SECONDS = 1;
+/** The player's diagnostics row, for ?filmdebug only (players saw it). */
+const DEBUG = typeof window !== 'undefined' && window.location.search.includes('filmdebug');
 
 /** A catalog line with one {name} that is shown bold: "battle at **name**". */
 function boldName(key: Key, name: string): React.ReactNode {
@@ -43,7 +49,11 @@ function boldName(key: Key, name: string): React.ReactNode {
  * one, which is the trap the battle recap avoided the same way.
  */
 export function MatchReplay(
-  { gameId, token }: { gameId?: string; token?: string },
+  { gameId, token, onSummary }: {
+    gameId?: string; token?: string;
+    /** The match, once loaded (the shared page titles itself from it). */
+    onSummary?: (s: MatchSummary) => void;
+  },
 ) {
   useI18n();
   // A token names its own game server-side, so the caller never supplies
@@ -74,6 +84,17 @@ export function MatchReplay(
     frames: 0, stage: 'no' });
 
   const posRef = useRef(0); const playRef = useRef(true);
+  /** Every row fetched so far: the video export replays them. */
+  const rowsRef = useRef<SnapshotRow[]>([]);
+  /** A video recording: its progress (0..1), and how to stop it. */
+  const [rec, setRec] = useState<number | null>(null);
+  const [recMsg, setRecMsg] = useState<string | null>(null);
+  const recordingRef = useRef(false);
+  const recAbort = useRef<AbortController | null>(null);
+  const mobile = useIsMobile();
+  /** Every page of the match is in (a video needs the whole of it). */
+  const [loaded, setLoaded] = useState(false);
+  const canVideo = useMemo(() => canRecordVideo(), []);
   const speedRef = useRef(1);
   playRef.current = playing; speedRef.current = speed;
 
@@ -81,7 +102,7 @@ export function MatchReplay(
     let live = true;
     fetch(src.summary, src.init)
       .then(r => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then(j => { if (live) setSummary(j); })
+      .then(j => { if (live) { setSummary(j); onSummary?.(j); } })
       .catch(e => { if (live) setErr(e?.message || 'summary failed'); });
     return () => { live = false; };
   }, [src.summary]);   // eslint-disable-line react-hooks/exhaustive-deps
@@ -119,6 +140,7 @@ export function MatchReplay(
     // Stream pages while playing; the film starts on page one.
     let dead = false;
     const collected: SnapshotRow[] = [];
+    rowsRef.current = collected;
     (async () => {
       let from = lo;
       while (!dead && from != null) {
@@ -146,20 +168,22 @@ export function MatchReplay(
         console.info('[match-replay] page', from, '→', j.rows.length, 'rows; next', j.nextFrom);
         from = j.nextFrom;
       }
+      if (!dead) setLoaded(true);
     })();
 
     let raf = 0; let last = performance.now();
     const loop = (now: number) => {
       raf = requestAnimationFrame(loop);
-      const dt = Math.min(200, Math.max(0, now - last));
+      // A slow frame slows the film; it never skips it (FILM_STEP_MAX_MS).
+      const dt = Math.min(FILM_STEP_MAX_MS, Math.max(0, now - last));
       last = now;
       if (playRef.current) {
-        // The director's pace, not a flat clock: heavy scenes play at up
-        // to ~2.4s a tick, quiet stretches at ~0.3s. The speed selector
-        // multiplies on top.
-        const rate = stage.rateAt?.(Math.floor(posRef.current)) ?? TICK_SECONDS;
-        const next = posRef.current
-          + (dt / (rate * 1000)) * speedRef.current;
+        // The film's own pace (filmReel): a battle runs about a tick a
+        // second, a time-lapse dozens. Spent tick by tick, so a fast
+        // stretch cannot carry the clock past the start of the next scene.
+        // The speed selector multiplies on top.
+        const next = advanceClock(t => stage.rateAt?.(t) ?? TICK_SECONDS,
+          posRef.current, (dt / 1000) * speedRef.current, hi + 1);
         if (next >= hi) {
           posRef.current = hi; playRef.current = false; setPlaying(false);
         } else {
@@ -170,6 +194,9 @@ export function MatchReplay(
         if ((frames % 6) === 0) setPos(posRef.current);
       }
       const t = Math.floor(posRef.current);
+      // While a video records, the recorder's stage has the screen's
+      // per-hull animation state to itself.
+      if (recordingRef.current) return;
       try {
         stage.setTick(t, posRef.current - t);
         stage.render();
@@ -237,6 +264,33 @@ export function MatchReplay(
   if (err) {
     return <div style={{ color: '#ff8a80', fontSize: 12, padding: 12 }}>{err}</div>;
   }
+  async function saveVideo() {
+    if (!summary || recordingRef.current) return;
+    const ctl = new AbortController();
+    recAbort.current = ctl;
+    recordingRef.current = true;
+    setPlaying(false);
+    setRecMsg(null);
+    setRec(0);
+    try {
+      const out = await recordFilmVideo({ summary, rows: rowsRef.current, signal: ctl.signal,
+        onProgress: k => setRec(k) });
+      if (out) {
+        const name = `orbital-${(summary.game.name || 'match').replace(/[^A-Za-z0-9]+/g, '-').toLowerCase()}-film.${out.ext}`;
+        await shareOrSaveVideo(out.blob, name, tr('replay.video.shareTitle', { name: summary.game.name || 'Orbital' }), mobile);
+      } else if (!ctl.signal.aborted) {
+        setRecMsg(tr('replay.video.failed'));
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('[match-replay] video failed', e);
+      setRecMsg(tr('replay.video.failed'));
+    } finally {
+      recordingRef.current = false;
+      recAbort.current = null;
+      setRec(null);
+    }
+  }
   return (
     <div className="cinema cinema-match">
       <div className="cinema-main">
@@ -273,16 +327,23 @@ export function MatchReplay(
           <option value={15}>15&times;</option>
           <option value={60}>60&times;</option>
         </select>
+        {canVideo && (rec == null
+          ? <button type="button" className="cinema-video" disabled={!loaded}
+              title={tr('replay.video.title')} onClick={saveVideo}>{tr('replay.video.save')}</button>
+          : <button type="button" className="cinema-video" onClick={() => recAbort.current?.abort()}>
+              {tr('replay.video.recording', { pct: Math.round(rec * 100) })} &middot; {tr('replay.video.cancel')}
+            </button>)}
       </div>
+      {recMsg && <div className="cinema-video-msg" role="status">{recMsg}</div>}
 
-      <div style={{ fontSize: 10, color: '#6f88a3', fontFamily: 'monospace',
+      {DEBUG && <div style={{ fontSize: 10, color: '#6f88a3', fontFamily: 'monospace',
         padding: '0 2px', display: 'flex', gap: 14, flexWrap: 'wrap' }}>
         <span>stage {diag.stage}</span>
         <span>rows {diag.rows}</span>
         <span>ships@tick {diag.ships}</span>
         <span>frames {diag.frames}</span>
         <span>fetch {diag.fetch}</span>
-      </div>
+      </div>}
       </div>
 
       <ol className="cinema-log" aria-label={tr('replay.log')}>

@@ -187,6 +187,17 @@
 .ao-phead > div:first-child { flex: 1 1 320px; min-width: 0; }
 .ao-phead__title { margin: 0; font-size: 17px; font-weight: 700; }
 .ao-phead__hint { margin: 4px 0 0; max-width: 72ch; font-size: 13px; line-height: 1.5; color: var(--ao-ink-3); text-wrap: pretty; }
+
+/* A heading that explains itself on hover (the traffic tables). */
+.ao-table th.ao-th-help { cursor: help; text-decoration: underline dotted; text-decoration-color: var(--ao-line-2); text-underline-offset: 4px; }
+
+/* "What each column means": term on the left, one plain line beside it. */
+.ao-gloss { margin: 0 0 14px; font-size: 12.5px; color: var(--ao-ink-2); }
+.ao-gloss summary { cursor: pointer; color: var(--ao-teal); font-weight: 600; margin-bottom: 8px; width: fit-content; }
+.ao-gloss dl { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 6px 24px; }
+.ao-gloss dl > div { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 10px; align-items: baseline; }
+.ao-gloss dt { margin: 0; font-weight: 600; color: var(--ao-ink); }
+.ao-gloss dd { margin: 0; line-height: 1.45; color: var(--ao-ink-3); }
 .ao-phead__tools { display: flex; gap: 8px; align-items: center; }
 .ao-note { margin: 0 0 12px; font-size: 12.5px; color: var(--ao-ink-3); }
 .ao-none { padding: 22px 4px; color: var(--ao-ink-3); font-size: 14px; }

@@ -26,10 +26,19 @@ const plan: RamPlan = {
 const rock = { id: 'rock', name: 'Rock', type: 'asteroid', parent: 'sol', radius: 0.5, mu: 0, orbitRadius: 650, orbitPeriod: 900, angle0: 2, ramPlan: plan } as unknown as Body;
 const BODIES = [SOL, EARTH, rock];
 
-/** The integrator exactly as it was before the cache: from launch, every call. */
+/** The integrator exactly as it was before the cache: from launch, every
+ *  call, with the miss at arrival folded in over the flight on a
+ *  smoothstep (asteroidRamCourse.test.ts: the bare burn stops short). */
 function reference(t: number) {
   if (t <= plan.startTick) return plan.startPos;
   if (t >= plan.arriveTick) return plan.interceptPos;
+  const p = bare(t), end = bare(plan.arriveTick);
+  const u = (t - plan.startTick) / (plan.arriveTick - plan.startTick);
+  const w = u * u * (3 - 2 * u);
+  return { x: p.x + (plan.interceptPos.x - end.x) * w, y: p.y + (plan.interceptPos.y - end.y) * w };
+}
+
+function bare(t: number) {
   let px = plan.startPos.x, py = plan.startPos.y, vx = plan.startVel.x, vy = plan.startVel.y;
   let cur = plan.startTick;
   while (cur < t) {
@@ -72,7 +81,7 @@ describe('[pure] ram position cache', () => {
     for (let i = 0; i < 2000; i++) bodyPosition(rock, 259.5 - (i % 7) * 0.013, BODIES);
     const cached = performance.now() - t0;
     const t1 = performance.now();
-    for (let i = 0; i < 50; i++) reference(259.5 - (i % 7) * 0.013);
+    for (let i = 0; i < 50; i++) bare(259.5 - (i % 7) * 0.013);
     const fromLaunch = (performance.now() - t1) * (2000 / 50);
     // 2000 cached calls must beat the old cost of 2000 calls by a wide margin.
     expect(cached * 10).toBeLessThan(fromLaunch);

@@ -3,12 +3,16 @@ import { DRAWN_SKIN_SQL } from './skins.js';
 import { parseNamePools } from '../src/game/namePools.js';
 import { getActiveSliders, activeSanctions, activeLawsFor } from './senate.js';
 import { buildCostFactors } from './buildCost.js';
-import { SETTLEMENT_COST, COLONIST_FOUND_MULT } from './actions.js';
+import { SETTLEMENT_COST, COLONIST_FOUND_MULT, MEGA_STRIKE_CHARGE_TICKS } from './actions.js';
+import { kaijuDials } from './kaiju.js';
 import { carrierCapFor } from './tradeRoutesV2.js';
-import { MEGASTRUCTURES, MEGA_BREACH_HP } from './megastructures.js';
+import { MEGASTRUCTURES, MEGA_BREACH_HP, megaBodyName } from './megastructures.js';
 import { upkeepSplit, parsePartsJson, shipBaseStatsFromCfg } from './shipDesigns.js';
 import { voteWeights } from './systems.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
+
+/** Send the sun gate omen's true exit bearing (see sun_gate_next below). */
+const SHOW_OMEN_BEARING = false;
 import { offerShipClass } from './discoveryOffers.js';
 import { visualsSwitches } from './botSettings.js';
 import { orbitAngle, legProgress } from './orbitPos.js';
@@ -69,9 +73,13 @@ function err(status, code, message) {
 // spread 2x, so absolute sensor ranges had to grow with it or the fog
 // would have silently doubled. KEEP IN SYNC with src/game/visibility.ts.
 const SENSOR_SCALE = 2;
+// Warships see at least as far as they shoot in flight (transitCombat.js
+// SHIP_RANGE 360 / 480 / 600 since 2026-10-23; was 300 / 400 / 350 sight,
+// and the Mega Destroyer had none). sensorScale.test holds the reach <= sight.
 export const SHIP_SENSOR_RANGE = {
-  corvette: 150 * SENSOR_SCALE, frigate: 200 * SENSOR_SCALE,
-  destroyer: 175 * SENSOR_SCALE, freighter: 100 * SENSOR_SCALE,
+  corvette: 180 * SENSOR_SCALE, frigate: 240 * SENSOR_SCALE,
+  destroyer: 300 * SENSOR_SCALE, mega_destroyer: 300 * SENSOR_SCALE,
+  freighter: 100 * SENSOR_SCALE,
   colony: 75 * SENSOR_SCALE,
   // A missile salvo (missiles.js) sees nothing: it is a warhead, not a probe.
   missile: 0,
@@ -459,7 +467,8 @@ async function handleGetState(req, env, ctx) {
               dyson_started_at_tick,
               dyson_acc_fuel, dyson_acc_ore, dyson_acc_credits, dyson_acc_science,
               dyson_target_fuel, dyson_target_ore, dyson_target_credits, dyson_target_science,
-              dyson_hp, dyson_max_hp, sun_gate_tick
+              dyson_hp, dyson_max_hp, sun_gate_tick,
+              solo, paused, solo_difficulty
          FROM games WHERE id = ?`,
     )
     .bind(gameId)
@@ -479,7 +488,8 @@ async function handleGetState(req, env, ctx) {
   //       state.js self-heal was bypassing this since the previous
   //       guard required next_tick_at != null.
   // Fire-and-forget — we don't await it so /state stays snappy.
-  const isActive = game.status === 'active';
+  // A paused solo game is stopped on purpose, not orphaned.
+  const isActive = game.status === 'active' && Number(game.paused) !== 1;
   const isOverdue = game.next_tick_at != null && Date.now() > game.next_tick_at + 1000;
   const isOrphaned = game.next_tick_at == null;
   if (isActive && (isOverdue || isOrphaned)) {
@@ -560,6 +570,8 @@ const factionsP = env.DB
     .prepare(
       `SELECT gf.id, gf.slot, gf.name, gf.color, gf.color2, gf.emblem, gf.status, gf.capital_body_id,
               gf.senate_weight, gf.reputation,
+              -- A computer empire in a solo game (worker/aiEmpire.js).
+              CASE WHEN gf.ai_doctrine IS NOT NULL THEN 1 ELSE 0 END AS ai,
               -- Colony and station skins (0154): the lobby override, else
               -- the account default, only while the Commission is held.
               ${DRAWN_SKIN_SQL('city_skin')} AS city_skin,
@@ -1202,7 +1214,14 @@ const shipsP = env.DB
   // shows ships only in sensor range and must use THIS answer, not a copy
   // of the rules that produce it (worker/wearWorlds.js).
   const visibleBodyIds = bodiesRaw.filter(b => b.visible_to_me).map(b => b.id);
-  const bodies = bodiesRaw.map(b => {
+  // A FINISHED STRUCTURE IS NOT A SITE. Completion renames the body now
+  // (renameFinishedSiteStmt), but structures finished before that still
+  // store "<Label> Site"; read them as the structure rather than migrate
+  // every running game. Only the founding name is touched.
+  const megaByBody = new Map(megastructures.map(m => [m.body_id, m]));
+  const bodies = bodiesRaw.map(raw => {
+    const mega = raw.type === 'megastructure' ? megaByBody.get(raw.id) : undefined;
+    const b = mega ? { ...raw, name: megaBodyName(raw.name, mega.kind, mega.status) } : raw;
     const isRevealed = b.secret_revealed === 1;
     // Strip unrevealed secret_kind so clients can't sniff what's buried
     // on bodies they haven't visited. After reveal it's broadcast.
@@ -1254,6 +1273,18 @@ const shipsP = env.DB
   // moons-of-presence + planet-of-moon-presence). Caller's own ships are
   // always visible regardless.
   const ships = (await shipsP).results ?? [];
+  // THE WHOLE WIND-UP of each charging strike, so the ring fills against
+  // it. The client divided by the Mega Destroyer's 24 for every hull, and
+  // a Leviathan winding up for the game's kaiju_charge_ticks dial (4 in
+  // the Studio) opened its ring 83% full. Public, like the charge itself.
+  if (ships.some(s => s.strike_ready_tick != null)) {
+    let kaijuCharge = MEGA_STRIKE_CHARGE_TICKS;
+    try { kaijuCharge = kaijuDials(await loadGameConfig(env, gameId)).chargeTicks; } catch { /* the default */ }
+    for (const s of ships) {
+      if (s.strike_ready_tick == null) continue;
+      s.strike_charge_ticks = s.ship_class === 'kaiju' ? kaijuCharge : MEGA_STRIKE_CHARGE_TICKS;
+    }
+  }
 
   // Exactly the ships this observer is receiving. Any of them that's
   // in-transit needs its node sent too, or the client can't place it on
@@ -2240,15 +2271,40 @@ const tradeRoutesP = env.DB
   let sunGateFirsts = [];
   if (game.sun_gate_tick != null) {
     try {
-      const { sunGatePlan, SUN_GATE_WARNING_TICKS } = await import('./sunGates.js');
+      const { sunGatePlan, SUN_GATE_WARNING_TICKS, sunGateOmenAngle, solGateId } = await import('./sunGates.js');
       const gconf = await loadGameConfig(env, gameId);
       const cur = Number(game.current_tick) || 0;
-      const step = sunGatePlan(gameId, Number(game.sun_gate_tick), gconf).find(s => s.emergeTick > cur);
+      const plan = sunGatePlan(gameId, Number(game.sun_gate_tick), gconf);
+      const step = plan.find(s => s.emergeTick > cur);
       if (step && cur >= step.emergeTick - SUN_GATE_WARNING_TICKS) {
         // kaiju: this one arrives on the Leviathan (kaiju.js), so the
         // countdown is to a launch from `system`, not a shape in the Sun.
         const kaiju = step.index === 1 && Number(gconf?.kaiju) === 1;
+        // WHERE THE OMEN RISES: the bearing the gate will really leave
+        // on (sunGateOmenAngle), so the shape on the Sun and the gate
+        // that then comes out of it are on the same limb. The gate before
+        // it is part of the answer (the new one keeps clear of it), so it
+        // goes in exactly as advanceSunGates passes it. Decoration: a
+        // failure leaves the omen where it used to be, never the payload.
+        // OFF until Lorne decides (2026-10-23): the bearing tells a sharp
+        // player six ticks early which limb the gate leaves on, and so
+        // roughly which system it leads to. The gate's exit was a secret
+        // until it came out, on purpose. Off, the omen rises where it
+        // always did (a bearing hashed from the tick).
+        let angle = null;
+        if (SHOW_OMEN_BEARING) try {
+          const prev = step.index > 0 ? plan[step.index - 1] : null;
+          const prior = prev
+            ? await env.DB.prepare(
+              'SELECT id, name, orbit_radius, orbit_period, angle0, emerge_until_tick FROM game_bodies WHERE id = ?',
+            ).bind(solGateId(gameId, prev.sys)).first()
+            : null;
+          angle = await sunGateOmenAngle(env.DB, gameId, step, gconf, prior ?? null, { kaiju });
+        } catch (e) {
+          console.error('sun gate omen bearing failed', e);
+        }
         sunGateNext = { emerge_tick: step.emergeTick, index: step.index,
+          ...(Number.isFinite(angle) ? { angle } : {}),
           ...(kaiju ? { kaiju: true, system: step.sys.label } : {}) };
       }
       const rows = (await env.DB.prepare(
@@ -2340,6 +2396,11 @@ const tradeRoutesP = env.DB
       map_seed: game.map_seed,
       winner_faction_id: game.winner_faction_id,
       victory_type: game.victory_type,
+      // Solo games (worker/solo.js): one player against computer empires,
+      // which the player may pause.
+      solo: Number(game.solo) === 1,
+      paused: Number(game.paused) === 1,
+      solo_difficulty: game.solo_difficulty ?? null,
       // Research gating. 0 for games that predate migration 0040 — they
       // grandfather every feature unlocked, so the client must not grey
       // anything out for them. The client mirrors the same flag through

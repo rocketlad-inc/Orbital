@@ -299,7 +299,11 @@ export function AdminOverview({ onOpenGame }: { onOpenGame: (id: string) => void
         </div>
       )}
       {tab === 'players' && <PlayersPanel refreshKey={listKey} onOpenGame={onOpenGame} />}
-      {tab === 'growth' && <Growth data={data} />}
+      {tab === 'growth' && (
+        <RefreshContext.Provider value={{ refresh: () => { void load(); }, loading, loadedAt }}>
+          <Growth data={data} />
+        </RefreshContext.Provider>
+      )}
       {tab === 'friction' && <FrictionTab data={data} />}
       {tab === 'features' && <Features rows={data.usage} />}
       {tab === 'commission' && <Commission />}
@@ -406,6 +410,24 @@ function Pulse({ data, onGo }: { data: Overview; onGo: (t: Tab) => void }) {
         <HeatGrid grid={data.heat_grid} />
       </section>
     </div>
+  );
+}
+
+/** The overview's refresh, for panels that want their own button. */
+const RefreshContext = React.createContext<{ refresh: () => void; loading: boolean; loadedAt: number | null } | null>(null);
+
+/** "Refresh · updated 40s ago", for a single panel. It re-reads the same
+ *  overview the header button does, so every table on the tab moves with it. */
+function RefreshTool() {
+  const ctx = React.useContext(RefreshContext);
+  if (!ctx) return null;
+  return (
+    <>
+      {ctx.loadedAt && <span className="ao-dim" style={{ fontSize: 12 }}>updated {ago(Date.now(), ctx.loadedAt)}</span>}
+      <button className="ao-btn" disabled={ctx.loading} onClick={ctx.refresh}>
+        {ctx.loading ? 'Refreshing…' : 'Refresh'}
+      </button>
+    </>
   );
 }
 
@@ -1149,7 +1171,7 @@ function InvitesPanel({ inv }: { inv: InvitesData }) {
       <PanelHead
         title="Who brings players in"
         hint="Last 30 days. An invite is a link to a room that names who sent it; a code typed by hand counts too, credited to the room's host. Recorded from the Oct 19 update on."
-      />
+      ><RefreshTool /></PanelHead>
       <div className="ao-headline">
         <div className="ao-headline__item"><span className="ao-headline__value">{n(inv.opens)}</span><span className="ao-headline__label">invite links opened</span></div>
         <div className="ao-headline__item"><span className="ao-headline__value">{n(inv.signed_up)}</span><span className="ao-headline__label">friends signed up</span></div>
@@ -1248,7 +1270,7 @@ function Growth({ data }: { data: Overview }) {
         <PanelHead
           title="Where players came from"
           hint="Every account by where it first arrived from: your link tag (?from=…), a friend’s invite, the site that sent them, or “direct”. Took a seat = joined a game. Came back = played again a day or more after signing up."
-        />
+        ><RefreshTool /></PanelHead>
         <SourcesTable rows={data.sources} now={data.now} />
       </section>
     </div>
@@ -1285,13 +1307,54 @@ function FunnelCells({ f }: { f: Funnel }) {
     </>
   );
 }
+/** What each traffic column counts, in one place: the glossary under the
+ *  panel's title and every column heading's hover read from this list,
+ *  so the two can never say different things (worker/visits.js and the
+ *  traffic queries in worker/adminDashboard.js are the definitions). */
+const TRAFFIC_COLS: Array<{ key: string; name: string; help: string }> = [
+  { key: 'source', name: 'Source', help: 'Where the visit came from: the tag on the link (?from= or utm_source), or else the site that sent it.' },
+  { key: 'campaign', name: 'Campaign', help: 'The utm_campaign on the link, if it had one.' },
+  { key: 'visitors', name: 'Visitors', help: 'Browsers that arrived this way, counted once on their first visit. One person on a phone and a laptop counts twice.' },
+  { key: 'engaged', name: 'Engaged', help: 'Stayed on the page 10 seconds with it visible, or tapped or scrolled it. Leaves out instant bounces and most robots.' },
+  { key: 'pressed_play', name: 'Pressed Play', help: 'Reached the sign-in screen: pressed Play free or Sign in. Includes people who already had an account and signed in.' },
+  { key: 'started', name: 'Started sign-up', help: 'Began making an account: opened the Sign up tab, sent the email form, or finished the Google step.' },
+  { key: 'errors', name: 'Errors', help: 'A sign-up or sign-in the game refused, or the Google button failing (common inside the Reddit and Facebook apps).' },
+  { key: 'signed_up', name: 'Signed up', help: 'Made a new account.' },
+  { key: 'seated', name: 'Took a seat', help: 'Of those new accounts, joined at least one game.' },
+  { key: 'came_back', name: 'Came back', help: 'Of those new accounts, played again a day or more after signing up.' },
+  { key: 'phone', name: 'On a phone', help: 'The share of visitors on a phone.' },
+  { key: 'clicks', name: 'Ad clicks', help: "Visitors whose link carried the ad network's click id (rdt_cid, gclid and so on): they clicked the ad itself, not a copy of the link shared somewhere else." },
+  { key: 'latest', name: 'Latest', help: 'How long ago the most recent visitor arrived.' },
+];
+const COL_HELP: Record<string, string> = Object.fromEntries(TRAFFIC_COLS.map(c => [c.key, c.help]));
+
+/** A column heading that explains itself on hover. */
+const HelpTh = ({ k, num, children }: { k: string; num?: boolean; children: React.ReactNode }) => (
+  <th className={`${num ? 'num ' : ''}ao-th-help`} title={COL_HELP[k]}>{children}</th>
+);
+
 const FUNNEL_HEAD = (
   <>
-    <th className="num">Visitors</th><th className="num">Engaged</th><th className="num">Pressed Play</th><th className="num">Started sign-up</th>
-    <th className="num">Errors</th><th className="num">Signed up</th><th className="num">Took a seat</th>
-    <th className="num">Came back</th>
+    <HelpTh k="visitors" num>Visitors</HelpTh><HelpTh k="engaged" num>Engaged</HelpTh>
+    <HelpTh k="pressed_play" num>Pressed Play</HelpTh><HelpTh k="started" num>Started sign-up</HelpTh>
+    <HelpTh k="errors" num>Errors</HelpTh><HelpTh k="signed_up" num>Signed up</HelpTh>
+    <HelpTh k="seated" num>Took a seat</HelpTh><HelpTh k="came_back" num>Came back</HelpTh>
   </>
 );
+
+/** The glossary under the panel's title: every column, one plain line. */
+function TrafficGlossary() {
+  return (
+    <details className="ao-gloss" open>
+      <summary>What each column means</summary>
+      <dl>
+        {TRAFFIC_COLS.map(c => (
+          <div key={c.key}><dt>{c.name}</dt><dd>{c.help}</dd></div>
+        ))}
+      </dl>
+    </details>
+  );
+}
 
 function TrafficPanel({ tr, now }: { tr: TrafficData; now: number }) {
   // Daily totals over 14 days, with the busiest source of each day.
@@ -1309,12 +1372,13 @@ function TrafficPanel({ tr, now }: { tr: TrafficData; now: number }) {
     <section className="ao-panel">
       <PanelHead
         title="Link and ad traffic"
-        hint="Last 30 days. Every visit that arrived through a tagged link (?from=, utm_…), an ad click, or another site, whether or not it signed up. One row per browser, counted on its first arrival. Engaged = stayed 10 seconds or touched the page; Pressed Play = reached the sign-in screen; Started sign-up = opened the Sign up tab or submitted the form or Google; Errors = sign-up refused or the Google button failed. Percentages are of visitors. Recorded from the Oct 20 update on."
-      />
+        hint="Every visit in the last 30 days that arrived through a tagged link, an ad click or another site, whether or not it signed up (recorded from Oct 20). Read a row left to right: each column is a step further in, and the small percentage beside a number is its share of that row's visitors."
+      ><RefreshTool /></PanelHead>
+      <TrafficGlossary />
       {tr.campaigns.length === 0 ? <div className="ao-none">No tagged or referred visits yet.</div> : (
         <div className="ao-scroll">
           <table className="ao-table">
-            <thead><tr><th>Source</th><th>Campaign</th>{FUNNEL_HEAD}<th className="num">On a phone</th><th className="num">Ad clicks</th><th>Latest</th></tr></thead>
+            <thead><tr><HelpTh k="source">Source</HelpTh><HelpTh k="campaign">Campaign</HelpTh>{FUNNEL_HEAD}<HelpTh k="phone" num>On a phone</HelpTh><HelpTh k="clicks" num>Ad clicks</HelpTh><HelpTh k="latest">Latest</HelpTh></tr></thead>
             <tbody>
               {tr.campaigns.map(r => (
                 <tr key={`${r.source}|${r.campaign}`}>

@@ -21,7 +21,7 @@ import {
   advanceSunGates, settleOmenTick, rollOmenTick, gateOrder, sunGatePlan,
   emergeFlightTicks, farReachBand, pickBearing, seededRand, siteId,
   FAR_SYSTEM_TEMPLATE_IDS, SUN_GATE_TRANSIT_FRACTION, solGateId, farGateId,
-  SUN_GATE_SYSTEMS, isFarSystemBody, mainSystemSql,
+  SUN_GATE_SYSTEMS, isFarSystemBody, mainSystemSql, sunGateOmenAngle,
 } from '../worker/sunGates.js';
 import { summarizeSystems, voteWeights } from '../worker/systems.js';
 import { gateTransitTicks } from '../worker/megastructures.js';
@@ -146,8 +146,16 @@ for (let t = 6; t <= 10; t++) await advanceSunGates(env, G, t, dials);
 check('...and nothing has come out yet', !(await DB.prepare(
   `SELECT 1 FROM game_bodies WHERE id = ?`).bind(solGateId(G, order[0])).first()));
 
+// THE OMEN POINTS WHERE IT WILL GO (Studio clip a-sun-gate-is-born: the
+// shape rose through the Sun's lower-left limb and the gate came out of
+// the right). Asked during the warning, before anything is written.
+const omen0 = await sunGateOmenAngle(DB, G, sunGatePlan(G, 5, dials)[0], dials, null);
 await advanceSunGates(env, G, 11, dials);
 const g0 = await DB.prepare(`SELECT * FROM game_bodies WHERE id = ?`).bind(solGateId(G, order[0])).first();
+const angleGap = (a, b) => Math.abs(((a - b) % (2 * Math.PI) + 3 * Math.PI) % (2 * Math.PI) - Math.PI);
+check('the omen rises on the bearing the first gate then leaves the Sun on',
+  Number.isFinite(omen0) && g0 && angleGap(omen0, orbitAngle(g0.angle0, g0.orbit_period, 11)) < 1e-9,
+  `omen ${omen0} vs gate ${g0 && orbitAngle(g0.angle0, g0.orbit_period, 11)}`);
 const f0 = await DB.prepare(`SELECT * FROM game_bodies WHERE id = ?`).bind(farGateId(G, order[0])).first();
 check(`tick 11: the first gate (to ${order[0].label}) leaves the Sun`,
   !!g0 && g0.emerge_from_tick === 11 && g0.parent_body_id === `${G}:sol`, JSON.stringify(g0));
@@ -267,10 +275,18 @@ rows = await chron();
 check('it is announced open the tick it lands',
   rows.some(r => r.kind === 'sun_gate_opened' && r.tick_number === arrive0), JSON.stringify(rows.map(r => [r.kind, r.tick_number])));
 
-for (let t = arrive0 + 1; t <= 21; t++) await advanceSunGates(env, G, t, dials);
+for (let t = arrive0 + 1; t <= 20; t++) await advanceSunGates(env, G, t, dials);
+// The second omen, in its warning, with the first gate as the server passes it.
+const omen1 = await sunGateOmenAngle(DB, G, sunGatePlan(G, 5, dials)[1], dials,
+  await DB.prepare('SELECT id, name, orbit_radius, orbit_period, angle0, emerge_until_tick FROM game_bodies WHERE id = ?')
+    .bind(solGateId(G, order[0])).first());
+await advanceSunGates(env, G, 21, dials);
 const g1 = await DB.prepare(`SELECT * FROM game_bodies WHERE id = ?`).bind(solGateId(G, order[1])).first();
 check(`tick 21: the second gate (to ${order[1].label}) leaves, ten ticks later`,
   !!g1 && g1.emerge_from_tick === 21, JSON.stringify(g1));
+check('...and its omen rose on the bearing it left on',
+  Number.isFinite(omen1) && g1 && angleGap(omen1, orbitAngle(g1.angle0, g1.orbit_period, 21)) < 1e-9,
+  `omen ${omen1} vs gate ${g1 && orbitAngle(g1.angle0, g1.orbit_period, 21)}`);
 {
   // The second gate is WARNED, like the first: six ticks ahead, once.
   const warns = (await chron()).filter(r => r.kind === 'sun_gate_omen');

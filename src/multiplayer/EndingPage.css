@@ -355,6 +355,10 @@
   letter-spacing: 0.16em; color: var(--ep-ink-3); text-transform: uppercase; overflow-wrap: anywhere;
 }
 .ep-film { margin-top: 28px; min-width: 0; }
+/* The film's buttons, under the verdict. */
+.ep-filmbar { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; margin-top: 28px; }
+.ep-filmshare { display: flex; justify-content: center; margin-top: 14px; }
+.ep-filmnote { text-align: center; margin-top: 10px; }
 
 /* ---- loading skeleton (built from the verdict alone) ---- */
 .ep-skelstack { display: grid; gap: 16px; margin-top: 56px; }
@@ -455,7 +459,7 @@
   .ep-you { padding: 18px 16px; }
   .ep-you__ord { font-size: 40px; }
   .ep-battles__head, .ep-battle { padding-left: 14px; padding-right: 14px; }
-  .ep-actions { flex-direction: column; }
+  .ep-actions, .ep-filmbar { flex-direction: column; }
   .ep-btn { width: 100%; }
   .ep-cm .ep-btn { width: auto; }
   .ep-btn.ep-btn--clip { width: auto; }

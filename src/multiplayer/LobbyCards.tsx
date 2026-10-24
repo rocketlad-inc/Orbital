@@ -53,6 +53,9 @@ export interface GameSummary {
   archived_at_ms?: number | null;
   /** A room hosted on a Map Maker map: that map's name (player-written). */
   custom_map_name?: string | null;
+  /** A solo game (worker/solo.js), and whether its clock is paused. */
+  solo?: boolean;
+  paused?: boolean;
 }
 
 // ---------- words ----------
@@ -193,7 +196,8 @@ export function GameCard({ g, now, variant, busy, onPrimary, menu, pinned, myUse
   const iHost = !!myUserId && g.host_id === myUserId;
 
   const sub = g.phase === 'live'
-    ? `${t('card.started', { when: ago(g.started_at, now) })}${g.next_tick_at ? ` · ${t('card.nextTurn', { when: until(g.next_tick_at, now) })}` : ''}`
+    ? `${t('card.started', { when: ago(g.started_at, now) })}${g.paused ? ` · ${t('card.paused')}`
+      : g.next_tick_at ? ` · ${t('card.nextTurn', { when: until(g.next_tick_at, now) })}` : ''}`
     : g.phase === 'finished'
       ? t('card.ended', { when: ago(g.completed_at, now), n: g.current_tick ?? 0 })
       : t('card.hosted', { host: iHost ? t('card.hostedYou') : g.host_name, when: ago(g.created_at, now) });
@@ -202,6 +206,8 @@ export function GameCard({ g, now, variant, busy, onPrimary, menu, pinned, myUse
   if (variant === 'mine') {
     cta = g.phase === 'live' ? { label: t('card.cta.resume'), kind: 'primary' }
       : g.phase === 'finished' ? { label: t('card.cta.view'), kind: 'secondary' }
+      // This OPENS the room (onPrimary = enter it); START is inside, so the
+      // label says so instead of promising a one-click start it never did.
       : iHost && g.phase === 'full' ? { label: t('card.cta.startGame'), kind: 'primary' }
       : { label: t('card.cta.openLobby'), kind: 'secondary' };
   } else if (g.is_member) {
@@ -224,7 +230,8 @@ export function GameCard({ g, now, variant, busy, onPrimary, menu, pinned, myUse
       <div className="lx-card__top">
         <StatusChip g={g} />
         <div className="lx-card__tags">
-          {g.has_password && <span className="lx-tag" title={t('card.tag.privateTitle')}>{t('card.tag.private')}</span>}
+          {g.solo && <span className="lx-tag lx-tag--solo" title={t('card.tag.soloTitle')}>{t('card.tag.solo')}</span>}
+          {g.has_password && !g.solo && <span className="lx-tag" title={t('card.tag.privateTitle')}>{t('card.tag.private')}</span>}
           {g.quick_join && g.phase !== 'finished' && <span className="lx-tag lx-tag--quick" title={t('card.tag.quickTitle')}>{t('card.tag.quick')}</span>}
           {pinned && <span className="lx-tag lx-tag--pin" title={t('card.tag.pinTitle')}>{t('card.tag.pin')}</span>}
           {menu}

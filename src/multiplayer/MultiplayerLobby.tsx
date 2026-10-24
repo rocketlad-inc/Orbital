@@ -183,6 +183,7 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
             onQuick={quickJoin}
             quickBusy={quickBusy}
             quickError={quickError}
+            onSoloStarted={onEnterRoom}
           />
         )}
         {tab === 'my' && (
@@ -249,7 +250,7 @@ function NavItem({
 // ---------- Hero + Quick Join ----------
 
 function Hero({
-  tab, name, mine, browse, autoloadSet, onQuick, quickBusy, quickError,
+  tab, name, mine, browse, autoloadSet, onQuick, quickBusy, quickError, onSoloStarted,
 }: {
   tab: 'my' | 'browse';
   name: string;
@@ -259,6 +260,7 @@ function Hero({
   onQuick: () => void;
   quickBusy: boolean;
   quickError: string | null;
+  onSoloStarted: (roomId: string) => void;
 }) {
   useI18n();
   // Quick Join only ever seats you in a PUBLIC game (no password), so the
@@ -292,6 +294,7 @@ function Hero({
           </p>
         )}
       </div>
+      <div className="lx-hero__cards">
       <div className="lx-quick">
         <div className="lx-quick__head">
           <span className="lx-quick__label">{t('lobby.quick.label')}</span>
@@ -309,7 +312,108 @@ function Hero({
         </button>
         {quickError && <div className="lx-error" role="alert">{quickError}</div>}
       </div>
+      <SoloCard onStarted={onSoloStarted} />
+      </div>
     </section>
+  );
+}
+
+// ---------- Solo ----------
+
+type SoloDifficulty = 'peaceful' | 'normal' | 'ruthless';
+const SOLO_DIFFICULTIES: SoloDifficulty[] = ['peaceful', 'normal', 'ruthless'];
+/** worker/solo.js SOLO_SPEEDS, with the lobby's words for them. */
+const SOLO_SPEEDS: Array<[number, 'lobby.solo.speed.fast' | 'lobby.solo.speed.steady' | 'lobby.solo.speed.relaxed']> = [
+  [30_000, 'lobby.solo.speed.fast'], [120_000, 'lobby.solo.speed.steady'], [600_000, 'lobby.solo.speed.relaxed'],
+];
+
+/**
+ * Play solo: one person and 1-5 computer empires in a game of their own
+ * (worker/solo.js). Lorne's picks: 3 rivals, normal, 2 min a turn by
+ * default. Collapsed it is one button; open, the three choices and Start.
+ */
+function SoloCard({ onStarted }: { onStarted: (roomId: string) => void }) {
+  useI18n();
+  const [open, setOpen] = useState(false);
+  const [rivals, setRivals] = useState(3);
+  const [difficulty, setDifficulty] = useState<SoloDifficulty>('normal');
+  const [speed, setSpeed] = useState(120_000);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const start = async () => {
+    setBusy(true);
+    setError(null);
+    const res = await apiFetch<{ ok: true; game_id: string }>('/api/solo', {
+      method: 'POST',
+      body: JSON.stringify({ rivals, difficulty, speed_ms: speed }),
+    });
+    setBusy(false);
+    if (res.ok) onStarted(res.data.game_id);
+    else setError(apiErrorText(res.error, 'lobby.solo.failed'));
+  };
+
+  return (
+    <div className={`lx-quick lx-solo${open ? ' is-open' : ''}`}>
+      <div className="lx-quick__head">
+        <span className="lx-quick__label">{t('lobby.solo.label')}</span>
+        <span className="lx-quick__meta">{t('lobby.solo.meta')}</span>
+      </div>
+      {!open ? (
+        <>
+          <p className="lx-quick__body">{t('lobby.solo.body')}</p>
+          <button className="lx-btn lx-btn--secondary lx-btn--lg lx-btn--block" onClick={() => setOpen(true)}>
+            {t('lobby.solo.btnSetup')}
+          </button>
+        </>
+      ) : (
+        <>
+          <div className="lx-solo__row">
+            <span className="lx-solo__k">{t('lobby.solo.rivals')}</span>
+            <div className="lx-seg lx-seg--fill" role="radiogroup" aria-label={t('lobby.solo.rivals')}>
+              {[1, 2, 3, 4, 5].map(n => (
+                <button key={n} type="button" role="radio" aria-checked={rivals === n}
+                  className={`lx-seg__opt ${rivals === n ? 'is-active' : ''}`} onClick={() => setRivals(n)}>
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="lx-solo__row">
+            <span className="lx-solo__k">{t('lobby.solo.difficulty')}</span>
+            <div className="lx-seg lx-seg--fill lx-solo__words" role="radiogroup" aria-label={t('lobby.solo.difficulty')}>
+              {SOLO_DIFFICULTIES.map(d => (
+                <button key={d} type="button" role="radio" aria-checked={difficulty === d}
+                  className={`lx-seg__opt ${difficulty === d ? 'is-active' : ''}`} onClick={() => setDifficulty(d)}>
+                  {t(`lobby.solo.diff.${d}` as const)}
+                </button>
+              ))}
+            </div>
+            <span className="lx-solo__hint">{t(`lobby.solo.diffHint.${difficulty}` as const)}</span>
+          </div>
+          <div className="lx-solo__row">
+            <span className="lx-solo__k">{t('lobby.solo.speed')}</span>
+            <div className="lx-seg lx-seg--fill" role="radiogroup" aria-label={t('lobby.solo.speed')}>
+              {SOLO_SPEEDS.map(([ms, key]) => (
+                <button key={ms} type="button" role="radio" aria-checked={speed === ms}
+                  className={`lx-seg__opt ${speed === ms ? 'is-active' : ''}`} onClick={() => setSpeed(ms)}>
+                  {t(key)}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="lx-solo__go">
+            <button className="lx-btn lx-btn--ghost lx-btn--lg" onClick={() => setOpen(false)} disabled={busy}>
+              {t('lobby.solo.cancel')}
+            </button>
+            <button className="lx-btn lx-btn--primary lx-btn--lg lx-solo__start" onClick={start} disabled={busy}>
+              {busy ? t('lobby.solo.busy') : t('lobby.solo.start')}
+            </button>
+          </div>
+        </>
+      )}
+      {error && <div className="lx-error" role="alert">{error}</div>}
+    </div>
   );
 }
 

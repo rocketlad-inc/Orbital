@@ -777,6 +777,45 @@ export async function resolveMissiles(env, gameId, tick, { peace = new Set() } =
   return events;
 }
 
+/** A salvo still in orbit at its silo's world whose launch was called
+ *  back (cancelled) and that never flew a leg. Binds: game id, tick. */
+const RECALLED = `s.game_id = ? AND s.ship_class = 'missile' AND s.status = 'active'
+  AND s.parent_body_id = s.home_body_id AND s.built_at_tick < ?
+  AND EXISTS (SELECT 1 FROM game_ship_nodes n WHERE n.ship_id = s.id AND n.status = 'cancelled')
+  AND NOT EXISTS (SELECT 1 FROM game_ship_nodes n WHERE n.ship_id = s.id
+                   AND n.status IN ('in_transit', 'committed', 'executed'))`;
+
+/**
+ * RECALL A SALVO. The ship panel offers "recall launch" while a launch
+ * waits for the next tick to burn, and a salvo is a ship row, so it got
+ * the ordinary recall: the node was cancelled and the salvo stayed in
+ * orbit as a parked "Missiles x1" with move orders (ciurk, 2026-10-22).
+ * A recalled salvo never left the silo: the missiles go back into its
+ * stock and the salvo row is retired. Only before the burn; once it
+ * flies, a salvo cannot be called back (no mid-flight orders).
+ */
+export async function recallSalvo(env, gameId, nodeId) {
+  const row = await env.DB.prepare(
+    `SELECT s.id, s.missile_count, s.missile_from_settlement_id, g.current_tick
+       FROM game_ship_nodes n JOIN game_ships s ON s.id = n.ship_id JOIN games g ON g.id = s.game_id
+      WHERE n.id = ? AND n.game_id = ?`,
+  ).bind(nodeId, gameId).first();
+  if (!row) return err(404, 'not_found', 'node not found');
+  // The guard IS the race: the tick that burns the node flips it to
+  // in_transit first, and then this changes nothing.
+  const off = await env.DB
+    .prepare("UPDATE game_ship_nodes SET status = 'cancelled' WHERE id = ? AND status = 'committed'")
+    .bind(nodeId).run();
+  if (!(off.meta?.changes > 0)) return err(409, 'missile', 'these missiles are already on their way');
+  await env.DB.batch([
+    env.DB.prepare(`UPDATE game_ships SET status = 'expended', destroyed_at_tick = ? WHERE id = ? AND status = 'active'`)
+      .bind(Number(row.current_tick ?? 0), row.id),
+    env.DB.prepare('UPDATE game_settlements SET missile_stock = missile_stock + ? WHERE id = ?')
+      .bind(Number(row.missile_count || 0), row.missile_from_settlement_id),
+  ]);
+  return json({ ok: true, node_id: nodeId, was: 'committed', recalled: Number(row.missile_count || 0) });
+}
+
 /**
  * A SALVO WITH NOWHERE LEFT TO GO. Every salvo bursts at its meeting or
  * lands somewhere else; one whose leg ended back at its own world without
@@ -786,14 +825,28 @@ export async function resolveMissiles(env, gameId, tick, { peace = new Set() } =
  * never hit anything. One statement; nothing to do in a game without one.
  */
 async function sweepStranded(env, gameId, tick) {
-  const r = await env.DB.prepare(
-    `UPDATE game_ships SET status = 'expended', destroyed_at_tick = ?
-      WHERE game_id = ? AND ship_class = 'missile' AND status = 'active'
-        AND parent_body_id = home_body_id AND built_at_tick < ?
-        AND NOT EXISTS (SELECT 1 FROM game_ship_nodes n
-                         WHERE n.ship_id = game_ships.id AND n.status IN ('in_transit', 'committed'))`,
-  ).bind(tick, gameId, tick).run();
-  return r.meta?.changes ?? 0;
+  // A RECALLED salvo (its launch called back before the burn, so it never
+  // flew) goes back into its silo rather than being spent. The recall
+  // itself does this now (recallSalvo); this catches any recalled before
+  // it did (ciurk, 2026-10-22: "Its a normal unit now").
+  // One batch: the refund and the retirement land together or not at all,
+  // so a salvo can never be refunded twice.
+  const [, r] = await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE game_settlements SET missile_stock = missile_stock + COALESCE((
+          SELECT SUM(s.missile_count) FROM game_ships s
+           WHERE s.missile_from_settlement_id = game_settlements.id AND ${RECALLED}), 0)
+        WHERE id IN (SELECT s.missile_from_settlement_id FROM game_ships s WHERE ${RECALLED})`,
+    ).bind(gameId, tick, gameId, tick),
+    env.DB.prepare(
+      `UPDATE game_ships SET status = 'expended', destroyed_at_tick = ?
+        WHERE game_id = ? AND ship_class = 'missile' AND status = 'active'
+          AND parent_body_id = home_body_id AND built_at_tick < ?
+          AND NOT EXISTS (SELECT 1 FROM game_ship_nodes n
+                           WHERE n.ship_id = game_ships.id AND n.status IN ('in_transit', 'committed'))`,
+    ).bind(tick, gameId, tick),
+  ]);
+  return r?.meta?.changes ?? 0;
 }
 
 /**
@@ -1008,10 +1061,14 @@ async function detonateInFlight(env, gameId, tick) {
             env.DB.prepare(`UPDATE game_ships SET missile_count = 0, status = 'expended', destroyed_at_tick = ? WHERE id = ?`).bind(tick, m.rv_follow_ship_id),
             env.DB.prepare(`UPDATE game_ship_nodes SET status = 'executed', executed_at_tick = ? WHERE ship_id = ? AND status IN ('in_transit', 'committed')`).bind(tick, m.rv_follow_ship_id),
           ]);
+        // ship_id names the INTERCEPTOR (spent here, always): the map plays
+        // the burst where it last drew it, which is where it drew the two
+        // meeting (on the salvo's drawn line); x, y is the true point, for
+        // a client that never drew it.
         await env.DB.prepare(
-          `INSERT INTO chronicle_entries (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
-           VALUES (?, ?, ?, 'missile_intercepted', ?, ?, ?, 'public', ?)`,
-        ).bind(`mintc_${Math.random().toString(36).slice(2, 10)}`, gameId, tick, m.owner_faction_id, prey.plan.targetBodyId,
+          `INSERT INTO chronicle_entries (id, game_id, tick_number, kind, actor_faction_id, body_id, ship_id, payload, visibility, created_at_ms)
+           VALUES (?, ?, ?, 'missile_intercepted', ?, ?, ?, ?, 'public', ?)`,
+        ).bind(`mintc_${Math.random().toString(36).slice(2, 10)}`, gameId, tick, m.owner_faction_id, prey.plan.targetBodyId, m.id,
           JSON.stringify({
             body_name: F.sky.byId.get(prey.plan.targetBodyId)?.name ?? '', count: killed, in_flight: true,
             by_name: factionNames.get(m.owner_faction_id) ?? null,

@@ -750,6 +750,8 @@ async function handleListRooms(_req, env) {
               (SELECT COUNT(*) FROM room_members m WHERE m.room_id = r.id) AS member_count
        FROM rooms r JOIN users u ON u.id = r.host_id
        WHERE r.status != 'closed'
+         -- Solo games (worker/solo.js) are nobody else's to see or join.
+         AND NOT EXISTS (SELECT 1 FROM games g WHERE g.id = r.id AND g.solo = 1)
        ORDER BY r.updated_at DESC
        LIMIT 50`,
     )
@@ -1434,6 +1436,7 @@ import * as economy from './economy.js';
 import * as heraldStrip from './heraldStrip.js';
 import * as battleCard from './battleCard.js';
 import * as recapShare from './recapShare.js';
+import * as filmShare from './filmShare.js';
 import * as widget from './widget.js';
 import * as wear from './wear.js';
 import * as wearWorlds from './wearWorlds.js';
@@ -1453,9 +1456,11 @@ import * as ending from './ending.js';
 import * as profileAwards from './profileAwards.js';
 import * as discoveryOffers from './discoveryOffers.js';
 import * as missiles from './missiles.js';
+import * as solo from './solo.js';
+import * as aiEmpire from './aiEmpire.js';
 import { carryNamePools } from './namePoolHistory.js';
 
-const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, studio, analytics, configAdmin, emailAdmin, emailLogin, store, skins, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed, customMaps, ending, discoveryOffers, invites, visits, profileAwards, missiles];
+const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, studio, analytics, configAdmin, emailAdmin, emailLogin, store, skins, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed, customMaps, ending, discoveryOffers, invites, visits, profileAwards, missiles, solo];
 
 function matchPattern(pattern, pathname) {
   if (typeof pattern === 'string') {
@@ -1573,6 +1578,28 @@ export default {
         } catch (e) {
           console.error('recap card failed', e);
           return new Response('card unavailable', { status: 500 });
+        }
+      }
+      // The whole-match film's link: its card and its page, the same way
+      // (worker/filmShare.js; /film/* is in run_worker_first).
+      const fcm = url.pathname.match(filmShare.FILM_CARD_RE);
+      if (fcm && req.method === 'GET') {
+        try {
+          await ensureMigrated(env);
+          return await filmShare.handleFilmCard(req, env, fcm[1]);
+        } catch (e) {
+          console.error('film card failed', e);
+          return new Response('card unavailable', { status: 500 });
+        }
+      }
+      const fpm = url.pathname.match(filmShare.FILM_PAGE_RE);
+      if (fpm && req.method === 'GET') {
+        try {
+          await ensureMigrated(env);
+          return await filmShare.handleFilmPage(req, env, fpm[1]);
+        } catch (e) {
+          console.error('film page failed', e);
+          return env.ASSETS.fetch(req);
         }
       }
       const rpm = url.pathname.match(recapShare.RECAP_PAGE_RE);
@@ -1925,6 +1952,7 @@ export default {
             `SELECT id FROM games
               WHERE status = 'active'
                 AND (turn_based_enabled IS NULL OR turn_based_enabled = 0)
+                AND COALESCE(paused, 0) = 0
                 AND (next_tick_at IS NULL OR next_tick_at <= ?)`,
           )
           .bind(now)
@@ -1956,6 +1984,12 @@ export default {
       } catch (e) {
         console.error('scheduled tick advancer failed', e);
       }
+
+      // Computer empires in solo games (aiEmpire.js) take this tick's
+      // turn, after the pokes so they see the tick that just ran. Its own
+      // catch: a bad turn never stops the cron's other work.
+      try { await aiEmpire.runSoloTurns(env); }
+      catch (e) { console.error('solo turns failed', e); }
 
       // Daily Discord digest — self-gating (fires only at
       // DIGEST_HOUR_UTC, max once per game per ~day). Runs after the

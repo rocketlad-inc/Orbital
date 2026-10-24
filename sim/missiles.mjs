@@ -193,6 +193,58 @@ check('...the salvo is spent, not destroyed, and it is news', (await hpOf(L1.bod
 check('...and no missile ever counts as a lost ship',
   !(await DB.prepare(`SELECT 1 AS x FROM chronicle_entries WHERE kind = 'ship_destroyed' AND ship_id = ?`).bind(L1.body.ship_id).first()));
 
+// ---- 4b. recall ----------------------------------------------------------
+// ciurk, 2026-10-22: "I think recalling the launch of a missile is bugged.
+// Its a normal unit now." The ship panel's RECALL LAUNCH cancelled the
+// salvo's node like any ship's, and the salvo sat in orbit as a parked
+// "Missiles x1" with move orders; the missiles were never returned.
+{
+  const A_ = await import('../worker/actions.js');
+  const cancel = async (user, nodeId) => {
+    const path = `/api/games/${G}/nodes/${encodeURIComponent(nodeId)}`;
+    const r = A_.routes.find(x => x.method === 'DELETE' && x.pattern.test(path));
+    const m = r.pattern.exec(path);
+    const res = await r.handle(new Request(`https://x${path}`, { method: 'DELETE' }), env, { params: { gameId: G, nodeId }, session: { user_id: user } });
+    return { status: res.status, body: await res.json() };
+  };
+  await DB.prepare('UPDATE game_settlements SET missile_stock = 5 WHERE id = ?').bind(cityA.id).run();
+  await park(B.id, MARS, 'corvette', 40);
+  const R = await call(A.user_id, 'POST', `${silo(cityA)}/launch`, { target_body_id: MARS, count: 2 });
+  const rnode = await DB.prepare('SELECT id FROM game_ship_nodes WHERE ship_id = ?').bind(R.body.ship_id).first();
+  check('recall: a launch waiting for the tick leaves the magazine at 3', R.status === 200
+    && Number((await cityOf(EARTH)).missile_stock) === 3, JSON.stringify(R.body));
+  check('...a rival cannot recall it', (await cancel(B.user_id, rnode.id)).status === 403);
+  const rc = await cancel(A.user_id, rnode.id);
+  const gone = await DB.prepare('SELECT status FROM game_ships WHERE id = ?').bind(R.body.ship_id).first();
+  check('...recalled, both missiles go back into the silo and the salvo leaves the map',
+    rc.status === 200 && rc.body.recalled === 2 && Number((await cityOf(EARTH)).missile_stock) === 5
+      && gone.status === 'expended', JSON.stringify({ rc, gone }));
+  await runTick();
+  check('...nothing is refunded twice', Number((await cityOf(EARTH)).missile_stock) === 5);
+
+  // Once the tick has burned the node, the salvo is flying: no call-back.
+  const F = await call(A.user_id, 'POST', `${silo(cityA)}/launch`, { target_body_id: MARS, count: 1 });
+  const fnode = await DB.prepare('SELECT id FROM game_ship_nodes WHERE ship_id = ?').bind(F.body.ship_id).first();
+  await runTick();
+  const late = await cancel(A.user_id, fnode.id);
+  check('...a salvo already flying cannot be recalled (409), and keeps flying',
+    late.status === 409 && (await DB.prepare('SELECT status FROM game_ship_nodes WHERE id = ?').bind(fnode.id).first()).status === 'in_transit'
+      && Number((await cityOf(EARTH)).missile_stock) === 4, JSON.stringify(late));
+
+  // A salvo recalled before this fix: its node cancelled, the row still
+  // parked at home. The sweep returns its missiles, once.
+  const S = await call(A.user_id, 'POST', `${silo(cityA)}/launch`, { target_body_id: MARS, count: 3 });
+  await DB.prepare("UPDATE game_ship_nodes SET status = 'cancelled' WHERE ship_id = ?").bind(S.body.ship_id).run();
+  check('...(a stranded recall: magazine at 1 before the sweep)', Number((await cityOf(EARTH)).missile_stock) === 1);
+  await runTick();
+  const sw = await DB.prepare('SELECT status FROM game_ships WHERE id = ?').bind(S.body.ship_id).first();
+  check('...a salvo stranded by an old recall is refunded by the next tick and retired',
+    Number((await cityOf(EARTH)).missile_stock) === 4 && sw.status === 'expended', JSON.stringify(sw));
+  await runTick();
+  check('...and only once', Number((await cityOf(EARTH)).missile_stock) === 4);
+  while (tick < F.body.arrive_tick + 1) await runTick();
+}
+
 // ---- 5. auto-defence: missiles --------------------------------------------
 await DB.prepare(`UPDATE game_settlements SET missile_stock = 5, missile_auto = 'missiles', missile_reserve = 1 WHERE id = ?`).bind(cityB.id).run();
 const vf = [await park(B.id, VENUS, 'frigate', 270), await park(B.id, VENUS, 'frigate', 270)];
@@ -346,6 +398,19 @@ check('a short hop is still shot down as it lands', intc2.in_flight !== true && 
       log: (await DB.prepare(`SELECT tick_number, kind, payload FROM chronicle_entries WHERE game_id = ? AND kind LIKE 'missile%' AND tick_number >= ? ORDER BY tick_number`).bind(G, L5.body.arrive_tick - 12).all()).results,
       interceptors: (await DB.prepare(`SELECT s.id, s.status, s.missile_count, n.status AS ns, n.scheduled_t, n.rv_meet_tick, n.arrival_at_tick FROM game_ships s JOIN game_ship_nodes n ON n.ship_id = s.id WHERE n.rv_follow_ship_id = ?`).bind(L5.body.ship_id).all()).results,
     }));
+  // The burst plays where the map drew the two meeting: the row names the
+  // interceptor (spent at the meeting, on the tick it meets), so the client
+  // anchors to its last drawn spot (salvo intercept clip, 2026-10-23).
+  const named = await DB.prepare(
+    `SELECT c.ship_id, c.tick_number, s.ship_class, s.status, s.destroyed_at_tick, n.rv_meet_tick
+       FROM chronicle_entries c JOIN game_ships s ON s.id = c.ship_id
+       JOIN game_ship_nodes n ON n.ship_id = s.id
+      WHERE c.game_id = ? AND c.kind = 'missile_intercepted' AND json_extract(c.payload, '$.in_flight') = 1`,
+  ).bind(G).first();
+  check('the in-flight shoot-down names its interceptor, spent on the meeting tick',
+    named && named.ship_class === 'missile' && named.status === 'expended'
+    && Number(named.tick_number) === Number(named.rv_meet_tick) && Number(named.destroyed_at_tick) === Number(named.rv_meet_tick),
+    JSON.stringify(named));
   await DB.prepare(`UPDATE game_settlements SET body_id = ?, missile_auto = 'off' WHERE id = ?`).bind(VENUS, cityB.id).run();
 }
 // The blast check that keeps auto-defence off your own fleet.

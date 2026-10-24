@@ -56,10 +56,17 @@ export function StudioBridge() {
         const bad = results.find(r => !r.ok) as { error?: string } | undefined;
         return { sent, failed: shipIds.length - sent, error: bad?.error };
       },
+      setSelection: (shipIds) => { planRef.current.ctx.setShipSelection(shipIds); },
+      selectShip: (shipId) => { planRef.current.ctx.selectShip(shipId); },
+      selectBody: (bodyId) => { planRef.current.ctx.selectBody(bodyId); },
       planIntercept: (shipIds, targetShipId) => {
         const c = planRef.current.ctx;
         return shipIds.map(id => {
           const leg = c.enqueueIntercept(id, targetShipId, 0, { fromNow: true });
+          // A dry run: enqueueIntercept STAGES its leg as the hull's plan,
+          // which drew a course and an Outliner row for a squadron that
+          // never went anywhere (judges, 2026-10-22). Take it back.
+          c.cancelTorchPreview(id);
           if (!leg) return { ship: id, none: true as const };
           return { ship: id, depart: leg.startTick, meet: leg.rv ? leg.rv.meetTick : null, arrive: leg.arriveTick, accel: leg.acceleration };
         });

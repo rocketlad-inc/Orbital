@@ -383,6 +383,20 @@
   cursor: help;
   flex: 0 0 auto;
 }
+/* A computer empire (solo games): a small outlined tag after the name. */
+.fp-cpu {
+  margin-left: 6px;
+  padding: 0 4px;
+  border: 1px solid var(--mp-border);
+  border-radius: 3px;
+  font-size: 9px;
+  line-height: 14px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--mp-fg-dim);
+  cursor: help;
+  flex: 0 0 auto;
+}
 
 .mp-kick {
   font-size: 12px;

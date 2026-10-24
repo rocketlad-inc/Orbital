@@ -19,8 +19,8 @@ import {
   BODY_LABEL_ROW_HEIGHT, bodyLabelAlwaysOn, computeTransitFormations, placeInFormation,
   drawAsteroidBeltDust, drawBody, drawOrbit, drawOwnershipLayer,
   drawSettlement, drawShip, drawStarfield, drawSystemRegions,
-  drawTorchTrajectory, drawTransitShip, generateStarfield, planBodyLabels,
-  shipLane, shipLaneOnly, MOON_ORBIT_MIN_PARENT_PX,
+  drawTorchTrajectory, drawTransitShip, forgetDrawnShips, generateStarfield, planBodyLabels,
+  departFromDrawn,
 } from './mapRenderer';
 import type { ShipFormation } from './mapRenderer';
 import {
@@ -43,8 +43,47 @@ import {
   type MatchWorld,
 } from './matchWorld';
 import type { ShipIconClass, ShipIconVariant } from '../components/ShipIcons';
+import { computePresentation, drawnRadiusOf, hullReveal, hullSize } from './bodyPresentation';
+import { battlePlacement, battleScale, forgetBattleGlides, liveBattleFor, type BattleUnit, type LiveBattle } from './battleLayoutLive';
+import { shipIconSize } from './mapRenderer';
+import { getShipClass } from '../game/shipClasses';
+import { getEmblemImage } from './emblemCache';
+import { getLang, tIn, type Key } from '../i18n/core';
+import {
+  battleWindow, filmSecondsAt, FILM_STEP_MAX_MS, planReel, reelRate, reelSeconds, sceneAt,
+  type ReelBattle, type ReelBeat, type ReelScene,
+} from './filmReel';
+import { beatCaption, billName, broadcastCopy, buildBeats, captionFor, type Caption } from './filmCaptions';
+import {
+  drawBattleTally, drawClock, drawCountChips, drawLowerThird, drawProgress,
+  drawResultCard, drawStandings, drawTicker, drawTitleCard, drawVignette,
+  liftColor, unitOf, type FilmFaction, type StandingRow, type TallySide,
+  drawBattleVerdict, drawProgressMeter, shortName, drawHookLine, drawDysonShell, drawSenateCard,
+  drawToasts, drawOutCards, drawHomePin,
+} from './filmOverlay';
 
 const NEUTRAL = '#8a9fb3';
+/** Log lines that ride the ticker: the news, not the bookkeeping. */
+const TICKER_KINDS = new Set([
+  'settlement_seized', 'settlement_destroyed', 'settlement_razed', 'ship_detonated',
+  'war_declared', 'war_ended', 'treaty_broken', 'faction_eliminated', 'faction_revived',
+  'megastructure_complete', 'megastructure_captured', 'megastructure_destroyed',
+  'dyson_initiated', 'dyson_milestone', 'dyson_collapsed', 'terraform_destroyed',
+  'world_obliterated', 'senate_vote', 'kaiju_launched', 'kaiju_hunting', 'kaiju_revealed',
+  'kaiju_charging', 'kaiju_dead', 'sun_gate_emerged', 'sun_gate_opened',
+  'mega_strike_charging', 'asteroid_impact', 'missile_strike',
+]);
+/** Film seconds between two ticker lines coming up, and each one's life. */
+const TICKER_GAP_SECONDS = 0.7;
+/** How much slower than the live map a hull glides to a new battle slot:
+ *  measured, re-slots swept hulls 56 degrees round Mars in nine frames. */
+const FILM_GLIDE_PACE = 3;
+/** See fireReference: hulls per fight before reloads stretch, in the film. */
+const FILM_FIRE_REFERENCE = 18;
+/** War, peace and pact banners: the least gap between two, and their life. */
+const TOAST_GAP_SECONDS = 0.5;
+const TOAST_LIFE_SECONDS = 3.0;
+const TICKER_LIFE_SECONDS = 2.6;
 const CLASSES = ['corvette', 'frigate', 'destroyer', 'freighter', 'colony'];
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- iconClassOf — icon refactor in flight
 const iconClassOf = (c: string | null): ShipIconClass =>
@@ -57,7 +96,9 @@ export function createMatchMap(
   summary: MatchSummary, canvas: HTMLCanvasElement,
 ): ReplayStage & { _shots: () => unknown[];
   _audit: (tick: number, frac?: number) => unknown[];
-  _deaths: (tick: number) => unknown[] } {
+  _deaths: (tick: number) => unknown[];
+  _probe: () => unknown;
+  _facts: () => unknown; _trace: () => unknown; _fire: (ref: number) => number } {
   const ctx = canvas.getContext('2d')!;
   let W = canvas.width || 1280, H = canvas.height || 720, DPR = 1;
 
@@ -65,30 +106,13 @@ export function createMatchMap(
   const byId = new Map(bodies.map(b => [b.id, b]));
   const faction = (fid: string | null) => summary.factions.find(f => f.id === fid);
   const colorOf = (fid: string | null) => faction(fid)?.color || NEUTRAL;
-  /**
-   * An empire's colour, lifted to a luminance that survives being read
-   * as small text over a territory band.
-   *
-   * Measured on a shipped frame: the NEPTUNE label came out at 1.29:1
-   * against the band it crossed, because a hue chosen to look right as a
-   * 10px roster swatch is not automatically legible as 11px type on a
-   * saturated ground. Identity is kept; the value is raised until it
-   * reads.
-   */
-  const liftedOf = (fid: string | null) => {
-    const h = (colorOf(fid) || NEUTRAL).replace('#', '');
-    const n = h.length === 3
-      ? h.split('').map(c => parseInt(c + c, 16))
-      : [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16));
-    if (n.some(v => Number.isNaN(v))) return 'rgba(206,222,238,0.95)';
-    const lum = 0.2126 * n[0] + 0.7152 * n[1] + 0.0722 * n[2];
-    const FLOOR = 168;
-    if (lum >= FLOOR) return `rgb(${n[0]},${n[1]},${n[2]})`;
-    const k = Math.min(2.6, FLOOR / Math.max(1, lum));
-    const lift = (v: number) => Math.round(Math.min(255, 40 + v * k));
-    return `rgb(${lift(n[0])},${lift(n[1])},${lift(n[2])})`;
-  };
-
+  /** The players: the Leviathan's faction is a monster, not an empire. */
+  const empires = summary.factions.filter(f => !/:leviathan_f$/.test(f.id));
+  const filmFactions = new Map<string, FilmFaction>(summary.factions.map(f => [f.id,
+    { id: f.id, name: f.name, color: f.color || NEUTRAL, emblem: f.emblem ?? null }]));
+  const filmFaction = (fid: string | null | undefined) => (fid ? filmFactions.get(fid) : undefined);
+  // Start the emblem rasters now: they land a frame or two later.
+  for (const f of filmFactions.values()) getEmblemImage(f.emblem ?? null, liftColor(f.color, 150));
   // ---- layout ----------------------------------------------------------
   //
   // Map units. Orbits are log-compressed — real proportions are empty —
@@ -156,9 +180,33 @@ export function createMatchMap(
     return bodyPosition(b, t, gameBodies);
   };
 
+  /**
+   * WORLDS THE MATCH MADE. The record has no creation tick, so the event
+   * log supplies it: the Leviathan's carcass exists from its death, a sun
+   * gate from the first one leaving the Sun. Drawn from tick one, the
+   * film showed a corpse labelled LEVIATHAN CARCASS while its caption
+   * said the beast was feeding.
+   */
+  const appearsAt = new Map<string, number>();
+  {
+    const first = (kind: string) => (summary.chronicle ?? []).find(r => r.kind === kind)?.tick_number;
+    const dead = first('kaiju_dead'), gate = first('sun_gate_emerged') ?? first('sun_gate_opened');
+    for (const b of bodies) {
+      if (/leviathan_carcass$/.test(b.id) && dead != null) appearsAt.set(b.id, dead);
+      else if (/:sungate_[a-z0-9]+(_far)?$/.test(b.id) && gate != null) appearsAt.set(b.id, gate);
+    }
+  }
+  /** Worlds a weapon or the Leviathan broke apart, from the log: the
+   *  record kept drawing MK 2 whole under "MK 2 is devoured". */
+  const goneAt = new Map<string, number>();
+  for (const r of summary.chronicle ?? []) {
+    if (r.kind === 'world_obliterated' && r.body_id && !goneAt.has(r.body_id)) goneAt.set(r.body_id, r.tick_number);
+  }
   const drawableAt = (b: Body, tick: number) =>
     (b.type === 'star' || (!!b.parent_body_id && !!b.orbit_period))
-    && !(b.destroyed_at_tick != null && tick >= b.destroyed_at_tick);
+    && !(b.destroyed_at_tick != null && tick >= b.destroyed_at_tick)
+    && !((appearsAt.get(b.id) ?? -Infinity) > tick)
+    && !((goneAt.get(b.id) ?? Infinity) <= tick);
 
   // The political wash used to be built here: orbital lanes derived from
   // this file's own compressed radii, with hand-tuned widths, an
@@ -171,31 +219,35 @@ export function createMatchMap(
   // ---- data ------------------------------------------------------------
   const timeline = new MatchTimeline();
   let events: MatchEvent[] = [];
-  /**
-   * A SCENE, not a slot.
-   *
-   * Shots used to be ten-tick windows on a fixed grid, and the director
-   * only chose what to point at inside each one. That is a metronome,
-   * not a director: a six-tick battle between twenty-five hulls got
-   * exactly as much film as six ticks of nothing, and a fight that ran
-   * thirty ticks was chopped into three unrelated shots. A scene takes
-   * its length from the thing it is about, and carries its own pace.
-   */
-  type Shot = {
-    from: number; to: number;
-    bodyId: string | null;
-    /** Why this beat won the screen. */
-    weight: number;
-    /** Seconds of film per tick: the director controls TIME as well. */
-    rate: number;
-    note: string;
-    /** Hulls present at the height of it, and hulls lost, where it applies. */
-    hulls?: number;
-    lost?: number;
-    /** The two largest empires present, at the height of it. */
-    sides?: string[];
-  };
-  let shots: Shot[] = [];
+  /** The edit: scenes with their own pace (filmReel). */
+  let scenes: ReelScene[] = [];
+  /** The battle the title card plays over. */
+  let teaser: ReelScene | null = null;
+  /** The display clock: the match clock, except during the cold open. */
+  let dispT = 0;
+  /** The film's own clock, which the edit and the graphics follow. */
+  let clockT = 0;
+  /** How far each world's battle layout reaches, over the world's own
+   *  radius (band.rOut / refR), from the last frame drawn; and the most
+   *  each battle scene has needed, so its framing only ever widens. */
+  const battleReach = new Map<string, number>();
+  const sceneExtent = new Map<ReelScene, number>();
+  /** Each dying hull's own moment within its last tick (0.12..0.88). */
+  const killPhase = (id: string) => 0.12 + 0.76 * ((hashStr(`${id}:k`) % 1000) / 1000);
+  /** The scene playing now (set by the camera). */
+  let curScene: ReelScene | undefined;
+  let filmTotal = 0;
+  /** Each empire's first world, for the roll call. */
+  const homes: Array<{ fid: string; body: string }> = [];
+  /** Every colony founded in the opening act, with the film second it lands. */
+  let built: Array<{ at: number; body: string; fid: string }> = [];
+  /** The roll call: when the first pin lands, the gap between pins, and
+   *  when they lift off for the land grab (film seconds into the act). */
+  const ROLL_CALL_AT = 0.5, ROLL_CALL_STEP = 0.32, ROLL_CALL_END = 5.2;
+  /** War, peace and pact banners, with the film second each comes up. */
+  let toasts: Array<{ at: number; kind: 'war' | 'peace' | 'pact' | 'broken'; a: string; b: string }> = [];
+  /** Smaller headlines, with the film second each one comes up. */
+  let ticker: Array<{ beat: ReelBeat; start: number }> = [];
 
   /**
    * Layout audit. Off unless a harness turns it on, and it only records
@@ -207,45 +259,15 @@ export function createMatchMap(
   type DebugRect = { kind: string; x: number; y: number;
     w: number; h: number; text: string };
   let debugRects: DebugRect[] | null = null;
-  const note = (kind: string, x: number, y: number,
-                w: number, h: number, text = '') => {
-    if (debugRects) debugRects.push({ kind, x, y, w, h, text });
-  };
-  /** Scraps shorter than half this are folded into a neighbour. */
-  const MIN_SHOT_TICKS = 6;
-  /** Seconds per tick across a quiet stretch -- a brisk clip. */
-  const FILLER_RATE = 0.3;
-  const MAX_RATE = 2.4;
-  /** Screen time a scene gets for merely mattering, plus what weight buys. */
-  const SCENE_BASE_SECONDS = 6;
-  const SCENE_SPREAD_SECONDS = 17;
-  /** No single scene may run away with the film. */
-  const MAX_SCENE_SECONDS = 24;
-  /** A quiet stretch is a breath, not an interlude. */
-  const FILLER_MAX_SECONDS = 9;
-  /** However brisk the pace, a scene must be long enough to read. */
-  const MIN_SCENE_SECONDS = 2.5;
-  /** How many fleet plates one frame may carry before it stops reading. */
-  // THE GAME'S OWN SPRITE-SIZE RAMP. A hull drawn at full size whatever
-  // the zoom is bigger than the world it orbits: at Mars the ring of
-  // sprites swallowed the planet, both moon orbits and all three names.
-  // MapCanvas ramps hull size with how many pixels the anchoring world
-  // actually occupies, so a system grows its ships in as you dive toward
-  // it instead of popping a wall of full-size hulls.
-  const ORBIT_SHIP_MIN_SCALE = 0.5;
-  const SPRITE_FULL_PX = 34;
-  const TRANSIT_SHIP_MIN_SIZE = 0.5;
+  // A big fleet in flight on the wide shot took up the whole system
+  // (Lorne, 2026-10-23): far out, hulls draw at a fraction of full size.
+  const TRANSIT_SHIP_MIN_SIZE = 0.3;
   const TRANSIT_FULL_CAM_SCALE = 0.5;
   const TRANSIT_MIN_CAM_SCALE = MIN_CAMERA_SCALE;
-  /** Angular span a whole engagement occupies -- about 86 degrees. */
-  const BATTLE_SECTOR = 1.5;
-
   /** How long a hull's death flash runs, in ticks. */
   const BLAST_TICKS = 1.5;
   /** How many ticks a crossing is shown flying. */
   const TRANSIT_TICKS = 4;
-  /** A shot with fewer worlds than this in it is a shot of nothing. */
-  const MIN_BODIES_IN_SHOT = 4;
   /** Nothing is drawn with its top edge inside this margin. */
   /**
    * Standings over the whole match, computed once when rows arrive.
@@ -274,7 +296,7 @@ export function createMatchMap(
    * is six ticks, expiring on the GAME clock so it survives the film's
    * variable pacing.
    */
-  const deathAt = new Map<number, Array<{ id: string; body: string }>>();
+  const deathAt = new Map<number, Array<{ id: string; body: string; fid: string | null; cls: string }>>();
   const transitAt = new Map<number, Array<{ id: string; from: string; to: string;
     fid: string | null; cls: string; iv: ShipIconVariant }>>();
   const rebuildTransits = () => {
@@ -292,10 +314,10 @@ export function createMatchMap(
         moves.push({ id, from: was.parent, to: sh.parent,
           fid: sh.fid, cls: sh.cls, iv: sh.iv });
       }
-      const gone: Array<{ id: string; body: string }> = [];
+      const gone: Array<{ id: string; body: string; fid: string | null; cls: string }> = [];
       for (const [id, was] of prev.ships) {
         if (now.ships.has(id) || !was.parent) continue;
-        gone.push({ id, body: was.parent });
+        gone.push({ id, body: was.parent, fid: was.fid ?? null, cls: was.cls });
       }
       if (gone.length) deathAt.set(t, gone);
       if (moves.length) transitAt.set(t - 1, moves);
@@ -365,28 +387,40 @@ export function createMatchMap(
   };
 
   /**
-   * THE DIRECTOR.
+   * THE EDIT (filmReel.ts).
    *
-   * Two passes. First it asks what actually happened and turns each
-   * answer into a candidate scene that knows its own span: battles at
-   * one world merge across the ticks they run, so a long siege is one
-   * held shot rather than three; a world changing hands is a scene; a
-   * bill landing is a scene. Then the candidates compete for the reel,
-   * heaviest first, and the ticks nobody claimed become wide shots of
-   * the system -- the honest framing for a stretch where the news is
-   * that fleets are moving and yards are building.
-   *
-   * Weight is measured, not assumed: hulls actually present at the
-   * height of the fight, and hulls that died in it.
+   * The film is planned as an edit against a runtime budget: the biggest
+   * battles and the event log's headlines win scenes, everything between
+   * them plays as a fast time-lapse of the whole map. What follows only
+   * MEASURES the match for the planner: each fight merged across the
+   * ticks it ran, how many hulls were there at the height of it, how many
+   * died and when, and the event log weighed and placed (filmCaptions).
    */
   const rebuildShots = () => {
     events = mineEvents(timeline.rows, summary);
-    shots = [];
+    scenes = [];
+    // A page of rows just landed: who is where may have changed.
+    occupiedCache.clear();
+    home = undefined;
     const lo = summary.ticks.lo ?? 0, hi = summary.ticks.hi ?? lo;
     if (hi < lo) return;
-    const cands: Shot[] = [];
+
+    const deathsAtBody = (body: string, t: number) =>
+      (deathAt.get(t) ?? []).reduce((n, d) => n + (d.body === body ? 1 : 0), 0);
+    // A world changing hands is the point of a siege: the log's own
+    // settlement rows, per world and tick.
+    const fallsAt = new Map<string, number[]>();
+    for (const r of summary.chronicle ?? []) {
+      if (!r.body_id || !/^settlement_(seized|destroyed|razed)$/.test(r.kind)) continue;
+      const a = fallsAt.get(r.body_id) ?? [];
+      a.push(r.tick_number);
+      fallsAt.set(r.body_id, a);
+    }
+    const fallsAtBody = (body: string, t: number) =>
+      (fallsAt.get(body) ?? []).reduce((n, x) => n + (x === t ? 1 : 0), 0);
 
     // --- battles at one world, merged into one engagement --------------
+    const battles: ReelBattle[] = [];
     const spansOf = new Map<string, Array<[number, number]>>();
     for (const b of summary.battles) {
       if (!b.body_id || !byId.has(b.body_id)) continue;
@@ -404,430 +438,685 @@ export function createMatchMap(
         else { merged.push(cur); cur = [spans[i][0], spans[i][1]]; }
       }
       merged.push(cur);
-      for (const [s0, e0] of merged) {
+      for (const [s0, e00] of merged) {
         if (!drawableAt(byId.get(body)!, s0)) continue;
-        // How big was it, really? Count hulls present at the height of
-        // it rather than trusting that a battle row means a battle.
-        let peak = 0;
-        let sides: string[] = [];
-        const step = Math.max(1, Math.floor((e0 - s0) / 4));
-        for (let t = s0; t <= e0; t += step) {
-          let n = 0;
+        // The fight's record can end a few ticks before the world it was
+        // about actually falls; the fall is the end of the story.
+        let e0 = e00;
+        for (const x of fallsAt.get(body) ?? []) if (x > e0 && x <= e00 + 8) e0 = x;
+        // The stretch worth showing is where the dying happened, and
+        // above all where the world fell.
+        const window = battleWindow(s0, e0 + 1,
+          t => deathsAtBody(body, t) + 6 * fallsAtBody(body, t));
+        // How big was it, really? Hulls present at the height of the
+        // window, and who was there in force.
+        // ENGAGED is every hull that was there across the window (a peak
+        // count let "21 engaged, 26 lost" through), and the SIDES are the
+        // two empires that fought hardest: most hulls there plus twice
+        // the hulls they lost. The world's owner heads it only if it was
+        // in the fight at all.
+        const seen = new Set<string>();
+        const most = new Map<string, number>();
+        const lostBy = new Map<string, number>();
+        for (let t = window[0]; t < window[1]; t++) {
           const per = new Map<string, number>();
-          for (const sh of timeline.worldAt(t).ships.values()) {
+          for (const [id, sh] of timeline.worldAt(t).ships) {
             if (sh.parent !== body) continue;
-            n++;
+            seen.add(id);
             if (sh.fid) per.set(sh.fid, (per.get(sh.fid) ?? 0) + 1);
           }
-          if (n > peak) {
-            peak = n;
-            // Who was actually there in force at the height of it. A
-            // battle captioned as pure hull arithmetic -- "20 hulls
-            // engaged, 8 lost" -- tells a viewer nothing about the
-            // balance of power, which is the whole reason to watch.
-            sides = [...per.entries()].sort((x, y) => y[1] - x[1])
-              .slice(0, 2).map(e => e[0]);
-          }
+          for (const [f, n] of per) most.set(f, Math.max(most.get(f) ?? 0, n));
         }
         let lost = 0;
-        for (const ev of events) {
-          if (ev.kind === 'loss' && ev.bodyId === body
-            && ev.tick >= s0 && ev.tick <= e0) lost += ev.count ?? 1;
+        for (let t = window[0]; t < window[1] + 1; t++) {
+          for (const d of deathAt.get(t) ?? []) {
+            if (d.body !== body) continue;
+            lost++;
+            seen.add(d.id);
+            if (d.fid) lostBy.set(d.fid, (lostBy.get(d.fid) ?? 0) + 1);
+          }
         }
-        const span = e0 - s0 + 1;
-        cands.push({ from: s0, to: e0 + 1, bodyId: body,
-          weight: peak * 2 + lost * 6 + span * 2, rate: 0,
-          hulls: peak, lost, sides, note: 'battle' });
+        const score = (f: string) => (most.get(f) ?? 0) + 2 * (lostBy.get(f) ?? 0);
+        const fought = [...new Set([...most.keys(), ...lostBy.keys()])]
+          .filter(f => score(f) > 0).sort((x, y) => score(y) - score(x));
+        const sides = fought.slice(0, 2);
+        // THE DEFENDER IS NAMED. A world's owner that fought for it is one
+        // of the two sides even when two attackers out-fought it: "Battle
+        // for Mars: Tritalowda vs Ministry, +4 more" hid the empire whose
+        // capital it was.
+        let holder: string | null = null, holderPop = -1;
+        for (const st of timeline.worldAt(window[0]).stls.values()) {
+          if (st.body !== body || !st.fid || st.pop <= holderPop) continue;
+          holder = st.fid; holderPop = st.pop;
+        }
+        if (holder && fought.includes(holder) && !sides.includes(holder) && sides.length === 2) sides[1] = holder;
+        const present = fought.length;
+        const peak = seen.size;
+        const atOnce = [...most.values()].reduce((a, b) => a + b, 0);
+        battles.push({ body, from: s0, to: e0 + 1, peak, lost, sides, window, atOnce,
+          present: Math.max(present, sides.length) });
       }
     }
 
-    // --- a world changing hands ----------------------------------------
-    for (const [t, list] of captureAt) {
-      for (const c of list) {
-        if (!byId.has(c.body) || !drawableAt(byId.get(c.body)!, t)) continue;
-        cands.push({ from: t - 1, to: t + 3, bodyId: c.body,
-          weight: 120, rate: 0, note: c.to ? 'capture' : 'driven off' });
-      }
-    }
-
-    // --- a bill landing belongs to nowhere: hold the system ------------
-    for (const bill of summary.senate ?? []) {
-      const at = bill.resolved_at_tick;
-      if (at == null) continue;
-      cands.push({ from: at - 1, to: at + 3, bodyId: null,
-        weight: 70, rate: 0, note: 'senate' });
-    }
-
-    // --- the heaviest beat owns the tick --------------------------------
-    const N = hi - lo + 1;
-    const owner: number[] = new Array(N).fill(-1);
-    cands.sort((a, b) => b.weight - a.weight);
-    cands.forEach((c, i) => {
-      for (let t = Math.max(lo, c.from); t < Math.min(hi + 1, c.to); t++) {
-        if (owner[t - lo] < 0) owner[t - lo] = i;
-      }
+    // --- the event log, weighed and placed ------------------------------
+    let beats: ReelBeat[] = buildBeats(summary, {
+      lang: getLang(),
+      // On the tick BEFORE: a world destroyed by the event is gone by its tick.
+      drawable: (id, t) => byId.has(id) && drawableAt(byId.get(id)!, t - 1),
     });
-
-    // --- runs of one owner become scenes; unclaimed ticks go wide -------
-    let i0 = 0;
-    while (i0 < N) {
-      let i1 = i0;
-      while (i1 + 1 < N && owner[i1 + 1] === owner[i0]) i1++;
-      const who = owner[i0];
-      const from = lo + i0, to = lo + i1 + 1;
-      if (who < 0) {
-        let moves = 0;
-        for (let t = from; t < to; t++) moves += transitAt.get(t)?.length ?? 0;
-        shots.push({ from, to, bodyId: null, weight: 0, rate: 0,
-          note: moves >= (to - from) ? 'fleets under way' : 'the system builds' });
-      } else {
-        shots.push({ ...cands[who], from, to });
-      }
-      i0 = i1 + 1;
-    }
-
-    // --- fold away scraps ------------------------------------------------
-    // A one-tick scene is a flicker, not a shot: absorb anything too
-    // short into its weightier neighbour.
-    for (let i = shots.length - 1; i >= 0; i--) {
-      if (shots[i].to - shots[i].from >= MIN_SHOT_TICKS / 2) continue;
-      const prev = shots[i - 1], next = shots[i + 1];
-      if (prev && (!next || prev.weight >= next.weight)) {
-        prev.to = shots[i].to; shots.splice(i, 1);
-      } else if (next) {
-        next.from = shots[i].from; shots.splice(i, 1);
-      }
-    }
-    // Neighbouring scenes about the same subject are one scene.
-    for (let i = shots.length - 1; i > 0; i--) {
-      const a = shots[i - 1], b = shots[i];
-      if (a.bodyId === b.bodyId) {
-        a.to = b.to; a.weight = Math.max(a.weight, b.weight);
-        shots.splice(i, 1);
+    if (!summary.chronicle) {
+      // An older server sends no log: worlds changing hands are still in
+      // the record, so they still make the cut, uncaptioned beyond that.
+      beats = [];
+      for (const [t, list] of captureAt) {
+        for (const c of list) {
+          if (!c.to || !byId.has(c.body) || !drawableAt(byId.get(c.body)!, t)) continue;
+          beats.push({ tick: t, kind: 'settlement_seized', body: c.body, weight: 75,
+            fid: c.to, target: c.from, text: '',
+            data: { body_name: byId.get(c.body)?.name ?? '' } });
+        }
       }
     }
 
-    // --- pace: the big moments get the seconds ---------------------------
-    // Film time is the director's other lever, and the one that was
-    // missing entirely: at a flat second per tick, a siege and a lull
-    // were weighted identically by the clock no matter how well the
-    // camera was aimed.
-    // BUDGET SECONDS, THEN DERIVE THE RATE -- not the other way round.
-    //
-    // Setting a per-tick rate from weight paid a long battle twice: once
-    // for being important and again for being long. The Mars engagement
-    // ran 55 ticks at 1.7s each, so ONE held shot took ninety-three
-    // seconds -- 27% of the whole film on a single frame of reference.
-    // What a scene actually needs is enough SCREEN TIME to register;
-    // whether that is spent slowly over four ticks or briskly over fifty
-    // is a consequence, not the goal.
-    const peakW = Math.max(1, ...shots.map(x => x.weight));
-    for (const sh of shots) {
-      const span = Math.max(1, sh.to - sh.from);
-      let secs: number;
-      if (sh.weight <= 0) {
-        secs = Math.min(FILLER_MAX_SECONDS, span * FILLER_RATE);
-      } else {
-        secs = SCENE_BASE_SECONDS
-          + SCENE_SPREAD_SECONDS * Math.sqrt(sh.weight / peakW);
+    // AN EMPIRE'S END HAPPENS SOMEWHERE: on the last world it held.
+    for (const e of beats) {
+      if (e.kind !== 'faction_eliminated' || e.body || !e.fid) continue;
+      for (let t = e.tick - 1; t >= Math.max(lo, e.tick - 12) && !e.body; t--) {
+        for (const st of timeline.worldAt(t).stls.values()) {
+          if (st.fid === e.fid && byId.has(st.body) && drawableAt(byId.get(st.body)!, e.tick)) {
+            e.body = st.body; break;
+          }
+        }
       }
-      // A scene too short to read is wasted film; a scene long enough to
-      // outstay the match is worse.
-      secs = Math.min(MAX_SCENE_SECONDS, Math.max(MIN_SCENE_SECONDS, secs));
-      sh.rate = Math.min(MAX_RATE, Math.max(0.18, secs / span));
+    }
+
+    // THE END OF AN EMPIRE IS A SCENE OF ITS OWN: opened a day earlier on
+    // the siege of its last world, held longer, and its toll counted.
+    {
+      const fidByName = new Map(summary.factions.map(f => [f.name, f.id]));
+      for (const e of beats) {
+        if (e.kind !== 'faction_eliminated' || e.weight <= 0) continue;
+        e.lead = 3;
+        e.hold = 7.2;
+        const names = [...(Array.isArray(e.data?.together) ? e.data!.together as string[] : []),
+          String(e.data?.faction_name ?? '')];
+        const toll = names.map(n => {
+          const fid = fidByName.get(n) ?? (n === e.data?.faction_name ? e.fid : null);
+          if (!fid) return null;
+          let peak = 0, lost = 0;
+          const step = Math.max(1, Math.floor((e.tick - lo) / 60));
+          for (let t = lo; t <= e.tick; t += step) {
+            const row = standingsAt(t).find(r => r.faction.id === fid);
+            if (row) peak = Math.max(peak, row.worlds);
+          }
+          for (const [t, list] of deathAt) if (t <= e.tick) for (const d of list) if (d.fid === fid) lost++;
+          return { fid, peak, lost };
+        }).filter(Boolean);
+        e.data = { ...e.data, toll };
+      }
+    }
+
+    // THE LEVIATHAN'S SCENES GO WHERE THE LEVIATHAN IS. Its log rows name
+    // the world it is after; the beast itself is parked at a sun gate, or
+    // at the moon it is eating, and that is the shot.
+    const kaijuAt = (tick: number): string | null => {
+      for (const sh of timeline.worldAt(tick).ships.values()) if (sh.cls === 'kaiju' && sh.parent) return sh.parent;
+      return null;
+    };
+    for (const e of beats) {
+      const isKaiju = /^kaiju_/.test(e.kind) || e.data?.cause === 'kaiju';
+      if (!isKaiju || e.kind === 'kaiju_omen') continue;
+      // THE KILL ON SCREEN. The beast's hull is gone a tick before the
+      // log's row: anchor the scene on the tick it actually dies in, so
+      // the death lands mid-scene, not in its first second.
+      if (e.kind === 'kaiju_dead') {
+        let t = e.tick;
+        while (t > e.tick - 4 && !kaijuAt(t - 1)) t--;
+        if (kaijuAt(t - 1)) e.tick = t;
+      }
+      // Its arrival is a hull APPEARING at the end of its tick: one tick
+      // of lead, so it is on screen for two thirds of the scene.
+      if (e.kind === 'kaiju_hunting' && e.data?.carried) e.lead = 1;
+      const at = kaijuAt(e.tick) ?? kaijuAt(e.tick - 1);
+      if (at && byId.has(at) && drawableAt(byId.get(at)!, e.tick)) e.body = at;
+    }
+
+    // WHAT EACH LAW DID, measured from the record: ships built while ship
+    // costs were halved, fleets grown while upkeep was cut, the losses of
+    // an empire the Senate authorised war on, the reparations paid out.
+    for (const e of beats) {
+      if (e.kind !== 'senate_vote' || e.weight <= 0) continue;
+      const p = (e.data ?? {}) as Record<string, unknown>;
+      const inner = (p.payload ?? {}) as Record<string, unknown>;
+      const until = Math.min(hi, Number(p.effect_until_tick) || e.tick + 24);
+      const days = Math.max(0, until - e.tick);
+      const slider = String(inner.slider_id ?? '');
+      const name = (id: unknown) => shortName(filmFaction(String(id ?? ''))?.name ?? '');
+      let impact = '';
+      if (p.bill_kind === 'reparations' && Number(p.transferred) > 0) {
+        impact = T('senate.paid', { n: Number(p.transferred).toLocaleString('en-US'), k: Number(p.recipients) || 0 });
+      } else if (p.bill_kind === 'war_authorization') {
+        const target = String(p.target_faction_id ?? inner.target_faction_id ?? '');
+        let n = 0;
+        for (let t = e.tick + 1; t <= until; t++) for (const d of deathAt.get(t) ?? []) if (d.fid === target) n++;
+        if (n > 0) impact = T('senate.lost', { b: name(target), n, d: days });
+      } else if (/ship_build|rush/.test(slider)) {
+        const seen = new Set(timeline.worldAt(e.tick).ships.keys());
+        let n = 0;
+        for (let t = e.tick + 1; t <= until; t++) {
+          for (const id of timeline.worldAt(t).ships.keys()) if (!seen.has(id)) { seen.add(id); n++; }
+        }
+        if (n > 0) impact = T('senate.built', { n });
+      } else if (/upkeep/.test(slider)) {
+        const a = timeline.worldAt(e.tick).ships.size, b = timeline.worldAt(until).ships.size;
+        if (b !== a) impact = T('senate.fleets', { a, b });
+      }
+      e.data = { ...p, impact,
+        term: p.effect_until_tick == null && p.bill_kind !== 'war_authorization' ? T('senate.forever') : T('senate.for', { d: days }) };
+    }
+
+    lastFacts = { battles, beats: [...beats].filter(b => b.weight > 0).sort((a, b) => b.weight - a.weight).slice(0, 40)
+      .map(b => ({ tick: b.tick, kind: b.kind, w: Math.round(b.weight), body: b.body, text: b.text.slice(0, 60) })) };
+    const dysonBody = (summary.chronicle ?? []).find(r => r.kind === 'dyson_initiated')?.body_id ?? null;
+    // THE OPENING ACT runs to just before the first war: the roll call and
+    // the land grab, never a nine-second time-lapse.
+    const firstWar = (summary.chronicle ?? []).find(r => r.kind === 'war_declared')?.tick_number;
+    const span = hi - lo;
+    const openingTo = Math.round(Math.max(lo + span * 0.12, Math.min(lo + span * 0.35,
+      firstWar != null ? firstWar - 3 : lo + span * 0.25)));
+    scenes = planReel({ lo, hi, battles, beats }, {
+      finaleBody: summary.game.victory_type === 'engineering' && dysonBody && byId.has(dysonBody)
+        ? dysonBody : null,
+      openingTo,
+    });
+    filmTotal = reelSeconds(scenes);
+    captionCache.clear();
+    usedTitles.clear();
+    montageTop.clear();
+    kaijuGlossed = false;
+    for (const sc of scenes) captionOf(sc);
+    // THE COLD OPEN: the title plays over the deadliest fight of the
+    // match, then the film cuts back to how it began. A feed gives a clip
+    // about a second to show it is worth watching.
+    teaser = null;
+    let teaserW = -1;
+    for (const s of scenes) {
+      if (s.kind !== 'battle' || !s.battle) continue;
+      const w = s.battle.lost * 6 + s.battle.peak;
+      if (w > teaserW) { teaserW = w; teaser = s; }
+    }
+    sceneExtent.clear();
+    sceneFocus.clear();
+
+    // NO BREATHING ZOOM and NO HELD WHIZZ. A time-lapse too short to read
+    // is a time cut (filmReel skips it); one long enough to play is the
+    // wide shot. Held close, a short one ran a day and a half a frame and
+    // hulls crossed the screen between two frames.
+    systemFrames.clear();
+    travelSeconds.clear();
+
+    buildToasts();
+    homes.length = 0;
+    built = [];
+    {
+      const opening = scenes.find(x => x.act === 'opening');
+      const firstOf = new Set<string>();
+      for (const r of summary.chronicle ?? []) {
+        if (r.kind !== 'settlement_built' || !r.actor_faction_id || !r.body_id || !byGame.has(r.body_id)) continue;
+        if (!firstOf.has(r.actor_faction_id) && r.tick_number <= lo + 3 && !/:leviathan_f$/.test(r.actor_faction_id)) {
+          firstOf.add(r.actor_faction_id);
+          homes.push({ fid: r.actor_faction_id, body: r.body_id });
+        }
+        if (opening && r.tick_number >= opening.from && r.tick_number < opening.to) {
+          built.push({ at: filmSecondsAt(scenes, r.tick_number), body: r.body_id, fid: r.actor_faction_id });
+        }
+      }
+    }
+
+    // --- the ticker: smaller headlines, spaced so each can be read ------
+    ticker = [];
+    let lastStart = -Infinity;
+    for (const s of scenes) {
+      if (s.kind === 'intro' || s.kind === 'finale') continue;
+      const sEnd = filmSecondsAt(scenes, s.to);
+      for (const e of s.extras) {
+        if (!TICKER_KINDS.has(e.kind) || !e.text) continue;
+        const at = filmSecondsAt(scenes, e.tick);
+        const start = Math.max(at, lastStart + TICKER_GAP_SECONDS);
+        // Late by more than a moment, it is no longer news: drop it.
+        if (start - at > 0.6 || start > sEnd + 0.2) continue;
+        ticker.push({ beat: e, start });
+        lastStart = start;
+      }
+    }
+  };
+
+  /**
+   * EVERY DECLARATION OF WAR, and every peace, pact and broken pact, as a
+   * banner at the moment it happens, in whatever scene that is. One that
+   * falls in a stretch the film cuts across comes up as the next scene
+   * opens; they stack (three at most) rather than queue out of their time.
+   */
+  const buildToasts = () => {
+    toasts = [];
+    const seen = new Set<string>();
+    const rows = (summary.chronicle ?? []).filter(r => /^(war_declared|war_ended|treaty_signed|treaty_broken)$/.test(r.kind));
+    let lastAt = -Infinity;
+    for (const r of rows) {
+      const a = r.actor_faction_id ?? null, b = r.target_faction_id ?? null;
+      if (!a || !b) continue;
+      const pair = [a, b].sort().join('|');
+      const kind = r.kind === 'war_declared' ? 'war' : r.kind === 'war_ended' ? 'peace'
+        : r.kind === 'treaty_broken' ? 'broken' : 'pact';
+      // A pact is signed as three treaties at once: one banner.
+      const key = `${kind}:${pair}:${r.tick_number}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      // Not over the cold open or the result.
+      const sc = sceneAt(scenes, r.tick_number);
+      if (!sc || sc.kind === 'intro' || sc.kind === 'finale') continue;
+      // The scene that IS this war says it already.
+      if (sc.kind === 'beat' && sc.beat?.kind === 'war_declared'
+        && (sc.beat.target === b || sc.beat.fid === a) && Math.abs(sc.beat.tick - r.tick_number) <= 12) continue;
+      const at = Math.max(filmSecondsAt(scenes, r.tick_number), lastAt + TOAST_GAP_SECONDS);
+      toasts.push({ at, kind, a, b });
+      lastAt = at;
     }
   };
 
   /** Seconds of film per tick at this point in the match. */
   const rateAt = (tick: number) => {
-    if (!shots.length) rebuildShots();
-    const sh = shots.find(x => tick >= x.from && tick < x.to);
-    return sh ? sh.rate : 1;
-  };
-
-  /**
-   * What the senate is doing at a tick.
-   *
-   * A bill runs proposed -> debating -> voting -> resolved, and every one
-   * of those is a campaign beat the film had no idea about. Vote weight
-   * comes from worlds held, so the chamber is also a second scoreboard.
-   */
-  type SenatePhase = 'debate' | 'vote' | 'resolved' | null;
-  const senateAt = (tick: number) => {
-    const bills = summary.senate ?? [];
-    for (const b of bills) {
-      const prop = b.proposed_at_tick ?? 0;
-      const opens = b.vote_opens_at_tick ?? prop;
-      const closes = b.vote_closes_at_tick ?? opens;
-      if (tick >= prop && tick < opens) return { bill: b, phase: 'debate' as SenatePhase };
-      if (tick >= opens && tick <= closes) return { bill: b, phase: 'vote' as SenatePhase };
-      const res = b.resolved_at_tick;
-      if (res != null && tick > res && tick <= res + 6) {
-        return { bill: b, phase: 'resolved' as SenatePhase };
-      }
-    }
-    return { bill: null, phase: null as SenatePhase };
+    if (!scenes.length) rebuildShots();
+    return reelRate(scenes, tick);
   };
 
   // ---- camera ----------------------------------------------------------
   //
-  // x,y = map point at canvas centre; scale = px per map unit. The
-  // director sets a target per shot; the camera eases toward it every
-  // frame, so every take is a move and no cut is a jump.
+  // x,y = map point at canvas centre; scale = px per map unit.
+  //
+  // THE CAMERA IS A FUNCTION OF THE FILM CLOCK, not an easing state. Each
+  // scene has a FRAME (the occupied system, a battle close in, a world at
+  // a middle distance), and every boundary between scenes is a move from
+  // the last frame to the next: a push in from the system to the world
+  // the news is at, a pull back out to the system after it, a cut where
+  // the next subject is not in the last shot at all. Computed from the
+  // clock, the same instant always frames the same way, so scrubbing,
+  // pausing and an exported film all agree.
   const cam = { x: 0, y: 0, scale: 1 };
-  const target = { x: 0, y: 0, scale: 1 };
-  let camInit = false;
-  let lastFocus: string | null = null;
   let viewMode: 'auto' | 'wide' = 'auto';
+  type Frame = { x: number; y: number; scale: number };
 
-  /** Right-hand panel width; the camera keeps the subject clear of it. */
-  // The panel is wider: three of eight empire names were truncated in
-  // every frame, and there was dead canvas to its left in nearly all
-  // of them.
-  const PANEL_W = 300;
-  const SAFE = 44;
-  /** The timeline lives here; the camera must never compose under it. */
-  const SAFE_BOTTOM = 78;
+  /** Where in the frame the subject sits: a little above centre, clear
+   *  of the lower third. */
+  const FOCUS_Y = 0.44;
+  /** A drawn subject's radius as a share of the frame height. */
+  const BATTLE_SUBJECT = 0.1;
+  const WORLD_SUBJECT = 0.12;
 
-  const fitAll = (t: number) => {
-    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    for (const b of bodies) {
-      if (!drawableAt(b, Math.floor(t))) continue;
-      const p = pos(b.id, t);
-      const r = (bodyR.get(b.id) ?? 4) + 8;
-      x0 = Math.min(x0, p.x - r); x1 = Math.max(x1, p.x + r);
-      y0 = Math.min(y0, p.y - r); y1 = Math.max(y1, p.y + r);
+  /** The star system a world belongs to (its root star). */
+  const systemOf = (id: string): string => {
+    let cur = byId.get(id);
+    for (let i = 0; i < 8 && cur?.parent_body_id; i++) {
+      const up = byId.get(cur.parent_body_id);
+      if (!up) break;
+      cur = up;
     }
-    if (!isFinite(x0)) { target.x = 0; target.y = 0; target.scale = 1; return; }
-    const bw = Math.max(40, x1 - x0), bh = Math.max(40, y1 - y0);
-    const availW = W - PANEL_W - SAFE * 2;
-    const availH = H - SAFE - SAFE_BOTTOM;
-    target.scale = Math.min(availW / bw, availH / bh) * 0.96;
-    // Centre in the space LEFT of the panel, not the raw canvas, so the
-    // system is never half-hidden behind the empire list.
-    target.x = (x0 + x1) / 2 + (PANEL_W / 2) / target.scale;
-    target.y = (y0 + y1) / 2 + (SAFE_BOTTOM - SAFE) / 2 / target.scale;
+    return cur?.id ?? id;
   };
 
   /**
-   * Frame the tick's subject: the body, its fleet ring and its effect
-   * radius, filling a healthy share of the frame.
-   *
-   * Reviewers measured event subjects at 4-13% of frame width against a
-   * ~30-45% norm for shipped replays. The fit box is the whole event,
-   * not the body's centre, and there is a zoom floor so a small moon
-   * still reads.
+   * Who is somewhere over a scene: worlds settled, or with hulls parked,
+   * sampled across its span. The system shot frames THESE, not the whole
+   * map out to the last rock in the belt.
    */
-  const fitBody = (id: string, t: number) => {
-    const p = pos(id, t);
-    const br = bodyR.get(id) ?? 6;
-    // The frame is the BODY PLUS ITS HARBOUR, and it must fill the shot.
-    // Reviewers measured subjects at 1.4-5% of canvas against a 30-45%
-    // norm: the old extent was dominated by a +46 constant, so a small
-    // asteroid framed the same as a gas giant and rendered ~23px in a
-    // 1280 frame. Extent scales with the body, and the body itself has a
-    // floor in screen pixels so a rock still reads.
-    // FRAME THE NEIGHBOURHOOD, not the rock. Five of eight frames were
-    // one isolated body at ~3% of canvas: you could not tell where in
-    // the system the event was, and the fleets in harbour at nearby
-    // worlds -- the film's whole force-disposition story -- were off
-    // screen. The fit box is the body plus its siblings and its parent.
-    const b0 = byId.get(id)!;
-    const kin = bodies.filter(x => x.id === id
-      || x.id === b0.parent_body_id
-      || (x.parent_body_id && x.parent_body_id === b0.parent_body_id));
-    let kx0 = p.x - br, kx1 = p.x + br, ky0 = p.y - br, ky1 = p.y + br;
-    for (const k of kin) {
-      if (!drawableAt(k, Math.floor(t))) continue;
-      const q = pos(k.id, t);
-      const kr = (bodyR.get(k.id) ?? 4) + 22;
-      kx0 = Math.min(kx0, q.x - kr); kx1 = Math.max(kx1, q.x + kr);
-      ky0 = Math.min(ky0, q.y - kr); ky1 = Math.max(ky1, q.y + kr);
+  const occupiedCache = new Map<string, string[]>();
+  let home: string | null | undefined;
+  const homeSystem = (): string | null => {
+    if (home !== undefined) return home;
+    const lo = summary.ticks.lo ?? 0, hi = summary.ticks.hi ?? lo;
+    const perSys = new Map<string, number>();
+    for (let t = lo; t <= hi; t += Math.max(1, Math.floor((hi - lo) / 24))) {
+      for (const st of timeline.worldAt(t).stls.values()) {
+        if (!byId.has(st.body)) continue;
+        const s = systemOf(st.body);
+        perSys.set(s, (perSys.get(s) ?? 0) + 1);
+      }
     }
-    // Never let the neighbourhood swallow the subject: cap how far the
-    // box may extend from the focused body.
-    const CAP = br + 190;
-    kx0 = Math.max(kx0, p.x - CAP); kx1 = Math.min(kx1, p.x + CAP);
-    ky0 = Math.max(ky0, p.y - CAP); ky1 = Math.min(ky1, p.y + CAP);
-    const bw = Math.max(2 * (br + 26), kx1 - kx0);
-    const bh = Math.max(2 * (br + 26), ky1 - ky0);
-    const availW = W - PANEL_W - SAFE * 2;
-    const availH = H - SAFE - SAFE_BOTTOM;
-    let sc = Math.min(availW / bw, availH / bh) * 0.9;
-    // Floor: the focused body must still read as a body.
-    sc = Math.max(sc, 30 / Math.max(2, br));
-
-    // A SHOT MUST CONTAIN SOMETHING BESIDES ITS SUBJECT.
-    //
-    // Framing on the subject and its kin is right for a planet with
-    // moons and wrong for a lone asteroid: an isolated rock filled the
-    // frame with black, and two reviewers independently reported those
-    // as shots held on nothing. Pull back until at least a few worlds
-    // are in the picture, so a capture out in the belt is still a
-    // capture SOMEWHERE.
-    // Widening blindly until the count is met loses the subject: a lone
-    // asteroid pulled the camera back so far it became a six-pixel dot
-    // in its own scene. Instead, GROW THE FIT BOX to take in the nearest
-    // few worlds. The subject stays centred and sized, and the shot
-    // gains the context that says where in the system this is.
-    // Only neighbours close enough to be worth showing. Out in the belt
-    // the "nearest" world can be half a system away, and taking it into
-    // the box explodes the frame: the zoom floor then clamps the scale
-    // and the centring lands the camera BETWEEN the subject and its
-    // distant neighbour, framing neither. Measured: a battle at Pluto
-    // rendered as empty starfield under its own caption.
-    const REACH = Math.max(260, br * 26);
-    const near = bodies
-      .filter(b => b.id !== id && drawableAt(b, Math.floor(t)))
-      .map(b => { const q = pos(b.id, t);
-        return { q, d: Math.hypot(q.x - p.x, q.y - p.y) }; })
-      .filter(m => m.d <= REACH)
-      .sort((m, n) => m.d - n.d)
-      .slice(0, MIN_BODIES_IN_SHOT - 1);
-    for (const { q } of near) {
-      kx0 = Math.min(kx0, q.x - 24); kx1 = Math.max(kx1, q.x + 24);
-      ky0 = Math.min(ky0, q.y - 24); ky1 = Math.max(ky1, q.y + 24);
+    home = [...perSys.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+    return home;
+  };
+  const occupiedOver = (from: number, to: number): string[] => {
+    const key = `${from}:${to}`;
+    const hit = occupiedCache.get(key);
+    if (hit) return hit;
+    // WHERE THE ACTION IS, not where anyone ever settled (Lorne,
+    // 2026-10-23: "very little in the outer system, most of the action
+    // takes place in the center"): fleets, losses and battles weigh; a
+    // quiet outpost barely does.
+    const weight = new Map<string, number>();
+    const add = (id: string, n: number) => weight.set(id, (weight.get(id) ?? 0) + n);
+    const step = Math.max(1, Math.floor((to - from) / 6));
+    for (let t = from; t <= Math.max(from, to - 1); t += step) {
+      const w = timeline.worldAt(t);
+      for (const st of w.stls.values()) add(st.body, 1);
+      for (const sh of w.ships.values()) if (sh.parent) add(sh.parent, 1);
     }
-    const bw2 = Math.max(2 * (br + 26), kx1 - kx0);
-    const bh2 = Math.max(2 * (br + 26), ky1 - ky0);
-    sc = Math.min(sc, Math.min(availW / bw2, availH / bh2) * 0.9);
-    // ...but never so far back that the subject stops reading as a world.
-    sc = Math.max(sc, 22 / Math.max(2, br));
-    // AND OUT IN THE EMPTY PLACES, GO CLOSER. Adding neighbours cannot
-    // rescue a shot in the belt or the outer system, because there are
-    // none -- measured at 2.9% lit pixels for a battle at Pluto. When
-    // the neighbourhood really is bare, let the subject fill the frame
-    // instead: a big world on black is a portrait, a small one is a
-    // shot of nothing.
-    if (near.length < 2) {
-      sc = Math.max(sc, (H - SAFE_BOTTOM) * 0.24 / Math.max(2, br));
+    for (let t = from; t < to; t++) for (const d of deathAt.get(t) ?? []) if (d.body) add(d.body, 3);
+    for (const b of summary.battles) {
+      if (!b.body_id || b.started_tick >= to || (b.ended_tick ?? b.started_tick) < from) continue;
+      add(b.body_id, 25);
     }
-    // ONE SUBJECT SIZE, WHATEVER THE WORLD. Measured across the reel:
-    // an identical event rendered Neptune at 22px and Hygiea at 165px --
-    // a 7.5x swing for the same kind of beat, which makes the camera
-    // look like it is obeying a rule the viewer cannot infer. The
-    // subject is held between roughly a fifth and a third of the frame.
-    const vh = H - SAFE_BOTTOM - SAFE;
-    sc = Math.max(sc, vh * 0.10 / Math.max(2, br));
-    sc = Math.min(sc, vh * 0.19 / Math.max(2, br));
-    target.scale = sc;
-    // If the box does not actually fit at the scale we settled on, the
-    // box centre is a lie -- centre on the subject instead.
-    const fits = bw2 * sc <= availW && bh2 * sc <= availH;
-    const lean = fits ? 0.45 : 0;
-    // Weighted toward the subject rather than the centroid of the box,
-    // so the world the scene is about does not drift to a corner.
-    target.x = (p.x * (1 - lean) + ((kx0 + kx1) / 2) * lean)
-      + (PANEL_W / 2) / sc;
-    target.y = (p.y * (1 - lean) + ((ky0 + ky1) / 2) * lean)
-      + (SAFE_BOTTOM - SAFE) / 2 / sc;
+    // ONE SYSTEM for every wide shot: the one the match was fought in.
+    // Chosen per scene, a late flurry out past a sun gate swung the last
+    // wide shot to another star and left the frame black.
+    const sys = homeSystem();
+    let ids = [...weight.keys()].filter(id => byId.has(id)
+      && drawableAt(byId.get(id)!, from) && systemOf(id) === sys);
+    // An outpost far out past everyone else should not shrink the war to
+    // a speck: keep the worlds within reach of where the weight is.
+    if (sys && ids.length > 3) {
+      const t0 = (from + to) / 2;
+      const c = pos(sys, t0);
+      const d = ids.map(id => { const p = pos(id, t0); return { id, d: Math.hypot(p.x - c.x, p.y - c.y), w: weight.get(id) ?? 0 }; })
+        .sort((a, b) => a.d - b.d);
+      const total = d.reduce((s2, x) => s2 + x.w, 0);
+      let acc = 0, cutD = d[d.length - 1].d;
+      for (const x of d) { acc += x.w; if (acc >= total * 0.7) { cutD = x.d; break; } }
+      ids = d.filter(x => x.d <= cutD * 1.05).map(x => x.id);
+    }
+    if (sys) ids.push(sys);
+    occupiedCache.set(key, ids);
+    return ids;
   };
 
-  const toPx = (p: { x: number; y: number }) =>
-    ({ x: W / 2 + (p.x - cam.x) * cam.scale, y: H / 2 + (p.y - cam.y) * cam.scale });
+  /** Margins the graphics take: the clock and standings above, the
+   *  lower third below. */
+  const safe = () => {
+    const u = unitOf(H);
+    return { top: 120 * u, bottom: 210 * u, side: 60 * u };
+  };
 
-  const aim = (t: number, dTicks: number) => {
-    if (!shots.length) rebuildShots();
-    const shot = shots.find(s => t >= s.from && t < s.to) ?? shots[shots.length - 1];
-    const rawFocus = viewMode === 'auto' && shot?.bodyId && byId.has(shot.bodyId)
-      && drawableAt(byId.get(shot.bodyId)!, Math.floor(t)) ? shot.bodyId : null;
-
-    // THE BREATH. A campaign film needs the grand scale as often as the
-    // detail: the whole map is the context that makes a single fight
-    // mean anything. Every shot now opens WIDE on the system, pushes in
-    // to its subject, holds, and pulls back out before the cut -- so the
-    // viewer is repeatedly reminded where in the war they are.
-    let focusId = rawFocus;
-    let blend = 0;   // 0 = system wide, 1 = fully on the subject
-    if (shot && rawFocus) {
-      const span = Math.max(1, shot.to - shot.from);
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars -- u
-      const u = Math.max(0, Math.min(1, (t - shot.from) / span));
-      // A SCENE NEVER LEAVES ITS SUBJECT.
-      //
-      // The breath used to swing all the way out to the system at each
-      // end of a shot. Two reviewers independently reported the result
-      // as the film's worst fault without being able to see the cause:
-      // a caption reading "THE BATTLE FOR PLUTO" over a frame showing
-      // Earth, Luna, Mercury and Venus. The scene was right and the
-      // caption was right; the camera was simply somewhere else at that
-      // moment. A push-in that starts at three-quarters keeps the
-      // subject in frame for every tick the caption is up.
-      // And no residual push at all. Even a blend starting at 0.75 --
-      // a quarter of the way toward the system view -- was enough to
-      // push the subject into a corner of its own establishing frame.
-      // Context is not this scene's job: the director already spends
-      // whole scenes on the wide system between the close ones.
-      blend = 1;
-    } else if (rawFocus) {
-      blend = 1;
-    }
-    if (focusId && blend > 0.02) {
-      fitBody(focusId, t);
-      if (blend < 0.995) {
-        const bx = target.x, by = target.y, bs = target.scale;
-        fitAll(t);
-        target.x += (bx - target.x) * blend;
-        target.y += (by - target.y) * blend;
-        // Scale interpolates geometrically: a linear blend between two
-        // very different zooms spends most of its time near the wide end.
-        target.scale = Math.exp(Math.log(target.scale)
-          + (Math.log(bs) - Math.log(target.scale)) * blend);
+  /** Each wide shot's one frame (see systemFrame). */
+  const systemFrames = new Map<ReelScene | undefined, Frame>();
+  const systemFrame = (s: ReelScene | undefined, t: number): Frame => {
+    // ONE FRAME FOR THE WHOLE SHOT. Re-centred on the occupied worlds at
+    // every instant, the wide shot swam 30-66 px a frame as the system
+    // turned under a time-lapse: framed once, over the worlds' places
+    // across the scene, it holds still and they turn inside it.
+    const hit = systemFrames.get(s);
+    if (hit) return hit;
+    const lo = summary.ticks.lo ?? 0;
+    const ids = s ? occupiedOver(s.from, s.to) : occupiedOver(lo, lo + 1);
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    const at = s ? [0, 0.25, 0.5, 0.75, 1].map(k => s.from + (s.to - s.from) * k) : [t];
+    for (const id of ids) {
+      for (const ti of at) {
+        const p = pos(id, ti);
+        const r = (bodyR.get(id) ?? 4) + 10;
+        x0 = Math.min(x0, p.x - r); x1 = Math.max(x1, p.x + r);
+        y0 = Math.min(y0, p.y - r); y1 = Math.max(y1, p.y + r);
       }
+    }
+    if (!isFinite(x0)) return { x: 0, y: 0, scale: 1 };
+    const m = safe();
+    const bw = Math.max(60, x1 - x0), bh = Math.max(60, y1 - y0);
+    const availW = W - m.side * 2, availH = H - m.top - m.bottom;
+    const scale = Math.max(MIN_CAMERA_SCALE, Math.min(availW / bw, availH / bh) * 0.92);
+    const cy = (y0 + y1) / 2;
+    // Centre the box in the space between the graphics.
+    const midY = (m.top + (H - m.bottom)) / 2;
+    const f = { x: (x0 + x1) / 2, y: cy + (H / 2 - midY) / scale, scale };
+    if (s) systemFrames.set(s, f);
+    return f;
+  };
+
+  const bodyFrame = (id: string, t: number, share: number): Frame => {
+    const p = pos(id, t);
+    // The game's own radius: close in, a world draws at true size, and
+    // its battle layout scales with it.
+    const r = Math.max(0.5, byGame.get(id)?.radius ?? bodyR.get(id) ?? 6);
+    const scale = Math.max(MIN_CAMERA_SCALE, (H * share) / r);
+    return { x: p.x, y: p.y + (H / 2 - H * FOCUS_Y) / scale, scale };
+  };
+
+  const subjectOf = (s: ReelScene | undefined, t: number): string | null =>
+    s && s.kind === 'intro' && teaser ? subjectOf(teaser, t)
+    : s && s.bodyId && s.framing !== 'system' && byId.has(s.bodyId)
+      && (drawableAt(byId.get(s.bodyId)!, Math.floor(t))
+        // The shot stays on a world for a moment after it is destroyed:
+        // the break-up is the picture.
+        || (goneAt.get(s.bodyId) ?? -Infinity) > t - 3) ? s.bodyId : null;
+
+  /** Where in a world's orbit a scene's action is: the centroid of the
+   *  hulls there when the scene was first framed (drawn-radius units). */
+  const sceneFocus = new Map<ReelScene, { ang: number; r: number; side: number }>();
+  const focusOf = (s: ReelScene, subj: string) => {
+    const hit = sceneFocus.get(s);
+    if (hit) return hit;
+    let sx = 0, sy = 0, n = 0;
+    for (const [, v] of lastSeen) {
+      if (v.body !== subj) continue;
+      sx += Math.cos(v.ang) * v.rFrac; sy += Math.sin(v.ang) * v.rFrac; n++;
+    }
+    const seed = (hashStr(`${s.from}:${subj}`) % 1000) / 1000;
+    const f = n >= 3 && Math.hypot(sx, sy) / n > 0.2
+      ? { ang: Math.atan2(sy, sx), r: Math.min(2.5, Math.hypot(sx, sy) / n), side: seed < 0.5 ? -1 : 1 }
+      : { ang: seed * Math.PI * 2, r: 1.6, side: seed < 0.5 ? -1 : 1 };
+    // Only settle once hulls have been seen there, or the first frame
+    // would pin a guess for the whole scene.
+    if (n >= 3) sceneFocus.set(s, f);
+    return f;
+  };
+  /** A battle at a world the film has already fought over. */
+  const repeatVisit = (s: ReelScene) => {
+    for (const x of scenes) {
+      if (x === s) return false;
+      if (x.kind === 'battle' && x.bodyId === s.bodyId) return true;
+    }
+    return false;
+  };
+
+  /** A scene's own frame at an instant, with its slow drift. */
+  const frameOf = (s0: ReelScene | undefined, t: number, prog: number): Frame => {
+    // The cold open is framed as the battle it shows.
+    const s = s0 && s0.kind === 'intro' && teaser ? teaser : s0;
+    const subj = viewMode === 'wide' ? null : subjectOf(s, t);
+    if (!s || !subj) {
+      const f = systemFrame(s, t);
+      return { ...f, scale: f.scale * (1 + 0.025 * prog) };
+    }
+    let share = WORLD_SUBJECT;
+    // FRAME WHAT IS THERE, not the planet: the whole layout of the ships
+    // at the world (both lines, the station) inside the space between the
+    // graphics. A big battle is a wider shot than a skirmish, and a world
+    // whose news is a fleet arriving shows the fleet.
+    const reach = Math.max(sceneExtent.get(s) ?? 0, battleReach.get(subj) ?? 0)
+      || (s.framing === 'battle' ? 2.2 : 0);
+    if (reach) sceneExtent.set(s, reach);
+    if (s.framing === 'battle') share = Math.min(BATTLE_SUBJECT * 1.4, 0.34 / reach);
+    else if (reach) share = Math.min(WORLD_SUBJECT * 1.3, 0.34 / reach);
+    // THE LEVIATHAN is drawn at over four times its world's width: a
+    // shot framed on the world had the beast off the edge of it.
+    const k0 = s.beat?.kind ?? '';
+    if (/^kaiju_/.test(k0) || s.beat?.data?.cause === 'kaiju') share = Math.min(share, 0.05);
+    if (/^kaiju_/.test(k0) || s.beat?.data?.cause === 'kaiju') share = Math.max(share, 0.07);
+    const f = bodyFrame(subj, t, share);
+    // THE DIRECTOR INSIDE THE SHOT. A locked-off frame for seven seconds
+    // read as a still, however much was dying in it. A battle opens wide,
+    // pushes in toward where the fleets are thickest, and eases back as
+    // the verdict lands; a second fight at the same world is shot from the
+    // other side, tighter. A world's news drifts across the frame.
+    const sm = (a: number, b: number, v: number) => { const q = Math.max(0, Math.min(1, (v - a) / (b - a))); return q * q * (3 - 2 * q); };
+    let k: number, offFrac = 0, lateral = 0;
+    const foc = focusOf(s, subj);
+    let sweep = 0;
+    if (s.framing === 'battle' && s.seconds > 7) {
+      // A BIG BATTLE IS THREE SETUPS in one continuous move: the whole
+      // fight established wide, a push in that sweeps round the orbit
+      // through the thick of it, and a pull back out for the verdict.
+      const inn = sm(0.06, 0.42, prog), out = sm(0.64, 0.96, prog);
+      k = 0.8 + 0.52 * inn - 0.6 * out;
+      offFrac = 0.55 * inn * (1 - out);
+      sweep = (sm(0.2, 0.7, prog) - 0.5) * 1.1 * foc.side;
+    } else if (s.framing === 'battle') {
+      const again = repeatVisit(s);
+      const push = sm(0, 0.62, prog) - 0.55 * sm(0.72, 1, prog);
+      k = (again ? 1.12 : 0.86) + (again ? 0.22 : 0.36) * push;
+      offFrac = 0.5 * push * (again ? -1 : 1);
     } else {
-      focusId = null;
-      fitAll(t);
+      k = 1 + 0.16 * prog;
+      lateral = (prog - 0.5) * 0.14 * (foc.side);
     }
+    const rw = drawnWorldR(byGame.get(subj)!) * foc.r;
+    const ang = foc.ang + sweep;
+    const cx = Math.cos(ang) * rw * offFrac, cy = Math.sin(ang) * rw * offFrac;
+    const sc = f.scale * k;
+    return { x: f.x + cx + (lateral * W) / sc,
+      y: f.y - (H / 2 - H * FOCUS_Y) / f.scale + (H / 2 - H * FOCUS_Y) / sc + cy,
+      scale: sc };
+  };
 
-    // Only a firmly-held subject counts as "the shot" for cut purposes;
-    // the wide ends of the breath must not each read as a new target.
-    const focusKey = blend > 0.5 ? focusId : null;
-    curFocus = focusId;
-    if (!camInit) {
-      cam.x = target.x; cam.y = target.y; cam.scale = target.scale;
-      camInit = true; lastFocus = focusKey; return;
-    }
-    // CUT, DON'T PAN, when the subject changes to somewhere far away.
-    // A pan between distant bodies at event zoom crosses nothing but
-    // starfield -- three reviewers independently reported those as dead
-    // frames. A cut costs one frame; a pan costs seconds of empty film.
-    // A SCENE BOUNDARY IS ALWAYS A CUT, never a drift. Easing across
-    // one meant the opening seconds of a scene were spent travelling
-    // from the last one, with the new caption already on screen naming
-    // a world still off camera. The settled frame was always correct,
-    // which is exactly why a still-frame audit could not see this and
-    // a reel sampled during motion could.
-    const shotKey = shot ? `${shot.from}:${shot.bodyId ?? ''}` : '';
-    if (shotKey !== lastShot) {
-      cam.x = target.x; cam.y = target.y; cam.scale = target.scale;
-      lastShot = shotKey; lastFocus = focusKey;
-    } else if (focusKey !== lastFocus) {
-      const far = Math.hypot(target.x - cam.x, target.y - cam.y) * cam.scale;
-      const zoomJump = Math.max(target.scale / cam.scale, cam.scale / target.scale);
-      if (far > W * 0.75 || zoomJump > 2.5) {
-        cam.x = target.x; cam.y = target.y; cam.scale = target.scale;
-      }
-      lastFocus = focusKey;
-    }
-    // Frame-rate INDEPENDENT easing. A fixed per-frame k converges in a
-    // second at 60fps and takes half a shot at 12fps, so the camera's
-    // speed silently depended on the machine.
-    const k = 1 - Math.exp(-7 * Math.max(0.0001, Math.min(0.5, dTicks)));
-    cam.x += (target.x - cam.x) * k;
-    cam.y += (target.y - cam.y) * k;
-    cam.scale += (target.scale - cam.scale) * k;
+  /** Where a world point lands on screen under a frame. */
+  const onScreen = (f: Frame, p: { x: number; y: number }) =>
+    ({ x: W / 2 + (p.x - f.x) * f.scale, y: H / 2 + (p.y - f.y) * f.scale });
 
-    // GUARANTEE: never render a frame with nothing in it.
-    let visible = false;
-    for (const b of bodies) {
-      if (!drawableAt(b, Math.floor(t))) continue;
-      const q = toPx(pos(b.id, t));
-      const r = (bodyR.get(b.id) ?? 4) * cam.scale;
-      if (q.x > -r && q.x < W - PANEL_W + r && q.y > -r && q.y < H + r) {
-        visible = true; break;
+  const toPx = (p: { x: number; y: number }) => onScreen(cam, p);
+
+  /** How "wide" the shot is right now: 1 = the system, 0 = a world. The
+   *  overlay uses it to swap the standings for the battle tally. */
+  let overview = 1;
+
+  /** Each scene's travel in, seconds (fixed per scene: captions wait on it). */
+  const travelSeconds = new Map<ReelScene, number>();
+  /** The move playing now: the world it is travelling to, and how far. */
+  let travel: { to: string; e: number } | null = null;
+  /**
+   * The smooth zoom-and-pan path from one frame to another (van Wijk and
+   * Nuij, 2003): out as far as the distance needs, across, and in. `S` is
+   * its length; `at(e)` the frame at a share of it.
+   */
+  const zoomPath = (a: Frame, b: Frame) => {
+    const rho = 1.42;
+    const w0 = W / a.scale, w1 = W / b.scale;
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const u1 = Math.hypot(dx, dy);
+    if (u1 < 1e-6 * Math.max(w0, w1)) {
+      const S = Math.abs(Math.log(w1 / w0)) / rho;
+      return { S, at: (e: number) => ({ x: a.x + dx * e, y: a.y + dy * e, scale: W / (w0 * Math.pow(w1 / w0, e)) }) };
+    }
+    const bI = (i: 0 | 1) => {
+      const wi = i ? w1 : w0;
+      return (w1 * w1 - w0 * w0 + (i ? -1 : 1) * rho ** 4 * u1 * u1) / (2 * wi * rho * rho * u1);
+    };
+    const rI = (i: 0 | 1) => { const bb = bI(i); return Math.log(-bb + Math.sqrt(bb * bb + 1)); };
+    const r0 = rI(0), r1 = rI(1);
+    const S = (r1 - r0) / rho;
+    const at = (e: number) => {
+      const sv = S * e;
+      const u = (w0 / (rho * rho)) * (Math.cosh(r0) * Math.tanh(rho * sv + r0) - Math.sinh(r0));
+      const w = (w0 * Math.cosh(r0)) / Math.cosh(rho * sv + r0);
+      return { x: a.x + (dx * u) / u1, y: a.y + (dy * u) / u1, scale: W / w };
+    };
+    return { S: Number.isFinite(S) ? S : 0, at };
+  };
+
+  /** True while a frame is laid out unseen at the shot's destination. */
+  let priming = false;
+  /** A leg's ease: gentle at both ends, even through the middle. */
+  const easeLeg = (q: number) => 0.5 - 0.5 * Math.cos(Math.PI * Math.max(0, Math.min(1, q)));
+  /**
+   * HOW THE CAMERA GETS THERE. Between two worlds: up to a frame that
+   * holds both and the star (so where it is reads on the map), a beat to
+   * read it, and down on the next world. To or from the system shot: one
+   * leg. Each leg runs evenly along its zoom-and-pan path; an S-curve over
+   * the whole move put all of it in eight frames.
+   */
+  const travelPlan = (s: ReelScene, a: Frame, b: Frame, subj: string | null, fromSubj: string | null, t: number) => {
+    const both = !!subj && !!fromSubj;
+    let peak: Frame | null = null;
+    if (both) {
+      const star = pos(systemOf(subj!), t);
+      const pts = [{ x: a.x, y: a.y }, { x: b.x, y: b.y }, star];
+      const x0 = Math.min(...pts.map(p => p.x)), x1 = Math.max(...pts.map(p => p.x));
+      const y0 = Math.min(...pts.map(p => p.y)), y1 = Math.max(...pts.map(p => p.y));
+      const m = safe();
+      const sc = Math.min(a.scale, b.scale,
+        Math.min((W - m.side * 2) / Math.max(1, x1 - x0), (H - m.top - m.bottom) / Math.max(1, y1 - y0)) * 0.8);
+      peak = { x: (x0 + x1) / 2, y: (y0 + y1) / 2, scale: Math.max(MIN_CAMERA_SCALE, sc) };
+    }
+    const legs = peak ? [zoomPath(a, peak), zoomPath(peak, b)] : [zoomPath(a, b)];
+    // A leg from a close-up to the whole system is a ~1,000x zoom: under a
+    // second it ran 40% a frame (a whoosh, measured), so a long one takes
+    // up to 1.6 s.
+    const legSec = legs.map(l => Math.max(1.1, Math.min(1.6, 0.8 + 0.14 * l.S)));
+    const hold = peak ? 0.35 : 0;
+    let total = legSec.reduce((x, y) => x + y, 0) + hold;
+    // Never more than half the scene: the moment still has to land.
+    const room = s.seconds * 0.62;
+    const k = total > room ? room / total : 1;
+    total *= k;
+    const l0 = legSec[0] * k, h = hold * k;
+    travelSeconds.set(s, total);
+    return {
+      total, end: b,
+      at: (el: number) => {
+        if (!peak) { const e = easeLeg(el / l0); return { frame: legs[0].at(e), e }; }
+        if (el < l0) return { frame: legs[0].at(easeLeg(el / l0)), e: 0.5 * (el / l0) };
+        if (el < l0 + h) return { frame: peak, e: 0.5 };
+        const q = (el - l0 - h) / Math.max(0.01, total - l0 - h);
+        return { frame: legs[1].at(easeLeg(q)), e: 0.5 + 0.5 * q };
+      },
+    };
+  };
+
+  const aim = (tClock: number) => {
+    if (!scenes.length) rebuildShots();
+    const idx = sceneIndexAt(tClock);
+    const s = scenes[idx] ?? scenes[scenes.length - 1];
+    const prev = idx > 0 ? scenes[idx - 1] : undefined;
+    const t0 = filmSecondsAt(scenes, s?.from ?? tClock);
+    const el = filmSecondsAt(scenes, tClock) - t0;
+    const prog = s ? Math.max(0, Math.min(1, el / Math.max(0.01, s.seconds))) : 0;
+    // World positions at the time on SCREEN (the cold open shows a later
+    // moment than the clock reads).
+    const t = dispT;
+    let f = frameOf(s, t, prog);
+    const subj = viewMode === 'wide' ? null : subjectOf(s, t);
+    let wideNow = subj ? 0 : 1;
+
+    // THE CAMERA TRAVELS BETWEEN WORLDS (Lorne, 2026-10-22: "zoom out and
+    // in on planets, so players keep a spatial understanding of where
+    // everything is"). Every change of subject is one continuous move on
+    // the van Wijk-Nuij path: out over the map as far as the distance
+    // needs, across, and in on the next world, which is marked on the way.
+    // A scene skipped as a time cut is not a shot: travel from the last
+    // one actually seen.
+    let from: ReelScene | undefined = prev;
+    for (let j = idx - 1; j >= 0 && from && from.seconds < 0.01; j--) from = scenes[j - 1];
+    const fromSubj = viewMode === 'wide' ? null : subjectOf(from, t);
+    // Out of the cold open is a cut: the clock has jumped back.
+    const fromTeaser = from?.kind === 'intro' && !!teaser;
+    travel = null;
+    if (s && from && !fromTeaser && !priming && !(subj && fromSubj === subj) && (subj || fromSubj)) {
+      const a = frameOf(from, t, 1);
+      const plan = travelPlan(s, a, f, subj, fromSubj, t);
+      if (el < plan.total) {
+        const at = plan.at(el);
+        f = at.frame;
+        // How wide the frame is, between the close shots and the system:
+        // the standings fade in with the map, out with the world.
+        const sys = systemFrame(undefined, t);
+        const wClose = Math.min(W / a.scale, W / plan.end.scale) || 1, wSys = W / sys.scale;
+        wideNow = Math.max(0, Math.min(1, Math.log(Math.max(1, (W / f.scale) / wClose))
+          / Math.max(0.1, Math.log(Math.max(1.01, wSys / wClose)))));
+        if (!subj) wideNow = Math.max(wideNow, at.e);
+        if (subj) travel = { to: subj, e: at.e };
       }
     }
-    if (!visible) { cam.x = target.x; cam.y = target.y; cam.scale = target.scale; }
+    overview = wideNow;
+    curFocus = subj;
+    curScene = s;
+    cam.x = f.x; cam.y = f.y; cam.scale = f.scale;
   };
   // ---- starfield (own, cheap, parallaxed) ------------------------------
   const stars: Array<[number, number, number]> = [];
@@ -853,39 +1142,128 @@ export function createMatchMap(
   /** Hulls drawn mid-crossing this frame; harbour stacks skip them. */
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- transiting
   let transiting = new Set<string>();
-  /** The scene the camera last composed for; a change is a cut. */
-  let lastShot = '';
   /** The body this scene is about, so the frame can spend detail on it. */
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- curFocus
   let curFocus: string | null = null;
+  /**
+   * Where each hull was last drawn, as an offset from its world in map
+   * units. A hull that dies is gone from the next tick's record, and its
+   * blast has to go off where it WAS -- in its battle line, not at some
+   * spot on a ring the film made up.
+   */
+  const lastSeen = new Map<string, { body: string; ang: number; rFrac: number }>();
+  /**
+   * THE DYSON SPHERE, rebuilt from the log: begun, its 25/50/75%
+   * milestones, the last damage report, complete at an engineering win.
+   * The game draws the lattice from this (drawDysonLattice); the film
+   * never passed it, so the victory the match was won by was never seen.
+   */
+  const dysonKeys: Array<[number, number]> = [];
+  let dysonDone: number | null = null;
+  for (const r of summary.chronicle ?? []) {
+    let p: Record<string, unknown> = {};
+    try { p = JSON.parse(r.payload || '{}') ?? {}; } catch { /* ignore */ }
+    if (r.kind === 'dyson_initiated') dysonKeys.push([r.tick_number, 0]);
+    else if (/^dyson_(milestone|damaged)$/.test(r.kind) && typeof p.pct === 'number') {
+      // A strike's row says where the Sphere fell TO; it stood higher
+      // the tick before, which is what the meter must read going in (it
+      // read 97% under "A last strike on the Sphere at 99%").
+      const max = Number(p.max_hp), before = Number(p.hp) + Number(p.progress_lost);
+      const prevT = dysonKeys.length ? dysonKeys[dysonKeys.length - 1][0] : -Infinity;
+      if (r.kind === 'dyson_damaged' && max > 0 && before > 0 && r.tick_number - 1 > prevT) {
+        dysonKeys.push([r.tick_number - 1, Math.min(1, before / max)]);
+      }
+      dysonKeys.push([r.tick_number, p.pct / 100]);
+    } else if (r.kind === 'dyson_collapsed') dysonKeys.push([r.tick_number, 0]);
+    else if (r.kind === 'victory' && p.victoryType === 'engineering') dysonDone = r.tick_number;
+  }
+  const dysonAt = (t: number): { progress: number; complete: boolean } | undefined => {
+    if (!dysonKeys.length || t < dysonKeys[0][0]) return undefined;
+    if (dysonDone != null && t >= dysonDone) return { progress: 1, complete: true };
+    let i = dysonKeys.length - 1;
+    while (i > 0 && dysonKeys[i][0] > t) i--;
+    const [t0, p0] = dysonKeys[i];
+    const next = dysonKeys[i + 1] ?? (dysonDone != null ? [dysonDone, 1] as [number, number] : null);
+    const p = next ? p0 + (next[1] - p0) * Math.max(0, Math.min(1, (t - t0) / Math.max(1, next[0] - t0))) : p0;
+    return { progress: p, complete: false };
+  };
+  /** The last frame's presentation, for work done before this frame's. */
+  let lastPres: ReturnType<typeof computePresentation> | null = null;
+  /** A world's drawn radius in map units at the current zoom. */
+  const drawnWorldR = (b: GameBody) =>
+    drawnRadiusOf(lastPres, b, cam.scale) / Math.max(1e-6, cam.scale);
+  /** Harness probe: what the planner was given. */
+  let lastFacts: unknown = null;
+  /** Harness probe: what the last frame drew at the scene's subject. */
+  let probing = false;
+  let lastProbe: unknown = null;
 
-  let lastT = -1;
-  function setTick(tick: number, frac: number) {
+  function setTick(tick0: number, frac0: number) {
+    let tick = tick0, frac = frac0;
+    dispT = tick0 + frac0;
+    clockT = dispT;
+    // THE COLD OPEN: while the title card is up, the screen shows the
+    // match's deadliest fight, two ticks of it at battle pace.
+    const s = scenes.length ? scenes.find(x => dispT >= x.from && dispT < x.to) : undefined;
+    if (s && s.kind === 'intro' && teaser && viewMode !== 'wide') {
+      const u = Math.max(0, Math.min(1, (dispT - s.from) / Math.max(1, s.to - s.from)));
+      const span = Math.min(2.5, teaser.to - teaser.from - 0.01);
+      const mid = Math.max(teaser.from, (teaser.from + teaser.to) / 2 - span / 2);
+      dispT = mid + u * span;
+      tick = Math.floor(dispT); frac = dispT - tick;
+    }
     if (tick !== worldTick) {
       world = timeline.worldAt(tick);
       worldTick = tick;
     }
     curTick = tick; curFrac = frac;
-    const t = tick + frac;
-    const d = lastT < 0 ? 1 : Math.abs(t - lastT);
-    lastT = t;
-    aim(t, d);
+    aim(tick0 + frac0);
   }
 
   // ---- render ----------------------------------------------------------
-  function render() {
+  /** The scene the last frame was framed for. */
+  let primedFor: ReelScene | undefined | null = null;
+  /**
+   * FRAMED RIGHT ON THE FIRST FRAME. A shot's framing reads the fleet
+   * layout at its world (battleReach), which only a drawn frame measures:
+   * the first frame after every cut was framed without it and the second
+   * re-framed, a 26% zoom pop after each cut. On a new scene, a frame is
+   * laid out unseen first, and the camera aimed again from it.
+   */
+  function render(dtMs?: number) {
+    stepFilmClock(dtMs);
+    if (curScene !== primedFor) {
+      primedFor = curScene;
+      // Every scene change is a cut: nothing carries over from the shot
+      // before (see forgetDrawnShips).
+      forgetDrawnShips();
+      forgetBattleGlides();
+      if (curFocus) {
+        battleReach.delete(curFocus);
+        if (curScene) sceneExtent.delete(curScene);
+        // Laid out AT THE DESTINATION: a world is only measured once it is
+        // on screen, and a travel starts far from it, so the framing
+        // snapped as it arrived (a 20% zoom pop on the last frames).
+        const was = tracing;
+        tracing = false;
+        priming = true;
+        aim(clockT);
+        renderOnce();
+        priming = false;
+        tracing = was;
+        aim(clockT);
+      }
+    }
+    renderOnce();
+  }
+  function renderOnce() {
     const t = curTick + curFrac;
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     ctx.fillStyle = '#03060d';
     ctx.fillRect(0, 0, W, H);
-    // THE MAP HAS ITS OWN RECT AND STAYS IN IT. Planets were drawing
-    // over the timeline and under the empire panel; a camera safe area
-    // alone cannot fix that, because bodies OTHER than the subject land
-    // wherever the orbit puts them.
+    // FULL BLEED. The film is the map edge to edge; its graphics float
+    // over it (filmOverlay), so there is no panel to keep clear of.
     ctx.save();
-    ctx.beginPath();
-    ctx.rect(0, 0, W - PANEL_W + 6, H - SAFE_BOTTOM + 10);
-    ctx.clip();
 
     // ---- THE GAME DRAWS THE GAME ------------------------------------
     //
@@ -913,21 +1291,39 @@ export function createMatchMap(
           return b ? bodyPosition(b, t, gameBodies) : null;
         },
         summary.parts);
-    } else {
-      // Same roster, new instant: the only thing that reads `t` within a
-      // tick is how far along its crossing a hull in flight has got.
-      for (const sh of adaptedShips) {
-        const leg = adaptedLegs.get(sh.id);
-        if (!leg || !sh.transit) continue;
-        const a = byGame.get(leg.from), b = byGame.get(leg.to);
-        if (!a || !b) continue;
-        const pa = bodyPosition(a, t, gameBodies);
-        const pb = bodyPosition(b, t, gameBodies);
-        const span = Math.max(1, leg.arrive - leg.depart);
-        const u = Math.max(0, Math.min(1, (t - leg.depart) / span));
-        const e = u * u * (3 - 2 * u);
-        sh.transit.pos.x = pa.x + (pb.x - pa.x) * e;
-        sh.transit.pos.y = pa.y + (pb.y - pa.y) * e;
+    }
+    // WHERE A CROSSING RUNS, every frame. The record knows only which
+    // world a hull left and which it reached, and the crossing used to
+    // run centre to centre: every departing hull rose out of the middle
+    // of its planet's disc and drifted slowly outward (at a close-up's
+    // pace, a fleet leaving read as fleas falling off the world), and
+    // every arrival sank into the next one's core. A crossing now leaves
+    // from where the hull was parked, riding its world, and ends on the
+    // destination's parking band, facing the way it came in.
+    for (const sh of adaptedShips) {
+      const leg = adaptedLegs.get(sh.id);
+      if (!leg || !sh.transit) continue;
+      const a = byGame.get(leg.from), b = byGame.get(leg.to);
+      if (!a || !b) continue;
+      const pa = bodyPosition(a, t, gameBodies);
+      const pb = bodyPosition(b, t, gameBodies);
+      const ra = drawnWorldR(a), rb = drawnWorldR(b);
+      const seen = lastSeen.get(sh.id);
+      const from = seen && seen.body === a.id
+        ? { x: pa.x + Math.cos(seen.ang) * seen.rFrac * ra, y: pa.y + Math.sin(seen.ang) * seen.rFrac * ra }
+        : (() => { const d = Math.hypot(pb.x - pa.x, pb.y - pa.y) || 1;
+          return { x: pa.x + (pb.x - pa.x) / d * ra * 2.1, y: pa.y + (pb.y - pa.y) / d * ra * 2.1 }; })();
+      const d2 = Math.hypot(from.x - pb.x, from.y - pb.y) || 1;
+      const to = { x: pb.x + (from.x - pb.x) / d2 * rb * 2.1, y: pb.y + (from.y - pb.y) / d2 * rb * 2.1 };
+      const span = Math.max(1, leg.arrive - leg.depart);
+      const u = Math.max(0, Math.min(1, (t - leg.depart) / span));
+      const e = u * u * (3 - 2 * u);
+      sh.transit.pos.x = from.x + (to.x - from.x) * e;
+      sh.transit.pos.y = from.y + (to.y - from.y) * e;
+      const plan = sh.transit.currentTransfer;
+      if (plan) {
+        plan.startPos = { x: from.x, y: from.y };
+        plan.interceptPos = { x: to.x, y: to.y };
       }
     }
     const gameSettlements = adaptedStls;
@@ -964,17 +1360,41 @@ export function createMatchMap(
       bodies: gameBodies,
       factions: gameFactions,
       settlements: gameSettlements,
-      nowMs: performance.now(),
+      dysonSphere: dysonAt(t),
+      nowMs: filmMs,
       // WHERE THE HULLS ACTUALLY LANDED. drawShip writes each sprite's
       // true centre here after every offset it applies -- orbit phase,
       // tick interpolation, formation spread. The tracer code below used
       // to re-derive those positions and drift off the visible ship;
       // now it fires from where the ship was really drawn.
       shipHitboxes: new Map<string, { x: number; y: number; r: number }>(),
+      transitDrawn: tracing ? new Map<string, { x: number; y: number }>() : undefined,
     };
 
     const shown = (b: GameBody) =>
-      b.destroyedAtTick == null || curTick < b.destroyedAtTick;
+      (b.destroyedAtTick == null || curTick < b.destroyedAtTick)
+      && !((appearsAt.get(b.id) ?? -Infinity) > curTick)
+      && !((goneAt.get(b.id) ?? Infinity) <= curTick);
+
+    // THE MULTIPLAYER MAP'S PRESENTATION (bodyPresentation.ts): every
+    // world's drawn size, moons folding into their planet at a distance,
+    // and which world a folded world's ships count toward. This is what
+    // the players looked at all match, so it is what their film shows.
+    const posPx = new Map<string, { x: number; y: number }>();
+    const liveBodies = gameBodies.filter(shown);
+    const liveById = new Map(liveBodies.map(b => [b.id, b]));
+    rc.presentation = computePresentation(liveBodies, cam.scale, id => {
+      const hit = posPx.get(id);
+      if (hit) return hit;
+      const b = liveById.get(id);
+      if (!b) return null;
+      const cp = toPx(bodyPosition(b, t, gameBodies));
+      posPx.set(id, cp);
+      return cp;
+    }, curFocus, { w: W, h: H }, null, curTick);
+    const pres = rc.presentation;
+    lastPres = pres;
+    const hostOf = (id: string) => pres.host.get(id) ?? id;
 
     // VIEWPORT CULL.
     //
@@ -988,9 +1408,9 @@ export function createMatchMap(
     const MARGIN = 160;
     const onCamera = (b: GameBody) => {
       const cp = toPx(bodyPosition(b, t, gameBodies));
-      const r = b.radius * cam.scale;
-      return cp.x + r > -MARGIN && cp.x - r < W - PANEL_W + MARGIN
-        && cp.y + r > -MARGIN && cp.y - r < H - SAFE_BOTTOM + MARGIN;
+      const r = drawnRadiusOf(pres, b, cam.scale);
+      return cp.x + r > -MARGIN && cp.x - r < W + MARGIN
+        && cp.y + r > -MARGIN && cp.y - r < H + MARGIN;
     };
     const visible = gameBodies.filter(b => shown(b) && onCamera(b));
     const visibleIds = new Set(visible.map(b => b.id));
@@ -1002,8 +1422,20 @@ export function createMatchMap(
     resetReservations();
 
     drawStarfield(starfield, rc);
+    // The territory wash, quieter than the live map: on a film frame the
+    // worlds and the fleets carry the picture, and full-strength bands
+    // read as a target, not a solar system.
+    ctx.save();
+    // Mid-move (part way between a close shot and the system) the bands
+    // sweep the whole frame: keep them low then, so a move is never a flash.
+    // ...and continuous: a switch at 5% and 95% of the move popped the
+    // bands on and off between two frames.
+    // (and lower still while the camera travels: the bands at mid zoom
+    // fill the frame, and swept through they read as a strobe).
+    ctx.globalAlpha = 0.32 * (1 - (travel ? 0.9 : 0.5) * Math.sin(Math.PI * Math.max(0, Math.min(1, overview))));
     drawSystemRegions(
       computeSystemRegions(gameBodies, gameFactions, gameSettlements), rc);
+    ctx.restore();
 
     // Cosmetic specks through the belt, so it stops reading as five
     // lonely rocks all sitting at the same radius.
@@ -1073,73 +1505,110 @@ export function createMatchMap(
       if (arr) arr.push(sh); else parked.set(k, [sh]);
     }
 
+    // KILLS LAND THROUGH THE TICK. The record says only which hulls are
+    // gone by the next tick, and every one of them used to blow up on the
+    // tick boundary: one flash a second and then a still battle. Each
+    // now goes at its own moment within the tick, on a seed from its id.
+    const vanishAt = new Map<string, number>();
+    for (const d of deathAt.get(curTick + 1) ?? []) vanishAt.set(d.id, killPhase(d.id));
+
+    // THE GAME'S WHOLE-ORBIT LAYOUT, AT EVERY WORLD (battleLayoutLive):
+    // whoever is parked takes as much of the orbit as their ships need,
+    // each side its own contiguous share facing the others across open
+    // space, the station opposite the fight. It is how a battle looks in
+    // the game, so it is how the film's battles look.
     const formationOf = new Map<string, ShipFormation>();
+    const liveBattles = new Map<string, LiveBattle>();
+    /** 0 = a count chip, 1 = the hulls themselves (hullReveal). */
+    const revealOf = (bid: string) =>
+      hostOf(bid) !== bid ? 0 : hullReveal(byGame.get(bid), cam.scale);
     for (const [bid, atBody] of parked) {
-      // A REPLAY KNOWS BETTER THAN THE LIVE GAME DOES. MapCanvas has to
-      // infer hostility from pacts and armament; the record simply says
-      // whether a battle was running at this world on this tick.
-      const owners = [...new Set(atBody.map(x => x.ownedBy).filter(Boolean))];
-      if (fightingNow.has(bid) && owners.length >= 2) {
-        const spacing = owners.length > 1 ? BATTLE_SECTOR / (owners.length - 1) : 0;
-        const arcWidth = Math.min(spacing * 0.55, 0.8);
-        const arcDir = atBody[0].orbit.direction ?? 1;
-        owners.forEach((owner, k) => {
-          const arcCenter = -BATTLE_SECTOR / 2 + spacing * k;
-          const mine = atBody.filter(x => x.ownedBy === owner);
-          mine.forEach((x, i) => formationOf.set(x.id, {
-            index: i, total: mine.length, lane: shipLane(x),
-            arcCenter, arcWidth, arcDir,
-          }));
-        });
-        continue;
-      }
-      // Peacetime: sub-bucket by altitude so separate rings stay separate.
-      const buckets = new Map<string, GameShip[]>();
-      for (const x of atBody) {
-        const sma = ((x.orbit.rp ?? 0) + (x.orbit.ra ?? 0)) / 2;
-        const key = String(Math.round(sma));
-        const list = buckets.get(key);
-        if (list) list.push(x); else buckets.set(key, [x]);
-      }
-      for (const list of buckets.values()) {
-        if (list.length === 1) {
-          formationOf.set(list[0].id, shipLaneOnly(list[0]));
-          continue;
-        }
-        list.forEach((x, i) => formationOf.set(x.id, {
-          index: i, total: list.length, lane: shipLane(x),
-        }));
-      }
+      const body = byGame.get(bid);
+      if (!body || !visibleIds.has(bid) || revealOf(bid) <= 0.01) continue;
+      atBody.sort((a, b) => (a.id < b.id ? -1 : 1));
+      const units: BattleUnit[] = atBody.map(x => ({
+        id: x.id, owner: x.ownedBy, group: null,
+        sizePx: shipIconSize(x.class, false),
+        armed: (getShipClass(x.class)?.damagePerTick ?? 0) > 0,
+      }));
+      const owners = [...new Set(atBody.map(x => x.ownedBy))].sort();
+      const station = gameSettlements.find(st => st.bodyId === bid && st.type === 'station');
+      const lb = liveBattleFor(bid, body, atBody[0].orbit.direction ?? 1,
+        units, owners, station?.id);
+      // Re-slots as maneuvers, not snaps (see LiveBattle.glidePace).
+      lb.glidePace = FILM_GLIDE_PACE;
+      liveBattles.set(bid, lb);
+      for (const u of units) formationOf.set(u.id, { index: 0, total: 1, battle: lb });
+    }
+    rc.liveBattles = liveBattles;
+    for (const [bid, lb] of liveBattles) {
+      battleReach.set(bid, Math.max(1.2, (lb.layout.band?.rOut ?? lb.refR * 2) / lb.refR));
     }
 
-    // Hull size ramps with how big the anchoring world is on screen.
-    const anchorOf = (bid: string): string => {
-      const b = byGame.get(bid);
-      if (!b || !b.parent) return bid;
-      const par = byGame.get(b.parent);
-      return par && par.type !== 'star' ? b.parent : bid;
-    };
-    const spriteSizeFor = (bid: string): number => {
-      const anchor = byGame.get(anchorOf(bid));
-      const px = (anchor?.radius ?? 4) * cam.scale;
-      return Math.max(ORBIT_SHIP_MIN_SCALE, Math.min(1,
-        ORBIT_SHIP_MIN_SCALE + (1 - ORBIT_SHIP_MIN_SCALE)
-          * (px - MOON_ORBIT_MIN_PARENT_PX)
-          / (SPRITE_FULL_PX - MOON_ORBIT_MIN_PARENT_PX)));
-    };
-    const transitScale = (() => {
-      const sc = Math.max(TRANSIT_MIN_CAM_SCALE, cam.scale);
-      const u = Math.max(0, Math.min(1,
-        Math.log(sc / TRANSIT_MIN_CAM_SCALE)
-          / Math.log(TRANSIT_FULL_CAM_SCALE / TRANSIT_MIN_CAM_SCALE)));
-      return TRANSIT_SHIP_MIN_SIZE + (1 - TRANSIT_SHIP_MIN_SIZE) * u;
-    })();
-
+    // Where the hulls are too small to read, the game shows a count per
+    // empire instead; so does the film.
+    const chips: Array<{ bid: string; counts: Map<string, number>; alpha: number }> = [];
+    const chipAgg = new Map<string, Map<string, number>>();
     for (const [bid, arr] of parked) {
-      const sz = spriteSizeFor(bid);
+      const rv = revealOf(bid);
+      if (rv < 0.99) {
+        const host = hostOf(bid);
+        if (!visibleIds.has(host) && !visibleIds.has(bid)) continue;
+        let m = chipAgg.get(host);
+        if (!m) { m = new Map(); chipAgg.set(host, m); }
+        for (const sh of arr) if (sh.ownedBy) m.set(sh.ownedBy, (m.get(sh.ownedBy) ?? 0) + 1);
+      }
+      if (rv <= 0.01) continue;
+      const sz = hullSize(byGame.get(bid), cam.scale);
+      ctx.save();
+      ctx.globalAlpha = rv;
       for (const sh of arr) {
+        // A hull that dies this tick goes when its own blast does.
+        if ((vanishAt.get(sh.id) ?? 2) <= curFrac) continue;
         drawShip(sh, rc, false, formationOf.get(sh.id), sz);
       }
+      ctx.restore();
+    }
+    for (const [host, counts] of chipAgg) {
+      chips.push({ bid: host, counts, alpha: 1 - revealOf(host) });
+    }
+
+    if (probing) {
+      const bid = curFocus;
+      const at = bid ? (parked.get(bid) ?? []) : [];
+      lastProbe = { focus: bid, scale: cam.scale, parked: at.length,
+        reveal: bid ? revealOf(bid) : null, host: bid ? hostOf(bid) : null,
+        visible: bid ? visibleIds.has(bid) : null,
+        drawnR: bid && byGame.get(bid) ? drawnRadiusOf(pres, byGame.get(bid)!, cam.scale) : null,
+        reach: bid ? battleReach.get(bid) ?? null : null,
+        hits: at.slice(0, 6).map(sh => { const h = rc.shipHitboxes?.get(sh.id); return h ? [Math.round(h.x), Math.round(h.y)] : null; }),
+        center: bid ? toPx(pos(bid, t)) : null,
+        lb: (() => {
+          const lb = bid ? liveBattles.get(bid) : undefined;
+          if (!lb || !at.length) return null;
+          const pl = battlePlacement(lb, at[0].id, filmMs);
+          return { refR: lb.refR, placed: lb.layout.placements.size, band: lb.layout.band,
+            k: battleScale(lb, drawnRadiusOf(pres, byGame.get(bid!)!, cam.scale)),
+            pl: pl ? [Math.round(pl.x), Math.round(pl.y)] : null,
+            orbit: [at[0].orbit.parentBodyId, Math.round(at[0].orbit.rp ?? 0), at[0].class],
+            formation: !!formationOf.get(at[0].id)?.battle };
+        })() };
+    }
+    // Remember where each hull was drawn, against its world, in units of
+    // the world's DRAWN radius (as fxAnchor does). Far out a world is drawn
+    // several times its true size and its battle layout with it, so an
+    // offset kept in map units from a wide shot put a close-up's blasts
+    // out in empty space, radii away from the fight.
+    for (const sh of gameShips) {
+      if (sh.transit) continue;
+      const hb = rc.shipHitboxes?.get(sh.id);
+      const host = byGame.get(sh.orbit.parentBodyId);
+      if (!hb || !host) continue;
+      const c0 = toPx(bodyPosition(host, t, gameBodies));
+      const r0 = drawnRadiusOf(pres, host, cam.scale);
+      if (!(r0 > 0)) continue;
+      lastSeen.set(sh.id, { body: host.id,
+        ang: Math.atan2(hb.y - c0.y, hb.x - c0.x), rFrac: Math.hypot(hb.x - c0.x, hb.y - c0.y) / r0 });
     }
 
     // SHIPS THAT DIED IN THE LAST SIX TICKS ARE STILL ON SCREEN.
@@ -1158,31 +1627,255 @@ export function createMatchMap(
       const host = byGame.get(bodyId);
       if (!host) return null;
       const bp = bodyPosition(host, atTick, gameBodies);
-      const ring = Math.max(host.radius * 2.1, host.radius + 9);
+      // The world's drawn radius, in map units, at this zoom.
+      const rw = drawnRadiusOf(pres, host, cam.scale) / cam.scale;
+      // Where it was last drawn, when the film saw it.
+      const seen = lastSeen.get(shipId);
+      if (seen && seen.body === bodyId) {
+        return { x: bp.x + Math.cos(seen.ang) * seen.rFrac * rw, y: bp.y + Math.sin(seen.ang) * seen.rFrac * rw };
+      }
+      const ring = rw * 2.1;
       const ang = ((hashStr(shipId) % 1000) / 1000) * Math.PI * 2;
       return { x: bp.x + Math.cos(ang) * ring, y: bp.y + Math.sin(ang) * ring };
     };
-    for (let dt = Math.max(0, curTick - 6); dt <= curTick; dt++) {
+    for (let dt = Math.max(0, curTick - 6); dt <= curTick + 1; dt++) {
       for (const d of deathAt.get(dt) ?? []) {
-        const wp = deathPos(d.id, d.body, dt);
+        // When it went: its own moment within the tick before it was gone.
+        const tb = dt - 1 + killPhase(d.id);
+        if (t < tb) continue;
+        // Where the hull is NOW relative to its world, at the world's
+        // position NOW: computed at the death tick, the blast stayed where
+        // the world had been while the world moved on along its orbit.
+        const wp = deathPos(d.id, d.body, t);
         if (!wp) continue;
         if (!spawnedWrecks.has(d.id)) {
           spawnedWrecks.add(d.id);
-          spawnWreck(d.id, wp, 10, performance.now(), dt);
+          // ANCHORED TO THE WORLD (fxAnchor), at the hull's own size: a
+          // wreck is the dead hull's picture breaking up, and stored as a
+          // point in space it hung there while the world sailed on --
+          // ship-shaped debris peeling off a moving planet like fleas.
+          spawnWreck(d.id, wp, shipIconSize(d.cls, false) * hullSize(byGame.get(d.body), cam.scale),
+            filmMs, tb, { bodyId: d.body, dir: 1 });
         }
         // The blast, on the GAME clock like the wreckage it belongs to.
         // A wall-clock flash would be a different length of film at
         // 0.3s a tick than at 2.4s, and the director changes that pace
         // scene by scene.
-        const k = (t - dt) / BLAST_TICKS;
+        const k = (t - tb) / BLAST_TICKS;
         if (k >= 0 && k < 1) {
           const cp = toPx(wp);
-          drawBlast(ctx, cp.x, cp.y, k, d.id);
+          if (d.cls === 'kaiju') {
+            // THE LEVIATHAN GOES UP AT ITS OWN SIZE: a 60 px fireball under
+            // a 400 px monster read as it blinking out. One blast the size
+            // of the body it was drawn at, and the body bursting along its
+            // length after it.
+            const R = Math.max(60, lastBeastR.get(d.id) ?? 0);
+            drawBlast(ctx, cp.x, cp.y, k, d.id, (R * 1.1) / 10);
+            for (let j = 1; j <= 3; j++) {
+              const kj = (t - tb - j * 0.12) / BLAST_TICKS;
+              if (kj <= 0 || kj >= 1) continue;
+              const a = (hashStr(`${d.id}:${j}`) % 628) / 100;
+              drawBlast(ctx, cp.x + Math.cos(a) * R * 0.6, cp.y + Math.sin(a) * R * 0.6, kj, `${d.id}:${j}`, (R * 0.55) / 10);
+            }
+          } else {
+            drawBlast(ctx, cp.x, cp.y, k, d.id, 1);
+          }
           drawDebris(ctx, cp.x, cp.y, 10, k, d.id);
         }
       }
     }
-    drawWrecks(rc, performance.now());
+    drawWrecks(rc, filmMs);
+    // THE MOMENT A WORLD CHANGES HANDS, on the world. The ownership ring
+    // flipping colour was the whole event, and a viewer never saw it: a
+    // conquest is a shockwave in the taker's colour, a fall is a burst of
+    // fire, landing on the tick the log stamps.
+    {
+      const b = curScene?.kind === 'beat' ? curScene.beat : undefined;
+      const fx = b && b.body && /^(settlement_(seized|destroyed|razed)|faction_(eliminated|comeback|revived))$/.test(b.kind)
+        ? b : undefined;
+      const gb = fx?.body ? byGame.get(fx.body) : undefined;
+      const k = fx ? (t - fx.tick + 0.15) / 1.2 : -1;
+      if (fx && gb && visibleIds.has(gb.id) && k >= 0 && k < 1) {
+        const cp = toPx(pos(gb.id, t));
+        const rr = drawnRadiusOf(pres, gb, cam.scale);
+        const takes = /seized|comeback|revived/.test(fx.kind);
+        const col = takes && fx.fid ? colorOf(fx.fid) : '#ff9a4d';
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        const g = ctx.createRadialGradient(cp.x, cp.y, rr * 0.2, cp.x, cp.y, rr * 1.5);
+        g.addColorStop(0, hexA(col, 0.55 * (1 - k)));
+        g.addColorStop(1, hexA(col, 0));
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(cp.x, cp.y, rr * 1.5, 0, Math.PI * 2); ctx.fill();
+        for (const lag of [0, 0.18]) {
+          const q = Math.max(0, Math.min(1, (k - lag) / (1 - lag)));
+          if (q <= 0 || q >= 1) continue;
+          const e = 1 - Math.pow(1 - q, 3);
+          ctx.strokeStyle = hexA(col, 0.9 * (1 - q));
+          ctx.lineWidth = Math.max(2, rr * 0.07 * (1 - q));
+          ctx.beginPath(); ctx.arc(cp.x, cp.y, rr * (1.05 + 2.4 * e), 0, Math.PI * 2); ctx.stroke();
+        }
+        ctx.restore();
+      }
+    }
+    // THE OPENING ACT on the map: each empire pinned to its home world in
+    // turn (the roll call), then every colony lighting up in its founder's
+    // colour as it is settled (the land grab).
+    if (curScene?.act === 'opening') {
+      const fsNow = filmSecondsAt(scenes, clockT);
+      const el0 = fsNow - filmSecondsAt(scenes, curScene.from);
+      const u = unitOf(H);
+      homes.forEach((h, i) => {
+        const gb = byGame.get(h.body);
+        const f = filmFaction(h.fid);
+        if (!gb || !f || !shown(gb)) return;
+        const k = Math.min((el0 - ROLL_CALL_AT - i * ROLL_CALL_STEP) / 0.3, (ROLL_CALL_END - el0) / 0.5);
+        if (k <= 0) return;
+        const cp = toPx(pos(gb.id, t));
+        drawHomePin(ctx, H, f, cp.x, cp.y - drawnRadiusOf(pres, gb, cam.scale), k);
+      });
+      ctx.save();
+      for (const b of built) {
+        const k = (fsNow - b.at) / 1.1;
+        if (k < 0 || k >= 1) continue;
+        const gb = byGame.get(b.body);
+        if (!gb || !shown(gb)) continue;
+        const cp = toPx(pos(gb.id, t));
+        const col = colorOf(b.fid);
+        ctx.globalAlpha = 1 - k;
+        ctx.strokeStyle = liftColor(col, 150);
+        ctx.lineWidth = Math.max(1.5, 3 * u * (1 - k));
+        ctx.beginPath(); ctx.arc(cp.x, cp.y, (8 + 34 * Math.sqrt(k)) * u, 0, Math.PI * 2); ctx.stroke();
+        ctx.fillStyle = liftColor(col, 150);
+        ctx.beginPath(); ctx.arc(cp.x, cp.y, 4 * u, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.restore();
+    }
+    // A WAR DECLARED on the map: while its banner is up, a red line from
+    // the aggressor's capital to its target's.
+    if (overview > 0.35) {
+      const fsNow = filmSecondsAt(scenes, clockT);
+      const capital = (fid: string) => {
+        let best: string | null = null, pop = -1;
+        for (const st of world.stls.values()) if (st.fid === fid && st.pop > pop && byGame.has(st.body)) { best = st.body; pop = st.pop; }
+        return best;
+      };
+      ctx.save();
+      for (const ts of toasts) {
+        if (ts.kind !== 'war') continue;
+        const k = (fsNow - ts.at) / TOAST_LIFE_SECONDS;
+        if (k < 0 || k >= 1) continue;
+        const ca = capital(ts.a), cb = capital(ts.b);
+        if (!ca || !cb || ca === cb) continue;
+        const pa = toPx(pos(ca, t)), pb = toPx(pos(cb, t));
+        const grow = Math.min(1, k / 0.25);
+        const mx = (pa.x + pb.x) / 2, my = (pa.y + pb.y) / 2;
+        const nx = -(pb.y - pa.y) * 0.18, ny = (pb.x - pa.x) * 0.18;
+        ctx.globalAlpha = overview * Math.min(1, (1 - k) / 0.2) * 0.9;
+        ctx.strokeStyle = '#ff5a4e';
+        ctx.lineWidth = Math.max(2, 3 * unitOf(H));
+        ctx.setLineDash([10 * unitOf(H), 7 * unitOf(H)]);
+        ctx.beginPath();
+        // Drawn out from the aggressor as it is declared.
+        const steps = 24;
+        for (let i = 0; i <= steps * grow; i++) {
+          const q = i / steps;
+          const x = (1 - q) * (1 - q) * pa.x + 2 * (1 - q) * q * (mx + nx) + q * q * pb.x;
+          const y = (1 - q) * (1 - q) * pa.y + 2 * (1 - q) * q * (my + ny) + q * q * pb.y;
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+    // WHERE THE CAMERA IS GOING, marked on the map as it travels: a
+    // reticle round the next world and its name, so the zoom out reads as
+    // "here is where this is", not as a swoop.
+    if (travel) {
+      const gb = byGame.get(travel.to);
+      if (gb && shown(gb)) {
+        const cp = toPx(pos(gb.id, t));
+        const u = unitOf(H);
+        const rr = Math.max(drawnRadiusOf(pres, gb, cam.scale) * 1.45, 26 * u);
+        const a = Math.min(1, travel.e / 0.15) * (1 - Math.max(0, (travel.e - 0.75) / 0.25));
+        if (a > 0.01) {
+          ctx.save();
+          ctx.globalAlpha = a;
+          ctx.strokeStyle = 'rgba(246,241,227,0.95)';
+          ctx.lineWidth = Math.max(1.5, 2.5 * u);
+          ctx.beginPath(); ctx.arc(cp.x, cp.y, rr, 0, Math.PI * 2); ctx.stroke();
+          for (let q = 0; q < 4; q++) {
+            const ang = q * Math.PI / 2 + Math.PI / 4;
+            ctx.beginPath();
+            ctx.moveTo(cp.x + Math.cos(ang) * rr * 1.08, cp.y + Math.sin(ang) * rr * 1.08);
+            ctx.lineTo(cp.x + Math.cos(ang) * (rr * 1.08 + 12 * u), cp.y + Math.sin(ang) * (rr * 1.08 + 12 * u));
+            ctx.stroke();
+          }
+          const nm = byId.get(gb.id)?.name ?? '';
+          if (nm) {
+            ctx.font = `400 ${Math.round(26 * u)}px "Audiowide", sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            ctx.fillStyle = 'rgba(246,241,227,0.95)';
+            ctx.shadowColor = 'rgba(0,0,0,0.8)'; ctx.shadowBlur = 6 * u;
+            ctx.fillText(nm.toUpperCase(), cp.x, cp.y - rr - 18 * u);
+          }
+          ctx.restore();
+        }
+      }
+    }
+    // THE DYSON SPHERE, built where everyone can see it.
+    if (dysonBodyId && visibleIds.has(dysonBodyId)) {
+      const fin = finaleDyson();
+      const dy0 = fin ?? dysonAt(t);
+      const gb = byGame.get(dysonBodyId);
+      if (dy0 && gb) {
+        const cp = toPx(pos(dysonBodyId, t));
+        const flare = fin ? fin.flare : 0;
+        const rr = drawnRadiusOf(pres, gb, cam.scale);
+        drawDysonShell(ctx, cp.x, cp.y, rr, dy0.progress, dy0.complete,
+          dysonOwner ? colorOf(dysonOwner) : null, flare, filmMs, fin ? fin.seal : undefined);
+        // THE CLIMAX IS LIGHT FROM THE STAR, not a wash over the frame: a
+        // bloom off the sealed shell and one shockwave rolling out across
+        // the fleets. The frame's edges stay dark and the graphics, drawn
+        // after this, stay crisp. (A full-frame white fill read as an
+        // exposure glitch to every judge.)
+        const fe = finaleEl();
+        const a = fe - DYSON_SEALED_AT;
+        if (fin && a >= 0 && a < 1.6) {
+          const reach = Math.hypot(W, H);
+          const pulse = a < 0.1 ? a / 0.1 : Math.exp(-(a - 0.1) * 2.6);
+          ctx.save();
+          ctx.globalCompositeOperation = 'lighter';
+          const R0 = rr * 1.6;
+          const bloomR = R0 + (reach * 0.55 - R0) * Math.min(1, a / 0.35);
+          const g = ctx.createRadialGradient(cp.x, cp.y, R0 * 0.3, cp.x, cp.y, bloomR);
+          g.addColorStop(0, `rgba(255,246,226,${0.75 * pulse})`);
+          g.addColorStop(0.35, `rgba(255,214,150,${0.32 * pulse})`);
+          g.addColorStop(1, 'rgba(255,190,120,0)');
+          ctx.fillStyle = g;
+          ctx.beginPath(); ctx.arc(cp.x, cp.y, bloomR, 0, Math.PI * 2); ctx.fill();
+          const k = Math.min(1, a / 1.1);
+          if (k < 1) {
+            const ease = 1 - Math.pow(1 - k, 3);
+            ctx.strokeStyle = `rgba(255,232,190,${0.85 * (1 - k)})`;
+            ctx.lineWidth = Math.max(2, unitOf(H) * 14 * (1 - k));
+            ctx.beginPath(); ctx.arc(cp.x, cp.y, R0 + (reach - R0) * ease, 0, Math.PI * 2); ctx.stroke();
+          }
+          ctx.restore();
+        }
+      }
+    }
+    for (const [bid, gt] of goneAt) {
+      const k = (t - gt) / 2.2;
+      if (k < 0 || k >= 1) continue;
+      const gb = byGame.get(bid);
+      if (!gb) continue;
+      const cp = toPx(pos(bid, t));
+      const r0 = drawnRadiusOf(pres, gb, cam.scale);
+      drawBlast(ctx, cp.x, cp.y, k, bid, Math.max(1, r0 / 14));
+      drawDebris(ctx, cp.x, cp.y, r0 * 1.4, k, bid);
+    }
 
     // RATE OF FIRE IS THE GAME'S PROBLEM, NOT THIS FILE'S.
     //
@@ -1198,8 +1891,13 @@ export function createMatchMap(
       if (sh.transit) continue;
       if (fightingNow.has(sh.orbit.parentBodyId)) sh.lastCombatTick = curTick;
     }
+    // In a battle shot the guns run hotter than the live map's duty
+    // cycle: the film shows a fight at a tick a second, and at the live
+    // rate a battle read as two fleets parked side by side.
+    const fireClock = curScene?.kind === 'battle' || curScene?.kind === 'intro' ? 1.8 : 1;
     drawEngagementFire(rc, gameShips, gameSettlements,
-      performance.now(), curTick);
+      filmMs * fireClock, curTick, undefined, warsAt(curTick, fightingNow), undefined, undefined, undefined, undefined,
+      { fireReference: fireReference, maxFiring: 400 });
 
     // A FLEET ARRIVING IS A BEAT. The film is largely about hulls moving
     // between worlds and every crossing simply stopped when it got there.
@@ -1214,37 +1912,24 @@ export function createMatchMap(
       const key = `${leg.id}@${leg.arrive}`;
       if (arrivedSeen.has(key)) continue;
       arrivedSeen.add(key);
-      spawnArrivalFlash(leg.id, performance.now());
+      spawnArrivalFlash(leg.id, filmMs);
     }
-    drawArrivalFlashes(rc, gameShips, performance.now());
+    drawArrivalFlashes(rc, gameShips, filmMs);
 
     // Names, painted now that every world and hull has staked its claim.
     flushLabels(ctx, cam.scale, canvas.width, canvas.height);
 
-    // Who is in harbour where, for the tracer and caption code below.
-    const harbour = new Map<string, Map<string, string[]>>();
-    for (const [bid, arr] of parked) {
-      const perF = new Map<string, string[]>();
-      for (const sh of arr) {
-        const k = sh.ownedBy || 'n';
-        const list = perF.get(k);
-        if (list) list.push(sh.id); else perF.set(k, [sh.id]);
-      }
-      harbour.set(bid, perF);
-    }
-    const shipPx = new Map<string, { x: number; y: number; fid: string | null }>();
-    for (const sh of gameShips) {
-      const hit = rc.shipHitboxes?.get(sh.id);
-      if (hit) shipPx.set(sh.id, { x: hit.x, y: hit.y, fid: sh.ownedBy || null });
-    }
-    // The worlds as drawn, so a callout is never printed across one.
-    const discs: Array<{ x: number; y: number; r: number }> = [];
-    for (const b of visible) {
-      const cp = toPx(bodyPosition(b, t, gameBodies));
-      discs.push({ x: cp.x, y: cp.y, r: Math.max(3, b.radius * cam.scale) });
-    }
-
-    // Hulls between worlds, on the game's trajectory art, in formation.
+    // Hulls between worlds, on the game's trajectory art, in formation,
+    // sized up as the camera closes in.
+    const transitScale = (() => {
+      const sc = Math.max(TRANSIT_MIN_CAM_SCALE, cam.scale);
+      const u = Math.max(0, Math.min(1,
+        Math.log(sc / TRANSIT_MIN_CAM_SCALE)
+          / Math.log(TRANSIT_FULL_CAM_SCALE / TRANSIT_MIN_CAM_SCALE)));
+      // Smaller still in a wide shot, where a full-size hull dwarfs the
+      // worlds it is flying between.
+      return (TRANSIT_SHIP_MIN_SIZE + (1 - TRANSIT_SHIP_MIN_SIZE) * u) * (1 - 0.5 * overview);
+    })();
     const transiting = new Set<string>();
     for (const sh of gameShips) {
       if (!sh.transit) continue;
@@ -1252,20 +1937,12 @@ export function createMatchMap(
       const samples = drawTorchTrajectory(
         sh.transit.currentTransfer, gameBodies, rc, undefined, true,
         false, curTick, sh.id);
-      drawTransitShip(sh, rc, false, placeInFormation(sh.id, samples, rc, transitScale), transitScale);
+      // Leaving a world: from where it was drawn parked (departFromDrawn).
+      const from = sh.orbit?.parentBodyId ? pos(sh.orbit.parentBodyId, rc.t) : undefined;
+      drawTransitShip(sh, rc, false,
+        departFromDrawn(sh.id, samples, placeInFormation(sh.id, samples, rc, transitScale), rc.t, rc.camera.scale, from),
+        transitScale);
     }
-
-    // Where the caption ends up, so the body names can keep clear of it.
-    let capRect: { x: number; y: number; w: number; h: number } | null = null;
-    // Boxes pinned to the worlds their news belongs to, filled below and
-    // drawn after the labels so nothing is written across them.
-    const callouts: Array<{ bodyId: string; text: string; note: string;
-      fid: string | null; rank: number }> = [];
-    const callRects: Array<{ x: number; y: number; w: number; h: number }> = [];
-    const calloutAt: Array<{ c: { bodyId: string; text: string; note: string;
-      fid: string | null; rank: number };
-      rect: { x: number; y: number; w: number; h: number };
-      px: { x: number; y: number }; r0: number }> = [];
 
     // Events at this tick: battles pulse, losses flash, foundings ring.
     for (const b of summary.battles) {
@@ -1273,8 +1950,16 @@ export function createMatchMap(
       if (curTick < b.started_tick || curTick > end || !b.body_id) continue;
       const id = b.body_id;
       if (!byId.has(id)) continue;
+      const gb = byGame.get(id);
+      if (!gb || !visibleIds.has(id)) continue;
       const p = toPx(pos(id, t));
-      const r = (bodyR.get(id) ?? 4) * cam.scale + 14;
+      const dr = drawnRadiusOf(pres, gb, cam.scale);
+      // Close in, the battle draws itself; the ring is the far read.
+      const far = 1 - Math.max(0, Math.min(1, (dr - 18) / 30));
+      if (far <= 0.01) continue;
+      const r = dr + 14;
+      ctx.save();
+      ctx.globalAlpha = far;
       // COMBAT IS ITS OWN CHANNEL, never a hue from the empire palette.
       // The old red ring read as Frowny Face's pink ownership halo, so a
       // contested rock and an owned rock looked the same.
@@ -1287,6 +1972,7 @@ export function createMatchMap(
       ctx.strokeStyle = `rgba(210,235,255,${(1 - pulse) * 0.35})`;
       ctx.lineWidth = 1;
       ctx.beginPath(); ctx.arc(p.x, p.y, r + 8 + pulse * 22, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
       // The tracers that used to be drawn here are gone. They were a
       // second firing system running alongside drawEngagementFire: seven
       // salvoes crammed into every tick, endpoints picked by a seeded
@@ -1297,9 +1983,18 @@ export function createMatchMap(
 
     for (const e of events) {
       if (e.tick !== curTick || !e.bodyId || !byId.has(e.bodyId)) continue;
+      const gb = byGame.get(e.bodyId);
+      if (!gb || !visibleIds.has(e.bodyId)) continue;
       const p = toPx(pos(e.bodyId, t));
-      const r0 = (bodyR.get(e.bodyId) ?? 4) * cam.scale;
+      const r0 = drawnRadiusOf(pres, gb, cam.scale);
       const k = Math.min(1, curFrac);
+      // These rings are the FAR read. Close in, a filled disc washed the
+      // whole world orange once a tick -- a strobe over every battle --
+      // and the blasts and wreckage already say it there.
+      const farK = 1 - Math.max(0, Math.min(1, (r0 - 18) / 30));
+      if (farK <= 0.01) continue;
+      ctx.save();
+      ctx.globalAlpha = farK;
       if (e.kind === 'loss') {
         ctx.fillStyle = `rgba(255,150,70,${(1 - k) * 0.5})`;
         ctx.beginPath(); ctx.arc(p.x, p.y, r0 + 10 + k * 26, 0, Math.PI * 2); ctx.fill();
@@ -1309,652 +2004,520 @@ export function createMatchMap(
         ctx.lineWidth = 2;
         ctx.beginPath(); ctx.arc(p.x, p.y, r0 + 4 + k * 30, 0, Math.PI * 2); ctx.stroke();
       }
+      ctx.restore();
     }
 
-    // CAPTION: VERB-LED, WITH A CONSEQUENCE. The old fallback said
-    // "Body — Empire", a sentence that is true on every tick of the
-    // match, so the director's cuts read as stopping on nothing.
-    {
-      const onScreen = summary.battles.filter(b => b.body_id
-        && curTick >= b.started_tick && curTick <= (b.ended_tick ?? b.started_tick)
-        && byId.has(b.body_id));
-      const caps = captureAt.get(curTick) ?? [];
-      // WHAT HAPPENS AT A WORLD IS SAID AT THAT WORLD. A single caption
-      // could only ever narrate one place, so on a busy tick the film
-      // picked one fight and left the other nine unremarked -- and when
-      // the shot was wide, that one caption sat over the map describing
-      // something the viewer had no way to locate. Every world-specific
-      // event now gets its own small box pinned to its own world, and the
-      // lower third is left for the things that genuinely belong to no
-      // single place: a bill, an elimination, a change of lead.
-      const sceneNow = shots.find(x => curTick >= x.from && curTick < x.to);
-      const sceneBody = sceneNow && sceneNow.weight > 0 ? sceneNow.bodyId : null;
-      const seenCall = new Set<string>();
-      const wantCall = (bodyId: string, text: string, note: string,
-                        fid: string | null, rank: number) => {
-        if (seenCall.has(bodyId)) return;
-        const b = byId.get(bodyId);
-        if (!b || !drawableAt(b, curTick)) return;
-        seenCall.add(bodyId);
-        callouts.push({ bodyId, text, note, fid, rank });
+    // Count chips where hulls are too small to read.
+    for (const c of chips) {
+      const gb = byGame.get(c.bid);
+      if (!gb || !visibleIds.has(c.bid)) continue;
+      const p = toPx(pos(c.bid, t));
+      const r0 = drawnRadiusOf(pres, gb, cam.scale);
+      const list = [...c.counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4)
+        .map(([fid, n]) => ({ faction: filmFaction(fid)!, n })).filter(x => x.faction);
+      drawCountChips(ctx, H, p.x, p.y + r0 + 16 * unitOf(H), list, c.alpha);
+    }
+
+    // How big the Leviathan was last drawn, for its death (see the blast).
+    for (const sh of adaptedShips) {
+      if (sh.class !== 'kaiju') continue;
+      const h = rc.shipHitboxes?.get(sh.id);
+      // Its hitbox is the head; the drawn body runs about 2.6 times that.
+      if (h) lastBeastR.set(sh.id, h.r * 2.6);
+    }
+
+    if (tracing) {
+      // WHERE EVERYTHING WAS DRAWN, this frame: the frame-to-frame audit
+      // (a hull that jumps, pops or flickers between two frames) reads
+      // this, not a sampled still.
+      const meta = new Map(adaptedShips.map(sh => [sh.id, sh]));
+      lastTrace = {
+        t, scene: curScene ? scenes.indexOf(curScene) : -1,
+        cam: { x: cam.x, y: cam.y, scale: cam.scale },
+        // Hulls dying this tick (they vanish under their blast: not a pop).
+        dying: [...vanishAt.keys()],
+        ships: [...(rc.shipHitboxes ?? new Map()).entries()].map(([id, h]) => {
+          const sh = meta.get(id);
+          return [id, Math.round(h.x * 10) / 10, Math.round(h.y * 10) / 10, Math.round(h.r * 10) / 10,
+            sh?.transit ? 1 : 0, sh?.orbit?.parentBodyId ?? null];
+        }).concat([...(rc.transitDrawn ?? new Map()).entries()]
+          .filter(([id]) => !rc.shipHitboxes?.has(id))
+          .map(([id, p]) => [id, Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10, 0, 1, null])),
+        bodies: visible.map(b => {
+          const p = toPx(bodyPosition(b, t, gameBodies));
+          return [b.id, Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10,
+            Math.round(drawnRadiusOf(pres, b, cam.scale) * 10) / 10];
+        }),
       };
-      // Ranked, because when more is happening than there is room for it
-      // is the captures that matter and the stray loss that can wait.
-      for (const c of caps) {
-        // The lower third already carries this world's news in full.
-        if (sceneBody && c.body === sceneBody) continue;
-        const nm = byId.get(c.body)?.name ?? 'this world';
-        if (c.to) {
-          wantCall(c.body, c.from ? `${nm} FALLS` : `${nm} SETTLED`,
-            faction(c.to)?.name ?? '', c.to, 0);
-        } else {
-          wantCall(c.body, `${nm} LOST`,
-            faction(c.from)?.name ?? 'driven off', c.from, 0);
-        }
-      }
-      for (const e of events) {
-        if (!e.bodyId || e.kind === 'pact') continue;
-        if (Math.abs(e.tick - curTick) > 1) continue;
-        const nm = byId.get(e.bodyId)?.name ?? 'this world';
-        if (e.kind === 'loss') {
-          const n = e.count ?? 1;
-          wantCall(e.bodyId, `${n} ship${n === 1 ? '' : 's'} lost`, nm, null, 2);
-        } else if (e.kind === 'founded') wantCall(e.bodyId, `${nm} SETTLED`, '', null, 1);
-        else if (e.kind === 'fallen') wantCall(e.bodyId, `${nm} — colony lost`, '', null, 1);
-      }
-      for (const b of onScreen) {
-        // The lower third is already naming the scene's own battle; a
-        // second box saying it at the same world is just noise.
-        if (sceneBody && b.body_id === sceneBody) continue;
-        const nm = byId.get(b.body_id!)?.name ?? 'this world';
-        const sides = [...(harbour.get(b.body_id!)?.keys() ?? [])]
-          .filter(k => k !== 'n').map(k => faction(k)?.name ?? '')
-          .filter(Boolean).slice(0, 2);
-        wantCall(b.body_id!, `Battle at ${nm}`,
-          sides.length >= 2 ? sides.join(' vs ') : '', null, 3);
-      }
-      callouts.sort((a, b) => a.rank - b.rank);
-      callouts.length = Math.min(callouts.length, 5);
-
-      // THE LOWER THIRD SPEAKS FOR THE SCENE IT IS IN.
-      //
-      // It used to pick a system-wide line regardless of what the
-      // director was actually showing, so the largest engagement in the
-      // match -- fifty-eight hulls at Saturn -- was captioned "6 fleets
-      // under way", and the same string captioned the frame after it. A
-      // caption that ignores its own scene is worse than none: it tells
-      // the viewer to look for something that is not there.
-      //
-      // So: when the scene is about something, say what it is and how
-      // big. Only a scene that is genuinely about the system at large
-      // gets a system-wide line.
-      let line = '', sub = '';
-      const sc = shots.find(x => curTick >= x.from && curTick < x.to);
-      const scName = sc?.bodyId ? byId.get(sc.bodyId)?.name ?? '' : '';
-      if (sc && sc.weight > 0 && scName) {
-        if (sc.note === 'battle') {
-          line = `THE BATTLE FOR ${scName.toUpperCase()}`;
-          const who = (sc.sides ?? []).map(f => faction(f)?.name ?? '')
-            .filter(Boolean);
-          const bits: string[] = [];
-          if (who.length >= 2) bits.push(who.join(' vs '));
-          else if (who.length === 1) bits.push(who[0]);
-          if (sc.hulls) bits.push(`${sc.hulls} hulls`);
-          if (sc.lost) bits.push(`${sc.lost} lost`);
-          sub = bits.join(' · ');
-        } else if (sc.note === 'capture') {
-          line = `${scName.toUpperCase()} CHANGES HANDS`;
-          // Which is only half the news. Who took it, and off whom, is
-          // the half that tells you what it MEANT.
-          const cp = [...captureAt.values()].flat()
-            .find(c => c.body === sc.bodyId);
-          if (cp && cp.to) {
-            const to = faction(cp.to)?.name;
-            const fr = cp.from ? faction(cp.from)?.name : null;
-            if (to) sub = fr ? `${to} takes it from ${fr}` : `${to} settles it`;
-          }
-        } else if (sc.note === 'driven off') {
-          line = `${scName.toUpperCase()} — THE GARRISON IS DRIVEN OFF`;
-        }
-      }
-      if (!line && sc && sc.weight <= 0) {
-        // A WIDE SHOT IS STILL A SCENE. One sampled frame carried no
-        // headline at all, so at that moment the viewer had nothing on
-        // screen telling them what they were watching. A quiet stretch
-        // is about the state of the war, so say what that state is.
-        const rank = rankAt.get(curTick);
-        let top: string | null = null;
-        if (rank) for (const [fid, r] of rank) if (r === 1) top = fid;
-        if (top) {
-          let worlds = 0;
-          for (const st3 of world.stls.values()) if (st3.fid === top) worlds++;
-          line = sc.note === 'fleets under way'
-            ? 'FLEETS UNDER WAY' : 'THE SYSTEM BUILDS';
-          sub = `${faction(top)?.name ?? 'The leader'} leads · ${worlds} worlds`;
-        }
-      }
-      if (!line) {
-        if (onScreen.length >= 3) {
-          line = `${onScreen.length} battles across the system`;
-        } else if (caps.length >= 2) {
-          line = `${caps.length} worlds change hands`;
-        } else if ((transitAt.get(curTick)?.length ?? 0) >= 3) {
-          line = `${transitAt.get(curTick)!.length} fleets under way`;
-        }
-      }
-      // Eliminations and lead changes are headline events in their own
-      // right; they used to happen only as a number change in the panel.
-      for (const [fid, tk] of elimAt) {
-        // Only once the clock has reached it: this used to print "T+186"
-        // in a box sitting above a clock reading T+185.
-        if (curTick >= tk && curTick - tk <= 3) {
-          line = `${faction(fid)?.name ?? 'An empire'} ELIMINATED`;
-          sub = '';
-        }
-      }
-      // A bill landing outranks a quiet map moment: it changes the
-      // rules for everyone, which is the biggest thing that can happen
-      // on a tick with no shooting.
-      {
-        const { bill, phase } = senateAt(curTick);
-        const res = bill?.resolved_at_tick;
-        if (bill && res != null && Math.abs(res - curTick) <= 1) {
-          const passed = bill.status === 'passed';
-          line = `SENATE — "${bill.title || bill.kind}" ${passed ? 'PASSES' : 'FAILS'}`;
-          let yea = 0, nay = 0;
-          for (const v of bill.votes) {
-            if (v.vote === 'yea') yea += v.weight || 1;
-            else if (v.vote === 'nay') nay += v.weight || 1;
-          }
-          sub = `${yea} yea · ${nay} nay`
-            + (bill.proposer_faction_id
-              ? ` · proposed by ${faction(bill.proposer_faction_id)?.name ?? 'a member'}`
-              : '');
-        } else if (bill && phase === 'vote' && !line) {
-          line = `SENATE VOTES — "${bill.title || bill.kind}"`;
-        }
-      }
-
-      const lead = leadAt.get(curTick);
-      if (lead && !line) {
-        line = `${faction(lead)?.name ?? 'A new empire'} TAKES THE LEAD`;
-      }
-
-      // THE FILM HAS AN ENDING.
-      //
-      // Both rounds, every reviewer: the reel simply stops. The last
-      // frame carried a routine settle caption and the winner was
-      // recoverable only by reading a number in a side panel and
-      // noticing which colour had flooded the map. A match film that
-      // does not say who won is not a match film.
-      if (curTick >= (summary.ticks.hi ?? 0) - 1) {
-        const rank = rankAt.get(curTick);
-        let champ: string | null = null;
-        if (rank) for (const [fid, r] of rank) if (r === 1) champ = fid;
-        if (champ) {
-          const w = world;
-          let worlds = 0, hulls = 0;
-          for (const st2 of w.stls.values()) if (st2.fid === champ) worlds++;
-          for (const sh2 of w.ships.values()) if (sh2.fid === champ) hulls++;
-          const nm = faction(champ)?.name ?? 'An empire';
-          const cx = (W - PANEL_W) / 2, cy = H / 2 - 40;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillStyle = 'rgba(4,8,14,0.9)';
-          ctx.fillRect(cx - 300, cy - 62, 600, 124);
-          ctx.strokeStyle = hexA(colorOf(champ), 0.9);
-          ctx.lineWidth = 2;
-          ctx.strokeRect(cx - 300 + 1, cy - 62 + 1, 598, 122);
-          ctx.font = '600 12px system-ui, sans-serif';
-          ctx.fillStyle = 'rgba(150,175,200,0.9)';
-          ctx.fillText('V I C T O R Y', cx, cy - 38);
-          ctx.font = '700 30px system-ui, sans-serif';
-          ctx.fillStyle = liftedOf(champ);
-          ctx.fillText(nm, cx, cy - 2);
-          ctx.font = '400 14px system-ui, sans-serif';
-          ctx.fillStyle = '#c3d3e4';
-          ctx.fillText(`${worlds} worlds held · ${hulls} hulls · ${curTick} ticks`,
-            cx, cy + 32);
-          line = '';
-        }
-      }
-
-      if (line) {
-        // A LOWER THIRD, NOT A SPEECH BUBBLE. The caption used to hang off
-        // whichever body the shot was on, so it wandered into other
-        // worlds' labels -- reported in three separate rounds, and not
-        // fixable by nudging, because at some zoom the anchor always lands
-        // on something. Pinning it above the timeline, the way match film
-        // has always captioned itself, makes the collision impossible
-        // rather than merely unlikely.
-        ctx.font = '700 22px system-ui, sans-serif';
-        ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-        const wMain = ctx.measureText(line).width;
-        ctx.font = '13px system-ui, sans-serif';
-        const wSub = sub ? ctx.measureText(sub).width : 0;
-        const boxW = Math.min(W - PANEL_W - 40, Math.max(wMain, wSub) + 34);
-        const boxH = sub ? 60 : 40;
-        const cx = (W - PANEL_W) / 2;
-        const cy = H - SAFE_BOTTOM - boxH - 16;
-        capRect = { x: cx - boxW / 2, y: cy, w: boxW, h: boxH };
-        note('caption', capRect.x, capRect.y, capRect.w, capRect.h, line);
-        ctx.fillStyle = 'rgba(4,8,14,0.88)';
-        ctx.fillRect(cx - boxW / 2, cy, boxW, boxH);
-        ctx.strokeStyle = 'rgba(150,180,215,0.45)';
-        ctx.strokeRect(cx - boxW / 2 + 0.5, cy + 0.5, boxW - 1, boxH - 1);
-        ctx.fillStyle = '#f4f8fd';
-        ctx.font = '700 22px system-ui, sans-serif';
-        ctx.fillText(line, cx, cy + 7);
-        if (sub) {
-          ctx.fillStyle = '#a8bccf';
-          ctx.font = '13px system-ui, sans-serif';
-          ctx.fillText(sub, cx, cy + 36);
-        }
-      }
     }
 
-    // Labels, after everything so they sit on top.
-    // Body names as the game sets them: uppercase, letter-spaced, a
-    // muted blue-grey, and no plate behind them.
-    ctx.font = '600 11px system-ui, sans-serif';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-    // Work out where each world's box wants to sit before the names are
-    // laid out, so a name never has to be squeezed around a box that has
-    // not been positioned yet.
-    for (const c of callouts) {
-      const b = byId.get(c.bodyId);
-      if (!b) continue;
-      const pc = toPx(pos(c.bodyId, t));
-      const r0 = (bodyR.get(c.bodyId) ?? 6) * cam.scale;
-      // Pinned news sits a clear step below the headline, and an
-      // incidental loss a step below that: size has to mean something.
-      ctx.font = c.rank <= 1 ? '600 12px system-ui, sans-serif'
-        : '600 10px system-ui, sans-serif';
-      const wMain = ctx.measureText(c.text).width;
-      ctx.font = '9px system-ui, sans-serif';
-      const wNote = c.note ? ctx.measureText(c.note).width : 0;
-      const bw = Math.max(wMain, wNote) + 18;
-      const bh = c.note ? 32 : 20;
-      // Above the world by preference, then below, then to either side:
-      // whichever first lands clear of the boxes already placed.
-      const tries = [
-        [pc.x - bw / 2, pc.y - r0 - 12 - bh],
-        [pc.x - bw / 2, pc.y + r0 + 12],
-        [pc.x + r0 + 12, pc.y - bh / 2],
-        [pc.x - r0 - 12 - bw, pc.y - bh / 2],
-        [pc.x - bw / 2, pc.y - r0 - 20 - bh * 2],
-      ];
-      let put: { x: number; y: number; w: number; h: number } | null = null;
-      for (const [bx, by] of tries) {
-        const rect = { x: bx, y: by, w: bw, h: bh };
-        if (rect.x < 6 || rect.x + bw > W - PANEL_W - 6) continue;
-        if (rect.y < 6 || rect.y + bh > H - SAFE_BOTTOM - 6) continue;
-        // Including the worlds themselves: a box printed across the
-        // disc it points at was reported in both rounds, and the label
-        // solver had already learned this lesson separately.
-        const onWorld = discs.some(d =>
-          Math.abs(d.x - (rect.x + bw / 2)) < d.r + bw / 2 - 4
-          && Math.abs(d.y - (rect.y + bh / 2)) < d.r + bh / 2 - 2);
-        const hits = onWorld
-          || callRects.some(q =>
-          Math.abs((q.x + q.w / 2) - (rect.x + bw / 2)) < (q.w + bw) / 2 + 6
-          && Math.abs((q.y + q.h / 2) - (rect.y + bh / 2)) < (q.h + bh) / 2 + 6)
-          || (capRect != null
-            && Math.abs((capRect.x + capRect.w / 2) - (rect.x + bw / 2))
-              < (capRect.w + bw) / 2 + 6
-            && Math.abs((capRect.y + capRect.h / 2) - (rect.y + bh / 2))
-              < (capRect.h + bh) / 2 + 6);
-        if (!hits) { put = rect; break; }
-      }
-      if (put) { callRects.push(put); calloutAt.push({ c, rect: put, px: pc, r0 }); }
-    }
-
-    // The body-name pass that used to sit here -- a `placed[]` array, a
-    // twelve-pixel band test, seeded rows for chips, lanes and captions --
-    // is gone. planBodyLabels() above solves the same problem with the
-    // solver the game ships, against the same anchors drawBody derives
-    // internally, so names and worlds can no longer disagree.
-
-    // The boxes themselves, last of all: a leader down to the world so
-    // there is never a question which one the news belongs to.
-    for (const { c, rect, px, r0 } of calloutAt) {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars -- col
-      const col = c.fid ? colorOf(c.fid) : 'rgba(150,180,215,0.75)';
-      const cx = rect.x + rect.w / 2, cy = rect.y + rect.h / 2;
-      const dx = px.x - cx, dy = px.y - cy;
-      const len = Math.hypot(dx, dy) || 1;
-      ctx.strokeStyle = hexA(c.fid ? colorOf(c.fid) : '#9db0c4', 0.55);
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(cx + (dx / len) * (rect.h / 2 + 2), cy + (dy / len) * (rect.h / 2 + 2));
-      ctx.lineTo(px.x - (dx / len) * (r0 + 2), px.y - (dy / len) * (r0 + 2));
-      ctx.stroke();
-      note('callout', rect.x, rect.y, rect.w, rect.h, c.text);
-      ctx.fillStyle = 'rgba(5,9,15,0.92)';
-      ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
-      ctx.strokeStyle = hexA(c.fid ? colorOf(c.fid) : '#9db0c4', 0.8);
-      ctx.lineWidth = 1.2;
-      ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.w - 1, rect.h - 1);
-      ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-      ctx.fillStyle = c.rank <= 1 ? '#eef4fb' : 'rgba(214,228,241,0.82)';
-      ctx.font = c.rank <= 1 ? '600 12px system-ui, sans-serif'
-        : '600 10px system-ui, sans-serif';
-      ctx.fillText(c.text, rect.x + rect.w / 2, rect.y + 4);
-      if (c.note) {
-        // Never the raw empire colour: the same slot measured 3.26:1 for
-        // one empire and 7.91:1 for another, decided purely by who owned
-        // the world.
-        ctx.fillStyle = c.fid ? liftedOf(c.fid) : '#9db2c6';
-        ctx.font = '9px system-ui, sans-serif';
-        ctx.fillText(c.note, rect.x + rect.w / 2, rect.y + 18);
-      }
-    }
-
-    ctx.restore();   // end map clip
-    drawHud(t);
+    ctx.restore();
+    drawFilm();
   }
+  /** Hulls a fight holds before each one fires less often (combatFx).
+   *  The live map's 18 keeps a 140-hull battle to a handful of shots in
+   *  the air; the film shows its battles hotter. */
+  let fireReference = FILM_FIRE_REFERENCE;
+  /**
+   * THE OPEN WARS on a tick, for the game's fire code. Since war is
+   * declared rather than assumed (2026-09-18), drawEngagementFire reads a
+   * missing list as everyone at peace -- and the film never passed one,
+   * so for a month no ship in any match film fired a shot. The log says
+   * who was at war when: declared and not yet ended, with the Leviathan
+   * everyone's enemy. A log with no war rows at all (an older server)
+   * falls back to the empires the battle record has fighting together.
+   */
+  let warsTick = -1;
+  let warsList: string[] = [];
+  const warRows = (summary.chronicle ?? []).filter(r => r.kind === 'war_declared' || r.kind === 'war_ended')
+    .sort((a, b) => a.tick_number - b.tick_number);
+  const pairOf = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+  const warsAt = (tick: number, fighting: Set<string>): string[] => {
+    if (tick === warsTick) return warsList;
+    warsTick = tick;
+    const open = new Set<string>();
+    for (const r of warRows) {
+      if (r.tick_number > tick) break;
+      if (!r.actor_faction_id || !r.target_faction_id) continue;
+      const k = pairOf(r.actor_faction_id, r.target_faction_id);
+      if (r.kind === 'war_declared') open.add(k); else open.delete(k);
+    }
+    const beast = summary.factions.find(f => /:leviathan_f$/.test(f.id))?.id;
+    if (beast) for (const f of summary.factions) if (f.id !== beast) open.add(pairOf(f.id, beast));
+    if (!warRows.length) {
+      const at = new Map<string, Set<string>>();
+      for (const sh of world.ships.values()) {
+        if (!sh.parent || !sh.fid || !fighting.has(sh.parent)) continue;
+        if (!at.has(sh.parent)) at.set(sh.parent, new Set());
+        at.get(sh.parent)!.add(sh.fid);
+      }
+      for (const fs of at.values()) for (const a of fs) for (const b of fs) if (a < b) open.add(pairOf(a, b));
+    }
+    // A fresh array only when the tick changes: the fire code caches the
+    // set by array identity.
+    warsList = [...open];
+    return warsList;
+  };
+  /** The Leviathan's drawn radius (screen px), last frame it was drawn. */
+  const lastBeastR = new Map<string, number>();
+  /** The scene playing at a clock time. The player parks on the match's
+   *  last tick when the film ends, which is past the finale's last tick:
+   *  that fell back to the cold open and froze the first shot, bare. */
+  const sceneIndexAt = (t: number) => {
+    const i = scenes.findIndex(x => t >= x.from && t < x.to);
+    if (i >= 0) return i;
+    return scenes.length && t >= scenes[scenes.length - 1].to ? scenes.length - 1 : 0;
+  };
+  /**
+   * THE FILM'S OWN CLOCK for everything animated in ms (glides, fire,
+   * wrecks, flashes, the continuity guard). On the wall clock they ran on
+   * while positions ran on the film's: a hitch moved one and not the
+   * other. It advances with the wall clock, never more than
+   * FILM_STEP_MAX_MS a frame, as the player's film clock does.
+   */
+  let filmMs = 0;
+  let lastWallMs = -1;
+  const stepFilmClock = (dtMs?: number) => {
+    const w = performance.now();
+    if (dtMs != null) filmMs += Math.max(0, dtMs);
+    else if (lastWallMs >= 0) filmMs += Math.min(FILM_STEP_MAX_MS, Math.max(0, w - lastWallMs));
+    lastWallMs = w;
+  };
+  /** The frame-to-frame audit's record of the last frame (see render). */
+  let tracing = false;
+  let lastTrace: unknown = null;
 
-  // ---- HUD: the clock and the empires ---------------------------------
+  // ---- the film's graphics (filmOverlay) -------------------------------
   //
-  // This is where the metrics earn their keep on screen: every faction's
-  // fleet size and stockpiles, live per tick, in its own colour.
-  function drawHud(t: number) {
+  // Everything over the map: the standings while the shot is wide, the
+  // tally while it is on a battle, the lower third naming each moment
+  // from the event log, the ticker of smaller headlines, the clock, and
+  // the title and result cards at either end.
+  const T = (k: string, vars?: Record<string, string | number>) =>
+    tIn(getLang(), `replay.film.${k}` as Key, vars);
+
+  /** When the log says each empire was knocked out (the game's own
+   *  ruling: a fleet with no world left is out), else when the record
+   *  shows it with nothing at all. */
+  const outAt = new Map<string, number>();
+  for (const r of summary.chronicle ?? []) {
+    if (r.kind === 'faction_eliminated' && r.actor_faction_id) outAt.set(r.actor_faction_id, r.tick_number);
+    if (r.kind === 'faction_revived' && r.actor_faction_id) outAt.delete(r.actor_faction_id);
+  }
+  const standingsAt = (tick: number): StandingRow[] => {
+    const w = timeline.worldAt(tick);
+    // WORLDS, not settlements: a city and a station on one world is one.
+    const held = new Map<string, Set<string>>();
+    for (const st of w.stls.values()) {
+      if (!st.fid) continue;
+      let set = held.get(st.fid);
+      if (!set) { set = new Set(); held.set(st.fid, set); }
+      set.add(st.body);
+    }
+    const ships = new Map<string, number>();
+    for (const sh of w.ships.values()) if (sh.fid) ships.set(sh.fid, (ships.get(sh.fid) ?? 0) + 1);
+    const outTick = (fid: string) => {
+      const o = outAt.get(fid) ?? elimAt.get(fid);
+      return o != null && o <= tick ? o : null;
+    };
+    return empires.map(f => ({
+      row: {
+        faction: filmFaction(f.id)!,
+        worlds: held.get(f.id)?.size ?? 0,
+        ships: ships.get(f.id) ?? 0,
+        out: outTick(f.id) != null && !(held.get(f.id)?.size),
+      },
+      o: outTick(f.id),
+    })).sort((a, b) => Number(a.row.out) - Number(b.row.out)
+      // The fallen in the order they fell: the last one out ranks highest.
+      || (b.o ?? 0) - (a.o ?? 0)
+      || b.row.worlds - a.row.worlds || b.row.ships - a.row.ships)
+      .map(x => x.row);
+  };
+
+  const captionCache = new Map<ReelScene, Caption>();
+  /** Every title already on screen: none is shown twice. */
+  const usedTitles = new Set<string>();
+  /** The headline a time-lapse carries, so the ticker does not repeat it. */
+  const montageTop = new Map<ReelScene, ReelBeat>();
+  /**
+   * A TIME-LAPSE SAYS WHAT CHANGED. "X leads" over every one of them was
+   * eighteen identical captions in a row, and named a leader who then
+   * lost. A montage now carries its biggest headline; failing that, a
+   * change of leader; failing that, nothing.
+   */
+  const montageCaption = (s: ReelScene): Caption | null => {
+    // The first one is the start of the story: who, and where.
+    if (s.from <= (summary.ticks.lo ?? 0) + 1) {
+      return { kicker: T('kicker.start'), title: T('title.begin', { n: empires.length }), sub: '', fid: null };
+    }
+    // Time-lapses too short to read a line in carry none.
+    if (s.seconds < MONTAGE_CAPTION_SECONDS) return null;
+    const name = (id: string | null | undefined) => filmFaction(id)?.name ?? '';
+    const world = (id: string | null | undefined) => (id && byId.get(id)?.name) || '';
+    // Only news worth a headline: a slider law or a found relic is ticker.
+    const tops = s.extras.filter(e => TICKER_KINDS.has(e.kind) && e.weight >= MONTAGE_HEADLINE_WEIGHT
+      && !/^dyson_milestone$/.test(e.kind))
+      .sort((a, b) => b.weight - a.weight || a.tick - b.tick);
+    for (const top of tops) {
+      const cap = beatCaption(top, T, name, world);
+      if (!cap.title || usedTitles.has(cap.title)) continue;
+      montageTop.set(s, top);
+      // Its own kind's kicker (WAR, ELIMINATED...), not a generic one.
+      return { kicker: cap.kicker || T('kicker.fastForward'), title: cap.title, sub: '', fid: top.fid };
+    }
+    const i = scenes.indexOf(s);
+    const leadOf = (x: ReelScene) => standingsAt(Math.floor((x.from + x.to) / 2))[0];
+    const now = leadOf(s);
+    const before = scenes.slice(0, i).reverse().find(x => x.kind === 'montage');
+    if (!now || now.worlds <= 0 || (before && leadOf(before)?.faction.id === now.faction.id)) return null;
+    return { kicker: T('kicker.lead'), title: T('title.leads', { a: now.faction.name }),
+      sub: T('sub.leads', { worlds: now.worlds, ships: now.ships }), fid: now.faction.id };
+  };
+  const captionOf = (s: ReelScene): Caption => {
+    let c = captionCache.get(s);
+    if (!c && s.kind === 'montage') {
+      c = montageCaption(s) ?? { kicker: '', title: '', sub: '', fid: null };
+      captionCache.set(s, c);
+    }
+    if (!c) {
+      c = captionFor(s, {
+        lang: getLang(), summary,
+        leaderAt: tick => {
+          const top = standingsAt(tick)[0];
+          return top && top.worlds > 0 ? { fid: top.faction.id, worlds: top.worlds, ships: top.ships } : null;
+        },
+        winner: summary.game.winner_faction_id ?? null,
+      });
+      // The Leviathan is introduced the first time it appears: a stranger
+      // has no idea what it is.
+      if (s.kind === 'beat' && /^kaiju_/.test(s.beat?.kind ?? '') && !kaijuGlossed) {
+        kaijuGlossed = true;
+        c = { ...c, sub: T('sub.kaijuGloss') };
+      }
+      // THE STAKES, the moment the Sphere is begun: an engineering win is
+      // a race, and a newcomer has to know it is one.
+      if (s.kind === 'beat' && s.beat?.kind === 'dyson_initiated') {
+        c = { ...c, sub: T('sub.dysonStakes', { a: shortName(filmFaction(s.beat.fid)?.name ?? '') }) };
+      }
+      // A second fight at the same world is the next chapter, not a repeat.
+      if (s.kind === 'battle' && repeatVisit(s)) {
+        c = { ...c, title: T('title.battleAgain', { world: byId.get(s.bodyId ?? '')?.name ?? '' }) };
+      }
+      captionCache.set(s, c);
+    }
+    if (c.title) usedTitles.add(c.title);
+    return c;
+  };
+  let kaijuGlossed = false;
+
+  /** A battle's two sides, as they stand at this tick. */
+  const seat = (fid: string) => summary.factions.findIndex(f => f.id === fid);
+  const tallyOf = (b: ReelBattle, tick: number): TallySide[] => [...b.sides].sort((x, y) => seat(x) - seat(y)).map(fid => {
+    // The hulls ON SCREEN at the world: a fleet still flying in is not
+    // in the fight yet, and counting it put numbers over an empty orbit.
+    // ...less any whose blast has already gone off this tick.
+    const dying = new Set((deathAt.get(tick + 1) ?? []).map(d => d.id));
+    let ships = 0;
+    for (const sh of adaptedShips) {
+      if (sh.transit || sh.orbit.parentBodyId !== b.body || sh.ownedBy !== fid) continue;
+      if (dying.has(sh.id) && killPhase(sh.id) <= curFrac) continue;
+      ships++;
+    }
+    let lost = 0;
+    for (let k = b.window[0] + 1; k <= tick + 1; k++) {
+      for (const d of deathAt.get(k) ?? []) {
+        if (d.body === b.body && d.fid === fid && (k <= tick || killPhase(d.id) <= curFrac)) lost++;
+      }
+    }
+    return { faction: filmFaction(fid)!, ships, lost };
+  }).filter(x => x.faction);
+
+  /** A time-lapse shorter than this carries no caption. */
+  const MONTAGE_CAPTION_SECONDS = 1.6;
+  /** The least a log row must weigh to headline a time-lapse. */
+  const MONTAGE_HEADLINE_WEIGHT = 40;
+  /** The finale holds its image this long before the table comes up. */
+  const FINALE_CARD_AT = 2.8;
+  /** Film seconds into the finale, or -1 outside it. */
+  const finaleEl = () => {
+    const sc = scenes[scenes.length - 1];
+    if (!sc || sc.kind !== 'finale' || clockT < sc.from) return -1;
+    return filmSecondsAt(scenes, clockT) - filmSecondsAt(scenes, sc.from);
+  };
+  /**
+   * THE SPHERE COMPLETES ON SCREEN. The win lands on the match's last
+   * tick, which the finale only reaches as the film ends, so the shell sat
+   * at 99% under "The Dyson Sphere is complete". In the finale it ticks to
+   * 100%, the segments lock, and it flares.
+   */
+  const finaleDyson = (): { progress: number; complete: boolean; flare: number; seal: number } | null => {
+    if (summary.game.victory_type !== 'engineering' || !dysonOwner) return null;
+    const el = finaleEl();
+    if (el < 0) return null;
+    const p0 = Math.min(0.99, dysonKeys.length ? dysonKeys[dysonKeys.length - 1][1] : 0.99);
+    // The last segment lights, then the shell SEALS round the star, one
+    // gap after another; the meter reads 100% on the frame it closes.
+    const lit = DYSON_LIT_AT, sealed = DYSON_SEALED_AT;
+    const seal = Math.max(0, Math.min(1, (el - lit) / (sealed - lit)));
+    const flare = el < sealed ? 0 : Math.max(0, Math.sin(Math.min(1, (el - sealed) / 1.2) * Math.PI));
+    return { progress: el < lit ? p0 + (1 - p0) * (el / lit) : 1, complete: el >= sealed, flare, seal };
+  };
+  /** Finale seconds: the last segment lit, and the shell sealed. */
+  const DYSON_LIT_AT = 0.7;
+  const DYSON_SEALED_AT = 1.3;
+  /** The cold open runs this long as pure action before the title. */
+  const HOOK_SECONDS = 1.4;
+  /** Who is building the Dyson Sphere, if anyone, and round which star. */
+  const dysonOwner = (summary.chronicle ?? []).find(r => r.kind === 'dyson_initiated')?.actor_faction_id ?? null;
+  const dysonBodyId = (summary.chronicle ?? []).find(r => r.kind === 'dyson_initiated')?.body_id ?? null;
+  /** Film seconds at which each Dyson milestone lands (for the meter's flash). */
+  const dysonFlashAt = () => (summary.chronicle ?? [])
+    .filter(r => r.kind === 'dyson_milestone' || r.kind === 'dyson_damaged')
+    .map(r => filmSecondsAt(scenes, r.tick_number));
+
+  /** When a scene's caption may come up: once a push in has arrived. */
+  const landAt = (s: ReelScene) => {
+    // A caption comes up as the camera arrives, not while it travels.
+    return Math.max(0, (travelSeconds.get(s) ?? 0) - 0.15);
+  };
+
+  function drawFilm() {
+    // The CLOCK's time: the cold open shows a later moment than this.
+    const t = clockT;
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    drawVignette(ctx, W, H);
+    if (!scenes.length) return;
+    const idx = sceneIndexAt(t);
+    const s = scenes[idx] ?? scenes[scenes.length - 1];
+    const fs = filmSecondsAt(scenes, t);
+    const el = fs - filmSecondsAt(scenes, s.from);
+    const intro = s.kind === 'intro';
+    const finale = s.kind === 'finale';
+    const card = intro ? 1 - Math.max(0, Math.min(1, (el - (s.seconds - 0.8)) / 0.8)) : finale ? 1 : 0;
+    const hud = intro ? 0 : 1 - card;
 
-    const fleets = new Map<string, number>();
-    for (const s2 of world.ships.values()) {
-      const k = s2.fid ?? 'n'; fleets.set(k, (fleets.get(k) ?? 0) + 1);
-    }
-    const worlds = new Map<string, number>();
-    for (const s2 of world.stls.values()) {
-      if (!s2.fid) continue; worlds.set(s2.fid, (worlds.get(s2.fid) ?? 0) + 1);
-    }
-
-    // SORTED BY WORLDS, THEN FLEET. The panel used to sit in seat order,
-    // so the leader was indistinguishable from an eliminated empire in
-    // the same 11px type -- you could not name who was winning at any
-    // moment. Rank is now the row order, and overtakes are visible.
-    const rows = [...summary.factions].sort((x, y) =>
-      (worlds.get(y.id) ?? 0) - (worlds.get(x.id) ?? 0)
-      || (fleets.get(y.id) ?? 0) - (fleets.get(x.id) ?? 0)).slice(0, 9);
-
-    const PW = PANEL_W - 12, rowH = 32;
-    const px0 = W - PW - 8, py0 = 10;
-    const panelH = rows.length * rowH + 34;
-    ctx.fillStyle = 'rgba(4,8,14,0.8)';
-    ctx.fillRect(px0, py0, PW, panelH);
-    ctx.strokeStyle = 'rgba(120,150,190,0.25)'; ctx.lineWidth = 1;
-    ctx.strokeRect(px0 + 0.5, py0 + 0.5, PW - 1, panelH - 1);
-
-    ctx.font = '600 10px system-ui, sans-serif';
-    ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-    ctx.fillStyle = '#7f97ad';
-    ctx.fillText('EMPIRE', px0 + 26, py0 + 8);
-    ctx.textAlign = 'right';
-    ctx.fillText('FLEET · WORLDS', px0 + PW - 10, py0 + 8);
-
-    rows.forEach((f, i) => {
-      const y = py0 + 24 + i * rowH;
-      const nWorlds = worlds.get(f.id) ?? 0, nShips = fleets.get(f.id) ?? 0;
-      // Eliminated empires are dimmed and struck, not drawn at full
-      // brightness with stale bars implying a live economy.
-      const dead = nWorlds === 0 && nShips === 0;
-      ctx.globalAlpha = dead ? 0.34 : 1;
-      if (i === 0 && !dead) {
-        ctx.fillStyle = 'rgba(120,160,210,0.12)';
-        ctx.fillRect(px0 + 2, y - 3, PW - 4, rowH - 2);
-      }
-      ctx.fillStyle = '#6f88a3';
-      ctx.font = '600 10px system-ui, sans-serif';
-      ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-      ctx.fillText(String(i + 1), px0 + 8, y + 2);
-      ctx.fillStyle = f.color || NEUTRAL;
-      ctx.fillRect(px0 + 20, y + 2, 9, 9);
-      ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.lineWidth = 1;
-      ctx.strokeRect(px0 + 20.5, y + 2.5, 8, 8);
-
-      // A FIXED GUTTER for the numbers, and the name truncated to fit.
-      // Two empires' fleet counts were unreadable in every frame because
-      // the name column and the count column shared pixels.
-      const GUT = 96;
-      const nameMax = PW - 34 - GUT - 10;
-      ctx.fillStyle = dead ? '#8d9aa6' : '#e6f0f8';
-      ctx.font = '600 11px system-ui, sans-serif';
-      let nm = f.name;
-      if (ctx.measureText(nm).width > nameMax) {
-        while (nm.length > 1 && ctx.measureText(nm + '…').width > nameMax) {
-          nm = nm.slice(0, -1);
-        }
-        nm += '…';
-      }
-      ctx.fillText(nm, px0 + 34, y + 1);
-      if (dead) {
-        const wpx = ctx.measureText(nm).width;
-        ctx.strokeStyle = '#8d9aa6'; ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(px0 + 34, y + 7);
-        ctx.lineTo(px0 + 34 + wpx, y + 7); ctx.stroke();
-      }
-      // WORLDS IS THE SORT KEY, SO WORLDS IS THE BIG NUMBER. Printing
-      // fleet large next to a worlds-ordered list made rank look wrong:
-      // "62·18 / 28·12 / 61·11" reads as a broken sort.
-      ctx.textAlign = 'right';
-      ctx.fillStyle = dead ? '#7c8895' : '#e6f0f8';
-      ctx.font = '700 15px system-ui, sans-serif';
-      ctx.fillText(String(nWorlds), px0 + PW - 10, y - 2);
-      ctx.fillStyle = dead ? '#66707c' : '#8ea3b8';
-      ctx.font = '10px system-ui, sans-serif';
-      ctx.fillText(nShips + (nShips === 1 ? ' ship' : ' ships'),
-        px0 + PW - 34, y + 3);
-
-      // Rank movement, held briefly so an overtake is an event you see.
-      const rNow = rankAt.get(curTick)?.get(f.id);
-      const rWas = rankAt.get(Math.max(0, curTick - 6))?.get(f.id);
-      if (!dead && rNow != null && rWas != null && rNow !== rWas) {
-        const up = rNow < rWas;
-        ctx.fillStyle = up ? '#6ee7a5' : '#ff8f7a';
-        ctx.font = '700 9px system-ui, sans-serif';
-        ctx.textAlign = 'left';
-        ctx.fillText((up ? '\u25b2' : '\u25bc') + Math.abs(rNow - rWas),
-          px0 + 8, y + 13);
-      }
-
-      // ONE stacked bar with a legend, not four unlabelled hairlines.
-      // The old bars had no scale, no units and no key, so they taught
-      // the viewer to ignore them.
-      if (!dead) {
-        const st = world.stock.get(f.id) ?? [0, 0, 0];
-        // ONE SCALE FOR THE WHOLE MATCH. Normalised per row, every
-        // bar rendered near-full and cross-empire comparison -- the
-        // only reason to draw them -- was impossible.
-        // Square-root scale. On a linear match-wide scale the first
-        // half of the film was 3%-fill nubs carrying no information.
-        const total = Math.sqrt(stockMax) * 3;
-        // metal, credits, science -- the three resources the game has.
-        const cols = ['#9aa7b6', '#e8c36a', '#6fb4ee'];
-        let bx = px0 + 34;
-        const bw = PW - 44;
-        ctx.fillStyle = 'rgba(255,255,255,0.07)';
-        ctx.fillRect(bx, y + 18, bw, 7);
-        for (let k = 0; k < 3; k++) {
-          const seg = (Math.sqrt(Math.max(0, st[k])) / total) * bw;
-          if (seg <= 0.4) continue;
-          ctx.fillStyle = cols[k];
-          ctx.fillRect(bx, y + 18, seg, 7);
-          bx += seg;
-        }
-      }
-      ctx.globalAlpha = 1;
-    });
-
-    // Legend for the stacked bar, once, under the panel.
-    {
-      const ly = py0 + panelH + 6;
-      const keys: Array<[string, string]> = [['metal', '#9aa7b6'],
-        ['credits', '#e8c36a'], ['science', '#6fb4ee']];
-      ctx.font = '9px system-ui, sans-serif';
-      ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-      let lx = px0 + 4;
-      for (const [name, col] of keys) {
-        ctx.fillStyle = col; ctx.fillRect(lx, ly - 3, 7, 7);
-        ctx.fillStyle = '#8ea3b8';
-        ctx.fillText(name, lx + 10, ly + 1);
-        lx += 12 + ctx.measureText(name).width + 10;
-      }
-    }
-
-    // ---- the senate --------------------------------------------------
-    //
-    // The chamber gets its own strip under the standings: which bill is
-    // live, what phase it is in, and how the vote is falling. Weight is
-    // worlds held, so this doubles as a second reading of the balance
-    // of power.
-    {
-      const { bill, phase } = senateAt(curTick);
-      const sx = W - PANEL_W - 8, sy = py0 + panelH + 22;
-      const sw = PANEL_W - 12;
-      const sh = bill ? 62 : 26;
-      ctx.fillStyle = 'rgba(4,8,14,0.8)';
-      ctx.fillRect(sx, sy, sw, sh);
-      ctx.strokeStyle = 'rgba(120,150,190,0.25)'; ctx.lineWidth = 1;
-      ctx.strokeRect(sx + 0.5, sy + 0.5, sw - 1, sh - 1);
-      ctx.font = '600 10px system-ui, sans-serif';
-      ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-      ctx.fillStyle = '#7f97ad';
-      ctx.fillText('THE SENATE', sx + 10, sy + 7);
-      if (!bill) {
-        ctx.textAlign = 'right';
-        ctx.fillStyle = '#5d7189';
-        ctx.fillText('in recess', sx + sw - 10, sy + 7);
-      } else {
-        const label = phase === 'debate' ? 'DEBATING'
-          : phase === 'vote' ? 'VOTING'
-          : bill.status === 'passed' ? 'PASSED' : 'FAILED';
-        const lc = phase === 'vote' ? '#e8c36a'
-          : phase === 'resolved'
-            ? (bill.status === 'passed' ? '#6ee7a5' : '#ff8f7a')
-            : '#8ea3b8';
-        ctx.textAlign = 'right';
-        ctx.fillStyle = lc;
-        ctx.fillText(label, sx + sw - 10, sy + 7);
-
-        ctx.textAlign = 'left';
-        ctx.fillStyle = '#e6f0f8';
-        ctx.font = '600 12px system-ui, sans-serif';
-        let ttl = bill.title || bill.kind;
-        const tmax = sw - 20;
-        if (ctx.measureText(ttl).width > tmax) {
-          while (ttl.length > 1 && ctx.measureText(ttl + '…').width > tmax) {
-            ttl = ttl.slice(0, -1);
+    // The race while the shot is wide; the fight while it is close.
+    drawStandings(ctx, W, H, standingsAt(curTick).slice(0, 5),
+      hud * overview, { worlds: T('worlds', { n: '' }).trim(), brand: T('worldsHeld') });
+    if (s.kind === 'battle' && s.battle) {
+      const sides = tallyOf(s.battle, curTick);
+      const more = Math.max(0, (s.battle.present ?? 2) - 2);
+      drawBattleTally(ctx, W, H, sides, hud * (1 - overview) * Math.min(1, Math.max(0, (el - landAt(s)) / 0.3)),
+        'VS', more, more ? T('more', { n: more }) : '');
+      // WHO HOLDS THE FIELD, as the fight closes.
+      const prog = el / Math.max(0.01, s.seconds);
+      // THE VERDICT IS THE SCOREBOARD'S. Whoever has the most ships left in
+      // the fight wins it, and only once the fight is nearly over: a stamp
+      // naming the world's owner read "Tritalowda holds Europa" over 0 vs
+      // 26, and "Ministry holds Earth" while it was still behind.
+      if (prog > 0.8 && sides.length) {
+        const top = [...sides].sort((a, b) => b.ships - a.ships)[0];
+        const second = [...sides].sort((a, b) => b.ships - a.ships)[1];
+        // A clear margin, or no call: 77 vs 70 named the side that then
+        // lost the field.
+        if (top.ships > 0 && (!second || top.ships >= 1.5 * second.ships)) {
+          // "Holds" only when every settlement on the world is theirs.
+          let mine = 0, theirs = 0;
+          for (const st of world.stls.values()) {
+            if (st.body !== s.battle.body || !st.fid) continue;
+            if (st.fid === top.faction.id) mine++; else theirs++;
           }
-          ttl += '…';
+          const where = byId.get(s.battle.body)?.name ?? '';
+          const key = mine > 0 && theirs === 0 ? 'verdict' : 'verdictWin';
+          drawBattleVerdict(ctx, W, H, T(key, { a: shortName(top.faction.name), world: where }).toUpperCase(),
+            top.faction.color, ((prog - 0.8) / 0.08) * (1 - overview) * hud);
         }
-        ctx.fillText(ttl, sx + 10, sy + 21);
-
-        // The vote as a weighted bar: yea / nay / not yet cast.
-        let yea = 0, nay = 0;
-        for (const v of bill.votes) {
-          if (v.vote === 'yea') yea += v.weight || 1;
-          else if (v.vote === 'nay') nay += v.weight || 1;
-        }
-        const cast = yea + nay;
-        const barW2 = sw - 20;
-        const total = Math.max(1, cast);
-        ctx.fillStyle = 'rgba(255,255,255,0.08)';
-        ctx.fillRect(sx + 10, sy + 40, barW2, 7);
-        ctx.fillStyle = '#6ee7a5';
-        ctx.fillRect(sx + 10, sy + 40, (yea / total) * barW2, 7);
-        ctx.fillStyle = '#ff8f7a';
-        ctx.fillRect(sx + 10 + (yea / total) * barW2, sy + 40,
-          (nay / total) * barW2, 7);
-        ctx.font = '9px system-ui, sans-serif';
-        ctx.fillStyle = '#8ea3b8';
-        ctx.textAlign = 'left';
-        ctx.fillText('yea ' + yea, sx + 10, sy + 50);
-        ctx.textAlign = 'right';
-        ctx.fillText('nay ' + nay, sx + sw - 10, sy + 50);
       }
+    }
+    // THE SENATE AT WORK: the law, the vote, what came of it.
+    if (s.kind === 'beat' && s.beat?.kind === 'senate_vote' && s.beat.data?.bill_kind !== 'chancellor_vote') {
+      const p = s.beat.data ?? {};
+      drawSenateCard(ctx, W, H, {
+        label: T('senate.label'), bill: billName(String(p.title ?? '')),
+        yea: Number(p.yea_weight) || 0, nay: Number(p.nay_weight) || 0,
+        term: String(p.term ?? ''), impact: String(p.impact ?? ''),
+        more: Number(p.also) > 0 ? T('senate.more', { n: Number(p.also) }) : '',
+      }, (el - 0.35) / 0.3, (el - (s.seconds - 0.25)) / 0.25);
+    }
+    // A victory being BUILT, on screen while it is built.
+    const fin = finaleDyson();
+    const dy = fin ?? dysonAt(curTick + curFrac);
+    if (dy && dysonOwner && (!dy.complete || fin)) {
+      const flash = fin ? (fin.complete ? 1 - Math.min(1, (el - DYSON_SEALED_AT) / 1.2) : 0)
+        : Math.max(0, ...dysonFlashAt().map(at => (fs >= at ? 1 - (fs - at) / 1.2 : 0)));
+      // In the finale the meter stays up until the table, to hit 100%.
+      const alpha = fin ? (el < FINALE_CARD_AT ? 1 : 0) : hud;
+      // The meter says what the caption says: a Sphere headline's own
+      // number while it is up (97% under "at 99%" was a contradiction),
+      // and 100% only on the frame the shell seals.
+      const said = s.kind === 'beat' && /^dyson_(damaged|milestone)$/.test(s.beat?.kind ?? '')
+        ? Number(s.beat?.data?.pct) / 100 : NaN;
+      const shown = fin ? (fin.complete ? 1 : Math.min(0.999, fin.progress))
+        : Number.isFinite(said) ? said : dy.progress;
+      drawProgressMeter(ctx, W, H, T('meter.dyson'), shown, colorOf(dysonOwner), alpha, flash,
+        T('meter.dysonNote', { a: shortName(filmFaction(dysonOwner)?.name ?? '') }));
     }
 
-    // ---- clock + timeline -------------------------------------------
-    //
-    // Nothing said where a tick fell in the match. The bar shows the
-    // whole war at a glance, with a mark at every battle.
-    const lo = summary.ticks.lo ?? 0, hi = summary.ticks.hi ?? lo;
-    const barY = H - 26, barX = 16, barW = W - PW - 40;
-    // A gradient scrim across the full width: bodies that do bleed to
-    // the bottom edge stay legible instead of fighting the rail.
-    const scrim = ctx.createLinearGradient(0, H - 88, 0, H);
-    scrim.addColorStop(0, 'rgba(3,6,13,0)');
-    scrim.addColorStop(1, 'rgba(3,6,13,0.92)');
-    ctx.fillStyle = scrim;
-    ctx.fillRect(0, H - 88, W, 88);
-    ctx.fillStyle = 'rgba(255,255,255,0.12)';
-    ctx.fillRect(barX, barY, barW, 3);
-    // Binned into a histogram so the war has a SHAPE -- a build, a peak
-    // and a tail -- rather than an undifferentiated picket fence.
-    {
-      const BINS = 72;
-      const bin = new Array(BINS).fill(0);
-      for (const bt of summary.battles) {
-        const f = (bt.started_tick - lo) / Math.max(1, hi - lo);
-        bin[Math.max(0, Math.min(BINS - 1, Math.floor(f * BINS)))]++;
+    // The clock, and how fast the film is running when it is fast.
+    const perTick = s.seconds / Math.max(1, s.to - s.from);
+    const x = Math.round(1 / Math.max(0.001, perTick));
+    drawClock(ctx, W, H, curTick + curFrac, s.kind === 'montage' && x >= 4 ? `${T('ff')} \u25B8\u25B8` : null, hud,
+      T('dayLabel'));
+
+    // The lower third: what this scene is. Drawn before the ticker, which
+    // keeps clear of how far it reaches.
+    const cap = !intro && !finale ? captionOf(s) : null;
+    let ltRight = 0;
+    if (s.act === 'opening') {
+      // Two captions: who is here (with the roll call), then the land grab.
+      const n = built.length;
+      const most = new Map<string, number>();
+      for (const b of built) most.set(b.fid, (most.get(b.fid) ?? 0) + 1);
+      const lead = [...most.entries()].sort((a, b) => b[1] - a[1])[0];
+      if (el < ROLL_CALL_END) {
+        ltRight = drawLowerThird(ctx, W, H, { kicker: T('kicker.start'), title: T('title.begin', { n: empires.length }),
+          sub: '', color: null }, el / 0.2, (el - (ROLL_CALL_END - 0.2)) / 0.2);
+      } else if (n > 0) {
+        ltRight = drawLowerThird(ctx, W, H, { kicker: T('land.kicker'),
+          title: T('land.title', { n, d: Math.max(1, s.to - s.from) }),
+          sub: lead ? T('land.sub', { a: shortName(filmFaction(lead[0])?.name ?? ''), k: lead[1] }) : '',
+          color: lead ? colorOf(lead[0]) : null },
+        (el - ROLL_CALL_END - 0.15) / 0.2, (el - (s.seconds - 0.2)) / 0.2);
       }
-      ctx.fillStyle = 'rgba(255,255,255,0.09)';
-      ctx.fillRect(barX, barY - 5, barW, 1);
-      const peak = Math.max(1, ...bin);
-      const bwid = barW / BINS;
-      for (let i = 0; i < BINS; i++) {
-        if (!bin[i]) continue;
-        const hgt = 4 + (bin[i] / peak) * 14;
-        ctx.fillStyle = 'rgba(255,130,95,0.8)';
-        ctx.fillRect(barX + i * bwid, barY - 4 - hgt, Math.max(1.2, bwid - 0.8), hgt);
-      }
-    }
-    // Senate marks sit above the battle histogram: the political track
-    // and the military one, on one timeline.
-    for (const b of summary.senate ?? []) {
-      const at = b.resolved_at_tick ?? b.vote_closes_at_tick;
-      if (at == null) continue;
-      const f = (at - lo) / Math.max(1, hi - lo);
-      ctx.fillStyle = b.status === 'passed'
-        ? 'rgba(110,231,165,0.9)' : 'rgba(255,143,122,0.9)';
-      ctx.beginPath();
-      ctx.arc(barX + f * barW, barY - 26, 3, 0, Math.PI * 2);
-      ctx.fill();
+    } else if (cap && cap.title && !(s.kind === 'montage' && s.seconds < 1.1)) {
+      const c = cap;
+      // A montage line is a quick read: in and out briskly.
+      // SNAP IN, HOLD, SNAP OUT: a 1.3 s fade left a two-second beat
+      // fully legible for under one.
+      ltRight = drawLowerThird(ctx, W, H, { kicker: c.kicker, title: c.title, sub: c.sub,
+        color: c.fid ? colorOf(c.fid) : null },
+      el / 0.2, (el - (s.seconds - 0.18)) / 0.18);
     }
 
-    const fx = (Math.floor(t) - lo) / Math.max(1, hi - lo);
-    ctx.fillStyle = '#6fb4ee';
-    ctx.fillRect(barX, barY, Math.max(1, fx * barW), 3);
-    ctx.beginPath();
-    ctx.arc(barX + fx * barW, barY + 1.5, 4, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.font = '600 12px system-ui, sans-serif';
-    ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
-    ctx.fillStyle = '#e6f0f8';
-    const clockTxt = 'T+' + Math.floor(t);
-    ctx.fillText(clockTxt, barX, barY - 6);
-    const cw = ctx.measureText(clockTxt).width;
-    ctx.font = '10px system-ui, sans-serif';
-    ctx.fillStyle = '#7f97ad';
-    ctx.fillText(' / ' + hi, barX + cw + 3, barY - 6);
-    const clockW = cw + 3 + ctx.measureText(' / ' + hi).width;
-    // Reconstructed stretches are shaded INSIDE the rail, so the label
-    // shows which span it covers instead of sitting on every frame as a
-    // permanent watermark.
-    const firstLive = summary.firstLiveTick;
-    if (firstLive != null && firstLive > lo) {
-      const fw = ((firstLive - lo) / Math.max(1, hi - lo)) * barW;
-      ctx.fillStyle = 'rgba(150,175,200,0.3)';
-      ctx.fillRect(barX, barY - 3, fw, 9);
-      if (Math.floor(t) < firstLive) {
-        ctx.textAlign = 'left';
-        ctx.fillStyle = '#7f97ad';
-        ctx.font = '9px system-ui, sans-serif';
-        // Placed after the clock pair has been measured, never under it.
-        ctx.fillText('REBUILT FROM THE RECORD', barX + clockW + 16, barY - 7);
-      }
+    // EVERY WAR, PEACE AND PACT, as it happens (see buildToasts).
+    const liveToasts = intro || finale ? [] : toasts.filter(x => fs >= x.at && fs < x.at + TOAST_LIFE_SECONDS).slice(-3);
+    if (liveToasts.length) {
+      drawToasts(ctx, W, H, liveToasts.reverse().map(x => {
+        const a = filmFaction(x.a), b = filmFaction(x.b);
+        const na = shortName(a?.name ?? ''), nb = shortName(b?.name ?? '');
+        return { kind: x.kind, a, b, life: (fs - x.at) / TOAST_LIFE_SECONDS,
+          text: T(`toast.${x.kind}`, { a: na, b: nb }) };
+      }));
     }
+    // AN EMPIRE'S END: its card, slammed on as it falls.
+    if (s.kind === 'beat' && s.beat?.kind === 'faction_eliminated' && Array.isArray(s.beat.data?.toll)) {
+      const fell = filmSecondsAt(scenes, s.beat.tick - 0.4);
+      const killer = typeof s.beat.data?.killer_faction_name === 'string' ? shortName(s.beat.data.killer_faction_name) : '';
+      const toll = s.beat.data!.toll as Array<{ fid: string; peak: number; lost: number }>;
+      const day = s.beat.tick;
+      const cards = toll.map(x => {
+        const f = filmFaction(x.fid);
+        return f ? { faction: f, stamp: T('out.stamp'), lines: [
+          `${T('out.lasted', { d: day })} · ${T('out.peak', { n: x.peak })}`,
+          `${T('out.lost', { n: x.lost })}${killer && toll.length === 1 ? ` · ${T('out.by', { k: killer })}` : ''}`,
+        ] } : null;
+      }).filter((x): x is NonNullable<typeof x> => !!x);
+      drawOutCards(ctx, W, H, cards, fs - fell, (el - (s.seconds - 0.25)) / 0.25);
+    }
+
+    // The ticker: one line, about what is in shot (never under a banner).
+    // Never beside a caption: two lines of news at once read as one
+    // ghosting behind the other.
+    if (hud > 0.5 && s.kind === 'montage' && !ltRight && !liveToasts.length && W - 56 * unitOf(H) - Math.max(W * 0.6, ltRight + 48 * unitOf(H)) > 320 * unitOf(H)) {
+      // A time-lapse device only: it never repeats the headline already
+      // up, and on a held shot it stays on the world in shot.
+      const top = montageTop.get(s);
+      const subj = curFocus;
+      const live = ticker.filter(x2 => fs >= x2.start && fs < x2.start + TICKER_LIFE_SECONDS
+        && x2.beat !== top
+        && (!subj || x2.beat.body === subj)).slice(-1);
+      drawTicker(ctx, W, H, live.map(x2 => ({ text: broadcastCopy(x2.beat.text),
+        faction: filmFaction(x2.beat.fid), life: (fs - x2.start) / TICKER_LIFE_SECONDS })),
+      Math.max(W * 0.6, ltRight + 48 * unitOf(H)));
+    }
+
+    if (intro) {
+      const c = captionOf(s);
+      if (teaser?.battle) {
+        drawHookLine(ctx, W, H, T('hook', { n: teaser.battle.peak }), el / 1.0, (el - (HOOK_SECONDS - 0.15)) / 0.15);
+      }
+      const at = teaser ? HOOK_SECONDS : 0;
+      drawTitleCard(ctx, W, H, c, empires.map(f => filmFaction(f.id)!).filter(Boolean),
+        (el - at) / 0.35, (el - (s.seconds - 0.4)) / 0.4, teaser ? 0.8 : 1);
+    }
+    // Out of the cold open, a dip through black: the clock jumps back
+    // five hundred days and the frame should say so.
+    const prevScene = scenes[idx - 1];
+    if (prevScene?.kind === 'intro' && teaser && el < 0.35) {
+      ctx.fillStyle = `rgba(0,0,0,${0.9 * (1 - el / 0.35)})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+    if (finale) {
+      const c = captionOf(s);
+      // The winner heads the table, however it won: a Senate election or
+      // a Dyson Sphere is not decided by worlds held.
+      const winner = summary.game.winner_faction_id ?? null;
+      const table = standingsAt(summary.ticks.hi ?? curTick)
+        .sort((a, b) => Number(b.faction.id === winner) - Number(a.faction.id === winner));
+      // The last shot breathes first: the camera holds the final map
+      // before the card comes up.
+      // THE PAYOFF FIRST, then the table: the decisive image held clean
+      // with its reason, and only then the standings.
+      const why = summary.game.victory_type === 'engineering' && dysonOwner ? T('title.dysonDone')
+        : c.title;
+      drawLowerThird(ctx, W, H, { kicker: c.kicker, title: why,
+        sub: summary.game.victory_type === 'engineering' ? T('sub.engineering') : '',
+        color: c.fid ? colorOf(c.fid) : null }, (el - (finaleDyson() ? DYSON_SEALED_AT + 0.1 : 0.9)) / 0.2,
+        (el - (FINALE_CARD_AT - 0.15)) / 0.15);
+      // The table comes in once the light has rolled out.
+      drawResultCard(ctx, W, H, { ...c, color: c.fid ? colorOf(c.fid) : null },
+        table, (el - FINALE_CARD_AT) / 0.6,
+        { worlds: T('worlds', { n: '' }).trim(), ships: T('ships', { n: '' }).trim(), url: T('url'),
+          out: T('out') },
+        !!winner);
+    }
+    drawProgress(ctx, W, H, filmTotal > 0 ? fs / filmTotal : 0);
   }
 
   function resize(w: number, h: number) {
@@ -1966,6 +2529,7 @@ export function createMatchMap(
     // worldToCanvas and this file's toPx the same function.
     DPR = 1;
     W = w; H = h;
+    systemFrames.clear();
     canvas.width = Math.round(w); canvas.height = Math.round(h);
     canvas.style.width = `${w}px`; canvas.style.height = `${h}px`;
     starfield = generateStarfield(canvas.width, canvas.height);
@@ -1984,8 +2548,20 @@ export function createMatchMap(
     worldAt: (tick: number) => timeline.worldAt(tick),
     setView: (mode: 'auto' | 'wide') => { viewMode = mode; },
     rateAt,
+    _facts: () => lastFacts,
+    /** Harness: try a fire density (see fireReference). */
+    _fire: (ref: number) => { fireReference = ref; return ref; },
+    _trace: () => { tracing = true; return lastTrace; },
+    _probe: () => {
+      probing = true;
+      const lp = lastProbe as { hits?: Array<[number, number] | null> } | null;
+      const px = (lp?.hits ?? []).map(h => h ? Array.from(ctx.getImageData(h[0], h[1], 1, 1).data) : null);
+      return { ...(lp ?? {}), px };
+    },
     // The cut list, for harnesses and probes; not part of the contract.
-    _shots: () => shots.map(x => ({ ...x })),
+    _shots: () => scenes.map(x => ({ kind: x.kind, from: x.from, to: x.to,
+      seconds: +x.seconds.toFixed(2), framing: x.framing, bodyId: x.bodyId,
+      title: captionOf(x).title, sub: captionOf(x).sub, extras: x.extras.length })),
     /**
      * Where each hull that died on a tick is placed, against the world it
      * died at. A probe rather than a feature: the blast and the wreck are

@@ -143,6 +143,23 @@ test('a roster change that holds replaces the layout after the dwell', () => {
   expect(next.layout.placements.has('b-new')).toBe(true);
 });
 
+test('a battle losing a hull every tick still takes in its arrivals', () => {
+  // The Dyson Sphere clip: hulls died every 0.72 s, each death restarted
+  // the dwell, the world never re-solved, and arrivals stayed held at the
+  // edge of the Sun for the rest of the fight.
+  resetLiveBattles();
+  const r = roster();
+  const first = liveBattleFor('mars', MARS_R, 1, r, ['a', 'b'], 'stn', { nowMs: 0 });
+  let units = [...r, unit('b-new', 'b', 30, 'sb')];
+  let lb = first;
+  for (let t = 100; t <= 100 + ROSTER_DWELL_MS + 800; t += 700) {
+    lb = liveBattleFor('mars', MARS_R, 1, units, ['a', 'b'], 'stn', { nowMs: t });
+    units = units.slice(0, -2).concat(units.slice(-1));          // a hull dies each tick
+  }
+  expect(lb).not.toBe(first);
+  expect(lb.layout.placements.has('b-new')).toBe(true);
+});
+
 test('noses point forward in the wheel’s sense, either way round', () => {
   const r = roster();
   const fwd = liveBattleFor('mars', MARS_R, 1, r, ['a', 'b']);
@@ -166,7 +183,9 @@ test('the live map uses it at EVERY world in multiplayer; single-player keeps it
   const src = fs.readFileSync(path.join(__dirname, '../../components/MapCanvas.tsx'), 'utf8');
   // Not gated on a battle: peaceful worlds scale with the planet too
   // (Lorne, 2026-10-06: "make every world scale with the planet").
-  expect(src).toMatch(/if \(mpActions\) \{\s*const bodyId = atBody\[0\]\.orbit\.parentBodyId;/);
+  // (The roster's world is its key: a hull still flying in to it carries
+  // the orbit it left, arrivalApproach.worldRosters.)
+  expect(src).toMatch(/if \(mpActions\) \{\s*const bodyId = rosterBodyId;/);
   expect(src).not.toMatch(/if \(battle && mpActions\)/);
   // A laid-out ship is not on its orbit ring, so neither is drawn for it.
   expect((src.match(/if \(showOrbitRing && !formation\?\.battle\)/g) ?? []).length).toBe(2);

@@ -90,6 +90,11 @@ const EndingPreview = process.env.NODE_ENV !== 'production'
 const ProfileAwardsPreview = process.env.NODE_ENV !== 'production'
   ? React.lazy(() => import('./multiplayer/ProfileAwardsPreview'))
   : null;
+// The room lobby preview (/?room-lobby, see RoomLobbyPreview.tsx). Dev only,
+// same guard: it renders a fixture of a real room.
+const RoomLobbyPreview = process.env.NODE_ENV !== 'production'
+  ? React.lazy(() => import('./multiplayer/RoomLobbyPreview'))
+  : null;
 // The Map Maker (?mapmaker): its own screen, out of the main bundle.
 // lazyChunk, not React.lazy: a tab opened before a deploy reloads once
 // instead of breaking when the Map Maker's (renamed) chunk is fetched.
@@ -998,6 +1003,13 @@ function AppRouter() {
     return (
       <React.Suspense fallback={<div style={{ position: 'fixed', inset: 0, background: '#0a0e14' }} />}>
         <ProfileAwardsPreview />
+      </React.Suspense>
+    );
+  }
+  if (RoomLobbyPreview && new URLSearchParams(window.location.search).has('room-lobby')) {
+    return (
+      <React.Suspense fallback={<div style={{ position: 'fixed', inset: 0, background: '#060a10' }} />}>
+        <RoomLobbyPreview />
       </React.Suspense>
     );
   }

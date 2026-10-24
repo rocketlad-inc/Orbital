@@ -477,7 +477,10 @@ async function handleStart(_req, env, ctx) {
  * both call this, and the games-row INSERT (primary key = room id) lets
  * exactly one of them through.
  */
-export async function startGame(env, roomId) {
+/** `opts.solo` = { difficulty, tickIntervalMs }: a solo game (worker/solo.js),
+ *  born flagged at its own speed, with no "your game has begun" email. */
+export async function startGame(env, roomId, opts = {}) {
+  const solo = opts?.solo ?? null;
   const existing = await env.DB.prepare('SELECT 1 AS x FROM games WHERE id = ?').bind(roomId).first();
   if (existing) return { error: err(409, 'already_started', 'game already started') };
 
@@ -500,6 +503,9 @@ export async function startGame(env, roomId) {
       if (ALLOWED_TICK_INTERVALS.has(cfg.tick_interval_ms)) tick_interval_ms = cfg.tick_interval_ms;
     }
   } catch {}
+  // A solo game's own speeds (solo.js SOLO_SPEEDS, validated there) are
+  // not host cadences, so they stay out of ALLOWED_TICK_INTERVALS.
+  if (solo && Number.isFinite(solo.tickIntervalMs) && solo.tickIntervalMs >= 1_000) tick_interval_ms = solo.tickIntervalMs;
 
   const map_seed = b64url(crypto.getRandomValues(new Uint8Array(16)));
   const now = Date.now();
@@ -522,10 +528,11 @@ export async function startGame(env, roomId) {
     await env.DB.batch([
       env.DB
         .prepare(
-          `INSERT INTO games (id, status, map_seed, current_tick, tick_interval_ms, created_at, started_at, config_id)
-           VALUES (?, 'setup', ?, 0, ?, ?, ?, ?)`,
+          `INSERT INTO games (id, status, map_seed, current_tick, tick_interval_ms, created_at, started_at, config_id,
+                              solo, solo_difficulty)
+           VALUES (?, 'setup', ?, 0, ?, ?, ?, ?, ?, ?)`,
         )
-        .bind(roomId, map_seed, tick_interval_ms, now, now, configId),
+        .bind(roomId, map_seed, tick_interval_ms, now, now, configId, solo ? 1 : 0, solo?.difficulty ?? null),
       env.DB
         .prepare("UPDATE rooms SET status = 'in_progress', updated_at = ? WHERE id = ?")
         .bind(now, roomId),
@@ -576,8 +583,9 @@ export async function startGame(env, roomId) {
     body: JSON.stringify({ gameId: roomId, tick_interval_ms, started_at: now }),
   });
 
-  // "Your game has begun" to everyone in it. Never throws.
-  try {
+  // "Your game has begun" to everyone in it. Never throws. Not for a solo
+  // game: its one player just pressed start.
+  if (!solo) try {
     const { sendGameStarted } = await import('./email.js');
     await sendGameStarted(env, roomId);
   } catch (e) {
@@ -1331,7 +1339,7 @@ const ROOM_COLS = `r.id, r.name, r.status AS room_status, r.max_players, r.host_
   r.quick_join, (r.password_hash IS NOT NULL) AS has_password, u.display_name AS host_name,
   (SELECT COUNT(*) FROM room_members m WHERE m.room_id = r.id) AS member_count,
   g.status AS game_status, g.current_tick, g.tick_interval_ms, g.started_at, g.next_tick_at,
-  g.winner_faction_id, g.victory_type, g.completed_at,
+  g.winner_faction_id, g.victory_type, g.completed_at, g.solo, g.paused,
   CASE WHEN r.custom_map_json IS NOT NULL AND json_valid(r.custom_map_json)
        THEN json_extract(r.custom_map_json, '$.name') END AS custom_map_name`;
 
@@ -1424,6 +1432,9 @@ async function buildSummaries(env, rows, userId) {
       host_name: r.host_name,
       // A room hosted on a Map Maker map: the map's name, for the card.
       custom_map_name: r.custom_map_name ?? null,
+      // A solo game (solo.js): one person and computer empires.
+      solo: Number(r.solo) === 1,
+      paused: Number(r.paused) === 1,
       created_at: r.created_at,
       updated_at: r.updated_at,
       started_at: r.started_at ?? null,
@@ -1451,7 +1462,7 @@ async function handleBrowse(_req, env, ctx) {
   const base = `SELECT ${ROOM_COLS}
                   FROM rooms r JOIN users u ON u.id = r.host_id
                   LEFT JOIN games g ON g.id = r.id
-                 WHERE r.status != 'closed' AND COALESCE(g.is_test_game, 0) = 0`;
+                 WHERE r.status != 'closed' AND COALESCE(g.is_test_game, 0) = 0 AND COALESCE(g.solo, 0) = 0`;
   const [lobbies, live, finished] = await Promise.all([
     env.DB.prepare(`${base} AND g.id IS NULL AND r.updated_at > ? ORDER BY r.updated_at DESC LIMIT ${BROWSE_LOBBY_LIMIT}`)
       .bind(staleLobby).all(),

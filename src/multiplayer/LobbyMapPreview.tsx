@@ -91,10 +91,39 @@ interface Props {
   /** Body id the local player has claimed. When set, the camera flies
    *  in to centre + zoom on it. Null/undefined → whole-system view. */
   focusBodyId?: string | null;
+  /** Extra class on the backdrop. The room lobby page passes `rl-map` to
+   *  lift it above the dock and make it a soft, non-interactive backdrop
+   *  behind the page (RoomLobby.css). */
+  className?: string;
+  /** Pixels of the right edge covered by something (the room panel), so the
+   *  system is framed in the part of the map that is actually visible
+   *  instead of being centred behind the panel. */
+  insetRight?: number;
+  /** Draw in place (a pane inside a page) instead of as the full-viewport
+   *  backdrop portaled to <body>. */
+  inline?: boolean;
+  /** The legend's last line. Defaults to the desktop wording ("scroll to
+   *  zoom"); a phone pane passes its own. */
+  hint?: string;
+  /** Tap/click a FREE start world on the map to claim it. When given, the
+   *  map is a second way to pick (the card picker stays the first); a drag
+   *  is a pan and never a pick. */
+  onPickBody?: (bodyId: string) => void;
 }
 
-export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }) => {
+export const LobbyMapPreview: React.FC<Props> = ({
+  snap, myUserId, focusBodyId, className, insetRight = 0, inline = false, hint, onPickBody,
+}) => {
   useI18n();
+  // Read through refs inside the long-lived canvas effect, so a new handler
+  // or a resized panel does not tear the whole canvas down.
+  const pickRef = useRef(onPickBody);
+  pickRef.current = onPickBody;
+  const insetRef = useRef(insetRight);
+  insetRef.current = insetRight;
+  const kickRef = useRef<() => void>(() => undefined);
+  /** Screen position of every start world at the last draw, for tap picks. */
+  const hitsRef = useRef<Array<{ id: string; x: number; y: number; owner?: string }>>([]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // Animated camera: `cam` is the current (lerps toward `target`).
   const camRef = useRef<Camera | null>(null);
@@ -145,7 +174,9 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
         if (o.parent) fit = Math.max(fit, solDistance(BY_ID, o.parent));
       }
       fit *= 1.25;
-      const fullScale = (Math.min(w, h) * 0.46) / fit;
+      // The visible stage is the canvas minus whatever covers its right edge.
+      const inset = Math.max(0, Math.min(insetRef.current, w * 0.7));
+      const fullScale = (Math.min(w - inset, h) * 0.46) / fit;
 
       // Framing is ALWAYS the whole startable system, regardless of what
       // the player has claimed. The selection is communicated by the
@@ -164,17 +195,22 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
       // Publish the framing basis + a pan bound, then clamp the current
       // pan so the framed centre + pan stays within `fit` of Sol — you
       // can drag around the startable system but never lose it entirely.
-      baseCenterRef.current = { x: center.x, y: center.y };
+      const scale = frameScale * userZoomRef.current;
+      // Half the covered strip, in world units: the camera looks that far to
+      // the right of the system so the system sits in the middle of what is
+      // visible. (Screen centre = camera; the strip is on the right.)
+      const base = { x: center.x + (inset / 2) / scale, y: center.y };
+      baseCenterRef.current = base;
       maxPanRef.current = fit;
-      const clampAbs = (base: number, off: number) =>
-        Math.max(-fit, Math.min(fit, base + off)) - base;
-      panRef.current.x = clampAbs(center.x, panRef.current.x);
-      panRef.current.y = clampAbs(center.y, panRef.current.y);
+      const clampAbs = (b: number, off: number) =>
+        Math.max(-fit, Math.min(fit, b + off)) - b;
+      panRef.current.x = clampAbs(base.x, panRef.current.x);
+      panRef.current.y = clampAbs(base.y, panRef.current.y);
 
       return {
-        x: center.x + panRef.current.x,
-        y: center.y + panRef.current.y,
-        scale: frameScale * userZoomRef.current,
+        x: base.x + panRef.current.x,
+        y: base.y + panRef.current.y,
+        scale,
       };
     };
 
@@ -240,6 +276,7 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
         snap.members.find(m => m.userId === uid)?.displayName ?? 'player';
 
       const startIds = new Set((snap.starting_body_options ?? []).map(o => o.id));
+      const hits: Array<{ id: string; x: number; y: number; owner?: string }> = [];
       for (const bodyId of startIds) {
         const b = BY_ID.get(bodyId);
         if (!b) continue;
@@ -247,6 +284,7 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
         const cp = worldToCanvas(wp.x, wp.y, ctx);
         const owner = claimedBy.get(bodyId);
         const isMine = !!owner && owner === myUserId;
+        hits.push({ id: bodyId, x: cp.x, y: cp.y, owner });
 
         if (!owner) {
           ctx2d.strokeStyle = 'rgba(78, 205, 196, 0.55)';
@@ -268,6 +306,7 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
           ctx2d.fillText(isMine ? '✓ YOU' : nameOf(owner), cp.x, cp.y + 14);
         }
       }
+      hitsRef.current = hits;
     };
 
     // Animate the current camera toward the target, redrawing each frame
@@ -322,28 +361,72 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
     };
     canvas.addEventListener('wheel', onWheel, { passive: false });
 
-    // Drag-to-pan. Pointer events cover mouse + touch (canvas has
-    // touch-action:none so the browser doesn't steal the gesture). We
-    // move both the pan offset and the *current* camera by the same
-    // world delta, so the map tracks the cursor 1:1 with no lerp lag and
+    // Drag-to-pan, pinch-to-zoom, tap-to-pick. Pointer events cover mouse +
+    // touch (canvas has touch-action:none so the browser doesn't steal the
+    // gesture). We move both the pan offset and the *current* camera by the
+    // same world delta, so the map tracks the cursor 1:1 with no lerp lag and
     // no snap-back when the drag ends (target == current camera).
-    let dragging = false;
+    const pointers = new Map<number, { x: number; y: number }>();
+    let pinchDist = 0;
+    let downX = 0;
+    let downY = 0;
+    let moved = 0;
     let lastX = 0;
     let lastY = 0;
+    const pinchSpan = () => {
+      const [a, b] = Array.from(pointers.values());
+      return Math.hypot(a.x - b.x, a.y - b.y);
+    };
+    /** The FREE start world under a screen point, if any (touch gets a bigger target). */
+    const freeWorldAt = (clientX: number, clientY: number, radius: number): string | null => {
+      const r = canvas.getBoundingClientRect();
+      const x = clientX - r.left;
+      const y = clientY - r.top;
+      let best: string | null = null;
+      let bestD = radius;
+      for (const h of hitsRef.current) {
+        if (h.owner) continue;
+        const d = Math.hypot(h.x - x, h.y - y);
+        if (d <= bestD) { best = h.id; bestD = d; }
+      }
+      return best;
+    };
     const onPointerDown = (e: PointerEvent) => {
-      dragging = true;
-      lastX = e.clientX;
-      lastY = e.clientY;
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pointers.size === 1) {
+        downX = lastX = e.clientX;
+        downY = lastY = e.clientY;
+        moved = 0;
+      } else if (pointers.size === 2) {
+        pinchDist = pinchSpan();
+        moved = 99;   // a pinch is never a pick
+      }
       canvas.style.cursor = 'grabbing';
       try { canvas.setPointerCapture(e.pointerId); } catch { /* noop */ }
     };
     const onPointerMove = (e: PointerEvent) => {
-      if (!dragging) return;
+      if (!pointers.has(e.pointerId)) {
+        // Hovering: a free world under the pointer is clickable.
+        canvas.style.cursor = pickRef.current && e.pointerType === 'mouse'
+          && freeWorldAt(e.clientX, e.clientY, 16) ? 'pointer' : 'grab';
+        return;
+      }
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       const cam = camRef.current;
       if (!cam) return;
       e.preventDefault();
+      if (pointers.size >= 2) {
+        const d = pinchSpan();
+        if (pinchDist > 0 && d > 0) {
+          userZoomRef.current = Math.max(0.001, Math.min(50, userZoomRef.current * (d / pinchDist)));
+          kick();
+        }
+        pinchDist = d;
+        return;
+      }
       const dx = (e.clientX - lastX) / cam.scale;
       const dy = (e.clientY - lastY) / cam.scale;
+      moved = Math.max(moved, Math.hypot(e.clientX - downX, e.clientY - downY));
       lastX = e.clientX;
       lastY = e.clientY;
       // Drag right → content follows the cursor right → centre moves left.
@@ -361,9 +444,15 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
       draw(cam, canvas.clientWidth, canvas.clientHeight);
     };
     const onPointerUp = (e: PointerEvent) => {
-      dragging = false;
+      const wasTap = e.type === 'pointerup' && pointers.size === 1 && moved < 6;
+      pointers.delete(e.pointerId);
+      pinchDist = 0;
       canvas.style.cursor = 'grab';
       try { canvas.releasePointerCapture(e.pointerId); } catch { /* noop */ }
+      if (wasTap && pickRef.current) {
+        const id = freeWorldAt(e.clientX, e.clientY, e.pointerType === 'mouse' ? 16 : 24);
+        if (id) pickRef.current(id);
+      }
     };
     canvas.style.cursor = 'grab';
     canvas.addEventListener('pointerdown', onPointerDown);
@@ -371,6 +460,7 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
     canvas.addEventListener('pointerup', onPointerUp);
     canvas.addEventListener('pointercancel', onPointerUp);
 
+    kickRef.current = kick;
     kick();
     const ro = new ResizeObserver(kick);
     ro.observe(canvas);
@@ -389,6 +479,9 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [claimsKey, optionsKey, myUserId, focusBodyId, system]);
 
+  // The panel opened, closed or resized: re-frame into the visible stage.
+  useEffect(() => { kickRef.current(); }, [insetRight]);
+
   // PORTAL TO BODY — required, not a nicety.
   //
   // This component is rendered from LobbyView, which lives inside the
@@ -404,16 +497,16 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
   // it here rather than moving the component up to App: `snap` and the
   // player's current pick both live in LobbyView, and lifting them just
   // to reach the DOM root would be a lot of plumbing for a layout fix.
-  return createPortal(
-    <div className="lobby-map-preview" aria-hidden="true">
+  const body = (
+    <div className={`lobby-map-preview ${inline ? 'lobby-map-preview--inline' : ''} ${className ?? ''}`} aria-hidden="true">
       <canvas ref={canvasRef} className="lobby-map-preview__canvas" />
       <div className="lobby-map-preview__legend">
         <span><i className="dot dot--claimable" /> {t('mp.lobbyPreview.claimable')}</span>
         <span><i className="dot dot--mine" /> {t('mp.lobbyPreview.mine')}</span>
         <span><i className="dot dot--other" /> {t('mp.lobbyPreview.taken')}</span>
-        <span className="lobby-map-preview__hint">{t('mp.lobbyPreview.hint')}</span>
+        <span className="lobby-map-preview__hint">{hint ?? t('mp.lobbyPreview.hint')}</span>
       </div>
-    </div>,
-    document.body,
+    </div>
   );
+  return inline ? body : createPortal(body, document.body);
 };

@@ -30,5 +30,13 @@ export function transitHullScale(camScale: number): number {
   const s = Math.max(MIN_CAMERA_SCALE, camScale);
   const t = Math.max(0, Math.min(1,
     Math.log(s / MIN_CAMERA_SCALE) / Math.log(TRANSIT_FULL_CAM_SCALE / MIN_CAMERA_SCALE)));
-  return TRANSIT_SHIP_MIN_SIZE + (1 - TRANSIT_SHIP_MIN_SIZE) * t;
+  return (TRANSIT_SHIP_MIN_SIZE + (1 - TRANSIT_SHIP_MIN_SIZE) * t) * studioHullScale;
+}
+
+/** The Studio's close-up of a battle in flight (its `hulls` step): hulls
+ *  in flight are drawn a fixed size whatever the zoom, so a camera zoom
+ *  never makes them bigger. 1 everywhere else. */
+let studioHullScale = 1;
+export function setStudioHullScale(k: number): void {
+  studioHullScale = k > 0 && Number.isFinite(k) ? k : 1;
 }

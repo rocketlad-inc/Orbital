@@ -92,6 +92,7 @@ export function EndingPreview() {
       data={forced === 'loading' || forced === 'failed' ? null : data}
       onReturn={() => { window.location.assign('/'); }}
       renderFilm={() => <div className="ep-sub" style={{ textAlign: 'center', padding: '32px 0' }}>{t('mp.provider.loadingRenderer')}</div>}
+      shareFilm={async () => ({ url: 'https://orbital-empire.com/film/preview-link' })}
       plug={plug}
     />
   );

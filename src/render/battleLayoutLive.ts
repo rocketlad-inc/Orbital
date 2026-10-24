@@ -19,7 +19,10 @@
 //
 // STICKY. A layout is cached per world on a roster signature, so it is
 // re-solved only when hulls arrive, leave or change fleets; and each
-// unit GLIDES to a new place rather than jumping when that happens.
+// unit GLIDES to a new place rather than jumping when that happens. That
+// re-solve is an EDIT of the layout it replaces (orbitBattleLayout's
+// `prev`): whoever was already here holds their place, and only the
+// newcomers are fitted in.
 //
 // Pure and free of the renderer (sizes come in from the caller), so the
 // map, the tests and the test page share it without an import cycle.
@@ -34,8 +37,6 @@ import {
 export const BATTLE_TURN_MS = 240000;
 /** A station's drawn width at full size (88-unit art x STATION_STRUCTURE_SCALE). */
 export const BATTLE_STATION_PX = 200;
-/** How fast a unit glides to a new place, ms (time constant). */
-const GLIDE_MS = 260;
 /** Sprites grow with the world up to this many times full size, then
  *  hold. Places keep scaling (so the fight stays clear of the disc);
  *  only the hulls stop growing, which can only open space, never close
@@ -58,6 +59,26 @@ const MIN_HIT_R = 12;
  */
 export function battleReferenceRadius(bodyRadius: number): number {
   return Math.max(60, Math.min(320, 95 * Math.sqrt(Math.max(0.05, bodyRadius || 0))));
+}
+
+/** A megastructure is drawn as art capped at this radius, px
+ *  (bodyPresentation ownGlyphRadius, drawMegastructureBody). */
+export const STRUCTURE_DRAWN_MAX_PX = 46;
+
+/**
+ * The reference radius for the world a battle is at. A STRUCTURE IS NOT
+ * A WORLD: its art never draws past STRUCTURE_DRAWN_MAX_PX, so on the
+ * world curve (a 1.6-radius site: 120 px) k never passed 0.38 and every
+ * hull parked at a site was drawn at a third of its size, tucked against
+ * the art (Studio clip "A megastructure completes", 2026-10-23: the
+ * outliner listed TFS FR-01 at the Weapons Station and nothing could be
+ * seen there). Laid out at the art's own full size, hulls at a site are
+ * full size when the site is.
+ */
+export function battleReferenceRadiusOf(body: number | { type?: string; radius: number }): number {
+  if (typeof body === 'number') return battleReferenceRadius(body);
+  if (body.type === 'megastructure') return STRUCTURE_DRAWN_MAX_PX;
+  return battleReferenceRadius(body.radius);
 }
 
 /**
@@ -130,6 +151,10 @@ export interface BattleUnit {
   escortRel?: number[];
   /** A fleet marker: the escort hulls riding in its block. */
   escortIds?: string[];
+  /** Still in flight to this world, landing within a tick or two
+   *  (arrivalApproach.worldRosters). Not part of the roster's signature:
+   *  the same hull parked is the same unit. */
+  arriving?: boolean;
 }
 
 export interface LiveBattle {
@@ -146,6 +171,14 @@ export interface LiveBattle {
   stationId?: string;
   /** Escort hull -> the fleet lead whose block it rides in. */
   leadOf: Map<string, string>;
+  /** Reference px from the world's centre to the outside of the fight:
+   *  the farthest hull's (or block's, or station's) edge. */
+  outerR: number;
+  /** Glides take this many times as long (the match film runs a day a
+   *  second, so its re-slots come far oftener than the live map's and at
+   *  the live pace read as hulls snapping sideways round the world).
+   *  Unset = 1, the live map. */
+  glidePace?: number;
 }
 
 const cache = new Map<string, LiveBattle>();
@@ -183,7 +216,8 @@ export function battleSolves(bodyId: string): number {
 
 export function liveBattleFor(
   bodyId: string,
-  bodyRadius: number,
+  /** The world (its type and true radius), or a bare radius. */
+  bodyRadius: number | { type?: string; radius: number },
   dir: number,
   units: readonly BattleUnit[],
   order: readonly string[],
@@ -198,13 +232,36 @@ export function liveBattleFor(
    *  (drawn on its orbit meanwhile) before gliding into its place. */
   dwell?: { nowMs: number; ms?: number },
 ): LiveBattle {
-  const refR = battleReferenceRadius(bodyRadius);
-  const key = battleKey(refR, dir, units, order, stationId);
+  const refR = battleReferenceRadiusOf(bodyRadius);
   const hit = cache.get(bodyId);
+  // THE WHEEL KEEPS ITS SENSE. The caller takes it from one hull's orbit;
+  // when that hull changes (an arrival sorting first, a landing that
+  // parks it on a new orbit) the sense could flip, and the whole battle
+  // jumped by twice its wheel angle. A world's battle turns the way it
+  // first turned.
+  if (hit) dir = hit.dir;
+  const key = battleKey(refR, dir, units, order, stationId);
   if (hit && hit.key === key) { pending.delete(bodyId); return hit; }
-  if (hit && dwell) {
+  // AN ARRIVAL IS TAKEN IN AT ONCE. A hull still in flight to this world
+  // (BattleUnit.arriving: landing within a tick or two) is a known
+  // newcomer, not fog flicker, and its place is wanted BEFORE it lands
+  // so it can fly into it (arrivalApproach). Waiting out the dwell is
+  // what held every arrival where it flew in and then glided it off
+  // again (strike4 take, 12.6-14.7 s). Only a newcomer skips the wait:
+  // a roster that merely lost someone still dwells, and a hull
+  // flickering out of fog and back finds itself already placed.
+  const newArrival = !!hit && units.some(u => u.arriving && !hit.layout.placements.has(u.id));
+  if (hit && dwell && !newArrival) {
+    // The wait runs from the FIRST change, and the re-solve takes whatever
+    // the roster is by then. Restarted on every change, a battle losing a
+    // hull every tick (ticks under the dwell apart) never re-solved, and
+    // every arrival stayed held where it flew in, nose out at the edge of
+    // the Sun (Lorne, Dyson Sphere clip, 2026-10-23). A hull flickering in
+    // and out of fog still never gets through: each flick back to the
+    // cached roster clears the pending change above.
     const p = pending.get(bodyId);
-    if (!p || p.key !== key) { pending.set(bodyId, { key, since: dwell.nowMs }); return hit; }
+    if (!p) { pending.set(bodyId, { key, since: dwell.nowMs }); return hit; }
+    p.key = key;
     if (dwell.nowMs - p.since < (dwell.ms ?? ROSTER_DWELL_MS)) return hit;
   }
   pending.delete(bodyId);
@@ -225,8 +282,22 @@ export function liveBattleFor(
     seed: seedOf(bodyId) + 1,
     factionOrder: [...order],
     station: stationId ? { id: stationId, clearR: BATTLE_STATION_PX * CLEAR_FRAC } : undefined,
+    // A ROSTER CHANGE IS AN EDIT, NOT A RE-DEAL. Every block already at
+    // the world holds its place (giving ground only where a newcomer needs
+    // it) and newcomers are fitted in around them. Re-solved from scratch,
+    // one block joining the Dyson Sphere fight sent every fleet round the
+    // Sun to a new slot (judges, 2026-10-23, 13.4 s): the shares are dealt
+    // from angle 0 in proportion to who is there, so any change turned
+    // them all.
+    prev: hit && hit.refR === refR ? hit.layout : undefined,
   });
-  const lb: LiveBattle = { bodyId, key, refR, dir, layout, blocks, stationId, leadOf };
+  let outerR = refR;
+  for (const s of ships) {
+    const p = layout.placements.get(s.id);
+    if (p) outerR = Math.max(outerR, p.r + (s.clearR ?? s.size * CLEAR_FRAC));
+  }
+  if (layout.station) outerR = Math.max(outerR, layout.station.r + BATTLE_STATION_PX * CLEAR_FRAC);
+  const lb: LiveBattle = { bodyId, key, refR, dir, layout, blocks, stationId, leadOf, outerR };
   cache.set(bodyId, lb);
   return lb;
 }
@@ -243,17 +314,42 @@ export function battleScale(battle: LiveBattle, drawnRadiusPx: number): number {
 
 // ---------------------------------------------------------------- glide
 
-interface Glide { r: number; t: number; ms: number }
+/** Where a unit is drawn (r, t: reference polar, wheel removed) and the
+ *  move it is making: from (r0, t0) to (r1, t1) over [t0ms, t0ms + dur]. */
+interface Glide {
+  r: number; t: number; ms: number;
+  r0?: number; a0?: number; r1?: number; a1?: number; startMs?: number; dur?: number;
+}
+/** A RE-SLOT IS A TIMED EASE, not a chase. Both chases this replaced
+ *  kicked on their first frame, in proportion to the distance: an
+ *  exponential is fastest at once, and a spring's first push scales with
+ *  the gap, so a fleet re-slotted across the orbit lurched off (the last
+ *  jumps in the Mega Destroyer clip, film --trace). Now every move is a
+ *  quintic ease (smootherstep: zero speed AND zero acceleration at both
+ *  ends) lasting with the distance, BATTLE_GLIDE_MIN_MS to _MAX_MS. */
+export const BATTLE_GLIDE_MIN_MS = 450;
+export const BATTLE_GLIDE_MAX_MS = 1200;
+const smoother = (u: number) => { const k = Math.max(0, Math.min(1, u)); return k * k * k * (k * (k * 6 - 15) + 10); };
+const wrapPi = (a: number) => { let d = a % (Math.PI * 2); if (d > Math.PI) d -= Math.PI * 2; if (d < -Math.PI) d += Math.PI * 2; return d; };
 const glides = new Map<string, Glide>();
 let lastSweep = 0;
+
+/** A glide not advanced for this long is history, not a glide: the hull
+ *  was elsewhere (in flight, folded, an escort in a block) since. Kept for
+ *  up to ten seconds, a hull parked at a world before it launched landed
+ *  back on its pre-launch entry and covered half the gap from THERE in one
+ *  frame (Lorne: ships "jumping around a lot in space"). */
+export const BATTLE_GLIDE_STALE_MS = 400;
+const fresh = (g: { ms: number } | undefined, nowMs: number) =>
+  !!g && nowMs >= g.ms && nowMs - g.ms <= BATTLE_GLIDE_STALE_MS;
 
 /** Start a unit's glide from where it was last drawn (reference polar,
  *  wheel removed), so a hull arriving or re-slotted eases in. */
 export function seedBattleGlide(id: string, r: number, t: number, nowMs: number): void {
-  if (!glides.has(id)) glides.set(id, { r, t, ms: nowMs });
+  if (!fresh(glides.get(id), nowMs)) glides.set(id, { r, t, ms: nowMs });
 }
-export function hasBattleGlide(id: string): boolean {
-  return glides.has(id);
+export function hasBattleGlide(id: string, nowMs?: number): boolean {
+  return nowMs == null ? glides.has(id) : fresh(glides.get(id), nowMs);
 }
 
 /** The wheel's angle at `nowMs`. */
@@ -275,15 +371,19 @@ export function battlePlacement(
     ?? (battle.layout.station && battle.layout.station.id === id ? battle.layout.station : undefined);
   if (!p) return null;
   let g = glides.get(id);
-  if (!g) { g = { r: p.r, t: p.theta, ms: nowMs }; glides.set(id, g); }
-  const dt = Math.max(0, Math.min(200, nowMs - g.ms));
+  if (!g || !fresh(g, nowMs)) { g = { r: p.r, t: p.theta, ms: nowMs }; glides.set(id, g); }
   g.ms = nowMs;
-  const k = 1 - Math.exp(-dt / GLIDE_MS);
-  let dth = (p.theta - g.t) % (Math.PI * 2);
-  if (dth > Math.PI) dth -= Math.PI * 2;
-  if (dth < -Math.PI) dth += Math.PI * 2;
-  g.t += dth * k;
-  g.r += (p.r - g.r) * k;
+  // A new target: start a move from wherever it is drawn now.
+  if (g.r1 === undefined || Math.abs(g.r1 - p.r) > 1e-6 || Math.abs(wrapPi((g.a1 ?? 0) - p.theta)) > 1e-6) {
+    const dAng = Math.abs(wrapPi(p.theta - g.t));
+    const dist = Math.hypot(p.r - g.r, ((g.r + p.r) / 2) * dAng);
+    const dur = (dist < 1e-6 ? 0
+      : Math.min(BATTLE_GLIDE_MAX_MS, BATTLE_GLIDE_MIN_MS + (dist / Math.max(1, p.r)) * 500)) * (battle.glidePace ?? 1);
+    g.r0 = g.r; g.a0 = g.t; g.r1 = p.r; g.a1 = p.theta; g.startMs = nowMs; g.dur = dur;
+  }
+  const u = g.dur ? smoother((nowMs - (g.startMs ?? nowMs)) / g.dur) : 1;
+  g.r = (g.r0 ?? p.r) + (p.r - (g.r0 ?? p.r)) * u;
+  g.t = (g.a0 ?? p.theta) + wrapPi(p.theta - (g.a0 ?? p.theta)) * u;
   if (nowMs - lastSweep > 10000) {
     lastSweep = nowMs;
     for (const [gid, gl] of glides) if (nowMs - gl.ms > 10000) glides.delete(gid);
@@ -305,11 +405,35 @@ export function battlePlacement(
  * the layout no longer uses: a fire or a bolt drawn there floated in
  * empty space (Lorne: "rogue damage effects floating by").
  */
+/** Where a unit is in its world's layout right now, without advancing or
+ *  creating its glide: the glide's current place if it has one, else its
+ *  target. For readers (effects), never for the hull's own draw. */
+export function peekBattlePlacement(
+  battle: LiveBattle, id: string, nowMs: number,
+): { x: number; y: number; theta: number; r: number; heading: number } | null {
+  const p = battle.layout.placements.get(id)
+    ?? (battle.layout.station && battle.layout.station.id === id ? battle.layout.station : undefined);
+  if (!p) return null;
+  const g = glides.get(id);
+  const r = g && fresh(g, nowMs) ? g.r : p.r;
+  const t = g && fresh(g, nowMs) ? g.t : p.theta;
+  const theta = t + battleDrift(battle, nowMs);
+  const jitter = p.heading - (Math.atan2(p.y, p.x) + Math.PI / 2);
+  const heading = theta + (Math.PI / 2) * battle.dir + jitter;
+  return { x: Math.cos(theta) * r, y: Math.sin(theta) * r, theta, r, heading };
+}
+
 export function battleShipOffsetPx(
   battle: LiveBattle, shipId: string, nowMs: number, k: number,
 ): { x: number; y: number } | null {
   const unit = battle.leadOf.get(shipId) ?? shipId;
-  const pl = battlePlacement(battle, unit, nowMs);
+  // READ ONLY. This asked battlePlacement, which CREATES a unit's glide at
+  // its target when it has none; called by the weapon FX before the hull
+  // drew itself, it planted the glide at the destination, the hull's own
+  // draw then found one and never seeded it from where the hull was, and
+  // an arriving hull went straight to its place (the Mega Destroyer
+  // take, 24.5 s).
+  const pl = peekBattlePlacement(battle, unit, nowMs);
   if (!pl) return null;
   let x = pl.x * k, y = pl.y * k;
   const blk = unit === shipId ? battle.blocks.get(unit) : undefined;
@@ -319,6 +443,46 @@ export function battleShipOffsetPx(
     y += (blk.flagX * s + blk.flagY * c) * k;
   }
   return { x, y };
+}
+
+/**
+ * Where a unit's PLACE is now, in SCREEN px from the world's centre at
+ * scale k: its target in the layout with the wheel turned to `nowMs` (and
+ * a fleet's lead ahead of its block's centre), ignoring any glide. Read
+ * only. It is where battlePlacement puts a unit that has arrived, so a
+ * hull still in flight can fly to it (arrivalApproach.steerIntoSlot).
+ */
+export function battleSlotPx(
+  battle: LiveBattle, id: string, nowMs: number, k: number,
+): { x: number; y: number; heading: number; fx: number; fy: number } | null {
+  const p = battle.layout.placements.get(id);
+  if (!p) return null;
+  const theta = p.theta + battleDrift(battle, nowMs);
+  const jitter = p.heading - (Math.atan2(p.y, p.x) + Math.PI / 2);
+  const heading = theta + (Math.PI / 2) * battle.dir + jitter;
+  // (fx, fy): a fleet's lead ahead of the block's centre, which is what
+  // the layout (and its glide) places.
+  let fx = 0, fy = 0;
+  const blk = battle.blocks.get(id);
+  if (blk) {
+    const c = Math.cos(heading), s = Math.sin(heading);
+    fx = (blk.flagX * c - blk.flagY * s) * k;
+    fy = (blk.flagX * s + blk.flagY * c) * k;
+  }
+  return { x: Math.cos(theta) * p.r * k + fx, y: Math.sin(theta) * p.r * k + fy, heading, fx, fy };
+}
+
+/** A unit drawn somewhere of its own this frame (a hull still flying in
+ *  to its place, arrivalApproach): its glide is held there (reference
+ *  polar, wheel removed), so the layout picks it up from where it is. */
+export function holdBattleGlide(id: string, r: number, t: number, nowMs: number): void {
+  glides.set(id, { r, t, ms: nowMs });
+}
+
+/** A CUT (the match film): no hull glides on from a place it held in the
+ *  shot before. The layouts themselves are kept. */
+export function forgetBattleGlides(): void {
+  glides.clear();
 }
 
 /** Test hook: clear every cached battle and glide. */

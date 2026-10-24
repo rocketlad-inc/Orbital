@@ -42,7 +42,8 @@ test('an escort riding with an off-screen flagship takes the flagship’s spot',
   const r = rc();
   drawEscortHull(r, escort('flag-x'), 50, 60, 24, 0);   // any recorded hull will do
   recordShipWorldPosAs('esc-2', 'flag-x');
-  expect(drawnShipWorldPos('esc-2')).toEqual(drawnShipWorldPos('flag-x'));
+  // Same place (each record also carries when it was made).
+  expect(drawnShipWorldPos('esc-2')).toMatchObject({ x: drawnShipWorldPos('flag-x')!.x, y: drawnShipWorldPos('flag-x')!.y });
 });
 
 test('a queued death with no drawn spot looks for the hull the way weapon FX do, before its raw orbit', () => {

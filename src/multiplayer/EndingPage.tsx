@@ -35,6 +35,8 @@ import {
   myStats, peakLeader, Rank, verdictKind, victoryWay, viewerOf,
 } from './endingModel';
 import { EndingChart } from './EndingCharts';
+import { RecapShareBar } from './RecapShare';
+import { useIsMobile } from '../hooks/useIsMobile';
 import {
   COMMISSION_CITY_SKINS, COMMISSION_EMBLEMS, COMMISSION_STATION_SKINS, COMMISSION_STRUCTURE_LOOKS,
 } from './commission';
@@ -76,6 +78,8 @@ export interface EndingPageProps {
   onReturn: () => void;
   /** Renders the match film; omit to hide the button (not offered). */
   renderFilm?: (gameId: string) => React.ReactNode;
+  /** Makes (or hands back) the film's public link; omit to hide Share. */
+  shareFilm?: () => Promise<{ url: string } | { error: 'not_ready' | 'failed' }>;
   /** Present only when the Commission may be shown to this viewer. */
   plug?: EndingPlug | null;
 }
@@ -132,7 +136,7 @@ function SectionHead({ title, sub, id }: { title: string; sub?: string; id: stri
 // The page
 // ---------------------------------------------------------------------------
 
-export function EndingPage({ gameId, meta, status, data, onReturn, renderFilm, plug }: EndingPageProps) {
+export function EndingPage({ gameId, meta, status, data, onReturn, renderFilm, shareFilm, plug }: EndingPageProps) {
   useI18n();
   const rootRef = useRef<HTMLDivElement>(null);
   const headRef = useRef<HTMLHeadingElement>(null);
@@ -186,6 +190,29 @@ export function EndingPage({ gameId, meta, status, data, onReturn, renderFilm, p
 
   const toggleFilm = () => {
     setShowFilm(v => !v);
+  };
+
+  // SHARING THE FILM, as fight clips are shared: the link (its unfurl is
+  // the match's own card, worker/filmShare.js), the phone's share sheet
+  // straight away on a phone, and the share bar to copy it or post it.
+  const mobile = useIsMobile();
+  const [filmLink, setFilmLink] = useState<string | null>(null);
+  const [shareState, setShareState] = useState<'idle' | 'making' | 'not_ready' | 'failed'>('idle');
+  const shareText = t('replay.share.text', { name: (ready && data ? data.game.name : '') || BRAND });
+  const onShareFilm = async () => {
+    if (!shareFilm || shareState === 'making') return;
+    let url = filmLink;
+    if (!url) {
+      setShareState('making');
+      const out = await shareFilm();
+      if ('error' in out) { setShareState(out.error); return; }
+      url = out.url;
+      setFilmLink(url);
+      setShareState('idle');
+    }
+    if (mobile && typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+      try { await navigator.share({ title: shareText, text: shareText, url }); } catch { /* dismissed: the bar stays */ }
+    }
   };
   useEffect(() => {
     if (!showFilm) return;
@@ -297,6 +324,32 @@ export function EndingPage({ gameId, meta, status, data, onReturn, renderFilm, p
           )}
         </header>
 
+        {/* The film is the thing players share: its button sits under the
+            verdict, not below every table (Lorne, 2026-10-23). */}
+        {renderFilm && (
+          <div className="ep-filmbar">
+            <button type="button" className="ep-btn ep-btn--gold" aria-expanded={showFilm} onClick={toggleFilm}>
+              {showFilm ? t('mp.provider.hideFilm') : t('mp.provider.watchFilm')}
+            </button>
+            {shareFilm && (
+              <button type="button" className="ep-btn" onClick={() => { void onShareFilm(); }}
+                disabled={shareState === 'making'}>
+                {shareState === 'making' ? t('replay.share.making') : t('replay.share.button')}
+              </button>
+            )}
+          </div>
+        )}
+        {(shareState === 'not_ready' || shareState === 'failed') && (
+          <div className="ep-sub ep-filmnote" role="status">
+            {t(shareState === 'not_ready' ? 'replay.share.notReady' : 'replay.share.failed')}
+          </div>
+        )}
+        {filmLink && (
+          <div className="ep-filmshare">
+            <RecapShareBar token="" url={filmLink} text={shareText} />
+          </div>
+        )}
+
         {showFilm && renderFilm && (
           <div className="ep-film" ref={filmRef}>{renderFilm(gameId)}</div>
         )}
@@ -370,11 +423,6 @@ export function EndingPage({ gameId, meta, status, data, onReturn, renderFilm, p
 
         {/* ===================== Actions ===================== */}
         <div className="ep-actions">
-          {renderFilm && (
-            <button type="button" className="ep-btn ep-btn--gold" aria-expanded={showFilm} onClick={toggleFilm}>
-              {showFilm ? t('mp.provider.hideFilm') : t('mp.provider.watchFilm')}
-            </button>
-          )}
           <button type="button" className="ep-btn ep-btn--ghost" onClick={onReturn}>{t('mp.provider.returnLobby')}</button>
         </div>
         {ready && (

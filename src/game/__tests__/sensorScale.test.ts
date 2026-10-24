@@ -22,6 +22,7 @@ import {
   SHIP_SENSOR_RANGE, SETTLEMENT_SENSOR_RANGE,
   setSensorScale, sensorScale, shipSensorRange, settlementSensorRangeFor,
 } from '../visibility';
+import { SHIP_RANGE } from '../firingWindows';
 
 const server = fs.readFileSync(
   path.resolve(__dirname, '../../..', 'worker/state.js'), 'utf8',
@@ -112,5 +113,14 @@ describe('the client applies the scale the server hands it', () => {
     // The exact regression, stated in the numbers that made it visible.
     setSensorScale(4);
     expect(settlementSensorRangeFor('station')).toBe(3200);
+  });
+});
+
+// Lorne, 2026-10-23: transit reach went to 360 / 480 / 600, past every
+// warship's sight (300 / 400 / 350), so hulls fired at targets their own
+// sensors could not see. His pick: raise the sensors to match.
+describe('a warship sees at least as far as it shoots in flight', () => {
+  it.each(Object.entries(SHIP_RANGE).filter(([, r]) => r > 0))('%s', (cls, reach) => {
+    expect(SHIP_SENSOR_RANGE[cls]).toBeGreaterThanOrEqual(reach);
   });
 });

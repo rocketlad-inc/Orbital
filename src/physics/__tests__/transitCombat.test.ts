@@ -146,10 +146,15 @@ describe('[pure] exposure — the overlap of the segment with the envelope', () 
   it('a miss is 0', () => {
     expect(exposure(P(0, 50), P(200, 0), 12)).toBe(0);
   });
-  it("a destroyer's window is 20/12 of a corvette's — range buys time, not just permission", () => {
-    const r0 = P(-100, 0), w = P(200, 0);
+  it("a destroyer's window is 5/3 of a corvette's — range buys time, not just permission", () => {
+    const r0 = P(-2000, 0), w = P(4000, 0);
     expect(exposure(r0, w, SHIP_RANGE.destroyer) / exposure(r0, w, SHIP_RANGE.corvette))
-      .toBeCloseTo(20 / 12, 9);
+      .toBeCloseTo(5 / 3, 9);
+  });
+  it('the reach ladder (Lorne, 2026-10-23): 360 / 480 / 600, the Mega Destroyer 600', () => {
+    expect([SHIP_RANGE.corvette, SHIP_RANGE.frigate, SHIP_RANGE.destroyer, SHIP_RANGE.mega_destroyer])
+      .toEqual([360, 480, 600, 600]);
+    expect([SHIP_RANGE.freighter, SHIP_RANGE.colony]).toEqual([0, 0]);
   });
 });
 
@@ -198,10 +203,10 @@ describe('[pure] the design-doc scenario table (corvette → freighter)', () => 
     // 13.26 units covered in the first tick at engine_g 0.05.
     expect(scenario(0, P(0, 0), P(13.26, 0))).toBeCloseTo(63.8, 1);
   });
-  it('at today\'s doubled reach the same parting shot is a full parked shot', () => {
-    // Reach doubled 2026-10-06: 13.26 units no longer leaves a corvette's
-    // envelope inside the tick, so the window is the whole tick.
-    expect(SHIP_RANGE.corvette).toBe(2 * DESIGN_REACH);
+  it('at today\'s reach the same parting shot is a full parked shot', () => {
+    // Since the 2026-10-06 doubling, 13.26 units no longer leaves a
+    // corvette's envelope inside the tick, so the window is the whole tick.
+    expect(SHIP_RANGE.corvette).toBeGreaterThan(13.26);
     expect(scenario(0, P(0, 0), P(13.26, 0), SHIP_RANGE.corvette)).toBeCloseTo(70.5, 1);
   });
   it('beam pass at moon-hop peak is much harder than the old model said', () => {
@@ -241,7 +246,7 @@ describe('[pure] engagement gates', () => {
   const shooter = { p0: P(0, 0), p1: P(0, 0), speed: CORVETTE, shipClass: 'corvette' };
 
   it('out of range: no engagement', () => {
-    const far = { p0: P(50, 0), p1: P(50, 0), speed: FREIGHTER, shipClass: 'freighter' };
+    const far = { p0: P(500, 0), p1: P(500, 0), speed: FREIGHTER, shipClass: 'freighter' };
     expect(engagement(shooter, far).engaged).toBe(false);
   });
   it('no line of sight (R4): no engagement, no roll, nothing to leak', () => {
@@ -254,9 +259,9 @@ describe('[pure] engagement gates', () => {
   });
   it('REGRESSION (the bug that started all this): a hull still at body A deals zero to a ship long departed', () => {
     // The old failure: parent_body_id kept pointing at A during flight,
-    // so hulls at A shot a ship 300 units away. With real positions the
-    // pair is simply out of range.
-    const fled = { p0: P(300, 0), p1: P(340, 0), speed: FREIGHTER, shipClass: 'freighter' };
+    // so hulls at A shot a ship far away. With real positions the pair
+    // is simply out of range (now scaled past the 2026-10-23 reach).
+    const fled = { p0: P(3000, 0), p1: P(3400, 0), speed: FREIGHTER, shipClass: 'freighter' };
     expect(engagement(shooter, fled).engaged).toBe(false);
   });
 });

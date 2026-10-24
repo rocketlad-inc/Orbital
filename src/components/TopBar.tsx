@@ -36,6 +36,7 @@ import { useIsMobile, isInApp } from '../hooks/useIsMobile';
 import { saveTextFile } from '../platform/saveTextFile';
 import { t, tn } from '../i18n/core';
 import { useI18n } from '../i18n/react';
+import { SoloClock } from '../multiplayer/SoloClock';
 
 export type PanelId = 'settlements' | 'fleet' | 'research' | null;
 
@@ -440,7 +441,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       )}
 
       <div className="top-bar__time">
-        <div className={`time-display${tickCountdownLabel != null ? ' time-display--ticking' : ''}`}>
+        <div className={`time-display${tickCountdownLabel != null || gameState.solo?.paused ? ' time-display--ticking' : ''}`}>
           <div className="time-display__label">{t('topbar.tick')}</div>
           <div className="time-display__value">{tickStr}</div>
           {tickCountdownLabel != null && (
@@ -449,7 +450,12 @@ export const TopBar: React.FC<TopBarProps> = ({
               <TickSpeedChip />
             </div>
           )}
+          {/* A paused solo game has no next tick: say so where it was. */}
+          {tickCountdownLabel == null && gameState.solo?.paused && (
+            <div className="time-display__countdown solo-paused">{t('solo.paused')}</div>
+          )}
         </div>
+        {gameState.solo && mpActions?.gameId && <SoloClock gameId={mpActions.gameId} />}
         {!hideSimControls && !turnBasedActive && !mpTbmActive && (
           // Realtime sim controls. Hidden in Turn-Based Mode (replaced
           // below by the single COMMIT TURN button) and in multiplayer

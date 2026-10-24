@@ -113,5 +113,37 @@ const near = { x: hostAt.x + 40, y: hostAt.y };
 r = await flyAt(near, 'near');
 check('a hull in flight inside the reach IS fired on', r.t === seed.id && r.c === TICK, r);
 
+// ---- three targets, three shots (2026-10-23) ----------------------------
+// "It fires on three at once", but the three shots shared ONE roll
+// (rollFor(station, tick)): every tick the station either hit all three
+// hulls or missed all three, so a Weapons Station shot nothing for whole
+// stretches of a raid and then hit everything at once (the weapons-station
+// clip: 16 raiders, damage on the three closest only on lucky ticks). Each
+// shot rolls for itself now. Three identical destroyers parked at the
+// battery's world for 16 ticks: some tick must split them.
+await DB.prepare(`DELETE FROM game_ship_nodes WHERE game_id = ?`).bind(G).run();
+await DB.prepare(`UPDATE game_ships SET status = 'destroyed' WHERE game_id = ?`).bind(G).run();
+const trio = [0, 1, 2].map(i => `${G}:trio_${i}`);
+for (const id of trio) {
+  await DB.prepare(
+    `INSERT INTO game_ships (id, game_id, owner_faction_id, name, ship_class, parent_body_id, orbit_rp, orbit_ra, orbit_omega, orbit_m0,
+       orbit_epoch, orbit_direction, fuel, fuel_max, status, built_at_tick, hp, hp_max, damage_per_tick, icon_variant, home_body_id)
+     VALUES (?, ?, ?, ?, 'destroyer', ?, 3, 3, 0, 0, ?, 1, 100, 100, 'active', 0, 1000000, 1000000, 1, 'A', ?)`,
+  ).bind(id, G, fa.id, id, host.id, TICK, host.id).run();
+}
+const hpOf = async () => Promise.all(trio.map(async id => Number((await DB.prepare('SELECT hp FROM game_ships WHERE id = ?').bind(id).first()).hp)));
+let prev = await hpOf();
+let split = 0, volleys = 0;
+for (let t = TICK + 1; t <= TICK + 16; t++) {
+  await DB.prepare('UPDATE game_megastructures SET hp = 3000 WHERE body_id = ?').bind(batId).run();
+  await room.resolveTick(G, t);
+  const cur = await hpOf();
+  const hit = cur.map((h, i) => h < prev[i] - 1e-6);
+  if (hit.some(Boolean)) volleys++;
+  if (hit.some(Boolean) && !hit.every(Boolean)) split++;
+  prev = cur;
+}
+check('three hulls in reach are three shots: some tick hits one and misses another', split > 0, { split, volleys });
+
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');
 process.exit(failures ? 1 : 0);

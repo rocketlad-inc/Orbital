@@ -19,22 +19,27 @@
 // applies 1:1 (no tween), so a glide is the same in preview and on tape.
 // ============================================================================
 
+import { flushSync } from 'react-dom';
 import type { Body, GameState, Ship } from '../../types';
 import { bodyPosition } from '../../physics/orbitalMechanics';
 import { torchPositionFromSamples } from '../../physics/torchTransfer';
-import { drawnShipWorldPos, torchTrajectorySamples } from '../../render/mapRenderer';
+import { drawnShipWorldPos, forgetDrawnShips, recentDrawnShipWorldPos, torchTrajectorySamples } from '../../render/mapRenderer';
 import { shipWorldPosition } from '../../game/combat';
 import { smoothedTick, setStudioDisplayTick } from '../../render/tickPhase';
 import { setStudioFullVisuals } from '../../render/lightweightMode';
+import { setStudioHullScale } from '../../render/cameraLimits';
+import { setStudioWashScale } from '../../render/mapRenderer';
 import { apiFetch } from '../api';
+import { arcApexScale, arcNeeded, glideProgress, panCamera, strikeTimingWarnings, worldStopsAt } from './shotPlan';
+import { installVirtualClock } from './virtualClock';
 
-export type Target = string; // 'earth' | 'ship:<id>' | 'fleet:<id>' | 'missile:<n>'
+export type Target = string; // 'earth' | 'ship:<id>' | 'fleet:<id>' | 'missile:<n>' | 'site:<kind>' | 'orbit:<world>:<r>:<bearing>' | 'mid:<target>|<target>'
 
 export type ShotStep =
   | { at: number; do: 'focus'; target: Target; px?: number; scale?: number }
-  | { at: number; do: 'pan'; target: Target; ms?: number; px?: number; scale?: number }
+  | { at: number; do: 'pan'; target: Target; ms?: number; px?: number; scale?: number; arc?: boolean; fit?: Target[] }
   | { at: number; do: 'zoom'; px?: number; scale?: number; factor?: number; ms?: number; target?: Target }
-  | { at: number; do: 'follow'; target: Target }
+  | { at: number; do: 'follow'; target: Target; ms?: number }
   | { at: number; do: 'tick'; n?: number }
   | { at: number; do: 'speed'; ms: number }
   | { at: number; do: 'caption'; text: string; color?: string }
@@ -44,7 +49,56 @@ export type ShotStep =
   | { at: number; do: 'click'; selector: string }
   | { at: number; do: 'intercept'; ships: Target; target: Target }
   | { at: number; do: 'strike'; ship: string; ticks?: number }
-  | { at: number; do: 'hull'; ship: string; hp: number };
+  | { at: number; do: 'hull'; ship: string; hp: number }
+  /** A time cut (film only): the map lives `ms` more on its own clock
+   *  with no frames kept, then the shot carries on. Pair it with a focus
+   *  for a cut that lands after an arrival has settled into orbit. */
+  | { at: number; do: 'skip'; ms: number }
+  /** Hulls in flight drawn `scale` times their size (eased over `ms`):
+   *  the close-up a camera zoom cannot give, since they draw a fixed size
+   *  at every zoom. Back to 1 with another step, and at the shot's end. */
+  | { at: number; do: 'hulls'; scale: number; ms?: number }
+  /** The territory wash: 0 hides it, 1 shows it as filmed (eased over
+   *  `ms`). Never hide it in a marketing clip: the wash is the game's
+   *  politics, and Lorne wants it on screen (2026-10-22). */
+  | { at: number; do: 'territory'; show: number; ms?: number }
+  /** Choose, at this moment, which of several squadrons to send: dry-run
+   *  each one's intercept of `target` (its hull `squad` with {b} replaced,
+   *  then _0), take `prefer` when it meets the target at least `within`
+   *  ticks before the target lands, else the earliest meeting. Later
+   *  steps say '@b' for the choice (a body id, and in squad names). */
+  | { at: number; do: 'pick'; from: string[]; squad: string; target: Target; prefer?: string; within?: number }
+  /** THE PLAYER'S HAND, on tape. An arrow glides over `ms` to a ship or
+   *  world (a Target) or to an element ('css:<selector>'), and on arrival
+   *  with `click`: an element is pressed (its real button), and a world
+   *  is shift-clicked, which sends the selected group there (the map's
+   *  own group-move). The arrow is a DOM overlay, so the film captures it. */
+  | { at: number; do: 'cursor'; to: Target; ms?: number; click?: boolean; value?: string }
+  /** Drag the orange selection box across these ships' screen bounds over
+   *  `ms` (the arrow drags its corner), then select them as the group. */
+  | { at: number; do: 'box'; ships: Target[]; ms?: number }
+  /** Select these ships as the group, at once. */
+  | { at: number; do: 'select'; ships: Target[] }
+  /** A server order mid-take (worker/studio.js handleOrder): 'move' a
+   *  parked hull on, or 'gate' it through the sun gate it is parked on
+   *  (the real crossing, with its flash) and `then` on from the far end;
+   *  'found' a megastructure site with a parked colony ship, 'supply' it
+   *  with freighters on a route (then 'site:<kind>' names the site). */
+  | { at: number; do: 'order'; order: Record<string, unknown> }
+  /** Off camera, tick until `ship` is `lead` ticks from landing (or, with
+   *  lead 0 and parked, until it has landed), at most `max` ticks. The
+   *  trip length a shot cannot know in advance (it changes with where the
+   *  worlds are); pair it with a focus and a skip for a clean time cut. */
+  | { at: number; do: 'advance'; ship: Target; lead?: number; max?: number }
+  /** Open one ship's panel (a click on the hull), on `tab` if given
+   *  ('cargo' shows a freighter's hold and its mining run). */
+  | { at: number; do: 'focusShip'; ship: Target; tab?: string }
+  /** Open a world's menu (a click on the world). The menu flies the camera
+   *  itself: hold camera steps while it is open. */
+  | { at: number; do: 'world'; body: Target }
+  /** Fire a window event the game's own UI listens for, e.g.
+   *  'orbital:open-ship-designer' { shipClass: 'destroyer' }. */
+  | { at: number; do: 'event'; name: string; detail?: Record<string, unknown> };
 
 /** The game's panels, by the name the dock and the shell know them by. */
 export type PanelId = 'senate' | 'faction' | 'comms' | 'trades' | 'situation' | 'eventlog' | 'multiplayer'
@@ -90,14 +144,33 @@ export interface DirectorHost {
   /** The same plan without sending it: per hull, when it would depart,
    *  meet the target, and arrive. For choosing a scene's numbers. */
   planIntercept?(shipIds: string[], targetShipId: string): Array<{ ship: string; depart: number; meet: number | null; arrive: number; accel: number } | { ship: string; none: true }>;
+  /** Make these the player's group selection (the box-select's result). */
+  setSelection?(shipIds: string[]): void;
+  /** Open one ship's own panel, as a click on the hull does. */
+  selectShip?(shipId: string): void;
+  /** Open a world's menu, as a click on the world does. */
+  selectBody?(bodyId: string): void;
 }
 
 interface Cam { x: number; y: number; scale: number }
-interface Tween { fromScale: number; toScale: number; fromX: number; fromY: number; t0: number; ms: number; target: Target | null }
+interface Tween {
+  fromScale: number; toScale: number; fromX: number; fromY: number; t0: number; ms: number; target: Target | null;
+  /** A long pan's pull-back (shotPlan.panCamera): the zoom at its top. */
+  arc?: { apex: number } | null;
+  /** A zoom on what the camera already holds: the centre stays on it. */
+  lock?: boolean;
+}
 
 const FORMATS = { '9:16': [1080, 1920], '16:9': [1920, 1080], '1:1': [1080, 1080] } as const;
+/** A camera move this short is a cut, not a glide. */
+const CUT_MS = 40;
+/** At the first frame and every hard cut, the map draws this long (on the
+ *  film's clock, the world held still) before a frame is kept: layout
+ *  glides, presentation fades and the roster's first solve all run on
+ *  that clock, and a frame drawn at once showed parked hulls as dots and
+ *  stations as the blue stand-in sprite (judges 2026-10-23, R1). */
+const CUT_SETTLE_MS = 300;
 const FONT = '"Segoe UI", system-ui, sans-serif';
-const easeInOut = (u: number) => (1 - Math.cos(Math.PI * Math.min(1, Math.max(0, u)))) / 2;
 
 function pickMime(): string | null {
   if (typeof MediaRecorder === 'undefined') return null;
@@ -122,11 +195,23 @@ export class Director {
   private tickSpeedMs: number | null = null;
   private tickWall = new Map<number, number>();
   /** The glide the map draws while filming: from tick `from` (landed at
-   *  film time `at`) to from+1 over `ms`. See smoothTicks(). */
-  private glide: { from: number; at: number; ms: number } | null = null;
+   *  film time `at`) to from+1 over `ms`, easing to rest when `ease` (the
+   *  last tick). See smoothTicks(). */
+  private glide: { from: number; at: number; ms: number; ease?: boolean } | null = null;
   /** How long the NEXT tick to land should glide: the gap to the tick
    *  step after it, so one tick hands over to the next with no stop. */
   private nextGlideMs: number | null = null;
+  /** The next tick to land is the shot's last: its glide comes to rest. */
+  private finalGlide = false;
+  /** The display tick of the map's last draw while filming (the drawn
+   *  hull positions belong to it), or null. */
+  private drawnTick: number | null = null;
+  /** A focus (or an instant pan) since the last kept frame: the next
+   *  frame is a cut, and settles before it is kept. */
+  private cutPending = false;
+  /** Real ms a cut waits for the art it asked for (sprites and globes
+   *  load on the wall clock). */
+  artWaitMs = 1500;
   private realFetch: typeof fetch | null = null;
   /** The last recording, for the Studio bar's download and the CLI's pull. */
   lastBlob: Blob | null = null;
@@ -154,7 +239,19 @@ export class Director {
   }
 
   private body(id: string): Body | undefined {
-    return this.host.state().bodies.find(b => b.id === id);
+    const s = this.host.state();
+    // 'site:<kind>' (or 'site:' for any kind): the construction site a
+    // faction founded most recently. A site founded mid-take (an `order`
+    // step's 'found') has an id the shot cannot know ahead ('mega_<random>').
+    if (id.startsWith('site:')) {
+      const kind = id.slice(5);
+      const site = Object.values(s.megastructures ?? {})
+        .filter(m => !m.ancient && m.foundedByFactionId != null && (!kind || m.kind === kind))
+        .filter(m => s.bodies.some(b => b.id === m.bodyId))
+        .sort((a, b) => b.foundedAtTick - a.foundedAtTick)[0];
+      return site ? s.bodies.find(b => b.id === site.bodyId) : undefined;
+    }
+    return s.bodies.find(b => b.id === id);
   }
 
   /** Ships and fleets carry the game id in front ('<game>:st_fr_0');
@@ -185,10 +282,24 @@ export class Director {
   position(target: Target): { x: number; y: number } | null {
     const s = this.host.state();
     const tick = this.tick();
+    // 'mid:ship:a|ship:b' -- the middle of several targets (a fight between
+    // two groups side by side, framed on neither). Those it cannot find
+    // drop out; null only when none are left.
+    if (target.startsWith('mid:')) {
+      const ps = target.slice(4).split('|').map(t => this.position(t.trim()))
+        .filter((p): p is { x: number; y: number } => !!p);
+      if (!ps.length) return null;
+      return { x: ps.reduce((a, p) => a + p.x, 0) / ps.length, y: ps.reduce((a, p) => a + p.y, 0) / ps.length };
+    }
     if (target.startsWith('ship:')) {
+      // A ship that is gone (destroyed) holds where it was last seen, so a
+      // camera on it, or on a 'mid:' that counts it, does not jump the
+      // frame it dies (judges, Mega Destroyer clip: the whole scene dropped
+      // ~110 px as the Mega was destroyed).
       const ship = this.ship(target.slice(5));
-      if (!ship) return null;
-      return this.shipPos(ship, tick);
+      const p = ship ? this.shipPos(ship, tick) : null;
+      if (p) { this.lastSeen.set(target, p); return p; }
+      return this.lastSeen.get(target) ?? null;
     }
     if (target.startsWith('missile:')) {
       const m = this.missile(Math.max(1, Number(target.slice(8)) || 1));
@@ -199,6 +310,19 @@ export class Director {
       const lead = members.find(x => x.transit) ?? members[0];
       return lead ? this.shipPos(lead, tick) : null;
     }
+    // 'orbit:<world>:<r>:<bearing>' -- the point r map units from a world's
+    // centre, `bearing` degrees from its direction of travel: the geometry
+    // of a 'found' order, so the hand clicks where the site will stand.
+    if (target.startsWith('orbit:')) {
+      const [, w, r, bearing] = target.split(':');
+      const host = this.body(w);
+      if (!host) return null;
+      const at = (t: number) => bodyPosition(host, t, s.bodies);
+      const c = at(tick), p0 = at(tick - 0.01), p1 = at(tick + 0.01);
+      const th = Math.atan2(p1.y - p0.y, p1.x - p0.x) + ((Number(bearing) || 0) * Math.PI) / 180;
+      const d = Number(r) || 0;
+      return { x: c.x + Math.cos(th) * d, y: c.y + Math.sin(th) * d };
+    }
     const b = this.body(target);
     if (!b) return null;
     const p = bodyPosition(b, tick, s.bodies);
@@ -207,7 +331,25 @@ export class Director {
 
   private shipPos(ship: Ship, tick: number): { x: number; y: number } | null {
     const drawn = drawnShipWorldPos(ship.id);
-    if (drawn) return drawn;
+    if (drawn) {
+      // WHERE IT WILL BE DRAWN, not where it was. The camera is placed just
+      // before the map draws at `tick`, and the drawn spot is the last
+      // draw's, a frame behind: the camera trailed its hull by a frame of
+      // motion all shot, and when the world came to rest the frame jumped
+      // that frame's width at once (judges 2026-10-23, seven clips). Carry
+      // the drawn spot (layout and all) by the hull's own motion since.
+      const t0 = this.drawnTick;
+      if (t0 != null && t0 !== tick && recentDrawnShipWorldPos(ship.id, 250)) {
+        const a = this.modelPos(ship, t0), b = this.modelPos(ship, tick);
+        if (a && b) return { x: drawn.x + b.x - a.x, y: drawn.y + b.y - a.y };
+      }
+      return drawn;
+    }
+    return this.modelPos(ship, tick);
+  }
+
+  /** Where a hull is at `tick` by its course or its orbit, before layout. */
+  private modelPos(ship: Ship, tick: number): { x: number; y: number } | null {
     if (ship.transit?.currentTransfer) {
       try {
         const samples = torchTrajectorySamples(ship.transit.currentTransfer, this.host.state().bodies);
@@ -249,14 +391,34 @@ export class Director {
     this.cam.x = p.x; this.cam.y = p.y;
     if (o.scale) this.cam.scale = o.scale;
     else if (o.px) this.cam.scale = this.scaleFor(target, o.px);
+    this.cutPending = true;
     this.push();
   }
 
-  /** Glide to a target over `ms`, then hold on it. */
-  pan(target: Target, o: { ms?: number; px?: number; scale?: number } = {}): void {
-    if (!this.position(target)) { this.note(`pan: no such target ${target}`); return; }
-    const toScale = o.scale ?? (o.px ? this.scaleFor(target, o.px) : this.cam.scale);
-    this.tween = { fromX: this.cam.x, fromY: this.cam.y, fromScale: this.cam.scale, toScale, t0: this.clock, ms: o.ms ?? this.moveMs ?? 2000, target };
+  /** The map canvas's size, the frame a pan has to keep things inside. */
+  private view(): { w: number; h: number } {
+    const c = this.host.mapCanvas();
+    return c && c.width > 0 && c.height > 0 ? { w: c.width, h: c.height } : { w: 1920, h: 1080 };
+  }
+
+  /** Glide to a target over `ms`, then hold on it. When the target starts
+   *  off the frame, the glide pulls back until both ends fit, moves, and
+   *  pushes in again, so the camera never sails through empty space
+   *  (`arc: false` keeps the straight glide). */
+  pan(target: Target, o: { ms?: number; px?: number; scale?: number; arc?: boolean; fit?: Target[] } = {}): void {
+    const p = this.position(target);
+    if (!p) { this.note(`pan: no such target ${target}`); return; }
+    const toScale = o.scale ?? (o.fit ? this.fitScale(o.fit) : o.px ? this.scaleFor(target, o.px) : this.cam.scale);
+    const ms = o.ms ?? this.moveMs ?? 2000;
+    // A pan over a frame or so ('ms': 1) is a cut, and is made as one, so
+    // the frames that settle it see where it lands (eased, its first step
+    // stood at the old view, and the cut settled there).
+    if (ms <= CUT_MS) { this.focus(target, { scale: toScale }); return; }
+    const view = this.view();
+    const arc = o.arc !== false && arcNeeded(this.cam, p.x, p.y, toScale, view)
+      ? { apex: arcApexScale(this.cam, p.x, p.y, toScale, view) }
+      : null;
+    this.tween = { fromX: this.cam.x, fromY: this.cam.y, fromScale: this.cam.scale, toScale, t0: this.clock, ms, target, arc };
     this.hold = target;
   }
 
@@ -264,11 +426,31 @@ export class Director {
   zoom(o: { px?: number; scale?: number; factor?: number; ms?: number; target?: Target }): void {
     const target = o.target ?? this.hold;
     const toScale = o.scale ?? (o.px ? this.scaleFor(target ?? undefined, o.px) : this.cam.scale * (o.factor ?? 1));
-    this.tween = { fromX: this.cam.x, fromY: this.cam.y, fromScale: this.cam.scale, toScale, t0: this.clock, ms: o.ms ?? this.moveMs ?? 1500, target: target ?? null };
+    // Zooming on the ship being followed keeps it centred. Eased from where
+    // the camera was to where the ship is NOW, a fast hull ran ahead of the
+    // ease and out of frame: the Mega Destroyer take's launching guard left
+    // 1.2 s of empty space (2026-10-22).
+    const lock = target != null && target === this.hold;
+    const ms = o.ms ?? this.moveMs ?? 1500;
+    if (ms <= CUT_MS) {
+      this.tween = null;
+      this.cam.scale = toScale;
+      this.cutPending = true;
+      this.push();
+      return;
+    }
+    this.tween = { fromX: this.cam.x, fromY: this.cam.y, fromScale: this.cam.scale, toScale, t0: this.clock, ms, target: target ?? null, lock };
   }
 
-  /** Keep the centre on a moving target from now on. */
-  follow(target: Target): void { this.hold = target; this.tween = null; }
+  /** Keep the centre on a moving target from now on, gliding onto it
+   *  over `ms` (default 500; 0 snaps). Snapping jerked the frame ~350 px
+   *  when a follow began off-centre (judges, round 2). */
+  follow(target: Target, ms = 500): void {
+    this.hold = target;
+    this.tween = ms > 0
+      ? { fromX: this.cam.x, fromY: this.cam.y, fromScale: this.cam.scale, toScale: this.cam.scale, t0: this.clock, ms, target, arc: null }
+      : null;
+  }
 
   /** Hide or show the game's interface around the map. */
   ui(show: boolean): void {
@@ -388,17 +570,34 @@ export class Director {
     const before = this.host.state().currentTick;
     // Bounded: a tick request that never answers froze two takes for an
     // hour. After 30 s, assume the server ticked and wait on the map.
-    const res = await Promise.race([
+    // A RETRY says the tick it advances FROM (`expect`), so a first try
+    // that did go through is a no-op on the server, never a second tick.
+    // The first try does not: the map's tick can lag the server's for a
+    // moment, and a stale `expect` refused a real tick and left a take a
+    // tick behind its script (the strike found the Mega "not arrived").
+    const ask = (expect?: number) => Promise.race([
       apiFetch<{ current_tick: number }>(`/api/admin/studio/games/${this.host.gameId}/tick`, {
-        method: 'POST', body: JSON.stringify({ n }),
+        method: 'POST', body: JSON.stringify(expect == null ? { n } : { n, expect }),
       }),
       realSleep(30_000).then(() => null),
     ]);
+    let res = await ask();
+    // A passing storage fault ("Durable Object storage caused object to be
+    // reset") ended a take at its cut (2026-10-22). Ask again, twice; the
+    // server ticks only from `before` (expect), so a try that did commit is
+    // never ticked again (the map lags the server, so its tick cannot say).
+    for (let i = 0; res && !res.ok && i < 2; i++) {
+      this.note(`tick: ${res.error?.message ?? res.status}; asking again`);
+      await realSleep(3000);
+      if (this.host.state().currentTick > before) { res = null; break; }
+      res = await ask(before);
+    }
     if (res && !res.ok) throw new Error(`tick: ${res.error?.message ?? res.status}`);
     if (!res) this.note(`tick: no answer in 30 s at tick ${before}; waiting on the map`);
     const want = res?.data?.current_tick ?? before + n;
-    const t0 = Date.now();
-    while (this.host.state().currentTick < want && Date.now() - t0 < 90_000) await realSleep(250);
+    // The wall clock: while filming, Date.now is the film's and stands still.
+    const t0 = realNow();
+    while (this.host.state().currentTick < want && realNow() - t0 < 90_000) await realSleep(250);
     return this.host.state().currentTick;
   }
 
@@ -409,24 +608,34 @@ export class Director {
     this.clock += dt;
     const tw = this.tween;
     if (tw) {
-      const u = easeInOut((this.clock - tw.t0) * 1000 / Math.max(1, tw.ms));
+      const u = (this.clock - tw.t0) * 1000 / Math.max(1, tw.ms);
       const dest = tw.target ? this.position(tw.target) : null;
       const tx = dest ? dest.x : tw.fromX, ty = dest ? dest.y : tw.fromY;
-      this.cam.x = tw.fromX + (tx - tw.fromX) * u;
-      this.cam.y = tw.fromY + (ty - tw.fromY) * u;
-      this.cam.scale = Math.exp(Math.log(tw.fromScale) + (Math.log(tw.toScale) - Math.log(tw.fromScale)) * u);
+      const c = panCamera(u, { x: tw.fromX, y: tw.fromY, scale: tw.fromScale }, tx, ty, tw.toScale, tw.arc ?? null);
+      this.cam.x = tw.lock && dest ? dest.x : c.x; this.cam.y = tw.lock && dest ? dest.y : c.y; this.cam.scale = c.scale;
       if (u >= 1) this.tween = null;
     } else if (this.hold) {
       const p = this.position(this.hold);
       if (p) { this.cam.x = p.x; this.cam.y = p.y; }
     }
-    this.push();
+    if (this.hullSize) setStudioHullScale(this.hullSizeNow());
+    if (this.wash) setStudioWashScale(this.washNow());
+    // An open world menu flies the camera itself; pushing ours every frame
+    // would pin it where it was. The next camera step takes it back.
+    if (!this.camFree) this.push();
+    this.drawHand();
   }
 
+  /** Hand the camera to the map, applied before this returns. The map's
+   *  camera is React state: set the plain way it landed on a later task,
+   *  so the map drew a frame (and a whole time cut, which draws in one
+   *  synchronous loop) at the camera before. flushSync commits it now,
+   *  effects and all, so the next draw has it. */
   private push(): void {
-    window.dispatchEvent(new CustomEvent('orbital:studio-camera', {
+    const ev = new CustomEvent('orbital:studio-camera', {
       detail: { x: this.cam.x, y: this.cam.y, scale: this.cam.scale, focusedBodyId: undefined },
-    }));
+    });
+    flushSync(() => { window.dispatchEvent(ev); });
   }
 
   private note(s: string): void { this.log.push(s); if (this.log.length > 200) this.log.shift(); }
@@ -445,49 +654,66 @@ export class Director {
    * worlds keep moving at an even pace through every boundary instead of
    * stopping and jumping. Before the first tick the glide is already
    * under way at the same pace and lands as that tick fires. After the
-   * last tick it glides one more tick at the shot's speed and holds.
+   * last tick it glides one more tick, leaving at the same pace and
+   * slowing to rest on it, and holds: nothing past that tick is known.
    */
   private smoothTicks(shot: Shot, now: () => number): void {
     const ticks = shot.steps.filter(s => s.do === 'tick').map(s => s.at).sort((a, b) => a - b);
     const pace = (ticks.length > 1 ? (ticks[1] - ticks[0]) * 1000 : null) ?? this.tickSpeedMs ?? 2500;
     const startTick = this.host.state().currentTick;
+    this.finalGlide = false;
     if (ticks.length) {
       const firstMs = Math.max(0, ticks[0] * 1000);
       // Phase at the opening frame, so tick 1 lands as the glide ends.
       this.glide = { from: startTick, at: now() - Math.max(0, pace - firstMs), ms: Math.max(firstMs, pace) };
     } else {
-      this.glide = { from: startTick, at: now(), ms: this.tickSpeedMs ?? 2500 };
+      // No ticks at all: the one glide there is comes to rest.
+      this.glide = { from: startTick, at: now(), ms: 2 * (this.tickSpeedMs ?? 2500), ease: true };
     }
     setStudioDisplayTick((ct: number) => {
       const t = now();
       if (!this.glide || ct !== this.glide.from) {
-        this.glide = { from: ct, at: t, ms: this.nextGlideMs ?? this.tickSpeedMs ?? 2500 };
+        if (this.finalGlide) {
+          // The last tick leaves at the pace the glides before it ran at,
+          // and slows to rest on its tick over twice that (shotPlan
+          // glideProgress): clamped at the pace, the world stopped dead.
+          const pace = this.glide && !this.glide.ease ? this.glide.ms : (this.tickSpeedMs ?? 2500);
+          this.glide = { from: ct, at: t, ms: 2 * pace, ease: true };
+        } else {
+          this.glide = { from: ct, at: t, ms: this.nextGlideMs ?? this.tickSpeedMs ?? 2500 };
+        }
       }
-      const u = (t - this.glide.at) / Math.max(1, this.glide.ms);
-      return ct + (u < 0 ? 0 : u > 1 ? 1 : u);
+      return ct + glideProgress(t - this.glide.at, this.glide.ms, !!this.glide.ease);
     });
   }
   private unsmoothTicks(): void {
     setStudioDisplayTick(null);
     this.glide = null;
     this.nextGlideMs = null;
+    this.finalGlide = false;
+    this.drawnTick = null;
   }
 
   /** Fire every step whose time has come. Ticks are awaited: the clock
    *  does not move while the server works. */
   private async fire(steps: ShotStep[], fired: Set<ShotStep>): Promise<void> {
-    for (const st of steps) {
-      if (fired.has(st) || st.at > this.clock + 1e-9) continue;
-      fired.add(st);
+    for (const raw of steps) {
+      if (fired.has(raw) || raw.at > this.clock + 1e-9) continue;
+      fired.add(raw);
+      const st = this.picked && JSON.stringify(raw).includes('@b')
+        ? JSON.parse(JSON.stringify(raw).split('@b').join(this.picked)) as ShotStep
+        : raw;
       if (st.do === 'tick') {
         const gap = Director.gapAfter(steps, st.at);
         this.nextGlideMs = gap != null && gap <= 6 ? gap * 1000 : null;
+        this.finalGlide = gap == null;
       }
+      if (st.do === 'focus' || st.do === 'pan' || st.do === 'zoom' || st.do === 'follow') this.camFree = false;
       switch (st.do) {
         case 'focus': this.focus(st.target, st); break;
         case 'pan': this.pan(st.target, st); break;
         case 'zoom': this.zoom(st); break;
-        case 'follow': this.follow(st.target); break;
+        case 'follow': this.follow(st.target, st.ms ?? 500); break;
         case 'speed': this.speed(st.ms); break;
         case 'ui': this.ui(st.show); break;
         case 'panel': this.panel(st.id); break;
@@ -498,6 +724,41 @@ export class Director {
         case 'hook': this.hook = st.text; break;
         case 'caption': this.caption = { text: st.text, since: this.clock, color: st.color }; break;
         case 'tick': await this.ticks(st.n ?? 1); break;
+        case 'territory':
+          this.wash = { from: this.washNow(), to: Math.max(0, Math.min(1, Number(st.show))), t0: this.clock, ms: st.ms ?? 800 };
+          break;
+        case 'hulls':
+          this.hullSize = { from: this.hullSizeNow(), to: Number(st.scale) > 0 ? Number(st.scale) : 1, t0: this.clock, ms: st.ms ?? 800 };
+          break;
+        case 'pick': this.pick(st); break;
+        case 'cursor': this.hand = { from: this.handAt(), to: st.to, t0: this.clock, ms: st.ms ?? 700, click: !!st.click, done: false, value: st.value }; break;
+        case 'box': this.boxDrag = { ships: st.ships, t0: this.clock, ms: st.ms ?? 900, done: false }; break;
+        case 'select': this.selectShips(st.ships); break;
+        case 'order': await this.order(st.order); break;
+        case 'advance': await this.advance(st.ship, st.lead ?? 2, st.max ?? 80); break;
+        case 'focusShip': {
+          const [id] = this.idsOf(st.ship);
+          if (!id || !this.host.selectShip) { this.note(`focusShip: no ${st.ship}`); break; }
+          this.host.selectShip(id);
+          if (st.tab) {
+            const tab = st.tab;
+            // The panel mounts on the next render; its tab listener with it.
+            realSetTimeout(() => window.dispatchEvent(new CustomEvent('orbital:ship-panel-tab', { detail: { tab } })), 120);
+          }
+          break;
+        }
+        case 'world': {
+          const b = this.body(st.body);
+          if (!b || !this.host.selectBody) { this.note(`world: no ${st.body}`); break; }
+          this.host.selectBody(b.id);
+          this.camFree = true;
+          break;
+        }
+        case 'event': window.dispatchEvent(new CustomEvent(st.name, { detail: st.detail ?? {} })); break;
+        case 'skip':
+          if (this.film) this.skipMs += Math.max(0, Number(st.ms) || 0);
+          else this.note('skip: film only');
+          break;
       }
     }
   }
@@ -525,8 +786,44 @@ export class Director {
 
   cancel(): void { this.cancelFlag = true; }
 
+  /**
+   * What this shot will get wrong in THIS game, before a frame is filmed:
+   * today, a strike step that fires while its Mega Destroyer is still in
+   * flight (the server refuses it, and the clip ends on a world where
+   * nothing happens). Uses the live arrival ticks and the shot's own tick
+   * steps. The CLI prints these before `film` and `record`; a run notes
+   * them in the log.
+   */
+  check(shot: Shot): string[] {
+    const s = this.host.state();
+    const out = strikeTimingWarnings(shot.steps, s.currentTick, (name) => {
+      const ship = this.ship(name.replace(/^ship:/, ''));
+      if (!ship) return undefined;
+      return ship.transit?.currentTransfer?.arriveTick ?? null;
+    });
+    // A still tail: after its last tick the world glides to rest, and a
+    // shot that runs on holds a frozen frame (judges 2026-10-23: the
+    // static endings of seven clips). Only for shots that tick at all.
+    if (shot.steps.some(st => st.do === 'tick')) {
+      const stop = worldStopsAt(shot.steps, shot.speed ?? (shot.tempo === 'fast' ? 900 : 2500));
+      if (shot.seconds - stop > 0.5) {
+        out.push(`the world comes to rest at ${stop.toFixed(1)}s (the last tick's glide) and the shot holds still to ${shot.seconds}s: end it there, or tick again`);
+      }
+    }
+    return out;
+  }
+
   private begin(shot: Shot): void {
+    for (const w of this.check(shot)) this.note(`check: ${w}`);
     this.clock = 0; this.tween = null; this.hold = null; this.caption = null;
+    this.hullSize = null; setStudioHullScale(1);
+    this.wash = null; setStudioWashScale(null);
+    this.lastSeen.clear();
+    this.picked = null;
+    this.camFree = false;
+    this.cutPending = false;
+    this.drawnTick = null;
+    this.dropHand();
     this.hook = shot.hook ?? null; this.progress = 0; this.result = null;
     // Every effect, every frame: lightweight mode (a phone's or the
     // server's choice) freezes animation and caps the map at 15fps.
@@ -540,6 +837,10 @@ export class Director {
   private end(): void {
     this.running = false;
     this.unsmoothTicks();
+    this.hullSize = null; setStudioHullScale(1);
+    this.wash = null; setStudioWashScale(null);
+    this.lastSeen.clear();
+    this.dropHand();
     this.moveMs = null;
     this.seenMissiles = [];
     this.speed(null);
@@ -601,13 +902,14 @@ export class Director {
         if (this.cancelFlag) break;
         const inShot = k < total - endFrames;
         if (inShot) {
-          // Ticks wait on the server in real time; the virtual clock holds.
-          await vclock.real(() => this.fire(shot.steps, fired));
-          this.step(1 / fps);
-          await vclock.real(() => realSleep(0));   // let React commit the camera
+          // Ticks wait on the server in real time; the film's clock holds.
+          await this.fire(shot.steps, fired);
+          this.cutPending = false;   // record keeps every frame as it comes
+          await this.frame(vclock, frameMs, draw, 1 / fps);
+        } else {
+          this.stats.rafRuns += vclock.advance(frameMs, !!draw);
+          if (draw) { draw(1); this.stats.draws++; }
         }
-        this.stats.rafRuns += vclock.advance(frameMs, !draw);   // time moves; the loop draws only without the hook
-        if (draw) { draw(1); this.stats.draws++; }
         const map = this.host.mapCanvas();
         if (map) {
           pg.drawImage(map, 0, 0, 48, 48);
@@ -623,14 +925,14 @@ export class Director {
         const on = vclock.realNow();
         track.requestFrame?.();
         const hold = Math.max(4, (k + 1) * frameMs - recorded);
-        await vclock.real(() => realSleep(hold));
+        await realSleep(hold);
         rec.pause();
         recorded += vclock.realNow() - on;
         this.progress = (k + 1) / total;
       }
       rec.resume();
       rec.stop();
-      await vclock.real(() => stopped);
+      await stopped;
     } finally {
       vclock.uninstall();
       track.stop();
@@ -655,6 +957,305 @@ export class Director {
   // (cinema mode hides the interface), with no overlays of any kind.
 
   private film: { vclock: ReturnType<typeof installVirtualClock>; shot: Shot; fired: Set<ShotStep>; k: number; total: number; draw?: (n?: number) => number } | null = null;
+  /** The 'territory' step: the wash's strength, eased from -> to. */
+  private wash: { from: number; to: number; t0: number; ms: number } | null = null;
+  private washNow(): number {
+    const w = this.wash;
+    if (!w) return 1;
+    if (w.ms <= 1) return w.to;
+    const u = Math.max(0, Math.min(1, (this.clock - w.t0) * 1000 / Math.max(1, w.ms)));
+    return w.from + (w.to - w.from) * u * u * (3 - 2 * u);
+  }
+  // ---------- the player's hand (cursor, box, select) ----------
+
+  private hand: { from: { x: number; y: number }; to: Target; t0: number; ms: number; click: boolean; done: boolean; value?: string } | null = null;
+  private handPos: { x: number; y: number } | null = null;
+  private clickAt: { x: number; y: number; t: number } | null = null;
+  private boxDrag: { ships: Target[]; t0: number; ms: number; done: boolean } | null = null;
+  private handEls: { arrow: HTMLDivElement; ripple: HTMLDivElement; box: HTMLDivElement } | null = null;
+
+  /** A world point on the page (CSS px), as the map draws it this frame. */
+  private toPage(p: { x: number; y: number }): { x: number; y: number } | null {
+    const c = this.host.mapCanvas();
+    if (!c || !(c.width > 0)) return null;
+    const r = c.getBoundingClientRect();
+    const cx = c.width / 2 + (p.x - this.cam.x) * this.cam.scale;
+    const cy = c.height / 2 + (p.y - this.cam.y) * this.cam.scale;
+    return { x: r.left + cx * (r.width / c.width), y: r.top + cy * (r.height / c.height) };
+  }
+  /** Where a cursor target is on the page now. */
+  /** The zoom at which these targets, as they stand now, fill about half
+   *  the frame: two moons a shot moves between, wherever they are. */
+  private fitScale(targets: Target[]): number {
+    const ps = targets.map(t => this.position(t)).filter((p): p is { x: number; y: number } => !!p);
+    if (ps.length < 2) return this.cam.scale;
+    const dx = Math.max(...ps.map(p => p.x)) - Math.min(...ps.map(p => p.x));
+    const dy = Math.max(...ps.map(p => p.y)) - Math.min(...ps.map(p => p.y));
+    const v = this.view();
+    const s = Math.min((v.w * 0.5) / Math.max(dx, 1e-6), (v.h * 0.5) / Math.max(dy, 1e-6));
+    return Math.max(0.0006, Math.min(60, s));
+  }
+  private pagePoint(to: Target): { x: number; y: number } | null {
+    // Out of frame, bottom right: where the hand goes when it is done.
+    if (to === 'off') return { x: window.innerWidth + 60, y: window.innerHeight + 60 };
+    if (to.startsWith('css:')) {
+      const el = document.querySelector<HTMLElement>(to.slice(4));
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    }
+    const p = this.position(to);
+    return p ? this.toPage(p) : null;
+  }
+  private handAt(): { x: number; y: number } {
+    if (this.handPos) return this.handPos;
+    const v = this.view();
+    return { x: v.w * 0.62, y: v.h * 0.78 };
+  }
+  private selectShips(ships: Target[]): void {
+    const ids = ships.flatMap(t => this.idsOf(t));
+    if (!this.host.setSelection) { this.note('select: host has no selection'); return; }
+    this.host.setSelection(ids);
+  }
+  /** The overlay elements, made once per shot. */
+  private els(): { arrow: HTMLDivElement; ripple: HTMLDivElement; box: HTMLDivElement } {
+    if (this.handEls) return this.handEls;
+    const mk = (css: string) => { const d = document.createElement('div'); d.style.cssText = css; document.body.appendChild(d); return d; };
+    const arrow = mk('position:fixed;left:0;top:0;width:26px;height:26px;pointer-events:none;z-index:100000;display:none;');
+    arrow.innerHTML = '<svg width="26" height="26" viewBox="0 0 26 26"><path d="M3 2 L3 21 L8.2 16.4 L11.6 24 L15 22.5 L11.7 15 L18.6 15 Z" fill="#fff" stroke="#0b1018" stroke-width="1.6" stroke-linejoin="round"/></svg>';
+    const ripple = mk('position:fixed;left:0;top:0;width:0;height:0;border:2px solid #ffb84d;border-radius:50%;pointer-events:none;z-index:99999;display:none;');
+    const box = mk('position:fixed;left:0;top:0;width:0;height:0;border:1px solid #ffb84d;background:rgba(255,184,77,0.10);pointer-events:none;z-index:99998;display:none;');
+    this.handEls = { arrow, ripple, box };
+    return this.handEls;
+  }
+  private dropHand(): void {
+    if (this.handEls) for (const e of Object.values(this.handEls)) e.remove();
+    this.handEls = null; this.hand = null; this.handPos = null; this.clickAt = null; this.boxDrag = null;
+  }
+  /** Move the arrow, drag the box, land the clicks: once a frame. */
+  private drawHand(): void {
+    if (!this.hand && !this.boxDrag && !this.handPos) return;
+    const e = this.els();
+    const ease = (u: number) => { const k = Math.max(0, Math.min(1, u)); return k * k * (3 - 2 * k); };
+    // The box: corner to corner across the ships' screen bounds, the arrow on its moving corner.
+    const bd = this.boxDrag;
+    if (bd) {
+      const pts = bd.ships.flatMap(t => this.idsOf(t)).map(id => this.position(`ship:${id}`))
+        .filter((p): p is { x: number; y: number } => !!p)
+        .map(p => this.toPage(p)).filter((p): p is { x: number; y: number } => !!p);
+      if (pts.length) {
+        const pad = 34;
+        const x0 = Math.min(...pts.map(p => p.x)) - pad, y0 = Math.min(...pts.map(p => p.y)) - pad;
+        const x1 = Math.max(...pts.map(p => p.x)) + pad, y1 = Math.max(...pts.map(p => p.y)) + pad;
+        const u = ease((this.clock - bd.t0) * 1000 / Math.max(1, bd.ms));
+        const cx = x0 + (x1 - x0) * u, cy = y0 + (y1 - y0) * u;
+        if (!bd.done) {
+          e.box.style.display = 'block';
+          e.box.style.left = `${x0}px`; e.box.style.top = `${y0}px`;
+          e.box.style.width = `${cx - x0}px`; e.box.style.height = `${cy - y0}px`;
+          this.handPos = { x: cx, y: cy };
+        }
+        if (u >= 1 && !bd.done) { bd.done = true; this.selectShips(bd.ships); }
+      }
+      if (bd.done && (this.clock - bd.t0) * 1000 > bd.ms + 160) { e.box.style.display = 'none'; this.boxDrag = null; }
+    }
+    // The arrow: glide to its target (which may be moving), click on arrival.
+    const h = this.hand;
+    if (h) {
+      const dest = this.pagePoint(h.to) ?? h.from;
+      const u = ease((this.clock - h.t0) * 1000 / Math.max(1, h.ms));
+      this.handPos = { x: h.from.x + (dest.x - h.from.x) * u, y: h.from.y + (dest.y - h.from.y) * u };
+      if (u >= 1 && !h.done) {
+        h.done = true;
+        // A value: pick that option in the <select> it arrived on, the way
+        // a player's pick does (a change event; React's onChange hears it),
+        // e.g. the group bar's "Transfer to" before its SEND.
+        if (h.value != null && h.to.startsWith('css:')) {
+          const sel = document.querySelector<HTMLSelectElement>(h.to.slice(4));
+          if (sel && [...sel.options].some(o => o.value === h.value)) {
+            this.clickAt = { ...this.handPos, t: this.clock };
+            sel.value = h.value;
+            sel.dispatchEvent(new Event('change', { bubbles: true }));
+          } else this.note(`cursor: no option ${h.value} at ${h.to}`);
+        }
+        if (h.click) {
+          this.clickAt = { ...this.handPos, t: this.clock };
+          if (h.to.startsWith('css:')) {
+            const el = document.querySelector<HTMLElement>(h.to.slice(4));
+            if (el) el.click(); else this.note(`cursor: nothing at ${h.to}`);
+          } else if (h.to.startsWith('orbit:') || h.to.startsWith('ship:')) {
+            // A point in space, or a hull: the click is the ripple alone.
+            // The act it stands for is the step beside it (an 'order'
+            // found at the same point, a 'focusShip').
+          } else {
+            const b = this.body(h.to);
+            if (b) window.dispatchEvent(new CustomEvent('orbital:group-move', { detail: { bodyId: b.id } }));
+            else this.note(`cursor: ${h.to} is not a world to send the group to`);
+          }
+        }
+      }
+      if (h.done) this.hand = null;
+    }
+    const at = this.handPos;
+    if (at) { e.arrow.style.display = 'block'; e.arrow.style.transform = `translate(${at.x - 3}px, ${at.y - 2}px)`; }
+    // The click: a ring that opens and fades.
+    const ck = this.clickAt;
+    if (ck) {
+      const k = (this.clock - ck.t) / 0.45;
+      if (k >= 1) { e.ripple.style.display = 'none'; this.clickAt = null; }
+      else {
+        const r = 8 + 26 * k;
+        e.ripple.style.display = 'block';
+        e.ripple.style.opacity = String(1 - k);
+        e.ripple.style.left = `${ck.x - r}px`; e.ripple.style.top = `${ck.y - r}px`;
+        e.ripple.style.width = `${2 * r}px`; e.ripple.style.height = `${2 * r}px`;
+      }
+    }
+  }
+
+  private async advance(target: Target, lead: number, max: number): Promise<void> {
+    let n = 0;
+    for (; n < max; n++) {
+      const [id] = this.idsOf(target);
+      const ship = id ? this.host.state().ships.find(s => s.id === id) : undefined;
+      if (!ship) break;
+      const tr = ship.transit?.currentTransfer;
+      const now = this.host.state().currentTick;
+      // In flight: stop `lead` ticks out. Parked: stop at once for lead 0
+      // (it has landed); otherwise it has yet to leave, so keep going.
+      if (tr ? tr.arriveTick - now <= lead : lead <= 0) break;
+      // As many ticks as are surely needed in one request (the server runs
+      // up to 12): one at a time, a 35-tick cut outlived the film's frame.
+      const k = tr ? Math.max(1, Math.min(12, tr.arriveTick - now - lead, max - n)) : 1;
+      await this.ticks(k);
+      n += k - 1;
+    }
+    this.note(`advance: ${n} ticks, now tick ${this.host.state().currentTick}`);
+  }
+
+  private async order(o: Record<string, unknown>): Promise<void> {
+    const res = await apiFetch<Record<string, unknown>>(`/api/admin/studio/games/${this.host.gameId}/order`, {
+      method: 'POST', body: JSON.stringify(o),
+    });
+    this.note(res.ok ? `order: ${JSON.stringify(res.data)}` : `order ${String(o.type)}: ${res.error?.message ?? res.status}`);
+    if (!res.ok) return;
+    // ON THIS FRAME, not at the next tick: fetch the state the order made
+    // (the server bumps its version) and hold the clock until the map has
+    // it, so a founded site appears, and its colony ship goes, where the
+    // order is in the shot. Bounded by the wall clock; the poll would
+    // bring it within a couple of seconds anyway.
+    const before = this.host.state();
+    // A founding is in when its colony ship has gone from the map.
+    const landed = () => this.host.state() !== before
+      && (o.type !== 'found' || !this.ship(String(o.ship)));
+    window.dispatchEvent(new CustomEvent('orbital:refresh-state'));
+    const t0 = realNow();
+    while (!landed() && realNow() - t0 < 5000) await realSleep(50);
+  }
+
+  /** The 'pick' step's choice, substituted for '@b' in later steps. */
+  private picked: string | null = null;
+  private pick(st: Extract<ShotStep, { do: 'pick' }>): void {
+    const [targetId] = this.idsOf(st.target);
+    const target = targetId ? this.host.state().ships.find(s => s.id === targetId) : undefined;
+    const lands = target?.transit?.currentTransfer?.arriveTick ?? Infinity;
+    const meets: Record<string, number> = {};
+    for (const b of st.from) {
+      const p = this.interceptPlan(`ship:${st.squad.split('{b}').join(b)}_0`, st.target) as Array<{ meet?: number | null }>;
+      meets[b] = p?.[0]?.meet ?? lands;
+    }
+    let best = st.prefer && st.prefer in meets && meets[st.prefer] <= lands - (st.within ?? 0) ? st.prefer : null;
+    if (!best) for (const b of st.from) if (best == null || meets[b] < meets[best]) best = b;
+    this.picked = best ?? st.from[0] ?? null;
+    this.note(`pick: ${this.picked} (meets ${Object.entries(meets).map(([b, m]) => `${b} ${m.toFixed(2)}`).join(', ')}; lands ${lands})`);
+  }
+  /** The camera is the game's own (an open world menu drives it). */
+  private camFree = false;
+  /** Where each 'ship:' target was last seen, for when it is gone. */
+  private lastSeen = new Map<string, { x: number; y: number }>();
+  /** Map time still to run off camera (a 'skip' step). */
+  private skipMs = 0;
+  /** The 'hulls' close-up: in-flight hull size, eased from -> to. */
+  private hullSize: { from: number; to: number; t0: number; ms: number } | null = null;
+  private hullSizeNow(): number {
+    const h = this.hullSize;
+    if (!h) return 1;
+    // Instant (ms <= 1) means now, even inside a skip, where the shot's
+    // clock stands still and an ease would only start after the cut.
+    if (h.ms <= 1) return h.to;
+    const u =Math.max(0, Math.min(1, (this.clock - h.t0) * 1000 / Math.max(1, h.ms)));
+    const e = u * u * (3 - 2 * u);
+    return h.from + (h.to - h.from) * e;
+  }
+
+  /**
+   * One frame on the film's clock. Time moves first (the interface's own
+   * frame callbacks run), THEN the camera is placed, at the moment the map
+   * is about to be drawn at: placed before the clock moved, it was a frame
+   * behind the world all shot, and jumped that frame's width when the
+   * world came to rest (judges 2026-10-23, seven clips). Without the
+   * map's draw hook the map draws inside advance(), so the camera goes
+   * first there.
+   */
+  private async frame(vclock: ReturnType<typeof installVirtualClock>, frameMs: number, draw: ((n?: number) => number) | undefined, dt: number): Promise<void> {
+    if (!draw) {
+      this.step(dt);
+      await realSleep(0);
+      this.stats.rafRuns += vclock.advance(frameMs, false);
+      return;
+    }
+    this.stats.rafRuns += vclock.advance(frameMs, true);
+    this.step(dt);
+    await realSleep(0);   // the interface catches up (the camera is already applied)
+    draw(1);
+    this.drew();
+    this.stats.draws++;
+  }
+
+  /** After a draw: the tick it drew at, which the drawn hulls belong to. */
+  private drew(): void {
+    this.drawnTick = this.tick();
+  }
+
+  /**
+   * A CUT: the first frame, a time cut (`skip`), or a hard cut (a focus,
+   * a pan or zoom with no time to it). The map draws on through the
+   * skipped time, or CUT_SETTLE_MS at least for a hard cut, with nothing
+   * kept, so dwells, glides and fades run their course at the new view.
+   * The shot's own clock does not move, so the steps after it keep their
+   * times, and the tick glide stands still: a cut lands on the moment it
+   * cut to (run on, the glide finished inside the skip and motion froze
+   * after the cut until the next tick).
+   *
+   * What each hull was drawn at before the cut is forgotten first. The
+   * map's continuity guard otherwise read an `advance` (ten ticks in one
+   * request) as a teleport and slid the hull back across 22,000 px through
+   * the skip; the slide was still running on the kept frame, and the
+   * followed freighter was off screen for a frame or two (judges
+   * 2026-10-23, the mining run at 2.60 s and 9.00 s).
+   *
+   * Then it waits for the art: sprites and globes load on the wall clock,
+   * and are asked for on the first draw at the new view, so frame 0 showed
+   * stand-ins (a dot for a hull, the blue sprite for a station). That wait
+   * used to come before any draw at the new view: the camera had not been
+   * applied yet (see push), so the art was asked for after it.
+   */
+  private async cut(vclock: ReturnType<typeof installVirtualClock>, frameMs: number, draw: ((n?: number) => number) | undefined, hard: boolean): Promise<void> {
+    const settle = Math.max(this.skipMs, hard ? CUT_SETTLE_MS : 0);
+    this.skipMs = 0;
+    this.cutPending = false;
+    forgetDrawnShips();
+    this.drawnTick = null;
+    for (let left = settle; left > 0; left -= frameMs) {
+      this.stats.rafRuns += vclock.advance(frameMs, !!draw);
+      if (this.glide) this.glide.at += frameMs;
+      this.step(0);
+      await realSleep(0);
+      if (draw) { draw(1); this.drew(); }
+    }
+    await realSleep(this.artWaitMs);
+    if (draw) { draw(1); this.drew(); }
+  }
 
   /** Start a stepped shot. Returns the frame count. */
   openFilm(shot: Shot): number {
@@ -676,11 +1277,18 @@ export class Director {
     const f = this.film;
     if (!f) throw new Error('openFilm first');
     const fps = f.shot.fps ?? 30;
-    await f.vclock.real(() => this.fire(f.shot.steps, f.fired));
-    this.step(1 / fps);
-    await f.vclock.real(() => realSleep(0));
-    this.stats.rafRuns += f.vclock.advance(1000 / fps, !f.draw);
-    if (f.draw) { f.draw(1); this.stats.draws++; }
+    const frameMs = 1000 / fps;
+    // NOT inside vclock.real(): that turns the PAGE's clock to the wall
+    // clock too, and React's renders and effects run while the director
+    // waits. The world menu's fade-in stamped its start on the wall clock,
+    // seconds ahead of the film's, and stayed hidden until the film caught
+    // up: 2.2 s late in "building on a world" (judges 2026-10-23). The
+    // director's own waits read the wall clock themselves (realNow).
+    await this.fire(f.shot.steps, f.fired);
+    if (f.k === 0 || this.skipMs > 0 || this.cutPending) {
+      await this.cut(f.vclock, frameMs, f.draw, f.k === 0 || this.cutPending);
+    }
+    await this.frame(f.vclock, frameMs, f.draw, 1 / fps);
     this.stats.frames++;
     f.k++;
     this.progress = f.k / f.total;
@@ -796,7 +1404,11 @@ export class Director {
       if (!(Number(st.at) >= 0)) out.push(`steps[${i}].at must be >= 0 seconds`);
       const needsTarget = st.do === 'focus' || st.do === 'pan' || st.do === 'follow';
       if (needsTarget && typeof (st as { target?: unknown }).target !== 'string') out.push(`steps[${i}] needs a target`);
-      if (!['focus', 'pan', 'zoom', 'follow', 'tick', 'speed', 'caption', 'hook', 'ui'].includes(st.do)) out.push(`steps[${i}].do '${st.do}' is not a verb`);
+      if (!VERBS.includes(st.do)) out.push(`steps[${i}].do '${st.do}' is not a verb`);
+      if (st.do === 'pan' && st.arc !== undefined && typeof st.arc !== 'boolean') out.push(`steps[${i}].arc must be true or false`);
+      if ((st.do === 'strike' || st.do === 'hull') && typeof (st as { ship?: unknown }).ship !== 'string') out.push(`steps[${i}] needs a ship`);
+      if (st.do === 'intercept' && (typeof st.ships !== 'string' || typeof st.target !== 'string')) out.push(`steps[${i}] needs ships and a target`);
+      if (st.do === 'hulls' && !(Number(st.scale) > 0)) out.push(`steps[${i}].scale must be > 0`);
     });
     return out;
   }
@@ -804,8 +1416,15 @@ export class Director {
 
 // ---------- helpers ----------
 
+/** Every verb a shot step can use (ShotStep). The Studio bar refuses a
+ *  shot lint flags, so a verb missing here is a verb nobody can use. */
+const VERBS: readonly string[] = ['focus', 'pan', 'zoom', 'follow', 'tick', 'speed', 'caption', 'hook', 'ui',
+  'panel', 'click', 'intercept', 'strike', 'hull', 'skip', 'hulls', 'territory', 'pick', 'cursor', 'box', 'select', 'order', 'advance', 'focusShip', 'world', 'event'];
+
 const realSetTimeout = window.setTimeout.bind(window);
 const realSleep = (ms: number) => new Promise<void>(r => realSetTimeout(r, ms));
+/** The wall clock, captured before any film clock replaces performance.now. */
+const realNow = performance.now.bind(performance);
 
 function wrap(g: CanvasRenderingContext2D, text: string, maxW: number): string[] {
   const lines: string[] = []; let line = '';
@@ -822,50 +1441,3 @@ function roundRect(g: CanvasRenderingContext2D, x: number, y: number, w: number,
   g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath();
 }
 
-/**
- * A clock only the caller advances. Date.now, performance.now and
- * requestAnimationFrame are swapped for the recording; `advance(ms)` moves
- * time and runs the frame callbacks that were waiting, which is how the
- * map draws exactly one frame per call. `real(fn)` runs fn against the
- * wall clock (server waits, the recorder's own hold timers).
- */
-function installVirtualClock() {
-  const D = Date.now, P = performance.now.bind(performance);
-  const RAF = window.requestAnimationFrame, CAF = window.cancelAnimationFrame;
-  const baseD = D(), baseP = P();
-  let v = 0;
-  let queue: Array<{ id: number; cb: FrameRequestCallback }> = [];
-  let nextId = 1;
-  let inReal = 0;
-  const vNow = () => baseD + v;
-  Date.now = () => (inReal ? D() : vNow());
-  performance.now = () => (inReal ? P() : baseP + v);
-  window.requestAnimationFrame = (cb: FrameRequestCallback) => { const id = nextId++; queue.push({ id, cb }); return id; };
-  window.cancelAnimationFrame = (id: number) => { queue = queue.filter(q => q.id !== id); };
-  return {
-    /** Move time by `ms`. With `runCallbacks` the waiting frame callbacks
-     *  run (the map's loop draws); without it they stay queued for the
-     *  next call, or for uninstall. Returns how many ran. */
-    advance(ms: number, runCallbacks = true): number {
-      v += ms;
-      if (!runCallbacks) return 0;
-      const cbs = queue; queue = [];
-      for (const q of cbs) { try { q.cb(baseP + v); } catch (e) { console.error(e); } }
-      return cbs.length;
-    },
-    async real<T>(fn: () => Promise<T> | T): Promise<T> {
-      inReal++;
-      try { return await fn(); } finally { inReal--; }
-    },
-    realNow: () => P(),
-    /** The film's clock, even inside real(): what a frame is drawn at. */
-    virtualNow: () => vNow(),
-    uninstall() {
-      Date.now = D; performance.now = P;
-      window.requestAnimationFrame = RAF; window.cancelAnimationFrame = CAF;
-      // Hand the map's loop back to the real clock.
-      const cbs = queue; queue = [];
-      for (const q of cbs) RAF(q.cb);
-    },
-  };
-}

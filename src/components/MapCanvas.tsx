@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useCallback, useState, useMemo } from 'react';
-import { spawnKaijuStrike, spawnKaijuDeath, drawKaijuFx, isKaijuShipId } from '../render/kaijuFx';
+import { spawnKaijuStrike, spawnKaijuDeath, drawKaijuFx, drawKaijuShards, isKaijuShipId } from '../render/kaijuFx';
+import { ramApproachDir, impactPoint } from '../render/asteroidRam';
 import { refitStatus } from '../game/refitStatus';
 import { routeForShip } from '../game/routeSelectors';
 import {
@@ -7,6 +8,7 @@ import {
   takeRouteFit, fitToPoints, offerPickCluster,
 } from '../game/routePick/store';
 import { perf } from '../multiplayer/PerfHud';
+import { studioHeldFrame } from '../multiplayer/studio/heldFrames';
 import { requestLabel, flushLabels, reserveBox, reserveRect, resetReservations, setKeepOutDiscs } from '../render/labelLayer';
 import { smoothedTick, shipDisplayTick } from '../render/tickPhase';
 import { useGameContext } from '../state/gameContext';
@@ -40,6 +42,18 @@ import {
   systemOpenness,
   drawFogOfWarOverlay,
   drawDestructionFlashes,
+  drawnShipLook,
+  glideLayout,
+  seedSettleGlide,
+  recentDrawnShipWorldPos,
+  settleTransitLayout,
+  approachWorlds,
+  battleUnitsFor,
+  flightReachPx,
+  transitHitWorldPos,
+  noteEmergence,
+  drawnShipsSince,
+  drawnThrust,
   generateStarfield,
   drawStarfield,
   StarfieldCache,
@@ -60,6 +74,8 @@ import {
   torchTrajectorySamples,
   computeTransitFormations,
   placeInFormation,
+  computeTransitCompany,
+  placeInCompany,
   drawTransitRangeRing,
   drawInterceptMarkersLayer,
   clipSegmentToRect,
@@ -79,7 +95,7 @@ import { BUILDING_DEFS, buildingLevel } from '../game/settlements';
 import { boxSingleTarget, cyclePick, orderPickHits } from '../render/mapPick';
 import type { PickHit } from '../render/mapPick';
 import { releaseFocusPosition } from '../game/cameraFocus';
-import { Body as GameBody, BuildingKind, CameraState, Ship } from '../types';
+import { Body as GameBody, BuildingKind, CameraState, Ship, Settlement } from '../types';
 import {
   spawnTracer,
   drawTracers,
@@ -94,7 +110,10 @@ import {
   enqueueDetonation,
   spawnDiscoveryBloom,
   spawnSterilisation,
+  spawnObliteration,
+  spawnSettlementFall,
   drawSterilisations,
+  drawSettlementFalls,
   drawSinkTethers,
   discoveryVariantForSecret,
   drawDiscoveryBlooms,
@@ -111,6 +130,7 @@ import { shipIconSize, rendererCanvasMb, drawStructureReach, parkedOrbitMap } fr
 import {
   liveBattleFor, escortBlockSpacing, type BattleUnit, type LiveBattle,
 } from '../render/battleLayoutLive';
+import { worldRosters } from '../render/arrivalApproach';
 import {
   computePresentation, drawnRadiusOf, hullReveal, hullSize, isBarycenter,
 } from '../render/bodyPresentation';
@@ -145,6 +165,20 @@ import { exploredStorageKey, loadExplored, saveExplored } from '../game/explored
 import './MapCanvas.css';
 import { getPlacement, cancelPlacement } from '../game/megastructurePlacement';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
+
+/** How long a hull that just arrived takes to fold into its world's badge. */
+export const ARRIVAL_FOLD_MS = 1100;
+/** 1 for a hull that has just arrived, easing to 0 over ARRIVAL_FOLD_MS
+ *  (held for the first third, so the landing reads before it folds). */
+export function arrivalGrace(arrivedAt: Map<string, number>, shipId: string, nowMs: number): number {
+  const at = arrivedAt.get(shipId);
+  if (at === undefined) return 0;
+  const k = (nowMs - at) / ARRIVAL_FOLD_MS;
+  if (k >= 1 || k < 0) { arrivedAt.delete(shipId); return 0; }
+  if (k < 1 / 3) return 1;
+  const u = (k - 1 / 3) / (2 / 3);
+  return 1 - u * u * (3 - 2 * u);
+}
 
 /** One hull as the last frame saw it: where, what class, and the ship. */
 type ShipSnap = { x: number; y: number; cls: string; ship: Ship };
@@ -560,6 +594,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   const tweenRafRef = useRef<number | null>(null);
   const renderRef = useRef<() => void>(() => {});
   const prevShipIdsRef = useRef<Map<string, ShipSnap>>(new Map());
+  // When each hull last arrived at a world (wall ms): the arrival grace
+  // that fades it into the world's badge instead of dropping it (below).
+  const arrivedAtRef = useRef<Map<string, number>>(new Map());
+  /** Hulls this client saw leave a world, by when (the departure hand-off). */
+  const departedAtRef = useRef<Map<string, number>>(new Map());
   // Ids of ships that were in torch transit last frame. Diffed against
   // this frame the same way hp deltas are — a ship present both frames
   // that dropped its .transit just ARRIVED, which triggers the soft
@@ -567,6 +606,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // the diff so a mid-flight page load doesn't fire a phantom flash.
   const prevTransitIdsRef = useRef<Set<string> | null>(null);
   const prevSettlementIdsRef = useRef<Map<string, { x: number; y: number; bodyId: string }>>(new Map());
+  /** Megastructure bodies on the previous frame (null until the first),
+   *  so a site that a vanished colony hull just founded can be told apart. */
+  const prevMegaBodyIdsRef = useRef<Set<string> | null>(null);
+  /** Every settlement as last seen in /state, kept after it leaves: a
+   *  fall plays where it stood (spawnSettlementFall), and by the time its
+   *  chronicle row plays it is gone from the list. */
+  const lastSeenSettlementsRef = useRef<Map<string, Settlement>>(new Map());
   const destructionFlashesRef = useRef<Map<string, DestructionFlash>>(new Map());
   /** Ship ids whose death already flashed at the hull via the list-diff
    *  path — consulted by the queued chronicle FX so the same kill never
@@ -591,6 +637,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // integration this map exists to route around — so a transiting hull's
   // fog circle sat ahead of the hull itself.
   const transitShipWorldPosRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  // Each drawn hull in flight's point on its OWN course this frame (world),
+  // before formation and company slots move it: where it truly is. Weapon
+  // reach is tested here (transitShotInReach); ship.transit.pos is not the
+  // course an intercepting hull flies.
+  const transitCourseWorldPosRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   /** Memoised torch polylines, keyed by ship, valid while the plan and
    *  the body array keep their identity (i.e. until the next /state). */
   const torchSampleCacheRef = useRef<Map<string, {
@@ -1171,6 +1222,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // integration runs once per leg per poll (~1.5s) rather than 60
     // times a second, and per-frame cost drops to one lerp per hull.
     transitShipWorldPosRef.current.clear();
+    transitCourseWorldPosRef.current.clear();
     for (const s of gameState.ships) {
       const plan = s.transit?.currentTransfer;
       if (!plan) continue;
@@ -1291,6 +1343,16 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       for (const id of prevTransitIdsRef.current) {
         if (!curTransitIds.has(id) && curShipIds.has(id)) {
           spawnArrivalFlash(id, nowMs);
+          if (arrivedAtRef.current.size > 2000) arrivedAtRef.current.clear();
+          arrivedAtRef.current.set(id, nowMs);
+        }
+      }
+      // And the other way: parked last frame, in flight now. A hull that
+      // leaves a world drawn as a badge grows out of it (noteEmergence).
+      for (const id of curTransitIds) {
+        if (!prevTransitIdsRef.current.has(id) && prevShipIdsRef.current.has(id)) {
+          if (departedAtRef.current.size > 2000) departedAtRef.current.clear();
+          departedAtRef.current.set(id, nowMs);
         }
       }
     }
@@ -1360,9 +1422,41 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       exploredFlushAtRef.current = nowMs;
     }
 
+    const curMegaBodyIds = new Set<string>();
+    for (const b of gameState.bodies) if (b.type === 'megastructure') curMegaBodyIds.add(b.id);
     if (prevShipIdsRef.current.size > 0) {
       for (const [id, pos] of prevShipIdsRef.current) {
         if (!curShipIds.has(id) && !destructionFlashesRef.current.has(id)) {
+          // SETTLED, NOT GONE: a colony hull that founded a station this
+          // update (settle on arrival, or the deploy button) hands its spot
+          // to that station, which glides from where the hull was drawn
+          // into its own slot (seedSettleGlide). A new station of its
+          // owner at the world it was flying to or parked at.
+          if (pos.cls === 'colony') {
+            const at = pos.ship.transit?.currentTransfer?.targetBodyId ?? pos.ship.orbit?.parentBodyId;
+            const founded = at ? gameState.settlements.find(st => st.type === 'station'
+              && st.bodyId === at && st.ownedBy === pos.ship.ownedBy
+              && !prevSettlementIdsRef.current.has(st.id)) : undefined;
+            const world = founded ? bodyById2.get(founded.bodyId) : undefined;
+            if (founded && world) {
+              const from = recentDrawnShipWorldPos(id, 1000) ?? { x: pos.x, y: pos.y };
+              seedSettleGlide(founded.id, from, bodyPosition(world, nowTick, gameState.bodies), nowMs);
+              continue;
+            }
+            // A FOUNDATION LAID: the hull was spent on a megastructure site
+            // (place-framework) that has just appeared round the world it
+            // was parked at. It went in silence, the hull simply gone and a
+            // scaffold standing (Studio construction clip, 2026-10-23); it
+            // breaks ground with the celebration a colony founding gets.
+            const prevMega = prevMegaBodyIdsRef.current;
+            const site = at && prevMega
+              ? gameState.bodies.find(b => b.type === 'megastructure' && b.parent === at && !prevMega.has(b.id))
+              : undefined;
+            if (site) {
+              spawnDiscoveryBloom(`founded:${site.id}`, site.id, 'firework');
+              continue;
+            }
+          }
           // Only flash a REAL kill. A ship dropping out of /state usually
           // just left the player's (moving) sensor coverage — a fog-out,
           // not a death. The server chronicles actual kills; require one.
@@ -1378,14 +1472,21 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // last frame — battle-line arcs and lane offsets place ships
           // far from their textbook orbital point, and a wreck on the
           // wrong side of the planet reads as a bug (QA finding).
-          const drawnPos = drawnShipWorldPos(id) ?? { x: pos.x, y: pos.y };
+          // ONLY IF IT WAS DRAWN JUST NOW. A hull folded into its world's
+          // badge (zoomed out) was last drawn somewhere else entirely, in
+          // flight before it parked, and its death played there: a full-
+          // size destroyer appearing out of empty space beside Earth to
+          // blow up (the Mega Destroyer re-shoot). Not drawn lately = it
+          // dies where it truly is, without its hull flying apart.
+          const fresh = recentDrawnShipWorldPos(id, 1000);
+          const drawnPos = fresh ?? { x: pos.x, y: pos.y };
           // Died parked at a world: the blast and its wreck stay with
           // that world (Lorne: "explode in place, and then its debris
           // orbit the world"). Died in flight: where it was, in space.
           const at = !pos.ship.transit && pos.ship.orbit?.parentBodyId
             ? { bodyId: pos.ship.orbit.parentBodyId, dir: orbitSense(pos.ship, nowTick) }
             : undefined;
-          destructionFlashesRef.current.set(id, { pos: drawnPos, startMs: nowMs, baseRadius: 12, id, at });
+          destructionFlashesRef.current.set(id, { pos: drawnPos, startMs: nowMs, baseRadius: 12, id, at, noLook: !fresh });
           // Remember we played this kill AT THE HULL, so the queued
           // chronicle twin of the same death doesn't boom again later.
           listDiffFlashedShipsRef.current.add(id);
@@ -1394,17 +1495,20 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // for a few minutes instead of vanishing with the flash.
           // Sized off the DEAD HULL's own icon, not a flat 12: a destroyer
           // (icon 44) now leaves visibly more than a corvette (28).
-          spawnWreck(id, drawnPos, shipIconSize(pos.cls, false), nowMs, nowTick, at);
+          spawnWreck(id, drawnPos, shipIconSize(pos.cls, false), nowMs, nowTick, at, !!fresh);
         }
       }
     }
     prevShipIdsRef.current = curShipIds;
+    prevMegaBodyIdsRef.current = curMegaBodyIds;
 
     // Settlements get the same treatment but their position is the
     // body world-position (cities + stations both render adjacent to
     // their body). Reusing bodyPosition keeps the math tight.
     const curSettlementIds = new Map<string, { x: number; y: number; bodyId: string }>();
+    if (lastSeenSettlementsRef.current.size > 4000) lastSeenSettlementsRef.current.clear();
     for (const settlement of gameState.settlements) {
+      lastSeenSettlementsRef.current.set(settlement.id, settlement);
       const body = bodyById2.get(settlement.bodyId);
       if (body) {
         const bp = bodyPosition(body, nowTick, gameState.bodies);
@@ -1473,12 +1577,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // server-chronicled kill (settlement_destroyed carries body_id,
           // not a settlement id — match on the host body).
           if (!diedByChronicle(`body:${snap.bodyId}`, nowMs)) continue;
-          destructionFlashesRef.current.set(id, {
-            pos: { x: snap.x, y: snap.y },
-            startMs: nowMs,
-            baseRadius: 14,
-            id,
-          });
+          // It falls WHERE IT STOOD: its city marker on the globe (or its
+          // station), sized by the globe. This was a 14 px flash at the
+          // world's centre, which at a close-up was a speck in the middle
+          // of a planet (siege clip, 2026-10-23). Keyed on the settlement,
+          // so the chronicle row for the same fall does not play twice.
+          spawnSettlementFall(id, snap.bodyId, lastSeenSettlementsRef.current.get(id) ?? null, null);
         }
       }
     }
@@ -1567,6 +1671,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       megastructures: gameState.megastructures,
       // The omen on the Sun while a gate's warning runs (sunSquid.ts).
       sunGateEmergeTick: gameState.sunGateNext?.emergeTick ?? null,
+      sunGateOmenAngle: gameState.sunGateNext?.angle ?? null,
       sunGateOmenBodyId: gameState.sunGateNext?.kaiju
         ? (KAIJU_OMEN_BODY[gameState.sunGateNext.system ?? ''] ?? 'sol')
         : 'sol',
@@ -2023,11 +2128,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // hulls this frame DRAWS: a folded fleet member already rides astern of
     // its flagship, and a rival hull fog hides must not leave a hole in its
     // formation. Before every trajectory layer, which all read it.
-    const transitFormations = computeTransitFormations(gameState.ships.filter(s =>
+    const drawnInFlight = gameState.ships.filter(s =>
       s.transit
       && (s.ownedBy === 'player' || visibleShipIds.has(s.id))
-      && fleetGrouping.draws.has(s.id) && !foldedShipIds.has(s.id)));
+      && fleetGrouping.draws.has(s.id) && !foldedShipIds.has(s.id));
+    const transitFormations = computeTransitFormations(drawnInFlight);
     renderContext.transitFormations = transitFormations;
+    // A matched intercept flies ABREAST of the group it joined, not on
+    // top of it (computeTransitCompany).
+    renderContext.transitCompany = computeTransitCompany(drawnInFlight, transitFormations, gameState.bodies);
 
     // ONE LINE PER FLEET, BY THE SAME RULES AS A SHIP. The flagship is
     // drawn and draws every line a lone ship would — its course, queued
@@ -2351,18 +2460,24 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // battle detection and line assignment now run over everything
       // orbiting the same world. Radial separation is what lane and the
       // renderer's ranks are for.
-      const byBody = new Map<string, Ship[]>();
-      for (const s of gameState.ships) {
-        if (s.transit) continue;
-        if (s.ownedBy !== 'player' && !visibleShipIds.has(s.id)) continue;
-        const arr = byBody.get(s.orbit.parentBodyId) || [];
-        arr.push(s);
-        byBody.set(s.orbit.parentBodyId, arr);
-      }
+      //
+      // ARRIVALS ARE LAID OUT BEFORE THEY LAND (MP, arrivalApproach): a
+      // hull about to land at a world joins its roster while still in
+      // flight, so its place there exists and it flies into it.
+      const rosters = worldRosters(gameState.ships, s => s.ownedBy === 'player' || visibleShipIds.has(s.id),
+        mpActions ? {
+          currentTick: gameState.currentTick,
+          onRoute: s => !!routeForShip(gameState.tradeRoutes ?? [], s.id),
+        } : {});
+      const byBody = rosters.byBody;
 
-      for (const atBody of byBody.values()) {
+      for (const [rosterBodyId, inRoster] of byBody) {
         // Stable order so a ship's slot doesn't jitter frame-to-frame.
-        atBody.sort((a, b) => (a.id < b.id ? -1 : 1));
+        inRoster.sort((a, b) => (a.id < b.id ? -1 : 1));
+        const laidOut = mpActions ? bodyById2.get(rosterBodyId) : undefined;
+        // Hulls still in flight count only at a laid-out world.
+        const atBody = laidOut ? inRoster : inRoster.filter(s => !rosters.arriving.has(s.id));
+        if (atBody.length === 0) continue;
 
         // BATTLE LINES: when two or more factions with ARMED hulls share
         // this WORLD, each faction forms its own line and the lines face
@@ -2406,32 +2521,16 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // (battleLayoutLive), so ships are fixed in scale to the planet
         // at every world. SP keeps the battle lines and rings below.
         if (mpActions) {
-          const bodyId = atBody[0].orbit.parentBodyId;
-          const body = bodyById2.get(bodyId);
+          const bodyId = rosterBodyId;
+          const body = laidOut;
           if (body) {
-            const destroyerPx = shipIconSize('destroyer', false);
-            const units: BattleUnit[] = [];
-            for (const s of atBody) {
-              // Escorts ride in their marker's block; the lead stands for them.
-              if (fleetGrouping.collapsed.has(s.id)) continue;
-              const marker = fleetGrouping.markerByLeadShip.get(s.id);
-              const escortRel = marker?.escortIds.map(id => {
-                const e = shipById2.get(id);
-                return e ? Math.min(1, shipIconSize(e.class, false) / destroyerPx) : 1;
-              });
-              units.push({
-                id: s.id,
-                owner: s.ownedBy,
-                group: s.fleetId ?? null,
-                sizePx: shipIconSize(s.class, false),
-                armed: (s.damagePerTick ?? getShipClass(s.class).damagePerTick) > 0,
-                escortRel: escortRel && escortRel.length > 0 ? escortRel : undefined,
-                escortIds: marker && marker.escortIds.length > 0 ? [...marker.escortIds] : undefined,
-              });
-            }
+            const units: BattleUnit[] = battleUnitsFor(atBody, bodyId, fleetGrouping, shipById2, rosters.arriving);
             const station = gameState.settlements.find(
               st => st.bodyId === bodyId && st.type === 'station' && st.hp > 0);
-            const lb = liveBattleFor(bodyId, body.radius, atBody[0].orbit.direction ?? 1,
+            // The wheel's sense from a hull PARKED here when there is one
+            // (a hull in flight still carries the orbit it left).
+            const senseOf = atBody.find(s => !rosters.arriving.has(s.id)) ?? atBody[0];
+            const lb = liveBattleFor(bodyId, body, senseOf.orbit.direction ?? 1,
               units, owners, station?.id, { nowMs: performance.now() });
             liveBattles.set(bodyId, lb);
             for (const u of units) formationMap.set(u.id, { index: 0, total: 1, battle: lb });
@@ -2631,7 +2730,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     if (placingNow && placingNow.anchorSoi > 0) {
       const anchor = gameState.bodies.find(b => b.id === placingNow.anchorBodyId);
       if (anchor) {
-        const ap = bodyPosition(anchor, gameState.currentTick, gameState.bodies);
+        // Render tick, like the anchor it rings (see the gate link below).
+        const ap = bodyPosition(anchor, renderContext.t, gameState.bodies);
         // Resolved camera, not raw — same bug as the gate link below:
         // raw camera.x/y are a focus-relative offset, so this ring sat
         // on the focused body instead of the anchor whenever a site was
@@ -2677,8 +2777,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const a = gameState.bodies.find(b => b.id === m.bodyId);
         const bb = gameState.bodies.find(b => b.id === m.partnerBodyId);
         if (!a || !bb) continue;
-        const pa = bodyPosition(a, gameState.currentTick, gameState.bodies);
-        const pb = bodyPosition(bb, gameState.currentTick, gameState.bodies);
+        // AT THE RENDER TICK, as the gates themselves are drawn (drawBody
+        // projects every body at renderContext.t, the smoothed clock). On
+        // the integer tick the line's end sat where the gate WAS at the
+        // last tick and slid off it as the clock ran on: about 40 px up
+        // its orbit in the Studio clip a-sun-gate-is-born, f480-f494.
+        const pa = bodyPosition(a, renderContext.t, gameState.bodies);
+        const pb = bodyPosition(bb, renderContext.t, gameState.bodies);
         const g = renderContext.ctx;
         // THROUGH THE RESOLVED CAMERA, like everything else on the map.
         // This projected with the RAW camera.x/y, which in focus mode
@@ -2732,8 +2837,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
     }
 
-    // Wrecks first — kill-site debris sits UNDER live hulls.
-    if (!isLightweight()) drawWrecks(renderContext, nowMs);
+    // Wrecks first — kill-site debris sits UNDER live hulls. So do the
+    // shards of a world the Leviathan breaks: rock flying into the debris
+    // field, never painted over the fleet guarding it.
+    if (!isLightweight()) {
+      drawWrecks(renderContext, nowMs);
+      drawKaijuShards(renderContext, nowMs);
+    }
 
     // Draw ships.
     //
@@ -2776,8 +2886,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // keep drawing — their trajectory arcs spread them out — and the
       // selected ship stays visible so the player can find what they
       // picked.
+      // ARRIVAL GRACE. In flight a hull is drawn at every zoom; parked at
+      // a world too small to show hulls, it is a count on the badge. So a
+      // fleet landing at map zoom vanished in one frame and came back
+      // when the zoom crossed the reveal (the Mega Destroyer re-shoot,
+      // 10.8 s). A hull that has just arrived holds, then fades into the
+      // badge over ARRIVAL_FOLD_MS instead.
       const sprBlend = (!ship.transit && !isSelected)
-        ? spriteBlendFor(ship.orbit?.parentBodyId)
+        ? Math.max(spriteBlendFor(ship.orbit?.parentBodyId), arrivalGrace(arrivedAtRef.current, ship.id, nowMs))
         : 1;
       if (sprBlend < 1 && !ship.transit && !isSelected) {
         const bodyId = ship.orbit?.parentBodyId;
@@ -2945,15 +3061,89 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // This hull's place in its formation. Everything below (range
         // ring, sprite, click hit-test) reads `placed`, so they move
         // together; the line above stays on the true course.
+        if (samples && samples.length > 0) {
+          const onCourse = torchPositionFromSamples(samples, renderTick());
+          transitCourseWorldPosRef.current.set(ship.id, { x: onCourse.x, y: onCourse.y });
+        }
         let placed = samples && samples.length > 0
-          ? placeInFormation(ship.id, samples, renderContext, transitShipScale(camera.scale))
+          ? placeInCompany(ship.id,
+            placeInFormation(ship.id, samples, renderContext, transitShipScale(camera.scale)),
+            renderContext, transitShipScale(camera.scale))
           : samples;
+        // GLIDE, don't pop (glideLayout): the layout offset eases to a new
+        // answer when a death re-slots the arrowhead, a fleet changes
+        // flagship or a match pulls it abreast. Seeded from wherever this
+        // hull was drawn a moment ago in flight, so an escort promoted to
+        // flagship slides out of its slot instead of jumping. Missiles
+        // excepted.
+        // LEAVING A WORLD (departFromDrawn, inside): a hull drawn parked a
+        // moment ago leaves from that spot, its battle slot or its ring,
+        // and merges onto its course as the course carries it away; one
+        // whose world was a badge (no sprite of its own) opens out of the
+        // world, growing as it goes. Never a straight line back across the
+        // world to its course's true starting point (the Lunar Wing clip).
+        if (placed && samples && samples.length > 1 && ship.class !== 'missile' && camera.scale > 0) {
+          const originBody = ship.orbit?.parentBodyId ? bodyById2.get(ship.orbit.parentBodyId) : undefined;
+          const origin = originBody ? bodyPosition(originBody, renderTick(), gameState.bodies) : undefined;
+          const departedAt = departedAtRef.current.get(ship.id);
+          let emergeFrom: { x: number; y: number } | undefined;
+          if (departedAt !== undefined) {
+            // Its first frame in flight since this client saw it leave.
+            departedAtRef.current.delete(ship.id);
+            if (nowMs - departedAt <= 1000 && origin && !recentDrawnShipWorldPos(ship.id, 600)) {
+              emergeFrom = origin;
+              noteEmergence(ship.id, nowMs);
+            }
+          }
+          placed = settleTransitLayout(ship.id, samples, placed, renderTick(), camera.scale, nowMs,
+            emergeFrom, origin);
+        }
         // A MISSILE CLEARS ITS WORLD AT ONCE (Lorne, 2026-10-20: "it visibly
         // enters orbit"). A world is drawn larger than its true size at map
         // zoom, and a salvo pushing from rest spends the start of its first
         // tick inside that disc, where it read as a hull in orbit. While its
         // true point is under the drawn disc it is drawn on the disc's edge,
         // on its course side, burning; it leaves the edge as it outruns it.
+        // NEVER THROUGH A WORLD'S DRAWN DISC. A course runs from the true
+        // parking orbit to the destination's true CENTRE, and at map zoom a
+        // world is drawn many times its true size: a fleet flew in over the
+        // disc toward the middle, then the parked layout put it on the
+        // ring in one frame (the Mega Destroyer re-shoot, 12.2 s). Inside a
+        // disc it rides the disc's edge on its course side, which is where
+        // the parked layout picks it up (and, leaving, where it left it).
+        if (ship.class !== 'missile' && placed && placed.length > 1 && pres) {
+          const sc = renderContext.camera.scale;
+          const destId = ship.transit?.currentTransfer?.targetBodyId;
+          const ends = [destId, ship.orbit?.parentBodyId]
+            .filter((id, i, a): id is string => !!id && a.indexOf(id) === i)
+            .map(id => bodyById2.get(id))
+            .filter((b): b is GameBody => !!b);
+          // ARRIVING, it stops short of the fight already in orbit there and
+          // of the world, by its own reach toward it (its escort block, for a
+          // flagship): a braking fleet points its engine and its block at the
+          // world, and both were laid over the Sun (arrivalStandoffPx).
+          const destPx = shipIconSize('destroyer', false);
+          const marker = fleetGrouping.markerByLeadShip.get(ship.id);
+          const reach = flightReachPx(
+            shipIconSize(ship.class, isSelected) * (isSelected ? 1 : transitShipScale(camera.scale)),
+            marker?.escortIds.map(id => {
+              const e = shipById2.get(id);
+              return e ? Math.min(1, shipIconSize(e.class, false) / destPx) : 1;
+            }));
+          placed = approachWorlds(ship.id, placed,
+            // Its own course: an arriving formation keeps its shape at the
+            // stop, not every slot on its own ray (keepOffDrawnDiscs).
+            samples ?? undefined,
+            ends.map(b => ({
+              id: b.id,
+              at: (t: number) => bodyPosition(b, t, gameState.bodies),
+              drawnR: drawnRadiusOf(pres, b, sc),
+              isDest: b.id === destId,
+              battle: renderContext.liveBattles?.get(b.id),
+            })),
+            // The battle wheel's clock, as the parked draw turns it.
+            plan, sc, reach, renderContext.nowMs ?? nowMs);
+        }
         if (ship.class === 'missile' && placed && placed.length > 1) {
           const home = ship.orbit?.parentBodyId ? bodyById2.get(ship.orbit.parentBodyId) : undefined;
           if (home) {
@@ -3010,7 +3200,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // diverging ship.transit.pos integration). Matches the lerp
         // drawTorchTransitShip does internally. See transitShipCanvasPosRef.
         if (placed && placed.length > 0) {
-          const lerped = torchPositionFromSamples(placed, renderTick());
+          const lerped = transitHitWorldPos(ship.id, placed, renderTick());
           const cp = worldToCanvas(lerped.x, lerped.y, renderContext);
           transitShipCanvasPosRef.current.set(ship.id, cp);
           // The WORLD-space twin of this point is NOT written here. It
@@ -3327,6 +3517,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const bLook = renderContext.battleLooks?.get(leadId);
         if (bLook) {
           heading = bLook.heading;
+        } else if (lead.transit?.currentTransfer && drawnShipLook(leadId)) {
+          // In flight the block holds astern of the flagship AS DRAWN: the
+          // way its nose points this frame. Aiming at the destination world
+          // put an intercepting fleet's escorts AHEAD of their flagship,
+          // pointing home, for the whole run out to the enemy (Lorne: "blue
+          // flies entirely backwards toward the enemy").
+          heading = drawnShipLook(leadId)!.heading;
         } else if (lead.transit?.currentTransfer) {
           const dest = bodyById2.get(lead.transit.currentTransfer.targetBodyId);
           if (dest) {
@@ -3405,9 +3602,20 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             fleetSlots.set(esc.id, { x: hb.x, y: hb.y });
             continue;
           }
-          const ex = hb.x + offs[i].dx;
-          const ey = hb.y + offs[i].dy;
-          drawEscortHull(renderContext, esc, ex, ey, escortGlyphFor(spacing0 * bks), heading);
+          // In flight, each escort's place in the block glides (a death
+          // re-spaces the block; a new flagship re-centres it), starting
+          // from where the hull was just drawn if it had another role.
+          // Parked too: a flag change re-centres a block at a world.
+          let rel = { x: offs[i].dx, y: offs[i].dy };
+          {
+            const was = recentDrawnShipWorldPos(esc.id);
+            const wc = was ? worldToCanvas(was.x, was.y, renderContext) : null;
+            rel = glideLayout(`esc:${esc.id}`, rel, nowMs, wc ? { x: wc.x - hb.x, y: wc.y - hb.y } : undefined);
+          }
+          const ex = hb.x + rel.x;
+          const ey = hb.y + rel.y;
+          drawEscortHull(renderContext, esc, ex, ey, escortGlyphFor(spacing0 * bks), heading,
+            lead.transit ? drawnThrust(leadId) : 0);
           // Where this hull IS, for everything that asks: its bolts leave
           // from here, hits on it land here, a click here is the fleet.
           fleetSlots.set(esc.id, { x: ex, y: ey });
@@ -3638,6 +3846,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
               const ang = (h >>> 0) % 628 / 100;
               const ringR = (b.radius ?? 4) + 2;
               world = { x: bp.x + Math.cos(ang) * ringR, y: bp.y + Math.sin(ang) * ringR };
+            } else if (fx.from || fx.kind === 'impact_scorch') {
+              // A RAMMED ROCK lands on the side of the world it came in
+              // on (asteroidRam.ts), not dead centre: the side this client
+              // watched it come from, else the side the server says.
+              const dir = ramApproachDir(b.id) ?? fx.from ?? null;
+              const R = drawnRadiusOf(renderContext.presentation, b, renderContext.camera.scale)
+                / Math.max(1e-9, renderContext.camera.scale);
+              world = impactPoint(bp, dir, R);
             } else {
               // Settlement/impact/discovery events genuinely belong to
               // the body itself.
@@ -3659,9 +3875,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           return;
         }
         if (fx.kind === 'built') {
-          // A firework, because finishing one of these is the longest
-          // single undertaking in the game.
-          if (fx.bodyId) spawnDiscoveryBloom(fx.id, fx.bodyId, 'firework');
+          // A flash and a shockwave at the structure's own drawn size,
+          // because finishing one of these is the longest single
+          // undertaking in the game (the fixed-size firework stayed inside
+          // the structure's art: drawCompletionBurst).
+          if (fx.bodyId) spawnDiscoveryBloom(fx.id, fx.bodyId, 'completion');
           return;
         }
         if (fx.kind === 'gateflash') {
@@ -3688,11 +3906,37 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           if (fx.bodyId) spawnKaijuDeath(fx.id, fx.bodyId);
           return;
         }
+        if (fx.kind === 'impact_scorch') {
+          // A rammed asteroid killed the biosphere: the fire and ash, from
+          // where it hit. No gun beam (it played as a Planet Killer strike
+          // from the top of the screen, Studio 2026-10-23).
+          if (fx.bodyId) {
+            spawnSterilisation(fx.id, fx.bodyId, {
+              beam: false, from: ramApproachDir(fx.bodyId) ?? fx.from ?? null,
+            });
+          }
+          return;
+        }
         if (fx.kind === 'sterilise') {
           // The body is the anchor: the beam, the fire and the ash all
           // key off where the planet is drawn this frame, so it rides
           // the orbit instead of playing at a fixed canvas point.
           if (fx.bodyId) spawnSterilisation(fx.id, fx.bodyId);
+          return;
+        }
+        if (fx.kind === 'obliterate') {
+          // The Mega's beam, then the world bursts (combatFx). The world
+          // is drawn whole until the burst (mapRenderer drawsAsDebris).
+          if (fx.bodyId) spawnObliteration(fx.id, fx.bodyId);
+          return;
+        }
+        if (fx.kind === 'settlement_fall') {
+          // Where that city or station stood, as this client last saw it
+          // (it has left /state by now), sized by the globe.
+          if (fx.bodyId) {
+            const seen = fx.settlementId ? lastSeenSettlementsRef.current.get(fx.settlementId) : undefined;
+            spawnSettlementFall(fx.settlementId ?? fx.id, fx.bodyId, seen ?? null, fx.id);
+          }
           return;
         }
         if (fx.kind === 'discovery') {
@@ -3761,6 +4005,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         }
       },
     );
+    // A settlement falling, where it stood. In every mode, like the
+    // destruction flashes above: a city lost is information, not
+    // decoration, so lightweight mode keeps it.
+    drawSettlementFalls(renderContext, nowMs);
 
     // REFIT ORDERED: a small ⟳ up-right of each of your hulls waiting on
     // a refit, amber when something is in its way (refitStatus, the same
@@ -3807,6 +4055,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         transitShipCanvasPosRef.current, gameState.warPairs,
         gameState.transitCombatEnabled, gameState.megastructures,
         mpActions ? settlementHasGuns : undefined,
+        transitCourseWorldPosRef.current,
       );
     }
     // RENDEZVOUS PREVIEW. Drawn after the fleet so the arc and its
@@ -4062,16 +4311,26 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     }
 
     perf.phase('fog_paint');
+    // JUMP TRACE (studio.mjs film --trace): every hull drawn this frame,
+    // in world units, with the zoom, so a script can find any hull that
+    // moved abruptly on screen. Off unless the array exists.
+    {
+      const trace = (window as unknown as { __shipTrace?: unknown[] }).__shipTrace;
+      if (Array.isArray(trace)) {
+        trace.push({ t: renderTick(), scale: camera.scale, ships: drawnShipsSince(nowMs) });
+        if (trace.length > 120) trace.splice(0, trace.length - 120);
+      }
+    }
     perf.phaseCommit();
     // Camera tween in flight → self-drive one more frame. The normal
     // render cadence is state-change-driven; a paused sim would freeze
     // the easing mid-flight without this. renderRef always points at
     // the latest render closure; the id guard stops frame stacking.
     if ((camTweenRef.current || wheelFollowRef.current) && tweenRafRef.current == null) {
-      tweenRafRef.current = requestAnimationFrame(() => {
+      tweenRafRef.current = requestAnimationFrame(studioHeldFrame(() => {
         tweenRafRef.current = null;
         renderRef.current();
-      });
+      }));
     }
     // enabledLayers (Set) is the actual signal for "redraw when a layer
     // toggles" — listing layerOn is redundant (it closes over the same
@@ -5209,6 +5468,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
       raf = requestAnimationFrame(loop);
     };
+    // The studio's film clock draws the map itself and holds this loop
+    // (and only this loop: see multiplayer/studio/heldFrames.ts).
+    studioHeldFrame(loop);
     raf = requestAnimationFrame(loop);
     return () => { if (raf != null) cancelAnimationFrame(raf); };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- the persistent rAF loop must NOT be torn down on every zoom; adding camera.scale would recreate it per scale change

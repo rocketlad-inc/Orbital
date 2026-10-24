@@ -2226,14 +2226,40 @@ export async function matchBackfillSweep(env) {
 // applies rows in order -- reset at a key, upsert/delete at a delta.
 // ---------------------------------------------------------------------------
 
+/**
+ * The event-log kinds the match film captions from. Headlines a viewer
+ * would recognise from their own log, not bookkeeping: no ship_built,
+ * ship_damaged or trade rows, which are thousands of lines in a long
+ * match. The film words them with the event log's own formatter
+ * (src/multiplayer/eventText.ts), so a caption reads exactly as the log
+ * did. Stays under D1's 100-bind limit with room to spare.
+ */
+export const FILM_CHRONICLE_KINDS = [
+  'game_started', 'victory',
+  'war_declared', 'war_ended', 'treaty_signed', 'treaty_broken',
+  'settlement_built', 'settlement_seized', 'settlement_destroyed', 'settlement_razed',
+  'faction_eliminated', 'faction_revived', 'faction_joined',
+  'captain_lost', 'fleet_flag_lost', 'ship_detonated',
+  'kaiju_omen', 'kaiju_launched', 'kaiju_revealed', 'kaiju_hunting', 'kaiju_charging',
+  'kaiju_leaving', 'kaiju_gone', 'kaiju_dead',
+  'sun_gate_omen', 'sun_gate_emerged', 'sun_gate_opened',
+  'megastructure_complete', 'megastructure_claimed', 'megastructure_captured',
+  'megastructure_destroyed', 'megastructure_abandoned',
+  'dyson_initiated', 'dyson_milestone', 'dyson_damaged', 'dyson_collapsed',
+  'terraform_complete', 'terraform_destroyed', 'world_obliterated',
+  'mega_strike_charging', 'asteroid_launched', 'asteroid_impact',
+  'missile_strike', 'secret_discovered', 'senate_vote',
+];
+
 async function handleMatchSummary(req, env, { params }) {
   const gameId = params.gameId;
-  const [gameQ, rangeQ, liveQ, fxQ, bodiesQ, battlesQ, senateQ, votesQ, partsQ] =
+  const [gameQ, rangeQ, liveQ, fxQ, bodiesQ, battlesQ, senateQ, votesQ, partsQ, chronQ] =
     await env.DB.batch([
     // games has no name column -- the 500 that greeted the first click.
-    env.DB.prepare(`SELECT id, NULL AS name, status, winner_faction_id,
-                           victory_type
-                      FROM games WHERE id = ?`).bind(gameId),
+    // The room's name is the match's name: the film's title card.
+    env.DB.prepare(`SELECT g.id, (SELECT r.name FROM rooms r WHERE r.id = g.id) AS name,
+                           g.status, g.winner_faction_id, g.victory_type
+                      FROM games g WHERE g.id = ?`).bind(gameId),
     env.DB.prepare(`SELECT MIN(tick_number) lo, MAX(tick_number) hi,
                            COUNT(*) rows FROM match_snapshots
                      WHERE game_id = ?`).bind(gameId),
@@ -2268,6 +2294,16 @@ async function handleMatchSummary(req, env, { params }) {
     // the summary rather than being repeated in 300 snapshot rows.
     env.DB.prepare(`SELECT id, parts_json FROM game_ships
                      WHERE game_id = ?`).bind(gameId),
+    // THE EVENT LOG, for the film's captions: the public headlines only
+    // (FILM_CHRONICLE_KINDS), never a private or per-faction row, so a
+    // shared film cannot leak what only one empire was told.
+    env.DB.prepare(`SELECT tick_number, kind, payload, actor_faction_id,
+                           target_faction_id, body_id
+                      FROM chronicle_entries
+                     WHERE game_id = ? AND visibility = 'public'
+                       AND kind IN (${FILM_CHRONICLE_KINDS.map(() => '?').join(',')})
+                     ORDER BY tick_number, created_at_ms
+                     LIMIT 1500`).bind(gameId, ...FILM_CHRONICLE_KINDS),
   ]);
   const game = gameQ.results?.[0];
   if (!game) return err(404, 'not_found', 'no such game');
@@ -2285,6 +2321,7 @@ async function handleMatchSummary(req, env, { params }) {
       try { parts = JSON.parse(r.parts_json || '[]'); } catch { parts = []; }
       return [r.id, Array.isArray(parts) ? parts : []];
     }).filter(([, v]) => v.length)),
+    chronicle: chronQ.results ?? [],
     senate: (senateQ.results ?? []).map(pr => ({
       ...pr,
       votes: (votesQ.results ?? []).filter(v => v.proposal_id === pr.id)

@@ -8,13 +8,19 @@
 // language for people and agents.
 // ============================================================================
 
-import { isValidStartingBody } from './factions.js';
+import { isValidStartingBody, BODY_CATALOG } from './factions.js';
+import { MEGASTRUCTURES, MEGASTRUCTURE_KINDS } from './megastructures.js';
 
 /** auth.js's agent-handle rule, repeated here so this module stays
  *  loadable without the crypto that auth.js sets up at import. */
 const isValidAgentHandle = (h) => typeof h === 'string' && /^[a-z0-9][a-z0-9_-]{0,30}$/.test(h);
 import { DEFAULT_LOADOUTS } from './shipDesigns.js';
 import { normalizeEmblem, EMBLEM_IDS } from './emblems.js';
+import { REQUIREMENTS } from './researchUnlocks.js';
+
+/** The research tracks a scene can seed: every track a feature unlocks on,
+ *  plus Sensors. */
+const RESEARCH_TRACKS = new Set([...Object.values(REQUIREMENTS).map(r => r.track), 'sensors']);
 
 /** The studio mark. Every row the studio writes has it in the id, which is
  *  what makes `reset` safe: nothing without it is ever deleted. */
@@ -44,6 +50,17 @@ export const TAG = { corvette: 'CV', frigate: 'FF', destroyer: 'DD', freighter: 
 
 const isKey = (s) => typeof s === 'string' && /^[a-z][a-z0-9_]{0,30}$/.test(s);
 const isBody = (s) => typeof s === 'string' && /^[a-z0-9_-]{1,40}$/.test(s);
+const catalogBody = (id) => BODY_CATALOG.find(b => b.id === id) ?? null;
+
+/** The rogue asteroids a station's Trajectory Control Thrusters can fly
+ *  (the catalogue's asteroids around the Sun: midas, styx_rock, ...). */
+export const ROGUE_ASTEROIDS = BODY_CATALOG.filter(b => b.type === 'asteroid' && b.parent === 'sol').map(b => b.id);
+/** What the Leviathan eats (kaiju.js KAIJU_PREY_TYPES; repeated here so
+ *  this module stays free of the tick's imports). */
+const KAIJU_PREY = new Set(['terrestrial', 'dwarf', 'moon']);
+/** The Leviathan's wind-up when a scene does not say: the Mega
+ *  Destroyer's (actions.js MEGA_STRIKE_CHARGE_TICKS). */
+export const KAIJU_DEFAULT_CHARGE = 24;
 
 /**
  * Normalise and validate a scene. Pure: no database, so it is unit-tested
@@ -70,9 +87,18 @@ export function expandScenario(raw) {
     if (!isValidAgentHandle(handle)) throw new Error(`factions[${i}].handle '${handle}' is not a valid agent handle`);
     const color = typeof f.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(f.color) ? f.color : null;
     const color2 = typeof f.color2 === 'string' && /^#[0-9a-fA-F]{6}$/.test(f.color2) ? f.color2 : null;
+    // Starting stock: a long battle's upkeep emptied an empire mid-take and
+    // its top bar went red with "-25% DMG" (judges 2026-10-23).
+    const stock = (k) => {
+      if (f[k] == null) return null;
+      const n = Number(f[k]);
+      if (!Number.isFinite(n) || n < 0 || n > 10_000_000) throw new Error(`factions[${i}].${k} must be a number from 0 to 10000000`);
+      return Math.round(n);
+    };
     return {
       key: f.key, name: typeof f.name === 'string' && f.name.trim() ? f.name.trim().slice(0, 40) : f.key,
       home, handle, color, color2, emblem: normalizeEmblem(f.emblem ?? EMBLEM_IDS[i % EMBLEM_IDS.length]),
+      metal: stock('metal'), gold: stock('gold'),
     };
   });
   const need = (k, where) => { if (!keys.has(k)) throw new Error(`${where}: unknown faction '${k}'`); };
@@ -96,7 +122,27 @@ export function expandScenario(raw) {
     if (w.owner != null) need(w.owner, `worlds[${i}]`);
     const cities = Array.isArray(w.cities) ? w.cities.map(c => String(c).slice(0, 40)) : [];
     if (cities.length > 6) throw new Error(`worlds[${i}]: at most 6 cities`);
-    return { body: w.body, owner: w.owner ?? null, living: w.living !== false, cities, stations: Math.max(0, Math.min(2, Number(w.stations) || 0)) };
+    const stations = Math.max(0, Math.min(2, Number(w.stations) || 0));
+    // Orbital Shields at a level on every studio city here (the building
+    // lives on cities, never stations: actions.js BUILDING_DEFS.shields).
+    let shields = null;
+    if (w.shields != null) {
+      shields = Number(w.shields);
+      if (!Number.isInteger(shields) || shields < 1 || shields > 10) throw new Error(`worlds[${i}].shields must be a level from 1 to 10`);
+      if (cities.length === 0) throw new Error(`worlds[${i}].shields: shields stand on cities; list at least one city`);
+    }
+    // Trajectory Control Thrusters on the studio station, so the rock can
+    // be rammed into a world (an `orders` ram). A station building, and
+    // only on a rogue asteroid, as in play.
+    if (w.thrusters != null && typeof w.thrusters !== 'boolean') throw new Error(`worlds[${i}].thrusters must be true or false`);
+    const thrusters = w.thrusters === true;
+    if (thrusters) {
+      if (stations < 1) throw new Error(`worlds[${i}].thrusters are a station building: add stations: 1`);
+      const cat = catalogBody(w.body);
+      if (cat && cat.type !== 'asteroid') throw new Error(`worlds[${i}].thrusters: ${w.body} is not a rogue asteroid (${ROGUE_ASTEROIDS.join(', ')})`);
+      if (w.living === true) throw new Error(`worlds[${i}]: an asteroid cannot be terraformed; leave living out`);
+    }
+    return { body: w.body, owner: w.owner ?? null, living: w.living !== false && !thrusters, cities, stations, shields, thrusters };
   });
 
   // ---- ships ----
@@ -139,8 +185,22 @@ export function expandScenario(raw) {
       else if (Array.isArray(g.priority) && g.priority.length && g.priority.every(c => typeof c === 'string' && /^[a-z_]{3,20}$/.test(c))) priority = g.priority;
       else throw new Error(`ships[${i}].priority must be big, small, civilian or a list of categories`);
     }
+    // A loaded hold, on every hull of the group: a freighter parked at a
+    // construction site with the load it is about to hand over (a
+    // mid-take `deliver`). `credits` is the game's word for gold.
+    let cargo = null;
+    if (g.cargo != null) {
+      if (typeof g.cargo !== 'object' || Array.isArray(g.cargo)) throw new Error(`ships[${i}].cargo must be { metal, gold }`);
+      const amt = (v, k) => {
+        if (v == null) return 0;
+        const n = Number(v);
+        if (!Number.isFinite(n) || n < 0 || n > 100000) throw new Error(`ships[${i}].cargo.${k} must be a number from 0 to 100000`);
+        return Math.floor(n);
+      };
+      cargo = { metal: amt(g.cargo.metal, 'metal'), gold: amt(g.cargo.gold ?? g.cargo.credits, 'gold') };
+    }
     return {
-      key: g.key, owner: g.owner, at: g.at, hulls, loadout, hp, variant, priority,
+      key: g.key, owner: g.owner, at: g.at, hulls, loadout, hp, variant, priority, cargo,
       prefix: typeof g.prefix === 'string' ? g.prefix.slice(0, 8) : g.owner.slice(0, 3).toUpperCase() + 'S',
     };
   });
@@ -161,6 +221,9 @@ export function expandScenario(raw) {
   const research = (Array.isArray(raw.research) ? raw.research : []).map((r, i) => {
     if (r?.faction !== 'all') need(r?.faction, `research[${i}]`);
     if (!/^[a-z_]{3,24}$/.test(String(r.track))) throw new Error(`research[${i}].track`);
+    // Unknown tracks were accepted and unlocked nothing: 'defense' left the
+    // designer's shield locked on camera (2026-10-23). Defense is 'armor'.
+    if (!RESEARCH_TRACKS.has(r.track)) throw new Error(`research[${i}].track '${r.track}' is not a research track (${[...RESEARCH_TRACKS].join(', ')})`);
     return { faction: r.faction, track: r.track, level: Math.max(0, Math.min(12, Number(r.level) || 0)) };
   });
 
@@ -172,7 +235,18 @@ export function expandScenario(raw) {
       case 'move': {
         needGroup(o.ships, where);
         if (!isBody(o.to)) throw new Error(`${where}.to is required`);
-        return { type: 'move', ships: String(o.ships), to: o.to, depart, arrive: o.arrive != null ? parseWhen(o.arrive, where) : null };
+        if (o.settle != null && o.settle !== 'station') throw new Error(`${where}.settle must be 'station'`);
+        return { type: 'move', ships: String(o.ships), to: o.to, depart, arrive: o.arrive != null ? parseWhen(o.arrive, where) : null,
+          settle: o.settle === 'station' ? 'station' : null };
+      }
+      // A freighter with a mining rig flies out to a meteoroid, fills its
+      // hold, and brings the haul home: the player's own mining route
+      // (trade-routes/full, a mine stop and a drop-off), run `loops` times.
+      case 'mine': {
+        needGroup(o.ship, where);
+        if (!isBody(o.rock) || !isBody(o.to)) throw new Error(`${where}: rock and to are required`);
+        const loops = Math.max(1, Math.min(20, Math.floor(Number(o.loops) || 1)));
+        return { type: 'mine', ship: String(o.ship), rock: o.rock, to: o.to, loops };
       }
       case 'strike': {
         needGroup(o.ship, where);
@@ -183,7 +257,35 @@ export function expandScenario(raw) {
         if (!isBody(o.from) || !isBody(o.to)) throw new Error(`${where}: from and to are required`);
         return { type: 'trade', ship: String(o.ship), from: o.from, to: o.to };
       }
-      default: throw new Error(`${where}.type must be move, strike or trade`);
+      // A rogue asteroid driven into a world: the player's own ram, with
+      // the plan worked out server-side as the inspector works it out. The
+      // rock must be seeded with a thrusters station in worlds[], whose
+      // owner fires it.
+      case 'ram': {
+        if (!isBody(o.asteroid) || !isBody(o.target)) throw new Error(`${where}: asteroid and target are required`);
+        if (o.asteroid === o.target) throw new Error(`${where}: an asteroid cannot ram itself`);
+        const rock = worlds.find(w => w.body === o.asteroid && w.thrusters);
+        if (!rock) throw new Error(`${where}: ${o.asteroid} needs a worlds[] entry with stations: 1 and thrusters: true`);
+        return { type: 'ram', asteroid: o.asteroid, target: o.target, depart, owner: rock.owner };
+      }
+      // Freighters on a standing supply run from a dock world to one of
+      // the scene's construction sites (2026-10-23): the player's own
+      // route (trade-routes/full, a pickup and the site as the drop-off),
+      // loading from the treasury at the dock. `to` is a megastructures[]
+      // key, checked once those are read.
+      case 'supply': {
+        needGroup(o.ships, where);
+        if (!isBody(o.from)) throw new Error(`${where}.from (the dock world the freight is loaded at) is required`);
+        if (!isKey(o.to)) throw new Error(`${where}.to must be the key of a site in megastructures[]`);
+        const [gk, gi] = String(o.ships).split('.');
+        const group = ships.find(g => g.key === gk);
+        const hulls = gi != null ? [group.hulls[Number(gi)]] : group.hulls;
+        if (hulls[0] == null) throw new Error(`${where}: group '${gk}' has no hull ${gi}`);
+        if (hulls.length > SUPPLY_MAX_CARRIERS) throw new Error(`${where}: a route flies at most ${SUPPLY_MAX_CARRIERS} freighters; split the group`);
+        if (hulls.some(c => c !== 'freighter')) throw new Error(`${where}: only freighters run a supply route`);
+        return { type: 'supply', ships: String(o.ships), from: o.from, to: o.to, loops: supplyLoops(o.loops, where) };
+      }
+      default: throw new Error(`${where}.type must be move, strike, trade, mine, ram or supply`);
     }
   });
 
@@ -239,14 +341,201 @@ export function expandScenario(raw) {
     return { world: s.world, owner: s.owner != null ? String(s.owner) : null, level, stock, auto, salvo, reserve };
   });
 
+  // ---- the far systems and their gate ----
+  // far_systems: Alpha Centauri and Cygnus X-1 on this board (the game's own
+  // far_systems dial). gates: the Centauri sun gate pair, already open.
+  // gates: 'birth' (2026-10-23, for a clip of the first gate leaving the
+  // Sun): nothing pre-spawned; the omen starts on the next tick and the
+  // game's own tick sends the first gate out six ticks after it.
+  if (raw.gates != null && raw.gates !== true && raw.gates !== false && raw.gates !== 'birth') {
+    throw new Error("gates must be true (already open) or 'birth' (the first gate leaves the Sun during the take)");
+  }
+  let gates = raw.gates === 'birth' ? 'birth' : raw.gates === true;
+
+  // ---- the Leviathan, parked at a world and about to wind up ----
+  // { at, charge_ticks?, hp? }. It starts hunting `at` (never a
+  // homeworld: it never attacks one), winds up for charge_ticks (the
+  // game's 24 by default, the kaiju_charge_ticks dial) and strikes as in
+  // play. It leaves through its sun gate when it is full, so a scene with
+  // it has the far systems and a gate (gates: true unless 'birth').
+  let kaiju = null;
+  if (raw.kaiju != null && raw.kaiju !== false) {
+    const k = raw.kaiju;
+    if (typeof k !== 'object' || Array.isArray(k)) throw new Error("kaiju must be { at: '<world>', charge_ticks?, hp? }");
+    if (!isBody(k.at)) throw new Error('kaiju.at (the world it starts on) is required');
+    const cat = catalogBody(k.at);
+    if (cat && !KAIJU_PREY.has(cat.type)) throw new Error(`kaiju.at: it eats terrestrial worlds, dwarfs and moons; ${k.at} is a ${cat.type}`);
+    if (fx.some(f => f.home === k.at)) throw new Error(`kaiju.at: ${k.at} is a homeworld, and the Leviathan never attacks one`);
+    let chargeTicks = KAIJU_DEFAULT_CHARGE;
+    if (k.charge_ticks != null) {
+      chargeTicks = Number(k.charge_ticks);
+      if (!Number.isInteger(chargeTicks) || chargeTicks < 1 || chargeTicks > 240) throw new Error('kaiju.charge_ticks must be a whole number of ticks from 1 to 240');
+    }
+    let hp = null;
+    if (k.hp != null) {
+      hp = Number(k.hp);
+      if (!Number.isFinite(hp) || hp < 100 || hp > 500000) throw new Error('kaiju.hp must be a number from 100 to 500000');
+      hp = Math.round(hp);
+    }
+    kaiju = { at: k.at, chargeTicks, hp };
+    if (!gates) gates = true;
+  }
+  const farSystems = !!gates || raw.far_systems === true;
+
+  // ---- megastructures: a site or a finished structure orbiting a world ----
+  // { key, kind, at, owner, progress?: 0..1, complete?: bool, name? }. The
+  // key names the site wherever a world can be named (ships.at,
+  // orders.move.to, a mid-take deliver).
+  const megaKeys = new Set();
+  const megastructures = (Array.isArray(raw.megastructures) ? raw.megastructures : []).map((m, i) => {
+    const where = `megastructures[${i}]`;
+    if (!isKey(m?.key)) throw new Error(`${where}.key must be a short lowercase slug`);
+    if (megaKeys.has(m.key)) throw new Error(`duplicate megastructure key '${m.key}'`);
+    megaKeys.add(m.key);
+    if (catalogBody(m.key)) throw new Error(`${where}.key '${m.key}' is a world id; ships and orders name the site by its key, so pick another`);
+    if (!MEGASTRUCTURES[m.kind]) throw new Error(`${where}.kind must be one of ${MEGASTRUCTURE_KINDS.join(', ')}`);
+    if (!isBody(m.at)) throw new Error(`${where}.at (the world it orbits) is required`);
+    need(m.owner, where);
+    if (m.complete != null && typeof m.complete !== 'boolean') throw new Error(`${where}.complete must be true or false`);
+    const p = m.progress == null ? 0 : Number(m.progress);
+    if (!Number.isFinite(p) || p < 0 || p > 1) throw new Error(`${where}.progress must be from 0 to 1`);
+    const complete = m.complete === true || p >= 1;
+    const name = typeof m.name === 'string' && m.name.trim() ? m.name.trim().slice(0, 40) : null;
+    // Where it orbits (2026-10-23), as a player may place a site anywhere
+    // in the world's sphere of influence: `orbit` units from its centre,
+    // standing at `angle` degrees on the tick the scene lands. Checked
+    // against the world itself when the scene is applied.
+    const place = {};
+    if (m.orbit != null) {
+      const o = Number(m.orbit);
+      if (!Number.isFinite(o) || o <= 0) throw new Error(`${where}.orbit must be a distance in map units from the world's centre`);
+      place.orbit = o;
+    }
+    if (m.angle != null) {
+      const a = Number(m.angle);
+      if (!Number.isFinite(a)) throw new Error(`${where}.angle must be in degrees`);
+      place.angle = ((a % 360) + 360) % 360;
+    }
+    return { key: m.key, kind: m.kind, at: m.at, owner: m.owner, progress: complete ? 1 : p, complete, name, ...place };
+  });
+  // A supply run's drop-off is one of these sites, and one still building
+  // (the game refuses a route to a finished structure).
+  orders.forEach((o, i) => {
+    if (o.type !== 'supply') return;
+    const site = megastructures.find(m => m.key === o.to);
+    if (!site) throw new Error(`orders[${i}].to '${o.to}' is not a key in megastructures[]`);
+    if (site.complete) throw new Error(`orders[${i}].to '${o.to}' is already complete; a supply run needs a site still building`);
+  });
+
+  // ---- the Dyson Sphere: one per match, at the Sun ----
+  // progress 0..0.99 of the way built (never complete: that ends the game),
+  // on a foundation station of station_hp at Sol. Its fall comes from that
+  // station's damage, as in play.
+  let dyson = null;
+  if (raw.dyson != null) {
+    const d = raw.dyson;
+    need(String(d?.owner), 'dyson');
+    const p = Number(d?.progress ?? 0.95);
+    dyson = {
+      owner: String(d.owner),
+      progress: Math.max(0, Math.min(0.99, Number.isFinite(p) ? p : 0.95)),
+      stationHp: Math.max(100, Math.min(100000, Math.floor(Number(d?.station_hp) || 4000))),
+    };
+  }
+
+  // ---- meteoroids: discovered (so they are seen and minable) and full ----
+  const meteoroids = (Array.isArray(raw.meteoroids) ? raw.meteoroids : []).map((m, i) => {
+    const where = `meteoroids[${i}]`;
+    if (!isBody(m?.body)) throw new Error(`${where}.body is required (e.g. mtr_belt_0)`);
+    const by = m.discovered_by == null ? 'all' : String(m.discovered_by);
+    if (by !== 'all') need(by, where);
+    const tons = m.tons == null ? null : Math.max(1, Math.min(5000, Math.floor(Number(m.tons) || 0)));
+    return { body: m.body, tons, discoveredBy: by };
+  });
+
   return {
     name, gameId, factions: fx, wars, worlds, ships, fleets, research, orders, laws, silos,
+    farSystems, gates, dyson, meteoroids, megastructures, kaiju,
     viewer: typeof raw.viewer === 'string' ? raw.viewer : (fx[0]?.key ?? null),
     camera: raw.camera !== false,   // observer hulls so the viewer sees every scene world
+    secrets: raw.secrets === true,  // keep the secrets buried at scene worlds (default: emptied)
     seatMe: raw.seat_me === true,
     reset: raw.reset !== false,
     tickIntervalMs: Number.isFinite(Number(raw.tick_interval_ms)) ? Number(raw.tick_interval_ms) : 3600000,
   };
+}
+
+/** Freighters one route may fly (tradeRoutesV2.js carrierCapFor at its
+ *  highest, Trade Armadas). The research may hold a faction to fewer. */
+export const SUPPLY_MAX_CARRIERS = 4;
+
+/** A supply run's `loops`: absent = forever; else 1..999 laps. */
+function supplyLoops(v, where) {
+  if (v == null) return null;
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < 1 || n > 999) throw new Error(`${where}.loops must be a whole number of laps from 1 to 999`);
+  return n;
+}
+
+/** A ship or site as a mid-take order names it: with or without the game
+ *  prefix ('st_cs_0', '<game>:st_cs_0', 'mega_ab12cd34'). */
+const isRef = (s) => typeof s === 'string' && /^[A-Za-z0-9_:-]{1,80}$/.test(s);
+
+/**
+ * A mid-take order (POST /api/admin/studio/games/:id/order, a shot's
+ * `order` step), checked before anything touches the game. Pure, so its
+ * rules are unit-tested here; studio.js handleOrder runs it first. Covers
+ * the orders with numbers of their own (2026-10-23, the construction
+ * clip); the others pass through for the handler to check:
+ *
+ *   { type: 'found', ship, kind, orbit, angle? | bearing?, variant? }
+ *     the colony ship lays a megastructure's foundation `orbit` map units
+ *     from the centre of the world it is parked at: the player's own
+ *     placement (actions.js handlePlaceFramework). `angle`: degrees round
+ *     the world (0 = +x). `bearing`: degrees from the world's own
+ *     direction of travel (0 = straight ahead, 180 = trailing), so the
+ *     site stands the same way round the world in every game, and supply
+ *     legs (which fly in the Sun's frame, where the world is moving) take
+ *     the same ticks in every game. Default: bearing 90.
+ *   { type: 'supply', ships, from, site?, loops?, name? }
+ *     freighters on a supply run from the dock `from` to a site: the
+ *     player's own route (trade-routes/full). `site` is 'last' (the site
+ *     founded most recently, the default), a scene megastructure's key,
+ *     a site's template ('mega_warp_gate') or its id.
+ */
+export function expandTakeOrder(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('an order must be an object');
+  if (raw.type === 'found') {
+    if (!isRef(raw.ship)) throw new Error('found.ship (the parked colony ship) is required');
+    if (!MEGASTRUCTURES[raw.kind]) throw new Error(`found.kind must be one of ${MEGASTRUCTURE_KINDS.join(', ')}`);
+    const orbit = Number(raw.orbit);
+    if (raw.orbit == null || !Number.isFinite(orbit) || orbit <= 0) throw new Error("found.orbit must be a distance in map units from the world's centre");
+    if (raw.angle != null && raw.bearing != null) throw new Error('found: give angle (round the world) or bearing (from its heading), not both');
+    const deg = (v, k) => {
+      const n = Number(v);
+      if (!Number.isFinite(n)) throw new Error(`found.${k} must be in degrees`);
+      return ((n % 360) + 360) % 360;
+    };
+    const variant = raw.variant == null ? null : String(raw.variant);
+    if (variant != null && !/^[A-F]$/.test(variant)) throw new Error('found.variant must be a letter A to F');
+    return {
+      type: 'found', ship: raw.ship, kind: raw.kind, orbit,
+      ...(raw.angle != null ? { angle: deg(raw.angle, 'angle') } : { bearing: raw.bearing != null ? deg(raw.bearing, 'bearing') : 90 }),
+      variant,
+    };
+  }
+  if (raw.type === 'supply') {
+    const ships = Array.isArray(raw.ships) ? raw.ships : [raw.ships];
+    if (!ships.length || !ships.every(isRef)) throw new Error('supply.ships must name one or more freighters');
+    if (ships.length > SUPPLY_MAX_CARRIERS) throw new Error(`supply: a route flies at most ${SUPPLY_MAX_CARRIERS} freighters`);
+    if (new Set(ships).size !== ships.length) throw new Error('supply.ships names a freighter twice');
+    if (!isBody(raw.from)) throw new Error('supply.from (the dock world the freight is loaded at) is required');
+    const site = raw.site == null ? 'last' : raw.site;
+    if (!isRef(site)) throw new Error("supply.site must be 'last', a site key, template or id");
+    const name = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim().slice(0, 40) : null;
+    return { type: 'supply', ships, from: raw.from, site, loops: supplyLoops(raw.loops, 'supply'), name };
+  }
+  return raw;
 }
 
 /** '+3' = three ticks from now; a bare number = an absolute tick. */
@@ -257,6 +546,37 @@ function parseWhen(v, where) {
   throw new Error(`${where}: times are '+N' ticks from now or an absolute tick`);
 }
 export const whenTick = (w, now) => (w.abs != null ? w.abs : now + w.rel);
+
+/**
+ * WHEN A MOVE LEAVES, so it lands at `want` on its OWN engine.
+ *
+ * `arrive` used to be handed to the leg planner as the arrival, and the
+ * planner shapes the burn to land on it: a 16-tick hop asked to take 40
+ * flew on a twentieth of its engine (a Mega Destroyer at 0.44 units/tick²
+ * against a normal 8-16), crawling through the shot while everything else
+ * in it flew (Lorne, 2026-10-21: "an incoherent mess"). Now the hull flies
+ * the leg a player's order would give it, and a later arrival is a later
+ * departure.
+ *
+ * `tripAt(depart)` is the natural trip in ticks for a departure at that
+ * tick (worlds move, so it is re-asked as the departure moves). Returns
+ * the departure, the arrival, and `late` when even leaving at `earliest`
+ * cannot make `want`, in which case it arrives as soon as it can.
+ * With no `want` it leaves at `earliest` and lands when it lands.
+ */
+export async function solveMoveTiming({ earliest, want, tripAt, maxIter = 4 }) {
+  let depart = earliest;
+  let trip = await tripAt(depart);
+  if (want == null) return { depart, arrive: depart + trip, late: false };
+  for (let i = 0; i < maxIter; i++) {
+    const next = Math.max(earliest, Math.floor(want - trip));
+    if (next === depart) break;
+    depart = next;
+    trip = await tripAt(depart);
+  }
+  const arrive = depart + trip;
+  return { depart, arrive, late: arrive > want + 1e-9 };
+}
 
 /** Scenes the editor offers as starting points. The first is the shot
  *  that started this module: a three-way fight at Earth with a wing

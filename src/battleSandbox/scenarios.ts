@@ -39,7 +39,7 @@ export const CLASS_PX: Record<ShipClass, number> = {
   frigate: 16 * 3,
   destroyer: 28 * 3,
   freighter: 15 * 3,
-  mega_destroyer: 58 * 2,
+  mega_destroyer: 100 * 2,
 };
 
 /** Drawn px per class, plus the world's station. */

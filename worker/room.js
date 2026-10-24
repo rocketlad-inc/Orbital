@@ -17,7 +17,7 @@ import {
 } from './routeMath.js';
 import {
   torchStateAt, engagement, hasLineOfSight, SHIP_RANGE, V_REF as TRANSIT_V_REF,
-  isEccentric, isRamming, ramPlanOf, eccentricLocalPosition,
+  isEccentric, isRamming, ramPlanOf, ramStateAt, eccentricLocalPosition,
   shipOrbitLocalPosition, muOfRow,
   DV_BONUS_MAX, DV_BONUS_START, DV_BONUS_FULL,
 } from './transitCombat.js';
@@ -25,7 +25,7 @@ import {
 // imports from outside src/. The worker's bundler has no such rule, so
 // the shared physics sits where both can reach it — one copy, not two.
 import { rendezvousStateAt } from '../src/physics/rendezvous.js';
-import { cfg as loadGameConfig } from './gameConfig.js';
+import { cfg as loadGameConfig, invalidate as invalidateGameConfig } from './gameConfig.js';
 import { selectInChunks } from './sqlChunk.js';
 import { refundBuildLedger } from './buildRefund.js';
 import { hostilePairs } from './wars.js';
@@ -37,6 +37,7 @@ import {
   periodForRadius, MEGASTRUCTURES, MEGA_MU, bodyPositionAt, foundrySlotsAt, buildSlotsAt, hasSettlementAt,
   MEGA_MAX_HP, MEGA_REGEN_PER_TICK, MEGA_BREACH_HP, stationDamage,
   maySupplySite, excludedFundersOf, constructionPartners, gateTransitTicks,
+  renameFinishedSiteStmt,
 } from './megastructures.js';
 import { NON_WORLD_TYPES, stationTypeMul } from './systems.js';
 import { advanceSunGates, mainSystemSql, tellEveryone, recordGateTransit } from './sunGates.js';
@@ -64,6 +65,7 @@ import { SHIP_COMBAT_STATS, parkPhaseFor, categorizeBodyForSecret, BODY_CATALOG 
 import { launchCompletedMobileSites } from './megaLaunch.js';
 import { OFFER_KINDS, offerStatements, settleExpiredOffers } from './discoveryOffers.js';
 import { advanceMissileBuilds, resolveMissiles } from './missiles.js';
+import { ramImpactFrom } from './ramImpact.js';
 // The salvaged destroyer is minted when a find is CLAIMED now
 // (discoveryOffers.js); re-exported for callers that import it from here.
 export { salvagedDestroyer } from './discoveryOffers.js';
@@ -480,6 +482,11 @@ export class Room {
       const body = await req.json().catch(() => ({}));
       const force = !!body?.force;
       const hintedGameId = typeof body?.gameId === 'string' ? body.gameId : null;
+      // freshConfig: the Studio's ticks (studio.js handleTick). A scene
+      // changes its game's dials (far systems, the Leviathan, its wind-up)
+      // from the Worker, and this isolate's config memo would run the next
+      // ticks on the old ones for up to 30 s (2026-10-23). Only the studio sends it.
+      if (body?.freshConfig && hintedGameId) invalidateGameConfig(hintedGameId);
       let started = await this.state.storage.get('gameStarted');
 
       // Self-heal: when the DO was recycled or the room predates the
@@ -508,12 +515,15 @@ export class Room {
       }
 
       const game = await this.env.DB
-        .prepare('SELECT next_tick_at, status, tick_interval_ms, turn_based_enabled FROM games WHERE id = ?')
+        .prepare('SELECT next_tick_at, status, tick_interval_ms, turn_based_enabled, paused FROM games WHERE id = ?')
         .bind(started.gameId).first();
       if (!game) return new Response(null, { status: 204 });
       if (game.status === 'completed' || game.status === 'abandoned') {
         return new Response(null, { status: 204 });
       }
+      // A paused solo game's NULL next_tick_at is deliberate, not an
+      // orphan: only the player's STEP (force) may advance it.
+      if (Number(game.paused) === 1 && !force) return new Response(null, { status: 204 });
 
       const now = Date.now();
       // Orphan recovery: active wall-clock game with NULL next_tick_at
@@ -944,13 +954,18 @@ export class Room {
     const gameId = started.gameId;
 
     const game = await this.env.DB
-      .prepare('SELECT status, current_tick, tick_interval_ms, turn_based_enabled, next_tick_at, tick_schedule FROM games WHERE id = ?')
+      .prepare('SELECT status, current_tick, tick_interval_ms, turn_based_enabled, next_tick_at, tick_schedule, paused FROM games WHERE id = ?')
       .bind(gameId)
       .first();
     if (!game) return;
     // Tick speed by time of day (tickSchedule.js), when the host set one.
     const schedule = readSchedule(game.tick_schedule);
     if (game.status === 'completed' || game.status === 'abandoned') return;
+
+    // A PAUSED solo game (worker/solo.js): time stands still. No tick and
+    // no re-arm; resuming arms the alarm again. A forced tick (the solo
+    // player's STEP) still advances exactly one, then stays paused.
+    if (Number(game.paused) === 1 && !force) return;
 
     // Turn-Based Mode short-circuit: the alarm doesn't auto-advance time
     // in TBM games. The tick batch is driven from POST /turn/commit
@@ -1043,6 +1058,10 @@ export class Room {
       speedNow = intervalAt(schedule, now);
     }
 
+    // Stepped while paused: the clock stays stopped (no next tick, no alarm).
+    const stillPaused = Number(game.paused) === 1;
+    if (stillPaused) nextAt = null;
+
     await this.env.DB.batch([
       this.env.DB
         .prepare('UPDATE games SET current_tick = ?, next_tick_at = ?, tick_interval_ms = ? WHERE id = ?')
@@ -1052,8 +1071,10 @@ export class Room {
         .bind(gameId, endTick, now, now, now),
     ]);
 
-    try { await this.state.storage.setAlarm(nextAt); } catch (e) {
-      console.error('setAlarm (reschedule) failed', e);
+    if (!stillPaused) {
+      try { await this.state.storage.setAlarm(nextAt); } catch (e) {
+        console.error('setAlarm (reschedule) failed', e);
+      }
     }
 
     this.broadcast({ type: 'tick', tick: endTick, next_tick_at: nextAt });
@@ -1443,7 +1464,7 @@ export class Room {
         }
         const siteHere = solDrop ? null : await DB
           .prepare(
-            `SELECT m.status, m.acc_metal, m.acc_credits, m.cost_metal, m.cost_credits,
+            `SELECT m.kind, m.status, m.acc_metal, m.acc_credits, m.cost_metal, m.cost_credits,
                     m.settings_json, b.owner_faction_id, b.name
                FROM game_megastructures m
                JOIN game_bodies b ON b.id = m.body_id
@@ -1493,6 +1514,9 @@ export class Room {
                 WHERE body_id = ?`,
             ).bind(accM, accG, full ? 'complete' : 'building',
                    full ? tick : null, stop.body_id).run();
+            // Finished: the body drops its "Site" (renameFinishedSiteStmt).
+            const renamed = full ? renameFinishedSiteStmt(DB, gameId, stop.body_id, siteHere.kind) : null;
+            if (renamed) await renamed.run();
             await DB.prepare('UPDATE game_ships SET trades_completed = trades_completed + 1 WHERE id = ?')
               .bind(c.ship_id).run();
           }
@@ -2321,7 +2345,7 @@ export class Room {
         if (r.kind === 'megastructure') {
           const site = await this.env.DB
             .prepare(
-              `SELECT m.status, m.acc_metal, m.acc_credits, m.cost_metal, m.cost_credits,
+              `SELECT m.kind, m.status, m.acc_metal, m.acc_credits, m.cost_metal, m.cost_credits,
                       b.name, b.destroyed_at_tick
                  FROM game_megastructures m
                  JOIN game_bodies b ON b.id = m.body_id
@@ -2416,6 +2440,8 @@ export class Room {
                 )
                 .bind(accM, accG, full ? 'complete' : 'building',
                       full ? tick : null, r.dest_body_id),
+              // Finished: the body drops its "Site" (renameFinishedSiteStmt).
+              ...(full ? [renameFinishedSiteStmt(this.env.DB, gameId, r.dest_body_id, site.kind)].filter(Boolean) : []),
               // Anything the site would not take goes home with the hull
               // rather than evaporating on the dock.
               this.env.DB
@@ -6143,8 +6169,6 @@ export class Room {
       }
       return e;
     };
-    /** targetId -> ships that landed on it this tick, for kill credit. */
-    const hitByShip = new Map();
 
     // `raw` is pre-mitigation, `dmg` post — the gap is what the target's
     // shields/armor absorbed, which is the whole point of recording both.
@@ -6219,21 +6243,20 @@ export class Room {
           let set = hitBy.get(targetId);
           if (!set) { set = new Set(); hitBy.set(targetId, set); }
           set.add(attackerClass);
-          if (attacker) {
-            let ships = hitByShip.get(targetId);
-            if (!ships) { ships = new Map(); hitByShip.set(targetId, ships); }
-            // Remember how much THIS hull put in, so overkill can be
-            // apportioned by contribution rather than split evenly.
-            ships.set(attacker.id, (ships.get(attacker.id) ?? 0) + dmg);
-          }
         }
       }
       return e;
     };
-    /** Credit a kill to every class that landed on this hull this tick.
-     *  `wasted` is damage beyond what the target had left — apportioned
-     *  across contributors by share of damage dealt. */
-    const tallyKill = (targetId, targetClass, wasted = 0, attackerLowHp) => {
+    /** Credit a kill to every class that landed on this hull this tick
+     *  (the class tally is a matchup table, not a leaderboard). `wasted` is
+     *  damage beyond what the target had left.
+     *
+     *  Per-HULL credit goes to `killerShipId` ALONE — the attacker that did
+     *  the most damage, the same ship veterancy and battle_participants
+     *  name. It used to go to everyone who fired on the target that tick,
+     *  so a corvette with one real kill read 24 and an empire that lost 113
+     *  hulls read 7,502 kills. Null (a settlement did it) credits no hull. */
+    const tallyKill = (targetId, targetClass, wasted = 0, attackerLowHp, killerShipId = null) => {
       const set = hitBy.get(targetId);
       if (set) {
         for (const cls of set) {
@@ -6241,19 +6264,13 @@ export class Room {
           if (e) { e.kills++; e.overkill += wasted / set.size; }
         }
       }
-      const ships = hitByShip.get(targetId);
-      if (!ships) return;
-      let total = 0;
-      for (const v of ships.values()) total += v;
-      for (const [shipId, contributed] of ships) {
-        const st = shipStats.get(shipId);
-        if (!st) continue;
-        st.kills++;
-        if (total > 0) st.overkill += wasted * (contributed / total);
-        // "Last Stand" — a kill landed while the killer was itself
-        // nearly dead. Resolved by the caller, which knows live HP.
-        if (attackerLowHp && attackerLowHp.has(shipId)) st.lowHpKills++;
-      }
+      const st = killerShipId ? shipStats.get(killerShipId) : null;
+      if (!st || killerShipId === targetId) return;
+      st.kills++;
+      st.overkill += wasted;
+      // "Last Stand" — a kill landed while the killer was itself
+      // nearly dead. Resolved by the caller, which knows live HP.
+      if (attackerLowHp && attackerLowHp.has(killerShipId)) st.lowHpKills++;
     };
 
     /** Speed of any combatant. Settlements are not ships but they shoot and
@@ -6546,7 +6563,7 @@ export class Room {
       if (!b || b.parent_body_id == null) return { x: 0, y: 0 };
       let out;
       if (isRamming(b, t)) {
-        out = torchStateAt(ramPlanOf(b), bodyVelSync, t).pos;
+        out = ramStateAt(ramPlanOf(b), bodyVelSync, t).pos;
       } else {
         const parent = bodyPosSync(b.parent_body_id, t);
         if (isEccentric(b)) {
@@ -7112,7 +7129,10 @@ export class Room {
           // that could not miss, which is not what 7,000 metal was
           // supposed to buy. It rolls on SETTLEMENT_SPEED for the same
           // reason a station does: it is a gun that cannot move.
-          if (rollFor(stn.body_id, tick) >= hitChance(speedOfSettlement(), speedOfShip(target))) {
+          // ONE ROLL PER SHOT, keyed on the target as well: keyed on the
+          // station alone, its three shots shared a roll, so every tick it
+          // hit all three hulls or none (sim/stationReach.mjs).
+          if (rollFor(`${stn.body_id}:${target.id}`, tick) >= hitChance(speedOfSettlement(), speedOfShip(target))) {
             tallyShot('weapons_station', target.ship_class, false, 0, target.id, 0, stn, target);
             megaFired.set(stn.body_id, target.id);
             continue;
@@ -8519,8 +8539,9 @@ export class Room {
           // Damage past zero is waste: simultaneous resolution means
           // everyone shooting this hull committed their volley before
           // anyone knew it was already dead.
+          const killerShipId = topAttackerShip(shipId);
           tallyKill(shipId, cur.ship_class,
-                    Math.max(0, entry.total - (cur.hp ?? 0)), lowHpAttackers);
+                    Math.max(0, entry.total - (cur.hp ?? 0)), lowHpAttackers, killerShipId);
           losses.push(shipId);
           lostShipRows.push(cur);
           const kf = topAttacker(shipId);
@@ -8531,7 +8552,7 @@ export class Room {
           // to its combat_history (LRU cap 20, applied in the flush
           // below). Settlements firing on ships have no shipId in the
           // byShip map so they correctly don't earn ranks.
-          const killerShipId = topAttackerShip(shipId);
+          // (killerShipId resolved above, so tallyKill credits the same hull.)
           // The hull that actually did it. "Lost to Harmattan" is a
           // better fact than "lost to Center of Gravity", and the ledger
           // has known it all along — killerShipByVictim was declared for
@@ -10184,7 +10205,8 @@ export class Room {
     const now = Date.now();
     const arrivals = (await this.env.DB
       .prepare(
-        `SELECT id, name, ram_target_body_id, ram_owned_by_faction_id, ram_arrive_tick
+        `SELECT id, name, ram_target_body_id, ram_owned_by_faction_id, ram_arrive_tick,
+                ram_start_pos_x, ram_start_pos_y, ram_intercept_pos_x, ram_intercept_pos_y
            FROM game_bodies
           WHERE game_id = ?
             AND ram_target_body_id IS NOT NULL
@@ -10198,6 +10220,11 @@ export class Room {
     for (const a of arrivals) {
       const targetId = a.ram_target_body_id;
       const targetIsSol = targetId === `${gameId}:sol` || targetId === 'sol';
+      // WHICH SIDE IT HIT (ramImpactFrom): the client lands the flash and
+      // the fire there, not at the world's centre under a Planet Killer's
+      // beam (Studio clip, 2026-10-23). `cause` tells its rows from a Mega
+      // Destroyer's and the Leviathan's.
+      const impactFrom = ramImpactFrom(a);
 
       // Always: consume the asteroid AND any settlements on it (the
       // rock is being driven into a planet — anyone who built a city
@@ -10417,6 +10444,9 @@ export class Room {
                 JSON.stringify({
                   body_name: targetName,
                   asteroid_name: a.name,
+                  cause: 'asteroid',
+                  asteroid_id: a.id,
+                  ...impactFrom,
                 }),
                 now,
               ),
@@ -10443,6 +10473,9 @@ export class Room {
               target_body_id: targetId,
               settlements_destroyed: destroyedCount,
               sol_special: targetIsSol,
+              cause: 'asteroid',
+              asteroid_id: a.id,
+              ...impactFrom,
             }),
             now,
           ),

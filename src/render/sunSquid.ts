@@ -103,6 +103,26 @@ export function sunGateMorph(flightFraction: number): number {
   return smooth((flightFraction - 0.8) / 0.2);
 }
 
+/** Ring radii out from its landing site at which the unfurling begins. */
+export const SUN_GATE_UNFURL_RINGS = 3;
+
+/**
+ * THE UNFURLING ENDS ON THE SITE, NOT ON THE CLOCK. A sun gate brakes
+ * into an orbit thousands of units out, so the last fifth of its flight
+ * TIME is still hundreds of px of flight on screen: it finished becoming
+ * the gate 100-220 px short of its gold reticle, which then slid into the
+ * open gate (Studio clip a-sun-gate-is-born, f232-f242). It now also waits
+ * on the distance left (`remainingPx`, the drawn gap to where it lands):
+ * it starts unfurling SUN_GATE_UNFURL_RINGS of its ring radii out and is
+ * whole as it arrives. The time rule still holds it back on a short hop.
+ */
+export function sunGateArrivalMorph(flightFraction: number, remainingPx: number, ringR: number): number {
+  const byClock = sunGateMorph(flightFraction);
+  if (!(ringR > 0) || !Number.isFinite(remainingPx)) return byClock;
+  const byGap = smooth(1 - Math.max(0, remainingPx) / (SUN_GATE_UNFURL_RINGS * ringR));
+  return Math.min(byClock, flightFraction >= 1 ? 1 : byGap);
+}
+
 /** Heading through the flight: outward while it pushes, swinging round
  *  across the flip to point back at the Sun while it brakes. */
 export function sunGateHeading(outward: number, flightFraction: number): number {
@@ -387,8 +407,8 @@ export function drawSunSquid(g: G, cx: number, cy: number, pose: SunSquidPose) {
  * (`k`, 0 at the warning, 1 as it breaks free), with a gold rim where the
  * photosphere boils off it; slow ripples run across the disc; and in the
  * last third two lamp eyes open in the dark, the squid's own. Where on the
- * disc is `angle` (the caller seeds it: where the gate will actually fly
- * stays secret until it does).
+ * disc is `angle`: the bearing the gate will leave on (mapRenderer
+ * gateOmenPose), so it rises through the limb the gate comes out of.
  */
 export function drawSunOmen(
   g: G, cx: number, cy: number, coreR: number, k: number, angle: number, now: number,
