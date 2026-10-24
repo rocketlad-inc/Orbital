@@ -57,6 +57,12 @@ const TABLES = [
   { t: 'game_captains', where: "game_id = ? AND status = 'lost'" },
 ];
 
+/** D1's longest statement is 100,000 bytes; stay clear of it. */
+const MAX_STATEMENT = 90_000;
+const PIECE = 60_000;
+/** How to find a row again to append to it (tables without an `id`). */
+const KEYS = { match_snapshots: ['game_id', 'tick_number', 'kind'] };
+
 function staging(args, input) {
   return execFileSync(process.execPath, [WRANGLER, 'd1', 'execute', 'orbital-staging', '--env', 'staging', '--remote', ...args],
     { cwd: repoDir, maxBuffer: 1 << 29, stdio: ['ignore', 'pipe', 'pipe'], input }).toString();
@@ -99,7 +105,17 @@ async function importGame(gameId, hostId) {
       if (spec.t === 'rooms') row.host_id = hostId;
       if (spec.t === 'game_factions') row.user_id = null;
       const cols = Object.keys(row).filter(c => have.has(c));
-      stmts.push(`INSERT OR REPLACE INTO ${spec.t} (${cols.join(', ')}) VALUES (${cols.map(c => lit(row[c])).join(', ')});`);
+      const insert = `INSERT OR REPLACE INTO ${spec.t} (${cols.join(', ')}) VALUES (${cols.map(c => lit(row[c])).join(', ')});`;
+      if (insert.length <= MAX_STATEMENT) { stmts.push(insert); continue; }
+      // D1 refuses a statement over 100 KB, and a replay keyframe can be
+      // nearly twice that: insert the longest text column empty, then append
+      // it in pieces, keyed by the row's own identity.
+      const big = cols.filter(c => typeof row[c] === 'string').sort((a, b) => row[b].length - row[a].length)[0];
+      const key = (KEYS[spec.t] ?? ['id']).map(k => `${k} = ${lit(row[k])}`).join(' AND ');
+      stmts.push(`INSERT OR REPLACE INTO ${spec.t} (${cols.join(', ')}) VALUES (${cols.map(c => (c === big ? "''" : lit(row[c]))).join(', ')});`);
+      for (let at = 0; at < row[big].length; at += PIECE) {
+        stmts.push(`UPDATE ${spec.t} SET ${big} = ${big} || ${lit(row[big].slice(at, at + PIECE))} WHERE ${key};`);
+      }
     }
     total += rows.length;
     process.stdout.write(`  ${spec.t}: ${rows.length}\n`);
