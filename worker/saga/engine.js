@@ -20,7 +20,7 @@
 
 import { Walker, hashOf, numWord, cap, listOf, shareWord, tidy } from './prose.js';
 import {
-  MADE_TITLES, MADE_TITLES_SPHERE, MADE_TITLES_VOTE,
+  MADE_TITLES, MADE_TITLES_FALLEN, MADE_TITLES_SPHERE, MADE_TITLES_VOTE,
   BOARD_OPEN, BOARD_SENATE, BOARD_TRADE, BOARD_FAR, BOARD_QUIET,
   HINTS, OMEN, OMEN_EXTRA, ROLE_LABEL, NO_BIO, HEAD, BECAUSE, RECEIPT, KICKER,
 } from './banks.js';
@@ -36,6 +36,8 @@ export function sagaRuntime(span) {
 }
 
 const pairKey = (a, b) => [a, b].sort().join('|');
+/** A bill title that talks about the game rather than in it. */
+const META_TITLE = /\b(propose|proposal|this bill|test(ing)?|ignore|still running|does this|how do|can i|lol|idk)\b/i;
 /** A bill title that reads as something somebody said, not a policy name:
  *  four or more words, or sentence punctuation, or a lowercase word. */
 const isLine = (t) => {
@@ -613,7 +615,8 @@ export function transmissionsOf(F, plots, beats) {
 
 function titleOf(F, S, plots, walker) {
   const aFids = new Set(plots[0]?.fids ?? []);
-  const cands = F.bills.filter(b => (b.title.match(/\p{L}/gu) ?? []).length >= 3 && b.title.length <= 70)
+  const cands = F.bills.filter(b => (b.title.match(/\p{L}/gu) ?? []).length >= 3 && b.title.length <= 70
+    && b.title.trim().split(/\s+/).length >= 2 && !META_TITLE.test(b.title))
     .map(b => {
       let s = 0;
       if (b.status === 'passed') s += 2;
@@ -645,11 +648,12 @@ function titleOf(F, S, plots, walker) {
   const battle = [...(F.D.battles ?? [])].sort((a, b) => (b.shipsLost ?? 0) - (a.shipsLost ?? 0))[0];
   const ctx = {
     world: battle?.bodyName ?? F.home.get(F.winner) ?? 'Sol', home: F.home.get(F.winner) ?? 'Sol',
-    days: numWord(F.span), fallen: short(F.nameOf(F.falls[F.falls.length - 1]?.fid)) || short(F.nameOf(F.winner)),
+    days: numWord(F.span), Days: cap(numWord(F.span)), fallen: short(F.nameOf(F.falls[F.falls.length - 1]?.fid)) || short(F.nameOf(F.winner)),
   };
   const bank = S.overlays.includes('sphere') && F.D.game.victoryType === 'engineering' ? MADE_TITLES_SPHERE
     : F.D.game.victoryType === 'chancellor' ? MADE_TITLES_VOTE : MADE_TITLES;
-  const made = walker.say('title.made', bank.filter(t => !/fallen/.test(t.toString()) || F.falls.length), ctx);
+  const pool = bank === MADE_TITLES && F.falls.length ? [...bank, ...MADE_TITLES_FALLEN] : bank;
+  const made = walker.say('title.made', pool, ctx);
   return { text: made || 'A Match in Orbit', kind: 'made', credit: '' };
 }
 

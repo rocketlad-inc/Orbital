@@ -76,22 +76,33 @@ export class Walker {
     this.seen = new Set();
   }
 
+  /**
+   * A bank's walk: a fixed permutation (start + i*step) for this bank, and
+   * the WINDOW this film reads from it. Film k begins k*advance places along
+   * the permutation, advance coprime with the bank's length and at least
+   * two, so consecutive films read disjoint windows (a film draws one or two
+   * lines from most banks) and the whole bank is used before any line
+   * repeats across films. (A raw `ordinal * step` is a multiple of `step`,
+   * and in a three-line bank every film opened on the same line.)
+   */
   _order(name, n) {
-    const start = mix32(this.seed ^ hashOf(name)) % n;
+    // ONE permutation per bank for every film (not seeded by the game), so
+    // the films' windows tile it instead of landing at random.
+    const start = mix32(hashOf(name)) % n;
     const step = strideFor(n, hashOf(name) + 7);
-    // The ordinal moves the ENTRY POINT across films: film k starts its
-    // walk k*3 steps further on, so neighbours in time read differently.
-    return { start: (start + this.ordinal * 3 * step) % n, step };
+    let advance = 2;
+    while (n > 2 && gcd(advance, n) !== 1) advance++;
+    return { start, step, offset: n > 1 ? (this.ordinal * advance) % n : 0 };
   }
 
   /** The next unused entry of a bank (a function or a string). */
   pick(name, bank, ok = () => true) {
     if (!bank?.length) return null;
     const n = bank.length;
-    const { start, step } = this._order(name, n);
+    const { start, step, offset } = this._order(name, n);
     let k = this.cursors.get(name) ?? 0;
     for (let tries = 0; tries < n; tries++, k++) {
-      const entry = bank[(start + k * step) % n];
+      const entry = bank[(start + ((offset + k) % n) * step) % n];
       if (!ok(entry)) continue;
       this.cursors.set(name, k + 1);
       return entry;
