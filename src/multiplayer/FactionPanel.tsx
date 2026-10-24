@@ -42,6 +42,10 @@ const STATUS_LABEL = {
   // to fall back to WAR for every stranger, and a brand-new game showed
   // three wars nobody had declared.
   neutral: 'faction.chip.neutral',
+  // No pact YET, but one is on the table for you: an Ally that has just
+  // offered peace read "Ally · NEUTRAL" with only DECLARE WAR to press
+  // (playtest B7).
+  offered: 'faction.chip.offered',
   self: '',
 } as const;
 
@@ -62,6 +66,7 @@ const RELATION_TEXT: Record<keyof typeof STATUS_LABEL, Key | ''> = {
   construction_pact: 'faction.rel.jointBuild',
   war: 'faction.rel.war',
   neutral: 'faction.rel.neutral',
+  offered: 'faction.rel.offered',
   self: '',
 };
 
@@ -74,6 +79,7 @@ const STATUS_COLOR: Record<keyof typeof STATUS_LABEL, string> = {
   construction_pact: '#ffb84d',
   war: '#ff5e5e',            // hostile red — a DECLARED, open war only
   neutral: '#8a9fb3',        // muted — no relationship either way
+  offered: '#67e8f9',        // the peace cyan: a pact waiting on your answer
   self: 'var(--mp-fg-dim)',
 };
 
@@ -98,6 +104,8 @@ export function FactionPanel({
   const [roster, setRoster] = useState<Faction[]>([]);
   const [pacts, setPacts] = useState<Pact[]>([]);
   const [wars, setWars] = useState<WarRow[]>([]);
+  /** Empires with a pact offer open and addressed to you. */
+  const [offeredBy, setOfferedBy] = useState<Set<string>>(new Set());
   const [breaking, setBreaking] = useState<string | null>(null);
   const [breakError, setBreakError] = useState<string | null>(null);
   // WAR FROM THE DRAWER. Declaring lived only in Trade › Standing, while
@@ -134,22 +142,36 @@ export function FactionPanel({
   const tradesApiClient = useMemo(() => tradesApi(gameId), [gameId]);
 
   const refresh = useCallback(async () => {
-    const [meRes, listRes, pactsRes, warsRes] = await Promise.all([
+    const [meRes, listRes, pactsRes, warsRes, offersRes] = await Promise.all([
       apiFetch<{ faction: MyFaction }>(`/api/games/${gameId}/me`),
       apiFetch<{ factions: Faction[]; dyson?: DysonProgress | null }>(`/api/games/${gameId}/factions`),
       tradesApiClient.listPacts(),
       warsApi(gameId).list(),
+      tradesApiClient.list(),
     ]);
     if (meRes.ok) setMe(meRes.data.faction);
     if (listRes.ok) { setRoster(listRes.data.factions); setDyson(listRes.data.dyson ?? null); }
     if (pactsRes.ok) setPacts(pactsRes.data.pacts);
     if (warsRes.ok) setWars(warsRes.data.wars);
+    if (offersRes.ok) {
+      const meId = (offersRes.data as { caller_faction_id?: string }).caller_faction_id;
+      setOfferedBy(new Set(offersRes.data.trades
+        .filter(o => o.status === 'open' && o.responder_faction_id === meId
+          && ((o.offer_pacts ?? []).length + (o.request_pacts ?? []).length) > 0)
+        .map(o => o.proposer_faction_id)));
+    }
   }, [gameId, tradesApiClient]);
 
   useEffect(() => {
     refresh();
     const iv = setInterval(refresh, 10_000);
-    return () => clearInterval(iv);
+    // A pact signed or a war declared shows at once, not 10 s later.
+    const onWs = (e: Event) => {
+      const d = (e as CustomEvent).detail;
+      if (d?.kind === 'trade' || d?.kind === 'treaty' || d?.type === 'wars_changed') void refresh();
+    };
+    window.addEventListener('orbital:ws', onWs as EventListener);
+    return () => { clearInterval(iv); window.removeEventListener('orbital:ws', onWs as EventListener); };
   }, [refresh]);
 
   async function handleBreak(treatyId: string) {
@@ -298,7 +320,7 @@ export function FactionPanel({
             const atWar = !mine && wars.some(w => w.open
               && w.factions.includes(me.id) && w.factions.includes(f.id));
             const statusKey: keyof typeof STATUS_LABEL = mine ? 'self'
-              : atWar ? 'war' : (top ?? 'neutral');
+              : atWar ? 'war' : (top ?? (offeredBy.has(f.id) ? 'offered' : 'neutral'));
             return (
               <div
                 key={f.id}
@@ -458,6 +480,17 @@ export function FactionPanel({
                           </span>
                         </div>
                       ) : (
+                        <>
+                        {statusKey === 'offered' && (
+                          <div className="fp-pact">
+                            <span>{t('faction.offer.waiting', { name: f.name })}</span>
+                            <button
+                              onClick={() => {
+                                try { window.dispatchEvent(new CustomEvent('orbital:open-panel', { detail: { panel: 'trades' } })); } catch { /* noop */ }
+                              }}
+                            >{t('faction.offer.answer')}</button>
+                          </div>
+                        )}
                         <div className="fp-pact">
                           <span>{t('faction.war.atPeace')}</span>
                           <button
@@ -467,6 +500,7 @@ export function FactionPanel({
                               : t('faction.war.declareTip')}
                           >{t('faction.war.declare')}</button>
                         </div>
+                        </>
                       );
                     })()}
                     {factionPacts.map(pct => (
