@@ -1460,10 +1460,11 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                 EditableName the ShipPanel header uses, so the pencil,
                 keyboard handling and optimistic-then-reconcile
                 behaviour are identical wherever you rename. Rivals'
-                hulls are read-only. stopPropagation keeps a click on
-                the pencil from also selecting/focusing the ship. */}
-            <span className="fleet-card__name" onClick={e => e.stopPropagation()}>
+                hulls are read-only. Only the pencil renames: a tap on
+                the name selects the ship like the rest of the row. */}
+            <span className="fleet-card__name">
               <EditableName
+                pencilOnly
                 value={ship.name}
                 readOnly={ship.ownedBy !== 'player' || !mpActions}
                 ariaLabel={t('fleet.renameName', { name: ship.name })}

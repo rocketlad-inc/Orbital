@@ -2213,7 +2213,8 @@ export const ShipPanel: React.FC = () => {
             >
               {hasExistingTransfer ? t('ship.panel.chainMove') : t('ship.panel.moveToTarget')}
             </button>
-            <button className="maneuver-btn" onClick={() => setTransferModalOpen(true)}>
+            <button className="maneuver-btn" onClick={() => setTransferModalOpen(true)}
+              data-tutorial-id="ship-list-button">
               {t('ship.panel.chooseFromList')}
             </button>
             {/* LOCATE — put the camera where this hull actually is.
@@ -4407,10 +4408,16 @@ export const TransferTargetPicker: React.FC<TransferTargetPickerProps> = ({
       const radii = v.bodies.map(b => b.orbitRadius ?? 0).sort((a, b) => a - b);
       v.order = radii[Math.floor(radii.length / 2)] ?? 0;
     }
+    // HOME FIRST: the system the ship (or world) is in leads the list, so
+    // the nearest worlds are the first ones offered. Outward from the Sun,
+    // a player at Jupiter or Pluto scrolled past forty worlds to find their
+    // neighbours (playtest, 2026-10-24).
+    const homeKey = excludeBodyId && byId.has(excludeBodyId) ? rootOf(excludeBodyId) : null;
+    const isHome = (k: string) => (k === homeKey ? 0 : 1);
     return Array.from(map.entries())
       .map(([key, v]) => ({ key, ...v }))
-      .sort((a, b) => a.order - b.order || a.label.localeCompare(b.label));
-  }, [visible, bodies, rootOf, pickerLang]);
+      .sort((a, b) => isHome(a.key) - isHome(b.key) || a.order - b.order || a.label.localeCompare(b.label));
+  }, [visible, bodies, rootOf, pickerLang, excludeBodyId]);
 
   // Active-query auto-expand: when the player is searching, any
   // far-system group that has matches gets opened so the matches are

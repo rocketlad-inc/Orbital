@@ -35,6 +35,10 @@ interface Props {
   ariaLabel?: string;
   /** Disable editing entirely (e.g. ship is destroyed). */
   readOnly?: boolean;
+  /** Only the pencil starts an edit; a click on the name itself goes on
+   *  to the row (a ship row selects its ship: tapping a name used to
+   *  open the rename box instead, playtest 2026-10-24). */
+  pencilOnly?: boolean;
 }
 
 export const EditableName: React.FC<Props> = ({
@@ -45,6 +49,7 @@ export const EditableName: React.FC<Props> = ({
   style,
   ariaLabel,
   readOnly,
+  pencilOnly,
 }) => {
   useI18n();
   const [editing, setEditing] = useState(false);
@@ -102,6 +107,26 @@ export const EditableName: React.FC<Props> = ({
     return <span className={className} style={style}>{value}</span>;
   }
 
+  if (!editing && pencilOnly) {
+    return (
+      <span className={className} style={style}>
+        {value}
+        <button
+          type="button"
+          className="editable-name__pencil"
+          title={ariaLabel ?? t('site.editName.click')}
+          aria-label={ariaLabel ?? t('site.editName.rename')}
+          onClick={(e) => { e.stopPropagation(); setEditing(true); }}
+          style={{
+            marginLeft: 4, padding: '0 6px', minHeight: 0, minWidth: 0,
+            background: 'none', border: 0, color: 'inherit', opacity: 0.45,
+            fontSize: '0.85em', cursor: 'pointer',
+          }}
+        >✎</button>
+      </span>
+    );
+  }
+
   if (!editing) {
     return (
       <span
@@ -145,6 +170,9 @@ export const EditableName: React.FC<Props> = ({
       maxLength={maxLength + 8} // soft slack so the user sees the over-length state
       value={draft}
       onChange={(e) => setDraft(e.target.value)}
+      // The row around a pencil-only name selects on click; typing in
+      // the box must not.
+      onClick={pencilOnly ? (e) => e.stopPropagation() : undefined}
       onBlur={() => { if (!submittingRef.current) commit(); }}
       onKeyDown={(e) => {
         if (e.key === 'Enter') {
