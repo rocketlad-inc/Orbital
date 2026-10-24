@@ -26,6 +26,7 @@ import { span } from './storyVerdict';
 import { GameActivity } from './AdminGameActivity';
 import { TrafficTrends, TrafficDay } from './AdminTrafficTrends';
 import { CommissionSales } from './AdminCommissionSales';
+import { isAiSource } from './aiSources';
 import './AdminOverview.css';
 
 // ---------- payload types (worker/adminDashboard.js) ----------
@@ -1288,6 +1289,24 @@ const IN_APP_LABEL: Record<string, string> = {
 
 /** The funnel cells shared by every traffic table: each step as a count
  *  with its share of visitors, so a leak shows where it happens. */
+/** Every AI assistant's rows summed into one (aiSources.js): ChatGPT,
+ *  Perplexity, Claude, Gemini, Copilot... read as one channel. Null when
+ *  fewer than two rows would be summed: one row is its own total. */
+function aiTotal<T extends { source: string }>(rows: T[], keys: Array<keyof T>): (T & { count: number }) | null {
+  const ai = rows.filter(r => isAiSource(r.source));
+  if (ai.length < 2) return null;
+  const sum = { ...ai[0], count: ai.length } as T & { count: number };
+  for (const k of keys) {
+    (sum as any)[k] = k === 'latest_ms'
+      ? Math.max(...ai.map(r => Number(r[k]) || 0))
+      : ai.reduce((s, r) => s + (Number(r[k]) || 0), 0);
+  }
+  return sum;
+}
+const FUNNEL_KEYS = ['visitors', 'players', 'engaged', 'pressed_play', 'started', 'errors', 'signed_up', 'seated', 'came_back'] as const;
+/** Marks an AI assistant's row. */
+const AiPill = () => <span className="ao-pill ao-pill--ai" title="An AI assistant (src/multiplayer/aiSources.js)">AI</span>;
+
 function FunnelCells({ f }: { f: Funnel }) {
   const cell = (a: number, title: string) => (
     <td className="num" title={title}>
@@ -1372,6 +1391,7 @@ function TrafficPanel({ tr, now }: { tr: TrafficData; now: number }) {
   }
   const dayRows = [...days.entries()].sort((a, b) => b[0] - a[0]);
   const maxDay = Math.max(1, ...dayRows.map(([, d]) => d.visitors));
+  const aiCampaigns = aiTotal(tr.campaigns, [...FUNNEL_KEYS, 'phones', 'clicks', 'latest_ms']);
   return (
     <section className="ao-panel">
       <PanelHead
@@ -1385,9 +1405,19 @@ function TrafficPanel({ tr, now }: { tr: TrafficData; now: number }) {
           <table className="ao-table">
             <thead><tr><HelpTh k="source">Source</HelpTh><HelpTh k="campaign">Campaign</HelpTh>{FUNNEL_HEAD}<HelpTh k="phone" num>On a phone</HelpTh><HelpTh k="clicks" num>Ad clicks</HelpTh><HelpTh k="latest">Latest</HelpTh></tr></thead>
             <tbody>
+              {aiCampaigns && (
+                <tr className="ao-row--total">
+                  <td>AI assistants <AiPill /></td>
+                  <td><span className="ao-dim">{aiCampaigns.count} rows below</span></td>
+                  <FunnelCells f={aiCampaigns} />
+                  <td className="num">{pctOf(aiCampaigns.phones, aiCampaigns.visitors) ?? 0}%</td>
+                  <td className="num">{n(aiCampaigns.clicks)}</td>
+                  <td>{ago(now, aiCampaigns.latest_ms)}</td>
+                </tr>
+              )}
               {tr.campaigns.map(r => (
                 <tr key={`${r.source}|${r.campaign}`}>
-                  <td>{r.source}</td>
+                  <td>{r.source}{isAiSource(r.source) && <> <AiPill /></>}</td>
                   <td>{r.campaign || <span className="ao-dim">—</span>}</td>
                   <FunnelCells f={r} />
                   <td className="num">{pctOf(r.phones, r.visitors) ?? 0}%</td>
@@ -1547,6 +1577,7 @@ function SourcesTable({ rows, now }: { rows: SourceRow[]; now: number }) {
       </span>
     );
   };
+  const ai = aiTotal(rows, ['signups', 'signups_30d', 'joined', 'came_back', 'latest_ms']);
   return (
     <div className="ao-scroll">
       <table className="ao-table">
@@ -1557,10 +1588,21 @@ function SourcesTable({ rows, now }: { rows: SourceRow[]; now: number }) {
           </tr>
         </thead>
         <tbody>
+          {ai && (
+            <tr className="ao-row--total">
+              <td>AI assistants <AiPill /></td>
+              <td className="num">{n(ai.signups)}</td>
+              <td className="num">{n(ai.signups_30d)}</td>
+              <td><Rate a={ai.joined} of={ai.signups} /></td>
+              <td><Rate a={ai.came_back} of={ai.signups} /></td>
+              <td>{ai.latest_ms ? ago(now, ai.latest_ms) : '—'}</td>
+              <td className="ao-sub">{ai.count} sources below</td>
+            </tr>
+          )}
           {rows.map(r => (
             <tr key={r.source || '(none)'}>
               {/* Blank = the account predates tracking; never guessed. */}
-              <td>{r.source || <span className="ao-dim">before tracking</span>}</td>
+              <td>{r.source ? <>{r.source}{isAiSource(r.source) && <> <AiPill /></>}</> : <span className="ao-dim">before tracking</span>}</td>
               <td className="num">{n(r.signups)}</td>
               <td className="num">{n(r.signups_30d)}</td>
               <td><Rate a={r.joined} of={r.signups} /></td>

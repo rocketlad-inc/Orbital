@@ -242,6 +242,8 @@ export async function handleFilmPage(req, env, token) {
     .on('meta[name="twitter:image"]', set(image))
     .on('meta[name="twitter:image:alt"]', set(alt))
     .on('link[rel="canonical"]', { element(el) { el.setAttribute('href', url); } })
+    // The home page's crawler copy (scripts/prerender-pages.mjs) is not this page.
+    .on('#seo-page', { element(el) { el.remove(); } })
     .transform(shell);
   const headers = new Headers(out.headers);
   headers.set('cache-control', 'public, max-age=300');

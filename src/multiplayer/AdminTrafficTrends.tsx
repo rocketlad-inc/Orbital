@@ -20,6 +20,7 @@
 
 import React, { useLayoutEffect, useMemo, useState } from 'react';
 import './AdminTrafficTrends.css';
+import { isAiSource, AI_GROUP } from './aiSources';
 
 const DAY = 86_400_000;
 
@@ -49,6 +50,7 @@ const SOURCE_NAME: Record<string, string> = {
   'reddit-ads': 'Reddit ads', reddit: 'Reddit, untagged', 'chatgpt.com': 'ChatGPT', google: 'Google search',
   bing: 'Bing', duckduckgo: 'DuckDuckGo', invite: 'Invite links', 'android-app': 'Android app',
   'discord-replay': 'Discord replay', 'discord-feed': 'Discord game feed', facebook: 'Facebook',
+  [AI_GROUP]: 'AI assistants',
 };
 /** "r-space" → "r/space"; the commonest tags in words; anything else as is. */
 export const sourceName = (s: string) => SOURCE_NAME[s] ?? (s.startsWith('r-') ? `r/${s.slice(2)}` : s);
@@ -94,7 +96,23 @@ function useWidth<T extends HTMLElement>(): [(el: T | null) => void, number] {
 type Point = { v: number | null; n: number; of: number };
 type Series = { source: string; slot: number; pts: Point[] };
 
-export function TrafficTrends({ rows, now }: { rows: TrafficDay[]; now: number }) {
+/** Every AI assistant folded into one source per day (aiSources.js), so
+ *  ChatGPT, Perplexity, Claude... read as one line. Each day's rows still
+ *  add up to the same total. */
+function foldAi(rows: TrafficDay[]): TrafficDay[] {
+  const out: TrafficDay[] = [];
+  const ai = new Map<number, TrafficDay>();
+  for (const r of rows) {
+    if (!isAiSource(r.source)) { out.push(r); continue; }
+    const d = ai.get(r.day_ms);
+    if (!d) { ai.set(r.day_ms, { ...r, source: AI_GROUP }); continue; }
+    for (const m of METRICS) d[m.key] += r[m.key];
+  }
+  return [...out, ...ai.values()].sort((a, b) => a.day_ms - b.day_ms);
+}
+
+export function TrafficTrends({ rows: raw, now }: { rows: TrafficDay[]; now: number }) {
+  const rows = useMemo(() => foldAi(raw), [raw]);
   const saved = useMemo(loadSaved, []);
   const [metric, setMetric] = useState<MetricKey>(
     METRICS.some(m => m.key === saved.metric) ? saved.metric! : 'visitors');

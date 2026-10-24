@@ -1,0 +1,136 @@
+/* ============================================================
+   AnswerPage — the "games like..." pages. An article, not a pitch
+   deck: one readable column in the landing's own palette and faces
+   (see LandingHome.css), over the shared starfield. Dark-only.
+   ============================================================ */
+
+.ap {
+  --ap-ink: #eaf0f6;
+  --ap-ink-2: #aebccb;
+  --ap-ink-3: #74879a;
+  --ap-line: rgba(140, 170, 200, 0.14);
+  --ap-line-strong: rgba(140, 170, 200, 0.3);
+  --ap-amber: #ffb84d;
+  --ap-amber-hi: #ffd180;
+  --ap-teal: #4ecdc4;
+  --ap-display: var(--font-display, 'Audiowide', system-ui, sans-serif);
+  --ap-body: 'Chakra Petch', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --ap-data: var(--font-data, 'Chivo Mono', ui-monospace, monospace);
+
+  position: relative;
+  z-index: 1;
+  box-sizing: border-box;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 56px 16px 64px;
+  color: var(--ap-ink);
+  font-family: var(--ap-body);
+  font-size: 17px;
+  line-height: 1.65;
+}
+.ap *, .ap *::before, .ap *::after { box-sizing: border-box; }
+
+.ap-eyebrow {
+  font-family: var(--ap-data);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ap-teal);
+}
+.ap-title {
+  margin: 14px 0 0;
+  font-family: var(--ap-display);
+  font-weight: 400;
+  font-size: clamp(30px, 4.6vw, 46px);
+  line-height: 1.1;
+  text-wrap: balance;
+}
+.ap-lede {
+  margin: 20px 0 0;
+  font-size: clamp(17px, 1.4vw, 19px);
+  color: var(--ap-ink-2);
+}
+.ap-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; }
+
+.ap-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 46px;
+  padding: 0 24px;
+  border-radius: 2px;
+  border: 1px solid var(--ap-line-strong);
+  background: transparent;
+  color: var(--ap-ink);
+  font-family: var(--ap-display);
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+.ap-btn:hover { border-color: var(--ap-teal); color: var(--ap-teal); }
+.ap-btn--primary { background: var(--ap-amber); border-color: var(--ap-amber); color: #1a1206; }
+.ap-btn--primary:hover { background: var(--ap-amber-hi); border-color: var(--ap-amber-hi); color: #1a1206; }
+.ap-btn--lg { min-height: 54px; padding: 0 32px; font-size: 15px; }
+.ap-btn:focus-visible, .ap a:focus-visible { outline: 2px solid var(--ap-teal); outline-offset: 3px; }
+
+.ap-shot {
+  margin: 40px 0 8px;
+  background: #04070b;
+  border: 1px solid var(--ap-line);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+}
+.ap-shot img { display: block; width: 100%; height: auto; }
+
+.ap-section { padding-top: 36px; }
+.ap-h2 {
+  margin: 0 0 12px;
+  font-family: var(--ap-display);
+  font-weight: 400;
+  font-size: clamp(21px, 2.4vw, 27px);
+  line-height: 1.2;
+  text-wrap: balance;
+}
+.ap-section p { margin: 0 0 12px; color: var(--ap-ink-2); }
+.ap-section ul, .ap-section ol { margin: 0; padding-left: 22px; color: var(--ap-ink-2); }
+.ap-section li { margin: 0 0 10px; padding-left: 4px; }
+.ap-section ul li::marker { color: var(--ap-teal); }
+.ap-section ol li::marker { color: var(--ap-amber); font-family: var(--ap-data); font-size: 14px; }
+
+.ap-cta {
+  margin-top: 48px;
+  padding: 32px 0;
+  border-top: 1px solid var(--ap-line);
+  border-bottom: 1px solid var(--ap-line);
+  text-align: center;
+}
+.ap-fine {
+  margin: 14px 0 0;
+  font-family: var(--ap-data);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ap-ink-3);
+}
+
+.ap-more { margin-top: 36px; }
+.ap-more__title {
+  margin: 0 0 12px;
+  font-family: var(--ap-data);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ap-ink-3);
+}
+.ap-more ul { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 0; padding: 0; list-style: none; }
+.ap-more a { color: var(--ap-amber); text-decoration: none; border-bottom: 1px solid rgba(255, 184, 77, 0.35); }
+.ap-more a:hover { color: var(--ap-amber-hi); border-bottom-color: var(--ap-amber-hi); }
+
+.ap-note { margin: 32px 0 0; font-size: 14px; color: var(--ap-ink-3); }
+
+@media (prefers-reduced-motion: reduce) {
+  .ap-btn { transition: none; }
+}

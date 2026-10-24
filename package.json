@@ -18,7 +18,7 @@
     "start": "react-scripts start",
     "lint:worker": "eslint worker/ --ext .js && npm run lint:claims",
     "art:version": "node scripts/art-version.js",
-    "build": "npm run lint:worker && node scripts/bundle-migrations.js && node scripts/mirror-shell-css.js && node scripts/globe-pngs.mjs && react-scripts build",
+    "build": "npm run lint:worker && node scripts/bundle-migrations.js && node scripts/mirror-shell-css.js && node scripts/globe-pngs.mjs && react-scripts build && node scripts/prerender-pages.mjs",
     "test": "react-scripts test",
     "eject": "react-scripts eject",
     "worker:dev": "wrangler dev",

@@ -774,6 +774,10 @@
   text-decoration: none;
 }
 .landing-footer .footer-link:hover { color: #ffb84d; }
+/* The answer pages ("games like..."): a quieter full-width row. */
+.landing-footer__links--answers { flex-basis: 100%; gap: 8px 22px; }
+.landing-footer .landing-footer__links--answers .footer-link { font-size: 14px; font-weight: 400; color: #74879a; }
+.landing-footer .landing-footer__links--answers .footer-link:hover { color: #ffb84d; }
 .landing-footer__legal {
   max-width: 1200px;
   margin: 32px auto 0;
