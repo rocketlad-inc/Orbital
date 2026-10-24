@@ -17,7 +17,11 @@ jest.mock('../api', () => ({
     if (mockSlow) return mockNever();
     return { ok: true, data: { factions: [mockME], dyson: null } };
   },
-  tradesApi: () => ({ listPacts: () => (mockSlow ? mockNever() : Promise.resolve({ ok: true, data: { pacts: [] } })) }),
+  tradesApi: () => ({
+    listPacts: () => (mockSlow ? mockNever() : Promise.resolve({ ok: true, data: { pacts: [] } })),
+    // Open offers (PACT OFFERED rows): none here.
+    list: () => Promise.resolve({ ok: true, data: { trades: [] } }),
+  }),
   warsApi: () => ({ list: () => (mockSlow ? mockNever() : Promise.resolve({ ok: true, data: { wars: [] } })) }),
 }));
 
