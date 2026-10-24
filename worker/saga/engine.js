@@ -597,7 +597,7 @@ export function transmissionsOf(F, plots, beats) {
     let score = (inPlot.has(s.fid) ? 2 : 0) + (near ? 3 : 0)
       + (text.length >= 24 && text.length <= 120 ? 1.5 : text.length > 150 ? -1 : 0);
     if (/[!?]/.test(text)) score += 0.5;
-    if (/[A-Z]{3,}.*[A-Z]{3,}/.test(text)) score += 1;
+    if (/\b[A-Z]{3,}\b.*\b[A-Z]{3,}\b/.test(text)) score += 1;
     for (const e of F.empires) if (e.id !== s.fid && text.toLowerCase().includes(short(e.name).toLowerCase().split(' ')[0])) score += 1;
     cands.push({ tick: s.t, fid: s.fid, text, score });
   }
@@ -619,11 +619,12 @@ function titleOf(F, S, plots, walker) {
       if (b.status === 'passed') s += 2;
       if (b.kind === 'chancellor_vote' && b.status === 'passed') s += 2;
       if (b.proposer && aFids.has(b.proposer)) s += 1;
+      else if (b.proposer && plots.some(p => p.fids.includes(b.proposer))) s += 0.5;
       const voters = b.votes.length;
       if (voters >= 3 && Math.abs(b.yea - b.nay) <= 1) s += 2;
       // A title that names what the match turned out to be about.
       if (S.overlays.includes('leviathan') && /monster|beast|squid|leviathan|kaiju/i.test(b.title)) s += 2;
-      if (S.overlays.includes('sphere') && /sphere|dyson|sun/i.test(b.title)) s += 2;
+      if (S.overlays.includes('sphere') && /sphere|dyson|sun\b/i.test(b.title)) s += 2;
       // A LINE SOMEONE SAID beats a policy name: "There's a giant space
       // monster coming. Mount up." over "Government Handouts".
       if (isLine(b.title)) s += 3;

@@ -34,7 +34,6 @@ export const MADE_TITLES = [
 export const MADE_TITLES_SPHERE = [
   () => 'A Cage Around the Sun',
   () => 'The Sphere at Sol',
-  () => 'Ninety-Nine Percent',
   () => 'The Great Work',
 ];
 export const MADE_TITLES_VOTE = [
