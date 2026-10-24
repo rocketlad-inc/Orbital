@@ -462,10 +462,11 @@ async function handleOverview(req, env, { session }) {
     q(`SELECT COALESCE(v.country, '??') AS country, COUNT(*) AS visitors, SUM(v.signup_user_id IS NOT NULL) AS signed_up
          ${visitFrom}
         GROUP BY 1 ORDER BY visitors DESC LIMIT 15`, tr0),
-    q(`SELECT CAST(v.first_ms / ${DAY_MS} AS INTEGER) * ${DAY_MS} AS day_ms, v.source,
-              COUNT(*) AS visitors, SUM(v.signup_user_id IS NOT NULL) AS signed_up
-         ${visitFrom} AND v.first_ms >= ?2
-        GROUP BY 1, 2 ORDER BY 1`, tr0, now - 14 * DAY_MS),
+    // Every funnel step per source per UTC day, all 30 days: the
+    // per-source trend chart (AdminTrafficTrends) picks the step.
+    q(`SELECT CAST(v.first_ms / ${DAY_MS} AS INTEGER) * ${DAY_MS} AS day_ms, v.source, ${funnelCols}
+         ${visitFrom}
+        GROUP BY 1, 2 ORDER BY 1`, tr0),
   ]);
 
   // 7x24 UTC grid; the client shifts it to the viewer's clock.
