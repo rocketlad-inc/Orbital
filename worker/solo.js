@@ -33,7 +33,6 @@
 
 import { getOrCreateAgentUser } from './auth.js';
 import { startGame } from './lobby.js';
-import { runSoloGame } from './aiEmpire.js';
 import { PERSONALITIES, SURPRISE_DECKS, doctrineFor } from './aiPersona.js';
 
 const json = (data, init = {}) => new Response(JSON.stringify(data), {
@@ -185,9 +184,8 @@ async function handleStep(_req, env, ctx) {
     body: JSON.stringify({ force: true, gameId: L.game.id }),
   });
   if (!res.ok) return err(502, 'step_failed', 'the tick did not run');
-  // The computer empires answer the step at once rather than at the next
-  // cron minute: a player stepping through a fight wants them to move.
-  try { await runSoloGame(env, L.game.id); } catch (e) { console.error('solo step turns failed', e); }
+  // The room plays the computer empires the moment the tick lands
+  // (room.js runComputerEmpires).
   await env.DB.prepare('UPDATE games SET state_version = state_version + 1 WHERE id = ?').bind(L.game.id).run();
   const row = await env.DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(L.game.id).first();
   return json({ ok: true, tick: row?.current_tick ?? null });

@@ -424,42 +424,60 @@ async function expand(env, g, me, call, note, tick, view) {
 // ---- every solo game -----------------------------------------------------
 
 /** Play every computer empire in one game that has not had this tick's
- *  turn. Returns how many played; `sink` (the sim) collects the tallies. */
-export async function runSoloGame(env, gameId, sink = null) {
+ *  turn, all at once (their turns are independent; each claims its own
+ *  tick first, so a pass that overlaps another never plays one twice).
+ *  Returns how many played; `sink` (the sim) collects the tallies. With
+ *  games.ai_log set (the crucible), every turn is written to
+ *  ai_turn_log: what it tried, what was refused, and any error. */
+export async function runSoloGame(env, gameId, sink = null, { lagOnly = false } = {}) {
   const row = await env.DB.prepare(
-    `SELECT id, current_tick, solo_difficulty, status FROM games WHERE id = ? AND solo = 1`,
+    `SELECT id, current_tick, solo_difficulty, status, COALESCE(ai_log, 0) AS ai_log FROM games WHERE id = ? AND solo = 1`,
   ).bind(gameId).first();
   if (!row || row.status !== 'active') return 0;
   const tick = Number(row.current_tick ?? 0);
   const g = await readGame(env, gameId, tick);
+  // lagOnly (the cron's fallback): only empires a whole tick behind, so
+  // the cron never races the room's own pass for the current tick.
+  const behind = lagOnly ? tick - 1 : tick;
   const due = g.factions.filter(f => f.ai_doctrine && f.status === 'active'
-    && (f.ai_last_tick == null || Number(f.ai_last_tick) < tick));
-  let played = 0;
-  for (const fac of due) {
-    // Claim the turn first: a slow turn overlapping the next cron minute
-    // must not play twice.
+    && (f.ai_last_tick == null || Number(f.ai_last_tick) < behind));
+  const results = await Promise.all(due.map(async (fac) => {
     const claim = await env.DB.prepare(
       `UPDATE game_factions SET ai_last_tick = ?
         WHERE id = ? AND (ai_last_tick IS NULL OR ai_last_tick < ?)`,
     ).bind(tick, fac.id, tick).run();
-    if (!(claim?.meta?.changes > 0)) continue;
+    if (!(claim?.meta?.changes > 0)) return 0;
+    const t0 = Date.now();
+    let tally = null;
+    let error = null;
     try {
-      const tally = await takeTurn(env, g, fac, row.solo_difficulty ?? 'normal');
-      played++;
+      tally = await takeTurn(env, g, fac, row.solo_difficulty ?? 'normal');
       if (sink) for (const [k, v] of Object.entries(tally)) sink[`${fac.ai_doctrine}:${k}`] = (sink[`${fac.ai_doctrine}:${k}`] ?? 0) + v;
-      if (env.AI_EMPIRE_LOG) console.log(`ai ${gameId} t${tick} ${fac.ai_doctrine}`, JSON.stringify(tally));
     } catch (e) {
+      error = String(e?.stack ?? e).slice(0, 1500);
       console.error(`ai turn failed ${gameId} ${fac.id}`, e);
     }
-  }
+    if (Number(row.ai_log) === 1) {
+      try {
+        await env.DB.prepare(
+          `INSERT INTO ai_turn_log (game_id, faction_id, tick, personality, tally, error, ms, created_at_ms)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).bind(gameId, fac.id, tick, fac.ai_personality ?? null, tally ? JSON.stringify(tally) : null,
+               error, Date.now() - t0, Date.now()).run();
+      } catch (e) { console.error('ai_turn_log write failed', e); }
+    }
+    return tally ? 1 : 0;
+  }));
+  const played = results.reduce((a, b) => a + b, 0);
   if (played > 0) {
     await env.DB.prepare('UPDATE games SET state_version = state_version + 1 WHERE id = ?').bind(gameId).run();
   }
   return played;
 }
 
-/** The cron's pass: every running solo game (a paused one still plays
- *  the ticks a STEP advanced). */
+/** The cron's FALLBACK pass. The room plays its computer empires right
+ *  after each tick (room.js runComputerEmpires); this catches any empire
+ *  a whole tick behind (a pass that failed, a room that was evicted). */
 export async function runSoloTurns(env) {
   const rows = (await env.DB.prepare(
     `SELECT g.id FROM games g
@@ -469,6 +487,6 @@ export async function runSoloTurns(env) {
                      AND (f.ai_last_tick IS NULL OR f.ai_last_tick < COALESCE(g.current_tick, 0)))`,
   ).all()).results ?? [];
   for (const r of rows) {
-    try { await runSoloGame(env, r.id); } catch (e) { console.error(`solo turns failed ${r.id}`, e); }
+    try { await runSoloGame(env, r.id, null, { lagOnly: true }); } catch (e) { console.error(`solo turns failed ${r.id}`, e); }
   }
 }

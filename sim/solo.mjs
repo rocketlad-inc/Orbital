@@ -13,6 +13,7 @@
 //   5. pause / step / speed / resume drive the clock, host only
 //   6. personalities: the Ally courts you and joins your wars, the
 //      Warlord refuses and attacks, the Snake courts you then betrays
+//   7. the crucible: six computer empires alone fight each other, logged
 //
 // Run: npm run sim:solo
 // ============================================================
@@ -298,6 +299,38 @@ const strikeOrders = Object.entries(tS).filter(([k]) => /schemer:(attack|attack_
 check('and its fleet sails the same turn or soon after', strikeOrders > 0, JSON.stringify(tS));
 console.log(`        snake betrayed at tick ${betrayal?.declared_at_tick ?? '-'}; tally:`,
   JSON.stringify(Object.fromEntries(Object.entries(tS).filter(([k]) => !/research|bld_|build_|vote_|personality/.test(k)))));
+
+// ---- 7. the crucible: computer empires alone, the turn log on ----------------
+await DB.prepare(`INSERT INTO users (id,email,display_name,password_hash,created_at) VALUES ('uC','c@t','Crucible','x',0)`).run();
+const cr = await call(solo, 'POST', '/api/solo', 'uC', { rivals: 5, difficulty: 'normal', speed_ms: 30000, personalities: ['ally', 'warlord', 'snake', 'warlord', 'ally'] });
+const GC = cr.data?.game_id;
+// The host's own seat plays too: a sixth computer empire, a Snake.
+await DB.prepare(`UPDATE game_factions SET ai_doctrine = 'schemer', ai_personality = 'snake', ai_personality_shown = 1
+                   WHERE game_id = ? AND user_id = 'uC'`).bind(GC).run();
+await DB.prepare('UPDATE games SET ai_log = 1 WHERE id = ?').bind(GC).run();
+const rC = new Room(makeState(), env);
+rC.broadcast = () => {};
+const tC = {};
+await play(GC, rC, 150, tC);
+const logRows = await DB.prepare('SELECT COUNT(*) AS n, SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) AS errs FROM ai_turn_log WHERE game_id = ?').bind(GC).first();
+check('crucible: every empire plays every tick, logged', logRows.n >= 6 * 140, `${logRows.n} rows`);
+const errs = (await DB.prepare('SELECT faction_id, tick, error FROM ai_turn_log WHERE game_id = ? AND error IS NOT NULL LIMIT 3').bind(GC).all()).results;
+check('crucible: no turn throws', Number(logRows.errs) === 0, JSON.stringify(errs));
+const cWars = (await DB.prepare(`SELECT w.declared_by, w.declared_at_tick, w.origin, a.ai_personality AS by_p, b.ai_personality AS a_p, c.ai_personality AS b_p
+                                   FROM game_wars w JOIN game_factions a ON a.id = w.declared_by
+                                   JOIN game_factions b ON b.id = w.faction_a JOIN game_factions c ON c.id = w.faction_b
+                                  WHERE w.game_id = ? ORDER BY w.declared_at_tick`).bind(GC).all()).results;
+check('crucible: with no person, they go to war with each other', cWars.length > 0, JSON.stringify(tC));
+console.log('        crucible wars:', JSON.stringify(cWars.map(w => `${w.declared_at_tick}:${w.by_p}->${w.a_p === w.by_p ? w.b_p : w.a_p}${w.origin === 'pact_broken' ? '(betrayal)' : ''}`)));
+const pactsC = await DB.prepare(`SELECT kind, status, COUNT(*) AS n FROM treaties WHERE game_id = ? GROUP BY kind, status`).bind(GC).all();
+console.log('        crucible pacts:', JSON.stringify(pactsC.results));
+const standing = (await DB.prepare(`SELECT f.ai_personality AS p, f.status,
+    (SELECT COUNT(*) FROM game_bodies b WHERE b.owner_faction_id = f.id AND b.destroyed_at_tick IS NULL) AS worlds,
+    (SELECT COUNT(*) FROM game_ships s WHERE s.owner_faction_id = f.id AND s.hp > 0) AS ships
+  FROM game_factions f WHERE f.game_id = ? ORDER BY f.slot`).bind(GC).all()).results;
+console.log('        crucible standings:', JSON.stringify(standing));
+const ms = await DB.prepare('SELECT AVG(ms) AS avg, MAX(ms) AS max FROM ai_turn_log WHERE game_id = ?').bind(GC).first();
+console.log(`        crucible turn time: avg ${Math.round(ms.avg)} ms, max ${ms.max} ms (in-memory DB)`);
 
 console.log(bad ? `\n${bad} FAILED` : '\nall passed');
 process.exit(bad ? 1 : 0);
