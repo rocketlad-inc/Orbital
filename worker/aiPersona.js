@@ -44,7 +44,7 @@ export function doctrineFor(personality, seat) {
   return seat % 2 === 0 ? 'expander' : 'economist';
 }
 
-/** The timings, in ticks (a tick is a turn), per difficulty.
+/** The timings, in ticks, per difficulty.
  *  warlordFrom   the earliest a Warlord declares on you
  *  snakeFrom     the earliest a Snake looks for its opening
  *  snakePatience how long past snakeFrom it waits for a good one before
