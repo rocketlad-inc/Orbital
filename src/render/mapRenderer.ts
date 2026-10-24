@@ -69,8 +69,9 @@ import { drawnRadiusOf, inflationOf, parkedRadiusMap } from './bodyPresentation'
 import { noteRamApproach, ramThrustDir, ramRockRadiusPx } from './asteroidRam';
 import {
   battlePlacement, battleScale, battleDrift, hasBattleGlide, seedBattleGlide, battleSpriteScale,
-  fleetBlockGeometry, type LiveBattle,
+  fleetBlockGeometry, battleSlotPx, holdBattleGlide, type LiveBattle, type BattleUnit,
 } from './battleLayoutLive';
+import { planCapture, captureAt, captureSamples, noteCapture, activeCapture } from './arrivalApproach';
 import { FX_TUNING } from './fxTuning';
 import {
   drawConstructionSite, drawCompletedStructure, drawCapitalHull, isCapitalHull, withAlpha,
@@ -5365,6 +5366,124 @@ function heldInBattle(shipId: string, parentPos: { x: number; y: number }, nowMs
   return seed;
 }
 
+/**
+ * Where a PARKED hull at a laid-out world is drawn (drawShip): world units
+ * from the world's centre, and its nose. `k` is the battle's scale (the
+ * world's drawn radius over the reference). `placed` is false while it is
+ * held waiting for a place. Null when the battle has nothing for it.
+ */
+export function battleLocalPos(
+  shipId: string, liveBattle: LiveBattle, k: number, parentPos: { x: number; y: number },
+  scale: number, nowM: number,
+  /** The render tick: a hull that has just landed may still be flying
+   *  the last of its way in (arrivalApproach). */
+  t?: number,
+): { lx: number; ly: number; heading: number; placed: boolean } | null {
+  if (!(k > 0)) return null;
+  // STILL COMING IN. It flew into its place in flight and is not there
+  // yet: it carries straight on along the same path, so the landing is
+  // not a stop. Its glide is held on it, and the layout takes over from
+  // exactly where the path ends (in its slot).
+  const cap = t != null && scale > 0 ? activeCapture(shipId, liveBattle.bodyId, t) : null;
+  const slot = cap ? battleSlotPx(liveBattle, shipId, nowM, k) : null;
+  if (cap && slot) {
+    const rel = captureAt(cap, t!, { x: slot.x / scale, y: slot.y / scale });
+    const cx = rel.x * scale - slot.fx, cy = rel.y * scale - slot.fy;
+    holdBattleGlide(shipId, Math.hypot(cx, cy) / k, Math.atan2(cy, cx) - battleDrift(liveBattle, nowM), nowM);
+    return { lx: rel.x, ly: rel.y, heading: slot.heading, placed: true };
+  }
+  if (!hasBattleGlide(shipId, nowM)) {
+    // Arriving (or newly in a fight): ease in from where it was drawn
+    // JUST NOW (in flight, or as an escort in its block). An older spot
+    // is somewhere it no longer is.
+    const was = recentDrawnShipWorldPos(shipId, 600);
+    if (was) {
+      const px = (was.x - parentPos.x) * scale / k;
+      const py = (was.y - parentPos.y) * scale / k;
+      seedBattleGlide(shipId, Math.hypot(px, py),
+        Math.atan2(py, px) - battleDrift(liveBattle, nowM), nowM);
+    }
+  }
+  const pl = battlePlacement(liveBattle, shipId, nowM);
+  if (!pl) {
+    // WAITING FOR A PLACE. A hull that just arrived is outside the cached
+    // layout until the roster dwell lets the world re-solve; it used to be
+    // drawn on its raw parking orbit meanwhile, a third spot between where
+    // it arrived and where it would go. It holds where it was drawn, fixed
+    // to the world, until its place exists, then glides from there.
+    const held = heldInBattle(shipId, parentPos, nowM);
+    return held ? { lx: held.lx, ly: held.ly, heading: held.heading, placed: false } : null;
+  }
+  const heading = pl.heading;
+  let px = pl.x * k, py = pl.y * k;
+  // A fleet's lead sits ahead of its block's centre (the layout
+  // places the centre, so the escorts astern have their room).
+  const blk = liveBattle.blocks.get(shipId);
+  if (blk) {
+    const c = Math.cos(heading), s = Math.sin(heading);
+    px += (blk.flagX * c - blk.flagY * s) * k;
+    py += (blk.flagX * s + blk.flagY * c) * k;
+  }
+  return { lx: px / scale, ly: py / scale, heading, placed: true };
+}
+
+/**
+ * The units a world's layout places (battleLayoutLive): every hull at the
+ * world that is drawn on its own, a fleet as its lead with the escorts in
+ * its block. MapCanvas's formation pass builds each world's roster with
+ * this. `arriving` names the hulls still in flight to it (see
+ * arrivalApproach.worldRosters).
+ */
+export function battleUnitsFor(
+  atBody: readonly Ship[], bodyId: string,
+  grouping: {
+    collapsed: ReadonlySet<string>;
+    markerByLeadShip: ReadonlyMap<string, { escortIds: readonly string[] }>;
+  },
+  shipById: ReadonlyMap<string, Ship>,
+  arriving?: ReadonlySet<string>,
+): BattleUnit[] {
+  const destroyerPx = shipIconSize('destroyer', false);
+  const units: BattleUnit[] = [];
+  // Factions here whose loose hulls come from more than one yard:
+  // those hulls clump by yard (below), so a squadron in from Ceres
+  // and the home guard read as two groups, not one blue blob.
+  const yardsOf = new Map<string, Set<string>>();
+  for (const s of atBody) {
+    if (s.fleetId) continue;
+    let ys = yardsOf.get(s.ownedBy);
+    if (!ys) { ys = new Set(); yardsOf.set(s.ownedBy, ys); }
+    ys.add(s.homeBodyId ?? bodyId);
+  }
+  for (const s of atBody) {
+    // Escorts ride in their marker's block; the lead stands for them.
+    if (grouping.collapsed.has(s.id)) continue;
+    const marker = grouping.markerByLeadShip.get(s.id);
+    const escortRel = marker?.escortIds.map(id => {
+      const e = shipById.get(id);
+      return e ? Math.min(1, shipIconSize(e.class, false) / destroyerPx) : 1;
+    });
+    units.push({
+      id: s.id,
+      owner: s.ownedBy,
+      // Loose hulls hold together BY YARD when their faction has
+      // hulls here from more than one: a squadron in from Ceres
+      // stays a squadron beside Earth's own defenders, which hold
+      // together too (judges, Mega Destroyer clip, 2026-10-22:
+      // "three groups read as two"; with only the incomers
+      // grouped, the scattered locals still covered them). One
+      // yard: loose, as ever.
+      group: s.fleetId ?? ((yardsOf.get(s.ownedBy)?.size ?? 0) > 1 ? `yard:${s.homeBodyId ?? bodyId}` : null),
+      sizePx: shipIconSize(s.class, false),
+      armed: (s.damagePerTick ?? getShipClass(s.class).damagePerTick) > 0,
+      escortRel: escortRel && escortRel.length > 0 ? escortRel : undefined,
+      escortIds: marker && marker.escortIds.length > 0 ? [...marker.escortIds] : undefined,
+      ...(arriving?.has(s.id) ? { arriving: true } : {}),
+    });
+  }
+  return units;
+}
+
 /** HULL_FLASH_MS after a hit the struck hull flashes white: the sprite
  *  drawn again additively, in the transform it was just drawn in. The
  *  hit has a place (fxArt sparks at the face) and the ship visibly
@@ -5416,6 +5535,12 @@ const continuity = new Map<string, {
   caught?: number;
   /** The frame the hull moves in (its world), and where it was. */
   oid: string | null; ax: number; ay: number;
+  /** That frame's own velocity (world units per ms), last measured. */
+  fvx?: number; fvy?: number;
+  /** vx/vy are still in world terms (the frame it landed). */
+  worldV?: boolean;
+  /** Last frame's change of motion, screen px per ms^2 (a jump's test). */
+  accPx?: number;
   /** This frame's answer, for a second call in the same frame. */
   lx?: number; ly?: number;
 }>();
@@ -5459,13 +5584,29 @@ export function continuousDrawnPos(
       oid, ax: axNow, ay: ayNow, lx: x, ly: y });
     return { x, y };
   }
+  const dt = nowMs - c.ms;
   // A new frame of reference (landing, a new world): rebase, so the
   // switch itself is not motion.
   // Its velocity belonged to the old frame too: a hull landing kept its
   // flight speed, predicted itself sailing on past its world, and its
-  // next step (being laid out in orbit) went through as motion.
-  if (c.oid !== oid) { c.oid = oid; c.ax = axNow; c.ay = ayNow; c.vx = 0; c.vy = 0; }
-  const dt = nowMs - c.ms;
+  // next step (being laid out in orbit) went through as motion. So the
+  // switch's own frame is predicted in WORLD terms (its velocity in the
+  // old frame plus that frame's own), and from the next frame on it is
+  // at rest in the new one. Zeroed outright, a hull landing on a moon
+  // that moves 60 px a frame (strike4 take, a close-up of Europa) was
+  // predicted to stop dead in space, the moon carrying its new place on
+  // was caught as a 60 px jump, and every arrival lagged a frame and
+  // slid back.
+  const rebased = c.oid !== oid;
+  if (rebased) {
+    if (c.oid != null) { c.vx += c.fvx ?? 0; c.vy += c.fvy ?? 0; }
+    c.oid = oid; c.ax = axNow; c.ay = ayNow; c.fvx = 0; c.fvy = 0;
+  } else if (oid != null && dt > 0) {
+    c.fvx = (axNow - c.ax) / dt; c.fvy = (ayNow - c.ay) / dt;
+    // The frame after a landing: its velocity was kept in world terms;
+    // now the world's own is known, it becomes its velocity on the world.
+    if (c.worldV) { c.vx -= c.fvx; c.vy -= c.fvy; c.worldV = false; }
+  }
   // The offset still left to close, on its ease. Held in SCREEN px: a slide
   // is something seen, and held in world units a zoom-in magnified it
   // (a 100 px catch at map zoom was 500 px by the close-up, then dropped).
@@ -5477,7 +5618,17 @@ export function continuousDrawnPos(
   const ex = x - px, ey = y - py;
   const errPx = Math.hypot(ex, ey) * scale;
   const stepPx = Math.hypot(c.vx, c.vy) * dt * scale;
-  const off = errPx > Math.max(8, 0.6 * stepPx);
+  // A JUMP IS OUT OF LINE WITH THE FRAMES AROUND IT (jump-check.py's own
+  // test), not merely a big change on a slow hull. A hull braking in and
+  // turning for its slot changes its velocity by more than 0.6 of a slow
+  // step every frame, smoothly; caught for it, the head-on arrival into a
+  // moon was held on its old line, ran 30 px inside its floor toward the
+  // moon, and slid back. So a change no bigger than twice the one the frame
+  // before is its motion, not a jump. (In SCREEN px per ms^2, so a zoom or
+  // an uneven frame does not read as one.)
+  const accPx = dt > 0 ? errPx / (dt * dt) : 0;
+  const steady = c.accPx != null && accPx <= 2 * c.accPx;
+  const off = errPx > Math.max(8, 0.6 * stepPx) && !steady;
   // A JUMP IS ONE FRAME. A teleport moves the hull once and its motion
   // carries on as before; off the prediction two frames running, the
   // motion itself changed (a hull rounding its world in orbit, a formation
@@ -5522,6 +5673,17 @@ export function continuousDrawnPos(
   } else {
     c.vx = (x - c.x - carryX) / dt;
     c.vy = (y - c.y - carryY) / dt;
+  }
+  // Its own acceleration this frame, for the next frame's test (a caught
+  // jump is not its motion; nor is the frame it switched worlds).
+  c.accPx = jumped || rebased ? c.accPx : accPx;
+  // Just landed in a world's frame: its motion there is not known until
+  // the world's is (next frame), so it is held in world terms till then.
+  // Taken to be at rest on the world, a hull still flying into its slot
+  // after landing (arrivalApproach) was caught as a jump and stopped
+  // dead for a frame.
+  if (rebased && oid != null) {
+    if (jumped) { c.vx = 0; c.vy = 0; } else c.worldV = true;
   }
   // A jump keeps the motion it had; the true position moves on regardless.
   c.x = x; c.y = y; c.ax = axNow; c.ay = ayNow;
@@ -5671,10 +5833,24 @@ export function keepOffDrawnDiscs(
     const side = disc.isDest
       ? { x: (first.x - last.x) / cl, y: (first.y - last.y) / cl }
       : { x: (last.x - first.x) / cl, y: (last.y - first.y) / cl };
-    const onEdge = (c: { x: number; y: number }, x: number, y: number) => {
+    // AT THE CENTRE, THE BEARING IT LAST HAD. A course ends on its world's
+    // centre (at the arrival tick the world reaches the intercept), where
+    // there is no bearing; this used to fall back to the approach side, so
+    // the hull riding the edge on the far side (where a moon running on
+    // under it had carried it) snapped across, and was lerped there in a
+    // chord through the disc (strike4 take, f366-f372: ~90 px jumps, then
+    // the fleet slid across Europa). Samples are in time order.
+    let lastU: { x: number; y: number } | null = null;
+    const onEdge = (c: { x: number; y: number }, x: number, y: number, track = false) => {
       const dx = x - c.x, dy = y - c.y;
       const d = Math.hypot(dx, dy);
-      const u = d > R * 0.05 ? { x: dx / d, y: dy / d } : side;
+      let u: { x: number; y: number };
+      if (d > R * 0.05) {
+        u = { x: dx / d, y: dy / d };
+        if (track) lastU = u;
+      } else {
+        u = (track && lastU) || side;
+      }
       return { x: c.x + u.x * R, y: c.y + u.y * R };
     };
     // A FORMATION ARRIVES AS A FORMATION (judges, "Select and strike",
@@ -5691,7 +5867,7 @@ export function keepOffDrawnDiscs(
         const q = torchPositionFromSamples(carry, p.t);
         const qIn = Math.hypot(q.x - c.x, q.y - c.y) < R;
         if (qIn) {
-          const e = onEdge(c, q.x, q.y);
+          const e = onEdge(c, q.x, q.y, true);
           const x = e.x + (p.x - q.x), y = e.y + (p.y - q.y);
           if (Math.hypot(x - c.x, y - c.y) >= R) return { t: p.t, x, y };
           const f = onEdge(c, x, y);
@@ -5699,7 +5875,7 @@ export function keepOffDrawnDiscs(
         }
       }
       if (Math.hypot(p.x - c.x, p.y - c.y) >= R) return p;
-      const e = onEdge(c, p.x, p.y);
+      const e = onEdge(c, p.x, p.y, disc.isDest && !carry);
       return { t: p.t, x: e.x, y: e.y };
     });
   }
@@ -5727,6 +5903,57 @@ export function arrivalStandoffPx(
 ): number {
   const fight = battle ? battle.outerR * battleScale(battle, drawnRadiusPx) : 0;
   return Math.max(drawnRadiusPx + 10, fight) + Math.max(0, ownReachPx);
+}
+
+/** A world at either end of a hull's leg, as the in-flight draw sees it. */
+export interface ApproachEnd {
+  id: string;
+  /** Its centre at tick t (world). */
+  at: (t: number) => { x: number; y: number };
+  /** Its drawn radius, px. */
+  drawnR: number;
+  /** The world the leg goes to (else the one it left). */
+  isDest: boolean;
+  /** The layout at that world, when it has one. */
+  battle?: LiveBattle;
+}
+
+/**
+ * A hull in flight, held off the worlds at the ends of its leg: the call
+ * MapCanvas makes for every hull in flight once its formation place is
+ * settled (settleTransitLayout). `placed` is that place, `course` its own
+ * true course, `reachPx` how far it reaches toward a world it brakes into
+ * (flightReachPx).
+ */
+export function approachWorlds(
+  shipId: string, placed: Sample[], course: Sample[] | undefined, ends: ApproachEnd[],
+  plan: { startTick: number; arriveTick: number }, scale: number, reachPx: number,
+  /** The clock the parked draw turns the battle wheel by (ctx.nowMs). */
+  nowMs: number,
+): Sample[] {
+  // ITS PLACE IS READY: fly into it (arrivalApproach). The world's layout
+  // took this hull in while it was still in flight (worldRosters), so the
+  // place it will be drawn at once it lands is known now.
+  const dest = ends.find(e => e.isDest);
+  const k = dest?.battle ? battleScale(dest.battle, dest.drawnR) : 0;
+  const slot = dest?.battle && k > 0 && scale > 0 ? battleSlotPx(dest.battle, shipId, nowMs, k) : null;
+  if (dest && slot && course && course.length >= 2 && plan.arriveTick > plan.startTick) {
+    const others = ends.filter(e => e !== dest);
+    const off = others.length ? keepOffDrawnDiscs(placed, others.map(e => ({
+      at: e.at, R: (e.drawnR + 10) / scale, isDest: false,
+    }))) : placed;
+    const cap = planCapture(dest.id, off, course, dest.at,
+      arrivalStandoffPx(dest.drawnR, undefined, reachPx) / scale, plan.startTick, plan.arriveTick);
+    noteCapture(shipId, cap);
+    if (cap) return captureSamples(cap, dest.at, { x: slot.x / scale, y: slot.y / scale });
+  } else {
+    noteCapture(shipId, null);
+  }
+  return keepOffDrawnDiscs(placed, ends.map(e => ({
+    at: e.at,
+    R: (e.isDest ? arrivalStandoffPx(e.drawnR, e.battle, reachPx) : e.drawnR + 10) / Math.max(1e-9, scale),
+    isDest: e.isDest,
+  })), course);
 }
 
 /** How far a hull in flight reaches from its own centre, px: half its
@@ -6251,47 +6478,13 @@ export function drawShip(
   let battleK = -1;
   if (liveBattle) {
     const k = battleScale(liveBattle, drawnRadiusOf(ctx.presentation, parentBody, ctx.camera.scale));
-    const nowM = ctx.nowMs ?? performance.now();
-    if (k > 0 && !hasBattleGlide(ship.id, nowM)) {
-      // Arriving (or newly in a fight): ease in from where it was drawn
-      // JUST NOW (in flight, or as an escort in its block). An older spot
-      // is somewhere it no longer is.
-      const was = recentDrawnShipWorldPos(ship.id, 600);
-      if (was) {
-        const px = (was.x - parentPos.x) * ctx.camera.scale / k;
-        const py = (was.y - parentPos.y) * ctx.camera.scale / k;
-        seedBattleGlide(ship.id, Math.hypot(px, py),
-          Math.atan2(py, px) - battleDrift(liveBattle, nowM), nowM);
-      }
-    }
-    const pl = k > 0 ? battlePlacement(liveBattle, ship.id, nowM) : null;
-    // WAITING FOR A PLACE. A hull that just arrived is outside the cached
-    // layout until the roster dwell lets the world re-solve; it used to be
-    // drawn on its raw parking orbit meanwhile, a third spot between where
-    // it arrived and where it would go. It holds where it was drawn, fixed
-    // to the world, until its place exists, then glides from there.
-    const held = !pl && k > 0 ? heldInBattle(ship.id, parentPos, nowM) : null;
-    if (held) {
+    const at = battleLocalPos(ship.id, liveBattle, k, parentPos, ctx.camera.scale, ctx.nowMs ?? performance.now(), ctx.t);
+    if (at) {
       battleK = k;
-      heading = held.heading;
-      lx = held.lx;
-      ly = held.ly;
-    }
-    if (pl) {
-      battleK = k;
-      heading = pl.heading;
-      let px = pl.x * k, py = pl.y * k;
-      // A fleet's lead sits ahead of its block's centre (the layout
-      // places the centre, so the escorts astern have their room).
-      const blk = liveBattle.blocks.get(ship.id);
-      if (blk) {
-        const c = Math.cos(heading), s = Math.sin(heading);
-        px += (blk.flagX * c - blk.flagY * s) * k;
-        py += (blk.flagX * s + blk.flagY * c) * k;
-      }
-      lx = px / ctx.camera.scale;
-      ly = py / ctx.camera.scale;
-      ctx.battleLooks?.set(ship.id, { heading, k, ks: battleSpriteScale(k) });
+      heading = at.heading;
+      lx = at.lx;
+      ly = at.ly;
+      if (at.placed) ctx.battleLooks?.set(ship.id, { heading, k, ks: battleSpriteScale(k) });
     }
   }
 
@@ -7152,9 +7345,12 @@ const torchSampleCache = new Map<string, Array<{ t: number; x: number; y: number
 const TORCH_SAMPLE_CACHE_MAX = 256;
 
 /** Samples per straight-line leg: the boost and the (much shorter) brake
- *  each get enough points that the hull's speed changes smoothly. */
+ *  each get enough points that the hull's speed changes smoothly. The
+ *  brake had 8: lerped between them a hard brake is a staircase of
+ *  speeds, and an arrival filmed at a close-up shuddered by 15-50 px a
+ *  frame per frame in turn as it braked in (strike4 take, f350-f359). */
 const SHAPED_BOOST_SAMPLES = 24;
-const SHAPED_BRAKE_SAMPLES = 8;
+const SHAPED_BRAKE_SAMPLES = 24;
 /** One array per plan object. Plans are rebuilt on each /state poll, so
  *  this re-times a hull every ~1.5s rather than every frame, and a
  *  WeakMap lets retired plans go with no cap to thrash. */
@@ -8494,9 +8690,13 @@ function drawTorchTransitShip(
   // direction: probing for motion fails once the brake has stopped the
   // hull on the intercept (a ceiled arrival can leave it there a while),
   // and the fallback would swing the nose at the moving target body.
+  // The LINE is the plan's (start to intercept), which is what is drawn.
+  // Its ends in the placed samples are not: a hull flying into its place
+  // at its world (arrivalApproach) ends its samples in that place, and
+  // read from them the nose swung the frame the place was assigned.
   const lineDir = shaped && trajectorySamples && trajectorySamples.length >= 2 ? (() => {
-    const a = trajectorySamples[0];
-    const b = trajectorySamples[trajectorySamples.length - 1];
+    const a = currentTransfer.startPos ?? trajectorySamples[0];
+    const b = currentTransfer.interceptPos ?? trajectorySamples[trajectorySamples.length - 1];
     const d = Math.hypot(b.x - a.x, b.y - a.y);
     return d > 1e-9 ? { x: (b.x - a.x) / d, y: (b.y - a.y) / d } : null;
   })() : null;

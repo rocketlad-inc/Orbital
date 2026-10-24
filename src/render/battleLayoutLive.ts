@@ -151,6 +151,10 @@ export interface BattleUnit {
   escortRel?: number[];
   /** A fleet marker: the escort hulls riding in its block. */
   escortIds?: string[];
+  /** Still in flight to this world, landing within a tick or two
+   *  (arrivalApproach.worldRosters). Not part of the roster's signature:
+   *  the same hull parked is the same unit. */
+  arriving?: boolean;
 }
 
 export interface LiveBattle {
@@ -224,10 +228,25 @@ export function liveBattleFor(
   dwell?: { nowMs: number; ms?: number },
 ): LiveBattle {
   const refR = battleReferenceRadiusOf(bodyRadius);
-  const key = battleKey(refR, dir, units, order, stationId);
   const hit = cache.get(bodyId);
+  // THE WHEEL KEEPS ITS SENSE. The caller takes it from one hull's orbit;
+  // when that hull changes (an arrival sorting first, a landing that
+  // parks it on a new orbit) the sense could flip, and the whole battle
+  // jumped by twice its wheel angle. A world's battle turns the way it
+  // first turned.
+  if (hit) dir = hit.dir;
+  const key = battleKey(refR, dir, units, order, stationId);
   if (hit && hit.key === key) { pending.delete(bodyId); return hit; }
-  if (hit && dwell) {
+  // AN ARRIVAL IS TAKEN IN AT ONCE. A hull still in flight to this world
+  // (BattleUnit.arriving: landing within a tick or two) is a known
+  // newcomer, not fog flicker, and its place is wanted BEFORE it lands
+  // so it can fly into it (arrivalApproach). Waiting out the dwell is
+  // what held every arrival where it flew in and then glided it off
+  // again (strike4 take, 12.6-14.7 s). Only a newcomer skips the wait:
+  // a roster that merely lost someone still dwells, and a hull
+  // flickering out of fog and back finds itself already placed.
+  const newArrival = !!hit && units.some(u => u.arriving && !hit.layout.placements.has(u.id));
+  if (hit && dwell && !newArrival) {
     // The wait runs from the FIRST change, and the re-solve takes whatever
     // the roster is by then. Restarted on every change, a battle losing a
     // hull every tick (ticks under the dwell apart) never re-solved, and
@@ -419,6 +438,40 @@ export function battleShipOffsetPx(
     y += (blk.flagX * s + blk.flagY * c) * k;
   }
   return { x, y };
+}
+
+/**
+ * Where a unit's PLACE is now, in SCREEN px from the world's centre at
+ * scale k: its target in the layout with the wheel turned to `nowMs` (and
+ * a fleet's lead ahead of its block's centre), ignoring any glide. Read
+ * only. It is where battlePlacement puts a unit that has arrived, so a
+ * hull still in flight can fly to it (arrivalApproach.steerIntoSlot).
+ */
+export function battleSlotPx(
+  battle: LiveBattle, id: string, nowMs: number, k: number,
+): { x: number; y: number; heading: number; fx: number; fy: number } | null {
+  const p = battle.layout.placements.get(id);
+  if (!p) return null;
+  const theta = p.theta + battleDrift(battle, nowMs);
+  const jitter = p.heading - (Math.atan2(p.y, p.x) + Math.PI / 2);
+  const heading = theta + (Math.PI / 2) * battle.dir + jitter;
+  // (fx, fy): a fleet's lead ahead of the block's centre, which is what
+  // the layout (and its glide) places.
+  let fx = 0, fy = 0;
+  const blk = battle.blocks.get(id);
+  if (blk) {
+    const c = Math.cos(heading), s = Math.sin(heading);
+    fx = (blk.flagX * c - blk.flagY * s) * k;
+    fy = (blk.flagX * s + blk.flagY * c) * k;
+  }
+  return { x: Math.cos(theta) * p.r * k + fx, y: Math.sin(theta) * p.r * k + fy, heading, fx, fy };
+}
+
+/** A unit drawn somewhere of its own this frame (a hull still flying in
+ *  to its place, arrivalApproach): its glide is held there (reference
+ *  polar, wheel removed), so the layout picks it up from where it is. */
+export function holdBattleGlide(id: string, r: number, t: number, nowMs: number): void {
+  glides.set(id, { r, t, ms: nowMs });
 }
 
 /** A CUT (the match film): no hull glides on from a place it held in the

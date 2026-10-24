@@ -183,7 +183,9 @@ test('the live map uses it at EVERY world in multiplayer; single-player keeps it
   const src = fs.readFileSync(path.join(__dirname, '../../components/MapCanvas.tsx'), 'utf8');
   // Not gated on a battle: peaceful worlds scale with the planet too
   // (Lorne, 2026-10-06: "make every world scale with the planet").
-  expect(src).toMatch(/if \(mpActions\) \{\s*const bodyId = atBody\[0\]\.orbit\.parentBodyId;/);
+  // (The roster's world is its key: a hull still flying in to it carries
+  // the orbit it left, arrivalApproach.worldRosters.)
+  expect(src).toMatch(/if \(mpActions\) \{\s*const bodyId = rosterBodyId;/);
   expect(src).not.toMatch(/if \(battle && mpActions\)/);
   // A laid-out ship is not on its orbit ring, so neither is drawn for it.
   expect((src.match(/if \(showOrbitRing && !formation\?\.battle\)/g) ?? []).length).toBe(2);
