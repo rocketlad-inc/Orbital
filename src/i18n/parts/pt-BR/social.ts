@@ -781,7 +781,7 @@ export const social: Catalog = {
   'roomlobby.who.two': '{a} e {b}',
   'roomlobby.who.three': '{a}, {b} e {c}',
   'roomlobby.who.more': '{a}, {b} e mais {n}',
-  'roomlobby.fact.tickS': 'turnos de {n} s',
+  'roomlobby.fact.tickS': 'ticks de {n} s',
   'roomlobby.fact.tickM': 'turnos de {n} min',
   'roomlobby.fact.tickH': 'turnos de {n} h',
   'roomlobby.fact.mapSol': 'O Sistema Solar',
