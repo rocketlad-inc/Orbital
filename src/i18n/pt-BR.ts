@@ -361,6 +361,20 @@ const base: Catalog = {
 
   // ---- sign in / create account ----
   'auth.subtitle.signin': 'ENTRE PARA COMANDAR',
+  // A página de entrada redesenhada (AuthOverlay.tsx, 2026-10-24).
+  'auth.back': '← Voltar',
+  'auth.headline': 'Seu império está esperando.',
+  'auth.clipCaption': 'Imagens reais: um Mega Destruidor vai de Júpiter à Terra.',
+  'auth.orEmailShort': 'ou e-mail',
+  'auth.showPw': 'Mostrar',
+  'auth.hidePw': 'Ocultar',
+  'auth.optional': '(opcional)',
+  'auth.working': 'Um momento…',
+  'auth.go.signup': 'Criar minha conta',
+  'auth.go.signin': 'Entrar',
+  'auth.orNoAccount': 'ou sem conta',
+  'auth.solo.title': 'Experimente um Jogo Solo',
+  'auth.solo.sub': 'Jogue agora contra dois impérios do computador.',
   'auth.subtitle.forgot': 'REDEFINA SUA SENHA',
   'auth.tab.signin': 'Entrar',
   'auth.tab.signup': 'Criar conta',

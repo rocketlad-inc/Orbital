@@ -624,7 +624,14 @@ function AppShell() {
             return;
           }
         }
-        if (current && isMember(current)) return;
+        // Still ours: open it. Usually it already is (state starts from the
+        // tab room), but Play for Free sets the tab room the moment before
+        // the account appears, and the lobby showed instead of the trial.
+        if (current && isMember(current)) {
+          setSelectedRoomId(current);
+          setMode('multiplayer');
+          return;
+        }
 
         // One-time move of a device-only pin onto the account.
         let autoload = res.data.autoload_room_id ?? null;
@@ -920,9 +927,9 @@ function AppShell() {
       );
     }
     if (!showAuth) {
-      return <Landing onSignIn={() => setShowAuth(true)} onPlay={() => beginTrial()} />;
+      return <Landing onSignIn={() => setShowAuth(true)} />;
     }
-    return <AuthOverlay />;
+    return <AuthOverlay onBack={() => setShowAuth(false)} onTrial={() => beginTrial()} />;
   }
 
   if (guestMode) {
@@ -978,7 +985,6 @@ function AppShell() {
             adminGameId={roomGameId as string}
             isHost={!!user && roomHostId === user.id}
           />
-          {user?.shadow && <SaveEmpireHost />}
         </MultiplayerGameProvider>
       ) : (
         // Pre-game backdrop + the dock rail's Multiplayer icon. The rail

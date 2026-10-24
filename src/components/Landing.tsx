@@ -102,11 +102,9 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onPlay, authed = fal
   const { lang } = useI18n();
   // Every Play / Sign in button on the site, counted for link and ad
   // traffic before it goes to the sign-in screen (0180).
-  // Play for Free starts a trial with no form (worker/trial.js); Login
-  // opens the sign-in screen. A page with no onPlay (signed in) keeps the
-  // old meaning.
+  // Every Play for Free button opens the sign-in page, which also offers a
+  // Solo Game with no account (Lorne, 2026-10-24).
   const play = () => { trackVisitStep('play_click'); (onPlay ?? onSignIn)(); };
-  const login = () => { trackVisitStep('play_click'); onSignIn(); };
   // Reading past the front page (how to play, changelog, press...).
   useEffect(() => { if (tab !== 'about') trackVisitStep('read_more'); }, [tab]);
 
@@ -254,7 +252,6 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onPlay, authed = fal
             <button className="landing-cta-btn" onClick={onExit}>{t('site.back')}</button>
           ) : (
             <>
-              <button className="landing-login-btn" onClick={login}>{t('site.signIn')}</button>
               <button className="landing-cta-btn" onClick={play}>{t('site.playFree')}</button>
             </>
           )}
