@@ -68,6 +68,10 @@ check('a shadow account: never emailable, never a login', u.shadow === 1 && /@sh
 check('auto-load lands them in the trial', u.autoload_room_id === G);
 const g = await DB.prepare('SELECT trial, solo, tick_interval_ms, solo_difficulty FROM games WHERE id = ?').bind(G).first();
 check('a trial game at 30 s, loose play', g.trial === 1 && g.solo === 1 && g.tick_interval_ms === 30000 && g.solo_difficulty === 'peaceful', JSON.stringify(g));
+const fleet = (await DB.prepare(`SELECT ship_class, COUNT(*) AS n FROM game_ships s JOIN game_factions f ON f.id = s.owner_faction_id
+                                   WHERE s.game_id = ? AND f.user_id = ? AND s.hp > 0 GROUP BY ship_class`).bind(G, shadowId).all()).results;
+const count = (c) => fleet.find(x => x.ship_class === c)?.n ?? 0;
+check('a head start: 3 extra corvettes and a freighter, at the capital', count('corvette') >= 4 && count('freighter') >= 1, JSON.stringify(fleet));
 const pausedAtStart = await DB.prepare('SELECT paused, auto_paused, next_tick_at FROM games WHERE id = ?').bind(G).first();
 check('it starts with the clock stopped, for the tutorial', pausedAtStart.paused === 1 && pausedAtStart.auto_paused === 0 && pausedAtStart.next_tick_at == null, JSON.stringify(pausedAtStart));
 await ai.runSoloTurns(env);

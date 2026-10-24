@@ -32,6 +32,7 @@ import { newUserId, createSession, sessionCookie, readSessionCookie, lookupSessi
 import { createSoloGame } from './solo.js';
 import { stampSignupSource } from './attribution.js';
 import { logEvent } from './analytics.js';
+import { SHIP_COMBAT_STATS } from './factions.js';
 
 const json = (data, init = {}) => new Response(JSON.stringify(data), {
   ...init, headers: { 'content-type': 'application/json', ...(init.headers ?? {}) },
@@ -41,8 +42,43 @@ async function readJson(req) { try { return await req.json(); } catch { return n
 
 export const SHADOW_DOMAIN = 'shadow.orbital.local';
 const SHADOW_PASSWORD_SENTINEL = '!shadow-account-no-password-login';
-/** Trials started per IP per hour. */
+/** Trials started per IP per hour (staging raises it: its testers share
+ *  one address; env TRIALS_PER_HOUR). */
 const TRIALS_PER_HOUR = 6;
+/** A trial's head start, on top of every empire's starter ships (his
+ *  pick, 2026-10-24): three corvettes to defend with, a freighter to haul. */
+const TRIAL_FLEET = [
+  { class: 'corvette', name: 'Lancer I', fuelMax: 600 },
+  { class: 'corvette', name: 'Lancer II', fuelMax: 600 },
+  { class: 'corvette', name: 'Lancer III', fuelMax: 600 },
+  { class: 'freighter', name: 'Packhorse', fuelMax: 1200 },
+];
+
+/** The trial's extra ships, parked at the player's capital like the
+ *  starter fleet (factions.js seedGameWorld). */
+async function giveTrialFleet(env, gameId, userId) {
+  const f = await env.DB.prepare(
+    `SELECT f.id, f.capital_body_id, b.radius, b.name AS world
+       FROM game_factions f JOIN game_bodies b ON b.id = f.capital_body_id
+      WHERE f.game_id = ? AND f.user_id = ?`,
+  ).bind(gameId, userId).first();
+  if (!f) return;
+  const r = Number(f.radius) || 5;
+  await env.DB.batch(TRIAL_FLEET.map((ship, i) => {
+    const stats = SHIP_COMBAT_STATS[ship.class] ?? { hp: 50, damage_per_tick: 0 };
+    return env.DB.prepare(
+      `INSERT INTO game_ships
+        (id, game_id, owner_faction_id, name, ship_class, parent_body_id,
+         orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, orbit_direction,
+         fuel, fuel_max, status, built_at_tick, hp, hp_max, damage_per_tick, home_body_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, 'active', 0, ?, ?, ?, ?)`,
+    ).bind(
+      `${gameId}:trial_${i}`, gameId, f.id, `${ship.name} of ${f.world}`, ship.class, f.capital_body_id,
+      r * 1.5, r * 2.0, (i + 1) * 1.3, (i + 1) * 2.1,
+      ship.fuelMax, ship.fuelMax, stats.hp, stats.hp, stats.damage_per_tick, f.capital_body_id,
+    );
+  }));
+}
 /** A trial pauses after this long without its player. */
 export const TRIAL_IDLE_MS = 15 * 60_000;
 /** The trial's game, his picks. */
@@ -81,7 +117,7 @@ export async function handleStart(req, env, session) {
   const recent = await env.DB.prepare(
     'SELECT COUNT(*) AS n FROM trial_starts WHERE ip_hash = ? AND created_at_ms > ?',
   ).bind(ipHash, now - 3_600_000).first();
-  if (Number(recent?.n ?? 0) >= TRIALS_PER_HOUR) {
+  if (Number(recent?.n ?? 0) >= (Number(env.TRIALS_PER_HOUR) || TRIALS_PER_HOUR)) {
     return err(429, 'too_many_trials', 'too many trial games from here; try again later');
   }
 
@@ -99,6 +135,7 @@ export async function handleStart(req, env, session) {
 
   const made = await createSoloGame(env, id, TRIAL_GAME, { trial: true });
   if (made.error) return made.error;
+  await giveTrialFleet(env, made.id, id);
   // The clock waits for the tutorial (Lorne, 2026-10-24): no ticks and no
   // computer empire moves until its last step, Start the clock (or a skip).
   await env.DB.prepare('UPDATE games SET paused = 1, auto_paused = 0, next_tick_at = NULL WHERE id = ?')
