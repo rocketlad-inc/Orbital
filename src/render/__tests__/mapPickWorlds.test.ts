@@ -4,7 +4,7 @@
 //  C24: "Sending a ship needed two taps the first time" (Maya) -- the
 //       phone's preview-then-commit fired for a pick that posts nothing.
 
-import { bodyBeatsShip, pickPostsLeg } from '../mapPick';
+import { badgeShipsAt, bodyBeatsShip, pickPostsLeg } from '../mapPick';
 import type { Ship } from '../../types';
 
 describe('bodyBeatsShip: a world and a parked ship under one click', () => {
@@ -63,5 +63,30 @@ describe('pickPostsLeg: when a phone tap must be confirmed', () => {
 
   it('no selected ship: nothing to post', () => {
     expect(pickPostsLeg(null, [ship({ transit: flying })])).toBe(false);
+  });
+});
+
+describe('badgeShipsAt: tapping the count badge under a world', () => {
+  const at = (id: string, body: string, over: Partial<Ship> = {}): Ship =>
+    ({ id, ownedBy: 'player', orbit: { parentBodyId: body }, ...over } as unknown as Ship);
+  const badge = { x: 100, y: 200, w: 40, h: 21, bodyIds: ['europa', 'io'] };
+  const ships = [
+    at('a', 'europa'), at('b', 'io'), at('c', 'mars'),
+    at('rival', 'europa', { ownedBy: 'f2' }),
+    at('leaving', 'europa', { transit: {} as Ship['transit'] }),
+  ];
+
+  it('selects your ships parked at every world the badge counts', () => {
+    expect(badgeShipsAt([badge], 110, 210, 0, ships)).toEqual(['a', 'b']);
+  });
+
+  it('a miss, even a near one without padding, selects nothing', () => {
+    expect(badgeShipsAt([badge], 95, 210, 0, ships)).toEqual([]);
+    expect(badgeShipsAt([badge], 95, 210, 7, ships)).toEqual(['a', 'b']);
+  });
+
+  it("a badge of a rival's hulls only gives you nothing to select", () => {
+    expect(badgeShipsAt([{ ...badge, bodyIds: ['callisto'] }], 110, 210, 0,
+      [at('r', 'callisto', { ownedBy: 'f2' })])).toEqual([]);
   });
 });

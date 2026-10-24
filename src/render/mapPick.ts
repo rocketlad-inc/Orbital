@@ -63,6 +63,33 @@ export function bodyBeatsShip(bodyD: number | null, shipD: number | null): boole
   return bodyD <= shipD;
 }
 
+/** A count badge as the map painted it this frame: its box in canvas px
+ *  and the worlds whose parked ships it counts. */
+export interface BadgeHit {
+  x: number; y: number; w: number; h: number;
+  bodyIds: readonly string[];
+}
+
+/**
+ * The viewer's ships a tap on a count badge means: every own hull PARKED
+ * at a world the badge counts (a badge counts parked hulls only; see
+ * fleetBadge.ts). `pad` grows each box for a finger. Empty when the tap
+ * misses every badge, or hits one with none of yours under it.
+ */
+export function badgeShipsAt(
+  badges: readonly BadgeHit[],
+  x: number, y: number, pad: number,
+  ships: readonly Pick<Ship, 'id' | 'ownedBy' | 'transit' | 'orbit'>[],
+): string[] {
+  const hit = badges.find(b => x >= b.x - pad && x <= b.x + b.w + pad
+    && y >= b.y - pad && y <= b.y + b.h + pad);
+  if (!hit) return [];
+  const here = new Set(hit.bodyIds);
+  return ships
+    .filter(s => s.ownedBy === 'player' && !s.transit && here.has(s.orbit?.parentBodyId))
+    .map(s => s.id);
+}
+
 /**
  * Does picking a destination for this ship POST a leg to the server?
  * Only then does a phone tap preview first and commit on the second tap.
