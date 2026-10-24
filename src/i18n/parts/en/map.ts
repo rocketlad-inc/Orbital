@@ -471,6 +471,8 @@ export const map = {
   'worldmenu.order.joinRouteEllipsis': 'Join trade route…',
   'worldmenu.order.noRoutes': 'Join a trade route — none laid yet',
   'worldmenu.q.queued': 'queued',
+  'worldmenu.p.hullMeta': '{m} metal · {c} credits · {n} ticks',
+  'worldmenu.hullCostTitle': '{m} metal and {c} credits, paid when you order it; ready in {n} ticks',
   'worldmenu.q.inLine': '#{n} in line',
   'worldmenu.q.botched': 'A rush went badly — this hull will be delivered at HALF health.',
   'worldmenu.q.cancelBuilding': 'Cancel construction (refunds cost)',

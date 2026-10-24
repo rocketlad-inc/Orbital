@@ -76,6 +76,12 @@ import { getCamera } from '../state/cameraStore';
 import { planHullIntercept } from '../multiplayer/interceptCommit';
 import { useInterceptOverlay } from './useInterceptOverlay';
 
+/** Δv for the order lines: whole numbers above 10, one decimal below.
+ *  "Δv 163.05" read as an instrument dump (playtest, 2026-10-24); the
+ *  hundredths say nothing a player can act on. The line's title explains
+ *  the term (ship.panel.dvTip). */
+const fmtDv = (dv: number): string => (Math.abs(dv) >= 10 ? dv.toFixed(0) : dv.toFixed(1));
+
 // Order-independent key for a parts loadout, so two designs with the same
 // multiset of parts compare equal regardless of slot order.
 const partsKey = (parts: string[] | undefined): string =>
@@ -2810,15 +2816,15 @@ export const ShipPanel: React.FC = () => {
                               <div className="order-details">
                                 {t('ship.panel.meetThenTogether', { n: meetIn.toFixed(0), name: targetBody?.name ?? plan.targetBodyId })}
                               </div>
-                              <div className="order-details" style={{ color: '#6ee7b7' }}>
-                                {t('ship.panel.etaDv', { eta: Math.max(0, plan.arriveTick - gameState.currentTick).toFixed(0), dv: plan.totalDv.toFixed(2) })}
+                              <div className="order-details" style={{ color: '#6ee7b7' }} title={t('ship.panel.dvTip')}>
+                                {t('ship.panel.etaDv', { eta: Math.max(0, plan.arriveTick - gameState.currentTick).toFixed(0), dv: fmtDv(plan.totalDv) })}
                               </div>
                             </>
                           ) : (
                             <>
                               <div className="order-type">→ {targetBody?.name ?? plan.targetBodyId}</div>
-                              <div className="order-details">
-                                {t('ship.panel.etaDv', { eta: Math.max(0, plan.arriveTick - gameState.currentTick).toFixed(0), dv: plan.totalDv.toFixed(2) })}
+                              <div className="order-details" title={t('ship.panel.dvTip')}>
+                                {t('ship.panel.etaDv', { eta: Math.max(0, plan.arriveTick - gameState.currentTick).toFixed(0), dv: fmtDv(plan.totalDv) })}
                               </div>
                               {pendingNode && gateNote(ship.orbit.parentBodyId, plan.targetBodyId, plan.arriveTick - plan.startTick)}
                             </>
@@ -2850,8 +2856,8 @@ export const ShipPanel: React.FC = () => {
                           ) : (
                             <>
                               <div className="order-type">→ {targetBody?.name ?? plan.targetBodyId} ({t('ship.panel.planned')})</div>
-                              <div className="order-details">
-                                {t('ship.panel.dvTrip', { dv: plan.totalDv.toFixed(2), n: tripTime.toFixed(0) })}
+                              <div className="order-details" title={t('ship.panel.dvTip')}>
+                                {t('ship.panel.dvTrip', { dv: fmtDv(plan.totalDv), n: tripTime.toFixed(0) })}
                               </div>
                               {gateNote(ship.orbit.parentBodyId, plan.targetBodyId, tripTime)}
                             </>
@@ -2909,8 +2915,8 @@ export const ShipPanel: React.FC = () => {
                       <div key={`${qt.targetBodyId}-${qt.startTick}-${i}`} className="order-item status-queued">
                         <div className="order-info">
                           <div className="order-type">→ {targetBody?.name ?? qt.targetBodyId}</div>
-                          <div className="order-details">
-                            {t('ship.panel.queuedLine', { dv: qt.totalDv.toFixed(2), tick: qt.arriveTick.toFixed(0) })}
+                          <div className="order-details" title={t('ship.panel.dvTip')}>
+                            {t('ship.panel.queuedLine', { dv: fmtDv(qt.totalDv), tick: qt.arriveTick.toFixed(0) })}
                           </div>
                           {gateNote(legFrom, qt.targetBodyId, qt.arriveTick - qt.startTick)}
                         </div>

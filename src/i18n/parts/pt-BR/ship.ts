@@ -457,6 +457,7 @@ export const ship: Catalog = {
   'ship.panel.enRoute': 'A caminho de {name}',
   'ship.panel.enRouteEta': 'A caminho de {name} · T-{eta}',
   'ship.panel.enRouteToWord': 'A caminho de',
+  'ship.panel.dvTip': 'Δv é quanto a nave precisa mudar de velocidade nesta viagem; quanto maior, mais difícil o voo.',
   'ship.panel.etaDv': 'Chegada em T-{eta} · Δv {dv}',
   'ship.panel.expected': 'ESPERADO',
   'ship.panel.expectedTip': 'Dano por acerto vezes a chance de acertar — a taxa real com que este alvo perde casco.',

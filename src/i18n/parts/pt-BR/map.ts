@@ -473,6 +473,8 @@ export const map: Catalog = {
   'worldmenu.order.joinRouteEllipsis': 'Entrar numa rota comercial…',
   'worldmenu.order.noRoutes': 'Entrar numa rota comercial — nenhuma criada ainda',
   'worldmenu.q.queued': 'na fila',
+  'worldmenu.p.hullMeta': '{m} metal · {c} créditos · {n} ticks',
+  'worldmenu.hullCostTitle': '{m} de metal e {c} créditos, pagos ao encomendar; pronta em {n} ticks',
   'worldmenu.q.inLine': '{n}º na fila',
   'worldmenu.q.botched': 'A pressa deu errado — este casco será entregue com METADE da integridade.',
   'worldmenu.q.cancelBuilding': 'Cancelar construção (devolve o custo)',

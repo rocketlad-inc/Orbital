@@ -455,6 +455,7 @@ export const ship = {
   'ship.panel.enRoute': 'En route to {name}',
   'ship.panel.enRouteEta': 'En route to {name} · T-{eta}',
   'ship.panel.enRouteToWord': 'En route to',
+  'ship.panel.dvTip': 'Δv is how much the ship must change its speed for this trip; a bigger number is a harder flight.',
   'ship.panel.etaDv': 'ETA T-{eta} · Δv {dv}',
   'ship.panel.expected': 'EXPECTED',
   'ship.panel.expectedTip': 'Damage per hit times the chance of landing it — the real rate this target is losing hull.',

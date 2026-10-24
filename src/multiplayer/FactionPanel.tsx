@@ -301,12 +301,15 @@ export function FactionPanel({
         <div role="table" aria-label={t('faction.standings.aria')}>
           <div role="rowgroup">
             <div className="fp-head" role="row">
-              <span role="columnheader">{t('faction.col.metal')}</span>
-              <span role="columnheader">{t('faction.col.credits')}</span>
-              <span role="columnheader">{t('faction.col.science')}</span>
-              <span role="columnheader">{t('faction.col.worlds')}</span>
-              <span role="columnheader">{t('faction.col.systems')}</span>
-              <span role="columnheader">{t('faction.col.fleet')}</span>
+              {/* Short heads for a narrow table; each says itself in full
+                  on hover ("MTL CR SCI WLD SYS" was jargon, playtest
+                  2026-10-24). */}
+              <span role="columnheader" title={t('faction.colTip.metal')}>{t('faction.col.metal')}</span>
+              <span role="columnheader" title={t('faction.colTip.credits')}>{t('faction.col.credits')}</span>
+              <span role="columnheader" title={t('faction.colTip.science')}>{t('faction.col.science')}</span>
+              <span role="columnheader" title={t('faction.colTip.worlds')}>{t('faction.col.worlds')}</span>
+              <span role="columnheader" title={t('faction.colTip.systems')}>{t('faction.col.systems')}</span>
+              <span role="columnheader" title={t('faction.colTip.fleet')}>{t('faction.col.fleet')}</span>
             </div>
           </div>
           {ranked.map(f => {

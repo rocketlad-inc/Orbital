@@ -3068,7 +3068,7 @@ const WmFleet: React.FC<{
                   {h.def.displayName.toUpperCase()}
                   {h.templates.length > 0 && <i>{h.picked?.name ?? h.templates[0].name} ▾</i>}
                 </span>
-                <span className="wmp-hull-meta">{h.costOre}m · {h.costCredits}c · {h.def.buildTime} T</span>
+                <span className="wmp-hull-meta">{t('worldmenu.p.hullMeta', { m: h.costOre, c: h.costCredits, n: h.def.buildTime })}</span>
               </span>
             </>
           );
@@ -3104,7 +3104,7 @@ const WmFleet: React.FC<{
                   <div key={cls} className="wmp-hull is-locked" title={h.lock ?? undefined} data-testid={`wm-hull-${cls}`}>
                     <span className="wmp-hull-nm">{h.def.displayName.toUpperCase()}</span>
                     <span className="wmp-hull-meta">{(h.lockObj?.text ?? '').replace(/^unlocks at\s*/i, '')}</span>
-                    <span className="wmp-hull-meta">{h.costOre}m · {h.costCredits}c · {h.def.buildTime} T</span>
+                    <span className="wmp-hull-meta">{t('worldmenu.p.hullMeta', { m: h.costOre, c: h.costCredits, n: h.def.buildTime })}</span>
                   </div>
                 );
               })}
@@ -3149,8 +3149,8 @@ const WmFleet: React.FC<{
               ) : (
                 <span className="wm-hulltpl is-bare" title={t('worldmenu.bareTitle')}>{tk('worldmenu.bareHull', 'Bare hull')}</span>
               )}
-              <span className="wm-hullcost">{h.costOre}m · {h.costCredits}c</span>
-              <span className="wm-hulltime">{h.def.buildTime}t</span>
+              <span className="wm-hullcost" title={t('worldmenu.hullCostTitle', { m: h.costOre, c: h.costCredits, n: h.def.buildTime })}>{h.costOre}m · {h.costCredits}c</span>
+              <span className="wm-hulltime" title={t('worldmenu.hullCostTitle', { m: h.costOre, c: h.costCredits, n: h.def.buildTime })}>{h.def.buildTime}t</span>
               <button
                 className="wm-hullbuild"
                 disabled={h.disabled}
