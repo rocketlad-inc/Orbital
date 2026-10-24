@@ -328,7 +328,10 @@ interface Glide {
  *  quintic ease (smootherstep: zero speed AND zero acceleration at both
  *  ends) lasting with the distance, BATTLE_GLIDE_MIN_MS to _MAX_MS. */
 export const BATTLE_GLIDE_MIN_MS = 450;
-export const BATTLE_GLIDE_MAX_MS = 1200;
+export const BATTLE_GLIDE_MAX_MS = 2600;
+/** Radians a second, at most, a re-slot carries a hull round its world:
+ *  half an orbit takes about two seconds. */
+export const BATTLE_GLIDE_TURN_RATE = 1.5;
 const smoother = (u: number) => { const k = Math.max(0, Math.min(1, u)); return k * k * k * (k * (k * 6 - 15) + 10); };
 const wrapPi = (a: number) => { let d = a % (Math.PI * 2); if (d > Math.PI) d -= Math.PI * 2; if (d < -Math.PI) d += Math.PI * 2; return d; };
 const glides = new Map<string, Glide>();
@@ -377,8 +380,16 @@ export function battlePlacement(
   if (g.r1 === undefined || Math.abs(g.r1 - p.r) > 1e-6 || Math.abs(wrapPi((g.a1 ?? 0) - p.theta)) > 1e-6) {
     const dAng = Math.abs(wrapPi(p.theta - g.t));
     const dist = Math.hypot(p.r - g.r, ((g.r + p.r) / 2) * dAng);
+    // NO FASTER ROUND THE WORLD THAN BATTLE_GLIDE_TURN_RATE. A re-slot to
+    // the far side swung half an orbit in about a second, and a battle
+    // re-solved on an arrival or a loss sent every hull doing it at once:
+    // "ships buzzing around the earth" (the Mega Destroyer clip's viewers,
+    // 2026-10-24). Long sweeps now take their time; short nudges stay brisk.
     const dur = (dist < 1e-6 ? 0
-      : Math.min(BATTLE_GLIDE_MAX_MS, BATTLE_GLIDE_MIN_MS + (dist / Math.max(1, p.r)) * 500)) * (battle.glidePace ?? 1);
+      : Math.min(BATTLE_GLIDE_MAX_MS, Math.max(
+        BATTLE_GLIDE_MIN_MS + (dist / Math.max(1, p.r)) * 500,
+        (dAng / BATTLE_GLIDE_TURN_RATE) * 1000,
+      ))) * (battle.glidePace ?? 1);
     g.r0 = g.r; g.a0 = g.t; g.r1 = p.r; g.a1 = p.theta; g.startMs = nowMs; g.dur = dur;
   }
   const u = g.dur ? smoother((nowMs - (g.startMs ?? nowMs)) / g.dur) : 1;
