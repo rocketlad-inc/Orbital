@@ -260,7 +260,7 @@ export const guide = {
   'landing.hero.h1soft': 'One hour at a time.',
   'landing.hero.f1': 'players',
   'landing.hero.f2a': '1 hr',
-  'landing.hero.f2b': 'ticks, or your pick',
+  'landing.hero.f2b': 'a tick (one step of the game clock), or your pick',
   'landing.hero.f3': 'ways to win',
   'landing.hero.f4': 'no ads',
   'site.meta.about.title': 'Orbital — Free Real-Time Space Strategy Game in Your Browser',

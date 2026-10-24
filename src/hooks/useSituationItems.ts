@@ -251,6 +251,7 @@ export type SituationCategory =
   | 'sanction_window' // a sanction on a RIVAL you can exploit before it lapses
   | 'intercept'       // a hostile is closing on one of your ships in flight
   | 'rock_running_dry' // a meteoroid one of your routes works is nearly out
+  | 'meteoroid_found'  // your sensors found a rock; its ore still has to be mined
   | 'structure_siege' // a megastructure of yours is being broken open
   | 'strike_incoming' // a Mega Destroyer is charging on a world of yours
   | 'strike_mine'     // YOUR Mega Destroyer is charging
@@ -358,6 +359,8 @@ const TIER_OF: Record<SituationCategory, SituationTier> = {
   // the run rather than discover it after the freighter arrives at a
   // dead rock.
   rock_running_dry: 'decision',
+  // Nothing is at risk and nothing expires: ore to collect when you can.
+  meteoroid_found: 'opportunity',
   // NOT 'now': nothing is broken yet. This is the tick-by-tick drain
   // that ENDS in fleet_arrears, and it is fixed by changing designs —
   // a decision, with time to make it.
@@ -504,6 +507,10 @@ const COMBAT_RECENT_TICKS = AUTO_COMBAT_INTERVAL * 2;
 /** How long a completion (building, research level, closed vote) stays
  *  in the report. Matches the 10-tick window arrivals already use. */
 const COMPLETION_TTL_TICKS = 10;
+
+/** How long a finished building asks for a decision before it becomes
+ *  the plain "building nothing" row. */
+const BUILDING_DONE_DECISION_TICKS = 3;
 
 /** A discovery lingers a bit longer than a routine completion — it's a
  *  bigger deal, and the reward (a free city to garrison, a warship to
@@ -765,6 +772,45 @@ export function useSituationItems(
         }
       }
     }
+
+    // A ROCK YOUR SENSORS JUST FOUND. The find banks nothing: the ore
+    // sits in the rock until a freighter mines it. The event-log line
+    // used to read like a payout ("Survey found MTR-16 — 825 credits")
+    // and players waited for credits that never came (playtest,
+    // 2026-10-24). Here it is a job to do, until a hull or a route of
+    // yours is working it.
+    try {
+      const worked = new Set<string>();
+      for (const r of gameState.tradeRoutes ?? []) {
+        if (r.ownedBy !== 'player') continue;
+        for (const st of r.stops ?? []) if (st.action === 'mine') worked.add(st.bodyId);
+      }
+      for (const s of gameState.ships) {
+        if (s.ownedBy === factionId && s.miningBodyId) worked.add(s.miningBodyId);
+      }
+      const seenRock = new Set<string>();
+      for (const f of gameState.recentMeteoroidFinds ?? []) {
+        if (seenRock.has(f.bodyId) || worked.has(f.bodyId)) continue;
+        if (tick - f.tick > DISCOVERY_TTL_TICKS) continue;
+        const rock = gameState.bodies.find(b => b.id === f.bodyId);
+        if (!rock || !((rock.mineralRemaining ?? 0) > 0)) continue;
+        seenRock.add(f.bodyId);
+        const kind = (rock.mineralKind ?? f.kind) === 'gold' ? 'gold' : 'metal';
+        push({
+          id: `meteoroid_found:${f.bodyId}`,
+          category: 'meteoroid_found',
+          entity: `body:${f.bodyId}`,
+          title: tr('helper.sit.meteoroidFound.title', { name: rock.name ?? f.name ?? '' }),
+          subtitle: tr('helper.sit.meteoroidFound.sub', {
+            amount: Math.round(rock.mineralRemaining ?? f.tons),
+            kind: tr(kind === 'gold' ? 'helper.sit.kind.credits' : 'helper.sit.kind.metal'),
+          }),
+          severity: 'normal',
+          sortKey: -f.tick,
+          focus: { kind: 'body', bodyId: f.bodyId },
+        });
+      }
+    } catch { /* defensive */ }
 
     const arr = gameState.fleetArrears;
     if (arr && (arr.credits > 0 || arr.ore > 0)) {
@@ -2114,11 +2160,26 @@ export function useSituationItems(
     try {
       for (const s of gameState.settlements) {
         if (s.ownedBy !== factionId) continue;
+        // Only an upgrade here the player can actually pay for makes a
+        // free slot worth a row. A screen full of "building nothing" you
+        // can't afford is nagging, not opportunity.
+        const canBuildSomething = () => {
+          const have = spendableAt(s.bodyId);
+          const kinds = s.type === 'city' ? CITY_BUILDINGS : STATION_BUILDINGS;
+          return kinds.some(kind => canPay(have, nextBuildingCost(kind, buildingLevel(s, kind))));
+        };
         const done = buildingDoneRef.current.get(s.id);
-        if (done) {
+        // A COMPLETION IS NEWS FOR A FEW TICKS, NOT A STANDING DECISION.
+        // It sat under "Needs a decision" for its whole 10-tick window
+        // ("Defense 1 complete", 7+ ticks on, playtest 2026-10-24), even
+        // when nothing here could be afforded. It asks for a decision only
+        // while it is fresh AND an upgrade is affordable; after that the
+        // free slot is the ordinary idle row below.
+        if (done && tick - done.tick < BUILDING_DONE_DECISION_TICKS) {
           push({
             id: `building_done:${s.id}`,
             category: 'building_done',
+            tier: canBuildSomething() ? 'decision' : 'opportunity',
             entity: `settlement:${s.id}`,
             title: tr('helper.sit.building.done', { label: buildingLabelText(done.label), where: s.name }),
             subtitle: tr('helper.sit.building.doneSub'),
@@ -2129,15 +2190,7 @@ export function useSituationItems(
           continue;                      // done implies idle; don't say both
         }
         if (!s.buildingQueue) {
-          // Only surface an idle slot if there's an upgrade here the
-          // player can actually pay for. A screen full of "building
-          // nothing" you can't afford is nagging, not opportunity.
-          const have = spendableAt(s.bodyId);
-          const kinds = s.type === 'city' ? CITY_BUILDINGS : STATION_BUILDINGS;
-          const canBuildSomething = kinds.some(kind =>
-            canPay(have, nextBuildingCost(kind, buildingLevel(s, kind))),
-          );
-          if (!canBuildSomething) continue;
+          if (!canBuildSomething()) continue;
           push({
             id: `building_idle:${s.id}`,
             category: 'building_idle',

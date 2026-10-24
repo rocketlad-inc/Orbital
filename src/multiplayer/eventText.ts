@@ -770,10 +770,11 @@ export function formatChronicleEvent(
   if (ev.kind === 'meteoroid_found') {
     const tons = Number(parsed.tons ?? 0);
     const unit = T(parsed.kind === 'gold' ? 'unit.credits' : 'unit.metal');
-    const name = String(parsed.name ?? T('fb.aMeteoroid'));
-    return out('◈ ', tons > 0
-      ? T('meteoroid.foundTons', { name, tons: num(tons), unit })
-      : T('meteoroid.found', { name }));
+    // The find banks nothing; the ore waits in the rock for a freighter.
+    // The old "Survey found Rock 9 — 400 credits" read like a payout.
+    return out('◈ ', tons > 0 && parsed.name
+      ? T('meteoroid.foundTons', { name: String(parsed.name), tons: num(tons), unit })
+      : T('meteoroid.found', { name: String(parsed.name ?? T('fb.aMeteoroid')) }));
   }
 
   if (ev.kind === 'meteoroid_exhausted') {

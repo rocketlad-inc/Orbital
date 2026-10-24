@@ -152,6 +152,8 @@
 .wm-terraform-assign button:hover:not(:disabled) { background: rgba(78, 205, 196, 0.2); }
 .wm-terraform-assign button:disabled { opacity: 0.5; cursor: default; }
 .wm-terraform-assign .wm-terraform-hint { flex-basis: 100%; }
+.wm-terraform-confirm { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 11px; color: #ffd27a; }
+.wm-terraform-confirm span { flex-basis: 100%; }
 .wm-more {
   align-self: flex-end;
   background: rgba(78, 205, 196, 0.08); border: 1px solid #2a3d50; border-radius: 4px;
@@ -418,10 +420,6 @@
 .wm-qline .wm-qbar { margin: 0 -4px 0 -8px; height: 3px; border-radius: 0 0 3px 3px; }
 .wm-qline .wm-qorder { font-size: 10px; padding: 2px 4px; }
 .wm-qline__end { display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
-.wm-qpos {
-  font-style: normal; font-size: 9px; color: #61758a; margin-right: 6px;
-  font-variant-numeric: tabular-nums;
-}
 
 /* The build list: one row per hull, the same columns every row. */
 .wm-hulls { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; }

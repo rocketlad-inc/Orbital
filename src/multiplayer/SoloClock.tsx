@@ -52,6 +52,19 @@ export function SoloClock({ gameId }: { gameId: string }) {
   const isMobile = useIsMobile();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // NEXT TICK, CLICKED AGAIN WHILE ONE RUNS. Those clicks used to be
+  // swallowed by the disabled button, so five quick clicks advanced one
+  // tick and nothing said so (playtest, 2026-10-24). Each click now
+  // counts: extra ones wait their turn (at most MAX_QUEUED), the button
+  // says how many are left, and each landed step names its tick.
+  const queuedRef = useRef(0);
+  const [queued, setQueued] = useState(0);
+  const [landed, setLanded] = useState<number | null>(null);
+  useEffect(() => {
+    if (landed == null) return;
+    const id = setTimeout(() => setLanded(null), 1800);
+    return () => clearTimeout(id);
+  }, [landed]);
   const solo = gameState.solo;
   // Others ask the clock here, one code path: the tutorial's last step has
   // its own START (a phone's top bar had none on screen), and a narrow
@@ -78,6 +91,34 @@ export function SoloClock({ gameId }: { gameId: string }) {
     if (!res.ok) { setError(apiErrorText(res.error, 'solo.failed')); return; }
     window.dispatchEvent(new CustomEvent('orbital:refresh-state'));
   };
+  const MAX_QUEUED = 9;
+  const step = async () => {
+    if (busy === 'step') {
+      queuedRef.current = Math.min(MAX_QUEUED, queuedRef.current + 1);
+      setQueued(queuedRef.current);
+      return;
+    }
+    if (busy) return;
+    setBusy('step');
+    setError(null);
+    setLanded(null);
+    for (;;) {
+      const res = await apiFetch<{ tick?: number | null }>(
+        `/api/games/${encodeURIComponent(gameId)}/solo/step`, { method: 'POST' });
+      if (!res.ok) {
+        setError(apiErrorText(res.error, 'solo.failed'));
+        queuedRef.current = 0;
+        setQueued(0);
+        break;
+      }
+      window.dispatchEvent(new CustomEvent('orbital:refresh-state'));
+      if (res.data?.tick != null) setLanded(res.data.tick);
+      if (queuedRef.current <= 0) break;
+      queuedRef.current -= 1;
+      setQueued(queuedRef.current);
+    }
+    setBusy(null);
+  };
   const setSpeed = (ms: number) => {
     if (ms === speed) return;
     send('speed', 'speed', { method: 'PATCH', body: JSON.stringify({ speed_ms: ms }) });
@@ -86,7 +127,7 @@ export function SoloClock({ gameId }: { gameId: string }) {
   const nextSpeed = nextSoloSpeed(speed);
   resumeRef.current = (action) => {
     if (action === 'resume' && paused) send('pause', 'resume', { method: 'POST' });
-    else if (action === 'step' && paused) send('step', 'step', { method: 'POST' });
+    else if (action === 'step' && paused) void step();
     else if (action === 'speed') setSpeed(nextSpeed);
   };
 
@@ -108,12 +149,17 @@ export function SoloClock({ gameId }: { gameId: string }) {
         <button
           type="button"
           className="solo-clock__btn solo-clock__step"
-          onClick={() => send('step', 'step', { method: 'POST' })}
-          disabled={!!busy}
+          onClick={step}
+          disabled={!!busy && busy !== 'step'}
           title={t('solo.stepTitle')}
+          aria-live="polite"
         >
           <StepIcon />
-          <span className="solo-clock__txt">{busy === 'step' ? t('solo.stepping') : t('solo.step')}</span>
+          <span className="solo-clock__txt">
+            {busy === 'step'
+              ? (queued > 0 ? t('solo.steppingMore', { n: queued }) : t('solo.stepping'))
+              : landed != null ? t('solo.steppedTo', { n: landed }) : t('solo.step')}
+          </span>
         </button>
       )}
       {isMobile ? (

@@ -79,6 +79,25 @@ const STATUS_COLOR: Record<keyof typeof STATUS_LABEL, string> = {
 
 // Per-resource tint for the income line — subtle, decoration only.
 
+/** THE LAST ANSWER, per game, kept across opens. The panel used to start
+ *  empty on every open and wait for all four fetches, so the Faction tab
+ *  said "Loading faction..." for 3-5 s each time (playtest, 2026-10-24).
+ *  Now a reopen draws what it showed last time at once and refreshes
+ *  underneath, and each fetch fills its part as soon as it lands. */
+interface FactionPanelCache {
+  me: MyFaction | null;
+  roster: Faction[];
+  pacts: Pact[];
+  wars: WarRow[];
+  dyson: DysonProgress | null;
+}
+const panelCache = new Map<string, FactionPanelCache>();
+function cacheFor(gameId: string): FactionPanelCache {
+  let c = panelCache.get(gameId);
+  if (!c) { c = { me: null, roster: [], pacts: [], wars: [], dyson: null }; panelCache.set(gameId, c); }
+  return c;
+}
+
 export function FactionPanel({
   gameId,
   onlineUserIds = [],
@@ -94,10 +113,10 @@ export function FactionPanel({
   // Set, not .includes() per row: the roster is small today but this is
   // inside a render that already runs on every poll.
   const onlineSet = useMemo(() => new Set(onlineUserIds), [onlineUserIds]);
-  const [me, setMe] = useState<MyFaction | null>(null);
-  const [roster, setRoster] = useState<Faction[]>([]);
-  const [pacts, setPacts] = useState<Pact[]>([]);
-  const [wars, setWars] = useState<WarRow[]>([]);
+  const [me, setMe] = useState<MyFaction | null>(() => cacheFor(gameId).me);
+  const [roster, setRoster] = useState<Faction[]>(() => cacheFor(gameId).roster);
+  const [pacts, setPacts] = useState<Pact[]>(() => cacheFor(gameId).pacts);
+  const [wars, setWars] = useState<WarRow[]>(() => cacheFor(gameId).wars);
   const [breaking, setBreaking] = useState<string | null>(null);
   const [breakError, setBreakError] = useState<string | null>(null);
   // WAR FROM THE DRAWER. Declaring lived only in Trade › Standing, while
@@ -122,7 +141,7 @@ export function FactionPanel({
   };
   /** Dyson progress rides on the factions payload so all three victory
    *  paths render from one fetch. Null on pre-Phase-B games. */
-  const [dyson, setDyson] = useState<DysonProgress | null>(null);
+  const [dyson, setDyson] = useState<DysonProgress | null>(() => cacheFor(gameId).dyson);
   /** Which faction rows have their detail drawer open. */
   const [openRows, setOpenRows] = useState<Set<string>>(new Set());
   const toggleRow = (id: string) => setOpenRows(prev => {
@@ -134,16 +153,22 @@ export function FactionPanel({
   const tradesApiClient = useMemo(() => tradesApi(gameId), [gameId]);
 
   const refresh = useCallback(async () => {
-    const [meRes, listRes, pactsRes, warsRes] = await Promise.all([
-      apiFetch<{ faction: MyFaction }>(`/api/games/${gameId}/me`),
-      apiFetch<{ factions: Faction[]; dyson?: DysonProgress | null }>(`/api/games/${gameId}/factions`),
-      tradesApiClient.listPacts(),
-      warsApi(gameId).list(),
+    // Each part lands on its own: the slowest fetch no longer holds the
+    // whole panel back.
+    const c = cacheFor(gameId);
+    await Promise.all([
+      apiFetch<{ faction: MyFaction }>(`/api/games/${gameId}/me`).then(r => {
+        if (r.ok) { c.me = r.data.faction; setMe(r.data.faction); }
+      }),
+      apiFetch<{ factions: Faction[]; dyson?: DysonProgress | null }>(`/api/games/${gameId}/factions`).then(r => {
+        if (r.ok) {
+          c.roster = r.data.factions; c.dyson = r.data.dyson ?? null;
+          setRoster(r.data.factions); setDyson(r.data.dyson ?? null);
+        }
+      }),
+      tradesApiClient.listPacts().then(r => { if (r.ok) { c.pacts = r.data.pacts; setPacts(r.data.pacts); } }),
+      warsApi(gameId).list().then(r => { if (r.ok) { c.wars = r.data.wars; setWars(r.data.wars); } }),
     ]);
-    if (meRes.ok) setMe(meRes.data.faction);
-    if (listRes.ok) { setRoster(listRes.data.factions); setDyson(listRes.data.dyson ?? null); }
-    if (pactsRes.ok) setPacts(pactsRes.data.pacts);
-    if (warsRes.ok) setWars(warsRes.data.wars);
   }, [gameId, tradesApiClient]);
 
   useEffect(() => {
@@ -276,12 +301,15 @@ export function FactionPanel({
         <div role="table" aria-label={t('faction.standings.aria')}>
           <div role="rowgroup">
             <div className="fp-head" role="row">
-              <span role="columnheader">{t('faction.col.metal')}</span>
-              <span role="columnheader">{t('faction.col.credits')}</span>
-              <span role="columnheader">{t('faction.col.science')}</span>
-              <span role="columnheader">{t('faction.col.worlds')}</span>
-              <span role="columnheader">{t('faction.col.systems')}</span>
-              <span role="columnheader">{t('faction.col.fleet')}</span>
+              {/* Short heads for a narrow table; each says itself in full
+                  on hover ("MTL CR SCI WLD SYS" was jargon, playtest
+                  2026-10-24). */}
+              <span role="columnheader" title={t('faction.colTip.metal')}>{t('faction.col.metal')}</span>
+              <span role="columnheader" title={t('faction.colTip.credits')}>{t('faction.col.credits')}</span>
+              <span role="columnheader" title={t('faction.colTip.science')}>{t('faction.col.science')}</span>
+              <span role="columnheader" title={t('faction.colTip.worlds')}>{t('faction.col.worlds')}</span>
+              <span role="columnheader" title={t('faction.colTip.systems')}>{t('faction.col.systems')}</span>
+              <span role="columnheader" title={t('faction.colTip.fleet')}>{t('faction.col.fleet')}</span>
             </div>
           </div>
           {ranked.map(f => {

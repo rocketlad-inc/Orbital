@@ -2,68 +2,71 @@
 // captainNames — the default captain name bank + picker.
 //
 // Unlike SHIP_NAME_POOLS / SETTLEMENT_NAME_POOLS (given+surname or
-// place-name style flavor), captains are named after specific,
-// recognizable characters from classic sci-fi — the point is
-// "my captain is Naomi Nagata," not a procedurally-combined given
-// name and surname. One flat pool, picked whole.
+// place-name style flavor), captains get a whole, memorable name picked
+// from one flat pool: "my captain is Naveen Okafor-Lisle", not a
+// procedurally-combined given name and surname.
 //
-// Drawn from Dune, Star Wars, Star Trek, The Expanse, Stargate, and
-// other popular sci-fi (Battlestar Galactica, Firefly, Alien,
-// Foundation, Guardians of the Galaxy, Mass Effect) as an homage —
-// same register as the ship/settlement banks reusing canonical
-// names (Rocinante-era freighter names, Tycho Station, etc).
+// ORIGINAL NAMES ONLY. This pool used to be real characters from Dune,
+// Star Wars, Star Trek, The Expanse, Stargate and others (B'Elanna
+// Torres, Mace Windu, Lando Calrissian...). A playtester flagged it
+// (2026-10-24): those names belong to someone else. Every entry below
+// is invented, grouped by the flavour the old sections had, so a fleet
+// still reads like classic space opera. Never add a character from an
+// existing work here.
+//
+// NEWLY MINTED CAPTAINS ONLY. Captains already in a game keep the name
+// they were given; nothing renames rows in the database.
 //
 // KEEP IN SYNC: this is the only copy — worker/captains.js is the
 // sole caller (captain minting is server-authoritative).
 // ============================================================
 
 export const CAPTAIN_NAMES = [
-  // Dune
-  'Paul Atreides', 'Leto Atreides', 'Jessica Atreides', 'Chani Kynes',
-  'Duncan Idaho', 'Gurney Halleck', 'Stilgar', 'Liet-Kynes',
-  'Thufir Hawat', 'Alia Atreides', 'Vladimir Harkonnen', 'Feyd-Rautha',
-  'Irulan Corrino', 'Margot Fenring', 'Piter De Vries', 'Glossu Rabban',
-  'Shaddam Corrino', 'Otheym', 'Korba', 'Farok',
+  // Desert dynasties and old houses
+  'Idris Valcaran', 'Sorel Valcaran', 'Mirah Valcaran', 'Tamsin Corvaine',
+  'Oriel Dunmarch', 'Hesper Kaal', 'Ilyas Qarim', 'Rhoda Venn',
+  'Barak Esh-Tali', 'Ysolde Varrin', 'Kesh Amaru', 'Nadir Sarkon',
+  'Taveth Morrow', 'Corvan Halleth', 'Ashra Tolven', 'Vashti Orlenne',
+  'Orhan', 'Selkie', 'Marrow', 'Tesh',
 
-  // Star Wars
-  'Luke Skywalker', 'Leia Organa', 'Han Solo', 'Chewbacca',
-  'Obi-Wan Kenobi', 'Anakin Skywalker', 'Padmé Amidala', 'Lando Calrissian',
-  'Ahsoka Tano', 'Din Djarin', 'Cara Dune', 'Poe Dameron',
-  'Rey Skywalker', 'Finn', 'Wedge Antilles', 'Hera Syndulla',
-  'Kanan Jarrus', 'Sabine Wren', 'Ezra Bridger', 'Mace Windu',
-  'Qui-Gon Jinn', 'Jyn Erso', 'Cassian Andor', 'Wilhuff Tarkin', 'Boba Fett',
+  // Knights, smugglers and rebels
+  'Kael Varro', 'Teyra Solace', 'Joren Vask', 'Mira Calloway',
+  'Brannoc Hale', 'Orrin Dask', 'Lysa Marwen', 'Corwin Stray',
+  'Pell Antarro', 'Neva Strand', 'Talon Rusk', 'Imra Vey',
+  'Cass Brightwater', 'Rook Danner', 'Severin Ashgrove', 'Ondra Kell',
+  'Juno Farrows', 'Ezren Talloway', 'Varis Thorne', 'Quillon',
+  'Bram Ostrander', 'Ilka Coil', 'Dorran Vex', 'Halcy Tarn', 'Vessik',
 
-  // Star Trek
-  'James Kirk', 'Spock', 'Leonard McCoy', 'Jean-Luc Picard',
-  'William Riker', 'Data', 'Geordi La Forge', 'Worf',
-  'Deanna Troi', 'Beverly Crusher', 'Benjamin Sisko', 'Kira Nerys',
-  'Kathryn Janeway', 'Chakotay', 'Tuvok', "B'Elanna Torres",
-  'Seven of Nine', 'Jonathan Archer', "T'Pol", 'Christopher Pike',
-  'Una Chin-Riley', 'Nyota Uhura', 'Hikaru Sulu', 'Pavel Chekov',
-  'Montgomery Scott',
+  // Starship officers
+  'Eleanor Vance-Okoro', 'Tobias Renn', 'Mariko Hale', 'Desmond Achterberg',
+  'Anjali Castellane', 'Lucan Ferro', 'Adaeze Monroe', 'Henrik Solberg',
+  'Yusuf Calder', 'Ines Marquand', 'Rowan Ashby', 'Tamar Ilesanmi',
+  'Gideon Pryce', 'Sunniva Lund', 'Matteo Qadir', 'Celeste Arunde',
+  'Oskar Brightman', 'Nadia Revel', 'Callum Strathe', 'Reiko Danvers',
+  'Anselm Ward', 'Lior Benhamou', 'Freya Castellan', 'Teodor Blak',
+  'Halvard Moss',
 
-  // The Expanse
-  'James Holden', 'Naomi Nagata', 'Amos Burton', 'Alex Kamal',
-  'Bobbie Draper', 'Chrisjen Avasarala', 'Josephus Miller', 'Camina Drummer',
-  'Klaes Ashford', 'Fred Johnson', 'Anderson Dawes', 'Michio Pa',
-  'Clarissa Mao', 'Praxidike Meng', 'Emily Santos',
+  // Belters, dockhands and ice haulers
+  'Naveen Okafor-Lisle', 'Marisol Kettering', 'Dagny Ruiz', 'Tobi Achebe',
+  'Rafe Kowalczyk', 'Wenna Sato', 'Lark Medeiros', 'Ozzie Takahara',
+  'Bex Nakamura-Reyes', 'Hollis Grange', 'Pia Lindqvist', 'Mags Olawale',
+  'Teo Vasquez', 'Ruth Abernathy', 'Jules Szabo',
 
-  // Stargate
-  "Jack O'Neill", 'Samantha Carter', 'Daniel Jackson', "Teal'c",
-  'George Hammond', 'Cameron Mitchell', 'Vala Mal Doran', 'John Sheppard',
-  'Elizabeth Weir', 'Rodney McKay', 'Teyla Emmagan', 'Ronon Dex',
-  'Hank Landry', 'Janet Fraiser', 'Walter Harriman',
+  // Gate teams and the marines
+  'Grace Halvorsen', 'Marcus Delacroix', 'Ada Kinsella', 'Bellamy Stroud',
+  'Owen Thackeray', 'Dana Whitlock', 'Silas Okonkwo', 'Harriet Vale',
+  'Conrad Ibsen', 'Mae Torrance', 'Royce Gallard', 'Nell Pemberton',
+  'Ike Mbeki', 'Ruthanne Cole', 'Wes Harrigan',
 
-  // Other popular sci-fi — Battlestar Galactica, Firefly, Alien,
-  // Foundation, Guardians of the Galaxy, Mass Effect
-  'William Adama', 'Laura Roslin', 'Kara Thrace', 'Lee Adama',
-  'Saul Tigh', 'Gaius Baltar', 'Sharon Valerii',
-  'Malcolm Reynolds', 'Zoe Washburne', 'Hoban Washburne', 'Inara Serra',
-  'Jayne Cobb', 'River Tam', 'Kaylee Frye',
-  'Ellen Ripley', 'Dwayne Hicks',
-  'Hari Seldon', 'Salvor Hardin', 'Gaal Dornick',
-  'Peter Quill', 'Gamora', 'Drax the Destroyer', 'Rocket Raccoon',
-  'Garrus Vakarian', 'Tali Zorah', "Liara T'Soni",
+  // Frontier crews, fleet admirals and far voyagers
+  'Augustin Rhee', 'Leonora Quist', 'Cyra Valdane', 'Emeric Lowe',
+  'Saul Bannerjee', 'Ottilie March', 'Teodora Inglis',
+  'Jonah Cutter', 'Wren Halloway', 'Abel Quarry', 'Sable Morrow',
+  'Hatch Merriwether', 'Dot Kincaid', 'Faye Dunleavy',
+  'Vera Okonedo', 'Lucius Brandt',
+  'Corin Aldane', 'Mercer Vail', 'Anouk Sterling',
+  'Zara Quell', 'Bosk', 'Tamsk the Wide', 'Pip Salvage',
+  'Ilse Varga', 'Thessaly Rook', 'Oren Vashti',
 ];
 
 /**

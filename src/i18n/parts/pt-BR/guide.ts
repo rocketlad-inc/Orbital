@@ -262,7 +262,7 @@ export const guide: Catalog = {
   'landing.hero.h1soft': 'Uma hora de cada vez.',
   'landing.hero.f1': 'jogadores',
   'landing.hero.f2a': '1 h',
-  'landing.hero.f2b': 'por tick, ou à sua escolha',
+  'landing.hero.f2b': 'por tick (um passo do relógio do jogo), ou à sua escolha',
   'landing.hero.f3': 'formas de vencer',
   'landing.hero.f4': 'sem anúncios',
   'site.meta.about.title': 'Orbital — Jogo de estratégia espacial em tempo real, grátis no navegador',

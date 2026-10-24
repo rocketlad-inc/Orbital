@@ -2597,6 +2597,20 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
           bodyName: (p.body_name as string) ?? null,
         };
       }),
+    // Owner-only rows (visibility is the finder), so every one is ours.
+    recentMeteoroidFinds: orderedEvents
+      .filter(ev => ev.kind === 'meteoroid_found' && ev.body_id)
+      .map(ev => {
+        let p: Record<string, unknown> = {};
+        try { p = JSON.parse(ev.payload || '{}'); } catch { /* ignore */ }
+        return {
+          bodyId: stripGameId(ev.body_id as string) ?? (ev.body_id as string),
+          tick: Number(ev.tick_number),
+          name: (p.name as string) ?? null,
+          kind: p.kind === 'gold' ? 'gold' as const : p.kind === 'metal' ? 'metal' as const : null,
+          tons: Number(p.tons ?? 0) || 0,
+        };
+      }),
     lastHarvestTick: srv.game.current_tick,
     tradeRoutes,
     shipDesigns,

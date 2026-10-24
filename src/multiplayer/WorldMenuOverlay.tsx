@@ -243,6 +243,13 @@ export const WorldMenuOverlay: React.FC = () => {
   const [picked, setPicked] = useState<{ kind: BuildingKind; column: 'surface' | 'orbit' } | null>(null);
   const pickedKind = picked?.kind ?? null;
   const pickedColumn = picked?.column ?? 'surface';
+  // AN UPGRADE THAT WILL WAIT. Ordering one while another is under
+  // construction here charges it now and parks it behind that one, and
+  // nothing said so before the money went (playtest, 2026-10-24: a Lab
+  // held the station upgrade at "#1 in line"). The first press arms this
+  // ("settlementId:kind") and says so; the second pays.
+  const [waitConfirm, setWaitConfirm] = useState<string | null>(null);
+  useEffect(() => { setWaitConfirm(null); }, [picked, openId]);
   // The station's own card: its modules, listed, one tap from their cards.
   const [stationOpen, setStationOpen] = useState(false);
   // The structure under the pointer: its tag and its building light together.
@@ -649,12 +656,24 @@ export const WorldMenuOverlay: React.FC = () => {
     // charged when you queue, so the only other way out would be to let
     // the thing you didn't want get built.
     const waiting = (settlement.buildingBacklog ?? []).find(o => o.kind === kind);
+    const key = `${settlement.id}:${kind}`;
+    if (!waiting && settlement.buildingQueue && waitConfirm !== key) {
+      setWaitConfirm(key);
+      return;
+    }
+    setWaitConfirm(null);
     const res = waiting
       ? await mpActions?.cancelBuilding(settlement.id, waiting.id)
       : await mpActions?.queueBuilding(settlement.id, kind, nextBuildingLevel(settlement, kind));
     // already_queued: the tap the screen had not caught up with. What was
     // asked for is already happening, so there is nothing to tell them.
     if (res && !res.ok && res.code !== 'already_queued') setErrMsg(res.error ?? t('worldmenu.err.buildRejected'));
+  };
+  /** "Waits behind Lab: #2 in line, paid now." for the armed confirm. */
+  const waitsBehindText = (s: Settlement) => {
+    const q = s.buildingQueue;
+    const what = q ? tk(`worldmenu.building.${q.kind}`, q.kind.toUpperCase()) : '';
+    return t('worldmenu.card.willWait', { what, pos: (s.buildingBacklog?.length ?? 0) + 1 });
   };
   // Rename a settlement (city OR station). Mirrors BodyInspector: apply
   // the optimistic local change, then PATCH the server; re-throw on
@@ -664,15 +683,22 @@ export const WorldMenuOverlay: React.FC = () => {
     const res = await mpActions?.renameSettlement(settlementId, next);
     if (res && !res.ok) throw new Error(humanizeMpError(res.code, res.error, 'rename'));
   };
+  // FOUNDING TAKES A MOMENT (~1.7 s, p95 ~4 s) and the button used to sit
+  // there silent, so "Build Station" read as a dead click (playtest,
+  // 2026-10-24). It now says it is working, then says what was founded.
+  const [founding, setFounding] = useState<SettlementType | null>(null);
   const foundSettlement = async (type: SettlementType) => {
-    if (!openId || !body) return;
+    if (!openId || !body || founding) return;
     setErrMsg(null);
     const name = suggestSettlementName(
       body, type, gameState.settlements,
       type === 'city' ? gameState.namePools?.city : gameState.namePools?.station,
     );
+    setFounding(type);
     const res = await mpActions?.deploySettlement({ bodyId: openId, type, name });
+    setFounding(null);
     if (res && !res.ok) setErrMsg(res.error ?? (type === 'city' ? t('worldmenu.err.couldNotFoundCity') : t('worldmenu.err.couldNotFoundStation')));
+    else if (res?.ok) setNoteMsg(t(type === 'city' ? 'worldmenu.found.doneCity' : 'worldmenu.found.doneStation', { name, body: body.name }));
   };
 
   // ---- founding a city / station (MP rules, mirrors BodyInspector) ----
@@ -846,7 +872,9 @@ export const WorldMenuOverlay: React.FC = () => {
         {st.state === 'backlogged' && (
           <span className="wm-bbtn-q" aria-label={t('worldmenu.build.queuePosition', { pos: st.position })}>{st.position}</span>
         )}
-        <span className="wm-bbtn-st">{lockShort ?? st.text}</span>
+        <span className="wm-bbtn-st">
+          {host && waitConfirm === `${host.id}:${kind}` ? waitsBehindText(host) : (lockShort ?? st.text)}
+        </span>
         <span className="wm-bbtn-fx">{BUILDING_DEFS[kind].effectShort}</span>
         {progress !== null && (
           <span className="wm-bbtn-bar">
@@ -958,7 +986,8 @@ export const WorldMenuOverlay: React.FC = () => {
       <button
         key={type}
         className={`wm-bbtn wm-found${raw ? ' wm-found--locked' : ''}`}
-        disabled={!enabled && !raw}
+        disabled={(!enabled && !raw) || founding === type}
+        aria-busy={founding === type}
         title={title}
         onClick={() => {
           // A raw world's city plot opens the way to living: the terraform
@@ -969,7 +998,9 @@ export const WorldMenuOverlay: React.FC = () => {
         data-testid={`wm-found-${type}`}
       >
         <span className="wm-bbtn-nm">{isCity ? t('worldmenu.found.btnCity') : t('worldmenu.found.btnStation')}</span>
-        <span className="wm-bbtn-st">{cityLock && isCity && !raw ? `🔒 ${sub}` : sub}</span>
+        <span className="wm-bbtn-st">
+          {founding === type ? t('worldmenu.found.busy') : cityLock && isCity && !raw ? `🔒 ${sub}` : sub}
+        </span>
       </button>
     );
   };
@@ -1240,10 +1271,17 @@ export const WorldMenuOverlay: React.FC = () => {
           <>
             <div className="wm-card-row"><span>{t('worldmenu.card.cost')}</span><b className="is-cost">{costText(kind, level)}</b></div>
             {lockObj && <div className="wm-card-row is-locked"><span>🔒 {lockObj.label} — {lockObj.text}</span></div>}
+            {waitConfirm === `${pickedHost.id}:${kind}` && (
+              <div className="wm-card-row is-booked" role="alert" data-testid="wm-card-wait">
+                <span>{waitsBehindText(pickedHost)}</span>
+              </div>
+            )}
             <button type="button" className="wm-card-go" data-testid="wm-card-go" disabled={!!lockObj}
               title={lockObj ? `${lockObj.label} — ${lockObj.text}` : undefined}
               onClick={() => { if (!lockObj) void queueBuild(kind, pickedHost); }}>
-              {level > 0 ? t('worldmenu.card.upgrade', { lv: level + 1 }) : t('worldmenu.card.build')}
+              {waitConfirm === `${pickedHost.id}:${kind}`
+                ? t('worldmenu.card.confirmPay', { cost: costText(kind, level) })
+                : level > 0 ? t('worldmenu.card.upgrade', { lv: level + 1 }) : t('worldmenu.card.build')}
             </button>
           </>
         )}
@@ -1771,9 +1809,16 @@ export const WorldMenuOverlay: React.FC = () => {
         <>
           <div className="wmp-cost"><span>{t('worldmenu.card.cost')}</span><b>{costText(kind, lv)}</b></div>
           {lockObj && <div className="wmp-lock">{lockGlyph}<span>{lockObj.label} — {lockObj.text}</span></div>}
+          {waitConfirm === `${sHost.id}:${kind}` && (
+            <div className="wm-card-row is-booked" role="alert" data-testid="wm-card-wait">
+              <span>{waitsBehindText(sHost)}</span>
+            </div>
+          )}
           <button type="button" className="wmp-go" data-testid="wm-card-go" disabled={!!lockObj}
             onClick={() => { if (!lockObj) void queueBuild(kind, sHost); }}>
-            {lv > 0 ? t('worldmenu.card.upgrade', { lv: lv + 1 }) : t('worldmenu.card.build')}
+            {waitConfirm === `${sHost.id}:${kind}`
+              ? t('worldmenu.card.confirmPay', { cost: costText(kind, lv) })
+              : lv > 0 ? t('worldmenu.card.upgrade', { lv: lv + 1 }) : t('worldmenu.card.build')}
           </button>
         </>
       ) : st.state === 'queued' ? (
@@ -2725,16 +2770,16 @@ const WmFleet: React.FC<{
       <div className={`wm-qline ${isBuilding ? 'building' : 'waiting'}`} key={o.id} data-testid="wm-qline">
         <div className="wm-qline__row">
           <ShipIcon shipClass={o.shipClass} variant={o.iconVariant} size={16} color={p1} color2={p2} />
-          <span className="wm-qnm">
-            {!isBuilding && <i className="wm-qpos">{pos}</i>}
-            {o.shipName ?? o.shipClass}
-          </span>
+          {/* The place in line sits with the status, not before the
+              name: a bare "2" read as part of it ("2 Kestrel", playtest
+              2026-10-24), so names looked inconsistent down the list. */}
+          <span className="wm-qnm">{o.shipName ?? o.shipClass}</span>
           {isMine ? orderSelect(o) : <span />}
           <span className="wm-qline__end">
             {o.botched && (
               <span title={t('worldmenu.q.botched')} style={{ color: '#ff8a5c' }}>⚠</span>
             )}
-            <span className="wm-qeta">{isBuilding ? `T-${eta}` : t('worldmenu.q.queued')}</span>
+            <span className="wm-qeta">{isBuilding ? `T-${eta}` : t('worldmenu.q.inLine', { n: pos })}</span>
             {isMine && isBuilding && eta > 1 && (
               <RushControl
                 order={o}
@@ -2998,7 +3043,14 @@ const WmFleet: React.FC<{
           </>
         )}
         {orders.length === 0 && (
-          <div className="wm-qrow empty">{hasStation ? (slots > 0 ? t('worldmenu.slotsIdle') : t('worldmenu.needYard')) : t('worldmenu.noStationYet')}</div>
+          // A city builds ships too (one slot on any world you hold), so
+          // "no station yet" over a working BUILD button was false
+          // (playtest, 2026-10-24). Only a world with nothing of yours on
+          // it has no yard.
+          <div className="wm-qrow empty">{
+            (hasStation || gameState.settlements.some(s => s.bodyId === bodyId && s.ownedBy === 'player'))
+              ? (slots > 0 ? t('worldmenu.slotsIdle') : t('worldmenu.needYard'))
+              : t('worldmenu.noStationYet')}</div>
         )}
       </div>
       {mobile ? (
@@ -3016,7 +3068,7 @@ const WmFleet: React.FC<{
                   {h.def.displayName.toUpperCase()}
                   {h.templates.length > 0 && <i>{h.picked?.name ?? h.templates[0].name} ▾</i>}
                 </span>
-                <span className="wmp-hull-meta">{h.costOre}m · {h.costCredits}c · {h.def.buildTime} T</span>
+                <span className="wmp-hull-meta">{t('worldmenu.p.hullMeta', { m: h.costOre, c: h.costCredits, n: h.def.buildTime })}</span>
               </span>
             </>
           );
@@ -3052,7 +3104,7 @@ const WmFleet: React.FC<{
                   <div key={cls} className="wmp-hull is-locked" title={h.lock ?? undefined} data-testid={`wm-hull-${cls}`}>
                     <span className="wmp-hull-nm">{h.def.displayName.toUpperCase()}</span>
                     <span className="wmp-hull-meta">{(h.lockObj?.text ?? '').replace(/^unlocks at\s*/i, '')}</span>
-                    <span className="wmp-hull-meta">{h.costOre}m · {h.costCredits}c · {h.def.buildTime} T</span>
+                    <span className="wmp-hull-meta">{t('worldmenu.p.hullMeta', { m: h.costOre, c: h.costCredits, n: h.def.buildTime })}</span>
                   </div>
                 );
               })}
@@ -3097,8 +3149,8 @@ const WmFleet: React.FC<{
               ) : (
                 <span className="wm-hulltpl is-bare" title={t('worldmenu.bareTitle')}>{tk('worldmenu.bareHull', 'Bare hull')}</span>
               )}
-              <span className="wm-hullcost">{h.costOre}m · {h.costCredits}c</span>
-              <span className="wm-hulltime">{h.def.buildTime}t</span>
+              <span className="wm-hullcost" title={t('worldmenu.hullCostTitle', { m: h.costOre, c: h.costCredits, n: h.def.buildTime })}>{h.costOre}m · {h.costCredits}c</span>
+              <span className="wm-hulltime" title={t('worldmenu.hullCostTitle', { m: h.costOre, c: h.costCredits, n: h.def.buildTime })}>{h.def.buildTime}t</span>
               <button
                 className="wm-hullbuild"
                 disabled={h.disabled}
@@ -3289,6 +3341,12 @@ const WmTerraformCard: React.FC<{ body: Body; isMine: boolean }> = ({ body, isMi
           feeding={feeding}
           payload={t('worldmenu.payload.terraform')}
           testId="wm-terraform-assign"
+          // The first load can be most of a treasury (372 metal + 372
+          // credits in one click, playtest 2026-10-24), so say so first.
+          confirmCost={{
+            metal: Math.max(0, Math.ceil(cfg.costMetal - acc.metal)),
+            credits: Math.max(0, Math.ceil(cfg.costCredits - acc.credits)),
+          }}
         />
       )}
     </div>
@@ -3317,7 +3375,10 @@ const WmSupplyAssign: React.FC<{
   buttonLabel?: string;
   /** No dock to choose: the freighter joins a route that has one. */
   hideOrigin?: boolean;
-}> = ({ destId, feeding, payload, testId, onAssign, buttonLabel, hideOrigin }) => {
+  /** Most this route can draw from the treasury. When set, the button
+   *  asks once, with the price, before it opens the route. */
+  confirmCost?: { metal: number; credits: number };
+}> = ({ destId, feeding, payload, testId, onAssign, buttonLabel, hideOrigin, confirmCost }) => {
   useI18n();
   const { gameState } = useGameContext();
   const mpActions = useMultiplayerActions();
@@ -3325,6 +3386,7 @@ const WmSupplyAssign: React.FC<{
   const [pickOrigin, setPickOrigin] = useState('');
   const [assignBusy, setAssignBusy] = useState(false);
   const [assignMsg, setAssignMsg] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
 
   // Your freighters, most-assignable first: idle at a body beats
   // in-transit beats already-on-a-route (picking a routed one simply
@@ -3372,8 +3434,11 @@ const WmSupplyAssign: React.FC<{
       </div>
     );
   }
+  const needsConfirm = !!confirmCost && (confirmCost.metal > 0 || confirmCost.credits > 0);
   const assign = async () => {
     if (!mpActions || !shipSel || !originSel || assignBusy) return;
+    if (needsConfirm && !confirming) { setConfirming(true); setAssignMsg(null); return; }
+    setConfirming(false);
     setAssignBusy(true);
     setAssignMsg(null);
     const res = onAssign
@@ -3408,13 +3473,25 @@ const WmSupplyAssign: React.FC<{
           ))}
         </select>
       )}
-      <button
-        disabled={assignBusy || !shipSel || !originSel}
-        onClick={assign}
-        data-testid={testId}
-      >
-        {buttonLabel ?? (feeding > 0 ? t('worldmenu.assign.addRoute') : t('worldmenu.assign.start'))}
-      </button>
+      {confirming && confirmCost ? (
+        <div className="wm-terraform-confirm" role="alertdialog" data-testid={`${testId}-confirm`}>
+          <span>{t('worldmenu.assign.confirm', {
+            metal: confirmCost.metal, credits: confirmCost.credits, dock: bodyNameOf(originSel),
+          })}</span>
+          <button disabled={assignBusy} onClick={assign} data-testid={`${testId}-yes`}>
+            {t('worldmenu.assign.confirmGo')}
+          </button>
+          <button onClick={() => setConfirming(false)}>{t('common.cancel')}</button>
+        </div>
+      ) : (
+        <button
+          disabled={assignBusy || !shipSel || !originSel}
+          onClick={assign}
+          data-testid={testId}
+        >
+          {buttonLabel ?? (feeding > 0 ? t('worldmenu.assign.addRoute') : t('worldmenu.assign.start'))}
+        </button>
+      )}
       {assignMsg && <div className="wm-terraform-hint">{assignMsg}</div>}
     </div>
   );

@@ -108,6 +108,8 @@ const base = {
   'solo.resumeTitle': 'Start the clock again',
   'solo.step': 'Next tick',
   'solo.stepping': 'Ticking…',
+  'solo.steppingMore': 'Ticking… {n} more',
+  'solo.steppedTo': 'Now T+{n}',
   'solo.stepTitle': 'Run one tick, then stay paused',
   'solo.speedTitle': 'Length of a tick',
   'solo.speed.fast': '30s',

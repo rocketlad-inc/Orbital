@@ -564,9 +564,14 @@ export class Room {
       if (game.next_tick_at == null && game.turn_based_enabled !== 1) {
         const interval = game.tick_interval_ms ?? 60_000;
         const nextAt = force ? now : Date.now() + interval;
-        await this.env.DB
-          .prepare('UPDATE games SET next_tick_at = ? WHERE id = ?')
-          .bind(nextAt, started.gameId).run();
+        // A paused solo game's STEP keeps its NULL: written to D1, every
+        // /state polled while the tick ran showed a countdown beside the
+        // paused clock (playtest, 2026-10-24). alarm() reads NULL as now.
+        if (!(force && Number(game.paused) === 1)) {
+          await this.env.DB
+            .prepare('UPDATE games SET next_tick_at = ? WHERE id = ?')
+            .bind(nextAt, started.gameId).run();
+        }
         if (!force) {
           try { await this.state.storage.setAlarm(nextAt); } catch {}
           return new Response(null, { status: 204 });
@@ -1084,18 +1089,27 @@ export class Room {
     }
 
     // Stepped while paused: the clock stays stopped (no next tick, no alarm).
-    const stillPaused = Number(game.paused) === 1;
+    let stillPaused = Number(game.paused) === 1;
     if (stillPaused) nextAt = null;
 
+    // PAUSED WHILE THIS TICK RAN. `game` was read before the tick, and a
+    // tick takes seconds; a Pause pressed in that window was overwritten
+    // by the next_tick_at below, so the bar showed "next in 14s" beside a
+    // Resume button (playtest, 2026-10-24). The write keeps NULL when the
+    // row is paused NOW, and the alarm is not re-armed.
     await this.env.DB.batch([
       this.env.DB
-        .prepare('UPDATE games SET current_tick = ?, next_tick_at = ?, tick_interval_ms = ? WHERE id = ?')
+        .prepare('UPDATE games SET current_tick = ?, next_tick_at = CASE WHEN paused = 1 THEN NULL ELSE ? END, tick_interval_ms = ? WHERE id = ?')
         .bind(endTick, nextAt, speedNow, gameId),
       this.env.DB
         .prepare("INSERT OR REPLACE INTO game_ticks (game_id, tick_number, status, scheduled_at, started_at, completed_at) VALUES (?, ?, 'completed', ?, ?, ?)")
         .bind(gameId, endTick, now, now, now),
     ]);
 
+    if (!stillPaused && Number(game.solo) === 1) {
+      const now2 = await this.env.DB.prepare('SELECT paused FROM games WHERE id = ?').bind(gameId).first();
+      if (Number(now2?.paused) === 1) { stillPaused = true; nextAt = null; }
+    }
     if (!stillPaused) {
       try { await this.state.storage.setAlarm(nextAt); } catch (e) {
         console.error('setAlarm (reschedule) failed', e);
