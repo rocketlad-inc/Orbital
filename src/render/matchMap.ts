@@ -1086,8 +1086,31 @@ export function createMatchMap(
     return { x: p.x, y: p.y + (H / 2 - H * FOCUS_Y) / scale, scale };
   };
 
+  /**
+   * A THEATRE BATTLE IS SHOT ON ITS BUSIEST WORLD (Lorne, 2026-10-24: "Can
+   * we zoom in more? The scale is a bit fucked here"). Framed on the planet
+   * and every moon at once, the worlds were specks under full-size fleets;
+   * each scene of the Battle of Jupiter is now a close battle shot on the
+   * moon where most hulls died in that stretch, and the tally still counts
+   * the whole theatre.
+   */
+  const busiestOf = new Map<ReelScene, string | null>();
+  const busiestWorld = (s: ReelScene, worlds: Set<string>): string | null => {
+    if (busiestOf.has(s)) return busiestOf.get(s)!;
+    const n = new Map<string, number>();
+    for (let k = s.from; k <= s.to; k++) for (const d of deathAt.get(k) ?? []) if (worlds.has(d.body)) n.set(d.body, (n.get(d.body) ?? 0) + 1);
+    const top = [...n.entries()].filter(([id]) => byGame.has(id)).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+    busiestOf.set(s, top);
+    return top;
+  };
+  const theatreSubject = (s: ReelScene): string | null => {
+    if (s.kind !== 'battle' || !s.battle?.theatre?.length || s.framing !== 'battle') return null;
+    const worlds = new Set([s.battle.body, ...s.battle.theatre]);
+    return busiestWorld(s, worlds);
+  };
   const subjectOf = (s: ReelScene | undefined, t: number): string | null =>
     s && s.kind === 'intro' && teaser ? subjectOf(teaser, t)
+    : s && theatreSubject(s) ? theatreSubject(s)
     : s && s.bodyId && s.framing !== 'system' && s.framing !== 'track' && byId.has(s.bodyId)
       && (drawableAt(byId.get(s.bodyId)!, Math.floor(t))
         // The shot stays on a world for a moment after it is destroyed:
@@ -1169,21 +1192,6 @@ export function createMatchMap(
     return best;
   };
 
-  /** A planet and some of its moons, framed together: centred on the
-   *  planet (which moves smoothly) and as wide as the farthest moon's
-   *  orbit, so the frame does not swim as the moons go round. */
-  const theatreFrame = (planet: string, moons: string[], t: number, prog: number): Frame => {
-    const p = pos(planet, t);
-    let R = (bodyR.get(planet) ?? 6) * 3;
-    for (const mId of moons) {
-      const q = pos(mId, t);
-      R = Math.max(R, Math.hypot(q.x - p.x, q.y - p.y) + (bodyR.get(mId) ?? 3) * 2.5);
-    }
-    const m = safe();
-    const scale = Math.max(MIN_CAMERA_SCALE, Math.min((W - m.side * 2) / (2 * R), (H - m.top - m.bottom) / (2 * R)) * (1 + 0.08 * prog));
-    const midY = (m.top + (H - m.bottom)) / 2;
-    return { x: p.x, y: p.y + (H / 2 - midY) / scale, scale };
-  };
   /** A scene's own frame at an instant, with its slow drift. */
   const frameOf = (s0: ReelScene | undefined, t: number, prog: number): Frame => {
     // The cold open is framed as the battle it shows.
@@ -1193,19 +1201,14 @@ export function createMatchMap(
     if (!s || !subj) {
       const act = s && viewMode !== 'wide' ? montageAction(s) : null;
       if (act) {
-        // The theatre the dying is in: its planet and every moon in it.
-        const moons = s ? [...new Set(Array.from({ length: s.to - s.from }, (_, i) => deathAt.get(s.from + i) ?? []).flat()
-          .map(x => x.body).filter(b => b !== act && byGame.has(b) && theatreOf(b) === act))] : [];
-        const f = moons.length ? theatreFrame(act, moons, t, prog) : bodyFrame(act, t, WORLD_SUBJECT * 0.3);
-        return { ...f, scale: Math.max(systemFrame(s, t).scale, f.scale * (moons.length ? 1 : 1 + 0.06 * prog)) };
+        // The busiest world of the theatre the dying is in, from a middle distance.
+        const at = s ? busiestWorld(s, new Set([...byGame.keys()].filter(id => theatreOf(id) === act))) ?? act : act;
+        const f = bodyFrame(at, t, WORLD_SUBJECT * 0.45);
+        return { ...f, scale: Math.max(systemFrame(s, t).scale, f.scale * (1 + 0.06 * prog)) };
       }
       const f = systemFrame(s, t);
       return { ...f, scale: f.scale * (1 + 0.025 * prog) };
     }
-    // A THEATRE: the planet with the moons where the dying is, all in
-    // frame, close enough to see the worlds burn.
-    const th = s.battle?.theatre?.filter(x => x !== subj && byGame.has(x)) ?? [];
-    if (th.length) return theatreFrame(subj, th, t, prog);
     let share = WORLD_SUBJECT;
     // FRAME WHAT IS THERE, not the planet: the whole layout of the ships
     // at the world (both lines, the station) inside the space between the
