@@ -160,15 +160,22 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
   // source of truth. railMounted gates rendering during the slide-out
   // animation so the panel still gets one frame to fade.
   useEffect(() => {
+    // ONE pending unmount, cancelled by a reopen: an uncancelled 250ms
+    // timer unmounted a panel the rail had just reopened (see TradeDock).
+    let unmountTimer: ReturnType<typeof setTimeout> | null = null;
     const onActive = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       const open = detail?.active === 'multiplayer';
       setRailOpen(open);
+      if (unmountTimer) { clearTimeout(unmountTimer); unmountTimer = null; }
       if (open) setRailMounted(true);
-      else setTimeout(() => setRailMounted(false), 250);
+      else unmountTimer = setTimeout(() => { unmountTimer = null; setRailMounted(false); }, 250);
     };
     window.addEventListener('dockrail:active', onActive as EventListener);
-    return () => window.removeEventListener('dockrail:active', onActive as EventListener);
+    return () => {
+      window.removeEventListener('dockrail:active', onActive as EventListener);
+      if (unmountTimer) clearTimeout(unmountTimer);
+    };
   }, []);
 
   // SitLog clicks on vote / trade items dispatch 'orbital:open-panel'

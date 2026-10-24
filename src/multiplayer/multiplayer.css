@@ -196,6 +196,8 @@
     left: 8px; right: 8px;
     bottom: calc(var(--mobile-rail-height, 8px) + 8px);
     width: auto;
+    /* Opaque: a full-screen sheet is not read through (DockRail.css). */
+    background: rgb(10, 14, 20);
   }
 }
 .mp-dock.collapsed {
