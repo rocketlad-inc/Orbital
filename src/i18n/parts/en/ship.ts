@@ -586,7 +586,7 @@ export const ship = {
   'ship.panel.nMetal': '{n} metal',
   'ship.panel.nScience': '{n} science',
   'ship.panel.nearestYard': 'Nearest shipyard',
-  'ship.panel.nearestYardNoHome': 'Nearest shipyard (no station at {name}, its home)',
+  'ship.panel.nearestYardNoHome': 'Nearest shipyard ({name}, its home, has no dock)',
   'ship.panel.newRoute': 'NEW TRADE ROUTE',
   'ship.panel.nextStop': 'the next stop',
   'ship.panel.nextTarget': 'NEXT TARGET',

@@ -3043,7 +3043,14 @@ const WmFleet: React.FC<{
           </>
         )}
         {orders.length === 0 && (
-          <div className="wm-qrow empty">{hasStation ? (slots > 0 ? t('worldmenu.slotsIdle') : t('worldmenu.needYard')) : t('worldmenu.noStationYet')}</div>
+          // A city builds ships too (one slot on any world you hold), so
+          // "no station yet" over a working BUILD button was false
+          // (playtest, 2026-10-24). Only a world with nothing of yours on
+          // it has no yard.
+          <div className="wm-qrow empty">{
+            (hasStation || gameState.settlements.some(s => s.bodyId === bodyId && s.ownedBy === 'player'))
+              ? (slots > 0 ? t('worldmenu.slotsIdle') : t('worldmenu.needYard'))
+              : t('worldmenu.noStationYet')}</div>
         )}
       </div>
       {mobile ? (

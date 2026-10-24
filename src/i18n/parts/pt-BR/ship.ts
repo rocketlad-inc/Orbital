@@ -588,7 +588,7 @@ export const ship: Catalog = {
   'ship.panel.nMetal': '{n} de metal',
   'ship.panel.nScience': '{n} de ciência',
   'ship.panel.nearestYard': 'Estaleiro mais próximo',
-  'ship.panel.nearestYardNoHome': 'Estaleiro mais próximo (sem estação em {name}, sua origem)',
+  'ship.panel.nearestYardNoHome': 'Estaleiro mais próximo ({name}, sua origem, não tem doca)',
   'ship.panel.newRoute': 'NOVA ROTA COMERCIAL',
   'ship.panel.nextStop': 'a próxima parada',
   'ship.panel.nextTarget': 'PRÓXIMO ALVO',
