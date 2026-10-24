@@ -60,6 +60,17 @@ const TABLES = [
 /** D1's longest statement is 100,000 bytes; stay clear of it. */
 const MAX_STATEMENT = 90_000;
 const PIECE = 60_000;
+/** Which imported rows each id set is filled from. */
+const ID_SET = { game_factions: 'factions', game_bodies: 'bodies', game_ships: 'ships', game_settlements: 'settlements' };
+/** Nullable columns that point at rows of those sets. games is copied before
+ *  the rows it points at, so its references are always cleared. */
+const NULLABLE_REFS = {
+  games: { dyson_controller_faction_id: 'factions', dyson_foundation_settlement_id: 'settlements' },
+  chronicle_entries: { actor_faction_id: 'factions', target_faction_id: 'factions', body_id: 'bodies', ship_id: 'ships' },
+  game_megastructures: { partner_body_id: 'bodies', founded_by_faction_id: 'factions' },
+  senate_proposals: { proposer_faction_id: 'factions' },
+  game_wars: { ended_by: 'factions', ceasefire_by: 'factions' },
+};
 /** How to find a row again to append to it (tables without an `id`). */
 const KEYS = { match_snapshots: ['game_id', 'tick_number', 'kind'] };
 
@@ -97,13 +108,20 @@ async function importGame(gameId, hostId) {
   stmts.push(`DELETE FROM game_sagas WHERE game_id = ${lit(gameId)};`);
   stmts.push(`DELETE FROM match_shares WHERE game_id = ${lit(gameId)};`);
   let total = 0;
+  const seen = { factions: new Set(), bodies: new Set(), ships: new Set(), settlements: new Set() };
   for (const spec of TABLES) {
     const rows = (await prodEnv.DB.prepare(`SELECT * FROM ${spec.t} WHERE ${spec.where}`).bind(gameId).all()).results;
     const have = stagingCols(spec.t);
+    if (ID_SET[spec.t]) for (const r of rows) seen[ID_SET[spec.t]].add(r.id ?? r.body_id);
     for (const r of rows) {
       const row = { ...r };
       if (spec.t === 'rooms') row.host_id = hostId;
       if (spec.t === 'game_factions') row.user_id = null;
+      // A nullable reference to a row prod no longer has (a ship long gone,
+      // a settlement razed) is cleared, or staging's foreign keys refuse it.
+      for (const [col, set] of Object.entries(NULLABLE_REFS[spec.t] ?? {})) {
+        if (row[col] != null && !seen[set].has(row[col])) row[col] = null;
+      }
       const cols = Object.keys(row).filter(c => have.has(c));
       const insert = `INSERT OR REPLACE INTO ${spec.t} (${cols.join(', ')}) VALUES (${cols.map(c => lit(row[c])).join(', ')});`;
       if (insert.length <= MAX_STATEMENT) { stmts.push(insert); continue; }
@@ -130,7 +148,7 @@ async function importGame(gameId, hostId) {
   const parts = [];
   let cur = [stmts[0]], size = 0;
   for (const s of stmts.slice(1)) {
-    if (size + s.length > 4_000_000 && cur.length > 1) { parts.push(cur); cur = [stmts[0]]; size = 0; }
+    if (size + s.length > 1_500_000 && cur.length > 1) { parts.push(cur); cur = [stmts[0]]; size = 0; }
     cur.push(s); size += s.length;
   }
   parts.push(cur);
