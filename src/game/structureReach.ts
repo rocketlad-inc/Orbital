@@ -29,9 +29,11 @@ export interface ReachScales {
 /** Catalogue (pre-scale) reach, and whether it is vision or a weapon. */
 export function reachSpec(kind: MegastructureKind): { raw: number; vision: boolean } | null {
   const e = (MEGASTRUCTURES[kind]?.effect ?? {}) as Record<string, number | undefined>;
+  // A gun's reach wins: a Weapons Station also SEES (sensorRange, as far
+  // as it shoots, 2026-10-23), but its ring is the GUN RANGE.
+  if ((e.range ?? 0) > 0) return { raw: e.range!, vision: false };
   if ((e.sensorRange ?? 0) > 0) return { raw: e.sensorRange!, vision: true };
   if ((e.blindRange ?? 0) > 0) return { raw: e.blindRange!, vision: true };
-  if ((e.range ?? 0) > 0) return { raw: e.range!, vision: false };
   return null;
 }
 

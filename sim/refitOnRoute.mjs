@@ -147,5 +147,39 @@ check('the refit is recorded as a ship_refitted event on that hull',
   JSON.stringify(ev));
 check('...visible only to its owner', ev?.visibility === JSON.stringify([A.id]), JSON.stringify(ev?.visibility));
 
+// ---- REFIT-FLEET, the immediate path ------------------------------------
+// SaltedPork, 2026-10-22: "Salvage destroyer isn't changing its look when
+// I refit it." His salvaged destroyer took the design's parts at the yard
+// and kept its old sprite; refitting again skipped it (parts matched).
+{
+  const yard = A.capital_body_id;
+  const put = (id, parts, look) => DB.prepare(
+    `INSERT INTO game_ships
+      (id, game_id, owner_faction_id, name, ship_class, parent_body_id,
+       orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, orbit_direction,
+       fuel, fuel_max, status, built_at_tick, hp, hp_max, damage_per_tick, parts_json, icon_variant)
+     VALUES (?, ?, ?, ?, 'destroyer', ?, 2, 2, 0, 0, 0, 1, 999, 999, 'active', 0, 400, 400, 10, ?, ?)`,
+  ).bind(id, G, A.id, id, yard, parts, look).run();
+  await put('dd_salvage', '["kinetic","kinetic","kinetic","shield","shield","engine"]', null);
+  await put('dd_matched', '["energy","energy","kinetic","shield","engine","engine"]', null);
+  await DB.prepare(
+    `INSERT INTO game_ship_designs (id, game_id, faction_id, ship_class, name, parts_json, icon_variant, created_at_ms)
+     VALUES ('dsn_fast', ?, ?, 'destroyer', 'Fast Laser', '["energy","energy","kinetic","shield","engine","engine"]', 'A', 0)`,
+  ).bind(G, A.id).run();
+  const acts = (await import('../worker/actions.js')).routes;
+  const rf = await callRoute(env, acts, 'POST', `/api/games/${G}/designs/dsn_fast/refit-fleet`, 'uA', {});
+  const dd = (id) => DB.prepare('SELECT parts_json, icon_variant FROM game_ships WHERE id = ?').bind(id).first();
+  const a = await dd('dd_salvage'), b = await dd('dd_matched');
+  check('refit-fleet at a yard: the hull takes the parts AND the look',
+    rf.ok && rf.refitted?.includes('dd_salvage') && a.icon_variant === 'A'
+      && a.parts_json === '["energy","energy","kinetic","shield","engine","engine"]', JSON.stringify({ rf, a }));
+  check('...a hull whose parts already match still takes the look',
+    b.icon_variant === 'A' && rf.restyled?.includes('dd_matched'), JSON.stringify({ rf, b }));
+  await DB.prepare("UPDATE game_ship_designs SET icon_variant = NULL WHERE id = 'dsn_fast'").run();
+  await DB.prepare("UPDATE game_ships SET icon_variant = 'B' WHERE id = 'dd_matched'").run();
+  await callRoute(env, acts, 'POST', `/api/games/${G}/designs/dsn_fast/refit-fleet`, 'uA', {});
+  check('...a design with no look leaves the hull its own', (await dd('dd_matched')).icon_variant === 'B');
+}
+
 console.log(bad === 0 ? '\nALL PASS' : `\n${bad} FAILURE(S)`);
 process.exit(bad === 0 ? 0 : 1);

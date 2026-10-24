@@ -3,9 +3,9 @@
 //
 // Written for someone who has never seen the game. Rules:
 //   - Plain language. No jargon before it's explained.
-//   - Every concept earns a picture. The screenshots are real
-//     renderer output (public/howto/*.jpg) — captured by driving
-//     the actual map renderer, not mockups.
+//   - Every concept earns a picture. The screenshots are the real game
+//     (public/howto/*.jpg, re-shot 2026-10-24 from the showcase game and
+//     Studio stills), not mockups.
 //   - Ordered as a first session actually goes: what am I looking
 //     at → what do I do first → how do I grow → how do I fight →
 //     how do I win.
