@@ -683,15 +683,22 @@ export const WorldMenuOverlay: React.FC = () => {
     const res = await mpActions?.renameSettlement(settlementId, next);
     if (res && !res.ok) throw new Error(humanizeMpError(res.code, res.error, 'rename'));
   };
+  // FOUNDING TAKES A MOMENT (~1.7 s, p95 ~4 s) and the button used to sit
+  // there silent, so "Build Station" read as a dead click (playtest,
+  // 2026-10-24). It now says it is working, then says what was founded.
+  const [founding, setFounding] = useState<SettlementType | null>(null);
   const foundSettlement = async (type: SettlementType) => {
-    if (!openId || !body) return;
+    if (!openId || !body || founding) return;
     setErrMsg(null);
     const name = suggestSettlementName(
       body, type, gameState.settlements,
       type === 'city' ? gameState.namePools?.city : gameState.namePools?.station,
     );
+    setFounding(type);
     const res = await mpActions?.deploySettlement({ bodyId: openId, type, name });
+    setFounding(null);
     if (res && !res.ok) setErrMsg(res.error ?? (type === 'city' ? t('worldmenu.err.couldNotFoundCity') : t('worldmenu.err.couldNotFoundStation')));
+    else if (res?.ok) setNoteMsg(t(type === 'city' ? 'worldmenu.found.doneCity' : 'worldmenu.found.doneStation', { name, body: body.name }));
   };
 
   // ---- founding a city / station (MP rules, mirrors BodyInspector) ----
@@ -979,7 +986,8 @@ export const WorldMenuOverlay: React.FC = () => {
       <button
         key={type}
         className={`wm-bbtn wm-found${raw ? ' wm-found--locked' : ''}`}
-        disabled={!enabled && !raw}
+        disabled={(!enabled && !raw) || founding === type}
+        aria-busy={founding === type}
         title={title}
         onClick={() => {
           // A raw world's city plot opens the way to living: the terraform
@@ -990,7 +998,9 @@ export const WorldMenuOverlay: React.FC = () => {
         data-testid={`wm-found-${type}`}
       >
         <span className="wm-bbtn-nm">{isCity ? t('worldmenu.found.btnCity') : t('worldmenu.found.btnStation')}</span>
-        <span className="wm-bbtn-st">{cityLock && isCity && !raw ? `🔒 ${sub}` : sub}</span>
+        <span className="wm-bbtn-st">
+          {founding === type ? t('worldmenu.found.busy') : cityLock && isCity && !raw ? `🔒 ${sub}` : sub}
+        </span>
       </button>
     );
   };
