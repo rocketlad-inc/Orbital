@@ -87,8 +87,9 @@ check('ruthless deals the warmongers', bots.filter(b => b.ai_doctrine === 'rushe
   JSON.stringify(bots.map(b => b.ai_doctrine)));
 const browse = await DB.prepare(`SELECT COUNT(*) AS c FROM games g WHERE g.status = 'active' AND COALESCE(g.solo, 0) = 0`).first();
 check('solo games stay out of the browse list', browse.c === 0);
-const room = await DB.prepare('SELECT password_hash, quick_join FROM rooms WHERE id = ?').bind(G).first();
-check('nobody can join the room', room.password_hash === 'solo:no-entry' && room.quick_join === 0);
+const room = await DB.prepare('SELECT password_hash, quick_join, invite_code FROM rooms WHERE id = ?').bind(G).first();
+check('nobody can join the room: no password, no Quick Join, no invite code',
+  room.password_hash === 'solo:no-entry' && room.quick_join === 0 && room.invite_code == null, JSON.stringify(room));
 const rerun = await lobby.startGame(env, G);
 check('starting it again is refused', !!rerun.error);
 

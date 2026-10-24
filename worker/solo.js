@@ -63,13 +63,6 @@ function newRoomId() {
   for (const b of bytes) s += String.fromCharCode(b);
   return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
-function newInviteCode() {
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  const bytes = crypto.getRandomValues(new Uint8Array(8));
-  let out = '';
-  for (const b of bytes) out += alphabet[b % alphabet.length];
-  return out;
-}
 
 /** The pool of computer players, made on first use. */
 async function aiUsers(env, n) {
@@ -103,12 +96,13 @@ async function handleCreate(req, env, ctx) {
   const name = `Solo · ${String(me.display_name ?? 'Commander').slice(0, 40)}`.slice(0, 60);
   const seats = [{ id: me.id, display_name: me.display_name }, ...bots];
   // A password nobody can type keeps the room out of every join path
-  // (Quick Join only offers password-free rooms); the listings also skip
-  // solo games by their flag.
+  // (Quick Join only offers password-free rooms), and NO invite code: a
+  // code skips the password (invites.js), and the in-game Invite button
+  // only shows when there is one. The listings skip solo games by flag.
   await env.DB.batch([
     env.DB.prepare(`INSERT INTO rooms (id, name, host_id, status, max_players, created_at, updated_at, invite_code, password_hash, quick_join)
-                    VALUES (?, ?, ?, 'lobby', ?, ?, ?, ?, ?, 0)`)
-      .bind(id, name, me.id, seats.length, now, now, newInviteCode(), 'solo:no-entry'),
+                    VALUES (?, ?, ?, 'lobby', ?, ?, ?, NULL, ?, 0)`)
+      .bind(id, name, me.id, seats.length, now, now, 'solo:no-entry'),
     ...seats.map((u, i) => env.DB
       .prepare("INSERT INTO room_members (room_id, user_id, joined_at, join_method) VALUES (?, ?, ?, ?)")
       .bind(id, u.id, now + i, i === 0 ? 'host' : 'solo_ai')),
