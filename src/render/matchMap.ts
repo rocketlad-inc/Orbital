@@ -2537,12 +2537,17 @@ export function createMatchMap(
         const name = b.name ?? c.title;
         const nm = (fid: string | null | undefined) => shortName(filmFaction(fid)?.name ?? '');
         if (s.phase === 'open') {
-          c = { ...c, title: T('battle.firstShots', { name }),
+          // Inside a sentence the name is lower case: "The first shots of the Second Battle of Mars".
+          c = { ...c, title: T('battle.firstShots', { name: name.replace(/^The\b/, 'the') }),
             sub: s.track ? T('battle.flyIn', { a: nm(s.track.fid), n: s.track.n })
               : T('battle.closeIn', { d: b.from, a: nm(b.sides[0]), b: nm(b.sides[1]) }) };
         } else if (s.phase === 'close') {
           c = { ...c, title: T('battle.ends', { name }), sub: T('battle.endsSub', { d: Math.max(1, b.to - b.from), lost: b.lost }) };
-        } else if (s.phase === 'peak' && scenes.some(x => x.battle === b && x.phase === 'open')) {
+        } else if (s.phase === 'peak' && (() => {
+          // "day 56" only when the film went somewhere else in between.
+          const open = scenes.find(x => x.battle === b && x.phase === 'open');
+          return !!open && scenes.some(x => x.from >= open.to && x.to <= s.from && x.kind !== 'montage' && x.seconds > 0.5);
+        })()) {
           c = { ...c, title: T('battle.dayN', { name, n: Math.max(1, s.from - b.from + 1) }) };
         } else {
           c = { ...c, title: name };

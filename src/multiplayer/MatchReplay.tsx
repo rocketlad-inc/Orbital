@@ -331,7 +331,7 @@ export function MatchReplay(
           ? <button type="button" className="cinema-video" disabled={!loaded}
               title={tr('replay.video.title')} onClick={saveVideo}>{tr('replay.video.save')}</button>
           : <button type="button" className="cinema-video" onClick={() => recAbort.current?.abort()}>
-              {tr('replay.video.recording', { pct: Math.round(rec * 100) })} &middot; {tr('replay.video.cancel')}
+              {`${tr('replay.video.recording', { pct: Math.round(rec * 100) })} · ${tr('replay.video.cancel')}`}
             </button>)}
       </div>
       {recMsg && <div className="cinema-video-msg" role="status">{recMsg}</div>}
