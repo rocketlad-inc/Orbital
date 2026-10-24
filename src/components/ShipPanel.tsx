@@ -209,6 +209,10 @@ export const ShipPanel: React.FC = () => {
   // Which in-flight ship the RENDEZVOUS picker is aimed at.
   const [rendezvousId, setRendezvousId] = useState<string | null>(null);
   const [rendezvousBusy, setRendezvousBusy] = useState(false);
+  /** COMMIT's post is in flight. Every leg it sends carries replace:true, so
+   *  a second press re-planned the burn from where the hull now was: a new
+   *  dv and the ETA started over (Leo, 2026-10-24). */
+  const [commitBusy, setCommitBusy] = useState(false);
   const [rendezvousOpen, setRendezvousOpen] = useState(false);
   // THE INTERCEPT PICKER (InterceptPicker): a pop-out beside the panel on
   // desktop, a page of the sheet on a phone. Picking a target no longer
@@ -255,6 +259,23 @@ export const ShipPanel: React.FC = () => {
   const ship = uiState.selectedShipId
     ? gameState.ships.find(s => s.id === uiState.selectedShipId) || null
     : null;
+
+  // RESULT LINES BELONG TO THE SHIP THAT EARNED THEM. The panel stays
+  // mounted while the selection changes, so a line set for one hull was
+  // still printed on the next: a colony ship read "Surveying 10 worlds -
+  // next stop Luna", a corvette's survey (Priya, 2026-10-24). Every
+  // per-ship line clears when another ship is selected, and the
+  // destination list closes rather than plan for the wrong hull.
+  useEffect(() => {
+    setTransferError(null);
+    setTransferNote(null);
+    setExploreNotice(null);
+    setDeployNotice(null);
+    setCaptainNotice(null);
+    setOrdersError(null);
+    setFleetError(null);
+    setTransferModalOpen(false);
+  }, [uiState.selectedShipId]);
 
   // OPEN ON FLEET for a fleet member. Keyed on the selection AND on
   // membership, so a fleet forming around the ship you are looking at
@@ -1467,17 +1488,19 @@ export const ShipPanel: React.FC = () => {
         s.fleetId === ship.fleetId && s.plannedTransit && !s.transit,
       )
     : (ship.plannedTransit ? [ship] : []);
-  const canCommit = fleetPreviewShips.length > 0;
+  const canCommit = fleetPreviewShips.length > 0 && !commitBusy;
   const commitLabel = fleetPreviewShips.length > 1
     ? `▶ ${t('ship.panel.commitAll', { n: fleetPreviewShips.length })}`
     : `▶ ${t('ship.panel.commit')}`;
   // Every hull's legs in ONE request (POST /transfers). A fleet COMMIT ALL
   // was one POST per leg per hull, awaited hull by hull.
   const commitStagedPlan = () => {
+    if (commitBusy) return;
     const intents = fleetPreviewShips.flatMap(s => commitTransferLocal(s));
     if (!mpActions || intents.length === 0) return;
     setTransferError(null);
-    void mpActions.transferMany(intents).then(results => {
+    setCommitBusy(true);
+    void mpActions.transferMany(intents).finally(() => setCommitBusy(false)).then(results => {
       const bad = results.filter((r): r is Extract<MpActionResult, { ok: false }> => !r.ok);
       if (bad.length === 0) return;
       const msg = humanizeMpError(bad[0].code, bad[0].error, 'transfer');
