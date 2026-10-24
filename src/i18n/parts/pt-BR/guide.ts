@@ -728,4 +728,5 @@ export const guide: Catalog = {
   'mp.provider.loadingRenderer': 'Carregando o renderizador…',
   // ---- app shell ----
   'site.loading': 'Carregando…',
+  'site.homeTitle': 'Página inicial',
 };
