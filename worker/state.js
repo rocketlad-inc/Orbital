@@ -255,8 +255,11 @@ export function buildFriendlySensors(
   // to settle. Scaled like every other range, so a spread map does not
   // quietly shrink what it covers.
   const friendly = new Set(friendlyFactionIds);
+  // A WEAPONS STATION sees too: as far as its guns reach, so it never
+  // fights something its owner cannot see. Any structure whose effect
+  // carries a sensorRange is a sensor.
   for (const m of megas) {
-    if (m.kind !== 'deep_array' || m.status !== 'complete') continue;
+    if (m.status !== 'complete') continue;
     if (!m.owner_faction_id || !friendly.has(m.owner_faction_id)) continue;
     const eff = MEGASTRUCTURES[m.kind]?.effect ?? {};
     const range = (eff.sensorRange ?? 0) * sensorScale;
@@ -853,7 +856,7 @@ const sensorSettlementsP = env.DB
         WHERE m.game_id = ? AND m.status = 'complete'
           AND b.destroyed_at_tick IS NULL
           AND m.hp > ?
-          AND m.kind IN ('deep_array', 'null_field')`,
+          AND m.kind IN ('deep_array', 'null_field', 'weapons_station')`,
     )
     // A structure shot below 20% is offline until it repairs. Without
     // this a breached Array keeps watching and a breached Null Field

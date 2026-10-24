@@ -4255,10 +4255,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const arrays: Array<{ bodyId: string; range: number }> = [];
         for (const m of Object.values(gameState.megastructures ?? {})) {
           // Breached is offline, as on the server (structureOnline).
-          if (m.kind !== 'deep_array' || !structureOnline(m)) continue;
+          // Any structure with a sensorRange: the Array, and a Weapons
+          // Station out to its reach (state.js buildFriendlySensors).
+          const sight = MEGASTRUCTURES[m.kind]?.effect.sensorRange ?? 0;
+          if (!(sight > 0) || !structureOnline(m)) continue;
           const owner = bodyById2.get(m.bodyId)?.ownedBy;
           if (!owner || (owner !== 'player' && !alliedSet.has(owner))) continue;
-          arrays.push({ bodyId: m.bodyId, range: MEGASTRUCTURES.deep_array.effect.sensorRange ?? 0 });
+          arrays.push({ bodyId: m.bodyId, range: sight });
         }
         const seen = coverageRings(
           'player', gameState.ships, gameState.settlements, gameState.bodies,
