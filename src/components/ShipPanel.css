@@ -17,8 +17,33 @@
      selected, so it only renders during the visible window — the
      keyframe runs once on mount. */
   animation: ship-panel-slide-in 0.22s ease-out;
+  /* CLIP, not just hidden. `overflow: hidden` is still a scroll container:
+     a focus() (the rename box) or a scrollIntoView could scroll it, and
+     the whole card slid sideways with COMMIT at x=-11, or up until the
+     card showed nothing (Priya, 2026-10-24). A clipped box cannot be
+     scrolled at all. `hidden` stays as the fallback for old engines. */
   overflow: hidden;
+  overflow: clip;
 }
+
+/* Nothing in the card may be wider than the card, or the body below
+   grows a sideways scroll. The header's name + rank + captain chips
+   wrap instead of pushing the close button out, the rename box fits the
+   line it is on, and a long word breaks rather than widening a column. */
+.ship-panel .panel-header > span:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.ship-panel .panel-header input {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.ship-panel .panel-body {
+  overflow-x: hidden;
+  overflow-wrap: anywhere;
+}
+.ship-panel .panel-body > * { max-width: 100%; }
 
 @keyframes ship-panel-slide-in {
   from { transform: translateY(-110%); opacity: 0; }
