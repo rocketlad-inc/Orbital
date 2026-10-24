@@ -107,7 +107,7 @@ for q in (82, 82, 74, 66, 58):
     try:
         wf[0].save(webp, save_all=True, append_images=wf[1:], duration=round(1000 / a.webp_fps), loop=0, quality=q, method=4)
         break
-    except RuntimeError as e:
+    except (RuntimeError, MemoryError) as e:
         print(f"webp at quality {q}: {e}; trying again")
 else:
     raise SystemExit('webp: could not encode at any quality')

@@ -136,6 +136,10 @@ test('the map routes every hull plume through the disc clip, and arrivals throug
   const r = fs.readFileSync(path.join(__dirname, '../mapRenderer.ts'), 'utf8');
   // Transit exhaust + hint, the landing plume, an escort's hint.
   expect((r.match(/drawOffDiscs\([^;]*?=>\s*drawThrust(Exhaust|Hint)\(/g) ?? []).length).toBe(4);
+  // MapCanvas hands every hull in flight to approachWorlds with each end's
+  // drawn disc and layout; a hull without a place yet still stops at
+  // arrivalStandoffPx (one with its place flies into it: arrivalOneMotion).
   const m = fs.readFileSync(path.join(__dirname, '../../components/MapCanvas.tsx'), 'utf8');
-  expect(m).toMatch(/b\.id === destId\s*\?\s*arrivalStandoffPx\(drawnRadiusOf\(pres, b, sc\), renderContext\.liveBattles\?\.get\(b\.id\), reach\)/);
+  expect(m).toMatch(/approachWorlds\(ship\.id, placed,[\s\S]*?drawnR: drawnRadiusOf\(pres, b, sc\),\s*isDest: b\.id === destId,\s*battle: renderContext\.liveBattles\?\.get\(b\.id\),/);
+  expect(r).toMatch(/R: \(e\.isDest \? arrivalStandoffPx\(e\.drawnR, e\.battle, reachPx\) : e\.drawnR \+ 10\)/);
 });

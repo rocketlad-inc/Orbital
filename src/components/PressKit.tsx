@@ -3,8 +3,8 @@
 // needs without having to ask: the facts, copy they can paste, and
 // screenshots and logos they can download.
 //
-// The files live in public/press/ and were made from the staged
-// eight-empire showcase game (marketing/sol-wars-screenshots): full-size
+// The files live in public/press/: the Studio's production test games and
+// the staged eight-empire showcase game (re-shot 2026-10-23): full-size
 // JPEGs, WebP thumbnails, and two zips. Cloudflare serves static assets
 // up to 25 MiB each, so the zips are split (screenshots / logos) rather
 // than one bundle of the original PNGs, which was 30 MB.
@@ -63,69 +63,87 @@ const FEATURES = [
 type Shot = { slug: string; title: string };
 const GROUPS: Array<{ title: string; ratio: string; size: string; wide: boolean; shots: Shot[] }> = [
   {
-    title: 'Battles and the map', ratio: '16:9', size: '2880 × 1620', wide: true, shots: [
-      { slug: 'battle-of-mars-16x9', title: 'Battle of Mars' },
-      { slug: 'battle-of-europa-16x9', title: 'Battle of Europa' },
-      { slug: 'raid-on-saturn-16x9', title: 'Raid on Saturn' },
-      { slug: 'battle-of-triton-16x9', title: 'Battle of Triton' },
-      { slug: 'battle-of-charon-16x9', title: 'Battle of Charon' },
-      { slug: 'mega-destroyer-over-luna-16x9', title: 'Mega Destroyer over Luna' },
-      { slug: 'dyson-sphere-16x9', title: 'The Dyson Sphere' },
-      { slug: 'earth-gate-16x9', title: 'The Earth gate' },
-      { slug: 'inner-system-16x9', title: 'The inner system' },
-      { slug: 'system-overview-16x9', title: 'The whole system' },
+    title: "Battles and superweapons", ratio: "16:9", size: "2880 × 1620", wide: true, shots: [
+      { slug: "mega-destroyer-over-callisto-16x9", title: "A Mega Destroyer fights its way over Callisto" },
+      { slug: "mega-destroyer-fires-on-callisto-16x9", title: "The Mega Destroyer fires" },
+      { slug: "callisto-obliterated-16x9", title: "Callisto, obliterated" },
+      { slug: "venus-sterilised-16x9", title: "A living Venus sterilised" },
+      { slug: "mega-destroyer-leaves-jupiter-16x9", title: "A Mega Destroyer burns out of Jupiter" },
+      { slug: "three-way-battle-of-earth-16x9", title: "A three-way battle for Earth" },
+      { slug: "battle-of-titan-16x9", title: "Battle of Titan" },
+      { slug: "siege-of-a-shielded-world-16x9", title: "Siege of a shielded world" },
+      { slug: "weapons-station-over-mars-16x9", title: "A Weapons Station guards Mars" },
+      { slug: "strike-on-europa-16x9", title: "Strike fleet over Europa" },
+      { slug: "freighter-convoy-16x9", title: "Freighters on the run to Ceres" },
+      { slug: "asteroid-ram-16x9", title: "An asteroid steered at Mars" },
+      { slug: "fleet-in-flight-16x9", title: "A fleet in flight to Jupiter" },
+      { slug: "battle-of-europa-16x9", title: "Battle of Europa" },
+      { slug: "raid-on-saturn-16x9", title: "Raid on Saturn" },
+      { slug: "battle-of-the-dyson-sphere-16x9", title: "Four empires fight for the Dyson Sphere" },
+      { slug: "dyson-sphere-close-16x9", title: "Fleets inside the Dyson ring" },
+      { slug: "system-overview-16x9", title: "The whole system" },
     ],
   },
   {
-    title: 'Interface', ratio: '16:9', size: '2880 × 1620', wide: true, shots: [
-      { slug: 'fleet-panel-16x9', title: 'A fleet over Mars' },
-      { slug: 'world-menu-earth-16x9', title: 'Earth’s world menu' },
-      { slug: 'world-menu-mars-16x9', title: 'Mars’s world menu' },
-      { slug: 'event-log-16x9', title: 'Event log' },
-      { slug: 'situation-report-16x9', title: 'Situation Report' },
-      { slug: 'empires-16x9', title: 'Empires and standings' },
-      { slug: 'market-16x9', title: 'Market' },
-      { slug: 'research-16x9', title: 'Research' },
+    title: "Interface", ratio: "16:9", size: "2880 × 1620", wide: true, shots: [
+      { slug: "select-and-strike-16x9", title: "Select a fleet and strike" },
+      { slug: "ship-designer-16x9", title: "The ship designer" },
+      { slug: "senate-16x9", title: "The Senate passes double damage" },
+      { slug: "world-menu-earth-16x9", title: "Earth’s world menu" },
+      { slug: "world-menu-mars-16x9", title: "Mars’s world menu" },
+      { slug: "fleet-panel-16x9", title: "A fleet over Mars" },
+      { slug: "situation-report-16x9", title: "Situation Report" },
+      { slug: "empires-16x9", title: "Empires and paths to victory" },
+      { slug: "event-log-16x9", title: "Event log" },
+      { slug: "market-16x9", title: "Market" },
+      { slug: "research-16x9", title: "Research" },
     ],
   },
   {
-    title: 'Square', ratio: '1:1', size: '1620 × 1620', wide: false, shots: [
-      { slug: 'battle-of-mars-1x1', title: 'Battle of Mars' },
-      { slug: 'dyson-sphere-1x1', title: 'The Dyson Sphere' },
-      { slug: 'mega-destroyer-over-luna-1x1', title: 'Mega Destroyer over Luna' },
-      { slug: 'battle-of-triton-1x1', title: 'Battle of Triton' },
+    title: "Square", ratio: "1:1", size: "1620 × 1620", wide: false, shots: [
+      { slug: "callisto-obliterated-1x1", title: "Callisto, obliterated" },
+      { slug: "battle-of-the-dyson-sphere-1x1", title: "Fight for the Dyson Sphere" },
+      { slug: "venus-sterilised-1x1", title: "A living Venus sterilised" },
+      { slug: "siege-of-a-shielded-world-1x1", title: "Siege of a shielded world" },
+      { slug: "strike-on-europa-1x1", title: "Strike fleet over Europa" },
+      { slug: "three-way-battle-of-earth-1x1", title: "A three-way battle for Earth" },
     ],
   },
   {
-    title: 'Phone', ratio: '9:20', size: '1082 × 2402', wide: false, shots: [
-      { slug: 'battle-of-mars-9x16', title: 'Battle of Mars' },
-      { slug: 'situation-report-9x16', title: 'Situation Report' },
-      { slug: 'empires-9x16', title: 'Empires' },
-      { slug: 'world-menu-earth-9x16', title: 'Earth’s world menu' },
+    title: "Phone", ratio: "9:20", size: "1082 × 2402", wide: false, shots: [
+      { slug: "battle-of-mars-9x16", title: "Battle of Mars" },
+      { slug: "situation-report-9x16", title: "Situation Report" },
+      { slug: "empires-9x16", title: "Empires" },
+      { slug: "world-menu-earth-9x16", title: "Earth’s world menu" },
     ],
   },
   {
-    title: 'Tablet and ultrawide', ratio: '4:3 · 21:9', size: '2048 × 1536 · 2560 × 1080', wide: true, shots: [
-      { slug: 'battle-of-europa-4x3', title: 'Battle of Europa (4:3)' },
-      { slug: 'system-overview-4x3', title: 'The whole system (4:3)' },
-      { slug: 'battle-of-mars-21x9', title: 'Battle of Mars (21:9)' },
-      { slug: 'system-overview-21x9', title: 'The whole system (21:9)' },
+    title: "Tablet and ultrawide", ratio: "4:3 · 21:9", size: "2048 × 1536 · 2560 × 1080", wide: true, shots: [
+      { slug: "battle-of-europa-4x3", title: "Battle of Europa (4:3)" },
+      { slug: "system-overview-4x3", title: "The whole system (4:3)" },
+      { slug: "mega-destroyer-fires-on-callisto-21x9", title: "The Mega Destroyer fires (21:9)" },
+      { slug: "system-overview-21x9", title: "The whole system (21:9)" },
     ],
   },
 ];
 
-// Looping clips, recorded frame by frame from the same game (the page clock
-// stepped exactly 1/30 s per frame, so motion is even). Files in
+// Looping clips, filmed with the Studio (docs/STUDIO.md) in private test
+// games on production, frame by frame on a stepped clock. Files in
 // public/clips/: <name>.gif to download, <name>.webp as the preview.
 const CLIPS: Array<{ name: string; title: string; secs: number }> = [
+  { name: 'mega-destroyer-jupiter-to-earth', title: 'A Mega Destroyer crosses from Jupiter and strikes Earth', secs: 28 },
+  { name: 'mega-destroyer-obliterates-callisto', title: 'A Mega Destroyer obliterates Callisto', secs: 8 },
+  { name: 'mega-destroyer-sterilises-venus-full', title: 'A living Venus sterilised', secs: 5 },
+  { name: 'battle-of-the-dyson-sphere-full', title: 'Four empires fight for the Dyson Sphere', secs: 17 },
+  { name: 'three-way-battle-of-earth-war-at-titan', title: 'A three-way battle for Earth, then war at Titan', secs: 10 },
+  { name: 'siege-of-a-shielded-world', title: 'Siege of a shielded world', secs: 8 },
+  { name: 'weapons-station-shreds-a-raid', title: 'A Weapons Station shreds a raid on Mars', secs: 11 },
+  { name: 'asteroid-ram-on-mars', title: 'An asteroid steered into Mars', secs: 7 },
+  { name: 'select-and-strike-europa', title: 'Select a fleet, strike Europa', secs: 18 },
+  { name: 'supply-line-mars-to-ceres', title: 'A supply line from Mars to Ceres', secs: 10 },
+  { name: 'building-on-a-world', title: 'Building on a world', secs: 6 },
+  { name: 'designing-a-destroyer', title: 'Designing a destroyer', secs: 9 },
   { name: 'flight-mars-to-europa', title: 'Mars to Europa, past a fight in flight', secs: 19 },
-  { name: 'flight-triton-to-charon', title: 'Triton to Charon, past a convoy under attack', secs: 19 },
-  { name: 'battle-of-mars', title: 'Battle of Mars', secs: 6 },
-  { name: 'battle-of-europa', title: 'Battle of Europa', secs: 6 },
-  { name: 'mega-destroyer-over-luna', title: 'Mega Destroyer over Luna', secs: 6 },
-  { name: 'zoom-system-to-mars', title: 'Zoom: the whole system to Mars', secs: 9 },
-  { name: 'zoom-dyson-sphere', title: 'Zoom: the Dyson Sphere', secs: 7 },
-  { name: 'pan-inner-system', title: 'Pan across the inner system', secs: 12 },
 ];
 
 const LOGOS: Array<{ file: string; preview?: string; title: string; note: string; bg: string }> = [
@@ -166,8 +184,8 @@ export const PressKit: React.FC = () => (
 
     <div className="press-downloads">
       <a className="press-dl" href="/press/orbital-screenshots.zip" download>
-        <span className="press-dl__title">All 30 screenshots</span>
-        <span className="press-dl__meta">ZIP · 7.7 MB · full-size JPG</span>
+        <span className="press-dl__title">All 43 screenshots</span>
+        <span className="press-dl__meta">ZIP · 12.1 MB · full-size JPG</span>
       </a>
       <a className="press-dl" href="/press/orbital-logos.zip" download>
         <span className="press-dl__title">Logos and key art</span>
@@ -199,7 +217,7 @@ export const PressKit: React.FC = () => (
 
     <h2>Screenshots</h2>
     <p>
-      All from one live eight-empire game. Click any image for the full-size file.
+      Captured from the game itself, in private test games, in October 2026. Click any image for the full-size file.
     </p>
     {GROUPS.map(g => (
       <div className="press-group" key={g.title}>
@@ -217,7 +235,7 @@ export const PressKit: React.FC = () => (
 
     <h2>Clips</h2>
     <p>
-      Looping GIFs, 640 pixels wide at 15 frames a second. Click any clip to open the GIF.
+      Looping GIFs, 640 pixels wide at 15 frames a second (the 28-second Mega Destroyer crossing is 12). Click any clip to open the GIF.
     </p>
     <div className="press-grid">
       {CLIPS.map(c => (

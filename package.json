@@ -35,6 +35,7 @@
     "sim:studio-gates": "node sim/studioGates.mjs",
     "sim:studio-quiet": "node sim/studioQuietWorlds.mjs",
     "sim:studio-site-orbit": "node sim/studioSiteOrbit.mjs",
+    "sim:studio-found": "node sim/studioFound.mjs",
     "sim:foundry": "node sim/foundryBuild.mjs",
     "sim:solo": "node sim/solo.mjs",
     "sim:buildtap": "node sim/buildingDoubleTap.mjs",

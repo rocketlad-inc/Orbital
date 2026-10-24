@@ -47,8 +47,8 @@ import {
   seedSettleGlide,
   recentDrawnShipWorldPos,
   settleTransitLayout,
-  keepOffDrawnDiscs,
-  arrivalStandoffPx,
+  approachWorlds,
+  battleUnitsFor,
   flightReachPx,
   transitHitWorldPos,
   noteEmergence,
@@ -130,6 +130,7 @@ import { shipIconSize, rendererCanvasMb, drawStructureReach, parkedOrbitMap } fr
 import {
   liveBattleFor, escortBlockSpacing, type BattleUnit, type LiveBattle,
 } from '../render/battleLayoutLive';
+import { worldRosters } from '../render/arrivalApproach';
 import {
   computePresentation, drawnRadiusOf, hullReveal, hullSize, isBarycenter,
 } from '../render/bodyPresentation';
@@ -605,6 +606,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // the diff so a mid-flight page load doesn't fire a phantom flash.
   const prevTransitIdsRef = useRef<Set<string> | null>(null);
   const prevSettlementIdsRef = useRef<Map<string, { x: number; y: number; bodyId: string }>>(new Map());
+  /** Megastructure bodies on the previous frame (null until the first),
+   *  so a site that a vanished colony hull just founded can be told apart. */
+  const prevMegaBodyIdsRef = useRef<Set<string> | null>(null);
   /** Every settlement as last seen in /state, kept after it leaves: a
    *  fall plays where it stood (spawnSettlementFall), and by the time its
    *  chronicle row plays it is gone from the list. */
@@ -1418,6 +1422,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       exploredFlushAtRef.current = nowMs;
     }
 
+    const curMegaBodyIds = new Set<string>();
+    for (const b of gameState.bodies) if (b.type === 'megastructure') curMegaBodyIds.add(b.id);
     if (prevShipIdsRef.current.size > 0) {
       for (const [id, pos] of prevShipIdsRef.current) {
         if (!curShipIds.has(id) && !destructionFlashesRef.current.has(id)) {
@@ -1435,6 +1441,19 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             if (founded && world) {
               const from = recentDrawnShipWorldPos(id, 1000) ?? { x: pos.x, y: pos.y };
               seedSettleGlide(founded.id, from, bodyPosition(world, nowTick, gameState.bodies), nowMs);
+              continue;
+            }
+            // A FOUNDATION LAID: the hull was spent on a megastructure site
+            // (place-framework) that has just appeared round the world it
+            // was parked at. It went in silence, the hull simply gone and a
+            // scaffold standing (Studio construction clip, 2026-10-23); it
+            // breaks ground with the celebration a colony founding gets.
+            const prevMega = prevMegaBodyIdsRef.current;
+            const site = at && prevMega
+              ? gameState.bodies.find(b => b.type === 'megastructure' && b.parent === at && !prevMega.has(b.id))
+              : undefined;
+            if (site) {
+              spawnDiscoveryBloom(`founded:${site.id}`, site.id, 'firework');
               continue;
             }
           }
@@ -1481,6 +1500,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
     }
     prevShipIdsRef.current = curShipIds;
+    prevMegaBodyIdsRef.current = curMegaBodyIds;
 
     // Settlements get the same treatment but their position is the
     // body world-position (cities + stations both render adjacent to
@@ -2440,18 +2460,24 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // battle detection and line assignment now run over everything
       // orbiting the same world. Radial separation is what lane and the
       // renderer's ranks are for.
-      const byBody = new Map<string, Ship[]>();
-      for (const s of gameState.ships) {
-        if (s.transit) continue;
-        if (s.ownedBy !== 'player' && !visibleShipIds.has(s.id)) continue;
-        const arr = byBody.get(s.orbit.parentBodyId) || [];
-        arr.push(s);
-        byBody.set(s.orbit.parentBodyId, arr);
-      }
+      //
+      // ARRIVALS ARE LAID OUT BEFORE THEY LAND (MP, arrivalApproach): a
+      // hull about to land at a world joins its roster while still in
+      // flight, so its place there exists and it flies into it.
+      const rosters = worldRosters(gameState.ships, s => s.ownedBy === 'player' || visibleShipIds.has(s.id),
+        mpActions ? {
+          currentTick: gameState.currentTick,
+          onRoute: s => !!routeForShip(gameState.tradeRoutes ?? [], s.id),
+        } : {});
+      const byBody = rosters.byBody;
 
-      for (const atBody of byBody.values()) {
+      for (const [rosterBodyId, inRoster] of byBody) {
         // Stable order so a ship's slot doesn't jitter frame-to-frame.
-        atBody.sort((a, b) => (a.id < b.id ? -1 : 1));
+        inRoster.sort((a, b) => (a.id < b.id ? -1 : 1));
+        const laidOut = mpActions ? bodyById2.get(rosterBodyId) : undefined;
+        // Hulls still in flight count only at a laid-out world.
+        const atBody = laidOut ? inRoster : inRoster.filter(s => !rosters.arriving.has(s.id));
+        if (atBody.length === 0) continue;
 
         // BATTLE LINES: when two or more factions with ARMED hulls share
         // this WORLD, each faction forms its own line and the lines face
@@ -2495,49 +2521,16 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // (battleLayoutLive), so ships are fixed in scale to the planet
         // at every world. SP keeps the battle lines and rings below.
         if (mpActions) {
-          const bodyId = atBody[0].orbit.parentBodyId;
-          const body = bodyById2.get(bodyId);
+          const bodyId = rosterBodyId;
+          const body = laidOut;
           if (body) {
-            const destroyerPx = shipIconSize('destroyer', false);
-            const units: BattleUnit[] = [];
-            // Factions here whose loose hulls come from more than one yard:
-            // those hulls clump by yard (below), so a squadron in from Ceres
-            // and the home guard read as two groups, not one blue blob.
-            const yardsOf = new Map<string, Set<string>>();
-            for (const s of atBody) {
-              if (s.fleetId) continue;
-              let ys = yardsOf.get(s.ownedBy);
-              if (!ys) { ys = new Set(); yardsOf.set(s.ownedBy, ys); }
-              ys.add(s.homeBodyId ?? bodyId);
-            }
-            for (const s of atBody) {
-              // Escorts ride in their marker's block; the lead stands for them.
-              if (fleetGrouping.collapsed.has(s.id)) continue;
-              const marker = fleetGrouping.markerByLeadShip.get(s.id);
-              const escortRel = marker?.escortIds.map(id => {
-                const e = shipById2.get(id);
-                return e ? Math.min(1, shipIconSize(e.class, false) / destroyerPx) : 1;
-              });
-              units.push({
-                id: s.id,
-                owner: s.ownedBy,
-                // Loose hulls hold together BY YARD when their faction has
-                // hulls here from more than one: a squadron in from Ceres
-                // stays a squadron beside Earth's own defenders, which hold
-                // together too (judges, Mega Destroyer clip, 2026-10-22:
-                // "three groups read as two"; with only the incomers
-                // grouped, the scattered locals still covered them). One
-                // yard: loose, as ever.
-                group: s.fleetId ?? ((yardsOf.get(s.ownedBy)?.size ?? 0) > 1 ? `yard:${s.homeBodyId ?? bodyId}` : null),
-                sizePx: shipIconSize(s.class, false),
-                armed: (s.damagePerTick ?? getShipClass(s.class).damagePerTick) > 0,
-                escortRel: escortRel && escortRel.length > 0 ? escortRel : undefined,
-                escortIds: marker && marker.escortIds.length > 0 ? [...marker.escortIds] : undefined,
-              });
-            }
+            const units: BattleUnit[] = battleUnitsFor(atBody, bodyId, fleetGrouping, shipById2, rosters.arriving);
             const station = gameState.settlements.find(
               st => st.bodyId === bodyId && st.type === 'station' && st.hp > 0);
-            const lb = liveBattleFor(bodyId, body, atBody[0].orbit.direction ?? 1,
+            // The wheel's sense from a hull PARKED here when there is one
+            // (a hull in flight still carries the orbit it left).
+            const senseOf = atBody.find(s => !rosters.arriving.has(s.id)) ?? atBody[0];
+            const lb = liveBattleFor(bodyId, body, senseOf.orbit.direction ?? 1,
               units, owners, station?.id, { nowMs: performance.now() });
             liveBattles.set(bodyId, lb);
             for (const u of units) formationMap.set(u.id, { index: 0, total: 1, battle: lb });
@@ -3137,16 +3130,19 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
               const e = shipById2.get(id);
               return e ? Math.min(1, shipIconSize(e.class, false) / destPx) : 1;
             }));
-          placed = keepOffDrawnDiscs(placed, ends.map(b => ({
-            at: (t: number) => bodyPosition(b, t, gameState.bodies),
-            R: (b.id === destId
-              ? arrivalStandoffPx(drawnRadiusOf(pres, b, sc), renderContext.liveBattles?.get(b.id), reach)
-              : drawnRadiusOf(pres, b, sc) + 10) / Math.max(1e-9, sc),
-            isDest: b.id === destId,
-          })),
-          // Its own course: an arriving formation keeps its shape at the
-          // stop, not every slot on its own ray (keepOffDrawnDiscs).
-          samples ?? undefined);
+          placed = approachWorlds(ship.id, placed,
+            // Its own course: an arriving formation keeps its shape at the
+            // stop, not every slot on its own ray (keepOffDrawnDiscs).
+            samples ?? undefined,
+            ends.map(b => ({
+              id: b.id,
+              at: (t: number) => bodyPosition(b, t, gameState.bodies),
+              drawnR: drawnRadiusOf(pres, b, sc),
+              isDest: b.id === destId,
+              battle: renderContext.liveBattles?.get(b.id),
+            })),
+            // The battle wheel's clock, as the parked draw turns it.
+            plan, sc, reach, renderContext.nowMs ?? nowMs);
         }
         if (ship.class === 'missile' && placed && placed.length > 1) {
           const home = ship.orbit?.parentBodyId ? bodyById2.get(ship.orbit.parentBodyId) : undefined;

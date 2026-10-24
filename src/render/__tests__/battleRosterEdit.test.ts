@@ -110,3 +110,58 @@ test('a battle losing escorts every tick never reshuffles over a long fight', ()
   expect(lb).not.toBe(first);
   expect(worst(moves(first, lb))).toBeLessThan(25);
 });
+
+// ---- arrivals, laid out before they land (arrivalApproach) --------------
+
+const arriving = (u: BattleUnit): BattleUnit => ({ ...u, arriving: true });
+
+test('a hull still in flight to the world is laid out at once, not after the dwell', () => {
+  const owners = ['jove', 'mars', 'terra'];
+  const first = liveBattleFor('sol', SUN_R, 1, ring(), owners, undefined, { nowMs: 0 });
+  const next = liveBattleFor('sol', SUN_R, 1, [...ring(), arriving(block('terra-4', 'terra', 12))], owners, undefined, { nowMs: 100 });
+  expect(next).not.toBe(first);
+  expect(next.layout.placements.has('terra-4')).toBe(true);
+  expect(worst(moves(first, next))).toBeLessThan(25);
+  // Landed, it is the same unit: the layout is not solved again.
+  const landed = liveBattleFor('sol', SUN_R, 1, [...ring(), block('terra-4', 'terra', 12)], owners, undefined, { nowMs: 200 });
+  expect(landed).toBe(next);
+});
+
+test('a battle losing a hull every tick still takes an arrival at once', () => {
+  const owners = ['jove', 'mars', 'terra'];
+  liveBattleFor('sol', SUN_R, 1, ring(), owners, undefined, { nowMs: 0 });
+  // A loss starts the dwell...
+  const lost = ring().filter(u => u.id !== 'mars-2');
+  liveBattleFor('sol', SUN_R, 1, lost, owners, undefined, { nowMs: 100 });
+  // ...and an arrival in the middle of it is placed straight away.
+  const lb = liveBattleFor('sol', SUN_R, 1, [...lost, arriving(block('terra-4', 'terra', 12))], owners, undefined, { nowMs: 400 });
+  expect(lb.layout.placements.has('terra-4')).toBe(true);
+  expect(lb.layout.placements.has('mars-2')).toBe(false);
+});
+
+test('a roster that only lost a hull still waits out the dwell', () => {
+  const owners = ['jove', 'mars', 'terra'];
+  const first = liveBattleFor('sol', SUN_R, 1, ring(), owners, undefined, { nowMs: 0 });
+  const lost = ring().filter(u => u.id !== 'mars-2');
+  expect(liveBattleFor('sol', SUN_R, 1, lost, owners, undefined, { nowMs: 100 })).toBe(first);
+  expect(liveBattleFor('sol', SUN_R, 1, lost, owners, undefined, { nowMs: 100 + ROSTER_DWELL_MS }))
+    .not.toBe(first);
+});
+
+test('an arrival flickering in and out of fog is solved once, not on every flicker', () => {
+  const owners = ['jove', 'mars', 'terra'];
+  liveBattleFor('sol', SUN_R, 1, ring(), owners, undefined, { nowMs: 0 });
+  const withIt = [...ring(), arriving(block('mars-9', 'mars', 6))];
+  const lb = liveBattleFor('sol', SUN_R, 1, withIt, owners, undefined, { nowMs: 100 });
+  for (let t = 240; t < 2000; t += 140) {
+    const shown = Math.floor(t / 140) % 2 === 0;
+    expect(liveBattleFor('sol', SUN_R, 1, shown ? withIt : ring(), owners, undefined, { nowMs: t })).toBe(lb);
+  }
+});
+
+test('the battle keeps the way it wheels when a different hull sorts first', () => {
+  const owners = ['jove', 'mars', 'terra'];
+  const first = liveBattleFor('sol', SUN_R, 1, ring(), owners, undefined, { nowMs: 0 });
+  const next = liveBattleFor('sol', SUN_R, -1, [...ring(), arriving(block('aaa-1', 'terra', 4))], owners, undefined, { nowMs: 100 });
+  expect(next.dir).toBe(first.dir);
+});
