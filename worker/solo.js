@@ -11,8 +11,10 @@
 // His picks (2026-10-23):
 //   - speeds 30 s / 2 min / 10 min a tick, and the player can PAUSE;
 //   - 1-5 rivals, 3 by default;
-//   - difficulty peaceful / normal / ruthless (how soon and how hard the
-//     computer empires go to war; never extra resources);
+//   - difficulty peaceful / normal / ruthless: how sharply the computer
+//     empires play (aiTactics.js); never extra resources;
+//   - each rival's personality, Ally / Warlord / Snake, picked per seat or
+//     dealt by "Surprise me" (aiPersona.js, 2026-10-24);
 //   - victory exactly as in multiplayer.
 //
 // The computer empires are agent users (auth.js getOrCreateAgentUser),
@@ -22,7 +24,7 @@
 // faction as a computer empire is game_factions.ai_doctrine (0181).
 //
 // Routes:
-//   POST  /api/solo                       { rivals, difficulty, speed_ms }
+//   POST  /api/solo                       { rivals, difficulty, speed_ms, personalities }
 //   POST  /api/games/:gameId/solo/pause
 //   POST  /api/games/:gameId/solo/resume
 //   POST  /api/games/:gameId/solo/step    one tick while paused
@@ -32,6 +34,7 @@
 import { getOrCreateAgentUser } from './auth.js';
 import { startGame } from './lobby.js';
 import { runSoloGame } from './aiEmpire.js';
+import { PERSONALITIES, SURPRISE_DECKS, doctrineFor } from './aiPersona.js';
 
 const json = (data, init = {}) => new Response(JSON.stringify(data), {
   ...init, headers: { 'content-type': 'application/json', ...(init.headers ?? {}) },
@@ -47,15 +50,6 @@ export const SOLO_DEFAULT_SPEED = 120_000;
 export const SOLO_DIFFICULTIES = ['peaceful', 'normal', 'ruthless'];
 export const SOLO_MAX_RIVALS = 5;
 export const SOLO_DEFAULT_RIVALS = 3;
-
-/** Which strategies a difficulty deals, seat by seat. A peaceful system
- *  has no warmongers; a ruthless one is mostly them. The doctrines are
- *  aiEmpire.js's. */
-const DOCTRINE_DECKS = {
-  peaceful: ['expander', 'economist', 'technocrat', 'expander', 'economist'],
-  normal: ['expander', 'rusher', 'economist', 'technocrat', 'expander'],
-  ruthless: ['rusher', 'expander', 'rusher', 'technocrat', 'rusher'],
-};
 
 function newRoomId() {
   const bytes = crypto.getRandomValues(new Uint8Array(9));
@@ -86,6 +80,15 @@ async function handleCreate(req, env, ctx) {
   const rivals = Math.max(1, Math.min(SOLO_MAX_RIVALS, Math.floor(Number(body.rivals ?? SOLO_DEFAULT_RIVALS)) || SOLO_DEFAULT_RIVALS));
   const difficulty = SOLO_DIFFICULTIES.includes(body.difficulty) ? body.difficulty : 'normal';
   const speed = SOLO_SPEEDS.includes(Number(body.speed_ms)) ? Number(body.speed_ms) : SOLO_DEFAULT_SPEED;
+  // Seat by seat: a named personality, or "surprise" (anything else) for
+  // the difficulty's deck. A picked one is shown on the roster.
+  const picks = Array.isArray(body.personalities) ? body.personalities : [];
+  const deck = SURPRISE_DECKS[difficulty];
+  const seatsAi = Array.from({ length: rivals }, (_, i) => {
+    const picked = PERSONALITIES.includes(picks[i]) ? picks[i] : null;
+    const personality = picked ?? deck[i % deck.length];
+    return { personality, shown: picked ? 1 : 0, doctrine: doctrineFor(personality, i) };
+  });
 
   const me = await env.DB.prepare('SELECT id, display_name FROM users WHERE id = ?').bind(userId).first();
   if (!me) return err(401, 'unauthenticated', 'sign in required');
@@ -117,11 +120,11 @@ async function handleCreate(req, env, ctx) {
   const started = await startGame(env, id, { solo: { difficulty, tickIntervalMs: speed } });
   if (started.error) return started.error;
 
-  // Deal the strategies, seat by seat after the player's.
-  const deck = DOCTRINE_DECKS[difficulty];
+  // Seat the personalities, seat by seat after the player's.
   await env.DB.batch(bots.map((u, i) => env.DB
-    .prepare('UPDATE game_factions SET ai_doctrine = ? WHERE game_id = ? AND user_id = ?')
-    .bind(deck[i % deck.length], id, u.id)));
+    .prepare(`UPDATE game_factions SET ai_doctrine = ?, ai_personality = ?, ai_personality_shown = ?
+               WHERE game_id = ? AND user_id = ?`)
+    .bind(seatsAi[i].doctrine, seatsAi[i].personality, seatsAi[i].shown, id, u.id)));
   return json({ ok: true, game_id: id, rivals, difficulty, speed_ms: speed });
 }
 

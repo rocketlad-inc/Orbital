@@ -11,6 +11,8 @@
 //   3. one turn per tick: a second pass in the same tick does nothing
 //   4. they vote in the Senate, so quorum can be met
 //   5. pause / step / speed / resume drive the clock, host only
+//   6. personalities: the Ally courts you and joins your wars, the
+//      Warlord refuses and attacks, the Snake courts you then betrays
 //
 // Run: npm run sim:solo
 // ============================================================
@@ -197,6 +199,105 @@ for (let i = 1; i <= 60; i++) {
 }
 const calmWars = await DB.prepare('SELECT COUNT(*) AS c FROM game_wars WHERE game_id = ?').bind(G2).first();
 check('peaceful: nobody declares war', calmWars.c === 0);
+
+// ---- 6. personalities (aiPersona.js, 2026-10-24) -------------------------
+const tradesMod = await import('../worker/trades.js');
+const factionsMod = await import('../worker/factions.js');
+await DB.prepare(`INSERT INTO users (id,email,display_name,password_hash,created_at)
+                  VALUES ('uY','y@t','Yara','x',0), ('uZ','z@t','Zeno','x',0)`).run();
+
+/** Play a game from its current tick to `to`, every bot every tick. */
+async function play(gameId, room, to, sink) {
+  let t = Number((await DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first()).current_tick ?? 0);
+  while (t < to) {
+    t += 1;
+    await room.resolveTick(gameId, t);
+    await DB.prepare('UPDATE games SET current_tick = ? WHERE id = ?').bind(t, gameId).run();
+    await ai.runSoloGame(env, gameId, sink);
+  }
+}
+const roster = async (gameId, userId) => (await call(factionsMod, 'GET', `/api/games/${gameId}/factions`, userId)).data?.factions ?? [];
+const facOf = async (gameId, personality) => DB.prepare(
+  'SELECT id, user_id FROM game_factions WHERE game_id = ? AND ai_personality = ?').bind(gameId, personality).first();
+const humanOf = async (gameId) => DB.prepare(
+  'SELECT id FROM game_factions WHERE game_id = ? AND ai_doctrine IS NULL').bind(gameId).first();
+/** The person accepts every open offer addressed to them. */
+async function acceptAll(gameId, userId, humanId) {
+  const open = (await DB.prepare(`SELECT id, proposer_faction_id, offer_pacts FROM trade_offers
+                                  WHERE game_id = ? AND responder_faction_id = ? AND status = 'open'`).bind(gameId, humanId).all()).results;
+  for (const o of open) await call(tradesMod, 'POST', `/api/games/${gameId}/trades/${o.id}/accept`, userId, {});
+  return open;
+}
+const napWith = async (gameId, a, b) => (await DB.prepare(
+  `SELECT t.status FROM treaties t
+     JOIN treaty_signatories x ON x.treaty_id = t.id AND x.faction_id = ?
+     JOIN treaty_signatories y ON y.treaty_id = t.id AND y.faction_id = ?
+    WHERE t.game_id = ? AND t.kind = 'nap' ORDER BY t.rowid DESC LIMIT 1`).bind(a, b, gameId).first())?.status ?? null;
+const warRow = async (gameId, a, b) => DB.prepare(
+  `SELECT declared_by, declared_at_tick, origin FROM game_wars
+    WHERE game_id = ? AND ((faction_a = ? AND faction_b = ?) OR (faction_a = ? AND faction_b = ?))
+    ORDER BY declared_at_tick DESC LIMIT 1`).bind(gameId, a, b, b, a).first();
+
+// Surprise me: hidden on the roster while the game runs.
+const hidden = (await roster(G, 'uH')).filter(f => f.computer);
+check('Surprise personalities stay hidden on the roster', hidden.length > 0 && hidden.every(f => f.personality == null),
+  JSON.stringify(hidden.map(f => [f.name, f.personality])));
+
+// --- an Ally and a Warlord ---------------------------------------------------
+const aw = await call(solo, 'POST', '/api/solo', 'uY', { rivals: 2, difficulty: 'normal', speed_ms: 30000, personalities: ['ally', 'warlord'] });
+const GA = aw.data?.game_id;
+check('setup takes a personality per rival', aw.status === 200 && !!GA, JSON.stringify(aw));
+const picked = await roster(GA, 'uY');
+check('picked personalities show on the roster', picked.filter(f => f.computer).map(f => f.personality).sort().join() === 'ally,warlord',
+  JSON.stringify(picked.map(f => [f.name, f.personality])));
+const allyF = await facOf(GA, 'ally');
+const warF = await facOf(GA, 'warlord');
+const humA = await humanOf(GA);
+const rA = new Room(makeState(), env);
+rA.broadcast = () => {};
+const tA = {};
+await play(GA, rA, 20, tA);
+const napOffers = await acceptAll(GA, 'uY', humA.id);
+check('the Ally offers you a non-aggression pact', napOffers.some(o => o.proposer_faction_id === allyF.id && /nap/.test(o.offer_pacts)),
+  JSON.stringify(napOffers));
+check('the Warlord offers nothing', !napOffers.some(o => o.proposer_faction_id === warF.id));
+check('accepting signs the pact with the Ally', (await napWith(GA, allyF.id, humA.id)) === 'active');
+await play(GA, rA, 90, tA);
+const wl = await warRow(GA, warF.id, humA.id);
+check('the Warlord declares on you once it has a fleet', wl?.declared_by === warF.id && wl.declared_at_tick >= 36,
+  JSON.stringify({ wl, tally: Object.fromEntries(Object.entries(tA).filter(([k]) => /rusher:(declare|attack|scout|hold|build)/.test(k))) }));
+const aj = await warRow(GA, allyF.id, warF.id);
+check('the Ally joins your war against the Warlord', aj?.declared_by === allyF.id,
+  JSON.stringify({ aj, tally: Object.fromEntries(Object.entries(tA).filter(([k]) => /^(expander|economist):(declare|offer)/.test(k))) }));
+check('the Ally never declares on you', !(await warRow(GA, allyF.id, humA.id)));
+console.log('        ally/warlord tally:', JSON.stringify(Object.fromEntries(Object.entries(tA).filter(([k]) => !/research|bld_|build_|vote_|personality/.test(k)))));
+
+// --- a Snake ----------------------------------------------------------------
+const sn = await call(solo, 'POST', '/api/solo', 'uZ', { rivals: 1, difficulty: 'normal', speed_ms: 30000, personalities: ['snake'] });
+const GS = sn.data?.game_id;
+const snakeF = await facOf(GS, 'snake');
+const humS = await humanOf(GS);
+const rS = new Room(makeState(), env);
+rS.broadcast = () => {};
+const tS = {};
+await play(GS, rS, 20, tS);
+const snOffers = await acceptAll(GS, 'uZ', humS.id);
+check('the Snake courts you with a non-aggression pact', snOffers.some(o => o.proposer_faction_id === snakeF.id), JSON.stringify(snOffers));
+check('the pact is signed', (await napWith(GS, snakeF.id, humS.id)) === 'active');
+let betrayal = null;
+for (let to = 40; to <= 200 && !betrayal; to += 20) {
+  await play(GS, rS, to, tS);
+  await acceptAll(GS, 'uZ', humS.id);
+  betrayal = await warRow(GS, snakeF.id, humS.id);
+}
+check('the Snake betrays you: declares while the pact stands', betrayal?.declared_by === snakeF.id && betrayal.origin === 'pact_broken',
+  JSON.stringify({ betrayal, tally: Object.fromEntries(Object.entries(tS).filter(([k]) => /betray|snake|visit|offer|declare/.test(k))) }));
+check('not before its window opens (tick 60 on Normal)', !betrayal || betrayal.declared_at_tick >= 60, JSON.stringify(betrayal));
+check('the betrayal breaks the pact for everyone to see', (await napWith(GS, snakeF.id, humS.id)) === 'broken');
+const strikeOrders = Object.entries(tS).filter(([k]) => /schemer:(attack|attack_blind)_ok/.test(k)).reduce((a, [, v]) => a + v, 0);
+check('and its fleet sails the same turn or soon after', strikeOrders > 0, JSON.stringify(tS));
+console.log(`        snake betrayed at tick ${betrayal?.declared_at_tick ?? '-'}; tally:`,
+  JSON.stringify(Object.fromEntries(Object.entries(tS).filter(([k]) => !/research|bld_|build_|vote_|personality/.test(k)))));
 
 console.log(bad ? `\n${bad} FAILED` : '\nall passed');
 process.exit(bad ? 1 : 0);
