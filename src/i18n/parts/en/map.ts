@@ -280,6 +280,8 @@ export const map = {
   'worldmenu.card.close': 'Close',
   'worldmenu.card.dome': 'DOME',
   'worldmenu.card.building': 'BUILDING LV {lv}',
+  'worldmenu.card.willWait': 'Waits behind {what}: #{pos} in line, and paid now.',
+  'worldmenu.card.confirmPay': 'Pay {cost} and queue',
   'worldmenu.card.inLine': '#{pos} in line for LV {lv}. Paid; taking it out refunds it.',
   'worldmenu.card.takeOut': 'TAKE OUT · REFUND',
   'worldmenu.card.cost': 'COST',
@@ -548,6 +550,8 @@ export const map = {
   'worldmenu.assign.loadAt': '⇐ load at {name}',
   'worldmenu.assign.addRoute': '+ ADD ROUTE',
   'worldmenu.assign.start': '▶ START SUPPLY',
+  'worldmenu.assign.confirm': 'This takes up to {metal} metal and {credits} credits from your treasury, loaded at {dock}.',
+  'worldmenu.assign.confirmGo': 'Confirm',
 
   // ---- world menu: Dyson card ----
   'worldmenu.dyson.title': '☀ DYSON SPHERE',

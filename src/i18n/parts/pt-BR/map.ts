@@ -282,6 +282,8 @@ export const map: Catalog = {
   'worldmenu.card.close': 'Fechar',
   'worldmenu.card.dome': 'CÚPULA',
   'worldmenu.card.building': 'CONSTRUINDO NV {lv}',
+  'worldmenu.card.willWait': 'Espera atrás de {what}: {pos}º na fila, e é pago agora.',
+  'worldmenu.card.confirmPay': 'Pagar {cost} e pôr na fila',
   'worldmenu.card.inLine': '#{pos} na fila para o NV {lv}. Já pago; retirar devolve o valor.',
   'worldmenu.card.takeOut': 'RETIRAR · REEMBOLSAR',
   'worldmenu.card.cost': 'CUSTO',
@@ -549,6 +551,8 @@ export const map: Catalog = {
   'worldmenu.assign.dockTitle': 'Mundo terraformado onde se carrega {payload} — sai da reserva da sua facção nesta doca.',
   'worldmenu.assign.loadAt': '⇐ carregar em {name}',
   'worldmenu.assign.addRoute': '+ ADICIONAR ROTA',
+  'worldmenu.assign.confirm': 'Isto tira até {metal} de metal e {credits} créditos do seu tesouro, carregados em {dock}.',
+  'worldmenu.assign.confirmGo': 'Confirmar',
   'worldmenu.assign.start': '▶ INICIAR ABASTECIMENTO',
 
   // ---- world menu: Dyson card ----

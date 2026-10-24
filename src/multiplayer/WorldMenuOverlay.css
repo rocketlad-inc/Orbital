@@ -152,6 +152,8 @@
 .wm-terraform-assign button:hover:not(:disabled) { background: rgba(78, 205, 196, 0.2); }
 .wm-terraform-assign button:disabled { opacity: 0.5; cursor: default; }
 .wm-terraform-assign .wm-terraform-hint { flex-basis: 100%; }
+.wm-terraform-confirm { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 11px; color: #ffd27a; }
+.wm-terraform-confirm span { flex-basis: 100%; }
 .wm-more {
   align-self: flex-end;
   background: rgba(78, 205, 196, 0.08); border: 1px solid #2a3d50; border-radius: 4px;
