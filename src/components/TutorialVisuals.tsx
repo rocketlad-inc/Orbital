@@ -13,6 +13,7 @@ import React from 'react';
 import type { TutorialVisualId } from '../game/tutorialSteps';
 import { t } from '../i18n/core';
 import { useI18n } from '../i18n/react';
+import { useIsMobile } from '../hooks/useIsMobile';
 
 const W = 300;
 const H = 110;
@@ -64,8 +65,11 @@ const Victory = () => (
   </Frame>
 );
 
-/** Map controls: drag hand, zoom rings, click-a-world cursor. */
-const MapControls = () => (
+/** Map controls: drag hand, zoom rings, click-a-world cursor. A phone
+ *  pinches and taps (playtest, 2026-10-24: "scroll · zoom" on a phone). */
+const MapControls = () => {
+  const touch = useIsMobile();
+  return (
   <Frame>
     {/* Orbits + worlds */}
     <circle cx={150} cy={55} r={40} fill="none" stroke="#2a3d50" strokeWidth={1} />
@@ -85,12 +89,13 @@ const MapControls = () => (
       <circle r={13} strokeWidth={1} strokeDasharray="2 2" />
       <path d="M5 5 l7 7" strokeWidth={1.6} />
     </g>
-    <text x={252} y={80} textAnchor="middle" fill="#7fd4ff" fontSize={8.5} letterSpacing={1}>{t('tutorial.vis.scroll')}</text>
+    <text x={252} y={80} textAnchor="middle" fill="#7fd4ff" fontSize={8.5} letterSpacing={1}>{t(touch ? 'tutorial.vis.pinch' : 'tutorial.vis.scroll')}</text>
     {/* Click cursor on the teal world */}
     <path d="M176 47 l6 14 l3 -5 l5 3 l2 -3 l-5 -3 l4 -4 Z" fill="#e8f4fb" stroke="#0a1018" strokeWidth={0.8} />
-    <text x={150} y={104} textAnchor="middle" fill="#8fa8bf" fontSize={8.5} letterSpacing={1}>{t('tutorial.vis.clickWorld')}</text>
+    <text x={150} y={104} textAnchor="middle" fill="#8fa8bf" fontSize={8.5} letterSpacing={1}>{t(touch ? 'tutorial.vis.tapWorld' : 'tutorial.vis.clickWorld')}</text>
   </Frame>
-);
+  );
+};
 
 /** Economy: settlement → terraformed world → treasury flow (the
  *  terraforming rework: terraformed status is the pipeline, not a

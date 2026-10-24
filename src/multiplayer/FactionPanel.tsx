@@ -268,7 +268,7 @@ export function FactionPanel({
       )}
 
       {/* ---------- standings ---------- */}
-      <section className="fp-sect">
+      <section className="fp-sect" data-tutorial-id="mp-standings">
         <div className="fp-sect__h">
           <span className="fp-lbl">{t('faction.standings')}</span>
           <span className="fp-lbl fp-lbl--dim">{t('faction.tapRow')}</span>

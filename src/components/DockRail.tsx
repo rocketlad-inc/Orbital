@@ -250,6 +250,8 @@ export const DockRail: React.FC<{ isMultiplayer?: boolean; lobbyOnly?: boolean }
           <button
             className={`dock-rail__btn dock-rail__btn--mobile-only${externalActive === 'research' ? ' is-active' : ''}`}
             onClick={() => toggleExternal('research')}
+            // The phone's way to Research: the top bar's (nav-research) is hidden.
+            data-tutorial-id="nav-research"
             title={t("dock.research")}
             aria-label={t("dock.research")}
             aria-pressed={externalActive === 'research'}
@@ -271,11 +273,14 @@ interface DockButtonProps {
   onClick: () => void;
 }
 
-const DockButton: React.FC<DockButtonProps> = ({ active, badge, icon, label, onClick }) => {
+const DockButton: React.FC<DockButtonProps> = ({ which, active, badge, icon, label, onClick }) => {
   const hasBadge = badge.count > 0;
   return (
     <button
       className={`dock-rail__btn${active ? ' is-active' : ''}${badge.hasWarn ? ' has-warn' : ''}`}
+      // The tutorial points at these (the trial's closing step: the
+      // Situation Report lists what needs you next).
+      data-tutorial-id={`dock-${which}`}
       onClick={onClick}
       title={hasBadge ? `${label} · ${badge.count}` : label}
       aria-label={label}

@@ -7,7 +7,9 @@
 //       LEAVING  the first try at leaving the page: the mouse heading
 //                for the tabs (our own sheet), or a close/navigate (the
 //                browser's own "Leave site?", the only thing it allows);
-//       TIME     after ten minutes of play (time the tab is visible);
+//       TIME     after ten minutes of play: time the tab is visible AND
+//                the clock is running, outside the tour (it fired at
+//                T+1 after a long paused tutorial: playtest 2026-10-24);
 //   - the moment the Warlord declares war, a card says what that means.
 // The menu entry (TopBar) opens the same sheet whenever they like.
 // ============================================================
@@ -33,6 +35,9 @@ function readAsked(uid: string): Asked {
 function writeAsked(uid: string, a: Asked) {
   try { localStorage.setItem(keyFor(uid), JSON.stringify(a)); } catch { /* private mode */ }
 }
+/** The one play-time counter in this tab: a second mounted layer must not
+ *  count the same minutes again (the prompt came at about five). */
+let playClockOwner: symbol | null = null;
 
 export function TrialLayer() {
   useI18n();
@@ -101,23 +106,34 @@ export function TrialLayer() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shadow, uid]);
 
-  // TIME: ten minutes of the tab being in view, kept across reloads. Not
-  // in the middle of a tutorial step: it waits for the tour to finish.
+  // TIME: ten minutes of PLAY, kept across reloads: the tab in view, the
+  // clock running, and no tour on screen. Counted from the real time
+  // between beats, so a throttled timer neither loses nor invents minutes.
   const activeRef = useRef(active);
   activeRef.current = active;
+  const pausedRef = useRef(true);
+  pausedRef.current = !!gameState.solo?.paused;
   useEffect(() => {
     if (!shadow) return;
+    const me = Symbol('play-clock');
+    if (playClockOwner) return;
+    playClockOwner = me;
     const STEP = 5_000;
+    let last = Date.now();
     const iv = setInterval(() => {
+      const now = Date.now();
+      const dt = Math.min(now - last, STEP * 2);
+      last = now;
       if (document.visibilityState !== 'visible' || askedRef.current.time) return;
-      const played = (askedRef.current.playedMs ?? 0) + STEP;
+      if (pausedRef.current || activeRef.current) return;
+      const played = (askedRef.current.playedMs ?? 0) + dt;
       mark({ playedMs: played });
-      if (played >= SAVE_PROMPT_AFTER_MS && !activeRef.current) {
+      if (played >= SAVE_PROMPT_AFTER_MS) {
         mark({ time: true });
         openSaveEmpire('time');
       }
     }, STEP);
-    return () => clearInterval(iv);
+    return () => { clearInterval(iv); if (playClockOwner === me) playClockOwner = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shadow, uid]);
 

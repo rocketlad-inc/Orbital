@@ -114,6 +114,8 @@ const base = {
   'solo.speed.steady': '2m',
   'solo.speed.relaxed': '10m',
   'solo.failed': 'The clock did not change. Try again.',
+  'solo.menu.speed': 'Tick length: {speed}',
+  'solo.menu.speedHint': 'tap for {next}',
 
 
   // ---- Play for Free (worker/trial.js) ----

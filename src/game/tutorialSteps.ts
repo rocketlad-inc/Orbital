@@ -9,9 +9,15 @@
 //      inline SVG illustration in the card (TutorialVisuals.tsx).
 //   3. The player DOES the moves, not reads about them: `task` steps
 //      gate NEXT on a real game-state condition (world menu opened,
-//      upgrade queued, corvette built, ship sent, research started)
-//      and auto-advance when it completes. Every task has a SKIP
-//      escape hatch so nobody can hard-stuck the tour.
+//      upgrade queued, corvette built, ship sent, research started).
+//      Done, the task ticks and NEXT lights up; the player moves on when
+//      ready (auto-advancing shut the panel they were still using and
+//      raced a NEXT click into skipping a step: playtest, 2026-10-24).
+//      Every task has a SKIP escape hatch so nobody can hard-stuck it.
+//   4. Words match the screen: a body may name a control with {vars}
+//      (TutorialOverlay stepVars), filled from the control's own label
+//      in the player's language, and a phone gets `bodyTouch` (tap, not
+//      click).
 //
 // Affordability contract: the task arc costs ≤60 metal + ≤16 credits.
 // Fresh factions seed with 100 metal / 100 credits (worker/factions.js
@@ -40,6 +46,7 @@ export type TutorialEffect =
   | 'open-capital-menu'    // selectBody(player capital) → world menu flies in
   | 'open-sol-menu'        // selectBody(sol) → the sun's menu (Dyson card)
   | 'select-first-ship'    // selectShip(first player ship) → ship panel mounts
+  | 'select-colony-ship'   // selectShip(a parked colony ship), else the first ship
   | 'open-panel-research'  // window 'orbital:open-panel' {panel:'research'}
   | 'open-panel-fleet'
   | 'open-panel-settlements'
@@ -85,8 +92,18 @@ export interface TutorialStep {
   id: string;
   /** Short title shown in bold at the top of the coachmark. */
   title: string;
-  /** Body text — one to two sentences. Plain string, no markdown. */
+  /** Body text — one sentence. Plain string, no markdown. {vars} name
+   *  controls by their on-screen label (TutorialOverlay stepVars). */
   body: string;
+  /** The body on a phone or tablet (useIsMobile): tap, pinch, ☰. */
+  bodyTouch?: string;
+  /** Shown once the task is done, in place of the body: what next. */
+  doneBody?: string;
+  /** Where to point once the task is done (with doneBody). */
+  doneTarget?: string;
+  /** The control to press NEXT: once it is enabled it becomes the one
+   *  the ring is on (pick a world, then the ring moves to COMMIT). */
+  thenTarget?: string;
   /** data-tutorial-id of the element to point at. null means
    *  center-of-screen. */
   target: string | null;
@@ -134,17 +151,18 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'open-world',
     title: 'Open your homeworld',
-    body: 'Click your capital (★ in the Outliner, or the planet) to open its menu.',
+    body: 'Click your capital (★ in the ☰ list, or the planet) to open its menu.',
+    bodyTouch: 'Tap your capital (★ in the ☰ list, or the planet) to open its menu.',
     target: 'outliner',
-    placement: 'left',
+    placement: 'right',
     task: { check: 'world-menu-open-owned', label: 'Open the menu on a world you own' },
     dim: 'light',
   },
   {
     id: 'world-readout',
     title: 'This is your base',
-    body: 'OUTPUT/t is what this world earns every tick.',
-    target: 'world-menu',
+    body: 'M, C and S are the metal, credits and science this world earns every tick.',
+    target: 'wm-output',
     placement: 'below',
     onEnter: 'open-capital-menu',
   },
@@ -177,7 +195,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'build-ship',
     title: 'Build a ship',
-    body: 'Open SHIPYARD, then BUILD a CORVETTE: cheap, fast, and armed.',
+    body: 'Open {yard}, then press {build} on a {corvette}: cheap, fast and armed.',
     target: 'wm-build',
     placement: 'above',
     onEnter: 'open-capital-menu',
@@ -188,7 +206,8 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'select-ship',
     title: 'This is a ship',
-    body: 'Click one of your ships, in the Outliner or on the map.',
+    body: 'Click one of your ships, in the ☰ list or on the map.',
+    bodyTouch: 'Tap ☰, then one of your ships.',
     target: 'outliner',
     extraTargets: ['ship-panel'],
     placement: 'left',
@@ -215,9 +234,10 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'send-ship',
     title: 'Send it somewhere',
-    body: 'CHOOSE FROM LIST, pick a world, then COMMIT.',
-    target: 'ship-transfer-button',
+    body: 'Press {list}, pick a world near the top, then {commit}.',
+    target: 'ship-list-button',
     extraTargets: ['ship-commit-button'],
+    thenTarget: 'ship-commit-button',
     placement: 'right',
     onEnter: ['close-world-menu', 'select-first-ship', 'ship-tab-orders'],
     dim: 'light',
@@ -278,7 +298,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'research',
     title: 'Research decides what you fight with',
-    body: 'Start a research project; science fills it automatically.',
+    body: 'Start a research project: science fills its bar on its own.',
     target: 'nav-research',
     placement: 'below',
     onEnter: 'open-panel-research',
@@ -357,30 +377,54 @@ export const TRIAL_TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'trial-welcome',
     title: 'Welcome, Commander',
-    body: 'Your world, a few ships, and two neighbours; a tick every 30 seconds.',
+    body: 'Every 30 seconds the game moves one tick: your worlds earn and your ships fly.',
     target: null,
     placement: 'center',
     visual: 'map-controls',
+    dim: 'light',
   },
   byId('open-world'),
   byId('world-readout'),
   byId('build-ship'),
   byId('select-ship'),
-  byId('send-ship'),
-  byId('expand'),
+  // The trial's ship to send is the colony ship it already has (a tester
+  // built a second one for 80 metal, not knowing), and where it goes is
+  // the next thing to learn.
+  {
+    id: 'trial-send-colony',
+    title: 'Claim a new world',
+    body: 'Your {colony} is selected: press {list}, pick a world near the top, then {commit}.',
+    target: 'ship-list-button',
+    extraTargets: ['ship-commit-button'],
+    thenTarget: 'ship-commit-button',
+    placement: 'right',
+    onEnter: ['close-world-menu', 'select-colony-ship', 'ship-tab-orders'],
+    dim: 'light',
+    task: { check: 'transfer-committed', label: 'Send your colony ship' },
+  },
+  {
+    id: 'trial-found',
+    title: 'Found a colony',
+    body: 'When it arrives, open that world and press {city} or {station} to claim it.',
+    target: null,
+    placement: 'center',
+    visual: 'expand',
+  },
   byId('research'),
   {
     id: 'trial-neighbours',
     title: 'Meet your neighbours',
-    body: 'The ALLY will offer you peace; the WARLORD attacks about ten minutes after the clock starts.',
-    target: 'mp-dock',
-    placement: 'left',
+    body: 'One neighbour will offer you peace; the other is arming for war.',
+    // The rows of empires, not the whole dock: a card placed on the dock
+    // sat on the very rows it was introducing.
+    target: 'mp-standings',
+    placement: 'below',
     onEnter: ['close-panels', 'open-panel-empires'],
   },
   {
     id: 'trial-defend',
-    title: 'Get ready for the Warlord',
-    body: 'Ships parked at home defend it: build more before the Warlord comes.',
+    title: 'Get ready for war',
+    body: 'Ships parked at home defend it: queue one more warship.',
     target: 'wm-build',
     placement: 'left',
     onEnter: ['close-dock', 'close-panels', 'open-capital-menu'],
@@ -389,7 +433,7 @@ export const TRIAL_TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'trial-save',
     title: 'Keep your empire',
-    body: 'Save your empire here to keep it.',
+    body: 'Your empire lives in this browser: save it from this menu any time.',
     target: 'menu-button',
     placement: 'below',
     onEnter: ['close-dock', 'close-panels', 'close-world-menu'],
@@ -397,11 +441,14 @@ export const TRIAL_TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'trial-clock',
     title: 'Start the clock',
-    body: 'Press START: time runs, and your neighbours start moving.',
+    body: 'Start the clock: time runs and your neighbours start moving.',
     target: 'solo-start',
     placement: 'below',
     onEnter: ['close-dock', 'close-panels', 'close-world-menu'],
     task: { check: 'clock-running', label: 'Start the clock' },
+    // The tour's last word: where to look once it is over.
+    doneBody: 'Your {sitrep} lists what needs you next.',
+    doneTarget: 'dock-situation',
   },
 ];
 

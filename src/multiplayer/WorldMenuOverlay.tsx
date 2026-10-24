@@ -1327,7 +1327,7 @@ export const WorldMenuOverlay: React.FC = () => {
     </div>
   ) : null;
   const yieldsEl = (
-    <div className="wm-yields">
+    <div className="wm-yields" data-tutorial-id="wm-output">
       {yieldChips.map(([k, v]) => (
         <span
           className="wm-yield" key={k}
@@ -1632,7 +1632,7 @@ export const WorldMenuOverlay: React.FC = () => {
           <span className="wmp-place">{placeName}</span>
           {readout.pop > 0 && <span className="wmp-pop">{t('worldmenu.metric.pop')} <b>{readout.pop}</b></span>}
         </div>
-        <div className="wmp-yields">
+        <div className="wmp-yields" data-tutorial-id="wm-output">
           {yieldChips.map(([k, v]) => (
             <span key={k} className="wmp-yield">
               <i style={{ color: RESOURCE_LETTER_COLORS[k as 'M' | 'C' | 'S'] }}>{k}</i>{Math.round(v * 10) / 10}<em>/t</em>

@@ -84,4 +84,26 @@
   .solo-clock__btn { padding: 0 8px; }
 }
 :root[data-mobile-shell] .solo-clock__txt { display: none; }
+/* ...except START / RESUME: an unlabelled play icon was not something
+   anyone pressed (playtest, 2026-10-24). */
+.solo-clock__main.is-go .solo-clock__txt,
+:root[data-mobile-shell] .solo-clock__main.is-go .solo-clock__txt { display: inline; }
+
+/* NARROW PHONES. The bar wanted ~450px on a 375px phone, so the clock sat
+   past the right edge: no START, and later no way to pause (playtest,
+   2026-10-24). Here the bar keeps the one button that matters, as an icon;
+   speed and the single tick live in the menu (TopBar SideMenu), and the
+   "next in" line gives up its width (the lit icon says paused). */
+@media (max-width: 480px) {
+  /* :root + both classes: the phone shell's own top-bar rules are
+     :root[data-mobile-shell]-scoped (shellJs.css) and outrank one class. */
+  :root .top-bar.top-bar--solo .time-display__countdown { display: none; }
+  :root .top-bar.top-bar--solo .top-bar__resources { gap: 6px; }
+  .top-bar--solo .solo-clock .solo-clock__speed,
+  .top-bar--solo .solo-clock .solo-clock__step { display: none; }
+  .top-bar--solo .solo-clock .solo-clock__main .solo-clock__txt { display: none; }
+  .top-bar--solo .solo-clock .solo-clock__main { padding: 0 8px; }
+  /* The last block in the bar: no divider or end padding to pay for. */
+  :root .top-bar.top-bar--solo .top-bar__time { gap: 6px; padding-right: 0; border-right: 0; }
+}
 :root[data-mobile-shell] .solo-clock__btn { padding: 0 8px; }

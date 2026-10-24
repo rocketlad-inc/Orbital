@@ -119,6 +119,8 @@ const base: Catalog = {
   'solo.speed.steady': '2min',
   'solo.speed.relaxed': '10min',
   'solo.failed': 'O relógio não mudou. Tente de novo.',
+  'solo.menu.speed': 'Duração do tick: {speed}',
+  'solo.menu.speedHint': 'toque para {next}',
 
 
   // ---- Jogar grátis (worker/trial.js) ----

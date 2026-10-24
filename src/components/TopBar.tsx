@@ -25,7 +25,7 @@ import { AdminGrantModal } from './AdminGrantModal';
 import { computeIncomePerTick } from '../game/settlements';
 import { TECH_DEFS, nextLevelCost, TECH_MAX_LEVEL, type TechId } from '../game/techs';
 import { useTutorial } from '../state/tutorial';
-import { TUTORIAL_STEP_COUNT } from '../game/tutorialSteps';
+import { TUTORIAL_STEP_COUNT, TRIAL_TUTORIAL_STEP_COUNT } from '../game/tutorialSteps';
 import type { GameState } from '../types';
 import { displayResource } from '../game/formatResources';
 import { GameDetail } from '../multiplayer/AdminAnalytics';
@@ -36,7 +36,7 @@ import { useIsMobile, isInApp } from '../hooks/useIsMobile';
 import { saveTextFile } from '../platform/saveTextFile';
 import { t, tn } from '../i18n/core';
 import { useI18n } from '../i18n/react';
-import { SoloClock } from '../multiplayer/SoloClock';
+import { SoloClock, soloSpeedLabel, nextSoloSpeed } from '../multiplayer/SoloClock';
 import { openSaveEmpire } from '../multiplayer/trial/SaveEmpire';
 import '../multiplayer/trial/trial.css';
 
@@ -186,7 +186,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       })();
 
   return (
-    <div className="top-bar">
+    <div className={`top-bar${gameState.solo ? ' top-bar--solo' : ''}`}>
       <button
         className="top-bar__title"
         onClick={() => setMenuOpen(true)}
@@ -1484,6 +1484,10 @@ const SideMenu: React.FC<SideMenuProps> = ({
   // Tutorial — replay entry under GAME. The first-game prompt has its
   // own modal; this menu item is the "I want to see it again" path.
   const tutorial = useTutorial();
+  // A trial game replays ITS tour (the one it opened with), and says how
+  // long that one is: the menu offered "24 steps" beside a 12-step tour.
+  const { gameState: menuGame } = useGameContext();
+  const trialGame = !!menuGame.solo?.trial;
   // A phone has no Esc key: no "Press Esc to close" footer there.
   const isMobile = useIsMobile();
   // "Log copied" / failure note on the Download Log row. The menu sits
@@ -1600,6 +1604,30 @@ const SideMenu: React.FC<SideMenuProps> = ({
               <span className="side-menu__item-hint">{t('topbar.load.hint')}</span>
             </button>
           )}
+          {/* A solo game's clock on a narrow phone: the bar keeps pause /
+              resume; speed and the single tick are here (SoloClock.css). */}
+          {menuGame.solo && isMobile && (
+            <button
+              className="side-menu__item"
+              onClick={() => window.dispatchEvent(new CustomEvent('orbital:solo-clock', { detail: { action: 'speed' } }))}
+              title={t('solo.speedTitle')}
+            >
+              <span className="side-menu__item-icon">⏱</span>
+              <span className="side-menu__item-label">{t('solo.menu.speed', { speed: soloSpeedLabel(menuGame.tickIntervalMs ?? 120_000) })}</span>
+              <span className="side-menu__item-hint">{t('solo.menu.speedHint', { next: soloSpeedLabel(nextSoloSpeed(menuGame.tickIntervalMs ?? 120_000)) })}</span>
+            </button>
+          )}
+          {menuGame.solo?.paused && isMobile && (
+            <button
+              className="side-menu__item"
+              onClick={() => window.dispatchEvent(new CustomEvent('orbital:solo-clock', { detail: { action: 'step' } }))}
+              title={t('solo.stepTitle')}
+            >
+              <span className="side-menu__item-icon">⏭</span>
+              <span className="side-menu__item-label">{t('solo.step')}</span>
+              <span className="side-menu__item-hint">{t('solo.stepTitle')}</span>
+            </button>
+          )}
           {/* A Play for Free trial (trial.js): keep it. First in the menu. */}
           {user?.shadow && (
             <button
@@ -1627,8 +1655,10 @@ const SideMenu: React.FC<SideMenuProps> = ({
               // player enters a game the prompt fires again. Calling
               // start() directly also relaunches the tour now without
               // requiring a reload.
-              tutorial.reset();
-              tutorial.start();
+              // (The trial's tour has its own done flag; reset() is the
+              // full tour's, so a trial leaves it alone.)
+              if (trialGame) tutorial.startTrial();
+              else { tutorial.reset(); tutorial.start(); }
               onClose();
             }}
             title={t('topbar.tutorial.title')}
@@ -1637,7 +1667,7 @@ const SideMenu: React.FC<SideMenuProps> = ({
             <span className="side-menu__item-label">
               {tutorial.completed ? t('topbar.tutorial.replay') : t('topbar.tutorial.start')}
             </span>
-            <span className="side-menu__item-hint">{t('topbar.tutorial.hint', { n: TUTORIAL_STEP_COUNT })}</span>
+            <span className="side-menu__item-hint">{t('topbar.tutorial.hint', { n: trialGame ? TRIAL_TUTORIAL_STEP_COUNT : TUTORIAL_STEP_COUNT })}</span>
           </button>
 
           <LightweightToggle />
