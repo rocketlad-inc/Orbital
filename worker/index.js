@@ -1481,9 +1481,10 @@ import * as missiles from './missiles.js';
 import * as solo from './solo.js';
 import * as aiEmpire from './aiEmpire.js';
 import * as trial from './trial.js';
+import * as saga from './saga/index.js';
 import { carryNamePools } from './namePoolHistory.js';
 
-const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, studio, analytics, configAdmin, emailAdmin, emailLogin, store, skins, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed, customMaps, ending, discoveryOffers, invites, visits, profileAwards, missiles, solo];
+const FEATURE_MODULES = [lobby, factions, messages, senate, trades, market, wars, tradeSummary, push, tradeRoutesV2, state, actions, fleets, discord, discordOauth, adminDashboard, studio, analytics, configAdmin, emailAdmin, emailLogin, store, skins, economy, devlog, widget, notifyActions, wearRequests, panel, gameFeed, customMaps, ending, discoveryOffers, invites, visits, profileAwards, missiles, solo, saga];
 
 function matchPattern(pattern, pathname) {
   if (typeof pattern === 'string') {

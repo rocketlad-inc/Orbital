@@ -9,6 +9,7 @@
 // ============================================================
 
 import type { ShipIconVariant } from '../components/ShipIcons';
+import type { SagaScript } from './sagaScript';
 
 // ---- payloads -----------------------------------------------------------
 
@@ -49,6 +50,9 @@ export interface MatchSummary {
     resolved_at_tick: number | null;
     votes: Array<{ fid: string; vote: string; weight: number }>;
   }>;
+  /** The film's script (the Saga Engine): null while the match is played
+   *  or from an older server. */
+  saga?: SagaScript | null;
 }
 
 export interface SnapshotRow {

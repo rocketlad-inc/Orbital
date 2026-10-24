@@ -51,9 +51,12 @@ import { getEmblemImage } from './emblemCache';
 import { getLang, tIn, type Key } from '../i18n/core';
 import {
   battleWindow, filmSecondsAt, FILM_STEP_MAX_MS, planReel, reelRate, reelSeconds, sceneAt,
+  INTRO_SECONDS, OPENING_SECONDS, FINALE_SECONDS,
   type ReelBattle, type ReelBeat, type ReelScene,
 } from './filmReel';
 import { beatCaption, billName, broadcastCopy, buildBeats, captionFor, type Caption } from './filmCaptions';
+import { sagaPair, portraitUrl, type SagaBeat, type SagaScript } from './sagaScript';
+import { drawCaptainCard, drawCastCard, drawCrawl, drawFlash, drawRollCall, drawTransmission } from './sagaOverlay';
 import {
   drawBattleTally, drawClock, drawCountChips, drawLowerThird, drawProgress,
   drawResultCard, drawStandings, drawTicker, drawTitleCard, drawVignette,
@@ -61,6 +64,17 @@ import {
   drawBattleVerdict, drawProgressMeter, shortName, drawHookLine, drawDysonShell, drawSenateCard,
   drawToasts, drawOutCards, drawHomePin,
 } from './filmOverlay';
+
+/** Seconds each empire's card holds in the opening act. */
+const CAST_CARD_SECONDS = 2.1;
+/** Seconds a transmission from the public channel stays up. */
+const TRANSMISSION_SECONDS = 5.5;
+/** The share of a scripted film kept for wide shots of the living system. */
+const ESTABLISHING_SHARE = 0.18;
+/** How many days of freighter traffic a trade lane shows. */
+const LANE_WINDOW_TICKS = 30;
+/** The roll call's time in the finale, for this many empires. */
+const ROLL_CALL_FINALE_SECONDS = (n: number) => 3.2 + 0.55 * n;
 
 const NEUTRAL = '#8a9fb3';
 /** Log lines that ride the ticker: the news, not the bookkeeping. */
@@ -113,6 +127,36 @@ export function createMatchMap(
   const filmFaction = (fid: string | null | undefined) => (fid ? filmFactions.get(fid) : undefined);
   // Start the emblem rasters now: they land a frame or two later.
   for (const f of filmFactions.values()) getEmblemImage(f.emblem ?? null, liftColor(f.color, 150));
+  /**
+   * THE SCRIPT (the Saga Engine, worker/saga/): the runtime, the crawl, the
+   * empires' cards, which scenes the story needs and their words, the
+   * veteran captains, the transmissions and the roll call. Absent while a
+   * match is played and from older servers; the film then plays its own edit.
+   */
+  const saga: SagaScript | null = summary.saga ?? null;
+  const sagaCast = saga ? saga.cast.filter(c => filmFactions.has(c.fid)) : [];
+  /** An empire's first world: where a scene about it, with no world of its
+   *  own in the record, is set. */
+  const homeOf = (fid: string): string | null => {
+    for (const r of summary.chronicle ?? []) {
+      if (r.kind === 'settlement_built' && r.actor_faction_id === fid && r.body_id) return r.body_id;
+    }
+    return null;
+  };
+  /** A world by its name (the script names the world a veteran fell at). */
+  const bodyNamed = (name: string | null | undefined): string | null =>
+    (name ? summary.bodies.find(b => b.name === name)?.id ?? null : null);
+  /** Captain portraits, loading as soon as the film is built. */
+  const portraits = new Map<string, HTMLImageElement>();
+  if (typeof Image !== 'undefined') {
+    for (const v of saga?.veterans ?? []) {
+      const url = portraitUrl(v.avatar);
+      if (!url || portraits.has(v.name)) continue;
+      const img = new Image();
+      img.src = url;
+      portraits.set(v.name, img);
+    }
+  }
   // ---- layout ----------------------------------------------------------
   //
   // Map units. Orbits are log-compressed — real proportions are empty —
@@ -243,11 +287,17 @@ export function createMatchMap(
   let built: Array<{ at: number; body: string; fid: string }> = [];
   /** The roll call: when the first pin lands, the gap between pins, and
    *  when they lift off for the land grab (film seconds into the act). */
-  const ROLL_CALL_AT = 0.5, ROLL_CALL_STEP = 0.32, ROLL_CALL_END = 5.2;
+  // With a script, each empire gets its card (sagaOverlay.drawCastCard) and
+  // its home pin lands with it.
+  const ROLL_CALL_AT = 0.5;
+  const ROLL_CALL_STEP = sagaCast.length ? CAST_CARD_SECONDS : 0.32;
+  const ROLL_CALL_END = sagaCast.length ? ROLL_CALL_AT + sagaCast.length * CAST_CARD_SECONDS : 5.2;
   /** War, peace and pact banners, with the film second each comes up. */
   let toasts: Array<{ at: number; kind: 'war' | 'peace' | 'pact' | 'broken'; a: string; b: string }> = [];
   /** Smaller headlines, with the film second each one comes up. */
   let ticker: Array<{ beat: ReelBeat; start: number }> = [];
+  /** The script's lines from the public channel, with the film second each comes up. */
+  let transmissions: Array<{ at: number; fid: string; text: string; tick: number }> = [];
 
   /**
    * Layout audit. Off unless a harness turns it on, and it only records
@@ -615,6 +665,50 @@ export function createMatchMap(
         term: p.effect_until_tick == null && p.bill_kind !== 'war_authorization' ? T('senate.forever') : T('senate.for', { d: days }) };
     }
 
+    // THE STORY'S SAY (the Saga Engine). Its scenes join the cut with their
+    // own weight and words; a headline the story is about counts for more,
+    // one it is not about for less; so do the fights.
+    if (saga) {
+      const used = new Set<ReelBeat>();
+      for (const sb of saga.beats) {
+        // A veteran is matched by name: two captains can die on one day.
+        const hit = beats.find(e => !used.has(e) && e.kind === sb.kind && Math.abs(e.tick - sb.tick) <= 1
+          && (!sb.fid || !e.fid || e.fid === sb.fid || e.target === sb.fid)
+          && (!sb.veteran || e.data?.captain_name === sb.veteran));
+        if (hit) {
+          used.add(hit);
+          hit.weight = Math.max(hit.weight, sb.weight);
+          hit.data = { ...(hit.data ?? {}), saga: sb };
+          if (sb.veteran) {
+            hit.hold = Math.max(hit.hold ?? 0, 6.4); hit.lead = Math.max(hit.lead ?? 2, 3);
+            hit.place = `veteran:${sb.veteran}`;
+            hit.body = hit.body ?? bodyNamed(saga.veterans.find(v => v.name === sb.veteran)?.world);
+          }
+        } else {
+          // A scene the film's own log reading does not have (a gift, a
+          // veteran on a world the log row did not name): where it happened
+          // if the record says, else the whole system.
+          const body = sb.veteran ? bodyNamed(saga.veterans.find(v => v.name === sb.veteran)?.world)
+            : sb.fid ? (homeOf(sb.fid) ?? null) : null;
+          const e: ReelBeat = { tick: sb.tick, kind: sb.kind, body: sb.kind === 'trade_accepted' ? null : body,
+            weight: sb.weight, fid: sb.fid, target: sb.target, text: sb.title, data: { saga: sb } };
+          if (sb.veteran) { e.hold = 6.4; e.lead = 3; e.place = `veteran:${sb.veteran}`; }
+          beats.push(e);
+          used.add(e);
+        }
+      }
+      for (const e of beats) {
+        if (used.has(e) || e.weight <= 0) continue;
+        const m = Math.max(saga.boosts.fids[e.fid ?? ''] ?? 0, saga.boosts.fids[e.target ?? ''] ?? 0);
+        e.weight *= m > 0 ? Math.min(1.3, m) : 0.85;
+      }
+      for (const b of battles) {
+        const pair = b.sides.length >= 2 ? saga.boosts.pairs[sagaPair(b.sides[0], b.sides[1])] : undefined;
+        const fid = Math.max(...b.sides.map(f => saga.boosts.fids[f] ?? 0), 0);
+        b.boost = pair ?? (fid > 0 ? Math.min(1.2, fid) : 0.8);
+      }
+    }
+
     lastFacts = { battles, beats: [...beats].filter(b => b.weight > 0).sort((a, b) => b.weight - a.weight).slice(0, 40)
       .map(b => ({ tick: b.tick, kind: b.kind, w: Math.round(b.weight), body: b.body, text: b.text.slice(0, 60) })) };
     const dysonBody = (summary.chronicle ?? []).find(r => r.kind === 'dyson_initiated')?.body_id ?? null;
@@ -624,11 +718,25 @@ export function createMatchMap(
     const span = hi - lo;
     const openingTo = Math.round(Math.max(lo + span * 0.12, Math.min(lo + span * 0.35,
       firstWar != null ? firstWar - 3 : lo + span * 0.25)));
-    scenes = planReel({ lo, hi, battles, beats }, {
+    const plan = (target?: number) => planReel({ lo, hi, battles, beats }, {
       finaleBody: summary.game.victory_type === 'engineering' && dysonBody && byId.has(dysonBody)
         ? dysonBody : null,
       openingTo,
+      ...(saga ? {
+        targetSeconds: target ?? saga.runtime,
+        introSeconds: INTRO_SECONDS + saga.crawl.seconds,
+        openingSeconds: Math.max(OPENING_SECONDS, ROLL_CALL_END + 6.5),
+        finaleSeconds: FINALE_SECONDS + ROLL_CALL_FINALE_SECONDS(sagaCast.length),
+        establishing: ESTABLISHING_SHARE,
+      } : {}),
     });
+    scenes = plan();
+    // The script's runtime is a ceiling (three minutes at most): the
+    // time-lapses' floors can carry a plan past it, so plan again shorter.
+    if (saga) {
+      const over = reelSeconds(scenes) - saga.runtime;
+      if (over > 0.5) scenes = plan(saga.runtime - over - 1);
+    }
     filmTotal = reelSeconds(scenes);
     captionCache.clear();
     usedTitles.clear();
@@ -673,10 +781,32 @@ export function createMatchMap(
       }
     }
 
+    // THE CAST IN SEAT ORDER, as the script cards them.
+    if (sagaCast.length) {
+      const order = new Map(sagaCast.map((c, i) => [c.fid, i]));
+      homes.sort((a, b) => (order.get(a.fid) ?? 99) - (order.get(b.fid) ?? 99));
+    }
+    // THE PUBLIC CHANNEL: each line comes up when it was sent (or as the
+    // next scene opens, if the film cuts across it), never over the cold
+    // open or the roll call, and never on top of another.
+    transmissions = [];
+    {
+      let lastEnd = -Infinity;
+      for (const x of saga?.transmissions ?? []) {
+        const sc = sceneAt(scenes, x.tick);
+        if (!sc || sc.kind === 'intro' || sc.kind === 'finale' || sc.act === 'opening') continue;
+        const at = Math.max(filmSecondsAt(scenes, x.tick), lastEnd + 0.5);
+        transmissions.push({ at, fid: x.fid, text: x.text, tick: x.tick });
+        lastEnd = at + TRANSMISSION_SECONDS;
+      }
+    }
+
     // --- the ticker: smaller headlines, spaced so each can be read ------
+    // A scripted film has none: one subject per shot (Sean, 2026-10-23).
     ticker = [];
     let lastStart = -Infinity;
     for (const s of scenes) {
+      if (saga) break;
       if (s.kind === 'intro' || s.kind === 'finale') continue;
       const sEnd = filmSecondsAt(scenes, s.to);
       for (const e of s.extras) {
@@ -1718,6 +1848,51 @@ export function createMatchMap(
         ctx.restore();
       }
     }
+    // THE LIVING SYSTEM, in a scripted film's wide shots: the trade lanes,
+    // drawn from the freighters' own flights over the last few weeks (what
+    // anyone could see on the map; no agreement's terms), each in its
+    // owner's colour and brighter the busier it is.
+    if (saga && overview > 0.3) {
+      const now = Math.floor(t);
+      const lanes = new Map<string, { a: string; b: string; fid: string | null; n: number }>();
+      for (let k = now - LANE_WINDOW_TICKS; k <= now; k++) {
+        for (const m of transitAt.get(k) ?? []) {
+          if (m.cls !== 'freighter') continue;
+          const [a, b] = m.from < m.to ? [m.from, m.to] : [m.to, m.from];
+          const key = `${a}|${b}|${m.fid ?? ''}`;
+          const l = lanes.get(key) ?? { a, b, fid: m.fid, n: 0 };
+          l.n++;
+          lanes.set(key, l);
+        }
+      }
+      if (lanes.size) {
+        const u = unitOf(H);
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.lineCap = 'round';
+        for (const l of lanes.values()) {
+          const ga = byGame.get(l.a), gb = byGame.get(l.b);
+          if (!ga || !gb || !shown(ga) || !shown(gb)) continue;
+          const pa = toPx(pos(ga.id, t)), pb = toPx(pos(gb.id, t));
+          const mx = (pa.x + pb.x) / 2, my = (pa.y + pb.y) / 2;
+          // A gentle bow, so two lanes between neighbours do not lie on top of each other.
+          const dx = pb.x - pa.x, dy = pb.y - pa.y, len = Math.hypot(dx, dy) || 1;
+          const bow = Math.min(60 * u, len * 0.12);
+          const cx = mx - (dy / len) * bow, cy = my + (dx / len) * bow;
+          const a = Math.min(0.55, 0.12 + l.n * 0.04) * Math.min(1, (overview - 0.3) / 0.3);
+          ctx.strokeStyle = hexA(colorOf(l.fid), a);
+          ctx.lineWidth = (1.2 + Math.min(3, l.n * 0.18)) * u;
+          ctx.beginPath(); ctx.moveTo(pa.x, pa.y); ctx.quadraticCurveTo(cx, cy, pb.x, pb.y); ctx.stroke();
+          // The traffic itself: a light running the lane.
+          const q = ((t * 0.9 + (hashStr(`${l.a}${l.b}`) % 100) / 100) % 1);
+          const qx = (1 - q) * (1 - q) * pa.x + 2 * (1 - q) * q * cx + q * q * pb.x;
+          const qy = (1 - q) * (1 - q) * pa.y + 2 * (1 - q) * q * cy + q * q * pb.y;
+          ctx.fillStyle = hexA(colorOf(l.fid), Math.min(0.9, a * 1.8));
+          ctx.beginPath(); ctx.arc(qx, qy, (1.6 + Math.min(2, l.n * 0.1)) * u, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.restore();
+      }
+    }
     // THE OPENING ACT on the map: each empire pinned to its home world in
     // turn (the roll call), then every colony lighting up in its founder's
     // colour as it is settled (the land grab).
@@ -2220,6 +2395,13 @@ export function createMatchMap(
       c = montageCaption(s) ?? { kicker: '', title: '', sub: '', fid: null };
       captionCache.set(s, c);
     }
+    // The script's words for a scene it asked for: its headline, and the
+    // line that says what caused it.
+    const sb = s.beat?.data?.saga as SagaBeat | undefined;
+    if (!c && sb && s.kind === 'beat') {
+      c = { kicker: sb.kicker, title: sb.title, sub: sb.because, fid: sb.fid };
+      captionCache.set(s, c);
+    }
     if (!c) {
       c = captionFor(s, {
         lang: getLang(), summary,
@@ -2415,7 +2597,20 @@ export function createMatchMap(
       const most = new Map<string, number>();
       for (const b of built) most.set(b.fid, (most.get(b.fid) ?? 0) + 1);
       const lead = [...most.entries()].sort((a, b) => b[1] - a[1])[0];
-      if (el < ROLL_CALL_END) {
+      if (sagaCast.length && el < ROLL_CALL_END) {
+        // THE EMPIRES, one card each: its flag, its name, its creed in its
+        // player's own words (or the engine's line when it wrote none).
+        const i = Math.max(0, Math.min(sagaCast.length - 1, Math.floor((el - ROLL_CALL_AT) / CAST_CARD_SECONDS)));
+        const c = sagaCast[i];
+        const f = filmFaction(c.fid);
+        const t0 = ROLL_CALL_AT + i * CAST_CARD_SECONDS;
+        if (f && el >= ROLL_CALL_AT) {
+          drawCastCard(ctx, W, H, { faction: f, creed: c.creed || c.tagline, quoted: !!c.creed,
+            home: c.home ?? '', index: i, count: sagaCast.length },
+          (el - t0) / 0.22, (el - (t0 + CAST_CARD_SECONDS - 0.18)) / 0.18);
+        }
+        ltRight = W * 0.62;
+      } else if (el < ROLL_CALL_END) {
         ltRight = drawLowerThird(ctx, W, H, { kicker: T('kicker.start'), title: T('title.begin', { n: empires.length }),
           sub: '', color: null }, el / 0.2, (el - (ROLL_CALL_END - 0.2)) / 0.2);
       } else if (n > 0) {
@@ -2483,8 +2678,52 @@ export function createMatchMap(
         drawHookLine(ctx, W, H, T('hook', { n: teaser.battle.peak }), el / 1.0, (el - (HOOK_SECONDS - 0.15)) / 0.15);
       }
       const at = teaser ? HOOK_SECONDS : 0;
+      // With a script, the title card gives way to the crawl.
+      const cardEnd = saga ? INTRO_SECONDS : s.seconds;
       drawTitleCard(ctx, W, H, c, empires.map(f => filmFaction(f.id)!).filter(Boolean),
-        (el - at) / 0.35, (el - (s.seconds - 0.4)) / 0.4, teaser ? 0.8 : 1);
+        (el - at) / 0.35, (el - (cardEnd - 0.4)) / 0.4, teaser ? 0.8 : 1);
+      if (saga && el >= INTRO_SECONDS - 0.35) {
+        const ce = el - INTRO_SECONDS;
+        const dur = Math.max(1, s.seconds - INTRO_SECONDS);
+        const alpha = Math.min(1, (ce + 0.35) / 0.5) * Math.min(1, (dur - ce) / 0.6);
+        drawCrawl(ctx, W, H, { show: `Orbital · ${summary.game.name ?? ''}`, title: saga.crawl.title,
+          credit: saga.crawl.credit, lines: saga.crawl.lines }, Math.max(0, ce) / dur, Math.max(0, alpha));
+      }
+    }
+    // A VETERAN FALLS: the captain's card over the fight, the ship going up
+    // in a flash that fills the frame, and the card burning out after it.
+    // A veteran who dies in the middle of a fight the film already shows
+    // gets the card in that fight's scene.
+    const vetBeat = (s.beat?.data?.saga as SagaBeat | undefined)?.veteran
+      ? s.beat!.data!.saga as SagaBeat : undefined;
+    const vet = vetBeat ? saga?.veterans.find(x => x.name === vetBeat.veteran)
+      : s.kind === 'battle' ? saga?.veterans.find(x => bodyNamed(x.world) === s.bodyId && x.tick >= s.from - 1 && x.tick <= s.to + 1)
+        : undefined;
+    if (vet) {
+      const v = vet;
+      const sb = vetBeat ?? saga!.beats.find(b => b.veteran === v.name);
+      const f = filmFaction(v.fid);
+      if (f && sb) {
+        const lostAt = filmSecondsAt(scenes, Math.max(s.from, Math.min(s.to, v.tick) - 0.35)) - filmSecondsAt(scenes, s.from);
+        const burn = Math.max(0, Math.min(1, (el - lostAt) / 0.9));
+        drawCaptainCard(ctx, W, H, {
+          name: v.name, rank: v.rank, faction: f, ship: v.ship ?? '', bio: v.bio, kicker: sb.kicker,
+          record: `${v.days} days in command · ${v.kills} ${v.kills === 1 ? 'kill' : 'kills'}${v.world ? ` · lost at ${v.world}` : ''}`,
+          ledger: v.ledger, portrait: portraits.get(v.name) ?? null,
+        }, (el - landAt(s) - 0.1) / 0.3, burn, (el - (s.seconds - 0.3)) / 0.3);
+        const gb = s.bodyId ? byGame.get(s.bodyId) : undefined;
+        const cp = gb ? toPx(pos(gb.id, curTick + curFrac)) : { x: W / 2, y: H / 2 };
+        drawFlash(ctx, W, H, cp.x, cp.y, (el - lostAt) / 1.6);
+      }
+    }
+    // THE PUBLIC CHANNEL: an empire's own words, as it sent them.
+    if (!intro && !finale) {
+      const x = transmissions.find(tx => fs >= tx.at && fs < tx.at + TRANSMISSION_SECONDS);
+      const f = x ? filmFaction(x.fid) : undefined;
+      if (x && f) {
+        drawTransmission(ctx, W, H, { faction: f, text: x.text, label: `Public channel · day ${x.tick}` },
+          (fs - x.at) / TRANSMISSION_SECONDS);
+      }
     }
     // Out of the cold open, a dip through black: the clock jumps back
     // five hundred days and the frame should say so.
@@ -2510,12 +2749,24 @@ export function createMatchMap(
         sub: summary.game.victory_type === 'engineering' ? T('sub.engineering') : '',
         color: c.fid ? colorOf(c.fid) : null }, (el - (finaleDyson() ? DYSON_SEALED_AT + 0.1 : 0.9)) / 0.2,
         (el - (FINALE_CARD_AT - 0.15)) / 0.15);
-      // The table comes in once the light has rolled out.
-      drawResultCard(ctx, W, H, { ...c, color: c.fid ? colorOf(c.fid) : null },
-        table, (el - FINALE_CARD_AT) / 0.6,
-        { worlds: T('worlds', { n: '' }).trim(), ships: T('ships', { n: '' }).trim(), url: T('url'),
-          out: T('out') },
-        !!winner);
+      // The table comes in once the light has rolled out. With a script it
+      // is the roll call: every empire, its role and the record behind it.
+      if (saga && sagaCast.length) {
+        const byFid = new Map(sagaCast.map(x => [x.fid, x]));
+        const rows = saga.rollCall.map(fid => {
+          const f = filmFaction(fid), x = byFid.get(fid);
+          return f && x ? { faction: f, label: x.label, receipt: x.receipt,
+            fallen: elimAt.has(fid), winner: fid === winner } : null;
+        }).filter((r): r is NonNullable<typeof r> => !!r);
+        drawRollCall(ctx, W, H, `${summary.game.name ?? ''} · the roll call`, rows,
+          (el - FINALE_CARD_AT) / Math.max(1, s.seconds - FINALE_CARD_AT - 1.2), T('url'));
+      } else {
+        drawResultCard(ctx, W, H, { ...c, color: c.fid ? colorOf(c.fid) : null },
+          table, (el - FINALE_CARD_AT) / 0.6,
+          { worlds: T('worlds', { n: '' }).trim(), ships: T('ships', { n: '' }).trim(), url: T('url'),
+            out: T('out') },
+          !!winner);
+      }
     }
     drawProgress(ctx, W, H, filmTotal > 0 ? fs / filmTotal : 0);
   }

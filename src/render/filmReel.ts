@@ -49,6 +49,9 @@ export interface ReelBattle {
   present?: number;
   /** The most hulls in the fight at one time (all sides). */
   atOnce?: number;
+  /** The story's say (the Saga Engine): over 1 a fight the story is about,
+   *  under 1 one it is not. Multiplies the battle's weight. */
+  boost?: number;
 }
 
 export interface ReelBeat {
@@ -70,6 +73,9 @@ export interface ReelBeat {
   /** Ticks the scene opens before `tick` (default 2). Something that
    *  APPEARS on its tick (the Leviathan surfacing) opens one before. */
   lead?: number;
+  /** Its own place for the variety rule: a scene that is a different story
+   *  from the fight at the same world (a veteran's death) is no repeat. */
+  place?: string;
 }
 
 export interface ReelFacts {
@@ -105,6 +111,14 @@ export interface ReelOptions {
   /** THE OPENING ACT runs to this tick (the first war, say): one scene of
    *  its own, the roll call and the land grab, never cut across. */
   openingTo?: number;
+  /** The Saga Engine's timings: the cold open with its crawl, the opening
+   *  act with every empire's card, the finale with its roll call. */
+  introSeconds?: number;
+  openingSeconds?: number;
+  finaleSeconds?: number;
+  /** The share of the runtime kept for the wide shots between scenes (the
+   *  establishing shots): the story scenes may not eat into it. */
+  establishing?: number;
 }
 
 /** How long the opening act runs: the roll call, then the land grab. */
@@ -192,6 +206,11 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
   const lo = f.lo, hi = Math.max(f.lo + 1, f.hi);
   const span = hi - lo;
   const target = opts.targetSeconds ?? reelBudget(span);
+  const introSec = opts.introSeconds ?? INTRO_SECONDS;
+  const openingSec = opts.openingSeconds ?? OPENING_SECONDS;
+  const finaleSec = opts.finaleSeconds ?? FINALE_SECONDS;
+  /** What the story scenes may spend: the rest is for the wide shots. */
+  const sceneBudget = target * (1 - Math.max(0, Math.min(0.5, opts.establishing ?? 0)));
 
   // The bookends. A one-tick match is all bookend.
   const introTo = Math.min(lo + 1, hi);
@@ -230,7 +249,7 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
     // outrank the Leviathan dying; scaled, the deadliest fight of the
     // match sits level with the biggest headline.
     const rel = Math.sqrt(w / peakW);
-    cands.push({ kind: 'battle', from, to, weight: BATTLE_WEIGHT_FLOOR + BATTLE_WEIGHT_SPREAD * rel,
+    cands.push({ kind: 'battle', from, to, weight: (BATTLE_WEIGHT_FLOOR + BATTLE_WEIGHT_SPREAD * rel) * (b.boost ?? 1),
       place: b.body, pair: b.sides.length >= 2 ? [...b.sides].sort().join('|') : null,
       // ...but never slower than about a second and a quarter a day: a
       // four-day fight held fourteen seconds is slow motion.
@@ -259,7 +278,7 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
     // An ARC told at one place -- the Leviathan surfacing then breaking a
     // world, a Sphere begun then struck at 99% -- is different pictures,
     // not repeats: the climax took the repeat discount and lost its scene.
-    const place = /^(kaiju|dyson)_/.test(e.kind) ? `arc:${e.kind}` : e.body ?? `${e.kind}:${e.target ?? e.fid ?? ""}`;
+    const place = e.place ?? (/^(kaiju|dyson)_/.test(e.kind) ? `arc:${e.kind}` : e.body ?? `${e.kind}:${e.target ?? e.fid ?? ""}`);
     cands.push({ kind: 'beat', from, to, weight: e.weight, place, pair: null,
       seconds: e.hold ?? Math.max(BEAT_MIN_SECONDS, Math.min(BEAT_MAX_SECONDS, BEAT_MIN_SECONDS + (e.weight - 60) / 60)), framing: e.body ? 'world' : 'system',
       bodyId: e.body, beat: e });
@@ -337,7 +356,7 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
     return { ...c, from: best[0], to: best[1],
       seconds: c.seconds * Math.max(0.6, (best[1] - best[0]) / Math.max(1, c.to - c.from)) };
   };
-  let used = INTRO_SECONDS + FINALE_SECONDS + (openTo != null ? OPENING_SECONDS : 0);
+  let used = introSec + finaleSec + (openTo != null ? openingSec : 0);
   const pool = [...cands];
   for (;;) {
     let best = -1, bestW = 0, bestC: Cand | null = null;
@@ -347,7 +366,7 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
       // Two headlines at one world back to back are one shot jump-cut.
       if (c.kind === 'beat' && chosen.some(x => x.kind === 'beat' && x.place === c.place
         && Math.abs(x.from - c.from) <= 20)) continue;
-      if (used + c.seconds + montageFloor([...chosen, c]) > target) continue;
+      if (used + c.seconds + montageFloor([...chosen, c]) > sceneBudget) continue;
       const w = worth(c, chosen);
       if (w > bestW + 1e-9) { best = i; bestW = w; bestC = c; }
     }
@@ -370,11 +389,11 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
 
   // ---- lay the timeline out ------------------------------------------
   const scenes: ReelScene[] = [];
-  scenes.push({ kind: 'intro', from: lo, to: introTo, seconds: INTRO_SECONDS,
+  scenes.push({ kind: 'intro', from: lo, to: introTo, seconds: introSec,
     framing: 'system', bodyId: null, extras: [] });
   let cur = introTo;
   if (openTo != null) {
-    scenes.push({ kind: 'montage', from: introTo, to: openTo, seconds: OPENING_SECONDS,
+    scenes.push({ kind: 'montage', from: introTo, to: openTo, seconds: openingSec,
       framing: 'system', bodyId: null, extras: [], act: 'opening' });
     cur = openTo;
   }
@@ -399,7 +418,7 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
     cur = c.to;
   }
   pushMontage(cur, finaleFrom);
-  scenes.push({ kind: 'finale', from: finaleFrom, to: hi, seconds: FINALE_SECONDS,
+  scenes.push({ kind: 'finale', from: finaleFrom, to: hi, seconds: finaleSec,
     framing: opts.finaleBody ? 'world' : 'system', bodyId: opts.finaleBody ?? null, extras: [] });
 
   // ---- montage pace: spend what is left -------------------------------

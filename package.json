@@ -48,6 +48,7 @@
     "sim:laws": "node sim/senateLaws.mjs",
     "sim:reparations": "node sim/senateReparations.mjs",
     "sim:ending": "node sim/ending.mjs",
+    "sim:saga": "node sim/saga.mjs",
     "sim:awards": "node sim/profileAwards.mjs",
     "sim:statskiller": "node sim/shipStatsKiller.mjs",
     "sim:unload": "node sim/unloadHold.mjs",

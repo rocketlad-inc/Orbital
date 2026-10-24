@@ -2310,8 +2310,17 @@ async function handleMatchSummary(req, env, { params }) {
   ]);
   const game = gameQ.results?.[0];
   if (!game) return err(404, 'not_found', 'no such game');
+  // THE SCRIPT (the Saga Engine, worker/saga/): the crawl, the cast, the
+  // stories and their words. Written when the match ended, kept with the
+  // game; built now if it is missing. Null while the match is played.
+  let saga = null;
+  if (game.status === 'completed') {
+    try { saga = await (await import('./saga/index.js')).sagaFor(env, gameId); }
+    catch (e) { console.error('match summary: saga failed', e); }
+  }
   return json({
     game,
+    saga,
     ticks: rangeQ.results?.[0] ?? { lo: null, hi: null, rows: 0 },
     firstLiveTick: liveQ.results?.[0]?.t ?? null,
     factions: fxQ.results ?? [],
