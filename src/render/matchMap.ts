@@ -27,6 +27,7 @@ import {
   drawArrivalFlashes, drawEngagementFire, drawWrecks, spawnArrivalFlash, spawnWreck,
 } from './combatFx';
 import { drawBlast, drawDebris } from './fxPrimitives';
+import { drawBattleHaze } from './battleHaze';
 import type { RenderContext, StarfieldCache } from './mapRenderer';
 import { flushLabels, resetReservations } from './labelLayer';
 import { computeSystemRegions } from './systemRegions';
@@ -51,9 +52,12 @@ import { getEmblemImage } from './emblemCache';
 import { getLang, tIn, type Key } from '../i18n/core';
 import {
   battleWindow, filmSecondsAt, FILM_STEP_MAX_MS, planReel, reelRate, reelSeconds, sceneAt,
-  type ReelBattle, type ReelBeat, type ReelScene,
+  INTRO_SECONDS, OPENING_SECONDS, FINALE_SECONDS, FLEET_FLIGHT_TICKS,
+  type FleetMove, type ReelBattle, type ReelBeat, type ReelScene,
 } from './filmReel';
 import { beatCaption, billName, broadcastCopy, buildBeats, captionFor, type Caption } from './filmCaptions';
+import { sagaPair, portraitUrl, type SagaBeat, type SagaScript } from './sagaScript';
+import { drawCaptainCard, drawCastCard, drawCrawl, drawFlash, drawRollCall, drawTransmission } from './sagaOverlay';
 import {
   drawBattleTally, drawClock, drawCountChips, drawLowerThird, drawProgress,
   drawResultCard, drawStandings, drawTicker, drawTitleCard, drawVignette,
@@ -61,6 +65,20 @@ import {
   drawBattleVerdict, drawProgressMeter, shortName, drawHookLine, drawDysonShell, drawSenateCard,
   drawToasts, drawOutCards, drawHomePin,
 } from './filmOverlay';
+
+// The overlays' reading times were set for the eye of whoever cut the
+// film; players could not keep up (Lorne, 2026-10-24). Each now stays up
+// about a third longer, and the scenes under them a fifth (FILM_PACE).
+/** Seconds each empire's card holds in the opening act. */
+const CAST_CARD_SECONDS = 2.7;
+/** Seconds a transmission from the public channel stays up. */
+const TRANSMISSION_SECONDS = 7.2;
+/** The share of a scripted film kept for wide shots of the living system. */
+const ESTABLISHING_SHARE = 0.18;
+/** How many days of freighter traffic a trade lane shows. */
+const LANE_WINDOW_TICKS = 30;
+/** The roll call's time in the finale, for this many empires. */
+const ROLL_CALL_FINALE_SECONDS = (n: number) => 4 + 0.7 * n;
 
 const NEUTRAL = '#8a9fb3';
 /** Log lines that ride the ticker: the news, not the bookkeeping. */
@@ -74,16 +92,16 @@ const TICKER_KINDS = new Set([
   'mega_strike_charging', 'asteroid_impact', 'missile_strike',
 ]);
 /** Film seconds between two ticker lines coming up, and each one's life. */
-const TICKER_GAP_SECONDS = 0.7;
+const TICKER_GAP_SECONDS = 1.0;
 /** How much slower than the live map a hull glides to a new battle slot:
  *  measured, re-slots swept hulls 56 degrees round Mars in nine frames. */
 const FILM_GLIDE_PACE = 3;
 /** See fireReference: hulls per fight before reloads stretch, in the film. */
 const FILM_FIRE_REFERENCE = 18;
 /** War, peace and pact banners: the least gap between two, and their life. */
-const TOAST_GAP_SECONDS = 0.5;
-const TOAST_LIFE_SECONDS = 3.0;
-const TICKER_LIFE_SECONDS = 2.6;
+const TOAST_GAP_SECONDS = 0.7;
+const TOAST_LIFE_SECONDS = 4.0;
+const TICKER_LIFE_SECONDS = 3.5;
 const CLASSES = ['corvette', 'frigate', 'destroyer', 'freighter', 'colony'];
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- iconClassOf — icon refactor in flight
 const iconClassOf = (c: string | null): ShipIconClass =>
@@ -113,6 +131,36 @@ export function createMatchMap(
   const filmFaction = (fid: string | null | undefined) => (fid ? filmFactions.get(fid) : undefined);
   // Start the emblem rasters now: they land a frame or two later.
   for (const f of filmFactions.values()) getEmblemImage(f.emblem ?? null, liftColor(f.color, 150));
+  /**
+   * THE SCRIPT (the Saga Engine, worker/saga/): the runtime, the crawl, the
+   * empires' cards, which scenes the story needs and their words, the
+   * veteran captains, the transmissions and the roll call. Absent while a
+   * match is played and from older servers; the film then plays its own edit.
+   */
+  const saga: SagaScript | null = summary.saga ?? null;
+  const sagaCast = saga ? saga.cast.filter(c => filmFactions.has(c.fid)) : [];
+  /** An empire's first world: where a scene about it, with no world of its
+   *  own in the record, is set. */
+  const homeOf = (fid: string): string | null => {
+    for (const r of summary.chronicle ?? []) {
+      if (r.kind === 'settlement_built' && r.actor_faction_id === fid && r.body_id) return r.body_id;
+    }
+    return null;
+  };
+  /** A world by its name (the script names the world a veteran fell at). */
+  const bodyNamed = (name: string | null | undefined): string | null =>
+    (name ? summary.bodies.find(b => b.name === name)?.id ?? null : null);
+  /** Captain portraits, loading as soon as the film is built. */
+  const portraits = new Map<string, HTMLImageElement>();
+  if (typeof Image !== 'undefined') {
+    for (const v of saga?.veterans ?? []) {
+      const url = portraitUrl(v.avatar);
+      if (!url || portraits.has(v.name)) continue;
+      const img = new Image();
+      img.src = url;
+      portraits.set(v.name, img);
+    }
+  }
   // ---- layout ----------------------------------------------------------
   //
   // Map units. Orbits are log-compressed — real proportions are empty —
@@ -202,6 +250,26 @@ export function createMatchMap(
   for (const r of summary.chronicle ?? []) {
     if (r.kind === 'world_obliterated' && r.body_id && !goneAt.has(r.body_id)) goneAt.set(r.body_id, r.tick_number);
   }
+  /**
+   * A world's THEATRE: the planet it belongs to (a moon's planet, or the
+   * planet itself). Fighting at Callisto, Ganymede and Io is the Battle of
+   * Jupiter, framed so the moons are in it (Lorne, 2026-10-24: "Why are we
+   * all the way back here through the entire battle of Jupiter?").
+   */
+  const theatreCache = new Map<string, string>();
+  const theatreOf = (id: string): string => {
+    const hit = theatreCache.get(id);
+    if (hit) return hit;
+    let cur = byId.get(id);
+    for (let guard = 0; cur && guard < 6; guard++) {
+      const parent = cur.parent_body_id ? byId.get(cur.parent_body_id) : undefined;
+      if (!parent || parent.type === 'star') break;
+      cur = parent;
+    }
+    const out = cur?.id ?? id;
+    theatreCache.set(id, out);
+    return out;
+  };
   const drawableAt = (b: Body, tick: number) =>
     (b.type === 'star' || (!!b.parent_body_id && !!b.orbit_period))
     && !(b.destroyed_at_tick != null && tick >= b.destroyed_at_tick)
@@ -243,11 +311,17 @@ export function createMatchMap(
   let built: Array<{ at: number; body: string; fid: string }> = [];
   /** The roll call: when the first pin lands, the gap between pins, and
    *  when they lift off for the land grab (film seconds into the act). */
-  const ROLL_CALL_AT = 0.5, ROLL_CALL_STEP = 0.32, ROLL_CALL_END = 5.2;
+  // With a script, each empire gets its card (sagaOverlay.drawCastCard) and
+  // its home pin lands with it.
+  const ROLL_CALL_AT = 0.5;
+  const ROLL_CALL_STEP = sagaCast.length ? CAST_CARD_SECONDS : 0.32;
+  const ROLL_CALL_END = sagaCast.length ? ROLL_CALL_AT + sagaCast.length * CAST_CARD_SECONDS : 5.2;
   /** War, peace and pact banners, with the film second each comes up. */
   let toasts: Array<{ at: number; kind: 'war' | 'peace' | 'pact' | 'broken'; a: string; b: string }> = [];
   /** Smaller headlines, with the film second each one comes up. */
   let ticker: Array<{ beat: ReelBeat; start: number }> = [];
+  /** The script's lines from the public channel, with the film second each comes up. */
+  let transmissions: Array<{ at: number; fid: string; text: string; tick: number }> = [];
 
   /**
    * Layout audit. Off unless a harness turns it on, and it only records
@@ -405,16 +479,18 @@ export function createMatchMap(
     const lo = summary.ticks.lo ?? 0, hi = summary.ticks.hi ?? lo;
     if (hi < lo) return;
 
+    // Counted by THEATRE: a fight at a moon is part of its planet's battle.
     const deathsAtBody = (body: string, t: number) =>
-      (deathAt.get(t) ?? []).reduce((n, d) => n + (d.body === body ? 1 : 0), 0);
+      (deathAt.get(t) ?? []).reduce((n, d) => n + (theatreOf(d.body) === body ? 1 : 0), 0);
     // A world changing hands is the point of a siege: the log's own
     // settlement rows, per world and tick.
     const fallsAt = new Map<string, number[]>();
     for (const r of summary.chronicle ?? []) {
-      if (!r.body_id || !/^settlement_(seized|destroyed|razed)$/.test(r.kind)) continue;
-      const a = fallsAt.get(r.body_id) ?? [];
+      if (!r.body_id || !/^settlement_(seized|destroyed|razed)$/.test(r.kind) || !byId.has(r.body_id)) continue;
+      const th = theatreOf(r.body_id);
+      const a = fallsAt.get(th) ?? [];
       a.push(r.tick_number);
-      fallsAt.set(r.body_id, a);
+      fallsAt.set(th, a);
     }
     const fallsAtBody = (body: string, t: number) =>
       (fallsAt.get(body) ?? []).reduce((n, x) => n + (x === t ? 1 : 0), 0);
@@ -424,9 +500,10 @@ export function createMatchMap(
     const spansOf = new Map<string, Array<[number, number]>>();
     for (const b of summary.battles) {
       if (!b.body_id || !byId.has(b.body_id)) continue;
-      const arr = spansOf.get(b.body_id) ?? [];
+      const th = theatreOf(b.body_id);
+      const arr = spansOf.get(th) ?? [];
       arr.push([b.started_tick, b.ended_tick ?? b.started_tick]);
-      spansOf.set(b.body_id, arr);
+      spansOf.set(th, arr);
     }
     for (const [body, spans] of spansOf) {
       spans.sort((a, b) => a[0] - b[0]);
@@ -461,17 +538,20 @@ export function createMatchMap(
         for (let t = window[0]; t < window[1]; t++) {
           const per = new Map<string, number>();
           for (const [id, sh] of timeline.worldAt(t).ships) {
-            if (sh.parent !== body) continue;
+            if (!sh.parent || theatreOf(sh.parent) !== body) continue;
             seen.add(id);
             if (sh.fid) per.set(sh.fid, (per.get(sh.fid) ?? 0) + 1);
           }
           for (const [f, n] of per) most.set(f, Math.max(most.get(f) ?? 0, n));
         }
         let lost = 0;
+        /** The worlds of the theatre where hulls died. */
+        const theatre = new Set<string>();
         for (let t = window[0]; t < window[1] + 1; t++) {
           for (const d of deathAt.get(t) ?? []) {
-            if (d.body !== body) continue;
+            if (theatreOf(d.body) !== body) continue;
             lost++;
+            theatre.add(d.body);
             seen.add(d.id);
             if (d.fid) lostBy.set(d.fid, (lostBy.get(d.fid) ?? 0) + 1);
           }
@@ -486,7 +566,7 @@ export function createMatchMap(
         // capital it was.
         let holder: string | null = null, holderPop = -1;
         for (const st of timeline.worldAt(window[0]).stls.values()) {
-          if (st.body !== body || !st.fid || st.pop <= holderPop) continue;
+          if (theatreOf(st.body) !== body || !st.fid || st.pop <= holderPop) continue;
           holder = st.fid; holderPop = st.pop;
         }
         if (holder && fought.includes(holder) && !sides.includes(holder) && sides.length === 2) sides[1] = holder;
@@ -494,8 +574,47 @@ export function createMatchMap(
         const peak = seen.size;
         const atOnce = [...most.values()].reduce((a, b) => a + b, 0);
         battles.push({ body, from: s0, to: e0 + 1, peak, lost, sides, window, atOnce,
-          present: Math.max(present, sides.length) });
+          present: Math.max(present, sides.length), theatre: [...theatre] });
       }
+    }
+
+    // THE FIRST BATTLE OF MARS (Lorne, 2026-10-24): a world that saw more
+    // than one real fight numbers them, the way a time traveller would say
+    // "the First World War" to a man in the trenches. One fight is simply
+    // "the Battle of Mars".
+    {
+      const real = battles.filter(b => b.peak >= 12 && b.lost >= 3).sort((a, b) => a.from - b.from);
+      const byWorld = new Map<string, ReelBattle[]>();
+      for (const b of real) { const l = byWorld.get(b.body) ?? []; l.push(b); byWorld.set(b.body, l); }
+      for (const [body, list] of byWorld) {
+        const world = byId.get(body)?.name ?? '';
+        list.forEach((b, i) => {
+          b.name = list.length > 1 && i < 10
+            ? T('battle.nth', { ord: T(`ord.${i + 1}`), world })
+            : T('battle.one', { world });
+        });
+      }
+    }
+
+    // FLEETS IN FLIGHT: one empire's warships leaving one world for another
+    // on the same day, counted. The biggest get tracking shots; the one that
+    // flew in to start a big battle opens its arc.
+    const fleets: FleetMove[] = [];
+    for (const [k, moves] of transitAt) {
+      const groups = new Map<string, FleetMove>();
+      for (const m of moves) {
+        if (m.cls === 'freighter' || m.cls === 'colony' || m.cls === 'kaiju') continue;
+        const key = `${m.from}|${m.to}|${m.fid ?? ''}`;
+        const g = groups.get(key) ?? { from: m.from, to: m.to, fid: m.fid, n: 0, arrive: k + 1 };
+        g.n++;
+        groups.set(key, g);
+      }
+      for (const g of groups.values()) if (g.n >= 8 && byGame.has(g.from) && byGame.has(g.to)) fleets.push(g);
+    }
+    fleets.sort((a, b) => b.n - a.n || a.arrive - b.arrive);
+    for (const b of battles) {
+      b.approach = fleets.filter(g => theatreOf(g.to) === b.body && g.arrive >= b.from - 3 && g.arrive <= b.from + 2)
+        .sort((x, y) => Number(b.sides.includes(y.fid ?? '')) - Number(b.sides.includes(x.fid ?? '')) || y.n - x.n)[0];
     }
 
     // --- the event log, weighed and placed ------------------------------
@@ -615,6 +734,50 @@ export function createMatchMap(
         term: p.effect_until_tick == null && p.bill_kind !== 'war_authorization' ? T('senate.forever') : T('senate.for', { d: days }) };
     }
 
+    // THE STORY'S SAY (the Saga Engine). Its scenes join the cut with their
+    // own weight and words; a headline the story is about counts for more,
+    // one it is not about for less; so do the fights.
+    if (saga) {
+      const used = new Set<ReelBeat>();
+      for (const sb of saga.beats) {
+        // A veteran is matched by name: two captains can die on one day.
+        const hit = beats.find(e => !used.has(e) && e.kind === sb.kind && Math.abs(e.tick - sb.tick) <= 1
+          && (!sb.fid || !e.fid || e.fid === sb.fid || e.target === sb.fid)
+          && (!sb.veteran || e.data?.captain_name === sb.veteran));
+        if (hit) {
+          used.add(hit);
+          hit.weight = Math.max(hit.weight, sb.weight);
+          hit.data = { ...(hit.data ?? {}), saga: sb };
+          if (sb.veteran) {
+            hit.hold = Math.max(hit.hold ?? 0, 6.4); hit.lead = Math.max(hit.lead ?? 2, 3);
+            hit.place = `veteran:${sb.veteran}`;
+            hit.body = hit.body ?? bodyNamed(saga.veterans.find(v => v.name === sb.veteran)?.world);
+          }
+        } else {
+          // A scene the film's own log reading does not have (a gift, a
+          // veteran on a world the log row did not name): where it happened
+          // if the record says, else the whole system.
+          const body = sb.veteran ? bodyNamed(saga.veterans.find(v => v.name === sb.veteran)?.world)
+            : sb.fid ? (homeOf(sb.fid) ?? null) : null;
+          const e: ReelBeat = { tick: sb.tick, kind: sb.kind, body: sb.kind === 'trade_accepted' ? null : body,
+            weight: sb.weight, fid: sb.fid, target: sb.target, text: sb.title, data: { saga: sb } };
+          if (sb.veteran) { e.hold = 6.4; e.lead = 3; e.place = `veteran:${sb.veteran}`; }
+          beats.push(e);
+          used.add(e);
+        }
+      }
+      for (const e of beats) {
+        if (used.has(e) || e.weight <= 0) continue;
+        const m = Math.max(saga.boosts.fids[e.fid ?? ''] ?? 0, saga.boosts.fids[e.target ?? ''] ?? 0);
+        e.weight *= m > 0 ? Math.min(1.3, m) : 0.85;
+      }
+      for (const b of battles) {
+        const pair = b.sides.length >= 2 ? saga.boosts.pairs[sagaPair(b.sides[0], b.sides[1])] : undefined;
+        const fid = Math.max(...b.sides.map(f => saga.boosts.fids[f] ?? 0), 0);
+        b.boost = pair ?? (fid > 0 ? Math.min(1.2, fid) : 0.8);
+      }
+    }
+
     lastFacts = { battles, beats: [...beats].filter(b => b.weight > 0).sort((a, b) => b.weight - a.weight).slice(0, 40)
       .map(b => ({ tick: b.tick, kind: b.kind, w: Math.round(b.weight), body: b.body, text: b.text.slice(0, 60) })) };
     const dysonBody = (summary.chronicle ?? []).find(r => r.kind === 'dyson_initiated')?.body_id ?? null;
@@ -624,11 +787,33 @@ export function createMatchMap(
     const span = hi - lo;
     const openingTo = Math.round(Math.max(lo + span * 0.12, Math.min(lo + span * 0.35,
       firstWar != null ? firstWar - 3 : lo + span * 0.25)));
-    scenes = planReel({ lo, hi, battles, beats }, {
+    // The armadas worth a tracking shot of their own: the biggest dozen,
+    // never two at one world within a few days.
+    const armadas: FleetMove[] = [];
+    for (const g of fleets) {
+      if (armadas.length >= 12) break;
+      if (armadas.some(x => x.to === g.to && Math.abs(x.arrive - g.arrive) <= 6)) continue;
+      armadas.push(g);
+    }
+    const plan = (target?: number) => planReel({ lo, hi, battles, beats, fleets: armadas }, {
       finaleBody: summary.game.victory_type === 'engineering' && dysonBody && byId.has(dysonBody)
         ? dysonBody : null,
       openingTo,
+      ...(saga ? {
+        targetSeconds: target ?? saga.runtime,
+        introSeconds: INTRO_SECONDS + saga.crawl.seconds,
+        openingSeconds: Math.max(OPENING_SECONDS, ROLL_CALL_END + 6.5),
+        finaleSeconds: FINALE_SECONDS + ROLL_CALL_FINALE_SECONDS(sagaCast.length),
+        establishing: ESTABLISHING_SHARE,
+      } : {}),
     });
+    scenes = plan();
+    // The script's runtime is a ceiling (three minutes at most): the
+    // time-lapses' floors can carry a plan past it, so plan again shorter.
+    if (saga) {
+      const over = reelSeconds(scenes) - saga.runtime;
+      if (over > 0.5) scenes = plan(saga.runtime - over - 1);
+    }
     filmTotal = reelSeconds(scenes);
     captionCache.clear();
     usedTitles.clear();
@@ -673,10 +858,32 @@ export function createMatchMap(
       }
     }
 
+    // THE CAST IN SEAT ORDER, as the script cards them.
+    if (sagaCast.length) {
+      const order = new Map(sagaCast.map((c, i) => [c.fid, i]));
+      homes.sort((a, b) => (order.get(a.fid) ?? 99) - (order.get(b.fid) ?? 99));
+    }
+    // THE PUBLIC CHANNEL: each line comes up when it was sent (or as the
+    // next scene opens, if the film cuts across it), never over the cold
+    // open or the roll call, and never on top of another.
+    transmissions = [];
+    {
+      let lastEnd = -Infinity;
+      for (const x of saga?.transmissions ?? []) {
+        const sc = sceneAt(scenes, x.tick);
+        if (!sc || sc.kind === 'intro' || sc.kind === 'finale' || sc.act === 'opening') continue;
+        const at = Math.max(filmSecondsAt(scenes, x.tick), lastEnd + 0.5);
+        transmissions.push({ at, fid: x.fid, text: x.text, tick: x.tick });
+        lastEnd = at + TRANSMISSION_SECONDS;
+      }
+    }
+
     // --- the ticker: smaller headlines, spaced so each can be read ------
+    // A scripted film has none: one subject per shot (Sean, 2026-10-23).
     ticker = [];
     let lastStart = -Infinity;
     for (const s of scenes) {
+      if (saga) break;
       if (s.kind === 'intro' || s.kind === 'finale') continue;
       const sEnd = filmSecondsAt(scenes, s.to);
       for (const e of s.extras) {
@@ -749,6 +956,10 @@ export function createMatchMap(
   /** Where in the frame the subject sits: a little above centre, clear
    *  of the lower third. */
   const FOCUS_Y = 0.44;
+  /** A time-lapse this short, with this many hulls lost at one world, is
+   *  shot from a middle distance on that world (montageAction). */
+  const ACTION_MONTAGE_TICKS = 40;
+  const ACTION_MIN_LOSSES = 10;
   /** A drawn subject's radius as a share of the frame height. */
   const BATTLE_SUBJECT = 0.1;
   const WORLD_SUBJECT = 0.12;
@@ -879,9 +1090,32 @@ export function createMatchMap(
     return { x: p.x, y: p.y + (H / 2 - H * FOCUS_Y) / scale, scale };
   };
 
+  /**
+   * A THEATRE BATTLE IS SHOT ON ITS BUSIEST WORLD (Lorne, 2026-10-24: "Can
+   * we zoom in more? The scale is a bit fucked here"). Framed on the planet
+   * and every moon at once, the worlds were specks under full-size fleets;
+   * each scene of the Battle of Jupiter is now a close battle shot on the
+   * moon where most hulls died in that stretch, and the tally still counts
+   * the whole theatre.
+   */
+  const busiestOf = new Map<ReelScene, string | null>();
+  const busiestWorld = (s: ReelScene, worlds: Set<string>): string | null => {
+    if (busiestOf.has(s)) return busiestOf.get(s)!;
+    const n = new Map<string, number>();
+    for (let k = s.from; k <= s.to; k++) for (const d of deathAt.get(k) ?? []) if (worlds.has(d.body)) n.set(d.body, (n.get(d.body) ?? 0) + 1);
+    const top = [...n.entries()].filter(([id]) => byGame.has(id)).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+    busiestOf.set(s, top);
+    return top;
+  };
+  const theatreSubject = (s: ReelScene): string | null => {
+    if (s.kind !== 'battle' || !s.battle?.theatre?.length || s.framing !== 'battle') return null;
+    const worlds = new Set([s.battle.body, ...s.battle.theatre]);
+    return busiestWorld(s, worlds);
+  };
   const subjectOf = (s: ReelScene | undefined, t: number): string | null =>
     s && s.kind === 'intro' && teaser ? subjectOf(teaser, t)
-    : s && s.bodyId && s.framing !== 'system' && byId.has(s.bodyId)
+    : s && theatreSubject(s) ? theatreSubject(s)
+    : s && s.bodyId && s.framing !== 'system' && s.framing !== 'track' && byId.has(s.bodyId)
       && (drawableAt(byId.get(s.bodyId)!, Math.floor(t))
         // The shot stays on a world for a moment after it is destroyed:
         // the break-up is the picture.
@@ -916,12 +1150,66 @@ export function createMatchMap(
     return false;
   };
 
+  /**
+   * THE TRACKING SHOT (Lorne, 2026-10-24: "we def need fleet following
+   * cameras"): the camera rides with a fleet in flight, the world it left
+   * falling behind and the one it is making for ahead in frame, and pushes
+   * in as it arrives. Framed on the trip, so the fleet reads at its size.
+   */
+  const trackFrame = (s: ReelScene, t: number): Frame => {
+    const fm = s.track!;
+    const depart = fm.arrive - FLEET_FLIGHT_TICKS;
+    const q = Math.max(0, Math.min(1, (t - depart) / FLEET_FLIGHT_TICKS));
+    const pa = pos(fm.from, t), pb = pos(fm.to, t);
+    const e = easeLeg(q);
+    const fleet = { x: pa.x + (pb.x - pa.x) * e, y: pa.y + (pb.y - pa.y) * e };
+    const d = Math.hypot(pb.x - pa.x, pb.y - pa.y);
+    const m = safe();
+    const span = Math.max(d * 0.8, (bodyR.get(fm.to) ?? 6) * 8);
+    let scale = Math.min((W - m.side * 2) / span, (H - m.top - m.bottom) / span) * (1 + 1.6 * e * e);
+    scale = Math.max(MIN_CAMERA_SCALE, systemFrame(s, t).scale, scale);
+    // Lead the fleet: aim a little ahead of it, toward where it is going.
+    const c = { x: fleet.x + (pb.x - fleet.x) * 0.35, y: fleet.y + (pb.y - fleet.y) * 0.35 };
+    const midY = (m.top + (H - m.bottom)) / 2;
+    return { x: c.x, y: c.y + (H / 2 - midY) / scale, scale };
+  };
+  /**
+   * WHERE THE FIGHTING IS in a short time-lapse (Lorne: "we were covering
+   * some of the largest battles in the game, and were too far out to see
+   * it"): a stretch with heavy losses at one world is shot from a middle
+   * distance on that world, not from across the system. Long time-lapses
+   * stay wide: they are the system at work.
+   */
+  const actionOf = new Map<ReelScene, string | null>();
+  const montageAction = (s: ReelScene): string | null => {
+    if (actionOf.has(s)) return actionOf.get(s)!;
+    let best: string | null = null;
+    if (s.kind === 'montage' && !s.act && s.to - s.from <= ACTION_MONTAGE_TICKS && s.seconds >= 1) {
+      const dead = new Map<string, number>();
+      for (let k = s.from; k < s.to; k++) {
+        for (const x of deathAt.get(k) ?? []) if (byId.has(x.body)) dead.set(theatreOf(x.body), (dead.get(theatreOf(x.body)) ?? 0) + 1);
+      }
+      const top = [...dead.entries()].filter(([b]) => byGame.has(b)).sort((a, b) => b[1] - a[1])[0];
+      if (top && top[1] >= ACTION_MIN_LOSSES) best = top[0];
+    }
+    actionOf.set(s, best);
+    return best;
+  };
+
   /** A scene's own frame at an instant, with its slow drift. */
   const frameOf = (s0: ReelScene | undefined, t: number, prog: number): Frame => {
     // The cold open is framed as the battle it shows.
     const s = s0 && s0.kind === 'intro' && teaser ? teaser : s0;
+    if (s?.framing === 'track' && s.track && viewMode !== 'wide') return trackFrame(s, t);
     const subj = viewMode === 'wide' ? null : subjectOf(s, t);
     if (!s || !subj) {
+      const act = s && viewMode !== 'wide' ? montageAction(s) : null;
+      if (act) {
+        // The busiest world of the theatre the dying is in, from a middle distance.
+        const at = s ? busiestWorld(s, new Set([...byGame.keys()].filter(id => theatreOf(id) === act))) ?? act : act;
+        const f = bodyFrame(at, t, WORLD_SUBJECT * 0.45);
+        return { ...f, scale: Math.max(systemFrame(s, t).scale, f.scale * (1 + 0.06 * prog)) };
+      }
       const f = systemFrame(s, t);
       return { ...f, scale: f.scale * (1 + 0.025 * prog) };
     }
@@ -1648,7 +1936,16 @@ export function createMatchMap(
         // the world had been while the world moved on along its orbit.
         const wp = deathPos(d.id, d.body, t);
         if (!wp) continue;
-        if (!spawnedWrecks.has(d.id)) {
+        // ONLY WHERE THE HULLS ARE DRAWN. Far out a world is a few pixels
+        // and its fleet a count chip; a hull's blast and wreckage at hull
+        // size over it read as a giant broken ship appearing over the
+        // planet. The haze (battleHaze) is the far read instead. The
+        // Leviathan is drawn at every zoom, so its death is too.
+        const rv = d.cls === 'kaiju' ? 1 : revealOf(d.body);
+        if (rv <= 0.01) continue;
+        // Not spawned from a wide shot: left unmarked, so a cut in close
+        // within its six ticks still finds the wreckage.
+        if (!spawnedWrecks.has(d.id) && rv > 0.3) {
           spawnedWrecks.add(d.id);
           // ANCHORED TO THE WORLD (fxAnchor), at the hull's own size: a
           // wreck is the dead hull's picture breaking up, and stored as a
@@ -1664,6 +1961,8 @@ export function createMatchMap(
         const k = (t - tb) / BLAST_TICKS;
         if (k >= 0 && k < 1) {
           const cp = toPx(wp);
+          ctx.save();
+          ctx.globalAlpha *= rv;
           if (d.cls === 'kaiju') {
             // THE LEVIATHAN GOES UP AT ITS OWN SIZE: a 60 px fireball under
             // a 400 px monster read as it blinking out. One blast the size
@@ -1681,10 +1980,11 @@ export function createMatchMap(
             drawBlast(ctx, cp.x, cp.y, k, d.id, 1);
           }
           drawDebris(ctx, cp.x, cp.y, 10, k, d.id);
+          ctx.restore();
         }
       }
     }
-    drawWrecks(rc, filmMs);
+    drawWrecks(rc, filmMs, revealOf);
     // THE MOMENT A WORLD CHANGES HANDS, on the world. The ownership ring
     // flipping colour was the whole event, and a viewer never saw it: a
     // conquest is a shockwave in the taker's colour, a fall is a burst of
@@ -1714,6 +2014,51 @@ export function createMatchMap(
           ctx.strokeStyle = hexA(col, 0.9 * (1 - q));
           ctx.lineWidth = Math.max(2, rr * 0.07 * (1 - q));
           ctx.beginPath(); ctx.arc(cp.x, cp.y, rr * (1.05 + 2.4 * e), 0, Math.PI * 2); ctx.stroke();
+        }
+        ctx.restore();
+      }
+    }
+    // THE LIVING SYSTEM, in a scripted film's wide shots: the trade lanes,
+    // drawn from the freighters' own flights over the last few weeks (what
+    // anyone could see on the map; no agreement's terms), each in its
+    // owner's colour and brighter the busier it is.
+    if (saga && overview > 0.3) {
+      const now = Math.floor(t);
+      const lanes = new Map<string, { a: string; b: string; fid: string | null; n: number }>();
+      for (let k = now - LANE_WINDOW_TICKS; k <= now; k++) {
+        for (const m of transitAt.get(k) ?? []) {
+          if (m.cls !== 'freighter') continue;
+          const [a, b] = m.from < m.to ? [m.from, m.to] : [m.to, m.from];
+          const key = `${a}|${b}|${m.fid ?? ''}`;
+          const l = lanes.get(key) ?? { a, b, fid: m.fid, n: 0 };
+          l.n++;
+          lanes.set(key, l);
+        }
+      }
+      if (lanes.size) {
+        const u = unitOf(H);
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.lineCap = 'round';
+        for (const l of lanes.values()) {
+          const ga = byGame.get(l.a), gb = byGame.get(l.b);
+          if (!ga || !gb || !shown(ga) || !shown(gb)) continue;
+          const pa = toPx(pos(ga.id, t)), pb = toPx(pos(gb.id, t));
+          const mx = (pa.x + pb.x) / 2, my = (pa.y + pb.y) / 2;
+          // A gentle bow, so two lanes between neighbours do not lie on top of each other.
+          const dx = pb.x - pa.x, dy = pb.y - pa.y, len = Math.hypot(dx, dy) || 1;
+          const bow = Math.min(60 * u, len * 0.12);
+          const cx = mx - (dy / len) * bow, cy = my + (dx / len) * bow;
+          const a = Math.min(0.55, 0.12 + l.n * 0.04) * Math.min(1, (overview - 0.3) / 0.3);
+          ctx.strokeStyle = hexA(colorOf(l.fid), a);
+          ctx.lineWidth = (1.2 + Math.min(3, l.n * 0.18)) * u;
+          ctx.beginPath(); ctx.moveTo(pa.x, pa.y); ctx.quadraticCurveTo(cx, cy, pb.x, pb.y); ctx.stroke();
+          // The traffic itself: a light running the lane.
+          const q = ((t * 0.9 + (hashStr(`${l.a}${l.b}`) % 100) / 100) % 1);
+          const qx = (1 - q) * (1 - q) * pa.x + 2 * (1 - q) * q * cx + q * q * pb.x;
+          const qy = (1 - q) * (1 - q) * pa.y + 2 * (1 - q) * q * cy + q * q * pb.y;
+          ctx.fillStyle = hexA(colorOf(l.fid), Math.min(0.9, a * 1.8));
+          ctx.beginPath(); ctx.arc(qx, qy, (1.6 + Math.min(2, l.n * 0.1)) * u, 0, Math.PI * 2); ctx.fill();
         }
         ctx.restore();
       }
@@ -1944,41 +2289,57 @@ export function createMatchMap(
         transitScale);
     }
 
-    // Events at this tick: battles pulse, losses flash, foundings ring.
-    for (const b of summary.battles) {
-      const end = b.ended_tick ?? b.started_tick;
-      if (curTick < b.started_tick || curTick > end || !b.body_id) continue;
-      const id = b.body_id;
-      if (!byId.has(id)) continue;
-      const gb = byGame.get(id);
-      if (!gb || !visibleIds.has(id)) continue;
-      const p = toPx(pos(id, t));
-      const dr = drawnRadiusOf(pres, gb, cam.scale);
-      // Close in, the battle draws itself; the ring is the far read.
-      const far = 1 - Math.max(0, Math.min(1, (dr - 18) / 30));
-      if (far <= 0.01) continue;
-      const r = dr + 14;
-      ctx.save();
-      ctx.globalAlpha = far;
-      // COMBAT IS ITS OWN CHANNEL, never a hue from the empire palette.
-      // The old red ring read as Frowny Face's pink ownership halo, so a
-      // contested rock and an owned rock looked the same.
-      const pulse = 0.5 + 0.5 * Math.sin(t * 9);
-      ctx.strokeStyle = `rgba(255,255,255,${0.5 + pulse * 0.4})`;
-      ctx.lineWidth = 2.5;
-      ctx.setLineDash([7, 6]);
-      ctx.beginPath(); ctx.arc(p.x, p.y, r + pulse * 5, 0, Math.PI * 2); ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.strokeStyle = `rgba(210,235,255,${(1 - pulse) * 0.35})`;
-      ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.arc(p.x, p.y, r + 8 + pulse * 22, 0, Math.PI * 2); ctx.stroke();
-      ctx.restore();
-      // The tracers that used to be drawn here are gone. They were a
-      // second firing system running alongside drawEngagementFire: seven
-      // salvoes crammed into every tick, endpoints picked by a seeded
-      // RNG. The game fires one volley per BOLT_MS + BEAT_MS -- 1.1
-      // seconds -- so at a brisk 0.3s/tick this file was drawing roughly
-      // twenty-three shots a second over the top of the real thing.
+    // A BATTLE FROM A DISTANCE (battleHaze). Where the hulls are not drawn,
+    // the fight is drawn on the plane instead: a haze of fire that spreads
+    // with how many hulls have gone lately, a ring in the colours of who is
+    // there, and a spark per loss. It replaces a pulsing ring that was the
+    // same size for a skirmish as for a slaughter. Moons folded into their
+    // planet at this zoom fight at the planet.
+    {
+      interface Haze { heat: number; sides: Map<string, number>; sparks: Array<{ id: string; k: number }> }
+      const hazes = new Map<string, Haze>();
+      const hazeAt = (bid: string) => {
+        let h = hazes.get(bid);
+        if (!h) { h = { heat: 0, sides: new Map(), sparks: [] }; hazes.set(bid, h); }
+        return h;
+      };
+      const HAZE_TICKS = 12, HAZE_TAU = 3.5;
+      for (let dt = Math.max(0, curTick - HAZE_TICKS); dt <= curTick + 1; dt++) {
+        for (const d of deathAt.get(dt) ?? []) {
+          if (!d.body || d.cls === 'kaiju') continue;
+          const tb = dt - 1 + killPhase(d.id);
+          if (t < tb) continue;
+          const h = hazeAt(hostOf(d.body));
+          h.heat += Math.exp(-(t - tb) / HAZE_TAU);
+          if (d.fid) h.sides.set(d.fid, (h.sides.get(d.fid) ?? 0) + 0.5);
+          const k = (t - tb) / BLAST_TICKS;
+          if (k > 0 && k < 1 && h.sparks.length < 40) h.sparks.push({ id: d.id, k });
+        }
+      }
+      // A fight the record says is on, in a lull between losses, still
+      // glows a little.
+      for (const bid of fightingNow) {
+        const h = hazeAt(hostOf(bid));
+        h.heat = Math.max(h.heat, 0.6);
+      }
+      for (const [bid, h] of hazes) {
+        const gb = byGame.get(bid);
+        if (!gb || !visibleIds.has(bid)) continue;
+        const alpha = 1 - revealOf(bid);
+        if (alpha <= 0.01) continue;
+        for (const [pb, arr] of parked) {
+          if (hostOf(pb) !== bid) continue;
+          for (const sh of arr) {
+            if (!sh.ownedBy || !((getShipClass(sh.class)?.damagePerTick ?? 0) > 0)) continue;
+            h.sides.set(sh.ownedBy, (h.sides.get(sh.ownedBy) ?? 0) + 1);
+          }
+        }
+        const sides = [...h.sides.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))
+          .map(([fid, share]) => ({ color: colorOf(fid), share }));
+        const p = toPx(pos(bid, t));
+        drawBattleHaze(ctx, p.x, p.y, drawnRadiusOf(pres, gb, cam.scale), h.heat, sides, h.sparks,
+          filmMs, alpha, unitOf(H));
+      }
     }
 
     for (const e of events) {
@@ -1995,10 +2356,8 @@ export function createMatchMap(
       if (farK <= 0.01) continue;
       ctx.save();
       ctx.globalAlpha = farK;
-      if (e.kind === 'loss') {
-        ctx.fillStyle = `rgba(255,150,70,${(1 - k) * 0.5})`;
-        ctx.beginPath(); ctx.arc(p.x, p.y, r0 + 10 + k * 26, 0, Math.PI * 2); ctx.fill();
-      } else if (e.kind === 'founded' || e.kind === 'fallen') {
+      // Losses are the haze's sparks now (above).
+      if (e.kind === 'founded' || e.kind === 'fallen') {
         const fid = ownerOf.get(e.bodyId) ?? null;
         ctx.strokeStyle = hexA(e.kind === 'founded' ? colorOf(fid) : '#ff6a5a', 1 - k);
         ctx.lineWidth = 2;
@@ -2220,6 +2579,20 @@ export function createMatchMap(
       c = montageCaption(s) ?? { kicker: '', title: '', sub: '', fid: null };
       captionCache.set(s, c);
     }
+    // The script's words for a scene it asked for: its headline, and the
+    // line that says what caused it.
+    // A fleet on the move: who, how many, where to.
+    if (!c && s.kind === 'beat' && s.beat?.kind === 'fleet_moving' && s.track) {
+      const fm = s.track;
+      c = { kicker: T('fleet.kicker'), title: T('fleet.title', { a: shortName(filmFaction(fm.fid)?.name ?? ''), n: fm.n,
+        world: byId.get(fm.to)?.name ?? '' }), sub: T('fleet.sub', { from: byId.get(fm.from)?.name ?? '' }), fid: fm.fid };
+      captionCache.set(s, c);
+    }
+    const sb = s.beat?.data?.saga as SagaBeat | undefined;
+    if (!c && sb && s.kind === 'beat') {
+      c = { kicker: sb.kicker, title: sb.title, sub: sb.because, fid: sb.fid };
+      captionCache.set(s, c);
+    }
     if (!c) {
       c = captionFor(s, {
         lang: getLang(), summary,
@@ -2240,9 +2613,28 @@ export function createMatchMap(
       if (s.kind === 'beat' && s.beat?.kind === 'dyson_initiated') {
         c = { ...c, sub: T('sub.dysonStakes', { a: shortName(filmFaction(s.beat.fid)?.name ?? '') }) };
       }
-      // A second fight at the same world is the next chapter, not a repeat.
-      if (s.kind === 'battle' && repeatVisit(s)) {
-        c = { ...c, title: T('title.battleAgain', { world: byId.get(s.bodyId ?? '')?.name ?? '' }) };
+      // A BATTLE BY ITS NAME ("The First Battle of Mars"), and by where in
+      // its arc this scene is: the first shots, the thick of it, the end.
+      if (s.kind === 'battle' && s.battle) {
+        const b = s.battle;
+        const name = b.name ?? c.title;
+        const nm = (fid: string | null | undefined) => shortName(filmFaction(fid)?.name ?? '');
+        if (s.phase === 'open') {
+          // Inside a sentence the name is lower case: "The first shots of the Second Battle of Mars".
+          c = { ...c, title: T('battle.firstShots', { name: name.replace(/^The\b/, 'the') }),
+            sub: s.track ? T('battle.flyIn', { a: nm(s.track.fid), n: s.track.n })
+              : T('battle.closeIn', { d: b.from, a: nm(b.sides[0]), b: nm(b.sides[1]) }) };
+        } else if (s.phase === 'close') {
+          c = { ...c, title: T('battle.ends', { name }), sub: T('battle.endsSub', { d: Math.max(1, b.to - b.from), lost: b.lost }) };
+        } else if (s.phase === 'peak' && (() => {
+          // "day 56" only when the film went somewhere else in between.
+          const open = scenes.find(x => x.battle === b && x.phase === 'open');
+          return !!open && scenes.some(x => x.from >= open.to && x.to <= s.from && x.kind !== 'montage' && x.seconds > 0.5);
+        })()) {
+          c = { ...c, title: T('battle.dayN', { name, n: Math.max(1, s.from - b.from + 1) }) };
+        } else {
+          c = { ...c, title: name };
+        }
       }
       captionCache.set(s, c);
     }
@@ -2260,21 +2652,22 @@ export function createMatchMap(
     const dying = new Set((deathAt.get(tick + 1) ?? []).map(d => d.id));
     let ships = 0;
     for (const sh of adaptedShips) {
-      if (sh.transit || sh.orbit.parentBodyId !== b.body || sh.ownedBy !== fid) continue;
+      if (sh.transit || !sh.orbit.parentBodyId || theatreOf(sh.orbit.parentBodyId) !== b.body || sh.ownedBy !== fid) continue;
       if (dying.has(sh.id) && killPhase(sh.id) <= curFrac) continue;
       ships++;
     }
     let lost = 0;
     for (let k = b.window[0] + 1; k <= tick + 1; k++) {
       for (const d of deathAt.get(k) ?? []) {
-        if (d.body === b.body && d.fid === fid && (k <= tick || killPhase(d.id) <= curFrac)) lost++;
+        if (theatreOf(d.body) === b.body && d.fid === fid && (k <= tick || killPhase(d.id) <= curFrac)) lost++;
       }
     }
     return { faction: filmFaction(fid)!, ships, lost };
   }).filter(x => x.faction);
 
   /** A time-lapse shorter than this carries no caption. */
-  const MONTAGE_CAPTION_SECONDS = 1.6;
+  // Under this a headline flashed past before it could be read.
+  const MONTAGE_CAPTION_SECONDS = 2.2;
   /** The least a log row must weigh to headline a time-lapse. */
   const MONTAGE_HEADLINE_WEIGHT = 40;
   /** The finale holds its image this long before the table comes up. */
@@ -2351,7 +2744,10 @@ export function createMatchMap(
       // the fight wins it, and only once the fight is nearly over: a stamp
       // naming the world's owner read "Tritalowda holds Europa" over 0 vs
       // 26, and "Ministry holds Earth" while it was still behind.
-      if (prog > 0.8 && sides.length) {
+      // ...and only on the last scene of its fight: an arc does not call
+      // the battle at its first shots, nor before it comes back to it.
+      const lastOfIt = s.phase !== 'open' && !scenes.some(x => x !== s && x.battle === s.battle && x.from > s.from);
+      if (prog > 0.8 && sides.length && lastOfIt) {
         const top = [...sides].sort((a, b) => b.ships - a.ships)[0];
         const second = [...sides].sort((a, b) => b.ships - a.ships)[1];
         // A clear margin, or no call: 77 vs 70 named the side that then
@@ -2360,7 +2756,7 @@ export function createMatchMap(
           // "Holds" only when every settlement on the world is theirs.
           let mine = 0, theirs = 0;
           for (const st of world.stls.values()) {
-            if (st.body !== s.battle.body || !st.fid) continue;
+            if (theatreOf(st.body) !== s.battle.body || !st.fid) continue;
             if (st.fid === top.faction.id) mine++; else theirs++;
           }
           const where = byId.get(s.battle.body)?.name ?? '';
@@ -2415,7 +2811,20 @@ export function createMatchMap(
       const most = new Map<string, number>();
       for (const b of built) most.set(b.fid, (most.get(b.fid) ?? 0) + 1);
       const lead = [...most.entries()].sort((a, b) => b[1] - a[1])[0];
-      if (el < ROLL_CALL_END) {
+      if (sagaCast.length && el < ROLL_CALL_END) {
+        // THE EMPIRES, one card each: its flag, its name, its creed in its
+        // player's own words (or the engine's line when it wrote none).
+        const i = Math.max(0, Math.min(sagaCast.length - 1, Math.floor((el - ROLL_CALL_AT) / CAST_CARD_SECONDS)));
+        const c = sagaCast[i];
+        const f = filmFaction(c.fid);
+        const t0 = ROLL_CALL_AT + i * CAST_CARD_SECONDS;
+        if (f && el >= ROLL_CALL_AT) {
+          drawCastCard(ctx, W, H, { faction: f, creed: c.creed || c.tagline, quoted: !!c.creed,
+            home: c.home ?? '', index: i, count: sagaCast.length },
+          (el - t0) / 0.22, (el - (t0 + CAST_CARD_SECONDS - 0.18)) / 0.18);
+        }
+        ltRight = W * 0.62;
+      } else if (el < ROLL_CALL_END) {
         ltRight = drawLowerThird(ctx, W, H, { kicker: T('kicker.start'), title: T('title.begin', { n: empires.length }),
           sub: '', color: null }, el / 0.2, (el - (ROLL_CALL_END - 0.2)) / 0.2);
       } else if (n > 0) {
@@ -2483,8 +2892,52 @@ export function createMatchMap(
         drawHookLine(ctx, W, H, T('hook', { n: teaser.battle.peak }), el / 1.0, (el - (HOOK_SECONDS - 0.15)) / 0.15);
       }
       const at = teaser ? HOOK_SECONDS : 0;
+      // With a script, the title card gives way to the crawl.
+      const cardEnd = saga ? INTRO_SECONDS : s.seconds;
       drawTitleCard(ctx, W, H, c, empires.map(f => filmFaction(f.id)!).filter(Boolean),
-        (el - at) / 0.35, (el - (s.seconds - 0.4)) / 0.4, teaser ? 0.8 : 1);
+        (el - at) / 0.35, (el - (cardEnd - 0.4)) / 0.4, teaser ? 0.8 : 1);
+      if (saga && el >= INTRO_SECONDS - 0.35) {
+        const ce = el - INTRO_SECONDS;
+        const dur = Math.max(1, s.seconds - INTRO_SECONDS);
+        const alpha = Math.min(1, (ce + 0.35) / 0.5) * Math.min(1, (dur - ce) / 0.6);
+        drawCrawl(ctx, W, H, { show: `Orbital · ${summary.game.name ?? ''}`, title: saga.crawl.title,
+          credit: saga.crawl.credit, lines: saga.crawl.lines }, Math.max(0, ce) / dur, Math.max(0, alpha));
+      }
+    }
+    // A VETERAN FALLS: the captain's card over the fight, the ship going up
+    // in a flash that fills the frame, and the card burning out after it.
+    // A veteran who dies in the middle of a fight the film already shows
+    // gets the card in that fight's scene.
+    const vetBeat = (s.beat?.data?.saga as SagaBeat | undefined)?.veteran
+      ? s.beat!.data!.saga as SagaBeat : undefined;
+    const vet = vetBeat ? saga?.veterans.find(x => x.name === vetBeat.veteran)
+      : s.kind === 'battle' ? saga?.veterans.find(x => bodyNamed(x.world) === s.bodyId && x.tick >= s.from - 1 && x.tick <= s.to + 1)
+        : undefined;
+    if (vet) {
+      const v = vet;
+      const sb = vetBeat ?? saga!.beats.find(b => b.veteran === v.name);
+      const f = filmFaction(v.fid);
+      if (f && sb) {
+        const lostAt = filmSecondsAt(scenes, Math.max(s.from, Math.min(s.to, v.tick) - 0.35)) - filmSecondsAt(scenes, s.from);
+        const burn = Math.max(0, Math.min(1, (el - lostAt) / 0.9));
+        drawCaptainCard(ctx, W, H, {
+          name: v.name, rank: v.rank, faction: f, ship: v.ship ?? '', bio: v.bio, kicker: sb.kicker,
+          record: `${v.days} days in command · ${v.kills} ${v.kills === 1 ? 'kill' : 'kills'}${v.world ? ` · lost at ${v.world}` : ''}`,
+          ledger: v.ledger, portrait: portraits.get(v.name) ?? null,
+        }, (el - landAt(s) - 0.1) / 0.3, burn, (el - (s.seconds - 0.3)) / 0.3);
+        const gb = s.bodyId ? byGame.get(s.bodyId) : undefined;
+        const cp = gb ? toPx(pos(gb.id, curTick + curFrac)) : { x: W / 2, y: H / 2 };
+        drawFlash(ctx, W, H, cp.x, cp.y, (el - lostAt) / 1.6);
+      }
+    }
+    // THE PUBLIC CHANNEL: an empire's own words, as it sent them.
+    if (!intro && !finale) {
+      const x = transmissions.find(tx => fs >= tx.at && fs < tx.at + TRANSMISSION_SECONDS);
+      const f = x ? filmFaction(x.fid) : undefined;
+      if (x && f) {
+        drawTransmission(ctx, W, H, { faction: f, text: x.text, label: `Public channel · day ${x.tick}` },
+          (fs - x.at) / TRANSMISSION_SECONDS);
+      }
     }
     // Out of the cold open, a dip through black: the clock jumps back
     // five hundred days and the frame should say so.
@@ -2510,12 +2963,24 @@ export function createMatchMap(
         sub: summary.game.victory_type === 'engineering' ? T('sub.engineering') : '',
         color: c.fid ? colorOf(c.fid) : null }, (el - (finaleDyson() ? DYSON_SEALED_AT + 0.1 : 0.9)) / 0.2,
         (el - (FINALE_CARD_AT - 0.15)) / 0.15);
-      // The table comes in once the light has rolled out.
-      drawResultCard(ctx, W, H, { ...c, color: c.fid ? colorOf(c.fid) : null },
-        table, (el - FINALE_CARD_AT) / 0.6,
-        { worlds: T('worlds', { n: '' }).trim(), ships: T('ships', { n: '' }).trim(), url: T('url'),
-          out: T('out') },
-        !!winner);
+      // The table comes in once the light has rolled out. With a script it
+      // is the roll call: every empire, its role and the record behind it.
+      if (saga && sagaCast.length) {
+        const byFid = new Map(sagaCast.map(x => [x.fid, x]));
+        const rows = saga.rollCall.map(fid => {
+          const f = filmFaction(fid), x = byFid.get(fid);
+          return f && x ? { faction: f, label: x.label, receipt: x.receipt,
+            fallen: elimAt.has(fid), winner: fid === winner } : null;
+        }).filter((r): r is NonNullable<typeof r> => !!r);
+        drawRollCall(ctx, W, H, `${summary.game.name ?? ''} · the roll call`, rows,
+          (el - FINALE_CARD_AT) / Math.max(1, s.seconds - FINALE_CARD_AT - 1.2), T('url'));
+      } else {
+        drawResultCard(ctx, W, H, { ...c, color: c.fid ? colorOf(c.fid) : null },
+          table, (el - FINALE_CARD_AT) / 0.6,
+          { worlds: T('worlds', { n: '' }).trim(), ships: T('ships', { n: '' }).trim(), url: T('url'),
+            out: T('out') },
+          !!winner);
+      }
     }
     drawProgress(ctx, W, H, filmTotal > 0 ? fs / filmTotal : 0);
   }

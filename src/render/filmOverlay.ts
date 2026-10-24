@@ -36,7 +36,7 @@ export function unitOf(H: number): number {
   return Math.max(0.42, H / 1080);
 }
 
-const ease = (x: number) => { const c = Math.max(0, Math.min(1, x)); return c * c * (3 - 2 * c); };
+export const ease = (x: number) => { const c = Math.max(0, Math.min(1, x)); return c * c * (3 - 2 * c); };
 
 /** An empire's colour lifted until it reads as text on a dark ground. */
 export function liftColor(hex: string | null | undefined, floor = 170): string {
@@ -61,12 +61,12 @@ export function rgba(hex: string | null | undefined, a: number): string {
   return `rgba(${n[0]},${n[1]},${n[2]},${Math.max(0, Math.min(1, a))})`;
 }
 
-function spacing(ctx: CanvasRenderingContext2D, px: number) {
+export function spacing(ctx: CanvasRenderingContext2D, px: number) {
   (ctx as unknown as { letterSpacing: string }).letterSpacing = `${px}px`;
 }
 
 /** Shrink a font until `text` fits `maxW`; returns the size used. */
-function fit(ctx: CanvasRenderingContext2D, text: string, family: string, weight: string,
+export function fit(ctx: CanvasRenderingContext2D, text: string, family: string, weight: string,
   size: number, min: number, maxW: number): number {
   let s = size;
   for (;;) {
@@ -78,7 +78,7 @@ function fit(ctx: CanvasRenderingContext2D, text: string, family: string, weight
 
 /** Break `text` into at most `max` lines of `maxW`, at words; the last
  *  line is ellipsized only if it still does not fit. */
-function wrapLines(ctx: CanvasRenderingContext2D, text: string, maxW: number, max: number): string[] {
+export function wrapLines(ctx: CanvasRenderingContext2D, text: string, maxW: number, max: number): string[] {
   const words = text.split(/\s+/).filter(Boolean);
   const lines: string[] = [];
   let cur = '';
@@ -94,7 +94,7 @@ function wrapLines(ctx: CanvasRenderingContext2D, text: string, maxW: number, ma
   return lines.slice(0, max);
 }
 
-function ellipsize(ctx: CanvasRenderingContext2D, text: string, maxW: number): string {
+export function ellipsize(ctx: CanvasRenderingContext2D, text: string, maxW: number): string {
   if (ctx.measureText(text).width <= maxW) return text;
   let lo = 0, hi = text.length;
   while (lo < hi) {

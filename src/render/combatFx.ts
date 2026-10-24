@@ -1644,13 +1644,20 @@ export function spawnWreck(
 
 /** Charred tumbling shards at every recent kill site. Drawn before
  *  ships so live hulls pass over the debris. */
-export function drawWrecks(rc: RenderContext, nowMs: number): void {
+export function drawWrecks(rc: RenderContext, nowMs: number,
+  /** How much of a wreck at this world to show (0..1). The film passes the
+   *  world's hull reveal: where the hulls are not drawn, nor is their
+   *  wreckage, which was spawned at close-up size and read from a distance
+   *  as a giant broken ship over the planet. */
+  revealAt?: (bodyId: string) => number): void {
   if (wrecks.length === 0) return;
   const c = rc.ctx;
   for (const w of wrecks) {
     // Expiry on the GAME clock (rc.t is the fractional display tick).
     const tickAge = rc.t - w.startTick;
     if (tickAge < 0 || tickAge >= WRECK_LIFE_TICKS) continue;
+    const shown = revealAt && w.at ? revealAt(w.at.bodyId) : 1;
+    if (shown <= 0.01) continue;
     const k = Math.max(0, Math.min(1, tickAge / WRECK_LIFE_TICKS));
     const age = nowMs - w.startMs;
     if (w.at && w.anchor === undefined) {
@@ -1666,9 +1673,12 @@ export function drawWrecks(rc: RenderContext, nowMs: number): void {
     // Fade the last third; hold readable before that.
     if (w.look) {
       const alpha = k < 0.66 ? 1 : 1 - (k - 0.66) / 0.34;
-      drawHullBreakup(c, w.look, cp.x, cp.y, 1, age, idHash(w.id), alpha);
+      drawHullBreakup(c, w.look, cp.x, cp.y, 1, age, idHash(w.id), alpha * shown);
     } else {
+      c.save();
+      c.globalAlpha *= shown;
       drawWreckShards(c, cp.x, cp.y, w.size, k, w.id, nowMs);
+      c.restore();
     }
   }
 }

@@ -2152,6 +2152,13 @@ async function applyBillEffects(env, gameId, tick, proposal, payload, effectUnti
     } catch (e) {
       console.error('final edition (chancellor) failed', e);
     }
+    // The film's script (the Saga Engine), kept with the game's data.
+    try {
+      const { buildAndStoreSaga } = await import('./saga/index.js');
+      await buildAndStoreSaga(env, gameId);
+    } catch (e) {
+      console.error('saga (chancellor) failed', e);
+    }
     try {
       const { sendGameOver } = await import('./email.js');
       await sendGameOver(env, gameId);

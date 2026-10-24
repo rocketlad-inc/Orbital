@@ -9987,6 +9987,13 @@ export class Room {
         } catch (e) {
           console.error('final edition (objective victory) failed', e);
         }
+        // The film's script (the Saga Engine), kept with the game's data.
+        try {
+          const { buildAndStoreSaga } = await import('./saga/index.js');
+          await buildAndStoreSaga(this.env, gameId);
+        } catch (e) {
+          console.error('saga (objective victory) failed', e);
+        }
         // "Game over" by email to everyone who played. Never throws.
         try {
           const { sendGameOver } = await import('./email.js');

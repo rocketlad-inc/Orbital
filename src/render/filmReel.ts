@@ -33,7 +33,20 @@
 export type ReelKind = 'intro' | 'battle' | 'beat' | 'montage' | 'finale';
 /** How the camera frames a scene: the whole occupied system, a fight
  *  close in, or a world's news at a middle distance. */
-export type Framing = 'system' | 'battle' | 'world';
+export type Framing = 'system' | 'battle' | 'world' | 'track';
+
+/** How many ticks a crossing is shown flying (matchMap draws it so). */
+export const FLEET_FLIGHT_TICKS = 4;
+
+/** A fleet in flight: hulls of one empire leaving one world for another
+ *  together. The camera follows it (framing 'track'). */
+export interface FleetMove {
+  from: string; to: string; fid: string | null;
+  /** Hulls in it. */
+  n: number;
+  /** The tick it lands. */
+  arrive: number;
+}
 
 export interface ReelBattle {
   body: string;
@@ -49,6 +62,17 @@ export interface ReelBattle {
   present?: number;
   /** The most hulls in the fight at one time (all sides). */
   atOnce?: number;
+  /** What the film calls it: "The First Battle of Mars" when a world saw
+   *  more than one, else "The Battle of Mars" (matchMap names them). */
+  name?: string;
+  /** Its theatre: the worlds where hulls died (a planet's moons fight
+   *  as part of the planet's battle). */
+  theatre?: string[];
+  /** The fleet that flew in to start it, when the record shows one. */
+  approach?: FleetMove;
+  /** The story's say (the Saga Engine): over 1 a fight the story is about,
+   *  under 1 one it is not. Multiplies the battle's weight. */
+  boost?: number;
 }
 
 export interface ReelBeat {
@@ -70,6 +94,9 @@ export interface ReelBeat {
   /** Ticks the scene opens before `tick` (default 2). Something that
    *  APPEARS on its tick (the Leviathan surfacing) opens one before. */
   lead?: number;
+  /** Its own place for the variety rule: a scene that is a different story
+   *  from the fight at the same world (a veteran's death) is no repeat. */
+  place?: string;
 }
 
 export interface ReelFacts {
@@ -77,6 +104,8 @@ export interface ReelFacts {
   hi: number;
   battles: ReelBattle[];
   beats: ReelBeat[];
+  /** The biggest fleets in flight, for tracking shots of their own. */
+  fleets?: FleetMove[];
 }
 
 export interface ReelScene {
@@ -95,6 +124,11 @@ export interface ReelScene {
   extras: ReelBeat[];
   /** The opening act: the roll call and the land grab (see ReelOptions). */
   act?: 'opening';
+  /** Which part of a big battle's arc this is: its first shots, the thick
+   *  of it, or how it ends. */
+  phase?: 'open' | 'peak' | 'close';
+  /** The fleet a tracking shot follows. */
+  track?: FleetMove;
 }
 
 export interface ReelOptions {
@@ -105,24 +139,39 @@ export interface ReelOptions {
   /** THE OPENING ACT runs to this tick (the first war, say): one scene of
    *  its own, the roll call and the land grab, never cut across. */
   openingTo?: number;
+  /** The Saga Engine's timings: the cold open with its crawl, the opening
+   *  act with every empire's card, the finale with its roll call. */
+  introSeconds?: number;
+  openingSeconds?: number;
+  finaleSeconds?: number;
+  /** The share of the runtime kept for the wide shots between scenes (the
+   *  establishing shots): the story scenes may not eat into it. */
+  establishing?: number;
+  /** Big battles told as arcs (open, peak, close). Default on. */
+  arcs?: boolean;
 }
 
-/** How long the opening act runs: the roll call, then the land grab. */
-export const OPENING_SECONDS = 13;
+/** EVERY SCENE HOLDS THIS MUCH LONGER than it was cut at. Players could
+ *  not read the captions at the old pace (Lorne, 2026-10-24), so the
+ *  film runs up to 3:30 and each scene stays up a fifth longer. */
+export const FILM_PACE = 1.2;
 
-export const INTRO_SECONDS = 3.4;
-export const FINALE_SECONDS = 5.2;
-export const BEAT_SECONDS = 2.4;
+/** How long the opening act runs: the roll call, then the land grab. */
+export const OPENING_SECONDS = 13 * FILM_PACE;
+
+export const INTRO_SECONDS = 3.4 * FILM_PACE;
+export const FINALE_SECONDS = 5.2 * FILM_PACE;
+export const BEAT_SECONDS = 2.4 * FILM_PACE;
 /** A beat's shortest and longest hold, by weight. */
 // Room for the camera to travel there (a zoom out over the map and in on
 // the world, about a second) before the moment lands.
-export const BEAT_MIN_SECONDS = 4.1;
-export const BEAT_MAX_SECONDS = 4.9;
+export const BEAT_MIN_SECONDS = 4.1 * FILM_PACE;
+export const BEAT_MAX_SECONDS = 4.9 * FILM_PACE;
 /** A battle gets this much for mattering, plus up to SPREAD for size. */
 // Big battles get time to shine (Lorne, 2026-10-22): the deadliest fight
-// of a match runs about fourteen seconds, at about a second a day.
-export const BATTLE_BASE_SECONDS = 4.5;
-export const BATTLE_SPREAD_SECONDS = 9.5;
+// of a match runs about seventeen seconds.
+export const BATTLE_BASE_SECONDS = 4.5 * FILM_PACE;
+export const BATTLE_SPREAD_SECONDS = 9.5 * FILM_PACE;
 /** The longest stretch of a fight the film will show, in ticks. */
 export const BATTLE_WINDOW_TICKS = 14;
 /** A montage never runs faster than this many seconds per tick (80 t/s)... */
@@ -141,6 +190,16 @@ export const BATTLE_WEIGHT_FLOOR = 80;
 export const BATTLE_WEIGHT_SPREAD = 100;
 /** Each earlier scene at the same place multiplies a candidate by this. */
 export const REPEAT_DISCOUNT = 0.55;
+/** A battle this many ticks long, and at least this big against the
+ *  match's biggest (sqrt of weight), is told as an arc. */
+export const ARC_MIN_TICKS = 18;
+export const ARC_MIN_REL = 0.45;
+/** An arc's opening and closing scenes, seconds; a tracking shot. */
+export const ARC_OPEN_SECONDS = 4.6 * FILM_PACE;
+export const ARC_CLOSE_SECONDS = 4.4 * FILM_PACE;
+export const TRACK_SECONDS = 5.4 * FILM_PACE;
+/** The smallest fleet that gets a tracking shot of its own. */
+export const TRACK_MIN_HULLS = 24;
 /** Gaps narrower than this are absorbed by the scene before them. */
 const MIN_GAP_TICKS = 3;
 
@@ -156,8 +215,9 @@ export const FILM_STEP_MAX_MS = 50;
 /** The film's length for a match of this many ticks. */
 export function reelBudget(span: number): number {
   // About two minutes for a big match (Lorne, 2026-10-22: "it can be
-  // longer, and cover more incidents"): ~80 s for 160 days, ~130 s for 525.
-  return Math.max(65, Math.min(140, Math.round(60 + Math.max(0, span) * 0.135)));
+  // longer, and cover more incidents"): ~95 s for 160 days, ~155 s for 525,
+  // at the slower pace (FILM_PACE).
+  return Math.max(78, Math.min(168, Math.round((60 + Math.max(0, span) * 0.135) * FILM_PACE)));
 }
 
 /** Seconds a battle earns: base plus a share that grows with its weight. */
@@ -192,6 +252,11 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
   const lo = f.lo, hi = Math.max(f.lo + 1, f.hi);
   const span = hi - lo;
   const target = opts.targetSeconds ?? reelBudget(span);
+  const introSec = opts.introSeconds ?? INTRO_SECONDS;
+  const openingSec = opts.openingSeconds ?? OPENING_SECONDS;
+  const finaleSec = opts.finaleSeconds ?? FINALE_SECONDS;
+  /** What the story scenes may spend: the rest is for the wide shots. */
+  const sceneBudget = target * (1 - Math.max(0, Math.min(0.5, opts.establishing ?? 0)));
 
   // The bookends. A one-tick match is all bookend.
   const introTo = Math.min(lo + 1, hi);
@@ -207,7 +272,8 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
     /** A chosen battle this beat cuts short to fit (see fitted). */
     trims?: { battle: Cand; to: number };
     seconds: number; framing: Framing; bodyId: string | null;
-    battle?: ReelBattle; beat?: ReelBeat };
+    battle?: ReelBattle; beat?: ReelBeat;
+    phase?: 'open' | 'peak' | 'close'; track?: FleetMove };
   const cands: Cand[] = [];
   const peakW = Math.max(1, ...f.battles.map(battleWeight));
   /** A fight a quarter the size of the match's biggest reads as a lull
@@ -230,12 +296,34 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
     // outrank the Leviathan dying; scaled, the deadliest fight of the
     // match sits level with the biggest headline.
     const rel = Math.sqrt(w / peakW);
-    cands.push({ kind: 'battle', from, to, weight: BATTLE_WEIGHT_FLOOR + BATTLE_WEIGHT_SPREAD * rel,
+    const weight = (BATTLE_WEIGHT_FLOOR + BATTLE_WEIGHT_SPREAD * rel) * (b.boost ?? 1);
+    // A BIG, LONG BATTLE IS AN ARC (Lorne, 2026-10-24: "set up and played
+    // off"): its first shots, with the fleet that started it flying in;
+    // a cut away to the rest of the war; back for the thick of it; and,
+    // if it ran on, how it ended.
+    const arc = opts.arcs !== false && b.to - b.from >= ARC_MIN_TICKS && rel >= ARC_MIN_REL;
+    cands.push({ kind: 'battle', from, to, weight,
       place: b.body, pair: b.sides.length >= 2 ? [...b.sides].sort().join('|') : null,
       // ...but never slower than about a second and a quarter a day: a
       // four-day fight held fourteen seconds is slow motion.
       seconds: Math.min(BATTLE_BASE_SECONDS + BATTLE_SPREAD_SECONDS * rel, Math.max(BATTLE_BASE_SECONDS, (to - from) * 1.25)),
-      framing: 'battle', bodyId: b.body, battle: b });
+      framing: 'battle', bodyId: b.body, battle: b, phase: arc ? 'peak' : undefined });
+    if (arc) {
+      const floor = openTo ?? introTo;
+      const ap = b.approach;
+      const o0 = Math.max(floor, ap ? ap.arrive - FLEET_FLIGHT_TICKS - 1 : b.from - 1);
+      const o1 = Math.min(from, ap ? ap.arrive + 2 : b.from + 3, finaleFrom);
+      if (o1 - o0 >= 3 && o1 <= from) {
+        cands.push({ kind: 'battle', from: o0, to: o1, weight: weight * 0.85, place: `${b.body}:open`, pair: null,
+          seconds: ap ? TRACK_SECONDS : ARC_OPEN_SECONDS, framing: ap ? 'track' : 'battle', bodyId: b.body,
+          battle: b, phase: 'open', track: ap });
+      }
+      const c0 = Math.max(to + 3, b.to - 3), c1 = Math.min(finaleFrom, b.to + 1);
+      if (c1 - c0 >= 3) {
+        cands.push({ kind: 'battle', from: c0, to: c1, weight: weight * 0.6, place: `${b.body}:close`, pair: null,
+          seconds: ARC_CLOSE_SECONDS, framing: 'battle', bodyId: b.body, battle: b, phase: 'close' });
+      }
+    }
   }
   for (const e of f.beats) {
     if (e.weight <= 0) continue;
@@ -259,10 +347,22 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
     // An ARC told at one place -- the Leviathan surfacing then breaking a
     // world, a Sphere begun then struck at 99% -- is different pictures,
     // not repeats: the climax took the repeat discount and lost its scene.
-    const place = /^(kaiju|dyson)_/.test(e.kind) ? `arc:${e.kind}` : e.body ?? `${e.kind}:${e.target ?? e.fid ?? ""}`;
+    const place = e.place ?? (/^(kaiju|dyson)_/.test(e.kind) ? `arc:${e.kind}` : e.body ?? `${e.kind}:${e.target ?? e.fid ?? ""}`);
     cands.push({ kind: 'beat', from, to, weight: e.weight, place, pair: null,
       seconds: e.hold ?? Math.max(BEAT_MIN_SECONDS, Math.min(BEAT_MAX_SECONDS, BEAT_MIN_SECONDS + (e.weight - 60) / 60)), framing: e.body ? 'world' : 'system',
       bodyId: e.body, beat: e });
+  }
+  // THE ARMADAS: a big fleet in flight gets a tracking shot of its own.
+  const tracked = new Set(f.battles.map(b => b.approach).filter(Boolean));
+  for (const fm of f.fleets ?? []) {
+    if (tracked.has(fm) || fm.n < TRACK_MIN_HULLS) continue;
+    const from = Math.max(openTo ?? introTo, fm.arrive - FLEET_FLIGHT_TICKS - 1);
+    const to = Math.min(finaleFrom, fm.arrive + 1);
+    if (to - from < 3) continue;
+    const beat: ReelBeat = { tick: fm.arrive, kind: 'fleet_moving', body: fm.to, weight: 0, fid: fm.fid, target: null,
+      text: '', data: { n: fm.n, from: fm.from, to: fm.to } };
+    cands.push({ kind: 'beat', from, to, weight: 50 + Math.min(70, fm.n), place: `track:${fm.to}`, pair: null,
+      seconds: TRACK_SECONDS, framing: 'track', bodyId: fm.to, beat, track: fm });
   }
   // Heaviest first; ties to the earlier moment so the plan is stable.
   cands.sort((a, b) => b.weight - a.weight || a.from - b.from);
@@ -337,7 +437,7 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
     return { ...c, from: best[0], to: best[1],
       seconds: c.seconds * Math.max(0.6, (best[1] - best[0]) / Math.max(1, c.to - c.from)) };
   };
-  let used = INTRO_SECONDS + FINALE_SECONDS + (openTo != null ? OPENING_SECONDS : 0);
+  let used = introSec + finaleSec + (openTo != null ? openingSec : 0);
   const pool = [...cands];
   for (;;) {
     let best = -1, bestW = 0, bestC: Cand | null = null;
@@ -347,7 +447,7 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
       // Two headlines at one world back to back are one shot jump-cut.
       if (c.kind === 'beat' && chosen.some(x => x.kind === 'beat' && x.place === c.place
         && Math.abs(x.from - c.from) <= 20)) continue;
-      if (used + c.seconds + montageFloor([...chosen, c]) > target) continue;
+      if (used + c.seconds + montageFloor([...chosen, c]) > sceneBudget) continue;
       const w = worth(c, chosen);
       if (w > bestW + 1e-9) { best = i; bestW = w; bestC = c; }
     }
@@ -370,11 +470,11 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
 
   // ---- lay the timeline out ------------------------------------------
   const scenes: ReelScene[] = [];
-  scenes.push({ kind: 'intro', from: lo, to: introTo, seconds: INTRO_SECONDS,
+  scenes.push({ kind: 'intro', from: lo, to: introTo, seconds: introSec,
     framing: 'system', bodyId: null, extras: [] });
   let cur = introTo;
   if (openTo != null) {
-    scenes.push({ kind: 'montage', from: introTo, to: openTo, seconds: OPENING_SECONDS,
+    scenes.push({ kind: 'montage', from: introTo, to: openTo, seconds: openingSec,
       framing: 'system', bodyId: null, extras: [], act: 'opening' });
     cur = openTo;
   }
@@ -395,11 +495,12 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
   for (const c of chosen) {
     pushMontage(cur, c.from);
     scenes.push({ kind: c.kind, from: c.from, to: c.to, seconds: c.seconds,
-      framing: c.framing, bodyId: c.bodyId, battle: c.battle, beat: c.beat, extras: [] });
+      framing: c.framing, bodyId: c.bodyId, battle: c.battle, beat: c.beat, extras: [],
+      ...(c.phase ? { phase: c.phase } : {}), ...(c.track ? { track: c.track } : {}) });
     cur = c.to;
   }
   pushMontage(cur, finaleFrom);
-  scenes.push({ kind: 'finale', from: finaleFrom, to: hi, seconds: FINALE_SECONDS,
+  scenes.push({ kind: 'finale', from: finaleFrom, to: hi, seconds: finaleSec,
     framing: opts.finaleBody ? 'world' : 'system', bodyId: opts.finaleBody ?? null, extras: [] });
 
   // ---- montage pace: spend what is left -------------------------------
