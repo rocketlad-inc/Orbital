@@ -1163,3 +1163,22 @@
   background: none; border: 0; padding: 0; cursor: pointer;
 }
 .wm-tag.is-hover { border-color: #ffb84d; box-shadow: 0 0 0 1px rgba(255, 184, 77, 0.6); }
+
+/* THE CLASSIC-UI SWITCH. Its rule went in the batch-2 rewrite (0f3f69aa)
+   and the button has rendered unstyled ever since, in the page's flow at
+   the top-left corner, where the list pill sat on top of it (tablet
+   playtest, 2026-10-24: the pill "hides UI CLASSICA"). Back to a small
+   pill at the foot of the map, clear of the phone's bottom rail. Anything
+   that opens over the map's foot (a sheet, the world menu) covers it. */
+.wm-toggle-pill {
+  position: fixed;
+  bottom: 10px; left: 50%; transform: translateX(-50%);
+  z-index: 59;
+  background: rgba(10, 15, 22, 0.85); border: 1px solid #2a3d50; border-radius: 999px;
+  color: #8aa0b4; font-family: var(--font-body); font-size: 9px;
+  letter-spacing: 0.14em; padding: 4px 12px; cursor: pointer;
+}
+.wm-toggle-pill:hover { color: #4ecdc4; border-color: #4ecdc4; }
+@media (max-width: 768px) { /* the bottom rail's tier (DockRail.css) */
+  .wm-toggle-pill { bottom: calc(var(--mobile-rail-height, 72px) + 8px); }
+}
