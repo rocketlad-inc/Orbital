@@ -11,6 +11,7 @@ import { openScreen, logAction } from './telemetry';
 import { connectRoomSocket } from './roomSocket';
 import { t, tn } from '../i18n/core';
 import { shareInvite } from './invite';
+import { tradeToastFor } from './tradeToast';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useI18n } from '../i18n/react';
 
@@ -483,25 +484,15 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
           return;
         }
         if (m?.kind === 'trade') {
-          if (m.event === 'proposed') {
-            // The 'proposed' broadcast fans out to EVERY socket in the
-            // room, including the proposer's. Skip it for our own
-            // outgoing trades — those aren't incoming, so no toast, no
-            // popup, no badge bump.
-            if (m.proposer_faction_id && m.proposer_faction_id === myFactionIdRef.current) {
-              return;
-            }
-            // …and skip trades between two OTHER factions. The broadcast
-            // is room-wide and unscoped, so every bystander was getting a
-            // popup for offers not addressed to them — and because
-            // pendingTrade is a single slot, an unrelated pair's trade
-            // would overwrite the popup you actually needed to answer
-            // (playtest: "the popup appears whenever" / "someone else
-            // closing it closed mine"). The payload already carries the
-            // responder, so scope it here — no server change needed.
-            if (m.responder_faction_id && m.responder_faction_id !== myFactionIdRef.current) {
-              return;
-            }
+          // Every trade push fans out to EVERY socket in the room: our own
+          // offers, and deals between two OTHER factions. Only the ones
+          // addressed to us, or answering ours, are news (tradeToast.ts):
+          // a bystander's popup overwrote the one you needed to answer,
+          // and the trial's Warlord declining the Ally's pact toasted
+          // "Trade declined" at a player who had done nothing.
+          const toast = tradeToastFor(m, myFactionIdRef.current);
+          if (!toast) return;
+          if (toast === 'offer') {
             const proposer = (typeof m.proposer_faction_name === 'string' && m.proposer_faction_name)
               ? m.proposer_faction_name
               : t('shell.toast.anotherFaction');
@@ -511,11 +502,11 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
               tradeId: String(m.trade_id ?? ''),
               proposerName: proposer,
             });
-          } else if (m.event === 'accepted') {
+          } else if (toast === 'accepted') {
             pushToast('trade', t('shell.toast.tradeAccepted'));
-          } else if (m.event === 'declined') {
+          } else if (toast === 'declined') {
             pushToast('trade', t('shell.toast.tradeDeclined'));
-          } else if (m.event === 'countered') {
+          } else if (toast === 'countered') {
             pushToast('trade', t('shell.toast.tradeCountered'));
           }
         } else if (m?.kind === 'treaty') {
