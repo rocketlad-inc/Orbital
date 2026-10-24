@@ -246,6 +246,26 @@ export function createMatchMap(
   for (const r of summary.chronicle ?? []) {
     if (r.kind === 'world_obliterated' && r.body_id && !goneAt.has(r.body_id)) goneAt.set(r.body_id, r.tick_number);
   }
+  /**
+   * A world's THEATRE: the planet it belongs to (a moon's planet, or the
+   * planet itself). Fighting at Callisto, Ganymede and Io is the Battle of
+   * Jupiter, framed so the moons are in it (Lorne, 2026-10-24: "Why are we
+   * all the way back here through the entire battle of Jupiter?").
+   */
+  const theatreCache = new Map<string, string>();
+  const theatreOf = (id: string): string => {
+    const hit = theatreCache.get(id);
+    if (hit) return hit;
+    let cur = byId.get(id);
+    for (let guard = 0; cur && guard < 6; guard++) {
+      const parent = cur.parent_body_id ? byId.get(cur.parent_body_id) : undefined;
+      if (!parent || parent.type === 'star') break;
+      cur = parent;
+    }
+    const out = cur?.id ?? id;
+    theatreCache.set(id, out);
+    return out;
+  };
   const drawableAt = (b: Body, tick: number) =>
     (b.type === 'star' || (!!b.parent_body_id && !!b.orbit_period))
     && !(b.destroyed_at_tick != null && tick >= b.destroyed_at_tick)
@@ -455,16 +475,18 @@ export function createMatchMap(
     const lo = summary.ticks.lo ?? 0, hi = summary.ticks.hi ?? lo;
     if (hi < lo) return;
 
+    // Counted by THEATRE: a fight at a moon is part of its planet's battle.
     const deathsAtBody = (body: string, t: number) =>
-      (deathAt.get(t) ?? []).reduce((n, d) => n + (d.body === body ? 1 : 0), 0);
+      (deathAt.get(t) ?? []).reduce((n, d) => n + (theatreOf(d.body) === body ? 1 : 0), 0);
     // A world changing hands is the point of a siege: the log's own
     // settlement rows, per world and tick.
     const fallsAt = new Map<string, number[]>();
     for (const r of summary.chronicle ?? []) {
-      if (!r.body_id || !/^settlement_(seized|destroyed|razed)$/.test(r.kind)) continue;
-      const a = fallsAt.get(r.body_id) ?? [];
+      if (!r.body_id || !/^settlement_(seized|destroyed|razed)$/.test(r.kind) || !byId.has(r.body_id)) continue;
+      const th = theatreOf(r.body_id);
+      const a = fallsAt.get(th) ?? [];
       a.push(r.tick_number);
-      fallsAt.set(r.body_id, a);
+      fallsAt.set(th, a);
     }
     const fallsAtBody = (body: string, t: number) =>
       (fallsAt.get(body) ?? []).reduce((n, x) => n + (x === t ? 1 : 0), 0);
@@ -474,9 +496,10 @@ export function createMatchMap(
     const spansOf = new Map<string, Array<[number, number]>>();
     for (const b of summary.battles) {
       if (!b.body_id || !byId.has(b.body_id)) continue;
-      const arr = spansOf.get(b.body_id) ?? [];
+      const th = theatreOf(b.body_id);
+      const arr = spansOf.get(th) ?? [];
       arr.push([b.started_tick, b.ended_tick ?? b.started_tick]);
-      spansOf.set(b.body_id, arr);
+      spansOf.set(th, arr);
     }
     for (const [body, spans] of spansOf) {
       spans.sort((a, b) => a[0] - b[0]);
@@ -511,17 +534,20 @@ export function createMatchMap(
         for (let t = window[0]; t < window[1]; t++) {
           const per = new Map<string, number>();
           for (const [id, sh] of timeline.worldAt(t).ships) {
-            if (sh.parent !== body) continue;
+            if (!sh.parent || theatreOf(sh.parent) !== body) continue;
             seen.add(id);
             if (sh.fid) per.set(sh.fid, (per.get(sh.fid) ?? 0) + 1);
           }
           for (const [f, n] of per) most.set(f, Math.max(most.get(f) ?? 0, n));
         }
         let lost = 0;
+        /** The worlds of the theatre where hulls died. */
+        const theatre = new Set<string>();
         for (let t = window[0]; t < window[1] + 1; t++) {
           for (const d of deathAt.get(t) ?? []) {
-            if (d.body !== body) continue;
+            if (theatreOf(d.body) !== body) continue;
             lost++;
+            theatre.add(d.body);
             seen.add(d.id);
             if (d.fid) lostBy.set(d.fid, (lostBy.get(d.fid) ?? 0) + 1);
           }
@@ -536,7 +562,7 @@ export function createMatchMap(
         // capital it was.
         let holder: string | null = null, holderPop = -1;
         for (const st of timeline.worldAt(window[0]).stls.values()) {
-          if (st.body !== body || !st.fid || st.pop <= holderPop) continue;
+          if (theatreOf(st.body) !== body || !st.fid || st.pop <= holderPop) continue;
           holder = st.fid; holderPop = st.pop;
         }
         if (holder && fought.includes(holder) && !sides.includes(holder) && sides.length === 2) sides[1] = holder;
@@ -544,7 +570,7 @@ export function createMatchMap(
         const peak = seen.size;
         const atOnce = [...most.values()].reduce((a, b) => a + b, 0);
         battles.push({ body, from: s0, to: e0 + 1, peak, lost, sides, window, atOnce,
-          present: Math.max(present, sides.length) });
+          present: Math.max(present, sides.length), theatre: [...theatre] });
       }
     }
 
@@ -583,7 +609,7 @@ export function createMatchMap(
     }
     fleets.sort((a, b) => b.n - a.n || a.arrive - b.arrive);
     for (const b of battles) {
-      b.approach = fleets.filter(g => g.to === b.body && g.arrive >= b.from - 3 && g.arrive <= b.from + 2)
+      b.approach = fleets.filter(g => theatreOf(g.to) === b.body && g.arrive >= b.from - 3 && g.arrive <= b.from + 2)
         .sort((x, y) => Number(b.sides.includes(y.fid ?? '')) - Number(b.sides.includes(x.fid ?? '')) || y.n - x.n)[0];
     }
 
@@ -1133,7 +1159,9 @@ export function createMatchMap(
     let best: string | null = null;
     if (s.kind === 'montage' && !s.act && s.to - s.from <= ACTION_MONTAGE_TICKS && s.seconds >= 1) {
       const dead = new Map<string, number>();
-      for (let k = s.from; k < s.to; k++) for (const x of deathAt.get(k) ?? []) dead.set(x.body, (dead.get(x.body) ?? 0) + 1);
+      for (let k = s.from; k < s.to; k++) {
+        for (const x of deathAt.get(k) ?? []) if (byId.has(x.body)) dead.set(theatreOf(x.body), (dead.get(theatreOf(x.body)) ?? 0) + 1);
+      }
       const top = [...dead.entries()].filter(([b]) => byGame.has(b)).sort((a, b) => b[1] - a[1])[0];
       if (top && top[1] >= ACTION_MIN_LOSSES) best = top[0];
     }
@@ -1141,6 +1169,21 @@ export function createMatchMap(
     return best;
   };
 
+  /** A planet and some of its moons, framed together: centred on the
+   *  planet (which moves smoothly) and as wide as the farthest moon's
+   *  orbit, so the frame does not swim as the moons go round. */
+  const theatreFrame = (planet: string, moons: string[], t: number, prog: number): Frame => {
+    const p = pos(planet, t);
+    let R = (bodyR.get(planet) ?? 6) * 3;
+    for (const mId of moons) {
+      const q = pos(mId, t);
+      R = Math.max(R, Math.hypot(q.x - p.x, q.y - p.y) + (bodyR.get(mId) ?? 3) * 2.5);
+    }
+    const m = safe();
+    const scale = Math.max(MIN_CAMERA_SCALE, Math.min((W - m.side * 2) / (2 * R), (H - m.top - m.bottom) / (2 * R)) * (1 + 0.08 * prog));
+    const midY = (m.top + (H - m.bottom)) / 2;
+    return { x: p.x, y: p.y + (H / 2 - midY) / scale, scale };
+  };
   /** A scene's own frame at an instant, with its slow drift. */
   const frameOf = (s0: ReelScene | undefined, t: number, prog: number): Frame => {
     // The cold open is framed as the battle it shows.
@@ -1150,12 +1193,19 @@ export function createMatchMap(
     if (!s || !subj) {
       const act = s && viewMode !== 'wide' ? montageAction(s) : null;
       if (act) {
-        const f = bodyFrame(act, t, WORLD_SUBJECT * 0.3);
-        return { ...f, scale: Math.max(systemFrame(s, t).scale, f.scale * (1 + 0.06 * prog)) };
+        // The theatre the dying is in: its planet and every moon in it.
+        const moons = s ? [...new Set(Array.from({ length: s.to - s.from }, (_, i) => deathAt.get(s.from + i) ?? []).flat()
+          .map(x => x.body).filter(b => b !== act && byGame.has(b) && theatreOf(b) === act))] : [];
+        const f = moons.length ? theatreFrame(act, moons, t, prog) : bodyFrame(act, t, WORLD_SUBJECT * 0.3);
+        return { ...f, scale: Math.max(systemFrame(s, t).scale, f.scale * (moons.length ? 1 : 1 + 0.06 * prog)) };
       }
       const f = systemFrame(s, t);
       return { ...f, scale: f.scale * (1 + 0.025 * prog) };
     }
+    // A THEATRE: the planet with the moons where the dying is, all in
+    // frame, close enough to see the worlds burn.
+    const th = s.battle?.theatre?.filter(x => x !== subj && byGame.has(x)) ?? [];
+    if (th.length) return theatreFrame(subj, th, t, prog);
     let share = WORLD_SUBJECT;
     // FRAME WHAT IS THERE, not the planet: the whole layout of the ships
     // at the world (both lines, the station) inside the space between the
@@ -2569,14 +2619,14 @@ export function createMatchMap(
     const dying = new Set((deathAt.get(tick + 1) ?? []).map(d => d.id));
     let ships = 0;
     for (const sh of adaptedShips) {
-      if (sh.transit || sh.orbit.parentBodyId !== b.body || sh.ownedBy !== fid) continue;
+      if (sh.transit || !sh.orbit.parentBodyId || theatreOf(sh.orbit.parentBodyId) !== b.body || sh.ownedBy !== fid) continue;
       if (dying.has(sh.id) && killPhase(sh.id) <= curFrac) continue;
       ships++;
     }
     let lost = 0;
     for (let k = b.window[0] + 1; k <= tick + 1; k++) {
       for (const d of deathAt.get(k) ?? []) {
-        if (d.body === b.body && d.fid === fid && (k <= tick || killPhase(d.id) <= curFrac)) lost++;
+        if (theatreOf(d.body) === b.body && d.fid === fid && (k <= tick || killPhase(d.id) <= curFrac)) lost++;
       }
     }
     return { faction: filmFaction(fid)!, ships, lost };
@@ -2672,7 +2722,7 @@ export function createMatchMap(
           // "Holds" only when every settlement on the world is theirs.
           let mine = 0, theirs = 0;
           for (const st of world.stls.values()) {
-            if (st.body !== s.battle.body || !st.fid) continue;
+            if (theatreOf(st.body) !== s.battle.body || !st.fid) continue;
             if (st.fid === top.faction.id) mine++; else theirs++;
           }
           const where = byId.get(s.battle.body)?.name ?? '';
