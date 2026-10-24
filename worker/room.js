@@ -4395,7 +4395,7 @@ export class Room {
               `INSERT INTO chronicle_entries
                 (id, game_id, tick_number, kind, actor_faction_id, payload, visibility, created_at_ms)
                VALUES (?, ?, ?, 'faction_eliminated', ?, ?, 'public', ?)`)
-            .bind(`c${tick}_elim_${String(f.id).slice(-8)}`, gameId, tick, f.id,
+            .bind(`c${tick}_elim_${f.id}`, gameId, tick, f.id,
                   JSON.stringify({ faction_name: f.name ?? null, cause: 'no_settlements' }),
                   Date.now())
             .run();
@@ -4436,7 +4436,7 @@ export class Room {
               `INSERT OR IGNORE INTO chronicle_entries
                 (id, game_id, tick_number, kind, actor_faction_id, payload, visibility, created_at_ms)
                VALUES (?, ?, ?, 'faction_revived', ?, ?, 'public', ?)`)
-            .bind(`c${tick}_revive_${String(f.id).slice(-8)}`, gameId, tick, f.id,
+            .bind(`c${tick}_revive_${f.id}`, gameId, tick, f.id,
                   JSON.stringify({ faction_name: f.name ?? null }), Date.now())
             .run();
         } catch (e) { console.error('revival chronicle failed', f.id, e); }
@@ -9298,7 +9298,14 @@ export class Room {
                     (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
                    VALUES (?, ?, ?, ?, ?, ?, ?, 'public', ?)`,
                 )
-                .bind(`c${tick}_cap_${lost.id.slice(-8)}`, gameId, tick,
+                // The WHOLE hull id (it carries the game's): the table's key
+                // is global, and `${tick}_cap_` + the id's last 8 ("t_mega_0")
+                // was already taken by any earlier game that lost the same
+                // hull on the same tick -- every Studio reshoot, and real
+                // games whose hull ids end alike. The insert failed, and took
+                // the batch's ship_destroyed rows with it: no kill in the log,
+                // no explosion on the map (2026-10-24).
+                .bind(`c${tick}_cap_${lost.id}`, gameId, tick,
                       fate.outcome === 'rescued' ? 'captain_rescued' : 'captain_lost',
                       lost.owner_faction_id ?? null, ship?.parent_body_id ?? null,
                       capPayload, now));
@@ -9313,12 +9320,19 @@ export class Room {
             await this.env.DB.batch(deathBulk.writes.slice(i, i + 100));
           }
         } catch (e) { console.error('captain fate batch failed', e); }
-        try {
-          for (let i = 0; i < killChronicle.length; i += 100) {
-            await this.env.DB.batch(killChronicle.slice(i, i + 100));
+        // A batch is all or nothing: one bad row cannot be allowed to take
+        // the tick's other kills with it, so a failed chunk goes again a
+        // row at a time.
+        for (let i = 0; i < killChronicle.length; i += 100) {
+          const chunk = killChronicle.slice(i, i + 100);
+          try {
+            await this.env.DB.batch(chunk);
+          } catch (e) {
+            console.error('kill chronicle batch failed; row by row', e);
+            for (const st of chunk) {
+              try { await st.run(); } catch (e2) { console.error('kill chronicle row failed', e2); }
+            }
           }
-        } catch (e) {
-          console.error('kill chronicle batch failed', e);
         }
         // WHOSE ships. The toast this drives said "N ship(s) destroyed"
         // and nothing else, so a player could not tell their own fleet
@@ -9869,7 +9883,7 @@ export class Room {
                VALUES (?, ?, ?, 'tech_advanced', ?, ?, 'public', ?)`,
             )
             .bind(
-              `c${tick}_tech_${f.id.slice(-6)}_${f.research_tech_id}`,
+              `c${tick}_tech_${f.id}_${f.research_tech_id}`,
               gameId, tick, f.id,
               JSON.stringify({
                 tech_id: f.research_tech_id,

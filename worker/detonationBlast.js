@@ -145,7 +145,7 @@ export async function finalizeStationBlast(db, gameId, tick, bodyId, summaries, 
            VALUES (?, ?, ?, 'settlement_destroyed', ?, ?, ?, 'public', ?)`,
         )
         .bind(
-          `c${tick}_blast_${s.settlement_id.slice(-6)}`,
+          `c${tick}_blast_${s.settlement_id}`,
           gameId, tick, s.owner_faction_id, bodyId, payload, now,
         )
         .run();
