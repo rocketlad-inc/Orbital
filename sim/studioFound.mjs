@@ -147,6 +147,10 @@ const snap = async (label) => {
   return m;
 };
 await snap('founded');
+// The clip's schedule: founded on the opening frames, the first supply
+// run laid after the first tick (SUPPLY_AT ticks after founding; 1 by
+// default), the next two a tick apart.
+for (let i = 0; i < Number(process.env.SUPPLY_AT ?? 1); i++) { await tick(); await snap('tick'); }
 const legs = [];
 for (let i = 0; i < 3; i++) {
   const s = await order({ type: 'supply', ships: [`st_fr_${i}`], from: 'earth', site: 'last' });

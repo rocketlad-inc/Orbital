@@ -33,7 +33,7 @@ import { apiFetch } from '../api';
 import { arcApexScale, arcNeeded, glideProgress, panCamera, strikeTimingWarnings, worldStopsAt } from './shotPlan';
 import { installVirtualClock } from './virtualClock';
 
-export type Target = string; // 'earth' | 'ship:<id>' | 'fleet:<id>' | 'missile:<n>' | 'site:<kind>' | 'mid:<target>|<target>'
+export type Target = string; // 'earth' | 'ship:<id>' | 'fleet:<id>' | 'missile:<n>' | 'site:<kind>' | 'orbit:<world>:<r>:<bearing>' | 'mid:<target>|<target>'
 
 export type ShotStep =
   | { at: number; do: 'focus'; target: Target; px?: number; scale?: number }
@@ -309,6 +309,19 @@ export class Director {
       const members = this.fleetMembers(target.slice(6));
       const lead = members.find(x => x.transit) ?? members[0];
       return lead ? this.shipPos(lead, tick) : null;
+    }
+    // 'orbit:<world>:<r>:<bearing>' -- the point r map units from a world's
+    // centre, `bearing` degrees from its direction of travel: the geometry
+    // of a 'found' order, so the hand clicks where the site will stand.
+    if (target.startsWith('orbit:')) {
+      const [, w, r, bearing] = target.split(':');
+      const host = this.body(w);
+      if (!host) return null;
+      const at = (t: number) => bodyPosition(host, t, s.bodies);
+      const c = at(tick), p0 = at(tick - 0.01), p1 = at(tick + 0.01);
+      const th = Math.atan2(p1.y - p0.y, p1.x - p0.x) + ((Number(bearing) || 0) * Math.PI) / 180;
+      const d = Number(r) || 0;
+      return { x: c.x + Math.cos(th) * d, y: c.y + Math.sin(th) * d };
     }
     const b = this.body(target);
     if (!b) return null;
@@ -1059,6 +1072,10 @@ export class Director {
           if (h.to.startsWith('css:')) {
             const el = document.querySelector<HTMLElement>(h.to.slice(4));
             if (el) el.click(); else this.note(`cursor: nothing at ${h.to}`);
+          } else if (h.to.startsWith('orbit:') || h.to.startsWith('ship:')) {
+            // A point in space, or a hull: the click is the ripple alone.
+            // The act it stands for is the step beside it (an 'order'
+            // found at the same point, a 'focusShip').
           } else {
             const b = this.body(h.to);
             if (b) window.dispatchEvent(new CustomEvent('orbital:group-move', { detail: { bodyId: b.id } }));
