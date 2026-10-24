@@ -13,11 +13,11 @@ const beat = (tick: number, kind: string, weight: number, body: string | null = 
   ({ tick, kind, body, weight, fid: 'a', target: 'b', text: `${kind} at ${tick}` });
 
 describe('filmReel', () => {
-  it('budgets about two minutes for a big match, less for a short one', () => {
-    expect(reelBudget(20)).toBe(65);
-    expect(reelBudget(160)).toBe(82);
-    expect(reelBudget(525)).toBe(131);
-    expect(reelBudget(5000)).toBe(140);
+  it('budgets about two and a half minutes for a big match, less for a short one', () => {
+    expect(reelBudget(20)).toBe(78);
+    expect(reelBudget(160)).toBe(98);
+    expect(reelBudget(525)).toBe(157);
+    expect(reelBudget(5000)).toBe(168);
   });
 
   it('finds the deadliest stretch of a long fight', () => {

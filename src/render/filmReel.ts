@@ -151,22 +151,27 @@ export interface ReelOptions {
   arcs?: boolean;
 }
 
-/** How long the opening act runs: the roll call, then the land grab. */
-export const OPENING_SECONDS = 13;
+/** EVERY SCENE HOLDS THIS MUCH LONGER than it was cut at. Players could
+ *  not read the captions at the old pace (Lorne, 2026-10-24), so the
+ *  film runs up to 3:30 and each scene stays up a fifth longer. */
+export const FILM_PACE = 1.2;
 
-export const INTRO_SECONDS = 3.4;
-export const FINALE_SECONDS = 5.2;
-export const BEAT_SECONDS = 2.4;
+/** How long the opening act runs: the roll call, then the land grab. */
+export const OPENING_SECONDS = 13 * FILM_PACE;
+
+export const INTRO_SECONDS = 3.4 * FILM_PACE;
+export const FINALE_SECONDS = 5.2 * FILM_PACE;
+export const BEAT_SECONDS = 2.4 * FILM_PACE;
 /** A beat's shortest and longest hold, by weight. */
 // Room for the camera to travel there (a zoom out over the map and in on
 // the world, about a second) before the moment lands.
-export const BEAT_MIN_SECONDS = 4.1;
-export const BEAT_MAX_SECONDS = 4.9;
+export const BEAT_MIN_SECONDS = 4.1 * FILM_PACE;
+export const BEAT_MAX_SECONDS = 4.9 * FILM_PACE;
 /** A battle gets this much for mattering, plus up to SPREAD for size. */
 // Big battles get time to shine (Lorne, 2026-10-22): the deadliest fight
-// of a match runs about fourteen seconds, at about a second a day.
-export const BATTLE_BASE_SECONDS = 4.5;
-export const BATTLE_SPREAD_SECONDS = 9.5;
+// of a match runs about seventeen seconds.
+export const BATTLE_BASE_SECONDS = 4.5 * FILM_PACE;
+export const BATTLE_SPREAD_SECONDS = 9.5 * FILM_PACE;
 /** The longest stretch of a fight the film will show, in ticks. */
 export const BATTLE_WINDOW_TICKS = 14;
 /** A montage never runs faster than this many seconds per tick (80 t/s)... */
@@ -190,9 +195,9 @@ export const REPEAT_DISCOUNT = 0.55;
 export const ARC_MIN_TICKS = 18;
 export const ARC_MIN_REL = 0.45;
 /** An arc's opening and closing scenes, seconds; a tracking shot. */
-export const ARC_OPEN_SECONDS = 4.6;
-export const ARC_CLOSE_SECONDS = 4.4;
-export const TRACK_SECONDS = 5.4;
+export const ARC_OPEN_SECONDS = 4.6 * FILM_PACE;
+export const ARC_CLOSE_SECONDS = 4.4 * FILM_PACE;
+export const TRACK_SECONDS = 5.4 * FILM_PACE;
 /** The smallest fleet that gets a tracking shot of its own. */
 export const TRACK_MIN_HULLS = 24;
 /** Gaps narrower than this are absorbed by the scene before them. */
@@ -210,8 +215,9 @@ export const FILM_STEP_MAX_MS = 50;
 /** The film's length for a match of this many ticks. */
 export function reelBudget(span: number): number {
   // About two minutes for a big match (Lorne, 2026-10-22: "it can be
-  // longer, and cover more incidents"): ~80 s for 160 days, ~130 s for 525.
-  return Math.max(65, Math.min(140, Math.round(60 + Math.max(0, span) * 0.135)));
+  // longer, and cover more incidents"): ~95 s for 160 days, ~155 s for 525,
+  // at the slower pace (FILM_PACE).
+  return Math.max(78, Math.min(168, Math.round((60 + Math.max(0, span) * 0.135) * FILM_PACE)));
 }
 
 /** Seconds a battle earns: base plus a share that grows with its weight. */
