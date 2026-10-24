@@ -971,6 +971,12 @@ function AppShell() {
   // exists on the server. Once roomGameId is a real id, swap in the
   // game provider which feeds the canvas.
   const gameStarted = typeof roomGameId === 'string' && roomGameId.length > 0;
+  // A Play for Free trial is never in a pre-game lobby: keep the launch
+  // screen up until its game is ready, instead of flashing the
+  // multiplayer shell's "Loading room…" at a first-time player.
+  if (user?.shadow && !gameStarted && roomGameId !== 'missing') {
+    return <TrialLaunch error={null} onRetry={() => undefined} onLogin={() => undefined} />;
+  }
   return (
     <MultiplayerShell onExit={handleExitRoom} initialRoomId={selectedRoomId} preGame={!gameStarted}>
       {gameStarted ? (
