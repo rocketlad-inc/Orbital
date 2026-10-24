@@ -38,6 +38,7 @@
     "sim:studio-found": "node sim/studioFound.mjs",
     "sim:foundry": "node sim/foundryBuild.mjs",
     "sim:solo": "node sim/solo.mjs",
+    "sim:trial": "node sim/trial.mjs",
     "sim:buildtap": "node sim/buildingDoubleTap.mjs",
     "sim:trade": "node sim/tradeRoutes.mjs",
     "sim:trade2": "node sim/tradeRoutesV2.mjs",

@@ -332,6 +332,24 @@ export class Room {
       this.broadcast({ type: 'settings', meta, settings });
       return Response.json(settings);
     }
+    if (url.pathname === '/member-renamed' && req.method === 'POST') {
+      // A Play for Free trial saved into an account (worker/trial.js
+      // claimShadow): the seat changes hands from the shadow account to
+      // the real one. Without this the saved player's socket was refused
+      // as "room full" (a trial room is full by design).
+      const body = await req.json().catch(() => ({}));
+      const { from, to } = body ?? {};
+      if (!from || !to) return new Response('missing from/to', { status: 400 });
+      const members = (await this.state.storage.get('members')) ?? {};
+      if (members[from]) {
+        members[to] = { ...members[from], userId: to };
+        delete members[from];
+        await this.state.storage.put('members', members);
+      }
+      const meta = await this.state.storage.get('meta');
+      if (meta && meta.hostId === from) await this.state.storage.put('meta', { ...meta, hostId: to });
+      return new Response(null, { status: 204 });
+    }
     if (url.pathname === '/member-add' && req.method === 'POST') {
       // Server-driven member upsert. Called from worker/index.js
       // handleJoinRoom right after the D1 room_members insert, so the
