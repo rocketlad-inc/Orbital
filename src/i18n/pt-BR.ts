@@ -108,6 +108,7 @@ const base: Catalog = {
   'solo.paused': 'PAUSADO',
   'solo.pause': 'Pausar',
   'solo.resume': 'Continuar',
+  'solo.start': 'Começar',
   'solo.pauseTitle': 'Parar o relógio. Nada se move até você continuar.',
   'solo.resumeTitle': 'Ligar o relógio de novo',
   'solo.step': 'Próximo tick',

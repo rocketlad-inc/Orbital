@@ -11,6 +11,7 @@
 //   5. saving: a new account made from the shadow session gets the game
 //      (members, faction, host), the shadow is retired, its sessions end
 //   6. a trial nobody plays pauses after 15 minutes; it wakes on return
+//   7. a trial starts paused for its tutorial: no ticks, no empire moves
 //
 // Run: npm run sim:trial
 // ============================================================
@@ -67,6 +68,12 @@ check('a shadow account: never emailable, never a login', u.shadow === 1 && /@sh
 check('auto-load lands them in the trial', u.autoload_room_id === G);
 const g = await DB.prepare('SELECT trial, solo, tick_interval_ms, solo_difficulty FROM games WHERE id = ?').bind(G).first();
 check('a trial game at 30 s, loose play', g.trial === 1 && g.solo === 1 && g.tick_interval_ms === 30000 && g.solo_difficulty === 'peaceful', JSON.stringify(g));
+const pausedAtStart = await DB.prepare('SELECT paused, auto_paused, next_tick_at FROM games WHERE id = ?').bind(G).first();
+check('it starts with the clock stopped, for the tutorial', pausedAtStart.paused === 1 && pausedAtStart.auto_paused === 0 && pausedAtStart.next_tick_at == null, JSON.stringify(pausedAtStart));
+await ai.runSoloTurns(env);
+const early = await DB.prepare('SELECT COUNT(*) AS n FROM game_factions WHERE game_id = ? AND ai_last_tick IS NOT NULL').bind(G).first();
+const earlyOffers = await DB.prepare('SELECT COUNT(*) AS n FROM trade_offers WHERE game_id = ?').bind(G).first();
+check('no computer empire moves or offers while it is paused', early.n === 0 && earlyOffers.n === 0, JSON.stringify({ early, earlyOffers }));
 const seats = (await DB.prepare('SELECT user_id, ai_personality, ai_personality_shown FROM game_factions WHERE game_id = ? ORDER BY slot').bind(G).all()).results;
 check('two neighbours on the roster: an Ally and a Warlord',
   seats.length === 3 && seats.filter(s => s.ai_personality_shown === 1).map(s => s.ai_personality).sort().join() === 'ally,warlord',
@@ -134,6 +141,7 @@ check('the room renames the seat (no "room full" on reconnect)', !!mem[realId] &
 // ---- 6. idle -------------------------------------------------------------------
 const r3 = await trial.handleStart(req(null, '5.5.5.5'), env, null);
 const G3 = (await r3.json()).game_id;
+await DB.prepare('UPDATE games SET paused = 0 WHERE id = ?').bind(G3).run(); // the tutorial started its clock
 await DB.prepare('UPDATE games SET host_seen_ms = ? WHERE id = ?').bind(Date.now() - 16 * 60_000, G3).run();
 await trial.sweepIdleTrials(env);
 let g3 = await DB.prepare('SELECT paused, auto_paused, next_tick_at FROM games WHERE id = ?').bind(G3).first();

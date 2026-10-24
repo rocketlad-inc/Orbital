@@ -103,6 +103,7 @@ const base = {
   'solo.paused': 'PAUSED',
   'solo.pause': 'Pause',
   'solo.resume': 'Resume',
+  'solo.start': 'Start',
   'solo.pauseTitle': 'Stop the clock. Nothing moves until you resume.',
   'solo.resumeTitle': 'Start the clock again',
   'solo.step': 'Next tick',

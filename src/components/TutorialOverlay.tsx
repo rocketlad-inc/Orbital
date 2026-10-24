@@ -324,6 +324,8 @@ export const TutorialOverlay: React.FC = () => {
           || techLevelSum(gameState) > (base?.techLevels ?? Infinity);
       case 'pact-signed':
         return (gameState.peaceFactionIds?.length ?? 0) > (base?.peace ?? 0);
+      case 'clock-running':
+        return !!gameState.solo && !gameState.solo.paused;
     }
   };
   const checkPassed = step?.task ? (taskDone || evalCheck(step.task.check)) : false;

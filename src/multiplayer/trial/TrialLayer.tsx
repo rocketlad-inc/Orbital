@@ -25,7 +25,7 @@ import './trial.css';
 /** Play time before the save prompt, ms (his pick: ten minutes). */
 export const SAVE_PROMPT_AFTER_MS = 10 * 60_000;
 
-type Asked = { leave?: boolean; time?: boolean; war?: boolean; playedMs?: number };
+type Asked = { leave?: boolean; time?: boolean; war?: boolean; playedMs?: number; clock?: boolean };
 const keyFor = (uid: string) => `orbital.trial.${uid}`;
 function readAsked(uid: string): Asked {
   try { return JSON.parse(localStorage.getItem(keyFor(uid)) ?? '{}') as Asked; } catch { return {}; }
@@ -60,6 +60,23 @@ export function TrialLayer() {
     const timer = setTimeout(() => { startedRef.current = true; startTrial(); }, 1200);
     return () => clearTimeout(timer);
   }, [trialDone, active, startTrial]);
+
+  // THE CLOCK. A trial starts paused for its tutorial, whose last step is
+  // Start the clock. Skipping the tour starts it instead. Once only: a
+  // pause the player chooses afterwards is theirs to keep.
+  const paused = !!gameState.solo?.paused;
+  useEffect(() => {
+    if (!paused) { if (!askedRef.current.clock) mark({ clock: true }); return; }
+    if (!trialDone || active || askedRef.current.clock) return;
+    mark({ clock: true });
+    const gid = gameState.solo ? sessionStorage.getItem('orbital.tab_room') : null;
+    if (gid) {
+      fetch(`/api/games/${encodeURIComponent(gid)}/solo/resume`, { method: 'POST', credentials: 'include' })
+        .then(() => window.dispatchEvent(new CustomEvent('orbital:refresh-state')))
+        .catch(() => { /* the clock button is right there */ });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paused, trialDone, active]);
 
   // LEAVING, first time only.
   useEffect(() => {
