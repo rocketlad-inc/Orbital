@@ -299,6 +299,8 @@ export class Room {
     // combat). Set for the duration of a tick pass; a concurrent entry
     // bails immediately.
     this.ticking = false;
+    // The running pass of a solo game's computer empires (one at a time).
+    this.aiPass = null;
   }
 
   async fetch(req) {
@@ -954,7 +956,7 @@ export class Room {
     const gameId = started.gameId;
 
     const game = await this.env.DB
-      .prepare('SELECT status, current_tick, tick_interval_ms, turn_based_enabled, next_tick_at, tick_schedule, paused FROM games WHERE id = ?')
+      .prepare('SELECT status, current_tick, tick_interval_ms, turn_based_enabled, next_tick_at, tick_schedule, paused, solo FROM games WHERE id = ?')
       .bind(gameId)
       .first();
     if (!game) return;
@@ -1083,6 +1085,29 @@ export class Room {
     }
 
     this.broadcast({ type: 'tick', tick: endTick, next_tick_at: nextAt });
+
+    // A solo game's computer empires (aiEmpire.js) answer the tick at
+    // once instead of at the next cron minute: at a 7 s or 30 s tick the
+    // minute cron left them several ticks behind. NOT awaited: their
+    // actions call back into this room, which must be free to take them,
+    // so they run after the alarm returns. One pass at a time per room
+    // (a slow pass simply skips a tick; the cron catches up laggards).
+    if (Number(game.solo) === 1) this.runComputerEmpires(gameId);
+  }
+
+  /** One pass of a solo game's computer empires, single-flight. */
+  runComputerEmpires(gameId) {
+    if (this.aiPass) return;
+    this.aiPass = (async () => {
+      try {
+        const { runSoloGame } = await import('./aiEmpire.js');
+        await runSoloGame(this.env, gameId);
+      } catch (e) {
+        console.error('computer empires pass failed', e);
+      } finally {
+        this.aiPass = null;
+      }
+    })();
   }
 
   // ==================================================================
