@@ -73,13 +73,14 @@ export function SoloClock({ gameId }: { gameId: string }) {
       <button
         type="button"
         className={`solo-clock__btn solo-clock__main${paused ? ' is-go' : ''}`}
+        data-tutorial-id="solo-start"
         onClick={() => send('pause', paused ? 'resume' : 'pause', { method: 'POST' })}
         disabled={!!busy}
         title={paused ? t('solo.resumeTitle') : t('solo.pauseTitle')}
         aria-pressed={paused}
       >
         {paused ? <PlayIcon /> : <PauseIcon />}
-        <span className="solo-clock__txt">{paused ? t('solo.resume') : t('solo.pause')}</span>
+        <span className="solo-clock__txt">{paused ? (gameState.currentTick === 0 ? t('solo.start') : t('solo.resume')) : t('solo.pause')}</span>
       </button>
       {paused && (
         <button

@@ -73,7 +73,8 @@ export type TutorialCheckId =
   | 'ship-selected'         // a player ship is selected (panel open)
   | 'transfer-committed'    // a player ship gained a maneuver order
   | 'research-started'      // a research project is running
-  | 'pact-signed';          // the player gained a peace partner (a pact)
+  | 'pact-signed'           // the player gained a peace partner (a pact)
+  | 'clock-running';        // a solo game's clock is running (not paused)
 
 /** Inline SVG illustration key (TutorialVisuals.tsx). */
 export type TutorialVisualId =
@@ -371,19 +372,10 @@ export const TRIAL_TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'trial-neighbours',
     title: 'Meet your neighbours',
-    body: 'The ALLY wants peace; the WARLORD attacks in about ten minutes.',
+    body: 'The ALLY will offer you peace; the WARLORD attacks about ten minutes after the clock starts.',
     target: 'mp-dock',
     placement: 'left',
     onEnter: ['close-panels', 'open-panel-empires'],
-  },
-  {
-    id: 'trial-pact',
-    title: 'Take the Ally’s hand',
-    body: 'Accept the Ally’s non-aggression pact.',
-    target: 'trade-dock',
-    placement: 'left',
-    onEnter: 'open-panel-trades',
-    task: { check: 'pact-signed', label: 'Accept the Ally’s pact' },
   },
   {
     id: 'trial-defend',
@@ -403,12 +395,13 @@ export const TRIAL_TUTORIAL_STEPS: TutorialStep[] = [
     onEnter: ['close-dock', 'close-panels', 'close-world-menu'],
   },
   {
-    id: 'trial-done',
-    title: 'Your empire is running',
-    body: 'You’re set; the full tour is in the menu.',
-    target: null,
-    placement: 'center',
-    visual: 'victory',
+    id: 'trial-clock',
+    title: 'Start the clock',
+    body: 'Press START: time runs, and your neighbours start moving.',
+    target: 'solo-start',
+    placement: 'below',
+    onEnter: ['close-dock', 'close-panels', 'close-world-menu'],
+    task: { check: 'clock-running', label: 'Start the clock' },
   },
 ];
 

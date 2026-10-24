@@ -7,7 +7,9 @@
 //   - 30 s ticks, two neighbours shown on the roster: an Ally and a
 //     Warlord. Loose play (Peaceful sharpness); the Warlord comes for
 //     them from tick 20, about ten minutes in (his pick).
-//   - the trial tutorial runs on its own (client, trial track).
+//   - it starts PAUSED: the trial tutorial runs on its own (client, trial
+//     track) and its last step starts the clock; until then no tick runs
+//     and no computer empire moves or makes offers.
 //
 // SAVING IS A MERGE. When a shadow session signs up, signs in, or signs
 // in with Google, claimShadow() moves the trial game into that account,
@@ -97,6 +99,10 @@ export async function handleStart(req, env, session) {
 
   const made = await createSoloGame(env, id, TRIAL_GAME, { trial: true });
   if (made.error) return made.error;
+  // The clock waits for the tutorial (Lorne, 2026-10-24): no ticks and no
+  // computer empire moves until its last step, Start the clock (or a skip).
+  await env.DB.prepare('UPDATE games SET paused = 1, auto_paused = 0, next_tick_at = NULL WHERE id = ?')
+    .bind(made.id).run();
   // A returning trial player opens straight into it.
   await env.DB.prepare('UPDATE users SET autoload_room_id = ? WHERE id = ?').bind(made.id, id).run();
   const { token, expiresAt } = await createSession(env.DB, id, req.headers.get('user-agent'));

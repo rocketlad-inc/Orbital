@@ -526,6 +526,9 @@ export async function runSoloTurns(env) {
   const rows = (await env.DB.prepare(
     `SELECT g.id FROM games g
       WHERE g.solo = 1 AND g.status = 'active'
+        -- A paused game's empires wait (a trial waits for its tutorial);
+        -- a STEP plays them through the room's own pass.
+        AND COALESCE(g.paused, 0) = 0
         AND EXISTS (SELECT 1 FROM game_factions f WHERE f.game_id = g.id AND f.ai_doctrine IS NOT NULL
                      AND f.status = 'active'
                      AND (f.ai_last_tick IS NULL OR f.ai_last_tick < COALESCE(g.current_tick, 0)))`,
