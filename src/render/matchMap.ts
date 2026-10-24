@@ -27,6 +27,7 @@ import {
   drawArrivalFlashes, drawEngagementFire, drawWrecks, spawnArrivalFlash, spawnWreck,
 } from './combatFx';
 import { drawBlast, drawDebris } from './fxPrimitives';
+import { drawBattleHaze } from './battleHaze';
 import type { RenderContext, StarfieldCache } from './mapRenderer';
 import { flushLabels, resetReservations } from './labelLayer';
 import { computeSystemRegions } from './systemRegions';
@@ -1932,7 +1933,16 @@ export function createMatchMap(
         // the world had been while the world moved on along its orbit.
         const wp = deathPos(d.id, d.body, t);
         if (!wp) continue;
-        if (!spawnedWrecks.has(d.id)) {
+        // ONLY WHERE THE HULLS ARE DRAWN. Far out a world is a few pixels
+        // and its fleet a count chip; a hull's blast and wreckage at hull
+        // size over it read as a giant broken ship appearing over the
+        // planet. The haze (battleHaze) is the far read instead. The
+        // Leviathan is drawn at every zoom, so its death is too.
+        const rv = d.cls === 'kaiju' ? 1 : revealOf(d.body);
+        if (rv <= 0.01) continue;
+        // Not spawned from a wide shot: left unmarked, so a cut in close
+        // within its six ticks still finds the wreckage.
+        if (!spawnedWrecks.has(d.id) && rv > 0.3) {
           spawnedWrecks.add(d.id);
           // ANCHORED TO THE WORLD (fxAnchor), at the hull's own size: a
           // wreck is the dead hull's picture breaking up, and stored as a
@@ -1948,6 +1958,8 @@ export function createMatchMap(
         const k = (t - tb) / BLAST_TICKS;
         if (k >= 0 && k < 1) {
           const cp = toPx(wp);
+          ctx.save();
+          ctx.globalAlpha *= rv;
           if (d.cls === 'kaiju') {
             // THE LEVIATHAN GOES UP AT ITS OWN SIZE: a 60 px fireball under
             // a 400 px monster read as it blinking out. One blast the size
@@ -1965,10 +1977,11 @@ export function createMatchMap(
             drawBlast(ctx, cp.x, cp.y, k, d.id, 1);
           }
           drawDebris(ctx, cp.x, cp.y, 10, k, d.id);
+          ctx.restore();
         }
       }
     }
-    drawWrecks(rc, filmMs);
+    drawWrecks(rc, filmMs, revealOf);
     // THE MOMENT A WORLD CHANGES HANDS, on the world. The ownership ring
     // flipping colour was the whole event, and a viewer never saw it: a
     // conquest is a shockwave in the taker's colour, a fall is a burst of
@@ -2273,41 +2286,57 @@ export function createMatchMap(
         transitScale);
     }
 
-    // Events at this tick: battles pulse, losses flash, foundings ring.
-    for (const b of summary.battles) {
-      const end = b.ended_tick ?? b.started_tick;
-      if (curTick < b.started_tick || curTick > end || !b.body_id) continue;
-      const id = b.body_id;
-      if (!byId.has(id)) continue;
-      const gb = byGame.get(id);
-      if (!gb || !visibleIds.has(id)) continue;
-      const p = toPx(pos(id, t));
-      const dr = drawnRadiusOf(pres, gb, cam.scale);
-      // Close in, the battle draws itself; the ring is the far read.
-      const far = 1 - Math.max(0, Math.min(1, (dr - 18) / 30));
-      if (far <= 0.01) continue;
-      const r = dr + 14;
-      ctx.save();
-      ctx.globalAlpha = far;
-      // COMBAT IS ITS OWN CHANNEL, never a hue from the empire palette.
-      // The old red ring read as Frowny Face's pink ownership halo, so a
-      // contested rock and an owned rock looked the same.
-      const pulse = 0.5 + 0.5 * Math.sin(t * 9);
-      ctx.strokeStyle = `rgba(255,255,255,${0.5 + pulse * 0.4})`;
-      ctx.lineWidth = 2.5;
-      ctx.setLineDash([7, 6]);
-      ctx.beginPath(); ctx.arc(p.x, p.y, r + pulse * 5, 0, Math.PI * 2); ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.strokeStyle = `rgba(210,235,255,${(1 - pulse) * 0.35})`;
-      ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.arc(p.x, p.y, r + 8 + pulse * 22, 0, Math.PI * 2); ctx.stroke();
-      ctx.restore();
-      // The tracers that used to be drawn here are gone. They were a
-      // second firing system running alongside drawEngagementFire: seven
-      // salvoes crammed into every tick, endpoints picked by a seeded
-      // RNG. The game fires one volley per BOLT_MS + BEAT_MS -- 1.1
-      // seconds -- so at a brisk 0.3s/tick this file was drawing roughly
-      // twenty-three shots a second over the top of the real thing.
+    // A BATTLE FROM A DISTANCE (battleHaze). Where the hulls are not drawn,
+    // the fight is drawn on the plane instead: a haze of fire that spreads
+    // with how many hulls have gone lately, a ring in the colours of who is
+    // there, and a spark per loss. It replaces a pulsing ring that was the
+    // same size for a skirmish as for a slaughter. Moons folded into their
+    // planet at this zoom fight at the planet.
+    {
+      interface Haze { heat: number; sides: Map<string, number>; sparks: Array<{ id: string; k: number }> }
+      const hazes = new Map<string, Haze>();
+      const hazeAt = (bid: string) => {
+        let h = hazes.get(bid);
+        if (!h) { h = { heat: 0, sides: new Map(), sparks: [] }; hazes.set(bid, h); }
+        return h;
+      };
+      const HAZE_TICKS = 12, HAZE_TAU = 3.5;
+      for (let dt = Math.max(0, curTick - HAZE_TICKS); dt <= curTick + 1; dt++) {
+        for (const d of deathAt.get(dt) ?? []) {
+          if (!d.body || d.cls === 'kaiju') continue;
+          const tb = dt - 1 + killPhase(d.id);
+          if (t < tb) continue;
+          const h = hazeAt(hostOf(d.body));
+          h.heat += Math.exp(-(t - tb) / HAZE_TAU);
+          if (d.fid) h.sides.set(d.fid, (h.sides.get(d.fid) ?? 0) + 0.5);
+          const k = (t - tb) / BLAST_TICKS;
+          if (k > 0 && k < 1 && h.sparks.length < 40) h.sparks.push({ id: d.id, k });
+        }
+      }
+      // A fight the record says is on, in a lull between losses, still
+      // glows a little.
+      for (const bid of fightingNow) {
+        const h = hazeAt(hostOf(bid));
+        h.heat = Math.max(h.heat, 0.6);
+      }
+      for (const [bid, h] of hazes) {
+        const gb = byGame.get(bid);
+        if (!gb || !visibleIds.has(bid)) continue;
+        const alpha = 1 - revealOf(bid);
+        if (alpha <= 0.01) continue;
+        for (const [pb, arr] of parked) {
+          if (hostOf(pb) !== bid) continue;
+          for (const sh of arr) {
+            if (!sh.ownedBy || !((getShipClass(sh.class)?.damagePerTick ?? 0) > 0)) continue;
+            h.sides.set(sh.ownedBy, (h.sides.get(sh.ownedBy) ?? 0) + 1);
+          }
+        }
+        const sides = [...h.sides.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))
+          .map(([fid, share]) => ({ color: colorOf(fid), share }));
+        const p = toPx(pos(bid, t));
+        drawBattleHaze(ctx, p.x, p.y, drawnRadiusOf(pres, gb, cam.scale), h.heat, sides, h.sparks,
+          filmMs, alpha, unitOf(H));
+      }
     }
 
     for (const e of events) {
@@ -2324,10 +2353,8 @@ export function createMatchMap(
       if (farK <= 0.01) continue;
       ctx.save();
       ctx.globalAlpha = farK;
-      if (e.kind === 'loss') {
-        ctx.fillStyle = `rgba(255,150,70,${(1 - k) * 0.5})`;
-        ctx.beginPath(); ctx.arc(p.x, p.y, r0 + 10 + k * 26, 0, Math.PI * 2); ctx.fill();
-      } else if (e.kind === 'founded' || e.kind === 'fallen') {
+      // Losses are the haze's sparks now (above).
+      if (e.kind === 'founded' || e.kind === 'fallen') {
         const fid = ownerOf.get(e.bodyId) ?? null;
         ctx.strokeStyle = hexA(e.kind === 'founded' ? colorOf(fid) : '#ff6a5a', 1 - k);
         ctx.lineWidth = 2;
