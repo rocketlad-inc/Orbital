@@ -92,7 +92,7 @@ import {
 } from '../render/galaxyLayer';
 import { getEmblemImage } from '../render/emblemCache';
 import { BUILDING_DEFS, buildingLevel } from '../game/settlements';
-import { boxSingleTarget, cyclePick, orderPickHits } from '../render/mapPick';
+import { bodyBeatsShip, boxSingleTarget, cyclePick, orderPickHits, pickPostsLeg } from '../render/mapPick';
 import type { PickHit } from '../render/mapPick';
 import { releaseFocusPosition } from '../game/cameraFocus';
 import { Body as GameBody, BuildingKind, CameraState, Ship, Settlement } from '../types';
@@ -4693,8 +4693,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // stays the single-pick answer for hover and the touch gestures. Used
   // by a click so overlapping hulls can be cycled (mapPick.cyclePick).
   // Click-time only: nothing here runs per frame.
-  const pickShipsAt = useCallback(
-    (canvasX: number, canvasY: number, padTouch: boolean): string[] => {
+  const pickShipHitsAt = useCallback(
+    (canvasX: number, canvasY: number, padTouch: boolean): PickHit[] => {
       const pad = padTouch ? TOUCH_HIT_PADDING : 0;
       const hits: PickHit[] = [];
       const slots = fleetSlotsRef.current;
@@ -4717,9 +4717,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const d = Math.hypot(canvasX - x, canvasY - y);
         if (d <= r) hits.push({ id: ship.id, d });
       }
-      return orderPickHits(hits);
+      return hits;
     },
     [gameState.ships, gameState.bodies, hitCam, renderTick],
+  );
+  const pickShipsAt = useCallback(
+    (canvasX: number, canvasY: number, padTouch: boolean): string[] =>
+      orderPickHits(pickShipHitsAt(canvasX, canvasY, padTouch)),
+    [pickShipHitsAt],
   );
   /** The order the last click cycled through (mapPick.cyclePick). */
   const pickCycleRef = useRef<string[] | null>(null);
@@ -4831,10 +4836,32 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // one (playtest: "when intercepting ships get overlapped it's
       // difficult to select one or the other"). A lone hull, and every
       // shift-click, resolve exactly as before.
-      let hitShip: string | null;
+      //
+      // MULTIPLAYER: A WORLD NEARER THAN EVERY SHIP TAKES THE CLICK
+      // (mapPick.bodyBeatsShip). Ships used to win outright, so zoomed out
+      // a parked hull's marker swallowed every click on its world's dot.
+      // The world is the nearest one drawn, as the hover highlight picks.
+      let nearBody: { id: string; d: number } | null = null;
       if (mpActions && !additive) {
+        const hc0 = hitCam();
+        for (const body of gameState.bodies) {
+          if (foldedForHit(body.id)) continue;
+          const p = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, hc0, renderTick());
+          const r = Math.max(8, Math.max(gateAwareRadius(body, hc0.scale), hitR(body, hc0.scale)) + 5) + pad;
+          const d = Math.hypot(canvasX - p.x, canvasY - p.y);
+          if (d < r && (!nearBody || d < nearBody.d)) nearBody = { id: body.id, d };
+        }
+      }
+      let hitShip: string | null;
+      const shipHits = mpActions && !additive ? pickShipHitsAt(canvasX, canvasY, touch) : [];
+      const shipD = shipHits.length > 0 ? Math.min(...shipHits.map(h => h.d)) : null;
+      if (mpActions && !additive && bodyBeatsShip(nearBody?.d ?? null, shipD)) {
+        hitShip = null;
+        pickCycleRef.current = null;
+      } else if (mpActions && !additive) {
+        nearBody = null;
         const cyc = cyclePick(
-          pickShipsAt(canvasX, canvasY, touch),
+          orderPickHits(shipHits),
           uiState.selectedShipId, pickCycleRef.current,
         );
         pickCycleRef.current = cyc && cyc.order.length > 1 ? cyc.order : null;
@@ -4871,12 +4898,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
       const hcBody = hitCam();
       for (const body of gameState.bodies) {
+        // The world that beat the ships above is the one this click means.
+        if (nearBody && body.id !== nearBody.id) continue;
         const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, hcBody, renderTick());
         // A revealed gate draws far bigger than the rock it replaced, so
         // the hit target follows the RING — otherwise you'd be aiming at a
         // 3px moon inside a 40px sprite. Mirrors drawWarpGateBody's R.
         const clickRadius = Math.max(8, gateAwareRadius(body, hcBody.scale) + 5) + pad;
-        if (Math.hypot(canvasX - bodyPos.x, canvasY - bodyPos.y) < clickRadius) {
+        if (nearBody || Math.hypot(canvasX - bodyPos.x, canvasY - bodyPos.y) < clickRadius) {
           // PICKING A ROUTE STOP takes the click before anything else.
           // Falling through to selectBody would dive the camera into
           // that world's menu on the way to adding a stop, which is the
@@ -4922,7 +4951,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       clearShipSelection();
     },
     [gameState, hitCam, uiState.targetSelectionMode, uiState.selectedShipIds, selectShip, selectBody, deselectShip, deselectBody, renderTick, pickShipAt, toggleShipSelection, clearShipSelection,
-     mpActions, pickShipsAt, uiState.selectedShipId]
+     mpActions, pickShipHitsAt, uiState.selectedShipId]
   );
 
   /**
@@ -5028,9 +5057,17 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           hoveredBodyId = body.id;
         }
       }
+      // The click gives a world nearer than every ship the world
+      // (mapPick.bodyBeatsShip); the ship's name label must not say
+      // otherwise.
+      if (mpActions && !aiming && hoveredShipIdRef.current && hoveredBodyId) {
+        const shipHits = pickShipHitsAt(canvasX, canvasY, false);
+        const shipD = shipHits.length > 0 ? Math.min(...shipHits.map(h => h.d)) : null;
+        if (bodyBeatsShip(bestDist, shipD)) hoveredShipIdRef.current = null;
+      }
       hoverBody(hoveredBodyId);
     },
-    [gameState, hitCam, uiState.targetSelectionMode, hoverBody, renderTick, pickShipAt]
+    [gameState, hitCam, uiState.targetSelectionMode, hoverBody, renderTick, pickShipAt, pickShipHitsAt, mpActions]
   );
 
   // Shared focus-on-tap logic — called by both onDoubleClick and the
@@ -5142,9 +5179,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // highlight and the dashed line (the hover preview, driven the same
       // way) and a second tap on the same world commits. A parked ship's
       // pick is itself only a preview until COMMIT, so it keeps one tap.
-      const sel = gameState.ships.find(sh => sh.id === uiState.selectedShipId);
-      const commits = !!sel && (!!sel.transit || !!sel.plannedTransit
-        || (sel.queuedTransits?.length ?? 0) > 0);
+      // "Commits" means the pick POSTS: a leg chained onto a hull already
+      // flying (ShipPanel's transfer handler posts only for crew with a
+      // live transit). A ship with a STAGED plan only stages another leg,
+      // so it took two taps for nothing (Maya, 2026-10-24: "the first tap
+      // only highlighted").
+      const commits = pickPostsLeg(uiState.selectedShipId, gameState.ships);
       if (commits) {
         const bodyId = pickBodyAt(x, y, true);
         if (!bodyId) return;
