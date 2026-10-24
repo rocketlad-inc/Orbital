@@ -275,7 +275,7 @@ async function nearestCapital(view, rm, foes, from) {
  * of [label, result] for the tally. Order of business: pull out of a
  * lost fight, answer an attack on my worlds, then strike.
  */
-export async function wageWar(view, rm, call, foes, sharp, { force = false } = {}) {
+export async function wageWar(view, rm, call, foes, sharp, { force = false, longWar = false } = {}) {
   const out = [];
   const armed = myArmed(view);
   if (!armed.length) return out;
@@ -337,7 +337,10 @@ export async function wageWar(view, rm, call, foes, sharp, { force = false } = {
     else { const r = await scout(view, rm, call, cap); if (r) out.push(['scout', r]); }
     return out;
   }
-  if (!force && sharp.margin > 0 && power(strike) < sharp.margin * target.theirs) {
+  // A long war lowers the bar to an even fight: waiting for 1.5x odds
+  // forever is how the crucible's fleets sat at home for 5000 ticks.
+  const margin = longWar ? Math.min(sharp.margin, 1) : sharp.margin;
+  if (!force && margin > 0 && power(strike) < margin * target.theirs) {
     out.push(['hold']);
     return out;
   }
