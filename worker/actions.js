@@ -2304,15 +2304,21 @@ async function handleResearch(req, env, ctx) {
     // (sensors, fully bank-covered) wiped an unrelated in-progress project
     // (propulsion at 14/15). Resuming re-applied banked science, which is
     // why the progress "came back" — it was never really preserved.
-    const completionUpdate = switching
+    // GUARDED: the debit applies only if the science is still there. Two
+    // UNLOCK NOWs clicked back to back both read the same pool and both
+    // paid, leaving science at -11 (playtest, 2026-10-24). The debit runs
+    // alone first; the level is granted only when it landed.
+    const paid = await (switching
       ? env.DB
-          .prepare('UPDATE game_factions SET science = science - ? WHERE id = ?')
-          .bind(spend, me.id)
+          .prepare('UPDATE game_factions SET science = science - ? WHERE id = ? AND science >= ?')
+          .bind(spend, me.id, spend)
       : env.DB
-          .prepare('UPDATE game_factions SET science = science - ?, research_tech_id = NULL, research_progress = 0 WHERE id = ?')
-          .bind(spend, me.id);
+          .prepare('UPDATE game_factions SET science = science - ?, research_tech_id = NULL, research_progress = 0 WHERE id = ? AND science >= ?')
+          .bind(spend, me.id, spend)).run();
+    if (!(paid?.meta?.changes > 0)) {
+      return err(409, 'insufficient_science', 'not enough science for that');
+    }
     await env.DB.batch([
-      completionUpdate,
       env.DB
         .prepare(
           `INSERT INTO faction_techs
@@ -2356,14 +2362,17 @@ async function handleResearch(req, env, ctx) {
     }, { status: 201 });
   }
 
-  await env.DB
+  const committed = await env.DB
     .prepare(
       `UPDATE game_factions
           SET science = science - ?, research_tech_id = ?, research_progress = ?
-        WHERE id = ?`,
+        WHERE id = ? AND science >= ?`,
     )
-    .bind(spend, techId, newProgress, me.id)
+    .bind(spend, techId, newProgress, me.id, spend)
     .run();
+  if (!(committed?.meta?.changes > 0)) {
+    return err(409, 'insufficient_science', 'not enough science for that');
+  }
 
   return json({
     tech_id: techId,

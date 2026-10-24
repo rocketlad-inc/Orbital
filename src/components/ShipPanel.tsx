@@ -1780,7 +1780,8 @@ export const ShipPanel: React.FC = () => {
     <>
       {/* Floating cancel banner during mobile target selection. The map
           HUD already prints "SELECT TARGET BODY", but mobile has no ESC
-          key — so we surface a tappable Cancel here. */}
+          key — so we surface a tappable Cancel here. Its bottom is in
+          ShipPanel.css: it clears the bottom dock rail. */}
       {hideForTargeting && (
         <div
           className="ship-target-banner"
@@ -1788,7 +1789,6 @@ export const ShipPanel: React.FC = () => {
             position: 'fixed',
             left: 12,
             right: 12,
-            bottom: 'calc(env(safe-area-inset-bottom, 0) + 12px)',
             zIndex: 1090,
             display: 'flex',
             alignItems: 'center',

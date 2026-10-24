@@ -176,7 +176,7 @@ export function applyShellAttribute(): void {
 /** Layout width forced on a PHONE-OS device that reports a desktop-class
  *  viewport (a foldable's inner screen). 720 sits below every mobile tier
  *  in the codebase — DockRail's bottom rail (768), the world menu's mobile
- *  layout (720), multiplayer HUD (768), the shell breakpoint (1023) — so
+ *  layout (768), multiplayer HUD (768), the shell breakpoint (1023) — so
  *  the device gets the COMPLETE phone experience, and the browser scales
  *  the 720px layout up to fill the screen (~1.5× on a Fold 7), fixing the
  *  "everything is tiny" density too. */

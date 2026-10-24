@@ -10,7 +10,7 @@
    Mobile: outliner is hidden behind the ☰ drawer anyway. Class only
    ever set by the MP overlay — dead rule in single-player. */
 :root { --wm-rail: 296px; --wm-dock: 60px; }
-@media (max-width: 720px) {
+@media (max-width: 768px) { /* WM_PHONE_MAX */
   body.wm-open .left-rail { display: none; }
   :root { --wm-rail: 0px; }
 }
