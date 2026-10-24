@@ -462,7 +462,19 @@ export function expandScenario(raw) {
     seatMe: raw.seat_me === true,
     reset: raw.reset !== false,
     tickIntervalMs: Number.isFinite(Number(raw.tick_interval_ms)) ? Number(raw.tick_interval_ms) : 3600000,
+    // Where every planet starts: a new game takes the seed of one filmed
+    // before, so a take that worked is shot again on the same sky (the
+    // Mega's colony squadron only rides it in when Ceres sits on its side
+    // of Earth; 2026-10-24). A new game only: an existing one keeps its own.
+    mapSeed: mapSeedOf(raw.map_seed),
   };
+}
+
+function mapSeedOf(v) {
+  if (v == null || v === '') return null;
+  const s = String(v);
+  if (!/^[A-Za-z0-9_-]{4,64}$/.test(s)) throw new Error("map_seed is a game's seed (games.map_seed), letters, digits, - and _");
+  return s;
 }
 
 /** Freighters one route may fly (tradeRoutesV2.js carrierCapFor at its

@@ -477,7 +477,9 @@ async function handleStart(_req, env, ctx) {
  * both call this, and the games-row INSERT (primary key = room id) lets
  * exactly one of them through.
  */
-export async function startGame(env, roomId) {
+/** `mapSeed` is for the Studio only (a scene shot again on the sky of an
+ *  earlier take); every lobby start draws a fresh one. */
+export async function startGame(env, roomId, { mapSeed = null } = {}) {
   const existing = await env.DB.prepare('SELECT 1 AS x FROM games WHERE id = ?').bind(roomId).first();
   if (existing) return { error: err(409, 'already_started', 'game already started') };
 
@@ -501,7 +503,7 @@ export async function startGame(env, roomId) {
     }
   } catch {}
 
-  const map_seed = b64url(crypto.getRandomValues(new Uint8Array(16)));
+  const map_seed = mapSeed || b64url(crypto.getRandomValues(new Uint8Array(16)));
   const now = Date.now();
 
   // Pin the balance config at creation. A game keeps whatever was

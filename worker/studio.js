@@ -142,7 +142,7 @@ async function createStudioGame(env, spec, session) {
   await env.DB.batch(spec.factions.map((f, i) => env.DB
     .prepare('UPDATE room_members SET empire_name = ?, chosen_starting_body = ?, color = ?, color2 = ?, emblem = ? WHERE room_id = ? AND user_id = ?')
     .bind(f.name, f.home, f.color, f.color2, f.emblem, id, users[i].id)));
-  const started = await startGame(env, id);
+  const started = await startGame(env, id, { mapSeed: spec.mapSeed });
   if (started.error) throw new Error(`could not start the scene: ${await started.error.text()}`);
   await env.DB
     .prepare('UPDATE games SET is_test_game = 1, tick_interval_ms = ?, next_tick_at = ? WHERE id = ?')
