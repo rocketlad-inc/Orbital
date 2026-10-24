@@ -4319,7 +4319,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     {
       const trace = (window as unknown as { __shipTrace?: unknown[] }).__shipTrace;
       if (Array.isArray(trace)) {
-        trace.push({ t: renderTick(), scale: camera.scale, ships: drawnShipsSince(nowMs) });
+        // Each world's layout as solved (its roster signature changes on
+        // a re-solve), so a re-slot in a take can be traced to its cause.
+        const battles = [...(renderContext.liveBattles?.values() ?? [])].map(lb => [lb.bodyId, lb.key]);
+        trace.push({ t: renderTick(), scale: camera.scale, ships: drawnShipsSince(nowMs), battles });
         if (trace.length > 120) trace.splice(0, trace.length - 120);
       }
     }
