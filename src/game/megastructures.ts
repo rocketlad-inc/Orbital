@@ -70,7 +70,8 @@ export const MEGASTRUCTURES: Record<MegastructureKind, MegastructureDef> = {
     color: '#ff8a6b',
     glyph: '✷',
     get blurb() { return tk('data.mega.weapons_station.blurb', 'Destroyer-tier guns with reach into transit lanes, and it fires on three at once.'); },
-    effect: { range: 700, damagePerTick: 22.5, targets: 3 },
+    // Sees as far as it shoots: worker/megastructures.js has why.
+    effect: { range: 700, damagePerTick: 22.5, targets: 3, sensorRange: 700 },
   },
   gravity_sink: {
     kind: 'gravity_sink',

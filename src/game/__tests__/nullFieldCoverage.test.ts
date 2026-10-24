@@ -60,5 +60,5 @@ test('no cut from an abandoned, breached, own or allied field', () => {
 test('the map passes the cuts to the fog and keeps breached arrays out', () => {
   const src = fs.readFileSync(path.join(__dirname, '../../components/MapCanvas.tsx'), 'utf8');
   expect(src).toMatch(/drawFogOfWarOverlay\(seen, renderContext, 1, \{ wash: regionFade, cuts \}\)/);
-  expect(src).toMatch(/m\.kind !== 'deep_array' \|\| !structureOnline\(m\)/);
+  expect(src).toMatch(/!\(sight > 0\) \|\| !structureOnline\(m\)/);
 });

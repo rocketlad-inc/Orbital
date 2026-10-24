@@ -252,7 +252,12 @@ export const MEGASTRUCTURES = {
     radius: 1.6,
     color: '#ff8a6b',
     blurb: 'Destroyer-tier guns with reach into transit lanes, and it fires on three at once.',
-    effect: { range: 700, damagePerTick: 22.5, targets: 3 },
+    // It SEES as far as it shoots (Sam, 2026-10-23: "slowly taking damage,
+    // but nothing is nearby to actually hit it"). Its guns reach 700 and
+    // the hulls it fires on shoot back from wherever they are
+    // (counter-battery), but a city sees 500: the station fought a raid
+    // its owner could not see. Mirrored in src/game/megastructures.ts.
+    effect: { range: 700, damagePerTick: 22.5, targets: 3, sensorRange: 700 },
   },
   gravity_sink: {
     label: 'Gravity Sink',
