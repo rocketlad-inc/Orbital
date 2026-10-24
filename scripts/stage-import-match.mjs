@@ -22,7 +22,7 @@
 // ============================================================================
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -88,7 +88,9 @@ const lit = (v) => {
   if (v === null || v === undefined) return 'NULL';
   if (typeof v === 'number') return Number.isFinite(v) ? String(v) : 'NULL';
   if (typeof v === 'boolean') return v ? '1' : '0';
-  return `'${String(v).replace(/'/g, "''")}'`;
+  // D1's file import splits statements at line ends, so a newline inside a
+  // value (an empire's bio) is written as char(10) instead.
+  return String(v).split(/\r?\n/).map(part => `'${part.replace(/\r/g, '').replace(/'/g, "''")}'`).join(' || char(10) || ');
 };
 
 /** The columns staging has for a table (its schema may be ahead of prod's). */
@@ -110,7 +112,20 @@ async function importGame(gameId, hostId) {
   let total = 0;
   const seen = { factions: new Set(), bodies: new Set(), ships: new Set(), settlements: new Set() };
   for (const spec of TABLES) {
-    const rows = (await prodEnv.DB.prepare(`SELECT * FROM ${spec.t} WHERE ${spec.where}`).bind(gameId).all()).results;
+    let rows = null;
+    // The Cloudflare API drops the odd request: try a read three times.
+    for (let attempt = 1; !rows; attempt++) {
+      try { rows = (await prodEnv.DB.prepare(`SELECT * FROM ${spec.t} WHERE ${spec.where}`).bind(gameId).all()).results; }
+      catch (e) { if (attempt >= 3) throw e; await new Promise(r => setTimeout(r, 3000 * attempt)); }
+    }
+    // D1's file import checks foreign keys statement by statement (it does
+    // not honour defer_foreign_keys), so a world must come after the body it
+    // orbits: a binary barycentre was listed after its asteroid.
+    if (spec.t === 'game_bodies') {
+      const byId = new Map(rows.map(r => [r.id, r]));
+      const depth = (r, n = 0) => (r?.parent_body_id && byId.has(r.parent_body_id) && n < 50 ? depth(byId.get(r.parent_body_id), n + 1) + 1 : 0);
+      rows = [...rows].sort((a, b) => depth(a) - depth(b));
+    }
     const have = stagingCols(spec.t);
     if (ID_SET[spec.t]) for (const r of rows) seen[ID_SET[spec.t]].add(r.id ?? r.body_id);
     for (const r of rows) {
@@ -142,23 +157,59 @@ async function importGame(gameId, hostId) {
   const token = `stg${gameId.replace(/[^A-Za-z0-9]/g, '')}film`;
   stmts.push(`INSERT OR REPLACE INTO match_shares (token, game_id, created_by, created_at_ms) VALUES (${lit(token)}, ${lit(gameId)}, NULL, ${Date.now()});`);
 
-  // D1 takes files; keep each well under its limits.
+  // THROUGH D1'S QUERY ENDPOINT, in batches under its 100 KB statement
+  // limit. Not `d1 execute --file`: its import API died on the NEXT Zone
+  // ("Not currently importing anything", no reason given) on statements the
+  // query endpoint runs without complaint.
   const dir = path.join(os.tmpdir(), 'orbital-stage-import');
   mkdirSync(dir, { recursive: true });
-  const parts = [];
-  let cur = [stmts[0]], size = 0;
-  for (const s of stmts.slice(1)) {
-    if (size + s.length > 1_500_000 && cur.length > 1) { parts.push(cur); cur = [stmts[0]]; size = 0; }
-    cur.push(s); size += s.length;
+  writeFileSync(path.join(dir, `${gameId}.sql`), stmts.join('\n'));
+  let batch = [], size = 0, sent = 0, calls = 0;
+  const flush = async () => {
+    if (!batch.length) return;
+    await stagingQuery(batch.join('\n'));
+    sent += batch.length; calls++;
+    if (calls % 25 === 0) process.stdout.write(`  ${sent}/${stmts.length} statements\n`);
+    batch = []; size = 0;
+  };
+  for (const s of stmts.slice(1)) {          // the PRAGMA is per file; ordering does its job here
+    if (size + s.length > 90_000) await flush();
+    batch.push(s); size += s.length;
   }
-  parts.push(cur);
-  for (const [i, p] of parts.entries()) {
-    const file = path.join(dir, `${gameId}.${i}.sql`);
-    writeFileSync(file, p.join('\n'));
-    staging(['--file', file, '--yes']);
-    process.stdout.write(`  wrote part ${i + 1}/${parts.length}\n`);
-  }
+  await flush();
+  process.stdout.write(`  ${sent} statements in ${calls} batches\n`);
   return { total, token };
+}
+
+/** The wrangler login's own token (refreshed by running wrangler when it is
+ *  about to expire). Read from disk, never printed. */
+function wranglerToken() {
+  const file = path.join(os.homedir(), '.wrangler/config/default.toml');
+  const read = () => {
+    const cfg = readFileSync(file, 'utf8');
+    return { token: /oauth_token\s*=\s*"([^"]+)"/.exec(cfg)?.[1], exp: Date.parse(/expiration_time\s*=\s*"([^"]+)"/.exec(cfg)?.[1] ?? '') };
+  };
+  let t = read();
+  if (!t.token || !(t.exp > Date.now() + 5 * 60_000)) { stagingSelect('SELECT 1 AS x'); t = read(); }
+  if (!t.token) throw new Error('no wrangler login token; run `wrangler login`');
+  return t.token;
+}
+const ACCOUNT_ID = '6eb3b8c98213e8980b94be54810fa57f';
+const STAGING_DB_ID = '102ba09d-028c-4227-8dce-e2d61bc3f556';
+async function stagingQuery(sql) {
+  for (let attempt = 1; ; attempt++) {
+    const r = await fetch(`https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/d1/database/${STAGING_DB_ID}/query`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${wranglerToken()}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ sql }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (j.success) return j;
+    if (attempt >= 3 || (j.errors ?? []).some(e => /constraint|syntax|no such/i.test(e.message ?? ''))) {
+      throw new Error(`D1: ${JSON.stringify(j.errors ?? r.status).slice(0, 400)}`);
+    }
+    await new Promise(res => setTimeout(res, 2000 * attempt));
+  }
 }
 
 async function main() {
