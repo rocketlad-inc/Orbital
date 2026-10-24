@@ -22,7 +22,7 @@ import { createPortal } from 'react-dom';
 import { useTutorial } from '../state/tutorial';
 import { useGameContext } from '../state/gameContext';
 import {
-  TUTORIAL_STEPS, TutorialStep, TutorialEffect, TutorialCheckId,
+  stepsFor, TutorialStep, TutorialEffect, TutorialCheckId,
 } from '../game/tutorialSteps';
 import { TutorialVisual } from './TutorialVisuals';
 import { t, tk } from '../i18n/core';
@@ -124,6 +124,8 @@ interface TaskBaseline {
   buildOrders: number;
   orders: number;
   buildingQueues: number;
+  /** Peace partners at step entry (the trial's pact task). */
+  peace: number;
 }
 
 function playerBuildOrderCount(gs: GameState): number {
@@ -141,7 +143,8 @@ function playerOrderCount(gs: GameState): number {
 
 export const TutorialOverlay: React.FC = () => {
   useI18n();
-  const { active, index, advance, back, skip, finish, jumpTo } = useTutorial();
+  const { active, index, advance, back, skip, finish, jumpTo, track } = useTutorial();
+  const TUTORIAL_STEPS = stepsFor(track);
   const { gameState, uiState, selectBody, selectShip } = useGameContext();
   const [targetRect, setTargetRect] = useState<Rect | null>(null);
   // Extra cutout rects for steps that highlight more than one element
@@ -206,6 +209,12 @@ export const TutorialOverlay: React.FC = () => {
         window.dispatchEvent(new CustomEvent('orbital:open-panel', { detail: { panel: null } }));
         window.dispatchEvent(new CustomEvent('orbital:close-ship-designer'));
         break;
+      case 'open-panel-trades':
+        window.dispatchEvent(new CustomEvent('orbital:open-panel', { detail: { panel: 'trades' } }));
+        break;
+      case 'open-panel-empires':
+        window.dispatchEvent(new CustomEvent('dockrail:set', { detail: { active: 'multiplayer' } }));
+        break;
       case 'ship-tab-orders':
       case 'ship-tab-ship':
       case 'ship-tab-cargo':
@@ -247,6 +256,7 @@ export const TutorialOverlay: React.FC = () => {
       buildOrders: playerBuildOrderCount(gameState),
       orders: playerOrderCount(gameState),
       buildingQueues: playerBuildingQueueCount(gameState),
+      peace: gameState.peaceFactionIds?.length ?? 0,
     };
     const iv = setInterval(() => forceTick(n => n + 1), 400);
     return () => clearInterval(iv);
@@ -275,6 +285,8 @@ export const TutorialOverlay: React.FC = () => {
         return playerOrderCount(gameState) > (base?.orders ?? 0);
       case 'research-started':
         return gameState.factionTech?.player?.researching != null;
+      case 'pact-signed':
+        return (gameState.peaceFactionIds?.length ?? 0) > (base?.peace ?? 0);
     }
   };
   const checkPassed = step?.task ? (taskDone || evalCheck(step.task.check)) : false;

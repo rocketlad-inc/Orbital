@@ -37,6 +37,8 @@ import { saveTextFile } from '../platform/saveTextFile';
 import { t, tn } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import { SoloClock } from '../multiplayer/SoloClock';
+import { openSaveEmpire } from '../multiplayer/trial/SaveEmpire';
+import '../multiplayer/trial/trial.css';
 
 export type PanelId = 'settlements' | 'fleet' | 'research' | null;
 
@@ -192,7 +194,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         aria-label={t('topbar.openMenu')}
         data-tutorial-id="menu-button"
       >
-        <div className="top-bar__title-main">ORBITAL</div>
+        <div className="top-bar__title-main">ORBITAL{user?.shadow && <span className="trial-dot" aria-hidden="true" />}</div>
         <div className="top-bar__title-sub" title={t('topbar.build', { sha: GIT_SHA })}>v0.3 · {GIT_SHA.slice(0,7)}</div>
       </button>
 
@@ -1121,7 +1123,7 @@ const LightweightToggle: React.FC = () => {
 interface SideMenuProps {
   onClose: () => void;
   onExitMode?: () => void;
-  user: { display_name: string; email: string } | null;
+  user: { display_name: string; email: string; shadow?: boolean } | null;
   onSignOut: () => Promise<void> | void;
   /** Opens the account-level notification preferences dialog. */
   onOpenNotifications?: () => void;
@@ -1539,7 +1541,7 @@ const SideMenu: React.FC<SideMenuProps> = ({
           <div className="side-menu__identity-name">
             {user ? (user.display_name || user.email) : t('topbar.guest')}
           </div>
-          {user && <div className="side-menu__identity-sub">{user.email}</div>}
+          {user && <div className="side-menu__identity-sub">{user.shadow ? t('trial.menu.unsaved') : user.email}</div>}
         </section>
 
         <nav className="side-menu__nav">
@@ -1594,6 +1596,17 @@ const SideMenu: React.FC<SideMenuProps> = ({
               <span className="side-menu__item-icon">⤒</span>
               <span className="side-menu__item-label">{t('topbar.load.label')}</span>
               <span className="side-menu__item-hint">{t('topbar.load.hint')}</span>
+            </button>
+          )}
+          {/* A Play for Free trial (trial.js): keep it. First in the menu. */}
+          {user?.shadow && (
+            <button
+              className="side-menu__item side-menu__item--save"
+              onClick={() => { onClose(); openSaveEmpire('menu'); }}
+            >
+              <span className="side-menu__item-icon">★</span>
+              <span className="side-menu__item-label">{t('trial.menu.save')}</span>
+              <span className="side-menu__item-hint">{t('trial.menu.saveHint')}</span>
             </button>
           )}
           {onExitMode && (

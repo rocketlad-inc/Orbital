@@ -638,7 +638,7 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
         </div>
       )}
       {railMounted && (
-      <div className={`dock-panel mp-dock${railOpen ? ' is-open' : ''}`}>
+      <div className={`dock-panel mp-dock${railOpen ? ' is-open' : ''}`} data-tutorial-id="mp-dock">
         <div className="mp-dock-head">
           <span className="mp-dock-head__title">
             <MpPeopleIcon />

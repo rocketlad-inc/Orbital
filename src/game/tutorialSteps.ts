@@ -54,7 +54,11 @@ export type TutorialEffect =
   | 'ship-tab-orders'      // window 'orbital:ship-panel-tab' {tab:'orders'}
   | 'ship-tab-ship'
   | 'ship-tab-cargo'
-  | 'ship-tab-log';
+  | 'ship-tab-log'
+  // The trial track (TRIAL_TUTORIAL_STEPS): the private offers tab of the
+  // trade dock (where a pact offer waits) and the empires panel.
+  | 'open-panel-trades'    // window 'orbital:open-panel' {panel:'trades'}
+  | 'open-panel-empires';  // window 'dockrail:set' {active:'multiplayer'}
 
 /** Game-state condition a task step waits on. Evaluated by the overlay
  *  a few times a second; baselines are snapshotted at step entry so a
@@ -66,7 +70,8 @@ export type TutorialCheckId =
   | 'ship-queued'           // a player build order appeared in the yard
   | 'ship-selected'         // a player ship is selected (panel open)
   | 'transfer-committed'    // a player ship gained a maneuver order
-  | 'research-started';     // a research project is running
+  | 'research-started'      // a research project is running
+  | 'pact-signed';          // the player gained a peace partner (a pact)
 
 /** Inline SVG illustration key (TutorialVisuals.tsx). */
 export type TutorialVisualId =
@@ -317,3 +322,88 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
 /** Total step count, exposed so TutorialProvider can size its index
  *  without importing the steps array (provider should stay generic). */
 export const TUTORIAL_STEP_COUNT = TUTORIAL_STEPS.length;
+
+// ============================================================
+// THE TRIAL TRACK — Play for Free's first ten minutes (Lorne,
+// 2026-10-24: "really think through a smooth transition and education").
+//
+// Starts on its own the moment a trial game opens (no "New to Orbital?"
+// prompt: they came to play). Short on purpose: the opening moves from
+// the full tour, as tasks, then the two things only a trial has: its
+// neighbours (the Ally's pact, the Warlord's coming war, about ten
+// minutes in) and saving the empire. The full tour stays in the menu.
+//
+// Order is the order a player meets things: their world, a ship, moving
+// it, the bigger map, research, then the politics, then keeping it.
+// ============================================================
+const byId = (id: string): TutorialStep => {
+  const step = TUTORIAL_STEPS.find(x => x.id === id);
+  if (!step) throw new Error(`tutorial: no step ${id}`);
+  return step;
+};
+
+export const TRIAL_TUTORIAL_STEPS: TutorialStep[] = [
+  {
+    id: 'trial-welcome',
+    title: 'Welcome, Commander',
+    body: 'This is your corner of the Solar System: one world and a few ships. Two other empires share it with you. Time runs on its own here: the game moves one tick every 30 seconds, whether you act or not.',
+    target: null,
+    placement: 'center',
+    visual: 'map-controls',
+  },
+  byId('open-world'),
+  byId('world-readout'),
+  byId('build-ship'),
+  byId('select-ship'),
+  byId('send-ship'),
+  byId('expand'),
+  byId('research'),
+  {
+    id: 'trial-neighbours',
+    title: 'Meet your neighbours',
+    body: 'Two computer empires. The ALLY wants peace and will stand with you. The WARLORD wants your worlds: it is building warships and will declare war in about ten minutes.',
+    target: 'mp-dock',
+    placement: 'left',
+    onEnter: 'open-panel-empires',
+  },
+  {
+    id: 'trial-pact',
+    title: 'Take the Ally’s hand',
+    body: 'The Ally has offered you a non-aggression pact: neither of you can attack the other, and it will join your wars. Accept it.',
+    target: 'trade-dock',
+    placement: 'left',
+    onEnter: 'open-panel-trades',
+    task: { check: 'pact-signed', label: 'Accept the Ally’s pact' },
+  },
+  {
+    id: 'trial-defend',
+    title: 'Get ready for the Warlord',
+    body: 'Ships parked at a world fight for it on their own when an enemy arrives. Keep a few warships at home and build more: by the time the Warlord comes, you want a fleet waiting.',
+    target: 'wm-build',
+    placement: 'left',
+    onEnter: ['close-panels', 'open-capital-menu'],
+    task: { check: 'ship-queued', label: 'Queue another warship' },
+  },
+  {
+    id: 'trial-save',
+    title: 'Keep your empire',
+    body: 'You are playing without an account, so this empire lives only in this browser. Save it from the menu here, top left, to keep it, play it on any device, and take on other commanders.',
+    target: 'menu-button',
+    placement: 'below',
+  },
+  {
+    id: 'trial-done',
+    title: 'Your empire is running',
+    body: 'Your moves are under way and the clock is ticking. The full tour (ship design, upkeep, the Senate, megastructures) is in the menu whenever you want it.',
+    target: null,
+    placement: 'center',
+    visual: 'victory',
+  },
+];
+
+export const TRIAL_TUTORIAL_STEP_COUNT = TRIAL_TUTORIAL_STEPS.length;
+
+/** The steps a track walks. */
+export function stepsFor(track: 'full' | 'trial'): TutorialStep[] {
+  return track === 'trial' ? TRIAL_TUTORIAL_STEPS : TUTORIAL_STEPS;
+}

@@ -154,6 +154,9 @@ export async function apiFetch<T = unknown>(
 }
 
 export type User = {
+  /** An unsaved Play for Free account (worker/trial.js): plays its trial
+   *  game only, until saved. */
+  shadow?: boolean;
   id: string;
   email: string;
   display_name: string;

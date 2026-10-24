@@ -31,6 +31,9 @@ const BY_MESSAGE: Array<[RegExp, Key]> = [
 
 const BY_CODE: Record<string, Key> = {
   unauthenticated: 'err.unauthenticated',
+  // Play for Free (worker/trial.js).
+  too_many_trials: 'trial.err.tooMany',
+  account_required: 'trial.err.account',
   invalid_credentials: 'err.invalid_credentials',
   email_taken: 'err.email_taken',
   room_full: 'err.room_full',

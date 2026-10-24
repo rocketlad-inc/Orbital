@@ -20,6 +20,7 @@ import { apiErrorText } from '../i18n/apiErrors';
 import { saveLocale } from '../i18n/account';
 import './lobby.css';
 import { InviteCard } from './InviteCard';
+import { openSaveEmpire } from './trial/SaveEmpire';
 
 // Full-screen pre-game lobby: where a signed-in player finds, starts and
 // returns to games. Sections:
@@ -45,6 +46,7 @@ type Listing = { games: GameSummary[]; now: number; autoload_room_id?: string | 
 export function MultiplayerLobby({ onEnterRoom }: Props) {
   useI18n();
   const { user, signOut } = useAuth();
+  const shadow = !!user?.shadow;
   const [tab, setTab] = useState<Tab>(() => {
     // Stripe's success/cancel redirect lands on the SPA root with
     // ?purchase=... — open straight onto the profile tab so the
@@ -91,7 +93,7 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
 
   // A player with nothing live lands on Browse rather than an empty list.
   useEffect(() => {
-    if (liveMine !== null && liveMine.length === 0 && tab === 'my') setTab('browse');
+    if (liveMine !== null && liveMine.length === 0 && tab === 'my' && !shadow) setTab('browse');
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveMine]);
 
@@ -133,11 +135,13 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
             {pastMine && pastMine.length > 0 && (
               <NavItem active={tab === 'past'} onClick={() => setTab('past')}>{t('lobby.nav.past')}</NavItem>
             )}
-            <NavItem active={tab === 'browse'} onClick={() => setTab('browse')}>{t('lobby.nav.browse')}</NavItem>
-            <NavItem active={tab === 'create'} onClick={() => setTab('create')}>{t('lobby.nav.create')}</NavItem>
-            <NavItem active={tab === 'code'} onClick={() => setTab('code')}>{t('lobby.nav.code')}</NavItem>
+            {/* A Play for Free trial plays its trial only (worker/trial.js):
+                saving the empire opens the rest. */}
+            {!shadow && <NavItem active={tab === 'browse'} onClick={() => setTab('browse')}>{t('lobby.nav.browse')}</NavItem>}
+            {!shadow && <NavItem active={tab === 'create'} onClick={() => setTab('create')}>{t('lobby.nav.create')}</NavItem>}
+            {!shadow && <NavItem active={tab === 'code'} onClick={() => setTab('code')}>{t('lobby.nav.code')}</NavItem>}
             {/* The Map Maker (src/mapmaker), behind its launch switch. */}
-            {mapMaker && (
+            {mapMaker && !shadow && (
               <NavItem active={false} onClick={() => { window.location.href = '/?mapmaker'; }}>{t('lobby.nav.mapMaker')}</NavItem>
             )}
             {/* Live-ops tools, allow-listed admins only. Display-only flag;
@@ -184,6 +188,7 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
             quickBusy={quickBusy}
             quickError={quickError}
             onSoloStarted={onEnterRoom}
+            shadow={shadow}
           />
         )}
         {tab === 'my' && (
@@ -250,7 +255,7 @@ function NavItem({
 // ---------- Hero + Quick Join ----------
 
 function Hero({
-  tab, name, mine, browse, autoloadSet, onQuick, quickBusy, quickError, onSoloStarted,
+  tab, name, mine, browse, autoloadSet, onQuick, quickBusy, quickError, onSoloStarted, shadow = false,
 }: {
   tab: 'my' | 'browse';
   name: string;
@@ -261,6 +266,8 @@ function Hero({
   quickBusy: boolean;
   quickError: string | null;
   onSoloStarted: (roomId: string) => void;
+  /** A Play for Free trial account: one card, to save the empire. */
+  shadow?: boolean;
 }) {
   useI18n();
   // Quick Join only ever seats you in a PUBLIC game (no password), so the
@@ -295,6 +302,17 @@ function Hero({
         )}
       </div>
       <div className="lx-hero__cards">
+      {shadow ? (
+        <div className="lx-quick">
+          <div className="lx-quick__head">
+            <span className="lx-quick__label">{t('trial.lobby.label')}</span>
+          </div>
+          <p className="lx-quick__body">{t('trial.lobby.body')}</p>
+          <button className="lx-btn lx-btn--primary lx-btn--lg lx-btn--block" onClick={() => openSaveEmpire('account')}>
+            {t('trial.menu.save')}
+          </button>
+        </div>
+      ) : (<>
       <div className="lx-quick">
         <div className="lx-quick__head">
           <span className="lx-quick__label">{t('lobby.quick.label')}</span>
@@ -313,6 +331,7 @@ function Hero({
         {quickError && <div className="lx-error" role="alert">{quickError}</div>}
       </div>
       <SoloCard onStarted={onSoloStarted} />
+      </>)}
       </div>
     </section>
   );

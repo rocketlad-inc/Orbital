@@ -31,10 +31,13 @@ import { useCommissionHandoff, useRefreshOnReturn } from './multiplayer/commissi
 import { TurnBasedSettingsProvider } from './state/turnBasedSettings';
 import { MapLayersProvider } from './state/mapLayers';
 import { TutorialProvider } from './state/tutorial';
-import { TUTORIAL_STEP_COUNT } from './game/tutorialSteps';
+import { TUTORIAL_STEP_COUNT, TRIAL_TUTORIAL_STEP_COUNT } from './game/tutorialSteps';
 import { TutorialOverlay } from './components/TutorialOverlay';
 import { TutorialPromptModal } from './components/TutorialPromptModal';
 import { AuthOverlay } from './multiplayer/AuthOverlay';
+import { TrialLayer } from './multiplayer/trial/TrialLayer';
+import { SaveEmpireHost } from './multiplayer/trial/SaveEmpire';
+import './multiplayer/trial/trial.css';
 import { Landing } from './components/Landing';
 import { SharedRecap } from './multiplayer/SharedRecap';
 import { StudioBridge } from './multiplayer/studio/StudioBridge';
@@ -149,6 +152,26 @@ const SituationPanelBridge: React.FC<{
   }, [onTogglePanel]);
   return null;
 };
+
+/** Play for Free's launch screen: the trial is being made (a few
+ *  seconds: an account, a seeded Solar System, two neighbours). */
+function TrialLaunch({ error, onRetry, onLogin }: { error: string | null; onRetry: () => void; onLogin: () => void }) {
+  useI18n();
+  return (
+    <div className="trial-launch" aria-busy={!error} role="status">
+      <div className="trial-launch__brand">ORBITAL</div>
+      {!error && <div className="trial-launch__orbit" aria-hidden="true" />}
+      <h1 className="trial-launch__title">{error ? t('trial.launch.failed') : t('trial.launch.title')}</h1>
+      <p className="trial-launch__sub">{error ?? t('trial.launch.sub')}</p>
+      {error && (
+        <div className="trial-launch__actions">
+          <button className="trial-launch__btn trial-launch__btn--go" onClick={onRetry}>{t('trial.launch.retry')}</button>
+          <button className="trial-launch__btn" onClick={onLogin}>{t('site.signIn')}</button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function GameUI({
   onExit,
@@ -377,7 +400,10 @@ function GameUI({
           so backdrop-filter on .top-bar doesn't trap them. The prompt
           self-suppresses once the player has completed/skipped (state
           persists across sessions via localStorage). */}
-      <TutorialPromptModal />
+      {/* A Play for Free trial skips the "New to Orbital?" prompt: its own
+          short track starts by itself (TrialStarter), and the save
+          prompts run alongside (trial/TrialSaveLayer). */}
+      {gameState.solo?.trial ? <TrialLayer /> : <TutorialPromptModal />}
       <TutorialOverlay />
     </div>
   );
@@ -467,7 +493,7 @@ const LEGACY_LAST_ROOM_KEY = 'orbital.last_room';
 
 function AppShell() {
   useI18n();
-  const { user, loading, refresh: refreshAuth } = useAuth();
+  const { user, loading, refresh: refreshAuth, startTrial } = useAuth();
   // index.html carries the marketing page's long search title; a signed-in
   // player's tab just says "Orbital" (the landing sets its own per page).
   useEffect(() => {
@@ -493,6 +519,15 @@ function AppShell() {
   // (activeRooms state retired with the mode picker — the rooms fetch
   //  below still runs, but only the priority/auto-jump logic reads it.)
   const [showAuth, setShowAuth] = useState(false);
+  // Play for Free (worker/trial.js): the launch screen while the shadow
+  // account and the trial game are made, or what went wrong.
+  const [trialLaunch, setTrialLaunch] = useState<null | { error: string | null }>(null);
+  const beginTrial = async () => {
+    setTrialLaunch({ error: null });
+    const problem = await startTrial();
+    // Success: `user` is set, and the launch routing opens the game.
+    setTrialLaunch(problem ? { error: problem } : null);
+  };
   // Ship icon gallery — reachable at ?icons. Standalone preview page
   // for picking which D/E/F candidates to keep before the dropdown
   // wires up at ship construction.
@@ -875,8 +910,17 @@ function AppShell() {
   // retired — accounts only). The Tunables sandbox and UX Lab used to
   // hang off the landing nav as auth-bypass routes; both are deleted.
   if (!user && !guestMode) {
+    if (trialLaunch) {
+      return (
+        <TrialLaunch
+          error={trialLaunch.error}
+          onRetry={() => beginTrial()}
+          onLogin={() => { setTrialLaunch(null); setShowAuth(true); }}
+        />
+      );
+    }
     if (!showAuth) {
-      return <Landing onSignIn={() => setShowAuth(true)} />;
+      return <Landing onSignIn={() => setShowAuth(true)} onPlay={() => beginTrial()} />;
     }
     return <AuthOverlay />;
   }
@@ -895,9 +939,12 @@ function AppShell() {
   }
 
   // Shown over the lobby or the game, whichever the player landed on.
-  const discordInvite = user?.invite_discord && !inviteClosed
-    ? <DiscordInvite url={user.invite_discord} onClose={() => setInviteClosed(true)} />
-    : null;
+  // A Play for Free account gets the save sheet instead of the invite.
+  const discordInvite = user?.shadow
+    ? <SaveEmpireHost />
+    : user?.invite_discord && !inviteClosed
+      ? <DiscordInvite url={user.invite_discord} onClose={() => setInviteClosed(true)} />
+      : null;
 
   // multiplayer — lobby first, then in-room shell
   if (!selectedRoomId) {
@@ -931,6 +978,7 @@ function AppShell() {
             adminGameId={roomGameId as string}
             isHost={!!user && roomHostId === user.id}
           />
+          {user?.shadow && <SaveEmpireHost />}
         </MultiplayerGameProvider>
       ) : (
         // Pre-game backdrop + the dock rail's Multiplayer icon. The rail
@@ -1069,7 +1117,7 @@ function AppRouter() {
     <AuthProvider>
       <TurnBasedSettingsProvider>
         <MapLayersProvider>
-          <TutorialProvider stepCount={TUTORIAL_STEP_COUNT}>
+          <TutorialProvider stepCount={TUTORIAL_STEP_COUNT} trialStepCount={TRIAL_TUTORIAL_STEP_COUNT}>
             <AppShell />
           </TutorialProvider>
         </MapLayersProvider>
