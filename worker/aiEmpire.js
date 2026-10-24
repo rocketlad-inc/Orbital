@@ -103,6 +103,20 @@ export const DOCTRINES = {
 };
 
 const ARMED = ['corvette', 'frigate', 'destroyer', 'capital'];
+/** worker/actions.js TECH_DEFS and TECH_MAX_LEVEL. */
+const ALL_TECHS = ['weapons', 'armor', 'propulsion', 'construction', 'industry', 'sensors'];
+const TECH_CAP = 10;
+/** Spending: one extra build order per doubling of the stockpile past
+ *  RICH_AT metal (credits weighed 8:1), at most MAX_EXTRA_ORDERS. */
+const RICH_AT = 2000;
+const MAX_EXTRA_ORDERS = 4;
+/** How often an empire plays, in real time: at most one turn per this
+ *  many ms (a 30 s tick: every tick; a 7 s tick: every third). The
+ *  crucible ran six empires every 7 s tick and their /state reads held
+ *  the database the tick needed: the room fell 50 ticks behind. */
+const TURN_EVERY_MS = 20_000;
+/** Ticks into a war after which a sharp empire attacks at even odds. */
+const SIEGE_AFTER = 100;
 const SETTLE_TYPES = ['terrestrial', 'moon', 'dwarf'];
 const SETTLE_SQL = SETTLE_TYPES.map(c => `'${c}'`).join(',');
 // ---- the door every action goes through --------------------------------
@@ -234,25 +248,44 @@ export async function takeTurn(env, g, fac, difficulty) {
   // Sensors 1 first, whatever the doctrine: it is Capital Ping, and under
   // fog a rival's capital is not on the map without it (state.js). A
   // person who wants to find their enemies researches it too.
-  const purse = await DB.prepare('SELECT research_tech_id FROM game_factions WHERE id = ?').bind(me).first();
-  const needSensors = Number(seen.data?.me?.tech_levels?.sensors ?? 0) < 1;
-  if (!purse?.research_tech_id && doctrine.research.length) {
-    const queue = needSensors ? ['sensors', ...doctrine.research.filter(x => x !== 'sensors')] : doctrine.research;
-    const pick = needSensors ? 'sensors' : queue[(tick + me.length) % queue.length];
-    note('research', await call('POST', '/research', { tech_id: pick, queue }));
+  // Its own list first; a track at the cap is skipped, and once its list
+  // is done it carries on with whatever is lowest (the crucible: 548 turns
+  // asking for maxed tracks while Armor sat at 0).
+  const purse = await DB.prepare('SELECT research_tech_id, metal, gold FROM game_factions WHERE id = ?').bind(me).first();
+  const levels = seen.data?.me?.tech_levels ?? {};
+  const needSensors = Number(levels.sensors ?? 0) < 1;
+  if (!purse?.research_tech_id) {
+    const open = (t) => Number(levels[t] ?? 0) < TECH_CAP;
+    const mine = doctrine.research.filter(open);
+    const rest = ALL_TECHS.filter(t => open(t) && !mine.includes(t))
+      .sort((a, b) => Number(levels[a] ?? 0) - Number(levels[b] ?? 0));
+    const queue = [...(needSensors ? ['sensors'] : []), ...mine.filter(t => !(needSensors && t === 'sensors')), ...rest];
+    if (queue.length) {
+      const pick = needSensors ? 'sensors' : (mine.length ? mine[(tick + me.length) % mine.length] : queue[0]);
+      note('research', await call('POST', '/research', { tech_id: pick, queue }));
+    }
   }
 
   // --- ships, at the capital --------------------------------------------
+  // A rich empire spends: one order on its rhythm, and more the deeper
+  // its stockpile (the crucible: 8 million metal banked, one hull at a
+  // time). It stops at the first refusal (a full yard, an empty purse).
   if (home && doctrine.build.length && due(tick, last, doctrine.buildEvery)) {
+    const wealth = Math.min(Number(purse?.metal ?? 0), Number(purse?.gold ?? 0) * 8);
+    const orders = 1 + Math.min(MAX_EXTRA_ORDERS, Math.floor(Math.log2(Math.max(1, wealth / RICH_AT))));
     const n = Math.floor(tick / doctrine.buildEvery);
-    let cls = doctrine.build[n % doctrine.build.length];
-    // At war, the yard turns out warships.
-    if (foes.size > 0 && !ARMED.includes(cls)) cls = 'corvette';
-    const r = await call('POST', `/bodies/${encodeURIComponent(home)}/build`, { ship_class: cls });
-    note(`build_${cls}`, r);
-    // A hull it has not researched yet: the one every yard can build.
-    if (!r.ok && r.data?.error?.code === 'not_researched' && cls !== 'corvette') {
-      note('build_corvette', await call('POST', `/bodies/${encodeURIComponent(home)}/build`, { ship_class: 'corvette' }));
+    for (let k = 0; k < orders; k++) {
+      let cls = doctrine.build[(n + k) % doctrine.build.length];
+      // At war, the yard turns out warships.
+      if (foes.size > 0 && !ARMED.includes(cls)) cls = 'corvette';
+      let r = await call('POST', `/bodies/${encodeURIComponent(home)}/build`, { ship_class: cls });
+      note(`build_${cls}`, r);
+      // A hull it has not researched yet: the one every yard can build.
+      if (!r.ok && r.data?.error?.code === 'not_researched' && cls !== 'corvette') {
+        r = await call('POST', `/bodies/${encodeURIComponent(home)}/build`, { ship_class: 'corvette' });
+        note('build_corvette', r);
+      }
+      if (!r.ok) break;
     }
   }
 
@@ -277,7 +310,10 @@ export async function takeTurn(env, g, fac, difficulty) {
 
   // --- war: how sharply it fights ----------------------------------------
   if (view && foes.size > 0) {
-    for (const [label, r] of await wageWar(view, g.rm, call, foes, sharp, { force })) note(label, r);
+    // A war past SIEGE_AFTER ticks: the empire settles for an even fight.
+    const longWar = g.wars.some(w => (w.faction_a === me || w.faction_b === me)
+      && tick - Number(w.declared_at_tick ?? tick) >= SIEGE_AFTER);
+    for (const [label, r] of await wageWar(view, g.rm, call, foes, sharp, { force, longWar })) note(label, r);
   }
 
   // --- expansion: claim, terraform, settle ------------------------------
@@ -423,25 +459,32 @@ async function expand(env, g, me, call, note, tick, view) {
 
 // ---- every solo game -----------------------------------------------------
 
-/** Play every computer empire in one game that has not had this tick's
- *  turn, all at once (their turns are independent; each claims its own
- *  tick first, so a pass that overlaps another never plays one twice).
+/** Play every computer empire in one game whose turn is due, one after
+ *  another (each claims its tick first, so a pass that overlaps another
+ *  never plays one twice; one at a time because D1 serves one query at a
+ *  time and the tick needs it too).
  *  Returns how many played; `sink` (the sim) collects the tallies. With
  *  games.ai_log set (the crucible), every turn is written to
  *  ai_turn_log: what it tried, what was refused, and any error. */
 export async function runSoloGame(env, gameId, sink = null, { lagOnly = false } = {}) {
   const row = await env.DB.prepare(
-    `SELECT id, current_tick, solo_difficulty, status, COALESCE(ai_log, 0) AS ai_log FROM games WHERE id = ? AND solo = 1`,
+    `SELECT id, current_tick, solo_difficulty, status, tick_interval_ms, COALESCE(ai_log, 0) AS ai_log FROM games WHERE id = ? AND solo = 1`,
   ).bind(gameId).first();
   if (!row || row.status !== 'active') return 0;
   const tick = Number(row.current_tick ?? 0);
   const g = await readGame(env, gameId, tick);
   // lagOnly (the cron's fallback): only empires a whole tick behind, so
   // the cron never races the room's own pass for the current tick.
-  const behind = lagOnly ? tick - 1 : tick;
-  const due = g.factions.filter(f => f.ai_doctrine && f.status === 'active'
-    && (f.ai_last_tick == null || Number(f.ai_last_tick) < behind));
-  const results = await Promise.all(due.map(async (fac) => {
+  // Pacing: an empire plays every `every` ticks, on its own beat (seat i
+  // plays when (tick + i) % every === 0), so a fast game spreads its
+  // empires across ticks instead of all of them at once.
+  const every = Math.max(1, Math.ceil(TURN_EVERY_MS / Math.max(1000, Number(row.tick_interval_ms) || 30_000)));
+  const behind = lagOnly ? tick - every : tick - every + 1;
+  const due = g.factions.filter((f, i) => f.ai_doctrine && f.status === 'active'
+    && (f.ai_last_tick == null || Number(f.ai_last_tick) < behind)
+    && (lagOnly || every === 1 || (tick + i) % every === 0 || f.ai_last_tick == null));
+  const results = [];
+  for (const fac of due) results.push(await (async () => {
     const claim = await env.DB.prepare(
       `UPDATE game_factions SET ai_last_tick = ?
         WHERE id = ? AND (ai_last_tick IS NULL OR ai_last_tick < ?)`,
@@ -467,7 +510,7 @@ export async function runSoloGame(env, gameId, sink = null, { lagOnly = false } 
       } catch (e) { console.error('ai_turn_log write failed', e); }
     }
     return tally ? 1 : 0;
-  }));
+  })());
   const played = results.reduce((a, b) => a + b, 0);
   if (played > 0) {
     await env.DB.prepare('UPDATE games SET state_version = state_version + 1 WHERE id = ?').bind(gameId).run();

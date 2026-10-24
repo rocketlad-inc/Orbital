@@ -72,6 +72,10 @@ const PEACE_OFFER = 48;
 /** The Warlord and the Snake make peace when their visible fleet is
  *  below this share of the enemy's. */
 const LOSING = 0.5;
+/** A war in which no world has changed hands for this many ticks ends in
+ *  peace, whoever the empires are (the crucible: four wars open for 5000
+ *  ticks, nobody attacking, nobody yielding). */
+const STALEMATE = 150;
 /** The defensive pacts (an Ally answers for these partners). */
 const DEFENSIVE = new Set(['nap', 'defense_pact']);
 
@@ -87,6 +91,7 @@ export function readMemory(raw) {
     victim: m.victim ?? null,     // the Snake's (or Warlord's) current target
     since: m.since ?? 0,          // tick the phase began
     warLast: m.warLast ?? [],     // who it was at war with last turn
+    front: m.front ?? {},         // factionId -> { key, since }: the war's map, unchanged since
   };
 }
 
@@ -142,8 +147,11 @@ export async function conduct(env, ctx) {
   const H = view.human;
   const T = TIMING[difficulty] ?? TIMING.normal;
   const sharp = SHARPNESS[difficulty] ?? SHARPNESS.normal;
-  const myWars = wars.filter(w => w.faction_a === me || w.faction_b === me);
   const enemyOf = (w) => (w.faction_a === me ? w.faction_b : w.faction_a);
+  // A war with an empire that is gone never formally ends: ignore it (the
+  // crucible scouted a dead capital 200 times and filed bills against it).
+  const standing = (f) => view.factions.get(f)?.status === 'active';
+  const myWars = wars.filter(w => (w.faction_a === me || w.faction_b === me) && standing(enemyOf(w)));
   const warWith = new Map(myWars.map(w => [enemyOf(w), w]));
   const { live: pacts, broken } = await myTreaties(env, gameId, me);
   const offered = await myOpenOffers(env, gameId, me);
@@ -162,6 +170,15 @@ export async function conduct(env, ctx) {
     if (mem.worldsAt[enemyOf(w)] == null) mem.worldsAt[enemyOf(w)] = myWorlds;
   }
   for (const f of Object.keys(mem.worldsAt)) if (!warWith.has(f)) delete mem.worldsAt[f];
+  // The front: both sides' world counts. Unchanged for STALEMATE ticks,
+  // the war is going nowhere.
+  const worldsOf = (f) => [...view.owner.values()].filter(o => o === f).length;
+  for (const f of warWith.keys()) {
+    const key = `${myWorlds}:${worldsOf(f)}`;
+    if (mem.front[f]?.key !== key) mem.front[f] = { key, since: tick };
+  }
+  for (const f of Object.keys(mem.front)) if (!warWith.has(f)) delete mem.front[f];
+  const stalled = (f) => warWith.has(f) && tick - (mem.front[f]?.since ?? tick) >= STALEMATE;
   // A war that was there last turn and is gone now ended in peace.
   for (const f of mem.warLast) if (!warWith.has(f)) mem.peaceAt[f] = tick;
   mem.warLast = [...warWith.keys()];
@@ -247,6 +264,7 @@ export async function conduct(env, ctx) {
     }
     for (const [f] of warWith) {
       if (view.factions.get(f)?.status === 'monster') continue;
+      if (stalled(f)) continue;
       handled.add(f);
       // It keeps fighting a partner's enemy while that war lasts.
       if (partners.some(p => view.atWar(p, f))) continue;
@@ -266,7 +284,7 @@ export async function conduct(env, ctx) {
       if (victim && await declare(victim, victim === H ? 'declare' : 'declare_rival')) mem.victim = victim;
     }
     for (const [f] of warWith) {
-      if (view.factions.get(f)?.status === 'monster') continue;
+      if (view.factions.get(f)?.status === 'monster' || stalled(f)) continue;
       handled.add(f);
       if (theyOffered(f) && losing(f)) await endWar(f, 'ceasefire_accept');
       else if (!warWith.get(f).ceasefire_by && losing(f)) await endWar(f, 'ceasefire_offer');
@@ -321,12 +339,20 @@ export async function conduct(env, ctx) {
         } else note('snake_waits');
       }
     }
-    if (mem.snake === 'war' && mem.victim && warWith.has(mem.victim)) {
+    if (mem.snake === 'war' && mem.victim && warWith.has(mem.victim) && !stalled(mem.victim)) {
       const v = mem.victim;
       handled.add(v);
       if (theyOffered(v) && (tookSomething(v) || losing(v))) await endWar(v, 'ceasefire_accept');
       else if (!warWith.get(v).ceasefire_by && (tookSomething(v) || losing(v))) await endWar(v, 'ceasefire_offer');
     }
+  }
+
+  // ---- a stalemate ends every war, whatever the personality -------------
+  for (const [f, w] of warWith) {
+    if (!stalled(f) || view.factions.get(f)?.status === 'monster') continue;
+    handled.add(f);
+    if (theyOffered(f)) await endWar(f, 'stalemate_accept');
+    else if (!w.ceasefire_by) await endWar(f, 'stalemate_offer');
   }
 
   // ---- every other war: fight back, then make peace -------------------
@@ -337,7 +363,7 @@ export async function conduct(env, ctx) {
   }
 
   // The view was read before this turn's declarations: add them.
-  const foes = new Set(view.enemiesOf(me));
+  const foes = new Set(view.enemiesOf(me).filter(standing));
   for (const [f, w] of warWith) if (w.declared_by === me && w.declared_at_tick === tick) foes.add(f);
   return { foes, force, mem };
 }
