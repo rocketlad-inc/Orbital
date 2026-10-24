@@ -90,7 +90,8 @@ async function humanFactions(env, gameId) {
   const rows = (await env.DB
     .prepare(
       `SELECT id, name, user_id FROM game_factions
-        WHERE game_id = ? AND status = 'active' AND user_id IS NOT NULL`,
+        WHERE game_id = ? AND status = 'active' AND user_id IS NOT NULL
+          AND ai_doctrine IS NULL`,
     )
     .bind(gameId).all()).results ?? [];
   return new Map(rows.map(r => [r.id, r]));

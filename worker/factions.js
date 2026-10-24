@@ -2847,7 +2847,9 @@ async function handleListFactions(_req, env, ctx) {
               -- Holds the Commander's Commission (0153): the roster's
               -- quiet mark. Public, like the hull it buys.
               EXISTS (SELECT 1 FROM user_entitlements e
-                       WHERE e.user_id = game_factions.user_id) AS commissioned
+                       WHERE e.user_id = game_factions.user_id) AS commissioned,
+              -- A computer empire in a solo game (aiEmpire.js).
+              (ai_doctrine IS NOT NULL) AS computer
          FROM game_factions
         WHERE game_id = ?
         ORDER BY slot ASC`,
