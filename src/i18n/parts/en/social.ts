@@ -292,11 +292,9 @@ export const social = {
   'faction.terr.count': '{worlds} worlds · {systems} systems',
   'faction.terr.owned': '{name} — {n} of {total} worlds',
   'faction.terr.unclaimedTip': '{n} worlds unclaimed',
-  'faction.terr.free': '{n} free',
   'faction.terr.dominationTip': 'Domination: {n} worlds ends the game',
   'faction.terr.claimed': '{n} of {total} claimed',
   'faction.terr.wins': '{n} to win',
-  'faction.terr.unclaimed': '{n} unclaimed',
   'faction.standings': 'Standings',
   'faction.tapRow': 'tap a row for detail',
   'faction.standings.aria': 'Faction standings',
@@ -854,4 +852,8 @@ export const social = {
   'roomlobby.chat.unread_one': '{n} new message',
   'roomlobby.chat.unread_other': '{n} new messages',
   // ---- end Room lobby redesign ----
+  'faction.terr.free_one': '{n} free',
+  'faction.terr.free_other': '{n} free',
+  'faction.terr.unclaimed_one': '{n} unclaimed',
+  'faction.terr.unclaimed_other': '{n} unclaimed',
 } as const;

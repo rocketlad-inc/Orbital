@@ -2086,7 +2086,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
           <div className="fleet-actionbar">
             <div className="fleet-actionbar__row">
               <span className="fleet-actionbar__count">
-                {t('fleet.nSelected', { n: visibleSelected.length })}
+                {tn('fleet.nSelected', visibleSelected.length)}
                 {visibleSelected.length !== selectedIds.size
                   && ` (${t('fleet.nIneligible', { n: selectedIds.size - visibleSelected.length })})`}
                 {/* Selected but filtered out of the list: orders still go

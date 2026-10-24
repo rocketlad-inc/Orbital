@@ -737,4 +737,5 @@ export const guide = {
   'mp.provider.loadingRenderer': 'Loading the renderer…',
   // ---- app shell ----
   'site.loading': 'Loading…',
+  'site.homeTitle': 'Home page',
 } as const;

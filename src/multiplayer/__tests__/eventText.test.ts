@@ -416,15 +416,15 @@ describe('Portuguese headlines', () => {
   it('renders a handful of kinds in full', () => {
     const f = (label: string) => formatChronicleEvent(ev(ROWS.find(x => x[0] === label)!), ctx, 'pt-BR');
     expect(f('faction_eliminated')).toBe('T+32  ☠ Cerean Union perdeu seu último assentamento e está fora da guerra');
-    expect(f('captain_lost')).toBe('T+12  O capitão Ace, da nave Tug, morreu com a nave em Titan. 3 abates.');
-    expect(f('settlement_destroyed capital')).toBe('T+12  ⚠ A CAPITAL de Cerean Union em Earth caiu por Zed Corp — restam apenas ruínas');
-    expect(f('settlement_destroyed named city')).toBe('T+12  Destruição de Cerean Union Capital (cidade) em Oberon por Zed Corp');
-    expect(f('builds_destroyed 4')).toBe('T+12  🏭 O estaleiro de Cerean Union em Mars caiu — 4 naves em construção destruídas');
-    expect(f('asteroid_impact 1')).toBe('T+12  💥 IMPACTO — Rock 7 atingiu Venus, 1 assentamento destruído (Cerean Union)');
+    expect(f('captain_lost')).toBe('T+12  O capitão Ace, da nave Tug, morreu com a nave em Titã. 3 abates.');
+    expect(f('settlement_destroyed capital')).toBe('T+12  ⚠ A CAPITAL de Cerean Union em Terra caiu por Zed Corp — restam apenas ruínas');
+    expect(f('settlement_destroyed named city')).toBe('T+12  Destruição de Capital de Cerean Union (cidade) em Oberon por Zed Corp');
+    expect(f('builds_destroyed 4')).toBe('T+12  🏭 O estaleiro de Cerean Union em Marte caiu — 4 naves em construção destruídas');
+    expect(f('asteroid_impact 1')).toBe('T+12  💥 IMPACTO — Rock 7 atingiu Vênus, 1 assentamento destruído (Cerean Union)');
     expect(f('dyson_milestone')).toBe('T+12  ☀ A Esfera de Dyson de Cerean Union chegou a 50% de conclusão');
     expect(f('kaiju_revealed')).toBe('T+12  🦑 ELE ESTÁ VIVO — a coisa vinda de Cygnus é uma criatura do tamanho de uma lua: o LEVIATÃ. Ele está se preparando sobre Mars para atacar em T+175, com 1.234.567 de HP. Todo império está em guerra com ele');
     expect(f('kaiju_dead killer ship')).toBe('T+12  🦑 O LEVIATÃ ESTÁ MORTO — ele caiu em Mars; Zed Corp, a bordo do HMS Grudge, deu o golpe final. Sua carcaça tem 54.321 t de metal para qualquer equipamento de mineração');
-    expect(f('building_completed')).toBe('T+12  Cerean Union Capital em Earth concluiu Casa da Moeda Nv 3');
+    expect(f('building_completed')).toBe('T+12  Capital de Cerean Union em Terra concluiu Casa da Moeda Nv 3');
     expect(f('tech_advanced level')).toBe('T+12  Cerean Union concluiu Armas Nv 3');
     expect(f('treaty_signed nap')).toBe('T+12  🕊 Cerean Union e Zed Corp assinaram o Pacto de Não Agressão');
     expect(f('senate_vote passed tally')).toBe('T+12  ⚖ Senado: “Embargo Zed” [embargo comercial] APROVADO — 5 sim / 2 não / 1 abstenção');
@@ -433,7 +433,7 @@ describe('Portuguese headlines', () => {
     expect(f('meteoroid_found tons')).toBe('T+12  ◈ Meteoroide Rock 9 encontrado: 400 de créditos para minerar com um cargueiro');
   });
 
-  it('uses the singular for 0 and 1 (Portuguese counts 0 as one) and the plural above', () => {
+  it('uses the singular for 1 and the plural above', () => {
     const f = (label: string) => formatChronicleEvent(ev(ROWS.find(x => x[0] === label)!), ctx, 'pt-BR');
     expect(f('trade_lane_consolidated 1')).toContain('1 cargueiro agora coleta');
     expect(f('trade_lane_consolidated 2')).toContain('2 cargueiros agora coletam');
@@ -441,7 +441,7 @@ describe('Portuguese headlines', () => {
 
   it('puts the owner after the thing and drops the stutter of an owner-named capital', () => {
     const f = (label: string) => formatChronicleEvent(ev(ROWS.find(x => x[0] === label)!), ctx, 'pt-BR');
-    expect(f('building_completed')).toMatch(/^T\+12 {2}Cerean Union Capital em Earth/);
+    expect(f('building_completed')).toMatch(/^T\+12 {2}Capital de Cerean Union em Terra/);
     expect(f('gate_transit sun gate')).toBe('T+12  ◎ Cerean Union Tug passou pelo Sun Gate, cruzando para Cygnus');
   });
 

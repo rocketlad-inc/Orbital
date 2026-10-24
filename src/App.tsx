@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { GameContextProvider, useGameContext } from './state/gameContext';
 import { useAutosave } from './state/useAutosave';
 import { MapCanvas } from './components/MapCanvas';
@@ -78,6 +78,7 @@ import './styles/mobile.css';
 // the mobile shell even though no media query can detect it.
 import './styles/shellJs.css';
 import { lazyChunk } from './util/lazyChunk';
+import { syncView, viewOf, type AppView } from './platform/viewHistory';
 
 // The orbital-battle layout test page (/?battle). Lazy: it is a tool,
 // not the game, so it stays out of the main bundle.
@@ -519,6 +520,9 @@ function AppShell() {
   // (activeRooms state retired with the mode picker — the rooms fetch
   //  below still runs, but only the priority/auto-jump logic reads it.)
   const [showAuth, setShowAuth] = useState(false);
+  // A signed-in player looking at the home page (the lobby's ORBITAL logo,
+  // or Back from the lobby). Signed out, the home page is the default.
+  const [showLanding, setShowLanding] = useState(false);
   // Play for Free (worker/trial.js): the launch screen while the shadow
   // account and the trial game are made, or what went wrong.
   const [trialLaunch, setTrialLaunch] = useState<null | { error: string | null }>(null);
@@ -683,6 +687,45 @@ function AppShell() {
     setSelectedRoomId(null);
     tabRoom.clear();
   };
+
+  // ---- Back / Forward between the home page, the lobby and a game ----
+  // (src/platform/viewHistory.ts). Everything that moves the player keeps
+  // working as it did; this mirrors the view on screen into history, and
+  // a popstate puts the view the entry names back on screen.
+  const historyView: AppView | null = (!user || guestMode || mode === 'singleplayer' || !launchResolved)
+    ? null
+    : (showLanding || docRoute) ? { view: 'landing' }
+      : selectedRoomId ? { view: 'game', roomId: selectedRoomId }
+        : { view: 'lobby' };
+  const historyKey = historyView
+    ? `${historyView.view}:${historyView.view === 'game' ? historyView.roomId : ''}` : null;
+  useEffect(() => {
+    if (historyView) syncView(historyView);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyKey]);
+  const signedInRef = useRef(false);
+  signedInRef.current = !!user;
+  const selectedRoomRef = useRef(selectedRoomId);
+  selectedRoomRef.current = selectedRoomId;
+  useEffect(() => {
+    const onPop = (e: PopStateEvent) => {
+      const v = viewOf(e.state);
+      if (!v || !signedInRef.current) return;
+      if (v.view === 'landing') { setShowLanding(true); return; }
+      setShowLanding(false);
+      if (v.view === 'lobby') {
+        if (selectedRoomRef.current) { setSelectedRoomId(null); tabRoom.clear(); }
+        return;
+      }
+      if (selectedRoomRef.current !== v.roomId) {
+        setRoomGameId(null);
+        setSelectedRoomId(v.roomId);
+        tabRoom.set(v.roomId);
+      }
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
 
   const handleEnterRoom = (roomId: string) => {
     setSelectedRoomId(roomId);
@@ -906,7 +949,9 @@ function AppShell() {
         onSignIn={() => { setDocRoute(null); setShowAuth(true); }}
         authed={!!user}
         onExit={() => {
-          window.history.pushState({}, '', '/');
+          // Signed in, history follows the view (viewHistory.ts).
+          if (!user) window.history.pushState({}, '', '/');
+          setShowLanding(false);
           setDocRoute(null);
         }}
       />
@@ -953,6 +998,13 @@ function AppShell() {
       ? <DiscordInvite url={user.invite_discord} onClose={() => setInviteClosed(true)} />
       : null;
 
+  // The home page, signed in: from the lobby's logo, or Back. Its Play
+  // and Back buttons return to the lobby.
+  if (showLanding) {
+    const toLobby = () => setShowLanding(false);
+    return <Landing authed onSignIn={toLobby} onPlay={toLobby} onExit={toLobby} />;
+  }
+
   // multiplayer — lobby first, then in-room shell
   if (!selectedRoomId) {
     // A beat of plain sky while launch decides between the lobby and an
@@ -960,7 +1012,7 @@ function AppShell() {
     if (!launchResolved) return <div className="app-launching" aria-busy="true" />;
     return (
       <>
-        <MultiplayerLobby onEnterRoom={handleEnterRoom} />
+        <MultiplayerLobby onEnterRoom={handleEnterRoom} onHome={() => setShowLanding(true)} />
         {discordInvite}
       </>
     );

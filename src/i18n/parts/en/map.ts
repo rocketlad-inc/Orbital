@@ -906,4 +906,8 @@ export const map = {
   'body.dyson.foundation': 'foundation: {name}',
   'body.dyson.hp': '{hp} / {max} HP · {pct}%',
   'body.dyson.runMore': 'Run more supply routes to speed delivery — each freighter loads from your pool at one of your collectors and hauls it here, and can be raided on the way. Lose the foundation and 20% of your progress is destroyed, with the rest left for a rival to claim — defend it.',
+  'body.flavor.debris': 'This was {name}. A Mega Destroyer broke it apart, and what orbits here now is rubble: its moons and anything parked here still circle the debris, but nothing can be built on it again, and it no longer counts as a world toward any victory.',
+  'body.flavor.aWorld': 'a world',
+  'body.flavor.planetKiller': 'These rocks are sometimes called “Planet Killers” for the devastation they can cause upon impact, but this one has been orbiting peacefully and stably for millennia.',
+  'body.flavor.immovable': 'Too massive to move — trajectory thrusters can only be anchored to loose rogue asteroids, never a body this size.',
 } as const;

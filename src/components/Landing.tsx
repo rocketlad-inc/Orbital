@@ -115,7 +115,10 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onPlay, authed = fal
     if (typeof window === 'undefined') return;
     const want = PATH_FOR_TAB[tab] ?? '/';
     if (window.location.pathname !== want) {
-      window.history.pushState({ tab }, '', want + window.location.search);
+      // Spread the entry's state: a signed-in player's entries carry the
+      // view they belong to (src/platform/viewHistory.ts).
+      const prev = window.history.state;
+      window.history.pushState({ ...(prev && typeof prev === 'object' ? prev : {}), tab }, '', want + window.location.search);
     }
   }, [tab]);
 

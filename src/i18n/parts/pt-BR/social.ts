@@ -294,11 +294,9 @@ export const social: Catalog = {
   'faction.terr.count': '{worlds} mundos · {systems} sistemas',
   'faction.terr.owned': '{name} — {n} de {total} mundos',
   'faction.terr.unclaimedTip': '{n} mundos sem dono',
-  'faction.terr.free': '{n} livres',
   'faction.terr.dominationTip': 'Dominação: {n} mundos encerram o jogo',
   'faction.terr.claimed': '{n} de {total} conquistados',
   'faction.terr.wins': '{n} para vencer',
-  'faction.terr.unclaimed': '{n} sem dono',
   'faction.standings': 'Classificação',
   'faction.tapRow': 'toque numa linha para ver detalhes',
   'faction.standings.aria': 'Classificação das facções',
@@ -856,4 +854,8 @@ export const social: Catalog = {
   'roomlobby.chat.unread_one': '{n} mensagem nova',
   'roomlobby.chat.unread_other': '{n} mensagens novas',
   // ---- end Room lobby redesign ----
+  'faction.terr.free_one': '{n} livre',
+  'faction.terr.free_other': '{n} livres',
+  'faction.terr.unclaimed_one': '{n} sem dono',
+  'faction.terr.unclaimed_other': '{n} sem dono',
 };

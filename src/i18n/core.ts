@@ -12,8 +12,8 @@
 //   t('lobby.hero.welcome', { name })        "Welcome back, {name}"
 //   tn('card.seatsLeft', 3)                  plural: card.seatsLeft_one /
 //                                            card.seatsLeft_other (CLDR
-//                                            rules for the language, so
-//                                            Portuguese counts 0 as "one")
+//                                            rules for the language, except
+//                                            zero is always plural: "0 mundos")
 //
 // Which language: the player's own choice (kept in this browser and, once
 // signed in, on their account so it follows them to the phone app), else
@@ -122,6 +122,15 @@ export function tk(key: string, english: string, vars?: Record<string, string | 
   return fill(own ?? english, vars);
 }
 
+/** The plural category for `n` in `lang`. CLDR files Portuguese 0 under
+ *  "one", but Brazilians write "0 estações", "0 naves": "0 estação" read as a
+ *  typo to a Brazilian tester (2026-10-24). So zero takes the plural here,
+ *  in every language this game speaks. */
+export function pluralRule(lang: Lang, n: number): string {
+  if (n === 0) return 'other';
+  return new Intl.PluralRules(lang).select(n);
+}
+
 /** Keys that have plural forms, named without the _one/_other suffix. */
 export type PluralKey = Extract<Key, `${string}_other`> extends `${infer B}_other` ? B : never;
 
@@ -132,7 +141,7 @@ export function tn(key: PluralKey, n: number, vars?: Record<string, string | num
 
 /** `tn` for an explicit language (same plural rules and fallbacks). */
 export function tnIn(lang: Lang, key: PluralKey, n: number, vars?: Record<string, string | number>): string {
-  const rule = new Intl.PluralRules(lang).select(n);   // zero|one|two|few|many|other
+  const rule = pluralRule(lang, n);   // zero|one|two|few|many|other
   const pick = (r: string) => (CATALOGS[lang] as Record<string, string | undefined>)[`${key}_${r}`];
   const s = pick(rule) ?? (en as Record<string, string>)[`${key}_${rule}`]
     ?? pick('other') ?? (en as Record<string, string>)[`${key}_other`] ?? String(key);

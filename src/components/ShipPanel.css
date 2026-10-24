@@ -327,9 +327,19 @@
 
 .maneuver-buttons {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  /* minmax(0, ...): a plain 1fr track will not shrink below its longest
+     word, so a Portuguese label ("MOVER PARA O ALVO" at the 13px touch
+     size) pushed the grid past the panel and the panel scrolled sideways
+     (playtest 2026-10-24). The buttons wrap instead. */
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
   margin-bottom: 8px;
+}
+.maneuver-buttons .maneuver-btn {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.2;
 }
 
 .maneuver-btn {
@@ -389,9 +399,12 @@
 
 .orders-config-row {
   display: flex;
+  /* A long label or option (Portuguese) drops the control under its label
+     instead of widening the panel. */
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
-  gap: 8px;
+  gap: 4px 8px;
   margin-bottom: 6px;
 }
 
@@ -441,6 +454,12 @@
 }
 
 .orders-config-select {
+  /* A <select> is as wide as its longest option unless told otherwise:
+     "Estaleiro mais próximo (sem estação em Tritão, sua origem)" made the
+     whole orders tab scroll sideways. */
+  min-width: 0;
+  max-width: 100%;
+  text-overflow: ellipsis;
   background: rgba(20, 32, 44, 0.8);
   border: 1px solid #2a3d50;
   border-radius: 2px;
@@ -1035,6 +1054,12 @@
 }
 .ship-tabs__tab {
   flex: 1;
+  /* Six tabs with Portuguese names (ESTALEIRO, REGISTRO) must share a
+     375px phone without widening the panel. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   padding: 8px 4px;
   border: none;
   border-bottom: 2px solid transparent;

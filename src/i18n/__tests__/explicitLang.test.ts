@@ -25,8 +25,8 @@ describe('explicit-language lookups', () => {
     }
   });
 
-  it('tnIn uses the plural rules of the asked language (Portuguese counts 0 as one)', () => {
-    expect(tnIn('pt-BR', 'eventlog.ev.game.started', 0)).toBe('O jogo começa — 0 facção');
+  it('tnIn uses the plural rules of the asked language (zero is plural in both)', () => {
+    expect(tnIn('pt-BR', 'eventlog.ev.game.started', 0)).toBe('O jogo começa — 0 facções');
     expect(tnIn('pt-BR', 'eventlog.ev.game.started', 1)).toBe('O jogo começa — 1 facção');
     expect(tnIn('pt-BR', 'eventlog.ev.game.started', 3)).toBe('O jogo começa — 3 facções');
     expect(tnIn('en', 'eventlog.ev.game.started', 0)).toBe('The game begins — 0 factions');

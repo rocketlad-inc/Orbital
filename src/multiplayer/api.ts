@@ -422,6 +422,9 @@ export type SenateSlider = {
   phrases?: Record<string, LawPhrase>;
   /** What the rule currently in force means for the caller. */
   current?: LawPhrase | null;
+  /** label / description / phrases / current in the other languages
+   *  (worker/senate.js lawI18n); read through inLang(). */
+  i18n?: Record<string, Partial<Pick<SenateSlider, 'label' | 'description' | 'phrases' | 'current'>> | undefined>;
 };
 
 /** A law's name and its one-sentence consequence, server-worded. */
@@ -542,6 +545,8 @@ export type ActiveLaw = {
   target_name: string | null;
   target_color: string | null;
   target_emblem: string | null;
+  /** law_name / effect_text / label / description in the other languages. */
+  i18n?: Record<string, Partial<Pick<ActiveLaw, 'law_name' | 'effect_text' | 'label' | 'description'>> | undefined>;
   until_tick: number;
   /** Computed server-side against the authoritative tick. */
   ticks_left: number;

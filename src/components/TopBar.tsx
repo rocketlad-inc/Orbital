@@ -35,7 +35,9 @@ import { GIT_SHA } from '../_version';
 import { useIsMobile, isInApp } from '../hooks/useIsMobile';
 import { saveTextFile } from '../platform/saveTextFile';
 import { t, tn } from '../i18n/core';
-import { useI18n } from '../i18n/react';
+import { useI18n, LanguageSwitch } from '../i18n/react';
+import { saveLocale } from '../i18n/account';
+import { inLang } from '../i18n/serverText';
 import { SoloClock, soloSpeedLabel, nextSoloSpeed } from '../multiplayer/SoloClock';
 import { openSaveEmpire } from '../multiplayer/trial/SaveEmpire';
 import '../multiplayer/trial/trial.css';
@@ -411,7 +413,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           Empty renders nothing, so a lawless game keeps the old bar. */}
       {(gameState.activeLaws?.length ?? 0) > 0 && (
         <div className="top-bar__laws" data-testid="topbar-laws"
-          title={gameState.activeLaws!.map(l => `${l.name}: ${l.effect}`).join(' · ')}>
+          title={gameState.activeLaws!.map(inLang).map(l => `${l.name}: ${l.effect}`).join(' · ')}>
           {/* Phones: just the scales and the count, so the tick and its
               countdown always fit (they were pushed off-screen). */}
           <span className="laws-chip__compact" aria-hidden>⚖ {gameState.activeLaws!.length}</span>
@@ -419,7 +421,7 @@ export const TopBar: React.FC<TopBarProps> = ({
             {gameState.activeLaws!.length === 1 ? t('topbar.laws.one') : t('topbar.laws.many', { n: gameState.activeLaws!.length })}
           </div>
           <div className="laws-chip__list">
-            {gameState.activeLaws!.slice(0, 2).map(l => {
+            {gameState.activeLaws!.slice(0, 2).map(inLang).map(l => {
               const left = Math.max(0, Math.ceil(l.untilTick - gameState.currentTick));
               return (
                 <div
@@ -1582,6 +1584,15 @@ const SideMenu: React.FC<SideMenuProps> = ({
           )}
 
           <div className="side-menu__group-label">{t('topbar.menuGame')}</div>
+          {/* The language, mid-game (it was only in the lobby). Switches
+              live: every panel re-renders, and the game provider re-maps
+              /state so world names and the log follow. Saved on the
+              account when there is one, as the lobby picker does. */}
+          <div className="side-menu__item side-menu__lang" data-testid="menu-language">
+            <span className="side-menu__item-icon" aria-hidden>🌐</span>
+            <span className="side-menu__item-label">{t('lang.label')}</span>
+            <LanguageSwitch className="side-menu__lang-switch" onChosen={user ? saveLocale : undefined} />
+          </div>
           {canSaveLoad && onOpenSave && (
             <button
               className="side-menu__item"
