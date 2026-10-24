@@ -217,6 +217,7 @@ export type SituationCategory =
   | 'terraform_unstarted' // claimed raw world that never had a route at all
   | 'vote_open'      // MP — senate proposal in voting, not voted on
   | 'incoming_trade' // MP — open trade where caller is responder
+  | 'ceasefire_offer' // MP — an empire at war with you offers to stop
   | 'market_new'     // MP — posts on the open market you have not looked at
   | 'trade_needs_ship' // MP — accepted deal with no hauler of mine yet
   | 'in_combat'      // shooting RIGHT NOW — your hulls/settlements engaged
@@ -294,6 +295,7 @@ const TIER_OF: Record<SituationCategory, SituationTier> = {
   arrived:        'decision',
   created:        'decision',
   incoming_trade: 'decision',
+  ceasefire_offer: 'decision',
   // Somebody is selling; nothing is waiting on you. An opportunity.
   market_new:     'opportunity',
   // A signed deal that ships nothing until you act is the definition of
@@ -390,7 +392,7 @@ export type SituationFocus =
    *  world's build screen over the top of it, which is the opposite of
    *  "show me". */
   | { kind: 'watch'; bodyId: string }
-  | { kind: 'panel'; panel: 'research' | 'senate' | 'trades' | 'market' | 'fleet' }
+  | { kind: 'panel'; panel: 'research' | 'senate' | 'trades' | 'market' | 'fleet' | 'standing' }
   /** Bring back a found ship's claim-or-refuse card (DiscoveryOfferCard). */
   | { kind: 'offer'; bodyId: string };
 
@@ -481,6 +483,16 @@ export interface SituationMpData {
     id: string;
     proposer_faction_id: string;
     proposer_faction_name?: string | null;
+    /** Pacts on the table; with nothing else offered or asked, the row
+     *  names the pact rather than calling it a trade. */
+    pacts?: string[];
+    pactOnly?: boolean;
+  }>;
+  /** Wars in which the other side has offered a ceasefire. */
+  ceasefireOffers?: Array<{
+    war_id: string;
+    faction_id: string;
+    faction_name?: string | null;
   }>;
   /** Open-market posts the caller has not looked at yet. */
   newMarketPosts?: number;
@@ -500,6 +512,11 @@ export interface SituationMpData {
 // and clears a couple of ticks after the last shot.
 // ------------------------------------------------------------
 const COMBAT_RECENT_TICKS = AUTO_COMBAT_INTERVAL * 2;
+
+/** Pact kind -> its full name's key (the event log's own pact names). */
+const PACT_KEY: Record<string, string> = {
+  nap: 'eventlog.ev.pact.nap', defense_pact: 'eventlog.ev.pact.defense', intel_share: 'eventlog.ev.pact.intel',
+};
 
 /** How long a completion (building, research level, closed vote) stays
  *  in the report. Matches the 10-tick window arrivals already use. */
@@ -1741,14 +1758,34 @@ export function useSituationItems(
     // ---- 7) Incoming trade offers (MP) ----
     if (mpData?.incomingTrades) {
       for (const t of mpData.incomingTrades) {
+        // A pact on its own is diplomacy, not a trade: say which pact
+        // (the trial's Ally opens with a Non-Aggression Pact).
+        const pactNames = (t.pacts ?? []).map(k => trk(PACT_KEY[k] ?? 'eventlog.ev.fb.pact', k)).join(', ');
         push({
           id: `incoming_trade:${t.id}`,
           category: 'incoming_trade',
-          title: t.proposer_faction_name != null
-            ? tr('helper.sit.trade.offer', { name: t.proposer_faction_name })
-            : tr('helper.sit.trade.offerUnknown'),
+          title: t.pactOnly && pactNames
+            ? tr('helper.sit.trade.pactOffer', { name: t.proposer_faction_name ?? tr('helper.sit.trade.someone'), pacts: pactNames })
+            : t.proposer_faction_name != null
+              ? tr('helper.sit.trade.offer', { name: t.proposer_faction_name })
+              : tr('helper.sit.trade.offerUnknown'),
           subtitle: tr('helper.sit.trade.offerSub'),
           focus: { kind: 'panel', panel: 'trades' },
+          severity: 'warn',
+        });
+      }
+    }
+
+    // ---- 7a) A ceasefire offered to you (MP) ----
+    // Peace takes two (worker/wars.js): the war runs on until you answer.
+    if (mpData?.ceasefireOffers) {
+      for (const c of mpData.ceasefireOffers) {
+        push({
+          id: `ceasefire_offer:${c.war_id}`,
+          category: 'ceasefire_offer',
+          title: tr('helper.sit.ceasefire.title', { name: c.faction_name ?? tr('helper.sit.trade.someone') }),
+          subtitle: tr('helper.sit.ceasefire.sub'),
+          focus: { kind: 'panel', panel: 'standing' },
           severity: 'warn',
         });
       }

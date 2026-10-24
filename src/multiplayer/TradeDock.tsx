@@ -94,8 +94,8 @@ export function TradeDock() {
   useEffect(() => {
     const onOpenPanel = (e: Event) => {
       const panel = (e as CustomEvent).detail?.panel;
-      if (panel !== 'trades' && panel !== 'routes' && panel !== 'market') return;
-      setTab(panel === 'routes' ? 'routes' : panel === 'market' ? 'market' : 'private');
+      if (panel !== 'trades' && panel !== 'routes' && panel !== 'market' && panel !== 'standing') return;
+      setTab(panel === 'routes' ? 'routes' : panel === 'market' ? 'market' : panel === 'standing' ? 'treaties' : 'private');
       deepLinkRef.current = true;
       try { window.dispatchEvent(new CustomEvent('dockrail:set', { detail: { active: 'trade' } })); } catch {}
     };
