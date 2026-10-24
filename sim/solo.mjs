@@ -145,7 +145,10 @@ if (term) {
     await playTo(t + 1);
     const votes = await DB.prepare(`SELECT COUNT(*) AS c FROM senate_votes v JOIN game_factions f ON f.id = v.faction_id
                                      WHERE v.proposal_id = ? AND f.ai_doctrine IS NOT NULL`).bind(filed.id).first();
-    check('4. every computer empire votes on an open bill', votes.c === 3, `${votes.c} votes`);
+    // Only a standing empire votes (an eliminated one never does).
+    const standing = await DB.prepare(`SELECT COUNT(*) AS c FROM game_factions WHERE game_id = ? AND ai_doctrine IS NOT NULL AND status = 'active'`).bind(G).first();
+    check('4. every computer empire votes on an open bill', votes.c === standing.c && standing.c > 0,
+      `${votes.c} votes from ${standing.c} standing; ${JSON.stringify(Object.fromEntries(Object.entries(tally).filter(([k]) => /vote/.test(k))))}`);
   }
 }
 check('a computer chairman files a bill of its own', sum(/:propose_ok$/) > 0,
