@@ -136,7 +136,9 @@ export class Walker {
 
 /** Collapse doubled spaces and spaces before punctuation. */
 export function tidy(s) {
-  return String(s ?? '').replace(/\s+/g, ' ').replace(/\s+([,.;:!?])/g, '$1').trim();
+  // Only a stray space between a word and its punctuation: names like
+  // ":) Smiley Face Friends :)" keep theirs.
+  return String(s ?? '').replace(/\s+/g, ' ').replace(/(\w)\s+([,.;!?])(?=\s|$)/g, '$1$2').trim();
 }
 
 // ---------------------------------------------------------------------------
