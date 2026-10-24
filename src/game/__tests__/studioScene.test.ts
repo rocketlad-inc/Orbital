@@ -3,7 +3,7 @@
  */
 // The studio's scene language (worker/studioScene.js): what a director
 // writes becomes a checked plan, and every mistake names its field.
-import { expandScenario, EXAMPLES, LOADOUT_PRESETS, whenTick, solveMoveTiming } from '../../../worker/studioScene.js';
+import { expandScenario, expandTakeOrder, EXAMPLES, LOADOUT_PRESETS, whenTick, solveMoveTiming } from '../../../worker/studioScene.js';
 
 const base = () => ({
   name: 'Test',
@@ -124,7 +124,7 @@ describe('expandScenario', () => {
     [{ ...base(), ships: [{ key: 'a', owner: 'terra', at: 'earth', class: 'battleship', count: 1 }] }, /unknown class/],
     [{ ...base(), ships: [{ key: 'a', owner: 'terra', at: 'earth', class: 'corvette', count: 1, loadout: 'laser' }] }, /loadout/],
     [{ ...base(), orders: [{ type: 'move', ships: 'ghost', to: 'luna' }] }, /unknown ship group 'ghost'/],
-    [{ ...base(), orders: [{ type: 'warp' }] }, /must be move, strike, trade, mine or ram/],
+    [{ ...base(), orders: [{ type: 'warp' }] }, /must be move, strike, trade, mine, ram or supply/],
     [{ ...base(), ships: [{ key: 'a', owner: 'terra', at: 'earth', class: 'freighter', count: 1 }], orders: [{ type: 'mine', ship: 'a', to: 'earth' }] }, /rock and to/],
     [{ ...base(), ships: [{ key: 'a', owner: 'terra', at: 'uranus', class: 'colony', count: 1 }], orders: [{ type: 'move', ships: 'a', to: 'verdant', settle: 'city' }] }, /settle must be 'station'/],
     [{ ...base(), dyson: { owner: 'venus' } }, /unknown faction 'venus'/],
@@ -259,6 +259,77 @@ describe('expandScenario: set pieces', () => {
     [{ ...base(), kaiju: 'europa' }, /kaiju must be/],
   ])('rejects a bad set piece with the field named (%#)', (scene, msg) => {
     expect(() => expandScenario(scene)).toThrow(msg);
+  });
+
+  // A supply run to a scene site (2026-10-23, the construction clip).
+  const yard = { key: 'yard', kind: 'warp_gate', at: 'earth', owner: 'terra' };
+  const haulers = { key: 'fr', owner: 'terra', at: 'earth', class: 'freighter', count: 3 };
+  it('reads a supply run from a dock to a scene site', () => {
+    const spec = expandScenario({ ...base(), megastructures: [yard], ships: [haulers],
+      orders: [{ type: 'supply', ships: 'fr', from: 'earth', to: 'yard' }, { type: 'supply', ships: 'fr.2', from: 'earth', to: 'yard', loops: 3 }] });
+    expect(spec.orders).toEqual([
+      { type: 'supply', ships: 'fr', from: 'earth', to: 'yard', loops: null },
+      { type: 'supply', ships: 'fr.2', from: 'earth', to: 'yard', loops: 3 },
+    ]);
+  });
+
+  it.each([
+    [{ orders: [{ type: 'supply', ships: 'fr', from: 'earth', to: 'gate' }] }, /orders\[0\]\.to 'gate' is not a key in megastructures/],
+    [{ orders: [{ type: 'supply', ships: 'fr', to: 'yard' }] }, /orders\[0\]\.from/],
+    [{ orders: [{ type: 'supply', ships: 'nope', from: 'earth', to: 'yard' }] }, /unknown ship group 'nope'/],
+    [{ orders: [{ type: 'supply', ships: 'fr.7', from: 'earth', to: 'yard' }] }, /has no hull 7/],
+    [{ orders: [{ type: 'supply', ships: 'fr', from: 'earth', to: 'yard', loops: 0 }] }, /loops must be a whole number/],
+    [{ ships: [{ ...haulers, count: 5 }], orders: [{ type: 'supply', ships: 'fr', from: 'earth', to: 'yard' }] }, /at most 4 freighters/],
+    [{ ships: [{ ...haulers, class: 'corvette' }], orders: [{ type: 'supply', ships: 'fr', from: 'earth', to: 'yard' }] }, /only freighters run a supply route/],
+    [{ megastructures: [{ ...yard, complete: true }], orders: [{ type: 'supply', ships: 'fr', from: 'earth', to: 'yard' }] }, /already complete/],
+  ])('rejects a bad supply run with the field named (%#)', (extra, msg) => {
+    expect(() => expandScenario({ ...base(), megastructures: [yard], ships: [haulers], ...extra })).toThrow(msg);
+  });
+});
+
+// Mid-take orders with numbers of their own (worker/studio.js handleOrder
+// runs this first): a site founded on camera, and the freighters that
+// build it (2026-10-23, the construction clip).
+describe('expandTakeOrder', () => {
+  it('reads a founding: orbit, and a bearing from the heading by default', () => {
+    expect(expandTakeOrder({ type: 'found', ship: 'st_cs_0', kind: 'warp_gate', orbit: 18 }))
+      .toEqual({ type: 'found', ship: 'st_cs_0', kind: 'warp_gate', orbit: 18, bearing: 90, variant: null });
+    expect(expandTakeOrder({ type: 'found', ship: 'g1:st_cs_0', kind: 'deep_array', orbit: '24', bearing: -90, variant: 'B' }))
+      .toEqual({ type: 'found', ship: 'g1:st_cs_0', kind: 'deep_array', orbit: 24, bearing: 270, variant: 'B' });
+    expect(expandTakeOrder({ type: 'found', ship: 'st_cs_0', kind: 'warp_gate', orbit: 18, angle: 400 }))
+      .toEqual({ type: 'found', ship: 'st_cs_0', kind: 'warp_gate', orbit: 18, angle: 40, variant: null });
+  });
+
+  it("reads a supply run: one or more freighters, the newest site unless named", () => {
+    expect(expandTakeOrder({ type: 'supply', ships: 'st_fr_0', from: 'earth' }))
+      .toEqual({ type: 'supply', ships: ['st_fr_0'], from: 'earth', site: 'last', loops: null, name: null });
+    expect(expandTakeOrder({ type: 'supply', ships: ['st_fr_0', 'st_fr_1'], from: 'luna', site: 'mega_warp_gate', loops: 2, name: ' Gate run ' }))
+      .toEqual({ type: 'supply', ships: ['st_fr_0', 'st_fr_1'], from: 'luna', site: 'mega_warp_gate', loops: 2, name: 'Gate run' });
+  });
+
+  it('passes the other orders through for their handler', () => {
+    const o = { type: 'deliver', ship: 'st_fr_0', site: 'ws' };
+    expect(expandTakeOrder(o)).toBe(o);
+  });
+
+  it.each([
+    [null, /an order must be an object/],
+    [{ type: 'found', kind: 'warp_gate', orbit: 18 }, /found\.ship/],
+    [{ type: 'found', ship: 'st_cs_0', kind: 'death_star', orbit: 18 }, /found\.kind must be one of/],
+    [{ type: 'found', ship: 'st_cs_0', kind: 'warp_gate' }, /found\.orbit/],
+    [{ type: 'found', ship: 'st_cs_0', kind: 'warp_gate', orbit: -2 }, /found\.orbit/],
+    [{ type: 'found', ship: 'st_cs_0', kind: 'warp_gate', orbit: 18, angle: 0, bearing: 90 }, /not both/],
+    [{ type: 'found', ship: 'st_cs_0', kind: 'warp_gate', orbit: 18, bearing: 'ahead' }, /found\.bearing must be in degrees/],
+    [{ type: 'found', ship: 'st_cs_0', kind: 'warp_gate', orbit: 18, variant: 'Z' }, /found\.variant/],
+    [{ type: 'found', ship: 'st cs 0', kind: 'warp_gate', orbit: 18 }, /found\.ship/],
+    [{ type: 'supply', ships: [], from: 'earth' }, /supply\.ships/],
+    [{ type: 'supply', ships: ['a', 'b', 'c', 'd', 'e'], from: 'earth' }, /at most 4 freighters/],
+    [{ type: 'supply', ships: ['a', 'a'], from: 'earth' }, /twice/],
+    [{ type: 'supply', ships: ['a'] }, /supply\.from/],
+    [{ type: 'supply', ships: ['a'], from: 'earth', site: 'a site' }, /supply\.site/],
+    [{ type: 'supply', ships: ['a'], from: 'earth', loops: 1.5 }, /supply\.loops/],
+  ])('rejects a bad order with the field named (%#)', (o, msg) => {
+    expect(() => expandTakeOrder(o)).toThrow(msg);
   });
 });
 

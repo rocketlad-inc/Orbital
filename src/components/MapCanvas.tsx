@@ -605,6 +605,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // the diff so a mid-flight page load doesn't fire a phantom flash.
   const prevTransitIdsRef = useRef<Set<string> | null>(null);
   const prevSettlementIdsRef = useRef<Map<string, { x: number; y: number; bodyId: string }>>(new Map());
+  /** Megastructure bodies on the previous frame (null until the first),
+   *  so a site that a vanished colony hull just founded can be told apart. */
+  const prevMegaBodyIdsRef = useRef<Set<string> | null>(null);
   /** Every settlement as last seen in /state, kept after it leaves: a
    *  fall plays where it stood (spawnSettlementFall), and by the time its
    *  chronicle row plays it is gone from the list. */
@@ -1418,6 +1421,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       exploredFlushAtRef.current = nowMs;
     }
 
+    const curMegaBodyIds = new Set<string>();
+    for (const b of gameState.bodies) if (b.type === 'megastructure') curMegaBodyIds.add(b.id);
     if (prevShipIdsRef.current.size > 0) {
       for (const [id, pos] of prevShipIdsRef.current) {
         if (!curShipIds.has(id) && !destructionFlashesRef.current.has(id)) {
@@ -1435,6 +1440,19 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             if (founded && world) {
               const from = recentDrawnShipWorldPos(id, 1000) ?? { x: pos.x, y: pos.y };
               seedSettleGlide(founded.id, from, bodyPosition(world, nowTick, gameState.bodies), nowMs);
+              continue;
+            }
+            // A FOUNDATION LAID: the hull was spent on a megastructure site
+            // (place-framework) that has just appeared round the world it
+            // was parked at. It went in silence, the hull simply gone and a
+            // scaffold standing (Studio construction clip, 2026-10-23); it
+            // breaks ground with the celebration a colony founding gets.
+            const prevMega = prevMegaBodyIdsRef.current;
+            const site = at && prevMega
+              ? gameState.bodies.find(b => b.type === 'megastructure' && b.parent === at && !prevMega.has(b.id))
+              : undefined;
+            if (site) {
+              spawnDiscoveryBloom(`founded:${site.id}`, site.id, 'firework');
               continue;
             }
           }
@@ -1481,6 +1499,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
     }
     prevShipIdsRef.current = curShipIds;
+    prevMegaBodyIdsRef.current = curMegaBodyIds;
 
     // Settlements get the same treatment but their position is the
     // body world-position (cities + stations both render adjacent to

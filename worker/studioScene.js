@@ -268,7 +268,24 @@ export function expandScenario(raw) {
         if (!rock) throw new Error(`${where}: ${o.asteroid} needs a worlds[] entry with stations: 1 and thrusters: true`);
         return { type: 'ram', asteroid: o.asteroid, target: o.target, depart, owner: rock.owner };
       }
-      default: throw new Error(`${where}.type must be move, strike, trade, mine or ram`);
+      // Freighters on a standing supply run from a dock world to one of
+      // the scene's construction sites (2026-10-23): the player's own
+      // route (trade-routes/full, a pickup and the site as the drop-off),
+      // loading from the treasury at the dock. `to` is a megastructures[]
+      // key, checked once those are read.
+      case 'supply': {
+        needGroup(o.ships, where);
+        if (!isBody(o.from)) throw new Error(`${where}.from (the dock world the freight is loaded at) is required`);
+        if (!isKey(o.to)) throw new Error(`${where}.to must be the key of a site in megastructures[]`);
+        const [gk, gi] = String(o.ships).split('.');
+        const group = ships.find(g => g.key === gk);
+        const hulls = gi != null ? [group.hulls[Number(gi)]] : group.hulls;
+        if (hulls[0] == null) throw new Error(`${where}: group '${gk}' has no hull ${gi}`);
+        if (hulls.length > SUPPLY_MAX_CARRIERS) throw new Error(`${where}: a route flies at most ${SUPPLY_MAX_CARRIERS} freighters; split the group`);
+        if (hulls.some(c => c !== 'freighter')) throw new Error(`${where}: only freighters run a supply route`);
+        return { type: 'supply', ships: String(o.ships), from: o.from, to: o.to, loops: supplyLoops(o.loops, where) };
+      }
+      default: throw new Error(`${where}.type must be move, strike, trade, mine, ram or supply`);
     }
   });
 
@@ -401,6 +418,14 @@ export function expandScenario(raw) {
     }
     return { key: m.key, kind: m.kind, at: m.at, owner: m.owner, progress: complete ? 1 : p, complete, name, ...place };
   });
+  // A supply run's drop-off is one of these sites, and one still building
+  // (the game refuses a route to a finished structure).
+  orders.forEach((o, i) => {
+    if (o.type !== 'supply') return;
+    const site = megastructures.find(m => m.key === o.to);
+    if (!site) throw new Error(`orders[${i}].to '${o.to}' is not a key in megastructures[]`);
+    if (site.complete) throw new Error(`orders[${i}].to '${o.to}' is already complete; a supply run needs a site still building`);
+  });
 
   // ---- the Dyson Sphere: one per match, at the Sun ----
   // progress 0..0.99 of the way built (never complete: that ends the game),
@@ -438,6 +463,79 @@ export function expandScenario(raw) {
     reset: raw.reset !== false,
     tickIntervalMs: Number.isFinite(Number(raw.tick_interval_ms)) ? Number(raw.tick_interval_ms) : 3600000,
   };
+}
+
+/** Freighters one route may fly (tradeRoutesV2.js carrierCapFor at its
+ *  highest, Trade Armadas). The research may hold a faction to fewer. */
+export const SUPPLY_MAX_CARRIERS = 4;
+
+/** A supply run's `loops`: absent = forever; else 1..999 laps. */
+function supplyLoops(v, where) {
+  if (v == null) return null;
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < 1 || n > 999) throw new Error(`${where}.loops must be a whole number of laps from 1 to 999`);
+  return n;
+}
+
+/** A ship or site as a mid-take order names it: with or without the game
+ *  prefix ('st_cs_0', '<game>:st_cs_0', 'mega_ab12cd34'). */
+const isRef = (s) => typeof s === 'string' && /^[A-Za-z0-9_:-]{1,80}$/.test(s);
+
+/**
+ * A mid-take order (POST /api/admin/studio/games/:id/order, a shot's
+ * `order` step), checked before anything touches the game. Pure, so its
+ * rules are unit-tested here; studio.js handleOrder runs it first. Covers
+ * the orders with numbers of their own (2026-10-23, the construction
+ * clip); the others pass through for the handler to check:
+ *
+ *   { type: 'found', ship, kind, orbit, angle? | bearing?, variant? }
+ *     the colony ship lays a megastructure's foundation `orbit` map units
+ *     from the centre of the world it is parked at: the player's own
+ *     placement (actions.js handlePlaceFramework). `angle`: degrees round
+ *     the world (0 = +x). `bearing`: degrees from the world's own
+ *     direction of travel (0 = straight ahead, 180 = trailing), so the
+ *     site stands the same way round the world in every game, and supply
+ *     legs (which fly in the Sun's frame, where the world is moving) take
+ *     the same ticks in every game. Default: bearing 90.
+ *   { type: 'supply', ships, from, site?, loops?, name? }
+ *     freighters on a supply run from the dock `from` to a site: the
+ *     player's own route (trade-routes/full). `site` is 'last' (the site
+ *     founded most recently, the default), a scene megastructure's key,
+ *     a site's template ('mega_warp_gate') or its id.
+ */
+export function expandTakeOrder(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('an order must be an object');
+  if (raw.type === 'found') {
+    if (!isRef(raw.ship)) throw new Error('found.ship (the parked colony ship) is required');
+    if (!MEGASTRUCTURES[raw.kind]) throw new Error(`found.kind must be one of ${MEGASTRUCTURE_KINDS.join(', ')}`);
+    const orbit = Number(raw.orbit);
+    if (raw.orbit == null || !Number.isFinite(orbit) || orbit <= 0) throw new Error("found.orbit must be a distance in map units from the world's centre");
+    if (raw.angle != null && raw.bearing != null) throw new Error('found: give angle (round the world) or bearing (from its heading), not both');
+    const deg = (v, k) => {
+      const n = Number(v);
+      if (!Number.isFinite(n)) throw new Error(`found.${k} must be in degrees`);
+      return ((n % 360) + 360) % 360;
+    };
+    const variant = raw.variant == null ? null : String(raw.variant);
+    if (variant != null && !/^[A-F]$/.test(variant)) throw new Error('found.variant must be a letter A to F');
+    return {
+      type: 'found', ship: raw.ship, kind: raw.kind, orbit,
+      ...(raw.angle != null ? { angle: deg(raw.angle, 'angle') } : { bearing: raw.bearing != null ? deg(raw.bearing, 'bearing') : 90 }),
+      variant,
+    };
+  }
+  if (raw.type === 'supply') {
+    const ships = Array.isArray(raw.ships) ? raw.ships : [raw.ships];
+    if (!ships.length || !ships.every(isRef)) throw new Error('supply.ships must name one or more freighters');
+    if (ships.length > SUPPLY_MAX_CARRIERS) throw new Error(`supply: a route flies at most ${SUPPLY_MAX_CARRIERS} freighters`);
+    if (new Set(ships).size !== ships.length) throw new Error('supply.ships names a freighter twice');
+    if (!isBody(raw.from)) throw new Error('supply.from (the dock world the freight is loaded at) is required');
+    const site = raw.site == null ? 'last' : raw.site;
+    if (!isRef(site)) throw new Error("supply.site must be 'last', a site key, template or id");
+    const name = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim().slice(0, 40) : null;
+    return { type: 'supply', ships, from: raw.from, site, loops: supplyLoops(raw.loops, 'supply'), name };
+  }
+  return raw;
 }
 
 /** '+3' = three ticks from now; a bare number = an absolute tick. */

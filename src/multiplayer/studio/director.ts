@@ -33,7 +33,7 @@ import { apiFetch } from '../api';
 import { arcApexScale, arcNeeded, glideProgress, panCamera, strikeTimingWarnings, worldStopsAt } from './shotPlan';
 import { installVirtualClock } from './virtualClock';
 
-export type Target = string; // 'earth' | 'ship:<id>' | 'fleet:<id>' | 'missile:<n>' | 'mid:<target>|<target>'
+export type Target = string; // 'earth' | 'ship:<id>' | 'fleet:<id>' | 'missile:<n>' | 'site:<kind>' | 'mid:<target>|<target>'
 
 export type ShotStep =
   | { at: number; do: 'focus'; target: Target; px?: number; scale?: number }
@@ -81,7 +81,9 @@ export type ShotStep =
   | { at: number; do: 'select'; ships: Target[] }
   /** A server order mid-take (worker/studio.js handleOrder): 'move' a
    *  parked hull on, or 'gate' it through the sun gate it is parked on
-   *  (the real crossing, with its flash) and `then` on from the far end. */
+   *  (the real crossing, with its flash) and `then` on from the far end;
+   *  'found' a megastructure site with a parked colony ship, 'supply' it
+   *  with freighters on a route (then 'site:<kind>' names the site). */
   | { at: number; do: 'order'; order: Record<string, unknown> }
   /** Off camera, tick until `ship` is `lead` ticks from landing (or, with
    *  lead 0 and parked, until it has landed), at most `max` ticks. The
@@ -237,7 +239,19 @@ export class Director {
   }
 
   private body(id: string): Body | undefined {
-    return this.host.state().bodies.find(b => b.id === id);
+    const s = this.host.state();
+    // 'site:<kind>' (or 'site:' for any kind): the construction site a
+    // faction founded most recently. A site founded mid-take (an `order`
+    // step's 'found') has an id the shot cannot know ahead ('mega_<random>').
+    if (id.startsWith('site:')) {
+      const kind = id.slice(5);
+      const site = Object.values(s.megastructures ?? {})
+        .filter(m => !m.ancient && m.foundedByFactionId != null && (!kind || m.kind === kind))
+        .filter(m => s.bodies.some(b => b.id === m.bodyId))
+        .sort((a, b) => b.foundedAtTick - a.foundedAtTick)[0];
+      return site ? s.bodies.find(b => b.id === site.bodyId) : undefined;
+    }
+    return s.bodies.find(b => b.id === id);
   }
 
   /** Ships and fleets carry the game id in front ('<game>:st_fr_0');
@@ -1096,6 +1110,19 @@ export class Director {
       method: 'POST', body: JSON.stringify(o),
     });
     this.note(res.ok ? `order: ${JSON.stringify(res.data)}` : `order ${String(o.type)}: ${res.error?.message ?? res.status}`);
+    if (!res.ok) return;
+    // ON THIS FRAME, not at the next tick: fetch the state the order made
+    // (the server bumps its version) and hold the clock until the map has
+    // it, so a founded site appears, and its colony ship goes, where the
+    // order is in the shot. Bounded by the wall clock; the poll would
+    // bring it within a couple of seconds anyway.
+    const before = this.host.state();
+    // A founding is in when its colony ship has gone from the map.
+    const landed = () => this.host.state() !== before
+      && (o.type !== 'found' || !this.ship(String(o.ship)));
+    window.dispatchEvent(new CustomEvent('orbital:refresh-state'));
+    const t0 = realNow();
+    while (!landed() && realNow() - t0 < 5000) await realSleep(50);
   }
 
   /** The 'pick' step's choice, substituted for '@b' in later steps. */

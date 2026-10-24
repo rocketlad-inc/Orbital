@@ -43,6 +43,7 @@ import { ensureCaptainFloor, ensureCaptains } from './captains.js';
 import { EMBLEM_IDS } from './emblems.js';
 import {
   STUDIO_MARK, SHIP_CLASSES, LOADOUT_PRESETS, FUEL_MAX, TAG, whenTick, expandScenario, EXAMPLES, solveMoveTiming, ROGUE_ASTEROIDS,
+  expandTakeOrder,
 } from './studioScene.js';
 import {
   routes as actionRoutes, MEGA_STRIKE_CHARGE_TICKS, RAM_ASTEROID_G, RAM_G_ANCHOR, RAM_METAL_PER_DV,
@@ -53,7 +54,7 @@ import { backfillMissingBodies } from './factions.js';
 import { cfg as gameCfg, invalidate as invalidateCfg } from './gameConfig.js';
 import { BY_ID as CONFIG_DIALS } from './configSchema.js';
 import { spawnSunGatePair, SUN_GATE_SYSTEMS, SUN_GATE_WARNING_TICKS, gateOrder, handOffLandingSite, solGateId } from './sunGates.js';
-import { MEGASTRUCTURES, MEGASTRUCTURE_KINDS, MEGA_MU, MEGA_MAX_HP, MEGA_BODY_TYPE, periodForRadius, angle0For } from './megastructures.js';
+import { MEGASTRUCTURES, MEGASTRUCTURE_KINDS, MEGA_MU, MEGA_MAX_HP, MEGA_BODY_TYPE, periodForRadius, angle0For, bodyPositionAt } from './megastructures.js';
 import { makeRouteMath } from './routeMath.js';
 import { launchKaiju, kaijuShipId, kaijuFactionId, kaijuCarcassId, KAIJU_UNKNOWN_FACTION } from './kaiju.js';
 
@@ -217,26 +218,37 @@ async function resetStudioRows(env, gameId) {
  * parked there drops to the world the site orbits, legs still flying to it
  * land there, the structure row goes and the body is marked destroyed.
  * The next apply brings a site back on the same id (upsertSite).
+ *
+ * A site a take FOUNDED (a mid-take `found` order, 2026-10-23) goes the
+ * same way: the real handler names it '<game>:mega_<random>', with no
+ * studio mark, so it is found by what only a player's founding leaves, a
+ * founder and no ancient flag. Relics and discovered gates have neither.
+ * Test games only ever reach this.
  */
 async function retireStudioSites(env, gameId) {
-  const sites = `${gameId}:${STUDIO_MARK}mega_%`;
+  const founded = ((await env.DB
+    .prepare(`SELECT body_id FROM game_megastructures
+               WHERE game_id = ? AND body_id LIKE ? AND founded_by_faction_id IS NOT NULL AND COALESCE(ancient, 0) = 0`)
+    .bind(gameId, `${gameId}:mega_%`).all()).results ?? []).map(r => r.body_id);
   const parentOf = '(SELECT b.parent_body_id FROM game_bodies b WHERE b.id = game_ships.parent_body_id)';
-  await env.DB.batch([
-    env.DB.prepare(`UPDATE game_ships SET parent_body_id = ${parentOf} WHERE game_id = ? AND parent_body_id LIKE ?`).bind(gameId, sites),
-    env.DB.prepare(
-      `UPDATE game_ship_nodes SET target_body_id = (SELECT b.parent_body_id FROM game_bodies b WHERE b.id = game_ship_nodes.target_body_id)
-        WHERE game_id = ? AND target_body_id LIKE ? AND status IN ('planned', 'committed', 'in_transit')`,
-    ).bind(gameId, sites),
-    // The log a take wrote about its sites (the launch of a finished
-    // slipway is keyed '<site>_launched', and INSERT OR IGNORE would
-    // keep the next take's from being written).
-    env.DB.prepare('DELETE FROM chronicle_entries WHERE game_id = ? AND (body_id LIKE ? OR id LIKE ?)').bind(gameId, sites, sites),
-    env.DB.prepare('DELETE FROM game_megastructures WHERE game_id = ? AND body_id LIKE ?').bind(gameId, sites),
-    env.DB.prepare(
-      `UPDATE game_bodies SET destroyed_at_tick = (SELECT current_tick FROM games WHERE id = ?)
-        WHERE game_id = ? AND id LIKE ? AND destroyed_at_tick IS NULL`,
-    ).bind(gameId, gameId, sites),
-  ]);
+  for (const [op, sites] of [['LIKE', `${gameId}:${STUDIO_MARK}mega_%`], ...founded.map(id => ['=', id])]) {
+    await env.DB.batch([
+      env.DB.prepare(`UPDATE game_ships SET parent_body_id = ${parentOf} WHERE game_id = ? AND parent_body_id ${op} ?`).bind(gameId, sites),
+      env.DB.prepare(
+        `UPDATE game_ship_nodes SET target_body_id = (SELECT b.parent_body_id FROM game_bodies b WHERE b.id = game_ship_nodes.target_body_id)
+          WHERE game_id = ? AND target_body_id ${op} ? AND status IN ('planned', 'committed', 'in_transit')`,
+      ).bind(gameId, sites),
+      // The log a take wrote about its sites (the launch of a finished
+      // slipway is keyed '<site>_launched', and INSERT OR IGNORE would
+      // keep the next take's from being written).
+      env.DB.prepare(`DELETE FROM chronicle_entries WHERE game_id = ? AND (body_id ${op} ? OR id ${op} ?)`).bind(gameId, sites, sites),
+      env.DB.prepare(`DELETE FROM game_megastructures WHERE game_id = ? AND body_id ${op} ?`).bind(gameId, sites),
+      env.DB.prepare(
+        `UPDATE game_bodies SET destroyed_at_tick = (SELECT current_tick FROM games WHERE id = ?)
+          WHERE game_id = ? AND id ${op} ? AND destroyed_at_tick IS NULL`,
+      ).bind(gameId, gameId, sites),
+    ]);
+  }
 }
 
 /**
@@ -944,6 +956,14 @@ export async function applyScenario(env, spec, { session = null } = {}) {
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(`orders.mine: ${body?.error?.message ?? res.status}`);
       done.push({ type: 'mine', ship: id, rock: o.rock, to: o.to, loops: o.loops, route_id: body?.route?.id ?? null });
+    } else if (o.type === 'supply') {
+      const ids = shipsOf(o.ships);
+      const owner = factions.get(shipRows.get(ids[0]).owner);
+      const r = await laySupplyRoute(env, gameId, {
+        shipIds: ids, fromId: bodyOf(o.from, 'orders.supply').id, siteId: bodyOf(o.to, 'orders.supply').id,
+        userId: owner.user_id, loops: o.loops,
+      });
+      done.push({ type: 'supply', ships: ids.length, from: o.from, to: o.to, loops: o.loops, ...r });
     } else if (o.type === 'ram') {
       const rock = bodyOf(o.asteroid, 'orders.ram');
       const target = bodyOf(o.target, 'orders.ram');
@@ -1037,6 +1057,40 @@ async function fireRam(env, gameId, { rockId, targetId, factionId, userId, depar
     throw new Error(`orders.ram refused: ${body?.error?.message ?? `HTTP ${res.status}`}`);
   }
   return { depart: s, flip: s + n / 2, arrive: s + n, ticks: n, metal_cost: metal, accel_g: a / RAM_G_ANCHOR };
+}
+
+/**
+ * A SUPPLY RUN the way a player lays one (2026-10-23, the construction
+ * clip): the route composer's own endpoint (tradeRoutesV2.js
+ * handleCreateFull), a pickup at the dock world and the site as the
+ * drop-off, posted as the freighters' owner, so every rule a player meets
+ * (a dock to load at, a site you may supply, the carrier cap your research
+ * allows, a free hull) passes judgement on it. The freight comes out of
+ * the treasury at the dock (routeMath.js planSiteDraw), so seed the
+ * faction's metal and gold. The endpoint dispatches at once: the hulls
+ * load and leave on the tick the route is laid. Returns the route and,
+ * per hull, the tick it lands at the first stop it flies to.
+ */
+async function laySupplyRoute(env, gameId, { shipIds, fromId, siteId, userId, loops = null, name = null }) {
+  const route = tradeRoutesV2.find(x => x.method === 'POST' && x.pattern instanceof RegExp && x.pattern.source.includes('trade-routes\\/full$'));
+  if (!route) throw new Error('route composer handler not found');
+  const url = new URL(`https://studio/api/games/${gameId}/trade-routes/full`);
+  const res = await route.handle(new Request(url, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      name: name ?? 'Supply run',
+      stops: [{ body_id: fromId, action: 'pickup' }, { body_id: siteId, action: 'dropoff' }],
+      carrier_ship_ids: shipIds, loop_mode: loops ? 'count' : 'forever', ...(loops ? { loop_count: loops } : {}),
+    }),
+  }), env, { url, session: { user_id: userId }, params: { gameId } });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(body?.error?.message ?? `the route was refused (${res.status})`);
+  const legs = ((await env.DB
+    .prepare(`SELECT ship_id, MAX(arrival_at_tick) AS arrive FROM game_ship_nodes
+               WHERE game_id = ? AND status IN ('committed', 'in_transit') AND ship_id IN (${shipIds.map(() => '?').join(',')})
+               GROUP BY ship_id`)
+    .bind(gameId, ...shipIds).all()).results ?? []).map(r => ({ ship: r.ship_id, arrive: r.arrive }));
+  return { route_id: body?.route?.id ?? null, dispatched: !!body?.dispatched, legs };
 }
 
 /**
@@ -1144,6 +1198,12 @@ async function enableFarSystems(env, gameId, tick, spec) {
  *     the first silo city there), the player's own launch (missiles.js).
  *   { type: 'ram', asteroid: 'midas', target: 'mars' }
  *     the rock's thrusters owner rams it now (fireRam).
+ *   { type: 'found', ship: 'st_cs_0', kind: 'warp_gate', orbit: 18, bearing: 90 }
+ *     the parked colony ship lays a site's foundation `orbit` units from
+ *     its world (actions.js handlePlaceFramework); answers with the site.
+ *   { type: 'supply', ships: ['st_fr_0'], from: 'earth', site: 'last' }
+ *     freighters on a supply run from a dock to a site (laySupplyRoute).
+ * Shapes are checked first (studioScene.js expandTakeOrder).
  * Each answers with the game handler's own reply, or its refusal.
  */
 async function handleOrder(req, env, { session, params }) {
@@ -1151,13 +1211,45 @@ async function handleOrder(req, env, { session, params }) {
   if (!(await allowedInGame(req, env, session, gameId))) return err(404, 'not_found', 'no such route');
   const g = await env.DB.prepare('SELECT id, is_test_game, current_tick FROM games WHERE id = ?').bind(gameId).first();
   if (!g || (g.is_test_game ?? 0) !== 1) return err(404, 'not_found', 'no such test game');
-  const tick = Number(g.current_tick) || 0;
-  const o = await readJson(req);
+  const res = await runOrder(req, env, gameId, Number(g.current_tick) || 0);
+  // THE MAP SEES IT NOW, not at the next tick (2026-10-23). A player's
+  // order bumps state_version at the dispatch choke point (index.js) so the
+  // next /state misses its cache; this path is not under /api/games/, and
+  // a founded site stayed invisible, the colony ship still parked, until a
+  // tick rolled the cache key. The director refetches after an order.
+  if (res.ok) {
+    try { await env.DB.prepare('UPDATE games SET state_version = state_version + 1 WHERE id = ?').bind(gameId).run(); }
+    catch (e) { console.error('studio order: state_version bump failed', e); }
+  }
+  return res;
+}
+
+async function runOrder(req, env, gameId, tick) {
+  let o;
+  try { o = expandTakeOrder(await readJson(req)); } catch (e) { return err(400, 'bad_order', e.message); }
   const full = (s) => { const raw = String(s ?? ''); return raw.startsWith(`${gameId}:`) ? raw : `${gameId}:${raw}`; };
   const bodyId = async (tpl) => {
     const b = await env.DB.prepare('SELECT id FROM game_bodies WHERE game_id = ? AND template_id = ? AND destroyed_at_tick IS NULL LIMIT 1')
       .bind(gameId, String(tpl ?? '')).first();
     return b?.id ?? null;
+  };
+  // A construction site, as an order names it: 'last' (the site founded
+  // most recently), a scene megastructure's key, a site's id, or its
+  // template ('mega_warp_gate', the newest of that kind a faction founded).
+  const siteFor = async (key) => {
+    const k = String(key ?? '');
+    const live = `FROM game_megastructures m JOIN game_bodies b ON b.id = m.body_id
+                  WHERE m.game_id = ? AND b.destroyed_at_tick IS NULL`;
+    if (k === 'last') {
+      return (await env.DB.prepare(`SELECT m.body_id AS id ${live} AND m.founded_by_faction_id IS NOT NULL AND COALESCE(m.ancient, 0) = 0
+                                    ORDER BY m.founded_at_tick DESC, b.rowid DESC LIMIT 1`).bind(gameId).first())?.id ?? null;
+    }
+    const byId = (await env.DB.prepare(`SELECT m.body_id AS id ${live} AND m.body_id IN (?, ?) LIMIT 1`)
+      .bind(gameId, `${gameId}:${STUDIO_MARK}mega_${k}`, full(k)).first())?.id;
+    if (byId) return byId;
+    return (await env.DB.prepare(`SELECT m.body_id AS id ${live} AND b.template_id = ?
+                                  ORDER BY (m.founded_by_faction_id IS NOT NULL) DESC, m.founded_at_tick DESC, b.rowid DESC LIMIT 1`)
+      .bind(gameId, k).first())?.id ?? null;
   };
   const shipRow = (id) => env.DB
     .prepare('SELECT s.id, s.name, s.owner_faction_id, s.parent_body_id, s.status, f.user_id FROM game_ships s JOIN game_factions f ON f.id = s.owner_faction_id WHERE s.id = ? AND s.game_id = ?')
@@ -1199,9 +1291,7 @@ async function handleOrder(req, env, { session, params }) {
       const ship = await shipRow(full(o.ship));
       if (!ship) return err(404, 'not_found', `no ship ${o.ship}`);
       const key = String(o.site ?? '');
-      const site = (await env.DB
-        .prepare('SELECT id FROM game_bodies WHERE game_id = ? AND id IN (?, ?) AND destroyed_at_tick IS NULL LIMIT 1')
-        .bind(gameId, `${gameId}:${STUDIO_MARK}mega_${key}`, full(key)).first())?.id ?? await bodyId(key);
+      const site = await siteFor(key);
       if (!site) throw new Error(`no construction site '${key}'`);
       const route = actionRoutes.find(x => x.method === 'POST' && x.pattern instanceof RegExp
         && x.pattern.source.includes('megastructures') && x.pattern.source.endsWith('\\/deliver$'));
@@ -1213,6 +1303,76 @@ async function handleOrder(req, env, { session, params }) {
       const body = await res.json().catch(() => null);
       if (!res.ok) return err(409, 'deliver', body?.error?.message ?? `delivery refused (${res.status})`);
       return json({ ok: true, type: 'deliver', ...body });
+    }
+    if (o.type === 'found') {
+      // THE PLAYER'S OWN FOUNDING (actions.js handlePlaceFramework): the
+      // parked colony ship, a point in the sphere of influence of the world
+      // it is parked at, posted as its owner, so the research gates, the
+      // Construction Module, the neighbourhood rule and the Senate's price
+      // all pass judgement. The hull is spent; the site is a new body
+      // ('<game>:mega_<random>'), named '<Kind> Site'. The point is worked
+      // out here from `orbit` and `angle` or `bearing` at this tick.
+      const ship = await shipRow(full(o.ship));
+      if (!ship) return err(404, 'not_found', `no ship ${o.ship}`);
+      if (ship.status !== 'active' || !ship.parent_body_id) throw new Error(`${o.ship} is not parked at a world`);
+      const live = (await env.DB
+        .prepare(`SELECT id, name, type, parent_body_id, radius, soi, orbit_radius, orbit_period, angle0
+                    FROM game_bodies WHERE game_id = ? AND destroyed_at_tick IS NULL`)
+        .bind(gameId).all()).results ?? [];
+      const byId = new Map(live.map(b => [b.id, b]));
+      const host = byId.get(ship.parent_body_id);
+      if (!host) throw new Error(`${o.ship} is parked at a world that is gone`);
+      const rad = Number(host.radius) || 1;
+      const soi = Number(host.soi) || 0;
+      if (o.orbit < rad * 1.5) throw new Error(`found.orbit ${o.orbit} is inside ${host.name} or on its surface (radius ${rad}); give at least ${Math.ceil(rad * 1.5 * 10) / 10}`);
+      if (soi > 0 && o.orbit > soi) throw new Error(`found.orbit ${o.orbit} is outside ${host.name}'s sphere of influence (${Math.round(soi * 10) / 10})`);
+      const c = bodyPositionAt(host, byId, tick);
+      let theta;
+      if (o.angle != null) theta = (o.angle * Math.PI) / 180;
+      else {
+        // The world's heading: its motion in the Sun's frame, by finite
+        // difference, as fireRam takes a rock's velocity.
+        const a = bodyPositionAt(host, byId, tick - 0.01);
+        const b = bodyPositionAt(host, byId, tick + 0.01);
+        theta = Math.atan2(b.y - a.y, b.x - a.x) + (o.bearing * Math.PI) / 180;
+      }
+      const x = c.x + Math.cos(theta) * o.orbit;
+      const y = c.y + Math.sin(theta) * o.orbit;
+      const route = actionRoutes.find(r => r.method === 'POST' && r.pattern instanceof RegExp && r.pattern.source.endsWith('\\/place-framework$'));
+      if (!route) throw new Error('place-framework handler not found');
+      const url = new URL(`https://studio/api/games/${gameId}/ships/${ship.id}/place-framework`);
+      const res = await route.handle(new Request(url, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ kind: o.kind, x, y, ...(o.variant ? { variant: o.variant } : {}) }),
+      }), env, { url, session: { user_id: ship.user_id }, params: { gameId, shipId: ship.id } });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) return err(409, 'found', body?.error?.message ?? `founding refused (${res.status})`);
+      const deg = ((theta * 180) / Math.PI % 360 + 360) % 360;
+      return json({
+        ok: true, type: 'found', tick, site: body.site.id, key: String(body.site.id).replace(/^[^:]+:/, ''),
+        name: body.site.name, kind: o.kind, at: host.name, orbit: o.orbit, angle: Math.round(deg * 10) / 10,
+      });
+    }
+    if (o.type === 'supply') {
+      const site = await siteFor(o.site);
+      if (!site) throw new Error(`no construction site '${o.site}'`);
+      const from = await bodyId(o.from);
+      if (!from) throw new Error(`no world '${o.from}'`);
+      const ships = [];
+      for (const s of o.ships) {
+        const ship = await shipRow(full(s));
+        if (!ship) return err(404, 'not_found', `no ship ${s}`);
+        ships.push(ship);
+      }
+      if (new Set(ships.map(s => s.owner_faction_id)).size > 1) throw new Error('supply: the freighters on one route belong to one empire');
+      try {
+        const r = await laySupplyRoute(env, gameId, {
+          shipIds: ships.map(s => s.id), fromId: from, siteId: site, userId: ships[0].user_id, loops: o.loops, name: o.name,
+        });
+        return json({ ok: true, type: 'supply', tick, site, ...r });
+      } catch (e) {
+        return err(409, 'supply', String(e?.message ?? e));
+      }
     }
     if (o?.type === 'launch') {
       const world = await bodyId(o.world);
@@ -1268,7 +1428,7 @@ async function handleOrder(req, env, { session, params }) {
       const r = await fireRam(env, gameId, { rockId: rock, targetId: target, factionId: owner.fid, userId: owner.user_id, depart: tick });
       return json({ ok: true, type: 'ram', asteroid: o.asteroid, target: o.target, ...r });
     }
-    return err(400, 'bad_request', "type must be 'move', 'gate', 'deliver', 'launch' or 'ram'");
+    return err(400, 'bad_request', "type must be 'move', 'gate', 'deliver', 'found', 'supply', 'launch' or 'ram'");
   } catch (e) {
     return err(400, 'bad_order', String(e?.message ?? e));
   }
