@@ -35,7 +35,8 @@ import { GIT_SHA } from '../_version';
 import { useIsMobile, isInApp } from '../hooks/useIsMobile';
 import { saveTextFile } from '../platform/saveTextFile';
 import { t, tn } from '../i18n/core';
-import { useI18n } from '../i18n/react';
+import { useI18n, LanguageSwitch } from '../i18n/react';
+import { saveLocale } from '../i18n/account';
 import { inLang } from '../i18n/serverText';
 import { SoloClock } from '../multiplayer/SoloClock';
 import { openSaveEmpire } from '../multiplayer/trial/SaveEmpire';
@@ -1579,6 +1580,15 @@ const SideMenu: React.FC<SideMenuProps> = ({
           )}
 
           <div className="side-menu__group-label">{t('topbar.menuGame')}</div>
+          {/* The language, mid-game (it was only in the lobby). Switches
+              live: every panel re-renders, and the game provider re-maps
+              /state so world names and the log follow. Saved on the
+              account when there is one, as the lobby picker does. */}
+          <div className="side-menu__item side-menu__lang" data-testid="menu-language">
+            <span className="side-menu__item-icon" aria-hidden>🌐</span>
+            <span className="side-menu__item-label">{t('lang.label')}</span>
+            <LanguageSwitch className="side-menu__lang-switch" onChosen={user ? saveLocale : undefined} />
+          </div>
           {canSaveLoad && onOpenSave && (
             <button
               className="side-menu__item"

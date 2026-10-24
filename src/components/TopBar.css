@@ -701,6 +701,15 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+/* The language row: a row, not a button, holding the shared picker. */
+.side-menu__lang { cursor: default; }
+.side-menu__lang .i18n-switch { color: #d8e4ee; }
+.side-menu__lang .i18n-switch__globe { display: none; }
+.side-menu__lang .i18n-switch__select {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-color: #2a3d50;
+}
 .side-menu__item-label {
   font-size: 12px;
   font-weight: 600;
