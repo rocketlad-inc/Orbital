@@ -42,9 +42,10 @@ async function readJson(req) { try { return await req.json(); } catch { return n
 
 export const SHADOW_DOMAIN = 'shadow.orbital.local';
 const SHADOW_PASSWORD_SENTINEL = '!shadow-account-no-password-login';
-/** Trials started per IP per hour (staging raises it: its testers share
- *  one address; env TRIALS_PER_HOUR). */
-const TRIALS_PER_HOUR = 6;
+/** Trials started per IP per hour. Schools, offices and phone carriers put
+ *  many players behind one address, so not 6 (2026-10-24). Staging raises
+ *  it further: its testers share one address (env TRIALS_PER_HOUR). */
+const TRIALS_PER_HOUR = 30;
 /** A trial's head start, on top of every empire's starter ships (his
  *  pick, 2026-10-24): three corvettes to defend with, a freighter to haul. */
 const TRIAL_FLEET = [
