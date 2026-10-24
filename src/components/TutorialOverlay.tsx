@@ -336,7 +336,11 @@ export const TutorialOverlay: React.FC = () => {
     // against advancing a step the player already navigated away from.
     const at = index;
     const timer = setTimeout(() => {
-      if (at === index) advance();
+      if (at !== index) return;
+      // A task on the LAST step (the trial's Start the clock) ends the tour;
+      // advance() past the end does nothing.
+      if (index === TUTORIAL_STEPS.length - 1) finish();
+      else advance();
     }, 1300);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
