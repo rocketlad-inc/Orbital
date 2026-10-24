@@ -14,11 +14,15 @@
 // ticks" decision asks whether a multiple of N passed SINCE THE LAST
 // TURN (due()), never `tick % N === 0`, which a skipped tick would miss.
 //
-// THE DOCTRINES are sim/bots.mjs's, which the balance sweeps were run
-// with: what to research, which hulls to build, which city buildings,
-// whether to take ground. On top of them, difficulty (Lorne's pick:
-// peaceful / normal / ruthless) only decides how soon and how hard an
-// empire goes to war, and how it treats a ceasefire.
+// THREE LAYERS.
+//   - DOCTRINE (here, from sim/bots.mjs, which the balance sweeps ran on):
+//     its economy. What to research, build and settle.
+//   - PERSONALITY (aiPersona.js): Ally, Warlord or Snake. How it treats
+//     the person, when it goes to war, when it makes peace.
+//   - SHARPNESS (aiTactics.js): the difficulty. How well it fights: does
+//     it weigh the odds, keep a home guard, defend, retreat.
+// It decides from its own fog-cut GET /state, never from the tables:
+// what it cannot see, it does not know.
 //
 // THE SENATE. Quorum counts every active faction, so a computer empire
 // that never voted would block every bill. Each one votes on every open
@@ -30,11 +34,16 @@ import * as wars from './wars.js';
 import * as senate from './senate.js';
 import { describeSlider } from './senate.js';
 import * as trades from './trades.js';
+import * as stateMod from './state.js';
 import { currentTerm } from './senateTerms.js';
 import { makeRouteMath } from './routeMath.js';
 import { isFarSystemBody } from './systems.js';
+import { due, readView, wageWar, SHARPNESS } from './aiTactics.js';
+import { conduct, readMemory, voteFor } from './aiPersona.js';
 
-const MODULES = [actions, wars, senate, trades];
+export { due };
+
+const MODULES = [actions, wars, senate, trades, stateMod];
 
 /** sim/bots.mjs ARCHETYPES, with the war rules difficulty layers on.
  *  `law`: the slider law it files when it holds the gavel. */
@@ -79,34 +88,23 @@ export const DOCTRINES = {
     warlike: false,
     law: ['science_yield_multiplier', 1.25],
   },
-};
-
-/** How each difficulty goes to war. `from`: the first tick a warlike
- *  empire may declare; `fleet`: armed hulls it wants first; `wars`: most
- *  open wars it starts; `everyone`: even the peaceable doctrines declare;
- *  `human`: aims at the person first; `peaceAfter`: ticks into a war it
- *  takes a ceasefire (null: never), `offerAfter`: when it offers one. */
-export const TEMPERS = {
-  peaceful: { from: null, fleet: 0, wars: 0, everyone: false, human: false, peaceAfter: 0, offerAfter: 12 },
-  normal: { from: 48, fleet: 4, wars: 1, everyone: false, human: false, peaceAfter: 24, offerAfter: 72 },
-  ruthless: { from: 24, fleet: 3, wars: 2, everyone: true, human: true, peaceAfter: null, offerAfter: null },
+  // The Snake's economy: takes ground like an Expander, but its yard
+  // turns out warships all the while, for the day it turns.
+  schemer: {
+    research: ['construction', 'weapons', 'industry', 'propulsion'],
+    build: ['colony', 'corvette', 'frigate', 'corvette', 'freighter'],
+    buildings: ['mint', 'forge', 'lab'],
+    colonise: true,
+    buildEvery: 8,
+    attack: { every: 8, minFleet: 3 },
+    warlike: false,
+    law: ['ship_build_cost_multiplier', 0.8],
+  },
 };
 
 const ARMED = ['corvette', 'frigate', 'destroyer', 'capital'];
-const ARMED_SQL = ARMED.map(c => `'${c}'`).join(',');
 const SETTLE_TYPES = ['terrestrial', 'moon', 'dwarf'];
 const SETTLE_SQL = SETTLE_TYPES.map(c => `'${c}'`).join(',');
-/** Fewest ticks between two of an empire's declarations. */
-const DECLARE_EVERY = 12;
-
-/** Did a multiple of `every` (shifted by `offset`) pass since the last
- *  turn? `last` null: the empire's first turn. */
-export function due(tick, last, every, offset = 0) {
-  if (!(every > 0)) return false;
-  if (last == null) return true;
-  return Math.floor((tick - offset) / every) > Math.floor((last - offset) / every);
-}
-
 // ---- the door every action goes through --------------------------------
 
 function matchPattern(pattern, pathname) {
@@ -162,7 +160,7 @@ async function readGame(env, gameId, tick) {
                        type, owner_faction_id, terraformed_at_tick, template_id,
                        emerge_from_tick, destroyed_at_tick, obliterated_at_tick
                   FROM game_bodies WHERE game_id = ?`).bind(gameId).all(),
-    DB.prepare(`SELECT id, user_id, status, capital_body_id, ai_doctrine, ai_last_tick
+    DB.prepare(`SELECT id, user_id, status, capital_body_id, ai_doctrine, ai_last_tick, ai_personality, ai_state
                   FROM game_factions WHERE game_id = ?`).bind(gameId).all(),
     DB.prepare(`SELECT id, faction_a, faction_b, declared_by, declared_at_tick, ceasefire_by
                   FROM game_wars WHERE game_id = ? AND ended_at_tick IS NULL`).bind(gameId).all(),
@@ -202,7 +200,8 @@ export async function takeTurn(env, g, fac, difficulty) {
   const DB = env.DB;
   const { gameId, tick } = g;
   const doctrine = DOCTRINES[fac.ai_doctrine] ?? DOCTRINES.expander;
-  const temper = TEMPERS[difficulty] ?? TEMPERS.normal;
+  const personality = fac.ai_personality ?? (doctrine.warlike ? 'warlord' : 'ally');
+  const sharp = SHARPNESS[difficulty] ?? SHARPNESS.normal;
   const last = fac.ai_last_tick == null ? null : Number(fac.ai_last_tick);
   const me = fac.id;
   const G = `/api/games/${encodeURIComponent(gameId)}`;
@@ -212,57 +211,43 @@ export async function takeTurn(env, g, fac, difficulty) {
     const key = r ? (r.ok ? `${k}_ok` : `${k}_${r.data?.error?.code ?? r.status}`) : k;
     tally[key] = (tally[key] ?? 0) + 1;
   };
-
-  const myWars = g.wars.filter(w => w.faction_a === me || w.faction_b === me);
-  const enemyOf = (w) => (w.faction_a === me ? w.faction_b : w.faction_a);
-  const enemies = new Set(myWars.map(enemyOf));
-  const rivals = g.factions.filter(f => f.id !== me && f.status === 'active');
   const home = fac.capital_body_id && g.bodyById.has(fac.capital_body_id) ? fac.capital_body_id : null;
 
-  // --- diplomacy: offers on the table ---------------------------------
-  const offers = (await DB.prepare(
-    `SELECT id, request_metal, request_fuel, request_gold, request_science, request_pacts
-       FROM trade_offers WHERE game_id = ? AND responder_faction_id = ? AND status = 'open'`,
-  ).bind(gameId, me).all()).results ?? [];
-  for (const o of offers) {
-    const asks = Number(o.request_metal) + Number(o.request_fuel) + Number(o.request_gold) + Number(o.request_science);
-    let pacts = [];
-    try { pacts = JSON.parse(o.request_pacts || '[]'); } catch { pacts = ['?']; }
-    // A gift is taken; a non-aggression pact is taken by anyone not out
-    // for blood; anything that costs it is turned down.
-    const take = asks === 0 && pacts.every(p => p === 'nap' && difficulty !== 'ruthless');
-    note(take ? 'trade_accept' : 'trade_decline',
-      await call('POST', `/trades/${encodeURIComponent(o.id)}/${take ? 'accept' : 'decline'}`, {}));
+  // --- what it can see: its own /state, fog and all ----------------------
+  const seen = await call('GET', '/state');
+  const view = seen.ok && seen.data?.me ? { ...readView(seen.data), db: DB, gameId } : null;
+  if (!view) note('blind', seen);
+  const mem = readMemory(fac.ai_state);
+
+  // --- who it is: diplomacy, by personality ------------------------------
+  let foes = new Set();
+  let force = false;
+  if (view) {
+    const r = await conduct(env, {
+      view, rm: g.rm, call, note, personality, difficulty, last, wars: g.wars, gameId, mem,
+    });
+    foes = r.foes;
+    force = r.force;
   }
 
-  // --- ceasefires -----------------------------------------------------
-  for (const w of myWars) {
-    const other = enemyOf(w);
-    const age = tick - Number(w.declared_at_tick ?? tick);
-    if (w.ceasefire_by && w.ceasefire_by === other) {
-      if (temper.peaceAfter != null && age >= temper.peaceAfter) {
-        note('ceasefire_accept', await call('POST', '/wars/end', { target_faction_id: other }));
-      }
-    } else if (!w.ceasefire_by && temper.offerAfter != null && age >= temper.offerAfter
-               && w.declared_by !== me) {
-      // It did not start this one, and has had enough.
-      note('ceasefire_offer', await call('POST', '/wars/end', { target_faction_id: other }));
-    }
-  }
-
-  // --- research: never idle -------------------------------------------
+  // --- research: never idle ---------------------------------------------
+  // Sensors 1 first, whatever the doctrine: it is Capital Ping, and under
+  // fog a rival's capital is not on the map without it (state.js). A
+  // person who wants to find their enemies researches it too.
   const purse = await DB.prepare('SELECT research_tech_id FROM game_factions WHERE id = ?').bind(me).first();
+  const needSensors = Number(seen.data?.me?.tech_levels?.sensors ?? 0) < 1;
   if (!purse?.research_tech_id && doctrine.research.length) {
-    const pick = doctrine.research[(tick + me.length) % doctrine.research.length];
-    note('research', await call('POST', '/research', { tech_id: pick, queue: doctrine.research }));
+    const queue = needSensors ? ['sensors', ...doctrine.research.filter(x => x !== 'sensors')] : doctrine.research;
+    const pick = needSensors ? 'sensors' : queue[(tick + me.length) % queue.length];
+    note('research', await call('POST', '/research', { tech_id: pick, queue }));
   }
 
-  // --- ships, at the capital ------------------------------------------
+  // --- ships, at the capital --------------------------------------------
   if (home && doctrine.build.length && due(tick, last, doctrine.buildEvery)) {
     const n = Math.floor(tick / doctrine.buildEvery);
     let cls = doctrine.build[n % doctrine.build.length];
     // At war, the yard turns out warships.
-    if (enemies.size > 0 && !ARMED.includes(cls)) cls = 'corvette';
+    if (foes.size > 0 && !ARMED.includes(cls)) cls = 'corvette';
     const r = await call('POST', `/bodies/${encodeURIComponent(home)}/build`, { ship_class: cls });
     note(`build_${cls}`, r);
     // A hull it has not researched yet: the one every yard can build.
@@ -271,7 +256,7 @@ export async function takeTurn(env, g, fac, difficulty) {
     }
   }
 
-  // --- city buildings -------------------------------------------------
+  // --- city buildings ---------------------------------------------------
   if (doctrine.buildings.length && due(tick, last, doctrine.buildEvery, 3)) {
     const city = await DB.prepare(
       `SELECT id FROM game_settlements
@@ -290,61 +275,15 @@ export async function takeTurn(env, g, fac, difficulty) {
     }
   }
 
-  // --- war: declaring -------------------------------------------------
-  const armedHome = (await DB.prepare(
-    `SELECT s.id, s.parent_body_id FROM game_ships s
-      WHERE s.game_id = ? AND s.owner_faction_id = ? AND s.hp > 0
-        AND s.ship_class IN (${ARMED_SQL}) AND s.parent_body_id IS NOT NULL
-        AND NOT EXISTS (SELECT 1 FROM game_ship_nodes n
-                         WHERE n.ship_id = s.id AND n.status IN ('pending','committed','in_transit'))`,
-  ).bind(gameId, me).all()).results ?? [];
-  const startedWars = myWars.filter(w => w.declared_by === me).length;
-  if (temper.from != null && tick >= temper.from && (doctrine.warlike || temper.everyone)
-      && startedWars < temper.wars && armedHome.length >= temper.fleet
-      && due(tick, last, DECLARE_EVERY, 5) && home) {
-    const candidates = rivals.filter(f => !enemies.has(f.id) && f.capital_body_id && g.bodyById.has(f.capital_body_id));
-    if (candidates.length) {
-      const scored = [];
-      for (const f of candidates) {
-        let d = await dist(g, home, f.capital_body_id);
-        if (temper.human && !f.ai_doctrine) d *= 0.25;
-        scored.push([d, f]);
-      }
-      scored.sort((a, b) => a[0] - b[0]);
-      note('declare', await call('POST', '/wars/declare', { target_faction_id: scored[0][1].id }));
-    }
+  // --- war: how sharply it fights ----------------------------------------
+  if (view && foes.size > 0) {
+    for (const [label, r] of await wageWar(view, g.rm, call, foes, sharp, { force })) note(label, r);
   }
 
-  // --- war: attacking -------------------------------------------------
-  if (enemies.size > 0 && due(tick, last, doctrine.attack.every, 1)
-      && armedHome.length >= doctrine.attack.minFleet) {
-    // The nearest enemy world, from where the fleet sits.
-    const from = armedHome[0].parent_body_id;
-    let best = null;
-    for (const b of g.bodies) {
-      if (!b.owner_faction_id || !enemies.has(b.owner_faction_id) || isFarSystemBody(b)) continue;
-      const d = await dist(g, from, b.id);
-      if (!best || d < best[0]) best = [d, b.id];
-    }
-    if (best) {
-      // Every warship at once: staggered arrivals lose in detail.
-      const arrivals = new Map();
-      const orders = [];
-      for (const s of armedHome.slice(0, 50)) {
-        if (s.parent_body_id === best[1]) continue;
-        if (!arrivals.has(s.parent_body_id)) arrivals.set(s.parent_body_id, await arrivalFor(g, me, s.parent_body_id, best[1]));
-        orders.push({ ship_id: s.id, target_body_id: best[1], scheduled_t: tick, arrival_t: arrivals.get(s.parent_body_id), replace: true });
-      }
-      if (orders.length) note('attack', await call('POST', '/transfers', { orders }));
-    } else {
-      note('attack_no_target');
-    }
-  }
+  // --- expansion: claim, terraform, settle ------------------------------
+  if (doctrine.colonise) await expand(env, g, me, call, note, tick, view);
 
-  // --- expansion: claim, terraform, settle ----------------------------
-  if (doctrine.colonise) await expand(env, g, me, call, note, tick);
-
-  // --- the senate -----------------------------------------------------
+  // --- the senate -------------------------------------------------------
   const open = (await DB.prepare(
     `SELECT p.id, p.kind, p.proposer_faction_id, p.payload FROM senate_proposals p
       WHERE p.game_id = ? AND p.status IN ('debating','voting')
@@ -352,7 +291,7 @@ export async function takeTurn(env, g, fac, difficulty) {
         AND NOT EXISTS (SELECT 1 FROM senate_votes v WHERE v.proposal_id = p.id AND v.faction_id = ?)`,
   ).bind(gameId, tick, tick, me).all()).results ?? [];
   for (const p of open) {
-    const vote = voteFor(p, me, enemies, difficulty, g);
+    const vote = voteFor(p, { me, human: view?.human ?? null, personality, enemies: foes, mem, tick });
     note(`vote_${vote}`, await call('POST', `/senate/proposals/${encodeURIComponent(p.id)}/vote`, { vote }));
   }
 
@@ -366,7 +305,7 @@ export async function takeTurn(env, g, fac, difficulty) {
         WHERE game_id = ? AND proposer_faction_id = ? AND proposed_at_tick >= ?`,
     ).bind(gameId, me, Number(term.start_tick ?? 0)).first();
     if (Number(filed?.c ?? 0) === 0) {
-      const foe = [...enemies][0] ?? null;
+      const foe = [...foes][0] ?? null;
       const [slider, value] = foe ? ['ship_build_cost_multiplier', 1.3] : doctrine.law;
       const d = describeSlider(slider, value);
       if (d) {
@@ -378,31 +317,10 @@ export async function takeTurn(env, g, fac, difficulty) {
     }
   }
 
+  // --- what it remembers ------------------------------------------------
+  await DB.prepare('UPDATE game_factions SET ai_state = ? WHERE id = ?').bind(JSON.stringify(mem), me).run();
+  tally[`personality:${personality}`] = 1;
   return tally;
-}
-
-/**
- * How a computer empire votes. For itself, yes; against itself, no; a
- * bill aimed at an enemy, yes. A chancellor bid by anyone else: a
- * ruthless empire votes it down, a normal one only when the candidate is
- * the person (who is the one it is playing against), a peaceful one
- * stands aside. Everything else it leaves to the others.
- */
-export function voteFor(p, me, enemies, difficulty, g) {
-  if (p.proposer_faction_id === me) return 'yea';
-  let payload = {};
-  try { payload = JSON.parse(p.payload || '{}'); } catch { payload = {}; }
-  const target = payload?.target_faction_id ?? null;
-  if (target === me) return 'nay';
-  if (target && enemies.has(target)) return 'yea';
-  if (p.kind === 'chancellor_vote') {
-    if (difficulty === 'ruthless') return 'nay';
-    const proposer = g.factions.find(f => f.id === p.proposer_faction_id);
-    if (difficulty === 'normal' && proposer && !proposer.ai_doctrine) return 'nay';
-    return 'abstain';
-  }
-  if (p.proposer_faction_id && enemies.has(p.proposer_faction_id)) return 'nay';
-  return 'abstain';
 }
 
 /**
@@ -410,7 +328,7 @@ export function voteFor(p, me, enemies, difficulty, g) {
  * work first: a city on a terraformed world, a station on a raw one, a
  * freighter route to terraform it, then a colony ship flown out.
  */
-async function expand(env, g, me, call, note, tick) {
+async function expand(env, g, me, call, note, tick, view) {
   const DB = env.DB;
   const { gameId } = g;
   const idle = `NOT EXISTS (SELECT 1 FROM game_ship_nodes n
@@ -480,15 +398,18 @@ async function expand(env, g, me, call, note, tick) {
         AND s.parent_body_id IS NOT NULL AND ${idle} LIMIT 1`,
   ).bind(gameId, me).first();
   if (!ship) return;
-  // The nearest open rock in the main system that nobody else is
-  // already flying a colony ship to.
+  // The nearest rock in the main system that looks open from here (fog:
+  // a world it cannot see may already be someone's, and it finds out on
+  // arrival) and that none of its own colony ships is already bound for.
   const claimed = new Set(((await DB.prepare(
     `SELECT DISTINCT n.target_body_id AS id FROM game_ship_nodes n JOIN game_ships s ON s.id = n.ship_id
-      WHERE s.game_id = ? AND s.ship_class = 'colony' AND n.status IN ('pending','committed','in_transit')`,
-  ).bind(gameId).all()).results ?? []).map(r => r.id));
+      WHERE s.game_id = ? AND s.owner_faction_id = ? AND s.ship_class = 'colony'
+        AND n.status IN ('pending','committed','in_transit')`,
+  ).bind(gameId, me).all()).results ?? []).map(r => r.id));
   let best = null;
   for (const b of g.bodies) {
-    if (b.owner_faction_id || !SETTLE_TYPES.includes(b.type) || !b.parent_body_id) continue;
+    const owned = view ? view.owner.has(b.id) : !!b.owner_faction_id;
+    if (owned || !SETTLE_TYPES.includes(b.type) || !b.parent_body_id) continue;
     if (isFarSystemBody(b) || claimed.has(b.id) || b.id === ship.parent_body_id) continue;
     const d = await dist(g, ship.parent_body_id, b.id);
     if (!best || d < best[0]) best = [d, b.id];

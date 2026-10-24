@@ -318,6 +318,9 @@ export type Faction = {
   commissioned?: number | boolean;
   /** A computer empire in a solo game (worker/aiEmpire.js); 0/1. */
   computer?: number | boolean;
+  /** Its personality, once the player may know it (picked at setup, or
+   *  the game is over); null while hidden. */
+  personality?: 'ally' | 'warlord' | 'snake' | null;
   senate_weight: number;
   reputation: number;
   /** Scoreboard extras from the factions endpoint — GATED by the caller's

@@ -322,6 +322,10 @@ function Hero({
 
 type SoloDifficulty = 'peaceful' | 'normal' | 'ruthless';
 const SOLO_DIFFICULTIES: SoloDifficulty[] = ['peaceful', 'normal', 'ruthless'];
+/** worker/aiPersona.js PERSONALITIES, plus "Surprise me" (hidden until
+ *  the game ends). */
+type SoloPersona = 'surprise' | 'ally' | 'warlord' | 'snake';
+const SOLO_PERSONAS: SoloPersona[] = ['surprise', 'ally', 'warlord', 'snake'];
 /** worker/solo.js SOLO_SPEEDS, with the lobby's words for them. */
 const SOLO_SPEEDS: Array<[number, 'lobby.solo.speed.fast' | 'lobby.solo.speed.steady' | 'lobby.solo.speed.relaxed']> = [
   [30_000, 'lobby.solo.speed.fast'], [120_000, 'lobby.solo.speed.steady'], [600_000, 'lobby.solo.speed.relaxed'],
@@ -338,6 +342,9 @@ function SoloCard({ onStarted }: { onStarted: (roomId: string) => void }) {
   const [rivals, setRivals] = useState(3);
   const [difficulty, setDifficulty] = useState<SoloDifficulty>('normal');
   const [speed, setSpeed] = useState(120_000);
+  const [personas, setPersonas] = useState<SoloPersona[]>(['surprise', 'surprise', 'surprise', 'surprise', 'surprise']);
+  // The hint follows the last seat the player changed.
+  const [hintSeat, setHintSeat] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -346,7 +353,7 @@ function SoloCard({ onStarted }: { onStarted: (roomId: string) => void }) {
     setError(null);
     const res = await apiFetch<{ ok: true; game_id: string }>('/api/solo', {
       method: 'POST',
-      body: JSON.stringify({ rivals, difficulty, speed_ms: speed }),
+      body: JSON.stringify({ rivals, difficulty, speed_ms: speed, personalities: personas.slice(0, rivals) }),
     });
     setBusy(false);
     if (res.ok) onStarted(res.data.game_id);
@@ -378,6 +385,24 @@ function SoloCard({ onStarted }: { onStarted: (roomId: string) => void }) {
                 </button>
               ))}
             </div>
+          </div>
+          <div className="lx-solo__row">
+            <span className="lx-solo__k">{t('lobby.solo.who')}</span>
+            {Array.from({ length: rivals }, (_, i) => (
+              <div key={i} className="lx-solo__seat">
+                <span className="lx-solo__seatk">{t('lobby.solo.seat', { n: i + 1 })}</span>
+                <div className="lx-seg lx-seg--fill lx-solo__words" role="radiogroup" aria-label={t('lobby.solo.seat', { n: i + 1 })}>
+                  {SOLO_PERSONAS.map(p => (
+                    <button key={p} type="button" role="radio" aria-checked={personas[i] === p}
+                      className={`lx-seg__opt ${personas[i] === p ? 'is-active' : ''}`}
+                      onClick={() => { setPersonas(prev => prev.map((x, k) => (k === i ? p : x))); setHintSeat(i); }}>
+                      {t(`lobby.solo.persona.${p}` as const)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+            <span className="lx-solo__hint">{t(`lobby.solo.personaHint.${personas[Math.min(hintSeat, rivals - 1)]}` as const)}</span>
           </div>
           <div className="lx-solo__row">
             <span className="lx-solo__k">{t('lobby.solo.difficulty')}</span>

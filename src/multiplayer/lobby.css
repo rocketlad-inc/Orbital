@@ -266,6 +266,9 @@
 }
 .lx-solo__words .lx-seg__opt { font-family: inherit; font-size: 14px; }
 .lx-solo__hint { font-size: 13px; color: var(--lx-ink-2); }
+.lx-solo__seat { display: grid; grid-template-columns: 64px minmax(0, 1fr); align-items: center; gap: 8px; }
+.lx-solo__seatk { font-family: var(--lx-data); font-size: 12px; color: var(--lx-ink-3); white-space: nowrap; }
+.lx-solo__seat .lx-seg__opt { padding: 0 6px; font-size: 13px; }
 .lx-solo__go { display: flex; gap: 10px; margin-top: 4px; }
 .lx-solo__start { flex: 1 1 auto; }
 .lx-quick__head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }

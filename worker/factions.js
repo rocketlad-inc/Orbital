@@ -2848,8 +2848,13 @@ async function handleListFactions(_req, env, ctx) {
               -- quiet mark. Public, like the hull it buys.
               EXISTS (SELECT 1 FROM user_entitlements e
                        WHERE e.user_id = game_factions.user_id) AS commissioned,
-              -- A computer empire in a solo game (aiEmpire.js).
-              (ai_doctrine IS NOT NULL) AS computer
+              -- A computer empire in a solo game (aiEmpire.js), and its
+              -- personality once the player may know it: picked at setup,
+              -- or the game is over ("Surprise me" is unmasked at the end).
+              (ai_doctrine IS NOT NULL) AS computer,
+              CASE WHEN ai_personality_shown = 1
+                     OR (SELECT status FROM games WHERE id = game_factions.game_id) = 'completed'
+                   THEN ai_personality END AS personality
          FROM game_factions
         WHERE game_id = ?
         ORDER BY slot ASC`,
