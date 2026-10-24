@@ -508,6 +508,10 @@ const COMBAT_RECENT_TICKS = AUTO_COMBAT_INTERVAL * 2;
  *  in the report. Matches the 10-tick window arrivals already use. */
 const COMPLETION_TTL_TICKS = 10;
 
+/** How long a finished building asks for a decision before it becomes
+ *  the plain "building nothing" row. */
+const BUILDING_DONE_DECISION_TICKS = 3;
+
 /** A discovery lingers a bit longer than a routine completion — it's a
  *  bigger deal, and the reward (a free city to garrison, a warship to
  *  crew) is worth keeping in front of the player for a while. */
@@ -2156,11 +2160,26 @@ export function useSituationItems(
     try {
       for (const s of gameState.settlements) {
         if (s.ownedBy !== factionId) continue;
+        // Only an upgrade here the player can actually pay for makes a
+        // free slot worth a row. A screen full of "building nothing" you
+        // can't afford is nagging, not opportunity.
+        const canBuildSomething = () => {
+          const have = spendableAt(s.bodyId);
+          const kinds = s.type === 'city' ? CITY_BUILDINGS : STATION_BUILDINGS;
+          return kinds.some(kind => canPay(have, nextBuildingCost(kind, buildingLevel(s, kind))));
+        };
         const done = buildingDoneRef.current.get(s.id);
-        if (done) {
+        // A COMPLETION IS NEWS FOR A FEW TICKS, NOT A STANDING DECISION.
+        // It sat under "Needs a decision" for its whole 10-tick window
+        // ("Defense 1 complete", 7+ ticks on, playtest 2026-10-24), even
+        // when nothing here could be afforded. It asks for a decision only
+        // while it is fresh AND an upgrade is affordable; after that the
+        // free slot is the ordinary idle row below.
+        if (done && tick - done.tick < BUILDING_DONE_DECISION_TICKS) {
           push({
             id: `building_done:${s.id}`,
             category: 'building_done',
+            tier: canBuildSomething() ? 'decision' : 'opportunity',
             entity: `settlement:${s.id}`,
             title: tr('helper.sit.building.done', { label: buildingLabelText(done.label), where: s.name }),
             subtitle: tr('helper.sit.building.doneSub'),
@@ -2171,15 +2190,7 @@ export function useSituationItems(
           continue;                      // done implies idle; don't say both
         }
         if (!s.buildingQueue) {
-          // Only surface an idle slot if there's an upgrade here the
-          // player can actually pay for. A screen full of "building
-          // nothing" you can't afford is nagging, not opportunity.
-          const have = spendableAt(s.bodyId);
-          const kinds = s.type === 'city' ? CITY_BUILDINGS : STATION_BUILDINGS;
-          const canBuildSomething = kinds.some(kind =>
-            canPay(have, nextBuildingCost(kind, buildingLevel(s, kind))),
-          );
-          if (!canBuildSomething) continue;
+          if (!canBuildSomething()) continue;
           push({
             id: `building_idle:${s.id}`,
             category: 'building_idle',
