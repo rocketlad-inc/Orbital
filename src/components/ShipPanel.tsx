@@ -4433,8 +4433,16 @@ export const TransferTargetPicker: React.FC<TransferTargetPickerProps> = ({
     });
   };
 
-  return (
-    <div className="modal-overlay" onClick={onClose}>
+  // PORTALLED TO <body>. The ship panel lives in .left-rail, a z-80
+  // stacking context, so the overlay's own z 1200 only ranked it inside
+  // the rail: with a world menu open (z 900) the list opened BEHIND the
+  // world and shipyard panels, and a "pick" landed on the world menu
+  // instead -- it focused that world and closed the ship panel (Priya,
+  // 2026-10-24). The world menu already portalled its own copy; doing it
+  // here makes every caller safe. From <body> the picker outranks every
+  // panel that opened it.
+  return createPortal(
+    <div className="modal-overlay" onClick={onClose} data-target-picker>
       <div
         className="modal-content target-picker"
         onClick={(e) => e.stopPropagation()}
@@ -4554,7 +4562,8 @@ export const TransferTargetPicker: React.FC<TransferTargetPickerProps> = ({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };
 
