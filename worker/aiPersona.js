@@ -30,7 +30,7 @@
 // last made peace with whom, the Snake's phase and victim.
 // ============================================================
 
-import { due, power, visibleFleet, myArmed, pickTarget, scout, SHARPNESS } from './aiTactics.js';
+import { due, power, visibleFleet, myArmed, pickTarget, scout, SHARPNESS, ARMED } from './aiTactics.js';
 
 export const PERSONALITIES = ['ally', 'warlord', 'snake'];
 
@@ -94,7 +94,25 @@ export function readMemory(raw) {
     since: m.since ?? 0,          // tick the phase began
     warLast: m.warLast ?? [],     // who it was at war with last turn
     front: m.front ?? {},         // factionId -> { key, since }: the war's map, unchanged since
+    pending: m.pending ?? {},     // factionId -> id of my open offer to them
+    snub: m.snub ?? {},           // factionId -> tick they declined or countered my offer
   };
+}
+
+/**
+ * Its answer to an offer: null to accept, or why not (a trades.js
+ * DECLINE_REASONS code). A gift with no strings, or pacts with someone
+ * it is friendly to: yes. Anything that costs it goods: no, it ships no
+ * cargo (it never crews a delivery, so the deal would stall half done).
+ */
+export function answerTo(o, friendly, { personality, grudge = false } = {}) {
+  const asks = Number(o.request_metal ?? 0) + Number(o.request_fuel ?? 0)
+    + Number(o.request_gold ?? 0) + Number(o.request_science ?? 0);
+  let pacts = [];
+  try { pacts = [...JSON.parse(o.offer_pacts || '[]'), ...JSON.parse(o.request_pacts || '[]')]; } catch { return 'unknown_terms'; }
+  if (asks > 0) return 'no_cargo';
+  if (pacts.length && !friendly) return grudge && personality !== 'warlord' ? 'no_trust' : 'no_pacts';
+  return null;
 }
 
 /** The pacts on my side of the table, by other faction. */
@@ -137,9 +155,10 @@ function spread(id) {
 }
 
 /**
- * One turn of diplomacy. Returns { foes, force, mem }: who to fight this
- * turn (every empire it is at war with), whether a strike was just
- * launched (fight now whatever the odds), and its updated memory.
+ * One turn of diplomacy. Returns { foes, force, mem, prey }: who to fight
+ * this turn (every empire it is at war with), whether a strike was just
+ * launched (fight now whatever the odds), its updated memory, and the
+ * victim its strike goes for first (null: any foe).
  */
 export async function conduct(env, ctx) {
   const { view, rm, call, note, personality, difficulty, last, wars, gameId } = ctx;
@@ -198,6 +217,9 @@ export async function conduct(env, ctx) {
     return (theirs > 0 && mineP < LOSING * theirs) || myWorlds < (mem.worldsAt[f] ?? myWorlds);
   };
   const tookSomething = (f) => myWorlds > (mem.worldsAt[f] ?? myWorlds);
+  /** My warships in flight to one of f's worlds. */
+  const striking = (f) => [...view.inbound].some(([bodyId, list]) => view.owner.get(bodyId) === f
+    && list.some(s => s.owner_faction_id === me && ARMED.has(s.ship_class)));
   const ageOf = (f) => tick - Number(warWith.get(f)?.declared_at_tick ?? tick);
   const theyOffered = (f) => !!warWith.get(f)?.ceasefire_by && warWith.get(f).ceasefire_by === f;
 
@@ -208,13 +230,27 @@ export async function conduct(env, ctx) {
     return r.ok;
   };
   const endWar = async (f, label) => note(label, await call('POST', '/wars/end', { target_faction_id: f }));
+  // NOT THE SAME OFFER STRAIGHT BACK. An offer of mine they declined or
+  // countered is a "no" to those terms: it is not made again for a full
+  // OFFER_EVERY ticks (playtest 2026-10-24: a countered pact was declined
+  // in silence and re-sent unchanged).
+  for (const [f, id] of Object.entries(mem.pending)) {
+    if (offered.has(f)) continue;
+    const row = await env.DB.prepare('SELECT status FROM trade_offers WHERE id = ?').bind(id).first();
+    if (row?.status === 'declined' || row?.status === 'countered') mem.snub[f] = tick;
+    delete mem.pending[f];
+  }
+  const snubbed = (f) => tick - (mem.snub[f] ?? -Infinity) < OFFER_EVERY;
   const offerPacts = async (f, kinds, label) => {
-    if (offered.has(f)) return;
+    if (offered.has(f) || snubbed(f)) return;
     const r = await call('POST', '/trades', {
       responder_faction_id: f, offer: {}, request: {}, offer_pacts: kinds, request_pacts: [],
     });
     note(label, r);
-    if (r.ok) offered.add(f);
+    if (r.ok) {
+      offered.add(f);
+      if (r.data?.trade?.id) mem.pending[f] = r.data.trade.id;
+    }
   };
   // Who it is willing to sign with.
   const friendlyTo = (f) => {
@@ -231,15 +267,11 @@ export async function conduct(env, ctx) {
        FROM trade_offers WHERE game_id = ? AND responder_faction_id = ? AND status = 'open'`,
   ).bind(gameId, me).all()).results ?? [];
   for (const o of inbox) {
-    const asks = Number(o.request_metal) + Number(o.request_fuel) + Number(o.request_gold) + Number(o.request_science);
-    let pactList = [];
-    try { pactList = [...JSON.parse(o.offer_pacts || '[]'), ...JSON.parse(o.request_pacts || '[]')]; } catch { pactList = ['?']; }
-    // A gift with no strings, or pacts with someone it is friendly to:
-    // yes. Anything that costs it resources: no (no freighter deliveries
-    // yet).
-    const take = asks === 0 && (pactList.length === 0 || (friendlyTo(o.proposer_faction_id) && !pactList.includes('?')));
-    note(take ? 'offer_accept' : 'offer_decline',
-      await call('POST', `/trades/${encodeURIComponent(o.id)}/${take ? 'accept' : 'decline'}`, {}));
+    const reason = answerTo(o, friendlyTo(o.proposer_faction_id), { personality, grudge: grudge(o.proposer_faction_id) });
+    // A REAL ANSWER. A yes, or a no that says why (a counter asking it for
+    // goods was declined in silence, and read as ignored).
+    note(reason ? 'offer_decline' : 'offer_accept',
+      await call('POST', `/trades/${encodeURIComponent(o.id)}/${reason ? 'decline' : 'accept'}`, reason ? { reason } : {}));
   }
 
   let force = false;
@@ -291,8 +323,13 @@ export async function conduct(env, ctx) {
     for (const [f] of warWith) {
       if (view.factions.get(f)?.status === 'monster' || stalled(f)) continue;
       handled.add(f);
-      if (theyOffered(f) && losing(f)) await endWar(f, 'ceasefire_accept');
-      else if (!warWith.get(f).ceasefire_by && losing(f)) await endWar(f, 'ceasefire_offer');
+      // Not beaten before it has fought: a war it just declared, or one
+      // whose strike is still in flight, is not judged by fleet counts
+      // (playtest 2026-10-24: outnumbered by a trial's head start, it
+      // offered peace before its corvettes had even arrived).
+      const beaten = losing(f) && ageOf(f) >= PEACE_AFTER && !striking(f);
+      if (theyOffered(f) && beaten) await endWar(f, 'ceasefire_accept');
+      else if (!warWith.get(f).ceasefire_by && beaten) await endWar(f, 'ceasefire_offer');
     }
   }
 
@@ -370,7 +407,12 @@ export async function conduct(env, ctx) {
   // The view was read before this turn's declarations: add them.
   const foes = new Set(view.enemiesOf(me).filter(standing));
   for (const [f, w] of warWith) if (w.declared_by === me && w.declared_at_tick === tick) foes.add(f);
-  return { foes, force, mem };
+  // The one it came for: a Warlord's or a Snake's strike goes at its
+  // victim, not at whoever else joined the war (an Ally answering for its
+  // partner turned the trial's Warlord away from the player).
+  const prey = (personality === 'warlord' || (personality === 'snake' && mem.snake === 'war'))
+    && mem.victim && foes.has(mem.victim) ? mem.victim : null;
+  return { foes, force, mem, prey };
 }
 
 /** How it votes: for itself, for its friends, against its enemies. */

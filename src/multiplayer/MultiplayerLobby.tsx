@@ -39,11 +39,13 @@ type Tab = 'my' | 'past' | 'browse' | 'create' | 'code' | 'profile' | 'admin' | 
 
 interface Props {
   onEnterRoom: (roomId: string) => void;
+  /** Open the home page (the ORBITAL logo). */
+  onHome?: () => void;
 }
 
 type Listing = { games: GameSummary[]; now: number; autoload_room_id?: string | null };
 
-export function MultiplayerLobby({ onEnterRoom }: Props) {
+export function MultiplayerLobby({ onEnterRoom, onHome }: Props) {
   useI18n();
   const { user, signOut } = useAuth();
   const shadow = !!user?.shadow;
@@ -136,7 +138,10 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
       <div className="lx-bg" aria-hidden />
       <header className="lx-top">
         <div className="lx-top__inner">
-          <button className="lx-brand" onClick={() => setTab(liveMine && liveMine.length ? 'my' : 'browse')}>
+          {/* The logo goes home, to the landing page (it only re-picked a
+              tab, so there was no way back there from the lobby). */}
+          <button className="lx-brand" title={t('site.homeTitle')}
+            onClick={() => (onHome ? onHome() : setTab(liveMine && liveMine.length ? 'my' : 'browse'))}>
             ORBITAL
           </button>
           <nav className="lx-nav" aria-label={t('lobby.nav.label')}>

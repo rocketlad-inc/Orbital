@@ -16,6 +16,7 @@ import { SHIP_SLOT_COUNTS, PART_GLYPH, partsCost, sanitizeParts } from '../game/
 import type { ShipPartId } from '../game/shipParts';
 import type { ShipDesign } from '../types';
 import { t } from '../i18n/core';
+import { designName } from '../i18n/names';
 
 export interface LibraryTemplate {
   id: string;
@@ -98,7 +99,7 @@ export const DesignLibrary: React.FC<Props> = ({
       <div className="sd-dl__cardbody">
         <ShipIcon shipClass={shipClass as IconCls} variant={iconVariant} size={80} color={p1} color2={p2} />
         <span className="sd-dl__text">
-          <span className="sd-dl__name">{name}</span>
+          <span className="sd-dl__name">{designName(name)}</span>
           <span className="sd-dl__meta">{SHIP_CLASSES[shipClass].displayName} · {lookOf(shipClass, iconVariant)}</span>
           <span className="sd-dl__parts">{glyphs(parts)}</span>
           <span className="sd-dl__cost">{costOf(shipClass, parts)}</span>

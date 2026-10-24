@@ -349,7 +349,8 @@
     border-top: none;
     border-bottom: none;
     z-index: 5520;
-    padding-top: env(safe-area-inset-top, 0);
+    /* + the staging banner's height (StagingBanner; 0 in production). */
+    padding-top: calc(env(safe-area-inset-top, 0px) + var(--stg-h, 0px));
     padding-bottom: env(safe-area-inset-bottom, 0);
     animation: outliner-slide-in 0.22s cubic-bezier(0.2, 0.7, 0.2, 1);
   }
@@ -382,6 +383,13 @@
   .outliner.outliner--mobile .outliner__body-name,
   .outliner.outliner--mobile .outliner__ship-name {
     font-size: 13px;
+  }
+  /* A ship's name is "Lancer I of Europa": cut to "Lancer I of ..." the
+     part that says where it is was the part that went (Maya, 2026-10-24).
+     On a phone the name wraps onto a second line instead. */
+  .outliner.outliner--mobile .outliner__ship-name {
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .outliner__scrim {

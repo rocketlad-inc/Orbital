@@ -152,6 +152,8 @@
 .wm-terraform-assign button:hover:not(:disabled) { background: rgba(78, 205, 196, 0.2); }
 .wm-terraform-assign button:disabled { opacity: 0.5; cursor: default; }
 .wm-terraform-assign .wm-terraform-hint { flex-basis: 100%; }
+.wm-terraform-confirm { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 11px; color: #ffd27a; }
+.wm-terraform-confirm span { flex-basis: 100%; }
 .wm-more {
   align-self: flex-end;
   background: rgba(78, 205, 196, 0.08); border: 1px solid #2a3d50; border-radius: 4px;
@@ -418,10 +420,6 @@
 .wm-qline .wm-qbar { margin: 0 -4px 0 -8px; height: 3px; border-radius: 0 0 3px 3px; }
 .wm-qline .wm-qorder { font-size: 10px; padding: 2px 4px; }
 .wm-qline__end { display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
-.wm-qpos {
-  font-style: normal; font-size: 9px; color: #61758a; margin-right: 6px;
-  font-variant-numeric: tabular-nums;
-}
 
 /* The build list: one row per hull, the same columns every row. */
 .wm-hulls { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; }
@@ -460,7 +458,10 @@
 .wm-hullcost { color: #b8c8d6; }
 .wm-hulltime { color: #8aa0b4; }
 .wm-hullbuild {
-  height: 24px; font-family: inherit; font-size: 9.5px; font-weight: 700; letter-spacing: 0.14em;
+  /* The column fits CONSTRUIR as well as BUILD (it was 64px, and the
+     Portuguese label was cut off at the tablet width). */
+  min-width: 0; padding: 0 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  height: 24px; font-family: inherit; font-size: 9.5px; font-weight: 700; letter-spacing: 0.08em;
   color: #4ecdc4; background: rgba(78, 205, 196, 0.1);
   border: 1px solid #2f6f6b; border-radius: 4px; cursor: pointer;
 }
@@ -814,7 +815,7 @@
 .wm-routepick__r:focus-visible, .wm-routepick__x:focus-visible { outline: 2px solid #ffb84d; outline-offset: 1px; }
 
 /* ---- Designs on the build list (2026-10-08): the hull is the design ---- */
-.wm-hullrow { grid-template-columns: 150px minmax(0, 1fr) 104px 32px 64px; }
+.wm-hullrow { grid-template-columns: 150px minmax(0, 1fr) 104px 32px 84px; }
 .wm-hullnm__txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .wm-hullnm__look { font-style: normal; font-size: 8.5px; font-weight: 400; letter-spacing: 0.04em; color: #6b8195; }
 .wm-hullpick { display: flex; align-items: center; gap: 4px; min-width: 0; }
@@ -1163,3 +1164,22 @@
   background: none; border: 0; padding: 0; cursor: pointer;
 }
 .wm-tag.is-hover { border-color: #ffb84d; box-shadow: 0 0 0 1px rgba(255, 184, 77, 0.6); }
+
+/* THE CLASSIC-UI SWITCH. Its rule went in the batch-2 rewrite (0f3f69aa)
+   and the button has rendered unstyled ever since, in the page's flow at
+   the top-left corner, where the list pill sat on top of it (tablet
+   playtest, 2026-10-24: the pill "hides UI CLASSICA"). Back to a small
+   pill at the foot of the map, clear of the phone's bottom rail. Anything
+   that opens over the map's foot (a sheet, the world menu) covers it. */
+.wm-toggle-pill {
+  position: fixed;
+  bottom: 10px; left: 50%; transform: translateX(-50%);
+  z-index: 59;
+  background: rgba(10, 15, 22, 0.85); border: 1px solid #2a3d50; border-radius: 999px;
+  color: #8aa0b4; font-family: var(--font-body); font-size: 9px;
+  letter-spacing: 0.14em; padding: 4px 12px; cursor: pointer;
+}
+.wm-toggle-pill:hover { color: #4ecdc4; border-color: #4ecdc4; }
+@media (max-width: 768px) { /* the bottom rail's tier (DockRail.css) */
+  .wm-toggle-pill { bottom: calc(var(--mobile-rail-height, 72px) + 8px); }
+}

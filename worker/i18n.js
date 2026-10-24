@@ -71,10 +71,13 @@ export function tr(locale, key, vars) {
 }
 
 /** A count-sensitive line: tries `key_one` / `key_other` (Intl.PluralRules,
- *  so Portuguese counts 0 as singular, as Portuguese does). `{n}` is set. */
+ *  except that 0 is always plural). `{n}` is set. */
 export function trn(locale, key, n, vars) {
   const loc = normalizeLocale(locale) ?? DEFAULT_LOCALE;
-  const cat = new Intl.PluralRules(loc).select(n);
+  // Zero takes the plural: "0 naves", never "0 nave" (CLDR files Portuguese
+  // 0 under "one"; Brazilians do not write it that way). Same rule as the
+  // app's src/i18n/core.ts pluralRule.
+  const cat = n === 0 ? 'other' : new Intl.PluralRules(loc).select(n);
   const k = `${key}_${cat === 'one' ? 'one' : 'other'}`;
   return tr(loc, k, { n, ...vars });
 }

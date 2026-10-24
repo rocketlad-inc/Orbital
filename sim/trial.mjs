@@ -6,8 +6,9 @@
 //      a trial game (30 s, an Ally and a Warlord on the roster), and
 //      auto-load set so they land in it
 //   2. asking again with that session gives the same game back
-//   3. six trials an hour per address, then 429
-//   4. the trial's Warlord declares on the player from tick 20
+//   3. thirty trials an hour per address, then 429
+//   4. the trial's Warlord declares on the player from tick 20, takes a
+//      world, and its warships reach an idle player within 60 ticks
 //   5. saving: a new account made from the shadow session gets the game
 //      (members, faction, host), the shadow is retired, its sessions end
 //   6. a trial nobody plays pauses after 15 minutes; it wakes on return
@@ -38,9 +39,19 @@ function makeState() {
 const DB = new SimD1(':memory:');
 DB.applyMigrations(MIGRATIONS);
 const roomCalls = [];
+// The game's paused flag at the moment the world finished seeding
+// (startGame tells the room /game-started): a cron pass could run then.
+const pausedAtSeed = [];
 const env = {
   DB,
-  ROOM: { idFromName: () => 'x', get: () => ({ fetch: async (u, init) => { roomCalls.push([String(u), init?.body ?? null]); return new Response('{}'); } }) },
+  ROOM: { idFromName: () => 'x', get: () => ({ fetch: async (u, init) => {
+    roomCalls.push([String(u), init?.body ?? null]);
+    if (String(u).endsWith('/game-started')) {
+      const gid = JSON.parse(init?.body ?? '{}').gameId;
+      pausedAtSeed.push((await DB.prepare('SELECT paused FROM games WHERE id = ?').bind(gid).first())?.paused);
+    }
+    return new Response('{}');
+  } }) },
 };
 
 const trial = await import('../worker/trial.js');
@@ -74,6 +85,7 @@ const count = (c) => fleet.find(x => x.ship_class === c)?.n ?? 0;
 check('a head start: 3 extra corvettes and a freighter, at the capital', count('corvette') >= 4 && count('freighter') >= 1, JSON.stringify(fleet));
 const pausedAtStart = await DB.prepare('SELECT paused, auto_paused, next_tick_at FROM games WHERE id = ?').bind(G).first();
 check('it starts with the clock stopped, for the tutorial', pausedAtStart.paused === 1 && pausedAtStart.auto_paused === 0 && pausedAtStart.next_tick_at == null, JSON.stringify(pausedAtStart));
+check('it is born paused: no moment after seeding when a cron pass could play its empires', pausedAtSeed[0] === 1, JSON.stringify(pausedAtSeed));
 await ai.runSoloTurns(env);
 const early = await DB.prepare('SELECT COUNT(*) AS n FROM game_factions WHERE game_id = ? AND ai_last_tick IS NOT NULL').bind(G).first();
 const earlyOffers = await DB.prepare('SELECT COUNT(*) AS n FROM trade_offers WHERE game_id = ?').bind(G).first();
@@ -92,26 +104,125 @@ check('asking again gives the same game back', r2.status === 200 && b2.game_id =
 
 // ---- 3. rate limit --------------------------------------------------------
 let last = null;
-for (let i = 0; i < 6; i++) last = await trial.handleStart(req(null, '9.9.9.9'), env, null);
-const sixth = last.status;
-const seventh = await trial.handleStart(req(null, '9.9.9.9'), env, null);
-check('six trials an hour from one address, then 429', sixth === 201 && seventh.status === 429, `${sixth} then ${seventh.status}`);
+for (let i = 0; i < 30; i++) last = await trial.handleStart(req(null, '9.9.9.9'), env, null);
+const thirtieth = last.status;
+const next = await trial.handleStart(req(null, '9.9.9.9'), env, null);
+check('thirty trials an hour from one address, then 429', thirtieth === 201 && next.status === 429, `${thirtieth} then ${next.status}`);
+
+// The stand-in name is in the language the app is showing.
+const rPt = await trial.handleStart(req(null, '5.5.5.5', { lang: 'pt-BR' }), env, null);
+const bPt = await rPt.json();
+const uPt = await DB.prepare('SELECT display_name, locale FROM users WHERE id = ?').bind(bPt.user?.id).first();
+check('a Portuguese trial player is "Comandante", and keeps the language',
+  rPt.status === 201 && bPt.user?.display_name === 'Comandante' && uPt?.display_name === 'Comandante' && uPt?.locale === 'pt-BR',
+  JSON.stringify({ user: bPt.user, uPt }));
+check('an English one is "Commander"', u.display_name === 'Commander', JSON.stringify(u));
 
 // ---- 4. the Warlord comes at tick 20 -------------------------------------
-const room = new Room(makeState(), env);
-room.broadcast = () => {};
 const human = seats[0];
 const war = (await DB.prepare('SELECT id FROM game_factions WHERE game_id = ? AND ai_personality = ?').bind(G, 'warlord').first()).id;
 const humanF = (await DB.prepare('SELECT id FROM game_factions WHERE game_id = ? AND user_id = ?').bind(G, human.user_id).first()).id;
-for (let t = 1; t <= 40; t++) {
-  await room.resolveTick(G, t);
-  await DB.prepare('UPDATE games SET current_tick = ? WHERE id = ?').bind(t, G).run();
-  await ai.runSoloGame(env, G);
+/**
+ * Play a trial for `ticks` ticks with a player who does nothing (or, with
+ * `pact`, only signs whatever pact is offered), and watch the Warlord.
+ * Playtest 2026-10-24: it never took a world, offered a ceasefire before
+ * its corvettes had landed, and testers saw no attack in half an hour.
+ */
+async function watchWarlord(gameId, warId, humanId, humanUser, { ticks = 60, pact = false } = {}) {
+  const rm = new Room(makeState(), env);
+  rm.broadcast = () => {};
+  const out = { arrivedAt: null, earlyCeasefire: null, worldsAt: {} };
+  for (let t = 1; t <= ticks; t++) {
+    await rm.resolveTick(gameId, t);
+    await DB.prepare('UPDATE games SET current_tick = ? WHERE id = ?').bind(t, gameId).run();
+    if (pact) {
+      const open = (await DB.prepare(`SELECT id FROM trade_offers WHERE game_id = ? AND responder_faction_id = ? AND status = 'open'`)
+        .bind(gameId, humanId).all()).results ?? [];
+      for (const o of open) await ai.callAs(env, humanUser, 'POST', `/api/games/${gameId}/trades/${o.id}/accept`, {});
+    }
+    await ai.runSoloGame(env, gameId);
+    // Its warships parked (no leg left) at one of the player's worlds.
+    const there = await DB.prepare(
+      `SELECT COUNT(*) AS n FROM game_ships s JOIN game_bodies b ON b.id = s.parent_body_id
+        WHERE s.owner_faction_id = ? AND s.hp > 0 AND s.ship_class IN ('corvette','frigate','destroyer','capital')
+          AND b.owner_faction_id = ?
+          AND NOT EXISTS (SELECT 1 FROM game_ship_nodes n WHERE n.ship_id = s.id AND n.status IN ('committed','in_transit'))`,
+    ).bind(warId, humanId).first();
+    if (out.arrivedAt == null && there.n > 0) out.arrivedAt = t;
+    const cf = await DB.prepare('SELECT ceasefire_at_tick FROM game_wars WHERE game_id = ? AND ceasefire_by = ?').bind(gameId, warId).first();
+    if (out.earlyCeasefire == null && cf && out.arrivedAt == null) out.earlyCeasefire = cf.ceasefire_at_tick;
+    out.worldsAt[t] = (await DB.prepare('SELECT COUNT(DISTINCT body_id) AS n FROM game_settlements WHERE game_id = ? AND owner_faction_id = ? AND destroyed_at_tick IS NULL')
+      .bind(gameId, warId).first()).n;
+  }
+  return out;
 }
+
+const idle = await watchWarlord(G, war, humanF, human.user_id);
 const w = await DB.prepare(`SELECT declared_by, declared_at_tick FROM game_wars WHERE game_id = ? AND declared_by = ?`).bind(G, war).first();
 check('the trial Warlord declares on the player from tick 20', w && w.declared_at_tick >= 20 && w.declared_at_tick <= 40, JSON.stringify(w));
+check('the trial Warlord takes a second world by tick 30 (it visibly expands)', idle.worldsAt[30] >= 2, JSON.stringify(idle.worldsAt[30]));
+check('its warships reach the idle player\'s worlds within 30 minutes (tick 60)', idle.arrivedAt != null && idle.arrivedAt <= 60, `arrived at ${idle.arrivedAt}`);
+check('it does not offer a ceasefire before its strike has landed', idle.earlyCeasefire == null, `offered at ${idle.earlyCeasefire}`);
 const allyOffer = await DB.prepare(`SELECT COUNT(*) AS n FROM trade_offers WHERE game_id = ? AND responder_faction_id = ? AND offer_pacts LIKE '%nap%'`).bind(G, humanF).first();
 check('the trial Ally offers a pact', allyOffer.n >= 1);
+
+// A player who signs the Ally's pact: the Ally joins the war (the second
+// "war declared" testers saw), and the Warlord still comes for the player.
+{
+  const rp = await trial.handleStart(req(null, '7.7.7.7'), env, null);
+  const GP = (await rp.json()).game_id;
+  await DB.prepare('UPDATE games SET paused = 0 WHERE id = ?').bind(GP).run();
+  const fs = (await DB.prepare('SELECT id, user_id, ai_personality FROM game_factions WHERE game_id = ?').bind(GP).all()).results;
+  const hp = fs.find(f => !f.ai_personality);
+  const wp = fs.find(f => f.ai_personality === 'warlord').id;
+  const ap = fs.find(f => f.ai_personality === 'ally').id;
+  const res = await watchWarlord(GP, wp, hp.id, hp.user_id, { pact: true });
+  const allyWar = await DB.prepare('SELECT declared_at_tick FROM game_wars WHERE game_id = ? AND declared_by = ?').bind(GP, ap).first();
+  check('with the Ally\'s pact signed, the Ally joins the war', !!allyWar, JSON.stringify(allyWar));
+  check('and the Warlord\'s warships still reach the player by tick 60', res.arrivedAt != null && res.arrivedAt <= 60, `arrived at ${res.arrivedAt}`);
+}
+
+// ---- 4b. a counter-offer gets a real answer --------------------------------
+// Playtest B4: a counter asking the Ally for credits was declined in
+// silence, and the same pact offer came straight back.
+{
+  const rc = await trial.handleStart(req(null, '6.6.6.6'), env, null);
+  const GC = (await rc.json()).game_id;
+  await DB.prepare('UPDATE games SET paused = 0 WHERE id = ?').bind(GC).run();
+  const fs = (await DB.prepare('SELECT id, user_id, ai_personality FROM game_factions WHERE game_id = ?').bind(GC).all()).results;
+  const hp = fs.find(f => !f.ai_personality);
+  const ap = fs.find(f => f.ai_personality === 'ally').id;
+  const rmC = new Room(makeState(), env);
+  rmC.broadcast = () => {};
+  const step = async (t) => {
+    await rmC.resolveTick(GC, t);
+    await DB.prepare('UPDATE games SET current_tick = ? WHERE id = ?').bind(t, GC).run();
+    await ai.runSoloGame(env, GC);
+  };
+  await step(1);
+  const first = await DB.prepare(`SELECT id FROM trade_offers WHERE game_id = ? AND proposer_faction_id = ? AND responder_faction_id = ? AND status = 'open'`)
+    .bind(GC, ap, hp.id).first();
+  const ctr = await ai.callAs(env, hp.user_id, 'POST', `/api/games/${GC}/trades/${first.id}/counter`,
+    { offer: {}, request: { gold: 100 }, offer_pacts: ['nap'], request_pacts: [] });
+  check('the player counters the Ally\'s pact, asking for credits', ctr.ok, JSON.stringify(ctr.data));
+  await step(2);
+  const answered = await DB.prepare('SELECT status, decline_reason FROM trade_offers WHERE id = ?').bind(ctr.data?.trade?.id).first();
+  check('the Ally answers it: declined, with a reason', answered?.status === 'declined' && answered?.decline_reason === 'no_cargo', JSON.stringify(answered));
+  for (let t = 3; t <= 26; t++) await step(t);
+  const again = await DB.prepare(`SELECT created_at_tick FROM trade_offers WHERE game_id = ? AND proposer_faction_id = ? AND responder_faction_id = ?
+                                   AND id != ? ORDER BY created_at_tick LIMIT 1`).bind(GC, ap, hp.id, first.id).first();
+  check('and does not send the same offer straight back (not within 24 ticks)', !again || again.created_at_tick >= 2 + 24, JSON.stringify(again));
+  // A counter it can take (the pact, sweetened with a gift) is accepted.
+  for (let t = 27; t <= 60 && !(await DB.prepare(`SELECT 1 AS x FROM trade_offers WHERE game_id = ? AND proposer_faction_id = ? AND responder_faction_id = ? AND status = 'open'`).bind(GC, ap, hp.id).first()); t++) await step(t);
+  const second = await DB.prepare(`SELECT id FROM trade_offers WHERE game_id = ? AND proposer_faction_id = ? AND responder_faction_id = ? AND status = 'open'`)
+    .bind(GC, ap, hp.id).first();
+  const ctr2 = second ? await ai.callAs(env, hp.user_id, 'POST', `/api/games/${GC}/trades/${second.id}/counter`,
+    { offer: { metal: 10 }, request: {}, offer_pacts: ['nap'], request_pacts: [] }) : null;
+  const cur = Number((await DB.prepare('SELECT current_tick AS t FROM games WHERE id = ?').bind(GC).first()).t);
+  await step(cur + 1);
+  const took = ctr2?.data?.trade?.id ? await DB.prepare('SELECT status FROM trade_offers WHERE id = ?').bind(ctr2.data.trade.id).first() : null;
+  check('a counter it can take (the pact plus a gift) is accepted', took?.status === 'accepted', JSON.stringify({ second: !!second, took }));
+}
 
 // ---- 5. saving -------------------------------------------------------------
 const realId = 'realUser1';

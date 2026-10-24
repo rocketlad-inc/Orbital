@@ -104,6 +104,10 @@ export interface TechDef {
   perLevel: number;
   /** Human-readable effect description for one level */
   effectText: string;
+  /** The effect makes a number SMALLER (Construction cuts build cost).
+   *  Display only: the totals on the research cards print a minus sign
+   *  for these, where they used to say "-5% ... (total +10%)". */
+  reduces?: boolean;
   /** Base science cost of level 1 */
   baseCost: number;
   /** Exponent applied to (level) for cost scaling. Cost = baseCost * level^costScaling */
@@ -169,6 +173,7 @@ export const TECH_DEFS: Record<TechId, TechDef> = {
     get description() { return tk('data.tech.construction.desc', 'Building big. Unlocks orbital stations, shipyards, the frigate and destroyer hulls, asteroid thrusters, and the Dyson foundation.'); },
     icon: '🔧',
     perLevel: 0.05,
+    reduces: true,
     get effectText() { return tk('data.tech.construction.effect', '-5% ship build cost'); },
     baseCost: RESEARCH_BASE_COST,
     costScaling: RESEARCH_COST_SCALING,
@@ -261,6 +266,15 @@ export function costForNext(state: FactionTechState | undefined, id: TechId): nu
 /** Effect magnitude at level N — flat `perLevel * level`. */
 export function effectAtLevel(def: TechDef, level: number): number {
   return def.perLevel * level;
+}
+
+/** The total effect at level N as the cards print it: "+20%", or "−10%"
+ *  for a track that reduces (Construction, which also stops at the 75%
+ *  floor buildCostModifier applies). */
+export function effectTotalText(def: TechDef, level: number): string {
+  let pct = effectAtLevel(def, level) * 100;
+  if (def.reduces) pct = Math.min(pct, 75);
+  return `${def.reduces ? '−' : '+'}${pct.toFixed(0)}%`;
 }
 
 // ============================================================

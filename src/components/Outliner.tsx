@@ -441,7 +441,9 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
   if (collapsed) {
     const trackedCount = tracked.length + inTransit.length;
     return (
-      <div className="outliner outliner--collapsed">
+      // The tutorial's "find it in the list" steps point here while the
+      // list is shut: on a phone the ☰ pill is all there is.
+      <div className="outliner outliner--collapsed" data-tutorial-id="outliner">
         <div className="outliner__header">
           <button
             className="outliner__toggle"

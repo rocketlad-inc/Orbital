@@ -581,3 +581,64 @@ html[data-mobile-shell] .sd-phoneonly .sd-actions .sd-btn { flex: 1 1 auto; heig
 @media (prefers-reduced-motion: reduce) {
   .sd-socket--accepting { animation: none; }
 }
+
+/* PHONES AND TABLETS READ THE DESIGNER AT 11px AND UP. Its labels were
+   7.5-10.5px, and at 9px Audiowide's G reads as an S (Rafaela, tablet,
+   2026-10-24). Every rule above under 11px, lifted on the mobile shell:
+   9.5px and under to 11px, 10-10.5px to 12px. Generated from this file's
+   own rules (playtest fix C28); the desktop sizes are unchanged. */
+html[data-mobile-shell] .sd-tab__name { font-size: 12px; }
+html[data-mobile-shell] .sd-tab__slots { font-size: 11px; }
+html[data-mobile-shell] .sd-lib__head { font-size: 11px; }
+html[data-mobile-shell] .sd-dz__look { font-size: 11px; }
+html[data-mobile-shell] .sd-dz__parts { font-size: 12px; }
+html[data-mobile-shell] .sd-new { font-size: 12px; }
+html[data-mobile-shell] .sd-tz__name { font-size: 12px; }
+html[data-mobile-shell] .sd-tz__meta { font-size: 11px; }
+html[data-mobile-shell] .sd-lookline__cls { font-size: 11px; }
+html[data-mobile-shell] .sd-lookchip { font-size: 11px; }
+html[data-mobile-shell] .sd-canvas__slots-label { font-size: 11px; }
+html[data-mobile-shell] .sd-canvas__det-warning { font-size: 11px; }
+html[data-mobile-shell] .sd-previewchip { font-size: 11px; }
+html[data-mobile-shell] .sd-drag-hint { font-size: 11px; }
+html[data-mobile-shell] .sd-flash { font-size: 12px; }
+html[data-mobile-shell] .sd-strip__cell > span { font-size: 11px; }
+html[data-mobile-shell] .sd-sidetab { font-size: 12px; }
+html[data-mobile-shell] .sd-part__name { font-size: 12px; }
+html[data-mobile-shell] .sd-part__price { font-size: 11px; }
+html[data-mobile-shell] .sd-part__blurb { font-size: 11px; }
+html[data-mobile-shell] .sd-part__counter { font-size: 11px; }
+html[data-mobile-shell] .sd-look__name { font-size: 11px; }
+html[data-mobile-shell] .sd-stat { font-size: 12px; }
+html[data-mobile-shell] .sd-hit__title { font-size: 11px; }
+html[data-mobile-shell] .sd-hit__lbl { font-size: 11px; }
+html[data-mobile-shell] .sd-hit__foot { font-size: 11px; }
+html[data-mobile-shell] .sd-hint { font-size: 11px; }
+html[data-mobile-shell] .sd-dl-open { font-size: 12px; }
+html[data-mobile-shell] .sd-dl__count { font-size: 11px; }
+html[data-mobile-shell] .sd-dl__search input { font-size: 12px; }
+html[data-mobile-shell] .sd-dl__origin { font-size: 11px; }
+html[data-mobile-shell] .sd-dl__meta { font-size: 11px; }
+html[data-mobile-shell] .sd-dl__parts { font-size: 12px; }
+html[data-mobile-shell] .sd-dl__cost { font-size: 12px; }
+html[data-mobile-shell] .sd-offer__fleet { font-size: 12px; }
+html[data-mobile-shell] .cfp__kicker { font-size: 11px; }
+html[data-mobile-shell] .cfp__hull > span { font-size: 11px; }
+html[data-mobile-shell] .cfp__chip { font-size: 11px; }
+html[data-mobile-shell] .cfp__facts { font-size: 12px; }
+html[data-mobile-shell] .cfp__quiet { font-size: 12px; }
+html[data-mobile-shell] .sd-restyle__head { font-size: 12px; }
+html[data-mobile-shell] .sd-restyle__body { font-size: 11px; }
+html[data-mobile-shell] .sd-offer__text { font-size: 11px; }
+html[data-mobile-shell] .sd-offer__get { font-size: 12px; }
+html[data-mobile-shell] .sd-offer__end { font-size: 12px; }
+html[data-mobile-shell] .sd-foot__status { font-size: 11px; }
+html[data-mobile-shell] .sd-refit__line { font-size: 11px; }
+html[data-mobile-shell] .sd-refit__hint { font-size: 11px; }
+html[data-mobile-shell] .sd-refit__note { font-size: 11px; }
+html[data-mobile-shell] .sd-btn { font-size: 11px; }
+html[data-mobile-shell] .sd-mini-btn { font-size: 11px; }
+html[data-mobile-shell] .sd-badge { font-size: 11px; }
+html[data-mobile-shell] .sd-error { font-size: 11px; }
+html[data-mobile-shell] .sd-libbtn { font-size: 12px; }
+html[data-mobile-shell] .sd-foot__summary { font-size: 12px; }

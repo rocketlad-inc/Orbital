@@ -72,6 +72,11 @@ export function TradeDock() {
   } | null>(null);
 
   useEffect(() => {
+    // ONE pending unmount, cancelled by a reopen. A close queued a 250ms
+    // unmount that nothing cancelled, so close-then-reopen inside that
+    // beat unmounted the sheet the rail had just opened: the icon lit,
+    // the map stayed empty, and it took a second tap (playtest C16/C26).
+    let unmountTimer: ReturnType<typeof setTimeout> | null = null;
     const onActive = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       const open = detail?.active === 'trade';
@@ -80,11 +85,15 @@ export function TradeDock() {
       // board. Only on the opening edge — never yank a tab mid-use.
       if (open && pendingRef.current > 0 && !deepLinkRef.current) setTab('private');
       deepLinkRef.current = false;
+      if (unmountTimer) { clearTimeout(unmountTimer); unmountTimer = null; }
       if (open) setRailMounted(true);
-      else setTimeout(() => setRailMounted(false), 250);
+      else unmountTimer = setTimeout(() => { unmountTimer = null; setRailMounted(false); }, 250);
     };
     window.addEventListener('dockrail:active', onActive as EventListener);
-    return () => window.removeEventListener('dockrail:active', onActive as EventListener);
+    return () => {
+      window.removeEventListener('dockrail:active', onActive as EventListener);
+      if (unmountTimer) clearTimeout(unmountTimer);
+    };
   }, []);
 
   // Deep links: the SitLog's trade items, the offer modal's "Take Me
@@ -94,8 +103,8 @@ export function TradeDock() {
   useEffect(() => {
     const onOpenPanel = (e: Event) => {
       const panel = (e as CustomEvent).detail?.panel;
-      if (panel !== 'trades' && panel !== 'routes' && panel !== 'market') return;
-      setTab(panel === 'routes' ? 'routes' : panel === 'market' ? 'market' : 'private');
+      if (panel !== 'trades' && panel !== 'routes' && panel !== 'market' && panel !== 'standing') return;
+      setTab(panel === 'routes' ? 'routes' : panel === 'market' ? 'market' : panel === 'standing' ? 'treaties' : 'private');
       deepLinkRef.current = true;
       try { window.dispatchEvent(new CustomEvent('dockrail:set', { detail: { active: 'trade' } })); } catch {}
     };

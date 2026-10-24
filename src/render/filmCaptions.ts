@@ -181,9 +181,10 @@ export function buildBeats(summary: MatchSummary, o: BeatOptions): ReelBeat[] {
       && p.former_owner_faction_id === r.actor_faction_id) p.retake = true;
     const beat: ReelBeat = { tick, kind: r.kind, body, weight,
       fid: r.actor_faction_id ?? null, target: r.target_faction_id ?? null, text, data: p };
-    // The log has no sentence of its own for some kinds (wars: the story
-    // view words those itself, and so does the film).
-    if (text === r.kind) {
+    // The log has no sentence of its own for some kinds, and the film
+    // words wars itself (in the present tense: "declares war"), as the
+    // story view does, even now that the log has a line for them.
+    if (text === r.kind || r.kind === 'war_declared' || r.kind === 'war_ended') {
       const fname = (id: string | null | undefined) => (id && names.get(id)) || '';
       const bname = (id: string | null | undefined) =>
         (id && summary.bodies.find(b => b.id === id)?.name) || '';

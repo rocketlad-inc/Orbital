@@ -113,12 +113,16 @@ const base: Catalog = {
   'solo.resumeTitle': 'Ligar o relógio de novo',
   'solo.step': 'Próximo tick',
   'solo.stepping': 'Avançando…',
+  'solo.steppingMore': 'Avançando… faltam {n}',
+  'solo.steppedTo': 'Agora T+{n}',
   'solo.stepTitle': 'Rodar um tick e continuar pausado',
   'solo.speedTitle': 'Duração de um tick',
   'solo.speed.fast': '30s',
   'solo.speed.steady': '2min',
   'solo.speed.relaxed': '10min',
   'solo.failed': 'O relógio não mudou. Tente de novo.',
+  'solo.menu.speed': 'Duração do tick: {speed}',
+  'solo.menu.speedHint': 'toque para {next}',
 
 
   // ---- Jogar grátis (worker/trial.js) ----

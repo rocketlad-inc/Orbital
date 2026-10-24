@@ -126,7 +126,7 @@ export async function createSoloGame(env, userId, body, { trial = false } = {}) 
       members: Object.fromEntries(seats.map(u => [u.id, { userId: u.id, displayName: u.display_name }])),
     }),
   });
-  const started = await startGame(env, id, { solo: { difficulty, tickIntervalMs: speed } });
+  const started = await startGame(env, id, { solo: { difficulty, tickIntervalMs: speed, paused: trial } });
   if (started.error) return { error: started.error };
 
   // Seat the personalities, seat by seat after the player's.

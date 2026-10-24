@@ -48,6 +48,7 @@ import { iconClassFor, ShipIcon } from './ShipIcons';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- ShipClassName — type import for work in flight
 import type { ShipClassName } from '../game/shipClasses';
 import { apiFetch } from '../multiplayer/api';
+import { currentSituation, onSituation } from '../multiplayer/situationFeed';
 import { t, tk } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import './SituationLog.css';
@@ -127,10 +128,28 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
     window.addEventListener('market:unseen', onUnseen as EventListener);
     return () => window.removeEventListener('market:unseen', onUnseen as EventListener);
   }, []);
-  const mpDataAll = useMemo(
-    () => ({ ...(mpData ?? {}), newMarketPosts: marketUnseen }),
-    [mpData, marketUnseen],
-  );
+  // What waits on the player's answer in a multiplayer game (an open
+  // vote, an offer, a ceasefire), published by MultiplayerShell's polls
+  // (situationFeed.ts). Nothing fed these rows before.
+  const [feed, setFeed] = useState(currentSituation);
+  useEffect(() => onSituation(setFeed), []);
+  const mpDataAll = useMemo(() => {
+    // Names from the roster (the polls carry ids only).
+    const nameOf = (id: string) => gameState.factions.find(f => f.id === id)?.name ?? null;
+    return {
+      ...feed,
+      ...(feed.incomingTrades ? {
+        incomingTrades: feed.incomingTrades.map(x => ({
+          ...x, proposer_faction_name: x.proposer_faction_name ?? nameOf(x.proposer_faction_id),
+        })),
+      } : {}),
+      ...(feed.ceasefireOffers ? {
+        ceasefireOffers: feed.ceasefireOffers.map(x => ({ ...x, faction_name: x.faction_name ?? nameOf(x.faction_id) })),
+      } : {}),
+      ...(mpData ?? {}),
+      newMarketPosts: marketUnseen,
+    };
+  }, [feed, mpData, marketUnseen, gameState.factions]);
   const items = useSituationItems(gameState, factionId, mpDataAll);
 
   // Manual dismissal. A dismissal lives exactly as long as its row's

@@ -33,6 +33,7 @@ import { createSoloGame } from './solo.js';
 import { stampSignupSource } from './attribution.js';
 import { logEvent } from './analytics.js';
 import { SHIP_COMBAT_STATS } from './factions.js';
+import { tr, pickLocale, localeFromAcceptLanguage } from './i18n.js';
 
 const json = (data, init = {}) => new Response(JSON.stringify(data), {
   ...init, headers: { 'content-type': 'application/json', ...(init.headers ?? {}) },
@@ -42,9 +43,10 @@ async function readJson(req) { try { return await req.json(); } catch { return n
 
 export const SHADOW_DOMAIN = 'shadow.orbital.local';
 const SHADOW_PASSWORD_SENTINEL = '!shadow-account-no-password-login';
-/** Trials started per IP per hour (staging raises it: its testers share
- *  one address; env TRIALS_PER_HOUR). */
-const TRIALS_PER_HOUR = 6;
+/** Trials started per IP per hour. Schools, offices and phone carriers put
+ *  many players behind one address, so not 6 (2026-10-24). Staging raises
+ *  it further: its testers share one address (env TRIALS_PER_HOUR). */
+const TRIALS_PER_HOUR = 30;
 /** A trial's head start, on top of every empire's starter ships (his
  *  pick, 2026-10-24): three corvettes to defend with, a freighter to haul. */
 const TRIAL_FLEET = [
@@ -124,10 +126,16 @@ export async function handleStart(req, env, session) {
   const body = (await readJson(req)) ?? {};
   const id = newUserId();
   const email = `shadow+${id}@${SHADOW_DOMAIN}`;
+  // The stand-in name is in the player's language ("Comandante"): it is on
+  // screen from the first second. The app sends the language it is showing;
+  // the browser's is the fallback. Saved as their language too, so the
+  // account they save into keeps it.
+  const locale = pickLocale(body.lang, localeFromAcceptLanguage(req.headers.get('accept-language')));
+  const displayName = tr(locale, 'trial.defaultName');
   await env.DB.batch([
-    env.DB.prepare(`INSERT INTO users (id, email, display_name, password_hash, created_at, last_login_at, shadow)
-                    VALUES (?, ?, 'Commander', ?, ?, ?, 1)`)
-      .bind(id, email, SHADOW_PASSWORD_SENTINEL, now, now),
+    env.DB.prepare(`INSERT INTO users (id, email, display_name, password_hash, created_at, last_login_at, shadow, locale)
+                    VALUES (?, ?, ?, ?, ?, ?, 1, ?)`)
+      .bind(id, email, displayName, SHADOW_PASSWORD_SENTINEL, now, now, locale),
     env.DB.prepare('INSERT INTO trial_starts (ip_hash, created_at_ms) VALUES (?, ?)').bind(ipHash, now),
   ]);
   // Where they came from rides along to the account they save into.
@@ -145,7 +153,7 @@ export async function handleStart(req, env, session) {
   const { token, expiresAt } = await createSession(env.DB, id, req.headers.get('user-agent'));
   logEvent(env, { gameId: made.id, userId: id, kind: 'trial_start' }).catch(() => {});
   return json(
-    { ok: true, game_id: made.id, user: { id, display_name: 'Commander', shadow: 1 } },
+    { ok: true, game_id: made.id, user: { id, display_name: displayName, shadow: 1 } },
     { status: 201, headers: { 'set-cookie': sessionCookie(token, expiresAt) } },
   );
 }

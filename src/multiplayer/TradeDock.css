@@ -38,6 +38,8 @@
 .fs-chip:hover { border-color: var(--mp-accent); color: var(--mp-accent); }
 .fs-chip:focus-visible { outline: 1px solid var(--mp-accent); outline-offset: 1px; }
 .fs-chip--go { border-color: rgba(255, 184, 77, 0.55); color: #ffb84d; }
+/* The action is not a ship name: it is never cut short ("Colocar para tr…"). */
+.fs-chip.fs-chip--go { max-width: none; }
 
 /* ---- cross-link landing: the card you were sent to says so ---- */
 .trade-focus-flash {

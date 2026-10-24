@@ -36,6 +36,7 @@ import {
   tIn, tnIn, tkIn, fmtNumberIn,
   type Key, type Lang, type PluralKey,
 } from '../i18n/core';
+import { bodyNameIn, designNameIn, settlementNameIn, shipNameIn } from '../i18n/names';
 
 type StripEv<K> = K extends `eventlog.ev.${infer S}` ? S : never;
 type EvKey = StripEv<Key>;
@@ -58,13 +59,40 @@ export interface EventTextCtx {
 
 type Payload = Record<string, unknown>;
 
+/** World / settlement / ship / design names in a payload, shown in `lang`
+ *  (src/i18n/names.ts). The payload carries the stored English names;
+ *  English lines keep them verbatim, so the machine-truth copy and the
+ *  classifiers that read it never change. */
+function namesIn(lang: Lang, p: Payload): Payload {
+  if (lang === 'en') return p;
+  const out: Payload = { ...p };
+  const str = (v: unknown): v is string => typeof v === 'string';
+  for (const [k, v] of Object.entries(p)) {
+    if (k === 'from_names' && Array.isArray(v)) {
+      out[k] = v.map(x => (str(x) ? bodyNameIn(lang, x) : x));
+    } else if (!str(v)) {
+      continue;
+    } else if (k.endsWith('body_name') || k === 'capital_name' || k === 'target_name' || k === 'from_name') {
+      out[k] = bodyNameIn(lang, v);
+    } else if (k === 'settlement_name') {
+      out[k] = settlementNameIn(lang, v);
+    } else if (k.endsWith('ship_name')) {
+      out[k] = shipNameIn(lang, v);
+    } else if (k === 'design_name') {
+      out[k] = designNameIn(lang, v);
+    }
+  }
+  return out;
+}
+
 /**
  * Rebuild a "DISCOVERY" sentence from the structured payload in `lang`
  * (worker/room.js composes the English one). Returns null when the payload
  * lacks what the sentence needs, so the caller falls back to the server text.
  * Exported for the test that pins the English rebuild to the server's text.
  */
-export function secretMessage(lang: Lang, p: Payload): string | null {
+export function secretMessage(lang: Lang, raw: Payload): string | null {
+  const p = namesIn(lang, raw);
   const kind = p.kind as string | undefined;
   const body = p.body_name as string | undefined;
   if (!kind || !body) return null;
@@ -106,7 +134,8 @@ export function secretMessage(lang: Lang, p: Payload): string | null {
  *  kind's own sentence (in this language) follows it; with only a
  *  message, the usual DISCOVERY heading leads it. Null when the find
  *  carries no custom words. */
-export function customSecretMessage(lang: Lang, p: Payload): string | null {
+export function customSecretMessage(lang: Lang, raw: Payload): string | null {
+  const p = namesIn(lang, raw);
   const name = typeof p.custom_name === 'string' && p.custom_name ? p.custom_name : null;
   const text = typeof p.custom_text === 'string' && p.custom_text ? p.custom_text : null;
   if (!name && !text) return null;
@@ -134,11 +163,14 @@ export function formatChronicleEvent(
    *  always use names. */
   opts: { names?: boolean } = {},
 ): string {
-  let parsed: Payload = {};
+  let raw: Payload = {};
   try {
     const j = JSON.parse(ev.payload || '{}');
-    if (j !== null && typeof j === 'object') parsed = j as Payload;
+    if (j !== null && typeof j === 'object') raw = j as Payload;
   } catch { /* ignore */ }
+  // Names shown in `lang`; `raw` keeps the stored ones for the rules that
+  // need them (a default settlement name below).
+  const parsed = namesIn(lang, raw);
   const tp = `T+${ev.tick_number}`;
   const en = lang === 'en';
 
@@ -168,7 +200,8 @@ export function formatChronicleEvent(
    * possessive rendered "Cerean Union's Cerean Union Capital on Oberon ...".
    */
   const possessive = (owner: string, thing: string): string => {
-    if (owner && thing.toLowerCase().startsWith(owner.toLowerCase())) return thing;
+    // "Capital de Cerean Union" names its owner too, just not first.
+    if (owner && thing.toLowerCase().includes(owner.toLowerCase())) return thing;
     return own(owner, thing);
   };
 
@@ -370,7 +403,12 @@ export function formatChronicleEvent(
 
   if (ev.kind === 'settlement_built') {
     const sType = settlementText(parsed.settlement_type as string | undefined);
-    const sName = (parsed.settlement_name as string) ?? null;
+    // A server default name ("Station", "New City") says nothing the type
+    // does not: "fundou Station (estação)" read as a bug (Leo, 2026-10-24).
+    // English keeps its line as is (the machine-truth contract).
+    const rawName = (parsed.settlement_name as string) ?? null;
+    const sName = rawName && (en || !/^(station|new city|city)$/i.test(String(raw.settlement_name ?? '')))
+      ? rawName : null;
     const where = (parsed.body_name as string) ?? T('fb.aBody');
     const owner = nameOfFaction(ev.actor_faction_id, parsed.owner_faction_name as string | undefined);
     return out('', sName
@@ -762,18 +800,29 @@ export function formatChronicleEvent(
     const offer = fmtBundle(parsed.offer);
     const request = fmtBundle(parsed.request);
     const pacts = Array.isArray(parsed.pacts) ? (parsed.pacts as string[]) : [];
+    const nothing = T('fb.nothing');
+    const pactList = pacts.map(pactLabel).join(', ');
+    // A pure pact deal is not a trade of nothing for nothing (playtest
+    // 2026-10-24): say who accepted which pacts.
+    if (pacts.length && offer === nothing && request === nothing) {
+      return out('⚖ ', T('trade.pactsOnly', { proposer, responder, pacts: pactList }));
+    }
+    if (pacts.length && request === nothing) {
+      return out('⚖ ', T('trade.acceptedPactsFor', { proposer, offer, responder, pacts: pactList }));
+    }
     return out('⚖ ', pacts.length
-      ? T('trade.acceptedPacts', { proposer, offer, responder, request, pacts: pacts.map(pactLabel).join(', ') })
+      ? T('trade.acceptedPacts', { proposer, offer, responder, request, pacts: pactList })
       : T('trade.accepted', { proposer, offer, responder, request }));
   }
 
   if (ev.kind === 'meteoroid_found') {
     const tons = Number(parsed.tons ?? 0);
     const unit = T(parsed.kind === 'gold' ? 'unit.credits' : 'unit.metal');
-    const name = String(parsed.name ?? T('fb.aMeteoroid'));
-    return out('◈ ', tons > 0
-      ? T('meteoroid.foundTons', { name, tons: num(tons), unit })
-      : T('meteoroid.found', { name }));
+    // The find banks nothing; the ore waits in the rock for a freighter.
+    // The old "Survey found Rock 9 — 400 credits" read like a payout.
+    return out('◈ ', tons > 0 && parsed.name
+      ? T('meteoroid.foundTons', { name: String(parsed.name), tons: num(tons), unit })
+      : T('meteoroid.found', { name: String(parsed.name ?? T('fb.aMeteoroid')) }));
   }
 
   if (ev.kind === 'meteoroid_exhausted') {
@@ -804,6 +853,26 @@ export function formatChronicleEvent(
     const breaker = nameOfFaction(ev.actor_faction_id);
     const other = nameOfFaction(ev.target_faction_id);
     return out('⚔ ', T('treaty.broken', { breaker, other, kind: pactLabel((parsed.kind as string) ?? 'pact') }));
+  }
+
+  // ---- war and peace (worker/wars.js) ----
+  if (ev.kind === 'war_declared') {
+    const a = nameOfFaction(ev.actor_faction_id);
+    const b = nameOfFaction(ev.target_faction_id);
+    const broke = Array.isArray(parsed.broke_pacts) ? (parsed.broke_pacts as string[]) : [];
+    return out('⚔ ', broke.length
+      ? T('war.declaredBroke', { a, b, pacts: broke.map(pactLabel).join(', ') })
+      : T('war.declared', { a, b }));
+  }
+  if (ev.kind === 'war_ended') {
+    const a = nameOfFaction(ev.actor_faction_id);
+    const b = nameOfFaction(ev.target_faction_id);
+    return out('🕊 ', N('war.ended', Number(parsed.ticks_fought ?? 0), { a, b }));
+  }
+  if (ev.kind === 'ceasefire_offered' || ev.kind === 'ceasefire_withdrawn') {
+    const a = nameOfFaction(ev.actor_faction_id);
+    const b = nameOfFaction(ev.target_faction_id);
+    return out('', T(ev.kind === 'ceasefire_offered' ? 'war.ceasefire' : 'war.ceasefireWithdrawn', { a, b }));
   }
 
   /** " [slider law]": the bill kind in brackets, as a clause. */

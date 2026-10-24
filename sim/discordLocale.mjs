@@ -82,7 +82,7 @@ check('the English weight rule is systems.js\'s own sentence', tr('en', 'dc.weig
     && e.description.endsWith('_You can change this any time with_ `/notify` _or in-game under Notifications._'));
   check('and its buttons', discord.dmConsentButtons()[0].components.map(c => c.label).join('|') === 'Yes, DM me|Server only');
   check('plurals in English', trn('en', 'dc.votes', 1) === '1 vote' && trn('en', 'dc.votes', 3) === '3 votes'
-    && trn('pt-BR', 'dc.votes', 0) === '0 voto' && trn('pt-BR', 'dc.votes', 2) === '2 votos');
+    && trn('pt-BR', 'dc.votes', 0) === '0 votos' && trn('pt-BR', 'dc.votes', 2) === '2 votos');
 }
 
 // ---- 3. registration: Discord's limits ---------------------------------------

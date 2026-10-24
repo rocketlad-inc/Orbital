@@ -275,7 +275,7 @@ async function nearestCapital(view, rm, foes, from) {
  * of [label, result] for the tally. Order of business: pull out of a
  * lost fight, answer an attack on my worlds, then strike.
  */
-export async function wageWar(view, rm, call, foes, sharp, { force = false, longWar = false } = {}) {
+export async function wageWar(view, rm, call, foes, sharp, { force = false, longWar = false, prey = null } = {}) {
   const out = [];
   const armed = myArmed(view);
   if (!armed.length) return out;
@@ -327,11 +327,14 @@ export async function wageWar(view, rm, call, foes, sharp, { force = false, long
   const guardIds = new Set(atHome.slice(0, keep).map(s => s.id));
   const strike = free.filter(s => !guardIds.has(s.id));
   if (!strike.length) return out;
-  const target = await pickTarget(view, rm, foes, strike, { opening: sharp.opening, against: foes });
+  // The strike goes at its victim when it has one; defence and retreat
+  // above answer every foe.
+  const aim = prey && foes.has(prey) ? new Set([prey]) : foes;
+  const target = await pickTarget(view, rm, aim, strike, { opening: sharp.opening, against: foes });
   if (!target) {
     // Nothing of theirs in sight. Loose (or a strike already launched):
     // go at their capital blind. Sharp: send one ship to look first.
-    const cap = await nearestCapital(view, rm, foes, view.capital ?? strike[0].parent_body_id);
+    const cap = await nearestCapital(view, rm, aim, view.capital ?? strike[0].parent_body_id);
     if (!cap) return out;
     if (force || sharp.margin === 0) out.push(['attack_blind', await sendAll(view, rm, call, strike, cap)]);
     else { const r = await scout(view, rm, call, cap); if (r) out.push(['scout', r]); }

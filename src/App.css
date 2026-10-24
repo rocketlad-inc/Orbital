@@ -18,8 +18,12 @@
   --font-data: 'Chivo Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
   /* Top-bar height. Single source of truth: the bar uses it, and every
      panel that anchors below the bar offsets from it (calc(var + gap)).
-     48px is the floor that still contains the 44px touch targets. */
-  --topbar-h: 48px;
+     48px is the floor that still contains the 44px touch targets.
+     PLUS THE STAGING BANNER (--stg-h, set by StagingBanner, staging only):
+     the banner sits over the top of the page, so the bar grows by its
+     height and pads its contents below it, and everything anchored under
+     the bar moves down with it. Unset in production: 0px, unchanged. */
+  --topbar-h: calc(48px + var(--stg-h, 0px));
 }
 
 * {

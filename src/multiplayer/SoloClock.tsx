@@ -9,7 +9,7 @@
 // glide both stand still on their own.
 // ============================================================
 
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { apiFetch } from './api';
 import { useGameContext } from '../state/gameContext';
 import { useIsMobile } from '../hooks/useIsMobile';
@@ -22,6 +22,11 @@ import './SoloClock.css';
 export const SOLO_SPEEDS = [30_000, 120_000, 600_000] as const;
 
 const speedKey = (ms: number) => (ms === 30_000 ? 'solo.speed.fast' : ms === 600_000 ? 'solo.speed.relaxed' : 'solo.speed.steady');
+/** A tick length as the clock names it ("30s"). */
+export const soloSpeedLabel = (ms: number) => t(speedKey(ms));
+/** The speed after this one, as the phone's single speed control cycles. */
+export const nextSoloSpeed = (ms: number) =>
+  SOLO_SPEEDS[(SOLO_SPEEDS.indexOf(ms as typeof SOLO_SPEEDS[number]) + 1) % SOLO_SPEEDS.length];
 
 const PauseIcon = () => (
   <svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true">
@@ -47,7 +52,32 @@ export function SoloClock({ gameId }: { gameId: string }) {
   const isMobile = useIsMobile();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // NEXT TICK, CLICKED AGAIN WHILE ONE RUNS. Those clicks used to be
+  // swallowed by the disabled button, so five quick clicks advanced one
+  // tick and nothing said so (playtest, 2026-10-24). Each click now
+  // counts: extra ones wait their turn (at most MAX_QUEUED), the button
+  // says how many are left, and each landed step names its tick.
+  const queuedRef = useRef(0);
+  const [queued, setQueued] = useState(0);
+  const [landed, setLanded] = useState<number | null>(null);
+  useEffect(() => {
+    if (landed == null) return;
+    const id = setTimeout(() => setLanded(null), 1800);
+    return () => clearTimeout(id);
+  }, [landed]);
   const solo = gameState.solo;
+  // Others ask the clock here, one code path: the tutorial's last step has
+  // its own START (a phone's top bar had none on screen), and a narrow
+  // phone keeps speed and the single tick in the menu (TopBar SideMenu).
+  const resumeRef = useRef<(action: string) => void>(() => undefined);
+  useEffect(() => {
+    const onAsk = (e: Event) => {
+      const action = (e as CustomEvent).detail?.action;
+      if (typeof action === 'string') resumeRef.current(action);
+    };
+    window.addEventListener('orbital:solo-clock', onAsk);
+    return () => window.removeEventListener('orbital:solo-clock', onAsk);
+  }, []);
   if (!solo) return null;
   const paused = solo.paused;
   const speed = gameState.tickIntervalMs ?? 120_000;
@@ -61,12 +91,45 @@ export function SoloClock({ gameId }: { gameId: string }) {
     if (!res.ok) { setError(apiErrorText(res.error, 'solo.failed')); return; }
     window.dispatchEvent(new CustomEvent('orbital:refresh-state'));
   };
+  const MAX_QUEUED = 9;
+  const step = async () => {
+    if (busy === 'step') {
+      queuedRef.current = Math.min(MAX_QUEUED, queuedRef.current + 1);
+      setQueued(queuedRef.current);
+      return;
+    }
+    if (busy) return;
+    setBusy('step');
+    setError(null);
+    setLanded(null);
+    for (;;) {
+      const res = await apiFetch<{ tick?: number | null }>(
+        `/api/games/${encodeURIComponent(gameId)}/solo/step`, { method: 'POST' });
+      if (!res.ok) {
+        setError(apiErrorText(res.error, 'solo.failed'));
+        queuedRef.current = 0;
+        setQueued(0);
+        break;
+      }
+      window.dispatchEvent(new CustomEvent('orbital:refresh-state'));
+      if (res.data?.tick != null) setLanded(res.data.tick);
+      if (queuedRef.current <= 0) break;
+      queuedRef.current -= 1;
+      setQueued(queuedRef.current);
+    }
+    setBusy(null);
+  };
   const setSpeed = (ms: number) => {
     if (ms === speed) return;
     send('speed', 'speed', { method: 'PATCH', body: JSON.stringify({ speed_ms: ms }) });
   };
   // A phone has room for one speed button: it steps through the three.
-  const nextSpeed = SOLO_SPEEDS[(SOLO_SPEEDS.indexOf(speed as typeof SOLO_SPEEDS[number]) + 1) % SOLO_SPEEDS.length];
+  const nextSpeed = nextSoloSpeed(speed);
+  resumeRef.current = (action) => {
+    if (action === 'resume' && paused) send('pause', 'resume', { method: 'POST' });
+    else if (action === 'step' && paused) void step();
+    else if (action === 'speed') setSpeed(nextSpeed);
+  };
 
   return (
     <div className={`solo-clock${paused ? ' is-paused' : ''}`} data-testid="solo-clock">
@@ -85,13 +148,18 @@ export function SoloClock({ gameId }: { gameId: string }) {
       {paused && (
         <button
           type="button"
-          className="solo-clock__btn"
-          onClick={() => send('step', 'step', { method: 'POST' })}
-          disabled={!!busy}
+          className="solo-clock__btn solo-clock__step"
+          onClick={step}
+          disabled={!!busy && busy !== 'step'}
           title={t('solo.stepTitle')}
+          aria-live="polite"
         >
           <StepIcon />
-          <span className="solo-clock__txt">{busy === 'step' ? t('solo.stepping') : t('solo.step')}</span>
+          <span className="solo-clock__txt">
+            {busy === 'step'
+              ? (queued > 0 ? t('solo.steppingMore', { n: queued }) : t('solo.stepping'))
+              : landed != null ? t('solo.steppedTo', { n: landed }) : t('solo.step')}
+          </span>
         </button>
       )}
       {isMobile ? (

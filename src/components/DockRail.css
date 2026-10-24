@@ -229,9 +229,15 @@
     /* Anchor to the top of the screen (past the logo/resource bar) so the
        menu fills the full height. Covers Situation / Event Log; the MP
        dock gets a matching override in multiplayer.css. */
-    top: env(safe-area-inset-top, 0px);
+    top: calc(env(safe-area-inset-top, 0px) + var(--stg-h, 0px)); /* under a staging banner */
     bottom: calc(var(--mobile-rail-height) + 8px); /* clear of the rail */
     width: auto;
+    /* OPAQUE on a phone. Here the sheet is the whole screen, so whatever
+       it covers is never something you are meant to read through it: at
+       0.94-0.96 the ship designer and the map's labels showed through
+       Trade and the Report (Maya, Rafaela, 2026-10-24). The MP sheets
+       (.mp-dock) repeat this in multiplayer.css, whose background wins. */
+    background: rgb(10, 14, 20);
   }
 }
 

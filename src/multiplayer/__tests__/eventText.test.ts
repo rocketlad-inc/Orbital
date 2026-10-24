@@ -260,12 +260,26 @@ const ROWS: Row[] = [
     "T+12  ⚖ Cerean Union traded 100 metal, 20 credits → Zed Corp for 3 fuel, 5 science + Non-Aggression Pact, Intel-Share Pact"],
   ["trade_accepted plain", "trade_accepted", "f1", "f2", 12, {"offer": {}, "request": null},
     "T+12  ⚖ Cerean Union traded nothing → Zed Corp for nothing"],
+  ["trade_accepted pact only", "trade_accepted", "f1", "f2", 12, {"offer": {"metal": 0}, "request": {}, "pacts": ["nap"]},
+    "T+12  ⚖ Zed Corp accepted Cerean Union's offer: Non-Aggression Pact"],
+  ["trade_accepted pacts for a gift", "trade_accepted", "f1", "f2", 12, {"offer": {"metal": 50}, "request": {}, "pacts": ["nap"]},
+    "T+12  ⚖ Cerean Union traded 50 metal → Zed Corp for Non-Aggression Pact"],
+  ["war_declared", "war_declared", "f1", "f2", 25, {"war_id": "w1", "broke_pacts": []},
+    "T+25  ⚔ Cerean Union declared war on Zed Corp"],
+  ["war_declared broke", "war_declared", "f1", "f2", 25, {"war_id": "w1", "broke_pacts": ["nap"]},
+    "T+25  ⚔ Cerean Union broke the Non-Aggression Pact and declared war on Zed Corp"],
+  ["war_ended", "war_ended", "f2", "f1", 40, {"war_id": "w1", "ticks_fought": 15},
+    "T+40  🕊 Zed Corp and Cerean Union made peace after 15 ticks of war"],
+  ["ceasefire_offered", "ceasefire_offered", "f1", "f2", 30, {"war_id": "w1"},
+    "T+30  Cerean Union offered Zed Corp a ceasefire"],
+  ["ceasefire_withdrawn", "ceasefire_withdrawn", "f1", "f2", 31, {"war_id": "w1"},
+    "T+31  Cerean Union withdrew its ceasefire offer to Zed Corp"],
   ["meteoroid_found tons", "meteoroid_found", "f1", null, 12, {"name": "Rock 9", "tons": 400, "kind": "gold"},
-    "T+12  ◈ Survey found Rock 9 — 400 credits"],
+    "T+12  ◈ Found meteoroid Rock 9: 400 credits to mine with a freighter"],
   ["meteoroid_found metal", "meteoroid_found", "f1", null, 12, {"name": "Rock 9", "tons": 400},
-    "T+12  ◈ Survey found Rock 9 — 400 metal"],
+    "T+12  ◈ Found meteoroid Rock 9: 400 metal to mine with a freighter"],
   ["meteoroid_found bare", "meteoroid_found", "f1", null, 12, {},
-    "T+12  ◈ Survey found a meteoroid"],
+    "T+12  ◈ Found a meteoroid to mine"],
   ["meteoroid_exhausted", "meteoroid_exhausted", "f1", null, 12, {"name": "Rock 9"},
     "T+12  ◇ Rock 9 is worked out"],
   ["meteoroid_exhausted bare", "meteoroid_exhausted", "f1", null, 12, {},
@@ -355,7 +369,7 @@ const KINDS = [
   'secret_discovered', 'victory', 'trade_accepted', 'meteoroid_found', 'meteoroid_exhausted', 'ship_refitted',
   'treaty_signed', 'treaty_broken', 'senate_vote', 'senate_law_expired', 'senate_reaped', 'senate_term',
   'tech_advanced', 'trade_route_run', 'trade_route_done', 'trade_lane_consolidated', 'trade_agreement_ended',
-  'trade_delivered', 'trade_shipment_lost',
+  'trade_delivered', 'trade_shipment_lost', 'war_declared', 'war_ended', 'ceasefire_offered', 'ceasefire_withdrawn',
 ];
 
 afterEach(() => setLang('en', false));
@@ -416,24 +430,27 @@ describe('Portuguese headlines', () => {
   it('renders a handful of kinds in full', () => {
     const f = (label: string) => formatChronicleEvent(ev(ROWS.find(x => x[0] === label)!), ctx, 'pt-BR');
     expect(f('faction_eliminated')).toBe('T+32  ☠ Cerean Union perdeu seu último assentamento e está fora da guerra');
-    expect(f('captain_lost')).toBe('T+12  O capitão Ace, da nave Tug, morreu com a nave em Titan. 3 abates.');
-    expect(f('settlement_destroyed capital')).toBe('T+12  ⚠ A CAPITAL de Cerean Union em Earth caiu por Zed Corp — restam apenas ruínas');
-    expect(f('settlement_destroyed named city')).toBe('T+12  Destruição de Cerean Union Capital (cidade) em Oberon por Zed Corp');
-    expect(f('builds_destroyed 4')).toBe('T+12  🏭 O estaleiro de Cerean Union em Mars caiu — 4 naves em construção destruídas');
-    expect(f('asteroid_impact 1')).toBe('T+12  💥 IMPACTO — Rock 7 atingiu Venus, 1 assentamento destruído (Cerean Union)');
+    expect(f('captain_lost')).toBe('T+12  O capitão Ace, da nave Tug, morreu com a nave em Titã. 3 abates.');
+    expect(f('settlement_destroyed capital')).toBe('T+12  ⚠ A CAPITAL de Cerean Union em Terra caiu por Zed Corp — restam apenas ruínas');
+    expect(f('settlement_destroyed named city')).toBe('T+12  Destruição de Capital de Cerean Union (cidade) em Oberon por Zed Corp');
+    expect(f('builds_destroyed 4')).toBe('T+12  🏭 O estaleiro de Cerean Union em Marte caiu — 4 naves em construção destruídas');
+    expect(f('asteroid_impact 1')).toBe('T+12  💥 IMPACTO — Rock 7 atingiu Vênus, 1 assentamento destruído (Cerean Union)');
     expect(f('dyson_milestone')).toBe('T+12  ☀ A Esfera de Dyson de Cerean Union chegou a 50% de conclusão');
     expect(f('kaiju_revealed')).toBe('T+12  🦑 ELE ESTÁ VIVO — a coisa vinda de Cygnus é uma criatura do tamanho de uma lua: o LEVIATÃ. Ele está se preparando sobre Mars para atacar em T+175, com 1.234.567 de HP. Todo império está em guerra com ele');
     expect(f('kaiju_dead killer ship')).toBe('T+12  🦑 O LEVIATÃ ESTÁ MORTO — ele caiu em Mars; Zed Corp, a bordo do HMS Grudge, deu o golpe final. Sua carcaça tem 54.321 t de metal para qualquer equipamento de mineração');
-    expect(f('building_completed')).toBe('T+12  Cerean Union Capital em Earth concluiu Casa da Moeda Nv 3');
+    expect(f('building_completed')).toBe('T+12  Capital de Cerean Union em Terra concluiu Casa da Moeda Nv 3');
     expect(f('tech_advanced level')).toBe('T+12  Cerean Union concluiu Armas Nv 3');
     expect(f('treaty_signed nap')).toBe('T+12  🕊 Cerean Union e Zed Corp assinaram o Pacto de Não Agressão');
     expect(f('senate_vote passed tally')).toBe('T+12  ⚖ Senado: “Embargo Zed” [embargo comercial] APROVADO — 5 sim / 2 não / 1 abstenção');
     expect(f('trade_accepted pacts')).toBe('T+12  ⚖ Cerean Union negociou 100 de metal, 20 de créditos → Zed Corp em troca de 3 de combustível, 5 de ciência + Pacto de Não Agressão, Pacto de Compartilhamento de Inteligência');
     expect(f('trade_route_run tariff')).toBe('T+12  ⟳ Rota comercial: Cerean Union → Zed Corp entregou 100M 20C (tarifa de −10%) — viagem nº 7');
-    expect(f('meteoroid_found tons')).toBe('T+12  ◈ O levantamento encontrou Rock 9 — 400 de créditos');
+    expect(f('meteoroid_found tons')).toBe('T+12  ◈ Meteoroide Rock 9 encontrado: 400 de créditos para minerar com um cargueiro');
+    expect(f('war_declared')).toBe('T+25  ⚔ Cerean Union declarou guerra a Zed Corp');
+    expect(f('war_ended')).toBe('T+40  🕊 Zed Corp e Cerean Union fizeram as pazes depois de 15 ticks de guerra');
+    expect(f('trade_accepted pact only')).toBe('T+12  ⚖ Zed Corp aceitou a proposta de Cerean Union: Pacto de Não Agressão');
   });
 
-  it('uses the singular for 0 and 1 (Portuguese counts 0 as one) and the plural above', () => {
+  it('uses the singular for 1 and the plural above', () => {
     const f = (label: string) => formatChronicleEvent(ev(ROWS.find(x => x[0] === label)!), ctx, 'pt-BR');
     expect(f('trade_lane_consolidated 1')).toContain('1 cargueiro agora coleta');
     expect(f('trade_lane_consolidated 2')).toContain('2 cargueiros agora coletam');
@@ -441,7 +458,7 @@ describe('Portuguese headlines', () => {
 
   it('puts the owner after the thing and drops the stutter of an owner-named capital', () => {
     const f = (label: string) => formatChronicleEvent(ev(ROWS.find(x => x[0] === label)!), ctx, 'pt-BR');
-    expect(f('building_completed')).toMatch(/^T\+12 {2}Cerean Union Capital em Earth/);
+    expect(f('building_completed')).toMatch(/^T\+12 {2}Capital de Cerean Union em Terra/);
     expect(f('gate_transit sun gate')).toBe('T+12  ◎ Cerean Union Tug passou pelo Sun Gate, cruzando para Cygnus');
   });
 

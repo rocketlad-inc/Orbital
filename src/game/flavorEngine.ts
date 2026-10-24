@@ -29,6 +29,7 @@ import { FLAVOR_BANK_PT } from './flavorBank.pt-BR';
 import { TECH_DEFS } from './techs';
 import { agreeArticles, lexFor, type FlavorLex, type Gender, type Noun } from './flavorLocale';
 import { catalogs, getLang, type Lang } from '../i18n/core';
+import { bodyNameIn, settlementNameIn, shipNameIn } from '../i18n/names';
 
 // ------------------------------------------------------------
 // Inputs the engine needs from the caller (resolved client-side
@@ -175,6 +176,11 @@ function resolveVars(ev: FlavorEvent, ctx: FlavorContext, lang: Lang): Resolved 
     const v = p[k];
     return typeof v === 'string' && v.length > 0 ? v : undefined;
   };
+  // Names shown in `lang` (src/i18n/names.ts); `str` keeps the stored
+  // English ones, which is what bodyByName() matches against.
+  const place = (k: string): string | undefined => { const v = str(k); return v && bodyNameIn(lang, v); };
+  const settlementOf = (k: string): string | undefined => { const v = str(k); return v && settlementNameIn(lang, v); };
+  const shipOf = (k: string): string | undefined => { const v = str(k); return v && shipNameIn(lang, v); };
   const num = (k: string): string | undefined => {
     const v = p[k];
     return typeof v === 'number' && Number.isFinite(v) ? String(v) : undefined;
@@ -185,7 +191,8 @@ function resolveVars(ev: FlavorEvent, ctx: FlavorContext, lang: Lang): Resolved 
     f?.name ?? (fallbackName || undefined);
   const capitalName = (f: FlavorFaction | undefined): string | undefined => {
     const bid = f?.capitalBodyId;
-    return bid ? ctx.bodies.get(bid)?.name : undefined;
+    const nm = bid ? ctx.bodies.get(bid)?.name : undefined;
+    return nm && bodyNameIn(lang, nm);
   };
   const bodyById = (id: string | null | undefined): FlavorBody | undefined =>
     id ? ctx.bodies.get(id) : undefined;
@@ -213,9 +220,9 @@ function resolveVars(ev: FlavorEvent, ctx: FlavorContext, lang: Lang): Resolved 
         return {
           actor: killer,
           partner: victim,
-          shipName: str('ship_name'),
+          shipName: shipOf('ship_name'),
           shipClass: noun('shipClass', lex.shipClass(str('ship_class'))),
-          body: str('body_name'),
+          body: place('body_name'),
           hpLost: num('hp_lost'),
           // Only set on ships that had a captain aboard — older chronicle
           // rows (pre-captains) and captain-less ships leave this
@@ -231,9 +238,9 @@ function resolveVars(ev: FlavorEvent, ctx: FlavorContext, lang: Lang): Resolved 
         return {
           actor: destroyer,
           partner: owner,
-          settlementName: str('settlement_name'),
+          settlementName: settlementOf('settlement_name'),
           settlementType: noun('settlementType', lex.settlementType(str('settlement_type'))),
-          body: str('body_name'),
+          body: place('body_name'),
           // "population 6" reads like a stat, not a loss. Scaled to
           // people (200,000 per pop unit) so the templates below can
           // land the actual weight of a settlement falling.
@@ -248,9 +255,9 @@ function resolveVars(ev: FlavorEvent, ctx: FlavorContext, lang: Lang): Resolved 
         const body = bodyByName(str('body_name'));
         return {
           actor: facName(actorFac, p.owner_faction_name as string | undefined),
-          settlementName: str('settlement_name'),
+          settlementName: settlementOf('settlement_name'),
           settlementType: noun('settlementType', lex.settlementType(str('settlement_type'))),
-          body: str('body_name'),
+          body: place('body_name'),
           bodyType: noun('bodyType', lex.bodyType(body?.type)),
           distance: distanceBucket(body),
           tick,
@@ -259,9 +266,9 @@ function resolveVars(ev: FlavorEvent, ctx: FlavorContext, lang: Lang): Resolved 
       case 'ship_built': {
         return {
           actor: facName(actorFac, p.owner_faction_name as string | undefined),
-          shipName: str('ship_name'),
+          shipName: shipOf('ship_name'),
           shipClass: noun('shipClass', lex.shipClass(str('ship_class'))),
-          body: str('body_name'),
+          body: place('body_name'),
           tick,
         };
       }
@@ -269,8 +276,8 @@ function resolveVars(ev: FlavorEvent, ctx: FlavorContext, lang: Lang): Resolved 
         return {
           actor: facName(actorFac, p.owner_faction_name as string | undefined),
           building: noun('building', lex.building(str('building_kind'))),
-          settlementName: str('settlement_name'),
-          body: str('body_name'),
+          settlementName: settlementOf('settlement_name'),
+          body: place('body_name'),
           tick,
         };
       }
@@ -279,7 +286,7 @@ function resolveVars(ev: FlavorEvent, ctx: FlavorContext, lang: Lang): Resolved 
         return {
           actor: facName(actorFac),
           secretName: noun('secretName', lex.secretName(str('kind'))),
-          body: str('body_name'),
+          body: place('body_name'),
           bodyType: noun('bodyType', lex.bodyType(body?.type)),
           tick,
         };
@@ -371,9 +378,9 @@ function resolveVars(ev: FlavorEvent, ctx: FlavorContext, lang: Lang): Resolved 
           // partner (target owner) often isn't in the payload — those
           // variants skip and fall to a partner-free one or the headline.
           partner: facName(facById(p.target_owner_faction_id as string | null), p.target_owner_faction_name as string | undefined),
-          body: str('target_name'),
+          body: place('target_name'),
           bodyType: noun('bodyType', lex.bodyType(bodyByName(str('target_name'))?.type)),
-          settlementName: str('settlement_name'),
+          settlementName: settlementOf('settlement_name'),
           tick,
         };
       }

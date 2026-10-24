@@ -528,7 +528,7 @@ export const GroupActionBar: React.FC = () => {
       <div className="group-bar group-bar--touch" role="region" aria-label={t('grp.selection')}>
         <div className="group-bar__row group-bar__row--head">
           <span className="group-bar__count">
-            {ships.length === 0 ? t('grp.selectShips') : t('grp.selectedCaps', { n: ships.length })}
+            {ships.length === 0 ? t('grp.selectShips') : tn('grp.selectedCaps', ships.length)}
             {ships.length > 0 && movable.length !== ships.length && (
               <span className="group-bar__sub">{t('grp.underWay', { n: ships.length - movable.length })}</span>
             )}
@@ -609,7 +609,7 @@ export const GroupActionBar: React.FC = () => {
     <div className="group-bar" role="region" aria-label={t('grp.groupActions')}>
       <div className="group-bar__row">
         <span className="group-bar__count">
-          {t('grp.selected', { n: ships.length })}
+          {tn('grp.selected', ships.length)}
           {movable.length !== ships.length && (
             <span className="group-bar__sub"> · {t('grp.alreadyBurning', { n: ships.length - movable.length })}</span>
           )}

@@ -17,8 +17,33 @@
      selected, so it only renders during the visible window — the
      keyframe runs once on mount. */
   animation: ship-panel-slide-in 0.22s ease-out;
+  /* CLIP, not just hidden. `overflow: hidden` is still a scroll container:
+     a focus() (the rename box) or a scrollIntoView could scroll it, and
+     the whole card slid sideways with COMMIT at x=-11, or up until the
+     card showed nothing (Priya, 2026-10-24). A clipped box cannot be
+     scrolled at all. `hidden` stays as the fallback for old engines. */
   overflow: hidden;
+  overflow: clip;
 }
+
+/* Nothing in the card may be wider than the card, or the body below
+   grows a sideways scroll. The header's name + rank + captain chips
+   wrap instead of pushing the close button out, the rename box fits the
+   line it is on, and a long word breaks rather than widening a column. */
+.ship-panel .panel-header > span:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.ship-panel .panel-header input {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.ship-panel .panel-body {
+  overflow-x: hidden;
+  overflow-wrap: anywhere;
+}
+.ship-panel .panel-body > * { max-width: 100%; }
 
 @keyframes ship-panel-slide-in {
   from { transform: translateY(-110%); opacity: 0; }
@@ -137,6 +162,24 @@
   margin-bottom: 6px;
   font-weight: 600;
 }
+
+/* ADVANCED: the disclosure over the orders a new player does not need yet.
+   A section title that is a button: no button chrome, the title's face. */
+button.ship-adv-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 10px;
+  padding: 6px 0;
+  background: none;
+  border: none;
+  border-top: 1px solid #2a3d50;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+button.ship-adv-toggle:hover { color: #ffd180; }
 
 .engagement-section {
   border-top: 1px solid #2a3d50;
@@ -327,9 +370,19 @@
 
 .maneuver-buttons {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  /* minmax(0, ...): a plain 1fr track will not shrink below its longest
+     word, so a Portuguese label ("MOVER PARA O ALVO" at the 13px touch
+     size) pushed the grid past the panel and the panel scrolled sideways
+     (playtest 2026-10-24). The buttons wrap instead. */
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
   margin-bottom: 8px;
+}
+.maneuver-buttons .maneuver-btn {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.2;
 }
 
 .maneuver-btn {
@@ -389,9 +442,12 @@
 
 .orders-config-row {
   display: flex;
+  /* A long label or option (Portuguese) drops the control under its label
+     instead of widening the panel. */
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
-  gap: 8px;
+  gap: 4px 8px;
   margin-bottom: 6px;
 }
 
@@ -441,6 +497,12 @@
 }
 
 .orders-config-select {
+  /* A <select> is as wide as its longest option unless told otherwise:
+     "Estaleiro mais próximo (sem estação em Tritão, sua origem)" made the
+     whole orders tab scroll sideways. */
+  min-width: 0;
+  max-width: 100%;
+  text-overflow: ellipsis;
   background: rgba(20, 32, 44, 0.8);
   border: 1px solid #2a3d50;
   border-radius: 2px;
@@ -1035,6 +1097,12 @@
 }
 .ship-tabs__tab {
   flex: 1;
+  /* Six tabs with Portuguese names (ESTALEIRO, REGISTRO) must share a
+     375px phone without widening the panel. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   padding: 8px 4px;
   border: none;
   border-bottom: 2px solid transparent;

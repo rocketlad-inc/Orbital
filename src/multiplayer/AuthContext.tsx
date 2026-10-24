@@ -98,7 +98,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const startTrial = useCallback(async () => {
     const res = await apiFetch<{ ok: true; game_id: string }>('/api/trial', {
       method: 'POST',
-      body: JSON.stringify({ attribution: attributionForSignup() }),
+      // The language on screen names the stand-in player ("Comandante").
+      body: JSON.stringify({ attribution: attributionForSignup(), lang: getLang() }),
     });
     // A server fault reads as "try again", never as the raw error.
     const friendly = (r: { status: number; error: unknown }) =>

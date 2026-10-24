@@ -22,12 +22,13 @@ import { createPortal } from 'react-dom';
 import { useTutorial } from '../state/tutorial';
 import { useGameContext } from '../state/gameContext';
 import {
-  stepsFor, TutorialStep, TutorialEffect, TutorialCheckId,
+  stepsFor, TutorialStep, TutorialEffect, TutorialCheckId, Placement,
 } from '../game/tutorialSteps';
 import { TutorialVisual } from './TutorialVisuals';
 import { t, tk } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import { getWorldMenuOpenBodyId } from '../game/worldMenu/store';
+import { useIsMobile } from '../hooks/useIsMobile';
 import type { GameState } from '../types';
 
 interface Rect {
@@ -39,10 +40,39 @@ interface Rect {
 
 /** Walk the DOM for the element matching `data-tutorial-id`. Returns
  *  null if missing (the corresponding component may not be mounted
- *  yet — overlay falls back to a centered card). */
+ *  yet — overlay falls back to a centered card). The first one that is
+ *  actually on screen wins: a phone and a desktop control can share an
+ *  id (nav-research is the top bar's, and the phone rail's), and the
+ *  hidden one may come first in the document. */
 function findTarget(targetId: string | null): Element | null {
   if (!targetId) return null;
-  return document.querySelector(`[data-tutorial-id="${targetId}"]`);
+  const all = document.querySelectorAll(`[data-tutorial-id="${targetId}"]`);
+  for (const el of Array.from(all)) {
+    const r = el.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0 && r.right > 0 && r.bottom > 0
+      && r.left < window.innerWidth && r.top < window.innerHeight) return el;
+  }
+  return null;
+}
+
+/** Open dialogs the player acts in while a step waits (the destination
+ *  list): the card keeps off them as it keeps off its target. */
+function openDialogRects(): Rect[] {
+  const out: Rect[] = [];
+  document.querySelectorAll('.modal-content').forEach(el => {
+    const r = el.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) out.push(snapRect(r));
+  });
+  return out;
+}
+
+/** The lowest y the card may reach: above a dock rail that runs along the
+ *  bottom (phones and tablets), else the window's own edge. */
+function bottomLimit(viewportH: number): number {
+  const rail = document.querySelector('.dock-rail');
+  const r = rail?.getBoundingClientRect();
+  if (r && r.width > r.height && r.top > viewportH * 0.6) return Math.round(r.top);
+  return viewportH;
 }
 
 /** Pad the target rect by a few pixels so the cutout doesn't crowd
@@ -85,32 +115,74 @@ function rectArraysDiffer(a: Rect[], b: Rect[]): boolean {
   return false;
 }
 
-/** Compute where to place the coachmark card relative to the target.
- *  Falls back to centered when target is null or off-screen. */
+function overlapArea(a: Rect, b: Rect): number {
+  const w = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+  const h = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+  return w > 0 && h > 0 ? w * h : 0;
+}
+
+/** Compute where to place the coachmark card. THE CARD NEVER SITS ON
+ *  WHAT IT POINTS AT (playtest, 2026-10-24: it covered the list, the
+ *  COMMIT button, "save here" and the home planet itself). The asked-for
+ *  side is tried first, then the others; when no side is clear (a phone,
+ *  a full-width panel), the top or bottom edge that covers least. A step
+ *  with nothing to point at sits low, off the middle of the map, where
+ *  the player's home world is. */
 function placeCard(
   targetRect: Rect | null,
+  avoid: Rect[],
   placement: TutorialStep['placement'],
   viewport: { width: number; height: number },
   cardSize: { width: number; height: number },
+  floorY: number,
+  /** A step played on the map: keep off its middle too (the home world). */
+  onMap = false,
+  /** Top of the free area: under the top bar, whose clock and resources
+   *  the edge positions used to cover. */
+  ceilY = 8,
 ): { x: number; y: number } {
   const GAP = 14;
-  if (!targetRect || placement === 'center') {
-    return {
-      x: Math.max(0, (viewport.width - cardSize.width) / 2),
-      y: Math.max(0, (viewport.height - cardSize.height) / 2),
-    };
-  }
-  let x = targetRect.x + targetRect.width / 2 - cardSize.width / 2;
-  let y = targetRect.y + targetRect.height / 2 - cardSize.height / 2;
-  if (placement === 'above')  y = targetRect.y - cardSize.height - GAP;
-  if (placement === 'below')  y = targetRect.y + targetRect.height + GAP;
-  if (placement === 'left')   x = targetRect.x - cardSize.width - GAP;
-  if (placement === 'right')  x = targetRect.x + targetRect.width + GAP;
-  // Clamp to viewport with a small margin so the card never goes off-screen.
   const MARGIN = 8;
-  x = Math.max(MARGIN, Math.min(x, viewport.width - cardSize.width - MARGIN));
-  y = Math.max(MARGIN, Math.min(y, viewport.height - cardSize.height - MARGIN));
-  return { x, y };
+  const topY = Math.max(MARGIN, ceilY);
+  const maxY = Math.max(MARGIN, floorY - cardSize.height - MARGIN);
+  const clamp = (x: number, y: number) => ({
+    x: Math.max(MARGIN, Math.min(x, viewport.width - cardSize.width - MARGIN)),
+    y: Math.max(MARGIN, Math.min(y, maxY)),
+  });
+  const centreX = (viewport.width - cardSize.width) / 2;
+  const home = { x: viewport.width / 2 - 70, y: viewport.height / 2 - 70, width: 140, height: 140 };
+  const cost = (p: { x: number; y: number }, keepOff: Rect[]) => {
+    const card = { x: p.x, y: p.y, width: cardSize.width, height: cardSize.height };
+    return keepOff.reduce((n, r) => n + overlapArea(card, r), 0);
+  };
+  if (!targetRect || placement === 'center') {
+    // Off the middle of the map, where the camera puts the player's own
+    // world: low if that clears it, else high (a tall card on a phone).
+    const low = clamp(centreX, maxY);
+    const high = clamp(centreX, topY);
+    return cost(low, [home]) <= cost(high, [home]) ? low : high;
+  }
+  const keepOff = [padRect(targetRect, 8), ...avoid.map(r => padRect(r, 4)), ...(onMap ? [home] : [])];
+  const at = (side: Exclude<Placement, 'center'>) => {
+    let x = targetRect.x + targetRect.width / 2 - cardSize.width / 2;
+    let y = targetRect.y + targetRect.height / 2 - cardSize.height / 2;
+    if (side === 'above') y = targetRect.y - cardSize.height - GAP;
+    if (side === 'below') y = targetRect.y + targetRect.height + GAP;
+    if (side === 'left')  x = targetRect.x - cardSize.width - GAP;
+    if (side === 'right') x = targetRect.x + targetRect.width + GAP;
+    return clamp(x, y);
+  };
+  const order: Exclude<Placement, 'center'>[] = [placement, 'below', 'above', 'right', 'left'];
+  const tried = order.filter((s, i) => order.indexOf(s) === i).map(at);
+  tried.push(clamp(centreX, topY), clamp(centreX, maxY));
+  let best = tried[0];
+  let bestCost = cost(best, keepOff);
+  for (const p of tried) {
+    if (bestCost === 0) break;
+    const c = cost(p, keepOff);
+    if (c < bestCost) { best = p; bestCost = c; }
+  }
+  return best;
 }
 
 // ---- Task baselines + checks (show-don't-tell tutorial) --------------
@@ -121,6 +193,8 @@ function placeCard(
 // has no baseline: a project already running counts as done.
 
 interface TaskBaseline {
+  /** The step these counts were taken for. */
+  stepId: string;
   buildOrders: number;
   orders: number;
   buildingQueues: number;
@@ -149,9 +223,29 @@ function playerOrderCount(gs: GameState): number {
   return gs.orders.filter(o => mine.has(o.shipId)).length;
 }
 
+/** Labels a step's {vars} stand for, read from the controls' own catalog
+ *  keys so the card says exactly what the button says, in either language
+ *  (playtest, 2026-10-24: "ESCOLHER DA LISTA" beside a button reading
+ *  "ESCOLHER NA LISTA"). */
+function stepVars(): Record<string, string> {
+  const bare = (s: string) => s.replace(/^[▲▶\s]+/, '');
+  return {
+    yard: t('worldmenu.bar.yard'),
+    build: t('worldmenu.build'),
+    corvette: t('data.ship.corvette.name').toUpperCase(),
+    colony: t('data.ship.colony.name').toUpperCase(),
+    list: t('ship.panel.chooseFromList'),
+    commit: t('ship.panel.commit'),
+    city: bare(t('worldmenu.found.btnCity')),
+    station: bare(t('worldmenu.found.btnStation')),
+    sitrep: t('dock.situation'),
+  };
+}
+
 export const TutorialOverlay: React.FC = () => {
   useI18n();
-  const { active, index, advance, back, skip, finish, jumpTo, track } = useTutorial();
+  const { active, index, back, skip, finish, jumpTo, track } = useTutorial();
+  const isMobile = useIsMobile();
   const TUTORIAL_STEPS = stepsFor(track);
   const { gameState, uiState, selectBody, selectShip } = useGameContext();
   const [targetRect, setTargetRect] = useState<Rect | null>(null);
@@ -160,6 +254,9 @@ export const TutorialOverlay: React.FC = () => {
   // BodyInspector so the inspector doesn't sit dimmed behind the
   // backdrop while the card talks about it).
   const [extraRects, setExtraRects] = useState<Rect[]>([]);
+  // Dialogs open over the map (the destination list): kept clear too.
+  const [dialogRects, setDialogRects] = useState<Rect[]>([]);
+  const [floorY, setFloorY] = useState(typeof window !== 'undefined' ? window.innerHeight : 800);
   const [viewport, setViewport] = useState({
     width: typeof window !== 'undefined' ? window.innerWidth : 1280,
     height: typeof window !== 'undefined' ? window.innerHeight : 800,
@@ -188,6 +285,13 @@ export const TutorialOverlay: React.FC = () => {
         // client-local after the deserializer strips the game prefix.
         const sol = gameState.bodies.find(b => b.type === 'star');
         if (sol) selectBody(sol.id);
+        break;
+      }
+      case 'select-colony-ship': {
+        const mine = gameState.ships.filter(s => s.ownedBy === 'player');
+        const colony = mine.find(s => s.class === 'colony' && !s.transit)
+          ?? mine.find(s => !s.transit) ?? mine[0];
+        if (colony) selectShip(colony.id);
         break;
       }
       case 'select-first-ship': {
@@ -269,6 +373,19 @@ export const TutorialOverlay: React.FC = () => {
               break;
             }
           }
+          // ...and sideways only inside a row built to scroll sideways (a
+          // phone's world-menu cards put SHIPYARD half off the edge).
+          for (let p = el?.parentElement ?? null; el && p; p = p.parentElement) {
+            const ox = getComputedStyle(p).overflowX;
+            if ((ox === 'auto' || ox === 'scroll') && p.scrollWidth > p.clientWidth) {
+              const er = el.getBoundingClientRect();
+              const pr = p.getBoundingClientRect();
+              // Bring its START into view: these rows snap to each card's
+              // left edge, and a nudge short of that snapped straight back.
+              if (er.left < pr.left || er.right > pr.right) p.scrollLeft += er.left - pr.left - 12;
+              break;
+            }
+          }
         }, 450)
       : null;
     return () => { if (scrollTimer) clearTimeout(scrollTimer); };
@@ -280,14 +397,17 @@ export const TutorialOverlay: React.FC = () => {
   // --- Task engine: snapshot baselines on step entry, evaluate the
   // check every render (a low-rate ticker forces re-evaluation for
   // checks reading non-reactive sources like the world-menu store),
-  // celebrate + auto-advance shortly after it passes.
+  // and mark it done when it passes (NEXT then lights up).
   const baselineRef = useRef<TaskBaseline | null>(null);
-  const [taskDone, setTaskDone] = useState(false);
+  // Done is kept per STEP: a plain boolean carried the last step's tick
+  // into the first render of the next one (playtest, 2026-10-24).
+  const [doneStepId, setDoneStepId] = useState<string | null>(null);
+  const taskDone = !!step && doneStepId === step.id;
   const [, forceTick] = useState(0);
   useEffect(() => {
-    setTaskDone(false);
     if (!step?.task) { baselineRef.current = null; return; }
     baselineRef.current = {
+      stepId: step.id,
       buildOrders: playerBuildOrderCount(gameState),
       orders: playerOrderCount(gameState),
       buildingQueues: playerBuildingQueueCount(gameState),
@@ -304,6 +424,11 @@ export const TutorialOverlay: React.FC = () => {
     const base = baselineRef.current;
     switch (check) {
       case 'world-menu-open-owned': {
+        // Ticks the moment an owned world is picked: the menu itself
+        // flies in a second later, and a player who saw nothing happen
+        // thought the tap had missed.
+        const picked = uiState.selectedBodyId;
+        if (picked && gameState.bodies.find(b => b.id === picked)?.ownedBy === 'player') return true;
         const id = getWorldMenuOpenBodyId();
         if (!id) return false;
         const body = gameState.bodies.find(b => b.id === id);
@@ -328,23 +453,32 @@ export const TutorialOverlay: React.FC = () => {
         return !!gameState.solo && !gameState.solo.paused;
     }
   };
-  const checkPassed = step?.task ? (taskDone || evalCheck(step.task.check)) : false;
+  // Only against THIS step's baseline. The first render of a step runs
+  // before its baseline is taken, and judged "one more build order than
+  // before" against the last step's (or none): "Queue another warship"
+  // ticked itself on arrival (three testers, 2026-10-24).
+  const baselineReady = !!step && baselineRef.current?.stepId === step.id;
+  const checkPassed = step?.task ? (taskDone || (baselineReady && evalCheck(step.task.check))) : false;
+  // Done stays done: the tick lands and NEXT lights up. No auto-advance:
+  // it shut the research panel and the shipyard while the player was
+  // still using them, and raced a NEXT click into skipping a whole step.
   useEffect(() => {
-    if (!step?.task || !checkPassed || taskDone) return;
-    setTaskDone(true);
-    // Let the ✓ + green flash land, then move on. Captured index guards
-    // against advancing a step the player already navigated away from.
-    const at = index;
-    const timer = setTimeout(() => {
-      if (at !== index) return;
-      // A task on the LAST step (the trial's Start the clock) ends the tour;
-      // advance() past the end does nothing.
-      if (index === TUTORIAL_STEPS.length - 1) finish();
-      else advance();
-    }, 1300);
-    return () => clearTimeout(timer);
+    if (step?.task && checkPassed && !taskDone) setDoneStepId(step.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [checkPassed, step?.id]);
+
+  // Moving on always names the step it goes TO, so two calls for one move
+  // (a click and a key, a double tap) land on the same step.
+  const goNext = () => {
+    if (index >= TUTORIAL_STEPS.length - 1) finish();
+    else jumpTo(index + 1);
+  };
+  // The trial's last task is the clock: the card starts it itself, since
+  // a phone's top bar can push START off the screen.
+  const startClock = () => {
+    window.dispatchEvent(new CustomEvent('orbital:solo-clock', { detail: { action: 'resume' } }));
+  };
+  const activeTarget = step ? (taskDone && step.doneTarget ? step.doneTarget : step.target) : null;
 
   // Re-measure target on every animation frame while active. Cheap —
   // getBoundingClientRect is fast and the overlay is short-lived. Avoids
@@ -361,13 +495,20 @@ export const TutorialOverlay: React.FC = () => {
     // so we only fire setState when the snapped (integer) rects
     // actually changed. State-by-reference would re-render every frame
     // and was the cause of the highlighted-panel wiggle.
-    let lastPrimary: Rect | null = null;
-    let lastExtras: Rect[] = [];
+    // Nothing measured yet in THIS step: the first frame always writes, or
+    // a step with no target kept the last step's ring up ("the highlight
+    // frames an empty area": playtest, 2026-10-24).
+    let lastPrimary: Rect | null | undefined;
+    let lastExtras: Rect[] | undefined;
+    let lastDialogs: Rect[] = [];
+    let lastFloor = -1;
     const tick = () => {
-      // Primary target — drives card placement + outline halo
-      const el = findTarget(step.target);
+      // Primary target — drives card placement + outline halo. A step's
+      // next control takes over once it is live (COMMIT after a pick).
+      const then = !taskDone && step.thenTarget ? findTarget(step.thenTarget) as HTMLButtonElement | null : null;
+      const el = then && !then.disabled ? then : findTarget(activeTarget);
       const nextPrimary: Rect | null = el ? snapRect(el.getBoundingClientRect()) : null;
-      if (rectsDiffer(lastPrimary, nextPrimary)) {
+      if (lastPrimary === undefined || rectsDiffer(lastPrimary, nextPrimary)) {
         lastPrimary = nextPrimary;
         setTargetRect(nextPrimary);
       }
@@ -377,24 +518,38 @@ export const TutorialOverlay: React.FC = () => {
       const nextExtras: Rect[] = [];
       for (const id of step.extraTargets ?? []) {
         const ee = findTarget(id);
-        if (!ee) continue;
+        if (!ee || ee === el) continue;
         nextExtras.push(snapRect(ee.getBoundingClientRect()));
       }
-      if (rectArraysDiffer(lastExtras, nextExtras)) {
+      if (lastExtras === undefined || rectArraysDiffer(lastExtras, nextExtras)) {
         lastExtras = nextExtras;
         setExtraRects(nextExtras);
+      }
+      const nextDialogs = openDialogRects();
+      if (rectArraysDiffer(lastDialogs, nextDialogs)) {
+        lastDialogs = nextDialogs;
+        setDialogRects(nextDialogs);
+      }
+      const nextFloor = bottomLimit(window.innerHeight);
+      if (nextFloor !== lastFloor) {
+        lastFloor = nextFloor;
+        setFloorY(nextFloor);
       }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [step]);
+  }, [step, activeTarget, taskDone]);
 
   useEffect(() => {
     const onResize = () => setViewport({ width: window.innerWidth, height: window.innerHeight });
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
+
+  // A tall dialog (the destination list on a phone) leaves no room beside
+  // it: the card shrinks to its title and task along the bottom edge.
+  const compact = dialogRects.some(d => d.height > viewport.height * 0.5);
 
   // Measure the actual card so placement math accounts for the real
   // height (varies by body length). Layout effect ensures we have
@@ -405,7 +560,7 @@ export const TutorialOverlay: React.FC = () => {
     if (Math.abs(r.width - cardSize.width) > 1 || Math.abs(r.height - cardSize.height) > 1) {
       setCardSize({ width: r.width, height: r.height });
     }
-  }, [step, cardSize.width, cardSize.height]);
+  }, [step, cardSize.width, cardSize.height, compact, taskDone]);
 
   // Keyboard: Esc skips, Enter / Right advances (unless a task is
   // gating the step), Left goes back.
@@ -418,20 +573,34 @@ export const TutorialOverlay: React.FC = () => {
       else if (e.key === 'ArrowRight' || e.key === 'Enter') {
         const cur = TUTORIAL_STEPS[index];
         if (cur?.task && !taskDone) return; // do the thing, don't skim past it
-        if (index === TUTORIAL_STEPS.length - 1) finish();
-        else advance();
+        goNext();
       }
       else if (e.key === 'ArrowLeft') back();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [active, index, advance, back, skip, finish, taskDone]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, index, back, skip, finish, taskDone]);
 
   if (!step) return null;
 
   const isLast = index === TUTORIAL_STEPS.length - 1;
   const isFirst = index === 0;
-  const cardPos = placeCard(targetRect, step.placement, viewport, cardSize);
+  const cardPos = compact
+    ? { x: Math.max(8, (viewport.width - cardSize.width) / 2), y: viewport.height - cardSize.height - 8 }
+    : placeCard(targetRect, [...extraRects, ...dialogRects], step.placement, viewport, cardSize, floorY,
+      step.dim === 'light', Math.round((document.querySelector('.top-bar')?.getBoundingClientRect().bottom ?? 0) + 8));
+  // A ring around a control a dialog now covers floated over the dialog.
+  const covered = (r: Rect) => dialogRects.some(d => overlapArea(d, r) > 0.5 * r.width * r.height);
+  const ringTarget = targetRect && !covered(targetRect) ? targetRect : null;
+  const ringExtras = extraRects.filter(r => !covered(r));
+  const vars = stepVars();
+  const bodyText = taskDone && step.doneBody
+    ? tk(`tutorial.step.${step.id}.doneBody`, step.doneBody, vars)
+    : isMobile && step.bodyTouch
+      ? tk(`tutorial.step.${step.id}.bodyTouch`, step.bodyTouch, vars)
+      : tk(`tutorial.step.${step.id}.body`, step.body, vars);
+  const clockStep = step.task?.check === 'clock-running';
 
   return createPortal(
     <div
@@ -467,15 +636,15 @@ export const TutorialOverlay: React.FC = () => {
           <mask id="tutorial-cutout">
             <rect x={0} y={0} width={viewport.width} height={viewport.height} fill="white" />
             {/* Primary cutout — full halo around the step's main target. */}
-            {targetRect && (() => {
-              const p = padRect(targetRect);
+            {ringTarget && (() => {
+              const p = padRect(ringTarget);
               return <rect x={p.x} y={p.y} width={p.width} height={p.height} rx={6} fill="black" />;
             })()}
             {/* Extra cutouts — each gets the same un-dimmed treatment so
                 a multi-anchor step (e.g. Outliner + freshly-opened
                 BodyInspector) doesn't leave half its anchors lurking in
                 the dark. */}
-            {extraRects.map((r, i) => {
+            {ringExtras.map((r, i) => {
               const p = padRect(r);
               return <rect key={i} x={p.x} y={p.y} width={p.width} height={p.height} rx={6} fill="black" />;
             })}
@@ -489,8 +658,8 @@ export const TutorialOverlay: React.FC = () => {
         />
         {/* Outline ring around the primary target — bright amber so it
             reads as "look here." */}
-        {targetRect && (() => {
-          const p = padRect(targetRect);
+        {ringTarget && (() => {
+          const p = padRect(ringTarget);
           return (
             <rect
               x={p.x} y={p.y} width={p.width} height={p.height}
@@ -505,7 +674,7 @@ export const TutorialOverlay: React.FC = () => {
         {/* Extra targets get a softer ring so the player's eye still
             lands on the primary first, but they read as "this is also
             relevant" rather than fading into the cutout. */}
-        {extraRects.map((r, i) => {
+        {ringExtras.map((r, i) => {
           const p = padRect(r);
           return (
             <rect
@@ -560,15 +729,17 @@ export const TutorialOverlay: React.FC = () => {
         <div style={{ fontSize: 15, fontWeight: 700, color: '#ffb84d', marginBottom: 6 }}>
           {tk(`tutorial.step.${step.id}.title`, step.title)}
         </div>
-        <div style={{ fontSize: 12, lineHeight: 1.45, color: '#d8e4ee' }}>
-          {tk(`tutorial.step.${step.id}.body`, step.body)}
-        </div>
+        {!compact && (
+          <div style={{ fontSize: 12, lineHeight: 1.45, color: '#d8e4ee' }}>
+            {bodyText}
+          </div>
+        )}
         {/* Illustration for menu-less concept steps (Lorne's rule:
             every step either points at a live surface or shows one). */}
-        {step.visual && <TutorialVisual id={step.visual} />}
+        {step.visual && !compact && <TutorialVisual id={step.visual} />}
         {/* Task checklist — the show-don't-tell gate. Pending: amber
-            checkbox + the imperative label. Done: green ✓ with a beat
-            before auto-advance so the win registers. */}
+            checkbox + the imperative label. Done: green ✓, and NEXT
+            lights up for when the player is ready. */}
         {step.task && (
           <div
             role="status"
@@ -591,7 +762,7 @@ export const TutorialOverlay: React.FC = () => {
         )}
         <div
           style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            display: compact ? 'none' : 'flex', alignItems: 'center', justifyContent: 'space-between',
             marginTop: 12, gap: 10,
           }}
         >
@@ -618,12 +789,15 @@ export const TutorialOverlay: React.FC = () => {
               into wrapping their labels.
               At >18 steps the dot row gets dense — drop to a compact
               "N / TOTAL" pill so the card stays readable instead. */}
-          {TUTORIAL_STEPS.length <= 18 ? (
+          {/* The clock step's wide START leaves no room for the dots, and
+              the header already says 12 / 12. */}
+          {clockStep && !taskDone ? <span style={{ flex: '1 1 auto' }} /> : TUTORIAL_STEPS.length <= 18 ? (
             <div
               style={{
-                display: 'flex', gap: 4, flex: '1 1 auto',
+                display: 'flex', gap: 3, flex: '1 1 auto',
                 minWidth: 0, justifyContent: 'center',
-                flexWrap: 'wrap',
+                // One row: PT's longer BACK / skip labels wrapped it.
+                flexWrap: 'nowrap', overflow: 'hidden',
               }}
             >
               {TUTORIAL_STEPS.map((_, i) => (
@@ -632,7 +806,10 @@ export const TutorialOverlay: React.FC = () => {
                   onClick={() => jumpTo(i)}
                   title={t('tutorial.stepOf', { n: i + 1, total: TUTORIAL_STEPS.length })}
                   style={{
-                    width: 6, height: 6, borderRadius: '50%', padding: 0,
+                    // min-* beat the phone shell's 40px floor on every
+                    // button, which drew these as tall ovals.
+                    width: 6, height: 6, minWidth: 6, minHeight: 6, flex: '0 0 6px',
+                    borderRadius: '50%', padding: 0,
                     background: i === index ? '#ffb84d' : '#2a3d50',
                     border: 'none', cursor: 'pointer',
                     transition: 'background 0.18s',
@@ -653,12 +830,26 @@ export const TutorialOverlay: React.FC = () => {
             </div>
           )}
 
-          {step.task && !taskDone ? (
+          {clockStep && !taskDone ? (
+            // The clock step's own START: the top bar's can sit off the
+            // edge of a phone (playtest, 2026-10-24).
+            <button
+              onClick={startClock}
+              data-testid="tutorial-start-clock"
+              style={{
+                padding: '5px 14px',
+                background: '#ffb84d', color: '#0a1018',
+                border: 'none', borderRadius: 4, cursor: 'pointer',
+                fontFamily: 'inherit', fontSize: 11, fontWeight: 700, letterSpacing: '0.08em',
+                flexShrink: 0, whiteSpace: 'nowrap',
+              }}
+            >{t('tutorial.startClock')}</button>
+          ) : step.task && !taskDone ? (
             // Task pending: NEXT is replaced by a quiet escape hatch so
             // nobody hard-stucks (broke, weird state, just not feeling
             // it) — but the loud affordance is DOING the task.
             <button
-              onClick={advance}
+              onClick={goNext}
               title={t('tutorial.skipTaskTitle')}
               style={{
                 padding: '5px 12px',
@@ -670,7 +861,7 @@ export const TutorialOverlay: React.FC = () => {
             >{t('tutorial.skipTask')}</button>
           ) : (
             <button
-              onClick={() => isLast ? finish() : advance()}
+              onClick={goNext}
               style={{
                 padding: '5px 14px',
                 background: taskDone ? '#7fffa1' : '#ffb84d', color: '#0a1018',

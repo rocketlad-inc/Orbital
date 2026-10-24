@@ -13,6 +13,8 @@
   left: 0;
   right: 0;
   height: var(--topbar-h);
+  /* Contents below the staging banner (App.css --topbar-h); 0 in prod. */
+  padding-top: var(--stg-h, 0px);
   z-index: 1000;
   display: flex;
   align-items: center;
@@ -701,6 +703,15 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+/* The language row: a row, not a button, holding the shared picker. */
+.side-menu__lang { cursor: default; }
+.side-menu__lang .i18n-switch { color: #d8e4ee; }
+.side-menu__lang .i18n-switch__globe { display: none; }
+.side-menu__lang .i18n-switch__select {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-color: #2a3d50;
+}
 .side-menu__item-label {
   font-size: 12px;
   font-weight: 600;
@@ -715,8 +726,13 @@
   color: #b8c8d6;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  flex-shrink: 0;
-  white-space: nowrap;
+  /* The hint wraps and never takes more than half the row, so the label
+     it explains is never the one cut short (Portuguese "Painel …"). */
+  flex: 0 1 auto;
+  max-width: 50%;
+  white-space: normal;
+  text-align: right;
+  line-height: 1.25;
 }
 
 .side-menu__foot {

@@ -808,3 +808,22 @@
 @media (max-width: 420px) {
   .landing-login-btn { display: none; }
 }
+
+/* A PHONE'S HEADER IS ONE ROW (playtest, 2026-10-24, 375 px). The 640 px
+   rule above lets the actions wrap, but the row is a fixed --nav-h tall,
+   so the wrapped EN pill was drawn on top of PLAY FOR FREE. Keep brand,
+   language and the button on one line and make them fit instead. */
+@media (max-width: 480px) {
+  .landing-nav { column-gap: 10px; }
+  .landing-nav-actions { flex-wrap: nowrap; gap: 6px; min-width: 0; }
+  .landing-brand { gap: 8px; }
+  .landing-brand .brand-glyph { font-size: 18px; }
+  .landing-brand .brand-text { font-size: 15px; letter-spacing: 0.06em; }
+  .landing-nav-actions .i18n-switch__globe { display: none; }
+  .landing-nav-actions .i18n-switch__select { padding: 7px 9px; }
+  .landing-cta-btn { padding: 0 12px; letter-spacing: 0.04em; white-space: nowrap; }
+}
+
+/* The corner build number is for the game, not the marketing page: on a
+   phone it sat over the hero's "2-10 players". */
+body:has(.landing) .version-badge:not(.version-badge--stale) { display: none; }

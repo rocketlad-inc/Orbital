@@ -1542,41 +1542,75 @@ async function handleQueueBuild(req, env, ctx) {
   // Local-first spend: drain settlement stockpiles at this body before
   // touching the faction pool. Lets a remote uncollectered settlement
   // self-fund ship builds from its banked LOCAL bucket.
-  const localStocks = (await env.DB
-    .prepare(
-      `SELECT id, stockpile_metal, stockpile_gold
-         FROM game_settlements
-        WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
-          AND destroyed_at_tick IS NULL`,
-    )
-    .bind(gameId, bodyId, me.id)
-    .all()).results ?? [];
-  let localMetal = 0, localGold = 0;
-  for (const s of localStocks) {
-    localMetal += Number(s.stockpile_metal ?? 0);
-    localGold  += Number(s.stockpile_gold  ?? 0);
-  }
-  if (localMetal + me.metal < scaledCost.metal || localGold + me.gold < scaledCost.gold) {
-    return err(409, 'insufficient_resources', `need ${scaledCost.metal}M ${scaledCost.gold}G (LOCAL+pool)`);
-  }
+  //
+  // PLAN AND CHARGE TOGETHER, AND RE-PLAN ON A MISS. The plan says "take
+  // 10 from this station's stockpile, the rest from the pool", read from
+  // a snapshot. Three quick BUILD clicks all planned against the SAME
+  // stockpile; the first spent it, the others' guarded debits missed, and
+  // they were refused with "Couldn't pay for this ship" while the pool
+  // held hundreds (playtest, 2026-10-24). A miss now re-reads both purses
+  // and plans again; only a fresh read that really falls short refuses.
+  let settlementDrains = [];
+  let poolDrawMetal = 0;
+  let poolDrawGold = 0;
+  let charged = { ok: false };
+  for (let attempt = 0; attempt < 4 && !charged.ok; attempt++) {
+    const localStocks = (await env.DB
+      .prepare(
+        `SELECT id, stockpile_metal, stockpile_gold
+           FROM game_settlements
+          WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
+            AND destroyed_at_tick IS NULL`,
+      )
+      .bind(gameId, bodyId, me.id)
+      .all()).results ?? [];
+    const pool = attempt === 0 ? me : await env.DB
+      .prepare('SELECT metal, gold FROM game_factions WHERE id = ?')
+      .bind(me.id).first();
+    let localMetal = 0, localGold = 0;
+    for (const s of localStocks) {
+      localMetal += Number(s.stockpile_metal ?? 0);
+      localGold  += Number(s.stockpile_gold  ?? 0);
+    }
+    const poolMetal = Number(pool?.metal ?? 0);
+    const poolGold = Number(pool?.gold ?? 0);
+    if (localMetal + poolMetal < scaledCost.metal || localGold + poolGold < scaledCost.gold) {
+      return err(409, 'insufficient_resources', `need ${scaledCost.metal}M ${scaledCost.gold}G (LOCAL+pool)`);
+    }
 
-  // Plan the per-settlement draws (FIFO across settlements; small
-  // amounts of remainder fall to the pool). One UPDATE per settlement
-  // that contributes, plus one for the pool if it covers any shortfall.
-  let needMetal = scaledCost.metal;
-  let needGold  = scaledCost.gold;
-  const settlementDrains = [];
-  for (const s of localStocks) {
-    if (needMetal <= 0 && needGold <= 0) break;
-    const takeM = Math.min(needMetal, Number(s.stockpile_metal ?? 0));
-    const takeG = Math.min(needGold,  Number(s.stockpile_gold  ?? 0));
-    if (takeM + takeG <= 0) continue;
-    settlementDrains.push({ id: s.id, metal: takeM, gold: takeG });
-    needMetal -= takeM;
-    needGold  -= takeG;
+    // Plan the per-settlement draws (FIFO across settlements; small
+    // amounts of remainder fall to the pool). One UPDATE per settlement
+    // that contributes, plus one for the pool if it covers any shortfall.
+    let needMetal = scaledCost.metal;
+    let needGold  = scaledCost.gold;
+    settlementDrains = [];
+    for (const s of localStocks) {
+      if (needMetal <= 0 && needGold <= 0) break;
+      const takeM = Math.min(needMetal, Number(s.stockpile_metal ?? 0));
+      const takeG = Math.min(needGold,  Number(s.stockpile_gold  ?? 0));
+      if (takeM + takeG <= 0) continue;
+      settlementDrains.push({ id: s.id, metal: takeM, gold: takeG });
+      needMetal -= takeM;
+      needGold  -= takeG;
+    }
+    poolDrawMetal = needMetal;  // remainder
+    poolDrawGold  = needGold;
+
+    // CHARGE FIRST, guarded, and only build if the money actually moved.
+    // See chargeConstruction for the report this fixes.
+    charged = await chargeConstruction(env, {
+      factionId: me.id,
+      drains: settlementDrains,
+      poolMetal: poolDrawMetal,
+      poolGold: poolDrawGold,
+    });
   }
-  const poolDrawMetal = needMetal;  // remainder
-  const poolDrawGold  = needGold;
+  if (!charged.ok) {
+    return err(409, 'insufficient_resources',
+      `Couldn't pay for this ship — ${scaledCost.metal} metal + ${scaledCost.gold} credits. `
+      + 'Your balance kept changing while the order was being placed. '
+      + 'Nothing was taken; try again.');
+  }
 
   // THE CHARGE LEDGER (migration 0084). Cancel refunds from this record
   // rather than re-deriving a price, which is what let a raw world's
@@ -1603,23 +1637,6 @@ async function handleQueueBuild(req, env, ctx) {
   // the charge had already gone through.
   const orderId = `${bodyId}:b${Date.now().toString(36)}${crypto.randomUUID().slice(0, 4)}`;
 
-  // CHARGE FIRST, guarded, and only build if the money actually moved. The
-  // affordability check above reads a snapshot; between that read and here,
-  // a second submit or the tick can have spent the same credits. See
-  // chargeConstruction for the report this fixes.
-  const charged = await chargeConstruction(env, {
-    factionId: me.id,
-    drains: settlementDrains,
-    poolMetal: poolDrawMetal,
-    poolGold: poolDrawGold,
-  });
-  if (!charged.ok) {
-    return err(409, 'insufficient_resources',
-      `Couldn't pay for this ship — ${scaledCost.metal} metal + ${scaledCost.gold} credits. `
-      + 'Your balance changed while the order was being placed (another build, or the tick landing). '
-      + 'Nothing was taken; check your purse and try again.');
-  }
-
   // THE SLOT IS DECIDED INSIDE THE INSERT, not from the inFlight read
   // above. That read and this write were two steps, so orders landing
   // together each counted the same "0 building" and ALL started: a
@@ -1628,9 +1645,21 @@ async function handleQueueBuild(req, env, ctx) {
   // other side did it twice on the same rock). D1 runs each statement
   // whole, so counting the building rows in the same statement that adds
   // this one means the second order sees the first.
-  const inFlightSql = `(SELECT COUNT(*) FROM game_body_build_queue
+  //
+  // FIRST COME, FIRST SERVED. A slot can stand free while orders wait
+  // (a cancelled hull, a new shipyard level: the promoter only runs on the
+  // tick). A new order must not take it ahead of them, or the yard builds
+  // in a different order from the one you queued (playtest, 2026-10-24:
+  // "ordered Stiletto, Rapier, Raptor, Talon; Raptor built first"). So an
+  // order only starts at once when nothing is waiting; otherwise it joins
+  // the back of the line and the tick promotes the oldest.
+  const inFlightSql = `((SELECT COUNT(*) FROM game_body_build_queue
                          WHERE game_id = ?2 AND body_id = ?3 AND faction_id = ?4
-                           AND cancelled_at_tick IS NULL AND status = 'building')`;
+                           AND cancelled_at_tick IS NULL AND status = 'building')
+                       + CASE WHEN EXISTS (SELECT 1 FROM game_body_build_queue
+                           WHERE game_id = ?2 AND body_id = ?3 AND faction_id = ?4
+                             AND cancelled_at_tick IS NULL AND status = 'waiting')
+                         THEN ?17 ELSE 0 END)`;
   await env.DB.batch([
     env.DB
       .prepare(
