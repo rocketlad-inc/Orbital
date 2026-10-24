@@ -107,15 +107,23 @@ export const AIM_FLOOR = 0.05;
  *  stage was cut, so a settlement never initiates at range.
  *
  *  Doubled 2026-10-06 (Lorne: "Double the firing radius of all ships in
- *  transit. Shits too small rn"); was 12 / 16 / 20. The in-system cut
- *  (transit_range_in_system_mul) still applies on top.
+ *  transit. Shits too small rn"); was 12 / 16 / 20.
+ *
+ *  x15 on 2026-10-23 (Lorne's pick from a table: "make the top range at
+ *  transit 600 units, stagger down"): 360 / 480 / 600, same 3:4:5 steps.
+ *  An intercept closes 150-280 units a tick, so at 40 the Hygiea
+ *  destroyers in the Mega Destroyer clip fired only in the meeting tick;
+ *  at 600 they open fire about 4 ticks out. The Mega Destroyer had NO
+ *  entry, so it never fired in flight; it shares the destroyer's 600.
+ *  The in-system cut (transit_range_in_system_mul, 0.5) still applies.
  *
  *  The client mirror is src/game/firingWindows.ts SHIP_RANGE, held equal
  *  by burnParity.test.ts. */
 export const SHIP_RANGE = {
-  corvette: 24,
-  frigate: 32,
-  destroyer: 40,
+  corvette: 360,
+  frigate: 480,
+  destroyer: 600,
+  mega_destroyer: 600,
   freighter: 0,
   colony: 0,
 };

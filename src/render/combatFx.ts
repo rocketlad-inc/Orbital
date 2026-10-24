@@ -855,6 +855,10 @@ export function drawEngagementFire(
   settlementMayFire?: (stl: Settlement) => boolean,
   /** Hulls in flight on their own courses, world (transitShotInReach). */
   transitCourseWorldPos?: ReadonlyMap<string, { x: number; y: number }>,
+  /** THE MATCH FILM's own fire density: a highlight reel shows a big fight
+   *  hotter than the live map's watchable aggregate. Omitted = the live
+   *  game's tuning, unchanged. */
+  density?: { fireReference?: number; maxFiring?: number },
 ): void {
   // The server never fires between at-peace factions (room.js builds the
   // same nap/defense-pact set) - so neither may the animation. Without
@@ -1016,8 +1020,10 @@ export function drawEngagementFire(
   for (const e of engagedScratch) {
     engagedAtBody.set(e.bodyId, (engagedAtBody.get(e.bodyId) ?? 0) + 1);
   }
+  const fireRef = density?.fireReference ?? BATTLE_FIRE_REFERENCE;
+  const maxFiring = density?.maxFiring ?? MAX_FIRING_PER_FRAME;
   const slotFor = (bodyId: string) => SLOT_MS
-    * Math.max(1, (engagedAtBody.get(bodyId) ?? 1) / BATTLE_FIRE_REFERENCE);
+    * Math.max(1, (engagedAtBody.get(bodyId) ?? 1) / fireRef);
 
   // Shooters that get past the cadence test this frame — each one costs a
   // target resolve, two position solves, an occlusion test and possibly a
@@ -1034,7 +1040,7 @@ export function drawEngagementFire(
     const firing = within < BOLT_MS;
     const impacting = !firing && within < BOLT_MS + IMPACT_MS;
     if (!firing && !impacting) continue;         // mid-reload
-    if (++firingSeen > MAX_FIRING_PER_FRAME) break;
+    if (++firingSeen > maxFiring) break;
 
     // Target: the SERVER'S stamped engagement (ship.lastTargetId — who
     // this combatant actually shot on its last volley, round-robin

@@ -31,7 +31,14 @@ def end_card(last, fps):
     if not a.end_title:
         return []
     w, h = last.size
-    title = font(os.path.join(HERE, 'assets', 'Audiowide-Regular.ttf'), max(12, round(w * 0.085)))
+    tpath = os.path.join(HERE, 'assets', 'Audiowide-Regular.ttf')
+    size = max(12, round(w * 0.085))
+    title = font(tpath, size)
+    # A longer name shrinks to fit: never wider than 80% of the frame.
+    probe = ImageDraw.Draw(Image.new('RGB', (1, 1)))
+    while size > 12 and probe.textlength(a.end_title, font=title) > w * 0.8:
+        size -= 2
+        title = font(tpath, size)
     line = font('C:/Windows/Fonts/bahnschrift.ttf', max(10, round(w * 0.03)))
     n, fade = max(1, round(a.end_seconds * fps)), max(1, round(0.6 * fps))
     out = []
@@ -92,17 +99,19 @@ def load(f):
 wf = [load(f) for f in pick(a.webp_fps)]
 wf += end_card(wf[-1], a.webp_fps)
 webp = os.path.join(out_dir, name + '.webp')
-# libwebp's animation encoder now and then fails a long take with
-# "WebPEncodingError: 1" and then takes the same frames on a retry.
-for attempt in range(4):
+# libwebp's animation encoder now and then fails a long, busy take with
+# "WebPEncodingError: 1" (a 30 s battle, 2026-10-23, though each half
+# encoded fine) and then takes the same frames on a retry. Retry at full
+# quality first, then step the quality down rather than lose the take.
+for q in (82, 82, 74, 66, 58):
     try:
-        wf[0].save(webp, save_all=True, append_images=wf[1:], duration=round(1000 / a.webp_fps), loop=0, quality=82, method=4)
+        wf[0].save(webp, save_all=True, append_images=wf[1:], duration=round(1000 / a.webp_fps), loop=0, quality=q, method=4)
         break
     except (RuntimeError, MemoryError) as e:
-        if attempt == 3:
-            raise
-        print(f"webp encode failed ({e}); trying again")
-print(f"{webp}: {len(wf)} frames @ {a.webp_fps:g}fps, {wf[0].size[0]}x{wf[0].size[1]}, {os.path.getsize(webp) // 1024}KB")
+        print(f"webp at quality {q}: {e}; trying again")
+else:
+    raise SystemExit('webp: could not encode at any quality')
+print(f"{webp}: {len(wf)} frames @ {a.webp_fps:g}fps, {wf[0].size[0]}x{wf[0].size[1]}, q{q}, {os.path.getsize(webp) // 1024}KB")
 
 if a.no_gif:
     raise SystemExit(0)

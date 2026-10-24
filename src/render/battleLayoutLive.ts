@@ -170,6 +170,11 @@ export interface LiveBattle {
   /** Reference px from the world's centre to the outside of the fight:
    *  the farthest hull's (or block's, or station's) edge. */
   outerR: number;
+  /** Glides take this many times as long (the match film runs a day a
+   *  second, so its re-slots come far oftener than the live map's and at
+   *  the live pace read as hulls snapping sideways round the world).
+   *  Unset = 1, the live map. */
+  glidePace?: number;
 }
 
 const cache = new Map<string, LiveBattle>();
@@ -353,8 +358,8 @@ export function battlePlacement(
   if (g.r1 === undefined || Math.abs(g.r1 - p.r) > 1e-6 || Math.abs(wrapPi((g.a1 ?? 0) - p.theta)) > 1e-6) {
     const dAng = Math.abs(wrapPi(p.theta - g.t));
     const dist = Math.hypot(p.r - g.r, ((g.r + p.r) / 2) * dAng);
-    const dur = dist < 1e-6 ? 0
-      : Math.min(BATTLE_GLIDE_MAX_MS, BATTLE_GLIDE_MIN_MS + (dist / Math.max(1, p.r)) * 500);
+    const dur = (dist < 1e-6 ? 0
+      : Math.min(BATTLE_GLIDE_MAX_MS, BATTLE_GLIDE_MIN_MS + (dist / Math.max(1, p.r)) * 500)) * (battle.glidePace ?? 1);
     g.r0 = g.r; g.a0 = g.t; g.r1 = p.r; g.a1 = p.theta; g.startMs = nowMs; g.dur = dur;
   }
   const u = g.dur ? smoother((nowMs - (g.startMs ?? nowMs)) / g.dur) : 1;

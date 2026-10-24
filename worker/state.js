@@ -73,9 +73,13 @@ function err(status, code, message) {
 // spread 2x, so absolute sensor ranges had to grow with it or the fog
 // would have silently doubled. KEEP IN SYNC with src/game/visibility.ts.
 const SENSOR_SCALE = 2;
+// Warships see at least as far as they shoot in flight (transitCombat.js
+// SHIP_RANGE 360 / 480 / 600 since 2026-10-23; was 300 / 400 / 350 sight,
+// and the Mega Destroyer had none). sensorScale.test holds the reach <= sight.
 export const SHIP_SENSOR_RANGE = {
-  corvette: 150 * SENSOR_SCALE, frigate: 200 * SENSOR_SCALE,
-  destroyer: 175 * SENSOR_SCALE, freighter: 100 * SENSOR_SCALE,
+  corvette: 180 * SENSOR_SCALE, frigate: 240 * SENSOR_SCALE,
+  destroyer: 300 * SENSOR_SCALE, mega_destroyer: 300 * SENSOR_SCALE,
+  freighter: 100 * SENSOR_SCALE,
   colony: 75 * SENSOR_SCALE,
   // A missile salvo (missiles.js) sees nothing: it is a warhead, not a probe.
   missile: 0,

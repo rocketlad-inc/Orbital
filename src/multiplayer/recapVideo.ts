@@ -72,7 +72,7 @@ const SCENE_SCALE = 1.95;
 const SCENE_Y = 470;
 
 /** The video codecs this browser can record, best first. */
-function pickMime(): string | null {
+export function pickMime(): string | null {
   if (typeof MediaRecorder === 'undefined') return null;
   for (const m of ['video/mp4;codecs=avc1.640028', 'video/mp4;codecs=avc1', 'video/mp4',
     'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm']) {

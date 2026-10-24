@@ -176,6 +176,10 @@ export interface RenderContext {
    *  read the true drawn box instead of re-deriving it and drifting off
    *  the visible hull. Cleared each frame by MapCanvas. */
   shipHitboxes?: Map<string, { x: number; y: number; r: number }>;
+  /** Where each hull in FLIGHT was drawn this frame (canvas px), when the
+   *  caller asks: the match film's frame-to-frame audit. Unset on the
+   *  live map. */
+  transitDrawn?: Map<string, { x: number; y: number }>;
   /** Where every FLEET hull sits in its fleet's formation this frame —
    *  the flagship at its own sprite, each escort at its slot behind it.
    *  Filled by MapCanvas's marker pass. Combat FX resolve a hull here
@@ -8433,6 +8437,7 @@ function drawTorchTransitShip(
   const lerpedPos = transitDrawnPos(ship.id, trajectorySamples,
     { x: ship.transit.pos.x, y: ship.transit.pos.y }, ctx.t, ctx.camera.scale, ctx.nowMs ?? performance.now());
   let canvasPos = worldToCanvas(lerpedPos.x, lerpedPos.y, ctx);
+  ctx.transitDrawn?.set(ship.id, canvasPos);
   // THE LEVIATHAN STAYS WITH THE WORLD IT IS CRUSHING (kaijuFlightPose). It
   // leaves for its next meal the tick it breaks one, so its flight began
   // while its arms were still round the world, and it was drawn far off
@@ -8546,6 +8551,7 @@ function drawTorchTransitShip(
       iconSize = pose.size;
       heading = pose.heading;
       kaijuOver = pose.bodyId ? bodyById(ctx.bodies, pose.bodyId) ?? null : null;
+      ctx.transitDrawn?.set(ship.id, canvasPos);
     }
   }
   // (Its look is noted below, once the plume it is flying on is known.)
