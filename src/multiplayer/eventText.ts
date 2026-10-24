@@ -762,8 +762,18 @@ export function formatChronicleEvent(
     const offer = fmtBundle(parsed.offer);
     const request = fmtBundle(parsed.request);
     const pacts = Array.isArray(parsed.pacts) ? (parsed.pacts as string[]) : [];
+    const nothing = T('fb.nothing');
+    const pactList = pacts.map(pactLabel).join(', ');
+    // A pure pact deal is not a trade of nothing for nothing (playtest
+    // 2026-10-24): say who accepted which pacts.
+    if (pacts.length && offer === nothing && request === nothing) {
+      return out('⚖ ', T('trade.pactsOnly', { proposer, responder, pacts: pactList }));
+    }
+    if (pacts.length && request === nothing) {
+      return out('⚖ ', T('trade.acceptedPactsFor', { proposer, offer, responder, pacts: pactList }));
+    }
     return out('⚖ ', pacts.length
-      ? T('trade.acceptedPacts', { proposer, offer, responder, request, pacts: pacts.map(pactLabel).join(', ') })
+      ? T('trade.acceptedPacts', { proposer, offer, responder, request, pacts: pactList })
       : T('trade.accepted', { proposer, offer, responder, request }));
   }
 
@@ -804,6 +814,26 @@ export function formatChronicleEvent(
     const breaker = nameOfFaction(ev.actor_faction_id);
     const other = nameOfFaction(ev.target_faction_id);
     return out('⚔ ', T('treaty.broken', { breaker, other, kind: pactLabel((parsed.kind as string) ?? 'pact') }));
+  }
+
+  // ---- war and peace (worker/wars.js) ----
+  if (ev.kind === 'war_declared') {
+    const a = nameOfFaction(ev.actor_faction_id);
+    const b = nameOfFaction(ev.target_faction_id);
+    const broke = Array.isArray(parsed.broke_pacts) ? (parsed.broke_pacts as string[]) : [];
+    return out('⚔ ', broke.length
+      ? T('war.declaredBroke', { a, b, pacts: broke.map(pactLabel).join(', ') })
+      : T('war.declared', { a, b }));
+  }
+  if (ev.kind === 'war_ended') {
+    const a = nameOfFaction(ev.actor_faction_id);
+    const b = nameOfFaction(ev.target_faction_id);
+    return out('🕊 ', N('war.ended', Number(parsed.ticks_fought ?? 0), { a, b }));
+  }
+  if (ev.kind === 'ceasefire_offered' || ev.kind === 'ceasefire_withdrawn') {
+    const a = nameOfFaction(ev.actor_faction_id);
+    const b = nameOfFaction(ev.target_faction_id);
+    return out('', T(ev.kind === 'ceasefire_offered' ? 'war.ceasefire' : 'war.ceasefireWithdrawn', { a, b }));
   }
 
   /** " [slider law]": the bill kind in brackets, as a clause. */

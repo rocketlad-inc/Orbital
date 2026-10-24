@@ -260,6 +260,20 @@ const ROWS: Row[] = [
     "T+12  ⚖ Cerean Union traded 100 metal, 20 credits → Zed Corp for 3 fuel, 5 science + Non-Aggression Pact, Intel-Share Pact"],
   ["trade_accepted plain", "trade_accepted", "f1", "f2", 12, {"offer": {}, "request": null},
     "T+12  ⚖ Cerean Union traded nothing → Zed Corp for nothing"],
+  ["trade_accepted pact only", "trade_accepted", "f1", "f2", 12, {"offer": {"metal": 0}, "request": {}, "pacts": ["nap"]},
+    "T+12  ⚖ Zed Corp accepted Cerean Union's offer: Non-Aggression Pact"],
+  ["trade_accepted pacts for a gift", "trade_accepted", "f1", "f2", 12, {"offer": {"metal": 50}, "request": {}, "pacts": ["nap"]},
+    "T+12  ⚖ Cerean Union traded 50 metal → Zed Corp for Non-Aggression Pact"],
+  ["war_declared", "war_declared", "f1", "f2", 25, {"war_id": "w1", "broke_pacts": []},
+    "T+25  ⚔ Cerean Union declared war on Zed Corp"],
+  ["war_declared broke", "war_declared", "f1", "f2", 25, {"war_id": "w1", "broke_pacts": ["nap"]},
+    "T+25  ⚔ Cerean Union broke the Non-Aggression Pact and declared war on Zed Corp"],
+  ["war_ended", "war_ended", "f2", "f1", 40, {"war_id": "w1", "ticks_fought": 15},
+    "T+40  🕊 Zed Corp and Cerean Union made peace after 15 ticks of war"],
+  ["ceasefire_offered", "ceasefire_offered", "f1", "f2", 30, {"war_id": "w1"},
+    "T+30  Cerean Union offered Zed Corp a ceasefire"],
+  ["ceasefire_withdrawn", "ceasefire_withdrawn", "f1", "f2", 31, {"war_id": "w1"},
+    "T+31  Cerean Union withdrew its ceasefire offer to Zed Corp"],
   ["meteoroid_found tons", "meteoroid_found", "f1", null, 12, {"name": "Rock 9", "tons": 400, "kind": "gold"},
     "T+12  ◈ Survey found Rock 9 — 400 credits"],
   ["meteoroid_found metal", "meteoroid_found", "f1", null, 12, {"name": "Rock 9", "tons": 400},
@@ -355,7 +369,7 @@ const KINDS = [
   'secret_discovered', 'victory', 'trade_accepted', 'meteoroid_found', 'meteoroid_exhausted', 'ship_refitted',
   'treaty_signed', 'treaty_broken', 'senate_vote', 'senate_law_expired', 'senate_reaped', 'senate_term',
   'tech_advanced', 'trade_route_run', 'trade_route_done', 'trade_lane_consolidated', 'trade_agreement_ended',
-  'trade_delivered', 'trade_shipment_lost',
+  'trade_delivered', 'trade_shipment_lost', 'war_declared', 'war_ended', 'ceasefire_offered', 'ceasefire_withdrawn',
 ];
 
 afterEach(() => setLang('en', false));
@@ -431,6 +445,9 @@ describe('Portuguese headlines', () => {
     expect(f('trade_accepted pacts')).toBe('T+12  ⚖ Cerean Union negociou 100 de metal, 20 de créditos → Zed Corp em troca de 3 de combustível, 5 de ciência + Pacto de Não Agressão, Pacto de Compartilhamento de Inteligência');
     expect(f('trade_route_run tariff')).toBe('T+12  ⟳ Rota comercial: Cerean Union → Zed Corp entregou 100M 20C (tarifa de −10%) — viagem nº 7');
     expect(f('meteoroid_found tons')).toBe('T+12  ◈ O levantamento encontrou Rock 9 — 400 de créditos');
+    expect(f('war_declared')).toBe('T+25  ⚔ Cerean Union declarou guerra a Zed Corp');
+    expect(f('war_ended')).toBe('T+40  🕊 Zed Corp e Cerean Union fizeram as pazes depois de 15 ticks de guerra');
+    expect(f('trade_accepted pact only')).toBe('T+12  ⚖ Zed Corp aceitou a proposta de Cerean Union: Pacto de Não Agressão');
   });
 
   it('uses the singular for 0 and 1 (Portuguese counts 0 as one) and the plural above', () => {
