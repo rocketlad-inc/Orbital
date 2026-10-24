@@ -450,6 +450,10 @@ async function expand(env, g, me, call, note, tick, view) {
   for (const b of g.bodies) {
     const owned = view ? view.owner.has(b.id) : !!b.owner_faction_id;
     if (owned || !SETTLE_TYPES.includes(b.type) || !b.parent_body_id) continue;
+    // Every capital's place is public (the roster), fog or not: never
+    // settle at a rival's home. Under fog it looks open (its owner and
+    // settlements are hidden), so a colony ship could fly at the player's.
+    if (view?.capitals?.has(b.id)) continue;
     if (isFarSystemBody(b) || claimed.has(b.id) || b.id === ship.parent_body_id) continue;
     const d = await dist(g, ship.parent_body_id, b.id);
     if (!best || d < best[0]) best = [d, b.id];

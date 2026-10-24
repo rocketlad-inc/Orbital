@@ -39,9 +39,19 @@ function makeState() {
 const DB = new SimD1(':memory:');
 DB.applyMigrations(MIGRATIONS);
 const roomCalls = [];
+// The game's paused flag at the moment the world finished seeding
+// (startGame tells the room /game-started): a cron pass could run then.
+const pausedAtSeed = [];
 const env = {
   DB,
-  ROOM: { idFromName: () => 'x', get: () => ({ fetch: async (u, init) => { roomCalls.push([String(u), init?.body ?? null]); return new Response('{}'); } }) },
+  ROOM: { idFromName: () => 'x', get: () => ({ fetch: async (u, init) => {
+    roomCalls.push([String(u), init?.body ?? null]);
+    if (String(u).endsWith('/game-started')) {
+      const gid = JSON.parse(init?.body ?? '{}').gameId;
+      pausedAtSeed.push((await DB.prepare('SELECT paused FROM games WHERE id = ?').bind(gid).first())?.paused);
+    }
+    return new Response('{}');
+  } }) },
 };
 
 const trial = await import('../worker/trial.js');
@@ -75,6 +85,7 @@ const count = (c) => fleet.find(x => x.ship_class === c)?.n ?? 0;
 check('a head start: 3 extra corvettes and a freighter, at the capital', count('corvette') >= 4 && count('freighter') >= 1, JSON.stringify(fleet));
 const pausedAtStart = await DB.prepare('SELECT paused, auto_paused, next_tick_at FROM games WHERE id = ?').bind(G).first();
 check('it starts with the clock stopped, for the tutorial', pausedAtStart.paused === 1 && pausedAtStart.auto_paused === 0 && pausedAtStart.next_tick_at == null, JSON.stringify(pausedAtStart));
+check('it is born paused: no moment after seeding when a cron pass could play its empires', pausedAtSeed[0] === 1, JSON.stringify(pausedAtSeed));
 await ai.runSoloTurns(env);
 const early = await DB.prepare('SELECT COUNT(*) AS n FROM game_factions WHERE game_id = ? AND ai_last_tick IS NOT NULL').bind(G).first();
 const earlyOffers = await DB.prepare('SELECT COUNT(*) AS n FROM trade_offers WHERE game_id = ?').bind(G).first();

@@ -529,10 +529,15 @@ export async function startGame(env, roomId, opts = {}) {
       env.DB
         .prepare(
           `INSERT INTO games (id, status, map_seed, current_tick, tick_interval_ms, created_at, started_at, config_id,
-                              solo, solo_difficulty)
-           VALUES (?, 'setup', ?, 0, ?, ?, ?, ?, ?, ?)`,
+                              solo, solo_difficulty, paused)
+           VALUES (?, 'setup', ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .bind(roomId, map_seed, tick_interval_ms, now, now, configId, solo ? 1 : 0, solo?.difficulty ?? null),
+        // A solo game may be born paused (a Play for Free trial waits for
+        // its tutorial): paused in the same write that creates it, so no
+        // cron pass ever sees it running (trial.js used to pause it after
+        // seeding, and the minute cron could play its empires in between).
+        .bind(roomId, map_seed, tick_interval_ms, now, now, configId, solo ? 1 : 0, solo?.difficulty ?? null,
+              solo?.paused ? 1 : 0),
       env.DB
         .prepare("UPDATE rooms SET status = 'in_progress', updated_at = ? WHERE id = ?")
         .bind(now, roomId),
