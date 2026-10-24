@@ -58,7 +58,8 @@ export type TutorialEffect =
   // The trial track (TRIAL_TUTORIAL_STEPS): the private offers tab of the
   // trade dock (where a pact offer waits) and the empires panel.
   | 'open-panel-trades'    // window 'orbital:open-panel' {panel:'trades'}
-  | 'open-panel-empires';  // window 'dockrail:set' {active:'multiplayer'}
+  | 'open-panel-empires'   // window 'dockrail:set' {active:'multiplayer'}
+  | 'close-dock';          // window 'dockrail:set' {active:null}: the right-hand docks
 
 /** Game-state condition a task step waits on. Evaluated by the overlay
  *  a few times a second; baselines are snapshotted at step entry so a
@@ -381,7 +382,7 @@ export const TRIAL_TUTORIAL_STEPS: TutorialStep[] = [
     body: 'Ships parked at a world fight for it on their own when an enemy arrives. Keep a few warships at home and build more: by the time the Warlord comes, you want a fleet waiting.',
     target: 'wm-build',
     placement: 'left',
-    onEnter: ['close-panels', 'open-capital-menu'],
+    onEnter: ['close-dock', 'open-capital-menu'],
     task: { check: 'ship-queued', label: 'Queue another warship' },
   },
   {
@@ -390,6 +391,7 @@ export const TRIAL_TUTORIAL_STEPS: TutorialStep[] = [
     body: 'You are playing without an account, so this empire lives only in this browser. Save it from the menu here, top left, to keep it, play it on any device, and take on other commanders.',
     target: 'menu-button',
     placement: 'below',
+    onEnter: 'close-dock',
   },
   {
     id: 'trial-done',

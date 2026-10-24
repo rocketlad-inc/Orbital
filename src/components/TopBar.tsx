@@ -208,7 +208,9 @@ export const TopBar: React.FC<TopBarProps> = ({
           onSignOut={signOut}
           onOpenNotifications={() => setNotifOpen(true)}
           adminGameId={adminGameId}
-          isHost={isHost}
+          // A solo game's clock is the SoloClock's (pause, step, speed):
+          // the multiplayer host's admin controls would fight it.
+          isHost={isHost && !gameState.solo}
           activePanel={activePanel}
           onTogglePanel={onTogglePanel}
           playerShipCount={playerShips.length}
@@ -1606,7 +1608,6 @@ const SideMenu: React.FC<SideMenuProps> = ({
             >
               <span className="side-menu__item-icon">★</span>
               <span className="side-menu__item-label">{t('trial.menu.save')}</span>
-              <span className="side-menu__item-hint">{t('trial.menu.saveHint')}</span>
             </button>
           )}
           {onExitMode && (
@@ -1796,6 +1797,9 @@ const SideMenu: React.FC<SideMenuProps> = ({
                 <span className="side-menu__item-label">{t('topbar.account.popout')}</span>
                 <span className="side-menu__item-hint">{t('topbar.account.popoutHint')}</span>
               </button>
+              {/* An unsaved trial: signing out would throw the empire away
+                  (there is no way back in). Save is the way out. */}
+              {!user.shadow && (
               <button
                 className="side-menu__item side-menu__item--danger"
                 onClick={async () => { onClose(); await onSignOut(); }}
@@ -1804,6 +1808,7 @@ const SideMenu: React.FC<SideMenuProps> = ({
                 <span className="side-menu__item-label">{t('topbar.account.signOut')}</span>
                 <span className="side-menu__item-hint">{t('topbar.account.signOutHint')}</span>
               </button>
+              )}
             </>
           )}
         </nav>
