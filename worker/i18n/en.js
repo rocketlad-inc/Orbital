@@ -356,6 +356,7 @@ export const EN = {
   // --- feed.*: what a game posts to its own feed -------------------------------
   'feed.thread.intro': '📡 **{name}**: this game\'s feed. Follow this post to get its news; players can also follow from the game\'s notification settings.\n{url}',
   'feed.thread.pointer': '📡 **{name}** has a game feed: <#{thread}>. Follow it there for that game\'s news.',
+  'feed.abandoned.text': '⏹ **{name}** has ended: 15 days without activity.',
   'feed.skipped_one': '⏩ {n} more update skipped: this game moves fast, so its feed is capped at {cap} posts every {minutes} minutes. The Herald covers the rest.',
   'feed.skipped_other': '⏩ {n} more updates skipped: this game moves fast, so its feed is capped at {cap} posts every {minutes} minutes. The Herald covers the rest.',
   'feed.welcome.thisGame': 'This game',

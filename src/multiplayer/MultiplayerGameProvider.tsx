@@ -1389,6 +1389,7 @@ function classifyChronicleEvent(kind: string): { category: LogCategory; level: L
     case 'senate_law_expired':
     case 'senate_reaped':
     case 'victory':
+    case 'game_abandoned':
       return { category: 'SYSTEM', level: 'INFO' };
     // A standing route dying is a WARN, not an INFO: every reason it can
     // end (war, piracy, an empty treasury, a partner pulling out) is
@@ -3052,7 +3053,8 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
   }
 
   const gameOver = meta?.status === 'completed';
-  const iWon = gameOver && meta?.winnerFactionId === meta?.myFactionId;
+  // null === null is not a win: an observer, or a game nobody won.
+  const iWon = gameOver && meta?.winnerFactionId != null && meta.winnerFactionId === meta.myFactionId;
 
   // Pass caller's capital body id so the canvas auto-pans there on
   // first load instead of staring at Sol.

@@ -52,6 +52,8 @@ export async function buildProfileAwards(env, userId) {
        JOIN rooms r ON r.id = g.id
        LEFT JOIN game_awards_state s ON s.game_id = g.id
       WHERE f.user_id = ? AND g.status = 'completed'
+        -- A game ended for inactivity (worker/cull.js) awards nothing.
+        AND COALESCE(g.victory_type, '') <> 'abandoned'
         AND f.status NOT IN ('observer', 'monster')
       ORDER BY g.completed_at DESC, g.id`,
   ).bind(userId).all())?.results ?? [];

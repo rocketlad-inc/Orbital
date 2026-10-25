@@ -354,6 +354,7 @@ export const PT_BR = {
   // --- feed.*: o que um jogo publica no próprio feed ------------------------------
   'feed.thread.intro': '📡 **{name}**: o feed deste jogo. Siga este post para receber as novidades; os jogadores também podem seguir pelas configurações de notificação do jogo.\n{url}',
   'feed.thread.pointer': '📡 **{name}** tem um feed de jogo: <#{thread}>. Siga por lá para acompanhar as novidades desse jogo.',
+  'feed.abandoned.text': '⏹ **{name}** foi encerrado: 15 dias sem atividade.',
   'feed.skipped_one': '⏩ {n} atualização a mais foi pulada: este jogo corre rápido, então o feed dele é limitado a {cap} posts a cada {minutes} minutos. O Arauto cobre o resto.',
   'feed.skipped_other': '⏩ {n} atualizações a mais foram puladas: este jogo corre rápido, então o feed dele é limitado a {cap} posts a cada {minutes} minutos. O Arauto cobre o resto.',
   'feed.welcome.thisGame': 'Este jogo',

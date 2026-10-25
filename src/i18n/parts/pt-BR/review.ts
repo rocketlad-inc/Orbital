@@ -481,6 +481,7 @@ export const review: Catalog = {
   'eventlog.ev.by.shipFaction': 'por {ship} ({faction})',
   'eventlog.ev.by.faction': 'por {faction}',
   // session and factions
+  'eventlog.ev.game.abandoned': 'FIM DE JOGO — encerrado após 15 dias sem atividade',
   'eventlog.ev.game.started_one': 'O jogo começa — {n} facção',
   'eventlog.ev.game.started_other': 'O jogo começa — {n} facções',
   'eventlog.ev.game.startedNames_one': 'O jogo começa — {n} facção: {names}',
@@ -699,6 +700,7 @@ export const review: Catalog = {
   'ending.dur.minutes_other': '{n} minutos',
   'ending.verdict.annihilation': 'Foi o último império de pé',
   'ending.verdict.other': 'Venceu o jogo',
+  'ending.verdict.abandoned': 'O jogo foi encerrado após 15 dias sem atividade.',
   'ending.chip.ticks_one': 'tick',
   'ending.chip.ticks_other': 'ticks',
   'ending.chip.empires_one': 'império',
