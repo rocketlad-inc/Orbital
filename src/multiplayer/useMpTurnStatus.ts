@@ -15,6 +15,8 @@ import { useEffect, useState, useCallback } from 'react';
 import { useMultiplayerActions, TurnStatus } from './MultiplayerActionsContext';
 
 const POLL_INTERVAL_MS = 3000;
+/** Off Turn-Based Mode: only watching for the host to turn it on. */
+const IDLE_POLL_MS = 15000;
 
 export function useMpTurnStatus(): {
   status: TurnStatus | null;
@@ -35,16 +37,22 @@ export function useMpTurnStatus(): {
       return;
     }
     // Kick an immediate fetch so the UI doesn't lag 3s behind on mount.
+    // The 3 s cadence is for a game IN Turn-Based Mode, where "waiting on
+    // Mars" has to feel live. A real-time game (every trial, nearly every
+    // match) only needs to notice the host switching it on, so it asks
+    // every IDLE_POLL_MS instead of adding a request every 3 s for the
+    // whole match (playtest R2-C11).
     let cancelled = false;
-    (async () => {
-      const s = await mp.getTurnStatus();
-      if (!cancelled) setStatus(s);
-    })();
-    const id = setInterval(async () => {
-      const s = await mp.getTurnStatus();
-      if (!cancelled) setStatus(s);
-    }, POLL_INTERVAL_MS);
-    return () => { cancelled = true; clearInterval(id); };
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const pump = async () => {
+      let s: TurnStatus | null = null;
+      try { s = await mp.getTurnStatus(); } catch { /* keep polling */ }
+      if (cancelled) return;
+      setStatus(s);
+      timer = setTimeout(pump, s?.turn_based_enabled ? POLL_INTERVAL_MS : IDLE_POLL_MS);
+    };
+    void pump();
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
   }, [mp]);
 
   return { status, refresh };

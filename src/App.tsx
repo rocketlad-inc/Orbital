@@ -834,7 +834,17 @@ function AppShell() {
   useEffect(() => {
     if (!selectedRoomId || !user) return;
     let cancelled = false;
-    let intervalId: ReturnType<typeof setInterval> | null = null;
+    let intervalId: ReturnType<typeof setTimeout> | null = null;
+    // ONCE IN THE GAME, THIS WATCH IS ONLY FOR "IS THE ROOM STILL THERE".
+    // It ran every 3 s for the whole match, and re-asked /joinable-bodies
+    // on every pass: two requests every 3 s forever, beside the /state
+    // poll, which is most of why a quiet trial read as "several requests
+    // a second" to a tester watching the network (playtest R2-C11).
+    // A faction, once joined, never un-joins, so that check runs once per
+    // game; and the watch slows to IN_GAME_MS once the game is mounted.
+    let joinedGid: string | null = null;
+    const LOBBY_MS = 3000;
+    const IN_GAME_MS = 20000;
     const poll = async () => {
       const res = await apiFetch<{
         game_id?: string | null;
@@ -857,6 +867,7 @@ function AppShell() {
         // caller actually has a faction. Otherwise leave roomGameId
         // null so the shell stays in lobby mode and LobbyView's
         // late-join picker runs.
+        if (joinedGid === gid) return;
         try {
           const fac = await apiFetch<{ already_joined: boolean }>(`/api/games/${gid}/joinable-bodies`);
           if (cancelled) return;
@@ -865,6 +876,7 @@ function AppShell() {
             return;
           }
         } catch { /* fall through to the original promote */ }
+        joinedGid = gid;
         setRoomGameId(gid);
         return;
       }
@@ -874,7 +886,8 @@ function AppShell() {
       // poll loop so we don't hammer the endpoint with hundreds of 403s
       // until the user reloads the tab.
       if (res.status === 404 || res.status === 403) {
-        if (intervalId) clearInterval(intervalId);
+        cancelled = true;
+        if (intervalId) clearTimeout(intervalId);
         intervalId = null;
         logger.warn('SYSTEM', `Room poll bailed (${res.status}) — exiting room`, {
           roomId: selectedRoomId, code: res.error?.code,
@@ -882,11 +895,16 @@ function AppShell() {
         setRoomGameId('missing');
       }
     };
-    poll();
-    intervalId = setInterval(poll, 3000);
+    // Self-scheduling, so the gap can follow whether the game is mounted.
+    const pump = async () => {
+      try { await poll(); } catch { /* transport error: try again below */ }
+      if (cancelled) return;
+      intervalId = setTimeout(pump, joinedGid ? IN_GAME_MS : LOBBY_MS);
+    };
+    void pump();
     return () => {
       cancelled = true;
-      if (intervalId) clearInterval(intervalId);
+      if (intervalId) clearTimeout(intervalId);
     };
   }, [selectedRoomId, user]);
 
