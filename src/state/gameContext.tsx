@@ -26,7 +26,7 @@ import {
   canHostCity, canHostStation, SETTLEMENT_DEFS,
   COLLECTOR_COST,
   BUILDING_DEFS, buildingCostForNextLevel, buildingTimeForNextLevel,
-  buildingLevel, shipyardSlotsAtBody,
+  buildingLevel, shipyardSlotsAtBody, buildingFitsHost,
 } from '../game/settlements';
 import { computeSecretReveal } from '../game/secrets';
 import { checkVictory } from '../game/victory';
@@ -3156,7 +3156,7 @@ export function GameContextProvider({
         logger.warn('ACTION', 'queueBuilding: unknown kind', { kind });
         return prev;
       }
-      if (def.hostType !== target.type) {
+      if (!buildingFitsHost(kind, target.type)) {
         logger.warn('ACTION', 'queueBuilding: host type mismatch', {
           kind, requires: def.hostType, settlementType: target.type,
         });

@@ -36,6 +36,8 @@ import { TargetPriorityCards } from './TargetPriorityCards';
 import { ChainOrderEditor } from './ChainOrderEditor';
 import { GroupIntercept } from './GroupIntercept';
 import { useBulkChain } from '../hooks/useBulkChain';
+import { useDepartureCheck, DepartureWarning } from '../hooks/useDepartureCheck';
+import { DepartureConfirm } from './DepartureConfirm';
 import { useIsMobile } from '../hooks/useIsMobile';
 import type { ChainStep } from '../physics/chainPlanner';
 import { t, tn } from '../i18n/core';
@@ -152,11 +154,14 @@ export const GroupActionBar: React.FC = () => {
     return t('grp.allOfClass', { name: getShipClass(classes[0] as ShipClassName).displayName.toUpperCase() });
   }, [mine]);
 
-  // Destination list for the picker — every body, alphabetical, matching
-  // the Fleet panel's transfer dropdown so the two read the same. Own
-  // worlds carry a ★ because "where do I already hold ground" is the
-  // question you're usually answering when you move a group.
-  const groupMove = useCallback((bodyId: string) => {
+  // ASK FIRST when the send would leave a world of yours with no
+  // warships: the trip time and the bare world, before a burn that
+  // cannot be called back after a tick (R2-C2). Only parked hulls leave
+  // anywhere; the ones under way are already gone.
+  const departureCheck = useDepartureCheck();
+  const [departAsk, setDepartAsk] = useState<{ warning: DepartureWarning; go: () => void } | null>(null);
+
+  const launchGroupMove = useCallback((bodyId: string) => {
     const body = gameState.bodies.find(b => b.id === bodyId);
     const targets = movable.map(s => s.id);
     const flying = underWay.map(s => s.id);
@@ -191,6 +196,12 @@ export const GroupActionBar: React.FC = () => {
       setShowSend(false);
     }
   }, [bulkTransfer, bulkChain, gameState.bodies, movable, underWay]);
+
+  const groupMove = useCallback((bodyId: string) => {
+    const warning = departureCheck(movable.map(s => s.id), bodyId);
+    if (warning) setDepartAsk({ warning, go: () => launchGroupMove(bodyId) });
+    else launchGroupMove(bodyId);
+  }, [departureCheck, movable, launchGroupMove]);
 
   const done = useCallback(() => {
     clearShipSelection();
@@ -241,6 +252,8 @@ export const GroupActionBar: React.FC = () => {
   // result. The targeting flyout closes with it: it was scoped to the
   // old group.
   useEffect(() => {
+    // A different group is a different order: never confirm the old one.
+    setDepartAsk(null);
     if (ownChangeRef.current) { ownChangeRef.current = false; return; }
     setNotice(null);
     setShowTargeting(false);
@@ -341,6 +354,12 @@ export const GroupActionBar: React.FC = () => {
   };
 
   const applyChain = () => {
+    if (routable.length === 0 || chain.length === 0) return;
+    const warning = departureCheck(movable.map(s => s.id), chain[0].bodyId);
+    if (warning) setDepartAsk({ warning, go: runChain });
+    else runChain();
+  };
+  const runChain = () => {
     const targets = routable.map(s => s.id);
     if (targets.length === 0 || chain.length === 0) return;
     const res = bulkChain(targets, chain, (msg) => setNotice(msg));
@@ -467,8 +486,16 @@ export const GroupActionBar: React.FC = () => {
       </button>
     </div>
   );
+  const departConfirm = departAsk && (
+    <DepartureConfirm
+      warning={departAsk.warning}
+      onConfirm={() => { const go = departAsk.go; setDepartAsk(null); go(); }}
+      onCancel={() => setDepartAsk(null)}
+    />
+  );
   const flyouts = (
     <>
+      {departConfirm}
       {/* Target-priority flyout — every drop applies to the whole group
           immediately, matching the stance buttons' apply model. */}
       {mpActions && showTargeting && gunners.length > 0 && (

@@ -275,6 +275,14 @@ export function buildingAllowedAt(kind: BuildingKind, body: Body): boolean {
   return true;
 }
 
+/** Whether a settlement of this type may host the building. hostType
+ *  'any' (the lab) fits both; a bare `def.hostType !== s.type` check
+ *  reads 'any' as a mismatch and silently refused every lab order. */
+export function buildingFitsHost(kind: BuildingKind, settlementType: SettlementType): boolean {
+  const host = BUILDING_DEFS[kind]?.hostType;
+  return host === 'any' || host === settlementType;
+}
+
 /** Returns the current level (or 0) of a building at this settlement. */
 export function buildingLevel(s: Settlement, kind: BuildingKind): number {
   return s.buildings?.[kind] ?? 0;
@@ -488,7 +496,7 @@ export function suggestSettlementName(
 ): string {
   const fromPool = pickFromPool(pool, existing.map(s => s.name));
   if (fromPool) return fromPool;
-  const fromBank = randomSettlementName(type, existing.map(s => s.name));
+  const fromBank = randomSettlementName(type, existing.map(s => s.name), body.name);
   if (fromBank) return fromBank;
   const countAtBody = existing.filter(s => s.bodyId === body.id && s.type === type).length;
   const suffix = type === 'city' ? 'City' : 'Station';

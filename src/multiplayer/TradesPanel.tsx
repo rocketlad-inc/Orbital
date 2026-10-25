@@ -8,6 +8,7 @@
 // inbound WS message from the lobby socket (registered globally).
 // ============================================================
 
+import { freighterTradeLock } from './tradeLock';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   apiFetch,
@@ -31,8 +32,7 @@ import { apiErrorText } from '../i18n/apiErrors';
 import { focusTradeCard, useTradeFocus } from './tradeFocus';
 import { AssetDealRow } from './AssetDealRow';
 import './AssetDealsCard.css';
-import { hasFeature, requirementFor, requirementLabel } from '../game/researchUnlocks';
-import { TECH_DEFS } from '../game/techs';
+import { requirementLabel } from '../game/researchUnlocks';
 import { onSituation } from './situationFeed';
 
 /** The last full read per game, so a reopen draws at once (R2-B3). */
@@ -121,15 +121,8 @@ export function TradesPanel({ gameId, view = 'deals' }: {
   // (that crashed the trade tab: "useGameContext must be used within
   // GameContextProvider"). Instead /me now returns tech_levels +
   // gating_enabled, and we run the same pure predicate the hook uses.
-  const tradeLock = useMemo(() => {
-    if (!me) return null; // still loading — don't flash a lock
-    const enabled = (me.gating_enabled ?? 0) === 1; // absent (old server) → ungated
-    if (hasFeature('hull.freighter', me.tech_levels, enabled)) return null;
-    const req = requirementFor('hull.freighter');
-    if (!req) return null;
-    const track = TECH_DEFS[req.track]?.name ?? req.track;
-    return { label: req.label, where: `${track} ${req.level}` };
-  }, [me]);
+  // A freighter in hand or the research to build one (tradeLock.ts).
+  const tradeLock = useMemo(() => freighterTradeLock(me), [me]);
   // Built at render, not inside the memo, so it follows the language.
   const lockText = tradeLock ? t('trade.unlocksAt', { where: tradeLock.where }) : '';
 

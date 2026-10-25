@@ -373,6 +373,8 @@ export type MyFaction = Faction & {
    *  carrierCapFor — the same function the add-ship endpoint enforces
    *  with. Absent on older server responses; treat as 1. */
   carrier_cap?: number;
+  /** Active freighters this faction owns. Absent on older responses. */
+  freighters?: number;
 };
 
 export type Message = {

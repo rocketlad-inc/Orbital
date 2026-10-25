@@ -564,6 +564,7 @@ export const review: Catalog = {
   'eventlog.ev.mega.abortedStood': 'O ataque de {owner} contra {where} foi cancelado — eles recuaram',
   'eventlog.ev.mstruct.abandoned': '{what} SE APAGA — {gone} sumiu, e a estrutura deles está sem dono. O primeiro casco a chegar até ela a toma.',
   'eventlog.ev.mstruct.claimed': '{taker} reivindicou {what}, abandonada — resgate, não conquista: não restava ninguém para impedir.',
+  'eventlog.ev.mstruct.complete': '{who} concluiu a construção de {what}',
   'eventlog.ev.mstruct.takenOp': '{what} TOMADA — {taker} abordou a estrutura operacional de {from}',
   'eventlog.ev.mstruct.takenOpToll': '{what} TOMADA — {taker} abordou a estrutura operacional de {from} — {lost} de metal em obras foi destruído na abordagem',
   'eventlog.ev.mstruct.takenSite': '{what} TOMADA — {taker} abordou o canteiro de obras de {from}',

@@ -424,9 +424,11 @@ export function formatChronicleEvent(
     const sType = settlementText(parsed.settlement_type as string | undefined);
     // A server default name ("Station", "New City") says nothing the type
     // does not: "fundou Station (estação)" read as a bug (Leo, 2026-10-24).
-    // English keeps its line as is (the machine-truth contract).
+    // The machine-truth English copy keeps its line as is; the English
+    // SHOWN to players drops it too ("founded station Station on
+    // Miranda", playtest R2-C6).
     const rawName = (parsed.settlement_name as string) ?? null;
-    const sName = rawName && (en || !/^(station|new city|city)$/i.test(String(raw.settlement_name ?? '')))
+    const sName = rawName && ((en && !opts.names) || !/^(station|new city|city)$/i.test(String(raw.settlement_name ?? '')))
       ? rawName : null;
     const where = (parsed.body_name as string) ?? T('fb.aBody');
     const owner = nameOfFaction(ev.actor_faction_id, parsed.owner_faction_name as string | undefined);
@@ -593,6 +595,14 @@ export function formatChronicleEvent(
     const owner = nameOfFaction(ev.actor_faction_id, parsed.faction_name as string | undefined);
     const where = ((parsed.world as string) ?? T('fb.aWorld')).toUpperCase();
     return out('○ ', T(parsed.reason === 'moved' ? 'mega.abortedMoved' : 'mega.abortedStood', { owner, where }));
+  }
+
+  // A STRUCTURE FINISHED. It had no line at all, so the log showed the
+  // raw key "megastructure_complete" (playtest R2-C6).
+  if (ev.kind === 'megastructure_complete') {
+    const who = nameOfFaction(ev.actor_faction_id, parsed.faction_name as string | undefined);
+    const what = ((parsed.structure as string) ?? T('fb.aStructure')).toUpperCase();
+    return out('⬢ ', T('mstruct.complete', { who, what }));
   }
 
   // DERELICTION AND SALVAGE.
@@ -1013,5 +1023,7 @@ export function formatChronicleEvent(
       : T('trade.lost', { sender, recipient, cargo }));
   }
 
-  return out('', ev.kind);
+  // A kind with no line yet. The machine copy keeps the id; a player is
+  // never shown "some_event_key" (playtest R2-C6).
+  return out('', en && !opts.names ? ev.kind : ev.kind.replace(/_/g, ' '));
 }

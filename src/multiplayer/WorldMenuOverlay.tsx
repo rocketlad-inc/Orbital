@@ -720,6 +720,14 @@ export const WorldMenuOverlay: React.FC = () => {
     // already_queued: the tap the screen had not caught up with. What was
     // asked for is already happening, so there is nothing to tell them.
     if (res && !res.ok && res.code !== 'already_queued') setErrMsg(res.error ?? t('worldmenu.err.buildRejected'));
+    // EVERY SPEND SAYS SO (playtest R2-C4): the tag only changes once the
+    // next /state lands, so the click itself confirms what was paid for.
+    else if (res?.ok) {
+      const what = tk(`worldmenu.building.${kind}`, kind.toUpperCase());
+      setNoteMsg(waiting
+        ? t('worldmenu.build.refunded', { what })
+        : t('worldmenu.build.ordered', { what, lv: nextBuildingLevel(settlement, kind), where: settlement.name }));
+    }
   };
   /** "Waits behind Lab: #2 in line, paid now." for the armed confirm. */
   const waitsBehindText = (s: Settlement) => {
@@ -748,10 +756,31 @@ export const WorldMenuOverlay: React.FC = () => {
     );
     setFounding(type);
     const res = await mpActions?.deploySettlement({ bodyId: openId, type, name });
+    if (res?.ok) {
+      // STAYS BUSY UNTIL THE STATION IS ON SCREEN. The 201 lands a
+      // moment before the /state that carries the new settlement, and in
+      // that gap the button went back to its price ("24M · 16C"), which
+      // read as "it charged me and built nothing" (playtest R2-C4). The
+      // effect below clears this once the slot is filled.
+      setFoundPending({ type, bodyId: openId });
+      setNoteMsg(t(type === 'city' ? 'worldmenu.found.doneCity' : 'worldmenu.found.doneStation', { name, body: body.name }));
+    } else if (res) {
+      setErrMsg(res.error ?? (type === 'city' ? t('worldmenu.err.couldNotFoundCity') : t('worldmenu.err.couldNotFoundStation')));
+    }
     setFounding(null);
-    if (res && !res.ok) setErrMsg(res.error ?? (type === 'city' ? t('worldmenu.err.couldNotFoundCity') : t('worldmenu.err.couldNotFoundStation')));
-    else if (res?.ok) setNoteMsg(t(type === 'city' ? 'worldmenu.found.doneCity' : 'worldmenu.found.doneStation', { name, body: body.name }));
   };
+  const [foundPending, setFoundPending] = useState<{ type: SettlementType; bodyId: string } | null>(null);
+  useEffect(() => {
+    if (!foundPending) return;
+    const filled = foundPending.bodyId === openId
+      && (foundPending.type === 'city' ? anyCity : anyStation);
+    if (filled || foundPending.bodyId !== openId) { setFoundPending(null); return; }
+    // A state that never arrives must not lock the button for good.
+    const id = window.setTimeout(() => setFoundPending(null), 10_000);
+    return () => window.clearTimeout(id);
+  }, [foundPending, openId, anyCity, anyStation]);
+  const busyFounding = (type: SettlementType) =>
+    founding === type || (foundPending?.type === type && foundPending.bodyId === openId);
 
   // ---- founding a city / station (MP rules, mirrors BodyInspector) ----
   // station : UNGATED — a Colony Ship here, OR an owned settlement here
@@ -1038,8 +1067,8 @@ export const WorldMenuOverlay: React.FC = () => {
       <button
         key={type}
         className={`wm-bbtn wm-found${raw ? ' wm-found--locked' : ''}`}
-        disabled={(!enabled && !raw) || founding === type}
-        aria-busy={founding === type}
+        disabled={(!enabled && !raw) || busyFounding(type)}
+        aria-busy={busyFounding(type)}
         title={title}
         onClick={() => {
           // A raw world's city plot opens the way to living: the terraform
@@ -1051,7 +1080,7 @@ export const WorldMenuOverlay: React.FC = () => {
       >
         <span className="wm-bbtn-nm">{isCity ? t('worldmenu.found.btnCity') : t('worldmenu.found.btnStation')}</span>
         <span className="wm-bbtn-st">
-          {founding === type ? t('worldmenu.found.busy') : cityLock && isCity && !raw ? `🔒 ${sub}` : sub}
+          {busyFounding(type) ? t('worldmenu.found.busy') : cityLock && isCity && !raw ? `🔒 ${sub}` : sub}
         </span>
       </button>
     );
@@ -1451,7 +1480,7 @@ export const WorldMenuOverlay: React.FC = () => {
   );
   const outEl = (
     <div className="wm-out">
-      <span className="wm-label">{t('worldmenu.output')}</span>
+      <span className="wm-label" title={t('worldmenu.outputTip')}>{t('worldmenu.output')}</span>
       {yieldsEl}
       {stockEl}
     </div>
@@ -1908,7 +1937,7 @@ export const WorldMenuOverlay: React.FC = () => {
           {settlementsEl}
           {canFoundStation && orbitEls}
           <RuinsCard bodyId={body.id} />
-          <div className="wmp-ov-row"><span className="wm-label">{t('worldmenu.output')}</span>{yieldsEl}</div>
+          <div className="wmp-ov-row"><span className="wm-label" title={t('worldmenu.outputTip')}>{t('worldmenu.output')}</span>{yieldsEl}</div>
           <div className="wmp-ov-row">{stockEl}</div>
           {worldExtrasEl}
           {body.secret?.revealed && (body.secret.customName || body.secret.customText) && (

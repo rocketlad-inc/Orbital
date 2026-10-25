@@ -62,6 +62,50 @@ const FX_DELAY_MS = 1700;
 
 const KEY = () => `recap:lastSeenCount:${typeof window !== 'undefined' ? window.location.pathname : 'default'}`;
 
+/** The tick a headline is stamped with ("T+12  ..."), or -1. */
+const tickOfLine = (line: string | undefined): number => {
+  const m = /^T\+(\d+)/.exec(line ?? '');
+  return m ? Number(m[1]) : -1;
+};
+
+/**
+ * Where the unseen part of the log starts, and the watermark to store.
+ *
+ * THE WATERMARK WAS A COUNT, and a count is not a place in the log. The
+ * first non-empty log a fresh page sees is not always the full one, so a
+ * reload could store a smaller count than the last visit's, and the next
+ * load then read most of the history as new: the WATCH RECAP banner came
+ * back after a 5 s reload (playtest R2-C12). It is now the last headline
+ * seen plus its tick, and it only ever moves FORWARD.
+ *
+ * Old stored values (a bare count) are still read, once.
+ */
+export function recapWatermark(
+  log: string[],
+  stored: string | null,
+): { start: number; next: string | null } {
+  const last = log[log.length - 1];
+  const lastTick = tickOfLine(last);
+  const nextMark = JSON.stringify({ tick: lastTick, line: last ?? '' });
+  if (stored == null) return { start: 0, next: nextMark };
+  let mark: { tick: number; line: string } | null = null;
+  try {
+    const j = JSON.parse(stored);
+    if (j && typeof j === 'object' && typeof j.tick === 'number') mark = { tick: j.tick, line: String(j.line ?? '') };
+  } catch { /* the old bare count */ }
+  if (!mark) {
+    const n = parseInt(stored, 10) || 0;
+    return { start: log.length - Math.max(0, Math.min(log.length, log.length - n)), next: nextMark };
+  }
+  // Never backwards: a log that ends before the mark is a partial one.
+  if (lastTick < mark.tick) return { start: log.length, next: null };
+  const at = mark.line ? log.lastIndexOf(mark.line) : -1;
+  if (at >= 0) return { start: at + 1, next: nextMark };
+  let start = log.length;
+  for (let i = 0; i < log.length; i++) if (tickOfLine(log[i]) > mark.tick) { start = i; break; }
+  return { start, next: nextMark };
+}
+
 interface Scene { bodyId?: string; shipId?: string; fx?: 'boom' | 'bloom' | 'spark'; lines: string[] }
 
 /** Camera target for a chronicle entry. Ship-loss rows carry a SHIP
@@ -142,12 +186,13 @@ export const RecapOverlay: React.FC = () => {
     if (log.length === 0) return;
     evaluatedRef.current = true;
 
-    let stored = 0;
-    try { stored = parseInt(localStorage.getItem(KEY()) ?? '0', 10) || 0; } catch { /* fine */ }
-    // Advance immediately — see header. A rolling window can shrink the
-    // array, so clamp instead of trusting subtraction.
-    try { localStorage.setItem(KEY(), String(log.length)); } catch { /* fine */ }
-    const fresh = Math.max(0, Math.min(log.length, log.length - stored));
+    let stored: string | null = null;
+    try { stored = localStorage.getItem(KEY()); } catch { /* fine */ }
+    // Advance immediately — see header — and only ever forward
+    // (recapWatermark).
+    const { start, next } = recapWatermark(log, stored);
+    if (next) { try { localStorage.setItem(KEY(), next); } catch { /* fine */ } }
+    const fresh = Math.max(0, log.length - start);
     if (fresh === 0) return;
 
     const focus = gameState.chronicleFocus ?? [];

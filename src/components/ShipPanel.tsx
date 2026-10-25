@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from 'react';
+import { landingTick, ticksUntil } from '../game/wholeTicks';
 import { NON_WORLD_TYPES } from '../game/victory';
 import { useGameContext } from '../state/gameContext';
 import { Ship, Body, Settlement, TradeRoute, TargetPriorityKey, CameraState } from '../types';
@@ -366,7 +367,7 @@ export const ShipPanel: React.FC = () => {
     const nameOf = (id: string | undefined | null) =>
       (id ? gameState.bodies.find(b => b.id === id)?.name : null) ?? t('ship.panel.unknownLower');
     const eta = (arrive: number | undefined) =>
-      arrive == null ? '' : t('ship.panel.arrives', { tick: Math.round(arrive), n: Math.max(0, Math.round(arrive - now)) });
+      arrive == null ? '' : t('ship.panel.arrives', { tick: landingTick(arrive), n: ticksUntil(arrive, now) });
 
     const out: Array<{
       key: string; kind: 'goto' | 'wait'; dest: string; label: string; meta: string;
@@ -460,7 +461,7 @@ export const ShipPanel: React.FC = () => {
         return {
           id: t.id,
           name: t.name,
-          meetIn: Math.max(0, Math.round(tr.arriveTick - now)),
+          meetIn: ticksUntil(tr.arriveTick, now),
           dest: gameState.bodies.find(b => b.id === tr.targetBodyId)?.name ?? '?',
           shipClass: t.class,
           iconVariant: t.iconVariant,
@@ -1855,14 +1856,14 @@ export const ShipPanel: React.FC = () => {
                         {t('ship.panel.meetThenTogether', { n: meetIn.toFixed(0), name: targetBody?.name ?? plan.targetBodyId })}
                       </div>
                       <div className="order-details" style={{ color: '#6ee7b7' }} title={t('ship.panel.dvTip')}>
-                        {t('ship.panel.etaDv', { eta: Math.max(0, plan.arriveTick - gameState.currentTick).toFixed(0), dv: fmtDv(plan.totalDv) })}
+                        {t('ship.panel.etaDv', { eta: ticksUntil(plan.arriveTick, gameState.currentTick), dv: fmtDv(plan.totalDv) })}
                       </div>
                     </>
                   ) : (
                     <>
                       <div className="order-type">→ {targetBody?.name ?? plan.targetBodyId}</div>
                       <div className="order-details" title={t('ship.panel.dvTip')}>
-                        {t('ship.panel.etaDv', { eta: Math.max(0, plan.arriveTick - gameState.currentTick).toFixed(0), dv: fmtDv(plan.totalDv) })}
+                        {t('ship.panel.etaDv', { eta: ticksUntil(plan.arriveTick, gameState.currentTick), dv: fmtDv(plan.totalDv) })}
                       </div>
                       {pendingNode && gateNote(ship.orbit.parentBodyId, plan.targetBodyId, plan.arriveTick - plan.startTick)}
                     </>
@@ -1954,7 +1955,7 @@ export const ShipPanel: React.FC = () => {
                 <div className="order-info">
                   <div className="order-type">→ {targetBody?.name ?? qt.targetBodyId}</div>
                   <div className="order-details" title={t('ship.panel.dvTip')}>
-                    {t('ship.panel.queuedLine', { dv: fmtDv(qt.totalDv), n: Math.max(0, Math.ceil(qt.arriveTick - gameState.currentTick)) })}
+                    {t('ship.panel.queuedLine', { dv: fmtDv(qt.totalDv), n: ticksUntil(qt.arriveTick, gameState.currentTick) })}
                   </div>
                   {gateNote(legFrom, qt.targetBodyId, qt.arriveTick - qt.startTick)}
                 </div>
@@ -5910,8 +5911,7 @@ const TradeRouteSection: React.FC<{
     if (ship.transit) {
       const plan = ship.transit.currentTransfer;
       const to = bodies.find(b => b.id === plan.targetBodyId);
-      const eta = Math.max(0, plan.arriveTick - currentTick);
-      nextAction = t('ship.panel.underWayTo', { name: to?.name ?? t('ship.panel.destinationWord'), n: Math.round(eta) });
+      nextAction = t('ship.panel.underWayTo', { name: to?.name ?? t('ship.panel.destinationWord'), n: ticksUntil(plan.arriveTick, currentTick) });
     } else if (here === route.destBodyId && cargoTotal > 0) {
       nextAction = t('ship.panel.unloadingAt', { name: dest?.name ?? t('ship.panel.destinationWord') });
     } else if (here && mineBodyIds.has(here)) {
