@@ -57,9 +57,9 @@ export const NEVER_CULL_IDS = ['Kai68RfB5BhV'];
 /** Accounts whose activity is not a person's: every QA domain except the
  *  unsaved trial accounts, which are real visitors. */
 const NOT_HUMAN_DOMAINS = QA_DOMAINS.filter(d => !d.includes('shadow'));
-const humanUser = (col) => NOT_HUMAN_DOMAINS.map(d => `${col} NOT LIKE '${d}'`).join(' AND ');
+export const humanUser = (col) => NOT_HUMAN_DOMAINS.map(d => `${col} NOT LIKE '${d}'`).join(' AND ');
 /** A player action in analytics_events (adminDashboard.js IS_ACTION). */
-const IS_ACTION = `e.kind <> 'heartbeat' AND e.kind NOT LIKE 'POST perf%'`;
+export const IS_ACTION = `e.kind <> 'heartbeat' AND e.kind NOT LIKE 'POST perf%'`;
 
 const stamp = (ms) => (ms ? new Date(ms).toISOString().slice(0, 16).replace('T', ' ') : null);
 
@@ -79,16 +79,18 @@ export async function findIdleGames(env, nowMs, opts = {}) {
   const cutoff = nowMs - CULL_AFTER_MS;
   const limit = opts.limit ?? MAX_GAMES_PER_RUN;
   const noCull = opts.noCullColumn === false ? '0' : 'COALESCE(g.no_cull, 0)';
-  // The exact last human action (all history, one scan per game) is for the
-  // report only; the sweep decides on the rollup plus the cutoff-bounded vetoes.
-  const detail = opts.detail === true;
+  // Plain `?` placeholders only: scripts/cull-dry-run-prod.mjs inlines the
+  // values into read-only SQL and does not understand numbered ones.
   const never = NEVER_CULL_IDS.map(id => `'${id}'`).join(', ');
+  // (No SQL comments in these queries: the read-only prod script flattens
+  // them onto one line.) raw_ms: the rollup leaves out unsaved trial players,
+  // so a TRIAL game's last action is read from its raw events (a few rows).
   const rows = (await env.DB.prepare(
     `SELECT g.id, r.name, g.status, g.current_tick, g.started_at, g.created_at, g.solo, g.trial,
             s.last_action_ms, s.last_beat_ms,
             MAX(COALESCE(s.last_action_ms, 0), COALESCE(g.started_at, g.created_at, 0)) AS rollup_ms,
-            ${detail ? `(SELECT MAX(e.created_at_ms) FROM analytics_events e JOIN users u ON u.id = e.user_id
-              WHERE e.game_id = g.id AND ${IS_ACTION} AND ${humanUser('u.email')})` : 'NULL'} AS raw_ms,
+            CASE WHEN g.trial = 1 THEN (SELECT MAX(e.created_at_ms) FROM analytics_events e JOIN users u ON u.id = e.user_id
+              WHERE e.game_id = g.id AND ${IS_ACTION} AND ${humanUser('u.email')}) END AS raw_ms,
             (SELECT COUNT(*) FROM game_factions f JOIN users u ON u.id = f.user_id
               WHERE f.game_id = g.id AND f.ai_doctrine IS NULL AND ${humanUser('u.email')}) AS humans
        FROM games g
@@ -98,16 +100,16 @@ export async function findIdleGames(env, nowMs, opts = {}) {
         AND ${noCull} = 0
         AND COALESCE(g.is_test_game, 0) = 0
         AND g.id NOT IN (${never})
-        AND MAX(COALESCE(s.last_action_ms, 0), COALESCE(g.started_at, g.created_at, 0)) < ?1
+        AND MAX(COALESCE(s.last_action_ms, 0), COALESCE(g.started_at, g.created_at, 0)) < ?
         AND NOT EXISTS (SELECT 1 FROM analytics_events e JOIN users u ON u.id = e.user_id
-                         WHERE e.game_id = g.id AND e.created_at_ms >= ?1 AND ${IS_ACTION}
+                         WHERE e.game_id = g.id AND e.created_at_ms >= ? AND ${IS_ACTION}
                            AND ${humanUser('u.email')})
         AND NOT EXISTS (SELECT 1 FROM game_factions f JOIN users u ON u.id = f.user_id
-                         WHERE f.game_id = g.id AND f.joined_at >= ?1 AND f.ai_doctrine IS NULL
+                         WHERE f.game_id = g.id AND f.joined_at >= ? AND f.ai_doctrine IS NULL
                            AND ${humanUser('u.email')})
       ORDER BY rollup_ms ASC, g.id ASC
-      LIMIT ?2`,
-  ).bind(cutoff, limit).all()).results ?? [];
+      LIMIT ?`,
+  ).bind(cutoff, cutoff, cutoff, limit).all()).results ?? [];
   return rows.map(r => {
     const last = Math.max(Number(r.rollup_ms) || 0, Number(r.raw_ms) || 0);
     const hadAction = (Number(r.last_action_ms) || Number(r.raw_ms) || 0) > 0;
@@ -149,9 +151,9 @@ export async function findIdleLobbies(env, nowMs, opts = {}) {
         WHERE r.status = 'lobby'
           AND NOT EXISTS (SELECT 1 FROM games g WHERE g.id = r.id)
      ) x
-      WHERE x.last_ms < ?1
+      WHERE x.last_ms < ?
       ORDER BY x.last_ms ASC, x.id ASC
-      LIMIT ?2`,
+      LIMIT ?`,
   ).bind(cutoff, limit).all()).results ?? [];
   return rows.map(r => ({
     id: r.id,
@@ -316,7 +318,7 @@ export async function sweepIdle(env, nowMs = Date.now(), opts = {}) {
   try {
     if (opts.dryRun) {
       const [games, lobbies] = await Promise.all([
-        findIdleGames(env, nowMs, { limit: opts.limit ?? 1000, noCullColumn: opts.noCullColumn, detail: true }),
+        findIdleGames(env, nowMs, { limit: opts.limit ?? 1000, noCullColumn: opts.noCullColumn }),
         findIdleLobbies(env, nowMs, { limit: opts.limit ?? 1000 }),
       ]);
       return { dryRun: true, enabled: await cullEnabled(env), cutoffMs: nowMs - CULL_AFTER_MS, games, lobbies };

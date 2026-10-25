@@ -1492,6 +1492,8 @@ async function handleBrowse(_req, env, ctx) {
 
 /** GET /api/lobby/mine — the caller's own games, same shape as Browse. */
 async function handleMine(_req, env, ctx) {
+  // Closed rooms are hidden, except a lobby the idle cull closed (cull_log,
+  // migration 0187): it stays on the player's list, labelled closed.
   const rows = (await env.DB
     .prepare(`SELECT ${ROOM_COLS}, rm.archived_at_ms
                 FROM room_members rm
@@ -1499,10 +1501,7 @@ async function handleMine(_req, env, ctx) {
                 JOIN users u ON u.id = r.host_id
                 LEFT JOIN games g ON g.id = r.id
                WHERE rm.user_id = ?
-                 AND (r.status != 'closed'
-                      -- ...except a lobby the idle cull closed: it stays on
-                      -- the player's list, labelled (cull_log, migration 0187).
-                      OR EXISTS (SELECT 1 FROM cull_log c WHERE c.id = r.id AND c.kind = 'lobby'))
+                 AND (r.status != 'closed' OR EXISTS (SELECT 1 FROM cull_log c WHERE c.id = r.id AND c.kind = 'lobby'))
                ORDER BY r.updated_at DESC
                LIMIT 60`)
     .bind(ctx.session.user_id).all()).results ?? [];
