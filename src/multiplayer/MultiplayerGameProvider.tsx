@@ -59,7 +59,7 @@ import { getLang, t } from '../i18n/core';
 import { bodyName, settlementName, shipName } from '../i18n/names';
 import { apiErrorText } from '../i18n/apiErrors';
 import { useI18n } from '../i18n/react';
-import { formatChronicleEvent } from './eventText';
+import { formatChronicleEvent, isPactOnlyTrade } from './eventText';
 
 // The end-of-game page (and, behind its button, the whole-match film). Split
 // out of the main bundle: it pulls in charts, the map renderer and the replay
@@ -1936,7 +1936,8 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
 
   // Server returns newest-first; we want chronological for both the UI log
   // and the audit mirror.
-  const orderedEvents = (srv.events ?? []).slice().reverse();
+  // A pact-only deal is said once, by its treaty_signed row (R2-B6).
+  const orderedEvents = (srv.events ?? []).slice().reverse().filter(ev => !isPactOnlyTrade(ev));
   // Detonator blast FX (render/combatFx §2): any ship_detonated
   // chronicle entry we haven't seen yet gets pushed onto a module-level
   // FX queue that the map renderer drains. Pure cosmetics — the queue

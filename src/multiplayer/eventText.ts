@@ -152,6 +152,25 @@ export function customSecretMessage(lang: Lang, raw: Payload): string | null {
   return T('secret.custom', { body, name: name ?? T('secret.discovery'), text: tail });
 }
 
+/**
+ * A deal of pacts and nothing else. Accepting one writes a trade_accepted
+ * row AND a treaty_signed row per pact (worker/trades.js), so the log said
+ * the same NAP twice at T+1 (playtest R2-B6). The event log keeps the
+ * treaty line and drops this one.
+ */
+export function isPactOnlyTrade(ev: Pick<ChronicleEventRow, 'kind' | 'payload'>): boolean {
+  if (ev.kind !== 'trade_accepted') return false;
+  let p: Payload = {};
+  try { p = JSON.parse(ev.payload || '{}') ?? {}; } catch { return false; }
+  const pacts = Array.isArray(p.pacts) ? p.pacts : [];
+  if (pacts.length === 0) return false;
+  const sum = (b: unknown) => {
+    const o = (b && typeof b === 'object' ? b : {}) as Record<string, unknown>;
+    return ['metal', 'fuel', 'gold', 'science'].reduce((s, k) => s + (Number(o[k]) || 0), 0);
+  };
+  return sum(p.offer) === 0 && sum(p.request) === 0;
+}
+
 export function formatChronicleEvent(
   ev: ChronicleEventRow,
   ctx: EventTextCtx,
@@ -795,6 +814,8 @@ export function formatChronicleEvent(
   };
 
   if (ev.kind === 'trade_accepted') {
+    // (A pact-only deal is filtered out of the log upstream:
+    // isPactOnlyTrade. This still words it for any other caller.)
     const proposer = nameOfFaction(ev.actor_faction_id);
     const responder = nameOfFaction(ev.target_faction_id);
     const offer = fmtBundle(parsed.offer);

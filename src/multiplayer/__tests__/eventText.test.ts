@@ -7,7 +7,7 @@
 // and also fuzzed against it over ~100k random payloads), so a wording
 // "fix" here is a deliberate contract change: update the classifiers too.
 
-import { formatChronicleEvent, secretMessage } from '../eventText';
+import { formatChronicleEvent, secretMessage, isPactOnlyTrade } from '../eventText';
 import { getLang, setLang } from '../../i18n/core';
 
 const ctx = { factionNameById: new Map([['f1', 'Cerean Union'], ['f2', 'Zed Corp']]) };
@@ -535,5 +535,19 @@ describe('discovery sentences', () => {
     expect(secretMessage('pt-BR', { kind: 'deep_cache', body_name: 'Ceres' })).toBeNull();
     expect(secretMessage('pt-BR', { kind: 'who_knows', body_name: 'Ceres' })).toBeNull();
     expect(secretMessage('pt-BR', { kind: 'derelict_warship' })).toBeNull();
+  });
+});
+
+// R2-B6: a pact-only deal wrote trade_accepted AND treaty_signed, and the
+// log said the NAP twice. The log drops the trade row for those.
+describe('isPactOnlyTrade', () => {
+  const row = (payload: object) => ({ kind: 'trade_accepted', payload: JSON.stringify(payload) });
+  it('is a pact deal with no goods either way', () => {
+    expect(isPactOnlyTrade(row({ pacts: ['nap'], offer: { metal: 0, gold: 0 }, request: {} }))).toBe(true);
+  });
+  it('is not a deal that moves goods, nor one with no pact', () => {
+    expect(isPactOnlyTrade(row({ pacts: ['nap'], offer: { metal: 50 }, request: {} }))).toBe(false);
+    expect(isPactOnlyTrade(row({ pacts: [], offer: { metal: 50 }, request: { gold: 5 } }))).toBe(false);
+    expect(isPactOnlyTrade({ kind: 'treaty_signed', payload: '{"kind":"nap"}' })).toBe(false);
   });
 });
