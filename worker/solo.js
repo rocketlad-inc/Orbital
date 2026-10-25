@@ -24,7 +24,7 @@
 // faction as a computer empire is game_factions.ai_doctrine (0181).
 //
 // Routes:
-//   POST  /api/solo                       { rivals, difficulty, speed_ms, personalities }
+//   POST  /api/solo                       { rivals, difficulty, speed_ms, personalities, map_id? }
 //   POST  /api/games/:gameId/solo/pause
 //   POST  /api/games/:gameId/solo/resume
 //   POST  /api/games/:gameId/solo/step    one tick while paused
@@ -34,6 +34,8 @@
 import { getOrCreateAgentUser } from './auth.js';
 import { startGame } from './lobby.js';
 import { PERSONALITIES, SURPRISE_DECKS, doctrineFor } from './aiPersona.js';
+import { mapMakerEnabled, canHostMaps } from './customMaps.js';
+import { normalizeMap, startWorlds, hostBlockers } from '../src/game/customMap.js';
 
 const json = (data, init = {}) => new Response(JSON.stringify(data), {
   ...init, headers: { 'content-type': 'application/json', ...(init.headers ?? {}) },
@@ -74,7 +76,7 @@ async function aiUsers(env, n) {
 
 // POST /api/solo
 async function handleCreate(req, env, ctx) {
-  const made = await createSoloGame(env, ctx.session.user_id, (await readJson(req)) ?? {});
+  const made = await createSoloGame(env, ctx.session.user_id, (await readJson(req)) ?? {}, { session: ctx.session });
   if (made.error) return made.error;
   return json({ ok: true, game_id: made.id, rivals: made.rivals, difficulty: made.difficulty, speed_ms: made.speed });
 }
@@ -82,11 +84,22 @@ async function handleCreate(req, env, ctx) {
 /**
  * Seat `userId` and 1-5 computer empires in a new solo game and start it.
  * `body` is POST /api/solo's ({ rivals, difficulty, speed_ms,
- * personalities }); `trial` (worker/trial.js) flags a Play for Free game.
- * Returns { id, rivals, difficulty, speed } or { error: Response }.
+ * personalities, map_id }); `trial` (worker/trial.js) flags a Play for
+ * Free game. Returns { id, rivals, difficulty, speed } or { error: Response }.
  */
-export async function createSoloGame(env, userId, body, { trial = false } = {}) {
-  const rivals = Math.max(1, Math.min(SOLO_MAX_RIVALS, Math.floor(Number(body.rivals ?? SOLO_DEFAULT_RIVALS)) || SOLO_DEFAULT_RIVALS));
+export async function createSoloGame(env, userId, body, { trial = false, session = null } = {}) {
+  let rivals = Math.max(1, Math.min(SOLO_MAX_RIVALS, Math.floor(Number(body.rivals ?? SOLO_DEFAULT_RIVALS)) || SOLO_DEFAULT_RIVALS));
+  // A CUSTOM MAP (Lorne, 2026-10-25): the Commission's, like hosting one,
+  // but from the gallery as well as your own maps. The room snapshots the
+  // map exactly as a hosted room does, and lobby.startGame seeds from it;
+  // rivals are capped at its start worlds less the player's own.
+  let customMap = null;
+  if (body.map_id != null && !trial) {
+    const picked = await soloMap(env, session, body.map_id);
+    if (picked.error) return { error: picked.error };
+    customMap = picked;
+    rivals = Math.min(rivals, picked.starts - 1);
+  }
   const difficulty = SOLO_DIFFICULTIES.includes(body.difficulty) ? body.difficulty : 'normal';
   const speed = SOLO_SPEEDS.includes(Number(body.speed_ms)) ? Number(body.speed_ms) : SOLO_DEFAULT_SPEED;
   // Seat by seat: a named personality, or "surprise" (anything else) for
@@ -112,9 +125,10 @@ export async function createSoloGame(env, userId, body, { trial = false } = {}) 
   // code skips the password (invites.js), and the in-game Invite button
   // only shows when there is one. The listings skip solo games by flag.
   await env.DB.batch([
-    env.DB.prepare(`INSERT INTO rooms (id, name, host_id, status, max_players, created_at, updated_at, invite_code, password_hash, quick_join)
-                    VALUES (?, ?, ?, 'lobby', ?, ?, ?, NULL, ?, 0)`)
-      .bind(id, name, me.id, seats.length, now, now, 'solo:no-entry'),
+    env.DB.prepare(`INSERT INTO rooms (id, name, host_id, status, max_players, created_at, updated_at, invite_code, password_hash, quick_join,
+                                       custom_map_id, custom_map_json)
+                    VALUES (?, ?, ?, 'lobby', ?, ?, ?, NULL, ?, 0, ?, ?)`)
+      .bind(id, name, me.id, seats.length, now, now, 'solo:no-entry', customMap?.id ?? null, customMap?.json ?? null),
     ...seats.map((u, i) => env.DB
       .prepare("INSERT INTO room_members (room_id, user_id, joined_at, join_method) VALUES (?, ?, ?, ?)")
       .bind(id, u.id, now + i, i === 0 ? 'host' : 'solo_ai')),
@@ -138,6 +152,31 @@ export async function createSoloGame(env, userId, body, { trial = false } = {}) 
     await env.DB.prepare('UPDATE games SET trial = 1, host_seen_ms = ? WHERE id = ?').bind(Date.now(), id).run();
   }
   return { id, rivals, difficulty, speed };
+}
+
+/** The custom map a solo game may be played on: the caller's own, or one
+ *  in the public gallery, hostable as it stands. The Commission's (or an
+ *  operator's), like hosting one. Returns { id, json, starts } or
+ *  { error: Response }. The SNAPSHOT is the map as saved, secrets and
+ *  all: in a game they stay on the server until they are found. */
+async function soloMap(env, session, mapId) {
+  if (!session || !(await mapMakerEnabled(env, session))) return { error: err(404, 'not_found', 'map not found') };
+  if (!(await canHostMaps(env, session))) {
+    return { error: err(402, 'commission_required',
+      "Playing a custom map solo is part of the Commander's Commission.") };
+  }
+  if (!/^map_[A-Za-z0-9]+$/.test(String(mapId))) return { error: err(400, 'bad_request', 'map_id is not a map') };
+  const row = await env.DB
+    .prepare('SELECT id, map_json FROM custom_maps WHERE id = ? AND (published = 1 OR owner_user_id = ?)')
+    .bind(mapId, session.user_id).first();
+  if (!row) return { error: err(404, 'not_found', 'map not found') };
+  let map;
+  try { map = normalizeMap(JSON.parse(row.map_json)); } catch { return { error: err(409, 'bad_map', 'that map could not be read') }; }
+  const blockers = hostBlockers(map);
+  if (blockers.length > 0) {
+    return { error: json({ error: { code: 'map_blocked', message: blockers.map(b => b.title).join('; '), blockers } }, { status: 409 }) };
+  }
+  return { id: row.id, json: JSON.stringify(map), starts: startWorlds(map).worlds.length };
 }
 
 /** The caller's solo game, or an error. Only its one person may drive the
