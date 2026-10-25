@@ -1322,7 +1322,7 @@ function FunnelCells({ f }: { f: Funnel }) {
       <td className="num">{n(f.visitors)}</td>
       {cell(f.engaged, 'Stayed 10 seconds or touched the page')}
       {cell(f.pressed_play, 'Pressed Play free or Sign in, reaching the sign-in screen')}
-      {cell(f.tried, 'Started a Play for Free trial game (no account)')}
+      {cell(f.tried, 'Started a trial game (no account)')}
       {cell(f.started, 'Opened Sign up, or submitted email / Google')}
       <td className="num" title="Sign-up or sign-in refused, or the Google button failed">
         {f.errors ? <span style={{ color: 'var(--ao-bad, #e5484d)' }}>{n(f.errors)}</span> : <span className="ao-dim">0</span>}
@@ -1343,7 +1343,7 @@ const TRAFFIC_COLS: Array<{ key: string; name: string; help: string }> = [
   { key: 'visitors', name: 'Visitors', help: 'Browsers that arrived this way, counted once on their first visit. One person on a phone and a laptop counts twice.' },
   { key: 'engaged', name: 'Engaged', help: 'Stayed on the page 10 seconds with it visible, or tapped or scrolled it. Leaves out instant bounces and most robots.' },
   { key: 'pressed_play', name: 'Pressed Play', help: 'Reached the sign-in screen: pressed Play free or Sign in. Includes people who already had an account and signed in.' },
-  { key: 'tried', name: 'Tried free', help: 'Started a Play for Free trial game from the sign-in screen, with no account. Saving it later counts under Signed up.' },
+  { key: 'tried', name: 'Trial game', help: 'Started a trial game from the sign-in screen, with no account. Saving it into a new account counts under Signed up and Took a seat; saving into an account they already had does not.' },
   { key: 'started', name: 'Started sign-up', help: 'Began making an account: opened the Sign up tab, sent the email form, or finished the Google step.' },
   { key: 'errors', name: 'Errors', help: 'A sign-up or sign-in the game refused, or the Google button failing (common inside the Reddit and Facebook apps).' },
   { key: 'signed_up', name: 'Signed up', help: 'Made a new account.' },
@@ -1363,7 +1363,7 @@ const HelpTh = ({ k, num, children }: { k: string; num?: boolean; children: Reac
 const FUNNEL_HEAD = (
   <>
     <HelpTh k="visitors" num>Visitors</HelpTh><HelpTh k="engaged" num>Engaged</HelpTh>
-    <HelpTh k="pressed_play" num>Pressed Play</HelpTh><HelpTh k="tried" num>Tried free</HelpTh><HelpTh k="started" num>Started sign-up</HelpTh>
+    <HelpTh k="pressed_play" num>Pressed Play</HelpTh><HelpTh k="tried" num>Trial game</HelpTh><HelpTh k="started" num>Started sign-up</HelpTh>
     <HelpTh k="errors" num>Errors</HelpTh><HelpTh k="signed_up" num>Signed up</HelpTh>
     <HelpTh k="seated" num>Took a seat</HelpTh><HelpTh k="came_back" num>Came back</HelpTh>
   </>

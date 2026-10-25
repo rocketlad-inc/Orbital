@@ -92,7 +92,7 @@ export function TrialPanel({ data, now }: { data: TrialData; now: number }) {
   const total = trials.length;
 
   const stages = [
-    { label: 'Started a trial', count: total, help: 'Pressed Try out a Solo Game and got a game.' },
+    { label: 'Started a trial game', count: total, help: 'Pressed Try out a Solo Game and got a game.' },
     { label: 'Saw the tour', count: trials.filter(t => t.furthest > 0).length, help: 'The trial tour showed its first step.' },
     { label: 'Started the clock', count: trials.filter(t => t.m.has('trial-clock') || t.tick > 0).length, help: 'The game is born paused; the tour ends by starting it.' },
     { label: 'Played 5+ minutes', count: trials.filter(t => t.minutes >= 5).length, help: 'Five or more minutes with the game open and in view.' },
@@ -144,7 +144,7 @@ export function TrialPanel({ data, now }: { data: TrialData; now: number }) {
     <section className="ao-panel tp">
       <div className="ao-phead">
         <div>
-          <h3 className="ao-phead__title">Play for Free</h3>
+          <h3 className="ao-phead__title">Trial Game</h3>
           <p className="ao-phead__hint">
             Trial games of the last 30 days, started from the sign-in page with no account. Each is followed by its game,
             because saving moves it into a real account. Tour, clock and save-prompt moments are recorded from Oct 25, so earlier trials show none.
@@ -170,7 +170,7 @@ export function TrialPanel({ data, now }: { data: TrialData; now: number }) {
           </div>
 
           <h4 className="tp-sub">How far trials get</h4>
-          <div className="tp-funnel" role="table" aria-label="Play for Free funnel">
+          <div className="tp-funnel" role="table" aria-label="Trial game funnel">
             {stages.map((s, i) => (
               <div className="tp-row" role="row" key={s.label} title={s.help}>
                 <span className="tp-row__label" role="rowheader">{s.label}</span>
