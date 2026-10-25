@@ -61,7 +61,7 @@ const READY_GRACE_MS = 60_000;
  *  least this much to be taken. */
 const GATE_AUTOPILOT_MIN_LEG = 20;
 const GATE_AUTOPILOT_MIN_SAVING = 3;
-import { SHIP_COMBAT_STATS, parkPhaseFor, categorizeBodyForSecret, BODY_CATALOG } from './factions.js';
+import { SHIP_COMBAT_STATS, parkPhaseFor, categorizeBodyForSecret, BODY_CATALOG, colonyArrivalDefault } from './factions.js';
 import { launchCompletedMobileSites } from './megaLaunch.js';
 import { OFFER_KINDS, offerStatements, settleExpiredOffers } from './discoveryOffers.js';
 import { advanceMissileBuilds, resolveMissiles } from './missiles.js';
@@ -4986,15 +4986,16 @@ export class Room {
                orbit_m0, orbit_epoch, orbit_direction,
                fuel, fuel_max, status, built_at_tick,
                hp, hp_max, damage_per_tick, icon_variant, parts_json,
-               home_body_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 1, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)`,
+               home_body_id, deploy_on_arrival)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 1, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .bind(shipId, gameId, b.faction_id, shipName, b.ship_class,
                 b.body_id, rp, ra, tick, fuelMax, fuelMax, tick,
                 spawnHp, hp, dmg, b.icon_variant ?? null,
                 parts.length > 0 ? JSON.stringify(parts) : null,
                 // The yard that built it is where it runs to (0126).
-                b.body_id),
+                b.body_id,
+                colonyArrivalDefault(b.ship_class)),
         this.env.DB
           .prepare('DELETE FROM game_body_build_queue WHERE id = ?')
           .bind(b.id),
