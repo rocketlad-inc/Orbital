@@ -60,13 +60,16 @@ import {
   TECH_MAX_LEVEL,
   type TechId,
 } from '../game/techs';
-import { unlocksAt, isMegastructureUnlock, megastructureNextStep } from '../game/researchUnlocks';
+import {
+  unlocksAt, isMegastructureUnlock, megastructureNextStep,
+  hasFeature, HULL_FEATURE, BUILDING_FEATURE, type FeatureId,
+} from '../game/researchUnlocks';
 import {
   computeIncomePerTick,
   BUILDING_DEFS,
   buildingLevel,
 } from '../game/settlements';
-import { SHIP_CLASSES, getShipClass } from '../game/shipClasses';
+import { SHIP_CLASSES, BUILDABLE_CLASSES, getShipClass } from '../game/shipClasses';
 import { SECRET_DEFS } from '../game/secrets';
 import { isDiscoveryAcked } from '../game/discoveryAck';
 import { offerTitle, upkeepText } from '../components/DiscoveryOfferCard';
@@ -88,17 +91,20 @@ import { t as tr, tn as trn, tk as trk, fmtNumber, getLang } from '../i18n/core'
 const CITY_BUILDINGS: BuildingKind[] = ['forge', 'mint', 'lab', 'shields', 'missile_silo'];
 const STATION_BUILDINGS: BuildingKind[] = ['weapons', 'lab', 'shipyard'];
 
-/** Cheapest hull anyone can lay down — the floor for "can I build a
- *  ship at all". Computed once from the class table. */
-const CHEAPEST_SHIP_COST = (() => {
-  let best = { fuel: Infinity, ore: Infinity, credits: Infinity };
+/** Cheapest hull this empire may lay down — the floor for "can I build
+ *  a ship at all". Only buildable classes it has the research for: a
+ *  floor priced off a locked hull nags about a yard nothing can use. */
+function cheapestShipCost(unlocked: (f: FeatureId | undefined) => boolean): ResBundle | null {
+  let best: ResBundle | null = null;
   let bestTotal = Infinity;
-  for (const def of Object.values(SHIP_CLASSES)) {
-    const t = (def.cost.fuel ?? 0) + (def.cost.ore ?? 0) + (def.cost.credits ?? 0);
-    if (t < bestTotal) { bestTotal = t; best = def.cost; }
+  for (const cls of BUILDABLE_CLASSES) {
+    if (!unlocked(HULL_FEATURE[cls])) continue;
+    const c = SHIP_CLASSES[cls].cost;
+    const t = (c.fuel ?? 0) + (c.ore ?? 0) + (c.credits ?? 0);
+    if (t < bestTotal) { bestTotal = t; best = { fuel: c.fuel ?? 0, ore: c.ore ?? 0, credits: c.credits ?? 0 }; }
   }
   return best;
-})();
+}
 
 interface ResBundle { fuel: number; ore: number; credits: number }
 /** Next-level cost of a building = base × scaling^currentLevel. */
@@ -1247,6 +1253,15 @@ export function useSituationItems(
       return { ore, credits, fuel };
     };
 
+    // RESEARCH GATES, the same predicate useFeatureGate and the server
+    // use. A row nudging you to build something research still locks
+    // (an upgrade behind Construction 2, a hull behind Propulsion 1) is
+    // advice with no action behind it (playtest R2-C3).
+    const techLevels = gameState.factionTech?.[factionId]?.levels;
+    const gatingOn = gameState.gatingEnabled === true;
+    const unlocked = (f: FeatureId | undefined) => !f || hasFeature(f, techLevels, gatingOn);
+    const cheapestHull = cheapestShipCost(unlocked);
+
     // --- Shared combat context ---
     // Both the NOW-tier sections and the contextual promotion of idle
     // yards need to know where the shooting is (hostile parked at a
@@ -1598,7 +1613,7 @@ export function useSituationItems(
         // Only an opportunity if you could actually lay down a hull.
         // Broke → nothing to do here, don't nag. (Under threat, above,
         // we still surface it — that's a warning, not an opportunity.)
-        if (!canPay(spendableAt(body.id), CHEAPEST_SHIP_COST)) continue;
+        if (!cheapestHull || !canPay(spendableAt(body.id), cheapestHull)) continue;
         push({
           id: `idle_shipyard:${body.id}`,
           category: 'idle_shipyard',
@@ -1783,11 +1798,11 @@ export function useSituationItems(
       if (waiting.length > 0) {
         // Whether a hauler is free changes the advice from "build one"
         // to "assign one", so say which.
-        const freeHaulers = (gameState.ships ?? []).filter(sh =>
-          sh.ownedBy === factionId
-          && sh.class === 'freighter'
-          && !sh.transit
-          && !(gameState.tradeRoutes ?? []).some(r => r.shipId === sh.id)).length;
+        // THE SAME idle set section 4 lists. A second, looser definition
+        // here had the report say "freighter parked, no trade route" and
+        // "no idle freighter, terraforming needs one" in the same breath
+        // (playtest R2-C3).
+        const freeHaulers = idleFreighters.length;
         const first = waiting[0];
         push({
           id: 'terraform_unstarted',
@@ -2232,7 +2247,12 @@ export function useSituationItems(
         const canBuildSomething = () => {
           const have = spendableAt(s.bodyId);
           const kinds = s.type === 'city' ? CITY_BUILDINGS : STATION_BUILDINGS;
-          return kinds.some(kind => canPay(have, nextBuildingCost(kind, buildingLevel(s, kind))));
+          return kinds.some(kind => {
+            const level = buildingLevel(s, kind);
+            // Research gates only the FIRST level (BodyInspector, server).
+            if (level === 0 && !unlocked(BUILDING_FEATURE[kind])) return false;
+            return canPay(have, nextBuildingCost(kind, level));
+          });
         };
         const done = buildingDoneRef.current.get(s.id);
         // A COMPLETION IS NEWS FOR A FEW TICKS, NOT A STANDING DECISION.
