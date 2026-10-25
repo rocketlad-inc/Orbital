@@ -57,7 +57,7 @@ import {
 } from './filmReel';
 import { beatCaption, billName, broadcastCopy, buildBeats, captionFor, type Caption } from './filmCaptions';
 import { sagaPair, portraitUrl, type SagaBeat, type SagaScript } from './sagaScript';
-import { drawCaptainCard, drawCastCard, drawCrawl, drawFlash, drawRollCall, drawTransmission } from './sagaOverlay';
+import { drawActCard, drawCaptainCard, drawCastCard, drawCrawl, drawFlash, drawRollCall, drawTransmission } from './sagaOverlay';
 import {
   drawBattleTally, drawClock, drawCountChips, drawLowerThird, drawProgress,
   drawResultCard, drawStandings, drawTicker, drawTitleCard, drawVignette,
@@ -73,6 +73,10 @@ import {
 const CAST_CARD_SECONDS = 2.7;
 /** Seconds a transmission from the public channel stays up. */
 const TRANSMISSION_SECONDS = 7.2;
+/** Seconds an act's title card holds as its scene opens. */
+const ACT_CARD_SECONDS = 2.2;
+/** An act's weight in the edit: above any scene the log alone can earn. */
+const ACT_WEIGHT = 1000;
 /** The share of a scripted film kept for wide shots of the living system. */
 const ESTABLISHING_SHARE = 0.18;
 /** How many days of freighter traffic a trade lane shows. */
@@ -739,15 +743,37 @@ export function createMatchMap(
     // one it is not about for less; so do the fights.
     if (saga) {
       const used = new Set<ReelBeat>();
+      sagaBattle.clear();
       for (const sb of saga.beats) {
+        // AN ACT THAT IS A FIGHT lands on the film's own battle at that
+        // world (or its planet, when it was a moon), and the battle takes
+        // the act's words. With no fight the film can show, a scene at the
+        // world.
+        if (sb.kind === 'battle') {
+          const bt = battles.find(b => sb.tick >= b.from - 3 && sb.tick <= b.to + 3
+            && [b.body, ...(b.theatre ?? [])].some(id => byId.get(id)?.name === sb.world));
+          if (bt) { sagaBattle.set(bt, sb); continue; }
+          beats.push({ tick: sb.tick, kind: 'battle_act', body: bodyNamed(sb.world), weight: ACT_WEIGHT,
+            fid: sb.fid, target: sb.target, text: sb.title, data: { saga: sb }, lead: 1 });
+          continue;
+        }
         // A veteran is matched by name: two captains can die on one day.
         const hit = beats.find(e => !used.has(e) && e.kind === sb.kind && Math.abs(e.tick - sb.tick) <= 1
           && (!sb.fid || !e.fid || e.fid === sb.fid || e.target === sb.fid)
           && (!sb.veteran || e.data?.captain_name === sb.veteran));
         if (hit) {
           used.add(hit);
-          hit.weight = Math.max(hit.weight, sb.weight);
+          // AN ACT IS ALWAYS IN THE FILM: it outbids every other scene (the
+          // planner fills its budget best-first; acts are the story).
+          hit.weight = Math.max(hit.weight, sb.act ? ACT_WEIGHT : sb.weight);
           hit.data = { ...(hit.data ?? {}), saga: sb };
+          // Acts days apart both play: a two-day lead-in made the second
+          // overlap the first (NEXT: the gang on day 241, the knife on 244).
+          if (sb.act) hit.lead = Math.min(hit.lead ?? 2, 1);
+          // An act about an empire is shot on it: a declaration or a vote
+          // with no world of its own frames its target's home, not the
+          // whole system.
+          if (sb.act && !hit.body) hit.body = homeOf(sb.target ?? sb.fid ?? '') ?? null;
           if (sb.veteran) {
             hit.hold = Math.max(hit.hold ?? 0, 6.4); hit.lead = Math.max(hit.lead ?? 2, 3);
             hit.place = `veteran:${sb.veteran}`;
@@ -758,10 +784,12 @@ export function createMatchMap(
           // veteran on a world the log row did not name): where it happened
           // if the record says, else the whole system.
           const body = sb.veteran ? bodyNamed(saga.veterans.find(v => v.name === sb.veteran)?.world)
-            : sb.fid ? (homeOf(sb.fid) ?? null) : null;
+            : sb.act && sb.kind !== 'arc_lead' && sb.target ? (homeOf(sb.target) ?? null)
+              : sb.fid ? (homeOf(sb.fid) ?? null) : null;
           const e: ReelBeat = { tick: sb.tick, kind: sb.kind, body: sb.kind === 'trade_accepted' ? null : body,
-            weight: sb.weight, fid: sb.fid, target: sb.target, text: sb.title, data: { saga: sb } };
+            weight: sb.act ? ACT_WEIGHT : sb.weight, fid: sb.fid, target: sb.target, text: sb.title, data: { saga: sb } };
           if (sb.veteran) { e.hold = 6.4; e.lead = 3; e.place = `veteran:${sb.veteran}`; }
+          if (sb.act) e.lead = 1;
           beats.push(e);
           used.add(e);
         }
@@ -775,6 +803,8 @@ export function createMatchMap(
         const pair = b.sides.length >= 2 ? saga.boosts.pairs[sagaPair(b.sides[0], b.sides[1])] : undefined;
         const fid = Math.max(...b.sides.map(f => saga.boosts.fids[f] ?? 0), 0);
         b.boost = pair ?? (fid > 0 ? Math.min(1.2, fid) : 0.8);
+        // A fight that is an act of the story always makes the cut.
+        if (sagaBattle.has(b)) b.boost = Math.max(b.boost, 10);
       }
     }
 
@@ -2535,6 +2565,24 @@ export function createMatchMap(
   };
 
   const captionCache = new Map<ReelScene, Caption>();
+  /** The fights that are acts of the season's story, with the act's words. */
+  const sagaBattle = new Map<ReelBattle, SagaBeat>();
+  /** An act card's rule: the protagonist's colour, the thread through
+   *  every act, so the eye learns whose story it is. */
+  const actColor = (sb: SagaBeat) => { const p = saga?.arc?.protagonist ?? sb.fid; return p ? colorOf(p) : null; };
+  /** The season's first act, when it lands inside the opening act. */
+  const openingAct = saga?.beats.find(b => b.act) ?? null;
+  /** The act a scene opens, if it opens one: the scene a beat act became,
+   *  or the scene of an act's fight that holds its day (else its peak). */
+  const actOf = (s: ReelScene): SagaBeat | null => {
+    const sb = s.beat?.data?.saga as SagaBeat | undefined;
+    if (s.kind === 'beat' && sb?.act) return sb;
+    const bt = s.kind === 'battle' && s.battle ? sagaBattle.get(s.battle) : undefined;
+    if (!bt?.act) return null;
+    const mine = scenes.filter(x => x.battle === s.battle);
+    const holds = mine.find(x => bt.tick >= x.from && bt.tick < x.to) ?? mine.find(x => x.phase === 'peak') ?? mine[0];
+    return holds === s ? bt : null;
+  };
   /** Every title already on screen: none is shown twice. */
   const usedTitles = new Set<string>();
   /** The headline a time-lapse carries, so the ticker does not repeat it. */
@@ -2619,7 +2667,11 @@ export function createMatchMap(
         const b = s.battle;
         const name = b.name ?? c.title;
         const nm = (fid: string | null | undefined) => shortName(filmFaction(fid)?.name ?? '');
-        if (s.phase === 'open') {
+        const act = actOf(s);
+        if (act) {
+          // An act of the story: its words, and the fight's name under them.
+          c = { kicker: act.kicker, title: act.title, sub: act.because || name, fid: act.fid };
+        } else if (s.phase === 'open') {
           // Inside a sentence the name is lower case: "The first shots of the Second Battle of Mars".
           c = { ...c, title: T('battle.firstShots', { name: name.replace(/^The\b/, 'the') }),
             sub: s.track ? T('battle.flyIn', { a: nm(s.track.fid), n: s.track.n })
@@ -2827,6 +2879,15 @@ export function createMatchMap(
       } else if (el < ROLL_CALL_END) {
         ltRight = drawLowerThird(ctx, W, H, { kicker: T('kicker.start'), title: T('title.begin', { n: empires.length }),
           sub: '', color: null }, el / 0.2, (el - (ROLL_CALL_END - 0.2)) / 0.2);
+      } else if (openingAct && openingAct.tick < s.to) {
+        // THE SEASON OPENS INSIDE THE LAND GRAB (a rise in its first weeks):
+        // the act's card, then its words, over the land grab's pictures.
+        const sb = openingAct, at = ROLL_CALL_END + 0.1;
+        drawActCard(ctx, W, H, { act: sb.kicker.split(' · ')[0] || `ACT ${sb.act!.n}`, title: sb.act!.title,
+          season: saga?.arc?.name, color: actColor(sb) }, (el - at) / ACT_CARD_SECONDS);
+        ltRight = drawLowerThird(ctx, W, H, { kicker: sb.kicker, title: sb.title, sub: sb.because,
+          color: sb.fid ? colorOf(sb.fid) : null },
+        (el - at - ACT_CARD_SECONDS + 0.35) / 0.2, (el - (s.seconds - 0.2)) / 0.2);
       } else if (n > 0) {
         ltRight = drawLowerThird(ctx, W, H, { kicker: T('land.kicker'),
           title: T('land.title', { n, d: Math.max(1, s.to - s.from) }),
@@ -2839,9 +2900,21 @@ export function createMatchMap(
       // A montage line is a quick read: in and out briskly.
       // SNAP IN, HOLD, SNAP OUT: a 1.3 s fade left a two-second beat
       // fully legible for under one.
+      // A scene that opens an act shows the act card first, then its line.
+      const after = actOf(s) ? ACT_CARD_SECONDS - 0.35 : 0;
       ltRight = drawLowerThird(ctx, W, H, { kicker: c.kicker, title: c.title, sub: c.sub,
         color: c.fid ? colorOf(c.fid) : null },
-      el / 0.2, (el - (s.seconds - 0.18)) / 0.18);
+      (el - after) / 0.2, (el - (s.seconds - 0.18)) / 0.18);
+    }
+    // AN ACT OPENS (the season's story): "ACT I · THE TALL POPPY", then its
+    // title, as the scene begins.
+    {
+      const sb = !intro && !finale ? actOf(s) : null;
+      if (sb?.act) {
+        drawActCard(ctx, W, H, { act: sb.kicker.split(' · ')[0] || `ACT ${sb.act.n}`, title: sb.act.title,
+          season: sb.act.n === 1 ? saga?.arc?.name : undefined, color: actColor(sb) },
+        (el - 0.1) / ACT_CARD_SECONDS);
+      }
     }
 
     // EVERY WAR, PEACE AND PACT, as it happens (see buildToasts).
@@ -2960,7 +3033,9 @@ export function createMatchMap(
       const why = summary.game.victory_type === 'engineering' && dysonOwner ? T('title.dysonDone')
         : c.title;
       drawLowerThird(ctx, W, H, { kicker: c.kicker, title: why,
-        sub: summary.game.victory_type === 'engineering' ? T('sub.engineering') : '',
+        // The season's last line, when the story has one ("Everyone came for
+        // the Ministry. The Ministry is still here.").
+        sub: saga?.arc?.finale || (summary.game.victory_type === 'engineering' ? T('sub.engineering') : ''),
         color: c.fid ? colorOf(c.fid) : null }, (el - (finaleDyson() ? DYSON_SEALED_AT + 0.1 : 0.9)) / 0.2,
         (el - (FINALE_CARD_AT - 0.15)) / 0.15);
       // The table comes in once the light has rolled out. With a script it

@@ -20,6 +20,23 @@ export interface SagaBeat {
   /** A veteran captain's name, on a captain_lost scene. */
   veteran?: string;
   remaining?: number;
+  /** An act of the season's story: its number, of how many, and title.
+   *  Kinds an act can land on that the log does not have as a row: 'battle'
+   *  (a fight, found by `world`) and 'arc_lead' (a change of leader). */
+  act?: { n: number; of: number; key: string; title: string };
+  world?: string;
+}
+
+/** The season's story (worker/saga/arcs.js). */
+export interface SagaArc {
+  key: string;
+  name: string;
+  protagonist: string | null;
+  nemesis: string | null;
+  acts: Array<{ n: number; key: string; title: string; tick: number; kind: string }>;
+  /** The finale's line, under the winner. */
+  finale: string;
+  considered: Array<{ key: string; score: number }>;
 }
 
 export interface SagaVeteran {
@@ -37,6 +54,8 @@ export interface SagaScript {
   mood: 'ember' | 'violet' | 'gold' | 'ice';
   /** Seconds of film. */
   runtime: number;
+  /** Engine 3 and later: the arc, its protagonist and acts. */
+  arc?: SagaArc;
   crawl: { title: string; titleKind: 'law' | 'made'; credit: string; lines: string[]; seconds: number };
   cast: Array<{ fid: string; role: string; label: string; receipt: string; creed: string; tagline: string; home: string | null }>;
   rollCall: string[];
