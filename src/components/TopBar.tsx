@@ -38,6 +38,7 @@ import { t, tn } from '../i18n/core';
 import { useI18n, LanguageSwitch } from '../i18n/react';
 import { saveLocale } from '../i18n/account';
 import { inLang } from '../i18n/serverText';
+import { closeOpenSheets } from './BottomSheet';
 import { SoloClock, soloSpeedLabel, nextSoloSpeed, useSoloPending } from '../multiplayer/SoloClock';
 import { openSaveEmpire } from '../multiplayer/trial/SaveEmpire';
 import '../multiplayer/trial/trial.css';
@@ -217,7 +218,9 @@ export const TopBar: React.FC<TopBarProps> = ({
           // the multiplayer host's admin controls would fight it.
           isHost={isHost && !gameState.solo}
           activePanel={activePanel}
-          onTogglePanel={onTogglePanel}
+          // A phone's sheets (the ship card) sit over these panels: close
+          // them first, as the rail does.
+          onTogglePanel={(p) => { if (p) closeOpenSheets(); onTogglePanel(p); }}
           playerShipCount={playerShips.length}
           settlementCount={gameState.settlements.filter(s => s.ownedBy === 'player').length}
           researchTotal={(() => {
