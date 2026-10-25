@@ -1446,7 +1446,7 @@ export const WorldMenuOverlay: React.FC = () => {
   );
   const outEl = (
     <div className="wm-out">
-      <span className="wm-label">{t('worldmenu.output')}</span>
+      <span className="wm-label" title={t('worldmenu.outputTip')}>{t('worldmenu.output')}</span>
       {yieldsEl}
       {stockEl}
     </div>
@@ -1894,7 +1894,7 @@ export const WorldMenuOverlay: React.FC = () => {
           {settlementsEl}
           {canFoundStation && orbitEls}
           <RuinsCard bodyId={body.id} />
-          <div className="wmp-ov-row"><span className="wm-label">{t('worldmenu.output')}</span>{yieldsEl}</div>
+          <div className="wmp-ov-row"><span className="wm-label" title={t('worldmenu.outputTip')}>{t('worldmenu.output')}</span>{yieldsEl}</div>
           <div className="wmp-ov-row">{stockEl}</div>
           {worldExtrasEl}
           {body.secret?.revealed && (body.secret.customName || body.secret.customText) && (

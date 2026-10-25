@@ -191,10 +191,13 @@ export function FactionPanel({
   useEffect(() => {
     refresh();
     const iv = setInterval(refresh, 10_000);
-    // A pact signed or a war declared shows at once, not 10 s later.
+    // A pact signed or a war declared shows at once, not 10 s later. So
+    // does a TICK: the stockpile columns are ticked numbers, and reading
+    // them up to 10 s stale put "588" here beside the top bar's "591"
+    // (playtest R2-C5).
     const onWs = (e: Event) => {
       const d = (e as CustomEvent).detail;
-      if (d?.kind === 'trade' || d?.kind === 'treaty' || d?.type === 'wars_changed') void refresh();
+      if (d?.kind === 'trade' || d?.kind === 'treaty' || d?.type === 'wars_changed' || d?.type === 'tick') void refresh();
     };
     window.addEventListener('orbital:ws', onWs as EventListener);
     return () => { clearInterval(iv); window.removeEventListener('orbital:ws', onWs as EventListener); };
