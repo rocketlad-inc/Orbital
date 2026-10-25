@@ -153,12 +153,12 @@ const base: Catalog = {
   'trial.lobby.label': 'Salve seu império',
   'trial.lobby.body': 'Seu império vive só neste navegador. Salve-o para guardá-lo e para jogar com outros comandantes.',
   'trial.war.eyebrow': 'Guerra',
-  'trial.war.title': '{name} declarou guerra',
-  'trial.war.someone': 'Um vizinho',
+  'trial.war.title': 'Você está em guerra com {name}',
+  'trial.war.someone': 'um vizinho',
   'trial.war.body': 'As naves de guerra dele virão atrás dos seus mundos. Nada está perdido ainda:',
   'trial.war.tip1': 'Naves estacionadas num mundo lutam por ele sozinhas quando um inimigo chega. Mantenha suas naves de guerra em casa.',
   'trial.war.tip2': 'Construa mais naves de guerra no seu estaleiro agora. Uma frota chega junta, então reúna a sua.',
-  'trial.war.tip3': 'Se você assinou o pacto do Aliado, ele entra na guerra do seu lado.',
+  'trial.war.tip3': 'Um império que tem um pacto com você pode entrar na guerra do seu lado.',
   'trial.war.go': 'Aos seus postos',
 
   // ---- lobby: Solo ----

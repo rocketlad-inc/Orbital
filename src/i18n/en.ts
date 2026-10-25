@@ -148,12 +148,16 @@ const base = {
   'trial.lobby.label': 'Save your empire',
   'trial.lobby.body': 'Your empire lives only in this browser. Save it to keep it, and to play with other commanders.',
   'trial.war.eyebrow': 'War',
-  'trial.war.title': '{name} has declared war',
-  'trial.war.someone': 'A neighbour',
+  // The card shows for a war either side declared (TrialLayer reads only
+  // who you are at war with), so it never says who started it: "Mars
+  // Combine has declared war" greeted a player who had declared on Mars
+  // Combine (playtest R2-B1).
+  'trial.war.title': 'You are at war with {name}',
+  'trial.war.someone': 'a neighbour',
   'trial.war.body': 'Its warships will come for your worlds. Nothing is lost yet:',
   'trial.war.tip1': 'Ships parked at a world fight for it on their own when an enemy arrives. Keep your warships at home.',
   'trial.war.tip2': 'Build more warships at your shipyard now. A fleet arrives together, so mass yours.',
-  'trial.war.tip3': 'If you signed the Ally’s pact, it joins the war on your side.',
+  'trial.war.tip3': 'An empire that holds a pact with you may join the war on your side.',
   'trial.war.go': 'To your posts',
 
   // ---- lobby: Solo ----
