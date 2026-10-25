@@ -38,7 +38,7 @@ import { t, tn } from '../i18n/core';
 import { useI18n, LanguageSwitch } from '../i18n/react';
 import { saveLocale } from '../i18n/account';
 import { inLang } from '../i18n/serverText';
-import { SoloClock, soloSpeedLabel, nextSoloSpeed } from '../multiplayer/SoloClock';
+import { SoloClock, soloSpeedLabel, nextSoloSpeed, useSoloPending } from '../multiplayer/SoloClock';
 import { openSaveEmpire } from '../multiplayer/trial/SaveEmpire';
 import '../multiplayer/trial/trial.css';
 
@@ -153,7 +153,10 @@ export const TopBar: React.FC<TopBarProps> = ({
   // remaining time down. Multiplayer only — single-player has no
   // server-driven cadence (nextTickAt is undefined) and shows the sim-speed
   // controls instead.
-  const nextTickAt = gameState.nextTickAt;
+  // The clock's press shows at once, here and on the button alike.
+  const soloPending = useSoloPending(gameState.solo?.paused, gameState.tickIntervalMs);
+  const soloPaused = !!gameState.solo && !!soloPending.paused;
+  const nextTickAt = soloPaused ? undefined : gameState.nextTickAt;
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
     if (nextTickAt == null) return;
@@ -447,7 +450,10 @@ export const TopBar: React.FC<TopBarProps> = ({
       )}
 
       <div className="top-bar__time">
-        <div className={`time-display${tickCountdownLabel != null || gameState.solo?.paused ? ' time-display--ticking' : ''}`}>
+        {/* A solo game always holds the footprint: PAUSED, then a blank
+            while the first countdown arrives, then "next in" all differ in
+            width, and the clock button beside them slid sideways (Leo). */}
+        <div className={`time-display${tickCountdownLabel != null || gameState.solo ? ' time-display--ticking' : ''}`}>
           <div className="time-display__label">{t('topbar.tick')}</div>
           <div className="time-display__value">{tickStr}</div>
           {tickCountdownLabel != null && (
@@ -457,11 +463,11 @@ export const TopBar: React.FC<TopBarProps> = ({
             </div>
           )}
           {/* A paused solo game has no next tick: say so where it was. */}
-          {tickCountdownLabel == null && gameState.solo?.paused && (
+          {tickCountdownLabel == null && soloPaused && (
             <div className="time-display__countdown solo-paused">{t('solo.paused')}</div>
           )}
         </div>
-        {gameState.solo && mpActions?.gameId && <SoloClock gameId={mpActions.gameId} />}
+        {gameState.solo && mpActions?.gameId && <SoloClock gameId={mpActions.gameId} pending={soloPending} />}
         {!hideSimControls && !turnBasedActive && !mpTbmActive && (
           // Realtime sim controls. Hidden in Turn-Based Mode (replaced
           // below by the single COMMIT TURN button) and in multiplayer
