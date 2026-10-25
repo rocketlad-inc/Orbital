@@ -480,6 +480,7 @@ export const review = {
   'eventlog.ev.by.shipFaction': 'by {ship} ({faction})',
   'eventlog.ev.by.faction': 'by {faction}',
   // session and factions
+  'eventlog.ev.game.abandoned': 'GAME OVER — ended after 15 days without activity',
   'eventlog.ev.game.started_one': 'The game begins — {n} faction',
   'eventlog.ev.game.started_other': 'The game begins — {n} factions',
   'eventlog.ev.game.startedNames_one': 'The game begins — {n} faction: {names}',
@@ -700,6 +701,7 @@ export const review = {
   'ending.dur.minutes_other': '{n} minutes',
   'ending.verdict.annihilation': 'Was the last empire left standing',
   'ending.verdict.other': 'Won the game',
+  'ending.verdict.abandoned': 'The game ended after 15 days without activity.',
   'ending.chip.ticks_one': 'tick',
   'ending.chip.ticks_other': 'ticks',
   'ending.chip.empires_one': 'empire',

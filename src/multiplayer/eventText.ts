@@ -241,6 +241,9 @@ export function formatChronicleEvent(
       : N('game.started', factions.length));
   }
 
+  // Ended by the idle cull (worker/cull.js): nobody won.
+  if (ev.kind === 'game_abandoned') return out('⏹ ', T('game.abandoned'));
+
   if (ev.kind === 'faction_eliminated') {
     const name = nameOfFaction(ev.actor_faction_id, parsed.faction_name as string | undefined);
     return out('☠ ', T('faction.eliminated', { name }));

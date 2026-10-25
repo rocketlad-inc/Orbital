@@ -174,10 +174,14 @@ export function EndingPage({ gameId, meta, status, data, onReturn, renderFilm, s
   const victory = kind === 'victory';
   const victoryType = ready ? data.game.victoryType : meta.victoryType;
   const way = victoryWay(victoryType);
+  // Ended by the idle cull: nobody won, nobody earned a superlative, and a
+  // dead game is no place for a sales pitch.
+  const abandoned = victoryType === 'abandoned';
 
   const meParty = meId ? (ready ? me : meta.factions.find(f => f.id === meId)) ?? null : null;
 
   const verdictLine = (): string => {
+    if (abandoned) return t('ending.verdict.abandoned');
     if (!winnerName) return victoryType === 'annihilation' ? t('mp.provider.noSurvivor') : t('mp.provider.noWinner');
     switch (way) {
       case 'engineering': return t('mp.provider.vl.engineering');
@@ -223,7 +227,7 @@ export function EndingPage({ gameId, meta, status, data, onReturn, renderFilm, s
 
   // ---- the report-dependent sections ----
   const stats = ready && me ? myStats(data.factions, me) : null;
-  const groups = useMemo(() => (ready ? awardGroups(data.awards, data.factions) : []), [ready, data]);
+  const groups = useMemo(() => (ready && !abandoned ? awardGroups(data.awards, data.factions) : []), [ready, data, abandoned]);
   const dur = ready ? durationParts(data.game.durationMs) : null;
   const timeline = useMemo(() => (ready ? buildTimeline(data) : []), [ready, data]);
 
@@ -414,7 +418,7 @@ export function EndingPage({ gameId, meta, status, data, onReturn, renderFilm, s
         )}
 
         {/* ===================== The Commission ===================== */}
-        {plug && !showFilm && status !== 'loading' && (
+        {plug && !abandoned && !showFilm && status !== 'loading' && (
           <section {...rise()} aria-labelledby="ep-cm-h">
             <SectionHead id="ep-cm-h" title={t('mp.endgame.title')} />
             <Plug plug={plug} me={meParty} />

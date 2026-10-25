@@ -626,7 +626,9 @@ export function buildTimeline(data: EndingPayload): TimelineRow[] {
         const w = f(0);
         title = w ? ref('ending.tl.victory.title', { who: nm(w) }) : ref('ending.tl.victory.noWinner');
         const way = victoryWay(m.detail);
-        sub = way === 'annihilation' ? ref('ending.verdict.annihilation') : way ? ref(`mp.provider.vl.${way}`) : null;
+        sub = way === 'annihilation' ? ref('ending.verdict.annihilation')
+          : way ? ref(`mp.provider.vl.${way}`)
+          : m.detail === 'abandoned' ? ref('ending.verdict.abandoned') : null;
         break;
       }
       default:
