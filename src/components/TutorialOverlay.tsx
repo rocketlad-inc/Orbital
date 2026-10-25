@@ -56,10 +56,11 @@ function findTarget(targetId: string | null): Element | null {
 }
 
 /** Open dialogs the player acts in while a step waits (the destination
- *  list): the card keeps off them as it keeps off its target. */
+ *  list), and controls marked data-tutorial-avoid (a panel's close X): the
+ *  card keeps off them as it keeps off its target. */
 function openDialogRects(): Rect[] {
   const out: Rect[] = [];
-  document.querySelectorAll('.modal-content').forEach(el => {
+  document.querySelectorAll('.modal-content, [data-tutorial-avoid]').forEach(el => {
     const r = el.getBoundingClientRect();
     if (r.width > 0 && r.height > 0) out.push(snapRect(r));
   });
@@ -144,10 +145,14 @@ function placeCard(
   const GAP = 14;
   const MARGIN = 8;
   const topY = Math.max(MARGIN, ceilY);
+  // Under the top bar, unless the step points INTO the top bar (the menu,
+  // the clock): a card pushed up to the very edge covered its resources
+  // and START (tablet playtest, 2026-10-24).
+  const minY = targetRect && targetRect.y < topY ? MARGIN : topY;
   const maxY = Math.max(MARGIN, floorY - cardSize.height - MARGIN);
   const clamp = (x: number, y: number) => ({
     x: Math.max(MARGIN, Math.min(x, viewport.width - cardSize.width - MARGIN)),
-    y: Math.max(MARGIN, Math.min(y, maxY)),
+    y: Math.max(minY, Math.min(y, maxY)),
   });
   const centreX = (viewport.width - cardSize.width) / 2;
   const home = { x: viewport.width / 2 - 70, y: viewport.height / 2 - 70, width: 140, height: 140 };
@@ -238,6 +243,10 @@ function stepVars(): Record<string, string> {
     commit: t('ship.panel.commit'),
     city: bare(t('worldmenu.found.btnCity')),
     station: bare(t('worldmenu.found.btnStation')),
+    foundStation: t('ship.panel.foundStation'),
+    onArrival: t('ship.panel.onArrival'),
+    queue: t('econ.tech.queue'),
+    menu: 'ORBITAL',   // the wordmark itself (TopBar), not translated
     sitrep: t('dock.situation'),
   };
 }
@@ -445,7 +454,10 @@ export const TutorialOverlay: React.FC = () => {
       case 'transfer-committed':
         return playerOrderCount(gameState) > (base?.orders ?? 0);
       case 'research-started':
+        // Running, unlocked outright, or QUEUED behind nothing yet (a
+        // queue was the one way to "start" research that never ticked).
         return gameState.factionTech?.player?.researching != null
+          || (gameState.factionTech?.player?.queue?.length ?? 0) > 0
           || techLevelSum(gameState) > (base?.techLevels ?? Infinity);
       case 'pact-signed':
         return (gameState.peaceFactionIds?.length ?? 0) > (base?.peace ?? 0);

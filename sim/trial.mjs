@@ -83,6 +83,9 @@ const fleet = (await DB.prepare(`SELECT ship_class, COUNT(*) AS n FROM game_ship
                                    WHERE s.game_id = ? AND f.user_id = ? AND s.hp > 0 GROUP BY ship_class`).bind(G, shadowId).all()).results;
 const count = (c) => fleet.find(x => x.ship_class === c)?.n ?? 0;
 check('a head start: 3 extra corvettes and a freighter, at the capital', count('corvette') >= 4 && count('freighter') >= 1, JSON.stringify(fleet));
+const colonyOrder = await DB.prepare(`SELECT s.deploy_on_arrival AS d FROM game_ships s JOIN game_factions f ON f.id = s.owner_faction_id
+                                        WHERE s.game_id = ? AND f.user_id = ? AND s.ship_class = 'colony'`).bind(G, shadowId).first();
+check('the colony ship is set to found a station where it lands', colonyOrder?.d === 'station', JSON.stringify(colonyOrder));
 const pausedAtStart = await DB.prepare('SELECT paused, auto_paused, next_tick_at FROM games WHERE id = ?').bind(G).first();
 check('it starts with the clock stopped, for the tutorial', pausedAtStart.paused === 1 && pausedAtStart.auto_paused === 0 && pausedAtStart.next_tick_at == null, JSON.stringify(pausedAtStart));
 check('it is born paused: no moment after seeding when a cron pass could play its empires', pausedAtSeed[0] === 1, JSON.stringify(pausedAtSeed));

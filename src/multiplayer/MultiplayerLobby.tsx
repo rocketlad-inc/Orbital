@@ -370,7 +370,7 @@ const SOLO_SPEEDS: Array<[number, 'lobby.solo.speed.fast' | 'lobby.solo.speed.st
  * (worker/solo.js). Lorne's picks: 3 rivals, normal, 2 min a tick by
  * default. Collapsed it is one button; open, the three choices and Start.
  */
-function SoloCard({ onStarted }: { onStarted: (roomId: string) => void }) {
+export function SoloCard({ onStarted }: { onStarted: (roomId: string) => void }) {
   useI18n();
   const [open, setOpen] = useState(false);
   const [rivals, setRivals] = useState(3);
@@ -381,13 +381,47 @@ function SoloCard({ onStarted }: { onStarted: (roomId: string) => void }) {
   const [hintSeat, setHintSeat] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // THE MAP (Lorne, 2026-10-25): the Solar System, or a custom map of your
+  // own or from the gallery. The Commission's, like hosting one; null maps
+  // = no Map Maker on this server, so no choice at all.
+  const [maps, setMaps] = useState<{ list: SavedMap[]; canHost: boolean } | null>(null);
+  const [gallery, setGallery] = useState<GalleryPick[] | null>(null);
+  const [useCustom, setUseCustom] = useState(false);
+  const [mapId, setMapId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!open || maps) return;
+    let live = true;
+    apiFetch<{ maps: SavedMap[]; can_host: boolean }>('/api/maps').then(res => {
+      if (live && res.ok) setMaps({ list: res.data.maps, canHost: !!res.data.can_host });
+    });
+    return () => { live = false; };
+  }, [open, maps]);
+  useEffect(() => {
+    if (!useCustom || !maps?.canHost || gallery) return;
+    let live = true;
+    apiFetch<{ items: GalleryPick[] }>('/api/maps/gallery?sort=popular&limit=30').then(res => {
+      if (live) setGallery(res.ok ? res.data.items : []);
+    });
+    return () => { live = false; };
+  }, [useCustom, maps, gallery]);
+  const pickIsOwn = !!mapId && !!maps?.list.some(m => m.id === mapId);
+  const { starts: mapStarts, blocked: mapBlocked, load: mapLoad } = useMapPick(mapId, pickIsOwn);
+  const custom = useCustom && !!maps;
+  const customReady = custom && !!maps?.canHost && !!mapId && mapLoad === 'ok' && mapBlocked.length === 0;
+  // One rival per start world, less the player's own.
+  const maxRivals = custom && mapStarts != null ? Math.max(1, Math.min(5, mapStarts - 1)) : 5;
+  useEffect(() => { setRivals(r => Math.min(r, maxRivals)); }, [maxRivals]);
 
   const start = async () => {
+    if (custom && !customReady) { setError(t('lobby.create.err.map')); return; }
     setBusy(true);
     setError(null);
     const res = await apiFetch<{ ok: true; game_id: string }>('/api/solo', {
       method: 'POST',
-      body: JSON.stringify({ rivals, difficulty, speed_ms: speed, personalities: personas.slice(0, rivals) }),
+      body: JSON.stringify({
+        rivals, difficulty, speed_ms: speed, personalities: personas.slice(0, rivals),
+        ...(custom ? { map_id: mapId } : {}),
+      }),
     });
     setBusy(false);
     if (res.ok) onStarted(res.data.game_id);
@@ -413,7 +447,7 @@ function SoloCard({ onStarted }: { onStarted: (roomId: string) => void }) {
             <span className="lx-solo__k">{t('lobby.solo.rivals')}</span>
             <div className="lx-seg lx-seg--fill" role="radiogroup" aria-label={t('lobby.solo.rivals')}>
               {[1, 2, 3, 4, 5].map(n => (
-                <button key={n} type="button" role="radio" aria-checked={rivals === n}
+                <button key={n} type="button" role="radio" aria-checked={rivals === n} disabled={n > maxRivals}
                   className={`lx-seg__opt ${rivals === n ? 'is-active' : ''}`} onClick={() => setRivals(n)}>
                   {n}
                 </button>
@@ -461,11 +495,18 @@ function SoloCard({ onStarted }: { onStarted: (roomId: string) => void }) {
               ))}
             </div>
           </div>
+          {maps && (
+            <div className="lx-solo__row">
+              <MapChoice maps={maps} useCustom={useCustom} setUseCustom={(v) => { setUseCustom(v); if (!v) setMapId(null); }}
+                mapId={mapId} setMapId={setMapId} seats={mapStarts} blocked={mapBlocked} load={mapLoad}
+                solo gallery={gallery} />
+            </div>
+          )}
           <div className="lx-solo__go">
             <button className="lx-btn lx-btn--ghost lx-btn--lg" onClick={() => setOpen(false)} disabled={busy}>
               {t('lobby.solo.cancel')}
             </button>
-            <button className="lx-btn lx-btn--primary lx-btn--lg lx-solo__start" onClick={start} disabled={busy}>
+            <button className="lx-btn lx-btn--primary lx-btn--lg lx-solo__start" onClick={start} disabled={busy || (custom && !customReady)}>
               {busy ? t('lobby.solo.busy') : t('lobby.solo.start')}
             </button>
           </div>
@@ -836,6 +877,35 @@ function BrowsePanel({
 // ---------- Create ----------
 
 type SavedMap = { id: string; name: string; bodies: number; blockers: number; sun_color: string };
+/** A published map as the gallery lists it (worker/customMaps.js galleryItem). */
+type GalleryPick = { id: string; name: string; author: string | null; starts: number; thumb?: { sun?: { color?: string } } };
+
+/** The picked map, read for its start worlds and anything that blocks a
+ *  game on it: your own through /api/maps/:id, a gallery map through the
+ *  gallery's own read. `starts` is the raw count; callers cap it. */
+function useMapPick(mapId: string | null, own: boolean) {
+  const [starts, setStarts] = useState<number | null>(null);
+  const [blocked, setBlocked] = useState<string[]>([]);
+  const [load, setLoad] = useState<'idle' | 'loading' | 'ok' | 'error'>('idle');
+  useEffect(() => {
+    // A new pick starts from nothing: the last map's seats and blockers
+    // never stand in for this one's while it loads.
+    setStarts(null); setBlocked([]);
+    if (!mapId) { setLoad('idle'); return; }
+    setLoad('loading');
+    let live = true;
+    apiFetch<{ map: unknown }>(own ? `/api/maps/${mapId}` : `/api/maps/gallery/${mapId}`).then(res => {
+      if (!live) return;
+      if (!res.ok) { setLoad('error'); return; }
+      const m = normalizeMap(res.data.map);
+      setLoad('ok');
+      setStarts(startWorlds(m).worlds.length);
+      setBlocked(hostBlockers(m).map(issueTitle));
+    });
+    return () => { live = false; };
+  }, [mapId, own]);
+  return { starts, blocked, load };
+}
 
 /**
  * THE MAP CHOICE (Lorne, 2026-10-15: "a 'use custom map' option in the
@@ -846,7 +916,7 @@ type SavedMap = { id: string; name: string; bodies: number; blockers: number; su
  * open (its routes 404), so prod's creator is unchanged until it ships.
  */
 function MapChoice({
-  maps, useCustom, setUseCustom, mapId, setMapId, seats, blocked, load,
+  maps, useCustom, setUseCustom, mapId, setMapId, seats, blocked, load, solo = false, gallery = null,
 }: {
   maps: { list: SavedMap[]; canHost: boolean };
   useCustom: boolean; setUseCustom: (v: boolean) => void;
@@ -854,6 +924,10 @@ function MapChoice({
   seats: number | null; blocked: string[];
   /** The picked map being read for its seats and blockers. */
   load: 'idle' | 'loading' | 'ok' | 'error';
+  /** The solo setup: its own words, and the gallery beside your maps
+   *  (Lorne, 2026-10-25: a solo game may be played on any of them). */
+  solo?: boolean;
+  gallery?: GalleryPick[] | null;
 }) {
   const sellable = canBuyHere();
   const price = tk('mp.commission.price', COMMISSION_PRICE);
@@ -877,13 +951,13 @@ function MapChoice({
             {t('lobby.create.mapCustom')}
             {!maps.canHost && <span className="lx-lock" title={t('hangar.commissionName')}> {HOLDER_MARK}</span>}
           </span>
-          <span className="lx-choice__desc">{t('lobby.create.mapCustomDesc')}</span>
+          <span className="lx-choice__desc">{t(solo ? 'lobby.solo.mapCustomDesc' : 'lobby.create.mapCustomDesc')}</span>
         </button>
       </div>
 
       {useCustom && !maps.canHost && (
         <div className="lx-mapgate">
-          <p className="lx-muted">{t('lobby.create.mapLocked', { name: t('hangar.commissionName'), price })}</p>
+          <p className="lx-muted">{t(solo ? 'lobby.solo.mapLocked' : 'lobby.create.mapLocked', { name: t('hangar.commissionName'), price })}</p>
           {sellable ? (
             <button type="button" className="lx-btn lx-btn--primary" disabled={buying} onClick={() => {
               logCommission('lobby-map', 'click');
@@ -906,7 +980,40 @@ function MapChoice({
         </div>
       )}
 
-      {useCustom && maps.canHost && (
+      {useCustom && maps.canHost && solo && (
+        <div className="lx-maplist" role="radiogroup" aria-label={t('lobby.create.mapPick')}>
+          {maps.list.length > 0 && <span className="lx-muted lx-small">{t('lobby.solo.mapMine')}</span>}
+          {maps.list.map(m => (
+            <button type="button" key={m.id} role="radio" aria-checked={mapId === m.id}
+              className={`lx-mappick ${mapId === m.id ? 'is-active' : ''}`} onClick={() => setMapId(m.id)}>
+              <span className="lx-mappick__sun" style={{ background: m.sun_color }} aria-hidden />
+              <span className="lx-mappick__name">{m.name}</span>
+              <span className="lx-muted lx-small">{tn('lobby.create.mapBodies', m.bodies)}</span>
+              <span className={`lx-mappick__tag ${m.blockers ? 'is-bad' : ''}`}>
+                {m.blockers ? t('lobby.create.mapToFix', { n: m.blockers }) : t('lobby.create.mapReady')}
+              </span>
+            </button>
+          ))}
+          <span className="lx-muted lx-small">{t('lobby.solo.mapGallery')}</span>
+          {gallery == null && <p className="lx-muted lx-small">{t('lobby.create.mapLoading')}</p>}
+          {gallery != null && gallery.length === 0 && <p className="lx-muted lx-small">{t('lobby.solo.mapGalleryEmpty')}</p>}
+          {(gallery ?? []).filter(g => !maps.list.some(m => m.id === g.id)).map(g => (
+            <button type="button" key={g.id} role="radio" aria-checked={mapId === g.id}
+              className={`lx-mappick ${mapId === g.id ? 'is-active' : ''}`} onClick={() => setMapId(g.id)}>
+              <span className="lx-mappick__sun" style={{ background: g.thumb?.sun?.color ?? '#ffd27a' }} aria-hidden />
+              <span className="lx-mappick__name">{g.name}</span>
+              <span className="lx-muted lx-small">{g.author ? t('lobby.solo.mapBy', { name: g.author }) : ''}</span>
+              <span className="lx-mappick__tag">{tn('lobby.solo.mapStarts', g.starts)}</span>
+            </button>
+          ))}
+          {mapId && load === 'loading' && <p className="lx-muted lx-small">{t('lobby.create.mapLoading')}</p>}
+          {mapId && load === 'error' && <p className="lx-error" role="alert">{t('lobby.create.mapLoadFailed')}</p>}
+          {mapId && load === 'ok' && seats != null && <p className="lx-muted lx-small">{tn('lobby.solo.mapRivals', Math.max(1, Math.min(5, seats - 1)))}</p>}
+          {blocked.length > 0 && <p className="lx-error">{t('lobby.create.mapBlocked', { list: blocked.join('; ') })}</p>}
+        </div>
+      )}
+
+      {useCustom && maps.canHost && !solo && (
         maps.list.length === 0 ? (
           <div className="lx-mapgate">
             <p className="lx-muted">{t('lobby.create.mapNone')}</p>
@@ -944,9 +1051,6 @@ function CreatePanel({ onCreated, hostName }: { onCreated: (id: string) => void;
   const [maps, setMaps] = useState<{ list: SavedMap[]; canHost: boolean } | null>(null);
   const [useCustom, setUseCustom] = useState(false);
   const [mapId, setMapId] = useState<string | null>(null);
-  const [mapSeats, setMapSeats] = useState<number | null>(null);
-  const [mapBlocked, setMapBlocked] = useState<string[]>([]);
-  const [mapLoad, setMapLoad] = useState<'idle' | 'loading' | 'ok' | 'error'>('idle');
   useEffect(() => {
     let live = true;
     apiFetch<{ maps: SavedMap[]; can_host: boolean }>('/api/maps').then(res => {
@@ -955,25 +1059,9 @@ function CreatePanel({ onCreated, hostName }: { onCreated: (id: string) => void;
     return () => { live = false; };
   }, []);
   // The picked map decides the seats: one per start world, ten at most.
-  useEffect(() => {
-    // A new pick starts from nothing: the last map's seats and blockers
-    // never stand in for this one's while it loads.
-    setMapSeats(null); setMapBlocked([]);
-    if (!mapId) { setMapLoad('idle'); return; }
-    setMapLoad('loading');
-    let live = true;
-    apiFetch<{ map: unknown }>(`/api/maps/${mapId}`).then(res => {
-      if (!live) return;
-      if (!res.ok) { setMapLoad('error'); return; }
-      const m = normalizeMap(res.data.map);
-      setMapLoad('ok');
-      const n = Math.max(2, Math.min(10, startWorlds(m).worlds.length));
-      setMapSeats(n);
-      setMapBlocked(hostBlockers(m).map(issueTitle));
-      setMaxPlayers(p => Math.min(p, n));
-    });
-    return () => { live = false; };
-  }, [mapId]);
+  const { starts: mapStarts, blocked: mapBlocked, load: mapLoad } = useMapPick(mapId, true);
+  const mapSeats = mapStarts == null ? null : Math.max(2, Math.min(10, mapStarts));
+  useEffect(() => { if (mapSeats != null) setMaxPlayers(p => Math.min(p, mapSeats)); }, [mapSeats]);
   const custom = useCustom && !!maps;
   const customReady = custom && !!maps?.canHost && !!mapId && mapLoad === 'ok' && mapBlocked.length === 0;
   const [isPrivate, setIsPrivate] = useState(false);
