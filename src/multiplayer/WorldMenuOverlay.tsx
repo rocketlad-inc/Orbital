@@ -1706,6 +1706,15 @@ export const WorldMenuOverlay: React.FC = () => {
     if (myCity || myStation) {
       cards.push({ id: 'yard', label: t('worldmenu.bar.yard'),
         sub: t('worldmenu.bar.slipways', { busy: yardBusy, slots: yardSlots }), go: () => setPview('yard') });
+    } else if (canFoundStation || (sideAvail.surface && !rawHere)) {
+      // THE YARD'S PLACE IS HELD on a world you can still claim. It used
+      // to appear only once the claim landed, which slid OVERVIEW along
+      // under the finger: the tap meant for it opened SHIPYARD (Maya,
+      // Dale, 2026-10-24). Until then the card says what it waits for
+      // and opens the list where the claim is made.
+      cards.push({ id: 'yard', label: t('worldmenu.bar.yard'), tone: 'is-waiting',
+        sub: t('worldmenu.bar.yardAfterClaim'),
+        go: () => { setPside(sideAvail.surface && !rawHere ? 'surface' : 'orbit'); setPview('structures'); } });
     }
     if (siloOk && myCity?.missileSilo) {
       cards.push({ id: 'silo', label: t('worldmenu.bar.silo'), short: t('worldmenu.silo.m.silo'), tone: 'is-silo', badgeN: raid?.groups,

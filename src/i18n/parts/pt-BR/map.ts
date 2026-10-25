@@ -268,6 +268,7 @@ export const map: Catalog = {
   'worldmenu.bar.built_other': '{n} construídas',
   'worldmenu.bar.yard': 'ESTALEIRO',
   'worldmenu.bar.slipways': '{busy} / {slots} rampas ocupadas',
+  'worldmenu.bar.yardAfterClaim': 'abre com uma cidade ou estação',
   'worldmenu.bar.silo': 'SILO DE MÍSSEIS',
   'worldmenu.bar.terraform': 'TERRAFORMAR',
   'worldmenu.bar.tfPct': '{n}% entregue',

@@ -228,6 +228,9 @@
 .wm-root.wmp .wmp-card.is-silo .wmp-card-sub { color: #ff8a5c; }
 .wm-root.wmp .wmp-card.is-tf { border-color: #2f6b55; }
 .wm-root.wmp .wmp-card.is-tf .wmp-card-sub { color: #6ee7b7; }
+/* The shipyard's held place on a world not yet claimed (WorldMenuOverlay). */
+.wm-root.wmp .wmp-card.is-waiting,
+.wm-root.wmp .wmp-tab.is-waiting { opacity: 0.55; }
 .wm-root.wmp .wmp-card-meter { align-self: stretch; height: 3px; border-radius: 2px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }
 .wm-root.wmp .wmp-card-meter i { display: block; height: 100%; background: linear-gradient(90deg, #4ecdc4, #6ee7b7); }
 
