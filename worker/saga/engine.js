@@ -22,12 +22,15 @@ import { Walker, hashOf, numWord, cap, listOf, shareWord, tidy } from './prose.j
 import {
   MADE_TITLES, MADE_TITLES_FALLEN, MADE_TITLES_SPHERE, MADE_TITLES_VOTE,
   BOARD_OPEN, BOARD_SENATE, BOARD_TRADE, BOARD_FAR, BOARD_QUIET,
-  HINTS, OMEN, OMEN_EXTRA, ROLE_LABEL, NO_BIO, HEAD, BECAUSE, RECEIPT, KICKER,
+  OMEN, OMEN_EXTRA, NO_BIO, HEAD, BECAUSE, KICKER,
 } from './banks.js';
+import { arcOf, partsOf } from './arcs.js';
+import { ARC_NAME, ARC_SETUP, ACT_TITLE, ACT_HEAD, ACT_BECAUSE, ARC_FINALE, PART_LABEL, PART_RECEIPT } from './arcBanks.js';
 
 /** Bump when the engine's output changes shape or meaning: stored films
- *  older than this are rebuilt the next time they are opened. */
-export const SAGA_ENGINE_VERSION = 2;
+ *  older than this are rebuilt the next time they are opened.
+ *  3: the season's story (arcs.js): an arc, its acts, a part per empire. */
+export const SAGA_ENGINE_VERSION = 3;
 
 /** The film's length for a match of `span` days (Lorne, 2026-10-23: "Film
  *  can be as long as 3 minutes"; 10-24: slowed so players can read it, up
@@ -260,130 +263,130 @@ export function shapeOf(F) {
 }
 
 // ===========================================================================
-// CAST: one role per empire, the rarest first
+// THE STORY: the arc's acts and every empire's part (saga/arcs.js)
 // ===========================================================================
 
-/** Role tests: [role, score(e) -> number|null]. Higher score wins the role. */
-function roleTests(F) {
-  const W = F.winner;
-  const pct = (fid) => Math.round(F.leadShare(fid) * 100);
-  const fav = F.empires.filter(e => e.id !== W).sort((a, b) => F.leadShare(b.id) - F.leadShare(a.id))[0]?.id ?? null;
-  const maxOf = (m) => Math.max(0, ...m.values());
-  const firstFall = F.falls[0]?.t ?? null;
-  const giftTo = (fid, to) => F.gifts.filter(g => g.from === fid && g.to === to).reduce((a, g) => a + g.total, 0);
-  const salesTo = (fid, to) => F.sold.filter(s => s.from === fid && s.to === to).length;
-  return [
-    ['oathbreaker', e => ((F.betrayalsBy.get(e.id) ?? 0) >= 2 ? F.betrayalsBy.get(e.id) : null)],
-    ['monsterSlayer', e => (F.beastSlayer === e.id ? 10 : null)],
-    ['patron', e => (W && e.id !== W && giftTo(e.id, W) >= 2000 ? giftTo(e.id, W) / 1000 : null)],
-    ['abdicator', e => {
-      if (e.id === W) return null;
-      const top = F.empires.map(o => o.id).filter(o => o !== e.id)
-        .map(o => ({ o, n: salesTo(e.id, o), g: giftTo(e.id, o) })).sort((a, b) => b.n - a.n || b.g - a.g)[0];
-      return top && (top.n >= 2 || top.g >= 5000) ? top.n + top.g / 5000 : null;
-    }],
-    ['kingmaker', e => {
-      const n = F.both.get(e.id) ?? 0, k = F.agree.get(e.id) ?? 0;
-      return W && e.id !== W && n >= 5 && k / n >= 0.85 ? k / n + n / 100 : null;
-    }],
-    ['fallingStar', e => (e.id !== W && e.peak.holdings >= 8 && e.final.holdings <= e.peak.holdings / 2
-      ? (e.peak.holdings - e.final.holdings) : null)],
-    ['zealots', e => ((F.detonations.get(e.id) ?? 0) >= 10 && (F.detonations.get(e.id) ?? 0) === maxOf(F.detonations)
-      ? F.detonations.get(e.id) : null)],
-    ['conqueror', e => ((F.felled.get(e.id) ?? 0) >= 2 ? F.felled.get(e.id) : null)],
-    ['fallenFavourite', e => (e.id === fav && e.id !== W && F.leadShare(e.id) >= 0.4 ? F.leadShare(e.id) : null)],
-    ['besieged', e => {
-      const n = Math.max(F.betrayedBy.get(e.id) ?? 0, (F.warsOn.get(e.id) ?? 0) >= 3 ? 2 : 0);
-      return (F.betrayedBy.get(e.id) ?? 0) >= 2 || (F.warsOn.get(e.id) ?? 0) >= 3 ? n + (F.warsOn.get(e.id) ?? 0) / 10 : null;
-    }],
-    ['merchantPrince', e => (e.totals.trades >= 6 && e.totals.trades === Math.max(...F.empires.map(o => o.totals.trades))
-      ? e.totals.trades : null)],
-    ['builder', e => ((F.megas.get(e.id) ?? 0) >= 2 || (F.terra.get(e.id) ?? 0) >= 8
-      ? (F.megas.get(e.id) ?? 0) * 3 + (F.terra.get(e.id) ?? 0) : null)],
-    ['dissenter', e => ((F.lone.get(e.id) ?? 0) >= 2 ? F.lone.get(e.id) : null)],
-    ['graveyard', e => ((F.captainsLost.get(e.id) ?? 0) >= 12 && (F.captainsLost.get(e.id) ?? 0) === maxOf(F.captainsLost)
-      ? F.captainsLost.get(e.id) : null)],
-    ['diplomat', e => ((F.pactsBy.get(e.id) ?? 0) >= 6 && (F.pactsBy.get(e.id) ?? 0) === maxOf(F.pactsBy)
-      ? F.pactsBy.get(e.id) : null)],
-    ['firstToFall', e => (e.finalStatus === 'eliminated' && firstFall != null && F.falls.find(f => f.fid === e.id)?.t === firstFall ? 1 : null)],
-    ['scrapper', e => (e.finalStatus === 'eliminated' && (F.warsBy.get(e.id) ?? 0) >= 1 ? F.warsBy.get(e.id) : null)],
-    ['collateral', e => (e.finalStatus === 'eliminated' && !(F.warsBy.get(e.id) ?? 0) ? 1 : null)],
-    ['survivor', e => (e.finalStatus !== 'eliminated' && e.id !== W && !(F.warsOn.get(e.id) ?? 0)
-      && !F.seizes.some(s => s.from === e.id) ? 1 : null)],
-    ['silent', e => (e.peak.holdings <= 1 && !F.D.said.some(s => s.fid === e.id) && !(F.warsBy.get(e.id) ?? 0) ? 1 : null)],
-  ].map(([role, test]) => ({ role, test, pct }));
+const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
+/** What the film's caption holds without cutting a line short: a headline
+ *  is two lines of about 23 characters, the line under it one long one,
+ *  the act card's title one line. Measured on the 1080p render. */
+const HEAD_MAX = 46, BECAUSE_MAX = 72, ACT_TITLE_MAX = 26;
+/** The variants of a bank that fit, given this context; all of them when
+ *  none does (names can be long: better a cut line than no line). */
+function fits(bank, ctx, max) {
+  const ok = bank.filter(t => tidy(typeof t === 'function' ? t(ctx) : String(t)).length <= max);
+  return ok.length ? ok : bank;
 }
 
-export function castOf(F, S) {
-  const W = F.winner;
-  const roleOf = new Map();
-  if (W) {
-    const w = F.leadShare(W);
-    roleOf.set(W, F.falls.some(f => f.fid === W) ? 'comeback'
-      : w >= 0.75 ? 'hegemon' : w <= 0.4 ? 'upstart' : 'champion');
-  }
-  const tests = roleTests(F);
-  // Rarest first: a role few empires qualify for is handed out before a
-  // common one, so the cast does not come out as five Scrappers.
-  const quals = tests.map(t => ({ ...t, who: F.empires.filter(e => !roleOf.has(e.id))
-    .map(e => ({ e, s: t.test(e) })).filter(x => x.s != null) }))
-    .filter(t => t.who.length)
-    .sort((a, b) => a.who.length - b.who.length);
-  const used = new Set(roleOf.values());
-  /** Common roles several empires can share; every other role is unique. */
-  const SHARED = new Set(['collateral', 'scrapper', 'survivor']);
-  for (const t of quals) {
-    if (used.has(t.role) && !SHARED.has(t.role)) continue;
-    if (SHARED.has(t.role)) {
-      for (const x of t.who) if (!roleOf.has(x.e.id)) roleOf.set(x.e.id, t.role);
-      used.add(t.role);
-      continue;
-    }
-    const pick = t.who.filter(x => !roleOf.has(x.e.id)).sort((a, b) => b.s - a.s || a.e.place - b.e.place)[0];
-    if (!pick) continue;
-    roleOf.set(pick.e.id, t.role);
-    used.add(t.role);
-  }
-  for (const e of F.empires) if (!roleOf.has(e.id)) roleOf.set(e.id, e.finalStatus === 'eliminated' ? 'fallen' : 'contender');
-  return roleOf;
+/** The arc's story lines: A is the arc's own cast, B the biggest rivalry it
+ *  leaves out, C the Leviathan or the Senate. */
+function plotsOfArc(F, arc) {
+  const c = arc.cast;
+  const A = [c.protagonist, c.nemesis, c.ringleader, c.turncoat, c.rebel, c.heir].filter((f, i, a) => f && a.indexOf(f) === i);
+  const plots = [{ id: 'A', kind: arc.key, fids: A }];
+  const inA = new Set(A);
+  const r = [...F.rivalry.entries()].sort((a, b) => b[1] - a[1]).find(([k]) => !k.split('|').every(f => inA.has(f)));
+  if (r) plots.push({ id: 'B', kind: 'rivalry', fids: r[0].split('|') });
+  if (F.beastDead || F.beastCame) plots.push({ id: 'C', kind: 'leviathan', fids: F.beastSlayer ? [F.beastSlayer] : [] });
+  else if (F.laws.some(l => l.outcome === 'passed')) plots.push({ id: 'C', kind: 'senate', fids: [] });
+  return plots;
 }
 
-/** The stat line under an empire's role. */
-function receiptOf(F, e, role) {
-  const W = F.winner, wName = short(F.nameOf(W));
-  const fall = F.falls.find(f => f.fid === e.id);
-  const giftTotal = (to) => F.gifts.filter(g => g.from === e.id && g.to === to).reduce((a, g) => a + g.total, 0);
-  const sales = F.sold.filter(s => s.from === e.id);
-  const salesTo = sales.length ? sales[sales.length - 1].to : null;
-  const ctx = {
-    pct: Math.round(F.leadShare(e.id) * 100), n: 0, betrayed: F.betrayedBy.get(e.id) ?? 0, wars: F.warsOn.get(e.id) ?? 0,
-    peak: e.peak.holdings, final: e.final.holdings, w: wName, k: F.agree.get(e.id) ?? 0, t: fall?.t ?? 0,
-    tied: fall ? F.falls.filter(f => f.t === fall.t).length > 1 : false,
-    megas: F.megas.get(e.id) ?? 0, terra: F.terra.get(e.id) ?? 0, world: F.beastDead?.p?.world ?? F.beastDead?.p?.body_name ?? '',
-    amount: '',
+/** The words every act and finale line can use. */
+function storyCtx(F, X, arc) {
+  const N = (fid) => short(F.nameOf(fid)) || '';
+  const c = arc.cast;
+  const P = X.M.get(c.protagonist);
+  const leaders = new Set(X.reigns.map(r => r.fid)).size;
+  const declarers = new Set(P?.on.map(w => w.a) ?? []).size;
+  return {
+    P: N(c.protagonist), Nn: N(c.nemesis), H: N(F.winner !== c.protagonist ? F.winner : null),
+    R: N(c.ringleader), T: N(c.turncoat),
+    N0: numWord(declarers), N0cap: cap(numWord(declarers)),
+    K: cap(numWord(leaders)), Kcap: cap(numWord(leaders)), Kw: numWord(leaders), reigns: X.reigns.length,
+    fell: !!P?.fall,
   };
-  switch (role) {
-    case 'oathbreaker': ctx.n = F.betrayalsBy.get(e.id) ?? 0; break;
-    case 'zealots': ctx.n = F.detonations.get(e.id) ?? 0; break;
-    case 'conqueror': ctx.n = F.felled.get(e.id) ?? 0; break;
-    case 'kingmaker': ctx.n = F.both.get(e.id) ?? 0; break;
-    case 'merchantPrince': ctx.n = e.totals.trades; break;
-    case 'dissenter': ctx.n = F.lone.get(e.id) ?? 0; break;
-    case 'diplomat': ctx.n = F.pactsBy.get(e.id) ?? 0; break;
-    case 'graveyard': ctx.n = F.captainsLost.get(e.id) ?? 0; break;
-    case 'scrapper': ctx.n = F.warsBy.get(e.id) ?? 0; break;
-    case 'patron': ctx.amount = amountWords({ metal: giftTotal(W) }); break;
-    case 'abdicator': {
-      const to = salesTo ?? F.gifts.filter(g => g.from === e.id).sort((a, b) => b.total - a.total)[0]?.to ?? null;
-      ctx.w = short(F.nameOf(to));
-      const g = giftTotal(to);
-      ctx.amount = [sales.filter(s => s.to === to).length ? `${numWord(sales.filter(s => s.to === to).length)} worlds` : '',
-        g ? amountWords({ total: g }) : ''].filter(Boolean).join(' and ');
-      break;
-    }
-    default: break;
+}
+
+/** The arc's acts as story scenes: kicker "ACT II · THE PILE-ON", the
+ *  headline, and the evidence line under it. */
+function actBeats(F, X, arc, walker) {
+  const N = (fid) => short(F.nameOf(fid)) || '';
+  const base = storyCtx(F, X, arc);
+  const P = X.M.get(arc.cast.protagonist);
+  const out = [];
+  let prevT = null;
+  arc.acts.forEach((act, i) => {
+    const an = act.anchor;
+    const loss = (fid) => an.losses?.find(l => l.fid === fid)?.n ?? 0;
+    const other = arc.key === 'duel' ? (an.fid === arc.cast.protagonist ? base.Nn : base.P) : '';
+    const pile = an.n ?? 0;
+    const ctx = {
+      ...base, A: N(an.fid), B: N(an.target), O: other, world: an.world ?? '', bill: an.bill ?? '',
+      day: an.t, d: prevT != null && an.t > prevT ? an.t - prevT : 0,
+      lost: an.lost ?? 0, pl: loss(an.fid), bl: loss(an.target),
+      drop: an.drop ?? Math.round((P?.drop ?? 0) * 100),
+      peak: X.M.get(an.fid)?.peak ?? 0, peakW: numWord(X.M.get(an.fid)?.peak ?? 0),
+      held: X.heldAt(an.fid, an.t), heldW: numWord(X.heldAt(an.fid, an.t)),
+      ...(pile >= 2 ? { N0: numWord(pile), N0cap: cap(numWord(pile)) } : {}),
+    };
+    if (act.key === 'defiance' && P?.on[0] && P.on[0].t < an.t) ctx.d = an.t - P.on[0].t;
+    else if (an.kind === 'dyson_initiated') ctx.d = 0;
+    // The kind of event decides the words; a pact-breaking declaration
+    // and a pile-on have their own.
+    const titleKey = act.key === 'knife' && an.kind === 'senate_vote' ? 'knifeSenate' : act.key;
+    const actTitle = walker.say(`arc.title.${titleKey}`, fits((ACT_TITLE[titleKey] ?? ['']).map(t => (typeof t === 'function' ? t : () => t)), ctx, ACT_TITLE_MAX), ctx);
+    const heads = ACT_HEAD[act.key]?.[an.kind] ?? ACT_HEAD[act.key]?.any ?? Object.values(ACT_HEAD[act.key] ?? {})[0] ?? [];
+    const title = walker.say(`arc.head.${act.key}.${an.kind}`, fits(heads, ctx, HEAD_MAX), ctx);
+    const becauseKey = an.kind === 'lead' ? (an.target && an.target === arc.cast.protagonist ? 'leadTaken' : 'lead')
+      : an.kind === 'war_declared' ? (an.broke ? (pile >= 2 ? 'brokePile' : 'broke') : pile >= 2 ? 'pile' : 'war_declared') : an.kind;
+    const because = ACT_BECAUSE[becauseKey] ? cap(walker.say(`arc.because.${becauseKey}`, fits(ACT_BECAUSE[becauseKey], ctx, BECAUSE_MAX), ctx)) : '';
+    prevT = an.t;
+    out.push({
+      tick: an.t, kind: an.kind === 'lead' ? 'arc_lead' : an.kind, fid: an.fid, target: an.target,
+      plot: 'A', weight: 270 - i, kicker: `ACT ${ROMAN[i] ?? i + 1} · ${actTitle}`, title, because,
+      act: { n: i + 1, of: arc.acts.length, key: act.key, title: actTitle },
+      ...(an.world ? { world: an.world } : {}),
+    });
+  });
+  return out;
+}
+
+/** The lead part's label and receipt for every empire. */
+function partCards(F, X, arc, parts) {
+  const N = (fid) => short(F.nameOf(fid)) || '';
+  const P = arc.cast.protagonist;
+  const out = new Map();
+  for (const e of F.empires) {
+    const m = X.M.get(e.id);
+    const part = parts.get(e.id) ?? 'contender';
+    const key = part === 'nemesis' && PART_LABEL[`nemesis:${arc.key}`] ? `nemesis:${arc.key}` : part;
+    const vsP = (F.D.battles ?? []).reduce((a, b) => a + ((b.lossesByFaction ?? []).some(l => l.factionId === P)
+      ? (b.lossesByFaction.find(l => l.factionId === e.id)?.shipsLost ?? 0) : 0), 0);
+    const firstOnP = F.wars.find(w => w.b === P && w.a === e.id)?.t ?? null;
+    const billOnP = F.laws.find(l => l.target === P && l.proposer === e.id && l.outcome === 'passed')?.title ?? '';
+    const scav = F.falls.reduce((a, f) => a + (m.took.get(f.fid) ?? 0), 0);
+    const ctx = {
+      P: N(P), Nn: N(arc.cast.nemesis), H: N(F.winner),
+      fell: !!m.fall, fellT: m.fall?.t ?? 0, killer: N(m.fall?.killer),
+      peakW: numWord(m.peak), peakT: m.peakT, final: m.final, finalW: numWord(m.final),
+      warsOn: new Set(m.on.map(w => w.a)).size, warsOnW: numWord(new Set(m.on.map(w => w.a)).size),
+      betrayed: m.betrayedBy.length, betrayedW: numWord(m.betrayedBy.length),
+      r30: m.r30, r30W: m.r30, t30: Math.round(X.fracT(0.3)),
+      swaps: X.reigns.filter((r, i) => i > 0 && [r.fid, X.reigns[i - 1].fid].includes(e.id)
+        && [r.fid, X.reigns[i - 1].fid].includes(arc.cast.nemesis === e.id ? P : arc.cast.nemesis)).length,
+      ledFrom: X.reigns.find(r => r.fid === e.id)?.t ?? 0, ledPct: Math.round(m.ledShare * 100),
+      tookFromP: m.took.get(P) ?? 0, tookFromPW: numWord(m.took.get(P) ?? 0), vsP: e.id === P ? 0 : vsP,
+      felledW: numWord(F.felled.get(e.id) ?? 0),
+      firstOnP, billOnP, broke: m.betrayals.length, brokeW: numWord(m.betrayals.length), brokeOnP: m.betrayals.some(b => b.b === P),
+      beastWorld: F.beastDead?.p?.world ?? '', scavW: numWord(scav),
+    };
+    // A sentence: capitalised, and one full stop after a quoted bill title
+    // that brought its own.
+    const receipt = cap(tidy((PART_RECEIPT[key] ?? PART_RECEIPT.contender)(ctx))).replace(/([.!?]["”])\.$/, '$1');
+    out.set(e.id, { part, label: PART_LABEL[key] ?? 'THE CONTENDER', receipt });
   }
-  return RECEIPT[role] ? tidy(RECEIPT[role](ctx)) : '';
+  return out;
 }
 
 /** "9,000 metal", or a total. */
@@ -395,55 +398,6 @@ function amountWords(r) {
     if (v > 0) parts.push(`${v.toLocaleString('en-US')} ${label}`);
   }
   return listOf(parts);
-}
-
-// ===========================================================================
-// PLOTS AND BEATS
-// ===========================================================================
-
-function plotsOf(F, S, roles) {
-  const W = F.winner;
-  const rivals = [...F.rivalry.entries()].sort((a, b) => b[1] - a[1]);
-  const plots = [];
-  const roleHolder = (r) => [...roles.entries()].find(([, x]) => x === r)?.[0] ?? null;
-  // A: the main story always reaches the ending, so it is the winner's.
-  if (W) {
-    const fav = roleHolder('fallenFavourite');
-    const targetedBy = F.wars.filter(w => w.b === W).map(w => w.a);
-    let fids = [W], kind = 'winner';
-    if (S.shape === 'upset' && new Set(targetedBy).size >= 2) { kind = 'target'; fids = [W, ...new Set(targetedBy)]; }
-    else if (S.shape === 'upset' && fav) { kind = 'favourite'; fids = [W, fav]; }
-    else if (S.shape === 'hegemony') {
-      kind = 'resistance';
-      fids = [W, ...F.falls.filter(f => f.killer === W).map(f => f.fid)];
-      const top = rivals.find(([k]) => k.split('|').includes(W));
-      if (top) for (const f of top[0].split('|')) if (!fids.includes(f)) fids.push(f);
-    } else {
-      const top = rivals.find(([k]) => k.split('|').includes(W));
-      const second = F.empires.filter(e => e.id !== W).sort((a, b) => F.leadShare(b.id) - F.leadShare(a.id))[0]?.id;
-      const rival = top ? top[0].split('|').find(f => f !== W) : second;
-      kind = 'duel'; fids = [W, rival].filter(Boolean);
-    }
-    plots.push({ id: 'A', kind, fids: [...new Set(fids)] });
-  }
-  const inA = new Set(plots[0]?.fids ?? []);
-  // B: the betrayal story, else the biggest rivalry the main story leaves out.
-  const oath = roleHolder('oathbreaker');
-  if (oath && !(inA.has(oath) && plots[0].fids.length > 2)) {
-    const victims = [...new Set(F.betrayals.filter(b => b.a === oath).map(b => b.b))];
-    plots.push({ id: 'B', kind: 'betrayal', fids: [oath, ...victims] });
-  } else {
-    const r = rivals.find(([k]) => !k.split('|').every(f => inA.has(f)));
-    if (r) plots.push({ id: 'B', kind: 'rivalry', fids: r[0].split('|') });
-  }
-  // C: the Leviathan, else the Senate, else a falling star.
-  if (F.beastDead || F.beastCame) plots.push({ id: 'C', kind: 'leviathan', fids: F.beastSlayer ? [F.beastSlayer] : [] });
-  else if (F.laws.some(l => l.outcome === 'passed')) plots.push({ id: 'C', kind: 'senate', fids: [] });
-  else {
-    const star = roleHolder('fallingStar');
-    if (star) plots.push({ id: 'C', kind: 'fallingStar', fids: [star] });
-  }
-  return plots;
 }
 
 /** The story scenes, with their words. */
@@ -458,7 +412,9 @@ function beatsOf(F, S, plots, roles, walker) {
   const plotOfPair = (a, b) => {
     for (const p of plots) {
       if (!p.fids.includes(a) || !p.fids.includes(b)) continue;
-      if (p.kind === 'target' && a !== p.fids[0] && b !== p.fids[0]) continue;
+      // In a story about everyone against one empire, a war is the story's
+      // only when that empire is in it.
+      if (/^(siege|tallPoppy|rebellion)$/.test(p.kind) && a !== p.fids[0] && b !== p.fids[0]) continue;
       return p.id;
     }
     return null;
@@ -658,7 +614,7 @@ function titleOf(F, S, plots, walker) {
   return { text: made || 'A Match in Orbit', kind: 'made', credit: '' };
 }
 
-function crawlOf(F, S, plots, roles, walker) {
+function crawlOf(F, S, plots, X, arc, walker) {
   const n = F.empires.length;
   const p1 = [walker.say('crawl.board', BOARD_OPEN, { n: numWord(n), N: cap(numWord(n)) })];
   if (F.bills.length) p1.push(walker.say('crawl.senate', BOARD_SENATE, {}));
@@ -666,26 +622,13 @@ function crawlOf(F, S, plots, roles, walker) {
   else if ((F.wars[0]?.t ?? Infinity) - F.start > F.span * 0.2) p1.push(walker.say('crawl.quiet', BOARD_QUIET, {}));
   if (F.farSystems) p1.push(walker.say('crawl.far', BOARD_FAR, {}));
 
-  // Paragraph two: the story's empires, each with a hint from its role. The
-  // hint must be true at the start; the role says how it pays off.
+  // Paragraph two: the season's setup, from the protagonist's corner. It
+  // teases; the acts pay it off ("they all know who won").
   const featured = [];
   for (const p of plots) for (const f of p.fids) if (f && !featured.includes(f)) featured.push(f);
   const hints = [];
-  for (const fid of featured) {
-    if (hints.length >= 2) break;
-    let role = roles.get(fid);
-    if (role === 'hegemon' && F.leaderAtFrac(0.2) !== fid) role = 'hegemonLate';
-    if (role === 'fallenFavourite' && F.leaderAtFrac(0.25) !== fid) role = 'fallenFavourite';
-    if (role === 'oathbreaker') {
-      const firstBreak = F.betrayals.find(b => b.a === fid)?.t ?? Infinity;
-      if (!F.pacts.some(p => (p.a === fid || p.b === fid) && p.t < firstBreak)) role = 'conqueror';
-    }
-    if (role === 'silent' && F.D.said.some(s => s.fid === fid)) role = null;
-    const bank = HINTS[role];
-    if (!bank) continue;
-    const line = walker.say(`crawl.hint.${role}`, bank, { a: F.nameOf(fid) }, { subject: fid });
-    if (line) hints.push(line);
-  }
+  const setup = walker.say(`crawl.arc.${arc.key}`, ARC_SETUP[arc.key] ?? [], { ...storyCtx(F, X, arc), P: F.nameOf(arc.cast.protagonist) ?? '' });
+  if (setup) hints.push(setup);
   // Echo one story empire's own creed, when it is short enough to quote.
   const creedOf = featured.map(f => F.byId.get(f)).find(e => e?.bio && e.bio.length <= 70
     && (e.bio.match(/\p{L}/gu) ?? []).length >= 6 && e.bio.trim().split(/\s+/).length >= 2
@@ -717,19 +660,34 @@ export function buildScript(D) {
   const S = shapeOf(F);
   const seed = hashOf(`saga:${D.gameId}`);
   const walker = new Walker(seed, D.ordinal ?? 0);
-  const roles = castOf(F, S);
-  const plots = plotsOf(F, S, roles);
-  const beats = beatsOf(F, S, plots, roles, walker);
+  // THE SEASON: the arc, its acts, a part for every empire.
+  const { X, arc, considered } = arcOf(F);
+  const parts = partsOf(F, X, arc);
+  const cards = partCards(F, X, arc, parts);
+  const plots = plotsOfArc(F, arc);
+  const acts = actBeats(F, X, arc, walker);
+  // The rest of the record's story scenes support the acts: one on the
+  // same event as an act gives way to it, those outside the arc's own cast
+  // count for less, and only the strongest dozen stay (the flashing text
+  // was too much: Sean, 2026-10-24).
+  const isAct = (b) => acts.some(a => a.kind === b.kind && Math.abs(a.tick - b.tick) <= 1
+    && (a.fid === b.fid || a.target === b.fid || a.fid === b.target));
+  // (A scene whose every line an act already said has nothing left to say.)
+  const support = beatsOf(F, S, plots, parts, walker).filter(b => !isAct(b) && b.title)
+    .map(b => (b.plot === 'A' ? b : { ...b, weight: Math.round(b.weight * 0.85) }))
+    .sort((a, b) => b.weight - a.weight).slice(0, 12);
+  const beats = [...acts, ...support].sort((a, b) => a.tick - b.tick || b.weight - a.weight);
   const title = titleOf(F, S, plots, walker);
-  const crawl = crawlOf(F, S, plots, roles, walker);
+  const crawl = crawlOf(F, S, plots, X, arc, walker);
+  const finale = walker.say(`arc.finale.${arc.key}`, ARC_FINALE[arc.key] ?? [], storyCtx(F, X, arc));
 
   // The cast, in seat order, each with its creed: the player's own bio, as
   // written, or a line from the engine when there is none.
   const cast = [...F.empires].sort((a, b) => a.slot - b.slot).map(e => ({
     fid: e.id,
-    role: roles.get(e.id),
-    label: ROLE_LABEL[roles.get(e.id)] ?? '',
-    receipt: receiptOf(F, e, roles.get(e.id)),
+    role: cards.get(e.id).part,
+    label: cards.get(e.id).label,
+    receipt: cards.get(e.id).receipt,
     creed: e.bio && (e.bio.match(/\p{L}/gu) ?? []).length >= 2 ? e.bio.replace(/\s+/g, ' ').trim().slice(0, 160) : '',
     tagline: e.bio ? '' : walker.say('cast.nobio', NO_BIO, { a: e.name }, { subject: e.id }),
     home: F.home.get(e.id) ?? null,
@@ -770,6 +728,14 @@ export function buildScript(D) {
     mood: S.mood,
     runtime: sagaRuntime(F.span),
     span: F.span,
+    // The season: its arc, the empire it follows, the villain, the acts in
+    // order, the finale's line, and what else it might have been.
+    arc: {
+      key: arc.key, name: ARC_NAME[arc.key] ?? arc.key,
+      protagonist: arc.cast.protagonist, nemesis: arc.cast.nemesis ?? null,
+      acts: acts.map(a => ({ n: a.act.n, key: a.act.key, title: a.act.title, tick: a.tick, kind: a.kind })),
+      finale, considered,
+    },
     crawl: { title: title.text, titleKind: title.kind, credit: title.credit, lines: crawl.lines, seconds: crawl.seconds },
     cast,
     rollCall,
@@ -793,6 +759,12 @@ export function scriptText(s, D) {
   L.push(`${D?.game?.name ?? s.gameId}  (${s.gameId})  ·  ${s.shape.toUpperCase()}${s.overlays.length ? ' + ' + s.overlays.join(', ') : ''}  ·  mood ${s.mood}  ·  ${s.runtime}s  ·  film #${s.ordinal}`);
   L.push(`${'='.repeat(78)}`);
   L.push('');
+  if (s.arc) {
+    L.push(`  SEASON: ${s.arc.name.toUpperCase()}  ·  following ${N(s.arc.protagonist)}${s.arc.nemesis ? `  ·  against ${N(s.arc.nemesis)}` : ''}`);
+    L.push(`    (considered: ${s.arc.considered.map(c => `${c.key} ${c.score}`).join(', ')})`);
+    if (s.arc.finale) L.push(`    finale: "${s.arc.finale}"`);
+    L.push('');
+  }
   L.push(`  CRAWL (${s.crawl.seconds}s)`);
   L.push(`    "${s.crawl.title}"${s.crawl.credit ? `   — ${s.crawl.credit}` : '   — (engine title)'}`);
   for (const line of s.crawl.lines) L.push(`    ${line}`);
@@ -805,8 +777,8 @@ export function scriptText(s, D) {
   L.push('');
   L.push('  SCENES');
   for (const b of s.beats) {
-    L.push(`    day ${String(b.tick).padStart(4)}  [${b.plot ?? '-'}] ${String(b.weight).padStart(3)}  ${b.kicker.padEnd(16)} ${b.title}`);
-    if (b.because) L.push(`    ${' '.repeat(36)}${b.because}`);
+    L.push(`    day ${String(b.tick).padStart(4)}  [${b.plot ?? '-'}] ${String(b.weight).padStart(3)}  ${b.kicker.padEnd(26)} ${b.title}`);
+    if (b.because) L.push(`    ${' '.repeat(46)}${b.because}`);
   }
   if (s.transmissions.length) {
     L.push('');

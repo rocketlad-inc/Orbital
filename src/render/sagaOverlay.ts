@@ -232,6 +232,46 @@ export function drawFlash(ctx: CanvasRenderingContext2D, W: number, H: number, x
   ctx.restore();
 }
 
+/**
+ * AN ACT OPENS: "ACT II" over its title, centred high on the frame, with a
+ * rule in the colour of the empire the act is about. It comes up as the
+ * scene opens and clears before the scene's own caption settles, so it
+ * reads as a chapter, not one more line of text (Sean, 2026-10-24: less
+ * flashing text). `life` runs 0..1 over the card's time.
+ */
+export function drawActCard(ctx: CanvasRenderingContext2D, W: number, H: number,
+  c: { act: string; title: string; season?: string; color: string | null }, life: number) {
+  if (life <= 0 || life >= 1) return;
+  const u = unitOf(H);
+  const a = Math.min(1, life / 0.12) * Math.min(1, (1 - life) / 0.18);
+  if (a <= 0.01) return;
+  const cx = W / 2, y = H * 0.27;
+  const rise = (1 - ease(Math.min(1, life / 0.25))) * 14 * u;
+  ctx.save();
+  ctx.globalAlpha = a;
+  // A soft dark band behind it: legible over a bright world.
+  const bh = 190 * u;
+  const g = ctx.createLinearGradient(0, y - bh / 2, 0, y + bh / 2);
+  g.addColorStop(0, 'rgba(2,6,12,0)');
+  g.addColorStop(0.5, 'rgba(2,6,12,0.55)');
+  g.addColorStop(1, 'rgba(2,6,12,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, y - bh / 2, W, bh);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = 'rgba(232,240,248,0.82)';
+  ctx.font = `600 ${Math.round(22 * u)}px ${FONT_MONO}`;
+  const head = c.season ? `${c.act}  ·  ${c.season.toUpperCase()}` : c.act;
+  ctx.fillText(head.split('').join(' '), cx, y - 34 * u + rise);
+  ctx.font = `400 ${Math.round(64 * u)}px ${FONT_DISPLAY}`;
+  ctx.fillStyle = '#f4f8fc';
+  ctx.fillText(ellipsize(ctx, c.title, W * 0.8), cx, y + 18 * u + rise);
+  const rw = Math.min(W * 0.3, 360 * u) * ease(Math.min(1, life / 0.3));
+  ctx.fillStyle = c.color ? liftColor(c.color) : 'rgba(232,240,248,0.7)';
+  ctx.fillRect(cx - rw / 2, y + 62 * u + rise, rw, 3 * u);
+  ctx.restore();
+}
+
 /** A line from the public channel, as it was sent. */
 export function drawTransmission(ctx: CanvasRenderingContext2D, W: number, H: number,
   c: { faction: FilmFaction; text: string; label: string }, life: number) {

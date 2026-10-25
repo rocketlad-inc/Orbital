@@ -149,7 +149,9 @@ export class Walker {
 export function tidy(s) {
   // Only a stray space between a word and its punctuation: names like
   // ":) Smiley Face Friends :)" keep theirs.
-  return String(s ?? '').replace(/\s+/g, ' ').replace(/(\w)\s+([,.;!?])(?=\s|$)/g, '$1$2').trim();
+  // A name ending in s takes a bare apostrophe: "Wonks'", not "Wonks's".
+  return String(s ?? '').replace(/\s+/g, ' ').replace(/(\w)\s+([,.;!?])(?=\s|$)/g, '$1$2')
+    .replace(/([A-Za-z]s)'s\b/g, "$1'").trim();
 }
 
 // ---------------------------------------------------------------------------

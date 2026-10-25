@@ -21,7 +21,8 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildScript } from '../worker/saga/engine.js';
+import { buildScript, factsOf } from '../worker/saga/engine.js';
+import { measure } from '../worker/saga/arcs.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
@@ -55,6 +56,7 @@ const CACHE = path.join(os.tmpdir(), 'orbital-saga');
 const files = existsSync(CACHE) ? readdirSync(CACHE).filter(f => /^dossier\..+\.json$/.test(f)).sort() : [];
 console.log(`\nscripts (${files.length} cached matches${files.length ? '' : ': run scripts/saga-from-prod.mjs --all --fetch-only'})`);
 const crawlSeen = new Map();
+const arcs = new Map();
 /** No narrator line twice within this many consecutive films. */
 const NEIGHBOURS = 4;
 let repeats = 0, narrator = 0;
@@ -94,9 +96,33 @@ for (const [i, f] of files.entries()) {
     crawlSeen.set(s, { tag, i });
   }
   if (!a.crawl.title) fail(`${tag}: no title`);
-  console.log(`  ${failures ? '..' : 'ok'}    ${tag.padEnd(28)} ${a.shape.padEnd(9)} ${a.cast.length} empires, ${a.beats.length} scenes, ${a.transmissions.length} transmissions, "${a.crawl.title}"`);
+  // THE SEASON: the protagonist plays the lead, and every act stands on an
+  // event the record has (the film finds it there; an invented act would
+  // be a scene of nothing).
+  const lead = a.cast.find(c => c.fid === a.arc?.protagonist);
+  if (!a.arc || !lead || !/^lead:/.test(lead.role)) fail(`${tag}: no protagonist playing the lead`);
+  const rows = D.chronicle;
+  const reigns = measure(factsOf(D)).reigns;
+  for (const x of a.beats.filter(b => b.act)) {
+    const real = x.kind === 'battle' ? (D.battles ?? []).some(b => b.startedTick === x.tick && b.bodyName === x.world)
+      : x.kind === 'arc_lead' ? reigns.some(r => r.fid === x.fid && r.t === x.tick)
+        : x.kind === 'senate_vote' ? rows.some(r => r.kind === 'senate_vote' && r.t === x.tick)
+          : x.kind === 'settlement_destroyed' ? rows.some(r => r.kind === x.kind && r.t === x.tick && r.a === x.fid)
+            : x.kind === 'faction_eliminated' ? rows.some(r => r.kind === x.kind && r.t === x.tick && r.a === x.fid)
+              : rows.some(r => r.kind === x.kind && r.t === x.tick && r.a === x.fid);
+    if (!real) fail(`${tag}: act ${x.act.n} (${x.kind}, day ${x.tick}) stands on no recorded event`);
+    if (!x.act.title) fail(`${tag}: act ${x.act.n} has no title`);
+  }
+  arcs.set(a.arc?.key, (arcs.get(a.arc?.key) ?? 0) + 1);
+  console.log(`  ${failures ? '..' : 'ok'}    ${tag.padEnd(28)} ${String(a.arc?.key).padEnd(10)} ${a.cast.length} empires, ${a.arc?.acts.length} acts, ${a.beats.length} scenes, "${a.crawl.title}"`);
 }
 
+// No arc takes most of the matches: a story generator that tells every
+// match the same way has no teeth.
+if (files.length >= 6) {
+  for (const [k, n] of arcs) if (n / files.length > 0.6) fail(`arc ${k} tells ${n} of ${files.length} matches`);
+  console.log(`\n  arcs: ${[...arcs].sort((x, y) => y[1] - x[1]).map(([k, n]) => `${k} ${n}`).join(', ')}`);
+}
 if (narrator) console.log(`\n  narrator crawl lines: ${narrator}, of which ${repeats} came round again from an earlier film (${Math.round(100 * repeats / narrator)}%)`);
 console.log(failures ? `\n${failures} failure(s)` : '\nall gates pass');
 process.exit(failures ? 1 : 0);
