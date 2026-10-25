@@ -52,7 +52,7 @@ export const MAX_GAMES_PER_RUN = 25;
 export const MAX_LOBBIES_PER_RUN = 50;
 /** Never culled, whatever the table says (migration 0188 also sets no_cull):
  *  the frozen marketing showcase. */
-export const NEVER_CULL_IDS = ['Kai68RfB5BhV'];
+export const NEVER_CULL_IDS = ['Kai68RfB5BhV', 'ij9VVSf4t5d4'];
 
 /** Accounts whose activity is not a person's: every QA domain except the
  *  unsaved trial accounts, which are real visitors. */

@@ -20,7 +20,7 @@
 
 ALTER TABLE games ADD COLUMN no_cull INTEGER NOT NULL DEFAULT 0;
 
-UPDATE games SET no_cull = 1 WHERE id = 'Kai68RfB5BhV';
+UPDATE games SET no_cull = 1 WHERE id IN ('Kai68RfB5BhV', 'ij9VVSf4t5d4');
 
 CREATE TABLE IF NOT EXISTS cull_log (
   id               TEXT NOT NULL,
