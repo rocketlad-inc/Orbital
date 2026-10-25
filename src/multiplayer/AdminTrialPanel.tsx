@@ -154,7 +154,7 @@ export function TrialPanel({ data, now }: { data: TrialData; now: number }) {
 
       {total === 0 ? <div className="ao-none">No trials yet.</div> : (
         <>
-          <div className="ao-kpis tp-kpis">
+          <div className="ao-kpis atp-kpis">
             <div className="ao-kpi"><span className="ao-kpi__label">Trials started</span>
               <span className="ao-kpi__value">{n(total)}</span>
               <span className="ao-kpi__foot">{n(trials.filter(t => now - t.created_at < 86_400_000).length)} in the last 24 hours</span></div>
@@ -169,22 +169,22 @@ export function TrialPanel({ data, now }: { data: TrialData; now: number }) {
               <span className="ao-kpi__foot">refused by the 30-an-hour limit per address</span></div>
           </div>
 
-          <h4 className="tp-sub">How far trials get</h4>
-          <div className="tp-funnel" role="table" aria-label="Trial game funnel">
+          <h4 className="atp-sub">How far trials get</h4>
+          <div className="atp-funnel" role="table" aria-label="Trial game funnel">
             {stages.map((s, i) => (
-              <div className="tp-row" role="row" key={s.label} title={s.help}>
-                <span className="tp-row__label" role="rowheader">{s.label}</span>
-                <span className="tp-row__bar" role="cell"><i style={{ width: `${total ? (s.count / total) * 100 : 0}%` }} /></span>
-                <span className="tp-row__n" role="cell">{n(s.count)}</span>
-                <span className="tp-row__pct" role="cell">{pct(s.count, total)}</span>
-                <span className="tp-row__step" role="cell">{i === 0 ? '' : `${pct(s.count, stages[i - 1].count)} of the step before`}</span>
+              <div className="atp-row" role="row" key={s.label} title={s.help}>
+                <span className="atp-row__label" role="rowheader">{s.label}</span>
+                <span className="atp-row__bar" role="cell"><i style={{ width: `${total ? (s.count / total) * 100 : 0}%` }} /></span>
+                <span className="atp-row__n" role="cell">{n(s.count)}</span>
+                <span className="atp-row__pct" role="cell">{pct(s.count, total)}</span>
+                <span className="atp-row__step" role="cell">{i === 0 ? '' : `${pct(s.count, stages[i - 1].count)} of the step before`}</span>
               </div>
             ))}
           </div>
 
-          <div className="tp-grid">
+          <div className="atp-grid">
             <div>
-              <h4 className="tp-sub">What opened the save sheet</h4>
+              <h4 className="atp-sub">What opened the save sheet</h4>
               <table className="ao-table">
                 <thead><tr><th>Opened by</th><th className="num">Trials</th><th className="num" title="Saved trials whose save followed this opening">Saved after it</th></tr></thead>
                 <tbody>
@@ -193,10 +193,10 @@ export function TrialPanel({ data, now }: { data: TrialData; now: number }) {
                   ))}
                 </tbody>
               </table>
-              {errors > 0 && <p className="ao-note tp-note">{n(errors)} trial{errors === 1 ? '' : 's'} had a save refused (wrong password, email taken).</p>}
+              {errors > 0 && <p className="ao-note atp-note">{n(errors)} trial{errors === 1 ? '' : 's'} had a save refused (wrong password, email taken).</p>}
             </div>
             <div>
-              <h4 className="tp-sub">How they saved</h4>
+              <h4 className="atp-sub">How they saved</h4>
               {saved === 0 ? <div className="ao-none">No saves yet.</div> : (
                 <table className="ao-table">
                   <thead><tr><th>Saved with</th><th className="num">Trials</th></tr></thead>
@@ -209,7 +209,7 @@ export function TrialPanel({ data, now }: { data: TrialData; now: number }) {
               )}
             </div>
             <div>
-              <h4 className="tp-sub">Where trials came from</h4>
+              <h4 className="atp-sub">Where trials came from</h4>
               <table className="ao-table">
                 <thead><tr><th>Source</th><th className="num">Started</th><th className="num">Saved</th></tr></thead>
                 <tbody>
@@ -222,21 +222,21 @@ export function TrialPanel({ data, now }: { data: TrialData; now: number }) {
             </div>
           </div>
 
-          <h4 className="tp-sub">The tour: furthest step reached</h4>
-          <div className="tp-tour" aria-label="Trials reaching each tour step">
+          <h4 className="atp-sub">The tour: furthest step reached</h4>
+          <div className="atp-tour" aria-label="Trials reaching each tour step">
             {steps.map((s, i) => (
-              <div className="tp-tour__col" key={i} title={`Step ${i + 1}: ${s.title} · ${s.reached} trial${s.reached === 1 ? '' : 's'}`}>
-                <span className="tp-tour__n">{n(s.reached)}</span>
-                <span className="tp-tour__bar"><i style={{ height: `${total ? (s.reached / total) * 100 : 0}%` }} /></span>
-                <span className="tp-tour__label">{i + 1}</span>
+              <div className="atp-tour__col" key={i} title={`Step ${i + 1}: ${s.title} · ${s.reached} trial${s.reached === 1 ? '' : 's'}`}>
+                <span className="atp-tour__n">{n(s.reached)}</span>
+                <span className="atp-tour__bar"><i style={{ height: `${total ? (s.reached / total) * 100 : 0}%` }} /></span>
+                <span className="atp-tour__label">{i + 1}</span>
               </div>
             ))}
           </div>
-          <p className="ao-note tp-note">
+          <p className="ao-note atp-note">
             {n(tourDone)} finished the tour and {n(tourSkip)} skipped it. Hover a bar for its step. The last step starts the clock.
           </p>
 
-          <h4 className="tp-sub">Latest trials</h4>
+          <h4 className="atp-sub">Latest trials</h4>
           <div className="ao-scroll">
             <table className="ao-table">
               <thead><tr><th>Started</th><th>Source</th><th>Tour</th><th className="num">Tick</th><th className="num">Played</th><th>Save prompt</th><th>Saved</th><th>Now</th></tr></thead>
