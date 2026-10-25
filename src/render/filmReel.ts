@@ -122,8 +122,9 @@ export interface ReelScene {
   beat?: ReelBeat;
   /** Other log lines that fall inside the scene, for its ticker. */
   extras: ReelBeat[];
-  /** The opening act: the roll call and the land grab (see ReelOptions). */
-  act?: 'opening';
+  /** The opening act: the roll call ('opening', each empire introduced on
+   *  its home world as its first orders go out) and the land grab. */
+  act?: 'opening' | 'landgrab';
   /** Which part of a big battle's arc this is: its first shots, the thick
    *  of it, or how it ends. */
   phase?: 'open' | 'peak' | 'close';
@@ -143,6 +144,10 @@ export interface ReelOptions {
    *  act with every empire's card, the finale with its roll call. */
   introSeconds?: number;
   openingSeconds?: number;
+  /** The roll call's own scene: this many days of the match over this many
+   *  seconds of the opening (the rest is the land grab). */
+  rollCallTicks?: number;
+  rollCallSeconds?: number;
   finaleSeconds?: number;
   /** The share of the runtime kept for the wide shots between scenes (the
    *  establishing shots): the story scenes may not eat into it. */
@@ -474,8 +479,20 @@ export function planReel(f: ReelFacts, opts: ReelOptions = {}): ReelScene[] {
     framing: 'system', bodyId: null, extras: [] });
   let cur = introTo;
   if (openTo != null) {
-    scenes.push({ kind: 'montage', from: introTo, to: openTo, seconds: openingSec,
-      framing: 'system', bodyId: null, extras: [], act: 'opening' });
+    // THE ROLL CALL IS SLOW: its first few days stretched over every
+    // empire's card, so each is on its home world as its first ships leave
+    // (Lorne, 2026-10-25); the land grab then runs at the opening's pace.
+    const rcTo = opts.rollCallSeconds && opts.rollCallTicks
+      ? Math.min(openTo - 3, introTo + opts.rollCallTicks) : null;
+    if (rcTo != null && rcTo > introTo) {
+      scenes.push({ kind: 'montage', from: introTo, to: rcTo, seconds: opts.rollCallSeconds!,
+        framing: 'system', bodyId: null, extras: [], act: 'opening' });
+      scenes.push({ kind: 'montage', from: rcTo, to: openTo, seconds: Math.max(4, openingSec - opts.rollCallSeconds!),
+        framing: 'system', bodyId: null, extras: [], act: 'landgrab' });
+    } else {
+      scenes.push({ kind: 'montage', from: introTo, to: openTo, seconds: openingSec,
+        framing: 'system', bodyId: null, extras: [], act: 'opening' });
+    }
     cur = openTo;
   }
   const pushMontage = (a: number, b: number) => {

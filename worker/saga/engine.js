@@ -266,7 +266,6 @@ export function shapeOf(F) {
 // THE STORY: the arc's acts and every empire's part (saga/arcs.js)
 // ===========================================================================
 
-const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
 /** What the film's caption holds without cutting a line short: a headline
  *  is two lines of about 23 characters, the line under it one long one,
  *  the act card's title one line. Measured on the 1080p render. */
@@ -305,6 +304,13 @@ function storyCtx(F, X, arc) {
     N0: numWord(declarers), N0cap: cap(numWord(declarers)),
     K: cap(numWord(leaders)), Kcap: cap(numWord(leaders)), Kw: numWord(leaders), reigns: X.reigns.length,
     fell: !!P?.fall,
+    // The two alliances, when the story has them, and whose won.
+    ...(c.allies || c.rivals ? (() => {
+      const sideP = [c.protagonist, ...(c.allies ?? [])], sideN = [c.nemesis, ...(c.rivals ?? [])].filter(Boolean);
+      return { SideP: listOf(sideP.map(N)), SideN: listOf(sideN.map(N)),
+        nP: sideP.length, nN: sideN.length, nPcap: cap(numWord(sideP.length)), nNw: numWord(sideN.length),
+        winSide: sideP.includes(F.winner) ? 'P' : sideN.includes(F.winner) ? 'N' : '' };
+    })() : {}),
   };
 }
 
@@ -340,11 +346,15 @@ function actBeats(F, X, arc, walker) {
     const title = walker.say(`arc.head.${act.key}.${an.kind}`, fits(heads, ctx, HEAD_MAX), ctx);
     const becauseKey = an.kind === 'lead' ? (an.target && an.target === arc.cast.protagonist ? 'leadTaken' : 'lead')
       : an.kind === 'war_declared' ? (an.broke ? (pile >= 2 ? 'brokePile' : 'broke') : pile >= 2 ? 'pile' : 'war_declared') : an.kind;
-    const because = ACT_BECAUSE[becauseKey] ? cap(walker.say(`arc.because.${becauseKey}`, fits(ACT_BECAUSE[becauseKey], ctx, BECAUSE_MAX), ctx)) : '';
+    const bk = ACT_BECAUSE[`${act.key}:${becauseKey}`] ? `${act.key}:${becauseKey}` : becauseKey;
+    const because = ACT_BECAUSE[bk] ? cap(walker.say(`arc.because.${bk}`, fits(ACT_BECAUSE[bk], ctx, BECAUSE_MAX), ctx)) : '';
     prevT = an.t;
     out.push({
       tick: an.t, kind: an.kind === 'lead' ? 'arc_lead' : an.kind, fid: an.fid, target: an.target,
-      plot: 'A', weight: 270 - i, kicker: `ACT ${ROMAN[i] ?? i + 1} · ${actTitle}`, title, because,
+      // The act's title is the kicker. Never "ACT II": the acts structure
+      // the story, the screen never numbers them (Lorne, 2026-10-25: show,
+      // don't tell).
+      plot: 'A', weight: 270 - i, kicker: actTitle, title, because,
       act: { n: i + 1, of: arc.acts.length, key: act.key, title: actTitle },
       ...(an.world ? { world: an.world } : {}),
     });
@@ -380,6 +390,8 @@ function partCards(F, X, arc, parts) {
       felledW: numWord(F.felled.get(e.id) ?? 0),
       firstOnP, billOnP, broke: m.betrayals.length, brokeW: numWord(m.betrayals.length), brokeOnP: m.betrayals.some(b => b.b === P),
       beastWorld: F.beastDead?.p?.world ?? '', scavW: numWord(scav),
+      alliesW: arc.cast.allies?.length ? numWord(arc.cast.allies.length + 1) : '',
+      rivalsW: arc.cast.rivals?.length ? numWord(arc.cast.rivals.length + 1) : '',
     };
     // A sentence: capitalised, and one full stop after a quoted bill title
     // that brought its own.
