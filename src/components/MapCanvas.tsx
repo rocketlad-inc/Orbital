@@ -5701,22 +5701,45 @@ function hudTr(english: string): string {
   return s;
 }
 
+/** How much of the canvas top the top bar covers, in canvas pixels. The
+ *  canvas runs under the bar (phone, tablet), so text painted at a fixed
+ *  y=16 showed through it as ghost lines ("SOI: 16 km", "Escala", "EM
+ *  FO…": Maya, Rafaela, 2026-10-24). Layout reads are cached for 500ms:
+ *  this runs every frame. */
+let hudInsetCache = { at: -Infinity, top: 0 };
+export function hudTopInset(canvas: HTMLCanvasElement, now = performance.now()): number {
+  if (now - hudInsetCache.at < 500) return hudInsetCache.top;
+  let top = 0;
+  const bar = document.querySelector('.top-bar');
+  if (bar && canvas.clientHeight > 0) {
+    const covered = bar.getBoundingClientRect().bottom - canvas.getBoundingClientRect().top;
+    top = Math.max(0, covered) * (canvas.height / canvas.clientHeight);
+  }
+  hudInsetCache = { at: now, top };
+  return top;
+}
+
 function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
   const speedLabel = ctx.simSpeed && ctx.simSpeed > 0 ? `${ctx.simSpeed}×` : hudTr('PAUSED');
+  // The LAYOUT's verdict (useIsMobile stamps data-mobile-shell), not the
+  // pointer media query, which some mouse-driven desktops answer 'coarse'.
+  const mobileShell = document.documentElement.hasAttribute('data-mobile-shell');
+  const top = hudTopInset(ctx.canvas);
   ctx.ctx.fillStyle = COLORS.fgDim;
   ctx.ctx.font = '12px "Audiowide", monospace';
   ctx.ctx.textAlign = 'left';
   ctx.ctx.textBaseline = 'top';
-  ctx.ctx.fillText(`${hudTr('Tick:')} ${ctx.t.toFixed(1)} | ${speedLabel}`, 16, 16);
-  ctx.ctx.fillText(`${hudTr('Scale:')} ${ctx.camera.scale.toFixed(2)}x`, 16, 32);
+  // A phone or tablet keeps the strip under the bar for its own buttons
+  // (the outliner pill, the map tools), and the bar already shows the tick.
+  if (!mobileShell) {
+    ctx.ctx.fillText(`${hudTr('Tick:')} ${ctx.t.toFixed(1)} | ${speedLabel}`, 16, top + 16);
+    ctx.ctx.fillText(`${hudTr('Scale:')} ${ctx.camera.scale.toFixed(2)}x`, 16, top + 32);
+  }
 
   ctx.ctx.fillStyle = COLORS.fgFaint;
   ctx.ctx.font = '10px "Audiowide", monospace';
   // Hint changes by input modality — desktop hotkeys are wrong on a
   // touch device, so don't tell a phone player to "right-drag."
-  // The LAYOUT's verdict (useIsMobile stamps data-mobile-shell), not the
-  // pointer media query, which some mouse-driven desktops answer 'coarse'.
-  const mobileShell = document.documentElement.hasAttribute('data-mobile-shell');
   const hint = hudTr(mobileShell
     ? 'Drag: pan · Pinch: zoom · Tap: select · Hold a ship: select several'
     : 'Right-drag: pan | Scroll: zoom | Click: select | Double-click: focus');
@@ -5726,26 +5749,28 @@ function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
     ctx.ctx.fillStyle = COLORS.warning;
     ctx.ctx.font = 'bold 12px "Audiowide", monospace';
     ctx.ctx.textAlign = 'center';
-    ctx.ctx.fillText(hudTr('SELECT TARGET BODY'), ctx.canvas.width / 2, 16);
+    ctx.ctx.fillText(hudTr('SELECT TARGET BODY'), ctx.canvas.width / 2, top + 16);
     ctx.ctx.fillStyle = COLORS.fgDim;
     ctx.ctx.font = '10px "Audiowide", monospace';
     // No Esc key or right button on a phone; its Cancel is the banner
     // ShipPanel floats at the bottom during targeting.
     ctx.ctx.fillText(hudTr(mobileShell
       ? 'Tap a body to transfer'
-      : 'Click a body to transfer | ESC to cancel | Right-click to cancel'), ctx.canvas.width / 2, 32);
+      : 'Click a body to transfer | ESC to cancel | Right-click to cancel'), ctx.canvas.width / 2, top + 32);
   }
 
-  if (ctx.camera.focusedBodyId) {
+  // The world's own label and menu name it on a phone; there the strip
+  // under the bar belongs to the outliner pill.
+  if (ctx.camera.focusedBodyId && !mobileShell) {
     const focusedBody = ctx.bodies.find(b => b.id === ctx.camera.focusedBodyId);
     if (focusedBody) {
       ctx.ctx.fillStyle = COLORS.info;
       ctx.ctx.font = 'bold 12px "Audiowide", monospace';
       ctx.ctx.textAlign = 'center';
-      ctx.ctx.fillText(`${hudTr('FOCUSED:')} ${focusedBody.name.toUpperCase()}`, ctx.canvas.width / 2, targetSelectionMode ? 52 : 32);
+      ctx.ctx.fillText(`${hudTr('FOCUSED:')} ${focusedBody.name.toUpperCase()}`, ctx.canvas.width / 2, top + (targetSelectionMode ? 52 : 32));
       ctx.ctx.fillStyle = COLORS.fgDim;
       ctx.ctx.font = '10px "Audiowide", monospace';
-      ctx.ctx.fillText(`${hudTr('SOI:')} ${focusedBody.soi.toFixed(0)} km`, ctx.canvas.width / 2, targetSelectionMode ? 68 : 48);
+      ctx.ctx.fillText(`${hudTr('SOI:')} ${focusedBody.soi.toFixed(0)} km`, ctx.canvas.width / 2, top + (targetSelectionMode ? 68 : 48));
     }
   }
 
