@@ -522,7 +522,9 @@ export async function sendGameOver(env, gameId) {
                        wf.name AS winner_name, wf.user_id AS winner_user_id
                   FROM rooms r JOIN games g ON g.id = r.id
                   LEFT JOIN game_factions wf ON wf.id = g.winner_faction_id
-                 WHERE r.id = ? AND g.status = 'completed'`)
+                 WHERE r.id = ? AND g.status = 'completed'
+                   -- A game ended for inactivity (worker/cull.js) sends no email, ever.
+                   AND COALESCE(g.victory_type, '') <> 'abandoned'`)
       .bind(gameId).first();
     if (!g) return;
     const mine = new Map(((await env.DB

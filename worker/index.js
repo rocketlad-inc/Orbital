@@ -1397,13 +1397,21 @@ async function handleJoinByCode(req, env, session) {
 
 async function handleRoomSnapshot(_req, env, _session, roomId) {
   if (!ROOM_ID_RE.test(roomId)) return err(400, 'bad_request', 'invalid room id');
+  if (await roomIsClosed(env, roomId)) return err(409, 'room_closed', 'room is closed');
   const res = await roomStub(env, roomId).fetch('https://room/snapshot');
   return new Response(res.body, { status: res.status, headers: { 'content-type': 'application/json' } });
+}
+
+/** A closed room (an idle lobby the cull closed, a Studio game) is not entered. */
+async function roomIsClosed(env, roomId) {
+  const r = await env.DB.prepare('SELECT status FROM rooms WHERE id = ?').bind(roomId).first();
+  return r?.status === 'closed';
 }
 
 async function handleRoomConnect(req, env, session, roomId) {
   if (!ROOM_ID_RE.test(roomId)) return err(400, 'bad_request', 'invalid room id');
   if (req.headers.get('upgrade') !== 'websocket') return err(426, 'upgrade_required', 'websocket upgrade required');
+  if (await roomIsClosed(env, roomId)) return err(409, 'room_closed', 'room is closed');
 
   const member = await env.DB
     .prepare('SELECT 1 AS x FROM room_members WHERE room_id = ? AND user_id = ?')
@@ -2042,6 +2050,16 @@ export default {
         } catch (e) {
           console.error('full-lobby sweep failed', e);
         }
+        // Games and lobbies nobody has touched for 15 days end (worker/cull.js).
+        // Hourly, claimed in D1, off on staging, behind a kill switch, and
+        // sends no email. Its own catch: a failure here never reaches the
+        // sweeps around it.
+        try {
+          const { sweepIdle } = await import('./cull.js');
+          await sweepIdle(env);
+        } catch (e) {
+          console.error('idle cull failed', e);
+        }
         // Signed up, never sat down: one email, once an hour at most
         // (worker/winback.js). Self-gating; never throws.
         try {
@@ -2185,6 +2203,20 @@ export default {
           }
           const { handleRecapGifInternal } = await import('./recapGif.js');
           return handleRecapGifInternal(req, env, im[1]);
+        }
+      }
+      // The idle-game sweep's operator view (worker/cull.js): what WOULD be
+      // ended or closed, and what the sweep last did. Agent key only, and the
+      // same 404 as an unmapped route for anyone without it.
+      {
+        const cm = /^\/api\/internal\/cull\/(dry-run|status)\/?$/.exec(url.pathname);
+        if (cm) {
+          const presented = req.headers.get('x-agent-key');
+          if (req.method !== 'GET' || !env.AGENT_KEY || !presented || !(await constantTimeEqual(presented, env.AGENT_KEY))) {
+            return err(404, 'not_found', 'not found');
+          }
+          const { handleCullInternal } = await import('./cull.js');
+          return handleCullInternal(req, env, cm[1]);
         }
       }
 

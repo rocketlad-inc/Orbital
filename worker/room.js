@@ -713,6 +713,29 @@ export class Room {
       try { await this.state.storage.deleteAll(); } catch {}
       return new Response(null, { status: 204 });
     }
+    if (url.pathname === '/abandon' && req.method === 'POST') {
+      // The game was ended for inactivity (worker/cull.js): D1 already says
+      // completed / abandoned. Cancel the alarm so no tick runs again and
+      // tell whoever is in the room, exactly as a victory does, with no
+      // winner. The sockets stay open so the players see the ending.
+      let tick = 0;
+      try { tick = Number((await req.json())?.tick) || 0; } catch { /* no body */ }
+      try { await this.state.storage.deleteAlarm(); } catch {}
+      this.broadcast({ type: 'game_completed', tick, winner_faction_id: null, victory_type: 'abandoned' });
+      return new Response(null, { status: 204 });
+    }
+    if (url.pathname === '/close-idle' && req.method === 'POST') {
+      // A lobby nobody touched for 15 days (worker/cull.js): D1 says the
+      // room is closed. Tell the sockets, close them and forget the lobby
+      // state (chat, ready flags). Nothing here ever ticks.
+      this.broadcast({ type: 'room_closed' });
+      for (const ws of this.state.getWebSockets()) {
+        try { ws.close(4003, 'room_closed'); } catch {}
+      }
+      try { await this.state.storage.deleteAlarm(); } catch {}
+      try { await this.state.storage.deleteAll(); } catch {}
+      return new Response(null, { status: 204 });
+    }
     if (url.pathname === '/connect') {
       if (req.headers.get('upgrade') !== 'websocket') {
         return new Response('expected websocket', { status: 426 });

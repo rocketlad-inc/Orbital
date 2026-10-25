@@ -10792,6 +10792,9 @@ export async function maybeRunDailyDigest(env) {
                 LEFT JOIN digest_state d ON d.game_id = g.id
                WHERE g.status = 'active'
                   OR (g.status = 'completed'
+                      -- A game ended for inactivity (worker/cull.js) gets no
+                      -- final edition: it is not announced anywhere.
+                      AND COALESCE(g.victory_type, '') <> 'abandoned'
                       AND EXISTS (SELECT 1 FROM chronicle_entries c
                                    WHERE c.game_id = g.id
                                      AND c.visibility = 'public'

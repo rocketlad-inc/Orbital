@@ -1375,7 +1375,7 @@ async function buildSummaries(env, rows, userId) {
   // host can change it in the lobby). Asked only for joinable lobbies,
   // and only a bounded number of them.
   const tickFor = new Map();
-  const askTick = rows.filter(r => !r.game_status && r.member_count < r.max_players).slice(0, LOBBY_TICK_LOOKUPS);
+  const askTick = rows.filter(r => !r.game_status && r.room_status !== 'closed' && r.member_count < r.max_players).slice(0, LOBBY_TICK_LOOKUPS);
   await Promise.all(askTick.map(async (r) => {
     try {
       const res = await roomStub(env, r.id).fetch('https://room/settings');
@@ -1388,7 +1388,10 @@ async function buildSummaries(env, rows, userId) {
 
   return rows.map(r => {
     const full = r.member_count >= r.max_players;
-    const phase = r.game_status === 'completed' ? 'finished'
+    // A lobby the idle cull closed (worker/cull.js) is over: it files with
+    // the finished games, labelled closed, and cannot be entered.
+    const closed = !r.game_status && r.room_status === 'closed';
+    const phase = r.game_status === 'completed' || closed ? 'finished'
       : r.game_status ? 'live'
       : full ? 'full' : 'open';
     let players;
@@ -1438,6 +1441,10 @@ async function buildSummaries(env, rows, userId) {
       quick_join: r.quick_join === 1,
       host_id: r.host_id,
       host_name: r.host_name,
+      // 'idle' = closed for 15 days without activity; its time is updated_at.
+      closed: closed ? 'idle' : null,
+      // A game the idle cull ended (victory_type 'abandoned'): no winner.
+      abandoned: r.victory_type === 'abandoned',
       // A room hosted on a Map Maker map: the map's name, for the card.
       custom_map_name: r.custom_map_name ?? null,
       // A solo game (solo.js): one person and computer empires.
@@ -1449,11 +1456,11 @@ async function buildSummaries(env, rows, userId) {
       completed_at: r.completed_at ?? null,
       current_tick: r.current_tick ?? null,
       next_tick_at: r.next_tick_at ?? null,
-      tick_interval_ms: r.tick_interval_ms ?? tickFor.get(r.id) ?? (r.game_status ? null : DEFAULT_TICK_INTERVAL_MS),
+      tick_interval_ms: r.tick_interval_ms ?? tickFor.get(r.id) ?? (r.game_status || closed ? null : DEFAULT_TICK_INTERVAL_MS),
       is_member: isMember,
       // A seat is open to take: a lobby with room, or a running game that
       // still has seats (late join seats a new empire on first connect).
-      joinable: !isMember && (phase === 'open' || (phase === 'live' && !full)),
+      joinable: !closed && !isMember && (phase === 'open' || (phase === 'live' && !full)),
       players,
       leader,
       winner,
@@ -1475,7 +1482,7 @@ async function handleBrowse(_req, env, ctx) {
     env.DB.prepare(`${base} AND g.id IS NULL AND r.updated_at > ? ORDER BY r.updated_at DESC LIMIT ${BROWSE_LOBBY_LIMIT}`)
       .bind(staleLobby).all(),
     env.DB.prepare(`${base} AND g.status IN ('setup', 'active') ORDER BY g.started_at DESC LIMIT ${BROWSE_LIVE_LIMIT}`).all(),
-    env.DB.prepare(`${base} AND g.status = 'completed' AND g.completed_at > ? ORDER BY g.completed_at DESC LIMIT ${BROWSE_FINISHED_LIMIT}`)
+    env.DB.prepare(`${base} AND g.status = 'completed' AND COALESCE(g.victory_type, '') <> 'abandoned' AND g.completed_at > ? ORDER BY g.completed_at DESC LIMIT ${BROWSE_FINISHED_LIMIT}`)
       .bind(recentFinish).all(),
   ]);
   const rows = [...(lobbies.results ?? []), ...(live.results ?? []), ...(finished.results ?? [])];
@@ -1491,7 +1498,11 @@ async function handleMine(_req, env, ctx) {
                 JOIN rooms r ON r.id = rm.room_id
                 JOIN users u ON u.id = r.host_id
                 LEFT JOIN games g ON g.id = r.id
-               WHERE rm.user_id = ? AND r.status != 'closed'
+               WHERE rm.user_id = ?
+                 AND (r.status != 'closed'
+                      -- ...except a lobby the idle cull closed: it stays on
+                      -- the player's list, labelled (cull_log, migration 0187).
+                      OR EXISTS (SELECT 1 FROM cull_log c WHERE c.id = r.id AND c.kind = 'lobby'))
                ORDER BY r.updated_at DESC
                LIMIT 60`)
     .bind(ctx.session.user_id).all()).results ?? [];
