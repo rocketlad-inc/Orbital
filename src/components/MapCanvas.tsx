@@ -807,6 +807,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   }, [gameState.bodies]);
   const worldCycleRef = useRef(worldCycle);
   worldCycleRef.current = worldCycle;
+  // The same order, only the worlds you hold a settlement on (the phone's
+  // < > buttons). Empty when you hold none: they then walk everything.
+  const ownWorldCycle = useMemo(() => {
+    const mine = new Set(gameState.settlements.filter(s => s.ownedBy === 'player').map(s => s.bodyId));
+    return worldCycle.filter(id => mine.has(id));
+  }, [worldCycle, gameState.settlements]);
+  const ownWorldCycleRef = useRef(ownWorldCycle);
+  ownWorldCycleRef.current = ownWorldCycle;
   // focusBody is NOT referentially stable (it closes over bodies + tick),
   // so it goes through a ref like everything else this listener touches.
   // Listing it as a dependency would re-subscribe the handler on every
@@ -880,8 +888,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // touch equivalent, so the mobile map controls raise
     // 'orbital:world-step' and land here: the same clamped, nearest-first
     // cycling, not a second copy of it that could drift.
-    const stepWorld = (dir: -1 | 1): boolean => {
-      const cycle = worldCycleRef.current;
+    const stepWorld = (dir: -1 | 1, mine = false): boolean => {
+      const cycle = mine && ownWorldCycleRef.current.length > 0 ? ownWorldCycleRef.current : worldCycleRef.current;
       if (cycle.length === 0) return false;
 
       const cam = cameraRef.current;
@@ -927,7 +935,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     };
     const onStep = (e: Event) => {
       const dir = (e as CustomEvent).detail?.dir;
-      if (dir === -1 || dir === 1) stepWorld(dir);
+      if (dir === -1 || dir === 1) stepWorld(dir, (e as CustomEvent).detail?.mine === true);
     };
 
     window.addEventListener('keydown', onKey);
