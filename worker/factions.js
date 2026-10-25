@@ -1341,6 +1341,13 @@ export function parkClearance(bodyRadius) {
   return Math.max(4, r * 0.3);
 }
 
+/** A colony ship's standing ON ARRIVAL order when it is made: found a
+ *  station where it lands. Founding is what the hull is for, and three of
+ *  five playtesters sent theirs off on the default WAIT and found it idle
+ *  (2026-10-24). The order clears itself after its first arrival
+ *  (room.js settleOnArrival), and the ship panel can set it back to WAIT. */
+export const colonyArrivalDefault = (shipClass) => (shipClass === 'colony' ? 'station' : null);
+
 export const SHIP_COMBAT_STATS = {
   // 3.75 -> 7 (Lorne). Live telemetry put the corvette at 0.70 combat
   // power per credit against the destroyer's 9.44, needing ~79 hulls to
@@ -2468,11 +2475,11 @@ export async function seedGameWorld(env, gameId) {
               (id, game_id, owner_faction_id, name, ship_class, parent_body_id,
                orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, orbit_direction,
                fuel, fuel_max, status, built_at_tick,
-               hp, hp_max, damage_per_tick, home_body_id)
+               hp, hp_max, damage_per_tick, home_body_id, deploy_on_arrival)
              VALUES (?, ?, ?, ?, ?, ?,
                      ?, ?, ?, ?, 0, 1,
                      ?, ?, 'active', 0,
-                     ?, ?, ?, ?)`,
+                     ?, ?, ?, ?, ?)`,
           ).bind(
             id, gameId, f.id, name, ship.class, parentBodyId,
             rp, ra, omega, m0,
@@ -2480,6 +2487,7 @@ export async function seedGameWorld(env, gameId) {
             stats.hp, stats.hp, stats.damage_per_tick,
             // Seeded at the capital: that is home (0126).
             parentBodyId,
+            colonyArrivalDefault(ship.class),
           ),
         );
       });
@@ -2847,7 +2855,14 @@ async function handleListFactions(_req, env, ctx) {
               -- Holds the Commander's Commission (0153): the roster's
               -- quiet mark. Public, like the hull it buys.
               EXISTS (SELECT 1 FROM user_entitlements e
-                       WHERE e.user_id = game_factions.user_id) AS commissioned
+                       WHERE e.user_id = game_factions.user_id) AS commissioned,
+              -- A computer empire in a solo game (aiEmpire.js), and its
+              -- personality once the player may know it: picked at setup,
+              -- or the game is over ("Surprise me" is unmasked at the end).
+              (ai_doctrine IS NOT NULL) AS computer,
+              CASE WHEN ai_personality_shown = 1
+                     OR (SELECT status FROM games WHERE id = game_factions.game_id) = 'completed'
+                   THEN ai_personality END AS personality
          FROM game_factions
         WHERE game_id = ?
         ORDER BY slot ASC`,
@@ -3480,11 +3495,11 @@ export async function seedLateFaction(env, gameId, userId, chosenTemplateId, ide
           (id, game_id, owner_faction_id, name, ship_class, parent_body_id,
            orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, orbit_direction,
            fuel, fuel_max, status, built_at_tick,
-           hp, hp_max, damage_per_tick, home_body_id)
+           hp, hp_max, damage_per_tick, home_body_id, deploy_on_arrival)
          VALUES (?, ?, ?, ?, ?, ?,
                  ?, ?, ?, ?, ?, 1,
                  ?, ?, 'active', ?,
-                 ?, ?, ?, ?)`,
+                 ?, ?, ?, ?, ?)`,
       ).bind(
         id, gameId, factionId, `${ship.baseName} of ${body.name}`, ship.class, bodyRowId,
         rp, ra, omega, m0, tick,
@@ -3492,6 +3507,7 @@ export async function seedLateFaction(env, gameId, userId, chosenTemplateId, ide
         stats.hp, stats.hp, stats.damage_per_tick,
         // Seeded at the capital: that is home (0126).
         bodyRowId,
+        colonyArrivalDefault(ship.class),
       ),
     );
   });

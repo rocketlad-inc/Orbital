@@ -27,6 +27,9 @@
 //     the rendered marker is small.
 // ============================================================
 
+import { getLang, t } from '../i18n/core';
+import { BODY_FLAVOR_PT } from './bodyFlavor.pt-BR';
+
 export const BODY_FLAVOR: Record<string, string> = {
   // === Sol system ============================================
   // Sol itself intentionally empty for now (no flavor authored yet).
@@ -197,10 +200,15 @@ export const BODY_FLAVOR: Record<string, string> = {
   reliquary: "The last world of Cygnus, a small cold relic wheeling far out from the black hole and the blue giant it is slowly eating. Science and metal in fair measure, and silence in abundance. Just past it is where the gate from Sol comes to rest — the first thing any traveller through it sees, and the last thing they pass on the way home.",
 };
 
-/** Lookup helper. Returns the flavor string for a body id, or
- *  empty string if none is authored. Callers should treat empty
- *  as "render nothing" rather than a placeholder. */
+/** Lookup helper. Returns the flavor string for a body id, in the
+ *  player's language (bodyFlavor.pt-BR.ts; English where a translation is
+ *  missing), or empty string if none is authored. Callers should treat
+ *  empty as "render nothing" rather than a placeholder. */
 export function getBodyFlavor(bodyId: string): string {
+  if (getLang() === 'pt-BR') {
+    const pt = BODY_FLAVOR_PT[bodyId];
+    if (pt) return pt;
+  }
   return BODY_FLAVOR[bodyId] ?? '';
 }
 
@@ -234,17 +242,10 @@ export function composedBodyFlavor(
   // A DEBRIS FIELD (0141) replaces the world's prose outright: the
   // authored lines describe a place that is not there any more.
   if (body.obliteratedAtTick != null) {
-    return `This was ${body.name ?? 'a world'}. A Mega Destroyer broke it apart, and what `
-      + 'orbits here now is rubble: its moons and anything parked here still circle the '
-      + 'debris, but nothing can be built on it again, and it no longer counts as a world '
-      + 'toward any victory.';
+    return t('body.flavor.debris', { name: body.name ?? t('body.flavor.aWorld') });
   }
   const authored = getBodyFlavor(body.id);
-  const planetKiller = body.type === 'asteroid'
-    ? 'These rocks are sometimes called “Planet Killers” for the '
-      + 'devastation they can cause upon impact, but this one has been '
-      + 'orbiting peacefully and stably for millennia.'
-    : '';
+  const planetKiller = body.type === 'asteroid' ? t('body.flavor.planetKiller') : '';
   return [authored, planetKiller].filter(Boolean).join(' ');
 }
 
@@ -261,6 +262,5 @@ export function bodyImmovableNote(
   body: { type?: string | null },
 ): string | null {
   if (body.type !== 'dwarf') return null;
-  return 'Too massive to move — trajectory thrusters can only be anchored '
-    + 'to loose rogue asteroids, never a body this size.';
+  return t('body.flavor.immovable');
 }

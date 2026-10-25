@@ -18,6 +18,8 @@ import { t, tk, type Key } from '../i18n/core';
 import { useI18n, LanguageSwitch } from '../i18n/react';
 
 interface LandingProps {
+  /** Play for Free: start a trial game with no account (App.tsx). */
+  onPlay?: () => void;
   /** Triggered by the Login button or any CTA. Reveals the auth overlay. */
   onSignIn: () => void;
   /** True when a SIGNED-IN player is here for a doc route (/changelog,
@@ -77,14 +79,16 @@ function tabFromPath(): LandingTab {
   return TAB_PATHS[window.location.pathname] ?? 'about';
 }
 
-export const Landing: React.FC<LandingProps> = ({ onSignIn, authed = false, onExit }) => {
+export const Landing: React.FC<LandingProps> = ({ onSignIn, onPlay, authed = false, onExit }) => {
   const starfieldRef = useRef<HTMLCanvasElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [tab, setTab] = useState<LandingTab>(tabFromPath);
   const { lang } = useI18n();
   // Every Play / Sign in button on the site, counted for link and ad
   // traffic before it goes to the sign-in screen (0180).
-  const play = () => { trackVisitStep('play_click'); onSignIn(); };
+  // Every Play for Free button opens the sign-in page, which also offers a
+  // Solo Game with no account (Lorne, 2026-10-24).
+  const play = () => { trackVisitStep('play_click'); (onPlay ?? onSignIn)(); };
   const answer = answerFor(tab);
   const openPath = (path: string) => setTab(TAB_PATHS[path] ?? 'about');
   /** A real link (crawlers follow it) that a plain click opens in place. */
@@ -103,7 +107,10 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, authed = false, onEx
     if (typeof window === 'undefined') return;
     const want = PATH_FOR_TAB[tab] ?? '/';
     if (window.location.pathname !== want) {
-      window.history.pushState({ tab }, '', want + window.location.search);
+      // Spread the entry's state: a signed-in player's entries carry the
+      // view they belong to (src/platform/viewHistory.ts).
+      const prev = window.history.state;
+      window.history.pushState({ ...(prev && typeof prev === 'object' ? prev : {}), tab }, '', want + window.location.search);
     }
   }, [tab]);
 
@@ -240,7 +247,6 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, authed = false, onEx
             <button className="landing-cta-btn" onClick={onExit}>{t('site.back')}</button>
           ) : (
             <>
-              <button className="landing-login-btn" onClick={play}>{t('site.signIn')}</button>
               <button className="landing-cta-btn" onClick={play}>{t('site.playFree')}</button>
             </>
           )}

@@ -77,84 +77,46 @@ export { WEIGHT_RULE };
 // talks that way. Past a doubling, say it in multiples — "twice as
 // much" is instantly legible where "100% more" makes a reader stop and
 // convert. Returns null below 2x, where percentages read fine.
-const TIMES_WORD = [null, null, 'twice', 'three times', 'four times', 'five times'];
-function timesWord(v) {
-  return Number.isInteger(v) ? (TIMES_WORD[v] ?? `${v} times`) : null;
+// The words themselves live in the worker catalogs (worker/i18n/*.js,
+// keys `law.*`), so a Portuguese player reads the same law in Portuguese:
+// this table only says WHICH sentence fits a value. English output is the
+// exact text this file used to hold.
+function timesWord(v, locale) {
+  if (!Number.isInteger(v) || v < 2) return null;
+  return v <= 5 ? tr(locale, `law.times.${v}`) : tr(locale, 'law.times.n', { v });
 }
 
-const PLAIN_LAW = {
-  ship_build_cost_multiplier: {
-    lower: 'Cheaper Ships', higher: 'Pricier Ships',
-    say: (v, pct, x) => (
-      v === 0 ? 'Ships are free to build.'
-        : v < 1 ? `Ships cost ${pct}% less to build.`
-          : x ? `Ships cost ${x} as much to build.`
-            : `Ships cost ${pct}% more to build.`),
-  },
-  megastructure_cost_multiplier: {
-    lower: 'Cheaper Megaprojects', higher: 'Pricier Megaprojects',
-    say: (v, pct, x) => (
-      v === 0 ? 'Megastructures cost nothing to raise.'
-        : v < 1 ? `Megastructure frameworks cost ${pct}% less to complete.`
-          : x ? `Megastructure frameworks cost ${x} as much to complete.`
-            : `Megastructure frameworks cost ${pct}% more to complete.`),
-  },
-  metal_yield_multiplier: {
-    lower: 'Less Metal', higher: 'More Metal',
-    say: (v, pct, x) => (
-      v === 0 ? 'Settlements mine no metal at all.'
-        : v < 1 ? `Every settlement mines ${pct}% less metal.`
-          : x ? `Every settlement mines ${x} as much metal.`
-            : `Every settlement mines ${pct}% more metal.`),
-  },
-  gold_yield_multiplier: {
-    lower: 'Fewer Credits', higher: 'More Credits',
-    say: (v, pct, x) => (
-      v === 0 ? 'Settlements earn no credits at all.'
-        : v < 1 ? `Every settlement earns ${pct}% fewer credits.`
-          : x ? `Every settlement earns ${x} as many credits.`
-            : `Every settlement earns ${pct}% more credits.`),
-  },
-  science_yield_multiplier: {
-    lower: 'Slower Research', higher: 'Faster Research',
-    say: (v, pct, x) => (
-      v === 0 ? 'Research stops completely.'
-        : v < 1 ? `Research runs ${pct}% slower.`
-          : x ? `Research runs ${x} as fast.`
-            : `Research runs ${pct}% faster.`),
-  },
-  combat_damage_multiplier: {
-    lower: 'Weaker Guns', higher: 'Stronger Guns',
-    say: (v, pct, x) => (
-      v === 0 ? 'Ships deal no damage at all.'
-        : v < 1 ? `Ships deal ${pct}% less damage.`
-          : x ? `Ships deal ${x} as much damage.`
-            : `Ships deal ${pct}% more damage.`),
-  },
-  trade_tariff_pct: {
+// Sliders whose v === 0 has its own sentence (everything but the rush
+// cost, whose floor is above zero, and the tariff, which reads its own way).
+const HAS_ZERO = new Set([
+  'ship_build_cost_multiplier', 'megastructure_cost_multiplier',
+  'metal_yield_multiplier', 'gold_yield_multiplier', 'science_yield_multiplier',
+  'combat_damage_multiplier', 'fleet_upkeep_multiplier',
+]);
+
+function plainSay(sliderId, v, pct, x, locale) {
+  const k = `law.${sliderId}`;
+  if (sliderId === 'trade_tariff_pct') {
     // The odd one out: already a percentage, and only meaningful upward,
     // so both names describe the same direction rather than a pair.
-    lower: 'No Trade Tax', higher: 'Trade Tax',
-    say: (v) => (
-      v <= 0 ? 'Trade deliveries arrive whole — no tax.'
-        : `Trade deliveries arrive ${v}% smaller.`),
-  },
-  fleet_upkeep_multiplier: {
-    lower: 'Cheaper Fleets', higher: 'Pricier Fleets',
-    say: (v, pct, x) => (
-      v === 0 ? 'Fleets cost nothing to keep.'
-        : v < 1 ? `Keeping your ships costs ${pct}% less each tick.`
-          : x ? `Keeping your ships costs ${x} as much each tick.`
-            : `Keeping your ships costs ${pct}% more each tick.`),
-  },
-  rush_cost_multiplier: {
-    lower: 'Cheaper Rush Jobs', higher: 'Pricier Rush Jobs',
-    say: (v, pct, x) => (
-      v < 1 ? `Rushing a build costs ${pct}% less.`
-        : x ? `Rushing a build costs ${x} as much.`
-          : `Rushing a build costs ${pct}% more.`),
-  },
-};
+    return v <= 0 ? tr(locale, `${k}.zero`) : tr(locale, `${k}.more`, { pct: v });
+  }
+  if (v === 0 && HAS_ZERO.has(sliderId)) return tr(locale, `${k}.zero`);
+  if (v < 1) return tr(locale, `${k}.less`, { pct });
+  if (x) return tr(locale, `${k}.times`, { x });
+  return tr(locale, `${k}.more`, { pct });
+}
+
+const PLAIN_LAW = Object.fromEntries([
+  'ship_build_cost_multiplier', 'megastructure_cost_multiplier',
+  'metal_yield_multiplier', 'gold_yield_multiplier', 'science_yield_multiplier',
+  'combat_damage_multiplier', 'trade_tariff_pct', 'fleet_upkeep_multiplier',
+  'rush_cost_multiplier',
+].map((id) => [id, {
+  lower: (locale) => tr(locale, `law.${id}.lower`),
+  higher: (locale) => tr(locale, `law.${id}.higher`),
+  say: (v, pct, x, locale) => plainSay(id, v, pct, x, locale),
+}]));
 
 const SLIDER_CATALOG = [
   {
@@ -289,7 +251,7 @@ export { SLIDER_BY_ID, SLIDER_CATALOG };
  *   describeSlider('ship_build_cost_multiplier', 0.5)
  *     -> { name: 'Cheaper Ships', effect: 'Ships cost 50% less to build.', … }
  */
-export function describeSlider(sliderId, value) {
+export function describeSlider(sliderId, value, locale = 'en') {
   const def = SLIDER_BY_ID[sliderId];
   const plain = PLAIN_LAW[sliderId];
   if (!def || !plain) return null;
@@ -305,15 +267,15 @@ export function describeSlider(sliderId, value) {
   return {
     slider_id: sliderId,
     // Topic — what the bill is about, for pickers and headers.
-    topic: def.label,
+    topic: tr(locale, `law.${sliderId}.topic`),
     // The law's NAME. At the default there is no law to name, and the
     // composer uses this to tell a proposer their bill does nothing.
-    name: atDefault ? 'No Change' : (v < base ? plain.lower : plain.higher),
+    name: atDefault ? tr(locale, 'law.noChange') : (v < base ? plain.lower(locale) : plain.higher(locale)),
     // The consequence, one sentence, always ending in a period so it can
     // be dropped into running prose anywhere.
     effect: atDefault
-      ? 'Nothing changes — this is already the rule.'
-      : plain.say(v, pct, v > base ? timesWord(v) : null),
+      ? tr(locale, 'law.noChangeEffect')
+      : plain.say(v, pct, v > base ? timesWord(v, locale) : null, locale),
     at_default: atDefault,
     value: v,
     // Kept for the few places that still want the bare arithmetic
@@ -334,7 +296,7 @@ export function describeSlider(sliderId, value) {
  * Small: eight sliders, at most ~50 steps each, all short strings, and
  * only fetched while the senate tab is actually open.
  */
-export function phraseTableFor(def) {
+export function phraseTableFor(def, locale = 'en') {
   const out = {};
   const step = def.step > 0 ? def.step : 1;
   // Integer loop so 0.05 steps don't accumulate float error into keys
@@ -345,8 +307,24 @@ export function phraseTableFor(def) {
     // Round to the step's own precision; 0.7000000000000001 as an object
     // key would simply never be looked up.
     const v = Math.round(raw * 1000) / 1000;
-    const d = describeSlider(def.id, v);
+    const d = describeSlider(def.id, v, locale);
     if (d) out[String(v)] = { name: d.name, effect: d.effect, at_default: d.at_default };
+  }
+  return out;
+}
+
+/**
+ * The same law in every other language the app speaks. The state and the
+ * senate payloads are not per-language (a player can switch mid-game), so
+ * each law carries its own translations and the client picks the one on
+ * screen: the words still live only here, and a switch needs no refetch.
+ */
+export const LAW_LOCALES = ['pt-BR'];
+export function lawI18n(sliderId, value) {
+  const out = {};
+  for (const loc of LAW_LOCALES) {
+    const d = describeSlider(sliderId, value, loc);
+    if (d) out[loc] = { topic: d.topic, name: d.name, effect: d.effect };
   }
   return out;
 }
@@ -860,6 +838,7 @@ export async function activeLawsFor(env, gameId, currentTick, factionId = null) 
       topic: d.topic,
       name: d.name,
       effect: d.effect,
+      i18n: lawI18n(d.slider_id, d.value),
       value: d.value,
       until_tick: r.active_until_tick,
       // The bill that granted this law — what a repeal bill aims at.
@@ -986,6 +965,16 @@ export async function activeLaws(env, gameId, currentTick) {
         effect_text: said?.effect ?? null,
         label: def?.label ?? r.slider_id,
         description: def?.description ?? null,
+        // The same four lines in the other languages (lawI18n).
+        i18n: Object.fromEntries(LAW_LOCALES.map((loc) => {
+          const d = describeSlider(r.slider_id, value, loc);
+          return [loc, {
+            law_name: d?.name ?? null,
+            effect_text: d?.effect ?? null,
+            label: def ? tr(loc, `law.${r.slider_id}.topic`) : null,
+            description: def ? tr(loc, `law.${r.slider_id}.desc`) : null,
+          }];
+        })),
         value,
         default_value: def?.default ?? null,
         delta_pct: said?.delta_pct ?? 0,
@@ -1220,6 +1209,13 @@ async function handleListSliders(_req, env, { params, session }) {
       phrases: phraseTableFor(s),
       // What the rule in force right now actually means for the caller.
       current: describeSlider(s.id, mine[s.id]),
+      // label / description / phrases / current in the other languages.
+      i18n: Object.fromEntries(LAW_LOCALES.map((loc) => [loc, {
+        label: tr(loc, `law.${s.id}.topic`),
+        description: tr(loc, `law.${s.id}.desc`),
+        phrases: phraseTableFor(s, loc),
+        current: describeSlider(s.id, mine[s.id], loc),
+      }])),
       effective_value: mine[s.id],
       general_value: general[s.id],
       targeted_at_me: mine[s.id] !== general[s.id],

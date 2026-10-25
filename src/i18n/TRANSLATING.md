@@ -27,7 +27,7 @@ function Panel() {
 * Keys must start with one of your area's prefixes (`PART_PREFIXES` in
   `src/i18n/parts/en/index.ts`); a test enforces it. Name keys by screen and meaning
   (`ship.panel.refit.confirm`), not by the English words.
-* Plural keys come in pairs (`x_one`, `x_other`) and use `{n}`. Portuguese counts 0 as singular.
+* Plural keys come in pairs (`x_one`, `x_other`) and use `{n}`. Zero is plural in every language ("0 naves"; core.ts pluralRule), so `_one` is only ever 1.
 * English values: keep the existing text **exactly** (tests and players depend on it).
   Placeholders `{name}` must be identical in both languages.
 * A component that shows text calls `useI18n()` once at the top, so it re-renders when the
@@ -73,7 +73,7 @@ for sentences; keep ALL-CAPS labels in caps. No European Portuguese ("ecrã", "r
 | lobby | sala | | bill (Senate) | projeto de lei |
 | seat | vaga | | Chancellor | Chanceler |
 | host | anfitrião | | treaty | tratado |
-| turn / tick | turno | | trade / trade route | comércio / rota comercial |
+| tick | tick (never "turno": Orbital has no turns; only Turn-Based Mode says turno) | | trade / trade route | comércio / rota comercial |
 | empire | império | | market | mercado |
 | faction | facção | | embargo | embargo |
 | world | mundo | | war / peace | guerra / paz |

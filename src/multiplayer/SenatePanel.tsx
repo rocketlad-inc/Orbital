@@ -12,6 +12,7 @@ import { t, tn, tk } from '../i18n/core';
 import type { Key } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import { apiErrorText } from '../i18n/apiErrors';
+import { inLang } from '../i18n/serverText';
 
 /** A translated sentence with React nodes (a bold name) standing in its
  *  {placeholders}; plain text placeholders go through t() as usual. */
@@ -363,9 +364,17 @@ export function SenatePanel({
 }: {
   gameId: string;
 }) {
-  useI18n();
+  const { lang } = useI18n();
   useEffect(() => { logUiEvent(gameId, 'senate'); }, [gameId]);
-  const [sliders, setSliders] = useState<SenateSlider[]>([]);
+  const [rawSliders, setSliders] = useState<SenateSlider[]>([]);
+  // The server words every law in each language (worker/senate.js
+  // lawI18n); show the copy for the language on screen. Memoised on
+  // `lang` so a switch mid-game re-words the panel without a refetch.
+  const sliders = useMemo(
+    () => rawSliders.map((s) => inLang(s)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rawSliders, lang],
+  );
   const [currentTick, setCurrentTick] = useState<number>(0);
   const [proposals, setProposals] = useState<SenateProposal[]>([]);
   const [factions, setFactions] = useState<Faction[]>([]);
@@ -374,7 +383,12 @@ export function SenatePanel({
   const [myFactionId, setMyFactionId] = useState<string | null>(null);
   const [session, setSession] = useState<SenateSession | null>(null);
   /** Slider laws currently in force. Empty is the normal state. */
-  const [laws, setLaws] = useState<ActiveLaw[]>([]);
+  const [rawLaws, setLaws] = useState<ActiveLaw[]>([]);
+  const laws = useMemo(
+    () => rawLaws.map((l) => inLang(l)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rawLaws, lang],
+  );
   /** Wall-clock length of one tick, from the server. Null until known. */
   const [tickMs, setTickMs] = useState<number | null>(null);
   const [weight, setWeight] = useState<WeightDetail | null>(null);
@@ -652,6 +666,8 @@ export function SenatePanel({
         body: JSON.stringify({ vote }),
       });
       if (!res.ok) setError(apiErrorText(res.error, 'senate.err.vote'));
+      // The tab badge and the Situation Report drop the bill now.
+      else { try { window.dispatchEvent(new Event('mp:senate-voted')); } catch { /* noop */ } }
       refresh();
     } finally {
       setVoting(null);

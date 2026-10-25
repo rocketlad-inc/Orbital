@@ -15,7 +15,7 @@
    position .wm-fleet; both have to lose here.
    ============================================================ */
 
-@media (max-width: 720px) {
+@media (max-width: 768px) { /* WM_PHONE_MAX */
   /* The map's own side buttons (box-select, previous / next) have no job
      inside a world; the neighbour chips are how you step to the next. */
   body.wm-open .map-controls { display: none; }

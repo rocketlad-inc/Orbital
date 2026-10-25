@@ -1,0 +1,174 @@
+/* Play for Free: the save sheet, the war card and the launch screen.
+   The game's own palette (TutorialPromptModal, TopBar): deep navy
+   cards, amber for the action, teal for focus. */
+
+/* Above the tutorial's backdrop and card (TutorialOverlay, 3300): the
+   sheet is opened from a tutorial step and from the menu over it. */
+.save-empire, .trial-war {
+  position: fixed;
+  inset: 0;
+  z-index: 3400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(5, 8, 14, 0.78);
+  font-family: var(--font-body);
+}
+
+.save-empire__card, .trial-war__card {
+  width: min(420px, 100%);
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 22px 22px 16px;
+  border: 1px solid #ffb84d;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #131c27 0%, #070b13 100%);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+  color: #d8e4ee;
+}
+
+.save-empire__eyebrow, .trial-war__eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #b8c8d6;
+}
+.save-empire__title, .trial-war__title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  color: #ffb84d;
+  text-wrap: balance;
+}
+.save-empire__lead, .trial-war__body {
+  margin: 0 0 6px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #d8e4ee;
+}
+
+.save-empire__tabs {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  margin-bottom: 4px;
+  border: 1px solid #2a3d50;
+  border-radius: 6px;
+}
+.save-empire__tabs button {
+  flex: 1 1 0;
+  height: 32px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #7a8b9a;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.save-empire__tabs button.is-on { background: rgba(255, 184, 77, 0.15); color: #ffb84d; }
+
+.save-empire__google { display: flex; flex-direction: column; gap: 8px; margin: 2px 0 4px; }
+.save-empire__or { text-align: center; font-size: 10px; letter-spacing: 0.12em; color: #6b8195; }
+
+.save-empire__label { font-size: 11px; letter-spacing: 0.06em; color: #b8c8d6; margin-top: 2px; }
+.save-empire__input {
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid #2a3d50;
+  border-radius: 4px;
+  background: #0a121c;
+  color: #d8e4ee;
+  font-family: inherit;
+  font-size: 14px;
+}
+.save-empire__input:focus { outline: 2px solid #4ecdc4; outline-offset: 0; border-color: transparent; }
+
+.save-empire__error { font-size: 12px; color: #ff8a7a; }
+
+.save-empire__go, .trial-war__go {
+  height: 42px;
+  margin-top: 8px;
+  border: 0;
+  border-radius: 6px;
+  background: #ffb84d;
+  color: #1a1206;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+.save-empire__go:disabled { opacity: 0.6; cursor: default; }
+.save-empire__go:focus-visible, .trial-war__go:focus-visible,
+.save-empire__later:focus-visible, .save-empire__tabs button:focus-visible { outline: 2px solid #4ecdc4; outline-offset: 2px; }
+
+.save-empire__fine { margin: 2px 0 0; font-size: 11px; color: #7a8b9a; text-align: center; }
+.save-empire__later {
+  align-self: center;
+  padding: 6px 10px;
+  border: 0;
+  background: transparent;
+  color: #7a8b9a;
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.save-empire__later:hover { color: #d8e4ee; }
+
+.trial-war__card { border-color: #ff6b5a; }
+.trial-war__title { color: #ff8a7a; }
+.trial-war__list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; line-height: 1.45; }
+
+/* The launch screen: Play for Free, while the empire is made. */
+.trial-launch {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 16px;
+  background: radial-gradient(ellipse at 50% 40%, #0f1a28 0%, #04070c 70%);
+  color: #d8e4ee;
+  font-family: var(--font-body);
+  text-align: center;
+}
+.trial-launch__brand { font-size: 13px; letter-spacing: 0.4em; color: #ffb84d; }
+.trial-launch__title { margin: 0; font-size: clamp(22px, 4vw, 32px); font-weight: 700; }
+.trial-launch__sub { margin: 0; font-size: 14px; color: #7a8b9a; }
+.trial-launch__orbit {
+  width: 64px; height: 64px;
+  border: 2px solid rgba(255, 184, 77, 0.25);
+  border-top-color: #ffb84d;
+  border-radius: 50%;
+  animation: trial-spin 1.1s linear infinite;
+}
+@keyframes trial-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .trial-launch__orbit { animation: none; } }
+.trial-launch__actions { display: flex; gap: 10px; margin-top: 6px; }
+.trial-launch__btn {
+  height: 40px; padding: 0 18px;
+  border: 1px solid #2a3d50; border-radius: 6px;
+  background: transparent; color: #d8e4ee;
+  font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.trial-launch__btn--go { background: #ffb84d; border-color: #ffb84d; color: #1a1206; }
+
+/* The menu's "Save your empire" and the dot on the menu button. */
+.side-menu__item--save { color: #ffb84d; }
+.top-bar__title .trial-dot {
+  display: inline-block;
+  width: 7px; height: 7px; margin-left: 6px;
+  border-radius: 50%;
+  background: #ffb84d;
+  box-shadow: 0 0 0 3px rgba(255, 184, 77, 0.2);
+  vertical-align: middle;
+}

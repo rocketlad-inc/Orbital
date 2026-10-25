@@ -7161,6 +7161,85 @@ CREATE TABLE IF NOT EXISTS campaign_steps (
   PRIMARY KEY (anon_id, step)
 );
 ` },
+  { name: "0181_solo.sql", sql: `-- ============================================================
+-- 0181 — Solo games: one player against computer empires (worker/solo.js).
+--
+-- Single player came back as a SOLO MULTIPLAYER ROOM (Lorne, 2026-10-23):
+-- the same server, the same rules, the human seated beside 1-5 computer
+-- empires that act through the real game actions (worker/aiEmpire.js).
+--
+-- games.solo        1 = a solo game: kept out of Browse, Quick Join, the
+--                   Herald and every other place that assumes people.
+-- games.paused      1 = time stands still (no ticks, no alarm) until the
+--                   solo player resumes. Only solo games pause.
+-- games.solo_difficulty  'peaceful' | 'normal' | 'ruthless'.
+-- game_factions.ai_doctrine   the computer empire's strategy ('rusher',
+--                   'expander', 'economist', 'technocrat'); NULL = a person.
+-- game_factions.ai_last_tick  the last tick it took a turn on, so the
+--                   cron acts once per new tick at most.
+--
+-- Schema only, constant defaults: safe to re-run, and every existing game
+-- reads as not solo, not paused, all human.
+-- ============================================================
+
+ALTER TABLE games ADD COLUMN solo INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE games ADD COLUMN paused INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE games ADD COLUMN solo_difficulty TEXT;
+ALTER TABLE game_factions ADD COLUMN ai_doctrine TEXT;
+ALTER TABLE game_factions ADD COLUMN ai_last_tick INTEGER;
+` },
+  { name: "0182_ai_personality.sql", sql: `-- Computer empire personalities (worker/aiPersona.js, Lorne 2026-10-24).
+--   ai_personality        'ally' | 'warlord' | 'snake'
+--   ai_personality_shown  1 when the player picked it at setup (the roster
+--                         shows it); 0 for "Surprise me" (shown when the
+--                         game ends)
+--   ai_state              its memory, JSON: grudges, peace times, the
+--                         Snake's phase
+ALTER TABLE game_factions ADD COLUMN ai_personality TEXT;
+ALTER TABLE game_factions ADD COLUMN ai_personality_shown INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE game_factions ADD COLUMN ai_state TEXT;
+` },
+  { name: "0183_ai_turn_log.sql", sql: `-- The crucible's record (worker/aiEmpire.js runSoloGame): with
+-- games.ai_log = 1, every computer empire turn writes one row: what it
+-- tried and was refused (tally, JSON), any error, and how long it took.
+-- Off for every ordinary solo game.
+ALTER TABLE games ADD COLUMN ai_log INTEGER NOT NULL DEFAULT 0;
+
+CREATE TABLE ai_turn_log (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  game_id       TEXT NOT NULL,
+  faction_id    TEXT NOT NULL,
+  tick          INTEGER NOT NULL,
+  personality   TEXT,
+  tally         TEXT,
+  error         TEXT,
+  ms            INTEGER,
+  created_at_ms INTEGER NOT NULL
+);
+CREATE INDEX idx_ai_turn_log_game ON ai_turn_log(game_id, tick);
+` },
+  { name: "0184_trial.sql", sql: `-- Play for Free (worker/trial.js, Lorne 2026-10-24): a visitor plays a
+-- trial solo game on a SHADOW account, with no sign-up, and saves it later.
+--   users.shadow            0 a real account; 1 an unsaved trial account;
+--                           2 a trial account since merged into a real one
+--   users.shadow_claimed_ms when it was saved (merged)
+--   games.trial             1 for a trial game (2 rivals, 30 s ticks)
+--   games.host_seen_ms      the trial player's last /state, once a minute
+--   games.auto_paused       1 when the idle sweep paused it (resumes on return)
+--   trial_starts            one row per trial started, per hashed IP, for
+--                           the rate limit
+ALTER TABLE users ADD COLUMN shadow INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN shadow_claimed_ms INTEGER;
+ALTER TABLE games ADD COLUMN trial INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE games ADD COLUMN host_seen_ms INTEGER;
+ALTER TABLE games ADD COLUMN auto_paused INTEGER NOT NULL DEFAULT 0;
+
+CREATE TABLE trial_starts (
+  ip_hash       TEXT NOT NULL,
+  created_at_ms INTEGER NOT NULL
+);
+CREATE INDEX idx_trial_starts_ip ON trial_starts(ip_hash, created_at_ms);
+` },
   { name: "0185_game_sagas.sql", sql: `-- ============================================================
 -- 0185 — game_sagas: the script of each finished match's film.
 --
@@ -7190,5 +7269,14 @@ CREATE TABLE IF NOT EXISTS game_sagas (
   script         TEXT NOT NULL,
   built_at_ms    INTEGER NOT NULL
 );
+` },
+  { name: "0186_trade_decline_reason.sql", sql: `-- Why an offer was declined (worker/trades.js handleDecline). A computer
+-- empire answers a counter-offer with one of these codes instead of a
+-- silent no (playtest 2026-10-24); a person may send none (NULL).
+--   no_cargo        it ships no goods: ask for a pact, or send a gift
+--   no_pacts        it signs no pacts (the Warlord)
+--   no_trust        it holds a grudge against you
+--   unknown_terms   terms it cannot read
+ALTER TABLE trade_offers ADD COLUMN decline_reason TEXT;
 ` },
 ];

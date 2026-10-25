@@ -25,7 +25,7 @@ import { AdminGrantModal } from './AdminGrantModal';
 import { computeIncomePerTick } from '../game/settlements';
 import { TECH_DEFS, nextLevelCost, TECH_MAX_LEVEL, type TechId } from '../game/techs';
 import { useTutorial } from '../state/tutorial';
-import { TUTORIAL_STEP_COUNT } from '../game/tutorialSteps';
+import { TUTORIAL_STEP_COUNT, TRIAL_TUTORIAL_STEP_COUNT } from '../game/tutorialSteps';
 import type { GameState } from '../types';
 import { displayResource } from '../game/formatResources';
 import { GameDetail } from '../multiplayer/AdminAnalytics';
@@ -35,7 +35,12 @@ import { GIT_SHA } from '../_version';
 import { useIsMobile, isInApp } from '../hooks/useIsMobile';
 import { saveTextFile } from '../platform/saveTextFile';
 import { t, tn } from '../i18n/core';
-import { useI18n } from '../i18n/react';
+import { useI18n, LanguageSwitch } from '../i18n/react';
+import { saveLocale } from '../i18n/account';
+import { inLang } from '../i18n/serverText';
+import { SoloClock, soloSpeedLabel, nextSoloSpeed } from '../multiplayer/SoloClock';
+import { openSaveEmpire } from '../multiplayer/trial/SaveEmpire';
+import '../multiplayer/trial/trial.css';
 
 export type PanelId = 'settlements' | 'fleet' | 'research' | null;
 
@@ -183,7 +188,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       })();
 
   return (
-    <div className="top-bar">
+    <div className={`top-bar${gameState.solo ? ' top-bar--solo' : ''}`}>
       <button
         className="top-bar__title"
         onClick={() => setMenuOpen(true)}
@@ -191,7 +196,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         aria-label={t('topbar.openMenu')}
         data-tutorial-id="menu-button"
       >
-        <div className="top-bar__title-main">ORBITAL</div>
+        <div className="top-bar__title-main">ORBITAL{user?.shadow && <span className="trial-dot" aria-hidden="true" />}</div>
         <div className="top-bar__title-sub" title={t('topbar.build', { sha: GIT_SHA })}>v0.3 · {GIT_SHA.slice(0,7)}</div>
       </button>
 
@@ -205,7 +210,9 @@ export const TopBar: React.FC<TopBarProps> = ({
           onSignOut={signOut}
           onOpenNotifications={() => setNotifOpen(true)}
           adminGameId={adminGameId}
-          isHost={isHost}
+          // A solo game's clock is the SoloClock's (pause, step, speed):
+          // the multiplayer host's admin controls would fight it.
+          isHost={isHost && !gameState.solo}
           activePanel={activePanel}
           onTogglePanel={onTogglePanel}
           playerShipCount={playerShips.length}
@@ -406,7 +413,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           Empty renders nothing, so a lawless game keeps the old bar. */}
       {(gameState.activeLaws?.length ?? 0) > 0 && (
         <div className="top-bar__laws" data-testid="topbar-laws"
-          title={gameState.activeLaws!.map(l => `${l.name}: ${l.effect}`).join(' · ')}>
+          title={gameState.activeLaws!.map(inLang).map(l => `${l.name}: ${l.effect}`).join(' · ')}>
           {/* Phones: just the scales and the count, so the tick and its
               countdown always fit (they were pushed off-screen). */}
           <span className="laws-chip__compact" aria-hidden>⚖ {gameState.activeLaws!.length}</span>
@@ -414,7 +421,7 @@ export const TopBar: React.FC<TopBarProps> = ({
             {gameState.activeLaws!.length === 1 ? t('topbar.laws.one') : t('topbar.laws.many', { n: gameState.activeLaws!.length })}
           </div>
           <div className="laws-chip__list">
-            {gameState.activeLaws!.slice(0, 2).map(l => {
+            {gameState.activeLaws!.slice(0, 2).map(inLang).map(l => {
               const left = Math.max(0, Math.ceil(l.untilTick - gameState.currentTick));
               return (
                 <div
@@ -440,7 +447,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       )}
 
       <div className="top-bar__time">
-        <div className={`time-display${tickCountdownLabel != null ? ' time-display--ticking' : ''}`}>
+        <div className={`time-display${tickCountdownLabel != null || gameState.solo?.paused ? ' time-display--ticking' : ''}`}>
           <div className="time-display__label">{t('topbar.tick')}</div>
           <div className="time-display__value">{tickStr}</div>
           {tickCountdownLabel != null && (
@@ -449,7 +456,12 @@ export const TopBar: React.FC<TopBarProps> = ({
               <TickSpeedChip />
             </div>
           )}
+          {/* A paused solo game has no next tick: say so where it was. */}
+          {tickCountdownLabel == null && gameState.solo?.paused && (
+            <div className="time-display__countdown solo-paused">{t('solo.paused')}</div>
+          )}
         </div>
+        {gameState.solo && mpActions?.gameId && <SoloClock gameId={mpActions.gameId} />}
         {!hideSimControls && !turnBasedActive && !mpTbmActive && (
           // Realtime sim controls. Hidden in Turn-Based Mode (replaced
           // below by the single COMMIT TURN button) and in multiplayer
@@ -1115,7 +1127,7 @@ const LightweightToggle: React.FC = () => {
 interface SideMenuProps {
   onClose: () => void;
   onExitMode?: () => void;
-  user: { display_name: string; email: string } | null;
+  user: { display_name: string; email: string; shadow?: boolean } | null;
   onSignOut: () => Promise<void> | void;
   /** Opens the account-level notification preferences dialog. */
   onOpenNotifications?: () => void;
@@ -1474,6 +1486,10 @@ const SideMenu: React.FC<SideMenuProps> = ({
   // Tutorial — replay entry under GAME. The first-game prompt has its
   // own modal; this menu item is the "I want to see it again" path.
   const tutorial = useTutorial();
+  // A trial game replays ITS tour (the one it opened with), and says how
+  // long that one is: the menu offered "24 steps" beside a 12-step tour.
+  const { gameState: menuGame } = useGameContext();
+  const trialGame = !!menuGame.solo?.trial;
   // A phone has no Esc key: no "Press Esc to close" footer there.
   const isMobile = useIsMobile();
   // "Log copied" / failure note on the Download Log row. The menu sits
@@ -1533,7 +1549,7 @@ const SideMenu: React.FC<SideMenuProps> = ({
           <div className="side-menu__identity-name">
             {user ? (user.display_name || user.email) : t('topbar.guest')}
           </div>
-          {user && <div className="side-menu__identity-sub">{user.email}</div>}
+          {user && <div className="side-menu__identity-sub">{user.shadow ? t('trial.menu.unsaved') : user.email}</div>}
         </section>
 
         <nav className="side-menu__nav">
@@ -1568,6 +1584,15 @@ const SideMenu: React.FC<SideMenuProps> = ({
           )}
 
           <div className="side-menu__group-label">{t('topbar.menuGame')}</div>
+          {/* The language, mid-game (it was only in the lobby). Switches
+              live: every panel re-renders, and the game provider re-maps
+              /state so world names and the log follow. Saved on the
+              account when there is one, as the lobby picker does. */}
+          <div className="side-menu__item side-menu__lang" data-testid="menu-language">
+            <span className="side-menu__item-icon" aria-hidden>🌐</span>
+            <span className="side-menu__item-label">{t('lang.label')}</span>
+            <LanguageSwitch className="side-menu__lang-switch" onChosen={user ? saveLocale : undefined} />
+          </div>
           {canSaveLoad && onOpenSave && (
             <button
               className="side-menu__item"
@@ -1590,6 +1615,40 @@ const SideMenu: React.FC<SideMenuProps> = ({
               <span className="side-menu__item-hint">{t('topbar.load.hint')}</span>
             </button>
           )}
+          {/* A solo game's clock on a narrow phone: the bar keeps pause /
+              resume; speed and the single tick are here (SoloClock.css). */}
+          {menuGame.solo && isMobile && (
+            <button
+              className="side-menu__item"
+              onClick={() => window.dispatchEvent(new CustomEvent('orbital:solo-clock', { detail: { action: 'speed' } }))}
+              title={t('solo.speedTitle')}
+            >
+              <span className="side-menu__item-icon">⏱</span>
+              <span className="side-menu__item-label">{t('solo.menu.speed', { speed: soloSpeedLabel(menuGame.tickIntervalMs ?? 120_000) })}</span>
+              <span className="side-menu__item-hint">{t('solo.menu.speedHint', { next: soloSpeedLabel(nextSoloSpeed(menuGame.tickIntervalMs ?? 120_000)) })}</span>
+            </button>
+          )}
+          {menuGame.solo?.paused && isMobile && (
+            <button
+              className="side-menu__item"
+              onClick={() => window.dispatchEvent(new CustomEvent('orbital:solo-clock', { detail: { action: 'step' } }))}
+              title={t('solo.stepTitle')}
+            >
+              <span className="side-menu__item-icon">⏭</span>
+              <span className="side-menu__item-label">{t('solo.step')}</span>
+              <span className="side-menu__item-hint">{t('solo.stepTitle')}</span>
+            </button>
+          )}
+          {/* A Play for Free trial (trial.js): keep it. First in the menu. */}
+          {user?.shadow && (
+            <button
+              className="side-menu__item side-menu__item--save"
+              onClick={() => { onClose(); openSaveEmpire('menu'); }}
+            >
+              <span className="side-menu__item-icon">★</span>
+              <span className="side-menu__item-label">{t('trial.menu.save')}</span>
+            </button>
+          )}
           {onExitMode && (
             <button
               className="side-menu__item"
@@ -1607,8 +1666,10 @@ const SideMenu: React.FC<SideMenuProps> = ({
               // player enters a game the prompt fires again. Calling
               // start() directly also relaunches the tour now without
               // requiring a reload.
-              tutorial.reset();
-              tutorial.start();
+              // (The trial's tour has its own done flag; reset() is the
+              // full tour's, so a trial leaves it alone.)
+              if (trialGame) tutorial.startTrial();
+              else { tutorial.reset(); tutorial.start(); }
               onClose();
             }}
             title={t('topbar.tutorial.title')}
@@ -1617,7 +1678,7 @@ const SideMenu: React.FC<SideMenuProps> = ({
             <span className="side-menu__item-label">
               {tutorial.completed ? t('topbar.tutorial.replay') : t('topbar.tutorial.start')}
             </span>
-            <span className="side-menu__item-hint">{t('topbar.tutorial.hint', { n: TUTORIAL_STEP_COUNT })}</span>
+            <span className="side-menu__item-hint">{t('topbar.tutorial.hint', { n: trialGame ? TRIAL_TUTORIAL_STEP_COUNT : TUTORIAL_STEP_COUNT })}</span>
           </button>
 
           <LightweightToggle />
@@ -1777,6 +1838,9 @@ const SideMenu: React.FC<SideMenuProps> = ({
                 <span className="side-menu__item-label">{t('topbar.account.popout')}</span>
                 <span className="side-menu__item-hint">{t('topbar.account.popoutHint')}</span>
               </button>
+              {/* An unsaved trial: signing out would throw the empire away
+                  (there is no way back in). Save is the way out. */}
+              {!user.shadow && (
               <button
                 className="side-menu__item side-menu__item--danger"
                 onClick={async () => { onClose(); await onSignOut(); }}
@@ -1785,6 +1849,7 @@ const SideMenu: React.FC<SideMenuProps> = ({
                 <span className="side-menu__item-label">{t('topbar.account.signOut')}</span>
                 <span className="side-menu__item-hint">{t('topbar.account.signOutHint')}</span>
               </button>
+              )}
             </>
           )}
         </nav>

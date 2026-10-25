@@ -192,6 +192,8 @@ export function tradeRowToJson(row) {
     recurring: Number(row.recurring ?? 0) === 1,
     parent_offer_id: row.parent_offer_id,
     note: row.note,
+    // Why it was declined, when the decliner said (a code: DECLINE_REASONS).
+    decline_reason: row.decline_reason ?? null,
     created_at_tick: row.created_at_tick,
     created_at_ms: row.created_at_ms,
     resolved_at_ms: row.resolved_at_ms,
@@ -954,6 +956,10 @@ export async function handleAccept(req, env, { session, params }) {
 }
 
 // ---------- POST /api/games/:gameId/trades/:tradeId/decline ----------
+// body (optional): { reason } — one of DECLINE_REASONS, shown to the
+// proposer (migration 0186). Computer empires always give one.
+
+export const DECLINE_REASONS = new Set(['no_cargo', 'no_pacts', 'no_trust', 'unknown_terms']);
 
 export async function handleDecline(req, env, { session, params }) {
   const gameId = params.gameId;
@@ -974,9 +980,12 @@ export async function handleDecline(req, env, { session, params }) {
   }
   if (trade.status !== 'open') return err(409, 'not_open', `trade is ${trade.status}`);
 
+  const body = await readJson(req);
+  const reason = DECLINE_REASONS.has(body?.reason) ? body.reason : null;
   await env.DB
-    .prepare(`UPDATE trade_offers SET status = 'declined', resolved_at_ms = ?, resolved_by_faction_id = ? WHERE id = ? AND status = 'open'`)
-    .bind(Date.now(), caller.id, tradeId)
+    .prepare(`UPDATE trade_offers SET status = 'declined', resolved_at_ms = ?, resolved_by_faction_id = ?, decline_reason = ?
+               WHERE id = ? AND status = 'open'`)
+    .bind(Date.now(), caller.id, reason, tradeId)
     .run();
 
   notifyRoom(env, gameId, {
@@ -985,6 +994,8 @@ export async function handleDecline(req, env, { session, params }) {
     trade_id: tradeId,
     proposer_faction_id: trade.proposer_faction_id,
     responder_faction_id: trade.responder_faction_id,
+    responder_faction_name: caller.name ?? null,
+    reason,
   });
 
   return new Response(null, { status: 204 });

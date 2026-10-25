@@ -6,11 +6,13 @@ import { messageAlertsMe } from './messageAlert';
 import { FactionPanel } from './FactionPanel';
 import { CommsPanel } from './CommsPanel';
 import { SenatePanel } from './SenatePanel';
-import { tradesApi, apiFetch, RoomSnapshot } from './api';
+import { tradesApi, warsApi, apiFetch, RoomSnapshot } from './api';
 import { openScreen, logAction } from './telemetry';
 import { connectRoomSocket } from './roomSocket';
-import { t, tn } from '../i18n/core';
+import { t, tn, tk } from '../i18n/core';
 import { shareInvite } from './invite';
+import { tradeToastFor } from './tradeToast';
+import { publishSituation, clearSituation } from './situationFeed';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useI18n } from '../i18n/react';
 
@@ -160,15 +162,22 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
   // source of truth. railMounted gates rendering during the slide-out
   // animation so the panel still gets one frame to fade.
   useEffect(() => {
+    // ONE pending unmount, cancelled by a reopen: an uncancelled 250ms
+    // timer unmounted a panel the rail had just reopened (see TradeDock).
+    let unmountTimer: ReturnType<typeof setTimeout> | null = null;
     const onActive = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       const open = detail?.active === 'multiplayer';
       setRailOpen(open);
+      if (unmountTimer) { clearTimeout(unmountTimer); unmountTimer = null; }
       if (open) setRailMounted(true);
-      else setTimeout(() => setRailMounted(false), 250);
+      else unmountTimer = setTimeout(() => { unmountTimer = null; setRailMounted(false); }, 250);
     };
     window.addEventListener('dockrail:active', onActive as EventListener);
-    return () => window.removeEventListener('dockrail:active', onActive as EventListener);
+    return () => {
+      window.removeEventListener('dockrail:active', onActive as EventListener);
+      if (unmountTimer) clearTimeout(unmountTimer);
+    };
   }, []);
 
   // SitLog clicks on vote / trade items dispatch 'orbital:open-panel'
@@ -365,9 +374,24 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
       // Remember who we are so the WS handler can tell our own outgoing
       // proposals apart from genuinely incoming ones.
       if (callerFactionId) myFactionIdRef.current = callerFactionId;
-      const incoming = res.data.trades.filter(
+      const incomingRows = res.data.trades.filter(
         (t) => t.status === 'open' && t.responder_faction_id === callerFactionId,
-      ).length;
+      );
+      const incoming = incomingRows.length;
+      // The Situation Report's NEEDS A DECISION rows (situationFeed.ts).
+      publishSituation({
+        incomingTrades: incomingRows.map((t) => {
+          const pacts = [...(t.offer_pacts ?? []), ...(t.request_pacts ?? [])];
+          const amt = (b: { metal?: number; fuel?: number; gold?: number; science?: number } | null | undefined) =>
+            Number(b?.metal ?? 0) + Number(b?.fuel ?? 0) + Number(b?.gold ?? 0) + Number(b?.science ?? 0);
+          return {
+            id: t.id,
+            proposer_faction_id: t.proposer_faction_id,
+            pacts,
+            pactOnly: pacts.length > 0 && amt(t.offer) === 0 && amt(t.request) === 0,
+          };
+        }),
+      });
       const unassigned = res.data.trades
         .filter((t) => t.status === 'accepted')
         .reduce((n, t) => n + (t.deliveries ?? []).filter(
@@ -399,10 +423,14 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
     };
     tick();
     const id = setInterval(tick, 10_000);
-    return () => { cancelled = true; clearInterval(id); };
+    // An offer made, answered or withdrawn: recount now, not in 10 s.
+    const onWs = (e: Event) => { if ((e as CustomEvent).detail?.kind === 'trade') void tick(); };
+    window.addEventListener('orbital:ws', onWs as EventListener);
+    return () => { cancelled = true; clearInterval(id); window.removeEventListener('orbital:ws', onWs as EventListener); };
   }, [gameId]);
 
-  // Poll the senate for bills awaiting the caller's ballot.
+  // Poll the senate for bills awaiting the caller's ballot, and the wars
+  // for a ceasefire someone has offered us (both NEEDS A DECISION rows).
   useEffect(() => {
     if (!gameId) {
       setIncomingProposalCount(0);
@@ -410,18 +438,52 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
     }
     let cancelled = false;
     const tick = async () => {
-      const res = await apiFetch<{ proposals: Array<{ status: string; caller_vote: string | null }> }>(
-        `/api/games/${gameId}/senate/proposals`,
-      );
-      if (cancelled || !res.ok) return;
-      setIncomingProposalCount(
-        (res.data.proposals ?? []).filter(p => p.status === 'voting' && !p.caller_vote).length,
-      );
+      const [res, wres] = await Promise.all([
+        apiFetch<{ proposals: Array<{ id: string; title: string; status: string; caller_vote: string | null; vote_closes_at_tick: number }> }>(
+          `/api/games/${gameId}/senate/proposals`,
+        ),
+        warsApi(gameId).list(),
+      ]);
+      if (cancelled) return;
+      if (res.ok) {
+        const open = (res.data.proposals ?? []).filter(p => p.status === 'voting' && !p.caller_vote);
+        setIncomingProposalCount(open.length);
+        publishSituation({
+          openVotes: open.map(p => ({ id: p.id, title: p.title, vote_closes_at_tick: p.vote_closes_at_tick })),
+        });
+      }
+      const me = myFactionIdRef.current;
+      if (wres.ok && me) {
+        publishSituation({
+          ceasefireOffers: (wres.data.wars ?? [])
+            .filter(w => w.open && w.mine && w.ceasefire_by && w.ceasefire_by !== me)
+            .map(w => ({ war_id: w.id, faction_id: w.factions.find(f => f !== me) ?? w.ceasefire_by! })),
+        });
+      }
     };
     tick();
     const id = setInterval(tick, 10_000);
-    return () => { cancelled = true; clearInterval(id); };
+    // THE BADGE FOLLOWS THE CHAMBER. A bill that opened, passed or got
+    // our vote left the badge on its old count for up to ten seconds
+    // while the panel (which re-polls on these) already said "No bill on
+    // the floor" (playtest B6). Same pushes, same moment.
+    const onWs = (e: Event) => {
+      const d = (e as CustomEvent).detail;
+      if (d?.kind === 'senate' || d?.type === 'wars_changed') void tick();
+    };
+    const onVoted = () => { void tick(); };
+    window.addEventListener('orbital:ws', onWs as EventListener);
+    window.addEventListener('mp:senate-voted', onVoted);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+      window.removeEventListener('orbital:ws', onWs as EventListener);
+      window.removeEventListener('mp:senate-voted', onVoted);
+    };
   }, [gameId]);
+
+  // Leaving the game: none of its decisions are waiting any more.
+  useEffect(() => () => clearSituation(), [gameId]);
 
   // Poll unread message count for the Comms tab badge.
   useEffect(() => {
@@ -483,25 +545,15 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
           return;
         }
         if (m?.kind === 'trade') {
-          if (m.event === 'proposed') {
-            // The 'proposed' broadcast fans out to EVERY socket in the
-            // room, including the proposer's. Skip it for our own
-            // outgoing trades — those aren't incoming, so no toast, no
-            // popup, no badge bump.
-            if (m.proposer_faction_id && m.proposer_faction_id === myFactionIdRef.current) {
-              return;
-            }
-            // …and skip trades between two OTHER factions. The broadcast
-            // is room-wide and unscoped, so every bystander was getting a
-            // popup for offers not addressed to them — and because
-            // pendingTrade is a single slot, an unrelated pair's trade
-            // would overwrite the popup you actually needed to answer
-            // (playtest: "the popup appears whenever" / "someone else
-            // closing it closed mine"). The payload already carries the
-            // responder, so scope it here — no server change needed.
-            if (m.responder_faction_id && m.responder_faction_id !== myFactionIdRef.current) {
-              return;
-            }
+          // Every trade push fans out to EVERY socket in the room: our own
+          // offers, and deals between two OTHER factions. Only the ones
+          // addressed to us, or answering ours, are news (tradeToast.ts):
+          // a bystander's popup overwrote the one you needed to answer,
+          // and the trial's Warlord declining the Ally's pact toasted
+          // "Trade declined" at a player who had done nothing.
+          const toast = tradeToastFor(m, myFactionIdRef.current);
+          if (!toast) return;
+          if (toast === 'offer') {
             const proposer = (typeof m.proposer_faction_name === 'string' && m.proposer_faction_name)
               ? m.proposer_faction_name
               : t('shell.toast.anotherFaction');
@@ -511,11 +563,16 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
               tradeId: String(m.trade_id ?? ''),
               proposerName: proposer,
             });
-          } else if (m.event === 'accepted') {
+          } else if (toast === 'accepted') {
             pushToast('trade', t('shell.toast.tradeAccepted'));
-          } else if (m.event === 'declined') {
-            pushToast('trade', t('shell.toast.tradeDeclined'));
-          } else if (m.event === 'countered') {
+          } else if (toast === 'declined') {
+            // With the reason when they gave one (a computer empire does).
+            const who = typeof m.responder_faction_name === 'string' && m.responder_faction_name ? m.responder_faction_name : null;
+            const why = typeof m.reason === 'string' && m.reason ? tk(`trade.declineReason.${m.reason}`, '') : '';
+            pushToast('trade', who && why
+              ? t('shell.toast.tradeDeclinedWhy', { name: who, reason: why })
+              : t('shell.toast.tradeDeclined'));
+          } else if (toast === 'countered') {
             pushToast('trade', t('shell.toast.tradeCountered'));
           }
         } else if (m?.kind === 'treaty') {
@@ -638,7 +695,7 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
         </div>
       )}
       {railMounted && (
-      <div className={`dock-panel mp-dock${railOpen ? ' is-open' : ''}`}>
+      <div className={`dock-panel mp-dock${railOpen ? ' is-open' : ''}`} data-tutorial-id="mp-dock">
         <div className="mp-dock-head">
           <span className="mp-dock-head__title">
             <MpPeopleIcon />

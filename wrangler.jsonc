@@ -135,7 +135,14 @@
       "vars": {
         // Read by the client banner so nobody mistakes staging for the
         // real game — see ENVIRONMENT_BANNER in the app shell.
-        "ORBITAL_ENV": "staging"
+        "ORBITAL_ENV": "staging",
+        // Play for Free's per-address limit (worker/trial.js): staging's
+        // playtesters all share one address.
+        "TRIALS_PER_HOUR": "200",
+        // The same public OAuth client id as prod, so Google sign-in (and
+        // Save your empire's Google button) shows on staging too. Google
+        // only accepts it from origins listed on that client.
+        "GOOGLE_CLIENT_ID": "45941283467-j1stgtpi5dfck741viel5u2mr91rm9av.apps.googleusercontent.com"
       }
     }
   }

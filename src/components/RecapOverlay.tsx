@@ -75,7 +75,7 @@ function resolveSceneBody(
   line: string,
   f: ChronicleFocus | null | undefined,
   ships: { id: string; orbit?: { parentBodyId?: string } }[],
-  bodies: { id: string; name: string }[],
+  bodies: { id: string; name: string; storedName?: string }[],
 ): string | undefined {
   if (f?.kind === 'body') return f.bodyId;
   if (f?.kind === 'ship') {
@@ -88,8 +88,12 @@ function resolveSceneBody(
   }
   let best: { id: string; len: number } | null = null;
   for (const b of bodies) {
-    if (b.name && line.includes(b.name) && (!best || b.name.length > best.len)) {
-      best = { id: b.id, len: b.name.length };
+    // The shown name (a line built in the player's language) or the stored
+    // English one (a line the server wrote).
+    for (const nm of [b.name, b.storedName]) {
+      if (nm && line.includes(nm) && (!best || nm.length > best.len)) {
+        best = { id: b.id, len: nm.length };
+      }
     }
   }
   return best?.id;

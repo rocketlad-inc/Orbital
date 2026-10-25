@@ -10,7 +10,7 @@ import React, { useMemo } from 'react';
 import { useGameContext } from '../state/gameContext';
 import {
   ALL_TECH_IDS, TECH_DEFS, TechId,
-  effectAtLevel, nextLevelCost,
+  effectTotalText, nextLevelCost,
   TECH_MAX_LEVEL, levelsToQueue, levelForQueueSlot,
 } from '../game/techs';
 import { unlocksAt, isMegastructureUnlock, megastructureNextStep, unlockLabelOf, unlockBlurbOf } from '../game/researchUnlocks';
@@ -219,7 +219,7 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                 {activeDef.name} <span className="tech-active__lvl">→ {t('econ.tech.levelN', { n: activeLevel + 1 })}</span>
               </div>
               <div className="tech-active__effect">
-                {t('econ.tech.next', { effect: activeDef.effectText, pct: ((activeLevel + 1) * activeDef.perLevel * 100).toFixed(0) })}
+                {t('econ.tech.next', { effect: activeDef.effectText, total: effectTotalText(activeDef, activeLevel + 1) })}
               </div>
               <div className="tech-active__bar">
                 <div className="tech-active__bar-fill" style={{ width: `${activePct}%` }} />
@@ -483,7 +483,7 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                       <span style={{ color: '#b8c8d6' }}>{t('econ.tech.noBonus')}</span>
                     ) : (
                       <span style={{ color: '#6ee7b7' }}>
-                        {t('econ.tech.effectPct', { pct: (effectAtLevel(def, lvl) * 100).toFixed(0) })}
+                        {t('econ.tech.effectPct', { total: effectTotalText(def, lvl) })}
                       </span>
                     )}
                   </div>

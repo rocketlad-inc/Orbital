@@ -54,7 +54,12 @@ export interface ManeuverNode {
  */
 export interface Body {
   id: string;
+  /** The name to SHOW, in the player's language (multiplayer maps the
+   *  stored name through src/i18n/names.ts: "Earth" reads "Terra"). */
   name: string;
+  /** The name as the server stores it, when it differs from `name`.
+   *  Server-built text (recaps, the Herald) quotes this one. */
+  storedName?: string;
   type: 'star' | 'black_hole' | 'terrestrial' | 'gas_giant' | 'ice_giant' | 'moon'
       | 'dwarf' | 'asteroid' | 'lagrange'
       // Minable and consumable, as opposed to `asteroid`, which is
@@ -1190,6 +1195,8 @@ export interface GameState {
     name: string;
     /** One sentence of consequence, e.g. "Research runs 2x as fast." */
     effect: string;
+    /** topic / name / effect in the other languages (worker lawI18n). */
+    i18n?: Record<string, { topic?: string; name?: string; effect?: string } | undefined>;
     value: number;
     /** Tick the law lapses on. */
     untilTick: number;
@@ -1318,6 +1325,17 @@ export interface GameState {
     bodyId: string | null;
     bodyName: string | null;
   }>;
+  /** Meteoroids YOUR sensors found recently (the owner-only
+   *  'meteoroid_found' chronicle rows). The ore is NOT banked by the find;
+   *  it sits in the rock until a freighter mines it, so the situation
+   *  report shows it as something to go and collect. Multiplayer only. */
+  recentMeteoroidFinds?: Array<{
+    bodyId: string;
+    tick: number;
+    name: string | null;
+    kind: 'metal' | 'gold' | null;
+    tons: number;
+  }>;
   /** Machine-readable chronicle kind per entry, parallel-indexed with
    *  combatLog. Drives the pending-FX queue (src/render/pendingFx.ts). */
   lastHarvestTick: number;             // tick when resources were last collected
@@ -1329,6 +1347,9 @@ export interface GameState {
   tickIntervalMs?: number;
   /** Tick speed by time of day (worker/tickSchedule.js); null = flat. */
   tickSchedule?: import('./game/tickSchedule').TickSchedule | null;
+  /** A solo game (worker/solo.js): one person against computer empires,
+   *  with a clock the person may pause. Null in every other game. */
+  solo?: { paused: boolean; difficulty: string | null; trial?: boolean } | null;
   /** Active trade routes (freighter ↔ collector). Empty when no
    *  freighter has been assigned. Persisted with the save. Currently
    *  data-only — the execution loop lands next turn. */

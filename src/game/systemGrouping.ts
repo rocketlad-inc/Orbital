@@ -18,7 +18,8 @@ import type { Body, Ship } from '../types';
 import { AUTO_COMBAT_INTERVAL } from './combat';
 import { ALWAYS_PEACE, PeaceCheck } from './peace';
 import { getShipClass } from './shipClasses';
-import { t } from '../i18n/core';
+import { getLang, t } from '../i18n/core';
+import { ofPlace } from '../i18n/names';
 
 /** A hull is "armed" if it actually deals damage — server-authoritative
  *  damagePerTick when present (designer builds can arm OR disarm ANY
@@ -630,7 +631,9 @@ export function systemLabel(bodies: Body[], rootId: string): string {
   const name = root.name.replace(/\s*Barycenter$/i, '');
   if (isStellarAnchor(root)) return name;
   const hasSatellites = bodies.some(b => b.parent === rootId);
-  return hasSatellites ? t('helper.sys.system', { name }) : name;
+  // "Jupiter System" / "Sistema de Júpiter" (body names are already shown
+  // in the player's language; see src/i18n/names.ts).
+  return hasSatellites ? t('helper.sys.system', { name: ofPlace(getLang(), name) }) : name;
 }
 
 /** A region's English label (CORE_LABEL, a belt's label) in the player's

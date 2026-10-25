@@ -54,6 +54,9 @@ export const QA_DOMAINS = [
   // counts and feature adoption in whichever direction the harness
   // happened to be driving that day.
   '%@agents.orbital.local',
+  // Unsaved Play for Free accounts (trial.js): not a signup until saved,
+  // when the account they save into is counted instead.
+  '%@shadow.orbital.local',
 ];
 // For queries that already join users as `u`.
 const NOT_QA_USER = QA_DOMAINS.map(d => `u.email NOT LIKE '${d}'`).join(' AND ');

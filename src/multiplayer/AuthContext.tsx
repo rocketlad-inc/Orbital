@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { apiFetch, User } from './api';
 import { attributionForSignup } from './attribution';
-import { getLang, setLang, isLang } from '../i18n/core';
+import { getLang, setLang, isLang, t } from '../i18n/core';
 import { apiErrorText } from '../i18n/apiErrors';
 
 interface AuthContextValue {
@@ -20,6 +20,10 @@ interface AuthContextValue {
    *  lobby header and every row showing the display name update without
    *  a reload — otherwise two different names sit on screen at once. */
   refresh: () => Promise<void>;
+  /** Play for Free (worker/trial.js): a shadow account and a trial game,
+   *  no form. Returns null on success (the app then opens the game), or
+   *  the error to show. */
+  startTrial: () => Promise<string | null>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -91,13 +95,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (res.ok) setUser(res.data.user);
   }, []);
 
+  const startTrial = useCallback(async () => {
+    const res = await apiFetch<{ ok: true; game_id: string }>('/api/trial', {
+      method: 'POST',
+      // The language on screen names the stand-in player ("Comandante").
+      body: JSON.stringify({ attribution: attributionForSignup(), lang: getLang() }),
+    });
+    // A server fault reads as "try again", never as the raw error.
+    const friendly = (r: { status: number; error: unknown }) =>
+      r.status >= 500 ? t('trial.err.failed') : apiErrorText(r.error as never, 'trial.err.failed');
+    if (!res.ok) return friendly(res);
+    // Straight into the trial: the launch routing opens this tab's room.
+    try { sessionStorage.setItem('orbital.tab_room', res.data.game_id); } catch { /* private mode */ }
+    // The session is made; who it is can fail on a transient database
+    // fault (staging, 2026-10-24: D1_RESET_DO), so ask again before giving up.
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const me = await apiFetch<{ user: User }>('/api/auth/me');
+      if (me.ok) { setUser(me.data.user); return null; }
+      if (attempt === 3) return friendly(me);
+      await new Promise(r => setTimeout(r, 700 * (attempt + 1)));
+    }
+    return t('trial.err.failed');
+  }, []);
+
   const signOut = useCallback(async () => {
     await apiFetch('/api/auth/logout', { method: 'POST' });
     setUser(null);
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, googleClientId, signIn, signUp, signInWithGoogle, signOut, refresh }}>
+    <AuthContext.Provider value={{ user, loading, googleClientId, signIn, signUp, signInWithGoogle, signOut, refresh, startTrial }}>
       {children}
     </AuthContext.Provider>
   );

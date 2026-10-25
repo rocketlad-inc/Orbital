@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { GameContextProvider, useGameContext } from './state/gameContext';
 import { useAutosave } from './state/useAutosave';
 import { MapCanvas } from './components/MapCanvas';
@@ -31,10 +31,13 @@ import { useCommissionHandoff, useRefreshOnReturn } from './multiplayer/commissi
 import { TurnBasedSettingsProvider } from './state/turnBasedSettings';
 import { MapLayersProvider } from './state/mapLayers';
 import { TutorialProvider } from './state/tutorial';
-import { TUTORIAL_STEP_COUNT } from './game/tutorialSteps';
+import { TUTORIAL_STEP_COUNT, TRIAL_TUTORIAL_STEP_COUNT } from './game/tutorialSteps';
 import { TutorialOverlay } from './components/TutorialOverlay';
 import { TutorialPromptModal } from './components/TutorialPromptModal';
 import { AuthOverlay } from './multiplayer/AuthOverlay';
+import { TrialLayer } from './multiplayer/trial/TrialLayer';
+import { SaveEmpireHost } from './multiplayer/trial/SaveEmpire';
+import './multiplayer/trial/trial.css';
 import { Landing } from './components/Landing';
 import { ANSWER_PAGES } from './content/answerPages';
 import { SharedRecap } from './multiplayer/SharedRecap';
@@ -76,6 +79,7 @@ import './styles/mobile.css';
 // the mobile shell even though no media query can detect it.
 import './styles/shellJs.css';
 import { lazyChunk } from './util/lazyChunk';
+import { syncView, viewOf, type AppView } from './platform/viewHistory';
 
 /** Landing pages a signed-in player can open by URL (see docRoute). */
 const DOC_PATHS = ['/changelog', '/how-to-play', '/privacy', '/press', '/credits', ...ANSWER_PAGES.map(p => p.path)];
@@ -153,6 +157,26 @@ const SituationPanelBridge: React.FC<{
   }, [onTogglePanel]);
   return null;
 };
+
+/** Play for Free's launch screen: the trial is being made (a few
+ *  seconds: an account, a seeded Solar System, two neighbours). */
+function TrialLaunch({ error, onRetry, onLogin }: { error: string | null; onRetry: () => void; onLogin: () => void }) {
+  useI18n();
+  return (
+    <div className="trial-launch" aria-busy={!error} role="status">
+      <div className="trial-launch__brand">ORBITAL</div>
+      {!error && <div className="trial-launch__orbit" aria-hidden="true" />}
+      <h1 className="trial-launch__title">{error ? t('trial.launch.failed') : t('trial.launch.title')}</h1>
+      <p className="trial-launch__sub">{error ?? t('trial.launch.sub')}</p>
+      {error && (
+        <div className="trial-launch__actions">
+          <button className="trial-launch__btn trial-launch__btn--go" onClick={onRetry}>{t('trial.launch.retry')}</button>
+          <button className="trial-launch__btn" onClick={onLogin}>{t('site.signIn')}</button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function GameUI({
   onExit,
@@ -381,7 +405,10 @@ function GameUI({
           so backdrop-filter on .top-bar doesn't trap them. The prompt
           self-suppresses once the player has completed/skipped (state
           persists across sessions via localStorage). */}
-      <TutorialPromptModal />
+      {/* A Play for Free trial skips the "New to Orbital?" prompt: its own
+          short track starts by itself (TrialStarter), and the save
+          prompts run alongside (trial/TrialSaveLayer). */}
+      {gameState.solo?.trial ? <TrialLayer /> : <TutorialPromptModal />}
       <TutorialOverlay />
     </div>
   );
@@ -471,7 +498,7 @@ const LEGACY_LAST_ROOM_KEY = 'orbital.last_room';
 
 function AppShell() {
   useI18n();
-  const { user, loading, refresh: refreshAuth } = useAuth();
+  const { user, loading, refresh: refreshAuth, startTrial } = useAuth();
   // index.html carries the marketing page's long search title; a signed-in
   // player's tab just says "Orbital" (the landing sets its own per page).
   useEffect(() => {
@@ -497,6 +524,18 @@ function AppShell() {
   // (activeRooms state retired with the mode picker — the rooms fetch
   //  below still runs, but only the priority/auto-jump logic reads it.)
   const [showAuth, setShowAuth] = useState(false);
+  // A signed-in player looking at the home page (the lobby's ORBITAL logo,
+  // or Back from the lobby). Signed out, the home page is the default.
+  const [showLanding, setShowLanding] = useState(false);
+  // Play for Free (worker/trial.js): the launch screen while the shadow
+  // account and the trial game are made, or what went wrong.
+  const [trialLaunch, setTrialLaunch] = useState<null | { error: string | null }>(null);
+  const beginTrial = async () => {
+    setTrialLaunch({ error: null });
+    const problem = await startTrial();
+    // Success: `user` is set, and the launch routing opens the game.
+    setTrialLaunch(problem ? { error: problem } : null);
+  };
   // Ship icon gallery — reachable at ?icons. Standalone preview page
   // for picking which D/E/F candidates to keep before the dropdown
   // wires up at ship construction.
@@ -593,7 +632,14 @@ function AppShell() {
             return;
           }
         }
-        if (current && isMember(current)) return;
+        // Still ours: open it. Usually it already is (state starts from the
+        // tab room), but Play for Free sets the tab room the moment before
+        // the account appears, and the lobby showed instead of the trial.
+        if (current && isMember(current)) {
+          setSelectedRoomId(current);
+          setMode('multiplayer');
+          return;
+        }
 
         // One-time move of a device-only pin onto the account.
         let autoload = res.data.autoload_room_id ?? null;
@@ -645,6 +691,45 @@ function AppShell() {
     setSelectedRoomId(null);
     tabRoom.clear();
   };
+
+  // ---- Back / Forward between the home page, the lobby and a game ----
+  // (src/platform/viewHistory.ts). Everything that moves the player keeps
+  // working as it did; this mirrors the view on screen into history, and
+  // a popstate puts the view the entry names back on screen.
+  const historyView: AppView | null = (!user || guestMode || mode === 'singleplayer' || !launchResolved)
+    ? null
+    : (showLanding || docRoute) ? { view: 'landing' }
+      : selectedRoomId ? { view: 'game', roomId: selectedRoomId }
+        : { view: 'lobby' };
+  const historyKey = historyView
+    ? `${historyView.view}:${historyView.view === 'game' ? historyView.roomId : ''}` : null;
+  useEffect(() => {
+    if (historyView) syncView(historyView);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyKey]);
+  const signedInRef = useRef(false);
+  signedInRef.current = !!user;
+  const selectedRoomRef = useRef(selectedRoomId);
+  selectedRoomRef.current = selectedRoomId;
+  useEffect(() => {
+    const onPop = (e: PopStateEvent) => {
+      const v = viewOf(e.state);
+      if (!v || !signedInRef.current) return;
+      if (v.view === 'landing') { setShowLanding(true); return; }
+      setShowLanding(false);
+      if (v.view === 'lobby') {
+        if (selectedRoomRef.current) { setSelectedRoomId(null); tabRoom.clear(); }
+        return;
+      }
+      if (selectedRoomRef.current !== v.roomId) {
+        setRoomGameId(null);
+        setSelectedRoomId(v.roomId);
+        tabRoom.set(v.roomId);
+      }
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
 
   const handleEnterRoom = (roomId: string) => {
     setSelectedRoomId(roomId);
@@ -868,7 +953,9 @@ function AppShell() {
         onSignIn={() => { setDocRoute(null); setShowAuth(true); }}
         authed={!!user}
         onExit={() => {
-          window.history.pushState({}, '', '/');
+          // Signed in, history follows the view (viewHistory.ts).
+          if (!user) window.history.pushState({}, '', '/');
+          setShowLanding(false);
           setDocRoute(null);
         }}
       />
@@ -879,10 +966,19 @@ function AppShell() {
   // retired — accounts only). The Tunables sandbox and UX Lab used to
   // hang off the landing nav as auth-bypass routes; both are deleted.
   if (!user && !guestMode) {
+    if (trialLaunch) {
+      return (
+        <TrialLaunch
+          error={trialLaunch.error}
+          onRetry={() => beginTrial()}
+          onLogin={() => { setTrialLaunch(null); setShowAuth(true); }}
+        />
+      );
+    }
     if (!showAuth) {
       return <Landing onSignIn={() => setShowAuth(true)} />;
     }
-    return <AuthOverlay />;
+    return <AuthOverlay onBack={() => setShowAuth(false)} onTrial={() => beginTrial()} />;
   }
 
   if (guestMode) {
@@ -899,9 +995,19 @@ function AppShell() {
   }
 
   // Shown over the lobby or the game, whichever the player landed on.
-  const discordInvite = user?.invite_discord && !inviteClosed
-    ? <DiscordInvite url={user.invite_discord} onClose={() => setInviteClosed(true)} />
-    : null;
+  // A Play for Free account gets the save sheet instead of the invite.
+  const discordInvite = user?.shadow
+    ? <SaveEmpireHost />
+    : user?.invite_discord && !inviteClosed
+      ? <DiscordInvite url={user.invite_discord} onClose={() => setInviteClosed(true)} />
+      : null;
+
+  // The home page, signed in: from the lobby's logo, or Back. Its Play
+  // and Back buttons return to the lobby.
+  if (showLanding) {
+    const toLobby = () => setShowLanding(false);
+    return <Landing authed onSignIn={toLobby} onPlay={toLobby} onExit={toLobby} />;
+  }
 
   // multiplayer — lobby first, then in-room shell
   if (!selectedRoomId) {
@@ -910,7 +1016,7 @@ function AppShell() {
     if (!launchResolved) return <div className="app-launching" aria-busy="true" />;
     return (
       <>
-        <MultiplayerLobby onEnterRoom={handleEnterRoom} />
+        <MultiplayerLobby onEnterRoom={handleEnterRoom} onHome={() => setShowLanding(true)} />
         {discordInvite}
       </>
     );
@@ -921,6 +1027,12 @@ function AppShell() {
   // exists on the server. Once roomGameId is a real id, swap in the
   // game provider which feeds the canvas.
   const gameStarted = typeof roomGameId === 'string' && roomGameId.length > 0;
+  // A Play for Free trial is never in a pre-game lobby: keep the launch
+  // screen up until its game is ready, instead of flashing the
+  // multiplayer shell's "Loading room…" at a first-time player.
+  if (user?.shadow && !gameStarted && roomGameId !== 'missing') {
+    return <TrialLaunch error={null} onRetry={() => undefined} onLogin={() => undefined} />;
+  }
   return (
     <MultiplayerShell onExit={handleExitRoom} initialRoomId={selectedRoomId} preGame={!gameStarted}>
       {gameStarted ? (
@@ -1073,7 +1185,7 @@ function AppRouter() {
     <AuthProvider>
       <TurnBasedSettingsProvider>
         <MapLayersProvider>
-          <TutorialProvider stepCount={TUTORIAL_STEP_COUNT}>
+          <TutorialProvider stepCount={TUTORIAL_STEP_COUNT} trialStepCount={TRIAL_TUTORIAL_STEP_COUNT}>
             <AppShell />
           </TutorialProvider>
         </MapLayersProvider>

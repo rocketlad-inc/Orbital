@@ -25,7 +25,7 @@ import {
 } from './api';
 import { logUiEvent } from './telemetry';
 import { TradeComposer, pactLabel, resWord } from './TradeComposer';
-import { t, tn, type Key } from '../i18n/core';
+import { t, tn, tk, type Key } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import { apiErrorText } from '../i18n/apiErrors';
 import { focusTradeCard, useTradeFocus } from './tradeFocus';
@@ -163,11 +163,16 @@ export function TradesPanel({ gameId, view = 'deals' }: {
       if (kind === 'trade' || kind === 'market') refresh();
     };
     const onVisible = () => { if (!document.hidden) refresh(); };
+    // Opened to the offers (the trial tutorial's pact step, a notice's
+    // "take me there"): show what is on the table now, not 15 s ago.
+    const onOpen = (e: Event) => { if ((e as CustomEvent).detail?.panel === 'trades') refresh(); };
     window.addEventListener('orbital:ws', onWs as EventListener);
+    window.addEventListener('orbital:open-panel', onOpen as EventListener);
     document.addEventListener('visibilitychange', onVisible);
     return () => {
       clearInterval(t);
       window.removeEventListener('orbital:ws', onWs as EventListener);
+      window.removeEventListener('orbital:open-panel', onOpen as EventListener);
       document.removeEventListener('visibilitychange', onVisible);
     };
   }, [refresh]);
@@ -673,6 +678,13 @@ function TradeCard({
       {trade.parent_offer_id && (
         <div style={{ marginTop: 4, fontSize: 9, color: '#b8c8d6' }}>
           ↳ {t('trade.counterOffer')}
+        </div>
+      )}
+
+      {/* Why they said no, when they said (a computer empire always does). */}
+      {trade.status === 'declined' && trade.decline_reason && (
+        <div className="tp-row__ended">
+          {tk(`trade.declineReason.${trade.decline_reason}`, trade.decline_reason)}
         </div>
       )}
 

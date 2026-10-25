@@ -14,7 +14,7 @@
 // knows which database it is bound to.
 // ============================================================
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import './StagingBanner.css';
 
 export const StagingBanner: React.FC = () => {
@@ -36,10 +36,28 @@ export const StagingBanner: React.FC = () => {
     return () => { live = false; };
   }, []);
 
+  // THE TOP BAR MAKES ROOM FOR THE BANNER. The banner sits over the top of
+  // the page and the bar is fixed at the top, so on a phone the resource
+  // pills sat under the stripes (Maya, 2026-10-24). Publishing the
+  // banner's height as --stg-h grows --topbar-h by it (App.css), and every
+  // panel anchored under the bar follows. Production never renders this,
+  // so --stg-h is never set there and the layout is unchanged.
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (env !== 'staging' || !el) return undefined;
+    const root = document.documentElement;
+    const publish = () => root.style.setProperty('--stg-h', `${Math.round(el.getBoundingClientRect().height)}px`);
+    publish();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(publish) : null;
+    ro?.observe(el);
+    return () => { ro?.disconnect(); root.style.removeProperty('--stg-h'); };
+  }, [env]);
+
   if (env !== 'staging') return null;
 
   return (
-    <div className="stg-banner" role="status">
+    <div className="stg-banner" role="status" ref={ref}>
       <span className="stg-dot" aria-hidden />
       <b>STAGING</b>
       <span className="stg-sep">·</span>

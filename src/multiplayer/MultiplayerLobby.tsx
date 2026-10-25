@@ -20,6 +20,7 @@ import { apiErrorText } from '../i18n/apiErrors';
 import { saveLocale } from '../i18n/account';
 import './lobby.css';
 import { InviteCard } from './InviteCard';
+import { openSaveEmpire } from './trial/SaveEmpire';
 
 // Full-screen pre-game lobby: where a signed-in player finds, starts and
 // returns to games. Sections:
@@ -38,13 +39,16 @@ type Tab = 'my' | 'past' | 'browse' | 'create' | 'code' | 'profile' | 'admin' | 
 
 interface Props {
   onEnterRoom: (roomId: string) => void;
+  /** Open the home page (the ORBITAL logo). */
+  onHome?: () => void;
 }
 
 type Listing = { games: GameSummary[]; now: number; autoload_room_id?: string | null };
 
-export function MultiplayerLobby({ onEnterRoom }: Props) {
+export function MultiplayerLobby({ onEnterRoom, onHome }: Props) {
   useI18n();
   const { user, signOut } = useAuth();
+  const shadow = !!user?.shadow;
   const [tab, setTab] = useState<Tab>(() => {
     // Stripe's success/cancel redirect lands on the SPA root with
     // ?purchase=... — open straight onto the profile tab so the
@@ -89,9 +93,18 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
   const liveMine = useMemo(() => mine?.games.filter(g => !g.archived_at_ms) ?? null, [mine]);
   const pastMine = useMemo(() => mine?.games.filter(g => !!g.archived_at_ms) ?? null, [mine]);
 
+  // A Play for Free account whose trial is gone (lost, or ended) has
+  // nothing to keep and nowhere to go: the lobby is closed to it. Back to
+  // the home page to start over (Lorne, 2026-10-24: "soft locked").
+  useEffect(() => {
+    if (!shadow || liveMine === null || liveMine.some(g => g.phase === 'live')) return;
+    try { sessionStorage.removeItem('orbital.tab_room'); } catch { /* private mode */ }
+    void signOut();
+  }, [shadow, liveMine, signOut]);
+
   // A player with nothing live lands on Browse rather than an empty list.
   useEffect(() => {
-    if (liveMine !== null && liveMine.length === 0 && tab === 'my') setTab('browse');
+    if (liveMine !== null && liveMine.length === 0 && tab === 'my' && !shadow) setTab('browse');
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveMine]);
 
@@ -125,7 +138,10 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
       <div className="lx-bg" aria-hidden />
       <header className="lx-top">
         <div className="lx-top__inner">
-          <button className="lx-brand" onClick={() => setTab(liveMine && liveMine.length ? 'my' : 'browse')}>
+          {/* The logo goes home, to the landing page (it only re-picked a
+              tab, so there was no way back there from the lobby). */}
+          <button className="lx-brand" title={t('site.homeTitle')}
+            onClick={() => (onHome ? onHome() : setTab(liveMine && liveMine.length ? 'my' : 'browse'))}>
             ORBITAL
           </button>
           <nav className="lx-nav" aria-label={t('lobby.nav.label')}>
@@ -133,11 +149,13 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
             {pastMine && pastMine.length > 0 && (
               <NavItem active={tab === 'past'} onClick={() => setTab('past')}>{t('lobby.nav.past')}</NavItem>
             )}
-            <NavItem active={tab === 'browse'} onClick={() => setTab('browse')}>{t('lobby.nav.browse')}</NavItem>
-            <NavItem active={tab === 'create'} onClick={() => setTab('create')}>{t('lobby.nav.create')}</NavItem>
-            <NavItem active={tab === 'code'} onClick={() => setTab('code')}>{t('lobby.nav.code')}</NavItem>
+            {/* A Play for Free trial plays its trial only (worker/trial.js):
+                saving the empire opens the rest. */}
+            {!shadow && <NavItem active={tab === 'browse'} onClick={() => setTab('browse')}>{t('lobby.nav.browse')}</NavItem>}
+            {!shadow && <NavItem active={tab === 'create'} onClick={() => setTab('create')}>{t('lobby.nav.create')}</NavItem>}
+            {!shadow && <NavItem active={tab === 'code'} onClick={() => setTab('code')}>{t('lobby.nav.code')}</NavItem>}
             {/* The Map Maker (src/mapmaker), behind its launch switch. */}
-            {mapMaker && (
+            {mapMaker && !shadow && (
               <NavItem active={false} onClick={() => { window.location.href = '/?mapmaker'; }}>{t('lobby.nav.mapMaker')}</NavItem>
             )}
             {/* Live-ops tools, allow-listed admins only. Display-only flag;
@@ -164,7 +182,8 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
               <span className="lx-user__avatar" aria-hidden>{initials(displayName).slice(0, 1)}</span>
               <span className="lx-user__name">{displayName}</span>
             </button>
-            <button className="lx-user__out" onClick={signOut}>{t('lobby.signOut')}</button>
+            {/* An unsaved trial has no way back in: no sign out. */}
+            {!shadow && <button className="lx-user__out" onClick={signOut}>{t('lobby.signOut')}</button>}
           </div>
         </div>
       </header>
@@ -183,6 +202,8 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
             onQuick={quickJoin}
             quickBusy={quickBusy}
             quickError={quickError}
+            onSoloStarted={onEnterRoom}
+            shadow={shadow}
           />
         )}
         {tab === 'my' && (
@@ -249,7 +270,7 @@ function NavItem({
 // ---------- Hero + Quick Join ----------
 
 function Hero({
-  tab, name, mine, browse, autoloadSet, onQuick, quickBusy, quickError,
+  tab, name, mine, browse, autoloadSet, onQuick, quickBusy, quickError, onSoloStarted, shadow = false,
 }: {
   tab: 'my' | 'browse';
   name: string;
@@ -259,6 +280,9 @@ function Hero({
   onQuick: () => void;
   quickBusy: boolean;
   quickError: string | null;
+  onSoloStarted: (roomId: string) => void;
+  /** A Play for Free trial account: one card, to save the empire. */
+  shadow?: boolean;
 }) {
   useI18n();
   // Quick Join only ever seats you in a PUBLIC game (no password), so the
@@ -292,6 +316,18 @@ function Hero({
           </p>
         )}
       </div>
+      <div className="lx-hero__cards">
+      {shadow ? (
+        <div className="lx-quick">
+          <div className="lx-quick__head">
+            <span className="lx-quick__label">{t('trial.lobby.label')}</span>
+          </div>
+          <p className="lx-quick__body">{t('trial.lobby.body')}</p>
+          <button className="lx-btn lx-btn--primary lx-btn--lg lx-btn--block" onClick={() => openSaveEmpire('account')}>
+            {t('trial.menu.save')}
+          </button>
+        </div>
+      ) : (<>
       <div className="lx-quick">
         <div className="lx-quick__head">
           <span className="lx-quick__label">{t('lobby.quick.label')}</span>
@@ -309,7 +345,134 @@ function Hero({
         </button>
         {quickError && <div className="lx-error" role="alert">{quickError}</div>}
       </div>
+      <SoloCard onStarted={onSoloStarted} />
+      </>)}
+      </div>
     </section>
+  );
+}
+
+// ---------- Solo ----------
+
+type SoloDifficulty = 'peaceful' | 'normal' | 'ruthless';
+const SOLO_DIFFICULTIES: SoloDifficulty[] = ['peaceful', 'normal', 'ruthless'];
+/** worker/aiPersona.js PERSONALITIES, plus "Surprise me" (hidden until
+ *  the game ends). */
+type SoloPersona = 'surprise' | 'ally' | 'warlord' | 'snake';
+const SOLO_PERSONAS: SoloPersona[] = ['surprise', 'ally', 'warlord', 'snake'];
+/** worker/solo.js SOLO_SPEEDS, with the lobby's words for them. */
+const SOLO_SPEEDS: Array<[number, 'lobby.solo.speed.fast' | 'lobby.solo.speed.steady' | 'lobby.solo.speed.relaxed']> = [
+  [30_000, 'lobby.solo.speed.fast'], [120_000, 'lobby.solo.speed.steady'], [600_000, 'lobby.solo.speed.relaxed'],
+];
+
+/**
+ * Play solo: one person and 1-5 computer empires in a game of their own
+ * (worker/solo.js). Lorne's picks: 3 rivals, normal, 2 min a tick by
+ * default. Collapsed it is one button; open, the three choices and Start.
+ */
+function SoloCard({ onStarted }: { onStarted: (roomId: string) => void }) {
+  useI18n();
+  const [open, setOpen] = useState(false);
+  const [rivals, setRivals] = useState(3);
+  const [difficulty, setDifficulty] = useState<SoloDifficulty>('normal');
+  const [speed, setSpeed] = useState(120_000);
+  const [personas, setPersonas] = useState<SoloPersona[]>(['surprise', 'surprise', 'surprise', 'surprise', 'surprise']);
+  // The hint follows the last seat the player changed.
+  const [hintSeat, setHintSeat] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const start = async () => {
+    setBusy(true);
+    setError(null);
+    const res = await apiFetch<{ ok: true; game_id: string }>('/api/solo', {
+      method: 'POST',
+      body: JSON.stringify({ rivals, difficulty, speed_ms: speed, personalities: personas.slice(0, rivals) }),
+    });
+    setBusy(false);
+    if (res.ok) onStarted(res.data.game_id);
+    else setError(apiErrorText(res.error, 'lobby.solo.failed'));
+  };
+
+  return (
+    <div className={`lx-quick lx-solo${open ? ' is-open' : ''}`}>
+      <div className="lx-quick__head">
+        <span className="lx-quick__label">{t('lobby.solo.label')}</span>
+        <span className="lx-quick__meta">{t('lobby.solo.meta')}</span>
+      </div>
+      {!open ? (
+        <>
+          <p className="lx-quick__body">{t('lobby.solo.body')}</p>
+          <button className="lx-btn lx-btn--secondary lx-btn--lg lx-btn--block" onClick={() => setOpen(true)}>
+            {t('lobby.solo.btnSetup')}
+          </button>
+        </>
+      ) : (
+        <>
+          <div className="lx-solo__row">
+            <span className="lx-solo__k">{t('lobby.solo.rivals')}</span>
+            <div className="lx-seg lx-seg--fill" role="radiogroup" aria-label={t('lobby.solo.rivals')}>
+              {[1, 2, 3, 4, 5].map(n => (
+                <button key={n} type="button" role="radio" aria-checked={rivals === n}
+                  className={`lx-seg__opt ${rivals === n ? 'is-active' : ''}`} onClick={() => setRivals(n)}>
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="lx-solo__row">
+            <span className="lx-solo__k">{t('lobby.solo.who')}</span>
+            {Array.from({ length: rivals }, (_, i) => (
+              <div key={i} className="lx-solo__seat">
+                <span className="lx-solo__seatk">{t('lobby.solo.seat', { n: i + 1 })}</span>
+                <div className="lx-seg lx-seg--fill lx-solo__words" role="radiogroup" aria-label={t('lobby.solo.seat', { n: i + 1 })}>
+                  {SOLO_PERSONAS.map(p => (
+                    <button key={p} type="button" role="radio" aria-checked={personas[i] === p}
+                      className={`lx-seg__opt ${personas[i] === p ? 'is-active' : ''}`}
+                      onClick={() => { setPersonas(prev => prev.map((x, k) => (k === i ? p : x))); setHintSeat(i); }}>
+                      {t(`lobby.solo.persona.${p}` as const)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+            <span className="lx-solo__hint">{t(`lobby.solo.personaHint.${personas[Math.min(hintSeat, rivals - 1)]}` as const)}</span>
+          </div>
+          <div className="lx-solo__row">
+            <span className="lx-solo__k">{t('lobby.solo.difficulty')}</span>
+            <div className="lx-seg lx-seg--fill lx-solo__words" role="radiogroup" aria-label={t('lobby.solo.difficulty')}>
+              {SOLO_DIFFICULTIES.map(d => (
+                <button key={d} type="button" role="radio" aria-checked={difficulty === d}
+                  className={`lx-seg__opt ${difficulty === d ? 'is-active' : ''}`} onClick={() => setDifficulty(d)}>
+                  {t(`lobby.solo.diff.${d}` as const)}
+                </button>
+              ))}
+            </div>
+            <span className="lx-solo__hint">{t(`lobby.solo.diffHint.${difficulty}` as const)}</span>
+          </div>
+          <div className="lx-solo__row">
+            <span className="lx-solo__k">{t('lobby.solo.speed')}</span>
+            <div className="lx-seg lx-seg--fill" role="radiogroup" aria-label={t('lobby.solo.speed')}>
+              {SOLO_SPEEDS.map(([ms, key]) => (
+                <button key={ms} type="button" role="radio" aria-checked={speed === ms}
+                  className={`lx-seg__opt ${speed === ms ? 'is-active' : ''}`} onClick={() => setSpeed(ms)}>
+                  {t(key)}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="lx-solo__go">
+            <button className="lx-btn lx-btn--ghost lx-btn--lg" onClick={() => setOpen(false)} disabled={busy}>
+              {t('lobby.solo.cancel')}
+            </button>
+            <button className="lx-btn lx-btn--primary lx-btn--lg lx-solo__start" onClick={start} disabled={busy}>
+              {busy ? t('lobby.solo.busy') : t('lobby.solo.start')}
+            </button>
+          </div>
+        </>
+      )}
+      {error && <div className="lx-error" role="alert">{error}</div>}
+    </div>
   );
 }
 

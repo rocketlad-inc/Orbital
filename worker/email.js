@@ -32,7 +32,8 @@ const REPLY_TO = 'support@orbital-empire.com';
 const LOGO_URL = `${SITE}/press/logo/orbital-wordmark-gold.png`;
 
 /** Agent accounts live on a domain that can never receive mail. */
-const UNDELIVERABLE = /@agents\.orbital\.local$/i;
+// Agent players, and unsaved Play for Free accounts (trial.js).
+const UNDELIVERABLE = /@(agents|shadow)\.orbital\.local$/i;
 
 /** The switches a player can flip, and what the page calls them. */
 export const EMAIL_CATEGORIES = {
@@ -648,7 +649,7 @@ export async function maybeSendDailyHeraldEmails(env, nowMs = Date.now(), opts =
     .prepare(`SELECT g.id, g.current_tick, r.name
                 FROM games g JOIN rooms r ON r.id = g.id
                WHERE g.status = 'active'
-                 AND COALESCE(g.is_test_game, 0) = 0
+                 AND COALESCE(g.is_test_game, 0) = 0 AND COALESCE(g.solo, 0) = 0
                  AND EXISTS (SELECT 1 FROM chronicle_entries c
                               WHERE c.game_id = g.id AND c.visibility = 'public'
                                 AND c.created_at_ms > ?)`)

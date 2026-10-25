@@ -61,7 +61,7 @@ const READY_GRACE_MS = 60_000;
  *  least this much to be taken. */
 const GATE_AUTOPILOT_MIN_LEG = 20;
 const GATE_AUTOPILOT_MIN_SAVING = 3;
-import { SHIP_COMBAT_STATS, parkPhaseFor, categorizeBodyForSecret, BODY_CATALOG } from './factions.js';
+import { SHIP_COMBAT_STATS, parkPhaseFor, categorizeBodyForSecret, BODY_CATALOG, colonyArrivalDefault } from './factions.js';
 import { launchCompletedMobileSites } from './megaLaunch.js';
 import { OFFER_KINDS, offerStatements, settleExpiredOffers } from './discoveryOffers.js';
 import { advanceMissileBuilds, resolveMissiles } from './missiles.js';
@@ -299,6 +299,8 @@ export class Room {
     // combat). Set for the duration of a tick pass; a concurrent entry
     // bails immediately.
     this.ticking = false;
+    // The running pass of a solo game's computer empires (one at a time).
+    this.aiPass = null;
   }
 
   async fetch(req) {
@@ -329,6 +331,24 @@ export class Room {
       await this.state.storage.put('settings', settings);
       this.broadcast({ type: 'settings', meta, settings });
       return Response.json(settings);
+    }
+    if (url.pathname === '/member-renamed' && req.method === 'POST') {
+      // A Play for Free trial saved into an account (worker/trial.js
+      // claimShadow): the seat changes hands from the shadow account to
+      // the real one. Without this the saved player's socket was refused
+      // as "room full" (a trial room is full by design).
+      const body = await req.json().catch(() => ({}));
+      const { from, to } = body ?? {};
+      if (!from || !to) return new Response('missing from/to', { status: 400 });
+      const members = (await this.state.storage.get('members')) ?? {};
+      if (members[from]) {
+        members[to] = { ...members[from], userId: to };
+        delete members[from];
+        await this.state.storage.put('members', members);
+      }
+      const meta = await this.state.storage.get('meta');
+      if (meta && meta.hostId === from) await this.state.storage.put('meta', { ...meta, hostId: to });
+      return new Response(null, { status: 204 });
     }
     if (url.pathname === '/member-add' && req.method === 'POST') {
       // Server-driven member upsert. Called from worker/index.js
@@ -515,12 +535,15 @@ export class Room {
       }
 
       const game = await this.env.DB
-        .prepare('SELECT next_tick_at, status, tick_interval_ms, turn_based_enabled FROM games WHERE id = ?')
+        .prepare('SELECT next_tick_at, status, tick_interval_ms, turn_based_enabled, paused FROM games WHERE id = ?')
         .bind(started.gameId).first();
       if (!game) return new Response(null, { status: 204 });
       if (game.status === 'completed' || game.status === 'abandoned') {
         return new Response(null, { status: 204 });
       }
+      // A paused solo game's NULL next_tick_at is deliberate, not an
+      // orphan: only the player's STEP (force) may advance it.
+      if (Number(game.paused) === 1 && !force) return new Response(null, { status: 204 });
 
       const now = Date.now();
       // Orphan recovery: active wall-clock game with NULL next_tick_at
@@ -541,9 +564,14 @@ export class Room {
       if (game.next_tick_at == null && game.turn_based_enabled !== 1) {
         const interval = game.tick_interval_ms ?? 60_000;
         const nextAt = force ? now : Date.now() + interval;
-        await this.env.DB
-          .prepare('UPDATE games SET next_tick_at = ? WHERE id = ?')
-          .bind(nextAt, started.gameId).run();
+        // A paused solo game's STEP keeps its NULL: written to D1, every
+        // /state polled while the tick ran showed a countdown beside the
+        // paused clock (playtest, 2026-10-24). alarm() reads NULL as now.
+        if (!(force && Number(game.paused) === 1)) {
+          await this.env.DB
+            .prepare('UPDATE games SET next_tick_at = ? WHERE id = ?')
+            .bind(nextAt, started.gameId).run();
+        }
         if (!force) {
           try { await this.state.storage.setAlarm(nextAt); } catch {}
           return new Response(null, { status: 204 });
@@ -951,13 +979,23 @@ export class Room {
     const gameId = started.gameId;
 
     const game = await this.env.DB
-      .prepare('SELECT status, current_tick, tick_interval_ms, turn_based_enabled, next_tick_at, tick_schedule FROM games WHERE id = ?')
+      .prepare('SELECT status, current_tick, tick_interval_ms, turn_based_enabled, next_tick_at, tick_schedule, paused, solo FROM games WHERE id = ?')
       .bind(gameId)
       .first();
     if (!game) return;
     // Tick speed by time of day (tickSchedule.js), when the host set one.
     const schedule = readSchedule(game.tick_schedule);
     if (game.status === 'completed' || game.status === 'abandoned') return;
+
+    // A PAUSED solo game (worker/solo.js): time stands still. No tick and
+    // no re-arm; resuming arms the alarm again. A forced tick (the solo
+    // player's STEP) still advances exactly one, then stays paused.
+    //
+    // `force === true`, never truthiness: Cloudflare calls alarm() with an
+    // alarmInfo object ({ retryCount, isRetry }), so on a natural alarm
+    // `force` is that object and a bare `!force` let the paused game tick
+    // (staging, 2026-10-23: paused at T6, ticked to T7 on schedule).
+    if (Number(game.paused) === 1 && force !== true) return;
 
     // Turn-Based Mode short-circuit: the alarm doesn't auto-advance time
     // in TBM games. The tick batch is driven from POST /turn/commit
@@ -1050,20 +1088,58 @@ export class Room {
       speedNow = intervalAt(schedule, now);
     }
 
+    // Stepped while paused: the clock stays stopped (no next tick, no alarm).
+    let stillPaused = Number(game.paused) === 1;
+    if (stillPaused) nextAt = null;
+
+    // PAUSED WHILE THIS TICK RAN. `game` was read before the tick, and a
+    // tick takes seconds; a Pause pressed in that window was overwritten
+    // by the next_tick_at below, so the bar showed "next in 14s" beside a
+    // Resume button (playtest, 2026-10-24). The write keeps NULL when the
+    // row is paused NOW, and the alarm is not re-armed.
     await this.env.DB.batch([
       this.env.DB
-        .prepare('UPDATE games SET current_tick = ?, next_tick_at = ?, tick_interval_ms = ? WHERE id = ?')
+        .prepare('UPDATE games SET current_tick = ?, next_tick_at = CASE WHEN paused = 1 THEN NULL ELSE ? END, tick_interval_ms = ? WHERE id = ?')
         .bind(endTick, nextAt, speedNow, gameId),
       this.env.DB
         .prepare("INSERT OR REPLACE INTO game_ticks (game_id, tick_number, status, scheduled_at, started_at, completed_at) VALUES (?, ?, 'completed', ?, ?, ?)")
         .bind(gameId, endTick, now, now, now),
     ]);
 
-    try { await this.state.storage.setAlarm(nextAt); } catch (e) {
-      console.error('setAlarm (reschedule) failed', e);
+    if (!stillPaused && Number(game.solo) === 1) {
+      const now2 = await this.env.DB.prepare('SELECT paused FROM games WHERE id = ?').bind(gameId).first();
+      if (Number(now2?.paused) === 1) { stillPaused = true; nextAt = null; }
+    }
+    if (!stillPaused) {
+      try { await this.state.storage.setAlarm(nextAt); } catch (e) {
+        console.error('setAlarm (reschedule) failed', e);
+      }
     }
 
     this.broadcast({ type: 'tick', tick: endTick, next_tick_at: nextAt });
+
+    // A solo game's computer empires (aiEmpire.js) answer the tick at
+    // once instead of at the next cron minute: at a 7 s or 30 s tick the
+    // minute cron left them several ticks behind. NOT awaited: their
+    // actions call back into this room, which must be free to take them,
+    // so they run after the alarm returns. One pass at a time per room
+    // (a slow pass simply skips a tick; the cron catches up laggards).
+    if (Number(game.solo) === 1) this.runComputerEmpires(gameId);
+  }
+
+  /** One pass of a solo game's computer empires, single-flight. */
+  runComputerEmpires(gameId) {
+    if (this.aiPass) return;
+    this.aiPass = (async () => {
+      try {
+        const { runSoloGame } = await import('./aiEmpire.js');
+        await runSoloGame(this.env, gameId);
+      } catch (e) {
+        console.error('computer empires pass failed', e);
+      } finally {
+        this.aiPass = null;
+      }
+    })();
   }
 
   // ==================================================================
@@ -4910,15 +4986,16 @@ export class Room {
                orbit_m0, orbit_epoch, orbit_direction,
                fuel, fuel_max, status, built_at_tick,
                hp, hp_max, damage_per_tick, icon_variant, parts_json,
-               home_body_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 1, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)`,
+               home_body_id, deploy_on_arrival)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 1, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .bind(shipId, gameId, b.faction_id, shipName, b.ship_class,
                 b.body_id, rp, ra, tick, fuelMax, fuelMax, tick,
                 spawnHp, hp, dmg, b.icon_variant ?? null,
                 parts.length > 0 ? JSON.stringify(parts) : null,
                 // The yard that built it is where it runs to (0126).
-                b.body_id),
+                b.body_id,
+                colonyArrivalDefault(b.ship_class)),
         this.env.DB
           .prepare('DELETE FROM game_body_build_queue WHERE id = ?')
           .bind(b.id),

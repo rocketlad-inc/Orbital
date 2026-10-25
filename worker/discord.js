@@ -342,7 +342,8 @@ async function effectFor(env, gameId, row, L = 'en') {
         .prepare('SELECT name FROM game_factions WHERE id = ?')
         .bind(targetId).first())?.name ?? null;
     }
-    return billEffect(L, row, senate.SLIDER_BY_ID, targetName, senate.describeSlider);
+    return billEffect(L, row, senate.SLIDER_BY_ID, targetName,
+      (id, v) => senate.describeSlider(id, v, L));
   } catch (e) {
     console.error('billEffect failed', e);
     return null;   // a card without the effect line still beats no card
