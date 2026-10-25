@@ -496,7 +496,7 @@ export function suggestSettlementName(
 ): string {
   const fromPool = pickFromPool(pool, existing.map(s => s.name));
   if (fromPool) return fromPool;
-  const fromBank = randomSettlementName(type, existing.map(s => s.name));
+  const fromBank = randomSettlementName(type, existing.map(s => s.name), body.name);
   if (fromBank) return fromBank;
   const countAtBody = existing.filter(s => s.bodyId === body.id && s.type === type).length;
   const suffix = type === 'city' ? 'City' : 'Station';

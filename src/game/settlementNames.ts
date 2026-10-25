@@ -91,18 +91,39 @@ export const SETTLEMENT_NAME_POOLS: Record<SettlementType, string[]> = {
   ],
 };
 
+/** Real worlds of this map that some pool names are named after. Such a
+ *  name is only right ON that world: a station on Earth was christened
+ *  "Ganymede Relay" (playtest R2-C9). */
+const WORLD_WORDS = [
+  'Ganymede', 'Ceres', 'Pallas', 'Iapetus', 'Callisto', 'Io', 'Titan', 'Luna',
+  'Phoebe', 'Hygiea', 'Vesta', 'Rhea', 'Enceladus', 'Mimas', 'Eros', 'Jupiter', 'Earth',
+];
+const WORLD_WORD_RE = new RegExp(`\\b(${WORLD_WORDS.join('|')})\\b`);
+
+/** The real world a pool name points at, if any ("Ganymede Relay" -> Ganymede). */
+export function worldNamedIn(name: string): string | null {
+  return WORLD_WORD_RE.exec(name)?.[1] ?? null;
+}
+
 /**
  * Pick a default name for a new settlement: a pool name not already
  * in use, or null once the pool for that type runs dry (callers fall
- * back to a body-relative name, e.g. suggestSettlementName).
+ * back to a body-relative name, e.g. suggestSettlementName). A name
+ * that names another real world is skipped; on that world it is fair.
  */
 export function randomSettlementName(
   type: SettlementType,
   existingNames: Iterable<string>,
+  /** The world being settled. */
+  bodyName?: string,
 ): string | null {
   const pool = SETTLEMENT_NAME_POOLS[type];
   const taken = existingNames instanceof Set ? existingNames : new Set(existingNames);
-  const available = pool.filter(n => !taken.has(n));
+  const available = pool.filter(n => {
+    if (taken.has(n)) return false;
+    const w = worldNamedIn(n);
+    return !w || w === bodyName;
+  });
   if (available.length === 0) return null;
   return available[Math.floor(Math.random() * available.length)];
 }
