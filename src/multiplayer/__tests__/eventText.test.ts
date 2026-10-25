@@ -7,7 +7,7 @@
 // and also fuzzed against it over ~100k random payloads), so a wording
 // "fix" here is a deliberate contract change: update the classifiers too.
 
-import { formatChronicleEvent, secretMessage } from '../eventText';
+import { formatChronicleEvent, secretMessage, isPactOnlyTrade } from '../eventText';
 import { getLang, setLang } from '../../i18n/core';
 
 const ctx = { factionNameById: new Map([['f1', 'Cerean Union'], ['f2', 'Zed Corp']]) };
@@ -298,6 +298,10 @@ const ROWS: Row[] = [
     "T+12  ⚔ Cerean Union broke the Intel-Share Pact with Zed Corp — war resumes"],
   ["senate_vote passed tally", "senate_vote", null, null, 12, {"title": "Embargo Zed", "outcome": "passed", "bill_kind": "trade_embargo", "yea_weight": 5, "nay_weight": 2, "abstain_weight": 1},
     "T+12  ⚖ Senate: “Embargo Zed” [trade embargo] PASSED — 5 yea / 2 nay / 1 abstain"],
+  // Ballots, not weights, where the row has them (R2-B2: weights 2/0/2
+  // read as four votes in a three-empire game).
+  ["senate_vote ballots", "senate_vote", null, null, 12, {"title": "More Metal", "outcome": "passed", "bill_kind": "slider_law", "yea_weight": 2, "nay_weight": 0, "abstain_weight": 2, "yea_count": 1, "nay_count": 0, "abstain_count": 1},
+    "T+12  ⚖ Senate: “More Metal” [slider law] PASSED — 1 yea / 0 nay / 1 abstain"],
   ["senate_vote failed", "senate_vote", null, null, 12, {"title": "Tax", "outcome": "failed", "bill_kind": "slider_law", "yea_weight": 1, "nay_weight": 4},
     "T+12  ⚖ Senate: “Tax” [slider law] FAILED — 1 yea / 4 nay"],
   ["senate_vote other", "senate_vote", null, null, 12, {"outcome": "tied"},
@@ -441,7 +445,7 @@ describe('Portuguese headlines', () => {
     expect(f('building_completed')).toBe('T+12  Capital de Cerean Union em Terra concluiu Casa da Moeda Nv 3');
     expect(f('tech_advanced level')).toBe('T+12  Cerean Union concluiu Armas Nv 3');
     expect(f('treaty_signed nap')).toBe('T+12  🕊 Cerean Union e Zed Corp assinaram o Pacto de Não Agressão');
-    expect(f('senate_vote passed tally')).toBe('T+12  ⚖ Senado: “Embargo Zed” [embargo comercial] APROVADO — 5 sim / 2 não / 1 abstenção');
+    expect(f('senate_vote passed tally')).toBe('T+12  ⚖ Senado: “Embargo Zed” [embargo comercial] APROVADA — 5 sim / 2 não / 1 abst.');
     expect(f('trade_accepted pacts')).toBe('T+12  ⚖ Cerean Union negociou 100 de metal, 20 de créditos → Zed Corp em troca de 3 de combustível, 5 de ciência + Pacto de Não Agressão, Pacto de Compartilhamento de Inteligência');
     expect(f('trade_route_run tariff')).toBe('T+12  ⟳ Rota comercial: Cerean Union → Zed Corp entregou 100M 20C (tarifa de −10%) — viagem nº 7');
     expect(f('meteoroid_found tons')).toBe('T+12  ◈ Meteoroide Rock 9 encontrado: 400 de créditos para minerar com um cargueiro');
@@ -531,5 +535,41 @@ describe('discovery sentences', () => {
     expect(secretMessage('pt-BR', { kind: 'deep_cache', body_name: 'Ceres' })).toBeNull();
     expect(secretMessage('pt-BR', { kind: 'who_knows', body_name: 'Ceres' })).toBeNull();
     expect(secretMessage('pt-BR', { kind: 'derelict_warship' })).toBeNull();
+  });
+});
+
+// R2-B6: a pact-only deal wrote trade_accepted AND treaty_signed, and the
+// log said the NAP twice. The log drops the trade row for those.
+describe('isPactOnlyTrade', () => {
+  const row = (payload: object) => ({ kind: 'trade_accepted', payload: JSON.stringify(payload) });
+  it('is a pact deal with no goods either way', () => {
+    expect(isPactOnlyTrade(row({ pacts: ['nap'], offer: { metal: 0, gold: 0 }, request: {} }))).toBe(true);
+  });
+  it('is not a deal that moves goods, nor one with no pact', () => {
+    expect(isPactOnlyTrade(row({ pacts: ['nap'], offer: { metal: 50 }, request: {} }))).toBe(false);
+    expect(isPactOnlyTrade(row({ pacts: [], offer: { metal: 50 }, request: { gold: 5 } }))).toBe(false);
+    expect(isPactOnlyTrade({ kind: 'treaty_signed', payload: '{"kind":"nap"}' })).toBe(false);
+  });
+});
+
+// Playtest R2-C6: the log showed the raw key "megastructure_complete", and
+// "founded station Station on Miranda" for a server-default name.
+describe('what a player is shown', () => {
+  const row = (kind: string, payload: unknown) => ({
+    id: 'x', game_id: 'g', tick_number: 12, kind, actor_faction_id: 'f1', target_faction_id: null,
+    body_id: null, payload: JSON.stringify(payload), visibility: 'public', created_at_ms: 0,
+  }) as unknown as Parameters<typeof formatChronicleEvent>[0];
+  it('a finished megastructure is a sentence, not its key', () => {
+    const text = formatChronicleEvent(row('megastructure_complete', { structure: 'Warp Gate' }), ctx, 'en', { names: true });
+    expect(text).toBe('T+12  ⬢ Cerean Union completed the WARP GATE');
+  });
+  it('a kind with no line yet is never shown as a raw key', () => {
+    expect(formatChronicleEvent(row('some_new_event', {}), ctx, 'en', { names: true })).toBe('T+12  some new event');
+    expect(formatChronicleEvent(row('some_new_event', {}), ctx, 'en')).toBe('T+12  some_new_event');
+  });
+  it('a default station name is dropped from the English shown', () => {
+    const p = { settlement_type: 'station', settlement_name: 'Station', body_name: 'Miranda' };
+    expect(formatChronicleEvent(row('settlement_built', p), ctx, 'en', { names: true })).toBe('T+12  Cerean Union founded station on Miranda');
+    expect(formatChronicleEvent(row('settlement_built', p), ctx, 'en')).toBe('T+12  Cerean Union founded station Station on Miranda');
   });
 });

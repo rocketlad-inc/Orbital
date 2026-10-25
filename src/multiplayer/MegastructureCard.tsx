@@ -45,7 +45,7 @@ import type { RouteStopInput } from './MultiplayerActionsContext';
 import { buildStageName } from '../render/megastructureArt';
 import type { MegastructureState } from '../game/megastructures';
 import type { Body } from '../types';
-import { t, tn, tk } from '../i18n/core';
+import { t, tn, tk, fmtFixed, fmtNumber } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 
 const HOLD = 400;
@@ -264,7 +264,7 @@ export const MegastructureCard: React.FC = () => {
                 the map sprite is illustrating, so a player who glanced
                 at the structure and came here reads one story rather
                 than two. */}
-            {buildStageName(pct)} · {(pct * 100).toFixed(1)}%
+            {buildStageName(pct)} · {fmtFixed(pct * 100, 1)}%
             {/* Loads, not raw numbers. "18 freighter runs" is the unit a
                 player plans in; 7,000 credits is not. */}
             <span className="megac__loads">
@@ -805,7 +805,7 @@ export const MegastructurePicker: React.FC<{
                   going and reading a wiki. */}
               <span className="megap__optwhat">{effectSummary(k)}</span>
               <span className="megap__optcost">
-                {t('megastructure.picker.cost', { metal: d.cost.metal.toLocaleString(), credits: d.cost.credits.toLocaleString() })}
+                {t('megastructure.picker.cost', { metal: fmtNumber(d.cost.metal), credits: fmtNumber(d.cost.credits) })}
                 <b> · {t('megastructure.picker.freighterLoads', { n: loads })}</b>
               </span>
             </span>

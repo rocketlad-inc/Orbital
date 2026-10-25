@@ -210,7 +210,9 @@ check('the trial Ally offers a pact', allyOffer.n >= 1);
   check('the player counters the Ally\'s pact, asking for credits', ctr.ok, JSON.stringify(ctr.data));
   await step(2);
   const answered = await DB.prepare('SELECT status, decline_reason FROM trade_offers WHERE id = ?').bind(ctr.data?.trade?.id).first();
-  check('the Ally answers it: declined, with a reason', answered?.status === 'declined' && answered?.decline_reason === 'no_cargo', JSON.stringify(answered));
+  // Round 2 (R2-B10): goods are no longer a flat no; this early it has no
+  // freighter to carry them, and says so. It is answered at once.
+  check('the Ally answers it: declined, with a reason', answered?.status === 'declined' && answered?.decline_reason === 'no_freighter', JSON.stringify(answered));
   for (let t = 3; t <= 26; t++) await step(t);
   const again = await DB.prepare(`SELECT created_at_tick FROM trade_offers WHERE game_id = ? AND proposer_faction_id = ? AND responder_faction_id = ?
                                    AND id != ? ORDER BY created_at_tick LIMIT 1`).bind(GC, ap, hp.id, first.id).first();

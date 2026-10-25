@@ -19,7 +19,7 @@ import { AUTO_COMBAT_INTERVAL } from './combat';
 import { ALWAYS_PEACE, PeaceCheck } from './peace';
 import { getShipClass } from './shipClasses';
 import { getLang, t } from '../i18n/core';
-import { ofPlace } from '../i18n/names';
+import { bodyName, ofPlace } from '../i18n/names';
 
 /** A hull is "armed" if it actually deals damage — server-authoritative
  *  damagePerTick when present (designer builds can arm OR disarm ANY
@@ -659,6 +659,17 @@ export function regionLabel(label: string): string {
   const far = /^(.+) Belt$/.exec(label);
   if (far) return t('helper.sys.beltOf', { name: far[1] });
   return label;
+}
+
+/** A system label the SERVER built (worker/systems.js systemLabel: "Saturn
+ *  System", a belt, "The Core", a lone world's name), in the player's
+ *  language. The server only knows English; this is the client's
+ *  systemLabel() applied to its words. */
+export function serverSystemLabel(label: string): string {
+  const sys = /^(.+) System$/.exec(label);
+  if (sys) return t('helper.sys.system', { name: ofPlace(getLang(), bodyName(sys[1])) });
+  const region = regionLabel(label);
+  return region !== label ? region : bodyName(label);
 }
 
 /** Legacy fallback window, used only when a caller can't supply presence

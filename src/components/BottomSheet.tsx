@@ -38,6 +38,18 @@ const DRAG_DISMISS_THRESHOLD = 80; // px downward swipe required to close
 interface OpenEntry { close?: () => void; }
 const openSheets = new Set<OpenEntry>();
 
+/** Close every open sheet (the ship card, a world's sheet, a group).
+ *  A phone shows one surface at a time, and the panels the rail opens sit
+ *  BELOW these sheets (z 110 against 1080): Research opened under the ship
+ *  card, the tap looked swallowed, and the card stayed on top of it
+ *  (Leo, Rafaela, Maya, 2026-10-24). The rail and App call this when they
+ *  open a panel. A no-op on desktop, where no sheet registers. */
+export function closeOpenSheets(): void {
+  for (const entry of Array.from(openSheets)) {
+    if (entry.close) entry.close();
+  }
+}
+
 export const BottomSheet: React.FC<BottomSheetProps> = ({
   open,
   onClose,

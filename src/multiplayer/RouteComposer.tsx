@@ -116,6 +116,9 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
   useI18n();
   const [name, setName] = useState(initialName ?? '');
   const [stops, setStops] = useState<RouteStopInput[]>(initialStops ?? []);
+  // Read by addStop, which is handed to the map pick and must not churn.
+  const stopsRef = React.useRef(stops);
+  stopsRef.current = stops;
   const [loopMode, setLoopMode] = useState<'forever' | 'count'>('forever');
   const [loopCount, setLoopCount] = useState(5);
   const [carriers, setCarriers] = useState<string[]>(initialCarrierId ? [initialCarrierId] : []);
@@ -201,6 +204,11 @@ export const RouteComposer: React.FC<RouteComposerProps> = ({
     // correct it — the server validates the ACTION, not the pill.
     const isRock = mineable.some(b => b.id === bodyId);
     const isSite = siteIds.has(bodyId);
+    // SAY WHY A PICK DID NOTHING. The same world twice in a row is a
+    // zero-length leg the server refuses, and the strip used to drop it
+    // without a word (playtest R2-C13).
+    const prevStop = stopsRef.current[stopsRef.current.length - 1];
+    setErr(prevStop?.bodyId === bodyId ? t('route.err.sameStop') : null);
     setStops(prev => {
       if (prev.length >= MAX_STOPS) return prev;
       // A stop that repeats the previous body is a zero-length leg —

@@ -28,13 +28,16 @@ import { logUiEvent } from '../multiplayer/telemetry';
 import { launchFromPlan } from '../physics/torchTransfer';
 import { openShipDesigner } from './ShipDesigner';
 import { useBulkChain } from '../hooks/useBulkChain';
+import { useDepartureCheck, DepartureWarning } from '../hooks/useDepartureCheck';
+import { DepartureConfirm } from './DepartureConfirm';
 import { ChainOrderEditor } from './ChainOrderEditor';
 import type { ChainStep } from '../physics/chainPlanner';
 import './OverviewPanel.css';
 import './FleetPanel.css';
 import { fleetPath } from '../multiplayer/fleetWire';
-import { t, tn } from '../i18n/core';
+import { t, tn, fmtDecimal } from '../i18n/core';
 import { useI18n } from '../i18n/react';
+import { DestinationOptions } from './ShipPanel';
 
 interface FleetPanelProps {
   onClose: () => void;
@@ -69,7 +72,7 @@ const FleetUpkeepLine: React.FC = () => {
 
   const inDebt = !!arrears && (arrears.credits > 0 || arrears.ore > 0);
   const rows = up.byClass ?? [];
-  const fmt = (n: number) => (Math.round(n * 100) / 100).toString();
+  const fmt = (n: number) => fmtDecimal(n, 2);
   // The senate can scale the whole bill; say so rather than leaving the
   // player to wonder why the arithmetic does not add up.
   const mult = up.multiplier ?? 1;
@@ -444,8 +447,29 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   const [showChain, setShowChain] = useState(false);
   const [chain, setChain] = useState<ChainStep[]>([]);
   const bulkChain = useBulkChain();
+
+  // ASK FIRST when a send would leave a world of yours with no warships.
+  // The burn fires at once and cannot be called back after a tick, so
+  // the trip time and the bare world are said before it goes (R2-C2).
+  const departureCheck = useDepartureCheck();
+  const [departAsk, setDepartAsk] = useState<{ warning: DepartureWarning; go: () => void } | null>(null);
+  const confirmDeparture = (ids: string[], destBodyId: string, go: () => void) => {
+    const warning = departureCheck(ids, destBodyId);
+    if (warning) setDepartAsk({ warning, go });
+    else go();
+  };
+  // A changed selection or destination is a different order: drop the
+  // question rather than confirm something the player no longer means.
+  // Keyed on the ids, not the Set, so a poll that rebuilds the same
+  // selection does not wipe the question out from under the player.
+  const selectionKey = useMemo(() => Array.from(selectedIds).sort().join(','), [selectedIds]);
+  useEffect(() => { setDepartAsk(null); }, [selectionKey, bulkTarget]);
+
   const applyChain = () => {
     if (chain.length === 0 || visibleSelected.length === 0) return;
+    confirmDeparture(visibleSelected, chain[0].bodyId, runChain);
+  };
+  const runChain = () => {
     const res = bulkChain(visibleSelected, chain, (msg) => setBulkError(msg));
     if (res.issued === 0) {
       setBulkError(t('fleet.noRoute'));
@@ -500,11 +524,6 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   // Bodies the player can route to. Sol is included — the Dyson
   // sphere ferry mechanic already routes freighters there, and the
   // fleet picker previously excluded it for no good reason.
-  const transferTargets = useMemo(
-    () => [...gameState.bodies].sort((a, b) => a.name.localeCompare(b.name)),
-    [gameState.bodies]
-  );
-
   // Damaged parked player hulls NOT already healing at a friendly
   // station — the population the one-shot repair dispatch operates on.
   const damagedAway = useMemo(
@@ -624,7 +643,9 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     const target = gameState.bodies.find(b => b.id === bulkTarget);
     if (!target) { setBulkError(t('fleet.unknownDest')); return; }
     if (visibleSelected.length === 0) { setBulkError(t('fleet.noEligible')); return; }
-
+    confirmDeparture(visibleSelected, bulkTarget, sendBulkTransfer);
+  };
+  const sendBulkTransfer = () => {
     let issued = 0;
     // Server refusals are summarised once the batch answers ("3 of 70
     // rejected — …"). Without that the bulk button looks like it worked
@@ -1507,7 +1528,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
             )}
             <span className="fleet-card__sep" aria-hidden>·</span>
             {transit && target ? (
-              <span className="fleet-card__dest">→ {target.name} · T-{Math.round(eta ?? 0)}</span>
+              <span className="fleet-card__dest">→ {target.name} · T-{Math.ceil((eta ?? 0) - 1e-6)}</span>
             ) : (
               <span>{bodyById.get(ship.orbit.parentBodyId)?.name ?? ship.orbit.parentBodyId}</span>
             )}
@@ -2134,9 +2155,13 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                 onChange={(e) => setBulkTarget(e.target.value)}
               >
                 <option value="">{t('fleet.destination')}</option>
-                {transferTargets.map(b => (
-                  <option key={b.id} value={b.id}>{b.name}</option>
-                ))}
+                {/* Grouped by system, the selection's own first: this was
+                    one alphabetical list of every body in the game. */}
+                <DestinationOptions
+                  bodies={gameState.bodies}
+                  homeBodyId={gameState.ships.find(s => s.id === visibleSelected[0])?.orbit?.parentBodyId}
+                  tick={gameState.currentTick}
+                />
               </select>
               <button
                 className="fleet-actionbar__btn fleet-actionbar__btn--primary"
@@ -2187,6 +2212,13 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                   {tn('fleet.launch', chain.length, { ships: visibleSelected.length })}
                 </button>
               </div>
+            )}
+            {departAsk && (
+              <DepartureConfirm
+                warning={departAsk.warning}
+                onConfirm={() => { const go = departAsk.go; setDepartAsk(null); go(); }}
+                onCancel={() => setDepartAsk(null)}
+              />
             )}
             {bulkError && <div className="fleet-actionbar__error">{bulkError}</div>}
 

@@ -46,9 +46,46 @@ const StepIcon = () => (
   </svg>
 );
 
-export function SoloClock({ gameId }: { gameId: string }) {
+/** WHAT THE PLAYER JUST ASKED THE CLOCK FOR, SHOWN BEFORE THE SERVER SAYS SO.
+ *  A press answered after the POST and the next /state (2-3 s on staging),
+ *  so PAUSE looked dead and its label kept saying "Stop the clock" while
+ *  paused (Leo, 2026-10-24). Each wish holds until /state agrees, the
+ *  request fails, or a backstop runs out. TopBar owns it, so the tick
+ *  readout's PAUSED and the button change together. */
+export interface SoloPending {
+  paused: boolean | undefined;
+  speedMs: number | undefined;
+  want: (w: { paused?: boolean; speedMs?: number }) => void;
+  drop: () => void;
+}
+const SOLO_PENDING_TTL_MS = 15_000;
+export function useSoloPending(serverPaused: boolean | undefined, serverSpeedMs: number | undefined): SoloPending {
+  const [w, setW] = useState<{ paused?: boolean; speedMs?: number; at: number }>({ at: 0 });
+  useEffect(() => {
+    if (w.paused !== undefined && w.paused === serverPaused) setW(p => ({ ...p, paused: undefined }));
+  }, [w.paused, serverPaused]);
+  useEffect(() => {
+    if (w.speedMs !== undefined && w.speedMs === serverSpeedMs) setW(p => ({ ...p, speedMs: undefined }));
+  }, [w.speedMs, serverSpeedMs]);
+  const live = w.paused !== undefined || w.speedMs !== undefined;
+  useEffect(() => {
+    if (!live) return undefined;
+    const id = setTimeout(() => setW({ at: 0 }), SOLO_PENDING_TTL_MS);
+    return () => clearTimeout(id);
+  }, [live, w.at]);
+  return {
+    paused: w.paused ?? serverPaused,
+    speedMs: w.speedMs ?? serverSpeedMs,
+    want: (next) => setW(p => ({ ...p, ...next, at: Date.now() })),
+    drop: () => setW({ at: 0 }),
+  };
+}
+
+export function SoloClock({ gameId, pending: given }: { gameId: string; pending?: SoloPending }) {
   useI18n();
   const { gameState } = useGameContext();
+  const own = useSoloPending(gameState.solo?.paused, gameState.tickIntervalMs);
+  const pending = given ?? own;
   const isMobile = useIsMobile();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -79,16 +116,17 @@ export function SoloClock({ gameId }: { gameId: string }) {
     return () => window.removeEventListener('orbital:solo-clock', onAsk);
   }, []);
   if (!solo) return null;
-  const paused = solo.paused;
-  const speed = gameState.tickIntervalMs ?? 120_000;
+  const paused = pending.paused ?? solo.paused;
+  const speed = pending.speedMs ?? gameState.tickIntervalMs ?? 120_000;
 
   const send = async (what: string, path: string, init: RequestInit) => {
     if (busy) return;
     setBusy(what);
     setError(null);
+    if (what === 'pause') pending.want({ paused: path === 'pause' });
     const res = await apiFetch(`/api/games/${encodeURIComponent(gameId)}/solo/${path}`, init);
     setBusy(null);
-    if (!res.ok) { setError(apiErrorText(res.error, 'solo.failed')); return; }
+    if (!res.ok) { pending.drop(); setError(apiErrorText(res.error, 'solo.failed')); return; }
     window.dispatchEvent(new CustomEvent('orbital:refresh-state'));
   };
   const MAX_QUEUED = 9;
@@ -121,6 +159,7 @@ export function SoloClock({ gameId }: { gameId: string }) {
   };
   const setSpeed = (ms: number) => {
     if (ms === speed) return;
+    pending.want({ speedMs: ms });
     send('speed', 'speed', { method: 'PATCH', body: JSON.stringify({ speed_ms: ms }) });
   };
   // A phone has room for one speed button: it steps through the three.
@@ -131,19 +170,23 @@ export function SoloClock({ gameId }: { gameId: string }) {
     else if (action === 'speed') setSpeed(nextSpeed);
   };
 
+  const mainWord = paused ? (gameState.currentTick === 0 ? t('solo.start') : t('solo.resume')) : t('solo.pause');
+
   return (
     <div className={`solo-clock${paused ? ' is-paused' : ''}`} data-testid="solo-clock">
       <button
         type="button"
-        className={`solo-clock__btn solo-clock__main${paused ? ' is-go' : ''}`}
+        className={`solo-clock__btn solo-clock__main${paused ? ' is-go' : ''}${paused && gameState.currentTick === 0 ? ' is-start' : ''}`}
         data-tutorial-id="solo-start"
         onClick={() => send('pause', paused ? 'resume' : 'pause', { method: 'POST' })}
         disabled={!!busy}
         title={paused ? t('solo.resumeTitle') : t('solo.pauseTitle')}
-        aria-pressed={paused}
+        // Named for what a press does, so a phone's icon-only button reads
+        // right too (it said "Stop the clock" while paused).
+        aria-label={mainWord}
       >
         {paused ? <PlayIcon /> : <PauseIcon />}
-        <span className="solo-clock__txt">{paused ? (gameState.currentTick === 0 ? t('solo.start') : t('solo.resume')) : t('solo.pause')}</span>
+        <span className="solo-clock__txt">{mainWord}</span>
       </button>
       {paused && (
         <button

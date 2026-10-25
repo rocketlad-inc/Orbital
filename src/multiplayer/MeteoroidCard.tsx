@@ -34,7 +34,7 @@ import {
   planMiningRun,
 } from '../game/mining';
 import { RouteComposer } from './RouteComposer';
-import { t, tn } from '../i18n/core';
+import { t, tn, fmtNumber } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import './MeteoroidCard.css';
 
@@ -282,7 +282,7 @@ export const MeteoroidCard: React.FC = () => {
         {/* ---- WHAT IT HAS ---- */}
         <div className="mtrc__figure">
           <div className={`mtrc__amount${dead ? ' is-dead' : ''}`}>
-            {Math.round(left).toLocaleString()}
+            {fmtNumber(Math.round(left))}
           </div>
           <div className="mtrc__unit">{t('meteoroid.unitLeft', { unit: unit === 'credits' ? t('meteoroid.unit.credits') : t('meteoroid.unit.metal') })}</div>
         </div>
@@ -296,11 +296,11 @@ export const MeteoroidCard: React.FC = () => {
 
         <div className="mtrc__stats">
           <div className="mtrc__stat">
-            <span className="mtrc__stat-v">{Math.round(initial).toLocaleString()}</span>
+            <span className="mtrc__stat-v">{fmtNumber(Math.round(initial))}</span>
             <span className="mtrc__stat-k">{t('meteoroid.surveyed')}</span>
           </div>
           <div className="mtrc__stat">
-            <span className="mtrc__stat-v">{Math.round(pulled).toLocaleString()}</span>
+            <span className="mtrc__stat-v">{fmtNumber(Math.round(pulled))}</span>
             <span className="mtrc__stat-k">{t('meteoroid.taken')}</span>
           </div>
           <div className="mtrc__stat">
@@ -314,17 +314,17 @@ export const MeteoroidCard: React.FC = () => {
         <div className="mtrc__orbit">
           <div className="mtrc__orbit-row">
             <span className="mtrc__k">{t('meteoroid.distFromSol')}</span>
-            <span className="mtrc__v">{distNow.toLocaleString()}</span>
+            <span className="mtrc__v">{fmtNumber(distNow)}</span>
           </div>
           {rp != null && ra != null && (
             <div className="mtrc__orbit-row">
               <span className="mtrc__k">{t('meteoroid.closestFarthest')}</span>
-              <span className="mtrc__v">{rp.toLocaleString()} · {ra.toLocaleString()}</span>
+              <span className="mtrc__v">{fmtNumber(rp)} · {fmtNumber(ra)}</span>
             </div>
           )}
           <div className="mtrc__orbit-row">
             <span className="mtrc__k">{t('meteoroid.year')}</span>
-            <span className="mtrc__v">{t('meteoroid.ticks', { n: Math.round(body.orbitPeriod).toLocaleString() })}</span>
+            <span className="mtrc__v">{t('meteoroid.ticks', { n: fmtNumber(Math.round(body.orbitPeriod)) })}</span>
           </div>
           {shipsHere > 0 && (
             <div className="mtrc__orbit-row">

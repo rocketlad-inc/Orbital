@@ -159,7 +159,7 @@ export const FLAVOR_BANK_PT: Record<string, string[]> = {
     "Uma moção para {voteTitle}, de autoria de {actor}, entrou na pauta. A câmara se acomodou para uma longa sessão.",
     "{actor} pôs a questão em votação: a Casa deve aprovar uma moção para {voteTitle}? O malhete deu a largada ao relógio.",
     "A moção de {actor} — para {voteTitle} — está agora diante do Senado. Esperam-se emendas.",
-    "A delegação de {actor} apresentou um projeto de lei para {voteTitle}. Quem preside a sessão o julgou em ordem.",
+    "A delegação de {actor} apresentou uma proposta para {voteTitle}. Quem preside a sessão a julgou em ordem.",
     "Abre-se o debate sobre a moção de {actor} para {voteTitle}. As galerias estão lotadas.",
     "{actor} forçou o assunto a entrar na pauta: uma votação para {voteTitle}. A câmara decidirá antes do recesso.",
     "Lida em plenário por {actor}: uma resolução para {voteTitle}. O envio à comissão foi dispensado.",
@@ -200,7 +200,7 @@ export const FLAVOR_BANK_PT: Record<string, string[]> = {
   bill_reaped: [
     "“{voteTitle}” nunca chegou ao plenário. A sessão se encerrou sem votação.",
     "A moção “{voteTitle}” expirou na comissão, sem ser votada.",
-    "O projeto de {actor}, “{voteTitle}”, perdeu o prazo antes de o debate abrir.",
+    "A proposta de {actor}, “{voteTitle}”, perdeu o prazo antes de o debate abrir.",
     "“{voteTitle}” saiu da pauta — o prazo passou sem que a votação abrisse.",
     "Nunca se convocou votação sobre “{voteTitle}”. Cai sem resolução.",
     "A câmara nunca chegou a examinar “{voteTitle}”; o relógio esgotou o prazo.",

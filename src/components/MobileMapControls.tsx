@@ -78,8 +78,11 @@ export const MobileMapControls: React.FC = () => {
     }
   };
 
+  // The phone's < > step through YOUR worlds: "Next world" took Maya to
+  // a world that was not hers (round 2). Q / E on a keyboard still walk
+  // the whole system, moon by moon.
   const step = (dir: -1 | 1) =>
-    window.dispatchEvent(new CustomEvent('orbital:world-step', { detail: { dir } }));
+    window.dispatchEvent(new CustomEvent('orbital:world-step', { detail: { dir, mine: true } }));
 
   return (
     <div className="map-controls" role="toolbar" aria-label={t('site.map.controls')}>

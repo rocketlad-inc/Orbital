@@ -89,6 +89,12 @@
 .solo-clock__main.is-go .solo-clock__txt,
 :root[data-mobile-shell] .solo-clock__main.is-go .solo-clock__txt { display: inline; }
 
+/* The phone shell drops the desktop's 104px footprint for the tick box,
+   so PAUSED / "next in 30s" / "próximo em 9m 59s" moved the clock button
+   beside it as they changed (Leo, 2026-10-24). A solo bar holds the
+   widest of them. */
+:root[data-mobile-shell] .top-bar--solo .top-bar__time .time-display--ticking { min-width: 74px; }
+
 /* NARROW PHONES. The bar wanted ~450px on a 375px phone, so the clock sat
    past the right edge: no START, and later no way to pause (playtest,
    2026-10-24). Here the bar keeps the one button that matters, as an icon;
@@ -96,13 +102,34 @@
    "next in" line gives up its width (the lit icon says paused). */
 @media (max-width: 480px) {
   /* :root + both classes: the phone shell's own top-bar rules are
-     :root[data-mobile-shell]-scoped (shellJs.css) and outrank one class. */
+     :root[data-mobile-shell]-scoped (shellJs.css) and outrank one class.
+     Measured at 375px, paused at T+999 with a law in force (round 2):
+     menu 75 + metal/credits/science 123 + law 27 + tick and START 117,
+     with 6px gaps and 8px ends. START keeps its word (an unlabelled play
+     icon went unpressed; RESUME is an icon, below); SHIPS and TERRA give way, as both are counted
+     in the Fleet and Empire panels. */
+  :root .top-bar.top-bar--solo { gap: 5px; }
   :root .top-bar.top-bar--solo .time-display__countdown { display: none; }
-  :root .top-bar.top-bar--solo .top-bar__resources { gap: 6px; }
+  :root[data-mobile-shell] .top-bar--solo .top-bar__time .time-display--ticking,
+  :root .top-bar--solo .top-bar__time .time-display--ticking { min-width: 0; }
+  :root .top-bar.top-bar--solo .top-bar__resources { gap: 5px; padding-right: 0; }
+  :root .top-bar.top-bar--solo .resource-pill--ships { display: none; }
+  :root .top-bar.top-bar--solo .top-bar__title { padding: 4px 2px; margin-right: 0; }
+  :root .top-bar.top-bar--solo .top-bar__title-main { font-size: 11px; letter-spacing: 0.02em; }
+  :root .top-bar.top-bar--solo .top-bar__laws { padding: 0 3px; }
+  /* The clock never leaves the screen: if anything still overflows (an
+     arrears chip), the resources clip, not the tick or the button. */
+  :root .top-bar.top-bar--solo .top-bar__resources { flex: 0 1 auto; min-width: 0; overflow: hidden; }
+  :root .top-bar.top-bar--solo .top-bar__title,
+  :root .top-bar.top-bar--solo .top-bar__laws { flex-shrink: 0; }
   .top-bar--solo .solo-clock .solo-clock__speed,
   .top-bar--solo .solo-clock .solo-clock__step { display: none; }
-  .top-bar--solo .solo-clock .solo-clock__main .solo-clock__txt { display: none; }
-  .top-bar--solo .solo-clock .solo-clock__main { padding: 0 8px; }
+  /* Icons only, except START before the first tick: that is the button a
+     new player has to find. RESUME ("Continuar") would push the science
+     pill off at three-digit ticks, and whoever paused knows the button. */
+  :root .top-bar--solo .solo-clock .solo-clock__main .solo-clock__txt { display: none; }
+  :root .top-bar--solo .solo-clock .solo-clock__main.is-start .solo-clock__txt { display: inline; }
+  :root .top-bar--solo .solo-clock .solo-clock__main { padding: 0 6px; }
   /* The last block in the bar: no divider or end padding to pay for. */
   :root .top-bar.top-bar--solo .top-bar__time { gap: 6px; padding-right: 0; border-right: 0; }
 }

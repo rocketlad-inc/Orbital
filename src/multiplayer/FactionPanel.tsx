@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch, Faction, MyFaction, Pact, PACT_LABELS, PactKind, tradesApi, warsApi, WarRow } from './api';
 import { FlagChip } from '../components/FactionEmblem';
 import { HOLDER_MARK } from './commission';
-import { t, tk, tn } from '../i18n/core';
+import { t, tk, tn, fmtFixed } from '../i18n/core';
 import type { Key } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import { apiErrorText } from '../i18n/apiErrors';
@@ -191,10 +191,13 @@ export function FactionPanel({
   useEffect(() => {
     refresh();
     const iv = setInterval(refresh, 10_000);
-    // A pact signed or a war declared shows at once, not 10 s later.
+    // A pact signed or a war declared shows at once, not 10 s later. So
+    // does a TICK: the stockpile columns are ticked numbers, and reading
+    // them up to 10 s stale put "588" here beside the top bar's "591"
+    // (playtest R2-C5).
     const onWs = (e: Event) => {
       const d = (e as CustomEvent).detail;
-      if (d?.kind === 'trade' || d?.kind === 'treaty' || d?.type === 'wars_changed') void refresh();
+      if (d?.kind === 'trade' || d?.kind === 'treaty' || d?.type === 'wars_changed' || d?.type === 'tick') void refresh();
     };
     window.addEventListener('orbital:ws', onWs as EventListener);
     return () => { clearInterval(iv); window.removeEventListener('orbital:ws', onWs as EventListener); };
@@ -623,9 +626,9 @@ function weightOf(f: Faction): number {
 function compact(n: number | null | undefined): string {
   const v = Math.round(Number(n ?? 0));
   if (!Number.isFinite(v)) return '0';
-  if (Math.abs(v) >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+  if (Math.abs(v) >= 1_000_000) return `${fmtFixed(v / 1_000_000, 1)}M`;
   if (Math.abs(v) >= 10_000) return `${Math.round(v / 1000)}k`;
-  if (Math.abs(v) >= 1_000) return `${(v / 1000).toFixed(1)}k`;
+  if (Math.abs(v) >= 1_000) return `${fmtFixed(v / 1000, 1)}k`;
   return String(v);
 }
 

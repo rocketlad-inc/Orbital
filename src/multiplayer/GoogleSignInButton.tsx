@@ -18,6 +18,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 
 import { t } from '../i18n/core';
+import { useI18n } from '../i18n/react';
 
 const GSI_SCRIPT_URL = 'https://accounts.google.com/gsi/client';
 
@@ -64,6 +65,9 @@ export const GoogleSignInButton: React.FC<Props> = ({
 }) => {
   const hostRef = useRef<HTMLDivElement>(null);
   const [ready, setReady] = useState(false);
+  // Google draws the button's words itself ("Continue with Google"), in
+  // the language we pass it; a language switch redraws it.
+  const { lang } = useI18n();
 
   // Keep the latest callbacks in refs so the init effect can depend ONLY
   // on clientId. Otherwise a parent re-render — e.g. every keystroke in
@@ -106,7 +110,9 @@ export const GoogleSignInButton: React.FC<Props> = ({
         // Width is required by GIS, in pixels. Measure the host element so
         // the button fills its column.
         const width = Math.max(220, Math.min(400, hostRef.current.clientWidth || 280));
+        hostRef.current.replaceChildren();
         goog.renderButton(hostRef.current, {
+          locale: lang,
           type: 'standard',
           theme: 'filled_black',
           size: 'large',
@@ -121,9 +127,9 @@ export const GoogleSignInButton: React.FC<Props> = ({
       }
     })();
     return () => { cancelled = true; };
-    // Only clientId — callbacks are read through refs so a parent
-    // re-render (login-form keystrokes) never re-inits the GIS button.
-  }, [clientId]);
+    // Only clientId and the language: callbacks are read through refs so
+    // a parent re-render (login-form keystrokes) never re-inits the button.
+  }, [clientId, lang]);
 
   return (
     <div

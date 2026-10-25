@@ -223,7 +223,7 @@ describe('the rules, in one line', () => {
     expect(tickFact(450_000)).toBe('7.5-minute ticks');
     expect(tickFact(86_400_000)).toBe('24-hour ticks');
     setLang('pt-BR', false);
-    expect(tickFact(450_000)).toBe('turnos de 7,5 min');
+    expect(tickFact(450_000)).toBe('ticks de 7,5 min');
     expect(getLang()).toBe('pt-BR');
   });
   it('the picker label for a known interval, a short form for an unknown one', () => {

@@ -473,12 +473,35 @@ async function handlePropose(req, env, { session, params }) {
     console.error('trade offer DM failed', e, { tradeId: id });
   }
 
+  await answerIfComputer(env, gameId, proposer.id, responderId, id);
+
   const row = await env.DB
     .prepare('SELECT * FROM trade_offers WHERE id = ?')
     .bind(id)
     .first();
 
   return json({ trade: tradeRowToJson(row) }, { status: 201 });
+}
+
+/**
+ * A person's offer to a computer empire is answered now, not on its next
+ * turn (aiEmpire.js answerNow; playtest R2-B3/B4: a pact just proposed
+ * read NEUTRAL until a tick, which a paused clock never brought). Only a
+ * person's: two computer empires haggling would answer each other
+ * inside one request. Never throws.
+ */
+async function answerIfComputer(env, gameId, proposerId, responderId, tradeId) {
+  try {
+    const rows = (await env.DB
+      .prepare('SELECT id, ai_doctrine FROM game_factions WHERE game_id = ? AND id IN (?, ?)')
+      .bind(gameId, proposerId, responderId).all()).results ?? [];
+    const computer = (fid) => !!rows.find(r => r.id === fid)?.ai_doctrine;
+    if (!computer(responderId) || computer(proposerId)) return;
+    const { answerNow } = await import('./aiEmpire.js');
+    await answerNow(env, gameId, responderId, tradeId);
+  } catch (e) {
+    console.error('answerIfComputer failed', e, { tradeId });
+  }
 }
 
 // ---------- GET /api/games/:gameId/trades ----------
@@ -959,7 +982,10 @@ export async function handleAccept(req, env, { session, params }) {
 // body (optional): { reason } — one of DECLINE_REASONS, shown to the
 // proposer (migration 0186). Computer empires always give one.
 
-export const DECLINE_REASONS = new Set(['no_cargo', 'no_pacts', 'no_trust', 'unknown_terms']);
+// Round 2 (R2-B10): no_trade (the Warlord trades with no one), one_off_only
+// (no standing deals), no_freighter (none free to carry it), cannot_spare.
+export const DECLINE_REASONS = new Set(['no_cargo', 'no_pacts', 'no_trust', 'unknown_terms',
+  'no_trade', 'one_off_only', 'no_freighter', 'cannot_spare']);
 
 export async function handleDecline(req, env, { session, params }) {
   const gameId = params.gameId;
@@ -1128,6 +1154,8 @@ async function handleCounter(req, env, { session, params }) {
     proposer_faction_id: newProposer.id,
     responder_faction_id: newResponderId,
   });
+
+  await answerIfComputer(env, gameId, newProposer.id, newResponderId, id);
 
   const row = await env.DB.prepare('SELECT * FROM trade_offers WHERE id = ?').bind(id).first();
   return json({ trade: tradeRowToJson(row) }, { status: 201 });

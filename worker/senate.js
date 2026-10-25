@@ -1094,6 +1094,42 @@ export async function quorumFor(env, gameId) {
   };
 }
 
+// ============================================================
+// IN A SOLO GAME THE PERSON VOTES ON EVERY BILL (playtest R2-B2).
+//
+// A solo or trial game seats one person beside computer empires, which
+// vote the turn a bill opens. At 30 s a tick a twelve-tick vote is six
+// minutes, and testers busy with their first fleet watched "More Metal"
+// pass without ever being asked. So in a solo game a bill whose window
+// has closed does not resolve while a living person in it has not
+// voted: the Situation Report keeps it as a decision ("waits for your
+// vote") and the vote is still taken. It resolves on the first tick
+// after their ballot. A game of computer empires alone (the crucible)
+// has no person and is unaffected; so is every multiplayer game.
+// ============================================================
+
+/** The person seats a solo game's bills wait for, or null when the game
+ *  is not solo. */
+export async function soloVoters(env, gameId) {
+  const g = await env.DB
+    .prepare('SELECT COALESCE(solo, 0) AS solo FROM games WHERE id = ?')
+    .bind(gameId).first();
+  if (Number(g?.solo) !== 1) return null;
+  const rows = (await env.DB
+    .prepare(`SELECT id FROM game_factions WHERE game_id = ? AND status = 'active' AND ai_doctrine IS NULL`)
+    .bind(gameId).all()).results ?? [];
+  return rows.map(r => r.id);
+}
+
+/** Has one of `voters` still to cast a ballot on this bill? */
+async function waitsOnVoter(env, proposalId, voters) {
+  if (!voters?.length) return false;
+  const rows = (await env.DB
+    .prepare(`SELECT faction_id FROM senate_votes WHERE proposal_id = ? AND faction_id IN (${voters.map(() => '?').join(',')})`)
+    .bind(proposalId, ...voters).all()).results ?? [];
+  return rows.length < voters.length;
+}
+
 /** Engagement headcount for a bill: every faction that cast ANYTHING. */
 export function votesCastCount(totals) {
   return (totals?.yea?.count ?? 0) + (totals?.nay?.count ?? 0) + (totals?.abstain?.count ?? 0);
@@ -1806,7 +1842,13 @@ export async function castVoteCore(env, { gameId, proposalId, factionId, current
   // flipped debating->voting at a tick boundary by the resolver, but a
   // vote may arrive in the gap between the window opening and the resolver
   // running — so accept 'debating' too, as long as the window is open.
-  const inWindow = currentTick >= row.vote_opens_at_tick && currentTick < row.vote_closes_at_tick;
+  let inWindow = currentTick >= row.vote_opens_at_tick && currentTick < row.vote_closes_at_tick;
+  // A solo game's bill held open for its person takes their vote late
+  // (soloVoters, R2-B2).
+  if (!inWindow && row.status === 'voting' && currentTick >= row.vote_opens_at_tick) {
+    const voters = await soloVoters(env, gameId);
+    if (voters?.includes(factionId)) inWindow = true;
+  }
   if (!inWindow || (row.status !== 'voting' && row.status !== 'debating')) {
     return { ok: false, status: 409, code: 'not_voting', message: 'this proposal is not in its voting window' };
   }
@@ -2333,9 +2375,22 @@ export async function resolveSenate(env, gameId, tick) {
     console.error("resolveSenate: phase 1 failed", e);
   }
 
-  const toResolve = (await env.DB
+  let toResolve = (await env.DB
     .prepare("SELECT * FROM senate_proposals WHERE game_id = ? AND status = 'voting' AND vote_closes_at_tick <= ?")
     .bind(gameId, tick).all()).results ?? [];
+  // A solo game's bill waits for its person (soloVoters).
+  if (toResolve.length > 0) {
+    try {
+      const voters = await soloVoters(env, gameId);
+      if (voters && voters.length > 0) {
+        const kept = [];
+        for (const p of toResolve) if (!(await waitsOnVoter(env, p.id, voters))) kept.push(p);
+        toResolve = kept;
+      }
+    } catch (e) {
+      console.error('resolveSenate: solo voter check failed', e);
+    }
+  }
 
   // Vote-window-elapsed proposals: tally + dispatch on bill kind.
   // Per-kind effect ticks live in EFFECT_TICKS_BY_KIND below so each bill
@@ -2409,6 +2464,12 @@ export async function resolveSenate(env, gameId, tick) {
             yea_weight: totals.yea.weight,
             nay_weight: totals.nay.weight,
             abstain_weight: totals.abstain.weight,
+            // Ballots, one per senator. The event log read the WEIGHTS
+            // as votes: "2 yea / 0 nay / 2 abstain" in a three-empire
+            // game (playtest R2-B2). The weights still decide the bill.
+            yea_count: totals.yea.count,
+            nay_count: totals.nay.count,
+            abstain_count: totals.abstain.count,
             effect_until_tick: effectUntil,
             ...(sideEffects ?? {}),
           }),

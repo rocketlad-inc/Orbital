@@ -34,11 +34,13 @@ import './TopBar.css';
 import { GIT_SHA } from '../_version';
 import { useIsMobile, isInApp } from '../hooks/useIsMobile';
 import { saveTextFile } from '../platform/saveTextFile';
-import { t, tn } from '../i18n/core';
+import { t, tn, fmtFixed, fmtNumber } from '../i18n/core';
 import { useI18n, LanguageSwitch } from '../i18n/react';
 import { saveLocale } from '../i18n/account';
 import { inLang } from '../i18n/serverText';
-import { SoloClock, soloSpeedLabel, nextSoloSpeed } from '../multiplayer/SoloClock';
+import { closeOpenSheets } from './BottomSheet';
+import { passTapThrough } from './passTapThrough';
+import { SoloClock, soloSpeedLabel, nextSoloSpeed, useSoloPending } from '../multiplayer/SoloClock';
 import { openSaveEmpire } from '../multiplayer/trial/SaveEmpire';
 import '../multiplayer/trial/trial.css';
 
@@ -153,7 +155,10 @@ export const TopBar: React.FC<TopBarProps> = ({
   // remaining time down. Multiplayer only — single-player has no
   // server-driven cadence (nextTickAt is undefined) and shows the sim-speed
   // controls instead.
-  const nextTickAt = gameState.nextTickAt;
+  // The clock's press shows at once, here and on the button alike.
+  const soloPending = useSoloPending(gameState.solo?.paused, gameState.tickIntervalMs);
+  const soloPaused = !!gameState.solo && !!soloPending.paused;
+  const nextTickAt = soloPaused ? undefined : gameState.nextTickAt;
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
     if (nextTickAt == null) return;
@@ -214,7 +219,9 @@ export const TopBar: React.FC<TopBarProps> = ({
           // the multiplayer host's admin controls would fight it.
           isHost={isHost && !gameState.solo}
           activePanel={activePanel}
-          onTogglePanel={onTogglePanel}
+          // A phone's sheets (the ship card) sit over these panels: close
+          // them first, as the rail does.
+          onTogglePanel={(p) => { if (p) closeOpenSheets(); onTogglePanel(p); }}
           playerShipCount={playerShips.length}
           settlementCount={gameState.settlements.filter(s => s.ownedBy === 'player').length}
           researchTotal={(() => {
@@ -447,7 +454,10 @@ export const TopBar: React.FC<TopBarProps> = ({
       )}
 
       <div className="top-bar__time">
-        <div className={`time-display${tickCountdownLabel != null || gameState.solo?.paused ? ' time-display--ticking' : ''}`}>
+        {/* A solo game always holds the footprint: PAUSED, then a blank
+            while the first countdown arrives, then "next in" all differ in
+            width, and the clock button beside them slid sideways (Leo). */}
+        <div className={`time-display${tickCountdownLabel != null || gameState.solo ? ' time-display--ticking' : ''}`}>
           <div className="time-display__label">{t('topbar.tick')}</div>
           <div className="time-display__value">{tickStr}</div>
           {tickCountdownLabel != null && (
@@ -457,11 +467,11 @@ export const TopBar: React.FC<TopBarProps> = ({
             </div>
           )}
           {/* A paused solo game has no next tick: say so where it was. */}
-          {tickCountdownLabel == null && gameState.solo?.paused && (
+          {tickCountdownLabel == null && soloPaused && (
             <div className="time-display__countdown solo-paused">{t('solo.paused')}</div>
           )}
         </div>
-        {gameState.solo && mpActions?.gameId && <SoloClock gameId={mpActions.gameId} />}
+        {gameState.solo && mpActions?.gameId && <SoloClock gameId={mpActions.gameId} pending={soloPending} />}
         {!hideSimControls && !turnBasedActive && !mpTbmActive && (
           // Realtime sim controls. Hidden in Turn-Based Mode (replaced
           // below by the single COMMIT TURN button) and in multiplayer
@@ -538,8 +548,8 @@ export const TopBar: React.FC<TopBarProps> = ({
 
 const fmtRate = (n: number) => {
   if (n === 0) return '0';
-  if (n < 0.1) return n.toFixed(2);
-  if (n < 10)  return n.toFixed(1);
+  if (n < 0.1) return fmtFixed(n, 2);
+  if (n < 10)  return fmtFixed(n, 1);
   return Math.round(n).toString();
 };
 
@@ -1341,7 +1351,7 @@ const HostTickSpeed: React.FC<{ gameId: string }> = ({ gameId }) => {
             <span className="side-menu__item-hint tsx__wrap">
               {live
                 ? t('topbar.tickSpeed.flatOverrides')
-                : t('topbar.tickSpeed.flatCount', { n: Math.round(86_400_000 / flatMs).toLocaleString() })}
+                : t('topbar.tickSpeed.flatCount', { n: fmtNumber(Math.round(86_400_000 / flatMs)) })}
             </span>
           </>
         ) : (
@@ -1357,8 +1367,8 @@ const HostTickSpeed: React.FC<{ gameId: string }> = ({ gameId }) => {
               </div>
             </div>
             <div className="tsx-total">
-              <span className="tsx-total__n">{ticks.length.toLocaleString()}</span>
-              <span>{t('topbar.tickSpeed.total', { night: nightCount.toLocaleString() })}</span>
+              <span className="tsx-total__n">{fmtNumber(ticks.length)}</span>
+              <span>{t('topbar.tickSpeed.total', { night: fmtNumber(nightCount) })}</span>
             </div>
             <label className="tsx-clock">
               {t('topbar.tickSpeed.clock')}
@@ -1534,7 +1544,12 @@ const SideMenu: React.FC<SideMenuProps> = ({
   // backdrop-filter would otherwise trap our fixed-positioned drawer.
   return createPortal(
     <>
-      <div className="side-menu__backdrop" onClick={onClose} />
+      {/* Closing tap passes on to a rail or top-bar button under it, so
+          Research opens on the first tap, not the second. */}
+      <div
+        className="side-menu__backdrop"
+        onClick={(e) => { onClose(); passTapThrough(e.currentTarget, e.clientX, e.clientY); }}
+      />
       <aside className="side-menu" role="dialog" aria-label={t('topbar.menu')}>
         <header className="side-menu__head">
           <div>

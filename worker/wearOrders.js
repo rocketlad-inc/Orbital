@@ -53,6 +53,7 @@ import { HULL_COST, parsePartsJson } from './shipDesigns.js';
 import { MEGASTRUCTURES } from './megastructures.js';
 import { iconKey } from './shipIconRaster.js';
 import { spriteKey } from './planetSvg.js';
+import { resolvedStance } from './shipStance.js';
 
 /** A trade offer's id, as worker/trades.js checks it (bare, not game-scoped). */
 const TRADE_ID_RE = /^[A-Za-z0-9_-]{6,64}$/;
@@ -543,7 +544,7 @@ export async function handleWearCommand(_req, env, { params, ctx }) {
       at: s.parent_body_id,
       fl: s.fleet_id && !s.fleet_detached ? s.fleet_id : null,
       moving: !!s.moving,
-      stance: s.stance ?? 'attack',
+      stance: resolvedStance(s.stance, s.ship_class),
       rt: s.retreat_hp_pct ?? null,
       dt: s.detonate_hp_pct ?? null,
       prio,

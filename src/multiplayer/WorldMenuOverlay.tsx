@@ -29,7 +29,7 @@ import { BUILDING_FEATURE } from '../game/researchUnlocks';
 import { BUILDABLE_CLASSES, getShipClass } from '../game/shipClasses';
 import { sanitizeParts, partsCost, computeDesignStats, PART_GLYPH } from '../game/shipParts';
 import type { ShipPartId } from '../game/shipParts';
-import { RESOURCE_LETTER_COLORS } from '../game/resourceColors';
+import { RESOURCE_LETTER_COLORS, resourceLetter } from '../game/resourceColors';
 import { trackPendingBuild, resolveServerOrderId } from '../game/optimisticBuilds';
 
 import { shipyardSlotsAtBody, canHostCity, canHostStation, isRawWorld, suggestSettlementName, BUILDING_DEFS } from '../game/settlements';
@@ -69,7 +69,7 @@ import { employedShipIds, routeDeliversTo, routeCarriers } from '../game/routeSe
 import { terraformInbound, tickClock } from '../game/terraformInbound';
 import { buildChoices } from '../game/designChoice';
 import { RamControlsSection } from '../components/BodyInspector';
-import { t, tn, tk } from '../i18n/core';
+import { t, tn, tk, fmtFixed, fmtDecimal, fmtNumber } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import { designName } from '../i18n/names';
 import { makePeaceCheck } from '../game/peace';
@@ -196,6 +196,8 @@ export const WorldMenuOverlay: React.FC = () => {
   }, []);
 
   const [openId, setOpenIdRaw] = useState<string | null>(null);
+  /** The world whose menu is opening while the camera still flies in. */
+  const [arrivingId, setArrivingId] = useState<string | null>(null);
   // Publish the currently open body id to the renderer so drawCity /
   // drawStation know to suppress their old canvas art ONLY on the
   // focused body while the menu is up. Cleared on close so diamonds
@@ -364,6 +366,7 @@ export const WorldMenuOverlay: React.FC = () => {
       focusBody(sel); // sets focusedBodyId (body-relative camera)
       updateCamera({ scale: s1, x: off.x, y: off.y });
       setOpenId(sel);
+      setArrivingId(sel);
       setErrMsg(null);
     } else {
       // SAME WORLD, NEW VIEWPORT (a window resized, a phone turned): frame
@@ -432,7 +435,24 @@ export const WorldMenuOverlay: React.FC = () => {
   // z from the real camera; eased display copy for chrome fades.
   const zTarget = body ? zOf(camera.scale, body, vh) : 0;
   const z = useEasedZ(zTarget);
-  const op = menuOpacity(z);
+  // THE TAP ANSWERS AT ONCE. The menu used to fade in only at the very
+  // end of the camera's dive (menuOpacity: z past 0.72), and took taps
+  // only past 0.9 of that, so it appeared 2-3 s after the tap and a second
+  // tap, made because nothing had happened, landed on a building card
+  // (Dale, Maya, 2026-10-24). An opening menu now shows and takes taps at
+  // once while the camera keeps flying in; its chrome is laid out for the
+  // settled framing, so nothing moves when the planet arrives. Once the
+  // dive lands, the fade follows the camera again (a pinch out dismisses).
+  // Handed back to the fade only where the two agree (the eased z has
+  // caught up), or once a landed dive starts pulling back out.
+  const arriving = !!openId && arrivingId === openId;
+  const landedRef = useRef(false);
+  useEffect(() => {
+    if (!arriving) { landedRef.current = false; return; }
+    if (zTarget >= 0.85) landedRef.current = true;
+    if (menuOpacity(z) >= 0.99 || (landedRef.current && zTarget < 0.8)) setArrivingId(null);
+  }, [arriving, zTarget, z]);
+  const op = arriving ? 1 : menuOpacity(z);
 
   // ---- chrome measurement (panel + fleet heights) ----
   // Gated on the chrome actually being MOUNTED: the overlay returns null
@@ -544,13 +564,20 @@ export const WorldMenuOverlay: React.FC = () => {
   // shoved to the screen edge, the pins floating over nothing (Maya,
   // 2026-10-24). Leaving the world leaves its menu, as zooming out does.
   // The camera has already gone where it was sent, so it is left alone.
+  // NOT A SWITCH, though: a click on another world (an outliner row, a
+  // map click) selects it and focuses it in one go, and this effect, seeing
+  // the camera on a world that is not the open one, closed the menu and
+  // dropped the new selection before the open effect could re-frame it.
+  // Clicking Titan's row then did nothing (Priya, 2026-10-24). While the
+  // selection names another world, that world's open is under way.
   useEffect(() => {
     if (!openId || camera.focusedBodyId === openId) return;
+    if (uiState.selectedBodyId && uiState.selectedBodyId !== openId) return;
     setWorldMenuOpenBodyId(null);
     setOpenId(null);
     deselectBody();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openId, camera.focusedBodyId]);
+  }, [openId, camera.focusedBodyId, uiState.selectedBodyId]);
 
   // Another menu opening (DockRail panels, settlements/fleet/research —
   // anything that dispatches 'orbital:close-world-menu') dismisses us.
@@ -693,6 +720,14 @@ export const WorldMenuOverlay: React.FC = () => {
     // already_queued: the tap the screen had not caught up with. What was
     // asked for is already happening, so there is nothing to tell them.
     if (res && !res.ok && res.code !== 'already_queued') setErrMsg(res.error ?? t('worldmenu.err.buildRejected'));
+    // EVERY SPEND SAYS SO (playtest R2-C4): the tag only changes once the
+    // next /state lands, so the click itself confirms what was paid for.
+    else if (res?.ok) {
+      const what = tk(`worldmenu.building.${kind}`, kind.toUpperCase());
+      setNoteMsg(waiting
+        ? t('worldmenu.build.refunded', { what })
+        : t('worldmenu.build.ordered', { what, lv: nextBuildingLevel(settlement, kind), where: settlement.name }));
+    }
   };
   /** "Waits behind Lab: #2 in line, paid now." for the armed confirm. */
   const waitsBehindText = (s: Settlement) => {
@@ -721,10 +756,31 @@ export const WorldMenuOverlay: React.FC = () => {
     );
     setFounding(type);
     const res = await mpActions?.deploySettlement({ bodyId: openId, type, name });
+    if (res?.ok) {
+      // STAYS BUSY UNTIL THE STATION IS ON SCREEN. The 201 lands a
+      // moment before the /state that carries the new settlement, and in
+      // that gap the button went back to its price ("24M · 16C"), which
+      // read as "it charged me and built nothing" (playtest R2-C4). The
+      // effect below clears this once the slot is filled.
+      setFoundPending({ type, bodyId: openId });
+      setNoteMsg(t(type === 'city' ? 'worldmenu.found.doneCity' : 'worldmenu.found.doneStation', { name, body: body.name }));
+    } else if (res) {
+      setErrMsg(res.error ?? (type === 'city' ? t('worldmenu.err.couldNotFoundCity') : t('worldmenu.err.couldNotFoundStation')));
+    }
     setFounding(null);
-    if (res && !res.ok) setErrMsg(res.error ?? (type === 'city' ? t('worldmenu.err.couldNotFoundCity') : t('worldmenu.err.couldNotFoundStation')));
-    else if (res?.ok) setNoteMsg(t(type === 'city' ? 'worldmenu.found.doneCity' : 'worldmenu.found.doneStation', { name, body: body.name }));
   };
+  const [foundPending, setFoundPending] = useState<{ type: SettlementType; bodyId: string } | null>(null);
+  useEffect(() => {
+    if (!foundPending) return;
+    const filled = foundPending.bodyId === openId
+      && (foundPending.type === 'city' ? anyCity : anyStation);
+    if (filled || foundPending.bodyId !== openId) { setFoundPending(null); return; }
+    // A state that never arrives must not lock the button for good.
+    const id = window.setTimeout(() => setFoundPending(null), 10_000);
+    return () => window.clearTimeout(id);
+  }, [foundPending, openId, anyCity, anyStation]);
+  const busyFounding = (type: SettlementType) =>
+    founding === type || (foundPending?.type === type && foundPending.bodyId === openId);
 
   // ---- founding a city / station (MP rules, mirrors BodyInspector) ----
   // station : UNGATED — a Colony Ship here, OR an owned settlement here
@@ -1011,8 +1067,8 @@ export const WorldMenuOverlay: React.FC = () => {
       <button
         key={type}
         className={`wm-bbtn wm-found${raw ? ' wm-found--locked' : ''}`}
-        disabled={(!enabled && !raw) || founding === type}
-        aria-busy={founding === type}
+        disabled={(!enabled && !raw) || busyFounding(type)}
+        aria-busy={busyFounding(type)}
         title={title}
         onClick={() => {
           // A raw world's city plot opens the way to living: the terraform
@@ -1024,7 +1080,7 @@ export const WorldMenuOverlay: React.FC = () => {
       >
         <span className="wm-bbtn-nm">{isCity ? t('worldmenu.found.btnCity') : t('worldmenu.found.btnStation')}</span>
         <span className="wm-bbtn-st">
-          {founding === type ? t('worldmenu.found.busy') : cityLock && isCity && !raw ? `🔒 ${sub}` : sub}
+          {busyFounding(type) ? t('worldmenu.found.busy') : cityLock && isCity && !raw ? `🔒 ${sub}` : sub}
         </span>
       </button>
     );
@@ -1091,6 +1147,13 @@ export const WorldMenuOverlay: React.FC = () => {
     obstacles.push({ l: vw - dockW - 130, t: TOPBAR + 4, r: vw - dockW, b: TOPBAR + 50 });
     if (readout.station || (!myStation && canHostStation(body) && !anyStation)) {
       obstacles.push({ l: rigLeft - 10, t: staY - 10, r: staX + staW + 10, b: rigBottom + 10 });
+    }
+    // An open drawer (shipyard, structures, terraform) rises from the
+    // bar: at 1280x800 it covered the lower tags, and a click on LAB
+    // landed in "Name next ship" (Leo, 2026-10-24). The arc keeps clear
+    // of it like any other chrome. 72 = --wm-bar-h, 12 its gap.
+    if (openTab && chromeH.fleet > 0) {
+      obstacles.push({ l: railW, t: vh - 12 - 72 - chromeH.fleet - 8, r: vw - dockW, b: vh });
     }
     neighbors.forEach((nb, i) => {
       const sl = ORB_SLOTS[orbSlotIndex(i, neighbors, body.parent)];
@@ -1396,8 +1459,8 @@ export const WorldMenuOverlay: React.FC = () => {
           className="wm-yield" key={k}
           style={{ color: RESOURCE_LETTER_COLORS[k as 'F' | 'M' | 'C' | 'S'] }}
         >
-          <i style={{ color: 'inherit', opacity: 0.75 }}>{k}</i>
-          {Math.round(v * 10) / 10}</span>
+          <i style={{ color: 'inherit', opacity: 0.75 }}>{resourceLetter(k as 'M' | 'C' | 'S')}</i>
+          {fmtDecimal(v)}</span>
       ))}
     </div>
   );
@@ -1410,14 +1473,14 @@ export const WorldMenuOverlay: React.FC = () => {
       ] as Array<['M' | 'C' | 'S', number]>).map(([k, v], i) => (
         <React.Fragment key={k}>
           {i > 0 && ' · '}
-          <span style={{ color: RESOURCE_LETTER_COLORS[k] }}>{k}{Math.round(v)}</span>
+          <span style={{ color: RESOURCE_LETTER_COLORS[k] }}>{resourceLetter(k)}{Math.round(v)}</span>
         </React.Fragment>
       ))}
     </div>
   );
   const outEl = (
     <div className="wm-out">
-      <span className="wm-label">{t('worldmenu.output')}</span>
+      <span className="wm-label" title={t('worldmenu.outputTip')}>{t('worldmenu.output')}</span>
       {yieldsEl}
       {stockEl}
     </div>
@@ -1672,6 +1735,15 @@ export const WorldMenuOverlay: React.FC = () => {
     if (myCity || myStation) {
       cards.push({ id: 'yard', label: t('worldmenu.bar.yard'),
         sub: t('worldmenu.bar.slipways', { busy: yardBusy, slots: yardSlots }), go: () => setPview('yard') });
+    } else if (canFoundStation || (sideAvail.surface && !rawHere)) {
+      // THE YARD'S PLACE IS HELD on a world you can still claim. It used
+      // to appear only once the claim landed, which slid OVERVIEW along
+      // under the finger: the tap meant for it opened SHIPYARD (Maya,
+      // Dale, 2026-10-24). Until then the card says what it waits for
+      // and opens the list where the claim is made.
+      cards.push({ id: 'yard', label: t('worldmenu.bar.yard'), tone: 'is-waiting',
+        sub: t('worldmenu.bar.yardAfterClaim'),
+        go: () => { setPside(sideAvail.surface && !rawHere ? 'surface' : 'orbit'); setPview('structures'); } });
     }
     if (siloOk && myCity?.missileSilo) {
       cards.push({ id: 'silo', label: t('worldmenu.bar.silo'), short: t('worldmenu.silo.m.silo'), tone: 'is-silo', badgeN: raid?.groups,
@@ -1698,7 +1770,7 @@ export const WorldMenuOverlay: React.FC = () => {
         <div className="wmp-yields" data-tutorial-id="wm-output">
           {yieldChips.map(([k, v]) => (
             <span key={k} className="wmp-yield">
-              <i style={{ color: RESOURCE_LETTER_COLORS[k as 'M' | 'C' | 'S'] }}>{k}</i>{Math.round(v * 10) / 10}<em>/t</em>
+              <i style={{ color: RESOURCE_LETTER_COLORS[k as 'M' | 'C' | 'S'] }}>{resourceLetter(k as 'M' | 'C' | 'S')}</i>{fmtDecimal(v)}<em>/t</em>
             </span>
           ))}
         </div>
@@ -1865,7 +1937,7 @@ export const WorldMenuOverlay: React.FC = () => {
           {settlementsEl}
           {canFoundStation && orbitEls}
           <RuinsCard bodyId={body.id} />
-          <div className="wmp-ov-row"><span className="wm-label">{t('worldmenu.output')}</span>{yieldsEl}</div>
+          <div className="wmp-ov-row"><span className="wm-label" title={t('worldmenu.outputTip')}>{t('worldmenu.output')}</span>{yieldsEl}</div>
           <div className="wmp-ov-row">{stockEl}</div>
           {worldExtrasEl}
           {body.secret?.revealed && (body.secret.customName || body.secret.customText) && (
@@ -3567,7 +3639,7 @@ const WmDysonCard: React.FC = () => {
           <i style={{ width: `${Math.min(100, pct)}%` }} />
         </div>
         <div className="wm-dyson-meta">
-          {Math.round(dyson.hp).toLocaleString()} / {dyson.maxHp.toLocaleString()} · {pct.toFixed(1)}%
+          {fmtNumber(Math.round(dyson.hp))} / {fmtNumber(dyson.maxHp)} · {fmtFixed(pct, 1)}%
         </div>
         {isMine && (
           <div className="wm-dyson-supply" title={t('worldmenu.dyson.supplyTitle')}>
@@ -3627,7 +3699,7 @@ const WmDysonCard: React.FC = () => {
         </span>
         {derelict && (
           <span className="wm-dyson-owner" style={{ color: '#ffb84d' }}>
-            {t('worldmenu.dyson.builtUnclaimed', { pct: derelictPct.toFixed(1) })}
+            {t('worldmenu.dyson.builtUnclaimed', { pct: fmtFixed(derelictPct, 1) })}
           </span>
         )}
       </div>
