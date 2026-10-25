@@ -47,6 +47,7 @@ export const social = {
   'standing.lede.warSome': 'You are at war with {n} of {total} empires; the rest are at peace until you say otherwise.',
   'standing.lede.rule': 'Shots are only exchanged between empires that have declared war — and a war ends only when both sides agree to stop.',
   'standing.noOthers': 'No other empires.',
+  'standing.loading': 'Reading where you stand…',
   'standing.chip.war': 'AT WAR',
   'standing.chip.allied': 'ALLIED',
   'standing.chip.peace': 'at peace',

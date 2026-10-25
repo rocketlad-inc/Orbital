@@ -49,6 +49,7 @@ export const social: Catalog = {
   'standing.lede.warSome': 'Você está em guerra com {n} de {total} impérios; os demais estão em paz até você dizer o contrário.',
   'standing.lede.rule': 'Só há tiros entre impérios que declararam guerra — e uma guerra só termina quando os dois lados concordam em parar.',
   'standing.noOthers': 'Nenhum outro império.',
+  'standing.loading': 'Lendo suas relações…',
   'standing.chip.war': 'EM GUERRA',
   'standing.chip.allied': 'ALIADO',
   'standing.chip.peace': 'em paz',

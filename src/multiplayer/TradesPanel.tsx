@@ -33,6 +33,13 @@ import { AssetDealRow } from './AssetDealRow';
 import './AssetDealsCard.css';
 import { hasFeature, requirementFor, requirementLabel } from '../game/researchUnlocks';
 import { TECH_DEFS } from '../game/techs';
+import { onSituation } from './situationFeed';
+
+/** The last full read per game, so a reopen draws at once (R2-B3). */
+const tradesCache = new Map<string, {
+  me: MyFaction; factions: Faction[]; trades: TradeOffer[]; pacts: Pact[];
+  agreements: TradeAgreement[]; assetView: AssetDealsView | null;
+}>();
 
 
 /** A delivery leg still doing something (or waiting for someone). */
@@ -63,15 +70,20 @@ export function TradesPanel({ gameId, view = 'deals' }: {
   useI18n();
   useEffect(() => { logUiEvent(gameId, view === 'treaties' ? 'treaties' : 'trades'); }, [gameId, view]);
   const api = useMemo(() => tradesApi(gameId), [gameId]);
-  const [me, setMe] = useState<MyFaction | null>(null);
-  const [factions, setFactions] = useState<Faction[]>([]);
-  const [trades, setTrades] = useState<TradeOffer[]>([]);
-  const [pacts, setPacts] = useState<Pact[]>([]);
-  const [agreements, setAgreements] = useState<TradeAgreement[]>([]);
+  const cached = tradesCache.get(gameId);
+  /** Has the first read landed? Until then "Nobody has offered you a
+   *  deal" would be a guess: it showed for ~20 s beside a badge of 1
+   *  (playtest R2-B3). */
+  const [loaded, setLoaded] = useState<boolean>(!!cached);
+  const [me, setMe] = useState<MyFaction | null>(cached?.me ?? null);
+  const [factions, setFactions] = useState<Faction[]>(cached?.factions ?? []);
+  const [trades, setTrades] = useState<TradeOffer[]>(cached?.trades ?? []);
+  const [pacts, setPacts] = useState<Pact[]>(cached?.pacts ?? []);
+  const [agreements, setAgreements] = useState<TradeAgreement[]>(cached?.agreements ?? []);
   // Ship & world sales. Fetched like everything else this panel shows,
   // rather than read from game state — which is what previously exiled
   // the feature to the economy tab.
-  const [assetView, setAssetView] = useState<AssetDealsView | null>(null);
+  const [assetView, setAssetView] = useState<AssetDealsView | null>(cached?.assetView ?? null);
   const [busyAsset, setBusyAsset] = useState(false);
   const assetDeals = assetView?.deals ?? [];
   // A sale you are BUYING needs your answer or your payment; one you are
@@ -149,7 +161,31 @@ export function TradesPanel({ gameId, view = 'deals' }: {
     if (pRes?.ok) setPacts(pRes.data.pacts);
     if (aRes?.ok) setAgreements(aRes.data.agreements);
     if (adRes?.ok) setAssetView(adRes.data);
+    // A reopen draws this at once and refreshes underneath.
+    const prev = tradesCache.get(gameId);
+    const meNow = d?.me?.faction ?? (meRes?.ok ? meRes.data.faction : prev?.me ?? null);
+    const tradesNow = d?.trades?.trades ?? (tRes?.ok ? tRes.data.trades : null);
+    if (meNow && tradesNow) {
+      tradesCache.set(gameId, {
+        me: meNow,
+        factions: d?.factions?.factions ?? (fRes?.ok ? fRes.data.factions : prev?.factions ?? []),
+        trades: tradesNow,
+        pacts: d?.pacts?.pacts ?? (pRes?.ok ? pRes.data.pacts : prev?.pacts ?? []),
+        agreements: d?.agreements?.agreements ?? (aRes?.ok ? aRes.data.agreements : prev?.agreements ?? []),
+        assetView: d?.asset_deals ?? (adRes?.ok ? adRes.data : prev?.assetView ?? null),
+      });
+      setLoaded(true);
+    }
   }, [gameId, api]);
+
+  // THE BADGE AND THE LIST AGREE. The shell's poll (the PRIVATE badge and
+  // the Situation Report) can see an offer before this panel's own read
+  // does; when it names one this list lacks, read now.
+  const incomingIdsRef = React.useRef<Set<string>>(new Set());
+  useEffect(() => onSituation((s) => {
+    const ids = (s.incomingTrades ?? []).map(x => x.id);
+    if (ids.some(id => !incomingIdsRef.current.has(id))) void refresh();
+  }), [refresh]);
 
   // The room pushes a 'trade' event on every offer, answer and
   // withdrawal, and a 'market' one when a post is taken (which mints a
@@ -190,6 +226,7 @@ export function TradesPanel({ gameId, view = 'deals' }: {
     () => trades.filter((t) => t.status === 'open' && t.responder_faction_id === me?.id),
     [trades, me],
   );
+  incomingIdsRef.current = new Set(incoming.map(x => x.id));
   const outgoing = useMemo(
     () => trades.filter((t) => t.status === 'open' && t.proposer_faction_id === me?.id),
     [trades, me],
@@ -297,7 +334,7 @@ export function TradesPanel({ gameId, view = 'deals' }: {
           title={t('trade.awaiting')}
           count={incoming.length + assetIncoming.length}
           tone={(incoming.length + assetIncoming.length) > 0 ? 'urgent' : undefined}
-          empty={t('trade.awaitingEmpty')}
+          empty={loaded ? t('trade.awaitingEmpty') : t('trade.loading')}
         >
           {/* A sale you are being offered is a deal awaiting your answer
               like any other, so it sits in this list rather than in a
