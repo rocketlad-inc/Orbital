@@ -49,7 +49,7 @@ const KNOWN = {
 const DB = prodEnv.DB;
 const all = async (sql, ...a) => (await DB.prepare(sql).bind(...a).all()).results ?? [];
 const day = (ms) => (ms ? new Date(ms).toISOString().slice(0, 16).replace('T', ' ') + 'Z' : '-');
-const age = (ms) => (ms ? `${Math.floor((now - ms) / DAY_MS)}d` : '-');
+const age = (ms) => (ms ? `${Math.max(0, Math.floor((now - ms) / DAY_MS))}d` : "-");
 const cell = (s, n) => String(s ?? '').replace(/\|/g, '/').slice(0, n);
 
 let hasNoCull = true;
