@@ -297,6 +297,29 @@ describe('two fingers and the world menu', () => {
     t.unmount();
   });
 
+  it('a pinch that closes the menu does not leave the map unable to pinch (round 2)', () => {
+    // Both fingers on the menu; the pinch closes it and React removes the
+    // elements under them. Their touchend then fires on nodes outside the
+    // document, so the document never hears it.
+    mockMenu.active = true; mockMenu.open = 'earth';
+    const t = mount({ focusedBodyId: 'earth' });
+    const chrome = menuChrome();
+    const a = document.createElement('i'), b = document.createElement('i');
+    chrome.sheet.append(a, b);
+    t.touch('touchstart', a, [[a, 200, 300], [b, 600, 300]]);
+    t.touch('touchmove', a, [[a, 300, 300], [b, 500, 300]]);
+    mockMenu.open = null;
+    chrome.done();                       // the menu is gone, fingers and all
+    t.touch('touchend', a, []);          // detached: never reaches document
+    // A fresh pinch on the map zooms.
+    const n = t.updates.length;
+    t.down(1, 300, 300);
+    t.down(2, 500, 300);
+    t.move(2, 400, 300);
+    expect(t.updates.slice(n).some(u => typeof u.scale === 'number')).toBe(true);
+    t.unmount();
+  });
+
   it('with no menu open a pinch frees the camera, as before', () => {
     mockMenu.active = true; mockMenu.open = null;
     const t = mount({ focusedBodyId: 'mars' });
