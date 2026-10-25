@@ -39,6 +39,7 @@ import { useI18n, LanguageSwitch } from '../i18n/react';
 import { saveLocale } from '../i18n/account';
 import { inLang } from '../i18n/serverText';
 import { closeOpenSheets } from './BottomSheet';
+import { passTapThrough } from './passTapThrough';
 import { SoloClock, soloSpeedLabel, nextSoloSpeed, useSoloPending } from '../multiplayer/SoloClock';
 import { openSaveEmpire } from '../multiplayer/trial/SaveEmpire';
 import '../multiplayer/trial/trial.css';
@@ -1543,7 +1544,12 @@ const SideMenu: React.FC<SideMenuProps> = ({
   // backdrop-filter would otherwise trap our fixed-positioned drawer.
   return createPortal(
     <>
-      <div className="side-menu__backdrop" onClick={onClose} />
+      {/* Closing tap passes on to a rail or top-bar button under it, so
+          Research opens on the first tap, not the second. */}
+      <div
+        className="side-menu__backdrop"
+        onClick={(e) => { onClose(); passTapThrough(e.currentTarget, e.clientX, e.clientY); }}
+      />
       <aside className="side-menu" role="dialog" aria-label={t('topbar.menu')}>
         <header className="side-menu__head">
           <div>
