@@ -179,7 +179,7 @@ export const econ: Catalog = {
   'build.slots': 'VAGAS DE CONSTRUÇÃO',
   'build.slotsFullMp': 'Todas as vagas ocupadas — novas construções são cobradas agora e esperam na fila. Adicione ou melhore um Estaleiro para ter mais vagas simultâneas.',
   'build.slotsFullSp': 'Todas as vagas ocupadas — espere uma construção terminar, ou adicione ou melhore um Estaleiro em uma estação aqui para ter mais.',
-  'build.localTip': 'As construções aqui gastam primeiro o estoque LOCAL deste corpo e depois a RESERVA da sua facção. Mundos brutos guardam 90% da produção no local — construir naves no próprio local é como gastá-la sem transportar.',
+  'build.localTip': 'As construções aqui gastam primeiro o estoque LOCAL deste mundo e depois a RESERVA da sua facção. Mundos brutos guardam 90% da produção no local — construir naves no próprio local é como gastá-la sem transportar.',
   'build.localLine': 'LOCAL {lm}M {lc}C · RESERVA {pm}M {pc}C — o local é gasto primeiro',
   'build.namePlaceholder': 'Nome personalizado (opcional)',
   'build.commitTip': 'Guarda este nome para a próxima nave que você CONSTRUIR',

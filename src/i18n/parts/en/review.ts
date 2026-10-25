@@ -370,7 +370,7 @@ export const review = {
   'review.video.hook': '{n} ships lost at {body}',
   'review.video.sub': 'A real battle from a real game of Orbital',
   'review.video.endTitle': 'Play free',
-  'review.video.endLine': 'The real solar system. Up to ten players. Turns that keep running while you are away.',
+  'review.video.endLine': 'The real solar system. Up to ten players. Ticks that keep running while you are away.',
   'review.battle.gifRecording': 'Making GIF… {pct}% · ✕',
   'review.battle.gifFailed': 'The GIF could not be made in this browser.',
   // ---- theatre (campaign) recap canvas ----

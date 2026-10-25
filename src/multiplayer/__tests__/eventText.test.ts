@@ -441,7 +441,7 @@ describe('Portuguese headlines', () => {
     expect(f('building_completed')).toBe('T+12  Capital de Cerean Union em Terra concluiu Casa da Moeda Nv 3');
     expect(f('tech_advanced level')).toBe('T+12  Cerean Union concluiu Armas Nv 3');
     expect(f('treaty_signed nap')).toBe('T+12  🕊 Cerean Union e Zed Corp assinaram o Pacto de Não Agressão');
-    expect(f('senate_vote passed tally')).toBe('T+12  ⚖ Senado: “Embargo Zed” [embargo comercial] APROVADO — 5 sim / 2 não / 1 abstenção');
+    expect(f('senate_vote passed tally')).toBe('T+12  ⚖ Senado: “Embargo Zed” [embargo comercial] APROVADA — 5 sim / 2 não / 1 abst.');
     expect(f('trade_accepted pacts')).toBe('T+12  ⚖ Cerean Union negociou 100 de metal, 20 de créditos → Zed Corp em troca de 3 de combustível, 5 de ciência + Pacto de Não Agressão, Pacto de Compartilhamento de Inteligência');
     expect(f('trade_route_run tariff')).toBe('T+12  ⟳ Rota comercial: Cerean Union → Zed Corp entregou 100M 20C (tarifa de −10%) — viagem nº 7');
     expect(f('meteoroid_found tons')).toBe('T+12  ◈ Meteoroide Rock 9 encontrado: 400 de créditos para minerar com um cargueiro');

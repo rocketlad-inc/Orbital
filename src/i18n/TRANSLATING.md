@@ -70,7 +70,7 @@ for sentences; keep ALL-CAPS labels in caps. No European Portuguese ("ecrã", "r
 | English | pt-BR | | English | pt-BR |
 |---|---|---|---|---|
 | game / match | jogo | | Senate | Senado |
-| lobby | sala | | bill (Senate) | projeto de lei |
+| lobby | sala | | bill (Senate) | proposta (never "projeto": that is a ship design or research) |
 | seat | vaga | | Chancellor | Chanceler |
 | host | anfitrião | | treaty | tratado |
 | tick | tick (never "turno": Orbital has no turns; only Turn-Based Mode says turno) | | trade / trade route | comércio / rota comercial |
