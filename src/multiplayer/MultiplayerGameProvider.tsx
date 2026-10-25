@@ -61,6 +61,7 @@ import { apiErrorText } from '../i18n/apiErrors';
 import { useI18n } from '../i18n/react';
 import { formatChronicleEvent } from './eventText';
 import { makeFetchGate } from './stateFetchGate';
+import { resolvedStance } from '../game/stance';
 
 // The end-of-game page (and, behind its button, the whole-match film). Split
 // out of the main bundle: it pulls in charts, the map renderer and the replay
@@ -998,10 +999,9 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
   // Standing orders — defensive narrows so a malformed row degrades to
   // "defaults" (attack / no retreat / no detonate) instead of poisoning
   // the client types.
-  let stance: Ship['stance'] = undefined;
-  if (s.stance === 'attack' || s.stance === 'defensive' || s.stance === 'hold') {
-    stance = s.stance;
-  }
+  // An unset stance resolves by class (game/stance.ts, mirroring the
+  // tick): a colony ship or freighter is DEFENSIVE, not ATTACK.
+  const stance: Ship['stance'] = resolvedStance(s.stance, s.ship_class);
   const retreatHpPct: Ship['retreatHpPct'] =
     (s.retreat_hp_pct === 25 || s.retreat_hp_pct === 50 || s.retreat_hp_pct === 75)
       ? s.retreat_hp_pct : null;
