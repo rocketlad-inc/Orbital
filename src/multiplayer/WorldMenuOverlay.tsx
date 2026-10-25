@@ -1112,6 +1112,13 @@ export const WorldMenuOverlay: React.FC = () => {
     if (readout.station || (!myStation && canHostStation(body) && !anyStation)) {
       obstacles.push({ l: rigLeft - 10, t: staY - 10, r: staX + staW + 10, b: rigBottom + 10 });
     }
+    // An open drawer (shipyard, structures, terraform) rises from the
+    // bar: at 1280x800 it covered the lower tags, and a click on LAB
+    // landed in "Name next ship" (Leo, 2026-10-24). The arc keeps clear
+    // of it like any other chrome. 72 = --wm-bar-h, 12 its gap.
+    if (openTab && chromeH.fleet > 0) {
+      obstacles.push({ l: railW, t: vh - 12 - 72 - chromeH.fleet - 8, r: vw - dockW, b: vh });
+    }
     neighbors.forEach((nb, i) => {
       const sl = ORB_SLOTS[orbSlotIndex(i, neighbors, body.parent)];
       const ox = cx + sl.dx - orbShift;
