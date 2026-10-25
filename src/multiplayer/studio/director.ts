@@ -72,8 +72,13 @@ export type ShotStep =
    *  world (a Target) or to an element ('css:<selector>'), and on arrival
    *  with `click`: an element is pressed (its real button), and a world
    *  is shift-clicked, which sends the selected group there (the map's
-   *  own group-move). The arrow is a DOM overlay, so the film captures it. */
-  | { at: number; do: 'cursor'; to: Target; ms?: number; click?: boolean; value?: string }
+   *  own group-move). The arrow is a DOM overlay, so the film captures it.
+   *  With `click` and `order`, the press sends that Studio order (a
+   *  shot's `order` step: the server's own planner) instead of the
+   *  button's, and the group is let go as a sent group is: the hand gives
+   *  a scene's exact course, where the button flies the group at full
+   *  burn (the Mega clip's ride-in needs the course the scene planned). */
+  | { at: number; do: 'cursor'; to: Target; ms?: number; click?: boolean; value?: string; order?: Record<string, unknown> }
   /** Drag the orange selection box across these ships' screen bounds over
    *  `ms` (the arrow drags its corner), then select them as the group. */
   | { at: number; do: 'box'; ships: Target[]; ms?: number }
@@ -731,7 +736,7 @@ export class Director {
           this.hullSize = { from: this.hullSizeNow(), to: Number(st.scale) > 0 ? Number(st.scale) : 1, t0: this.clock, ms: st.ms ?? 800 };
           break;
         case 'pick': this.pick(st); break;
-        case 'cursor': this.hand = { from: this.handAt(), to: st.to, t0: this.clock, ms: st.ms ?? 700, click: !!st.click, done: false, value: st.value }; break;
+        case 'cursor': this.hand = { from: this.handAt(), to: st.to, t0: this.clock, ms: st.ms ?? 700, click: !!st.click, done: false, value: st.value, order: st.order }; break;
         case 'box': this.boxDrag = { ships: st.ships, t0: this.clock, ms: st.ms ?? 900, done: false }; break;
         case 'select': this.selectShips(st.ships); break;
         case 'order': await this.order(st.order); break;
@@ -968,7 +973,7 @@ export class Director {
   }
   // ---------- the player's hand (cursor, box, select) ----------
 
-  private hand: { from: { x: number; y: number }; to: Target; t0: number; ms: number; click: boolean; done: boolean; value?: string } | null = null;
+  private hand: { from: { x: number; y: number }; to: Target; t0: number; ms: number; click: boolean; done: boolean; value?: string; order?: Record<string, unknown> } | null = null;
   private handPos: { x: number; y: number } | null = null;
   private clickAt: { x: number; y: number; t: number } | null = null;
   private boxDrag: { ships: Target[]; t0: number; ms: number; done: boolean } | null = null;
@@ -1080,7 +1085,12 @@ export class Director {
         }
         if (h.click) {
           this.clickAt = { ...this.handPos, t: this.clock };
-          if (h.to.startsWith('css:')) {
+          if (h.order) {
+            // The scene's course, not the button's; then the group is let
+            // go, as GroupActionBar does once a group is sent.
+            void this.order(h.order);
+            this.host.setSelection?.([]);
+          } else if (h.to.startsWith('css:')) {
             const el = document.querySelector<HTMLElement>(h.to.slice(4));
             if (el) el.click(); else this.note(`cursor: nothing at ${h.to}`);
           } else if (h.to.startsWith('orbit:') || h.to.startsWith('ship:')) {
