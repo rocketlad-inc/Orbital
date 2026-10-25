@@ -131,7 +131,7 @@ const GROUPS: Array<{ title: string; ratio: string; size: string; wide: boolean;
 // games on production, frame by frame on a stepped clock. Files in
 // public/clips/: <name>.gif to download, <name>.webp as the preview.
 const CLIPS: Array<{ name: string; title: string; secs: number }> = [
-  { name: 'mega-destroyer-jupiter-to-earth', title: 'A Mega Destroyer crosses from Jupiter and strikes Earth', secs: 28 },
+  { name: 'mega-destroyer-jupiter-to-earth', title: 'A Mega Destroyer is sent from Jupiter, strikes Earth and is destroyed', secs: 43 },
   { name: 'mega-destroyer-obliterates-callisto', title: 'A Mega Destroyer obliterates Callisto', secs: 8 },
   { name: 'mega-destroyer-sterilises-venus-full', title: 'A living Venus sterilised', secs: 5 },
   { name: 'battle-of-the-dyson-sphere-full', title: 'Four empires fight for the Dyson Sphere', secs: 17 },
