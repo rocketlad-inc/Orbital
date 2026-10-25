@@ -564,13 +564,20 @@ export const WorldMenuOverlay: React.FC = () => {
   // shoved to the screen edge, the pins floating over nothing (Maya,
   // 2026-10-24). Leaving the world leaves its menu, as zooming out does.
   // The camera has already gone where it was sent, so it is left alone.
+  // NOT A SWITCH, though: a click on another world (an outliner row, a
+  // map click) selects it and focuses it in one go, and this effect, seeing
+  // the camera on a world that is not the open one, closed the menu and
+  // dropped the new selection before the open effect could re-frame it.
+  // Clicking Titan's row then did nothing (Priya, 2026-10-24). While the
+  // selection names another world, that world's open is under way.
   useEffect(() => {
     if (!openId || camera.focusedBodyId === openId) return;
+    if (uiState.selectedBodyId && uiState.selectedBodyId !== openId) return;
     setWorldMenuOpenBodyId(null);
     setOpenId(null);
     deselectBody();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openId, camera.focusedBodyId]);
+  }, [openId, camera.focusedBodyId, uiState.selectedBodyId]);
 
   // Another menu opening (DockRail panels, settlements/fleet/research —
   // anything that dispatches 'orbital:close-world-menu') dismisses us.
