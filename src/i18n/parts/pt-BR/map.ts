@@ -414,6 +414,8 @@ export const map: Catalog = {
   'worldmenu.building.telescope': 'TELESCÓPIO',
   'worldmenu.building.trajectory_thrusters': 'PROPULSORES DE TRAJETÓRIA',
   'worldmenu.build.backlogTitle': '#{pos} na fila de construção — clique para tirá-lo da fila e reaver o custo.',
+  'worldmenu.build.ordered': '{what} nível {lv} encomendado em {where}.',
+  'worldmenu.build.refunded': '{what} saiu da fila e o custo foi devolvido.',
   'worldmenu.build.queuePosition': 'posição na fila {pos}',
   'worldmenu.found.costColonist': '{cost} · capitão Colonizador −20%',
   'worldmenu.found.busy': 'construindo…',

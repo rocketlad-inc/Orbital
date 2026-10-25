@@ -412,6 +412,8 @@ export const map = {
   'worldmenu.building.telescope': 'TELESCOPE',
   'worldmenu.building.trajectory_thrusters': 'TRAJECTORY_THRUSTERS',
   'worldmenu.build.backlogTitle': '#{pos} in the build queue — click to take it back out and refund the cost.',
+  'worldmenu.build.ordered': '{what} level {lv} ordered at {where}.',
+  'worldmenu.build.refunded': '{what} taken out of the queue and refunded.',
   'worldmenu.build.queuePosition': 'queue position {pos}',
   'worldmenu.found.costColonist': '{cost} · Colonist captain −20%',
   'worldmenu.found.busy': 'building…',
