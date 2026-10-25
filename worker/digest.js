@@ -9411,6 +9411,10 @@ export const HERALD_HANDLED_KINDS = new Set([
   'asset_sold', 'secret_discovered', 'ancient_databank', 'meteoroid_found',
   // campaign
   'game_started', 'faction_joined', 'faction_eliminated', 'faction_revived', 'victory',
+  // Written when the idle cull ends a game (worker/cull.js). Claimed, and
+  // deliberately never printed: an ended-for-inactivity game gets no Herald
+  // at all (maybeRunDailyDigest skips it), so no story builder ever sees it.
+  'game_abandoned',
 ]);
 
 /**

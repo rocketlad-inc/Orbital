@@ -2026,6 +2026,15 @@ export default {
       try { await trial.sweepIdleTrials(env); }
       catch (e) { console.error('trial idle sweep failed', e); }
 
+      // Games and lobbies nobody has touched for 15 days end (worker/cull.js).
+      // Hourly, claimed in D1, off on staging, behind a kill switch, and
+      // sends no email. Its own catch, and outside the Herald block below:
+      // a failure here never reaches the sweeps around it, nor theirs it.
+      try {
+        const { sweepIdle } = await import('./cull.js');
+        await sweepIdle(env);
+      } catch (e) { console.error('idle cull failed', e); }
+
       // Daily Discord digest — self-gating (fires only at
       // DIGEST_HOUR_UTC, max once per game per ~day). Runs after the
       // tick pokes so today's final events make today's paper. A
@@ -2049,16 +2058,6 @@ export default {
           await mail.sweepFullLobbies(env);
         } catch (e) {
           console.error('full-lobby sweep failed', e);
-        }
-        // Games and lobbies nobody has touched for 15 days end (worker/cull.js).
-        // Hourly, claimed in D1, off on staging, behind a kill switch, and
-        // sends no email. Its own catch: a failure here never reaches the
-        // sweeps around it.
-        try {
-          const { sweepIdle } = await import('./cull.js');
-          await sweepIdle(env);
-        } catch (e) {
-          console.error('idle cull failed', e);
         }
         // Signed up, never sat down: one email, once an hour at most
         // (worker/winback.js). Self-gating; never throws.

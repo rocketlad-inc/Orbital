@@ -566,6 +566,38 @@ console.log('\n-- what a player sees');
     stt.status === 200 && stt.data.enabled === true && stt.data.lastRun?.games_ended >= 0 && stt.data.totals.some(t => t.kind === 'game' && t.n >= 6), stt.data);
 }
 
+// ============================================================================
+// THE CRON: the minute handler runs the sweep (and a failing sweep breaks nothing)
+// ============================================================================
+console.log('\n-- the minute cron');
+{
+  const sim2 = new SimD1(':memory:');
+  sim2.applyMigrations(MIGRATIONS);
+  sim2.db.exec('CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)');
+  for (const m of MIGRATIONS) sim2.db.prepare('INSERT OR IGNORE INTO _migrations (name, applied_at) VALUES (?, 0)').run(m.name);
+  sim2.db.exec('PRAGMA foreign_keys = OFF');
+  const t = Date.now();
+  const run2 = (sql, ...a) => sim2.prepare(sql).bind(...a).run();
+  await run2("INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES ('u1', 'x@gmail.com', 'x', 'x', 0)");
+  await run2("INSERT INTO rooms (id, name, host_id, status, max_players, created_at, updated_at) VALUES ('cronGame', 'Cron Game', 'u1', 'in_progress', 4, ?, ?)", t - 40 * DAY, t - 40 * DAY);
+  await run2("INSERT INTO games (id, status, map_seed, created_at, started_at, tick_interval_ms, current_tick) VALUES ('cronGame', 'active', 's', ?, ?, 3600000, 9)", t - 40 * DAY, t - 40 * DAY);
+  await run2("INSERT INTO rooms (id, name, host_id, status, max_players, created_at, updated_at) VALUES ('cronLobby', 'Cron Lobby', 'u1', 'lobby', 4, ?, ?)", t - 40 * DAY, t - 40 * DAY);
+  const calls = [];
+  const env2 = { DB: sim2, ROOM: { idFromName: (n) => n, get: (id) => ({ async fetch(u) { calls.push([id, new URL(u).pathname]); return new Response(null, { status: 204 }); } }) } };
+  cull._resetCullSlot();
+  const tasks = [];
+  await worker.scheduled({}, env2, { waitUntil: (p) => tasks.push(p) });
+  await Promise.all(tasks);
+  const g = await sim2.prepare("SELECT status, victory_type FROM games WHERE id = 'cronGame'").first();
+  const r = await sim2.prepare("SELECT status FROM rooms WHERE id = 'cronLobby'").first();
+  check('the minute cron ended the idle game and closed the idle lobby', g.status === 'completed' && g.victory_type === 'abandoned' && r.status === 'closed', { g, r });
+  check('...and told both Room DOs', calls.some(c => c[0] === 'cronGame' && c[1] === '/abandon') && calls.some(c => c[0] === 'cronLobby' && c[1] === '/close-idle'), calls);
+  const tasks2 = [];
+  await worker.scheduled({}, env2, { waitUntil: (p) => tasks2.push(p) });
+  await Promise.all(tasks2);
+  check('the next minute does not run it again (one claim per hour)', (await sim2.prepare('SELECT COUNT(*) AS n FROM cull_runs').first()).n === 1);
+}
+
 // ---- done ---------------------------------------------------------------------
 globalThis.fetch = realFetch;
 console.error = realError;
