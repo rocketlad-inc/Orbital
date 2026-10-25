@@ -3191,13 +3191,22 @@ async function handleMyFaction(_req, env, ctx) {
   // Research context for standalone panels (TradesPanel lives OUTSIDE
   // GameContextProvider, so it can't read tech levels from game state —
   // it asks /me instead). Additive fields; older clients ignore them.
-  const [techRows, game] = await Promise.all([
+  const [techRows, game, freighterRow] = await Promise.all([
     env.DB
       .prepare('SELECT tech_id, level FROM faction_techs WHERE game_id = ? AND faction_id = ?')
       .bind(gameId, row.id)
       .all(),
     env.DB.prepare('SELECT gating_enabled FROM games WHERE id = ?').bind(gameId).first(),
+    // Freighters you already own carry trades whatever research says: a
+    // Play for Free trial starts with one and no Propulsion, and the
+    // trade panels told it "you cannot build one yet" (playtest R2-C5).
+    env.DB
+      .prepare(`SELECT COUNT(*) AS n FROM game_ships
+                 WHERE game_id = ? AND owner_faction_id = ? AND ship_class = 'freighter' AND status = 'active'`)
+      .bind(gameId, row.id)
+      .first(),
   ]);
+  const freighters = Number(freighterRow?.n ?? 0);
   const tech_levels = Object.fromEntries((techRows.results ?? []).map(r => [r.tech_id, r.level]));
   // HOW MANY FREIGHTERS A ROUTE MAY HOLD, resolved by the SAME function
   // the /state payload and the add-ship endpoint use. Sent rather than
@@ -3210,7 +3219,7 @@ async function handleMyFaction(_req, env, ctx) {
     carrier_cap = await carrierCapFor(env, gameId, row.id);
   } catch { /* leave the conservative 1 — the server still enforces */ }
   return jsonResponse({
-    faction: { ...row, tech_levels, gating_enabled: game?.gating_enabled ?? 0, carrier_cap },
+    faction: { ...row, tech_levels, gating_enabled: game?.gating_enabled ?? 0, carrier_cap, freighters },
   });
 }
 

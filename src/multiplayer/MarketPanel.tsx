@@ -16,6 +16,7 @@
 // everything it shows is fetched.
 // ============================================================
 
+import { freighterTradeLock } from './tradeLock';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   apiFetch, marketApi, MarketPost, MarketView, ResourceBundle, MyFaction, Faction, AssetListing,
@@ -27,8 +28,6 @@ import {
 import { t, tn, type Key } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import { apiErrorText } from '../i18n/apiErrors';
-import { hasFeature, requirementFor } from '../game/researchUnlocks';
-import { TECH_DEFS } from '../game/techs';
 import {
   MARKET_KEYS as KEYS, MarketKey, nonZeroKeys as nonZero,
   compareToGoingRate, costForUnits,
@@ -129,15 +128,8 @@ export function MarketPanel({ gameId }: { gameId: string }) {
   // Same gate the private composer uses: goods ride freighters, so a
   // faction that cannot build one can neither ship a post nor pay for
   // one. Pure predicate — this panel has no GameContext to ask.
-  const tradeLock = useMemo(() => {
-    if (!me) return null;
-    const enabled = (me.gating_enabled ?? 0) === 1;
-    if (hasFeature('hull.freighter', me.tech_levels, enabled)) return null;
-    const req = requirementFor('hull.freighter');
-    if (!req) return null;
-    const track = TECH_DEFS[req.track]?.name ?? req.track;
-    return { where: `${track} ${req.level}` };
-  }, [me]);
+  // A freighter in hand or the research to build one (tradeLock.ts).
+  const tradeLock = useMemo(() => freighterTradeLock(me), [me]);
   // Built at render, not inside the memo, so it follows the language.
   const lockText = tradeLock ? t('trade.unlocksAt', { where: tradeLock.where }) : null;
 
