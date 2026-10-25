@@ -41,6 +41,7 @@ import type { ChainStep } from '../physics/chainPlanner';
 import { t, tn } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import './GroupActionBar.css';
+import { DestinationOptions } from './ShipPanel';
 
 type Stance = 'attack' | 'defensive' | 'hold';
 
@@ -155,13 +156,6 @@ export const GroupActionBar: React.FC = () => {
   // the Fleet panel's transfer dropdown so the two read the same. Own
   // worlds carry a ★ because "where do I already hold ground" is the
   // question you're usually answering when you move a group.
-  const destinations = useMemo(
-    () => [...gameState.bodies]
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map(b => ({ id: b.id, label: `${b.ownedBy === 'player' ? '★ ' : ''}${b.name}` })),
-    [gameState.bodies],
-  );
-
   const groupMove = useCallback((bodyId: string) => {
     const body = gameState.bodies.find(b => b.id === bodyId);
     const targets = movable.map(s => s.id);
@@ -451,9 +445,13 @@ export const GroupActionBar: React.FC = () => {
         title={t('grp.sendAllTip')}
       >
         <option value="">{t('grp.destination')}</option>
-        {destinations.map(d => (
-          <option key={d.id} value={d.id}>{d.label}</option>
-        ))}
+        {/* Grouped by system, the group's own first (★ = yours). */}
+        <DestinationOptions
+          bodies={gameState.bodies}
+          homeBodyId={(movable[0] ?? mine[0])?.orbit?.parentBodyId}
+          tick={gameState.currentTick}
+          label={(b) => `${b.ownedBy === 'player' ? '★ ' : ''}${b.name}`}
+        />
       </select>
       <button
         className="group-bar__btn group-bar__btn--primary"

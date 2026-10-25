@@ -35,6 +35,7 @@ import './FleetPanel.css';
 import { fleetPath } from '../multiplayer/fleetWire';
 import { t, tn, fmtDecimal } from '../i18n/core';
 import { useI18n } from '../i18n/react';
+import { DestinationOptions } from './ShipPanel';
 
 interface FleetPanelProps {
   onClose: () => void;
@@ -500,11 +501,6 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   // Bodies the player can route to. Sol is included — the Dyson
   // sphere ferry mechanic already routes freighters there, and the
   // fleet picker previously excluded it for no good reason.
-  const transferTargets = useMemo(
-    () => [...gameState.bodies].sort((a, b) => a.name.localeCompare(b.name)),
-    [gameState.bodies]
-  );
-
   // Damaged parked player hulls NOT already healing at a friendly
   // station — the population the one-shot repair dispatch operates on.
   const damagedAway = useMemo(
@@ -2134,9 +2130,13 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                 onChange={(e) => setBulkTarget(e.target.value)}
               >
                 <option value="">{t('fleet.destination')}</option>
-                {transferTargets.map(b => (
-                  <option key={b.id} value={b.id}>{b.name}</option>
-                ))}
+                {/* Grouped by system, the selection's own first: this was
+                    one alphabetical list of every body in the game. */}
+                <DestinationOptions
+                  bodies={gameState.bodies}
+                  homeBodyId={gameState.ships.find(s => s.id === visibleSelected[0])?.orbit?.parentBodyId}
+                  tick={gameState.currentTick}
+                />
               </select>
               <button
                 className="fleet-actionbar__btn fleet-actionbar__btn--primary"

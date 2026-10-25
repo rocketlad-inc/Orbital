@@ -184,7 +184,11 @@
   border-right: 1px solid var(--lh-line);
   font-size: 14px;
   color: var(--lh-ink-3);
-  white-space: nowrap;
+  /* Wraps: "a tick (one step of the game clock), or your pick" on one
+     line ran the row off the right edge of phones and tablets (Rafaela,
+     Maya, 2026-10-24); the .landing clip then cut it. */
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .lh-facts li:last-child { border-right: 0; margin-right: 0; padding-right: 0; }
 .lh-facts strong {

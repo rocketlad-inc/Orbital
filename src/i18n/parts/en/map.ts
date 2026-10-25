@@ -267,6 +267,7 @@ export const map = {
   'worldmenu.bar.built_other': '{n} built',
   'worldmenu.bar.yard': 'SHIPYARD',
   'worldmenu.bar.slipways': '{busy} / {slots} slipways busy',
+  'worldmenu.bar.yardAfterClaim': 'opens with a city or station',
   'worldmenu.bar.silo': 'MISSILE SILO',
   'worldmenu.bar.terraform': 'TERRAFORM',
   'worldmenu.bar.tfPct': '{n}% delivered',

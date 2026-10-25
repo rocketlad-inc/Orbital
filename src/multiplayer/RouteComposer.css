@@ -379,7 +379,13 @@
   cursor: pointer; transition: border-color .15s, box-shadow .15s, transform .15s;
 }
 .rsp-card svg { margin: -6px 0 -8px; }
-.rsp-card:hover:not(:disabled) { border-color: #3d5873; transform: translateY(-1px); }
+.rsp-card:hover:not(:disabled) { border-color: #3d5873; }
+/* The lift only where a pointer can hover. On a touch screen :hover sticks
+   to the card just tapped, so the card jumped as it was picked (Maya,
+   Dale, 2026-10-24). */
+@media (hover: hover) {
+  .rsp-card:hover:not(:disabled) { transform: translateY(-1px); }
+}
 .rsp-card.on {
   border-color: #4ecdc4; background: linear-gradient(#123033, #0f2226);
   box-shadow: 0 0 0 1px #4ecdc4, 0 0 18px rgba(78, 205, 196, .35);

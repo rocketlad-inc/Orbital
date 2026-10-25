@@ -13,6 +13,7 @@ import React from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { DockRail } from '../DockRail';
+import { BottomSheet } from '../BottomSheet';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -57,6 +58,25 @@ describe('phone panels', () => {
     expect(active).toBeNull();
     window.removeEventListener('dockrail:active', onActive);
     rail.done();
+  });
+
+  it('a rail button closes the ship card instead of opening under it (round 2)', () => {
+    // Research (z 110) opened UNDER the ship's bottom sheet (z 1080): the
+    // tap looked swallowed and the card stayed on top (Leo, Rafaela, Maya).
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 375 });
+    const sheetHost = document.createElement('div');
+    document.body.appendChild(sheetHost);
+    const sheetRoot = createRoot(sheetHost);
+    let closed = 0;
+    act(() => { sheetRoot.render(<BottomSheet open onClose={() => { closed += 1; }} title="SHIP"><p>card</p></BottomSheet>); });
+    const rail = mountRail(375);
+    rail.click('Research');
+    expect(closed).toBe(1);
+    rail.click('Trade');
+    expect(closed).toBe(2);
+    rail.done();
+    act(() => sheetRoot.unmount());
+    sheetHost.remove();
   });
 
   it('a desktop keeps its independent panels', () => {

@@ -196,6 +196,8 @@ export const WorldMenuOverlay: React.FC = () => {
   }, []);
 
   const [openId, setOpenIdRaw] = useState<string | null>(null);
+  /** The world whose menu is opening while the camera still flies in. */
+  const [arrivingId, setArrivingId] = useState<string | null>(null);
   // Publish the currently open body id to the renderer so drawCity /
   // drawStation know to suppress their old canvas art ONLY on the
   // focused body while the menu is up. Cleared on close so diamonds
@@ -364,6 +366,7 @@ export const WorldMenuOverlay: React.FC = () => {
       focusBody(sel); // sets focusedBodyId (body-relative camera)
       updateCamera({ scale: s1, x: off.x, y: off.y });
       setOpenId(sel);
+      setArrivingId(sel);
       setErrMsg(null);
     } else {
       // SAME WORLD, NEW VIEWPORT (a window resized, a phone turned): frame
@@ -432,7 +435,24 @@ export const WorldMenuOverlay: React.FC = () => {
   // z from the real camera; eased display copy for chrome fades.
   const zTarget = body ? zOf(camera.scale, body, vh) : 0;
   const z = useEasedZ(zTarget);
-  const op = menuOpacity(z);
+  // THE TAP ANSWERS AT ONCE. The menu used to fade in only at the very
+  // end of the camera's dive (menuOpacity: z past 0.72), and took taps
+  // only past 0.9 of that, so it appeared 2-3 s after the tap and a second
+  // tap, made because nothing had happened, landed on a building card
+  // (Dale, Maya, 2026-10-24). An opening menu now shows and takes taps at
+  // once while the camera keeps flying in; its chrome is laid out for the
+  // settled framing, so nothing moves when the planet arrives. Once the
+  // dive lands, the fade follows the camera again (a pinch out dismisses).
+  // Handed back to the fade only where the two agree (the eased z has
+  // caught up), or once a landed dive starts pulling back out.
+  const arriving = !!openId && arrivingId === openId;
+  const landedRef = useRef(false);
+  useEffect(() => {
+    if (!arriving) { landedRef.current = false; return; }
+    if (zTarget >= 0.85) landedRef.current = true;
+    if (menuOpacity(z) >= 0.99 || (landedRef.current && zTarget < 0.8)) setArrivingId(null);
+  }, [arriving, zTarget, z]);
+  const op = arriving ? 1 : menuOpacity(z);
 
   // ---- chrome measurement (panel + fleet heights) ----
   // Gated on the chrome actually being MOUNTED: the overlay returns null
@@ -544,13 +564,20 @@ export const WorldMenuOverlay: React.FC = () => {
   // shoved to the screen edge, the pins floating over nothing (Maya,
   // 2026-10-24). Leaving the world leaves its menu, as zooming out does.
   // The camera has already gone where it was sent, so it is left alone.
+  // NOT A SWITCH, though: a click on another world (an outliner row, a
+  // map click) selects it and focuses it in one go, and this effect, seeing
+  // the camera on a world that is not the open one, closed the menu and
+  // dropped the new selection before the open effect could re-frame it.
+  // Clicking Titan's row then did nothing (Priya, 2026-10-24). While the
+  // selection names another world, that world's open is under way.
   useEffect(() => {
     if (!openId || camera.focusedBodyId === openId) return;
+    if (uiState.selectedBodyId && uiState.selectedBodyId !== openId) return;
     setWorldMenuOpenBodyId(null);
     setOpenId(null);
     deselectBody();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openId, camera.focusedBodyId]);
+  }, [openId, camera.focusedBodyId, uiState.selectedBodyId]);
 
   // Another menu opening (DockRail panels, settlements/fleet/research —
   // anything that dispatches 'orbital:close-world-menu') dismisses us.
@@ -1091,6 +1118,13 @@ export const WorldMenuOverlay: React.FC = () => {
     obstacles.push({ l: vw - dockW - 130, t: TOPBAR + 4, r: vw - dockW, b: TOPBAR + 50 });
     if (readout.station || (!myStation && canHostStation(body) && !anyStation)) {
       obstacles.push({ l: rigLeft - 10, t: staY - 10, r: staX + staW + 10, b: rigBottom + 10 });
+    }
+    // An open drawer (shipyard, structures, terraform) rises from the
+    // bar: at 1280x800 it covered the lower tags, and a click on LAB
+    // landed in "Name next ship" (Leo, 2026-10-24). The arc keeps clear
+    // of it like any other chrome. 72 = --wm-bar-h, 12 its gap.
+    if (openTab && chromeH.fleet > 0) {
+      obstacles.push({ l: railW, t: vh - 12 - 72 - chromeH.fleet - 8, r: vw - dockW, b: vh });
     }
     neighbors.forEach((nb, i) => {
       const sl = ORB_SLOTS[orbSlotIndex(i, neighbors, body.parent)];
@@ -1672,6 +1706,15 @@ export const WorldMenuOverlay: React.FC = () => {
     if (myCity || myStation) {
       cards.push({ id: 'yard', label: t('worldmenu.bar.yard'),
         sub: t('worldmenu.bar.slipways', { busy: yardBusy, slots: yardSlots }), go: () => setPview('yard') });
+    } else if (canFoundStation || (sideAvail.surface && !rawHere)) {
+      // THE YARD'S PLACE IS HELD on a world you can still claim. It used
+      // to appear only once the claim landed, which slid OVERVIEW along
+      // under the finger: the tap meant for it opened SHIPYARD (Maya,
+      // Dale, 2026-10-24). Until then the card says what it waits for
+      // and opens the list where the claim is made.
+      cards.push({ id: 'yard', label: t('worldmenu.bar.yard'), tone: 'is-waiting',
+        sub: t('worldmenu.bar.yardAfterClaim'),
+        go: () => { setPside(sideAvail.surface && !rawHere ? 'surface' : 'orbit'); setPview('structures'); } });
     }
     if (siloOk && myCity?.missileSilo) {
       cards.push({ id: 'silo', label: t('worldmenu.bar.silo'), short: t('worldmenu.silo.m.silo'), tone: 'is-silo', badgeN: raid?.groups,

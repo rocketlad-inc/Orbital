@@ -19,6 +19,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { closeOpenSheets } from './BottomSheet';
 import { t } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import './DockRail.css';
@@ -157,6 +158,9 @@ export const DockRail: React.FC<{ isMultiplayer?: boolean; lobbyOnly?: boolean }
     // through; Research opened under it and the two drew over each other
     // (Maya, Rafaela, 2026-10-24).
     try { window.dispatchEvent(new CustomEvent('orbital:close-ship-designer')); } catch { /* noop */ }
+    // ...and the bottom sheets: the ship card sat over the panel the
+    // button had just opened, so the tap looked swallowed.
+    closeOpenSheets();
     if (closing === 'internal') {
       // Opening a situation/eventlog/multiplayer panel → close any
       // settlements/fleet/research panel.
