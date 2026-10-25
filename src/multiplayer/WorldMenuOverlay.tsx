@@ -196,6 +196,8 @@ export const WorldMenuOverlay: React.FC = () => {
   }, []);
 
   const [openId, setOpenIdRaw] = useState<string | null>(null);
+  /** The world whose menu is opening while the camera still flies in. */
+  const [arrivingId, setArrivingId] = useState<string | null>(null);
   // Publish the currently open body id to the renderer so drawCity /
   // drawStation know to suppress their old canvas art ONLY on the
   // focused body while the menu is up. Cleared on close so diamonds
@@ -364,6 +366,7 @@ export const WorldMenuOverlay: React.FC = () => {
       focusBody(sel); // sets focusedBodyId (body-relative camera)
       updateCamera({ scale: s1, x: off.x, y: off.y });
       setOpenId(sel);
+      setArrivingId(sel);
       setErrMsg(null);
     } else {
       // SAME WORLD, NEW VIEWPORT (a window resized, a phone turned): frame
@@ -432,7 +435,24 @@ export const WorldMenuOverlay: React.FC = () => {
   // z from the real camera; eased display copy for chrome fades.
   const zTarget = body ? zOf(camera.scale, body, vh) : 0;
   const z = useEasedZ(zTarget);
-  const op = menuOpacity(z);
+  // THE TAP ANSWERS AT ONCE. The menu used to fade in only at the very
+  // end of the camera's dive (menuOpacity: z past 0.72), and took taps
+  // only past 0.9 of that, so it appeared 2-3 s after the tap and a second
+  // tap, made because nothing had happened, landed on a building card
+  // (Dale, Maya, 2026-10-24). An opening menu now shows and takes taps at
+  // once while the camera keeps flying in; its chrome is laid out for the
+  // settled framing, so nothing moves when the planet arrives. Once the
+  // dive lands, the fade follows the camera again (a pinch out dismisses).
+  // Handed back to the fade only where the two agree (the eased z has
+  // caught up), or once a landed dive starts pulling back out.
+  const arriving = !!openId && arrivingId === openId;
+  const landedRef = useRef(false);
+  useEffect(() => {
+    if (!arriving) { landedRef.current = false; return; }
+    if (zTarget >= 0.85) landedRef.current = true;
+    if (menuOpacity(z) >= 0.99 || (landedRef.current && zTarget < 0.8)) setArrivingId(null);
+  }, [arriving, zTarget, z]);
+  const op = arriving ? 1 : menuOpacity(z);
 
   // ---- chrome measurement (panel + fleet heights) ----
   // Gated on the chrome actually being MOUNTED: the overlay returns null

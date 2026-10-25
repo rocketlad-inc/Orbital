@@ -5761,7 +5761,9 @@ function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
 
   // The world's own label and menu name it on a phone; there the strip
   // under the bar belongs to the outliner pill.
-  if (ctx.camera.focusedBodyId && !mobileShell) {
+  // Nor under an open world menu, whose own panel names the world (the
+  // label showed through behind it).
+  if (ctx.camera.focusedBodyId && !mobileShell && !document.body.classList.contains('wm-open')) {
     const focusedBody = ctx.bodies.find(b => b.id === ctx.camera.focusedBodyId);
     if (focusedBody) {
       ctx.ctx.fillStyle = COLORS.info;
