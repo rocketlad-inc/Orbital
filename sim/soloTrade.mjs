@@ -75,6 +75,15 @@ const propose = (to, offer, request, pacts = []) => call(trades, 'POST', `/api/g
   responder_faction_id: to, offer, request, offer_pacts: pacts, request_pacts: [],
 });
 
+// ---- R2-B9: computer empires are named for the world they hold ----------
+const named = (await DB.prepare(`SELECT f.name, b.name AS capital, f.ai_doctrine FROM game_factions f
+                                   JOIN game_bodies b ON b.id = f.capital_body_id WHERE f.game_id = ? ORDER BY f.slot`).bind(G).all()).results;
+check('B9. each computer empire is named for its capital', named.filter(r => r.ai_doctrine).every(r => r.name.startsWith(`${r.capital} `)),
+  JSON.stringify(named));
+check('    and the capital city follows the name', (await DB.prepare(`SELECT COUNT(*) AS n FROM game_settlements s JOIN game_factions f ON f.id = s.owner_faction_id
+                                   WHERE s.game_id = ? AND f.ai_doctrine IS NOT NULL AND s.name = f.name || ' Capital'`).bind(G).first()).n === 3);
+check('    the person keeps the default name', named[0].name === 'Solar Directorate', JSON.stringify(named[0]));
+
 // ---- R2-B3/B4: answered at once ---------------------------------------
 const nap = await propose(ally.id, {}, {}, ['nap']);
 const napRow = await status(nap.data?.trade?.id);
@@ -153,6 +162,12 @@ if (ask) {
   const afterRow = await status(after.data?.trade?.id);
   check('   and will not deal with you now', afterRow?.status === 'declined' && afterRow.decline_reason === 'no_trust', JSON.stringify(afterRow));
 }
+
+// ---- R2-B9: their hulls carry names from the ordinary pool --------------
+const built = (await DB.prepare(`SELECT s.name FROM game_ships s JOIN game_factions f ON f.id = s.owner_faction_id
+                                   WHERE s.game_id = ? AND f.ai_doctrine IS NOT NULL AND s.built_at_tick > 0`).bind(G).all()).results;
+check('B9. computer empires\' new hulls are named from the pool, not "Corvette T13-384"',
+  built.length > 0 && built.every(r => !/ T\d+-\d{3}$/.test(r.name)), JSON.stringify(built.map(r => r.name)));
 
 console.log(bad ? `\n${bad} FAILED` : '\nall passed');
 process.exit(bad ? 1 : 0);

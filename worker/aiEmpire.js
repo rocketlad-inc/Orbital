@@ -39,7 +39,8 @@ import { currentTerm } from './senateTerms.js';
 import { makeRouteMath } from './routeMath.js';
 import { isFarSystemBody } from './systems.js';
 import { due, readView, wageWar, SHARPNESS } from './aiTactics.js';
-import { conduct, readMemory, voteFor, answerInbox } from './aiPersona.js';
+import { conduct, readMemory, voteFor, answerInbox, takenShipNames } from './aiPersona.js';
+import { randomShipName } from '../src/game/shipNamePools.js';
 
 export { due };
 
@@ -314,15 +315,18 @@ export async function takeTurn(env, g, fac, difficulty, { trial = false } = {}) 
     const wealth = Math.min(Number(purse?.metal ?? 0), Number(purse?.gold ?? 0) * 8);
     const orders = 1 + Math.min(MAX_EXTRA_ORDERS, Math.floor(Math.log2(Math.max(1, wealth / RICH_AT))));
     const n = Math.floor(tick / doctrine.buildEvery);
+    // Named from the ordinary pool, as a person's BUILD names a hull.
+    const taken = await takenShipNames(env, gameId);
+    const named = (cls) => { const s = randomShipName(cls, taken); taken.add(s); return s; };
     for (let k = 0; k < orders; k++) {
       let cls = doctrine.build[(n + k) % doctrine.build.length];
       // At war, the yard turns out warships.
       if (foes.size > 0 && !ARMED.includes(cls)) cls = 'corvette';
-      let r = await call('POST', `/bodies/${encodeURIComponent(home)}/build`, { ship_class: cls });
+      let r = await call('POST', `/bodies/${encodeURIComponent(home)}/build`, { ship_class: cls, ship_name: named(cls) });
       note(`build_${cls}`, r);
       // A hull it has not researched yet: the one every yard can build.
       if (!r.ok && r.data?.error?.code === 'not_researched' && cls !== 'corvette') {
-        r = await call('POST', `/bodies/${encodeURIComponent(home)}/build`, { ship_class: 'corvette' });
+        r = await call('POST', `/bodies/${encodeURIComponent(home)}/build`, { ship_class: 'corvette', ship_name: named('corvette') });
         note('build_corvette', r);
       }
       if (!r.ok) break;

@@ -32,6 +32,7 @@
 
 import { due, power, visibleFleet, myArmed, pickTarget, scout, SHARPNESS, ARMED } from './aiTactics.js';
 import { factionTechLevels, gatingEnabled, hasFeature } from './researchUnlocks.js';
+import { randomShipName } from '../src/game/shipNamePools.js';
 
 export const PERSONALITIES = ['ally', 'warlord', 'snake'];
 
@@ -230,7 +231,9 @@ export async function crewDeliveries(env, gameId, me, call, note = () => {}) {
       if (!onOrder) {
         const home = await env.DB.prepare('SELECT capital_body_id FROM game_factions WHERE id = ?').bind(me).first();
         if (home?.capital_body_id) {
-          note('crew_order', await call('POST', `/bodies/${encodeURIComponent(home.capital_body_id)}/build`, { ship_class: 'freighter' }));
+          note('crew_order', await call('POST', `/bodies/${encodeURIComponent(home.capital_body_id)}/build`, {
+            ship_class: 'freighter', ship_name: randomShipName('freighter', await takenShipNames(env, gameId)),
+          }));
         }
       } else note('crew_waits');
       break;
@@ -247,6 +250,17 @@ export async function crewDeliveries(env, gameId, me, call, note = () => {}) {
     note('crew', await call('POST', `/trades/${encodeURIComponent(d.trade_id)}/deliveries/${encodeURIComponent(d.id)}/assign`,
       { ship_id: ship.id, dest_body_id: dest.body_id }));
   }
+}
+
+/** Ship names already used in the game, built or on the ways, so a new
+ *  hull of a computer empire draws an unused one from the ordinary pool
+ *  (shipNamePools.js). Its hulls were "Corvette T13-384" (R2-B9). */
+export async function takenShipNames(env, gameId) {
+  const rows = (await env.DB.prepare(
+    `SELECT name FROM game_ships WHERE game_id = ?
+     UNION SELECT ship_name AS name FROM game_body_build_queue WHERE game_id = ? AND ship_name IS NOT NULL`,
+  ).bind(gameId, gameId).all()).results ?? [];
+  return new Set(rows.map(r => r.name));
 }
 
 /** Can it carry a shipment: a freighter free now, or one it is allowed to
