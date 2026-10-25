@@ -27,7 +27,7 @@ import type { BuildListEntry, ShipDesign } from '../types';
 import { HULL_FEATURE } from '../game/researchUnlocks';
 import { useFeatureGate } from '../hooks/useFeatureGate';
 import { RESOURCE_COLORS } from '../game/resourceColors';
-import { trackPendingBuild, resolveServerOrderId } from '../game/optimisticBuilds';
+import { trackPendingBuild, resolveServerOrderId, isOptimisticBuildId } from '../game/optimisticBuilds';
 import './BuildPanel.css';
 import { COMMISSION_LINES } from '../multiplayer/commission';
 import { MEGASTRUCTURES } from '../game/megastructures';
@@ -1180,6 +1180,9 @@ export const RushControl: React.FC<{
 }> = ({ order, remaining, constructionLvl, buildCost }) => {
   useI18n();
   const mpActions = useMultiplayerActions();
+  const { gameState, updateGameState } = useGameContext();
+  const gsRef = React.useRef(gameState);
+  gsRef.current = gameState;
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1220,6 +1223,12 @@ export const RushControl: React.FC<{
     };
   }, [open]);
   if (!mpActions) return null;
+  // NOT ON A ROW THE SERVER HAS NOT CONFIRMED. A just-ordered hull shows
+  // at once as an optimistic row (optimisticBuilds.ts) whose id the
+  // server has never seen, so a rush on it could only fail (playtest
+  // R2-C7: a rush that "confirmed" and changed nothing). The button
+  // appears once the real row lands, a moment later.
+  if (isOptimisticBuildId(order.id)) return null;
   // Client-side quote: hull + the order's parts snapshot, scaled by every
   // dial the server charges through — host config, the senate's
   // build-cost law, the construction discount, and the senate's separate
@@ -1298,8 +1307,19 @@ export const RushControl: React.FC<{
                 setError(null);
                 mpActions.rushBuild(order.id).then(res => {
                   setBusy(false);
-                  if (res.ok) setOpen(false);
-                  else setError(humanizeMpError(res.code, res.error ?? t('build.rush.failed'), 'build'));
+                  if (res.ok) {
+                    setOpen(false);
+                    // SHOW THE NEW DELIVERY NOW. The row kept its old T-
+                    // until the next /state landed, which read as a rush
+                    // that did nothing (playtest R2-C7). The server's
+                    // answer carries the new schedule; the poll confirms.
+                    const live = gsRef.current.buildOrders ?? [];
+                    updateGameState({
+                      buildOrders: live.map(o => (o.id === order.id
+                        ? { ...o, completeTick: res.completesAtTick ?? o.completeTick, rushCount: res.rushCount ?? o.rushCount, botched: res.botched ?? o.botched }
+                        : o)),
+                    });
+                  } else setError(humanizeMpError(res.code, res.error ?? t('build.rush.failed'), 'build'));
                 });
               }}
               style={{
