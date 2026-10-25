@@ -14,7 +14,7 @@
 // A test is the only thing that catches it, because everything else
 // about such a building looks correct.
 
-import { BUILDING_DEFS } from '../settlements';
+import { BUILDING_DEFS, buildingFitsHost } from '../settlements';
 import { columnsFor } from '../worldMenu/buildRules';
 import type { Body, BuildingKind } from '../../types';
 
@@ -70,5 +70,21 @@ describe('every building is reachable from some build menu', () => {
     expect(city.orbit).not.toContain('shields');
     expect(BUILDING_DEFS.telescope.hostType).toBe('station');
     expect(BUILDING_DEFS.shields.hostType).toBe('city');
+  });
+});
+
+// R2-C1: the classic inspector's "+ L1" on a lab did nothing, on a city
+// and on a station, because its host check read hostType 'any' as a
+// mismatch and dropped the order before any request was sent.
+describe('buildingFitsHost', () => {
+  test('the lab fits a city and a station', () => {
+    expect(buildingFitsHost('lab', 'city')).toBe(true);
+    expect(buildingFitsHost('lab', 'station')).toBe(true);
+  });
+  test('single-host buildings still fit only their host', () => {
+    expect(buildingFitsHost('forge', 'city')).toBe(true);
+    expect(buildingFitsHost('forge', 'station')).toBe(false);
+    expect(buildingFitsHost('shipyard', 'station')).toBe(true);
+    expect(buildingFitsHost('shipyard', 'city')).toBe(false);
   });
 });

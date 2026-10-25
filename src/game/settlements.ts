@@ -275,6 +275,14 @@ export function buildingAllowedAt(kind: BuildingKind, body: Body): boolean {
   return true;
 }
 
+/** Whether a settlement of this type may host the building. hostType
+ *  'any' (the lab) fits both; a bare `def.hostType !== s.type` check
+ *  reads 'any' as a mismatch and silently refused every lab order. */
+export function buildingFitsHost(kind: BuildingKind, settlementType: SettlementType): boolean {
+  const host = BUILDING_DEFS[kind]?.hostType;
+  return host === 'any' || host === settlementType;
+}
+
 /** Returns the current level (or 0) of a building at this settlement. */
 export function buildingLevel(s: Settlement, kind: BuildingKind): number {
   return s.buildings?.[kind] ?? 0;

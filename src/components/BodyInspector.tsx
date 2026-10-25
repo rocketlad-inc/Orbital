@@ -1170,7 +1170,13 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
                     // optimistic mutation below moves it on.
                     const target = nextBuildingLevel(s, kind);
                     const ok = queueBuilding(sid, kind);
-                    if (ok && mpActions) {
+                    // In multiplayer the server decides, so post even when
+                    // the optimistic copy declined: `ok` is set inside a
+                    // state updater React may run later, and a local
+                    // refusal (the lab's hostType 'any' once read as a
+                    // mismatch) used to swallow the click with no request
+                    // and no error. The server's refusal shows its reason.
+                    if (mpActions) {
                       mpActions.queueBuilding(sid, kind, target).then(res => {
                         if (!res.ok && res.code !== 'already_queued') setDeployError(humanizeMpError(res.code, res.error, 'build'));
                       });
@@ -1179,7 +1185,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
                   }}
                   cancelBuilding={(sid) => {
                     const ok = cancelBuilding(sid);
-                    if (ok && mpActions) {
+                    if (mpActions) {
                       mpActions.cancelBuilding(sid).then(res => {
                         if (!res.ok) setDeployError(humanizeMpError(res.code, res.error, 'build'));
                       });
