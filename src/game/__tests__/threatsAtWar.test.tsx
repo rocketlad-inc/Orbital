@@ -92,3 +92,17 @@ describe('Situation Report: hostiles overhead', () => {
     expect(row?.title).toBe('Vesta Station — hostiles overhead');
   });
 });
+
+// Playtest R2-C2: a declared war was nowhere near the top of the report.
+describe('Situation Report: an open war heads the list', () => {
+  it('names the foe in the first row', () => {
+    const xs = items(state({ warPairs: AT_WAR }));
+    expect(xs[0].category).toBe('at_war');
+    expect(xs[0].tier).toBe('now');
+    expect(xs[0].title).toBe('At war with The Ministry of Silly Wonks');
+  });
+  it('is absent at peace, and for a war between two other empires', () => {
+    expect(items(state({ warPairs: [] })).some(i => i.category === 'at_war')).toBe(false);
+    expect(items(state({ warPairs: ['rivals|wonks'] })).some(i => i.category === 'at_war')).toBe(false);
+  });
+});

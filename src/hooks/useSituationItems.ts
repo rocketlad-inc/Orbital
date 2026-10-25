@@ -256,7 +256,8 @@ export type SituationCategory =
   | 'structure_siege' // a megastructure of yours is being broken open
   | 'strike_incoming' // a Mega Destroyer is charging on a world of yours
   | 'strike_mine'     // YOUR Mega Destroyer is charging
-  | 'capital_lost';   // MP — your capital city fell (gameState.capitalLoss)
+  | 'capital_lost'    // MP — your capital city fell (gameState.capitalLoss)
+  | 'at_war';         // MP — an open war; always the report's first row
 
 /** Share of Dyson progress lost when a foundation is destroyed and the
  *  sphere goes uncontrolled. MIRRORS DYSON_ABANDON_LOSS in worker/room.js
@@ -287,6 +288,9 @@ const TIER_ORDER: SituationTier[] = ['now', 'decision', 'opportunity'];
  *  (e.g. an idle yard at a body with hostiles inbound is a DECISION —
  *  "build defenses" — not a someday-opportunity). */
 const TIER_OF: Record<SituationCategory, SituationTier> = {
+  // An open war is the frame every other row is read in, so it heads the
+  // report (playtest R2: a declared war was nowhere near the top).
+  at_war:         'now',
   in_combat:      'now',
   // The heaviest single loss short of elimination. It was one ordinary
   // event-log line, styled like a ship kill (QA battle test).
@@ -828,6 +832,31 @@ export function useSituationItems(
         });
       }
     } catch { /* defensive */ }
+
+    // ---- OPEN WARS: the first row of the report ----
+    // warPairs is in the client id space (the caller is factionId), the
+    // same set combat FX and threats read. One row naming every foe.
+    {
+      const foes = new Set<string>();
+      for (const key of gameState.warPairs ?? []) {
+        const [a, b] = key.split('|');
+        if (a === factionId && b) foes.add(b);
+        else if (b === factionId && a) foes.add(a);
+      }
+      if (foes.size > 0) {
+        push({
+          id: 'at_war',
+          category: 'at_war',
+          title: tr('helper.sit.war.title', {
+            names: [...foes].map(f => factionName(gameState, f)).join(', '),
+          }),
+          subtitle: tr('helper.sit.war.sub'),
+          focus: { kind: 'panel', panel: 'standing' },
+          severity: 'danger',
+          sortKey: Number.MIN_SAFE_INTEGER,
+        });
+      }
+    }
 
     const arr = gameState.fleetArrears;
     if (arr && (arr.credits > 0 || arr.ore > 0)) {
