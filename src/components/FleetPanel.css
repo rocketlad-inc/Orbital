@@ -874,8 +874,11 @@ button.fleet-capcard__posting--go:focus-visible { outline: 2px solid #4ecdc4; ou
   font: inherit;
   font-size: 11px;
   min-width: 0;
-  flex: 1 1 130px;
-  max-width: 220px;
+  /* As wide as its longest choice, up to the row: at a 130px basis the
+     Portuguese "Recuar para: manter" read "Recuar para: ma…" (Rafaela,
+     2026-10-24). The row wraps instead of the words being cut. */
+  flex: 1 1 auto;
+  max-width: 100%;
   cursor: pointer;
 }
 
