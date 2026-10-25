@@ -74,12 +74,16 @@ export function isImminentArrival(
   const leg = s.transit?.currentTransfer;
   if (!leg || !leg.targetBodyId) return false;
   if (s.class === 'missile') return false;
-  // A hull meeting another in flight joins its leader's course; once it
-  // HAS met it, it flies that course to the leader's world and lands with
-  // it, so it comes in the same way. Left out, a squadron that rode the
-  // Mega Destroyer in landed, sat out the roster dwell, then darted to its
-  // slots at ~50 px a frame (the Battle of Earth take, 2026-10-24).
-  if (s.plannedRendezvous && !(currentTick >= s.plannedRendezvous.meetTick)) return false;
+  // A hull meeting another in flight joins its leader's course, flies it
+  // to the leader's world and lands with it, so it comes in the same way.
+  // Left out, a squadron that rode the Mega Destroyer in landed, sat out
+  // the roster dwell on a plain parking orbit, then darted to its slots at
+  // ~50 px a frame (the Battle of Earth take, 2026-10-24). Judged on the
+  // MEETING, not the tick it is: the state's tick is whole, and a meeting
+  // at 25.18 for a landing at 26 was "not met yet" at 25 and landed at 26,
+  // so the squadron was never an arrival at all. It meets before it lands:
+  // it is one.
+  if (s.plannedRendezvous && !(s.plannedRendezvous.meetTick <= leg.arriveTick + 1e-9)) return false;
   if (s.queuedTransits && s.queuedTransits.length > 0) return false;
   if (onRoute?.(s)) return false;
   return leg.arriveTick - currentTick <= ARRIVAL_ADMIT_TICKS;
