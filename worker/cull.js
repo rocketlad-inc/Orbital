@@ -50,7 +50,7 @@ export const CULL_AFTER_MS = 15 * 24 * 3600 * 1000;
 /** Most work one run does; the rest waits for the next hour. */
 export const MAX_GAMES_PER_RUN = 25;
 export const MAX_LOBBIES_PER_RUN = 50;
-/** Never culled, whatever the table says (migration 0187 also sets no_cull):
+/** Never culled, whatever the table says (migration 0188 also sets no_cull):
  *  the frozen marketing showcase. */
 export const NEVER_CULL_IDS = ['Kai68RfB5BhV'];
 
@@ -70,7 +70,7 @@ const stamp = (ms) => (ms ? new Date(ms).toISOString().slice(0, 16).replace('T',
 /**
  * Active games whose last human action is older than the cutoff, oldest
  * first. `opts.noCullColumn === false` is for a database that has not run
- * migration 0187 yet (the read-only prod dry run).
+ * migration 0188 yet (the read-only prod dry run).
  *
  * The vetoes live in the WHERE so that LIMIT counts only games that really
  * would be culled.

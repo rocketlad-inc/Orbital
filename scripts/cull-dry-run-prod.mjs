@@ -8,7 +8,7 @@
 // findIdleGames / findIdleLobbies) against the read-only adapter of
 // scripts/ending-from-prod.mjs: SELECT/WITH only, one statement at a time, no
 // run() at all, so nothing here can write to production. The deployed worker
-// need not have migration 0187 yet: the script notices the missing no_cull
+// need not have migration 0188 yet: the script notices the missing no_cull
 // column and relies on the code's own never-cull list for the showcase game.
 //
 // Prints three things:
@@ -56,7 +56,7 @@ let hasNoCull = true;
 try { await all('SELECT no_cull FROM games LIMIT 1'); } catch { hasNoCull = false; }
 
 console.log(`# Idle cull dry run against production`);
-console.log(`now = ${day(now)}   cutoff (15 days) = ${day(cutoff)}   no_cull column on prod: ${hasNoCull ? 'yes' : 'NO (migration 0187 not deployed yet; showcase protected by the code list)'}`);
+console.log(`now = ${day(now)}   cutoff (15 days) = ${day(cutoff)}   no_cull column on prod: ${hasNoCull ? 'yes' : 'NO (migration 0188 not deployed yet; showcase protected by the code list)'}`);
 console.log(`never-cull ids in code: ${NEVER_CULL_IDS.join(', ')}\n`);
 
 const byStatus = await all('SELECT status, COUNT(*) AS n FROM games GROUP BY status ORDER BY n DESC');

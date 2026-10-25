@@ -1493,7 +1493,7 @@ async function handleBrowse(_req, env, ctx) {
 /** GET /api/lobby/mine — the caller's own games, same shape as Browse. */
 async function handleMine(_req, env, ctx) {
   // Closed rooms are hidden, except a lobby the idle cull closed (cull_log,
-  // migration 0187): it stays on the player's list, labelled closed.
+  // migration 0188): it stays on the player's list, labelled closed.
   const rows = (await env.DB
     .prepare(`SELECT ${ROOM_COLS}, rm.archived_at_ms
                 FROM room_members rm
