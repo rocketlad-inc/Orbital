@@ -298,7 +298,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'research',
     title: 'Research decides what you fight with',
-    body: 'Start a research project: science fills its bar on its own.',
+    body: 'Pick a track and set it as your project, or {queue} it: science fills its bar on its own.',
     target: 'nav-research',
     placement: 'below',
     onEnter: 'open-panel-research',
@@ -377,7 +377,7 @@ export const TRIAL_TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'trial-welcome',
     title: 'Welcome, Commander',
-    body: 'Every 30 seconds the game moves one tick: your worlds earn and your ships fly.',
+    body: 'Once the clock starts, the game moves one tick every 30 seconds: your worlds earn and your ships fly.',
     target: null,
     placement: 'center',
     visual: 'map-controls',
@@ -394,6 +394,7 @@ export const TRIAL_TUTORIAL_STEPS: TutorialStep[] = [
     id: 'trial-send-colony',
     title: 'Claim a new world',
     body: 'Your {colony} is selected: press {list}, pick a world near the top, then {commit}.',
+    // (Its ON ARRIVAL is already FOUND STATION: worker factions.js.)
     target: 'ship-list-button',
     extraTargets: ['ship-commit-button'],
     thenTarget: 'ship-commit-button',
@@ -405,7 +406,7 @@ export const TRIAL_TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'trial-found',
     title: 'Found a colony',
-    body: 'When it arrives, open that world and press {city} or {station} to claim it.',
+    body: 'Its {onArrival} order is {foundStation}, so the world is yours the moment it lands.',
     target: null,
     placement: 'center',
     visual: 'expand',
@@ -414,7 +415,7 @@ export const TRIAL_TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'trial-neighbours',
     title: 'Meet your neighbours',
-    body: 'One neighbour will offer you peace; the other is arming for war.',
+    body: 'These are your two neighbours: watch what each one does.',
     // The rows of empires, not the whole dock: a card placed on the dock
     // sat on the very rows it was introducing.
     target: 'mp-standings',
@@ -424,7 +425,7 @@ export const TRIAL_TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'trial-defend',
     title: 'Get ready for war',
-    body: 'Ships parked at home defend it: queue one more warship.',
+    body: 'Open {yard} and {build} one more {corvette}: ships parked at home defend it.',
     target: 'wm-build',
     placement: 'left',
     onEnter: ['close-dock', 'close-panels', 'open-capital-menu'],
@@ -433,7 +434,7 @@ export const TRIAL_TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'trial-save',
     title: 'Keep your empire',
-    body: 'Your empire lives in this browser: save it from this menu any time.',
+    body: 'Your empire lives in this browser: save it from the {menu} menu, top left, any time.',
     target: 'menu-button',
     placement: 'below',
     onEnter: ['close-dock', 'close-panels', 'close-world-menu'],

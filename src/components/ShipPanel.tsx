@@ -2184,7 +2184,7 @@ export const ShipPanel: React.FC = () => {
               </span>
             )}
           </span>
-          <button className="panel-close" onClick={deselectShip}>✕</button>
+          <button className="panel-close" onClick={deselectShip} data-tutorial-avoid="">✕</button>
         </div>
 
         <div className="ship-tabs" role="tablist">
