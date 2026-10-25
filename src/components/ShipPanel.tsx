@@ -4430,6 +4430,108 @@ function pickerGroupOf(
   return { key: rootOf(body.id) };
 }
 
+/** The destination picker's groups: one per system, lone rocks and sites
+ *  folded together, the home system (the one `homeBodyId` is in) first,
+ *  then outward from the Sun, the far systems last. Shared by the picker
+ *  and the fleet / group "Destination…" lists, which were one flat
+ *  alphabetical list of 96 worlds (Rafaela, Leo, 2026-10-24). */
+export function groupTransferTargets(
+  bodies: import('../types').Body[],
+  visible: import('../types').Body[],
+  homeBodyId: string | null | undefined,
+  rootOf: (bodyId: string) => string = makeSystemRootOf(bodies),
+): Array<{ key: string; label: string; order: number; farSystem?: boolean; bodies: import('../types').Body[] }> {
+  const excludeBodyId = homeBodyId;
+  const byId = new Map(bodies.map(b => [b.id, b]));
+  const map = new Map<string, { label: string; order: number; farSystem?: boolean; bodies: import('../types').Body[] }>();
+  for (const b of visible) {
+    const g = pickerGroupOf(b, rootOf);
+    if (!map.has(g.key)) {
+      // Far systems keep their hand-written names; everything else is
+      // named by systemLabel, which already knows that a bare rock is
+      // "Midas" and only a body with satellites earns "… System".
+      const label = g.key === 'centauri' ? t('ship.panel.centauriSystem')
+        : g.key === 'cygnus' ? t('ship.panel.cygnusSystem')
+        : systemLabel(bodies, g.key);
+      map.set(g.key, { label, order: 0, farSystem: g.farSystem, bodies: [] });
+    }
+    map.get(g.key)!.bodies.push(b);
+  }
+  // LONE ROCKS SHARE A GROUP. A meteoroid (MTR-12) or a structure site
+  // orbiting nothing but the sun is its own "system", so the list grew
+  // a one-item heading per rock ("MTR-14 · 1", "MTR-12 · 1", … — QA
+  // battle test). They fold into one group of their kind instead.
+  for (const [key, v] of [...map.entries()]) {
+    const only = v.bodies.length === 1 ? v.bodies[0] : null;
+    if (!only || v.farSystem || only.id !== key) continue;
+    const kind = only.type === 'meteoroid' ? { k: '__meteoroids', label: t('ship.panel.meteoroids') }
+      : only.type === 'megastructure' ? { k: '__structures', label: t('ship.panel.structureSites') }
+      : null;
+    if (!kind) continue;
+    map.delete(key);
+    if (!map.has(kind.k)) map.set(kind.k, { label: kind.label, order: 0, bodies: [] });
+    map.get(kind.k)!.bodies.push(only);
+  }
+  // Order Sol groups by distance from the sun, so the list reads
+  // outward — Core, Earth, Mars, the Belt, Jupiter … Kuiper. That is
+  // the map players already have in their heads, and it beats an
+  // arbitrary hand-assigned rank that has to be renumbered whenever a
+  // group is added.
+  //
+  // Two shapes of key: a REAL body (jupiter → use its own orbit) and a
+  // SYNTHETIC root (the Core, and each belt — no body carries that id,
+  // so fall back to the median orbit of its members).
+  for (const [key, v] of map.entries()) {
+    v.bodies.sort((a, b) => a.name.localeCompare(b.name));
+    if (v.farSystem) { v.order = key === 'centauri' ? 1e9 : 1e9 + 1; continue; }
+    const root = byId.get(key);
+    if (root) { v.order = root.orbitRadius ?? 0; continue; }
+    const radii = v.bodies.map(b => b.orbitRadius ?? 0).sort((a, b) => a - b);
+    v.order = radii[Math.floor(radii.length / 2)] ?? 0;
+  }
+  // HOME FIRST: the system the ship (or world) is in leads the list, so
+  // the nearest worlds are the first ones offered. Outward from the Sun,
+  // a player at Jupiter or Pluto scrolled past forty worlds to find their
+  // neighbours (playtest, 2026-10-24).
+  const homeKey = excludeBodyId && byId.has(excludeBodyId) ? rootOf(excludeBodyId) : null;
+  const isHome = (k: string) => (k === homeKey ? 0 : 1);
+  return Array.from(map.entries())
+    .map(([key, v]) => ({ key, ...v }))
+    .sort((a, b) => isHome(a.key) - isHome(b.key) || a.order - b.order || a.label.localeCompare(b.label));
+}
+
+/** A world a leg can end at: not a centre-of-mass marker (a sun gate's
+ *  landing site excepted), not a gate still in flight. */
+export function isPickableDestination(b: import('../types').Body, tick?: number): boolean {
+  if (b.type === 'lagrange' && !isSunGateSite(b)) return false;
+  if (tick != null && isGateInFlight(b, tick)) return false;
+  return true;
+}
+
+/** <optgroup>s for a native "Destination…" <select>, grouped as the
+ *  picker groups them, home system first. */
+export const DestinationOptions: React.FC<{
+  bodies: import('../types').Body[];
+  homeBodyId?: string | null;
+  tick?: number;
+  label?: (b: import('../types').Body) => string;
+}> = ({ bodies, homeBodyId, tick, label }) => {
+  const { lang } = useI18n();
+  const groups = useMemo(() => {
+    void lang;
+    return groupTransferTargets(bodies, bodies.filter(b => isPickableDestination(b, tick)), homeBodyId);
+  }, [bodies, homeBodyId, tick, lang]);
+  return (
+    <>
+      {groups.map(g => (
+        <optgroup key={g.key} label={g.label}>
+          {g.bodies.map(b => <option key={b.id} value={b.id}>{label ? label(b) : b.name}</option>)}
+        </optgroup>
+      ))}
+    </>
+  );
+};
+
 // Exported so the world menu can reuse it for "where should this hull go
 // when it is built". One destination picker for the whole game: a second
 // one would drift in grouping, search and mobile layout the moment
@@ -4488,63 +4590,8 @@ export const TransferTargetPicker: React.FC<TransferTargetPickerProps> = ({
   const rootOf = useMemo(() => makeSystemRootOf(bodies), [bodies]);
 
   const groups = useMemo(() => {
-    const byId = new Map(bodies.map(b => [b.id, b]));
     void pickerLang;   // group labels are translated: recompute on a language flip
-    const map = new Map<string, { label: string; order: number; farSystem?: boolean; bodies: import('../types').Body[] }>();
-    for (const b of visible) {
-      const g = pickerGroupOf(b, rootOf);
-      if (!map.has(g.key)) {
-        // Far systems keep their hand-written names; everything else is
-        // named by systemLabel, which already knows that a bare rock is
-        // "Midas" and only a body with satellites earns "… System".
-        const label = g.key === 'centauri' ? t('ship.panel.centauriSystem')
-          : g.key === 'cygnus' ? t('ship.panel.cygnusSystem')
-          : systemLabel(bodies, g.key);
-        map.set(g.key, { label, order: 0, farSystem: g.farSystem, bodies: [] });
-      }
-      map.get(g.key)!.bodies.push(b);
-    }
-    // LONE ROCKS SHARE A GROUP. A meteoroid (MTR-12) or a structure site
-    // orbiting nothing but the sun is its own "system", so the list grew
-    // a one-item heading per rock ("MTR-14 · 1", "MTR-12 · 1", … — QA
-    // battle test). They fold into one group of their kind instead.
-    for (const [key, v] of [...map.entries()]) {
-      const only = v.bodies.length === 1 ? v.bodies[0] : null;
-      if (!only || v.farSystem || only.id !== key) continue;
-      const kind = only.type === 'meteoroid' ? { k: '__meteoroids', label: t('ship.panel.meteoroids') }
-        : only.type === 'megastructure' ? { k: '__structures', label: t('ship.panel.structureSites') }
-        : null;
-      if (!kind) continue;
-      map.delete(key);
-      if (!map.has(kind.k)) map.set(kind.k, { label: kind.label, order: 0, bodies: [] });
-      map.get(kind.k)!.bodies.push(only);
-    }
-    // Order Sol groups by distance from the sun, so the list reads
-    // outward — Core, Earth, Mars, the Belt, Jupiter … Kuiper. That is
-    // the map players already have in their heads, and it beats an
-    // arbitrary hand-assigned rank that has to be renumbered whenever a
-    // group is added.
-    //
-    // Two shapes of key: a REAL body (jupiter → use its own orbit) and a
-    // SYNTHETIC root (the Core, and each belt — no body carries that id,
-    // so fall back to the median orbit of its members).
-    for (const [key, v] of map.entries()) {
-      v.bodies.sort((a, b) => a.name.localeCompare(b.name));
-      if (v.farSystem) { v.order = key === 'centauri' ? 1e9 : 1e9 + 1; continue; }
-      const root = byId.get(key);
-      if (root) { v.order = root.orbitRadius ?? 0; continue; }
-      const radii = v.bodies.map(b => b.orbitRadius ?? 0).sort((a, b) => a - b);
-      v.order = radii[Math.floor(radii.length / 2)] ?? 0;
-    }
-    // HOME FIRST: the system the ship (or world) is in leads the list, so
-    // the nearest worlds are the first ones offered. Outward from the Sun,
-    // a player at Jupiter or Pluto scrolled past forty worlds to find their
-    // neighbours (playtest, 2026-10-24).
-    const homeKey = excludeBodyId && byId.has(excludeBodyId) ? rootOf(excludeBodyId) : null;
-    const isHome = (k: string) => (k === homeKey ? 0 : 1);
-    return Array.from(map.entries())
-      .map(([key, v]) => ({ key, ...v }))
-      .sort((a, b) => isHome(a.key) - isHome(b.key) || a.order - b.order || a.label.localeCompare(b.label));
+    return groupTransferTargets(bodies, visible, excludeBodyId, rootOf);
   }, [visible, bodies, rootOf, pickerLang, excludeBodyId]);
 
   // Active-query auto-expand: when the player is searching, any
