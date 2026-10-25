@@ -213,3 +213,8 @@
 .cl-more a { color: #ffb84d; text-decoration: none; font-size: 16px; line-height: 1.4; }
 .cl-more a:hover { color: #ffd180; }
 .cl-more-date { font-size: 11.5px; letter-spacing: 0.16em; text-transform: uppercase; color: #6f8296; }
+
+/* Links inside a post body: paths on this site only (worker/devlog.js). */
+.cl-body a { color: #ffb84d; text-decoration: none; border-bottom: 1px solid rgba(255, 184, 77, 0.35); }
+.cl-body a:hover { color: #ffd180; border-bottom-color: #ffd180; }
+.cl-body a:focus-visible { outline: 2px solid #4ecdc4; outline-offset: 2px; }

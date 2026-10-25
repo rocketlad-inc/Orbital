@@ -12,6 +12,7 @@ import { PrivacyPolicy } from '../../src/components/PrivacyPolicy';
 import { AnswerPage } from '../../src/components/AnswerPage';
 import { ANSWER_PAGES } from '../../src/content/answerPages';
 import { SEED_POSTS } from '../../src/content/devlogPosts';
+import { primeDevlogPosts, type DevlogPost } from '../../src/content/devlogStore';
 import { PAGE_META, DOC_PATH } from '../../src/content/pageMeta';
 import { setLang } from '../../src/i18n/core';
 
@@ -19,9 +20,11 @@ const noop = () => {};
 
 export { ANSWER_PAGES, SEED_POSTS, FAQ, PAGE_META, DOC_PATH };
 
-/** path -> body markup. Titles and descriptions come from the caller. */
-export function renderPages(): Record<string, string> {
+/** path -> body markup. Titles and descriptions come from the caller.
+ *  `posts` is the live devlog, so links to posts match what is published. */
+export function renderPages(posts: DevlogPost[]): Record<string, string> {
   setLang('en', false);
+  primeDevlogPosts(posts);
   const html = (el: React.ReactElement) => renderToStaticMarkup(el);
   const out: Record<string, string> = {
     '/': html(<LandingHome onSignIn={noop} />),

@@ -39,6 +39,9 @@ export interface AnswerPage {
   sections: AnswerSection[];
   /** Small print under the page, e.g. a trademark note. */
   note?: string;
+  /** A devlog post that tells the story behind this page. Linked only
+   *  once it is published, so the page never points at a 404. */
+  story?: { slug: string; label: string };
 }
 
 /** Heading over the links to the other pages. */
@@ -93,6 +96,7 @@ export const ANSWER_PAGES: AnswerPage[] = [
       },
     ],
     note: 'Neptune’s Pride is a game by Iron Helmet Games. Orbital is not affiliated with it.',
+    story: { slug: 'neptunes-pride-inspired-orbital', label: 'Read the story: how Neptune’s Pride inspired Orbital' },
   },
   {
     slug: 'real-solar-system',

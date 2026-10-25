@@ -1651,6 +1651,15 @@ export default {
           return env.ASSETS.fetch(req);
         }
       }
+      if (url.pathname === '/llms.txt' && req.method === 'GET') {
+        try {
+          await ensureMigrated(env);
+          return await devlogPages.handleLlms(req, env);
+        } catch (e) {
+          console.error('llms.txt failed', e);
+          return env.ASSETS.fetch(req);
+        }
+      }
       if (url.pathname === '/sitemap.xml' && req.method === 'GET') {
         try {
           await ensureMigrated(env);

@@ -168,9 +168,9 @@ async function main() {
   if (shell.includes('id="seo-page"')) throw new Error('prerender: build/index.html is already prerendered; rebuild first');
 
   const { renderPages, ANSWER_PAGES, SEED_POSTS, FAQ, PAGE_META, DOC_PATH } = await loadRenderer();
-  const bodies = renderPages();
   const live = await livePosts();
   const posts = live ?? SEED_POSTS;
+  const bodies = renderPages(posts);
   bodies['/changelog'] = changelogMarkup(posts);
 
   const docs = [

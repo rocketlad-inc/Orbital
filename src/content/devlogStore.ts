@@ -57,6 +57,13 @@ function load(): Promise<void> {
   return inflight;
 }
 
+/** Set the list outright: the build's prerender (scripts/prerender) has
+ *  the live posts in hand and renders without effects or fetches. */
+export function primeDevlogPosts(list: DevlogPost[]): void {
+  posts = list;
+  settled = true;
+}
+
 /** The posts, newest first, and whether the live list has answered. */
 export function useDevlogPosts(): { posts: DevlogPost[]; settled: boolean } {
   const [, bump] = useState(0);

@@ -113,7 +113,13 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onPlay, authed = fal
   // Solo Game with no account (Lorne, 2026-10-24).
   const play = () => { trackVisitStep('play_click'); (onPlay ?? onSignIn)(); };
   const answer = answerFor(tab);
-  const openPath = (path: string) => setTab(tabForPath(path));
+  /** Open a site path: a landing page in place, anything else (a link
+   *  in a devlog post to somewhere in the app) as a normal navigation. */
+  const openPath = (path: string) => {
+    const bare = path.split('#')[0] || '/';
+    if (bare === '/' || TAB_PATHS[bare] || DEVLOG_POST_RE.test(bare)) setTab(tabForPath(bare));
+    else window.location.assign(path);
+  };
   const postSlug = postSlugOf(tab);
   const { posts } = useDevlogPosts();
   /** A real link (crawlers follow it) that a plain click opens in place. */

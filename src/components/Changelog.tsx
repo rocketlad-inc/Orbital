@@ -78,7 +78,7 @@ interface Mounts {
   slots: { key: string; el: Element }[];
 }
 
-const DevlogBody: React.FC<{ html: string; id?: string }> = ({ html, id }) => {
+const DevlogBody: React.FC<{ html: string; id?: string; onOpen?: (path: string) => void }> = ({ html, id, onOpen }) => {
   const hostRef = useRef<HTMLElement>(null);
   const [mounts, setMounts] = useState<Mounts>({ html, slots: [] });
 
@@ -109,6 +109,14 @@ const DevlogBody: React.FC<{ html: string; id?: string }> = ({ html, id }) => {
         id={id}
         className="cl-body"
         ref={hostRef}
+        // Links in a body are paths on this site (the sanitiser drops any
+        // other href): a plain click opens them in place, no reload.
+        onClick={e => {
+          const a = (e.target as Element).closest?.('a[href^="/"]');
+          if (!a || !onOpen || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+          e.preventDefault();
+          onOpen(a.getAttribute('href') as string);
+        }}
         // Authored HTML. Sanitised SERVER-SIDE on write against a tag
         // allow-list (worker/devlog.js) — that is the guard, not this
         // component, because the string now comes from a database.
@@ -156,7 +164,7 @@ export const Changelog: React.FC<Props> = ({ ctaLabel, onCta, slug, onOpen }) =>
             <div className="cl-date">{post.date}</div>
             <div className="cl-lede">{post.lede}</div>
           </div>
-          <DevlogBody id={post.slug} html={post.html} />
+          <DevlogBody id={post.slug} html={post.html} onOpen={onOpen} />
           {post.charts && <CombatCharts />}
           <div className="cl-cta">
             <button className="cl-cta-btn" onClick={onCta}>{ctaLabel}</button>
@@ -196,7 +204,7 @@ export const Changelog: React.FC<Props> = ({ ctaLabel, onCta, slug, onOpen }) =>
         <div className="cl-lede">{newest.lede}</div>
       </div>
 
-      <DevlogBody id={newest.slug} html={newest.html} />
+      <DevlogBody id={newest.slug} html={newest.html} onOpen={onOpen} />
       {newest.charts && <CombatCharts />}
 
       {older.map(post => (
@@ -210,7 +218,7 @@ export const Changelog: React.FC<Props> = ({ ctaLabel, onCta, slug, onOpen }) =>
             <div className="cl-date">{post.date}</div>
             <div className="cl-post-lede">{post.lede}</div>
           </div>
-          <DevlogBody html={post.html} />
+          <DevlogBody html={post.html} onOpen={onOpen} />
           {/* The combat matrix belongs to the post that discusses it,
               not to whichever post happens to be last on the page. */}
           {post.charts && <CombatCharts />}

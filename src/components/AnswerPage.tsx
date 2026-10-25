@@ -11,6 +11,7 @@ import React from 'react';
 import { t } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import { ANSWER_PAGES, ANSWER_MORE, type AnswerPage as Page } from '../content/answerPages';
+import { useDevlogPosts, devlogPath } from '../content/devlogStore';
 import './AnswerPage.css';
 
 interface Props {
@@ -28,6 +29,8 @@ export const AnswerPage: React.FC<Props> = ({ page, onSignIn, onOpen }) => {
     onOpen(path);
   };
   const others = ANSWER_PAGES.filter(p => p.slug !== page.slug);
+  const { posts } = useDevlogPosts();
+  const story = page.story && posts.some(p => p.slug === page.story!.slug) ? page.story : null;
   return (
     <article className="ap">
       <header className="ap-hero">
@@ -52,6 +55,12 @@ export const AnswerPage: React.FC<Props> = ({ page, onSignIn, onOpen }) => {
           {s.steps && <ol>{s.steps.map((p, i) => <li key={i}>{p}</li>)}</ol>}
         </section>
       ))}
+
+      {story && (
+        <p className="ap-story">
+          <a href={devlogPath(story.slug)} onClick={go(devlogPath(story.slug))}>{story.label}</a>
+        </p>
+      )}
 
       <div className="ap-cta">
         <button className="ap-btn ap-btn--primary ap-btn--lg" onClick={onSignIn}>{t('landing.hero.play')}</button>

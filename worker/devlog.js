@@ -52,12 +52,21 @@ function newId() {
 // notes carry `cl-tablewrap` / `cl-table` and the page's CSS keys off
 // them. It is restricted to a fixed set of known class names rather
 // than "any class", so it cannot be used to reach an unrelated rule.
+//
+// The other is `href` on <a>, and only to a path on this site
+// (SAFE_HREF): a post links to Play, How to Play or another post, which
+// is what search engines and readers both follow. Nothing with a scheme,
+// a host, a quote or a protocol-relative "//" survives, so there is no
+// javascript: or off-site link to smuggle in (2026-10-25).
 // ------------------------------------------------------------------
 const ALLOWED_TAGS = new Set([
   'p', 'h2', 'h3', 'ul', 'ol', 'li', 'strong', 'em', 'b', 'i',
   'blockquote', 'code', 'pre', 'br', 'hr',
-  'table', 'thead', 'tbody', 'tr', 'th', 'td', 'div', 'span',
+  'table', 'thead', 'tbody', 'tr', 'th', 'td', 'div', 'span', 'a',
 ]);
+
+/** A path on this site: "/how-to-play", "/devlog/map-maker#routes". */
+const SAFE_HREF = /^\/(?!\/)[a-z0-9\-_/]*(#[a-z0-9-]+)?$/i;
 
 /** Tags whose CONTENT must die with them. Dropping `<script>` while
  *  keeping its text would paste the payload into the page as prose,
@@ -114,6 +123,11 @@ export function sanitizeHtml(input) {
     if (!ALLOWED_TAGS.has(name)) return '';
     if (close) return `</${name}>`;
     let keep = '';
+    if (name === 'a') {
+      const href = /\bhref\s*=\s*("([^"]*)"|'([^']*)')/i.exec(attrs ?? '');
+      const value = href ? (href[2] ?? href[3] ?? '').trim() : '';
+      return SAFE_HREF.test(value) ? `<a href="${value}">` : '<a>';
+    }
     const cls = /class\s*=\s*("([^"]*)"|'([^']*)')/i.exec(attrs ?? '');
     if (cls) {
       const value = (cls[2] ?? cls[3] ?? '')

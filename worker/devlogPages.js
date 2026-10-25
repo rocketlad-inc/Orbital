@@ -122,3 +122,34 @@ export async function handleSitemap(req, env) {
     headers: { 'content-type': 'application/xml; charset=utf-8', 'cache-control': 'public, max-age=3600' },
   });
 }
+
+/** build/llms.txt (scripts/prerender-pages.mjs) with its devlog lines
+ *  swapped for the live list, so a post published from admin is listed
+ *  at once. Any trouble serves the built file as it is. */
+export async function handleLlms(req, env) {
+  const base = await env.ASSETS.fetch(new Request(new URL('/llms.txt', req.url)));
+  const text = await base.text();
+  let rows = [];
+  try {
+    rows = (await env.DB.prepare(
+      `SELECT slug, title, date, lede FROM devlog_posts WHERE published = 1
+        ORDER BY sort_index DESC, created_at_ms DESC`,
+    ).all()).results ?? [];
+  } catch (e) {
+    console.error('llms.txt: devlog posts failed', e);
+  }
+  const lines = text.split('\n');
+  const anchor = lines.findIndex(l => l.startsWith(`- [Changelog](${SITE}/changelog)`));
+  let body = text;
+  if (rows.length && anchor >= 0) {
+    const kept = lines.filter(l => !l.includes(`](${SITE}/devlog/`));
+    const at = kept.findIndex(l => l.startsWith(`- [Changelog](${SITE}/changelog)`));
+    const flat = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+    kept.splice(at + 1, 0, ...rows.map(r => `- [${flat(r.title)}](${SITE}/devlog/${r.slug}) (${flat(r.date)}): ${flat(r.lede)}`));
+    body = kept.join('\n');
+  }
+  return new Response(body, {
+    status: 200,
+    headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'public, max-age=600' },
+  });
+}

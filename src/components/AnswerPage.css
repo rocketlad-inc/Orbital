@@ -134,3 +134,8 @@
 @media (prefers-reduced-motion: reduce) {
   .ap-btn { transition: none; }
 }
+
+/* The devlog post behind this page, when there is one. */
+.ap-story { margin: 36px 0 0; padding: 16px 18px; border: 1px solid var(--ap-line-strong); border-radius: 4px; }
+.ap-story a { color: var(--ap-amber); text-decoration: none; font-weight: 600; }
+.ap-story a:hover { color: var(--ap-amber-hi); }
