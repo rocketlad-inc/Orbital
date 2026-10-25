@@ -31,6 +31,7 @@
 // ============================================================
 
 import { due, power, visibleFleet, myArmed, pickTarget, scout, SHARPNESS, ARMED } from './aiTactics.js';
+import { factionTechLevels, gatingEnabled, hasFeature } from './researchUnlocks.js';
 
 export const PERSONALITIES = ['ally', 'warlord', 'snake'];
 
@@ -96,23 +97,255 @@ export function readMemory(raw) {
     front: m.front ?? {},         // factionId -> { key, since }: the war's map, unchanged since
     pending: m.pending ?? {},     // factionId -> id of my open offer to them
     snub: m.snub ?? {},           // factionId -> tick they declined or countered my offer
+    favour: m.favour ?? {},       // factionId -> worth the Snake gave them beyond its price
+    favourAt: m.favourAt ?? {},   // factionId -> tick of the latest such deal
+    favourAsk: m.favourAsk ?? {}, // factionId -> id of its offer asking the favour back
   };
 }
 
+// ---- what it will trade (playtest R2-B10) -------------------------------
+//
+// "The AI refuses any resource terms": every request for goods got a flat
+// "they ship no goods". Now each personality answers a request for goods
+// in its own way, within reason (Lorne's picks for the three):
+//   ALLY     generous: a small ask is a gift, a bigger one at half price
+//   WARLORD  refuses: it trades with no one
+//   SNAKE    accepts at a friendly discount, and REMEMBERS the favour:
+//            later it asks for it back, and a refusal is a grudge
+// None of this touches the economy: the goods move by the ordinary
+// delivery, on its own freighter (crewDeliveries), at the ordinary rates.
+// The values below are only how it weighs a bundle, not prices.
+
+/** How it weighs a unit of each good (credits are the scarce one: the
+ *  8:1 cross-pairing the economy runs on). */
+export const TRADE_VALUE = { metal: 1, fuel: 0, gold: 8, science: 4 };
+/** The most of any one stockpile it will part with in one deal. */
+export const SPARE_SHARE = 0.25;
+/** What it asks in return, as a share of what it gives. */
+export const PRICE_SHARE = { ally: 0.5, snake: 0.75 };
+/** An Ally gives this share of its stockpile's worth for nothing. */
+export const ALLY_GIFT_SHARE = 0.05;
+/** A favour the Snake asks back once it is worth this much. */
+export const FAVOUR_ASK_AT = 40;
+const GOODS = ['metal', 'gold', 'science'];
+
+const bundle = (o, side) => Object.fromEntries(GOODS.map(k => [k, Math.max(0, Math.floor(Number(o[`${side}_${k}`] ?? 0)))]));
+export const worth = (b) => GOODS.reduce((s, k) => s + (Number(b[k]) || 0) * TRADE_VALUE[k], 0);
+
 /**
- * Its answer to an offer: null to accept, or why not (a trades.js
- * DECLINE_REASONS code). A gift with no strings, or pacts with someone
- * it is friendly to: yes. Anything that costs it goods: no, it ships no
- * cargo (it never crews a delivery, so the deal would stall half done).
+ * Its answer to an offer. Returns
+ *   { action: 'accept', favour? }       favour: worth it gave beyond the
+ *                                       price (the Snake remembers it)
+ *   { action: 'decline', reason }       a trades.js DECLINE_REASONS code
+ *   { action: 'counter', offer, request } the terms it would take
+ * `o` is the trade_offers row, `purse` its own stockpile, `hauler`
+ * whether a freighter of its own is free to carry what it gives.
  */
-export function answerTo(o, friendly, { personality, grudge = false } = {}) {
-  const asks = Number(o.request_metal ?? 0) + Number(o.request_fuel ?? 0)
-    + Number(o.request_gold ?? 0) + Number(o.request_science ?? 0);
+export function decideOffer(o, friendly, { personality, grudge = false, purse = {}, hauler = true } = {}) {
   let pacts = [];
-  try { pacts = [...JSON.parse(o.offer_pacts || '[]'), ...JSON.parse(o.request_pacts || '[]')]; } catch { return 'unknown_terms'; }
-  if (asks > 0) return 'no_cargo';
-  if (pacts.length && !friendly) return grudge && personality !== 'warlord' ? 'no_trust' : 'no_pacts';
-  return null;
+  try { pacts = [...JSON.parse(o.offer_pacts || '[]'), ...JSON.parse(o.request_pacts || '[]')]; } catch { return { action: 'decline', reason: 'unknown_terms' }; }
+  if (Number(o.request_fuel ?? 0) > 0 || Number(o.offer_fuel ?? 0) > 0) return { action: 'decline', reason: 'unknown_terms' };
+  const give = bundle(o, 'request');   // what the proposer asks of it
+  const get = bundle(o, 'offer');      // what the proposer gives it
+  const giveV = worth(give);
+  if (pacts.length && !friendly) {
+    return { action: 'decline', reason: grudge && personality !== 'warlord' ? 'no_trust' : 'no_pacts' };
+  }
+  if (giveV <= 0) return { action: 'accept' };             // a gift, or pacts it wants
+  if (personality === 'warlord') return { action: 'decline', reason: 'no_trade' };
+  if (!friendly) return { action: 'decline', reason: 'no_trust' };
+  if (Number(o.recurring ?? 0) === 1) return { action: 'decline', reason: 'one_off_only' };
+  if (!hauler) return { action: 'decline', reason: 'no_freighter' };
+
+  // What it can spare of each good, and the price it asks.
+  const spare = Object.fromEntries(GOODS.map(k => [k, Math.floor(SPARE_SHARE * Math.max(0, Number(purse[k] ?? 0)))]));
+  const share = PRICE_SHARE[personality] ?? 1;
+  const freeUpTo = personality === 'ally' ? ALLY_GIFT_SHARE * worth(Object.fromEntries(GOODS.map(k => [k, Number(purse[k] ?? 0)]))) : 0;
+  const priceOf = (v) => (v <= freeUpTo ? 0 : v * share);
+  const fits = GOODS.every(k => give[k] <= spare[k]);
+  const getV = worth(get);
+  if (fits && getV >= priceOf(giveV)) {
+    return { action: 'accept', favour: personality === 'snake' ? Math.max(0, Math.round(giveV - getV)) : 0 };
+  }
+
+  // A COUNTER: as much of the ask as it can spare, for its price, paid
+  // in what they offered (else in what it is not giving away).
+  const give2 = Object.fromEntries(GOODS.map(k => [k, Math.min(give[k], spare[k])]));
+  const give2V = worth(give2);
+  if (give2V <= 0) return { action: 'decline', reason: 'cannot_spare' };
+  const need = priceOf(give2V);
+  let request = { ...get };
+  if (getV > need && getV > 0) {
+    // They offered more than it now asks for the smaller load: scale down.
+    const f = need / getV;
+    request = Object.fromEntries(GOODS.map(k => [k, Math.ceil(get[k] * f)]));
+  } else if (getV < need) {
+    const payIn = GOODS.find(k => get[k] > 0)
+      ?? (give2.gold > 0 ? 'metal' : 'gold');
+    request = { ...get, [payIn]: get[payIn] + Math.ceil((need - getV) / TRADE_VALUE[payIn]) };
+  }
+  // The same terms straight back would be an accept, not a counter.
+  const same = GOODS.every(k => give2[k] === give[k] && request[k] === get[k]);
+  if (same) return { action: 'accept', favour: 0 };
+  return { action: 'counter', offer: give2, request };
+}
+
+/** Its own freighters free to carry a shipment: active, on no route, on
+ *  no other shipment, not mid-burn (trades.js handleDeliveryOptions). */
+export async function idleFreighters(env, gameId, me) {
+  return (await env.DB.prepare(
+    `SELECT sh.id FROM game_ships sh
+      WHERE sh.game_id = ? AND sh.owner_faction_id = ? AND sh.ship_class = 'freighter' AND sh.status = 'active'
+        AND NOT EXISTS (SELECT 1 FROM game_trade_routes r WHERE r.ship_id = sh.id AND r.cancelled_at_tick IS NULL)
+        AND NOT EXISTS (SELECT 1 FROM game_trade_route_ships c JOIN game_trade_routes r ON r.id = c.route_id
+                         AND r.cancelled_at_tick IS NULL WHERE c.ship_id = sh.id)
+        AND NOT EXISTS (SELECT 1 FROM trade_deliveries d WHERE d.ship_id = sh.id AND d.resolved_at_tick IS NULL)
+        AND NOT EXISTS (SELECT 1 FROM game_ship_nodes n WHERE n.ship_id = sh.id AND n.status IN ('committed','in_transit'))`,
+  ).bind(gameId, me).all()).results ?? [];
+}
+
+/**
+ * CREW WHAT IT OWES. Every shipment of a deal it agreed to, still with
+ * no freighter, gets an idle one of its own, bound for the other side's
+ * capital (else any world of theirs that can receive). Without this a
+ * deal it accepted would stall half done.
+ */
+export async function crewDeliveries(env, gameId, me, call, note = () => {}) {
+  const owed = (await env.DB.prepare(
+    `SELECT d.id, d.trade_id, d.recipient_faction_id FROM trade_deliveries d
+      WHERE d.game_id = ? AND d.sender_faction_id = ? AND d.status = 'unassigned' AND d.resolved_at_tick IS NULL
+      ORDER BY d.created_at_tick`,
+  ).bind(gameId, me).all()).results ?? [];
+  if (!owed.length) return;
+  const free = await idleFreighters(env, gameId, me);
+  for (const d of owed) {
+    const ship = free.shift();
+    if (!ship) {
+      // None free: one on the ways will do, else it orders one at its
+      // capital (it agreed to the deal knowing it could: canHaul).
+      const onOrder = await env.DB.prepare(
+        `SELECT 1 AS x FROM game_body_build_queue
+          WHERE game_id = ? AND faction_id = ? AND ship_class = 'freighter' AND cancelled_at_tick IS NULL LIMIT 1`,
+      ).bind(gameId, me).first();
+      if (!onOrder) {
+        const home = await env.DB.prepare('SELECT capital_body_id FROM game_factions WHERE id = ?').bind(me).first();
+        if (home?.capital_body_id) {
+          note('crew_order', await call('POST', `/bodies/${encodeURIComponent(home.capital_body_id)}/build`, { ship_class: 'freighter' }));
+        }
+      } else note('crew_waits');
+      break;
+    }
+    const dest = await env.DB.prepare(
+      `SELECT s.body_id FROM game_settlements s
+         JOIN game_bodies b ON b.id = s.body_id AND b.game_id = s.game_id
+         JOIN game_factions f ON f.id = s.owner_faction_id
+        WHERE s.game_id = ? AND s.owner_faction_id = ? AND b.terraformed_at_tick IS NOT NULL
+          AND s.destroyed_at_tick IS NULL AND b.destroyed_at_tick IS NULL
+        ORDER BY CASE WHEN s.body_id = f.capital_body_id THEN 0 ELSE 1 END LIMIT 1`,
+    ).bind(gameId, d.recipient_faction_id).first();
+    if (!dest) { note('crew_no_dest'); continue; }
+    note('crew', await call('POST', `/trades/${encodeURIComponent(d.trade_id)}/deliveries/${encodeURIComponent(d.id)}/assign`,
+      { ship_id: ship.id, dest_body_id: dest.body_id }));
+  }
+}
+
+/** Can it carry a shipment: a freighter free now, or one it is allowed to
+ *  build (Propulsion 1; crewDeliveries orders it). */
+export async function canHaul(env, gameId, me, freeCount) {
+  if (freeCount > 0) return true;
+  const [levels, gated] = await Promise.all([factionTechLevels(env, gameId, me), gatingEnabled(env, gameId)]);
+  return hasFeature('hull.freighter', levels, gated);
+}
+
+/** Who it is willing to sign with, from its memory alone. */
+export function friendlyFrom(personality, mem, tick, f) {
+  if ((mem.grudge[f] ?? -1) > tick) return false;
+  if (personality === 'warlord') return false;
+  if (personality === 'snake') return !(mem.snake === 'war' && mem.victim === f);
+  return true;
+}
+
+/**
+ * Answer every open offer addressed to it: accept, decline with a
+ * reason, or counter. Shared by its turn and by the instant answer to a
+ * person's offer (answerNow), so both say the same thing.
+ */
+export async function answerInbox(env, { gameId, me, personality, mem, tick, call, note = () => {}, only = null }) {
+  const inbox = (await env.DB.prepare(
+    `SELECT id, proposer_faction_id, request_metal, request_fuel, request_gold, request_science,
+            offer_metal, offer_fuel, offer_gold, offer_science, offer_pacts, request_pacts, recurring
+       FROM trade_offers WHERE game_id = ? AND responder_faction_id = ? AND status = 'open'`,
+  ).bind(gameId, me).all()).results ?? [];
+  if (!inbox.length) return 0;
+  const purse = await env.DB.prepare('SELECT metal, gold, science FROM game_factions WHERE id = ?').bind(me).first() ?? {};
+  let free = (await idleFreighters(env, gameId, me)).length;
+  // One shipment at a time on a freighter still to be built.
+  let canBuild = free > 0 ? false : await canHaul(env, gameId, me, 0);
+  let gave = false;
+  for (const o of inbox) {
+    if (only && o.id !== only) continue;
+    const f = o.proposer_faction_id;
+    const d = decideOffer(o, friendlyFrom(personality, mem, tick, f), {
+      personality, grudge: (mem.grudge[f] ?? -1) > tick, purse, hauler: free > 0 || canBuild,
+    });
+    const path = `/trades/${encodeURIComponent(o.id)}`;
+    if (d.action === 'accept') {
+      const r = await call('POST', `${path}/accept`, {});
+      note('offer_accept', r);
+      if (r.ok && worth(bundle(o, 'request')) > 0) {
+        if (free > 0) free -= 1; else canBuild = false;
+        gave = true;
+      }
+      if (r.ok && d.favour > 0) {
+        mem.favour[f] = (mem.favour[f] ?? 0) + d.favour;
+        mem.favourAt[f] = tick;
+      }
+    } else if (d.action === 'counter') {
+      note('offer_counter', await call('POST', `${path}/counter`, {
+        offer: d.offer, request: d.request, offer_pacts: [], request_pacts: [],
+      }));
+    } else {
+      // A REAL ANSWER. A no that says why (a counter asking it for goods
+      // was declined in silence, and read as ignored).
+      note('offer_decline', await call('POST', `${path}/decline`, { reason: d.reason }));
+    }
+  }
+  if (gave) await crewDeliveries(env, gameId, me, call, note);
+  return inbox.length;
+}
+
+/**
+ * THE SNAKE CALLS IN ITS FAVOURS. Once what it gave beyond its price is
+ * worth FAVOUR_ASK_AT, it asks for that worth back in credits (or metal,
+ * if they have none to speak of), nothing offered. Paid, the favour is
+ * settled; refused, it holds a grudge.
+ */
+async function callInFavours(ctx, mem, rivals, offered, warWith) {
+  const { env, gameId, call, note, view } = ctx;
+  const tick = view.tick;
+  for (const f of rivals) {
+    const owed = Number(mem.favour[f] ?? 0);
+    if (owed < FAVOUR_ASK_AT || warWith.has(f) || mem.favourAsk[f]) continue;
+    if (tick - Number(mem.favourAt[f] ?? tick) < OFFER_EVERY) continue;
+    const them = await env.DB.prepare('SELECT gold, metal FROM game_factions WHERE id = ?').bind(f).first();
+    const inGold = Math.ceil(owed / TRADE_VALUE.gold);
+    const request = Number(them?.gold ?? 0) >= inGold ? { gold: inGold } : { metal: Math.ceil(owed) };
+    const r = await call('POST', '/trades', {
+      responder_faction_id: f, offer: {}, request, offer_pacts: [], request_pacts: [],
+    });
+    note('favour_ask', r);
+    if (r.ok && r.data?.trade?.id) { mem.favourAsk[f] = r.data.trade.id; offered.add(f); }
+  }
+  // How the asks went.
+  for (const [f, id] of Object.entries(mem.favourAsk)) {
+    const row = await env.DB.prepare('SELECT status FROM trade_offers WHERE id = ?').bind(id).first();
+    if (!row || row.status === 'open') continue;
+    if (row.status !== 'accepted') mem.grudge[f] = Math.max(mem.grudge[f] ?? 0, tick + GRUDGE_TICKS);
+    delete mem.favour[f];
+    delete mem.favourAt[f];
+    delete mem.favourAsk[f];
+    note(row.status === 'accepted' ? 'favour_repaid' : 'favour_refused');
+  }
 }
 
 /** The pacts on my side of the table, by other faction. */
@@ -253,26 +486,15 @@ export async function conduct(env, ctx) {
     }
   };
   // Who it is willing to sign with.
-  const friendlyTo = (f) => {
-    if (grudge(f)) return false;
-    if (personality === 'warlord') return false;
-    if (personality === 'snake') return !(mem.snake === 'war' && mem.victim === f);
-    return true;
-  };
+  const friendlyTo = (f) => friendlyFrom(personality, mem, tick, f);
 
   // ---- offers addressed to me ----------------------------------------
-  const inbox = (await env.DB.prepare(
-    `SELECT id, proposer_faction_id, request_metal, request_fuel, request_gold, request_science,
-            offer_pacts, request_pacts
-       FROM trade_offers WHERE game_id = ? AND responder_faction_id = ? AND status = 'open'`,
-  ).bind(gameId, me).all()).results ?? [];
-  for (const o of inbox) {
-    const reason = answerTo(o, friendlyTo(o.proposer_faction_id), { personality, grudge: grudge(o.proposer_faction_id) });
-    // A REAL ANSWER. A yes, or a no that says why (a counter asking it for
-    // goods was declined in silence, and read as ignored).
-    note(reason ? 'offer_decline' : 'offer_accept',
-      await call('POST', `/trades/${encodeURIComponent(o.id)}/${reason ? 'decline' : 'accept'}`, reason ? { reason } : {}));
-  }
+  // (A person's offer is usually answered the moment it is made:
+  // answerNow. This catches the rest.)
+  await answerInbox(env, { gameId, me, personality, mem, tick, call, note });
+  // What it owes from deals already agreed.
+  await crewDeliveries(env, gameId, me, call, note);
+  if (personality === 'snake') await callInFavours({ env, gameId, call, note, view }, mem, rivals, offered, warWith);
 
   let force = false;
   const handled = new Set();   // wars whose peace this personality decided

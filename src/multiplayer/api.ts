@@ -594,7 +594,8 @@ export type TradeOffer = {
   note: string | null;
   /** Why it was declined, when the decliner said (worker/trades.js
    *  DECLINE_REASONS). Computer empires always say. */
-  decline_reason?: 'no_cargo' | 'no_pacts' | 'no_trust' | 'unknown_terms' | null;
+  decline_reason?: 'no_cargo' | 'no_pacts' | 'no_trust' | 'unknown_terms'
+    | 'no_trade' | 'one_off_only' | 'no_freighter' | 'cannot_spare' | null;
   created_at_tick: number;
   created_at_ms: number;
   resolved_at_ms: number | null;
