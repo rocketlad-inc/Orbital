@@ -583,6 +583,7 @@ export const social: Catalog = {
   'senate.kind.chancellor_vote': 'eleição de chanceler',
   'senate.kind.repeal_law': 'revogação de lei',
   'senate.weight.title': 'Seu peso de voto',
+  'senate.weight.rule': 'Peso do voto = 1 + 1 por sistema que você controla. Você controla um sistema quando tem mais mundos nele do que qualquer outra facção; em caso de empate, ele fica em disputa e não vale nada para ninguém.',
   'senate.weight.base': 'Base {n}',
   'senate.weight.held': 'Você tem {held} de {total} corpos aqui',
   'senate.weight.none': '— você ainda não controla nenhum sistema por completo.',

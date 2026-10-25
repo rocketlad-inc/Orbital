@@ -60,7 +60,7 @@ import {
   TECH_MAX_LEVEL,
   type TechId,
 } from '../game/techs';
-import { unlocksAt, isMegastructureUnlock, megastructureNextStep } from '../game/researchUnlocks';
+import { unlocksAt, isMegastructureUnlock, megastructureNextStep, unlockLabelOf } from '../game/researchUnlocks';
 import {
   computeIncomePerTick,
   BUILDING_DEFS,
@@ -2258,12 +2258,12 @@ export function useSituationItems(
         // Name what the level actually opened up — with gating on, that
         // is the whole reason the level mattered.
         const openedRows = unlocksAt(track as Parameters<typeof unlocksAt>[0], done.level);
-        const opened = openedRows.map(u => u.label);
+        const opened = openedRows.map(unlockLabelOf);
         // A megastructure is the one unlock that does not show up on any
         // build menu you already use: it is built from a colony ship with
         // a module from ANOTHER track. Say what to do with it, or the
         // player has the key and no idea where the door is.
-        const megaOpened = openedRows.filter(u => isMegastructureUnlock(u.feature)).map(u => u.label);
+        const megaOpened = openedRows.filter(u => isMegastructureUnlock(u.feature)).map(unlockLabelOf);
         // Already researching and nothing was unlocked: no decision to
         // make and nothing to report. Don't manufacture a row.
         if (researchingNow && opened.length === 0) continue;

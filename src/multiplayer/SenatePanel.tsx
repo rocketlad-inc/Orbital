@@ -7,6 +7,7 @@ import { logUiEvent } from './telemetry';
 import { DiscordLink } from './DiscordLink';
 import { FactionEmblem } from '../components/FactionEmblem';
 import { hasFeature, requirementFor } from '../game/researchUnlocks';
+import { serverSystemLabel } from '../game/systemGrouping';
 import { TECH_DEFS } from '../game/techs';
 import { t, tn, tk } from '../i18n/core';
 import type { Key } from '../i18n/core';
@@ -140,7 +141,7 @@ function WeightCard({ detail }: { detail: WeightDetail | null }) {
         {t('senate.weight.title')}
       </div>
       <div style={{ fontSize: 10.5, color: 'var(--mp-fg-dim)', marginTop: 3, lineHeight: 1.55 }}>
-        {detail.rule}
+        {t('senate.weight.rule')}
       </div>
       <div style={{ fontSize: 10.5, marginTop: 6, lineHeight: 1.6 }}>
         <span style={{ color: 'var(--mp-fg-dim)' }}>{t('senate.weight.base', { n: detail.base })}</span>
@@ -151,7 +152,7 @@ function WeightCard({ detail }: { detail: WeightDetail | null }) {
               <span key={s.label}>
                 {i > 0 && <span style={{ color: 'var(--mp-fg-dim)' }}> + </span>}
                 <span style={{ color: '#6ee7b7' }} title={t('senate.weight.held', { held: s.held, total: s.total })}>
-                  {s.label}
+                  {serverSystemLabel(s.label)}
                 </span>
               </span>
             ))}
@@ -162,7 +163,7 @@ function WeightCard({ detail }: { detail: WeightDetail | null }) {
       </div>
       {near.length > 0 && (
         <div style={{ fontSize: 10.5, color: '#ffb84d', marginTop: 6, lineHeight: 1.6 }}>
-          {t('senate.weight.near', { labels: near.map(s => s.label).join(', ') })}
+          {t('senate.weight.near', { labels: near.map(s => serverSystemLabel(s.label)).join(', ') })}
         </div>
       )}
       </div>

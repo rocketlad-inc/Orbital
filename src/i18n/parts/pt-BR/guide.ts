@@ -273,7 +273,7 @@ export const guide: Catalog = {
   'site.sectionsAria': 'Seções',
   'site.nav.about': 'O jogo',
   'site.nav.howto': 'Como jogar',
-  'site.nav.changelog': 'Changelog',
+  'site.nav.changelog': 'Novidades',
   'site.nav.press': 'Imprensa',
   'site.back': '← Voltar ao jogo',
   'site.signIn': 'Entrar',

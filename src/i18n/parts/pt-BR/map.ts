@@ -22,7 +22,7 @@ export const map: Catalog = {
   'map.hud.tapBody': 'Toque em um corpo para transferir',
   'map.hud.clickBody': 'Clique em um corpo para transferir | ESC para cancelar | Clique direito para cancelar',
   'map.hud.focused': 'EM FOCO:',
-  'map.hud.soi': 'SOI:',
+  'map.hud.soi': 'Esfera de influência:',
 
   // ---- DockRail ----
   'dock.sidePanels': 'Painéis laterais',
@@ -255,7 +255,7 @@ export const map: Catalog = {
   'worldmenu.err.cantSetOrder': 'Não foi possível definir essa ordem',
   'worldmenu.building.forge': 'FORJA',
   'worldmenu.building.mint': 'CUNHAGEM',
-  'worldmenu.building.lab': 'LAB',
+  'worldmenu.building.lab': 'LABORATÓRIO',
   'worldmenu.building.shields': 'ESCUDOS',
   'worldmenu.building.missile_silo': 'SILO DE MÍSSEIS',
   'worldmenu.silo.tabYard': 'ESTALEIRO',
