@@ -25,6 +25,7 @@ export const ARC_NAME = {
   duel: 'Two Crowns',
   rebellion: 'The Rebellion',
   thrones: 'Musical Thrones',
+  coldWar: 'The Cold War',
   longWar: 'The Long War',
 };
 
@@ -62,6 +63,11 @@ export const ARC_SETUP = {
     c => `${c.K} empires will wear the crown before this is over. ${c.P} is one of them.`,
     c => `The lead in this war will change hands ${c.reigns} times. Nobody stays on top.`,
     c => `Nobody keeps the lead here for long. ${c.P} will find that out.`,
+  ],
+  coldWar: [
+    c => `This system is about to split in two. ${c.P} will lead one half, ${c.Nn} the other.`,
+    c => `Two alliances are coming: one around ${c.P}, one around ${c.Nn}. Everyone else picks a side.`,
+    c => `${c.P} and ${c.Nn} will never share this system. Their friends will make sure of it.`,
   ],
   longWar: [
     c => `This is ${c.P}'s war, whatever the others think.`,
@@ -105,6 +111,12 @@ export const ACT_TITLE = {
   opening: ['THE FIRST SHOT', 'WAR'],
   battle: ['THE BATTLE', 'THE BLOODIEST DAY'],
   ending: ['THE END OF IT', 'THE LAST DAY'],
+  alliance: ['SIDES', 'THE ALLIANCE'],
+  otherSide: ['THE OTHER SIDE', 'AND AGAINST THEM'],
+  line: ['THE LINE', 'FIRST BLOOD'],
+  clash: ['BLOC AGAINST BLOC', 'THE CLASH'],
+  defector: ['THE DEFECTOR', 'CHANGING SIDES'],
+  decided: ['THE BALANCE BREAKS', 'ONE SIDE BLINKS'],
 };
 
 /** Headlines, by act, then by the kind of event it landed on. */
@@ -355,10 +367,61 @@ export const ACT_HEAD = {
       c => `${c.P} is gone`,
     ],
   },
+  alliance: {
+    treaty_signed: [
+      c => `${c.A} and ${c.B} sign a defence pact`,
+      c => `${c.A} and ${c.B} pick a side: each other`,
+      c => `${c.A} and ${c.B}: one side`,
+    ],
+  },
+  otherSide: {
+    treaty_signed: [
+      c => `${c.A} and ${c.B} sign one too`,
+      c => `${c.A} and ${c.B} answer with a pact`,
+      c => `The other side: ${c.A} and ${c.B}`,
+    ],
+  },
+  line: {
+    war_declared: [
+      c => `${c.A} declares war on ${c.B}`,
+      c => `${c.A} crosses the line`,
+      c => `The alliances go to war`,
+    ],
+  },
+  clash: {
+    battle: [
+      c => `${c.world}: bloc against bloc`,
+      c => `${c.lost} ships at ${c.world}`,
+      c => `The alliances meet at ${c.world}`,
+    ],
+  },
+  defector: {
+    war_declared: [
+      c => `${c.A} turns on its own side`,
+      c => `${c.A} switches sides`,
+      c => `${c.A} fires on ${c.B}, an ally`,
+    ],
+  },
+  decided: {
+    faction_eliminated: [
+      c => `${c.A} falls, and its side wavers`,
+      c => `${c.B} takes ${c.A} out of the war`,
+      c => `${c.A} falls to ${c.B}`,
+    ],
+  },
 };
 
 /** The evidence line under a headline, by the kind of event. */
 export const ACT_BECAUSE = {
+  // An act's own line, ahead of its kind's (`act:kind`).
+  'line:war_declared': [
+    c => (c.SideP && c.SideN ? `${c.SideP} on one side. ${c.SideN} on the other.` : `Day ${c.day}.`),
+    c => (c.nP && c.nN ? `${c.nPcap} empires on one side, ${c.nNw} on the other.` : `Day ${c.day}.`),
+  ],
+  treaty_signed: [
+    c => 'A defence pact: attack one, and you fight both.',
+    c => 'If one of them is attacked, the other goes to war.',
+  ],
   // What it held THAT day: its peak may come long after (a claim checked
   // against the day it is made).
   lead: [
@@ -426,6 +489,12 @@ export const ARC_FINALE = {
     c => `${c.Kcap} empires wore the crown. ${c.H || c.P} keeps it.`,
     c => `Everyone had a turn. ${c.H || c.P} had the last one.`,
   ],
+  coldWar: [
+    c => (c.winSide === 'P' ? `Two alliances went to war. ${c.P}'s won.`
+      : c.winSide === 'N' ? `Two alliances went to war. ${c.Nn}'s won.` : `Two alliances went to war, and ${c.H} won it.`),
+    c => (c.winSide === 'P' ? `${c.P} and its friends hold the field.`
+      : c.winSide === 'N' ? `${c.Nn} and its friends hold the field.` : `Neither alliance won. ${c.H} did.`),
+  ],
   longWar: [
     () => '',
   ],
@@ -443,6 +512,9 @@ export const PART_LABEL = {
   'lead:rebellion': 'THE REBEL',
   'lead:thrones': 'THE PRETENDER',
   'lead:longWar': 'THE STAR',
+  'lead:coldWar': 'THE ALLIANCE LEADER',
+  'nemesis:coldWar': 'THE RIVAL ALLIANCE',
+  otherSide: 'THE OTHER SIDE',
   nemesis: 'THE NEMESIS',
   'nemesis:usurper': 'THE KING',
   'nemesis:duel': 'THE RIVAL',
@@ -471,6 +543,9 @@ export const PART_RECEIPT = {
   'lead:rebellion': c => (c.fell ? `Fought ${c.Nn} until day ${c.fellT}.` : `Fought ${c.Nn}. Still standing.`),
   'lead:thrones': c => (c.ledFrom ? `Led from day ${c.ledFrom}${c.warsOn ? `; ${c.warsOnW} empires declared war on it` : ''}.` : `${c.finalW} worlds at the end.`),
   'lead:longWar': c => (c.fell ? `Fell on day ${c.fellT}.` : `${c.finalW} worlds at the end.`),
+  'lead:coldWar': c => (c.alliesW ? `Led an alliance of ${c.alliesW} against ${c.Nn}'s.` : `Led one side against ${c.Nn}.`),
+  'nemesis:coldWar': c => (c.rivalsW ? `Led the other alliance, ${c.rivalsW} strong.` : `Led the other side.`),
+  otherSide: c => `Fought on ${c.Nn}'s side.`,
   nemesis: c => (c.tookFromP ? `Took ${c.tookFromPW} ${c.tookFromP === 1 ? 'world' : 'worlds'} from ${c.P}.`
     : c.vsP ? `Lost ${c.vsP} ships fighting ${c.P}.` : `Led for ${c.ledPct}% of the war.`),
   'nemesis:usurper': c => `Led for ${c.ledPct}% of the war.`,

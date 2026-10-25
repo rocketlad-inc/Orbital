@@ -75,6 +75,12 @@ const CAST_CARD_SECONDS = 2.7;
 const TRANSMISSION_SECONDS = 7.2;
 /** Seconds an act's title card holds as its scene opens. */
 const ACT_CARD_SECONDS = 2.2;
+/** The roll call's days: every empire's first orders go out in them. */
+const ROLL_CALL_TICKS = 4;
+/** Seconds after the last card to pull back from its world to the system. */
+const ROLL_CALL_OUT = 1.2;
+/** Of each card's time, the share spent travelling to its world. */
+const ROLL_CALL_TRAVEL = 0.28;
 /** An act's weight in the edit: above any scene the log alone can earn. */
 const ACT_WEIGHT = 1000;
 /** The share of a scripted film kept for wide shots of the living system. */
@@ -832,7 +838,10 @@ export function createMatchMap(
       ...(saga ? {
         targetSeconds: target ?? saga.runtime,
         introSeconds: INTRO_SECONDS + saga.crawl.seconds,
-        openingSeconds: Math.max(OPENING_SECONDS, ROLL_CALL_END + 6.5),
+        openingSeconds: Math.max(OPENING_SECONDS, ROLL_CALL_END + ROLL_CALL_OUT + 8.5),
+        // THE ROLL CALL, slow: its first days over every empire's card,
+        // each on its home world as its first ships go out.
+        ...(sagaCast.length ? { rollCallTicks: ROLL_CALL_TICKS, rollCallSeconds: ROLL_CALL_END + ROLL_CALL_OUT } : {}),
         finaleSeconds: FINALE_SECONDS + ROLL_CALL_FINALE_SECONDS(sagaCast.length),
         establishing: ESTABLISHING_SHARE,
       } : {}),
@@ -875,6 +884,7 @@ export function createMatchMap(
     built = [];
     {
       const opening = scenes.find(x => x.act === 'opening');
+      const grabTo = (scenes.find(x => x.act === 'landgrab') ?? opening)?.to ?? 0;
       const firstOf = new Set<string>();
       for (const r of summary.chronicle ?? []) {
         if (r.kind !== 'settlement_built' || !r.actor_faction_id || !r.body_id || !byGame.has(r.body_id)) continue;
@@ -882,7 +892,7 @@ export function createMatchMap(
           firstOf.add(r.actor_faction_id);
           homes.push({ fid: r.actor_faction_id, body: r.body_id });
         }
-        if (opening && r.tick_number >= opening.from && r.tick_number < opening.to) {
+        if (opening && r.tick_number >= opening.from && r.tick_number < grabTo) {
           built.push({ at: filmSecondsAt(scenes, r.tick_number), body: r.body_id, fid: r.actor_faction_id });
         }
       }
@@ -901,7 +911,7 @@ export function createMatchMap(
       let lastEnd = -Infinity;
       for (const x of saga?.transmissions ?? []) {
         const sc = sceneAt(scenes, x.tick);
-        if (!sc || sc.kind === 'intro' || sc.kind === 'finale' || sc.act === 'opening') continue;
+        if (!sc || sc.kind === 'intro' || sc.kind === 'finale' || sc.act === 'opening' || sc.act === 'landgrab') continue;
         const at = Math.max(filmSecondsAt(scenes, x.tick), lastEnd + 0.5);
         transmissions.push({ at, fid: x.fid, text: x.text, tick: x.tick });
         lastEnd = at + TRANSMISSION_SECONDS;
@@ -1227,7 +1237,41 @@ export function createMatchMap(
   };
 
   /** A scene's own frame at an instant, with its slow drift. */
+  /**
+   * THE ROLL CALL ON EACH HOME WORLD (Lorne, 2026-10-25: "show each of them
+   * with a title card and a zoom in on their planet as their starting
+   * orders go out"). Each empire's card brings the camera down onto its
+   * home, where its first ships are leaving; then on to the next; then back
+   * out to the system for the land grab.
+   */
+  let rollCallClose = 0;
+  const rollCallFrame = (s: ReelScene, t: number, prog: number): Frame => {
+    const el = prog * s.seconds;
+    const sys = systemFrame(s, t);
+    const n = sagaCast.length;
+    const at = (i: number): Frame => {
+      const home = homes.find(h => h.fid === sagaCast[i]?.fid)?.body ?? homeOf(sagaCast[i]?.fid ?? '');
+      return home && byGame.has(home) ? bodyFrame(home, t, WORLD_SUBJECT * 0.9) : sys;
+    };
+    if (el < ROLL_CALL_AT) return sys;
+    if (el >= ROLL_CALL_END) {
+      rollCallClose = at(n - 1).scale;
+      const q = Math.min(1, (el - ROLL_CALL_END) / ROLL_CALL_OUT);
+      return zoomPath(at(n - 1), sys).at(easeLeg(q));
+    }
+    const i = Math.max(0, Math.min(n - 1, Math.floor((el - ROLL_CALL_AT) / CAST_CARD_SECONDS)));
+    const q = (el - ROLL_CALL_AT - i * CAST_CARD_SECONDS) / CAST_CARD_SECONDS;
+    const cur = at(i);
+    rollCallClose = cur.scale;
+    if (q < ROLL_CALL_TRAVEL) return zoomPath(i ? at(i - 1) : sys, cur).at(easeLeg(q / ROLL_CALL_TRAVEL));
+    // Held on the world, a slow push in while its ships go out.
+    return { ...cur, scale: cur.scale * (1 + 0.12 * (q - ROLL_CALL_TRAVEL) / (1 - ROLL_CALL_TRAVEL)) };
+  };
+
   const frameOf = (s0: ReelScene | undefined, t: number, prog: number): Frame => {
+    if (s0?.act === 'opening' && sagaCast.length && viewMode !== 'wide' && scenes.some(x => x.act === 'landgrab')) {
+      return rollCallFrame(s0, t, prog);
+    }
     // The cold open is framed as the battle it shows.
     const s = s0 && s0.kind === 'intro' && teaser ? teaser : s0;
     if (s?.framing === 'track' && s.track && viewMode !== 'wide') return trackFrame(s, t);
@@ -1401,6 +1445,14 @@ export function createMatchMap(
     let f = frameOf(s, t, prog);
     const subj = viewMode === 'wide' ? null : subjectOf(s, t);
     let wideNow = subj ? 0 : 1;
+    // On a home world in the roll call the shot is close, however the scene
+    // is marked: how wide it is follows the zoom (hulls at full size there,
+    // the standings fading back as the camera pulls out).
+    if (s?.act === 'opening' && rollCallClose > 0 && viewMode !== 'wide') {
+      const wSys = W / systemFrame(undefined, t).scale, wClose = W / rollCallClose;
+      wideNow = Math.max(0, Math.min(1, Math.log(Math.max(1, (W / f.scale) / wClose))
+        / Math.max(0.1, Math.log(Math.max(1.01, wSys / wClose)))));
+    }
 
     // THE CAMERA TRAVELS BETWEEN WORLDS (Lorne, 2026-10-22: "zoom out and
     // in on planets, so players keep a spatial understanding of where
@@ -2096,11 +2148,11 @@ export function createMatchMap(
     // THE OPENING ACT on the map: each empire pinned to its home world in
     // turn (the roll call), then every colony lighting up in its founder's
     // colour as it is settled (the land grab).
-    if (curScene?.act === 'opening') {
+    if (curScene?.act === 'opening' || curScene?.act === 'landgrab') {
       const fsNow = filmSecondsAt(scenes, clockT);
       const el0 = fsNow - filmSecondsAt(scenes, curScene.from);
       const u = unitOf(H);
-      homes.forEach((h, i) => {
+      if (curScene.act === 'opening') homes.forEach((h, i) => {
         const gb = byGame.get(h.body);
         const f = filmFaction(h.fid);
         if (!gb || !f || !shown(gb)) return;
@@ -2638,7 +2690,8 @@ export function createMatchMap(
     }
     const sb = s.beat?.data?.saga as SagaBeat | undefined;
     if (!c && sb && s.kind === 'beat') {
-      c = { kicker: sb.kicker, title: sb.title, sub: sb.because, fid: sb.fid };
+      // An act's title is on its card: the caption under it carries no kicker.
+      c = { kicker: sb.act ? '' : sb.kicker, title: sb.title, sub: sb.because, fid: sb.fid };
       captionCache.set(s, c);
     }
     if (!c) {
@@ -2670,7 +2723,7 @@ export function createMatchMap(
         const act = actOf(s);
         if (act) {
           // An act of the story: its words, and the fight's name under them.
-          c = { kicker: act.kicker, title: act.title, sub: act.because || name, fid: act.fid };
+          c = { kicker: '', title: act.title, sub: act.because || name, fid: act.fid };
         } else if (s.phase === 'open') {
           // Inside a sentence the name is lower case: "The first shots of the Second Battle of Mars".
           c = { ...c, title: T('battle.firstShots', { name: name.replace(/^The\b/, 'the') }),
@@ -2857,13 +2910,21 @@ export function createMatchMap(
     // keeps clear of how far it reaches.
     const cap = !intro && !finale ? captionOf(s) : null;
     let ltRight = 0;
-    if (s.act === 'opening') {
+    const elRaw = el;
+    if (s.act === 'opening' || s.act === 'landgrab') {
       // Two captions: who is here (with the roll call), then the land grab.
+      // Split into two scenes (a slow roll call, then the land grab), the
+      // land grab's clock reads as if it ran on from the roll call's end.
+      const split = scenes.some(x => x.act === 'landgrab');
+      const el = s.act === 'landgrab' ? elRaw + ROLL_CALL_END : elRaw;
       const n = built.length;
       const most = new Map<string, number>();
       for (const b of built) most.set(b.fid, (most.get(b.fid) ?? 0) + 1);
       const lead = [...most.entries()].sort((a, b) => b[1] - a[1])[0];
-      if (sagaCast.length && el < ROLL_CALL_END) {
+      const endsAt = s.act === 'landgrab' ? s.seconds + ROLL_CALL_END : s.seconds;
+      if (split && s.act === 'opening' && el >= ROLL_CALL_END) {
+        // The roll call's last moment: the camera pulls back to the system.
+      } else if (sagaCast.length && el < ROLL_CALL_END) {
         // THE EMPIRES, one card each: its flag, its name, its creed in its
         // player's own words (or the engine's line when it wrote none).
         const i = Math.max(0, Math.min(sagaCast.length - 1, Math.floor((el - ROLL_CALL_AT) / CAST_CARD_SECONDS)));
@@ -2883,17 +2944,17 @@ export function createMatchMap(
         // THE SEASON OPENS INSIDE THE LAND GRAB (a rise in its first weeks):
         // the act's card, then its words, over the land grab's pictures.
         const sb = openingAct, at = ROLL_CALL_END + 0.1;
-        drawActCard(ctx, W, H, { act: sb.kicker.split(' · ')[0] || `ACT ${sb.act!.n}`, title: sb.act!.title,
-          season: saga?.arc?.name, color: actColor(sb) }, (el - at) / ACT_CARD_SECONDS);
-        ltRight = drawLowerThird(ctx, W, H, { kicker: sb.kicker, title: sb.title, sub: sb.because,
+        drawActCard(ctx, W, H, { title: sb.act!.title, color: actColor(sb) }, (el - at) / ACT_CARD_SECONDS);
+        ltRight = drawLowerThird(ctx, W, H, { kicker: '', title: sb.title, sub: sb.because,
           color: sb.fid ? colorOf(sb.fid) : null },
-        (el - at - ACT_CARD_SECONDS + 0.35) / 0.2, (el - (s.seconds - 0.2)) / 0.2);
+        (el - at - ACT_CARD_SECONDS + 0.35) / 0.2, (el - (endsAt - 0.2)) / 0.2);
       } else if (n > 0) {
+        const grab = scenes.find(x => x.act === 'landgrab') ?? s;
         ltRight = drawLowerThird(ctx, W, H, { kicker: T('land.kicker'),
-          title: T('land.title', { n, d: Math.max(1, s.to - s.from) }),
+          title: T('land.title', { n, d: Math.max(1, grab.to - s.from) }),
           sub: lead ? T('land.sub', { a: shortName(filmFaction(lead[0])?.name ?? ''), k: lead[1] }) : '',
           color: lead ? colorOf(lead[0]) : null },
-        (el - ROLL_CALL_END - 0.15) / 0.2, (el - (s.seconds - 0.2)) / 0.2);
+        (el - ROLL_CALL_END - 0.15) / 0.2, (el - (endsAt - 0.2)) / 0.2);
       }
     } else if (cap && cap.title && !(s.kind === 'montage' && s.seconds < 1.1)) {
       const c = cap;
@@ -2911,9 +2972,7 @@ export function createMatchMap(
     {
       const sb = !intro && !finale ? actOf(s) : null;
       if (sb?.act) {
-        drawActCard(ctx, W, H, { act: sb.kicker.split(' · ')[0] || `ACT ${sb.act.n}`, title: sb.act.title,
-          season: sb.act.n === 1 ? saga?.arc?.name : undefined, color: actColor(sb) },
-        (el - 0.1) / ACT_CARD_SECONDS);
+        drawActCard(ctx, W, H, { title: sb.act.title, color: actColor(sb) }, (el - 0.1) / ACT_CARD_SECONDS);
       }
     }
 

@@ -399,6 +399,67 @@ export const ARCS = {
     },
   },
 
+  // THE COLD WAR: two alliances, one big empire at the head of each, the
+  // rest lined up behind them (Lorne, 2026-10-25: "there's almost always two
+  // alliances, with one big guy per alliance and the rest acting as
+  // supporting characters"). Sides are read from who fought beside whom
+  // (defence pacts, wars on the same enemy) and against whom.
+  coldWar: {
+    min: 3,
+    fit(F, X) {
+      const ms = [...X.M.values()];
+      const foe = (x, y) => F.rivalry.get(pairKey(x, y)) ?? 0;
+      const side = (x, y) => X.side.get(pairKey(x, y)) ?? 0;
+      // The two big empires most at odds with each other.
+      const big = [...ms].sort((a, b) => b.peak - a.peak).slice(0, 4);
+      let heads = null;
+      for (let i = 0; i < big.length; i++) for (let j = i + 1; j < big.length; j++) {
+        const h = foe(big[i].fid, big[j].fid);
+        if (h >= 3 && (!heads || h > heads.h)) heads = { a: big[i], b: big[j], h };
+      }
+      if (!heads) return null;
+      const A = [heads.a.fid], B = [heads.b.fid];
+      const lean = (fid, bloc) => bloc.reduce((s, y) => s + side(fid, y) - 0.5 * foe(fid, y), 0);
+      for (const m of [...ms].sort((a, b) => b.peak - a.peak)) {
+        if (A.includes(m.fid) || B.includes(m.fid)) continue;
+        const a = lean(m.fid, A), b = lean(m.fid, B);
+        if (a > 0 && a > b) A.push(m.fid);
+        else if (b > 0 && b > a) B.push(m.fid);
+      }
+      if (A.length < 2 || B.length < 2) return null;
+      const inA = (f) => A.includes(f), inB = (f) => B.includes(f);
+      const across = F.wars.filter(w => (inA(w.a) && inB(w.b)) || (inB(w.a) && inA(w.b)));
+      if (across.length < 2) return null;
+      const [P, N] = heads.a.drama >= heads.b.drama ? [heads.a, heads.b] : [heads.b, heads.a];
+      const mine = inA(P.fid) ? A : B, theirs = mine === A ? B : A;
+      const pactIn = (bloc) => F.D.chronicle.find(r => r.kind === 'treaty_signed' && r.p?.kind === 'defense_pact'
+        && bloc.includes(r.a) && bloc.includes(r.b));
+      const pm = pactIn(mine), pt = pactIn(theirs);
+      const clash = (F.D.battles ?? []).filter(b => (b.lossesByFaction ?? []).some(l => mine.includes(l.factionId))
+        && (b.lossesByFaction ?? []).some(l => theirs.includes(l.factionId)))
+        .sort((x, y) => (y.shipsLost ?? 0) - (x.shipsLost ?? 0))[0] ?? null;
+      const defect = F.betrayals.find(b => (inA(b.a) && inA(b.b)) || (inB(b.a) && inB(b.b))) ?? null;
+      const decided = F.falls.find(f => f.killer && ((inA(f.fid) && inB(f.killer)) || (inB(f.fid) && inA(f.killer)))) ?? null;
+      // The line is crossed once the sides exist: the first war between them
+      // after both pacts (a skirmish before the alliances formed is not it).
+      const formed = Math.max(pm?.t ?? -Infinity, pt?.t ?? -Infinity);
+      const first = across.find(w => w.t > formed) ?? across[0];
+      const acts = [
+        { key: 'alliance', anchor: pm ? at('treaty_signed', pm.t, pm.a, pm.b) : null },
+        { key: 'otherSide', anchor: pt ? at('treaty_signed', pt.t, pt.a, pt.b) : null },
+        { key: 'line', rank: 3, anchor: at('war_declared', first.t, first.a, first.b) },
+        { key: 'clash', anchor: clash ? battleAnchor(clash, P.fid, N.fid) : null },
+        { key: 'defector', rank: 2, anchor: defect ? at('war_declared', defect.t, defect.a, defect.b, { broke: true }) : null },
+        { key: 'decided', rank: 4, anchor: decided ? at('faction_eliminated', decided.t, decided.fid, decided.killer) : null },
+      ];
+      return {
+        score: 0.9 + 0.12 * (A.length + B.length) + Math.min(0.6, 0.1 * across.length) + (pm && pt ? 0.3 : 0),
+        cast: { protagonist: P.fid, nemesis: N.fid, allies: mine.filter(f => f !== P.fid), rivals: theirs.filter(f => f !== N.fid) },
+        acts,
+      };
+    },
+  },
+
   // THE LONG WAR: always there. The most dramatic empire's own story, told
   // through its biggest moments.
   longWar: {
@@ -482,6 +543,9 @@ export function partsOf(F, X, arc) {
   set(arc.cast.ringleader, 'ringleader', {});
   set(arc.cast.turncoat, 'turncoat', {});
   set(arc.cast.rebel, 'rebel', {});
+  // The two alliances' supporting casts.
+  for (const f of arc.cast.allies ?? []) set(f, 'lieutenant', {});
+  for (const f of arc.cast.rivals ?? []) set(f, 'otherSide', {});
   // Supporting parts, each to the empire with the strongest record; one of
   // each, but turncoats can come in pairs.
   const rest = () => F.empires.filter(e => !part.has(e.id)).map(e => X.M.get(e.id));
