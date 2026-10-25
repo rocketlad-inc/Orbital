@@ -38,6 +38,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { economyLedger, upkeepMixWarnings } from '../game/economyLedger';
 import { canBeTerraformed } from '../game/settlements';
+import { dominationWorlds, dominationTarget } from '../game/dominationWorlds';
 import type {
   GameState,
   Ship,
@@ -1182,9 +1183,11 @@ export function useSituationItems(
     // everyone can see who's swallowing the map. One row for the
     // leader once anyone crosses 45%.
     {
-      // Every body counts — stations have no body-type gate, so every
-      // world (Sol included) can be claimed. Mirrors victory.ts.
-      const claimable = gameState.bodies;
+      // The worlds the server's win check counts (dominationWorlds.ts):
+      // home-system worlds, no rocks or markers. Every body in state put
+      // the total at 92 on a trial map against the server's 60.
+      const claimable = dominationWorlds(gameState.bodies);
+      const domFraction = gameState.dominationFraction ?? 0.6;
       if (claimable.length > 0) {
         const claims = gameState.settlementClaims;
         const ownerOf = (bodyId: string): string | undefined =>
@@ -1220,7 +1223,7 @@ export function useSituationItems(
               ? tr('helper.sit.dom.sub.you', {
                 n: leaderN,
                 total: claimable.length,
-                more: Math.floor(claimable.length * 0.6) + 1 - leaderN,
+                more: dominationTarget(claimable.length, domFraction) - leaderN,
               })
               : tr('helper.sit.dom.sub.other'),
             severity: mineLead ? 'normal' : pct >= 55 ? 'danger' : 'warn',
