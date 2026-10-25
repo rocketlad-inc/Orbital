@@ -887,9 +887,13 @@ export function formatChronicleEvent(
     // of a senate line.
     const title = (parsed.title as string) ?? T('fb.aMotion');
     const outcome = (parsed.outcome as string) ?? T('fb.resolved');
-    const yea = Number(parsed.yea_weight ?? 0);
-    const nay = Number(parsed.nay_weight ?? 0);
-    const abs = Number(parsed.abstain_weight ?? 0);
+    // Ballots cast, one per senator, where the row has them: the weights
+    // read as "2 yea / 0 nay / 2 abstain" in a three-empire game
+    // (playtest R2-B2). Older rows carry only the weights.
+    const counted = parsed.yea_count != null;
+    const yea = Number((counted ? parsed.yea_count : parsed.yea_weight) ?? 0);
+    const nay = Number((counted ? parsed.nay_count : parsed.nay_weight) ?? 0);
+    const abs = Number((counted ? parsed.abstain_count : parsed.abstain_weight) ?? 0);
     const tally = (yea || nay || abs)
       ? ` — ${abs
         ? T('senate.tallyAbs', { yea: num(yea), nay: num(nay), abs: num(abs) })

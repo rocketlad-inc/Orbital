@@ -1791,9 +1791,13 @@ export function useSituationItems(
           category: 'vote_open',
           tier: closing ? 'now' : undefined,
           title: v.title,
-          subtitle: closing
-            ? tr('helper.sit.vote.closing', { n: closesIn })
-            : tr('helper.sit.vote.open', { n: closesIn }),
+          // Past its window and still open: a solo game holds the bill
+          // for your vote (worker/senate.js soloVoters, R2-B2).
+          subtitle: closesIn <= 0
+            ? tr('helper.sit.vote.waits')
+            : closing
+              ? tr('helper.sit.vote.closing', { n: closesIn })
+              : tr('helper.sit.vote.open', { n: closesIn }),
           focus: { kind: 'panel', panel: 'senate' },
           severity: closing ? 'danger' : 'warn',
           sortKey: closesIn,

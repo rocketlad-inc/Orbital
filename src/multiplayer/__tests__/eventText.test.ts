@@ -298,6 +298,10 @@ const ROWS: Row[] = [
     "T+12  ⚔ Cerean Union broke the Intel-Share Pact with Zed Corp — war resumes"],
   ["senate_vote passed tally", "senate_vote", null, null, 12, {"title": "Embargo Zed", "outcome": "passed", "bill_kind": "trade_embargo", "yea_weight": 5, "nay_weight": 2, "abstain_weight": 1},
     "T+12  ⚖ Senate: “Embargo Zed” [trade embargo] PASSED — 5 yea / 2 nay / 1 abstain"],
+  // Ballots, not weights, where the row has them (R2-B2: weights 2/0/2
+  // read as four votes in a three-empire game).
+  ["senate_vote ballots", "senate_vote", null, null, 12, {"title": "More Metal", "outcome": "passed", "bill_kind": "slider_law", "yea_weight": 2, "nay_weight": 0, "abstain_weight": 2, "yea_count": 1, "nay_count": 0, "abstain_count": 1},
+    "T+12  ⚖ Senate: “More Metal” [slider law] PASSED — 1 yea / 0 nay / 1 abstain"],
   ["senate_vote failed", "senate_vote", null, null, 12, {"title": "Tax", "outcome": "failed", "bill_kind": "slider_law", "yea_weight": 1, "nay_weight": 4},
     "T+12  ⚖ Senate: “Tax” [slider law] FAILED — 1 yea / 4 nay"],
   ["senate_vote other", "senate_vote", null, null, 12, {"outcome": "tied"},

@@ -338,6 +338,7 @@ export const helpers = {
   'helper.sit.tf.unstarted.none': 'No idle freighter — terraforming needs one dedicated to the run',
   'helper.sit.vote.closing': 'Closes in {n}t — vote now',
   'helper.sit.vote.open': 'Voting closes in {n}t',
+  'helper.sit.vote.waits': 'The Senate waits for your vote',
   'helper.sit.trade.offer': 'Trade offer from {name}',
   'helper.sit.trade.offerUnknown': 'Trade offer from another faction',
   'helper.sit.trade.offerSub': 'Open in Trades to respond',

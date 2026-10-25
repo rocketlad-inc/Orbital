@@ -340,6 +340,7 @@ export const helpers: Catalog = {
   'helper.sit.tf.unstarted.none': 'Nenhum cargueiro ocioso — a terraformação precisa de um dedicado à rota',
   'helper.sit.vote.closing': 'Encerra em {n}t — vote agora',
   'helper.sit.vote.open': 'A votação encerra em {n}t',
+  'helper.sit.vote.waits': 'O Senado aguarda o seu voto',
   'helper.sit.trade.offer': 'Oferta de comércio de {name}',
   'helper.sit.trade.offerUnknown': 'Oferta de comércio de outra facção',
   'helper.sit.trade.offerSub': 'Abra em Comércio para responder',
