@@ -1481,6 +1481,7 @@ import * as panel from './panel.js';
 import * as wearOrders from './wearOrders.js';
 import * as battleWidget from './battleWidget.js';
 import * as devlog from './devlog.js';
+import * as devlogPages from './devlogPages.js';
 import * as gameFeed from './gameFeed.js';
 import * as ending from './ending.js';
 import * as profileAwards from './profileAwards.js';
@@ -1631,6 +1632,31 @@ export default {
           return await filmShare.handleFilmPage(req, env, fpm[1]);
         } catch (e) {
           console.error('film page failed', e);
+          return env.ASSETS.fetch(req);
+        }
+      }
+      // A devlog post's own page and the sitemap that lists the posts
+      // (worker/devlogPages.js; both in run_worker_first). Any failure
+      // serves the plain app page / the static sitemap.
+      if (req.method === 'GET' && /^\/devlog\/?$/.test(url.pathname)) {
+        return Response.redirect(new URL('/changelog', req.url).toString(), 301);
+      }
+      const dpm = url.pathname.match(devlogPages.DEVLOG_PAGE_RE);
+      if (dpm && req.method === 'GET') {
+        try {
+          await ensureMigrated(env);
+          return await devlogPages.handleDevlogPage(req, env, dpm[1]);
+        } catch (e) {
+          console.error('devlog page failed', e);
+          return env.ASSETS.fetch(req);
+        }
+      }
+      if (url.pathname === '/sitemap.xml' && req.method === 'GET') {
+        try {
+          await ensureMigrated(env);
+          return await devlogPages.handleSitemap(req, env);
+        } catch (e) {
+          console.error('sitemap failed', e);
           return env.ASSETS.fetch(req);
         }
       }

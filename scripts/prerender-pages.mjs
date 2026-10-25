@@ -20,6 +20,8 @@
 // a head script marks <html class="js"> and CSS hides it before first
 // paint, and src/index.tsx removes it before React renders.
 //
+// Each post's own page (/devlog/<slug>) is rendered by the worker on
+// request (worker/devlogPages.js), so new posts never wait for a deploy.
 // The changelog comes from the live devlog (/api/devlog), so posts
 // published without a deploy are in it; the compiled seed posts are the
 // fallback when that cannot be reached.
@@ -75,10 +77,10 @@ function changelogMarkup(posts) {
   const [newest, ...older] = posts;
   const body = (html) => `<div class="cl-body">${html}</div>`;
   return `<div class="cl"><div class="cl-hero"><div class="cl-eyebrow">— DEVLOG</div>`
-    + `<h1 class="cl-title">${esc(newest.title)}</h1><div class="cl-date">${esc(newest.date)}</div>`
+    + `<h1 class="cl-title"><a href="/devlog/${esc(newest.slug)}">${esc(newest.title)}</a></h1><div class="cl-date">${esc(newest.date)}</div>`
     + `<div class="cl-lede">${esc(newest.lede)}</div></div>${body(newest.html)}`
     + older.map(p => `<section class="cl-post" id="${esc(p.slug)}"><div class="cl-post-head">`
-      + `<div class="cl-eyebrow">— EARLIER</div><h2 class="cl-post-title">${esc(p.title)}</h2>`
+      + `<div class="cl-eyebrow">— EARLIER</div><h2 class="cl-post-title"><a href="/devlog/${esc(p.slug)}">${esc(p.title)}</a></h2>`
       + `<div class="cl-date">${esc(p.date)}</div><div class="cl-post-lede">${esc(p.lede)}</div></div>`
       + `${body(p.html)}</section>`).join('')
     + `</div>`;
@@ -148,7 +150,7 @@ function llmsTxt({ ANSWER_PAGES, PAGE_META, FAQ, posts }) {
     '## News',
     '',
     `- [Changelog](${SITE}/changelog): ${PAGE_META.changelog.description}`,
-    ...posts.slice(0, 5).map(p => `- [${strip(p.title)}](${SITE}/changelog#${p.slug}) (${p.date}): ${strip(p.lede)}`),
+    ...posts.map(p => `- [${strip(p.title)}](${SITE}/devlog/${p.slug}) (${p.date}): ${strip(p.lede)}`),
     '',
     '## Optional',
     '',

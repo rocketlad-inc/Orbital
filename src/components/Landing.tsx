@@ -13,6 +13,7 @@ import { LandingHome } from './LandingHome';
 import { AnswerPage } from './AnswerPage';
 import { ANSWER_PAGES } from '../content/answerPages';
 import { PAGE_META, type DocTab } from '../content/pageMeta';
+import { useDevlogPosts, DEVLOG_POST_RE, devlogPath, type DevlogPost } from '../content/devlogStore';
 import { trackVisitStep } from '../multiplayer/attribution';
 import { t, tk, type Key } from '../i18n/core';
 import { useI18n, LanguageSwitch } from '../i18n/react';
@@ -33,7 +34,11 @@ interface LandingProps {
 
 /** One per page in src/content/answerPages.ts ("games like...", "free 4X"...). */
 type AnswerTab = `answer:${string}`;
-type LandingTab = DocTab | AnswerTab;
+/** One devlog post on its own page, /devlog/<slug>. */
+type PostTab = `post:${string}`;
+type LandingTab = DocTab | AnswerTab | PostTab;
+
+const postSlugOf = (tab: LandingTab) => (tab.startsWith('post:') ? tab.slice(5) : null);
 
 const answerFor = (tab: LandingTab) =>
   tab.startsWith('answer:') ? ANSWER_PAGES.find(p => `answer:${p.slug}` === tab) ?? null : null;
@@ -62,9 +67,27 @@ const PATH_FOR_TAB: Partial<Record<LandingTab, string>> = {
   ...Object.fromEntries(ANSWER_PAGES.map(p => [`answer:${p.slug}`, p.path])),
 };
 
+/** The URL a tab lives at. */
+function pathForTab(tab: LandingTab): string {
+  const slug = postSlugOf(tab);
+  return slug ? devlogPath(slug) : PATH_FOR_TAB[tab] ?? '/';
+}
+
+/** The tab a site path opens. */
+function tabForPath(path: string): LandingTab {
+  const post = DEVLOG_POST_RE.exec(path);
+  if (post) return `post:${post[1]}`;
+  return TAB_PATHS[path] ?? 'about';
+}
+
 /** Title and description for the tab, in the player's language. The press,
  *  privacy, changelog and credits pages are English documents, so theirs stay. */
-function pageMeta(tab: LandingTab): { title: string; description: string } {
+function pageMeta(tab: LandingTab, posts: DevlogPost[]): { title: string; description: string } {
+  const slug = postSlugOf(tab);
+  if (slug) {
+    const post = posts.find(p => p.slug === slug);
+    return post ? { title: `${post.title} — Orbital devlog`, description: post.lede } : PAGE_META.changelog;
+  }
   const answer = answerFor(tab);
   if (answer) return { title: answer.title, description: answer.description };
   const m = PAGE_META[tab as DocTab];
@@ -76,7 +99,7 @@ function pageMeta(tab: LandingTab): { title: string; description: string } {
 
 function tabFromPath(): LandingTab {
   if (typeof window === 'undefined') return 'about';
-  return TAB_PATHS[window.location.pathname] ?? 'about';
+  return tabForPath(window.location.pathname);
 }
 
 export const Landing: React.FC<LandingProps> = ({ onSignIn, onPlay, authed = false, onExit }) => {
@@ -90,7 +113,9 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onPlay, authed = fal
   // Solo Game with no account (Lorne, 2026-10-24).
   const play = () => { trackVisitStep('play_click'); (onPlay ?? onSignIn)(); };
   const answer = answerFor(tab);
-  const openPath = (path: string) => setTab(TAB_PATHS[path] ?? 'about');
+  const openPath = (path: string) => setTab(tabForPath(path));
+  const postSlug = postSlugOf(tab);
+  const { posts } = useDevlogPosts();
   /** A real link (crawlers follow it) that a plain click opens in place. */
   const pageLink = (path: string) => (e: React.MouseEvent) => {
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
@@ -105,7 +130,7 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onPlay, authed = fal
   // so Back walks the tabs the way people expect.
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const want = PATH_FOR_TAB[tab] ?? '/';
+    const want = pathForTab(tab);
     if (window.location.pathname !== want) {
       // Spread the entry's state: a signed-in player's entries carry the
       // view they belong to (src/platform/viewHistory.ts).
@@ -126,7 +151,7 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onPlay, authed = fal
   // static HTML carries no canonical on purpose: one pointing at "/" would
   // tell search engines /changelog and /how-to-play are duplicates of it.
   useEffect(() => {
-    const meta = pageMeta(tab);
+    const meta = pageMeta(tab, posts);
     const prevTitle = document.title;
     document.title = meta.title;
     const desc = document.querySelector('meta[name="description"]');
@@ -134,13 +159,13 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onPlay, authed = fal
     if (desc) desc.setAttribute('content', meta.description);
     let link = document.querySelector<HTMLLinkElement>('link[rel="canonical"]');
     if (!link) { link = document.createElement('link'); link.rel = 'canonical'; document.head.appendChild(link); }
-    link.href = `https://orbital-empire.com${PATH_FOR_TAB[tab] ?? '/'}`;
+    link.href = `https://orbital-empire.com${pathForTab(tab)}`;
     // Leaving the landing (into the game) puts a plain title back.
     return () => {
       document.title = prevTitle.startsWith('Orbital') ? 'Orbital' : prevTitle;
       if (desc && prevDesc !== null) desc.setAttribute('content', prevDesc);
     };
-  }, [tab, lang]);
+  }, [tab, lang, posts]);
 
   // Switching tabs scrolls back to the top — otherwise you land
   // mid-page in the new content with no idea where you are. NOTE:
@@ -233,7 +258,7 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onPlay, authed = fal
           ] as Array<[LandingTab, Key]>).map(([id, labelKey]) => (
             <button
               key={id}
-              className={`landing-tab-btn${tab === id ? ' is-active' : ''}`}
+              className={`landing-tab-btn${tab === id || (id === 'changelog' && postSlug) ? ' is-active' : ''}`}
               aria-current={tab === id ? 'page' : undefined}
               onClick={() => setTab(id)}
             >
@@ -261,10 +286,12 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onPlay, authed = fal
 
       {tab === 'credits' && <Credits />}
 
-      {tab === 'changelog' && (
+      {(tab === 'changelog' || postSlug) && (
         <Changelog
           ctaLabel={authed ? t('site.changelogBack') : t('site.changelogPlay')}
           onCta={authed ? (onExit ?? play) : play}
+          slug={postSlug ?? undefined}
+          onOpen={openPath}
         />
       )}
 
