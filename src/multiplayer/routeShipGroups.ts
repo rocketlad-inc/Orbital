@@ -16,6 +16,7 @@
 // ticks out" here is the number the ship panel would quote.
 // ============================================================
 
+import { ticksUntil } from '../game/wholeTicks';
 import type { Body, Fleet, GameState, Ship } from '../types';
 import {
   orbitWorldPos, orbitWorldVelocity, bodyPosition, bodyWorldVelocity,
@@ -57,7 +58,7 @@ export function tripTicks(
     { pos, vel }, toId, accel, brakeAccelFor(accel), startTick, bodies, 20, mpRampFor(accel),
   );
   if (!plan) return where.bodyId === toId ? 0 : null;
-  return Math.max(0, Math.round(plan.arriveTick - tick));
+  return ticksUntil(plan.arriveTick, tick);
 }
 
 export interface ShipSpot { ship: Ship; enRoute: boolean; eta: number | null }

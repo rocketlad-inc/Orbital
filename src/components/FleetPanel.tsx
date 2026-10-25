@@ -1532,7 +1532,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
             )}
             <span className="fleet-card__sep" aria-hidden>·</span>
             {transit && target ? (
-              <span className="fleet-card__dest">→ {target.name} · T-{Math.round(eta ?? 0)}</span>
+              <span className="fleet-card__dest">→ {target.name} · T-{Math.ceil((eta ?? 0) - 1e-6)}</span>
             ) : (
               <span>{bodyById.get(ship.orbit.parentBodyId)?.name ?? ship.orbit.parentBodyId}</span>
             )}
