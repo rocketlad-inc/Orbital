@@ -533,3 +533,25 @@ describe('discovery sentences', () => {
     expect(secretMessage('pt-BR', { kind: 'derelict_warship' })).toBeNull();
   });
 });
+
+// Playtest R2-C6: the log showed the raw key "megastructure_complete", and
+// "founded station Station on Miranda" for a server-default name.
+describe('what a player is shown', () => {
+  const row = (kind: string, payload: unknown) => ({
+    id: 'x', game_id: 'g', tick_number: 12, kind, actor_faction_id: 'f1', target_faction_id: null,
+    body_id: null, payload: JSON.stringify(payload), visibility: 'public', created_at_ms: 0,
+  }) as unknown as Parameters<typeof formatChronicleEvent>[0];
+  it('a finished megastructure is a sentence, not its key', () => {
+    const text = formatChronicleEvent(row('megastructure_complete', { structure: 'Warp Gate' }), ctx, 'en', { names: true });
+    expect(text).toBe('T+12  ⬢ Cerean Union completed the WARP GATE');
+  });
+  it('a kind with no line yet is never shown as a raw key', () => {
+    expect(formatChronicleEvent(row('some_new_event', {}), ctx, 'en', { names: true })).toBe('T+12  some new event');
+    expect(formatChronicleEvent(row('some_new_event', {}), ctx, 'en')).toBe('T+12  some_new_event');
+  });
+  it('a default station name is dropped from the English shown', () => {
+    const p = { settlement_type: 'station', settlement_name: 'Station', body_name: 'Miranda' };
+    expect(formatChronicleEvent(row('settlement_built', p), ctx, 'en', { names: true })).toBe('T+12  Cerean Union founded station on Miranda');
+    expect(formatChronicleEvent(row('settlement_built', p), ctx, 'en')).toBe('T+12  Cerean Union founded station Station on Miranda');
+  });
+});

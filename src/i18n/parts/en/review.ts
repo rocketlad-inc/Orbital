@@ -562,6 +562,7 @@ export const review = {
   'eventlog.ev.mega.abortedStood': '{owner}\'s strike on {where} is off — they stood down',
   'eventlog.ev.mstruct.abandoned': '{what} GOES DARK — {gone} is gone, and their structure stands unclaimed. The first hull to reach it takes it.',
   'eventlog.ev.mstruct.claimed': '{taker} claimed the derelict {what} — salvage, not conquest: nobody was left to stop them.',
+  'eventlog.ev.mstruct.complete': '{who} completed the {what}',
   'eventlog.ev.mstruct.takenOp': '{what} TAKEN — {taker} boarded {from}\'s operational structure',
   'eventlog.ev.mstruct.takenOpToll': '{what} TAKEN — {taker} boarded {from}\'s operational structure — {lost} metal of work was wrecked in the boarding',
   'eventlog.ev.mstruct.takenSite': '{what} TAKEN — {taker} boarded {from}\'s construction site',
