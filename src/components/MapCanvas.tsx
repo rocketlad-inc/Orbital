@@ -5719,6 +5719,15 @@ export function hudTopInset(canvas: HTMLCanvasElement, now = performance.now()):
   return top;
 }
 
+let hudRailCache = { at: -Infinity, covers: false };
+function hudLeftRailCovers(now = performance.now()): boolean {
+  if (now - hudRailCache.at >= 500) {
+    const rail = document.querySelector('.left-rail .outliner');
+    hudRailCache = { at: now, covers: !!rail && rail.getBoundingClientRect().width > 0 };
+  }
+  return hudRailCache.covers;
+}
+
 function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
   const speedLabel = ctx.simSpeed && ctx.simSpeed > 0 ? `${ctx.simSpeed}×` : hudTr('PAUSED');
   // The LAYOUT's verdict (useIsMobile stamps data-mobile-shell), not the
@@ -5731,7 +5740,9 @@ function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
   ctx.ctx.textBaseline = 'top';
   // A phone or tablet keeps the strip under the bar for its own buttons
   // (the outliner pill, the map tools), and the bar already shows the tick.
-  if (!mobileShell) {
+  // On a desktop the outliner column stands exactly there, and the lines
+  // read through it; the bar has the tick there too.
+  if (!mobileShell && !hudLeftRailCovers()) {
     ctx.ctx.fillText(`${hudTr('Tick:')} ${ctx.t.toFixed(1)} | ${speedLabel}`, 16, top + 16);
     ctx.ctx.fillText(`${hudTr('Scale:')} ${ctx.camera.scale.toFixed(2)}x`, 16, top + 32);
   }
