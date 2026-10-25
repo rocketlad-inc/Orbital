@@ -20,7 +20,7 @@
 
 import { GameState } from '../types';
 import { createCircularOrbit } from '../physics/orbitalMechanics';
-import { t } from '../i18n/core';
+import { t, fmtFixed } from '../i18n/core';
 
 const STORAGE_PREFIX = 'orbital.save.v1';
 const INDEX_KEY = `${STORAGE_PREFIX}.index`;
@@ -303,8 +303,8 @@ export async function importSave(file: File): Promise<SaveMeta> {
 /** Human-readable byte size for the picker. */
 export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / 1024 / 1024).toFixed(2)} MB`;
+  if (n < 1024 * 1024) return `${fmtFixed(n / 1024, 1)} KB`;
+  return `${fmtFixed(n / 1024 / 1024, 2)} MB`;
 }
 
 /** Human-readable "5m ago" / "2h ago" / "3d ago" for the picker. */

@@ -83,9 +83,21 @@ export function setLang(lang: Lang, persist = true): void {
 
 try { document.documentElement.lang = current; } catch { /* no document */ }
 
-function fill(s: string, vars?: Record<string, string | number>): string {
+/** A number filling a {placeholder}: a fraction takes the language's
+ *  decimal mark (2.4 reads "2,4" in Portuguese). Whole numbers stay as
+ *  they are, so a tick ("T+1500") or a year never gains a separator; a
+ *  caller wanting thousands grouping passes fmtNumber(n). */
+function varText(v: string | number, lang: Lang): string {
+  if (typeof v !== 'number' || Number.isInteger(v) || !Number.isFinite(v) || lang === 'en') return String(v);
+  return String(v).replace('.', decimalMark(lang));
+}
+function decimalMark(lang: Lang): string {
+  return lang === 'pt-BR' ? ',' : '.';
+}
+
+function fill(s: string, vars: Record<string, string | number> | undefined, lang: Lang): string {
   if (!vars) return s;
-  return s.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m));
+  return s.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? varText(vars[k], lang) : m));
 }
 
 function lookup(key: string, lang: Lang): string {
@@ -96,7 +108,7 @@ function lookup(key: string, lang: Lang): string {
 
 /** Translate `key`, filling {placeholders}. */
 export function t(key: Key, vars?: Record<string, string | number>): string {
-  return fill(lookup(key, current), vars);
+  return fill(lookup(key, current), vars, current);
 }
 
 /** `t` for an EXPLICIT language instead of the player's current one. For
@@ -104,13 +116,13 @@ export function t(key: Key, vars?: Record<string, string | number>): string {
  *  event-log headlines are built twice: once in English for the audit log
  *  and the classifiers, once in the player's language for display). */
 export function tIn(lang: Lang, key: Key, vars?: Record<string, string | number>): string {
-  return fill(lookup(key, lang), vars);
+  return fill(lookup(key, lang), vars, lang);
 }
 
 /** `tk` for an explicit language: a run-time key with an English fallback. */
 export function tkIn(lang: Lang, key: string, english: string, vars?: Record<string, string | number>): string {
   const own = (CATALOGS[lang] as Record<string, string | undefined>)[key];
-  return fill(own ?? english, vars);
+  return fill(own ?? english, vars, lang);
 }
 
 /** Translate a key that is built at run time (`data.tech.${id}.name`) or
@@ -119,7 +131,7 @@ export function tkIn(lang: Lang, key: string, english: string, vars?: Record<str
  *  ship or world never leaves a blank. Static strings should use t(). */
 export function tk(key: string, english: string, vars?: Record<string, string | number>): string {
   const own = (CATALOGS[current] as Record<string, string | undefined>)[key];
-  return fill(own ?? english, vars);
+  return fill(own ?? english, vars, current);
 }
 
 /** The plural category for `n` in `lang`. CLDR files Portuguese 0 under
@@ -145,17 +157,41 @@ export function tnIn(lang: Lang, key: PluralKey, n: number, vars?: Record<string
   const pick = (r: string) => (CATALOGS[lang] as Record<string, string | undefined>)[`${key}_${r}`];
   const s = pick(rule) ?? (en as Record<string, string>)[`${key}_${rule}`]
     ?? pick('other') ?? (en as Record<string, string>)[`${key}_other`] ?? String(key);
-  return fill(s, { n: fmtNumberIn(lang, n), ...vars });
+  return fill(s, { n: fmtNumberIn(lang, n), ...vars }, lang);
+}
+
+/** Building an Intl.NumberFormat costs far more than using one, and these
+ *  run while rendering (and on the map, every frame): one per language and
+ *  option set. */
+const NUMBER_FORMATS = new Map<string, Intl.NumberFormat>();
+function numberFormat(lang: Lang, opts?: Intl.NumberFormatOptions): Intl.NumberFormat {
+  const key = opts ? `${lang}|${JSON.stringify(opts)}` : lang;
+  let f = NUMBER_FORMATS.get(key);
+  if (!f) { f = new Intl.NumberFormat(lang, opts); NUMBER_FORMATS.set(key, f); }
+  return f;
 }
 
 /** 7.5 reads "7,5" in Portuguese. */
 export function fmtNumber(n: number, opts?: Intl.NumberFormatOptions): string {
-  return new Intl.NumberFormat(current, opts).format(n);
+  return numberFormat(current, opts).format(n);
 }
 
 /** `fmtNumber` for an explicit language. */
 export function fmtNumberIn(lang: Lang, n: number, opts?: Intl.NumberFormatOptions): string {
-  return new Intl.NumberFormat(lang, opts).format(n);
+  return numberFormat(lang, opts).format(n);
+}
+
+/** `n.toFixed(digits)` for the screen, in the player's language: 0.92 is
+ *  "0,92" and 1.375 "1,375" in Portuguese. Use it for every decimal a
+ *  player reads; keep toFixed for CSS, SVG and ids. */
+export function fmtFixed(n: number, digits: number): string {
+  return numberFormat(current, { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(n);
+}
+
+/** Up to `digits` decimals, trailing zeros dropped: Math.round(v * 10) / 10
+ *  for the screen ("2,4", "3"). */
+export function fmtDecimal(n: number, digits = 1): string {
+  return numberFormat(current, { maximumFractionDigits: digits }).format(n);
 }
 
 /** "2 days ago", "yesterday": the browser already knows every language's

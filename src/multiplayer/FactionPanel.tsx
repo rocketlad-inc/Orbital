@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch, Faction, MyFaction, Pact, PACT_LABELS, PactKind, tradesApi, warsApi, WarRow } from './api';
 import { FlagChip } from '../components/FactionEmblem';
 import { HOLDER_MARK } from './commission';
-import { t, tk, tn } from '../i18n/core';
+import { t, tk, tn, fmtFixed } from '../i18n/core';
 import type { Key } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import { apiErrorText } from '../i18n/apiErrors';
@@ -623,9 +623,9 @@ function weightOf(f: Faction): number {
 function compact(n: number | null | undefined): string {
   const v = Math.round(Number(n ?? 0));
   if (!Number.isFinite(v)) return '0';
-  if (Math.abs(v) >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+  if (Math.abs(v) >= 1_000_000) return `${fmtFixed(v / 1_000_000, 1)}M`;
   if (Math.abs(v) >= 10_000) return `${Math.round(v / 1000)}k`;
-  if (Math.abs(v) >= 1_000) return `${(v / 1000).toFixed(1)}k`;
+  if (Math.abs(v) >= 1_000) return `${fmtFixed(v / 1000, 1)}k`;
   return String(v);
 }
 

@@ -475,8 +475,8 @@ export const econ = {
   'trade.withdraw': 'Withdraw',
   'trade.pactsLine_one': '{n} pact in force',
   'trade.pactsLine_other': '{n} pacts in force',
-  // Names the tab that holds them: there is no TREATIES tab (R2-B5).
-  'trade.seeTreaties': 'see STANDING',
+  // Names the tab that holds them, by its own label: there is no TREATIES tab.
+  'trade.seeTreaties': 'see {tab}',
   'trade.settled': 'Settled',
   'trade.settledEmpty': 'No resolved trades yet.',
   'trade.marketDealTip': 'This deal was struck by taking a post on the open market',

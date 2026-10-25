@@ -29,7 +29,7 @@ import { BUILDING_FEATURE } from '../game/researchUnlocks';
 import { BUILDABLE_CLASSES, getShipClass } from '../game/shipClasses';
 import { sanitizeParts, partsCost, computeDesignStats, PART_GLYPH } from '../game/shipParts';
 import type { ShipPartId } from '../game/shipParts';
-import { RESOURCE_LETTER_COLORS } from '../game/resourceColors';
+import { RESOURCE_LETTER_COLORS, resourceLetter } from '../game/resourceColors';
 import { trackPendingBuild, resolveServerOrderId } from '../game/optimisticBuilds';
 
 import { shipyardSlotsAtBody, canHostCity, canHostStation, isRawWorld, suggestSettlementName, BUILDING_DEFS } from '../game/settlements';
@@ -69,7 +69,7 @@ import { employedShipIds, routeDeliversTo, routeCarriers } from '../game/routeSe
 import { terraformInbound, tickClock } from '../game/terraformInbound';
 import { buildChoices } from '../game/designChoice';
 import { RamControlsSection } from '../components/BodyInspector';
-import { t, tn, tk } from '../i18n/core';
+import { t, tn, tk, fmtFixed, fmtDecimal, fmtNumber } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import { designName } from '../i18n/names';
 import { makePeaceCheck } from '../game/peace';
@@ -1396,8 +1396,8 @@ export const WorldMenuOverlay: React.FC = () => {
           className="wm-yield" key={k}
           style={{ color: RESOURCE_LETTER_COLORS[k as 'F' | 'M' | 'C' | 'S'] }}
         >
-          <i style={{ color: 'inherit', opacity: 0.75 }}>{k}</i>
-          {Math.round(v * 10) / 10}</span>
+          <i style={{ color: 'inherit', opacity: 0.75 }}>{resourceLetter(k as 'M' | 'C' | 'S')}</i>
+          {fmtDecimal(v)}</span>
       ))}
     </div>
   );
@@ -1410,7 +1410,7 @@ export const WorldMenuOverlay: React.FC = () => {
       ] as Array<['M' | 'C' | 'S', number]>).map(([k, v], i) => (
         <React.Fragment key={k}>
           {i > 0 && ' · '}
-          <span style={{ color: RESOURCE_LETTER_COLORS[k] }}>{k}{Math.round(v)}</span>
+          <span style={{ color: RESOURCE_LETTER_COLORS[k] }}>{resourceLetter(k)}{Math.round(v)}</span>
         </React.Fragment>
       ))}
     </div>
@@ -1698,7 +1698,7 @@ export const WorldMenuOverlay: React.FC = () => {
         <div className="wmp-yields" data-tutorial-id="wm-output">
           {yieldChips.map(([k, v]) => (
             <span key={k} className="wmp-yield">
-              <i style={{ color: RESOURCE_LETTER_COLORS[k as 'M' | 'C' | 'S'] }}>{k}</i>{Math.round(v * 10) / 10}<em>/t</em>
+              <i style={{ color: RESOURCE_LETTER_COLORS[k as 'M' | 'C' | 'S'] }}>{resourceLetter(k as 'M' | 'C' | 'S')}</i>{fmtDecimal(v)}<em>/t</em>
             </span>
           ))}
         </div>
@@ -3567,7 +3567,7 @@ const WmDysonCard: React.FC = () => {
           <i style={{ width: `${Math.min(100, pct)}%` }} />
         </div>
         <div className="wm-dyson-meta">
-          {Math.round(dyson.hp).toLocaleString()} / {dyson.maxHp.toLocaleString()} · {pct.toFixed(1)}%
+          {fmtNumber(Math.round(dyson.hp))} / {fmtNumber(dyson.maxHp)} · {fmtFixed(pct, 1)}%
         </div>
         {isMine && (
           <div className="wm-dyson-supply" title={t('worldmenu.dyson.supplyTitle')}>
@@ -3627,7 +3627,7 @@ const WmDysonCard: React.FC = () => {
         </span>
         {derelict && (
           <span className="wm-dyson-owner" style={{ color: '#ffb84d' }}>
-            {t('worldmenu.dyson.builtUnclaimed', { pct: derelictPct.toFixed(1) })}
+            {t('worldmenu.dyson.builtUnclaimed', { pct: fmtFixed(derelictPct, 1) })}
           </span>
         )}
       </div>

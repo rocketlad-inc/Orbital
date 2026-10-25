@@ -582,6 +582,7 @@ export const social = {
   'senate.kind.chancellor_vote': 'chancellor vote',
   'senate.kind.repeal_law': 'repeal law',
   'senate.weight.title': 'Your vote weight',
+  'senate.weight.rule': 'Vote weight = 1 + 1 per system you control. You control a system when you own more of its bodies than any other faction; a tie leaves it contested and worth nothing to anyone.',
   'senate.weight.base': 'Base {n}',
   'senate.weight.held': 'You hold {held} of {total} bodies here',
   'senate.weight.none': '— you control no system outright yet.',

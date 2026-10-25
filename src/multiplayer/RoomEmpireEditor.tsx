@@ -24,7 +24,7 @@ import { isAndroidApp } from '../platform/appShell';
 import { deriveSecondary, emblemInk } from '../game/colorUtils';
 import { EMBLEM_IDS, PREMIUM_EMBLEM_IDS, EARNED_EMBLEM_IDS, EMBLEM_NAMES } from '../game/emblems';
 import { FactionEmblem } from '../components/FactionEmblem';
-import { RESOURCE_LETTER_COLORS } from '../game/resourceColors';
+import { RESOURCE_LETTER_COLORS, resourceLetter } from '../game/resourceColors';
 import type { NamePools } from '../game/namePools';
 import { t, tk } from '../i18n/core';
 import { useI18n } from '../i18n/react';
@@ -443,7 +443,7 @@ export function StartingBodyPicker({
                 {/* no F — fuel is dead (DESIGN-identity-economy.md §1.1) */}
                 {/* C = credits (server field is still 'gold') */}
                 {opt.yield.gold > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.C }}>C{opt.yield.gold}</span>}
-                {opt.yield.science > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.S }}>S{opt.yield.science}</span>}
+                {opt.yield.science > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.S }}>{resourceLetter('S')}{opt.yield.science}</span>}
               </div>
               {isMine && <div className="lobby-body-card__tag">{t('roomlobby.capital.yours')}</div>}
               {isTaken && <div className="lobby-body-card__tag is-taken">{ownerName}</div>}

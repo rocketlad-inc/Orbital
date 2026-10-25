@@ -24,7 +24,7 @@ import { logUiEvent } from './telemetry';
 import {
   TradeComposer, resWord, resTitle, bundleWordsT, marketRateT, goingRateTextT, fmtTicksAsTimeT,
 } from './TradeComposer';
-import { t, tn, type Key } from '../i18n/core';
+import { t, tn, type Key, fmtNumber } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import { apiErrorText } from '../i18n/apiErrors';
 import { hasFeature, requirementFor } from '../game/researchUnlocks';
@@ -39,7 +39,7 @@ import './MarketPanel.css';
 
 const COLOR: Record<keyof ResourceBundle, string> = { metal: '#a0a0a0', gold: '#ffd700', science: '#6ee7b7' };
 
-const fmt = (n: number) => Math.round(n).toLocaleString();
+const fmt = (n: number) => fmtNumber(Math.round(n));
 
 function Bundle({ b }: { b: ResourceBundle }) {
   useI18n();

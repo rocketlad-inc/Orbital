@@ -50,7 +50,7 @@ import {
 import type { ShipDesign } from '../types';
 import { PART_FEATURE } from '../game/researchUnlocks';
 import { useFeatureGate } from '../hooks/useFeatureGate';
-import { t, tn, tk } from '../i18n/core';
+import { t, tn, tk, fmtFixed, fmtDecimal } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import { designName } from '../i18n/names';
 import { deriveSecondary } from '../game/colorUtils';
@@ -287,7 +287,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   const costMult = gameState.buildCost?.mult ?? 1;
   const priced = (n: number) => Math.ceil(n * costMult);
   const costNote = costMult !== 1
-    ? t('ship.sd.costNote', { mult: costMult.toFixed(2) })
+    ? t('ship.sd.costNote', { mult: fmtFixed(costMult, 2) })
     : undefined;
   const nDetonators = countPart(draftParts, 'detonator');
   const upkeepMult = gameState.fleetUpkeep?.multiplier ?? 1;
@@ -296,8 +296,8 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   const upkeep = upkeepSplitFor(activeClass, draftParts, partsCost);
   const upkeepLabel = (upkeep.credits * upkeepMult) > 0 || (upkeep.ore * upkeepMult) > 0
     ? [
-        upkeep.credits * upkeepMult > 0 ? `${(upkeep.credits * upkeepMult).toFixed(2).replace(/\.?0+$/, '')}C` : null,
-        upkeep.ore * upkeepMult > 0 ? `${(upkeep.ore * upkeepMult).toFixed(2).replace(/\.?0+$/, '')}M` : null,
+        upkeep.credits * upkeepMult > 0 ? `${fmtDecimal(upkeep.credits * upkeepMult, 2)}C` : null,
+        upkeep.ore * upkeepMult > 0 ? `${fmtDecimal(upkeep.ore * upkeepMult, 2)}M` : null,
       ].filter(Boolean).join(' + ') + ` ${t('ship.sd.perTick')}`
     : t('ship.sd.free');
 
@@ -658,7 +658,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
       <div className="sd-stat" title={t('ship.sd.travelTip')}>
         <span className="sd-stat__label">{t('ship.sd.travel')}</span>
         <span className="sd-stat__value">
-          <Delta from={base.travelTimeMult} to={stats.travelTimeMult} fmt={n => `×${n.toFixed(2)}`} invert />
+          <Delta from={base.travelTimeMult} to={stats.travelTimeMult} fmt={n => `×${fmtFixed(n, 2)}`} invert />
         </span>
       </div>
       <div className="sd-stat" title={costNote}>
@@ -1146,7 +1146,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                   <em>{t('ship.sd.tipCompound')}</em>{' '}
                   {t('ship.sd.tipC', { ladder: reductionLadder(3), hp: SERVER_HULL_BASE[activeClass].hp, dmg: SERVER_HULL_BASE[activeClass].damagePerTick })}
                   {hpOut(100) !== 100 && (
-                    <> {t('ship.sd.tipTech', { mult: (hpOut(1000) / 1000).toFixed(2) })}</>
+                    <> {t('ship.sd.tipTech', { mult: fmtFixed(hpOut(1000) / 1000, 2) })}</>
                   )}
                   {' '}{t('ship.sd.tipBuilds')}
                 </div>

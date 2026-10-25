@@ -30,7 +30,7 @@
 import React from 'react';
 import { SHIP_CLASSES, ShipClassName } from '../game/shipClasses';
 import { hitChanceOf, DAMAGE_MITIGATION_PER_PART } from '../game/shipParts';
-import { t, tn } from '../i18n/core';
+import { t, tn, fmtFixed } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import './CombatCharts.css';
 
@@ -164,10 +164,10 @@ export const CombatCharts: React.FC = () => {
           const dmg = stat(a).damagePerTick * p;
           return {
             t: maxExp > 0 ? dmg / maxExp : 0,
-            text: dmg.toFixed(1),
+            text: fmtFixed(dmg, 1),
             title: t('combat.exp.cell', {
               a: label(a), d: label(d), base: stat(a).damagePerTick,
-              p: Math.round(p * 100), dmg: dmg.toFixed(1),
+              p: Math.round(p * 100), dmg: fmtFixed(dmg, 1),
             }),
           };
         }}
@@ -177,8 +177,8 @@ export const CombatCharts: React.FC = () => {
         {rich(t('combat.note.accuracy', {
           x: (stat('destroyer').damagePerTick / stat('corvette').damagePerTick).toFixed(0),
           dmg: stat('destroyer').damagePerTick,
-          eff: (stat('destroyer').damagePerTick
-            * hitChanceOf(stat('destroyer').speed, stat('corvette').speed)).toFixed(1),
+          eff: fmtFixed(stat('destroyer').damagePerTick
+            * hitChanceOf(stat('destroyer').speed, stat('corvette').speed), 1),
         }))}
       </p>
 
@@ -208,7 +208,7 @@ export const CombatCharts: React.FC = () => {
           </figcaption>
           {TARGETS.map(c => (
             <BarRow key={c} name={label(c)} value={stat(c).speed} max={maxSpd}
-              fmt={n => n.toFixed(2)} />
+              fmt={n => fmtFixed(n, 2)} />
           ))}
         </figure>
       </div>

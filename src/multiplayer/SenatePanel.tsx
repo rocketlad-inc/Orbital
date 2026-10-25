@@ -7,8 +7,9 @@ import { logUiEvent } from './telemetry';
 import { DiscordLink } from './DiscordLink';
 import { FactionEmblem } from '../components/FactionEmblem';
 import { hasFeature, requirementFor } from '../game/researchUnlocks';
+import { serverSystemLabel } from '../game/systemGrouping';
 import { TECH_DEFS } from '../game/techs';
-import { t, tn, tk } from '../i18n/core';
+import { t, tn, tk, fmtDecimal } from '../i18n/core';
 import type { Key } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import { apiErrorText } from '../i18n/apiErrors';
@@ -31,10 +32,10 @@ function ticksReal(ticks: number, tickMs?: number | null): string {
   const mins = ms / 60_000;
   const hours = ms / 3_600_000;
   const human = mins < 60
-    ? `~${Math.max(1, Math.round(mins))}m`
+    ? `~${t('market.time.m', { n: Math.max(1, Math.round(mins)) })}`
     : hours < 48
-      ? `~${Math.round(hours)}h`
-      : `~${Math.round(hours / 24)}d`;
+      ? `~${t('market.time.h', { n: Math.round(hours) })}`
+      : `~${t('market.time.d', { n: Math.round(hours / 24) })}`;
   return `${base} · ${human}`;
 }
 
@@ -140,7 +141,7 @@ function WeightCard({ detail }: { detail: WeightDetail | null }) {
         {t('senate.weight.title')}
       </div>
       <div style={{ fontSize: 10.5, color: 'var(--mp-fg-dim)', marginTop: 3, lineHeight: 1.55 }}>
-        {detail.rule}
+        {t('senate.weight.rule')}
       </div>
       <div style={{ fontSize: 10.5, marginTop: 6, lineHeight: 1.6 }}>
         <span style={{ color: 'var(--mp-fg-dim)' }}>{t('senate.weight.base', { n: detail.base })}</span>
@@ -151,7 +152,7 @@ function WeightCard({ detail }: { detail: WeightDetail | null }) {
               <span key={s.label}>
                 {i > 0 && <span style={{ color: 'var(--mp-fg-dim)' }}> + </span>}
                 <span style={{ color: '#6ee7b7' }} title={t('senate.weight.held', { held: s.held, total: s.total })}>
-                  {s.label}
+                  {serverSystemLabel(s.label)}
                 </span>
               </span>
             ))}
@@ -162,7 +163,7 @@ function WeightCard({ detail }: { detail: WeightDetail | null }) {
       </div>
       {near.length > 0 && (
         <div style={{ fontSize: 10.5, color: '#ffb84d', marginTop: 6, lineHeight: 1.6 }}>
-          {t('senate.weight.near', { labels: near.map(s => s.label).join(', ') })}
+          {t('senate.weight.near', { labels: near.map(s => serverSystemLabel(s.label)).join(', ') })}
         </div>
       )}
       </div>
@@ -1378,7 +1379,7 @@ export function SenatePanel({
 function fmtNum(n: number | undefined): string {
   if (n == null || !Number.isFinite(n)) return '—';
   if (Math.abs(n - Math.round(n)) < 1e-9) return String(Math.round(n));
-  return n.toFixed(2).replace(/\.?0+$/, '');
+  return fmtDecimal(n, 2);
 }
 
 /**

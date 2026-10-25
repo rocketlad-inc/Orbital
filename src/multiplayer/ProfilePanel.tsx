@@ -19,7 +19,7 @@ import { useAuth } from './AuthContext';
 import { EmailSettings } from './EmailSettings';
 import { Hangar } from './Hangar';
 import { ProfileAwards } from './ProfileAwards';
-import { t, tn, tk } from '../i18n/core';
+import { t, tn, tk, fmtNumber } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import { apiErrorText } from '../i18n/apiErrors';
 
@@ -264,7 +264,7 @@ export function ProfilePanel({ onEnterRoom }: { onEnterRoom?: (id: string) => vo
           {stat(t('profile.stat.wins'), p.wins ?? 0)}
           {stat(t('profile.stat.winRate'), `${winRate}%`)}
           {stat(t('profile.stat.kills'), p.kills ?? 0)}
-          {stat(t('profile.stat.damage'), Math.round(p.damage_dealt ?? 0).toLocaleString())}
+          {stat(t('profile.stat.damage'), fmtNumber(Math.round(p.damage_dealt ?? 0)))}
           {stat(t('profile.stat.built'), p.ships_built ?? 0)}
           {stat(t('profile.stat.lost'), p.ships_lost ?? 0)}
           {stat(t('profile.stat.settlements'), p.settlements_founded ?? 0)}

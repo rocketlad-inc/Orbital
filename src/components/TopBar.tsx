@@ -34,7 +34,7 @@ import './TopBar.css';
 import { GIT_SHA } from '../_version';
 import { useIsMobile, isInApp } from '../hooks/useIsMobile';
 import { saveTextFile } from '../platform/saveTextFile';
-import { t, tn } from '../i18n/core';
+import { t, tn, fmtFixed, fmtNumber } from '../i18n/core';
 import { useI18n, LanguageSwitch } from '../i18n/react';
 import { saveLocale } from '../i18n/account';
 import { inLang } from '../i18n/serverText';
@@ -538,8 +538,8 @@ export const TopBar: React.FC<TopBarProps> = ({
 
 const fmtRate = (n: number) => {
   if (n === 0) return '0';
-  if (n < 0.1) return n.toFixed(2);
-  if (n < 10)  return n.toFixed(1);
+  if (n < 0.1) return fmtFixed(n, 2);
+  if (n < 10)  return fmtFixed(n, 1);
   return Math.round(n).toString();
 };
 
@@ -1341,7 +1341,7 @@ const HostTickSpeed: React.FC<{ gameId: string }> = ({ gameId }) => {
             <span className="side-menu__item-hint tsx__wrap">
               {live
                 ? t('topbar.tickSpeed.flatOverrides')
-                : t('topbar.tickSpeed.flatCount', { n: Math.round(86_400_000 / flatMs).toLocaleString() })}
+                : t('topbar.tickSpeed.flatCount', { n: fmtNumber(Math.round(86_400_000 / flatMs)) })}
             </span>
           </>
         ) : (
@@ -1357,8 +1357,8 @@ const HostTickSpeed: React.FC<{ gameId: string }> = ({ gameId }) => {
               </div>
             </div>
             <div className="tsx-total">
-              <span className="tsx-total__n">{ticks.length.toLocaleString()}</span>
-              <span>{t('topbar.tickSpeed.total', { night: nightCount.toLocaleString() })}</span>
+              <span className="tsx-total__n">{fmtNumber(ticks.length)}</span>
+              <span>{t('topbar.tickSpeed.total', { night: fmtNumber(nightCount) })}</span>
             </div>
             <label className="tsx-clock">
               {t('topbar.tickSpeed.clock')}

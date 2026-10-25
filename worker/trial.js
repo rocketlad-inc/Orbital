@@ -48,7 +48,10 @@ const SHADOW_PASSWORD_SENTINEL = '!shadow-account-no-password-login';
  *  it further: its testers share one address (env TRIALS_PER_HOUR). */
 const TRIALS_PER_HOUR = 30;
 /** A trial's head start, on top of every empire's starter ships (his
- *  pick, 2026-10-24): three corvettes to defend with, a freighter to haul. */
+ *  pick, 2026-10-24): three corvettes to defend with, a freighter to haul.
+ *  Named "<name> of <World>" like the starter fleet; the client's
+ *  shipNameIn (src/i18n/names.ts) translates exactly that shape, so a
+ *  name here is one word plus at most a roman numeral. */
 const TRIAL_FLEET = [
   { class: 'corvette', name: 'Lancer I', fuelMax: 600 },
   { class: 'corvette', name: 'Lancer II', fuelMax: 600 },

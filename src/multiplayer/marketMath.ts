@@ -1,7 +1,7 @@
 // Pure helpers for the market board — kept apart from MarketPanel so
 // they can be tested without mounting a panel that fetches.
 
-import { t, fmtNumber } from '../i18n/core';
+import { t, fmtNumber, fmtFixed } from '../i18n/core';
 
 export type MarketBundle = { metal: number; gold: number; science: number };
 export type MarketKey = keyof MarketBundle;
@@ -26,7 +26,7 @@ export function nonZeroKeys(b: MarketBundle): MarketKey[] {
 }
 
 export function fmtPrice(p: number): string {
-  return p >= 10 ? p.toFixed(0) : p >= 1 ? p.toFixed(1) : p.toFixed(2);
+  return p >= 10 ? p.toFixed(0) : p >= 1 ? fmtFixed(p, 1) : fmtFixed(p, 2);
 }
 
 /** Unit price, only when it means something: exactly one resource each

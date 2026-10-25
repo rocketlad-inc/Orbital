@@ -160,7 +160,7 @@ import { menuScaleFor, zOf, furnitureOpacity } from '../game/worldMenu/camera';
 import { drawWorldMenuCloseup } from '../render/worldMenuCloseup';
 import { useCanvasTouchInput } from '../hooks/useCanvasTouchInput';
 import { GIT_SHA } from '../_version';
-import { t, tk, getLang, subscribeLang } from '../i18n/core';
+import { t, tk, getLang, subscribeLang, fmtFixed, fmtNumber } from '../i18n/core';
 import { exploredStorageKey, loadExplored, saveExplored } from '../game/exploredBodies';
 import './MapCanvas.css';
 import { presenceBubblePx } from '../render/sensorEdge';
@@ -5707,8 +5707,8 @@ function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
   ctx.ctx.font = '12px "Audiowide", monospace';
   ctx.ctx.textAlign = 'left';
   ctx.ctx.textBaseline = 'top';
-  ctx.ctx.fillText(`${hudTr('Tick:')} ${ctx.t.toFixed(1)} | ${speedLabel}`, 16, 16);
-  ctx.ctx.fillText(`${hudTr('Scale:')} ${ctx.camera.scale.toFixed(2)}x`, 16, 32);
+  ctx.ctx.fillText(`${hudTr('Tick:')} ${fmtFixed(ctx.t, 1)} | ${speedLabel}`, 16, 16);
+  ctx.ctx.fillText(`${hudTr('Scale:')} ${fmtFixed(ctx.camera.scale, 2)}x`, 16, 32);
 
   ctx.ctx.fillStyle = COLORS.fgFaint;
   ctx.ctx.font = '10px "Audiowide", monospace';
@@ -5745,7 +5745,7 @@ function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
       ctx.ctx.fillText(`${hudTr('FOCUSED:')} ${focusedBody.name.toUpperCase()}`, ctx.canvas.width / 2, targetSelectionMode ? 52 : 32);
       ctx.ctx.fillStyle = COLORS.fgDim;
       ctx.ctx.font = '10px "Audiowide", monospace';
-      ctx.ctx.fillText(`${hudTr('SOI:')} ${focusedBody.soi.toFixed(0)} km`, ctx.canvas.width / 2, targetSelectionMode ? 68 : 48);
+      ctx.ctx.fillText(`${hudTr('SOI:')} ${fmtNumber(Math.round(focusedBody.soi))} km`, ctx.canvas.width / 2, targetSelectionMode ? 68 : 48);
     }
   }
 
