@@ -2,7 +2,7 @@
 // AdminTrafficTrends — link and ad traffic, per source, per day (admin).
 //
 // One line per source the viewer picks (six at most), for one step of
-// the visit funnel: visitors, engaged, pressed Play, tried free, started sign-up,
+// the visit funnel: visitors, engaged, pressed Play, trial game, started sign-up,
 // signed up, took a seat. "Share of visitors" divides that step by the
 // same source's visitors that day, so a small link that converts well
 // is not drowned out by a big one that doesn't. Days are UTC; today's
@@ -33,7 +33,7 @@ const METRICS = [
   { key: 'visitors', label: 'Visitors' },
   { key: 'engaged', label: 'Engaged' },
   { key: 'pressed_play', label: 'Pressed Play' },
-  { key: 'tried', label: 'Tried free' },
+  { key: 'tried', label: 'Trial game' },
   { key: 'started', label: 'Started sign-up' },
   { key: 'signed_up', label: 'Signed up' },
   { key: 'seated', label: 'Took a seat' },
