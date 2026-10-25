@@ -254,6 +254,7 @@ export const map = {
   'worldmenu.building.forge': 'FORGE',
   'worldmenu.building.mint': 'MINT',
   'worldmenu.building.lab': 'LAB',
+  'worldmenu.res.science': 'S',
   'worldmenu.building.shields': 'SHIELDS',
   'worldmenu.building.missile_silo': 'MISSILE SILO',
   'worldmenu.silo.tabYard': 'SHIPYARD',

@@ -31,7 +31,7 @@ import { trackPendingBuild, resolveServerOrderId } from '../game/optimisticBuild
 import './BuildPanel.css';
 import { COMMISSION_LINES } from '../multiplayer/commission';
 import { MEGASTRUCTURES } from '../game/megastructures';
-import { t, tn } from '../i18n/core';
+import { t, tn, fmtFixed } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import { designName } from '../i18n/names';
 
@@ -827,14 +827,14 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
               <div className="class-stats">
                 <span className="stat">FP:{designStats ? designStats.damagePerTick : SERVER_HULL_BASE[cls].damagePerTick}</span>
                 <span className="stat" title={t('build.speedTip')}>
-                  SPD:{combatSpeedOf(cls, designParts).toFixed(2)}
+                  SPD:{fmtFixed(combatSpeedOf(cls, designParts), 2)}
                 </span>
                 <span className="stat" title={hpTitle(cls, designStats)}>
                   HP:{deliveredHp(cls, designStats)}
                 </span>
                 {designStats && designStats.travelTimeMult < 1 && (
                   <span className="stat" title={t('build.engineTip')}>
-                    ⏱×{designStats.travelTimeMult.toFixed(2)}
+                    ⏱×{fmtFixed(designStats.travelTimeMult, 2)}
                   </span>
                 )}
                 {def.cargoCapacity > 0 && <span className="stat">CG:{def.cargoCapacity}</span>}
@@ -1064,14 +1064,14 @@ export const BuildPanel: React.FC<{ bodyId?: string }> = ({ bodyId }) => {
                   <div className="class-stats">
                     <span className="stat">FP:{dstats ? dstats.damagePerTick : SERVER_HULL_BASE[row.shipClass].damagePerTick}</span>
                     <span className="stat" title={t('build.speedTip')}>
-                      SPD:{combatSpeedOf(row.shipClass, row.parts).toFixed(2)}
+                      SPD:{fmtFixed(combatSpeedOf(row.shipClass, row.parts), 2)}
                     </span>
                     <span className="stat" title={hpTitle(row.shipClass, dstats)}>
                       HP:{deliveredHp(row.shipClass, dstats)}
                     </span>
                     {dstats && dstats.travelTimeMult < 1 && (
                       <span className="stat" title={t('build.engineTip')}>
-                        ⏱×{dstats.travelTimeMult.toFixed(2)}
+                        ⏱×{fmtFixed(dstats.travelTimeMult, 2)}
                       </span>
                     )}
                     {def.cargoCapacity > 0 && <span className="stat">CG:{def.cargoCapacity}</span>}

@@ -2,7 +2,7 @@
 // real Sol worlds and the template words the server builds names from
 // translate; generated proper names never do.
 import { bodyNameIn, settlementNameIn, shipNameIn, designNameIn, ofPlace } from '../names';
-import { pluralRule, setLang, tn } from '../core';
+import { pluralRule, setLang, tn, t, fmtFixed, fmtDecimal } from '../core';
 import { inLang } from '../serverText';
 import { systemLabel, serverSystemLabel } from '../../game/systemGrouping';
 import type { Body } from '../../types';
@@ -98,5 +98,22 @@ describe('server-worded text (Senate laws)', () => {
     setLang('pt-BR', false);
     expect(inLang(law)).toMatchObject({ name: 'Mais Metal', effect: 'Cada assentamento extrai 25% mais metal.' });
     expect(inLang({ name: 'X' } as { name: string; i18n?: undefined }).name).toBe('X');
+  });
+});
+
+describe('numbers on screen', () => {
+  it('take a decimal comma in Portuguese, a point in English', () => {
+    setLang('pt-BR', false);
+    expect(fmtFixed(0.92, 2)).toBe('0,92');
+    expect(fmtFixed(1.375, 3)).toBe('1,375');
+    expect(fmtDecimal(2.4)).toBe('2,4');
+    expect(fmtDecimal(3)).toBe('3');
+    // A fraction filling a placeholder; a whole number (a tick) is untouched.
+    expect(t('helper.sit.research.complete', { name: 'Armas', level: 2.5 })).toBe('Armas 2,5 concluída');
+    expect(t('helper.sit.research.complete', { name: 'Armas', level: 1500 })).toBe('Armas 1500 concluída');
+    setLang('en', false);
+    expect(fmtFixed(0.92, 2)).toBe('0.92');
+    expect(fmtDecimal(2.4)).toBe('2.4');
+    expect(t('helper.sit.research.complete', { name: 'Weapons', level: 2.5 })).toBe('Weapons 2.5 complete');
   });
 });

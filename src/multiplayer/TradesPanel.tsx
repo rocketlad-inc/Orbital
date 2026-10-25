@@ -25,7 +25,7 @@ import {
 } from './api';
 import { logUiEvent } from './telemetry';
 import { TradeComposer, pactLabel, resWord } from './TradeComposer';
-import { t, tn, tk, type Key } from '../i18n/core';
+import { t, tn, tk, type Key, fmtFixed } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import { apiErrorText } from '../i18n/apiErrors';
 import { focusTradeCard, useTradeFocus } from './tradeFocus';
@@ -450,7 +450,7 @@ export function TradesPanel({ gameId, view = 'deals' }: {
               onClick={() => {
                 try { window.dispatchEvent(new CustomEvent('tradedock:tab', { detail: { tab: 'treaties' } })); } catch {}
               }}
-            >{t('trade.seeTreaties')}</button>
+            >{t('trade.seeTreaties', { tab: t('trade.dock.standing').toUpperCase() })}</button>
           </div>
         )}
 
@@ -932,7 +932,7 @@ function BundleLine({
 function fmtAmount(n: number): string {
   const v = Math.round(n);
   if (Math.abs(v) >= 10000) return `${(v / 1000).toFixed(0)}k`;
-  if (Math.abs(v) >= 1000) return `${(v / 1000).toFixed(1)}k`;
+  if (Math.abs(v) >= 1000) return `${fmtFixed(v / 1000, 1)}k`;
   return String(v);
 }
 

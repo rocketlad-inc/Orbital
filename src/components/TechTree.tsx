@@ -25,7 +25,7 @@ import {
 import {
   RESEARCH_UNLOCKS, UnlockRow, isMegastructureUnlock, megastructureHowTo, megastructureReassurance, unlockLabelOf, unlockBlurbOf,
 } from '../game/researchUnlocks';
-import { t, tn } from '../i18n/core';
+import { t, tn, fmtNumber } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import './TechTree.css';
 
@@ -162,7 +162,7 @@ export const TechTree: React.FC<TechTreeProps> = ({
               <div
                 className="techtree__gutter"
                 title={t('econ.tree.gutterTip', {
-                  cost: row.cost, level: row.level, total: cumulative[row.level - 1].toLocaleString(),
+                  cost: row.cost, level: row.level, total: fmtNumber(cumulative[row.level - 1]),
                 })}
               >
                 <span className="techtree__gutter-lvl">{row.level}</span>

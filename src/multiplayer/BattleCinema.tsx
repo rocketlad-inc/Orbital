@@ -22,7 +22,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createStage, TICK_MS, type Stage } from '../render3d/BattleStage';
-import { t, tn, type Key } from '../i18n/core';
+import { t, tn, type Key, fmtFixed } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import './BattleCinema.css';
 import type { TheatreDetail } from './TheatreRecap';
@@ -185,7 +185,7 @@ export function BattleCinema({ detail }: { detail: CinemaDetail }) {
           aria-label={t('review.cinema.scrub')}
         />
         <span className="cinema-clock">
-          {elapsed.toFixed(1)}s / {total.toFixed(1)}s
+          {fmtFixed(elapsed, 1)}s / {fmtFixed(total, 1)}s
         </span>
         <select
           value={speed} onChange={e => setSpeed(Number(e.target.value))}

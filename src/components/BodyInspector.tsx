@@ -30,7 +30,7 @@ import { EditableName } from './EditableName';
 import { RESOURCE_COLORS } from '../game/resourceColors';
 import './BodyInspector.css';
 import { anyRouteCollectsFrom , routesIAmPartyTo } from '../game/routeSelectors';
-import { t, tn, tk } from '../i18n/core';
+import { t, tn, tk, fmtFixed, fmtNumber } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import { nextBuildingLevel } from '../game/worldMenu/buildRules';
 
@@ -515,7 +515,7 @@ export const BodyInspector: React.FC = () => {
             );
           }
 
-          const fmt = (n: number) => n >= 10 ? Math.round(n).toString() : n.toFixed(1);
+          const fmt = (n: number) => n >= 10 ? Math.round(n).toString() : fmtFixed(n, 1);
 
           return (
             <div className="body-focus__yields" data-tutorial-id="body-production">
@@ -1018,8 +1018,8 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
         const isSelected = selectedSettlementId === s.id;
         const yieldRate = applyYieldMultipliers(settlementYield(s, body), empireMul);
         const yieldStr = [
-          yieldRate.ore > 0.05 ? `+${yieldRate.ore.toFixed(1)}M` : null,
-          yieldRate.credits > 0.05 ? `+${yieldRate.credits.toFixed(1)}C` : null,
+          yieldRate.ore > 0.05 ? `+${fmtFixed(yieldRate.ore, 1)}M` : null,
+          yieldRate.credits > 0.05 ? `+${fmtFixed(yieldRate.credits, 1)}C` : null,
         ].filter(Boolean).join(' ');
         const isMine = s.ownedBy === 'player';
         const playerRes = gameState.resources['player'];
@@ -1782,7 +1782,7 @@ export const RamControlsSection: React.FC<{ body: Body }> = ({ body }) => {
             <div style={{ fontSize: 10, color: '#e0d0c0', marginBottom: 6, lineHeight: 1.4 }}>
               {t('body.ram.crash', { from: body.name, to: pickedTarget.name })}<br />
               {t('body.ram.eta', { eta: (plan.arriveTick - gameState.currentTick).toFixed(0) })}<br />
-              {t('body.ram.dv', { dv: plan.totalDv.toFixed(1), cost: metalCost })}<br />
+              {t('body.ram.dv', { dv: fmtFixed(plan.totalDv, 1), cost: metalCost })}<br />
               {pickedTarget.id === 'sol'
                 ? <span style={{ color: '#ffcc66' }}>{t('body.ram.solTarget')}</span>
                 : <span style={{ color: '#ff8888' }}>{t('body.ram.onImpact')}</span>}
@@ -1979,7 +1979,7 @@ const DysonSphereProgress: React.FC = () => {
         }} />
       </div>
       <div style={{ fontSize: 10, color: '#a8b8c8', marginBottom: 8, letterSpacing: '0.05em' }}>
-        {t('body.dyson.hp', { hp: Math.round(dyson.hp), max: dyson.maxHp, pct: pct.toFixed(1) })}
+        {t('body.dyson.hp', { hp: Math.round(dyson.hp), max: dyson.maxHp, pct: fmtFixed(pct, 1) })}
       </div>
 
       {/* Per-resource breakdown */}
@@ -1999,7 +1999,7 @@ const DysonSphereProgress: React.FC = () => {
                 }} />
               </div>
               <span style={{ minWidth: 96, textAlign: 'right', color: '#a8b8c8', letterSpacing: '0.04em' }}>
-                {Math.round(r.acc).toLocaleString()} / {r.tgt.toLocaleString()}
+                {fmtNumber(Math.round(r.acc))} / {fmtNumber(r.tgt)}
               </span>
             </div>
           );

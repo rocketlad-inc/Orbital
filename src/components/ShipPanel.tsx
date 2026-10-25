@@ -65,7 +65,7 @@ import { isCapitalHull } from '../render/megastructureArt';
 import { BuildPanel } from './BuildPanel';
 import { fleetPath } from '../multiplayer/fleetWire';
 import { gateRouteFor } from '../game/gateRoute';
-import { t, tn } from '../i18n/core';
+import { t, tn, fmtFixed } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import { designName } from '../i18n/names';
 import { createPortal } from 'react-dom';
@@ -81,7 +81,7 @@ import { useInterceptOverlay } from './useInterceptOverlay';
  *  "Δv 163.05" read as an instrument dump (playtest, 2026-10-24); the
  *  hundredths say nothing a player can act on. The line's title explains
  *  the term (ship.panel.dvTip). */
-const fmtDv = (dv: number): string => (Math.abs(dv) >= 10 ? dv.toFixed(0) : dv.toFixed(1));
+const fmtDv = (dv: number): string => (Math.abs(dv) >= 10 ? dv.toFixed(0) : fmtFixed(dv, 1));
 
 // Order-independent key for a parts loadout, so two designs with the same
 // multiset of parts compare equal regardless of slot order.
@@ -1916,7 +1916,7 @@ export const ShipPanel: React.FC = () => {
               <div className="order-info">
                 <div className="order-type">{order.label || order.type.toUpperCase()}</div>
                 <div className="order-details">
-                  Δv: {Math.abs(order.deltav).toFixed(2)} km/s | T+{order.burnTime.toFixed(0)}
+                  Δv: {fmtFixed(Math.abs(order.deltav), 2)} km/s | T+{order.burnTime.toFixed(0)}
                 </div>
               </div>
               <div className="order-actions">
@@ -3952,7 +3952,7 @@ export const ShipPanel: React.FC = () => {
             >
               <span className="label">{t('ship.panel.speed')}</span>
               <span className="value">
-                {combatSpeedOf(ship.class as ShipClassName, ship.parts).toFixed(2)}
+                {fmtFixed(combatSpeedOf(ship.class as ShipClassName, ship.parts), 2)}
               </span>
             </div>
             {/* The standalone ETA row is gone: the countdown now rides the
@@ -5185,10 +5185,10 @@ const CurrentTargetRow: React.FC<{ ship: Ship }> = ({ ship }) => {
   // Shows the work only when there is work to show; an orbit with no
   // flak keeps the plain sentence.
   const flakNote = (f: { mounts: number; mul: number }, whose: string) =>
-    f.mounts > 0 ? ` (${whose ? t('ship.panel.flakEnemy', { mul: f.mul.toFixed(2), n: f.mounts }) : t('ship.panel.flakOwn', { mul: f.mul.toFixed(2), n: f.mounts })})` : '';
+    f.mounts > 0 ? ` (${whose ? t('ship.panel.flakEnemy', { mul: fmtFixed(f.mul, 2), n: f.mounts }) : t('ship.panel.flakOwn', { mul: fmtFixed(f.mul, 2), n: f.mounts })})` : '';
   const oddsTitle = t('ship.panel.oddsTip', {
-    a: hullSpeed.toFixed(2), noteA: flakNote(myFlak, 'enemy '),
-    b: targetHullSpeed.toFixed(2), noteB: flakNote(targetFlak, ''),
+    a: fmtFixed(hullSpeed, 2), noteA: flakNote(myFlak, 'enemy '),
+    b: fmtFixed(targetHullSpeed, 2), noteB: flakNote(targetFlak, ''),
   });
 
   // Settlements carry no shield/armor parts, so bombardment lands in
@@ -5225,14 +5225,14 @@ const CurrentTargetRow: React.FC<{ ship: Ship }> = ({ ship }) => {
         </span>
         <span className="sp-target__k">{t('ship.panel.perHit')}</span>
         <span className="sp-target__v" title={mit < 1
-          ? t('ship.panel.perHitCut', { dmg: myDamage.toFixed(1), pct: Math.round(100 * mit) })
+          ? t('ship.panel.perHitCut', { dmg: fmtFixed(myDamage, 1), pct: Math.round(100 * mit) })
           : t('ship.panel.perHitFull')}>
-          {perHit.toFixed(1)}
+          {fmtFixed(perHit, 1)}
           {mit < 1 && <span className="sp-target__dim"> ({Math.round(100 * mit)}%)</span>}
         </span>
         <span className="sp-target__k">{t('ship.panel.expected')}</span>
         <span className="sp-target__v sp-target__v--hero" title={t('ship.panel.expectedTip')}>
-          {perTick.toFixed(1)}<span className="sp-target__dim">/{t('fleet.tick')}</span>
+          {fmtFixed(perTick, 1)}<span className="sp-target__dim">/{t('fleet.tick')}</span>
         </span>
       </div>
       {/* Show the work: every live multiplier folded into the numbers
@@ -5242,14 +5242,14 @@ const CurrentTargetRow: React.FC<{ ship: Ship }> = ({ ship }) => {
       {factors.length > 0 && (
         <div className="sp-target__bonus">
           <span className="sp-target__bonus-lead">
-            {t('ship.panel.baseMul', { dmg: baseDamage.toFixed(1), mul: bonusMul.toFixed(2) })}
+            {t('ship.panel.baseMul', { dmg: fmtFixed(baseDamage, 1), mul: fmtFixed(bonusMul, 2) })}
           </span>
           {factors.map(f => (
             <span
               key={f.label}
               className={`sp-target__chip${f.mul < 1 ? ' sp-target__chip--bad' : ''}`}
             >
-              {f.label} ×{f.mul.toFixed(2)}
+              {f.label} ×{fmtFixed(f.mul, 2)}
             </span>
           ))}
         </div>

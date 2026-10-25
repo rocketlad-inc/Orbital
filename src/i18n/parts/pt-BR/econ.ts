@@ -477,7 +477,7 @@ export const econ: Catalog = {
   'trade.withdraw': 'Retirar',
   'trade.pactsLine_one': '{n} pacto em vigor',
   'trade.pactsLine_other': '{n} pactos em vigor',
-  'trade.seeTreaties': 'ver TRATADOS',
+  'trade.seeTreaties': 'ver {tab}',
   'trade.settled': 'Encerrados',
   'trade.settledEmpty': 'Nenhum negócio resolvido ainda.',
   'trade.marketDealTip': 'Este negócio foi fechado ao aceitar um anúncio no mercado aberto',

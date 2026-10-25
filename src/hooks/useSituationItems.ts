@@ -76,7 +76,7 @@ import { MEGASTRUCTURES, MEGA_MAX_HP, isBreached } from '../game/megastructures'
 import { shipyardBodyIds } from '../game/repair';
 import { deriveSecondary } from '../game/colorUtils';
 // `tr`/`trn`/`trk` rather than t/tn/tk: this file has plenty of locals named `t`.
-import { t as tr, tn as trn, tk as trk, fmtNumber, getLang } from '../i18n/core';
+import { t as tr, tn as trn, tk as trk, fmtNumber, getLang, fmtFixed } from '../i18n/core';
 
 // Building kinds each settlement type can host (mirrors BuildPanel /
 // the map's world-overlay chips). Used to ask "is there anything here I
@@ -875,8 +875,8 @@ export function useSituationItems(
           category: 'upkeep_mix',
           title: tr('helper.sit.upkeepMix.title', { name }),
           subtitle: tr('helper.sit.upkeepMix.sub', {
-            out: w.line.upkeep.toFixed(1),
-            inc: w.line.income.toFixed(1),
+            out: fmtFixed(w.line.upkeep, 1),
+            inc: fmtFixed(w.line.income, 1),
             ticks: ticksText(ticks),
             name,
             swap,
@@ -1456,10 +1456,10 @@ export function useSituationItems(
       // line and lives in the row's tooltip, because a sentence that is
       // identical on every row is not information, it is wallpaper.
       const when = inc.open
-        ? tr('helper.sit.intercept.firingNow', { dur: inc.duration.toFixed(1) })
+        ? tr('helper.sit.intercept.firingNow', { dur: fmtFixed(inc.duration, 1) })
         : tr('helper.sit.intercept.fires', {
           at: inc.opensAt.toFixed(0),
-          dur: inc.duration.toFixed(1),
+          dur: fmtFixed(inc.duration, 1),
         });
       // A freighter's reach is 0, so it never answers however close it
       // gets. Saying so is the point — that silence is a rule, not a bug.

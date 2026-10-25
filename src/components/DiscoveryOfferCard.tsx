@@ -17,7 +17,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import type { DiscoveryOffer } from '../types';
-import { t, type Key } from '../i18n/core';
+import { t, type Key, fmtDecimal } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import './DiscoveryBanner.css';
 import './DiscoveryOfferCard.css';
@@ -25,7 +25,7 @@ import './DiscoveryOfferCard.css';
 /** "1 metal + 1 credit", "6 metal + 6 credits", in the player's words. */
 export function upkeepText(u: { credits: number; ore: number }): string {
   const parts: string[] = [];
-  const fmt = (n: number) => (Math.round(n * 100) / 100).toString();
+  const fmt = (n: number) => fmtDecimal(n, 2);
   if (u.ore > 0) parts.push(t('discovery.offer.metal', { n: fmt(u.ore) }));
   if (u.credits > 0) parts.push(t(u.credits === 1 ? 'discovery.offer.credit' : 'discovery.offer.credits', { n: fmt(u.credits) }));
   return parts.length ? parts.join(' + ') : t('discovery.offer.nothing');

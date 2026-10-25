@@ -9,7 +9,7 @@ import { FactionEmblem } from '../components/FactionEmblem';
 import { hasFeature, requirementFor } from '../game/researchUnlocks';
 import { serverSystemLabel } from '../game/systemGrouping';
 import { TECH_DEFS } from '../game/techs';
-import { t, tn, tk } from '../i18n/core';
+import { t, tn, tk, fmtDecimal } from '../i18n/core';
 import type { Key } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import { apiErrorText } from '../i18n/apiErrors';
@@ -32,10 +32,10 @@ function ticksReal(ticks: number, tickMs?: number | null): string {
   const mins = ms / 60_000;
   const hours = ms / 3_600_000;
   const human = mins < 60
-    ? `~${Math.max(1, Math.round(mins))}m`
+    ? `~${t('market.time.m', { n: Math.max(1, Math.round(mins)) })}`
     : hours < 48
-      ? `~${Math.round(hours)}h`
-      : `~${Math.round(hours / 24)}d`;
+      ? `~${t('market.time.h', { n: Math.round(hours) })}`
+      : `~${t('market.time.d', { n: Math.round(hours / 24) })}`;
   return `${base} · ${human}`;
 }
 
@@ -1339,7 +1339,7 @@ export function SenatePanel({
 function fmtNum(n: number | undefined): string {
   if (n == null || !Number.isFinite(n)) return '—';
   if (Math.abs(n - Math.round(n)) < 1e-9) return String(Math.round(n));
-  return n.toFixed(2).replace(/\.?0+$/, '');
+  return fmtDecimal(n, 2);
 }
 
 /**

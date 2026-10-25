@@ -256,6 +256,7 @@ export const map: Catalog = {
   'worldmenu.building.forge': 'FORJA',
   'worldmenu.building.mint': 'CASA DA MOEDA',
   'worldmenu.building.lab': 'LABORATÓRIO',
+  'worldmenu.res.science': 'CIÊ',
   'worldmenu.building.shields': 'ESCUDOS',
   'worldmenu.building.missile_silo': 'SILO DE MÍSSEIS',
   'worldmenu.silo.tabYard': 'ESTALEIRO',

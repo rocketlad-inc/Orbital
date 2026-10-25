@@ -33,7 +33,7 @@ import type { ChainStep } from '../physics/chainPlanner';
 import './OverviewPanel.css';
 import './FleetPanel.css';
 import { fleetPath } from '../multiplayer/fleetWire';
-import { t, tn } from '../i18n/core';
+import { t, tn, fmtDecimal } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 
 interface FleetPanelProps {
@@ -69,7 +69,7 @@ const FleetUpkeepLine: React.FC = () => {
 
   const inDebt = !!arrears && (arrears.credits > 0 || arrears.ore > 0);
   const rows = up.byClass ?? [];
-  const fmt = (n: number) => (Math.round(n * 100) / 100).toString();
+  const fmt = (n: number) => fmtDecimal(n, 2);
   // The senate can scale the whole bill; say so rather than leaving the
   // player to wonder why the arithmetic does not add up.
   const mult = up.multiplier ?? 1;
