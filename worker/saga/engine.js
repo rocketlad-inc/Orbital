@@ -29,8 +29,9 @@ import { ARC_NAME, ARC_SETUP, ACT_TITLE, ACT_HEAD, ACT_BECAUSE, ARC_FINALE, PART
 
 /** Bump when the engine's output changes shape or meaning: stored films
  *  older than this are rebuilt the next time they are opened.
- *  3: the season's story (arcs.js): an arc, its acts, a part per empire. */
-export const SAGA_ENGINE_VERSION = 3;
+ *  3: the season's story (arcs.js): an arc, its acts, a part per empire.
+ *  4: the cold war arc; act kickers carry no number. */
+export const SAGA_ENGINE_VERSION = 4;
 
 /** The film's length for a match of `span` days (Lorne, 2026-10-23: "Film
  *  can be as long as 3 minutes"; 10-24: slowed so players can read it, up
