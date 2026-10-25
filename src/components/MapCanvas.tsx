@@ -160,7 +160,7 @@ import { menuScaleFor, zOf, furnitureOpacity } from '../game/worldMenu/camera';
 import { drawWorldMenuCloseup } from '../render/worldMenuCloseup';
 import { useCanvasTouchInput } from '../hooks/useCanvasTouchInput';
 import { GIT_SHA } from '../_version';
-import { t, tk, getLang, subscribeLang } from '../i18n/core';
+import { t, tk, getLang, subscribeLang, fmtFixed, fmtNumber } from '../i18n/core';
 import { exploredStorageKey, loadExplored, saveExplored } from '../game/exploredBodies';
 import './MapCanvas.css';
 import { presenceBubblePx } from '../render/sensorEdge';
@@ -807,6 +807,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   }, [gameState.bodies]);
   const worldCycleRef = useRef(worldCycle);
   worldCycleRef.current = worldCycle;
+  // The same order, only the worlds you hold a settlement on (the phone's
+  // < > buttons). Empty when you hold none: they then walk everything.
+  const ownWorldCycle = useMemo(() => {
+    const mine = new Set(gameState.settlements.filter(s => s.ownedBy === 'player').map(s => s.bodyId));
+    return worldCycle.filter(id => mine.has(id));
+  }, [worldCycle, gameState.settlements]);
+  const ownWorldCycleRef = useRef(ownWorldCycle);
+  ownWorldCycleRef.current = ownWorldCycle;
   // focusBody is NOT referentially stable (it closes over bodies + tick),
   // so it goes through a ref like everything else this listener touches.
   // Listing it as a dependency would re-subscribe the handler on every
@@ -880,8 +888,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // touch equivalent, so the mobile map controls raise
     // 'orbital:world-step' and land here: the same clamped, nearest-first
     // cycling, not a second copy of it that could drift.
-    const stepWorld = (dir: -1 | 1): boolean => {
-      const cycle = worldCycleRef.current;
+    const stepWorld = (dir: -1 | 1, mine = false): boolean => {
+      const cycle = mine && ownWorldCycleRef.current.length > 0 ? ownWorldCycleRef.current : worldCycleRef.current;
       if (cycle.length === 0) return false;
 
       const cam = cameraRef.current;
@@ -927,7 +935,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     };
     const onStep = (e: Event) => {
       const dir = (e as CustomEvent).detail?.dir;
-      if (dir === -1 || dir === 1) stepWorld(dir);
+      if (dir === -1 || dir === 1) stepWorld(dir, (e as CustomEvent).detail?.mine === true);
     };
 
     window.addEventListener('keydown', onKey);
@@ -5704,22 +5712,56 @@ function hudTr(english: string): string {
   return s;
 }
 
+/** How much of the canvas top the top bar covers, in canvas pixels. The
+ *  canvas runs under the bar (phone, tablet), so text painted at a fixed
+ *  y=16 showed through it as ghost lines ("SOI: 16 km", "Escala", "EM
+ *  FO…": Maya, Rafaela, 2026-10-24). Layout reads are cached for 500ms:
+ *  this runs every frame. */
+let hudInsetCache = { at: -Infinity, top: 0 };
+export function hudTopInset(canvas: HTMLCanvasElement, now = performance.now()): number {
+  if (now - hudInsetCache.at < 500) return hudInsetCache.top;
+  let top = 0;
+  const bar = document.querySelector('.top-bar');
+  if (bar && canvas.clientHeight > 0) {
+    const covered = bar.getBoundingClientRect().bottom - canvas.getBoundingClientRect().top;
+    top = Math.max(0, covered) * (canvas.height / canvas.clientHeight);
+  }
+  hudInsetCache = { at: now, top };
+  return top;
+}
+
+let hudRailCache = { at: -Infinity, covers: false };
+function hudLeftRailCovers(now = performance.now()): boolean {
+  if (now - hudRailCache.at >= 500) {
+    const rail = document.querySelector('.left-rail .outliner');
+    hudRailCache = { at: now, covers: !!rail && rail.getBoundingClientRect().width > 0 };
+  }
+  return hudRailCache.covers;
+}
+
 function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
   const speedLabel = ctx.simSpeed && ctx.simSpeed > 0 ? `${ctx.simSpeed}×` : hudTr('PAUSED');
+  // The LAYOUT's verdict (useIsMobile stamps data-mobile-shell), not the
+  // pointer media query, which some mouse-driven desktops answer 'coarse'.
+  const mobileShell = document.documentElement.hasAttribute('data-mobile-shell');
+  const top = hudTopInset(ctx.canvas);
   ctx.ctx.fillStyle = COLORS.fgDim;
   ctx.ctx.font = '12px "Audiowide", monospace';
   ctx.ctx.textAlign = 'left';
   ctx.ctx.textBaseline = 'top';
-  ctx.ctx.fillText(`${hudTr('Tick:')} ${ctx.t.toFixed(1)} | ${speedLabel}`, 16, 16);
-  ctx.ctx.fillText(`${hudTr('Scale:')} ${ctx.camera.scale.toFixed(2)}x`, 16, 32);
+  // A phone or tablet keeps the strip under the bar for its own buttons
+  // (the outliner pill, the map tools), and the bar already shows the tick.
+  // On a desktop the outliner column stands exactly there, and the lines
+  // read through it; the bar has the tick there too.
+  if (!mobileShell && !hudLeftRailCovers()) {
+    ctx.ctx.fillText(`${hudTr('Tick:')} ${fmtFixed(ctx.t, 1)} | ${speedLabel}`, 16, top + 16);
+    ctx.ctx.fillText(`${hudTr('Scale:')} ${fmtFixed(ctx.camera.scale, 2)}x`, 16, top + 32);
+  }
 
   ctx.ctx.fillStyle = COLORS.fgFaint;
   ctx.ctx.font = '10px "Audiowide", monospace';
   // Hint changes by input modality — desktop hotkeys are wrong on a
   // touch device, so don't tell a phone player to "right-drag."
-  // The LAYOUT's verdict (useIsMobile stamps data-mobile-shell), not the
-  // pointer media query, which some mouse-driven desktops answer 'coarse'.
-  const mobileShell = document.documentElement.hasAttribute('data-mobile-shell');
   const hint = hudTr(mobileShell
     ? 'Drag: pan · Pinch: zoom · Tap: select · Hold a ship: select several'
     : 'Right-drag: pan | Scroll: zoom | Click: select | Double-click: focus');
@@ -5729,26 +5771,30 @@ function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
     ctx.ctx.fillStyle = COLORS.warning;
     ctx.ctx.font = 'bold 12px "Audiowide", monospace';
     ctx.ctx.textAlign = 'center';
-    ctx.ctx.fillText(hudTr('SELECT TARGET BODY'), ctx.canvas.width / 2, 16);
+    ctx.ctx.fillText(hudTr('SELECT TARGET BODY'), ctx.canvas.width / 2, top + 16);
     ctx.ctx.fillStyle = COLORS.fgDim;
     ctx.ctx.font = '10px "Audiowide", monospace';
     // No Esc key or right button on a phone; its Cancel is the banner
     // ShipPanel floats at the bottom during targeting.
     ctx.ctx.fillText(hudTr(mobileShell
       ? 'Tap a body to transfer'
-      : 'Click a body to transfer | ESC to cancel | Right-click to cancel'), ctx.canvas.width / 2, 32);
+      : 'Click a body to transfer | ESC to cancel | Right-click to cancel'), ctx.canvas.width / 2, top + 32);
   }
 
-  if (ctx.camera.focusedBodyId) {
+  // The world's own label and menu name it on a phone; there the strip
+  // under the bar belongs to the outliner pill.
+  // Nor under an open world menu, whose own panel names the world (the
+  // label showed through behind it).
+  if (ctx.camera.focusedBodyId && !mobileShell && !document.body.classList.contains('wm-open')) {
     const focusedBody = ctx.bodies.find(b => b.id === ctx.camera.focusedBodyId);
     if (focusedBody) {
       ctx.ctx.fillStyle = COLORS.info;
       ctx.ctx.font = 'bold 12px "Audiowide", monospace';
       ctx.ctx.textAlign = 'center';
-      ctx.ctx.fillText(`${hudTr('FOCUSED:')} ${focusedBody.name.toUpperCase()}`, ctx.canvas.width / 2, targetSelectionMode ? 52 : 32);
+      ctx.ctx.fillText(`${hudTr('FOCUSED:')} ${focusedBody.name.toUpperCase()}`, ctx.canvas.width / 2, top + (targetSelectionMode ? 52 : 32));
       ctx.ctx.fillStyle = COLORS.fgDim;
       ctx.ctx.font = '10px "Audiowide", monospace';
-      ctx.ctx.fillText(`${hudTr('SOI:')} ${focusedBody.soi.toFixed(0)} km`, ctx.canvas.width / 2, targetSelectionMode ? 68 : 48);
+      ctx.ctx.fillText(`${hudTr('SOI:')} ${fmtNumber(Math.round(focusedBody.soi))} km`, ctx.canvas.width / 2, top + (targetSelectionMode ? 68 : 48));
     }
   }
 

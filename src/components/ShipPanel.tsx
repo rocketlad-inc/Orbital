@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from 'react';
+import { landingTick, ticksUntil } from '../game/wholeTicks';
 import { NON_WORLD_TYPES } from '../game/victory';
 import { useGameContext } from '../state/gameContext';
 import { Ship, Body, Settlement, TradeRoute, TargetPriorityKey, CameraState } from '../types';
@@ -65,7 +66,7 @@ import { isCapitalHull } from '../render/megastructureArt';
 import { BuildPanel } from './BuildPanel';
 import { fleetPath } from '../multiplayer/fleetWire';
 import { gateRouteFor } from '../game/gateRoute';
-import { t, tn } from '../i18n/core';
+import { t, tn, fmtFixed } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import { designName } from '../i18n/names';
 import { createPortal } from 'react-dom';
@@ -81,7 +82,7 @@ import { useInterceptOverlay } from './useInterceptOverlay';
  *  "Δv 163.05" read as an instrument dump (playtest, 2026-10-24); the
  *  hundredths say nothing a player can act on. The line's title explains
  *  the term (ship.panel.dvTip). */
-const fmtDv = (dv: number): string => (Math.abs(dv) >= 10 ? dv.toFixed(0) : dv.toFixed(1));
+const fmtDv = (dv: number): string => (Math.abs(dv) >= 10 ? dv.toFixed(0) : fmtFixed(dv, 1));
 
 // Order-independent key for a parts loadout, so two designs with the same
 // multiset of parts compare equal regardless of slot order.
@@ -366,7 +367,7 @@ export const ShipPanel: React.FC = () => {
     const nameOf = (id: string | undefined | null) =>
       (id ? gameState.bodies.find(b => b.id === id)?.name : null) ?? t('ship.panel.unknownLower');
     const eta = (arrive: number | undefined) =>
-      arrive == null ? '' : t('ship.panel.arrives', { tick: Math.round(arrive), n: Math.max(0, Math.round(arrive - now)) });
+      arrive == null ? '' : t('ship.panel.arrives', { tick: landingTick(arrive), n: ticksUntil(arrive, now) });
 
     const out: Array<{
       key: string; kind: 'goto' | 'wait'; dest: string; label: string; meta: string;
@@ -460,7 +461,7 @@ export const ShipPanel: React.FC = () => {
         return {
           id: t.id,
           name: t.name,
-          meetIn: Math.max(0, Math.round(tr.arriveTick - now)),
+          meetIn: ticksUntil(tr.arriveTick, now),
           dest: gameState.bodies.find(b => b.id === tr.targetBodyId)?.name ?? '?',
           shipClass: t.class,
           iconVariant: t.iconVariant,
@@ -1855,14 +1856,14 @@ export const ShipPanel: React.FC = () => {
                         {t('ship.panel.meetThenTogether', { n: meetIn.toFixed(0), name: targetBody?.name ?? plan.targetBodyId })}
                       </div>
                       <div className="order-details" style={{ color: '#6ee7b7' }} title={t('ship.panel.dvTip')}>
-                        {t('ship.panel.etaDv', { eta: Math.max(0, plan.arriveTick - gameState.currentTick).toFixed(0), dv: fmtDv(plan.totalDv) })}
+                        {t('ship.panel.etaDv', { eta: ticksUntil(plan.arriveTick, gameState.currentTick), dv: fmtDv(plan.totalDv) })}
                       </div>
                     </>
                   ) : (
                     <>
                       <div className="order-type">→ {targetBody?.name ?? plan.targetBodyId}</div>
                       <div className="order-details" title={t('ship.panel.dvTip')}>
-                        {t('ship.panel.etaDv', { eta: Math.max(0, plan.arriveTick - gameState.currentTick).toFixed(0), dv: fmtDv(plan.totalDv) })}
+                        {t('ship.panel.etaDv', { eta: ticksUntil(plan.arriveTick, gameState.currentTick), dv: fmtDv(plan.totalDv) })}
                       </div>
                       {pendingNode && gateNote(ship.orbit.parentBodyId, plan.targetBodyId, plan.arriveTick - plan.startTick)}
                     </>
@@ -1916,7 +1917,7 @@ export const ShipPanel: React.FC = () => {
               <div className="order-info">
                 <div className="order-type">{order.label || order.type.toUpperCase()}</div>
                 <div className="order-details">
-                  Δv: {Math.abs(order.deltav).toFixed(2)} km/s | T+{order.burnTime.toFixed(0)}
+                  Δv: {fmtFixed(Math.abs(order.deltav), 2)} km/s | T+{order.burnTime.toFixed(0)}
                 </div>
               </div>
               <div className="order-actions">
@@ -1954,7 +1955,7 @@ export const ShipPanel: React.FC = () => {
                 <div className="order-info">
                   <div className="order-type">→ {targetBody?.name ?? qt.targetBodyId}</div>
                   <div className="order-details" title={t('ship.panel.dvTip')}>
-                    {t('ship.panel.queuedLine', { dv: fmtDv(qt.totalDv), n: Math.max(0, Math.ceil(qt.arriveTick - gameState.currentTick)) })}
+                    {t('ship.panel.queuedLine', { dv: fmtDv(qt.totalDv), n: ticksUntil(qt.arriveTick, gameState.currentTick) })}
                   </div>
                   {gateNote(legFrom, qt.targetBodyId, qt.arriveTick - qt.startTick)}
                 </div>
@@ -3952,7 +3953,7 @@ export const ShipPanel: React.FC = () => {
             >
               <span className="label">{t('ship.panel.speed')}</span>
               <span className="value">
-                {combatSpeedOf(ship.class as ShipClassName, ship.parts).toFixed(2)}
+                {fmtFixed(combatSpeedOf(ship.class as ShipClassName, ship.parts), 2)}
               </span>
             </div>
             {/* The standalone ETA row is gone: the countdown now rides the
@@ -4430,6 +4431,108 @@ function pickerGroupOf(
   return { key: rootOf(body.id) };
 }
 
+/** The destination picker's groups: one per system, lone rocks and sites
+ *  folded together, the home system (the one `homeBodyId` is in) first,
+ *  then outward from the Sun, the far systems last. Shared by the picker
+ *  and the fleet / group "Destination…" lists, which were one flat
+ *  alphabetical list of 96 worlds (Rafaela, Leo, 2026-10-24). */
+export function groupTransferTargets(
+  bodies: import('../types').Body[],
+  visible: import('../types').Body[],
+  homeBodyId: string | null | undefined,
+  rootOf: (bodyId: string) => string = makeSystemRootOf(bodies),
+): Array<{ key: string; label: string; order: number; farSystem?: boolean; bodies: import('../types').Body[] }> {
+  const excludeBodyId = homeBodyId;
+  const byId = new Map(bodies.map(b => [b.id, b]));
+  const map = new Map<string, { label: string; order: number; farSystem?: boolean; bodies: import('../types').Body[] }>();
+  for (const b of visible) {
+    const g = pickerGroupOf(b, rootOf);
+    if (!map.has(g.key)) {
+      // Far systems keep their hand-written names; everything else is
+      // named by systemLabel, which already knows that a bare rock is
+      // "Midas" and only a body with satellites earns "… System".
+      const label = g.key === 'centauri' ? t('ship.panel.centauriSystem')
+        : g.key === 'cygnus' ? t('ship.panel.cygnusSystem')
+        : systemLabel(bodies, g.key);
+      map.set(g.key, { label, order: 0, farSystem: g.farSystem, bodies: [] });
+    }
+    map.get(g.key)!.bodies.push(b);
+  }
+  // LONE ROCKS SHARE A GROUP. A meteoroid (MTR-12) or a structure site
+  // orbiting nothing but the sun is its own "system", so the list grew
+  // a one-item heading per rock ("MTR-14 · 1", "MTR-12 · 1", … — QA
+  // battle test). They fold into one group of their kind instead.
+  for (const [key, v] of [...map.entries()]) {
+    const only = v.bodies.length === 1 ? v.bodies[0] : null;
+    if (!only || v.farSystem || only.id !== key) continue;
+    const kind = only.type === 'meteoroid' ? { k: '__meteoroids', label: t('ship.panel.meteoroids') }
+      : only.type === 'megastructure' ? { k: '__structures', label: t('ship.panel.structureSites') }
+      : null;
+    if (!kind) continue;
+    map.delete(key);
+    if (!map.has(kind.k)) map.set(kind.k, { label: kind.label, order: 0, bodies: [] });
+    map.get(kind.k)!.bodies.push(only);
+  }
+  // Order Sol groups by distance from the sun, so the list reads
+  // outward — Core, Earth, Mars, the Belt, Jupiter … Kuiper. That is
+  // the map players already have in their heads, and it beats an
+  // arbitrary hand-assigned rank that has to be renumbered whenever a
+  // group is added.
+  //
+  // Two shapes of key: a REAL body (jupiter → use its own orbit) and a
+  // SYNTHETIC root (the Core, and each belt — no body carries that id,
+  // so fall back to the median orbit of its members).
+  for (const [key, v] of map.entries()) {
+    v.bodies.sort((a, b) => a.name.localeCompare(b.name));
+    if (v.farSystem) { v.order = key === 'centauri' ? 1e9 : 1e9 + 1; continue; }
+    const root = byId.get(key);
+    if (root) { v.order = root.orbitRadius ?? 0; continue; }
+    const radii = v.bodies.map(b => b.orbitRadius ?? 0).sort((a, b) => a - b);
+    v.order = radii[Math.floor(radii.length / 2)] ?? 0;
+  }
+  // HOME FIRST: the system the ship (or world) is in leads the list, so
+  // the nearest worlds are the first ones offered. Outward from the Sun,
+  // a player at Jupiter or Pluto scrolled past forty worlds to find their
+  // neighbours (playtest, 2026-10-24).
+  const homeKey = excludeBodyId && byId.has(excludeBodyId) ? rootOf(excludeBodyId) : null;
+  const isHome = (k: string) => (k === homeKey ? 0 : 1);
+  return Array.from(map.entries())
+    .map(([key, v]) => ({ key, ...v }))
+    .sort((a, b) => isHome(a.key) - isHome(b.key) || a.order - b.order || a.label.localeCompare(b.label));
+}
+
+/** A world a leg can end at: not a centre-of-mass marker (a sun gate's
+ *  landing site excepted), not a gate still in flight. */
+export function isPickableDestination(b: import('../types').Body, tick?: number): boolean {
+  if (b.type === 'lagrange' && !isSunGateSite(b)) return false;
+  if (tick != null && isGateInFlight(b, tick)) return false;
+  return true;
+}
+
+/** <optgroup>s for a native "Destination…" <select>, grouped as the
+ *  picker groups them, home system first. */
+export const DestinationOptions: React.FC<{
+  bodies: import('../types').Body[];
+  homeBodyId?: string | null;
+  tick?: number;
+  label?: (b: import('../types').Body) => string;
+}> = ({ bodies, homeBodyId, tick, label }) => {
+  const { lang } = useI18n();
+  const groups = useMemo(() => {
+    void lang;
+    return groupTransferTargets(bodies, bodies.filter(b => isPickableDestination(b, tick)), homeBodyId);
+  }, [bodies, homeBodyId, tick, lang]);
+  return (
+    <>
+      {groups.map(g => (
+        <optgroup key={g.key} label={g.label}>
+          {g.bodies.map(b => <option key={b.id} value={b.id}>{label ? label(b) : b.name}</option>)}
+        </optgroup>
+      ))}
+    </>
+  );
+};
+
 // Exported so the world menu can reuse it for "where should this hull go
 // when it is built". One destination picker for the whole game: a second
 // one would drift in grouping, search and mobile layout the moment
@@ -4488,63 +4591,8 @@ export const TransferTargetPicker: React.FC<TransferTargetPickerProps> = ({
   const rootOf = useMemo(() => makeSystemRootOf(bodies), [bodies]);
 
   const groups = useMemo(() => {
-    const byId = new Map(bodies.map(b => [b.id, b]));
     void pickerLang;   // group labels are translated: recompute on a language flip
-    const map = new Map<string, { label: string; order: number; farSystem?: boolean; bodies: import('../types').Body[] }>();
-    for (const b of visible) {
-      const g = pickerGroupOf(b, rootOf);
-      if (!map.has(g.key)) {
-        // Far systems keep their hand-written names; everything else is
-        // named by systemLabel, which already knows that a bare rock is
-        // "Midas" and only a body with satellites earns "… System".
-        const label = g.key === 'centauri' ? t('ship.panel.centauriSystem')
-          : g.key === 'cygnus' ? t('ship.panel.cygnusSystem')
-          : systemLabel(bodies, g.key);
-        map.set(g.key, { label, order: 0, farSystem: g.farSystem, bodies: [] });
-      }
-      map.get(g.key)!.bodies.push(b);
-    }
-    // LONE ROCKS SHARE A GROUP. A meteoroid (MTR-12) or a structure site
-    // orbiting nothing but the sun is its own "system", so the list grew
-    // a one-item heading per rock ("MTR-14 · 1", "MTR-12 · 1", … — QA
-    // battle test). They fold into one group of their kind instead.
-    for (const [key, v] of [...map.entries()]) {
-      const only = v.bodies.length === 1 ? v.bodies[0] : null;
-      if (!only || v.farSystem || only.id !== key) continue;
-      const kind = only.type === 'meteoroid' ? { k: '__meteoroids', label: t('ship.panel.meteoroids') }
-        : only.type === 'megastructure' ? { k: '__structures', label: t('ship.panel.structureSites') }
-        : null;
-      if (!kind) continue;
-      map.delete(key);
-      if (!map.has(kind.k)) map.set(kind.k, { label: kind.label, order: 0, bodies: [] });
-      map.get(kind.k)!.bodies.push(only);
-    }
-    // Order Sol groups by distance from the sun, so the list reads
-    // outward — Core, Earth, Mars, the Belt, Jupiter … Kuiper. That is
-    // the map players already have in their heads, and it beats an
-    // arbitrary hand-assigned rank that has to be renumbered whenever a
-    // group is added.
-    //
-    // Two shapes of key: a REAL body (jupiter → use its own orbit) and a
-    // SYNTHETIC root (the Core, and each belt — no body carries that id,
-    // so fall back to the median orbit of its members).
-    for (const [key, v] of map.entries()) {
-      v.bodies.sort((a, b) => a.name.localeCompare(b.name));
-      if (v.farSystem) { v.order = key === 'centauri' ? 1e9 : 1e9 + 1; continue; }
-      const root = byId.get(key);
-      if (root) { v.order = root.orbitRadius ?? 0; continue; }
-      const radii = v.bodies.map(b => b.orbitRadius ?? 0).sort((a, b) => a - b);
-      v.order = radii[Math.floor(radii.length / 2)] ?? 0;
-    }
-    // HOME FIRST: the system the ship (or world) is in leads the list, so
-    // the nearest worlds are the first ones offered. Outward from the Sun,
-    // a player at Jupiter or Pluto scrolled past forty worlds to find their
-    // neighbours (playtest, 2026-10-24).
-    const homeKey = excludeBodyId && byId.has(excludeBodyId) ? rootOf(excludeBodyId) : null;
-    const isHome = (k: string) => (k === homeKey ? 0 : 1);
-    return Array.from(map.entries())
-      .map(([key, v]) => ({ key, ...v }))
-      .sort((a, b) => isHome(a.key) - isHome(b.key) || a.order - b.order || a.label.localeCompare(b.label));
+    return groupTransferTargets(bodies, visible, excludeBodyId, rootOf);
   }, [visible, bodies, rootOf, pickerLang, excludeBodyId]);
 
   // Active-query auto-expand: when the player is searching, any
@@ -5185,10 +5233,10 @@ const CurrentTargetRow: React.FC<{ ship: Ship }> = ({ ship }) => {
   // Shows the work only when there is work to show; an orbit with no
   // flak keeps the plain sentence.
   const flakNote = (f: { mounts: number; mul: number }, whose: string) =>
-    f.mounts > 0 ? ` (${whose ? t('ship.panel.flakEnemy', { mul: f.mul.toFixed(2), n: f.mounts }) : t('ship.panel.flakOwn', { mul: f.mul.toFixed(2), n: f.mounts })})` : '';
+    f.mounts > 0 ? ` (${whose ? t('ship.panel.flakEnemy', { mul: fmtFixed(f.mul, 2), n: f.mounts }) : t('ship.panel.flakOwn', { mul: fmtFixed(f.mul, 2), n: f.mounts })})` : '';
   const oddsTitle = t('ship.panel.oddsTip', {
-    a: hullSpeed.toFixed(2), noteA: flakNote(myFlak, 'enemy '),
-    b: targetHullSpeed.toFixed(2), noteB: flakNote(targetFlak, ''),
+    a: fmtFixed(hullSpeed, 2), noteA: flakNote(myFlak, 'enemy '),
+    b: fmtFixed(targetHullSpeed, 2), noteB: flakNote(targetFlak, ''),
   });
 
   // Settlements carry no shield/armor parts, so bombardment lands in
@@ -5225,14 +5273,14 @@ const CurrentTargetRow: React.FC<{ ship: Ship }> = ({ ship }) => {
         </span>
         <span className="sp-target__k">{t('ship.panel.perHit')}</span>
         <span className="sp-target__v" title={mit < 1
-          ? t('ship.panel.perHitCut', { dmg: myDamage.toFixed(1), pct: Math.round(100 * mit) })
+          ? t('ship.panel.perHitCut', { dmg: fmtFixed(myDamage, 1), pct: Math.round(100 * mit) })
           : t('ship.panel.perHitFull')}>
-          {perHit.toFixed(1)}
+          {fmtFixed(perHit, 1)}
           {mit < 1 && <span className="sp-target__dim"> ({Math.round(100 * mit)}%)</span>}
         </span>
         <span className="sp-target__k">{t('ship.panel.expected')}</span>
         <span className="sp-target__v sp-target__v--hero" title={t('ship.panel.expectedTip')}>
-          {perTick.toFixed(1)}<span className="sp-target__dim">/{t('fleet.tick')}</span>
+          {fmtFixed(perTick, 1)}<span className="sp-target__dim">/{t('fleet.tick')}</span>
         </span>
       </div>
       {/* Show the work: every live multiplier folded into the numbers
@@ -5242,14 +5290,14 @@ const CurrentTargetRow: React.FC<{ ship: Ship }> = ({ ship }) => {
       {factors.length > 0 && (
         <div className="sp-target__bonus">
           <span className="sp-target__bonus-lead">
-            {t('ship.panel.baseMul', { dmg: baseDamage.toFixed(1), mul: bonusMul.toFixed(2) })}
+            {t('ship.panel.baseMul', { dmg: fmtFixed(baseDamage, 1), mul: fmtFixed(bonusMul, 2) })}
           </span>
           {factors.map(f => (
             <span
               key={f.label}
               className={`sp-target__chip${f.mul < 1 ? ' sp-target__chip--bad' : ''}`}
             >
-              {f.label} ×{f.mul.toFixed(2)}
+              {f.label} ×{fmtFixed(f.mul, 2)}
             </span>
           ))}
         </div>
@@ -5863,8 +5911,7 @@ const TradeRouteSection: React.FC<{
     if (ship.transit) {
       const plan = ship.transit.currentTransfer;
       const to = bodies.find(b => b.id === plan.targetBodyId);
-      const eta = Math.max(0, plan.arriveTick - currentTick);
-      nextAction = t('ship.panel.underWayTo', { name: to?.name ?? t('ship.panel.destinationWord'), n: Math.round(eta) });
+      nextAction = t('ship.panel.underWayTo', { name: to?.name ?? t('ship.panel.destinationWord'), n: ticksUntil(plan.arriveTick, currentTick) });
     } else if (here === route.destBodyId && cargoTotal > 0) {
       nextAction = t('ship.panel.unloadingAt', { name: dest?.name ?? t('ship.panel.destinationWord') });
     } else if (here && mineBodyIds.has(here)) {

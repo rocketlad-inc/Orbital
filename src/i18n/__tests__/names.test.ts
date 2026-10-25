@@ -2,9 +2,9 @@
 // real Sol worlds and the template words the server builds names from
 // translate; generated proper names never do.
 import { bodyNameIn, settlementNameIn, shipNameIn, designNameIn, ofPlace } from '../names';
-import { pluralRule, setLang, tn } from '../core';
+import { pluralRule, setLang, tn, t, fmtFixed, fmtDecimal } from '../core';
 import { inLang } from '../serverText';
-import { systemLabel } from '../../game/systemGrouping';
+import { systemLabel, serverSystemLabel } from '../../game/systemGrouping';
 import type { Body } from '../../types';
 
 afterEach(() => setLang('en', false));
@@ -36,6 +36,18 @@ describe('world names', () => {
     expect(systemLabel(bodies, 'uranus')).toBe('Urano System');
     expect(ofPlace('en', 'Mars')).toBe('Mars');
   });
+
+  it('translates the system labels the server builds (Senate vote weight)', () => {
+    setLang('pt-BR', false);
+    expect(serverSystemLabel('Saturn System')).toBe('Sistema de Saturno');
+    expect(serverSystemLabel('Earth System')).toBe('Sistema da Terra');
+    expect(serverSystemLabel('Kuiper Belt')).toBe('Cinturão de Kuiper');
+    expect(serverSystemLabel('The Core')).toBe('O Núcleo');
+    expect(serverSystemLabel('Ceres')).toBe('Ceres');
+    expect(serverSystemLabel('Pluto')).toBe('Plutão');
+    setLang('en', false);
+    expect(serverSystemLabel('Saturn System')).toBe('Saturn System');
+  });
 });
 
 describe('generated names: only the template words translate', () => {
@@ -52,6 +64,10 @@ describe('generated names: only the template words translate', () => {
     expect(shipNameIn('pt-BR', 'Vanguard of Earth')).toBe('Vanguard da Terra');
     expect(shipNameIn('pt-BR', 'Pioneer of Mars')).toBe('Pioneer de Marte');
     expect(shipNameIn('pt-BR', 'Kestrel')).toBe('Kestrel');
+    // The trial's head-start hulls (worker/trial.js TRIAL_FLEET).
+    expect(shipNameIn('pt-BR', 'Lancer I of Europa')).toBe('Lancer I de Europa');
+    expect(shipNameIn('pt-BR', 'Lancer III of Earth')).toBe('Lancer III da Terra');
+    expect(shipNameIn('pt-BR', 'Packhorse of Titan')).toBe('Packhorse de Titã');
     expect(shipNameIn('en', 'Vanguard of Earth')).toBe('Vanguard of Earth');
     expect(designNameIn('pt-BR', 'Default')).toBe('Padrão');
     expect(designNameIn('en', 'Default')).toBe('Default');
@@ -82,5 +98,22 @@ describe('server-worded text (Senate laws)', () => {
     setLang('pt-BR', false);
     expect(inLang(law)).toMatchObject({ name: 'Mais Metal', effect: 'Cada assentamento extrai 25% mais metal.' });
     expect(inLang({ name: 'X' } as { name: string; i18n?: undefined }).name).toBe('X');
+  });
+});
+
+describe('numbers on screen', () => {
+  it('take a decimal comma in Portuguese, a point in English', () => {
+    setLang('pt-BR', false);
+    expect(fmtFixed(0.92, 2)).toBe('0,92');
+    expect(fmtFixed(1.375, 3)).toBe('1,375');
+    expect(fmtDecimal(2.4)).toBe('2,4');
+    expect(fmtDecimal(3)).toBe('3');
+    // A fraction filling a placeholder; a whole number (a tick) is untouched.
+    expect(t('helper.sit.research.complete', { name: 'Armas', level: 2.5 })).toBe('Armas 2,5 concluída');
+    expect(t('helper.sit.research.complete', { name: 'Armas', level: 1500 })).toBe('Armas 1500 concluída');
+    setLang('en', false);
+    expect(fmtFixed(0.92, 2)).toBe('0.92');
+    expect(fmtDecimal(2.4)).toBe('2.4');
+    expect(t('helper.sit.research.complete', { name: 'Weapons', level: 2.5 })).toBe('Weapons 2.5 complete');
   });
 });

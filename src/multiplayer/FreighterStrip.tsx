@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { employedShipIds } from '../game/routeSelectors';
-import { t } from '../i18n/core';
+import { t, tn } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 
 // "Why is my freighter idle?" is the question the trade dock exists to
@@ -46,7 +46,7 @@ export function FreighterStrip({ onPutToWork }: { onPutToWork: () => void }) {
       <span className="fs-count">
         <b>{total}</b> · {t('mp.freighters.working', { n: working })}
         {idle.length > 0
-          ? <> · <b className="fs-idle">{t('mp.freighters.idle', { n: idle.length })}</b></>
+          ? <> · <b className="fs-idle">{tn('mp.freighters.idle', idle.length)}</b></>
           : ` · ${t('mp.freighters.noneIdle')}`}
       </span>
       {idle.length > 0 && (

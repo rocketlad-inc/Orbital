@@ -12,7 +12,7 @@ import { deriveSecondary } from '../game/colorUtils';
 import { makeSystemRootOf, systemLabel as systemLabelOf } from '../game/systemGrouping';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { EconomyPanel } from './EconomyPanel';
-import { t, tn } from '../i18n/core';
+import { t, tn, fmtFixed } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import './OverviewPanel.css';
 // Borrow the Fleet panel's chrome so the two overview screens read as one
@@ -329,10 +329,10 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
                               </span>
                               <span className="set-card__l3">
                                 <span className={yields.ore > 0 ? 'prod-rate prod-rate--ore' : 'prod-rate prod-rate--zero'}>
-                                  {yields.ore > 0 ? `+${yields.ore.toFixed(1)}M` : '—'}
+                                  {yields.ore > 0 ? `+${fmtFixed(yields.ore, 1)}M` : '—'}
                                 </span>
                                 <span className={yields.credits > 0 ? 'prod-rate prod-rate--credits' : 'prod-rate prod-rate--zero'}>
-                                  {yields.credits > 0 ? `+${yields.credits.toFixed(1)}C` : '—'}
+                                  {yields.credits > 0 ? `+${fmtFixed(yields.credits, 1)}C` : '—'}
                                 </span>
                                 <span className="set-card__stock" title={t('settle.bankedTitle')}>
                                   {hasStock

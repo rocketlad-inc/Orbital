@@ -6,7 +6,7 @@
 
 import React from 'react';
 import { RoomPageShell } from './RoomLobbyScreen';
-import { RESOURCE_LETTER_COLORS } from '../game/resourceColors';
+import { RESOURCE_LETTER_COLORS, resourceLetter } from '../game/resourceColors';
 import { t } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 
@@ -84,7 +84,7 @@ export function RoomLateJoin({
                         {/* no F — fuel is dead (DESIGN-identity-economy.md §1.1) */}
                         {/* C = credits (server field is still 'gold') */}
                         {b.yield.gold > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.C }}>C{b.yield.gold}</span>}
-                        {b.yield.science > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.S }}>S{b.yield.science}</span>}
+                        {b.yield.science > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.S }}>{resourceLetter('S')}{b.yield.science}</span>}
                       </div>
                       {isMine && <div className="lobby-body-card__tag">{t('roomlobby.late.chosen')}</div>}
                     </button>

@@ -293,4 +293,13 @@
     padding-top: calc(env(safe-area-inset-top) + var(--stg-h, 0px));
     height: calc(var(--topbar-h) + env(safe-area-inset-top));
   }
+  /* The narrow-phone 8px above lost to this block (same specificity,
+     later in the file), so a 375px bar paid 32px of padding and pushed
+     the clock off the right edge (Maya, 2026-10-24). */
+  @media (max-width: 480px) {
+    .top-bar {
+      padding-left: max(8px, env(safe-area-inset-left));
+      padding-right: max(8px, env(safe-area-inset-right));
+    }
+  }
 }

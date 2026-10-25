@@ -1,0 +1,28 @@
+/* The one-step check before a group order leaves a world with no warships. */
+.depart-confirm {
+  margin: 6px 0;
+  padding: 8px 10px;
+  border: 1px solid #a85a2a;
+  border-radius: 4px;
+  background: rgba(60, 28, 12, 0.85);
+  color: #f2d7c0;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.depart-confirm__warn { font-weight: 700; color: #ffb27a; }
+.depart-confirm__eta { margin-top: 2px; color: #d8c4b0; }
+.depart-confirm__actions { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.depart-confirm__btn {
+  padding: 4px 10px;
+  background: transparent;
+  color: #d8e4ee;
+  border: 1px solid #5a7080;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.depart-confirm__btn--go { color: #ffb27a; border-color: #ffb27a; }

@@ -12,6 +12,7 @@
 // as a claim about their squadron, so it lives where it can be tested.
 // ============================================================
 
+import { ticksUntil } from './wholeTicks';
 import type { Ship } from '../types';
 import type { ShipStatus } from './systemGrouping';
 
@@ -89,7 +90,7 @@ export function summarizeFleet(
     }
     place.count++;
     if (leg && place.kind === 'transit') {
-      place.eta = Math.max(place.eta ?? 0, Math.max(0, Math.round(leg.arriveTick - currentTick)));
+      place.eta = Math.max(place.eta ?? 0, ticksUntil(leg.arriveTick, currentTick));
     }
   }
 

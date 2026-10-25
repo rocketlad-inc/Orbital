@@ -13,7 +13,7 @@ import type { GameState } from '../../types';
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const EN = ['T+3  ⚠ Cerean Union diverts Rock 7 toward Venus — impact in T-9 ticks', 'T+4  Cerean Union founded city Alpha on Mars'];
-const PT = ['T+3  ⚠ Cerean Union desvia Rock 7 rumo a Venus — impacto em 9 turnos', 'T+4  Cerean Union fundou Alpha (cidade) em Mars'];
+const PT = ['T+3  ⚠ Cerean Union desvia Rock 7 rumo a Venus — impacto em 9 ticks', 'T+4  Cerean Union fundou Alpha (cidade) em Mars'];
 
 function state(extra: Partial<GameState>): GameState {
   return {

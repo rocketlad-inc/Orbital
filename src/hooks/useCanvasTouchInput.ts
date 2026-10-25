@@ -261,6 +261,9 @@ export function useCanvasTouchInput({
       if (e.pointerType !== 'touch') return;
       // Prevent the page from interpreting this as scroll / pull-to-refresh.
       e.preventDefault();
+      // The first finger of a new gesture: whatever menu pinch was going
+      // on has ended, whether or not its end reached us.
+      if (pointers.size === 0) endMenuPinch();
       // Capture keeps a drag's moves coming when the finger leaves the
       // canvas. It THROWS if the pointer is no longer active by the time
       // the handler runs (a finger lifted mid-dispatch), and an uncaught
@@ -471,7 +474,24 @@ export function useCanvasTouchInput({
       const el = tc.target as Element | null;
       return !!el && el !== canvas && typeof el.closest === 'function' && !!el.closest('.wm-root');
     };
+    // THE END OF A MENU PINCH MUST ALWAYS ARRIVE. A pinch out of the menu
+    // closes it, and React removes the very elements the fingers are on.
+    // A touch's events keep going to its first target, and from a node no
+    // longer in the document they never reach the document's listeners:
+    // the touchend was lost, menuPinch stayed set, and every later pinch on
+    // the map returned early, so a phone could not zoom out once a pinch
+    // had closed a menu (Maya, round 2). The fingers' own targets hear the
+    // end too, and a fresh touch on the canvas clears a stale one.
+    let menuPinchTargets: EventTarget[] = [];
+    const onTargetTouchEnd = (e: Event) => {
+      if ((e as TouchEvent).touches.length !== 2) endMenuPinch();
+    };
     const endMenuPinch = () => {
+      for (const t of menuPinchTargets) {
+        t.removeEventListener('touchend', onTargetTouchEnd);
+        t.removeEventListener('touchcancel', onTargetTouchEnd);
+      }
+      menuPinchTargets = [];
       if (!menuPinch) return;
       menuPinch = null;
       // A finger left on the canvas was half a pinch, not a tap.
@@ -495,6 +515,11 @@ export function useCanvasTouchInput({
         for (const p of pointers.values()) p.gesture = 'pan';
         beginPinchFocus();
         menuPinch = { startDist: dist, startScale: cameraRef.current.scale, lastMid: mid };
+        menuPinchTargets = all.map(tc => tc.target).filter(t => t !== canvas);
+        for (const t of menuPinchTargets) {
+          t.addEventListener('touchend', onTargetTouchEnd);
+          t.addEventListener('touchcancel', onTargetTouchEnd);
+        }
         return;
       }
       if (e.type !== 'touchmove') return;

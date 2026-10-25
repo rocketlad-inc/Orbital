@@ -1196,6 +1196,16 @@ export function customFactionName(capitalName) {
   return n ? `House of ${n}` : 'Free House';
 }
 
+/** A solo game's computer empire, named for the world it starts on: the
+ *  capital's name and its seat's word from FACTION_NAMES ("Titan
+ *  Combine"). The defaults name places ("Mars Combine") that a seat
+ *  dealt Pluto never held (playtest R2-B9). */
+export function computerFactionName(capitalName, slot) {
+  const n = typeof capitalName === 'string' ? capitalName.trim() : '';
+  const word = FACTION_NAMES[slot % FACTION_NAMES.length].split(' ').pop();
+  return n ? `${n} ${word}` : FACTION_NAMES[slot % FACTION_NAMES.length];
+}
+
 const FACTION_COLORS = [
   '#ff7043', // ember
   '#42a5f5', // azure
@@ -1779,7 +1789,7 @@ export async function seedGameWorld(env, gameId) {
   const members = await env.DB
     .prepare(
       `SELECT user_id, joined_at, empire_name, bio, chosen_starting_body,
-              color, color2, emblem, name_pools
+              color, color2, emblem, name_pools, join_method
          FROM room_members
         WHERE room_id = ?
         ORDER BY joined_at ASC, user_id ASC`,
@@ -2130,7 +2140,10 @@ export async function seedGameWorld(env, gameId) {
       user_id: m.user_id,
       // A custom map's default name waits for the capital (below): Sol's
       // "Mars Combine" and "Belt Syndicate" name places that map lacks.
-      name: empire || (customStarts ? null : FACTION_NAMES[slot % FACTION_NAMES.length]),
+      // A solo game's computer empire is named for its capital (below):
+      // "Mars Combine" built at Pluto and Titan (playtest R2-B9).
+      name: empire || (customStarts || m.join_method === 'solo_ai' ? null : FACTION_NAMES[slot % FACTION_NAMES.length]),
+      solo_ai: m.join_method === 'solo_ai',
       color,
       color2,
       emblem,
@@ -2216,6 +2229,7 @@ export async function seedGameWorld(env, gameId) {
     }
     f.worlds = myWorlds;
     f.capital_body_id = bodyRowIdFor(f.capital_template_id);
+    if (!f.name && f.solo_ai) f.name = computerFactionName(CATALOG.find(b => b.id === f.capital_template_id)?.name, f.slot);
     if (!f.name) f.name = customFactionName(CATALOG.find(b => b.id === f.capital_template_id)?.name);
     myWorlds.forEach((tplId, wIdx) => {
       ownership.set(tplId, { factionId: f.id, isCapital: wIdx === 0 });
@@ -3191,13 +3205,22 @@ async function handleMyFaction(_req, env, ctx) {
   // Research context for standalone panels (TradesPanel lives OUTSIDE
   // GameContextProvider, so it can't read tech levels from game state —
   // it asks /me instead). Additive fields; older clients ignore them.
-  const [techRows, game] = await Promise.all([
+  const [techRows, game, freighterRow] = await Promise.all([
     env.DB
       .prepare('SELECT tech_id, level FROM faction_techs WHERE game_id = ? AND faction_id = ?')
       .bind(gameId, row.id)
       .all(),
     env.DB.prepare('SELECT gating_enabled FROM games WHERE id = ?').bind(gameId).first(),
+    // Freighters you already own carry trades whatever research says: a
+    // Play for Free trial starts with one and no Propulsion, and the
+    // trade panels told it "you cannot build one yet" (playtest R2-C5).
+    env.DB
+      .prepare(`SELECT COUNT(*) AS n FROM game_ships
+                 WHERE game_id = ? AND owner_faction_id = ? AND ship_class = 'freighter' AND status = 'active'`)
+      .bind(gameId, row.id)
+      .first(),
   ]);
+  const freighters = Number(freighterRow?.n ?? 0);
   const tech_levels = Object.fromEntries((techRows.results ?? []).map(r => [r.tech_id, r.level]));
   // HOW MANY FREIGHTERS A ROUTE MAY HOLD, resolved by the SAME function
   // the /state payload and the add-ship endpoint use. Sent rather than
@@ -3210,7 +3233,7 @@ async function handleMyFaction(_req, env, ctx) {
     carrier_cap = await carrierCapFor(env, gameId, row.id);
   } catch { /* leave the conservative 1 — the server still enforces */ }
   return jsonResponse({
-    faction: { ...row, tech_levels, gating_enabled: game?.gating_enabled ?? 0, carrier_cap },
+    faction: { ...row, tech_levels, gating_enabled: game?.gating_enabled ?? 0, carrier_cap, freighters },
   });
 }
 

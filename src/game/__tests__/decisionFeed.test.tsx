@@ -52,6 +52,24 @@ describe('NEEDS A DECISION: votes, offers and ceasefires', () => {
   });
 });
 
+describe('an open bill across ticks (R2-B2, R2-B8)', () => {
+  it('counts down as the ticks pass, the same feed throughout', () => {
+    const mp: SituationMpData = { openVotes: [{ id: 'p1', title: 'More Metal', vote_closes_at_tick: 13 }] };
+    let out: SituationItem[] = [];
+    const Probe: React.FC<{ g: GameState }> = ({ g }) => { out = useSituationItems(g, 'player', mp); return null; };
+    const root = createRoot(document.createElement('div'));
+    const sub = () => out.find(i => i.category === 'vote_open')?.subtitle;
+    act(() => { root.render(<Probe g={{ ...gs, currentTick: 3 } as GameState} />); });
+    expect(sub()).toBe('Voting closes in 10t');
+    act(() => { root.render(<Probe g={{ ...gs, currentTick: 5 } as GameState} />); });
+    expect(sub()).toBe('Voting closes in 8t');
+    // Past its window and still open: a solo game holds it for you.
+    act(() => { root.render(<Probe g={{ ...gs, currentTick: 14 } as GameState} />); });
+    expect(sub()).toBe('The Senate waits for your vote');
+    act(() => root.unmount());
+  });
+});
+
 describe('situationFeed', () => {
   afterEach(() => clearSituation());
   it('merges each poll\'s part and announces the whole', () => {

@@ -43,12 +43,18 @@ type Summary = {
   wars: { wars: WarRow[] } | null;
 };
 
+/** The last read per game: a reopen draws at once instead of "No other
+ *  empires." while it loads (playtest R2-B3). */
+const standingCache = new Map<string, { factions: Faction[]; wars: WarRow[]; allies: Set<string>; meId: string | null }>();
+
 export function StandingPanel({ gameId }: Props) {
   useI18n();
-  const [factions, setFactions] = useState<Faction[]>([]);
-  const [wars, setWars] = useState<WarRow[]>([]);
-  const [allies, setAllies] = useState<Set<string>>(new Set());
-  const [meId, setMeId] = useState<string | null>(null);
+  const cached = standingCache.get(gameId);
+  const [loaded, setLoaded] = useState<boolean>(!!cached);
+  const [factions, setFactions] = useState<Faction[]>(cached?.factions ?? []);
+  const [wars, setWars] = useState<WarRow[]>(cached?.wars ?? []);
+  const [allies, setAllies] = useState<Set<string>>(cached?.allies ?? new Set());
+  const [meId, setMeId] = useState<string | null>(cached?.meId ?? null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
@@ -73,6 +79,11 @@ export function StandingPanel({ gameId }: Props) {
       }
       setAllies(set);
       setError(null);
+      standingCache.set(gameId, {
+        factions: d?.factions?.factions ?? [], wars: d?.wars?.wars ?? [],
+        allies: set, meId: d?.me?.faction?.id ?? null,
+      });
+      setLoaded(true);
     } catch {
       setError(t('standing.err.read'));
     }
@@ -118,6 +129,15 @@ export function StandingPanel({ gameId }: Props) {
   };
 
   const others = factions.filter(f => f.id !== meId && f.status !== 'eliminated');
+
+  if (!loaded) {
+    return (
+      <div className="mp-standing">
+        {error ? <div className="mp-standing-error">{error}</div>
+          : <div className="mp-standing-empty">{t('standing.loading')}</div>}
+      </div>
+    );
+  }
 
   return (
     <div className="mp-standing">

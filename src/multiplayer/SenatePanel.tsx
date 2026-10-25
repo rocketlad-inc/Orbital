@@ -7,8 +7,9 @@ import { logUiEvent } from './telemetry';
 import { DiscordLink } from './DiscordLink';
 import { FactionEmblem } from '../components/FactionEmblem';
 import { hasFeature, requirementFor } from '../game/researchUnlocks';
+import { serverSystemLabel } from '../game/systemGrouping';
 import { TECH_DEFS } from '../game/techs';
-import { t, tn, tk } from '../i18n/core';
+import { t, tn, tk, fmtDecimal } from '../i18n/core';
 import type { Key } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import { apiErrorText } from '../i18n/apiErrors';
@@ -31,10 +32,10 @@ function ticksReal(ticks: number, tickMs?: number | null): string {
   const mins = ms / 60_000;
   const hours = ms / 3_600_000;
   const human = mins < 60
-    ? `~${Math.max(1, Math.round(mins))}m`
+    ? `~${t('market.time.m', { n: Math.max(1, Math.round(mins)) })}`
     : hours < 48
-      ? `~${Math.round(hours)}h`
-      : `~${Math.round(hours / 24)}d`;
+      ? `~${t('market.time.h', { n: Math.round(hours) })}`
+      : `~${t('market.time.d', { n: Math.round(hours / 24) })}`;
   return `${base} · ${human}`;
 }
 
@@ -140,7 +141,7 @@ function WeightCard({ detail }: { detail: WeightDetail | null }) {
         {t('senate.weight.title')}
       </div>
       <div style={{ fontSize: 10.5, color: 'var(--mp-fg-dim)', marginTop: 3, lineHeight: 1.55 }}>
-        {detail.rule}
+        {t('senate.weight.rule')}
       </div>
       <div style={{ fontSize: 10.5, marginTop: 6, lineHeight: 1.6 }}>
         <span style={{ color: 'var(--mp-fg-dim)' }}>{t('senate.weight.base', { n: detail.base })}</span>
@@ -151,7 +152,7 @@ function WeightCard({ detail }: { detail: WeightDetail | null }) {
               <span key={s.label}>
                 {i > 0 && <span style={{ color: 'var(--mp-fg-dim)' }}> + </span>}
                 <span style={{ color: '#6ee7b7' }} title={t('senate.weight.held', { held: s.held, total: s.total })}>
-                  {s.label}
+                  {serverSystemLabel(s.label)}
                 </span>
               </span>
             ))}
@@ -162,7 +163,7 @@ function WeightCard({ detail }: { detail: WeightDetail | null }) {
       </div>
       {near.length > 0 && (
         <div style={{ fontSize: 10.5, color: '#ffb84d', marginTop: 6, lineHeight: 1.6 }}>
-          {t('senate.weight.near', { labels: near.map(s => s.label).join(', ') })}
+          {t('senate.weight.near', { labels: near.map(s => serverSystemLabel(s.label)).join(', ') })}
         </div>
       )}
       </div>
@@ -359,6 +360,15 @@ const STATUS_LABEL: Record<SenateProposal['status'], Key> = {
   withdrawn: 'senate.status.withdrawn',
 };
 
+/** The last proposals answer per game, kept across opens. The tab used to
+ *  start empty and say "No bill on the floor" for a second or two before
+ *  the bill it was about to show (playtest R2-B7); a reopen now draws the
+ *  last answer at once, and a first open says it is loading. */
+const senateCache = new Map<string, {
+  proposals: SenateProposal[]; session: SenateSession | null; tickMs: number | null;
+  laws: ActiveLaw[]; currentTick: number;
+}>();
+
 export function SenatePanel({
   gameId,
 }: {
@@ -375,22 +385,28 @@ export function SenatePanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [rawSliders, lang],
   );
-  const [currentTick, setCurrentTick] = useState<number>(0);
-  const [proposals, setProposals] = useState<SenateProposal[]>([]);
+  const cached = senateCache.get(gameId);
+  const [loaded, setLoaded] = useState<boolean>(!!cached);
+  const [currentTick, setCurrentTick] = useState<number>(cached?.currentTick ?? 0);
+  const [proposals, setProposals] = useState<SenateProposal[]>(cached?.proposals ?? []);
   const [factions, setFactions] = useState<Faction[]>([]);
   const [error, setError] = useState<string | null>(null);
+  /** The propose form's own messages, shown by its submit button: they
+   *  rendered at the top of the tab, off-screen from the form (R2-B7). */
+  const [formError, setFormError] = useState<string | null>(null);
+  const [filedNote, setFiledNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [myFactionId, setMyFactionId] = useState<string | null>(null);
-  const [session, setSession] = useState<SenateSession | null>(null);
+  const [session, setSession] = useState<SenateSession | null>(cached?.session ?? null);
   /** Slider laws currently in force. Empty is the normal state. */
-  const [rawLaws, setLaws] = useState<ActiveLaw[]>([]);
+  const [rawLaws, setLaws] = useState<ActiveLaw[]>(cached?.laws ?? []);
   const laws = useMemo(
     () => rawLaws.map((l) => inLang(l)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [rawLaws, lang],
   );
   /** Wall-clock length of one tick, from the server. Null until known. */
-  const [tickMs, setTickMs] = useState<number | null>(null);
+  const [tickMs, setTickMs] = useState<number | null>(cached?.tickMs ?? null);
   const [weight, setWeight] = useState<WeightDetail | null>(null);
   const [voting, setVoting] = useState<string | null>(null);
   /** Total weight in the chamber — the denominator every turnout and
@@ -526,6 +542,16 @@ export function SenatePanel({
       setSession(pRes.data.session ?? null);
       setTickMs(pRes.data.tick_interval_ms ?? null);
       setLaws(pRes.data.laws ?? []);
+      // The list carries the tick it was read at: the deadlines count
+      // down from it even when the sliders read fails.
+      const tickNow = (pRes.data as { current_tick?: number }).current_tick;
+      if (typeof tickNow === 'number') setCurrentTick(tickNow);
+      senateCache.set(gameId, {
+        proposals: pRes.data.proposals, session: pRes.data.session ?? null,
+        tickMs: pRes.data.tick_interval_ms ?? null, laws: pRes.data.laws ?? [],
+        currentTick: typeof tickNow === 'number' ? tickNow : (sRes.ok ? sRes.data.current_tick : 0),
+      });
+      setLoaded(true);
     }
     if (fRes.ok) setFactions(fRes.data.factions);
     if (wRes.ok) setWeight(wRes.data);
@@ -577,9 +603,10 @@ export function SenatePanel({
 
   async function propose(e: React.FormEvent) {
     e.preventDefault();
-    setError(null);
+    setFormError(null);
+    setFiledNote(null);
     if (!title.trim() || !summary.trim()) {
-      setError(t('senate.err.titleSummary'));
+      setFormError(t('senate.err.titleSummary'));
       return;
     }
     // Per-kind body shape — server validates each branch in
@@ -593,7 +620,7 @@ export function SenatePanel({
       vote_ticks: voteTicks,
     };
     if (kind === 'slider_law') {
-      if (!selectedSlider) { setError(t('senate.err.pickSlider')); return; }
+      if (!selectedSlider) { setFormError(t('senate.err.pickSlider')); return; }
       body.slider_id = selectedSlider.id;
       body.target_value = target;
       // Omitted entirely when empty: the server reads a missing/blank
@@ -604,12 +631,12 @@ export function SenatePanel({
       // on the law itself (LawsCard), so an empty one means the player
       // switched the kind by hand without picking a target.
       if (!repealTargetId) {
-        setError(t('senate.err.pickLaw'));
+        setFormError(t('senate.err.pickLaw'));
         return;
       }
       body.target_proposal_id = repealTargetId;
     } else if (kind === 'chancellor_vote') {
-      if (!targetFactionId) { setError(t('senate.err.pickCandidate')); return; }
+      if (!targetFactionId) { setFormError(t('senate.err.pickCandidate')); return; }
       // The chancellor bill is ONE-SHOT per faction: a failed bid burns
       // your only attempt forever. That consequence lived in a server
       // comment and nowhere in the UI (usability report) — make the
@@ -621,9 +648,9 @@ export function SenatePanel({
     } else {
       // Targeted sanctions: trade_embargo, war_authorization,
       // production_sanction, reparations
-      if (!targetFactionId) { setError(t('senate.err.pickTarget')); return; }
+      if (!targetFactionId) { setFormError(t('senate.err.pickTarget')); return; }
       if (targetFactionId === myFactionId) {
-        setError(t('senate.err.noSelf'));
+        setFormError(t('senate.err.noSelf'));
         return;
       }
       body.target_faction_id = targetFactionId;
@@ -634,7 +661,7 @@ export function SenatePanel({
         if (repAmount.trim() !== '') {
           const n = Number(repAmount);
           if (!Number.isInteger(n) || n < reparationsRange.min || n > reparationsRange.max) {
-            setError(t('senate.err.repAmount', { min: fmtNum(reparationsRange.min), max: fmtNum(reparationsRange.max) }));
+            setFormError(t('senate.err.repAmount', { min: fmtNum(reparationsRange.min), max: fmtNum(reparationsRange.max) }));
             return;
           }
           body.amount_per_faction = n;
@@ -647,7 +674,14 @@ export function SenatePanel({
       body: JSON.stringify(body),
     });
     setBusy(false);
-    if (!res.ok) { setError(apiErrorText(res.error, 'senate.err.propose')); return; }
+    if (!res.ok) { setFormError(apiErrorText(res.error, 'senate.err.propose')); return; }
+    // Say it was filed: a submit used to clear the form and nothing else
+    // (playtest R2-B7). The bill itself is at the top of the tab.
+    const filed = (res.data as { proposal?: SenateProposal } | null)?.proposal;
+    setFiledNote(t('senate.compose.filed', {
+      title: title.trim(),
+      tick: filed?.vote_closes_at_tick ?? currentTick + (kind === 'chancellor_vote' ? chancellorTicks : voteTicks),
+    }));
     setTitle(''); setSummary('');
     setTargetFactionId(''); setSliderTargetId(''); setRepAmount('');
     // Reset to the floor, not to a legacy default below it.
@@ -801,7 +835,7 @@ export function SenatePanel({
           <div className="sp-sect__h"><span className="sp-lbl">{t('senate.floor')}</span></div>
           {floorBills.length === 0 && (
             <div className="sp-empty">
-              {session?.is_chairman === true
+              {!loaded ? t('senate.loading') : session?.is_chairman === true
                 ? t('senate.floor.none.chair')
                 : t('senate.floor.none')}
             </div>
@@ -1158,6 +1192,12 @@ export function SenatePanel({
                 : t('senate.compose.cant'))
             : t('senate.compose.submit')}
         </button>
+        {formError && <div className="mp-error" role="alert" style={{ marginTop: 8 }}>{formError}</div>}
+        {filedNote && !formError && (
+          <div role="status" data-testid="sp-filed" style={{ marginTop: 8, fontSize: 11, color: '#6ee7b7' }}>
+            {filedNote}
+          </div>
+        )}
       </form>
       </div>
       </details>
@@ -1172,8 +1212,9 @@ export function SenatePanel({
             <div className="sp-empty">{t('senate.resolved.none')}</div>
           )}
           {resolvedBills.map((p) => {
-            const yea = p.totals?.yea?.weight ?? 0;
-            const nay = p.totals?.nay?.weight ?? 0;
+            // Ballots, one per senator (each chip below shows its weight).
+            const yea = p.totals?.yea?.count ?? 0;
+            const nay = p.totals?.nay?.count ?? 0;
             const verdict = p.status === 'passed'
               ? t('senate.verdict.passed', { yea, nay })
               : p.status === 'failed'
@@ -1338,7 +1379,7 @@ export function SenatePanel({
 function fmtNum(n: number | undefined): string {
   if (n == null || !Number.isFinite(n)) return '—';
   if (Math.abs(n - Math.round(n)) < 1e-9) return String(Math.round(n));
-  return n.toFixed(2).replace(/\.?0+$/, '');
+  return fmtDecimal(n, 2);
 }
 
 /**
@@ -1573,12 +1614,21 @@ function ActionableBills({
   // The deadline lives in the section header, where the mockup put it —
   // red, because it is the only clock on the tab that runs out.
   const soonest = Math.min(...open.map(p => Math.max(0, p.vote_closes_at_tick - currentTick)));
+  // "Needs your vote" only while one does: a bill you filed opens with
+  // your YES on it, and read NEEDS YOUR VOTE with YES already cast
+  // (playtest R2-B7).
+  const unvoted = open.filter(p => !p.caller_vote).length;
   return (
     <section className="sp-sect">
       <div className="sp-sect__h">
-        <span className="sp-lbl">{t('senate.needsVote')}</span>
+        <span className="sp-lbl">{unvoted > 0 ? t('senate.needsVote') : t('senate.openVotes')}</span>
         <span className="sp-lbl" style={{ color: '#ff6b6b' }}>
-          {t('senate.closesIn', { time: ticksReal(soonest, tickMs) })}
+          {soonest > 0
+            ? t('senate.closesIn', { time: ticksReal(soonest, tickMs) })
+            // Past its window: a solo game's bill waits for its person's
+            // vote (worker/senate.js soloVoters); otherwise it resolves
+            // on the next tick.
+            : unvoted > 0 ? t('senate.waitsForYou') : t('senate.closesNextTick')}
         </span>
       </div>
       {open.map(p => (
@@ -1727,6 +1777,11 @@ function VoteCard({
           {t('senate.abstain')}{my === 'abstain' ? ' ✓' : ''}
         </button>
       </div>
+      {my && (
+        <div className="sp-turnout" data-testid="vc-mine">
+          {t('senate.vc.youVoted', { vote: voteWord(my) })}
+        </div>
+      )}
       {/* WITHDRAW, the proposer's, until anyone else has voted -- the
           server's rule (senate.js handleWithdraw). It lived only on the
           debate card, which new bills never get, so it had vanished. */}

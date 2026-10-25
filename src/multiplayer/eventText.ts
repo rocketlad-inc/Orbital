@@ -152,6 +152,25 @@ export function customSecretMessage(lang: Lang, raw: Payload): string | null {
   return T('secret.custom', { body, name: name ?? T('secret.discovery'), text: tail });
 }
 
+/**
+ * A deal of pacts and nothing else. Accepting one writes a trade_accepted
+ * row AND a treaty_signed row per pact (worker/trades.js), so the log said
+ * the same NAP twice at T+1 (playtest R2-B6). The event log keeps the
+ * treaty line and drops this one.
+ */
+export function isPactOnlyTrade(ev: Pick<ChronicleEventRow, 'kind' | 'payload'>): boolean {
+  if (ev.kind !== 'trade_accepted') return false;
+  let p: Payload = {};
+  try { p = JSON.parse(ev.payload || '{}') ?? {}; } catch { return false; }
+  const pacts = Array.isArray(p.pacts) ? p.pacts : [];
+  if (pacts.length === 0) return false;
+  const sum = (b: unknown) => {
+    const o = (b && typeof b === 'object' ? b : {}) as Record<string, unknown>;
+    return ['metal', 'fuel', 'gold', 'science'].reduce((s, k) => s + (Number(o[k]) || 0), 0);
+  };
+  return sum(p.offer) === 0 && sum(p.request) === 0;
+}
+
 export function formatChronicleEvent(
   ev: ChronicleEventRow,
   ctx: EventTextCtx,
@@ -408,9 +427,11 @@ export function formatChronicleEvent(
     const sType = settlementText(parsed.settlement_type as string | undefined);
     // A server default name ("Station", "New City") says nothing the type
     // does not: "fundou Station (estação)" read as a bug (Leo, 2026-10-24).
-    // English keeps its line as is (the machine-truth contract).
+    // The machine-truth English copy keeps its line as is; the English
+    // SHOWN to players drops it too ("founded station Station on
+    // Miranda", playtest R2-C6).
     const rawName = (parsed.settlement_name as string) ?? null;
-    const sName = rawName && (en || !/^(station|new city|city)$/i.test(String(raw.settlement_name ?? '')))
+    const sName = rawName && ((en && !opts.names) || !/^(station|new city|city)$/i.test(String(raw.settlement_name ?? '')))
       ? rawName : null;
     const where = (parsed.body_name as string) ?? T('fb.aBody');
     const owner = nameOfFaction(ev.actor_faction_id, parsed.owner_faction_name as string | undefined);
@@ -577,6 +598,14 @@ export function formatChronicleEvent(
     const owner = nameOfFaction(ev.actor_faction_id, parsed.faction_name as string | undefined);
     const where = ((parsed.world as string) ?? T('fb.aWorld')).toUpperCase();
     return out('○ ', T(parsed.reason === 'moved' ? 'mega.abortedMoved' : 'mega.abortedStood', { owner, where }));
+  }
+
+  // A STRUCTURE FINISHED. It had no line at all, so the log showed the
+  // raw key "megastructure_complete" (playtest R2-C6).
+  if (ev.kind === 'megastructure_complete') {
+    const who = nameOfFaction(ev.actor_faction_id, parsed.faction_name as string | undefined);
+    const what = ((parsed.structure as string) ?? T('fb.aStructure')).toUpperCase();
+    return out('⬢ ', T('mstruct.complete', { who, what }));
   }
 
   // DERELICTION AND SALVAGE.
@@ -798,6 +827,8 @@ export function formatChronicleEvent(
   };
 
   if (ev.kind === 'trade_accepted') {
+    // (A pact-only deal is filtered out of the log upstream:
+    // isPactOnlyTrade. This still words it for any other caller.)
     const proposer = nameOfFaction(ev.actor_faction_id);
     const responder = nameOfFaction(ev.target_faction_id);
     const offer = fmtBundle(parsed.offer);
@@ -890,9 +921,13 @@ export function formatChronicleEvent(
     // of a senate line.
     const title = (parsed.title as string) ?? T('fb.aMotion');
     const outcome = (parsed.outcome as string) ?? T('fb.resolved');
-    const yea = Number(parsed.yea_weight ?? 0);
-    const nay = Number(parsed.nay_weight ?? 0);
-    const abs = Number(parsed.abstain_weight ?? 0);
+    // Ballots cast, one per senator, where the row has them: the weights
+    // read as "2 yea / 0 nay / 2 abstain" in a three-empire game
+    // (playtest R2-B2). Older rows carry only the weights.
+    const counted = parsed.yea_count != null;
+    const yea = Number((counted ? parsed.yea_count : parsed.yea_weight) ?? 0);
+    const nay = Number((counted ? parsed.nay_count : parsed.nay_weight) ?? 0);
+    const abs = Number((counted ? parsed.abstain_count : parsed.abstain_weight) ?? 0);
     const tally = (yea || nay || abs)
       ? ` — ${abs
         ? T('senate.tallyAbs', { yea: num(yea), nay: num(nay), abs: num(abs) })
@@ -991,5 +1026,7 @@ export function formatChronicleEvent(
       : T('trade.lost', { sender, recipient, cargo }));
   }
 
-  return out('', ev.kind);
+  // A kind with no line yet. The machine copy keeps the id; a player is
+  // never shown "some_event_key" (playtest R2-C6).
+  return out('', en && !opts.names ? ev.kind : ev.kind.replace(/_/g, ' '));
 }

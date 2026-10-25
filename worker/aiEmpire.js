@@ -39,7 +39,8 @@ import { currentTerm } from './senateTerms.js';
 import { makeRouteMath } from './routeMath.js';
 import { isFarSystemBody } from './systems.js';
 import { due, readView, wageWar, SHARPNESS } from './aiTactics.js';
-import { conduct, readMemory, voteFor } from './aiPersona.js';
+import { conduct, readMemory, voteFor, answerInbox, takenShipNames } from './aiPersona.js';
+import { randomShipName } from '../src/game/shipNamePools.js';
 
 export { due };
 
@@ -149,7 +150,7 @@ export async function callAs(env, userId, method, path, body) {
         body: body == null || method === 'GET' ? undefined : JSON.stringify(body),
       });
       try {
-        const res = await r.handle(req, env, { session: { user_id: userId }, params });
+        const res = await r.handle(req, env, { session: { user_id: userId }, params, url });
         let data = null;
         try { data = await res.clone().json(); } catch { /* not json */ }
         return { ok: res.ok, status: res.status, data };
@@ -160,6 +161,42 @@ export async function callAs(env, userId, method, path, body) {
     }
   }
   return { ok: false, status: 404, data: null };
+}
+
+/**
+ * A PERSON'S OFFER IS ANSWERED AT ONCE (playtest R2-B3/B4). A computer
+ * empire answered offers on its turn, a tick or more later, and never
+ * while the clock was paused: a pact the player had just proposed read
+ * NEUTRAL until then. trades.js calls this right after a person proposes
+ * to (or counters) a computer empire; it answers that one offer the way
+ * its turn would (aiPersona.js answerInbox). Never throws.
+ */
+export async function answerNow(env, gameId, factionId, tradeId) {
+  try {
+    const fac = await env.DB.prepare(
+      `SELECT f.id, f.user_id, f.status, f.ai_doctrine, f.ai_personality, f.ai_state, g.current_tick, g.status AS game_status
+         FROM game_factions f JOIN games g ON g.id = f.game_id
+        WHERE f.id = ? AND f.game_id = ?`,
+    ).bind(factionId, gameId).first();
+    if (!fac?.ai_doctrine || fac.status !== 'active' || fac.game_status !== 'active') return false;
+    const doctrine = DOCTRINES[fac.ai_doctrine] ?? DOCTRINES.expander;
+    const personality = fac.ai_personality ?? (doctrine.warlike ? 'warlord' : 'ally');
+    const mem = readMemory(fac.ai_state);
+    const G = `/api/games/${encodeURIComponent(gameId)}`;
+    const call = (method, path, body) => callAs(env, fac.user_id, method, `${G}${path}`, body);
+    await answerInbox(env, {
+      gameId, me: fac.id, personality, mem, tick: Number(fac.current_tick ?? 0), call, only: tradeId,
+    });
+    // Only what this answer changed: its turn may be writing the rest.
+    const fresh = readMemory((await env.DB.prepare('SELECT ai_state FROM game_factions WHERE id = ?').bind(fac.id).first())?.ai_state);
+    fresh.favour = mem.favour;
+    fresh.favourAt = mem.favourAt;
+    await env.DB.prepare('UPDATE game_factions SET ai_state = ? WHERE id = ?').bind(JSON.stringify(fresh), fac.id).run();
+    return true;
+  } catch (e) {
+    console.error('answerNow failed', e, { gameId, factionId, tradeId });
+    return false;
+  }
 }
 
 // ---- one empire's turn ---------------------------------------------------
@@ -278,15 +315,18 @@ export async function takeTurn(env, g, fac, difficulty, { trial = false } = {}) 
     const wealth = Math.min(Number(purse?.metal ?? 0), Number(purse?.gold ?? 0) * 8);
     const orders = 1 + Math.min(MAX_EXTRA_ORDERS, Math.floor(Math.log2(Math.max(1, wealth / RICH_AT))));
     const n = Math.floor(tick / doctrine.buildEvery);
+    // Named from the ordinary pool, as a person's BUILD names a hull.
+    const taken = await takenShipNames(env, gameId);
+    const named = (cls) => { const s = randomShipName(cls, taken); taken.add(s); return s; };
     for (let k = 0; k < orders; k++) {
       let cls = doctrine.build[(n + k) % doctrine.build.length];
       // At war, the yard turns out warships.
       if (foes.size > 0 && !ARMED.includes(cls)) cls = 'corvette';
-      let r = await call('POST', `/bodies/${encodeURIComponent(home)}/build`, { ship_class: cls });
+      let r = await call('POST', `/bodies/${encodeURIComponent(home)}/build`, { ship_class: cls, ship_name: named(cls) });
       note(`build_${cls}`, r);
       // A hull it has not researched yet: the one every yard can build.
       if (!r.ok && r.data?.error?.code === 'not_researched' && cls !== 'corvette') {
-        r = await call('POST', `/bodies/${encodeURIComponent(home)}/build`, { ship_class: 'corvette' });
+        r = await call('POST', `/bodies/${encodeURIComponent(home)}/build`, { ship_class: 'corvette', ship_name: named('corvette') });
         note('build_corvette', r);
       }
       if (!r.ok) break;

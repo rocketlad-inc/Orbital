@@ -38,6 +38,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { economyLedger, upkeepMixWarnings } from '../game/economyLedger';
 import { canBeTerraformed } from '../game/settlements';
+import { dominationWorlds, dominationTarget } from '../game/dominationWorlds';
 import type {
   GameState,
   Ship,
@@ -60,13 +61,16 @@ import {
   TECH_MAX_LEVEL,
   type TechId,
 } from '../game/techs';
-import { unlocksAt, isMegastructureUnlock, megastructureNextStep } from '../game/researchUnlocks';
+import {
+  unlocksAt, isMegastructureUnlock, megastructureNextStep, unlockLabelOf,
+  hasFeature, HULL_FEATURE, BUILDING_FEATURE, type FeatureId,
+} from '../game/researchUnlocks';
 import {
   computeIncomePerTick,
   BUILDING_DEFS,
   buildingLevel,
 } from '../game/settlements';
-import { SHIP_CLASSES, getShipClass } from '../game/shipClasses';
+import { SHIP_CLASSES, BUILDABLE_CLASSES, getShipClass } from '../game/shipClasses';
 import { SECRET_DEFS } from '../game/secrets';
 import { isDiscoveryAcked } from '../game/discoveryAck';
 import { offerTitle, upkeepText } from '../components/DiscoveryOfferCard';
@@ -76,7 +80,7 @@ import { MEGASTRUCTURES, MEGA_MAX_HP, isBreached } from '../game/megastructures'
 import { shipyardBodyIds } from '../game/repair';
 import { deriveSecondary } from '../game/colorUtils';
 // `tr`/`trn`/`trk` rather than t/tn/tk: this file has plenty of locals named `t`.
-import { t as tr, tn as trn, tk as trk, fmtNumber, getLang } from '../i18n/core';
+import { t as tr, tn as trn, tk as trk, fmtNumber, getLang, fmtFixed } from '../i18n/core';
 
 // Building kinds each settlement type can host (mirrors BuildPanel /
 // the map's world-overlay chips). Used to ask "is there anything here I
@@ -88,17 +92,20 @@ import { t as tr, tn as trn, tk as trk, fmtNumber, getLang } from '../i18n/core'
 const CITY_BUILDINGS: BuildingKind[] = ['forge', 'mint', 'lab', 'shields', 'missile_silo'];
 const STATION_BUILDINGS: BuildingKind[] = ['weapons', 'lab', 'shipyard'];
 
-/** Cheapest hull anyone can lay down — the floor for "can I build a
- *  ship at all". Computed once from the class table. */
-const CHEAPEST_SHIP_COST = (() => {
-  let best = { fuel: Infinity, ore: Infinity, credits: Infinity };
+/** Cheapest hull this empire may lay down — the floor for "can I build
+ *  a ship at all". Only buildable classes it has the research for: a
+ *  floor priced off a locked hull nags about a yard nothing can use. */
+function cheapestShipCost(unlocked: (f: FeatureId | undefined) => boolean): ResBundle | null {
+  let best: ResBundle | null = null;
   let bestTotal = Infinity;
-  for (const def of Object.values(SHIP_CLASSES)) {
-    const t = (def.cost.fuel ?? 0) + (def.cost.ore ?? 0) + (def.cost.credits ?? 0);
-    if (t < bestTotal) { bestTotal = t; best = def.cost; }
+  for (const cls of BUILDABLE_CLASSES) {
+    if (!unlocked(HULL_FEATURE[cls])) continue;
+    const c = SHIP_CLASSES[cls].cost;
+    const t = (c.fuel ?? 0) + (c.ore ?? 0) + (c.credits ?? 0);
+    if (t < bestTotal) { bestTotal = t; best = { fuel: c.fuel ?? 0, ore: c.ore ?? 0, credits: c.credits ?? 0 }; }
   }
   return best;
-})();
+}
 
 interface ResBundle { fuel: number; ore: number; credits: number }
 /** Next-level cost of a building = base × scaling^currentLevel. */
@@ -256,7 +263,8 @@ export type SituationCategory =
   | 'structure_siege' // a megastructure of yours is being broken open
   | 'strike_incoming' // a Mega Destroyer is charging on a world of yours
   | 'strike_mine'     // YOUR Mega Destroyer is charging
-  | 'capital_lost';   // MP — your capital city fell (gameState.capitalLoss)
+  | 'capital_lost'    // MP — your capital city fell (gameState.capitalLoss)
+  | 'at_war';         // MP — an open war; always the report's first row
 
 /** Share of Dyson progress lost when a foundation is destroyed and the
  *  sphere goes uncontrolled. MIRRORS DYSON_ABANDON_LOSS in worker/room.js
@@ -287,6 +295,9 @@ const TIER_ORDER: SituationTier[] = ['now', 'decision', 'opportunity'];
  *  (e.g. an idle yard at a body with hostiles inbound is a DECISION —
  *  "build defenses" — not a someday-opportunity). */
 const TIER_OF: Record<SituationCategory, SituationTier> = {
+  // An open war is the frame every other row is read in, so it heads the
+  // report (playtest R2: a declared war was nowhere near the top).
+  at_war:         'now',
   in_combat:      'now',
   // The heaviest single loss short of elimination. It was one ordinary
   // event-log line, styled like a ship kill (QA battle test).
@@ -829,6 +840,31 @@ export function useSituationItems(
       }
     } catch { /* defensive */ }
 
+    // ---- OPEN WARS: the first row of the report ----
+    // warPairs is in the client id space (the caller is factionId), the
+    // same set combat FX and threats read. One row naming every foe.
+    {
+      const foes = new Set<string>();
+      for (const key of gameState.warPairs ?? []) {
+        const [a, b] = key.split('|');
+        if (a === factionId && b) foes.add(b);
+        else if (b === factionId && a) foes.add(a);
+      }
+      if (foes.size > 0) {
+        push({
+          id: 'at_war',
+          category: 'at_war',
+          title: tr('helper.sit.war.title', {
+            names: [...foes].map(f => factionName(gameState, f)).join(', '),
+          }),
+          subtitle: tr('helper.sit.war.sub'),
+          focus: { kind: 'panel', panel: 'standing' },
+          severity: 'danger',
+          sortKey: Number.MIN_SAFE_INTEGER,
+        });
+      }
+    }
+
     const arr = gameState.fleetArrears;
     if (arr && (arr.credits > 0 || arr.ore > 0)) {
       const owed = [
@@ -875,8 +911,8 @@ export function useSituationItems(
           category: 'upkeep_mix',
           title: tr('helper.sit.upkeepMix.title', { name }),
           subtitle: tr('helper.sit.upkeepMix.sub', {
-            out: w.line.upkeep.toFixed(1),
-            inc: w.line.income.toFixed(1),
+            out: fmtFixed(w.line.upkeep, 1),
+            inc: fmtFixed(w.line.income, 1),
             ticks: ticksText(ticks),
             name,
             swap,
@@ -1147,9 +1183,11 @@ export function useSituationItems(
     // everyone can see who's swallowing the map. One row for the
     // leader once anyone crosses 45%.
     {
-      // Every body counts — stations have no body-type gate, so every
-      // world (Sol included) can be claimed. Mirrors victory.ts.
-      const claimable = gameState.bodies;
+      // The worlds the server's win check counts (dominationWorlds.ts):
+      // home-system worlds, no rocks or markers. Every body in state put
+      // the total at 92 on a trial map against the server's 60.
+      const claimable = dominationWorlds(gameState.bodies);
+      const domFraction = gameState.dominationFraction ?? 0.6;
       if (claimable.length > 0) {
         const claims = gameState.settlementClaims;
         const ownerOf = (bodyId: string): string | undefined =>
@@ -1185,7 +1223,7 @@ export function useSituationItems(
               ? tr('helper.sit.dom.sub.you', {
                 n: leaderN,
                 total: claimable.length,
-                more: Math.floor(claimable.length * 0.6) + 1 - leaderN,
+                more: dominationTarget(claimable.length, domFraction) - leaderN,
               })
               : tr('helper.sit.dom.sub.other'),
             severity: mineLead ? 'normal' : pct >= 55 ? 'danger' : 'warn',
@@ -1217,6 +1255,15 @@ export function useSituationItems(
       }
       return { ore, credits, fuel };
     };
+
+    // RESEARCH GATES, the same predicate useFeatureGate and the server
+    // use. A row nudging you to build something research still locks
+    // (an upgrade behind Construction 2, a hull behind Propulsion 1) is
+    // advice with no action behind it (playtest R2-C3).
+    const techLevels = gameState.factionTech?.[factionId]?.levels;
+    const gatingOn = gameState.gatingEnabled === true;
+    const unlocked = (f: FeatureId | undefined) => !f || hasFeature(f, techLevels, gatingOn);
+    const cheapestHull = cheapestShipCost(unlocked);
 
     // --- Shared combat context ---
     // Both the NOW-tier sections and the contextual promotion of idle
@@ -1456,10 +1503,10 @@ export function useSituationItems(
       // line and lives in the row's tooltip, because a sentence that is
       // identical on every row is not information, it is wallpaper.
       const when = inc.open
-        ? tr('helper.sit.intercept.firingNow', { dur: inc.duration.toFixed(1) })
+        ? tr('helper.sit.intercept.firingNow', { dur: fmtFixed(inc.duration, 1) })
         : tr('helper.sit.intercept.fires', {
           at: inc.opensAt.toFixed(0),
-          dur: inc.duration.toFixed(1),
+          dur: fmtFixed(inc.duration, 1),
         });
       // A freighter's reach is 0, so it never answers however close it
       // gets. Saying so is the point — that silence is a rule, not a bug.
@@ -1569,7 +1616,7 @@ export function useSituationItems(
         // Only an opportunity if you could actually lay down a hull.
         // Broke → nothing to do here, don't nag. (Under threat, above,
         // we still surface it — that's a warning, not an opportunity.)
-        if (!canPay(spendableAt(body.id), CHEAPEST_SHIP_COST)) continue;
+        if (!cheapestHull || !canPay(spendableAt(body.id), cheapestHull)) continue;
         push({
           id: `idle_shipyard:${body.id}`,
           category: 'idle_shipyard',
@@ -1754,11 +1801,11 @@ export function useSituationItems(
       if (waiting.length > 0) {
         // Whether a hauler is free changes the advice from "build one"
         // to "assign one", so say which.
-        const freeHaulers = (gameState.ships ?? []).filter(sh =>
-          sh.ownedBy === factionId
-          && sh.class === 'freighter'
-          && !sh.transit
-          && !(gameState.tradeRoutes ?? []).some(r => r.shipId === sh.id)).length;
+        // THE SAME idle set section 4 lists. A second, looser definition
+        // here had the report say "freighter parked, no trade route" and
+        // "no idle freighter, terraforming needs one" in the same breath
+        // (playtest R2-C3).
+        const freeHaulers = idleFreighters.length;
         const first = waiting[0];
         push({
           id: 'terraform_unstarted',
@@ -1791,9 +1838,13 @@ export function useSituationItems(
           category: 'vote_open',
           tier: closing ? 'now' : undefined,
           title: v.title,
-          subtitle: closing
-            ? tr('helper.sit.vote.closing', { n: closesIn })
-            : tr('helper.sit.vote.open', { n: closesIn }),
+          // Past its window and still open: a solo game holds the bill
+          // for your vote (worker/senate.js soloVoters, R2-B2).
+          subtitle: closesIn <= 0
+            ? tr('helper.sit.vote.waits')
+            : closing
+              ? tr('helper.sit.vote.closing', { n: closesIn })
+              : tr('helper.sit.vote.open', { n: closesIn }),
           focus: { kind: 'panel', panel: 'senate' },
           severity: closing ? 'danger' : 'warn',
           sortKey: closesIn,
@@ -2203,7 +2254,12 @@ export function useSituationItems(
         const canBuildSomething = () => {
           const have = spendableAt(s.bodyId);
           const kinds = s.type === 'city' ? CITY_BUILDINGS : STATION_BUILDINGS;
-          return kinds.some(kind => canPay(have, nextBuildingCost(kind, buildingLevel(s, kind))));
+          return kinds.some(kind => {
+            const level = buildingLevel(s, kind);
+            // Research gates only the FIRST level (BodyInspector, server).
+            if (level === 0 && !unlocked(BUILDING_FEATURE[kind])) return false;
+            return canPay(have, nextBuildingCost(kind, level));
+          });
         };
         const done = buildingDoneRef.current.get(s.id);
         // A COMPLETION IS NEWS FOR A FEW TICKS, NOT A STANDING DECISION.
@@ -2258,12 +2314,12 @@ export function useSituationItems(
         // Name what the level actually opened up — with gating on, that
         // is the whole reason the level mattered.
         const openedRows = unlocksAt(track as Parameters<typeof unlocksAt>[0], done.level);
-        const opened = openedRows.map(u => u.label);
+        const opened = openedRows.map(unlockLabelOf);
         // A megastructure is the one unlock that does not show up on any
         // build menu you already use: it is built from a colony ship with
         // a module from ANOTHER track. Say what to do with it, or the
         // player has the key and no idea where the door is.
-        const megaOpened = openedRows.filter(u => isMegastructureUnlock(u.feature)).map(u => u.label);
+        const megaOpened = openedRows.filter(u => isMegastructureUnlock(u.feature)).map(unlockLabelOf);
         // Already researching and nothing was unlocked: no decision to
         // make and nothing to report. Don't manufacture a row.
         if (researchingNow && opened.length === 0) continue;

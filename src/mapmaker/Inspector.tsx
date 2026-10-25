@@ -9,7 +9,7 @@ import {
   MAX_SECTORS, SECTOR_COLORS, ORBIT_LIMITS,
   canStartOn, secretFits, bodyYear, makeName, startWorlds,
 } from '../game/customMap';
-import { t, tn, type Key } from '../i18n/core';
+import { t, tn, type Key, fmtFixed } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import {
   PRESETS, MOODS, MOONLESS_TYPES, addMoons, changeType, deleteBodies, duplicateBodies, updateBodies, bulkResources,
@@ -260,7 +260,7 @@ export const BodyInspector: React.FC<{
             <Field label={t('mm.world.year')}>
               <input className="mm-input is-ro" readOnly value={tn('mm.n.ticks', year)} />
             </Field>
-            <Field label={t('mm.sizeVal', { n: body.radius.toFixed(1) })}>
+            <Field label={t('mm.sizeVal', { n: fmtFixed(body.radius, 1) })}>
               <Slider label={t('mm.world.size')} value={body.radius} min={info.radius[0]} max={info.radius[1]} step={0.1}
                 onChange={(v) => live({ radius: v })} onCommit={() => onChange(map)} />
             </Field>
@@ -450,7 +450,7 @@ export const SunInspector: React.FC<{ map: CustomMap; onChange: Change; onTransi
         <Field label={t('mm.sizeVal', { n: Math.round(map.sun.size) })}>
           <Slider label={t('mm.sun.sizeAria')} value={map.sun.size} min={SUN_LIMITS.size[0]} max={SUN_LIMITS.size[1]} onChange={(v) => live({ size: v })} onCommit={() => onChange(map)} />
         </Field>
-        <Field label={t('mm.sun.mass', { n: map.sun.mass.toFixed(2) })}>
+        <Field label={t('mm.sun.mass', { n: fmtFixed(map.sun.mass, 2) })}>
           <Slider label={t('mm.sun.massAria')} value={map.sun.mass} min={SUN_LIMITS.mass[0]} max={SUN_LIMITS.mass[1]} step={0.05} onChange={(v) => live({ mass: v })} onCommit={() => onChange(map)} />
         </Field>
         <p className="mm-note">{t('mm.sun.note')}</p>
@@ -684,7 +684,7 @@ export const BulkBar: React.FC<{
       )}
       {open === 'size' && (
         <div className="mm-pop is-small">
-          <div className="mm-pop__head"><b>{t('mm.bulk.resize', { n: bodies.length })}</b><span className="mm-mono">×{sizeF.toFixed(2)}</span></div>
+          <div className="mm-pop__head"><b>{t('mm.bulk.resize', { n: bodies.length })}</b><span className="mm-mono">×{fmtFixed(sizeF, 2)}</span></div>
           <Slider label={t('mm.bulk.sizeFactor')} value={sizeF} min={0.5} max={2} step={0.05} onChange={setSizeF} />
           <div className="mm-row mm-row--end"><button className="mm-btn is-primary" onClick={() => apply(scaleSize(map, ids, sizeF))}>{t('mm.apply')}</button></div>
         </div>

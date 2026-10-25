@@ -59,7 +59,9 @@ import { getLang, t } from '../i18n/core';
 import { bodyName, settlementName, shipName } from '../i18n/names';
 import { apiErrorText } from '../i18n/apiErrors';
 import { useI18n } from '../i18n/react';
-import { formatChronicleEvent } from './eventText';
+import { formatChronicleEvent, isPactOnlyTrade } from './eventText';
+import { makeFetchGate } from './stateFetchGate';
+import { resolvedStance } from '../game/stance';
 
 // The end-of-game page (and, behind its button, the whole-match film). Split
 // out of the main bundle: it pulls in charts, the map renderer and the replay
@@ -997,10 +999,9 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
   // Standing orders — defensive narrows so a malformed row degrades to
   // "defaults" (attack / no retreat / no detonate) instead of poisoning
   // the client types.
-  let stance: Ship['stance'] = undefined;
-  if (s.stance === 'attack' || s.stance === 'defensive' || s.stance === 'hold') {
-    stance = s.stance;
-  }
+  // An unset stance resolves by class (game/stance.ts, mirroring the
+  // tick): a colony ship or freighter is DEFENSIVE, not ATTACK.
+  const stance: Ship['stance'] = resolvedStance(s.stance, s.ship_class);
   const retreatHpPct: Ship['retreatHpPct'] =
     (s.retreat_hp_pct === 25 || s.retreat_hp_pct === 50 || s.retreat_hp_pct === 75)
       ? s.retreat_hp_pct : null;
@@ -1937,7 +1938,8 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
 
   // Server returns newest-first; we want chronological for both the UI log
   // and the audit mirror.
-  const orderedEvents = (srv.events ?? []).slice().reverse();
+  // A pact-only deal is said once, by its treaty_signed row (R2-B6).
+  const orderedEvents = (srv.events ?? []).slice().reverse().filter(ev => !isPactOnlyTrade(ev));
   // Detonator blast FX (render/combatFx §2): any ship_detonated
   // chronicle entry we haven't seen yet gets pushed onto a module-level
   // FX queue that the map renderer drains. Pure cosmetics — the queue
@@ -2654,6 +2656,10 @@ interface Props {
 }
 
 const POLL_INTERVAL_MS = 1500;
+/** Floor between two /state starts, whoever asked (stateFetchGate.ts).
+ *  Under the 1.5 s poll, so it never slows the steady loop; it only stops
+ *  the back-to-back runs, and an action's result still lands within it. */
+const STATE_MIN_GAP_MS = 700;
 /** Ceiling on the adaptive backoff. A truly awful connection still refreshes
  *  every 6s rather than drifting toward never. */
 const MAX_POLL_INTERVAL_MS = 6000;
@@ -2732,7 +2738,6 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
   /** Set true when the server returns 404. Stops polling + offers an exit. */
   const [missing, setMissing] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
-  const inflightRef = useRef(false);
   /** Own-ship ids already seen — null until the first poll seeds it, so a
    *  rejoin never fires a debut card for the standing fleet. */
   const seenShipIdsRef = useRef<Set<string> | null>(null);
@@ -2762,16 +2767,11 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
   // next poll even though the server body didn't change.
   const lastAppliedBodyRef = useRef<string | null>(null);
 
-  // Set when a refetch is requested while one is already in flight. The
-  // in-flight response was issued BEFORE the player's action, so it
-  // cannot contain the result - dropping the request (the old behaviour)
-  // meant waiting for the next scheduled poll. Instead we remember and
-  // immediately re-run when the current one lands.
-  const refetchQueuedRef = useRef(false);
+  // A refetch asked for while one is in flight still runs once that one
+  // lands (the in-flight response predates the player's action, so it
+  // cannot contain the result): makeFetchGate's trailing re-run.
 
-  const fetchState = useCallback(async () => {
-    if (inflightRef.current) { refetchQueuedRef.current = true; return; }
-    inflightRef.current = true;
+  const fetchStateNow = useCallback(async () => {
     try {
       perf.gameId = gameId;
       const fetchT0 = performance.now();
@@ -2857,20 +2857,32 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
         setError(apiErrorText(res.error, 'mp.provider.errLoad'));
       }
     } finally {
-      inflightRef.current = false;
-      if (refetchQueuedRef.current) {
-        refetchQueuedRef.current = false;
-        // Chain, don't recurse-await: this call re-enters with the guard
-        // clear, so the queued refetch runs right now instead of at the
-        // next 1.5s poll boundary.
-        void fetchStateRef.current?.();
-      }
+      // (The in-flight guard and the "asked again meanwhile" re-run live
+      // in the gate below now, with a floor on how close two starts can
+      // be. Here the re-run fired the instant a response landed, which
+      // is how /state ran back to back.)
     }
     // carryStagedPreviews is a useCallback with [] deps, so it's stable
     // and listing it can't churn the poll.
   }, [gameId, carryStagedPreviews]);
-  // Stable self-reference so the finally block above can re-enter the
-  // latest fetchState without making it a dependency of itself.
+  // ONE BUDGET FOR EVERY CALLER (stateFetchGate.ts): one request in flight,
+  // starts at least STATE_MIN_GAP_MS apart, and asks made meanwhile fold
+  // into one trailing fetch. The gate is per game and stable, so the poll
+  // and socket effects below keep their identity across renders.
+  const fetchStateNowRef = useRef(fetchStateNow);
+  useEffect(() => { fetchStateNowRef.current = fetchStateNow; }, [fetchStateNow]);
+  const aliveRef = useRef(true);
+  useEffect(() => { aliveRef.current = true; return () => { aliveRef.current = false; }; }, []);
+  const fetchState = useMemo(
+    () => makeFetchGate(
+      () => (aliveRef.current ? fetchStateNowRef.current() : Promise.resolve()),
+      STATE_MIN_GAP_MS,
+    ),
+    // A new game is a new budget.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [gameId],
+  );
+  // Stable self-reference for callers outside the effects below.
   const fetchStateRef = useRef<typeof fetchState | null>(null);
   useEffect(() => { fetchStateRef.current = fetchState; }, [fetchState]);
 

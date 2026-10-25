@@ -127,11 +127,14 @@ export function designName(name: string | null | undefined): string {
 }
 
 /** A ship's name in `lang`. The starter hulls are "<Name> of <World>"
- *  (factions.js STARTER_FLEET); only the "of <World>" half translates. */
+ *  (factions.js STARTER_FLEET) and the trial's extra hulls "<Name> <numeral>
+ *  of <World>" (trial.js TRIAL_FLEET: "Lancer II of Europa"); only the
+ *  "of <World>" half translates. A longer name a player typed ("Hammer of
+ *  the Gods") is theirs and stays as typed. */
 export function shipNameIn(lang: Lang, name: string | null | undefined): string {
   if (name == null) return '';
   if (lang !== 'pt-BR') return name;
-  const of = /^(\S+) of (.+)$/.exec(name);
+  const of = /^(\S+(?: [IVX]+)?) of (.+)$/.exec(name);
   if (of) return `${of[1]} ${ofPlacePt(bodyNameIn(lang, of[2]))}`;
   return name;
 }

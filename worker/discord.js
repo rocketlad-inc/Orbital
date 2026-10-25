@@ -1360,7 +1360,7 @@ export const SLASH_COMMANDS = [
   { name: 'research', description: 'Your current project and tech levels.',
     description_localizations: { 'pt-BR': 'Sua pesquisa atual e os níveis de tecnologia.' } },
   { name: 'bills',    description: 'Senate bills on the floor and how you voted.',
-    description_localizations: { 'pt-BR': 'Projetos de lei em votação no Senado e como você votou.' } },
+    description_localizations: { 'pt-BR': 'Propostas em votação no Senado e como você votou.' } },
   { name: 'map',      description: 'The current territory map.',
     description_localizations: { 'pt-BR': 'O mapa de territórios atual.' } },
   {
@@ -1374,7 +1374,7 @@ export const SLASH_COMMANDS = [
           { name: 'all', value: 'all', name_localizations: { 'pt-BR': 'todas' } },
           { name: 'messages from factions', value: 'dm', name_localizations: { 'pt-BR': 'mensagens de facções' } },
           { name: 'attacks on you', value: 'combat', name_localizations: { 'pt-BR': 'ataques contra você' } },
-          { name: 'senate bills & votes', value: 'senate', name_localizations: { 'pt-BR': 'projetos e votos do Senado' } },
+          { name: 'senate bills & votes', value: 'senate', name_localizations: { 'pt-BR': 'propostas e votos do Senado' } },
           { name: 'upkeep & build problems', value: 'economy', name_localizations: { 'pt-BR': 'manutenção e problemas de construção' } },
           { name: 'daily situation report', value: 'digest', name_localizations: { 'pt-BR': 'relatório diário de situação' } },
           { name: 'away reminders', value: 'nudge', name_localizations: { 'pt-BR': 'lembretes de ausência' } },

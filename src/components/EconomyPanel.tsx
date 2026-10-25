@@ -26,7 +26,7 @@ import { SHIP_UPKEEP, upkeepSplitFor, type ShipClassName } from '../game/shipCla
 import { partsCost, sanitizeParts } from '../game/shipParts';
 import { TECH_DEFS } from '../game/techs';
 import { apiFetch } from '../multiplayer/api';
-import { t, tn } from '../i18n/core';
+import { t, tn, fmtNumber } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import './EconomyPanel.css';
 
@@ -90,7 +90,7 @@ const add = (a: Triple, b: Triple): Triple => ({
 
 function n(v: number, dp = 2): string {
   if (!Number.isFinite(v)) return '—';
-  return v.toLocaleString(undefined, { minimumFractionDigits: dp, maximumFractionDigits: dp });
+  return fmtNumber(v, { minimumFractionDigits: dp, maximumFractionDigits: dp });
 }
 function signed(v: number, dp = 2): string {
   if (!Number.isFinite(v)) return '—';

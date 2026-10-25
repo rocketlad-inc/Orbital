@@ -20,6 +20,7 @@ import { useGameContext } from '../state/gameContext';
 import { useMultiplayerActions, TransferIntent } from '../multiplayer/MultiplayerActionsContext';
 import { humanizeMpError } from '../multiplayer/errorMessages';
 import { launchFromPlan } from '../physics/torchTransfer';
+import { expandFleetIds } from '../game/leftUndefended';
 
 export interface BulkTransferResult {
   /** Ships we managed to plan a burn for and posted to the server. */
@@ -59,17 +60,8 @@ export function useBulkTransfer() {
       // saying so, which is the same bug the orders endpoint had.
       // Expanding here covers every caller: the group bar, the fleet
       // panel's bulk transfer, and send-damaged-to-yards.
-      const fleets = new Set(
-        shipIds
-          .map(id => { const sh = gameState.ships.find(s => s.id === id); return sh?.fleetDetached ? null : sh?.fleetId; })
-          .filter((f): f is string => !!f),
-      );
-      const expanded = fleets.size > 0
-        ? [...new Set([
-            ...shipIds,
-            ...gameState.ships.filter(s => s.fleetId && fleets.has(s.fleetId) && !s.fleetDetached).map(s => s.id),
-          ])]
-        : shipIds;
+      // (Shared with useDepartureCheck, which must agree on who leaves.)
+      const expanded = expandFleetIds(shipIds, gameState.ships);
 
       // ONE REQUEST for the whole group (POST /transfers) — it was one POST
       // per hull, 70 in parallel for the QA armada at ~2.8s apiece.

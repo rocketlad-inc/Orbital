@@ -45,6 +45,7 @@ import { advanceKaiju } from './kaiju.js';
 import { legDilation } from './wellDilation.js';
 import { binaryCloseness, binaryStarRow } from './binaryDance.js';
 import { readSchedule, intervalAt, nextTickAt } from './tickSchedule.js';
+import { resolvedStance } from './shipStance.js';
 const MAIN_SYSTEM = mainSystemSql();
 
 /** Unordered faction-pair key, shared by the tick's combat passes and
@@ -6783,8 +6784,8 @@ export class Room {
     //     present" == "currently damaging your ships/settlements here".
     //     Defensive-vs-defensive standoffs correctly never fire.
     //   hold: never fires. Still takes damage.
-    const effectiveStance = (s) =>
-      (s.stance === 'defensive' || s.stance === 'hold') ? s.stance : 'attack';
+    // NULL resolves by class (shipStance.js): civilian hulls are defensive.
+    const effectiveStance = (s) => resolvedStance(s.stance, s.ship_class);
     // aggressorsAtBody: bodyId -> Set<factionId> with at least one armed
     // attack-stance ship at that body.
     const aggressorsAtBody = new Map();
