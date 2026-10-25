@@ -15,6 +15,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuth } from '../AuthContext';
 import { GoogleSignInButton } from '../GoogleSignInButton';
+import { logTrial } from './trialTelemetry';
 import { t } from '../../i18n/core';
 import { useI18n } from '../../i18n/react';
 import './trial.css';
@@ -62,6 +63,9 @@ function SaveEmpireSheet({ reason, onClose }: { reason: SaveReason; onClose: () 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // The dashboard's save funnel (trialTelemetry.ts): what opened the sheet.
+  useEffect(() => { logTrial(`save-open-${reason}`); }, [reason]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !busy) onClose(); };
     window.addEventListener('keydown', onKey);
@@ -76,18 +80,20 @@ function SaveEmpireSheet({ reason, onClose }: { reason: SaveReason; onClose: () 
     e.preventDefault();
     setError(null);
     setBusy(true);
+    logTrial(`save-try-${mode}`);
     const problem = mode === 'new' ? await signUp(email, password, callSign) : await signIn(email, password);
     setBusy(false);
-    if (problem) setError(problem);
+    if (problem) { setError(problem); logTrial('save-error'); }
     else saved();
   }
 
   const onGoogle = useCallback(async (idToken: string) => {
     setError(null);
     setBusy(true);
+    logTrial('save-try-google');
     const problem = await signInWithGoogle(idToken);
     setBusy(false);
-    if (problem) setError(problem);
+    if (problem) { setError(problem); logTrial('save-error'); }
     else saved();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signInWithGoogle]);

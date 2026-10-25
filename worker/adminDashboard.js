@@ -436,7 +436,8 @@ async function handleOverview(req, env, { session }) {
     COUNT(*) AS visitors,
     SUM(v.viewer_user_id IS NOT NULL) AS players,
     SUM(${step(['engaged'])}) AS engaged,
-    SUM(${step(['play_click', 'signup_tab', 'email_try', 'google_try', 'login_try'])}) AS pressed_play,
+    SUM(${step(['play_click', 'signup_tab', 'email_try', 'google_try', 'login_try', 'trial_click'])}) AS pressed_play,
+    SUM(v.trial_user_id IS NOT NULL) AS tried,
     SUM(${step(['signup_tab', 'email_try', 'google_try'])}) AS started,
     SUM(${step(['auth_error', 'google_error'])}) AS errors,
     SUM(v.signup_user_id IS NOT NULL) AS signed_up,
@@ -467,6 +468,43 @@ async function handleOverview(req, env, { session }) {
     q(`SELECT CAST(v.first_ms / ${DAY_MS} AS INTEGER) * ${DAY_MS} AS day_ms, v.source, ${funnelCols}
          ${visitFrom}
         GROUP BY 1, 2 ORDER BY 1`, tr0),
+  ]);
+
+  // Play for Free (trial.js, 0184/0187): every trial game of the last 30
+  // days, one row each, with how far it got. A trial player is a shadow
+  // account, QA by its domain so it is never counted as a signup; these
+  // queries read shadows on purpose. The game is the key, because saving
+  // moves it to another account halfway through. A trial saved into a
+  // test account is left out.
+  const [trialGames, trialSteps, trialRefused] = await Promise.all([
+    q(`SELECT g.id, g.created_at, g.current_tick AS tick, g.status,
+              COALESCE(g.paused, 0) AS paused, COALESCE(g.auto_paused, 0) AS auto_paused, g.host_seen_ms,
+              s.shadow, s.shadow_claimed_ms AS saved_ms, COALESCE(s.signup_source, '') AS source,
+              (SELECT json_extract(e.payload, '$.kind') FROM analytics_events e
+                WHERE e.game_id = g.id AND e.kind = 'trial_claim' LIMIT 1) AS saved_how,
+              (SELECT json_extract(e.payload, '$.result') FROM analytics_events e
+                WHERE e.game_id = g.id AND e.kind = 'trial_claim' LIMIT 1) AS saved_into,
+              COALESCE((SELECT SUM(d.minutes) FROM analytics_user_day d WHERE d.game_id = g.id), 0) AS minutes,
+              COALESCE((SELECT 1 FROM analytics_user_day d
+                         WHERE d.user_id = s.shadow_claimed_by AND d.minutes > 0
+                           AND d.day_ms >= (s.shadow_claimed_ms / ${DAY_MS} + 1) * ${DAY_MS} LIMIT 1), 0) AS came_back
+         FROM games g
+         LEFT JOIN users s ON s.id = COALESCE(
+              (SELECT e.user_id FROM analytics_events e WHERE e.game_id = g.id AND e.kind = 'trial_start' LIMIT 1),
+              (SELECT m.user_id FROM room_members m JOIN users mu ON mu.id = m.user_id
+                WHERE m.room_id = g.id AND mu.shadow > 0 LIMIT 1))
+         LEFT JOIN users t ON t.id = s.shadow_claimed_by
+        WHERE g.trial = 1 AND g.created_at >= ?1 AND (t.id IS NULL OR (${notQa('t.email')}))
+        ORDER BY g.created_at DESC LIMIT 500`, tr0),
+    // Each trial moment, first time per game (src/multiplayer/trial/trialTelemetry.ts).
+    q(`SELECT e.game_id, substr(e.kind, 4) AS kind, MIN(e.created_at_ms) AS at
+         FROM analytics_events e
+        WHERE e.game_id IN (SELECT id FROM games WHERE trial = 1 AND created_at >= ?1)
+          AND e.kind LIKE 'ui/trial-%'
+        GROUP BY 1, 2`, tr0),
+    // Turned away by the per-address limit (no game, no account).
+    q(`SELECT COUNT(*) AS n FROM analytics_events
+        WHERE game_id IS NULL AND kind = 'trial_refused' AND created_at_ms >= ?1`, tr0).then(r => r[0]),
   ]);
 
   // 7x24 UTC grid; the client shifts it to the viewer's clock.
@@ -558,6 +596,11 @@ async function handleOverview(req, env, { session }) {
       devices: trDevices,
       countries: trCountries,
       daily: trDaily,
+    },
+    trial: {
+      games: trialGames,
+      steps: trialSteps,
+      refused: Number(trialRefused?.n ?? 0),
     },
     journey: {
       signed_up: journey?.signed_up ?? 0,

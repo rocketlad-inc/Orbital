@@ -418,7 +418,7 @@ async function handleLogin(req, env) {
   await env.DB.prepare('UPDATE users SET last_login_at = ? WHERE id = ?').bind(Date.now(), row.id).run();
   const { token, expiresAt } = await createSession(env.DB, row.id, req.headers.get('user-agent'));
   // Signed in from a Play for Free trial: the trial game moves in.
-  await trial.claimShadow(env, req, row.id);
+  await trial.claimShadow(env, req, row.id, 'login');
   return json(
     { user: { id: row.id, email: row.email, display_name: row.display_name, ...(await noteVisit(env, row.id)) } },
     { headers: { 'set-cookie': sessionCookie(token, expiresAt) } },
@@ -587,7 +587,7 @@ async function handleGoogleAuth(req, env) {
 
   const { token, expiresAt } = await createSession(env.DB, userId, req.headers.get('user-agent'));
   // Signed in with Google from a Play for Free trial: the trial moves in.
-  await trial.claimShadow(env, req, userId);
+  await trial.claimShadow(env, req, userId, 'google');
   return json(
     { user: { id: userId, email: userEmail, display_name: userDisplayName, ...(await noteVisit(env, userId)) } },
     { headers: { 'set-cookie': sessionCookie(token, expiresAt) } },

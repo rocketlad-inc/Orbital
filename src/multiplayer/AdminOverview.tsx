@@ -25,6 +25,7 @@ import { FrictionRows } from './GameStory';
 import { span } from './storyVerdict';
 import { GameActivity } from './AdminGameActivity';
 import { TrafficTrends, TrafficDay } from './AdminTrafficTrends';
+import { TrialPanel, TrialData } from './AdminTrialPanel';
 import { CommissionSales } from './AdminCommissionSales';
 import { isAiSource } from './aiSources';
 import './AdminOverview.css';
@@ -66,7 +67,7 @@ type SourceRow = {
 };
 /** One row of the visit funnel (0180, worker/visits.js). */
 type Funnel = {
-  visitors: number; players: number; engaged: number; pressed_play: number; started: number; errors: number;
+  visitors: number; players: number; engaged: number; pressed_play: number; tried: number; started: number; errors: number;
   signed_up: number; seated: number; came_back: number;
 };
 type TrafficData = {
@@ -81,6 +82,8 @@ type Overview = {
   now: number;
   /** Link and ad traffic, signed up or not, last 30 days (0180). */
   traffic?: TrafficData;
+  /** Play for Free trial games, last 30 days (0184, 0187). */
+  trial?: TrialData;
   rollup: { through_ms: number; behind_ms: number | null };
   kpis: Kpis;
   daily: DailyRow[];
@@ -1269,6 +1272,7 @@ function Growth({ data }: { data: Overview }) {
         <CohortTable rows={cohorts} />
       </section>
       {data.traffic && <TrafficPanel tr={data.traffic} now={data.now} />}
+      {data.trial && <TrialPanel data={data.trial} now={data.now} />}
       <section className="ao-panel">
         <PanelHead
           title="Where players came from"
@@ -1318,6 +1322,7 @@ function FunnelCells({ f }: { f: Funnel }) {
       <td className="num">{n(f.visitors)}</td>
       {cell(f.engaged, 'Stayed 10 seconds or touched the page')}
       {cell(f.pressed_play, 'Pressed Play free or Sign in, reaching the sign-in screen')}
+      {cell(f.tried, 'Started a Play for Free trial game (no account)')}
       {cell(f.started, 'Opened Sign up, or submitted email / Google')}
       <td className="num" title="Sign-up or sign-in refused, or the Google button failed">
         {f.errors ? <span style={{ color: 'var(--ao-bad, #e5484d)' }}>{n(f.errors)}</span> : <span className="ao-dim">0</span>}
@@ -1338,6 +1343,7 @@ const TRAFFIC_COLS: Array<{ key: string; name: string; help: string }> = [
   { key: 'visitors', name: 'Visitors', help: 'Browsers that arrived this way, counted once on their first visit. One person on a phone and a laptop counts twice.' },
   { key: 'engaged', name: 'Engaged', help: 'Stayed on the page 10 seconds with it visible, or tapped or scrolled it. Leaves out instant bounces and most robots.' },
   { key: 'pressed_play', name: 'Pressed Play', help: 'Reached the sign-in screen: pressed Play free or Sign in. Includes people who already had an account and signed in.' },
+  { key: 'tried', name: 'Tried free', help: 'Started a Play for Free trial game from the sign-in screen, with no account. Saving it later counts under Signed up.' },
   { key: 'started', name: 'Started sign-up', help: 'Began making an account: opened the Sign up tab, sent the email form, or finished the Google step.' },
   { key: 'errors', name: 'Errors', help: 'A sign-up or sign-in the game refused, or the Google button failing (common inside the Reddit and Facebook apps).' },
   { key: 'signed_up', name: 'Signed up', help: 'Made a new account.' },
@@ -1357,7 +1363,7 @@ const HelpTh = ({ k, num, children }: { k: string; num?: boolean; children: Reac
 const FUNNEL_HEAD = (
   <>
     <HelpTh k="visitors" num>Visitors</HelpTh><HelpTh k="engaged" num>Engaged</HelpTh>
-    <HelpTh k="pressed_play" num>Pressed Play</HelpTh><HelpTh k="started" num>Started sign-up</HelpTh>
+    <HelpTh k="pressed_play" num>Pressed Play</HelpTh><HelpTh k="tried" num>Tried free</HelpTh><HelpTh k="started" num>Started sign-up</HelpTh>
     <HelpTh k="errors" num>Errors</HelpTh><HelpTh k="signed_up" num>Signed up</HelpTh>
     <HelpTh k="seated" num>Took a seat</HelpTh><HelpTh k="came_back" num>Came back</HelpTh>
   </>

@@ -13,6 +13,9 @@
 //      (members, faction, host), the shadow is retired, its sessions end
 //   6. a trial nobody plays pauses after 15 minutes; it wakes on return
 //   7. a trial starts paused for its tutorial: no ticks, no empire moves
+//   8. the dashboard can follow it (0187): trial_start, trial_refused and
+//      trial_claim are written (awaited), the visit links to the trial as
+//      trial_user_id (not as a signup), and the shadow names its account
 //
 // Run: npm run sim:trial
 // ============================================================
@@ -67,7 +70,11 @@ const req = (cookie, ip = '1.2.3.4', body = {}) => new Request('https://x/api/tr
 const cookieOf = (res) => (res.headers.get('set-cookie') ?? '').split(';')[0];
 
 // ---- 1. start ---------------------------------------------------------
-const r1 = await trial.handleStart(req(null, '1.2.3.4', { attribution: { source: 'reddit' } }), env, null);
+// The browser arrived through a tagged link first (worker/visits.js).
+const ANON = 'simAnon_trial_1';
+await DB.prepare(`INSERT INTO campaign_visits (anon_id, source, first_ms, last_ms) VALUES (?, 'reddit', ?, ?)`)
+  .bind(ANON, Date.now(), Date.now()).run();
+const r1 = await trial.handleStart(req(null, '1.2.3.4', { attribution: { source: 'reddit', anon: ANON } }), env, null);
 const b1 = await r1.json();
 check('POST /api/trial starts a game with no account', r1.status === 201 && !!b1.game_id, JSON.stringify(b1));
 const cookie = cookieOf(r1);
@@ -111,6 +118,8 @@ for (let i = 0; i < 30; i++) last = await trial.handleStart(req(null, '9.9.9.9')
 const thirtieth = last.status;
 const next = await trial.handleStart(req(null, '9.9.9.9'), env, null);
 check('thirty trials an hour from one address, then 429', thirtieth === 201 && next.status === 429, `${thirtieth} then ${next.status}`);
+const refused = await DB.prepare(`SELECT COUNT(*) AS n FROM analytics_events WHERE kind = 'trial_refused' AND game_id IS NULL`).first();
+check('a refused trial is counted for the dashboard', refused.n === 1, JSON.stringify(refused));
 
 // The stand-in name is in the language the app is showing.
 const rPt = await trial.handleStart(req(null, '5.5.5.5', { lang: 'pt-BR' }), env, null);
@@ -231,8 +240,17 @@ check('the trial Ally offers a pact', allyOffer.n >= 1);
 const realId = 'realUser1';
 await DB.prepare(`INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES (?, 'hana@t', 'Hana', 'x', 0)`).bind(realId).run();
 roomCalls.length = 0;
-const claim = await trial.claimShadow(env, req(cookie), realId);
+const startEv = await DB.prepare(`SELECT user_id FROM analytics_events WHERE kind = 'trial_start' AND game_id = ?`).bind(G).first();
+check('trial_start is written, against the game and the shadow', startEv?.user_id === shadowId, JSON.stringify(startEv));
+const visit = await DB.prepare('SELECT trial_user_id, signup_user_id FROM campaign_visits WHERE anon_id = ?').bind(ANON).first();
+check('the visit links to the trial, and is not a signup yet', visit.trial_user_id === shadowId && visit.signup_user_id == null, JSON.stringify(visit));
+const claim = await trial.claimShadow(env, req(cookie), realId, 'login');
 check('saving moves the trial into the account', claim?.gameId === G, JSON.stringify(claim));
+const claimEv = await DB.prepare(`SELECT user_id, payload FROM analytics_events WHERE kind = 'trial_claim' AND game_id = ?`).bind(G).first();
+check('trial_claim is written: how, and into an existing account', claimEv?.user_id === realId
+  && claimEv.payload === JSON.stringify({ kind: 'login', result: 'existing' }), JSON.stringify(claimEv));
+const by = await DB.prepare('SELECT shadow_claimed_by FROM users WHERE id = ?').bind(shadowId).first();
+check('the shadow names the account it was saved into', by.shadow_claimed_by === realId, JSON.stringify(by));
 const member = await DB.prepare('SELECT user_id FROM room_members WHERE room_id = ? AND join_method = ?').bind(G, 'host').first();
 const fac = await DB.prepare('SELECT user_id FROM game_factions WHERE id = ?').bind(humanF).first();
 const host = await DB.prepare('SELECT host_id FROM rooms WHERE id = ?').bind(G).first();

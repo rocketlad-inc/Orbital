@@ -141,11 +141,15 @@ async function handleVisit(req, env, { session }) {
 
 /** A new account made by this browser: join its funnel to the account.
  *  Once only, and best-effort, like the rest of signup attribution. */
-export async function linkVisitToUser(db, userId, anon) {
+export async function linkVisitToUser(db, userId, anon, { trial = false } = {}) {
   if (!userId || typeof anon !== 'string' || !ANON_RE.test(anon)) return;
   try {
+    // A Play for Free trial is not a signup: it gets its own column, and
+    // signup_user_id waits for the account the trial is saved into (0187).
     await db
-      .prepare('UPDATE campaign_visits SET signup_user_id = ? WHERE anon_id = ? AND signup_user_id IS NULL')
+      .prepare(trial
+        ? 'UPDATE campaign_visits SET trial_user_id = ? WHERE anon_id = ? AND trial_user_id IS NULL'
+        : 'UPDATE campaign_visits SET signup_user_id = ? WHERE anon_id = ? AND signup_user_id IS NULL')
       .bind(userId, anon)
       .run();
   } catch (e) {

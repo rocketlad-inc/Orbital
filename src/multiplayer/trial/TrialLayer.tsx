@@ -20,6 +20,9 @@ import { useAuth } from '../AuthContext';
 import { useGameContext } from '../../state/gameContext';
 import { useTutorial } from '../../state/tutorial';
 import { openSaveEmpire } from './SaveEmpire';
+import { logTrial, setTrialGame } from './trialTelemetry';
+import { useMultiplayerActions } from '../MultiplayerActionsContext';
+import { TRIAL_TUTORIAL_STEPS } from '../../game/tutorialSteps';
 import { t } from '../../i18n/core';
 import { useI18n } from '../../i18n/react';
 import './trial.css';
@@ -43,7 +46,9 @@ export function TrialLayer() {
   useI18n();
   const { user } = useAuth();
   const { gameState } = useGameContext();
-  const { active, trialDone, startTrial } = useTutorial();
+  const { active, trialDone, startTrial, track, index } = useTutorial();
+  const mpActions = useMultiplayerActions();
+  useEffect(() => { setTrialGame(mpActions?.gameId); }, [mpActions?.gameId]);
   const uid = user?.id ?? '';
   const shadow = !!user?.shadow;
   const askedRef = useRef<Asked>(uid ? readAsked(uid) : {});
@@ -66,12 +71,26 @@ export function TrialLayer() {
     return () => clearTimeout(timer);
   }, [trialDone, active, startTrial]);
 
+  // The dashboard follows the tour step by step (trialTelemetry.ts): the
+  // furthest step shown, then whether it ended on the last one.
+  const lastStepRef = useRef(-1);
+  useEffect(() => {
+    if (!active || track !== 'trial' || index < 0) return;
+    lastStepRef.current = index;
+    logTrial(`tour-step-${index + 1}`);
+  }, [active, track, index]);
+  useEffect(() => {
+    if (active || !trialDone || lastStepRef.current < 0) return;
+    logTrial(lastStepRef.current >= TRIAL_TUTORIAL_STEPS.length - 1 ? 'tour-done' : 'tour-skip');
+    lastStepRef.current = -1;
+  }, [active, trialDone]);
+
   // THE CLOCK. A trial starts paused for its tutorial, whose last step is
   // Start the clock. Skipping the tour starts it instead. Once only: a
   // pause the player chooses afterwards is theirs to keep.
   const paused = !!gameState.solo?.paused;
   useEffect(() => {
-    if (!paused) { if (!askedRef.current.clock) mark({ clock: true }); return; }
+    if (!paused) { logTrial('clock'); if (!askedRef.current.clock) mark({ clock: true }); return; }
     if (!trialDone || active || askedRef.current.clock) return;
     mark({ clock: true });
     const gid = gameState.solo ? sessionStorage.getItem('orbital.tab_room') : null;
@@ -144,6 +163,7 @@ export function TrialLayer() {
     if (!pair) return;
     const other = pair.split('|').find(x => x !== 'player') ?? null;
     mark({ war: true });
+    logTrial('war');
     setWarWith(other);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameState.warPairs]);

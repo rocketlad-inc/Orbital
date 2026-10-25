@@ -120,6 +120,9 @@ export async function handleStart(req, env, session) {
     'SELECT COUNT(*) AS n FROM trial_starts WHERE ip_hash = ? AND created_at_ms > ?',
   ).bind(ipHash, now - 3_600_000).first();
   if (Number(recent?.n ?? 0) >= (Number(env.TRIALS_PER_HOUR) || TRIALS_PER_HOUR)) {
+    // Counted on the dashboard: a limit that turns real visitors away
+    // (a school, a phone carrier) should be seen, not guessed.
+    await logEvent(env, { kind: 'trial_refused' });
     return err(429, 'too_many_trials', 'too many trial games from here; try again later');
   }
 
@@ -139,7 +142,7 @@ export async function handleStart(req, env, session) {
     env.DB.prepare('INSERT INTO trial_starts (ip_hash, created_at_ms) VALUES (?, ?)').bind(ipHash, now),
   ]);
   // Where they came from rides along to the account they save into.
-  try { await stampSignupSource(env.DB, id, body.attribution); } catch { /* never blocks */ }
+  try { await stampSignupSource(env.DB, id, body.attribution, { trial: true }); } catch { /* never blocks */ }
 
   const made = await createSoloGame(env, id, TRIAL_GAME, { trial: true });
   if (made.error) return made.error;
@@ -151,7 +154,9 @@ export async function handleStart(req, env, session) {
   // A returning trial player opens straight into it.
   await env.DB.prepare('UPDATE users SET autoload_room_id = ? WHERE id = ?').bind(made.id, id).run();
   const { token, expiresAt } = await createSession(env.DB, id, req.headers.get('user-agent'));
-  logEvent(env, { gameId: made.id, userId: id, kind: 'trial_start' }).catch(() => {});
+  // Awaited: a promise left running after the response is cut off, and
+  // these two events are what the dashboard follows a trial by.
+  await logEvent(env, { gameId: made.id, userId: id, kind: 'trial_start' });
   return json(
     { ok: true, game_id: made.id, user: { id, display_name: displayName, shadow: 1 } },
     { status: 201, headers: { 'set-cookie': sessionCookie(token, expiresAt) } },
@@ -165,7 +170,7 @@ export async function handleStart(req, env, session) {
  * anyone without one. Never throws: a failed merge must not fail the
  * sign-in (the shadow keeps its game; the client offers the save again).
  */
-export async function claimShadow(env, req, targetUserId) {
+export async function claimShadow(env, req, targetUserId, how = 'signup') {
   try {
     const shadow = await lookupSession(env.DB, readSessionCookie(req));
     if (!shadow || Number(shadow.shadow) !== 1 || shadow.user_id === targetUserId) return null;
@@ -176,7 +181,7 @@ export async function claimShadow(env, req, targetUserId) {
       env.DB.prepare('UPDATE room_members SET user_id = ? WHERE user_id = ?').bind(targetUserId, from),
       env.DB.prepare('UPDATE game_factions SET user_id = ? WHERE user_id = ?').bind(targetUserId, from),
       env.DB.prepare('UPDATE rooms SET host_id = ? WHERE host_id = ?').bind(targetUserId, from),
-      env.DB.prepare('UPDATE users SET shadow = 2, shadow_claimed_ms = ?, autoload_room_id = NULL WHERE id = ?').bind(now, from),
+      env.DB.prepare('UPDATE users SET shadow = 2, shadow_claimed_ms = ?, shadow_claimed_by = ?, autoload_room_id = NULL WHERE id = ?').bind(now, targetUserId, from),
       env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(from),
       // The saved game opens on their next launch, unless they already
       // chose one.
@@ -192,7 +197,14 @@ export async function claimShadow(env, req, targetUserId) {
       } catch { /* the room re-reads D1 on its own */ }
       await env.DB.prepare('UPDATE games SET state_version = state_version + 1 WHERE id = ?').bind(trial.id).run();
     }
-    logEvent(env, { gameId: trial?.id ?? null, userId: targetUserId, kind: 'trial_claim' }).catch(() => {});
+    // How they saved, and whether into a brand-new account (made in this
+    // same request) or one they already had.
+    const target = await env.DB.prepare('SELECT created_at FROM users WHERE id = ?').bind(targetUserId).first();
+    const fresh = !!target && now - Number(target.created_at) < 5 * 60_000;
+    await logEvent(env, {
+      gameId: trial?.id ?? null, userId: targetUserId, kind: 'trial_claim',
+      payload: { kind: how, result: fresh ? 'new' : 'existing' },
+    });
     return { from, gameId: trial?.id ?? null };
   } catch (e) {
     console.error('claimShadow failed', e);

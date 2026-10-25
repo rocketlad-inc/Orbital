@@ -90,7 +90,7 @@ export function readAttribution(raw) {
  * later sign-in can't rewrite where someone came from. Best-effort: a
  * failure here must never cost a signup.
  */
-export async function stampSignupSource(db, userId, raw) {
+export async function stampSignupSource(db, userId, raw, { trial = false } = {}) {
   const a = readAttribution(raw);
   if (!a) return;
   try {
@@ -107,5 +107,5 @@ export async function stampSignupSource(db, userId, raw) {
   }
   if (a.invite_code) await stampReferral(db, userId, { inviteCode: a.invite_code, by: a.by });
   // The browser's pre-signup funnel (0180) now has an account to belong to.
-  await linkVisitToUser(db, userId, raw?.anon);
+  await linkVisitToUser(db, userId, raw?.anon, { trial });
 }
