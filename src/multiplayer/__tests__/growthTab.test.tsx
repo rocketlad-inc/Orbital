@@ -76,7 +76,7 @@ test('four headline cards: visits, signups, seats and the next-day return', () =
   expect(cards[3]).toContain('Came back the next day');
 });
 
-test('it opens on Acquisition: the chart, the link generator and ONE sources table', () => {
+test('it opens on Acquisition: the chart, the link generator and ONE Sources panel', () => {
   show(data);
   expect(tab('Acquisition').getAttribute('aria-selected')).toBe('true');
   expect(host.textContent).toContain('Link generator');
@@ -84,14 +84,18 @@ test('it opens on Acquisition: the chart, the link generator and ONE sources tab
   expect(host.textContent).toContain('New accounts per week');
   expect(host.textContent).not.toContain('Where players came from');
   expect(host.textContent).not.toContain('Link and ad traffic');
-  expect(host.querySelectorAll('table').length).toBe(1);
-  // the Sources table carries a Visits column next to the accounts
-  const heads = [...host.querySelectorAll('thead th')].map(h => h.textContent);
-  expect(heads.slice(0, 3)).toEqual(['Source', 'Visits', 'Signups']);
-  const row = [...host.querySelectorAll('tbody tr')].find(r => r.textContent?.startsWith('r-space'))!;
-  expect(row.textContent).toContain('217');
-  const direct = [...host.querySelectorAll('tbody tr')].find(r => r.textContent?.startsWith('direct'))!;
-  expect(direct.textContent).toContain('—'); // a typed address has no visits to count
+  const panelTitles = [...host.querySelectorAll('.ao-phead__title')].map(h => h.textContent);
+  expect(panelTitles.filter(t => t === 'Sources')).toHaveLength(1);
+});
+
+test('the Sources table opens on the visit funnel, every column the old traffic table had', () => {
+  show(data);
+  const heads = [...host.querySelectorAll('thead th')].map(h => h.textContent ?? '').join('|');
+  for (const col of ['Source', 'Campaign', 'Visitors', 'Engaged', 'Pressed Play', 'Trial game', 'Started sign-up',
+    'Errors', 'Signed up', 'Took a seat', 'Came back', 'On a phone', 'Ad clicks', 'Latest']) {
+    expect(heads).toContain(col);
+  }
+  expect(host.textContent).toContain('217');
 });
 
 test('the other panels live on their own tabs, nothing removed', () => {
@@ -104,18 +108,22 @@ test('the other panels live on their own tabs, nothing removed', () => {
   expect(buttons().some(b => b.textContent === 'Invites')).toBe(false); // an older server sends none
 });
 
-test('Visits by campaign shows the campaign tables, and Accounts brings the sources back', () => {
+test('Accounts shows the account table with a Visits column, and Visits by campaign brings the funnel back', () => {
   show(data);
-  click(buttons().find(b => b.textContent === 'Visits by campaign')!);
-  expect(host.textContent).toContain('What each column means');
-  expect([...host.querySelectorAll('thead th')].map(h => h.textContent).join('|')).toContain('Campaign');
   click(buttons().find(b => b.textContent === 'Accounts')!);
-  expect([...host.querySelectorAll('thead th')].map(h => h.textContent)[1]).toBe('Visits');
+  const heads = [...host.querySelectorAll('thead th')].map(h => h.textContent);
+  expect(heads.slice(0, 3)).toEqual(['Source', 'Visits', 'Signups']);
+  const row = [...host.querySelectorAll('tbody tr')].find(r => r.textContent?.startsWith('r-space'))!;
+  expect(row.textContent).toContain('217');
+  const direct = [...host.querySelectorAll('tbody tr')].find(r => r.textContent?.startsWith('direct'))!;
+  expect(direct.textContent).toContain('—'); // a typed address has no visits to count
+  click(buttons().find(b => b.textContent === 'Visits by campaign')!);
+  expect([...host.querySelectorAll('thead th')].map(h => h.textContent).join('|')).toContain('Campaign');
 });
 
 test('the glossary starts closed', () => {
   show(data);
-  click(buttons().find(b => b.textContent === 'Visits by campaign')!);
+  expect(host.textContent).toContain('What each column means');
   expect(host.querySelector('details.ao-gloss')!.hasAttribute('open')).toBe(false);
 });
 

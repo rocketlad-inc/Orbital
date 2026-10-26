@@ -1287,18 +1287,20 @@ function WeeklyAccounts({ cohorts }: { cohorts: Cohort[] }) {
 /** One table for where players come from: accounts by source (with their
  *  visits), or the visit tables by campaign, ad, device and day. */
 function SourcesPanel({ data, visits }: { data: Overview; visits: Record<string, number> }) {
-  const [view, setView] = useState<'accounts' | 'visits'>('accounts');
+  // It opens on the visit funnel (every step from visitor to seat, per
+  // source and campaign): the table the old Link and ad traffic panel was.
+  const [view, setView] = useState<'accounts' | 'visits'>(data.traffic ? 'visits' : 'accounts');
   return (
     <section className="ao-panel">
       <PanelHead
         title="Sources"
-        hint="Every account by where it first arrived from: your link tag (?from=…), a friend’s invite, the site that sent them, or “direct”. Took a seat = joined a game. Came back = played again a day or more after signing up. Visits are recorded from Oct 20, so an older source can have many accounts and few visits."
+        hint="Visits by campaign: every visit by its link tag, campaign, ad and device, step by step from visitor to seat (recorded from Oct 20). Accounts: every account by where it first arrived from, a friend’s invite or “direct”; Took a seat = joined a game, Came back = played again a day or more after signing up. An older source can have many accounts and few visits."
       >
         <div className="ao-seg" role="group" aria-label="Show">
-          <button className={`ao-seg__opt${view === 'accounts' ? ' is-active' : ''}`} onClick={() => setView('accounts')}>Accounts</button>
           {data.traffic && (
             <button className={`ao-seg__opt${view === 'visits' ? ' is-active' : ''}`} onClick={() => setView('visits')}>Visits by campaign</button>
           )}
+          <button className={`ao-seg__opt${view === 'accounts' ? ' is-active' : ''}`} onClick={() => setView('accounts')}>Accounts</button>
         </div>
       </PanelHead>
       {view === 'visits' && data.traffic
