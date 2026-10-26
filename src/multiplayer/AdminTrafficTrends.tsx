@@ -22,7 +22,7 @@
 // "views"). The first step is always the one a share divides by.
 // ============================================================
 
-import React, { useLayoutEffect, useMemo, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import './AdminTrafficTrends.css';
 import { isAiSource, AI_GROUP } from './aiSources';
 
@@ -92,7 +92,7 @@ const dayLabel = (ms: number) =>
 const dayLong = (ms: number) =>
   new Date(ms).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
 
-type Saved = { metric?: MetricKey; share?: boolean; range?: number; picked?: string[]; total?: boolean };
+type Saved = { metric?: MetricKey; share?: boolean; range?: number; picked?: string[]; total?: boolean; auto?: boolean };
 // Per-viewer convenience only: a private window or blocked storage just
 // starts from the defaults.
 function loadSaved(store: string): Saved {
@@ -172,9 +172,14 @@ export function TrafficTrends({ rows: raw, now, config = TRAFFIC }: { rows: Tren
     return Array.from({ length: SLOTS }, (_, i) => want[i] ?? null);
   });
   const picked = slots.filter((s): s is string => !!s);
+  // Following the top five until the viewer picks by hand: the data
+  // re-reads every minute, so a new source that climbs into the top five
+  // joins the lines by itself. A choice saved before this existed stays a
+  // hand pick.
+  const [auto, setAuto] = useState(saved.auto ?? saved.picked === undefined);
 
   const persist = (p: Partial<Saved>) =>
-    save(store, { metric, share, range, total: showTotal, picked, ...p });
+    save(store, { metric, share, range, total: showTotal, picked, auto, ...p });
 
   const shareOn = share && metric !== BASE;
   const today = Math.floor(now / DAY) * DAY;
@@ -215,6 +220,20 @@ export function TrafficTrends({ rows: raw, now, config = TRAFFIC }: { rows: Tren
     rows.reduce((s, r) => s + (r.source === source && r.day_ms >= start ? num(r, metric) : 0), 0);
   const chipSources = allSources.filter(s => rows.some(r => r.source === s && r.day_ms >= start) || picked.includes(s));
 
+  // The five busiest in view. While following, the lines are these: a
+  // source still in the five keeps its colour, one that fell out frees
+  // its colour for the newcomer.
+  const topKey = chipSources.slice(0, 5).join('|');
+  useEffect(() => {
+    if (!auto) return;
+    const want = topKey ? topKey.split('|') : [];
+    setSlots(prev => {
+      const next = prev.map(s => (s && want.includes(s) ? s : null));
+      for (const s of want) if (!next.includes(s)) next[next.indexOf(null)] = s;
+      return next.every((s, i) => s === prev[i]) ? prev : next;
+    });
+  }, [auto, topKey]);
+
   const toggle = (s: string) => {
     const at = slots.indexOf(s);
     let next = [...slots];
@@ -225,17 +244,18 @@ export function TrafficTrends({ rows: raw, now, config = TRAFFIC }: { rows: Tren
       next[free] = s;
     }
     setFull(false);
+    setAuto(false);
     setSlots(next);
-    persist({ picked: next.filter((x): x is string => !!x) });
+    persist({ picked: next.filter((x): x is string => !!x), auto: false });
   };
   const pickTop = () => {
     const next = Array.from({ length: SLOTS }, (_, i) => (i < 5 ? chipSources[i] ?? null : null));
-    setSlots(next); setFull(false);
-    persist({ picked: next.filter((x): x is string => !!x) });
+    setSlots(next); setFull(false); setAuto(true);
+    persist({ picked: next.filter((x): x is string => !!x), auto: true });
   };
   const clear = () => {
-    setSlots(Array.from({ length: SLOTS }, () => null)); setFull(false);
-    persist({ picked: [] });
+    setSlots(Array.from({ length: SLOTS }, () => null)); setFull(false); setAuto(false);
+    persist({ picked: [], auto: false });
   };
 
   const mLabel = METRICS.find(m => m.key === metric)!.label;
@@ -370,6 +390,7 @@ export function TrafficTrends({ rows: raw, now, config = TRAFFIC }: { rows: Tren
         <span className="tt-quick">
           <button type="button" className="tt-link" onClick={pickTop}>Top 5</button>
           <button type="button" className="tt-link" onClick={clear}>Clear</button>
+          {auto && <span className="tt-auto" title={`The five busiest ${many} are drawn, and a new one joins as soon as it climbs in. Pick or clear a ${one} yourself to stop.`}>following the top 5</span>}
         </span>
       </div>
       {full && <p className="tt-note" role="status">Six lines at most: turn one off first.</p>}

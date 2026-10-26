@@ -79,6 +79,7 @@
 .tt-sw--total { border-radius: 2px; height: 0; width: 14px; border-width: 0; border-top: 2px dashed var(--tt-total); }
 .tt-chip--total.is-on .tt-sw--total { border-top-color: var(--ao-ink-2); }
 .tt-quick { display: inline-flex; gap: 10px; margin-left: 6px; }
+.tt-auto { font-size: 12px; color: var(--ao-ink-3); }
 .tt-link {
   appearance: none;
   border: 0;
