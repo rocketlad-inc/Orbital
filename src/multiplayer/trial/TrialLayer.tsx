@@ -10,7 +10,8 @@
 //       TIME     after ten minutes of play: time the tab is visible AND
 //                the clock is running, outside the tour (it fired at
 //                T+1 after a long paused tutorial: playtest 2026-10-24);
-//   - the moment the Warlord declares war, a card says what that means.
+//   - the moment the Warlord declares war, a card says what that means;
+//   - closing the page pauses the trial (it wakes when they come back).
 // The menu entry (TopBar) opens the same sheet whenever they like.
 // ============================================================
 
@@ -124,6 +125,23 @@ export function TrialLayer() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shadow, uid]);
+
+  // GONE: the page is closing, so the trial's clock stops now instead of
+  // running ~30 ticks for nobody until the idle sweep (worker/trial.js
+  // leaveTrial). A reload or a return wakes it on the next /state.
+  const gameId = mpActions?.gameId;
+  useEffect(() => {
+    if (!shadow || !gameId) return;
+    const onPageHide = () => {
+      try {
+        void fetch(`/api/games/${encodeURIComponent(gameId)}/trial-leave`, {
+          method: 'POST', credentials: 'same-origin', keepalive: true,
+        }).catch(() => { /* the idle sweep is the fallback */ });
+      } catch { /* the idle sweep is the fallback */ }
+    };
+    window.addEventListener('pagehide', onPageHide);
+    return () => window.removeEventListener('pagehide', onPageHide);
+  }, [shadow, gameId]);
 
   // TIME: ten minutes of PLAY, kept across reloads: the tab in view, the
   // clock running, and no tour on screen. Counted from the real time

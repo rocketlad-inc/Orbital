@@ -2329,6 +2329,12 @@ export default {
           && SHADOW_BLOCKED.some(re => re.test(url.pathname))) {
         return err(403, 'account_required', 'save your empire to do this');
       }
+      // The trial player closed the page: pause their trial now (trial.js).
+      const tl = url.pathname.match(/^\/api\/games\/([^/]+)\/trial-leave$/);
+      if (tl && req.method === 'POST') {
+        if (Number(session.shadow) !== 1) return json({ paused: false });
+        return json(await trial.leaveTrial(env, decodeURIComponent(tl[1]), session));
+      }
 
       // --- analytics telemetry (fire-and-forget semantics) -----------
       // Feature usage: one row per mutating game action. Logged at this
