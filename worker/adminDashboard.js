@@ -1085,9 +1085,13 @@ async function handleCommissionFunnel(req, env, { session, url }) {
   const gate = requireAdmin(session);
   if (gate) return gate;
   const days = Math.max(1, Math.min(180, parseInt(url.searchParams.get('days') ?? '30', 10) || 30));
-  const since = Date.now() - days * DAY_MS;
+  const now = Date.now();
+  const since = now - days * DAY_MS;
+  // The per-day chart always gets the last 30 UTC days, whatever the
+  // table's window (it picks 7 / 14 / 30 itself).
+  const since30 = floorDay(now) - 29 * DAY_MS;
   const q = (sql, ...args) => env.DB.prepare(sql).bind(...args).all().then(r => r.results ?? []);
-  const [events, paid, gifts, asks] = await Promise.all([
+  const [events, paid, gifts, asks, dayEvents, dayPaid] = await Promise.all([
     q(`SELECT e.kind,
               COALESCE(json_extract(e.payload, '$.from'), 'other') AS surface,
               COALESCE(json_extract(e.payload, '$.result'), '') AS result,
@@ -1106,6 +1110,20 @@ async function handleCommissionFunnel(req, env, { session, url }) {
          FROM commission_gifts WHERE created_at >= ?1`, since),
     q(`SELECT commission_ask_action AS action, COUNT(*) AS n
          FROM users WHERE commission_ask_ms >= ?1 GROUP BY 1`, since),
+    // The same funnel, per UTC day: views, players, clicks, checkouts.
+    q(`SELECT (e.created_at_ms / ${DAY_MS}) * ${DAY_MS} AS day_ms, e.kind,
+              COALESCE(json_extract(e.payload, '$.from'), 'other') AS surface,
+              COUNT(*) AS n, COUNT(DISTINCT e.user_id) AS players
+         FROM analytics_events e JOIN users u ON u.id = e.user_id
+        WHERE e.game_id IS NULL
+          AND (e.kind IN ('ui/commission-view', 'ui/commission-click')
+               OR (e.kind = 'commission/checkout' AND json_extract(e.payload, '$.result') = 'started'))
+          AND e.created_at_ms >= ?1 AND ${notQa('u.email')}
+        GROUP BY 1, 2, 3`, since30),
+    q(`SELECT (granted_at / ${DAY_MS}) * ${DAY_MS} AS day_ms, COALESCE(surface, 'before tracking') AS surface, COUNT(*) AS n
+         FROM user_entitlements
+        WHERE source = 'stripe' AND granted_at >= ?1
+        GROUP BY 1, 2`, since30),
   ]);
 
   const SURFACES = ['profile', 'lobby-flag', 'designer', 'endgame', 'thanks-card', 'skins', 'discord-feed', 'map-maker', 'lobby-map', 'invite'];
@@ -1124,9 +1142,27 @@ async function handleCommissionFunnel(req, env, { session, url }) {
     else if (e.kind === 'commission/checkout' && e.result === 'expired') r.expired += e.n;
   }
   for (const p of paid) if (p.source === 'stripe') get(p.surface).paid += p.n;
+
+  // One row per (day, surface) with anything on it, for the trend chart.
+  const daily = new Map();
+  const dayRow = (d, s) => {
+    const k = `${d}|${s}`;
+    if (!daily.has(k)) daily.set(k, { day_ms: Number(d), source: s, views: 0, viewers: 0, clicks: 0, checkouts: 0, paid: 0 });
+    return daily.get(k);
+  };
+  for (const e of dayEvents) {
+    const r = dayRow(e.day_ms, e.surface);
+    if (e.kind === 'ui/commission-view') { r.views += e.n; r.viewers += e.players; }
+    else if (e.kind === 'ui/commission-click') r.clicks += e.n;
+    else r.checkouts += e.n;
+  }
+  for (const p of dayPaid) dayRow(p.day_ms, p.surface).paid += p.n;
+
   return json({
     days,
+    now,
     surfaces: [...by.values()],
+    daily: [...daily.values()].sort((a, b) => a.day_ms - b.day_ms),
     gifts: {
       sold: gifts[0]?.sold ?? 0,
       redeemed: gifts[0]?.redeemed ?? 0,

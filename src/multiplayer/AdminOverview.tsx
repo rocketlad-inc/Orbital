@@ -24,7 +24,7 @@ import { ago, labelForKind, playTime } from './adminFormat';
 import { FrictionRows } from './GameStory';
 import { span } from './storyVerdict';
 import { GameActivity } from './AdminGameActivity';
-import { TrafficTrends, TrafficDay } from './AdminTrafficTrends';
+import { TrafficTrends, TrafficDay, TrendRow, TrendConfig } from './AdminTrafficTrends';
 import { TrialPanel, TrialData } from './AdminTrialPanel';
 import { CommissionSales } from './AdminCommissionSales';
 import { isAiSource } from './aiSources';
@@ -1725,7 +1725,10 @@ type FunnelRow = {
 };
 type FunnelData = {
   days: number;
+  now: number;
   surfaces: FunnelRow[];
+  /** The last 30 UTC days, one row per (day, surface): the trend chart. */
+  daily: TrendRow[];
   gifts: { sold: number; redeemed: number; voided: number; redeemed_grants: number };
   thanks_card: Record<string, number>;
 };
@@ -1742,6 +1745,21 @@ const SURFACE_LABEL: Record<string, string> = {
   invite: 'Invite card: gift for a friend',
   other: 'Other / older clients',
   'before tracking': 'Before tracking',
+};
+/** The traffic chart, per surface: the same lines, the Commission's funnel. */
+const SURFACE_TRENDS: TrendConfig = {
+  title: 'Per surface, per day',
+  metrics: [
+    { key: 'views', label: 'Views' },
+    { key: 'viewers', label: 'Players' },
+    { key: 'clicks', label: 'Clicks' },
+    { key: 'checkouts', label: 'Checkouts' },
+    { key: 'paid', label: 'Paid' },
+  ],
+  name: (s) => SURFACE_LABEL[s] ?? s,
+  store: 'ao.commissionTrends.v1',
+  item: ['surface', 'surfaces'],
+  base: 'views',
 };
 
 /**
@@ -1779,6 +1797,7 @@ function CommissionFunnel() {
       {!data && !error && <div className="ao-none">Loading…</div>}
       {data && (
         <>
+          {data.daily && <TrafficTrends rows={data.daily} now={data.now} config={SURFACE_TRENDS} />}
           <div className="ao-scroll">
             <table className="ao-table">
               <thead>
