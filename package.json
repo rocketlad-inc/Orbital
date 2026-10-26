@@ -117,7 +117,8 @@
     "sim:ram": "esbuild sim/ramAuthority.mjs --bundle --platform=node --format=esm --outfile=node_modules/.cache/ramAuthority.mjs && node node_modules/.cache/ramAuthority.mjs",
     "sim:trial-signup": "esbuild sim/trialSignup.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/trialSignup.mjs && node node_modules/.cache/trialSignup.mjs",
     "sim:trial-leave": "esbuild sim/trialLeave.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/trialLeave.mjs && node node_modules/.cache/trialLeave.mjs",
-    "sim:link-tags": "esbuild sim/linkTags.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --loader:.css=empty --jsx=automatic --log-level=error --outfile=node_modules/.cache/linkTags.mjs && node node_modules/.cache/linkTags.mjs"
+    "sim:link-tags": "esbuild sim/linkTags.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --loader:.css=empty --jsx=automatic --log-level=error --outfile=node_modules/.cache/linkTags.mjs && node node_modules/.cache/linkTags.mjs",
+    "sim:cancel-refund": "esbuild sim/cancelRefund.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/cancelRefund.mjs && node node_modules/.cache/cancelRefund.mjs"
   },
   "eslintConfig": {
     "extends": [
