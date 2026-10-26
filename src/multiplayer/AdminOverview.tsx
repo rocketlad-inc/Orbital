@@ -25,6 +25,7 @@ import { FrictionRows } from './GameStory';
 import { span } from './storyVerdict';
 import { GameActivity } from './AdminGameActivity';
 import { TrafficTrends, TrafficDay, TrendRow, TrendConfig } from './AdminTrafficTrends';
+import { LinkGenerator } from './AdminLinkGenerator';
 import { TrialPanel, TrialData } from './AdminTrialPanel';
 import { CommissionSales } from './AdminCommissionSales';
 import { isAiSource } from './aiSources';
@@ -1398,12 +1399,17 @@ function TrafficPanel({ tr, now }: { tr: TrafficData; now: number }) {
   const dayRows = [...days.entries()].sort((a, b) => b[0] - a[0]);
   const maxDay = Math.max(1, ...dayRows.map(([, d]) => d.visitors));
   const aiCampaigns = aiTotal(tr.campaigns, [...FUNNEL_KEYS, 'phones', 'clicks', 'latest_ms']);
+  // Visits per tag over the 30 days the daily rows cover: what the link
+  // generator says about a tag that already has a line.
+  const seenTags: Record<string, number> = {};
+  for (const r of tr.daily) seenTags[r.source] = (seenTags[r.source] ?? 0) + r.visitors;
   return (
     <section className="ao-panel">
       <PanelHead
         title="Link and ad traffic"
         hint="Every visit in the last 30 days that arrived through a tagged link, an ad click or another site, whether or not it signed up (recorded from Oct 20). Read a row left to right: each column is a step further in, and the small percentage beside a number is its share of that row's visitors."
       ><RefreshTool /></PanelHead>
+      <LinkGenerator seen={seenTags} />
       <TrafficTrends rows={tr.daily} now={now} />
       <TrafficGlossary />
       {tr.campaigns.length === 0 ? <div className="ao-none">No tagged or referred visits yet.</div> : (
