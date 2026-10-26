@@ -167,6 +167,15 @@ export function captureAttribution(): void {
     }
   }
 
+  // TikTok's built-in browser sends no referrer, so a visit from a video
+  // would be filed as "direct". It names itself in its User-Agent: say so,
+  // and the server files it under "tiktok" (worker/attribution.js), for the
+  // visit and for the account it becomes. A link tag still wins.
+  if (!now.referrer && typeof navigator !== 'undefined' && /musical_ly|BytedanceWebview|TikTok/i.test(navigator.userAgent || '')) {
+    now.referrer = 'tiktok.com';
+    now.in_app = 'tiktok';
+  }
+
   const stored = read();
   thisVisit = now;
   if (!stored || (!informative(stored) && informative(now))) write(now);

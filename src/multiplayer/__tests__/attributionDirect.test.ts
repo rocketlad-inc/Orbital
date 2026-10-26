@@ -3,6 +3,8 @@
 // shows up, so the traffic table has a "direct" line. Later loads of the
 // same browser do not report again; an informative arrival always does.
 import { captureAttribution } from '../attribution';
+// @ts-ignore — plain JS worker module
+import { readAttribution } from '../../../worker/attribution.js';
 
 type Call = { url: string; body: Record<string, unknown> };
 let calls: Call[] = [];
@@ -56,6 +58,38 @@ describe('direct visits', () => {
     const all = lands();
     expect(all).toHaveLength(2);
     expect((all[1]!.body.a as Record<string, unknown>).from).toBe('r-space');
+  });
+
+  it('files a visit from TikTok’s built-in browser under tiktok, though it sends no referrer', () => {
+    const real = navigator.userAgent;
+    Object.defineProperty(window.navigator, 'userAgent', {
+      configurable: true,
+      value: 'Mozilla/5.0 (Linux; Android 14; Pixel 8; wv) AppleWebKit/537.36 Chrome/141.0 Mobile Safari/537.36 musical_ly_2024 BytedanceWebview/d8a21c6',
+    });
+    try {
+      visit('/');
+      const a = lands()[0]!.body.a as Record<string, unknown>;
+      expect(a.referrer).toBe('tiktok.com');
+      expect(a.in_app).toBe('tiktok');
+      expect(readAttribution(a)!.source).toBe('tiktok');
+    } finally {
+      Object.defineProperty(window.navigator, 'userAgent', { configurable: true, value: real });
+    }
+  });
+
+  it('keeps a link tag over the TikTok guess, and never guesses for other browsers', () => {
+    const real = navigator.userAgent;
+    Object.defineProperty(window.navigator, 'userAgent', { configurable: true, value: 'Mozilla/5.0 TikTok 38.0' });
+    try {
+      visit('/?from=tt-launch');
+      expect(readAttribution(lands()[0]!.body.a as Record<string, unknown>)!.source).toBe('tt-launch');
+    } finally {
+      Object.defineProperty(window.navigator, 'userAgent', { configurable: true, value: real });
+    }
+    calls = [];
+    window.localStorage.clear();
+    visit('/');
+    expect((lands()[0]!.body.a as Record<string, unknown>).referrer).toBeUndefined();
   });
 
   it('reports a referred arrival as before', () => {
