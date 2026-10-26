@@ -3,8 +3,8 @@
 // Noah built Trajectory Control Thrusters on Styx and "there's no option
 // to do anything with it". The aim-and-fire controls existed — in the
 // legacy BodyInspector, which the multiplayer World Menu REPLACES
-// (App.tsx: `worldMenuOn ? <WorldMenuOverlay/> : <BodyInspector/>`, and
-// the World Menu is on by default). The Dyson Sphere card went missing
+// (App.tsx: `isMultiplayer ? <WorldMenuOverlay/> : <BodyInspector/>`, and
+// the World Menu is always on). The Dyson Sphere card went missing
 // the same way. Source-level on purpose: the World Menu needs the whole
 // game context to render, and what regressed was a MOUNT, which is
 // exactly what this reads.
@@ -21,7 +21,8 @@ describe('asteroid ram controls in the World Menu', () => {
   const app = read('src/App.tsx');
 
   it('the World Menu really does replace the inspector in MP (the premise)', () => {
-    expect(app).toMatch(/worldMenuOn\s*\n?\s*\?\s*<>\s*<WorldMenuOverlay/);
+    expect(app).toMatch(/isMultiplayer\s*\n?\s*\?\s*<>\s*<WorldMenuOverlay/);
+    expect(app).not.toMatch(/WorldMenuToggle|worldMenuPref/);
   });
 
   it('mounts the ram controls for asteroids', () => {

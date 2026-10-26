@@ -49,7 +49,7 @@ import { ShipIconGalleryPage } from './components/ShipIconGalleryPage';
 import { PhysicsSandbox } from './physicsSandbox/PhysicsSandbox';
 import { TorchSandbox } from './torchSandbox/TorchSandbox';
 import { MultiplayerShell } from './multiplayer/MultiplayerShell';
-import { WorldMenuOverlay, WorldMenuToggle, worldMenuPref } from './multiplayer/WorldMenuOverlay';
+import { WorldMenuOverlay } from './multiplayer/WorldMenuOverlay';
 import { WarpGateCard } from './multiplayer/WarpGateCard';
 import { MeteoroidCard } from './multiplayer/MeteoroidCard';
 import { MegastructureCard } from './multiplayer/MegastructureCard';
@@ -246,16 +246,6 @@ function GameUI({
   const { gameState, uiState } = useGameContext();
   useAutosave(gameState, !isMultiplayer);
 
-  // World-menu preference (MP only — SP never reads this). Synced to
-  // the toggle pill via the pref event so flipping it re-renders here.
-  const [worldMenuOn, setWorldMenuOn] = useState(() => worldMenuPref());
-  useEffect(() => {
-    if (!isMultiplayer) return;
-    const onPref = () => setWorldMenuOn(worldMenuPref());
-    window.addEventListener('orbital:world-menu-pref', onPref);
-    return () => window.removeEventListener('orbital:world-menu-pref', onPref);
-  }, [isMultiplayer]);
-
   useEffect(() => {
     const handleResize = () => {
       setWindowSize({ width: window.innerWidth, height: window.innerHeight });
@@ -386,14 +376,12 @@ function GameUI({
       {isMultiplayer && <EliminationBanner />}
       {isMultiplayer && <CapitalLossAlert />}
 
-      {/* World menu (MULTIPLAYER ONLY, default ON with a kill-switch
-          pill). SP is DEAD code-wise here: isMultiplayer=false always
-          renders <BodyInspector /> exactly as before — the world menu
-          and its toggle are unreachable outside MP. */}
-      {isMultiplayer && worldMenuOn
+      {/* World menu (MULTIPLAYER ONLY, always on: the classic-UI pill is
+          gone). SP is DEAD code-wise here: isMultiplayer=false always
+          renders <BodyInspector /> exactly as before. */}
+      {isMultiplayer
         ? <><WorldMenuOverlay /><WarpGateCard /><MeteoroidCard /><MegastructureCard /></>
         : <BodyInspector />}
-      {isMultiplayer && <WorldMenuToggle on={worldMenuOn} />}
       {/* ThreatsPanel (the top-right popup) is RETIRED — incoming hostile
           ships now live in the Situation Log's "Incoming threats" NOW-tier
           section, which says strictly more than the popup did (attacker,

@@ -588,12 +588,6 @@ export const map = {
   'worldmenu.dyson.initiateBtn': '◆ INITIATE AT {name}',
   'worldmenu.dyson.clickDismiss': 'Click to dismiss',
 
-  // ---- world menu: classic/world toggle ----
-  'worldmenu.toggle.toClassicTitle': 'Switch back to the classic body inspector',
-  'worldmenu.toggle.toWorldTitle': 'Switch to the diegetic world menu',
-  'worldmenu.toggle.classic': '☰ CLASSIC UI',
-  'worldmenu.toggle.world': '🪐 WORLD MENU',
-
   // ---- TopBar ----
   'topbar.openMenu': 'Open menu',
   'topbar.build': 'Build {sha}',

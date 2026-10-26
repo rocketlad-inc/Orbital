@@ -590,12 +590,6 @@ export const map: Catalog = {
   'worldmenu.dyson.initiateBtn': '◆ INICIAR EM {name}',
   'worldmenu.dyson.clickDismiss': 'Clique para dispensar',
 
-  // ---- world menu: classic/world toggle ----
-  'worldmenu.toggle.toClassicTitle': 'Voltar ao inspetor de mundo clássico',
-  'worldmenu.toggle.toWorldTitle': 'Mudar para o menu de mundo diegético',
-  'worldmenu.toggle.classic': '☰ UI CLÁSSICA',
-  'worldmenu.toggle.world': '🪐 MENU DO MUNDO',
-
   // ---- TopBar ----
   'topbar.openMenu': 'Abrir menu',
   'topbar.build': 'Versão {sha}',
