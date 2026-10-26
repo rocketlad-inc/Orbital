@@ -290,7 +290,7 @@ export const helpers: Catalog = {
   'helper.sit.strike.sub.force': 'Force-o a sair do mundo e a carga se rompe.',
   'helper.sit.strike.mine.sub': 'Ela se rompe se o casco se mover. Nada mais a detém.',
   'helper.sit.strike.showHull': 'Mostrar o casco',
-  'helper.sit.siege.breached': '{body} foi rompida — pode ser abordada agora',
+  'helper.sit.siege.breached': '{body} foi rompida — pode ser capturada agora',
   'helper.sit.siege.attack': '{body} sob ataque — casco a {pct}%',
   'helper.sit.siege.hostiles_one': '{n} nave de guerra hostil mantendo a órbita. Expulse-a e a estrutura se repara sozinha.',
   'helper.sit.siege.hostiles_other': '{n} naves de guerra hostis mantendo a órbita. Expulse-as e a estrutura se repara sozinha.',

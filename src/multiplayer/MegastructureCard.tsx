@@ -553,7 +553,16 @@ export const MegastructureCard: React.FC = () => {
         return (
         <div className="megac__seize">
           <div className="megac__gatehead">{site.ancient ? t('megastructure.boardIt') : t('megastructure.notYoursHead')}</div>
-          {!canTake && <div className="megac__hint">{why}</div>}
+          {/* The button is always there (a player looked for it and found
+              only a hint: "it says it's boardable but I don't know where
+              the button is"); it stays dim, with the next missing step
+              beside it, until all three conditions hold. */}
+          {!canTake && (<>
+            <button className="megac__take" disabled title={why}>
+              {t('megastructure.capture')}
+            </button>
+            <div className="megac__hint">{why}</div>
+          </>)}
           {canTake && (<>
           <button
             className="megac__take"

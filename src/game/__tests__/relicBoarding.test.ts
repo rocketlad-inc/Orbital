@@ -41,3 +41,19 @@ test('a breached finished structure does not claim to be operational', () => {
   expect(read('src/multiplayer/MegastructureCard.tsx'))
     .toMatch(/complete \? \(isBreached\(site\) \? 'Breached · offline' : 'Operational'\)/);
 });
+
+// TheSaltedPork, 2026-10-26, on a Deep Space Array: "It says it's boardable
+// but I don't know where the button is". The Capture button only existed
+// once an armed ship of the player's was in orbit, so before that the card
+// showed a red "boardable" line and a grey hint, and no button at all.
+test('the Capture button is always on the card, dim until it can work', () => {
+  const card = read('src/multiplayer/MegastructureCard.tsx');
+  expect(card).toMatch(/!canTake && \(<>\s*<button className="megac__take" disabled/);
+});
+
+test('the card says "capture", never "board", for what the button does', () => {
+  const en = read('src/i18n/parts/en/map.ts');
+  expect(en).toMatch(/'megastructure\.breachedWarn': '[^']*capture/);
+  expect(en).toMatch(/'megastructure\.why\.breached': "[^"]*unlock Capture/);
+  expect(en).not.toMatch(/'megastructure\.(breachedWarn|why\.[a-z_]+|boardIt)': ['"][^'"]*\bboard/i);
+});
