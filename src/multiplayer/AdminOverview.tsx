@@ -30,6 +30,7 @@ import { TrialPanel, TrialData } from './AdminTrialPanel';
 import { CommissionSales } from './AdminCommissionSales';
 import { isAiSource } from './aiSources';
 import './AdminOverview.css';
+import './AdminGrowth.css';
 
 // ---------- payload types (worker/adminDashboard.js) ----------
 
@@ -79,7 +80,7 @@ type TrafficData = {
   /** Per source per UTC day, last 30 days, every funnel step. */
   daily: (Funnel & TrafficDay)[];
 };
-type Overview = {
+export type Overview = {
   now: number;
   /** Link and ad traffic, signed up or not, last 30 days (0180). */
   traffic?: TrafficData;
@@ -1178,7 +1179,7 @@ function InvitesPanel({ inv }: { inv: InvitesData }) {
       <PanelHead
         title="Who brings players in"
         hint="Last 30 days. An invite is a link to a room that names who sent it; a code typed by hand counts too, credited to the room's host. Recorded from the Oct 19 update on."
-      ><RefreshTool /></PanelHead>
+      />
       <div className="ao-headline">
         <div className="ao-headline__item"><span className="ao-headline__value">{n(inv.opens)}</span><span className="ao-headline__label">invite links opened</span></div>
         <div className="ao-headline__item"><span className="ao-headline__value">{n(inv.signed_up)}</span><span className="ao-headline__label">friends signed up</span></div>
@@ -1234,7 +1235,85 @@ function InvitesPanel({ inv }: { inv: InvitesData }) {
   );
 }
 
-function Growth({ data }: { data: Overview }) {
+const GROWTH_TABS = [
+  { id: 'acquisition', label: 'Acquisition' },
+  { id: 'activation', label: 'Activation' },
+  { id: 'retention', label: 'Retention' },
+  { id: 'invites', label: 'Invites' },
+  { id: 'trial', label: 'Trial game' },
+] as const;
+type GrowthTab = typeof GROWTH_TABS[number]['id'];
+const GROWTH_TAB_KEY = 'ao.growthTab.v1';
+
+/** The tab last open in this browser; a private window just opens Acquisition. */
+function savedGrowthTab(): GrowthTab {
+  try {
+    const v = localStorage.getItem(GROWTH_TAB_KEY);
+    if (GROWTH_TABS.some(t => t.id === v)) return v as GrowthTab;
+  } catch { /* storage off */ }
+  return 'acquisition';
+}
+
+/** New accounts per week: the cohorts' sizes, the newest week still in progress. */
+function WeeklyAccounts({ cohorts }: { cohorts: Cohort[] }) {
+  const weeks = [...cohorts].sort((a, b) => a.week_ms - b.week_ms).slice(-5);
+  if (weeks.length === 0) return null;
+  const top = Math.max(1, ...weeks.map(w => w.size));
+  const peak = weeks.reduce((a, w) => (w.size > a.size ? w : a), weeks[0]!);
+  const low = weeks.slice(0, -1).reduce<Cohort | null>((a, w) => (!a || w.size < a.size ? w : a), null);
+  return (
+    <section className="ao-panel gr-weekly">
+      <PanelHead
+        title="New accounts per week"
+        hint="Accounts made, grouped by the week they joined. The last bar is a week still in progress."
+      />
+      <p className="gr-weekly__sub">
+        Busiest week: {n(peak.size)} (from {dayLabel(peak.week_ms)})
+        {low && low !== peak ? `, quietest: ${n(low.size)} (from ${dayLabel(low.week_ms)})` : ''}.
+      </p>
+      <div className="gr-bars" role="img" aria-label={`New accounts per week: ${weeks.map(w => `${dayLabel(w.week_ms)} ${w.size}`).join(', ')}`}>
+        {weeks.map((w, i) => (
+          <div key={w.week_ms} className="gr-bar">
+            <span className="gr-bar__n">{n(w.size)}</span>
+            <i className={`gr-bar__fill${i === weeks.length - 1 ? ' is-open' : ''}`} style={{ height: `${Math.max(3, Math.round((w.size / top) * 104))}px` }} />
+            <span className="gr-bar__label">{dayLabel(w.week_ms)}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/** One table for where players come from: accounts by source (with their
+ *  visits), or the visit tables by campaign, ad, device and day. */
+function SourcesPanel({ data, visits }: { data: Overview; visits: Record<string, number> }) {
+  const [view, setView] = useState<'accounts' | 'visits'>('accounts');
+  return (
+    <section className="ao-panel">
+      <PanelHead
+        title="Sources"
+        hint="Every account by where it first arrived from: your link tag (?from=…), a friend’s invite, the site that sent them, or “direct”. Took a seat = joined a game. Came back = played again a day or more after signing up. Visits are recorded from Oct 20, so an older source can have many accounts and few visits."
+      >
+        <div className="ao-seg" role="group" aria-label="Show">
+          <button className={`ao-seg__opt${view === 'accounts' ? ' is-active' : ''}`} onClick={() => setView('accounts')}>Accounts</button>
+          {data.traffic && (
+            <button className={`ao-seg__opt${view === 'visits' ? ' is-active' : ''}`} onClick={() => setView('visits')}>Visits by campaign</button>
+          )}
+        </div>
+      </PanelHead>
+      {view === 'visits' && data.traffic
+        ? <TrafficDetails tr={data.traffic} now={data.now} />
+        : <SourcesTable rows={data.sources} now={data.now} visits={data.traffic ? visits : undefined} />}
+    </section>
+  );
+}
+
+export function Growth({ data }: { data: Overview }) {
+  const [tab, setTab] = useState<GrowthTab>(savedGrowthTab);
+  const pick = (t: GrowthTab) => {
+    setTab(t);
+    try { localStorage.setItem(GROWTH_TAB_KEY, t); } catch { /* storage off */ }
+  };
   const cohorts = data.cohorts;
   const sum = (key: keyof Cohort) => cohorts.reduce((s, c) => s + (c[key] as number), 0);
   const rate = (r: keyof Cohort, e: keyof Cohort) => pctOf(sum(r), sum(e));
@@ -1244,11 +1323,76 @@ function Growth({ data }: { data: Overview }) {
     ['after two weeks', rate('r14', 'e14'), sum('e14')],
     ['after four weeks', rate('r28', 'e28'), sum('e28')],
   ];
+
+  // Visits per source over the 30 days the daily rows cover: the Sources
+  // table's Visits column, and what the link generator says about a tag.
+  const visits: Record<string, number> = {};
+  for (const r of data.traffic?.daily ?? []) visits[r.source] = (visits[r.source] ?? 0) + r.visitors;
+  const visitTotal = Object.values(visits).reduce((s, v) => s + v, 0);
+  const firstVisitDay = Math.min(...(data.traffic?.daily ?? []).map(r => r.day_ms));
+  const signedUp = data.sources.reduce((s, r) => s + r.signups_30d, 0);
+  const seatedStep = data.journey?.steps.find(s => s.id === 'seated');
+  const nextDay = headline[0]!;
+  const kpis: Array<{ label: string; value: string; foot: string }> = [
+    ...(data.traffic ? [{
+      label: 'Visits', value: n(visitTotal),
+      foot: Number.isFinite(firstVisitDay) ? `recorded since ${dayLabel(firstVisitDay)}` : 'last 30 days',
+    }] : []),
+    { label: 'Signed up', value: n(signedUp), foot: 'new accounts, 30 days' },
+    ...(seatedStep && data.journey ? [{
+      label: 'Took a seat', value: n(seatedStep.n),
+      foot: data.journey.signed_up ? `${pctOf(seatedStep.n, data.journey.signed_up)}% of signups` : 'joined a game',
+    }] : []),
+    { label: 'Came back the next day', value: nextDay[1] == null ? '—' : `${nextDay[1]}%`, foot: `of ${n(nextDay[2])} old enough` },
+  ];
+
+  const tabs = GROWTH_TABS.filter(t =>
+    (t.id !== 'invites' || data.invites) && (t.id !== 'trial' || data.trial) && (t.id !== 'activation' || data.journey));
+  const active: GrowthTab = tabs.some(t => t.id === tab) ? tab : 'acquisition';
+
   return (
     <div className="ao-stack">
-      {data.invites && <InvitesPanel inv={data.invites} />}
-      {data.journey && (
-        <section className="ao-panel">
+      <div className="gr-head">
+        <h2 className="gr-title">Growth</h2>
+        <span className="gr-sub">Last 30 days</span>
+        <span className="gr-tool"><RefreshTool /></span>
+      </div>
+      <div className="gr-kpis">
+        {kpis.map(k => (
+          <div key={k.label} className="gr-kpi">
+            <span className="gr-kpi__label">{k.label}</span>
+            <span className="gr-kpi__value">{k.value}</span>
+            <span className="gr-kpi__foot">{k.foot}</span>
+          </div>
+        ))}
+      </div>
+      <div className="gr-tabs" role="tablist" aria-label="Growth sections">
+        {tabs.map(t => (
+          <button key={t.id} type="button" role="tab" aria-selected={active === t.id}
+            className={active === t.id ? 'is-on' : ''} onClick={() => pick(t.id)}>{t.label}</button>
+        ))}
+      </div>
+
+      {active === 'acquisition' && (
+        <div className="ao-stack" role="tabpanel">
+          <div className="gr-duo">
+            <WeeklyAccounts cohorts={cohorts} />
+            {data.traffic && (
+              <div className="gr-links">
+                <LinkGenerator seen={visits} />
+              </div>
+            )}
+          </div>
+          {data.traffic && (
+            <section className="ao-panel">
+              <TrafficTrends rows={data.traffic.daily} now={data.now} />
+            </section>
+          )}
+          <SourcesPanel data={data} visits={visits} />
+        </div>
+      )}
+      {active === 'activation' && data.journey && (
+        <section className="ao-panel" role="tabpanel">
           <PanelHead
             title="What new players actually do"
             hint="Everyone who signed up in the last 30 days, and how many reached each of the game's basics, with the median time it took them. A step counts only when the game said yes, not on a refused attempt. The striped part of each bar is who dropped off since the step above."
@@ -1256,31 +1400,26 @@ function Growth({ data }: { data: Overview }) {
           <JourneyFunnel journey={data.journey} />
         </section>
       )}
-      <section className="ao-panel">
-        <PanelHead
-          title="Do new players come back?"
-          hint="Everyone who signed up in the last 12 weeks, grouped by the week they joined. “Came back after a week” means they played again at least seven days after signing up. Players too new to have had the chance are left out of that column."
-        />
-        <div className="ao-headline">
-          {headline.map(([label, p, of]) => (
-            <div key={label} className="ao-headline__item">
-              <span className="ao-headline__value">{p == null ? '—' : `${p}%`}</span>
-              <span className="ao-headline__label">{label}</span>
-              <span className="ao-headline__of">of {n(of)} old enough</span>
-            </div>
-          ))}
-        </div>
-        <CohortTable rows={cohorts} />
-      </section>
-      {data.traffic && <TrafficPanel tr={data.traffic} now={data.now} />}
-      {data.trial && <TrialPanel data={data.trial} now={data.now} />}
-      <section className="ao-panel">
-        <PanelHead
-          title="Where players came from"
-          hint="Every account by where it first arrived from: your link tag (?from=…), a friend’s invite, the site that sent them, or “direct”. Took a seat = joined a game. Came back = played again a day or more after signing up."
-        ><RefreshTool /></PanelHead>
-        <SourcesTable rows={data.sources} now={data.now} />
-      </section>
+      {active === 'retention' && (
+        <section className="ao-panel" role="tabpanel">
+          <PanelHead
+            title="Do new players come back?"
+            hint="Everyone who signed up in the last 12 weeks, grouped by the week they joined. “Came back after a week” means they played again at least seven days after signing up. Players too new to have had the chance are left out of that column."
+          />
+          <div className="ao-headline">
+            {headline.map(([label, p, of]) => (
+              <div key={label} className="ao-headline__item">
+                <span className="ao-headline__value">{p == null ? '—' : `${p}%`}</span>
+                <span className="ao-headline__label">{label}</span>
+                <span className="ao-headline__of">of {n(of)} old enough</span>
+              </div>
+            ))}
+          </div>
+          <CohortTable rows={cohorts} />
+        </section>
+      )}
+      {active === 'invites' && data.invites && <InvitesPanel inv={data.invites} />}
+      {active === 'trial' && data.trial && <TrialPanel data={data.trial} now={data.now} />}
     </div>
   );
 }
@@ -1373,7 +1512,7 @@ const FUNNEL_HEAD = (
 /** The glossary under the panel's title: every column, one plain line. */
 function TrafficGlossary() {
   return (
-    <details className="ao-gloss" open>
+    <details className="ao-gloss">
       <summary>What each column means</summary>
       <dl>
         {TRAFFIC_COLS.map(c => (
@@ -1384,7 +1523,10 @@ function TrafficGlossary() {
   );
 }
 
-function TrafficPanel({ tr, now }: { tr: TrafficData; now: number }) {
+/** The tables behind the traffic chart: by source and campaign, by ad and
+ *  keyword, device, day and country. Shown by the Sources panel's "Visits
+ *  by campaign" view. */
+function TrafficDetails({ tr, now }: { tr: TrafficData; now: number }) {
   // Daily totals over 14 days, with the busiest source of each day.
   const days = new Map<number, { visitors: number; signed_up: number; top: string; topN: number }>();
   const since14 = Math.floor(now / 86_400_000) * 86_400_000 - 13 * 86_400_000;
@@ -1399,18 +1541,11 @@ function TrafficPanel({ tr, now }: { tr: TrafficData; now: number }) {
   const dayRows = [...days.entries()].sort((a, b) => b[0] - a[0]);
   const maxDay = Math.max(1, ...dayRows.map(([, d]) => d.visitors));
   const aiCampaigns = aiTotal(tr.campaigns, [...FUNNEL_KEYS, 'phones', 'clicks', 'latest_ms']);
-  // Visits per tag over the 30 days the daily rows cover: what the link
-  // generator says about a tag that already has a line.
-  const seenTags: Record<string, number> = {};
-  for (const r of tr.daily) seenTags[r.source] = (seenTags[r.source] ?? 0) + r.visitors;
   return (
-    <section className="ao-panel">
-      <PanelHead
-        title="Link and ad traffic"
-        hint="Every visit in the last 30 days that arrived through a tagged link, an ad click or another site, whether or not it signed up (recorded from Oct 20). Read a row left to right: each column is a step further in, and the small percentage beside a number is its share of that row's visitors."
-      ><RefreshTool /></PanelHead>
-      <LinkGenerator seen={seenTags} />
-      <TrafficTrends rows={tr.daily} now={now} />
+    <>
+      <p className="ao-note" style={{ margin: '0 0 8px' }}>
+        Every visit in the last 30 days that arrived through a tagged link, an ad click or another site, whether or not it signed up (recorded from Oct 20). Read a row left to right: each column is a step further in, and the small percentage beside a number is its share of that row's visitors.
+      </p>
       <TrafficGlossary />
       {tr.campaigns.length === 0 ? <div className="ao-none">No tagged or referred visits yet.</div> : (
         <div className="ao-scroll">
@@ -1523,7 +1658,7 @@ function TrafficPanel({ tr, now }: { tr: TrafficData; now: number }) {
           )}
         </div>
       </div>
-    </section>
+    </>
   );
 }
 
@@ -1578,8 +1713,14 @@ function CohortTable({ rows }: { rows: Cohort[] }) {
   );
 }
 
-function SourcesTable({ rows, now }: { rows: SourceRow[]; now: number }) {
+function SourcesTable({ rows, now, visits }: { rows: SourceRow[]; now: number; visits?: Record<string, number> }) {
   if (rows.length === 0) return <div className="ao-none">No accounts yet.</div>;
+  /** Visits in the last 30 days for a source: only recorded from Oct 20, and
+   *  a dash where none were (a typed address carries no tag). */
+  const visitCell = (source: string) => {
+    const v = visits?.[source];
+    return <td className="num">{v ? n(v) : <span className="ao-dim">—</span>}</td>;
+  };
   const Rate = ({ a, of }: { a: number; of: number }) => {
     const p = pctOf(a, of) ?? 0;
     return (
@@ -1595,7 +1736,7 @@ function SourcesTable({ rows, now }: { rows: SourceRow[]; now: number }) {
       <table className="ao-table">
         <thead>
           <tr>
-            <th>Source</th><th className="num">Signups</th><th className="num">30 days</th>
+            <th>Source</th>{visits && <th className="num" title="Visits in the last 30 days, recorded from Oct 20">Visits</th>}<th className="num">Signups</th><th className="num">30 days</th>
             <th>Took a seat</th><th>Came back</th><th>Latest</th><th>Via</th>
           </tr>
         </thead>
@@ -1603,6 +1744,7 @@ function SourcesTable({ rows, now }: { rows: SourceRow[]; now: number }) {
           {ai && (
             <tr className="ao-row--total">
               <td>AI assistants <AiPill /></td>
+              {visits && <td className="num">{n(rows.filter(r => isAiSource(r.source)).reduce((s, r) => s + (visits[r.source] ?? 0), 0))}</td>}
               <td className="num">{n(ai.signups)}</td>
               <td className="num">{n(ai.signups_30d)}</td>
               <td><Rate a={ai.joined} of={ai.signups} /></td>
@@ -1615,6 +1757,7 @@ function SourcesTable({ rows, now }: { rows: SourceRow[]; now: number }) {
             <tr key={r.source || '(none)'}>
               {/* Blank = the account predates tracking; never guessed. */}
               <td>{r.source ? <>{r.source}{isAiSource(r.source) && <> <AiPill /></>}</> : <span className="ao-dim">before tracking</span>}</td>
+              {visits && visitCell(r.source)}
               <td className="num">{n(r.signups)}</td>
               <td className="num">{n(r.signups_30d)}</td>
               <td><Rate a={r.joined} of={r.signups} /></td>
