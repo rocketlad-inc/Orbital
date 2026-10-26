@@ -7,7 +7,9 @@
 // browser (src/multiplayer/attribution.ts) now reports:
 //
 //   POST /api/visit { anon, step: 'land', a: <attribution> }
-//        once per browser, on its first tagged or referred arrival
+//        once per browser, on its first arrival: tagged, referred or
+//        direct (nothing said; counted only for signed-out browsers, and
+//        a later tagged arrival takes a direct row over)
 //   POST /api/visit { anon, step }   the sign-in screen's progress:
 //        engaged      stayed 10 s with the page visible, or touched it
 //        read_more    opened a page past the front one (how to play, ...)
@@ -108,16 +110,29 @@ async function handleVisit(req, env, { session }) {
     if (body.step === 'land') {
       const v = readVisit(body.a);
       if (!v) return done;
+      // "direct" = no tag, no referring site: someone who typed the address
+      // or used a bookmark. A signed-in browser is a player coming back, not
+      // a visitor arriving, so only signed-out browsers are counted as direct.
+      if (v.source === 'direct' && session?.user_id) return done;
       const inApp = inAppFrom(ua) ?? (typeof body.a?.in_app === 'string' ? cleanTag(body.a.in_app, 30) : null);
       const country = typeof req.cf?.country === 'string' ? req.cf.country.slice(0, 2) : null;
       // First arrival wins; a later one only bumps the count and the time.
+      // The exception is a first arrival that said nothing (direct): the
+      // first one that says where it came from takes the row over, dated
+      // from that arrival.
+      const takeOver = `source = 'direct' AND ?2 <> 'direct'`;
+      const keep = (col, p) => `${col} = CASE WHEN ${takeOver} THEN ${p} ELSE ${col} END`;
       await env.DB
         .prepare(
           `INSERT INTO campaign_visits
              (anon_id, source, campaign, content, term, medium, click_kind, click_id, referrer, landing,
               device, in_app, country, viewer_user_id, first_ms, last_ms, visits)
            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15, 1)
-           ON CONFLICT(anon_id) DO UPDATE SET last_ms = ?15, visits = visits + 1`,
+           ON CONFLICT(anon_id) DO UPDATE SET
+             last_ms = ?15, visits = visits + 1,
+             ${keep('source', '?2')}, ${keep('campaign', '?3')}, ${keep('content', '?4')}, ${keep('term', '?5')},
+             ${keep('medium', '?6')}, ${keep('click_kind', '?7')}, ${keep('click_id', '?8')},
+             ${keep('referrer', '?9')}, ${keep('landing', '?10')}, ${keep('in_app', '?12')}, ${keep('first_ms', '?15')}`,
         )
         .bind(anon, v.source, v.campaign, v.content, v.term, v.medium, v.click_kind, v.click_id,
           v.referrer, v.landing, deviceFrom(ua), inApp, country, session?.user_id ?? null, now)

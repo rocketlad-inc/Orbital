@@ -1480,7 +1480,7 @@ function FunnelCells({ f }: { f: Funnel }) {
  *  so the two can never say different things (worker/visits.js and the
  *  traffic queries in worker/adminDashboard.js are the definitions). */
 const TRAFFIC_COLS: Array<{ key: string; name: string; help: string }> = [
-  { key: 'source', name: 'Source', help: 'Where the visit came from: the tag on the link (?from= or utm_source), or else the site that sent it.' },
+  { key: 'source', name: 'Source', help: 'Where the visit came from: the tag on the link (?from= or utm_source), or else the site that sent it, or “direct” when it came with neither (typed or bookmarked, signed-out browsers only, counted from Oct 26).' },
   { key: 'campaign', name: 'Campaign', help: 'The utm_campaign on the link, if it had one.' },
   { key: 'visitors', name: 'Visitors', help: 'Browsers that arrived this way, counted once on their first visit. One person on a phone and a laptop counts twice.' },
   { key: 'engaged', name: 'Engaged', help: 'Stayed on the page 10 seconds with it visible, or tapped or scrolled it. Leaves out instant bounces and most robots.' },

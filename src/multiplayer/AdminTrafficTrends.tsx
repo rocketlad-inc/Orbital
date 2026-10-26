@@ -48,6 +48,8 @@ export type TrendConfig = {
   base: string;
   /** Fold every AI assistant into one line (traffic only). */
   foldAi?: boolean;
+  /** A line under the chart, after the day note. */
+  note?: string;
 };
 
 const RANGES = [7, 14, 30] as const;
@@ -84,6 +86,7 @@ const TRAFFIC: TrendConfig = {
   item: ['source', 'sources'],
   base: 'visitors',
   foldAi: true,
+  note: 'Direct (typed or bookmarked) visits are counted from Oct 26, so earlier days leave them out.',
 };
 
 const nf = new Intl.NumberFormat();
@@ -465,6 +468,7 @@ export function TrafficTrends({ rows: raw, now, config = TRAFFIC }: { rows: Tren
       <div className="tt-foot">
         <span>
           UTC days, from {dayLabel(firstDay)}, when recording began. Today is dashed: the day is not over.
+          {config.note ? ` ${config.note}` : ''}
           {shareOn && ` A share needs ${MIN_FOR_SHARE} or more ${baseWord} that day, so quiet days leave a gap.`}
         </span>
         <button type="button" className="tt-link" onClick={() => setAsTable(!asTable)}>

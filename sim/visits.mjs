@@ -132,5 +132,33 @@ const redditApp = tr?.devices.find(x => x.device === 'phone' && x.in_app === 're
 check('the Reddit app browser shows in the device table', redditApp?.visitors === 1, tr?.devices);
 check('countries and the 14-day series are filled', tr?.countries.some(c => c.country === 'US') && tr?.daily.length > 0, tr?.countries);
 
+// ---- direct: nothing said about where they came from ---------------------
+const nothing = { first_seen_ms: 5, landing: '/' };
+r = await call('POST', '/api/visit', { body: { anon: 'anonDIRECT0001', step: 'land', a: nothing } });
+v = await visit('anonDIRECT0001');
+check('a visit with no tag and no referrer is counted as "direct"', r.status === 204 && v?.source === 'direct' && v?.campaign === null, v);
+await call('POST', '/api/visit', { body: { anon: 'anonDIRECT0001', step: 'engaged' } });
+check('...and its steps count, like any other browser', (await steps('anonDIRECT0001')).includes('engaged'));
+
+// A signed-in browser is a player coming back, not a visitor arriving.
+const back = await call('POST', '/api/auth/signup', {
+  body: { email: 'comeback@players.org', password: 'password123', display_name: 'Comeback' },
+});
+await call('POST', '/api/visit', { body: { anon: 'anonDIRECT0002', step: 'land', a: nothing }, cookie: back.cookie });
+check('a signed-in browser arriving direct is not counted', !(await visit('anonDIRECT0002')));
+await call('POST', '/api/visit', { body: { anon: 'anonDIRECT0002', step: 'land', a: { from: 'r-space', first_seen_ms: 6 } }, cookie: back.cookie });
+check('...but a signed-in arrival through a tagged link still is', (await visit('anonDIRECT0002'))?.source === 'r-space');
+
+// A browser that first came direct and later arrives through a link: the
+// link takes the row over (it would be a lie to credit it to "direct").
+await call('POST', '/api/visit', {
+  body: { anon: 'anonDIRECT0001', step: 'land', a: { from: 'r-space', utm_campaign: 'launch', referrer: 'www.reddit.com', first_seen_ms: 7, landing: '/' } },
+});
+v = await visit('anonDIRECT0001');
+check('a later tagged arrival takes a direct row over', v?.source === 'r-space' && v?.campaign === 'launch' && v?.referrer === 'reddit', v);
+check('...counted as a visit, dated from the tagged arrival', v?.visits === 2 && v?.first_ms >= v?.last_ms - 1000, v);
+await call('POST', '/api/visit', { body: { anon: 'anonDIRECT0001', step: 'land', a: nothing } });
+check('...and a direct arrival afterwards cannot take it back', (await visit('anonDIRECT0001'))?.source === 'r-space');
+
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');
 process.exit(failures ? 1 : 0);

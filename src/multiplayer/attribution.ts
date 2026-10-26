@@ -177,9 +177,12 @@ export function captureAttribution(): void {
   }
 
   // A visit that came from somewhere: count it before anyone signs up
-  // (worker/visits.js), and watch how far it gets.
+  // (worker/visits.js), and watch how far it gets. One that came from
+  // nowhere (typed or bookmarked) is counted as "direct" the first time
+  // this browser shows up; the server leaves out signed-in players.
   if (informative(now)) beaconLanding(now);
   else if (trackedHere()) watchEngagement();
+  else beaconLanding(now);
 
   if (TAG_PARAMS.some(k => p.has(k))) {
     for (const k of TAG_PARAMS) p.delete(k);
