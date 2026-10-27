@@ -46,7 +46,7 @@ type Kpis = {
   game_days_week?: number; game_days_prev_week?: number;
   commissions_total: number; commissions_week: number;
 };
-type DailyRow = { day_ms: number; players: number; games?: number; minutes: number; actions: number; signups: number };
+type DailyRow = { day_ms: number; players: number; games?: number; games_multi?: number; minutes: number; actions: number; signups: number };
 type UsageRow = {
   kind: string; n30: number; prev30: number; total: number;
   /** Refused, and tries that carry an outcome at all (0152). Rates divide by judged. */
@@ -508,10 +508,10 @@ function MiniSpark({ values }: { values: number[] }) {
 
 // ---------- 30-day chart ----------
 
-type ChartMetric = 'players' | 'games' | 'minutes' | 'signups' | 'actions';
+type ChartMetric = 'players' | 'games_multi' | 'minutes' | 'signups' | 'actions';
 const CHART_METRICS: Array<{ id: ChartMetric; label: string; title: string }> = [
   { id: 'players', label: 'Players', title: 'Players per day' },
-  { id: 'games', label: 'Active games', title: 'Games with a player in them, per day' },
+  { id: 'games_multi', label: 'Active games', title: 'Games with 2+ players in them, per day' },
   { id: 'minutes', label: 'Time played', title: 'Time played per day' },
   { id: 'signups', label: 'New players', title: 'New players per day' },
   { id: 'actions', label: 'Actions', title: 'Player actions per day' },
@@ -556,7 +556,7 @@ function DailyChart({ days }: { days: DailyRow[] }) {
       <div className="ao-readout" aria-live="polite">
         <span className="ao-readout__day">{shown === last ? 'Today so far' : dayLabel(d.day_ms)}</span>
         <span><b>{n(d.players)}</b> players</span>
-        <span><b>{n(d.games ?? 0)}</b> active games</span>
+        <span><b>{n(d.games_multi ?? 0)}</b> active games (2+ players)</span>
         <span><b>{hours(d.minutes)}</b> played</span>
         <span><b>{n(d.signups)}</b> new</span>
         <span><b>{n(d.actions)}</b> actions</span>

@@ -262,12 +262,18 @@ async function handleOverview(req, env, { session }) {
 
     // games = games a real player spent a minute in that day (a
     // heartbeat, the same test as the 24h tile; '' = the lobby).
-    q(`SELECT day_ms, COUNT(DISTINCT user_id) AS players,
-              COUNT(DISTINCT CASE WHEN minutes > 0 AND game_id <> '' THEN game_id END) AS games,
-              SUM(minutes) AS minutes, SUM(actions) AS actions
-         FROM analytics_user_day
-        WHERE day_ms >= ?1 AND qa = 0
-        GROUP BY day_ms ORDER BY day_ms`,
+    // games_multi = the same, but only games two or more real players
+    // were in that day (solo games and trials leave the health chart).
+    q(`SELECT d.day_ms, COUNT(DISTINCT d.user_id) AS players,
+              COUNT(DISTINCT CASE WHEN d.minutes > 0 AND d.game_id <> '' THEN d.game_id END) AS games,
+              (SELECT COUNT(*) FROM (
+                 SELECT m.game_id FROM analytics_user_day m
+                  WHERE m.day_ms = d.day_ms AND m.qa = 0 AND m.minutes > 0 AND m.game_id <> ''
+                  GROUP BY m.game_id HAVING COUNT(DISTINCT m.user_id) >= 2)) AS games_multi,
+              SUM(d.minutes) AS minutes, SUM(d.actions) AS actions
+         FROM analytics_user_day d
+        WHERE d.day_ms >= ?1 AND d.qa = 0
+        GROUP BY d.day_ms ORDER BY d.day_ms`,
       series0),
 
     q(`SELECT CAST(u.created_at / ${DAY_MS} AS INTEGER) * ${DAY_MS} AS day_ms, COUNT(*) AS n
@@ -525,6 +531,7 @@ async function handleOverview(req, env, { session }) {
       day_ms: d,
       players: r?.players ?? 0,
       games: r?.games ?? 0,
+      games_multi: r?.games_multi ?? 0,
       minutes: r?.minutes ?? 0,
       actions: r?.actions ?? 0,
       signups: signupsByDay.get(d) ?? 0,
