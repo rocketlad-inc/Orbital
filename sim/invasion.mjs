@@ -18,7 +18,7 @@
 import { SimD1 } from './d1.mjs';
 import { MIGRATIONS } from '../worker/_migrations_bundle.js';
 import {
-  invasionDials, blightMult, rollStartTick, invaderTicks,
+  invasionDials, blightMult, rollStartTick, invaderTicks, blightFor,
   invasionFactionId, invasionGateId, invasionTwinId, invasionSiteId,
 } from '../worker/invasion.js';
 import { legTicks, SHIP_ENGINE_ACCEL } from '../worker/burn.js';
@@ -147,6 +147,14 @@ const kinds = async (DB, G) => (await DB.prepare(
   const share = withEvent / without;
   check('science really is cut over the blight: about 55% of an ordinary game',
     without > 20 && share > 0.49 && share < 0.62, `${withEvent} of ${without} = ${share.toFixed(3)}`);
+  // What the player is shown (state.js): the number and when it lapses,
+  // never the cause.
+  const conf = { ...LIVE, invasion: 1, invasion_start: 5, invasion_end: 5 };
+  const shown = await blightFor(DB, G, 44, conf);
+  check('the state payload gets the blight: 36% at its last tick, lapsing at tick 45',
+    shown && Math.abs(shown.multiplier - 0.36) < 1e-9 && shown.until_tick === 45, JSON.stringify(shown));
+  check('...and nothing before it or after it', (await blightFor(DB, G, 4, conf)) === null && (await blightFor(DB, G, 45, conf)) === null);
+  check('...nor in a game without the event', (await blightFor(base.DB, 'invB', 10, { ...LIVE, invasion: 0 })) === null);
   check('and the log says nothing about it', (await kinds(DB, G)).length === 0
     && ((await DB.prepare(`SELECT COUNT(*) AS n FROM chronicle_entries WHERE game_id = ?`).bind(G).first()).n >= 0));
 

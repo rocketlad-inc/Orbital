@@ -13,6 +13,18 @@ const stateWith = (industry: number, sliders?: Record<string, number>) => ({
   activeSliders: sliders,
 } as unknown as GameState);
 
+describe('the blight (Three Body)', () => {
+  it('cuts science only, on top of tech and laws, and is neutral without it', () => {
+    const s = { ...stateWith(2, { scienceYieldMultiplier: 2, metalYieldMultiplier: 1, goldYieldMultiplier: 1 }),
+      blight: { multiplier: 0.5, untilTick: 99 } } as unknown as GameState;
+    const m = empireYieldMultipliers(s);
+    expect(m.science).toBeCloseTo(1.2 * 2 * 0.5);
+    expect(m.ore).toBeCloseTo(1.2);
+    expect(m.credits).toBeCloseTo(1.2);
+    expect(empireYieldMultipliers(stateWith(0)).science).toBe(1);
+  });
+});
+
 describe('empireYieldMultipliers', () => {
   it('is neutral with no tech and no laws', () => {
     const m = empireYieldMultipliers(stateWith(0));

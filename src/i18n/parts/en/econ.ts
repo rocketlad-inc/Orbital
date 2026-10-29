@@ -146,6 +146,7 @@ export const econ = {
   'econ.out.rawTip': 'Raw world — it banks {kept}% of its yield on-site and only {sent}% reaches the pool. Terraform it to ship everything.',
   'econ.out.raw': 'raw, {pct}%',
   'econ.out.total': 'Total output',
+  'econ.out.blightNote': 'Science -{pct}%, already counted above',
   'econ.out.gross': 'Gross produced',
   'econ.out.grossNote': 'the difference banks locally on raw worlds',
   'econ.mining.h': 'Mining',

@@ -47,7 +47,9 @@ export function empireYieldMultipliers(gameState: GameState): YieldMultipliers {
     fuel: industry,
     ore: industry * (sl?.metalYieldMultiplier ?? 1),
     credits: industry * (sl?.goldYieldMultiplier ?? 1),
-    science: industry * (sl?.scienceYieldMultiplier ?? 1),
+    // The blight (Three Body) rides here so every readout that quotes
+    // science agrees with the tick; it is labelled "???" where shown.
+    science: industry * (sl?.scienceYieldMultiplier ?? 1) * (gameState.blight?.multiplier ?? 1),
   };
 }
 

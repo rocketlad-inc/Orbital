@@ -1201,6 +1201,10 @@ export interface GameState {
     /** Tick the law lapses on. */
     untilTick: number;
   }[];
+  /** A science penalty on the whole empire that the game does not explain
+   *  (the Three Body blight). The multiplier is already folded into every
+   *  readout by empireYieldMultipliers; the UI labels it "???". */
+  blight?: { multiplier: number; untilTick: number };
   activeSliders?: {
     metalYieldMultiplier: number;
     goldYieldMultiplier: number;

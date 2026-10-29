@@ -631,6 +631,8 @@ interface ServerState {
     value: number;
     until_tick: number;
   }>;
+  /** The unexplained science penalty, if one is on (worker/invasion.js). */
+  blight?: { multiplier: number; until_tick: number } | null;
   /** Senate slider laws in force on the caller, resolved server-side. */
   active_sliders?: {
     metal_yield_multiplier: number;
@@ -2572,6 +2574,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       value: l.value,
       untilTick: l.until_tick,
     })),
+    blight: srv.blight ? { multiplier: srv.blight.multiplier, untilTick: srv.blight.until_tick } : undefined,
     activeSliders: srv.active_sliders ? {
       metalYieldMultiplier: srv.active_sliders.metal_yield_multiplier,
       goldYieldMultiplier: srv.active_sliders.gold_yield_multiplier,
