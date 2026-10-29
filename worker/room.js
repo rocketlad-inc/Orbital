@@ -42,6 +42,7 @@ import {
 import { NON_WORLD_TYPES, stationTypeMul } from './systems.js';
 import { advanceSunGates, mainSystemSql, tellEveryone, recordGateTransit } from './sunGates.js';
 import { advanceKaiju } from './kaiju.js';
+import { advanceInvasion, scienceBlightMult } from './invasion.js';
 import { legDilation } from './wellDilation.js';
 import { binaryCloseness, binaryStarRow } from './binaryDance.js';
 import { readSchedule, intervalAt, nextTickAt } from './tickSchedule.js';
@@ -5828,6 +5829,13 @@ export class Room {
     } catch (e) {
       console.error('advanceSunGates failed', e);
     }
+    // The Three Body event (invasion.js): the fleet from Verdant. A no-op
+    // unless the host turned it on.
+    try {
+      await advanceInvasion(this.env, gameId, tick, CFG, kaijuHooks);
+    } catch (e) {
+      console.error('advanceInvasion failed', e);
+    }
 
     // 2d-bis. Finished MOBILE sites become hulls. Non-throwing: a
     // launch failure must not take the rest of the tick with it.
@@ -5975,7 +5983,12 @@ export class Room {
     const fuelYieldMultOf = (fid) => Number(sliderFor(fid).fuel_yield_multiplier ?? 1);
     const metalYieldMultOf = (fid) => Number(sliderFor(fid).metal_yield_multiplier ?? 1);
     const goldYieldMultOf = (fid) => Number(sliderFor(fid).gold_yield_multiplier ?? 1);
-    const scienceYieldMultOf = (fid) => Number(sliderFor(fid).science_yield_multiplier ?? 1);
+    // THE THREE BODY BLIGHT (invasion.js): every empire's science, silently.
+    // 1 outside the event; it names no cause anywhere a player can read.
+    let blight = 1;
+    try { blight = await scienceBlightMult(this.env.DB, gameId, tick, CFG); }
+    catch (e) { console.error('scienceBlightMult failed', e); }
+    const scienceYieldMultOf = (fid) => Number(sliderFor(fid).science_yield_multiplier ?? 1) * blight;
 
     // Senate sanction cache for this tick. Used by trade routes
     // (trade_embargo), combat damage (war_authorization), and body

@@ -471,6 +471,70 @@ export const SCHEMA = [
     help: 'Ticks it sits over a world charging before each of its two strikes. '
       + 'Fleets have this long to drive it off or kill it.',
   },
+  // THE THREE BODY EVENT (worker/invasion.js). Staging first: 0 is production's answer.
+  {
+    id: 'invasion', group: 'map', type: 'int',
+    label: 'Three Body: a fleet from Verdant invades', def: 0, min: 0, max: 1, step: 1,
+    danger: true,
+    help: 'Needs the far systems. A silent science blight, then a fleet leaves Verdant for the '
+      + 'right side of the solar system, lays a gate, takes the nearest settled world, digs in, '
+      + 'takes Earth, then the home worlds one by one. An event, not an ending.',
+  },
+  {
+    id: 'invasion_start', group: 'map', type: 'int',
+    label: 'Three Body: earliest tick the blight can begin', def: 120, min: 1, max: 5000, step: 1,
+  },
+  {
+    id: 'invasion_end', group: 'map', type: 'int',
+    label: 'Three Body: latest tick the blight can begin', def: 220, min: 1, max: 5000, step: 1,
+  },
+  {
+    id: 'invasion_debuff_pct', group: 'map', type: 'number',
+    label: "Three Body: science lost at the blight's first tick (%)", def: 25, min: 0, max: 95, step: 1,
+  },
+  {
+    id: 'invasion_debuff_growth_pct', group: 'map', type: 'number',
+    label: 'Three Body: extra science lost each tick of the blight (points)', def: 1, min: 0, max: 10, step: 0.1,
+  },
+  {
+    id: 'invasion_blight_ticks', group: 'map', type: 'int',
+    label: 'Three Body: ticks the blight lasts', def: 40, min: 1, max: 1000, step: 1,
+  },
+  {
+    id: 'invasion_speed', group: 'map', type: 'number',
+    label: "Three Body: their trip time as a share of a player hull's", def: 0.75, min: 0.1, max: 1, step: 0.05,
+  },
+  {
+    id: 'invasion_frigates', group: 'map', type: 'int',
+    label: 'Three Body: frigates in the first fleet', def: 8, min: 0, max: 200, step: 1,
+  },
+  {
+    id: 'invasion_destroyers', group: 'map', type: 'int',
+    label: 'Three Body: destroyers in the first fleet', def: 4, min: 0, max: 100, step: 1,
+  },
+  {
+    id: 'invasion_colony', group: 'map', type: 'int',
+    label: 'Three Body: colony ships in the first fleet', def: 2, min: 1, max: 20, step: 1,
+  },
+  {
+    id: 'invasion_hunker_ticks', group: 'map', type: 'int',
+    label: 'Three Body: ticks they dig in before Earth', def: 40, min: 0, max: 1000, step: 1,
+  },
+  {
+    id: 'invasion_build_every', group: 'map', type: 'int',
+    label: 'Three Body: a new frigate every N ticks while digging in', def: 4, min: 1, max: 100, step: 1,
+    help: 'Raised by script, only while their gate stands.',
+  },
+  {
+    id: 'invasion_fleet_cap', group: 'map', type: 'int',
+    label: 'Three Body: most hulls they will ever field at once', def: 80, min: 10, max: 500, step: 1,
+    help: 'Reinforcements stop here, so a long war cannot grow the fleet (and the tick) without limit.',
+  },
+  {
+    id: 'invasion_destroyer_every', group: 'map', type: 'int',
+    label: 'Three Body: a new destroyer every N ticks once they hold Earth', def: 3, min: 1, max: 100, step: 1,
+    help: 'Raised by script, only while their gate stands.',
+  },
   {
     id: 'system_scale', group: 'map', type: 'number',
     label: 'System scale (orbit spread)', def: 1, min: 0.1, max: 10, step: 0.05,
