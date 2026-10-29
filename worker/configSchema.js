@@ -476,17 +476,18 @@ export const SCHEMA = [
     id: 'invasion', group: 'map', type: 'int',
     label: 'Three Body: a fleet from Verdant invades', def: 0, min: 0, max: 1, step: 1,
     danger: true,
-    help: 'Needs the far systems. A silent science blight, then a fleet leaves Verdant for the '
+    help: 'Needs the far systems. A hidden emitter appears at an outer planet; once found it '
+      + 'blights everyone\'s science until destroyed, and 24 ticks later a fleet leaves Verdant for the '
       + 'right side of the solar system, lays a gate, takes the nearest settled world, digs in, '
       + 'takes Earth, then the home worlds one by one. An event, not an ending.',
   },
   {
     id: 'invasion_start', group: 'map', type: 'int',
-    label: 'Three Body: earliest tick the blight can begin', def: 120, min: 1, max: 5000, step: 1,
+    label: 'Three Body: earliest tick the emitter can appear', def: 120, min: 1, max: 5000, step: 1,
   },
   {
     id: 'invasion_end', group: 'map', type: 'int',
-    label: 'Three Body: latest tick the blight can begin', def: 220, min: 1, max: 5000, step: 1,
+    label: 'Three Body: latest tick the emitter can appear', def: 220, min: 1, max: 5000, step: 1,
   },
   {
     id: 'invasion_debuff_pct', group: 'map', type: 'number',
@@ -497,8 +498,23 @@ export const SCHEMA = [
     label: 'Three Body: extra science lost each tick of the blight (points)', def: 1, min: 0, max: 10, step: 0.1,
   },
   {
-    id: 'invasion_blight_ticks', group: 'map', type: 'int',
-    label: 'Three Body: ticks the blight lasts', def: 40, min: 1, max: 1000, step: 1,
+    id: 'invasion_debuff_max_pct', group: 'map', type: 'number',
+    label: 'Three Body: most science the blight can take (%)', def: 65, min: 0, max: 95, step: 1,
+    help: 'It deepens every tick the emitter stays on, up to this ceiling.',
+  },
+  {
+    id: 'invasion_emitter_hp', group: 'map', type: 'int',
+    label: 'Three Body: the emitter\'s hull points', def: 10000, min: 100, max: 1000000, step: 100,
+    help: 'It has to be destroyed to switch the blight off.',
+  },
+  {
+    id: 'invasion_launch_delay', group: 'map', type: 'int',
+    label: 'Three Body: ticks from the emitter switching on to the fleet leaving', def: 24, min: 0, max: 1000, step: 1,
+  },
+  {
+    id: 'invasion_reveal_after', group: 'map', type: 'int',
+    label: 'Three Body: ticks before an unfound emitter switches on by itself', def: 120, min: 1, max: 5000, step: 1,
+    help: 'A backstop so a game that never scouts the outer planets still gets the event.',
   },
   {
     id: 'invasion_speed', group: 'map', type: 'number',

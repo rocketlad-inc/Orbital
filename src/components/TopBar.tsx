@@ -440,7 +440,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                 >
                   <b>{l.name}</b>
                   <span className="laws-chip__effect">{l.effect.replace(/\.$/, '')}</span>
-                  <span className="laws-chip__ttl">{left}t</span>
+                  {left < 1e6 && <span className="laws-chip__ttl">{left}t</span>}
                 </div>
               );
             })}

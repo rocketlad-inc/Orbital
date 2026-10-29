@@ -1,19 +1,22 @@
 // ============================================================
 // THE THREE BODY EVENT — a neighbour that does not want to be one.
 //
-// Lorne, 2026-10-28, four phases:
-//   1. BLIGHT. Everyone's science output drops by 25% for 40 ticks and
-//      the drop deepens by 1% every tick of it. Nothing in the log says
-//      why: no entry, no notice, no breakdown. (scienceBlightMult.)
-//   2. LAUNCH. When the blight ends a fleet leaves Verdant, in the Alpha
-//      Centauri system, from an enemy that lives there. It burns harder
-//      than any player hull: the trip takes 75% of the time a player's
-//      ship needs for it. Everyone is told. It flies to a random point on
-//      the right-hand side of the solar system.
-//   3. GATE. Where it stops it lays a gate wired to a twin beside
-//      Verdant. The gate is OWNED, so unlike the sun gates it can be
-//      destroyed, and the invaders only raise reinforcements while it
-//      stands.
+// Lorne, 2026-10-28, four phases (phase 1 rewritten the same evening):
+//   1. EMITTER. A structure with 10,000 hull points starts in orbit of an
+//      outer planet on the right-hand side of the system, hidden. Once any
+//      empire's sensors find it, it switches on: everyone's science drops
+//      25% and the drop deepens a point a tick, until the emitter is
+//      destroyed. Nothing in the log explains the drop; the reports show
+//      it under the label "???". (scienceBlightMult.)
+//   2. LAUNCH. 24 ticks after the emitter switches on, a fleet leaves
+//      Verdant, in the Alpha Centauri system, from an enemy that lives
+//      there. It burns harder than any player hull: the trip takes 75% of
+//      the time a player's ship needs for it. Everyone is told. It flies
+//      to a random point on the right-hand side of the solar system.
+//   3. GATE. Where it stops it lays a gate on the rim of Centauri facing
+//      Sol, wired to a twin. The gate is OWNED, so unlike the sun gates it
+//      can be shot down, and the invaders only raise reinforcements while
+//      it stands.
 //   4. CONQUEST. The fleet takes the settled world nearest the gate (a
 //      moon counts), digs in and raises hulls for 40 ticks, then takes
 //      Earth. Holding Earth, it raises destroyers and takes the home
@@ -75,11 +78,18 @@ export function invasionDials(conf) {
     on: Number(conf?.invasion) === 1 && Number(conf?.far_systems) === 1,
     start,
     end: Math.max(start, Math.round(num(conf?.invasion_end, 220))),
-    // The blight: 25% down at its first tick, 1 more point every tick,
-    // for 40 ticks (25 -> 64).
+    // The blight: 25% down the tick the emitter switches on, 1 more point
+    // every tick it stays on, up to a ceiling (it runs until the emitter
+    // is destroyed, so it needs one).
     debuff: Math.min(0.95, Math.max(0, num(conf?.invasion_debuff_pct, 25) / 100)),
     growth: Math.max(0, num(conf?.invasion_debuff_growth_pct, 1) / 100),
-    blightTicks: Math.max(1, Math.round(num(conf?.invasion_blight_ticks, 40))),
+    maxCut: Math.min(0.95, Math.max(0, num(conf?.invasion_debuff_max_pct, 65) / 100)),
+    // The emitter: hull points, ticks from switching on to the fleet
+    // leaving, and a backstop that switches it on by itself if no
+    // empire's sensors ever find it (else a game with no scouts stalls).
+    emitterHp: Math.max(100, Math.round(num(conf?.invasion_emitter_hp, 10000))),
+    launchDelay: Math.max(0, Math.round(num(conf?.invasion_launch_delay, 24))),
+    revealAfter: Math.max(1, Math.round(num(conf?.invasion_reveal_after, 120))),
     // Their trip time as a share of a player hull's.
     speed: Math.min(1, Math.max(0.1, num(conf?.invasion_speed, 0.75))),
     frigates: Math.max(0, Math.round(num(conf?.invasion_frigates, 8))),
@@ -94,55 +104,55 @@ export function invasionDials(conf) {
   };
 }
 
-// ---- phase 1: the blight --------------------------------------------------
+// ---- phase 1: the emitter and its blight -------------------------------------
 
-/** The seeded tick the blight begins. */
+export const invasionEmitterId = (g) => `${g}:blight_emitter`;
+export const EMITTER_KIND = 'blight_emitter';
+/** Stands in for "until the emitter is destroyed" where a lapse tick is wanted. */
+export const BLIGHT_NO_END = 1e9;
+
+/** The seeded tick the emitter appears. */
 export function rollStartTick(gameId, d) {
   return d.start + Math.floor(seededRand(`${gameId}|invasion|start`)() * (d.end - d.start + 1));
 }
 
 /**
- * Science multiplier for one tick. PURE: it reads only the start tick, so
- * it does not matter whether the harvest pass runs before or after
- * advanceInvasion in the tick. 1 outside the blight.
+ * Science multiplier for one tick. PURE: it reads only when the emitter
+ * switched on and when it was destroyed, so it does not matter whether the
+ * harvest pass runs before or after advanceInvasion in the tick. 1 before
+ * it is on and after it is gone.
  */
-export function blightMult(startTick, tick, d) {
-  if (startTick == null) return 1;
-  const k = tick - Number(startTick);
-  if (k < 0 || k >= d.blightTicks) return 1;
-  return Math.max(0.05, 1 - (d.debuff + d.growth * k));
+export function blightMult(activatedTick, destroyedTick, tick, d) {
+  if (activatedTick == null) return 1;
+  const k = tick - Number(activatedTick);
+  if (k < 0) return 1;
+  if (destroyedTick != null && tick >= Number(destroyedTick)) return 1;
+  return 1 - Math.min(d.maxCut, d.debuff + d.growth * k);
 }
 
-const startCache = new Map();
 /**
  * What every faction's science is multiplied by this tick (room.js,
- * beside the senate's science slider). One D1 read the first time a game
- * is asked, then none: the start tick is written once and never changes.
- * Monster factions earn nothing anyway.
+ * beside the senate's science slider). One primary-key read.
  */
 export async function scienceBlightMult(DB, gameId, tick, conf) {
   const d = invasionDials(conf);
   if (!d.on) return 1;
-  let start = startCache.get(gameId);
-  if (start === undefined) {
-    const row = await DB.prepare('SELECT start_tick FROM game_invasion WHERE game_id = ?').bind(gameId).first();
-    start = row ? Number(row.start_tick) : null;
-    if (start != null) startCache.set(gameId, start);
-  }
-  return blightMult(start, tick, d);
+  const row = await DB
+    .prepare('SELECT activated_tick, emitter_destroyed_tick FROM game_invasion WHERE game_id = ?')
+    .bind(gameId).first();
+  if (!row) return 1;
+  return blightMult(row.activated_tick, row.emitter_destroyed_tick, tick, d);
 }
 
 /**
- * The blight as the player is allowed to see it (state.js): a number and
- * when it lapses, under a label the game does not explain ("???"). Null
- * outside the blight. The cause is never in this payload.
+ * The blight as the player is allowed to see it (state.js): a number, under
+ * a label the game does not explain ("???"). Null when it is not on. The
+ * cause is never in this payload.
  */
 export async function blightFor(DB, gameId, tick, conf) {
   const mult = await scienceBlightMult(DB, gameId, tick, conf);
   if (!(mult < 1)) return null;
-  const d = invasionDials(conf);
-  const start = startCache.get(gameId);
-  return { multiplier: mult, until_tick: Number(start) + d.blightTicks };
+  return { multiplier: mult, until_tick: BLIGHT_NO_END };
 }
 
 // ---- movement -----------------------------------------------------------------
@@ -217,15 +227,15 @@ async function ownSettlements(DB, gameId, fid) {
 /** Is the invaders' gate still standing? Their reinforcements need it. */
 export async function gateStands(DB, gameId) {
   // Destroyed (seizing it in 'destroy' mode deletes the structure), or
-  // captured by an empire (founded_by changes hands): either way it is no
-  // longer theirs to send ships through.
+  // captured by an empire (a capture changes the BODY's owner, not
+  // founded_by): either way it is no longer theirs to send ships through.
   const g = await DB
-    .prepare(`SELECT m.hp, m.status, m.founded_by_faction_id, b.destroyed_at_tick FROM game_megastructures m
+    .prepare(`SELECT m.hp, m.status, b.owner_faction_id, b.destroyed_at_tick FROM game_megastructures m
                 JOIN game_bodies b ON b.id = m.body_id
                WHERE m.body_id = ? AND m.game_id = ?`)
     .bind(invasionGateId(gameId), gameId).first();
   return !!g && g.status === 'complete' && Number(g.hp) > 0 && g.destroyed_at_tick == null
-    && g.founded_by_faction_id === invasionFactionId(gameId);
+    && g.owner_faction_id === invasionFactionId(gameId);
 }
 
 // ---- writes -------------------------------------------------------------------
@@ -276,19 +286,36 @@ export async function advanceInvasion(env, gameId, tick, conf, hooks) {
       `INSERT OR IGNORE INTO game_invasion (game_id, start_tick, phase, phase_tick) VALUES (?, ?, 'pending', ?)`,
     ).bind(gameId, start, tick).run();
     row = await loadRow(DB, gameId);
-    startCache.set(gameId, Number(row.start_tick));
   }
+
+  // The emitter has its own life, whatever the fleet is doing: it can be
+  // shot down in any phase, and that is what switches the blight off.
+  if (row.emitter_body_id && row.emitter_destroyed_tick == null) {
+    if (await checkEmitter(env, gameId, tick, row)) row.emitter_destroyed_tick = tick;
+  }
+
   const phase = row.phase;
   if (phase === 'repelled' || phase === 'done') return { phase };
 
-  // The blight is silent: it needs no row change and says nothing.
+  // The emitter is placed, silent and unseen.
   if (phase === 'pending') {
     if (tick < Number(row.start_tick)) return { phase: 'pending' };
-    await setPhase(DB, gameId, 'blight', tick);
-    return { phase: 'blight' };
+    const placed = await placeEmitter(env, gameId, tick, d, conf);
+    if (!placed) return { phase: 'pending', waiting: 'no_host' };
+    await setPhase(DB, gameId, 'hidden', tick, { emitter_body_id: placed.id, faction_id: invasionFactionId(gameId) });
+    return { phase: 'hidden' };
   }
+  // Waiting to be found: the first empire whose sensors cover it switches
+  // it on, or the backstop does.
+  if (phase === 'hidden') {
+    const finder = await findEmitter(env, gameId, tick, conf, row.emitter_body_id);
+    if (!finder && tick < Number(row.phase_tick) + d.revealAfter) return { phase: 'hidden' };
+    await activateEmitter(env, gameId, tick, row, finder);
+    return { phase: 'blight', finder };
+  }
+  // On, and the fleet leaves `launchDelay` ticks after it came on.
   if (phase === 'blight') {
-    if (tick < Number(row.start_tick) + d.blightTicks) return { phase: 'blight' };
+    if (tick < Number(row.activated_tick) + d.launchDelay) return { phase: 'blight' };
     return launch(env, gameId, tick, d, hooks, row);
   }
 
@@ -310,6 +337,163 @@ export async function advanceInvasion(env, gameId, tick, conf, hooks) {
   if (phase === 'earth') return assault(env, gameId, tick, d, hooks, row, fleet, 'earth');
   if (phase === 'conquest') return conquer(env, gameId, tick, d, hooks, row, fleet);
   return { phase };
+}
+
+// ---- the emitter --------------------------------------------------------------
+
+/**
+ * Stand the emitter up in orbit of an outer planet on the right-hand side
+ * of the system (+x): a gas or ice giant, picked at random among those
+ * there; if none is on the right, the one furthest right. Hidden like any
+ * other structure nobody has found: it has no discovery rows. It belongs
+ * to the invaders' faction, which is what lets ships siege it. Returns
+ * { id, host } or null when the board has no giant to put it at.
+ */
+async function placeEmitter(env, gameId, tick, d, conf) {
+  const DB = env.DB;
+  const fid = invasionFactionId(gameId);
+  const main = mainSystemSql('template_id');
+  const bodies = (await DB
+    .prepare(`SELECT id, template_id, name, type, parent_body_id, mu, soi, radius,
+                     orbit_radius, orbit_period, angle0
+                FROM game_bodies WHERE game_id = ? AND destroyed_at_tick IS NULL AND obliterated_at_tick IS NULL`)
+    .bind(gameId).all()).results ?? [];
+  const mainIds = new Set((await DB
+    .prepare(`SELECT id FROM game_bodies WHERE game_id = ? AND ${main.sql}`)
+    .bind(gameId, ...main.binds).all()).results?.map(r => r.id) ?? []);
+  const giants = bodies.filter(b => mainIds.has(b.id) && (b.type === 'gas-giant' || b.type === 'ice-giant'));
+  if (giants.length === 0) return null;
+  const rm = makeRouteMath(DB, gameId);
+  const placed = [];
+  for (const g of giants) placed.push({ g, x: (await rm.bodyPosAt(g.id, tick)).x });
+  const right = placed.filter(p => p.x > 0);
+  const pool = right.length > 0 ? right : [placed.slice().sort((a, b) => b.x - a.x)[0]];
+  const host = pool[Math.floor(seededRand(`${gameId}|invasion|emitter`)() * pool.length)].g;
+
+  const bodyScale = Number(conf?.body_scale) > 0 ? Number(conf.body_scale) : 1;
+  // The gate rule: clear of the surface, inside the sphere of influence.
+  const soi = Number(host.soi) || 0;
+  const rad = Number(host.radius) || 1;
+  const r = soi > 0 ? Math.min(Math.max(rad * 2.5, soi * 0.35), soi * 0.8) : rad * 4;
+  const period = periodForRadius(host, r, bodies);
+  const angle0 = angle0For(seededRand(`${gameId}|invasion|emitter|angle`)() * TWO_PI, period, tick);
+  const id = invasionEmitterId(gameId);
+  await DB.batch([
+    // Faction first: the structure is its.
+    DB.prepare(
+      `INSERT OR IGNORE INTO game_factions
+         (id, game_id, user_id, slot, name, color, status, joined_at)
+       VALUES (?, ?, NULL, ?, ?, ?, 'monster', ?)`,
+    ).bind(fid, gameId, INVADER_SLOT, INVADER_FACTION_NAME, INVADER_COLOR, Date.now()),
+    DB.prepare(
+      `INSERT OR IGNORE INTO game_bodies
+         (id, game_id, template_id, name, type, parent_body_id, radius, soi, mu,
+          orbit_radius, orbit_period, angle0, color, owner_faction_id)
+       VALUES (?, ?, 'blight_emitter', ?, 'megastructure', ?, ?, 0, ?, ?, ?, ?, ?, ?)`,
+    ).bind(id, gameId, `${host.name} Emitter`, host.id, 2.2 * bodyScale, MEGA_MU,
+      r, period, angle0, INVADER_COLOR, fid),
+    // Full health EXPLICITLY, as every structure here (the column default
+    // is a small number).
+    DB.prepare(
+      `INSERT OR IGNORE INTO game_megastructures
+         (body_id, game_id, kind, status, acc_metal, acc_credits,
+          cost_metal, cost_credits, founded_by_faction_id,
+          founded_at_tick, completed_at_tick, hp)
+       VALUES (?, ?, ?, 'complete', 0, 0, 0, 0, ?, ?, ?, ?)`,
+    ).bind(id, gameId, EMITTER_KIND, fid, tick, tick, d.emitterHp),
+  ]);
+  return { id, host: host.name };
+}
+
+/**
+ * Has any empire's sensors found the emitter? The same sensor circles the
+ * map's fog and the meteoroid survey use (meteoroidTick.sensorBubbles), so
+ * "discovered" means what it means everywhere else: you can see it. Returns
+ * the finding faction's id, or null.
+ */
+async function findEmitter(env, gameId, tick, conf, emitterId) {
+  const DB = env.DB;
+  const rm = makeRouteMath(DB, gameId);
+  const ids = new Set([emitterId]);
+  for (const r of (await DB.prepare(
+    `SELECT DISTINCT parent_body_id AS b FROM game_ships WHERE game_id = ? AND status = 'active' AND parent_body_id IS NOT NULL`,
+  ).bind(gameId).all()).results ?? []) ids.add(r.b);
+  for (const r of (await DB.prepare(
+    `SELECT DISTINCT body_id AS b FROM game_settlements WHERE game_id = ? AND destroyed_at_tick IS NULL`,
+  ).bind(gameId).all()).results ?? []) ids.add(r.b);
+  const pos = new Map();
+  for (const id of ids) pos.set(id, await rm.bodyPosAt(id, tick));
+  const monsters = new Set((await DB
+    .prepare(`SELECT id FROM game_factions WHERE game_id = ? AND status = 'monster'`).bind(gameId).all())
+    .results?.map(r => r.id) ?? []);
+  const mt = await import('./meteoroidTick.js');
+  const scale = Number(conf?.system_scale) > 0 ? Number(conf.system_scale) : 1;
+  const bubbles = await mt.sensorBubbles(env, gameId, tick, (id) => pos.get(id), scale);
+  const e = pos.get(emitterId);
+  for (const [fid, list] of bubbles) {
+    if (monsters.has(fid)) continue;
+    for (const b of list) {
+      const dx = e.x - b.x, dy = e.y - b.y;
+      if (dx * dx + dy * dy <= b.r2) return fid;
+    }
+  }
+  return null;
+}
+
+/** Switch it on. Tells whoever found it, and only them. */
+async function activateEmitter(env, gameId, tick, row, finderFid) {
+  const DB = env.DB;
+  await setPhase(DB, gameId, 'blight', tick, { activated_tick: tick, found_by_faction_id: finderFid ?? null });
+  row.activated_tick = tick;
+  if (!finderFid) return;
+  const body = await DB.prepare('SELECT name FROM game_bodies WHERE id = ?').bind(row.emitter_body_id).first();
+  await DB.batch([
+    DB.prepare(
+      `INSERT OR IGNORE INTO game_body_discoveries (game_id, body_id, faction_id, discovered_at_tick, method)
+       VALUES (?, ?, ?, ?, 'sensor')`,
+    ).bind(gameId, row.emitter_body_id, finderFid, tick),
+    DB.prepare(
+      `INSERT OR IGNORE INTO chronicle_entries
+         (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
+       VALUES (?, ?, ?, 'invasion_emitter_found', ?, ?, ?, ?, ?)`,
+    ).bind(`${gameId}:invasion:emitter_found`, gameId, tick, finderFid, row.emitter_body_id,
+      JSON.stringify({ name: body?.name ?? null }), JSON.stringify([finderFid]), Date.now()),
+  ]);
+  const users = (await DB
+    .prepare('SELECT user_id FROM game_factions WHERE id = ? AND user_id IS NOT NULL').bind(finderFid).all())
+    .results?.map(r => r.user_id) ?? [];
+  if (users.length > 0) {
+    await tellEveryone(env, gameId, tick, 'invasion:emitter', (L) => ({
+      title: tr(L, 'feed.invasion.emitterFoundTitle'),
+      lines: [tr(L, 'feed.invasion.emitterFoundBody', { where: body?.name ?? '' })],
+    }), { color: FEED_COLOR, only: users, feed: false });
+  }
+}
+
+/**
+ * Is the emitter gone? A ship siege wears its hull down (the room's
+ * megastructure siege, which the invaders' ownership makes apply), and a
+ * boarding party can destroy it outright; either way it is finished here:
+ * the structure goes, the blight ends, and everyone is told. Captured it
+ * cannot be (actions.js refuses): nobody gets to own this.
+ */
+async function checkEmitter(env, gameId, tick, row) {
+  const DB = env.DB;
+  const m = await DB.prepare('SELECT hp FROM game_megastructures WHERE body_id = ?').bind(row.emitter_body_id).first();
+  if (m && Number(m.hp) > 0) return false;
+  await DB.batch([
+    DB.prepare('DELETE FROM game_megastructures WHERE body_id = ?').bind(row.emitter_body_id),
+    DB.prepare('UPDATE game_bodies SET destroyed_at_tick = COALESCE(destroyed_at_tick, ?) WHERE id = ?').bind(tick, row.emitter_body_id),
+    DB.prepare('UPDATE game_invasion SET emitter_destroyed_tick = ? WHERE game_id = ? AND emitter_destroyed_tick IS NULL').bind(tick, gameId),
+  ]);
+  if (row.activated_tick != null && await chronicleOnce(DB, `${gameId}:invasion:emitter_down`, gameId, tick,
+    'invasion_emitter_destroyed', row.emitter_body_id, { after: tick - Number(row.activated_tick) })) {
+    await tellEveryone(env, gameId, tick, 'invasion:emitter_down', (L) => ({
+      title: tr(L, 'feed.invasion.emitterDownTitle'),
+      lines: [tr(L, 'feed.invasion.emitterDownBody')],
+    }), { color: FEED_COLOR });
+  }
+  return true;
 }
 
 // ---- phase 2: the launch ------------------------------------------------------
@@ -440,8 +624,11 @@ async function arrive(env, gameId, tick, d, hooks, row, fleet) {
        (id, game_id, template_id, name, type, parent_body_id, radius, soi, mu,
         orbit_radius, orbit_period, angle0, color, owner_faction_id,
         emerge_from_tick, emerge_until_tick)
-     VALUES (?, ?, ?, ?, 'megastructure', ?, ?, 0, ?, ?, ?, ?, ?, NULL, ?, NULL)`,
-  ).bind(id, gameId, SUN_GATE_TEMPLATE, name, parentId, gateR, MEGA_MU, orbitR, orbitP, ang0, INVADER_COLOR, tick);
+     VALUES (?, ?, ?, ?, 'megastructure', ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+    // OWNED by the invaders: the room's siege only wears down a structure
+    // whose body has an owner at war with the besiegers, so an ownerless
+    // gate (the sun gates) could never be shot down.
+  ).bind(id, gameId, SUN_GATE_TEMPLATE, name, parentId, gateR, MEGA_MU, orbitR, orbitP, ang0, INVADER_COLOR, fid, tick);
   const insMega = (id, partner) => DB.prepare(
     `INSERT OR IGNORE INTO game_megastructures
        (body_id, game_id, kind, status, acc_metal, acc_credits,

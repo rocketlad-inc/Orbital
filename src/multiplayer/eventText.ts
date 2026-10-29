@@ -492,6 +492,10 @@ export function formatChronicleEvent(
 
   // THE THREE BODY EVENT (worker/invasion.js). The science blight that
   // starts it is deliberately NOT here: nothing in the log explains it.
+  if (ev.kind === 'invasion_emitter_found') {
+    return out('', T('invasion.emitterFound', { where: (parsed.name as string) ?? T('fb.aWorld') }));
+  }
+  if (ev.kind === 'invasion_emitter_destroyed') return out('', T('invasion.emitterDown'));
   if (ev.kind === 'invasion_launched') {
     return out('', T('invasion.launched', { n: num(Number(parsed.ships) || 0), at: tickNo(Number(parsed.arrive_tick)) }));
   }
