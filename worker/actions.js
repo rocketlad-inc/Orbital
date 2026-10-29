@@ -5352,6 +5352,11 @@ async function handleSeizeSite(req, env, ctx) {
   if (site.owner_faction_id === me.id) {
     return err(409, 'already_yours', `${site.name} is already yours`);
   }
+  // The Three Body emitter (invasion.js) can be destroyed and nothing
+  // else: a captured blight would be a weapon in a player's hands.
+  if (site.kind === 'blight_emitter' && mode !== 'destroy') {
+    return err(409, 'not_capturable', `${site.name} cannot be taken, only destroyed`);
+  }
   // An ancient gate belongs to nobody and to everybody. Letting one
   // faction own the single fixed crossing on the board would hand them
   // the map's one piece of permanent topology.

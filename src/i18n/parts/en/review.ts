@@ -538,6 +538,8 @@ export const review = {
   'eventlog.ev.terraform.begun': '{owner}\'s terraforming payload landed on {where} — transformation completes in {dur} ticks',
   'eventlog.ev.terraform.complete': '{where} LIVES — {owner}\'s terraforming is complete. Full yield, city rights, trade dock — permanently.',
   // the Leviathan
+  'eventlog.ev.invasion.emitterFound': 'You have found a structure of unknown make orbiting {where}. It is switched on',
+  'eventlog.ev.invasion.emitterDown': 'The structure at the outer planet has been destroyed. Whatever it was doing has stopped',
   'eventlog.ev.invasion.launched': 'A FLEET HAS LEFT VERDANT — {n} ships on a burn faster than any of ours, bound for our side of the Sun. They arrive at T+{at}',
   'eventlog.ev.invasion.gate': 'The fleet from Verdant has stopped near {near} and opened a gate back home. Destroy it and no more ships come through',
   'eventlog.ev.invasion.gateBare': 'The fleet from Verdant has stopped and opened a gate back home. Destroy it and no more ships come through',

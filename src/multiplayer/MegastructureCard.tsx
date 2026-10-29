@@ -154,7 +154,14 @@ export const MegastructureCard: React.FC = () => {
   // came out of the Sun, cannot be broken or claimed, and its link is
   // fixed. Every section below is about building, pairing, besieging or
   // seizing, none of which applies, so it has its own short card.
-  if (site.transitFraction != null) {
+  // The Three Body emitter (worker/invasion.js) is none of the above: it
+  // cannot be built, paired, or taken, only destroyed.
+  if (site.kind === ('blight_emitter' as MegastructureKind)) {
+    return <EmitterCard site={site} body={body} />;
+  }
+  // The invaders' gate has a transit fraction like a sun gate but is NOT
+  // one: it is owned, and it can be shot down and captured like any gate.
+  if (site.transitFraction != null && !body.id.endsWith(':invasion_gate') && !body.id.endsWith(':invasion_gate_far')) {
     return <SunGateCard site={site} body={body} />;
   }
 
@@ -831,6 +838,23 @@ export const MegastructurePicker: React.FC<{
  * is open yet, and the three rules that make it unlike every other
  * structure -- nobody's, unbreakable, and a tenth of the burn.
  */
+/** The Three Body emitter: what it is, how hurt it is, and the one thing to do. */
+function EmitterCard({ site, body }: { site: MegastructureState; body: Body }) {
+  useI18n();
+  return (
+    <div className="megac">
+      <div className="megac__head">
+        <span className="megac__glyph" style={{ color: body.color }}>✺</span>
+        <div className="megac__headtext">
+          <div className="megac__title">{body.name}</div>
+          <div className="megac__sub">{t('megastructure.emitter.hull', { hp: fmtNumber(Math.max(0, Math.round(site.hp))) })}</div>
+        </div>
+      </div>
+      <p className="megac__blurb">{t('megastructure.emitter.blurb')}</p>
+    </div>
+  );
+}
+
 function SunGateCard({ site, body }: { site: MegastructureState; body: Body }) {
   useI18n();
   const { gameState } = useGameContext();

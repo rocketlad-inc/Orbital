@@ -3002,6 +3002,47 @@ function landingSiteCovered(site: Body, sitePos: { x: number; y: number }, ctx: 
   return siteCoveredByGate(Math.hypot(gp.x - sitePos.x, gp.y - sitePos.y), gateArt, landed);
 }
 
+/** The Three Body emitter: a dark core in a slow pulse of rings and spokes. */
+function drawBlightEmitter(
+  canvasPos: { x: number; y: number }, radius: number, ctx: RenderContext, hullFrac: number,
+) {
+  const g = ctx.ctx;
+  const R = Math.max(7, Math.min(radius * 1.4, 40));
+  const t = (ctx.nowMs ?? 0) / 1000;
+  const col = '#ff4fd8';
+  g.save();
+  g.translate(canvasPos.x, canvasPos.y);
+  // Rings that swell and fade outward, three out of phase.
+  for (let i = 0; i < 3; i++) {
+    const p = ((t * 0.35) + i / 3) % 1;
+    g.globalAlpha = (1 - p) * 0.55 * Math.max(0.35, hullFrac);
+    g.strokeStyle = col;
+    g.lineWidth = 1.5;
+    g.beginPath(); g.arc(0, 0, R * (0.9 + p * 1.8), 0, Math.PI * 2); g.stroke();
+  }
+  g.globalAlpha = 1;
+  // Spokes, a few missing as it takes damage.
+  const spokes = 8;
+  g.strokeStyle = col; g.lineWidth = 2;
+  for (let i = 0; i < spokes; i++) {
+    if (i / spokes > hullFrac + 0.12) continue;
+    const a = (i / spokes) * Math.PI * 2 + t * 0.2;
+    g.beginPath();
+    g.moveTo(Math.cos(a) * R * 0.7, Math.sin(a) * R * 0.7);
+    g.lineTo(Math.cos(a) * R * 1.25, Math.sin(a) * R * 1.25);
+    g.stroke();
+  }
+  // The core.
+  g.fillStyle = '#12070f';
+  g.beginPath(); g.arc(0, 0, R * 0.7, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = col; g.lineWidth = 2;
+  g.beginPath(); g.arc(0, 0, R * 0.7, 0, Math.PI * 2); g.stroke();
+  g.fillStyle = col;
+  g.globalAlpha = 0.6 + 0.4 * Math.sin(t * 3);
+  g.beginPath(); g.arc(0, 0, R * 0.22, 0, Math.PI * 2); g.fill();
+  g.restore();
+}
+
 /** A sun gate at rest, either end: the squid fully unfurled. */
 function drawSunGateBody(canvasPos: { x: number; y: number }, radius: number, ctx: RenderContext) {
   drawSunSquid(ctx.ctx, canvasPos.x, canvasPos.y, {
@@ -4584,6 +4625,10 @@ export function drawBody(
     // Rocks never reach the client undiscovered, so anything with a
     // mineral kind is something this player has surveyed and should see.
     drawMeteoroidBody(body, canvasPos, radius, ctx);
+  } else if (body.type === 'megastructure' && templateIdOf(body.id) === 'blight_emitter') {
+    // The Three Body emitter (worker/invasion.js), 10,000 hull by default.
+    const st = ctx.megastructures?.[body.id];
+    drawBlightEmitter(canvasPos, radius, ctx, st ? Math.max(0, Math.min(1, st.hp / 10000)) : 1);
   } else if (body.type === 'megastructure' && templateIdOf(body.id).startsWith('sungate_')) {
     // Either end of a sun gate, at rest: what the thing from the Sun
     // turned into, not a warp gate somebody built.

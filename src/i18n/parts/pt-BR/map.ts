@@ -207,6 +207,8 @@ export const map: Catalog = {
   'megastructure.picker.freighterLoads': '{n} cargas de cargueiro',
   'megastructure.picker.neverMind': 'Deixa pra lá',
   'megastructure.sun.inFlight': 'Em voo · abre em T+{n}',
+  'megastructure.emitter.hull': 'Casco {hp}',
+  'megastructure.emitter.blurb': 'Uma estrutura de origem desconhecida. O que quer que ela esteja fazendo, está fazendo com você. Não pode ser tomada, só destruída: estacione naves armadas nela.',
   'megastructure.sun.open': 'Aberto',
   'megastructure.sun.neutral': 'neutro',
   'megastructure.sun.blurbSol': 'Ele saiu do Sol. Estacione uma nave nele para partir rumo a {dest} com um décimo da propulsão normal.',

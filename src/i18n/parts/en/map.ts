@@ -205,6 +205,8 @@ export const map = {
   'megastructure.picker.freighterLoads': '{n} freighter loads',
   'megastructure.picker.neverMind': 'Never mind',
   'megastructure.sun.inFlight': 'In flight · opens at T+{n}',
+  'megastructure.emitter.hull': 'Hull {hp}',
+  'megastructure.emitter.blurb': 'A structure of unknown make. Whatever it is doing, it is doing it to you. It cannot be taken, only destroyed: park armed ships on it.',
   'megastructure.sun.open': 'Open',
   'megastructure.sun.neutral': 'neutral',
   'megastructure.sun.blurbSol': 'It came out of the Sun. Park a ship on it to launch to {dest} at a tenth of the normal burn.',

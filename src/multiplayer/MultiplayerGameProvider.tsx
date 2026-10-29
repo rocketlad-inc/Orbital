@@ -1359,6 +1359,7 @@ function classifyChronicleEvent(kind: string): { category: LogCategory; level: L
     case 'kaiju_charging':
       return { category: 'THREAT', level: 'WARN' };
     // The Three Body event (worker/invasion.js): a threat to everyone.
+    case 'invasion_emitter_found':
     case 'invasion_launched':
     case 'invasion_gate':
     case 'invasion_assault':
@@ -1367,6 +1368,7 @@ function classifyChronicleEvent(kind: string): { category: LogCategory; level: L
       return { category: 'THREAT', level: 'WARN' };
     case 'invasion_done':
     case 'invasion_repelled':
+    case 'invasion_emitter_destroyed':
       return { category: 'SYSTEM', level: 'WARN' };
     case 'kaiju_leaving':
     case 'kaiju_gone':

@@ -539,6 +539,8 @@ export const review: Catalog = {
   'eventlog.ev.terraform.begun': 'A carga de terraformação de {owner} pousou em {where} — a transformação termina em {dur} ticks',
   'eventlog.ev.terraform.complete': '{where} VIVE — a terraformação de {owner} está completa. Rendimento total, direitos de cidade, doca comercial — para sempre.',
   // the Leviathan
+  'eventlog.ev.invasion.emitterFound': 'Você encontrou uma estrutura de origem desconhecida orbitando {where}. Ela está ligada',
+  'eventlog.ev.invasion.emitterDown': 'A estrutura no planeta externo foi destruída. O que quer que ela estivesse fazendo parou',
   'eventlog.ev.invasion.launched': 'UMA FROTA PARTIU DE VERDANT — {n} naves em uma queima mais rápida que qualquer uma das nossas, rumo ao nosso lado do Sol. Chegam em T+{at}',
   'eventlog.ev.invasion.gate': 'A frota de Verdant parou perto de {near} e abriu um portal de volta para casa. Destrua-o e nenhuma nave mais passa',
   'eventlog.ev.invasion.gateBare': 'A frota de Verdant parou e abriu um portal de volta para casa. Destrua-o e nenhuma nave mais passa',
