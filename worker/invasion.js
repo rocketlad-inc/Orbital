@@ -46,9 +46,11 @@ import { commitSettlement } from './actions.js';
 import { MEGA_MU, MEGA_MAX_HP, MEGASTRUCTURES, periodForRadius } from './megastructures.js';
 import {
   seededRand, chronicleOnce, tellEveryone, angle0For, templateOf, mainSystemSql,
+  pickBearing, FAR_GATE_RADIUS_MUL,
   SUN_GATE_TEMPLATE, SUN_GATE_SITE_TEMPLATE, SUN_GATE_TRANSIT_FRACTION, SUN_GATE_SIZE_MUL,
 } from './sunGates.js';
 import { tr } from './i18n.js';
+import { isWorld } from './systems.js';
 
 export const invasionFactionId = (g) => `${g}:invaders_f`;
 export const invasionSiteId = (g) => `${g}:invasion_site`;
@@ -388,21 +390,37 @@ async function arrive(env, gameId, tick, d, hooks, row, fleet) {
   if (fleet.length === 0) return repel(env, gameId, tick, row, 'fleet_destroyed');
 
   const bodies = (await DB
-    .prepare(`SELECT id, template_id, parent_body_id, type, radius, orbit_radius, orbit_period, angle0
+    .prepare(`SELECT id, template_id, parent_body_id, type, radius, orbit_radius, orbit_ra, orbit_period, angle0
                 FROM game_bodies WHERE game_id = ? AND destroyed_at_tick IS NULL`)
     .bind(gameId).all()).results ?? [];
   const siteRow = bodies.find(b => b.id === site);
   const verdant = bodies.find(b => b.id === `${gameId}:verdant`);
-  const parent = verdant ? bodies.find(b => b.id === verdant.parent_body_id) : null;
-  if (!siteRow || !verdant || !parent) return repel(env, gameId, tick, row, 'no_board');
+  const sol = bodies.find(b => templateOf(b) === 'sol') ?? bodies.find(b => !b.parent_body_id);
+  const bary = bodies.find(b => templateOf(b) === 'binary_barycenter');
+  if (!siteRow || !verdant || !sol || !bary) return repel(env, gameId, tick, row, 'no_board');
 
   const gate = invasionGateId(gameId), twin = invasionTwinId(gameId), fid = row.faction_id;
   const gateR = Number(siteRow.radius) || 2.85;
-  // The twin rides a little past Verdant's own orbit around its star.
-  const twinR = Number(verdant.orbit_radius) * 1.3;
+  // THE TWIN SITS ON THE RIM FACING SOL (Lorne, 2026-10-28: "like with the
+  // squid gate"): just past the outermost world of the Centauri system,
+  // within 45 degrees either side of the line to the Sun, and clear of the
+  // sun gate's own far end if that one is already there.
   const orbitPeers = bodies.filter(b => !(Number(b.orbit_period) >= 1e9) && b.type !== 'star' && b.type !== 'black_hole');
-  const twinPeriod = periodForRadius(parent, twinR, orbitPeers);
-  const twinAngle = angle0For(((seededRand(`${gameId}|invasion|twin`)() * TWO_PI)), twinPeriod, tick);
+  const farWorlds = bodies.filter(b => b.parent_body_id === bary.id && isWorld(b) && b.type !== 'star' && b.type !== 'black_hole');
+  const outermost = Math.max(100, ...farWorlds.map(b => Number(b.orbit_ra ?? b.orbit_radius) || 0));
+  const twinR = outermost * FAR_GATE_RADIUS_MUL;
+  const twinPeriod = periodForRadius(bary, twinR, orbitPeers);
+  const rm = makeRouteMath(DB, gameId);
+  const solAt = await rm.bodyPosAt(sol.id, tick);
+  const baryAt = await rm.bodyPosAt(bary.id, tick);
+  const avoid = [];
+  if (bodies.some(b => b.id === `${gameId}:sungate_centauri_far`)) {
+    const q = await rm.bodyPosAt(`${gameId}:sungate_centauri_far`, tick);
+    avoid.push({ x: q.x - baryAt.x, y: q.y - baryAt.y });
+  }
+  const towardSol = Math.atan2(solAt.y - baryAt.y, solAt.x - baryAt.x);
+  const twinBearing = pickBearing(seededRand(`${gameId}|invasion|twin`), twinR, avoid, towardSol, twinR * 0.15);
+  const twinAngle = angle0For(twinBearing, twinPeriod, tick);
 
   const insBody = (id, name, parentId, orbitR, orbitP, ang0) => DB.prepare(
     `INSERT OR IGNORE INTO game_bodies
@@ -421,7 +439,7 @@ async function arrive(env, gameId, tick, d, hooks, row, fleet) {
   await DB.batch([
     insBody(gate, 'Verdant Gate', siteRow.parent_body_id, Number(siteRow.orbit_radius),
       Number(siteRow.orbit_period), Number(siteRow.angle0)),
-    insBody(twin, 'Armada Gate', parent.id, twinR, twinPeriod, twinAngle),
+    insBody(twin, 'Armada Gate', bary.id, twinR, twinPeriod, twinAngle),
     insMega(gate, twin),
     insMega(twin, gate),
   ]);

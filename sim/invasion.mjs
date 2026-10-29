@@ -195,7 +195,21 @@ const kinds = async (DB, G) => (await DB.prepare(
   check('the gate is theirs, complete, with a destructible hull and a twin',
     gate?.status === 'complete' && gate.founded_by_faction_id === invasionFactionId(G) && gate.hp > 0
       && gate.partner_body_id === invasionTwinId(G) && twin?.partner_body_id === invasionGateId(G), JSON.stringify({ gate, twin }));
-  check('the twin is beside Verdant, in the Centauri system', twin?.parent_body_id === (await DB.prepare('SELECT parent_body_id FROM game_bodies WHERE id = ?').bind(`${G}:verdant`).first()).parent_body_id);
+  check('the twin is in the Centauri system, orbiting its barycenter', twin?.parent_body_id === `${G}:binary_barycenter`, twin?.parent_body_id);
+  // On the rim facing Sol, like the squid gate's far end: within 45 degrees
+  // of the line to the Sun, and just past the outermost Centauri world.
+  {
+    const rm2 = makeRouteMath(DB, G);
+    const tq = await rm2.bodyPosAt(invasionTwinId(G), row.phase_tick);
+    const bq = await rm2.bodyPosAt(`${G}:binary_barycenter`, row.phase_tick);
+    const toSol = Math.atan2(0 - bq.y, 0 - bq.x), toTwin = Math.atan2(tq.y - bq.y, tq.x - bq.x);
+    const off = Math.abs(Math.atan2(Math.sin(toTwin - toSol), Math.cos(toTwin - toSol))) * 180 / Math.PI;
+    check('the twin sits on the rim facing Sol (within 45 degrees of the line to the Sun)', off <= 45.5, `${off.toFixed(1)} degrees off`);
+    const worlds = (await DB.prepare(`SELECT orbit_radius, orbit_ra FROM game_bodies WHERE parent_body_id = ? AND type IN ('terrestrial','dwarf','moon','gas-giant','ice-giant')`).bind(`${G}:binary_barycenter`).all()).results;
+    const outer = Math.max(...worlds.map(w => Number(w.orbit_ra ?? w.orbit_radius) || 0));
+    const rTwin = Math.hypot(tq.x - bq.x, tq.y - bq.y);
+    check('...just past the outermost world of that system', rTwin > outer && rTwin < outer * 1.4, `${Math.round(rTwin)} vs ${Math.round(outer)}`);
+  }
   ks = await kinds(DB, G);
   check('the gate is announced', ks.map(k => k.kind).join() === 'invasion_launched,invasion_gate', ks.map(k => k.kind).join());
   void env;
