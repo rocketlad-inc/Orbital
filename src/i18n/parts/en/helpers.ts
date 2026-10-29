@@ -20,7 +20,7 @@ export const helpers = {
   'helper.unlock.part.armor.blurb': 'The answer to energy. Does nothing against kinetic.',
   'helper.unlock.building.shields.label': 'Planetary Shields',
   'helper.unlock.building.missile_silo.label': 'Missile Silo',
-  'helper.unlock.building.missile_silo.blurb': 'A city building that builds and fires missiles: 10 damage to everything in the target orbit, and they stack.',
+  'helper.unlock.building.missile_silo.blurb': 'A city building that builds and fires missiles: 15 damage to everything in the target orbit, and they stack.',
   'helper.unlock.building.shields.blurb': 'A regenerating shield pool over your cities. Absorbs fire before structure — and structure never comes back.',
   'helper.unlock.part.repair.label': 'Repair Bay',
   'helper.unlock.part.repair.blurb': 'Freighter part. A field tender that patches up your worst-hurt ship anywhere — no station needed.',

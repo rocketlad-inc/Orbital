@@ -9,7 +9,7 @@
 //              would do, and a launch on each row. Intercepting raids is
 //              the silo's main job (Lorne, 2026-10-20: "the PRIMARY use
 //              is to intercept incoming ships"), so it leads. Under it,
-//              folded, OTHER TARGETS: a world's orbit (10 per missile to
+//              folded, OTHER TARGETS: a world's orbit (15 per missile to
 //              EVERY ship there, a confirm when yours are among them) or
 //              ships bound elsewhere
 //   AUTO-DEFENCE — off / shoot down incoming missiles / also intercept
@@ -31,7 +31,7 @@ import { t, tn, type Key } from '../i18n/core';
 import { useI18n } from '../i18n/react';
 import './WmSilo.css';
 
-export const MISSILE_DAMAGE = 10;
+export const MISSILE_DAMAGE = 15;
 export const MISSILE_COST = { ore: 40, credits: 40 };
 export const MISSILE_BUILD_TICKS = 12;
 export const MISSILES_PER_LEVEL = 5;

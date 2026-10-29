@@ -97,7 +97,7 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
     // dropped the columns for. The perk now lands where veterancy lives.
     label: 'Veteran Yards', blurb: 'Your new captains start at rank 1 — already blooded.' },
   { track: 'weapons', level: 5, feature: 'building.missile_silo',
-    label: 'Missile Silo', blurb: 'A city building that builds and fires missiles: 10 damage to everything in the target orbit, and they stack.' },
+    label: 'Missile Silo', blurb: 'A city building that builds and fires missiles: 15 damage to everything in the target orbit, and they stack.' },
   { track: 'weapons', level: 6, feature: 'part.detonator',
     label: 'Fusion Detonator', blurb: 'Turns a cheap hull into a threat. Hits friend and foe.' },
   { track: 'weapons', level: 7, feature: 'mega.weaponsStation',

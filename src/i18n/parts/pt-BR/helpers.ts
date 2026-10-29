@@ -22,7 +22,7 @@ export const helpers: Catalog = {
   'helper.unlock.part.armor.blurb': 'A resposta à energia. Não faz nada contra cinético.',
   'helper.unlock.building.shields.label': 'Escudos Planetários',
   'helper.unlock.building.missile_silo.label': 'Silo de Mísseis',
-  'helper.unlock.building.missile_silo.blurb': 'Um prédio de cidade que constrói e dispara mísseis: 10 de dano a tudo na órbita do alvo, e eles se somam.',
+  'helper.unlock.building.missile_silo.blurb': 'Um prédio de cidade que constrói e dispara mísseis: 15 de dano a tudo na órbita do alvo, e eles se somam.',
   'helper.unlock.building.shields.blurb': 'Uma reserva de escudo regenerativa sobre suas cidades. Absorve o fogo antes da estrutura — e a estrutura nunca se recupera.',
   'helper.unlock.part.repair.label': 'Oficina de Reparos',
   'helper.unlock.part.repair.blurb': 'Peça de cargueiro. Um rebocador de campo que remenda a nave mais ferida em qualquer lugar — sem precisar de estação.',

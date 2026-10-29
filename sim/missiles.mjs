@@ -7,14 +7,14 @@
 //   2. building: a missile lands in the magazine 12 ticks after it starts
 //   3. launching: a salvo flies to a world in the same star system; never
 //      its own world; never more than are ready
-//   4. impact: 10 damage per missile to EVERY ship in that orbit, friend or
+//   4. impact: 15 damage per missile to EVERY ship in that orbit, friend or
 //      foe, stacking; the salvo is spent, not "destroyed"
 //   5. auto-defence MISSILES: incoming salvos shot down one for one, above
 //      the reserve; what gets through still lands
 //   6. auto-defence + FLEETS: hostile ships landing on the silo's world are
 //      hit (the silo's salvo size), but never while its own ships are there
 //   7. intercepts in flight: a salvo meets a group on the way and bursts;
-//      every hull within 40 units takes 10 per missile, friend or foe;
+//      every hull within 40 units takes 15 per missile, friend or foe;
 //      + FLEETS launches one salvo per hostile group bound for its world
 //
 // Run: node sim/missiles.mjs
@@ -184,12 +184,12 @@ check('nothing is hit while it flies', (await hpOf(bc[0])).hp === 40 && (await h
 await runTick();
 const strike = await DB.prepare(`SELECT payload FROM chronicle_entries WHERE game_id = ? AND kind = 'missile_strike' ORDER BY tick_number DESC`).bind(G).first();
 const sp = strike ? JSON.parse(strike.payload) : null;
-check('on landing: 40 damage to every ship at Mars, so all three enemy corvettes die',
+check('on landing: 60 damage to every ship at Mars, so all three enemy corvettes die',
   (await Promise.all(bc.map(hpOf))).every(s => s.status === 'destroyed'), JSON.stringify(await Promise.all(bc.map(hpOf))));
-check('...the frigate takes 40 (270 -> 230)', (await hpOf(bf)).hp === 230, JSON.stringify(await hpOf(bf)));
+check('...the frigate takes 60 (270 -> 210)', (await hpOf(bf)).hp === 210, JSON.stringify(await hpOf(bf)));
 check('...and so does the launcher\'s own corvette: friend or foe', (await hpOf(mine)).status === 'destroyed');
 check('...the salvo is spent, not destroyed, and it is news', (await hpOf(L1.body.ship_id)).status === 'expended'
-  && sp?.missiles === 4 && sp.damage === 40 && sp.destroyed_count === 4, JSON.stringify(sp));
+  && sp?.missiles === 4 && sp.damage === 60 && sp.destroyed_count === 4, JSON.stringify(sp));
 check('...and no missile ever counts as a lost ship',
   !(await DB.prepare(`SELECT 1 AS x FROM chronicle_entries WHERE kind = 'ship_destroyed' AND ship_id = ?`).bind(L1.body.ship_id).first()));
 
@@ -255,7 +255,7 @@ while (tick < L2.body.arrive_tick) await runTick();
 const intc = await DB.prepare(`SELECT payload FROM chronicle_entries WHERE game_id = ? AND kind = 'missile_intercepted'`).bind(G).first();
 check('Venus\'s silo shoots down 4 (5 ready, 1 kept in reserve)', intc && JSON.parse(intc.payload).count === 4
   && Number((await cityOf(VENUS)).missile_stock) === 1, JSON.stringify({ intc: intc?.payload, stock: (await cityOf(VENUS)).missile_stock }));
-check('...the 2 that got through still land: 20 damage to each frigate', (await hpOf(vf[0])).hp === 250 && (await hpOf(vf[1])).hp === 250,
+check('...the 2 that got through still land: 30 damage to each frigate', (await hpOf(vf[0])).hp === 240 && (await hpOf(vf[1])).hp === 240,
   JSON.stringify(await Promise.all(vf.map(hpOf))));
 
 // ---- 6. auto-defence: + fleets ---------------------------------------------
@@ -323,8 +323,8 @@ check('...ONE straight push to a whole-tick meeting: no second burn to match spe
 while (tick < L3.body.meet_tick - 1) await runTick();
 check('nothing is hit before the meeting', (await hpOf(grp[0])).hp === 40 && (await hpOf(grp[2])).hp === 270);
 await runTick();
-check('at the meeting: 40 to every hull of the group (both corvettes die, the frigate 270 -> 230)',
-  (await hpOf(grp[0])).status === 'destroyed' && (await hpOf(grp[1])).status === 'destroyed' && (await hpOf(grp[2])).hp === 230,
+check('at the meeting: 60 to every hull of the group (both corvettes die, the frigate 270 -> 210)',
+  (await hpOf(grp[0])).status === 'destroyed' && (await hpOf(grp[1])).status === 'destroyed' && (await hpOf(grp[2])).hp === 210,
   JSON.stringify(await Promise.all(grp.map(hpOf))));
 check('...our own corvette flying alongside is caught too: friend or foe', (await hpOf(tag)).status === 'destroyed', JSON.stringify(await hpOf(tag)));
 check('...a hull far away is not', (await hpOf(far)).hp === 40);

@@ -264,7 +264,7 @@ const MISSILE: ShipClassDef = {
   className: 'missile',
   get displayName() { return tk('data.ship.missile.name', 'Missile salvo'); },
   icon: '🚀',
-  get description() { return tk('data.ship.missile.desc', 'Missiles from a silo, in flight. Where they land, each deals 10 damage to every ship in that orbit.'); },
+  get description() { return tk('data.ship.missile.desc', 'Missiles from a silo, in flight. Where they land, each deals 15 damage to every ship in that orbit.'); },
   firepower: 0,
   hp: 1,
   pdcRating: 0,

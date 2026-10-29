@@ -157,7 +157,7 @@ export const BUILDING_DEFS: Record<BuildingKind, BuildingDef> = {
     costScaling: 1.6,
     baseBuildTicks: 30,
     buildTimeScaling: 1.3,
-    get description() { return tk('data.building.missile_silo.desc', 'Builds and stores single-use missiles, 5 per level. A missile deals 10 damage to every ship in the orbit it lands in, friend or foe, and missiles stack. Fire them at a world in this star system, or let the silo shoot down incoming missiles.'); },
+    get description() { return tk('data.building.missile_silo.desc', 'Builds and stores single-use missiles, 5 per level. A missile deals 15 damage to every ship in the orbit it lands in, friend or foe, and missiles stack. Fire them at a world in this star system, or let the silo shoot down incoming missiles.'); },
     get effectShort() { return tk('data.building.missile_silo.short', '+5 missile capacity / level'); },
   },
   forge: {

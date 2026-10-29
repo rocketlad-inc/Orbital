@@ -3,7 +3,7 @@
 //
 // Lorne, 2026-10-19: "I want to move away from detonator laden ships as
 // missiles, and instead have this building that is capable of building
-// single use missiles. Missiles deal 10 damage 1 time to all targets in
+// single use missiles. Missiles deal 15 damage 1 time to all targets in
 // orbit and stack damage. Missile buildings can store an amount of
 // missiles matching their rank, 5 at level 1, 10 at level 2, etc.
 // Missiles can either be launched at a target or be set to auto launch to
@@ -42,7 +42,7 @@
 // INTERCEPTS IN FLIGHT (Lorne, 2026-10-19: "I want missiles to be able to
 // intercept incoming ships, and allow auto intercept of incoming ships").
 // His picks: a salvo that meets ships in flight hits EVERYTHING within
-// MISSILE_BLAST_RADIUS (40) of the meeting, friend or foe, 10 per missile;
+// MISSILE_BLAST_RADIUS (40) of the meeting, friend or foe, 15 per missile;
 // auto-intercept sends the silo's own salvo size (missile_salvo, 0179) at
 // each hostile group bound for ITS world, as soon as a meeting exists.
 //   - The salvo flies ONE straight push at the first whole tick the
@@ -67,7 +67,7 @@ import { resolveCaptainOnDeath } from './captains.js';
 import { loadFlights, groupFlights, loadSky } from './flightState.js';
 import { rendezvousStateAt } from '../src/physics/rendezvous.js';
 
-export const MISSILE_DAMAGE = 10;
+export const MISSILE_DAMAGE = 15;
 export const MISSILE_COST = { metal: 40, gold: 40 };
 export const MISSILE_BUILD_TICKS = 12;
 export const MISSILES_PER_LEVEL = 5;
